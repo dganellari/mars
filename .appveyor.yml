@@ -10,6 +10,12 @@ init:
 cache:
   - C:\projects\installations\kokkos-kernels -> appveyor.yml
   - C:\projects\installations\kokkos -> appveyor.yml
+  - C:\projects\installations\adios2 -> appveyor.yml
+
+
+
+##########################################################################################
+# DEPENDENCIES: mpi, kokkos, kokkkos-kernels, adios2
 
 
 install:
@@ -33,16 +39,31 @@ install:
 
 
 # Install KokkosKernels
+# Specify Kokkos_DIR with front slashes, it will still find kokkos but more importantly
+# it will write in KokkosKernelsConfig.cmake the path with '/'.
 - cd C:\ && mkdir kkg && cd kkg
 - ps: Start-FileDownload 'https://github.com/kokkos/kokkos-kernels/archive/refs/tags/3.6.00.tar.gz'
 - 7z x 3.6.00.tar.gz -so | 7z x -si -ttar > nul
 - cd kokkos-kernels-3.6.00
 - IF NOT EXIST C:\projects\installations\kokkos-kernels cmake -B "build64" -DKokkosKernels_ENABLE_TESTS=OFF -DCMAKE_EXE_LINKER_FLAGS:STRING="/machine:x64" -DCMAKE_INSTALL_PREFIX="C:\projects\installations\kokkos-kernels"  -DCMAKE_CXX_FLAGS:STRING="/DWIN32 /D_WINDOWS /GR /EHsc /bigobj" -DKokkos_DIR="C:/projects/installations/kokkos/lib/cmake/Kokkos" && cmake --build build64 --config Release --target install
 
+
+# Install ADIOS2
+- cd C:\ && mkdir adios2 && cd adios2
+- ps: Start-FileDownload 'https://github.com/ornladios/ADIOS2/archive/refs/tags/v2.8.0.tar.gz'
+- 7z x ADIOS2-2.8.0.tar.gz -so | 7z x -si -ttar > nul
+- cd ADIOS2-2.8.0
+- IF NOT EXIST C:\projects\installations\adios2 cmake -B "build64" -DCMAKE_EXE_LINKER_FLAGS:STRING="/machine:x64" -DCMAKE_INSTALL_PREFIX="C:\projects\installations\adios2" && cmake --build build64 --config Release --target install
+
+
+
+##########################################################################################
+
+
 # # Mars
 before_build:
 - cd c:\projects\mars
-- cmake -Ball_builds -DMARS_ENABLE_TESTING=OFF -DMARS_ENABLE_BENCHMARK=OFF -DCMAKE_INSTALL_PREFIX=install  -DMPI_C_INCLUDE_PATH="C:\Program Files (x86)\Microsoft SDKs\MPI\Include" -DMPI_C_LIBRARIES="C:\Program Files (x86)\Microsoft SDKs\MPI\Lib\x64\msmpi.lib" -DMPI_CXX_LIBRARIES="C:\Program Files (x86)\Microsoft SDKs\MPI\Lib\x64\msmpi.lib" -DMPI_CXX_INCLUDE_PATH="C:\Program Files (x86)\Microsoft SDKs\MPI\Include -DKokkos_DIR="C:\projects\installations\kokkos\lib\cmake\Kokkos" -DKokkosKernels_DIR="C:\projects\installations\kokkos-kernels\lib\cmake\KokkosKernels" -DMARS_ENABLE_KOKKOS=ON -DMARS_ENABLE_KOKKOS_KERNELS=ON  #-DCMAKE_VERBOSE_MAKEFILE=ON
+- cmake -Ball_builds -DMARS_ENABLE_TESTING=ON -DMARS_ENABLE_BENCHMARK=ON -DCMAKE_INSTALL_PREFIX=install  -DMPI_C_INCLUDE_PATH="C:\Program Files (x86)\Microsoft SDKs\MPI\Include" -DMPI_C_LIBRARIES="C:\Program Files (x86)\Microsoft SDKs\MPI\Lib\x64\msmpi.lib" -DMPI_CXX_LIBRARIES="C:\Program Files (x86)\Microsoft SDKs\MPI\Lib\x64\msmpi.lib" -DMPI_CXX_INCLUDE_PATH="C:\Program Files (x86)\Microsoft SDKs\MPI\Include -DKokkos_DIR="C:\projects\installations\kokkos\lib\cmake\Kokkos" -DKokkosKernels_DIR="C:\projects\installations\kokkos-kernels\lib\cmake\KokkosKernels" -DMARS_ENABLE_KOKKOS=ON -DMARS_ENABLE_KOKKOS_KERNELS=ON  #-DCMAKE_VERBOSE_MAKEFILE=ON
 # -DBUILD_SHARED_LIBS=ON
 
 
