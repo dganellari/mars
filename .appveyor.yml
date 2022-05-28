@@ -63,7 +63,7 @@ install:
 # # Mars
 before_build:
 - cd c:\projects\mars
-- cmake -Ball_builds -DMARS_ENABLE_TESTING=ON -DMARS_ENABLE_BENCHMARK=ON -DCMAKE_INSTALL_PREFIX=install -DCMAKE_EXE_LINKER_FLAGS:STRING="/machine:x64 -DMPI_C_INCLUDE_PATH="C:\Program Files (x86)\Microsoft SDKs\MPI\Include" -DMPI_C_LIBRARIES="C:\Program Files (x86)\Microsoft SDKs\MPI\Lib\x64\msmpi.lib" -DMPI_CXX_LIBRARIES="C:\Program Files (x86)\Microsoft SDKs\MPI\Lib\x64\msmpi.lib" -DMPI_CXX_INCLUDE_PATH="C:\Program Files (x86)\Microsoft SDKs\MPI\Include -DKokkos_DIR="C:\projects\installations\kokkos\lib\cmake\Kokkos" -DKokkosKernels_DIR="C:\projects\installations\kokkos-kernels\lib\cmake\KokkosKernels" -DMARS_ENABLE_KOKKOS=ON -DMARS_ENABLE_KOKKOS_KERNELS=ON  #-DCMAKE_VERBOSE_MAKEFILE=ON
+- cmake -Ball_builds -DMARS_ENABLE_TESTING=ON -DMARS_ENABLE_BENCHMARK=ON -DCMAKE_INSTALL_PREFIX=install -DCMAKE_EXE_LINKER_FLAGS:STRING="/machine:x64" -DMPI_C_INCLUDE_PATH="C:\Program Files (x86)\Microsoft SDKs\MPI\Include" -DMPI_C_LIBRARIES="C:\Program Files (x86)\Microsoft SDKs\MPI\Lib\x64\msmpi.lib" -DMPI_CXX_LIBRARIES="C:\Program Files (x86)\Microsoft SDKs\MPI\Lib\x64\msmpi.lib" -DMPI_CXX_INCLUDE_PATH="C:\Program Files (x86)\Microsoft SDKs\MPI\Include -DKokkos_DIR="C:\projects\installations\kokkos\lib\cmake\Kokkos" -DKokkosKernels_DIR="C:\projects\installations\kokkos-kernels\lib\cmake\KokkosKernels" -DMARS_ENABLE_KOKKOS=ON -DMARS_ENABLE_KOKKOS_KERNELS=ON  #-DCMAKE_VERBOSE_MAKEFILE=ON
 # -DBUILD_SHARED_LIBS=ON
 
 
