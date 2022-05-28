@@ -4,9 +4,6 @@ clone_folder: c:\projects\mars
 # https://www.appveyor.com/docs/build-environment/#build-worker-images
 image: Visual Studio 2019
 
-cache:
-  - C:\projects\installations\kokkos-kernels -> appveyor.yml
-
 
 install:
 # Install MS-MPI
@@ -36,6 +33,9 @@ install:
 - 7z x 3.6.00.tar.gz -so | 7z x -si -ttar > nul
 - cd kokkos-kernels-3.6.00
 - IF NOT EXIST C:\projects\installations\kokkos-kernels cmake -B "build64" -DKokkosKernels_ENABLE_TESTS=OFF -DCMAKE_EXE_LINKER_FLAGS:STRING="/machine:x64" -DCMAKE_INSTALL_PREFIX="C:\projects\installations\kokkos-kernels"  -DCMAKE_CXX_FLAGS:STRING="/DWIN32 /D_WINDOWS /GR /EHsc /bigobj" -DKokkos_DIR=C:\projects\installations\kokkos\lib\cmake\Kokkos && cmake --build build64 --config Release --target install
+
+cache:
+  - C:\projects\installations\kokkos-kernels -> appveyor.yml
 
 
 # # Mars
