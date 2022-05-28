@@ -8,7 +8,7 @@ init:
   - ps: ($env:APPVEYOR_SAVE_CACHE_ON_ERROR = "true")
 
 cache:
-  - C:\projects\installations\kokkos-kernels -> appveyor.yml
+  # - C:\projects\installations\kokkos-kernels -> appveyor.yml
   - C:\projects\installations\kokkos -> appveyor.yml
 
 
