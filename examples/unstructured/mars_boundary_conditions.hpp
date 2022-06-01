@@ -3,6 +3,8 @@
 
 #include "mars_base.hpp"
 #include "mars_globals.hpp"
+
+#ifdef WITH_KOKKOS_KERNELS
 #include "mars_laplace_ex.hpp"
 
 namespace mars {
@@ -148,4 +150,5 @@ namespace mars {
 
 }  // namespace mars
 
+#endif
 #endif  // mars_boundary_conditions_hpp

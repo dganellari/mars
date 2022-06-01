@@ -1,9 +1,9 @@
 #ifndef MARS_MODEL_TEST_HPP
 #define MARS_MODEL_TEST_HPP
 
-#include <err.h>
+#include "mars_err.hpp"
 
-#include <adios2.h>
+#ifdef WITH_KOKKOS_KERNELS
 #include <KokkosBlas1_nrm1.hpp>
 #include <KokkosBlas1_nrminf.hpp>
 #include <KokkosBlas1_sum.hpp>
@@ -448,3 +448,4 @@ namespace mars {
 }  // namespace mars
 
 #endif  // MARS_MODEL_TEST_HPP
+#endif

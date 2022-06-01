@@ -32,16 +32,16 @@ uk =[ u1, ... uL ], L = 4
 ---------------------
 //local to global
 u = P uk */
-#include "mars.hpp"
-#ifdef WITH_KOKKOS
+#ifdef WITH_KOKKOS_KERNELS
 #include <KokkosBlas1_sum.hpp>
+
+#include "mars.hpp"
 #include "mars_boundary_conditions.hpp"
 #include "mars_dm_interpolate.hpp"
 #include "mars_laplace_ex.hpp"
 #include "mars_poisson_operator.hpp"
 #include "mars_precon_conjugate_grad.hpp"
 #include "mars_quad4.hpp"
-#endif  // WITH_KOKKOS
 
 // #include "mars_pvtu_writer.hpp"  // VTK
 
@@ -286,3 +286,4 @@ namespace mars {
     }
 
 }  // namespace mars
+#endif

@@ -1,6 +1,7 @@
 #ifndef MARS_SPACETIME_EXAMPLES
 #define MARS_SPACETIME_EXAMPLES
 
+#ifdef WITH_KOKKOS_KERNELS
 #include <Kokkos_ArithTraits.hpp>
 #include <cmath>
 
@@ -414,3 +415,4 @@ namespace mars {
 }  // namespace mars
 
 #endif  // MARS_SPACETIME_EXAMPLES
+#endif

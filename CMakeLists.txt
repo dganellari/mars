@@ -1,368 +1,163 @@
-# cmake_minimum_required(VERSION 2.8.12)
-cmake_minimum_required(VERSION 3.17)
+cmake_minimum_required(VERSION 3.5...3.19)
 cmake_policy(SET CMP0048 NEW)
-project(mars VERSION 0.1.0)
+project(
+  mars
+  VERSION 0.1.0
+  LANGUAGES "CXX" "C"
+  HOMEPAGE_URL "https://bitbucket.org/zulianp/mars/src/master/"
+  DESCRIPTION
+    "Mars is an open-source mesh management library designed to handle N-dimensional elements (N <= 4)"
+)
 
-
-
-# FIXME make them usable from avaialble installation
-add_subdirectory(external/googletest)
-add_subdirectory(external/benchmark)
-
-include(cmake/MARSOptions.cmake)
-
-option(TRY_WITH_MOONOLITH
-       "Use -DTRY_WITH_MOONOLITH=ON for enabling mesh transfer functions." OFF)
-option(TRY_WITH_KOKKOS
-       "Use -DTRY_WITH_KOKKOS=ON for enabling mesh transfer functions." OFF)
-
-
-set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
-
-if(NOT CMAKE_BUILD_TYPE)
-    set(CMAKE_BUILD_TYPE
-        "Release"
-        CACHE STRING "Choose the type of build, options are: Debug Release
-RelWithDebInfo MinSizeRel." FORCE)
-
-    message(STATUS "[Status] CMAKE_BUILD_TYPE=Release")
-endif(NOT CMAKE_BUILD_TYPE)
-
-if(UNIX AND NOT APPLE)
-    set(LINUX TRUE)
-endif()
-
-
-if(MARS_ENABLE_ADIOS2)
-    find_package(adios2 REQUIRED)
-endif()
+# Std CMake imports
+include(CMakePackageConfigHelpers)
+include(CMakeDependentOption)
+# Cmake imports.
+include(cmake/MarsDefaults.cmake)
+include(cmake/MarsOptions.cmake)
+include(cmake/MarsCMakeFunctions.cmake)
+include(cmake/MarsDependencies.cmake)
 
 # ##############################################################################
 # ##############################################################################
-# ##############################################################################
-
-function(find_project_files rootPath dirPaths headers sources)
-    set(verbose TRUE)
-
-    set(theaders ${${headers}})
-    set(tsources ${${sources}})
-
-    set(ROOT_PATH ${${rootPath}})
-    set(DIR_PATHS ${${dirPaths}})
-
-    foreach(INCLUDE_PATH ${DIR_PATHS})
-        include_directories(${ROOT_PATH}/${INCLUDE_PATH})
-
-        file(GLOB TEMP_HPPSRC "${ROOT_PATH}/${INCLUDE_PATH}/*.cpp")
-        file(GLOB TEMP_SRC "${ROOT_PATH}/${INCLUDE_PATH}/*.c")
-        file(GLOB TEMP_HPPDR "${ROOT_PATH}/${INCLUDE_PATH}/*.hpp")
-        file(GLOB TEMP_HDR "${ROOT_PATH}/${INCLUDE_PATH}/*.h")
-
-        source_group(
-            ${INCLUDE_PATH} FILES ${TEMP_HPPDR}; ${TEMP_HDR}; ${TEMP_HPPSRC};
-                                  ${TEMP_SRC}; ${TEMP_UI})
-
-        set(tsources ${tsources}; ${TEMP_SRC}; ${TEMP_HPPSRC})
-        set(theaders ${theaders}; ${TEMP_HDR}; ${TEMP_HPPDR})
-    endforeach(INCLUDE_PATH)
-
-    set(${headers}
-        ${theaders}
-        PARENT_SCOPE)
-    set(${sources}
-        ${tsources}
-        PARENT_SCOPE)
-endfunction()
-
-# ##############################################################################
-# ##############################################################################
-# ##############################################################################
-
-find_package(MPIExtended)
-
-if(MPI_FOUND)
-    set(WITH_MPI ON)
-endif()
-
-if(NOT DEFINED CMAKE_CXX_STANDARD_REQUIRED)
-    set(CMAKE_CXX_STANDARD_REQUIRED ON)
-endif()
-if(NOT DEFINED CMAKE_CXX_STANDARD)
-    set(CMAKE_CXX_STANDARD 14)
-endif()
-
-if(TRY_WITH_KOKKOS)
-    if(NOT TRILINOS_DIR)
-        message(STATUS "Setting TRILINOS_DIR to $ENV{TRILINOS_DIR}")
-        set(TRILINOS_DIR
-            $ENV{TRILINOS_DIR}
-            CACHE PATH "Directory where Kokkos is installed")
-    endif()
-
-    if(NOT KOKKOS_DIR)
-        message(STATUS "Setting KOKKOS_DIR to $ENV{KOKKOS_DIR}")
-        set(KOKKOS_DIR
-            $ENV{KOKKOS_DIR}
-            CACHE PATH "Directory where Kokkos is installed")
-    endif()
-
-    # FIND_PACKAGE(Trilinos PATHS ${TRILINOS_DIR}/lib/cmake/Trilinos QUIET)
-
-    find_package(
-        Kokkos
-        HINTS
-        ${KOKKOS_DIR}
-        ${KOKKOS_DIR}/lib/CMake/Kokkos
-        ${KOKKOS_DIR}/lib64/CMake/Kokkos
-        ${TRILINOS_DIR}
-        ${TRILINOS_DIR}/lib/cmake/Kokkos
-        ${TRILINOS_DIR}/lib64/cmake/Kokkos
-        QUIET)
-
-    if(Kokkos_FOUND)
-        if (TARGET Kokkos::kokkos)
-            message(STATUS "Kokkos::kokkos is a target, get include directories from the target")
-            get_target_property(Kokkos_INCLUDE_DIRS Kokkos::kokkos INTERFACE_INCLUDE_DIRECTORIES)
-            get_target_property(Kokkos_LIBRARIES Kokkos::kokkos INTERFACE_LINK_LIBRARIES)
-            get_target_property(Kokkos_LIBRARY_DIRS Kokkos::kokkos INTERFACE_LINK_DIRECTORIES)
-        endif()
-        message("\nFound Kokkos!  Here are the details: ")
-        message(" Kokkos_CXX_COMPILER = ${Kokkos_CXX_COMPILER}")
-        message(" Kokkos_INCLUDE_DIRS = ${Kokkos_INCLUDE_DIRS}")
-        message(" Kokkos_LIBRARIES = ${Kokkos_LIBRARIES}")
-        message(" Kokkos_TPL_LIBRARIES = ${Kokkos_TPL_LIBRARIES}")
-        message(" Kokkos_LIBRARY_DIRS = ${Kokkos_LIBRARY_DIRS}")
-
-        if(MARS_USE_CUDA)
-            message(" Kokkos CUDA Enabled = ${Kokkos_ENABLE_CUDA}")
-        endif()
-
-        # message("   Kokkos_CXX_COMPILER = ${Kokkos_CXX_COMPILER}") message("
-        # Kokkos_C_COMPILER = ${Kokkos_C_COMPILER}")
-
-        if(Kokkos_CXX_COMPILER)
-            set(CMAKE_C_COMPILER ${Kokkos_C_COMPILER})
-            set(CMAKE_CXX_COMPILER ${Kokkos_CXX_COMPILER})
-            # message( "Setting CMAKE_CXX_COMPILER to
-            # Kokkos_CXX_COMPILER=${Kokkos_CXX_COMPILER}" )
-        endif()
-
-        set(WITH_KOKKOS ON)
-
-        find_package(
-            KokkosKernels
-            HINTS
-            ${KOKKOS_DIR}
-            ${KOKKOS_DIR}/lib/CMake/KokkosKernels
-            ${KOKKOS_DIR}/lib64/cmake/KokkosKernels
-            ${TRILINOS_DIR}
-            ${TRILINOS_DIR}/lib/cmake/KokkosKernels
-            ${TRILINOS_DIR}/lib64/cmake/KokkosKernels
-            REQUIRED)
-
-        find_package(OpenMP)
-
-        if(OPENMP_FOUND)
-            set(CMAKE_Fortran_FLAGS
-                "${CMAKE_Fortran_FLAGS} ${OpenMP_Fortran_FLAGS}")
-            set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
-            set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${OpenMP_C_FLAGS}")
-            set(CMAKE_CXX_LINK_FLAGS
-                "${CMAKE_CXX_LINK_FLAGS} ${OpenMP_CXX_FLAGS}")
-        endif()
-
-    else()
-        message(WARNING "Could not find Kokkos!")
-        if(MARS_USE_CUDA)
-            message(FATAL_ERROR "Could not use CUDA without Kokkos!")
-        endif()
-    endif()
-
-endif()
-
+# Library
 # ##############################################################################
 
 list(APPEND MARS_HEADERS mars.hpp mars_env.hpp)
 list(APPEND MARS_SOURCES mars.cpp mars_env.cpp)
 
-add_subdirectory(base)
-add_subdirectory(core)
-add_subdirectory(distributed)
-add_subdirectory(examples)
-add_subdirectory(io)
-add_subdirectory(kokkos)
+set(MARS_MODULES base core distributed examples io kokkos)
 
-if(MARS_ENABLE_ADIOS2)
-    add_subdirectory(backend/adios2)
+foreach(MODULE ${MARS_MODULES})
+  add_subdirectory("${MODULE}")
+endforeach(MODULE)
+
+add_library(mars ${MARS_HEADERS} ${MARS_SOURCES})
+
+# ##############################################################################
+# include
+
+foreach(include ${MARS_BUILD_INCLUDES})
+  target_include_directories(mars BEFORE PUBLIC $<BUILD_INTERFACE:${include}>)
+endforeach()
+
+target_include_directories(
+  mars BEFORE
+  PUBLIC $<BUILD_INTERFACE:${CMAKE_BINARY_DIR}>
+         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
+         $<INSTALL_INTERFACE:include>)
+
+target_include_directories(mars PUBLIC ${MARS_DEP_INCLUDES})
+
+# ##############################################################################
+# link
+
+target_link_libraries(mars PUBLIC ${MARS_DEP_LIBRARIES})
+# target_link_libraries(mars PUBLIC ${MPI_LIBRARIES})
+
+# ##############################################################################
+# properties
+
+if(NOT CMAKE_BUILD_TYPE)
+  set(CMAKE_BUILD_TYPE
+      "Release"
+      CACHE STRING "Choose the type of build, options are: Debug Release
+RelWithDebInfo MinSizeRel." FORCE)
+
+  message(STATUS "[Status] CMAKE_BUILD_TYPE=Release")
+endif(NOT CMAKE_BUILD_TYPE)
+
+if(NOT DEFINED CMAKE_CXX_STANDARD_REQUIRED)
+  set(CMAKE_CXX_STANDARD_REQUIRED ON)
+endif()
+if(NOT DEFINED CMAKE_CXX_STANDARD)
+  set(CMAKE_CXX_STANDARD 14)
+endif()
+
+target_compile_features(mars PUBLIC cxx_std_14)
+
+# ##############################################################################
+# ##############################################################################
+# Extra targets
+# ##############################################################################
+
+if(MARS_ENABLE_BENCHMARK)
+  include(bench/benchmarks.cmake)
+endif()
+
+if(MARS_ENABLE_TESTING)
+  include(tests/tests.cmake)
 endif()
 
 if(MARS_ENABLE_VTK)
-    add_subdirectory(backend/vtk)
+  find_package(
+    VTK
+    COMPONENTS vtkCommonCore vtkCommonDataModel vtkFiltersGeneral vtkIOXML
+               vtkIOParallel vtkIOParallelXML
+    REQUIRED)
+  add_subdirectory(backend/vtk)
 endif()
 
-add_library(mars STATIC ${MARS_HEADERS} ${MARS_SOURCES})
+# ##############################################################################
+# ##############################################################################
+# ##############################################################################
 
-message(STATUS "MARS_LIBRARIES=${MARS_LIBRARIES}")
-target_link_libraries(mars ${MARS_LIBRARIES})
-
-target_link_libraries(
-    mars # $<$<CONFIG:RelWithDebInfo>:asan> # $<$<CONFIG:RelWithDebInfo>:ubsan>
-)
-
-target_compile_options(
-    mars
-    PUBLIC -Wall -Wextra
-           # $<$<CONFIG:RelWithDebInfo>:-fsanitize=address -fsanitize=leak
-           # -fsanitize=undefined -fsanitize-address-use-after-scope>
-    # $<$<CONFIG:RelWithDebInfo>:-fsanitize=memory
-    # -fsanitize-memory-track-origins>
-)
-
-target_link_libraries(mars ${MPI_LIBRARIES})
-target_compile_features(mars PUBLIC cxx_std_14)
-target_include_directories(mars PUBLIC .)
-
-if(Kokkos_FOUND)
-
-    message(" Kokkos_INCLUDE_DIRS = ${Kokkos_INCLUDE_DIRS}")
-    message(" Kokkos_LIBRARIES = ${Kokkos_LIBRARIES}")
-    message(" Kokkos_TPL_LIBRARIES = ${Kokkos_TPL_LIBRARIES}")
-    message(" Kokkos_LIBRARY_DIRS = ${Kokkos_LIBRARY_DIRS}")
-
-    if(MARS_USE_CUDA AND (NOT DEFINED Kokkos_ENABLE_CUDA OR NOT ${Kokkos_ENABLE_CUDA}))
-            message(
-                FATAL_ERROR
-                    "Enable Kokkos Cuda or unset MARS_USE_CUDA to continue with OpenMP!"
-            )
-    endif()
-
-    if(Kokkos_ENABLE_CUDA)
-        kokkos_check(OPTIONS CUDA_LAMBDA)
-    endif()
-
-    target_include_directories(mars SYSTEM PUBLIC ${Kokkos_TPL_INCLUDE_DIRS} ${Kokkos_INCLUDE_DIRS})
-
-    message(
-        STATUS
-            "Kokkos_INCLUDE_DIRS=${Kokkos_INCLUDE_DIRS}, ${Kokkos_TPL_INCLUDE_DIRS}"
-    )
-
-    if(Kokkos_CXX_COMPILER)
-        target_link_libraries(mars ${Kokkos_LIBRARIES} ${Kokkos_TPL_LIBRARIES})
-    else()
-        target_link_libraries(mars ${Kokkos_LIBRARIES} ${Kokkos_TPL_LIBRARIES}
-                              -L${Kokkos_LIBRARY_DIRS})
-    endif()
-
-    if(KokkosKernels_FOUND)
-        if (TARGET Kokkos::kokkoskernels)
-            target_link_libraries(mars Kokkos::kokkoskernels)
-        else()
-            target_include_directories(mars PUBLIC ${KokkosKernels_TPL_INCLUDE_DIRS}
-                                                           ${KokkosKernels_INCLUDE_DIRS})
-
-            if(Kokkos_CXX_COMPILER)
-                target_link_libraries(mars ${KokkosKernels_LIBRARIES}
-                                      ${KokkosKernels_TPL_LIBRARIES})
-            else()
-                target_link_libraries(
-                    mars ${KokkosKernels_LIBRARIES} ${KokkosKernels_TPL_LIBRARIES}
-                    -L${KokkosKernels_LIBRARY_DIRS})
-            endif()
-        endif()
-    endif()
-
-endif()
+# #################  EXECUTABLES AND INSTALL ##################
 
 add_executable(mars_exec main.cpp)
 target_link_libraries(mars_exec mars)
 
-target_include_directories(
-    mars PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/external/cxxopts/include)
+# Adios2 Executables go here.
 
-if(TRY_WITH_MOONOLITH)
-    add_subdirectory(moonolith_adapter)
+include_directories(${CMAKE_BINARY_DIR})
 
-    if(WITH_PAR_MOONOLITH)
-        target_link_libraries(mars mars_moonolith)
-    endif()
-endif()
-
-target_link_libraries(mars ${MARS_LIBRARIES})
-target_include_directories(mars PUBLIC ${CMAKE_BINARY_DIR})
-target_include_directories(mars PUBLIC ${MARS_INCLUDES})
-
-message(STATUS "${MARS_INCLUDES}")
+install(
+  TARGETS mars mars_exec
+  EXPORT MarsTargets
+  RUNTIME DESTINATION bin
+  LIBRARY DESTINATION lib
+  ARCHIVE DESTINATION lib)
 
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/base/mars_config.hpp.in
                ${CMAKE_BINARY_DIR}/mars_config.hpp)
-include_directories(${CMAKE_BINARY_DIR})
-
-if(MARS_WITH_VTK)
-    install(
-        TARGETS mars_vtk
-        RUNTIME DESTINATION bin
-        LIBRARY DESTINATION lib
-        ARCHIVE DESTINATION lib)
-endif()
-
-
-
-if(MARS_WITH_ADIOS2)
-    install(
-        TARGETS mars_adios2
-        RUNTIME DESTINATION bin
-        LIBRARY DESTINATION lib
-        ARCHIVE DESTINATION lib)
-endif()
-
-
-install(
-    TARGETS mars mars_exec mars_examples
-    RUNTIME DESTINATION bin
-    LIBRARY DESTINATION lib
-    ARCHIVE DESTINATION lib)
-
 install(FILES ${MARS_HEADERS} DESTINATION include)
 install(FILES ${CMAKE_BINARY_DIR}/mars_config.hpp DESTINATION include)
 
+install(
+    EXPORT MarsTargets
+    FILE MarsTargets.cmake
+    NAMESPACE Mars::
+    DESTINATION lib/cmake)
+
+# generate the config file that is includes the exports
+configure_package_config_file(
+  ${CMAKE_CURRENT_SOURCE_DIR}/cmake/MarsConfig.cmake.in
+  "${CMAKE_CURRENT_BINARY_DIR}/MarsConfig.cmake"
+  INSTALL_DESTINATION "lib/cmake/")
+
+# generate the version file for the config file
+write_basic_package_version_file(
+  "${CMAKE_CURRENT_BINARY_DIR}/MarsConfigVersion.cmake"
+  VERSION "${MARS_VERSION}"
+  COMPATIBILITY AnyNewerVersion)
+
+# install the configuration file
+install(FILES ${CMAKE_CURRENT_BINARY_DIR}/MarsConfig.cmake
+              ${CMAKE_CURRENT_BINARY_DIR}/MarsConfigVersion.cmake
+        DESTINATION lib/cmake/)
+
+include(cmake/PostInstall.cmake)
+
 # ##############################################################################
 
-if(Kokkos_FOUND)
-    add_executable(st_example examples/mars_st_example.cpp)
-    target_link_libraries(st_example mars mars_io)
+# #################  Extra Targets, Complete ##################
+
+add_custom_target(mars_complete)
+
+if(MARS_ENABLE_BENCHMARK)
+  add_dependencies(mars_complete mars_bench)
 endif()
 
-# ##############################################################################
-#ADIOS STUFF
-
-
-find_package(ADIOS2 REQUIRED)
-if(ADIOS2_FOUND)
-    target_link_libraries(mars adios2::cxx11_mpi MPI::MPI_C)
-
-    # add_executable(adios_example examples/mars_example_adios2.cpp 
-    # examples/mars_image_data_writer_settings.cpp
-    # examples/mars_image_data_writer.cpp
-    # examples/mars_mesh_writer.cpp
-    # examples/mars_mesh_io.cpp)
-
-    add_executable(adios_mpi_example examples/mars_example_adios_mpi.cpp)
-
-    add_executable(adios_mpi_mesh_example examples/mars_mesh_mpi_adios.cpp)
-
-    add_executable(adios_mpi_mesh_time_example examples/mars_mesh_mpi_adios_time.cpp)
-
-    add_executable(adios_mesh_reader examples/mars_mesh_reader.cpp)
-
-    # target_link_libraries(adios_example mars mars_io)
-    target_link_libraries(adios_mpi_example mars mars_io)
-    target_link_libraries(adios_mpi_mesh_example mars mars_io)
-    target_link_libraries(adios_mpi_mesh_time_example mars mars_io)
-    target_link_libraries(adios_mesh_reader mars mars_io)
-else()
-    message("Adios Not Found")
+if(MARS_ENABLE_TESTING)
+  add_dependencies(mars_complete mars_test)
 endif()
-
-include(tests/tests.cmake)
-include(bench/benchmarks.cmake)
