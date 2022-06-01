@@ -23,6 +23,8 @@ include(cmake/MarsDependencies.cmake)
 # Library
 # ##############################################################################
 
+
+
 list(APPEND MARS_HEADERS mars.hpp mars_env.hpp)
 list(APPEND MARS_SOURCES mars.cpp mars_env.cpp)
 
@@ -98,6 +100,10 @@ if(MARS_ENABLE_VTK)
   add_subdirectory(backend/vtk)
 endif()
 
+<<<<<<< HEAD
+=======
+
+>>>>>>> origin/adios2
 # ##############################################################################
 # ##############################################################################
 # ##############################################################################
@@ -161,3 +167,9 @@ endif()
 if(MARS_ENABLE_TESTING)
   add_dependencies(mars_complete mars_test)
 endif()
+<<<<<<< HEAD
+=======
+
+message("MARS_DEP_INCLUDES: ${MARS_DEP_INCLUDES}")
+message("MARS_DEP_LIBRARIES: ${MARS_DEP_LIBRARIES}")
+>>>>>>> origin/adios2
