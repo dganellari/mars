@@ -3,6 +3,7 @@
 # ##############################################################################
 
 find_package(MPIExtended REQUIRED)
+# find_package(MPI REQUIRED)
 
 if(MPI_FOUND)
   set(WITH_MPI ON)
@@ -202,22 +203,23 @@ if(MARS_ENABLE_KOKKOS)
   # Kokkos Kernels
   if(MARS_ENABLE_KOKKOS_KERNELS)
 
-
     if(WIN32)
-    find_package(KokkosKernels HINTS C:/projects/installations/kokkos-kernels/lib/cmake/KokkosKernels
-                 ${KokkosKernels_DIR} $ENV{KokkosKernels_DIR} REQUIRED)
+      find_package(
+        KokkosKernels HINTS
+        C:/projects/installations/kokkos-kernels/lib/cmake/KokkosKernels
+        ${KokkosKernels_DIR} $ENV{KokkosKernels_DIR} REQUIRED)
     else()
-    find_package(
-      KokkosKernels
-      HINTS
-      ${KOKKOS_DIR}
-      ${KOKKOS_DIR}/lib/CMake/KokkosKernels
-      ${KOKKOS_DIR}/lib64/cmake/KokkosKernels
-      ${TRILINOS_DIR}
-      ${TRILINOS_DIR}/lib/cmake/KokkosKernels
-      ${TRILINOS_DIR}/lib64/cmake/KokkosKernels
-      REQUIRED)
-  endif()
+      find_package(
+        KokkosKernels
+        HINTS
+        ${KOKKOS_DIR}
+        ${KOKKOS_DIR}/lib/CMake/KokkosKernels
+        ${KOKKOS_DIR}/lib64/cmake/KokkosKernels
+        ${TRILINOS_DIR}
+        ${TRILINOS_DIR}/lib/cmake/KokkosKernels
+        ${TRILINOS_DIR}/lib64/cmake/KokkosKernels
+        REQUIRED)
+    endif()
 
     message(VERBOSE "Found Kokkos Kernels")
     set(WITH_KOKKOS_KERNELS ON)
@@ -260,4 +262,18 @@ endif()
 
 if(MARS_ENABLE_CXXOPTS)
   include(cxxopts/cxxopts.cmake)
+endif()
+
+if(MARS_ENABLE_ADIOS2)
+  find_package(ADIOS2 REQUIRED)
+  if(ADIOS2_FOUND)
+    message(STATUS "Adios2 found.")
+    add_subdirectory(backend/adios2)
+
+    set(ADIOS2_INCLUDE_DIRS ${ADIOS2_DIR}/../../../include)
+    set(MARS_DEP_LIBRARIES "${MARS_DEP_LIBRARIES};${ADIOS2_LIBRARIES}")
+    set(MARS_DEP_INCLUDES "${MARS_DEP_INCLUDES};${ADIOS2_INCLUDE_DIRS}")
+  else()
+    message(STATUS "Adios2 not found.")
+  endif()
 endif()

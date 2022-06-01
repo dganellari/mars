@@ -3,7 +3,7 @@ cmake_policy(SET CMP0048 NEW)
 project(
   mars
   VERSION 0.1.0
-  LANGUAGES "CXX"
+  LANGUAGES "CXX" "C"
   HOMEPAGE_URL "https://bitbucket.org/zulianp/mars/src/master/"
   DESCRIPTION
     "Mars is an open-source mesh management library designed to handle N-dimensional elements (N <= 4)"
@@ -98,12 +98,6 @@ if(MARS_ENABLE_VTK)
   add_subdirectory(backend/vtk)
 endif()
 
-if(MARS_ENABLE_ADIOS2)
-  find_package(ADIOS2 REQUIRED)
-  add_subdirectory(backend/adios2)
-endif()
-
-
 # ##############################################################################
 # ##############################################################################
 # ##############################################################################
@@ -112,6 +106,9 @@ endif()
 
 add_executable(mars_exec main.cpp)
 target_link_libraries(mars_exec mars)
+
+# Adios2 Executables go here.
+
 include_directories(${CMAKE_BINARY_DIR})
 
 install(

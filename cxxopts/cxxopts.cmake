@@ -3,7 +3,7 @@ if(MARS_ENABLE_CXXOPTS)
     find_package(cxxopts QUIET)
 
     if(NOT cxxopts_FOUND)
-        message("cxxopts not found")
+        message("cxxopts not found, now installing it.")
         include(FetchContent)
 
         FetchContent_Declare(
