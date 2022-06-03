@@ -1,7 +1,10 @@
 #include <complex>
 #include <iostream>
 #include "adios2.h"
+
+#ifdef WITH_CXXOPTS
 #include "cxxopts.hpp"
+#endif
 #include "mars_image.hpp"
 #include "mars_image_adios_writer.hpp"
 

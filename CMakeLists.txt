@@ -100,10 +100,6 @@ if(MARS_ENABLE_VTK)
   add_subdirectory(backend/vtk)
 endif()
 
-<<<<<<< HEAD
-=======
-
->>>>>>> origin/adios2
 # ##############################################################################
 # ##############################################################################
 # ##############################################################################
@@ -114,6 +110,19 @@ add_executable(mars_exec main.cpp)
 target_link_libraries(mars_exec mars)
 
 # Adios2 Executables go here.
+add_executable(adios_example backend/adios2/mars_example_adios2.cpp 
+    backend/adios2/mars_image_data_writer_settings.cpp
+    backend/adios2/mars_image_data_writer.cpp
+    backend/adios2/mars_mesh_writer.cpp
+    backend/adios2/mars_mesh_io.cpp)
+
+add_executable(adios_mpi_example_image backend/adios2/mars_example_adios_mpi.cpp)
+add_executable(adios_mpi_example_mesh_time backend/adios2/mars_mesh_mpi_adios_time.cpp)
+target_link_libraries(adios_mpi_example_mesh_time mars)
+target_link_libraries(adios_mpi_example_image mars)
+target_link_libraries(adios_example mars)
+
+
 
 include_directories(${CMAKE_BINARY_DIR})
 
@@ -167,9 +176,3 @@ endif()
 if(MARS_ENABLE_TESTING)
   add_dependencies(mars_complete mars_test)
 endif()
-<<<<<<< HEAD
-=======
-
-message("MARS_DEP_INCLUDES: ${MARS_DEP_INCLUDES}")
-message("MARS_DEP_LIBRARIES: ${MARS_DEP_LIBRARIES}")
->>>>>>> origin/adios2

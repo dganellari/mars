@@ -7,7 +7,6 @@
 #include "mars_mesh.hpp"
 #include "mars_mesh_generation.hpp"
 #include "mars_mesh_reader.hpp"
-#include "mars_test_mesh.hpp"
 
 #ifdef WITH_KOKKOS
 #include "mars_lepp_benchmark_kokkos.hpp"

@@ -266,7 +266,6 @@ endif()
 
 if(MARS_ENABLE_ADIOS2)
   find_package(ADIOS2 REQUIRED)
-<<<<<<< HEAD
   if(ADIOS2_FOUND)
     message(STATUS "Adios2 found.")
     add_subdirectory(backend/adios2)
@@ -277,9 +276,4 @@ if(MARS_ENABLE_ADIOS2)
   else()
     message(STATUS "Adios2 not found.")
   endif()
-=======
-  set(MARS_DEP_LIBRARIES "${MARS_DEP_LIBRARIES};adios2::cxx11_mpi")
-  set(MARS_DEP_LIBRARIES "${MARS_DEP_LIBRARIES};MPI::MPI_C")
-  add_subdirectory(backend/adios2)
->>>>>>> origin/adios2
 endif()

@@ -1,6 +1,8 @@
 #include <adios2.h>
 #include <iostream>
+// #ifdef WITH_CXXOPTS
 #include "cxxopts.hpp"
+// #endif
 #include "mars_base.hpp"
 #include "mars_image_data_writer.hpp"
 #include "mars_image_data_writer_settings.hpp"
