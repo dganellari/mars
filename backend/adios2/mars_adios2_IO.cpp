@@ -4,6 +4,8 @@
 #include "mars_distributed_dof_management.hpp"
 #include "mars_distributed_finite_element.hpp"
 
+#include "mars_config.hpp"
+
 #include "mars_globals.hpp"
 #include "mars_mesh.hpp"
 #include "mars_mesh_generation.hpp"

@@ -1,6 +1,8 @@
 #ifndef MARS_ADIOS2_IO_HPP
 #define MARS_ADIOS2_IO_HPP
 
+#include "mars_config.hpp"
+
 #ifdef WITH_KOKKOS
 #include "mars_utils_kokkos.hpp"
 
