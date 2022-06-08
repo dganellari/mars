@@ -268,6 +268,7 @@ if(MARS_ENABLE_ADIOS2)
   find_package(ADIOS2 REQUIRED)
   if(ADIOS2_FOUND)
     message(STATUS "Adios2 found.")
+    set(WITH_ADIOS2 ON)
     add_subdirectory(backend/adios2)
 
     set(ADIOS2_INCLUDE_DIRS ${ADIOS2_DIR}/../../../include)
