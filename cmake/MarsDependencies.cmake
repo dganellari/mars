@@ -83,12 +83,12 @@ if(MARS_ENABLE_KOKKOS)
   message(VERBOSE "Found Kokkos")
   set(WITH_KOKKOS ON)
   # check what was found
-  message(STATUS "Kokkos_CXX_FLAGS: ${Kokkos_CXX_FLAGS}")
-  message(STATUS "Kokkos_CXX_COMPILER = ${Kokkos_CXX_COMPILER}")
-  message(STATUS "Kokkos_INCLUDE_DIRS = ${Kokkos_INCLUDE_DIRS}")
-  message(STATUS "Kokkos_LIBRARIES = ${Kokkos_LIBRARIES}")
-  message(STATUS "Kokkos_TPL_LIBRARIES = ${Kokkos_TPL_LIBRARIES}")
-  message(STATUS "Kokkos_LIBRARY_DIRS = ${Kokkos_LIBRARY_DIRS}")
+  # message(STATUS "Kokkos_CXX_FLAGS: ${Kokkos_CXX_FLAGS}")
+  # message(STATUS "Kokkos_CXX_COMPILER = ${Kokkos_CXX_COMPILER}")
+  # message(STATUS "Kokkos_INCLUDE_DIRS = ${Kokkos_INCLUDE_DIRS}")
+  # message(STATUS "Kokkos_LIBRARIES = ${Kokkos_LIBRARIES}")
+  # message(STATUS "Kokkos_TPL_LIBRARIES = ${Kokkos_TPL_LIBRARIES}")
+  # message(STATUS "Kokkos_LIBRARY_DIRS = ${Kokkos_LIBRARY_DIRS}")
 
   # _KK_TARGET is set as a local variable do not use outside this file
   set(_KK_TARGET "Kokkos::kokkos")

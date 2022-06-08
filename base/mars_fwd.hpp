@@ -12,7 +12,7 @@ namespace mars {
     class Simplex;
 
     template <Integer Dim_,
-              Integer Manifold_ = Dim_,
+              int Manifold_ = Dim_,
               class Implementation_ = DefaultImplementation,
               class Simplex_ = Simplex<Dim_, Manifold_, Implementation_>>
     class Mesh;
