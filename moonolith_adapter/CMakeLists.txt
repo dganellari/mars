@@ -1,4 +1,4 @@
-find_package(ParMoonolith)
+find_package(ParMoonolith REQUIRED)
 
 if(MOONOLITH_FOUND)
 

@@ -7,6 +7,10 @@ if (@MARS_ENABLE_KOKKOS_KERNELS@)
     find_dependency(KokkosKernels HINTS @KokkosKernels_DIR@)
 endif()
 
+if (@MARS_ENABLE_ADIOS2@)
+    find_dependency(ADIOS2 HINTS @ADIOS2_DIR@)
+endif()
+
 if (@MARS_ENABLE_CXXOPTS@)
     find_dependency(cxxopts HINTS @cxxopts_DIR@)
 endif()

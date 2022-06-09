@@ -1,6 +1,6 @@
 if(MARS_ENABLE_CXXOPTS)
     # ##########################################################################
-    find_package(cxxopts QUIET)
+    find_package(cxxopts REQUIRED)
 
     if(NOT cxxopts_FOUND)
         message("cxxopts not found, now installing it.")
@@ -12,15 +12,14 @@ if(MARS_ENABLE_CXXOPTS)
             GIT_TAG v3.0.0)
         FetchContent_MakeAvailable(cxxopts)
         set(MARS_DEP_LIBRARIES "${MARS_DEP_LIBRARIES};cxxopts::cxxopts")
-        # set(MARS_DEP_INCLUDES "${MARS_DEP_INCLUDES};cxxopts::cxxopts")
-
+        set(MARS_DEP_INCLUDES "${MARS_DEP_INCLUDES};${cxxopts_INCLUDE_DIRS}")
         # message(${MARS_DEP_INCLUDES})
 
         # FetchContent_GetProperties(cxxopts)
 
         # if(NOT cxxopts_POPULATED)
         #     FetchContent_Populate(cxxopts)
-        #     add_subdirectory(${cxxopts_SOURCE_DIR} ${cxxopts_BINARY_DIR})
+        # #     add_subdirectory(${cxxopts_SOURCE_DIR} ${cxxopts_BINARY_DIR})
         # endif()
 
         # set_target_properties(cxxopts PROPERTIES FOLDER extern)
@@ -29,7 +28,8 @@ if(MARS_ENABLE_CXXOPTS)
 
     else()
         message("Found cxxopts")
-        set(MARS_CXXOPTS_LIBRARIES cxxopts::cxxopts)
+        set(MARS_DEP_LIBRARIES "${MARS_DEP_LIBRARIES};cxxopts::cxxopts")
+        set(MARS_DEP_INCLUDES "${MARS_DEP_INCLUDES};${cxxopts_INCLUDE_DIRS}")
     endif()
     set(WITH_CXXOPTS ON)
 
@@ -45,6 +45,5 @@ if(MARS_ENABLE_CXXOPTS)
     # endif()
 
     # set(MARS_EXEC_DEP_LIBRARIES "${MARS_EXEC_DEP_LIBRARIES};${MARS_CXXOPTS_LIBRARIES}")
-
 
 endif(MARS_ENABLE_CXXOPTS)
