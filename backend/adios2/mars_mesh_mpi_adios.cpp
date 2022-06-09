@@ -1,7 +1,7 @@
 #include <complex>
 #include <iostream>
 #include "adios2.h"
-#include "cxxopts.hpp"
+#include "mars_config.hpp"
 #include "mars_globals.hpp"
 #include "mars_interpolate.hpp"
 #include "mars_mesh.hpp"

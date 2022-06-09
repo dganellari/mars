@@ -1,9 +1,10 @@
 cmake_minimum_required(VERSION 3.5...3.19)
-project(mars_usage)
+project(mars_usage LANGUAGES "CXX" "C")
 
 include(CMakeFindDependencyMacro)
 
 find_package(Mars 0 REQUIRED)
+find_package(ADIOS2 REQUIRED)
 
 # we use one of our examples here
 add_executable(mars_example_1 ${CMAKE_SOURCE_DIR}/../mars_example_post_install.cpp)

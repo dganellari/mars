@@ -256,12 +256,14 @@ endif()
 # ##############################################################################
 # Moonolith
 
-if(TRY_WITH_MOONOLITH)
+if(MARS_ENABLE_MOONOLITH)
   add_subdirectory(moonolith_adapter)
+  set(WITH_PAR_MOONOLITH ON)
 endif()
 
 if(MARS_ENABLE_CXXOPTS)
   include(cxxopts/cxxopts.cmake)
+  set(WITH_CXXOPTS ON)
 endif()
 
 if(MARS_ENABLE_ADIOS2)

@@ -1,12 +1,11 @@
-#include "mars_context.hpp"
-#include "mars_globals.hpp"
-// #include <bits/c++config.h>
 #include <adios2.h>
 #include <exception>
 #include <iostream>
 #include <tuple>
 #include <type_traits>
 #include <utility>
+#include "mars_context.hpp"
+#include "mars_globals.hpp"
 
 #ifdef WITH_MPI
 
