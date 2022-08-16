@@ -7,11 +7,11 @@
 #include "mars_globals.hpp"
 #ifdef WITH_KOKKOS
 #include "Kokkos_ArithTraits.hpp"
-#include "Kokkos_Atomic.hpp"
-#include "Kokkos_Macros.hpp"
-#if KOKKOS_VERSION == 30500
-#include "impl/Kokkos_Atomic_Generic.hpp"
-#endif
+// #include "Kokkos_Atomic.hpp"
+// #include "Kokkos_Macros.hpp"
+// #if KOKKOS_VERSION == 30500
+// #include "impl/Kokkos_Atomic_Generic.hpp"
+// #endif
 #endif
 
 #ifdef WITH_MPI
