@@ -29,9 +29,11 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. */
 
 #pragma once
 
+#include <cmath>
 #include <cstddef>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include <mars_pp_util.hpp>
 
