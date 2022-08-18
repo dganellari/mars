@@ -636,7 +636,7 @@ namespace mars {
         constexpr Integer Dim = DistributedQuad4Mesh::Dim;
 
         using Elem = typename DistributedQuad4Mesh::Elem;
-        constexpr Integer Type = Elem::ElemType;
+        static constexpr Integer Type = Elem::ElemType;
 
         std::cout << "Type: " << Type << std::endl;
 
