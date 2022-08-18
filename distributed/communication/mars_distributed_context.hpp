@@ -161,7 +161,6 @@ namespace mars {
 
 #define MAKE_PTOP_FUN(F_) \
     F_(double)            \
-    // F_(Integer)           \
     F_(float)             \
     F_(int)               \
     F_(unsigned)          \
