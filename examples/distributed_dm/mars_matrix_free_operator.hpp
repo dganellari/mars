@@ -15,7 +15,7 @@
 #include <KokkosBlas1_nrm1.hpp>
 #include <KokkosBlas1_nrm2.hpp>
 #include <KokkosBlas1_scal.hpp>
-#include <KokkosSparse_spadd.hpp>
+// #include <KokkosSparse_spadd.hpp>
 #include <KokkosSparse_spmv.hpp>
 #include <Kokkos_Core.hpp>
 #include "KokkosSparse_CrsMatrix.hpp"
