@@ -17,6 +17,7 @@ include(cmake/MarsDefaults.cmake)
 include(cmake/MarsOptions.cmake)
 include(cmake/MarsCMakeFunctions.cmake)
 include(cmake/MarsDependencies.cmake)
+include(cmake/MarsClangFormat.cmake)
 
 # ##############################################################################
 # ##############################################################################
@@ -161,3 +162,8 @@ endif()
 if(MARS_ENABLE_TESTING)
   add_dependencies(mars_complete mars_test)
 endif()
+
+
+# ##############################################################################
+target_format_setup("mars;mars_bench;mars_test")
+# ##############################################################################
