@@ -73,9 +73,10 @@ namespace mars {
     F_(int)                     \
     F_(unsigned)                \
     F_(long)                    \
-    F_(unsigned long)           \
-    F_(long long)               \
-    F_(unsigned long long)
+    F_(unsigned long)
+    //\
+    // F_(long long)               \
+    // F_(unsigned long long)
 
 #define GENERATE_COLLECTIVE_PUBLIC MAKE_COLLECTIVE_FUN(MARS_PUBLIC_COLLECTIVES_)
 #define GENERATE_COLLECTIVE_INTERFACE MAKE_COLLECTIVE_FUN(MARS_INTERFACE_COLLECTIVES_)
@@ -160,7 +161,7 @@ namespace mars {
 
 #define MAKE_PTOP_FUN(F_) \
     F_(double)            \
-    F_(Integer)           \
+    // F_(Integer)           \
     F_(float)             \
     F_(int)               \
     F_(unsigned)          \
