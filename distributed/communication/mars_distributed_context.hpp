@@ -35,6 +35,8 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. */
 #include <string>
 #include <vector>
 
+#include "mars_base.hpp"
+
 #include <mars_pp_util.hpp>
 
 #include "mars_gathered_vector.hpp"
