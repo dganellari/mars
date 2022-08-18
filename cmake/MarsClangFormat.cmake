@@ -24,16 +24,16 @@ function(format_setup)
     endforeach()
 
     add_custom_target(
-        utopia_format
+        mars_format
         COMMAND ${CLANG_FORMAT_EXE} -style=file -fallback-style=none -i
                 ${format_sources}
         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
         COMMENT "Formating with ${CLANG_FORMAT_EXE} ...")
 
     if(TARGET format)
-        add_dependencies(format utopia_format)
+        add_dependencies(format mars_format)
     else()
-        add_custom_target(format DEPENDS utopia_format)
+        add_custom_target(format DEPENDS mars_format)
     endif()
 endfunction()
 

@@ -178,7 +178,6 @@ namespace mars {
                     // build the ghost dof object and insert into the map
                     const auto result = gsgm.insert(ghost_sfc, Dof(gid, owner_proc));
                     assert(!result.failed());
-
                 });
         }
 

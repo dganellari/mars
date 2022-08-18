@@ -27,7 +27,6 @@ ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. */
 
-
 #pragma once
 
 #include <exception>
@@ -36,56 +35,41 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. */
 
 #include "mars_mpi_error.hpp"
 
-namespace marsenv
-{
+namespace marsenv {
 
-struct mpi_guard
-{
-    mpi_guard(int &argc, char **&argv, bool fatal_errors = true)
-    {
-        init(&argc, &argv, fatal_errors);
-    }
+    struct mpi_guard {
+        mpi_guard(int &argc, char **&argv, bool fatal_errors = true) { init(&argc, &argv, fatal_errors); }
 
-    explicit mpi_guard(bool fatal_errors = true)
-    {
-        init(nullptr, nullptr, fatal_errors);
-    }
+        explicit mpi_guard(bool fatal_errors = true) { init(nullptr, nullptr, fatal_errors); }
 
-    ~mpi_guard()
-    {
-        // Test if the stack is being unwound because of an exception.
-        // If other ranks have not thrown an exception, there is a very
-        // high likelihood that the MPI_Finalize will hang due to the other
-        // ranks calling other MPI calls.
-        // We don't directly call MPI_Abort in this case because that would
-        // force exit the application before the exception that is unwinding
-        // the stack has been caught, which would deny the opportunity to print
-        // an error message explaining the cause of the exception.
-        if (!std::uncaught_exception())
-        {
-            MPI_Finalize();
-        }
-    }
-
-private:
-    void init(int *argcp, char ***argvp, bool fatal_errors)
-    {
-        int provided;
-        int ev = MPI_Init_thread(argcp, argvp, MPI_THREAD_SERIALIZED, &provided);
-        if (ev)
-        {
-            throw mars::mpi_error(ev, "MPI_Init_thread");
-        }
-        else if (provided < MPI_THREAD_SERIALIZED)
-        {
-            throw mars::mpi_error(MPI_ERR_OTHER, "MPI_Init_thread: MPI_THREAD_SERIALIZED unsupported");
+        ~mpi_guard() {
+            // Test if the stack is being unwound because of an exception.
+            // If other ranks have not thrown an exception, there is a very
+            // high likelihood that the MPI_Finalize will hang due to the other
+            // ranks calling other MPI calls.
+            // We don't directly call MPI_Abort in this case because that would
+            // force exit the application before the exception that is unwinding
+            // the stack has been caught, which would deny the opportunity to print
+            // an error message explaining the cause of the exception.
+            if (!std::uncaught_exception()) {
+                MPI_Finalize();
+            }
         }
 
-        if (!fatal_errors)
-        {
-            MPI_Comm_set_errhandler(MPI_COMM_WORLD, MPI_ERRORS_RETURN);
-        }
-    }
-};
+    private:
+        void init(int *argcp, char ***argvp, bool fatal_errors) {
+            int provided;
+            int ev = MPI_Init_thread(argcp, argvp, MPI_THREAD_SERIALIZED, &provided);
+            if (ev) {
+                throw mars::mpi_error(ev, "MPI_Init_thread");
+            } else if (provided < MPI_THREAD_SERIALIZED) {
+                throw mars::mpi_error(MPI_ERR_OTHER, "MPI_Init_thread: MPI_THREAD_SERIALIZED unsupported");
+            }
 
-} // namespace marsenv
+            if (!fatal_errors) {
+                MPI_Comm_set_errhandler(MPI_COMM_WORLD, MPI_ERRORS_RETURN);
+            }
+        }
+    };
+
+}  // namespace marsenv

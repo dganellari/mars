@@ -105,7 +105,7 @@ namespace mars {
     }
 
     template <typename T>
-    MARS_INLINE_FUNCTION const T& abs(const T& a) {
+    MARS_INLINE_FUNCTION const T abs(const T& a) {
         if (a < 0) return -a;
 
         return a;

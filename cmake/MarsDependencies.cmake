@@ -242,9 +242,13 @@ if(MARS_ENABLE_KOKKOS)
                  ${KokkosKernels_TPL_LIBRARIES})
       set_property(TARGET ${_KKK_TARGET} PROPERTY INTERFACE_LINK_DIRECTORIES
                                                   ${KokkosKernels_LIBRARY_DIRS})
+
+      set(MARS_DEP_LIBRARIES "${MARS_DEP_LIBRARIES};${KokkosKernels_LIBRARIES}") 
+    else()
+        set(MARS_DEP_LIBRARIES "${MARS_DEP_LIBRARIES};Kokkos::kokkoskernels")
     endif()
 
-    set(MARS_DEP_LIBRARIES "${MARS_DEP_LIBRARIES};Kokkos::kokkoskernels")
+    
 
     # done with setting up Kokkos Kernels target
     unset(_KKK_TARGET)
