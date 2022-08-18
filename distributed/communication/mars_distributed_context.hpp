@@ -64,7 +64,32 @@ namespace mars {
     T sum(T value) const override { return wrapped.sum(value); } \
     std::vector<T> gather(T value, int root) const override { return wrapped.gather(value, root); }
 
+#ifdef _WIN32
+    // Type-list does not compile on MSVC
+
+#define MAKE_COLLECTIVE_FUN(F_) \
+    F_(float)                   \
+    F_(double)                  \
+    F_(int)                     \
+    F_(unsigned)                \
+    F_(long)                    \
+    F_(unsigned long)           \
+    F_(long long)               \
+    F_(unsigned long long)
+
+#define GENERATE_COLLECTIVE_PUBLIC MAKE_COLLECTIVE_FUN(MARS_PUBLIC_COLLECTIVES_)
+#define GENERATE_COLLECTIVE_INTERFACE MAKE_COLLECTIVE_FUN(MARS_INTERFACE_COLLECTIVES_)
+#define GENERATE_COLLECTIVE_WRAP MAKE_COLLECTIVE_FUN(MARS_WRAP_COLLECTIVES_)
+
+#else  //_WIN32
+
 #define MARS_COLLECTIVE_TYPES_ float, double, int, unsigned, long, unsigned long, long long, unsigned long long
+
+#define GENERATE_COLLECTIVE_PUBLIC MARS_PP_FOREACH(MARS_PUBLIC_COLLECTIVES_, MARS_COLLECTIVE_TYPES_);
+#define GENERATE_COLLECTIVE_INTERFACE MARS_PP_FOREACH(MARS_INTERFACE_COLLECTIVES_, MARS_COLLECTIVE_TYPES_)
+#define GENERATE_COLLECTIVE_WRAP MARS_PP_FOREACH(MARS_WRAP_COLLECTIVES_, MARS_COLLECTIVE_TYPES_)
+
+#endif  // _WIN32
 
 #ifdef WITH_KOKKOS
 #define MARS_PUBLIC_PTOP_(T)                                                                       \
@@ -130,7 +155,30 @@ namespace mars {
         wrapped.gather_all_view(value, buffer);                                                                   \
     }
 
+#ifdef _WIN32
+    // Type-list does not compile on MSVC
+
+#define MAKE_PTOP_FUN(F_) \
+    F_(double)            \
+    F_(Integer)           \
+    F_(float)             \
+    F_(int)               \
+    F_(unsigned)          \
+    F_(short)
+
+#define GENERATE_PTOP_PUBLIC MAKE_PTOP_FUN(MARS_PUBLIC_PTOP_);
+#define GENERATE_PTOP_INTERFACE MAKE_PTOP_FUN(MARS_INTERFACE_PTOP_)
+#define GENERATE_PTOP_WRAP MAKE_PTOP_FUN(MARS_WRAP_PTOP_)
+
+#else  //_WIN32
+
 #define MARS_PTOP_TYPES_ double, Integer, float, int, unsigned, short
+#define GENERATE_PTOP_PUBLIC MARS_PP_FOREACH(MARS_PUBLIC_PTOP_, MARS_PTOP_TYPES_);
+#define GENERATE_PTOP_INTERFACE MARS_PP_FOREACH(MARS_INTERFACE_PTOP_, MARS_PTOP_TYPES_)
+#define GENERATE_PTOP_WRAP MARS_PP_FOREACH(MARS_WRAP_PTOP_, MARS_PTOP_TYPES_)
+
+#endif  //_WIN32
+
 #endif
 
     // Defines the concept/interface for a distributed communication context.
@@ -182,10 +230,12 @@ namespace mars {
 
         std::string name() const { return impl_->name(); }
 
-        MARS_PP_FOREACH(MARS_PUBLIC_COLLECTIVES_, MARS_COLLECTIVE_TYPES_);
+        // MARS_PP_FOREACH(MARS_PUBLIC_COLLECTIVES_, MARS_COLLECTIVE_TYPES_);
+        GENERATE_COLLECTIVE_PUBLIC
 
 #ifdef WITH_KOKKOS
-        MARS_PP_FOREACH(MARS_PUBLIC_PTOP_, MARS_PTOP_TYPES_);
+        // MARS_PP_FOREACH(MARS_PUBLIC_PTOP_, MARS_PTOP_TYPES_);
+        GENERATE_PTOP_PUBLIC
 #endif
 
         std::vector<std::string> gather(std::string value, int root) const { return impl_->gather(value, root); }
@@ -199,7 +249,8 @@ namespace mars {
 
             virtual gathered_vector<Integer> gather_gids(const gid_vector &local_gids) const = 0;
 
-            MARS_PP_FOREACH(MARS_INTERFACE_COLLECTIVES_, MARS_COLLECTIVE_TYPES_)
+            // MARS_PP_FOREACH(MARS_INTERFACE_COLLECTIVES_, MARS_COLLECTIVE_TYPES_)
+            GENERATE_COLLECTIVE_INTERFACE
 
 #ifdef WITH_KOKKOS
             virtual local_sfc scatter_gids(const local_sfc global, const local_sfc local) const = 0;
@@ -207,7 +258,8 @@ namespace mars {
                                        const local_sfc local,
                                        const std::vector<int> &counts) const = 0;
             virtual void broadcast(const ViewVectorType<Integer> global) const = 0;
-            MARS_PP_FOREACH(MARS_INTERFACE_PTOP_, MARS_PTOP_TYPES_)
+            // MARS_PP_FOREACH(MARS_INTERFACE_PTOP_, MARS_PTOP_TYPES_)
+            GENERATE_PTOP_INTERFACE
 
 #endif
             virtual std::vector<std::string> gather(std::string value, int root) const = 0;
@@ -231,7 +283,9 @@ namespace mars {
             }
             virtual void broadcast(const ViewVectorType<Integer> global) const override { wrapped.broadcast(global); }
 
-            MARS_PP_FOREACH(MARS_WRAP_PTOP_, MARS_PTOP_TYPES_)
+            // MARS_PP_FOREACH(MARS_WRAP_PTOP_, MARS_PTOP_TYPES_)
+            GENERATE_PTOP_WRAP
+
 #endif
             virtual gathered_vector<Integer> gather_gids(const gid_vector &local_gids) const override {
                 return wrapped.gather_gids(local_gids);
@@ -242,7 +296,8 @@ namespace mars {
             void barrier() const override { wrapped.barrier(); }
             std::string name() const override { return wrapped.name(); }
 
-            MARS_PP_FOREACH(MARS_WRAP_COLLECTIVES_, MARS_COLLECTIVE_TYPES_)
+            // MARS_PP_FOREACH(MARS_WRAP_COLLECTIVES_, MARS_COLLECTIVE_TYPES_)
+            GENERATE_COLLECTIVE_WRAP
 
             std::vector<std::string> gather(std::string value, int root) const override {
                 return wrapped.gather(value, root);
