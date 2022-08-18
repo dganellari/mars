@@ -19,6 +19,8 @@ namespace mars {
         // errx(select_err, format, file, line, function, message);
     }
 
+    void errorx(int select_err, const char* format) { std::cerr << "Windows does not support err.h now."; }
+
     void warningx(const char* format, const char* message) {
         std::cerr << "Windows does not support err.h now.";
         // warnx(format, message);
