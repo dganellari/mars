@@ -633,7 +633,7 @@ namespace mars {
         const Integer yDim = mesh.get_YDim();
         const Integer zDim = mesh.get_ZDim();
 
-        constexpr Integer Dim = DistributedQuad4Mesh::Dim;
+        static constexpr Integer Dim = DistributedQuad4Mesh::Dim;
 
         using Elem = typename DistributedQuad4Mesh::Elem;
         static constexpr Integer Type = Elem::ElemType;
