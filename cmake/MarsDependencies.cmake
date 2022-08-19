@@ -288,10 +288,10 @@ if(MARS_ENABLE_ADIOS2)
   endif()
 endif()
 
-if(Kokkos_CXX_COMPILER)
-  message(STATUS "[Status] Setting CMAKE_CXX_COMPILER=${Kokkos_CXX_COMPILER}")
-  set(CMAKE_CXX_COMPILER ${Kokkos_CXX_COMPILER})
-  set(CMAKE_C_COMPILER ${Kokkos_C_COMPILER})
-endif()
+# if(Kokkos_CXX_COMPILER)
+#   message(STATUS "[Status] Setting CMAKE_CXX_COMPILER=${Kokkos_CXX_COMPILER}")
+#   set(CMAKE_CXX_COMPILER ${Kokkos_CXX_COMPILER})
+#   set(CMAKE_C_COMPILER ${Kokkos_C_COMPILER})
+# endif()
 
 
