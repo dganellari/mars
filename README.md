@@ -1,4 +1,5 @@
-[![License](https://img.shields.io/badge/License-BSD%203--Clause-blue.svg)](https://opensource.org/licenses/BSD-3-Clause)
+[![License](https://img.shields.io/badge/License-BSD%203--Clause-blue.svg)](https://opensource.org/licenses/BSD-3-Clause) [![Build status](https://ci.appveyor.com/api/projects/status/a6kjacwk5e5pd4by/branch/development?svg=true)](https://ci.appveyor.com/project/zulianp/mars/branch/development)
+
 
 # M.A.R.S #
 ## Mesh Adaptive Refinement for Supercomputing ##
