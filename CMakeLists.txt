@@ -1,6 +1,12 @@
 cmake_minimum_required(VERSION 3.5...3.19)
 cmake_policy(SET CMP0048 NEW)
 
+#Check if the compiler is set at command line.
+#Needs to be before project(...) where the cxx compiler is set to the default value.
+if(CMAKE_CXX_COMPILER)
+    set(CMAKE_CXX_COMPILER_SET_EXTERNALLY TRUE)
+endif()
+
 project(
   mars
   VERSION 0.2.0
@@ -9,7 +15,6 @@ project(
   DESCRIPTION
     "Mars is an open-source mesh management library designed to handle N-dimensional elements (N <= 4)"
 )
-
 
 # Std CMake imports
 include(CMakePackageConfigHelpers)
@@ -22,7 +27,7 @@ include(cmake/MarsDependencies.cmake)
 include(cmake/MarsClangFormat.cmake)
 
 if(MARS_ENABLE_CUDA)
-  message(STATUS "${Magenta}For MARS with Cuda make sure to pass the option -DCMAKE_CXX_COMPILER=/path/to/nvcc_wrapper${ColourReset}")
+    message(STATUS "${Magenta}For MARS with Cuda make sure to pass the option -DCMAKE_CXX_COMPILER=/path/to/nvcc_wrapper. Otherwise it will be set automatically to the Kokkos CXX Compiler.${ColourReset}")
 endif()
 
 # ##############################################################################
