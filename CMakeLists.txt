@@ -21,9 +21,8 @@ include(cmake/MarsCMakeFunctions.cmake)
 include(cmake/MarsDependencies.cmake)
 include(cmake/MarsClangFormat.cmake)
 
-
 if(MARS_ENABLE_CUDA)
-  message(STATUS "For MARS with Cuda make sure to pass the option -DCMAKE_CXX_COMPILER=/path/to/nvcc_wrapper")
+  message(STATUS "${Magenta}For MARS with Cuda make sure to pass the option -DCMAKE_CXX_COMPILER=/path/to/nvcc_wrapper${ColourReset}")
 endif()
 
 # ##############################################################################
