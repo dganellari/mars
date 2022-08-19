@@ -76,4 +76,5 @@ build_script:
 after_build:
 - .\all_builds\Release\mars_test.exe
 - .\all_builds\Release\mars_bench.exe
-- cmake --build all_builds --config Release --target test_install
+# FIXME
+# - cmake --build all_builds --config Release --target test_install
