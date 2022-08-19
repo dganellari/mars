@@ -39,11 +39,11 @@ endif()
 # ##############################################################################
 
 # Kokkos
-cmake_dependent_option(MARS_ENABLE_KOKKOS_CUDA "Enable CUDA backend for Kokkos"
+cmake_dependent_option(MARS_ENABLE_CUDA "Enable CUDA backend for Kokkos"
                        OFF "MARS_ENABLE_KOKKOS" OFF)
 cmake_dependent_option(
-  MARS_ENABLE_KOKKOS_CUDAUVM "Kokkos use as default memory space CUDAUVM" OFF
-  "MARS_ENABLE_KOKKOS;MARS_ENABLE_KOKKOS_CUDA" OFF)
+  MARS_ENABLE_CUDAUVM "Kokkos use as default memory space CUDAUVM" OFF
+  "MARS_ENABLE_KOKKOS;MARS_ENABLE_CUDA" OFF)
 cmake_dependent_option(MARS_ENABLE_KOKKOS_KERNELS "Enable Kokkos Kernels" ON
                        "MARS_ENABLE_KOKKOS" OFF)
 
@@ -139,7 +139,7 @@ if(MARS_ENABLE_KOKKOS)
   # perhaps later we can attach this to the target
   # add_compile_definitions("MARS_ENABLE_KOKKOS")
 
-  if(MARS_ENABLE_KOKKOS_CUDA)
+  if(MARS_ENABLE_CUDA)
     if(NOT DEFINED Kokkos_ENABLE_CUDA OR NOT ${Kokkos_ENABLE_CUDA})
       message(
         FATAL_ERROR
@@ -147,8 +147,8 @@ if(MARS_ENABLE_KOKKOS)
     endif()
     message(VERBOSE "Kokkos CUDA Enabled = ${Kokkos_ENABLE_CUDA}")
     # target_compile_definitions(${_KK_TARGET} INTERFACE
-    # MARS_ENABLE_KOKKOS_CUDA)
-    # add_compile_definitions("MARS_ENABLE_KOKKOS_CUDA")
+    # MARS_ENABLE_CUDA)
+    # add_compile_definitions("MARS_ENABLE_CUDA")
     kokkos_check(OPTIONS CUDA_LAMBDA)
 
     # get cuda flags from the wrapper alternatively we can strip
