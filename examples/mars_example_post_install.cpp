@@ -12,7 +12,6 @@
 
 #ifdef MARS_ENABLE_PAR_MOONOLITH
 #include <mpi.h>
-
 #include "mars_moonolith_test.hpp"
 #endif  // MARS_ENABLE_PAR_MOONOLITH
 
@@ -54,6 +53,7 @@ using namespace std::chrono;
 // }
 
 void test_mars_mesh_generation(const int x) {
+#ifdef MARS_ENABLE_KOKKOS
     Kokkos::Timer timer;
 
     mars::ParallelMesh3 pMesh;
@@ -64,6 +64,7 @@ void test_mars_mesh_generation(const int x) {
     double time = timer.seconds();
 
     std::cout << "Generation 3D kokkos took: " << time << " seconds." << std::endl;
+#endif  // MARS_ENABLE_KOKKOS
 }
 
 int main(int argc, char *argv[]) {
