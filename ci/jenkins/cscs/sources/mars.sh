@@ -12,6 +12,7 @@ MAINDIR=${1:-${SCRATCH}/build/mars}
 INSTALLDIR=${2:-${MAINDIR}/install}
 BUILDDIR=${4:-${MAINDIR}/build}
 
+export NVCC_WRAPPER=/apps/daint/UES/anfink/gpu/trilinos/bin/nvcc_wrapper
 
 [[ -f ${INSTALLDIR}/build.log ]] && exit 0
 
@@ -29,6 +30,7 @@ mkdir -p ${INSTALLDIR}
 
 MARS_ENABLE_KOKKOS="OFF"
 
+
 if [[ $BUILD_WITH_SERIAL_SUPPORT == 1 ]]; then
   MARS_ENABLE_KOKKOS="ON"
 fi
@@ -44,7 +46,7 @@ if [[ $BUILD_WITH_CUDA_SUPPORT == 1 ]]; then
 #    export CXX="${BUILDSCRIPT_DIR}/nvcc_wrapper"
 #  fi
   PATCHES=""
-  CUDA_FLAGS="-DMARS_ENABLE_CUDA=ON"
+  CUDA_FLAGS="-DMARS_ENABLE_CUDA=ON -DCMAKE_CXX_COMPILER=$NVCC_WRAPPER "
   MARS_ENABLE_KOKKOS="ON"
 fi
 
