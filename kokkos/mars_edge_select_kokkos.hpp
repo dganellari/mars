@@ -2,7 +2,7 @@
 #define MARS_EDGE_SELECT_KOKKOS_HPP
 
 #include "mars_base.hpp"
-#ifdef WITH_KOKKOS
+#ifdef MARS_ENABLE_KOKKOS
 #include "mars_edge_kokkos.hpp"
 #endif
 #include "mars_fwd.hpp"
@@ -34,12 +34,12 @@ namespace mars {
             return 0;
         }
 
-        virtual MARS_INLINE_FUNCTION Integer select(const Mesh &mesh,
-                                                    const Integer element_id,
-                                                    const EdgeElementMap &edge_element_map) const {
-            // first edge selected
-            return 0;
-        }
+        // virtual MARS_INLINE_FUNCTION Integer select(const Mesh &mesh,
+        //                                             const Integer element_id,
+        //                                             const EdgeElementMap &edge_element_map) const {
+        //     // first edge selected
+        //     return 0;
+        // }
 
         virtual MARS_INLINE_FUNCTION Integer stable_select(const Mesh &mesh, const Integer element_id) const {
             // first edge selected
@@ -52,9 +52,9 @@ namespace mars {
 
         virtual void reorder_edge(const Mesh &mesh, const Integer element_id, Integer &v1, Integer &v2) const {}
 
-        virtual void edge_refined(const Mesh &mesh, const EdgeElementMap &eem, const Edge &edge) {
-            //
-        }
+        // virtual void edge_refined(const Mesh &mesh, const EdgeElementMap &eem, const Edge &edge) {
+        //     //
+        // }
 
         virtual void update(const Mesh &mesh) {}
 

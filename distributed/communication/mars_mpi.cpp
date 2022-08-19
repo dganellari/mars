@@ -27,34 +27,26 @@ ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. */
 
-
 #include <mpi.h>
 
 #include "mars_mpi.hpp"
 
-namespace mars
-{
-namespace mpi
-{
+namespace mars {
+    namespace mpi {
 
-int rank(MPI_Comm comm)
-{
-    int r;
-    MPI_OR_THROW(MPI_Comm_rank, comm, &r);
-    return r;
-}
+        int rank(MPI_Comm comm) {
+            int r;
+            MPI_OR_THROW(MPI_Comm_rank, comm, &r);
+            return r;
+        }
 
-int size(MPI_Comm comm)
-{
-    int s;
-    MPI_OR_THROW(MPI_Comm_size, comm, &s);
-    return s;
-}
+        int size(MPI_Comm comm) {
+            int s;
+            MPI_OR_THROW(MPI_Comm_size, comm, &s);
+            return s;
+        }
 
-void barrier(MPI_Comm comm)
-{
-    MPI_OR_THROW(MPI_Barrier, comm);
-}
+        void barrier(MPI_Comm comm) { MPI_OR_THROW(MPI_Barrier, comm); }
 
-} // namespace mpi
-} // namespace mars
+    }  // namespace mpi
+}  // namespace mars

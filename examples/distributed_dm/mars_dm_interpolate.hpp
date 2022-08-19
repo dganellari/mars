@@ -2,6 +2,7 @@
 #define MARS_DMINTERPOLATE_HPP
 
 #include "mars_base.hpp"
+
 #include "mars_globals.hpp"
 
 namespace mars {

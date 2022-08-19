@@ -22,7 +22,8 @@
   ],
   "settings": {
     "ClangFormat": {
-      "format_on_save": true
+      "format_on_save": true,
+      "style" : "File"
     },
     "CMakeFormat": {
       "format_on_save": true

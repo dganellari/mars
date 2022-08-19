@@ -1,5 +1,9 @@
 pipeline {
-    agent any
+    agent {
+        node {
+            label 'ssl_daintvm1'
+        }
+    }
     stages {
         stage('checkout') {
             steps {

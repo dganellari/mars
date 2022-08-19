@@ -1,23 +1,71 @@
-set(MARS_TEST_DIR ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+if(MARS_ENABLE_TESTING)
 
-list(APPEND TEST_MODULES .)
+    set(MARS_TEST_DIR ${CMAKE_CURRENT_SOURCE_DIR}/tests)
 
-# Now simply link against gtest or gtest_main as needed. Eg
-add_executable(mars_test ${MARS_TEST_DIR}/test.cpp)
+    list(APPEND TEST_MODULES . /adios2)
 
-target_link_libraries(mars_test gtest_main)
-add_test(NAME mars_test COMMAND mars_test)
+    find_project_files(${MARS_TEST_DIR} "." UNIT_TESTS_HEADERS
+                       UNIT_TESTS_SOURCES)
 
-set(LOCAL_HEADERS "")
-set(LOCAL_SOURCES "")
-find_project_files(MARS_TEST_DIR TEST_MODULES LOCAL_HEADERS LOCAL_SOURCES)
-target_sources(mars_test PRIVATE ${LOCAL_SOURCES})
-target_link_libraries(mars_test mars)
+    # ##########################################################################
 
-target_include_directories(mars_test PRIVATE ${MARS_TEST_DIR})
-target_include_directories(mars_test PRIVATE .)
-target_include_directories(mars_test PRIVATE ${TEST_MODULES})
-target_compile_features(mars_test PUBLIC cxx_std_14)
+    enable_testing()
 
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${MARS_DEV_FLAGS}")
-set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -g ${MARS_DEV_FLAGS}")
+    find_package(GTest QUIET)
+
+    if(NOT GTest_FOUND)
+        include(FetchContent)
+
+        FetchContent_Declare(
+            googletest
+            GIT_REPOSITORY https://github.com/google/googletest.git
+            GIT_TAG release-1.10.0)
+
+        FetchContent_GetProperties(googletest)
+
+        if(NOT googletest_POPULATED)
+            FetchContent_Populate(googletest)
+            add_subdirectory(${googletest_SOURCE_DIR} ${googletest_BINARY_DIR})
+        endif()
+
+        set_target_properties(gtest PROPERTIES FOLDER extern)
+        set_target_properties(gtest_main PROPERTIES FOLDER extern)
+        set_target_properties(gmock PROPERTIES FOLDER extern)
+        set_target_properties(gmock_main PROPERTIES FOLDER extern)
+
+        set(MARS_G_TEST_LIBRARIES gtest gmock)
+        # add_library(googletest ALIAS gtest)
+    else()
+        set(MARS_G_TEST_LIBRARIES GTest::GTest)
+        # add_library(googletest PUBLIC GTest::GTest)
+    endif()
+
+    include(GoogleTest)
+
+    macro(mars_add_test TESTNAME TEST_FILE TEST_SOURCES)
+        add_executable(${TESTNAME} ${TEST_FILE} ${ARGN})
+        target_link_libraries(${TESTNAME} mars
+                              ${MARS_G_TEST_LIBRARIES})
+
+        gtest_add_tests(TARGET ${TESTNAME} SOURCES ${TEST_SOURCES})
+        set_target_properties(${TESTNAME} PROPERTIES FOLDER tests)
+
+        # Does not work on cluster env where you cannot run MPI on master node
+        # So for the moment it will only work on apple laptops (the test can be
+        # run with ./mars_test anyway but not with make test)
+        if(APPLE
+           OR WIN32
+           OR MARS_ALLOW_DISCOVER_TESTS)
+            gtest_discover_tests(
+                ${TESTNAME}
+                WORKING_DIRECTORY ${PROJECT_DIR}
+                PROPERTIES VS_DEBUGGER_WORKING_DIRECTORY "${PROJECT_DIR}")
+        endif()
+
+    endmacro()
+
+    # ##########################################################################
+
+    mars_add_test(
+        mars_test ${CMAKE_CURRENT_SOURCE_DIR}/tests/test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/tests/mars_MeshGenerationTest.cpp)
+endif(MARS_ENABLE_TESTING)

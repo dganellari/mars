@@ -1,15 +1,17 @@
 #ifndef MARS_BISECTION_KOKKOS_HPP
 #define MARS_BISECTION_KOKKOS_HPP
 
-#include "mars_mark_kokkos.hpp"
-#include "mars_dof_map.hpp"
-#include "mars_tracker.hpp"
-#include "mars_edge_select_kokkos.hpp"
-#include "mars_longest_edge_kokkos.hpp"
-#include "mars_edge_node_map_kokkos.hpp"
-#include "mars_edge_element_map_kokkos.hpp"
+#include "mars_base.hpp"
+
 #include <iostream>
 #include <typeinfo>
+// #include "mars_dof_map.hpp"
+#include "mars_edge_element_map_kokkos.hpp"
+#include "mars_edge_node_map_kokkos.hpp"
+#include "mars_edge_select_kokkos.hpp"
+#include "mars_longest_edge_kokkos.hpp"
+#include "mars_mark_kokkos.hpp"
+// #include "mars_tracker.hpp"
 
 namespace mars {
     template <class Mesh_, class EdgeSelect_ = LongestEdgeSelect<Mesh_, KokkosImplementation>>
@@ -1100,7 +1102,7 @@ namespace mars {
                                     lip_size));
 
             double time2 = timer2.seconds();
-            if (verbose) std::cout << "BisectElem took: " << time2 << " seconds." << std::endl<<std::endl;
+            if (verbose) std::cout << "BisectElem took: " << time2 << " seconds." << std::endl << std::endl;
 
             /* std::cout << "------------------------------------------------------------" << std::endl; */
         }
@@ -1209,4 +1211,4 @@ namespace mars {
     };
 }  // namespace mars
 
-#endif //MARS_BISECTION_HPP
+#endif  // MARS_BISECTION_HPP

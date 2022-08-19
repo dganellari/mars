@@ -9,7 +9,12 @@
  */
 namespace mars {
     using Real = double;
+#ifdef _WIN32
+    using Integer = int;
+#else
     using Integer = long;
+#endif
+    using Unsigned = unsigned long;
     static constexpr long INVALID_INDEX = -1;
 
     enum DofOrient : int { xDir = 0, yDir = 1, zDir = 2 };

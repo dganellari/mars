@@ -3,6 +3,7 @@
 
 #include "mars_base.hpp"
 
+#ifdef MARS_ENABLE_KOKKOS_KERNELS
 namespace mars {
 
     /* Face numbering on the stencil => ordering in the stencil stencil[1,0,3,2]
@@ -14,6 +15,8 @@ namespace mars {
     // building the stencil is the responsibility of the specialized DofHandler.
     template <typename ST, bool Orient = false, typename DofHandler>
     ST build_stencil(const DofHandler &handler) {
+        static_assert(DofHandler::Block == 1, "Stencil does not support yet vector valued block structures.");
+
         ViewVectorType<Integer> locally_owned_dofs;
         compact_owned_dofs<ST::dofLabel>(handler, locally_owned_dofs);
 
@@ -289,4 +292,5 @@ namespace mars {
     };
 }  // namespace mars
 
+#endif
 #endif  // mars_stencil

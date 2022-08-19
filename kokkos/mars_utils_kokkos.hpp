@@ -1,14 +1,19 @@
 #ifndef GENERATION_MARS_UTILS_KOKKOS_HPP_
 #define GENERATION_MARS_UTILS_KOKKOS_HPP_
 
-#ifdef WITH_KOKKOS
+#include "mars_config.hpp"
+
+#ifdef MARS_ENABLE_KOKKOS_KERNELS
 #include "KokkosKernels_default_types.hpp"
 #include "KokkosSparse_CrsMatrix.hpp"
-#include "Kokkos_Layout.hpp"
 #endif
-#include <err.h>
+
+#ifdef MARS_ENABLE_KOKKOS
+#include "Kokkos_Layout.hpp"
+#include "Kokkos_UnorderedMap.hpp"
+#endif
+#include "mars_err.hpp"
 #include "mars_globals.hpp"
-#include "mars_vector.hpp"
 
 namespace mars {
 
@@ -20,30 +25,32 @@ namespace mars {
 
 // Defined for host operations that need to be performed always on the host
 #ifdef KOKKOS_ENABLE_OPENMP
-#define KokkosHostSpace Kokkos::HostSpace
-#define KokkosHostExecSpace Kokkos::OpenMP
-#else //Serial
-#define KokkosHostSpace Kokkos::HostSpace
-#define KokkosHostExecSpace Kokkos::Serial
+    using KokkosHostSpace = Kokkos::HostSpace;
+    using KokkosHostExecSpace = Kokkos::OpenMP;
+#else  // Serial
+    using KokkosHostSpace = Kokkos::HostSpace;
+    using KokkosHostExecSpace = Kokkos::Serial;
 #endif
 
 // Default Kokkos Exec space.
-#if defined(MARS_USE_CUDA)
-#if defined(MARS_USE_CUDAUVM)
-#define KokkosSpace Kokkos::CudaUVMSpace
+#if defined(MARS_ENABLE_CUDA)
+#if defined(MARS_ENABLE_CUDAUVM)
+    using KokkosSpace = Kokkos::CudaUVMSpace;
 #else
-#define KokkosSpace Kokkos::CudaSpace
-#endif  // MARS_USE_CUDAUVM
-#define KokkosLayout Kokkos::LayoutLeft
-#else  // MARS_USE_CUDA
+    using KokkosSpace = Kokkos::CudaSpace;
+#endif  // MARS_ENABLE_CUDAUVM
+    using KokkosLayout = Kokkos::LayoutLeft;
+#define MARS_LAMBDA_REF [&] __device__;
+#else  // MARS_ENABLE_CUDA
 #ifdef KOKKOS_ENABLE_OPENMP
-#define KokkosSpace Kokkos::HostSpace
-#define KokkosLayout Kokkos::LayoutRight
-#else  // Serial
-#define KokkosSpace Kokkos::HostSpace
-#define KokkosLayout Kokkos::LayoutRight
+    using KokkosSpace = Kokkos::HostSpace;
+    using KokkosLayout = Kokkos::LayoutRight;
+#else   // Serial
+    using KokkosSpace = Kokkos::HostSpace;
+    using KokkosLayout = Kokkos::LayoutRight;
 #endif  // KOKKOS_ENABLE_OPENMP
-#endif  // MARS_USE_CUDA
+#define MARS_LAMBDA_REF [&]
+#endif  // MARS_ENABLE_CUDA
 
     template <typename T>
     using ViewVectorTypeStride = Kokkos::View<T*, Kokkos::LayoutStride, KokkosSpace>;
@@ -53,6 +60,9 @@ namespace mars {
 
     template <typename T>
     using ViewVectorType = Kokkos::View<T*, KokkosLayout, KokkosSpace>;
+
+    template <typename T>
+    using ViewMatrixTypeLeft = Kokkos::View<T**, Kokkos::LayoutLeft, KokkosSpace>;
 
     template <typename T>
     using ViewMatrixType = Kokkos::View<T**, KokkosLayout, KokkosSpace>;
@@ -118,71 +128,6 @@ namespace mars {
         std::string name = "distributed";
     };
 
-    template <class SerialMesh, class ParallelMesh>
-    void convert_parallel_mesh_to_serial(SerialMesh& mesh, const ParallelMesh& pMesh) {
-        ViewMatrixType<Integer>::HostMirror h_el = Kokkos::create_mirror_view(pMesh.get_view_elements());
-        ViewMatrixType<Real>::HostMirror h_pt = Kokkos::create_mirror_view(pMesh.get_view_points());
-        ViewVectorType<bool>::HostMirror h_ac = Kokkos::create_mirror_view(pMesh.get_view_active());
-
-        // Deep copy device views to host views.
-        Kokkos::deep_copy(h_el, pMesh.get_view_elements());
-        Kokkos::deep_copy(h_pt, pMesh.get_view_points());
-        Kokkos::deep_copy(h_ac, pMesh.get_view_active());
-
-        mesh.reserve(pMesh.n_elements(), pMesh.n_nodes());
-
-        Vector<Real, SerialMesh::Dim> p;
-
-        for (Integer i = 0; i < pMesh.n_nodes(); ++i) {
-            for (Integer j = 0; j < SerialMesh::Dim; ++j) {
-                p[j] = h_pt(i, j);
-            }
-
-            mesh.add_point(p);
-        }
-
-        for (Integer i = 0; i < pMesh.n_elements(); ++i) {
-            auto& e = mesh.add_elem();
-
-            for (Integer j = 0; j < e.nodes.size(); ++j) {
-                e.nodes[j] = h_el(i, j);
-            }
-        }
-
-        // add_elem sets all elements to active. In case there is any non-active...
-        for (Integer i = 0; i < pMesh.n_elements(); ++i) {
-            if (!h_ac(i)) mesh.set_active(i, false);
-        }
-    }
-
-    template <class SerialMesh, class ParallelMesh>
-    void convert_serial_mesh_to_parallel(ParallelMesh& pMesh, const SerialMesh& mesh) {
-        pMesh.reserve(mesh.n_elements(), mesh.n_nodes());
-
-        ViewMatrixType<Integer>::HostMirror h_el = Kokkos::create_mirror_view(pMesh.get_view_elements());
-        ViewMatrixType<Real>::HostMirror h_pt = Kokkos::create_mirror_view(pMesh.get_view_points());
-        ViewVectorType<bool>::HostMirror h_ac = Kokkos::create_mirror_view(pMesh.get_view_active());
-
-        for (Integer i = 0; i < mesh.n_nodes(); ++i) {
-            for (Integer j = 0; j < SerialMesh::Dim; ++j) {
-                h_pt(i, j) = mesh.point(i)[j];
-            }
-        }
-
-        for (Integer i = 0; i < mesh.n_elements(); ++i) {
-            for (Integer j = 0; j < mesh.elem(i).nodes.size(); ++j) {
-                h_el(i, j) = mesh.elem(i).nodes[j];
-            }
-
-            h_ac(i) = mesh.is_active(i);
-        }
-
-        // Deep copy host views to device views.
-        Kokkos::deep_copy(pMesh.get_view_elements(), h_el);
-        Kokkos::deep_copy(pMesh.get_view_points(), h_pt);
-        Kokkos::deep_copy(pMesh.get_view_active(), h_ac);
-    }
-
     // copy matrix from host data to the host mirror view and then deep copy to the device texture view.
     template <typename T, Integer xDim_, Integer yDim_>
     void copy_matrix_from_host(std::vector<std::vector<T>> hostData,
@@ -194,9 +139,8 @@ namespace mars {
         typename ViewMatrixTextureC<T, xDim_, yDim_>::HostMirror h_view = create_mirror_view(map_side_to_nodes);
 
         parallel_for(
-            MDRangePolicy<Rank<2>, KokkosHostExecSpace>({0, 0}, {xDim, yDim}), KOKKOS_LAMBDA(int i, int j) {
-                h_view(i, j) = hostData[i][j];
-            });
+            MDRangePolicy<Rank<2>, KokkosHostExecSpace>({0, 0}, {xDim, yDim}),
+            KOKKOS_LAMBDA(int i, int j) { h_view(i, j) = hostData[i][j]; });
 
         Kokkos::deep_copy(map_side_to_nodes, h_view);
     }
@@ -326,7 +270,7 @@ namespace mars {
 
     // not a very performant scan since its access is not coalesced. However OK for small arrays.
     template <typename T, typename U>
-    void row_scan(const Integer end, const Integer row_idx, const ViewMatrixType<U>& in_, ViewVectorType<T>& out_) {
+    void row_scan(const Integer end, const Integer row_idx, const ViewMatrixTypeLeft<U>& in_, ViewVectorType<T>& out_) {
         using namespace Kokkos;
 
         parallel_scan(
@@ -409,6 +353,35 @@ namespace mars {
                 }
 
                 upd += val_i;
+            });
+    }
+
+    // returns the prefix sum of C into a mirror view
+    template <typename C>
+    void make_scan_index_mirror(const ViewVectorType<Integer>::HostMirror& out, C const& c) {
+        static_assert(std::is_integral<typename C::value_type>::value, "make_index only applies to integral types");
+
+        out(0) = 0;
+        std::partial_sum(c.begin(), c.end(), out.data() + 1);
+    }
+
+    // Segmented scan on a bool view using hierachical Parallelism. Cub lib has the best impl.
+    template <typename F>
+    void segmented_scan(const Integer teams, ViewVectorType<bool> in_, F f) {
+        Kokkos::parallel_for(
+            "naive scan",
+            Kokkos::TeamPolicy<>(teams, Kokkos::AUTO),
+            MARS_LAMBDA(const Kokkos::TeamPolicy<>::member_type& teamMember) {
+                Integer i = teamMember.league_rank();
+                if (in_(i) == 1) {
+                    Integer segmentSum = 0;
+                    Kokkos::parallel_reduce(
+                        Kokkos::TeamVectorRange(teamMember, i),
+                        [=](const Integer j, Integer& innerUpdate) { innerUpdate += in_(j); },
+                        segmentSum);
+
+                    f(segmentSum, i);
+                }
             });
     }
 
