@@ -110,10 +110,10 @@ namespace mars {
         }
 
         template <Integer INPUT>
-        MARS_INLINE_FUNCTION void gather_elem_data(const DMQ2 &dm,
-                                                   const FEM &fe,
-                                                   const Integer elem_index,
-                                                   DMDataType<INPUT> *sol) {
+        static MARS_INLINE_FUNCTION void gather_elem_data(const DMQ2 &dm,
+                                                          const FEM &fe,
+                                                          const Integer elem_index,
+                                                          DMDataType<INPUT> *sol) {
             for (int i = 0; i < FEM::elem_nodes; i++) {
                 // forach dof get the local number
                 const Integer local_dof = fe.get_elem_local_dof(elem_index, i);
