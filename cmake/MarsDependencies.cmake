@@ -68,7 +68,7 @@ if(MARS_ENABLE_KOKKOS)
   if(WIN32)
     find_package(Kokkos HINTS C:/projects/installations/kokkos/lib/cmake/Kokkos
                  ${Kokkos_DIR} $ENV{KOKKOS_DIR} REQUIRED)
-  else()  
+  else()
     find_package(
       Kokkos
       HINTS
@@ -91,6 +91,15 @@ if(MARS_ENABLE_KOKKOS)
   message(STATUS "Kokkos_LIBRARIES = ${Kokkos_LIBRARIES}")
   message(STATUS "Kokkos_TPL_LIBRARIES = ${Kokkos_TPL_LIBRARIES}")
   message(STATUS "Kokkos_LIBRARY_DIRS = ${Kokkos_LIBRARY_DIRS}")
+
+
+  # if the cxx compiler was not set at command line set it to the kokkos compiler
+  if(MARS_ENABLE_CUDA AND Kokkos_CXX_COMPILER AND NOT CMAKE_CXX_COMPILER_SET_EXTERNALLY)
+    message(STATUS "[Status] Setting CMAKE_CXX_COMPILER=${Kokkos_CXX_COMPILER}")
+    set(CMAKE_CXX_COMPILER ${Kokkos_CXX_COMPILER} CACHE FILEPATH "CXX nvcc compiler" FORCE)
+    set(CMAKE_CXX_COMPILER ${Kokkos_CXX_COMPILER})
+    set(CMAKE_C_COMPILER ${Kokkos_C_COMPILER})
+  endif()
 
   # _KK_TARGET is set as a local variable do not use outside this file
   set(_KK_TARGET "Kokkos::kokkos")
@@ -247,12 +256,12 @@ if(MARS_ENABLE_KOKKOS)
       set_property(TARGET ${_KKK_TARGET} PROPERTY INTERFACE_LINK_DIRECTORIES
                                                   ${KokkosKernels_LIBRARY_DIRS})
 
-      set(MARS_DEP_LIBRARIES "${MARS_DEP_LIBRARIES};${KokkosKernels_LIBRARIES}") 
+      set(MARS_DEP_LIBRARIES "${MARS_DEP_LIBRARIES};${KokkosKernels_LIBRARIES}")
     else()
         set(MARS_DEP_LIBRARIES "${MARS_DEP_LIBRARIES};Kokkos::kokkoskernels")
     endif()
 
-    
+
 
     # done with setting up Kokkos Kernels target
     unset(_KKK_TARGET)
@@ -287,11 +296,4 @@ if(MARS_ENABLE_ADIOS2)
     message(STATUS "Adios2 not found.")
   endif()
 endif()
-
-# if(Kokkos_CXX_COMPILER)
-#   message(STATUS "[Status] Setting CMAKE_CXX_COMPILER=${Kokkos_CXX_COMPILER}")
-#   set(CMAKE_CXX_COMPILER ${Kokkos_CXX_COMPILER})
-#   set(CMAKE_C_COMPILER ${Kokkos_C_COMPILER})
-# endif()
-
 
