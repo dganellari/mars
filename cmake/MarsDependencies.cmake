@@ -90,11 +90,11 @@ if(MARS_ENABLE_KOKKOS)
   message(STATUS "Kokkos_TPL_LIBRARIES = ${Kokkos_TPL_LIBRARIES}")
   message(STATUS "Kokkos_LIBRARY_DIRS = ${Kokkos_LIBRARY_DIRS}")
 
-  if(Kokkos_CXX_COMPILER AND MARS_ENABLE_KOKKOS_CUDA)
-    # message(STATUS "Setting CMAKE_CXX_COMPILER=${Kokkos_CXX_COMPILER}")
-    # set(CMAKE_CXX_COMPILER ${Kokkos_CXX_COMPILER})
-    # set(CMAKE_C_COMPILER ${Kokkos_C_COMPILER})
-    enable_language(CUDA)
+  # if(Kokkos_CXX_COMPILER AND MARS_ENABLE_KOKKOS_CUDA)
+  if(Kokkos_CXX_COMPILER)
+    message(STATUS "[Status] Setting CMAKE_CXX_COMPILER=${Kokkos_CXX_COMPILER}")
+    set(CMAKE_CXX_COMPILER ${Kokkos_CXX_COMPILER})
+    set(CMAKE_C_COMPILER ${Kokkos_C_COMPILER})
   endif()
 
   # _KK_TARGET is set as a local variable do not use outside this file
