@@ -32,3 +32,10 @@ set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 # ##############################################################################
 
 # if(NOT MARS_LAUNCH_EXE) set(MARS_LAUNCH_EXE "") endif()
+
+if(NOT DEFINED CMAKE_CXX_STANDARD_REQUIRED)
+  set(CMAKE_CXX_STANDARD_REQUIRED ON)
+endif()
+if(NOT DEFINED CMAKE_CXX_STANDARD)
+  set(CMAKE_CXX_STANDARD 14)
+endif()

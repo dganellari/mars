@@ -10,6 +10,7 @@ project(
     "Mars is an open-source mesh management library designed to handle N-dimensional elements (N <= 4)"
 )
 
+
 # Std CMake imports
 include(CMakePackageConfigHelpers)
 include(CMakeDependentOption)
@@ -75,12 +76,7 @@ RelWithDebInfo MinSizeRel." FORCE)
   message(STATUS "[Status] CMAKE_BUILD_TYPE=Release")
 endif(NOT CMAKE_BUILD_TYPE)
 
-if(NOT DEFINED CMAKE_CXX_STANDARD_REQUIRED)
-  set(CMAKE_CXX_STANDARD_REQUIRED ON)
-endif()
-if(NOT DEFINED CMAKE_CXX_STANDARD)
-  set(CMAKE_CXX_STANDARD 14)
-endif()
+
 
 target_compile_features(mars PUBLIC cxx_std_14)
 
