@@ -1,169 +1,147 @@
+#include "mars_kokkos_generate_cube.hpp"
 #include "mars_mesh_kokkos.hpp"
 
 void test_mars_mesh_generation_kokkos_1D(const int level) {
+    using namespace mars;
 
-	using namespace mars;
+    Kokkos::Timer timer;
 
-	Kokkos::Timer timer;
+    ParallelMesh1 pMesh;
+    generate_cube(pMesh, level, 0, 0);
 
-	ParallelMesh1 pMesh;
-	generate_cube(pMesh, level, 0, 0);
+    Kokkos::fence();
 
-	Kokkos::fence();
+    double time = timer.seconds();
 
-	double time = timer.seconds();
+    std::cout << "Generation 1D Kokkos took: " << time << " seconds." << std::endl;
 
-	std::cout << "Generation 1D Kokkos took: " << time << " seconds." << std::endl;
+    // FIXME(depend on serial)
+    //  if (level < 100) {
+    //      Mesh1 sMesh;
+    //      convert_parallel_mesh_to_serial(sMesh, pMesh);
 
-	if (level < 100) {
+    //     std::cout << "n_active_elements: " << sMesh.n_active_elements() << std::endl;
+    //     std::cout << "n_nodes: " << sMesh.n_nodes() << std::endl;
 
-		Mesh1 sMesh;
-		convert_parallel_mesh_to_serial(sMesh, pMesh);
-
-		std::cout << "n_active_elements: " << sMesh.n_active_elements()
-				<< std::endl;
-		std::cout << "n_nodes: " << sMesh.n_nodes() << std::endl;
-
-		VTKMeshWriter<Mesh1> w;
-		w.write("build_line_parallel" + std::to_string(level) + ".vtu", sMesh);
-	}
-
+    //     VTKMeshWriter<Mesh1> w;
+    //     w.write("build_line_parallel" + std::to_string(level) + ".vtu", sMesh);
+    // }
 }
 
 void test_mars_mesh_generation_kokkos_2D(const int x, const int y) {
+    using namespace mars;
 
-	using namespace mars;
+    /*Kokkos::initialize();
+     {*/
+    Kokkos::Timer timer;
 
-	/*Kokkos::initialize();
-	 {*/
-	Kokkos::Timer timer;
+    ParallelMesh2 pMesh;
+    generate_cube(pMesh, x, y, 0);
 
-	ParallelMesh2 pMesh;
-	generate_cube(pMesh, x, y, 0);
+    // Kokkos::fence();
 
-	//Kokkos::fence();
+    double time = timer.seconds();
 
-	double time = timer.seconds();
+    std::cout << "Generation 2D kokkos took: " << time << " seconds." << std::endl;
 
-	std::cout << "Generation 2D kokkos took: " << time << " seconds." << std::endl;
+    // FIXME(depend on serial)
+    //  if (x < 100) {
+    //      Mesh2 sMesh;
+    //      convert_parallel_mesh_to_serial(sMesh, pMesh);
 
-	if (x < 100) {
+    //     std::cout << "n_active_elements: " << sMesh.n_active_elements() << std::endl;
+    //     std::cout << "n_nodes: " << sMesh.n_nodes() << std::endl;
 
-		Mesh2 sMesh;
-		convert_parallel_mesh_to_serial(sMesh, pMesh);
+    //     VTKMeshWriter<Mesh2> w;
+    //     w.write("build_square_parallel" + std::to_string(x) + std::to_string(y) + ".vtu", sMesh);
 
-		std::cout << "n_active_elements: " << sMesh.n_active_elements()
-				<< std::endl;
-		std::cout << "n_nodes: " << sMesh.n_nodes() << std::endl;
+    //     sMesh.repair(true);
+    // }
+    /*}
 
-		VTKMeshWriter<Mesh2> w;
-		w.write(
-				"build_square_parallel" + std::to_string(x) + std::to_string(y)
-						+ ".vtu", sMesh);
-
-		sMesh.repair(true);
-	}
-	/*}
-
-	 Kokkos::finalize();*/
+     Kokkos::finalize();*/
 }
 
-
 void test_mars_nonsimplex_mesh_generation_kokkos_2D(const int x, const int y) {
+    using namespace mars;
 
-	using namespace mars;
+    Kokkos::Timer timer;
 
+    ParallelQuad4Mesh pMesh;
+    generate_cube(pMesh, x, y, 0);
 
-	Kokkos::Timer timer;
+    double time = timer.seconds();
 
-	ParallelQuad4Mesh pMesh;
-	generate_cube(pMesh, x, y, 0);
+    std::cout << "Generation 2D kokkos took: " << time << " seconds." << std::endl;
 
-	double time = timer.seconds();
+    std::cout << "n_active_elements pmesh: " << pMesh.n_active_elements(pMesh.get_view_elements().extent(0))
+              << std::endl;
 
-	std::cout << "Generation 2D kokkos took: " << time << " seconds." << std::endl;
+    // FIXME(depend on serial)
+    // if (x < 100) {
+    //     Quad4_Mesh sMesh;
+    //     convert_parallel_mesh_to_serial(sMesh, pMesh);
 
-	std::cout << "n_active_elements pmesh: " << pMesh.n_active_elements(pMesh.get_view_elements().extent(0))
-			<< std::endl;
-	if (x < 100) {
+    //     std::cout << "n_active_elements: " << sMesh.n_active_elements() << std::endl;
+    //     std::cout << "n_nodes: " << sMesh.n_nodes() << std::endl;
 
-		Quad4_Mesh sMesh;
-		convert_parallel_mesh_to_serial(sMesh, pMesh);
-
-		std::cout << "n_active_elements: " << sMesh.n_active_elements()
-				<< std::endl;
-		std::cout << "n_nodes: " << sMesh.n_nodes() << std::endl;
-
-		VTKMeshWriter<Quad4_Mesh> w;
-		w.write(
-				"build_quad4_parallel" + std::to_string(x) + std::to_string(y)
-						+ ".vtu", sMesh);
-	}
-	
+    //     VTKMeshWriter<Quad4_Mesh> w;
+    //     w.write("build_quad4_parallel" + std::to_string(x) + std::to_string(y) + ".vtu", sMesh);
+    // }
 }
 
 void test_mars_nonsimplex_mesh_generation_kokkos_3D(const int x, const int y, const int z) {
+    using namespace mars;
 
-	using namespace mars;
+    Kokkos::Timer timer;
 
-	Kokkos::Timer timer;
+    ParallelHex8Mesh pMesh;
+    generate_cube(pMesh, x, y, z);
 
-	ParallelHex8Mesh pMesh;
-	generate_cube(pMesh, x, y, z);
+    double time = timer.seconds();
 
-	double time = timer.seconds();
+    std::cout << "Generation 3D kokkos took: " << time << " seconds." << std::endl;
+    std::cout << "n_active_elements pmesh: " << pMesh.n_active_elements(pMesh.get_view_elements().extent(0))
+              << std::endl;
 
-	std::cout << "Generation 3D kokkos took: " << time << " seconds." << std::endl;
-	std::cout << "n_active_elements pmesh: " << pMesh.n_active_elements(pMesh.get_view_elements().extent(0))
-				<< std::endl;
-				
-	if (x < 100) {
+    // FIXME(depend on serial)
+    // if (x < 100) {
+    //     Hex8_Mesh sMesh;
+    //     convert_parallel_mesh_to_serial(sMesh, pMesh);
 
-		Hex8_Mesh sMesh;
-		convert_parallel_mesh_to_serial(sMesh, pMesh);
+    //     std::cout << "n_active_elements: " << sMesh.n_active_elements() << std::endl;
+    //     std::cout << "n_nodes: " << sMesh.n_nodes() << std::endl;
 
-		std::cout << "n_active_elements: " << sMesh.n_active_elements()
-				<< std::endl;
-		std::cout << "n_nodes: " << sMesh.n_nodes() << std::endl;
-
-		VTKMeshWriter<Hex8_Mesh> w;
-		w.write(
-				"build_hex8_parallel" + std::to_string(x) + std::to_string(y)
-						+ ".vtu", sMesh);
-	}
-	
+    //     VTKMeshWriter<Hex8_Mesh> w;
+    //     w.write("build_hex8_parallel" + std::to_string(x) + std::to_string(y) + ".vtu", sMesh);
+    // }
 }
 void test_mars_mesh_generation_kokkos_3D(const int x, const int y, const int z) {
+    using namespace mars;
 
-	using namespace mars;
+    Kokkos::Timer timer;
 
-	Kokkos::Timer timer;
+    ParallelMesh3 pMesh;
+    generate_cube(pMesh, x, y, z);
 
-	ParallelMesh3 pMesh;
-	generate_cube(pMesh, x, y, z);
+    // Kokkos::fence();
 
-	//Kokkos::fence();
+    double time = timer.seconds();
 
-	double time = timer.seconds();
+    std::cout << "Generation 3D kokkos took: " << time << " seconds." << std::endl;
 
-	std::cout << "Generation 3D kokkos took: " << time << " seconds." << std::endl;
+    // FIXME(depend on serial)
+    // if (x < 100) {
+    //     Mesh3 sMesh;
+    //     convert_parallel_mesh_to_serial(sMesh, pMesh);
 
-	if (x < 100) {
+    //     std::cout << "n_active_elements: " << sMesh.n_active_elements() << std::endl;
+    //     std::cout << "n_nodes: " << sMesh.n_nodes() << std::endl;
 
-		Mesh3 sMesh;
-		convert_parallel_mesh_to_serial(sMesh, pMesh);
+    //     std::cout << "build_cube_parallel" + std::to_string(x) + std::to_string(y) + ".vtu" << std::endl;
+    //     VTKMeshWriter<Mesh3> w;
+    //     w.write("build_cube_parallel" + std::to_string(x) + std::to_string(y) + ".vtu", sMesh);
 
-		std::cout << "n_active_elements: " << sMesh.n_active_elements()
-				<< std::endl;
-		std::cout << "n_nodes: " << sMesh.n_nodes() << std::endl;
-
-		std::cout<<"build_cube_parallel" + std::to_string(x) + std::to_string(y) + ".vtu"<<std::endl;
-		VTKMeshWriter<Mesh3> w;
-		w.write(
-				"build_cube_parallel" + std::to_string(x) + std::to_string(y)
-						+ ".vtu", sMesh);
-
-		sMesh.repair(true);
-
-	}
+    //     sMesh.repair(true);
+    // }
 }

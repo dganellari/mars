@@ -17,6 +17,7 @@ include(cmake/MarsDefaults.cmake)
 include(cmake/MarsOptions.cmake)
 include(cmake/MarsCMakeFunctions.cmake)
 include(cmake/MarsDependencies.cmake)
+include(cmake/MarsClangFormat.cmake)
 
 # ##############################################################################
 # ##############################################################################
@@ -32,6 +33,11 @@ foreach(MODULE ${MARS_MODULES})
   add_subdirectory("${MODULE}")
 endforeach(MODULE)
 
+if(MARS_ENABLE_SERIAL_BACKEND)
+    add_subdirectory("backend/serial")
+endif()
+
+
 add_library(mars ${MARS_HEADERS} ${MARS_SOURCES})
 
 # ##############################################################################
@@ -40,6 +46,7 @@ add_library(mars ${MARS_HEADERS} ${MARS_SOURCES})
 foreach(include ${MARS_BUILD_INCLUDES})
   target_include_directories(mars BEFORE PUBLIC $<BUILD_INTERFACE:${include}>)
 endforeach()
+
 
 target_include_directories(
   mars BEFORE
@@ -161,3 +168,8 @@ endif()
 if(MARS_ENABLE_TESTING)
   add_dependencies(mars_complete mars_test)
 endif()
+
+
+# ##############################################################################
+target_format_setup("mars;mars_bench;mars_test")
+# ##############################################################################

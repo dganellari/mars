@@ -15,7 +15,7 @@
 #include <KokkosBlas1_nrm1.hpp>
 #include <KokkosBlas1_nrm2.hpp>
 #include <KokkosBlas1_scal.hpp>
-#include <KokkosSparse_spadd.hpp>
+// #include <KokkosSparse_spadd.hpp>
 #include <KokkosSparse_spmv.hpp>
 #include <Kokkos_Core.hpp>
 #include "KokkosSparse_CrsMatrix.hpp"
@@ -30,9 +30,9 @@
 
 #include "mars_context.hpp"
 #include "mars_fedm_values.hpp"
-#include "mars_matrix.hpp"
-#include "mars_utils.hpp"
-#include "mars_vector.hpp"
+// #include "mars_matrix.hpp"
+// #include "mars_utils.hpp"
+// #include "mars_vector.hpp"
 
 namespace mars {
     // using KokkosVector = Kokkos::View<Real *>;

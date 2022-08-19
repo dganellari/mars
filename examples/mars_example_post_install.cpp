@@ -28,28 +28,45 @@
 #include <chrono>
 using namespace std::chrono;
 
-mars::Mesh1 test_mars_mesh_generation_1D(const int x) {
-    using namespace mars;
+// void test_mars_mesh_generation(const int x) {
+//     using namespace mars;
 
-    high_resolution_clock::time_point t1 = high_resolution_clock::now();
+//     high_resolution_clock::time_point t1 = high_resolution_clock::now();
 
-    Mesh1 mesh;
-    generate_line(mesh, x);
+//     Mesh1 mesh;
+//     generate_line(mesh, x);
 
-    high_resolution_clock::time_point t2 = high_resolution_clock::now();
-    auto duration = duration_cast<seconds>(t2 - t1).count();
+//     high_resolution_clock::time_point t2 = high_resolution_clock::now();
+//     auto duration = duration_cast<seconds>(t2 - t1).count();
 
-    std::cout << "Generation took: " << duration << " seconds." << std::endl;
+//     std::cout << "Generation took: " << duration << " seconds." << std::endl;
 
-    std::cout << "n_active_elements: " << mesh.n_active_elements() << std::endl;
-    std::cout << "n_nodes: " << mesh.n_nodes() << std::endl;
+//     std::cout << "n_active_elements: " << mesh.n_active_elements() << std::endl;
+//     std::cout << "n_nodes: " << mesh.n_nodes() << std::endl;
 
-    if (x < 100) {
-        VTKMeshWriter<Mesh1> w;
-        w.write("build_line" + std::to_string(x) + ".vtu", mesh);
-    }
+//     if (x < 100) {
+//         VTKMeshWriter<Mesh1> w;
+//         w.write("build_line" + std::to_string(x) + ".vtu", mesh);
+//     }
 
-    return mesh;
+//     return mesh;
+// }
+
+void test_mars_mesh_generation(const int x) {
+    Kokkos::Timer timer;
+
+    mars::ParallelMesh3 pMesh;
+    mars::generate_cube(pMesh, x, x, x);
+
+    // Kokkos::fence();
+
+    double time = timer.seconds();
+
+    std::cout << "Generation 3D kokkos took: " << time << " seconds." << std::endl;
 }
 
-int main(int argc, char const *argv[]) { test_mars_mesh_generation_1D(10000000); }
+int main(int argc, char *argv[]) {
+    mars::Env env(argc, argv);
+    test_mars_mesh_generation(100);
+    return env.exit_code();
+}

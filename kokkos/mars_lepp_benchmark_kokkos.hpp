@@ -1,14 +1,13 @@
 #ifndef MARS_LEPP_BENCHMARK_KOKKOS_HPP_
 #define MARS_LEPP_BENCHMARK_KOKKOS_HPP_
 
-#include "mars_quality.hpp"
 #include <chrono>
 
-#include "mars_longest_edge_kokkos.hpp"
 #include "mars_bisection_kokkos.hpp"
+#include "mars_longest_edge_kokkos.hpp"
+#include "mars_mark_kokkos.hpp"
 #include "mars_sub_view.hpp"
 #include "mars_utils_kokkos.hpp"
-#include "mars_mark_kokkos.hpp"
 
 namespace mars {
     template <class Mesh>
@@ -71,13 +70,13 @@ namespace mars {
             double time = timer_refine.seconds();
             std::cout << "parallel LEPP Refinement took: " << time << " seconds." << std::endl;
 
-            typename Mesh::SerialMesh sMesh;
-            convert_parallel_mesh_to_serial(sMesh, mesh);
+            // typename Mesh::SerialMesh sMesh;
+            // convert_parallel_mesh_to_serial(sMesh, mesh);
 
             std::cout << "======================================\n";
 
             // std::cout << "volume: " << sMesh.volume() << std::endl;
-            std::cout << "n_active_elements: " << sMesh.n_active_elements() << std::endl;
+            // std::cout << "n_active_elements: " << sMesh.n_active_elements() << std::endl;
 
             /* const Integer meshsize = mesh.get_view_elements().extent(0);
             Kokkos::parallel_for("p", meshsize,

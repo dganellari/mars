@@ -160,7 +160,6 @@ namespace mars {
             Kokkos::parallel_for("init_initial_cond", get_block<B>() * global_dof_enum.get_elem_size(), f);
         }
 
-
         template <typename H, Integer B = Block_>
         MARS_INLINE_FUNCTION void dof_iterate(H f) const {
             Kokkos::parallel_for("init_initial_cond", get_block<B>() * local_dof_enum.get_elem_size(), f);

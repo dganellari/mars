@@ -31,13 +31,11 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. */
 
 #include "mars_mpi_error.hpp"
 
-namespace mars
-{
+namespace mars {
 
-const mpi_error_category_impl &mpi_error_category()
-{
-    static mpi_error_category_impl the_category;
-    return the_category;
-}
+    const mpi_error_category_impl &mpi_error_category() {
+        static mpi_error_category_impl the_category;
+        return the_category;
+    }
 
-} // namespace mars
+}  // namespace mars

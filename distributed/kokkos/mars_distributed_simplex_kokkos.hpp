@@ -4,8 +4,8 @@
 #include "mars_base.hpp"
 #include "mars_fwd.hpp"
 #include "mars_imesh_kokkos.hpp"
-#include "mars_matrix.hpp"
-#include "mars_stream.hpp"
+// #include "mars_matrix.hpp"
+// #include "mars_stream.hpp"
 
 #include <array>
 #include <iostream>
@@ -17,7 +17,7 @@
 #include <cmath>
 #include <initializer_list>
 
-#include "mars_static_math_kokkos.hpp"
+// #include "mars_static_math_kokkos.hpp"
 #include "mars_sub_view.hpp"
 #include "mars_utils_kokkos.hpp"
 
@@ -57,24 +57,24 @@ namespace mars {
 
         MARS_INLINE_FUNCTION Integer type() const override { return ManifoldDim; }
 
-        MARS_INLINE_FUNCTION static std::vector<Vector<Real, Dim>> &ref() {
-            static const Integer N = ManifoldDim + 1;
+        // MARS_INLINE_FUNCTION static std::vector<Vector<Real, Dim>> &ref() {
+        //     static const Integer N = ManifoldDim + 1;
 
-            static std::vector<Vector<Real, Dim>> ref_;
+        //     static std::vector<Vector<Real, Dim>> ref_;
 
-            if (ref_.empty()) {
-                ref_.resize(N);
+        //     if (ref_.empty()) {
+        //         ref_.resize(N);
 
-                ref_[0] = Vector<Real, Dim>().zero();
+        //         ref_[0] = Vector<Real, Dim>().zero();
 
-                for (Integer i = 0; i < ManifoldDim; ++i) {
-                    ref_[i + 1] = Vector<Real, Dim>().zero();
-                    ref_[i + 1](i) = 1.;
-                }
-            }
+        //         for (Integer i = 0; i < ManifoldDim; ++i) {
+        //             ref_[i + 1] = Vector<Real, Dim>().zero();
+        //             ref_[i + 1](i) = 1.;
+        //         }
+        //     }
 
-            return ref_;
-        }
+        //     return ref_;
+        // }
 
         MARS_INLINE_FUNCTION
         void edge(const Integer &edge_num,
