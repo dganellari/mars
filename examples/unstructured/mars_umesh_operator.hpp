@@ -3,6 +3,8 @@
 
 #include <memory>
 
+#ifdef MARS_ENABLE_KOKKOS_KERNELS
+
 #include "mars_base.hpp"
 #include "mars_fe_values.hpp"
 #include "mars_globals.hpp"
@@ -152,3 +154,4 @@ namespace mars {
 }  // namespace mars
 
 #endif  // MARS_UMESH_OPERATOR_HPP
+#endif

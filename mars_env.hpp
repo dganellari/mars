@@ -4,9 +4,9 @@
 #include <memory>
 #include "mars_base.hpp"
 
-#ifdef WITH_MPI
+#ifdef MARS_ENABLE_MPI
 #include <mpi.h>
-#endif  // WITH_MPI
+#endif  // MARS_ENABLE_MPI
 
 namespace mars {
     class Env {
@@ -14,7 +14,7 @@ namespace mars {
         class Impl;
 
         Env(int argc, char *argv[]);
-#ifdef WITH_MPI
+#ifdef MARS_ENABLE_MPI
         Env(int argc, char *argv[], MPI_Comm comm);
 #endif
         ~Env();

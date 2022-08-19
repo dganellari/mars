@@ -1,6 +1,9 @@
 #ifndef MARS_POISSON_OPERATOR_HPP
 #define MARS_POISSON_OPERATOR_HPP
 
+#include "mars_base.hpp"
+
+#ifdef MARS_ENABLE_KOKKOS_KERNELS
 #include "mars_copy_operator.hpp"
 #include "mars_matrix_free_operator.hpp"
 
@@ -62,4 +65,5 @@ namespace mars {
 
 }  // namespace mars
 
+#endif
 #endif

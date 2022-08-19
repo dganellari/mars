@@ -1,10 +1,11 @@
-#include <err.h>
+// #include "mars_err.hpp"
 #include <algorithm>
 #include <cassert>
 #include <cstdlib>
 #include <iostream>
 #include <numeric>
 
+#ifdef MARS_ENABLE_KOKKOS_KERNELS
 #include <KokkosBlas1_nrm1.hpp>
 #include <KokkosBlas1_nrminf.hpp>
 
@@ -32,10 +33,10 @@
 
 #include "mars_mesh_generation.hpp"
 
-#ifdef WITH_KOKKOS
+#ifdef MARS_ENABLE_KOKKOS
 #include "mars_lepp_benchmark_kokkos.hpp"
 #include "mars_test_kokkos.hpp"
-#endif  // WITH_KOKKOS
+#endif  // MARS_ENABLE_KOKKOS
 
 // #include "mars_fitzhugh_nagumo.hpp"
 #include "mars_mesh_kokkos.hpp"
@@ -405,3 +406,4 @@ int main(int argc, char *argv[]) {
 
     return env.exit_code();
 }
+#endif

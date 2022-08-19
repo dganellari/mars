@@ -157,7 +157,7 @@ namespace mars {
 
         void generate_sfc_to_local_map() {
             sfc_to_local_map_ = UnorderedMap<Integer, Integer>(get_elem_size());
-            //copies needed because of cuda lambda functions. Issue: Copied as *this.{} host pointer.
+            // copies needed because of cuda lambda functions. Issue: Copied as *this.{} host pointer.
             auto element_view = elements_;
             auto sfc_map = sfc_to_local_map_;
             Kokkos::parallel_for(

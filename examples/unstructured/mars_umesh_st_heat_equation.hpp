@@ -3,6 +3,7 @@
 
 #include <memory>
 
+#ifdef MARS_ENABLE_KOKKOS_KERNELS
 #include "mars_base.hpp"
 #include "mars_fe_simplex.hpp"
 #include "mars_fe_values.hpp"
@@ -328,3 +329,4 @@ namespace mars {
 }  // namespace mars
 
 #endif  // MARS_UMESH_ST_HEAT_EQUATION_HPP
+#endif

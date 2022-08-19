@@ -3,13 +3,11 @@
 
 #include "mars.hpp"
 
-#ifdef WITH_KOKKOS
+#ifdef MARS_ENABLE_KOKKOS_KERNELS
 #include "mars_quad4.hpp"
-#ifdef WITH_MPI
+#ifdef MARS_ENABLE_MPI
 #include "mars_distributed_finite_element.hpp"
 #endif
-
-#endif  // WITH_KOKKOS
 
 namespace mars {
 
@@ -67,9 +65,12 @@ namespace mars {
         // use as more readable tuple index to identify the data
         FEDMValues(DMQ2 &d, FEM &f) : dm_(d), fe_(f) {}
 
-        //OK as long as we are doing affine meshes in 2D
+        // OK as long as we are doing affine meshes in 2D
         template <Integer Type>
-        void compute_invJ_and_detJ(const DMQ2 &data, const FEM &fe, ViewVectorType<Real> detJ, ViewMatrixType<Real> invJ) {
+        void compute_invJ_and_detJ(const DMQ2 &data,
+                                   const FEM &fe,
+                                   ViewVectorType<Real> detJ,
+                                   ViewMatrixType<Real> invJ) {
             auto dm = data.get_dof_handler();
             dm.elem_iterate(MARS_LAMBDA(const Integer elem_index) {
                 Real J[4];
@@ -109,7 +110,10 @@ namespace mars {
         }
 
         template <Integer INPUT>
-        MARS_INLINE_FUNCTION void gather_elem_data(const DMQ2 &dm, const FEM &fe, const Integer elem_index, DMDataType<INPUT> *sol) {
+        static MARS_INLINE_FUNCTION void gather_elem_data(const DMQ2 &dm,
+                                                          const FEM &fe,
+                                                          const Integer elem_index,
+                                                          DMDataType<INPUT> *sol) {
             for (int i = 0; i < FEM::elem_nodes; i++) {
                 // forach dof get the local number
                 const Integer local_dof = fe.get_elem_local_dof(elem_index, i);
@@ -260,3 +264,4 @@ namespace mars {
 
 }  // namespace mars
 #endif
+#endif  // MARS_ENABLE_KOKKOS_KERNELS

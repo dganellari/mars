@@ -2,6 +2,7 @@
 #define MARS_GRADIENT_RECOVERY_HPP
 
 #include "mars_fe_simplex.hpp"
+#ifdef MARS_ENABLE_KOKKOS_KERNELS
 #include "mars_fe_values.hpp"
 
 namespace mars {
@@ -155,5 +156,5 @@ namespace mars {
     };
 
 }  // namespace mars
-
+#endif
 #endif  // MARS_GRADIENT_RECOVERY_HPP

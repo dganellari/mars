@@ -2,9 +2,9 @@
 #define MARS_LONGEST_EDGE_SELECT_KOKKOS_HPP
 
 #include "mars_base.hpp"
-#include "mars_node_rank.hpp"
+// #include "mars_node_rank.hpp"
 
-#ifdef WITH_KOKKOS
+#ifdef MARS_ENABLE_KOKKOS
 #include "mars_edge_select_kokkos.hpp"
 #endif
 

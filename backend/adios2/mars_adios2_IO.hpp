@@ -1,6 +1,10 @@
 #ifndef MARS_ADIOS2_IO_HPP
 #define MARS_ADIOS2_IO_HPP
 
+#include "mars_config.hpp"
+
+#ifdef MARS_ENABLE_KOKKOS_KERNELS
+#include "mars_distributed_finite_element.hpp"
 #include "mars_utils_kokkos.hpp"
 
 #include <memory>
@@ -70,5 +74,5 @@ namespace mars {
         };
     }  // namespace adios2
 }  // namespace mars
-
+#endif
 #endif  // MARS_ADIOS2_IO_HPP

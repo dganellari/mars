@@ -1,8 +1,8 @@
 #ifndef GENERATION_MARS_DISTRIBUTED_SP_HPP_
 #define GENERATION_MARS_DISTRIBUTED_SP_HPP_
 
-#ifdef WITH_MPI
-#ifdef WITH_KOKKOS
+#ifdef MARS_ENABLE_MPI
+#ifdef MARS_ENABLE_KOKKOS_KERNELS
 #include <sstream>
 #include "KokkosKernels_SparseUtils.hpp"
 #include "mars_distributed_finite_element.hpp"

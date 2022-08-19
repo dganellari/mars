@@ -17,19 +17,19 @@ include(FindPackageHandleStandardArgs)
 
 # Search for include files
 find_path(
-    MARS_INCLUDES
-    NAMES "mars.hpp"
-    HINTS ${MARS_DIR} $ENV{MARS_DIR}
-    PATH_SUFFIXES include
-    NO_DEFAULT_PATH)
+  MARS_INCLUDES
+  NAMES "mars.hpp"
+  HINTS ${MARS_DIR} $ENV{MARS_DIR}
+  PATH_SUFFIXES include
+  NO_DEFAULT_PATH)
 
 # Search for libraries
 find_library(
-    MARS_LIBRARIES
-    NAMES mars
-    HINTS ${MARS_DIR} ${MARS_INCLUDES}/.. $ENV{MARS_DIR}
-    PATH_SUFFIXES lib
-    NO_DEFAULT_PATH)
+  MARS_LIBRARIES
+  NAMES mars
+  HINTS ${MARS_DIR} ${MARS_INCLUDES}/.. $ENV{MARS_DIR}
+  PATH_SUFFIXES lib
+  NO_DEFAULT_PATH)
 
 # find_path(MARS_CONFIG_FILE_PATH NAMES "mars_config.cmake" HINTS $ENV{MARS_DIR}
 # ${MARS_DIR} ${MARS_INCLUDES}/.. $ENV{MOONOLITH_ROOT}/utopia/build
@@ -45,18 +45,18 @@ find_package_handle_standard_args(MARS DEFAULT_MSG MARS_LIBRARIES MARS_INCLUDES)
 if(MARS_LIBRARIES
    AND MARS_INCLUDES
    AND MARS_CONFIG_FILE_PATH)
-    set(MARS_FOUND TRUE)
+  set(MARS_FOUND TRUE)
 else()
-    set(MARS_FOUND FALSE)
-    message(
-        WARNING
-            "mars not found. You can set MARS_DIR variable to the path of the utopia installation. Either in your environment or through -DMARS_DIR=..."
-    )
-    message(STATUS "---------------------------------------------")
-    message(STATUS "mars include: ${MARS_INCLUDES}")
-    message(STATUS "mars lib:     ${MARS_LIBRARIES}")
-    message(STATUS "mars config:  ${MARS_CONFIG_FILE_PATH}")
-    message(STATUS "---------------------------------------------")
+  set(MARS_FOUND FALSE)
+  message(
+    WARNING
+      "mars not found. You can set MARS_DIR variable to the path of the utopia installation. Either in your environment or through -DMARS_DIR=..."
+  )
+  message(STATUS "---------------------------------------------")
+  message(STATUS "mars include: ${MARS_INCLUDES}")
+  message(STATUS "mars lib:     ${MARS_LIBRARIES}")
+  message(STATUS "mars config:  ${MARS_CONFIG_FILE_PATH}")
+  message(STATUS "---------------------------------------------")
 endif()
 
 mark_as_advanced(MARS_INCLUDES MARS_LIBRARIES MARS_CONFIG_FILE_PATH)

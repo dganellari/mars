@@ -2,8 +2,8 @@
 #define GENERATION_MARS_DISTRIBUTED_DofHandler_HPP_
 
 #include <cstdlib>
-#ifdef WITH_MPI
-#ifdef WITH_KOKKOS
+#ifdef MARS_ENABLE_MPI
+#ifdef MARS_ENABLE_KOKKOS
 #include "mars_distributed_dof.hpp"
 #include "mars_distributed_mesh_management.hpp"
 
@@ -159,7 +159,6 @@ namespace mars {
         MARS_INLINE_FUNCTION void owned_dof_iterate(H f) const {
             Kokkos::parallel_for("init_initial_cond", get_block<B>() * global_dof_enum.get_elem_size(), f);
         }
-
 
         template <typename H, Integer B = Block_>
         MARS_INLINE_FUNCTION void dof_iterate(H f) const {

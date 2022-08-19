@@ -1,8 +1,8 @@
 #ifndef GENERATION_MARS_DISTRIBUTED_RDofMap_HPP_
 #define GENERATION_MARS_DISTRIBUTED_RDofMap_HPP_
 
-#ifdef WITH_MPI
-#ifdef WITH_KOKKOS
+#ifdef MARS_ENABLE_MPI
+#ifdef MARS_ENABLE_KOKKOS
 #include "mars_distributed_dof.hpp"
 
 namespace mars {
@@ -178,7 +178,6 @@ namespace mars {
                     // build the ghost dof object and insert into the map
                     const auto result = gsgm.insert(ghost_sfc, Dof(gid, owner_proc));
                     assert(!result.failed());
-
                 });
         }
 

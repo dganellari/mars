@@ -29,7 +29,10 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. */
 /* This example tries to do the same and compare to the step3 p4est example
  * using MARS instead */
 
+#include "mars_base.hpp"
+
 #include "mars.hpp"
+#ifdef MARS_ENABLE_KOKKOS_KERNELS
 
 namespace mars {
 
@@ -612,7 +615,7 @@ namespace mars {
         using namespace mars;
         mars::proc_allocation resources;
 
-#ifdef WITH_MPI
+#ifdef MARS_ENABLE_MPI
         // create a distributed context
         auto context = mars::make_context(resources, MPI_COMM_WORLD);
         int proc_num = mars::rank(context);
@@ -622,7 +625,7 @@ namespace mars {
         // auto context = mars::make_context(resources);
 #endif
 
-#ifdef WITH_KOKKOS
+#ifdef MARS_ENABLE_KOKKOS
 
         DistributedQuad4Mesh mesh(context);
         mesh.set_periodic();  // set the domain to be periodic before generation!
@@ -632,10 +635,10 @@ namespace mars {
         const Integer yDim = mesh.get_YDim();
         const Integer zDim = mesh.get_ZDim();
 
-        constexpr Integer Dim = DistributedQuad4Mesh::Dim;
+        static constexpr Integer Dim = DistributedQuad4Mesh::Dim;
 
         using Elem = typename DistributedQuad4Mesh::Elem;
-        constexpr Integer Type = Elem::ElemType;
+        static constexpr Integer Type = Elem::ElemType;
 
         std::cout << "Type: " << Type << std::endl;
 
@@ -692,7 +695,7 @@ namespace mars {
                 data.get_elem_data<1>(i) = 2;
             }); */
 
-        //The ghost layer is created when the mesh is generated.
+        // The ghost layer is created when the mesh is generated.
         /* create_ghost_layer<Data, Type>(data); */
         exchange_ghost_user_data(data);
 
@@ -713,3 +716,4 @@ namespace mars {
 #endif
     }
 }  // namespace mars
+#endif  // MARS_ENABLE_KOKKOS_KERNELS

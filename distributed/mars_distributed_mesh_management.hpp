@@ -1,10 +1,10 @@
 #ifndef GENERATION_MARS_DISTRIBUTED_MM_HPP_
 #define GENERATION_MARS_DISTRIBUTED_MM_HPP_
 
-#ifdef WITH_MPI
+#ifdef MARS_ENABLE_MPI
 #include "mars_context.hpp"
 #include "mars_execution_context.hpp"
-#ifdef WITH_KOKKOS
+#ifdef MARS_ENABLE_KOKKOS
 #include "mars_distributed_mesh_kokkos.hpp"
 #include "mars_utils_kokkos.hpp"
 

@@ -12,6 +12,7 @@ MAINDIR=${1:-${SCRATCH}/build/mars}
 INSTALLDIR=${2:-${MAINDIR}/install}
 BUILDDIR=${4:-${MAINDIR}/build}
 
+export NVCC_WRAPPER=/apps/daint/UES/anfink/gpu/trilinos/bin/nvcc_wrapper
 
 [[ -f ${INSTALLDIR}/build.log ]] && exit 0
 
@@ -27,15 +28,16 @@ echo $SRCDIR
 mkdir -p ${BUILDDIR}
 mkdir -p ${INSTALLDIR}
 
-MARS_USE_KOKKOS="OFF"
+MARS_ENABLE_KOKKOS="OFF"
+
 
 if [[ $BUILD_WITH_SERIAL_SUPPORT == 1 ]]; then
-  MARS_USE_KOKKOS="ON"
+  MARS_ENABLE_KOKKOS="ON"
 fi
 
 if [[ $BUILD_WITH_OMP_SUPPORT == 1 ]]; then
   OMP_FLAGS="-fopenmp"
-  MARS_USE_KOKKOS="ON"
+  MARS_ENABLE_KOKKOS="ON"
 fi
 
 CUDA_FLAGS=""
@@ -44,8 +46,8 @@ if [[ $BUILD_WITH_CUDA_SUPPORT == 1 ]]; then
 #    export CXX="${BUILDSCRIPT_DIR}/nvcc_wrapper"
 #  fi
   PATCHES=""
-  CUDA_FLAGS="-DMARS_USE_CUDA=ON"
-  MARS_USE_KOKKOS="ON"
+  CUDA_FLAGS="-DMARS_ENABLE_CUDA=ON -DCMAKE_CXX_COMPILER=$NVCC_WRAPPER "
+  MARS_ENABLE_KOKKOS="ON"
 fi
 
 PATCHES="$PATCHES"
@@ -65,7 +67,9 @@ cmake -DCMAKE_VERBOSE_MAKEFILE=ON \
       -DCMAKE_BUILD_TYPE=${BUILD_TYPE} \
       -DCMAKE_CXX_EXTENSIONS=OFF \
       -DCMAKE_CXX_STANDARD=14 \
-      -DTRY_WITH_KOKKOS=${MARS_USE_KOKKOS} \
+      -DMARS_ENABLE_KOKKOS=${MARS_ENABLE_KOKKOS} \
+      -DMARS_ENABLE_TESTING=OFF \
+      -DMARS_ENABLE_BENCHMARK=OFF \
       ${CUDA_FLAGS} \
       ${SRCDIR}
 make -j16
