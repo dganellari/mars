@@ -96,8 +96,8 @@ namespace mars {
     }
 
     template <Integer Dim>
-    bool write_mesh(const std::string &path, const Mesh<Dim, 3> &mesh) {
-        VTKMeshWriter<Mesh<Dim, 3>> w;
+    bool write_mesh(const std::string &path, const SimplicialMesh<Dim, 3> &mesh) {
+        VTKMeshWriter<SimplicialMesh<Dim, 3>> w;
         return w.write(path + ".vtu", mesh);
     }
 
@@ -114,11 +114,11 @@ namespace mars {
 
     template <Integer Dim>
     bool write_mesh_partitions(const std::string &path,
-                               const std::vector<std::shared_ptr<MeshPartition<Mesh<Dim, 3>>>> &parts,
+                               const std::vector<std::shared_ptr<MeshPartition<SimplicialMesh<Dim, 3>>>> &parts,
                                const PlotFun plot_fun) {
         bool ok = true;
         for (const auto &p : parts) {
-            VTKMeshWriter<Mesh<Dim, 3>> w;
+            VTKMeshWriter<SimplicialMesh<Dim, 3>> w;
             ok &= w.write(path + std::to_string(p->partition_id()) + ".vtu", p->get_mesh());
         }
 
@@ -128,7 +128,7 @@ namespace mars {
 #ifdef WITH_MOONOLITH
 
     template <Integer Dim, Integer ManifoldDim>
-    void mesh_color(const Mesh<Dim, ManifoldDim> &mesh, const PlotOpts &opts, std::vector<Real> &hsv) {
+    void mesh_color(const SimplicialMesh<Dim, ManifoldDim> &mesh, const PlotOpts &opts, std::vector<Real> &hsv) {
         const bool active_only = opts.active_only;
         const Integer plot_fun = opts.plot_fun;
 
@@ -228,7 +228,7 @@ namespace mars {
     }
 
     template <class Canvas, Integer Dim, Integer ManifoldDim>
-    void draw_element_side(const Mesh<Dim, ManifoldDim> &m,
+    void draw_element_side(const SimplicialMesh<Dim, ManifoldDim> &m,
                            const Integer element_id,
                            const Integer side_num,
                            const Real cx,
@@ -243,7 +243,7 @@ namespace mars {
     }
 
     template <class Canvas, Integer Dim, Integer ManifoldDim>
-    void draw_element(const Mesh<Dim, ManifoldDim> &m,
+    void draw_element(const SimplicialMesh<Dim, ManifoldDim> &m,
                       const Integer element_id,
                       const Real cx,
                       const Real cy,
@@ -290,7 +290,7 @@ namespace mars {
     }
 
     template <Integer Dim, Integer ManifoldDim, class Canvas>
-    void draw_element_as_child(const Mesh<Dim, ManifoldDim> &m,
+    void draw_element_as_child(const SimplicialMesh<Dim, ManifoldDim> &m,
                                const EdgeNodeMap &en_map,
                                const Integer element_id,
                                const Real cx,
@@ -391,7 +391,7 @@ namespace mars {
 
     template <Integer Dim, Integer ManifoldDim>
     bool write_element(const std::string &path,
-                       const Mesh<Dim, ManifoldDim> &m,
+                       const SimplicialMesh<Dim, ManifoldDim> &m,
                        const EdgeNodeMap &en_map,
                        const Integer element_id,
                        const Real scale_factor,
@@ -504,7 +504,7 @@ namespace mars {
     }
 
     template <class Canvas, Integer Dim>
-    void draw_mesh(Canvas &canvas, const Mesh<Dim, 2> &mesh, const PlotOpts &opts) {
+    void draw_mesh(Canvas &canvas, const SimplicialMesh<Dim, 2> &mesh, const PlotOpts &opts) {
         moonolith::Mesh m;
         m.dim = Dim;
 
@@ -625,7 +625,7 @@ namespace mars {
 
     template <Integer Dim>
     bool write_mesh(const std::string &path,
-                    const Mesh<Dim, 2> &mesh,
+                    const SimplicialMesh<Dim, 2> &mesh,
                     const Real scale_factor = 10.,
                     const PlotFun plot_fun = PLOT_ROOT) {
         moonolith::EPSCanvas canvas;
@@ -668,7 +668,7 @@ namespace mars {
     }
 
     template <class Canvas, Integer Dim, Integer ManifoldDim, class NodeVector>
-    void draw_element_subsurface(const Mesh<Dim, ManifoldDim> &m,
+    void draw_element_subsurface(const SimplicialMesh<Dim, ManifoldDim> &m,
                                  const Integer element_id,
                                  const NodeVector &sub_surface_nodes,
                                  const Real cx,
@@ -729,7 +729,7 @@ namespace mars {
 
     template <Integer Dim, Integer ManifoldDim>
     bool write_element_with_sides(const std::string &path,
-                                  const Mesh<Dim, ManifoldDim> &m,
+                                  const SimplicialMesh<Dim, ManifoldDim> &m,
                                   const Integer element_id,
                                   const Real scale_factor,
                                   const Integer side_num,
@@ -858,7 +858,7 @@ namespace mars {
 
     template <Integer Dim, Integer ManifoldDim>
     bool write_element_with_subsurfaces(const std::string &path,
-                                        const Mesh<Dim, ManifoldDim> &m,
+                                        const SimplicialMesh<Dim, ManifoldDim> &m,
                                         const Integer element_id,
                                         const Real scale_factor) {
         // const auto &m = rgr.get_mesh();
@@ -938,20 +938,20 @@ namespace mars {
 
     template <Integer Dim>
     bool write_mesh(const std::string &path,
-                    const Mesh<Dim, 2> &mesh,
+                    const SimplicialMesh<Dim, 2> &mesh,
                     const Real scale_factor = 10.,
                     const PlotFun plot_fun = PLOT_ROOT) {
-        VTKMeshWriter<Mesh<Dim, 2>> w;
+        VTKMeshWriter<SimplicialMesh<Dim, 2>> w;
         return w.write(path + ".vtu", mesh);
     }
 
     template <Integer Dim>
     bool write_mesh_partitions(const std::string &path,
-                               const std::vector<std::shared_ptr<MeshPartition<Mesh<Dim, 2>>>> &parts,
+                               const std::vector<std::shared_ptr<MeshPartition<SimplicialMesh<Dim, 2>>>> &parts,
                                const PlotFun plot_fun) {
         bool ok = true;
         for (const auto &p : parts) {
-            VTKMeshWriter<Mesh<Dim, 2>> w;
+            VTKMeshWriter<SimplicialMesh<Dim, 2>> w;
             ok &= w.write(path + std::to_string(p->partition_id()) + ".vtu", p->get_mesh());
         }
 
@@ -960,7 +960,7 @@ namespace mars {
 
     template <Integer Dim, Integer ManifoldDim>
     bool write_element(const std::string &path,
-                       const Mesh<Dim, ManifoldDim> &m,
+                       const SimplicialMesh<Dim, ManifoldDim> &m,
                        const EdgeNodeMap &en_map,
                        const Integer element_id,
                        const Real scale_factor,
@@ -979,7 +979,7 @@ namespace mars {
 
     template <Integer Dim, Integer ManifoldDim>
     bool write_element_with_sides(const std::string &path,
-                                  const Mesh<Dim, ManifoldDim> &m,
+                                  const SimplicialMesh<Dim, ManifoldDim> &m,
                                   const Integer element_id,
                                   const Real scale_factor,
                                   const Integer side_num,
@@ -989,7 +989,7 @@ namespace mars {
 
     template <Integer Dim, Integer ManifoldDim>
     bool write_element_with_subsurfaces(const std::string &path,
-                                        const Mesh<Dim, ManifoldDim> &m,
+                                        const SimplicialMesh<Dim, ManifoldDim> &m,
                                         const Integer element_id,
                                         const Real scale_factor) {
         return false;

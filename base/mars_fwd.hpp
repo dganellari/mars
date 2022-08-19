@@ -43,4 +43,8 @@ namespace mars {
     template <class Mesh, class Implementation_ = DefaultImplementation>
     class LongestEdgeSelect;
 
+    template <Integer Dim, Integer ManifoldDim>
+    using SimplicialMesh =
+        mars::Mesh<Dim, ManifoldDim, DefaultImplementation, Simplex<Dim, ManifoldDim, DefaultImplementation>>;
+
 }  // namespace mars

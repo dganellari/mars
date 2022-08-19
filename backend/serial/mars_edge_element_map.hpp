@@ -42,7 +42,7 @@ namespace mars {
         }
 
         template <Integer Dim, Integer ManifoldDim>
-        void update(const Mesh<Dim, ManifoldDim> &mesh) {
+        void update(const SimplicialMesh<Dim, ManifoldDim> &mesh) {
             auto ne = mesh.n_elements();
             for (Integer i = 0; i < ne; ++i) {
                 // if(mesh.is_active(i)) {
@@ -52,7 +52,7 @@ namespace mars {
         }
 
         template <Integer Dim, Integer ManifoldDim>
-        void update_active(const Mesh<Dim, ManifoldDim> &mesh) {
+        void update_active(const SimplicialMesh<Dim, ManifoldDim> &mesh) {
             auto ne = mesh.n_elements();
             for (Integer i = 0; i < ne; ++i) {
                 if (mesh.is_active(i)) {
@@ -62,7 +62,7 @@ namespace mars {
         }
 
         template <Integer Dim, Integer ManifoldDim>
-        void build(const Mesh<Dim, ManifoldDim> &mesh) {
+        void build(const SimplicialMesh<Dim, ManifoldDim> &mesh) {
             mapping_.clear();
 
             auto ne = mesh.n_elements();
@@ -156,7 +156,7 @@ namespace mars {
         }
 
         template <Integer Dim, Integer ManifoldDim>
-        void update(const Mesh<Dim, ManifoldDim> &m) {
+        void update(const SimplicialMesh<Dim, ManifoldDim> &m) {
             map_.update(m);
             sub_elem_map_.update(m);
         }
@@ -217,7 +217,7 @@ namespace mars {
         }
 
         template <Integer Dim, Integer ManifoldDim>
-        void update(const Mesh<Dim, ManifoldDim> &m) {
+        void update(const SimplicialMesh<Dim, ManifoldDim> &m) {
             map_.update(m);
         }
 

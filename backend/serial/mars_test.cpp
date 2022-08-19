@@ -108,9 +108,9 @@ namespace mars {
     }
 
     template <mars::Integer Dim, mars::Integer ManifoldDim>
-    void test_mesh(mars::Mesh<Dim, ManifoldDim> &mesh) {
+    void test_mesh(mars::SimplicialMesh<Dim, ManifoldDim> &mesh) {
         using namespace mars;
-        using MeshD = mars::Mesh<Dim, ManifoldDim>;
+        using MeshD = mars::SimplicialMesh<Dim, ManifoldDim>;
 
         RedGreenRefinement<MeshD> rgr(mesh);
 
@@ -141,9 +141,9 @@ namespace mars {
     }
 
     template <mars::Integer Dim, mars::Integer ManifoldDim>
-    void generate_mesh(mars::Mesh<Dim, ManifoldDim> &mesh, int level) {
+    void generate_mesh(mars::SimplicialMesh<Dim, ManifoldDim> &mesh, int level) {
         using namespace mars;
-        using MeshD = mars::Mesh<Dim, ManifoldDim>;
+        using MeshD = mars::SimplicialMesh<Dim, ManifoldDim>;
 
         RedGreenRefinement<MeshD> rgr(mesh);
 
@@ -174,11 +174,11 @@ namespace mars {
     }
 
     template <mars::Integer Dim, mars::Integer ManifoldDim>
-    static void test_generate_3D(mars::Mesh<Dim, ManifoldDim> &mesh) {
+    static void test_generate_3D(mars::SimplicialMesh<Dim, ManifoldDim> &mesh) {
         using namespace mars;
 
         std::cout << "======================================\n";
-        using MeshD = mars::Mesh<Dim, ManifoldDim>;
+        using MeshD = mars::SimplicialMesh<Dim, ManifoldDim>;
 
         RedGreenRefinement<MeshD> rgr(mesh);
         rgr.red_refine({0});
@@ -387,7 +387,7 @@ namespace mars {
         VTKMeshWriter<Mesh3> w;
                                 w.write("cube_red"+ std::to_string(mesh.Dim) +".vtu", mesh);*/
 
-        Mesh<3, 2> tri;
+        SimplicialMesh<3, 2> tri;
         read_mesh("../data/square_3.MFEM", tri, true);
         generate_mesh(tri, level);
 

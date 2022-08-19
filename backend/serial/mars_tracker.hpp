@@ -29,7 +29,7 @@ namespace mars {
         }
 
         template <Integer Dim, Integer ManifoldDim>
-        void undo_last_iterate(Mesh<Dim, ManifoldDim> &mesh) {
+        void undo_last_iterate(SimplicialMesh<Dim, ManifoldDim> &mesh) {
             const Integer last_iterate = current_iterate_ - 1;
             const Integer iter_size = iterates_.size();
 

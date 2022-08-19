@@ -52,7 +52,7 @@ namespace mars {
         }
 
         template <Integer Dim>
-        void update(const Mesh<Dim, ManifoldDim> &mesh, const bool force = false) {
+        void update(const SimplicialMesh<Dim, ManifoldDim> &mesh, const bool force = false) {
             const Integer n_nodes = mesh.n_nodes();
             const Integer n_elements = mesh.n_elements();
             Integer el_index_size = 0;

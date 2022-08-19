@@ -32,7 +32,7 @@ namespace mars {
         }
 
         template <Integer Dim, Integer ManifoldDim>
-        void init(const Mesh<Dim, ManifoldDim> &mesh) {
+        void init(const SimplicialMesh<Dim, ManifoldDim> &mesh) {
             ranks_.reserve(mesh.n_nodes() * 2);
             ranks_.resize(mesh.n_nodes(), 1);
         }

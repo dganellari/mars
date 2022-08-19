@@ -830,7 +830,7 @@ namespace mars {
     };
 
     template <Integer Dim, Integer ManifoldDim>
-    bool read_mesh(const std::string &path, Mesh<Dim, ManifoldDim> &mesh, const bool verbose = false) {
+    bool read_mesh(const std::string &path, SimplicialMesh<Dim, ManifoldDim> &mesh, const bool verbose = false) {
         std::ifstream is(path);
         if (!is.good()) {
             return false;
@@ -896,7 +896,7 @@ namespace mars {
     }
 
     template <Integer Dim, Integer ManifoldDim>
-    bool write_mesh_MFEM(const std::string &path, const Mesh<Dim, ManifoldDim> &mesh) {
+    bool write_mesh_MFEM(const std::string &path, const SimplicialMesh<Dim, ManifoldDim> &mesh) {
         std::ofstream os;
         os.open(path.c_str());
         if (!os.good()) {
@@ -914,14 +914,14 @@ namespace mars {
     }
 
     template <Integer Dim, Integer ManifoldDim>
-    void writeHeader(const Mesh<Dim, ManifoldDim> &mesh, std::ostream &os) {
+    void writeHeader(const SimplicialMesh<Dim, ManifoldDim> &mesh, std::ostream &os) {
         Integer dim = mesh.ManifoldDim;
         os << "MFEM mesh v1.0\n\ndimension\n";
         os << dim << "\n\n";
     }
 
     template <Integer Dim, Integer ManifoldDim>
-    void writeElements(const Mesh<Dim, ManifoldDim> &mesh, std::ostream &os) {
+    void writeElements(const SimplicialMesh<Dim, ManifoldDim> &mesh, std::ostream &os) {
         os << "elements\n";
         os << mesh.n_elements() << "\n";
 
@@ -946,7 +946,7 @@ namespace mars {
     }
 
     template <Integer Dim, Integer ManifoldDim>
-    void writeVertices(const Mesh<Dim, ManifoldDim> &mesh, std::ostream &os) {
+    void writeVertices(const SimplicialMesh<Dim, ManifoldDim> &mesh, std::ostream &os) {
         Integer dim = mesh.Dim;
         os << "vertices\n";
 
@@ -969,16 +969,16 @@ namespace mars {
     inline bool mesh_hyper_cube(const std::array<Integer, 4> &dims,
                                 const Vector<Real, 4> &lobo,
                                 const Vector<Real, 4> &upbo,
-                                const Mesh<4, 4> &mesh) {
+                                const SimplicialMesh<4, 4> &mesh) {
         return false;
     }
 
-    using Mesh1 = mars::Mesh<1, 1>;
-    using Mesh2 = mars::Mesh<2, 2>;
-    using Mesh3 = mars::Mesh<3, 3>;
-    using Mesh4 = mars::Mesh<4, 4>;
-    using Mesh5 = mars::Mesh<5, 5>;
-    using Mesh6 = mars::Mesh<6, 6>;
+    using Mesh1 = mars::SimplicialMesh<1, 1>;
+    using Mesh2 = mars::SimplicialMesh<2, 2>;
+    using Mesh3 = mars::SimplicialMesh<3, 3>;
+    using Mesh4 = mars::SimplicialMesh<4, 4>;
+    using Mesh5 = mars::SimplicialMesh<5, 5>;
+    using Mesh6 = mars::SimplicialMesh<6, 6>;
 
     using Quad4_Mesh = mars::Mesh<2, 2, DefaultImplementation, Quad4Elem>;
     using Hex8_Mesh = mars::Mesh<3, 3, DefaultImplementation, Hex8Elem>;
