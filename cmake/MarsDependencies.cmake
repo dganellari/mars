@@ -1,36 +1,37 @@
 # MarsDependencies.cmake
 
 # ##############################################################################
+if(MARS_ENABLE_MPI)
+  find_package(MPIExtended REQUIRED)
+  # find_package(MPI REQUIRED)
 
-find_package(MPIExtended REQUIRED)
-# find_package(MPI REQUIRED)
+  if(MPI_FOUND)
+    set(MARS_ENABLE_MPI ON)
 
-if(MPI_FOUND)
-  set(MARS_ENABLE_MPI ON)
+    if(MPI_C_INCLUDE_PATH)
+      set(MARS_DEP_INCLUDES "${MARS_DEP_INCLUDES};${MPI_C_INCLUDE_PATH}")
+    endif()
 
-  if(MPI_C_INCLUDE_PATH)
-    set(MARS_DEP_INCLUDES "${MARS_DEP_INCLUDES};${MPI_C_INCLUDE_PATH}")
+    if(MPI_CXX_INCLUDE_PATH)
+      set(MARS_DEP_INCLUDES "${MARS_DEP_INCLUDES};${MPI_CXX_INCLUDE_PATH}")
+    endif()
+
+    if(MPI_LIBRARIES)
+      set(MARS_DEP_LIBRARIES "${MARS_DEP_LIBRARIES};${MPI_LIBRARIES}")
+    endif()
+
+    if(MPI_C_LIBRARIES)
+      set(MARS_DEP_LIBRARIES "${MARS_DEP_LIBRARIES};${MPI_C_LIBRARIES}")
+    endif()
+
+    if(MPI_CXX_LIBRARIES)
+      set(MARS_DEP_LIBRARIES "${MARS_DEP_LIBRARIES};${MPI_CXX_LIBRARIES}")
+    endif()
+  else()
+    message(
+      FATAL_ERROR
+        "We should never end up here, because find_package above is REQUIRED")
   endif()
-
-  if(MPI_CXX_INCLUDE_PATH)
-    set(MARS_DEP_INCLUDES "${MARS_DEP_INCLUDES};${MPI_CXX_INCLUDE_PATH}")
-  endif()
-
-  if(MPI_LIBRARIES)
-    set(MARS_DEP_LIBRARIES "${MARS_DEP_LIBRARIES};${MPI_LIBRARIES}")
-  endif()
-
-  if(MPI_C_LIBRARIES)
-    set(MARS_DEP_LIBRARIES "${MARS_DEP_LIBRARIES};${MPI_C_LIBRARIES}")
-  endif()
-
-  if(MPI_CXX_LIBRARIES)
-    set(MARS_DEP_LIBRARIES "${MARS_DEP_LIBRARIES};${MPI_CXX_LIBRARIES}")
-  endif()
-else()
-  message(
-    FATAL_ERROR
-      "We should never end up here, because find_package above is REQUIRED")
 endif()
 
 # MPI
