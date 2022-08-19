@@ -163,6 +163,11 @@ if(MARS_ENABLE_KOKKOS)
     # with different CUDA settings
     set(CMAKE_CUDA_FLAGS "${_wrapper_flags} ${_openmp}")
 
+    if(Kokkos_CXX_COMPILER)
+      set(CMAKE_CXX_COMPILER ${Kokkos_CXX_COMPILER})
+      set(CMAKE_C_COMPILER ${Kokkos_C_COMPILER})
+    endif()
+
   else()
     string(FIND "${CMAKE_CXX_FLAGS}" "${_openmp}" _pos)
     if(_pos EQUAL -1)
