@@ -31,7 +31,7 @@ if(MARS_ENABLE_CXXOPTS)
         set(MARS_DEP_LIBRARIES "${MARS_DEP_LIBRARIES};cxxopts::cxxopts")
         set(MARS_DEP_INCLUDES "${MARS_DEP_INCLUDES};${cxxopts_INCLUDE_DIRS}")
     endif()
-    set(WITH_CXXOPTS ON)
+    set(MARS_ENABLE_CXXOPTS ON)
 
     # ##########################################################################
 

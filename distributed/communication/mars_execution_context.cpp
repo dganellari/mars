@@ -37,7 +37,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. */
 #include "mars_execution_context.hpp"
 //#include "mars_threading.hpp"
 
-#ifdef WITH_MPI
+#ifdef MARS_ENABLE_MPI
 #include <mpi.h>
 #endif
 
@@ -54,7 +54,7 @@ namespace mars {
 
     context make_context(const proc_allocation& p) { return context(new execution_context(p)); }
 
-#ifdef WITH_MPI
+#ifdef MARS_ENABLE_MPI
     template <>
     execution_context::execution_context(const proc_allocation& resources, MPI_Comm comm)
         : distributed(make_mpi_context(comm)) /* ,

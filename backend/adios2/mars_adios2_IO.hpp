@@ -3,7 +3,8 @@
 
 #include "mars_config.hpp"
 
-#ifdef WITH_KOKKOS
+#ifdef MARS_ENABLE_KOKKOS_KERNELS
+#include "mars_distributed_finite_element.hpp"
 #include "mars_utils_kokkos.hpp"
 
 #include <memory>

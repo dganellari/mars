@@ -29,8 +29,10 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. */
 /* This example tries to do the same and compare to the step3 p4est example
  * using MARS instead */
 
+#include "mars_base.hpp"
+
 #include "mars.hpp"
-#ifdef WITH_KOKKOS_KERNELS
+#ifdef MARS_ENABLE_KOKKOS_KERNELS
 
 namespace mars {
 
@@ -613,7 +615,7 @@ namespace mars {
         using namespace mars;
         mars::proc_allocation resources;
 
-#ifdef WITH_MPI
+#ifdef MARS_ENABLE_MPI
         // create a distributed context
         auto context = mars::make_context(resources, MPI_COMM_WORLD);
         int proc_num = mars::rank(context);
@@ -623,7 +625,7 @@ namespace mars {
         // auto context = mars::make_context(resources);
 #endif
 
-#ifdef WITH_KOKKOS
+#ifdef MARS_ENABLE_KOKKOS
 
         DistributedQuad4Mesh mesh(context);
         mesh.set_periodic();  // set the domain to be periodic before generation!
@@ -714,4 +716,4 @@ namespace mars {
 #endif
     }
 }  // namespace mars
-#endif  // WITH_KOKKOS_KERNELS
+#endif  // MARS_ENABLE_KOKKOS_KERNELS

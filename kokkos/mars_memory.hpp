@@ -1,6 +1,8 @@
 #ifndef GENERATION_MARS_MEMORY_HPP_
 #define GENERATION_MARS_MEMORY_HPP_
 
+#include "mars_base.hpp"
+
 #include "stdio.h"
 #include "stdlib.h"
 #include "string.h"

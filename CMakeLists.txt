@@ -1,8 +1,9 @@
 cmake_minimum_required(VERSION 3.5...3.19)
 cmake_policy(SET CMP0048 NEW)
+
 project(
   mars
-  VERSION 0.1.0
+  VERSION 0.2.0
   LANGUAGES "CXX" "C"
   HOMEPAGE_URL "https://bitbucket.org/zulianp/mars/src/master/"
   DESCRIPTION

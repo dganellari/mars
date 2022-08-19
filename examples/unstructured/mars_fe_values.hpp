@@ -5,7 +5,7 @@
 #include "mars_invert.hpp"
 #include "mars_tensor_laplacian.hpp"
 
-#ifdef WITH_KOKKOS_KERNELS
+#ifdef MARS_ENABLE_KOKKOS_KERNELS
 #include <Kokkos_ArithTraits.hpp>
 
 namespace mars {

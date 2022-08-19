@@ -283,7 +283,7 @@ namespace mars {
             }
 
             bool save(const std::string &path) const {
-#ifdef WITH_MOONOLITH
+#ifdef MARS_ENABLE_MOONOLITH
                 using namespace moonolith;
 
                 const Integer n_data = x.size();
@@ -365,7 +365,7 @@ namespace mars {
                 return canvas.write(path);
 #else
                 return false;
-#endif  // WITH_MOONOLITH
+#endif  // MARS_ENABLE_MOONOLITH
             }
         };
 

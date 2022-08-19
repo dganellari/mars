@@ -1,6 +1,8 @@
 #ifndef MARS_EDGE_ELEMENT_MAP_KOKKOS_HPP
 #define MARS_EDGE_ELEMENT_MAP_KOKKOS_HPP
 
+#include "mars_base.hpp"
+
 #include "mars_static_math_kokkos.hpp"
 
 #include <cassert>

@@ -1,6 +1,8 @@
 #ifndef MARS_LEPP_BENCHMARK_KOKKOS_HPP_
 #define MARS_LEPP_BENCHMARK_KOKKOS_HPP_
 
+#include "mars_base.hpp"
+
 #include <chrono>
 
 #include "mars_bisection_kokkos.hpp"

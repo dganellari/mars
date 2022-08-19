@@ -12,7 +12,7 @@
 #include <string>
 #include "mars_err.hpp"
 
-#ifdef WITH_KOKKOS_KERNELS
+#ifdef MARS_ENABLE_KOKKOS_KERNELS
 #include <KokkosBlas1_axpby.hpp>
 #include <KokkosBlas1_dot.hpp>
 #include <KokkosBlas1_mult.hpp>

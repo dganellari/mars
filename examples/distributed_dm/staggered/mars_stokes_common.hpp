@@ -1,6 +1,8 @@
 #ifndef MARS_SC_STOKES_
 #define MARS_SC_STOKES_
 
+#include "mars_base.hpp"
+
 #include "mars.hpp"
 #include "mars_staggered_utils.hpp"
 

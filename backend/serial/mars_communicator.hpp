@@ -3,7 +3,7 @@
 
 #include "mars_base.hpp"
 
-#ifdef WITH_MPI
+#ifdef MARS_ENABLE_MPI
 
 #include <assert.h>
 #include <mpi.h>
@@ -478,4 +478,4 @@ namespace mars {
 }  // namespace mars
 
 #endif  // MARS_COMMUNICATOR_H
-#endif  // WITH_MPI
+#endif  // MARS_ENABLE_MPI

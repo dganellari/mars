@@ -1,6 +1,8 @@
 #ifndef MARS_BISECTION_KOKKOS_HPP
 #define MARS_BISECTION_KOKKOS_HPP
 
+#include "mars_base.hpp"
+
 #include <iostream>
 #include <typeinfo>
 // #include "mars_dof_map.hpp"

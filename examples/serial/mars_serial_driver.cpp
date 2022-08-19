@@ -4,7 +4,7 @@
 #include "mars_config.hpp"
 #include "mars_err.hpp"
 
-#ifdef WITH_CXXOPTS
+#ifdef MARS_ENABLE_CXXOPTS
 #include "cxxopts.hpp"
 #endif
 #include <iostream>
@@ -13,22 +13,22 @@
 #include "mars.hpp"
 #include "mars_env.hpp"
 
-#ifdef WITH_PAR_MOONOLITH
+#ifdef MARS_ENABLE_PAR_MOONOLITH
 #include <mpi.h>
 
 #include "mars_moonolith_test.hpp"
-#endif  // WITH_PAR_MOONOLITH
+#endif  // MARS_ENABLE_PAR_MOONOLITH
 
-#ifdef WITH_MPI
-#ifdef WITH_KOKKOS_KERNELS
+#ifdef MARS_ENABLE_MPI
+#ifdef MARS_ENABLE_KOKKOS_KERNELS
 #include "mars_advection.hpp"
 #include "mars_constant_viscosity_stokes.hpp"
 #include "mars_poisson.hpp"
 #include "mars_test_kokkos.hpp"
 #include "mars_test_mpi.hpp"
 #include "mars_variable_viscosity_stokes.hpp"
-#endif  // WITH_KokkosKernels
-#endif  // WITH_MPI
+#endif  // MARS_ENABLE_KOKKOS_KERNELS
+#endif  // MARS_ENABLE_MPI
 #include <chrono>
 
 using namespace std::chrono;
@@ -847,7 +847,7 @@ void run_benchmarks(int level, int refine_level) {
       PreLeppBenchmark<Mesh2> prb;
       b.run(refine_level, mesh2, "prb"); */
 
-#ifdef WITH_KOKKOS_KERNELS
+#ifdef MARS_ENABLE_KOKKOS_KERNELS
 
     /* ParallelQuad4Mesh nsm;
     generate_cube(nsm, level, refine_level, 0); */
@@ -1069,7 +1069,7 @@ void write_file() {
 
 int main_serial(int argc, char *argv[]) {
     using namespace mars;
-#ifdef WITH_CXXOPTS
+#ifdef MARS_ENABLE_CXXOPTS
     using namespace cxxopts;
 
     /* MARS::init(argc, argv); */
@@ -1128,9 +1128,9 @@ int main_serial(int argc, char *argv[]) {
         apps["read_file"] = read_file;
         apps["write_file"] = write_file;
 
-#ifdef WITH_PAR_MOONOLITH
+#ifdef MARS_ENABLE_PAR_MOONOLITH
         apps["mars_moonolith_test"] = run_mars_moonolith_test;
-#endif  // WITH_PAR_MOONOLITH
+#endif  // MARS_ENABLE_PAR_MOONOLITH
 
         apps["bisection_3D"] = [=]() { test_bisection_3D(); };
         apps["uniform_bisection_2D"] = [=]() { test_uniform_bisection_2D(level, filename); };
@@ -1148,7 +1148,7 @@ int main_serial(int argc, char *argv[]) {
 
         apps["benchmarks"] = [=]() { run_benchmarks(level, refine_level); };
 
-#ifdef WITH_KOKKOS_KERNELS
+#ifdef MARS_ENABLE_KOKKOS_KERNELS
 
         apps["mars_mesh_generation_kokkos_2D_a"] = [=]() { test_mars_mesh_generation_kokkos_2D(2, 4); };
         apps["mars_mesh_generation_kokkos_2D_b"] = [=]() { test_mars_mesh_generation_kokkos_2D(level + 4, level); };
@@ -1156,7 +1156,7 @@ int main_serial(int argc, char *argv[]) {
         apps["mars_mesh_generation_kokkos_3D"] = [=]() { test_mars_mesh_generation_kokkos_3D(level, level, level); };
         apps["mars_mesh_generation_kokkos_1D"] = [=]() { test_mars_mesh_generation_kokkos_1D(level); };
 
-#ifdef WITH_MPI
+#ifdef MARS_ENABLE_MPI
 
         apps["mars_distributed_mesh_generation_2D"] = [=]() {
             test_mars_distributed_nonsimplex_mesh_generation_kokkos_2D(xDim, yDim);
@@ -1204,7 +1204,7 @@ int main_serial(int argc, char *argv[]) {
         apps["advection"] = [=]() { advection(level); };
 
 #endif
-#endif  // WITH_KOKKOS_KERNELS
+#endif  // MARS_ENABLE_KOKKOS_KERNELS
 
         if (!app.empty()) {
             auto it = apps.find(app);

@@ -1,7 +1,7 @@
 #ifndef MARS_SPACETIME_EXAMPLES
 #define MARS_SPACETIME_EXAMPLES
 
-#ifdef WITH_KOKKOS_KERNELS
+#ifdef MARS_ENABLE_KOKKOS_KERNELS
 #include <Kokkos_ArithTraits.hpp>
 #include <cmath>
 

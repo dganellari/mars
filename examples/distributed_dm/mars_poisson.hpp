@@ -32,7 +32,10 @@ uk =[ u1, ... uL ], L = 4
 ---------------------
 //local to global
 u = P uk */
-#ifdef WITH_KOKKOS_KERNELS
+
+#include "mars_base.hpp"
+
+#ifdef MARS_ENABLE_KOKKOS_KERNELS
 #include <KokkosBlas1_sum.hpp>
 
 #include "mars.hpp"
@@ -123,7 +126,7 @@ namespace mars {
         using namespace mars;
         mars::proc_allocation resources;
 
-#ifdef WITH_MPI
+#ifdef MARS_ENABLE_MPI
         // create a distributed context
         auto context = mars::make_context(resources, MPI_COMM_WORLD);
         int proc_num = mars::rank(context);
@@ -133,7 +136,7 @@ namespace mars {
         // auto context = mars::make_context(resources);
 #endif
 
-#ifdef WITH_KOKKOS
+#ifdef MARS_ENABLE_KOKKOS
 
         Kokkos::Timer timer;
 

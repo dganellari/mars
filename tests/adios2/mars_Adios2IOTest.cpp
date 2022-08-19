@@ -63,7 +63,7 @@ public:
         using namespace mars;
         mars::proc_allocation resources;
 
-#ifdef WITH_MPI
+#ifdef MARS_ENABLE_MPI
         // create a distributed context
         auto context = mars::make_context(resources, MPI_COMM_WORLD);
         int proc_num = mars::rank(context);
@@ -73,7 +73,7 @@ public:
         // auto context = mars::make_context(resources);
 #endif
 
-#ifdef WITH_KOKKOS
+#ifdef MARS_ENABLE_KOKKOS
 
         Kokkos::Timer timer;
 
@@ -82,20 +82,20 @@ public:
 
         double time_gen = timer.seconds();
         std::cout << "Mesh Generation took: " << time_gen << std::endl;
-/*
-        Kokkos::Timer timer_dof;
+        /*
+                Kokkos::Timer timer_dof;
 
-        DOFHandler_t dof_handler(&mesh);
-        dof_handler.enumerate_dofs();
-        dof_handler.set_block(1);
+                DOFHandler_t dof_handler(&mesh);
+                dof_handler.enumerate_dofs();
+                dof_handler.set_block(1);
 
-        double time_dh = timer_dof.seconds();
-        std::cout << "DOFHandler enum took: " << time_dh << std::endl;
-        auto fe = build_fe_dof_map<DOFHandler_t>(dof_handler);
- */
+                double time_dh = timer_dof.seconds();
+                std::cout << "DOFHandler enum took: " << time_dh << std::endl;
+                auto fe = build_fe_dof_map<DOFHandler_t>(dof_handler);
+         */
         Kokkos::Timer timer_map;
 
-        //builds FEDOFMAP from the mesh and block 1.
+        // builds FEDOFMAP from the mesh and block 1.
         auto fe = build_fe_dof_map<DOFHandler_t>(mesh, 1);
         auto dof_handler = fe.get_dof_handler();
 

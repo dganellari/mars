@@ -10,7 +10,7 @@
 // #include "mars_mesh.hpp"
 // #include "mars_mesh_generation.hpp"
 
-#ifdef WITH_KOKKOS
+#ifdef MARS_ENABLE_KOKKOS_KERNELS
 #include "mars_mesh_kokkos.hpp"
 
 ////////////////////////////////////
@@ -317,7 +317,7 @@ namespace mars {
                 ViewVectorType<Real> points("points", n_nodes * Dim);
                 Adios2Helper::write_nodes(mesh, points);
 
-#ifdef MARS_USE_CUDA
+#ifdef MARS_ENABLE_CUDA
                 var_connectivity.SetMemorySpace(::adios2::MemorySpace::CUDA);
                 var_vertices.SetMemorySpace(::adios2::MemorySpace::CUDA);
 #endif
@@ -367,7 +367,7 @@ namespace mars {
             ::adios2::Variable<Real> var = io.InquireVariable<Real>(this->name);
             ViewVectorType<Real> local_data;
             Adios2Helper::write_field(mesh, local_data, this->data);
-#ifdef MARS_USE_CUDA
+#ifdef MARS_ENABLE_CUDA
             var.SetMemorySpace(::adios2::MemorySpace::CUDA);
 #endif
             engine.Put<Real>(var, local_data.data());

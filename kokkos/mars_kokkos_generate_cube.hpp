@@ -1,6 +1,8 @@
 #ifndef MARS_KOKKOS_GENERATE_CUBE_HPP
 #define MARS_KOKKOS_GENERATE_CUBE_HPP
 
+#include "mars_base.hpp"
+
 #include "mars_mesh_kokkos.hpp"
 
 namespace mars {

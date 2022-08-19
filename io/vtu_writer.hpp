@@ -1,7 +1,7 @@
 #ifndef VTU_WRITER_H
 #define VTU_WRITER_H
 
-#ifdef WITH_KOKKOS_KERNELS
+#ifdef MARS_ENABLE_KOKKOS_KERNELS
 #include <KokkosSparse_spmv.hpp>
 #include <Kokkos_Core.hpp>
 #include "KokkosSparse_CrsMatrix.hpp"

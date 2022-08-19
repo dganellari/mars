@@ -5,7 +5,7 @@
 #include "mars_globals.hpp"
 #include "mars_mesh.hpp"
 
-#ifdef WITH_KOKKOS
+#ifdef MARS_ENABLE_KOKKOS
 #include "mars_mesh_kokkos.hpp"
 #endif
 

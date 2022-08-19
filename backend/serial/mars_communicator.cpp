@@ -1,7 +1,7 @@
 
 #include "mars_base.hpp"
 
-#ifdef WITH_MPI
+#ifdef MARS_ENABLE_MPI
 
 #include <iostream>
 #include "mars_communicator.hpp"
@@ -371,4 +371,4 @@ namespace mars {
 
 // clean up macros
 #undef MARS_MPI_CATCH_ERROR
-#endif  // WITH_MPI
+#endif  // MARS_ENABLE_MPI

@@ -21,7 +21,7 @@ void mesh_test(int &argc, char **&argv, const int level) {
             resources.num_threads = nt;
         } */
 
-#ifdef WITH_MPI
+#ifdef MARS_ENABLE_MPI
         // initialize MPI
         marsenv::mpi_guard guard(argc, argv, false);
 
@@ -38,7 +38,7 @@ void mesh_test(int &argc, char **&argv, const int level) {
         // auto context = mars::make_context(resources);
 #endif
 
-#ifdef WITH_KOKKOS_KERNELS
+#ifdef MARS_ENABLE_KOKKOS_KERNELS
 
         Kokkos::Timer timer;
         // create the quad mesh distributed through the mpi procs.

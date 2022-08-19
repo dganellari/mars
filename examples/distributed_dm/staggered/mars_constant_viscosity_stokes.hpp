@@ -1,7 +1,9 @@
 #ifndef MARS_CV_STOKES_
 #define MARS_CV_STOKES_
 
-#ifdef WITH_KOKKOS_KERNELS
+#include "mars_base.hpp"
+
+#ifdef MARS_ENABLE_KOKKOS_KERNELS
 #include "mars.hpp"
 #include "mars_staggered_utils.hpp"
 #include "mars_stokes_common.hpp"
@@ -157,7 +159,7 @@ namespace mars {
         using namespace mars;
         mars::proc_allocation resources;
 
-#ifdef WITH_MPI
+#ifdef MARS_ENABLE_MPI
         // create a distributed context
         auto context = mars::make_context(resources, MPI_COMM_WORLD);
         int proc_num = mars::rank(context);
@@ -167,7 +169,7 @@ namespace mars {
         // auto context = mars::make_context(resources);
 #endif
 
-#ifdef WITH_KOKKOS
+#ifdef MARS_ENABLE_KOKKOS
 
         Kokkos::Timer timer;
         // create the quad mesh distributed through the mpi procs.

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "mars_base.hpp"
+
 #include "mars_device_vector.hpp"
 #include "mars_sub_view.hpp"
 

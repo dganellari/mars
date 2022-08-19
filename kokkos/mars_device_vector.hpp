@@ -1,6 +1,8 @@
 #ifndef MARS_VECTOR_KOKKOS_HPP
 #define MARS_VECTOR_KOKKOS_HPP
 
+#include "mars_base.hpp"
+
 #include <cmath>
 #include <iostream>
 #include "mars_utils_kokkos.hpp"

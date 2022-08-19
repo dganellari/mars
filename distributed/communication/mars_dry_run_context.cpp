@@ -31,7 +31,10 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. */
 #include <string>
 #include <vector>
 
-#ifndef WITH_KOKKOS
+#include "mars_base.hpp"
+#include "mars_gathered_vector.hpp"
+
+#ifdef MARS_ENABLE_KOKKOS
 #include <mars_distributed_context.hpp>
 //#include <mars_threading.hpp>
 #endif
@@ -67,7 +70,7 @@ namespace mars {
 
             return gathered_vector<Integer>(std::move(gathered_gids), std::move(partition));
         }
-#ifdef WITH_KOKKOS
+#ifdef MARS_ENABLE_KOKKOS
         ViewVectorType<Integer> scatter_gids(const ViewVectorType<Integer> global,
                                              const ViewVectorType<Integer> local) const {
             return ViewVectorType<Integer>("dry_run", 0);

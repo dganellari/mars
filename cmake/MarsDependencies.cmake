@@ -6,7 +6,7 @@ find_package(MPIExtended REQUIRED)
 # find_package(MPI REQUIRED)
 
 if(MPI_FOUND)
-  set(WITH_MPI ON)
+  set(MARS_ENABLE_MPI ON)
 
   if(MPI_C_INCLUDE_PATH)
     set(MARS_DEP_INCLUDES "${MARS_DEP_INCLUDES};${MPI_C_INCLUDE_PATH}")
@@ -81,7 +81,7 @@ if(MARS_ENABLE_KOKKOS)
       REQUIRED)
   endif()
   message(VERBOSE "Found Kokkos")
-  set(WITH_KOKKOS ON)
+  # set(MARS_ENABLE_KOKKOS ON)
   # check what was found
   message(STATUS "Kokkos_CXX_FLAGS: ${Kokkos_CXX_FLAGS}")
   message(STATUS "Kokkos_CXX_COMPILER = ${Kokkos_CXX_COMPILER}")
@@ -135,18 +135,18 @@ if(MARS_ENABLE_KOKKOS)
   )
 
   # perhaps later we can attach this to the target
-  add_compile_definitions("MARS_ENABLE_KOKKOS")
+  # add_compile_definitions("MARS_ENABLE_KOKKOS")
 
   if(MARS_ENABLE_KOKKOS_CUDA)
     if(NOT DEFINED Kokkos_ENABLE_CUDA OR NOT ${Kokkos_ENABLE_CUDA})
       message(
         FATAL_ERROR
-          "Enable Kokkos Cuda or unset MARS_USE_CUDA to continue with OpenMP!")
+          "Enable Kokkos Cuda or unset MARS_ENABLE_CUDA to continue with OpenMP!")
     endif()
     message(VERBOSE "Kokkos CUDA Enabled = ${Kokkos_ENABLE_CUDA}")
     # target_compile_definitions(${_KK_TARGET} INTERFACE
     # MARS_ENABLE_KOKKOS_CUDA)
-    add_compile_definitions("MARS_ENABLE_KOKKOS_CUDA")
+    # add_compile_definitions("MARS_ENABLE_KOKKOS_CUDA")
     kokkos_check(OPTIONS CUDA_LAMBDA)
 
     # get cuda flags from the wrapper alternatively we can strip
@@ -222,7 +222,7 @@ if(MARS_ENABLE_KOKKOS)
     endif()
 
     message(VERBOSE "Found Kokkos Kernels")
-    set(WITH_KOKKOS_KERNELS ON)
+    # set(MARS_ENABLE_KOKKOS_KERNELS ON)
     message(VERBOSE "KokkosKernels_LIBRARIES = ${KokkosKernels_LIBRARIES}")
     message(VERBOSE
             "KokkosKernels_LIBRARY_DIRS = ${KokkosKernels_LIBRARY_DIRS}")
@@ -262,19 +262,18 @@ endif()
 
 if(MARS_ENABLE_MOONOLITH)
   add_subdirectory(moonolith_adapter)
-  set(WITH_PAR_MOONOLITH ON)
 endif()
 
 if(MARS_ENABLE_CXXOPTS)
   include(cxxopts/cxxopts.cmake)
-  set(WITH_CXXOPTS ON)
+  # set(MARS_ENABLE_CXXOPTS ON)
 endif()
 
 if(MARS_ENABLE_ADIOS2)
   find_package(ADIOS2 REQUIRED)
   if(ADIOS2_FOUND)
     message(STATUS "Adios2 found.")
-    set(WITH_ADIOS2 ON)
+    # set(MARS_ENABLE_ADIOS2 ON)
     add_subdirectory(backend/adios2)
 
     set(ADIOS2_INCLUDE_DIRS ${ADIOS2_DIR}/../../../include)

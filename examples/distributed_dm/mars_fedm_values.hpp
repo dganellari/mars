@@ -3,9 +3,9 @@
 
 #include "mars.hpp"
 
-#ifdef WITH_KOKKOS_KERNELS
+#ifdef MARS_ENABLE_KOKKOS_KERNELS
 #include "mars_quad4.hpp"
-#ifdef WITH_MPI
+#ifdef MARS_ENABLE_MPI
 #include "mars_distributed_finite_element.hpp"
 #endif
 
@@ -264,4 +264,4 @@ namespace mars {
 
 }  // namespace mars
 #endif
-#endif  // WITH_KOKKOS_KERNELS
+#endif  // MARS_ENABLE_KOKKOS_KERNELS

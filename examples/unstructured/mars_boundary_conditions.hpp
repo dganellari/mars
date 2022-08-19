@@ -4,7 +4,7 @@
 #include "mars_base.hpp"
 #include "mars_globals.hpp"
 
-#ifdef WITH_KOKKOS_KERNELS
+#ifdef MARS_ENABLE_KOKKOS_KERNELS
 #include "mars_laplace_ex.hpp"
 
 namespace mars {

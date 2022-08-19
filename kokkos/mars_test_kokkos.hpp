@@ -1,3 +1,5 @@
+#include "mars_base.hpp"
+
 #include "mars_kokkos_generate_cube.hpp"
 #include "mars_mesh_kokkos.hpp"
 

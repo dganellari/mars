@@ -30,7 +30,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. */
 
 namespace mars {
 
-#ifdef WITH_MPI
+#ifdef MARS_ENABLE_MPI
 
     void test_mpi(int &argc, char **&argv) {
         using namespace mars;
@@ -64,7 +64,7 @@ namespace mars {
                 resources.num_threads = nt;
             } */
 
-#ifdef WITH_MPI
+#ifdef MARS_ENABLE_MPI
             // initialize MPI
             marsenv::mpi_guard guard(argc, argv, false);
 
@@ -94,7 +94,7 @@ namespace mars {
         }
     }
 
-#ifdef WITH_KOKKOS
+#ifdef MARS_ENABLE_KOKKOS
     template <typename... T>
     using user_tuple = mars::ViewsTuple<T...>;
 
@@ -126,7 +126,7 @@ namespace mars {
                 resources.num_threads = nt;
             } */
 
-#ifdef WITH_MPI
+#ifdef MARS_ENABLE_MPI
             // initialize MPI
             /* marsenv::mpi_guard guard(argc, argv, false); */
 
@@ -143,7 +143,7 @@ namespace mars {
             // auto context = mars::make_context(resources);
 #endif
 
-#ifdef WITH_KOKKOS_KERNELS
+#ifdef MARS_ENABLE_KOKKOS_KERNELS
 
             Kokkos::Timer timer_gen;
             DistributedQuad4Mesh mesh(context);
@@ -173,7 +173,7 @@ namespace mars {
                 resources.num_threads = nt;
             }*/
 
-#ifdef WITH_MPI
+#ifdef MARS_ENABLE_MPI
             /* initialize MPI */
             /* marsenv::mpi_guard guard(argc, argv, false); */
 
@@ -190,7 +190,7 @@ namespace mars {
             auto context = mars::make_context(resources); */
 #endif
 
-#ifdef WITH_KOKKOS_KERNELS
+#ifdef MARS_ENABLE_KOKKOS_KERNELS
             using namespace Kokkos;
 
             DistributedHex8Mesh mesh(context);
@@ -211,7 +211,7 @@ namespace mars {
         using namespace mars;
         mars::proc_allocation resources;
 
-#ifdef WITH_MPI
+#ifdef MARS_ENABLE_MPI
         // create a distributed context
         auto context = mars::make_context(resources, MPI_COMM_WORLD);
         int proc_num = mars::rank(context);
@@ -221,7 +221,7 @@ namespace mars {
         // auto context = mars::make_context(resources);
 #endif
 
-#ifdef WITH_KOKKOS_KERNELS
+#ifdef MARS_ENABLE_KOKKOS_KERNELS
 
         Kokkos::Timer timer;
 

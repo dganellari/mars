@@ -9,22 +9,22 @@
 #include "mars.hpp"
 #include "mars_env.hpp"
 
-#ifdef WITH_PAR_MOONOLITH
+#ifdef MARS_ENABLE_PAR_MOONOLITH
 #include <mpi.h>
 
 #include "mars_moonolith_test.hpp"
-#endif  // WITH_PAR_MOONOLITH
+#endif  // MARS_ENABLE_PAR_MOONOLITH
 
-#ifdef WITH_MPI
-#ifdef WITH_KOKKOS_KERNELS
+#ifdef MARS_ENABLE_MPI
+#ifdef MARS_ENABLE_KOKKOS_KERNELS
 #include "mars_advection.hpp"
 #include "mars_constant_viscosity_stokes.hpp"
 #include "mars_poisson.hpp"
 #include "mars_test_kokkos.hpp"
 #include "mars_test_mpi.hpp"
 #include "mars_variable_viscosity_stokes.hpp"
-#endif  // WITH_KokkosKernels
-#endif  // WITH_MPI
+#endif  // MARS_ENABLE_KOKKOS_KERNELS
+#endif  // MARS_ENABLE_MPI
 #include <chrono>
 using namespace std::chrono;
 

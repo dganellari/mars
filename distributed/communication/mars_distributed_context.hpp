@@ -40,7 +40,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. */
 #include <mars_pp_util.hpp>
 
 #include "mars_gathered_vector.hpp"
-#ifdef WITH_KOKKOS
+#ifdef MARS_ENABLE_KOKKOS
 #include "mars_utils_kokkos.hpp"
 #endif
 
@@ -92,7 +92,7 @@ namespace mars {
 
 #endif  // _WIN32
 
-#ifdef WITH_KOKKOS
+#ifdef MARS_ENABLE_KOKKOS
 #define MARS_PUBLIC_PTOP_(T)                                                                       \
     ViewObject<T> min(ViewObject<T> value) const { return impl_->min(value); }                     \
     ViewObject<T> max(ViewObject<T> value) const { return impl_->max(value); }                     \
@@ -194,7 +194,7 @@ namespace mars {
     public:
         using gid_vector = std::vector<Integer>;
 
-#ifdef WITH_KOKKOS
+#ifdef MARS_ENABLE_KOKKOS
         using local_sfc = ViewVectorType<Integer>;
 #endif
         // default constructor uses a local context: see below.
@@ -210,7 +210,7 @@ namespace mars {
             return impl_->gather_gids(local_gids);
         }
 
-#ifdef WITH_KOKKOS
+#ifdef MARS_ENABLE_KOKKOS
         local_sfc scatter_gids(const local_sfc global, const local_sfc local) const {
             return impl_->scatter_gids(global, local);
         }
@@ -233,7 +233,7 @@ namespace mars {
         // MARS_PP_FOREACH(MARS_PUBLIC_COLLECTIVES_, MARS_COLLECTIVE_TYPES_);
         GENERATE_COLLECTIVE_PUBLIC
 
-#ifdef WITH_KOKKOS
+#ifdef MARS_ENABLE_KOKKOS
         // MARS_PP_FOREACH(MARS_PUBLIC_PTOP_, MARS_PTOP_TYPES_);
         GENERATE_PTOP_PUBLIC
 #endif
@@ -252,7 +252,7 @@ namespace mars {
             // MARS_PP_FOREACH(MARS_INTERFACE_COLLECTIVES_, MARS_COLLECTIVE_TYPES_)
             GENERATE_COLLECTIVE_INTERFACE
 
-#ifdef WITH_KOKKOS
+#ifdef MARS_ENABLE_KOKKOS
             virtual local_sfc scatter_gids(const local_sfc global, const local_sfc local) const = 0;
             virtual void scatterv_gids(const local_sfc global,
                                        const local_sfc local,
@@ -272,7 +272,7 @@ namespace mars {
             explicit wrap(const Impl &impl) : wrapped(impl) {}
             explicit wrap(Impl &&impl) : wrapped(std::move(impl)) {}
 
-#ifdef WITH_KOKKOS
+#ifdef MARS_ENABLE_KOKKOS
             virtual local_sfc scatter_gids(const local_sfc global, const local_sfc local) const override {
                 return wrapped.scatter_gids(global, local);
             }
@@ -311,7 +311,7 @@ namespace mars {
 
     struct local_context {
         using gid_vector = std::vector<Integer>;
-#ifdef WITH_KOKKOS
+#ifdef MARS_ENABLE_KOKKOS
         using local_sfc = ViewVectorType<Integer>;
         local_sfc scatter_gids(const local_sfc global, const local_sfc local) const {
             return ViewVectorType<Integer>("local_context_view", 0);

@@ -6,7 +6,7 @@
 #include "mars_base.hpp"
 #include "mars_config.hpp"
 
-#ifdef WITH_KOKKOS
+#ifdef MARS_ENABLE_KOKKOS
 #define MARS_INLINE_FUNCTION KOKKOS_INLINE_FUNCTION
 #define MARS_LAMBDA KOKKOS_LAMBDA
 #include <Kokkos_Core.hpp>
@@ -132,7 +132,7 @@ namespace mars {
         return out;
     }
 
-#ifdef WITH_KOKKOS
+#ifdef MARS_ENABLE_KOKKOS
 
     template <typename T, Integer N>
     MARS_INLINE_FUNCTION int find_pivot(TempArray<T, N>& in, int start, int end) {

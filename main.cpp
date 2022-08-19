@@ -5,7 +5,7 @@
 #include "mars_config.hpp"
 #include "mars_err.hpp"
 
-#ifdef WITH_CXXOPTS
+#ifdef MARS_ENABLE_CXXOPTS
 #include "cxxopts.hpp"
 #endif
 #include <iostream>
@@ -14,16 +14,16 @@
 #include "mars.hpp"
 #include "mars_env.hpp"
 
-#ifdef WITH_MPI
-#ifdef WITH_KOKKOS_KERNELS
+#ifdef MARS_ENABLE_MPI
+#ifdef MARS_ENABLE_KOKKOS_KERNELS
 #include "mars_advection.hpp"
 #include "mars_constant_viscosity_stokes.hpp"
 #include "mars_poisson.hpp"
 #include "mars_test_kokkos.hpp"
 #include "mars_test_mpi.hpp"
 #include "mars_variable_viscosity_stokes.hpp"
-#endif  // WITH_KokkosKernels
-#endif  // WITH_MPI
+#endif  // MARS_ENABLE_KOKKOS_KERNELS
+#endif  // MARS_ENABLE_MPI
 #include <chrono>
 
 using namespace std::chrono;
@@ -34,7 +34,7 @@ void run_benchmarks(int level, int refine_level) {
     std::cout << "Generation level:" << level << std::endl;
     std::cout << "Refinement level:" << refine_level << std::endl;
 
-#ifdef WITH_KOKKOS_KERNELS
+#ifdef MARS_ENABLE_KOKKOS_KERNELS
 
     /* ParallelQuad4Mesh nsm;
     generate_cube(nsm, level, refine_level, 0); */
@@ -54,7 +54,7 @@ void run_benchmarks(int level, int refine_level) {
 
 int main(int argc, char *argv[]) {
     using namespace mars;
-#ifdef WITH_CXXOPTS
+#ifdef MARS_ENABLE_CXXOPTS
     using namespace cxxopts;
 
     /* MARS::init(argc, argv); */
@@ -99,7 +99,7 @@ int main(int argc, char *argv[]) {
         // FIXME create tests, benchmarks and separate apps for what is below
         std::map<std::string, std::function<void()>> apps;
 
-#ifdef WITH_KOKKOS_KERNELS
+#ifdef MARS_ENABLE_KOKKOS_KERNELS
 
         apps["mars_mesh_generation_kokkos_2D_a"] = [=]() { test_mars_mesh_generation_kokkos_2D(2, 4); };
         apps["mars_mesh_generation_kokkos_2D_b"] = [=]() { test_mars_mesh_generation_kokkos_2D(level + 4, level); };
@@ -107,7 +107,7 @@ int main(int argc, char *argv[]) {
         apps["mars_mesh_generation_kokkos_3D"] = [=]() { test_mars_mesh_generation_kokkos_3D(level, level, level); };
         apps["mars_mesh_generation_kokkos_1D"] = [=]() { test_mars_mesh_generation_kokkos_1D(level); };
 
-#ifdef WITH_MPI
+#ifdef MARS_ENABLE_MPI
 
         apps["mars_distributed_mesh_generation_2D"] = [=]() {
             test_mars_distributed_nonsimplex_mesh_generation_kokkos_2D(xDim, yDim);
@@ -155,7 +155,7 @@ int main(int argc, char *argv[]) {
         apps["advection"] = [=]() { advection(level); };
 
 #endif
-#endif  // WITH_KOKKOS_KERNELS
+#endif  // MARS_ENABLE_KOKKOS_KERNELS
 
         if (!app.empty()) {
             auto it = apps.find(app);

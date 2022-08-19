@@ -3,12 +3,12 @@
 
 #include "mars_config.hpp"
 
-#ifdef WITH_KOKKOS_KERNELS
+#ifdef MARS_ENABLE_KOKKOS_KERNELS
 #include "KokkosKernels_default_types.hpp"
 #include "KokkosSparse_CrsMatrix.hpp"
 #endif
 
-#ifdef WITH_KOKKOS
+#ifdef MARS_ENABLE_KOKKOS
 #include "Kokkos_Layout.hpp"
 #include "Kokkos_UnorderedMap.hpp"
 #endif
@@ -33,15 +33,15 @@ namespace mars {
 #endif
 
 // Default Kokkos Exec space.
-#if defined(MARS_USE_CUDA)
-#if defined(MARS_USE_CUDAUVM)
+#if defined(MARS_ENABLE_CUDA)
+#if defined(MARS_ENABLE_CUDAUVM)
     using KokkosSpace = Kokkos::CudaUVMSpace;
 #else
     using KokkosSpace = Kokkos::CudaSpace;
-#endif  // MARS_USE_CUDAUVM
+#endif  // MARS_ENABLE_CUDAUVM
     using KokkosLayout = Kokkos::LayoutLeft;
 #define MARS_LAMBDA_REF [&] __device__;
-#else  // MARS_USE_CUDA
+#else  // MARS_ENABLE_CUDA
 #ifdef KOKKOS_ENABLE_OPENMP
     using KokkosSpace = Kokkos::HostSpace;
     using KokkosLayout = Kokkos::LayoutRight;
@@ -50,7 +50,7 @@ namespace mars {
     using KokkosLayout = Kokkos::LayoutRight;
 #endif  // KOKKOS_ENABLE_OPENMP
 #define MARS_LAMBDA_REF [&]
-#endif  // MARS_USE_CUDA
+#endif  // MARS_ENABLE_CUDA
 
     template <typename T>
     using ViewVectorTypeStride = Kokkos::View<T*, Kokkos::LayoutStride, KokkosSpace>;

@@ -53,13 +53,13 @@ It will automatically find Kokkos if installed into your system. It can work wit
 Mars looks for KOKKOS_DIR or TRILINOS_DIR into the environment variables. 
 When using Trilinos it will find them from Trilinos in $TRILINOS_DIR otherwise it will look for kokkos and kokkos kernels installations at $KOKKOS_DIR.
 
-Use -DTRY_WITH_KOKKOS=ON to use the feature. For more details check CMakeLists.txt.
+Use -DMARS_ENABLE_KOKKOS=ON to use the feature. For more details check CMakeLists.txt.
 
 The default when compiling MARS with Kokkos without specifing any other CMAKE flag is the Kokkos/OpenMP execution space. Kokkos should also be compiled with OpenMP support. Otherwise the default is the serial execution space.
 
-To compile for CUDA the Cmake flag needs to be set: MARS_USE_CUDA=ON. An example would be: 
+To compile for CUDA the Cmake flag needs to be set: MARS_ENABLE_CUDA=ON. An example would be: 
 ```
-cmake -DCMAKE_VERBOSE_MAKEFILE=ON -DCMAKE_BUILD_TYPE=Release -DTRY_WITH_KOKKOS=ON -DMARS_USE_CUDA=ON ..
+cmake -DCMAKE_VERBOSE_MAKEFILE=ON -DCMAKE_BUILD_TYPE=Release -DMARS_ENABLE_KOKKOS=ON -DMARS_ENABLE_CUDA=ON ..
 ```
 
 If compiled for CUDA then Kokkos should also be compiled with CUDA (Kokkos_ENABLE_CUDA=ON) and CUDA_LAMBDA (Kokkos_ENABLE_CUDA_LAMBDA=ON) support.

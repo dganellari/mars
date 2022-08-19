@@ -5,6 +5,9 @@
 #include <cmath>
 #include <initializer_list>
 #include <iostream>
+
+#include "mars_base.hpp"
+
 #include "mars_utils_kokkos.hpp"
 
 namespace mars {

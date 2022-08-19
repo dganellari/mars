@@ -1,7 +1,9 @@
 #ifndef MARS_POISSON_OPERATOR_HPP
 #define MARS_POISSON_OPERATOR_HPP
 
-#ifdef WITH_KOKKOS_KERNELS
+#include "mars_base.hpp"
+
+#ifdef MARS_ENABLE_KOKKOS_KERNELS
 #include "mars_copy_operator.hpp"
 #include "mars_matrix_free_operator.hpp"
 

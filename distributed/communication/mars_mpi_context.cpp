@@ -32,7 +32,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. */
 
 #include "mars_config.hpp"
 
-#ifndef WITH_MPI
+#ifndef MARS_ENABLE_MPI
 #error "build only if MPI is enabled"
 #endif
 
@@ -61,7 +61,7 @@ namespace mars {
             return mpi::gather_all_with_partition(local_gids, comm_);
         }
 
-#ifdef WITH_KOKKOS
+#ifdef MARS_ENABLE_KOKKOS
         ViewVectorType<Integer> scatter_gids(const ViewVectorType<Integer> global,
                                              const ViewVectorType<Integer> local) const {
             return mpi::scatter(global, local, comm_);
@@ -120,7 +120,7 @@ namespace mars {
         T max(T value) const {
             return mpi::reduce(value, MPI_MAX, comm_);
         }
-#ifdef WITH_KOKKOS
+#ifdef MARS_ENABLE_KOKKOS
         template <typename T>
         ViewObject<T> min(ViewObject<T> value) const {
             return mpi::reduce(value, MPI_MIN, comm_);

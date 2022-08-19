@@ -1,8 +1,8 @@
 #ifndef GENERATION_MARS_DISTRIBUTED_DM_HPP_
 #define GENERATION_MARS_DISTRIBUTED_DM_HPP_
 
-#ifdef WITH_MPI
-#ifdef WITH_KOKKOS_KERNELS
+#ifdef MARS_ENABLE_MPI
+#ifdef MARS_ENABLE_KOKKOS_KERNELS
 #include "mars_distributed_base_data_management.hpp"
 #include "mars_distributed_finite_element.hpp"
 #include "mars_distributed_stencil.hpp"

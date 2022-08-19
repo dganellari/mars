@@ -3,7 +3,7 @@
 
 #include "mars_base.hpp"
 
-#ifdef WITH_KOKKOS_KERNELS
+#ifdef MARS_ENABLE_KOKKOS_KERNELS
 namespace mars {
 
     /* Face numbering on the stencil => ordering in the stencil stencil[1,0,3,2]

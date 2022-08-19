@@ -3,7 +3,7 @@
 
 #include <memory>
 
-#ifdef WITH_KOKKOS_KERNELS
+#ifdef MARS_ENABLE_KOKKOS_KERNELS
 
 #include "mars_base.hpp"
 #include "mars_fe_values.hpp"

@@ -1,7 +1,7 @@
 #ifndef MARS_LAPLACIAN_EXAMPLES
 #define MARS_LAPLACIAN_EXAMPLES
 
-#ifdef WITH_KOKKOS_KERNELS
+#ifdef MARS_ENABLE_KOKKOS_KERNELS
 #include <Kokkos_ArithTraits.hpp>
 #include <cmath>
 

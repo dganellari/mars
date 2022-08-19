@@ -1,6 +1,8 @@
 #ifndef MARS_MESH_KOKKOS_HPP
 #define MARS_MESH_KOKKOS_HPP
 
+#include "mars_base.hpp"
+
 #include "mars_point.hpp"
 // #include "mars_visualization.hpp"
 

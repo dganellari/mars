@@ -6,9 +6,9 @@
 #include <type_traits>
 #include "mars_globals.hpp"
 
-#ifdef WITH_KOKKOS_KERNELS
+#ifdef MARS_ENABLE_KOKKOS_KERNELS
 #include "Kokkos_ArithTraits.hpp"
-#ifdef WITH_KOKKOS
+#ifdef MARS_ENABLE_KOKKOS
 #include "Kokkos_Atomic.hpp"
 #include "Kokkos_Macros.hpp"
 #if KOKKOS_VERSION >= 30500
@@ -16,7 +16,7 @@
 #endif
 #endif
 
-#ifdef WITH_MPI
+#ifdef MARS_ENABLE_MPI
 #include <mpi.h>
 #endif
 
@@ -24,7 +24,7 @@ namespace mars {
 
     inline void Abort() {
         int error_code = -1;
-#ifdef WITH_MPI
+#ifdef MARS_ENABLE_MPI
         MPI_Abort(MPI_COMM_WORLD, error_code);
 #else
         exit(error_code);
@@ -270,7 +270,7 @@ namespace mars {
 
     /* ***************************general utils************************************************** */
 
-#ifdef WITH_KOKKOS
+#ifdef MARS_ENABLE_KOKKOS
 
     template <typename T, Integer Dim>
     void fill_view_vector(ViewVectorTextureC<T, Dim> v, const T value[Dim]) {

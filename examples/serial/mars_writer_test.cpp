@@ -30,17 +30,17 @@
 
 #include "mars_mesh_generation.hpp"
 
-#ifdef WITH_KOKKOS
+#ifdef MARS_ENABLE_KOKKOS
 #include "mars_lepp_benchmark_kokkos.hpp"
 #include "mars_test_kokkos.hpp"
-#endif  // WITH_KOKKOS
+#endif  // MARS_ENABLE_KOKKOS
 
-#ifdef WITH_PAR_MOONOLITH
+#ifdef MARS_ENABLE_PAR_MOONOLITH
 #include <mpi.h>
 #include "mars_moonolith_test.hpp"
-#endif  // WITH_PAR_MOONOLITH
+#endif  // MARS_ENABLE_PAR_MOONOLITH
 
-#ifdef WITH_MPI
+#ifdef MARS_ENABLE_MPI
 #include "mars_advection.hpp"
 #include "mars_distributed_mesh_generation.hpp"
 #include "mars_par_bisection.hpp"
@@ -48,7 +48,7 @@
 #include "mars_poisson.hpp"
 #include "mars_test_mpi.hpp"
 #include "test.hpp"
-#endif  // WITH_MPI
+#endif  // MARS_ENABLE_MPI
 #include <chrono>
 
 using namespace std::chrono;
@@ -56,7 +56,7 @@ using namespace std::chrono;
 int main(int argc, char *argv[]) {
     using namespace mars;
 
-#ifdef WITH_PAR_MOONOLITH
+#ifdef MARS_ENABLE_PAR_MOONOLITH
     MPI_Init(&argc, &argv);
 #endif
 
@@ -79,10 +79,10 @@ int main(int argc, char *argv[]) {
     } else
         std::cout << "No level of refinement was specified. Setting the default to 1!" << std::endl;
 
-#ifdef WITH_KOKKOS
+#ifdef MARS_ENABLE_KOKKOS
     Kokkos::initialize(argc, argv);
     {
-#ifdef MARS_USE_CUDA
+#ifdef MARS_ENABLE_CUDA
         cudaDeviceSetLimit(cudaLimitStackSize,
                            32768);  // set stack to 32KB only for cuda since it is
                                     // not yet supported in kokkos.
@@ -94,11 +94,11 @@ int main(int argc, char *argv[]) {
 
 #endif
 
-#ifdef WITH_PAR_MOONOLITH
+#ifdef MARS_ENABLE_PAR_MOONOLITH
     run_mars_moonolith_test();
-#endif  // WITH_PAR_MOONOLITH
+#endif  // MARS_ENABLE_PAR_MOONOLITH
 
-#ifdef WITH_PAR_MOONOLITH
+#ifdef MARS_ENABLE_PAR_MOONOLITH
     return MPI_Finalize();
 #else
     return 0;

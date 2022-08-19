@@ -1,6 +1,8 @@
 #ifndef MARS_QUAD4_HPP
 #define MARS_QUAD4_HPP
 
+#include "mars_base.hpp"
+
 #include "mars_globals.hpp"
 
 #include "mars_distributed_utils.hpp"
@@ -131,7 +133,7 @@ namespace mars {
         static T_ q_weights[6];
         static T_ q_points[6][PhysicalDim_];
 
-#ifdef WITH_KOKKOS_KERNELS
+#ifdef MARS_ENABLE_KOKKOS_KERNELS
 
         class Quadrature final {
         public:

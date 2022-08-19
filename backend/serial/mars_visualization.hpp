@@ -8,7 +8,7 @@
 
 #include "mars_red_green_refinement.hpp"
 
-#ifdef WITH_MOONOLITH
+#ifdef MARS_ENABLE_MOONOLITH
 
 namespace moonolith {
     using Integer = mars::Integer;
@@ -21,7 +21,7 @@ namespace moonolith {
 #include "mars_moonolith_func_to_color.hpp"
 #include "mars_moonolith_plotter.hpp"
 
-#endif  // WITH_MOONOLITH
+#endif  // MARS_ENABLE_MOONOLITH
 
 namespace mars {
 
@@ -125,7 +125,7 @@ namespace mars {
         return ok;
     }
 
-#ifdef WITH_MOONOLITH
+#ifdef MARS_ENABLE_MOONOLITH
 
     template <Integer Dim, Integer ManifoldDim>
     void mesh_color(const SimplicialMesh<Dim, ManifoldDim> &mesh, const PlotOpts &opts, std::vector<Real> &hsv) {
@@ -995,7 +995,7 @@ namespace mars {
         return false;
     }
 
-#endif  // WITH_MOONOLITH
+#endif  // MARS_ENABLE_MOONOLITH
 
 }  // namespace mars
 

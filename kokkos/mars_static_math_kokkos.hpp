@@ -4,7 +4,9 @@
 #include <array>
 #include <iostream>
 #include <vector>
+
 #include "mars_base.hpp"
+
 #include "mars_static_math.hpp"
 #include "mars_sub_view.hpp"
 #include "mars_utils_kokkos.hpp"

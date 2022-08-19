@@ -113,7 +113,7 @@ namespace mars {
             return buffer;
         }
 
-#ifdef WITH_KOKKOS
+#ifdef MARS_ENABLE_KOKKOS
         // Scatter sfc values of type T from root into each rank
         template <typename T>
         ViewVectorType<T> scatter(const ViewVectorType<T> global, const ViewVectorType<T> local, MPI_Comm comm) {
@@ -589,7 +589,7 @@ namespace mars {
             return gathered_type(std::move(buffer), std::vector<count_type>(displs.begin(), displs.end()));
         }
 
-#ifdef WITH_KOKKOS
+#ifdef MARS_ENABLE_KOKKOS
         template <typename T>
         ViewObject<T> reduce(const ViewObject<T> value, MPI_Op op, MPI_Comm comm) {
             using traits = mpi_traits<T>;
