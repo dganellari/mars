@@ -3,6 +3,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <numeric>
+
 #include "mars_config.hpp"
 #include "mars_err.hpp"
 
