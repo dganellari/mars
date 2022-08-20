@@ -17,7 +17,7 @@
 #include <cmath>
 #include <initializer_list>
 
-// #include "mars_static_math_kokkos.hpp"
+#include "mars_static_math_kokkos.hpp"
 #include "mars_sub_view.hpp"
 #include "mars_utils_kokkos.hpp"
 

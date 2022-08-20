@@ -2,7 +2,8 @@ list(APPEND DISTRIBUTED_MODULES
     .
     communication
     communication/util
-    kokkos
+    mesh
+    mesh_manager
     mars_env
     sfc)
 

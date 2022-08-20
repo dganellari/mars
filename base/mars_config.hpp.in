@@ -23,4 +23,6 @@
 #cmakedefine MARS_NO_RDMA
 #endif
 
+#cmakedefine MARS_ENABLE_AMR_BACKEND
+
 #endif //MARS_CONFIG_HPP
