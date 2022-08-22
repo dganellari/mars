@@ -46,8 +46,8 @@ cmake_dependent_option(
   "MARS_ENABLE_KOKKOS;MARS_ENABLE_CUDA" OFF)
 cmake_dependent_option(MARS_ENABLE_KOKKOS_KERNELS "Enable Kokkos Kernels" ON
                        "MARS_ENABLE_KOKKOS" OFF)
-# cmake_dependent_option(MARS_ENABLE_AMR_BACKEND "Enable AMR backend for Kokkos"
-#     ON "MARS_ENABLE_KOKKOS" OFF)
+cmake_dependent_option(MARS_ENABLE_AMR_BACKEND "Enable AMR backend for Kokkos"
+    ON "MARS_ENABLE_KOKKOS" OFF)
 
 if(MARS_ENABLE_KOKKOS)
   message(STATUS "Setup Kokkos")
