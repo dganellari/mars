@@ -56,9 +56,6 @@ if(MARS_ENABLE_BENCHMARK)
 
     target_include_directories(
         mars_bench PRIVATE "$<BUILD_INTERFACE:${MARS_BENCH_DIR}>")
-    target_include_directories(mars_bench PRIVATE " $<BUILD_INTERFACE:.>")
-    target_include_directories(mars_bench
-                               PRIVATE " $<BUILD_INTERFACE:${BENCH_MODULES}>")
 
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${MARS_DEV_FLAGS}")
 	set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -g ${MARS_DEV_FLAGS}")
