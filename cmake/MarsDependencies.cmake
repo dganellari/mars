@@ -162,14 +162,6 @@ if(MARS_ENABLE_KOKKOS)
     # add_compile_definitions("MARS_ENABLE_CUDA")
     kokkos_check(OPTIONS CUDA_LAMBDA)
 
-    if(MARS_ENABLE_HIP)
-        if(NOT DEFINED Kokkos_ENABLE_HIP OR NOT ${Kokkos_ENABLE_HIP})
-      message(
-        FATAL_ERROR
-        "Enable Kokkos HIP or unset MARS_ENABLE_HIP to continue with OpenMP!")
-    endif()
-    message(VERBOSE "Kokkos HIP Enabled = ${Kokkos_ENABLE_HIP}")
-
     # get cuda flags from the wrapper alternatively we can strip
     # Kokkos_INTERFACE_COMPILE_OPTIONS when defined
     execute_process(
@@ -184,7 +176,13 @@ if(MARS_ENABLE_KOKKOS)
     # with different CUDA settings
     set(CMAKE_CUDA_FLAGS "${_wrapper_flags} ${_openmp}")
 
-
+    elseif(MARS_ENABLE_HIP)
+        if(NOT DEFINED Kokkos_ENABLE_HIP OR NOT ${Kokkos_ENABLE_HIP})
+      message(
+        FATAL_ERROR
+        "Enable Kokkos HIP or unset MARS_ENABLE_HIP to continue with OpenMP!")
+        endif()
+    message(VERBOSE "Kokkos HIP Enabled = ${Kokkos_ENABLE_HIP}")
 
   else()
     string(FIND "${CMAKE_CXX_FLAGS}" "${_openmp}" _pos)
