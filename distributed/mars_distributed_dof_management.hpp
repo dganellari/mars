@@ -2,8 +2,8 @@
 #define GENERATION_MARS_DISTRIBUTED_DofHandler_HPP_
 
 #include <cstdlib>
-#ifdef WITH_MPI
-#ifdef WITH_KOKKOS
+#ifdef MARS_ENABLE_MPI
+#ifdef MARS_ENABLE_KOKKOS
 #include "mars_distributed_dof.hpp"
 #include "mars_distributed_mesh_management.hpp"
 
@@ -115,27 +115,26 @@ namespace mars {
         static constexpr Integer elem_dofs = NDofs::elem_dofs();
 
         MARS_INLINE_FUNCTION
-        constexpr Integer get_elem_type() { return simplex_type::ElemType; }
+        constexpr Integer get_elem_type() const { return simplex_type::ElemType; }
 
         MARS_INLINE_FUNCTION
         DofHandler(Mesh *mesh) : mesh_manager(MM(mesh)) {}
 
-        //computes the component (block) from the block local
+        // computes the component (block) from the block local
         template <Integer B = Block_>
         MARS_INLINE_FUNCTION typename std::enable_if<B == 1, Integer>::type compute_component(
             const Integer local) const {
             return 0;
         }
 
-        //B==0 goes for runtime block input. Useful for interfacing with UtopiaFE.
+        // B==0 goes for runtime block input. Useful for interfacing with UtopiaFE.
         template <Integer B = Block_>
         MARS_INLINE_FUNCTION typename std::enable_if<B != 1, Integer>::type compute_component(
             const Integer local) const {
             return local % get_block<B>();
         }
 
-
-        //computes the base (scalar) local id from the block local
+        // computes the base (scalar) local id from the block local
         template <Integer B = Block_>
         MARS_INLINE_FUNCTION typename std::enable_if<B == 1, Integer>::type compute_base(const Integer local) const {
             return local;
@@ -167,6 +166,11 @@ namespace mars {
         }
 
         template <typename H>
+        MARS_INLINE_FUNCTION void base_dof_iterate(H f) const {
+            Kokkos::parallel_for("init_initial_cond", local_dof_enum.get_elem_size(), f);
+        }
+
+        template <typename H>
         MARS_INLINE_FUNCTION void elem_iterate(H f) const {
             get_mesh_manager().elem_iterate(f);
         }
@@ -187,8 +191,9 @@ namespace mars {
         }
 
         template <Integer Type>
-        MARS_INLINE_FUNCTION std::enable_if_t<Type == ElementType::Quad4, Integer>
-        enum_corner(const Octant &oc, const int i, const int j) const {
+        MARS_INLINE_FUNCTION std::enable_if_t<Type == ElementType::Quad4, Integer> enum_corner(const Octant &oc,
+                                                                                               const int i,
+                                                                                               const int j) const {
             Octant o;
             // get the next corner using the elem sfc
             o.x = oc.x + i;
@@ -832,9 +837,7 @@ namespace mars {
                 : local_predicate(lp), global_predicate(gp) {}
 
             MARS_INLINE_FUNCTION
-            void volume_predicate(const Integer sfc, std::true_type) const {
-                local_predicate(sfc) = 1;
-            }
+            void volume_predicate(const Integer sfc, std::true_type) const { local_predicate(sfc) = 1; }
 
             MARS_INLINE_FUNCTION
             void volume_predicate(const Integer sfc, std::false_type) const {
@@ -1356,7 +1359,7 @@ namespace mars {
 
         // generic local predicate functor to be used for edge, face and corners. The volume is specialized.
         template <bool Ghost, Integer Label>
-        struct LocalGlobalLabel{
+        struct LocalGlobalLabel {
             SFC<ElemType> local_enum;
             SFC<ElemType> global_enum;
             Integer proc;
@@ -1383,10 +1386,10 @@ namespace mars {
 
             MARS_INLINE_FUNCTION
             void set_label_from_sfc(const Mesh *mesh,
-                              const Integer i,
-                              const Integer sfc,
-                              const Integer owner_proc,
-                              std::false_type) const {
+                                    const Integer i,
+                                    const Integer sfc,
+                                    const Integer owner_proc,
+                                    std::false_type) const {
                 /* if the neighbor element is ghost then check if the processor
                     is less than the owner. This is how the dofs are partitioned*/
                 if (proc >= owner_proc) {
@@ -1431,9 +1434,8 @@ namespace mars {
             }
         };
 
-
         template <bool Ghost>
-        struct BuildLocalGlobalLabel{
+        struct BuildLocalGlobalLabel {
             BuildLocalGlobalLabel(Mesh *m, SFC<ElemType> le, SFC<ElemType> ge)
                 : mesh(m), local_enum(le), global_enum(ge) {}
 
@@ -1651,7 +1653,8 @@ namespace mars {
         }
 
         template <Integer B = Block_>
-        MARS_INLINE_FUNCTION typename std::enable_if<B != 1, Integer>::type local_to_owned_dof(const Integer local) const {
+        MARS_INLINE_FUNCTION typename std::enable_if<B != 1, Integer>::type local_to_owned_dof(
+            const Integer local) const {
             const Integer comp_local = compute_component<B>(local);
             const Integer sfc = local_to_sfc<B>(local);
             const Integer base_owned = get_eval_value_in_global_map(sfc);
@@ -1659,7 +1662,8 @@ namespace mars {
         }
 
         template <Integer B = Block_>
-        MARS_INLINE_FUNCTION typename std::enable_if<B == 1, Integer>::type local_to_owned_dof(const Integer local) const {
+        MARS_INLINE_FUNCTION typename std::enable_if<B == 1, Integer>::type local_to_owned_dof(
+            const Integer local) const {
             const Integer sfc = local_to_sfc<B>(local);
             return get_eval_value_in_global_map(sfc);
         }
@@ -1774,9 +1778,7 @@ namespace mars {
         }
 
         MARS_INLINE_FUNCTION
-        Integer sfc_to_local(const Integer sfc) const {
-            return get_eval_value_in_local_map(sfc);
-        }
+        Integer sfc_to_local(const Integer sfc) const { return get_eval_value_in_local_map(sfc); }
 
         MARS_INLINE_FUNCTION
         Integer sfc_to_local(const Integer sfc, const Integer component) const {
@@ -1809,6 +1811,10 @@ namespace mars {
         template <Integer B = Block_>
         MARS_INLINE_FUNCTION void get_local_dof_coordinates(const Integer local, double *point) const {
             get_dof_coordinates_from_local<ElemType, B>(local, point);
+        }
+
+        MARS_INLINE_FUNCTION void get_base_local_dof_coordinates(const Integer local, double *point) const {
+            get_dof_coordinates_from_local<ElemType, 1>(local, point);
         }
 
         template <Integer Type>
@@ -1873,7 +1879,9 @@ namespace mars {
             return get_block<B>() * local_dof_enum.get_elem_size();
         }
 
-        //no need to be vector valued since it will give the same result.
+        MARS_INLINE_FUNCTION const Integer get_base_dof_size() const { return local_dof_enum.get_elem_size(); }
+
+        // no need to be vector valued since it will give the same result.
         MARS_INLINE_FUNCTION
         const Integer get_local_dof(const Integer i) const {
             assert(i < get_dof_size());
@@ -2065,7 +2073,6 @@ namespace mars {
         MARS_INLINE_FUNCTION
         const Integer get_ZMax() const { return Degree * get_mesh_manager().get_mesh()->get_ZDim(); }
 
-
         MARS_INLINE_FUNCTION
         void set_block(const Integer b) {
             assert(b > 0);
@@ -2095,7 +2102,7 @@ namespace mars {
         }
 
     private:
-        //manages host and device mesh objects.
+        // manages host and device mesh objects.
         MM mesh_manager;
 
         // local dof enumeration containing the local to sfc and sfc to local views.

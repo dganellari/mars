@@ -1,0 +1,80 @@
+version: '{build}'
+clone_folder: c:\projects\mars
+
+# https://www.appveyor.com/docs/build-environment/#build-worker-images
+image: Visual Studio 2019
+
+init:
+  - ps: ($env:APPVEYOR_SAVE_CACHE_ON_ERROR = "true")
+
+cache:
+  - C:\projects\installations\kokkos-kernels -> appveyor.yml
+  - C:\projects\installations\kokkos -> appveyor.yml
+  - C:\projects\installations\adios2 -> appveyor.yml
+
+
+
+##########################################################################################
+# DEPENDENCIES: mpi, kokkos, kokkkos-kernels, adios2
+
+
+install:
+# Install MS-MPI
+- ps: Start-FileDownload 'https://github.com/microsoft/Microsoft-MPI/releases/download/v10.1.1/msmpisetup.exe'
+- msmpisetup.exe -unattend
+- set PATH=C:\Program Files\Microsoft MPI\Bin;%PATH%
+
+# Install MS-MPI SDK
+- ps: Start-FileDownload 'https://github.com/microsoft/Microsoft-MPI/releases/download/v10.1.1/msmpisdk.msi'
+- msmpisdk.msi /quiet /passive
+- set PATH=C:\Program Files\Microsoft MPI\Bin;%PATH%
+
+
+# Install Kokkos
+- cd C:\ && mkdir kg && cd kg
+- ps: Start-FileDownload 'https://github.com/kokkos/kokkos/archive/refs/tags/3.6.00.tar.gz'
+- 7z x 3.6.00.tar.gz -so | 7z x -si -ttar > nul
+- cd kokkos-3.6.00
+- IF NOT EXIST C:\projects\installations\kokkos cmake -G "Visual Studio 16 2019" -A x64 -S . -B "build64" -DKokkos_ENABLE_TESTS=OFF -DCMAKE_INSTALL_PREFIX="C:\projects\installations\kokkos" -DCMAKE_CXX_FLAGS="/W0 /EHsc" -DKokkos_ENABLE_DEPRECATED_CODE_3=ON -DKokkos_ENABLE_DEPRECATION_WARNINGS=OFF && cmake --build build64 --config Release --target install
+
+
+# Install KokkosKernels
+# Specify Kokkos_DIR with front slashes, it will still find kokkos but more importantly
+# it will write in KokkosKernelsConfig.cmake the path with '/'.
+- cd C:\ && mkdir kkg && cd kkg
+- ps: Start-FileDownload 'https://github.com/kokkos/kokkos-kernels/archive/refs/tags/3.6.00.tar.gz'
+- 7z x 3.6.00.tar.gz -so | 7z x -si -ttar > nul
+- cd kokkos-kernels-3.6.00
+- IF NOT EXIST C:\projects\installations\kokkos-kernels cmake -B "build64" -DKokkosKernels_ENABLE_TESTS=OFF -DCMAKE_EXE_LINKER_FLAGS:STRING="/machine:x64" -DCMAKE_INSTALL_PREFIX="C:\projects\installations\kokkos-kernels"  -DCMAKE_CXX_FLAGS:STRING="/DWIN32 /D_WINDOWS /GR /EHsc /bigobj" -DKokkos_DIR="C:/projects/installations/kokkos/lib/cmake/Kokkos" && cmake --build build64 --config Release --target install
+
+
+# Install ADIOS2, can be commented out.
+- cd C:\ && mkdir adios2 && cd adios2
+- ps: Start-FileDownload 'https://github.com/ornladios/ADIOS2/archive/refs/tags/v2.8.0.tar.gz'
+- 7z x v2.8.0.tar.gz -so | 7z x -si -ttar > nul
+- cd ADIOS2-2.8.0
+- IF NOT EXIST C:\projects\installations\adios2 cmake -B "build64" -DCMAKE_EXE_LINKER_FLAGS:STRING="/machine:x64" -DCMAKE_INSTALL_PREFIX="C:\projects\installations\adios2" -DADIOS2_BUILD_EXAMPLES=OFF -DBUILD_TESTING=OFF && cmake --build build64 --config Release --target install
+
+
+
+##########################################################################################
+
+
+# # Mars
+before_build:
+- cd c:\projects\mars
+- cmake -Ball_builds -DMARS_ENABLE_TESTING=ON -DMARS_ENABLE_BENCHMARK=ON -DCMAKE_INSTALL_PREFIX=install -DCMAKE_EXE_LINKER_FLAGS:STRING="/machine:x64" -DMPI_C_INCLUDE_PATH="C:\Program Files (x86)\Microsoft SDKs\MPI\Include" -DMPI_C_LIBRARIES="C:\Program Files (x86)\Microsoft SDKs\MPI\Lib\x64\msmpi.lib" -DMPI_CXX_LIBRARIES="C:\Program Files (x86)\Microsoft SDKs\MPI\Lib\x64\msmpi.lib" -DMPI_CXX_INCLUDE_PATH="C:\Program Files (x86)\Microsoft SDKs\MPI\Include" -DKokkos_DIR="C:\projects\installations\kokkos\lib\cmake\Kokkos" -DKokkosKernels_DIR="C:\projects\installations\kokkos-kernels\lib\cmake\KokkosKernels" -DMARS_ENABLE_KOKKOS=ON -DMARS_ENABLE_KOKKOS_KERNELS=ON  #-DCMAKE_VERBOSE_MAKEFILE=ON
+# -DBUILD_SHARED_LIBS=ON
+
+
+build_script:
+- cmake --build all_builds --config Release -j 4
+- ls -lah all_builds
+- ls -lah all_builds/Release
+- cmake --build all_builds --config Release --target install
+
+after_build:
+- .\all_builds\Release\mars_test.exe
+- .\all_builds\Release\mars_bench.exe
+# FIXME
+# - cmake --build all_builds --config Release --target test_install

@@ -13,7 +13,7 @@
 #include <type_traits>
 #include <vector>
 
-#ifdef WITH_MPI
+#ifdef MARS_ENABLE_MPI
 #include "mars_distributed_non_simplex_kokkos.hpp"
 #include "mars_distributed_octant.hpp"
 #include "mars_distributed_simplex_kokkos.hpp"

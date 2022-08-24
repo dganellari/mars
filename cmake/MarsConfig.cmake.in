@@ -1,0 +1,25 @@
+include(CMakeFindDependencyMacro)
+if (@MARS_ENABLE_KOKKOS@)
+    find_dependency(Kokkos HINTS @Kokkos_DIR@)
+endif()
+
+if (@MARS_ENABLE_KOKKOS_KERNELS@)
+    find_dependency(KokkosKernels HINTS @KokkosKernels_DIR@)
+endif()
+
+if (@MARS_ENABLE_ADIOS2@)
+    find_dependency(ADIOS2 HINTS @ADIOS2_DIR@)
+endif()
+
+if (@MARS_ENABLE_CXXOPTS@)
+    find_dependency(cxxopts HINTS @cxxopts_DIR@)
+endif()
+
+@PACKAGE_INIT@
+
+########## old style variables. Preferably you should use target_link_libraries(my_target Mars::mars) ################
+@OLD_CMAKE_CONFIG_CONTENT@
+########## end of old style variables ####################################################################################
+
+
+include("${CMAKE_CURRENT_LIST_DIR}/MarsTargets.cmake")

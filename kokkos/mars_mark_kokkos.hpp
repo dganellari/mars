@@ -1,6 +1,8 @@
 #ifndef MARS_MARK_KOKKOS_HPP_
 #define MARS_MARK_KOKKOS_HPP_
 
+#include "mars_base.hpp"
+
 #include "mars_mesh_kokkos.hpp"
 
 namespace mars {

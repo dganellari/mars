@@ -59,33 +59,52 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. */
  *
  *      int* a = new int; int* b = new int; int* c = new int;
  *      delete a; delete b; delete c;
-*/
+ */
 
 // Implementation macros for MARS_PP_FOREACH:
 
 #define MARS_PP_FOREACH_1_(M, A, ...) M(A)
-#define MARS_PP_FOREACH_2_(M, A, ...) M(A) \
-MARS_PP_FOREACH_1_(M, __VA_ARGS__)
-#define MARS_PP_FOREACH_3_(M, A, ...) M(A) \
-MARS_PP_FOREACH_2_(M, __VA_ARGS__)
-#define MARS_PP_FOREACH_4_(M, A, ...) M(A) \
-MARS_PP_FOREACH_3_(M, __VA_ARGS__)
-#define MARS_PP_FOREACH_5_(M, A, ...) M(A) \
-MARS_PP_FOREACH_4_(M, __VA_ARGS__)
-#define MARS_PP_FOREACH_6_(M, A, ...) M(A) \
-MARS_PP_FOREACH_5_(M, __VA_ARGS__)
-#define MARS_PP_FOREACH_7_(M, A, ...) M(A) \
-MARS_PP_FOREACH_6_(M, __VA_ARGS__)
-#define MARS_PP_FOREACH_8_(M, A, ...) M(A) \
-MARS_PP_FOREACH_7_(M, __VA_ARGS__)
-#define MARS_PP_FOREACH_9_(M, A, ...) M(A) \
-MARS_PP_FOREACH_8_(M, __VA_ARGS__)
-#define MARS_PP_FOREACH_10_(M, A, ...) M(A) \
-MARS_PP_FOREACH_9_(M, __VA_ARGS__)
+#define MARS_PP_FOREACH_2_(M, A, ...) \
+    M(A)                              \
+    MARS_PP_FOREACH_1_(M, __VA_ARGS__)
+#define MARS_PP_FOREACH_3_(M, A, ...) \
+    M(A)                              \
+    MARS_PP_FOREACH_2_(M, __VA_ARGS__)
+#define MARS_PP_FOREACH_4_(M, A, ...) \
+    M(A)                              \
+    MARS_PP_FOREACH_3_(M, __VA_ARGS__)
+#define MARS_PP_FOREACH_5_(M, A, ...) \
+    M(A)                              \
+    MARS_PP_FOREACH_4_(M, __VA_ARGS__)
+#define MARS_PP_FOREACH_6_(M, A, ...) \
+    M(A)                              \
+    MARS_PP_FOREACH_5_(M, __VA_ARGS__)
+#define MARS_PP_FOREACH_7_(M, A, ...) \
+    M(A)                              \
+    MARS_PP_FOREACH_6_(M, __VA_ARGS__)
+#define MARS_PP_FOREACH_8_(M, A, ...) \
+    M(A)                              \
+    MARS_PP_FOREACH_7_(M, __VA_ARGS__)
+#define MARS_PP_FOREACH_9_(M, A, ...) \
+    M(A)                              \
+    MARS_PP_FOREACH_8_(M, __VA_ARGS__)
+#define MARS_PP_FOREACH_10_(M, A, ...) \
+    M(A)                               \
+    MARS_PP_FOREACH_9_(M, __VA_ARGS__)
 #define MARS_PP_GET_11TH_ARGUMENT_(a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, ...) a11
 
 // Apply macro in first argument to each of the remaining arguments (up to 10).
 // Note: if __VA_ARGS__ has size N, when it is expanded the 11th argument is the MARS_PP_FOREACH_N_ macro.
-#define MARS_PP_FOREACH(M, ...)                                                                                                                                                                                                                      \
-    MARS_PP_GET_11TH_ARGUMENT_(__VA_ARGS__, MARS_PP_FOREACH_10_, MARS_PP_FOREACH_9_, MARS_PP_FOREACH_8_, MARS_PP_FOREACH_7_, MARS_PP_FOREACH_6_, MARS_PP_FOREACH_5_, MARS_PP_FOREACH_4_, MARS_PP_FOREACH_3_, MARS_PP_FOREACH_2_, MARS_PP_FOREACH_1_) \
+#define MARS_PP_FOREACH(M, ...)                     \
+    MARS_PP_GET_11TH_ARGUMENT_(__VA_ARGS__,         \
+                               MARS_PP_FOREACH_10_, \
+                               MARS_PP_FOREACH_9_,  \
+                               MARS_PP_FOREACH_8_,  \
+                               MARS_PP_FOREACH_7_,  \
+                               MARS_PP_FOREACH_6_,  \
+                               MARS_PP_FOREACH_5_,  \
+                               MARS_PP_FOREACH_4_,  \
+                               MARS_PP_FOREACH_3_,  \
+                               MARS_PP_FOREACH_2_,  \
+                               MARS_PP_FOREACH_1_)  \
     (M, __VA_ARGS__)

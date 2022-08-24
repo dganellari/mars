@@ -1,8 +1,10 @@
 #ifndef MARS_MESH_KOKKOS_HPP
 #define MARS_MESH_KOKKOS_HPP
 
+#include "mars_base.hpp"
+
 #include "mars_point.hpp"
-#include "mars_visualization.hpp"
+// #include "mars_visualization.hpp"
 
 #include <algorithm>
 #include <array>
@@ -11,8 +13,8 @@
 #include <sstream>
 #include <vector>
 
-#include "mars_longest_edge_kokkos.hpp"
 #include "mars_imesh_kokkos.hpp"
+#include "mars_longest_edge_kokkos.hpp"
 #include "mars_non_simplex_kokkos.hpp"
 #include "mars_simplex_kokkos.hpp"
 
@@ -27,7 +29,7 @@ namespace mars {
         using Elem = Simplex_;
         using SideElem = mars::Simplex<Dim, ManifoldDim - 1, KokkosImplementation>;
         using Point = mars::Point<Real, Dim>;
-        using SerialMesh = mars::Mesh<Dim_, ManifoldDim_>;
+        // using SerialMesh = mars::Mesh<Dim_, ManifoldDim_>;
         using Edge = mars::Side<2, KokkosImplementation>;
         using Comb = Combinations<ManifoldDim + 1, 2, KokkosImplementation>;
 

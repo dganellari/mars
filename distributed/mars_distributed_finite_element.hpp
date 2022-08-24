@@ -1,8 +1,8 @@
 #ifndef GENERATION_MARS_DISTRIBUTED_FE_HPP_
 #define GENERATION_MARS_DISTRIBUTED_FE_HPP_
 
-#ifdef WITH_MPI
-#ifdef WITH_KOKKOS
+#ifdef MARS_ENABLE_MPI
+#ifdef MARS_ENABLE_KOKKOS
 #include "mars_distributed_dof_management.hpp"
 
 namespace mars {
@@ -15,6 +15,7 @@ namespace mars {
     template <class DofHandler, bool Overlap = true, Integer Label = DofHandler::dofLabel>
     class FEDofMap : public IFEDofMap {
     public:
+        using DHandler = DofHandler;
         static constexpr Integer degree = DofHandler::Degree;
         static constexpr Integer Dim = DofHandler::ManifoldDim;
 
@@ -33,7 +34,6 @@ namespace mars {
         MARS_INLINE_FUNCTION
         Integer get_elem_nodes() const { return get_dof_handler().get_block() * NDofs::elem_dofs(); }
 
-        using DHandler = DofHandler;
         //! regular grids only. This can be a specialized version of the  non uniform impl.
         // Each node has max 2^Dim neighboring elements and  3^DIM neighboring nodes.
         // To account for the dofs we multiply with the degree.
@@ -354,7 +354,6 @@ namespace mars {
 
             return h_ps();
         }
-
 
         // Store the elements with all owned dofs first (first matrix rows) and then elements with non-owned dofs.
         // Finally add ghost elements. This to overlap assembly with communication of ghost layer data.
@@ -757,24 +756,25 @@ namespace mars {
         void ghost_dof_element_iterate(F f) const {
             const Integer size = get_fe_dof_map_size();
             Kokkos::parallel_for("fedomap ghost iterate", Kokkos::RangePolicy<>(owned_size, size), f);
-            /* Kokkos::parallel_for("fedomap ghost iterate", Kokkos::RangePolicy<>(owned_size, size), f(elem_index(i)); */
+            /* Kokkos::parallel_for("fedomap ghost iterate", Kokkos::RangePolicy<>(owned_size, size), f(elem_index(i));
+             */
         }
 
-        //iterate on the elements that contain only owned local dofs.
+        // iterate on the elements that contain only owned local dofs.
         template <typename F>
         void non_owned_dof_element_iterate(F f) const {
             const Integer local_size = get_dof_handler().get_mesh_manager().get_host_mesh()->get_chunk_size();
             Kokkos::parallel_for("fedomap non owned dof iterate", Kokkos::RangePolicy<>(owned_size, local_size), f);
         }
 
-        //iterate on the owned elements
+        // iterate on the owned elements
         template <typename F>
         void owned_element_iterate(F f) const {
             const Integer local_size = get_dof_handler().get_mesh_manager().get_host_mesh()->get_chunk_size();
             Kokkos::parallel_for("fedomap ghost iterate", local_size, f);
         }
 
-        //iterate on the elements that containt ghost dofs.
+        // iterate on the elements that containt ghost dofs.
         template <typename F>
         void ghost_element_iterate(F f) const {
             const Integer local_size = get_dof_handler().get_mesh_manager().get_host_mesh()->get_chunk_size();
@@ -782,7 +782,7 @@ namespace mars {
             Kokkos::parallel_for("fedomap ghost iterate", Kokkos::RangePolicy<>(local_size, size), f);
         }
 
-        //iterate on all elements, owned + ghost
+        // iterate on all elements, owned + ghost
         template <typename F>
         void iterate(F f) const {
             Kokkos::parallel_for("fedomap iterate", get_fe_dof_map_size(), f);
@@ -865,6 +865,14 @@ namespace mars {
         fe.enumerate_local_dofs();
         fe.build_node_element_index_dof_map();
         return fe;
+    }
+
+    template <class DofHandler, class Mesh, bool Overlap = true, Integer Label = DofHandler::dofLabel>
+    auto build_fe_dof_map(Mesh &mesh, const Integer block = 1) {
+        DofHandler handler(&mesh);
+        handler.enumerate_dofs();
+        handler.set_block(block);
+        return build_fe_dof_map<DofHandler, Overlap, Label>(handler);
     }
 
 }  // namespace mars

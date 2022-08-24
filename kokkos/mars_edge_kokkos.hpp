@@ -2,12 +2,14 @@
 #define MARS_EDGE_KOKKOS_HPP
 
 #include "mars_base.hpp"
-#include "mars_stream.hpp"
+// #include "mars_stream.hpp"
 
 #include <algorithm>
 #include <array>
 #include <initializer_list>
 #include <vector>
+
+#include "mars_interfaces.hpp"
 #include "mars_utils_kokkos.hpp"
 
 namespace mars {

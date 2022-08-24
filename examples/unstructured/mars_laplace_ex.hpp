@@ -1,6 +1,7 @@
 #ifndef MARS_LAPLACIAN_EXAMPLES
 #define MARS_LAPLACIAN_EXAMPLES
 
+#ifdef MARS_ENABLE_KOKKOS_KERNELS
 #include <Kokkos_ArithTraits.hpp>
 #include <cmath>
 
@@ -141,5 +142,5 @@ namespace mars {
     }
 
 }  // namespace mars
-
+#endif
 #endif  // MARS_LAPLACIAN_EXAMPLESs

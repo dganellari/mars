@@ -1,7 +1,6 @@
 #ifndef MARS_ST_CG_HPP
 #define MARS_ST_CG_HPP
 
-#include <err.h>
 #include <algorithm>
 #include <cassert>
 #include <cmath>
@@ -11,7 +10,9 @@
 #include <map>
 #include <numeric>
 #include <string>
+#include "mars_err.hpp"
 
+#ifdef MARS_ENABLE_KOKKOS_KERNELS
 #include <KokkosBlas1_axpby.hpp>
 #include <KokkosBlas1_dot.hpp>
 #include <KokkosBlas1_mult.hpp>
@@ -183,3 +184,4 @@ namespace mars {
 }  // namespace mars
 
 #endif  // MARS_ST_CG_HPP
+#endif

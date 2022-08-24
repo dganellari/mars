@@ -1,8 +1,8 @@
 #ifndef GENERATION_MARS_DISTRIBUTED_SDH_HPP_
 #define GENERATION_MARS_DISTRIBUTED_SDH_HPP_
 
-#ifdef WITH_MPI
-#ifdef WITH_KOKKOS
+#ifdef MARS_ENABLE_MPI
+#ifdef MARS_ENABLE_KOKKOS
 #include "mars_distributed_dof_management.hpp"
 #include "mars_distributed_stencil.hpp"
 
@@ -358,7 +358,6 @@ namespace mars {
                 return INVALID_INDEX;
         }
 
-
         MARS_INLINE_FUNCTION
         const Integer sfc_to_global(const Integer sfc) const {
             const Integer local_dof = get_dof_handler().sfc_to_local(sfc);
@@ -510,7 +509,7 @@ namespace mars {
         }
 
         MARS_INLINE_FUNCTION
-        constexpr Integer get_elem_type() { return simplex_type::ElemType; }
+        constexpr Integer get_elem_type() const { return simplex_type::ElemType; }
 
         MARS_INLINE_FUNCTION
         const Integer get_global_dof_offset(const Integer proc) const { return global_dof_offset(proc); }
@@ -537,7 +536,7 @@ namespace mars {
             return get_dof_handler().get_owned_label(owned_dof);
         }
 
-        //computes the component (block) from the block local
+        // computes the component (block) from the block local
         template <Integer B = Block>
         MARS_INLINE_FUNCTION Integer compute_component(const Integer local) const {
             return get_dof_handler().template compute_component<B>(local);
@@ -586,8 +585,7 @@ namespace mars {
         Integer sfc_to_local(const Integer sfc) const { return get_dof_handler().sfc_to_local(sfc); }
 
         template <Integer Type>
-        MARS_INLINE_FUNCTION Integer
-        enum_corner(const Octant &oc, const int i, const int j) const {
+        MARS_INLINE_FUNCTION Integer enum_corner(const Octant &oc, const int i, const int j) const {
             return get_dof_handler().template enum_corner<Type>(oc, i, j);
         }
 
@@ -612,7 +610,6 @@ namespace mars {
 
         MARS_INLINE_FUNCTION
         const Integer get_ZMax() const { return get_dof_handler().get_ZMax(); }
-
 
         MARS_INLINE_FUNCTION
         void set_block(const Integer b) { get_dof_handler().set_block(b); }

@@ -5,11 +5,18 @@
 #include <tuple>
 #include <type_traits>
 #include "mars_globals.hpp"
-#ifdef WITH_KOKKOS
+
+#ifdef MARS_ENABLE_KOKKOS_KERNELS
 #include "Kokkos_ArithTraits.hpp"
+#ifdef MARS_ENABLE_KOKKOS
+#include "Kokkos_Atomic.hpp"
+#include "Kokkos_Macros.hpp"
+#if KOKKOS_VERSION >= 30500
+#include "impl/Kokkos_Atomic_Generic.hpp"
+#endif
 #endif
 
-#ifdef WITH_MPI
+#ifdef MARS_ENABLE_MPI
 #include <mpi.h>
 #endif
 
@@ -17,14 +24,14 @@ namespace mars {
 
     inline void Abort() {
         int error_code = -1;
-#ifdef WITH_MPI
+#ifdef MARS_ENABLE_MPI
         MPI_Abort(MPI_COMM_WORLD, error_code);
 #else
         exit(error_code);
 #endif
     }
 
-    inline void Abort(const std::string &message) {
+    inline void Abort(const std::string& message) {
         std::printf("%s\n", message.c_str());
         Abort();
     }
@@ -99,22 +106,22 @@ namespace mars {
     };
 
     template <std::size_t I = 0, typename... Tp>
-    inline typename std::enable_if<I == sizeof...(Tp), void>::type print_tuple(std::tuple<Tp...> &t) {}
+    inline typename std::enable_if<I == sizeof...(Tp), void>::type print_tuple(std::tuple<Tp...>& t) {}
 
     template <std::size_t I = 0, typename... Tp>
-        inline typename std::enable_if < I<sizeof...(Tp), void>::type print_tuple(std::tuple<Tp...> &t) {
+        inline typename std::enable_if < I<sizeof...(Tp), void>::type print_tuple(std::tuple<Tp...>& t) {
         std::cout << std::get<I>(t) << std::endl;
         print_tuple<I + 1, Tp...>(t);
     }
 
     template <std::size_t I = 0, typename... Tp>
-    inline typename std::enable_if<I == sizeof...(Tp), void>::type reserve_view_tuple(std::tuple<Tp...> &t,
+    inline typename std::enable_if<I == sizeof...(Tp), void>::type reserve_view_tuple(std::tuple<Tp...>& t,
                                                                                       const int size,
                                                                                       const std::string desc) {}
 
     template <std::size_t I = 0, typename... Tp>
         inline typename std::enable_if <
-        I<sizeof...(Tp), void>::type reserve_view_tuple(std::tuple<Tp...> &t, const int size, const std::string desc) {
+        I<sizeof...(Tp), void>::type reserve_view_tuple(std::tuple<Tp...>& t, const int size, const std::string desc) {
         std::get<I>(t) = typename std::tuple_element<I, typename std::decay<decltype(t)>::type>::type(
             desc + std::to_string(I), size);
         reserve_view_tuple<I + 1, Tp...>(t, size, desc);
@@ -124,68 +131,68 @@ namespace mars {
 
     // backwards expansion of a tuple from N-0
     template <typename F, size_t Idx, typename... Vs>
-    typename std::enable_if<Idx == 0, void>::type apply_each_element_impl(const F &fct, std::tuple<Vs...> &tuple) {
+    typename std::enable_if<Idx == 0, void>::type apply_each_element_impl(const F& fct, std::tuple<Vs...>& tuple) {
         fct(std::get<0>(tuple));
     }
 
     template <typename F, size_t Idx, typename... Vs>
-    typename std::enable_if<Idx != 0, void>::type apply_each_element_impl(const F &fct, std::tuple<Vs...> &tuple) {
+    typename std::enable_if<Idx != 0, void>::type apply_each_element_impl(const F& fct, std::tuple<Vs...>& tuple) {
         fct(std::get<Idx>(tuple));
         apply_each_element_impl<F, Idx - 1, Vs...>(fct, tuple);
     }
 
     template <typename F, typename... Vs>
-    void apply_each_element(const F &fct, std::tuple<Vs...> &tuple) {
+    void apply_each_element(const F& fct, std::tuple<Vs...>& tuple) {
         apply_each_element_impl<F, sizeof...(Vs) - 1, Vs...>(fct, tuple);
     }
 
     template <int I, class... Ts>
-    auto get_nth_value(Ts &&... ts) -> decltype(std::get<I>(std::forward_as_tuple(ts...))) {
+    auto get_nth_value(Ts&&... ts) -> decltype(std::get<I>(std::forward_as_tuple(ts...))) {
         return std::get<I>(std::forward_as_tuple(ts...));
     }
 
     template <std::size_t I = 0, std::size_t J, typename F>
-    inline typename std::enable_if<I == J, void>::type for_each_tuple_elem(const F &f) {}
+    inline typename std::enable_if<I == J, void>::type for_each_tuple_elem(const F& f) {}
 
     template <std::size_t I = 0, std::size_t J, typename F>
-        inline typename std::enable_if < I<J, void>::type for_each_tuple_elem(const F &f) {
+        inline typename std::enable_if < I<J, void>::type for_each_tuple_elem(const F& f) {
         f(I);
         for_each_tuple_elem<I + 1, J, F>(f);
     }
 
     // forwards expansion of a tuple from 0-N
     template <typename F, std::size_t I = 0, typename... Tp>
-    inline typename std::enable_if<I == sizeof...(Tp), void>::type apply_impl(const F &f, std::tuple<Tp...> &t) {}
+    inline typename std::enable_if<I == sizeof...(Tp), void>::type apply_impl(const F& f, std::tuple<Tp...>& t) {}
 
     template <typename F, std::size_t I = 0, typename... Tp>
-        inline typename std::enable_if < I<sizeof...(Tp), void>::type apply_impl(const F &f, std::tuple<Tp...> &t) {
+        inline typename std::enable_if < I<sizeof...(Tp), void>::type apply_impl(const F& f, std::tuple<Tp...>& t) {
         f(std::get<I>(t), I);
         apply_impl<F, I + 1, Tp...>(f, t);
     }
 
     /* forwards expansion of a tuple from 0-N */
     template <typename F, std::size_t I = 0, typename... Tp>
-    inline typename std::enable_if<I == sizeof...(Tp), void>::type apply_impl(const F &f,
-                                                                              std::tuple<Tp...> &t,
-                                                                              std::tuple<Tp...> &v) {}
+    inline typename std::enable_if<I == sizeof...(Tp), void>::type apply_impl(const F& f,
+                                                                              std::tuple<Tp...>& t,
+                                                                              std::tuple<Tp...>& v) {}
 
     template <typename F, std::size_t I = 0, typename... Tp>
         inline typename std::enable_if <
-        I<sizeof...(Tp), void>::type apply_impl(const F &f, std::tuple<Tp...> &t, std::tuple<Tp...> &v) {
+        I<sizeof...(Tp), void>::type apply_impl(const F& f, std::tuple<Tp...>& t, std::tuple<Tp...>& v) {
         f(std::get<I>(t), std::get<I>(v));
         apply_impl<F, I + 1, Tp...>(f, t, v);
     }
 
     /* forwards expansion of a tuple from 0-N */
     template <typename F, std::size_t I = 0, typename... Tp>
-    inline typename std::enable_if<I == sizeof...(Tp), void>::type apply_impl(const F &f,
-                                                                              std::tuple<ViewMatrixType<Tp>...> &t,
-                                                                              std::tuple<ViewVectorType<Tp>...> &v) {}
+    inline typename std::enable_if<I == sizeof...(Tp), void>::type apply_impl(const F& f,
+                                                                              std::tuple<ViewMatrixType<Tp>...>& t,
+                                                                              std::tuple<ViewVectorType<Tp>...>& v) {}
 
     template <typename F, std::size_t I = 0, typename... Tp>
-        inline typename std::enable_if < I<sizeof...(Tp), void>::type apply_impl(const F &f,
-                                                                                 std::tuple<ViewMatrixType<Tp>...> &t,
-                                                                                 std::tuple<ViewVectorType<Tp>...> &v) {
+        inline typename std::enable_if < I<sizeof...(Tp), void>::type apply_impl(const F& f,
+                                                                                 std::tuple<ViewMatrixType<Tp>...>& t,
+                                                                                 std::tuple<ViewVectorType<Tp>...>& v) {
         f(std::get<I>(t), std::get<I>(v));
         apply_impl<F, I + 1, Tp...>(f, t, v);
     }
@@ -207,12 +214,12 @@ namespace mars {
     }
 
     template <typename F, Integer I = 0, Integer... Args, typename... Tp>
-    typename std::enable_if<I == sizeof...(Args), void>::type MARS_INLINE_FUNCTION for_each_arg(const F &f,
-                                                                                                std::tuple<Tp...> &t) {}
+    typename std::enable_if<I == sizeof...(Args), void>::type MARS_INLINE_FUNCTION for_each_arg(const F& f,
+                                                                                                std::tuple<Tp...>& t) {}
 
     template <typename F, Integer I = 0, Integer... Args, typename... Tp>
         typename std::enable_if <
-        I<sizeof...(Args), void>::type MARS_INLINE_FUNCTION for_each_arg(const F &f, std::tuple<Tp...> &t) {
+        I<sizeof...(Args), void>::type MARS_INLINE_FUNCTION for_each_arg(const F& f, std::tuple<Tp...>& t) {
         constexpr Integer dataIndex = NthValue<I, Args...>::value;
 
         f(std::get<dataIndex>(t), dataIndex);
@@ -220,15 +227,15 @@ namespace mars {
     }
 
     template <typename F, Integer I = 0, Integer... Args, typename... Tp>
-    typename std::enable_if<I == sizeof...(Args), void>::type MARS_INLINE_FUNCTION for_each_arg(const F &f,
-                                                                                                std::tuple<Tp...> &t,
-                                                                                                std::tuple<Tp...> &v) {}
+    typename std::enable_if<I == sizeof...(Args), void>::type MARS_INLINE_FUNCTION for_each_arg(const F& f,
+                                                                                                std::tuple<Tp...>& t,
+                                                                                                std::tuple<Tp...>& v) {}
 
     template <typename F, Integer I = 0, Integer... Args, typename... Tp>
         typename std::enable_if <
-        I<sizeof...(Args), void>::type MARS_INLINE_FUNCTION for_each_arg(const F &f,
-                                                                         std::tuple<Tp...> &t,
-                                                                         std::tuple<Tp...> &v) {
+        I<sizeof...(Args), void>::type MARS_INLINE_FUNCTION for_each_arg(const F& f,
+                                                                         std::tuple<Tp...>& t,
+                                                                         std::tuple<Tp...>& v) {
         constexpr Integer dataIndex = NthValue<I, Args...>::value;
 
         f(std::get<dataIndex>(t), std::get<dataIndex>(v));
@@ -237,13 +244,13 @@ namespace mars {
 
     template <typename F, Integer I = 0, Integer... Args, typename... Tp>
     typename std::enable_if<I == sizeof...(Args), void>::type MARS_INLINE_FUNCTION
-    for_each_arg(const F &f, std::tuple<ViewMatrixType<Tp>...> &t, std::tuple<ViewVectorType<Tp>...> &v) {}
+    for_each_arg(const F& f, std::tuple<ViewMatrixType<Tp>...>& t, std::tuple<ViewVectorType<Tp>...>& v) {}
 
     template <typename F, Integer I = 0, Integer... Args, typename... Tp>
         typename std::enable_if <
-        I<sizeof...(Args), void>::type MARS_INLINE_FUNCTION for_each_arg(const F &f,
-                                                                         std::tuple<ViewMatrixType<Tp>...> &t,
-                                                                         std::tuple<ViewVectorType<Tp>...> &v) {
+        I<sizeof...(Args), void>::type MARS_INLINE_FUNCTION for_each_arg(const F& f,
+                                                                         std::tuple<ViewMatrixType<Tp>...>& t,
+                                                                         std::tuple<ViewVectorType<Tp>...>& v) {
         constexpr Integer dataIndex = NthValue<I, Args...>::value;
 
         f(std::get<dataIndex>(t), std::get<dataIndex>(v));
@@ -266,7 +273,7 @@ namespace mars {
     }
 
     template <typename F, typename T, Integer... dataidx>
-    MARS_INLINE_FUNCTION static void expand_tuple(const F &f, T &t) {
+    MARS_INLINE_FUNCTION static void expand_tuple(const F& f, T& t) {
         if (sizeof...(dataidx) == 0) {
             apply_impl(f, t);
         } else {
@@ -275,7 +282,7 @@ namespace mars {
     }
 
     template <typename F, typename T, Integer... dataidx>
-    MARS_INLINE_FUNCTION static void expand_tuple(const F &f, T &t, T &v) {
+    MARS_INLINE_FUNCTION static void expand_tuple(const F& f, T& t, T& v) {
         if (sizeof...(dataidx) == 0) {
             apply_impl(f, t, v);
         } else {
@@ -284,7 +291,7 @@ namespace mars {
     }
 
     template <typename F, typename M, typename T, Integer... dataidx>
-    MARS_INLINE_FUNCTION static void expand_tuple(const F &f, M &t, T &v) {
+    MARS_INLINE_FUNCTION static void expand_tuple(const F& f, M& t, T& v) {
         if (sizeof...(dataidx) == 0) {
             apply_impl(f, t, v);
         } else {
@@ -294,7 +301,7 @@ namespace mars {
 
     /* ***************************general utils************************************************** */
 
-#ifdef WITH_KOKKOS
+#ifdef MARS_ENABLE_KOKKOS
 
     template <typename T, Integer Dim>
     void fill_view_vector(ViewVectorTextureC<T, Dim> v, const T value[Dim]) {
@@ -323,7 +330,7 @@ namespace mars {
     }
 
     template <typename T>
-    void print_view(const ViewVectorType<T> &view) {
+    void print_view(const ViewVectorType<T>& view) {
         using namespace Kokkos;
 
         parallel_for(
@@ -349,7 +356,7 @@ namespace mars {
     struct resize_view_functor {
         resize_view_functor(std::string d, size_t s) : _desc(d), _size(s) {}
         template <typename ElementType>
-        void operator()(ElementType &el, std::size_t I) const {
+        void operator()(ElementType& el, std::size_t I) const {
             el = ElementType(_desc + std::to_string(I), _size);
         }
 
@@ -360,7 +367,7 @@ namespace mars {
     struct resize_functor {
         resize_functor(size_t s) : _size(s) {}
         template <typename ElementType>
-        void operator()(ElementType &el, std::size_t I) const {
+        void operator()(ElementType& el, std::size_t I) const {
             el = ElementType(_size);
         }
         size_t _size;
@@ -368,7 +375,7 @@ namespace mars {
 
     struct print_functor {
         template <typename ElementType>
-        void operator()(ElementType &el) const {
+        void operator()(ElementType& el) const {
             std::cout << el << std::endl;
         }
     };
@@ -402,7 +409,7 @@ namespace mars {
 
     // standard binary search
     template <typename T>
-    MARS_INLINE_FUNCTION Integer binary_search(const T *view, Integer f, Integer l, const T enc_oc) {
+    MARS_INLINE_FUNCTION Integer binary_search(const T* view, Integer f, Integer l, const T enc_oc) {
         while (f <= l) {
             Integer guess = (l + f) / 2;
 
@@ -424,7 +431,7 @@ namespace mars {
     template <class T, class H>
     struct AbsMinOp {
         MARS_INLINE_FUNCTION
-        static T apply(const T &val1, const H &val2) {
+        static T apply(const T& val1, const H& val2) {
             const auto abs1 = Kokkos::ArithTraits<T>::abs(val1);
             const auto abs2 = Kokkos::ArithTraits<H>::abs(val2);
             return abs1 < abs2 ? T(abs1) : H(abs2);
@@ -434,7 +441,7 @@ namespace mars {
     template <typename SC>
     struct atomic_abs_min {
         MARS_INLINE_FUNCTION
-        void operator()(SC &dest, const SC &src) const {
+        void operator()(SC& dest, const SC& src) const {
             Kokkos::Impl::atomic_fetch_oper(AbsMinOp<SC, SC>(), &dest, src);
         }
     };
@@ -442,7 +449,7 @@ namespace mars {
     template <class T, class H>
     struct AbsMaxOp {
         MARS_INLINE_FUNCTION
-        static T apply(const T &val1, const H &val2) {
+        static T apply(const T& val1, const H& val2) {
             const auto abs1 = Kokkos::ArithTraits<T>::abs(val1);
             const auto abs2 = Kokkos::ArithTraits<H>::abs(val2);
             return abs1 > abs2 ? T(abs1) : H(abs2);
@@ -452,7 +459,7 @@ namespace mars {
     template <typename SC>
     struct atomic_abs_max {
         KOKKOS_INLINE_FUNCTION
-        void operator()(SC &dest, const SC &src) const {
+        void operator()(SC& dest, const SC& src) const {
             Kokkos::Impl::atomic_fetch_oper(AbsMaxOp<SC, SC>(), &dest, src);
         }
     };
@@ -462,13 +469,13 @@ namespace mars {
         AtomicOp(H f) : func(f) {}
 
         MARS_INLINE_FUNCTION
-        void operator()(double &dest, const double &src) const { Kokkos::Impl::atomic_fetch_oper(func, &dest, src); }
+        void operator()(double& dest, const double& src) const { Kokkos::Impl::atomic_fetch_oper(func, &dest, src); }
 
         H func;
     };
 
     template <typename H, typename S>
-    MARS_INLINE_FUNCTION void atomic_op(H f, S &dest, const S &src) {
+    MARS_INLINE_FUNCTION void atomic_op(H f, S& dest, const S& src) {
         Kokkos::Impl::atomic_fetch_oper(f, &dest, src);
     }
 
@@ -487,7 +494,7 @@ namespace mars {
         typedef typename ViewVectorType<T>::size_type size_type;
 
         KOKKOS_INLINE_FUNCTION void operator()(const size_type i,
-                                               value_type &update) const {  // max-plus semiring equivalent of "plus"
+                                               value_type& update) const {  // max-plus semiring equivalent of "plus"
             if (update < x_(i)) {
                 update = x_(i);
             }
@@ -498,15 +505,15 @@ namespace mars {
         // operation as operator() above. Note that both input
         // arguments MUST be declared volatile.
         KOKKOS_INLINE_FUNCTION void join(
-            volatile value_type &dst,
-            const volatile value_type &src) const {  // max-plus semiring equivalent of "plus"
+            volatile value_type& dst,
+            const volatile value_type& src) const {  // max-plus semiring equivalent of "plus"
             if (dst < src) {
                 dst = src;
             }
         }
 
         // Tell each thread how to initialize its reduction result.
-        KOKKOS_INLINE_FUNCTION void init(value_type &dst) const {  // The identity under max is -Inf.
+        KOKKOS_INLINE_FUNCTION void init(value_type& dst) const {  // The identity under max is -Inf.
             dst = Kokkos::reduction_identity<value_type>::max();
         }
 
@@ -520,7 +527,7 @@ namespace mars {
     // They work for both general and staggered dof handlers (unified for handlers).
     // However not possible to unify for owned and local. Either one or the other.
     template <Integer Label, typename H>
-    ViewVectorType<Integer> compact_owned_dofs(const H &dof_handler, ViewVectorType<Integer> &locally_owned_dofs) {
+    ViewVectorType<Integer> compact_owned_dofs(const H& dof_handler, ViewVectorType<Integer>& locally_owned_dofs) {
         using namespace Kokkos;
 
         const Integer local_size = dof_handler.template get_owned_dof_size<1>();
@@ -558,7 +565,7 @@ namespace mars {
     }
 
     template <Integer Label, typename H>
-    ViewVectorType<Integer> compact_local_dofs(const H &dof_handler, ViewVectorType<Integer> &local_dofs) {
+    ViewVectorType<Integer> compact_local_dofs(const H& dof_handler, ViewVectorType<Integer>& local_dofs) {
         using namespace Kokkos;
 
         const Integer local_size = dof_handler.template get_dof_size<1>();
@@ -619,7 +626,7 @@ namespace mars {
     inline ViewVectorType<bool> compact_sfc_to_local(DH dofhandler,
                                                      F f,
                                                      const ViewVectorType<Integer> in,
-                                                     ViewVectorType<Integer> &out) {
+                                                     ViewVectorType<Integer>& out) {
         using namespace Kokkos;
 
         auto local_size = in.extent(0);
@@ -671,5 +678,5 @@ namespace mars {
     }
 #endif
 }  // namespace mars
-
+#endif
 #endif  // MARS_DISTRIBUTED_UTILS_HPP

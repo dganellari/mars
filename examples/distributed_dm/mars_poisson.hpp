@@ -32,16 +32,19 @@ uk =[ u1, ... uL ], L = 4
 ---------------------
 //local to global
 u = P uk */
-#include "mars.hpp"
-#ifdef WITH_KOKKOS
+
+#include "mars_base.hpp"
+
+#ifdef MARS_ENABLE_KOKKOS_KERNELS
 #include <KokkosBlas1_sum.hpp>
+
+#include "mars.hpp"
 #include "mars_boundary_conditions.hpp"
 #include "mars_dm_interpolate.hpp"
 #include "mars_laplace_ex.hpp"
 #include "mars_poisson_operator.hpp"
 #include "mars_precon_conjugate_grad.hpp"
 #include "mars_quad4.hpp"
-#endif  // WITH_KOKKOS
 
 // #include "mars_pvtu_writer.hpp"  // VTK
 
@@ -123,7 +126,7 @@ namespace mars {
         using namespace mars;
         mars::proc_allocation resources;
 
-#ifdef WITH_MPI
+#ifdef MARS_ENABLE_MPI
         // create a distributed context
         auto context = mars::make_context(resources, MPI_COMM_WORLD);
         int proc_num = mars::rank(context);
@@ -133,7 +136,7 @@ namespace mars {
         // auto context = mars::make_context(resources);
 #endif
 
-#ifdef WITH_KOKKOS
+#ifdef MARS_ENABLE_KOKKOS
 
         Kokkos::Timer timer;
 
@@ -286,3 +289,4 @@ namespace mars {
     }
 
 }  // namespace mars
+#endif
