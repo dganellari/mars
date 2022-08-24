@@ -155,6 +155,8 @@ namespace mars {
                          comm);
         }
 
+#ifdef MARS_NO_RDMA
+
         template <typename T>
         void i_send(const ViewVectorHost<T> local,
                     const Integer offset,
@@ -199,6 +201,7 @@ namespace mars {
                          request);
         }
 
+#endif
 
         template <typename T>
         void i_receive(const ViewVectorType<T> local,
@@ -659,3 +662,4 @@ namespace mars {
 
     }  // namespace mpi
 }  // namespace mars
+
