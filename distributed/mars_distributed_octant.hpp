@@ -353,6 +353,7 @@ namespace mars {
             Integer y;
             Integer z;
 
+            MARS_INLINE_FUNCTION
             Depth(Integer xd, Integer yd, Integer zd) : x(xd), y(yd), z(zd) {}
 
             // This gives a depth one one ring neighbors since the largest you are substracting from the x is 1.
