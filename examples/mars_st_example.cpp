@@ -298,6 +298,14 @@ int main(int argc, char *argv[]) {
     Env env(argc, argv);
 
     {
+
+    using ModelTest_t = ModelTest<ParallelQuad4Mesh,
+                  UMeshSTHeatEquation<ParallelQuad4Mesh>,
+                  ST3BC<ParallelQuad4Mesh>,
+                  ST3RHS,
+                  ST3Analitcal>;
+
+#ifdef MARS_ENABLE_CXXOPTS
         using namespace cxxopts;
         Options options("./st_example", "Run M.A.R.S. based applications.");
 
@@ -332,13 +340,6 @@ int main(int argc, char *argv[]) {
         //           Example2Analitcal>()
         //     .run(args);
 
-        ModelTest<ParallelQuad4Mesh,
-                  UMeshSTHeatEquation<ParallelQuad4Mesh>,
-                  ST3BC<ParallelQuad4Mesh>,
-                  ST3RHS,
-                  ST3Analitcal>()
-            .run(args);
-
         // ModelTest<ParallelMesh2, UMeshLaplace<ParallelMesh2>, Example3Dirichlet, Example3RHS,
         // Example3Analitcal>().run(
         //     args);
@@ -364,8 +365,8 @@ int main(int argc, char *argv[]) {
         //     .run(args);
 
         // 3D example 2
-        ModelTest<ParallelMesh3, UMeshSTHeatEquation<ParallelMesh3>, ST3D2BC<ParallelMesh3>, ST3D2RHS, ST3D2Analitcal>()
-            .run(args);
+        // ModelTest<ParallelMesh3, UMeshSTHeatEquation<ParallelMesh3>, ST3D2BC<ParallelMesh3>, ST3D2RHS, ST3D2Analitcal>()
+        //     .run(args);
 
         // 4D example 1
         // ModelTest<ParallelMesh4, UMeshSTHeatEquation<ParallelMesh4>, ST4D1BC<ParallelMesh4>, ST4D1RHS,
@@ -378,6 +379,11 @@ int main(int argc, char *argv[]) {
         //           One<ZeroDirchletOnUnitCube<ParallelMesh4>>,
         //           One<ZeroDirchletOnUnitCube<ParallelMesh4>>>()
         //     .run(args);
+
+        ModelTest_t().run(args);
+#else
+        ModelTest_t().run();
+#endif
     }
 
     return env.exit_code();

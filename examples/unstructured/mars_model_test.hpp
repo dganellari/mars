@@ -18,7 +18,9 @@
 #include <iostream>
 #include <numeric>
 
+#ifdef MARS_ENABLE_CXXOPTS
 #include <cxxopts.hpp>
+#endif //MARS_ENABLE_CXXOPTS
 // #include <Kokkos_sort.hpp>
 
 #ifdef MARS_ENABLE_SERIAL_BACKEND
@@ -466,13 +468,25 @@ namespace mars {
             return true;
         }
 
-        void run(cxxopts::ParseResult &args) {
+
+        void run(
+#ifdef MARS_ENABLE_CXXOPTS
+            cxxopts::ParseResult &args
+#endif
+            ) 
+        {
+
+
+#ifdef MARS_ENABLE_CXXOPTS
             Integer ns[4] = {
                 args["nx"].as<Integer>(), args["ny"].as<Integer>(), args["nz"].as<Integer>(), args["nt"].as<Integer>()};
 
             use_adaptive_refinement = args["adaptive"].as<bool>();
             write_output = args["output"].as<bool>();
             max_refinements = args["refine_level"].as<Integer>();
+#else
+            Integer ns[4] = {10, 10, 10, 10};
+#endif
 
             PMesh mesh;
 
