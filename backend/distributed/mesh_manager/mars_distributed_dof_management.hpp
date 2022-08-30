@@ -853,7 +853,7 @@ namespace mars {
 
         // sfc | octant_from_sfc | volume_octant_transform. Composable functions.
         template <typename F, Integer ET = ElemType>
-        static void volume_iterate(const Integer sfc, const Mesh *mesh, const Integer index, F f) {
+        static MARS_INLINE_FUNCTION void volume_iterate(const Integer sfc, const Mesh *mesh, const Integer index, F f) {
             Octant oc = mesh->octant_from_sfc(sfc);
             volume_octant_transform(oc, mesh, index, f, mars::get_sfc_from_octant<ElemType>);
         }
@@ -1985,7 +1985,7 @@ namespace mars {
 
         /* MARS_INLINE_FUNCTION
         const Integer get_local_dof_map(const Integer sfc) const { return sfc_to_local(sfc); } */
-
+        MARS_INLINE_FUNCTION
         MM get_mesh_manager() const { return mesh_manager; }
 
         MARS_INLINE_FUNCTION

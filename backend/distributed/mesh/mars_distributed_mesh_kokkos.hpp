@@ -1329,7 +1329,7 @@ namespace mars {
         }
 
         const context &get_context() const { return ctx; }
-        void set_context(const context &c) { ctx = c; }
+        /* void set_context(const context &c) { ctx = c; } */
 
         MARS_INLINE_FUNCTION
         const UnorderedMap<Integer, Integer> &get_sfc_to_local_map() const { return sfc_to_local_map_; }

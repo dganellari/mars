@@ -227,6 +227,7 @@ namespace mars {
             get_mesh_manager().elem_iterate(f);
         }
 
+        MARS_INLINE_FUNCTION
         Mesh *get_mesh() const { return get_mesh_manager().get_mesh(); }
 
         template <typename H>
@@ -292,6 +293,7 @@ namespace mars {
                 return get_mesh_manager().get_mesh()->get_sfc(sfc_index);
         }
 
+        MARS_INLINE_FUNCTION
         MM get_mesh_manager() const { return mesh_manager_; }
 
     private:

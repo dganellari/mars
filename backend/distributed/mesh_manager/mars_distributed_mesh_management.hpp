@@ -169,6 +169,7 @@ namespace mars {
                                                 zDim));
         }
 
+        MARS_INLINE_FUNCTION
         Mesh *get_mesh() const { return mesh; }
 
         Mesh *get_host_mesh() const { return host_mesh; }
