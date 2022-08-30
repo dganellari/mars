@@ -1,4 +1,6 @@
-// #include "mars_err.hpp"
+#include "mars_base.hpp"
+#include "mars_env.hpp"
+
 #include <algorithm>
 #include <cassert>
 #include <cstdlib>
@@ -9,36 +11,11 @@
 #include <KokkosBlas1_nrm1.hpp>
 #include <KokkosBlas1_nrminf.hpp>
 
-#include "mars_benchmark.hpp"
-#include "mars_bisection.hpp"
-#include "mars_lagrange_element.hpp"
-#include "mars_lepp_benchmark.hpp"
-#include "mars_mesh.hpp"
-#include "mars_mesh_partition.hpp"
-#include "mars_partitioned_bisection.hpp"
-#include "mars_prelepp_benchmark.hpp"
-#include "mars_quality.hpp"
-#include "mars_simplex.hpp"
-#include "mars_utils.hpp"
-#include "mars_vtk_writer.hpp"
-
-#include "mars_longest_edge.hpp"
-#include "mars_mesh_reader.hpp"
-#include "mars_mesh_writer.hpp"
-#include "mars_oldest_edge.hpp"
-#include "mars_ranked_edge.hpp"
-#include "mars_test.hpp"
-
-#include "mars_env.hpp"
-
-#include "mars_mesh_generation.hpp"
-
 #ifdef MARS_ENABLE_KOKKOS
 #include "mars_lepp_benchmark_kokkos.hpp"
 #include "mars_test_kokkos.hpp"
 #endif  // MARS_ENABLE_KOKKOS
 
-// #include "mars_fitzhugh_nagumo.hpp"
 #include "mars_mesh_kokkos.hpp"
 #include "mars_model_test.hpp"
 #include "mars_spacetime_ex.hpp"
@@ -381,15 +358,14 @@ int main(int argc, char *argv[]) {
         //           One<ParallelMesh3>>()
         //     .run(args);
 
-        // 3D example 1
+        // // 3D example 1
         // ModelTest<ParallelMesh3, UMeshSTHeatEquation<ParallelMesh3>, ST3D1BC<ParallelMesh3>, ST3D1RHS,
         // ST3D1Analitcal>()
         //     .run(args);
 
         // 3D example 2
-        // ModelTest<ParallelMesh3, UMeshSTHeatEquation<ParallelMesh3>, ST3D2BC<ParallelMesh3>, ST3D2RHS,
-        // ST3D2Analitcal>()
-        //     .run(args);
+        ModelTest<ParallelMesh3, UMeshSTHeatEquation<ParallelMesh3>, ST3D2BC<ParallelMesh3>, ST3D2RHS, ST3D2Analitcal>()
+            .run(args);
 
         // 4D example 1
         // ModelTest<ParallelMesh4, UMeshSTHeatEquation<ParallelMesh4>, ST4D1BC<ParallelMesh4>, ST4D1RHS,

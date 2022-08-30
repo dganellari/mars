@@ -1,10 +1,14 @@
 #ifndef MARS_MODEL_TEST_HPP
 #define MARS_MODEL_TEST_HPP
 
+#include "mars_base.hpp"
 #include "mars_err.hpp"
 
 #ifdef MARS_ENABLE_KOKKOS_KERNELS
+
+#include <KokkosBlas1_axpby.hpp>
 #include <KokkosBlas1_nrm1.hpp>
+#include <KokkosBlas1_nrm2.hpp>
 #include <KokkosBlas1_nrminf.hpp>
 #include <KokkosBlas1_sum.hpp>
 #include <algorithm>
@@ -17,26 +21,35 @@
 #include <cxxopts.hpp>
 // #include <Kokkos_sort.hpp>
 
-#include "mars_base.hpp"
+#ifdef MARS_ENABLE_SERIAL_BACKEND
+#include "mars_globals.hpp"
+#include "mars_invert.hpp"
+#include "mars_laplace_ex.hpp"
+#include "mars_mesh.hpp"
+#include "mars_precon_conjugate_grad.hpp"
+#include "mars_serial_utils.hpp"
+#include "mars_simplex_laplacian.hpp"
+#include "mars_umesh_laplace.hpp"
+
+#ifdef MARS_ENABLE_VTK
+#include "vtu_writer.hpp"
+
+#endif
+#endif  // MARS_ENABLE_SERIAL_BACKEND
+
 #include "mars_boundary_conditions.hpp"
 #include "mars_copy_operator.hpp"
 #include "mars_fe_values.hpp"
-#include "mars_globals.hpp"
 #include "mars_gradient_recovery.hpp"
 #include "mars_identity_operator.hpp"
 #include "mars_interpolate.hpp"
-#include "mars_invert.hpp"
-#include "mars_laplace_ex.hpp"
-#include "mars_precon_conjugate_grad.hpp"
-#include "mars_simplex_laplacian.hpp"
-#include "mars_umesh_laplace.hpp"
-#include "vtu_writer.hpp"
-
 #include "mars_mesh_kokkos.hpp"
 
 using namespace std::chrono;
 
 namespace mars {
+
+#ifdef MARS_ENABLE_SERIAL_BACKEND
 
     template <class Mesh>
     struct SerialMeshType {};
@@ -44,7 +57,7 @@ namespace mars {
     template <int Dim, int ManifoldDim>
     struct SerialMeshType<
         mars::Mesh<Dim, ManifoldDim, KokkosImplementation, Simplex<Dim, ManifoldDim, KokkosImplementation>>> {
-        using Type = mars::Mesh<Dim, ManifoldDim>;
+        using Type = mars::SimplicialMesh<Dim, ManifoldDim>;
     };
 
     template <int Dim, int ManifoldDim, int ElemType>
@@ -60,18 +73,20 @@ namespace mars {
 
     template <>
     struct SerialMeshType<mars::ParallelMesh2> {
-        using Type = mars::Mesh<2, 2>;
+        using Type = mars::SimplicialMesh<2, 2>;
     };
 
     template <>
     struct SerialMeshType<mars::ParallelMesh3> {
-        using Type = mars::Mesh<3, 3>;
+        using Type = mars::SimplicialMesh<3, 3>;
     };
 
     template <>
     struct SerialMeshType<mars::ParallelMesh4> {
-        using Type = mars::Mesh<4, 4>;
+        using Type = mars::SimplicialMesh<4, 4>;
     };
+
+#endif  // MARS_ENABLE_SERIAL_BACKEND
 
     template <class PMesh, class Op, class BC, class RHS, class AnalyticalFun>
     class ModelTest {
@@ -79,8 +94,9 @@ namespace mars {
         static const int Dim = PMesh::Dim;
         static const int ManifoldDim = PMesh::ManifoldDim;
         static const int NFuns = ManifoldDim + 1;
-
+#ifdef MARS_ENABLE_SERIAL_BACKEND
         using SMesh = typename SerialMeshType<PMesh>::Type;
+#endif  // MARS_ENABLE_SERIAL_BACKEND
         using VectorReal = mars::ViewVectorType<Real>;
         using VectorInt = mars::ViewVectorType<Integer>;
         using VectorBool = mars::ViewVectorType<bool>;
@@ -133,6 +149,9 @@ namespace mars {
                 Kokkos::deep_copy(x_host, x);
                 Kokkos::deep_copy(rhs_host, rhs);
 
+#ifdef MARS_ENABLE_SERIAL_BACKEND
+#ifdef MARS_ENABLE_VTK
+
                 SMesh serial_mesh;
                 convert_parallel_mesh_to_serial(serial_mesh, mesh);
 
@@ -145,7 +164,8 @@ namespace mars {
                 if (!w.write("rhs.vtu", serial_mesh, rhs_host)) {
                     return false;
                 }
-
+#endif  // MARS_ENABLE_VTK
+#endif  // MARS_ENABLE_SERIAL_BACKEND
                 return true;
             }
 
@@ -191,12 +211,16 @@ namespace mars {
 
                 std::cout << "=====================================" << std::endl;
 
+#ifdef MARS_ENABLE_SERIAL_BACKEND
+#ifdef MARS_ENABLE_VTK
                 if (write_output) {
                     VTUMeshWriter<SMesh> w;
                     VectorReal::HostMirror x_exact_host("x_exact_host", mesh.n_nodes());
                     Kokkos::deep_copy(x_exact_host, x_exact);
                     return w.write("x_exact.vtu", serial_mesh, x_exact_host);
                 }
+#endif  // MARS_ENABLE_VTK
+#endif  // MARS_ENABLE_SERIAL_BACKEND
 
                 return true;
             }
@@ -209,9 +233,11 @@ namespace mars {
                 op.assemble_rhs(rhs, rhs_fun);
                 bc.apply(rhs, bc_fun);
 
+#ifdef MARS_ENABLE_SERIAL_BACKEND
                 if (write_output) {
                     convert_parallel_mesh_to_serial(serial_mesh, mesh);
                 }
+#endif  // MARS_ENABLE_SERIAL_BACKEND
             }
 
             BC bc_fun;
@@ -223,7 +249,10 @@ namespace mars {
             BoundaryConditions<PMesh> bc;
             VectorReal rhs;
 
+#ifdef MARS_ENABLE_SERIAL_BACKEND
             SMesh serial_mesh;
+#endif  // MARS_ENABLE_SERIAL_BACKEND
+
             bool write_output;
         };
 
@@ -373,6 +402,8 @@ namespace mars {
             std::cout << "n_nodes:           " << mesh.n_nodes() << std::endl;
 
             //////////////////////////////////////////////////////////////////////////////////////////////////////////////
+#ifdef MARS_ENABLE_SERIAL_BACKEND
+#ifdef MARS_ENABLE_VTK
             if (write_output) {
                 VectorReal::HostMirror refined_x_host("refined_x_host", mesh.n_nodes());
                 Kokkos::deep_copy(refined_x_host, x);
@@ -383,6 +414,8 @@ namespace mars {
                 VTUMeshWriter<SMesh> w;
                 w.write("mesh_refined.vtu", serial_mesh, refined_x_host);
             }
+#endif  // MARS_ENABLE_VTK
+#endif  // MARS_ENABLE_SERIAL_BACKEND
 
             return true;
         }
@@ -478,5 +511,5 @@ namespace mars {
     };  // namespace mars
 }  // namespace mars
 
-#endif  // MARS_MODEL_TEST_HPP
 #endif
+#endif  // MARS_MODEL_TEST_HPP
