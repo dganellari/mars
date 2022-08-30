@@ -38,7 +38,8 @@ endif()
 list(APPEND MARS_HEADERS mars.hpp mars_env.hpp)
 list(APPEND MARS_SOURCES mars.cpp mars_env.cpp)
 
-set(MARS_MODULES base core distributed examples io kokkos)
+# set(MARS_MODULES base core distributed examples io kokkos)
+set(MARS_MODULES base core examples io kokkos)
 
 foreach(MODULE ${MARS_MODULES})
   add_subdirectory("${MODULE}")
@@ -46,6 +47,14 @@ endforeach(MODULE)
 
 if(MARS_ENABLE_SERIAL_BACKEND)
     add_subdirectory("backend/serial")
+endif()
+
+if(MARS_ENABLE_DISTRIBUTED_BACKEND)
+    add_subdirectory("backend/distributed")
+endif()
+
+if(MARS_ENABLE_AMR_BACKEND)
+    add_subdirectory("backend/amr")
 endif()
 
 
