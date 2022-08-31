@@ -38,7 +38,6 @@ namespace mars {
         static constexpr Integer dofLabel = Label;
         static constexpr Integer Length = L;
 
-        MARS_INLINE_FUNCTION
         Stencil() = default;
 
         MARS_INLINE_FUNCTION
@@ -66,7 +65,7 @@ namespace mars {
             return stencil(row, col) = value;
         }
 
-        const Integer get_stencil_size() const { return stencil.extent(0); }
+        Integer get_stencil_size() const { return stencil.extent(0); }
 
         template <typename F>
         void dof_iterate(F f) const {
@@ -149,7 +148,6 @@ namespace mars {
         /* static constexpr Integer Face_Length = 2 * Dim; */
         using SuperStencil = Stencil<Label, Dim, 2, L>;
 
-        MARS_INLINE_FUNCTION
         StokesStencil() = default;
 
         MARS_INLINE_FUNCTION
@@ -220,7 +218,6 @@ namespace mars {
         using SuperStencil = Stencil<Label, Dim, Width, L>;
         using SuperStokesStencil = StokesStencil<Label, Dim, L>;
 
-        MARS_INLINE_FUNCTION
         FullStokesStencil() = default;
 
         MARS_INLINE_FUNCTION

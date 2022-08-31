@@ -39,7 +39,6 @@ namespace mars {
         // To account for the dofs we multiply with the degree.
         /* static constexpr Integer max_dof_to_dof_size = power((degree * 2 + 1), Dim); */
 
-        MARS_INLINE_FUNCTION
         FEDofMap() = default;
 
         MARS_INLINE_FUNCTION
@@ -581,12 +580,12 @@ namespace mars {
       */
 
         MARS_INLINE_FUNCTION
-        const Integer get_elem_local_dof(const Integer elem_index, const Integer i) const {
+        Integer get_elem_local_dof(const Integer elem_index, const Integer i) const {
             return elem_dof_enum(elem_index, i);
         }
 
         /* MARS_INLINE_FUNCTION
-        const Integer get_nbh_dof(const Integer elem_index, const Integer i) const {
+        Integer get_nbh_dof(const Integer elem_index, const Integer i) const {
             return dof_to_dof_map(elem_index, i);
         } */
 
@@ -697,22 +696,22 @@ namespace mars {
         }
 
         MARS_INLINE_FUNCTION
-        const Integer get_fe_dof_map_size() const { return elem_dof_enum.extent(0); }
+        Integer get_fe_dof_map_size() const { return elem_dof_enum.extent(0); }
 
         MARS_INLINE_FUNCTION
-        const Integer get_fe_size() const { return elem_dof_enum.extent(1); }
+        Integer get_fe_size() const { return elem_dof_enum.extent(1); }
 
         MARS_INLINE_FUNCTION
-        const Integer get_owned_dof_elements_size() const { return owned_size; }
+        Integer get_owned_dof_elements_size() const { return owned_size; }
 
         MARS_INLINE_FUNCTION
-        const Integer get_ghost_dof_elements_size() const {
+        Integer get_ghost_dof_elements_size() const {
             const Integer size = get_fe_dof_map_size();
             return size - owned_size;
         }
 
         MARS_INLINE_FUNCTION
-        const Integer get_non_owned_dof_elements_size() const { return non_owned_size; }
+        Integer get_non_owned_dof_elements_size() const { return non_owned_size; }
 
         /* const Integer get_dof_to_dof_map_size() const { return dof_to_dof_map.extent(0); } */
         /* const Integer get_nbh_dof_size() const { return dof_to_dof_map.extent(1); } */

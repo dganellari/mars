@@ -273,7 +273,7 @@ namespace mars {
         void set_proc(Integer p) { proc = p; }
 
         MARS_INLINE_FUNCTION
-        const Integer get_proc() const { return proc; }
+        Integer get_proc() const { return proc; }
 
         MARS_INLINE_FUNCTION
         void set_global_to_local_map(const UnorderedMap<Integer, Integer> &gl_map) { global_to_local_map_ = gl_map; }

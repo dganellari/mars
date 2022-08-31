@@ -1765,7 +1765,7 @@ namespace mars {
         }
 
         template <Integer B = Block_>
-        MARS_INLINE_FUNCTION const Integer local_to_owned(const Integer local) const {
+        MARS_INLINE_FUNCTION Integer local_to_owned(const Integer local) const {
             return local_to_owned_dof<B>(local);
         }
 
@@ -1875,22 +1875,22 @@ namespace mars {
         }
 
         template <Integer B = Block_>
-        MARS_INLINE_FUNCTION const Integer get_dof_size() const {
+        MARS_INLINE_FUNCTION Integer get_dof_size() const {
             return get_block<B>() * local_dof_enum.get_elem_size();
         }
 
-        MARS_INLINE_FUNCTION const Integer get_base_dof_size() const { return local_dof_enum.get_elem_size(); }
+        MARS_INLINE_FUNCTION Integer get_base_dof_size() const { return local_dof_enum.get_elem_size(); }
 
         // no need to be vector valued since it will give the same result.
         MARS_INLINE_FUNCTION
-        const Integer get_local_dof(const Integer i) const {
+        Integer get_local_dof(const Integer i) const {
             assert(i < get_dof_size());
             return i;
         }
 
         // get the local dof of the owned index.
         template <Integer B = Block_>
-        MARS_INLINE_FUNCTION const Integer get_owned_dof(const Integer owned_dof) const {
+        MARS_INLINE_FUNCTION Integer get_owned_dof(const Integer owned_dof) const {
             auto base = compute_base<B>(owned_dof);
             auto component = compute_component<B>(owned_dof);
             const Integer sfc = get_global_dof_enum().get_view_elements()(base);
@@ -1898,10 +1898,10 @@ namespace mars {
         }
 
         MARS_INLINE_FUNCTION
-        const Integer get_base_owned_dof_size() const { return global_dof_enum.get_elem_size(); }
+        Integer get_base_owned_dof_size() const { return global_dof_enum.get_elem_size(); }
 
         template <Integer B = Block_>
-        MARS_INLINE_FUNCTION const Integer get_owned_dof_size() const {
+        MARS_INLINE_FUNCTION Integer get_owned_dof_size() const {
             return get_block<B>() * global_dof_enum.get_elem_size();
         }
 
@@ -1912,12 +1912,12 @@ namespace mars {
         const SFC<simplex_type::ElemType> &get_global_dof_enum() const { return global_dof_enum; }
 
         MARS_INLINE_FUNCTION
-        const Integer get_global_dof_offset(const Integer proc) const { return global_dof_offset(proc); }
+        Integer get_global_dof_offset(const Integer proc) const { return global_dof_offset(proc); }
 
         MARS_INLINE_FUNCTION
         const ViewVectorType<Integer> get_global_dof_offset() const { return global_dof_offset; }
 
-        MARS_INLINE_FUNCTION const Integer get_global_base_dof_size() const {
+        MARS_INLINE_FUNCTION Integer get_global_base_dof_size() const {
             const Integer rank_size = num_ranks(get_context());
 
             auto ss = subview(global_dof_offset, rank_size);
@@ -1928,7 +1928,7 @@ namespace mars {
         }
 
         template <Integer B = Block_>
-        MARS_INLINE_FUNCTION const Integer get_global_dof_size() const {
+        MARS_INLINE_FUNCTION Integer get_global_dof_size() const {
             return get_block<B>() * get_global_base_dof_size();
         }
 
@@ -1989,7 +1989,7 @@ namespace mars {
         MM get_mesh_manager() const { return mesh_manager; }
 
         MARS_INLINE_FUNCTION
-        const Integer get_proc() const { return get_mesh_manager().get_mesh()->get_proc(); }
+        Integer get_proc() const { return get_mesh_manager().get_mesh()->get_proc(); }
 
         MARS_INLINE_FUNCTION
         const ViewVectorType<Integer> &get_view_scan_recv() const { return scan_recv; }
@@ -2004,19 +2004,19 @@ namespace mars {
         const ViewVectorType<Integer>::HostMirror &get_view_scan_send_mirror() const { return scan_send_mirror; }
 
         template <Integer B = Block_>
-        MARS_INLINE_FUNCTION const Integer get_orientation(const Integer local_dof) const {
+        MARS_INLINE_FUNCTION Integer get_orientation(const Integer local_dof) const {
             const Integer base_local = compute_base<B>(local_dof);
             return get_local_dof_enum().get_orientation(base_local);
         }
 
         template <Integer B = Block_>
-        MARS_INLINE_FUNCTION const Integer get_label(const Integer local_dof) const {
+        MARS_INLINE_FUNCTION Integer get_label(const Integer local_dof) const {
             const Integer base_local = compute_base<B>(local_dof);
             return get_local_dof_enum().get_label(base_local);
         }
 
         template <Integer B = Block_>
-        MARS_INLINE_FUNCTION const Integer get_owned_label(const Integer owned_dof) const {
+        MARS_INLINE_FUNCTION Integer get_owned_label(const Integer owned_dof) const {
             const Integer base_owned = compute_base<B>(owned_dof);
             return get_global_dof_enum().get_label(base_owned);
         }
@@ -2065,13 +2065,13 @@ namespace mars {
         }
 
         MARS_INLINE_FUNCTION
-        const Integer get_XMax() const { return Degree * get_mesh_manager().get_mesh()->get_XDim(); }
+        Integer get_XMax() const { return Degree * get_mesh_manager().get_mesh()->get_XDim(); }
 
         MARS_INLINE_FUNCTION
-        const Integer get_YMax() const { return Degree * get_mesh_manager().get_mesh()->get_YDim(); }
+        Integer get_YMax() const { return Degree * get_mesh_manager().get_mesh()->get_YDim(); }
 
         MARS_INLINE_FUNCTION
-        const Integer get_ZMax() const { return Degree * get_mesh_manager().get_mesh()->get_ZDim(); }
+        Integer get_ZMax() const { return Degree * get_mesh_manager().get_mesh()->get_ZDim(); }
 
         MARS_INLINE_FUNCTION
         void set_block(const Integer b) {

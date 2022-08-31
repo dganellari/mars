@@ -33,7 +33,7 @@ namespace mars {
         using Edge = mars::Side<2, KokkosImplementation>;
         using Comb = Combinations<ManifoldDim + 1, 2, KokkosImplementation>;
 
-        MARS_INLINE_FUNCTION Mesh()
+        Mesh()
             : ParallelIMesh<Dim_>(),
               elements_size_(0),
               points_size_(0),
@@ -1397,7 +1397,7 @@ namespace mars {
                     const int n_elements = xDim * yDim * zDim * 24;  // 24 tetrahedrons on one hex27
                     reserve_elements(n_elements);
 
-                    const int n_cube_nodes = (2 * xDim + 1) * (2 * yDim + 1) * (2 * zDim + 1);
+                    /* const int n_cube_nodes = (2 * xDim + 1) * (2 * yDim + 1) * (2 * zDim + 1); */
 
                     // texture view for random access
                     ViewMatrixTexture<Integer, hex_n_nodes> hexes("hexes", xDim * yDim * zDim);

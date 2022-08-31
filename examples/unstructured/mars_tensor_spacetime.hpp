@@ -23,7 +23,8 @@ namespace mars {
             //     val[i] = 1.0;
             // }
 
-            Real gi[Dim], g[Dim], g_x[Dim - 1];
+            // Real g[Dim];
+            Real gi[Dim], g_x[Dim - 1];
             Real pk[Dim];
 
             auto &q_points = q.q_p;

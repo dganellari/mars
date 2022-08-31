@@ -142,9 +142,15 @@ namespace mars {
 
         typename ViewMatrixTextureC<T, xDim_, yDim_>::HostMirror h_view = create_mirror_view(map_side_to_nodes);
 
-        parallel_for(
+        //Parallel for generates warning for [] operator as called from a device function.
+        /* parallel_for(
             MDRangePolicy<Rank<2>, KokkosHostExecSpace>({0, 0}, {xDim, yDim}),
-            KOKKOS_LAMBDA(int i, int j) { h_view(i, j) = hostData[i][j]; });
+            MARS_LAMBDA(int i, int j) { h_view(i, j) = hostData[i][j]; }); */
+        for (int i = 0; i < xDim; ++i) {
+            for (int j = 0; j < yDim; ++j) {
+                h_view(i, j) = hostData[i][j];
+            }
+        }
 
         Kokkos::deep_copy(map_side_to_nodes, h_view);
     }

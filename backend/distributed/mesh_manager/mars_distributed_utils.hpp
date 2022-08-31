@@ -48,7 +48,7 @@ namespace mars {
 
     template <std::size_t Index>
     struct TypeIdxTest<Index, false> {
-        static_assert(Index == -1, "Type not found in the tuple!");
+        static_assert(Index < 0, "Type not found in the tuple!");
     };
 
     template <class Head, class T, std::size_t Index>
