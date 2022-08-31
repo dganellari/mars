@@ -312,7 +312,7 @@ namespace mars {
                 sfc_elem, point, data.get_mesh()->get_XDim(), data.get_mesh()->get_YDim(), data.get_mesh()->get_ZDim());
 
             printf(
-                "derivative data: %li - (%lf, %lf) - rank: %i - u: %lf - dudt: %lf "
+                "derivative data: %i - (%lf, %lf) - rank: %li - u: %lf - dudt: %lf "
                 "- derivatives: [%lf - %lf]\n",
                 i,
                 point[0],
@@ -495,8 +495,8 @@ namespace mars {
 
                     if (ii == 1 && data.get_mesh()->get_proc() == 0)
                         printf(
-                            "(%i %lf:%lf) q: %lf, uavg: %lf - %i -  %i, rank: "
-                            "%i\n",
+                            "(%i %lf:%lf) q: %lf, uavg: %lf - %li -  %li, rank: "
+                            "%li\n",
                             i,
                             point[0],
                             point[1],

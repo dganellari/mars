@@ -276,11 +276,10 @@ namespace mars {
             }
         }
 
-        MARS_INLINE_FUNCTION
-        void insert_sorted_unique_fe(const ViewMatrixType<Integer> &col,
-                                     const Integer row,
-                                     const Integer value,
-                                     Integer &count) const {
+        static MARS_INLINE_FUNCTION void insert_sorted_unique_fe(const ViewMatrixType<Integer> &col,
+                                                                 const Integer row,
+                                                                 const Integer value,
+                                                                 Integer &count) {
             Integer i = 0;
             while (value > col(row, i) && i < count) {
                 i++;
@@ -325,7 +324,6 @@ namespace mars {
 
             /* compact_owned_dofs<L>(get_dof_handler(), locally_owned_dofs); */
             assert(owned_size == block * locally_owned_dofs.extent(0));
-
             auto el_max_size = fe.template label_based_element_count<L>();
             Kokkos::parallel_for(
                 "Count_nodes", owned_size, MARS_LAMBDA(const Integer i) {

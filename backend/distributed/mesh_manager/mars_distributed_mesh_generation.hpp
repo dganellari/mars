@@ -4,8 +4,10 @@
 #ifdef MARS_ENABLE_MPI
 #include "mars_context.hpp"
 #include "mars_execution_context.hpp"
+#ifdef MARS_ENABLE_KOKKOS
 #ifdef MARS_ENABLE_KOKKOS_KERNELS
 #include "KokkosKernels_Sorting.hpp"
+#endif
 #include "mars_distributed_mesh_kokkos.hpp"
 namespace mars {
 
@@ -245,10 +247,12 @@ namespace mars {
         }
 
         ViewVectorType<unsigned_l> aux_elem_sfc("aux_elem_sfc", number_of_elements);
-        /* Kokkos::Impl::sort(element_sfc, 0, element_sfc.extent(0)); */
-        KokkosKernels::Impl::SerialRadixSort<Integer, unsigned_l>(
+#ifndef MARS_ENABLE_KOKKOS_KERNELS
+        Kokkos::Impl::sort(element_sfc, 0, element_sfc.extent(0));
+#else
+        KokkosKernels::SerialRadixSort<Integer, unsigned_l>(
             element_sfc.data(), aux_elem_sfc.data(), number_of_elements);
-
+#endif
         return element_sfc;
     }
 
@@ -389,7 +393,6 @@ namespace mars {
         double time_gen = timer.seconds();
         std::cout << "SFC Generation and Partition took: " << time_gen << " seconds. Process: " << proc_num
                   << std::endl;
-
         /* //Classical method using the radix sort. 10x slower than the current one due to the sort.
         generate_local_sfc<Type>(mesh, counts); */
     }

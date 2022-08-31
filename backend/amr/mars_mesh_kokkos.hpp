@@ -558,7 +558,7 @@ namespace mars {
         inline Integer n_active_elements(const Integer N) {
             using namespace Kokkos;
 
-            Timer timer;
+            // Timer timer;
 
             ViewVectorType<bool> active_ = get_view_active();
 
@@ -566,10 +566,10 @@ namespace mars {
             parallel_reduce(
                 "Active_all", N, KOKKOS_LAMBDA(const int &i, double &lsum) { lsum += active_(i); }, result);
 
-            double time = timer.seconds();
-            std::cout << "Active_all Reduction took: " << time << " seconds." << std::endl;
+            /* double time = timer.seconds();
+            std::cout << "Active_all Reduction took: " << time << " seconds." << std::endl; */
 
-            printf("Result: %i %lf\n", N, result);
+            // printf("Result: %li %lf\n", N, result);
 
             return result;
         }
@@ -577,7 +577,7 @@ namespace mars {
         inline Integer n_active_elements(const ViewVectorType<Integer> elements) {
             using namespace Kokkos;
 
-            Timer timer;
+            // Timer timer;
 
             ViewVectorType<bool> active_ = get_view_active();
 
@@ -587,10 +587,10 @@ namespace mars {
             parallel_reduce(
                 "Active_elem", N, KOKKOS_LAMBDA(const int &i, double &lsum) { lsum += active_(elements(i)); }, result);
 
-            double time = timer.seconds();
-            std::cout << "Active_elements Reduction took: " << time << " seconds." << std::endl;
+            /* double time = timer.seconds();
+            std::cout << "Active_elements Reduction took: " << time << " seconds." << std::endl; */
 
-            printf("Result: %i %lf\n", N, result);
+            // printf("Result: %li %lf\n", N, result);
 
             return result;
         }
@@ -1718,7 +1718,7 @@ namespace mars {
 
      }
 
-    /*inline bool mesh_hyper_cube(
+    inline bool mesh_hyper_cube(
      const std::array<Integer, 4> &dims,
      const Vector<Real, 4> &lobo,
      const Vector<Real, 4> &upbo,
