@@ -1071,7 +1071,7 @@ namespace mars {
                         gid = sfc_lid + global_dof_offset(proc);
                     } */
 
-                    Octant o = get_octant_from_sfc(sfc_elem);
+                    Octant o = handler.get_octant_from_sfc(sfc_elem);
 
                     printf("i: %i global sfc: %li gdof: %li octant: [%li, %li, %li] -  rank: %i\n",
                            i,

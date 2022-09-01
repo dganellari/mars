@@ -88,14 +88,14 @@ namespace mars {
             CountUniqueDofs(ViewVectorType<Integer> c, SHandler h) : counter(c), dhandler(h) {}
 
             template <typename H>
-            MARS_INLINE_FUNCTION Integer get_total(const Integer dof, Integer &count, const H &handler) const {
+            static MARS_INLINE_FUNCTION Integer get_total(const Integer dof, Integer &count, const H &handler) {
                 return handler.template is_boundary<SHandler::ElemType>(dof) ? 1 : count;
             }
 
             // TODO:Specialize for normal stencils as in the method below since normally the boundary is excluded.
             /* template <>
-            MARS_INLINE_FUNCTION Integer
-            get_total<DofHandler<SHandler::Mesh, SHandler::Degree>>(const StokesStencil<DHandler> &st) const {
+            static MARS_INLINE_FUNCTION Integer
+            get_total<DofHandler<SHandler::Mesh, SHandler::Degree>>(const StokesStencil<DHandler> &st) {
                 return dhandler.template is_boundary<SHandler::ElemType>(dof) ? 0 : count;
             } */
 
@@ -148,6 +148,7 @@ namespace mars {
             template <typename S>
             MARS_INLINE_FUNCTION void insert_sorted(S st) const {
                 auto handler = dhandler;
+                auto sortedDofs = *this;
                 auto rp = row_ptr;
                 auto ci = col_idx;
                 st.iterate(MARS_LAMBDA(const Integer stencil_index) {
@@ -164,7 +165,7 @@ namespace mars {
                             const Integer local_dof = st.get_value(stencil_index, i);
                             if (conditional(local_dof, handler)) {
                                 const Integer global = handler.local_to_global(local_dof);
-                                insert_sorted(ci, index, global, count);
+                                sortedDofs.insert_sorted(ci, index, global, count);
                             }
                         }
                     }
