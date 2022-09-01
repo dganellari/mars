@@ -276,7 +276,8 @@ namespace mars {
 
             // auto parents = mesh.parent_map();
 
-            VectorInt parents("parents", n_elements, -1);
+            VectorInt parents("parents", n_elements);
+            Kokkos::deep_copy(parents, -1);
 
             Kokkos::parallel_for(
                 new_elem_offset, MARS_LAMBDA(const Integer &i) {
