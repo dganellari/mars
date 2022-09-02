@@ -17,14 +17,14 @@ namespace mars {
         using UserDataType = typename std::tuple_element<idx, tuple>::type;
 
         template <Integer... dataidx>
-        MARS_INLINE_FUNCTION static void reserve_user_data(user_tuple &tuple,
+        static void reserve_user_data(user_tuple &tuple,
                                                            std::string view_desc,
                                                            const Integer size) {
             expand_tuple<resize_view_functor, user_tuple, dataidx...>(resize_view_functor(view_desc, size), tuple);
         }
 
         template <typename H>
-        MARS_INLINE_FUNCTION void parallel_for_data(const Integer size, H f) {
+        void parallel_for_data(const Integer size, H f) {
             Kokkos::parallel_for("init_initial_cond", size, f);
         }
 
@@ -103,9 +103,7 @@ namespace mars {
         };
 
         template <typename H, Integer Op, Integer... dataidx>
-        MARS_INLINE_FUNCTION static void fill_buffer_data(user_tuple &udata,
-                                                          user_tuple &buffer_data,
-                                                          const H &dof_handler) {
+        static void fill_buffer_data(user_tuple &udata, user_tuple &buffer_data, const H &dof_handler) {
             const Integer size = dof_handler.get_boundary_dof_size();
             expand_tuple<FillBufferDataFunctor<Op, H>, user_tuple, dataidx...>(
                 FillBufferDataFunctor<Op, H>("fill_buffer_data", size, dof_handler), buffer_data, udata);
@@ -141,7 +139,7 @@ namespace mars {
             return block_scan;
         } */
 
-        MARS_INLINE_FUNCTION static std::vector<Integer> compute_block_scan(Integer *mirror,
+        static std::vector<Integer> compute_block_scan(Integer *mirror,
                                                                             const Integer size,
                                                                             const Integer block) {
             assert(block > 0);
@@ -159,7 +157,7 @@ namespace mars {
         }
 
         template <typename H, Integer... dataidx>
-        MARS_INLINE_FUNCTION static void exchange_ghost_dofs_data(const context &c,
+        static void exchange_ghost_dofs_data(const context &c,
                                                                   const Integer block,
                                                                   user_tuple &recv_data,
                                                                   user_tuple &send_data,
@@ -221,7 +219,7 @@ namespace mars {
 
         /* fill the user data views from the ghost data that were filled in FillBufferData and received through mpi. */
         template <typename H, bool Op, Integer... dataidx>
-        MARS_INLINE_FUNCTION static void fill_user_data(user_tuple &udata,
+        static void fill_user_data(user_tuple &udata,
                                                         user_tuple &ghost_user_data,
                                                         const H &dof_handler) {
             const Integer size = dof_handler.get_ghost_dof_size();

@@ -146,7 +146,6 @@ namespace mars {
 
         SFC() = default;
 
-        MARS_INLINE_FUNCTION
         SFC(const Integer x, const Integer y, const Integer z) : xDim(x), yDim(y), zDim(z) {
             all_range_ = compute_all_range<Type>(xDim, yDim, zDim);
         }

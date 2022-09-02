@@ -55,6 +55,7 @@ namespace mars {
             fix_ordering();
         }
 
+        MARS_INLINE_FUNCTION
         Side(const Integer a_node, const Integer another_node) {
             static_assert(N == 2, "This constructor can only be used for a 2-side");
 

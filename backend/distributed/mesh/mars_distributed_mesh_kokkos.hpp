@@ -50,13 +50,14 @@ namespace mars {
         //, combinations(nullptr)
         {} */
 
-        MARS_INLINE_FUNCTION Mesh(const context &c)
+        Mesh(const context &c)
             : ParallelIMesh<Dim_>(),
               elements_size_(0),
               points_size_(0),
               ctx(c)
         //, combinations(nullptr)
         {}
+
         void reserve(const std::size_t n_elements, const std::size_t n_points) override {
             elements_size_ = n_elements;
             points_size_ = n_points;

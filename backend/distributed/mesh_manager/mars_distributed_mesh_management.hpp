@@ -16,10 +16,10 @@ namespace mars {
         using simplex_type = typename Mesh::Elem;
 
     public:
-        MARS_INLINE_FUNCTION MeshManager(Mesh *mesh) : host_mesh(mesh), mesh(nullptr) { copy_mesh_to_device(); }
+        MeshManager(Mesh *mesh) : host_mesh(mesh), mesh(nullptr) { copy_mesh_to_device(); }
 
         template <typename H>
-        MARS_INLINE_FUNCTION void elem_iterate(H f) {
+        void elem_iterate(H f) {
             const Integer size = host_mesh->get_chunk_size();
             Kokkos::parallel_for("init_initial_cond", size, f);
         }

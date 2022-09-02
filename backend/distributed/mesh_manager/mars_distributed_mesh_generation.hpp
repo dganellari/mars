@@ -410,10 +410,7 @@ namespace mars {
 
         const context &context = mesh.get_context();
 
-        int proc_num = rank(context);
-
-        mesh.set_XDim(xDim);
-        mesh.set_YDim(yDim);
+        int proc_num = rank(context); mesh.set_XDim(xDim); mesh.set_YDim(yDim);
         mesh.set_ZDim(zDim);
 
         // partition the mesh and then generate the points and elements.

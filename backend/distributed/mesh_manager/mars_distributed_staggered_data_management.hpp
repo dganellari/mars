@@ -24,13 +24,11 @@ namespace mars {
         template <Integer idx>
         using UserDataType = typename std::tuple_element<idx, tuple>::type;
 
-        MARS_INLINE_FUNCTION
         SDM(DofHandler<typename SDofHandler::Mesh, SDofHandler::Degree> d) : dof_handler(SDofHandler(d)) {
             SuperDM::template reserve_user_data(
                 vdata, "separated_user_data tuple", dof_handler.get_local_dofs().extent(0));
         }
 
-        MARS_INLINE_FUNCTION
         SDM(SDofHandler d) : dof_handler(d) {
             SuperDM::template reserve_user_data(
                 vdata, "separated_user_data tuple", dof_handler.get_local_dofs().extent(0));

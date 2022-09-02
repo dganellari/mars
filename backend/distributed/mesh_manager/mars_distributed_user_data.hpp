@@ -23,14 +23,18 @@ namespace mars {
         template <Integer idx>
         using UserDataType = typename std::tuple_element<idx, tuple>::type;
 
-        MARS_INLINE_FUNCTION UserData(Mesh *mesh) : mesh_manager_(MM(mesh)) {
+        MARS_INLINE_FUNCTION
+        UserData(Mesh *mesh) : mesh_manager_(MM(mesh)) {
             const Integer size = get_mesh_manager().get_host_mesh()->get_chunk_size();
             reserve_user_data(user_data_, "user_data", size);
         }
 
-        MARS_INLINE_FUNCTION UserData(Mesh *mesh, const user_tuple &data) : mesh_manager_(MM(mesh)), user_data_(data) {}
+        MARS_INLINE_FUNCTION
+        UserData(Mesh *mesh, const user_tuple &data) : mesh_manager_(MM(mesh)), user_data_(data) {}
 
-        MARS_INLINE_FUNCTION void reserve_user_data(user_tuple &tuple, std::string view_desc, const Integer size) {
+
+        MARS_INLINE_FUNCTION
+        void reserve_user_data(user_tuple &tuple, std::string view_desc, const Integer size) {
             apply_impl(resize_view_functor(view_desc, size), tuple);
         }
 
@@ -65,7 +69,7 @@ namespace mars {
             ViewVectorType<Integer> boundary_lsfc_index;
         };
 
-        MARS_INLINE_FUNCTION void fill_buffer_data(user_tuple &buffer_data) {
+        void fill_buffer_data(user_tuple &buffer_data) {
             const Integer size = get_mesh_manager().get_host_mesh()->get_view_boundary().extent(0);
 
             reserve_user_data(buffer_data, "buffer_data", size);
@@ -185,7 +189,7 @@ namespace mars {
             tuple tup;
         };
 
-        MARS_INLINE_FUNCTION void init_user_data(T... args) {
+        void init_user_data(T... args) {
             const Integer size = get_mesh_manager().get_host_mesh()->get_chunk_size();
 
             apply_impl(InitData("init_data", size, std::forward_as_tuple(args...)), user_data_);
@@ -207,23 +211,23 @@ namespace mars {
     */
 
         template <typename H>
-        MARS_INLINE_FUNCTION void parallel_for_data(const Integer size, H f) {
+        void parallel_for_data(const Integer size, H f) {
             Kokkos::parallel_for("init_initial_cond", size, f);
         }
 
         template <typename H>
-        MARS_INLINE_FUNCTION void set_init_cond(H f) {
+        void set_init_cond(H f) {
             elem_iterate(f);
         }
 
         template <typename H, typename S>
-        MARS_INLINE_FUNCTION void elem_iterate_reduce(H f, S s) {
+        void elem_iterate_reduce(H f, S s) {
             const Integer size = get_mesh_manager().get_host_mesh()->get_chunk_size();
             Kokkos::parallel_reduce("elem_reduce", size, f, s);
         }
 
         template <typename H>
-        MARS_INLINE_FUNCTION void elem_iterate(H f) {
+        void elem_iterate(H f) {
             get_mesh_manager().elem_iterate(f);
         }
 
@@ -231,7 +235,7 @@ namespace mars {
         Mesh *get_mesh() const { return get_mesh_manager().get_mesh(); }
 
         template <typename H>
-        MARS_INLINE_FUNCTION void face_iterate(H f) const {
+        void face_iterate(H f) const {
             get_mesh_manager().face_iterate(f);
         }
 

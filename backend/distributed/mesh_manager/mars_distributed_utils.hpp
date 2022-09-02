@@ -198,12 +198,12 @@ namespace mars {
     }
 
     template <typename F, Integer I = 0, Integer... Args, typename... Tp>
-    typename std::enable_if<I == sizeof...(Args), void>::type MARS_INLINE_FUNCTION for_each_arg(const F& f,
+    typename std::enable_if<I == sizeof...(Args), void>::type for_each_arg(const F& f,
                                                                                                 std::tuple<Tp...>& t) {}
 
     template <typename F, Integer I = 0, Integer... Args, typename... Tp>
         typename std::enable_if <
-        I<sizeof...(Args), void>::type MARS_INLINE_FUNCTION for_each_arg(const F& f, std::tuple<Tp...>& t) {
+        I<sizeof...(Args), void>::type for_each_arg(const F& f, std::tuple<Tp...>& t) {
         constexpr Integer dataIndex = NthValue<I, Args...>::value;
 
         f(std::get<dataIndex>(t), dataIndex);
@@ -211,13 +211,13 @@ namespace mars {
     }
 
     template <typename F, Integer I = 0, Integer... Args, typename... Tp>
-    typename std::enable_if<I == sizeof...(Args), void>::type MARS_INLINE_FUNCTION for_each_arg(const F& f,
+    typename std::enable_if<I == sizeof...(Args), void>::type for_each_arg(const F& f,
                                                                                                 std::tuple<Tp...>& t,
                                                                                                 std::tuple<Tp...>& v) {}
 
     template <typename F, Integer I = 0, Integer... Args, typename... Tp>
         typename std::enable_if <
-        I<sizeof...(Args), void>::type MARS_INLINE_FUNCTION for_each_arg(const F& f,
+        I<sizeof...(Args), void>::type for_each_arg(const F& f,
                                                                          std::tuple<Tp...>& t,
                                                                          std::tuple<Tp...>& v) {
         constexpr Integer dataIndex = NthValue<I, Args...>::value;
@@ -227,12 +227,12 @@ namespace mars {
     }
 
     template <typename F, Integer I = 0, Integer... Args, typename... Tp>
-    typename std::enable_if<I == sizeof...(Args), void>::type MARS_INLINE_FUNCTION
+    typename std::enable_if<I == sizeof...(Args), void>::type
     for_each_arg(const F& f, std::tuple<ViewMatrixType<Tp>...>& t, std::tuple<ViewVectorType<Tp>...>& v) {}
 
     template <typename F, Integer I = 0, Integer... Args, typename... Tp>
         typename std::enable_if <
-        I<sizeof...(Args), void>::type MARS_INLINE_FUNCTION for_each_arg(const F& f,
+        I<sizeof...(Args), void>::type for_each_arg(const F& f,
                                                                          std::tuple<ViewMatrixType<Tp>...>& t,
                                                                          std::tuple<ViewVectorType<Tp>...>& v) {
         constexpr Integer dataIndex = NthValue<I, Args...>::value;
@@ -242,7 +242,7 @@ namespace mars {
     }
 
     template <typename F, typename T, Integer... dataidx>
-    MARS_INLINE_FUNCTION static void expand_tuple(const F& f, T& t) {
+    static void expand_tuple(const F& f, T& t) {
         if (sizeof...(dataidx) == 0) {
             apply_impl(f, t);
         } else {
@@ -251,7 +251,7 @@ namespace mars {
     }
 
     template <typename F, typename T, Integer... dataidx>
-    MARS_INLINE_FUNCTION static void expand_tuple(const F& f, T& t, T& v) {
+    static void expand_tuple(const F& f, T& t, T& v) {
         if (sizeof...(dataidx) == 0) {
             apply_impl(f, t, v);
         } else {
@@ -260,7 +260,7 @@ namespace mars {
     }
 
     template <typename F, typename M, typename T, Integer... dataidx>
-    MARS_INLINE_FUNCTION static void expand_tuple(const F& f, M& t, T& v) {
+    static void expand_tuple(const F& f, M& t, T& v) {
         if (sizeof...(dataidx) == 0) {
             apply_impl(f, t, v);
         } else {

@@ -117,7 +117,6 @@ namespace mars {
         MARS_INLINE_FUNCTION
         constexpr Integer get_elem_type() const { return simplex_type::ElemType; }
 
-        MARS_INLINE_FUNCTION
         DofHandler(Mesh *mesh) : mesh_manager(MM(mesh)) {}
 
         // computes the component (block) from the block local
@@ -151,36 +150,36 @@ namespace mars {
         }
 
         template <typename H>
-        MARS_INLINE_FUNCTION void owned_iterate(H f) const {
+        void owned_iterate(H f) const {
             owned_dof_iterate(f);
         }
 
         template <typename H, Integer B = Block_>
-        MARS_INLINE_FUNCTION void owned_dof_iterate(H f) const {
+        void owned_dof_iterate(H f) const {
             Kokkos::parallel_for("init_initial_cond", get_block<B>() * global_dof_enum.get_elem_size(), f);
         }
 
         template <typename H, Integer B = Block_>
-        MARS_INLINE_FUNCTION void dof_iterate(H f) const {
+        void dof_iterate(H f) const {
             Kokkos::parallel_for("init_initial_cond", get_block<B>() * local_dof_enum.get_elem_size(), f);
         }
 
         template <typename H>
-        MARS_INLINE_FUNCTION void base_dof_iterate(H f) const {
+        void base_dof_iterate(H f) const {
             Kokkos::parallel_for("init_initial_cond", local_dof_enum.get_elem_size(), f);
         }
 
         template <typename H>
-        MARS_INLINE_FUNCTION void elem_iterate(H f) const {
+        void elem_iterate(H f) const {
             get_mesh_manager().elem_iterate(f);
         }
 
-        MARS_INLINE_FUNCTION Integer get_elem_size() const {
+        Integer get_elem_size() const {
             return get_mesh_manager().get_host_mesh()->get_chunk_size();
         }
 
         template <typename H>
-        MARS_INLINE_FUNCTION void face_iterate(H f) const {
+        void face_iterate(H f) const {
             get_mesh_manager().face_iterate(f);
         }
 
@@ -1875,7 +1874,7 @@ namespace mars {
         }
 
         template <Integer B = Block_>
-        MARS_INLINE_FUNCTION Integer get_dof_size() const {
+        Integer get_dof_size() const {
             return get_block<B>() * local_dof_enum.get_elem_size();
         }
 
@@ -1901,7 +1900,7 @@ namespace mars {
         Integer get_base_owned_dof_size() const { return global_dof_enum.get_elem_size(); }
 
         template <Integer B = Block_>
-        MARS_INLINE_FUNCTION Integer get_owned_dof_size() const {
+        Integer get_owned_dof_size() const {
             return get_block<B>() * global_dof_enum.get_elem_size();
         }
 
@@ -1917,7 +1916,7 @@ namespace mars {
         MARS_INLINE_FUNCTION
         const ViewVectorType<Integer> get_global_dof_offset() const { return global_dof_offset; }
 
-        MARS_INLINE_FUNCTION Integer get_global_base_dof_size() const {
+        Integer get_global_base_dof_size() const {
             const Integer rank_size = num_ranks(get_context());
 
             auto ss = subview(global_dof_offset, rank_size);
@@ -1928,7 +1927,7 @@ namespace mars {
         }
 
         template <Integer B = Block_>
-        MARS_INLINE_FUNCTION Integer get_global_dof_size() const {
+        Integer get_global_dof_size() const {
             return get_block<B>() * get_global_base_dof_size();
         }
 

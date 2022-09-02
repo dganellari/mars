@@ -55,7 +55,6 @@ namespace mars {
 
         static constexpr Integer Block = DofHandler::Block;
 
-        MARS_INLINE_FUNCTION
         SparsityPattern(SHandler h) : dof_handler(h) {}
 
         /* struct CompareLabel {
@@ -100,7 +99,7 @@ namespace mars {
             } */
 
             template <typename S>
-            MARS_INLINE_FUNCTION void count_unique(S st) const {
+            void count_unique(S st) const {
                 auto handler = dhandler;
                 auto cntr = counter;
                 st.iterate(MARS_LAMBDA(const Integer stencil_index) {
@@ -119,7 +118,7 @@ namespace mars {
             }
 
             template <typename S>
-            MARS_INLINE_FUNCTION void operator()(S &stencil, size_t I) const {
+            void operator()(S &stencil, size_t I) const {
                 count_unique<S>(stencil);
             }
 
@@ -130,8 +129,10 @@ namespace mars {
         struct InsertSortedDofs {
             InsertSortedDofs(crs_row r, crs_col c, SHandler h) : row_ptr(r), col_idx(c), dhandler(h) {}
 
-            MARS_INLINE_FUNCTION
-            void insert_sorted(const crs_col &col, const Integer index, const Integer value, Integer &count) const {
+            MARS_INLINE_FUNCTION void insert_sorted(const crs_col &col,
+                                                    const Integer index,
+                                                    const Integer value,
+                                                    Integer &count) const {
                 Integer i = 0;
                 while (value > col(index + i) && i < count) {
                     i++;
@@ -146,7 +147,7 @@ namespace mars {
 
             /* TODO:specialize for stokes because normally the boundary would be excluded. */
             template <typename S>
-            MARS_INLINE_FUNCTION void insert_sorted(S st) const {
+            void insert_sorted(S st) const {
                 auto handler = dhandler;
                 auto sortedDofs = *this;
                 auto rp = row_ptr;
@@ -173,7 +174,7 @@ namespace mars {
             }
 
             template <typename S>
-            MARS_INLINE_FUNCTION void operator()(S &stencil, size_t I) const {
+            void operator()(S &stencil, size_t I) const {
                 insert_sorted<S>(stencil);
                 /* //To be used with kokkos radix sort. Currently slower than the insert_sorted routine.
                 insert<S>(stencil); */
@@ -181,7 +182,7 @@ namespace mars {
 
             /* TODO:specialize for stokes because normally the boundary would be excluded. */
             template <typename S>
-            MARS_INLINE_FUNCTION void insert(S st) const {
+            void insert(S st) const {
                 auto handler = dhandler;
                 auto rp = row_ptr;
                 auto ci = col_idx;
@@ -421,11 +422,11 @@ namespace mars {
             }
 
             template <typename M, typename S>
-            MARS_INLINE_FUNCTION void operator()(const M &ntn, const S &lod) const {
+            void operator()(const M &ntn, const S &lod) const {
                 generate_col_idx_from_node_to_node(ntn, lod);
             }
 
-            MARS_INLINE_FUNCTION
+
             GenColIdxFromNodeToNodeTuple(SHandler dh, crs_col c, crs_row r) : dhandler(dh), col(c), row(r) {}
 
             SHandler dhandler;

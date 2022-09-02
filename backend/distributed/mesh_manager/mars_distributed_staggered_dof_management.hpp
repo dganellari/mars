@@ -43,7 +43,6 @@ namespace mars {
 
         static constexpr Integer elem_dofs = NDofs::elem_dofs();
 
-        MARS_INLINE_FUNCTION
         SDofHandler(DofHandler d) : dof_handler(d) { prepare_separated_dofs(); }
 
         struct IsSeparatedDof {
@@ -377,7 +376,6 @@ namespace mars {
                 return INVALID_INDEX;
         }
 
-        MARS_INLINE_FUNCTION
         Integer get_global_dof_size() const {
             const Integer rank_size = num_ranks(get_dof_handler().get_context());
 
