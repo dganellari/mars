@@ -21,7 +21,7 @@
 
 #ifdef MARS_ENABLE_MPI
 #ifdef MARS_ENABLE_KOKKOS_KERNELS
-/* #include "mars_advection.hpp" */
+#include "mars_advection.hpp"
 #include "mars_constant_viscosity_stokes.hpp"
 #include "mars_poisson.hpp"
 #include "mars_test_kokkos.hpp"
@@ -1201,7 +1201,7 @@ int main_serial(int argc, char *argv[]) {
 
         apps["vstokes3D"] = [=]() { staggered_variable_viscosty_stokes<ElementType::Hex8>(xDim, yDim, zDim); };
 
-        /* apps["advection"] = [=]() { advection(level); }; */
+        apps["advection"] = [=]() { advection(level); };
 
 #endif
 #endif  // MARS_ENABLE_KOKKOS_KERNELS

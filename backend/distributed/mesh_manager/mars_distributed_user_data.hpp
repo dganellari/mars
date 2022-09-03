@@ -23,17 +23,14 @@ namespace mars {
         template <Integer idx>
         using UserDataType = typename std::tuple_element<idx, tuple>::type;
 
-        MARS_INLINE_FUNCTION
         UserData(Mesh *mesh) : mesh_manager_(MM(mesh)) {
             const Integer size = get_mesh_manager().get_host_mesh()->get_chunk_size();
             reserve_user_data(user_data_, "user_data", size);
         }
 
-        MARS_INLINE_FUNCTION
         UserData(Mesh *mesh, const user_tuple &data) : mesh_manager_(MM(mesh)), user_data_(data) {}
 
 
-        MARS_INLINE_FUNCTION
         void reserve_user_data(user_tuple &tuple, std::string view_desc, const Integer size) {
             apply_impl(resize_view_functor(view_desc, size), tuple);
         }
@@ -242,17 +239,14 @@ namespace mars {
         MARS_INLINE_FUNCTION
         Integer get_ghost_elem(const Integer i) const { return get_mesh_manager().get_mesh()->get_ghost_sfc(i); }
 
-        MARS_INLINE_FUNCTION
         const ViewVectorType<Integer> &get_view_boundary() const {
             return get_mesh_manager().get_host_mesh()->get_view_boundary();
         }
 
-        MARS_INLINE_FUNCTION
         const ViewVectorType<Integer> &get_view_ghost() const {
             return get_mesh_manager().get_host_mesh()->get_view_ghost();
         }
 
-        MARS_INLINE_FUNCTION
         const ViewVectorType<Integer> &get_view_scan_ghost() const {
             return get_mesh_manager().get_host_mesh()->get_view_scan_ghost();
         }
