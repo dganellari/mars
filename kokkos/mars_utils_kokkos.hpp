@@ -9,7 +9,7 @@
 #endif
 
 #ifdef MARS_ENABLE_KOKKOS
-#include "Kokkos_Layout.hpp"
+#include "Kokkos_Core.hpp"
 #include "Kokkos_UnorderedMap.hpp"
 #endif
 #include "mars_err.hpp"

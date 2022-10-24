@@ -4,7 +4,6 @@
 #ifdef MARS_ENABLE_MPI
 #ifdef MARS_ENABLE_KOKKOS_KERNELS
 #include <sstream>
-#include "KokkosKernels_SparseUtils.hpp"
 #include "mars_distributed_finite_element.hpp"
 #include "mars_distributed_stencil.hpp"
 
