@@ -163,7 +163,7 @@ namespace mars {
         static constexpr int OUTPUT = 1;
         static constexpr int RHSD = 2;
 
-        DOFHandler dof_handler(&mesh);
+        DOFHandler dof_handler(mesh);
         dof_handler.enumerate_dofs();
 
         /* dof_handler.print_dofs(proc_num); */

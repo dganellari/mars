@@ -18,7 +18,6 @@ namespace mars {
         static constexpr Integer Degree = DofHandler::Degree;
         static constexpr Integer Block = DofHandler::Block;
 
-        using MM = MeshManager<Mesh>;
         using simplex_type = typename Mesh::Elem;
 
         static constexpr Integer ElemType = simplex_type::ElemType;
@@ -444,16 +443,16 @@ namespace mars {
 
         template <bool G>
         static MARS_INLINE_FUNCTION typename std::enable_if<G == true, Octant>::type get_octant_ghost_or_local(
-            const Mesh *mesh,
+            const Mesh mesh,
             const Integer index) {
-            return mesh->get_ghost_octant(index);
+            return mesh.get_ghost_octant(index);
         }
 
         template <bool G>
         static MARS_INLINE_FUNCTION typename std::enable_if<G == false, Octant>::type get_octant_ghost_or_local(
-            const Mesh *mesh,
+            const Mesh mesh,
             const Integer index) {
-            return mesh->get_octant(index);
+            return mesh.get_octant(index);
         }
 
         MARS_INLINE_FUNCTION Integer get_sfc_from_octant(const Octant &o) const {
@@ -561,7 +560,7 @@ namespace mars {
         }
 
         MARS_INLINE_FUNCTION
-        MM get_mesh_manager() const { return get_dof_handler().get_mesh_manager(); }
+        Mesh get_mesh() const { return get_dof_handler().get_mesh(); }
 
         MARS_INLINE_FUNCTION
         const Integer get_proc() const { return get_dof_handler().get_proc(); }

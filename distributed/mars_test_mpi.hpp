@@ -254,7 +254,7 @@ namespace mars {
 
         Kokkos::Timer timer_dof;
 
-        DOFHandler dof_handler(&mesh);
+        DOFHandler dof_handler(mesh);
         dof_handler.enumerate_dofs();
         dof_handler.set_block(block);
 

@@ -231,7 +231,7 @@ namespace mars {
 
         // enumerate the dofs locally and globally. The ghost dofs structures
         // are now created and ready to use for the gather and scatter ops.
-        DofHandler dof_handler(&mesh);
+        DofHandler dof_handler(mesh);
         dof_handler.enumerate_dofs();
 
         // curently only working for the cpu version for debugging purposes.
