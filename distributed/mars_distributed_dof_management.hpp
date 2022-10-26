@@ -577,6 +577,7 @@ namespace mars {
                 elem_dof_iterate(sfc, mesh, i, rb, rb, vrb, rb);
             }
 
+            MARS_INLINE_FUNCTION
             IdentifyBoundaryDofPerRank(Mesh m,
                                        ViewMatrixTypeLeft<bool> npb,
                                        ViewVectorType<Integer> mp,
@@ -854,7 +855,7 @@ namespace mars {
 
         // sfc | octant_from_sfc | volume_octant_transform. Composable functions.
         template <typename F, Integer ET = ElemType>
-        static void volume_iterate(const Integer sfc, const Mesh mesh, const Integer index, F f) {
+        static MARS_INLINE_FUNCTION void volume_iterate(const Integer sfc, const Mesh mesh, const Integer index, F f) {
             Octant oc = mesh.octant_from_sfc(sfc);
             volume_octant_transform(oc, mesh, index, f, mars::get_sfc_from_octant<ElemType>);
         }
@@ -1018,6 +1019,8 @@ namespace mars {
 
         template <bool Ghost>
         struct BuildLocalGlobalPredicate {
+
+            MARS_INLINE_FUNCTION
             BuildLocalGlobalPredicate(Mesh m,
                                       ViewVectorType<bool> lp,
                                       ViewVectorType<bool> gp,
@@ -1327,6 +1330,7 @@ namespace mars {
                 }
             }
 
+            MARS_INLINE_FUNCTION
             OrientDofs(Mesh m, ViewVectorType<Integer> sd, UnorderedMap<Integer, Integer> sl)
                 : mesh(m), face_dir(sd), stl_map(sl) {}
 
@@ -1437,6 +1441,8 @@ namespace mars {
 
         template <bool Ghost>
         struct BuildLocalGlobalLabel {
+
+            MARS_INLINE_FUNCTION
             BuildLocalGlobalLabel(Mesh m, SFC<ElemType> le, SFC<ElemType> ge)
                 : mesh(m), local_enum(le), global_enum(ge) {}
 
@@ -1551,6 +1557,7 @@ namespace mars {
             ViewVectorType<Integer> ghost_dofs;
             ViewVectorType<Integer> ghost_dofs_index;
 
+            MARS_INLINE_FUNCTION
             BuildLocalToGlobalGhostMap(Mesh m,
                                        UnorderedMap<Integer, Dof> g,
                                        ViewVectorType<Integer> gdo,
