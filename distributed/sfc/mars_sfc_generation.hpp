@@ -140,8 +140,10 @@ namespace mars {
 
         void set_elem_size(const Integer size) { elements_size_ = size; }
 
+        MARS_INLINE_FUNCTION
         const Integer get_elem_size() const { return elements_size_; }
 
+        MARS_INLINE_FUNCTION
         const Integer get_all_range() const { return all_range_; }
 
         MARS_INLINE_FUNCTION

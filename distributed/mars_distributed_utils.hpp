@@ -523,7 +523,7 @@ namespace mars {
     ViewVectorType<Integer> compact_local_dofs(const H& dof_handler, ViewVectorType<Integer>& local_dofs) {
         using namespace Kokkos;
 
-        const Integer local_size = dof_handler.template get_dof_size<1>();
+        const Integer local_size = dof_handler.get_base_dof_size();
 
         ViewVectorType<bool> dof_predicate("label_dof_predicate", local_size);
         Kokkos::parallel_for(
