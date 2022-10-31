@@ -187,6 +187,7 @@ namespace mars {
         using VolumeStencil = typename MyDofTypes::VStencil;
         using StokesStencil = typename MyDofTypes::SStencil;
         using SparsityPattern = typename MyDofTypes::SPattern;
+        using SparsityMatrix= typename MyDofTypes::SMatrix;
         using CornerDM = typename MyDofTypes::CornerDM;
 
         // enumerate the dofs locally and globally. The ghost dofs structures
@@ -218,15 +219,18 @@ namespace mars {
         SparsityPattern sp(fv_dof_handler);
         sp.build_pattern(volume_stencil, face_stencil);
 
-        assemble_volume(volume_stencil, sp, proc_num);
-        assemble_face(face_stencil, sp);
-        /* assemble_oriented_face(face_stencil, sp); */
+        SparsityMatrix sm(sp);
+        sm.build_crs_matrix();
+
+        assemble_volume(volume_stencil, sm, proc_num);
+        assemble_face(face_stencil, sm);
+        /* assemble_oriented_face(face_stencil, sm); */
 
         fv_dof_handler.boundary_dof_iterate(
-            MARS_LAMBDA(const Integer local_dof) { sp.set_value(local_dof, local_dof, 1); });
+            MARS_LAMBDA(const Integer local_dof) { sm.set_value(local_dof, local_dof, 1); });
 
         /* sp.print_sparsity_pattern(); */
-        /* sp.write("Spattern"); */
+        /* sm.write("Spattern"); */
 
         CornerDM cdm(dof_handler);
         set_data_in_circle(cdm, 0, 1);

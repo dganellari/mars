@@ -44,6 +44,7 @@ namespace mars {
             /* using SPattern = SparsityPattern<double, default_lno_t, unsigned long, FVDH, VStencil, SStencil>; */
 
             using SPattern = SparsityPattern<double, Integer, unsigned long, FVDH>;
+            using SMatrix = SparsityMatrix<SPattern>;
 
             template <Integer idx>
             using VDMDataType = typename VolumeDM::template UserDataType<idx>;
