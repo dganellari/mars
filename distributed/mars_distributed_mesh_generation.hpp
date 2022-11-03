@@ -339,7 +339,7 @@ namespace mars {
 #ifdef MARS_ENABLE_CUDA
         // Classical method using the radix sort.
         auto elem_sfc = generate_elements_sfc(mesh);
-        auto sorted_elem_sfc = cub_radix_sort(elem_sfc);
+        auto sorted_elem_sfc = buffer_cub_radix_sort(elem_sfc);
         compact_into_local(sorted_elem_sfc, morton.get_view_elements(), GpNp_host, proc_num);
         build_first_sfc(sorted_elem_sfc, first_sfc, mesh.get_view_gp());
 #else
