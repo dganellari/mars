@@ -11,6 +11,9 @@
 #ifdef MARS_ENABLE_KOKKOS
 #include "Kokkos_Core.hpp"
 #include "Kokkos_UnorderedMap.hpp"
+#ifdef MARS_ENABLE_CUDA
+#include <cub/cub.cuh>  // or equivalently <cub/device/device_radix_sort.cuh>
+#endif
 #endif
 #include "mars_err.hpp"
 #include "mars_globals.hpp"
@@ -384,6 +387,25 @@ namespace mars {
                 }
             });
     }
+
+#ifdef MARS_ENABLE_CUDA
+    template <typename V>
+    V cub_radix_sort(V in) {
+        // Declare, allocate, and initialize device-accessible pointers for sorting data
+        auto size = in.extent(0);
+        V out("out radix sort data", size);
+
+        // Determine temporary device storage requirements
+        void* d_temp_storage = NULL;
+        size_t temp_storage_bytes = 0;
+        cub::DeviceRadixSort::SortKeys(d_temp_storage, temp_storage_bytes, in.data(), out.data(), size);
+        // Allocate temporary storage
+        cudaMalloc(&d_temp_storage, temp_storage_bytes);
+        // Run sorting operation
+        cub::DeviceRadixSort::SortKeys(d_temp_storage, temp_storage_bytes, in.data(), out.data(), size);
+        return out;
+    }
+#endif
 
 }  // namespace mars
 #endif /* GENERATION_MARS_UTILS_KOKKOS_HPP_ */

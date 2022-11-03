@@ -7,6 +7,7 @@
 #ifdef MARS_ENABLE_KOKKOS_KERNELS
 #include "KokkosKernels_Sorting.hpp"
 #include "mars_distributed_mesh_kokkos.hpp"
+
 namespace mars {
 
     template <Integer Dim, Integer ManifoldDim, Integer Type>
@@ -124,14 +125,10 @@ namespace mars {
             });
     }
 
-    template <typename V, typename M>
-    ViewVectorType<Integer> compact_into_local(const V &elem_sfc, M &mesh) {
+    template <typename V, typename S, typename H>
+    void compact_into_local(const V &elem_sfc, const S &local, const H &gp, const Integer rank) {
         using namespace Kokkos;
 
-        ViewVectorType<Integer> local("local_partition_sfc", mesh.get_chunk_size());
-        auto rank = mesh.get_proc();
-
-        auto gp = mesh.get_view_gp();
         const Integer start = gp(2 * rank + 1);
         const Integer end = gp(2 * (rank + 1) + 1);
         parallel_for(
@@ -139,7 +136,6 @@ namespace mars {
                 const Integer index = i - start;
                 local(index) = elem_sfc(i);
             });
-        return local;
     }
 
     struct GenerateSFC {
@@ -182,26 +178,6 @@ namespace mars {
         }
     };
 
-    template <Integer Type, typename M>
-    auto generate_local_sfc(M &mesh, const std::vector<int> &counts) {
-        auto rank_size = num_ranks(mesh.get_context());
-
-        ViewVectorType<Integer> GpNp = ViewVectorType<Integer>("global_static_partition", 2 * (rank_size + 1));
-        auto GpNp_host = scan_count(GpNp, counts, rank_size);
-        mesh.set_view_gp(GpNp);
-
-        auto elem_sfc = generate_elements_sfc(mesh);
-
-        auto local = compact_into_local(elem_sfc, mesh);
-        mesh.set_view_sfc(local);
-
-        ViewVectorType<Integer> first_sfc("first_sfc_per_rank", rank_size);
-        build_first_sfc(elem_sfc, first_sfc, mesh.get_view_gp());
-
-        auto last_sfc = compute_all_range<Type>(mesh.get_XDim(), mesh.get_YDim(), mesh.get_ZDim());
-        build_gp_np(first_sfc, mesh.get_view_gp(), GpNp_host, last_sfc - 1);
-    }
-
     using unsigned_l = unsigned long;
 
     template <Integer Dim, Integer ManifoldDim, Integer Type>
@@ -243,11 +219,6 @@ namespace mars {
                 break;
             }
         }
-
-        ViewVectorType<unsigned_l> aux_elem_sfc("aux_elem_sfc", number_of_elements);
-        /* Kokkos::Impl::sort(element_sfc, 0, element_sfc.extent(0)); */
-        KokkosKernels::Impl::SerialRadixSort<Integer, unsigned_l>(
-            element_sfc.data(), aux_elem_sfc.data(), number_of_elements);
 
         return element_sfc;
     }
@@ -313,19 +284,15 @@ namespace mars {
     template <Integer Dim, Integer ManifoldDim, Integer Type>
     void partition_mesh(DMesh<Dim, ManifoldDim, Type> &mesh) {
         using namespace Kokkos;
-
         Timer timer;
 
         const context &context = mesh.get_context();
-
         int proc_num = rank(context);
         mesh.set_proc(proc_num);
         // std::cout << "rank -:    " << proc_num << std::endl;
         int size = num_ranks(context);
         // std::cout << "size - :    " << size << std::endl;
-
         Integer number_of_elements = get_number_of_elements(mesh);
-
         // Integer chunk_size = (Integer)ceil((double)number_of_elements / size);
         // Integer chunk_size = number_of_elements / size + (number_of_elements % size != 0);
         // Integer last_chunk_size = chunk_size - (chunk_size * size - number_of_elements);
@@ -364,10 +331,20 @@ namespace mars {
         auto GpNp_host = scan_count(GpNp, counts, size);
         mesh.set_view_gp(GpNp);
 
-        // generate the SFC linearization
         SFC<Type> morton(mesh.get_XDim(), mesh.get_YDim(), mesh.get_ZDim());
-        auto all_sfc_elements_predicate = generate_sfc(morton);
         morton.reserve_elements(mesh.get_chunk_size());
+
+        ViewVectorType<Integer> first_sfc("first_sfc_per_rank", size);
+        Timer time;
+#ifdef MARS_ENABLE_CUDA
+        // Classical method using the radix sort.
+        auto elem_sfc = generate_elements_sfc(mesh);
+        auto sorted_elem_sfc = cub_radix_sort(elem_sfc);
+        compact_into_local(sorted_elem_sfc, morton.get_view_elements(), GpNp_host, proc_num);
+        build_first_sfc(sorted_elem_sfc, first_sfc, mesh.get_view_gp());
+#else
+        // generate the SFC linearization
+        auto all_sfc_elements_predicate = generate_sfc(morton);
 
         // compacting sfc predicate and inserting the morton code corresponding to a true value in the predicate
         // leaves the sfc elements array sorted.
@@ -376,22 +353,22 @@ namespace mars {
         compact_into_local(
             sfc_to_local, all_sfc_elements_predicate, morton.get_view_elements(), mesh.get_view_gp(), proc_num);
 
-        ViewVectorType<Integer> first_sfc("first_sfc_per_rank", size);
         build_first_sfc(sfc_to_local, all_sfc_elements_predicate, first_sfc, mesh.get_view_gp(), size);
+#endif
+        double time_radix = time.seconds();
+        std::cout << "Radix sort method took: " << time_radix<< " seconds." << std::endl;
+
+        mesh.set_view_sfc(morton.get_view_elements());
 
         auto all_range = morton.get_all_range();
         build_gp_np(first_sfc, mesh.get_view_gp(), GpNp_host, all_range - 1);
 
-        mesh.set_view_sfc(morton.get_view_elements());
         morton.generate_sfc_to_local_map();
         mesh.set_sfc_to_local_map(morton.get_sfc_to_local_map());
 
         double time_gen = timer.seconds();
         std::cout << "SFC Generation and Partition took: " << time_gen << " seconds. Process: " << proc_num
                   << std::endl;
-
-        /* //Classical method using the radix sort. 10x slower than the current one due to the sort.
-        generate_local_sfc<Type>(mesh, counts); */
     }
 
     // the points and elements can be generated on the fly from the sfc code in case meshless true.
@@ -421,7 +398,7 @@ namespace mars {
         if (!Meshless) {
             Kokkos::Timer timer_gen;
 
-            // the mesh construct depends on template parameters.
+            /* the mesh construct depends on template parameters. */
             auto gen_pts = mesh.template generate_points<Type>();
 
             auto gen_elm = mesh.template generate_elements<Type>();
