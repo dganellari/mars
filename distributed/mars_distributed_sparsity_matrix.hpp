@@ -7,7 +7,7 @@
 
 namespace mars {
 
-    class ISparsityMatrix{
+    class ISparsityMatrix {
     public:
         virtual MARS_INLINE_FUNCTION ~ISparsityMatrix() {}
     };
@@ -38,6 +38,9 @@ namespace mars {
 
         MARS_INLINE_FUNCTION
         SparsityMatrix(SparsityPattern sp) : sparsity_pattern(sp) {}
+
+        MARS_INLINE_FUNCTION
+        SparsityMatrix(SparsityPattern sp, crs_matrix mat) : sparsity_pattern(sp), matrix(mat) {}
 
         crs_matrix new_crs_matrix() const { return get_sparsity_pattern().new_crs_matrix(); }
 
@@ -89,7 +92,9 @@ namespace mars {
         const V get_value(const Integer index) const { return matrix.values(index); }
 
         MARS_INLINE_FUNCTION
-        const V get_value(const Integer row, const Integer col) const { return matrix.values(get_sparsity_pattern().get_col_index(row, col)); }
+        const V get_value(const Integer row, const Integer col) const {
+            return matrix.values(get_sparsity_pattern().get_col_index(row, col));
+        }
 
         MARS_INLINE_FUNCTION
         const V get_value_from_global(const Integer row, const Integer col) const {
@@ -176,7 +181,6 @@ namespace mars {
 
         MARS_INLINE_FUNCTION
         const Integer get_num_rows() const { return matrix.numRows(); }
-
 
         MARS_INLINE_FUNCTION
         const crs_matrix get_crs_matrix() const { return matrix; }
