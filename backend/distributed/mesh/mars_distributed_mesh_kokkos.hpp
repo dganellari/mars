@@ -50,13 +50,14 @@ namespace mars {
         //, combinations(nullptr)
         {} */
 
-        MARS_INLINE_FUNCTION Mesh(const context &c)
+        Mesh(const context &c)
             : ParallelIMesh<Dim_>(),
               elements_size_(0),
               points_size_(0),
               ctx(c)
         //, combinations(nullptr)
         {}
+
         void reserve(const std::size_t n_elements, const std::size_t n_points) override {
             elements_size_ = n_elements;
             points_size_ = n_points;
@@ -273,7 +274,7 @@ namespace mars {
         void set_proc(Integer p) { proc = p; }
 
         MARS_INLINE_FUNCTION
-        const Integer get_proc() const { return proc; }
+        Integer get_proc() const { return proc; }
 
         MARS_INLINE_FUNCTION
         void set_global_to_local_map(const UnorderedMap<Integer, Integer> &gl_map) { global_to_local_map_ = gl_map; }
@@ -1473,7 +1474,7 @@ namespace mars {
         }
 
         const context &get_context() const { return ctx; }
-        void set_context(const context &c) { ctx = c; }
+        /* void set_context(const context &c) { ctx = c; } */
 
         MARS_INLINE_FUNCTION
         const UnorderedMap<Integer, Integer> &get_sfc_to_local_map() const { return sfc_to_local_map_; }

@@ -44,7 +44,11 @@ namespace mars {
 #endif  // MARS_ENABLE_CUDAUVM
     using KokkosLayout = Kokkos::LayoutLeft;
 #define MARS_LAMBDA_REF [&] __device__;
-#else  // MARS_ENABLE_CUDA
+#elif defined(MARS_USE_HIP)
+    using KokkosSpace = Kokkos::Experimental::HIPSpace;
+    using KokkosLayout = Kokkos::LayoutLeft;
+#define MARS_LAMBDA_REF [&] __device__;
+#else  // MARS_USE_HIP
 #ifdef KOKKOS_ENABLE_OPENMP
     using KokkosSpace = Kokkos::HostSpace;
     using KokkosLayout = Kokkos::LayoutRight;
@@ -141,9 +145,15 @@ namespace mars {
 
         typename ViewMatrixTextureC<T, xDim_, yDim_>::HostMirror h_view = create_mirror_view(map_side_to_nodes);
 
-        parallel_for(
+        //Parallel for generates warning for [] operator as called from a device function.
+        /* parallel_for(
             MDRangePolicy<Rank<2>, KokkosHostExecSpace>({0, 0}, {xDim, yDim}),
-            KOKKOS_LAMBDA(int i, int j) { h_view(i, j) = hostData[i][j]; });
+            MARS_LAMBDA(int i, int j) { h_view(i, j) = hostData[i][j]; }); */
+        for (int i = 0; i < xDim; ++i) {
+            for (int j = 0; j < yDim; ++j) {
+                h_view(i, j) = hostData[i][j];
+            }
+        }
 
         Kokkos::deep_copy(map_side_to_nodes, h_view);
     }

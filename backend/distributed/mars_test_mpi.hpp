@@ -246,9 +246,9 @@ namespace mars {
         using SMatrix = SparsityMatrix<SPattern>;
 
         // use as more readable tuple index to identify the data
-        static constexpr int INPUT = 0;
+        /* static constexpr int INPUT = 0;
         static constexpr int OUTPUT = 1;
-        static constexpr int RHSD = 2;
+        static constexpr int RHSD = 2; */
 
         double time_gen = timer.seconds();
         std::cout << "Mesh Generation took: " << time_gen << std::endl;

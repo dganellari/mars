@@ -41,11 +41,16 @@ endif()
 # Kokkos
 cmake_dependent_option(MARS_ENABLE_CUDA "Enable CUDA backend for Kokkos"
                        OFF "MARS_ENABLE_KOKKOS" OFF)
+cmake_dependent_option(MARS_ENABLE_HIP "Enable HIP backend for Kokkos"
+                       OFF "MARS_ENABLE_KOKKOS" OFF)
+
 cmake_dependent_option(
   MARS_ENABLE_CUDAUVM "Kokkos use as default memory space CUDAUVM" OFF
   "MARS_ENABLE_KOKKOS;MARS_ENABLE_CUDA" OFF)
 cmake_dependent_option(MARS_ENABLE_KOKKOS_KERNELS "Enable Kokkos Kernels" ON
                        "MARS_ENABLE_KOKKOS" OFF)
+cmake_dependent_option(MARS_ENABLE_AMR_BACKEND "Enable AMR backend for Kokkos"
+    ON "MARS_ENABLE_KOKKOS" OFF)
 
 if(MARS_ENABLE_KOKKOS)
   message(STATUS "Setup Kokkos")
@@ -174,7 +179,13 @@ if(MARS_ENABLE_KOKKOS)
     # with different CUDA settings
     set(CMAKE_CUDA_FLAGS "${_wrapper_flags} ${_openmp}")
 
-
+  elseif(MARS_ENABLE_HIP)
+    if(NOT DEFINED Kokkos_ENABLE_HIP OR NOT ${Kokkos_ENABLE_HIP})
+      message(
+        FATAL_ERROR
+        "Enable Kokkos HIP or unset MARS_ENABLE_HIP to continue with OpenMP!")
+    endif()
+    message(VERBOSE "Kokkos HIP Enabled = ${Kokkos_ENABLE_HIP}")
 
   else()
     string(FIND "${CMAKE_CXX_FLAGS}" "${_openmp}" _pos)

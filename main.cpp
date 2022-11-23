@@ -19,7 +19,9 @@
 #include "mars_advection.hpp"
 #include "mars_constant_viscosity_stokes.hpp"
 #include "mars_poisson.hpp"
+#ifdef MARS_ENABLE_AMR_BACKEND
 #include "mars_test_kokkos.hpp"
+#endif
 #include "mars_test_mpi.hpp"
 #include "mars_variable_viscosity_stokes.hpp"
 #endif  // MARS_ENABLE_KOKKOS_KERNELS
@@ -28,6 +30,7 @@
 
 using namespace std::chrono;
 
+#ifdef MARS_ENABLE_AMR_BACKEND
 void run_benchmarks(int level, int refine_level) {
     using namespace mars;
 
@@ -51,6 +54,7 @@ void run_benchmarks(int level, int refine_level) {
     b3.run(refine_level, sMesh3, "b3"); */
 #endif
 }
+#endif
 
 int main(int argc, char *argv[]) {
     using namespace mars;

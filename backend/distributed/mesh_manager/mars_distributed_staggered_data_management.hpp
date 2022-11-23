@@ -1,20 +1,20 @@
-#ifndef GENERATION_MARS_DISTRIBUTED_DM_HPP_
-#define GENERATION_MARS_DISTRIBUTED_DM_HPP_
+#ifndef GENERATION_MARS_DISTRIBUTED_SDM_HPP_
+#define GENERATION_MARS_DISTRIBUTED_SDM_HPP_
 
 #ifdef MARS_ENABLE_MPI
 #ifdef MARS_ENABLE_KOKKOS_KERNELS
 #include "mars_distributed_base_data_management.hpp"
-#include "mars_distributed_finite_element.hpp"
+#include "mars_distributed_staggered_dof_management.hpp"
 #include "mars_distributed_stencil.hpp"
 
 namespace mars {
 
     template <typename DHandler, typename... T>
-    class DM : public BDM<T...> {
+    class SDM : public BDM<T...> {
     public:
         static constexpr Integer Degree = DHandler::Degree;
 
-        using DofHandler = DHandler;
+        using SDofHandler = DHandler;
 
         using user_tuple = ViewsTuple<T...>;
         using tuple = std::tuple<T...>;
@@ -24,40 +24,44 @@ namespace mars {
         template <Integer idx>
         using UserDataType = typename std::tuple_element<idx, tuple>::type;
 
-        MARS_INLINE_FUNCTION
-        DM(DofHandler d) : dof_handler(d) {
+        SDM(DofHandler<typename SDofHandler::Mesh, SDofHandler::Degree> d) : dof_handler(SDofHandler(d)) {
             SuperDM::template reserve_user_data(
-                user_data, "user_data tuple", get_dof_handler().get_local_dof_enum().get_elem_size());
+                vdata, "separated_user_data tuple", dof_handler.get_local_dofs().extent(0));
+        }
+
+        SDM(SDofHandler d) : dof_handler(d) {
+            SuperDM::template reserve_user_data(
+                vdata, "separated_user_data tuple", dof_handler.get_local_dofs().extent(0));
         }
 
         MARS_INLINE_FUNCTION
-        const user_tuple &get_user_data() const { return user_data; }
+        const user_tuple &get_user_data() const { return vdata; }
 
         template <std::size_t idx, typename H = typename std::tuple_element<idx, user_tuple>::type>
         MARS_INLINE_FUNCTION const H get_dof_data() const {
-            return std::get<idx>(user_data);
+            return std::get<idx>(vdata);
         }
 
         template <std::size_t idx, typename H = typename std::tuple_element<idx, tuple>::type>
-        MARS_INLINE_FUNCTION H &get_dof_data(const Integer i) const {
-            return std::get<idx>(user_data)(i);
+        MARS_INLINE_FUNCTION H &get_dof_data(const Integer local_dof) const {
+            return std::get<idx>(vdata)(get_dof_handler().get_dof_index(local_dof));
         }
 
         template <std::size_t idx, typename H = typename std::tuple_element<idx, tuple>::type>
         MARS_INLINE_FUNCTION H &get_data(const Integer i) const {
-            return std::get<idx>(user_data)(i);
+            return std::get<idx>(vdata)(i);
         }
 
         // gather operation: fill the data from the received ghost data
         template <Integer... dataidx>
         void gather_ghost_data() {
             // gather operation: fill the data from the received ghost data
-            SuperDM::template gather_ghost_data<dataidx...>(get_dof_handler(), user_data);
+            SuperDM::template gather_ghost_data<dataidx...>(get_dof_handler(), vdata);
         }
 
         template <Integer... dataidx>
         user_tuple scatter_ghost_data() {
-            return SuperDM::template scatter_ghost_data<dataidx...>(get_dof_handler(), user_data);
+            return SuperDM::template scatter_ghost_data<dataidx...>(get_dof_handler(), vdata);
         }
 
         template <Integer... dataidx>
@@ -76,32 +80,28 @@ namespace mars {
             // try to access uninitialized tuplelement and get seg faults. example::
             // dm.scatter_add<1>(boundary_data); If: dm.scatter_add<0>(boundary_data) then
             // seg faults.
-            SuperDM::template scatter_add<dataidx...>(get_dof_handler(), boundary_data, user_data);
+            SuperDM::template scatter_add<dataidx...>(get_dof_handler(), boundary_data, vdata);
             /*dm.scatter_max<u>(boundary_data);*/
             /*dm.scatter_min<u>(boundary_data);*/
         }
 
-        template <Integer idx, typename H = typename std::tuple_element<idx, tuple>::type>
-        void get_locally_owned_data(const ViewVectorType<H> &x) {
-            SuperDM::template get_locally_owned_data<idx>(get_dof_handler(), x, user_data);
-        }
-
-        template <Integer idx, typename H = typename std::tuple_element<idx, tuple>::type>
-        void set_locally_owned_data(const ViewVectorType<H> &x) {
-            SuperDM::template set_locally_owned_data<idx>(get_dof_handler(), user_data, x);
-        }
-
-        /* building the stencil is the responsibility of the specialized DM. */
+        /* Face numbering on the stencil => ordering in the stencil stencil[1,0,3,2]
+                       ----3----
+                       |       |
+                       0   x   1
+                       |       |
+                       ----2---- */
+        // building the stencil is the responsibility of the specialized DM.
         template <typename ST, bool Orient = false>
         ST build_stencil() {
-            return mars::build_stencil<ST, Orient>(get_dof_handler());
+            return mars::build_stencil<ST, Orient>(*this);
         }
 
         /* building the FE dof map*/
-        auto build_fe_dof_map() { return mars::build_fe_dof_map(get_dof_handler()); }
+        auto build_fe_dof_map() { return mars::build_fe_dof_map(*this); }
 
         MARS_INLINE_FUNCTION
-        const DofHandler &get_dof_handler() const { return dof_handler; }
+        const SDofHandler &get_dof_handler() const { return dof_handler; }
 
         template <Integer idx, typename F>
         void owned_data_iterate(F f) const {
@@ -114,10 +114,19 @@ namespace mars {
         }
 
     private:
-        DofHandler dof_handler;
-        // data associated to the dof data.
-        user_tuple user_data;
+        SDofHandler dof_handler;
+        // data assigned to each separated local dof
+        user_tuple vdata;
     };
+
+    template <class DofHandler, typename... T>
+    using VDM = SDM<VolumeDofHandler<DofHandler>, T...>;
+
+    template <class DofHandler, typename... T>
+    using FDM = SDM<FaceDofHandler<DofHandler>, T...>;
+
+    template <class DofHandler, typename... T>
+    using CDM = SDM<CornerDofHandler<DofHandler>, T...>;
 
 }  // namespace mars
 

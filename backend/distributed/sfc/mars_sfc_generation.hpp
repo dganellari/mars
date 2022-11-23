@@ -115,13 +115,13 @@ namespace mars {
         }
 
         MARS_INLINE_FUNCTION
-        const Integer get_sfc(const Integer i) const  // override
+        Integer get_sfc(const Integer i) const  // override
         {
             return elements_(i);
         }
 
         MARS_INLINE_FUNCTION
-        const Integer get_orientation(const Integer i) const  // override
+        Integer get_orientation(const Integer i) const  // override
         {
             return element_orientations_(i);
         }
@@ -133,7 +133,7 @@ namespace mars {
         }
 
         MARS_INLINE_FUNCTION
-        const Integer get_label(const Integer i) const  // override
+        Integer get_label(const Integer i) const  // override
         {
             return element_labels_(i);
         }
@@ -146,10 +146,8 @@ namespace mars {
         MARS_INLINE_FUNCTION
         const Integer get_all_range() const { return all_range_; }
 
-        MARS_INLINE_FUNCTION
         SFC() = default;
 
-        MARS_INLINE_FUNCTION
         SFC(const Integer x, const Integer y, const Integer z) : xDim(x), yDim(y), zDim(z) {
             all_range_ = compute_all_range<Type>(xDim, yDim, zDim);
         }
@@ -169,13 +167,13 @@ namespace mars {
         }
 
         MARS_INLINE_FUNCTION
-        const Integer get_XDim() const { return xDim; }
+        Integer get_XDim() const { return xDim; }
 
         MARS_INLINE_FUNCTION
-        const Integer get_YDim() const { return yDim; }
+        Integer get_YDim() const { return yDim; }
 
         MARS_INLINE_FUNCTION
-        const Integer get_ZDim() const { return zDim; }
+        Integer get_ZDim() const { return zDim; }
 
     private:
         ViewVectorType<Integer> elements_;

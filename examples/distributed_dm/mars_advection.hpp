@@ -290,7 +290,7 @@ namespace mars {
     }
 
     template <Integer first, Integer second>
-    MARS_INLINE_FUNCTION void reset_derivatives(Data &data) {
+    void reset_derivatives(Data &data) {
         data.elem_iterate(MARS_LAMBDA(const int i) {
             data.get_elem_data<first>(i) = -1.;
             data.get_elem_data<second>(i) = -1.;
@@ -298,12 +298,12 @@ namespace mars {
     }
 
     template <Integer dt_idx>
-    MARS_INLINE_FUNCTION void quad_divergence(Data &data) {
+    void quad_divergence(Data &data) {
         data.elem_iterate(MARS_LAMBDA(const int i) { data.get_elem_data<dt_idx>(i) = 0.; });
     }
 
     template <Integer Type, Integer first, Integer second>
-    MARS_INLINE_FUNCTION void print_derivatives(Data &data) {
+    void print_derivatives(Data &data) {
         data.elem_iterate(MARS_LAMBDA(const int i) {
             Integer sfc_elem = data.get_mesh().get_sfc_elem(i);
 
@@ -312,7 +312,7 @@ namespace mars {
                 sfc_elem, point, data.get_mesh().get_XDim(), data.get_mesh().get_YDim(), data.get_mesh().get_ZDim());
 
             printf(
-                "derivative data: %li - (%lf, %lf) - rank: %i - u: %lf - dudt: %lf "
+                "derivative data: %i - (%lf, %lf) - rank: %li - u: %lf - dudt: %lf "
                 "- derivatives: [%lf - %lf]\n",
                 i,
                 point[0],
@@ -326,7 +326,7 @@ namespace mars {
     }
 
     template <Integer Type, Integer Dir>
-    MARS_INLINE_FUNCTION static void print_face_data(const Data &data, const Face<Type, Dir> &face, const Integer i) {
+    static void print_face_data(const Data &data, const Face<Type, Dir> &face, const Integer i) {
         constexpr Integer du_index = 1 + Dir;
 
         Integer idx = face.get_side(i).get_elem_id();
@@ -495,8 +495,8 @@ namespace mars {
 
                     if (ii == 1 && data.get_mesh().get_proc() == 0)
                         printf(
-                            "(%i %lf:%lf) q: %lf, uavg: %lf - %i -  %i, rank: "
-                            "%i\n",
+                            "(%i %lf:%lf) q: %lf, uavg: %lf - %li -  %li, rank: "
+                            "%li\n",
                             i,
                             point[0],
                             point[1],
@@ -517,7 +517,7 @@ namespace mars {
     // parallel reduction on the data view using the max plus functor from
     // distributed utils.
     template <Integer idx>
-    MARS_INLINE_FUNCTION DataType<idx> umax(Data &data) {
+    DataType<idx> umax(const Data &data) {
         DataType<idx> result;
         Kokkos::parallel_reduce(
             data.get_mesh().get_chunk_size(), MaxPlus<DataType<idx>>(data.get_data<idx>()), result);
@@ -560,7 +560,7 @@ namespace mars {
     }
 
     template <typename T = DataType<DataDesc::dudt>>
-    MARS_INLINE_FUNCTION void timestep_update(Data &data, T dt) {
+    void timestep_update(Data &data, T dt) {
         T hx = 1. / data.get_mesh().get_XDim();
         T hy = 1. / data.get_mesh().get_YDim();
 

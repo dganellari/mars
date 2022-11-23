@@ -152,8 +152,8 @@ namespace mars {
             Quadrature() : q_p("q_p"), q_w("q_w") {}
 
             void init() {
-                fill_view_matrix(q_p, q_points);
-                fill_view_vector(q_w, q_weights);
+                fill_view_matrix<T_, 6, PhysicalDim_>(q_p, q_points);
+                fill_view_vector<T, 6>(q_w, q_weights);
             }
         };
 #endif

@@ -7,6 +7,7 @@
 #cmakedefine MARS_ENABLE_CXXOPTS
 #cmakedefine MARS_ENABLE_CUDA
 #cmakedefine MARS_ENABLE_CUDAUVM
+#cmakedefine MARS_ENABLE_HIP
 #cmakedefine MARS_ENABLE_RDMA
 #cmakedefine MARS_ENBABLE_PAR_MOONOLITH
 #cmakedefine MARS_ENABLE_ADIOS2
@@ -22,5 +23,8 @@
 #ifndef MARS_ENABLE_RDMA
 #cmakedefine MARS_NO_RDMA
 #endif
+
+#cmakedefine MARS_ENABLE_AMR_BACKEND
+#cmakedefine MARS_ENABLE_SERIAL_BACKEND
 
 #endif //MARS_CONFIG_HPP

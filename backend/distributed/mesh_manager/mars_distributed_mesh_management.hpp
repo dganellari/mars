@@ -15,7 +15,7 @@ namespace mars {
     class MeshManager {
 
     public:
-        MARS_INLINE_FUNCTION MeshManager(Mesh *mesh) : host_mesh(mesh), mesh(nullptr) { copy_mesh_to_device(); }
+        MeshManager(Mesh *mesh) : host_mesh(mesh), mesh(nullptr) { copy_mesh_to_device(); }
 
         MARS_INLINE_FUNCTION
         Mesh *get_mesh() const { return mesh; }

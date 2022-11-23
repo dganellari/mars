@@ -4,8 +4,10 @@
 #ifdef MARS_ENABLE_MPI
 #include "mars_context.hpp"
 #include "mars_execution_context.hpp"
+#ifdef MARS_ENABLE_KOKKOS
 #ifdef MARS_ENABLE_KOKKOS_KERNELS
 #include "KokkosKernels_Sorting.hpp"
+#endif
 #include "mars_distributed_mesh_kokkos.hpp"
 
 namespace mars {
@@ -384,10 +386,7 @@ namespace mars {
 
         const context &context = mesh.get_context();
 
-        int proc_num = rank(context);
-
-        mesh.set_XDim(xDim);
-        mesh.set_YDim(yDim);
+        int proc_num = rank(context); mesh.set_XDim(xDim); mesh.set_YDim(yDim);
         mesh.set_ZDim(zDim);
 
         // partition the mesh and then generate the points and elements.

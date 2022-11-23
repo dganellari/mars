@@ -152,22 +152,22 @@ namespace mars {
         }
 
         template <typename H>
-        MARS_INLINE_FUNCTION void owned_iterate(H f) const {
+        void owned_iterate(H f) const {
             owned_dof_iterate(f);
         }
 
         template <typename H, Integer B = Block_>
-        MARS_INLINE_FUNCTION void owned_dof_iterate(H f) const {
+        void owned_dof_iterate(H f) const {
             Kokkos::parallel_for("init_initial_cond", get_block<B>() * global_dof_enum.get_elem_size(), f);
         }
 
         template <typename H, Integer B = Block_>
-        MARS_INLINE_FUNCTION void dof_iterate(H f) const {
+        void dof_iterate(H f) const {
             Kokkos::parallel_for("init_initial_cond", get_block<B>() * local_dof_enum.get_elem_size(), f);
         }
 
         template <typename H>
-        MARS_INLINE_FUNCTION void base_dof_iterate(H f) const {
+        void base_dof_iterate(H f) const {
             Kokkos::parallel_for("init_initial_cond", local_dof_enum.get_elem_size(), f);
         }
 
@@ -1075,7 +1075,7 @@ namespace mars {
                         gid = sfc_lid + global_dof_offset(proc);
                     }*/
 
-                    Octant o = get_octant_from_sfc(sfc_elem);
+                    Octant o = handler.get_octant_from_sfc(sfc_elem);
 
                     printf("i: %i global sfc: %li gdof: %li octant: [%li, %li, %li] -  rank: %i\n",
                            i,
@@ -1774,7 +1774,7 @@ namespace mars {
         }
 
         template <Integer B = Block_>
-        MARS_INLINE_FUNCTION const Integer local_to_owned(const Integer local) const {
+        MARS_INLINE_FUNCTION Integer local_to_owned(const Integer local) const {
             return local_to_owned_dof<B>(local);
         }
 
@@ -1884,22 +1884,22 @@ namespace mars {
         }
 
         template <Integer B = Block_>
-        MARS_INLINE_FUNCTION const Integer get_dof_size() const {
+        Integer get_dof_size() const {
             return get_block<B>() * local_dof_enum.get_elem_size();
         }
 
-        MARS_INLINE_FUNCTION const Integer get_base_dof_size() const { return local_dof_enum.get_elem_size(); }
+        MARS_INLINE_FUNCTION Integer get_base_dof_size() const { return local_dof_enum.get_elem_size(); }
 
         // no need to be vector valued since it will give the same result.
         MARS_INLINE_FUNCTION
-        const Integer get_local_dof(const Integer i) const {
+        Integer get_local_dof(const Integer i) const {
             assert(i < get_dof_size());
             return i;
         }
 
         // get the local dof of the owned index.
         template <Integer B = Block_>
-        MARS_INLINE_FUNCTION const Integer get_owned_dof(const Integer owned_dof) const {
+        MARS_INLINE_FUNCTION Integer get_owned_dof(const Integer owned_dof) const {
             auto base = compute_base<B>(owned_dof);
             auto component = compute_component<B>(owned_dof);
             const Integer sfc = get_global_dof_enum().get_view_elements()(base);
@@ -1907,10 +1907,10 @@ namespace mars {
         }
 
         MARS_INLINE_FUNCTION
-        const Integer get_base_owned_dof_size() const { return global_dof_enum.get_elem_size(); }
+        Integer get_base_owned_dof_size() const { return global_dof_enum.get_elem_size(); }
 
         template <Integer B = Block_>
-        MARS_INLINE_FUNCTION const Integer get_owned_dof_size() const {
+        Integer get_owned_dof_size() const {
             return get_block<B>() * global_dof_enum.get_elem_size();
         }
 
@@ -1921,12 +1921,12 @@ namespace mars {
         const SFC<simplex_type::ElemType> &get_global_dof_enum() const { return global_dof_enum; }
 
         MARS_INLINE_FUNCTION
-        const Integer get_global_dof_offset(const Integer proc) const { return global_dof_offset(proc); }
+        Integer get_global_dof_offset(const Integer proc) const { return global_dof_offset(proc); }
 
         MARS_INLINE_FUNCTION
         const ViewVectorType<Integer> get_global_dof_offset() const { return global_dof_offset; }
 
-        MARS_INLINE_FUNCTION const Integer get_global_base_dof_size() const {
+        Integer get_global_base_dof_size() const {
             const Integer rank_size = num_ranks(get_context());
 
             auto ss = subview(global_dof_offset, rank_size);
@@ -1937,7 +1937,7 @@ namespace mars {
         }
 
         template <Integer B = Block_>
-        MARS_INLINE_FUNCTION const Integer get_global_dof_size() const {
+        Integer get_global_dof_size() const {
             return get_block<B>() * get_global_base_dof_size();
         }
 
@@ -1994,7 +1994,6 @@ namespace mars {
 
         /* MARS_INLINE_FUNCTION
         const Integer get_local_dof_map(const Integer sfc) const { return sfc_to_local(sfc); } */
-
         /* MM get_mesh_manager() const { return mesh_manager; } */
         MARS_INLINE_FUNCTION
         Mesh get_mesh() const { return mesh; }
@@ -2015,19 +2014,19 @@ namespace mars {
         const ViewVectorType<Integer>::HostMirror &get_view_scan_send_mirror() const { return scan_send_mirror; }
 
         template <Integer B = Block_>
-        MARS_INLINE_FUNCTION const Integer get_orientation(const Integer local_dof) const {
+        MARS_INLINE_FUNCTION Integer get_orientation(const Integer local_dof) const {
             const Integer base_local = compute_base<B>(local_dof);
             return get_local_dof_enum().get_orientation(base_local);
         }
 
         template <Integer B = Block_>
-        MARS_INLINE_FUNCTION const Integer get_label(const Integer local_dof) const {
+        MARS_INLINE_FUNCTION Integer get_label(const Integer local_dof) const {
             const Integer base_local = compute_base<B>(local_dof);
             return get_local_dof_enum().get_label(base_local);
         }
 
         template <Integer B = Block_>
-        MARS_INLINE_FUNCTION const Integer get_owned_label(const Integer owned_dof) const {
+        MARS_INLINE_FUNCTION Integer get_owned_label(const Integer owned_dof) const {
             const Integer base_owned = compute_base<B>(owned_dof);
             return get_global_dof_enum().get_label(base_owned);
         }

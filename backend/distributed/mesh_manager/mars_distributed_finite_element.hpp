@@ -39,7 +39,6 @@ namespace mars {
         // To account for the dofs we multiply with the degree.
         /* static constexpr Integer max_dof_to_dof_size = power((degree * 2 + 1), Dim); */
 
-        MARS_INLINE_FUNCTION
         FEDofMap() = default;
 
         MARS_INLINE_FUNCTION
@@ -581,12 +580,12 @@ namespace mars {
       */
 
         MARS_INLINE_FUNCTION
-        const Integer get_elem_local_dof(const Integer elem_index, const Integer i) const {
+        Integer get_elem_local_dof(const Integer elem_index, const Integer i) const {
             return elem_dof_enum(elem_index, i);
         }
 
         /* MARS_INLINE_FUNCTION
-        const Integer get_nbh_dof(const Integer elem_index, const Integer i) const {
+        Integer get_nbh_dof(const Integer elem_index, const Integer i) const {
             return dof_to_dof_map(elem_index, i);
         } */
 

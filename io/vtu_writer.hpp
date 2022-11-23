@@ -1,7 +1,10 @@
-#ifndef VTU_WRITER_H
-#define VTU_WRITER_H
+#ifndef VTU_MESH_WRITER_H
+#define VTU_MESH_WRITER_H
+
+#include "mars_base.hpp"
 
 #ifdef MARS_ENABLE_KOKKOS_KERNELS
+
 #include <KokkosSparse_spmv.hpp>
 #include <Kokkos_Core.hpp>
 #include "KokkosSparse_CrsMatrix.hpp"
@@ -300,5 +303,5 @@ namespace mars {
     };
 }  // namespace mars
 
-#endif  // VTU_WRITER_H
 #endif
+#endif  // VTU_MESH_WRITER_H
