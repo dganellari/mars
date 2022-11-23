@@ -24,7 +24,6 @@ namespace mars {
         template <Integer idx>
         using UserDataType = typename std::tuple_element<idx, tuple>::type;
 
-        MARS_INLINE_FUNCTION
         DM(DofHandler d) : dof_handler(d) {
             SuperDM::template reserve_user_data(
                 user_data, "user_data tuple", get_dof_handler().get_local_dof_enum().get_elem_size());

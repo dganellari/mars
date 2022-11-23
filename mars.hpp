@@ -16,7 +16,7 @@
 #ifdef MARS_ENABLE_KOKKOS
 #include "mars_distributed_data_management.hpp"
 #include "mars_distributed_mesh_generation.hpp"
-#include "mars_distributed_sparsity_pattern.hpp"
+#include "mars_distributed_sparsity_matrix.hpp"
 #include "mars_distributed_staggered_data_management.hpp"
 #include "mars_distributed_user_data.hpp"
 #endif  // MARS_ENABLE_KOKKOS

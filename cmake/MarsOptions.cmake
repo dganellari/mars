@@ -6,6 +6,8 @@ option(MARS_ENABLE_CUDA "Build mars with cuda support" OFF)
 option(MARS_ENABLE_CUDAUVM "Use as default memory space CUDAUVM. This has only an effect if MARS_ENABLE_CUDA is used too." OFF)
 option(MARS_ENABLE_RDMA "Build mars with RDMA support" ON)
 
+option(MARS_ENABLE_HIP "Build mars with cuda support" OFF)
+
 option(MARS_ENABLE_ADIOS2 "Uses ADIOS2 IO" OFF)
 
 # maintainace

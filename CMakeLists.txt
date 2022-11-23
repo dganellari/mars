@@ -96,7 +96,7 @@ endif(NOT CMAKE_BUILD_TYPE)
 
 
 
-target_compile_features(mars PUBLIC cxx_std_14)
+# target_compile_features(mars PUBLIC cxx_std_17)
 
 # ##############################################################################
 # ##############################################################################

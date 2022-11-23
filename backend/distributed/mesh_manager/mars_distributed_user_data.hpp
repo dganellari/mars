@@ -17,20 +17,20 @@ namespace mars {
         using tuple = std::tuple<T...>;
 
         using simplex_type = typename Mesh::Elem;
-        using MM = MeshManager<Mesh>;
+        /* using MM = MeshManager<Mesh>; */
 
     public:
         template <Integer idx>
         using UserDataType = typename std::tuple_element<idx, tuple>::type;
 
-        MARS_INLINE_FUNCTION UserData(Mesh *mesh) : mesh_manager_(MM(mesh)) {
-            const Integer size = get_mesh_manager().get_host_mesh()->get_chunk_size();
+        MARS_INLINE_FUNCTION UserData(Mesh m) : mesh(m) {
+            const Integer size = get_mesh().get_chunk_size();
             reserve_user_data(user_data_, "user_data", size);
         }
 
-        MARS_INLINE_FUNCTION UserData(Mesh *mesh, const user_tuple &data) : mesh_manager_(MM(mesh)), user_data_(data) {}
+        MARS_INLINE_FUNCTION UserData(Mesh m, const user_tuple &data) : mesh(m), user_data_(data) {}
 
-        MARS_INLINE_FUNCTION void reserve_user_data(user_tuple &tuple, std::string view_desc, const Integer size) {
+        void reserve_user_data(user_tuple &tuple, std::string view_desc, const Integer size) {
             apply_impl(resize_view_functor(view_desc, size), tuple);
         }
 
@@ -65,13 +65,13 @@ namespace mars {
             ViewVectorType<Integer> boundary_lsfc_index;
         };
 
-        MARS_INLINE_FUNCTION void fill_buffer_data(user_tuple &buffer_data) {
-            const Integer size = get_mesh_manager().get_host_mesh()->get_view_boundary().extent(0);
+        void fill_buffer_data(user_tuple &buffer_data) {
+            const Integer size = get_mesh().get_view_boundary().extent(0);
 
             reserve_user_data(buffer_data, "buffer_data", size);
 
             ViewVectorType<Integer> boundary_lsfc_index =
-                get_mesh_manager().get_host_mesh()->get_view_boundary_sfc_index();
+                get_mesh().get_view_boundary_sfc_index();
             apply_impl(
                 fill_buffer_data_functor("fill_buffer_data", size, boundary_lsfc_index), buffer_data, user_data_);
         }
@@ -105,8 +105,8 @@ namespace mars {
             int proc_num = rank(context);
             int size = num_ranks(context);
 
-            auto scan_send_mirror = get_mesh_manager().get_host_mesh()->get_view_scan_send_mirror();
-            auto scan_recv_mirror = get_mesh_manager().get_host_mesh()->get_view_scan_recv_mirror();
+            auto scan_send_mirror = get_mesh().get_view_scan_send_mirror();
+            auto scan_recv_mirror = get_mesh().get_view_scan_recv_mirror();
             Integer ghost_size = scan_recv_mirror(size);
             reserve_user_data(ghost_user_data_, "ghost_user_data", ghost_size);
 
@@ -131,9 +131,9 @@ namespace mars {
             ViewVectorType<H> data = std::get<I>(ghost_user_data_);
             Integer ghost_size = data.extent(0);
 
-            Integer xDim = get_mesh_manager().get_host_mesh()->get_XDim();
-            Integer yDim = get_mesh_manager().get_host_mesh()->get_YDim();
-            Integer zDim = get_mesh_manager().get_host_mesh()->get_ZDim();
+            Integer xDim = get_mesh().get_XDim();
+            Integer yDim = get_mesh().get_YDim();
+            Integer zDim = get_mesh().get_ZDim();
 
             parallel_for(
                 "print set", ghost_size, KOKKOS_LAMBDA(const Integer i) {
@@ -185,8 +185,8 @@ namespace mars {
             tuple tup;
         };
 
-        MARS_INLINE_FUNCTION void init_user_data(T... args) {
-            const Integer size = get_mesh_manager().get_host_mesh()->get_chunk_size();
+        void init_user_data(T... args) {
+            const Integer size = get_mesh().get_chunk_size();
 
             apply_impl(InitData("init_data", size, std::forward_as_tuple(args...)), user_data_);
         }
@@ -207,49 +207,44 @@ namespace mars {
     */
 
         template <typename H>
-        MARS_INLINE_FUNCTION void parallel_for_data(const Integer size, H f) {
+        void parallel_for_data(const Integer size, H f) {
             Kokkos::parallel_for("init_initial_cond", size, f);
         }
 
         template <typename H>
-        MARS_INLINE_FUNCTION void set_init_cond(H f) {
+        void set_init_cond(H f) {
             elem_iterate(f);
         }
 
         template <typename H, typename S>
-        MARS_INLINE_FUNCTION void elem_iterate_reduce(H f, S s) {
-            const Integer size = get_mesh_manager().get_host_mesh()->get_chunk_size();
+        void elem_iterate_reduce(H f, S s) {
+            const Integer size = get_mesh().get_chunk_size();
             Kokkos::parallel_reduce("elem_reduce", size, f, s);
         }
 
         template <typename H>
-        MARS_INLINE_FUNCTION void elem_iterate(H f) {
-            get_mesh_manager().elem_iterate(f);
+        void elem_iterate(H f) {
+            get_mesh().elem_iterate(f);
         }
-
-        Mesh *get_mesh() const { return get_mesh_manager().get_mesh(); }
 
         template <typename H>
-        MARS_INLINE_FUNCTION void face_iterate(H f) const {
-            get_mesh_manager().face_iterate(f);
+        void face_iterate(H f) const {
+            get_mesh().face_iterate(f);
         }
 
         MARS_INLINE_FUNCTION
-        Integer get_ghost_elem(const Integer i) const { return get_mesh_manager().get_mesh()->get_ghost_sfc(i); }
+        Integer get_ghost_elem(const Integer i) const { return get_mesh().get_ghost_sfc(i); }
 
-        MARS_INLINE_FUNCTION
         const ViewVectorType<Integer> &get_view_boundary() const {
-            return get_mesh_manager().get_host_mesh()->get_view_boundary();
+            return get_mesh().get_view_boundary();
         }
 
-        MARS_INLINE_FUNCTION
         const ViewVectorType<Integer> &get_view_ghost() const {
-            return get_mesh_manager().get_host_mesh()->get_view_ghost();
+            return get_mesh().get_view_ghost();
         }
 
-        MARS_INLINE_FUNCTION
         const ViewVectorType<Integer> &get_view_scan_ghost() const {
-            return get_mesh_manager().get_host_mesh()->get_view_scan_ghost();
+            return get_mesh().get_view_scan_ghost();
         }
 
         MARS_INLINE_FUNCTION
@@ -289,13 +284,14 @@ namespace mars {
             if (Ghost)
                 return get_ghost_elem(sfc_index);
             else
-                return get_mesh_manager().get_mesh()->get_sfc(sfc_index);
+                return get_mesh().get_sfc(sfc_index);
         }
 
-        MM get_mesh_manager() const { return mesh_manager_; }
+        Mesh get_mesh() const { return mesh; }
 
     private:
-        MM mesh_manager_;
+        /* MM mesh_manager_; */
+        Mesh mesh;
         // ghost data layer
         user_tuple user_data_;
         user_tuple ghost_user_data_;
@@ -303,11 +299,11 @@ namespace mars {
 
     template <class UserData>
     void exchange_ghost_user_data(UserData &data) {
-        const context &context = data.get_mesh_manager().get_host_mesh()->get_context();
+        const context &context = data.get_mesh().get_context();
         int size = num_ranks(context);
 
-        if (data.get_mesh_manager().get_host_mesh()->get_view_scan_recv_mirror()(size) ==
-            data.get_mesh_manager().get_host_mesh()->get_view_ghost().extent(0)) {
+        if (data.get_mesh().get_view_scan_recv_mirror()(size) ==
+            data.get_mesh().get_view_ghost().extent(0)) {
             std::cout << "Exchange the ghost data..." << std::endl;
             data.exchange_ghost_data(context);
         } else {

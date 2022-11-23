@@ -184,6 +184,7 @@ namespace mars {
             static constexpr int Dim = Mesh::Dim;
 
             void header(std::ostream& vtk_schema) const {
+                // https://kitware.github.io/vtk-examples/site/VTKFileFormats/#unstructuredgrid
                 vtk_schema << R"(
 <?xml version="1.0"?>
 <VTKFile type="UnstructuredGrid" version="0.2" byte_order="LittleEndian">
@@ -207,14 +208,15 @@ namespace mars {
                     vtk_schema << "\n";
                 } else {
                     for (const auto& point_datum : point_fields) {
-                        vtk_schema << "        <DataArray Name=\"" << point_datum->name << "\"/>\n";
+                        vtk_schema << "        <DataArray Name=\"" << point_datum->name;
+                        vtk_schema << "\" ";
+                        vtk_schema << "/>\n ";
                     }
                 }
 
                 vtk_schema << "        <DataArray Name=\"TIME\">\n";
                 vtk_schema << "          TIME\n";
                 vtk_schema << "        </DataArray>\n";
-
                 vtk_schema << R"(
           </PointData>
           </Piece>
@@ -410,6 +412,11 @@ namespace mars {
         bool IO<Mesh>::aux_write(const std::string& path, const ViewVectorType<Real>& data) {
             set_output_path(path);
             add_field("U", -1, data);
+            return write();
+        }
+
+        template <class Mesh>
+        bool IO<Mesh>::write() {
             if (!open_output()) {
                 return false;
             }

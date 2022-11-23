@@ -224,6 +224,7 @@ namespace mars {
         using VolumeStencil = typename MyDofTypes::VStencil;
         using StokesStencil = typename MyDofTypes::SStencil;
         using SparsityPattern = typename MyDofTypes::SPattern;
+        using SparsityMatrix = typename MyDofTypes::SMatrix;
         using CornerDM = typename MyDofTypes::CornerDM;
         using CornerVolumeDM = typename MyDofTypes::CornerVolumeDM;
 
@@ -231,7 +232,7 @@ namespace mars {
 
         // enumerate the dofs locally and globally. The ghost dofs structures
         // are now created and ready to use for the gather and scatter ops.
-        DofHandler dof_handler(&mesh);
+        DofHandler dof_handler(mesh);
         dof_handler.enumerate_dofs();
 
         // curently only working for the cpu version for debugging purposes.
@@ -249,6 +250,9 @@ namespace mars {
 
         SparsityPattern sp(fv_dof_handler);
         sp.build_pattern(volume_stencil, face_stencil);
+
+        SparsityMatrix sm(sp);
+        sm.build_crs_matrix();
 
         CornerDM cdm(dof_handler);
         set_data_in_circle(cdm, 0, 1);
@@ -277,17 +281,17 @@ namespace mars {
             printf("lid: %li, u: %lf, global: %li, rank: %i\n", i, idata, d.get_gid(), d.get_proc());
         });*/
 
-        assemble_volume(volume_stencil, sp, proc_num);
+        assemble_volume(volume_stencil, sm, proc_num);
         // Only use with Oriented stencil!!!
-        assemble_oriented_face(face_stencil, sp, cvdm);
+        assemble_oriented_face(face_stencil, sm, cvdm);
         // otherwise use the following:
-        /* assemble_face(face_stencil, sp, cvdm); */
+        /* assemble_face(face_stencil, sm, cvdm); */
 
         fv_dof_handler.boundary_dof_iterate(
-            MARS_LAMBDA(const Integer local_dof) { sp.set_value(local_dof, local_dof, 1); });
+            MARS_LAMBDA(const Integer local_dof) { sm.set_value(local_dof, local_dof, 1); });
 
         /* sp.print_sparsity_pattern(); */
-        /* sp.write("Spattern"); */
+        /* sm.write("Spattern"); */
 
         auto rhs = assemble_rhs(fv_dof_handler, cdm);
 

@@ -18,7 +18,6 @@ namespace mars {
         static constexpr Integer Degree = DofHandler::Degree;
         static constexpr Integer Block = DofHandler::Block;
 
-        using MM = MeshManager<Mesh>;
         using simplex_type = typename Mesh::Elem;
 
         static constexpr Integer ElemType = simplex_type::ElemType;
@@ -43,7 +42,6 @@ namespace mars {
 
         static constexpr Integer elem_dofs = NDofs::elem_dofs();
 
-        MARS_INLINE_FUNCTION
         SDofHandler(DofHandler d) : dof_handler(d) { prepare_separated_dofs(); }
 
         struct IsSeparatedDof {
@@ -188,13 +186,13 @@ namespace mars {
         const ViewVectorType<Integer> get_local_dofs() const { return local_dofs; }
 
         MARS_INLINE_FUNCTION
-        const Integer get_local_dof(const Integer i) const { return local_dofs(i); }
+        Integer get_local_dof(const Integer i) const { return local_dofs(i); }
 
         MARS_INLINE_FUNCTION
         const ViewVectorType<Integer> get_owned_dofs() const { return locally_owned_dofs; }
 
         template <Integer B = Block>
-        MARS_INLINE_FUNCTION const Integer get_owned_dof(const Integer i) const {
+        MARS_INLINE_FUNCTION Integer get_owned_dof(const Integer i) const {
             auto base = get_dof_handler().template compute_base<B>(i);
             auto component = get_dof_handler().template compute_component<B>(i);
             return get_dof_handler().template compute_block_index<B>(locally_owned_dofs(base), component);
@@ -204,13 +202,13 @@ namespace mars {
         const ViewVectorType<Integer> get_local_dof_map() const { return local_dof_map; }
 
         MARS_INLINE_FUNCTION
-        const Integer get_local_dof_map(const Integer local_dof) const { return local_dof_map(local_dof); }
+        Integer get_local_dof_map(const Integer local_dof) const { return local_dof_map(local_dof); }
 
         MARS_INLINE_FUNCTION
         const ViewVectorType<Integer> get_owned_dof_map() const { return owned_dof_map; }
 
         MARS_INLINE_FUNCTION
-        const Integer get_owned_dof_map(const Integer local_dof) const { return owned_dof_map(local_dof); }
+        Integer get_owned_dof_map(const Integer local_dof) const { return owned_dof_map(local_dof); }
 
         MARS_INLINE_FUNCTION
         Integer get_boundary_dof(const Integer index) const { return boundary_dofs(index); }
@@ -231,7 +229,7 @@ namespace mars {
         Integer get_ghost_dof_size() const { return ghost_dofs.extent(0); }
 
         MARS_INLINE_FUNCTION
-        const Integer get_scan_recv_mirror_size() const { return scan_recv_mirror.extent(0); }
+        Integer get_scan_recv_mirror_size() const { return scan_recv_mirror.extent(0); }
 
         MARS_INLINE_FUNCTION
         const ViewVectorType<Integer>::HostMirror &get_view_scan_recv_mirror() const { return scan_recv_mirror; }
@@ -313,7 +311,7 @@ namespace mars {
         }
 
         MARS_INLINE_FUNCTION
-        const Integer global_to_local(const Integer global_index) const {
+        Integer global_to_local(const Integer global_index) const {
             if (global_index == INVALID_INDEX) return INVALID_INDEX;
 
             const Integer proc = get_dof_handler().get_proc();
@@ -359,7 +357,7 @@ namespace mars {
         }
 
         MARS_INLINE_FUNCTION
-        const Integer sfc_to_global(const Integer sfc) const {
+        Integer sfc_to_global(const Integer sfc) const {
             const Integer local_dof = get_dof_handler().sfc_to_local(sfc);
             Dof dof = local_to_separated_global_dof(local_dof);
             if (dof.is_valid())
@@ -369,7 +367,7 @@ namespace mars {
         }
 
         MARS_INLINE_FUNCTION
-        const Integer local_to_global(const Integer local_dof) const {
+        Integer local_to_global(const Integer local_dof) const {
             Dof dof = local_to_separated_global_dof(local_dof);
             if (dof.is_valid())
                 return dof.get_gid();
@@ -377,8 +375,7 @@ namespace mars {
                 return INVALID_INDEX;
         }
 
-        MARS_INLINE_FUNCTION
-        const Integer get_global_dof_size() const {
+        Integer get_global_dof_size() const {
             const Integer rank_size = num_ranks(get_dof_handler().get_context());
 
             auto ss = subview(global_dof_offset, rank_size);
@@ -444,16 +441,16 @@ namespace mars {
 
         template <bool G>
         static MARS_INLINE_FUNCTION typename std::enable_if<G == true, Octant>::type get_octant_ghost_or_local(
-            const Mesh *mesh,
+            const Mesh mesh,
             const Integer index) {
-            return mesh->get_ghost_octant(index);
+            return mesh.get_ghost_octant(index);
         }
 
         template <bool G>
         static MARS_INLINE_FUNCTION typename std::enable_if<G == false, Octant>::type get_octant_ghost_or_local(
-            const Mesh *mesh,
+            const Mesh mesh,
             const Integer index) {
-            return mesh->get_octant(index);
+            return mesh.get_octant(index);
         }
 
         MARS_INLINE_FUNCTION Integer get_sfc_from_octant(const Octant &o) const {
@@ -512,27 +509,27 @@ namespace mars {
         constexpr Integer get_elem_type() const { return simplex_type::ElemType; }
 
         MARS_INLINE_FUNCTION
-        const Integer get_global_dof_offset(const Integer proc) const { return global_dof_offset(proc); }
+        Integer get_global_dof_offset(const Integer proc) const { return global_dof_offset(proc); }
 
         MARS_INLINE_FUNCTION
         const ViewVectorType<Integer> get_global_dof_offset() const { return global_dof_offset; }
 
         /* MARS_INLINE_FUNCTION
-        const Integer get_global_dof_size() const { return get_dof_handler().get_global_dof_size(); }
+        Integer get_global_dof_size() const { return get_dof_handler().get_global_dof_size(); }
  */
 
         MARS_INLINE_FUNCTION
-        const Integer get_orientation(const Integer local_dof) const {
+        Integer get_orientation(const Integer local_dof) const {
             return get_dof_handler().get_orientation(local_dof);
         }
 
         template <Integer B = Block>
-        MARS_INLINE_FUNCTION const Integer get_label(const Integer local_dof) const {
+        MARS_INLINE_FUNCTION Integer get_label(const Integer local_dof) const {
             return get_dof_handler().template get_label<B>(local_dof);
         }
 
         MARS_INLINE_FUNCTION
-        const Integer get_owned_label(const Integer owned_dof) const {
+        Integer get_owned_label(const Integer owned_dof) const {
             return get_dof_handler().get_owned_label(owned_dof);
         }
 
@@ -561,13 +558,13 @@ namespace mars {
         }
 
         MARS_INLINE_FUNCTION
-        MM get_mesh_manager() const { return get_dof_handler().get_mesh_manager(); }
+        Mesh get_mesh() const { return get_dof_handler().get_mesh(); }
 
         MARS_INLINE_FUNCTION
-        const Integer get_proc() const { return get_dof_handler().get_proc(); }
+        Integer get_proc() const { return get_dof_handler().get_proc(); }
 
         /* MARS_INLINE_FUNCTION
-        const Integer local_to_owned_dof(const Integer local) const { return
+        Integer local_to_owned_dof(const Integer local) const { return
         get_dof_handler().local_to_owned_dof(local); }
  */
         MARS_INLINE_FUNCTION
@@ -603,13 +600,13 @@ namespace mars {
         }
 
         MARS_INLINE_FUNCTION
-        const Integer get_XMax() const { return get_dof_handler().get_XMax(); }
+        Integer get_XMax() const { return get_dof_handler().get_XMax(); }
 
         MARS_INLINE_FUNCTION
-        const Integer get_YMax() const { return get_dof_handler().get_YMax(); }
+        Integer get_YMax() const { return get_dof_handler().get_YMax(); }
 
         MARS_INLINE_FUNCTION
-        const Integer get_ZMax() const { return get_dof_handler().get_ZMax(); }
+        Integer get_ZMax() const { return get_dof_handler().get_ZMax(); }
 
         MARS_INLINE_FUNCTION
         void set_block(const Integer b) { get_dof_handler().set_block(b); }

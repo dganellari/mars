@@ -38,15 +38,12 @@ namespace mars {
         static constexpr Integer dofLabel = Label;
         static constexpr Integer Length = L;
 
-        MARS_INLINE_FUNCTION
         Stencil() = default;
 
-        MARS_INLINE_FUNCTION
         Stencil(const Integer size) { reserve_stencil(size); }
 
         void reserve_stencil(const Integer size) { stencil = ViewMatrixTypeRC<Integer, L>("stencil", size); }
 
-        MARS_INLINE_FUNCTION
         ViewMatrixTypeRC<Integer, L> get_stencil() const { return stencil; }
 
         MARS_INLINE_FUNCTION
@@ -62,11 +59,11 @@ namespace mars {
         Integer get_value(const Integer row, const Integer col) const { return stencil(row, col); }
 
         MARS_INLINE_FUNCTION
-        Integer set_value(const Integer row, const Integer col, const Integer value) const {
-            return stencil(row, col) = value;
+        void set_value(const Integer row, const Integer col, const Integer value) const {
+            stencil(row, col) = value;
         }
 
-        const Integer get_stencil_size() const { return stencil.extent(0); }
+        Integer get_stencil_size() const { return stencil.extent(0); }
 
         template <typename F>
         void dof_iterate(F f) const {
@@ -149,10 +146,8 @@ namespace mars {
         /* static constexpr Integer Face_Length = 2 * Dim; */
         using SuperStencil = Stencil<Label, Dim, 2, L>;
 
-        MARS_INLINE_FUNCTION
         StokesStencil() = default;
 
-        MARS_INLINE_FUNCTION
         StokesStencil(const Integer size) : SuperStencil(size) {}
 
         template <bool Orient = false, typename DM>
@@ -220,10 +215,8 @@ namespace mars {
         using SuperStencil = Stencil<Label, Dim, Width, L>;
         using SuperStokesStencil = StokesStencil<Label, Dim, L>;
 
-        MARS_INLINE_FUNCTION
         FullStokesStencil() = default;
 
-        MARS_INLINE_FUNCTION
         FullStokesStencil(const Integer size) : SuperStokesStencil(size) {}
 
         template <bool Orient = false, typename DM>

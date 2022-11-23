@@ -290,7 +290,7 @@ namespace mars {
     }
 
     template <Integer first, Integer second>
-    MARS_INLINE_FUNCTION void reset_derivatives(Data &data) {
+    void reset_derivatives(Data &data) {
         data.elem_iterate(MARS_LAMBDA(const int i) {
             data.get_elem_data<first>(i) = -1.;
             data.get_elem_data<second>(i) = -1.;
@@ -298,26 +298,26 @@ namespace mars {
     }
 
     template <Integer dt_idx>
-    MARS_INLINE_FUNCTION void quad_divergence(Data &data) {
+    void quad_divergence(Data &data) {
         data.elem_iterate(MARS_LAMBDA(const int i) { data.get_elem_data<dt_idx>(i) = 0.; });
     }
 
     template <Integer Type, Integer first, Integer second>
-    MARS_INLINE_FUNCTION void print_derivatives(Data &data) {
+    void print_derivatives(Data &data) {
         data.elem_iterate(MARS_LAMBDA(const int i) {
-            Integer sfc_elem = data.get_mesh()->get_sfc_elem(i);
+            Integer sfc_elem = data.get_mesh().get_sfc_elem(i);
 
             double point[3];
             get_vertex_coordinates_from_sfc<Type>(
-                sfc_elem, point, data.get_mesh()->get_XDim(), data.get_mesh()->get_YDim(), data.get_mesh()->get_ZDim());
+                sfc_elem, point, data.get_mesh().get_XDim(), data.get_mesh().get_YDim(), data.get_mesh().get_ZDim());
 
             printf(
-                "derivative data: %li - (%lf, %lf) - rank: %i - u: %lf - dudt: %lf "
+                "derivative data: %i - (%lf, %lf) - rank: %li - u: %lf - dudt: %lf "
                 "- derivatives: [%lf - %lf]\n",
                 i,
                 point[0],
                 point[1],
-                data.get_mesh()->get_proc(),
+                data.get_mesh().get_proc(),
                 data.get_elem_data<DataDesc::u>(i),
                 data.get_elem_data<DataDesc::dudt>(i),
                 data.get_elem_data<first>(i),
@@ -326,15 +326,15 @@ namespace mars {
     }
 
     template <Integer Type, Integer Dir>
-    MARS_INLINE_FUNCTION static void print_face_data(const Data &data, const Face<Type, Dir> &face, const Integer i) {
+    static void print_face_data(const Data &data, const Face<Type, Dir> &face, const Integer i) {
         constexpr Integer du_index = 1 + Dir;
 
         Integer idx = face.get_side(i).get_elem_id();
-        Integer sfc_elem = data.get_mesh()->get_sfc_elem(idx);
+        Integer sfc_elem = data.get_mesh().get_sfc_elem(idx);
 
         double point[3];
         get_vertex_coordinates_from_sfc<Type>(
-            sfc_elem, point, data.get_mesh()->get_XDim(), data.get_mesh()->get_YDim(), data.get_mesh()->get_ZDim());
+            sfc_elem, point, data.get_mesh().get_XDim(), data.get_mesh().get_YDim(), data.get_mesh().get_ZDim());
 
         printf(
             "face data: %li - dir: %li - face: %li - (%lf, %lf) - rank: %i - "
@@ -344,7 +344,7 @@ namespace mars {
             face.get_side(i).get_face_side(),
             point[0],
             point[1],
-            data.get_mesh()->get_proc(),
+            data.get_mesh().get_proc(),
             face.get_side(i).is_ghost(),
             data.get_elem_data<du_index>(idx));
     }
@@ -384,9 +384,9 @@ namespace mars {
                     Integer idx = face.get_side(i).get_elem_id();
 
                     if (i == 0)
-                        hx = 1. / data.get_mesh()->get_XDim();
+                        hx = 1. / data.get_mesh().get_XDim();
                     else
-                        hy = 1. / data.get_mesh()->get_YDim();
+                        hy = 1. / data.get_mesh().get_YDim();
 
                     if (face.get_side(i).is_ghost()) {
                         uavg[i] = data.get_ghost_elem_data<DataDesc::u>(idx);
@@ -463,7 +463,7 @@ namespace mars {
 
             /* if(ii == 1)
                 printf("q: %lf, uagv: %lf rank: %i\n", q, uavg,
-               data.get_mesh()->get_proc()); */
+               data.get_mesh().get_proc()); */
 
             double facearea = 0;
             for (int i = 0; i < 2; ++i) {
@@ -474,29 +474,29 @@ namespace mars {
 
                     if (!face.get_side(i).is_ghost()) {
                         if (i == 0)
-                            facearea = -1. / data.get_mesh()->get_XDim();
+                            facearea = -1. / data.get_mesh().get_XDim();
                         else
-                            facearea = 1. / data.get_mesh()->get_YDim();
+                            facearea = 1. / data.get_mesh().get_YDim();
 
                         DataType<DataDesc::dudt> du_dt = q * facearea;
 
                         Kokkos::atomic_add(&data.get_elem_data<DataDesc::dudt>(idx), du_dt);
 
-                        sfc_elem = data.get_mesh()->get_sfc_elem(idx);
+                        sfc_elem = data.get_mesh().get_sfc_elem(idx);
                     } else
                         sfc_elem = data.get_ghost_elem(idx);
 
                     double point[3];
                     get_vertex_coordinates_from_sfc<Type>(sfc_elem,
                                                           point,
-                                                          data.get_mesh()->get_XDim(),
-                                                          data.get_mesh()->get_YDim(),
-                                                          data.get_mesh()->get_ZDim());
+                                                          data.get_mesh().get_XDim(),
+                                                          data.get_mesh().get_YDim(),
+                                                          data.get_mesh().get_ZDim());
 
-                    if (ii == 1 && data.get_mesh()->get_proc() == 0)
+                    if (ii == 1 && data.get_mesh().get_proc() == 0)
                         printf(
-                            "(%i %lf:%lf) q: %lf, uavg: %lf - %i -  %i, rank: "
-                            "%i\n",
+                            "(%i %lf:%lf) q: %lf, uavg: %lf - %li -  %li, rank: "
+                            "%li\n",
                             i,
                             point[0],
                             point[1],
@@ -504,7 +504,7 @@ namespace mars {
                             uavg,
                             face.get_side(i).get_face_side(),
                             Dir,
-                            data.get_mesh()->get_proc());
+                            data.get_mesh().get_proc());
                 }
             }
         }
@@ -517,10 +517,10 @@ namespace mars {
     // parallel reduction on the data view using the max plus functor from
     // distributed utils.
     template <Integer idx>
-    MARS_INLINE_FUNCTION DataType<idx> umax(Data &data) {
+    DataType<idx> umax(const Data &data) {
         DataType<idx> result;
         Kokkos::parallel_reduce(
-            data.get_mesh()->get_chunk_size(), MaxPlus<DataType<idx>>(data.get_data<idx>()), result);
+            data.get_mesh().get_chunk_size(), MaxPlus<DataType<idx>>(data.get_data<idx>()), result);
         return result;
     }
 
@@ -544,8 +544,8 @@ namespace mars {
 
     template <Integer Dim>
     double get_timestep(Data &data, const ProblemDesc<Dim> &pd) {
-        double hx = 1. / data.get_mesh()->get_XDim();
-        double hy = 1. / data.get_mesh()->get_YDim();
+        double hx = 1. / data.get_mesh().get_XDim();
+        double hy = 1. / data.get_mesh().get_YDim();
 
         double vnorm = 0;
         double min_h = min(hx, hy);
@@ -560,9 +560,9 @@ namespace mars {
     }
 
     template <typename T = DataType<DataDesc::dudt>>
-    MARS_INLINE_FUNCTION void timestep_update(Data &data, T dt) {
-        T hx = 1. / data.get_mesh()->get_XDim();
-        T hy = 1. / data.get_mesh()->get_YDim();
+    void timestep_update(Data &data, T dt) {
+        T hx = 1. / data.get_mesh().get_XDim();
+        T hy = 1. / data.get_mesh().get_YDim();
 
         T vol = hx * hy;
 
@@ -573,7 +573,7 @@ namespace mars {
 
     template <Integer Type, Integer Dim>
     void timestep(Data &data, ProblemDesc<Dim> &pd, double time) {
-        const context &context = data.get_mesh_manager().get_host_mesh()->get_context();
+        const context &context = data.get_mesh().get_context();
 
         DataType<DataDesc::dudt> dt = 0.;
         DataType<DataDesc::dudt> t = 0.;
@@ -611,7 +611,7 @@ namespace mars {
         }
     }
 
-    void advection(const int level) {
+    void advection(const int x, const int y) {
         using namespace mars;
         mars::proc_allocation resources;
 
@@ -629,7 +629,7 @@ namespace mars {
 
         DistributedQuad4Mesh mesh(context);
         mesh.set_periodic();  // set the domain to be periodic before generation!
-        generate_distributed_cube(mesh, level, level, 0);
+        generate_distributed_cube(mesh, x, y, 0);
 
         const Integer xDim = mesh.get_XDim();
         const Integer yDim = mesh.get_YDim();
@@ -654,7 +654,7 @@ namespace mars {
         pd.refine_period = 2;
         pd.write_period = 8;
 
-        Data data(&mesh);
+        Data data(mesh);
 
         ViewVectorType<Integer> sfc = mesh.get_view_sfc();
         /* another option to use this one with a functor instead of the lamda. Just

@@ -243,18 +243,19 @@ namespace mars {
         using DMQ = DM<DOFHandler, double, double, double>;
         using FE = FEDofMap<DOFHandler>;
         using SPattern = SparsityPattern<double, Integer, unsigned long, DOFHandler>;
+        using SMatrix = SparsityMatrix<SPattern>;
 
         // use as more readable tuple index to identify the data
-        static constexpr int INPUT = 0;
+        /* static constexpr int INPUT = 0;
         static constexpr int OUTPUT = 1;
-        static constexpr int RHSD = 2;
+        static constexpr int RHSD = 2; */
 
         double time_gen = timer.seconds();
         std::cout << "Mesh Generation took: " << time_gen << std::endl;
 
         Kokkos::Timer timer_dof;
 
-        DOFHandler dof_handler(&mesh);
+        DOFHandler dof_handler(mesh);
         dof_handler.enumerate_dofs();
         dof_handler.set_block(block);
 
@@ -277,6 +278,9 @@ namespace mars {
         SPattern sp(dof_handler);
         sp.build_pattern(fe);
 
+        SMatrix sm(sp);
+        sm.build_crs_matrix();
+
         double time_sp = timer_sp.seconds();
         std::cout << "SP build took: " << time_sp << std::endl;
 
@@ -287,14 +291,14 @@ namespace mars {
         ViewVectorType<Integer> x_local("local_data", dof_handler.get_dof_size());
         dof_handler.dof_iterate(MARS_LAMBDA(const Integer i) {
             x_local(i) = -1;
-            if (dof_handler.is_owned(i)) sp.set_value(i, i, 9);
+            if (dof_handler.is_owned(i)) sm.set_value(i, i, 9);
         });
 
         double time_aall = timer_as.seconds();
         std::cout << "Assembly: " << time_aall << std::endl;
 
         /* sp.print_sparsity_pattern(); */
-        /* sp.write("overlap_sp.txt"); */
+        /* sm.write("overlap_sp.txt"); */
 
         auto owned_size = dof_handler.get_owned_dof_size();
         ViewVectorType<Integer> owned("owned_data", owned_size);

@@ -41,7 +41,7 @@
 #endif  // MARS_ENABLE_PAR_MOONOLITH
 
 #ifdef MARS_ENABLE_MPI
-#include "mars_advection.hpp"
+/* #include "mars_advection.hpp" */
 #include "mars_distributed_mesh_generation.hpp"
 #include "mars_par_bisection.hpp"
 #include "mars_par_mesh.hpp"

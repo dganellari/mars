@@ -31,12 +31,12 @@ namespace mars {
     // for default local/global ordinals, you can have for instantiation:
     // LO=default_lno_t
     // GO=default_size_type
-    template <typename V, typename LO, typename GO, typename SHandler, typename Offset = GO>
+    template <typename V, typename LO, typename GO, typename SHandler, typename OS = GO>
     class SparsityPattern : public ISparsityPattern {
     public:
         using Scalar = V;
         using Ordinal = LO;
-        // using Offset = GO;
+        using Offset = OS;
         using Layout = default_layout;
 
         using device_type = typename Kokkos::Device<Kokkos::DefaultExecutionSpace, KokkosSpace>;
@@ -54,7 +54,6 @@ namespace mars {
 
         static constexpr Integer Block = DofHandler::Block;
 
-        MARS_INLINE_FUNCTION
         SparsityPattern(SHandler h) : dof_handler(h) {}
 
         /* struct CompareLabel {
@@ -87,19 +86,19 @@ namespace mars {
             CountUniqueDofs(ViewVectorType<Integer> c, SHandler h) : counter(c), dhandler(h) {}
 
             template <typename H>
-            MARS_INLINE_FUNCTION Integer get_total(const Integer dof, Integer &count, const H &handler) const {
+            static MARS_INLINE_FUNCTION Integer get_total(const Integer dof, Integer &count, const H &handler) {
                 return handler.template is_boundary<SHandler::ElemType>(dof) ? 1 : count;
             }
 
             // TODO:Specialize for normal stencils as in the method below since normally the boundary is excluded.
             /* template <>
-            MARS_INLINE_FUNCTION Integer
-            get_total<DofHandler<SHandler::Mesh, SHandler::Degree>>(const StokesStencil<DHandler> &st) const {
+            static MARS_INLINE_FUNCTION Integer
+            get_total<DofHandler<SHandler::Mesh, SHandler::Degree>>(const StokesStencil<DHandler> &st) {
                 return dhandler.template is_boundary<SHandler::ElemType>(dof) ? 0 : count;
             } */
 
             template <typename S>
-            MARS_INLINE_FUNCTION void count_unique(S st) const {
+            void count_unique(S st) const {
                 auto handler = dhandler;
                 auto cntr = counter;
                 st.iterate(MARS_LAMBDA(const Integer stencil_index) {
@@ -118,7 +117,7 @@ namespace mars {
             }
 
             template <typename S>
-            MARS_INLINE_FUNCTION void operator()(S &stencil, size_t I) const {
+            void operator()(S &stencil, size_t I) const {
                 count_unique<S>(stencil);
             }
 
@@ -129,8 +128,10 @@ namespace mars {
         struct InsertSortedDofs {
             InsertSortedDofs(crs_row r, crs_col c, SHandler h) : row_ptr(r), col_idx(c), dhandler(h) {}
 
-            MARS_INLINE_FUNCTION
-            void insert_sorted(const crs_col &col, const Integer index, const Integer value, Integer &count) const {
+            MARS_INLINE_FUNCTION void insert_sorted(const crs_col &col,
+                                                    const Integer index,
+                                                    const Integer value,
+                                                    Integer &count) const {
                 Integer i = 0;
                 while (value > col(index + i) && i < count) {
                     i++;
@@ -145,8 +146,9 @@ namespace mars {
 
             /* TODO:specialize for stokes because normally the boundary would be excluded. */
             template <typename S>
-            MARS_INLINE_FUNCTION void insert_sorted(S st) const {
+            void insert_sorted(S st) const {
                 auto handler = dhandler;
+                auto sortedDofs = *this;
                 auto rp = row_ptr;
                 auto ci = col_idx;
                 st.iterate(MARS_LAMBDA(const Integer stencil_index) {
@@ -163,7 +165,7 @@ namespace mars {
                             const Integer local_dof = st.get_value(stencil_index, i);
                             if (conditional(local_dof, handler)) {
                                 const Integer global = handler.local_to_global(local_dof);
-                                insert_sorted(ci, index, global, count);
+                                sortedDofs.insert_sorted(ci, index, global, count);
                             }
                         }
                     }
@@ -171,7 +173,7 @@ namespace mars {
             }
 
             template <typename S>
-            MARS_INLINE_FUNCTION void operator()(S &stencil, size_t I) const {
+            void operator()(S &stencil, size_t I) const {
                 insert_sorted<S>(stencil);
                 /* //To be used with kokkos radix sort. Currently slower than the insert_sorted routine.
                 insert<S>(stencil); */
@@ -179,7 +181,7 @@ namespace mars {
 
             /* TODO:specialize for stokes because normally the boundary would be excluded. */
             template <typename S>
-            MARS_INLINE_FUNCTION void insert(S st) const {
+            void insert(S st) const {
                 auto handler = dhandler;
                 auto rp = row_ptr;
                 auto ci = col_idx;
@@ -231,8 +233,6 @@ namespace mars {
             deep_copy(h_ss, ss);
 
             crs_col col_idx("ColIdxST", h_ss());
-            crs_value values("valuesST", h_ss());
-
             expand_tuple<InsertSortedDofs, stencil_tuple>(InsertSortedDofs(row_ptr, col_idx, get_dof_handler()),
                                                           stencils);
 
@@ -241,10 +241,6 @@ namespace mars {
             KokkosKernels::Impl::sort_crs_graph<Kokkos::DefaultExecutionSpace, crs_row, crs_col>(row_ptr, col_idx); */
 
             sparsity_pattern = crs_graph(col_idx, row_ptr);
-
-            matrix = crs_matrix("crs_matrix", global_size, values, sparsity_pattern);
-
-            printf("Build SparsityPattern ended!\n");
         }
 
         // Finite Element Sparsity pattern creation
@@ -275,11 +271,10 @@ namespace mars {
             }
         }
 
-        MARS_INLINE_FUNCTION
-        void insert_sorted_unique_fe(const ViewMatrixType<Integer> &col,
-                                     const Integer row,
-                                     const Integer value,
-                                     Integer &count) const {
+        static MARS_INLINE_FUNCTION void insert_sorted_unique_fe(const ViewMatrixType<Integer> &col,
+                                                                 const Integer row,
+                                                                 const Integer value,
+                                                                 Integer &count) {
             Integer i = 0;
             while (value > col(row, i) && i < count) {
                 i++;
@@ -324,7 +319,6 @@ namespace mars {
 
             /* compact_owned_dofs<L>(get_dof_handler(), locally_owned_dofs); */
             assert(owned_size == block * locally_owned_dofs.extent(0));
-
             auto el_max_size = fe.template label_based_element_count<L>();
             Kokkos::parallel_for(
                 "Count_nodes", owned_size, MARS_LAMBDA(const Integer i) {
@@ -421,11 +415,11 @@ namespace mars {
             }
 
             template <typename M, typename S>
-            MARS_INLINE_FUNCTION void operator()(const M &ntn, const S &lod) const {
+            void operator()(const M &ntn, const S &lod) const {
                 generate_col_idx_from_node_to_node(ntn, lod);
             }
 
-            MARS_INLINE_FUNCTION
+
             GenColIdxFromNodeToNodeTuple(SHandler dh, crs_col c, crs_row r) : dhandler(dh), col(c), row(r) {}
 
             SHandler dhandler;
@@ -507,15 +501,11 @@ namespace mars {
             deep_copy(h_ss, ss);
 
             crs_col col_idx("ColIdxFe", h_ss());
-            crs_value values("valuesFe", h_ss());
 
             expand_tuple<GenColIdxFromNodeToNodeTuple, M, S>(
                 GenColIdxFromNodeToNodeTuple(get_dof_handler(), col_idx, row_ptr), ntn_tuple, lod_tuple);
 
             sparsity_pattern = crs_graph(col_idx, row_ptr);
-            matrix = crs_matrix("crs_matrix", global_size, values, sparsity_pattern);
-
-            /* printf("Build FE SparsityPattern ended!\n"); */
         }
 
         crs_matrix new_crs_matrix() const {
@@ -538,7 +528,7 @@ namespace mars {
         }
 
         MARS_INLINE_FUNCTION
-        void matrix_apply_constraints(const Integer row, crs_matrix m, const V value) const {
+        void matrix_apply_constraints(const Integer row, crs_matrix m, const Scalar value) const {
             const Integer diag_row = get_dof_handler().local_to_owned_index(row);
             const col_index_type diag_col = get_dof_handler().local_to_global(row);
 
@@ -560,19 +550,19 @@ namespace mars {
         const crs_graph get_sparsity_pattern() const { return sparsity_pattern; }
 
         MARS_INLINE_FUNCTION
-        const Integer get_col(const Integer index) const { return get_sparsity_pattern().entries(index); }
+        Integer get_col(const Integer index) const { return get_sparsity_pattern().entries(index); }
 
         MARS_INLINE_FUNCTION
         const crs_col get_col() const { return get_sparsity_pattern().entries; }
 
         MARS_INLINE_FUNCTION
-        const Integer get_row_map(const Integer index) const { return get_sparsity_pattern().row_map(index); }
+        Integer get_row_map(const Integer index) const { return get_sparsity_pattern().row_map(index); }
 
         MARS_INLINE_FUNCTION
         const crs_row get_row_map() { return get_sparsity_pattern().row_map; }
 
         MARS_INLINE_FUNCTION
-        const Integer get_col_index_from_global(const Integer row, const col_index_type col) const {
+        Integer get_col_index_from_global(const Integer row, const col_index_type col) const {
             const Integer row_idx = sparsity_pattern.row_map(row);
             const Integer next_row_idx = sparsity_pattern.row_map(row + 1) - 1;
 
@@ -582,7 +572,7 @@ namespace mars {
         }
 
         MARS_INLINE_FUNCTION
-        const Integer get_col_index(const Integer local_row, const Integer local_col) const {
+        Integer get_col_index(const Integer local_row, const Integer local_col) const {
             // translate the row to the owned index and the col to the global index first.
             auto row = get_dof_handler().local_to_owned_index(local_row);
             auto col = get_dof_handler().local_to_global(local_col);
@@ -591,147 +581,13 @@ namespace mars {
         }
 
         MARS_INLINE_FUNCTION
-        void set_value(const Integer index, const V val) const { matrix.values(index) = val; }
-
-        MARS_INLINE_FUNCTION
-        void set_value(const Integer row, const Integer col, const V val) const {
-            const Integer index = get_col_index(row, col);
-            assert(index > -1);
-            if (index > -1) matrix.values(index) = val;
-        }
-
-        MARS_INLINE_FUNCTION
-        void atomic_add_value(const Integer row, const Integer col, const V val) const {
-            const Integer index = get_col_index(row, col);
-            assert(index > -1);
-            if (index > -1) {
-                Kokkos::atomic_fetch_add(&matrix.values(index), val);
-            }
-        }
-
-        template <typename C>
-        MARS_INLINE_FUNCTION void atomic_add_value(const Integer row,
-                                                   const Integer col,
-                                                   const V val,
-                                                   C &crs_matrix) const {
-            const Integer index = get_col_index(row, col);
-            assert(index > -1);
-            if (index > -1) {
-                Kokkos::atomic_fetch_add(&crs_matrix.values(index), val);
-            }
-        }
-
-        MARS_INLINE_FUNCTION
-        void set_value_from_global(const Integer row, const Integer col, const V val) const {
-            const Integer index = get_col_index_from_global(row, col);
-            if (index > -1) matrix.values(index) = val;
-        }
-
-        MARS_INLINE_FUNCTION
-        const V get_value(const Integer index) const { return matrix.values(index); }
-
-        MARS_INLINE_FUNCTION
-        const V get_value(const Integer row, const Integer col) const { return matrix.values(get_col_index(row, col)); }
-
-        MARS_INLINE_FUNCTION
-        const V get_value_from_global(const Integer row, const Integer col) const {
-            return matrix.values(get_col_index_from_global(row, col));
-        }
-
-        MARS_INLINE_FUNCTION
-        const Integer get_nnz() const { return matrix.nnz(); }
-
-        MARS_INLINE_FUNCTION
-        const Integer get_num_cols() const { return matrix.numCols(); }
-
-        MARS_INLINE_FUNCTION
-        const Integer get_num_rows() const { return matrix.numRows(); }
-
-        MARS_INLINE_FUNCTION
-        crs_matrix get_matrix() const { return matrix; }
-
-        /* ***************** print ******************************************** */
-
-        void print_sparsity_pattern() const {
-            const Integer size = get_num_rows();
-            auto sp = *this;
-            Kokkos::parallel_for(
-                "for", size, MARS_LAMBDA(const int row) {
-                    const Integer start = sp.get_row_map(row);
-                    const Integer end = sp.get_row_map(row + 1);
-
-                    // print only if end - start > 0. Otherwise segfaults.
-                    // The row index is not a global index of the current process!
-                    for (int i = start; i < end; ++i) {
-                        auto value = sp.get_value(i);
-                        auto col = sp.get_col(i);
-
-                        const Integer local_dof = sp.get_dof_handler().get_owned_dof(row);
-                        const Integer global_row = sp.get_dof_handler().local_to_global(local_dof);
-
-                        auto base_col = sp.get_dof_handler().compute_base(col);
-                        auto base_row = sp.get_dof_handler().compute_base(global_row);
-                        printf("SP - Row_Dof: %li - %li, base_row:%li, col_dof: %li, base_col: %li, value: %lf\n",
-                               row,
-                               global_row,
-                               base_row,
-                               col,
-                               base_col,
-                               value);
-                    }
-                });
-        }
-
-        bool write(const std::string &file_path) {
-            auto proc = mars::rank(get_dof_handler().get_context());
-            auto path = file_path + "_" + std::to_string(proc);
-
-            std::cout << "Writing SparsityPattern to " << path << " file." << std::endl;
-
-            std::ofstream os;
-            os.open(path.c_str());
-            if (!os.good()) {
-                os.close();
-                return false;
-            }
-
-            auto row_h = Kokkos::create_mirror_view(sparsity_pattern.row_map);
-            auto col_h = Kokkos::create_mirror_view(sparsity_pattern.entries);
-            auto val_h = Kokkos::create_mirror_view(matrix.values);
-            Kokkos::deep_copy(row_h, sparsity_pattern.row_map);
-            Kokkos::deep_copy(col_h, sparsity_pattern.entries);
-            Kokkos::deep_copy(val_h, matrix.values);
-
-            os << "Number of values: " << matrix.nnz() << " Number of Cols: " << matrix.numCols()
-               << " Number of Rows: " << matrix.numRows() << "\n";
-
-            for (int i = 0; i < matrix.nnz(); ++i) {
-                os << val_h(i) << " ";
-            }
-            os << "\n";
-
-            for (int i = 0; i < matrix.nnz(); ++i) {
-                os << col_h(i) << " ";
-            }
-            os << "\n";
-
-            for (int i = 0; i < matrix.numRows() + 1; ++i) {
-                os << row_h(i) << " ";
-            }
-            os << "\n";
-
-            os.close();
-            return true;
-        }
-        /* ********************************************************************************* */
+        const Integer get_nnz() const { return get_sparsity_pattern().entries.extent(0); }
 
         MARS_INLINE_FUNCTION
         const SHandler &get_dof_handler() const { return dof_handler; }
 
     private:
         crs_graph sparsity_pattern;
-        crs_matrix matrix;
-
         SHandler dof_handler;
     };
 }  // namespace mars

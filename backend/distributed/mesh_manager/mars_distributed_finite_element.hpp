@@ -39,7 +39,6 @@ namespace mars {
         // To account for the dofs we multiply with the degree.
         /* static constexpr Integer max_dof_to_dof_size = power((degree * 2 + 1), Dim); */
 
-        MARS_INLINE_FUNCTION
         FEDofMap() = default;
 
         MARS_INLINE_FUNCTION
@@ -149,7 +148,7 @@ namespace mars {
         template <typename F, Integer T = ElemType>
         static MARS_INLINE_FUNCTION std::enable_if_t<T == ElementType::Hex8, void>
         edge_iterate(const DofHandler &dofHandler, F f, const Octant &oc, Integer &index, const int edge) {
-            const Octant start = dofHandler.get_mesh_manager().get_mesh()->get_octant_edge_start(oc, edge);
+            const Octant start = dofHandler.get_mesh().get_octant_edge_start(oc, edge);
             const Integer direction = oc.get_edge_direction(edge);
 
             for (int j = 0; j < DofHandler::edge_dofs; j++) {
@@ -164,7 +163,7 @@ namespace mars {
         template <typename F, bool G, Integer L = Label, Integer ET = ElemType>
         static MARS_INLINE_FUNCTION std::enable_if_t<ET == ElementType::Quad4, void>
         ordered_dof_enumeration(const DofHandler &handler, F f, const Integer i, Integer &index) {
-            Octant oc = DofHandler::template get_octant_ghost_or_local<G>(handler.get_mesh_manager().get_mesh(), i);
+            Octant oc = DofHandler::template get_octant_ghost_or_local<G>(handler.get_mesh(), i);
 
             if (L & DofLabel::lCorner) {
                 corner_iterate(handler, f, oc, index);
@@ -184,7 +183,7 @@ namespace mars {
         template <typename F, bool G, Integer L = Label, Integer ET = ElemType>
         static MARS_INLINE_FUNCTION std::enable_if_t<ET == ElementType::Hex8, void>
         ordered_dof_enumeration(const DofHandler &handler, F f, const Integer i, Integer &index) {
-            Octant oc = DofHandler::template get_octant_ghost_or_local<G>(handler.get_mesh_manager().get_mesh(), i);
+            Octant oc = DofHandler::template get_octant_ghost_or_local<G>(handler.get_mesh(), i);
 
             if (L & DofLabel::lCorner) {
                 corner_iterate(handler, f, oc, index);
@@ -327,7 +326,7 @@ namespace mars {
         template <bool O = Overlap>
         std::enable_if_t<O == true, void> build_elem_index() {
             auto handler = get_dof_handler();
-            const Integer size = handler.get_mesh_manager().get_host_mesh()->get_chunk_size();
+            const Integer size = handler.get_mesh().get_chunk_size();
 
             elem_index = ViewVectorType<Integer>("elem_index", size);
 
@@ -372,8 +371,8 @@ namespace mars {
         // Finally add ghost elements. This to overlap assembly with communication of ghost layer data.
         void enumerate_local_dofs() {
             auto handler = get_dof_handler();
-            const Integer size = handler.get_mesh_manager().get_host_mesh()->get_chunk_size();
-            const Integer ghost_size = handler.get_mesh_manager().get_host_mesh()->get_ghost_size();
+            const Integer size = handler.get_mesh().get_chunk_size();
+            const Integer ghost_size = handler.get_mesh().get_ghost_size();
             const Integer block = handler.get_block();
 
             build_elem_index();
@@ -479,8 +478,8 @@ namespace mars {
         ViewMatrixType<Integer> build_node_element_dof_map(ViewVectorType<Integer> &locally_owned_dofs) const {
             auto handler = get_dof_handler();
 
-            const Integer size = handler.get_mesh_manager().get_host_mesh()->get_chunk_size();
-            const Integer ghost_size = handler.get_mesh_manager().get_host_mesh()->get_ghost_size();
+            const Integer size = handler.get_mesh().get_chunk_size();
+            const Integer ghost_size = handler.get_mesh().get_ghost_size();
 
             /* ViewVectorType<Integer> locally_owned_dofs; */
             auto owned_dof_map = compact_owned_dofs<L>(get_dof_handler(), locally_owned_dofs);
@@ -581,12 +580,12 @@ namespace mars {
       */
 
         MARS_INLINE_FUNCTION
-        const Integer get_elem_local_dof(const Integer elem_index, const Integer i) const {
+        Integer get_elem_local_dof(const Integer elem_index, const Integer i) const {
             return elem_dof_enum(elem_index, i);
         }
 
         /* MARS_INLINE_FUNCTION
-        const Integer get_nbh_dof(const Integer elem_index, const Integer i) const {
+        Integer get_nbh_dof(const Integer elem_index, const Integer i) const {
             return dof_to_dof_map(elem_index, i);
         } */
 
@@ -600,13 +599,13 @@ namespace mars {
 
         MARS_INLINE_FUNCTION
         bool is_ghost(const Integer sfc_index) const {
-            const Integer size = get_dof_handler().get_mesh_manager().get_host_mesh()->get_chunk_size();
+            const Integer size = get_dof_handler().get_mesh().get_chunk_size();
             return (is_valid(sfc_index) && sfc_index >= size);
         }
 
         MARS_INLINE_FUNCTION
         bool is_owned(const Integer sfc_index) const {
-            const Integer size = get_dof_handler().get_mesh_manager().get_host_mesh()->get_chunk_size();
+            const Integer size = get_dof_handler().get_mesh().get_chunk_size();
             return (is_valid(sfc_index) && sfc_index < size);
         }
 
@@ -641,21 +640,21 @@ namespace mars {
         // iterate on the elements that contain only owned local dofs.
         template <typename F>
         void non_owned_dof_element_iterate(F f) const {
-            const Integer local_size = get_dof_handler().get_mesh_manager().get_host_mesh()->get_chunk_size();
+            const Integer local_size = get_dof_handler().get_mesh().get_chunk_size();
             Kokkos::parallel_for("fedomap non owned dof iterate", Kokkos::RangePolicy<>(owned_size, local_size), f);
         }
 
         // iterate on the owned elements
         template <typename F>
         void owned_element_iterate(F f) const {
-            const Integer local_size = get_dof_handler().get_mesh_manager().get_host_mesh()->get_chunk_size();
+            const Integer local_size = get_dof_handler().get_mesh().get_chunk_size();
             Kokkos::parallel_for("fedomap ghost iterate", local_size, f);
         }
 
         // iterate on the elements that containt ghost dofs.
         template <typename F>
         void ghost_element_iterate(F f) const {
-            const Integer local_size = get_dof_handler().get_mesh_manager().get_host_mesh()->get_chunk_size();
+            const Integer local_size = get_dof_handler().get_mesh().get_chunk_size();
             const Integer size = get_fe_dof_map_size();
             Kokkos::parallel_for("fedomap ghost iterate", Kokkos::RangePolicy<>(local_size, size), f);
         }
@@ -696,13 +695,22 @@ namespace mars {
             });
         }
 
+        MARS_INLINE_FUNCTION
         const Integer get_fe_dof_map_size() const { return elem_dof_enum.extent(0); }
+
+        MARS_INLINE_FUNCTION
         const Integer get_fe_size() const { return elem_dof_enum.extent(1); }
+
+        MARS_INLINE_FUNCTION
         const Integer get_owned_dof_elements_size() const { return owned_size; }
+
+        MARS_INLINE_FUNCTION
         const Integer get_ghost_dof_elements_size() const {
             const Integer size = get_fe_dof_map_size();
             return size - owned_size;
         }
+
+        MARS_INLINE_FUNCTION
         const Integer get_non_owned_dof_elements_size() const { return non_owned_size; }
 
         /* const Integer get_dof_to_dof_map_size() const { return dof_to_dof_map.extent(0); } */
@@ -742,7 +750,7 @@ namespace mars {
 
     template <class DofHandler, class Mesh, bool Overlap = true, Integer Label = DofHandler::dofLabel>
     auto build_fe_dof_map(Mesh &mesh, const Integer block = 1) {
-        DofHandler handler(&mesh);
+        DofHandler handler(mesh);
         handler.enumerate_dofs();
         handler.set_block(block);
         return build_fe_dof_map<DofHandler, Overlap, Label>(handler);

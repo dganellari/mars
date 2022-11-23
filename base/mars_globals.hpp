@@ -9,6 +9,7 @@
 #ifdef MARS_ENABLE_KOKKOS
 #define MARS_INLINE_FUNCTION KOKKOS_INLINE_FUNCTION
 #define MARS_LAMBDA KOKKOS_LAMBDA
+#define MARS_CLASS_LAMBDA KOKKOS_CLASS_LAMBDA
 #include <Kokkos_Core.hpp>
 #include <Kokkos_UnorderedMap.hpp>
 #include "mars_device_vector.hpp"

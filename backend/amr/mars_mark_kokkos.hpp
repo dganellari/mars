@@ -13,7 +13,7 @@ namespace mars {
                                                     const ViewVectorTypeC<Real, Mesh_::Dim> center,
                                                     const Real radius) {
         bool inside = false;
-        bool outside = false;
+        // bool outside = false;
 
         if (mesh->is_active(element_id))  // TODO: remove if by compacting on active elems.
         {
@@ -26,10 +26,10 @@ namespace mars {
                 if (d < radius) {
                     inside = true;
                 } else if (d > radius) {
-                    outside = true;
+                    // outside = true;
                 } else if (abs(d) < 1e-16) {
                     inside = true;
-                    outside = true;
+                    // outside = true;
                     break;
                 }
             }

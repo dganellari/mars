@@ -50,13 +50,14 @@ namespace mars {
         //, combinations(nullptr)
         {} */
 
-        MARS_INLINE_FUNCTION Mesh(const context &c)
+        Mesh(const context &c)
             : ParallelIMesh<Dim_>(),
               elements_size_(0),
               points_size_(0),
               ctx(c)
         //, combinations(nullptr)
         {}
+
         void reserve(const std::size_t n_elements, const std::size_t n_points) override {
             elements_size_ = n_elements;
             points_size_ = n_points;
@@ -273,7 +274,7 @@ namespace mars {
         void set_proc(Integer p) { proc = p; }
 
         MARS_INLINE_FUNCTION
-        const Integer get_proc() const { return proc; }
+        Integer get_proc() const { return proc; }
 
         MARS_INLINE_FUNCTION
         void set_global_to_local_map(const UnorderedMap<Integer, Integer> &gl_map) { global_to_local_map_ = gl_map; }
@@ -1158,6 +1159,150 @@ namespace mars {
                 });
         }
 
+        template <typename H>
+        MARS_INLINE_FUNCTION void elem_iterate(H f) {
+            const Integer size = get_chunk_size();
+            Kokkos::parallel_for("init_initial_cond", size, f);
+        }
+
+        template <typename H>
+        struct FaceIterate {
+            using simplex_type = typename Mesh::Elem;
+            FaceIterate(Mesh m,
+                        H f,
+                        ViewVectorType<Integer> gl,
+                        ViewVectorType<Integer> sg,
+                        Integer p,
+                        Integer x,
+                        Integer y,
+                        Integer z)
+                : mesh(m), func(f), ghost_layer(gl), scan_ghost(sg), proc(p), xDim(x), yDim(y), zDim(z) {}
+
+            template <Integer dir>
+            MARS_INLINE_FUNCTION void iterate(const Integer i) const {
+                // side  0 means origin side and 1 destination side.
+                for (int side = 0; side < 2; ++side) {
+                    Integer face_nr;
+
+                    if (side == 0)
+                        face_nr = 2 * dir + 1;
+                    else
+                        face_nr = 2 * dir;
+
+                    /* Octant nbh_oc = face_nbh<simplex_type::ElemType>(ref_octant, face_nr,
+                     * mesh); */
+                    Octant nbh_oc = mesh.get_octant_face_nbh(i, face_nr);
+
+                    bool ghost = false;
+                    Integer index;
+
+                    if (nbh_oc.is_valid()) {
+                        Integer enc_oc = get_sfc_from_octant<simplex_type::ElemType>(nbh_oc);
+
+                        Integer owner_proc = find_owner_processor(mesh.get_view_gp(), enc_oc, 2, proc);
+                        assert(owner_proc >= 0);
+
+                        /* if the face neighbor element is ghost then do a binary search
+                         * on the ghost layer to find the index */
+                        if (proc != owner_proc) {
+                            ghost = true;
+
+                            /* to narrow down the range of search we use the scan ghost
+                and the owner proc of the ghost. */
+                            const int start_index = scan_ghost(owner_proc);
+                            const int last_index = scan_ghost(owner_proc + 1) - 1;
+
+                            /* as opposed to the whole range: */
+                            /* const int start_index = 0;
+                const int last_index = ghost_layer.extent(0) -1; */
+
+                            index = binary_search(ghost_layer.data(), start_index, last_index, enc_oc);
+                            assert(index >= 0);
+                        } else {
+                            // using the sfc (global) to local mapping of the mesh.
+                            index = mesh.get_index_of_sfc_elem(enc_oc);
+                            assert(index >= 0);
+                        }
+
+                        /* printf("Index: %li, o.x: %li, y: %li, elem-index: %li, owner_proc:
+                         * %li, proc: %li , o.x: %li, y: %li, index: %li, ghost: %i\n", index,
+                         * ref_octant.x, ref_octant.y, elem_index(ref_octant.x, ref_octant.y,
+                         * ref_octant.z, xDim, yDim), owner_proc, proc, o.x, o.y,
+                         * elem_index(o.x, o.y, o.z, xDim, yDim),
+                         * face.get_second_side().is_ghost()); */
+                    }
+
+                    bool boundary = nbh_oc.shares_boundary();
+
+                    /* constructed valid for period and non-periodic. */
+                    Face<simplex_type::ElemType, dir> face;
+
+                    /* build only faces from face nr 1 and 3 (right and up) face sides
+            meaning: side 0 only if the nbc_oc is not ghost to avoid a boundary face
+            been called twice. Check the validate_nbh func.*/
+                    if (side == 1 && mesh.is_periodic() && boundary && !ghost) {
+                        nbh_oc.set_invalid();
+                        face.invalidate();
+                    }
+
+                    if (face.is_valid() && ((side == 0 && nbh_oc.is_valid()) || ghost || boundary)) {
+                        int origin_side = side;
+
+                        if (boundary && !mesh.is_periodic()) origin_side = 0;
+
+                        face.get_side(origin_side).set_elem_id(i);
+                        face.get_side(origin_side).set_boundary(boundary);
+
+                        /* if it is the side element of the ref octant. */
+                        face.get_side(origin_side).set_origin();
+
+                        if (!boundary || mesh.is_periodic()) {
+                            int otherside = origin_side ^ 1;
+
+                            face.get_side(otherside).set_elem_id(index);
+                            face.get_side(otherside).set_ghost(ghost);
+                        }
+
+                        if (boundary && mesh.is_periodic()) face.swap_sides();
+
+                        func(face);
+                    }
+                }
+            }
+
+            MARS_INLINE_FUNCTION
+            void operator()(const Integer i) const {
+                /* const Integer oc = mesh.get_view_sfc()(i);
+          Octant ref_octant = get_octant_from_sfc<simplex_type::ElemType>(oc); */
+                iterate<0>(i);
+                iterate<1>(i);
+                // TODO: 3D part
+            }
+
+            Mesh mesh;
+            H func;
+
+            ViewVectorType<Integer> ghost_layer;
+            ViewVectorType<Integer> scan_ghost;
+
+            Integer proc;
+            Integer xDim;
+            Integer yDim;
+            Integer zDim;
+        };
+
+        template <typename H>
+        void face_iterate(H f) {
+            Integer xDim = get_XDim();
+            Integer yDim = get_YDim();
+            Integer zDim = get_ZDim();
+
+            Kokkos::parallel_for(
+                "face_iterate",
+                get_chunk_size(),
+                FaceIterate<H>(*this, f, get_view_ghost(), get_view_scan_ghost(), get_proc(), xDim, yDim, zDim));
+        }
+
         void print_sfc() {
             using namespace Kokkos;
 
@@ -1191,7 +1336,7 @@ namespace mars {
         }
 
         MARS_INLINE_FUNCTION
-        Integer get_index_of_sfc_elem(const Integer enc_oc) {
+        Integer get_index_of_sfc_elem(const Integer enc_oc) const {
             /* return sfc_to_local_(enc_oc) - gp_np(2 * proc + 1); */
             auto index = INVALID_INDEX;
             const auto it = get_sfc_to_local_map().find(enc_oc);
@@ -1329,7 +1474,7 @@ namespace mars {
         }
 
         const context &get_context() const { return ctx; }
-        void set_context(const context &c) { ctx = c; }
+        /* void set_context(const context &c) { ctx = c; } */
 
         MARS_INLINE_FUNCTION
         const UnorderedMap<Integer, Integer> &get_sfc_to_local_map() const { return sfc_to_local_map_; }
