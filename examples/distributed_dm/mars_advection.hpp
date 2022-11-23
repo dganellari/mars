@@ -611,7 +611,7 @@ namespace mars {
         }
     }
 
-    void advection(const int level) {
+    void advection(const int x, const int y) {
         using namespace mars;
         mars::proc_allocation resources;
 
@@ -629,7 +629,7 @@ namespace mars {
 
         DistributedQuad4Mesh mesh(context);
         mesh.set_periodic();  // set the domain to be periodic before generation!
-        generate_distributed_cube(mesh, level, level, 0);
+        generate_distributed_cube(mesh, x, y, 0);
 
         const Integer xDim = mesh.get_XDim();
         const Integer yDim = mesh.get_YDim();
