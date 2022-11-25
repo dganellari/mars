@@ -287,6 +287,7 @@ namespace mars {
                 return get_mesh().get_sfc(sfc_index);
         }
 
+        MARS_INLINE_FUNCTION
         Mesh get_mesh() const { return mesh; }
 
     private:

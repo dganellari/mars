@@ -44,11 +44,11 @@ namespace mars {
 #endif  // MARS_ENABLE_CUDAUVM
     using KokkosLayout = Kokkos::LayoutLeft;
 #define MARS_LAMBDA_REF [&] __device__;
-#elif defined(MARS_USE_HIP)
+#elif defined(MARS_ENABLE_HIP)
     using KokkosSpace = Kokkos::Experimental::HIPSpace;
     using KokkosLayout = Kokkos::LayoutLeft;
 #define MARS_LAMBDA_REF [&] __device__;
-#else  // MARS_USE_HIP
+#else
 #ifdef KOKKOS_ENABLE_OPENMP
     using KokkosSpace = Kokkos::HostSpace;
     using KokkosLayout = Kokkos::LayoutRight;
