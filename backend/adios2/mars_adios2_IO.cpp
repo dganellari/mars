@@ -298,7 +298,7 @@ namespace mars {
                 std::stringstream ss;
                 header(ss);
 
-                std::cout << ss.str() << std::endl;
+                // std::cout << ss.str() << std::endl;
 
                 io.DefineAttribute<std::string>("vtk.xml", ss.str(), {}, {});
                 ///////////////////////////////////////////////////////////////////////////////
