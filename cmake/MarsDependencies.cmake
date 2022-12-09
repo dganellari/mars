@@ -99,7 +99,7 @@ if(MARS_ENABLE_KOKKOS)
 
 
   # if the cxx compiler was not set at command line set it to the kokkos compiler
-  if(MARS_ENABLE_CUDA AND Kokkos_CXX_COMPILER AND NOT CMAKE_CXX_COMPILER_SET_EXTERNALLY)
+  if((MARS_ENABLE_CUDA OR MARS_ENABLE_HIP) AND Kokkos_CXX_COMPILER AND NOT CMAKE_CXX_COMPILER_SET_EXTERNALLY)
     message(STATUS "[Status] Setting CMAKE_CXX_COMPILER=${Kokkos_CXX_COMPILER}")
     set(CMAKE_CXX_COMPILER ${Kokkos_CXX_COMPILER} CACHE FILEPATH "CXX nvcc compiler" FORCE)
     set(CMAKE_CXX_COMPILER ${Kokkos_CXX_COMPILER})
@@ -186,6 +186,11 @@ if(MARS_ENABLE_KOKKOS)
         "Enable Kokkos HIP or unset MARS_ENABLE_HIP to continue with OpenMP!")
     endif()
     message(VERBOSE "Kokkos HIP Enabled = ${Kokkos_ENABLE_HIP}")
+
+    find_package(hip REQUIRED)
+    # enable_language(HIP)
+    include(cmake/rocmlibs_target.cmake)
+    set(MARS_DEP_LIBRARIES "${MARS_DEP_LIBRARIES};mars::rocmlibs")
 
   else()
     string(FIND "${CMAKE_CXX_FLAGS}" "${_openmp}" _pos)
