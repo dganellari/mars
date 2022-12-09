@@ -187,7 +187,7 @@ if(MARS_ENABLE_KOKKOS)
     endif()
     message(VERBOSE "Kokkos HIP Enabled = ${Kokkos_ENABLE_HIP}")
 
-    find_package(hip REQUIRED)
+    # find_package(hip REQUIRED)
     # enable_language(HIP)
     include(cmake/rocmlibs_target.cmake)
     set(MARS_DEP_LIBRARIES "${MARS_DEP_LIBRARIES};mars::rocmlibs")
