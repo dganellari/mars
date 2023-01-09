@@ -478,5 +478,369 @@ namespace mars {
     }
 #endif
 
+
+    /* ***************************distributed utils************************************************** */
+
+
+    template <typename T, Integer Dim>
+    void fill_view_vector(ViewVectorTextureC<T, Dim> v, const T value[Dim]) {
+        using namespace Kokkos;
+
+        typename ViewVectorTextureC<T, Dim>::HostMirror h_pt = create_mirror_view(v);
+
+        for (Integer i = 0; i < Dim; ++i) h_pt(i) = value[i];
+
+        deep_copy(v, h_pt);
+    }
+
+    template <typename T, Integer XDim, Integer YDim>
+    void fill_view_matrix(ViewMatrixTextureC<T, XDim, YDim> m, const T value[XDim][YDim]) {
+        using namespace Kokkos;
+
+        typename ViewMatrixTextureC<T, XDim, YDim>::HostMirror h_pt = create_mirror_view(m);
+
+        for (Integer i = 0; i < XDim; ++i) {
+            for (Integer j = 0; j < YDim; ++j) {
+                h_pt(i, j) = value[i][j];
+            }
+        }
+
+        deep_copy(m, h_pt);
+    }
+
+    template <typename T>
+    void print_view(const ViewVectorType<T>& view) {
+        using namespace Kokkos;
+
+        parallel_for(
+            "print view", view.extent(0), KOKKOS_LAMBDA(const Integer i) {
+                std::cout << "i: " << i << " value: " << view(i) << std::endl;
+            });
+    }
+
+    struct resize_view_functor {
+        resize_view_functor(std::string d, size_t s) : _desc(d), _size(s) {}
+        template <typename ElementType>
+        void operator()(ElementType& el, std::size_t I) const {
+            el = ElementType(_desc + std::to_string(I), _size);
+        }
+
+        std::string _desc;
+        size_t _size;
+    };
+
+    struct resize_functor {
+        resize_functor(size_t s) : _size(s) {}
+        template <typename ElementType>
+        void operator()(ElementType& el, std::size_t I) const {
+            el = ElementType(_size);
+        }
+        size_t _size;
+    };
+
+    struct print_functor {
+        template <typename ElementType>
+        void operator()(ElementType& el) const {
+            std::cout << el << std::endl;
+        }
+    };
+
+    /* special implementation of the binary search considering found
+    if an element is between current and next proc value. */
+    template <typename T>
+    MARS_INLINE_FUNCTION Integer
+    find_owner_processor(const ViewVectorType<T> view, const T enc_oc, const int offset, Integer guess) {
+        const int last_index = view.extent(0) / offset - 1;
+        int first_proc = 0;
+        int last_proc = last_index;
+
+        while (first_proc <= last_proc && first_proc != last_index) {
+            T current = view(offset * guess);
+            T next = view(offset * (guess + 1));
+
+            if (enc_oc >= current && enc_oc < next) {
+                return guess;
+            } else if (enc_oc < current) {
+                last_proc = guess - 1;
+                guess = (first_proc + last_proc + 1) / 2;
+            } else if (enc_oc >= next) {
+                first_proc = guess + 1;
+                guess = (first_proc + last_proc) / 2;
+            }
+        }
+
+        return -1;
+    }
+
+    // standard binary search
+    template <typename T>
+    MARS_INLINE_FUNCTION Integer binary_search(const T* view, Integer f, Integer l, const T enc_oc) {
+        while (f <= l) {
+            Integer guess = (l + f) / 2;
+
+            T current = *(view + guess);
+
+            if (enc_oc == current) {
+                return guess;
+            } else if (enc_oc < current) {
+                l = guess - 1;
+            } else {
+                f = guess + 1;
+            }
+        }
+
+        return -1;
+    }
+
+    // Trilinos way of doing abs max and min
+    template <class T, class H>
+    struct AbsMinOp {
+        MARS_INLINE_FUNCTION
+        static T apply(const T& val1, const H& val2) {
+            const auto abs1 = Kokkos::ArithTraits<T>::abs(val1);
+            const auto abs2 = Kokkos::ArithTraits<H>::abs(val2);
+            return abs1 < abs2 ? T(abs1) : H(abs2);
+        }
+    };
+
+    template <typename SC>
+    struct atomic_abs_min {
+        MARS_INLINE_FUNCTION
+        void operator()(SC& dest, const SC& src) const {
+            Kokkos::Impl::atomic_fetch_oper(AbsMinOp<SC, SC>(), &dest, src);
+        }
+    };
+
+    template <class T, class H>
+    struct AbsMaxOp {
+        MARS_INLINE_FUNCTION
+        static T apply(const T& val1, const H& val2) {
+            const auto abs1 = Kokkos::ArithTraits<T>::abs(val1);
+            const auto abs2 = Kokkos::ArithTraits<H>::abs(val2);
+            return abs1 > abs2 ? T(abs1) : H(abs2);
+        }
+    };
+
+    template <typename SC>
+    struct atomic_abs_max {
+        KOKKOS_INLINE_FUNCTION
+        void operator()(SC& dest, const SC& src) const {
+            Kokkos::Impl::atomic_fetch_oper(AbsMaxOp<SC, SC>(), &dest, src);
+        }
+    };
+
+    template <typename H>
+    struct AtomicOp {
+        AtomicOp(H f) : func(f) {}
+
+        MARS_INLINE_FUNCTION
+        void operator()(double& dest, const double& src) const { Kokkos::Impl::atomic_fetch_oper(func, &dest, src); }
+
+        H func;
+    };
+
+    template <typename H, typename S>
+    MARS_INLINE_FUNCTION void atomic_op(H f, S& dest, const S& src) {
+        Kokkos::Impl::atomic_fetch_oper(f, &dest, src);
+    }
+
+    // max plus functor
+    template <typename T>
+    class MaxPlus {
+    public:
+        // Kokkos reduction functors need the value_type typedef.
+        // This is the type of the result of the reduction.
+        typedef T value_type;
+
+        MaxPlus(const ViewVectorType<T> x) : x_(x) {}
+
+        // This is helpful for determining the right index type,
+        // especially if you expect to need a 64-bit index.
+        typedef typename ViewVectorType<T>::size_type size_type;
+
+        KOKKOS_INLINE_FUNCTION void operator()(const size_type i,
+                                               value_type& update) const {  // max-plus semiring equivalent of "plus"
+            if (update < x_(i)) {
+                update = x_(i);
+            }
+        }
+
+        // "Join" intermediate results from different threads.
+        // This should normally implement the same reduction
+        // operation as operator() above. Note that both input
+        // arguments MUST be declared volatile.
+        KOKKOS_INLINE_FUNCTION void join(
+            volatile value_type& dst,
+            const volatile value_type& src) const {  // max-plus semiring equivalent of "plus"
+            if (dst < src) {
+                dst = src;
+            }
+        }
+
+        // Tell each thread how to initialize its reduction result.
+        KOKKOS_INLINE_FUNCTION void init(value_type& dst) const {  // The identity under max is -Inf.
+            dst = Kokkos::reduction_identity<value_type>::max();
+        }
+
+    private:
+        ViewVectorType<T> x_;
+    };
+
+    //**********************************dof handler utils******************************************
+
+    // The staggered grid implementation forbids unifying these two methods.
+    // They work for both general and staggered dof handlers (unified for handlers).
+    // However not possible to unify for owned and local. Either one or the other.
+    template <Integer Label, typename H>
+    ViewVectorType<Integer> compact_owned_dofs(const H& dof_handler, ViewVectorType<Integer>& locally_owned_dofs) {
+        using namespace Kokkos;
+
+        const Integer local_size = dof_handler.template get_owned_dof_size<1>();
+
+        ViewVectorType<bool> dof_predicate("label_dof_predicate", local_size);
+        Kokkos::parallel_for(
+            "separateowneddoflabels", local_size, KOKKOS_LAMBDA(const Integer i) {
+                const Integer local = dof_handler.template get_owned_dof<1>(i);
+                if (dof_handler.template get_label<1>(local) & Label) {
+                    dof_predicate(i) = 1;
+                }
+            });
+
+        /* perform a scan on the dof predicate*/
+        ViewVectorType<Integer> owned_dof_map("owned_dof_scan", local_size + 1);
+        incl_excl_scan(0, local_size, dof_predicate, owned_dof_map);
+
+        auto vol_subview = subview(owned_dof_map, local_size);
+        auto h_vs = create_mirror_view(vol_subview);
+        // Deep copy device view to host view.
+        deep_copy(h_vs, vol_subview);
+
+        locally_owned_dofs = ViewVectorType<Integer>("locally_owned_dofs", h_vs());
+
+        parallel_for(
+            local_size, KOKKOS_LAMBDA(const Integer i) {
+                if (dof_predicate(i) == 1) {
+                    Integer vindex = owned_dof_map(i);
+                    const Integer local = dof_handler.template get_owned_dof<1>(i);
+                    locally_owned_dofs(vindex) = local;
+                }
+            });
+
+        return owned_dof_map;
+    }
+
+    template <Integer Label, typename H>
+    ViewVectorType<Integer> compact_local_dofs(const H& dof_handler, ViewVectorType<Integer>& local_dofs) {
+        using namespace Kokkos;
+
+        const Integer local_size = dof_handler.get_base_dof_size();
+
+        ViewVectorType<bool> dof_predicate("label_dof_predicate", local_size);
+        Kokkos::parallel_for(
+            "separatelocaldoflabels", local_size, KOKKOS_LAMBDA(const Integer i) {
+                const Integer local = dof_handler.get_local_dof(i);
+                if (dof_handler.template get_label<1>(local) & Label) {
+                    dof_predicate(i) = 1;
+                }
+            });
+
+        /* perform a scan on the dof predicate*/
+        ViewVectorType<Integer> local_dof_map("local_dof_scan", local_size + 1);
+        incl_excl_scan(0, local_size, dof_predicate, local_dof_map);
+
+        auto vol_subview = subview(local_dof_map, local_size);
+        auto h_vs = create_mirror_view(vol_subview);
+        // Deep copy device view to host view.
+        deep_copy(h_vs, vol_subview);
+
+        local_dofs = ViewVectorType<Integer>("local_dofs", h_vs());
+
+        /* Compact the predicate into the volume and face dofs views */
+        parallel_for(
+            local_size, KOKKOS_LAMBDA(const Integer i) {
+                if (dof_predicate(i) == 1) {
+                    Integer vindex = local_dof_map(i);
+                    const Integer local = dof_handler.get_local_dof(i);
+                    local_dofs(vindex) = local;
+                }
+            });
+
+        return local_dof_map;
+    }
+
+    template <typename DH, typename F>
+    ViewVectorType<bool> build_sfc_to_local_predicate(DH dofhandler,
+                                                      F f,
+                                                      const Integer local_size,
+                                                      const ViewVectorType<Integer> in) {
+        ViewVectorType<bool> predicate("separated_predicate", local_size);
+
+        Kokkos::parallel_for(
+            "separatedoflabelss", local_size, KOKKOS_LAMBDA(const Integer i) {
+                const Integer sfc = in(i);
+                /* if (f(dofhandler.sfc_to_local(sfc))) { */
+                if (f(sfc)) {
+                    predicate(i) = 1;
+                }
+            });
+
+        return predicate;
+    }
+
+    template <typename DH, typename F>
+    inline ViewVectorType<bool> compact_sfc_to_local(DH dofhandler,
+                                                     F f,
+                                                     const ViewVectorType<Integer> in,
+                                                     ViewVectorType<Integer>& out) {
+        using namespace Kokkos;
+
+        auto local_size = in.extent(0);
+        auto in_predicate = build_sfc_to_local_predicate<DH, F>(dofhandler, f, local_size, in);
+
+        /* perform a scan on the separated dof predicate*/
+        auto bscan = ViewVectorType<Integer>("boudnary_separated_scan", local_size + 1);
+        incl_excl_scan(0, local_size, in_predicate, bscan);
+
+        auto vol_subview = subview(bscan, local_size);
+        auto h_vs = create_mirror_view(vol_subview);
+        // Deep copy device view to host view.
+        deep_copy(h_vs, vol_subview);
+
+        out = ViewVectorType<Integer>("local_separated_dofs", h_vs());
+        /* ViewVectorType<Integer> bvds = out; */
+
+        /* Compact the predicate into the separated and face dofs views */
+        parallel_for(
+            local_size, KOKKOS_LAMBDA(const Integer i) {
+                if (in_predicate(i) == 1) {
+                    Integer vindex = bscan(i);
+                    out(vindex) = dofhandler.sfc_to_local(in(i));
+                }
+            });
+        return in_predicate;
+    }
+
+    inline ViewVectorType<Integer> count_sfc_to_local(const ViewVectorType<Integer> in_scan,
+                                                      const ViewVectorType<bool> in_predicate) {
+        using namespace Kokkos;
+
+        const Integer count_size = in_scan.extent(0) - 1;
+
+        ViewVectorType<Integer> count("count_to_local", count_size);
+        ViewVectorType<Integer> scan("scan_to_local", count_size + 1);
+        /* Compact the predicate into the separated and face dofs views */
+        parallel_for(
+            in_predicate.extent(0), KOKKOS_LAMBDA(const Integer i) {
+                if (in_predicate(i) == 1) {
+                    Integer proc = find_owner_processor(in_scan, i, 1, 0);
+                    atomic_increment(&count(proc));
+                }
+            });
+
+        incl_excl_scan(0, count_size, count, scan);
+
+        return scan;
+    }
+
 }  // namespace mars
 #endif /* GENERATION_MARS_UTILS_KOKKOS_HPP_ */
