@@ -98,6 +98,8 @@ namespace mars {
         // NonSimplex4D,
         InvalidElem = -1
     };
+
+
 }  // namespace mars
 
 #endif  // MARS_BASE_HPP

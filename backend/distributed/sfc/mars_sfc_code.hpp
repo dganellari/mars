@@ -14,7 +14,6 @@
 
 #include "mars_morton_code.hpp"
 #include "mars_hilbert_code.hpp"
-#include "mars_distributed_utils.hpp"
 
 namespace mars {
 
@@ -52,18 +51,6 @@ MARS_INLINE_FUNCTION std::enable_if_t<IsHilbert<KeyType>{}, KeyType> iSfcKey(uns
     return KeyType{iHilbert<typename KeyType::ValueType>(ix, iy, iz)};
 }
 
-/* template<class KeyType, class T>
-MARS_INLINE_FUNCTION KeyType sfc3D(T x, T y, T z, T xmin, T ymin, T zmin, T mx, T my, T mz)
-{
-    constexpr unsigned mcoord = (1u << maxTreeLevel<typename KeyType::ValueType>{}) - 1;
-
-    unsigned ix = stl::min(unsigned((x - xmin) * mx), mcoord);
-    unsigned iy = stl::min(unsigned((y - ymin) * my), mcoord);
-    unsigned iz = stl::min(unsigned((z - zmin) * mz), mcoord);
-
-    return iSfcKey<KeyType>(ix, iy, iz);
-} */
-
 //! @brief decode a Morton key
 template<class KeyType>
 MARS_INLINE_FUNCTION std::enable_if_t<IsMorton<KeyType>{}, util::tuple<unsigned, unsigned, unsigned>>
@@ -74,7 +61,7 @@ decodeSfc(KeyType key)
 
 //! @brief decode a Hilbert key
 template<class KeyType>
-MARS_INLINE_FUNCTION std::enable_if_t<IsHilbert<KeyType>{}, util::tuple<unsigned, unsigned, unsigned>>
+MARS_INLINE_FUNCTION inline std::enable_if_t<IsHilbert<KeyType>{}, util::tuple<unsigned, unsigned, unsigned>>
 decodeSfc(KeyType key)
 {
     return decodeHilbert<typename KeyType::ValueType>(key);

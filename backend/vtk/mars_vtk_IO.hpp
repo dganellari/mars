@@ -21,7 +21,7 @@
 #include "mars_base.hpp"
 #include "mars_config.hpp"
 #include "mars_distributed_data_management.hpp"
-#include "mars_distributed_octant.hpp"
+#include "mars_distributed_octant_utils.hpp"
 #include "mars_globals.hpp"
 #include "mars_sfc_code.hpp"
 #include "mars_sfc_generation.hpp"

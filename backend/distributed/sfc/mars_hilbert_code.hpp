@@ -18,36 +18,10 @@
 #ifndef MARS_HILBERT_CODE_HPP
 #define MARS_HILBERT_CODE_HPP
 
-#include "mars_base.hpp"
-#include "mars_config.hpp"
-#include "mars_globals.hpp"
+#include "mars_sfc_utils.hpp"
+#include "mars_distributed_octant.hpp"
 
 namespace mars {
-
-template<class KeyType>
-struct maxTreeLevel
-{
-};
-
-template<>
-struct maxTreeLevel<unsigned> : stl::integral_constant<unsigned, 10>
-{
-};
-
-template<>
-struct maxTreeLevel<unsigned long long> : stl::integral_constant<unsigned, 21>
-{
-};
-template<>
-struct maxTreeLevel<Unsigned> : stl::integral_constant<unsigned, 21>
-{
-};
-
-//! @brief maximum integer coordinate
-template<class KeyType>
-struct maxCoord : stl::integral_constant<unsigned, (1u << maxTreeLevel<KeyType>{})>
-{
-};
 
 template<typename KeyType = Unsigned>
 MARS_INLINE_FUNCTION
@@ -141,7 +115,7 @@ Octant decode_hilbert_3D(KeyType key) noexcept
     Unsigned py = 0;
     Unsigned pz = 0;
 
-    for (Unsigned level = 0; level < maxTreeLevel<KeyType>; ++level)
+    for (Unsigned level = 0; level < maxTreeLevel<KeyType>{}; ++level)
     {
         Unsigned octant   = (key >> (3 * level)) & 7u;
         const Unsigned xi = octant >> 2u;
@@ -190,8 +164,9 @@ __device__ static unsigned mortonToHilbertDevice[8] = {0, 1, 3, 2, 7, 6, 4, 5};
  * @param[in]  px,py,pz  input coordinates in [0:2^maxTreeLevel<KeyType>{}]
  * @return               the Hilbert key
  */
+template<typename KeyType = Unsigned>
 MARS_INLINE_FUNCTION
-encode_hilbert_3D(unsigned px, unsigned py, unsigned pz) noexcept
+std::enable_if_t<std::is_unsigned_v<KeyType>, KeyType> encode_hilbert_3D(unsigned px, unsigned py, unsigned pz) noexcept
 {
     assert(px < (1u << maxTreeLevel<KeyType>{}));
     assert(py < (1u << maxTreeLevel<KeyType>{}));

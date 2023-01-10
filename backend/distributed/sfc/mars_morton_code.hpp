@@ -1,9 +1,7 @@
 #ifndef MARS_MORTON_CODE_HPP
 #define MARS_MORTON_CODE_HPP
 
-#include "mars_base.hpp"
-#include "mars_config.hpp"
-#include "mars_globals.hpp"
+#include "mars_sfc_utils.hpp"
 
 namespace mars {
 
