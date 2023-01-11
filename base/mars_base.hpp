@@ -14,7 +14,7 @@ namespace mars {
 #else
     using Integer = long;
 #endif
-    using Unsigned = unsigned long;
+    using Unsigned = uint64_t;
     static constexpr long INVALID_INDEX = -1;
 
     enum DofOrient : int { xDir = 0, yDir = 1, zDir = 2 };

@@ -34,18 +34,14 @@ namespace mars {
 
     //! @brief Key encode overload for Morton keys
     template <class KeyType>
-    MARS_INLINE_FUNCTION std::enable_if_t<IsMorton<KeyType>{}, KeyType> encode_sfc_2D(unsigned ix,
-                                                                                      unsigned iy,
-                                                                                      unsigned iz) {
-        return KeyType{encode_morton_2D(ix, iy)};
+    MARS_INLINE_FUNCTION std::enable_if_t<IsMorton<KeyType>{}, KeyType> encode_sfc_2D(unsigned ix, unsigned iy) {
+        return KeyType{encode_morton_2D<typename KeyType::ValueType>(ix, iy)};
     }
 
     //! @brief Key encode overload for Hilbert keys
     template <class KeyType>
-    MARS_INLINE_FUNCTION std::enable_if_t<IsHilbert<KeyType>{}, KeyType> encode_sfc_2D(unsigned ix,
-                                                                                       unsigned iy,
-                                                                                       unsigned iz) {
-        return KeyType{encode_hilbert_2D<typename KeyType::ValueType>(ix, iy, iz)};
+    MARS_INLINE_FUNCTION std::enable_if_t<IsHilbert<KeyType>{}, KeyType> encode_sfc_2D(unsigned ix, unsigned iy) {
+        return KeyType{encode_hilbert_2D<typename KeyType::ValueType>(ix, iy)};
     }
 
     //! @brief decode a Morton key

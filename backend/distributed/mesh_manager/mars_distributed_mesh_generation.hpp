@@ -140,6 +140,7 @@ namespace mars {
             });
     }
 
+    template<class KeyType>
     struct GenerateSFC {
         ViewVectorType<bool> predicate;
         Integer max_oc;
@@ -153,7 +154,7 @@ namespace mars {
             : predicate(el), max_oc(m), xDim(xdm), yDim(ydm), zDim(zdm) {}
         KOKKOS_INLINE_FUNCTION
         void operator()(int j, int i) const {
-            const Integer enc_oc = encode_morton_2D(i, j);
+            const Integer enc_oc = encode_sfc_2D<KeyType>(i, j);
             // set to true only those elements from the vector that are generated.
             assert(enc_oc < max_oc);
             /* if (enc_oc >= max_oc) {
@@ -182,7 +183,7 @@ namespace mars {
 
     using unsigned_l = unsigned long;
 
-    template <Integer Dim, Integer ManifoldDim, Integer Type>
+    template <class KeyType, Integer Dim, Integer ManifoldDim, Integer Type>
     ViewVectorType<unsigned_l> generate_elements_sfc(DMesh<Dim, ManifoldDim, Type> &mesh) {
         using namespace Kokkos;
         const Integer xDim = mesh.get_XDim();
@@ -200,7 +201,7 @@ namespace mars {
 
                 Kokkos::parallel_for(
                     MDRangePolicy<Rank<2>>({0, 0}, {xDim, yDim}), MARS_LAMBDA(const int i, const int j) {
-                        const Integer oc = encode_morton_2D(i, j);
+                        const Integer oc = encode_sfc_2D<KeyType>(i, j);
                         const Integer index = xDim * j + i;
                         element_sfc(index) = oc;
                     });
@@ -225,7 +226,7 @@ namespace mars {
         return element_sfc;
     }
 
-    template <Integer Type>
+    template <class KeyType, Integer Type>
     auto generate_sfc(const SFC<Type> &morton) {
         using namespace Kokkos;
 
@@ -243,7 +244,7 @@ namespace mars {
 
                 const Integer max_oc = encode_morton_2D(xDim, yDim);
                 parallel_for(MDRangePolicy<Rank<2>>({0, 0}, {yDim, xDim}),
-                             GenerateSFC(all_elements, max_oc, xDim, yDim));
+                             GenerateSFC<KeyType>(all_elements, max_oc, xDim, yDim));
                 break;
             }
             case ElementType::Hex8: {
@@ -253,7 +254,7 @@ namespace mars {
 
                 const Integer max_oc = encode_morton_3D(xDim, yDim, zDim);
                 parallel_for(MDRangePolicy<Rank<3>>({0, 0, 0}, {zDim, yDim, xDim}),
-                             GenerateSFC(all_elements, max_oc, xDim, yDim, zDim));
+                             GenerateSFC<KeyType>(all_elements, max_oc, xDim, yDim, zDim));
                 break;
             }
         }
@@ -283,7 +284,7 @@ namespace mars {
         return number_of_elements;
     }
 
-    template <Integer Dim, Integer ManifoldDim, Integer Type>
+    template <class KeyType, Integer Dim, Integer ManifoldDim, Integer Type>
     void partition_mesh(DMesh<Dim, ManifoldDim, Type> &mesh) {
         using namespace Kokkos;
         Timer timer;
@@ -340,13 +341,13 @@ namespace mars {
         Timer time;
 #ifdef MARS_ENABLE_CUDA
         // Classical method using the radix sort.
-        auto elem_sfc = generate_elements_sfc(mesh);
+        auto elem_sfc = generate_elements_sfc<KeyType>(mesh);
         auto sorted_elem_sfc = buffer_cub_radix_sort(elem_sfc);
         compact_into_local(sorted_elem_sfc, morton.get_view_elements(), GpNp_host, proc_num);
         build_first_sfc(sorted_elem_sfc, first_sfc, mesh.get_view_gp());
 #else
         // generate the SFC linearization
-        auto all_sfc_elements_predicate = generate_sfc(morton);
+        auto all_sfc_elements_predicate = generate_sfc<KeyType>(morton);
 
         // compacting sfc predicate and inserting the morton code corresponding to a true value in the predicate
         // leaves the sfc elements array sorted.
@@ -374,7 +375,7 @@ namespace mars {
     }
 
     // the points and elements can be generated on the fly from the sfc code in case meshless true.
-    template <Integer Dim, Integer ManifoldDim, Integer Type, bool Meshless = true>
+    template <class KeyType = MortonKey<Integer>, Integer Dim, Integer ManifoldDim, Integer Type, bool Meshless = true>
     void generate_distributed_cube(DMesh<Dim, ManifoldDim, Type> &mesh,
                                    const Integer xDim,
                                    const Integer yDim,
@@ -390,7 +391,7 @@ namespace mars {
         mesh.set_ZDim(zDim);
 
         // partition the mesh and then generate the points and elements.
-        partition_mesh(mesh);
+        partition_mesh<KeyType>(mesh);
 
         mesh.template create_ghost_layer<Type>();
 
