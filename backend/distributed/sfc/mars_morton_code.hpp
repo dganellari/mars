@@ -1,6 +1,7 @@
 #ifndef MARS_MORTON_CODE_HPP
 #define MARS_MORTON_CODE_HPP
 
+#include "mars_distributed_octant.hpp"
 #include "mars_sfc_utils.hpp"
 
 namespace mars {
@@ -34,6 +35,9 @@ namespace mars {
 
     MARS_INLINE_FUNCTION
     Unsigned decode_morton_2DY(Unsigned code) { return compact_2D(code >> 1); }
+
+    MARS_INLINE_FUNCTION
+    Octant decode_morton_2D(Unsigned code) { return Octant(decode_morton_2DX(code), decode_morton_2DY(code)); }
 
     // method to seperate bits from a given integer 3 positions apart
     MARS_INLINE_FUNCTION Unsigned interleave_3D(Unsigned a) {
@@ -71,6 +75,11 @@ namespace mars {
 
     MARS_INLINE_FUNCTION
     Unsigned decode_morton_3DZ(Unsigned code) { return compact_3D(code >> 2); }
+
+    MARS_INLINE_FUNCTION
+    Octant decode_morton_3D(Unsigned code) {
+        return Octant(decode_morton_3DX(code), decode_morton_3DY(code), decode_morton_3DZ(code));
+    }
 
     /******************** morton z curve from fgiesen.wordpress.com with slight
      * modifications*****************************/
