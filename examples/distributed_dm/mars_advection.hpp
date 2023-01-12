@@ -263,9 +263,9 @@ namespace mars {
         return retval;
     }
 
-    template <Integer Type>
+    template <Integer Type, class KeyType = Unsigned>
     MARS_INLINE_FUNCTION void get_midpoint_coordinates(double *point,
-                                                       const Integer sfc,
+                                                       const KeyType sfc,
                                                        const Integer xDim,
                                                        const Integer yDim,
                                                        const Integer zDim) {
@@ -305,7 +305,7 @@ namespace mars {
     template <Integer Type, Integer first, Integer second>
     void print_derivatives(Data &data) {
         data.elem_iterate(MARS_LAMBDA(const int i) {
-            Integer sfc_elem = data.get_mesh().get_sfc_elem(i);
+            auto sfc_elem = data.get_mesh().get_sfc_elem(i);
 
             double point[3];
             get_vertex_coordinates_from_sfc<Type>(
@@ -330,7 +330,7 @@ namespace mars {
         constexpr Integer du_index = 1 + Dir;
 
         Integer idx = face.get_side(i).get_elem_id();
-        Integer sfc_elem = data.get_mesh().get_sfc_elem(idx);
+        auto sfc_elem = data.get_mesh().get_sfc_elem(idx);
 
         double point[3];
         get_vertex_coordinates_from_sfc<Type>(
@@ -470,7 +470,7 @@ namespace mars {
                 /* in case that is a boundary face containing only one side.*/
                 if (face.get_side(i).is_valid()) {
                     Integer idx = face.get_side(i).get_elem_id();
-                    Integer sfc_elem;
+                    Unsigned sfc_elem;
 
                     if (!face.get_side(i).is_ghost()) {
                         if (i == 0)
@@ -656,7 +656,7 @@ namespace mars {
 
         Data data(mesh);
 
-        ViewVectorType<Integer> sfc = mesh.get_view_sfc();
+        auto sfc = mesh.get_view_sfc();
         /* another option to use this one with a functor instead of the lamda. Just
          * be careful what you use within the Lambda body since it is copied by
          * value. Kokkos views are no problem but the userdata object has other

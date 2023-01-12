@@ -47,7 +47,7 @@ namespace mars {
     //! @brief decode a Morton key
     template <class KeyType>
     MARS_INLINE_FUNCTION std::enable_if_t<IsMorton<KeyType>{}, Octant> decode_sfc_2D(KeyType key) {
-        return decode_morton_2D(key);
+        return decode_morton_2D<typename KeyType::ValueType>(key);
     }
 
     //! @brief decode a Hilbert key

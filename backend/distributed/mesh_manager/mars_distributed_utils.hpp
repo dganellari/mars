@@ -337,9 +337,9 @@ namespace mars {
 
     /* special implementation of the binary search considering found
     if an element is between current and next proc value. */
-    template <typename T>
+    template <typename T, typename S>
     MARS_INLINE_FUNCTION Integer
-    find_owner_processor(const ViewVectorType<T> view, const T enc_oc, const int offset, Integer guess) {
+    find_owner_processor(const ViewVectorType<T> view, const S enc_oc, const int offset, Integer guess) {
         const int last_index = view.extent(0) / offset - 1;
         int first_proc = 0;
         int last_proc = last_index;

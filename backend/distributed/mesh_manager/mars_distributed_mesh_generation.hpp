@@ -107,10 +107,10 @@ namespace mars {
             });
     }
 
-    template <typename V>
+    template <typename V, typename L>
     inline void compact_into_local(const V &sfc_to_local,
                                    const ViewVectorType<bool> all_elements,
-                                   const V &local,
+                                   const L &local,
                                    const V &gp_np,
                                    const Integer rank) {
         using namespace Kokkos;
@@ -154,7 +154,7 @@ namespace mars {
             : predicate(el), max_oc(m), xDim(xdm), yDim(ydm), zDim(zdm) {}
         KOKKOS_INLINE_FUNCTION
         void operator()(int j, int i) const {
-            const Integer enc_oc = encode_sfc_2D<KeyType>(i, j);
+            const Integer enc_oc = encode_morton_2D(i, j);
             // set to true only those elements from the vector that are generated.
             assert(enc_oc < max_oc);
             /* if (enc_oc >= max_oc) {
@@ -184,14 +184,14 @@ namespace mars {
     using unsigned_l = unsigned long;
 
     template <class KeyType, Integer Dim, Integer ManifoldDim, Integer Type>
-    ViewVectorType<unsigned_l> generate_elements_sfc(DMesh<Dim, ManifoldDim, Type> &mesh) {
+    ViewVectorType<KeyType> generate_elements_sfc(DMesh<Dim, ManifoldDim, Type> &mesh) {
         using namespace Kokkos;
         const Integer xDim = mesh.get_XDim();
         const Integer yDim = mesh.get_YDim();
         const Integer zDim = mesh.get_ZDim();
 
         Integer number_of_elements = get_number_of_elements(mesh);
-        ViewVectorType<unsigned_l> element_sfc("element_sfc", number_of_elements);
+        ViewVectorType<KeyType> element_sfc("element_sfc", number_of_elements);
 
         switch (Type) {
             case ElementType::Quad4: {
@@ -201,8 +201,8 @@ namespace mars {
 
                 Kokkos::parallel_for(
                     MDRangePolicy<Rank<2>>({0, 0}, {xDim, yDim}), MARS_LAMBDA(const int i, const int j) {
-                        const Integer oc = encode_sfc_2D<KeyType>(i, j);
-                        const Integer index = xDim * j + i;
+                        const auto oc = encode_sfc_2D<KeyType>(i, j);
+                        const auto index = xDim * j + i;
                         element_sfc(index) = oc;
                     });
                 break;
@@ -215,8 +215,8 @@ namespace mars {
                 Kokkos::parallel_for(
                     MDRangePolicy<Rank<3>>({0, 0, 0}, {xDim, yDim, zDim}),
                     MARS_LAMBDA(const int i, const int j, const int k) {
-                        const Integer oc = encode_morton_3D(i, j, k);
-                        const Integer index = xDim * (j + k * yDim) + i;
+                        const auto oc = encode_morton_3D(i, j, k);
+                        const auto index = xDim * (j + k * yDim) + i;
                         element_sfc(index) = oc;
                     });
                 break;

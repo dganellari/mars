@@ -25,12 +25,12 @@ namespace mars {
 
     template <typename KeyType = Unsigned>
     MARS_INLINE_FUNCTION Octant decode_hilbert_2D(KeyType s) noexcept {
-        auto order = maxTreeLevel<KeyType>{};
+        unsigned order = maxTreeLevel<KeyType>{};
 
         s = s | (0x55555555 << 2 * order);  // Pad s on left with 01
 
-        const Unsigned sr = (s >> 1) & 0x55555555;           // (no change) groups.
-        Unsigned cs = ((s & 0x55555555) + sr) ^ 0x55555555;  // Compute complement & swap info in two-bit groups.
+        const unsigned sr = (s >> 1) & 0x55555555;           // (no change) groups.
+        unsigned cs = ((s & 0x55555555) + sr) ^ 0x55555555;  // Compute complement & swap info in two-bit groups.
         // Parallel prefix xor op to propagate both complement
         // and swap info together from left to right (there is
         // no step "cs ^= cs >> 1", so in effect it computes
@@ -40,10 +40,10 @@ namespace mars {
         cs = cs ^ (cs >> 4);
         cs = cs ^ (cs >> 8);
         cs = cs ^ (cs >> 16);
-        const Unsigned swap = cs & 0x55555555;         // Separate the swap and
-        const Unsigned comp = (cs >> 1) & 0x55555555;  // complement bits.
+        const unsigned swap = cs & 0x55555555;         // Separate the swap and
+        const unsigned comp = (cs >> 1) & 0x55555555;  // complement bits.
 
-        Unsigned t = (s & swap) ^ comp;  // Calculate x and y in
+        unsigned t = (s & swap) ^ comp;  // Calculate x and y in
         s = s ^ sr ^ t ^ (t << 1);       // the odd & even bit positions, resp.
         s = s & ((1 << 2 * order) - 1);  // Clear out any junk on the left (unpad).
 
@@ -58,16 +58,16 @@ namespace mars {
         t = (s ^ (s >> 8)) & 0x0000FF00;
         s = s ^ t ^ (t << 8);
 
-        auto xp = s >> 16;     // Assign the two halves
-        auto yp = s & 0xFFFF;  // of t to x and y.
+        unsigned xp = s >> 16;     // Assign the two halves
+        unsigned yp = s & 0xFFFF;  // of t to x and y.
 
         return Octant(xp, yp);
     }
 
     template <typename KeyType = Unsigned>
-    MARS_INLINE_FUNCTION std::enable_if_t<std::is_unsigned_v<KeyType>, KeyType> encode_hilbert_2D(Unsigned x,
-                                                                                                  Unsigned y) noexcept {
-        int i, xi, yi;
+    MARS_INLINE_FUNCTION std::enable_if_t<std::is_unsigned_v<KeyType>, KeyType> encode_hilbert_2D(unsigned x,
+                                                                                                  unsigned y) noexcept {
+        unsigned i, xi, yi;
         Unsigned temp;
         KeyType s = 0;
 
@@ -106,31 +106,31 @@ namespace mars {
     //
     template <typename KeyType = Unsigned>
     MARS_INLINE_FUNCTION Octant decode_hilbert_3D(KeyType key) noexcept {
-        Unsigned px = 0;
-        Unsigned py = 0;
-        Unsigned pz = 0;
+        unsigned px = 0;
+        unsigned py = 0;
+        unsigned pz = 0;
 
-        for (Unsigned level = 0; level < maxTreeLevel<KeyType>{}; ++level) {
-            Unsigned octant = (key >> (3 * level)) & 7u;
-            const Unsigned xi = octant >> 2u;
-            const Unsigned yi = (octant >> 1u) & 1u;
-            const Unsigned zi = octant & 1u;
+        for (unsigned level = 0; level < maxTreeLevel<KeyType>{}; ++level) {
+            unsigned octant = (key >> (3 * level)) & 7u;
+            const unsigned xi = octant >> 2u;
+            const unsigned yi = (octant >> 1u) & 1u;
+            const unsigned zi = octant & 1u;
 
             if (yi ^ zi) {
                 // cyclic rotation
-                Unsigned pt = px;
+                unsigned pt = px;
                 px = pz;
                 pz = py;
                 py = pt;
             } else if ((!xi & !yi & !zi) || (xi & yi & zi)) {
                 // swap x and z
-                Unsigned pt = px;
+                unsigned pt = px;
                 px = pz;
                 pz = pt;
             }
 
             // turn px, py and pz
-            Unsigned mask = (1 << level) - 1;
+            unsigned mask = (1 << level) - 1;
             px ^= mask & (-(xi & (yi | zi)));
             py ^= mask & (-((xi & ((!yi) | (!zi))) | ((!xi) & yi & zi)));
             pz ^= mask & (-((xi & (!yi) & (!zi)) | (yi & zi)));

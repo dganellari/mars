@@ -3,9 +3,9 @@
 
 #include <map>
 #include <type_traits>
-/* #include "mars_sfc_code.hpp" */
 
 namespace mars {
+
     struct Octant {
         Integer x;
         Integer y;

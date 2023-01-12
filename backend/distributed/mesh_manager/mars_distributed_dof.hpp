@@ -4,6 +4,7 @@
 #include "mars_globals.hpp"
 
 namespace mars {
+
     struct Dof {
         Integer gid;
         Integer owner_proc;

@@ -6,33 +6,26 @@
 
 namespace mars {
 
-    template <Integer Type>
-    MARS_INLINE_FUNCTION Octant get_octant_from_sfc(const Integer gl_index) {
+    template <Integer Type, class KeyType = Unsigned>
+    MARS_INLINE_FUNCTION Octant get_octant_from_sfc(const KeyType gl_index) {
         Octant ref_octant;
 
         switch (Type) {
             case ElementType::Quad4: {
-                const Integer i = decode_morton_2DX(gl_index);
-                const Integer j = decode_morton_2DY(gl_index);
-
-                ref_octant = Octant(i, j);
+                ref_octant = decode_morton_2D(gl_index);
                 break;
             }
             case ElementType::Hex8: {
-                const Integer i = decode_morton_3DX(gl_index);
-                const Integer j = decode_morton_3DY(gl_index);
-                const Integer k = decode_morton_3DZ(gl_index);
-
-                ref_octant = Octant(i, j, k);
+                ref_octant = decode_morton_3D(gl_index);
                 break;
             }
         }
         return ref_octant;
     }
 
-    template <Integer Type>
-    MARS_INLINE_FUNCTION Integer get_sfc_from_octant(const Octant &o) {
-        Integer enc_oc = -1;
+    template <Integer Type, class KeyType = Unsigned>
+    MARS_INLINE_FUNCTION KeyType get_sfc_from_octant(const Octant &o) {
+        KeyType enc_oc = 0;
 
         switch (Type) {
             case ElementType::Quad4: {
@@ -49,8 +42,8 @@ namespace mars {
     }
 
     //-1 for all boundary. 0 left, 1 right, 2 down, 3 up and 4 and 5 for z dim.
-    template <Integer Type>
-    MARS_INLINE_FUNCTION bool is_boundary_sfc(const Integer sfc,
+    template <Integer Type, class KeyType = Unsigned>
+    MARS_INLINE_FUNCTION bool is_boundary_sfc(const KeyType sfc,
                                               const int xdim,
                                               const int ydim,
                                               const int zdim,
@@ -87,8 +80,8 @@ namespace mars {
         return find_map_side(side_map, side);
     }
 
-    template <Integer Type>
-    MARS_INLINE_FUNCTION void get_vertex_coordinates_from_sfc(const Integer sfc,
+    template <Integer Type, class KeyType = Unsigned>
+    MARS_INLINE_FUNCTION void get_vertex_coordinates_from_sfc(const KeyType sfc,
                                                               double *point,
                                                               const Integer xDim,
                                                               const Integer yDim,

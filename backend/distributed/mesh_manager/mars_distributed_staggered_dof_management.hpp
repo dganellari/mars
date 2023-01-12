@@ -15,6 +15,8 @@ namespace mars {
                       "Staggered Dof Handler does not support yet vector valued block structures.");
 
         using Mesh = typename DofHandler::Mesh;
+        using KeyType = typename Mesh::SfcKeyType;
+
         static constexpr Integer Degree = DofHandler::Degree;
         static constexpr Integer Block = DofHandler::Block;
 
@@ -52,7 +54,7 @@ namespace mars {
             IsSeparatedDof(ViewVectorType<Integer> map, DofHandler d) : local_separated_dof_map(map), handler(d) {}
 
             MARS_INLINE_FUNCTION
-            bool operator()(const Integer sfc) const {
+            bool operator()(const KeyType sfc) const {
                 const Integer local_dof = handler.sfc_to_local(sfc);
                 if ((local_dof + 1) >= local_separated_dof_map.extent(0)) return false;
                 /*use the map which is the scan of the predicate.
@@ -259,7 +261,7 @@ namespace mars {
         /* *******************************local_to_global********************************** */
 
         MARS_INLINE_FUNCTION
-        Integer sfc_to_owned(const Integer sfc) const {
+        Integer sfc_to_owned(const KeyType sfc) const {
             const Integer local_dof = get_dof_handler().sfc_to_local(sfc);
             const Integer owned = get_dof_handler().local_to_owned_dof(local_dof);
             const Integer pred_value = owned_dof_map(owned + 1) - owned_dof_map(owned);
@@ -276,7 +278,7 @@ namespace mars {
 
         MARS_INLINE_FUNCTION
         Integer is_owned_dof_sfc(const Integer local_dof) const {
-            const Integer owned = get_dof_handler().local_to_owned_dof(local_dof);
+            const auto owned = get_dof_handler().local_to_owned_dof(local_dof);
             const Integer pred_value = owned_dof_map(owned + 1) - owned_dof_map(owned);
             return (pred_value > 0);
         }
@@ -329,14 +331,14 @@ namespace mars {
         const Dof local_to_separated_global_dof(const Integer local_dof) const {
             Dof dof;
             const Integer proc = get_dof_handler().get_proc();
-            const Integer owned = local_to_owned_dof(local_dof);
+            const auto owned = local_to_owned_dof(local_dof);
 
             if (owned != INVALID_INDEX) {
                 const Integer index = owned_dof_map(owned) + global_dof_offset(proc);
                 dof.set_gid(index);
                 dof.set_proc(proc);
             } else {
-                const Integer sfc = get_dof_handler().local_to_sfc(local_dof);
+                const auto sfc = get_dof_handler().local_to_sfc(local_dof);
                 const auto it = ghost_local_to_global_map.find(sfc);
                 if (!ghost_local_to_global_map.valid_at(it)) {
                     dof.set_invalid();
@@ -357,7 +359,7 @@ namespace mars {
         }
 
         MARS_INLINE_FUNCTION
-        Integer sfc_to_global(const Integer sfc) const {
+        Integer sfc_to_global(const KeyType sfc) const {
             const Integer local_dof = get_dof_handler().sfc_to_local(sfc);
             Dof dof = local_to_separated_global_dof(local_dof);
             if (dof.is_valid())
@@ -453,11 +455,11 @@ namespace mars {
             return mesh.get_octant(index);
         }
 
-        MARS_INLINE_FUNCTION Integer get_sfc_from_octant(const Octant &o) const {
+        MARS_INLINE_FUNCTION KeyType get_sfc_from_octant(const Octant &o) const {
             return get_dof_handler().get_sfc_from_octant(o);
         }
 
-        MARS_INLINE_FUNCTION Integer get_local_sfc_from_octant(const Octant &o) const {
+        MARS_INLINE_FUNCTION KeyType get_local_sfc_from_octant(const Octant &o) const {
             return get_dof_handler().get_local_sfc_from_octant(o);
         }
 
@@ -474,7 +476,7 @@ namespace mars {
             return get_dof_handler().get_octant_from_local(local);
         }
 
-        MARS_INLINE_FUNCTION Octant get_octant_from_sfc(const Integer sfc) const {
+        MARS_INLINE_FUNCTION Octant get_octant_from_sfc(const KeyType sfc) const {
             return get_dof_handler().get_octant_from_sfc(sfc);
         }
 
@@ -576,10 +578,10 @@ namespace mars {
         const SFC<simplex_type::ElemType> &get_local_dof_enum() const { return get_dof_handler().get_local_dof_enum(); }
 
         MARS_INLINE_FUNCTION
-        Integer local_to_sfc(const Integer local) const { return get_local_dof_enum().get_view_elements()(local); }
+        KeyType local_to_sfc(const Integer local) const { return get_local_dof_enum().get_view_elements()(local); }
 
         MARS_INLINE_FUNCTION
-        Integer sfc_to_local(const Integer sfc) const { return get_dof_handler().sfc_to_local(sfc); }
+        Integer sfc_to_local(const KeyType sfc) const { return get_dof_handler().sfc_to_local(sfc); }
 
         template <Integer Type>
         MARS_INLINE_FUNCTION Integer enum_corner(const Octant &oc, const int i, const int j) const {
@@ -587,7 +589,7 @@ namespace mars {
         }
 
         MARS_INLINE_FUNCTION
-        bool is_local(const Integer sfc) const { return get_dof_handler().is_local(sfc); }
+        bool is_local(const KeyType sfc) const { return get_dof_handler().is_local(sfc); }
 
         template <Integer part, Integer Type>
         static MARS_INLINE_FUNCTION Octant enum_face_corner(const Octant &oc, const int dir) {

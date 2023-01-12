@@ -55,14 +55,14 @@ namespace mars {
         return n;
     }
 
-    MARS_INLINE_FUNCTION
+    /* MARS_INLINE_FUNCTION
     Unsigned decode_morton_3DX(Unsigned code) { return compact_3D(code >> 0); }
 
     MARS_INLINE_FUNCTION
     Unsigned decode_morton_3DY(Unsigned code) { return compact_3D(code >> 1); }
 
     MARS_INLINE_FUNCTION
-    Unsigned decode_morton_3DZ(Unsigned code) { return compact_3D(code >> 2); }
+    Unsigned decode_morton_3DZ(Unsigned code) { return compact_3D(code >> 2); } */
 
     /* -------------------------------------32 bit ------------------------------------- */
 
@@ -111,20 +111,30 @@ namespace mars {
         return x;
     }
 
-    MARS_INLINE_FUNCTION
-    unsigned decode_morton_2DX(unsigned code) { return compact_2D(code >> 0); }
+    template <class KeyType>
+    MARS_INLINE_FUNCTION std::enable_if_t<std::is_unsigned<KeyType>{}, unsigned> decode_morton_2DX(KeyType code) {
+        return compact_2D(code >> 0);
+    }
 
-    MARS_INLINE_FUNCTION
-    unsigned decode_morton_2DY(unsigned code) { return compact_2D(code >> 1); }
+    template <class KeyType>
+    MARS_INLINE_FUNCTION std::enable_if_t<std::is_unsigned<KeyType>{}, unsigned> decode_morton_2DY(KeyType code) {
+        return compact_2D(code >> 1);
+    }
 
-    MARS_INLINE_FUNCTION
-    unsigned decode_morton_3DX(unsigned code) { return compact_3D(code >> 0); }
+    template <class KeyType>
+    MARS_INLINE_FUNCTION std::enable_if_t<std::is_unsigned<KeyType>{}, unsigned> decode_morton_3DX(KeyType code) {
+        return compact_3D(code >> 0);
+    }
 
-    MARS_INLINE_FUNCTION
-    unsigned decode_morton_3DY(unsigned code) { return compact_3D(code >> 1); }
+    template <class KeyType>
+    MARS_INLINE_FUNCTION std::enable_if_t<std::is_unsigned<KeyType>{}, unsigned> decode_morton_3DY(KeyType code) {
+        return compact_3D(code >> 1);
+    }
 
-    MARS_INLINE_FUNCTION
-    unsigned decode_morton_3DZ(unsigned code) { return compact_3D(code >> 2); }
+    template <class KeyType>
+    MARS_INLINE_FUNCTION std::enable_if_t<std::is_unsigned<KeyType>{}, unsigned> decode_morton_3DZ(KeyType code) {
+        return compact_3D(code >> 2);
+    }
 
     /* -------------------------3D Morton encoding/decoding in 32- and 64-bit using the magic number method---- */
 
