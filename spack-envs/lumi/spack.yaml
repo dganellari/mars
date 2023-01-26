@@ -1,0 +1,22 @@
+# MARS Spack Environment file.
+#
+spack:
+  specs:
+  
+  # - mars@develop mars@develop +rocm~openmp amdgpu_targe^t=gfx90a build_type=Release
+  - kokkos+rocm ^hip@5.0.2
+  - kokkos-kernels
+  - mpi
+  - cxxopts
+  develop:
+    mars:
+      path: /project/project_465000105/gandanie/mars
+      spec: mars@develop
+  view: /project/project_465000105/gandanie/view/mars
+  packages:
+    all:
+      variants: std=17 amdgpu_target=gfx90a amdgpu_target_sram_ecc=gfx90a
+  concretizer:
+    unify: true
+  repos:
+  - /pfs/lustrep1/users/daganell/projects/mars/spack
