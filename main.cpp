@@ -117,6 +117,10 @@ int main(int argc, char *argv[]) {
             test_mars_distributed_nonsimplex_mesh_generation_kokkos_2D(xDim, yDim);
         };
 
+        apps["mars_distributed_mesh_generation_Hilbert_2D"] = [=]() {
+            test_mars_distributed_nonsimplex_mesh_generation_kokkos_hilbert_2D(xDim, yDim);
+        };
+
         apps["mars_distributed_mesh_generation_3D"] = [=]() {
             test_mars_distributed_nonsimplex_mesh_generation_kokkos_3D(xDim, yDim, zDim);
         };

@@ -184,14 +184,14 @@ namespace mars {
     using unsigned_l = unsigned long;
 
     template <class KeyType, Integer Dim, Integer ManifoldDim, Integer Type>
-    ViewVectorType<KeyType> generate_elements_sfc(DMesh<Dim, ManifoldDim, Type> &mesh) {
+    ViewVectorType<typename KeyType::ValueType> generate_elements_sfc(DMesh<Dim, ManifoldDim, Type> &mesh) {
         using namespace Kokkos;
         const Integer xDim = mesh.get_XDim();
         const Integer yDim = mesh.get_YDim();
         const Integer zDim = mesh.get_ZDim();
 
         Integer number_of_elements = get_number_of_elements(mesh);
-        ViewVectorType<KeyType> element_sfc("element_sfc", number_of_elements);
+        ViewVectorType<typename KeyType::ValueType> element_sfc("element_sfc", number_of_elements);
 
         switch (Type) {
             case ElementType::Quad4: {
@@ -375,7 +375,7 @@ namespace mars {
     }
 
     // the points and elements can be generated on the fly from the sfc code in case meshless true.
-    template <class KeyType = MortonKey<Integer>, Integer Dim, Integer ManifoldDim, Integer Type, bool Meshless = true>
+    template <class KeyType = MortonKey<Unsigned>, Integer Dim, Integer ManifoldDim, Integer Type, bool Meshless = true>
     void generate_distributed_cube(DMesh<Dim, ManifoldDim, Type> &mesh,
                                    const Integer xDim,
                                    const Integer yDim,

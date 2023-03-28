@@ -146,6 +146,7 @@ namespace mars {
 #ifdef MARS_ENABLE_KOKKOS_KERNELS
 
             using KeyType = uint64_t;
+            /* using KeyType = unsigned; */
 
             Kokkos::Timer timer_gen;
             DistributedQuad4Mesh mesh(context);

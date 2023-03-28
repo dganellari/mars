@@ -3,6 +3,7 @@
 
 #include <cassert>
 #include "mars_config.hpp"
+#include <stdint.h>
 
 /**
  * M.A.R.S Mesh Adaptive Refinement for Simplical meshes

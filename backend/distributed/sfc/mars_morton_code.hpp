@@ -29,7 +29,7 @@ namespace mars {
     }
 
     MARS_INLINE_FUNCTION
-    Unsigned decode_morton_2DX(Unsigned code) { return compact_2D(code >> 0); }
+    Unsigned decode_morton_2DX(Unsigned code) { return compact_2D(code); }
 
     MARS_INLINE_FUNCTION
     Unsigned decode_morton_2DY(Unsigned code) { return compact_2D(code >> 1); }
@@ -113,7 +113,7 @@ namespace mars {
 
     template <class KeyType>
     MARS_INLINE_FUNCTION std::enable_if_t<std::is_unsigned<KeyType>{}, unsigned> decode_morton_2DX(KeyType code) {
-        return compact_2D(code >> 0);
+        return compact_2D(code);
     }
 
     template <class KeyType>
@@ -123,7 +123,7 @@ namespace mars {
 
     template <class KeyType>
     MARS_INLINE_FUNCTION std::enable_if_t<std::is_unsigned<KeyType>{}, unsigned> decode_morton_3DX(KeyType code) {
-        return compact_3D(code >> 0);
+        return compact_3D(code);
     }
 
     template <class KeyType>
