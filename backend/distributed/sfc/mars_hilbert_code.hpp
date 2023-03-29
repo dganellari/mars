@@ -23,9 +23,9 @@
 
 namespace mars {
 
-    template <typename KeyType = Unsigned>
-    MARS_INLINE_FUNCTION Octant decode_hilbert_2D(KeyType s) noexcept {
-        unsigned order = maxTreeLevel<KeyType>{};
+    //! @brief inverse function of iHilbert_2D 32 bit only up to oder 16 but works at constant time.
+    MARS_INLINE_FUNCTION Octant decode_hilbert_2D(unsigned s) noexcept {
+        unsigned order = maxTreeLevel<unsigned>{};
 
         s = s | (0x55555555 << 2 * order);  // Pad s on left with 01
 
@@ -64,9 +64,43 @@ namespace mars {
         return Octant(xp, yp);
     }
 
+    // Lam and Shapiro inverse function of hilbert
+    template <class KeyType>
+    MARS_INLINE_FUNCTION Octant decode_hilbert_2D(KeyType key) noexcept {
+        unsigned sa, sb;
+        unsigned x = 0, y = 0, temp = 0;
+        unsigned order = maxTreeLevel<KeyType>{};
+
+        for (unsigned level = 0; level < 2 * order; level += 2) {
+            // Get bit level+1 of key.
+            sa = (key >> (level + 1)) & 1;
+            // Get bit level of key.
+            sb = (key >> level) & 1;
+            if ((sa ^ sb) == 0) {
+                // If sa,sb = 00 or 11,
+                temp = x;
+                // swap x and y,
+                x = y ^ (-sa);
+                // and if sa = 1,
+                y = temp ^ (-sa);
+                // complement them.
+            }
+            x = (x >> 1) | (sa << 31);         // Prepend sa to x and
+            y = (y >> 1) | ((sa ^ sb) << 31);  // (sa ^ sb) to y.
+        }
+        unsigned px = x >> (32 - order);
+        // Right-adjust x and y
+        unsigned py = y >> (32 - order);
+        // and return them to
+        return Octant(px, py);
+    }
+
     template <typename KeyType = Unsigned>
     MARS_INLINE_FUNCTION std::enable_if_t<std::is_unsigned_v<KeyType>, KeyType> encode_hilbert_2D(unsigned x,
                                                                                                   unsigned y) noexcept {
+        assert(px < (1u << maxTreeLevel<KeyType>{}));
+        assert(py < (1u << maxTreeLevel<KeyType>{}));
+
         unsigned i, xi, yi;
         Unsigned temp;
         KeyType s = 0;
