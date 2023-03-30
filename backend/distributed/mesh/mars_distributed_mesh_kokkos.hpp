@@ -33,8 +33,8 @@
 
 namespace mars {
 
-    template <Integer Dim_, Integer ManifoldDim_, class Simplex_, class KeyType>
-    class Mesh<Dim_, ManifoldDim_, DistributedImplementation, Simplex_, KeyType> : public ParallelIMesh<Dim_> {
+    template <Integer Dim_, Integer ManifoldDim_, class Simplex_, class SfcKeyType>
+    class Mesh<Dim_, ManifoldDim_, DistributedImplementation, Simplex_, SfcKeyType> : public ParallelIMesh<Dim_> {
     public:
         static constexpr Integer Dim = Dim_;
         static constexpr Integer ManifoldDim = ManifoldDim_;
@@ -43,7 +43,7 @@ namespace mars {
         using Point = mars::Point<Real, Dim>;
         using Comb = Combinations<ManifoldDim + 1, 2, DistributedImplementation>;
 
-        using SfcKeyType = KeyType;
+        using KeyType = typename SfcKeyType::ValueType;
         /* MARS_INLINE_FUNCTION Mesh()
             : ParallelIMesh<Dim_>(),
               elements_size_(0),
@@ -1003,7 +1003,7 @@ namespace mars {
             MARS_INLINE_FUNCTION
             void operator()(int index) const {
                 const auto gl_index = global(index);
-                Octant ref_octant = get_octant_from_sfc<Type>(gl_index);
+                Octant ref_octant = get_octant_from_sfc<Type, SfcKeyType>(gl_index);
 
                 predicate_face(ref_octant, index, xDim, yDim, zDim, periodic);
                 predicate_corner(ref_octant, index, xDim, yDim, zDim, periodic);
@@ -1523,16 +1523,33 @@ namespace mars {
         ViewVectorType<Integer>::HostMirror scan_recv_mirror;
     };
 
-    using DistributedMesh1 = mars::Mesh<1, 1, DistributedImplementation, Simplex<1, 1, DistributedImplementation>>;
-    using DistributedMesh2 = mars::Mesh<2, 2, DistributedImplementation, Simplex<2, 2, DistributedImplementation>>;
-    using DistributedMesh3 = mars::Mesh<3, 3, DistributedImplementation, Simplex<3, 3, DistributedImplementation>>;
-    using DistributedMesh4 = mars::Mesh<4, 4, DistributedImplementation, Simplex<4, 4, DistributedImplementation>>;
+    template <typename KeyType = MortonKey<Unsigned>>
+    using DistributedMesh1 =
+        mars::Mesh<1, 1, DistributedImplementation, Simplex<1, 1, DistributedImplementation>, KeyType>;
 
-    using DistributedQuad4Mesh = mars::Mesh<2, 2, DistributedImplementation, Quad4DElem>;
-    using DistributedHex8Mesh = mars::Mesh<3, 3, DistributedImplementation, Hex8DElem>;
+    template <typename KeyType = MortonKey<Unsigned>>
+    using DistributedMesh2 =
+        mars::Mesh<2, 2, DistributedImplementation, Simplex<2, 2, DistributedImplementation>, KeyType>;
 
-    template <Integer Type, Integer Dim = (Type == ElementType::Quad4) ? 2 : 3, Integer ManifoldDim = Dim>
+    template <typename KeyType = MortonKey<Unsigned>>
+    using DistributedMesh3 =
+        mars::Mesh<3, 3, DistributedImplementation, Simplex<3, 3, DistributedImplementation>, KeyType>;
+
+    template <typename KeyType = MortonKey<Unsigned>>
+    using DistributedMesh4 =
+        mars::Mesh<4, 4, DistributedImplementation, Simplex<4, 4, DistributedImplementation>, KeyType>;
+
+    template <typename KeyType = MortonKey<Unsigned>>
+    using DistributedQuad4Mesh = mars::Mesh<2, 2, DistributedImplementation, Quad4DElem, KeyType>;
+
+    template <typename KeyType = MortonKey<Unsigned>>
+    using DistributedHex8Mesh = mars::Mesh<3, 3, DistributedImplementation, Hex8DElem, KeyType>;
+
+    template <Integer Type,
+              Integer Dim = (Type == ElementType::Quad4) ? 2 : 3,
+              Integer ManifoldDim = Dim,
+              typename KeyType = MortonKey<Unsigned>>
     using DistributedMesh =
-        mars::Mesh<Dim, ManifoldDim, DistributedImplementation, NonSimplex<Type, DistributedImplementation>>;
+        mars::Mesh<Dim, ManifoldDim, DistributedImplementation, NonSimplex<Type, DistributedImplementation>, KeyType>;
 }  // namespace mars
 #endif  // MARS_MESH_HPP

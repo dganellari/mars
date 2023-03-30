@@ -5,14 +5,14 @@
 
 namespace mars {
 
-    template <Integer Type, class KeyType = Unsigned>
-    MARS_INLINE_FUNCTION KeyType compute_all_range(const unsigned x, const unsigned y, const unsigned z) {
+    template <Integer Type, class KeyType = MortonKey<Unsigned>>
+    MARS_INLINE_FUNCTION typename KeyType::ValueType compute_all_range(const unsigned x, const unsigned y, const unsigned z) {
         switch (Type) {
             case ElementType::Quad4: {
-                return encode_morton_2D(x + 1, y + 1);
+                return encode_sfc_2D<KeyType>(x + 1, y + 1);
             }
             case ElementType::Hex8: {
-                return encode_morton_3D(x + 1, y + 1, z + 1);
+                return encode_sfc_3D<KeyType>(x + 1, y + 1, z + 1);
             }
             default: {
                 return INVALID_INDEX;
@@ -20,9 +20,11 @@ namespace mars {
         }
     }
 
-    template <Integer Type, class KeyType = Unsigned>
+    template <Integer Type, class SfcKeyType = MortonKey<Unsigned>>
     class SFC {
     public:
+        using KeyType = typename SfcKeyType::ValueType;
+
         inline void compact_elements(const ViewVectorType<Integer> &sfc_to_local,
                                      const ViewVectorType<bool> all_elements) {
             using namespace Kokkos;
@@ -147,7 +149,7 @@ namespace mars {
         SFC() = default;
 
         SFC(const Integer x, const Integer y, const Integer z) : xDim(x), yDim(y), zDim(z) {
-            all_range_ = compute_all_range<Type>(xDim, yDim, zDim);
+            all_range_ = compute_all_range<Type, SfcKeyType>(xDim, yDim, zDim);
         }
 
         MARS_INLINE_FUNCTION

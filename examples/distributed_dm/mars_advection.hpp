@@ -36,7 +36,9 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. */
 
 namespace mars {
 
-    using Data = UserData<DistributedQuad4Mesh, double, double, double, double>;
+    using DQ4Mesh = DistributedQuad4Mesh<>;
+
+    using Data = UserData<DQ4Mesh, double, double, double, double>;
     enum DataDesc : int { u = 0, du_0 = 1, du_1 = 2, dudt = 3 };
 
     template <Integer idx>
@@ -627,7 +629,7 @@ namespace mars {
 
 #ifdef MARS_ENABLE_KOKKOS
 
-        DistributedQuad4Mesh mesh(context);
+        DQ4Mesh mesh(context);
         mesh.set_periodic();  // set the domain to be periodic before generation!
         generate_distributed_cube(mesh, x, y, 0);
 
@@ -635,9 +637,9 @@ namespace mars {
         const Integer yDim = mesh.get_YDim();
         const Integer zDim = mesh.get_ZDim();
 
-        static constexpr Integer Dim = DistributedQuad4Mesh::Dim;
+        static constexpr Integer Dim = DQ4Mesh::Dim;
 
-        using Elem = typename DistributedQuad4Mesh::Elem;
+        using Elem = typename DQ4Mesh::Elem;
         static constexpr Integer Type = Elem::ElemType;
 
         std::cout << "Type: " << Type << std::endl;

@@ -6,34 +6,34 @@
 
 namespace mars {
 
-    template <Integer Type, class KeyType = Unsigned>
-    MARS_INLINE_FUNCTION Octant get_octant_from_sfc(const KeyType gl_index) {
+    template <Integer Type, class KeyType = MortonKey<Unsigned>>
+    MARS_INLINE_FUNCTION Octant get_octant_from_sfc(const typename KeyType::ValueType gl_index) {
         Octant ref_octant;
 
         switch (Type) {
             case ElementType::Quad4: {
-                ref_octant = decode_morton_2D(gl_index);
+                ref_octant = decode_sfc_2D<KeyType>(gl_index);
                 break;
             }
             case ElementType::Hex8: {
-                ref_octant = decode_morton_3D(gl_index);
+                ref_octant = decode_sfc_3D<KeyType>(gl_index);
                 break;
             }
         }
         return ref_octant;
     }
 
-    template <Integer Type, class KeyType = Unsigned>
-    MARS_INLINE_FUNCTION KeyType get_sfc_from_octant(const Octant &o) {
-        KeyType enc_oc = 0;
+    template <Integer Type, class KeyType = MortonKey<Unsigned>>
+    MARS_INLINE_FUNCTION typename KeyType::ValueType get_sfc_from_octant(const Octant &o) {
+        typename KeyType::ValueType enc_oc = 0;
 
         switch (Type) {
             case ElementType::Quad4: {
-                enc_oc = encode_morton_2D(o.x, o.y);
+                enc_oc = encode_sfc_2D<KeyType>(o.x, o.y);
                 break;
             }
             case ElementType::Hex8: {
-                enc_oc = encode_morton_3D(o.x, o.y, o.z);
+                enc_oc = encode_sfc_3D<KeyType>(o.x, o.y, o.z);
                 break;
             }
         }
@@ -42,13 +42,13 @@ namespace mars {
     }
 
     //-1 for all boundary. 0 left, 1 right, 2 down, 3 up and 4 and 5 for z dim.
-    template <Integer Type, class KeyType = Unsigned>
-    MARS_INLINE_FUNCTION bool is_boundary_sfc(const KeyType sfc,
+    template <Integer Type, class KeyType = MortonKey<Unsigned>>
+    MARS_INLINE_FUNCTION bool is_boundary_sfc(const typename KeyType::ValueType sfc,
                                               const int xdim,
                                               const int ydim,
                                               const int zdim,
                                               const Integer Face = -1) {
-        Octant o = get_octant_from_sfc<Type>(sfc);
+        Octant o = get_octant_from_sfc<Type, KeyType>(sfc);
         return o.is_boundary<Type>(xdim, ydim, zdim, Face);
     }
 
@@ -80,13 +80,13 @@ namespace mars {
         return find_map_side(side_map, side);
     }
 
-    template <Integer Type, class KeyType = Unsigned>
-    MARS_INLINE_FUNCTION void get_vertex_coordinates_from_sfc(const KeyType sfc,
+    template <Integer Type, class KeyType = MortonKey<Unsigned>>
+    MARS_INLINE_FUNCTION void get_vertex_coordinates_from_sfc(const typename KeyType::ValueType sfc,
                                                               double *point,
                                                               const Integer xDim,
                                                               const Integer yDim,
                                                               const Integer zDim) {
-        Octant o = get_octant_from_sfc<Type>(sfc);
+        Octant o = get_octant_from_sfc<Type, KeyType>(sfc);
         o.get_vertex_coordinates<Type>(point, xDim, yDim, zDim);
     }
 

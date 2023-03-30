@@ -112,54 +112,7 @@ namespace mars {
     };
 #endif
 
-    void test_mars_distributed_nonsimplex_mesh_generation_kokkos_hilbert_2D(const int x, const int y) {
-        using namespace mars;
-        try {
-            mars::proc_allocation resources;
-            /*
-            // try to detect how many threads can be run on this system
-            resources.num_threads = marsenv::thread_concurrency();
-
-            // override thread count if the user set MARS_NUM_THREADS
-            if (auto nt = marsenv::get_env_num_threads())
-            {
-                resources.num_threads = nt;
-            } */
-
-#ifdef MARS_ENABLE_MPI
-            // initialize MPI
-            /* marsenv::mpi_guard guard(argc, argv, false); */
-
-            // assign a unique gpu to this rank if available
-            /*  resources.gpu_id = marsenv::find_private_gpu(MPI_COMM_WORLD); */
-
-            // create a distributed context
-            auto context = mars::make_context(resources, MPI_COMM_WORLD);
-            // bool root = mars::rank(context) == 0;
-#else
-            // resources.gpu_id = marsenv::default_gpu();
-
-            // // create a local context
-            // auto context = mars::make_context(resources);
-#endif
-
-#ifdef MARS_ENABLE_KOKKOS_KERNELS
-
-            using KeyType = uint64_t;
-            /* using KeyType = unsigned; */
-
-            Kokkos::Timer timer_gen;
-            DistributedQuad4Mesh mesh(context);
-            generate_distributed_cube<HilbertKey<KeyType>>(mesh, x, y, 0);
-
-            double time_gen = timer_gen.seconds();
-            std::cout << "2D Mesh Generation took: " << time_gen << std::endl;
-
-#endif
-        } catch (std::exception &e) {
-            std::cerr << "exception caught in ring miniapp: " << e.what() << "\n";
-        }
-    }
+    template <class KeyType = MortonKey<Unsigned>>
     void test_mars_distributed_nonsimplex_mesh_generation_kokkos_2D(const int x, const int y) {
         using namespace mars;
         try {
@@ -194,7 +147,7 @@ namespace mars {
 #ifdef MARS_ENABLE_KOKKOS_KERNELS
 
             Kokkos::Timer timer_gen;
-            DistributedQuad4Mesh mesh(context);
+            DistributedQuad4Mesh<KeyType> mesh(context);
             generate_distributed_cube(mesh, x, y, 0);
 
             double time_gen = timer_gen.seconds();
@@ -206,6 +159,7 @@ namespace mars {
         }
     }
 
+    template <class KeyType = MortonKey<Unsigned>>
     void test_mars_distributed_nonsimplex_mesh_generation_kokkos_3D(const int x, const int y, const int z) {
         using namespace mars;
 
@@ -241,7 +195,7 @@ namespace mars {
 #ifdef MARS_ENABLE_KOKKOS_KERNELS
             using namespace Kokkos;
 
-            DistributedHex8Mesh mesh(context);
+            DistributedHex8Mesh<KeyType> mesh(context);
             Kokkos::Timer timer_gen;
             generate_distributed_cube(mesh, x, y, z);
 

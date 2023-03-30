@@ -44,16 +44,44 @@ namespace mars {
         return KeyType{encode_hilbert_2D<typename KeyType::ValueType>(ix, iy)};
     }
 
+    //! @brief Key encode overload for Morton keys
+    template <class KeyType>
+    MARS_INLINE_FUNCTION std::enable_if_t<IsMorton<KeyType>{}, KeyType> encode_sfc_3D(unsigned ix,
+                                                                                      unsigned iy,
+                                                                                      unsigned iz) {
+        return KeyType{encode_morton_3D<typename KeyType::ValueType>(ix, iy, iz)};
+    }
+
+    //! @brief Key encode overload for Hilbert keys
+    template <class KeyType>
+    MARS_INLINE_FUNCTION std::enable_if_t<IsHilbert<KeyType>{}, KeyType> encode_sfc_3D(unsigned ix,
+                                                                                       unsigned iy,
+                                                                                       unsigned iz) {
+        return KeyType{encode_hilbert_3D<typename KeyType::ValueType>(ix, iy, iz)};
+    }
+
     //! @brief decode a Morton key
     template <class KeyType>
-    MARS_INLINE_FUNCTION std::enable_if_t<IsMorton<KeyType>{}, Octant> decode_sfc_2D(KeyType key) {
-        return decode_morton_2D<typename KeyType::ValueType>(key);
+    MARS_INLINE_FUNCTION std::enable_if_t<IsMorton<KeyType>{}, Octant> decode_sfc_2D(typename KeyType::ValueType key) {
+        return decode_morton_2D(key);
     }
 
     //! @brief decode a Hilbert key
     template <class KeyType>
-    MARS_INLINE_FUNCTION std::enable_if_t<IsHilbert<KeyType>{}, Octant> decode_sfc_2D(KeyType key) {
-        return decode_hilbert_2D<typename KeyType::ValueType>(key);
+    MARS_INLINE_FUNCTION std::enable_if_t<IsHilbert<KeyType>{}, Octant> decode_sfc_2D(typename KeyType::ValueType key) {
+        return decode_hilbert_2D(key);
+    }
+
+    //! @brief decode a Morton key
+    template <class KeyType>
+    MARS_INLINE_FUNCTION std::enable_if_t<IsMorton<KeyType>{}, Octant> decode_sfc_3D(typename KeyType::ValueType key) {
+        return decode_morton_3D(key);
+    }
+
+    //! @brief decode a Hilbert key
+    template <class KeyType>
+    MARS_INLINE_FUNCTION std::enable_if_t<IsHilbert<KeyType>{}, Octant> decode_sfc_3D(typename KeyType::ValueType key) {
+        return decode_hilbert_3D(key);
     }
 
 }  // namespace mars

@@ -117,31 +117,35 @@ int main(int argc, char *argv[]) {
             test_mars_distributed_nonsimplex_mesh_generation_kokkos_2D(xDim, yDim);
         };
 
-        apps["mars_distributed_mesh_generation_Hilbert_2D"] = [=]() {
-            test_mars_distributed_nonsimplex_mesh_generation_kokkos_hilbert_2D(xDim, yDim);
+        apps["mars_distributed_mesh_generation_hilbert_2D"] = [=]() {
+            test_mars_distributed_nonsimplex_mesh_generation_kokkos_2D<HilbertKey<Unsigned>>(xDim, yDim);
         };
 
         apps["mars_distributed_mesh_generation_3D"] = [=]() {
             test_mars_distributed_nonsimplex_mesh_generation_kokkos_3D(xDim, yDim, zDim);
         };
 
-        apps["distributed_vector_valued_3D_degree2"] = [=]() {
-            test_mars_distributed_vector_valued<ElementType::Hex8, 2>(xDim, yDim, zDim, block_size);
+        apps["mars_distributed_mesh_generation_hilbert_3D"] = [=]() {
+            test_mars_distributed_nonsimplex_mesh_generation_kokkos_3D<HilbertKey<Unsigned>>(xDim, yDim, zDim);
         };
+
+        apps["distributed_vector_valued"] = [=]() { test_mars_distributed_vector_valued(xDim, yDim, 0, block_size); };
 
         apps["distributed_vector_valued_degree2"] = [=]() {
             test_mars_distributed_vector_valued<ElementType::Quad4, 2>(xDim, yDim, 0, block_size);
-        };
-
-        apps["distributed_vector_valued_3D"] = [=]() {
-            test_mars_distributed_vector_valued<ElementType::Hex8>(xDim, yDim, zDim, block_size);
         };
 
         apps["distributed_vector_valued_no_overlap_3D"] = [=]() {
             test_mars_distributed_vector_valued<ElementType::Hex8, 1, false>(xDim, yDim, zDim, block_size);
         };
 
-        apps["distributed_vector_valued"] = [=]() { test_mars_distributed_vector_valued(xDim, yDim, 0, block_size); };
+        apps["distributed_vector_valued_3D"] = [=]() {
+            test_mars_distributed_vector_valued<ElementType::Hex8>(xDim, yDim, zDim, block_size);
+        };
+
+        apps["distributed_vector_valued_3D_degree2"] = [=]() {
+            test_mars_distributed_vector_valued<ElementType::Hex8, 2>(xDim, yDim, zDim, block_size);
+        };
 
         apps["mfpoisson"] = [=]() {
             matrix_free_poisson<Example2Dirichlet, Example2RHS, Example2Analitcal, ElementType::Quad4>(xDim, yDim, 0);
