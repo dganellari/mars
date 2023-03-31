@@ -131,6 +131,11 @@ int main(int argc, char *argv[]) {
 
         apps["distributed_vector_valued"] = [=]() { test_mars_distributed_vector_valued(xDim, yDim, 0, block_size); };
 
+        apps["distributed_vector_valued_hilbert"] = [=]() {
+            test_mars_distributed_vector_valued<ElementType::Quad4, 1, true, HilbertKey<Unsigned>>(
+                xDim, yDim, 0, block_size);
+        };
+
         apps["distributed_vector_valued_degree2"] = [=]() {
             test_mars_distributed_vector_valued<ElementType::Quad4, 2>(xDim, yDim, 0, block_size);
         };

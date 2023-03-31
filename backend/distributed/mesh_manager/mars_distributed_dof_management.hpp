@@ -85,9 +85,8 @@ namespace mars {
     class DofHandler : public IDofHandler {
     public:
         using Mesh = Mesh_;
-        using KeyType = typename Mesh::SfcKeyType;
-
-        /* static_assert(std::is_same_v<KeyType, Unsigned>, "must be uns"); */
+        using KeyType = typename Mesh::KeyType;
+        /* using SfcKeyType = typename Mesh::SfcKeyType; */
         using simplex_type = typename Mesh::Elem;
 
         static constexpr Integer ElemType = simplex_type::ElemType;

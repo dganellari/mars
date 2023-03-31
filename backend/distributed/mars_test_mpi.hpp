@@ -208,7 +208,10 @@ namespace mars {
         }
     }
 
-    template <Integer Type = ElementType::Quad4, Integer Degree = 1, bool Overlap = true>
+    template <Integer Type = ElementType::Quad4,
+              Integer Degree = 1,
+              bool Overlap = true,
+              class KeyType = MortonKey<Unsigned>>
     void test_mars_distributed_vector_valued(const int xDim, const int yDim, const int zDim, const int block) {
         using namespace mars;
         mars::proc_allocation resources;
@@ -227,7 +230,7 @@ namespace mars {
 
         Kokkos::Timer timer;
 
-        using DMesh = DistributedMesh<Type>;
+        using DMesh = DistributedMesh<KeyType, Type>;
 
         // create the quad mesh distributed through the mpi procs.
         DMesh mesh(context);

@@ -44,6 +44,7 @@ namespace mars {
         using Comb = Combinations<ManifoldDim + 1, 2, DistributedImplementation>;
 
         using KeyType = typename SfcKeyType::ValueType;
+
         /* MARS_INLINE_FUNCTION Mesh()
             : ParallelIMesh<Dim_>(),
               elements_size_(0),
@@ -1545,10 +1546,10 @@ namespace mars {
     template <typename KeyType = MortonKey<Unsigned>>
     using DistributedHex8Mesh = mars::Mesh<3, 3, DistributedImplementation, Hex8DElem, KeyType>;
 
-    template <Integer Type,
+    template <typename KeyType = MortonKey<Unsigned>,
+              Integer Type = ElementType::Hex8,
               Integer Dim = (Type == ElementType::Quad4) ? 2 : 3,
-              Integer ManifoldDim = Dim,
-              typename KeyType = MortonKey<Unsigned>>
+              Integer ManifoldDim = Dim>
     using DistributedMesh =
         mars::Mesh<Dim, ManifoldDim, DistributedImplementation, NonSimplex<Type, DistributedImplementation>, KeyType>;
 }  // namespace mars

@@ -15,7 +15,7 @@ namespace mars {
                       "Staggered Dof Handler does not support yet vector valued block structures.");
 
         using Mesh = typename DofHandler::Mesh;
-        using KeyType = typename Mesh::SfcKeyType;
+        using KeyType = typename Mesh::KeyType;
 
         static constexpr Integer Degree = DofHandler::Degree;
         static constexpr Integer Block = DofHandler::Block;
