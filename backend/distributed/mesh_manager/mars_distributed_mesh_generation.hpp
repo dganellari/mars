@@ -144,18 +144,18 @@ namespace mars {
     template<class KeyType>
     struct GenerateSFC {
         ViewVectorType<bool> predicate;
-        Integer max_oc;
+        KeyType max_oc;
         Integer xDim;
         Integer yDim;
         Integer zDim;
 
-        GenerateSFC(ViewVectorType<bool> el, Integer m, Integer xdm, Integer ydm)
+        GenerateSFC(ViewVectorType<bool> el, KeyType m, Integer xdm, Integer ydm)
             : predicate(el), max_oc(m), xDim(xdm), yDim(ydm) {}
-        GenerateSFC(ViewVectorType<bool> el, Integer m, Integer xdm, Integer ydm, Integer zdm)
+        GenerateSFC(ViewVectorType<bool> el, KeyType m, Integer xdm, Integer ydm, Integer zdm)
             : predicate(el), max_oc(m), xDim(xdm), yDim(ydm), zDim(zdm) {}
         KOKKOS_INLINE_FUNCTION
         void operator()(int j, int i) const {
-            const Integer enc_oc = encode_sfc_2D<KeyType>(i, j);
+            const auto enc_oc = encode_sfc_2D<KeyType>(i, j);
             // set to true only those elements from the vector that are generated.
             assert(enc_oc < max_oc);
             /* if (enc_oc >= max_oc) {
@@ -169,7 +169,7 @@ namespace mars {
 
         KOKKOS_INLINE_FUNCTION
         void operator()(int k, int j, int i) const {
-            const Integer enc_oc = encode_sfc_3D<KeyType>(i, j, k);
+            const auto enc_oc = encode_sfc_3D<KeyType>(i, j, k);
             // set to true only those elements from the vector that are generated.
             assert(enc_oc < max_oc);
             /* if (enc_oc >= max_oc) {
@@ -181,8 +181,6 @@ namespace mars {
             predicate(enc_oc) = 1;
         }
     };
-
-    using unsigned_l = unsigned long;
 
     template <Integer Dim, Integer ManifoldDim, Integer Type, class KeyType>
     ViewVectorType<typename KeyType::ValueType> generate_elements_sfc(DMesh<Dim, ManifoldDim, Type, KeyType> &mesh) {
@@ -243,7 +241,7 @@ namespace mars {
                 assert(yDim != 0);
                 assert(zDim == 0);
 
-                const Integer max_oc = encode_sfc_2D<KeyType>(xDim, yDim);
+                const auto max_oc = encode_sfc_2D<KeyType>(xDim, yDim);
                 parallel_for(MDRangePolicy<Rank<2>>({0, 0}, {yDim, xDim}),
                              GenerateSFC<KeyType>(all_elements, max_oc, xDim, yDim));
                 break;
@@ -253,7 +251,7 @@ namespace mars {
                 assert(yDim != 0);
                 assert(zDim != 0);
 
-                const Integer max_oc = encode_sfc_3D<KeyType>(xDim, yDim, zDim);
+                const auto max_oc = encode_sfc_3D<KeyType>(xDim, yDim, zDim);
                 parallel_for(MDRangePolicy<Rank<3>>({0, 0, 0}, {zDim, yDim, xDim}),
                              GenerateSFC<KeyType>(all_elements, max_oc, xDim, yDim, zDim));
                 break;

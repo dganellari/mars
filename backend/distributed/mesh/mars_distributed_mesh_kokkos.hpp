@@ -349,14 +349,17 @@ namespace mars {
 
                 switch (Type) {
                     case ElementType::Quad4: {
-                        points(index, 0) = static_cast<Real>(decode_morton_2DX(gl_index)) / static_cast<Real>(xDim);
-                        points(index, 1) = static_cast<Real>(decode_morton_2DY(gl_index)) / static_cast<Real>(yDim);
+                        auto octant = decode_sfc_2D<SfcKeyType>(gl_index);
+
+                        points(index, 0) = static_cast<Real>(octant.x) / static_cast<Real>(xDim);
+                        points(index, 1) = static_cast<Real>(octant.y) / static_cast<Real>(yDim);
                         break;
                     }
                     case ElementType::Hex8: {
-                        points(index, 0) = static_cast<Real>(decode_morton_3DX(gl_index)) / static_cast<Real>(xDim);
-                        points(index, 1) = static_cast<Real>(decode_morton_3DY(gl_index)) / static_cast<Real>(yDim);
-                        points(index, 2) = static_cast<Real>(decode_morton_3DZ(gl_index)) / static_cast<Real>(zDim);
+                        auto octant = decode_sfc_3D<SfcKeyType>(gl_index);
+                        points(index, 0) = static_cast<Real>(octant.x) / static_cast<Real>(xDim);
+                        points(index, 1) = static_cast<Real>(octant.y) / static_cast<Real>(yDim);
+                        points(index, 2) = static_cast<Real>(octant.z) / static_cast<Real>(zDim);
                         break;
                     }
                 }
@@ -391,16 +394,15 @@ namespace mars {
                         // faster in parallel.
 
                         auto gl_index = global(i);
-                        assert(gl_index < encode_morton_2D(xDim + 1, yDim + 1));
+                        assert(gl_index < encode_sfc_2D<SfcKeyType>(xDim + 1, yDim + 1));
 
                         // gl_index defines one element by its corner node. Then we add all the other nodes for that
                         // element.
-                        const auto x = decode_morton_2DX(gl_index);
-                        const auto y = decode_morton_2DY(gl_index);
+                        auto octant = decode_sfc_2D<SfcKeyType>(gl_index);
                         predicate(gl_index) = 1;
-                        predicate(encode_morton_2D(x + 1, y)) = 1;
-                        predicate(encode_morton_2D(x, y + 1)) = 1;
-                        predicate(encode_morton_2D(x + 1, y + 1)) = 1;
+                        predicate(encode_sfc_2D<SfcKeyType>(octant.x + 1, octant.y)) = 1;
+                        predicate(encode_sfc_2D<SfcKeyType>(octant.x, octant.y + 1)) = 1;
+                        predicate(encode_sfc_2D<SfcKeyType>(octant.x + 1, octant.y + 1)) = 1;
                         break;
                     }
                     case ElementType::Hex8: {
@@ -410,23 +412,20 @@ namespace mars {
 
                         auto gl_index = global(i);
 
-                        assert(gl_index < encode_morton_3D(xDim + 1, yDim + 1, zDim + 1));
+                        assert(gl_index < encode_sfc_3D<SfcKeyType>(xDim + 1, yDim + 1, zDim + 1));
 
                         // gl_index defines one element by its corner node. Then we add all the other nodes for that
                         // element.
-                        const auto x = decode_morton_3DX(gl_index);
-                        const auto y = decode_morton_3DY(gl_index);
-                        const auto z = decode_morton_3DZ(gl_index);
-
+                        auto octant = decode_sfc_3D<SfcKeyType>(gl_index);
                         predicate(gl_index) = 1;
-                        predicate(encode_morton_3D(x + 1, y, z)) = 1;
-                        predicate(encode_morton_3D(x, y + 1, z)) = 1;
-                        predicate(encode_morton_3D(x + 1, y + 1, z)) = 1;
+                        predicate(encode_sfc_3D<SfcKeyType>(octant.x + 1, octant.y, octant.z)) = 1;
+                        predicate(encode_sfc_3D<SfcKeyType>(octant.x, octant.y + 1, octant.z)) = 1;
+                        predicate(encode_sfc_3D<SfcKeyType>(octant.x + 1, octant.y + 1, octant.z)) = 1;
 
-                        predicate(encode_morton_3D(x, y, z + 1)) = 1;
-                        predicate(encode_morton_3D(x + 1, y, z + 1)) = 1;
-                        predicate(encode_morton_3D(x, y + 1, z + 1)) = 1;
-                        predicate(encode_morton_3D(x + 1, y + 1, z + 1)) = 1;
+                        predicate(encode_sfc_3D<SfcKeyType>(octant.x, octant.y, octant.z + 1)) = 1;
+                        predicate(encode_sfc_3D<SfcKeyType>(octant.x + 1, octant.y, octant.z + 1)) = 1;
+                        predicate(encode_sfc_3D<SfcKeyType>(octant.x, octant.y + 1, octant.z + 1)) = 1;
+                        predicate(encode_sfc_3D<SfcKeyType>(octant.x + 1, octant.y + 1, octant.z + 1)) = 1;
                         break;
                     }
                 }
@@ -493,7 +492,7 @@ namespace mars {
 
                             ViewVectorType<KeyType> local_to_global;
 
-                            const auto allrange = encode_morton_2D(xDim + 1, yDim + 1);
+                            const auto allrange = encode_sfc_2D<SfcKeyType>(xDim + 1, yDim + 1);
 
                             const Integer nr_points = compact_elements<Type>(local_to_global, allrange);
 
@@ -515,10 +514,9 @@ namespace mars {
 
                                     const auto gl_index = local_to_global(i);
 
-                                    const auto x = decode_morton_2DX(gl_index);
-                                    const auto y = decode_morton_2DY(gl_index);
+                                    const auto octant = decode_sfc_2D<SfcKeyType>(gl_index);
 
-                                    global_to_local_map.insert(x + offset * y, i);
+                                    global_to_local_map.insert(octant.x + offset * octant.y, i);
                                 });
 
                             set_global_to_local_map(global_to_local_map);
@@ -538,7 +536,7 @@ namespace mars {
                             assert(zDim != 0);
 
                             ViewVectorType<KeyType> local_to_global;
-                            const auto allrange = encode_morton_3D(
+                            const auto allrange = encode_sfc_3D<SfcKeyType>(
                                 xDim + 1, yDim + 1, zDim + 1);  // TODO : check if enough. Test with xdim != ydim.
 
                             const Integer nr_points = compact_elements<Type>(local_to_global, allrange);
@@ -561,11 +559,9 @@ namespace mars {
                                 "local_global_map_for", nr_points, KOKKOS_LAMBDA(const int i) {
                                     const auto gl_index = local_to_global(i);
 
-                                    const auto x = decode_morton_3DX(gl_index);
-                                    const auto y = decode_morton_3DY(gl_index);
-                                    const auto z = decode_morton_3DZ(gl_index);
+                                    const auto octant = decode_sfc_3D<SfcKeyType>(gl_index);
 
-                                    global_to_local_map.insert(elem_index(x, y, z, xD, yD), i);
+                                    global_to_local_map.insert(elem_index(octant.x, octant.y, octant.z, xD, yD), i);
                                 });
 
                             set_global_to_local_map(global_to_local_map);
@@ -619,14 +615,12 @@ namespace mars {
                         const int offset = xDim + 1;
 
                         const auto gl_index = global(index);
+                        const auto octant = decode_sfc_2D<SfcKeyType>(gl_index);
 
-                        const auto i = decode_morton_2DX(gl_index);
-                        const auto j = decode_morton_2DY(gl_index);
-
-                        elem(index, 0) = map.value_at(map.find(i + offset * j));
-                        elem(index, 1) = map.value_at(map.find((i + 1) + offset * j));
-                        elem(index, 2) = map.value_at(map.find((i + 1) + offset * (j + 1)));
-                        elem(index, 3) = map.value_at(map.find(i + offset * (j + 1)));
+                        elem(index, 0) = map.value_at(map.find(octant.x + offset * octant.y));
+                        elem(index, 1) = map.value_at(map.find((octant.x + 1) + offset * octant.y));
+                        elem(index, 2) = map.value_at(map.find((octant.x + 1) + offset * (octant.y + 1)));
+                        elem(index, 3) = map.value_at(map.find(octant.x + offset * (octant.y + 1)));
 
                         active(index) = true;
                         break;
@@ -634,18 +628,23 @@ namespace mars {
                     case ElementType::Hex8: {
                         const auto gl_index = global(index);
 
-                        const auto i = decode_morton_3DX(gl_index);
-                        const auto j = decode_morton_3DY(gl_index);
-                        const auto k = decode_morton_3DZ(gl_index);
+                        const auto octant = decode_sfc_3D<SfcKeyType>(gl_index);
 
-                        elem(index, 0) = map.value_at(map.find(elem_index(i, j, k, xDim, yDim)));
-                        elem(index, 1) = map.value_at(map.find(elem_index(i + 1, j, k, xDim, yDim)));
-                        elem(index, 2) = map.value_at(map.find(elem_index(i + 1, j + 1, k, xDim, yDim)));
-                        elem(index, 3) = map.value_at(map.find(elem_index(i, j + 1, k, xDim, yDim)));
-                        elem(index, 4) = map.value_at(map.find(elem_index(i, j, k + 1, xDim, yDim)));
-                        elem(index, 5) = map.value_at(map.find(elem_index(i + 1, j, k + 1, xDim, yDim)));
-                        elem(index, 6) = map.value_at(map.find(elem_index(i + 1, j + 1, k + 1, xDim, yDim)));
-                        elem(index, 7) = map.value_at(map.find(elem_index(i, j + 1, k + 1, xDim, yDim)));
+                        elem(index, 0) = map.value_at(map.find(elem_index(octant.x, octant.y, octant.z, xDim, yDim)));
+                        elem(index, 1) =
+                            map.value_at(map.find(elem_index(octant.x + 1, octant.y, octant.z, xDim, yDim)));
+                        elem(index, 2) =
+                            map.value_at(map.find(elem_index(octant.x + 1, octant.y + 1, octant.z, xDim, yDim)));
+                        elem(index, 3) =
+                            map.value_at(map.find(elem_index(octant.x, octant.y + 1, octant.z, xDim, yDim)));
+                        elem(index, 4) =
+                            map.value_at(map.find(elem_index(octant.x, octant.y, octant.z + 1, xDim, yDim)));
+                        elem(index, 5) =
+                            map.value_at(map.find(elem_index(octant.x + 1, octant.y, octant.z + 1, xDim, yDim)));
+                        elem(index, 6) =
+                            map.value_at(map.find(elem_index(octant.x + 1, octant.y + 1, octant.z + 1, xDim, yDim)));
+                        elem(index, 7) =
+                            map.value_at(map.find(elem_index(octant.x, octant.y + 1, octant.z + 1, xDim, yDim)));
 
                         active(index) = true;
                         break;

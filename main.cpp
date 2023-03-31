@@ -144,6 +144,11 @@ int main(int argc, char *argv[]) {
             test_mars_distributed_vector_valued<ElementType::Hex8, 1, false>(xDim, yDim, zDim, block_size);
         };
 
+        apps["distributed_vector_valued_hilbert_3D"] = [=]() {
+            test_mars_distributed_vector_valued<ElementType::Hex8, 1, true, HilbertKey<Unsigned>>(
+                xDim, yDim, zDim, block_size);
+        };
+
         apps["distributed_vector_valued_3D"] = [=]() {
             test_mars_distributed_vector_valued<ElementType::Hex8>(xDim, yDim, zDim, block_size);
         };
