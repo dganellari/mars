@@ -18,6 +18,7 @@ namespace mars {
 
         using simplex_type = typename Mesh::Elem;
         /* using MM = MeshManager<Mesh>; */
+        using SfcKeyType = typename Mesh::SfcKeyType;
 
     public:
         template <Integer idx>
@@ -140,9 +141,10 @@ namespace mars {
                     const Integer r = find_owner_processor(scan_ghost, i, 1, proc);
 
                     double point[3];
-                    get_vertex_coordinates_from_sfc<simplex_type::ElemType>(ghost(i), point, xDim, yDim, zDim);
+                    get_vertex_coordinates_from_sfc<simplex_type::ElemType, SfcKeyType>(
+                        ghost(i), point, xDim, yDim, zDim);
 
-                    Octant o = get_octant_from_sfc<simplex_type::ElemType>(ghost(i));
+                    Octant o = get_octant_from_sfc<simplex_type::ElemType, SfcKeyType>(ghost(i));
                     printf(
                         "ghost data: %li - %li - %li - (%lf, %lf) - data: %lf - proc: "
                         "%li - rank: %i\n",

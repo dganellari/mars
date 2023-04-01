@@ -45,7 +45,7 @@ namespace mars {
         FEDofMap(DofHandler handler) : dof_handler(handler) {}
 
         static MARS_INLINE_FUNCTION Integer enumerate_volume(const DofHandler &handler, const Octant &o) {
-            Integer sfc = get_sfc_from_octant<ElemType>(o);
+            Integer sfc = handler.get_sfc_from_octant(o);
             Integer localid = handler.sfc_to_local(sfc);
             return localid;
         }
@@ -153,7 +153,7 @@ namespace mars {
 
             for (int j = 0; j < DofHandler::edge_dofs; j++) {
                 Integer dof_sfc = DofHandler::template process_edge_node<ElemType>(
-                    mars::get_sfc_from_octant<ElemType>, start, direction, j);
+                    mars::get_sfc_from_octant<T, typename DofHandler::SfcKeyType>, start, direction, j);
                 auto localid = dofHandler.sfc_to_local(dof_sfc);
                 f(index, localid);
             }
@@ -525,7 +525,7 @@ namespace mars {
                     Integer col_index = end;
                     for (int i = 0; i < end; ++i) {
                         const Integer sfc = dm.local_to_sfc(map(index, i));
-                        Octant oc = get_octant_from_sfc<ElemType>(sfc);
+                        Octant oc = dm.get_octant_from_sfc(sfc);
 
                         Integer face_nr;
                         for (int side = 0; side < 2; ++side) {
@@ -537,7 +537,7 @@ namespace mars {
                             Octant o = oc;
                             for (int w = 0; w < degree; ++w) {
                                 o = o.sfc_face_nbh<ElemType>(face_nr);
-                                const Integer nbh_sfc = get_sfc_from_octant<ElemType>(o);
+                                const Integer nbh_sfc = dm.get_sfc_from_octant(o);
                                 Integer nbh_id = dm.is_local(nbh_sfc) ? dm.sfc_to_local(nbh_sfc) : -1;
                                 map(index, col_index) = nbh_id;
                                 ++col_index;

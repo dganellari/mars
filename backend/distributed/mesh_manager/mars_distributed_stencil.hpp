@@ -102,7 +102,7 @@ namespace mars {
             set_value(stencil_index, 0, localid);
             const auto sfc = dm.local_to_sfc(localid);
 
-            Octant oc = get_octant_from_sfc<DM::simplex_type::ElemType>(sfc);
+            Octant oc = dm.get_octant_from_sfc(sfc);
 
             Integer face_nr;
             for (int dir = 0; dir < 2; ++dir) {
@@ -126,7 +126,7 @@ namespace mars {
                         /* const Integer nbh_sfc = dm.get_sfc_face_nbh(oc, face_nr); */
 
                         o = o.sfc_face_nbh<DM::simplex_type::ElemType>(face_nr);
-                        const auto nbh_sfc = get_sfc_from_octant<DM::simplex_type::ElemType>(o);
+                        const auto nbh_sfc = dm.get_sfc_from_octant(o);
                         Integer nbh_id = dm.is_local(nbh_sfc) ? dm.sfc_to_local(nbh_sfc) : -1;
                         Integer offset = w * 2 * Dim;
                         set_value(stencil_index, index + offset, nbh_id);
@@ -157,11 +157,11 @@ namespace mars {
                                                          const Integer orientation) const {
             const auto sfc = dm.local_to_sfc(localid);
 
-            Octant oc = get_octant_from_sfc<DM::simplex_type::ElemType>(sfc);
+            Octant oc = dm.get_octant_from_sfc(sfc);
 
             for (int corner = power_of_2(DM::ManifoldDim) - 1; corner != -1; --corner) {
                 Octant o = oc.sfc_corner_nbh<DM::simplex_type::ElemType>(corner);
-                const Integer nbh_sfc = get_sfc_from_octant<DM::simplex_type::ElemType>(o);
+                const Integer nbh_sfc = dm.get_sfc_from_octant(o);
                 Integer nbh_id = dm.is_local(nbh_sfc) ? dm.sfc_to_local(nbh_sfc) : -1;
                 set_face_value(stencil_index, corner, nbh_id);
             }
@@ -226,7 +226,7 @@ namespace mars {
                                                             const Integer orientation) const {
             const auto sfc = dm.local_to_sfc(localid);
 
-            Octant oc = get_octant_from_sfc<DM::simplex_type::ElemType>(sfc);
+            Octant oc = dm.get_octant_from_sfc(sfc);
 
             for (int corner = power_of_2(DM::ManifoldDim) - 1; corner != -1; --corner) {
                 Octant co = oc.sfc_corner_nbh<DM::simplex_type::ElemType>(corner);
@@ -247,7 +247,7 @@ namespace mars {
 
                 // after locating the corner octant co, use it to find the stokes corner.
                 Octant o = co.sfc_face_nbh<DM::simplex_type::ElemType>(face_nr);
-                const auto nbh_sfc = get_sfc_from_octant<DM::simplex_type::ElemType>(o);
+                const auto nbh_sfc = dm.get_sfc_from_octant(o);
                 Integer nbh_id = dm.is_local(nbh_sfc) ? dm.sfc_to_local(nbh_sfc) : -1;
                 set_corner_value(stencil_index, corner, nbh_id);
             }

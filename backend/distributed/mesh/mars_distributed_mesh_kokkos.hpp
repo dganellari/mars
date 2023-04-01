@@ -33,8 +33,8 @@
 
 namespace mars {
 
-    template <Integer Dim_, Integer ManifoldDim_, class Simplex_, class SfcKeyType>
-    class Mesh<Dim_, ManifoldDim_, DistributedImplementation, Simplex_, SfcKeyType> : public ParallelIMesh<Dim_> {
+    template <Integer Dim_, Integer ManifoldDim_, class Simplex_, class SfcKey>
+    class Mesh<Dim_, ManifoldDim_, DistributedImplementation, Simplex_, SfcKey> : public ParallelIMesh<Dim_> {
     public:
         static constexpr Integer Dim = Dim_;
         static constexpr Integer ManifoldDim = ManifoldDim_;
@@ -43,7 +43,8 @@ namespace mars {
         using Point = mars::Point<Real, Dim>;
         using Comb = Combinations<ManifoldDim + 1, 2, DistributedImplementation>;
 
-        using KeyType = typename SfcKeyType::ValueType;
+        using KeyType = typename SfcKey::ValueType;
+        using SfcKeyType = SfcKey;
 
         /* MARS_INLINE_FUNCTION Mesh()
             : ParallelIMesh<Dim_>(),
@@ -722,7 +723,7 @@ namespace mars {
 
             MARS_INLINE_FUNCTION
             void increment(const Octant &o) const {
-                auto enc_oc = get_sfc_from_octant<Type>(o);
+                auto enc_oc = get_sfc_from_octant<Type, SfcKeyType>(o);
 
                 assert(find_owner_processor(gp, enc_oc, 2, proc) >= 0);
                 Integer owner_proc = find_owner_processor(gp, enc_oc, 2, proc);
@@ -737,7 +738,7 @@ namespace mars {
             MARS_INLINE_FUNCTION
             void operator()(int index) const {
                 const auto gl_index = global(index);
-                Octant ref_octant = get_octant_from_sfc<Type>(gl_index);
+                Octant ref_octant = get_octant_from_sfc<Type, SfcKeyType>(gl_index);
 
                 const int offset = xDim + 1;
 
@@ -807,7 +808,7 @@ namespace mars {
 
             MARS_INLINE_FUNCTION
             void scatter(const Octant &o, const Integer ref) const {
-                auto enc_oc = get_sfc_from_octant<Type>(o);
+                auto enc_oc = get_sfc_from_octant<Type, SfcKeyType>(o);
 
                 assert(find_owner_processor(gp, enc_oc, 2, proc) >= 0);
                 Integer owner_proc = find_owner_processor(gp, enc_oc, 2, proc);
@@ -824,7 +825,7 @@ namespace mars {
             MARS_INLINE_FUNCTION
             void operator()(int index) const {
                 const auto gl_index = global(index);
-                Octant ref_octant = get_octant_from_sfc<Type>(gl_index);
+                Octant ref_octant = get_octant_from_sfc<Type, SfcKeyType>(gl_index);
 
                 const int offset = xDim + 1;
                 for (int face = 0; face < 2 * ManifoldDim; ++face) {
@@ -913,7 +914,7 @@ namespace mars {
 
             MARS_INLINE_FUNCTION
             void setPredicate(const int index, const Octant &o) const {
-                auto enc_oc = get_sfc_from_octant<Type>(o);
+                auto enc_oc = get_sfc_from_octant<Type, SfcKeyType>(o);
 
                 assert(find_owner_processor(gp, enc_oc, 2, proc) >= 0);
                 Integer owner_proc = find_owner_processor(gp, enc_oc, 2, proc);
@@ -1198,7 +1199,7 @@ namespace mars {
                     Integer index;
 
                     if (nbh_oc.is_valid()) {
-                        Integer enc_oc = get_sfc_from_octant<simplex_type::ElemType>(nbh_oc);
+                        Integer enc_oc = get_sfc_from_octant<simplex_type::ElemType, SfcKeyType>(nbh_oc);
 
                         Integer owner_proc = find_owner_processor(mesh.get_view_gp(), enc_oc, 2, proc);
                         assert(owner_proc >= 0);
@@ -1273,8 +1274,6 @@ namespace mars {
 
             MARS_INLINE_FUNCTION
             void operator()(const Integer i) const {
-                /* const Integer oc = mesh.get_view_sfc()(i);
-          Octant ref_octant = get_octant_from_sfc<simplex_type::ElemType>(oc); */
                 iterate<0>(i);
                 iterate<1>(i);
                 // TODO: 3D part
@@ -1317,9 +1316,9 @@ namespace mars {
                 "print set", get_chunk_size(), KOKKOS_LAMBDA(const Integer i) {
                     const Integer sfc = sfcv(i);
                     double point[3];
-                    get_vertex_coordinates_from_sfc<Elem::ElemType>(sfc, point, xDim, yDim, zDim);
+                    get_vertex_coordinates_from_sfc<Elem::ElemType, SfcKeyType>(sfc, point, xDim, yDim, zDim);
 
-                    Octant o = get_octant_from_sfc<Elem::ElemType>(sfc);
+                    Octant o = get_octant_from_sfc<Elem::ElemType, SfcKeyType>(sfc);
                     printf("mesh sfc : %li - %li - %li - (%lf, %lf, %lf) -rank: %i\n",
                            i,
                            sfc,
@@ -1360,7 +1359,7 @@ namespace mars {
         MARS_INLINE_FUNCTION
         Octant get_ghost_octant(const Integer index) const {
             const KeyType sfc_code = ghost_(index);
-            return get_octant_from_sfc<Elem::ElemType>(sfc_code);
+            return get_octant_from_sfc<Elem::ElemType, SfcKeyType>(sfc_code);
         }
 
         MARS_INLINE_FUNCTION
@@ -1369,11 +1368,11 @@ namespace mars {
         MARS_INLINE_FUNCTION
         Octant get_octant(const Integer sfc_index) const {
             const KeyType sfc_code = local_sfc_(sfc_index);
-            return get_octant_from_sfc<Elem::ElemType>(sfc_code);
+            return get_octant_from_sfc<Elem::ElemType, SfcKeyType>(sfc_code);
         }
 
         MARS_INLINE_FUNCTION
-        Octant octant_from_sfc(const KeyType sfc) const { return get_octant_from_sfc<Elem::ElemType>(sfc); }
+        Octant octant_from_sfc(const KeyType sfc) const { return get_octant_from_sfc<Elem::ElemType, SfcKeyType>(sfc); }
 
         MARS_INLINE_FUNCTION
         Octant get_octant_face_nbh(const Octant &oc, const Integer face_nr) const {

@@ -16,6 +16,7 @@ namespace mars {
 
         using Mesh = typename DofHandler::Mesh;
         using KeyType = typename Mesh::KeyType;
+        using SfcKeyType = typename Mesh::SfcKeyType;
 
         static constexpr Integer Degree = DofHandler::Degree;
         static constexpr Integer Block = DofHandler::Block;
@@ -570,12 +571,12 @@ namespace mars {
         get_dof_handler().local_to_owned_dof(local); }
  */
         MARS_INLINE_FUNCTION
-        const SFC<simplex_type::ElemType> &get_global_dof_enum() const {
+        const SFC<simplex_type::ElemType, SfcKeyType> &get_global_dof_enum() const {
             return get_dof_handler().get_global_dof_enum();
         }
 
         MARS_INLINE_FUNCTION
-        const SFC<simplex_type::ElemType> &get_local_dof_enum() const { return get_dof_handler().get_local_dof_enum(); }
+        const SFC<simplex_type::ElemType, SfcKeyType> &get_local_dof_enum() const { return get_dof_handler().get_local_dof_enum(); }
 
         MARS_INLINE_FUNCTION
         KeyType local_to_sfc(const Integer local) const { return get_local_dof_enum().get_view_elements()(local); }

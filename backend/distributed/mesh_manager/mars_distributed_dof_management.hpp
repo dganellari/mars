@@ -86,7 +86,8 @@ namespace mars {
     public:
         using Mesh = Mesh_;
         using KeyType = typename Mesh::KeyType;
-        /* using SfcKeyType = typename Mesh::SfcKeyType; */
+        using SfcKeyType = typename Mesh::SfcKeyType;
+
         using simplex_type = typename Mesh::Elem;
 
         static constexpr Integer ElemType = simplex_type::ElemType;
@@ -202,7 +203,7 @@ namespace mars {
             // convert the octant value into the new nodal sfc system
             o.x *= degree;
             o.y *= degree;
-            auto sfc = mars::get_sfc_from_octant<Type>(o);
+            auto sfc = get_sfc_from_octant(o);
 
             return sfc_to_local(sfc);
         }
@@ -221,7 +222,7 @@ namespace mars {
             o.x *= degree;
             o.y *= degree;
             o.z *= degree;
-            auto sfc = mars::get_sfc_from_octant<Type>(o);
+            auto sfc = get_sfc_from_octant(o);
 
             return sfc_to_local(sfc);
         }
@@ -275,7 +276,7 @@ namespace mars {
                 o.x = degree * face_cornerA.x + sign * (j + 1);
                 o.y = degree * face_cornerA.y;
             }
-            auto sfc = mars::get_sfc_from_octant<Type>(o);
+            auto sfc = mars::get_sfc_from_octant<Type, SfcKeyType>(o);
 
             return sfc;
         }
@@ -283,7 +284,7 @@ namespace mars {
         template <Integer part, Integer Type>
         static MARS_INLINE_FUNCTION std::enable_if_t<Type == ElementType::Hex8, Integer>
         sfc_face_node(const Octant &face_cornerA, const int j, const int dir) {
-            return build_face_node<Type, part>(mars::get_sfc_from_octant<Type>, face_cornerA, j);
+            return build_face_node<Type, part>(mars::get_sfc_from_octant<Type, SfcKeyType>, face_cornerA, j);
         }
 
         template <Integer part, Integer Type>
@@ -342,7 +343,7 @@ namespace mars {
 
             // find owner proc method returns an invalid result with invalid octant.
             if (nbh_oc.is_valid()) {
-                Integer enc_oc = mars::get_sfc_from_octant<Type>(nbh_oc);
+                Integer enc_oc = mars::get_sfc_from_octant<Type, SfcKeyType>(nbh_oc);
                 owner_proc = find_owner_processor(mesh.get_view_gp(), enc_oc, 2, mesh.get_proc());
             }
 
@@ -390,7 +391,7 @@ namespace mars {
 
         template <Integer Type, Integer dir>
         static MARS_INLINE_FUNCTION Integer process_face_node(const Octant &face_cornerA, const int j) {
-            return build_face_node<Type, dir>(mars::get_sfc_from_octant<Type>, face_cornerA, j);
+            return build_face_node<Type, dir>(mars::get_sfc_from_octant<Type, SfcKeyType>, face_cornerA, j);
         }
 
         template <bool Ghost, Integer Label = DofLabel::lAll>
@@ -501,7 +502,7 @@ namespace mars {
             void operator()(const Octant &nbh_oc) const {
                 // find owner proc method returns an invalid result with invalid octant.
                 if (nbh_oc.is_valid()) {
-                    Integer enc_oc = mars::get_sfc_from_octant<ElemType>(nbh_oc);
+                    Integer enc_oc = mars::get_sfc_from_octant<ElemType, SfcKeyType>(nbh_oc);
                     Integer owner_proc = find_owner_processor(gp, enc_oc, 2, proc);
                     if (owner_proc > max_proc) {
                         max_proc = owner_proc;
@@ -527,7 +528,7 @@ namespace mars {
 
                 for (int j = 0; j < edge_dofs; j++) {
                     Integer dof_sfc =
-                        process_edge_node<ElemType>(mars::get_sfc_from_octant<ElemType>, start, direction, j);
+                        process_edge_node<ElemType>(mars::get_sfc_from_octant<ElemType, SfcKeyType>, start, direction, j);
                     f(mesh, i, dof_sfc, max_proc, direction);
                 }
             }
@@ -659,7 +660,7 @@ namespace mars {
                     const Integer rank = find_owner_processor(scan_boundary, i, 1, proc);
 
                     printf("i:%li - boundary_ : %i - %li (%li) - proc: %li - rank: %li\n", i, boundary_dofs_sfc(i),
-               boundary_lsfc_index(i), get_octant_from_sfc<simplex_type::ElemType>(boundary_dofs_sfc(i)).template
+               boundary_lsfc_index(i), get_octant_from_sfc<simplex_type::ElemType, SfcKeyType>(boundary_dofs_sfc(i)).template
                get_global_index<simplex_type::ElemType>(xDim, yDim), rank, proc);
                 }); */
         }
@@ -694,7 +695,7 @@ namespace mars {
 
             for (int k = 0; k < Type; k++) {
                 if (one_ring[k].is_valid()) {
-                    auto enc_oc = mars::get_sfc_from_octant<Type>(one_ring[k]);
+                    auto enc_oc = mars::get_sfc_from_octant<Type, SfcKeyType>(one_ring[k]);
                     /* check the proc that owns the corner and then decide on the predicate.
                         This works because the corner defines an element and this element is
                         always on the largest proc number due to the z order partitioning*/
@@ -734,7 +735,7 @@ namespace mars {
                     // convert the octant value into the new nodal sfc system
                     o.x *= degree;
                     o.y *= degree;
-                    auto dof_sfc = mars::get_sfc_from_octant<ElemType>(o);
+                    auto dof_sfc = mars::get_sfc_from_octant<ElemType, SfcKeyType>(o);
 
                     f(mesh, index, dof_sfc, max_proc);
                 }
@@ -763,7 +764,7 @@ namespace mars {
                         o.x *= degree;
                         o.y *= degree;
                         o.z *= degree;
-                        auto dof_sfc = mars::get_sfc_from_octant<ElemType>(o);
+                        auto dof_sfc = mars::get_sfc_from_octant<ElemType, SfcKeyType>(o);
 
                         f(mesh, index, dof_sfc, max_proc);
                     }
@@ -857,7 +858,7 @@ namespace mars {
         template <typename F, Integer ET = ElemType>
         static MARS_INLINE_FUNCTION void volume_iterate(const KeyType sfc, const Mesh mesh, const Integer index, F f) {
             Octant oc = mesh.octant_from_sfc(sfc);
-            volume_octant_transform(oc, mesh, index, f, mars::get_sfc_from_octant<ElemType>);
+            volume_octant_transform(oc, mesh, index, f, mars::get_sfc_from_octant<ElemType, SfcKeyType>);
         }
 
         template <typename F, typename G, Integer ET = ElemType>
@@ -1061,7 +1062,7 @@ namespace mars {
         void print_dofs(const int rank = 0) {
             auto handler = *this;
 
-            SFC<ElemType> gdof = get_global_dof_enum();
+            SFC<ElemType, SfcKeyType> gdof = get_global_dof_enum();
             Kokkos::parallel_for(
                 "for", gdof.get_elem_size(), MARS_LAMBDA(const int i) {
                     const auto sfc_elem = handler.owned_to_sfc(i);
@@ -1087,7 +1088,7 @@ namespace mars {
                            global_dof.get_proc());
                 });
 
-            /* SFC<ElemType> dof = get_local_dof_enum();
+            /* SFC<ElemType, SfcKeyType> dof = get_local_dof_enum();
             Kokkos::parallel_for(
                 "for", dof.get_elem_size(), MARS_CLASS_LAMBDA(const int i) {
                     const Integer sfc_elem = local_to_sfc(i);
@@ -1116,8 +1117,8 @@ namespace mars {
 
             /* TODO: xdim and ydim should be changed to max xdim and ydim
              * of the local partition to reduce memory footprint */
-            local_dof_enum = SFC<simplex_type::ElemType>(degree * xDim, degree * yDim, degree * zDim);
-            global_dof_enum = SFC<simplex_type::ElemType>(degree * xDim, degree * yDim, degree * zDim);
+            local_dof_enum = SFC<simplex_type::ElemType, SfcKeyType>(degree * xDim, degree * yDim, degree * zDim);
+            global_dof_enum = SFC<simplex_type::ElemType, SfcKeyType>(degree * xDim, degree * yDim, degree * zDim);
 
             ViewVectorType<bool> local_predicate("lpred", local_dof_enum.get_all_range());
             ViewVectorType<bool> global_predicate("gpred", global_dof_enum.get_all_range());
@@ -1149,14 +1150,14 @@ namespace mars {
             incl_excl_scan(0, rank_size, global_dof_size_per_rank, global_dof_offset);
         }
 
-        void build_sfc_from_predicate(SFC<ElemType> &sfc_enum, const ViewVectorType<bool> &predicate) {
+        void build_sfc_from_predicate(SFC<ElemType, SfcKeyType> &sfc_enum, const ViewVectorType<bool> &predicate) {
             ViewVectorType<Integer> sfc_to_local("sfc_to_local dof handler", sfc_enum.get_all_range());
             sfc_enum.compact_elements(sfc_to_local, predicate);
             sfc_enum.generate_sfc_to_local_map();
         }
 
         // Memory efficient implementation but poor performance due to the segmented scan.
-        /* void build_sfc_from_predicate(SFC<ElemType> &sfc_enum,
+        /* void build_sfc_from_predicate(SFC<ElemType, SfcKeyType> &sfc_enum,
                                       const ViewVectorType<bool> &predicate,
                                       const ViewVectorType<Integer> &label) {
             auto all_range = sfc_enum.get_all_range();
@@ -1365,12 +1366,12 @@ namespace mars {
         // generic local predicate functor to be used for edge, face and corners. The volume is specialized.
         template <bool Ghost, Integer Label>
         struct LocalGlobalLabel {
-            SFC<ElemType> local_enum;
-            SFC<ElemType> global_enum;
+            SFC<ElemType, SfcKeyType> local_enum;
+            SFC<ElemType, SfcKeyType> global_enum;
             Integer proc;
 
             MARS_INLINE_FUNCTION
-            LocalGlobalLabel(SFC<ElemType> le, SFC<ElemType> ge, Integer p)
+            LocalGlobalLabel(SFC<ElemType, SfcKeyType> le, SFC<ElemType, SfcKeyType> ge, Integer p)
                 : local_enum(le), global_enum(ge), proc(p) {}
 
             MARS_INLINE_FUNCTION
@@ -1413,11 +1414,11 @@ namespace mars {
 
         template <bool Ghost>
         struct LocalGlobalLabel<Ghost, DofLabel::lVolume> {
-            SFC<ElemType> local_enum;
-            SFC<ElemType> global_enum;
+            SFC<ElemType, SfcKeyType> local_enum;
+            SFC<ElemType, SfcKeyType> global_enum;
 
             MARS_INLINE_FUNCTION
-            LocalGlobalLabel(SFC<ElemType> le, SFC<ElemType> ge) : local_enum(le), global_enum(ge) {}
+            LocalGlobalLabel(SFC<ElemType, SfcKeyType> le, SFC<ElemType, SfcKeyType> ge) : local_enum(le), global_enum(ge) {}
 
             MARS_INLINE_FUNCTION
             void volume_label(const KeyType sfc, std::true_type) const {
@@ -1443,12 +1444,12 @@ namespace mars {
         struct BuildLocalGlobalLabel {
 
             MARS_INLINE_FUNCTION
-            BuildLocalGlobalLabel(Mesh m, SFC<ElemType> le, SFC<ElemType> ge)
+            BuildLocalGlobalLabel(Mesh m, SFC<ElemType, SfcKeyType> le, SFC<ElemType, SfcKeyType> ge)
                 : mesh(m), local_enum(le), global_enum(ge) {}
 
             Mesh mesh;
-            SFC<ElemType> local_enum;
-            SFC<ElemType> global_enum;
+            SFC<ElemType, SfcKeyType> local_enum;
+            SFC<ElemType, SfcKeyType> global_enum;
 
             MARS_INLINE_FUNCTION
             void operator()(const Integer i) const {
@@ -1804,11 +1805,11 @@ namespace mars {
 
         template <Integer Type>
         MARS_INLINE_FUNCTION void get_dof_coordinates_from_sfc(const KeyType sfc, double *point) const {
-            get_vertex_coordinates_from_sfc<Type>(sfc,
-                                                  point,
-                                                  get_local_dof_enum().get_XDim(),
-                                                  get_local_dof_enum().get_YDim(),
-                                                  get_local_dof_enum().get_ZDim());
+            get_vertex_coordinates_from_sfc<Type, SfcKeyType>(sfc,
+                                                              point,
+                                                              get_local_dof_enum().get_XDim(),
+                                                              get_local_dof_enum().get_YDim(),
+                                                              get_local_dof_enum().get_ZDim());
         }
 
         template <Integer Type, Integer B = Block_>
@@ -1832,7 +1833,7 @@ namespace mars {
             const Integer ydim = get_local_dof_enum().get_YDim();
             const Integer zdim = get_local_dof_enum().get_ZDim();
 
-            return is_boundary_sfc<Type>(sfc, xdim, ydim, zdim, FaceNr);
+            return is_boundary_sfc<Type, SfcKeyType>(sfc, xdim, ydim, zdim, FaceNr);
         }
 
         template <Integer Type, Integer B = Block_>
@@ -1915,10 +1916,10 @@ namespace mars {
         }
 
         MARS_INLINE_FUNCTION
-        const SFC<simplex_type::ElemType> &get_local_dof_enum() const { return local_dof_enum; }
+        const SFC<simplex_type::ElemType, SfcKeyType> &get_local_dof_enum() const { return local_dof_enum; }
 
         MARS_INLINE_FUNCTION
-        const SFC<simplex_type::ElemType> &get_global_dof_enum() const { return global_dof_enum; }
+        const SFC<simplex_type::ElemType, SfcKeyType> &get_global_dof_enum() const { return global_dof_enum; }
 
         MARS_INLINE_FUNCTION
         Integer get_global_dof_offset(const Integer proc) const { return global_dof_offset(proc); }
@@ -2046,11 +2047,11 @@ namespace mars {
         }
 
         MARS_INLINE_FUNCTION Octant get_octant_from_sfc(const KeyType sfc) const {
-            return mars::get_octant_from_sfc<ElemType>(sfc);
+            return mars::get_octant_from_sfc<ElemType, SfcKeyType>(sfc);
         }
 
         MARS_INLINE_FUNCTION KeyType get_sfc_from_octant(const Octant &o) const {
-            return mars::get_sfc_from_octant<ElemType>(o);
+            return mars::get_sfc_from_octant<ElemType, SfcKeyType>(o);
         }
 
         /* MARS_INLINE_FUNCTION Integer get_global_from_octant(const Octant &o) const {
@@ -2117,9 +2118,9 @@ namespace mars {
         Mesh mesh;
 
         // local dof enumeration containing the local to sfc and sfc to local views.
-        SFC<simplex_type::ElemType> local_dof_enum;
+        SFC<simplex_type::ElemType, SfcKeyType> local_dof_enum;
         // locally owned dof enumeration containing the global to sfc and sfc to global views.
-        SFC<simplex_type::ElemType> global_dof_enum;
+        SFC<simplex_type::ElemType, SfcKeyType> global_dof_enum;
         // global offset used to calc the global numbering of the dofs.
         ViewVectorType<Integer> global_dof_offset;
 
