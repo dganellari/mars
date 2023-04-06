@@ -2000,7 +2000,7 @@ namespace mars {
         Mesh get_mesh() const { return mesh; }
 
         MARS_INLINE_FUNCTION
-        const Integer get_proc() const { return get_mesh().get_proc(); }
+        Integer get_proc() const { return get_mesh().get_proc(); }
 
         MARS_INLINE_FUNCTION
         const ViewVectorType<Integer> &get_view_scan_recv() const { return scan_recv; }
@@ -2076,13 +2076,13 @@ namespace mars {
         }
 
         MARS_INLINE_FUNCTION
-        const Integer get_XMax() const { return Degree * get_mesh().get_XDim(); }
+        Integer get_XMax() const { return Degree * get_mesh().get_XDim(); }
 
         MARS_INLINE_FUNCTION
-        const Integer get_YMax() const { return Degree * get_mesh().get_YDim(); }
+        Integer get_YMax() const { return Degree * get_mesh().get_YDim(); }
 
         MARS_INLINE_FUNCTION
-        const Integer get_ZMax() const { return Degree * get_mesh().get_ZDim(); }
+        Integer get_ZMax() const { return Degree * get_mesh().get_ZDim(); }
 
         MARS_INLINE_FUNCTION
         void set_block(const Integer b) {

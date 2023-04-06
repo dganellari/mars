@@ -24,7 +24,7 @@ namespace mars {
         template <Integer idx>
         using UserDataType = typename std::tuple_element<idx, tuple>::type;
 
-        MARS_INLINE_FUNCTION UserData(Mesh m) : mesh(m) {
+        UserData(Mesh m) : mesh(m) {
             const Integer size = get_mesh().get_chunk_size();
             reserve_user_data(user_data_, "user_data", size);
         }

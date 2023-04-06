@@ -101,11 +101,11 @@ namespace mars {
         assert(px < (1u << maxTreeLevel<KeyType>{}));
         assert(py < (1u << maxTreeLevel<KeyType>{}));
 
-        unsigned i, xi, yi;
+        unsigned xi, yi;
         Unsigned temp;
         KeyType s = 0;
 
-        for (i = maxTreeLevel<KeyType>{} - 1; i >= 0; i--) {
+        for (int i = maxTreeLevel<KeyType>{} - 1; i >= 0; i--) {
             xi = (x >> i) & 1;  // Get bit i of x.
             yi = (y >> i) & 1;  // Get bit i of y.
 

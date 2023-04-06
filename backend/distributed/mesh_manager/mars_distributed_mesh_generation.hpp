@@ -141,8 +141,10 @@ namespace mars {
             });
     }
 
-    template<class KeyType>
+    template<class SfcKeyType>
     struct GenerateSFC {
+        using KeyType = typename SfcKeyType::ValueType;
+
         ViewVectorType<bool> predicate;
         KeyType max_oc;
         Integer xDim;
@@ -155,7 +157,7 @@ namespace mars {
             : predicate(el), max_oc(m), xDim(xdm), yDim(ydm), zDim(zdm) {}
         KOKKOS_INLINE_FUNCTION
         void operator()(int j, int i) const {
-            const auto enc_oc = encode_sfc_2D<KeyType>(i, j);
+            const auto enc_oc = encode_sfc_2D<SfcKeyType>(i, j);
             // set to true only those elements from the vector that are generated.
             assert(enc_oc < max_oc);
             /* if (enc_oc >= max_oc) {
@@ -169,7 +171,7 @@ namespace mars {
 
         KOKKOS_INLINE_FUNCTION
         void operator()(int k, int j, int i) const {
-            const auto enc_oc = encode_sfc_3D<KeyType>(i, j, k);
+            const auto enc_oc = encode_sfc_3D<SfcKeyType>(i, j, k);
             // set to true only those elements from the vector that are generated.
             assert(enc_oc < max_oc);
             /* if (enc_oc >= max_oc) {

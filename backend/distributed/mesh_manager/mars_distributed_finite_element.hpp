@@ -696,22 +696,22 @@ namespace mars {
         }
 
         MARS_INLINE_FUNCTION
-        const Integer get_fe_dof_map_size() const { return elem_dof_enum.extent(0); }
+        Integer get_fe_dof_map_size() const { return elem_dof_enum.extent(0); }
 
         MARS_INLINE_FUNCTION
-        const Integer get_fe_size() const { return elem_dof_enum.extent(1); }
+        Integer get_fe_size() const { return elem_dof_enum.extent(1); }
 
         MARS_INLINE_FUNCTION
-        const Integer get_owned_dof_elements_size() const { return owned_size; }
+        Integer get_owned_dof_elements_size() const { return owned_size; }
 
         MARS_INLINE_FUNCTION
-        const Integer get_ghost_dof_elements_size() const {
+        Integer get_ghost_dof_elements_size() const {
             const Integer size = get_fe_dof_map_size();
             return size - owned_size;
         }
 
         MARS_INLINE_FUNCTION
-        const Integer get_non_owned_dof_elements_size() const { return non_owned_size; }
+        Integer get_non_owned_dof_elements_size() const { return non_owned_size; }
 
         /* const Integer get_dof_to_dof_map_size() const { return dof_to_dof_map.extent(0); } */
         /* const Integer get_nbh_dof_size() const { return dof_to_dof_map.extent(1); } */

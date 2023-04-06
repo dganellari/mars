@@ -581,7 +581,7 @@ namespace mars {
         }
 
         MARS_INLINE_FUNCTION
-        const Integer get_nnz() const { return get_sparsity_pattern().entries.extent(0); }
+        Integer get_nnz() const { return get_sparsity_pattern().entries.extent(0); }
 
         MARS_INLINE_FUNCTION
         const SHandler &get_dof_handler() const { return dof_handler; }

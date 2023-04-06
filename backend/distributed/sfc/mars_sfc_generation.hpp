@@ -6,7 +6,7 @@
 namespace mars {
 
     template <Integer Type, class KeyType = MortonKey<Unsigned>>
-    MARS_INLINE_FUNCTION typename KeyType::ValueType compute_all_range(const unsigned x, const unsigned y, const unsigned z) {
+    MARS_INLINE_FUNCTION Integer compute_all_range(const unsigned x, const unsigned y, const unsigned z) {
         switch (Type) {
             case ElementType::Quad4: {
                 return encode_sfc_2D<KeyType>(x + 1, y + 1);
@@ -141,7 +141,7 @@ namespace mars {
         void set_elem_size(const Integer size) { elements_size_ = size; }
 
         MARS_INLINE_FUNCTION
-        const Integer get_elem_size() const { return elements_size_; }
+        Integer get_elem_size() const { return elements_size_; }
 
         MARS_INLINE_FUNCTION
         const KeyType get_all_range() const { return all_range_; }
