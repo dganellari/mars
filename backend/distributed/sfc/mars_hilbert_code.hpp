@@ -98,8 +98,8 @@ namespace mars {
     template <typename KeyType = Unsigned>
     MARS_INLINE_FUNCTION std::enable_if_t<std::is_unsigned_v<KeyType>, KeyType> encode_hilbert_2D(unsigned x,
                                                                                                   unsigned y) noexcept {
-        assert(px < (1u << maxTreeLevel<KeyType>{}));
-        assert(py < (1u << maxTreeLevel<KeyType>{}));
+        assert(x < (1u << maxTreeLevel<KeyType>{}));
+        assert(y < (1u << maxTreeLevel<KeyType>{}));
 
         unsigned xi, yi;
         Unsigned temp;

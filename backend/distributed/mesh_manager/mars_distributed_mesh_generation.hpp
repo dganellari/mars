@@ -335,7 +335,7 @@ namespace mars {
         auto GpNp_host = scan_count(GpNp, counts, size);
         mesh.set_view_gp(GpNp);
 
-        SFC<Type> morton(mesh.get_XDim(), mesh.get_YDim(), mesh.get_ZDim());
+        SFC<Type, KeyType> morton(mesh.get_XDim(), mesh.get_YDim(), mesh.get_ZDim());
         morton.reserve_elements(mesh.get_chunk_size());
 
         ViewVectorType<Integer> first_sfc("first_sfc_per_rank", size);
@@ -388,7 +388,9 @@ namespace mars {
 
         const context &context = mesh.get_context();
 
-        int proc_num = rank(context); mesh.set_XDim(xDim); mesh.set_YDim(yDim);
+        int proc_num = rank(context);
+        mesh.set_XDim(xDim);
+        mesh.set_YDim(yDim);
         mesh.set_ZDim(zDim);
 
         // partition the mesh and then generate the points and elements.

@@ -919,7 +919,7 @@ namespace mars {
                 assert(find_owner_processor(gp, enc_oc, 2, proc) >= 0);
                 Integer owner_proc = find_owner_processor(gp, enc_oc, 2, proc);
 
-                // printf("Proc: %li, %li\n", proc, owner_proc);
+                /* printf("Proc: %li, %li, %li\n", proc, owner_proc, index); */
                 // the case when the neihgbor is a ghost element.
                 if (proc != owner_proc) {
                     predicate(index, owner_proc) = 1;
