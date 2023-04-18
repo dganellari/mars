@@ -99,12 +99,18 @@ namespace mars {
     }
 
     template <typename VW, typename V>
-    inline void build_first_sfc(const VW &elem_sfc, const V &first_sfc, const V &gp_np) {
-        auto size = first_sfc.extent(0);
+    inline void build_first_sfc(const VW &elem_sfc, const V &gp_np) {
+        auto size = gp_np.extent(0) / 2;
         Kokkos::parallel_for(
             size, KOKKOS_LAMBDA(const Integer i) {
-                const Integer index = gp_np(2 * i + 1);
-                first_sfc(i) = elem_sfc(index);
+                auto index = gp_np(2 * i + 1);
+                // The last index is the total size of the sfc vector
+                int inc = 0;
+                if (i == size - 1) {
+                    --index;
+                    ++inc;
+                }
+                gp_np(2 * i) = elem_sfc(index) + inc;
             });
     }
 
@@ -338,18 +344,18 @@ namespace mars {
         SFC<Type, KeyType> morton(mesh.get_XDim(), mesh.get_YDim(), mesh.get_ZDim());
         morton.reserve_elements(mesh.get_chunk_size());
 
-        ViewVectorType<Integer> first_sfc("first_sfc_per_rank", size);
         Timer time;
 #ifdef MARS_ENABLE_CUDA
         // Classical method using the radix sort.
         auto elem_sfc = generate_elements_sfc(mesh);
         auto sorted_elem_sfc = buffer_cub_radix_sort(elem_sfc);
+        build_first_sfc(sorted_elem_sfc, mesh.get_view_gp());
+        deep_copy(GpNp_host, mesh.get_view_gp());
         compact_into_local(sorted_elem_sfc, morton.get_view_elements(), GpNp_host, proc_num);
-        build_first_sfc(sorted_elem_sfc, first_sfc, mesh.get_view_gp());
 #else
+        ViewVectorType<Integer> first_sfc("first_sfc_per_rank", size);
         // generate the SFC linearization
         auto all_sfc_elements_predicate = generate_sfc<KeyType>(morton);
-
         // compacting sfc predicate and inserting the morton code corresponding to a true value in the predicate
         // leaves the sfc elements array sorted.
         /* ViewVectorType<Integer> local("local_partition_sfc", mesh.get_chunk_size()); */
@@ -358,14 +364,13 @@ namespace mars {
             sfc_to_local, all_sfc_elements_predicate, morton.get_view_elements(), mesh.get_view_gp(), proc_num);
 
         build_first_sfc(sfc_to_local, all_sfc_elements_predicate, first_sfc, mesh.get_view_gp(), size);
+        auto all_range = morton.get_all_range();
+        build_gp_np(first_sfc, mesh.get_view_gp(), GpNp_host, all_range - 1);
 #endif
         double time_radix = time.seconds();
         std::cout << "Radix sort method took: " << time_radix<< " seconds." << std::endl;
 
         mesh.set_view_sfc(morton.get_view_elements());
-
-        auto all_range = morton.get_all_range();
-        build_gp_np(first_sfc, mesh.get_view_gp(), GpNp_host, all_range - 1);
 
         morton.generate_sfc_to_local_map();
         mesh.set_sfc_to_local_map(morton.get_sfc_to_local_map());
