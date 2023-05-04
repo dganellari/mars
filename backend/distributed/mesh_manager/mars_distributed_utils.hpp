@@ -457,11 +457,17 @@ namespace mars {
 
         // "Join" intermediate results from different threads.
         // This should normally implement the same reduction
-        // operation as operator() above. Note that both input
-        // arguments MUST be declared volatile.
+        // operation as operator() above.
+#if (KOKKOS_VERSION >= 40000)
+        KOKKOS_INLINE_FUNCTION void join(
+            value_type& dst,
+            const value_type& src) const {  // max-plus semiring equivalent of "plus"
+#else
+        // Kokkos forces us to have the input values being declared volatile.
         KOKKOS_INLINE_FUNCTION void join(
             volatile value_type& dst,
             const volatile value_type& src) const {  // max-plus semiring equivalent of "plus"
+#endif
             if (dst < src) {
                 dst = src;
             }
