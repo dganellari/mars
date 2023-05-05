@@ -171,7 +171,7 @@ if(MARS_ENABLE_KOKKOS)
       COMMAND ${Kokkos_CXX_COMPILER} --show
       OUTPUT_VARIABLE _wrapper_command
       ERROR_QUIET)
-    string(REGEX REPLACE [[\n\v\c\c]] "" _wrapper_flags ${_wrapper_command})
+    string(REGEX REPLACE [[\n\v\c\c]] "" _wrapper_flags "${_wrapper_command}")
     string(STRIP "${_wrapper_flags}" _wrapper_flags)
     message(DEBUG "_wrapper_flags ${_wrapper_flags}")
 
