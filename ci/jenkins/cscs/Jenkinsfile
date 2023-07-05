@@ -32,7 +32,7 @@ pipeline {
         }
 
         failure {
-            mail body: "<b>Mars Build Failed in Jenkins: </b><br>Project: ${env.JOB_NAME} <br>Build Number: ${env.BUILD_NUMBER} <br> URL : ${env.BUILD_URL}", cc: 'patrick.zulian@usi.ch', charset: 'UTF-8', from: '', mimeType: 'text/html', subject: "ERROR CI: Project name -> ${env.JOB_NAME}", to: "ganellari.d@gmail.com";
+            mail body: "<b>Mars Build Failed in Jenkins: </b><br>Project: ${env.JOB_NAME} <br>Build Number: ${env.BUILD_NUMBER} <br> URL : ${env.BUILD_URL}", cc: 'patrick.zulian@usi.ch,edoardo.paone@cscs.ch', charset: 'UTF-8', from: '', mimeType: 'text/html', subject: "ERROR CI: Project name -> ${env.JOB_NAME}", to: "ganellari.d@gmail.com";
         }
 
         always {
@@ -40,7 +40,7 @@ pipeline {
         }
 
         fixed {
-            mail body: "<b>Mars Build is back to normal: </b><br>Project: ${env.JOB_NAME} <br>Build Number: ${env.BUILD_NUMBER} <br> URL : ${env.BUILD_URL}", cc: 'patrick.zulian@usi.ch', charset: 'UTF-8', from: '', mimeType: 'text/html', subject: "Build CI Fixed: Project name -> ${env.JOB_NAME}", to: "ganellari.d@gmail.com";
+            mail body: "<b>Mars Build is back to normal: </b><br>Project: ${env.JOB_NAME} <br>Build Number: ${env.BUILD_NUMBER} <br> URL : ${env.BUILD_URL}", cc: 'patrick.zulian@usi.ch,edoardo.paone@cscs.ch', charset: 'UTF-8', from: '', mimeType: 'text/html', subject: "Build CI Fixed: Project name -> ${env.JOB_NAME}", to: "ganellari.d@gmail.com";
         }
     }
 }

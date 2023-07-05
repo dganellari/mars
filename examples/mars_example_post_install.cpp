@@ -1,32 +1,14 @@
-#include <algorithm>
-#include <cassert>
-#include <cstdlib>
 #include <iostream>
-#include <numeric>
 
-#include "mars_config.hpp"
+#include "mars_base.hpp"
 #include "mars_err.hpp"
 
 #include "mars.hpp"
 #include "mars_env.hpp"
 
-#ifdef MARS_ENABLE_PAR_MOONOLITH
-#include <mpi.h>
-#include "mars_moonolith_test.hpp"
-#endif  // MARS_ENABLE_PAR_MOONOLITH
-
-#ifdef MARS_ENABLE_MPI
-#ifdef MARS_ENABLE_KOKKOS_KERNELS
-#include "mars_advection.hpp"
-#include "mars_constant_viscosity_stokes.hpp"
-#include "mars_poisson.hpp"
-#include "mars_test_kokkos.hpp"
-#include "mars_test_mpi.hpp"
-#include "mars_variable_viscosity_stokes.hpp"
-#endif  // MARS_ENABLE_KOKKOS_KERNELS
-#endif  // MARS_ENABLE_MPI
-#include <chrono>
-using namespace std::chrono;
+#ifdef MARS_ENABLE_AMR_BACKEND
+#include "mars_kokkos_generate_cube.hpp"
+#endif
 
 // void test_mars_mesh_generation(const int x) {
 //     using namespace mars;
@@ -52,14 +34,13 @@ using namespace std::chrono;
 //     return mesh;
 // }
 
+#ifdef MARS_ENABLE_AMR_BACKEND
 void test_mars_mesh_generation(const int x) {
 #ifdef MARS_ENABLE_KOKKOS
     Kokkos::Timer timer;
 
     mars::ParallelMesh3 pMesh;
     mars::generate_cube(pMesh, x, x, x);
-
-    // Kokkos::fence();
 
     double time = timer.seconds();
 
@@ -72,3 +53,4 @@ int main(int argc, char *argv[]) {
     test_mars_mesh_generation(100);
     return env.exit_code();
 }
+#endif

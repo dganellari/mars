@@ -63,7 +63,7 @@ namespace mars {
             });
     }
 
-    template <typename DH>
+    /* template <typename DH>
     void print_dofs(const DH &dofhandler, const int rank) {
         SFC<DH::ElemType> dof = dofhandler.get_local_dof_enum();
         Kokkos::parallel_for(
@@ -75,7 +75,7 @@ namespace mars {
                 dofhandler.get_dof_coordinates_from_sfc<DH::ElemType>(sfc_elem, point);
                 printf("dof: %li - gdof: %li --- (%lf, %lf) - rank: %i\n", i, global_dof, point[0], point[1], rank);
             });
-    }
+    } */
 
     // print thlocal and the global number of the dof within each element.
     // the dof enumeration within eachlement is topological
@@ -163,7 +163,7 @@ namespace mars {
         static constexpr int OUTPUT = 1;
         static constexpr int RHSD = 2;
 
-        DOFHandler dof_handler(&mesh);
+        DOFHandler dof_handler(mesh);
         dof_handler.enumerate_dofs();
 
         /* dof_handler.print_dofs(proc_num); */
@@ -196,7 +196,7 @@ namespace mars {
 
         BC bc_fun;
         RHS rhs_fun;
-        AnalyticalFun an_fun;
+        // AnalyticalFun an_fun;
 
         const Integer locally_owned_dof_size = dof_handler.get_owned_dof_size();
         printf("Locally owned dof size: %li\n", locally_owned_dof_size);

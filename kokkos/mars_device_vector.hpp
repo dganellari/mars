@@ -30,7 +30,7 @@ namespace mars {
                     "kernel...");
                 //"Reached the memory limit of 13 incidents that an edge can have based on the LEPP from Rivara.\n
                 // Probably due to a bad quality initial mesh (very small or very larg angle). Exiting kernel...\n");
-                exit(1);
+                // exit(1);
             }
             values[i] = value;
         }

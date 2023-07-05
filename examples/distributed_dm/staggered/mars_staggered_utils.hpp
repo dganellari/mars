@@ -44,6 +44,7 @@ namespace mars {
             /* using SPattern = SparsityPattern<double, default_lno_t, unsigned long, FVDH, VStencil, SStencil>; */
 
             using SPattern = SparsityPattern<double, Integer, unsigned long, FVDH>;
+            using SMatrix = SparsityMatrix<SPattern>;
 
             template <Integer idx>
             using VDMDataType = typename VolumeDM::template UserDataType<idx>;
@@ -67,7 +68,7 @@ namespace mars {
                     Dof d = dm.local_to_global_dof(i);
 
                     double point[3];
-                    dm.get_dof_coordinates_from_sfc<Type>(sfc_elem, point);
+                    dm.template get_dof_coordinates_from_sfc<Type>(sfc_elem, point);
                     printf("dof: %li - gdof: %li - label: %li --- (%lf, %lf) - rank: %i\n",
                            i,
                            d.get_gid(),
@@ -276,7 +277,7 @@ namespace mars {
 
             // enumerate the dofs locally and globally. The ghost dofs structures
             // are now created and ready to use for the gather and scatter ops.
-            typename MyDofTypes::DHandler dof_handler(&mesh);
+            typename MyDofTypes::DHandler dof_handler(mesh);
             dof_handler.enumerate_dofs();
 
             double dtime = timer.seconds();

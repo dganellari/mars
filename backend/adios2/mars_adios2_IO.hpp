@@ -50,10 +50,18 @@ namespace mars {
             };
 
             void add_field(const std::string &name, const int n_components, const ViewVectorType<Real> &data);
+
+            template <class View>
+            bool add_field_tpetra(const std::string &name, const int n_components, const View &data) {
+                ::mars::ViewVectorType<Real> x_view_rank1(::Kokkos::subview(data, ::Kokkos::ALL, 0));
+                add_field(name, n_components, x_view_rank1);
+            }
+
             void set_output_path(const std::string &path);
             bool open_output();
             void close();
             bool write_step();
+            bool write();
 
             template <class View>
             bool write_tpetra(const std::string &path, const View &data) {
