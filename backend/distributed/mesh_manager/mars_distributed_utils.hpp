@@ -374,7 +374,8 @@ namespace mars {
         return -1;
     }
 
-//Kokkos way of doing Abs Max Atomics
+//Kokkos way of doing Abs Max Atomics : https://github.com/kokkos/kokkos/pull/5816/files
+//Trick the atomic add into doing max abs fetch operator
   template <class Scalar>
   struct AbsMaxHelper {
     Scalar value;
