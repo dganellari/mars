@@ -349,14 +349,43 @@ namespace mars {
             data.get_elem_data<du_index>(idx));
     }
 
-    /* template <typename T>
+#if (KOKKOS_VERSION >= 40000)
+    template <class Scalar>
+    struct AbsMinMod {
+        Scalar value;
+
+        //Tricking the atomic_add operators to act as an atomic_fetch_oper for max abs until kokkos adds custom atomics
+        KOKKOS_FUNCTION AbsMinMod &operator+=(AbsMinMod const &rhs) {
+            Scalar lhs_abs_value = Kokkos::abs(value);
+            Scalar rhs_abs_value = Kokkos::abs(rhs.value);
+
+            if (Kokkos::ArithTraits<Scalar>::isNan(value)) {
+                value = rhs.value;
+                return *this;
+            }
+
+            if (rhs.value * value >= 0)
+                value = rhs_abs_value < lhs_abs_value ? rhs.value : value;
+            else
+                value = 0.0;
+
+            return *this;
+        }
+
+        KOKKOS_FUNCTION AbsMinMod operator+(AbsMinMod const &rhs) const {
+            AbsMinMod ret = *this;
+            ret += rhs;
+            return ret;
+        }
+    };
+#else
+    //Trilinos way of doing custom atomic_abs_min which is only supported up to Kokkos version 4
+    template <typename T>
     struct AbsMinMod {
         KOKKOS_INLINE_FUNCTION
         static T apply(const T &val1, const T &val2) {
             const auto abs1 = Kokkos::ArithTraits<T>::abs(val1);
             const auto abs2 = Kokkos::ArithTraits<T>::abs(val2);
-
-            [>printf("udata: %lf - est: %lf\n", val1, val2);<]
 
             if (Kokkos::ArithTraits<T>::isNan(val1)) return val2;
 
@@ -365,35 +394,9 @@ namespace mars {
             else
                 return 0.0;
         }
-    }; */
+    };
 
- template <class Scalar>
-  struct AbsMinMod {
-    Scalar value;
-
-    KOKKOS_FUNCTION AbsMinMod& operator+=(AbsMinMod const& rhs) {
-      Scalar lhs_abs_value = Kokkos::ArithTraits<Scalar>::abs(value);
-      Scalar rhs_abs_value = Kokkos::ArithTraits<Scalar>::abs(rhs.value);
-
-      if (Kokkos::ArithTraits<Scalar>::isNan(value)) {
-          value = rhs.value;
-          return *this;
-      }
-
-      if (rhs.value * value >= 0)
-          value =  rhs_abs_value < lhs_abs_value  ? rhs.value : value;
-      else
-          value = 0.0;
-
-      return *this;
-    }
-
-    KOKKOS_FUNCTION AbsMinMod operator+(AbsMinMod const& rhs) const {
-      AbsMinMod ret = *this;
-      ret += rhs;
-      return ret;
-    }
-  };
+#endif
 
     struct Minmod {
         Minmod(Data d) : data(d) {}
@@ -427,8 +430,7 @@ namespace mars {
 
             double du_estimate = (uavg[1] - uavg[0]) / ((hx + hy) / 2);
 
-            // the x derivative is in position 1 of the tuple and the y derivative in
-            // pos 2.
+            // the x derivative is in position 1 of the tuple and the y derivative in pos 2.
             constexpr Integer du_index = 1 + Dir;
 
             for (int i = 0; i < 2; ++i) {
@@ -437,23 +439,13 @@ namespace mars {
                     if (!face.get_side(i).is_ghost()) {
                         Integer idx = face.get_side(i).get_elem_id();
                         /* the derivative in the direction: data.get_elem_data<du_index>(idx)
-                        DataType<du_index> is the type of the
-                        data.get_elem_data<du_index>(idx) */
-                        /* atomic_op(AbsMinMod<DataType<du_index>>(), data.get_elem_data<du_index>(idx), du_estimate); */
+                        DataType<du_index> is the type of the  data.get_elem_data<du_index>(idx) */
+#if (KOKKOS_VERSION >= 40000)
                         Kokkos::atomic_add(reinterpret_cast<AbsMinMod<double> *>(&data.get_elem_data<du_index>(idx)),
                                            AbsMinMod<double>{du_estimate});
-
-                        /* if(face.get_side(i).is_boundary())
-                        { */
-                        /* Integer sfc_elem = data.get_mesh()->get_sfc_elem(idx);
-                        double point[3];
-                        get_vertex_coordinates_from_sfc<Type>(sfc_elem, point,
-                        data.get_mesh()->get_XDim(), data.get_mesh()->get_YDim(),
-                        data.get_mesh()->get_ZDim());
-                        printf("i: %i - (%lf, %lf) udata: %lf - %i -  %i]\n", i, point[0],
-                        point[1], data.get_elem_data<du_index>(idx),
-                        face.get_side(i).get_face_side(), Dir); */
-                        /* } */
+#else
+                        atomic_op(AbsMinMod<DataType<du_index>>(), data.get_elem_data<du_index>(idx), du_estimate);
+#endif
                     }
                 }
             }
