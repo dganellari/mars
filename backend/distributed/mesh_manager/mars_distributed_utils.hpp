@@ -12,6 +12,10 @@
 #include "Kokkos_ArithTraits.hpp"
 #endif
 
+#if (KOKKOS_VERSION < 40000)
+#include "impl/Kokkos_Atomic_Generic.hpp"
+#endif
+
 #ifdef MARS_ENABLE_MPI
 #include <mpi.h>
 #endif
