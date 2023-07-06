@@ -372,8 +372,8 @@ namespace mars {
     Scalar value;
 
     KOKKOS_FUNCTION AbsMinMod& operator+=(AbsMinMod const& rhs) {
-      Scalar lhs_abs_value = Kokkos::abs(value);
-      Scalar rhs_abs_value = Kokkos::abs(rhs.value);
+      Scalar lhs_abs_value = Kokkos::ArithTraits<Scalar>::abs(value);
+      Scalar rhs_abs_value = Kokkos::ArithTraits<Scalar>::abs(rhs.value);
 
       if (Kokkos::ArithTraits<Scalar>::isNan(value)) {
           value = rhs.value;
