@@ -23,7 +23,8 @@ namespace mars {
             //     val[i] = 1.0;
             // }
 
-            Real gi[Dim], g[Dim], g_x[Dim - 1];
+            // Real g[Dim];
+            Real gi[Dim], g_x[Dim - 1];
             Real pk[Dim];
 
             auto &q_points = q.q_p;
@@ -61,7 +62,7 @@ namespace mars {
                                                   const Real &det_J,
                                                   const Real *u,
                                                   Real *val) const {
-            Real gi[Dim], g[Dim], g_x[Dim - 1];
+            Real gi[Dim], g[Dim]; //, g_x[Dim - 1];
             Real pk[Dim];
 
             auto &q_points = q.q_p;
@@ -85,9 +86,9 @@ namespace mars {
                 // Separate time and space dimensions
                 Real g_t = g[Dim - 1];
 
-                for (int d = 0; d < Dim - 1; ++d) {
-                    g_x[d] = g[d];
-                }
+                // for (int d = 0; d < Dim - 1; ++d) {
+                //     g_x[d] = g[d];
+                // }
 
                 assert(det_J > 0.0);
                 const Real dx = det_J * q_weights(k);

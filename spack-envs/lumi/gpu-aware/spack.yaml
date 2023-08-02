@@ -1,0 +1,27 @@
+# MARS Spack Environment file.
+#
+spack:
+  specs:
+  # - mars@develop mars@develop +rocm~openmp amdgpu_targe^t=gfx90a build_type=Release
+  - cray-mpich-binary+rocm
+  - kokkos+rocm ^hip@5.2.3
+  - kokkos-kernels
+  - cxxopts
+  develop:
+    mars:
+      path: /project/project_465000105/gandanie/mars
+      spec: mars@develop
+  view: /project/project_465000105/gandanie/view/mars
+  packages:
+    all:
+      variants: std=17 amdgpu_target=gfx90a amdgpu_target_sram_ecc=gfx90a
+    libfabric:
+      buildable: false
+      externals:
+        - spec: libfabric@1.15.2.0
+          prefix: /opt/cray/libfabric/1.15.2.0
+  concretizer:
+    unify: true
+  repos:
+  - /project/project_465000105/gandanie/external/spack-repo
+

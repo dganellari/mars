@@ -8,6 +8,12 @@
 #include "mars_base.hpp"
 #include "mars_config.hpp"
 
+#ifdef _WIN32
+#ifndef M_PI
+#define M_PI 3.141592653589793
+#endif
+#endif
+
 namespace mars {
     /* Examples for heat equation u_t - laplacian u = f */
 

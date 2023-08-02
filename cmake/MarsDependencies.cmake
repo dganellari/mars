@@ -41,11 +41,16 @@ endif()
 # Kokkos
 cmake_dependent_option(MARS_ENABLE_CUDA "Enable CUDA backend for Kokkos"
                        OFF "MARS_ENABLE_KOKKOS" OFF)
+cmake_dependent_option(MARS_ENABLE_HIP "Enable HIP backend for Kokkos"
+                       OFF "MARS_ENABLE_KOKKOS" OFF)
+
 cmake_dependent_option(
   MARS_ENABLE_CUDAUVM "Kokkos use as default memory space CUDAUVM" OFF
   "MARS_ENABLE_KOKKOS;MARS_ENABLE_CUDA" OFF)
 cmake_dependent_option(MARS_ENABLE_KOKKOS_KERNELS "Enable Kokkos Kernels" ON
                        "MARS_ENABLE_KOKKOS" OFF)
+cmake_dependent_option(MARS_ENABLE_AMR_BACKEND "Enable AMR backend for Kokkos"
+    ON "MARS_ENABLE_KOKKOS" OFF)
 
 if(MARS_ENABLE_KOKKOS)
   message(STATUS "Setup Kokkos")
@@ -94,7 +99,7 @@ if(MARS_ENABLE_KOKKOS)
 
 
   # if the cxx compiler was not set at command line set it to the kokkos compiler
-  if(MARS_ENABLE_CUDA AND Kokkos_CXX_COMPILER AND NOT CMAKE_CXX_COMPILER_SET_EXTERNALLY)
+  if((MARS_ENABLE_CUDA OR MARS_ENABLE_HIP) AND Kokkos_CXX_COMPILER AND NOT CMAKE_CXX_COMPILER_SET_EXTERNALLY)
     message(STATUS "[Status] Setting CMAKE_CXX_COMPILER=${Kokkos_CXX_COMPILER}")
     set(CMAKE_CXX_COMPILER ${Kokkos_CXX_COMPILER} CACHE FILEPATH "CXX nvcc compiler" FORCE)
     set(CMAKE_CXX_COMPILER ${Kokkos_CXX_COMPILER})
@@ -166,7 +171,7 @@ if(MARS_ENABLE_KOKKOS)
       COMMAND ${Kokkos_CXX_COMPILER} --show
       OUTPUT_VARIABLE _wrapper_command
       ERROR_QUIET)
-    string(REGEX REPLACE [[\n\v\c\c]] "" _wrapper_flags ${_wrapper_command})
+    string(REGEX REPLACE [[\n\v\c\c]] "" _wrapper_flags "${_wrapper_command}")
     string(STRIP "${_wrapper_flags}" _wrapper_flags)
     message(DEBUG "_wrapper_flags ${_wrapper_flags}")
 
@@ -174,7 +179,18 @@ if(MARS_ENABLE_KOKKOS)
     # with different CUDA settings
     set(CMAKE_CUDA_FLAGS "${_wrapper_flags} ${_openmp}")
 
+  elseif(MARS_ENABLE_HIP)
+    if(NOT DEFINED Kokkos_ENABLE_HIP OR NOT ${Kokkos_ENABLE_HIP})
+      message(
+        FATAL_ERROR
+        "Enable Kokkos HIP or unset MARS_ENABLE_HIP to continue with OpenMP!")
+    endif()
+    message(VERBOSE "Kokkos HIP Enabled = ${Kokkos_ENABLE_HIP}")
 
+    # find_package(hip REQUIRED)
+    # enable_language(HIP)
+    include(cmake/rocmlibs_target.cmake)
+    set(MARS_DEP_LIBRARIES "${MARS_DEP_LIBRARIES};mars::rocmlibs")
 
   else()
     string(FIND "${CMAKE_CXX_FLAGS}" "${_openmp}" _pos)

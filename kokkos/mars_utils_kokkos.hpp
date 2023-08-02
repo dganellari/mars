@@ -11,6 +11,9 @@
 #ifdef MARS_ENABLE_KOKKOS
 #include "Kokkos_Core.hpp"
 #include "Kokkos_UnorderedMap.hpp"
+#ifdef MARS_ENABLE_CUDA
+#include <cub/cub.cuh>  // or equivalently <cub/device/device_radix_sort.cuh>
+#endif
 #endif
 #include "mars_err.hpp"
 #include "mars_globals.hpp"
@@ -41,7 +44,11 @@ namespace mars {
 #endif  // MARS_ENABLE_CUDAUVM
     using KokkosLayout = Kokkos::LayoutLeft;
 #define MARS_LAMBDA_REF [&] __device__;
-#else  // MARS_ENABLE_CUDA
+#elif defined(MARS_ENABLE_HIP)
+    using KokkosSpace = Kokkos::Experimental::HIPSpace;
+    using KokkosLayout = Kokkos::LayoutLeft;
+#define MARS_LAMBDA_REF [&] __device__;
+#else
 #ifdef KOKKOS_ENABLE_OPENMP
     using KokkosSpace = Kokkos::HostSpace;
     using KokkosLayout = Kokkos::LayoutRight;
@@ -138,9 +145,15 @@ namespace mars {
 
         typename ViewMatrixTextureC<T, xDim_, yDim_>::HostMirror h_view = create_mirror_view(map_side_to_nodes);
 
-        parallel_for(
+        //Parallel for generates warning for [] operator as called from a device function.
+        /* parallel_for(
             MDRangePolicy<Rank<2>, KokkosHostExecSpace>({0, 0}, {xDim, yDim}),
-            KOKKOS_LAMBDA(int i, int j) { h_view(i, j) = hostData[i][j]; });
+            MARS_LAMBDA(int i, int j) { h_view(i, j) = hostData[i][j]; }); */
+        for (int i = 0; i < xDim; ++i) {
+            for (int j = 0; j < yDim; ++j) {
+                h_view(i, j) = hostData[i][j];
+            }
+        }
 
         Kokkos::deep_copy(map_side_to_nodes, h_view);
     }
@@ -384,6 +397,86 @@ namespace mars {
                 }
             });
     }
+
+#ifdef MARS_ENABLE_CUDA
+
+    // Sorts keys into ascending order. (~2N auxiliary storage required)
+    template <typename V>
+    V cub_radix_sort(V in) {
+        // Declare, allocate, and initialize device-accessible pointers for sorting data
+        auto size = in.extent(0);
+        V out("out radix sort data", size);
+
+        // Determine temporary device storage requirements
+        void* d_temp_storage = NULL;
+        size_t temp_storage_bytes = 0;
+        cub::DeviceRadixSort::SortKeys(d_temp_storage, temp_storage_bytes, in.data(), out.data(), size);
+        // Allocate temporary storage
+        cudaMalloc(&d_temp_storage, temp_storage_bytes);
+        // Run sorting operation
+        cub::DeviceRadixSort::SortKeys(d_temp_storage, temp_storage_bytes, in.data(), out.data(), size);
+        return out;
+    }
+
+    // Sorts keys into ascending order. (~N auxiliary storage required).
+    template <typename T>
+    ViewVectorType<T> buffer_cub_radix_sort(ViewVectorType<T> in) {
+        // Declare, allocate, and initialize device-accessible pointers for sorting data
+        auto size = in.extent(0);
+        ViewVectorType<T> out("out radix sort data", size);
+
+        // Create a DoubleBuffer to wrap the pair of device pointers
+        cub::DoubleBuffer<T> d_keys(in.data(), out.data());
+
+        // Determine temporary device storage requirements
+        void* d_temp_storage = NULL;
+        size_t temp_storage_bytes = 0;
+        cub::DeviceRadixSort::SortKeys(d_temp_storage, temp_storage_bytes, d_keys, size);
+        // Allocate temporary storage
+        cudaMalloc(&d_temp_storage, temp_storage_bytes);
+        // Run sorting operation
+        cub::DeviceRadixSort::SortKeys(d_temp_storage, temp_storage_bytes, d_keys, size);
+
+        //selector 0,1 based on the active buffer.
+        if (d_keys.selector)
+            return out;
+        else
+            return in;
+    }
+
+    // Block-sorting CUDA kernel
+    template <typename T>
+    __global__ void BlockSortKernel(T* d_in, T* d_out) {
+        using namespace cub;
+
+        // Specialize BlockRadixSort, BlockLoad, and BlockStore for 128 threads
+        // owning 16 T items each
+        typedef BlockRadixSort<T, 128, 16> BlockRadixSort;
+        typedef BlockLoad<T, 128, 16, BLOCK_LOAD_TRANSPOSE> BlockLoad;
+        typedef BlockStore<T, 128, 16, BLOCK_STORE_TRANSPOSE> BlockStore;
+
+        // Allocate shared memory
+        __shared__ union {
+            typename BlockRadixSort::TempStorage sort;
+            typename BlockLoad::TempStorage load;
+            typename BlockStore::TempStorage store;
+        } temp_storage;
+
+        int block_offset = blockIdx.x * (128 * 16);  // OffsetT for this block's ment
+
+        // Obtain a segment of 2048 consecutive keys that are blocked across threads
+        T thread_keys[16];
+        BlockLoad(temp_storage.load).Load(d_in + block_offset, thread_keys);
+        __syncthreads();
+
+        // Collectively sort the keys
+        BlockRadixSort(temp_storage.sort).Sort(thread_keys);
+        __syncthreads();
+
+        // Store the sorted segment
+        BlockStore(temp_storage.store).Store(d_out + block_offset, thread_keys);
+    }
+#endif
 
 }  // namespace mars
 #endif /* GENERATION_MARS_UTILS_KOKKOS_HPP_ */

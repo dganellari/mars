@@ -7,6 +7,6 @@ KOKKOS_DIR==$HOME/installations/kokkos
 cmake ..  \
     -DCMAKE_INSTALL_PREFIX=$HOME/installations/kokkos-kernels \
     -DKokkos_ENABLE_DEBUG=ON \
-    -DKokkos_CXX_STANDARD=14 \
+    -DKokkos_CXX_STANDARD=17 \
     -DCMAKE_CUDA_COMPILERa=${NVCC_WRAPPER} \
     -DCMAKE_CXX_COMPILER=${NVCC_WRAPPER}

@@ -39,8 +39,8 @@ namespace mars {
         errx(select_err, format, file, line, function, message);
     }
 
-    void errorx(int select_err, const char* format) { errx(select_err, format); }
+    void errorx(int select_err, const char* format) { errx(select_err, "%s\n", format); }
 
-    void warningx(const char* format, const char* message) { warnx(format, message); }
+    void warningx(const char* format, const char* message) { warnx(format, "%s\n", message); }
 }  // namespace mars
 #endif

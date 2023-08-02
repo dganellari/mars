@@ -19,7 +19,9 @@
 #include "mars_advection.hpp"
 #include "mars_constant_viscosity_stokes.hpp"
 #include "mars_poisson.hpp"
+#ifdef MARS_ENABLE_AMR_BACKEND
 #include "mars_test_kokkos.hpp"
+#endif
 #include "mars_test_mpi.hpp"
 #include "mars_variable_viscosity_stokes.hpp"
 #endif  // MARS_ENABLE_KOKKOS_KERNELS
@@ -28,6 +30,7 @@
 
 using namespace std::chrono;
 
+#ifdef MARS_ENABLE_AMR_BACKEND
 void run_benchmarks(int level, int refine_level) {
     using namespace mars;
 
@@ -51,6 +54,7 @@ void run_benchmarks(int level, int refine_level) {
     b3.run(refine_level, sMesh3, "b3"); */
 #endif
 }
+#endif
 
 int main(int argc, char *argv[]) {
     using namespace mars;
@@ -146,13 +150,13 @@ int main(int argc, char *argv[]) {
 
         apps["cstokes"] = [=]() { staggered_constant_viscosty_stokes<ElementType::Quad4>(xDim, yDim, 0); };
 
-        apps["cstokes3D"] = [=]() { staggered_constant_viscosty_stokes<ElementType::Hex8>(xDim, yDim, zDim); };
+        /* apps["cstokes3D"] = [=]() { staggered_constant_viscosty_stokes<ElementType::Hex8>(xDim, yDim, zDim); }; */
 
         apps["vstokes"] = [=]() { staggered_variable_viscosty_stokes<ElementType::Quad4>(xDim, yDim, 0); };
 
-        apps["vstokes3D"] = [=]() { staggered_variable_viscosty_stokes<ElementType::Hex8>(xDim, yDim, zDim); };
+        /* apps["vstokes3D"] = [=]() { staggered_variable_viscosty_stokes<ElementType::Hex8>(xDim, yDim, zDim); }; */
 
-        apps["advection"] = [=]() { advection(level); };
+        apps["advection"] = [=]() { advection(xDim, yDim); };
 
 #endif
 #endif  // MARS_ENABLE_KOKKOS_KERNELS
