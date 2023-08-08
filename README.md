@@ -82,7 +82,7 @@ If you use MARS CPU please use the following bibliographic entry
 #!bibtex
 
 @misc{marscpu,
-    author = {Zulian, Patrick and Ganellari, Daniel and Rovi, Gabriele},
+    author = {Zulian, Patrick and Ganellari, Daniel and Rovi, Gabriele and Ramelli, Dylan},
     title = {{MARS} - {M}esh {A}daptive {R}efinement for {S}upercomputing. {G}it repository},
     url = {https://bitbucket.org/zulianp/mars},
     year = {2018}
@@ -96,7 +96,7 @@ If you use MARS GPU please use the following bibliographic entry
 #!bibtex
 
 @misc{marsgpu,
-    author = {Ganellari, Daniel and Zulian, Patrick and Rovi, Gabriele},
+    author = {Ganellari, Daniel and Zulian, Patrick and Rovi, Gabriele and Ramelli, Dylan},
     title = {{MARS} - {M}esh {A}daptive {R}efinement for {S}upercomputing. {G}it repository},
     url = {https://bitbucket.org/zulianp/mars},
     year = {2018}
