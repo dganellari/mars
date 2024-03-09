@@ -338,25 +338,39 @@ std::vector<int> calculate_counts(int size, int chunk_size, int last_chunk_size)
 }
 
 #ifdef MARS_ENABLE_CUDA
+// This function processes the mesh using CUDA. It's only compiled if MARS_ENABLE_CUDA is defined.
 template <Integer Dim, Integer ManifoldDim, Integer Type, class KeyType, class H>
 void process_with_cuda(DMesh<Dim, ManifoldDim, Type, KeyType> &mesh, SFC<Type, KeyType> &sfc_generator, const H &global_partition_host, int rank) {
+    // Generate SFC elements for each mesh element
     auto elem_sfc = generate_elements_sfc(mesh);
+    // Sort the SFC elements using radix sort
     auto sorted_elem_sfc = buffer_cub_radix_sort(elem_sfc);
+    // Build the first SFC using the sorted elements
     build_first_sfc(sorted_elem_sfc, mesh.get_view_gp());
+    // Copy the global partition to the mesh's view of the global partition
     deep_copy(global_partition_host, mesh.get_view_gp());
+    // Compact the sorted elements into the local partition
     compact_into_local(sorted_elem_sfc, sfc_generator.get_view_elements(), global_partition_host, rank);
 }
 #else
+// This function processes the mesh without using CUDA. It's only compiled if MARS_ENABLE_CUDA is not defined.
 template <Integer Dim, Integer ManifoldDim, Integer Type, class KeyType, class H>
 void process_without_cuda(DMesh<Dim, ManifoldDim, Type, KeyType> &mesh, SFC<Type, KeyType> &sfc_generator, const H &global_partition_host, int size, int rank) {
+    // Create a vector to hold the first SFC per rank
     ViewVectorType<Integer> first_sfc("first_sfc_per_rank", size);
+    // Generate all SFC elements
     auto all_sfc_elements_predicate = generate_sfc<Type, KeyType>(sfc_generator);
+    // Create a vector to map SFC to local elements
     ViewVectorType<Integer> sfc_to_local("sfc_to_local_mesh_generation", sfc_generator.get_all_range());
+    // Compact the SFC to local elements
     compact_into_local(
         sfc_to_local, all_sfc_elements_predicate, sfc_generator.get_view_elements(), mesh.get_view_gp(), rank);
 
+    // Build the first SFC using the local elements
     build_first_sfc(sfc_to_local, all_sfc_elements_predicate, first_sfc, mesh.get_view_gp(), size);
+    // Get the total range of the SFC
     auto all_range = sfc_generator.get_all_range();
+    // Build the global partition using the first SFC and the total range
     build_gp_np(first_sfc, mesh.get_view_gp(), global_partition_host, all_range - 1);
 }
 #endif
@@ -375,7 +389,6 @@ void partition_mesh(DMesh<Dim, ManifoldDim, Type, KeyType> &mesh) {
     Integer last_chunk_size = chunk_size - (chunk_size * size - num_elements);
 
     printf("chunk_size: %li, number_of_elements: %li, rank: %i\n", chunk_size, num_elements, rank);
-    assert(chunk_size > 0);
 
     if (chunk_size <= 0) {
         errorx(1, " Invalid number of mpi processes. Defined more mpi processes than mesh elements to be generated!");

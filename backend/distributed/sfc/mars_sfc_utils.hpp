@@ -30,7 +30,7 @@ struct maxTreeLevel<unsigned long long> : integral_constant<unsigned, 21>
 };
 
 template<>
-struct maxTreeLevel<Unsigned> : integral_constant<unsigned, 21>
+struct maxTreeLevel<unsigned long> : integral_constant<unsigned, 21>
 {
 };
 
