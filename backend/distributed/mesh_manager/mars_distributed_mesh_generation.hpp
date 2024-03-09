@@ -233,8 +233,8 @@ namespace mars {
         return element_sfc;
     }
 
-    template <class KeyType, Integer Type>
-    auto generate_sfc(const SFC<Type> &morton) {
+    template <Integer Type,class KeyType>
+    auto generate_sfc(const SFC<Type, KeyType> &morton) {
         using namespace Kokkos;
 
         const Integer xDim = morton.get_XDim();
@@ -291,96 +291,139 @@ namespace mars {
         return number_of_elements;
     }
 
-    template <Integer Dim, Integer ManifoldDim, Integer Type, class KeyType>
-    void partition_mesh(DMesh<Dim, ManifoldDim, Type, KeyType> &mesh) {
-        using namespace Kokkos;
-        Timer timer;
+template <typename MeshType>
+void partition_mesh(MeshType& mesh, int num_processes) {
+    // Assuming MPI_Comm_rank and MPI_Comm_size are available to get the rank and size of the MPI communicator
+    int rank, size;
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &size);
 
-        const context &context = mesh.get_context();
-        int proc_num = rank(context);
-        mesh.set_proc(proc_num);
-        // std::cout << "rank -:    " << proc_num << std::endl;
-        int size = num_ranks(context);
-        // std::cout << "size - :    " << size << std::endl;
-        Integer number_of_elements = get_number_of_elements(mesh);
-        // Integer chunk_size = (Integer)ceil((double)number_of_elements / size);
-        // Integer chunk_size = number_of_elements / size + (number_of_elements % size != 0);
-        // Integer last_chunk_size = chunk_size - (chunk_size * size - number_of_elements);
-        Integer chunk_size = number_of_elements / size;
-        Integer last_chunk_size = chunk_size - (chunk_size * size - number_of_elements);
+    // Calculate the portion of the mesh for this process
+    int portion_size = mesh.size() / size;
+    int start = rank * portion_size;
+    int end = (rank == size - 1) ? mesh.size() : start + portion_size;
 
-        printf("chunk_size: %li, number_of_elements: %li, rank: %i\n", chunk_size, number_of_elements, proc_num);
-        assert(chunk_size > 0);
+    // Generate the SFC code for this portion of the mesh
+    auto elem_sfc = generate_elements_sfc(mesh, start, end);
 
-        if (chunk_size <= 0) {
-            errorx(1,
-                   " Invalid number of mpi processes. Defined more mpi processes than mesh elements to be generated!");
-        }
+    // Sort the SFC codes using a radix sort
+    auto sorted_sfc = buffer_cub_radix_sort(elem_sfc);
 
-        bool root = mars::rank(context) == 0;
-        if (root) {
-            std::cout << "Mesh Number of Elements: " << number_of_elements << std::endl;
-            std::cout << "Mesh Chunk Size: " << chunk_size << std::endl;
-            std::cout << "Mesh Last Chunk Size: " << last_chunk_size << std::endl;
-        }
+    // TODO: Perform the mesh partitioning using the sorted SFC codes
+}
 
-        std::vector<int> counts(size);
-        for (int i = 0; i < size; ++i) {
-            if (i == size - 1)
-                counts[i] = last_chunk_size;
-            else
-                counts[i] = chunk_size;
-        }
-        // set the chunk size to the remainder for the last mpi processes.
-        if (proc_num == size - 1) {
-            chunk_size = last_chunk_size;
-        }
-        mesh.set_chunk_size(chunk_size);
 
-        ViewVectorType<Integer> GpNp = ViewVectorType<Integer>("global_static_partition", 2 * (size + 1));
-        auto GpNp_host = scan_count(GpNp, counts, size);
-        mesh.set_view_gp(GpNp);
+//write the generate_sfc function assuming you have a square with quad4 elements 
+//which does not need sorting and the sfc code can be generated directly from the
+//element indices. The sfc code is generated using the hilbert code and
 
-        SFC<Type, KeyType> morton(mesh.get_XDim(), mesh.get_YDim(), mesh.get_ZDim());
-        morton.reserve_elements(mesh.get_chunk_size());
 
-        Timer time;
+//write the print_mesh_info function to print the mesh information
+void print_mesh_info(Integer num_elements, Integer chunk_size, Integer last_chunk_size) {
+    std::cout << "Mesh Number of Elements: " << num_elements << std::endl;
+    std::cout << "Mesh Chunk Size: " << chunk_size << std::endl;
+    std::cout << "Mesh Last Chunk Size: " << last_chunk_size << std::endl;
+}
+
+//write the calculate_counts function to calculate the counts for each mpi process
+std::vector<int> calculate_counts(int size, int chunk_size, int last_chunk_size) {
+    std::vector<int> counts(size);
+    for (int i = 0; i < size; ++i) {
+        if (i == size - 1)
+            counts[i] = last_chunk_size;
+        else
+            counts[i] = chunk_size;
+    }
+    return counts;
+}
+
 #ifdef MARS_ENABLE_CUDA
-        // Classical method using the radix sort.
-        auto elem_sfc = generate_elements_sfc(mesh);
-        auto sorted_elem_sfc = buffer_cub_radix_sort(elem_sfc);
-        build_first_sfc(sorted_elem_sfc, mesh.get_view_gp());
-        deep_copy(GpNp_host, mesh.get_view_gp());
-        compact_into_local(sorted_elem_sfc, morton.get_view_elements(), GpNp_host, proc_num);
+template <Integer Dim, Integer ManifoldDim, Integer Type, class KeyType, class H>
+void process_with_cuda(DMesh<Dim, ManifoldDim, Type, KeyType> &mesh, SFC<Type, KeyType> &sfc_generator, const H &global_partition_host, int rank) {
+    auto elem_sfc = generate_elements_sfc(mesh);
+    auto sorted_elem_sfc = buffer_cub_radix_sort(elem_sfc);
+    build_first_sfc(sorted_elem_sfc, mesh.get_view_gp());
+    deep_copy(global_partition_host, mesh.get_view_gp());
+    compact_into_local(sorted_elem_sfc, sfc_generator.get_view_elements(), global_partition_host, rank);
+}
 #else
-        ViewVectorType<Integer> first_sfc("first_sfc_per_rank", size);
-        // generate the SFC linearization
-        auto all_sfc_elements_predicate = generate_sfc<KeyType>(morton);
-        // compacting sfc predicate and inserting the morton code corresponding to a true value in the predicate
-        // leaves the sfc elements array sorted.
-        /* ViewVectorType<Integer> local("local_partition_sfc", mesh.get_chunk_size()); */
-        ViewVectorType<Integer> sfc_to_local("sfc_to_local_mesh_generation", morton.get_all_range());
-        compact_into_local(
-            sfc_to_local, all_sfc_elements_predicate, morton.get_view_elements(), mesh.get_view_gp(), proc_num);
+template <Integer Dim, Integer ManifoldDim, Integer Type, class KeyType, class H>
+void process_without_cuda(DMesh<Dim, ManifoldDim, Type, KeyType> &mesh, SFC<Type, KeyType> &sfc_generator, const H &global_partition_host, int size, int rank) {
+    ViewVectorType<Integer> first_sfc("first_sfc_per_rank", size);
+    auto all_sfc_elements_predicate = generate_sfc<Type, KeyType>(sfc_generator);
+    ViewVectorType<Integer> sfc_to_local("sfc_to_local_mesh_generation", sfc_generator.get_all_range());
+    compact_into_local(
+        sfc_to_local, all_sfc_elements_predicate, sfc_generator.get_view_elements(), mesh.get_view_gp(), rank);
 
-        build_first_sfc(sfc_to_local, all_sfc_elements_predicate, first_sfc, mesh.get_view_gp(), size);
-        auto all_range = morton.get_all_range();
-        build_gp_np(first_sfc, mesh.get_view_gp(), GpNp_host, all_range - 1);
+    build_first_sfc(sfc_to_local, all_sfc_elements_predicate, first_sfc, mesh.get_view_gp(), size);
+    auto all_range = sfc_generator.get_all_range();
+    build_gp_np(first_sfc, mesh.get_view_gp(), global_partition_host, all_range - 1);
+}
 #endif
-        double time_radix = time.seconds();
-        std::cout << "Radix sort method took: " << time_radix<< " seconds." << std::endl;
 
-        mesh.set_view_sfc(morton.get_view_elements());
+template <Integer Dim, Integer ManifoldDim, Integer Type, class KeyType>
+void partition_mesh(DMesh<Dim, ManifoldDim, Type, KeyType> &mesh) {
+    using namespace Kokkos;
+    Timer timer;
 
-        morton.generate_sfc_to_local_map();
-        mesh.set_sfc_to_local_map(morton.get_sfc_to_local_map());
+    const context &context = mesh.get_context();
+    int rank = mars::rank(context);
+    mesh.set_proc(rank);
+    int size = num_ranks(context);
+    Integer num_elements = get_number_of_elements(mesh);
+    Integer chunk_size = num_elements / size;
+    Integer last_chunk_size = chunk_size - (chunk_size * size - num_elements);
 
-        double time_gen = timer.seconds();
-        std::cout << "SFC Generation and Partition took: " << time_gen << " seconds. Process: " << proc_num
-                  << std::endl;
+    printf("chunk_size: %li, number_of_elements: %li, rank: %i\n", chunk_size, num_elements, rank);
+    assert(chunk_size > 0);
+
+    if (chunk_size <= 0) {
+        errorx(1, " Invalid number of mpi processes. Defined more mpi processes than mesh elements to be generated!");
     }
 
-    // the points and elements can be generated on the fly from the sfc code in case meshless true.
+    bool is_root = mars::rank(context) == 0;
+    if (is_root) {
+        print_mesh_info(num_elements, chunk_size, last_chunk_size);
+    }
+
+    std::vector<int> counts = calculate_counts(size, chunk_size, last_chunk_size);
+    if (rank == size - 1) {
+        chunk_size = last_chunk_size;
+    }
+    mesh.set_chunk_size(chunk_size);
+
+    ViewVectorType<Integer> global_partition = ViewVectorType<Integer>("global_static_partition", 2 * (size + 1));
+    auto global_partition_host = scan_count(global_partition, counts, size);
+    mesh.set_view_gp(global_partition);
+
+    SFC<Type, KeyType> sfc_generator(mesh.get_XDim(), mesh.get_YDim(), mesh.get_ZDim());
+    sfc_generator.reserve_elements(mesh.get_chunk_size());
+
+    Timer time;
+#ifdef MARS_ENABLE_CUDA
+    process_with_cuda(mesh, sfc_generator, global_partition_host, rank);
+#else
+    process_without_cuda(mesh, sfc_generator, global_partition_host, size, rank);
+#endif
+    double time_radix = time.seconds();
+    std::cout << "Radix sort method took: " << time_radix<< " seconds." << std::endl;
+
+    mesh.set_view_sfc(sfc_generator.get_view_elements());
+
+    sfc_generator.generate_sfc_to_local_map();
+    mesh.set_sfc_to_local_map(sfc_generator.get_sfc_to_local_map());
+
+    double time_gen = timer.seconds();
+    std::cout << "SFC Generation and Partition took: " << time_gen << " seconds. Process: " << rank << std::endl;
+}
+
+    // write the same partition_mesh function for the distributed mesh with the difference that the sfc elements are generated independtly using
+//the hilbert curve taking advantage of the property of the hilbert curve that the elements are generated in a sorted order and there are no jumps
+//in the sfc code which allows independent generation of the sfc code for each mpi process. What the current implementation does is each process to generate the
+//sfc code for the whole mesh and then each process takes it cut. This is not efficient and it is not scalable. The sfc code should be generated independently
+//for each mpi process and then the partitioning should be done.
+// the points and elements can be generated on the fly from the sfc code in case meshless true.
+
     template <class KeyType, Integer Dim, Integer ManifoldDim, Integer Type, bool Meshless = true>
     void generate_distributed_cube(DMesh<Dim, ManifoldDim, Type, KeyType> &mesh,
                                    const Integer xDim,
@@ -393,7 +436,7 @@ namespace mars {
 
         const context &context = mesh.get_context();
 
-        int proc_num = rank(context);
+            int proc_num = rank(context);
         mesh.set_XDim(xDim);
         mesh.set_YDim(yDim);
         mesh.set_ZDim(zDim);
@@ -418,6 +461,7 @@ namespace mars {
             if (!gen_pts || !gen_elm) std::cerr << "Not implemented for other dimensions yet" << std::endl;
         }
     }
+
 }  // namespace mars
 
 #endif
