@@ -233,7 +233,7 @@ namespace mars {
         return element_sfc;
     }
 
-    template <Integer Type,class KeyType>
+    template <Integer Type, class KeyType>
     auto generate_sfc(const SFC<Type, KeyType> &morton) {
         using namespace Kokkos;
 
@@ -291,29 +291,7 @@ namespace mars {
         return number_of_elements;
     }
 
-template <typename MeshType>
-void partition_mesh(MeshType& mesh, int num_processes) {
-    // Assuming MPI_Comm_rank and MPI_Comm_size are available to get the rank and size of the MPI communicator
-    int rank, size;
-    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-    MPI_Comm_size(MPI_COMM_WORLD, &size);
-
-    // Calculate the portion of the mesh for this process
-    int portion_size = mesh.size() / size;
-    int start = rank * portion_size;
-    int end = (rank == size - 1) ? mesh.size() : start + portion_size;
-
-    // Generate the SFC code for this portion of the mesh
-    auto elem_sfc = generate_elements_sfc(mesh, start, end);
-
-    // Sort the SFC codes using a radix sort
-    auto sorted_sfc = buffer_cub_radix_sort(elem_sfc);
-
-    // TODO: Perform the mesh partitioning using the sorted SFC codes
-}
-
-
-//write the generate_sfc function assuming you have a square with quad4 elements 
+//write the generate_sfc function assuming you have a square with quad4 elements
 //which does not need sorting and the sfc code can be generated directly from the
 //element indices. The sfc code is generated using the hilbert code and
 
@@ -374,6 +352,89 @@ void process_without_cuda(DMesh<Dim, ManifoldDim, Type, KeyType> &mesh, SFC<Type
     build_gp_np(first_sfc, mesh.get_view_gp(), global_partition_host, all_range - 1);
 }
 #endif
+
+template <typename V, int D>
+void generateHilbertCurve(const V& curve, int L) {
+    // The number of points on the curve is 2^(DL)
+    return pow(2, D*L);
+}
+
+// Pseudocode
+template <class Type, class SfcKeyType>
+MARS_INLINE_FUNCTION bool isInsideSubdomain(SfcKeyType sfcIndex,
+                                            const int domain_max_x,
+                                            const int domain_max_y,
+                                            const int domain_max_z) {
+    // Translate the point's SFC index to coordinates
+    Point coords = sfcIndexToCoords(point.sfcIndex);
+    auto coords = get_octant_from_sfc<Type, SfcKeyType>(sfcIndex);
+    auto domain_min_x, domain_min_y, domain_min_z = 0;
+
+    // Check if the coordinates are inside the domain
+    return coords.x >= domain_min_x && coords.x < domain_max_x &&
+           coords.y >= domain_min_y && coords.y < domain_max_y &&
+           coords.z >= domain_min_z && coords.z < domain_max_z;
+}
+template <typename MeshType, typename ViewVectorType, typename Integer>
+ViewVectorType<Integer> processSegment(MeshType &mesh, int start, int end) {
+    auto rank_elements_size = end - start;
+    auto rank_elements_predicate = ViewVectorType<bool>("rank_elements", rank_elements_size);
+    auto rank_elements_scan = ViewVectorType<Integer>("rank_elements_scan", rank_elements_size + 1);
+
+    // Each rank works on its segment of the Hilbert curve
+    Kokkos::parallel_for(
+        "workOnSegment", Kokkos::RangePolicy<>(start, end), KOKKOS_LAMBDA(const int i) {
+            if (isInsideSubdomain(i, mesh.get_XDim(), mesh.get_YDim(), mesh.get_ZDim())) {
+                rank_elements_predicate(i - start) = true;
+            }
+        });
+
+    // Wait for all parallel operations to complete
+    Kokkos::fence();
+
+    // Perform an inclusive exclusive scan
+    incl_excl_scan(0, rank_elements_size, rank_elements_predicate, rank_elements_scan);
+
+    auto index_subview = subview(rank_elements_scan, rank_elements_size);
+    auto index_host = create_mirror_view(index_subview);
+
+    // Deep copy device view to host view.
+    deep_copy(index_host, index_subview);
+    auto local_size = index_host(0);
+    auto rank_elements = ViewVectorType<Integer>("rank_elements", local_size);
+
+    Kokkos::parallel_for(
+        "compactElements", Kokkos::RangePolicy<>(start, end), KOKKOS_LAMBDA(const int i) {
+            auto index = i - start;
+            if (rank_elements_predicate(index)) {
+                int local_index = rank_elements_scan(index);
+                rank_elements(local_index) = i;
+            }
+        });
+
+    return rank_elements;
+}
+
+template <typename MeshType>
+void partition_mesh(MeshType &mesh) {
+    // Assuming MPI_Comm_rank and MPI_Comm_size are available to get the rank and size of the MPI communicator
+    const context &context = mesh.get_context();
+    int rank = mars::rank(context);
+    mesh.set_proc(rank);
+    int size = num_ranks(context);
+    /* Integer num_elements = get_number_of_elements(mesh); */
+    int max_dim = max(mesh.get_XDim(), mesh.get_YDim(), mesh.get_ZDim());
+    int L = ceil(log2(max_dim));
+    // Generate the Hilbert curve range for this process
+    int num_points = generateHilbertCurve(L);
+
+    // Calculate the portion of the mesh for this process
+    int portion_size = num_points / size;
+    int start = rank * portion_size;
+    int end = (rank == size - 1) ? num_points : start + portion_size;
+
+    mesh.set_view_sfc(processSegment(mesh, start, end));
+}
 
 template <Integer Dim, Integer ManifoldDim, Integer Type, class KeyType>
 void partition_mesh(DMesh<Dim, ManifoldDim, Type, KeyType> &mesh) {
