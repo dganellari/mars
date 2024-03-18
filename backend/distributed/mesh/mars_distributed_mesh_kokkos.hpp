@@ -1482,6 +1482,18 @@ namespace mars {
         MARS_INLINE_FUNCTION
         void set_sfc_to_local_map(const UnorderedMap<KeyType, Integer> &map) { sfc_to_local_map_ = map; }
 
+        void generate_sfc_to_local_map() {
+            auto map = UnorderedMap<KeyType, Integer>(get_chunk_size());
+            set_sfc_to_local_map(map);
+            // copies needed because of cuda lambda functions. Issue: Copied as *this.{} host pointer.
+            auto element_view = get_view_sfc();
+            auto sfc_map = get_sfc_to_local_map();
+            Kokkos::parallel_for(
+                "generate_sfc_to_local_map", get_chunk_size(), MARS_LAMBDA(const Integer i) {
+                    sfc_map.insert(element_view(i), i);
+                });
+        }
+
     private:
         // careful: not a device pointer!
         const context &ctx;
