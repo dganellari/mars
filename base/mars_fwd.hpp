@@ -19,7 +19,7 @@ namespace mars {
     //           class Simplex_ = Simplex<Dim_, Manifold_, Implementation_>>
     // class Mesh;
 
-    template <Integer Dim_, Integer Manifold_, class Implementation_, class Simplex_>
+    template <Integer Dim_, Integer Manifold_, class Implementation_, class Simplex_, class SfcKey = Unsigned>
     class Mesh;
 
     template <Integer N, Integer K, class Implementation_ = DefaultImplementation>
@@ -45,6 +45,6 @@ namespace mars {
 
     template <Integer Dim, Integer ManifoldDim>
     using SimplicialMesh =
-        mars::Mesh<Dim, ManifoldDim, DefaultImplementation, Simplex<Dim, ManifoldDim, DefaultImplementation>>;
+        mars::Mesh<Dim, ManifoldDim, DefaultImplementation, Simplex<Dim, ManifoldDim, DefaultImplementation>, Unsigned>;
 
 }  // namespace mars

@@ -15,7 +15,7 @@
 
 #ifdef MARS_ENABLE_MPI
 #include "mars_distributed_non_simplex_kokkos.hpp"
-#include "mars_distributed_octant.hpp"
+#include "mars_distributed_octant_utils.hpp"
 #include "mars_distributed_simplex_kokkos.hpp"
 #include "mars_distributed_utils.hpp"
 #include "mars_imesh_kokkos.hpp"
@@ -33,8 +33,8 @@
 
 namespace mars {
 
-    template <Integer Dim_, Integer ManifoldDim_, class Simplex_>
-    class Mesh<Dim_, ManifoldDim_, DistributedImplementation, Simplex_> : public ParallelIMesh<Dim_> {
+    template <Integer Dim_, Integer ManifoldDim_, class Simplex_, class SfcKey>
+    class Mesh<Dim_, ManifoldDim_, DistributedImplementation, Simplex_, SfcKey> : public ParallelIMesh<Dim_> {
     public:
         static constexpr Integer Dim = Dim_;
         static constexpr Integer ManifoldDim = ManifoldDim_;
@@ -42,6 +42,9 @@ namespace mars {
         using Elem = Simplex_;
         using Point = mars::Point<Real, Dim>;
         using Comb = Combinations<ManifoldDim + 1, 2, DistributedImplementation>;
+
+        using KeyType = typename SfcKey::ValueType;
+        using SfcKeyType = SfcKey;
 
         /* MARS_INLINE_FUNCTION Mesh()
             : ParallelIMesh<Dim_>(),
@@ -183,13 +186,13 @@ namespace mars {
         }
 
         MARS_INLINE_FUNCTION
-        Integer get_sfc_elem(const Integer index) const { return local_sfc_(index); }
+        KeyType get_sfc_elem(const Integer index) const { return local_sfc_(index); }
 
         MARS_INLINE_FUNCTION
-        const ViewVectorType<Integer> &get_view_sfc() const { return local_sfc_; }
+        const ViewVectorType<KeyType> &get_view_sfc() const { return local_sfc_; }
 
         MARS_INLINE_FUNCTION
-        void set_view_sfc(const ViewVectorType<Integer> &local) { local_sfc_ = local; }
+        void set_view_sfc(const ViewVectorType<KeyType> &local) { local_sfc_ = local; }
 
         MARS_INLINE_FUNCTION
         const ViewVectorType<Integer> &get_view_gp() const { return gp_np; }
@@ -325,17 +328,17 @@ namespace mars {
         template <Integer Type>
         struct AddNonSimplexPoint {
             ViewMatrixType<Real> points;
-            ViewVectorType<Integer> encoded_points;
+            ViewVectorType<KeyType> encoded_points;
 
             Integer xDim;
             Integer yDim;
             Integer zDim;
 
-            AddNonSimplexPoint(ViewMatrixType<Real> pts, ViewVectorType<Integer> epts, Integer xdm, Integer ydm)
+            AddNonSimplexPoint(ViewMatrixType<Real> pts, ViewVectorType<KeyType> epts, Integer xdm, Integer ydm)
                 : points(pts), encoded_points(epts), xDim(xdm), yDim(ydm) {}
 
             AddNonSimplexPoint(ViewMatrixType<Real> pts,
-                               ViewVectorType<Integer> epts,
+                               ViewVectorType<KeyType> epts,
                                Integer xdm,
                                Integer ydm,
                                Integer zdm)
@@ -343,18 +346,21 @@ namespace mars {
 
             KOKKOS_INLINE_FUNCTION
             void operator()(Integer index) const {
-                Integer gl_index = encoded_points(index);
+                KeyType gl_index = encoded_points(index);
 
                 switch (Type) {
                     case ElementType::Quad4: {
-                        points(index, 0) = static_cast<Real>(decode_morton_2DX(gl_index)) / static_cast<Real>(xDim);
-                        points(index, 1) = static_cast<Real>(decode_morton_2DY(gl_index)) / static_cast<Real>(yDim);
+                        auto octant = decode_sfc_2D<SfcKeyType>(gl_index);
+
+                        points(index, 0) = static_cast<Real>(octant.x) / static_cast<Real>(xDim);
+                        points(index, 1) = static_cast<Real>(octant.y) / static_cast<Real>(yDim);
                         break;
                     }
                     case ElementType::Hex8: {
-                        points(index, 0) = static_cast<Real>(decode_morton_3DX(gl_index)) / static_cast<Real>(xDim);
-                        points(index, 1) = static_cast<Real>(decode_morton_3DY(gl_index)) / static_cast<Real>(yDim);
-                        points(index, 2) = static_cast<Real>(decode_morton_3DZ(gl_index)) / static_cast<Real>(zDim);
+                        auto octant = decode_sfc_3D<SfcKeyType>(gl_index);
+                        points(index, 0) = static_cast<Real>(octant.x) / static_cast<Real>(xDim);
+                        points(index, 1) = static_cast<Real>(octant.y) / static_cast<Real>(yDim);
+                        points(index, 2) = static_cast<Real>(octant.z) / static_cast<Real>(zDim);
                         break;
                     }
                 }
@@ -364,17 +370,17 @@ namespace mars {
         template <Integer Type>
         struct BuildGlobalPointIndex {
             ViewVectorType<bool> predicate;
-            ViewVectorType<Integer> global;
+            ViewVectorType<KeyType> global;
 
             Integer xDim;
             Integer yDim;
             Integer zDim;
 
-            BuildGlobalPointIndex(ViewVectorType<bool> el, ViewVectorType<Integer> gl, Integer xdm, Integer ydm)
+            BuildGlobalPointIndex(ViewVectorType<bool> el, ViewVectorType<KeyType> gl, Integer xdm, Integer ydm)
                 : predicate(el), global(gl), xDim(xdm), yDim(ydm) {}
 
             BuildGlobalPointIndex(ViewVectorType<bool> el,
-                                  ViewVectorType<Integer> gl,
+                                  ViewVectorType<KeyType> gl,
                                   Integer xdm,
                                   Integer ydm,
                                   Integer zdm)
@@ -388,17 +394,16 @@ namespace mars {
                         // in this way the array is already sorted and you just compact it using scan which is much
                         // faster in parallel.
 
-                        Integer gl_index = global(i);
-                        assert(gl_index < encode_morton_2D(xDim + 1, yDim + 1));
+                        auto gl_index = global(i);
+                        assert(gl_index < encode_sfc_2D<SfcKeyType>(xDim + 1, yDim + 1));
 
                         // gl_index defines one element by its corner node. Then we add all the other nodes for that
                         // element.
-                        const Integer x = decode_morton_2DX(gl_index);
-                        const Integer y = decode_morton_2DY(gl_index);
+                        auto octant = decode_sfc_2D<SfcKeyType>(gl_index);
                         predicate(gl_index) = 1;
-                        predicate(encode_morton_2D(x + 1, y)) = 1;
-                        predicate(encode_morton_2D(x, y + 1)) = 1;
-                        predicate(encode_morton_2D(x + 1, y + 1)) = 1;
+                        predicate(encode_sfc_2D<SfcKeyType>(octant.x + 1, octant.y)) = 1;
+                        predicate(encode_sfc_2D<SfcKeyType>(octant.x, octant.y + 1)) = 1;
+                        predicate(encode_sfc_2D<SfcKeyType>(octant.x + 1, octant.y + 1)) = 1;
                         break;
                     }
                     case ElementType::Hex8: {
@@ -406,25 +411,22 @@ namespace mars {
                         // in this way the array is already sorted and you just compact it using scan which is much
                         // faster in parallel.
 
-                        Integer gl_index = global(i);
+                        auto gl_index = global(i);
 
-                        assert(gl_index < encode_morton_3D(xDim + 1, yDim + 1, zDim + 1));
+                        assert(gl_index < encode_sfc_3D<SfcKeyType>(xDim + 1, yDim + 1, zDim + 1));
 
                         // gl_index defines one element by its corner node. Then we add all the other nodes for that
                         // element.
-                        const Integer x = decode_morton_3DX(gl_index);
-                        const Integer y = decode_morton_3DY(gl_index);
-                        const Integer z = decode_morton_3DZ(gl_index);
-
+                        auto octant = decode_sfc_3D<SfcKeyType>(gl_index);
                         predicate(gl_index) = 1;
-                        predicate(encode_morton_3D(x + 1, y, z)) = 1;
-                        predicate(encode_morton_3D(x, y + 1, z)) = 1;
-                        predicate(encode_morton_3D(x + 1, y + 1, z)) = 1;
+                        predicate(encode_sfc_3D<SfcKeyType>(octant.x + 1, octant.y, octant.z)) = 1;
+                        predicate(encode_sfc_3D<SfcKeyType>(octant.x, octant.y + 1, octant.z)) = 1;
+                        predicate(encode_sfc_3D<SfcKeyType>(octant.x + 1, octant.y + 1, octant.z)) = 1;
 
-                        predicate(encode_morton_3D(x, y, z + 1)) = 1;
-                        predicate(encode_morton_3D(x + 1, y, z + 1)) = 1;
-                        predicate(encode_morton_3D(x, y + 1, z + 1)) = 1;
-                        predicate(encode_morton_3D(x + 1, y + 1, z + 1)) = 1;
+                        predicate(encode_sfc_3D<SfcKeyType>(octant.x, octant.y, octant.z + 1)) = 1;
+                        predicate(encode_sfc_3D<SfcKeyType>(octant.x + 1, octant.y, octant.z + 1)) = 1;
+                        predicate(encode_sfc_3D<SfcKeyType>(octant.x, octant.y + 1, octant.z + 1)) = 1;
+                        predicate(encode_sfc_3D<SfcKeyType>(octant.x + 1, octant.y + 1, octant.z + 1)) = 1;
                         break;
                     }
                 }
@@ -432,7 +434,7 @@ namespace mars {
         };
 
         template <Integer Type>
-        inline ViewVectorType<bool> build_global_elements(const Integer allrange) {
+        inline ViewVectorType<bool> build_global_elements(const KeyType allrange) {
             using namespace Kokkos;
 
             Timer timer;
@@ -441,13 +443,13 @@ namespace mars {
 
             parallel_for("local_sfc_range",
                          get_chunk_size(),
-                         BuildGlobalPointIndex<Type>(all_elements, local_sfc_, xDim, yDim, zDim));
+                         BuildGlobalPointIndex<Type>(all_elements, get_view_sfc(), xDim, yDim, zDim));
 
             return all_elements;
         }
 
         template <Integer Type>
-        inline Integer compact_elements(ViewVectorType<Integer> &ltg, const Integer allrange) {
+        inline Integer compact_elements(ViewVectorType<KeyType> &ltg, const KeyType allrange) {
             using namespace Kokkos;
 
             Timer timer;
@@ -464,10 +466,10 @@ namespace mars {
             deep_copy(h_ic, index_subview);
             // std::cout << "Hyper count result: " << h_ic(0)<< std::endl;
 
-            ltg = ViewVectorType<Integer>("local_to_global", h_ic());
+            ltg = ViewVectorType<KeyType>("local_to_global", h_ic());
 
             parallel_for(
-                allrange, KOKKOS_LAMBDA(const Integer i) {
+                allrange, KOKKOS_LAMBDA(const KeyType i) {
                     if (all_elements(i) == 1) {
                         Integer k = scan_indices(i);
                         ltg(k) = i;
@@ -489,9 +491,9 @@ namespace mars {
                             assert(yDim != 0);
                             assert(zDim == 0);
 
-                            ViewVectorType<Integer> local_to_global;
+                            ViewVectorType<KeyType> local_to_global;
 
-                            const Integer allrange = encode_morton_2D(xDim + 1, yDim + 1);
+                            const auto allrange = encode_sfc_2D<SfcKeyType>(xDim + 1, yDim + 1);
 
                             const Integer nr_points = compact_elements<Type>(local_to_global, allrange);
 
@@ -511,12 +513,11 @@ namespace mars {
                                 "local_global_map_for", nr_points, KOKKOS_LAMBDA(const int i) {
                                     const int offset = xD + 1;
 
-                                    const Integer gl_index = local_to_global(i);
+                                    const auto gl_index = local_to_global(i);
 
-                                    const Integer x = decode_morton_2DX(gl_index);
-                                    const Integer y = decode_morton_2DY(gl_index);
+                                    const auto octant = decode_sfc_2D<SfcKeyType>(gl_index);
 
-                                    global_to_local_map.insert(x + offset * y, i);
+                                    global_to_local_map.insert(octant.x + offset * octant.y, i);
                                 });
 
                             set_global_to_local_map(global_to_local_map);
@@ -535,8 +536,8 @@ namespace mars {
                             assert(yDim != 0);
                             assert(zDim != 0);
 
-                            ViewVectorType<Integer> local_to_global;
-                            const Integer allrange = encode_morton_3D(
+                            ViewVectorType<KeyType> local_to_global;
+                            const auto allrange = encode_sfc_3D<SfcKeyType>(
                                 xDim + 1, yDim + 1, zDim + 1);  // TODO : check if enough. Test with xdim != ydim.
 
                             const Integer nr_points = compact_elements<Type>(local_to_global, allrange);
@@ -557,13 +558,11 @@ namespace mars {
 
                             parallel_for(
                                 "local_global_map_for", nr_points, KOKKOS_LAMBDA(const int i) {
-                                    const Integer gl_index = local_to_global(i);
+                                    const auto gl_index = local_to_global(i);
 
-                                    const Integer x = decode_morton_3DX(gl_index);
-                                    const Integer y = decode_morton_3DY(gl_index);
-                                    const Integer z = decode_morton_3DZ(gl_index);
+                                    const auto octant = decode_sfc_3D<SfcKeyType>(gl_index);
 
-                                    global_to_local_map.insert(elem_index(x, y, z, xD, yD), i);
+                                    global_to_local_map.insert(elem_index(octant.x, octant.y, octant.z, xD, yD), i);
                                 });
 
                             set_global_to_local_map(global_to_local_map);
@@ -586,7 +585,7 @@ namespace mars {
             using UMap = UnorderedMap<Integer, Integer>;
             ViewMatrixType<Integer> elem;
             ViewVectorType<bool> active;
-            ViewVectorType<Integer> global;
+            ViewVectorType<KeyType> global;
             UMap map;
 
             Integer xDim;
@@ -594,7 +593,7 @@ namespace mars {
             Integer zDim;
 
             AddNonSimplexElem(ViewMatrixType<Integer> el,
-                              ViewVectorType<Integer> gl,
+                              ViewVectorType<KeyType> gl,
                               UMap mp,
                               ViewVectorType<bool> ac,
                               Integer xdm,
@@ -602,7 +601,7 @@ namespace mars {
                 : elem(el), global(gl), map(mp), active(ac), xDim(xdm), yDim(ydm) {}
 
             AddNonSimplexElem(ViewMatrixType<Integer> el,
-                              ViewVectorType<Integer> gl,
+                              ViewVectorType<KeyType> gl,
                               UMap mp,
                               ViewVectorType<bool> ac,
                               Integer xdm,
@@ -616,34 +615,37 @@ namespace mars {
                     case ElementType::Quad4: {
                         const int offset = xDim + 1;
 
-                        const Integer gl_index = global(index);
+                        const auto gl_index = global(index);
+                        const auto octant = decode_sfc_2D<SfcKeyType>(gl_index);
 
-                        const Integer i = decode_morton_2DX(gl_index);
-                        const Integer j = decode_morton_2DY(gl_index);
-
-                        elem(index, 0) = map.value_at(map.find(i + offset * j));
-                        elem(index, 1) = map.value_at(map.find((i + 1) + offset * j));
-                        elem(index, 2) = map.value_at(map.find((i + 1) + offset * (j + 1)));
-                        elem(index, 3) = map.value_at(map.find(i + offset * (j + 1)));
+                        elem(index, 0) = map.value_at(map.find(octant.x + offset * octant.y));
+                        elem(index, 1) = map.value_at(map.find((octant.x + 1) + offset * octant.y));
+                        elem(index, 2) = map.value_at(map.find((octant.x + 1) + offset * (octant.y + 1)));
+                        elem(index, 3) = map.value_at(map.find(octant.x + offset * (octant.y + 1)));
 
                         active(index) = true;
                         break;
                     }
                     case ElementType::Hex8: {
-                        const Integer gl_index = global(index);
+                        const auto gl_index = global(index);
 
-                        const Integer i = decode_morton_3DX(gl_index);
-                        const Integer j = decode_morton_3DY(gl_index);
-                        const Integer k = decode_morton_3DZ(gl_index);
+                        const auto octant = decode_sfc_3D<SfcKeyType>(gl_index);
 
-                        elem(index, 0) = map.value_at(map.find(elem_index(i, j, k, xDim, yDim)));
-                        elem(index, 1) = map.value_at(map.find(elem_index(i + 1, j, k, xDim, yDim)));
-                        elem(index, 2) = map.value_at(map.find(elem_index(i + 1, j + 1, k, xDim, yDim)));
-                        elem(index, 3) = map.value_at(map.find(elem_index(i, j + 1, k, xDim, yDim)));
-                        elem(index, 4) = map.value_at(map.find(elem_index(i, j, k + 1, xDim, yDim)));
-                        elem(index, 5) = map.value_at(map.find(elem_index(i + 1, j, k + 1, xDim, yDim)));
-                        elem(index, 6) = map.value_at(map.find(elem_index(i + 1, j + 1, k + 1, xDim, yDim)));
-                        elem(index, 7) = map.value_at(map.find(elem_index(i, j + 1, k + 1, xDim, yDim)));
+                        elem(index, 0) = map.value_at(map.find(elem_index(octant.x, octant.y, octant.z, xDim, yDim)));
+                        elem(index, 1) =
+                            map.value_at(map.find(elem_index(octant.x + 1, octant.y, octant.z, xDim, yDim)));
+                        elem(index, 2) =
+                            map.value_at(map.find(elem_index(octant.x + 1, octant.y + 1, octant.z, xDim, yDim)));
+                        elem(index, 3) =
+                            map.value_at(map.find(elem_index(octant.x, octant.y + 1, octant.z, xDim, yDim)));
+                        elem(index, 4) =
+                            map.value_at(map.find(elem_index(octant.x, octant.y, octant.z + 1, xDim, yDim)));
+                        elem(index, 5) =
+                            map.value_at(map.find(elem_index(octant.x + 1, octant.y, octant.z + 1, xDim, yDim)));
+                        elem(index, 6) =
+                            map.value_at(map.find(elem_index(octant.x + 1, octant.y + 1, octant.z + 1, xDim, yDim)));
+                        elem(index, 7) =
+                            map.value_at(map.find(elem_index(octant.x, octant.y + 1, octant.z + 1, xDim, yDim)));
 
                         active(index) = true;
                         break;
@@ -698,7 +700,7 @@ namespace mars {
         template <Integer Type>
         struct CountGhostNeighbors {
             ViewVectorType<Integer> global;
-            ViewVectorType<Integer> count;
+            ViewVectorType<KeyType> count;
             ViewVectorType<Integer> gp;
 
             Integer proc;
@@ -709,7 +711,7 @@ namespace mars {
 
             bool periodic;
 
-            CountGhostNeighbors(ViewVectorType<Integer> gl,
+            CountGhostNeighbors(ViewVectorType<KeyType> gl,
                                 ViewVectorType<Integer> ct,
                                 ViewVectorType<Integer> g,
                                 Integer p,
@@ -721,7 +723,7 @@ namespace mars {
 
             MARS_INLINE_FUNCTION
             void increment(const Octant &o) const {
-                Integer enc_oc = get_sfc_from_octant<Type>(o);
+                auto enc_oc = get_sfc_from_octant<Type, SfcKeyType>(o);
 
                 assert(find_owner_processor(gp, enc_oc, 2, proc) >= 0);
                 Integer owner_proc = find_owner_processor(gp, enc_oc, 2, proc);
@@ -735,8 +737,8 @@ namespace mars {
 
             MARS_INLINE_FUNCTION
             void operator()(int index) const {
-                const Integer gl_index = global(index);
-                Octant ref_octant = get_octant_from_sfc<Type>(gl_index);
+                const auto gl_index = global(index);
+                Octant ref_octant = get_octant_from_sfc<Type, SfcKeyType>(gl_index);
 
                 const int offset = xDim + 1;
 
@@ -770,7 +772,7 @@ namespace mars {
 
         template <Integer Type>
         struct BuildBoundarySets {
-            ViewVectorType<Integer> global;
+            ViewVectorType<KeyType> global;
             ViewVectorType<Integer> gp;
 
             ViewVectorType<Integer> set;
@@ -785,7 +787,7 @@ namespace mars {
 
             bool periodic;
 
-            BuildBoundarySets(ViewVectorType<Integer> gl,
+            BuildBoundarySets(ViewVectorType<KeyType> gl,
                               ViewVectorType<Integer> g,
                               ViewVectorType<Integer> st,
                               ViewVectorType<Integer> sc,  // ViewVectorType<Integer> in,
@@ -806,7 +808,7 @@ namespace mars {
 
             MARS_INLINE_FUNCTION
             void scatter(const Octant &o, const Integer ref) const {
-                Integer enc_oc = get_sfc_from_octant<Type>(o);
+                auto enc_oc = get_sfc_from_octant<Type, SfcKeyType>(o);
 
                 assert(find_owner_processor(gp, enc_oc, 2, proc) >= 0);
                 Integer owner_proc = find_owner_processor(gp, enc_oc, 2, proc);
@@ -822,8 +824,8 @@ namespace mars {
 
             MARS_INLINE_FUNCTION
             void operator()(int index) const {
-                const Integer gl_index = global(index);
-                Octant ref_octant = get_octant_from_sfc<Type>(gl_index);
+                const auto gl_index = global(index);
+                Octant ref_octant = get_octant_from_sfc<Type, SfcKeyType>(gl_index);
 
                 const int offset = xDim + 1;
                 for (int face = 0; face < 2 * ManifoldDim; ++face) {
@@ -861,7 +863,7 @@ namespace mars {
 
             parallel_for("count_ghost_nbhs",
                          get_chunk_size(),
-                         CountGhostNeighbors<Type>(local_sfc_, count, gp_np, proc, xDim, yDim, zDim));
+                         CountGhostNeighbors<Type>(get_view_sfc(), count, gp_np, proc, xDim, yDim, zDim));
 
             parallel_for(
                 "print acc", rank_size, KOKKOS_LAMBDA(const int i) { printf(" count : %i-%li\n", i, count(i)); });
@@ -881,14 +883,14 @@ namespace mars {
 
             parallel_for("build_set_kernel",
                          get_chunk_size(),
-                         BuildBoundarySets<Type>(local_sfc_, gp_np, set, scan, proc, xDim, yDim, zDim));
+                         BuildBoundarySets<Type>(get_view_sfc(), gp_np, set, scan, proc, xDim, yDim, zDim));
             parallel_for(
                 "print set", h_ic(), KOKKOS_LAMBDA(const int i) { printf(" set : %i - %li\n", i, set(i)); });
         }
 
         template <Integer Type>
         struct IdentifyBoundaryPerRank {
-            ViewVectorType<Integer> global;
+            ViewVectorType<KeyType> global;
             ViewMatrixTypeLeft<bool> predicate;
             ViewVectorType<Integer> gp;
 
@@ -900,7 +902,7 @@ namespace mars {
 
             bool periodic;
 
-            IdentifyBoundaryPerRank(ViewVectorType<Integer> gl,
+            IdentifyBoundaryPerRank(ViewVectorType<KeyType> gl,
                                     ViewMatrixTypeLeft<bool> pr,
                                     ViewVectorType<Integer> g,
                                     Integer p,
@@ -912,12 +914,12 @@ namespace mars {
 
             MARS_INLINE_FUNCTION
             void setPredicate(const int index, const Octant &o) const {
-                Integer enc_oc = get_sfc_from_octant<Type>(o);
+                auto enc_oc = get_sfc_from_octant<Type, SfcKeyType>(o);
 
                 assert(find_owner_processor(gp, enc_oc, 2, proc) >= 0);
                 Integer owner_proc = find_owner_processor(gp, enc_oc, 2, proc);
 
-                // printf("Proc: %li, %li\n", proc, owner_proc);
+                /* printf("Proc: %li, %li, %li\n", proc, owner_proc, index); */
                 // the case when the neihgbor is a ghost element.
                 if (proc != owner_proc) {
                     predicate(index, owner_proc) = 1;
@@ -1001,8 +1003,8 @@ namespace mars {
 
             MARS_INLINE_FUNCTION
             void operator()(int index) const {
-                const Integer gl_index = global(index);
-                Octant ref_octant = get_octant_from_sfc<Type>(gl_index);
+                const auto gl_index = global(index);
+                Octant ref_octant = get_octant_from_sfc<Type, SfcKeyType>(gl_index);
 
                 predicate_face(ref_octant, index, xDim, yDim, zDim, periodic);
                 predicate_corner(ref_octant, index, xDim, yDim, zDim, periodic);
@@ -1020,7 +1022,7 @@ namespace mars {
 
             /* the only way to work using the lambda instead of the functor on c++11 */
             ViewVectorType<Integer> boundary = boundary_;
-            ViewVectorType<Integer> local_sfc = local_sfc_;
+            ViewVectorType<KeyType> local_sfc = local_sfc_;
             ViewVectorType<Integer> boundary_lsfc_index = boundary_lsfc_index_;
 
             parallel_for(
@@ -1046,7 +1048,7 @@ namespace mars {
             parallel_for(
                 "IdentifyBoundaryPerRank",
                 get_chunk_size(),
-                IdentifyBoundaryPerRank<Type>(local_sfc_, rank_boundary, gp_np, proc, xDim, yDim, zDim, periodic));
+                IdentifyBoundaryPerRank<Type>(get_view_sfc(), rank_boundary, gp_np, proc, xDim, yDim, zDim, periodic));
 
             /* perform a scan for each row with the sum at the end for each rank */
             ViewMatrixTypeLeft<Integer> rank_scan("rank_scan", chunk_size_ + 1, rank_size);
@@ -1197,7 +1199,7 @@ namespace mars {
                     Integer index;
 
                     if (nbh_oc.is_valid()) {
-                        Integer enc_oc = get_sfc_from_octant<simplex_type::ElemType>(nbh_oc);
+                        Integer enc_oc = get_sfc_from_octant<simplex_type::ElemType, SfcKeyType>(nbh_oc);
 
                         Integer owner_proc = find_owner_processor(mesh.get_view_gp(), enc_oc, 2, proc);
                         assert(owner_proc >= 0);
@@ -1272,8 +1274,6 @@ namespace mars {
 
             MARS_INLINE_FUNCTION
             void operator()(const Integer i) const {
-                /* const Integer oc = mesh.get_view_sfc()(i);
-          Octant ref_octant = get_octant_from_sfc<simplex_type::ElemType>(oc); */
                 iterate<0>(i);
                 iterate<1>(i);
                 // TODO: 3D part
@@ -1316,9 +1316,9 @@ namespace mars {
                 "print set", get_chunk_size(), KOKKOS_LAMBDA(const Integer i) {
                     const Integer sfc = sfcv(i);
                     double point[3];
-                    get_vertex_coordinates_from_sfc<Elem::ElemType>(sfc, point, xDim, yDim, zDim);
+                    get_vertex_coordinates_from_sfc<Elem::ElemType, SfcKeyType>(sfc, point, xDim, yDim, zDim);
 
-                    Octant o = get_octant_from_sfc<Elem::ElemType>(sfc);
+                    Octant o = get_octant_from_sfc<Elem::ElemType, SfcKeyType>(sfc);
                     printf("mesh sfc : %li - %li - %li - (%lf, %lf, %lf) -rank: %i\n",
                            i,
                            sfc,
@@ -1358,21 +1358,21 @@ namespace mars {
 
         MARS_INLINE_FUNCTION
         Octant get_ghost_octant(const Integer index) const {
-            const Integer sfc_code = ghost_(index);
-            return get_octant_from_sfc<Elem::ElemType>(sfc_code);
+            const KeyType sfc_code = ghost_(index);
+            return get_octant_from_sfc<Elem::ElemType, SfcKeyType>(sfc_code);
         }
 
         MARS_INLINE_FUNCTION
-        Integer get_sfc(const Integer sfc_index) const { return local_sfc_(sfc_index); }
+        KeyType get_sfc(const Integer sfc_index) const { return local_sfc_(sfc_index); }
 
         MARS_INLINE_FUNCTION
         Octant get_octant(const Integer sfc_index) const {
-            const Integer sfc_code = local_sfc_(sfc_index);
-            return get_octant_from_sfc<Elem::ElemType>(sfc_code);
+            const KeyType sfc_code = local_sfc_(sfc_index);
+            return get_octant_from_sfc<Elem::ElemType, SfcKeyType>(sfc_code);
         }
 
         MARS_INLINE_FUNCTION
-        Octant octant_from_sfc(const Integer sfc) const { return get_octant_from_sfc<Elem::ElemType>(sfc); }
+        Octant octant_from_sfc(const KeyType sfc) const { return get_octant_from_sfc<Elem::ElemType, SfcKeyType>(sfc); }
 
         MARS_INLINE_FUNCTION
         Octant get_octant_face_nbh(const Octant &oc, const Integer face_nr) const {
@@ -1477,18 +1477,18 @@ namespace mars {
         /* void set_context(const context &c) { ctx = c; } */
 
         MARS_INLINE_FUNCTION
-        const UnorderedMap<Integer, Integer> &get_sfc_to_local_map() const { return sfc_to_local_map_; }
+        const UnorderedMap<KeyType, Integer> &get_sfc_to_local_map() const { return sfc_to_local_map_; }
 
         MARS_INLINE_FUNCTION
-        void set_sfc_to_local_map(const UnorderedMap<Integer, Integer> &map) { sfc_to_local_map_ = map; }
+        void set_sfc_to_local_map(const UnorderedMap<KeyType, Integer> &map) { sfc_to_local_map_ = map; }
 
     private:
         // careful: not a device pointer!
         const context &ctx;
         // This block represents the SFC data and the data structures needed to manage it in a distributed manner.
-        ViewVectorType<Integer> local_sfc_;
+        ViewVectorType<KeyType> local_sfc_;
         /* ViewVectorType<Integer> sfc_to_local_;  // global to local map from sfc allrange */
-        UnorderedMap<Integer, Integer> sfc_to_local_map_;
+        UnorderedMap<KeyType, Integer> sfc_to_local_map_;
         ViewVectorType<Integer> gp_np;  // parallel partition info shared among all processes.
         Integer xDim, yDim, zDim;
         Integer chunk_size_;
@@ -1522,16 +1522,33 @@ namespace mars {
         ViewVectorType<Integer>::HostMirror scan_recv_mirror;
     };
 
-    using DistributedMesh1 = mars::Mesh<1, 1, DistributedImplementation, Simplex<1, 1, DistributedImplementation>>;
-    using DistributedMesh2 = mars::Mesh<2, 2, DistributedImplementation, Simplex<2, 2, DistributedImplementation>>;
-    using DistributedMesh3 = mars::Mesh<3, 3, DistributedImplementation, Simplex<3, 3, DistributedImplementation>>;
-    using DistributedMesh4 = mars::Mesh<4, 4, DistributedImplementation, Simplex<4, 4, DistributedImplementation>>;
+    template <typename KeyType = MortonKey<Unsigned>>
+    using DistributedMesh1 =
+        mars::Mesh<1, 1, DistributedImplementation, Simplex<1, 1, DistributedImplementation>, KeyType>;
 
-    using DistributedQuad4Mesh = mars::Mesh<2, 2, DistributedImplementation, Quad4DElem>;
-    using DistributedHex8Mesh = mars::Mesh<3, 3, DistributedImplementation, Hex8DElem>;
+    template <typename KeyType = MortonKey<Unsigned>>
+    using DistributedMesh2 =
+        mars::Mesh<2, 2, DistributedImplementation, Simplex<2, 2, DistributedImplementation>, KeyType>;
 
-    template <Integer Type, Integer Dim = (Type == ElementType::Quad4) ? 2 : 3, Integer ManifoldDim = Dim>
+    template <typename KeyType = MortonKey<Unsigned>>
+    using DistributedMesh3 =
+        mars::Mesh<3, 3, DistributedImplementation, Simplex<3, 3, DistributedImplementation>, KeyType>;
+
+    template <typename KeyType = MortonKey<Unsigned>>
+    using DistributedMesh4 =
+        mars::Mesh<4, 4, DistributedImplementation, Simplex<4, 4, DistributedImplementation>, KeyType>;
+
+    template <typename KeyType = MortonKey<Unsigned>>
+    using DistributedQuad4Mesh = mars::Mesh<2, 2, DistributedImplementation, Quad4DElem, KeyType>;
+
+    template <typename KeyType = MortonKey<Unsigned>>
+    using DistributedHex8Mesh = mars::Mesh<3, 3, DistributedImplementation, Hex8DElem, KeyType>;
+
+    template <typename KeyType = MortonKey<Unsigned>,
+              Integer Type = ElementType::Hex8,
+              Integer Dim = (Type == ElementType::Quad4) ? 2 : 3,
+              Integer ManifoldDim = Dim>
     using DistributedMesh =
-        mars::Mesh<Dim, ManifoldDim, DistributedImplementation, NonSimplex<Type, DistributedImplementation>>;
+        mars::Mesh<Dim, ManifoldDim, DistributedImplementation, NonSimplex<Type, DistributedImplementation>, KeyType>;
 }  // namespace mars
 #endif  // MARS_MESH_HPP

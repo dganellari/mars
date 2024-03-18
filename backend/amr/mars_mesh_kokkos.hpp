@@ -20,8 +20,8 @@
 
 namespace mars {
 
-    template <Integer Dim_, Integer ManifoldDim_, class Simplex_>
-    class Mesh<Dim_, ManifoldDim_, KokkosImplementation, Simplex_> : public ParallelIMesh<Dim_> {
+    template <Integer Dim_, Integer ManifoldDim_, class Simplex_, class KeyType>
+    class Mesh<Dim_, ManifoldDim_, KokkosImplementation, Simplex_, KeyType> : public ParallelIMesh<Dim_> {
     public:
         static constexpr Integer Dim = Dim_;
         static constexpr Integer ManifoldDim = ManifoldDim_;

@@ -174,13 +174,13 @@ namespace mars {
         }
 
         MARS_INLINE_FUNCTION
-        const Integer get_nnz() const { return matrix.nnz(); }
+        Integer get_nnz() const { return matrix.nnz(); }
 
         MARS_INLINE_FUNCTION
-        const Integer get_num_cols() const { return matrix.numCols(); }
+        Integer get_num_cols() const { return matrix.numCols(); }
 
         MARS_INLINE_FUNCTION
-        const Integer get_num_rows() const { return matrix.numRows(); }
+        Integer get_num_rows() const { return matrix.numRows(); }
 
         MARS_INLINE_FUNCTION
         const crs_matrix get_crs_matrix() const { return matrix; }

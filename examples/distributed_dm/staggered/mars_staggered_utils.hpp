@@ -264,11 +264,11 @@ namespace mars {
 
             Kokkos::Timer timer;
             // create the quad mesh distributed through the mpi procs.
-            DistributedQuad4Mesh mesh(context);
+            DistributedQuad4Mesh<> mesh(context);
             generate_distributed_cube(mesh, level, level, 0);
 
             constexpr Integer Degree = 2;
-            using MyDofTypes = DofTypes<DistributedQuad4Mesh, Degree>;
+            using MyDofTypes = DofTypes<DistributedQuad4Mesh<>, Degree>;
 
             double mtime = timer.seconds();
             std::cout << "Mesh generation took: " << mtime << " seconds." << std::endl;

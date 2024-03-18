@@ -50,14 +50,14 @@ u = P uk */
 
 namespace mars {
 
-    template <Integer Type>
-    void print_dof(const SFC<Type> &dof, const int rank) {
+    template <Integer Type, class SfcKeyType>
+    void print_dof(const SFC<Type, SfcKeyType> &dof, const int rank) {
         Kokkos::parallel_for(
             "for", dof.get_elem_size(), MARS_LAMBDA(const int i) {
                 Integer sfc_elem = dof.get_view_elements()(i);
 
                 double point[3];
-                get_vertex_coordinates_from_sfc<Type>(sfc_elem, point, dof.get_XDim(), dof.get_YDim(), dof.get_ZDim());
+                get_vertex_coordinates_from_sfc<Type, SfcKeyType>(sfc_elem, point, dof.get_XDim(), dof.get_YDim(), dof.get_ZDim());
 
                 printf("dof: %li - (%lf, %lf) - rank: %i\n", i, point[0], point[1], rank);
             });
@@ -121,7 +121,11 @@ namespace mars {
             });
     }
 
-    template <class BC, class RHS, class AnalyticalFun, Integer Type = ElementType::Quad4>
+    template <class BC,
+              class RHS,
+              class AnalyticalFun,
+              Integer Type = ElementType::Quad4,
+              class KeyType = MortonKey<Unsigned>>
     void matrix_free_poisson(const int xDim, const int yDim, const int zDim) {
         using namespace mars;
         mars::proc_allocation resources;
@@ -140,7 +144,7 @@ namespace mars {
 
         Kokkos::Timer timer;
 
-        using DMesh = DistributedMesh<Type>;
+        using DMesh = DistributedMesh<KeyType, Type>;
 
         // create the quad mesh distributed through the mpi procs.
         DMesh mesh(context);
