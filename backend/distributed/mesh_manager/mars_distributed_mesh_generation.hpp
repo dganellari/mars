@@ -359,16 +359,20 @@ IntegerType generateHilbertCurve(int L) {
     return pow(2, D*L);
 }
 
-template <class Oc>
+template <Integer Type, typename Oc, typename T>
 MARS_INLINE_FUNCTION bool isInsideSubdomain(const Oc &coords,
-                                            const Integer domain_max_x,
-                                            const Integer domain_max_y,
-                                            const Integer domain_max_z) {
-    Integer domain_min_x, domain_min_y, domain_min_z = 0;
+                                            const T domain_max_x,
+                                            const T domain_max_y,
+                                            const T domain_max_z) {
+    Integer domain_min_x = 0, domain_min_y = 0, domain_min_z = 0;
     // Check if the coordinates are inside the domain
-    return coords.x >= domain_min_x && coords.x < domain_max_x &&
-           coords.y >= domain_min_y && coords.y < domain_max_y &&
-           coords.z >= domain_min_z && coords.z < domain_max_z;
+    if constexpr (Type == ElementType::Quad4) {
+        return coords.x >= domain_min_x && coords.x < domain_max_x && coords.y >= domain_min_y &&
+               coords.y < domain_max_y;
+    } else if constexpr (Type == ElementType::Hex8) {
+        return coords.x >= domain_min_x && coords.x < domain_max_x && coords.y >= domain_min_y &&
+               coords.y < domain_max_y && coords.z >= domain_min_z && coords.z < domain_max_z;
+    }
 }
 
 template <Integer Dim, Integer ManifoldDim, Integer Type, typename KeyType>
@@ -376,20 +380,24 @@ void processSegment(DMesh<Dim, ManifoldDim, Type, KeyType> &mesh,
                     const typename KeyType::ValueType start,
                     const typename KeyType::ValueType end) {
     using ValueType = typename KeyType::ValueType;
+    static_assert(std::is_same<KeyType, HilbertKey<ValueType>>::value, "Key type must be HilbertKey");
 
-    auto rank_elements_size = end - start;
+    const auto rank_elements_size = end - start;
     auto rank_elements_predicate = ViewVectorType<bool>("rank_elements", rank_elements_size);
     auto rank_elements_scan = ViewVectorType<ValueType>("rank_elements_scan", rank_elements_size + 1);
 
+    const Integer xDim = mesh.get_XDim();
+    const Integer yDim = mesh.get_YDim();
+    const Integer zDim = mesh.get_ZDim();
     // Each rank works on its segment of the Hilbert curve
     Kokkos::parallel_for(
-        "workOnSegment", Kokkos::RangePolicy<>(start, end), KOKKOS_LAMBDA(const ValueType i) {
+        "workOnSegment", Kokkos::RangePolicy<>(start, end), MARS_LAMBDA(const Integer i) {
             auto coords = get_octant_from_sfc<Type, KeyType>(i);
-            if (isInsideSubdomain(coords, mesh.get_XDim(), mesh.get_YDim(), mesh.get_ZDim())) {
+            if (isInsideSubdomain<Type>(coords, xDim, yDim, zDim)) {
+                printf("coords: %li, %li, %li, %li\n", i, coords.x, coords.y, coords.z);
                 rank_elements_predicate(i - start) = true;
             }
         });
-
     // Wait for all parallel operations to complete
     Kokkos::fence();
 
@@ -404,7 +412,7 @@ void processSegment(DMesh<Dim, ManifoldDim, Type, KeyType> &mesh,
     auto local_size = index_host();
     auto rank_elements = ViewVectorType<ValueType>("rank_elements", local_size);
 
-    printf("Hchunk_size: %li, number_of_elements: %li\n", local_size, rank_elements_size);
+    printf("Hilbert chunk_size: %i, Full Hilbert size: %li\n", local_size, rank_elements_size);
 
     Kokkos::parallel_for(
         "compactElements", Kokkos::RangePolicy<>(start, end), KOKKOS_LAMBDA(const ValueType i) {
@@ -539,6 +547,7 @@ void partition_mesh(DMesh<Dim, ManifoldDim, Type, KeyType> &mesh) {
         mesh.set_YDim(yDim);
         mesh.set_ZDim(zDim);
 
+        printf("xDim %i, yDim %i, zDim %i\n", xDim, yDim, zDim);
         // partition the mesh and then generate the points and elements.
         partition_mesh(mesh);
 
