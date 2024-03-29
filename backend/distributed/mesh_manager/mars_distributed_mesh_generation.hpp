@@ -360,7 +360,7 @@ IntegerType generateHilbertCurve(int L) {
 }
 
 template <Integer Type, typename Oc, typename T>
-MARS_INLINE_FUNCTION bool isInsideSubdomain(const Oc &coords,
+MARS_INLINE_FUNCTION bool is_inside_subdomain(const Oc &coords,
                                             const T domain_max_x,
                                             const T domain_max_y,
                                             const T domain_max_z) {
@@ -376,7 +376,7 @@ MARS_INLINE_FUNCTION bool isInsideSubdomain(const Oc &coords,
 }
 
 template <Integer Dim, Integer ManifoldDim, Integer Type, typename KeyType>
-void processSegment(DMesh<Dim, ManifoldDim, Type, KeyType> &mesh,
+void process_segment(DMesh<Dim, ManifoldDim, Type, KeyType> &mesh,
                     const typename KeyType::ValueType start,
                     const typename KeyType::ValueType end) {
     using ValueType = typename KeyType::ValueType;
@@ -393,8 +393,7 @@ void processSegment(DMesh<Dim, ManifoldDim, Type, KeyType> &mesh,
     Kokkos::parallel_for(
         "workOnSegment", Kokkos::RangePolicy<>(start, end), MARS_LAMBDA(const Integer i) {
             auto coords = get_octant_from_sfc<Type, KeyType>(i);
-            if (isInsideSubdomain<Type>(coords, xDim, yDim, zDim)) {
-                printf("coords: %li, %li, %li, %li\n", i, coords.x, coords.y, coords.z);
+            if (is_inside_subdomain<Type>(coords, xDim, yDim, zDim)) {
                 rank_elements_predicate(i - start) = true;
             }
         });
@@ -428,13 +427,37 @@ void processSegment(DMesh<Dim, ManifoldDim, Type, KeyType> &mesh,
     mesh.generate_sfc_to_local_map();
 }
 
+// to aovid predicate, scan and compact and so reduce memory footprint when full hilbert curve is processed
+template <Integer Dim, Integer ManifoldDim, Integer Type, typename KeyType>
+void process_full_segment(DMesh<Dim, ManifoldDim, Type, KeyType> &mesh,
+                    const typename KeyType::ValueType start,
+                    const typename KeyType::ValueType end) {
+    using ValueType = typename KeyType::ValueType;
+    static_assert(std::is_same<KeyType, HilbertKey<ValueType>>::value, "Key type must be HilbertKey");
+
+    const auto rank_elements_size = end - start;
+    auto rank_elements = ViewVectorType<ValueType>("rank_elements", rank_elements_size);
+
+    printf("Hilbert chunk_size: %li\n", rank_elements_size);
+
+    Kokkos::parallel_for(
+        "compactElements", Kokkos::RangePolicy<>(start, end), KOKKOS_LAMBDA(const ValueType i) {
+            auto index = i - start;
+            rank_elements(index) = i;
+        });
+
+    mesh.set_view_sfc(rank_elements);
+    mesh.set_chunk_size(rank_elements_size);
+    mesh.generate_sfc_to_local_map();
+}
+
 template <typename V>
-void build_first_sfc(const V &first_sfc, int size, Unsigned portion_size) {
+void build_first_hilbert_sfc(const V &first_sfc, int size, Integer portion_size) {
     // Each rank calculates its first SFC in parallel
     Kokkos::parallel_for(
-        "update_first_sfc", Kokkos::RangePolicy<>(0, size), KOKKOS_LAMBDA(const int rank) {
+        "update_first_sfc", Kokkos::RangePolicy<>(0, size + 1), KOKKOS_LAMBDA(const Integer rank) {
             // Compute the start of the SFC for this rank
-            auto start = rank * portion_size;
+            Integer start = rank * portion_size;
             // Update the start in the view
             first_sfc(2 * rank) = start;
         });
@@ -443,14 +466,34 @@ void build_first_sfc(const V &first_sfc, int size, Unsigned portion_size) {
     Kokkos::fence();
 }
 
+template <Integer Dim, Integer ManifoldDim, Integer Type, class KeyType>
+bool is_full_hilbert_curve(DMesh<Dim, ManifoldDim, Type, KeyType> &mesh) {
+    // Check if all dimensions are equal
+    if (mesh.get_XDim() != mesh.get_YDim() || mesh.get_XDim() != mesh.get_YDim()) {
+        return false;
+    }
+    // Calculate L based on one of the dimensions
+    int L = log2(mesh.get_XDim());
+    // Check if the dimension is a power of 2
+    if (pow(2, L) != mesh.get_XDim()) {
+        return false;
+    }
+    // Get the number of elements in the mesh
+    Integer num_elements = get_number_of_elements(mesh);
+    // Generate the Hilbert curve range for this process
+    auto num_points = generateHilbertCurve<Integer, Dim>(L);
+    // Check if the number of elements is equal to the number of points
+    return num_elements == num_points;
+}
+
 template <Integer Dim, Integer ManifoldDim, Integer Type, class IntegerType>
 void partition_mesh(DMesh<Dim, ManifoldDim, Type, HilbertKey<IntegerType>> &mesh) {
-    printf("partition_mesh for hilbert curve\n");
+    Integer num_elements = get_number_of_elements(mesh);
+    printf("partition_mesh for hilbert curve with %li elements\n", num_elements);
     const context &context = mesh.get_context();
     int rank = mars::rank(context);
     mesh.set_proc(rank);
     int size = num_ranks(context);
-    /* Integer num_elements = get_number_of_elements(mesh); */
     int max_dim = std::max({mesh.get_XDim(), mesh.get_YDim(), mesh.get_ZDim()});
     int L = ceil(log2(max_dim));
     // Generate the Hilbert curve range for this process
@@ -461,11 +504,17 @@ void partition_mesh(DMesh<Dim, ManifoldDim, Type, HilbertKey<IntegerType>> &mesh
     IntegerType start = rank * portion_size;
     IntegerType end = (rank == size - 1) ? num_points : start + portion_size;
 
-    processSegment(mesh, start, end);
+    // Check if the Hilbert curve is full. If it is, we can process the segment without predicate, scan and compact
+    /* if (is_full_hilbert_curve(mesh)) {
+        process_full_segment(mesh, start, end);
+    } else { */
+        process_segment(mesh, start, end);
+    // }
 
     ViewVectorType<Integer> global_partition = ViewVectorType<Integer>("global_static_partition", 2 * (size + 1));
-    build_first_sfc(global_partition, size, portion_size);
     mesh.set_view_gp(global_partition);
+
+    build_first_hilbert_sfc(mesh.get_view_gp(), size, portion_size);
 }
 
 template <Integer Dim, Integer ManifoldDim, Integer Type, class KeyType>
