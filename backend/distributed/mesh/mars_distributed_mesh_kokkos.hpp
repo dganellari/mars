@@ -1012,9 +1012,10 @@ namespace mars {
             }
         };
 
-        inline void compact_boundary_elements(const ViewVectorType<Integer> scan_indices,
-                                              const ViewMatrixTypeLeft<bool> predicate,
-                                              const ViewMatrixTypeLeft<Integer> predicate_scan,
+        inline void compact_boundary_elements(const ViewVectorType<Integer> scan_boundary,
+                                              const ViewMatrixTypeLeft<bool> rank_boundary,
+                                              const ViewMatrixTypeLeft<Integer> rank_scan,
+                                              const ViewVectorType<Integer> scan_ranks_with_count,
                                               const Integer rank_size) {
             using namespace Kokkos;
 
@@ -1028,8 +1029,8 @@ namespace mars {
             parallel_for(
                 MDRangePolicy<Rank<2>>({0, 0}, {chunk_size_, rank_size}),
                 KOKKOS_LAMBDA(const Integer i, const Integer j) {
-                    if (predicate(i, j) == 1) {
-                        Integer index = scan_indices(j) + predicate_scan(i, j);
+                    if (rank_boundary(i, j) == 1) {
+                        Integer index = scan_boundary(j) + rank_scan(i, scan_ranks_with_count(j));
                         boundary(index) = local_sfc(i);
                         boundary_lsfc_index(index) = i;
                     }
@@ -1043,25 +1044,58 @@ namespace mars {
             const Integer rank_size = gp_np.extent(0) / 2 - 1;
 
             ViewMatrixTypeLeft<bool> rank_boundary("count_per_proc", chunk_size_, rank_size);
-            scan_boundary_ = ViewVectorType<Integer>("scan_boundary_", rank_size + 1);
-
             parallel_for(
                 "IdentifyBoundaryPerRank",
                 get_chunk_size(),
                 IdentifyBoundaryPerRank<Type>(get_view_sfc(), rank_boundary, gp_np, proc, xDim, yDim, zDim, periodic));
 
-            /* perform a scan for each row with the sum at the end for each rank */
-            ViewMatrixTypeLeft<Integer> rank_scan("rank_scan", chunk_size_ + 1, rank_size);
+            // count the number of boundary elements for each rank.
+            auto count_boundary = ViewVectorType<Integer>("count_boundary", rank_size);
+            ViewVectorType<Integer> total_counts("total count of boundary elements", 1);
+            TeamPolicy<> policy(rank_size, AUTO);
+            parallel_for(
+                "count_boundary", policy, KOKKOS_LAMBDA(const TeamPolicy<>::member_type &team) {
+                    Integer i = team.league_rank();
+                    Integer count = 0;
+                    parallel_reduce(
+                        TeamThreadRange(team, chunk_size_),
+                        [=](Integer j, Integer &lsum) { lsum += rank_boundary(j, i); },
+                        count);
+                    count_boundary(i) = count;
+                    if (count > 0) {
+                        atomic_increment(&total_counts(0));
+                    }
+                });
+
+            scan_boundary_ = ViewVectorType<Integer>("scan_boundary_", rank_size + 1);
+            incl_excl_scan(0, rank_size, count_boundary, scan_boundary_);
+
+            auto h_total_counts = create_mirror_view(total_counts);
+            deep_copy(h_total_counts, total_counts);
+            //allocate only space for the boundary elements that have boundary count > 0 to reduce memory usage.
+            //this is the reason for the parallel reduce kernel above.
+            ViewMatrixTypeLeft<Integer> rank_scan("rank_scan", chunk_size_ + 1, h_total_counts(0));
+            printf("Total counts: %li, rank_size: %li\n", h_total_counts(0), rank_size);
+
+            auto h_count_boundary = create_mirror_view(count_boundary);
+            deep_copy(h_count_boundary, count_boundary);
+
+            auto scan_ranks_with_count = ViewVectorType<Integer>("scan_ranks_with_count", rank_size + 1);
+            auto h_scan_ranks_with_count = create_mirror_view(scan_ranks_with_count);
+
+            auto index = 0;
             for (int i = 0; i < rank_size; ++i) {
-                if (i != proc) {
+                if (h_count_boundary(i) && i != proc) {
                     auto proc_predicate = subview(rank_boundary, ALL, i);
-                    auto proc_scan = subview(rank_scan, ALL, i);
+                    auto proc_scan = subview(rank_scan, ALL, index++);
                     incl_excl_scan(0, chunk_size_, proc_predicate, proc_scan);
                 }
+                h_scan_ranks_with_count(i + 1) = index;
             }
+            deep_copy(scan_ranks_with_count, h_scan_ranks_with_count);
 
             // perform a scan on the last row to get the total sum.
-            row_scan(rank_size, chunk_size_, rank_scan, scan_boundary_);
+            /* row_scan(rank_size, chunk_size_, rank_scan, scan_boundary_); */
             auto index_subview = subview(scan_boundary_, rank_size);
             auto h_ic = create_mirror_view(index_subview);
 
@@ -1073,7 +1107,7 @@ namespace mars {
 
             /* We use this strategy so that the compacted elements from the local_sfc
             would still be sorted and unique. */
-            compact_boundary_elements(scan_boundary_, rank_boundary, rank_scan, rank_size);
+            compact_boundary_elements(scan_boundary_, rank_boundary, rank_scan, scan_ranks_with_count, rank_size);
         }
 
         void exchange_ghost_counts(const context &context) {

@@ -244,14 +244,14 @@ namespace mars {
     }
      */
     // works for all cases including those with strided access views coming from auto = subview...
-    template <typename H, typename U>
-    void incl_excl_scan(const Integer start, const Integer end, const U in_, H out_) {
+    template <typename H, typename U, typename S, typename J>
+    void incl_excl_scan(const S start, const J end, const U in_, H out_) {
         using namespace Kokkos;
 
         using T = typename H::value_type;
 
         parallel_scan(
-            RangePolicy<>(start, end), KOKKOS_LAMBDA(const int& i, T& upd, const bool& final) {
+            RangePolicy<IndexType<J>>(start, end), KOKKOS_LAMBDA(const J i, T& upd, const bool final) {
                 // Load old value in case we update it before accumulating
                 const T val_i = in_(i);
 
