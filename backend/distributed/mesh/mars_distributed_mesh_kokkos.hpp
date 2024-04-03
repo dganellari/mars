@@ -1043,6 +1043,7 @@ namespace mars {
 
             const Integer rank_size = gp_np.extent(0) / 2 - 1;
 
+            //TODO:replace with kokkos bitset
             ViewMatrixTypeLeft<bool> rank_boundary("count_per_proc", chunk_size_, rank_size);
             parallel_for(
                 "IdentifyBoundaryPerRank",
@@ -1063,7 +1064,7 @@ namespace mars {
                         count);
                     count_boundary(i) = count;
                     if (count > 0) {
-                        atomic_increment(&total_counts(0));
+                        atomic_increment(total_counts.data());
                     }
                 });
 
