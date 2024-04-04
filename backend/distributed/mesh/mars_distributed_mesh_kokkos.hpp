@@ -1052,7 +1052,6 @@ namespace mars {
 
             // count the number of boundary elements for each rank.
             auto count_boundary = ViewVectorType<Integer>("count_boundary", rank_size);
-            ViewVectorType<Integer> total_counts("total count of boundary elements", 1);
             TeamPolicy<> policy(rank_size, AUTO);
             parallel_for(
                 "count_boundary", policy, KOKKOS_LAMBDA(const TeamPolicy<>::member_type &team) {
@@ -1063,37 +1062,38 @@ namespace mars {
                         [=](Integer j, Integer &lsum) { lsum += rank_boundary(j, i); },
                         count);
                     count_boundary(i) = count;
-                    if (count > 0) {
-                        atomic_increment(total_counts.data());
-                    }
                 });
 
             scan_boundary_ = ViewVectorType<Integer>("scan_boundary_", rank_size + 1);
             incl_excl_scan(0, rank_size, count_boundary, scan_boundary_);
 
-            auto h_total_counts = create_mirror_view(total_counts);
-            deep_copy(h_total_counts, total_counts);
-            //allocate only space for the boundary elements that have boundary count > 0 to reduce memory usage.
-            //this is the reason for the parallel reduce kernel above.
-            ViewMatrixTypeLeft<Integer> rank_scan("rank_scan", chunk_size_ + 1, h_total_counts(0));
-            printf("Total counts: %li, rank_size: %li\n", h_total_counts(0), rank_size);
-
+            //count how many ranks have boundary elements so that we can allocate only memory for those ranks.
             auto h_count_boundary = create_mirror_view(count_boundary);
             deep_copy(h_count_boundary, count_boundary);
+
 
             auto scan_ranks_with_count = ViewVectorType<Integer>("scan_ranks_with_count", rank_size + 1);
             auto h_scan_ranks_with_count = create_mirror_view(scan_ranks_with_count);
 
-            auto index = 0;
+            auto h_total_counts = 0;
+            for (int i = 0; i < rank_size; ++i) {
+                if (h_count_boundary(i) && i != proc) {
+                    h_total_counts++;
+                }
+                h_scan_ranks_with_count(i + 1) = h_total_counts;
+            }
+            deep_copy(scan_ranks_with_count, h_scan_ranks_with_count);
+            //allocate only space for the boundary elements that have boundary count > 0 to reduce memory usage.
+            //this is the reason for the parallel reduce kernel above.
+            ViewMatrixTypeLeft<Integer> rank_scan("rank_scan", chunk_size_ + 1, h_total_counts);
+            printf("Total counts: %li, rank_size: %li\n", h_total_counts, rank_size);
             for (int i = 0; i < rank_size; ++i) {
                 if (h_count_boundary(i) && i != proc) {
                     auto proc_predicate = subview(rank_boundary, ALL, i);
-                    auto proc_scan = subview(rank_scan, ALL, index++);
+                    auto proc_scan = subview(rank_scan, ALL, h_scan_ranks_with_count(i));
                     incl_excl_scan(0, chunk_size_, proc_predicate, proc_scan);
                 }
-                h_scan_ranks_with_count(i + 1) = index;
             }
-            deep_copy(scan_ranks_with_count, h_scan_ranks_with_count);
 
             // perform a scan on the last row to get the total sum.
             /* row_scan(rank_size, chunk_size_, rank_scan, scan_boundary_); */
