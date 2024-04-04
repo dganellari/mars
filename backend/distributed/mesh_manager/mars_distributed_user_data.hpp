@@ -307,7 +307,7 @@ namespace mars {
 
         if (data.get_mesh().get_view_scan_recv_mirror()(size) ==
             data.get_mesh().get_view_ghost().extent(0)) {
-            std::cout << "Exchange the ghost data..." << std::endl;
+            // std::cout << "Exchange the ghost data..." << std::endl;
             data.exchange_ghost_data(context);
         } else {
             errorx(1,

@@ -6,14 +6,14 @@
 #include <type_traits>
 #include "mars_globals.hpp"
 
+#ifdef MARS_ENABLE_KOKKOS
+
 #ifdef MARS_ENABLE_KOKKOS_KERNELS
 #include "Kokkos_ArithTraits.hpp"
-#ifdef MARS_ENABLE_KOKKOS
-#include "Kokkos_Atomic.hpp"
-#include "Kokkos_Macros.hpp"
-#if KOKKOS_VERSION >= 30500
-#include "impl/Kokkos_Atomic_Generic.hpp"
 #endif
+
+#if (KOKKOS_VERSION < 40000)
+#include "impl/Kokkos_Atomic_Generic.hpp"
 #endif
 
 #ifdef MARS_ENABLE_MPI
@@ -382,25 +382,28 @@ namespace mars {
         return -1;
     }
 
-    // Trilinos way of doing abs max and min
-    template <class T, class H>
-    struct AbsMinOp {
-        MARS_INLINE_FUNCTION
-        static T apply(const T& val1, const H& val2) {
-            const auto abs1 = Kokkos::ArithTraits<T>::abs(val1);
-            const auto abs2 = Kokkos::ArithTraits<H>::abs(val2);
-            return abs1 < abs2 ? T(abs1) : H(abs2);
+#if (KOKKOS_VERSION >= 40000)
+    // Kokkos way of doing Abs Max Atomics : https://github.com/kokkos/kokkos/pull/5816/files
+    // Trick the atomic add into doing max abs fetch operator
+    template <class Scalar>
+    struct AbsMaxHelper {
+        Scalar value;
+
+        KOKKOS_FUNCTION AbsMaxHelper& operator+=(AbsMaxHelper const& rhs) {
+            Scalar lhs_abs_value = Kokkos::abs(value);
+            Scalar rhs_abs_value = Kokkos::abs(rhs.value);
+            value = lhs_abs_value > rhs_abs_value ? lhs_abs_value : rhs_abs_value;
+            return *this;
+        }
+
+        KOKKOS_FUNCTION AbsMaxHelper operator+(AbsMaxHelper const& rhs) const {
+            AbsMaxHelper ret = *this;
+            ret += rhs;
+            return ret;
         }
     };
-
-    template <typename SC>
-    struct atomic_abs_min {
-        MARS_INLINE_FUNCTION
-        void operator()(SC& dest, const SC& src) const {
-            Kokkos::Impl::atomic_fetch_oper(AbsMinOp<SC, SC>(), &dest, src);
-        }
-    };
-
+#elif defined MARS_ENABLE_KOKKOS_KERNELS
+    // Trilinos way of doing it using the deprecated atomic_fetch_oper
     template <class T, class H>
     struct AbsMaxOp {
         MARS_INLINE_FUNCTION
@@ -419,20 +422,11 @@ namespace mars {
         }
     };
 
-    template <typename H>
-    struct AtomicOp {
-        AtomicOp(H f) : func(f) {}
-
-        MARS_INLINE_FUNCTION
-        void operator()(double& dest, const double& src) const { Kokkos::Impl::atomic_fetch_oper(func, &dest, src); }
-
-        H func;
-    };
-
     template <typename H, typename S>
     MARS_INLINE_FUNCTION void atomic_op(H f, S& dest, const S& src) {
         Kokkos::Impl::atomic_fetch_oper(f, &dest, src);
     }
+#endif
 
     // max plus functor
     template <typename T>
@@ -457,7 +451,6 @@ namespace mars {
 
         // "Join" intermediate results from different threads.
         // This should normally implement the same reduction
-        // operation as operator() above.
 #if (KOKKOS_VERSION >= 40000)
         KOKKOS_INLINE_FUNCTION void join(
             value_type& dst,
