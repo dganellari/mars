@@ -952,7 +952,8 @@ namespace mars {
 
             Timer timer2;
 
-            complex_inclusive_scan(1, nr_elements + 1, index_count_, pt_count_);
+            inclusive_scan(1, nr_elements + 1, index_count_);
+            inclusive_scan(1, nr_elements + 1, pt_count_);
 
             double time2 = timer2.seconds();
             if (verbose) std::cout << "Scan took: " << time2 << " seconds." << std::endl;
