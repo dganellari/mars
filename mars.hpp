@@ -14,6 +14,7 @@
 #ifdef MARS_ENABLE_MPI
 #include "mars_mpi_guard.hpp"
 #ifdef MARS_ENABLE_KOKKOS
+#include "mars_distributed_octant_utils.hpp"
 #include "mars_distributed_data_management.hpp"
 #include "mars_distributed_mesh_generation.hpp"
 #include "mars_distributed_sparsity_matrix.hpp"

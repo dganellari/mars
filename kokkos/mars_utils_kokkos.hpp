@@ -189,6 +189,37 @@ namespace mars {
     }
 
     template <typename T>
+    void complex_inclusive_scan(const Integer start,
+                                const Integer end,
+                                ViewVectorType<T> index_count_,
+                                ViewVectorType<T> pt_count_) {
+        using namespace Kokkos;
+        // paralel scan on the index_count view for both columns at the same time misusing the complex instead.
+        // Warning: Kokkos complex only works on floating point types
+        parallel_scan(
+            RangePolicy<>(start, end), KOKKOS_LAMBDA(const int& i, complex<T>& upd, const bool& final) {
+                // Load old value in case we update it before accumulating
+                const T val_i = index_count_(i);
+                const T val_ip = pt_count_(i);
+                /*upd += val_i;
+                upd_ip += val_ip;*/
+                upd.real() += val_i;
+                upd.imag() += val_ip;
+                if (final) {
+                    index_count_(i) = upd.real();  // only update array on final pass
+                    pt_count_(i) = upd.imag();
+                    /*index_count_(i,0) = upd;
+                    index_count_(i,1) = upd_ip;*/
+                }
+                // For exclusive scan, change the update value after
+                // updating array, like we do here. For inclusive scan,
+                // change the update value before updating array.
+                /*upd.real() += val_i0;
+                upd.imag() += val_i1;*/
+            });
+    }
+
+    template <typename T>
     void inclusive_scan(const Integer start, const Integer end, ViewVectorType<T> in_) {
         using namespace Kokkos;
 
@@ -244,14 +275,14 @@ namespace mars {
     }
      */
     // works for all cases including those with strided access views coming from auto = subview...
-    template <typename H, typename U>
-    void incl_excl_scan(const Integer start, const Integer end, const U in_, H out_) {
+    template <typename H, typename U, typename S, typename J>
+    void incl_excl_scan(const S start, const J end, const U in_, H out_) {
         using namespace Kokkos;
 
         using T = typename H::value_type;
 
         parallel_scan(
-            RangePolicy<>(start, end), KOKKOS_LAMBDA(const int& i, T& upd, const bool& final) {
+            RangePolicy<IndexType<J>>(start, end), KOKKOS_LAMBDA(const J i, T& upd, const bool final) {
                 // Load old value in case we update it before accumulating
                 const T val_i = in_(i);
 
@@ -296,42 +327,6 @@ namespace mars {
                 if (final) {
                     out_(i + 1) = upd;  // To have both ex and inclusive in the same output.
                 }
-            });
-    }
-
-    template <typename T>
-    void complex_inclusive_scan(const Integer start,
-                                const Integer end,
-                                ViewVectorType<T> index_count_,
-                                ViewVectorType<T> pt_count_) {
-        using namespace Kokkos;
-
-        // paralel scan on the index_count view for both columns at the same time misusing the complex instead.
-        /*	parallel_scan (RangePolicy<>(1 , nr_elements +1 ),	KOKKOS_LAMBDA (const int& i,
-                                        complex<Integer>& upd, const bool& final)
-                {*/
-        parallel_scan(
-            RangePolicy<>(start, end), KOKKOS_LAMBDA(const int& i, complex<T>& upd, const bool& final) {
-                // Load old value in case we update it before accumulating
-                const T val_i = index_count_(i);
-                const T val_ip = pt_count_(i);
-
-                /*upd += val_i;
-                upd_ip += val_ip;*/
-                upd.real() += val_i;
-                upd.imag() += val_ip;
-
-                if (final) {
-                    index_count_(i) = upd.real();  // only update array on final pass
-                    pt_count_(i) = upd.imag();
-                    /*index_count_(i,0) = upd;
-                    index_count_(i,1) = upd_ip;*/
-                }
-                // For exclusive scan, change the update value after
-                // updating array, like we do here. For inclusive scan,
-                // change the update value before updating array.
-                /*upd.real() += val_i0;
-                upd.imag() += val_i1;*/
             });
     }
 

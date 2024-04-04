@@ -4,6 +4,7 @@
 #include "mars_globals.hpp"
 
 namespace mars {
+
     struct Dof {
         Integer gid;
         Integer owner_proc;
@@ -12,7 +13,6 @@ namespace mars {
         MARS_INLINE_FUNCTION
         Dof(Integer g, Integer p) : gid(g), owner_proc(p) {}
 
-        MARS_INLINE_FUNCTION
         Dof() = default;
 
         MARS_INLINE_FUNCTION

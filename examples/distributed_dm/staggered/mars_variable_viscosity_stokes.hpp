@@ -194,7 +194,7 @@ namespace mars {
         });
     }
 
-    template <Integer Type = ElementType::Quad4>
+    template <Integer Type = ElementType::Quad4, class KeyType = MortonKey<Unsigned>>
     void staggered_variable_viscosty_stokes(const int xDim, const int yDim, const int zDim) {
         using namespace mars;
         mars::proc_allocation resources;
@@ -213,11 +213,11 @@ namespace mars {
 
         Kokkos::Timer timer;
         // create the quad mesh distributed through the mpi procs.
-        DistributedMesh<Type> mesh(context);
+        DistributedMesh<KeyType, Type> mesh(context);
         generate_distributed_cube(mesh, xDim, yDim, zDim);
 
         constexpr Integer Degree = 2;
-        using MyDofTypes = DofTypes<DistributedMesh<Type>, Degree>;
+        using MyDofTypes = DofTypes<DistributedMesh<KeyType, Type>, Degree>;
 
         using DofHandler = typename MyDofTypes::DHandler;
         using FVDofHandler = typename MyDofTypes::FVDH;

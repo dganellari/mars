@@ -36,7 +36,9 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. */
 
 namespace mars {
 
-    using Data = UserData<DistributedQuad4Mesh, double, double, double, double>;
+    using DQ4Mesh = DistributedQuad4Mesh<>;
+
+    using Data = UserData<DQ4Mesh, double, double, double, double>;
     enum DataDesc : int { u = 0, du_0 = 1, du_1 = 2, dudt = 3 };
 
     template <Integer idx>
@@ -263,9 +265,9 @@ namespace mars {
         return retval;
     }
 
-    template <Integer Type>
+    template <Integer Type, class KeyType = Unsigned>
     MARS_INLINE_FUNCTION void get_midpoint_coordinates(double *point,
-                                                       const Integer sfc,
+                                                       const KeyType sfc,
                                                        const Integer xDim,
                                                        const Integer yDim,
                                                        const Integer zDim) {
@@ -305,7 +307,7 @@ namespace mars {
     template <Integer Type, Integer first, Integer second>
     void print_derivatives(Data &data) {
         data.elem_iterate(MARS_LAMBDA(const int i) {
-            Integer sfc_elem = data.get_mesh().get_sfc_elem(i);
+            auto sfc_elem = data.get_mesh().get_sfc_elem(i);
 
             double point[3];
             get_vertex_coordinates_from_sfc<Type>(
@@ -330,7 +332,7 @@ namespace mars {
         constexpr Integer du_index = 1 + Dir;
 
         Integer idx = face.get_side(i).get_elem_id();
-        Integer sfc_elem = data.get_mesh().get_sfc_elem(idx);
+        auto sfc_elem = data.get_mesh().get_sfc_elem(idx);
 
         double point[3];
         get_vertex_coordinates_from_sfc<Type>(
@@ -492,7 +494,7 @@ namespace mars {
                 /* in case that is a boundary face containing only one side.*/
                 if (face.get_side(i).is_valid()) {
                     Integer idx = face.get_side(i).get_elem_id();
-                    Integer sfc_elem;
+                    Unsigned sfc_elem;
 
                     if (!face.get_side(i).is_ghost()) {
                         if (i == 0)
@@ -649,7 +651,7 @@ namespace mars {
 
 #ifdef MARS_ENABLE_KOKKOS
 
-        DistributedQuad4Mesh mesh(context);
+        DQ4Mesh mesh(context);
         mesh.set_periodic();  // set the domain to be periodic before generation!
         generate_distributed_cube(mesh, x, y, 0);
 
@@ -657,9 +659,9 @@ namespace mars {
         const Integer yDim = mesh.get_YDim();
         const Integer zDim = mesh.get_ZDim();
 
-        static constexpr Integer Dim = DistributedQuad4Mesh::Dim;
+        static constexpr Integer Dim = DQ4Mesh::Dim;
 
-        using Elem = typename DistributedQuad4Mesh::Elem;
+        using Elem = typename DQ4Mesh::Elem;
         static constexpr Integer Type = Elem::ElemType;
 
         // std::cout << "Type: " << Type << std::endl;
@@ -678,7 +680,7 @@ namespace mars {
 
         Data data(mesh);
 
-        ViewVectorType<Integer> sfc = mesh.get_view_sfc();
+        auto sfc = mesh.get_view_sfc();
         /* another option to use this one with a functor instead of the lamda. Just
          * be careful what you use within the Lambda body since it is copied by
          * value. Kokkos views are no problem but the userdata object has other

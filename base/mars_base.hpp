@@ -3,6 +3,7 @@
 
 #include <cassert>
 #include "mars_config.hpp"
+#include <stdint.h>
 
 /**
  * M.A.R.S Mesh Adaptive Refinement for Simplical meshes
@@ -14,8 +15,9 @@ namespace mars {
 #else
     using Integer = long;
 #endif
-    using Unsigned = unsigned long;
-    static constexpr long INVALID_INDEX = -1;
+    using Unsigned = uint64_t;
+
+    static constexpr Integer INVALID_INDEX = -1;
 
     enum DofOrient : int { xDir = 0, yDir = 1, zDir = 2 };
 
@@ -98,6 +100,8 @@ namespace mars {
         // NonSimplex4D,
         InvalidElem = -1
     };
+
+
 }  // namespace mars
 
 #endif  // MARS_BASE_HPP

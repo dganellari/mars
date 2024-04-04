@@ -5,14 +5,14 @@
 
 namespace mars {
 
-    template <Integer Type>
-    MARS_INLINE_FUNCTION Integer compute_all_range(const Integer x, const Integer y, const Integer z) {
+    template <Integer Type, class KeyType = MortonKey<Unsigned>>
+    MARS_INLINE_FUNCTION Integer compute_all_range(const unsigned x, const unsigned y, const unsigned z) {
         switch (Type) {
             case ElementType::Quad4: {
-                return encode_morton_2D(x + 1, y + 1);
+                return encode_sfc_2D<KeyType>(x + 1, y + 1);
             }
             case ElementType::Hex8: {
-                return encode_morton_3D(x + 1, y + 1, z + 1);
+                return encode_sfc_3D<KeyType>(x + 1, y + 1, z + 1);
             }
             default: {
                 return INVALID_INDEX;
@@ -20,9 +20,11 @@ namespace mars {
         }
     }
 
-    template <Integer Type>
+    template <Integer Type, class SfcKeyType = MortonKey<Unsigned>>
     class SFC {
     public:
+        using KeyType = typename SfcKeyType::ValueType;
+
         inline void compact_elements(const ViewVectorType<Integer> &sfc_to_local,
                                      const ViewVectorType<bool> all_elements) {
             using namespace Kokkos;
@@ -39,14 +41,12 @@ namespace mars {
             const Integer elem_size = h_sfc() + h_elm();
             reserve_elements(elem_size);
 
-            // otherwise kokkos lambda will not work with CUDA
-            ViewVectorType<Integer> el = elements_;
+            ViewVectorType<KeyType> el = elements_;
             parallel_for(
-                get_all_range(), KOKKOS_LAMBDA(const Integer i) {
+                get_all_range(), KOKKOS_LAMBDA(const KeyType i) {
                     if (all_elements(i) == 1) {
                         Integer k = sfc_to_local(i);
                         el(k) = i;
-                        // elements_(k) =i; It will not work with CUDA. this.elements_ is a host pointer.
                     }
                 });
         }
@@ -93,7 +93,7 @@ namespace mars {
 
         void reserve_elements(const Integer n_elements) {
             elements_size_ = n_elements;
-            elements_ = ViewVectorType<Integer>("morton_code", n_elements);
+            elements_ = ViewVectorType<KeyType>("morton_code", n_elements);
         }
 
         MARS_INLINE_FUNCTION
@@ -109,13 +109,13 @@ namespace mars {
         }
 
         MARS_INLINE_FUNCTION
-        const ViewVectorType<Integer> &get_view_elements() const  // override
+        const ViewVectorType<KeyType> &get_view_elements() const  // override
         {
             return elements_;
         }
 
         MARS_INLINE_FUNCTION
-        Integer get_sfc(const Integer i) const  // override
+        KeyType get_sfc(const Integer i) const  // override
         {
             return elements_(i);
         }
@@ -141,22 +141,22 @@ namespace mars {
         void set_elem_size(const Integer size) { elements_size_ = size; }
 
         MARS_INLINE_FUNCTION
-        const Integer get_elem_size() const { return elements_size_; }
+        Integer get_elem_size() const { return elements_size_; }
 
         MARS_INLINE_FUNCTION
-        const Integer get_all_range() const { return all_range_; }
+        const KeyType get_all_range() const { return all_range_; }
 
         SFC() = default;
 
         SFC(const Integer x, const Integer y, const Integer z) : xDim(x), yDim(y), zDim(z) {
-            all_range_ = compute_all_range<Type>(xDim, yDim, zDim);
+            all_range_ = compute_all_range<Type, SfcKeyType>(xDim, yDim, zDim);
         }
 
         MARS_INLINE_FUNCTION
-        const UnorderedMap<Integer, Integer> &get_sfc_to_local_map() const { return sfc_to_local_map_; }
+        const UnorderedMap<KeyType, Integer> &get_sfc_to_local_map() const { return sfc_to_local_map_; }
 
         void generate_sfc_to_local_map() {
-            sfc_to_local_map_ = UnorderedMap<Integer, Integer>(get_elem_size());
+            sfc_to_local_map_ = UnorderedMap<KeyType, Integer>(get_elem_size());
             // copies needed because of cuda lambda functions. Issue: Copied as *this.{} host pointer.
             auto element_view = elements_;
             auto sfc_map = sfc_to_local_map_;
@@ -176,13 +176,13 @@ namespace mars {
         Integer get_ZDim() const { return zDim; }
 
     private:
-        ViewVectorType<Integer> elements_;
+        ViewVectorType<KeyType> elements_;
         ViewVectorType<Integer> element_labels_;
         ViewVectorType<Integer> element_orientations_;
         Integer elements_size_;
 
-        UnorderedMap<Integer, Integer> sfc_to_local_map_;
-        Integer all_range_;
+        UnorderedMap<KeyType, Integer> sfc_to_local_map_;
+        KeyType all_range_;
 
         Integer xDim, yDim, zDim;
     };

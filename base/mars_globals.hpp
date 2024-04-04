@@ -20,6 +20,108 @@
 
 namespace mars {
 
+template<typename T, T v>
+struct integral_constant
+{
+    static constexpr T value = v;
+    typedef T value_type;
+    typedef integral_constant<T, v> type;
+
+    MARS_INLINE_FUNCTION
+    constexpr operator value_type() const noexcept { return value; } // NOLINT
+};
+
+/*! @brief A template to create structs as a type-safe version to using declarations
+ * based on the https://github.com/unibas-dmi-hpc/SPH-EXA
+ *
+ * Used in public API functions where a distinction between different
+ * arguments of the same underlying type is desired. This provides a type-safe
+ * version to using declarations. Instead of naming a type alias, the name
+ * is used to define a struct that inherits from StrongType<T>, where T is
+ * the underlying type.
+ *
+ * Due to the T() conversion and assignment from T,
+ * an instance of StrongType<T> struct behaves essentially like an actual T, while construction
+ * from T is disabled. This makes it impossible to pass a T as a function parameter
+ * of type StrongType<T>.
+ */
+template<class T, class Phantom>
+struct StrongType
+{
+    using ValueType [[maybe_unused]] = T;
+
+    //! default ctor
+    constexpr MARS_INLINE_FUNCTION StrongType()
+        : value_{}
+    {
+    }
+    //! construction from the underlying type T, implicit conversions disabled
+    explicit constexpr MARS_INLINE_FUNCTION StrongType(T v)
+        : value_(std::move(v))
+    {
+    }
+
+    //! assignment from T
+    constexpr MARS_INLINE_FUNCTION StrongType& operator=(T v)
+    {
+        value_ = std::move(v);
+        return *this;
+    }
+
+    //! conversion to T
+    constexpr MARS_INLINE_FUNCTION operator T() const { return value_; } // NOLINT
+
+    //! access the underlying value
+    constexpr MARS_INLINE_FUNCTION T value() const { return value_; }
+
+private:
+    T value_;
+};
+
+/*! @brief StrongType equality comparison
+ *
+ * Requires that both T and Phantom template parameters match.
+ * For the case where a comparison between StrongTypes with matching T, but differing Phantom
+ * parameters is desired, the underlying value attribute should be compared instead
+ */
+template<class T, class Phantom>
+constexpr MARS_INLINE_FUNCTION bool operator==(const StrongType<T, Phantom>& lhs, const StrongType<T, Phantom>& rhs)
+{
+    return lhs.value() == rhs.value();
+}
+
+//! @brief comparison function <
+template<class T, class Phantom>
+constexpr MARS_INLINE_FUNCTION bool operator<(const StrongType<T, Phantom>& lhs, const StrongType<T, Phantom>& rhs)
+{
+    return lhs.value() < rhs.value();
+}
+
+//! @brief comparison function >
+template<class T, class Phantom>
+constexpr MARS_INLINE_FUNCTION bool operator>(const StrongType<T, Phantom>& lhs, const StrongType<T, Phantom>& rhs)
+{
+    return lhs.value() > rhs.value();
+}
+
+//! @brief addition
+template<class T, class Phantom>
+constexpr MARS_INLINE_FUNCTION StrongType<T, Phantom> operator+(const StrongType<T, Phantom>& lhs,
+                                                           const StrongType<T, Phantom>& rhs)
+{
+    return StrongType<T, Phantom>(lhs.value() + rhs.value());
+}
+
+//! @brief subtraction
+template<class T, class Phantom>
+constexpr MARS_INLINE_FUNCTION StrongType<T, Phantom> operator-(const StrongType<T, Phantom>& lhs,
+                                                           const StrongType<T, Phantom>& rhs)
+{
+    return StrongType<T, Phantom>(lhs.value() - rhs.value());
+}
+
+/* --------------------------------------------------------------------------------------------------------- */
+
     constexpr int hex_n_sides = 6;       // 6 faces in total for the hex27.
     constexpr int hex_n_nodes = 27;      // 27 nodes for the hex27.
     constexpr int hex_side_n_nodes = 9;  // 9 nodes per face for the hex27.

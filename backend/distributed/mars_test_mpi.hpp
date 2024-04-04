@@ -112,6 +112,7 @@ namespace mars {
     };
 #endif
 
+    template <class KeyType = MortonKey<Unsigned>>
     void test_mars_distributed_nonsimplex_mesh_generation_kokkos_2D(const int x, const int y) {
         using namespace mars;
         try {
@@ -146,7 +147,7 @@ namespace mars {
 #ifdef MARS_ENABLE_KOKKOS_KERNELS
 
             Kokkos::Timer timer_gen;
-            DistributedQuad4Mesh mesh(context);
+            DistributedQuad4Mesh<KeyType> mesh(context);
             generate_distributed_cube(mesh, x, y, 0);
 
             double time_gen = timer_gen.seconds();
@@ -158,6 +159,7 @@ namespace mars {
         }
     }
 
+    template <class KeyType = MortonKey<Unsigned>>
     void test_mars_distributed_nonsimplex_mesh_generation_kokkos_3D(const int x, const int y, const int z) {
         using namespace mars;
 
@@ -193,7 +195,7 @@ namespace mars {
 #ifdef MARS_ENABLE_KOKKOS_KERNELS
             using namespace Kokkos;
 
-            DistributedHex8Mesh mesh(context);
+            DistributedHex8Mesh<KeyType> mesh(context);
             Kokkos::Timer timer_gen;
             generate_distributed_cube(mesh, x, y, z);
 
@@ -206,7 +208,10 @@ namespace mars {
         }
     }
 
-    template <Integer Type = ElementType::Quad4, Integer Degree = 1, bool Overlap = true>
+    template <Integer Type = ElementType::Quad4,
+              Integer Degree = 1,
+              bool Overlap = true,
+              class KeyType = MortonKey<Unsigned>>
     void test_mars_distributed_vector_valued(const int xDim, const int yDim, const int zDim, const int block) {
         using namespace mars;
         mars::proc_allocation resources;
@@ -225,7 +230,7 @@ namespace mars {
 
         Kokkos::Timer timer;
 
-        using DMesh = DistributedMesh<Type>;
+        using DMesh = DistributedMesh<KeyType, Type>;
 
         // create the quad mesh distributed through the mpi procs.
         DMesh mesh(context);

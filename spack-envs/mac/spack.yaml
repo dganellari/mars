@@ -1,0 +1,24 @@
+# MARS Spack Environment file.
+#
+spack:
+  specs:
+  - kokkos
+  - kokkos-kernels
+  - mpi
+  - cxxopts
+  - llvm
+  develop:
+    mars:
+      path: ~/scratch/mars
+      spec: mars@develop
+  view: ~/scratch/view_mars
+  packages:
+    all:
+      variants: std=17 target=aarch64
+    cmake:
+      buildable: false
+      externals:
+      - spec: cmake@3.28.3
+        prefix: /opt/homebrew
+  concretizer:
+    unify: when_possible

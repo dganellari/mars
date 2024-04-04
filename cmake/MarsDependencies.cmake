@@ -167,13 +167,13 @@ if(MARS_ENABLE_KOKKOS)
 
     # get cuda flags from the wrapper alternatively we can strip
     # Kokkos_INTERFACE_COMPILE_OPTIONS when defined
-    execute_process(
-      COMMAND ${Kokkos_CXX_COMPILER} --show
-      OUTPUT_VARIABLE _wrapper_command
-      ERROR_QUIET)
-    string(REGEX REPLACE [[\n\v\c\c]] "" _wrapper_flags "${_wrapper_command}")
-    string(STRIP "${_wrapper_flags}" _wrapper_flags)
-    message(DEBUG "_wrapper_flags ${_wrapper_flags}")
+#     execute_process(
+    #   COMMAND ${Kokkos_CXX_COMPILER} --show
+    #   OUTPUT_VARIABLE _wrapper_command
+    #   ERROR_QUIET)
+    # string(REGEX REPLACE [[\n\v\c\c]] "" _wrapper_flags ${_wrapper_command})
+    # string(STRIP "${_wrapper_flags}" _wrapper_flags)
+#     message(DEBUG "_wrapper_flags ${_wrapper_flags}")
 
     # this could be done per target if we need to compile other parts of QuICC
     # with different CUDA settings
