@@ -1042,9 +1042,10 @@ namespace mars {
             using namespace Kokkos;
 
             const Integer rank_size = gp_np.extent(0) / 2 - 1;
+            auto chunk = chunk_size_;
 
             //TODO:replace with kokkos bitset
-            ViewMatrixTypeLeft<bool> rank_boundary("count_per_proc", chunk_size_, rank_size);
+            ViewMatrixTypeLeft<bool> rank_boundary("count_per_proc", chunk, rank_size);
             parallel_for(
                 "IdentifyBoundaryPerRank",
                 get_chunk_size(),
@@ -1058,7 +1059,7 @@ namespace mars {
                     Integer i = team.league_rank();
                     Integer count = 0;
                     parallel_reduce(
-                        TeamThreadRange(team, chunk_size_),
+                        TeamVectorRange(team, chunk),
                         [=](Integer j, Integer &lsum) { lsum += rank_boundary(j, i); },
                         count);
                     count_boundary(i) = count;
@@ -1085,18 +1086,17 @@ namespace mars {
             deep_copy(scan_ranks_with_count, h_scan_ranks_with_count);
             //allocate only space for the boundary elements that have boundary count > 0 to reduce memory usage.
             //this is the reason for the parallel reduce kernel above.
-            ViewMatrixTypeLeft<Integer> rank_scan("rank_scan", chunk_size_ + 1, h_total_counts);
+            ViewMatrixTypeLeft<Integer> rank_scan("rank_scan", chunk + 1, h_total_counts);
             printf("Total counts: %li, rank_size: %li\n", h_total_counts, rank_size);
             for (int i = 0; i < rank_size; ++i) {
                 if (h_count_boundary(i) && i != proc) {
                     auto proc_predicate = subview(rank_boundary, ALL, i);
                     auto proc_scan = subview(rank_scan, ALL, h_scan_ranks_with_count(i));
-                    incl_excl_scan(0, chunk_size_, proc_predicate, proc_scan);
+                    incl_excl_scan(0, chunk, proc_predicate, proc_scan);
                 }
             }
 
             // perform a scan on the last row to get the total sum.
-            /* row_scan(rank_size, chunk_size_, rank_scan, scan_boundary_); */
             auto index_subview = subview(scan_boundary_, rank_size);
             auto h_ic = create_mirror_view(index_subview);
 
