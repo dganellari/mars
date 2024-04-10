@@ -34,6 +34,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. */
 
 #include "mars_base.hpp"
 #include "mars_gathered_vector.hpp"
+#include "mars_utils_kokkos.hpp"
 
 #ifdef MARS_ENABLE_MPI
 #include "mars_distributed_context.hpp"
@@ -99,6 +100,9 @@ namespace mars {
                               const Integer *src_displ) const {}
 
         void broadcast(const ViewVectorType<Integer> global) const {}
+
+        template <typename T>
+        void gather_all_view(const ViewVectorType<T> &values, ViewVectorType<T> &buffer) const {}
 
         template <typename T>
         void gather_all_view(T value, const ViewVectorType<T> &buffer) const {}

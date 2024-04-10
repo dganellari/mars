@@ -470,9 +470,9 @@ void load_balance(DMesh<Dim, ManifoldDim, Type, KeyType> &mesh) {
     int rank = mars::rank(context);
     int size = mars::num_ranks(context);
 
-    const ViewVectorType<IntegerType> local_sfc = mesh.get_view_sfc();
     // Gather all chunk sizes and SFC to end up with sorted global SFC
-    auto global_sfc = context->distributed->gather_all_view(local_sfc);
+    ViewVectorType<IntegerType> global_sfc;
+    context->distributed->gather_all_view(mesh.get_view_sfc(), global_sfc);
     auto sfc_size = global_sfc.extent(0);
 
     // Calculate the target chunk size for each rank
@@ -482,9 +482,9 @@ void load_balance(DMesh<Dim, ManifoldDim, Type, KeyType> &mesh) {
 
     // Create a copy of the subview and store it in the mesh's SFC view
     auto local_sfc_size = end - start;
-    auto local_sfc_sub = subview(global_sfc, Kokkos::make_pair(start, end));
+    auto local_sfc = subview(global_sfc, Kokkos::make_pair(start, end));
     ViewVectorType<IntegerType> local_sfc_copy("local_sfc_copy", local_sfc_size);
-    Kokkos::deep_copy(local_sfc_copy, local_sfc_sub);
+    Kokkos::deep_copy(local_sfc_copy, local_sfc);
     // update the chunk size and view_sfc of the mesh
     mesh.set_chunk_size(local_sfc_size);
     mesh.set_view_sfc(local_sfc_copy);
@@ -529,7 +529,7 @@ void process_segment(DMesh<Dim, ManifoldDim, Type, KeyType> &mesh,
     auto local_size = index_host();
     auto rank_elements = ViewVectorType<ValueType>("rank_elements", local_size);
 
-    printf("Hilbert chunk_size: %llu, Full Hilbert size: %llu\n", local_size, rank_elements_size);
+    printf("Hilbert chunk_size: %llu, Full Hilbert size: %llu, %llu, %llu\n", local_size, rank_elements_size, start, end);
 
     Kokkos::parallel_for(
         "compactSegment",

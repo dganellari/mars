@@ -31,6 +31,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. */
 // a link error.
 
 #include "mars_config.hpp"
+#include "mars_utils_kokkos.hpp"
 
 #ifndef MARS_ENABLE_MPI
 #error "build only if MPI is enabled"
@@ -104,6 +105,11 @@ namespace mars {
         template <typename T>
         void gather_all_view(T value, const ViewVectorType<T> &buffer) const {
             mpi::gather_all_view(value, buffer, comm_);
+        }
+
+        template <typename T>
+        void gather_all_view(const ViewVectorType<T> &values, ViewVectorType<T> &buffer) const {
+            mpi::gather_all_view(values, buffer, comm_);
         }
 #endif
 
