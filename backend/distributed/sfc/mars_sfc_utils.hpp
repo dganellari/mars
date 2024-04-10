@@ -19,26 +19,18 @@ struct maxTreeLevel
 {
 };
 
-template<>
-struct maxTreeLevel<unsigned> : integral_constant<unsigned, 10>
-{
-};
+template <>
+struct maxTreeLevel<unsigned> : integral_constant<unsigned, 10> {};
 
-template<>
-struct maxTreeLevel<unsigned long long> : integral_constant<unsigned, 21>
-{
-};
+template <>
+struct maxTreeLevel<unsigned long> : integral_constant<unsigned, 21> {};
 
-template<>
-struct maxTreeLevel<unsigned long> : integral_constant<unsigned, 21>
-{
-};
+template <>
+struct maxTreeLevel<unsigned long long> : integral_constant<unsigned, 21> {};
 
 //! @brief maximum integer coordinate
-template<class KeyType>
-struct maxCoord : integral_constant<unsigned, (1u << maxTreeLevel<KeyType>{})>
-{
-};
+template <class KeyType>
+struct maxCoord : integral_constant<unsigned, (1u << maxTreeLevel<KeyType>{})> {};
 
 }  // namespace mars
 #endif
