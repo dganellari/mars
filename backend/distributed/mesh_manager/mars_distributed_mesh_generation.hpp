@@ -1,6 +1,5 @@
 #ifndef GENERATION_MARS_MESH_DISTRIBUTED_GENERATION_HPP_
 #define GENERATION_MARS_MESH_DISTRIBUTED_GENERATION_HPP_
-#include <_types/_uint64_t.h>
 #include "mars_base.hpp"
 #include "mars_err.hpp"
 #include "mars_utils_kokkos.hpp"
