@@ -1,9 +1,9 @@
 #ifndef GENERATION_MARS_MESH_DISTRIBUTED_GENERATION_HPP_
 #define GENERATION_MARS_MESH_DISTRIBUTED_GENERATION_HPP_
+#include "mars_base.hpp"
 #include "mars_err.hpp"
+#include "mars_utils_kokkos.hpp"
 #ifdef MARS_ENABLE_MPI
-#include "mars_context.hpp"
-#include "mars_execution_context.hpp"
 #ifdef MARS_ENABLE_KOKKOS
 #ifdef MARS_ENABLE_KOKKOS_KERNELS
 #include "KokkosKernels_Sorting.hpp"
@@ -371,6 +371,124 @@ MARS_INLINE_FUNCTION bool is_inside_subdomain(const Oc &coords,
     }
 }
 
+/* work-stealing algorithm to distribute the elements to the ranks */
+template <Integer Dim, Integer ManifoldDim, Integer Type, typename KeyType>
+void work_stealing_load_balance(DMesh<Dim, ManifoldDim, Type, KeyType> &mesh) {
+    using ValueType = typename KeyType::ValueType;
+    const auto &context = mesh.get_context();
+    // MPI rank and size
+    int rank = mars::rank(context);
+    int size = mars::num_ranks(context);
+
+    // Gather all chunk sizes
+    ValueType local_size = mesh.get_chunk_size();
+    std::vector<ValueType> all_sizes(size);
+    MPI_Allgather(&local_size, 1, MPI_INT, all_sizes.data(), 1, MPI_INT, MPI_COMM_WORLD);
+
+    // Calculate the target chunk size
+    ValueType total_size = std::accumulate(all_sizes.begin(), all_sizes.end(), 0);
+    ValueType target_chunk_size = total_size / size;
+
+    // Threshold for chunk size approximation
+    ValueType threshold = target_chunk_size * 0.1; // 10% of target_chunk_size
+
+    auto start = 0;
+    auto end = mesh.get_chunk_size();
+    // Work-stealing loop
+    while (true) {
+        // Check if this process's chunk size is approximately equal to the target
+        if (abs(mesh.get_chunk_size() - target_chunk_size) < threshold) {
+            // Start a non-blocking barrier operation
+            MPI_Request barrier_request;
+            MPI_Ibarrier(MPI_COMM_WORLD, &barrier_request);
+
+            // Check if all other processes have reached the barrier
+            int flag;
+            MPI_Test(&barrier_request, &flag, MPI_STATUS_IGNORE);
+            if (flag) {
+                // All other processes have finished, so break out of the loop
+                break;
+            }
+        }
+
+        // If this process's chunk size is less than the target, try to steal work from another process
+        if (mesh.get_chunk_size() < target_chunk_size) {
+            // Send work-stealing request to another process
+            int target = rand() % size;
+            MPI_Send(&rank, 1, MPI_INT, target, 0, MPI_COMM_WORLD);
+
+            // Receive response
+            ValueType stolen[2];
+            MPI_Status status;
+            MPI_Recv(&stolen, 2, MPI_INT, MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
+
+            // If the response is negative, continue to the next iteration
+            if (stolen[0]== stolen[1]) {
+                continue;
+            }
+
+            // Process the stolen nodes
+            process_segment(mesh, stolen[0], stolen[1]);
+        } else {
+            // Check for incoming work-stealing requests
+            MPI_Status status;
+            int flag;
+            MPI_Iprobe(MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &flag, &status);
+            if (flag) {
+                // Receive work-stealing request
+                int thief;
+                MPI_Recv(&thief, 1, MPI_INT, MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
+
+                auto work_to_steal = end - target_chunk_size;
+                // If this process's chunk size is greater than the target, send some unprocessed nodes to the
+                // requesting process
+                if (work_to_steal > 0) {
+                    ValueType stolen[2];
+                    stolen[0] = end - work_to_steal; //stolen start
+                    stolen[1] = end; //stolen end
+                    MPI_Send(stolen, 2, MPI_INT, thief, 0, MPI_COMM_WORLD);
+
+                    // Update this process's range of unprocessed nodes
+                    end = stolen[0];
+                } else {
+                    // Send a negative response
+                    ValueType response[2] = {end, end};
+                    MPI_Send(response, 2, MPI_INT, thief, 0, MPI_COMM_WORLD);
+                }
+            }
+        }
+    }
+}
+
+template <Integer Dim, Integer ManifoldDim, Integer Type, typename KeyType>
+void load_balance(DMesh<Dim, ManifoldDim, Type, KeyType> &mesh) {
+    using IntegerType = typename KeyType::ValueType;
+    // Get the mesh context
+    const auto &context = mesh.get_context();
+    // MPI rank and size
+    int rank = mars::rank(context);
+    int size = mars::num_ranks(context);
+
+    // Gather all chunk sizes and SFC to end up with sorted global SFC
+    ViewVectorType<IntegerType> global_sfc;
+    context->distributed->gather_all_view(mesh.get_view_sfc(), global_sfc);
+    auto sfc_size = global_sfc.extent(0);
+
+    // Calculate the target chunk size for each rank
+    IntegerType portion_size = sfc_size / size;
+    IntegerType start = rank * portion_size;
+    IntegerType end = (rank == size - 1) ? sfc_size : start + portion_size;
+
+    // Create a copy of the subview and store it in the mesh's SFC view
+    auto local_sfc_size = end - start;
+    auto local_sfc = subview(global_sfc, Kokkos::make_pair(start, end));
+    ViewVectorType<IntegerType> local_sfc_copy("local_sfc_copy", local_sfc_size);
+    Kokkos::deep_copy(local_sfc_copy, local_sfc);
+    // update the chunk size and view_sfc of the mesh
+    mesh.set_chunk_size(local_sfc_size);
+    mesh.set_view_sfc(local_sfc_copy);
+}
+
 template <Integer Dim, Integer ManifoldDim, Integer Type, typename KeyType>
 void process_segment(DMesh<Dim, ManifoldDim, Type, KeyType> &mesh,
                     const typename KeyType::ValueType start,
@@ -410,7 +528,7 @@ void process_segment(DMesh<Dim, ManifoldDim, Type, KeyType> &mesh,
     auto local_size = index_host();
     auto rank_elements = ViewVectorType<ValueType>("rank_elements", local_size);
 
-    printf("Hilbert chunk_size: %i, Full Hilbert size: %li\n", local_size, rank_elements_size);
+    printf("Hilbert chunk_size: %llu, Full Hilbert size: %llu, %llu, %llu\n", local_size, rank_elements_size, start, end);
 
     Kokkos::parallel_for(
         "compactSegment",
@@ -425,7 +543,6 @@ void process_segment(DMesh<Dim, ManifoldDim, Type, KeyType> &mesh,
 
     mesh.set_view_sfc(rank_elements);
     mesh.set_chunk_size(local_size);
-    mesh.generate_sfc_to_local_map();
 }
 
 // to aovid predicate, scan and compact and so reduce memory footprint when full hilbert curve is processed
@@ -451,7 +568,6 @@ void process_full_segment(DMesh<Dim, ManifoldDim, Type, KeyType> &mesh,
 
     mesh.set_view_sfc(rank_elements);
     mesh.set_chunk_size(rank_elements_size);
-    mesh.generate_sfc_to_local_map();
 }
 
 template <typename V, typename T>
@@ -490,6 +606,7 @@ bool is_full_hilbert_curve(DMesh<Dim, ManifoldDim, Type, KeyType> &mesh) {
     return num_elements == num_points;
 }
 
+
 template <Integer Dim, Integer ManifoldDim, Integer Type, class IntegerType>
 void partition_mesh(DMesh<Dim, ManifoldDim, Type, HilbertKey<IntegerType>> &mesh) {
     auto num_elements = get_number_of_elements(mesh);
@@ -512,7 +629,10 @@ void partition_mesh(DMesh<Dim, ManifoldDim, Type, HilbertKey<IntegerType>> &mesh
         process_full_segment(mesh, start, end);
     } else {
         process_segment(mesh, start, end);
+        load_balance(mesh);
     }
+
+    mesh.generate_sfc_to_local_map();
 
     ViewVectorType<Integer> global_partition = ViewVectorType<Integer>("global_static_partition", 2 * (size + 1));
     mesh.set_view_gp(global_partition);

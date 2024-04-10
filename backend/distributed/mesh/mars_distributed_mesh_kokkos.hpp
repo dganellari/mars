@@ -14,6 +14,7 @@
 #include <vector>
 
 #ifdef MARS_ENABLE_MPI
+#include "mars_env.hpp"
 #include "mars_distributed_non_simplex_kokkos.hpp"
 #include "mars_distributed_octant_utils.hpp"
 #include "mars_distributed_simplex_kokkos.hpp"

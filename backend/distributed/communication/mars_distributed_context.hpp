@@ -93,28 +93,31 @@ namespace mars {
 #endif  // _WIN32
 
 #ifdef MARS_ENABLE_KOKKOS
-#define MARS_PUBLIC_PTOP_(T)                                                                       \
-    ViewObject<T> min(ViewObject<T> value) const { return impl_->min(value); }                     \
-    ViewObject<T> max(ViewObject<T> value) const { return impl_->max(value); }                     \
-    void i_send_recv_all_to_all(const std::vector<T> &send_count, std::vector<T> &receive_count) { \
-        impl_->i_send_recv_all_to_all(send_count, receive_count);                                  \
-    }                                                                                              \
-    void i_send_recv_vec(const std::vector<T> &send_count, std::vector<T> &receive_count) {        \
-        impl_->i_send_recv_vec(send_count, receive_count);                                         \
-    }                                                                                              \
-    void i_send_recv_view_to_all(const ViewVectorType<T> &dest,                                    \
-                                 const Integer *dest_displ,                                        \
-                                 const ViewVectorType<T> &src,                                     \
-                                 const Integer *src_displ) {                                       \
-        impl_->i_send_recv_view_to_all(dest, dest_displ, src, src_displ);                          \
-    }                                                                                              \
-    void i_send_recv_view(const ViewVectorType<T> &dest,                                           \
-                          const Integer *dest_displ,                                               \
-                          const ViewVectorType<T> &src,                                            \
-                          const Integer *src_displ) {                                              \
-        impl_->i_send_recv_view(dest, dest_displ, src, src_displ);                                 \
-    }                                                                                              \
-    void gather_all_view(T value, const ViewVectorType<T> &buffer) { impl_->gather_all_view(value, buffer); }
+#define MARS_PUBLIC_PTOP_(T)                                                                                  \
+    ViewObject<T> min(ViewObject<T> value) const { return impl_->min(value); }                                \
+    ViewObject<T> max(ViewObject<T> value) const { return impl_->max(value); }                                \
+    void i_send_recv_all_to_all(const std::vector<T> &send_count, std::vector<T> &receive_count) {            \
+        impl_->i_send_recv_all_to_all(send_count, receive_count);                                             \
+    }                                                                                                         \
+    void i_send_recv_vec(const std::vector<T> &send_count, std::vector<T> &receive_count) {                   \
+        impl_->i_send_recv_vec(send_count, receive_count);                                                    \
+    }                                                                                                         \
+    void i_send_recv_view_to_all(const ViewVectorType<T> &dest,                                               \
+                                 const Integer *dest_displ,                                                   \
+                                 const ViewVectorType<T> &src,                                                \
+                                 const Integer *src_displ) {                                                  \
+        impl_->i_send_recv_view_to_all(dest, dest_displ, src, src_displ);                                     \
+    }                                                                                                         \
+    void i_send_recv_view(const ViewVectorType<T> &dest,                                                      \
+                          const Integer *dest_displ,                                                          \
+                          const ViewVectorType<T> &src,                                                       \
+                          const Integer *src_displ) {                                                         \
+        impl_->i_send_recv_view(dest, dest_displ, src, src_displ);                                            \
+    }                                                                                                         \
+    void gather_all_view(T value, const ViewVectorType<T> &buffer) { impl_->gather_all_view(value, buffer); } \
+    void gather_all_view(const ViewVectorType<T> &values, ViewVectorType<T> &buffer) {                  \
+        impl_->gather_all_view(values, buffer);                                                               \
+    }
 
 #define MARS_INTERFACE_PTOP_(T)                                                                                     \
     virtual ViewObject<T> min(ViewObject<T> value) const = 0;                                                       \
@@ -129,7 +132,8 @@ namespace mars {
                                   const Integer *dest_displ,                                                        \
                                   const ViewVectorType<T> &src,                                                     \
                                   const Integer *src_displ) const = 0;                                              \
-    virtual void gather_all_view(T value, const ViewVectorType<T> &buffer) const = 0;
+    virtual void gather_all_view(T value, const ViewVectorType<T> &buffer) const = 0;                               \
+    virtual void gather_all_view(const ViewVectorType<T> &values, ViewVectorType<T> &buffer) const = 0;
 
 #define MARS_WRAP_PTOP_(T)                                                                                        \
     ViewObject<T> min(ViewObject<T> value) const override { return wrapped.min(value); }                          \
@@ -154,6 +158,9 @@ namespace mars {
     }                                                                                                             \
     void gather_all_view(T value, const ViewVectorType<T> &buffer) const override {                               \
         wrapped.gather_all_view(value, buffer);                                                                   \
+    }                                                                                                             \
+    void gather_all_view(const ViewVectorType<T> &values, ViewVectorType<T> &buffer) const override {             \
+        wrapped.gather_all_view(values, buffer);                                                                  \
     }
 
 #ifdef _WIN32
@@ -172,7 +179,7 @@ namespace mars {
 
 #else  //_WIN32
 
-#define MARS_PTOP_TYPES_ double, Integer, float, int, unsigned, short
+#define MARS_PTOP_TYPES_ double, Integer, float, int, unsigned, short, uint64_t
 #define GENERATE_PTOP_PUBLIC MARS_PP_FOREACH(MARS_PUBLIC_PTOP_, MARS_PTOP_TYPES_);
 #define GENERATE_PTOP_INTERFACE MARS_PP_FOREACH(MARS_INTERFACE_PTOP_, MARS_PTOP_TYPES_)
 #define GENERATE_PTOP_WRAP MARS_PP_FOREACH(MARS_WRAP_PTOP_, MARS_PTOP_TYPES_)
@@ -338,6 +345,9 @@ namespace mars {
 
         template <typename T>
         void gather_all_view(T value, const ViewVectorType<T> &buffer) const {}
+
+        template <typename T>
+        void gather_all_view(const ViewVectorType<T> &values, ViewVectorType<T> &buffer) const {}
 
         void broadcast(const ViewVectorType<Integer> global) const {}
 

@@ -39,6 +39,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. */
 #include <vector>
 
 #include "mars_gathered_vector.hpp"
+#include "mars_utils_kokkos.hpp"
 
 namespace mars {
     namespace mpi {
@@ -108,6 +109,26 @@ namespace mars {
                          traits::count(),
                          traits::mpi_type(),  // receive buffer
                          root,
+                         comm);
+
+            return buffer;
+        }
+
+        // Gather individual values of type T from each rank into a std::vector on
+        // the every rank.
+        // T must be trivially copyable
+        template <typename T>
+        std::vector<T> gather_all(T value, MPI_Comm comm) {
+            using traits = mpi_traits<T>;
+            std::vector<T> buffer(size(comm));
+
+            MPI_OR_THROW(MPI_Allgather,
+                         &value,
+                         traits::count(),
+                         traits::mpi_type(),  // send buffer
+                         buffer.data(),
+                         traits::count(),
+                         traits::mpi_type(),  // receive buffer
                          comm);
 
             return buffer;
@@ -474,26 +495,29 @@ namespace mars {
                          comm);
         }
 
-#endif
-        // Gather individual values of type T from each rank into a std::vector on
-        // the every rank.
-        // T must be trivially copyable
         template <typename T>
-        std::vector<T> gather_all(T value, MPI_Comm comm) {
+        void gather_all_view(const ViewVectorType<T> &values, ViewVectorType<T> &buffer, MPI_Comm comm) {
             using traits = mpi_traits<T>;
-            std::vector<T> buffer(size(comm));
+            auto counts = gather_all(int(values.extent(0)), comm);
+            for (auto &c : counts) {
+                c *= traits::count();
+            }
+            auto displs = make_scan_index(counts);
 
-            MPI_OR_THROW(MPI_Allgather,
-                         &value,
-                         traits::count(),
+            buffer = ViewVectorType<T>("Gather View buffer", displs.back() / traits::count());
+            MPI_OR_THROW(MPI_Allgatherv,
+                         // const_cast required for MPI implementations that don't use const* in their interfaces
+                         const_cast<T *>(values.data()),
+                         counts[rank(comm)],
                          traits::mpi_type(),  // send buffer
                          buffer.data(),
-                         traits::count(),
+                         counts.data(),
+                         displs.data(),
                          traits::mpi_type(),  // receive buffer
                          comm);
-
-            return buffer;
         }
+
+#endif
 
         // Specialize gather for std::string.
         inline std::vector<std::string> gather(std::string str, int root, MPI_Comm comm) {

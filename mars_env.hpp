@@ -5,7 +5,9 @@
 #include "mars_base.hpp"
 
 #ifdef MARS_ENABLE_MPI
-#include <mpi.h>
+#include "mars_mpi_guard.hpp"
+#include "mars_context.hpp"
+#include "mars_execution_context.hpp"
 #endif  // MARS_ENABLE_MPI
 
 namespace mars {
