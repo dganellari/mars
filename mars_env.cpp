@@ -1,10 +1,5 @@
 #include "mars_env.hpp"
 
-#ifdef MARS_ENABLE_MPI
-#include <mpi.h>
-#include "mars_mpi_guard.hpp"
-#endif  // MARS_ENABLE_MPI
-
 #ifdef MARS_ENABLE_KOKKOS
 #include <Kokkos_Core.hpp>
 #endif  // MARS_ENABLE_KOKKOS
