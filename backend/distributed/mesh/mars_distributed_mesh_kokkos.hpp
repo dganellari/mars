@@ -196,10 +196,10 @@ namespace mars {
         void set_view_sfc(const ViewVectorType<KeyType> &local) { local_sfc_ = local; }
 
         MARS_INLINE_FUNCTION
-        const ViewVectorType<Integer> &get_view_gp() const { return gp_np; }
+        const ViewVectorType<KeyType> &get_view_gp() const { return gp_np; }
 
         MARS_INLINE_FUNCTION
-        void set_view_gp(const ViewVectorType<Integer> &gp) { gp_np = gp; }
+        void set_view_gp(const ViewVectorType<KeyType> &gp) { gp_np = gp; }
 
         MARS_INLINE_FUNCTION
         const ViewVectorType<Integer> &get_view_boundary() const { return boundary_; }
@@ -893,7 +893,7 @@ namespace mars {
         struct IdentifyBoundaryPerRank {
             ViewVectorType<KeyType> global;
             ViewMatrixTypeLeft<bool> predicate;
-            ViewVectorType<Integer> gp;
+            ViewVectorType<KeyType> gp;
 
             Integer proc;
 
@@ -905,7 +905,7 @@ namespace mars {
 
             IdentifyBoundaryPerRank(ViewVectorType<KeyType> gl,
                                     ViewMatrixTypeLeft<bool> pr,
-                                    ViewVectorType<Integer> g,
+                                    ViewVectorType<KeyType> g,
                                     Integer p,
                                     Integer xdm,
                                     Integer ydm,
@@ -920,9 +920,9 @@ namespace mars {
                 assert(find_owner_processor(gp, enc_oc, 2, proc) >= 0);
                 Integer owner_proc = find_owner_processor(gp, enc_oc, 2, proc);
 
-                /* printf("Proc: %li, %li, %li\n", proc, owner_proc, index); */
+                printf("Proc: %li, %li, %li\n", proc, owner_proc, index);
                 // the case when the neihgbor is a ghost element.
-                if (proc != owner_proc) {
+                if (owner_proc >= 0 && proc != owner_proc) {
                     predicate(index, owner_proc) = 1;
                 }
             }
@@ -1043,7 +1043,7 @@ namespace mars {
             using namespace Kokkos;
 
             const Integer rank_size = gp_np.extent(0) / 2 - 1;
-            auto chunk = chunk_size_;
+            auto chunk = get_chunk_size();
 
             //TODO:replace with kokkos bitset
             ViewMatrixTypeLeft<bool> rank_boundary("count_per_proc", chunk, rank_size);
@@ -1051,6 +1051,13 @@ namespace mars {
                 "IdentifyBoundaryPerRank",
                 get_chunk_size(),
                 IdentifyBoundaryPerRank<Type>(get_view_sfc(), rank_boundary, gp_np, proc, xDim, yDim, zDim, periodic));
+            //print rank_boundary matrix using kokkos parallel for
+            parallel_for(
+                "print rank_boundary", rank_size, KOKKOS_LAMBDA(const int i) {
+                    for (int j = 0; j < chunk; ++j) {
+                        printf("rank_boundary %i: %i\n", i, rank_boundary(j, i));
+                    }
+                });
 
             // count the number of boundary elements for each rank.
             auto count_boundary = ViewVectorType<Integer>("count_boundary", rank_size);
@@ -1064,6 +1071,7 @@ namespace mars {
                         [=](Integer j, Integer &lsum) { lsum += rank_boundary(j, i); },
                         count);
                     count_boundary(i) = count;
+                    // printf("count boundary %li: %li\n", i, count_boundary(i));
                 });
 
             scan_boundary_ = ViewVectorType<Integer>("scan_boundary_", rank_size + 1);
@@ -1106,6 +1114,7 @@ namespace mars {
 
             boundary_ = ViewVectorType<Integer>("boundary_", h_ic());
             boundary_lsfc_index_ = ViewVectorType<Integer>("boundary_lsfc_index_", h_ic());
+            printf("Boundary size: %li\n", h_ic());
 
             /* We use this strategy so that the compacted elements from the local_sfc
             would still be sorted and unique. */
@@ -1142,6 +1151,7 @@ namespace mars {
             scan_recv_mirror = create_mirror_view(get_view_scan_ghost());
             make_scan_index_mirror(scan_recv_mirror, receive_count);
             Kokkos::deep_copy(get_view_scan_ghost(), scan_recv_mirror);
+            printf("MPI send receive for the mesh ghost layer done. Time: %f\n", timer.seconds());
         }
 
         void exchange_ghost_layer(const context &context) {
@@ -1537,7 +1547,7 @@ namespace mars {
         ViewVectorType<KeyType> local_sfc_;
         /* ViewVectorType<Integer> sfc_to_local_;  // global to local map from sfc allrange */
         UnorderedMap<KeyType, Integer> sfc_to_local_map_;
-        ViewVectorType<Integer> gp_np;  // parallel partition info shared among all processes.
+        ViewVectorType<KeyType> gp_np;  // parallel partition info shared among all processes.
         Integer xDim, yDim, zDim;
         Integer chunk_size_;
         Integer proc;
