@@ -2,6 +2,7 @@
 #define GENERATION_MARS_MESH_DISTRIBUTED_GENERATION_HPP_
 #include "mars_base.hpp"
 #include "mars_err.hpp"
+#include "mars_sfc_code.hpp"
 #include "mars_utils_kokkos.hpp"
 #ifdef MARS_ENABLE_MPI
 #ifdef MARS_ENABLE_KOKKOS
@@ -16,8 +17,8 @@ namespace mars {
     using DMesh =
         Mesh<Dim, ManifoldDim, DistributedImplementation, NonSimplex<Type, DistributedImplementation>, KeyType>;
 
-    template <typename V>
-    auto scan_count(const V &GpNp, const std::vector<int> &counts, const Integer size) {
+    template <typename V, typename T>
+    auto scan_count(const V &GpNp, const std::vector<T> &counts, const Integer size) {
         using namespace Kokkos;
         auto GpNp_host = create_mirror_view(GpNp);
 
@@ -32,8 +33,8 @@ namespace mars {
         return GpNp_host;
     }
 
-    template <typename V, typename M>
-    void build_gp_np(const V &first_sfc, const V &GpNp, const M &GpNp_host, const Integer last_sfc) {
+    template <typename V, typename S, typename M>
+    void build_gp_np(const V &first_sfc, const S &GpNp, const M &GpNp_host, const Integer last_sfc) {
         using namespace Kokkos;
         auto size = first_sfc.extent(0);
         auto first_sfc_mirror = create_mirror_view(first_sfc);
@@ -78,11 +79,11 @@ namespace mars {
         return index;
     }
 
-    template <typename V>
+    template <typename VW, typename V>
     inline void build_first_sfc(const V &sfc_to_local,
                                 const ViewVectorType<bool> all_elements,
                                 const V &first_sfc,
-                                const V &gp_np,
+                                const VW &gp_np,
                                 const Integer size) {
         Kokkos::parallel_for(
             sfc_to_local.extent(0), KOKKOS_LAMBDA(const Integer i) {
@@ -109,11 +110,47 @@ namespace mars {
             });
     }
 
-    template <typename V, typename L>
+    //full hilbert first sfc build
+    template <typename V, typename T>
+    void build_first_hilbert_sfc(const V &first_sfc, const int size, const T portion_size) {
+        // Each rank calculates its first SFC in parallel
+        Kokkos::parallel_for(
+            "update_first_sfc_hilbert_full", Kokkos::RangePolicy<>(0, size + 1), KOKKOS_LAMBDA(const int rank) {
+                // Compute the start of the SFC for this rank
+                const T start = rank * portion_size;
+                // Update the start in the view
+                first_sfc(2 * rank) = start;
+            });
+
+        // Wait for all parallel operations to complete
+        Kokkos::fence();
+    }
+
+    template <typename IntegerType>
+    void build_first_hilbert_sfc(const ViewVectorType<IntegerType> &gp_np,
+                                 const IntegerType start,
+                                 const IntegerType end,
+                                 const int size,
+                                 const ViewVectorType<IntegerType> &global_sfc) {
+        Kokkos::parallel_for(
+            "calculate_indices", size + 1, KOKKOS_LAMBDA(const int rank) {
+                // Calculate the target chunk size for each rank
+                auto sfc_size = global_sfc.extent(0);
+                IntegerType portion_size = sfc_size / size;
+                IntegerType gather_start = rank * portion_size;
+
+                if (rank < size)
+                    gp_np(2 * rank) = (rank == 0) ? start : global_sfc(gather_start - 1) + 1;
+                else
+                    gp_np(2 * rank) = end;
+            });
+    }
+
+    template <typename V, typename L, typename S>
     inline void compact_into_local(const V &sfc_to_local,
                                    const ViewVectorType<bool> all_elements,
                                    const L &local,
-                                   const V &gp_np,
+                                   const S &gp_np,
                                    const Integer rank) {
         using namespace Kokkos;
 
@@ -300,8 +337,9 @@ void print_mesh_info(Integer num_elements, Integer chunk_size, Integer last_chun
 }
 
 //write the calculate_counts function to calculate the counts for each mpi process
-std::vector<int> calculate_counts(int size, int chunk_size, int last_chunk_size) {
-    std::vector<int> counts(size);
+template <typename T>
+std::vector<T> calculate_counts(int size, T chunk_size, T last_chunk_size) {
+    std::vector<T> counts(size);
     for (int i = 0; i < size; ++i) {
         if (i == size - 1)
             counts[i] = last_chunk_size;
@@ -479,9 +517,46 @@ void load_balance(DMesh<Dim, ManifoldDim, Type, KeyType> &mesh) {
     IntegerType start = rank * portion_size;
     IntegerType end = (rank == size - 1) ? sfc_size : start + portion_size;
 
+    IntegerType last_portion_size = sfc_size - portion_size * (size - 1);
+    std::vector<IntegerType> counts = calculate_counts(size, portion_size, last_portion_size);
+    scan_count(mesh.get_view_gp(), counts, size);
+
     // Create a copy of the subview and store it in the mesh's SFC view
     auto local_sfc_size = end - start;
     auto local_sfc = subview(global_sfc, Kokkos::make_pair(start, end));
+    ViewVectorType<IntegerType> local_sfc_copy("local_sfc_copy", local_sfc_size);
+    Kokkos::deep_copy(local_sfc_copy, local_sfc);
+    // update the chunk size and view_sfc of the mesh
+    mesh.set_chunk_size(local_sfc_size);
+    mesh.set_view_sfc(local_sfc_copy);
+}
+
+template <Integer Dim, Integer ManifoldDim, Integer Type, typename KeyType>
+void load_balance(DMesh<Dim, ManifoldDim, Type, KeyType> &mesh,
+                  const typename KeyType::ValueType start,
+                  const typename KeyType::ValueType end) {
+    using IntegerType = typename KeyType::ValueType;
+    // Get the mesh context
+    const auto &context = mesh.get_context();
+    // MPI rank and size
+    int rank = mars::rank(context);
+    int size = mars::num_ranks(context);
+
+    // Gather all chunk sizes and SFC to end up with sorted global SFC
+    ViewVectorType<IntegerType> global_sfc;
+    context->distributed->gather_all_view(mesh.get_view_sfc(), global_sfc);
+    auto sfc_size = global_sfc.extent(0);
+
+    build_first_hilbert_sfc(mesh.get_view_gp(), start, end, size, global_sfc);
+
+    // Calculate the target chunk size for each rank
+    IntegerType portion_size = sfc_size / size;
+    IntegerType gather_start = rank * portion_size;
+    IntegerType gather_end = (rank == size - 1) ? sfc_size : gather_start + portion_size;
+
+    // Create a copy of the subview and store it in the mesh's SFC view
+    auto local_sfc_size = gather_end - gather_start;
+    auto local_sfc = subview(global_sfc, Kokkos::make_pair(gather_start, gather_end));
     ViewVectorType<IntegerType> local_sfc_copy("local_sfc_copy", local_sfc_size);
     Kokkos::deep_copy(local_sfc_copy, local_sfc);
     // update the chunk size and view_sfc of the mesh
@@ -570,21 +645,6 @@ void process_full_segment(DMesh<Dim, ManifoldDim, Type, KeyType> &mesh,
     mesh.set_chunk_size(rank_elements_size);
 }
 
-template <typename V, typename T>
-void build_first_hilbert_sfc(const V &first_sfc, const int size, const T portion_size) {
-    // Each rank calculates its first SFC in parallel
-    Kokkos::parallel_for(
-        "update_first_sfc", Kokkos::RangePolicy<>(0, size + 1), KOKKOS_LAMBDA(const int rank) {
-            // Compute the start of the SFC for this rank
-            const T start = rank * portion_size;
-            // Update the start in the view
-            first_sfc(2 * rank) = start;
-        });
-
-    // Wait for all parallel operations to complete
-    Kokkos::fence();
-}
-
 template <Integer Dim, Integer ManifoldDim, Integer Type, class KeyType>
 bool is_full_hilbert_curve(DMesh<Dim, ManifoldDim, Type, KeyType> &mesh) {
     using ValueType = typename KeyType::ValueType;
@@ -624,20 +684,19 @@ void partition_mesh(DMesh<Dim, ManifoldDim, Type, HilbertKey<IntegerType>> &mesh
     IntegerType start = rank * portion_size;
     IntegerType end = (rank == size - 1) ? num_points : start + portion_size;
 
+    ViewVectorType<IntegerType> global_partition =
+        ViewVectorType<IntegerType>("global_static_partition", 2 * (size + 1));
+    mesh.set_view_gp(global_partition);
+
     // Check if the Hilbert curve is full. If it is, we can process the segment without predicate, scan and compact
     if (is_full_hilbert_curve(mesh)) {
         process_full_segment(mesh, start, end);
+        build_first_hilbert_sfc(mesh.get_view_gp(), size, portion_size);
     } else {
         process_segment(mesh, start, end);
-        load_balance(mesh);
+        load_balance(mesh, 0, num_points);
     }
-
     mesh.generate_sfc_to_local_map();
-
-    ViewVectorType<Integer> global_partition = ViewVectorType<Integer>("global_static_partition", 2 * (size + 1));
-    mesh.set_view_gp(global_partition);
-
-    build_first_hilbert_sfc(mesh.get_view_gp(), size, portion_size);
 }
 
 template <Integer Dim, Integer ManifoldDim, Integer Type, class KeyType>
@@ -664,13 +723,13 @@ void partition_mesh(DMesh<Dim, ManifoldDim, Type, KeyType> &mesh) {
         print_mesh_info(num_elements, chunk_size, last_chunk_size);
     }
 
-    std::vector<int> counts = calculate_counts(size, chunk_size, last_chunk_size);
+    std::vector<Integer> counts = calculate_counts(size, chunk_size, last_chunk_size);
     if (rank == size - 1) {
         chunk_size = last_chunk_size;
     }
     mesh.set_chunk_size(chunk_size);
 
-    ViewVectorType<Integer> global_partition = ViewVectorType<Integer>("global_static_partition", 2 * (size + 1));
+    ViewVectorType<typename KeyType::ValueType> global_partition("global_static_partition", 2 * (size + 1));
     auto global_partition_host = scan_count(global_partition, counts, size);
     mesh.set_view_gp(global_partition);
 
@@ -684,13 +743,12 @@ void partition_mesh(DMesh<Dim, ManifoldDim, Type, KeyType> &mesh) {
     process_without_cuda(mesh, sfc_generator, global_partition_host, size, rank);
 #endif
     double time_radix = time.seconds();
-    std::cout << "Radix sort method took: " << time_radix<< " seconds." << std::endl;
+    std::cout << "Radix sort method took: " << time_radix << " seconds." << std::endl;
 
     mesh.set_view_sfc(sfc_generator.get_view_elements());
 
     sfc_generator.generate_sfc_to_local_map();
     mesh.set_sfc_to_local_map(sfc_generator.get_sfc_to_local_map());
-
     double time_gen = timer.seconds();
     std::cout << "SFC Generation and Partition took: " << time_gen << " seconds. Process: " << rank << std::endl;
 }

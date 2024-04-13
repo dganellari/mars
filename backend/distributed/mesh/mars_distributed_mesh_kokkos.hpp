@@ -196,10 +196,10 @@ namespace mars {
         void set_view_sfc(const ViewVectorType<KeyType> &local) { local_sfc_ = local; }
 
         MARS_INLINE_FUNCTION
-        const ViewVectorType<Integer> &get_view_gp() const { return gp_np; }
+        const ViewVectorType<KeyType> &get_view_gp() const { return gp_np; }
 
         MARS_INLINE_FUNCTION
-        void set_view_gp(const ViewVectorType<Integer> &gp) { gp_np = gp; }
+        void set_view_gp(const ViewVectorType<KeyType> &gp) { gp_np = gp; }
 
         MARS_INLINE_FUNCTION
         const ViewVectorType<Integer> &get_view_boundary() const { return boundary_; }
@@ -542,14 +542,10 @@ namespace mars {
                                 xDim + 1, yDim + 1, zDim + 1);  // TODO : check if enough. Test with xdim != ydim.
 
                             const Integer nr_points = compact_elements<Type>(local_to_global, allrange);
-                            /* printf("nr_p 3D: %u\n", nr_points); */
-
                             reserve_points(nr_points);
-
                             parallel_for("non_simplex_point",
                                          nr_points,
                                          AddNonSimplexPoint<Type>(points_, local_to_global, xDim, yDim, zDim));
-
                             // build global_to_local map for use in generate elements.
                             UnorderedMap<Integer, Integer> global_to_local_map(nr_points);
 
@@ -729,7 +725,6 @@ namespace mars {
                 assert(find_owner_processor(gp, enc_oc, 2, proc) >= 0);
                 Integer owner_proc = find_owner_processor(gp, enc_oc, 2, proc);
 
-                // printf("Proc: %li, %li\n", proc, owner_proc);
                 // the case when the neihgbor is a ghost element.
                 if (proc != owner_proc) {
                     Kokkos::atomic_increment(&count(owner_proc));
@@ -816,7 +811,6 @@ namespace mars {
 
                 // the case when the neihgbor is a ghost element.
                 if (proc != owner_proc) {
-                    // printf("Proc: %li, %li , %li\n", proc, owner_proc, i);
                     // get the starting index before incrementing it.
                     Integer i = Kokkos::atomic_fetch_add(&scan(owner_proc), 1);
                     set(i) = ref;
@@ -832,9 +826,6 @@ namespace mars {
                 for (int face = 0; face < 2 * ManifoldDim; ++face) {
                     Octant o = ref_octant.face_nbh<Type>(face, xDim, yDim, zDim, periodic);
                     if (o.is_valid()) {
-                        /* printf("face Nbh of %u is %li: x and y: %li - %li\n",
-                               ref_octant.x + offset * ref_octant.y,
-                               o.x + offset * o.y, o.x, o.y); */
                         scatter(o, gl_index);
                     }
                 }
@@ -842,9 +833,6 @@ namespace mars {
                 for (int corner = 0; corner < power_of_2(ManifoldDim); ++corner) {
                     Octant o = ref_octant.corner_nbh<Type>(corner, xDim, yDim, zDim, periodic);
                     if (o.is_valid()) {
-                        /* printf("Corner Nbh of %u is %li: x and y: %li - %li\n",
-                               ref_octant.x + offset * ref_octant.y,
-                               o.x + offset * o.y, o.x, o.y); */
                         scatter(o, gl_index);
                     }
                 }
@@ -893,7 +881,7 @@ namespace mars {
         struct IdentifyBoundaryPerRank {
             ViewVectorType<KeyType> global;
             ViewMatrixTypeLeft<bool> predicate;
-            ViewVectorType<Integer> gp;
+            ViewVectorType<KeyType> gp;
 
             Integer proc;
 
@@ -905,7 +893,7 @@ namespace mars {
 
             IdentifyBoundaryPerRank(ViewVectorType<KeyType> gl,
                                     ViewMatrixTypeLeft<bool> pr,
-                                    ViewVectorType<Integer> g,
+                                    ViewVectorType<KeyType> g,
                                     Integer p,
                                     Integer xdm,
                                     Integer ydm,
@@ -920,9 +908,8 @@ namespace mars {
                 assert(find_owner_processor(gp, enc_oc, 2, proc) >= 0);
                 Integer owner_proc = find_owner_processor(gp, enc_oc, 2, proc);
 
-                /* printf("Proc: %li, %li, %li\n", proc, owner_proc, index); */
                 // the case when the neihgbor is a ghost element.
-                if (proc != owner_proc) {
+                if (owner_proc >= 0 && proc != owner_proc) {
                     predicate(index, owner_proc) = 1;
                 }
             }
@@ -1043,7 +1030,7 @@ namespace mars {
             using namespace Kokkos;
 
             const Integer rank_size = gp_np.extent(0) / 2 - 1;
-            auto chunk = chunk_size_;
+            auto chunk = get_chunk_size();
 
             //TODO:replace with kokkos bitset
             ViewMatrixTypeLeft<bool> rank_boundary("count_per_proc", chunk, rank_size);
@@ -1088,7 +1075,6 @@ namespace mars {
             //allocate only space for the boundary elements that have boundary count > 0 to reduce memory usage.
             //this is the reason for the parallel reduce kernel above.
             ViewMatrixTypeLeft<Integer> rank_scan("rank_scan", chunk + 1, h_total_counts);
-            printf("Total counts: %li, rank_size: %li\n", h_total_counts, rank_size);
             for (int i = 0; i < rank_size; ++i) {
                 if (h_count_boundary(i) && i != proc) {
                     auto proc_predicate = subview(rank_boundary, ALL, i);
@@ -1106,7 +1092,6 @@ namespace mars {
 
             boundary_ = ViewVectorType<Integer>("boundary_", h_ic());
             boundary_lsfc_index_ = ViewVectorType<Integer>("boundary_lsfc_index_", h_ic());
-
             /* We use this strategy so that the compacted elements from the local_sfc
             would still be sorted and unique. */
             compact_boundary_elements(scan_boundary_, rank_boundary, rank_scan, scan_ranks_with_count, rank_size);
@@ -1537,7 +1522,7 @@ namespace mars {
         ViewVectorType<KeyType> local_sfc_;
         /* ViewVectorType<Integer> sfc_to_local_;  // global to local map from sfc allrange */
         UnorderedMap<KeyType, Integer> sfc_to_local_map_;
-        ViewVectorType<Integer> gp_np;  // parallel partition info shared among all processes.
+        ViewVectorType<KeyType> gp_np;  // parallel partition info shared among all processes.
         Integer xDim, yDim, zDim;
         Integer chunk_size_;
         Integer proc;

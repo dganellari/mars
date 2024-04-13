@@ -492,11 +492,11 @@ namespace mars {
 
         struct MaxOneRingProc {
             Integer &max_proc;
-            ViewVectorType<Integer> gp;
+            ViewVectorType<KeyType> gp;
             Integer proc;
 
             MARS_INLINE_FUNCTION
-            MaxOneRingProc(ViewVectorType<Integer> g, Integer p, Integer &mx) : gp(g), proc(p), max_proc(mx) {}
+            MaxOneRingProc(ViewVectorType<KeyType> g, Integer p, Integer &mx) : gp(g), proc(p), max_proc(mx) {}
 
             MARS_INLINE_FUNCTION
             void operator()(const Octant &nbh_oc) const {
