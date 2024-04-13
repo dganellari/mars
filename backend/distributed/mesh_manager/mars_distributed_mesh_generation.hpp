@@ -126,22 +126,24 @@ namespace mars {
         Kokkos::fence();
     }
 
-    // set the gp np start to the start sfc hilbert range for each rank.
-    // In the case of the last index (+1) it has to be the last hilbert sfc value.
-    template <typename V, typename T>
-    void build_first_hilbert_sfc(const V &indices, const T &gp_np) {
-        auto size = gp_np.extent(0) / 2;
-        // Each rank calculates its first SFC in parallel
+    template <typename IntegerType>
+    void build_first_hilbert_sfc(const ViewVectorType<IntegerType> &gp_np,
+                                 const IntegerType start,
+                                 const IntegerType end,
+                                 const int size,
+                                 const ViewVectorType<IntegerType> &global_sfc) {
         Kokkos::parallel_for(
-            "update_first_sfc_hilbert_filtered", Kokkos::RangePolicy<>(0, size), KOKKOS_LAMBDA(const int rank) {
-                // Compute the start of the SFC for this rank
-                if (rank < size - 1)
-                    gp_np(2 * rank) = indices(rank, 0);
+            "calculate_indices", size + 1, KOKKOS_LAMBDA(const int rank) {
+                // Calculate the target chunk size for each rank
+                auto sfc_size = global_sfc.extent(0);
+                IntegerType portion_size = sfc_size / size;
+                IntegerType gather_start = rank * portion_size;
+
+                if (rank < size)
+                    gp_np(2 * rank) = (rank == 0) ? start : global_sfc(gather_start - 1) + 1;
                 else
-                    gp_np(2 * rank) = indices(rank, 1);
+                    gp_np(2 * rank) = end;
             });
-        // Wait for all parallel operations to complete
-        Kokkos::fence();
     }
 
     template <typename V, typename L, typename S>
@@ -529,25 +531,6 @@ void load_balance(DMesh<Dim, ManifoldDim, Type, KeyType> &mesh) {
     mesh.set_view_sfc(local_sfc_copy);
 }
 
-template <typename IntegerType>
-void calculate_indices(const ViewMatrixType<IntegerType> &indices,
-                       const IntegerType start,
-                       const IntegerType end,
-                       const int size,
-                       const ViewVectorType<IntegerType> &global_sfc) {
-    Kokkos::parallel_for(
-        "calculate_indices", size + 1, KOKKOS_LAMBDA(const int rank) {
-            // Calculate the target chunk size for each rank
-            auto sfc_size = global_sfc.extent(0);
-            IntegerType portion_size = sfc_size / size;
-            IntegerType gather_start = rank * portion_size;
-            IntegerType gather_end = (rank == size - 1) ? sfc_size : gather_start + portion_size;
-
-            indices(rank, 0) = (rank == 0) ? start : global_sfc(gather_start - 1) + 1;
-            indices(rank, 1) = (rank >= size - 1) ? end : global_sfc(gather_end - 1) + 1;
-        });
-}
-
 template <Integer Dim, Integer ManifoldDim, Integer Type, typename KeyType>
 void load_balance(DMesh<Dim, ManifoldDim, Type, KeyType> &mesh,
                   const typename KeyType::ValueType start,
@@ -564,11 +547,7 @@ void load_balance(DMesh<Dim, ManifoldDim, Type, KeyType> &mesh,
     context->distributed->gather_all_view(mesh.get_view_sfc(), global_sfc);
     auto sfc_size = global_sfc.extent(0);
 
-        //create a view to store the new start and end indices for each rank
-    ViewMatrixType<IntegerType> new_start_end("new_start_end", size + 1, 2);
-    calculate_indices(new_start_end, start, end, size, global_sfc);
-
-    build_first_hilbert_sfc(new_start_end, mesh.get_view_gp());
+    build_first_hilbert_sfc(mesh.get_view_gp(), start, end, size, global_sfc);
 
     // Calculate the target chunk size for each rank
     IntegerType portion_size = sfc_size / size;

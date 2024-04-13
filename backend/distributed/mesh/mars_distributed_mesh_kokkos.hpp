@@ -542,14 +542,10 @@ namespace mars {
                                 xDim + 1, yDim + 1, zDim + 1);  // TODO : check if enough. Test with xdim != ydim.
 
                             const Integer nr_points = compact_elements<Type>(local_to_global, allrange);
-                            /* printf("nr_p 3D: %u\n", nr_points); */
-
                             reserve_points(nr_points);
-
                             parallel_for("non_simplex_point",
                                          nr_points,
                                          AddNonSimplexPoint<Type>(points_, local_to_global, xDim, yDim, zDim));
-
                             // build global_to_local map for use in generate elements.
                             UnorderedMap<Integer, Integer> global_to_local_map(nr_points);
 
@@ -729,7 +725,6 @@ namespace mars {
                 assert(find_owner_processor(gp, enc_oc, 2, proc) >= 0);
                 Integer owner_proc = find_owner_processor(gp, enc_oc, 2, proc);
 
-                // printf("Proc: %li, %li\n", proc, owner_proc);
                 // the case when the neihgbor is a ghost element.
                 if (proc != owner_proc) {
                     Kokkos::atomic_increment(&count(owner_proc));
@@ -816,7 +811,6 @@ namespace mars {
 
                 // the case when the neihgbor is a ghost element.
                 if (proc != owner_proc) {
-                    // printf("Proc: %li, %li , %li\n", proc, owner_proc, i);
                     // get the starting index before incrementing it.
                     Integer i = Kokkos::atomic_fetch_add(&scan(owner_proc), 1);
                     set(i) = ref;
@@ -832,9 +826,6 @@ namespace mars {
                 for (int face = 0; face < 2 * ManifoldDim; ++face) {
                     Octant o = ref_octant.face_nbh<Type>(face, xDim, yDim, zDim, periodic);
                     if (o.is_valid()) {
-                        /* printf("face Nbh of %u is %li: x and y: %li - %li\n",
-                               ref_octant.x + offset * ref_octant.y,
-                               o.x + offset * o.y, o.x, o.y); */
                         scatter(o, gl_index);
                     }
                 }
@@ -842,9 +833,6 @@ namespace mars {
                 for (int corner = 0; corner < power_of_2(ManifoldDim); ++corner) {
                     Octant o = ref_octant.corner_nbh<Type>(corner, xDim, yDim, zDim, periodic);
                     if (o.is_valid()) {
-                        /* printf("Corner Nbh of %u is %li: x and y: %li - %li\n",
-                               ref_octant.x + offset * ref_octant.y,
-                               o.x + offset * o.y, o.x, o.y); */
                         scatter(o, gl_index);
                     }
                 }
@@ -1050,18 +1038,6 @@ namespace mars {
                 "IdentifyBoundaryPerRank",
                 get_chunk_size(),
                 IdentifyBoundaryPerRank<Type>(get_view_sfc(), rank_boundary, gp_np, proc, xDim, yDim, zDim, periodic));
-            auto views = get_view_sfc();
-            //print rank_boundary matrix using kokkos parallel for
-            parallel_for(
-                "print rank_boundary", rank_size, KOKKOS_LAMBDA(const int i) {
-                    for (int j = 0; j < chunk; ++j) {
-                        printf("rank_boundary  rank: %i: index: %i SFC: %llu, boundary: %i\n",
-                               i,
-                               j,
-                               views(j),
-                               rank_boundary(j, i));
-                    }
-                });
 
             // count the number of boundary elements for each rank.
             auto count_boundary = ViewVectorType<Integer>("count_boundary", rank_size);
@@ -1075,7 +1051,6 @@ namespace mars {
                         [=](Integer j, Integer &lsum) { lsum += rank_boundary(j, i); },
                         count);
                     count_boundary(i) = count;
-                    // printf("count boundary %li: %li\n", i, count_boundary(i));
                 });
 
             scan_boundary_ = ViewVectorType<Integer>("scan_boundary_", rank_size + 1);
@@ -1100,7 +1075,6 @@ namespace mars {
             //allocate only space for the boundary elements that have boundary count > 0 to reduce memory usage.
             //this is the reason for the parallel reduce kernel above.
             ViewMatrixTypeLeft<Integer> rank_scan("rank_scan", chunk + 1, h_total_counts);
-            printf("Total counts: %li, rank_size: %li\n", h_total_counts, rank_size);
             for (int i = 0; i < rank_size; ++i) {
                 if (h_count_boundary(i) && i != proc) {
                     auto proc_predicate = subview(rank_boundary, ALL, i);
@@ -1118,8 +1092,6 @@ namespace mars {
 
             boundary_ = ViewVectorType<Integer>("boundary_", h_ic());
             boundary_lsfc_index_ = ViewVectorType<Integer>("boundary_lsfc_index_", h_ic());
-            printf("Boundary size: %li\n", h_ic());
-
             /* We use this strategy so that the compacted elements from the local_sfc
             would still be sorted and unique. */
             compact_boundary_elements(scan_boundary_, rank_boundary, rank_scan, scan_ranks_with_count, rank_size);
@@ -1155,7 +1127,6 @@ namespace mars {
             scan_recv_mirror = create_mirror_view(get_view_scan_ghost());
             make_scan_index_mirror(scan_recv_mirror, receive_count);
             Kokkos::deep_copy(get_view_scan_ghost(), scan_recv_mirror);
-            printf("MPI send receive for the mesh ghost layer done. Time: %f\n", timer.seconds());
         }
 
         void exchange_ghost_layer(const context &context) {
