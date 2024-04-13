@@ -126,6 +126,8 @@ namespace mars {
         Kokkos::fence();
     }
 
+    // set the gp np start to the start sfc hilbert range for each rank.
+    // In the case of the last index (+1) it has to be the last hilbert sfc value.
     template <typename V, typename T>
     void build_first_hilbert_sfc(const V &indices, const T &gp_np) {
         auto size = gp_np.extent(0) / 2;
@@ -133,11 +135,11 @@ namespace mars {
         Kokkos::parallel_for(
             "update_first_sfc_hilbert_filtered", Kokkos::RangePolicy<>(0, size), KOKKOS_LAMBDA(const int rank) {
                 // Compute the start of the SFC for this rank
-                auto start = indices(rank, 0);
-                auto end = indices(rank, 1);
-                gp_np(2 * rank) = start;
+                if (rank < size - 1)
+                    gp_np(2 * rank) = indices(rank, 0);
+                else
+                    gp_np(2 * rank) = indices(rank, 1);
             });
-
         // Wait for all parallel operations to complete
         Kokkos::fence();
     }
@@ -507,11 +509,6 @@ void load_balance(DMesh<Dim, ManifoldDim, Type, KeyType> &mesh) {
     ViewVectorType<IntegerType> global_sfc;
     context->distributed->gather_all_view(mesh.get_view_sfc(), global_sfc);
     auto sfc_size = global_sfc.extent(0);
-    printf("Hilbert chunk_size before load balance: %llu\n", sfc_size);
-    /* Kokkos::parallel_for(
-        "print_view_sfc", sfc_size, KOKKOS_LAMBDA(const IntegerType i) {
-            printf("Hilbert chunk_size after gather: %llu, %llu, %llu\n", global_sfc(i), i, sfc_size);
-        }); */
 
     // Calculate the target chunk size for each rank
     IntegerType portion_size = sfc_size / size;
@@ -530,13 +527,6 @@ void load_balance(DMesh<Dim, ManifoldDim, Type, KeyType> &mesh) {
     // update the chunk size and view_sfc of the mesh
     mesh.set_chunk_size(local_sfc_size);
     mesh.set_view_sfc(local_sfc_copy);
-
-    printf("Hilbert chunk_size after : %llu, %llu, %llu\n", local_sfc_size, start, end);
-
-    /* Kokkos::parallel_for(
-        "print_view_sfc", local_sfc_size, KOKKOS_LAMBDA(const IntegerType i) {
-            printf("Hilbert chunk_size after load balance: %llu, %llu, %llu\n", mesh.get_view_sfc()(i), i, local_sfc_size);
-        }); */
 }
 
 template <typename IntegerType>
@@ -546,7 +536,7 @@ void calculate_indices(const ViewMatrixType<IntegerType> &indices,
                        const int size,
                        const ViewVectorType<IntegerType> &global_sfc) {
     Kokkos::parallel_for(
-        "calculate_indices", size, KOKKOS_LAMBDA(const int rank) {
+        "calculate_indices", size + 1, KOKKOS_LAMBDA(const int rank) {
             // Calculate the target chunk size for each rank
             auto sfc_size = global_sfc.extent(0);
             IntegerType portion_size = sfc_size / size;
@@ -554,10 +544,7 @@ void calculate_indices(const ViewMatrixType<IntegerType> &indices,
             IntegerType gather_end = (rank == size - 1) ? sfc_size : gather_start + portion_size;
 
             indices(rank, 0) = (rank == 0) ? start : global_sfc(gather_start - 1) + 1;
-            indices(rank, 1) = (rank == size - 1) ? end : global_sfc(gather_end - 1) + 1;
-
-            printf(
-                "Rank: %d, , New start: %llu, New end: %llu\n", rank, indices(rank, 0), indices(rank, 1));
+            indices(rank, 1) = (rank >= size - 1) ? end : global_sfc(gather_end - 1) + 1;
         });
 }
 
@@ -572,14 +559,13 @@ void load_balance(DMesh<Dim, ManifoldDim, Type, KeyType> &mesh,
     int rank = mars::rank(context);
     int size = mars::num_ranks(context);
 
-    printf("Hilbert chunk_size new load balance: %llu\n", end - start);
     // Gather all chunk sizes and SFC to end up with sorted global SFC
     ViewVectorType<IntegerType> global_sfc;
     context->distributed->gather_all_view(mesh.get_view_sfc(), global_sfc);
     auto sfc_size = global_sfc.extent(0);
 
         //create a view to store the new start and end indices for each rank
-    ViewMatrixType<IntegerType> new_start_end("new_start_end", size, 2);
+    ViewMatrixType<IntegerType> new_start_end("new_start_end", size + 1, 2);
     calculate_indices(new_start_end, start, end, size, global_sfc);
 
     build_first_hilbert_sfc(new_start_end, mesh.get_view_gp());
@@ -597,7 +583,6 @@ void load_balance(DMesh<Dim, ManifoldDim, Type, KeyType> &mesh,
     // update the chunk size and view_sfc of the mesh
     mesh.set_chunk_size(local_sfc_size);
     mesh.set_view_sfc(local_sfc_copy);
-    printf("Hilbert chunk_size new load balance: %llu\n", local_sfc_size);
 }
 
 template <Integer Dim, Integer ManifoldDim, Integer Type, typename KeyType>
@@ -732,22 +717,6 @@ void partition_mesh(DMesh<Dim, ManifoldDim, Type, HilbertKey<IntegerType>> &mesh
         process_segment(mesh, start, end);
         load_balance(mesh, 0, num_points);
     }
-    Kokkos::parallel_for(
-        "print_view_sfc", mesh.get_chunk_size(), KOKKOS_LAMBDA(const IntegerType i) {
-            Octant ref_octant = get_octant_from_sfc<Type, HilbertKey<IntegerType>>(mesh.get_view_sfc()(i));
-            printf("Hilbert chunk_size after load balance: %llu, %llu, %llu, %llu\n",
-                   i,
-                   mesh.get_view_sfc()(i),
-                   ref_octant.x,
-                   ref_octant.y);
-        });
-
-        auto gp_np = mesh.get_view_gp();
-        Kokkos::parallel_for("print_gp_np", gp_np.extent(0), KOKKOS_LAMBDA(const int i) {
-            printf("gp_np[%d] = %f\n", i, gp_np(i));
-        });
-        Kokkos::fence();
-
     mesh.generate_sfc_to_local_map();
 }
 
@@ -801,10 +770,6 @@ void partition_mesh(DMesh<Dim, ManifoldDim, Type, KeyType> &mesh) {
 
     sfc_generator.generate_sfc_to_local_map();
     mesh.set_sfc_to_local_map(sfc_generator.get_sfc_to_local_map());
-    auto gp_np = mesh.get_view_gp();
-    Kokkos::parallel_for(
-        "print_gp_np", gp_np.extent(0), KOKKOS_LAMBDA(const int i) { printf("gp_np[%d] = %f\n", i, gp_np(i)); });
-    Kokkos::fence();
     double time_gen = timer.seconds();
     std::cout << "SFC Generation and Partition took: " << time_gen << " seconds. Process: " << rank << std::endl;
 }

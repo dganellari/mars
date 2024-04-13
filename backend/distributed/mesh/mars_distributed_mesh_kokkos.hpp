@@ -920,7 +920,6 @@ namespace mars {
                 assert(find_owner_processor(gp, enc_oc, 2, proc) >= 0);
                 Integer owner_proc = find_owner_processor(gp, enc_oc, 2, proc);
 
-                printf("Proc: %li, %li, %li\n", proc, owner_proc, index);
                 // the case when the neihgbor is a ghost element.
                 if (owner_proc >= 0 && proc != owner_proc) {
                     predicate(index, owner_proc) = 1;
@@ -1051,11 +1050,16 @@ namespace mars {
                 "IdentifyBoundaryPerRank",
                 get_chunk_size(),
                 IdentifyBoundaryPerRank<Type>(get_view_sfc(), rank_boundary, gp_np, proc, xDim, yDim, zDim, periodic));
+            auto views = get_view_sfc();
             //print rank_boundary matrix using kokkos parallel for
             parallel_for(
                 "print rank_boundary", rank_size, KOKKOS_LAMBDA(const int i) {
                     for (int j = 0; j < chunk; ++j) {
-                        printf("rank_boundary %i: %i\n", i, rank_boundary(j, i));
+                        printf("rank_boundary  rank: %i: index: %i SFC: %llu, boundary: %i\n",
+                               i,
+                               j,
+                               views(j),
+                               rank_boundary(j, i));
                     }
                 });
 
