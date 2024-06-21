@@ -13,6 +13,9 @@
 #include "Kokkos_UnorderedMap.hpp"
 #ifdef MARS_ENABLE_CUDA
 #include <cub/cub.cuh>  // or equivalently <cub/device/device_radix_sort.cuh>
+#include <thrust/unique.h>
+#include <thrust/device_vector.h>
+#include <thrust/device_ptr.h>
 #endif
 #endif
 #include "mars_err.hpp"
@@ -158,22 +161,28 @@ namespace mars {
         Kokkos::deep_copy(map_side_to_nodes, h_view);
     }
 
-    /*template<Integer Dim, Integer ManifoldDim, class Point_>
-    void remove_extra_nodes(Mesh<Dim, ManifoldDim, Point_>& mesh,
-                    std::vector<Vector<Real, Dim> >& np, const std::vector<bool>& active) {
 
-            int count = 0;
-            for (unsigned int i = 0; i < active.size(); ++i) {
-                    if (active[i]) {
-                            np[count] = mesh.point(i);
-                            ++count;
-                    }
+    //generate a kokkos function that takes a view as input and returns the last value of the view by coping it to the host.
+    template <typename T>
+    T get_last_value(ViewVectorType<T> view) {
+        using namespace Kokkos;
 
-            }
+        auto subview = subview(view, view.extent(0) - 1);
+        auto h_view = create_mirror_view(subview);
+        deep_copy(h_view, subview);
 
-            mesh.setPoints(move(np));
+        return h_view();
+    }
 
-    }*/
+    //generate a kokkos function that takes a view as input  then creates a mirror host view, fills it up and copies it to the gpu memory.
+    template <typename T, typename U>
+    void host_scan_to_device(ViewVectorType<T> view, const U& data) {
+        using namespace Kokkos;
+        auto h_view = create_mirror_view(view);
+        make_scan_index_mirror(h_view, data);
+        deep_copy(view, h_view);
+    }
+
 
     template <typename T>
     void compact_scan(const ViewVectorType<bool>& pred, const ViewVectorType<T>& scan, const ViewVectorType<T>& out) {
@@ -253,27 +262,6 @@ namespace mars {
             });
     }
 
-    /* template<typename T, typename U>
-    void incl_excl_scan_strided(const Integer start, const Integer end,
-                            const U in_, T out_)
-    {
-            using namespace Kokkos;
-
-            parallel_scan (RangePolicy<>(start , end ),	KOKKOS_LAMBDA (const int& i,
-                                    Integer& upd, const bool& final)
-            {
-                    // Load old value in case we update it before accumulating
-                    const Integer val_i = in_(i);
-
-                    upd += val_i;
-
-                    if (final)
-                    {
-                            out_(i+1) = upd; // To have both ex and inclusive in the same output.
-                    }
-            });
-    }
-     */
     // works for all cases including those with strided access views coming from auto = subview...
     template <typename H, typename U, typename S, typename J>
     void incl_excl_scan(const S start, const J end, const U in_, H out_) {
@@ -394,6 +382,47 @@ namespace mars {
     }
 
 #ifdef MARS_ENABLE_CUDA
+
+    template <typename T>
+    void cub_inclusive_scan(ViewVectorType<T> data_, const Integer size) {
+        // Determine temporary device storage requirements
+        void* d_temp_storage = nullptr;
+        size_t temp_storage_bytes = 0;
+        cub::DeviceScan::InclusiveSum(d_temp_storage, temp_storage_bytes, data_.data(), end);
+        // Allocate temporary storage
+        cudaMalloc(&d_temp_storage, temp_storage_bytes);
+        // Run inclusive scan operation
+        cub::DeviceScan::InclusiveSum(d_temp_storage, temp_storage_bytes, data_.data(), end);
+    }
+
+    template <typename T>
+    Integer cub_unique(ViewVectorType<T> d_in, ViewVectorType<T> d_out) {
+        auto num_items = d_in.extent(0);
+
+        void* d_temp_storage = nullptr;
+        size_t temp_storage_bytes = 0;
+        cub::DeviceSelect::Unique(
+            d_temp_storage, temp_storage_bytes, d_in.data(), d_out.data(), d_num_selected_out, num_items);
+        // Allocate temporary storage
+        cudaMalloc(&d_temp_storage, temp_storage_bytes);
+        // Run selection
+        cub::DeviceSelect::Unique(
+            d_temp_storage, temp_storage_bytes, d_in.data(), d_out.data(), d_num_selected_out, num_items);
+
+        return *d_num_selected_out;
+    }
+
+    template <typename T>
+    void thrust_unique(ViewVectorType<T> d_in) {
+        thrust::device_ptr<T> d_ptr_in(d_in.data());
+        auto unique_count = thrust::unique_count(d_ptr_in, d_ptr_in + d_in.extent(0));
+
+        ViewVectorType<T> d_out("unique data", unique_count);
+        thrust::device_ptr<T> d_ptr_out(d_out.data());
+
+        thrust::unique_copy(d_ptr_in, d_ptr_in + d_in.extent(0), d_ptr_out);
+        return d_out;
+    }
 
     // Sorts keys into ascending order. (~2N auxiliary storage required)
     template <typename V>

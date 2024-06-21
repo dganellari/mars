@@ -1,18 +1,37 @@
 #ifndef MARS_SFC_GENERATION_HPP
 #define MARS_SFC_GENERATION_HPP
 
+#include "mars_base.hpp"
 #include "mars_sfc_code.hpp"
 
 namespace mars {
 
+    template <typename IntegerType, int D>
+    IntegerType generateHilbertCurve(int L) {
+        /* The number of points on the curve is 2^(DL) */
+        return pow(2, D * L);
+    }
+
     template <Integer Type, class KeyType = MortonKey<Unsigned>>
-    MARS_INLINE_FUNCTION Integer compute_all_range(const unsigned x, const unsigned y, const unsigned z) {
+    MARS_INLINE_FUNCTION Unsigned compute_all_range(const unsigned x, const unsigned y, const unsigned z) {
         switch (Type) {
             case ElementType::Quad4: {
-                return encode_sfc_2D<KeyType>(x + 1, y + 1);
+                if constexpr (std::is_same<KeyType, MortonKey<Unsigned>>::value) {
+                    return encode_sfc_2D<KeyType>(x + 1, y + 1);
+                } else {
+                    auto max_dim = std::max(x, y);
+                    auto L = std::ceil(std::log2(max_dim));
+                    return generateHilbertCurve<Unsigned, 2>(L);
+                }
             }
             case ElementType::Hex8: {
-                return encode_sfc_3D<KeyType>(x + 1, y + 1, z + 1);
+                if constexpr (std::is_same<KeyType, MortonKey<Unsigned>>::value) {
+                    return encode_sfc_3D<KeyType>(x + 1, y + 1, z + 1);
+                } else {
+                    auto max_dim = std::max({x, y, z});
+                    auto L = std::ceil(std::log2(max_dim));
+                    return generateHilbertCurve<Unsigned, 3>(L);
+                }
             }
             default: {
                 return INVALID_INDEX;
@@ -94,6 +113,11 @@ namespace mars {
         void reserve_elements(const Integer n_elements) {
             elements_size_ = n_elements;
             elements_ = ViewVectorType<KeyType>("morton_code", n_elements);
+        }
+
+        void set_elements(const ViewVectorType<KeyType> &elements) {
+            elements_ = elements;
+            set_elem_size(elements_.extent(0));
         }
 
         MARS_INLINE_FUNCTION

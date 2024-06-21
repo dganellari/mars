@@ -2,6 +2,10 @@
 #define GENERATION_MARS_DISTRIBUTED_DofHandler_HPP_
 
 #include <cstdlib>
+#include <type_traits>
+#include "mars_base.hpp"
+#include "mars_distributed_mesh_generation.hpp"
+#include "mars_utils_kokkos.hpp"
 #ifdef MARS_ENABLE_MPI
 #ifdef MARS_ENABLE_KOKKOS
 #include "mars_distributed_dof.hpp"
@@ -772,89 +776,7 @@ namespace mars {
             }
         }
 
-        // generic local predicate functor to be used for edge, face and corners. The volume is specialized.
-        template <bool Ghost, Integer Label>
-        struct LocalGlobalPredicate {
-            ViewVectorType<bool> local_predicate;
-            ViewVectorType<bool> global_predicate;
-            ViewVectorType<bool> nbh_proc_predicate_send;
-            ViewVectorType<bool> nbh_proc_predicate_recv;
-            Integer proc;
-
-            MARS_INLINE_FUNCTION
-            LocalGlobalPredicate(ViewVectorType<bool> lp,
-                                 ViewVectorType<bool> gp,
-                                 ViewVectorType<bool> npps,
-                                 ViewVectorType<bool> nppr,
-                                 Integer p)
-                : local_predicate(lp),
-                  global_predicate(gp),
-                  nbh_proc_predicate_send(npps),
-                  nbh_proc_predicate_recv(nppr),
-                  proc(p) {}
-
-            MARS_INLINE_FUNCTION
-            void lg_predicate(const Mesh mesh,
-                              const Integer i,
-                              const KeyType sfc,
-                              const Integer owner_proc,
-                              std::true_type) const {
-                Integer elem_sfc_proc =
-                    find_owner_processor(mesh.get_view_gp(), mesh.get_ghost_sfc(i), 2, mesh.get_proc());
-
-                // if the ghost elem owns the dof then he is able to send it.
-                if (elem_sfc_proc >= owner_proc) {
-                    local_predicate(sfc) = 1;
-                    nbh_proc_predicate_send(elem_sfc_proc) = 1;
-                    nbh_proc_predicate_recv(elem_sfc_proc) = 1;
-                }
-            }
-
-            MARS_INLINE_FUNCTION
-            void lg_predicate(const Mesh mesh,
-                              const Integer i,
-                              const KeyType sfc,
-                              const Integer owner_proc,
-                              std::false_type) const {
-                /* if the neighbor element is ghost then check if the processor
-                    is less than the owner. This is how the dofs are partitioned*/
-                if (proc >= owner_proc) {
-                    global_predicate(sfc) = 1;
-                }
-                local_predicate(sfc) = 1;
-            }
-
-            MARS_INLINE_FUNCTION
-            void operator()(const Mesh mesh, const Integer i, const KeyType dof_sfc, const Integer owner_proc) const {
-                lg_predicate(mesh, i, dof_sfc, owner_proc, std::integral_constant<bool, Ghost>{});
-            }
-        };
-
-        template <bool Ghost>
-        struct LocalGlobalPredicate<Ghost, DofLabel::lVolume> {
-            ViewVectorType<bool> local_predicate;
-            ViewVectorType<bool> global_predicate;
-
-            MARS_INLINE_FUNCTION
-            LocalGlobalPredicate(ViewVectorType<bool> lp, ViewVectorType<bool> gp)
-                : local_predicate(lp), global_predicate(gp) {}
-
-            MARS_INLINE_FUNCTION
-            void volume_predicate(const KeyType sfc, std::true_type) const { local_predicate(sfc) = 1; }
-
-            MARS_INLINE_FUNCTION
-            void volume_predicate(const KeyType sfc, std::false_type) const {
-                local_predicate(sfc) = 1;
-                global_predicate(sfc) = 1;
-            }
-
-            MARS_INLINE_FUNCTION
-            void operator()(const Mesh mesh, const Integer i, const Integer enc_oc) const {
-                volume_predicate(enc_oc, std::integral_constant<bool, Ghost>{});
-            }
-        };
-
-        // sfc | octant_from_sfc | volume_octant_transform. Composable functions.
+       // sfc | octant_from_sfc | volume_octant_transform. Composable functions.
         template <typename F, Integer ET = ElemType>
         static MARS_INLINE_FUNCTION void volume_iterate(const KeyType sfc, const Mesh mesh, const Integer index, F f) {
             Octant oc = mesh.octant_from_sfc(sfc);
@@ -1018,6 +940,378 @@ namespace mars {
             return get_local_sfc(mesh, index);
         }
 
+        // generic local predicate functor to be used for edge, face and corners. The volume is specialized.
+        template <typename T, bool Ghost, Integer Label>
+        struct LocalOwnedDofsFill{
+            ViewVectorType<KeyType> owned_dofs;
+            ViewVectorType<KeyType> dofs;
+            ViewVectorType<T> local_thread_count;
+            ViewVectorType<T> owned_thread_count;
+            Integer &owned_index;
+            Integer &index;
+            Integer proc;
+
+            MARS_INLINE_FUNCTION
+            LocalOwnedDofsFill(ViewVectorType<KeyType> od,
+                               Integer &ow_idx,
+                               ViewVectorType<KeyType> d,
+                               Integer &idx,
+                               ViewVectorType<T> lc,
+                               ViewVectorType<T> gc,
+                               Integer p)
+                : owned_dofs(od),
+                  owned_index(ow_idx),
+                  dofs(d),
+                  index(idx),
+                  local_thread_count(lc),
+                  owned_thread_count(gc),
+                  proc(p) {}
+
+            MARS_INLINE_FUNCTION
+            void lg_insert(const Mesh mesh,
+                          const Integer i,
+                          const KeyType dof_sfc,
+                          const Integer owner_proc,
+                          std::true_type) const {
+                Integer elem_sfc_proc =
+                    find_owner_processor(mesh.get_view_gp(), mesh.get_ghost_sfc(i), 2, mesh.get_proc());
+
+                auto owned_size = mesh.get_chunk_size();
+                // if the ghost elem owns the dof then he is able to send it.
+                if (elem_sfc_proc >= owner_proc) {
+                    auto scan_idx = i == 0 ? 0 : local_thread_count(owned_size + i);
+                    dofs(scan_idx + index++) = dof_sfc;
+                }
+            }
+
+            MARS_INLINE_FUNCTION
+            void lg_insert(const Mesh mesh,
+                              const Integer i,
+                              const KeyType dof_sfc,
+                              const Integer owner_proc,
+                              std::false_type) const {
+                /* if the neighbor element is ghost then check if the processor
+                    is less than the owner. This is how the dofs are partitioned*/
+                if (proc >= owner_proc) {
+                    auto owned_scan_idx = i == 0 ? 0 : owned_thread_count(i);
+                    owned_dofs(owned_scan_idx + owned_index++) = dof_sfc;
+                }
+                auto scan_idx = i == 0 ? 0 : local_thread_count(i);
+                dofs(scan_idx + index++) = dof_sfc;
+            }
+
+            MARS_INLINE_FUNCTION
+            void operator()(const Mesh mesh,
+                            const Integer i,
+                            const KeyType dof_sfc,
+                            const Integer owner_proc) const {
+                lg_insert(mesh, i, dof_sfc, owner_proc, std::integral_constant<bool, Ghost>{});
+            }
+        };
+
+        template <typename T, bool Ghost>
+        struct LocalOwnedDofsFill<Ghost, DofLabel::lVolume> {
+            ViewVectorType<KeyType> owned_dofs;
+            ViewVectorType<KeyType> dofs;
+            ViewVectorType<T> local_thread_count;
+            ViewVectorType<T> owned_thread_count;
+            Integer &owned_index;
+            Integer &index;
+
+            MARS_INLINE_FUNCTION
+            LocalOwnedDofsFill(ViewVectorType<KeyType> od,
+                               Integer &ow_idx,
+                               ViewVectorType<KeyType> d,
+                               Integer &idx,
+                               ViewVectorType<T> lc,
+                               ViewVectorType<T> gc)
+                : owned_dofs(od),
+                  owned_index(ow_idx),
+                  index(idx),
+                  dofs(d),
+                  local_thread_count(lc),
+                  owned_thread_count(gc) {}
+
+            MARS_INLINE_FUNCTION
+            void volume_insert(const Mesh mesh,
+                                  const Integer i,
+                                  const KeyType dof_sfc,
+                                  std::true_type) const {
+                auto owned_size = mesh.get_chunk_size();
+                auto scan_idx = i == 0 ? 0 : local_thread_count(owned_size + i);
+                dofs(scan_idx + index++) = dof_sfc;
+            }
+
+            MARS_INLINE_FUNCTION
+            void volume_insert(const Mesh mesh,
+                                  const Integer i,
+                                  const KeyType dof_sfc,
+                                  std::false_type) const {
+                auto owned_scan_idx = i == 0 ? 0 : owned_thread_count(i);
+                owned_dofs(owned_scan_idx + owned_index++) = dof_sfc;
+
+                auto scan_idx = i == 0 ? 0 : local_thread_count(i);
+                dofs(scan_idx + index++) = dof_sfc;
+            }
+
+            MARS_INLINE_FUNCTION
+            void operator()(const Mesh mesh,
+                            const Integer i,
+                            const KeyType dof_sfc) const {
+                volume_insert(mesh, i, dof_sfc, std::integral_constant<bool, Ghost>{});
+            }
+        };
+
+        template <bool Ghost, typename T>
+        struct InsertLocalGlobalDofs {
+            MARS_INLINE_FUNCTION
+            InsertLocalGlobalDofs(Mesh m,
+                                  ViewVectorType<KeyType> od,
+                                  ViewVectorType<KeyType> d,
+                                  ViewVectorType<T> lc,
+                                  ViewVectorType<T> gc)
+                : mesh(m), owned_dofs(od), dofs(d), thread_count(lc), owned_thread_count(gc) {}
+
+            Mesh mesh;
+            ViewVectorType<KeyType> owned_dofs;
+            ViewVectorType<KeyType> dofs;
+            ViewVectorType<T> owned_thread_count;
+            ViewVectorType<T> thread_count;
+
+            MARS_INLINE_FUNCTION
+            void operator()(const Integer i) const {
+                const KeyType sfc = get_sfc_ghost_or_local<Ghost>(mesh, i);
+                const Integer proc = mesh.get_proc();
+
+                Integer owned_index = 0;
+                Integer index = 0;
+
+                auto cp = LocalOwnedDofsFill<Ghost, DofLabel::lCorner>(
+                    owned_dofs, dofs, thread_count, owned_thread_count, owned_index, index, proc);
+
+                auto fp = LocalOwnedDofsFill<Ghost, DofLabel::lFace>(
+                    owned_dofs, dofs, thread_count, owned_thread_count, owned_index, index, proc);
+
+                // fp logic is the same as the edge one. Just different label.
+                auto ep = LocalOwnedDofsFill<Ghost, DofLabel::lEdge>(
+                    owned_dofs, dofs, thread_count, owned_thread_count, owned_index, index, proc);
+
+                auto vp = LocalOwnedDofsFill<Ghost, DofLabel::lVolume>(
+                    owned_dofs, dofs, thread_count, owned_thread_count, owned_index, index);
+
+                elem_dof_iterate(sfc, mesh, i, cp, fp, vp, ep);
+            }
+        };
+
+        // generic local predicate functor to be used for edge, face and corners. The volume is specialized.
+        template <typename T, bool Ghost, Integer Label>
+        struct LocalOwnedThreadCount {
+            ViewVectorType<T> local_thread_count;
+            ViewVectorType<T> owned_thread_count;
+            ViewVectorType<bool> nbh_proc_predicate_send;
+            ViewVectorType<bool> nbh_proc_predicate_recv;
+            Integer proc;
+
+            MARS_INLINE_FUNCTION
+            LocalOwnedThreadCount(ViewVectorType<T> lc,
+                                  ViewVectorType<T> gc,
+                                  ViewVectorType<bool> npps,
+                                  ViewVectorType<bool> nppr,
+                                  Integer p)
+                : local_thread_count(lc),
+                  owned_thread_count(gc),
+                  nbh_proc_predicate_send(npps),
+                  nbh_proc_predicate_recv(nppr),
+                  proc(p) {}
+
+            MARS_INLINE_FUNCTION
+            void lg_count(const Mesh mesh,
+                          const Integer i,
+                          const Integer owner_proc,
+                          std::true_type) const {
+                Integer elem_sfc_proc =
+                    find_owner_processor(mesh.get_view_gp(), mesh.get_ghost_sfc(i), 2, mesh.get_proc());
+
+                auto owned_size = mesh.get_chunk_size();
+                // if the ghost elem owns the dof then he is able to send it.
+                if (elem_sfc_proc >= owner_proc) {
+                    nbh_proc_predicate_send(elem_sfc_proc) = 1;
+                    nbh_proc_predicate_recv(elem_sfc_proc) = 1;
+                    local_thread_count(owned_size + i)++;
+                }
+            }
+
+            MARS_INLINE_FUNCTION
+            void lg_count(const Mesh mesh,
+                              const Integer i,
+                              const Integer owner_proc,
+                              std::false_type) const {
+                /* if the neighbor element is ghost then check if the processor
+                    is less than the owner. This is how the dofs are partitioned*/
+                if (proc >= owner_proc) {
+                    owned_thread_count(i)++;
+                }
+                local_thread_count(i)++;
+            }
+
+            MARS_INLINE_FUNCTION
+            void operator()(const Mesh mesh, const Integer i, const KeyType dof_sfc, const Integer owner_proc) const {
+                lg_count(mesh, i, owner_proc, std::integral_constant<bool, Ghost>{});
+            }
+        };
+
+        template <typename T, bool Ghost>
+        struct LocalOwnedThreadCount<Ghost, DofLabel::lVolume> {
+            ViewVectorType<T> local_thread_count;
+            ViewVectorType<T> owned_thread_count;
+
+            MARS_INLINE_FUNCTION
+                LocalOwnedThreadCount(ViewVectorType<T> lc, ViewVectorType<T> gc)
+                : local_thread_count(lc), owned_thread_count(gc) {}
+
+            MARS_INLINE_FUNCTION
+            void volume_predicate(const Mesh mesh, const Integer i, std::true_type) const {
+                auto owned_size = mesh.get_chunk_size();
+                local_thread_count(owned_size + i)++;
+            }
+
+            MARS_INLINE_FUNCTION
+            void volume_predicate(const Mesh mesh, const Integer i, std::false_type) const {
+                owned_thread_count(i)++;
+                local_thread_count(i)++;
+            }
+
+            MARS_INLINE_FUNCTION
+            void operator()(const Mesh mesh, const Integer i, const KeyType dofs_sfc) const {
+                volume_predicate(mesh, i, std::integral_constant<bool, Ghost>{});
+            }
+        };
+
+
+
+        template <bool Ghost, typename T>
+        struct CountLocalGlobalDofs {
+            MARS_INLINE_FUNCTION
+            CountLocalGlobalDofs(Mesh m,
+                                 ViewVectorType<T> lc,
+                                 ViewVectorType<T> gc,
+                                 ViewVectorType<bool> npbs,
+                                 ViewVectorType<bool> npbr)
+                : mesh(m),
+                  thread_count(lc),
+                  owned_thread_count(gc),
+                  nbh_proc_predicate_send(npbs),
+                  nbh_proc_predicate_recv(npbr) {}
+
+            Mesh mesh;
+            ViewVectorType<T> thread_count;
+            ViewVectorType<T> owned_thread_count;
+            ViewVectorType<bool> nbh_proc_predicate_send;
+            ViewVectorType<bool> nbh_proc_predicate_recv;
+
+            MARS_INLINE_FUNCTION
+            void operator()(const Integer i) const {
+                const KeyType sfc = get_sfc_ghost_or_local<Ghost>(mesh, i);
+                const Integer proc = mesh.get_proc();
+                auto cp = LocalOwnedThreadCount<Ghost, DofLabel::lCorner>(
+                    thread_count, owned_thread_count, nbh_proc_predicate_send, nbh_proc_predicate_recv, proc);
+
+                auto fp = LocalOwnedThreadCount<Ghost, DofLabel::lFace>(
+                    thread_count, owned_thread_count, nbh_proc_predicate_send, nbh_proc_predicate_recv, proc);
+
+                // fp logic is the same as the edge one. Just different label.
+                auto ep = LocalOwnedThreadCount<Ghost, DofLabel::lEdge>(
+                    thread_count, owned_thread_count, nbh_proc_predicate_send, nbh_proc_predicate_recv, proc);
+
+                auto vp = LocalOwnedThreadCount<Ghost, DofLabel::lVolume>(thread_count, owned_thread_count);
+
+                elem_dof_iterate(sfc, mesh, i, cp, fp, vp, ep);
+            }
+        };
+
+        // generic local predicate functor to be used for edge, face and corners. The volume is specialized.
+        template <bool Ghost, Integer Label>
+        struct LocalGlobalPredicate {
+            ViewVectorType<bool> local_predicate;
+            ViewVectorType<bool> global_predicate;
+            ViewVectorType<bool> nbh_proc_predicate_send;
+            ViewVectorType<bool> nbh_proc_predicate_recv;
+            Integer proc;
+
+            MARS_INLINE_FUNCTION
+            LocalGlobalPredicate(ViewVectorType<bool> lp,
+                                 ViewVectorType<bool> gp,
+                                 ViewVectorType<bool> npps,
+                                 ViewVectorType<bool> nppr,
+                                 Integer p)
+                : local_predicate(lp),
+                  global_predicate(gp),
+                  nbh_proc_predicate_send(npps),
+                  nbh_proc_predicate_recv(nppr),
+                  proc(p) {}
+
+            MARS_INLINE_FUNCTION
+            void lg_predicate(const Mesh mesh,
+                              const Integer i,
+                              const KeyType sfc,
+                              const Integer owner_proc,
+                              std::true_type) const {
+                Integer elem_sfc_proc =
+                    find_owner_processor(mesh.get_view_gp(), mesh.get_ghost_sfc(i), 2, mesh.get_proc());
+
+                // if the ghost elem owns the dof then he is able to send it.
+                if (elem_sfc_proc >= owner_proc) {
+                    local_predicate(sfc) = 1;
+                    nbh_proc_predicate_send(elem_sfc_proc) = 1;
+                    nbh_proc_predicate_recv(elem_sfc_proc) = 1;
+                }
+            }
+
+            MARS_INLINE_FUNCTION
+            void lg_predicate(const Mesh mesh,
+                              const Integer i,
+                              const KeyType sfc,
+                              const Integer owner_proc,
+                              std::false_type) const {
+                /* if the neighbor element is ghost then check if the processor
+                    is less than the owner. This is how the dofs are partitioned*/
+                if (proc >= owner_proc) {
+                    global_predicate(sfc) = 1;
+                }
+                local_predicate(sfc) = 1;
+            }
+
+            MARS_INLINE_FUNCTION
+            void operator()(const Mesh mesh, const Integer i, const KeyType dof_sfc, const Integer owner_proc) const {
+                lg_predicate(mesh, i, dof_sfc, owner_proc, std::integral_constant<bool, Ghost>{});
+            }
+        };
+
+        template <bool Ghost>
+        struct LocalGlobalPredicate<Ghost, DofLabel::lVolume> {
+            ViewVectorType<bool> local_predicate;
+            ViewVectorType<bool> global_predicate;
+
+            MARS_INLINE_FUNCTION
+            LocalGlobalPredicate(ViewVectorType<bool> lp, ViewVectorType<bool> gp)
+                : local_predicate(lp), global_predicate(gp) {}
+
+            MARS_INLINE_FUNCTION
+            void volume_predicate(const KeyType sfc, std::true_type) const { local_predicate(sfc) = 1; }
+
+            MARS_INLINE_FUNCTION
+            void volume_predicate(const KeyType sfc, std::false_type) const {
+                local_predicate(sfc) = 1;
+                global_predicate(sfc) = 1;
+            }
+
+            MARS_INLINE_FUNCTION
+            void operator()(const Mesh mesh, const Integer i, const Integer enc_oc) const {
+                volume_predicate(enc_oc, std::integral_constant<bool, Ghost>{});
+            }
+        };
+
+
         template <bool Ghost>
         struct BuildLocalGlobalPredicate {
 
@@ -1107,16 +1401,112 @@ namespace mars {
                 }); */
         }
 
+        template <typename KeyType>
+        void process_full_segment(const typename KeyType::ValueType start, const typename KeyType::ValueType end) {
+            using ValueType = typename KeyType::ValueType;
+            static_assert(std::is_same<KeyType, HilbertKey<ValueType>>::value, "Key type must be HilbertKey");
+
+            const auto rank_elements_size = end - start;
+            auto rank_elements = ViewVectorType<ValueType>("rank_elements", rank_elements_size);
+
+            printf("Hilbert DOF chunk_size:%li,  start: %li end: %li\n", rank_elements_size, start, end);
+
+            Kokkos::parallel_for(
+                "compactSegment",
+                Kokkos::RangePolicy<Kokkos::IndexType<ValueType>>(start, end),
+                KOKKOS_LAMBDA(const ValueType i) {
+                    auto index = i - start;
+                    rank_elements(index) = i;
+                });
+
+            mesh.set_view_sfc(rank_elements);
+            mesh.set_chunk_size(rank_elements_size);
+        }
+
+        void build_lg_hilbert_predicate(const context &context,
+                                        ViewVectorType<bool> &nbhs,
+                                        ViewVectorType<bool> &nbhr) {
+            const int rank_size = num_ranks(context);
+            const int rank = mars::rank(context);
+
+            Integer xDim = get_mesh().get_XDim() * degree;
+            Integer yDim = get_mesh().get_YDim() * degree;
+            Integer zDim = get_mesh().get_ZDim() * degree;
+
+            global_dof_enum = SFC<simplex_type::ElemType, SfcKeyType>(xDim, yDim, zDim);
+            local_dof_enum = SFC<simplex_type::ElemType, SfcKeyType>(xDim, yDim, zDim);
+
+            const Integer size = get_mesh().get_chunk_size();
+            const Integer ghost_size = get_mesh().get_ghost_size();
+
+            ViewVectorType<unsigned> owned_thread_count("thread_count", size);
+            ViewVectorType<unsigned> local_thread_count("thread_count", size + ghost_size);
+            //count the number of local and global dofs
+            // Iterate through the local sfc and enumerate
+            Kokkos::parallel_for(
+                "lg_predicate",
+                size,
+                CountLocalGlobalDofs<false>(get_mesh(), local_thread_count, owned_thread_count, nbhs, nbhr));
+            // Iterate through ghost sfc and enumerate
+            Kokkos::parallel_for(
+                "lg_predicate_from_ghost",
+                ghost_size,
+                CountLocalGlobalDofs<true>(get_mesh(), local_thread_count, owned_thread_count, nbhs, nbhr));
+
+#ifdef MARS_ENABLE_CUDA
+            cub_inclusive_scan(owned_thread_count, size);
+            cub_inclusive_scan(local_thread_count, size + ghost_size);
+#else
+            ViewVectorType<Integer> owned_thread_count_scan("owned_thread_count_scan", size);
+            ViewVectorType<Integer> local_thread_count_scan("local_thread_count_scan", size + ghost_size);
+            inclusive_scan(0, size, owned_thread_count, owned_thread_count_scan);
+            inclusive_scan(0, size + ghost_size, local_thread_count, local_thread_count_scan);
+#endif
+
+            const Integer owned_size = get_last_value(owned_thread_count_scan);
+            ViewVectorType<KeyType> owned_dofs("owned_dofs", owned_size);
+            const Integer local_size = get_last_value(local_thread_count_scan);
+            ViewVectorType<KeyType> dofs("dofs", local_size);
+            // Insert the local and global dofs
+            // Iterate through the local sfc and enumerate
+            Kokkos::parallel_for(
+                "lg_predicate",
+                size,
+                InsertLocalGlobalDofs<false>(get_mesh(), owned_dofs, dofs, local_thread_count, owned_thread_count));
+            // Iterate through ghost sfc and enumerate
+            Kokkos::parallel_for(
+                "lg_predicate_from_ghost",
+                ghost_size,
+                InsertLocalGlobalDofs<true>(get_mesh(), owned_dofs, dofs, local_thread_count, owned_thread_count));
+
+            buffer_cub_radix_sort(owned_dofs);
+            buffer_cub_radix_sort(dofs);
+
+            auto owned_unique_dofs = thrust_unique(owned_dofs);
+            auto unique_dofs = thrust_unique(dofs);
+
+            global_dof_enum.set_elements(owned_unique_dofs);
+            local_dof_enum.set_elements(unique_dofs);
+
+            global_dof_enum.generate_sfc_to_local_map();
+            local_dof_enum.generate_sfc_to_local_map();
+
+            ViewVectorType<Integer> global_dof_size_per_rank("global_dof_size_per_rank", rank_size);
+            global_dof_offset = ViewVectorType<Integer>("global_dof_offset", rank_size + 1);
+
+            context->distributed->gather_all_view(global_dof_enum.get_elem_size(), global_dof_size_per_rank);
+            incl_excl_scan(0, rank_size, global_dof_size_per_rank, global_dof_offset);
+        }
+
+
         void build_lg_predicate(const context &context, ViewVectorType<bool> &npbs, ViewVectorType<bool> &npbr) {
             Integer xDim = get_mesh().get_XDim();
             Integer yDim = get_mesh().get_YDim();
             Integer zDim = get_mesh().get_ZDim();
 
             const Integer size = get_mesh().get_chunk_size();
-            const Integer ghost_size = get_mesh().get_view_ghost().extent(0);
+            const Integer ghost_size = get_mesh().get_ghost_size();
 
-            /* TODO: xdim and ydim should be changed to max xdim and ydim
-             * of the local partition to reduce memory footprint */
             local_dof_enum = SFC<simplex_type::ElemType, SfcKeyType>(degree * xDim, degree * yDim, degree * zDim);
             global_dof_enum = SFC<simplex_type::ElemType, SfcKeyType>(degree * xDim, degree * yDim, degree * zDim);
 
@@ -1125,16 +1515,16 @@ namespace mars {
 
             /* generate the sfc for the local and global dofs containing the generation locally
             for each partition of the mesh using the existing elem sfc to build this nodal sfc. */
-            Kokkos::parallel_for("lg_predicate",
-                                 size,
-                                 BuildLocalGlobalPredicate<false>(
-                                     get_mesh(), local_predicate, global_predicate, npbs, npbr));
+            Kokkos::parallel_for(
+                "lg_predicate",
+                size,
+                BuildLocalGlobalPredicate<false>(get_mesh(), local_predicate, global_predicate, npbs, npbr));
 
             // Iterate through ghost sfc and enumerate
-            Kokkos::parallel_for("lg_predicate_from_ghost",
-                                 ghost_size,
-                                 BuildLocalGlobalPredicate<true>(
-                                     get_mesh(), local_predicate, global_predicate, npbs, npbr));
+            Kokkos::parallel_for(
+                "lg_predicate_from_ghost",
+                ghost_size,
+                BuildLocalGlobalPredicate<true>(get_mesh(), local_predicate, global_predicate, npbs, npbr));
 
             build_sfc_from_predicate(local_dof_enum, local_predicate);
             build_sfc_from_predicate(global_dof_enum, global_predicate);
@@ -1418,7 +1808,8 @@ namespace mars {
             SFC<ElemType, SfcKeyType> global_enum;
 
             MARS_INLINE_FUNCTION
-            LocalGlobalLabel(SFC<ElemType, SfcKeyType> le, SFC<ElemType, SfcKeyType> ge) : local_enum(le), global_enum(ge) {}
+            LocalGlobalLabel(SFC<ElemType, SfcKeyType> le, SFC<ElemType, SfcKeyType> ge)
+                : local_enum(le), global_enum(ge) {}
 
             MARS_INLINE_FUNCTION
             void volume_label(const KeyType sfc, std::true_type) const {
@@ -1427,7 +1818,7 @@ namespace mars {
             }
 
             MARS_INLINE_FUNCTION
-            void volume_label(const KeyType  sfc, std::false_type) const {
+            void volume_label(const KeyType sfc, std::false_type) const {
                 auto gindex = get_value_in_map(global_enum.get_sfc_to_local_map(), sfc);
                 global_enum.set_label(gindex, DofLabel::lVolume);
                 auto index = get_value_in_map(local_enum.get_sfc_to_local_map(), sfc);
@@ -1442,7 +1833,6 @@ namespace mars {
 
         template <bool Ghost>
         struct BuildLocalGlobalLabel {
-
             MARS_INLINE_FUNCTION
             BuildLocalGlobalLabel(Mesh m, SFC<ElemType, SfcKeyType> le, SFC<ElemType, SfcKeyType> ge)
                 : mesh(m), local_enum(le), global_enum(ge) {}
@@ -1478,14 +1868,12 @@ namespace mars {
             for each partition of the mesh using the existing elem sfc to build this nodal sfc. */
             Kokkos::parallel_for("label_local",
                                  size,
-                                 BuildLocalGlobalLabel<false>(
-                                     get_mesh(), get_local_dof_enum(), get_global_dof_enum()));
+                                 BuildLocalGlobalLabel<false>(get_mesh(), get_local_dof_enum(), get_global_dof_enum()));
 
             // Iterate through ghost sfc and enumerate
             Kokkos::parallel_for("label_ghost",
                                  ghost_size,
-                                 BuildLocalGlobalLabel<true>(
-                                     get_mesh(), get_local_dof_enum(), get_global_dof_enum()));
+                                 BuildLocalGlobalLabel<true>(get_mesh(), get_local_dof_enum(), get_global_dof_enum()));
         }
 
         virtual void enumerate_dofs() {
@@ -1508,21 +1896,16 @@ namespace mars {
             incl_excl_scan(0, rank_size, nbh_proc_predicate_send, proc_scan_send);
             incl_excl_scan(0, rank_size, nbh_proc_predicate_recv, proc_scan_recv);
 
-            auto ps = subview(proc_scan_send, rank_size);
-            auto pr = subview(proc_scan_recv, rank_size);
-            auto h_ps = create_mirror_view(ps);
-            auto h_pr = create_mirror_view(pr);
-            // Deep copy device view to host view.
-            deep_copy(h_ps, ps);
-            deep_copy(h_pr, pr);
+            auto ps = get_last_value(proc_scan_send);
+            auto pr = get_last_value(proc_scan_recv);
 
-            ViewVectorType<Integer> sender_ranks("sender_ranks", h_ps());
-            ViewVectorType<Integer> recver_ranks("receiver_ranks", h_pr());
+            ViewVectorType<Integer> sender_ranks("sender_ranks", ps);
+            ViewVectorType<Integer> recver_ranks("receiver_ranks", pr);
             compact_scan(nbh_proc_predicate_send, proc_scan_send, sender_ranks);
             compact_scan(nbh_proc_predicate_recv, proc_scan_recv, recver_ranks);
 
             ViewVectorType<Integer> scan_boundary, boundary_dofs_index;
-            build_boundary_dof_sets(scan_boundary, boundary_dofs_index, proc_scan_send, h_ps());
+            build_boundary_dof_sets(scan_boundary, boundary_dofs_index, proc_scan_send, ps);
 
             Kokkos::fence();
 
@@ -1532,19 +1915,12 @@ namespace mars {
 
             /* create the scan recv mirror view from the receive count */
             scan_recv = ViewVectorType<Integer>("scan_recv_", rank_size + 1);
-            scan_recv_mirror = create_mirror_view(scan_recv);
-            make_scan_index_mirror(scan_recv_mirror, r_count);
-            Kokkos::deep_copy(scan_recv, scan_recv_mirror);
-
-            /*create the scan send mirror view from the send count*/
             scan_send = ViewVectorType<Integer>("scan_send_", rank_size + 1);
-            scan_send_mirror = create_mirror_view(scan_send);
-            make_scan_index_mirror(scan_send_mirror, s_count);
-            Kokkos::deep_copy(scan_send, scan_send_mirror);
+            host_scan_to_device(scan_recv, r_count);
+            host_scan_to_device(scan_send, s_count);
 
             ViewVectorType<Integer> ghost_dofs_index;
             exchange_ghost_dofs(context, boundary_dofs_index, ghost_dofs_index);
-
             build_ghost_local_global_map(context, ghost_dofs_index);
         }
 
@@ -1710,7 +2086,6 @@ namespace mars {
 
         template <Integer B = Block_>
         MARS_INLINE_FUNCTION typename std::enable_if<B != 1, Dof>::type local_to_global_dof(const Integer local) const {
-
             // use the local to sfc view (elements) to get the sfc of the local numbering.
             const Integer component = compute_component<B>(local);
 
@@ -1791,7 +2166,7 @@ namespace mars {
         Integer sfc_to_local(const KeyType sfc) const { return get_eval_value_in_local_map(sfc); }
 
         MARS_INLINE_FUNCTION
-        Integer sfc_to_local(const KeyType  sfc, const Integer component) const {
+        Integer sfc_to_local(const KeyType sfc, const Integer component) const {
             return compute_block_index<Block>(get_eval_value_in_local_map(sfc), component);
         }
 
