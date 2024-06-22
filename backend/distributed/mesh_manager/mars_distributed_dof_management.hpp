@@ -944,11 +944,11 @@ namespace mars {
         template <typename T, bool Ghost, Integer Label>
         struct LocalOwnedDofsFill{
             ViewVectorType<KeyType> owned_dofs;
-            ViewVectorType<KeyType> dofs;
-            ViewVectorType<T> local_thread_count;
-            ViewVectorType<T> owned_thread_count;
             Integer &owned_index;
+            ViewVectorType<KeyType> dofs;
             Integer &index;
+            ViewVectorType<T> owned_thread_count;
+            ViewVectorType<T> local_thread_count;
             Integer proc;
 
             MARS_INLINE_FUNCTION
@@ -956,15 +956,15 @@ namespace mars {
                                Integer &ow_idx,
                                ViewVectorType<KeyType> d,
                                Integer &idx,
-                               ViewVectorType<T> lc,
                                ViewVectorType<T> gc,
+                               ViewVectorType<T> lc,
                                Integer p)
                 : owned_dofs(od),
                   owned_index(ow_idx),
                   dofs(d),
                   index(idx),
-                  local_thread_count(lc),
                   owned_thread_count(gc),
+                  local_thread_count(lc),
                   proc(p) {}
 
             MARS_INLINE_FUNCTION
@@ -979,7 +979,7 @@ namespace mars {
                 auto owned_size = mesh.get_chunk_size();
                 // if the ghost elem owns the dof then he is able to send it.
                 if (elem_sfc_proc >= owner_proc) {
-                    auto scan_idx = i == 0 ? 0 : local_thread_count(owned_size + i);
+                    auto scan_idx = i == 0 ? 0 : local_thread_count(owned_size + i - 1);
                     dofs(scan_idx + index++) = dof_sfc;
                 }
             }
@@ -993,10 +993,12 @@ namespace mars {
                 /* if the neighbor element is ghost then check if the processor
                     is less than the owner. This is how the dofs are partitioned*/
                 if (proc >= owner_proc) {
-                    auto owned_scan_idx = i == 0 ? 0 : owned_thread_count(i);
+                    auto owned_scan_idx = i == 0 ? 0 : owned_thread_count(i - 1);
+                    printf("owned_scan_idx: %ld, %ld, %ld\n", i, owned_scan_idx, owned_index);
                     owned_dofs(owned_scan_idx + owned_index++) = dof_sfc;
                 }
-                auto scan_idx = i == 0 ? 0 : local_thread_count(i);
+                auto scan_idx = i == 0 ? 0 : local_thread_count(i - 1);
+                printf("scan_idx: %ld, %ld, %ld\n", i, scan_idx, index);
                 dofs(scan_idx + index++) = dof_sfc;
             }
 
@@ -1010,27 +1012,27 @@ namespace mars {
         };
 
         template <typename T, bool Ghost>
-        struct LocalOwnedDofsFill<Ghost, DofLabel::lVolume> {
+        struct LocalOwnedDofsFill<T, Ghost, DofLabel::lVolume> {
             ViewVectorType<KeyType> owned_dofs;
-            ViewVectorType<KeyType> dofs;
-            ViewVectorType<T> local_thread_count;
-            ViewVectorType<T> owned_thread_count;
             Integer &owned_index;
+            ViewVectorType<KeyType> dofs;
             Integer &index;
+            ViewVectorType<T> owned_thread_count;
+            ViewVectorType<T> local_thread_count;
 
             MARS_INLINE_FUNCTION
             LocalOwnedDofsFill(ViewVectorType<KeyType> od,
                                Integer &ow_idx,
                                ViewVectorType<KeyType> d,
                                Integer &idx,
-                               ViewVectorType<T> lc,
-                               ViewVectorType<T> gc)
+                               ViewVectorType<T> gc,
+                               ViewVectorType<T> lc)
                 : owned_dofs(od),
                   owned_index(ow_idx),
-                  index(idx),
                   dofs(d),
-                  local_thread_count(lc),
-                  owned_thread_count(gc) {}
+                  index(idx),
+                  owned_thread_count(gc),
+                  local_thread_count(lc) {}
 
             MARS_INLINE_FUNCTION
             void volume_insert(const Mesh mesh,
@@ -1038,7 +1040,7 @@ namespace mars {
                                   const KeyType dof_sfc,
                                   std::true_type) const {
                 auto owned_size = mesh.get_chunk_size();
-                auto scan_idx = i == 0 ? 0 : local_thread_count(owned_size + i);
+                auto scan_idx = i == 0 ? 0 : local_thread_count(owned_size + i - 1);
                 dofs(scan_idx + index++) = dof_sfc;
             }
 
@@ -1047,10 +1049,10 @@ namespace mars {
                                   const Integer i,
                                   const KeyType dof_sfc,
                                   std::false_type) const {
-                auto owned_scan_idx = i == 0 ? 0 : owned_thread_count(i);
+                auto owned_scan_idx = i == 0 ? 0 : owned_thread_count(i - 1);
                 owned_dofs(owned_scan_idx + owned_index++) = dof_sfc;
 
-                auto scan_idx = i == 0 ? 0 : local_thread_count(i);
+                auto scan_idx = i == 0 ? 0 : local_thread_count(i - 1);
                 dofs(scan_idx + index++) = dof_sfc;
             }
 
@@ -1068,9 +1070,9 @@ namespace mars {
             InsertLocalGlobalDofs(Mesh m,
                                   ViewVectorType<KeyType> od,
                                   ViewVectorType<KeyType> d,
-                                  ViewVectorType<T> lc,
-                                  ViewVectorType<T> gc)
-                : mesh(m), owned_dofs(od), dofs(d), thread_count(lc), owned_thread_count(gc) {}
+                                  ViewVectorType<T> gc,
+                                  ViewVectorType<T> lc)
+                : mesh(m), owned_dofs(od), dofs(d), owned_thread_count(gc), thread_count(lc) {}
 
             Mesh mesh;
             ViewVectorType<KeyType> owned_dofs;
@@ -1085,41 +1087,44 @@ namespace mars {
 
                 Integer owned_index = 0;
                 Integer index = 0;
+                printf("Index at i before: %ld, %ld, %ld\n:", i, owned_index, index);
 
-                auto cp = LocalOwnedDofsFill<Ghost, DofLabel::lCorner>(
-                    owned_dofs, dofs, thread_count, owned_thread_count, owned_index, index, proc);
+                auto cp = LocalOwnedDofsFill<T, Ghost, DofLabel::lCorner>(
+                    owned_dofs, owned_index, dofs, index, owned_thread_count, thread_count, proc);
 
-                auto fp = LocalOwnedDofsFill<Ghost, DofLabel::lFace>(
-                    owned_dofs, dofs, thread_count, owned_thread_count, owned_index, index, proc);
+                auto fp = LocalOwnedDofsFill<T, Ghost, DofLabel::lFace>(
+                    owned_dofs, owned_index, dofs, index, owned_thread_count, thread_count, proc);
 
                 // fp logic is the same as the edge one. Just different label.
-                auto ep = LocalOwnedDofsFill<Ghost, DofLabel::lEdge>(
-                    owned_dofs, dofs, thread_count, owned_thread_count, owned_index, index, proc);
+                auto ep = LocalOwnedDofsFill<T, Ghost, DofLabel::lEdge>(
+                    owned_dofs, owned_index, dofs, index, owned_thread_count, thread_count, proc);
 
-                auto vp = LocalOwnedDofsFill<Ghost, DofLabel::lVolume>(
-                    owned_dofs, dofs, thread_count, owned_thread_count, owned_index, index);
+                auto vp = LocalOwnedDofsFill<T, Ghost, DofLabel::lVolume>(
+                    owned_dofs, owned_index, dofs, index, owned_thread_count, thread_count);
 
                 elem_dof_iterate(sfc, mesh, i, cp, fp, vp, ep);
+
+                printf("Index at i after: %ld, %ld, %ld\n:", i, owned_index, index);
             }
         };
 
         // generic local predicate functor to be used for edge, face and corners. The volume is specialized.
         template <typename T, bool Ghost, Integer Label>
         struct LocalOwnedThreadCount {
-            ViewVectorType<T> local_thread_count;
             ViewVectorType<T> owned_thread_count;
+            ViewVectorType<T> local_thread_count;
             ViewVectorType<bool> nbh_proc_predicate_send;
             ViewVectorType<bool> nbh_proc_predicate_recv;
             Integer proc;
 
             MARS_INLINE_FUNCTION
-            LocalOwnedThreadCount(ViewVectorType<T> lc,
-                                  ViewVectorType<T> gc,
+            LocalOwnedThreadCount(ViewVectorType<T> gc,
+                                  ViewVectorType<T> lc,
                                   ViewVectorType<bool> npps,
                                   ViewVectorType<bool> nppr,
                                   Integer p)
-                : local_thread_count(lc),
-                  owned_thread_count(gc),
+                : owned_thread_count(gc),
+                  local_thread_count(lc),
                   nbh_proc_predicate_send(npps),
                   nbh_proc_predicate_recv(nppr),
                   proc(p) {}
@@ -1161,13 +1166,13 @@ namespace mars {
         };
 
         template <typename T, bool Ghost>
-        struct LocalOwnedThreadCount<Ghost, DofLabel::lVolume> {
-            ViewVectorType<T> local_thread_count;
+        struct LocalOwnedThreadCount<T, Ghost, DofLabel::lVolume> {
             ViewVectorType<T> owned_thread_count;
+            ViewVectorType<T> local_thread_count;
 
             MARS_INLINE_FUNCTION
-                LocalOwnedThreadCount(ViewVectorType<T> lc, ViewVectorType<T> gc)
-                : local_thread_count(lc), owned_thread_count(gc) {}
+            LocalOwnedThreadCount(ViewVectorType<T> gc, ViewVectorType<T> lc)
+                : owned_thread_count(gc), local_thread_count(lc) {}
 
             MARS_INLINE_FUNCTION
             void volume_predicate(const Mesh mesh, const Integer i, std::true_type) const {
@@ -1187,25 +1192,23 @@ namespace mars {
             }
         };
 
-
-
         template <bool Ghost, typename T>
         struct CountLocalGlobalDofs {
             MARS_INLINE_FUNCTION
             CountLocalGlobalDofs(Mesh m,
-                                 ViewVectorType<T> lc,
                                  ViewVectorType<T> gc,
+                                 ViewVectorType<T> lc,
                                  ViewVectorType<bool> npbs,
                                  ViewVectorType<bool> npbr)
                 : mesh(m),
-                  thread_count(lc),
                   owned_thread_count(gc),
+                  thread_count(lc),
                   nbh_proc_predicate_send(npbs),
                   nbh_proc_predicate_recv(npbr) {}
 
             Mesh mesh;
-            ViewVectorType<T> thread_count;
             ViewVectorType<T> owned_thread_count;
+            ViewVectorType<T> thread_count;
             ViewVectorType<bool> nbh_proc_predicate_send;
             ViewVectorType<bool> nbh_proc_predicate_recv;
 
@@ -1213,17 +1216,17 @@ namespace mars {
             void operator()(const Integer i) const {
                 const KeyType sfc = get_sfc_ghost_or_local<Ghost>(mesh, i);
                 const Integer proc = mesh.get_proc();
-                auto cp = LocalOwnedThreadCount<Ghost, DofLabel::lCorner>(
-                    thread_count, owned_thread_count, nbh_proc_predicate_send, nbh_proc_predicate_recv, proc);
+                auto cp = LocalOwnedThreadCount<T, Ghost, DofLabel::lCorner>(
+                    owned_thread_count, thread_count, nbh_proc_predicate_send, nbh_proc_predicate_recv, proc);
 
-                auto fp = LocalOwnedThreadCount<Ghost, DofLabel::lFace>(
-                    thread_count, owned_thread_count, nbh_proc_predicate_send, nbh_proc_predicate_recv, proc);
+                auto fp = LocalOwnedThreadCount<T, Ghost, DofLabel::lFace>(
+                    owned_thread_count, thread_count, nbh_proc_predicate_send, nbh_proc_predicate_recv, proc);
 
                 // fp logic is the same as the edge one. Just different label.
-                auto ep = LocalOwnedThreadCount<Ghost, DofLabel::lEdge>(
-                    thread_count, owned_thread_count, nbh_proc_predicate_send, nbh_proc_predicate_recv, proc);
+                auto ep = LocalOwnedThreadCount<T, Ghost, DofLabel::lEdge>(
+                    owned_thread_count, thread_count, nbh_proc_predicate_send, nbh_proc_predicate_recv, proc);
 
-                auto vp = LocalOwnedThreadCount<Ghost, DofLabel::lVolume>(thread_count, owned_thread_count);
+                auto vp = LocalOwnedThreadCount<T, Ghost, DofLabel::lVolume>(owned_thread_count, thread_count);
 
                 elem_dof_iterate(sfc, mesh, i, cp, fp, vp, ep);
             }
@@ -1439,52 +1442,58 @@ namespace mars {
             const Integer size = get_mesh().get_chunk_size();
             const Integer ghost_size = get_mesh().get_ghost_size();
 
-            ViewVectorType<unsigned> owned_thread_count("thread_count", size);
-            ViewVectorType<unsigned> local_thread_count("thread_count", size + ghost_size);
+            printf("SFC\n");
+            ViewVectorType<size_t> owned_thread_count("thread_count", size);
+            ViewVectorType<size_t> local_thread_count("thread_count", size + ghost_size);
             //count the number of local and global dofs
             // Iterate through the local sfc and enumerate
             Kokkos::parallel_for(
                 "lg_predicate",
                 size,
-                CountLocalGlobalDofs<false>(get_mesh(), local_thread_count, owned_thread_count, nbhs, nbhr));
+                CountLocalGlobalDofs<false, size_t>(get_mesh(), owned_thread_count, local_thread_count, nbhs, nbhr));
             // Iterate through ghost sfc and enumerate
             Kokkos::parallel_for(
                 "lg_predicate_from_ghost",
                 ghost_size,
-                CountLocalGlobalDofs<true>(get_mesh(), local_thread_count, owned_thread_count, nbhs, nbhr));
+                CountLocalGlobalDofs<true, size_t>(get_mesh(), owned_thread_count, local_thread_count, nbhs, nbhr));
 
-#ifdef MARS_ENABLE_CUDA
-            cub_inclusive_scan(owned_thread_count, size);
-            cub_inclusive_scan(local_thread_count, size + ghost_size);
-#else
-            ViewVectorType<Integer> owned_thread_count_scan("owned_thread_count_scan", size);
-            ViewVectorType<Integer> local_thread_count_scan("local_thread_count_scan", size + ghost_size);
-            inclusive_scan(0, size, owned_thread_count, owned_thread_count_scan);
-            inclusive_scan(0, size + ghost_size, local_thread_count, local_thread_count_scan);
-#endif
+            printf("countlocalglobaldofs\n");
 
-            const Integer owned_size = get_last_value(owned_thread_count_scan);
+            cub_inclusive_scan(owned_thread_count);
+            cub_inclusive_scan(local_thread_count);
+
+            printf("cub scan\n");
+
+            const Integer owned_size = get_last_value(owned_thread_count);
+            const Integer local_size = get_last_value(local_thread_count);
+
+            printf("scan last value: %ld, %ld:\n", owned_size, local_size);
+
             ViewVectorType<KeyType> owned_dofs("owned_dofs", owned_size);
-            const Integer local_size = get_last_value(local_thread_count_scan);
             ViewVectorType<KeyType> dofs("dofs", local_size);
+
             // Insert the local and global dofs
             // Iterate through the local sfc and enumerate
             Kokkos::parallel_for(
                 "lg_predicate",
                 size,
-                InsertLocalGlobalDofs<false>(get_mesh(), owned_dofs, dofs, local_thread_count, owned_thread_count));
+                InsertLocalGlobalDofs<false, size_t>(get_mesh(), owned_dofs, dofs, owned_thread_count, local_thread_count));
             // Iterate through ghost sfc and enumerate
             Kokkos::parallel_for(
                 "lg_predicate_from_ghost",
                 ghost_size,
-                InsertLocalGlobalDofs<true>(get_mesh(), owned_dofs, dofs, local_thread_count, owned_thread_count));
+                InsertLocalGlobalDofs<true, size_t>(get_mesh(), owned_dofs, dofs, owned_thread_count, local_thread_count));
+
+            printf("InsertLocalGlobalDofs\n");
 
             buffer_cub_radix_sort(owned_dofs);
             buffer_cub_radix_sort(dofs);
 
+            printf("cub radix\n");
             auto owned_unique_dofs = thrust_unique(owned_dofs);
             auto unique_dofs = thrust_unique(dofs);
 
+            printf("thrust unique\n");
             global_dof_enum.set_elements(owned_unique_dofs);
             local_dof_enum.set_elements(unique_dofs);
 
@@ -1889,16 +1898,21 @@ namespace mars {
             ViewVectorType<Integer> proc_scan_send("nbh_scan_send", rank_size + 1);
             ViewVectorType<Integer> proc_scan_recv("nbh_scan_recv", rank_size + 1);
 
-            build_lg_predicate(context, nbh_proc_predicate_send, nbh_proc_predicate_recv);
+            /* build_lg_predicate(context, nbh_proc_predicate_send, nbh_proc_predicate_recv);
             label_local_global_dofs();
-            build_local_orientation();
+            build_local_orientation(); */
+            build_lg_hilbert_predicate(context, nbh_proc_predicate_send, nbh_proc_predicate_recv);
+
+            printf("end hilbert predicate\n");
 
             incl_excl_scan(0, rank_size, nbh_proc_predicate_send, proc_scan_send);
             incl_excl_scan(0, rank_size, nbh_proc_predicate_recv, proc_scan_recv);
 
+            printf("end hilbert scan\n");
             auto ps = get_last_value(proc_scan_send);
             auto pr = get_last_value(proc_scan_recv);
 
+            printf("end hilbert last value\n");
             ViewVectorType<Integer> sender_ranks("sender_ranks", ps);
             ViewVectorType<Integer> recver_ranks("receiver_ranks", pr);
             compact_scan(nbh_proc_predicate_send, proc_scan_send, sender_ranks);
@@ -1907,11 +1921,14 @@ namespace mars {
             ViewVectorType<Integer> scan_boundary, boundary_dofs_index;
             build_boundary_dof_sets(scan_boundary, boundary_dofs_index, proc_scan_send, ps);
 
+            printf("end hilbert build_dof boundary\n");
             Kokkos::fence();
 
             std::vector<Integer> s_count(rank_size, 0);
             std::vector<Integer> r_count(rank_size, 0);
             exchange_ghost_counts(context, scan_boundary, sender_ranks, recver_ranks, s_count, r_count);
+
+            printf("end hilbert exchange ghost\n");
 
             /* create the scan recv mirror view from the receive count */
             scan_recv = ViewVectorType<Integer>("scan_recv_", rank_size + 1);

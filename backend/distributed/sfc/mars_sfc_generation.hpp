@@ -12,32 +12,44 @@ namespace mars {
         return pow(2, D * L);
     }
 
-    template <Integer Type, class KeyType = MortonKey<Unsigned>>
-    MARS_INLINE_FUNCTION Unsigned compute_all_range(const unsigned x, const unsigned y, const unsigned z) {
-        switch (Type) {
-            case ElementType::Quad4: {
-                if constexpr (std::is_same<KeyType, MortonKey<Unsigned>>::value) {
-                    return encode_sfc_2D<KeyType>(x + 1, y + 1);
-                } else {
-                    auto max_dim = std::max(x, y);
-                    auto L = std::ceil(std::log2(max_dim));
-                    return generateHilbertCurve<Unsigned, 2>(L);
-                }
-            }
-            case ElementType::Hex8: {
-                if constexpr (std::is_same<KeyType, MortonKey<Unsigned>>::value) {
-                    return encode_sfc_3D<KeyType>(x + 1, y + 1, z + 1);
-                } else {
-                    auto max_dim = std::max({x, y, z});
-                    auto L = std::ceil(std::log2(max_dim));
-                    return generateHilbertCurve<Unsigned, 3>(L);
-                }
-            }
-            default: {
-                return INVALID_INDEX;
+    template <Integer Type, class KeyType>
+    struct ComputeAllRange {
+        MARS_INLINE_FUNCTION typename KeyType::ValueType operator()(const unsigned x,
+                                                                    const unsigned y,
+                                                                    const unsigned z) {
+            throw std::invalid_argument("Invalid ElementType in compute_all_range");
+        }
+    };
+
+    template <class KeyType>
+    struct ComputeAllRange<ElementType::Quad4, KeyType> {
+        MARS_INLINE_FUNCTION typename KeyType::ValueType operator()(const unsigned x,
+                                                                    const unsigned y,
+                                                                    const unsigned z) {
+            if constexpr (std::is_same<KeyType, MortonKey<Integer>>::value) {
+                return encode_sfc_2D<KeyType>(x + 1, y + 1);
+            } else {
+                auto max_dim = std::max(x, y);
+                auto L = std::ceil(std::log2(max_dim));
+                return generateHilbertCurve<Unsigned, 2>(L);
             }
         }
-    }
+    };
+
+    template <class KeyType>
+    struct ComputeAllRange<ElementType::Hex8, KeyType> {
+        MARS_INLINE_FUNCTION typename KeyType::ValueType operator()(const unsigned x,
+                                                                    const unsigned y,
+                                                                    const unsigned z) {
+            if constexpr (std::is_same<KeyType, MortonKey<Integer>>::value) {
+                return encode_sfc_3D<KeyType>(x + 1, y + 1, z + 1);
+            } else {
+                auto max_dim = std::max({x, y, z});
+                auto L = std::ceil(std::log2(max_dim));
+                return generateHilbertCurve<Unsigned, 3>(L);
+            }
+        }
+    };
 
     template <Integer Type, class SfcKeyType = MortonKey<Unsigned>>
     class SFC {
@@ -173,7 +185,8 @@ namespace mars {
         SFC() = default;
 
         SFC(const Integer x, const Integer y, const Integer z) : xDim(x), yDim(y), zDim(z) {
-            all_range_ = compute_all_range<Type, SfcKeyType>(xDim, yDim, zDim);
+            ComputeAllRange<Type, SfcKeyType> compute;
+            all_range_ = compute(x, y, z);
         }
 
         MARS_INLINE_FUNCTION
