@@ -352,12 +352,11 @@ namespace mars {
     }
 
     //generate a kokkos function that takes a view as input  then creates a mirror host view, fills it up and copies it to the gpu memory.
-    template <typename T, typename U>
-    void host_scan_to_device(ViewVectorType<T> view, const U& data) {
-        using namespace Kokkos;
-        auto h_view = create_mirror_view(view);
+    template <typename V, typename H, typename U>
+    void host_scan_to_device(const V& view, H& h_view, U const& data) {
+        h_view = Kokkos::create_mirror_view(view);
         make_scan_index_mirror(h_view, data);
-        deep_copy(view, h_view);
+        Kokkos::deep_copy(view, h_view);
     }
 
     // Segmented scan on a bool view using hierachical Parallelism. Cub lib has the best impl.

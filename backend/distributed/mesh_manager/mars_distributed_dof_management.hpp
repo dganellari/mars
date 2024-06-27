@@ -602,7 +602,6 @@ namespace mars {
                                      const Integer nbh_rank_size) {
             using namespace Kokkos;
 
-            printf("Bilding the Boundary DOF Sets!\n");
             const Integer size = get_mesh().get_view_boundary().extent(0);
 
             Integer xDim = get_mesh().get_XDim();
@@ -611,6 +610,7 @@ namespace mars {
 
             const Integer chunk_size_ = global_dof_enum.get_elem_size();
             ViewMatrixTypeLeft<bool> rank_boundary("count_per_proc", chunk_size_, nbh_rank_size);
+
             /* generate the sfc for the local and global dofs containing the generation locally
             for each partition of the mesh using the existing elem sfc to build this nodal sfc. */
             Kokkos::parallel_for("identify_boundary_predicate",
@@ -619,6 +619,7 @@ namespace mars {
                                                             rank_boundary,
                                                             sender_ranks_scan,
                                                             get_global_dof_enum().get_sfc_to_local_map()));
+
 
             /* perform a scan for each row with the sum at the end for each rank */
             ViewMatrixTypeLeft<Integer> rank_scan("rank_scan", chunk_size_ + 1, nbh_rank_size);
@@ -639,10 +640,6 @@ namespace mars {
 
             boundary_dofs_sfc = ViewVectorType<Integer>("boundary_sfc_dofs", h_ic());
             boundary_lsfc_index = ViewVectorType<Integer>("boundary_lsfc_index_dofs", h_ic());
-            /*   parallel_for(
-                "print scan", rank_size + 1, KOKKOS_LAMBDA(const int i) {
-                    printf(" scan boundary: %i-%li\n", i, scan_boundary(i));
-                }); */
 
             auto g_elems = global_dof_enum.get_view_elements();
             auto boundary_ds = boundary_dofs_sfc;
@@ -658,14 +655,18 @@ namespace mars {
                     }
                 });
 
+
             /* parallel_for(
                 "print set", h_ic(), KOKKOS_LAMBDA(const Integer i) {
-                    Integer proc = get_mesh_manager().get_host_mesh()->get_proc();
+                    Integer proc = get_mesh().get_proc();
                     const Integer rank = find_owner_processor(scan_boundary, i, 1, proc);
 
-                    printf("i:%li - boundary_ : %i - %li (%li) - proc: %li - rank: %li\n", i, boundary_dofs_sfc(i),
-               boundary_lsfc_index(i), get_octant_from_sfc<simplex_type::ElemType, SfcKeyType>(boundary_dofs_sfc(i)).template
-               get_global_index<simplex_type::ElemType>(xDim, yDim), rank, proc);
+                    printf("i:%ld - boundary_ : %ld - %ld proc: %li - rank: %li\n",
+                           i,
+                           boundary_dofs_sfc(i),
+                           boundary_lsfc_index(i),
+                           rank,
+                           proc);
                 }); */
         }
 
@@ -994,11 +995,9 @@ namespace mars {
                     is less than the owner. This is how the dofs are partitioned*/
                 if (proc >= owner_proc) {
                     auto owned_scan_idx = i == 0 ? 0 : owned_thread_count(i - 1);
-                    printf("owned_scan_idx: %ld, %ld, %ld\n", i, owned_scan_idx, owned_index);
                     owned_dofs(owned_scan_idx + owned_index++) = dof_sfc;
                 }
                 auto scan_idx = i == 0 ? 0 : local_thread_count(i - 1);
-                printf("scan_idx: %ld, %ld, %ld\n", i, scan_idx, index);
                 dofs(scan_idx + index++) = dof_sfc;
             }
 
@@ -1087,7 +1086,6 @@ namespace mars {
 
                 Integer owned_index = 0;
                 Integer index = 0;
-                printf("Index at i before: %ld, %ld, %ld\n:", i, owned_index, index);
 
                 auto cp = LocalOwnedDofsFill<T, Ghost, DofLabel::lCorner>(
                     owned_dofs, owned_index, dofs, index, owned_thread_count, thread_count, proc);
@@ -1103,8 +1101,6 @@ namespace mars {
                     owned_dofs, owned_index, dofs, index, owned_thread_count, thread_count);
 
                 elem_dof_iterate(sfc, mesh, i, cp, fp, vp, ep);
-
-                printf("Index at i after: %ld, %ld, %ld\n:", i, owned_index, index);
             }
         };
 
@@ -1359,6 +1355,10 @@ namespace mars {
         void print_dofs(const int rank = 0) {
             auto handler = *this;
 
+            printf("local and global size: %li, %li\n",
+                   get_global_dof_enum().get_elem_size(),
+                   get_local_dof_enum().get_elem_size());
+
             SFC<ElemType, SfcKeyType> gdof = get_global_dof_enum();
             Kokkos::parallel_for(
                 "for", gdof.get_elem_size(), MARS_LAMBDA(const int i) {
@@ -1375,10 +1375,10 @@ namespace mars {
 
                     Octant o = handler.get_octant_from_sfc(sfc_elem);
 
-                    printf("i: %i global sfc: %li gdof: %li octant: [%li, %li, %li] -  rank: %i\n",
+                    printf("i: %d global sfc: %ld gdof: %ld octant: [%ld, %ld, %ld] -  rank: %i\n",
                            i,
+                           gdof.get_sfc(i),
                            sfc_elem,
-                           global_dof.get_gid(),
                            o.x,
                            o.y,
                            o.z,
@@ -1442,7 +1442,6 @@ namespace mars {
             const Integer size = get_mesh().get_chunk_size();
             const Integer ghost_size = get_mesh().get_ghost_size();
 
-            printf("SFC\n");
             ViewVectorType<size_t> owned_thread_count("thread_count", size);
             ViewVectorType<size_t> local_thread_count("thread_count", size + ghost_size);
             //count the number of local and global dofs
@@ -1457,17 +1456,14 @@ namespace mars {
                 ghost_size,
                 CountLocalGlobalDofs<true, size_t>(get_mesh(), owned_thread_count, local_thread_count, nbhs, nbhr));
 
-            printf("countlocalglobaldofs\n");
 
             cub_inclusive_scan(owned_thread_count);
             cub_inclusive_scan(local_thread_count);
 
-            printf("cub scan\n");
 
             const Integer owned_size = get_last_value(owned_thread_count);
             const Integer local_size = get_last_value(local_thread_count);
 
-            printf("scan last value: %ld, %ld:\n", owned_size, local_size);
 
             ViewVectorType<KeyType> owned_dofs("owned_dofs", owned_size);
             ViewVectorType<KeyType> dofs("dofs", local_size);
@@ -1484,16 +1480,13 @@ namespace mars {
                 ghost_size,
                 InsertLocalGlobalDofs<true, size_t>(get_mesh(), owned_dofs, dofs, owned_thread_count, local_thread_count));
 
-            printf("InsertLocalGlobalDofs\n");
 
             buffer_cub_radix_sort(owned_dofs);
             buffer_cub_radix_sort(dofs);
 
-            printf("cub radix\n");
             auto owned_unique_dofs = thrust_unique(owned_dofs);
             auto unique_dofs = thrust_unique(dofs);
 
-            printf("thrust unique\n");
             global_dof_enum.set_elements(owned_unique_dofs);
             local_dof_enum.set_elements(unique_dofs);
 
@@ -1652,7 +1645,6 @@ namespace mars {
 
             context->distributed->i_send_recv_view(
                 ghost_dofs_sfc, scan_recv_mirror.data(), boundary_dofs_sfc, scan_send_mirror.data());
-            /* std::cout << "DM:Ending mpi send receive for the ghost sfc dofs " << std::endl; */
 
             context->distributed->i_send_recv_view(
                 ghost_dofs_index, scan_recv_mirror.data(), boundary_lsfc_index, scan_send_mirror.data());
@@ -1898,21 +1890,23 @@ namespace mars {
             ViewVectorType<Integer> proc_scan_send("nbh_scan_send", rank_size + 1);
             ViewVectorType<Integer> proc_scan_recv("nbh_scan_recv", rank_size + 1);
 
-            /* build_lg_predicate(context, nbh_proc_predicate_send, nbh_proc_predicate_recv);
-            label_local_global_dofs();
-            build_local_orientation(); */
-            build_lg_hilbert_predicate(context, nbh_proc_predicate_send, nbh_proc_predicate_recv);
+            if constexpr (IsHilbert<SfcKeyType>{}) {
+                build_lg_hilbert_predicate(context, nbh_proc_predicate_send, nbh_proc_predicate_recv);
+            } else {
+                build_lg_predicate(context, nbh_proc_predicate_send, nbh_proc_predicate_recv);
+            }
 
-            printf("end hilbert predicate\n");
+            label_local_global_dofs();
+            build_local_orientation();
+
+            print_dofs();
 
             incl_excl_scan(0, rank_size, nbh_proc_predicate_send, proc_scan_send);
             incl_excl_scan(0, rank_size, nbh_proc_predicate_recv, proc_scan_recv);
 
-            printf("end hilbert scan\n");
             auto ps = get_last_value(proc_scan_send);
             auto pr = get_last_value(proc_scan_recv);
 
-            printf("end hilbert last value\n");
             ViewVectorType<Integer> sender_ranks("sender_ranks", ps);
             ViewVectorType<Integer> recver_ranks("receiver_ranks", pr);
             compact_scan(nbh_proc_predicate_send, proc_scan_send, sender_ranks);
@@ -1921,23 +1915,21 @@ namespace mars {
             ViewVectorType<Integer> scan_boundary, boundary_dofs_index;
             build_boundary_dof_sets(scan_boundary, boundary_dofs_index, proc_scan_send, ps);
 
-            printf("end hilbert build_dof boundary\n");
             Kokkos::fence();
 
             std::vector<Integer> s_count(rank_size, 0);
             std::vector<Integer> r_count(rank_size, 0);
             exchange_ghost_counts(context, scan_boundary, sender_ranks, recver_ranks, s_count, r_count);
 
-            printf("end hilbert exchange ghost\n");
-
-            /* create the scan recv mirror view from the receive count */
+            /*create the scan recv mirror view from the receive count*/
             scan_recv = ViewVectorType<Integer>("scan_recv_", rank_size + 1);
+            host_scan_to_device(scan_recv, scan_recv_mirror, r_count);
             scan_send = ViewVectorType<Integer>("scan_send_", rank_size + 1);
-            host_scan_to_device(scan_recv, r_count);
-            host_scan_to_device(scan_send, s_count);
+            host_scan_to_device(scan_send, scan_send_mirror, s_count);
 
             ViewVectorType<Integer> ghost_dofs_index;
             exchange_ghost_dofs(context, boundary_dofs_index, ghost_dofs_index);
+
             build_ghost_local_global_map(context, ghost_dofs_index);
         }
 
@@ -1999,7 +1991,6 @@ namespace mars {
             /* In the end the size of the map should be as the size of the ghost_dofs.
              * Careful map size  is not capacity */
             assert(size == ghost_local_to_global_map.size());
-            printf("Built the Ghost Local to Global Map.\n");
         }
 
         /* MARS_INLINE_FUNCTION

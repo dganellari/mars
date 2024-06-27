@@ -12,41 +12,40 @@ namespace mars {
         return pow(2, D * L);
     }
 
-    template <Integer Type, class KeyType>
+    template <Integer Type, class KeyType = MortonKey<Unsigned>>
     struct ComputeAllRange {
-        MARS_INLINE_FUNCTION typename KeyType::ValueType operator()(const unsigned x,
-                                                                    const unsigned y,
-                                                                    const unsigned z) {
+        typename KeyType::ValueType operator()(const unsigned x, const unsigned y, const unsigned z) {
             throw std::invalid_argument("Invalid ElementType in compute_all_range");
         }
     };
 
     template <class KeyType>
     struct ComputeAllRange<ElementType::Quad4, KeyType> {
-        MARS_INLINE_FUNCTION typename KeyType::ValueType operator()(const unsigned x,
-                                                                    const unsigned y,
-                                                                    const unsigned z) {
-            if constexpr (std::is_same<KeyType, MortonKey<Integer>>::value) {
+        typename KeyType::ValueType operator()(const unsigned x, const unsigned y, const unsigned z) {
+            if constexpr (IsMorton<KeyType>{}){
                 return encode_sfc_2D<KeyType>(x + 1, y + 1);
-            } else {
+            } else if constexpr (IsHilbert<KeyType>{}) {
                 auto max_dim = std::max(x, y);
                 auto L = std::ceil(std::log2(max_dim));
                 return generateHilbertCurve<Unsigned, 2>(L);
+            } else {
+                throw std::invalid_argument("Invalid KeyType in compute_all_range. Use either Morton or Hilbert!");
             }
         }
     };
 
     template <class KeyType>
     struct ComputeAllRange<ElementType::Hex8, KeyType> {
-        MARS_INLINE_FUNCTION typename KeyType::ValueType operator()(const unsigned x,
-                                                                    const unsigned y,
-                                                                    const unsigned z) {
-            if constexpr (std::is_same<KeyType, MortonKey<Integer>>::value) {
+        typename KeyType::ValueType operator()(const unsigned x, const unsigned y, const unsigned z) {
+            if constexpr (IsMorton<KeyType>{}) {
                 return encode_sfc_3D<KeyType>(x + 1, y + 1, z + 1);
-            } else {
+            } else if constexpr (IsHilbert<KeyType>{}) {
                 auto max_dim = std::max({x, y, z});
                 auto L = std::ceil(std::log2(max_dim));
                 return generateHilbertCurve<Unsigned, 3>(L);
+            }
+            else {
+                throw std::invalid_argument("Invalid KeyType in compute_all_range. Use either Morton or Hilbert!");
             }
         }
     };

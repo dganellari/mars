@@ -307,7 +307,7 @@ namespace mars {
     template <Integer Type, Integer first, Integer second>
     void print_derivatives(Data &data) {
         data.elem_iterate(MARS_LAMBDA(const int i) {
-            auto sfc_elem = data.get_mesh().get_sfc_elem(i);
+            auto sfc_elem = data.get_mesh().get_sfc(i);
 
             double point[3];
             get_vertex_coordinates_from_sfc<Type>(
@@ -332,7 +332,7 @@ namespace mars {
         constexpr Integer du_index = 1 + Dir;
 
         Integer idx = face.get_side(i).get_elem_id();
-        auto sfc_elem = data.get_mesh().get_sfc_elem(idx);
+        auto sfc_elem = data.get_mesh().get_sfc(idx);
 
         double point[3];
         get_vertex_coordinates_from_sfc<Type>(
@@ -506,7 +506,7 @@ namespace mars {
 
                         Kokkos::atomic_add(&data.get_elem_data<DataDesc::dudt>(idx), du_dt);
 
-                        sfc_elem = data.get_mesh().get_sfc_elem(idx);
+                        sfc_elem = data.get_mesh().get_sfc(idx);
                     } else
                         sfc_elem = data.get_ghost_elem(idx);
 

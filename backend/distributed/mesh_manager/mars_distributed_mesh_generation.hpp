@@ -643,15 +643,30 @@ void process_full_segment(DMesh<Dim, ManifoldDim, Type, KeyType> &mesh,
         });
 
     mesh.set_view_sfc(rank_elements);
+
+    //print the sfc elements and its coordinates using get octant from sfc in parallel with kokkos
+    Kokkos::parallel_for(
+        "printSFC", mesh.get_view_sfc().extent(0), KOKKOS_LAMBDA(const ValueType i) {
+            auto sfc = mesh.get_sfc(i);
+            auto coords = get_octant_from_sfc<Type, KeyType>(sfc);
+            printf("SFC: %li, %li Coordinates: %i, %i, %i\n", i, sfc, coords.x, coords.y, coords.z);
+        });
+
     mesh.set_chunk_size(rank_elements_size);
 }
 
 template <Integer Dim, Integer Type, class KeyType>
 bool is_full_hilbert_curve(const Unsigned xDim, const Unsigned yDim, const Unsigned zDim) {
     using ValueType = typename KeyType::ValueType;
-    // Check if all dimensions are equal
-    if(xDim != yDim || xDim != zDim) {
-        return false;
+    // Check if the dimensions are equal
+    if constexpr (Dim == 2) {
+        if (xDim != yDim) {
+            return false;
+        }
+    } else if constexpr (Dim == 3) {
+        if (xDim != yDim || xDim != zDim) {
+            return false;
+        }
     }
     // Calculate L based on one of the dimensions
     auto L = log2(xDim);
