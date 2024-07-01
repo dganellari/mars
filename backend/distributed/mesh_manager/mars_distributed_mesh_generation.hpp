@@ -623,6 +623,21 @@ void process_segment(DMesh<Dim, ManifoldDim, Type, KeyType> &mesh,
 
 // to aovid predicate, scan and compact and so reduce memory footprint when full hilbert curve is processed
 template <Integer Dim, Integer ManifoldDim, Integer Type, typename KeyType>
+void print_mesh_sfc_coordinates(DMesh<Dim, ManifoldDim, Type, KeyType> &mesh) {
+    using ValueType = typename KeyType::ValueType;
+    static_assert(std::is_same<KeyType, HilbertKey<ValueType>>::value, "Key type must be HilbertKey");
+
+    // print the sfc elements and its coordinates using get octant from sfc in parallel with kokkos
+    Kokkos::parallel_for(
+        "printSFC", mesh.get_view_sfc().extent(0), KOKKOS_LAMBDA(const ValueType i) {
+            auto sfc = mesh.get_sfc(i);
+            auto coords = get_octant_from_sfc<Type, KeyType>(sfc);
+            printf("SFC: %li, %li Coordinates: %i, %i, %i\n", i, sfc, coords.x, coords.y, coords.z);
+        });
+}
+
+// to aovid predicate, scan and compact and so reduce memory footprint when full hilbert curve is processed
+template <Integer Dim, Integer ManifoldDim, Integer Type, typename KeyType>
 void process_full_segment(DMesh<Dim, ManifoldDim, Type, KeyType> &mesh,
                     const typename KeyType::ValueType start,
                     const typename KeyType::ValueType end) {
@@ -641,17 +656,8 @@ void process_full_segment(DMesh<Dim, ManifoldDim, Type, KeyType> &mesh,
             auto index = i - start;
             rank_elements(index) = i;
         });
-
+    // Set the view of the mesh to the rank elements
     mesh.set_view_sfc(rank_elements);
-
-    //print the sfc elements and its coordinates using get octant from sfc in parallel with kokkos
-    Kokkos::parallel_for(
-        "printSFC", mesh.get_view_sfc().extent(0), KOKKOS_LAMBDA(const ValueType i) {
-            auto sfc = mesh.get_sfc(i);
-            auto coords = get_octant_from_sfc<Type, KeyType>(sfc);
-            printf("SFC: %li, %li Coordinates: %i, %i, %i\n", i, sfc, coords.x, coords.y, coords.z);
-        });
-
     mesh.set_chunk_size(rank_elements_size);
 }
 

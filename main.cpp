@@ -157,6 +157,11 @@ int main(int argc, char *argv[]) {
             test_mars_distributed_vector_valued<ElementType::Hex8, 2>(xDim, yDim, zDim, block_size);
         };
 
+        apps["distributed_vector_valued_hilbert_3D_degree2"] = [=]() {
+            test_mars_distributed_vector_valued<ElementType::Hex8, 2, true, HilbertKey<Unsigned>>(
+                xDim, yDim, zDim, block_size);
+        };
+
         apps["mfpoisson"] = [=]() {
             matrix_free_poisson<Example2Dirichlet, Example2RHS, Example2Analitcal, ElementType::Quad4>(xDim, yDim, 0);
         };

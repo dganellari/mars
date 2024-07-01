@@ -980,7 +980,7 @@ namespace mars {
                 auto owned_size = mesh.get_chunk_size();
                 // if the ghost elem owns the dof then he is able to send it.
                 if (elem_sfc_proc >= owner_proc) {
-                    auto scan_idx = i == 0 ? 0 : local_thread_count(owned_size + i - 1);
+                    auto scan_idx = local_thread_count(owned_size + i - 1);
                     dofs(scan_idx + index++) = dof_sfc;
                 }
             }
@@ -994,9 +994,11 @@ namespace mars {
                 /* if the neighbor element is ghost then check if the processor
                     is less than the owner. This is how the dofs are partitioned*/
                 if (proc >= owner_proc) {
+                    //since owned_thread_count is an inclusive scan the address starts at 0
                     auto owned_scan_idx = i == 0 ? 0 : owned_thread_count(i - 1);
                     owned_dofs(owned_scan_idx + owned_index++) = dof_sfc;
                 }
+                // since owned_thread_count is an inclusive scan the address starts at 0
                 auto scan_idx = i == 0 ? 0 : local_thread_count(i - 1);
                 dofs(scan_idx + index++) = dof_sfc;
             }
@@ -1039,7 +1041,7 @@ namespace mars {
                                   const KeyType dof_sfc,
                                   std::true_type) const {
                 auto owned_size = mesh.get_chunk_size();
-                auto scan_idx = i == 0 ? 0 : local_thread_count(owned_size + i - 1);
+                auto scan_idx = local_thread_count(owned_size + i - 1);
                 dofs(scan_idx + index++) = dof_sfc;
             }
 
@@ -1048,9 +1050,10 @@ namespace mars {
                                   const Integer i,
                                   const KeyType dof_sfc,
                                   std::false_type) const {
+                //since owned_thread_count is an inclusive scan the address starts at 0
                 auto owned_scan_idx = i == 0 ? 0 : owned_thread_count(i - 1);
                 owned_dofs(owned_scan_idx + owned_index++) = dof_sfc;
-
+                // since owned_thread_count is an inclusive scan the address starts at 0
                 auto scan_idx = i == 0 ? 0 : local_thread_count(i - 1);
                 dofs(scan_idx + index++) = dof_sfc;
             }
@@ -1355,7 +1358,7 @@ namespace mars {
         void print_dofs(const int rank = 0) {
             auto handler = *this;
 
-            printf("local and global size: %li, %li\n",
+            printf("owned and local size: %li, %li\n",
                    get_global_dof_enum().get_elem_size(),
                    get_local_dof_enum().get_elem_size());
 
@@ -1373,7 +1376,7 @@ namespace mars {
                         gid = sfc_lid + global_dof_offset(proc);
                     }*/
 
-                    Octant o = handler.get_octant_from_sfc(sfc_elem);
+                    Octant o = handler.get_octant_from_sfc(gdof.get_sfc(i));
 
                     printf("i: %d global sfc: %ld gdof: %ld octant: [%ld, %ld, %ld] -  rank: %i\n",
                            i,
@@ -1456,15 +1459,14 @@ namespace mars {
                 ghost_size,
                 CountLocalGlobalDofs<true, size_t>(get_mesh(), owned_thread_count, local_thread_count, nbhs, nbhr));
 
-
             cub_inclusive_scan(owned_thread_count);
             cub_inclusive_scan(local_thread_count);
 
-
+            //get the last value of the thread count
             const Integer owned_size = get_last_value(owned_thread_count);
             const Integer local_size = get_last_value(local_thread_count);
 
-
+            //reserve the space for the dofs
             ViewVectorType<KeyType> owned_dofs("owned_dofs", owned_size);
             ViewVectorType<KeyType> dofs("dofs", local_size);
 
@@ -1480,9 +1482,8 @@ namespace mars {
                 ghost_size,
                 InsertLocalGlobalDofs<true, size_t>(get_mesh(), owned_dofs, dofs, owned_thread_count, local_thread_count));
 
-
-            buffer_cub_radix_sort(owned_dofs);
-            buffer_cub_radix_sort(dofs);
+            owned_dofs = buffer_cub_radix_sort(owned_dofs);
+            dofs = buffer_cub_radix_sort(dofs);
 
             auto owned_unique_dofs = thrust_unique(owned_dofs);
             auto unique_dofs = thrust_unique(dofs);
@@ -1898,8 +1899,6 @@ namespace mars {
 
             label_local_global_dofs();
             build_local_orientation();
-
-            print_dofs();
 
             incl_excl_scan(0, rank_size, nbh_proc_predicate_send, proc_scan_send);
             incl_excl_scan(0, rank_size, nbh_proc_predicate_recv, proc_scan_recv);

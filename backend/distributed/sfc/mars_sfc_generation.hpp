@@ -202,6 +202,39 @@ namespace mars {
                 });
         }
 
+        // this function is used to print the sfc_to_local_map_ for debugging purposes using kokkos and unordered_map key at value at valid at device functions
+
+        void print_sfc_to_local_map() const {
+            auto map = sfc_to_local_map_;
+            Kokkos::parallel_for(
+                "PrintMap", map.capacity(), KOKKOS_LAMBDA(const int i) {
+                    if (map.valid_at(i)) {
+                        auto octant = mars::get_octant_from_sfc<Type, SfcKeyType>(map.key_at(i));
+                        printf("sfc: %ld, dof: %ld, octant: %ld, %ld, %ld\n",
+                               map.key_at(i),
+                               map.value_at(i),
+                               octant.x,
+                               octant.y,
+                               octant.z);
+                    }
+                });
+        }
+
+        //write a kokkos function to print the elements_ and for debugging purposes
+        void print_elements_view() const {
+            auto el = elements_;
+            Kokkos::parallel_for(
+                "PrintView", el.extent(0), KOKKOS_LAMBDA(const int i) {
+                    auto octant = mars::get_octant_from_sfc<Type, SfcKeyType>(el(i));
+                    printf("dof: %ld, sfc: %ld, octant: %ld, %ld, %ld\n",
+                           i,
+                           el(i),
+                           octant.x,
+                           octant.y,
+                           octant.z);
+                });
+        }
+
         MARS_INLINE_FUNCTION
         Integer get_XDim() const { return xDim; }
 

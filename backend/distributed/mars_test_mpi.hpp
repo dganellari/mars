@@ -269,7 +269,7 @@ namespace mars {
 
         Kokkos::Timer timer_map;
 
-        /* dof_handler.print_dofs(proc_num); */
+        // dof_handler.print_dofs(proc_num);
 
         auto fe = build_fe_dof_map<DOFHandler, Overlap>(dof_handler);
 
