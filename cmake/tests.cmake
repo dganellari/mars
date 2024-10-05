@@ -1,13 +1,4 @@
-if(MARS_ENABLE_TESTING)
-
-    set(MARS_TEST_DIR ${CMAKE_CURRENT_SOURCE_DIR}/tests)
-
-    list(APPEND TEST_MODULES . /adios2)
-
-    find_project_files(${MARS_TEST_DIR} "." UNIT_TESTS_HEADERS
-                       UNIT_TESTS_SOURCES)
-
-    # ##########################################################################
+if(MARS_ENABLE_TESTS)
 
     enable_testing()
 
@@ -48,7 +39,8 @@ if(MARS_ENABLE_TESTING)
                               ${MARS_G_TEST_LIBRARIES})
 
         gtest_add_tests(TARGET ${TESTNAME} SOURCES ${TEST_SOURCES})
-        set_target_properties(${TESTNAME} PROPERTIES FOLDER tests)
+        get_filename_component(CURRENT_DIRECTORY_NAME ${CMAKE_CURRENT_SOURCE_DIR} NAME)
+        set_target_properties(${TESTNAME} PROPERTIES FOLDER ${CURRENT_DIRECTORY_NAME})
 
         # Does not work on cluster env where you cannot run MPI on master node
         # So for the moment it will only work on apple laptops (the test can be
@@ -64,8 +56,4 @@ if(MARS_ENABLE_TESTING)
 
     endmacro()
 
-    # ##########################################################################
-
-    mars_add_test(
-        mars_test ${CMAKE_CURRENT_SOURCE_DIR}/tests/test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/tests/mars_MeshGenerationTest.cpp)
-endif(MARS_ENABLE_TESTING)
+endif(MARS_ENABLE_TESTS)

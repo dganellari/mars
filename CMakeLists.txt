@@ -103,12 +103,10 @@ endif(NOT CMAKE_BUILD_TYPE)
 # Extra targets
 # ##############################################################################
 
-if(MARS_ENABLE_BENCHMARK)
-  include(bench/benchmarks.cmake)
-endif()
-
-if(MARS_ENABLE_TESTING)
-  include(tests/tests.cmake)
+if(MARS_ENABLE_TESTS)
+  include(cmake/tests.cmake)
+  add_subdirectory("backend/distributed/testsuite")
+  add_subdirectory("backend/adapters/testsuite")
 endif()
 
 if(MARS_ENABLE_VTK)
@@ -176,11 +174,7 @@ include(cmake/PostInstall.cmake)
 
 add_custom_target(mars_complete)
 
-if(MARS_ENABLE_BENCHMARK)
-  add_dependencies(mars_complete mars_bench)
-endif()
-
-if(MARS_ENABLE_TESTING)
+if(MARS_ENABLE_TESTS)
   add_dependencies(mars_complete mars_test)
 endif()
 
