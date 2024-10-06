@@ -27,116 +27,20 @@ ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. */
 
 #include "mars.hpp"
+#include "mars_base.hpp"
 
 namespace mars {
 
-#ifdef MARS_ENABLE_MPI
-
-    void test_mpi(int &argc, char **&argv) {
-        using namespace mars;
-
-        try {
-            // Constructing guard will initialize MPI with a
-            // call to MPI_Init_thread()
-            marsenv::mpi_guard guard(argc, argv, false);
-            printf("test\n");
-            // When leaving this scope, the destructor of guard will
-            // call MPI_Finalize()
-        } catch (std::exception &e) {
-            std::cerr << "error: " << e.what() << "\n";
-        }
-    }
-
-#endif
-
-    void test_mpi_context(int &argc, char **&argv) {
-        using namespace mars;
-
-        try {
-            mars::proc_allocation resources;
-            /*
-            // try to detect how many threads can be run on this system
-            resources.num_threads = marsenv::thread_concurrency();
-
-            // override thread count if the user set MARS_NUM_THREADS
-            if (auto nt = marsenv::get_env_num_threads())
-            {
-                resources.num_threads = nt;
-            } */
-
-#ifdef MARS_ENABLE_MPI
-            // initialize MPI
-            marsenv::mpi_guard guard(argc, argv, false);
-
-            // assign a unique gpu to this rank if available
-            /*  resources.gpu_id = marsenv::find_private_gpu(MPI_COMM_WORLD); */
-
-            // create a distributed context
-            auto context = mars::make_context(resources, MPI_COMM_WORLD);
-            // int root = mars::rank(context) == 0;
-#else
-            // resources.gpu_id = marsenv::default_gpu();
-
-            // // create a local context
-            // auto context = mars::make_context(resources);
-#endif
-
-            // Print a banner with information about hardware configuration
-            // std::cout << "gpu:      " << (has_gpu(context) ? "yes" : "no") << "\n";
-            // std::cout << "threads:  " << num_threads(context) << "\n";
-            std::cout << "mpi:      " << (has_mpi(context) ? "yes" : "no") << "\n";
-            std::cout << "ranks:    " << num_ranks(context) << "\n";
-            std::cout << "rank:    " << rank(context) << "\n" << std::endl;
-
-            // run some simulations!
-        } catch (std::exception &e) {
-            std::cerr << "exception caught in ring miniapp: " << e.what() << "\n";
-        }
-    }
-
-#ifdef MARS_ENABLE_KOKKOS
-    template <typename... T>
-    using user_tuple = mars::ViewsTuple<T...>;
-
-    template <typename... T>
-    struct functor {
-        user_tuple<T...> tuple;
-
-        functor(user_tuple<T...> t) : tuple(t) {}
-
-        MARS_INLINE_FUNCTION
-        void operator()(int i) const {
-            /* note the use of std get instead */
-            std::get<1>(tuple)(i) = 1;
-        }
-    };
-#endif
-
     template <class KeyType = MortonKey<Unsigned>>
-    void test_mars_distributed_nonsimplex_mesh_generation_kokkos_2D(const int x, const int y) {
+    Unsigned test_mars_distributed_nonsimplex_mesh_generation_kokkos_2D(const int x, const int y) {
         using namespace mars;
         try {
             mars::proc_allocation resources;
-            /*
-            // try to detect how many threads can be run on this system
-            resources.num_threads = marsenv::thread_concurrency();
-
-            // override thread count if the user set MARS_NUM_THREADS
-            if (auto nt = marsenv::get_env_num_threads())
-            {
-                resources.num_threads = nt;
-            } */
 
 #ifdef MARS_ENABLE_MPI
-            // initialize MPI
-            /* marsenv::mpi_guard guard(argc, argv, false); */
-
-            // assign a unique gpu to this rank if available
-            /*  resources.gpu_id = marsenv::find_private_gpu(MPI_COMM_WORLD); */
 
             // create a distributed context
             auto context = mars::make_context(resources, MPI_COMM_WORLD);
-            // bool root = mars::rank(context) == 0;
 #else
             // resources.gpu_id = marsenv::default_gpu();
 
@@ -153,14 +57,17 @@ namespace mars {
             double time_gen = timer_gen.seconds();
             std::cout << "2D Mesh Generation took: " << time_gen << std::endl;
 
+            return get_number_of_elements(mesh);
+
 #endif
         } catch (std::exception &e) {
             std::cerr << "exception caught in ring miniapp: " << e.what() << "\n";
+            return 0;
         }
     }
 
     template <class KeyType = MortonKey<Unsigned>>
-    void test_mars_distributed_nonsimplex_mesh_generation_kokkos_3D(const int x, const int y, const int z) {
+    Unsigned test_mars_distributed_nonsimplex_mesh_generation_kokkos_3D(const int x, const int y, const int z) {
         using namespace mars;
 
         try {
@@ -201,10 +108,12 @@ namespace mars {
 
             double time_gen = timer_gen.seconds();
             std::cout << "3D Mesh Generation took: " << time_gen << std::endl;
+            return get_number_of_elements(mesh);
 
 #endif
         } catch (std::exception &e) {
             std::cerr << "exception caught in ring miniapp: " << e.what() << "\n";
+            return 0;
         }
     }
 
@@ -236,14 +145,7 @@ namespace mars {
         DMesh mesh(context);
         generate_distributed_cube(mesh, xDim, yDim, zDim);
 
-        /* constexpr Integer Dim = DMesh::Dim; */
-        /* using Elem = typename DistributedQuad4Mesh::Elem; */
-        /* constexpr Integer Type = Elem::ElemType; */
-
-        /* constexpr Integer Degree = 2; */
-        /* constexpr Integer Block = DMesh::Dim; */
         constexpr Integer Block = 0;
-        /* using DOFHandler = DofHandler<DMesh, Degree>; */
         using DOFHandler = DofHandler<DMesh, Degree, Block>;
         using DMQ = DM<DOFHandler, double, double, double>;
         using FE = FEDofMap<DOFHandler>;
