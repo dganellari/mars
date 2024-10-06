@@ -7,6 +7,7 @@ TEST(MarsTest, TestMeshGeneration2D_Small) {
     const int y = 10;
     Unsigned num_elements = test_mars_distributed_nonsimplex_mesh_generation_kokkos_2D(x, y);
     Unsigned expected_num_elements = x * y;  // Assuming the mesh is a grid of x by y elements
+                                             //
     ASSERT_EQ(num_elements, expected_num_elements);
 }
 
@@ -131,6 +132,7 @@ TEST(MarsTest, TestMeshGeneration3D_HilbertKey_NonCube) {
 }
 
 int main(int argc, char **argv) {
+    mars::Env env(argc, argv);
     testing::InitGoogleTest(&argc, argv);
     return RUN_ALL_TESTS();
 }

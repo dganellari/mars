@@ -36,7 +36,7 @@ endif()
 # ##############################################################################
 
 list(APPEND MARS_HEADERS mars.hpp mars_env.hpp)
-list(APPEND MARS_SOURCES mars.cpp mars_env.cpp)
+list(APPEND MARS_SOURCES mars_env.cpp)
 
 # set(MARS_MODULES base core distributed examples io kokkos)
 set(MARS_MODULES base core examples io kokkos)
@@ -106,7 +106,7 @@ endif(NOT CMAKE_BUILD_TYPE)
 if(MARS_ENABLE_TESTS)
   include(cmake/tests.cmake)
   add_subdirectory("backend/distributed/testsuite")
-  add_subdirectory("backend/adapters/testsuite")
+  add_subdirectory("backend/adios2/testsuite")
 endif()
 
 if(MARS_ENABLE_VTK)
@@ -175,7 +175,11 @@ include(cmake/PostInstall.cmake)
 add_custom_target(mars_complete)
 
 if(MARS_ENABLE_TESTS)
-  add_dependencies(mars_complete mars_test)
+    # Get the list of tests from the global MARS_TESTS property
+    get_property(MARS_TESTS GLOBAL PROPERTY MARS_TESTS)
+
+    # Add the tests as dependencies
+    add_dependencies(mars_complete ${MARS_TESTS})
 endif()
 
 

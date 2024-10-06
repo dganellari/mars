@@ -42,6 +42,8 @@ if(MARS_ENABLE_TESTS)
         get_filename_component(CURRENT_DIRECTORY_NAME ${CMAKE_CURRENT_SOURCE_DIR} NAME)
         set_target_properties(${TESTNAME} PROPERTIES FOLDER ${CURRENT_DIRECTORY_NAME})
 
+        # Add this test to a global property
+        set_property(GLOBAL APPEND PROPERTY MARS_TESTS ${TESTNAME})
         # Does not work on cluster env where you cannot run MPI on master node
         # So for the moment it will only work on apple laptops (the test can be
         # run with ./mars_test anyway but not with make test)
