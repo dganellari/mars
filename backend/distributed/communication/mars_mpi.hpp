@@ -429,12 +429,16 @@ namespace mars {
                 }
             }
 
+            printf("dest size: %li - %li - %li\n", dest.size(), src.size(), nranks);
+
             std::vector<MPI_Request> send_req(proc_count);
             std::vector<MPI_Request> receive_req(proc_count_r);
 
             int recv_proc = 0;
             for (int i = 0; i < nranks; ++i) {
                 Integer count = dest_displ[i + 1] - dest_displ[i];
+
+                printf("dest count: %li - %li, %li %li\n", i, count, dest_displ[i], dest_displ[i + 1]);
                 if (count > 0) {
                     i_receive(dest, dest_displ[i], count, i, 0, comm, &receive_req[recv_proc++]);
                 }
@@ -449,6 +453,7 @@ namespace mars {
             int send_proc = 0;
             for (int i = 0; i < nranks; ++i) {
                 Integer count = src_displ[i + 1] - src_displ[i];
+                printf("Send count: %li - %li, %li %li\n", i, count, src_displ[i], src_displ[i + 1]);
                 if (count > 0) {
 #ifdef MARS_NO_RDMA
                     i_send(host_src, src_displ[i], count, i, 0, comm, &send_req[send_proc++]);

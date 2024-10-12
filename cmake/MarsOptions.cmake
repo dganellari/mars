@@ -11,7 +11,7 @@ option(MARS_ENABLE_HIP "Build mars with cuda support" OFF)
 option(MARS_ENABLE_ADIOS2 "Uses ADIOS2 IO" OFF)
 
 # maintainace
-option(MARS_ENABLE_BENCHMARK "Enable benchmarks" ON)
+option(MARS_ENABLE_BENCHMARK "Enable benchmarks" OFF)
 option(MARS_ENABLE_TESTING "Enable tests" ON)
 
 # FIXME Extra backends 
@@ -22,5 +22,5 @@ option(MARS_ENABLE_VTK "Uses VTK IO" OFF)
 # FIXME  and turn on!
 option(MARS_ENABLE_SERIAL_BACKEND "Use -DMARS_ENABLE_SERIAL_BACKEND=ON for enabling the serial backend" OFF)
 option(MARS_ENABLE_DISTRIBUTED_BACKEND "Use -DMARS_ENABLE_DISTRIBUTED_BACKEND=ON for enabling the distributed backend" ON)
-option(MARS_ENABLE_AMR_BACKEND "Use -DMARS_ENABLE_AMR_BACKEND=ON for enabling the AMR backend" ON)
+option(MARS_ENABLE_AMR_BACKEND "Use -DMARS_ENABLE_AMR_BACKEND=ON for enabling the AMR backend" OFF)
 

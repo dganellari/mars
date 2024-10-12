@@ -32,7 +32,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. */
 #include "mars_base.hpp"
 
 #include "mars.hpp"
-#ifdef MARS_ENABLE_KOKKOS_KERNELS
+#ifdef MARS_ENABLE_KOKKOS
 
 namespace mars {
 
@@ -740,4 +740,4 @@ namespace mars {
 #endif
     }
 }  // namespace mars
-#endif  // MARS_ENABLE_KOKKOS_KERNELS
+#endif  // MARS_ENABLE_KOKKOS

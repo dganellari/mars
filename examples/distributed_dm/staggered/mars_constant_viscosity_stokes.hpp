@@ -3,7 +3,7 @@
 
 #include "mars_base.hpp"
 
-#ifdef MARS_ENABLE_KOKKOS_KERNELS
+#ifdef MARS_ENABLE_KOKKOS
 #include "mars.hpp"
 #include "mars_staggered_utils.hpp"
 #include "mars_stokes_common.hpp"

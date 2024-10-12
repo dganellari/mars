@@ -144,7 +144,7 @@ namespace mars {
             // auto context = mars::make_context(resources);
 #endif
 
-#ifdef MARS_ENABLE_KOKKOS_KERNELS
+#ifdef MARS_ENABLE_KOKKOS
 
             Kokkos::Timer timer_gen;
             DistributedQuad4Mesh<KeyType> mesh(context);
@@ -192,7 +192,7 @@ namespace mars {
             auto context = mars::make_context(resources); */
 #endif
 
-#ifdef MARS_ENABLE_KOKKOS_KERNELS
+#ifdef MARS_ENABLE_KOKKOS
             using namespace Kokkos;
 
             DistributedHex8Mesh<KeyType> mesh(context);
@@ -226,7 +226,7 @@ namespace mars {
         // auto context = mars::make_context(resources);
 #endif
 
-#ifdef MARS_ENABLE_KOKKOS_KERNELS
+#ifdef MARS_ENABLE_KOKKOS
 
         Kokkos::Timer timer;
 
@@ -247,8 +247,11 @@ namespace mars {
         using DOFHandler = DofHandler<DMesh, Degree, Block>;
         using DMQ = DM<DOFHandler, double, double, double>;
         using FE = FEDofMap<DOFHandler>;
+
+#ifdef MARS_ENABLE_KOKKOS_KERNELS
         using SPattern = SparsityPattern<double, Integer, unsigned long, DOFHandler>;
         using SMatrix = SparsityMatrix<SPattern>;
+#endif
 
         // use as more readable tuple index to identify the data
         /* static constexpr int INPUT = 0;
@@ -280,6 +283,7 @@ namespace mars {
         // print the global dofs for each element's local dof
         /* fe.print(); */
 
+#ifdef MARS_ENABLE_KOKKOS_KERNELS
         SPattern sp(dof_handler);
         sp.build_pattern(fe);
 
@@ -288,12 +292,13 @@ namespace mars {
 
         double time_sp = timer_sp.seconds();
         std::cout << "SP build took: " << time_sp << std::endl;
-
+#endif
         double time_all = timer.seconds();
         std::cout << "Discretization: " << time_all << std::endl;
 
-        Kokkos::Timer timer_as;
         ViewVectorType<Integer> x_local("local_data", dof_handler.get_dof_size());
+#ifdef MARS_ENABLE_KOKKOS_KERNELS
+        Kokkos::Timer timer_as;
         dof_handler.dof_iterate(MARS_LAMBDA(const Integer i) {
             x_local(i) = -1;
             if (dof_handler.is_owned(i)) sm.set_value(i, i, 9);
@@ -304,7 +309,7 @@ namespace mars {
 
         /* sp.print_sparsity_pattern(); */
         /* sm.write("overlap_sp.txt"); */
-
+#endif
         auto owned_size = dof_handler.get_owned_dof_size();
         ViewVectorType<Integer> owned("owned_data", owned_size);
         dof_handler.owned_dof_iterate(MARS_LAMBDA(const Integer i) { owned(i) = proc_num; });
