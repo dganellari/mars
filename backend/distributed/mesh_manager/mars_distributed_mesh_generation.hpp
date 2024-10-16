@@ -6,9 +6,6 @@
 #include "mars_utils_kokkos.hpp"
 #ifdef MARS_ENABLE_MPI
 #ifdef MARS_ENABLE_KOKKOS
-#ifdef MARS_ENABLE_KOKKOS_KERNELS
-#include "KokkosKernels_Sorting.hpp"
-#endif
 #include "mars_distributed_mesh_kokkos.hpp"
 
 namespace mars {
