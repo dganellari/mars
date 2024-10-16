@@ -71,9 +71,9 @@ class mars_build(rfm.CompileOnlyRegressionTest):
             ' -DCMAKE_BUILD_TYPE=Release',
             ' -DCMAKE_CXX_COMPILER=nvcc_wrapper',
             ' -DMARS_ENABLE_KOKKOS=ON',
+            ' -DMARS_ENABLE_KERNELS=ON',
             ' -DMARS_ENABLE_CUDA=ON',
-            ' -DMARS_ENABLE_TESTING=ON',
-            ' -DMARS_ENABLE_BENCHMARKS=OFF',
+            ' -DMARS_ENABLE_TESTS=ON',
             '-DMARS_ENABLE_CXXOPTS=ON',
         ]
         # set architecture-specific flags
