@@ -187,9 +187,6 @@ namespace mars {
         }
 
         MARS_INLINE_FUNCTION
-        KeyType get_sfc_elem(const Integer index) const { return local_sfc_(index); }
-
-        MARS_INLINE_FUNCTION
         const ViewVectorType<KeyType> &get_view_sfc() const { return local_sfc_; }
 
         MARS_INLINE_FUNCTION
@@ -272,6 +269,9 @@ namespace mars {
         Integer get_ghost_size() const { return get_view_ghost().extent(0); }
 
         MARS_INLINE_FUNCTION
+        Integer get_boundary_size() const { return get_view_boundary().extent(0); }
+
+        MARS_INLINE_FUNCTION
         Integer get_chunk_size() const { return chunk_size_; }
 
         MARS_INLINE_FUNCTION
@@ -285,27 +285,17 @@ namespace mars {
 
         inline Integer n_active_elements(const Integer N) {
             using namespace Kokkos;
-
-            Timer timer;
-
             ViewVectorType<bool> active_ = get_view_active();
 
             double result = 0;
             parallel_reduce(
                 "Active_all", N, KOKKOS_LAMBDA(const int &i, double &lsum) { lsum += active_(i); }, result);
 
-            double time = timer.seconds();
-            std::cout << "Active_all Reduction took: " << time << " seconds." << std::endl;
-
-            printf("Result: %i %lf\n", N, result);
-
             return result;
         }
 
         inline Integer n_active_elements(const ViewVectorType<Integer> elements) {
             using namespace Kokkos;
-
-            Timer timer;
 
             ViewVectorType<bool> active_ = get_view_active();
 
@@ -315,10 +305,6 @@ namespace mars {
             parallel_reduce(
                 "Active_elem", N, KOKKOS_LAMBDA(const int &i, double &lsum) { lsum += active_(elements(i)); }, result);
 
-            double time = timer.seconds();
-            std::cout << "Active_elements Reduction took: " << time << " seconds." << std::endl;
-
-            printf("Result: %i %lf\n", N, result);
 
             return result;
         }
@@ -741,12 +727,6 @@ namespace mars {
                 for (int face = 0; face < 2 * ManifoldDim; ++face) {
                     Octant o = ref_octant.face_nbh<Type>(face, xDim, yDim, zDim, periodic);
                     if (o.is_valid()) {
-                        /* printf("face Nbh of %li (%li) is : %li with--- x and y: %li - %li\n",
-                               gl_index,
-                               elem_index(ref_octant.x, ref_octant.y, ref_octant.z, xDim, yDim),
-                               elem_index(o.x, o.y, o.z, xDim, yDim),
-                               o.x,
-                               o.y); */
                         increment(o);
                     }
                 }
@@ -754,12 +734,6 @@ namespace mars {
                 for (int corner = 0; corner < power_of_2(ManifoldDim); ++corner) {
                     Octant o = ref_octant.corner_nbh<Type>(corner, xDim, yDim, zDim, periodic);
                     if (o.is_valid()) {
-                        /* printf("Corner Nbh of %li (%li) is : %li with--- x and y: %li - %li\n",
-                               gl_index,
-                               elem_index(ref_octant.x, ref_octant.y, ref_octant.z, xDim, yDim),
-                               elem_index(o.x, o.y, o.z, xDim, yDim),
-                               o.x,
-                               o.y); */
                         increment(o);
                     }
                 }
@@ -854,9 +828,6 @@ namespace mars {
                          get_chunk_size(),
                          CountGhostNeighbors<Type>(get_view_sfc(), count, gp_np, proc, xDim, yDim, zDim));
 
-            parallel_for(
-                "print acc", rank_size, KOKKOS_LAMBDA(const int i) { printf(" count : %i-%li\n", i, count(i)); });
-
             ViewVectorType<Integer> scan("scan", rank_size + 1);
             incl_excl_scan(0, rank_size, count, scan);
 
@@ -873,8 +844,6 @@ namespace mars {
             parallel_for("build_set_kernel",
                          get_chunk_size(),
                          BuildBoundarySets<Type>(get_view_sfc(), gp_np, set, scan, proc, xDim, yDim, zDim));
-            parallel_for(
-                "print set", h_ic(), KOKKOS_LAMBDA(const int i) { printf(" set : %i - %li\n", i, set(i)); });
         }
 
         template <Integer Type>
@@ -923,14 +892,6 @@ namespace mars {
                 for (int face = 0; face < 2 * ManifoldDim; ++face) {
                     Octant o = ref_octant.face_nbh<Type>(face, xDim, yDim, zDim, periodic);
                     if (o.is_valid()) {
-                        /* printf("Face Nbh of %li (%li) is : (%li) with--- x and y z: %li - %li - %li\n",
-                               index,
-                               elem_index(ref_octant.x, ref_octant.y, ref_octant.z, xDim, yDim),
-                               elem_index(o.x, o.y, o.z, xDim, yDim),
-                               o.x,
-                               o.y,
-                               o.z); */
-
                         setPredicate(index, o);
                     }
                 }
@@ -945,14 +906,6 @@ namespace mars {
                 for (int corner = 0; corner < power_of_2(ManifoldDim); ++corner) {
                     Octant o = ref_octant.corner_nbh<Type>(corner, xDim, yDim, zDim, periodic);
                     if (o.is_valid()) {
-                        /* printf("Corner Nbh of %li (%li) is : (%li) with--- x and y z: %li - %li - %li\n",
-                               index,
-                               elem_index(ref_octant.x, ref_octant.y, ref_octant.z, xDim, yDim),
-                               elem_index(o.x, o.y, o.z, xDim, yDim),
-                               o.x,
-                               o.y,
-                               o.z); */
-
                         setPredicate(index, o);
                     }
                 }
@@ -968,14 +921,6 @@ namespace mars {
                 for (int edge = 0; edge < 4 * ManifoldDim; ++edge) {
                     Octant o = ref_octant.edge_nbh<Type>(edge, xDim, yDim, zDim, periodic);
                     if (o.is_valid()) {
-                        /* printf("Edge Nbh of %li (%li) is : (%li) with--- x and y z: %li - %li - %li\n",
-                               index,
-                               elem_index(ref_octant.x, ref_octant.y, ref_octant.z, xDim, yDim),
-                               elem_index(o.x, o.y, o.z, xDim, yDim),
-                               o.x,
-                               o.y,
-                               o.z); */
-
                         setPredicate(index, o);
                     }
                 }
@@ -1246,13 +1191,6 @@ namespace mars {
                             index = mesh.get_index_of_sfc_elem(enc_oc);
                             assert(index >= 0);
                         }
-
-                        /* printf("Index: %li, o.x: %li, y: %li, elem-index: %li, owner_proc:
-                         * %li, proc: %li , o.x: %li, y: %li, index: %li, ghost: %i\n", index,
-                         * ref_octant.x, ref_octant.y, elem_index(ref_octant.x, ref_octant.y,
-                         * ref_octant.z, xDim, yDim), owner_proc, proc, o.x, o.y,
-                         * elem_index(o.x, o.y, o.z, xDim, yDim),
-                         * face.get_second_side().is_ghost()); */
                     }
 
                     bool boundary = nbh_oc.shares_boundary();

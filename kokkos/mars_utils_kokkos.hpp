@@ -11,8 +11,12 @@
 #ifdef MARS_ENABLE_KOKKOS
 #include "Kokkos_Core.hpp"
 #include "Kokkos_UnorderedMap.hpp"
+#include <Kokkos_Sort.hpp>
 #ifdef MARS_ENABLE_CUDA
 #include <cub/cub.cuh>  // or equivalently <cub/device/device_radix_sort.cuh>
+#include <thrust/unique.h>
+#include <thrust/device_vector.h>
+#include <thrust/device_ptr.h>
 #endif
 #endif
 #include "mars_err.hpp"
@@ -158,22 +162,18 @@ namespace mars {
         Kokkos::deep_copy(map_side_to_nodes, h_view);
     }
 
-    /*template<Integer Dim, Integer ManifoldDim, class Point_>
-    void remove_extra_nodes(Mesh<Dim, ManifoldDim, Point_>& mesh,
-                    std::vector<Vector<Real, Dim> >& np, const std::vector<bool>& active) {
 
-            int count = 0;
-            for (unsigned int i = 0; i < active.size(); ++i) {
-                    if (active[i]) {
-                            np[count] = mesh.point(i);
-                            ++count;
-                    }
+    //generate a kokkos function that takes a view as input and returns the last value of the view by coping it to the host.
+    template <typename T>
+    T get_last_value(ViewVectorType<T> view) {
+        using namespace Kokkos;
 
-            }
+        auto sub_view = subview(view, view.extent(0) - 1);
+        auto h_view = create_mirror_view(sub_view);
+        deep_copy(h_view, sub_view);
 
-            mesh.setPoints(move(np));
-
-    }*/
+        return h_view();
+    }
 
     template <typename T>
     void compact_scan(const ViewVectorType<bool>& pred, const ViewVectorType<T>& scan, const ViewVectorType<T>& out) {
@@ -253,27 +253,6 @@ namespace mars {
             });
     }
 
-    /* template<typename T, typename U>
-    void incl_excl_scan_strided(const Integer start, const Integer end,
-                            const U in_, T out_)
-    {
-            using namespace Kokkos;
-
-            parallel_scan (RangePolicy<>(start , end ),	KOKKOS_LAMBDA (const int& i,
-                                    Integer& upd, const bool& final)
-            {
-                    // Load old value in case we update it before accumulating
-                    const Integer val_i = in_(i);
-
-                    upd += val_i;
-
-                    if (final)
-                    {
-                            out_(i+1) = upd; // To have both ex and inclusive in the same output.
-                    }
-            });
-    }
-     */
     // works for all cases including those with strided access views coming from auto = subview...
     template <typename H, typename U, typename S, typename J>
     void incl_excl_scan(const S start, const J end, const U in_, H out_) {
@@ -373,6 +352,14 @@ namespace mars {
         std::partial_sum(c.begin(), c.end(), out.data() + 1);
     }
 
+    //generate a kokkos function that takes a view as input  then creates a mirror host view, fills it up and copies it to the gpu memory.
+    template <typename V, typename H, typename U>
+    void host_scan_to_device(const V& view, H& h_view, U const& data) {
+        h_view = Kokkos::create_mirror_view(view);
+        make_scan_index_mirror(h_view, data);
+        Kokkos::deep_copy(view, h_view);
+    }
+
     // Segmented scan on a bool view using hierachical Parallelism. Cub lib has the best impl.
     template <typename F>
     void segmented_scan(const Integer teams, ViewVectorType<bool> in_, F f) {
@@ -393,7 +380,103 @@ namespace mars {
             });
     }
 
+    template <typename T>
+    void kokkos_sort(ViewVectorType<T> d_in) {
+        Kokkos::sort(d_in);
+    }
+
+    template <typename T>
+    ViewVectorType<T> kokkos_unique(const ViewVectorType<T>& d_in) {
+        // Create a view to hold the unique flags
+        ViewVectorType<bool> flags("flags", d_in.extent(0));
+
+        // Mark the unique elements
+        Kokkos::parallel_for(
+            "mark_unique", Kokkos::RangePolicy<>(1, d_in.extent(0)), KOKKOS_LAMBDA(int i) {
+                flags(i) = (d_in(i) != d_in(i - 1));
+            });
+
+        // Count the number of unique elements
+        int unique_count;
+        Kokkos::parallel_reduce(
+            "count_unique",
+            d_in.extent(0),
+            KOKKOS_LAMBDA(int i, int& count) {
+                if (flags(i)) count++;
+            },
+            unique_count);
+
+        // Create a view to hold the unique elements
+        ViewVectorType<T> d_out("d_out", unique_count);
+
+        // Copy the unique elements
+        Kokkos::parallel_scan(
+            "copy_unique", d_in.extent(0), KOKKOS_LAMBDA(int i, int& index, bool final) {
+                if (flags(i)) {
+                    if (final) d_out(index) = d_in(i);
+                    index++;
+                }
+            });
+
+        return d_out;
+    }
+
 #ifdef MARS_ENABLE_CUDA
+
+    //TODO: Check in alps to see if the inplace works directly
+    template <typename T>
+    void cub_inclusive_scan(ViewVectorType<T> data_) {
+        // Determine temporary device storage requirements
+        void* d_temp_storage = nullptr;
+        size_t temp_storage_bytes = 0;
+        cub::DeviceScan::InclusiveSum(d_temp_storage, temp_storage_bytes, data_.data(), data_.data(), data_.extent(0));
+        // Allocate temporary storage
+        cudaMalloc(&d_temp_storage, temp_storage_bytes);
+        // Run inclusive scan operation
+        cub::DeviceScan::InclusiveSum(d_temp_storage, temp_storage_bytes, data_.data(), data_.data(), data_.extent(0));
+    }
+
+
+    template <typename T>
+    void cub_unique(ViewVectorType<T> d_in, ViewVectorType<T> d_out, ViewVectorType<T> d_num_selected_out) {
+        auto num_items = d_in.extent(0);
+
+        void* d_temp_storage = nullptr;
+        size_t temp_storage_bytes = 0;
+        cub::DeviceSelect::Unique(
+            d_temp_storage, temp_storage_bytes, d_in.data(), d_out.data(), d_num_selected_out.data(), num_items);
+        // Allocate temporary storage
+        cudaMalloc(&d_temp_storage, temp_storage_bytes);
+        // Run selection
+        cub::DeviceSelect::Unique(
+            d_temp_storage, temp_storage_bytes, d_in.data(), d_out.data(), d_num_selected_out.data(), num_items);
+    }
+
+    template <typename T>
+    ViewVectorType<T> thrust_unique(const ViewVectorType<T>& d_in) {
+        thrust::device_ptr<T> d_ptr_in(d_in.data());
+        //do unique and count the unique elements
+        auto end_unique = thrust::unique(d_ptr_in, d_ptr_in + d_in.extent(0));
+        int unique_count = thrust::distance(d_ptr_in, end_unique);
+        //allocate the output size based on the unique count.
+        ViewVectorType<T> d_out(Kokkos::view_alloc("d_out no init", Kokkos::WithoutInitializing), unique_count);
+        //copy from thrust to d_out
+        thrust::copy(d_ptr_in, d_ptr_in + unique_count, d_out.data());
+        return d_out;
+    }
+
+    //using thrust unique_count for newer thrust versions
+    /* template <typename T>
+    void thrust_unique(ViewVectorType<T> d_in) {
+        thrust::device_ptr<T> d_ptr_in(d_in.data());
+        auto count = thrust::unique_count(d_ptr_in, d_ptr_in + d_in.extent(0), thrust::equal_to<T>());
+
+        ViewVectorType<T> d_out("unique data", count);
+        thrust::device_ptr<T> d_ptr_out(d_out.data());
+
+        thrust::unique_copy(d_ptr_in, d_ptr_in + d_in.extent(0), d_ptr_out);
+        return d_out;
+    } */
 
     // Sorts keys into ascending order. (~2N auxiliary storage required)
     template <typename V>

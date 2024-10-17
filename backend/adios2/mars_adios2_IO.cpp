@@ -10,7 +10,7 @@
 // #include "mars_mesh.hpp"
 // #include "mars_mesh_generation.hpp"
 
-#ifdef MARS_ENABLE_KOKKOS_KERNELS
+#ifdef MARS_ENABLE_KOKKOS
 #include "mars_mesh_kokkos.hpp"
 
 ////////////////////////////////////

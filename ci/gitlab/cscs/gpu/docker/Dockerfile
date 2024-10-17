@@ -19,8 +19,8 @@ RUN mkdir -p /mars.src/build \
     -DCMAKE_VERBOSE_MAKEFILE=ON \
     -DMARS_ENABLE_KOKKOS=ON \
     -DMARS_ENABLE_CUDA=ON \
-    -DMARS_ENABLE_BENCHMARK=ON \
-    -DMARS_ENABLE_TESTING=ON \
+    -DMARS_ENABLE_BENCHMARK=OFF \
+    -DMARS_ENABLE_TESTS=ON \
     .. |& tee cmake_output.log \
   && ! grep 'Manually-specified variables were' cmake_output.log \
   && make -j$NUM_PROCS \

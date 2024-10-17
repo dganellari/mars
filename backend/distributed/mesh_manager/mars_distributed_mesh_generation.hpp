@@ -6,9 +6,6 @@
 #include "mars_utils_kokkos.hpp"
 #ifdef MARS_ENABLE_MPI
 #ifdef MARS_ENABLE_KOKKOS
-#ifdef MARS_ENABLE_KOKKOS_KERNELS
-#include "KokkosKernels_Sorting.hpp"
-#endif
 #include "mars_distributed_mesh_kokkos.hpp"
 
 namespace mars {
@@ -301,18 +298,20 @@ namespace mars {
         return all_elements;
     }
 
-    template <Integer Dim, Integer ManifoldDim, Integer Type, class KeyType>
-    typename KeyType::ValueType get_number_of_elements(DMesh<Dim, ManifoldDim, Type, KeyType> &mesh) {
+    template <Integer Type, class KeyType>
+    typename KeyType::ValueType calculate_number_of_elements(const Unsigned xDim,
+                                                             const Unsigned yDim,
+                                                             const Unsigned zDim = 0) {
         using ValueType = typename KeyType::ValueType;
         ValueType number_of_elements = 0;
 
         switch (Type) {
             case ElementType::Quad4: {
-                number_of_elements = mesh.get_XDim() * mesh.get_YDim();
+                number_of_elements = xDim * yDim;
                 break;
             }
             case ElementType::Hex8: {
-                number_of_elements = mesh.get_XDim() * mesh.get_YDim() * mesh.get_ZDim();
+                number_of_elements = xDim * yDim * zDim;
                 break;
             }
             default: {
@@ -322,6 +321,11 @@ namespace mars {
             }
         }
         return number_of_elements;
+    }
+
+    template <Integer Dim, Integer ManifoldDim, Integer Type, class KeyType>
+    typename KeyType::ValueType get_number_of_elements(DMesh<Dim, ManifoldDim, Type, KeyType> &mesh) {
+        return calculate_number_of_elements<Type, KeyType>(mesh.get_XDim(), mesh.get_YDim(), mesh.get_ZDim());
     }
 
 //write the generate_sfc function assuming you have a square with quad4 elements
@@ -386,12 +390,6 @@ void process_without_cuda(DMesh<Dim, ManifoldDim, Type, KeyType> &mesh, SFC<Type
     build_gp_np(first_sfc, mesh.get_view_gp(), global_partition_host, all_range - 1);
 }
 #endif
-
-template <typename IntegerType, int D>
-IntegerType generateHilbertCurve(int L) {
-    // The number of points on the curve is 2^(DL)
-    return pow(2, D*L);
-}
 
 template <Integer Type, typename Oc, typename T>
 MARS_INLINE_FUNCTION bool is_inside_subdomain(const Oc &coords,
@@ -622,6 +620,21 @@ void process_segment(DMesh<Dim, ManifoldDim, Type, KeyType> &mesh,
 
 // to aovid predicate, scan and compact and so reduce memory footprint when full hilbert curve is processed
 template <Integer Dim, Integer ManifoldDim, Integer Type, typename KeyType>
+void print_mesh_sfc_coordinates(DMesh<Dim, ManifoldDim, Type, KeyType> &mesh) {
+    using ValueType = typename KeyType::ValueType;
+    static_assert(std::is_same<KeyType, HilbertKey<ValueType>>::value, "Key type must be HilbertKey");
+
+    // print the sfc elements and its coordinates using get octant from sfc in parallel with kokkos
+    Kokkos::parallel_for(
+        "printSFC", mesh.get_view_sfc().extent(0), KOKKOS_LAMBDA(const ValueType i) {
+            auto sfc = mesh.get_sfc(i);
+            auto coords = get_octant_from_sfc<Type, KeyType>(sfc);
+            printf("SFC: %li, %li Coordinates: %i, %i, %i\n", i, sfc, coords.x, coords.y, coords.z);
+        });
+}
+
+// to aovid predicate, scan and compact and so reduce memory footprint when full hilbert curve is processed
+template <Integer Dim, Integer ManifoldDim, Integer Type, typename KeyType>
 void process_full_segment(DMesh<Dim, ManifoldDim, Type, KeyType> &mesh,
                     const typename KeyType::ValueType start,
                     const typename KeyType::ValueType end) {
@@ -640,30 +653,41 @@ void process_full_segment(DMesh<Dim, ManifoldDim, Type, KeyType> &mesh,
             auto index = i - start;
             rank_elements(index) = i;
         });
-
+    // Set the view of the mesh to the rank elements
     mesh.set_view_sfc(rank_elements);
     mesh.set_chunk_size(rank_elements_size);
 }
 
-template <Integer Dim, Integer ManifoldDim, Integer Type, class KeyType>
-bool is_full_hilbert_curve(DMesh<Dim, ManifoldDim, Type, KeyType> &mesh) {
+template <Integer Dim, Integer Type, class KeyType>
+bool is_full_hilbert_curve(const Unsigned xDim, const Unsigned yDim, const Unsigned zDim) {
     using ValueType = typename KeyType::ValueType;
-    // Check if all dimensions are equal
-    if (mesh.get_XDim() != mesh.get_YDim() || mesh.get_XDim() != mesh.get_YDim()) {
-        return false;
+    // Check if the dimensions are equal
+    if constexpr (Dim == 2) {
+        if (xDim != yDim) {
+            return false;
+        }
+    } else if constexpr (Dim == 3) {
+        if (xDim != yDim || xDim != zDim) {
+            return false;
+        }
     }
     // Calculate L based on one of the dimensions
-    auto L = log2(mesh.get_XDim());
+    auto L = log2(xDim);
     // Check if the dimension is a power of 2
-    if (pow(2, L) != mesh.get_XDim()) {
+    if (pow(2, L) != xDim) {
         return false;
     }
     // Get the number of elements in the mesh
-    auto num_elements = get_number_of_elements(mesh);
+    auto num_elements = calculate_number_of_elements<Type, KeyType>(xDim, yDim, zDim);
     // Generate the Hilbert curve range for this process
     auto num_points = generateHilbertCurve<ValueType, Dim>(L);
     // Check if the number of elements is equal to the number of points
     return num_elements == num_points;
+}
+
+template <Integer Dim, Integer ManifoldDim, Integer Type, class KeyType>
+bool is_full_hilbert_curve(DMesh<Dim, ManifoldDim, Type, KeyType> &mesh) {
+    return is_full_hilbert_curve<Dim, Type, KeyType>(mesh.get_XDim(), mesh.get_YDim(), mesh.get_ZDim());
 }
 
 

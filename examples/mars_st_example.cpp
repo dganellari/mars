@@ -7,15 +7,12 @@
 #include <iostream>
 #include <numeric>
 
-#ifdef MARS_ENABLE_KOKKOS_KERNELS
+#if defined (MARS_ENABLE_AMR_BACKEND) && defined (MARS_ENABLE_KOKKOS_KERNELS)
 #include <KokkosBlas1_nrm1.hpp>
 #include <KokkosBlas1_nrminf.hpp>
 
-#ifdef MARS_ENABLE_KOKKOS
 #include "mars_lepp_benchmark_kokkos.hpp"
 #include "mars_test_kokkos.hpp"
-#endif  // MARS_ENABLE_KOKKOS
-
 #include "mars_mesh_kokkos.hpp"
 #include "mars_model_test.hpp"
 #include "mars_spacetime_ex.hpp"

@@ -18,13 +18,13 @@
 #ifdef MARS_ENABLE_KOKKOS_KERNELS
 #include "mars_advection.hpp"
 #include "mars_constant_viscosity_stokes.hpp"
+#include "mars_variable_viscosity_stokes.hpp"
 #include "mars_poisson.hpp"
+#endif
 #ifdef MARS_ENABLE_AMR_BACKEND
 #include "mars_test_kokkos.hpp"
 #endif
 #include "mars_test_mpi.hpp"
-#include "mars_variable_viscosity_stokes.hpp"
-#endif  // MARS_ENABLE_KOKKOS_KERNELS
 #endif  // MARS_ENABLE_MPI
 #include <chrono>
 
@@ -37,7 +37,7 @@ void run_benchmarks(int level, int refine_level) {
     std::cout << "Generation level:" << level << std::endl;
     std::cout << "Refinement level:" << refine_level << std::endl;
 
-#ifdef MARS_ENABLE_KOKKOS_KERNELS
+#ifdef MARS_ENABLE_KOKKOS
 
     /* ParallelQuad4Mesh nsm;
     generate_cube(nsm, level, refine_level, 0); */
@@ -65,7 +65,7 @@ int main(int argc, char *argv[]) {
 
     Env env(argc, argv);
 
-    Options options("./mars_exec", "Run M.A.R.S. based applications.");
+    Options options("./mars_examples", "Run M.A.R.S. based example test cases.");
 
     options.add_options()("d,debug", "Enable debugging")                                //
         ("x,xDim", "Grid X Dim", value<int>()->default_value("4"))                      //
@@ -103,29 +103,31 @@ int main(int argc, char *argv[]) {
         // FIXME create tests, benchmarks and separate apps for what is below
         std::map<std::string, std::function<void()>> apps;
 
-#ifdef MARS_ENABLE_KOKKOS_KERNELS
+#ifdef MARS_ENABLE_KOKKOS
+#ifdef MARS_ENABLE_AMR_BACKEND
 
-        apps["mars_mesh_generation_kokkos_2D_a"] = [=]() { test_mars_mesh_generation_kokkos_2D(2, 4); };
-        apps["mars_mesh_generation_kokkos_2D_b"] = [=]() { test_mars_mesh_generation_kokkos_2D(level + 4, level); };
+        apps["mesh_generation_kokkos_2D_a"] = [=]() { test_mars_mesh_generation_kokkos_2D(2, 4); };
+        apps["mesh_generation_kokkos_2D_b"] = [=]() { test_mars_mesh_generation_kokkos_2D(level + 4, level); };
 
-        apps["mars_mesh_generation_kokkos_3D"] = [=]() { test_mars_mesh_generation_kokkos_3D(level, level, level); };
-        apps["mars_mesh_generation_kokkos_1D"] = [=]() { test_mars_mesh_generation_kokkos_1D(level); };
+        apps["mesh_generation_kokkos_3D"] = [=]() { test_mars_mesh_generation_kokkos_3D(level, level, level); };
+        apps["mesh_generation_kokkos_1D"] = [=]() { test_mars_mesh_generation_kokkos_1D(level); };
+#endif
 
 #ifdef MARS_ENABLE_MPI
 
-        apps["mars_distributed_mesh_generation_2D"] = [=]() {
+        apps["distributed_mesh_generation_2D"] = [=]() {
             test_mars_distributed_nonsimplex_mesh_generation_kokkos_2D(xDim, yDim);
         };
 
-        apps["mars_distributed_mesh_generation_hilbert_2D"] = [=]() {
+        apps["distributed_mesh_generation_hilbert_2D"] = [=]() {
             test_mars_distributed_nonsimplex_mesh_generation_kokkos_2D<HilbertKey<Unsigned>>(xDim, yDim);
         };
 
-        apps["mars_distributed_mesh_generation_3D"] = [=]() {
+        apps["distributed_mesh_generation_3D"] = [=]() {
             test_mars_distributed_nonsimplex_mesh_generation_kokkos_3D(xDim, yDim, zDim);
         };
 
-        apps["mars_distributed_mesh_generation_hilbert_3D"] = [=]() {
+        apps["distributed_mesh_generation_hilbert_3D"] = [=]() {
             test_mars_distributed_nonsimplex_mesh_generation_kokkos_3D<HilbertKey<Unsigned>>(xDim, yDim, zDim);
         };
 
@@ -157,6 +159,13 @@ int main(int argc, char *argv[]) {
             test_mars_distributed_vector_valued<ElementType::Hex8, 2>(xDim, yDim, zDim, block_size);
         };
 
+        apps["distributed_vector_valued_hilbert_3D_degree2"] = [=]() {
+            test_mars_distributed_vector_valued<ElementType::Hex8, 2, true, HilbertKey<Unsigned>>(
+                xDim, yDim, zDim, block_size);
+        };
+
+#ifdef MARS_ENABLE_KOKKOS_KERNELS
+
         apps["mfpoisson"] = [=]() {
             matrix_free_poisson<Example2Dirichlet, Example2RHS, Example2Analitcal, ElementType::Quad4>(xDim, yDim, 0);
         };
@@ -175,9 +184,9 @@ int main(int argc, char *argv[]) {
         /* apps["vstokes3D"] = [=]() { staggered_variable_viscosty_stokes<ElementType::Hex8>(xDim, yDim, zDim); }; */
 
         apps["advection"] = [=]() { advection(xDim, yDim); };
-
-#endif
-#endif  // MARS_ENABLE_KOKKOS_KERNELS
+#endif // MARS_ENABLE_KOKKOS_KERNELS
+#endif // MARS_ENABLE_MPI
+#endif  // MARS_ENABLE_KOKKOS
 
         if (!app.empty()) {
             auto it = apps.find(app);

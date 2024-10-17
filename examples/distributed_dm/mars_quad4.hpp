@@ -133,7 +133,7 @@ namespace mars {
         static T_ q_weights[6];
         static T_ q_points[6][PhysicalDim_];
 
-#ifdef MARS_ENABLE_KOKKOS_KERNELS
+#ifdef MARS_ENABLE_KOKKOS
 
         class Quadrature final {
         public:

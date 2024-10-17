@@ -1,24 +1,54 @@
 #ifndef MARS_SFC_GENERATION_HPP
 #define MARS_SFC_GENERATION_HPP
 
+#include "mars_base.hpp"
 #include "mars_sfc_code.hpp"
 
 namespace mars {
 
+    template <typename IntegerType, int D>
+    IntegerType generateHilbertCurve(int L) {
+        /* The number of points on the curve is 2^(DL) */
+        return pow(2, D * L);
+    }
+
     template <Integer Type, class KeyType = MortonKey<Unsigned>>
-    MARS_INLINE_FUNCTION Integer compute_all_range(const unsigned x, const unsigned y, const unsigned z) {
-        switch (Type) {
-            case ElementType::Quad4: {
+    struct ComputeAllRange {
+        typename KeyType::ValueType operator()(const unsigned x, const unsigned y, const unsigned z) {
+            throw std::invalid_argument("Invalid ElementType in compute_all_range");
+        }
+    };
+
+    template <class KeyType>
+    struct ComputeAllRange<ElementType::Quad4, KeyType> {
+        typename KeyType::ValueType operator()(const unsigned x, const unsigned y, const unsigned z) {
+            if constexpr (IsMorton<KeyType>{}){
                 return encode_sfc_2D<KeyType>(x + 1, y + 1);
-            }
-            case ElementType::Hex8: {
-                return encode_sfc_3D<KeyType>(x + 1, y + 1, z + 1);
-            }
-            default: {
-                return INVALID_INDEX;
+            } else if constexpr (IsHilbert<KeyType>{}) {
+                auto max_dim = std::max(x, y);
+                auto L = std::ceil(std::log2(max_dim));
+                return generateHilbertCurve<Unsigned, 2>(L);
+            } else {
+                throw std::invalid_argument("Invalid KeyType in compute_all_range. Use either Morton or Hilbert!");
             }
         }
-    }
+    };
+
+    template <class KeyType>
+    struct ComputeAllRange<ElementType::Hex8, KeyType> {
+        typename KeyType::ValueType operator()(const unsigned x, const unsigned y, const unsigned z) {
+            if constexpr (IsMorton<KeyType>{}) {
+                return encode_sfc_3D<KeyType>(x + 1, y + 1, z + 1);
+            } else if constexpr (IsHilbert<KeyType>{}) {
+                auto max_dim = std::max({x, y, z});
+                auto L = std::ceil(std::log2(max_dim));
+                return generateHilbertCurve<Unsigned, 3>(L);
+            }
+            else {
+                throw std::invalid_argument("Invalid KeyType in compute_all_range. Use either Morton or Hilbert!");
+            }
+        }
+    };
 
     template <Integer Type, class SfcKeyType = MortonKey<Unsigned>>
     class SFC {
@@ -96,6 +126,11 @@ namespace mars {
             elements_ = ViewVectorType<KeyType>("morton_code", n_elements);
         }
 
+        void set_elements(const ViewVectorType<KeyType> &elements) {
+            elements_ = elements;
+            set_elem_size(elements_.extent(0));
+        }
+
         MARS_INLINE_FUNCTION
         const ViewVectorType<Integer> &get_view_element_orientations() const  // override
         {
@@ -149,7 +184,8 @@ namespace mars {
         SFC() = default;
 
         SFC(const Integer x, const Integer y, const Integer z) : xDim(x), yDim(y), zDim(z) {
-            all_range_ = compute_all_range<Type, SfcKeyType>(xDim, yDim, zDim);
+            ComputeAllRange<Type, SfcKeyType> compute;
+            all_range_ = compute(x, y, z);
         }
 
         MARS_INLINE_FUNCTION
@@ -163,6 +199,39 @@ namespace mars {
             Kokkos::parallel_for(
                 "generate_sfc_to_local_map", get_elem_size(), MARS_LAMBDA(const Integer i) {
                     sfc_map.insert(element_view(i), i);
+                });
+        }
+
+        // this function is used to print the sfc_to_local_map_ for debugging purposes using kokkos and unordered_map key at value at valid at device functions
+
+        void print_sfc_to_local_map() const {
+            auto map = sfc_to_local_map_;
+            Kokkos::parallel_for(
+                "PrintMap", map.capacity(), KOKKOS_LAMBDA(const int i) {
+                    if (map.valid_at(i)) {
+                        auto octant = mars::get_octant_from_sfc<Type, SfcKeyType>(map.key_at(i));
+                        printf("sfc: %ld, dof: %ld, octant: %ld, %ld, %ld\n",
+                               map.key_at(i),
+                               map.value_at(i),
+                               octant.x,
+                               octant.y,
+                               octant.z);
+                    }
+                });
+        }
+
+        //write a kokkos function to print the elements_ and for debugging purposes
+        void print_elements_view() const {
+            auto el = elements_;
+            Kokkos::parallel_for(
+                "PrintView", el.extent(0), KOKKOS_LAMBDA(const int i) {
+                    auto octant = mars::get_octant_from_sfc<Type, SfcKeyType>(el(i));
+                    printf("dof: %ld, sfc: %ld, octant: %ld, %ld, %ld\n",
+                           i,
+                           el(i),
+                           octant.x,
+                           octant.y,
+                           octant.z);
                 });
         }
 

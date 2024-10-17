@@ -295,8 +295,6 @@ namespace mars {
             Integer proc_count_r =
                 std::count_if(receive_count.begin(), receive_count.end(), [](T count) { return count > 0; });
 
-            /* printf("proc count proc: %li - %li - %li - %li\n", proc_count, proc_count_r, receive_count.size(),
-             * send_count.size()); */
             std::vector<MPI_Request> send_req(proc_count);
             std::vector<MPI_Request> receive_req(proc_count_r);
 
@@ -327,8 +325,6 @@ namespace mars {
             Integer proc_count = send_count.size();
             Integer proc_count_r = receive_count.size();
 
-            /* printf("proc count proc: %li - %li - %li - %li\n", proc_count, proc_count_r, receive_count.size(),
-             * send_count.size()); */
             std::vector<MPI_Request> send_req(proc_count);
             std::vector<MPI_Request> receive_req(proc_count_r);
 
@@ -435,6 +431,7 @@ namespace mars {
             int recv_proc = 0;
             for (int i = 0; i < nranks; ++i) {
                 Integer count = dest_displ[i + 1] - dest_displ[i];
+
                 if (count > 0) {
                     i_receive(dest, dest_displ[i], count, i, 0, comm, &receive_req[recv_proc++]);
                 }

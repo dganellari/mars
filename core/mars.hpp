@@ -12,7 +12,7 @@
 #endif  // MARS_ENABLE_KOKKOS
 
 #ifdef MARS_ENABLE_MPI
-#include "mars_mpi_guard.hpp"
+#include "mars_env.hpp"
 #ifdef MARS_ENABLE_KOKKOS
 #include "mars_distributed_octant_utils.hpp"
 #include "mars_distributed_data_management.hpp"

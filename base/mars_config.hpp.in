@@ -26,5 +26,6 @@
 
 #cmakedefine MARS_ENABLE_AMR_BACKEND
 #cmakedefine MARS_ENABLE_SERIAL_BACKEND
+#cmakedefine MARS_ENABLE_EXAMPLES
 
 #endif //MARS_CONFIG_HPP

@@ -184,7 +184,6 @@ namespace mars {
         Kokkos::Timer timer_sp;
         // print the global dofs for each element's local dof
         /* fe.print(); */
-
 #ifdef MARS_ENABLE_KOKKOS_KERNELS
 
         SPattern sp(dof_handler);
@@ -199,9 +198,9 @@ namespace mars {
         double time_all = timer.seconds();
         std::cout << "Discretization: " << time_all << std::endl;
 
+        Kokkos::Timer timer_as;
         ViewVectorType<Integer> x_local("local_data", dof_handler.get_dof_size());
 #ifdef MARS_ENABLE_KOKKOS_KERNELS
-        Kokkos::Timer timer_as;
         dof_handler.dof_iterate(MARS_LAMBDA(const Integer i) {
             x_local(i) = -1;
             if (dof_handler.is_owned(i)) sm.set_value(i, i, 9);
@@ -209,10 +208,10 @@ namespace mars {
 
         double time_aall = timer_as.seconds();
         std::cout << "Assembly: " << time_aall << std::endl;
-
+#endif
         /* sp.print_sparsity_pattern(); */
         /* sm.write("overlap_sp.txt"); */
-#endif
+
         auto owned_size = dof_handler.get_owned_dof_size();
         ViewVectorType<Integer> owned("owned_data", owned_size);
         dof_handler.owned_dof_iterate(MARS_LAMBDA(const Integer i) { owned(i) = proc_num; });

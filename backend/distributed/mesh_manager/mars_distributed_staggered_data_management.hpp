@@ -2,7 +2,7 @@
 #define GENERATION_MARS_DISTRIBUTED_SDM_HPP_
 
 #ifdef MARS_ENABLE_MPI
-#ifdef MARS_ENABLE_KOKKOS_KERNELS
+#ifdef MARS_ENABLE_KOKKOS
 #include "mars_distributed_base_data_management.hpp"
 #include "mars_distributed_staggered_dof_management.hpp"
 #include "mars_distributed_stencil.hpp"

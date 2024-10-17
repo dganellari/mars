@@ -28,6 +28,9 @@ struct maxTreeLevel<unsigned long> : integral_constant<unsigned, 21> {};
 template <>
 struct maxTreeLevel<unsigned long long> : integral_constant<unsigned, 21> {};
 
+template<>
+struct maxTreeLevel<int> : integral_constant<unsigned, 10> {};
+
 //! @brief maximum integer coordinate
 template <class KeyType>
 struct maxCoord : integral_constant<unsigned, (1u << maxTreeLevel<KeyType>{})> {};
