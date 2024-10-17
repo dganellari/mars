@@ -106,8 +106,6 @@ int main(int argc, char *argv[]) {
 #ifdef MARS_ENABLE_KOKKOS
 #ifdef MARS_ENABLE_AMR_BACKEND
 
-        Kokkos::print_configuration(std::cout);
-
         apps["mars_mesh_generation_kokkos_2D_a"] = [=]() { test_mars_mesh_generation_kokkos_2D(2, 4); };
         apps["mars_mesh_generation_kokkos_2D_b"] = [=]() { test_mars_mesh_generation_kokkos_2D(level + 4, level); };
 
