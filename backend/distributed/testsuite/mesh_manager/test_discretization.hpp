@@ -115,6 +115,7 @@ TEST(DofMapTest, TestDOFMAPGeneration) {
 // test the DOFMAP generation
 
 int main(int argc, char **argv) {
+    mars::Env env(argc, argv);
     testing::InitGoogleTest(&argc, argv);
     return RUN_ALL_TESTS();
 }

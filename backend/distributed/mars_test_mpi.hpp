@@ -186,6 +186,7 @@ namespace mars {
         /* fe.print(); */
 
 #ifdef MARS_ENABLE_KOKKOS_KERNELS
+
         SPattern sp(dof_handler);
         sp.build_pattern(fe);
 
