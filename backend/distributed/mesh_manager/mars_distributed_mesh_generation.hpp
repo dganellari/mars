@@ -690,7 +690,6 @@ bool is_full_hilbert_curve(DMesh<Dim, ManifoldDim, Type, KeyType> &mesh) {
     return is_full_hilbert_curve<Dim, Type, KeyType>(mesh.get_XDim(), mesh.get_YDim(), mesh.get_ZDim());
 }
 
-
 template <Integer Dim, Integer ManifoldDim, Integer Type, class IntegerType>
 void partition_mesh(DMesh<Dim, ManifoldDim, Type, HilbertKey<IntegerType>> &mesh) {
     auto num_elements = get_number_of_elements(mesh);
