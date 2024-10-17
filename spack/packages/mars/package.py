@@ -21,7 +21,6 @@ class Mars(CMakePackage, CudaPackage,  ROCmPackage):
     variant("openmp", default=True)
     variant("cxxopts", default=True)
     variant("tests", default=False)
-    variant("bench", default=False)
     variant("build_type",
             default="Release",
             description="CMake build type",
@@ -54,8 +53,7 @@ class Mars(CMakePackage, CudaPackage,  ROCmPackage):
 
     def cmake_args(self):
         options = [
-            self.define_from_variant("MARS_ENABLE_TESTING", "tests"),
-            self.define_from_variant("MARS_ENABLE_BENCHMARK", "bench"),
+            self.define_from_variant("MARS_ENABLE_TESTS", "tests"),
             self.define_from_variant("MARS_ENABLE_KOKKOS", "kokkos"),
             #  self.define_from_variant("MARS_ENABLE_OPENMP", "openmp"),
             self.define_from_variant("MARS_ENABLE_HIP", "rocm"),

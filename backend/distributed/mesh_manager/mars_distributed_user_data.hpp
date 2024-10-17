@@ -4,7 +4,7 @@
 #ifdef MARS_ENABLE_MPI
 #include "mars_context.hpp"
 #include "mars_execution_context.hpp"
-#ifdef MARS_ENABLE_KOKKOS_KERNELS
+#ifdef MARS_ENABLE_KOKKOS
 #include "mars_distributed_mesh_kokkos.hpp"
 #include "mars_distributed_mesh_management.hpp"
 #include "mars_utils_kokkos.hpp"
