@@ -65,7 +65,7 @@ int main(int argc, char *argv[]) {
 
     Env env(argc, argv);
 
-    Options options("./mars_exec", "Run M.A.R.S. based applications.");
+    Options options("./mars_examples", "Run M.A.R.S. based example test cases.");
 
     options.add_options()("d,debug", "Enable debugging")                                //
         ("x,xDim", "Grid X Dim", value<int>()->default_value("4"))                      //
@@ -106,28 +106,28 @@ int main(int argc, char *argv[]) {
 #ifdef MARS_ENABLE_KOKKOS
 #ifdef MARS_ENABLE_AMR_BACKEND
 
-        apps["mars_mesh_generation_kokkos_2D_a"] = [=]() { test_mars_mesh_generation_kokkos_2D(2, 4); };
-        apps["mars_mesh_generation_kokkos_2D_b"] = [=]() { test_mars_mesh_generation_kokkos_2D(level + 4, level); };
+        apps["mesh_generation_kokkos_2D_a"] = [=]() { test_mars_mesh_generation_kokkos_2D(2, 4); };
+        apps["mesh_generation_kokkos_2D_b"] = [=]() { test_mars_mesh_generation_kokkos_2D(level + 4, level); };
 
-        apps["mars_mesh_generation_kokkos_3D"] = [=]() { test_mars_mesh_generation_kokkos_3D(level, level, level); };
-        apps["mars_mesh_generation_kokkos_1D"] = [=]() { test_mars_mesh_generation_kokkos_1D(level); };
+        apps["mesh_generation_kokkos_3D"] = [=]() { test_mars_mesh_generation_kokkos_3D(level, level, level); };
+        apps["mesh_generation_kokkos_1D"] = [=]() { test_mars_mesh_generation_kokkos_1D(level); };
 #endif
 
 #ifdef MARS_ENABLE_MPI
 
-        apps["mars_distributed_mesh_generation_2D"] = [=]() {
+        apps["distributed_mesh_generation_2D"] = [=]() {
             test_mars_distributed_nonsimplex_mesh_generation_kokkos_2D(xDim, yDim);
         };
 
-        apps["mars_distributed_mesh_generation_hilbert_2D"] = [=]() {
+        apps["distributed_mesh_generation_hilbert_2D"] = [=]() {
             test_mars_distributed_nonsimplex_mesh_generation_kokkos_2D<HilbertKey<Unsigned>>(xDim, yDim);
         };
 
-        apps["mars_distributed_mesh_generation_3D"] = [=]() {
+        apps["distributed_mesh_generation_3D"] = [=]() {
             test_mars_distributed_nonsimplex_mesh_generation_kokkos_3D(xDim, yDim, zDim);
         };
 
-        apps["mars_distributed_mesh_generation_hilbert_3D"] = [=]() {
+        apps["distributed_mesh_generation_hilbert_3D"] = [=]() {
             test_mars_distributed_nonsimplex_mesh_generation_kokkos_3D<HilbertKey<Unsigned>>(xDim, yDim, zDim);
         };
 

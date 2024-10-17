@@ -7,7 +7,7 @@
 #include <iostream>
 #include <numeric>
 
-#ifdef MARS_ENABLE_AMR_BACKEND
+#if defined (MARS_ENABLE_AMR_BACKEND) && defined (MARS_ENABLE_KOKKOS_KERNELS)
 #include <KokkosBlas1_nrm1.hpp>
 #include <KokkosBlas1_nrminf.hpp>
 

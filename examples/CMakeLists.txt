@@ -19,7 +19,10 @@ set(MARS_SOURCES
     ${MARS_SOURCES}
     PARENT_SCOPE)
 
-if(Kokkos_FOUND AND MARS_ENABLE_AMR_BACKEND)
-    add_executable(st_example mars_st_example.cpp)
-    target_link_libraries(st_example PRIVATE mars)
+
+if(MARS_ENABLE_EXAMPLES)
+    set(MARS_TARGETS mars_examples PARENT_SCOPE)
+
+    add_executable(mars_examples mars_discretization.cpp)
+    target_link_libraries(mars_examples PRIVATE mars)
 endif()

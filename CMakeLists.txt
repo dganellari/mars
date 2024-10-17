@@ -11,7 +11,7 @@ project(
   mars
   VERSION 0.2.0
   LANGUAGES "CXX" "C"
-  HOMEPAGE_URL "https://bitbucket.org/zulianp/mars/src/master/"
+  HOMEPAGE_URL "https://github.com/dganellari/mars"
   DESCRIPTION
     "Mars is an open-source mesh management library designed to handle N-dimensional elements (N <= 4)"
 )
@@ -30,13 +30,7 @@ if(MARS_ENABLE_CUDA)
     message(STATUS "${Magenta}For MARS with Cuda make sure to pass the option -DCMAKE_CXX_COMPILER=/path/to/nvcc_wrapper. Otherwise it will be set automatically to the Kokkos CXX Compiler.${ColourReset}")
 endif()
 
-# ##############################################################################
-# ##############################################################################
-# Library
-# ##############################################################################
-
-list(APPEND MARS_HEADERS mars.hpp mars_env.hpp)
-list(APPEND MARS_SOURCES mars_env.cpp)
+# ######################### Library Configuration #############################
 
 # set(MARS_MODULES base core distributed examples io kokkos)
 set(MARS_MODULES base core examples io kokkos)
@@ -60,8 +54,6 @@ endif()
 
 add_library(mars ${MARS_HEADERS} ${MARS_SOURCES})
 
-# ##############################################################################
-# include
 
 foreach(include ${MARS_BUILD_INCLUDES})
   target_include_directories(mars BEFORE PUBLIC $<BUILD_INTERFACE:${include}>)
@@ -75,15 +67,7 @@ target_include_directories(
          $<INSTALL_INTERFACE:include>)
 
 target_include_directories(mars PUBLIC ${MARS_DEP_INCLUDES})
-
-# ##############################################################################
-# link
-
 target_link_libraries(mars PUBLIC ${MARS_DEP_LIBRARIES})
-# target_link_libraries(mars PUBLIC ${MPI_LIBRARIES})
-
-# ##############################################################################
-# properties
 
 if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE
@@ -94,14 +78,7 @@ RelWithDebInfo MinSizeRel." FORCE)
   message(STATUS "[Status] CMAKE_BUILD_TYPE=Release")
 endif(NOT CMAKE_BUILD_TYPE)
 
-
-
-# target_compile_features(mars PUBLIC cxx_std_17)
-
-# ##############################################################################
-# ##############################################################################
-# Extra targets
-# ##############################################################################
+# ###############################Extra Targets##################################
 
 if(MARS_ENABLE_TESTS)
   include(cmake/tests.cmake)
@@ -118,21 +95,13 @@ if(MARS_ENABLE_VTK)
   add_subdirectory(backend/vtk)
 endif()
 
-# ##############################################################################
-# ##############################################################################
-# ##############################################################################
 
 # #################  EXECUTABLES AND INSTALL ##################
-
-add_executable(mars_exec main.cpp)
-target_link_libraries(mars_exec mars)
-
-# Adios2 Executables go here.
 
 include_directories(${CMAKE_BINARY_DIR})
 
 install(
-  TARGETS mars mars_exec
+  TARGETS mars ${MARS_TARGETS}
   EXPORT MarsTargets
   RUNTIME DESTINATION bin
   LIBRARY DESTINATION lib
@@ -168,8 +137,6 @@ install(FILES ${CMAKE_CURRENT_BINARY_DIR}/MarsConfig.cmake
 
 include(cmake/PostInstall.cmake)
 
-# ##############################################################################
-
 # #################  Extra Targets, Complete ##################
 
 add_custom_target(mars_complete)
@@ -182,7 +149,4 @@ if(MARS_ENABLE_TESTS)
     add_dependencies(mars_complete ${MARS_TESTS})
 endif()
 
-
-# ##############################################################################
 target_format_setup("mars")
-# ##############################################################################

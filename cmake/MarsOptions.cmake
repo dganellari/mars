@@ -16,7 +16,6 @@ option(MARS_ENABLE_TESTS "Enable tests" ON)
 
 # FIXME Extra backends 
 option(MARS_ENABLE_MOONOLITH "Use -DMARS_ENABLE_MOONOLITH=ON for enabling mesh transfer functions." OFF)
-option(MARS_ENABLE_CXXOPTS "Enable cxxopts" OFF)
 option(MARS_ENABLE_VTK "Uses VTK IO" OFF)
 
 # FIXME  and turn on!
@@ -24,3 +23,5 @@ option(MARS_ENABLE_SERIAL_BACKEND "Use -DMARS_ENABLE_SERIAL_BACKEND=ON for enabl
 option(MARS_ENABLE_DISTRIBUTED_BACKEND "Use -DMARS_ENABLE_DISTRIBUTED_BACKEND=ON for enabling the distributed backend" ON)
 option(MARS_ENABLE_AMR_BACKEND "Use -DMARS_ENABLE_AMR_BACKEND=ON for enabling the AMR backend" OFF)
 
+option(MARS_ENABLE_EXAMPLES "Enable examples" OFF)
+option(MARS_ENABLE_CXXOPTS "Enable cxxopts" ON)
