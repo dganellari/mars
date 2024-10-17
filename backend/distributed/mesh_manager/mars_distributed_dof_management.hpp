@@ -1459,8 +1459,13 @@ namespace mars {
                 ghost_size,
                 CountLocalGlobalDofs<true, size_t>(get_mesh(), owned_thread_count, local_thread_count, nbhs, nbhr));
 
+#ifdef MARS_ENABLE_CUDA
             cub_inclusive_scan(owned_thread_count);
             cub_inclusive_scan(local_thread_count);
+#else
+            inclusive_scan(0, owned_thread_count.size(), owned_thread_count);
+            inclusive_scan(0, local_thread_count.size(), local_thread_count);
+#endif
 
             //get the last value of the thread count
             const Integer owned_size = get_last_value(owned_thread_count);
@@ -1482,11 +1487,19 @@ namespace mars {
                 ghost_size,
                 InsertLocalGlobalDofs<true, size_t>(get_mesh(), owned_dofs, dofs, owned_thread_count, local_thread_count));
 
+#ifdef MARS_ENABLE_CUDA
             owned_dofs = buffer_cub_radix_sort(owned_dofs);
             dofs = buffer_cub_radix_sort(dofs);
 
             auto owned_unique_dofs = thrust_unique(owned_dofs);
             auto unique_dofs = thrust_unique(dofs);
+#else
+            kokkos_sort(owned_dofs);
+            kokkos_sort(dofs);
+
+            auto owned_unique_dofs = kokkos_unique(owned_dofs);
+            auto unique_dofs = kokkos_unique(dofs);
+#endif
 
             global_dof_enum.set_elements(owned_unique_dofs);
             local_dof_enum.set_elements(unique_dofs);
@@ -1890,6 +1903,7 @@ namespace mars {
             ViewVectorType<bool> nbh_proc_predicate_recv("receive_from", rank_size);
             ViewVectorType<Integer> proc_scan_send("nbh_scan_send", rank_size + 1);
             ViewVectorType<Integer> proc_scan_recv("nbh_scan_recv", rank_size + 1);
+
 
             if constexpr (IsHilbert<SfcKeyType>{}) {
                 build_lg_hilbert_predicate(context, nbh_proc_predicate_send, nbh_proc_predicate_recv);

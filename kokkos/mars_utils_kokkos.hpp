@@ -11,6 +11,7 @@
 #ifdef MARS_ENABLE_KOKKOS
 #include "Kokkos_Core.hpp"
 #include "Kokkos_UnorderedMap.hpp"
+#include <Kokkos_Sort.hpp>
 #ifdef MARS_ENABLE_CUDA
 #include <cub/cub.cuh>  // or equivalently <cub/device/device_radix_sort.cuh>
 #include <thrust/unique.h>
@@ -379,6 +380,47 @@ namespace mars {
             });
     }
 
+    template <typename T>
+    void kokkos_sort(ViewVectorType<T> d_in) {
+        Kokkos::sort(d_in);
+    }
+
+    template <typename T>
+    ViewVectorType<T> kokkos_unique(const ViewVectorType<T>& d_in) {
+        // Create a view to hold the unique flags
+        ViewVectorType<bool> flags("flags", d_in.extent(0));
+
+        // Mark the unique elements
+        Kokkos::parallel_for(
+            "mark_unique", Kokkos::RangePolicy<>(1, d_in.extent(0)), KOKKOS_LAMBDA(int i) {
+                flags(i) = (d_in(i) != d_in(i - 1));
+            });
+
+        // Count the number of unique elements
+        int unique_count;
+        Kokkos::parallel_reduce(
+            "count_unique",
+            d_in.extent(0),
+            KOKKOS_LAMBDA(int i, int& count) {
+                if (flags(i)) count++;
+            },
+            unique_count);
+
+        // Create a view to hold the unique elements
+        ViewVectorType<T> d_out("d_out", unique_count);
+
+        // Copy the unique elements
+        Kokkos::parallel_scan(
+            "copy_unique", d_in.extent(0), KOKKOS_LAMBDA(int i, int& index, bool final) {
+                if (flags(i)) {
+                    if (final) d_out(index) = d_in(i);
+                    index++;
+                }
+            });
+
+        return d_out;
+    }
+
 #ifdef MARS_ENABLE_CUDA
 
     //TODO: Check in alps to see if the inplace works directly
@@ -393,6 +435,7 @@ namespace mars {
         // Run inclusive scan operation
         cub::DeviceScan::InclusiveSum(d_temp_storage, temp_storage_bytes, data_.data(), data_.data(), data_.extent(0));
     }
+
 
     template <typename T>
     void cub_unique(ViewVectorType<T> d_in, ViewVectorType<T> d_out, ViewVectorType<T> d_num_selected_out) {
