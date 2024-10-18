@@ -46,7 +46,6 @@
 #include "mars_par_bisection.hpp"
 #include "mars_par_mesh.hpp"
 #include "mars_poisson.hpp"
-#include "mars_test_mpi.hpp"
 #include "test.hpp"
 #endif  // MARS_ENABLE_MPI
 #include <chrono>

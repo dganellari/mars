@@ -25,7 +25,6 @@
 #include "mars_constant_viscosity_stokes.hpp"
 #include "mars_poisson.hpp"
 #include "mars_test_kokkos.hpp"
-#include "mars_test_mpi.hpp"
 #include "mars_variable_viscosity_stokes.hpp"
 #endif  // MARS_ENABLE_KOKKOS_KERNELS
 #endif  // MARS_ENABLE_MPI

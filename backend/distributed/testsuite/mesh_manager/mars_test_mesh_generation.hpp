@@ -1,5 +1,5 @@
 #include <gtest/gtest.h>
-#include "template_mesh_manager.hpp"
+#include "mars_template_mesh_manager.hpp"
 
 // Test the mesh generation for 2D meshes for the morton key
 TEST(MarsTest, TestMeshGeneration2D_Small) {

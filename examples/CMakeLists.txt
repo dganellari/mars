@@ -1,8 +1,9 @@
 list(APPEND EXAMPLES_MODULES 
     .
+    util
     unstructured
-    distributed_dm
-    distributed_dm/staggered)
+    distributed
+    distributed/staggered)
 
 
 scan_directories(${CMAKE_CURRENT_SOURCE_DIR} "${EXAMPLES_MODULES}" MARS_BUILD_INCLUDES MARS_HEADERS MARS_SOURCES)
