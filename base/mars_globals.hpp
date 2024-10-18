@@ -200,19 +200,42 @@ constexpr MARS_INLINE_FUNCTION StrongType<T, Phantom> operator-(const StrongType
         *b = t;
     }
 
-    template <typename T>
-    MARS_INLINE_FUNCTION const T& min(const T& a, const T& b) {
+    //! @brief This does what you think it does
+    template <class T>
+    MARS_INLINE_FUNCTION constexpr const T& min(const T& a, const T& b) {
         if (b < a) return b;
-
         return a;
     }
 
-    template <typename T>
+    //! @brief This does what you think it does
+    template <class T>
+    MARS_INLINE_FUNCTION constexpr const T& max(const T& a, const T& b) {
+        if (a < b) return b;
+        return a;
+    }
+
+    //! @brief the std version is not constexpr, this here requires two's complement
+    template <class T>
+    MARS_INLINE_FUNCTION constexpr std::enable_if_t<std::is_signed_v<T>, T> abs(T a) {
+#ifdef __CUDA_ARCH__
+        if constexpr (std::is_same_v<T, int>) {
+            return ::abs(a);
+        } else {
+            return ::labs(a);
+        }
+#else
+        T mask = a >> (sizeof(T) * 8 - 1);
+        return (a ^ mask) - mask;
+#endif
+    }
+
+
+    /* template <typename T>
     MARS_INLINE_FUNCTION const T abs(const T& a) {
         if (a < 0) return -a;
 
         return a;
-    }
+    } */
 
     template <typename T>
     MARS_INLINE_FUNCTION constexpr Integer power(T base, T exp) noexcept {

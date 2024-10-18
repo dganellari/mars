@@ -24,7 +24,7 @@
 #ifdef MARS_ENABLE_AMR_BACKEND
 #include "mars_test_kokkos.hpp"
 #endif
-#include "mars_test_mpi.hpp"
+#include "mars_test.hpp"
 #endif  // MARS_ENABLE_MPI
 #include <chrono>
 

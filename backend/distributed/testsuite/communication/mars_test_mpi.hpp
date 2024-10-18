@@ -1,7 +1,7 @@
 // File: testsuite/comm/test_mars_mpi.cpp
 
 #include <gtest/gtest.h>
-#include "mars_test_mpi.hpp"
+#include "mars_template_mpi.hpp"
 
 
 

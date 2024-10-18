@@ -7,11 +7,11 @@ find_package(Mars 0 REQUIRED)
 
 
 # we use one of our examples here
-add_executable(mars_example_1 ${CMAKE_SOURCE_DIR}/../mars_example_post_install.cpp)	
+add_executable(mars_example ${CMAKE_SOURCE_DIR}/../mars_discretization.cpp)
 
 # import all the dependencies and targets
-target_link_libraries(mars_example_1 PUBLIC Mars::mars)
+target_link_libraries(mars_example PUBLIC Mars::mars)
 
 # If you want to test it
 enable_testing()
-add_test(NAME Mars.mars_example_1 COMMAND mars_example_1 ${CMAKE_SOURCE_DIR}/../data)
+add_test(NAME Mars.mars_example COMMAND mars_example ${CMAKE_SOURCE_DIR}/../data)

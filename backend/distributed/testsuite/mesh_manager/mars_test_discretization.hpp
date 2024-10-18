@@ -1,6 +1,6 @@
 #include <gtest/gtest.h>
 #include <Kokkos_Core.hpp>
-#include "template_mesh_manager.hpp"
+#include "mars_template_mesh_manager.hpp"
 
 TEST(MarsTest, TestDOFHandlerEnumeration) {
     // Define the dimensions of the mesh
