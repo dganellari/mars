@@ -120,6 +120,80 @@ namespace mars {
         }
     }
 
+
+    template <class DofHandler>
+    MARS_INLINE_FUNCTION bool check_unique_dofs(DofHandler &handler) {
+        auto size = handler.get_dof_size();
+        ViewVectorType<bool> unique_ids("unique_ids", 1);
+        Kokkos::deep_copy(unique_ids, true);
+
+        // Check for duplicates
+        Kokkos::parallel_for("check_duplicates", size - 1, KOKKOS_LAMBDA(const size_t i) {
+            if (handler.template local_to_sfc<DofHandler::Block>(i) == handler.template local_to_sfc<DofHandler::Block>(i + 1)) {
+                bool expected = true;
+                Kokkos::atomic_compare_exchange(&unique_ids(0), expected, false);
+            }
+        });
+
+            // Copy the result back to the host
+        auto host_unique_ids = Kokkos::create_mirror_view(unique_ids);
+        Kokkos::deep_copy(host_unique_ids, unique_ids);
+        bool result = host_unique_ids(0);
+
+        return result;
+    }
+
+     template <Integer Type,
+              Integer Degree = 1,
+              bool Overlap = true,
+              class KeyType = MortonKey<Unsigned>>
+    bool test_mars_distributed_dof_handler(const int xDim, const int yDim, const int zDim, const int block) {
+        using namespace mars;
+        mars::proc_allocation resources;
+
+        bool result = false;
+
+#ifdef MARS_ENABLE_MPI
+        // create a distributed context
+        auto context = mars::make_context(resources, MPI_COMM_WORLD);
+        int proc_num = mars::rank(context);
+#else
+        // resources.gpu_id = marsenv::default_gpu();
+        // // create a local context
+        // auto context = mars::make_context(resources);
+#endif
+
+#ifdef MARS_ENABLE_KOKKOS
+
+        Kokkos::Timer timer;
+
+        using DMesh = DistributedMesh<KeyType, Type>;
+
+        // create the quad mesh distributed through the mpi procs.
+        DMesh mesh(context);
+        generate_distributed_cube(mesh, xDim, yDim, zDim);
+
+        constexpr Integer Block = 0;
+        using DOFHandler = DofHandler<DMesh, Degree, Block>;
+        double time_gen = timer.seconds();
+        std::cout << "Mesh Generation took: " << time_gen << std::endl;
+
+        Kokkos::Timer timer_dof;
+
+        DOFHandler dof_handler(mesh);
+        dof_handler.enumerate_dofs();
+        dof_handler.set_block(block);
+
+        double time_dh = timer_dof.seconds();
+        std::cout << "DOFHandler enum took: " << time_dh << std::endl;
+
+        /* result = dof_handler.template check_unique_dofs<Block>(); */
+        result = check_unique_dofs(dof_handler);
+        printf("Unique dofs ---- %i\n", result);
+#endif
+        return result;
+    }
+
     template <Integer Type = ElementType::Quad4,
               Integer Degree = 1,
               bool Overlap = true,

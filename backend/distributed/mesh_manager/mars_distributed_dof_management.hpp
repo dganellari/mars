@@ -2508,18 +2508,27 @@ namespace mars {
             vector_apply_constraints(row, v, 0);
         }
 
+        /* template <Integer B>
         MARS_INLINE_FUNCTION bool check_unique_dofs() {
             bool unique_ids = true;
             auto size = get_dof_size();
-            Kokkos::parallel_reduce("check_unique_ids", size, MARS_LAMBDA(const int i, bool& update) {
-                for (int j = i + 1; j < size; ++j) {
-                    if (local_to_sfc(i) == local_to_sfc(j)) {
+
+            auto handler = *this;
+            printf("Checking unique dofs\n");
+            Kokkos::parallel_reduce("check_unique_ids", size, MARS_LAMBDA(const size_t i, bool& update) {
+                for (size_t j = i + 1; j < size; ++j) {
+                    auto i_sfc = handler.template local_to_sfc<B>(i);
+                    auto j_sfc = handler.template local_to_sfc<B>(j);
+                    printf("Dof %li and %li sfc %li - %li\n", i, j, i_sfc, j_sfc);
+                    if (i_sfc > j_sfc) {
+                        printf("Dof %li and %li sfc %li - %li\n", i, j, i_sfc, j_sfc);
                         update = false;
                     }
                 }
             }, unique_ids);
+            printf("Unique dofs %i\n", unique_ids);
             return unique_ids;
-        }
+        } */
 
     private:
         // manages host and device mesh objects.
