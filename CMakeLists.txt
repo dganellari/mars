@@ -81,7 +81,7 @@ endif(NOT CMAKE_BUILD_TYPE)
 # ###############################Extra Targets##################################
 
 if(MARS_ENABLE_TESTS)
-  include(cmake/tests.cmake)
+  include(cmake/Tests.cmake)
   add_subdirectory("backend/distributed/testsuite")
   add_subdirectory("backend/adios2/testsuite")
 endif()

@@ -54,29 +54,6 @@ struct maxTreeLevel<int> : integral_constant<unsigned, 10> {};
 template <class KeyType>
 struct maxCoord : integral_constant<unsigned, (1u << maxTreeLevel<KeyType>{})> {};
 
-/*! @brief add (binary) zeros behind a prefix
- *
- * Allows comparisons, such as number of leading common bits (cpr)
- * of the prefix with SFC codes.
- *
- * @tparam KeyType  32- or 64-bit unsigned integer type
- * @param prefix    the bit pattern
- * @param length    number of bits in the prefix
- * @return          prefix padded out with zeros
- *
- * Examples:
- *  pad(0b011u,  3) -> 0b00011 << 27
- *  pad(0b011ul, 3) -> 0b0011ul << 60
- *
- *  i.e. @p length plus the number of zeros added adds up to 30 for 32-bit integers
- *  or 63 for 64-bit integers, because these are the numbers of usable bits in SFC codes.
- */
-template<class KeyType>
-constexpr KeyType pad(KeyType prefix, int length)
-{
-    return prefix << (3 * maxTreeLevel<KeyType>{} - length);
-}
-
 /*! @brief extract the n-th octal digit from an SFC key, starting from the most significant
  *
  * @tparam KeyType   32- or 64-bit unsigned integer type

@@ -2508,6 +2508,19 @@ namespace mars {
             vector_apply_constraints(row, v, 0);
         }
 
+        MARS_INLINE_FUNCTION bool check_unique_dofs() {
+            bool unique_ids = true;
+            auto size = get_dof_size();
+            Kokkos::parallel_reduce("check_unique_ids", size, MARS_LAMBDA(const int i, bool& update) {
+                for (int j = i + 1; j < size; ++j) {
+                    if (local_to_sfc(i) == local_to_sfc(j)) {
+                        update = false;
+                    }
+                }
+            }, unique_ids);
+            return unique_ids;
+        }
+
     private:
         // manages host and device mesh objects.
         /* MM mesh_manager; */

@@ -24,6 +24,8 @@
  */
 
 #include <gtest/gtest.h>
+#include <random>
+#include "mars_distributed_octant.hpp"
 #include "mars_sfc_code.hpp"
 
 using namespace mars;
@@ -134,14 +136,14 @@ void continuityTest()
             KeyType lastKey      = (octant + 1) * nodeRange<KeyType>(level) - 1;
             KeyType firstNextKey = lastKey + 1;
 
-            auto octant = decode_hilbert_3D<KeyType>(lastKey);
+            auto lastOctant = decode_hilbert_3D<KeyType>(lastKey);
 
             auto nextOctant = decode_hilbert_3D<KeyType>(firstNextKey);
 
             // the points in 3D space should be right next to each other, i.e. delta == 1
             // this is a property that the Z-curve does not have
-            int delta = std::abs(int(octant.x) - int(nextOctant.x)) + std::abs(int(octant.y) - int(nextOctant.y)) +
-                        std::abs(int(octant.z) - int(nextOctant.z));
+            int delta = std::abs(int(lastOctant.x) - int(nextOctant.x)) + std::abs(int(lastOctant.y) - int(nextOctant.y)) +
+                        std::abs(int(lastOctant.z) - int(nextOctant.z));
 
             EXPECT_EQ(delta, 1);
         }
@@ -192,7 +194,6 @@ TEST(HilbertCode, inversion)
 }
 
 int main(int argc, char **argv) {
-    mars::Env env(argc, argv);
     testing::InitGoogleTest(&argc, argv);
     return RUN_ALL_TESTS();
 }

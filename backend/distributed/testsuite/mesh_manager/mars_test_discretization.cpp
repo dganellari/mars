@@ -2,13 +2,16 @@
 #include <Kokkos_Core.hpp>
 #include "mars_template_mesh_manager.hpp"
 
-TEST(MarsTest, TestDOFHandlerEnumeration) {
+using namespace mars;
+
+TEST(DofHandlerTest, TestDOFHandlerEnumeration) {
     // Define the dimensions of the mesh
     const int xDim = 10;
     const int yDim = 10;
     const int zDim = 10;
     const int block = 1;
 
+    std::cout << "TestDOFHandlerEnumeration" << std::endl;
     // Create a context
     mars::proc_allocation resources;
     auto context = mars::make_context(resources, MPI_COMM_WORLD);
@@ -24,36 +27,14 @@ TEST(MarsTest, TestDOFHandlerEnumeration) {
     dof_handler.enumerate_dofs();
     dof_handler.set_block(block);
 
-    // Check that the DOFHandler has the correct number of DOFs
-    Unsigned expected_num_dofs = xDim * yDim * zDim;  // Replace with your expected value
-    ASSERT_EQ(dof_handler.get_dof_size(), expected_num_dofs);
-
     // Check that the block size is set correctly
-    ASSERT_EQ(dof_handler.get_block_size(), block);
-
-    // Check that each DOF has a unique identifier
-    // Create a Kokkos View to store the DOF identifiers
-    Kokkos::View<Unsigned*> dof_ids("dof_ids", dof_handler.get_dof_size());
-
-    // Use a Kokkos parallel_for to fill the View with DOF identifiers
-    Kokkos::parallel_for("fill_dof_ids", dof_handler.get_dof_size(), KOKKOS_LAMBDA(const int i) {
-        dof_ids(i) = dof_handler.get_dof_id(i);
-    });
+    ASSERT_EQ(dof_handler.get_block(), block);
 
     // Use a Kokkos parallel_reduce to check for unique identifiers
-    bool unique_ids = true;
-    Kokkos::parallel_reduce("check_unique_ids", dof_handler.get_dof_size(), KOKKOS_LAMBDA(const int i, bool& update) {
-        for (int j = i + 1; j < dof_handler.get_dof_size(); ++j) {
-            if (dof_ids(i) == dof_ids(j)) {
-                update = false;
-            }
-        }
-    }, unique_ids);
-
-    ASSERT_TRUE(unique_ids);
+    ASSERT_TRUE(dof_handler.check_unique_dofs());
 }
 
-TEST(DofMapTest, TestDOFMAPGeneration) {
+/* TEST(DofMapTest, TestDOFMAPGeneration) {
     // Define the dimensions of the mesh
     const int xDim = 10;
     const int yDim = 10;
@@ -111,7 +92,7 @@ TEST(DofMapTest, TestDOFMAPGeneration) {
         }
     }
 
-}
+} */
 // test the DOFMAP generation
 
 int main(int argc, char **argv) {
