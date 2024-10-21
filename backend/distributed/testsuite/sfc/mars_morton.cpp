@@ -6,7 +6,7 @@ using namespace mars;
 
 
 
-TEST(MortonCodeTest, EncodeDecode2D) {
+TEST(MortonCode, EncodeDecode2D) {
     unsigned x = 5, y = 10;
     auto code = encode_morton_2D(x, y);
     auto decoded = decode_morton_2D<unsigned>(code);
@@ -24,7 +24,7 @@ void encode_morton(){
     EXPECT_EQ(decoded.z, z);
 }
 
-TEST(MortonCodeTest, EncodeDecode3D) {
+TEST(MortonCode, EncodeDecode3D) {
     encode_morton<unsigned>();
     encode_morton<uint64_t>();
 }
@@ -40,12 +40,12 @@ void decode_morton(){
     EXPECT_EQ(z, octant.z);
 }
 
-TEST(MortonCodeTest, DecodeMorton3D) {
+TEST(MortonCode, DecodeMorton3D) {
     decode_morton<unsigned>();
     decode_morton<uint64_t>();
 }
 
-TEST(MortonCodeTest, decodeMorton64)
+TEST(MortonCode, decodeMorton64)
 {
     uint64_t code = 0x7FFFFFFFFFFFFFFFlu;
     auto octant = decode_morton_3D<uint64_t>(code);

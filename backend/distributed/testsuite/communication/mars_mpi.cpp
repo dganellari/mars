@@ -5,7 +5,7 @@
 
 
 
-TEST(MPITest, TestGuard) {
+TEST(MPI, TestGuard) {
     int argc = 1;
     char *argv[] = { (char*)"test_program", NULL };
 
@@ -14,7 +14,7 @@ TEST(MPITest, TestGuard) {
     EXPECT_TRUE(result);
 }
 
-TEST(MPITest, TestMPIContext) {
+TEST(MPI, TestMPIContext) {
     int argc = 1;
     char *argv[] = {(char *)"test_program", NULL};
     char **argv_ptr = argv;

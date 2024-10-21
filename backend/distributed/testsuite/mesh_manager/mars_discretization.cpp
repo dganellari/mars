@@ -4,7 +4,7 @@
 
 using namespace mars;
 
-TEST(DofHandlerTest, TestDOFHandlerEnumerationMorton2D) {
+TEST(DofHandler, TestDOFHandlerEnumerationMorton2D) {
     // Define the dimensions of the mesh
     const int xDim = 10;
     const int yDim = 10;
@@ -16,7 +16,7 @@ TEST(DofHandlerTest, TestDOFHandlerEnumerationMorton2D) {
     ASSERT_TRUE(unique);
 }
 
-TEST(DofHandlerTest, TestDOFHandlerEnumerationMorton2DDegree2) {
+TEST(DofHandler, TestDOFHandlerEnumerationMorton2DDegree2) {
     // Define the dimensions of the mesh
     const int xDim = 10;
     const int yDim = 10;
@@ -28,7 +28,7 @@ TEST(DofHandlerTest, TestDOFHandlerEnumerationMorton2DDegree2) {
     ASSERT_TRUE(unique);
 }
 
-TEST(DofHandlerTest, TestDOFHandlerEnumerationMorton3D) {
+TEST(DofHandler, TestDOFHandlerEnumerationMorton3D) {
     // Define the dimensions of the mesh
     const int xDim = 10;
     const int yDim = 10;
@@ -40,7 +40,7 @@ TEST(DofHandlerTest, TestDOFHandlerEnumerationMorton3D) {
     ASSERT_TRUE(unique);
 }
 
-TEST(DofHandlerTest, TestDOFHandlerEnumerationMorton3DDegree2) {
+TEST(DofHandler, TestDOFHandlerEnumerationMorton3DDegree2) {
     // Define the dimensions of the mesh
     const int xDim = 10;
     const int yDim = 10;
@@ -52,7 +52,7 @@ TEST(DofHandlerTest, TestDOFHandlerEnumerationMorton3DDegree2) {
     ASSERT_TRUE(unique);
 }
 
-TEST(DofHandlerTest, TestDOFHandlerEnumerationHilbert2D) {
+TEST(DofHandlerHilbert, TestDOFHandlerEnumerationHilbert2D) {
     // Define the dimensions of the mesh
     const int xDim = 10;
     const int yDim = 10;
@@ -64,7 +64,7 @@ TEST(DofHandlerTest, TestDOFHandlerEnumerationHilbert2D) {
     ASSERT_TRUE(unique);
 }
 
-TEST(DofHandlerTest, TestDOFHandlerEnumerationHilbert2DDegree2) {
+TEST(DofHandlerHilbert, TestDOFHandlerEnumerationHilbert2DDegree2) {
     // Define the dimensions of the mesh
     const int xDim = 10;
     const int yDim = 10;
@@ -76,7 +76,7 @@ TEST(DofHandlerTest, TestDOFHandlerEnumerationHilbert2DDegree2) {
     ASSERT_TRUE(unique);
 }
 
-TEST(DofHandlerTest, TestDOFHandlerEnumerationHilbert3D) {
+TEST(DofHandlerHilbert, TestDOFHandlerEnumerationHilbert3D) {
     // Define the dimensions of the mesh
     const int xDim = 10;
     const int yDim = 10;
@@ -89,7 +89,7 @@ TEST(DofHandlerTest, TestDOFHandlerEnumerationHilbert3D) {
 }
 
 
-TEST(DofHandlerTest, TestDOFHandlerEnumerationHilbert3DDegree2) {
+TEST(DofHandlerHilbert, TestDOFHandlerEnumerationHilbert3DDegree2) {
     // Define the dimensions of the mesh
     const int xDim = 10;
     const int yDim = 10;

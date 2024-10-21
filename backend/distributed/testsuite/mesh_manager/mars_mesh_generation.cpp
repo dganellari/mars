@@ -4,7 +4,7 @@
 using namespace mars;
 
 // Test the mesh generation for 2D meshes for the morton key
-TEST(MarsTest, TestMeshGeneration2D_Small) {
+TEST(MeshGen, TestMeshGeneration2D_Small) {
     const int x = 10;
     const int y = 10;
     auto num_elements = test_mars_distributed_nonsimplex_mesh_generation_kokkos_2D(x, y);
@@ -14,7 +14,7 @@ TEST(MarsTest, TestMeshGeneration2D_Small) {
     ASSERT_EQ(num_elements, expected_num_elements);
 }
 
-TEST(MarsTest, TestMeshGeneration2D_Medium) {
+TEST(MeshGen, TestMeshGeneration2D_Medium) {
     const int x = 100;
     const int y = 100;
     auto num_elements = test_mars_distributed_nonsimplex_mesh_generation_kokkos_2D(x, y);
@@ -22,7 +22,9 @@ TEST(MarsTest, TestMeshGeneration2D_Medium) {
     ASSERT_EQ(num_elements, expected_num_elements);
 }
 
-TEST(MarsTest, TestMeshGeneration2D_Large) {
+#ifdef KOKKOS_ENABLE_CUDA
+
+TEST(MeshGen, TestMeshGeneration2D_Large) {
     const int x = 1000;
     const int y = 1000;
     auto num_elements = test_mars_distributed_nonsimplex_mesh_generation_kokkos_2D(x, y);
@@ -30,7 +32,9 @@ TEST(MarsTest, TestMeshGeneration2D_Large) {
     ASSERT_EQ(num_elements, expected_num_elements);
 }
 
-TEST(MarsTest, TestMeshGeneration2D_NonSquare) {
+#endif
+
+TEST(MeshGen, TestMeshGeneration2D_NonSquare) {
     const int x = 100;
     const int y = 200;
     auto num_elements = test_mars_distributed_nonsimplex_mesh_generation_kokkos_2D(x, y);
@@ -38,7 +42,7 @@ TEST(MarsTest, TestMeshGeneration2D_NonSquare) {
     ASSERT_EQ(num_elements, expected_num_elements);
 }
 
-TEST(MarsTest, TestMeshGeneration3D_Small) {
+TEST(MeshGen, TestMeshGeneration3D_Small) {
     const int x = 10;
     const int y = 10;
     const int z = 10;
@@ -47,7 +51,7 @@ TEST(MarsTest, TestMeshGeneration3D_Small) {
     ASSERT_EQ(num_elements, expected_num_elements);
 }
 
-TEST(MarsTest, TestMeshGeneration3D_Medium) {
+TEST(MeshGen, TestMeshGeneration3D_Medium) {
     const int x = 100;
     const int y = 100;
     const int z = 100;
@@ -56,7 +60,9 @@ TEST(MarsTest, TestMeshGeneration3D_Medium) {
     ASSERT_EQ(num_elements, expected_num_elements);
 }
 
-TEST(MarsTest, TestMeshGeneration3D_Large) {
+#ifdef KOKKOS_ENABLE_CUDA
+
+TEST(MeshGen, TestMeshGeneration3D_Large) {
     const int x = 1000;
     const int y = 1000;
     const int z = 1000;
@@ -65,7 +71,9 @@ TEST(MarsTest, TestMeshGeneration3D_Large) {
     ASSERT_EQ(num_elements, expected_num_elements);
 }
 
-TEST(MarsTest, TestMeshGeneration3D_NonCube) {
+#endif
+
+TEST(MeshGen, TestMeshGeneration3D_NonCube) {
     const int x = 100;
     const int y = 200;
     const int z = 300;
@@ -75,7 +83,7 @@ TEST(MarsTest, TestMeshGeneration3D_NonCube) {
 }
 
 // Test the mesh generation for 2D meshes for the hilbert key
-TEST(MarsTest, TestMeshGeneration2D_HilbertKey) {
+TEST(MeshGenHilbert, TestMeshGeneration2D_HilbertKey) {
     const int x = 10;
     const int y = 10;
     auto num_elements = test_mars_distributed_nonsimplex_mesh_generation_kokkos_2D<HilbertKey<Unsigned>>(x, y);
@@ -83,7 +91,7 @@ TEST(MarsTest, TestMeshGeneration2D_HilbertKey) {
     ASSERT_EQ(num_elements, expected_num_elements);
 }
 
-TEST(MarsTest, TestMeshGeneration2D_HilbertKey_Medium) {
+TEST(MeshGenHilbert, TestMeshGeneration2D_HilbertKey_Medium) {
     const int x = 100;
     const int y = 100;
     auto num_elements = test_mars_distributed_nonsimplex_mesh_generation_kokkos_2D<HilbertKey<Unsigned>>(x, y);
@@ -91,7 +99,9 @@ TEST(MarsTest, TestMeshGeneration2D_HilbertKey_Medium) {
     ASSERT_EQ(num_elements, expected_num_elements);
 }
 
-TEST(MarsTest, TestMeshGeneration2D_HilbertKey_Large) {
+#ifdef KOKKOS_ENABLE_CUDA
+
+TEST(MeshGenHilbert, TestMeshGeneration2D_HilbertKey_Large) {
     const int x = 1000;
     const int y = 1000;
     auto num_elements = test_mars_distributed_nonsimplex_mesh_generation_kokkos_2D<HilbertKey<Unsigned>>(x, y);
@@ -99,7 +109,9 @@ TEST(MarsTest, TestMeshGeneration2D_HilbertKey_Large) {
     ASSERT_EQ(num_elements, expected_num_elements);
 }
 
-TEST(MarsTest, TestMeshGeneration2D_HilbertKey_NonSquare) {
+#endif
+
+TEST(MeshGenHilbert, TestMeshGeneration2D_HilbertKey_NonSquare) {
     const int x = 100;
     const int y = 200;
     auto num_elements = test_mars_distributed_nonsimplex_mesh_generation_kokkos_2D<HilbertKey<Unsigned>>(x, y);
@@ -108,7 +120,7 @@ TEST(MarsTest, TestMeshGeneration2D_HilbertKey_NonSquare) {
 }
 
 // Test the mesh generation for 3D meshes for the hilbert key
-TEST(MarsTest, TestMeshGeneration3D_HilbertKey_Small) {
+TEST(MeshGenHilbert, TestMeshGeneration3D_HilbertKey_Small) {
     const int x = 10;
     const int y = 10;
     const int z = 10;
@@ -117,7 +129,7 @@ TEST(MarsTest, TestMeshGeneration3D_HilbertKey_Small) {
     ASSERT_EQ(num_elements, expected_num_elements);
 }
 
-TEST(MarsTest, TestMeshGeneration3D_HilbertKey_Medium) {
+TEST(MeshGenHilbert, TestMeshGeneration3D_HilbertKey_Medium) {
     const int x = 100;
     const int y = 100;
     const int z = 100;
@@ -126,7 +138,9 @@ TEST(MarsTest, TestMeshGeneration3D_HilbertKey_Medium) {
     ASSERT_EQ(num_elements, expected_num_elements);
 }
 
-TEST(MarsTest, TestMeshGeneration3D_HilbertKey_Large) {
+#ifdef KOKKOS_ENABLE_CUDA
+
+TEST(MeshGenHilbert, TestMeshGeneration3D_HilbertKey_Large) {
     const int x = 1000;
     const int y = 1000;
     const int z = 1000;
@@ -135,7 +149,9 @@ TEST(MarsTest, TestMeshGeneration3D_HilbertKey_Large) {
     ASSERT_EQ(num_elements, expected_num_elements);
 }
 
-TEST(MarsTest, TestMeshGeneration3D_HilbertKey_NonCube) {
+#endif
+
+TEST(MeshGenHilbert, TestMeshGeneration3D_HilbertKey_NonCube) {
     const int x = 100;
     const int y = 200;
     const int z = 300;
