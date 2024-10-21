@@ -47,23 +47,23 @@ TEST(MortonCodeTest, DecodeMorton3D) {
 
 TEST(MortonCodeTest, decodeMorton64)
 {
-    std::size_t code = 0x7FFFFFFFFFFFFFFFlu;
-    auto octant = decode_morton_3D<size_t>(code);
+    uint64_t code = 0x7FFFFFFFFFFFFFFFlu;
+    auto octant = decode_morton_3D<uint64_t>(code);
     EXPECT_EQ((1u << 21u) - 1u, octant.z);
     EXPECT_EQ((1u << 21u) - 1u, octant.y);
     EXPECT_EQ((1u << 21u) - 1u, octant.x);
 
     code = 0x1249249241249249;
-    EXPECT_EQ((1u << 21u) - 512u - 1u, decode_morton_3D<size_t>(code).x);
+    EXPECT_EQ((1u << 21u) - 512u - 1u, decode_morton_3D<uint64_t>(code).x);
 
     code = 0b0111lu << (20u * 3);
-    auto octant2 = decode_morton_3D<size_t>(code);
+    auto octant2 = decode_morton_3D<uint64_t>(code);
     EXPECT_EQ(1u << 20u, octant2.z);
     EXPECT_EQ(1u << 20u, octant2.y);
     EXPECT_EQ(1u << 20u, octant2.x);
 
     code = 0b0011lu << (20u * 3);
-    auto octant3 = decode_morton_3D<size_t>(code);
+    auto octant3 = decode_morton_3D<uint64_t>(code);
     EXPECT_EQ(0, octant3.z);
     EXPECT_EQ(1u << 20u, octant3.y);
     EXPECT_EQ(1u << 20u, octant3.x);
