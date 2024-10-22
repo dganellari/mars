@@ -298,16 +298,6 @@ namespace mars {
         deep_copy(m, h_pt);
     }
 
-    template <typename T>
-    void print_view(const ViewVectorType<T>& view) {
-        using namespace Kokkos;
-
-        parallel_for(
-            "print view", view.extent(0), KOKKOS_LAMBDA(const Integer i) {
-                std::cout << "i: " << i << " value: " << view(i) << std::endl;
-            });
-    }
-
     struct resize_view_functor {
         resize_view_functor(std::string d, size_t s) : _desc(d), _size(s) {}
         template <typename ElementType>

@@ -129,7 +129,20 @@ namespace mars {
 
         // Check for duplicates
         Kokkos::parallel_for("check_duplicates", size - 1, KOKKOS_LAMBDA(const size_t i) {
-            if (handler.template local_to_sfc<DofHandler::Block>(i) == handler.template local_to_sfc<DofHandler::Block>(i + 1)) {
+            auto sfc_i = handler.template local_to_sfc<DofHandler::Block>(i);
+            auto sfc_j = handler.template local_to_sfc<DofHandler::Block>(i + 1);
+
+            // Get the components of the block local dof in order to compute the local dof
+            auto component_i = handler.get_component(i);
+            auto component_j = handler.get_component(i + 1);
+
+            //in this way we test component and sfc to local map to get to the same local dof value
+            auto local_i = handler.sfc_to_local(sfc_i, component_i);
+            auto local_j = handler.sfc_to_local(sfc_j, component_j);
+            assert(local_i == i && local_j == i + 1);
+
+            //it is unique only if one of the two is not equal
+            if (sfc_i == sfc_j && local_i == local_j) {
                 bool expected = true;
                 Kokkos::atomic_compare_exchange(&unique_ids(0), expected, false);
             }
@@ -187,9 +200,7 @@ namespace mars {
         double time_dh = timer_dof.seconds();
         std::cout << "DOFHandler enum took: " << time_dh << std::endl;
 
-        /* result = dof_handler.template check_unique_dofs<Block>(); */
         result = check_unique_dofs(dof_handler);
-        printf("Unique dofs ---- %i\n", result);
 #endif
         return result;
     }

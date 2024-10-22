@@ -236,6 +236,17 @@ namespace mars {
             });
     }
 
+
+    //write a function that prints a view in parallel with kokkos
+    //
+    template <typename T>
+    void print_view(ViewVectorType<T> view, const std::string& name) {
+        using namespace Kokkos;
+
+        parallel_for(
+            "print view", view.extent(0), KOKKOS_LAMBDA(const int i) { printf("%s[%d] = %d\n", name.c_str(), i, view(i)); });
+    }
+
     template <typename T>
     void inclusive_scan(const Integer start, const Integer end, const ViewVectorType<T> in_, ViewVectorType<T> out_) {
         using namespace Kokkos;
@@ -392,12 +403,16 @@ namespace mars {
 
         // Mark the unique elements
         Kokkos::parallel_for(
-            "mark_unique", Kokkos::RangePolicy<>(1, d_in.extent(0)), KOKKOS_LAMBDA(int i) {
-                flags(i) = (d_in(i) != d_in(i - 1));
+            "mark_unique", Kokkos::RangePolicy<>(0, d_in.extent(0)), KOKKOS_LAMBDA(int i) {
+                if (i == 0) {
+                    flags(i) = true;  // The first element is always unique
+                } else {
+                    flags(i) = (d_in(i) != d_in(i - 1));
+                }
             });
 
         // Count the number of unique elements
-        int unique_count;
+        int unique_count = 0;
         Kokkos::parallel_reduce(
             "count_unique",
             d_in.extent(0),
@@ -423,7 +438,6 @@ namespace mars {
 
 #ifdef MARS_ENABLE_CUDA
 
-    //TODO: Check in alps to see if the inplace works directly
     template <typename T>
     void cub_inclusive_scan(ViewVectorType<T> data_) {
         // Determine temporary device storage requirements
@@ -435,7 +449,6 @@ namespace mars {
         // Run inclusive scan operation
         cub::DeviceScan::InclusiveSum(d_temp_storage, temp_storage_bytes, data_.data(), data_.data(), data_.extent(0));
     }
-
 
     template <typename T>
     void cub_unique(ViewVectorType<T> d_in, ViewVectorType<T> d_out, ViewVectorType<T> d_num_selected_out) {
