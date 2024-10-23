@@ -36,7 +36,7 @@ class mars_download(rfm.RunOnlyRegressionTest):
     executable_opts = [
         'clone', 'git@github.com:dganellari/mars.git'
         '&&', 'cd', 'mars'
-        '&&', 'git', 'checkout', 'hilbert'
+        '&&', 'git', 'checkout', 'master'
     ]
     local = True
 
@@ -74,7 +74,6 @@ class mars_build(rfm.CompileOnlyRegressionTest):
             ' -DMARS_ENABLE_KERNELS=ON',
             ' -DMARS_ENABLE_CUDA=ON',
             ' -DMARS_ENABLE_TESTS=ON',
-            '-DMARS_ENABLE_CXXOPTS=ON',
         ]
         # set architecture-specific flags
         if self.uarch == 'gh200':
@@ -98,53 +97,96 @@ class mars_build(rfm.CompileOnlyRegressionTest):
 @rfm.simple_test
 class mars_unit(rfm.RunOnlyRegressionTest):
     descr = 'Run the mars unit tests'
-    valid_systems = ['*']
-    valid_prog_environs = ['+mars-dev']
+    valid_systems = ['+uenv ']
+    valid_prog_environs = ['+mpi']
+    target_executable = variable(str, value='ctest')
     time_limit = '5m'
     maintainers = ['dganellari']
+
     mars_build = fixture(mars_build, scope='environment')
 
     @run_before('run')
     def prepare_run(self):
-        self.executable = os.path.join(self.arbor_build.stagedir,
-                                       'build', 'bin', 'unit')
-        self.executable_opts = []
-
-    @sanity_function
-    def validate_test(self):
-        return sn.assert_found(r'PASSED', self.stdout)
-
-class testBase(rfm.RunOnlyRegressionTest):
-    valid_systems = ['+uenv']
-    valid_prog_environs = ['+mpi']
-    target_executable = variable(str, value='ctest')
-    maintainers = ['dganellari']
-
-    test = ''
-    region = []
-    is_serial_test = True
-    use_multithreading = False
-    refs = {}
-
-    quicc_build = fixture(quicc_build, scope='environment')
-
-    @run_before('run')
-    def set_num_tasks(self):
-        """Set num tasks based on machine"""
-        proc = self.current_partition.processor
-        self.num_tasks_per_node = proc.num_cores
-        self.num_tasks = 1
-        self.time_limit = '30m'
-
-    @run_before('run')
-    def set_exec(self):
         self.executable = self.target_executable
         self.executable_opts = [
             '--test-dir', f'{self.mars_build.stagedir}/build', '-V', '-R', self.test
         ]
 
     @sanity_function
+    def validate_test(self):
+        return sn.assert_found(r'PASSED', self.stdout)
+
+@rfm.simple_test
+class mars_discretization(rfm.RunOnlyRegressionTest):
+    descr = 'Run the mars FEM discretization tests small and medium mesh'
+    valid_systems = ['uenv']
+    valid_prog_environs = ['+mpi']
+    target_executable = variable(str, value='ctest')
+    maintainers = ['dganellari']
+    model_size = parameter(['small_mesh', 'medium_mesh'])
+
+    mars_build = fixture(mars_build, scope='environment')
+
+
+    @run_before('run')
+    def prepare_run(self):
+        self.executable = self.target_executable
+        self.executable_opts = [
+            '--test-dir', f'{self.mars_build.stagedir}/build', '-V', '-R', self.test
+        ]
+
+        # Instead of explicitly listing performance targets for all possible
+        # system:partition combinations, set the reference targets to those
+        # for the uarch of the current partition.
+        # * self.uarch is one of the alps arch: gh200, zen2, a100, ... or None
+        # * self.current_partition.fullname is the vcluster:partition string,
+        #   for example "daint:normal" or "todi:debug".
+        self.uarch = uenv.uarch(self.current_partition)
+        if (self.uarch is not None) and (self.uarch in mars_references):
+            self.reference = {
+                self.current_partition.fullname:
+                    arbor_references[self.uarch]['serial'][self.model_size]
+            }
+
+    @sanity_function
     def assert_sanity(self):
         return sn.assert_found(r'All tests passed', self.stdout)
 
+    @performance_function('s')
+    def time_run(self):
+        return sn.extractsingle(r'model-run\s+(\S+)', self.stdout, 1, float)
 
+slurm_config = {
+        'gh200': {"ranks": 4, "cores": 64, "gpu": True},
+        'zen2': {"ranks": 2, "cores": 64, "gpu": False},
+}
+
+
+@rfm.simple_test
+class mars_discretization_mpi(mars_discretization):
+    """
+    adapt the mars discretization test to run with MPI
+    """
+
+    descr = 'arbor busyring model MPI on a single node'
+    model_size = parameter(['medium'])
+
+    @run_before('run')
+    def prepare_run(self):
+        self.uarch = uenv.uarch(self.current_partition)
+        self.executable = self.target_executable
+        self.executable_opts = [
+            '--test-dir', f'{self.mars_build.stagedir}/build', '-V', '-R', self.test
+        ]
+
+        self.num_tasks = slurm_config[self.uarch]["ranks"]
+        self.num_cpus_per_task = slurm_config[self.uarch]["cores"]
+        if slurm_config[self.uarch]["gpu"]:
+            self.job.options = ['--gpus-per-task=1']
+
+        self.uarch = uenv.uarch(self.current_partition)
+        if (self.uarch is not None) and (self.uarch in mars_references):
+            self.reference = {
+                self.current_partition.fullname:
+                    arbor_references[self.uarch]['distributed'][self.model_size]
+            }
