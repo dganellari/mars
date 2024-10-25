@@ -128,14 +128,14 @@ namespace mars {
 
         // computes the component (block) from the block local
         template <Integer B = Block_>
-        MARS_INLINE_FUNCTION typename std::enable_if<B == 1, Integer>::type compute_component(
+        MARS_INLINE_FUNCTION typename std::enable_if<B == 1, Integer>::type get_component(
             const Integer local) const {
             return 0;
         }
 
         // B==0 goes for runtime block input. Useful for interfacing with UtopiaFE.
         template <Integer B = Block_>
-        MARS_INLINE_FUNCTION typename std::enable_if<B != 1, Integer>::type compute_component(
+        MARS_INLINE_FUNCTION typename std::enable_if<B != 1, Integer>::type get_component(
             const Integer local) const {
             return local % get_block<B>();
         }
@@ -423,7 +423,7 @@ namespace mars {
                 /* if (proc >= owner_proc && owner_proc >= 0) { */
                 if (proc >= owner_proc) {
                     Integer index = get_value_in_map(sfc_to_locally_owned, sfc);
-                    rank_boundary(index, map(ghost_proc)) = 1;
+                    if (index > INVALID_INDEX) rank_boundary(index, map(ghost_proc)) = 1;
                 }
             }
 
@@ -451,7 +451,7 @@ namespace mars {
             void volume_rank_boundary(const Mesh mesh, const Integer i, const KeyType sfc, std::false_type) const {
                 const Integer ghost_proc = find_owner_processor(mesh.get_view_scan_boundary(), i, 1, proc);
                 Integer index = get_value_in_map(sfc_to_locally_owned, sfc);
-                rank_boundary(index, map(ghost_proc)) = 1;
+                if (index > INVALID_INDEX) rank_boundary(index, map(ghost_proc)) = 1;
             }
 
             MARS_INLINE_FUNCTION
@@ -1466,7 +1466,6 @@ namespace mars {
             inclusive_scan(0, owned_thread_count.size(), owned_thread_count);
             inclusive_scan(0, local_thread_count.size(), local_thread_count);
 #endif
-
             //get the last value of the thread count
             const Integer owned_size = get_last_value(owned_thread_count);
             const Integer local_size = get_last_value(local_thread_count);
@@ -1499,6 +1498,7 @@ namespace mars {
 
             auto owned_unique_dofs = kokkos_unique(owned_dofs);
             auto unique_dofs = kokkos_unique(dofs);
+
 #endif
 
             global_dof_enum.set_elements(owned_unique_dofs);
@@ -1668,7 +1668,11 @@ namespace mars {
         template <class UMAP>
         static MARS_INLINE_FUNCTION Integer get_value_in_map(const UMAP map, const KeyType sfc) {
             const auto it = map.find(sfc);
-            return map.value_at(it);
+            if (map.valid_at(it)) {
+                return map.value_at(it);
+            } else {
+                return INVALID_INDEX;
+            }
         }
 
         template <bool Ghost>
@@ -1697,7 +1701,7 @@ namespace mars {
                 // if the ghost elem owns the dof then he is able to send it.
                 if (elem_sfc_proc >= owner_proc) {
                     Integer index = get_local_from_sfc(sfc);
-                    dir(index) = d;
+                    if (index > INVALID_INDEX) dir(index) = d;
                 }
             }
 
@@ -1709,7 +1713,7 @@ namespace mars {
                                  const Integer d,
                                  std::false_type) const {
                 Integer index = get_local_from_sfc(sfc);
-                dir(index) = d;
+                if (index > INVALID_INDEX) dir(index) = d;
             }
 
             MARS_INLINE_FUNCTION
@@ -1791,7 +1795,7 @@ namespace mars {
                 // if the ghost elem owns the dof then he is able to send it.
                 if (elem_sfc_proc >= owner_proc) {
                     auto index = get_value_in_map(local_enum.get_sfc_to_local_map(), sfc);
-                    local_enum.set_label(index, Label);
+                    if (index > INVALID_INDEX) local_enum.set_label(index, Label);
                 }
             }
 
@@ -1805,10 +1809,16 @@ namespace mars {
                     is less than the owner. This is how the dofs are partitioned*/
                 if (proc >= owner_proc) {
                     auto gindex = get_value_in_map(global_enum.get_sfc_to_local_map(), sfc);
-                    global_enum.set_label(gindex, Label);
+                    if (gindex > INVALID_INDEX)
+                        global_enum.set_label(gindex, Label);
+                    else
+                        printf("Setting global label: %li, %li, %li, %li, %li\n", Label, gindex, i, sfc, owner_proc);
                 }
                 auto index = get_value_in_map(local_enum.get_sfc_to_local_map(), sfc);
-                local_enum.set_label(index, Label);
+                if (index > INVALID_INDEX)
+                    local_enum.set_label(index, Label);
+                else
+                    printf("Setting global label: %li, %li, %li, %li, %li\n", Label, index, i, sfc, owner_proc);
             }
 
             MARS_INLINE_FUNCTION
@@ -1829,15 +1839,15 @@ namespace mars {
             MARS_INLINE_FUNCTION
             void volume_label(const KeyType sfc, std::true_type) const {
                 auto index = get_value_in_map(local_enum.get_sfc_to_local_map(), sfc);
-                local_enum.set_label(index, DofLabel::lVolume);
+                if (index > INVALID_INDEX) local_enum.set_label(index, DofLabel::lVolume);
             }
 
             MARS_INLINE_FUNCTION
             void volume_label(const KeyType sfc, std::false_type) const {
                 auto gindex = get_value_in_map(global_enum.get_sfc_to_local_map(), sfc);
-                global_enum.set_label(gindex, DofLabel::lVolume);
+                if (gindex > INVALID_INDEX) global_enum.set_label(gindex, DofLabel::lVolume);
                 auto index = get_value_in_map(local_enum.get_sfc_to_local_map(), sfc);
-                local_enum.set_label(index, DofLabel::lVolume);
+                if (index > INVALID_INDEX) local_enum.set_label(index, DofLabel::lVolume);
             }
 
             MARS_INLINE_FUNCTION
@@ -2061,7 +2071,7 @@ namespace mars {
         template <Integer B = Block_>
         MARS_INLINE_FUNCTION typename std::enable_if<B != 1, Integer>::type local_to_owned_dof(
             const Integer local) const {
-            const Integer comp_local = compute_component<B>(local);
+            const Integer comp_local = get_component<B>(local);
             const auto sfc = local_to_sfc<B>(local);
             const Integer base_owned = get_eval_value_in_global_map(sfc);
             return compute_block_index<B>(base_owned, comp_local);
@@ -2108,7 +2118,7 @@ namespace mars {
         template <Integer B = Block_>
         MARS_INLINE_FUNCTION typename std::enable_if<B != 1, Dof>::type local_to_global_dof(const Integer local) const {
             // use the local to sfc view (elements) to get the sfc of the local numbering.
-            const Integer component = compute_component<B>(local);
+            const Integer component = get_component<B>(local);
 
             const auto local_sfc = local_to_sfc<B>(local);
             auto dof = sfc_to_global_dof(local_sfc);
@@ -2272,7 +2282,7 @@ namespace mars {
             auto handler = *this;
             owned_dof_iterate(MARS_LAMBDA(const Integer i) {
                 const auto sfc = handler.owned_to_sfc(i);
-                auto comp = handler.compute_component(i);
+                auto comp = handler.get_component(i);
                 if (is_separated_block(bl, comp) && handler.template boundary_sfc<ElemType>(sfc, side_value)) {
                     const Integer local = handler.sfc_to_local(sfc);
                     f(handler.compute_block_index(local, comp));
@@ -2298,7 +2308,7 @@ namespace mars {
         template <Integer B = Block_>
         MARS_INLINE_FUNCTION Integer get_owned_dof(const Integer owned_dof) const {
             auto base = compute_base<B>(owned_dof);
-            auto component = compute_component<B>(owned_dof);
+            auto component = get_component<B>(owned_dof);
             const auto sfc = get_global_dof_enum().get_view_elements()(base);
             return compute_block_index<B>(sfc_to_local(sfc), component);
         }
@@ -2344,7 +2354,7 @@ namespace mars {
         template <Integer B = Block_>
         MARS_INLINE_FUNCTION Integer get_boundary_dof(const Integer i) const {
             const auto base = compute_base<B>(i);
-            const auto component = compute_component<B>(i);
+            const auto component = get_component<B>(i);
             const auto local = sfc_to_local(get_boundary_dofs()(base));
             assert(INVALID_INDEX != local);
             return compute_block_index<B>(local, component);
@@ -2363,7 +2373,7 @@ namespace mars {
         template <Integer B = Block_>
         MARS_INLINE_FUNCTION Integer get_ghost_dof(const Integer i) const {
             const auto base = compute_base<B>(i);
-            const auto component = compute_component<B>(i);
+            const auto component = get_component<B>(i);
             const auto local = sfc_to_local(get_ghost_dofs()(base));
             assert(INVALID_INDEX != local);
             return compute_block_index<B>(local, component);

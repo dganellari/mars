@@ -33,12 +33,12 @@ if(MARS_ENABLE_TESTS)
 
     include(GoogleTest)
 
-    macro(mars_add_test TESTNAME TEST_FILE TEST_SOURCES)
+    macro(mars_add_test TESTNAME TEST_FILE)
         add_executable(${TESTNAME} ${TEST_FILE} ${ARGN})
-        target_link_libraries(${TESTNAME} mars
-                              ${MARS_G_TEST_LIBRARIES})
+        target_link_libraries(${TESTNAME} mars ${MARS_G_TEST_LIBRARIES})
 
-        gtest_add_tests(TARGET ${TESTNAME} SOURCES ${TEST_SOURCES})
+        # Automatically include TEST_FILE in the TEST_SOURCES
+        gtest_add_tests(TARGET ${TESTNAME} SOURCES ${TEST_FILE} ${ARGN})
         get_filename_component(CURRENT_DIRECTORY_NAME ${CMAKE_CURRENT_SOURCE_DIR} NAME)
         set_target_properties(${TESTNAME} PROPERTIES FOLDER ${CURRENT_DIRECTORY_NAME})
 

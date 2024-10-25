@@ -197,7 +197,7 @@ namespace mars {
         template <Integer B = Block>
         MARS_INLINE_FUNCTION Integer get_owned_dof(const Integer i) const {
             auto base = get_dof_handler().template compute_base<B>(i);
-            auto component = get_dof_handler().template compute_component<B>(i);
+            auto component = get_dof_handler().template get_component<B>(i);
             return get_dof_handler().template compute_block_index<B>(locally_owned_dofs(base), component);
         }
 
@@ -538,8 +538,8 @@ namespace mars {
 
         // computes the component (block) from the block local
         template <Integer B = Block>
-        MARS_INLINE_FUNCTION Integer compute_component(const Integer local) const {
-            return get_dof_handler().template compute_component<B>(local);
+        MARS_INLINE_FUNCTION Integer get_component(const Integer local) const {
+            return get_dof_handler().template get_component<B>(local);
         }
 
         template <Integer B = Block>

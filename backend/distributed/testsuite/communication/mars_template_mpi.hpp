@@ -32,7 +32,7 @@ namespace mars {
 
 #ifdef MARS_ENABLE_MPI
 
-    void test_mpi(int &argc, char **&argv) {
+    bool test_mpi(int &argc, char **&argv) {
         using namespace mars;
 
         try {
@@ -51,7 +51,7 @@ namespace mars {
 #endif
 
 
-    void test_mpi_context(int &argc, char **&argv) {
+    context test_mpi_context(int &argc, char **&argv) {
         using namespace mars;
 
         try {
@@ -91,9 +91,10 @@ namespace mars {
                 std::cout << "ranks:    " << num_ranks(context) << "\n";
                 std::cout << "rank:    " << rank(context) << "\n" << std::endl;
             }
-            // run some simulations!
+            return context;
         } catch (std::exception &e) {
             std::cerr << "exception caught in ring miniapp: " << e.what() << "\n";
+            return {};
         }
     }
 
