@@ -342,7 +342,7 @@ namespace mars {
 
                     auto base_index = handler.compute_base(i);
                     auto local_owned_dof = locally_owned_dofs(base_index);
-                    auto comp_index = handler.compute_component(i);
+                    auto comp_index = handler.get_component(i);
 
                     auto block_owned = handler.compute_block_index(local_owned_dof, comp_index);
                     auto local_owned_index = handler.local_to_owned_dof(block_owned);
@@ -402,7 +402,7 @@ namespace mars {
                 Kokkos::parallel_for(
                     "generate columns from node to node connectivity", owned_size, MARS_LAMBDA(const Integer i) {
                         auto local_owned_dof = lod(handler.compute_base(i));
-                        auto comp_index = handler.compute_component(i);
+                        auto comp_index = handler.get_component(i);
                         auto block_owned = handler.compute_block_index(local_owned_dof, comp_index);
                         auto owned_index = handler.local_to_owned_dof(block_owned);
 

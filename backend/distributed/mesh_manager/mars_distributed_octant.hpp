@@ -3,6 +3,7 @@
 
 #include <map>
 #include <type_traits>
+#include "mars_globals.hpp"
 
 namespace mars {
 

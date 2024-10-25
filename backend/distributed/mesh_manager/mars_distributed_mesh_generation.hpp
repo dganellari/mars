@@ -622,7 +622,6 @@ void process_segment(DMesh<Dim, ManifoldDim, Type, KeyType> &mesh,
 template <Integer Dim, Integer ManifoldDim, Integer Type, typename KeyType>
 void print_mesh_sfc_coordinates(DMesh<Dim, ManifoldDim, Type, KeyType> &mesh) {
     using ValueType = typename KeyType::ValueType;
-    static_assert(std::is_same<KeyType, HilbertKey<ValueType>>::value, "Key type must be HilbertKey");
 
     // print the sfc elements and its coordinates using get octant from sfc in parallel with kokkos
     Kokkos::parallel_for(

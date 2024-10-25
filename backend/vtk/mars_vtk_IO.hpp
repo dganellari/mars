@@ -44,7 +44,7 @@ namespace mars {
         Kokkos::parallel_for(
             "set_locally_owned_data", size, MARS_LAMBDA(const Integer i) {
                 const Integer base = dof_handler.compute_base(i);
-                const Integer component = dof_handler.compute_component(i);
+                const Integer component = dof_handler.get_component(i);
                 const Integer sfc = global_to_sfc(base);
 
                 // const Integer local = sfc_to_local(sfc);
@@ -335,7 +335,7 @@ namespace mars {
                 global_dof_array->SetName("global_dof_id");
 
                 // const Integer base = dof_handler.compute_base(i);
-                // const Integer component = dof_handler.compute_component(i);
+                // const Integer component = dof_handler.get_component(i);
                 // const Integer sfc = global_to_sfc(base);
 
                 Integer n_nodes = dof.get_elem_size();

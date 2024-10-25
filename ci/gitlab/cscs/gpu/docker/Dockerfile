@@ -1,16 +1,22 @@
-ARG BASE_IMAGE
-FROM $BASE_IMAGE
+FROM docker.io/finkandreas/spack:0.19.2-cuda11.7.1-ubuntu22.04 as builder
 
 ARG NUM_PROCS
 
-COPY . /mars.src
+RUN spack-install-helper \
+    daint-gpu \
+    "kokkos +aggressive_vectorization ~alloc_async +cuda_constexpr +cuda_lambda ~cuda_relocatable_device_code ~cuda_uvm cxxstd=17 +openmp +pic +serial +shared +tuning +wrapper" \
+    "kokkos-kernels +blas +cublas +cusparse +cusolver +execspace_cuda +execspace_openmp +execspace_serial +lapack +memspace_cudaspace +openmp scalars=float,double,complex_float,complex_double +serial +shared +superlu" \
+    "cmake" \
+    "git" \
+
+RUN cd /opt/view/lib/pkgconfig && ln -s openblas.pc blas.pc
 
 ENV MARS_DIR=/mars.install
 
-# scripting broken, hence we disable it.
-# We are grepping in the output of cmake for the string 'Manually-specified variables were' to catch early error were variables are being renamed.
-# It is an error to specify variables on the commandline that are unused.
-RUN mkdir -p /mars.src/build \
+RUN git clone https://github.com/dganellari/mars.git --branch development /mars.src
+RUN cd /mars.src && git submodule update --init --recursive
+RUN mkdir -p /mars.src/build
+RUN spack env activate /opt/spack-environment \
   && cd /mars.src/build \
   && cmake \
     -DCMAKE_BUILD_TYPE=Release \
@@ -19,28 +25,32 @@ RUN mkdir -p /mars.src/build \
     -DCMAKE_VERBOSE_MAKEFILE=ON \
     -DMARS_ENABLE_KOKKOS=ON \
     -DMARS_ENABLE_CUDA=ON \
-    -DMARS_ENABLE_BENCHMARK=OFF \
     -DMARS_ENABLE_TESTS=ON \
-    .. |& tee cmake_output.log \
+    -DMARS_ENABLE_EXAMPLES=ON \
+    /mars.src |& tee cmake_output.log \
   && ! grep 'Manually-specified variables were' cmake_output.log \
   && make -j$NUM_PROCS \
-  && make install
+  && make install \
+  && spack env deactivate
+RUN rm -rf /mars.src/build
 
-RUN mkdir -p /utopia.src/utopia_fe/build \
-  && cd /utopia.src/utopia_fe/build \
-  && cmake \
-    -DCMAKE_BUILD_TYPE=Release \
-    -DCMAKE_INSTALL_PREFIX=$UTOPIA_DIR \
-    -DCMAKE_VERBOSE_MAKEFILE=OFF \
-    -DCMAKE_CXX_COMPILER=/opt/view/bin/nvcc_wrapper \
-    -DCMAKE_PREFIX_PATH=$MARS_DIR/lib/cmake \
-    -DBUILD_SHARED_LIBS=OFF \
-    -DUTOPIA_ENABLE_CXX14_FEATURES=ON \
-    -DUTOPIA_ENABLE_LIBMESH=OFF \
-    -DUTOPIA_ENABLE_MARS=ON \
-    -DUTOPIA_ENABLE_MOONOLITH=OFF \
-    -DUTOPIA_ENABLE_TRILINOS_ALGEBRA=ON \
-    .. |& tee cmake_output.log \
-  && ! grep 'Manually-specified variables were' cmake_output.log \
-  && make -j$NUM_PROCS complete \
-  && make install
+# end of builder container, now we are ready to copy necessary files
+
+# copy only relevant parts to the final container
+FROM docker.io/finkandreas/spack:base-cuda11.7.1-ubuntu22.04
+
+# copy mars installation to the final container
+COPY --from=builder $MARS_DIR $MARS_DIR
+
+# it is important to keep the paths, otherwise your installation is broken
+# all these paths are created with the above `spack-install-helper` invocation
+COPY --from=builder /opt/spack-environment /opt/spack-environment
+COPY --from=builder /opt/software /opt/software
+COPY --from=builder /opt/._view /opt/._view
+COPY --from=builder /etc/profile.d/z10_spack_environment.sh /etc/profile.d/z10_spack_environment.sh
+
+RUN fix_spack_install
+
+RUN apt-get -yqq update && apt-get -yqq upgrade \
+ && apt-get -yqq install build-essential gdb gfortran \
+ && rm -rf /var/lib/apt/lists/*

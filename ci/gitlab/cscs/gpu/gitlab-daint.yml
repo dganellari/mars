@@ -2,71 +2,46 @@ include:
   - remote: 'https://gitlab.com/cscs-ci/recipes/-/raw/master/templates/v2/.ci-ext.yml'
 
 stages:
-  - build_base
-  - build # build stage is running on the Kubernetes cluster
+  - build
   - test # test stage is running on a slurm cluster
 
 variables:
   # for CUDA-aware MPI, Sarus requires LD_PRELOAD to be set in order to load
   # the specified cuda libraries from the compute node before all others
   CUDA_LIBS: '/usr/local/cuda/compat/libcuda.so:/usr/local/cuda/lib64/libcudart.so'
-  PERSIST_IMAGE_NAME: $CSCS_REGISTRY_PATH/mars_gpu:$CI_COMMIT_SHA
-  UTOPIA_CASE_PATH: '/utopia.src/ci/cases/'
+  PERSIST_IMAGE_NAME: $CSCS_REGISTRY_PATH/mars_kokkos_gpu:$CI_COMMIT_SHA
+  # MARS_CASE_PATH: '/mars.src/ci/reframe
 
-build-mars-baseimage:
+build-mars-image:
   extends: .container-builder
-  stage: build_base
+  stage: build
   before_script:
     - DATA_TAG=`mktemp`
     - sha256sum $DOCKERFILE > $DATA_TAG
-    # always use latest branch revision from utopia repo
-    - git ls-remote $UTOPIA_GIT_URL $UTOPIA_GIT_REFS >> $DATA_TAG
+    # always use latest branch revision from mars repo
+    - git ls-remote $MARS_GIT_URL $MARS_GIT_REFS >> $DATA_TAG
     - DOCKERFILE_TAG=`sha256sum $DATA_TAG | head -c 16`
     - rm -f $DATA_TAG
-    - export PERSIST_IMAGE_NAME=$CSCS_REGISTRY_PATH/baseimage/mars_base:$DOCKERFILE_TAG
-    - echo "BASE_IMAGE=$PERSIST_IMAGE_NAME" >> build.env
+    - export PERSIST_IMAGE_NAME=$CSCS_REGISTRY_PATH/image/mars:$DOCKERFILE_TAG
+    - echo "IMAGE=$PERSIST_IMAGE_NAME" >> build.env
   artifacts:
     reports:
       dotenv: build.env
   variables:
-    DOCKERFILE: ci/gitlab/cscs/gpu/docker/Dockerfile.base
-    UTOPIA_GIT_URL: 'https://bitbucket.org/zulianp/utopia.git'
-    UTOPIA_GIT_REFS: 'refs/heads/development'
-
-build-mars:
-  extends: .container-builder
-  stage: build
-  variables:
     DOCKERFILE: ci/gitlab/cscs/gpu/docker/Dockerfile
-    DOCKER_BUILD_ARGS: '["BASE_IMAGE=$BASE_IMAGE"]'
-    GIT_SUBMODULE_STRATEGY: recursive
+    MARS_GIT_URL: 'https://github.com/dganellari/mars.git'
+    MARS_GIT_REFS: 'refs/heads/development'
 
-run-utopia_fe-test:
+run-mars-test:
   extends: .container-runner-daint-gpu
   image: $PERSIST_IMAGE_NAME
   variables:
     SLURM_NTASKS: 1
     SLURM_TIMELIMIT: "00:10:00"
     USE_MPI: "YES"
-    MPICH_RDMA_ENABLED_CUDA: "1"
+    MPICH_GPU_SUPPORT_ENABLED: "1"
   script:
     # the tests are not installed, so we need to run them from the build directory
-    - cd /utopia.src/utopia_fe/build
+    - cd /mars.src/build
     # run all tests
-    - env LD_PRELOAD=$CUDA_LIBS ./utopia_fe_test --verbose
-
-run-utopia_fe-mars:
-  extends: .container-runner-daint-gpu
-  image: $PERSIST_IMAGE_NAME
-  variables:
-    SLURM_NTASKS: 1
-    SLURM_TIMELIMIT: "00:10:00"
-    USE_MPI: "YES"
-    MPICH_RDMA_ENABLED_CUDA: "1"
-  script:
-    # the tests are not installed, so we need to run them from the build directory
-    - cd /utopia.src/utopia_fe/build
-    # run all tests
-    - env LD_PRELOAD=$CUDA_LIBS ./utopia_fe_exec --verbose -backend mars @file $UTOPIA_CASE_PATH/elasticity.yaml
-    - env LD_PRELOAD=$CUDA_LIBS ./utopia_fe_exec --verbose -backend mars @file $UTOPIA_CASE_PATH/poisson.yaml
-    - env LD_PRELOAD=$CUDA_LIBS ./utopia_fe_exec --verbose -backend mars @file $UTOPIA_CASE_PATH/thermo_elasticity.yaml
+    - env LD_PRELOAD=$CUDA_LIBS ctest -V
