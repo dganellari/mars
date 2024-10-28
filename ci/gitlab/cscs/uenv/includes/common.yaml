@@ -1,15 +1,11 @@
-####################
-# Global Variables #
-####################
+##################### Global Variables #####################
 variables:
   BUILD_DIR: "$CI_PROJECT_DIR/build"
   INSTALL_DIR: "$CI_PROJECT_DIR/install"
   CMAKE_BUILD_TYPE: "Debug"
   CUDA_ARCH: "90"
 
-###########################
-# SLURM Default Variables #
-###########################
+########################### SLURM Default Variables ###########################
 .default_slurm_vars: &default_slurm_vars
   SLURM_JOB_NUM_NODES: 1
   SLURM_NTASKS: 1
@@ -18,32 +14,35 @@ variables:
   SLURM_CPU_BIND: "verbose,none"
   USE_MPI: "NO"
 
-###########################
-# SLURM Distributed Setup #
-###########################
+###################### SLURM Distributed Setup Variables ######################
 .distributed_slurm_vars: &distributed_slurm_vars
   SLURM_JOB_NUM_NODES: 2
   SLURM_CPU_BIND: "verbose,rank_ldom"
   SLURM_TIMELIMIT: "00:30:00"
   USE_MPI: "YES"
 
-######################
-# uenv specification #
-######################
+########################## uenv Image Definition ##########################
 .uenv_image:
   image: prgenv-gnu/24.7:v4
   variables:
     UENV_VIEW: 'default'
 
-##########################
-# uenv Activation Anchor #
-##########################
+########################## uenv Activation Anchor ##########################
 .uenv_activate: &uenv_activate
   - . /user-environment/env/${UENV_VIEW}/activate.sh
 
-#####################
-# Common Build Job #
-#####################
+########################## uenv Runner Test Job ##########################
+.test-uenv-runner:
+  extends: .uenv_image
+  stage: test
+  script:
+    - gcc --version | grep 13.2.0
+  variables:
+    <<: *default_slurm_vars
+    SLURM_TIMELIMIT: "00:30:00"
+
+
+######################## Build Job Template ########################
 .build_template:
   extends: .uenv_image
   stage: build
@@ -79,9 +78,7 @@ variables:
       - $BUILD_DIR/lib
       - $INSTALL_DIR
 
-#####################
-# Common Test Jobs #
-#####################
+######################## Unit Test Job Template ########################
 .test_unit_template:
   extends: .uenv_image
   stage: test

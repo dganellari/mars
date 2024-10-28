@@ -1,6 +1,4 @@
-###########################
-# vcluster specifications #
-###########################
+########################### vcluster specifications ############
 .todi:
   extends: .uenv-runner-todi-gh200
   variables:
@@ -8,24 +6,23 @@
     #SLURM_PARTITION: debug
     SLURM_RESERVATION: daint
 
-#################
-# Build Project #
-#################
+########################## Build Jobs #########################
 build_aarch64:
   extends: [.todi, .build_template]
   variables:
     ARB_GPU: "cuda"
     CUDA_ARCH: "90"
 
-#####################
-# Single Node Tests #
-#####################
-test_aarch64:
+###################### Single Node Tests ######################
+test_runner_aarch64:
+  extends: [.todi, .test-uenv-runner]
+  variables:
+    SLURM_TIMELIMIT: "00:30:00"
+
+test_unit_aarch64:
   extends: [.todi, .test_unit_template]
 
-####################
-# Multi Node Tests #
-####################
+###################### Distributed Tests ######################
 test_aarch64_distributed:
   extends: [.todi, .test_distributed_template]
   variables:
