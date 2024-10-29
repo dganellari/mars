@@ -8,7 +8,7 @@ stages:
 
 variables:
   GITLAB_RUNNER_VERSION: v17.3.1
-  PERSIST_IMAGE_NAME: $CSCS_REGISTRY_PATH/mars_kokkos_mc:$CI_COMMIT_SHA
+  PERSIST_IMAGE_NAME: $CSCS_REGISTRY_PATH/mars-uenv/mars_kokkos_mc:$CI_COMMIT_SHA
   # MARS_CASE_PATH: '/mars.src/ci/reframe
 
 build-mars-image:

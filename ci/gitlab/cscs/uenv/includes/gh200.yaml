@@ -10,7 +10,6 @@
 build_aarch64:
   extends: [.todi, .build_template]
   variables:
-    ARB_GPU: "cuda"
     CUDA_ARCH: "90"
 
 ###################### Single Node Tests ######################

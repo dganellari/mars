@@ -1,30 +1,30 @@
-FROM quay.io/podman/stable
-
-ARG GITLAB_RUNNER_VERSION
+FROM docker.io/finkandreas/spack:0.19.2-cuda11.7.1-ubuntu22.04 as builder
 
 ARG NUM_PROCS
 
 RUN spack-install-helper \
-    daint-mc \
-    "kokkos +aggressive_vectorization ~alloc_async cxxstd=17 +openmp +pic +serial +shared +tuning" \
-    "kokkos-kernels +blas +execspace_openmp +execspace_serial +lapack +openmp scalars=float,double,complex_float,complex_double +serial +shared +superlu" \
+    daint-gpu \
+    "kokkos +aggressive_vectorization ~alloc_async +cuda_constexpr +cuda_lambda ~cuda_relocatable_device_code ~cuda_uvm cxxstd=17 +openmp +pic +serial +shared +tuning +wrapper" \
+    "kokkos-kernels +blas +cublas +cusparse +cusolver +execspace_cuda +execspace_openmp +execspace_serial +lapack +memspace_cudaspace +openmp scalars=float,double,complex_float,complex_double +serial +shared +superlu" \
     "cmake" \
-    "git"
+    "git" \
 
 RUN cd /opt/view/lib/pkgconfig && ln -s openblas.pc blas.pc
 
 ENV MARS_DIR=/mars.install
 
-jUN git clone https://github.com/dganellari/mars.git --branch development /mars.src
+RUN git clone https://github.com/dganellari/mars.git --branch development /mars.src
 RUN cd /mars.src && git submodule update --init --recursive
 RUN mkdir -p /mars.src/build
 RUN spack env activate /opt/spack-environment \
   && cd /mars.src/build \
   && cmake \
     -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_CXX_COMPILER=/opt/view/bin/nvcc_wrapper \
     -DCMAKE_INSTALL_PREFIX=$MARS_DIR \
     -DCMAKE_VERBOSE_MAKEFILE=ON \
     -DMARS_ENABLE_KOKKOS=ON \
+    -DMARS_ENABLE_CUDA=ON \
     -DMARS_ENABLE_TESTS=ON \
     -DMARS_ENABLE_EXAMPLES=ON \
     /mars.src |& tee cmake_output.log \
@@ -34,11 +34,10 @@ RUN spack env activate /opt/spack-environment \
   && spack env deactivate
 RUN rm -rf /mars.src/build
 
-
 # end of builder container, now we are ready to copy necessary files
 
 # copy only relevant parts to the final container
-FROM docker.io/finkandreas/spack:base-ubuntu22.04
+FROM docker.io/finkandreas/spack:base-cuda11.7.1-ubuntu22.04
 
 # copy mars installation to the final container
 COPY --from=builder $MARS_DIR $MARS_DIR
