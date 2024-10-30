@@ -9,8 +9,6 @@ RUN spack-install-helper \
     "cmake" \
     "git"
 
-RUN cd /opt/view/lib/pkgconfig && ln -s openblas.pc blas.pc
-
 ENV MARS_DIR=/mars.install
 
 jUN git clone https://github.com/dganellari/mars.git --branch development /mars.src
