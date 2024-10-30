@@ -1,4 +1,4 @@
-FROM docker.io/finkandreas/spack:0.19.2-cuda11.7.1-ubuntu22.04 as builder
+FROM jfrog.svc.cscs.ch/docker-ci-ext/base-containers/public/spack-build:spack0.21.0-ubuntu22.04-cuda12.4.1 as builder
 
 ARG NUM_PROCS
 

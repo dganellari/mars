@@ -28,7 +28,7 @@ build-mars-image:
     reports:
       dotenv: build.env
   variables:
-    DOCKERFILE: ci/gitlab/cscs/gpu/docker/Dockerfile
+    DOCKERFILE: ci/gitlab/cscs/daint/gpu/docker/Dockerfile
     MARS_GIT_URL: 'https://github.com/dganellari/mars.git'
     MARS_GIT_REFS: 'refs/heads/development'
 
