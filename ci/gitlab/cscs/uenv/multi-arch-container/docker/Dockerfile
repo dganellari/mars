@@ -2,10 +2,14 @@ FROM jfrog.svc.cscs.ch/docker-ci-ext/base-containers/public/spack-build:spack0.2
 
 ARG NUM_PROCS
 
+ARG KOKKOS_SPEC
+
+ARG SPACK_ENV
+
 RUN spack-install-helper \
-    daint-gpu \
-    "kokkos +aggressive_vectorization ~alloc_async +cuda_constexpr +cuda_lambda ~cuda_relocatable_device_code ~cuda_uvm cxxstd=17 +openmp +pic +serial +shared +tuning +wrapper" \
-    "kokkos-kernels +blas +cublas +cusparse +cusolver +execspace_cuda +execspace_openmp +execspace_serial +lapack +memspace_cudaspace +openmp scalars=float,double,complex_float,complex_double +serial +shared +superlu" \
+    $SPACK_ENV \
+    "kokkos +aggressive_vectorization ~alloc_async +pic +serial +shared +tuning $KOKKOS_SPEC" \
+    # "kokkos-kernels" \
     "cmake" \
     "git" \
 
@@ -22,6 +26,7 @@ RUN spack env activate /opt/spack-environment \
     -DCMAKE_INSTALL_PREFIX=$MARS_DIR \
     -DCMAKE_VERBOSE_MAKEFILE=ON \
     -DMARS_ENABLE_KOKKOS=ON \
+    -DMARS_ENABLE_KOKKOS_KERNELS=OFF \
     -DMARS_ENABLE_CUDA=ON \
     -DMARS_ENABLE_TESTS=ON \
     -DMARS_ENABLE_EXAMPLES=ON \
