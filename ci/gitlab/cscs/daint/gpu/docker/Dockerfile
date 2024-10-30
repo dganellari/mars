@@ -4,7 +4,7 @@ ARG NUM_PROCS
 
 RUN spack-install-helper \
     daint-gpu \
-    "kokkos" \
+    "kokkos+cuda+wrapper" \
     "kokkos-kernels" \
     "cmake" \
     "git"
