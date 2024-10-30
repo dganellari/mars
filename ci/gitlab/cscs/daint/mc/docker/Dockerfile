@@ -5,7 +5,7 @@ ARG NUM_PROCS
 RUN spack-install-helper \
     daint-mc \
     "kokkos +aggressive_vectorization ~alloc_async cxxstd=17 +openmp +pic +serial +shared +tuning" \
-    "kokkos-kernels +blas +execspace_openmp +execspace_serial +lapack +openmp scalars=float,double,complex_float,complex_double +serial +shared +superlu" \
+    # "kokkos-kernels +blas +execspace_openmp +execspace_serial +lapack +openmp scalars=float,double,complex_float,complex_double +serial +shared " \
     "cmake" \
     "git"
 
