@@ -4,7 +4,7 @@ ARG NUM_PROCS
 
 RUN spack-install-helper \
     daint-mc \
-    "kokkos cxxstd=17 +serial" \
+    "kokkos +serial" \
     "kokkos-kernels" \
     "cmake" \
     "git"
