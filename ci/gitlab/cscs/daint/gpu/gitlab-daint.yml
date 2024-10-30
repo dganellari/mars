@@ -9,7 +9,7 @@ variables:
   # for CUDA-aware MPI, Sarus requires LD_PRELOAD to be set in order to load
   # the specified cuda libraries from the compute node before all others
   CUDA_LIBS: '/usr/local/cuda/compat/libcuda.so:/usr/local/cuda/lib64/libcudart.so'
-  PERSIST_IMAGE_NAME: $CSCS_REGISTRY_PATH/mars-uenv/mars_kokkos_gpu:$CI_COMMIT_SHA
+  PERSIST_IMAGE_NAME: $CSCS_REGISTRY_PATH/mars_gpu:$CI_COMMIT_SHA
   # MARS_CASE_PATH: '/mars.src/ci/reframe
 
 build-mars-image:
@@ -22,8 +22,8 @@ build-mars-image:
     - git ls-remote $MARS_GIT_URL $MARS_GIT_REFS >> $DATA_TAG
     - DOCKERFILE_TAG=`sha256sum $DATA_TAG | head -c 16`
     - rm -f $DATA_TAG
-    - export PERSIST_IMAGE_NAME=$CSCS_REGISTRY_PATH/image/mars:$DOCKERFILE_TAG
-    - echo "IMAGE=$PERSIST_IMAGE_NAME" >> build.env
+    - export PERSIST_IMAGE_NAME=$CSCS_REGISTRY_PATH/baseimage/mars_base:$DOCKERFILE_TAG
+    - echo "BASE_IMAGE=$PERSIST_IMAGE_NAME" >> build.env
   artifacts:
     reports:
       dotenv: build.env

@@ -1,6 +1,4 @@
-FROM quay.io/podman/stable
-
-ARG GITLAB_RUNNER_VERSION
+FROM docker.io/finkandreas/spack:0.19.2-ubuntu22.04 as builder
 
 ARG NUM_PROCS
 

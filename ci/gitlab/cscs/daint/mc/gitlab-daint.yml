@@ -8,7 +8,7 @@ stages:
 
 variables:
   GITLAB_RUNNER_VERSION: v17.3.1
-  PERSIST_IMAGE_NAME: $CSCS_REGISTRY_PATH/mars-uenv/mars_kokkos_mc:$CI_COMMIT_SHA
+  PERSIST_IMAGE_NAME: $CSCS_REGISTRY_PATH/mars_mc:$CI_COMMIT_SHA
   # MARS_CASE_PATH: '/mars.src/ci/reframe
 
 build-mars-image:
@@ -21,8 +21,8 @@ build-mars-image:
     - git ls-remote $MARS_GIT_URL $MARS_GIT_REFS >> $DATA_TAG
     - DOCKERFILE_TAG=`sha256sum $DATA_TAG | head -c 16`
     - rm -f $DATA_TAG
-    - export PERSIST_IMAGE_NAME=$CSCS_REGISTRY_PATH/image/mars:$DOCKERFILE_TAG
-    - echo "IMAGE=$PERSIST_IMAGE_NAME" >> build.env
+    - export PERSIST_IMAGE_NAME=$CSCS_REGISTRY_PATH/baseimage/mars_base:$DOCKERFILE_TAG
+    - echo "BASE_IMAGE=$PERSIST_IMAGE_NAME" >> build.env
   artifacts:
     reports:
       dotenv: build.env
