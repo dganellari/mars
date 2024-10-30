@@ -4,8 +4,8 @@ ARG NUM_PROCS
 
 RUN spack-install-helper \
     daint-gpu \
-    "kokkos +aggressive_vectorization ~alloc_async +cuda_constexpr +cuda_lambda ~cuda_relocatable_device_code ~cuda_uvm cxxstd=17 +openmp +pic +serial +shared +tuning +wrapper" \
-    "kokkos-kernels +blas +cublas +cusparse +cusolver +execspace_cuda +execspace_openmp +execspace_serial +lapack +memspace_cudaspace +openmp scalars=float,double,complex_float,complex_double +serial +shared " \
+    "kokkos" \
+    "kokkos-kernels" \
     "cmake" \
     "git"
 
