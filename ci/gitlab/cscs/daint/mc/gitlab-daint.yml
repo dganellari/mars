@@ -12,7 +12,7 @@ variables:
   # MARS_CASE_PATH: '/mars.src/ci/reframe
 
 build-mars-image:
-  extends: .container-builder
+  extends: .container-builder-cscs-gh200
   stage: build
   before_script:
     - DATA_TAG=`mktemp`
