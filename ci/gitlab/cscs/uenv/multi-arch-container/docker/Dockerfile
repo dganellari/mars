@@ -11,7 +11,7 @@ RUN spack-install-helper \
     "kokkos +aggressive_vectorization ~alloc_async +pic +serial +shared +tuning $KOKKOS_SPEC" \
     # "kokkos-kernels" \
     "cmake" \
-    "git" \
+    "git"
 
 ENV MARS_DIR=/mars.install
 
