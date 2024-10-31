@@ -22,14 +22,14 @@ RUN spack env activate /opt/spack-environment \
   && cd /mars.src/build \
   && cmake \
     -DCMAKE_BUILD_TYPE=Release \
-    -DCMAKE_CXX_COMPILER=/opt/view/bin/nvcc_wrapper \
+    # -DCMAKE_CXX_COMPILER=/opt/view/bin/nvcc_wrapper \
     -DCMAKE_INSTALL_PREFIX=$MARS_DIR \
     -DCMAKE_VERBOSE_MAKEFILE=ON \
     -DMARS_ENABLE_KOKKOS=ON \
     -DMARS_ENABLE_KOKKOS_KERNELS=OFF \
-    -DMARS_ENABLE_CUDA=ON \
+    # -DMARS_ENABLE_CUDA=ON \
     -DMARS_ENABLE_TESTS=ON \
-    -DMARS_ENABLE_EXAMPLES=ON \
+    # -DMARS_ENABLE_EXAMPLES=ON \
     /mars.src |& tee cmake_output.log \
   && ! grep 'Manually-specified variables were' cmake_output.log \
   && make -j$NUM_PROCS \
