@@ -18,8 +18,8 @@ stages:
     # DOCKER_BUILD_ARGS: '["KOKKOS_SPEC= +cuda_constexpr +cuda_lambda ~cuda_relocatable_device_code ~cuda_uvm +wrapper", "SPACK_ENV=alps-gh200"]'
 build x86_64:
   extends: [.container-builder-cscs-zen2, .build]
-  variables:
-    DOCKER_BUILD_ARGS: '["KOKKOS_SPEC= +openmp", "SPACK_ENV=alps-zen2"]'
+  # variables:
+    # DOCKER_BUILD_ARGS: '["KOKKOS_SPEC= +openmp", "SPACK_ENV=alps-zen2"]'
 
 # make multiarch:
   # extends: .make-multiarch-image
