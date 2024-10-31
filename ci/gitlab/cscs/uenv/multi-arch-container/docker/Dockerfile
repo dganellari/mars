@@ -8,7 +8,7 @@ ARG SPACK_ENV
 
 RUN spack-install-helper \
     alps-zen2 \
-    "kokkos +aggressive_vectorization ~alloc_async +pic +serial +shared +tuning" \
+    "kokkos +aggressive_vectorization +pic +serial +shared +tuning" \
     # "kokkos-kernels" \
     "cmake" \
     "git"
