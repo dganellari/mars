@@ -11,7 +11,7 @@ stages:
   variables:
     DOCKERFILE: ci/gitlab/cscs/uenv/multi-arch-container/docker/Dockerfile
     PERSIST_IMAGE_NAME: $CSCS_REGISTRY_PATH/${ARCH}/mars-uenv/mars_kokkos_container:${CI_COMMIT_SHORT_SHA}
-    DOCKER_BUILD_ARGS: '["KOKKOS_SPEC=+openmp", "ALPS_SPEC=alps-zen2"]'
+    DOCKER_BUILD_ARGS: '["KOKKOS_SPEC=+openmp", "ALPS_SPEC=alps-ze2"]'
 # build aarch64:
   # extends: [.container-builder-cscs-gh200, .build]
 build x86_64:
