@@ -6,10 +6,7 @@ ARG KOKKOS_SPEC
 
 ARG SPACK_ENV
 
-RUN spack-install-helper \
-    $SPACK_ENV \
-    "kokkos +aggressive_vectorization +pic +serial +shared +tuning" \
-    # "kokkos-kernels" \
+RUN spack-install-helper alps-zen2 $KOKKOS_SPEC \
     "cmake" \
     "git"
 

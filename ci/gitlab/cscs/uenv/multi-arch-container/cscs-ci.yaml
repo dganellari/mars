@@ -19,7 +19,7 @@ stages:
 build x86_64:
   extends: [.container-builder-cscs-zen2, .build]
   variables:
-    DOCKER_BUILD_ARGS: '["KOKKOS_SPEC= +openmp", "SPACK_ENV=alps-zen2"]'
+    DOCKER_BUILD_ARGS: '["KOKKOS_SPEC=kokkos +serial"]'
 
 # make multiarch:
   # extends: .make-multiarch-image
