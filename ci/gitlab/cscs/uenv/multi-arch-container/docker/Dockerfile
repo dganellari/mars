@@ -37,7 +37,7 @@ RUN rm -rf /mars.src/build
 # end of builder container, now we are ready to copy necessary files
 
 # copy only relevant parts to the final container
-FROM jfrog.svc.cscs.ch/docker-ci-ext/base-containers/public/spack-base:spack0.21.0-ubuntu22.04-cuda12.4.1
+FROM jfrog.svc.cscs.ch/docker-ci-ext/base-containers/public/spack-runtime:spack0.21.0-ubuntu22.04-cuda12.4.1
 
 # copy mars installation to the final container
 COPY --from=builder $MARS_DIR $MARS_DIR
