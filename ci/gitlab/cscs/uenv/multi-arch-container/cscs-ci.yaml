@@ -11,6 +11,7 @@ stages:
   variables:
     DOCKERFILE: ci/gitlab/cscs/uenv/multi-arch-container/docker/Dockerfile
     PERSIST_IMAGE_NAME: $CSCS_REGISTRY_PATH/${ARCH}/mars-uenv/mars_kokkos_container:${CI_COMMIT_SHORT_SHA}
+    DOCKER_BUILD_ARGS: '["KOKKOS_SPEC=+openmp", "ALPS_SPEC=alps-zen2"]'
   script:
     - echo "Docker build arguments: $DOCKER_BUILD_ARGS"
 # build aarch64:
@@ -18,10 +19,10 @@ stages:
   # variables:
     # DOCKER_BUILD_ARGS: '["KOKKOS_SPEC= +cuda_constexpr +cuda_lambda ~cuda_relocatable_device_code ~cuda_uvm +wrapper", "SPACK_ENV=alps-gh200"]'
     # DOCKER_BUILD_ARGS: '["KOKKOS_SPEC= +cuda_constexpr +cuda_lambda ~cuda_relocatable_device_code ~cuda_uvm +wrapper", "SPACK_ENV=alps-gh200"]'
-build x86_64:
-  extends: [.container-builder-cscs-zen2, .build]
-  variables:
-    DOCKER_BUILD_ARGS: '["KOKKOS_SPEC=+openmp", "ALPS_SPEC=alps-zen2"]'
+# build x86_64:
+  # extends: [.container-builder-cscs-zen2, .build]
+  # variables:
+#     DOCKER_BUILD_ARGS: '["KOKKOS_SPEC=+openmp", "ALPS_SPEC=alps-zen2"]'
 
 # make multiarch:
   # extends: .make-multiarch-image
