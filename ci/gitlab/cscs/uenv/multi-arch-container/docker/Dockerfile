@@ -4,7 +4,7 @@ ARG NUM_PROCS
 
 ARG KOKKOS_SPEC
 
-ARG ALPS_SPEC=alps-zen2
+# ARG ALPS_SPEC=alps-zen2
 
 RUN spack-install-helper $ALPS_SPEC \
     "kokkos +aggressive_vectorization cxxstd=17 +pic +shared +serial +tuning $KOKKOS_SPEC" \
