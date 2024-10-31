@@ -16,7 +16,6 @@ stages:
     - echo $DOCKER_BUILD_ARGS | jq -r '.[]'
     - export DOCKER_BUILD_ARGS=$(echo $DOCKER_BUILD_ARGS | jq -r '.[] | "--build-arg " + .')
     - echo "Docker build arguments: $DOCKER_BUILD_ARGS"
-    - docker build $DOCKER_BUILD_ARGS -t your_image_name:tag .
 # build aarch64:
   # extends: [.container-builder-cscs-gh200, .build]
   # variables:
