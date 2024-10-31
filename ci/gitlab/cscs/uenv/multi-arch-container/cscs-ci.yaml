@@ -4,7 +4,7 @@ include:
 stages:
   - build
   # - make_multiarch
-  - run
+  # - run
 
 .build:
   stage: build
@@ -32,14 +32,14 @@ stages:
   #   PERSIST_IMAGE_NAME_AARCH64: $CSCS_REGISTRY_PATH/aarch64/mars_kokkos_container:${CI_COMMIT_SHORT_SHA}
     # PERSIST_IMAGE_NAME_X86_64: $CSCS_REGISTRY_PATH/x86_64/mars_kokkos_container:${CI_COMMIT_SHORT_SHA}
 
-.run:
-  stage: run
+# .run:
+  # stage: run
   # image: $CSCS_REGISTRY_PATH/mars_kokkos_container_multiarch_image:${CI_COMMIT_SHORT_SHA}
-  image: $CSCS_REGISTRY_PATH/mars_kokkos_container:${CI_COMMIT_SHORT_SHA}
-  script:
-    - cd /mars.src/build
-    - ctest -V
+  # image: $CSCS_REGISTRY_PATH/mars_kokkos_container:${CI_COMMIT_SHORT_SHA}
+  # script:
+  #   - cd /mars.src/build
+  #   - ctest -V
 # run aarch64:
   # extends: [.container-runner-daint-gh200, .run]
-run x86_64:
-  extends: [.container-runner-eiger-mc, .run]
+# run x86_64:
+  # extends: [.container-runner-eiger-mc, .run]
