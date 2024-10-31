@@ -3,37 +3,38 @@ include:
 
 stages:
   - build
-  # - make_multiarch
+  - make_multiarch
   - run
 
 .build:
   stage: build
   variables:
     DOCKERFILE: ci/gitlab/cscs/uenv/multi-arch-container/docker/Dockerfile
-    PERSIST_IMAGE_NAME: $CSCS_REGISTRY_PATH/${ARCH}/mars-uenv/mars_kokkos_container:${CI_COMMIT_SHORT_SHA}
-# build aarch64:
-  # extends: [.container-builder-cscs-gh200, .build]
+    PERSIST_IMAGE_NAME: $CSCS_REGISTRY_PATH/${ARCH}/mars_kokkos_container:${CI_COMMIT_SHORT_SHA}
+build aarch64:
+  extends: [.container-builder-cscs-gh200, .build]
+  variables:
+    DOCKER_BUILD_ARGS: '["KOKKOS_SPEC=+cuda +wrapper", "ALPS_SPEC=alps-gh200"]'
 build x86_64:
   extends: [.container-builder-cscs-zen2, .build]
   variables:
     DOCKER_BUILD_ARGS: '["KOKKOS_SPEC=+openmp", "ALPS_SPEC=alps-zen2"]'
 
-# make multiarch:
-  # extends: .make-multiarch-image
-  # stage: make_multiarch
-  # variables:
-  #   PERSIST_IMAGE_NAME: $CSCS_REGISTRY_PATH/mars_kokkos_container_multiarch_image:${CI_COMMIT_SHORT_SHA}
-  #   PERSIST_IMAGE_NAME_AARCH64: $CSCS_REGISTRY_PATH/aarch64/mars_kokkos_container:${CI_COMMIT_SHORT_SHA}
-    # PERSIST_IMAGE_NAME_X86_64: $CSCS_REGISTRY_PATH/x86_64/mars_kokkos_container:${CI_COMMIT_SHORT_SHA}
+make multiarch:
+  extends: .make-multiarch-image
+  stage: make_multiarch
+  variables:
+    PERSIST_IMAGE_NAME: $CSCS_REGISTRY_PATH/mars_kokkos_container_multiarch_image:${CI_COMMIT_SHORT_SHA}
+    PERSIST_IMAGE_NAME_AARCH64: $CSCS_REGISTRY_PATH/aarch64/mars_kokkos_container:${CI_COMMIT_SHORT_SHA}
+    PERSIST_IMAGE_NAME_X86_64: $CSCS_REGISTRY_PATH/x86_64/mars_kokkos_container:${CI_COMMIT_SHORT_SHA}
 
 .run:
   stage: run
-  # image: $CSCS_REGISTRY_PATH/mars_kokkos_container_multiarch_image:${CI_COMMIT_SHORT_SHA}
-  image: $CSCS_REGISTRY_PATH/mars_kokkos_container:${CI_COMMIT_SHORT_SHA}
+  image: $CSCS_REGISTRY_PATH/mars_kokkos_container_multiarch_image:${CI_COMMIT_SHORT_SHA}
   script:
     - cd /mars.src/build
     - ctest -V
-# run aarch64:
-  # extends: [.container-runner-daint-gh200, .run]
+run aarch64:
+  extends: [.container-runner-daint-gh200, .run]
 run x86_64:
   extends: [.container-runner-eiger-mc, .run]
