@@ -14,11 +14,11 @@ stages:
 build aarch64:
   extends: [.container-builder-cscs-gh200, .build]
   variables:
-    DOCKER_BUILD_ARGS: '["KOKKOS_SPEC=+cuda +wrapper", "ALPS_SPEC=alps-gh200"]'
+    DOCKER_BUILD_ARGS: '["KOKKOS_SPEC=+cuda +wrapper cuda_arch=90 +cuda_constexpr", "ALPS_SPEC=alps-gh200", "MARS_CUDA_SPEC=-DMARS_ENABLE_CUDA=ON", "MARS_CXX_SPEC=-DCMAKE_CXX_COMPILER=nvcc_wrapper"]'
 build x86_64:
   extends: [.container-builder-cscs-zen2, .build]
   variables:
-    DOCKER_BUILD_ARGS: '["KOKKOS_SPEC=+openmp", "ALPS_SPEC=alps-zen2"]'
+    DOCKER_BUILD_ARGS: '["KOKKOS_SPEC=+openmp", "ALPS_SPEC=alps-zen2", "MARS_CUDA_SPEC=-DMARS_ENABLE_CUDA=OFF"]'
 
 make multiarch:
   extends: .make-multiarch-image

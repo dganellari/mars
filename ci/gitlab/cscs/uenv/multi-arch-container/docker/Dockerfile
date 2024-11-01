@@ -6,8 +6,13 @@ ARG KOKKOS_SPEC
 
 ARG ALPS_SPEC
 
+ARG MARS_CXX_SPEC
+
+ARG MARS_CUDA_SPEC
+
 RUN spack-install-helper $ALPS_SPEC \
     "kokkos +aggressive_vectorization cxxstd=17 +pic +shared +serial +tuning $KOKKOS_SPEC" \
+    "kokkos-kernels" \
     "cmake" \
     "git"
 
@@ -20,14 +25,13 @@ RUN spack env activate /opt/spack-environment \
   && cd /mars.src/build \
   && cmake \
     -DCMAKE_BUILD_TYPE=Release \
-    # -DCMAKE_CXX_COMPILER=/opt/view/bin/nvcc_wrapper \
+    $MARS_CXX_SPEC \
     -DCMAKE_INSTALL_PREFIX=$MARS_DIR \
     -DCMAKE_VERBOSE_MAKEFILE=ON \
     -DMARS_ENABLE_KOKKOS=ON \
-    -DMARS_ENABLE_KOKKOS_KERNELS=OFF \
-    # -DMARS_ENABLE_CUDA=ON \
+    -DMARS_ENABLE_KOKKOS_KERNELS=ON \
+    $MARS_CUDA_SPEC \
     -DMARS_ENABLE_TESTS=ON \
-    # -DMARS_ENABLE_EXAMPLES=ON \
     /mars.src |& tee cmake_output.log \
   && ! grep 'Manually-specified variables were' cmake_output.log \
   && make -j$NUM_PROCS \
