@@ -205,6 +205,63 @@ namespace mars {
         return result;
     }
 
+    // Helper function to compute the expected value for a given element and DOF index
+    KOKKOS_INLINE_FUNCTION
+    int expected_value(int elem_index, int dof_index, int block) {
+        // Compute the expected value based on the element index, DOF index, and block size
+        return elem_index * block + dof_index;
+    }
+
+    template <Integer Type = ElementType::Quad4,
+              Integer Degree = 1,
+              bool Overlap = true,
+              class KeyType = MortonKey<Unsigned>>
+    void test_mars_distributed_dof_map(const int xDim, const int yDim, const int zDim, const int block) {
+        using namespace mars;
+        mars::proc_allocation resources;
+
+#ifdef MARS_ENABLE_MPI
+        // create a distributed context
+        auto context = mars::make_context(resources, MPI_COMM_WORLD);
+        int proc_num = mars::rank(context);
+#else
+        // resources.gpu_id = marsenv::default_gpu();
+        // // create a local context
+        // auto context = mars::make_context(resources);
+#endif
+
+#ifdef MARS_ENABLE_KOKKOS
+
+        using DMesh = DistributedMesh<KeyType, Type>;
+
+        // create the quad mesh distributed through the mpi procs.
+        DMesh mesh(context);
+        generate_distributed_cube(mesh, xDim, yDim, zDim);
+
+        constexpr Integer Block = 0;
+        using DOFHandler = DofHandler<DMesh, Degree, Block>;
+        using DMQ = DM<DOFHandler, double, double, double>;
+        using FE = FEDofMap<DOFHandler>;
+
+        DOFHandler dof_handler(mesh);
+        dof_handler.enumerate_dofs();
+        dof_handler.set_block(block);
+
+        auto fe = build_fe_dof_map<DOFHandler, Overlap>(dof_handler);
+
+        fe_dof_map.enumerate_local_dofs();
+
+        auto elem_dof_enum = fe_dof_map.get_elem_dof_map();
+
+        Kokkos::parallel_for("VerifyTopologicalOrder2DLarge", elem_dof_enum.extent(0), KOKKOS_LAMBDA(const int elem_index) {
+            for (int dof_index = 0; dof_index < elem_dof_enum.extent(1); ++dof_index) {
+                // Check that the DOFs are in the expected topological order
+                assert(elem_dof_enum(elem_index, dof_index) == expected_value(elem_index, dof_index, block));
+            }
+        });
+#endif
+    }
+
     template <Integer Type = ElementType::Quad4,
               Integer Degree = 1,
               bool Overlap = true,
