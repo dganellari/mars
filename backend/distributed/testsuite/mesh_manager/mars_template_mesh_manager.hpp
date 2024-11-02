@@ -264,7 +264,7 @@ namespace mars {
 #ifdef MARS_ENABLE_KOKKOS_KERNELS
 
     template <Integer Type, Integer Degree = 1, bool Overlap = true, class KeyType = MortonKey<Unsigned>>
-    void test_mars_sparsity_pattern(const int xDim, const int yDim, const int zDim, const int block) {
+    void test_mars_distributed_sparsity_pattern(const int xDim, const int yDim, const int zDim, const int block) {
         // Create a DofHandler
         mars::proc_allocation resources;
 

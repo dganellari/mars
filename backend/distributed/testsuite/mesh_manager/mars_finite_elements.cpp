@@ -1,7 +1,5 @@
 #include <gtest/gtest.h>
-#include <Kokkos_Core.hpp>
 #include "mars_template_mesh_manager.hpp"
-#include "mars_distributed_finite_element.hpp"
 
 using namespace mars;
 
@@ -69,51 +67,51 @@ TEST(FEDofMapTest, EdgeCasesHilbert) {
 //Test sparsity pattern
 
 TEST(SparsityPatternTest, SparsityPattern2DMorton) {
-    test_mars_sparsity_pattern<ElementType::Quad4, 1, true, MortonKey<Unsigned>>(4, 4, 0, 1);
+    test_mars_distributed_sparsity_pattern<ElementType::Quad4, 1, true, MortonKey<Unsigned>>(4, 4, 0, 1);
 }
 
 TEST(SparsityPatternTest, SparsityPattern3DMorton) {
-    test_mars_sparsity_pattern<ElementType::Hex8, 1, true, MortonKey<Unsigned>>(4, 4, 4, 1);
+    test_mars_distributed_sparsity_pattern<ElementType::Hex8, 1, true, MortonKey<Unsigned>>(4, 4, 4, 1);
 }
 
 TEST(SparsityPatternTest, SparsityPattern2DVectorValuedMorton) {
-    test_mars_sparsity_pattern<ElementType::Quad4, 1, true, MortonKey<Unsigned>>(4, 4, 0, 2);
+    test_mars_distributed_sparsity_pattern<ElementType::Quad4, 1, true, MortonKey<Unsigned>>(4, 4, 0, 2);
 }
 
 TEST(SparsityPatternTest, SparsityPattern3DVectorValuedMorton) {
-    test_mars_sparsity_pattern<ElementType::Hex8, 1, true, MortonKey<Unsigned>>(4, 4, 4, 2);
+    test_mars_distributed_sparsity_pattern<ElementType::Hex8, 1, true, MortonKey<Unsigned>>(4, 4, 4, 2);
 }
 
 TEST(SparsityPatternTest, SparsityPattern2DLargeMorton) {
-    test_mars_sparsity_pattern<ElementType::Quad4, 1, true, MortonKey<Unsigned>>(64, 64, 0, 1);
+    test_mars_distributed_sparsity_pattern<ElementType::Quad4, 1, true, MortonKey<Unsigned>>(64, 64, 0, 1);
 }
 
 TEST(SparsityPatternTest, SparsityPattern3DLargeMorton) {
-    test_mars_sparsity_pattern<ElementType::Hex8, 1, true, MortonKey<Unsigned>>(32, 32, 32, 1);
+    test_mars_distributed_sparsity_pattern<ElementType::Hex8, 1, true, MortonKey<Unsigned>>(32, 32, 32, 1);
 }
 
 TEST(SparsityPatternTest, SparsityPattern2DHilbert) {
-    test_mars_sparsity_pattern<ElementType::Quad4, 1, true, HilbertKey<Unsigned>>(4, 4, 0, 1);
+    test_mars_distributed_sparsity_pattern<ElementType::Quad4, 1, true, HilbertKey<Unsigned>>(4, 4, 0, 1);
 }
 
 TEST(SparsityPatternTest, SparsityPattern3DHilbert) {
-    test_mars_sparsity_pattern<ElementType::Hex8, 1, true, HilbertKey<Unsigned>>(4, 4, 4, 1);
+    test_mars_distributed_sparsity_pattern<ElementType::Hex8, 1, true, HilbertKey<Unsigned>>(4, 4, 4, 1);
 }
 
 TEST(SparsityPatternTest, SparsityPattern2DVectorValuedHilbert) {
-    test_mars_sparsity_pattern<ElementType::Quad4, 1, true, HilbertKey<Unsigned>>(4, 4, 0, 2);
+    test_mars_distributed_sparsity_pattern<ElementType::Quad4, 1, true, HilbertKey<Unsigned>>(4, 4, 0, 2);
 }
 
 TEST(SparsityPatternTest, SparsityPattern3DVectorValuedHilbert) {
-    test_mars_sparsity_pattern<ElementType::Hex8, 1, true, HilbertKey<Unsigned>>(4, 4, 4, 2);
+    test_mars_distributed_sparsity_pattern<ElementType::Hex8, 1, true, HilbertKey<Unsigned>>(4, 4, 4, 2);
 }
 
 TEST(SparsityPatternTest, SparsityPattern2DLargeHilbert) {
-    test_mars_sparsity_pattern<ElementType::Quad4, 1, true, HilbertKey<Unsigned>>(64, 64, 0, 1);
+    test_mars_distributed_sparsity_pattern<ElementType::Quad4, 1, true, HilbertKey<Unsigned>>(64, 64, 0, 1);
 }
 
 TEST(SparsityPatternTest, SparsityPattern3DLargeHilbert) {
-    test_mars_sparsity_pattern<ElementType::Hex8, 1, true, HilbertKey<Unsigned>>(32, 32, 32, 1);
+    test_mars_distributed_sparsity_pattern<ElementType::Hex8, 1, true, HilbertKey<Unsigned>>(32, 32, 32, 1);
 }
 
 int main(int argc, char **argv) {

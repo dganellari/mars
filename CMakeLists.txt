@@ -80,11 +80,11 @@ endif(NOT CMAKE_BUILD_TYPE)
 
 # ###############################Extra Targets##################################
 
-# if(MARS_ENABLE_TESTS)
-  # include(cmake/Tests.cmake)
-  # add_subdirectory("backend/distributed/testsuite")
-  # add_subdirectory("backend/adios2/testsuite")
-# endif()
+if(MARS_ENABLE_TESTS)
+  include(cmake/Tests.cmake)
+  add_subdirectory("backend/distributed/testsuite")
+  add_subdirectory("backend/adios2/testsuite")
+endif()
 
 if(MARS_ENABLE_VTK)
   find_package(
