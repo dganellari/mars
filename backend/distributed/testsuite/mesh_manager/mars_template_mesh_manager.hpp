@@ -247,20 +247,93 @@ namespace mars {
         dof_handler.enumerate_dofs();
         dof_handler.set_block(block);
 
-        auto fe = build_fe_dof_map<DOFHandler, Overlap>(dof_handler);
-
-        fe_dof_map.enumerate_local_dofs();
-
+        auto fe_dof_map = build_fe_dof_map<DOFHandler, Overlap>(dof_handler);
         auto elem_dof_enum = fe_dof_map.get_elem_dof_map();
 
-        Kokkos::parallel_for("VerifyTopologicalOrder2DLarge", elem_dof_enum.extent(0), KOKKOS_LAMBDA(const int elem_index) {
-            for (int dof_index = 0; dof_index < elem_dof_enum.extent(1); ++dof_index) {
-                // Check that the DOFs are in the expected topological order
-                assert(elem_dof_enum(elem_index, dof_index) == expected_value(elem_index, dof_index, block));
-            }
-        });
+        Kokkos::parallel_for(
+            "VerifyTopologicalOrder2DLarge", elem_dof_enum.extent(0), KOKKOS_LAMBDA(const int elem_index) {
+                for (int dof_index = 0; dof_index < elem_dof_enum.extent(1); ++dof_index) {
+                    // Check that the DOFs are in the expected topological order
+                    assert(elem_dof_enum(elem_index, dof_index) == expected_value(elem_index, dof_index, block));
+                }
+            });
 #endif
     }
+
+
+#ifdef MARS_ENABLE_KOKKOS_KERNELS
+
+    template <Integer Type, Integer Degree = 1, bool Overlap = true, class KeyType = MortonKey<Unsigned>>
+    void test_mars_sparsity_pattern(const int xDim, const int yDim, const int zDim, const int block) {
+        // Create a DofHandler
+        mars::proc_allocation resources;
+
+#ifdef MARS_ENABLE_MPI
+        // create a distributed context
+        auto context = mars::make_context(resources, MPI_COMM_WORLD);
+#else
+        // resources.gpu_id = marsenv::default_gpu();
+        // // create a local context
+        // auto context = mars::make_context(resources);
+#endif
+
+        using DMesh = DistributedMesh<KeyType, Type>;
+
+        // create the mesh distributed through the mpi procs.
+        DMesh mesh(context);
+        generate_distributed_cube(mesh, xDim, yDim, zDim);
+
+        using DOFHandler = DofHandler<DMesh, Degree, 0>;
+        DOFHandler dof_handler(mesh);
+        dof_handler.enumerate_dofs();
+        dof_handler.set_block(block);
+
+        auto fe_dof_map = build_fe_dof_map<DOFHandler, Overlap>(dof_handler);
+        // Initialize SparsityPattern
+        using SPattern = SparsityPattern<double, Integer, unsigned long, DOFHandler>;
+        SPattern sparsity_pattern(dof_handler);
+
+        // Build the sparsity pattern
+        sparsity_pattern.build_pattern(fe_dof_map);
+
+        // Verify the sparsity pattern
+        auto row_map = sparsity_pattern.get_row_map();
+        auto entries = sparsity_pattern.get_col();
+
+        // Check that the row map and entries are correctly constructed using Kokkos parallel_for
+        Kokkos::parallel_for(
+            "VerifySparsityPattern", row_map.extent(0) - 1, KOKKOS_LAMBDA(const int row) {
+                for (int i = row_map(row); i < row_map(row + 1); ++i) {
+                    // Check that the column indices are valid
+                    assert(entries(i) >= 0);
+                }
+            });
+
+        // Verify specific values for a known scenario
+        Kokkos::parallel_for(
+            "VerifySpecificValues", row_map.extent(0) - 1, KOKKOS_LAMBDA(const int row) {
+                // Example check: Ensure that the diagonal element is present
+                bool has_diagonal = false;
+                for (int i = row_map(row); i < row_map(row + 1); ++i) {
+                    if (entries(i) == row) {
+                        has_diagonal = true;
+                        break;
+                    }
+                }
+                assert(has_diagonal);
+            });
+
+        SparsityMatrix<SPattern> sparsity_matrix(sparsity_pattern);
+        auto crs_matrix = sparsity_matrix.build_crs_matrix();
+
+        // Verify the CRS matrix
+        Kokkos::parallel_for(
+            "VerifyCRSMatrix", crs_matrix.numRows(), KOKKOS_LAMBDA(const int row) {
+                assert(crs_matrix.graph.row_map(row + 1) >= crs_matrix.graph.row_map(row));
+            });
+    }
+
+#endif
 
     template <Integer Type = ElementType::Quad4,
               Integer Degree = 1,
