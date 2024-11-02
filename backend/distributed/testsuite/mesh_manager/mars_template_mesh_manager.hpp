@@ -120,7 +120,6 @@ namespace mars {
         }
     }
 
-
     template <class DofHandler>
     MARS_INLINE_FUNCTION bool check_unique_dofs(DofHandler &handler) {
         auto size = handler.get_dof_size();
@@ -128,27 +127,28 @@ namespace mars {
         Kokkos::deep_copy(unique_ids, true);
 
         // Check for duplicates
-        Kokkos::parallel_for("check_duplicates", size - 1, KOKKOS_LAMBDA(const size_t i) {
-            auto sfc_i = handler.template local_to_sfc<DofHandler::Block>(i);
-            auto sfc_j = handler.template local_to_sfc<DofHandler::Block>(i + 1);
+        Kokkos::parallel_for(
+            "check_duplicates", size - 1, KOKKOS_LAMBDA(const size_t i) {
+                auto sfc_i = handler.template local_to_sfc<DofHandler::Block>(i);
+                auto sfc_j = handler.template local_to_sfc<DofHandler::Block>(i + 1);
 
-            // Get the components of the block local dof in order to compute the local dof
-            auto component_i = handler.get_component(i);
-            auto component_j = handler.get_component(i + 1);
+                // Get the components of the block local dof in order to compute the local dof
+                auto component_i = handler.get_component(i);
+                auto component_j = handler.get_component(i + 1);
 
-            //in this way we test component and sfc to local map to get to the same local dof value
-            auto local_i = handler.sfc_to_local(sfc_i, component_i);
-            auto local_j = handler.sfc_to_local(sfc_j, component_j);
-            assert(local_i == i && local_j == i + 1);
+                // in this way we test component and sfc to local map to get to the same local dof value
+                auto local_i = handler.sfc_to_local(sfc_i, component_i);
+                auto local_j = handler.sfc_to_local(sfc_j, component_j);
+                assert(local_i == i && local_j == i + 1);
 
-            //it is unique only if one of the two is not equal
-            if (sfc_i == sfc_j && local_i == local_j) {
-                bool expected = true;
-                Kokkos::atomic_compare_exchange(&unique_ids(0), expected, false);
-            }
-        });
+                // it is unique only if one of the two is not equal
+                if (sfc_i == sfc_j && local_i == local_j) {
+                    bool expected = true;
+                    Kokkos::atomic_compare_exchange(&unique_ids(0), expected, false);
+                }
+            });
 
-            // Copy the result back to the host
+        // Copy the result back to the host
         auto host_unique_ids = Kokkos::create_mirror_view(unique_ids);
         Kokkos::deep_copy(host_unique_ids, unique_ids);
         bool result = host_unique_ids(0);
@@ -156,10 +156,7 @@ namespace mars {
         return result;
     }
 
-     template <Integer Type,
-              Integer Degree = 1,
-              bool Overlap = true,
-              class KeyType = MortonKey<Unsigned>>
+    template <Integer Type, Integer Degree = 1, bool Overlap = true, class KeyType = MortonKey<Unsigned>>
     bool test_mars_distributed_dof_handler(const int xDim, const int yDim, const int zDim, const int block) {
         using namespace mars;
         mars::proc_allocation resources;
@@ -216,7 +213,7 @@ namespace mars {
               Integer Degree = 1,
               bool Overlap = true,
               class KeyType = MortonKey<Unsigned>>
-    void test_mars_distributed_dof_map(const int xDim, const int yDim, const int zDim, const int block) {
+    bool test_mars_distributed_dof_map(const int xDim, const int yDim, const int zDim, const int block) {
         using namespace mars;
         mars::proc_allocation resources;
 
@@ -250,21 +247,30 @@ namespace mars {
         auto fe_dof_map = build_fe_dof_map<DOFHandler, Overlap>(dof_handler);
         auto elem_dof_enum = fe_dof_map.get_elem_dof_map();
 
-        Kokkos::parallel_for(
-            "VerifyTopologicalOrder2DLarge", elem_dof_enum.extent(0), KOKKOS_LAMBDA(const int elem_index) {
+        bool success = true;
+
+        Kokkos::parallel_reduce(
+            "VerifyTopologicalOrder2DLarge",
+            elem_dof_enum.extent(0),
+            KOKKOS_LAMBDA(const int elem_index, bool &local_success) {
                 for (int dof_index = 0; dof_index < elem_dof_enum.extent(1); ++dof_index) {
                     // Check that the DOFs are in the expected topological order
-                    assert(elem_dof_enum(elem_index, dof_index) == expected_value(elem_index, dof_index, block));
+                    if (elem_dof_enum(elem_index, dof_index) != expected_value(elem_index, dof_index, block)) {
+                        local_success = false;
+                    }
                 }
-            });
-#endif
-    }
+            },
+            Kokkos::LAnd<bool>(success));
 
+        return success;
+#endif
+        return false;
+    }
 
 #ifdef MARS_ENABLE_KOKKOS_KERNELS
 
     template <Integer Type, Integer Degree = 1, bool Overlap = true, class KeyType = MortonKey<Unsigned>>
-    void test_mars_distributed_sparsity_pattern(const int xDim, const int yDim, const int zDim, const int block) {
+    bool test_mars_distributed_sparsity_pattern(const int xDim, const int yDim, const int zDim, const int block) {
         // Create a DofHandler
         mars::proc_allocation resources;
 
@@ -300,18 +306,27 @@ namespace mars {
         auto row_map = sparsity_pattern.get_row_map();
         auto entries = sparsity_pattern.get_col();
 
+        bool success = true;
+
         // Check that the row map and entries are correctly constructed using Kokkos parallel_for
-        Kokkos::parallel_for(
-            "VerifySparsityPattern", row_map.extent(0) - 1, KOKKOS_LAMBDA(const int row) {
+        Kokkos::parallel_reduce(
+            "VerifySparsityPattern",
+            row_map.extent(0) - 1,
+            KOKKOS_LAMBDA(const int row, bool &local_success) {
                 for (int i = row_map(row); i < row_map(row + 1); ++i) {
                     // Check that the column indices are valid
-                    assert(entries(i) >= 0);
+                    if (entries(i) < 0) {
+                        local_success = false;
+                    }
                 }
-            });
+            },
+            Kokkos::LAnd<bool>(success));
 
         // Verify specific values for a known scenario
-        Kokkos::parallel_for(
-            "VerifySpecificValues", row_map.extent(0) - 1, KOKKOS_LAMBDA(const int row) {
+        Kokkos::parallel_reduce(
+            "VerifySpecificValues",
+            row_map.extent(0) - 1,
+            KOKKOS_LAMBDA(const int row, bool &local_success) {
                 // Example check: Ensure that the diagonal element is present
                 bool has_diagonal = false;
                 for (int i = row_map(row); i < row_map(row + 1); ++i) {
@@ -320,17 +335,27 @@ namespace mars {
                         break;
                     }
                 }
-                assert(has_diagonal);
-            });
+                if (!has_diagonal) {
+                    local_success = false;
+                }
+            },
+            Kokkos::LAnd<bool>(success));
 
         SparsityMatrix<SPattern> sparsity_matrix(sparsity_pattern);
         auto crs_matrix = sparsity_matrix.build_crs_matrix();
 
         // Verify the CRS matrix
-        Kokkos::parallel_for(
-            "VerifyCRSMatrix", crs_matrix.numRows(), KOKKOS_LAMBDA(const int row) {
-                assert(crs_matrix.graph.row_map(row + 1) >= crs_matrix.graph.row_map(row));
-            });
+        Kokkos::parallel_reduce(
+            "VerifyCRSMatrix",
+            crs_matrix.numRows(),
+            KOKKOS_LAMBDA(const int row, bool &local_success) {
+                if (crs_matrix.graph.row_map(row + 1) < crs_matrix.graph.row_map(row)) {
+                    local_success = false;
+                }
+            },
+            Kokkos::LAnd<bool>(success));
+
+        return success;
     }
 
 #endif
@@ -443,11 +468,9 @@ namespace mars {
         double time_call = timer_c.seconds();
         std::cout << "Collect: " << time_call << std::endl;
 
-        dof_handler.boundary_dof_iterate(
-            MARS_LAMBDA(const Integer local_dof) { x_local(local_dof) = 7; }, 0);
+        dof_handler.boundary_dof_iterate(MARS_LAMBDA(const Integer local_dof) { x_local(local_dof) = 7; }, 0);
 
-        dof_handler.boundary_dof_iterate(
-            MARS_LAMBDA(const Integer local_dof) { x_local(local_dof) = 8; }, 1);
+        dof_handler.boundary_dof_iterate(MARS_LAMBDA(const Integer local_dof) { x_local(local_dof) = 8; }, 1);
 
         /*print using the index iterate*/
         /* dof_handler.dof_iterate(MARS_LAMBDA(const Integer i) {
@@ -466,6 +489,5 @@ namespace mars {
 
 #endif
     }
-
 
 }  // namespace mars
