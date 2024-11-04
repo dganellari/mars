@@ -7,6 +7,8 @@ list(APPEND DISTRIBUTED_MODULES
     mars_env
     sfc
     testsuite
+    testsuite/common
+    testsuite/discretization
     testsuite/communication
     testsuite/mesh_manager
     testsuite/sfc
