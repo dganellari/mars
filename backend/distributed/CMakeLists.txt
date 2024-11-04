@@ -5,7 +5,12 @@ list(APPEND DISTRIBUTED_MODULES
     mesh
     mesh_manager
     mars_env
-    sfc)
+    sfc
+    testsuite
+    testsuite/communication
+    testsuite/mesh_manager
+    testsuite/sfc
+    )
 
 scan_directories(${CMAKE_CURRENT_SOURCE_DIR} "${DISTRIBUTED_MODULES}" MARS_BUILD_INCLUDES MARS_HEADERS MARS_SOURCES)
 
