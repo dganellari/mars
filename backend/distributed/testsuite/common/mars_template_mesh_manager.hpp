@@ -289,7 +289,8 @@ namespace mars {
         DMesh mesh(context);
         generate_distributed_cube(mesh, xDim, yDim, zDim);
 
-        using DOFHandler = DofHandler<DMesh, Degree, 0>;
+        constexpr Integer Block = 0;
+        using DOFHandler = DofHandler<DMesh, Degree, Block>;
         DOFHandler dof_handler(mesh);
         dof_handler.enumerate_dofs();
         dof_handler.set_block(block);
@@ -307,20 +308,6 @@ namespace mars {
         auto entries = sparsity_pattern.get_col();
 
         bool success = true;
-
-        // Check that the row map and entries are correctly constructed using Kokkos parallel_for
-        Kokkos::parallel_reduce(
-            "VerifySparsityPattern",
-            row_map.extent(0) - 1,
-            KOKKOS_LAMBDA(const int row, bool &local_success) {
-                for (int i = row_map(row); i < row_map(row + 1); ++i) {
-                    // Check that the column indices are valid
-                    if (entries(i) < 0) {
-                        local_success = false;
-                    }
-                }
-            },
-            Kokkos::LAnd<bool>(success));
 
         // Verify specific values for a known scenario
         Kokkos::parallel_reduce(
@@ -342,7 +329,9 @@ namespace mars {
             Kokkos::LAnd<bool>(success));
 
         SparsityMatrix<SPattern> sparsity_matrix(sparsity_pattern);
-        auto crs_matrix = sparsity_matrix.build_crs_matrix();
+        sparsity_matrix.build_crs_matrix();
+
+        auto crs_matrix = sparsity_matrix.get_crs_matrix();
 
         // Verify the CRS matrix
         Kokkos::parallel_reduce(

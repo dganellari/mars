@@ -73,6 +73,8 @@ TEST(FEDofMapTest, EdgeCasesHilbert) {
     ASSERT_TRUE(success);
 }
 
+#ifdef MARS_ENABLE_KOKKOS_KERNELS
+
 // Test sparsity pattern
 
 TEST(SparsityPatternTest, SparsityPattern2DMorton) {
@@ -134,6 +136,8 @@ TEST(SparsityPatternTest, SparsityPattern3DLargeHilbert) {
     bool success = test_mars_distributed_sparsity_pattern<ElementType::Hex8, 1, true, HilbertKey<Unsigned>>(32, 32, 32, 1);
     ASSERT_TRUE(success);
 }
+
+#endif
 
 int main(int argc, char **argv) {
     mars::Env env(argc, argv);
