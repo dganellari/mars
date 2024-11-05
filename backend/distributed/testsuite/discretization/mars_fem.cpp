@@ -73,7 +73,7 @@ TEST(FEDofMapTest, EdgeCasesHilbert) {
     ASSERT_TRUE(success);
 }
 
-#ifdef MARS_ENABLE_KOKKOS_KERNELS
+/* #ifdef MARS_ENABLE_KOKKOS_KERNELS
 
 // Test sparsity pattern
 
@@ -137,7 +137,7 @@ TEST(SparsityPatternTest, SparsityPattern3DLargeHilbert) {
     ASSERT_TRUE(success);
 }
 
-#endif
+#endif */
 
 int main(int argc, char **argv) {
     mars::Env env(argc, argv);

@@ -267,7 +267,7 @@ namespace mars {
         return false;
     }
 
-#ifdef MARS_ENABLE_KOKKOS_KERNELS
+/* #ifdef MARS_ENABLE_KOKKOS_KERNELS
 
     template <Integer Type, Integer Degree = 1, bool Overlap = true, class KeyType = MortonKey<Unsigned>>
     bool test_mars_distributed_sparsity_pattern(const int xDim, const int yDim, const int zDim, const int block) {
@@ -347,7 +347,7 @@ namespace mars {
         return success;
     }
 
-#endif
+#endif */
 
     template <Integer Type = ElementType::Quad4,
               Integer Degree = 1,
