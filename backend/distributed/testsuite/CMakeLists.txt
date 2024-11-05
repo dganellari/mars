@@ -1,4 +1,3 @@
-add_subdirectory(common)
 add_subdirectory(discretization)
 add_subdirectory(communication)
 add_subdirectory(mesh_manager)

@@ -8,10 +8,6 @@ list(APPEND DISTRIBUTED_MODULES
     sfc
     testsuite
     testsuite/common
-    testsuite/discretization
-    testsuite/communication
-    testsuite/mesh_manager
-    testsuite/sfc
     )
 
 scan_directories(${CMAKE_CURRENT_SOURCE_DIR} "${DISTRIBUTED_MODULES}" MARS_BUILD_INCLUDES MARS_HEADERS MARS_SOURCES)
