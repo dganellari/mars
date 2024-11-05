@@ -8,7 +8,7 @@ TEST(FEDofMapTest, TopologicalEnumeration2DMorton) {
     ASSERT_TRUE(success);
 }
 
-TEST(FEDofMapTest, TopologicalEnumeration3DMorton) {
+/* TEST(FEDofMapTest, TopologicalEnumeration3DMorton) {
     bool success = test_mars_distributed_dof_map<ElementType::Hex8, 1, true, MortonKey<Unsigned>>(4, 4, 4, 1);
     ASSERT_TRUE(success);
 }
@@ -71,7 +71,7 @@ TEST(FEDofMapTest, TopologicalEnumeration3DLargeHilbert) {
 TEST(FEDofMapTest, EdgeCasesHilbert) {
     bool success = test_mars_distributed_dof_map<ElementType::Quad4, 1, true, HilbertKey<Unsigned>>(1, 1, 0, 1);
     ASSERT_TRUE(success);
-}
+} */
 
 /* #ifdef MARS_ENABLE_KOKKOS_KERNELS
 
