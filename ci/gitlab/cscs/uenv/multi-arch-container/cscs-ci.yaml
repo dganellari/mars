@@ -11,6 +11,7 @@ stages:
   variables:
     DOCKERFILE: ci/gitlab/cscs/uenv/multi-arch-container/docker/Dockerfile
     PERSIST_IMAGE_NAME: $CSCS_REGISTRY_PATH/${ARCH}/mars_kokkos_container:${CI_COMMIT_SHORT_SHA}
+    SLURM_ACCOUNT: g154
 build aarch64:
   extends: [.container-builder-cscs-gh200, .build]
   variables:
