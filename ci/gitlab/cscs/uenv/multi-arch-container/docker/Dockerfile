@@ -29,7 +29,7 @@ RUN spack env activate /opt/spack-environment \
     -DCMAKE_INSTALL_PREFIX=$MARS_DIR \
     -DCMAKE_VERBOSE_MAKEFILE=ON \
     -DMARS_ENABLE_KOKKOS=ON \
-    -DMARS_ENABLE_KOKKOS_KERNELS=OFF \
+    -DMARS_ENABLE_KOKKOS_KERNELS=ON \
     $MARS_CUDA_SPEC \
     -DMARS_ENABLE_TESTS=ON \
     /mars.src |& tee cmake_output.log \
