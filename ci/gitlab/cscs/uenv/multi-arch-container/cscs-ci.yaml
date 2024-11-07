@@ -38,4 +38,4 @@ make multiarch:
 run aarch64:
   extends: [.container-runner-todi-gh200, .run]
 run x86_64:
-  extends: [.container-runner-eiger-mc, .run]
+  extends: [.container-runner-eiger-zen2, .run]
