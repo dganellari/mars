@@ -36,6 +36,6 @@ make multiarch:
     # - cd /mars.src/build
     # - ctest -V
 run aarch64:
-  extends: [.container-runner-daint-gh200, .run]
+  extends: [.container-runner-todi-gh200, .run]
 run x86_64:
   extends: [.container-runner-eiger-mc, .run]
