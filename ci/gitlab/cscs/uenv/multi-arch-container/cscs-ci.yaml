@@ -33,9 +33,9 @@ make multiarch:
   image: $CSCS_REGISTRY_PATH/mars_kokkos_container_multiarch_image:${CI_COMMIT_SHORT_SHA}
   script:
     - echo "Running tests"
-    # - cd /mars.src/build
-    # - ctest -V
+    - cd /mars.src/build
+    - ctest -V
 run aarch64:
   extends: [.container-runner-todi-gh200, .run]
 run x86_64:
-  extends: [.container-runner-eiger-zen2, .run]
+  extends: [.container-runner-eiger-mc, .run]
