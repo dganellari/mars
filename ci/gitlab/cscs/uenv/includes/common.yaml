@@ -2,7 +2,7 @@
 variables:
   BUILD_DIR: "$CI_PROJECT_DIR/build"
   INSTALL_DIR: "$CI_PROJECT_DIR/install"
-  CMAKE_BUILD_TYPE: "Debug"
+  CMAKE_BUILD_TYPE: "Release"
   CUDA_ARCH: "90"
 
 ########################### SLURM Default Variables ###########################
@@ -23,7 +23,7 @@ variables:
 
 ########################## uenv Image Definition ##########################
 .uenv_image:
-  image: prgenv-gnu/24.7:v4
+  image: prgenv-gnu/24.11:rc1
   variables:
     UENV_VIEW: 'default'
 
@@ -85,7 +85,7 @@ variables:
   script:
     - *uenv_activate
     - cd ${BUILD_DIR}
-    - ctest -V -R unit
+    - ctest -V -R
   variables:
     <<: *default_slurm_vars
     SLURM_TIMELIMIT: "00:30:00"
@@ -95,7 +95,7 @@ variables:
   stage: test
   script:
     - cd ${BUILD_DIR}
-    - ctest -V -R distributed
+    - ctest -V -R
   variables:
     <<: *distributed_slurm_vars
     SLURM_TIMELIMIT: "00:15:00"

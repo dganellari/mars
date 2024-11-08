@@ -2,9 +2,9 @@
 .todi:
   extends: .uenv-runner-todi-gh200
   variables:
-    SLURM_ACCOUNT: g154
+    SLURM_ACCOUNT: csstaff
     #SLURM_PARTITION: debug
-    SLURM_RESERVATION: daint
+    # SLURM_RESERVATION: daint
 
 ########################## Build Jobs #########################
 build_aarch64:
