@@ -33,7 +33,7 @@ make multiarch:
   image: $CSCS_REGISTRY_PATH/mars_kokkos_container_multiarch_image:${CI_COMMIT_SHORT_SHA}
   script:
     - echo "Running tests"
-    - cd /mars.src/build
+    - ll
     - ctest -V
 run aarch64:
   extends: [.container-runner-todi-gh200, .run]
