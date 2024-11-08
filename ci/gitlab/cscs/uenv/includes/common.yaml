@@ -56,11 +56,9 @@ variables:
           -DCMAKE_BUILD_TYPE=$CMAKE_BUILD_TYPE \
           -DCMAKE_INSTALL_PREFIX=$INSTALL_DIR \
           -DCMAKE_CXX_COMPILER=`which nvcc_wrapper` \
-          -DMARS_BUILD_TESTS=ON \
-          # -DMARS_BUILD_EXAMPLES=ON \
           -DMARS_ENABLE_KOKKOS=ON \
-          -DMARS_ENABLE_KOKKOS_KERNELS=ON \
           -DMARS_ENABLE_CUDA=ON \
+          -DMARS_BUILD_TESTS=ON \
           -DCMAKE_CUDA_ARCHITECTURES=${CUDA_ARCH}
     - |
         if [ -z "$SLURM_CPUS_PER_TASK" ]; then
