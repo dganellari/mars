@@ -846,6 +846,123 @@ namespace mars {
                          BuildBoundarySets<Type>(get_view_sfc(), gp_np, set, scan, proc, xDim, yDim, zDim));
         }
 
+        template <Integer Type, bool OP = 0>
+        struct CountOrInsertBoundaryPerRank {
+            ViewVectorType<KeyType> global;
+            ViewVectorType<KeyType> data;
+            ViewVectorType<KeyType> scan;
+            ViewVectorType<KeyType> gp;
+
+            Integer proc;
+
+            Integer xDim;
+            Integer yDim;
+            Integer zDim;
+
+            bool periodic;
+
+            CountOrInsertBoundaryPerRank(ViewVectorType<KeyType> gl,
+                                    ViewVectorType<KeyType> d,
+                                    ViewVectorType<KeyType> g,
+                                    Integer p,
+                                    Integer xdm,
+                                    Integer ydm,
+                                    Integer zdm,
+                                    bool period)
+                : global(gl), data(d), gp(g), proc(p), xDim(xdm), yDim(ydm), zDim(zdm), periodic(period) {}
+
+            CountOrInsertBoundaryPerRank(ViewVectorType<KeyType> gl,
+                                         ViewVectorType<KeyType> d,
+                                         ViewVectorType<KeyType> s,
+                                         ViewVectorType<KeyType> g,
+                                         Integer p,
+                                         Integer xdm,
+                                         Integer ydm,
+                                         Integer zdm,
+                                         bool period)
+                : global(gl), data(d), scan(s), gp(g), proc(p), xDim(xdm), yDim(ydm), zDim(zdm), periodic(period) {}
+
+            MARS_INLINE_FUNCTION
+            void increment_count(const int index, const Octant &o) const {
+                auto enc_oc = get_sfc_from_octant<Type, SfcKeyType>(o);
+
+                assert(find_owner_processor(gp, enc_oc, 2, proc) >= 0);
+                Integer owner_proc = find_owner_processor(gp, enc_oc, 2, proc);
+
+                // the case when the neihgbor is a ghost element.
+                if (owner_proc >= 0 && proc != owner_proc) {
+                    if constexpr (OP) {
+                        // get the starting index before incrementing it.
+                        Integer i = Kokkos::atomic_fetch_add(&scan(owner_proc), 1);
+                        data(i) = index;
+                    } else {
+                        Kokkos::atomic_increment(&data(owner_proc));
+                    }
+                }
+            }
+
+            MARS_INLINE_FUNCTION void predicate_face(const Octant ref_octant,
+                                                     const Integer index,
+                                                     const Integer xDim,
+                                                     const Integer yDim,
+                                                     const Integer zDim,
+                                                     bool periodic) const {
+                for (int face = 0; face < 2 * ManifoldDim; ++face) {
+                    Octant o = ref_octant.face_nbh<Type>(face, xDim, yDim, zDim, periodic);
+                    if (o.is_valid()) {
+                        increment_count(index, o);
+                    }
+                }
+            }
+
+            MARS_INLINE_FUNCTION void predicate_corner(const Octant ref_octant,
+                                                       const Integer index,
+                                                       const Integer xDim,
+                                                       const Integer yDim,
+                                                       const Integer zDim,
+                                                       bool periodic) const {
+                for (int corner = 0; corner < power_of_2(ManifoldDim); ++corner) {
+                    Octant o = ref_octant.corner_nbh<Type>(corner, xDim, yDim, zDim, periodic);
+                    if (o.is_valid()) {
+                        increment_count(index, o);
+                    }
+                }
+            }
+
+            template <Integer T = Type>
+            MARS_INLINE_FUNCTION std::enable_if_t<T == ElementType::Hex8, void> predicate_edge(const Octant ref_octant,
+                                                                                               const Integer index,
+                                                                                               const Integer xDim,
+                                                                                               const Integer yDim,
+                                                                                               const Integer zDim,
+                                                                                               bool periodic) const {
+                for (int edge = 0; edge < 4 * ManifoldDim; ++edge) {
+                    Octant o = ref_octant.edge_nbh<Type>(edge, xDim, yDim, zDim, periodic);
+                    if (o.is_valid()) {
+                        increment_count(index, o);
+                    }
+                }
+            }
+
+            template <Integer T = Type>
+            MARS_INLINE_FUNCTION std::enable_if_t<T != ElementType::Hex8, void> predicate_edge(const Octant ref_octant,
+                                                                                               const Integer index,
+                                                                                               const Integer xDim,
+                                                                                               const Integer yDim,
+                                                                                               const Integer zDim,
+                                                                                               bool periodic) const {}
+
+            MARS_INLINE_FUNCTION
+            void operator()(int index) const {
+                const auto gl_index = global(index);
+                Octant ref_octant = get_octant_from_sfc<Type, SfcKeyType>(gl_index);
+
+                predicate_face(ref_octant, index, xDim, yDim, zDim, periodic);
+                predicate_corner(ref_octant, index, xDim, yDim, zDim, periodic);
+                predicate_edge(ref_octant, index, xDim, yDim, zDim, periodic);
+            }
+        };
+
         template <Integer Type>
         struct IdentifyBoundaryPerRank {
             ViewVectorType<KeyType> global;
@@ -970,7 +1087,53 @@ namespace mars {
                 });
         }
 
+        // build the boundary elements for each rank. Device is the device id to use. (0 mc, 1 gpu)
         template <Integer Type>
+        inline void build_boundary_element_sets<Type, 1>() {
+            using namespace Kokkos;
+
+            const Integer rank_size = gp_np.extent(0) / 2 - 1;
+            auto chunk = get_chunk_size();
+
+           ViewVectorType<KeyType> count_boundary("count_boundary", rank_size);
+            parallel_for(
+                "CountBoundaryPerRank",
+                get_chunk_size(),
+                CountOrInsertBoundaryPerRank<Type>(get_view_sfc(), count_boundary, gp_np, proc, xDim, yDim, zDim, periodic));
+
+            scan_boundary_ = ViewVectorType<KeyType>("scan_boundary_", rank_size + 1);
+            incl_excl_scan(0, rank_size, count_boundary, scan_boundary_);
+
+            // perform a scan on the last row to get the total sum.
+            auto index_subview = subview(scan_boundary_, rank_size);
+            auto h_ic = create_mirror_view(index_subview);
+
+            // Deep copy device view to host view.
+            deep_copy(h_ic, index_subview);
+
+            // boundary_ = ViewVectorType<KeyType>("boundary_", h_ic());
+            boundary_lsfc_index_ = ViewVectorType<KeyType>("boundary_lsfc_index_", h_ic());
+
+            parallel_for(
+                "InsertBoundaryPerRank",
+                get_chunk_size(),
+                CountOrInsertBoundaryPerRank<Type, 1>(
+                    get_view_sfc(), boundary_lsfc_index_, scan_boundary_, gp_np, proc, xDim, yDim, zDim, periodic));
+
+            //fix the scan_boundary_ after incremented  by the atomic operation on count_or_insert_boundary_per_rank.
+            incl_excl_scan(0, rank_size, count_boundary, scan_boundary_);
+            //unique and sort the boundary elements.
+
+            boundary_lsfc_index_ = segmented_sort_unique(boundary_lsfc_index_, scan_boundary_);
+
+            //modify count boundary after sort unique then scan again to get the real addresses of the boundary elements.
+            incl_excl_scan(0, rank_size, count_boundary, scan_boundary_);
+
+            //get boundary_sfc from the sorted and unique boundary indices.TODO:
+            store_boundary_sfc(boundary_lsfc_index_, scan_boundary_, rank_size);
+        }
+
+        template <Integer Type, Integer Device = 0>
         inline void build_boundary_element_sets() {
             using namespace Kokkos;
 
@@ -1094,8 +1257,11 @@ namespace mars {
         template <Integer Type>
         void create_ghost_layer() {
             const context &context = get_context();
-
+#ifdef MARS_ENABLE_CUDA
+            build_boundary_element_sets<Type, 1>();
+#else
             build_boundary_element_sets<Type>();
+#endif
 
             Kokkos::fence();
 
@@ -1481,16 +1647,16 @@ namespace mars {
         UnorderedMap<Integer, Integer> global_to_local_map_;
 
         // Boundary and ghost layer data
-        ViewVectorType<Integer> boundary_;             // sfc code for the ghost layer
-        ViewVectorType<Integer> boundary_lsfc_index_;  // view index of the previous
-        ViewVectorType<Integer> scan_boundary_;
+        ViewVectorType<KeyType> boundary_;             // sfc code for the ghost layer
+        ViewVectorType<KeyType> boundary_lsfc_index_;  // view index of the previous
+        ViewVectorType<KeyType> scan_boundary_;
         // mirror view on the mesh scan boundary view used for the mpi send
-        ViewVectorType<Integer>::HostMirror scan_send_mirror;
+        ViewVectorType<KeyType>::HostMirror scan_send_mirror;
         // ghost data
-        ViewVectorType<Integer> ghost_;
-        ViewVectorType<Integer> scan_ghost_;
+        ViewVectorType<KeyType> ghost_;
+        ViewVectorType<KeyType> scan_ghost_;
         // mirror view on the scan_ghost view for the mpi receive
-        ViewVectorType<Integer>::HostMirror scan_recv_mirror;
+        ViewVectorType<KeyType>::HostMirror scan_recv_mirror;
     };
 
     template <typename KeyType = MortonKey<Unsigned>>
