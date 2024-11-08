@@ -50,15 +50,16 @@ variables:
     - *uenv_activate
     - mkdir -p $BUILD_DIR $INSTALL_DIR
     - |
-        CXX=`which g++` CC=`which gcc` cmake \
+          cmake \
           -S $CI_PROJECT_DIR \
           -B $BUILD_DIR \
           -DCMAKE_BUILD_TYPE=$CMAKE_BUILD_TYPE \
           -DCMAKE_INSTALL_PREFIX=$INSTALL_DIR \
           -DCMAKE_CXX_COMPILER=`which nvcc_wrapper` \
           -DMARS_BUILD_TESTS=ON \
-          -DMARS_BUILD_EXAMPLES=ON \
+          # -DMARS_BUILD_EXAMPLES=ON \
           -DMARS_ENABLE_KOKKOS=ON \
+          -DMARS_ENABLE_KOKKOS_KERNELS=ON \
           -DMARS_ENABLE_CUDA=ON \
           -DCMAKE_CUDA_ARCHITECTURES=${CUDA_ARCH}
     - |
