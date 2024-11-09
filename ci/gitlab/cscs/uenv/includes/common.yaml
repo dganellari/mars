@@ -29,7 +29,8 @@ variables:
 
 ########################## uenv Activation Anchor ##########################
 .uenv_activate: &uenv_activate
-  - . /user-environment/env/${UENV_VIEW}/activate.sh
+  - uenv view default
+  # - . /user-environment/env/${UENV_VIEW}/activate.sh
 
 ########################## uenv Runner Test Job ##########################
 .test-uenv-runner:
@@ -50,7 +51,7 @@ variables:
     - *uenv_activate
     - mkdir -p $BUILD_DIR $INSTALL_DIR
     - |
-          cmake \
+        CXX=`which g++` CC=`which gcc` cmake \
           -S $CI_PROJECT_DIR \
           -B $BUILD_DIR \
           -DCMAKE_BUILD_TYPE=$CMAKE_BUILD_TYPE \
