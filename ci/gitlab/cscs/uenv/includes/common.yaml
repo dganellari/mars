@@ -29,11 +29,6 @@ variables:
   variables:
     UENV_VIEW: 'default'
 
-########################## uenv Activation Anchor ##########################
-# .uenv_activate: &uenv_activate
-  # - uenv view default
-  # - . /user-environment/env/${UENV_VIEW}/activate.sh
-
 ########################## uenv Runner Test Job ##########################
 .test-uenv-runner:
   extends: .uenv_image
@@ -61,6 +56,7 @@ variables:
           -DMARS_ENABLE_KOKKOS=ON \
           -DMARS_ENABLE_CUDA=ON \
           -DMARS_BUILD_TESTS=ON \
+          -DMARS_ENABLE_EXAMPLES=ON \
           -DCMAKE_CUDA_ARCHITECTURES=${CUDA_ARCH}
     - |
         if [ -z "$SLURM_CPUS_PER_TASK" ]; then
