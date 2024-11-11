@@ -28,8 +28,8 @@ variables:
     UENV_VIEW: 'default'
 
 ########################## uenv Activation Anchor ##########################
-.uenv_activate: &uenv_activate
-  - uenv view default
+# .uenv_activate: &uenv_activate
+  # - uenv view default
   # - . /user-environment/env/${UENV_VIEW}/activate.sh
 
 ########################## uenv Runner Test Job ##########################
@@ -48,7 +48,6 @@ variables:
   extends: .uenv_image
   stage: build
   script:
-    - *uenv_activate
     - mkdir -p $BUILD_DIR $INSTALL_DIR
     - |
         CXX=`which g++` CC=`which gcc` cmake \
@@ -83,7 +82,6 @@ variables:
   extends: .uenv_image
   stage: test
   script:
-    - *uenv_activate
     - cd ${BUILD_DIR}
     - ctest -V -R
   variables:

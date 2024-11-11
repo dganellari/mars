@@ -6,6 +6,13 @@
     #SLURM_PARTITION: debug
     # SLURM_RESERVATION: daint
 
+########################## Test UENV #########################
+test_runner_aarch64:
+  extends: [.todi, .test-uenv-runner]
+  variables:
+    SLURM_TIMELIMIT: "00:30:00"
+
+
 ########################## Build Jobs #########################
 build_aarch64:
   extends: [.todi, .build_template]
@@ -13,11 +20,6 @@ build_aarch64:
     CUDA_ARCH: "90"
 
 ###################### Single Node Tests ######################
-test_runner_aarch64:
-  extends: [.todi, .test-uenv-runner]
-  variables:
-    SLURM_TIMELIMIT: "00:30:00"
-
 test_unit_aarch64:
   extends: [.todi, .test_unit_template]
 
