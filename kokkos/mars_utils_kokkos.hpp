@@ -537,6 +537,33 @@ namespace mars {
 
     // Sorts keys into ascending order. (~N auxiliary storage required).
     template <typename T>
+    void buffer_cub_radix_sort_pairs(ViewVectorType<T>& keys, ViewVectorType<T>& values) {
+        // Declare, allocate, and initialize device-accessible pointers for sorting data
+        auto size = in.extent(0);
+        ViewVectorType<T> out("out radix sort data", size);
+        ViewVectorType<T> out_values("out radix sort values", size);
+
+        // Create a DoubleBuffer to wrap the pair of device pointers
+        cub::DoubleBuffer<T> d_keys(in.data(), out.data());
+        cub::DoubleBuffer<T> d_values(values.data(), out_values.data());
+
+        // Determine temporary device storage requirements
+        void* d_temp_storage = NULL;
+        size_t temp_storage_bytes = 0;
+        cub::DeviceRadixSort::SortKeys(d_temp_storage, temp_storage_bytes, d_keys, d_values, size);
+        // Allocate temporary storage
+        cudaMalloc(&d_temp_storage, temp_storage_bytes);
+        // Run sorting operation
+        cub::DeviceRadixSort::SortKeys(d_temp_storage, temp_storage_bytes, d_keys, d_values, size);
+
+        cudaFree(d_temp_storage);
+
+        keys = d_keys.selector ? out : keys;
+        values = d_values.selector ? out_values : values;
+    }
+
+    // Sorts keys into ascending order. (~N auxiliary storage required).
+    template <typename T>
     ViewVectorType<T> buffer_cub_segmented_radix_sort(ViewVectorType<T> in, ViewVectorType<T> d_scan) {
         // Declare, allocate, and initialize device-accessible pointers for sorting data
         auto size = in.extent(0);
@@ -564,56 +591,75 @@ namespace mars {
             return in;
     }
 
-    // Function to perform segmented unique operation using Thrust
-template <typename T>
-ViewVectorType<T> thrust_segmented_unique(ViewVectorType<T> d_in, ViewVectorType<int> d_scan, int max_element) {
-    auto size = d_in.extent(0);
-    auto num_segments = d_scan.extent(0) - 1;
+    // Function to perform segmented unique operation using Thrust with transforming the original values to get to different segment values and work with the whole array instead of segmentes.
+    template <typename T>
+    ViewVectorType<T> thrust_segmented_unique(ViewVectorType<T>& d_in,
+                                              ViewVectorType<T>& d_count,
+                                              ViewVectorType<T> d_scan,
+                                              int max_element) {
+        auto size = d_in.extent(0);
+        auto num_segments = d_scan.extent(0) - 1;
 
-    // Create flags to denote membership of each element to the respective segment
-    thrust::device_vector<int> flags(size);
-    for (int i = 0; i < num_segments; ++i) {
-        thrust::fill(flags.begin() + d_scan(i), flags.begin() + d_scan(i + 1), i);
+        // Create flags to denote membership of each element to the respective segment
+        thrust::device_vector<int> flags(size);
+        for (int i = 0; i < num_segments; ++i) {
+            thrust::fill(flags.begin() + d_scan(i), flags.begin() + d_scan(i + 1), i);
+        }
+
+        // Transform data
+        thrust::device_ptr<T> d_ptr_in(d_in.data());
+        thrust::transform(d_ptr_in, d_ptr_in + size, flags.begin(), d_ptr_in, [max_element] __device__(T x, int flag) {
+            return x + flag * 2 * max_element;
+        });
+
+        // Sort the transformed data
+        /* buffer_cub_radix_sort_pairs(d_in, flags); */
+        thrust::sort_by_key(d_ptr_in, d_ptr_in + size, flags.begin());
+
+        // Apply thrust::unique_by_key
+        thrust::device_vector<int> flags_out(size);
+        auto end = thrust::unique_by_key(d_ptr_in, d_ptr_in + size, flags.begin(), flags_out.begin());
+        int unique_count = thrust::distance(d_ptr_in, end.first);
+
+        // Transform data back
+        thrust::transform(
+            d_ptr_in, d_ptr_in + unique_count, flags_out.begin(), d_ptr_in, [max_element] __device__(T x, int flag) {
+                return x - flag * 2 * max_element;
+            });
+
+        // Allocate the output size based on the unique count
+        ViewVectorType<T> d_out(Kokkos::view_alloc("d_out no init", Kokkos::WithoutInitializing), unique_count);
+        thrust::copy(d_ptr_in, d_ptr_in + unique_count, d_out.data());
+
+        // Use reduce_by_key to get unique keys and their counts
+        thrust::device_vector<int> counts(unique_count, 1);
+        thrust::device_vector<int> unique_keys(unique_count);
+        thrust::device_vector<int> unique_counts(unique_count);
+        auto reduce_end = thrust::reduce_by_key(flags_out.begin(),
+                                                flags_out.begin() + unique_count,
+                                                counts.begin(),
+                                                unique_keys.begin(),
+                                                unique_counts.begin());
+
+        // Use the unique keys and counts to fill out d_count
+        thrust::for_each(thrust::make_zip_iterator(thrust::make_tuple(unique_keys.begin(), unique_counts.begin())),
+                         thrust::make_zip_iterator(thrust::make_tuple(reduce_end.first, reduce_end.second)),
+                         [d_count_data = d_count.data()] __device__(const thrust::tuple<int, int>& t) {
+                             d_count_data[thrust::get<0>(t)] = thrust::get<1>(t);
+                         });
+
+        return d_out;
     }
-
-    // Transform data
-    thrust::device_ptr<T> d_ptr_in(d_in.data());
-    thrust::transform(d_ptr_in, d_ptr_in + size, flags.begin(), d_ptr_in, [max_element] __device__(T x, int flag) {
-        return x + flag * 2 * max_element;
-    });
-
-    // Sort the transformed data
-    d_in = buffer_cub_radix_sort(d_in);
-
-    // Apply thrust::unique_by_key
-    thrust::device_vector<int> flags_out(size);
-    auto end = thrust::unique_by_key(d_ptr_in, d_ptr_in + size, flags.begin(), flags_out.begin());
-    int unique_count = thrust::distance(d_ptr_in, end.first);
-
-    // Transform data back
-    thrust::transform(d_ptr_in, d_ptr_in + unique_count, flags_out.begin(), d_ptr_in, [max_element] __device__(T x, int flag) {
-        return x - flag * 2 * max_element;
-    });
-
-    // Allocate the output size based on the unique count
-    ViewVectorType<T> d_out(Kokkos::view_alloc("d_out no init", Kokkos::WithoutInitializing), unique_count);
-    thrust::copy(d_ptr_in, d_ptr_in + unique_count, d_out.data());
-
-
-    return d_out;
-}
 
 // Function to perform sort and unique operation
 template <typename T>
-ViewVectorType<T> segmented_sort_unique(ViewVectorType<T>& d_in, ViewVectorType<int> d_scan) {
+ViewVectorType<T> segmented_sort_unique(ViewVectorType<T>& d_in, ViewVectorType<T>& d_count, ViewVectorType<int> d_scan) {
     // Determine the maximum element in the input data
     thrust::device_ptr<T> d_ptr_in(d_in.data());
     T max_element = *thrust::max_element(d_ptr_in, d_ptr_in + d_in.extent(0));
 
-    // Sort the data
-    d_in = buffer_cub_radix_sort(d_in);
     // Perform unique and count the unique elements
-    auto unique = thrust_segmented_unique(d_in, d_scan, max_element);
+    auto unique = thrust_segmented_unique(d_in, d_count, d_scan, max_element);
     return unique;
 }
 

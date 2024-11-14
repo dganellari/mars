@@ -525,7 +525,7 @@ namespace mars {
 
                             ViewVectorType<KeyType> local_to_global;
                             const auto allrange = encode_sfc_3D<SfcKeyType>(
-                                xDim + 1, yDim + 1, zDim + 1);  // TODO : check if enough. Test with xdim != ydim.
+                                xDim + 1, yDim + 1, zDim + 1);
 
                             const Integer nr_points = compact_elements<Type>(local_to_global, allrange);
                             reserve_points(nr_points);
@@ -1124,13 +1124,16 @@ namespace mars {
             incl_excl_scan(0, rank_size, count_boundary, scan_boundary_);
             //unique and sort the boundary elements.
 
-            boundary_lsfc_index_ = segmented_sort_unique(boundary_lsfc_index_, scan_boundary_);
+            boundary_lsfc_index_ = segmented_sort_unique(boundary_lsfc_index_, count_boundary, scan_boundary_);
 
             //modify count boundary after sort unique then scan again to get the real addresses of the boundary elements.
             incl_excl_scan(0, rank_size, count_boundary, scan_boundary_);
 
-            //get boundary_sfc from the sorted and unique boundary indices.TODO:
-            store_boundary_sfc(boundary_lsfc_index_, scan_boundary_, rank_size);
+            //TODO: remove the boundary and use only the boundary_lsfc_index_. With it also this piece of code.
+            Kokkos::parallel_for(
+                "UpdateBoundary",
+                boundary_lsfc_index_.extent(0),
+                KOKKOS_LAMBDA(const Integer i) { boundary_(i) = local_sfc_(boundary_lsfc_index_(i)); });
         }
 
         template <Integer Type, Integer Device = 0>
@@ -1140,7 +1143,6 @@ namespace mars {
             const Integer rank_size = gp_np.extent(0) / 2 - 1;
             auto chunk = get_chunk_size();
 
-            //TODO:replace with kokkos bitset
             ViewMatrixTypeLeft<bool> rank_boundary("count_per_proc", chunk, rank_size);
             parallel_for(
                 "IdentifyBoundaryPerRank",
