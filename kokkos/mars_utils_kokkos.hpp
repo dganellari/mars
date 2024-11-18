@@ -539,12 +539,12 @@ namespace mars {
     template <typename T>
     void buffer_cub_radix_sort_pairs(ViewVectorType<T>& keys, ViewVectorType<T>& values) {
         // Declare, allocate, and initialize device-accessible pointers for sorting data
-        auto size = in.extent(0);
-        ViewVectorType<T> out("out radix sort data", size);
+        auto size = keys.extent(0);
+        ViewVectorType<T> out_keys("out radix sort data", size);
         ViewVectorType<T> out_values("out radix sort values", size);
 
         // Create a DoubleBuffer to wrap the pair of device pointers
-        cub::DoubleBuffer<T> d_keys(in.data(), out.data());
+        cub::DoubleBuffer<T> d_keys(keys.data(), out_keys.data());
         cub::DoubleBuffer<T> d_values(values.data(), out_values.data());
 
         // Determine temporary device storage requirements
@@ -558,7 +558,7 @@ namespace mars {
 
         cudaFree(d_temp_storage);
 
-        keys = d_keys.selector ? out : keys;
+        keys = d_keys.selector ? out_keys : keys;
         values = d_values.selector ? out_values : values;
     }
 
