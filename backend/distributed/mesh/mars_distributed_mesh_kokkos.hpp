@@ -850,7 +850,7 @@ namespace mars {
         struct CountOrInsertBoundaryPerRank {
             ViewVectorType<KeyType> global;
             ViewVectorType<KeyType> data;
-            ViewVectorType<KeyType> scan;
+            ViewVectorType<Integer> scan;
             ViewVectorType<KeyType> gp;
 
             Integer proc;
@@ -873,7 +873,7 @@ namespace mars {
 
             CountOrInsertBoundaryPerRank(ViewVectorType<KeyType> gl,
                                          ViewVectorType<KeyType> d,
-                                         ViewVectorType<KeyType> s,
+                                         ViewVectorType<Integer> s,
                                          ViewVectorType<KeyType> g,
                                          Integer p,
                                          Integer xdm,
@@ -1087,9 +1087,24 @@ namespace mars {
                 });
         }
 
-        template <Integer Type, Integer Device = 0>
-        inline void build_boundary_element_sets() {
+        struct DeviceTagCPU{};
+        struct DeviceTagGPU {};
+
+        template <Integer Type, Integer Device>
+        struct BoundaryElementBuilder {
+            typedef DeviceTagCPU tag;
+        };
+
+        template <Integer Type>
+        struct BoundaryElementBuilder<Type, 1> {
+            typedef DeviceTagGPU tag;
+        };
+
+        template <Integer Type, Integer Device>
+        void build_boundary_element_sets(const DeviceTagCPU) {
             using namespace Kokkos;
+
+            printf("Building boundary elements using kokkos for rank: %i\n", proc);
 
             const Integer rank_size = gp_np.extent(0) / 2 - 1;
             auto chunk = get_chunk_size();
@@ -1157,11 +1172,15 @@ namespace mars {
             would still be sorted and unique. */
             compact_boundary_elements(scan_boundary_, rank_boundary, rank_scan, scan_ranks_with_count, rank_size);
         }
+#ifdef MARS_ENABLE_CUDA
 
         // build the boundary elements for each rank. Device is the device id to use. (0 mc, 1 gpu)
-        template <Integer Type>
-        inline void build_boundary_element_sets<Type, 1>() {
+
+        template <Integer Type, Integer Device>
+        void build_boundary_element_sets(const DeviceTagGPU) {
             using namespace Kokkos;
+
+            printf("Building boundary elements using thrust for rank: %i\n", proc);
 
             const Integer rank_size = gp_np.extent(0) / 2 - 1;
             auto chunk = get_chunk_size();
@@ -1208,6 +1227,12 @@ namespace mars {
                 "UpdateBoundary", boundary_lsfc_index.extent(0), KOKKOS_LAMBDA(const Integer i) {
                     boundary(i) = local_sfc(boundary_lsfc_index(i));
                 });
+        }
+#endif
+
+        template <Integer Type, Integer Device>
+        void build_boundary_element_sets() {
+            build_boundary_element_sets<Type, Device>(typename BoundaryElementBuilder<Type, Device>::tag());
         }
 
         void exchange_ghost_counts(const context &context) {
@@ -1265,7 +1290,7 @@ namespace mars {
 #ifdef MARS_ENABLE_CUDA
             build_boundary_element_sets<Type, 1>();
 #else
-            build_boundary_element_sets<Type>();
+            build_boundary_element_sets<Type, 0>();
 #endif
 
             Kokkos::fence();

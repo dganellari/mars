@@ -592,10 +592,10 @@ namespace mars {
     }
 
     // Function to perform segmented unique operation using Thrust with transforming the original values to get to different segment values and work with the whole array instead of segmentes.
-    template <typename T>
+    template <typename T, typename S>
     ViewVectorType<T> thrust_segmented_unique(ViewVectorType<T>& d_in,
                                               ViewVectorType<T>& d_count,
-                                              ViewVectorType<T> d_scan,
+                                              ViewVectorType<S> d_scan,
                                               int max_element) {
         auto size = d_in.extent(0);
         auto num_segments = d_scan.extent(0) - 1;
@@ -653,7 +653,7 @@ namespace mars {
 
 // Function to perform sort and unique operation
 template <typename T>
-ViewVectorType<T> segmented_sort_unique(ViewVectorType<T>& d_in, ViewVectorType<T>& d_count, ViewVectorType<int> d_scan) {
+ViewVectorType<T> segmented_sort_unique(ViewVectorType<T>& d_in, ViewVectorType<T>& d_count, ViewVectorType<Integer> d_scan) {
     // Determine the maximum element in the input data
     thrust::device_ptr<T> d_ptr_in(d_in.data());
     T max_element = *thrust::max_element(d_ptr_in, d_ptr_in + d_in.extent(0));
