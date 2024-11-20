@@ -1214,7 +1214,7 @@ namespace mars {
             incl_excl_scan(0, rank_size, count_boundary, scan_boundary_);
             //unique and sort the boundary elements.
 
-            boundary_lsfc_index_ = segmented_sort_unique(boundary_lsfc_index_, count_boundary, scan_boundary_);
+            boundary_lsfc_index_ = segmented_sort_unique(boundary_lsfc_index_, count_boundary, scan_send_mirror);
 
             //modify count boundary after sort unique then scan again to get the real addresses of the boundary elements.
             incl_excl_scan(0, rank_size, count_boundary, scan_boundary_);
@@ -1245,9 +1245,6 @@ namespace mars {
 
             std::vector<Integer> send_count(size, 0);
             std::vector<Integer> receive_count(size, 0);
-
-            scan_send_mirror = create_mirror_view(get_view_scan_boundary());
-            Kokkos::deep_copy(scan_send_mirror, get_view_scan_boundary());
 
             for (int i = 0; i < size; ++i) {
                 Integer count = scan_send_mirror(i + 1) - scan_send_mirror(i);
@@ -1287,12 +1284,16 @@ namespace mars {
         template <Integer Type>
         void create_ghost_layer() {
             const context &context = get_context();
+
+            //copy the boundary elements to the host
+            scan_send_mirror = create_mirror_view(get_view_scan_boundary());
+            Kokkos::deep_copy(scan_send_mirror, get_view_scan_boundary());
+
 #ifdef MARS_ENABLE_CUDA
             build_boundary_element_sets<Type, 1>();
 #else
             build_boundary_element_sets<Type, 0>();
 #endif
-
             Kokkos::fence();
 
             exchange_ghost_counts(context);
