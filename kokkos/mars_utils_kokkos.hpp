@@ -242,6 +242,7 @@ namespace mars {
     void print_view(ViewVectorType<T> view, const std::string& name) {
         using namespace Kokkos;
 
+        printf("Printing view %s\n", name.c_str());
         parallel_for(
             "print view", view.extent(0), KOKKOS_LAMBDA(const int i) {
                 printf("%s[%d] = %d\n", name.c_str(), i, view(i));
@@ -690,7 +691,6 @@ namespace mars {
                                               T max_element) {
         auto size = d_in.extent(0);
         auto num_segments = h_scan.extent(0) - 1;
-
         // Create flags to denote membership of each element to the respective segment
         ViewVectorType<T> flags_view("flags", size);
         thrust::device_ptr<T> flags(flags_view.data());
@@ -718,12 +718,15 @@ namespace mars {
                 return x - flag * 2 * max_element;
             });
 
+        printf("Unique count: %d\n", unique_count);
+
         // Allocate the output size based on the unique count
-        ViewVectorType<T> d_out(Kokkos::view_alloc("d_out no init", Kokkos::WithoutInitializing), unique_count);
+        ViewVectorType<T> d_out("d_out", unique_count);
         thrust::copy(d_ptr_in, d_ptr_in + unique_count, d_out.data());
 
         // Initialize d_count to zero
-        thrust::fill(d_count.data(), d_count.data() + d_count.extent(0), 0);
+        // thrust::fill(d_count.data(), d_count.data() + d_count.extent(0), 0);
+        printf("d_count size: %d\n", d_count.extent(0));
 
         // Use reduce_by_key to get unique keys and their counts
         thrust::device_vector<T> counts(unique_count, 1);
@@ -738,7 +741,6 @@ namespace mars {
                          [d_count_data = d_count.data()] __device__(const thrust::tuple<T, T>& t) {
                              d_count_data[thrust::get<0>(t)] = thrust::get<1>(t);
                          });
-
         return d_out;
     }
 
@@ -750,6 +752,7 @@ namespace mars {
         // Determine the maximum element in the input data
         thrust::device_ptr<T> d_ptr_in(d_in.data());
         T max_element = *thrust::max_element(d_ptr_in, d_ptr_in + d_in.extent(0));
+        printf("Max element: %d, %d\n", max_element, h_scan.extent(0) - 1);
 
         // Perform unique and count the unique elements
         auto unique = thrust_segmented_unique(d_in, d_count, h_scan, max_element);

@@ -1185,48 +1185,62 @@ namespace mars {
             const Integer rank_size = gp_np.extent(0) / 2 - 1;
             auto chunk = get_chunk_size();
 
-           ViewVectorType<KeyType> count_boundary("count_boundary", rank_size);
-            parallel_for(
-                "CountBoundaryPerRank",
-                get_chunk_size(),
-                CountOrInsertBoundaryPerRank<Type>(get_view_sfc(), count_boundary, gp_np, proc, xDim, yDim, zDim, periodic));
+            ViewVectorType<KeyType> count_boundary("count_boundary", rank_size);
+            parallel_for("CountBoundaryPerRank",
+                         get_chunk_size(),
+                         CountOrInsertBoundaryPerRank<Type>(
+                             get_view_sfc(), count_boundary, gp_np, proc, xDim, yDim, zDim, periodic));
 
             scan_boundary_ = ViewVectorType<Integer>("scan_boundary_", rank_size + 1);
             incl_excl_scan(0, rank_size, count_boundary, scan_boundary_);
 
+            //print scan_boundary on the device using kokkos
+            Kokkos::parallel_for(
+                "print scan_boundary", rank_size, KOKKOS_LAMBDA(const Integer i) {
+                    printf("scan_boundary: %i - %i\n", i, count_boundary(i), scan_boundary_(i));
+                });
+
             // perform a scan on the last row to get the total sum.
             auto index_subview = subview(scan_boundary_, rank_size);
-            auto h_ic = create_mirror_view(index_subview);
+            auto total_boundary_number = create_mirror_view(index_subview);
 
             // Deep copy device view to host view.
-            deep_copy(h_ic, index_subview);
+            deep_copy(total_boundary_number, index_subview);
 
-            // boundary_ = ViewVectorType<KeyType>("boundary_", h_ic());
-            boundary_lsfc_index_ = ViewVectorType<KeyType>("boundary_lsfc_index_", h_ic());
+            if (total_boundary_number()) {
+                // boundary_ = ViewVectorType<KeyType>("boundary_", total_boundary_number);
+                boundary_lsfc_index_ = ViewVectorType<KeyType>("boundary_lsfc_index_", total_boundary_number());
 
-            parallel_for(
-                "InsertBoundaryPerRank",
-                get_chunk_size(),
-                CountOrInsertBoundaryPerRank<Type, 1>(
-                    get_view_sfc(), boundary_lsfc_index_, scan_boundary_, gp_np, proc, xDim, yDim, zDim, periodic));
+                parallel_for(
+                    "InsertBoundaryPerRank",
+                    get_chunk_size(),
+                    CountOrInsertBoundaryPerRank<Type, 1>(
+                        get_view_sfc(), boundary_lsfc_index_, scan_boundary_, gp_np, proc, xDim, yDim, zDim, periodic));
 
-            //fix the scan_boundary_ after incremented  by the atomic operation on count_or_insert_boundary_per_rank.
-            incl_excl_scan(0, rank_size, count_boundary, scan_boundary_);
-            //unique and sort the boundary elements.
+                // fix the scan_boundary_ after incremented  by the atomic operation on
+                // count_or_insert_boundary_per_rank.
+                incl_excl_scan(0, rank_size, count_boundary, scan_boundary_);
+                // unique and sort the boundary elements.
+                scan_send_mirror = create_mirror_view(get_view_scan_boundary());
+                Kokkos::deep_copy(scan_send_mirror, get_view_scan_boundary());
+                printf("scan_send_mirror size 1: %li\n", scan_send_mirror.extent(0));
 
-            boundary_lsfc_index_ = segmented_sort_unique(boundary_lsfc_index_, count_boundary, scan_send_mirror);
+                boundary_lsfc_index_ = segmented_sort_unique(boundary_lsfc_index_, count_boundary, scan_send_mirror);
+                boundary_ = ViewVectorType<KeyType>("boundary_", boundary_lsfc_index_.extent(0));
 
-            //modify count boundary after sort unique then scan again to get the real addresses of the boundary elements.
-            incl_excl_scan(0, rank_size, count_boundary, scan_boundary_);
+                // modify count boundary after sort unique then scan again to get the real addresses of the boundary
+                // elements.
+                incl_excl_scan(0, rank_size, count_boundary, scan_boundary_);
 
-            auto boundary = get_view_boundary();
-            auto local_sfc = get_view_sfc();
-            auto boundary_lsfc_index = get_view_boundary_sfc_index();
-            //TODO: remove the boundary and use only the boundary_lsfc_index_. With it also this piece of code.
-            Kokkos::parallel_for(
-                "UpdateBoundary", boundary_lsfc_index.extent(0), KOKKOS_LAMBDA(const Integer i) {
-                    boundary(i) = local_sfc(boundary_lsfc_index(i));
-                });
+                auto boundary = get_view_boundary();
+                auto local_sfc = get_view_sfc();
+                auto boundary_lsfc_index = get_view_boundary_sfc_index();
+                // TODO: remove the boundary and use only the boundary_lsfc_index_. With it also this piece of code.
+                Kokkos::parallel_for(
+                    "UpdateBoundary", boundary_lsfc_index.extent(0), KOKKOS_LAMBDA(const Integer i) {
+                        boundary(i) = local_sfc(boundary_lsfc_index(i));
+                    });
+            }
         }
 #endif
 
@@ -1242,6 +1256,9 @@ namespace mars {
 
             int proc_num = rank(context);
             int size = num_ranks(context);
+            // copy the boundary elements to the host
+            scan_send_mirror = create_mirror_view(get_view_scan_boundary());
+            Kokkos::deep_copy(scan_send_mirror, get_view_scan_boundary());
 
             std::vector<Integer> send_count(size, 0);
             std::vector<Integer> receive_count(size, 0);
@@ -1285,22 +1302,22 @@ namespace mars {
         void create_ghost_layer() {
             const context &context = get_context();
 
-            //copy the boundary elements to the host
-            scan_send_mirror = create_mirror_view(get_view_scan_boundary());
-            Kokkos::deep_copy(scan_send_mirror, get_view_scan_boundary());
-
-#ifdef MARS_ENABLE_CUDA
+// #ifdef MARS_ENABLE_CUDA
             build_boundary_element_sets<Type, 1>();
-#else
-            build_boundary_element_sets<Type, 0>();
-#endif
+
+            print_view(get_view_boundary(), "boundary1");
+            print_view(get_view_boundary_sfc_index(), "boundary_sfc_index1");
+            print_view(get_view_scan_boundary(), "scan_boundary1");
+// #else
+            /* build_boundary_element_sets<Type, 0>();
+            print_view(get_view_boundary(), "boundary2");
+            print_view(get_view_boundary_sfc_index(), "boundary_sfc_index2");
+            print_view(get_view_scan_boundary(), "scan_boundary2"); */
+// #endif
             Kokkos::fence();
 
-            exchange_ghost_counts(context);
-            exchange_ghost_layer(context);
-
-            /* Not needed anymore since the Mesh manager is now doing the update */
-            /* data.copy_mesh_to_device();  // update the boundary device pointers */
+            /* exchange_ghost_counts(context);
+            exchange_ghost_layer(context); */
 
             std::cout << "Finished building the ghost layer (boundary element set). Rank: " << get_proc() << std::endl;
         }
