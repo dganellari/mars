@@ -45,6 +45,8 @@ variables:
   extends: .uenv_image
   stage: build
   script:
+    - spack install cxxopts
+    - spack load cxxopts
     - mkdir -p $BUILD_DIR $INSTALL_DIR
     - |
         CXX=`which g++` CC=`which gcc` cmake \
