@@ -1194,12 +1194,6 @@ namespace mars {
             scan_boundary_ = ViewVectorType<Integer>("scan_boundary_", rank_size + 1);
             incl_excl_scan(0, rank_size, count_boundary, scan_boundary_);
 
-            //print scan_boundary on the device using kokkos
-            Kokkos::parallel_for(
-                "print scan_boundary", rank_size, KOKKOS_LAMBDA(const Integer i) {
-                    printf("scan_boundary: %i - %i\n", i, count_boundary(i), scan_boundary_(i));
-                });
-
             // perform a scan on the last row to get the total sum.
             auto index_subview = subview(scan_boundary_, rank_size);
             auto total_boundary_number = create_mirror_view(index_subview);
@@ -1219,11 +1213,12 @@ namespace mars {
 
                 // fix the scan_boundary_ after incremented  by the atomic operation on
                 // count_or_insert_boundary_per_rank.
+                Kokkos::deep_copy(scan_boundary_, 0);
                 incl_excl_scan(0, rank_size, count_boundary, scan_boundary_);
+
                 // unique and sort the boundary elements.
                 scan_send_mirror = create_mirror_view(get_view_scan_boundary());
                 Kokkos::deep_copy(scan_send_mirror, get_view_scan_boundary());
-                printf("scan_send_mirror size 1: %li\n", scan_send_mirror.extent(0));
 
                 boundary_lsfc_index_ = segmented_sort_unique(boundary_lsfc_index_, count_boundary, scan_send_mirror);
                 boundary_ = ViewVectorType<KeyType>("boundary_", boundary_lsfc_index_.extent(0));
@@ -1302,22 +1297,16 @@ namespace mars {
         void create_ghost_layer() {
             const context &context = get_context();
 
-// #ifdef MARS_ENABLE_CUDA
+#ifdef MARS_ENABLE_CUDA
             build_boundary_element_sets<Type, 1>();
+#else
+            build_boundary_element_sets<Type, 0>();
+#endif
 
-            print_view(get_view_boundary(), "boundary1");
-            print_view(get_view_boundary_sfc_index(), "boundary_sfc_index1");
-            print_view(get_view_scan_boundary(), "scan_boundary1");
-// #else
-            /* build_boundary_element_sets<Type, 0>();
-            print_view(get_view_boundary(), "boundary2");
-            print_view(get_view_boundary_sfc_index(), "boundary_sfc_index2");
-            print_view(get_view_scan_boundary(), "scan_boundary2"); */
-// #endif
             Kokkos::fence();
 
-            /* exchange_ghost_counts(context);
-            exchange_ghost_layer(context); */
+            exchange_ghost_counts(context);
+            exchange_ghost_layer(context);
 
             std::cout << "Finished building the ghost layer (boundary element set). Rank: " << get_proc() << std::endl;
         }
