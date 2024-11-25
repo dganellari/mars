@@ -120,6 +120,103 @@ namespace mars {
         }
     }
 
+    template <Integer Dim, Integer ManifoldDim, Integer Type, class KeyType = MortonKey<Unsigned>>
+    bool test_mars_distributed_nonsimplex_mesh_ghost_layer(
+        DMesh<Dim, ManifoldDim, Type, KeyType> &mesh_thrust_boundary,
+        DM<Dim, ManifoldDim, Type, KeyType> &mesh_predicate_boundary) {
+        using namespace mars;
+
+#ifdef MARS_ENABLE_KOKKOS
+        using namespace Kokkos;
+
+        partition_mesh(mesh_thrust_boundary);
+        mesh_thrust_boundary.build_boundary_element_sets<Type, 0>();
+
+        partition_mesh(mesh_predicate_boundary);
+        mesh_predicate_boundary.build_boundary_element_sets<Type, 1>();
+
+        bool equal_scan_boundary = thrust::equal(
+            thrust::device,
+            mesh_thrust_boundary.get_view_scan_boundary().data(),
+            mesh_thrust_boundary.get_view_scan_boundary().data() + mesh_thrust_boundary.get_view_scan_boundary().size(),
+            mesh_predicate_boundary.get_view_scan_boundary().data());
+
+        bool equal_boundary = thrust::equal(
+            thrust::device,
+            mesh_thrust_boundary.get_view_boundary().data(),
+            mesh_thrust_boundary.get_view_boundary().data() + mesh_thrust_boundary.get_view_boundary().size(),
+            mesh_predicate_boundary.get_view_boundary().data());
+
+        bool equal_boundary_lsfc = thrust::equal(thrust::device,
+                                                 mesh_thrust_boundary.get_view_boundary_sfc_index().data(),
+                                                 mesh_thrust_boundary.get_view_boundary_sfc_index().data() +
+                                                     mesh_thrust_boundary.get_view_boundary_sfc_index().size(),
+                                                 mesh_predicate_boundary.get_view_boundary_sfc_index().data());
+
+        return equal_scan_boundary && equal_boundary && equal_boundary_lsfc;
+
+#endif
+    }
+
+    template <class KeyType = MortonKey<Unsigned>>
+    bool test_mars_distributed_nonsimplex_mesh_ghost_layer_2D(const int x, const int y) {
+        using namespace mars;
+        try {
+            mars::proc_allocation resources;
+
+#ifdef MARS_ENABLE_MPI
+            // create a distributed context
+            auto context = mars::make_context(resources, MPI_COMM_WORLD);
+#endif
+
+#ifdef MARS_ENABLE_KOKKOS
+
+            Kokkos::Timer timer_gen;
+            DistributedQuad4Mesh<KeyType> mesh1(context);
+            generate_distributed_cube(mesh, x, y, 0);
+
+            DistributedQuad4Mesh<KeyType> mesh2(context);
+            generate_distributed_cube(mesh, x, y, 0);
+
+            return test_mars_distributed_nonsimplex_mesh_ghost_layer(mesh1, mesh2);
+
+#endif
+        } catch (std::exception &e) {
+            std::cerr << "exception caught in ring miniapp: " << e.what() << "\n";
+            return 0;
+        }
+    }
+
+    template <class KeyType = MortonKey<Unsigned>>
+    bool test_mars_distributed_nonsimplex_mesh_ghost_layer_3D(const int x, const int y, const int z) {
+        using namespace mars;
+        try {
+            mars::proc_allocation resources;
+
+#ifdef MARS_ENABLE_MPI
+            // create a distributed context
+            auto context = mars::make_context(resources, MPI_COMM_WORLD);
+#endif
+
+#ifdef MARS_ENABLE_KOKKOS
+
+            Kokkos::Timer timer_gen;
+            DistributedHex8Mesh<KeyType> mesh1(context);
+            generate_distributed_cube(mesh, x, y, z);
+
+            DistributedHex8Mesh<KeyType> mesh2(context);
+            generate_distributed_cube(mesh, x, y, z);
+
+            return test_mars_distributed_nonsimplex_mesh_ghost_layer(mesh1, mesh2);
+
+#endif
+        } catch (std::exception &e) {
+            std::cerr << "exception caught in ring miniapp: " << e.what() << "\n";
+            return 0;
+        }
+    }
+
+
     template <class DofHandler>
     MARS_INLINE_FUNCTION bool check_unique_dofs(DofHandler &handler) {
         auto size = handler.get_dof_size();
