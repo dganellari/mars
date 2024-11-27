@@ -120,20 +120,19 @@ namespace mars {
         }
     }
 
-    template <Integer Dim, Integer ManifoldDim, Integer Type, class KeyType = MortonKey<Unsigned>>
-    bool test_mars_distributed_nonsimplex_mesh_ghost_layer(
-        DMesh<Dim, ManifoldDim, Type, KeyType> &mesh_thrust_boundary,
-        DM<Dim, ManifoldDim, Type, KeyType> &mesh_predicate_boundary) {
+    template <Integer Type, class KeyType = MortonKey<Unsigned>>
+    bool test_mars_distributed_nonsimplex_mesh_ghost_layer(DistributedMesh<KeyType, Type> &mesh_thrust_boundary,
+                                                           DistributedMesh<KeyType, Type> &mesh_predicate_boundary) {
         using namespace mars;
 
 #ifdef MARS_ENABLE_KOKKOS
         using namespace Kokkos;
 
         partition_mesh(mesh_thrust_boundary);
-        mesh_thrust_boundary.build_boundary_element_sets<Type, 0>();
+        mesh_thrust_boundary.template build_boundary_element_sets<Type, 0>();
 
         partition_mesh(mesh_predicate_boundary);
-        mesh_predicate_boundary.build_boundary_element_sets<Type, 1>();
+        mesh_predicate_boundary.template build_boundary_element_sets<Type, 1>();
 
         bool equal_scan_boundary = thrust::equal(
             thrust::device,
@@ -154,7 +153,6 @@ namespace mars {
                                                  mesh_predicate_boundary.get_view_boundary_sfc_index().data());
 
         return equal_scan_boundary && equal_boundary && equal_boundary_lsfc;
-
 #endif
     }
 
@@ -173,10 +171,10 @@ namespace mars {
 
             Kokkos::Timer timer_gen;
             DistributedQuad4Mesh<KeyType> mesh1(context);
-            generate_distributed_cube(mesh, x, y, 0);
+            generate_distributed_cube(mesh1, x, y, 0);
 
             DistributedQuad4Mesh<KeyType> mesh2(context);
-            generate_distributed_cube(mesh, x, y, 0);
+            generate_distributed_cube(mesh2, x, y, 0);
 
             return test_mars_distributed_nonsimplex_mesh_ghost_layer(mesh1, mesh2);
 
@@ -202,10 +200,10 @@ namespace mars {
 
             Kokkos::Timer timer_gen;
             DistributedHex8Mesh<KeyType> mesh1(context);
-            generate_distributed_cube(mesh, x, y, z);
+            generate_distributed_cube(mesh1, x, y, z);
 
             DistributedHex8Mesh<KeyType> mesh2(context);
-            generate_distributed_cube(mesh, x, y, z);
+            generate_distributed_cube(mesh2, x, y, z);
 
             return test_mars_distributed_nonsimplex_mesh_ghost_layer(mesh1, mesh2);
 
