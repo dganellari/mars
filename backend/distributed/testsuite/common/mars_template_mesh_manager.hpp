@@ -120,13 +120,11 @@ namespace mars {
         }
     }
 
+#ifdef MARS_ENABLE_CUDA
     template <Integer Type, class KeyType = MortonKey<Unsigned>>
     bool test_mars_distributed_nonsimplex_mesh_ghost_layer(DistributedMesh<KeyType, Type> &mesh_thrust_boundary,
                                                            DistributedMesh<KeyType, Type> &mesh_predicate_boundary) {
         using namespace mars;
-
-#ifdef MARS_ENABLE_KOKKOS
-        using namespace Kokkos;
 
         partition_mesh(mesh_thrust_boundary);
         mesh_thrust_boundary.template build_boundary_element_sets<Type, 0>();
@@ -153,7 +151,6 @@ namespace mars {
                                                  mesh_predicate_boundary.get_view_boundary_sfc_index().data());
 
         return equal_scan_boundary && equal_boundary && equal_boundary_lsfc;
-#endif
     }
 
     template <class KeyType = MortonKey<Unsigned>>
@@ -168,8 +165,6 @@ namespace mars {
 #endif
 
 #ifdef MARS_ENABLE_KOKKOS
-
-            Kokkos::Timer timer_gen;
             DistributedQuad4Mesh<KeyType> mesh1(context);
             generate_distributed_cube(mesh1, x, y, 0);
 
@@ -177,7 +172,6 @@ namespace mars {
             generate_distributed_cube(mesh2, x, y, 0);
 
             return test_mars_distributed_nonsimplex_mesh_ghost_layer(mesh1, mesh2);
-
 #endif
         } catch (std::exception &e) {
             std::cerr << "exception caught in ring miniapp: " << e.what() << "\n";
@@ -197,8 +191,6 @@ namespace mars {
 #endif
 
 #ifdef MARS_ENABLE_KOKKOS
-
-            Kokkos::Timer timer_gen;
             DistributedHex8Mesh<KeyType> mesh1(context);
             generate_distributed_cube(mesh1, x, y, z);
 
@@ -206,14 +198,13 @@ namespace mars {
             generate_distributed_cube(mesh2, x, y, z);
 
             return test_mars_distributed_nonsimplex_mesh_ghost_layer(mesh1, mesh2);
-
 #endif
         } catch (std::exception &e) {
             std::cerr << "exception caught in ring miniapp: " << e.what() << "\n";
             return 0;
         }
     }
-
+#endif
 
     template <class DofHandler>
     MARS_INLINE_FUNCTION bool check_unique_dofs(DofHandler &handler) {
