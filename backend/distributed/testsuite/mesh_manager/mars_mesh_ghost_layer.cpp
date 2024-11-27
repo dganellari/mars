@@ -120,6 +120,7 @@ TEST(GhostLayer, MeshGhostLayer3D_HilbertKey_Large_power_of_2) {
     ASSERT_TRUE(test_mars_distributed_nonsimplex_mesh_ghost_layer_3D<HilbertKey<Unsigned>>(x, y, z));
 }
 
+#endif
 
 int main(int argc, char **argv) {
     mars::Env env(argc, argv);
@@ -127,5 +128,4 @@ int main(int argc, char **argv) {
     return RUN_ALL_TESTS();
 }
 
-#endif
 
