@@ -9,7 +9,7 @@ stages:
 .build:
   stage: build
   variables:
-    DOCKERFILE: ci/gitlab/cscs/uenv/multi-arch-container/docker/Dockerfile
+    DOCKERFILE: ci/gitlab/cscs/alps/docker/Dockerfile
     PERSIST_IMAGE_NAME: $CSCS_REGISTRY_PATH/${ARCH}/mars_kokkos_container:${CI_COMMIT_SHORT_SHA}
 build aarch64:
   extends: [.container-builder-cscs-gh200, .build]
