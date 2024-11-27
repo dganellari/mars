@@ -105,7 +105,19 @@ install(
   EXPORT MarsTargets
   RUNTIME DESTINATION bin
   LIBRARY DESTINATION lib
-  ARCHIVE DESTINATION lib)
+  ARCHIVE DESTINATION lib
+  INCLUDES DESTINATION include)
+
+# Export the cxxopts target if it was fetched
+if(TARGET cxxopts)
+    install(TARGETS cxxopts
+        EXPORT MarsTargets
+        RUNTIME DESTINATION bin
+        LIBRARY DESTINATION lib
+        ARCHIVE DESTINATION lib
+        INCLUDES DESTINATION include
+    )
+endif()
 
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/base/mars_config.hpp.in
                ${CMAKE_BINARY_DIR}/mars_config.hpp)

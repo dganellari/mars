@@ -9,14 +9,14 @@
 #endif
 
 #ifdef MARS_ENABLE_KOKKOS
+#include <Kokkos_Sort.hpp>
 #include "Kokkos_Core.hpp"
 #include "Kokkos_UnorderedMap.hpp"
-#include <Kokkos_Sort.hpp>
 #ifdef MARS_ENABLE_CUDA
-#include <cub/cub.cuh>  // or equivalently <cub/device/device_radix_sort.cuh>
-#include <thrust/unique.h>
-#include <thrust/device_vector.h>
 #include <thrust/device_ptr.h>
+#include <thrust/device_vector.h>
+#include <thrust/unique.h>
+#include <cub/cub.cuh>  // or equivalently <cub/device/device_radix_sort.cuh>
 #endif
 #endif
 #include "mars_err.hpp"
@@ -149,7 +149,7 @@ namespace mars {
 
         typename ViewMatrixTextureC<T, xDim_, yDim_>::HostMirror h_view = create_mirror_view(map_side_to_nodes);
 
-        //Parallel for generates warning for [] operator as called from a device function.
+        // Parallel for generates warning for [] operator as called from a device function.
         /* parallel_for(
             MDRangePolicy<Rank<2>, KokkosHostExecSpace>({0, 0}, {xDim, yDim}),
             MARS_LAMBDA(int i, int j) { h_view(i, j) = hostData[i][j]; }); */
@@ -162,8 +162,8 @@ namespace mars {
         Kokkos::deep_copy(map_side_to_nodes, h_view);
     }
 
-
-    //generate a kokkos function that takes a view as input and returns the last value of the view by coping it to the host.
+    // generate a kokkos function that takes a view as input and returns the last value of the view by coping it to the
+    // host.
     template <typename T>
     T get_last_value(ViewVectorType<T> view) {
         using namespace Kokkos;
@@ -236,15 +236,17 @@ namespace mars {
             });
     }
 
-
-    //write a function that prints a view in parallel with kokkos
+    // write a function that prints a view in parallel with kokkos
     //
     template <typename T>
     void print_view(ViewVectorType<T> view, const std::string& name) {
         using namespace Kokkos;
 
+        printf("Printing view %s - %d\n", name.c_str(), view.extent(0));
         parallel_for(
-            "print view", view.extent(0), KOKKOS_LAMBDA(const int i) { printf("%s[%d] = %d\n", name.c_str(), i, view(i)); });
+            "print view", view.extent(0), KOKKOS_LAMBDA(const int i) {
+                printf("%s[%d] = %d\n", name.c_str(), i, view(i));
+            });
     }
 
     template <typename T>
@@ -363,7 +365,8 @@ namespace mars {
         std::partial_sum(c.begin(), c.end(), out.data() + 1);
     }
 
-    //generate a kokkos function that takes a view as input  then creates a mirror host view, fills it up and copies it to the gpu memory.
+    // generate a kokkos function that takes a view as input  then creates a mirror host view, fills it up and copies it
+    // to the gpu memory.
     template <typename V, typename H, typename U>
     void host_scan_to_device(const V& view, H& h_view, U const& data) {
         h_view = Kokkos::create_mirror_view(view);
@@ -466,19 +469,100 @@ namespace mars {
     }
 
     template <typename T>
+    T cub_unique_by_key(ViewVectorType<T> d_keys_in,
+                          ViewVectorType<T> d_values_in,
+                          ViewVectorType<T> d_keys_out,
+                          ViewVectorType<T> d_values_out) {
+        auto num_items = d_keys_in.extent(0);
+
+        // Allocate device memory for the number of selected items
+        T* d_num_selected_out;
+        cudaMalloc(&d_num_selected_out, sizeof(T));
+
+        // Determine temporary device storage requirements
+        void* d_temp_storage = nullptr;
+        size_t temp_storage_bytes = 0;
+        cub::DeviceSelect::UniqueByKey(d_temp_storage,
+                                       temp_storage_bytes,
+                                       d_keys_in.data(),
+                                       d_values_in.data(),
+                                       d_keys_out.data(),
+                                       d_values_out.data(),
+                                       d_num_selected_out,
+                                       num_items);
+
+        // Allocate temporary storage
+        cudaMalloc(&d_temp_storage, temp_storage_bytes);
+        // Run selection
+        cub::DeviceSelect::UniqueByKey(d_temp_storage,
+                                       temp_storage_bytes,
+                                       d_keys_in.data(),
+                                       d_values_in.data(),
+                                       d_keys_out.data(),
+                                       d_values_out.data(),
+                                       d_num_selected_out,
+                                       num_items);
+
+        // Copy the number of selected items from device to host
+        T num_selected;
+        cudaMemcpy(&num_selected, d_num_selected_out, sizeof(T), cudaMemcpyDeviceToHost);
+
+        // Free temporary storage
+        cudaFree(d_temp_storage);
+        cudaFree(d_num_selected_out);
+
+        return num_selected;
+    }
+    /* template <typename KeyIterator, typename ValueIterator, typename OutputIterator, typename CountIterator>
+    void cub_unique_by_key(KeyIterator keys_first,
+                           KeyIterator keys_last,
+                           ValueIterator values_first,
+                           OutputIterator keys_out,
+                           OutputIterator values_out,
+                           CountIterator num_selected_out) {
+        using T = typename thrust::iterator_value<KeyIterator>::type;
+        size_t num_items = thrust::distance(keys_first, keys_last);
+
+        // Determine temporary device storage requirements
+        void* d_temp_storage = NULL;
+        size_t temp_storage_bytes = 0;
+        cub::DeviceSelect::UniqueByKey(d_temp_storage,
+                                       temp_storage_bytes,
+                                       thrust::raw_pointer_cast(&*keys_first),
+                                       thrust::raw_pointer_cast(&*values_first),
+                                       thrust::raw_pointer_cast(&*keys_out),
+                                       thrust::raw_pointer_cast(&*values_out),
+                                       thrust::raw_pointer_cast(&*num_selected_out),
+                                       num_items);
+        // Allocate temporary storage
+        cudaMalloc(&d_temp_storage, temp_storage_bytes);
+        // Run unique operation
+        cub::DeviceSelect::UniqueByKey(d_temp_storage,
+                                       temp_storage_bytes,
+                                       thrust::raw_pointer_cast(&*keys_first),
+                                       thrust::raw_pointer_cast(&*values_first),
+                                       thrust::raw_pointer_cast(&*keys_out),
+                                       thrust::raw_pointer_cast(&*values_out),
+                                       thrust::raw_pointer_cast(&*num_selected_out),
+                                       num_items);
+        // Free temporary storage
+        cudaFree(d_temp_storage);
+    } */
+
+    template <typename T>
     ViewVectorType<T> thrust_unique(const ViewVectorType<T>& d_in) {
         thrust::device_ptr<T> d_ptr_in(d_in.data());
-        //do unique and count the unique elements
+        // do unique and count the unique elements
         auto end_unique = thrust::unique(d_ptr_in, d_ptr_in + d_in.extent(0));
         int unique_count = thrust::distance(d_ptr_in, end_unique);
-        //allocate the output size based on the unique count.
+        // allocate the output size based on the unique count.
         ViewVectorType<T> d_out(Kokkos::view_alloc("d_out no init", Kokkos::WithoutInitializing), unique_count);
-        //copy from thrust to d_out
+        // copy from thrust to d_out
         thrust::copy(d_ptr_in, d_ptr_in + unique_count, d_out.data());
         return d_out;
     }
 
-    //using thrust unique_count for newer thrust versions
+    // using thrust unique_count for newer thrust versions
     /* template <typename T>
     void thrust_unique(ViewVectorType<T> d_in) {
         thrust::device_ptr<T> d_ptr_in(d_in.data());
@@ -528,11 +612,148 @@ namespace mars {
         // Run sorting operation
         cub::DeviceRadixSort::SortKeys(d_temp_storage, temp_storage_bytes, d_keys, size);
 
-        //selector 0,1 based on the active buffer.
+        // selector 0,1 based on the active buffer.
         if (d_keys.selector)
             return out;
         else
             return in;
+    }
+
+    // Sorts keys into ascending order. (~N auxiliary storage required).
+    template <typename T>
+    void buffer_cub_radix_sort_pairs(ViewVectorType<T>& keys, ViewVectorType<T>& values) {
+        // Declare, allocate, and initialize device-accessible pointers for sorting data
+        auto size = keys.extent(0);
+        ViewVectorType<T> out_keys("out radix sort data", size);
+        ViewVectorType<T> out_values("out radix sort values", size);
+
+        // Create a DoubleBuffer to wrap the pair of device pointers
+        cub::DoubleBuffer<T> d_keys(keys.data(), out_keys.data());
+        cub::DoubleBuffer<T> d_values(values.data(), out_values.data());
+
+        // Determine temporary device storage requirements
+        void* d_temp_storage = NULL;
+        size_t temp_storage_bytes = 0;
+        cub::DeviceRadixSort::SortKeys(d_temp_storage, temp_storage_bytes, d_keys, d_values, size);
+        // Allocate temporary storage
+        cudaMalloc(&d_temp_storage, temp_storage_bytes);
+        // Run sorting operation
+        cub::DeviceRadixSort::SortKeys(d_temp_storage, temp_storage_bytes, d_keys, d_values, size);
+
+        cudaFree(d_temp_storage);
+
+        keys = d_keys.selector ? out_keys : keys;
+        values = d_values.selector ? out_values : values;
+    }
+
+    // Sorts keys into ascending order. (~N auxiliary storage required).
+    template <typename T>
+    ViewVectorType<T> buffer_cub_segmented_radix_sort(ViewVectorType<T> in, ViewVectorType<T> d_scan) {
+        // Declare, allocate, and initialize device-accessible pointers for sorting data
+        auto size = in.extent(0);
+        ViewVectorType<T> out("out radix sort data", size);
+
+        auto num_segments = d_scan.extent(0) - 1;
+
+        // Create a DoubleBuffer to wrap the pair of device pointers
+        cub::DoubleBuffer<T> d_keys(in.data(), out.data());
+
+        // Determine temporary device storage requirements
+        void* d_temp_storage = NULL;
+        size_t temp_storage_bytes = 0;
+        cub::DeviceSegmentedRadixSort::SortKeys(
+            d_temp_storage, temp_storage_bytes, d_keys, size, num_segments, d_scan.data(), d_scan.data() + 1);
+        // Allocate temporary storage
+        cudaMalloc(&d_temp_storage, temp_storage_bytes);
+        // Run sorting operation
+        cub::DeviceSegmentedRadixSort::SortKeys(
+            d_temp_storage, temp_storage_bytes, d_keys, size, num_segments, d_scan.data(), d_scan.data() + 1);
+
+        cudaFree(d_temp_storage);
+        // selector 0,1 based on the active buffer.
+        if (d_keys.selector)
+            return out;
+        else
+            return in;
+    }
+
+    // Custom equality operator template
+    template <typename T>
+    struct custom_equal_to {
+        __host__ __device__ bool operator()(const T& lhs, const T& rhs) const { return lhs == rhs; }
+    };
+
+    // Function to perform segmented unique operation using Thrust
+    template <typename T, typename S>
+    ViewVectorType<T> thrust_segmented_unique(ViewVectorType<T>& d_in,
+                                              ViewVectorType<T>& d_count,
+                                              const S& h_scan,
+                                              T max_element) {
+        auto size = d_in.extent(0);
+        auto num_segments = h_scan.extent(0) - 1;
+        // Create flags to denote membership of each element to the respective segment
+        ViewVectorType<T> flags_view("flags", size);
+        thrust::device_ptr<T> flags(flags_view.data());
+        for (int i = 0; i < num_segments; ++i) {
+            thrust::fill(flags + h_scan(i), flags + h_scan(i + 1), i);
+        }
+
+        // Transform data
+        thrust::device_ptr<T> d_ptr_in(d_in.data());
+        thrust::transform(d_ptr_in, d_ptr_in + size, flags, d_ptr_in, [max_element] __device__(T x, T flag) {
+            return x + flag * 2 * max_element;
+        });
+
+        // Sort the transformed data along with flags using thrust::sort_by_key
+        thrust::sort_by_key(d_ptr_in, d_ptr_in + size, flags);
+
+        // Apply thrust::unique_by_key with custom equality operator
+        ViewVectorType<T> flags_out_view("flags_out", size);
+        thrust::device_ptr<T> flags_out(flags_out_view.data());
+        auto unique_count = cub_unique_by_key(d_in, flags_view, d_in, flags_out_view);
+
+        // Transform data back
+        thrust::transform(
+            d_ptr_in, d_ptr_in + unique_count, flags_out, d_ptr_in, [max_element] __device__(T x, T flag) {
+                return x - flag * 2 * max_element;
+            });
+
+        // Allocate the output size based on the unique count
+        ViewVectorType<T> d_out("d_out", unique_count);
+        thrust::copy(d_ptr_in, d_ptr_in + unique_count, d_out.data());
+
+        // Initialize d_count to zero
+        thrust::device_ptr<T> d_count_ptr(d_count.data());
+        thrust::fill(d_count_ptr, d_count_ptr + d_count.extent(0), 0);
+
+        // Use reduce_by_key to get unique keys and their counts
+        thrust::device_vector<T> counts(unique_count, 1);
+        thrust::device_vector<T> unique_keys(unique_count);
+        thrust::device_vector<T> unique_counts(unique_count);
+        auto reduce_end = thrust::reduce_by_key(
+            flags_out, flags_out + unique_count, counts.begin(), unique_keys.begin(), unique_counts.begin());
+
+        // Use the unique keys and counts to fill out d_count
+        thrust::for_each(thrust::make_zip_iterator(thrust::make_tuple(unique_keys.begin(), unique_counts.begin())),
+                         thrust::make_zip_iterator(thrust::make_tuple(reduce_end.first, reduce_end.second)),
+                         [d_count_data = d_count.data()] __device__(const thrust::tuple<T, T>& t) {
+                             d_count_data[thrust::get<0>(t)] = thrust::get<1>(t);
+                         });
+        return d_out;
+    }
+
+    // Function to perform sort and unique operation
+    template <typename T, typename S>
+    ViewVectorType<T> segmented_sort_unique(ViewVectorType<T>& d_in,
+                                            ViewVectorType<T>& d_count,
+                                            const S& h_scan) {
+        // Determine the maximum element in the input data
+        thrust::device_ptr<T> d_ptr_in(d_in.data());
+        T max_element = *thrust::max_element(d_ptr_in, d_ptr_in + d_in.extent(0));
+
+        // Perform unique and count the unique elements
+        auto unique = thrust_segmented_unique(d_in, d_count, h_scan, max_element);
+        return unique;
     }
 
     // Block-sorting CUDA kernel

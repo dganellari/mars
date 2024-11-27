@@ -19,6 +19,7 @@ namespace mars {
         using simplex_type = typename Mesh::Elem;
         /* using MM = MeshManager<Mesh>; */
         using SfcKeyType = typename Mesh::SfcKeyType;
+        using KeyType = typename Mesh::KeyType;
 
     public:
         template <Integer idx>
@@ -39,20 +40,20 @@ namespace mars {
         struct FillBufferData {
             ElementType buffer_data;
             ElementType user_data;
-            ViewVectorType<Integer> boundary_lsfc_index;
+            ViewVectorType<KeyType> boundary_lsfc_index;
 
-            FillBufferData(ElementType bf, ElementType ud, ViewVectorType<Integer> bd)
+            FillBufferData(ElementType bf, ElementType ud, ViewVectorType<KeyType> bd)
                 : buffer_data(bf), user_data(ud), boundary_lsfc_index(bd) {}
 
             MARS_INLINE_FUNCTION
             void operator()(Integer i) const {
-                const Integer lsfc_index = boundary_lsfc_index(i);
+                const auto lsfc_index = boundary_lsfc_index(i);
                 buffer_data(i) = user_data(lsfc_index);
             }
         };
 
         struct fill_buffer_data_functor {
-            fill_buffer_data_functor(std::string d, size_t s, ViewVectorType<Integer> b)
+            fill_buffer_data_functor(std::string d, size_t s, ViewVectorType<KeyType> b)
                 : desc(d), size(s), boundary_lsfc_index(b) {}
 
             template <typename ElementType>
@@ -63,7 +64,7 @@ namespace mars {
             std::string desc;
             size_t size;
 
-            ViewVectorType<Integer> boundary_lsfc_index;
+            ViewVectorType<KeyType> boundary_lsfc_index;
         };
 
         void fill_buffer_data(user_tuple &buffer_data) {
@@ -71,8 +72,7 @@ namespace mars {
 
             reserve_user_data(buffer_data, "buffer_data", size);
 
-            ViewVectorType<Integer> boundary_lsfc_index =
-                get_mesh().get_view_boundary_sfc_index();
+            auto boundary_lsfc_index = get_mesh().get_view_boundary_sfc_index();
             apply_impl(
                 fill_buffer_data_functor("fill_buffer_data", size, boundary_lsfc_index), buffer_data, user_data_);
         }

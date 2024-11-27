@@ -1,10 +1,17 @@
-FROM docker.io/finkandreas/spack:0.19.2-cuda11.7.1-ubuntu22.04 as builder
+FROM jfrog.svc.cscs.ch/docker-ci-ext/base-containers/public/spack-build:spack0.21.0-ubuntu22.04-cuda12.4.1 as builder
 
 ARG NUM_PROCS
 
-RUN spack-install-helper \
-    daint-gpu \
-    "kokkos+cuda+wrapper" \
+ARG KOKKOS_SPEC
+
+ARG ALPS_SPEC
+
+ARG MARS_CXX_SPEC
+
+ARG MARS_CUDA_SPEC
+
+RUN spack-install-helper $ALPS_SPEC \
+    "kokkos +aggressive_vectorization cxxstd=17 +pic +shared +serial +tuning $KOKKOS_SPEC" \
     "kokkos-kernels" \
     "cmake" \
     "git"
@@ -18,13 +25,13 @@ RUN spack env activate /opt/spack-environment \
   && cd /mars.src/build \
   && cmake \
     -DCMAKE_BUILD_TYPE=Release \
-    -DCMAKE_CXX_COMPILER=/opt/view/bin/nvcc_wrapper \
+    $MARS_CXX_SPEC \
     -DCMAKE_INSTALL_PREFIX=$MARS_DIR \
     -DCMAKE_VERBOSE_MAKEFILE=ON \
     -DMARS_ENABLE_KOKKOS=ON \
-    -DMARS_ENABLE_CUDA=ON \
+    -DMARS_ENABLE_KOKKOS_KERNELS=ON \
+    $MARS_CUDA_SPEC \
     -DMARS_ENABLE_TESTS=ON \
-    -DMARS_ENABLE_EXAMPLES=ON \
     /mars.src |& tee cmake_output.log \
   && ! grep 'Manually-specified variables were' cmake_output.log \
   && make -j$NUM_PROCS \
@@ -35,7 +42,7 @@ RUN rm -rf /mars.src/build
 # end of builder container, now we are ready to copy necessary files
 
 # copy only relevant parts to the final container
-FROM docker.io/finkandreas/spack:base-cuda11.7.1-ubuntu22.04
+FROM jfrog.svc.cscs.ch/docker-ci-ext/base-containers/public/spack-build:spack0.21.0-ubuntu22.04-cuda12.4.1
 
 # copy mars installation to the final container
 COPY --from=builder $MARS_DIR $MARS_DIR

@@ -553,13 +553,13 @@ namespace mars {
         Integer get_col(const Integer index) const { return get_sparsity_pattern().entries(index); }
 
         MARS_INLINE_FUNCTION
-        const crs_col get_col() const { return get_sparsity_pattern().entries; }
+        crs_col get_col() { return sparsity_pattern.entries; }
 
         MARS_INLINE_FUNCTION
         Integer get_row_map(const Integer index) const { return get_sparsity_pattern().row_map(index); }
 
         MARS_INLINE_FUNCTION
-        const crs_row get_row_map() { return get_sparsity_pattern().row_map; }
+        crs_row get_row_map() { return sparsity_pattern.row_map; }
 
         MARS_INLINE_FUNCTION
         Integer get_col_index_from_global(const Integer row, const col_index_type col) const {

@@ -7,10 +7,6 @@ spack:
   - mpi
   - cxxopts
   - llvm
-  develop:
-    mars:
-      path: ~/scratch/mars
-      spec: mars@develop
   view: ~/scratch/view_mars
   packages:
     all:
@@ -22,3 +18,18 @@ spack:
         prefix: /opt/homebrew
   concretizer:
     unify: when_possible
+  compilers:
+    - compiler:
+        spec: apple-clang@=16.0.0
+        paths:
+          cc: /usr/bin/clang
+          cxx: /usr/bin/clang++
+          f77: /opt/homebrew/bin/gfortran
+          fc: /opt/homebrew/bin/gfortran
+        flags: {}
+        operating_system: sequoia
+        target: aarch64
+        modules: []
+        environment: {}
+        extra_rpaths: []
+

@@ -120,6 +120,100 @@ namespace mars {
         }
     }
 
+    template <Integer Type, class KeyType = MortonKey<Unsigned>>
+    bool test_mars_distributed_nonsimplex_mesh_ghost_layer(DistributedMesh<KeyType, Type> &mesh_thrust_boundary,
+                                                           DistributedMesh<KeyType, Type> &mesh_predicate_boundary) {
+        using namespace mars;
+
+#ifdef MARS_ENABLE_KOKKOS
+        using namespace Kokkos;
+
+        partition_mesh(mesh_thrust_boundary);
+        mesh_thrust_boundary.template build_boundary_element_sets<Type, 0>();
+
+        partition_mesh(mesh_predicate_boundary);
+        mesh_predicate_boundary.template build_boundary_element_sets<Type, 1>();
+
+        bool equal_scan_boundary = thrust::equal(
+            thrust::device,
+            mesh_thrust_boundary.get_view_scan_boundary().data(),
+            mesh_thrust_boundary.get_view_scan_boundary().data() + mesh_thrust_boundary.get_view_scan_boundary().size(),
+            mesh_predicate_boundary.get_view_scan_boundary().data());
+
+        bool equal_boundary = thrust::equal(
+            thrust::device,
+            mesh_thrust_boundary.get_view_boundary().data(),
+            mesh_thrust_boundary.get_view_boundary().data() + mesh_thrust_boundary.get_view_boundary().size(),
+            mesh_predicate_boundary.get_view_boundary().data());
+
+        bool equal_boundary_lsfc = thrust::equal(thrust::device,
+                                                 mesh_thrust_boundary.get_view_boundary_sfc_index().data(),
+                                                 mesh_thrust_boundary.get_view_boundary_sfc_index().data() +
+                                                     mesh_thrust_boundary.get_view_boundary_sfc_index().size(),
+                                                 mesh_predicate_boundary.get_view_boundary_sfc_index().data());
+
+        return equal_scan_boundary && equal_boundary && equal_boundary_lsfc;
+#endif
+    }
+
+    template <class KeyType = MortonKey<Unsigned>>
+    bool test_mars_distributed_nonsimplex_mesh_ghost_layer_2D(const int x, const int y) {
+        using namespace mars;
+        try {
+            mars::proc_allocation resources;
+
+#ifdef MARS_ENABLE_MPI
+            // create a distributed context
+            auto context = mars::make_context(resources, MPI_COMM_WORLD);
+#endif
+
+#ifdef MARS_ENABLE_KOKKOS
+
+            Kokkos::Timer timer_gen;
+            DistributedQuad4Mesh<KeyType> mesh1(context);
+            generate_distributed_cube(mesh1, x, y, 0);
+
+            DistributedQuad4Mesh<KeyType> mesh2(context);
+            generate_distributed_cube(mesh2, x, y, 0);
+
+            return test_mars_distributed_nonsimplex_mesh_ghost_layer(mesh1, mesh2);
+
+#endif
+        } catch (std::exception &e) {
+            std::cerr << "exception caught in ring miniapp: " << e.what() << "\n";
+            return 0;
+        }
+    }
+
+    template <class KeyType = MortonKey<Unsigned>>
+    bool test_mars_distributed_nonsimplex_mesh_ghost_layer_3D(const int x, const int y, const int z) {
+        using namespace mars;
+        try {
+            mars::proc_allocation resources;
+
+#ifdef MARS_ENABLE_MPI
+            // create a distributed context
+            auto context = mars::make_context(resources, MPI_COMM_WORLD);
+#endif
+
+#ifdef MARS_ENABLE_KOKKOS
+
+            Kokkos::Timer timer_gen;
+            DistributedHex8Mesh<KeyType> mesh1(context);
+            generate_distributed_cube(mesh1, x, y, z);
+
+            DistributedHex8Mesh<KeyType> mesh2(context);
+            generate_distributed_cube(mesh2, x, y, z);
+
+            return test_mars_distributed_nonsimplex_mesh_ghost_layer(mesh1, mesh2);
+
+#endif
+        } catch (std::exception &e) {
+            std::cerr << "exception caught in ring miniapp: " << e.what() << "\n";
+            return 0;
+        }
+    }
+
 
     template <class DofHandler>
     MARS_INLINE_FUNCTION bool check_unique_dofs(DofHandler &handler) {
@@ -128,27 +222,28 @@ namespace mars {
         Kokkos::deep_copy(unique_ids, true);
 
         // Check for duplicates
-        Kokkos::parallel_for("check_duplicates", size - 1, KOKKOS_LAMBDA(const size_t i) {
-            auto sfc_i = handler.template local_to_sfc<DofHandler::Block>(i);
-            auto sfc_j = handler.template local_to_sfc<DofHandler::Block>(i + 1);
+        Kokkos::parallel_for(
+            "check_duplicates", size - 1, KOKKOS_LAMBDA(const size_t i) {
+                auto sfc_i = handler.template local_to_sfc<DofHandler::Block>(i);
+                auto sfc_j = handler.template local_to_sfc<DofHandler::Block>(i + 1);
 
-            // Get the components of the block local dof in order to compute the local dof
-            auto component_i = handler.get_component(i);
-            auto component_j = handler.get_component(i + 1);
+                // Get the components of the block local dof in order to compute the local dof
+                auto component_i = handler.get_component(i);
+                auto component_j = handler.get_component(i + 1);
 
-            //in this way we test component and sfc to local map to get to the same local dof value
-            auto local_i = handler.sfc_to_local(sfc_i, component_i);
-            auto local_j = handler.sfc_to_local(sfc_j, component_j);
-            assert(local_i == i && local_j == i + 1);
+                // in this way we test component and sfc to local map to get to the same local dof value
+                auto local_i = handler.sfc_to_local(sfc_i, component_i);
+                auto local_j = handler.sfc_to_local(sfc_j, component_j);
+                assert(local_i == i && local_j == i + 1);
 
-            //it is unique only if one of the two is not equal
-            if (sfc_i == sfc_j && local_i == local_j) {
-                bool expected = true;
-                Kokkos::atomic_compare_exchange(&unique_ids(0), expected, false);
-            }
-        });
+                // it is unique only if one of the two is not equal
+                if (sfc_i == sfc_j && local_i == local_j) {
+                    bool expected = true;
+                    Kokkos::atomic_compare_exchange(&unique_ids(0), expected, false);
+                }
+            });
 
-            // Copy the result back to the host
+        // Copy the result back to the host
         auto host_unique_ids = Kokkos::create_mirror_view(unique_ids);
         Kokkos::deep_copy(host_unique_ids, unique_ids);
         bool result = host_unique_ids(0);
@@ -156,10 +251,7 @@ namespace mars {
         return result;
     }
 
-     template <Integer Type,
-              Integer Degree = 1,
-              bool Overlap = true,
-              class KeyType = MortonKey<Unsigned>>
+    template <Integer Type, Integer Degree = 1, bool Overlap = true, class KeyType = MortonKey<Unsigned>>
     bool test_mars_distributed_dof_handler(const int xDim, const int yDim, const int zDim, const int block) {
         using namespace mars;
         mars::proc_allocation resources;
@@ -204,6 +296,153 @@ namespace mars {
 #endif
         return result;
     }
+
+    // Helper function to compute the expected value for a given element and DOF index
+    KOKKOS_INLINE_FUNCTION
+    int expected_value(int elem_index, int dof_index, int block) {
+        // Compute the expected value based on the element index, DOF index, and block size
+        return elem_index * block + dof_index;
+    }
+
+    template <Integer Type = ElementType::Quad4,
+              Integer Degree = 1,
+              bool Overlap = true,
+              class KeyType = MortonKey<Unsigned>>
+    bool test_mars_distributed_dof_map(const int xDim, const int yDim, const int zDim, const int block) {
+        using namespace mars;
+        mars::proc_allocation resources;
+
+#ifdef MARS_ENABLE_MPI
+        // create a distributed context
+        auto context = mars::make_context(resources, MPI_COMM_WORLD);
+        int proc_num = mars::rank(context);
+#else
+        // resources.gpu_id = marsenv::default_gpu();
+        // // create a local context
+        // auto context = mars::make_context(resources);
+#endif
+
+#ifdef MARS_ENABLE_KOKKOS
+
+        using DMesh = DistributedMesh<KeyType, Type>;
+
+        // create the quad mesh distributed through the mpi procs.
+        DMesh mesh(context);
+        generate_distributed_cube(mesh, xDim, yDim, zDim);
+
+        constexpr Integer Block = 0;
+        using DOFHandler = DofHandler<DMesh, Degree, Block>;
+        using DMQ = DM<DOFHandler, double, double, double>;
+        using FE = FEDofMap<DOFHandler>;
+
+        DOFHandler dof_handler(mesh);
+        dof_handler.enumerate_dofs();
+        dof_handler.set_block(block);
+
+        auto fe_dof_map = build_fe_dof_map<DOFHandler, Overlap>(dof_handler);
+        auto elem_dof_enum = fe_dof_map.get_elem_dof_map();
+
+        bool success = true;
+
+        Kokkos::parallel_reduce(
+            "VerifyTopologicalOrder2DLarge",
+            elem_dof_enum.extent(0),
+            KOKKOS_LAMBDA(const int elem_index, bool &local_success) {
+                for (int dof_index = 0; dof_index < elem_dof_enum.extent(1); ++dof_index) {
+                    // Check that the DOFs are in the expected topological order
+                    if (elem_dof_enum(elem_index, dof_index) != expected_value(elem_index, dof_index, block)) {
+                        local_success = false;
+                    }
+                }
+            },
+            Kokkos::LAnd<bool>(success));
+
+        return success;
+#endif
+        return false;
+    }
+
+/* #ifdef MARS_ENABLE_KOKKOS_KERNELS
+
+    template <Integer Type, Integer Degree = 1, bool Overlap = true, class KeyType = MortonKey<Unsigned>>
+    bool test_mars_distributed_sparsity_pattern(const int xDim, const int yDim, const int zDim, const int block) {
+        // Create a DofHandler
+        mars::proc_allocation resources;
+
+#ifdef MARS_ENABLE_MPI
+        // create a distributed context
+        auto context = mars::make_context(resources, MPI_COMM_WORLD);
+#else
+        // resources.gpu_id = marsenv::default_gpu();
+        // // create a local context
+        // auto context = mars::make_context(resources);
+#endif
+
+        using DMesh = DistributedMesh<KeyType, Type>;
+
+        // create the mesh distributed through the mpi procs.
+        DMesh mesh(context);
+        generate_distributed_cube(mesh, xDim, yDim, zDim);
+
+        constexpr Integer Block = 0;
+        using DOFHandler = DofHandler<DMesh, Degree, Block>;
+        DOFHandler dof_handler(mesh);
+        dof_handler.enumerate_dofs();
+        dof_handler.set_block(block);
+
+        auto fe_dof_map = build_fe_dof_map<DOFHandler, Overlap>(dof_handler);
+        // Initialize SparsityPattern
+        using SPattern = SparsityPattern<double, Integer, unsigned long, DOFHandler>;
+        SPattern sparsity_pattern(dof_handler);
+
+        // Build the sparsity pattern
+        sparsity_pattern.build_pattern(fe_dof_map);
+
+        // Verify the sparsity pattern
+        auto row_map = sparsity_pattern.get_row_map();
+        auto entries = sparsity_pattern.get_col();
+
+        bool success = true;
+
+        // Verify specific values for a known scenario
+        Kokkos::parallel_reduce(
+            "VerifySpecificValues",
+            row_map.extent(0) - 1,
+            KOKKOS_LAMBDA(const int row, bool &local_success) {
+                // Example check: Ensure that the diagonal element is present
+                bool has_diagonal = false;
+                for (int i = row_map(row); i < row_map(row + 1); ++i) {
+                    if (entries(i) == row) {
+                        has_diagonal = true;
+                        break;
+                    }
+                }
+                if (!has_diagonal) {
+                    local_success = false;
+                }
+            },
+            Kokkos::LAnd<bool>(success));
+
+        SparsityMatrix<SPattern> sparsity_matrix(sparsity_pattern);
+        sparsity_matrix.build_crs_matrix();
+
+        auto crs_matrix = sparsity_matrix.get_crs_matrix();
+
+        // Verify the CRS matrix
+        Kokkos::parallel_reduce(
+            "VerifyCRSMatrix",
+            crs_matrix.numRows(),
+            KOKKOS_LAMBDA(const int row, bool &local_success) {
+                if (crs_matrix.graph.row_map(row + 1) < crs_matrix.graph.row_map(row)) {
+                    local_success = false;
+                }
+            },
+            Kokkos::LAnd<bool>(success));
+
+        return success;
+    }
+
+#endif */
 
     template <Integer Type = ElementType::Quad4,
               Integer Degree = 1,
@@ -313,11 +552,9 @@ namespace mars {
         double time_call = timer_c.seconds();
         std::cout << "Collect: " << time_call << std::endl;
 
-        dof_handler.boundary_dof_iterate(
-            MARS_LAMBDA(const Integer local_dof) { x_local(local_dof) = 7; }, 0);
+        dof_handler.boundary_dof_iterate(MARS_LAMBDA(const Integer local_dof) { x_local(local_dof) = 7; }, 0);
 
-        dof_handler.boundary_dof_iterate(
-            MARS_LAMBDA(const Integer local_dof) { x_local(local_dof) = 8; }, 1);
+        dof_handler.boundary_dof_iterate(MARS_LAMBDA(const Integer local_dof) { x_local(local_dof) = 8; }, 1);
 
         /*print using the index iterate*/
         /* dof_handler.dof_iterate(MARS_LAMBDA(const Integer i) {
@@ -336,6 +573,5 @@ namespace mars {
 
 #endif
     }
-
 
 }  // namespace mars
