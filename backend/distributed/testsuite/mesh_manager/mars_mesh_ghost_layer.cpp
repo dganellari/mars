@@ -1,9 +1,9 @@
+#ifdef MARS_ENABLE_CUDA
+
 #include <gtest/gtest.h>
 #include "mars_template_mesh_manager.hpp"
 
 using namespace mars;
-
-#ifdef KOKKOS_ENABLE_CUDA
 // Test the mesh generation for 2D meshes for the morton key
 TEST(GhostLayer, MeshGhostLayer2D_Small) {
     const int x = 10;
@@ -120,11 +120,12 @@ TEST(GhostLayer, MeshGhostLayer3D_HilbertKey_Large_power_of_2) {
     ASSERT_TRUE(test_mars_distributed_nonsimplex_mesh_ghost_layer_3D<HilbertKey<Unsigned>>(x, y, z));
 }
 
-#endif
 
 int main(int argc, char **argv) {
     mars::Env env(argc, argv);
     testing::InitGoogleTest(&argc, argv);
     return RUN_ALL_TESTS();
 }
+
+#endif
 
