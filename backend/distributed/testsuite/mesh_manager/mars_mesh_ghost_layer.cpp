@@ -4,6 +4,15 @@
 
 using namespace mars;
 
+TEST(MeshGen, MeshGeneration3D_HilbertKey_NonCube) {
+    const int x = 512;
+    const int y = 128;
+    const int z = 256;
+    auto num_elements = test_mars_distributed_nonsimplex_mesh_generation_kokkos_3D<HilbertKey<Unsigned>>(x, y, z);
+    auto expected_num_elements = x * y * z;
+    ASSERT_EQ(num_elements, expected_num_elements);
+}
+
 #ifdef KOKKOS_ENABLE_CUDA
 // Test the mesh generation for 2D meshes for the morton key
 TEST(GhostLayer, MeshGhostLayer2D_Small) {
