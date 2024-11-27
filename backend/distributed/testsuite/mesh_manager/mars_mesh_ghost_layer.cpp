@@ -1,9 +1,10 @@
-#ifdef MARS_ENABLE_CUDA
 
 #include <gtest/gtest.h>
 #include "mars_template_mesh_manager.hpp"
 
 using namespace mars;
+
+#ifdef KOKKOS_ENABLE_CUDA
 // Test the mesh generation for 2D meshes for the morton key
 TEST(GhostLayer, MeshGhostLayer2D_Small) {
     const int x = 10;
