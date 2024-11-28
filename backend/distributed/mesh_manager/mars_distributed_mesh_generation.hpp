@@ -353,7 +353,7 @@ std::vector<T> calculate_counts(int size, T chunk_size, T last_chunk_size) {
     return counts;
 }
 
-#ifdef MARS_ENABLE_CUDA
+#ifdef KOKKOS_ENABLE_CUDA
 // This function processes the mesh using CUDA. It's only compiled if MARS_ENABLE_CUDA is defined.
 template <Integer Dim, Integer ManifoldDim, Integer Type, class KeyType, class H>
 void process_with_cuda(DMesh<Dim, ManifoldDim, Type, KeyType> &mesh, SFC<Type, KeyType> &sfc_generator, const H &global_partition_host, int rank) {
@@ -760,7 +760,7 @@ void partition_mesh(DMesh<Dim, ManifoldDim, Type, KeyType> &mesh) {
     sfc_generator.reserve_elements(mesh.get_chunk_size());
 
     Timer time;
-#ifdef MARS_ENABLE_CUDA
+#ifdef KOKKOS_ENABLE_CUDA
     process_with_cuda(mesh, sfc_generator, global_partition_host, rank);
 #else
     process_without_cuda(mesh, sfc_generator, global_partition_host, size, rank);

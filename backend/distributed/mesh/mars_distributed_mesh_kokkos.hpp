@@ -1172,7 +1172,7 @@ namespace mars {
             would still be sorted and unique. */
             compact_boundary_elements(scan_boundary_, rank_boundary, rank_scan, scan_ranks_with_count, rank_size);
         }
-#ifdef MARS_ENABLE_CUDA
+#ifdef KOKKOS_ENABLE_CUDA
 
         // build the boundary elements for each rank. Device is the device id to use. (0 mc, 1 gpu)
 
@@ -1297,7 +1297,7 @@ namespace mars {
         void create_ghost_layer() {
             const context &context = get_context();
 
-#ifdef MARS_ENABLE_CUDA
+#ifdef KOKKOS_ENABLE_CUDA
             build_boundary_element_sets<Type, 1>();
 #else
             build_boundary_element_sets<Type, 0>();
