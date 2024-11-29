@@ -1,0 +1,5 @@
+add_test([=[MPITest.TestGuard]=]  /Users/gandanie/scratch/santis/mars/mac/backend/distributed/testsuite/communication/mpi_test [==[--gtest_filter=MPITest.TestGuard]==] --gtest_also_run_disabled_tests)
+set_tests_properties([=[MPITest.TestGuard]=]  PROPERTIES WORKING_DIRECTORY /Users/gandanie/scratch/santis/mars/mac/backend/distributed/testsuite/communication SKIP_REGULAR_EXPRESSION [==[\[  SKIPPED \]]==] VS_DEBUGGER_WORKING_DIRECTORY)
+add_test([=[MPITest.TestMPIContext]=]  /Users/gandanie/scratch/santis/mars/mac/backend/distributed/testsuite/communication/mpi_test [==[--gtest_filter=MPITest.TestMPIContext]==] --gtest_also_run_disabled_tests)
+set_tests_properties([=[MPITest.TestMPIContext]=]  PROPERTIES WORKING_DIRECTORY /Users/gandanie/scratch/santis/mars/mac/backend/distributed/testsuite/communication SKIP_REGULAR_EXPRESSION [==[\[  SKIPPED \]]==] VS_DEBUGGER_WORKING_DIRECTORY)
+set(  mpi_test_TESTS MPITest.TestGuard MPITest.TestMPIContext)
