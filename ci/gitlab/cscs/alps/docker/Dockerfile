@@ -12,7 +12,7 @@ ARG MARS_CUDA_SPEC
 
 RUN spack-install-helper --target $ALPS_SPEC \
     "git" "cmake" "python@3.11" "vim +python +perl +lua" \
-    "kokkos +aggressive_vectorization cxxstd=17 +pic +serial +shared +tuning $KOKKOS_SPEC" \
+    "kokkos +aggressive_vectorization $KOKKOS_SPEC cxxstd=17 +pic +serial +shared +tuning" \
     "kokkos-kernels"
 
 ENV MARS_DIR=/mars.install
