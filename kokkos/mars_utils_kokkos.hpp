@@ -12,7 +12,7 @@
 #include <Kokkos_Sort.hpp>
 #include "Kokkos_Core.hpp"
 #include "Kokkos_UnorderedMap.hpp"
-#ifdef MARS_ENABLE_CUDA
+#ifdef KOKKOS_ENABLE_CUDA
 #include <thrust/device_ptr.h>
 #include <thrust/device_vector.h>
 #include <thrust/unique.h>
@@ -439,7 +439,7 @@ namespace mars {
         return d_out;
     }
 
-#ifdef MARS_ENABLE_CUDA
+#ifdef KOKKOS_ENABLE_CUDA
 
     template <typename T>
     void cub_inclusive_scan(ViewVectorType<T> data_) {

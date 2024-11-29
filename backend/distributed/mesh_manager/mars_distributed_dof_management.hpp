@@ -1459,7 +1459,7 @@ namespace mars {
                 ghost_size,
                 CountLocalGlobalDofs<true, size_t>(get_mesh(), owned_thread_count, local_thread_count, nbhs, nbhr));
 
-#ifdef MARS_ENABLE_CUDA
+#ifdef KOKKOS_ENABLE_CUDA
             cub_inclusive_scan(owned_thread_count);
             cub_inclusive_scan(local_thread_count);
 #else
@@ -1486,7 +1486,7 @@ namespace mars {
                 ghost_size,
                 InsertLocalGlobalDofs<true, size_t>(get_mesh(), owned_dofs, dofs, owned_thread_count, local_thread_count));
 
-#ifdef MARS_ENABLE_CUDA
+#ifdef KOKKOS_ENABLE_CUDA
             owned_dofs = buffer_cub_radix_sort(owned_dofs);
             dofs = buffer_cub_radix_sort(dofs);
 

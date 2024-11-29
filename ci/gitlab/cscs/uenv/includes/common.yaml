@@ -81,7 +81,7 @@ variables:
   stage: test
   script:
     - cd ${BUILD_DIR}
-    - ctest -V -R
+    - ctest -V
   variables:
     <<: *default_slurm_vars
     SLURM_TIMELIMIT: "00:30:00"
@@ -91,7 +91,7 @@ variables:
   stage: test
   script:
     - cd ${BUILD_DIR}
-    - ctest -V -R
+    - ctest -V
   variables:
     <<: *distributed_slurm_vars
     SLURM_TIMELIMIT: "00:15:00"

@@ -11,7 +11,7 @@ RUN spack-install-helper \
 
 ENV MARS_DIR=/mars.install
 
-jUN git clone https://github.com/dganellari/mars.git --branch development /mars.src
+RUN git clone https://github.com/dganellari/mars.git --branch development /mars.src
 RUN cd /mars.src && git submodule update --init --recursive
 RUN mkdir -p /mars.src/build
 RUN spack env activate /opt/spack-environment \

@@ -120,7 +120,7 @@ namespace mars {
         }
     }
 
-#ifdef MARS_ENABLE_CUDA
+#ifdef KOKKOS_ENABLE_CUDA
     template <Integer Type, class KeyType = MortonKey<Unsigned>>
     bool test_mars_distributed_nonsimplex_mesh_ghost_layer(DistributedMesh<KeyType, Type> &mesh_thrust_boundary,
                                                            DistributedMesh<KeyType, Type> &mesh_predicate_boundary) {
