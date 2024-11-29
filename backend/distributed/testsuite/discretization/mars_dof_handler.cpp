@@ -1,5 +1,4 @@
 #include <gtest/gtest.h>
-#include <Kokkos_Core.hpp>
 #include "mars_template_mesh_manager.hpp"
 
 using namespace mars;

@@ -294,7 +294,6 @@ endif()
 
 if(MARS_ENABLE_CXXOPTS)
   include(cxxopts/cxxopts.cmake)
-  # set(MARS_ENABLE_CXXOPTS ON)
 endif()
 
 if(MARS_ENABLE_ADIOS2)

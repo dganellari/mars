@@ -15,8 +15,7 @@ if(MARS_ENABLE_TESTS)
         FetchContent_GetProperties(googletest)
 
         if(NOT googletest_POPULATED)
-            FetchContent_Populate(googletest)
-            add_subdirectory(${googletest_SOURCE_DIR} ${googletest_BINARY_DIR})
+            FetchContent_MakeAvailable(googletest)
         endif()
 
         set_target_properties(gtest PROPERTIES FOLDER extern)
