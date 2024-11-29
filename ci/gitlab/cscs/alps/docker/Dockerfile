@@ -19,11 +19,9 @@ ENV MARS_DIR=/mars.install
 
 COPY . /mars.src
 
-# RUN git clone https://github.com/dganellari/mars.git --branch development /mars.src
 RUN cd /mars.src && git submodule update --init --recursive
 RUN mkdir -p /mars.src/build
-RUN spack env activate /opt/spack-environment \
-  && cd /mars.src/build \
+RUN cd /mars.src/build \
   && cmake \
     -DCMAKE_BUILD_TYPE=Release \
     $MARS_CXX_SPEC \
@@ -36,8 +34,7 @@ RUN spack env activate /opt/spack-environment \
     /mars.src |& tee cmake_output.log \
   && ! grep 'Manually-specified variables were' cmake_output.log \
   && make -j$NUM_PROCS \
-  && make install \
-  && spack env deactivate
+  && make install
 RUN rm -rf /mars.src/build
 
 # end of builder container, now we are ready to copy necessary files

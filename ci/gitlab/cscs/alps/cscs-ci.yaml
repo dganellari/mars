@@ -14,7 +14,7 @@ stages:
 build aarch64:
   extends: [.container-builder-cscs-gh200, .build]
   variables:
-    DOCKER_BUILD_ARGS: '["KOKKOS_SPEC=+openmp ~alloc_async +cuda cuda_arch=90 +wrapper +cuda_constexpr +cuda_lambda ~cuda_relocatable_device_code ~cuda_uvm", "ALPS_SPEC=alps-gh200", "MARS_CUDA_SPEC=-DMARS_ENABLE_CUDA=ON", "MARS_CXX_SPEC=-DCMAKE_CXX_COMPILER=nvcc_wrapper"]'
+    DOCKER_BUILD_ARGS: '["KOKKOS_SPEC=+openmp +cuda cuda_arch=90 +wrapper +cuda_constexpr +cuda_lambda ~cuda_relocatable_device_code ~cuda_uvm", "ALPS_SPEC=alps-gh200", "MARS_CUDA_SPEC=-DMARS_ENABLE_CUDA=ON", "MARS_CXX_SPEC=-DCMAKE_CXX_COMPILER=nvcc_wrapper"]'
 build x86_64:
   extends: [.container-builder-cscs-zen2, .build]
   variables:
