@@ -10,15 +10,14 @@ ARG MARS_CXX_SPEC
 
 ARG MARS_CUDA_SPEC
 
-RUN spack-install-helper $ALPS_SPEC \
-    "kokkos +aggressive_vectorization cxxstd=17 +pic +shared +serial +tuning $KOKKOS_SPEC" \
-    "kokkos-kernels" \
-    "cmake" \
-    "git"
+RUN spack-install-helper --target $ALPS_SPEC \
+    "git" "cmake" "python@3.11" "vim +python +perl +lua" \
+    "kokkos +aggressive_vectorization cxxstd=17 +pic +serial +shared +tuning $KOKKOS_SPEC" \
+    "kokkos-kernels"
 
 ENV MARS_DIR=/mars.install
 
-RUN git clone https://github.com/dganellari/mars.git --branch development /mars.src
+RUN git clone https://github.com/dganellari/mars.git --branch reframe_ci /mars.src
 RUN cd /mars.src && git submodule update --init --recursive
 RUN mkdir -p /mars.src/build
 RUN spack env activate /opt/spack-environment \
@@ -42,7 +41,7 @@ RUN rm -rf /mars.src/build
 # end of builder container, now we are ready to copy necessary files
 
 # copy only relevant parts to the final container
-FROM jfrog.svc.cscs.ch/docker-ci-ext/base-containers/public/spack-build:spack0.21.0-ubuntu22.04-cuda12.4.1
+FROM jfrog.svc.cscs.ch/docker-ci-ext/base-containers/public/spack-runtime:ubuntu22.04-cuda12.4.1
 
 # copy mars installation to the final container
 COPY --from=builder $MARS_DIR $MARS_DIR
@@ -54,8 +53,13 @@ COPY --from=builder /opt/software /opt/software
 COPY --from=builder /opt/._view /opt/._view
 COPY --from=builder /etc/profile.d/z10_spack_environment.sh /etc/profile.d/z10_spack_environment.sh
 
+# Some boilerplate to get all paths correctly - fix_spack_install is part of the base image
+# and makes sure that all important things are being correctly setup
 RUN fix_spack_install
 
+# Finally install software that is needed, e.g. compilers
+# It is also possible to build compilers via spack and let all dependencies be handled by spack
 RUN apt-get -yqq update && apt-get -yqq upgrade \
- && apt-get -yqq install build-essential gdb gfortran \
+ && apt-get -yqq install build-essential gfortran \
  && rm -rf /var/lib/apt/lists/*
+
