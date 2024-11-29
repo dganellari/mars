@@ -4,7 +4,7 @@
 
 using namespace mars;
 
-TEST(MeshGen, MeshGeneration3D_HilbertKey_NonCube) {
+TEST(GhostLayer, MeshGeneration3D_HilbertKey_before_ghost_layer) {
     const int x = 512;
     const int y = 128;
     const int z = 256;
