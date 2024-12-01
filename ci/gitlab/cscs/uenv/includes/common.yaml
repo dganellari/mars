@@ -80,7 +80,7 @@ variables:
   extends: .uenv_image
   stage: test
   script:
-    - cd ${BUILD_DIR}
+    - cd ${INSTALL_DIR}
     - ctest -V
   variables:
     <<: *default_slurm_vars
@@ -90,7 +90,7 @@ variables:
   extends: .uenv_image
   stage: test
   script:
-    - cd ${BUILD_DIR}
+    - cd ${INSTALL_DIR}
     - ctest -V
   variables:
     <<: *distributed_slurm_vars
