@@ -87,12 +87,12 @@ variables:
     <<: *default_slurm_vars
     SLURM_TIMELIMIT: "00:30:00"
 
-# .test_distributed_template:
-  # extends: .uenv_image
-  # stage: test
-  # script:
-  #   - cd $INSTALL_DIR
-  #   - ctest -V
-  # variables:
-  #   <<: *distributed_slurm_vars
-#     SLURM_TIMELIMIT: "00:15:00"
+.test_distributed_template:
+  extends: .uenv_image
+  stage: test
+  script:
+    - cd $INSTALL_DIR
+    - ctest -V
+  variables:
+    <<: *distributed_slurm_vars
+    SLURM_TIMELIMIT: "00:15:00"
