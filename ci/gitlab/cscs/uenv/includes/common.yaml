@@ -84,12 +84,13 @@ variables:
     - pwd
     - git clone --branch alps https://github.com/eth-cscs/cscs-reframe-tests.git
     - git clone -c feature.manyFiles=true --depth=2 https://github.com/spack/spack.git $SPACK_DIR
-    - source $SPACK_DIR/share/spack/setup-env.sh
     - export SPACK_SYSTEM_CONFIG_PATH=/user-environment/config
+    - source $SPACK_DIR/share/spack/setup-env.sh
     - ls /user-environment/config
     - spack --version
     - spack find
-    # - spack install reframe
+    - spack spec -I reframe
+    - spack install reframe
     # - spack load reframe
     # - reframe --version
     # - git clone -q --depth 1 --branch develop https://github.com/reframe-hpc/reframe.git
