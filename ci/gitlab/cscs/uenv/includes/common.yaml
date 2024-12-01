@@ -80,8 +80,9 @@ variables:
   extends: .uenv_image
   stage: test
   script:
-    - cd ${INSTALL_DIR}
-    - ctest -V
+    - pip install reframe-hpc
+    - git clone --branch alps https://github.com/eth-cscs/cscs-reframe-tests.git
+    - reframe -C cscs-reframe-tests/config/cscs.py -c $CI_PROJECT_DIR/ci/gitlab/cscs/reframe/mars-dev.py -S $CI_PROJECT_DIR -r --performance-report --exec-policy=serial --keep-stage-files
   variables:
     <<: *default_slurm_vars
     SLURM_TIMELIMIT: "00:30:00"
@@ -90,7 +91,7 @@ variables:
   extends: .uenv_image
   stage: test
   script:
-    - cd ${INSTALL_DIR}
+    - cd $INSTALL_DIR
     - ctest -V
   variables:
     <<: *distributed_slurm_vars
