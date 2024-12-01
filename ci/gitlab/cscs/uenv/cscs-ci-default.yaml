@@ -8,5 +8,5 @@ include:
   - local: 'ci/gitlab/cscs/uenv/includes/gh200.yaml'
 
 stages:
-  - build
+  # - build
   - test

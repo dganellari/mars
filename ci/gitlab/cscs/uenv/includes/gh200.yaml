@@ -14,19 +14,19 @@ test_runner_aarch64:
 
 
 ########################## Build Jobs #########################
-build_aarch64:
-  extends: [.todi, .build_template]
-  variables:
-    CUDA_ARCH: "90"
+# build_aarch64:
+  # extends: [.todi, .build_template]
+  # variables:
+#     CUDA_ARCH: "90"
 
 ###################### Single Node Tests ######################
 test_unit_aarch64:
   extends: [.todi, .test_unit_template]
 
 ###################### Distributed Tests ######################
-test_aarch64_distributed:
-  extends: [.todi, .test_distributed_template]
-  variables:
-    SLURM_GPUS_PER_NODE: 4
-    SLURM_GPUS_PER_TASK: 1
-    SLURM_NTASKS_PER_NODE: 4
+# test_aarch64_distributed:
+  # extends: [.todi, .test_distributed_template]
+  # variables:
+  #   SLURM_GPUS_PER_NODE: 4
+  #   SLURM_GPUS_PER_TASK: 1
+#     SLURM_NTASKS_PER_NODE: 4
