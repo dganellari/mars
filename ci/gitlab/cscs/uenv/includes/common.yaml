@@ -80,8 +80,9 @@ variables:
   extends: .uenv_image
   stage: test
   script:
-    - pip install reframe-hpc
     - git clone --branch alps https://github.com/eth-cscs/cscs-reframe-tests.git
+    - git clone -q --depth 1 --branch develop https://github.com/reframe-hpc/reframe.git
+    - cd reframe && ./bootstrap.sh && export PATH=$CI_PROJECT_DIR/reframe/bin:$PATH && cd ..
     - reframe -C cscs-reframe-tests/config/cscs.py -c $CI_PROJECT_DIR/ci/gitlab/cscs/reframe/mars-dev.py -S $CI_PROJECT_DIR -r --performance-report --exec-policy=serial --keep-stage-files
   variables:
     <<: *default_slurm_vars
