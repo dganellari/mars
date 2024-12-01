@@ -3,7 +3,7 @@
   extends: .uenv-runner-todi-gh200
   variables:
     SLURM_ACCOUNT: csstaff
-    #SLURM_PARTITION: debug
+    SLURM_PARTITION: debug
     # SLURM_RESERVATION: daint
 
 ########################## Test UENV #########################
