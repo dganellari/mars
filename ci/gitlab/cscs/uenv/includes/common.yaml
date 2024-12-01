@@ -86,7 +86,7 @@ variables:
     - git clone -c feature.manyFiles=true --depth=2 https://github.com/spack/spack.git $SPACK_DIR
     - source $SPACK_DIR/share/spack/setup-env.sh
     - export SPACK_SYSTEM_CONFIG_PATH=/user-environment/config
-    - which spack
+    - spack --version
     - spack install reframe
     - spack load reframe
     - reframe --version
