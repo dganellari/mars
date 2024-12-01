@@ -2,7 +2,7 @@
 variables:
   BUILD_DIR: "$CI_PROJECT_DIR/build"
   INSTALL_DIR: "$CI_PROJECT_DIR/install"
-  SPACK_DIR: "$CI_PROJECT_DIR/spack"
+  SPACK_DIR: "$CI_PROJECT_DIR/spack-dir"
   CMAKE_BUILD_TYPE: "Release"
   CUDA_ARCH: "90"
 
@@ -82,9 +82,9 @@ variables:
   stage: test
   script:
     - pwd
-    - git clone --branch alps https://github.com/eth-cscs/cscs-reframe-tests.git $SPACK_DIR
-    - git clone -c feature.manyFiles=true --depth=2 https://github.com/spack/spack.git
-    - source spack/share/spack/setup-env.sh
+    - git clone --branch alps https://github.com/eth-cscs/cscs-reframe-tests.git
+    - git clone -c feature.manyFiles=true --depth=2 https://github.com/spack/spack.git $SPACK_DIR
+    - source $SPACK_DIR/share/spack/setup-env.sh
     - which spack
     - spack install reframe
     - spack load reframe
