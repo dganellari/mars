@@ -83,7 +83,8 @@ variables:
   script:
     - pwd
     - git clone --branch alps https://github.com/eth-cscs/cscs-reframe-tests.git
-    - git clone -c feature.manyFiles=true --depth=2 https://github.com/spack/spack.git $SPACK_DIR
+    - git clone --filter=tree:0 $(jq -r .spack.repo /user-environment/meta/configure.json) $SPACK_DIR
+    - git -C $SPACK_DIR checkout $(jq -r .spack.commit /user-environment/meta/configure.json)
     - env --chdir=$SPACK_DIR git checkout  $(jq -r .spack.commit /user-environment/meta/configure.json)
     - export SPACK_SYSTEM_CONFIG_PATH=/user-environment/config
     - source $SPACK_DIR/share/spack/setup-env.sh
@@ -98,7 +99,7 @@ variables:
     - reframe --version
     # - git clone -q --depth 1 --branch develop https://github.com/reframe-hpc/reframe.git
     # - cd reframe && ./bootstrap.sh && export PATH=$CI_PROJECT_DIR/reframe/bin:$PATH && cd ..
-    # - reframe -C cscs-reframe-tests/config/cscs.py -c $CI_PROJECT_DIR/ci/gitlab/cscs/reframe/mars-dev.py -S $CI_PROJECT_DIR -r --performance-report --exec-policy=serial --keep-stage-files
+    - reframe -C cscs-reframe-tests/config/cscs.py -c $CI_PROJECT_DIR/ci/gitlab/cscs/reframe/mars-dev.py -S $CI_PROJECT_DIR -r --performance-report --exec-policy=serial --keep-stage-files
   variables:
     <<: *default_slurm_vars
     SLURM_TIMELIMIT: "00:60:00"
