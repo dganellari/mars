@@ -89,9 +89,10 @@ variables:
     - source $SPACK_DIR/share/spack/setup-env.sh
     - ls /user-environment/config
     - spack --version
-    - spack spec -I reframe
     - spack install py-filelock py-tabulate py-lxml
     - spack load py-filelock py-tabulate py-lxml
+    - python3 -m venv reframe-env
+    - source reframe-env/bin/activate
     - pip install hostlist
     - sed -i -e "s-\"tutorials\",--" -e "s-\"config\",--" $SPACK_DIR/var/spack/repos/builtin/packages/reframe/package.py
     - spack install reframe@develop
