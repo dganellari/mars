@@ -11,7 +11,7 @@ variables:
   SLURM_JOB_NUM_NODES: 1
   SLURM_NTASKS: 1
   SLURM_NTASKS_PER_NODE: 1
-  SLURM_TIMELIMIT: "00:30:00"
+  SLURM_TIMELIMIT: "00:60:00"
   SLURM_CPU_BIND: "verbose,none"
   USE_MPI: "NO"
 
@@ -19,7 +19,7 @@ variables:
 .distributed_slurm_vars: &distributed_slurm_vars
   SLURM_JOB_NUM_NODES: 2
   SLURM_CPU_BIND: "verbose,rank_ldom"
-  SLURM_TIMELIMIT: "00:30:00"
+  SLURM_TIMELIMIT: "00:60:00"
   USE_MPI: "YES"
 
 ########################## uenv Image Definition ##########################
@@ -38,7 +38,7 @@ variables:
     - gcc --version | grep 13.2.0
   variables:
     <<: *default_slurm_vars
-    SLURM_TIMELIMIT: "00:30:00"
+    SLURM_TIMELIMIT: "00:60:00"
 
 
 ######################## Build Job Template ########################
@@ -88,17 +88,19 @@ variables:
     - source $SPACK_DIR/share/spack/setup-env.sh
     - ls /user-environment/config
     - spack --version
-    - spack find
     - spack spec -I reframe
-    - spack install reframe
-    # - spack load reframe
-    # - reframe --version
+    - spack install py-filelock py-tabulate py-lxml
+    - spack load py-filelock py-tabulate py-lxml
+    - sed -i -e "s-\"tutorials\",--" -e "s-\"config\",--" $SPACK_DIR/var/spack/repos/builtin/packages/reframe/package.py
+    - spack install reframe@develop
+    - spack load reframe
+    - reframe --version
     # - git clone -q --depth 1 --branch develop https://github.com/reframe-hpc/reframe.git
     # - cd reframe && ./bootstrap.sh && export PATH=$CI_PROJECT_DIR/reframe/bin:$PATH && cd ..
     # - reframe -C cscs-reframe-tests/config/cscs.py -c $CI_PROJECT_DIR/ci/gitlab/cscs/reframe/mars-dev.py -S $CI_PROJECT_DIR -r --performance-report --exec-policy=serial --keep-stage-files
   variables:
     <<: *default_slurm_vars
-    SLURM_TIMELIMIT: "00:30:00"
+    SLURM_TIMELIMIT: "00:60:00"
 
 # .test_distributed_template:
   # extends: .uenv_image
