@@ -85,7 +85,6 @@ variables:
     - git clone --branch alps https://github.com/eth-cscs/cscs-reframe-tests.git
     - git clone --filter=tree:0 $(jq -r .spack.repo /user-environment/meta/configure.json) $SPACK_DIR
     - git -C $SPACK_DIR checkout $(jq -r .spack.commit /user-environment/meta/configure.json)
-    - env --chdir=$SPACK_DIR git checkout  $(jq -r .spack.commit /user-environment/meta/configure.json)
     - export SPACK_SYSTEM_CONFIG_PATH=/user-environment/config
     - source $SPACK_DIR/share/spack/setup-env.sh
     - ls /user-environment/config
@@ -93,6 +92,7 @@ variables:
     - spack spec -I reframe
     - spack install py-filelock py-tabulate py-lxml
     - spack load py-filelock py-tabulate py-lxml
+    - pip install hostlist
     - sed -i -e "s-\"tutorials\",--" -e "s-\"config\",--" $SPACK_DIR/var/spack/repos/builtin/packages/reframe/package.py
     - spack install reframe@develop
     - spack load reframe
