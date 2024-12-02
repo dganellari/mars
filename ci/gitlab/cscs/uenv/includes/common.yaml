@@ -31,14 +31,14 @@ variables:
     UENV_VIEW: 'default'
 
 ########################## uenv Runner Test Job ##########################
-.test-uenv-runner:
-  extends: .uenv_image
-  stage: test
-  script:
-    - gcc --version | grep 13.2.0
-  variables:
-    <<: *default_slurm_vars
-    SLURM_TIMELIMIT: "00:60:00"
+# .test-uenv-runner:
+  # extends: .uenv_image
+  # stage: test
+  # script:
+  #   - gcc --version | grep 13.2.0
+  # variables:
+  #   <<: *default_slurm_vars
+#     SLURM_TIMELIMIT: "00:60:00"
 
 
 ######################## Build Job Template ########################

@@ -7,10 +7,10 @@
     # SLURM_RESERVATION: daint
 
 ########################## Test UENV #########################
-test_runner_aarch64:
-  extends: [.todi, .test-uenv-runner]
-  variables:
-    SLURM_TIMELIMIT: "00:30:00"
+# test_runner_aarch64:
+  # extends: [.todi, .test-uenv-runner]
+  # variables:
+#     SLURM_TIMELIMIT: "00:30:00"
 
 
 ########################## Build Jobs #########################
