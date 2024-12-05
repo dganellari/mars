@@ -109,7 +109,7 @@ variables:
   stage: test
   script:
     - pwd
-    - ls $UENV_REPO_PATH
+    - ls /capstor/scratch/cscs/gandanie/.uenv-images-ci-todi
     - export rfm_meta_path=/user-environment/meta/extra/reframe.yaml
     # - export sqfs_path=$(uenv image inspect --format '{path}' $IMAGE_NAME)
     - uenv --version
