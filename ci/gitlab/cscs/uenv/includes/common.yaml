@@ -12,7 +12,7 @@ variables:
   SLURM_JOB_NUM_NODES: 1
   SLURM_NTASKS: 1
   SLURM_NTASKS_PER_NODE: 1
-  SLURM_TIMELIMIT: "00:60:00"
+  SLURM_TIMELIMIT: "00:30:00"
   SLURM_CPU_BIND: "verbose,none"
   USE_MPI: "NO"
 
@@ -20,7 +20,7 @@ variables:
 .distributed_slurm_vars: &distributed_slurm_vars
   SLURM_JOB_NUM_NODES: 2
   SLURM_CPU_BIND: "verbose,rank_ldom"
-  SLURM_TIMELIMIT: "00:60:00"
+  SLURM_TIMELIMIT: "00:30:00"
   USE_MPI: "YES"
 
 ########################## uenv Image Definition ##########################
@@ -39,7 +39,7 @@ variables:
   #   - gcc --version | grep 13.2.0
   # variables:
   #   <<: *default_slurm_vars
-#     SLURM_TIMELIMIT: "00:60:00"
+#     SLURM_TIMELIMIT: "00:30:00"
 
 
 ######################## Build Job Template ########################
@@ -102,7 +102,7 @@ variables:
   #   - reframe -C cscs-reframe-tests/config/cscs.py -c $CI_PROJECT_DIR/ci/gitlab/cscs/reframe/mars-dev.py -S $CI_PROJECT_DIR -r --performance-report --exec-policy=serial --keep-stage-files
   # variables:
   #   <<: *default_slurm_vars
-#     SLURM_TIMELIMIT: "00:60:00"
+#     SLURM_TIMELIMIT: "00:30:00"
 
 .test_unit_template:
   extends: .uenv_image
@@ -127,7 +127,7 @@ variables:
     - reframe -C cscs-reframe-tests/config/cscs.py -c $CI_PROJECT_DIR/ci/gitlab/cscs/reframe/mars-dev.py -S $CI_PROJECT_DIR -r --performance-report --exec-policy=serial --keep-stage-files
   variables:
     <<: *default_slurm_vars
-    SLURM_TIMELIMIT: "00:60:00"
+    SLURM_TIMELIMIT: "00:30:00"
 
 
 # .test_distributed_template:
