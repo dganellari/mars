@@ -5,6 +5,7 @@ variables:
   SPACK_DIR: "$CI_PROJECT_DIR/spack-dir"
   CMAKE_BUILD_TYPE: "Release"
   CUDA_ARCH: "90"
+  IMAGE_NAME: "prgenv-gnu/24.11:v1"
 
 ########################### SLURM Default Variables ###########################
 .default_slurm_vars: &default_slurm_vars
@@ -24,7 +25,7 @@ variables:
 
 ########################## uenv Image Definition ##########################
 .uenv_image:
-  image: prgenv-gnu/24.11:v1
+  image: $IMAGE_NAME
   script:
     - gcc --version
   variables:
@@ -77,33 +78,59 @@ variables:
   #     - $INSTALL_DIR
 #
 ######################## Unit Test Job Template ########################
+# .test_unit_template1:
+  # extends: .uenv_image
+  # stage: test
+  # script:
+  #   - pwd
+  #   - git clone --branch alps https://github.com/eth-cscs/cscs-reframe-tests.git
+  #   - git clone --filter=tree:0 $(jq -r .spack.repo /user-environment/meta/configure.json) $SPACK_DIR
+  #   - git -C $SPACK_DIR checkout $(jq -r .spack.commit /user-environment/meta/configure.json)
+  #   - export SPACK_SYSTEM_CONFIG_PATH=/user-environment/config
+  #   - source $SPACK_DIR/share/spack/setup-env.sh
+  #   - ls /user-environment/config
+  #   - spack --version
+  #   - spack install py-filelock py-tabulate py-lxml
+  #   - spack load py-filelock py-tabulate py-lxml
+  #   - python3 -m venv reframe-env
+  #   - source reframe-env/bin/activate
+  #   - pip install hostlist
+  #   - sed -i -e "s-\"tutorials\",--" -e "s-\"config\",--" $SPACK_DIR/var/spack/repos/builtin/packages/reframe/package.py
+  #   - spack install reframe@develop
+  #   - spack load reframe
+  #   - reframe --version
+  #   - reframe -C cscs-reframe-tests/config/cscs.py -c $CI_PROJECT_DIR/ci/gitlab/cscs/reframe/mars-dev.py -S $CI_PROJECT_DIR -r --performance-report --exec-policy=serial --keep-stage-files
+  # variables:
+  #   <<: *default_slurm_vars
+#     SLURM_TIMELIMIT: "00:60:00"
+
 .test_unit_template:
   extends: .uenv_image
   stage: test
   script:
     - pwd
-    - git clone --branch alps https://github.com/eth-cscs/cscs-reframe-tests.git
     - git clone --filter=tree:0 $(jq -r .spack.repo /user-environment/meta/configure.json) $SPACK_DIR
-    - git -C $SPACK_DIR checkout $(jq -r .spack.commit /user-environment/meta/configure.json)
     - export SPACK_SYSTEM_CONFIG_PATH=/user-environment/config
     - source $SPACK_DIR/share/spack/setup-env.sh
+    - export rfm_meta_path=/user-environment/meta/extra/reframe.yaml
+    - export sqfs_path=$(uenv image inspect --format '{path}' $IMAGE_NAME)
+    - cp  $rfm_meta_path $sqfs_path/store.yaml
     - ls /user-environment/config
-    - spack --version
-    - spack install py-filelock py-tabulate py-lxml
-    - spack load py-filelock py-tabulate py-lxml
-    - python3 -m venv reframe-env
-    - source reframe-env/bin/activate
-    - pip install hostlist
-    - sed -i -e "s-\"tutorials\",--" -e "s-\"config\",--" $SPACK_DIR/var/spack/repos/builtin/packages/reframe/package.py
-    - spack install reframe@develop
-    - spack load reframe
+    - rm -rf rfm_venv
+    - python3 -m venv rfm_venv
+    - source rfm_venv/bin/activate
+    - git clone https://github.com/reframe-hpc/reframe.git
+    - (cd reframe; git checkout v4.6.1; ./bootstrap.sh)
+    - export PATH="$(pwd)/reframe/bin:$PATH"
+    - rm -rf cscs-reframe-tests
+    - git clone -b alps https://github.com/eth-cscs/cscs-reframe-tests.git
+    - pip install python-hostlist
     - reframe --version
-    # - git clone -q --depth 1 --branch develop https://github.com/reframe-hpc/reframe.git
-    # - cd reframe && ./bootstrap.sh && export PATH=$CI_PROJECT_DIR/reframe/bin:$PATH && cd ..
     - reframe -C cscs-reframe-tests/config/cscs.py -c $CI_PROJECT_DIR/ci/gitlab/cscs/reframe/mars-dev.py -S $CI_PROJECT_DIR -r --performance-report --exec-policy=serial --keep-stage-files
   variables:
     <<: *default_slurm_vars
     SLURM_TIMELIMIT: "00:60:00"
+
 
 # .test_distributed_template:
   # extends: .uenv_image
