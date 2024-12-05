@@ -109,11 +109,9 @@ variables:
   stage: test
   script:
     - pwd
-    - git clone --filter=tree:0 $(jq -r .spack.repo /user-environment/meta/configure.json) $SPACK_DIR
-    - export SPACK_SYSTEM_CONFIG_PATH=/user-environment/config
-    - source $SPACK_DIR/share/spack/setup-env.sh
     - export rfm_meta_path=/user-environment/meta/extra/reframe.yaml
     - export sqfs_path=$(uenv image inspect --format '{path}' $IMAGE_NAME)
+    - echo "Copying $rfm_meta_path to $sqfs_path/store.yaml"
     - cp  $rfm_meta_path $sqfs_path/store.yaml
     - ls /user-environment/config
     - rm -rf rfm_venv
