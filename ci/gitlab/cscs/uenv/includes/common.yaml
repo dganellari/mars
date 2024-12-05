@@ -109,11 +109,11 @@ variables:
   stage: test
   script:
     - pwd
+    - ls $UENV_REPO_PATH
     - export rfm_meta_path=/user-environment/meta/extra/reframe.yaml
     # - export sqfs_path=$(uenv image inspect --format '{path}' $IMAGE_NAME)
     - uenv --version
     # - uenv image inspect --format '{path}' $IMAGE_NAME
-    - uenv status
     - echo "Copying $rfm_meta_path to $sqfs_path/store.yaml"
     # - cp  $rfm_meta_path $sqfs_path/store.yaml
     - ls /user-environment/config
