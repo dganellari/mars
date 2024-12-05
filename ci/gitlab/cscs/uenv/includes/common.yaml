@@ -113,7 +113,7 @@ variables:
     # - export sqfs_path=$(uenv image inspect --format '{path}' $IMAGE_NAME)
     - uenv --version
     # - uenv image inspect --format '{path}' $IMAGE_NAME
-    - echo $(uenv image inspect --format '{path}' prgenv-gnu/24.2:v1)
+    - uenv image ls
     - echo "Copying $rfm_meta_path to $sqfs_path/store.yaml"
     # - cp  $rfm_meta_path $sqfs_path/store.yaml
     - ls /user-environment/config
