@@ -127,7 +127,7 @@ variables:
     - git clone -b alps https://github.com/eth-cscs/cscs-reframe-tests.git
     - pip install python-hostlist
     - reframe --version
-    # - reframe -C cscs-reframe-tests/config/cscs.py -c $CI_PROJECT_DIR/ci/gitlab/cscs/reframe/mars-dev.py -S $CI_PROJECT_DIR -r --performance-report --exec-policy=serial --keep-stage-files
+    - reframe -C cscs-reframe-tests/config/cscs.py -c $CI_PROJECT_DIR/ci/gitlab/cscs/reframe/mars-dev.py -S $CI_PROJECT_DIR -r --performance-report --exec-policy=serial --keep-stage-files
   variables:
     <<: *default_slurm_vars
     SLURM_TIMELIMIT: "00:30:00"
