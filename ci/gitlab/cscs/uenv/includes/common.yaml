@@ -107,6 +107,8 @@ variables:
 .test_unit_template:
   extends: .uenv_image
   stage: test
+  before_script:
+    - export UENV_REPO_PATH=$(eval echo $UENV_REPO_PATH)
   script:
     - pwd
     - ls /capstor/scratch/cscs/gandanie/.uenv-images-ci-todi
@@ -114,7 +116,7 @@ variables:
     # - export sqfs_path=$(uenv image inspect --format '{path}' $IMAGE_NAME)
     - uenv --version
     - echo $IMAGE_NAME
-    # - uenv image inspect --format '{path}' $IMAGE_NAME
+    - uenv image inspect --format '{path}' $IMAGE_NAME
     - uenv status
     - echo "Copying $rfm_meta_path to $sqfs_path/store.yaml"
     # - cp  $rfm_meta_path $sqfs_path/store.yaml
