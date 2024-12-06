@@ -129,6 +129,7 @@ variables:
     - pip install pyfirecrest
     - export UENV=$IMAGE_NAME
     - reframe --version
+    - echo $UENV
     - reframe -C cscs-reframe-tests/config/cscs.py -c $CI_PROJECT_DIR/ci/gitlab/cscs/reframe/mars-dev.py -S $CI_PROJECT_DIR -r --performance-report --exec-policy=serial --keep-stage-files
   variables:
     <<: *default_slurm_vars
