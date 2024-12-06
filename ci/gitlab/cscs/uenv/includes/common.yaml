@@ -29,7 +29,7 @@ variables:
   script:
     - gcc --version
   variables:
-    UENV_VIEW: 'default'
+    WITH_UENV_VIEW: 'default'
 
 ########################## uenv Runner Test Job ##########################
 # .test-uenv-runner:
