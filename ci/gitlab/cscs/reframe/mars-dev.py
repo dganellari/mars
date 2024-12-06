@@ -7,7 +7,6 @@ import os
 import reframe as rfm
 import reframe.utility.sanity as sn
 import reframe.utility.udeps as udeps
-import mars.reframe.utils as mars_utils
 from collections import defaultdict
 import uenv
 

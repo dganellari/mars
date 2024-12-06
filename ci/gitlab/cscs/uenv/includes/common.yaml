@@ -107,20 +107,14 @@ variables:
 .test_unit_template:
   extends: .uenv_image
   stage: test
-  before_script:
-    - export UENV_REPO_PATH=$(eval echo $UENV_REPO_PATH)
   script:
     - pwd
     - ls /capstor/scratch/cscs/gandanie/.uenv-images-ci-todi
     - export rfm_meta_path=/user-environment/meta/extra/reframe.yaml
-    # - export sqfs_path=$(uenv image inspect --format '{path}' $IMAGE_NAME)
-    - uenv --version
-    - echo $IMAGE_NAME
-    - uenv image inspect --format '{path}' $IMAGE_NAME
-    - uenv status
+    - export sqfs_path=$(uenv image inspect --format '{path}' $IMAGE_NAME)
     - echo "Copying $rfm_meta_path to $sqfs_path/store.yaml"
-    # - cp  $rfm_meta_path $sqfs_path/store.yaml
-    - ls /user-environment/config
+    - cp  $rfm_meta_path $sqfs_path/store.yaml
+    - uenv status
     - rm -rf rfm_venv
     - python3 -m venv rfm_venv
     - source rfm_venv/bin/activate
@@ -133,7 +127,6 @@ variables:
     - pip install pyfirecrest
     - export UENV=$IMAGE_NAME
     - reframe --version
-    - echo $UENV
     - reframe -C cscs-reframe-tests/config/cscs.py -c $CI_PROJECT_DIR/ci/gitlab/cscs/reframe/mars-dev.py -r --performance-report --exec-policy=serial --keep-stage-files
   variables:
     <<: *default_slurm_vars
