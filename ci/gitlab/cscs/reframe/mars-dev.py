@@ -7,7 +7,6 @@ import os
 import reframe as rfm
 import reframe.utility.sanity as sn
 import reframe.utility.udeps as udeps
-import mars.reframe.utils as mars_utils
 from collections import defaultdict
 import uenv
 
@@ -47,7 +46,7 @@ class mars_download(rfm.RunOnlyRegressionTest):
 class mars_build(rfm.CompileOnlyRegressionTest):
     descr = 'Build MARS'
     valid_systems = ['+uenv']
-    valid_prog_environs = ['+mpi']
+    valid_prog_environs = ['+mpi +kokkos']
     build_system = 'CMake'
     sourcedir = None
     maintainers = ['dganellari']
@@ -97,7 +96,7 @@ class mars_build(rfm.CompileOnlyRegressionTest):
 @rfm.simple_test
 class mars_unit(rfm.RunOnlyRegressionTest):
     descr = 'Run the mars unit tests'
-    valid_systems = ['+uenv ']
+    valid_systems = ['+uenv']
     valid_prog_environs = ['+mpi']
     target_executable = variable(str, value='ctest')
     time_limit = '5m'
@@ -119,7 +118,7 @@ class mars_unit(rfm.RunOnlyRegressionTest):
 @rfm.simple_test
 class mars_discretization(rfm.RunOnlyRegressionTest):
     descr = 'Run the mars FEM discretization tests small and medium mesh'
-    valid_systems = ['uenv']
+    valid_systems = ['+uenv']
     valid_prog_environs = ['+mpi']
     target_executable = variable(str, value='ctest')
     maintainers = ['dganellari']
