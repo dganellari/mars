@@ -121,7 +121,7 @@ variables:
     - python3 -m venv rfm_venv
     - source rfm_venv/bin/activate
     - git clone https://github.com/reframe-hpc/reframe.git
-    - (cd reframe; git checkout v4.6.3; ./bootstrap.sh)
+    - (cd reframe; git checkout v4.7.0; ./bootstrap.sh)
     - export PATH="$(pwd)/reframe/bin:$PATH"
     - rm -rf cscs-reframe-tests
     - git clone -b alps https://github.com/eth-cscs/cscs-reframe-tests.git
