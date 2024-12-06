@@ -127,7 +127,7 @@ variables:
     - pip install pyfirecrest
     - export UENV=$IMAGE_NAME
     - reframe --version
-    - reframe -C cscs-reframe-tests/config/cscs.py -c $CI_PROJECT_DIR/ci/gitlab/cscs/reframe/mars-dev.py -r --performance-report --exec-policy=serial --keep-stage-files
+    - reframe -C /capstor/scratch/cscs/gandanie/reframe-tests/cscs-reframe-tests/config/cscs.py -c $CI_PROJECT_DIR/ci/gitlab/cscs/reframe/mars-dev.py -r --performance-report --exec-policy=serial --keep-stage-files
   variables:
     <<: *default_slurm_vars
     SLURM_TIMELIMIT: "00:30:00"
