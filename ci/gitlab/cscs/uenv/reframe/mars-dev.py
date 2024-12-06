@@ -62,7 +62,8 @@ class mars_download(rfm.RunOnlyRegressionTest):
 class mars_build(rfm.CompileOnlyRegressionTest):
     descr = 'Build MARS'
     valid_systems = ['+uenv']
-    valid_prog_environs = ['+mpi +kokkos']
+    #  valid_prog_environs = ['+mpi +kokkos']
+    valid_prog_environs = ['+mpi']
     build_system = 'CMake'
     sourcedir = None
     maintainers = ['dganellari']
