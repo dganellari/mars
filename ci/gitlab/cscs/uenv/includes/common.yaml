@@ -126,6 +126,7 @@ variables:
     - rm -rf cscs-reframe-tests
     - git clone -b alps https://github.com/eth-cscs/cscs-reframe-tests.git
     - pip install python-hostlist
+    - pip install pyfirecrest
     - export UENV=$IMAGE_NAME
     - reframe --version
     - reframe -C cscs-reframe-tests/config/cscs.py -c $CI_PROJECT_DIR/ci/gitlab/cscs/reframe/mars-dev.py -S $CI_PROJECT_DIR -r --performance-report --exec-policy=serial --keep-stage-files
