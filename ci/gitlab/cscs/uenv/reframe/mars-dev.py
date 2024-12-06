@@ -28,20 +28,20 @@ mars_references = {
     }
 }
 
-class cscs_reframe_tests_download(rfm.RunOnlyRegressionTest):
-    descr = 'Fetch MARS sources code'
-    sourcesdir = None
-    executable = 'git'
-    executable_opts = [
-        'clone', 'git@github.com:dganellari/mars.git'
-        '&&', 'cd', 'mars'
-        '&&', 'git', 'checkout', 'master'
-    ]
-    local = True
-
-    @sanity_function
-    def validate_download(self):
-        return sn.assert_eq(self.job.exitcode, 0)
+#  class cscs_reframe_tests_download(rfm.RunOnlyRegressionTest):
+    #  descr = 'Fetch MARS sources code'
+    #  sourcesdir = None
+    #  executable = 'git'
+    #  executable_opts = [
+    #      'clone', 'git@github.com:dganellari/mars.git'
+    #      '&&', 'cd', 'mars'
+    #      '&&', 'git', 'checkout', 'master'
+    #  ]
+    #  local = True
+    #
+    #  @sanity_function
+    #  def validate_download(self):
+#          return sn.assert_eq(self.job.exitcode, 0)
 
 
 class mars_download(rfm.RunOnlyRegressionTest):
@@ -62,7 +62,7 @@ class mars_download(rfm.RunOnlyRegressionTest):
 class mars_build(rfm.CompileOnlyRegressionTest):
     descr = 'Build MARS'
     valid_systems = ['+uenv']
-    valid_prog_environs = ['+mpi']
+    valid_prog_environs = ['+mpi+kokkos']
     build_system = 'CMake'
     sourcedir = None
     maintainers = ['dganellari']
