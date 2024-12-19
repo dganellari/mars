@@ -3,7 +3,7 @@
   extends: .uenv-runner-daint-gh200
   variables:
     SLURM_ACCOUNT: csstaff
-    # SLURM_PARTITION: debug
+    SLURM_PARTITION: debug
 
 ########################## Test UENV #########################
 # test_runner_aarch64:
