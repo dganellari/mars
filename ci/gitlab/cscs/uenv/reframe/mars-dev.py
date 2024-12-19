@@ -155,7 +155,7 @@ class mars_discretization(rfm.RunOnlyRegressionTest):
         # for the uarch of the current partition.
         # * self.uarch is one of the alps arch: gh200, zen2, a100, ... or None
         # * self.current_partition.fullname is the vcluster:partition string,
-        #   for example "daint:normal" or "todi:debug".
+        #   for example "daint:normal" or "daint:debug".
         self.uarch = uenv.uarch(self.current_partition)
         if (self.uarch is not None) and (self.uarch in mars_references):
             self.reference = {
