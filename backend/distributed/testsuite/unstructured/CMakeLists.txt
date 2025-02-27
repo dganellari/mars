@@ -1,0 +1,2 @@
+mars_add_test(generate_mesh_adios2_test ${CMAKE_CURRENT_SOURCE_DIR}/mars_generate_mesh_adios2.cpp)
+mars_add_test(read_mesh_adios2_test ${CMAKE_CURRENT_SOURCE_DIR}/mars_read_mesh_adios2.cpp)

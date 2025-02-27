@@ -8,6 +8,8 @@ list(APPEND DISTRIBUTED_MODULES
     sfc
     testsuite
     testsuite/common
+    unstructured
+    octree
     )
 
 scan_directories(${CMAKE_CURRENT_SOURCE_DIR} "${DISTRIBUTED_MODULES}" MARS_BUILD_INCLUDES MARS_HEADERS MARS_SOURCES)

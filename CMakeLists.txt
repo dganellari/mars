@@ -51,6 +51,13 @@ if(MARS_ENABLE_AMR_BACKEND)
     add_subdirectory("backend/amr")
 endif()
 
+if(MARS_ENABLE_OCTREE)
+    list(APP_END MARS_MODULES octree)
+endif()
+
+if(MARS_ENABLE_UNSTRUCTURED)
+    list(APP_END MARS_MODULES unstructured)
+endif()
 
 add_library(mars ${MARS_HEADERS} ${MARS_SOURCES})
 
