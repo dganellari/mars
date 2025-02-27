@@ -51,21 +51,19 @@ if(MARS_ENABLE_AMR_BACKEND)
     add_subdirectory("backend/amr")
 endif()
 
-if(MARS_ENABLE_OCTREE)
-    list(APP_END MARS_MODULES octree)
+if(MARS_ENABLE_MOONOLITH)
+  add_subdirectory(moonolith_adapter)
 endif()
 
-if(MARS_ENABLE_UNSTRUCTURED)
-    list(APP_END MARS_MODULES unstructured)
+if(MARS_ENABLE_CXXOPTS)
+  include(cxxopts/cxxopts.cmake)
 endif()
 
 add_library(mars ${MARS_HEADERS} ${MARS_SOURCES})
 
-
 foreach(include ${MARS_BUILD_INCLUDES})
   target_include_directories(mars BEFORE PUBLIC $<BUILD_INTERFACE:${include}>)
 endforeach()
-
 
 target_include_directories(
   mars BEFORE
@@ -90,7 +88,6 @@ endif(NOT CMAKE_BUILD_TYPE)
 if(MARS_ENABLE_TESTS)
   include(cmake/Tests.cmake)
   add_subdirectory("backend/distributed/testsuite")
-  add_subdirectory("backend/adios2/testsuite")
 endif()
 
 if(MARS_ENABLE_VTK)
@@ -102,6 +99,31 @@ if(MARS_ENABLE_VTK)
   add_subdirectory(backend/vtk)
 endif()
 
+if(MARS_ENABLE_UNSTRUCTURED)
+    find_package(ADIOS2 REQUIRED)
+
+    if(ADIOS2_FOUND)
+        message(STATUS "ADIOS2 found: ${ADIOS2_DIR}")
+        # Check for CUDA support in ADIOS2 if MARS_ENABLE_CUDA is enabled
+        if(MARS_ENABLE_CUDA)
+            include(CheckCXXSymbolExists)
+            check_cxx_symbol_exists(ADIOS2_HAS_CUDA "adios2.h" ADIOS2_HAS_CUDA)
+            if(NOT ADIOS2_HAS_CUDA)
+                # message(FATAL_ERROR "ADIOS2 was found but it does not have CUDA support. Please install ADIOS2 with CUDA support or disable MARS_ENABLE_CUDA.")
+            endif()
+        endif()
+        # add_subdirectory(backend/adios2)
+        if(MARS_ENABLE_TESTS)
+            # add_subdirectory("backend/adios2/testsuite")
+        endif()
+
+        # Add the ADIOS2 target to the list of targets to install
+        target_include_directories(mars PUBLIC ${ADIOS2_INCLUDE_DIRS})
+        target_link_libraries(mars PUBLIC ${ADIOS2_LIBRARIES})
+    else()
+        message(FATAL_ERROR "ADIOS2 not found. Please install ADIOS2 or disable MARS_ENABLE_UNSTRUCTURED.")
+    endif()
+endif()
 
 # #################  EXECUTABLES AND INSTALL ##################
 

@@ -285,29 +285,3 @@ if(MARS_ENABLE_KOKKOS)
   # list(POP_BACK CMAKE_MESSAGE_INDENT)
 endif()
 
-# ##############################################################################
-# Moonolith
-
-if(MARS_ENABLE_MOONOLITH)
-  add_subdirectory(moonolith_adapter)
-endif()
-
-if(MARS_ENABLE_CXXOPTS)
-  include(cxxopts/cxxopts.cmake)
-endif()
-
-if(MARS_ENABLE_ADIOS2)
-  find_package(ADIOS2 REQUIRED)
-  if(ADIOS2_FOUND)
-    message(STATUS "Adios2 found.")
-    # set(MARS_ENABLE_ADIOS2 ON)
-    add_subdirectory(backend/adios2)
-
-    set(ADIOS2_INCLUDE_DIRS ${ADIOS2_DIR}/../../../include)
-    set(MARS_DEP_LIBRARIES "${MARS_DEP_LIBRARIES};${ADIOS2_LIBRARIES}")
-    set(MARS_DEP_INCLUDES "${MARS_DEP_INCLUDES};${ADIOS2_INCLUDE_DIRS}")
-  else()
-    message(STATUS "Adios2 not found.")
-  endif()
-endif()
-

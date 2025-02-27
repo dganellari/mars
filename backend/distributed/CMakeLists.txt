@@ -1,4 +1,4 @@
-list(APPEND DISTRIBUTED_MODULES 
+list(APPEND DISTRIBUTED_MODULES
     .
     communication
     communication/util
@@ -8,9 +8,15 @@ list(APPEND DISTRIBUTED_MODULES
     sfc
     testsuite
     testsuite/common
-    unstructured
-    octree
     )
+
+if(MARS_ENABLE_UNSTRUCTURED)
+    list(APPEND DISTRIBUTED_MODULES
+        octree
+        unstructured
+        unstructured/utils
+        )
+endif()
 
 scan_directories(${CMAKE_CURRENT_SOURCE_DIR} "${DISTRIBUTED_MODULES}" MARS_BUILD_INCLUDES MARS_HEADERS MARS_SOURCES)
 
