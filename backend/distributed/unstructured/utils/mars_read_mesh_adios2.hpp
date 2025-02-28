@@ -1,4 +1,7 @@
 #include <adios2.h>
+#include "mars.hpp"
+#include "mars_globals.hpp"
+#include <algorithm> // Include this header for std::min
 
 void readMeshInParallel(const std::string& filename, int rank, int size) {
     adios2::ADIOS adios(MPI_COMM_WORLD);
@@ -15,21 +18,21 @@ void readMeshInParallel(const std::string& filename, int rank, int size) {
     const std::size_t totalNodes = varNodes.Shape()[0];
     const std::size_t nodesPerProcess = totalNodes / size;
     const std::size_t remainderNodes = totalNodes % size;
-    const std::size_t startNode = rank * nodesPerProcess + std::min(rank, remainderNodes);
+    const std::size_t startNode = rank * nodesPerProcess + std::min<std::size_t>(rank, remainderNodes);
     const std::size_t countNode = nodesPerProcess + (rank < remainderNodes ? 1 : 0);
 
     const std::size_t totalTets = varTets.Shape()[0];
     const std::size_t tetsPerProcess = totalTets / size;
     const std::size_t remainderTets = totalTets % size;
-    const std::size_t startTet = rank * tetsPerProcess + std::min(rank, remainderTets);
+    const std::size_t startTet = rank * tetsPerProcess + std::min<std::size_t>(rank, remainderTets);
     const std::size_t countTet = tetsPerProcess + (rank < remainderTets ? 1 : 0);
 
     varNodes.SetSelection({{startNode, 0}, {countNode, 3}});
     varTets.SetSelection({{startTet, 0}, {countTet, 4}});
 
     // Read data
-    std::vector<std::array<double, 3>> nodes(countNode);
-    std::vector<std::array<int, 4>> tets(countTet);
+    std::vector<double> nodes(countNode * 3);
+    std::vector<int> tets(countTet * 4);
 
     engine.Get(varNodes, nodes.data());
     engine.Get(varTets, tets.data());
@@ -40,15 +43,15 @@ void readMeshInParallel(const std::string& filename, int rank, int size) {
     // Close the engine
     engine.Close();
 
-    // Print the data read by each process
-    std::cout << "Process " << rank << " read nodes:\n";
-    for (const auto& node : nodes) {
-        std::cout << node[0] << " " << node[1] << " " << node[2] << "\n";
+    // Print the read data for each rank
+    std::cout << "Rank " << rank << " read " << countNode << " nodes and " << countTet << " tets.\n";
+    std::cout << "Nodes:\n";
+    for (std::size_t i = 0; i < countNode; ++i) {
+        std::cout << nodes[i * 3] << " " << nodes[i * 3 + 1] << " " << nodes[i * 3 + 2] << "\n";
     }
-
-    std::cout << "Process " << rank << " read tetrahedra:\n";
-    for (const auto& tet : tets) {
-        std::cout << tet[0] << " " << tet[1] << " " << tet[2] << " " << tet[3] << "\n";
+    std::cout << "Tets:\n";
+    for (std::size_t i = 0; i < countTet; ++i) {
+        std::cout << tets[i * 4] << " " << tets[i * 4 + 1] << " " << tets[i * 4 + 2] << " " << tets[i * 4 + 3] << "\n";
     }
 }
 

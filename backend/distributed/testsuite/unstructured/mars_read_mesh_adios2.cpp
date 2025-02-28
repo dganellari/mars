@@ -1,8 +1,7 @@
 #include <gtest/gtest.h>
-#include "mars.hpp"
+#include "mars_read_mesh_adios2.hpp"
 
 #ifdef MARS_ENABLE_MPI
-#include "mars_read_mesh_adios2.hpp"
 
 TEST(ReadMeshTest, ReadsMeshFileInParallel) {
     int rank, size;
