@@ -160,7 +160,7 @@ class mars_discretization(rfm.RunOnlyRegressionTest):
         if (self.uarch is not None) and (self.uarch in mars_references):
             self.reference = {
                 self.current_partition.fullname:
-                    arbor_references[self.uarch]['serial'][self.model_size]
+                    mars_references[self.uarch]['serial'][self.model_size]
             }
 
     @sanity_function
@@ -183,7 +183,7 @@ class mars_discretization_mpi(mars_discretization):
     adapt the mars discretization test to run with MPI
     """
 
-    descr = 'arbor busyring model MPI on a single node'
+    descr = 'marbusyring model MPI on a single node'
     model_size = parameter(['medium'])
 
     @run_before('run')
@@ -203,5 +203,5 @@ class mars_discretization_mpi(mars_discretization):
         if (self.uarch is not None) and (self.uarch in mars_references):
             self.reference = {
                 self.current_partition.fullname:
-                    arbor_references[self.uarch]['distributed'][self.model_size]
+                    mars_references[self.uarch]['distributed_mesh'][self.model_size]
             }
