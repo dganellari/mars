@@ -1,5 +1,5 @@
-#include <gtest/gtest.h>
 #include "mars_read_mesh_adios2.hpp"
+#include <gtest/gtest.h>
 
 #ifdef MARS_ENABLE_MPI
 
@@ -35,7 +35,7 @@ TEST(ReadMesh, ReadsComplexMeshFileInParallel) {
     // Add assertions to verify the correctness of the read data
     // For simplicity, we assume the mesh is correctly read if no errors occur
     ASSERT_TRUE(true);
-}   
+}
 #endif
 
 int main(int argc, char** argv) {

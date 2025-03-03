@@ -1,11 +1,11 @@
-#include <gtest/gtest.h>
-#include <vector>
-#include <array>
-#include <iostream>
-#include <fstream>
-#include <sstream>
 #include <adios2.h>
+#include <gtest/gtest.h>
+#include <array>
+#include <fstream>
+#include <iostream>
+#include <sstream>
 #include <string>
+#include <vector>
 
 void generateTestVTKMesh() {
     try {
@@ -33,13 +33,14 @@ void generateTestVTKMesh() {
 
         // Write standard VTK format which ParaView will definitely read correctly
         std::ofstream vtkFile("tetrahedral_mesh.vtu");
-        
+
         // VTK XML UnstructuredGrid header
         vtkFile << "<?xml version=\"1.0\"?>\n";
         vtkFile << "<VTKFile type=\"UnstructuredGrid\" version=\"0.1\" byte_order=\"LittleEndian\">\n";
         vtkFile << "  <UnstructuredGrid>\n";
-        vtkFile << "    <Piece NumberOfPoints=\"" << points.size() << "\" NumberOfCells=\"" << tetrahedra.size() << "\">\n";
-        
+        vtkFile << "    <Piece NumberOfPoints=\"" << points.size() << "\" NumberOfCells=\"" << tetrahedra.size()
+                << "\">\n";
+
         // Write points
         vtkFile << "      <Points>\n";
         vtkFile << "        <DataArray type=\"Float64\" Name=\"Points\" NumberOfComponents=\"3\" format=\"ascii\">\n";
@@ -50,7 +51,7 @@ void generateTestVTKMesh() {
         vtkFile << "\n";
         vtkFile << "        </DataArray>\n";
         vtkFile << "      </Points>\n";
-        
+
         // Write cells
         vtkFile << "      <Cells>\n";
         vtkFile << "        <DataArray type=\"Int32\" Name=\"connectivity\" format=\"ascii\">\n";
@@ -60,7 +61,7 @@ void generateTestVTKMesh() {
         }
         vtkFile << "\n";
         vtkFile << "        </DataArray>\n";
-        
+
         // Write offsets
         vtkFile << "        <DataArray type=\"Int32\" Name=\"offsets\" format=\"ascii\">\n";
         vtkFile << "          ";
@@ -69,7 +70,7 @@ void generateTestVTKMesh() {
         }
         vtkFile << "\n";
         vtkFile << "        </DataArray>\n";
-        
+
         // Write cell types (10 = VTK_TETRA)
         vtkFile << "        <DataArray type=\"UInt8\" Name=\"types\" format=\"ascii\">\n";
         vtkFile << "          ";
@@ -79,7 +80,7 @@ void generateTestVTKMesh() {
         vtkFile << "\n";
         vtkFile << "        </DataArray>\n";
         vtkFile << "      </Cells>\n";
-        
+
         // Add cell IDs for better visualization - MOVED OUTSIDE CELLS TAG
         vtkFile << "      <CellData>\n";
         vtkFile << "        <DataArray type=\"Int32\" Name=\"CellID\" format=\"ascii\">\n";
@@ -90,15 +91,15 @@ void generateTestVTKMesh() {
         vtkFile << "\n";
         vtkFile << "        </DataArray>\n";
         vtkFile << "      </CellData>\n";
-        
+
         // End the file
         vtkFile << "    </Piece>\n";
         vtkFile << "  </UnstructuredGrid>\n";
         vtkFile << "</VTKFile>\n";
-        
+
         vtkFile.close();
         std::cout << "Tetrahedral mesh written to 'tetrahedral_mesh.vtu' successfully.\n";
-        
+
     } catch (const std::exception& e) {
         std::cerr << "Error generating mesh: " << e.what() << std::endl;
     }
@@ -158,17 +159,13 @@ void generateTestMesh() {
         io.DefineAttribute<std::string>("Description", "Tetrahedral mesh of a cube");
 
         // Define ADIOS2 variables with 2D shape for nodes/connectivity, 1D for types/offsets
-        adios2::Variable<double> varVertices =
-            io.DefineVariable<double>("nodes", {8, 3}, {0, 0}, {8, 3});
+        adios2::Variable<double> varVertices = io.DefineVariable<double>("nodes", {8, 3}, {0, 0}, {8, 3});
 
-        adios2::Variable<int> varConnectivity =
-            io.DefineVariable<int>("tets", {6, 4}, {0, 0}, {6, 4});
+        adios2::Variable<int> varConnectivity = io.DefineVariable<int>("tets", {6, 4}, {0, 0}, {6, 4});
 
-        adios2::Variable<uint8_t> varTypes =
-            io.DefineVariable<uint8_t>("types", {6}, {0}, {6});
+        adios2::Variable<uint8_t> varTypes = io.DefineVariable<uint8_t>("types", {6}, {0}, {6});
 
-        adios2::Variable<int> varOffsets =
-            io.DefineVariable<int>("offsets", {6}, {0}, {6});
+        adios2::Variable<int> varOffsets = io.DefineVariable<int>("offsets", {6}, {0}, {6});
 
         // Write the data
         writer.Put(varVertices, vertices.data());
@@ -221,49 +218,137 @@ void generateComplexMesh() {
         // Define vertices for a complex shape (prism with additional features)
         // Base layer (z=0)
         std::vector<double> vertices = {
-            0.0, 0.0, 0.0,   // V0: base layer, corner
-            1.0, 0.0, 0.0,   // V1: base layer, corner
-            1.0, 1.0, 0.0,   // V2: base layer, corner
-            0.0, 1.0, 0.0,   // V3: base layer, corner
+            0.0,
+            0.0,
+            0.0,  // V0: base layer, corner
+            1.0,
+            0.0,
+            0.0,  // V1: base layer, corner
+            1.0,
+            1.0,
+            0.0,  // V2: base layer, corner
+            0.0,
+            1.0,
+            0.0,  // V3: base layer, corner
             // Middle layer (z=0.5)
-            0.0, 0.0, 0.5,   // V4: middle layer, corner
-            1.0, 0.0, 0.5,   // V5: middle layer, corner
-            1.0, 1.0, 0.5,   // V6: middle layer, corner
-            0.0, 1.0, 0.5,   // V7: middle layer, corner
-            0.5, 0.5, 0.5,   // V8: middle layer, center
+            0.0,
+            0.0,
+            0.5,  // V4: middle layer, corner
+            1.0,
+            0.0,
+            0.5,  // V5: middle layer, corner
+            1.0,
+            1.0,
+            0.5,  // V6: middle layer, corner
+            0.0,
+            1.0,
+            0.5,  // V7: middle layer, corner
+            0.5,
+            0.5,
+            0.5,  // V8: middle layer, center
             // Top layer (z=1.0)
-            0.0, 0.0, 1.0,   // V9: top layer, corner
-            1.0, 0.0, 1.0,   // V10: top layer, corner
-            1.0, 1.0, 1.0,   // V11: top layer, corner
-            0.0, 1.0, 1.0,   // V12: top layer, corner
-            0.5, 0.5, 1.5    // V13: apex point
+            0.0,
+            0.0,
+            1.0,  // V9: top layer, corner
+            1.0,
+            0.0,
+            1.0,  // V10: top layer, corner
+            1.0,
+            1.0,
+            1.0,  // V11: top layer, corner
+            0.0,
+            1.0,
+            1.0,  // V12: top layer, corner
+            0.5,
+            0.5,
+            1.5  // V13: apex point
         };
 
         // Define tetrahedra connectivity (20 tetrahedra)
         std::vector<int> connectivity = {
             // Lower section (between z=0 and z=0.5)
-            0, 1, 3, 8,      // T1: bottom front left section
-            1, 2, 3, 8,      // T2: bottom front right section
-            0, 1, 4, 8,      // T3: connecting base to middle
-            1, 2, 5, 8,      // T4: connecting base to middle
-            2, 3, 6, 8,      // T5: connecting base to middle
-            3, 0, 7, 8,      // T6: connecting base to middle
-            4, 5, 7, 8,      // T7: middle section
-            5, 6, 7, 8,      // T8: middle section
+            0,
+            1,
+            3,
+            8,  // T1: bottom front left section
+            1,
+            2,
+            3,
+            8,  // T2: bottom front right section
+            0,
+            1,
+            4,
+            8,  // T3: connecting base to middle
+            1,
+            2,
+            5,
+            8,  // T4: connecting base to middle
+            2,
+            3,
+            6,
+            8,  // T5: connecting base to middle
+            3,
+            0,
+            7,
+            8,  // T6: connecting base to middle
+            4,
+            5,
+            7,
+            8,  // T7: middle section
+            5,
+            6,
+            7,
+            8,  // T8: middle section
             // Upper section (between z=0.5 and z=1.0)
-            4, 5, 8, 9,      // T9: connecting middle to top
-            5, 6, 8, 10,     // T10: connecting middle to top
-            6, 7, 8, 11,     // T11: connecting middle to top
-            7, 4, 8, 12,     // T12: connecting middle to top
-            9, 10, 12, 8,    // T13: upper section
-            10, 11, 12, 8,   // T14: upper section
+            4,
+            5,
+            8,
+            9,  // T9: connecting middle to top
+            5,
+            6,
+            8,
+            10,  // T10: connecting middle to top
+            6,
+            7,
+            8,
+            11,  // T11: connecting middle to top
+            7,
+            4,
+            8,
+            12,  // T12: connecting middle to top
+            9,
+            10,
+            12,
+            8,  // T13: upper section
+            10,
+            11,
+            12,
+            8,  // T14: upper section
             // Pyramid on top
-            9, 10, 12, 13,   // T15: pyramid section
-            10, 11, 12, 13,  // T16: pyramid section
-            9, 10, 13, 8,    // T17: pyramid section
-            10, 11, 13, 8,   // T18: pyramid section
-            11, 12, 13, 8,   // T19: pyramid section
-            12, 9, 13, 8     // T20: pyramid section
+            9,
+            10,
+            12,
+            13,  // T15: pyramid section
+            10,
+            11,
+            12,
+            13,  // T16: pyramid section
+            9,
+            10,
+            13,
+            8,  // T17: pyramid section
+            10,
+            11,
+            13,
+            8,  // T18: pyramid section
+            11,
+            12,
+            13,
+            8,  // T19: pyramid section
+            12,
+            9,
+            13,
+            8  // T20: pyramid section
         };
 
         // Define cell types (10 = VTK_TETRA)
@@ -283,25 +368,22 @@ void generateComplexMesh() {
 
         // Store mesh type to indicate this is not image data
         io.DefineAttribute<std::string>("MeshType", "UnstructuredGrid");
-        io.DefineAttribute<int>("NumPoints", static_cast<int>(vertices.size()/3));
-        io.DefineAttribute<int>("NumCells", static_cast<int>(connectivity.size()/4));
+        io.DefineAttribute<int>("NumPoints", static_cast<int>(vertices.size() / 3));
+        io.DefineAttribute<int>("NumCells", static_cast<int>(connectivity.size() / 4));
         io.DefineAttribute<std::string>("Description", "Complex unstructured mesh with ~20 tetrahedral elements");
 
         // Define ADIOS2 variables
         size_t numVertices = vertices.size() / 3;
         size_t numCells = connectivity.size() / 4;
-        
+
         adios2::Variable<double> varVertices =
             io.DefineVariable<double>("nodes", {numVertices, 3}, {0, 0}, {numVertices, 3});
 
-        adios2::Variable<int> varConnectivity =
-            io.DefineVariable<int>("tets", {numCells, 4}, {0, 0}, {numCells, 4});
+        adios2::Variable<int> varConnectivity = io.DefineVariable<int>("tets", {numCells, 4}, {0, 0}, {numCells, 4});
 
-        adios2::Variable<uint8_t> varTypes =
-            io.DefineVariable<uint8_t>("types", {numCells}, {0}, {numCells});
+        adios2::Variable<uint8_t> varTypes = io.DefineVariable<uint8_t>("types", {numCells}, {0}, {numCells});
 
-        adios2::Variable<int> varOffsets =
-            io.DefineVariable<int>("offsets", {numCells}, {0}, {numCells});
+        adios2::Variable<int> varOffsets = io.DefineVariable<int>("offsets", {numCells}, {0}, {numCells});
 
         // Write the data
         writer.Put(varVertices, vertices.data());
@@ -314,7 +396,8 @@ void generateComplexMesh() {
 <?xml version="1.0"?>
 <VTKFile type="UnstructuredGrid" version="0.1" byte_order="LittleEndian">
   <UnstructuredGrid>
-    <Piece NumberOfPoints=")" + std::to_string(numVertices) + R"(" NumberOfCells=")" + std::to_string(numCells) + R"(">
+    <Piece NumberOfPoints=")" + std::to_string(numVertices) +
+                                R"(" NumberOfCells=")" + std::to_string(numCells) + R"(">
       <Points>
         <DataArray Name="nodes" NumberOfComponents="3" type="Float64"/>
       </Points>
@@ -346,7 +429,7 @@ TEST(GenerateMesh, GeneratesComplexMeshFile) {
     infile.close();
 }
 
-int main(int argc, char **argv) {
+int main(int argc, char** argv) {
     testing::InitGoogleTest(&argc, argv);
     return RUN_ALL_TESTS();
 }

@@ -121,6 +121,20 @@ if(MARS_ENABLE_UNSTRUCTURED)
     else()
         message(FATAL_ERROR "ADIOS2 not found. Please install ADIOS2 or disable MARS_ENABLE_UNSTRUCTURED.")
     endif()
+
+    # Now handle Cornerstone dependency for unstructured support
+    find_package(cornerstone REQUIRED)
+
+    if(cornerstone_FOUND)
+        # Include directories from cornerstone
+        target_link_libraries(mars PUBLIC cornerstone::cornerstone)
+
+        # Define a preprocessor macro to indicate cornerstone support
+        target_compile_definitions(mars PUBLIC MARS_HAS_CORNERSTONE)
+    else()
+        # We'll make this a warning rather than an error since it's an optional component
+        message(FATAL_ERROR "Cornerstone not found. Unstructured mesh support will be limited.")
+    endif()
 endif()
 
 # #################  EXECUTABLES AND INSTALL ##################
