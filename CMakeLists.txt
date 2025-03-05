@@ -123,16 +123,40 @@ if(MARS_ENABLE_UNSTRUCTURED)
     endif()
 
     # Now handle Cornerstone dependency for unstructured support
+    list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
     find_package(cornerstone REQUIRED)
 
     if(cornerstone_FOUND)
-        # Include directories from cornerstone
-        target_link_libraries(mars PUBLIC cornerstone::cornerstone)
+        # Add explicit include directory for cornerstone
+        message(STATUS "Cornerstone include directory: ${cornerstone_INCLUDE_DIR}")
+        # Get the actual source directory from FetchContent
+        set(CORNERSTONE_SRC_DIR "${CMAKE_BINARY_DIR}/_deps/cornerstone_fetch-src")
+        # The proper include path should be the 'include' directory inside the source
+        if(EXISTS "${CORNERSTONE_SRC_DIR}/include/cstone/domain/domain.hpp")
+            message(STATUS "Found domain.hpp in expected location")
+
+            # Create an interface library for cornerstone
+            add_library(cornerstone_headers INTERFACE)
+            target_include_directories(cornerstone_headers INTERFACE
+                $<BUILD_INTERFACE:${CORNERSTONE_SRC_DIR}/include>
+                $<INSTALL_INTERFACE:include>
+            )
+            # Link against this interface library
+            target_link_libraries(mars PUBLIC cornerstone_headers)
+
+            # Add cornerstone_headers to the list of targets to install
+            list(APPEND MARS_TARGETS cornerstone_headers)
+        else()
+            message(STATUS "Could not find domain.hpp in expected location")
+            # Try alternate approach - copy headers to build directory include path
+            file(COPY ${CORNERSTONE_SRC_DIR}/include/ DESTINATION ${CMAKE_BINARY_DIR}/include/)
+            message(STATUS "Copied cornerstone headers to ${CMAKE_BINARY_DIR}/include/")
+            # This path is already in the include directories
+        endif()
 
         # Define a preprocessor macro to indicate cornerstone support
         target_compile_definitions(mars PUBLIC MARS_HAS_CORNERSTONE)
     else()
-        # We'll make this a warning rather than an error since it's an optional component
         message(FATAL_ERROR "Cornerstone not found. Unstructured mesh support will be limited.")
     endif()
 endif()

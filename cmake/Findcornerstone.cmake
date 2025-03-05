@@ -24,23 +24,32 @@ message(STATUS "  cornerstone_INCLUDE_DIR = ${cornerstone_INCLUDE_DIR}")
 # If not found and Git fetch is enabled, get it from GitHub
 if(NOT cornerstone_INCLUDE_DIR AND NOT CORNERSTONE_NO_GIT_FETCH)
     message(STATUS "Cornerstone headers not found, fetching from GitHub...")
-    
     # Include FetchContent module (available in CMake 3.11+)
     include(FetchContent)
-    
+    # Disable testing for cornerstone
+    set(BUILD_TESTING OFF CACHE BOOL "Disable cornerstone tests" FORCE)
+    # Pass through CUDA/GPU options if they exist in the parent project
+    if(DEFINED CSTONE_WITH_CUDA)
+        # User has already defined this, so we'll respect it
+        message(STATUS "Using parent project's CSTONE_WITH_CUDA=${CSTONE_WITH_CUDA}")
+    else()
+        # Set default based on whether MARS uses CUDA
+        if(DEFINED MARS_ENABLE_CUDA AND MARS_ENABLE_CUDA)
+            set(CSTONE_WITH_CUDA ON CACHE BOOL "Enable CUDA for cornerstone" FORCE)
+            set(CSTONE_WITH_GPU_AWARE_MPI ON CACHE BOOL "Enable GPU-aware MPI" FORCE)
+        else()
+            set(CSTONE_WITH_CUDA OFF CACHE BOOL "Disable CUDA for cornerstone" FORCE)
+            set(CSTONE_WITH_GPU_AWARE_MPI OFF CACHE BOOL "Disable GPU-aware MPI" FORCE)
+        endif()
+    endif()
     # Declare cornerstone dependency
     FetchContent_Declare(
         cornerstone_fetch
         GIT_REPOSITORY https://github.com/sekelle/cornerstone-octree
         GIT_TAG master # Change to a specific tag/commit if needed
     )
-    
-    # Just download the content without processing the CMakeLists.txt
-    FetchContent_GetProperties(cornerstone_fetch)
-    if(NOT cornerstone_fetch_POPULATED)
-        FetchContent_Populate(cornerstone_fetch)
-    endif()
-    
+    # Use MakeAvailable to avoid the warning
+    FetchContent_MakeAvailable(cornerstone_fetch)
     # Set the include directory to the fetched source
     set(cornerstone_INCLUDE_DIR "${cornerstone_fetch_SOURCE_DIR}")
     message(STATUS "Fetched cornerstone from git: ${cornerstone_INCLUDE_DIR}")
