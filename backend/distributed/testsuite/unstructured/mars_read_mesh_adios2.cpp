@@ -8,7 +8,7 @@ TEST(ReadMesh, ReadsMeshFileInParallel) {
 
     using namespace mars;
     mars::proc_allocation resources;
-    bool result = false;
+    // bool result = false;
     // create a distributed context
     auto context = mars::make_context(resources, MPI_COMM_WORLD);
     rank = mars::rank(context);
@@ -25,7 +25,7 @@ TEST(ReadMesh, ReadsComplexMeshFileInParallel) {
 
     using namespace mars;
     mars::proc_allocation resources;
-    bool result = false;
+    // bool result = false;
     // create a distributed context
     auto context = mars::make_context(resources, MPI_COMM_WORLD);
     rank = mars::rank(context);

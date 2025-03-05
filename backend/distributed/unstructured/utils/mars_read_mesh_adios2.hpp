@@ -6,9 +6,19 @@
 namespace {
     // Helper function to open mesh file
     bool openMeshFile(const std::string& filename, adios2::ADIOS& adios, adios2::IO& io, adios2::Engine& engine) {
-        io = adios.DeclareIO("MeshIO");
-        engine = io.Open(filename, adios2::Mode::ReadRandomAccess);
-        return engine;
+        try {
+            io = adios.DeclareIO("MeshIO");
+            engine = io.Open(filename, adios2::Mode::ReadRandomAccess);
+
+            // Check if the engine is valid/open
+            if (!engine) {
+                return false;
+            }
+            return true;
+        } catch (std::exception& e) {
+            std::cerr << "Error opening ADIOS2 file: " << e.what() << std::endl;
+            return false;
+        }
     }
 
     // Helper function to read mesh metadata
