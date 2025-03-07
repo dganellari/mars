@@ -1,3 +1,5 @@
+#pragma once
+
 #include <adios2.h>
 #include <algorithm>
 #include "mars.hpp"

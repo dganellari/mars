@@ -16,6 +16,10 @@ project(
     "Mars is an open-source mesh management library designed to handle N-dimensional elements (N <= 4)"
 )
 
+if(MARS_ENABLE_CUDA)
+    enable_language(CUDA)
+endif()
+
 # Std CMake imports
 include(CMakePackageConfigHelpers)
 include(CMakeDependentOption)
@@ -25,10 +29,6 @@ include(cmake/MarsOptions.cmake)
 include(cmake/MarsCMakeFunctions.cmake)
 include(cmake/MarsDependencies.cmake)
 include(cmake/MarsClangFormat.cmake)
-
-if(MARS_ENABLE_CUDA)
-    message(STATUS "${Magenta}For MARS with Cuda make sure to pass the option -DCMAKE_CXX_COMPILER=/path/to/nvcc_wrapper. Otherwise it will be set automatically to the Kokkos CXX Compiler.${ColourReset}")
-endif()
 
 # ######################### Library Configuration #############################
 
@@ -43,6 +43,7 @@ if(MARS_ENABLE_SERIAL_BACKEND)
     add_subdirectory("backend/serial")
 endif()
 
+# Now add distributed backend - dependencies handled in unstructured directory
 if(MARS_ENABLE_DISTRIBUTED_BACKEND)
     add_subdirectory("backend/distributed")
 endif()
@@ -74,6 +75,32 @@ target_include_directories(
 target_include_directories(mars PUBLIC ${MARS_DEP_INCLUDES})
 target_link_libraries(mars PUBLIC ${MARS_DEP_LIBRARIES})
 
+# Configure cornerstone and ADIOS2 for main target if available from unstructured module
+if(MARS_ENABLE_UNSTRUCTURED)
+    # Define a preprocessor macro to indicate cornerstone support
+    target_compile_definitions(mars PUBLIC MARS_HAS_CORNERSTONE)
+
+     # Make sure ADIOS2 targets are available in this scope
+    find_package(ADIOS2 QUIET)
+    
+    # Link dependencies if variables have been set
+    if(ADIOS2_FOUND)
+        target_include_directories(mars PUBLIC ${ADIOS2_INCLUDE_DIRS})
+        target_link_libraries(mars PUBLIC ${ADIOS2_LIBRARIES})
+    endif()
+    
+    # Link against cornerstone headers if available
+    if(TARGET cornerstone_headers)
+        target_link_libraries(mars PUBLIC cornerstone_headers)
+    endif()
+    
+    # Add ADIOS2 subdirectories
+    add_subdirectory(backend/adios2)
+    if(MARS_ENABLE_TESTS)
+        add_subdirectory("backend/adios2/testsuite")
+    endif()
+endif()
+
 if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE
       "Release"
@@ -97,68 +124,6 @@ if(MARS_ENABLE_VTK)
                vtkIOParallel vtkIOParallelXML
     REQUIRED)
   add_subdirectory(backend/vtk)
-endif()
-
-if(MARS_ENABLE_UNSTRUCTURED)
-    find_package(ADIOS2 REQUIRED)
-
-    if(ADIOS2_FOUND)
-        message(STATUS "ADIOS2 found: ${ADIOS2_DIR}")
-        # Check for CUDA support in ADIOS2 if MARS_ENABLE_CUDA is enabled
-        if(MARS_ENABLE_CUDA)
-            if(NOT ADIOS2_HAVE_CUDA)
-                message(FATAL_ERROR "ADIOS2 was found but it does not have CUDA support. Please install ADIOS2 with CUDA support or disable MARS_ENABLE_CUDA.")
-            endif()
-        endif()
-        add_subdirectory(backend/adios2)
-        if(MARS_ENABLE_TESTS)
-            add_subdirectory("backend/adios2/testsuite")
-        endif()
-
-        # Add the ADIOS2 target to the list of targets to install
-        target_include_directories(mars PUBLIC ${ADIOS2_INCLUDE_DIRS})
-        target_link_libraries(mars PUBLIC ${ADIOS2_LIBRARIES})
-    else()
-        message(FATAL_ERROR "ADIOS2 not found. Please install ADIOS2 or disable MARS_ENABLE_UNSTRUCTURED.")
-    endif()
-
-    # Now handle Cornerstone dependency for unstructured support
-    list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
-    find_package(cornerstone REQUIRED)
-
-    if(cornerstone_FOUND)
-        # Add explicit include directory for cornerstone
-        message(STATUS "Cornerstone include directory: ${cornerstone_INCLUDE_DIR}")
-        # Get the actual source directory from FetchContent
-        set(CORNERSTONE_SRC_DIR "${CMAKE_BINARY_DIR}/_deps/cornerstone_fetch-src")
-        # The proper include path should be the 'include' directory inside the source
-        if(EXISTS "${CORNERSTONE_SRC_DIR}/include/cstone/domain/domain.hpp")
-            message(STATUS "Found domain.hpp in expected location")
-
-            # Create an interface library for cornerstone
-            add_library(cornerstone_headers INTERFACE)
-            target_include_directories(cornerstone_headers INTERFACE
-                $<BUILD_INTERFACE:${CORNERSTONE_SRC_DIR}/include>
-                $<INSTALL_INTERFACE:include>
-            )
-            # Link against this interface library
-            target_link_libraries(mars PUBLIC cornerstone_headers)
-
-            # Add cornerstone_headers to the list of targets to install
-            list(APPEND MARS_TARGETS cornerstone_headers)
-        else()
-            message(STATUS "Could not find domain.hpp in expected location")
-            # Try alternate approach - copy headers to build directory include path
-            file(COPY ${CORNERSTONE_SRC_DIR}/include/ DESTINATION ${CMAKE_BINARY_DIR}/include/)
-            message(STATUS "Copied cornerstone headers to ${CMAKE_BINARY_DIR}/include/")
-            # This path is already in the include directories
-        endif()
-
-        # Define a preprocessor macro to indicate cornerstone support
-        target_compile_definitions(mars PUBLIC MARS_HAS_CORNERSTONE)
-    else()
-        message(FATAL_ERROR "Cornerstone not found. Unstructured mesh support will be limited.")
-    endif()
 endif()
 
 # #################  EXECUTABLES AND INSTALL ##################
