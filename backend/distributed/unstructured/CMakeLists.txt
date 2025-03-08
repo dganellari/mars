@@ -24,6 +24,14 @@ if(MARS_ENABLE_CUDA AND NOT CMAKE_CUDA_COMPILER_ID)
         find_package(CUDA REQUIRED)
     endif()
 
+    # Add this block to make CUDA headers available to C++ files
+    add_compile_definitions(USE_CUDA)
+    if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.18)
+        include_directories(SYSTEM ${CUDAToolkit_INCLUDE_DIRS})
+    else()
+        include_directories(SYSTEM ${CUDA_INCLUDE_DIRS})
+    endif()
+
     # CUDA-specific settings for unstructured code
     set(CMAKE_CUDA_STANDARD 17)
     set(CMAKE_CUDA_STANDARD_REQUIRED ON)
@@ -127,6 +135,12 @@ message(STATUS "MPI_CXX_COMPILER: ${MPI_CXX_COMPILER}")
 
 # Create target for the unstructured implementation
 add_library(mars_unstructured "")
+
+# Export include directories properly for consumers
+target_include_directories(mars_unstructured PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>  # Current dir with domain.hpp
+    $<INSTALL_INTERFACE:include/mars/backend/distributed/unstructured>
+)
 
 # Link against Mars to inherit all include directories and dependencies
 target_link_libraries(mars_unstructured PUBLIC mars)

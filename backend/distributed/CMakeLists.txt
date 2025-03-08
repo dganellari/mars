@@ -2,13 +2,22 @@ list(APPEND DISTRIBUTED_MODULES
     .
     communication
     communication/util
-    mesh
-    mesh_manager
     mars_env
-    sfc
-    testsuite
-    testsuite/common
+    testsuite/communication
+    testsuite/unstructured
     )
+
+if(MARS_ENABLE_KOKKOS)
+    list(APPEND DISTRIBUTED_MODULES
+        sfc
+        mesh
+        mesh_manager
+        testsuite/sfc
+        testsuite/common
+        testsuite/discretization
+        testsuite/mesh_manager
+        )
+endif()
 
 # Add unstructured if enabled
 if(MARS_ENABLE_UNSTRUCTURED)

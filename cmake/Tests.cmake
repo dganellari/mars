@@ -18,6 +18,10 @@ if(MARS_ENABLE_TESTS)
             FetchContent_MakeAvailable(googletest)
         endif()
 
+        # Add include directories for downloaded GTest
+        include_directories(${googletest_SOURCE_DIR}/googletest/include)
+        include_directories(${googletest_SOURCE_DIR}/googlemock/include)
+
         set_target_properties(gtest PROPERTIES FOLDER extern)
         set_target_properties(gtest_main PROPERTIES FOLDER extern)
         set_target_properties(gmock PROPERTIES FOLDER extern)
@@ -26,6 +30,8 @@ if(MARS_ENABLE_TESTS)
         set(MARS_G_TEST_LIBRARIES gtest gmock)
         # add_library(googletest ALIAS gtest)
     else()
+        # Add include directories for system GTest
+        include_directories(${GTEST_INCLUDE_DIRS})
         set(MARS_G_TEST_LIBRARIES GTest::GTest)
         # add_library(googletest PUBLIC GTest::GTest)
     endif()
