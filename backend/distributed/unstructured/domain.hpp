@@ -70,6 +70,23 @@ __global__ void extractRepCoordinatesKernel(const Real* x,
                                             Real* elemH,
                                             int numElements);
 
+// Add these with the other forward declarations
+template <typename ElementTag>
+__global__ void computeCharacteristicSizesKernel(const Real* x,
+                                               const Real* y,
+                                               const Real* z,
+                                               const int* indices0,
+                                               const int* indices1,
+                                               const int* indices2,
+                                               const int* indices3,
+                                               int* nodeTetCount,
+                                               Real* h,
+                                               int numElements);
+
+__global__ void finalizeCharacteristicSizesKernel(Real* h, 
+                                               int* nodeTetCount, 
+                                               int numNodes);
+
 // After other forward declarations
 template <typename KeyType>
 void computeSfcKeysGpu(const Real* x, const Real* y, const Real* z,
@@ -160,7 +177,7 @@ public:
     void mapElementsToNodes();
 
     // Transfer data to GPU for computations
-    void transferDataToGPU();
+    void transferDataToGPU(CoordsTuple& h_coords_, ConnectivityTuple& h_conn_);
 
     // Domain synchronization (following cornerstone API pattern)
     void sync();
@@ -241,6 +258,7 @@ void ElementDomain<ElementTag, cstone::GpuTag>::computeOnElements(KernelFunc ker
                                          thrust::raw_pointer_cast(d_i2.data()),
                                          thrust::raw_pointer_cast(d_i3.data()),
                                          elementCount_);
+        cudaCheckError();
     } else if constexpr (std::is_same_v<ElementTag, HexTag>) {
         auto& d_i0 = std::get<0>(d_conn_);
         auto& d_i1 = std::get<1>(d_conn_);
@@ -263,6 +281,7 @@ void ElementDomain<ElementTag, cstone::GpuTag>::computeOnElements(KernelFunc ker
                                          thrust::raw_pointer_cast(d_i6.data()),
                                          thrust::raw_pointer_cast(d_i7.data()),
                                          elementCount_);
+        cudaCheckError();
     }
     // Add cases for other element types
 }
@@ -310,9 +329,6 @@ ElementDomain<ElementTag, AcceleratorTag>::ElementDomain(const std::string& mesh
     // Read the mesh in SoA format
     readMeshDataSoA(meshFile, h_coords_, h_conn_);
 
-    // Calculate characteristic sizes
-    calculateCharacteristicSizes();
-
     // Initialize cornerstone domain
     int bucketSize = 64;
     unsigned bucketSizeFocus = 8;
@@ -324,7 +340,10 @@ ElementDomain<ElementTag, AcceleratorTag>::ElementDomain(const std::string& mesh
     domain_ = std::make_unique<DomainType>(rank, numRanks, bucketSize, bucketSizeFocus, theta, box);
 
     // Transfer data to GPU before sync
-    transferDataToGPU();
+    transferDataToGPU(h_coords_, h_conn_);
+
+    // Calculate characteristic sizes
+    calculateCharacteristicSizes();
 
     // Map elements to their representative nodes
     mapElementsToNodes();
@@ -619,6 +638,7 @@ void ElementDomain<ElementTag, AcceleratorTag>::mapElementsToNodes() {
                                            thrust::raw_pointer_cast(d_nodeSfcCodes.data()),
                                            thrust::raw_pointer_cast(d_elemToNodeMap_.data()),
                                            elementCount_);
+            cudaCheckError();
         } else if constexpr (std::is_same_v<ElementTag, HexTag>) {
             // Similar implementation for hex elements
         }
@@ -627,16 +647,12 @@ void ElementDomain<ElementTag, AcceleratorTag>::mapElementsToNodes() {
 
 // Transfer data to GPU for computations
 template <typename ElementTag, typename AcceleratorTag>
-void ElementDomain<ElementTag, AcceleratorTag>::transferDataToGPU() {
+void ElementDomain<ElementTag, AcceleratorTag>::transferDataToGPU(CoordsTuple& h_coords_, ConnectivityTuple& h_conn_) {
     if constexpr (std::is_same_v<AcceleratorTag, cstone::GpuTag>) {
         // Copy coordinates
         std::get<0>(d_coords_) = std::get<0>(h_coords_);  // x
         std::get<1>(d_coords_) = std::get<1>(h_coords_);  // y
         std::get<2>(d_coords_) = std::get<2>(h_coords_);  // z
-
-        // Copy properties
-        std::get<0>(d_props_) = std::get<0>(h_props_);  // h
-
         // Copy connectivity
         for (int i = 0; i < NodesPerElement; ++i) {
             std::get<i>(d_conn_) = std::get<i>(h_conn_);
@@ -680,6 +696,7 @@ void ElementDomain<ElementTag, AcceleratorTag>::sync() {
                                            thrust::raw_pointer_cast(d_nodeSfcCodes.data()),
                                            thrust::raw_pointer_cast(d_elemToNodeMap_.data()),
                                            elementCount_);
+            cudaCheckError();
         } else if constexpr (std::is_same_v<ElementTag, HexTag>) {
             // Similar implementation for hexes
         }
@@ -689,7 +706,7 @@ void ElementDomain<ElementTag, AcceleratorTag>::sync() {
         DeviceVector<Real> d_elemY(elementCount_);
         DeviceVector<Real> d_elemZ(elementCount_);
         DeviceVector<Real> d_elemH(elementCount_);
-        DeviceVector<KeyType> d_elemSfcCodes(elementCount_);
+        d_elemSfcCodes_.resize(elementCount_);
 
         extractRepCoordinatesKernel<ElementTag>
             <<<numBlocks, blockSize>>>(thrust::raw_pointer_cast(d_x.data()),
@@ -702,11 +719,11 @@ void ElementDomain<ElementTag, AcceleratorTag>::sync() {
                                        thrust::raw_pointer_cast(d_elemZ.data()),
                                        thrust::raw_pointer_cast(d_elemH.data()),
                                        elementCount_);
-
+        cudaCheckError();
         // Sync domain with element representatives
         DeviceVector<Real> scratch1, scratch2, scratch3;
         domain_->sync(
-            d_elemSfcCodes, d_elemX, d_elemY, d_elemZ, d_elemH, std::tie(d_elemToNodeMap_), std::tie(scratch1, scratch2, scratch3));
+            d_elemSfcCodes_, d_elemX, d_elemY, d_elemZ, d_elemH, std::tie(d_elemToNodeMap_), std::tie(scratch1, scratch2, scratch3));
 
         size_t localElements = domain_->endIndex() - domain_->startIndex();
         size_t totalElements = domain_->nParticles();
