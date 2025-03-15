@@ -4,3 +4,5 @@ mars_add_test(read_mesh_adios2_test ${CMAKE_CURRENT_SOURCE_DIR}/mars_read_mesh_a
 mars_add_test(mars_cstone_domain_test ${CMAKE_CURRENT_SOURCE_DIR}/mars_cstone_domain.cpp)
 target_link_libraries(mars_cstone_domain_test mars_unstructured)
 
+mars_add_test(mars_read_mesh_binary_test ${CMAKE_CURRENT_SOURCE_DIR}/mars_read_mesh_binary.cpp)
+target_link_libraries(mars_read_mesh_binary_test mars_unstructured)
