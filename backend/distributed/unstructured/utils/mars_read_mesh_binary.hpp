@@ -9,6 +9,23 @@
 
 namespace mars {
 
+// Helper function to create a tuple of N vector<int>
+template<int N>
+auto createNVectors(size_t size) {
+    if constexpr (N == 3) {
+        return std::tuple<std::vector<int>, std::vector<int>, std::vector<int>>(
+            std::vector<int>(size), std::vector<int>(size), std::vector<int>(size));
+    } else if constexpr (N == 4) {
+        return std::tuple<std::vector<int>, std::vector<int>, std::vector<int>, std::vector<int>>(
+            std::vector<int>(size), std::vector<int>(size), std::vector<int>(size), std::vector<int>(size));
+    } else if constexpr (N == 8) {
+        return std::tuple<std::vector<int>, std::vector<int>, std::vector<int>, std::vector<int>,
+                          std::vector<int>, std::vector<int>, std::vector<int>, std::vector<int>>(
+            std::vector<int>(size), std::vector<int>(size), std::vector<int>(size), std::vector<int>(size),
+            std::vector<int>(size), std::vector<int>(size), std::vector<int>(size), std::vector<int>(size));
+    }
+}
+
 /**
  * Read binary mesh coordinates from separate x, y, z files
  * @param meshDir Directory containing mesh files
@@ -80,13 +97,8 @@ auto readMeshConnectivityBinaryTuple(const std::string& meshDir, size_t nodeStar
     size_t elemEndIdx = (rank == numRanks - 1) ? total_elements : elemStartIdx + elemPerRank;
     size_t elementCount = elemEndIdx - elemStartIdx;
     
-    // Create a tuple of N vectors
-    auto create_tuple = [elementCount](auto... indices) {
-        return std::make_tuple(std::vector<int>(elementCount)...);
-    };
-    
-    // Use index_sequence to create N tuple elements
-    auto result = std::apply(create_tuple, std::make_index_sequence<N>{});
+    // Then use it:
+    auto result = createNVectors<N>(elementCount);
     
     // Read data into each vector in the tuple
     int i = 0;

@@ -1,12 +1,12 @@
 #include <gtest/gtest.h>
 #include <fstream>
 #include <filesystem>
-#include "domain.hpp"
+#include "mars_read_mesh_binary.hpp"  // Include only this header
 
 namespace fs = std::filesystem;
 
 // Test fixture that creates test mesh files
-class MeshReadTest : public ::testing::Test {
+class MeshReadBinaryTest : public ::testing::Test {
 protected:
     // Test directory for mesh files
     fs::path testDir;
@@ -16,7 +16,7 @@ protected:
     // Create test files with known data
     void SetUp() override {
         // Create a temporary directory
-        testDir = fs::temp_directory_path() / "mars_mesh_test";
+        testDir = fs::temp_directory_path() / "mars_mesh_binary_test";
         fs::create_directories(testDir);
         
         // Create coordinate files
@@ -51,84 +51,73 @@ protected:
     }
 };
 
-// Test reading tetrahedral mesh with float precision
-TEST_F(MeshReadTest, ReadTetMeshFloat) {
-    // Test with Real as float
-    using Real = float;
-    using ElementType = TetTag;
-    using AccelType = cstone::GpuTag;
-    using Domain = ElementDomain<ElementType, AccelType>;
+// Test reading coordinates
+TEST_F(MeshReadBinaryTest, ReadCoordinates) {
+    // Test reading coordinates using the function directly
+    auto [nodeCount, nodeStartIdx, x_data, y_data, z_data] = 
+        mars::readMeshCoordinatesBinary(testDir.string(), rank, numRanks);
     
-    // Create host data structures to receive the data
-    typename Domain::CoordsTuple h_coords;
-    typename Domain::ConnectivityTuple h_conn;
+    // Verify node count
+    EXPECT_EQ(nodeCount, 8);
+    EXPECT_EQ(nodeStartIdx, 0);  // For rank 0
     
-    // Create a domain object to test the readMeshDataSoA method
-    Domain domain(testDir.string(), rank, numRanks);
+    // Verify coordinate values
+    EXPECT_EQ(x_data.size(), 8);
+    EXPECT_EQ(y_data.size(), 8);
+    EXPECT_EQ(z_data.size(), 8);
     
-    // Access results
-    EXPECT_EQ(domain.getNodeCount(), 8);
-    EXPECT_EQ(domain.getElementCount(), 4);
-    
-    // Check coordinates (test a few points)
-    EXPECT_FLOAT_EQ(domain.x()[0], 1.0f);
-    EXPECT_FLOAT_EQ(domain.y()[2], 0.3f);
-    EXPECT_FLOAT_EQ(domain.z()[5], 60.0f);
-    
-    // Test connectivity
-    EXPECT_EQ(domain.indices<0>()[0], 0);
-    EXPECT_EQ(domain.indices<1>()[1], 3);
-    EXPECT_EQ(domain.indices<2>()[2], 6);
-    EXPECT_EQ(domain.indices<3>()[3], 1);
+    EXPECT_FLOAT_EQ(x_data[0], 1.0f);
+    EXPECT_FLOAT_EQ(y_data[2], 0.3f);
+    EXPECT_FLOAT_EQ(z_data[5], 60.0f);
 }
 
-// Test reading tetrahedral mesh with double precision
-TEST_F(MeshReadTest, ReadTetMeshDouble) {
-    // Test with Real as double to test conversion
-    using ElementType = TetTag;
-    using AccelType = cstone::GpuTag;
+// Test reading connectivity with tuple version
+TEST_F(MeshReadBinaryTest, ReadConnectivityTuple) {
+    // Test reading tetrahedral connectivity (4 nodes per element)
+    auto [elementCount, conn_tuple] = 
+        mars::readMeshConnectivityBinaryTuple<4>(testDir.string(), 0, rank, numRanks);
     
-    // This is a specialized test that explicitly sets Real to double
-    class TestDomain : public ElementDomain<ElementType, AccelType> {
-    public:
-        using ElementDomain<ElementType, AccelType>::ElementDomain;
-        
-        // Test method that calls readMeshDataSoA directly for testing
-        void testRead(const std::string& meshFile) {
-            CoordsTuple h_coords;
-            ConnectivityTuple h_conn;
-            readMeshDataSoA(meshFile, h_coords, h_conn);
-            
-            // Verify data is properly converted to double
-            EXPECT_EQ(std::get<0>(h_coords).size(), 8);
-            EXPECT_EQ(std::get<0>(h_conn).size(), 4);
-            
-            EXPECT_DOUBLE_EQ(std::get<0>(h_coords)[0], 1.0);
-            EXPECT_DOUBLE_EQ(std::get<1>(h_coords)[2], 0.3);
-            EXPECT_DOUBLE_EQ(std::get<2>(h_coords)[5], 60.0);
-        }
-    };
+    // Verify element count
+    EXPECT_EQ(elementCount, 4);
     
-    TestDomain domain(testDir.string(), rank, numRanks);
-    domain.testRead(testDir.string());
+    // Verify tuple structure (should have 4 vectors)
+    EXPECT_EQ(std::tuple_size_v<decltype(conn_tuple)>, 4);
+    
+    // Verify connectivity values
+    EXPECT_EQ(std::get<0>(conn_tuple)[0], 0);
+    EXPECT_EQ(std::get<1>(conn_tuple)[1], 3);
+    EXPECT_EQ(std::get<2>(conn_tuple)[2], 6);
+    EXPECT_EQ(std::get<3>(conn_tuple)[3], 1);
+    
+    // Test with triangles (3 nodes per element)
+    // We'll use the same files but interpret first 3 indices as triangle connectivity
+    auto [triCount, tri_tuple] = 
+        mars::readMeshConnectivityBinaryTuple<3>(testDir.string(), 0, rank, numRanks);
+    
+    EXPECT_EQ(triCount, 4);
+    EXPECT_EQ(std::tuple_size_v<decltype(tri_tuple)>, 3);
 }
 
-// Test error handling for missing files
-TEST_F(MeshReadTest, HandleMissingFiles) {
-    fs::remove(testDir / "x.float32"); // Delete a coordinate file
+// Test reading connectivity with vector of vectors version
+TEST_F(MeshReadBinaryTest, ReadConnectivityVectors) {
+    // Test reading connectivity using the vector version
+    auto [elementCount, indices] = 
+        mars::readMeshConnectivityBinary(testDir.string(), 4, 0, rank, numRanks);
     
-    using ElementType = TetTag;
-    using AccelType = cstone::GpuTag;
-    using Domain = ElementDomain<ElementType, AccelType>;
+    // Verify element and node counts
+    EXPECT_EQ(elementCount, 4);
+    EXPECT_EQ(indices.size(), 4);  // 4 indices per tet
+    EXPECT_EQ(indices[0].size(), 4);  // 4 elements
     
-    // Should throw an exception for missing file
-    EXPECT_THROW({
-        Domain domain(testDir.string(), rank, numRanks);
-    }, std::runtime_error);
+    // Verify connectivity values
+    EXPECT_EQ(indices[0][0], 0);
+    EXPECT_EQ(indices[1][1], 3);
+    EXPECT_EQ(indices[2][2], 6);
+    EXPECT_EQ(indices[3][3], 1);
 }
 
-// Test multi-rank distribution (simulated)
-TEST_F(MeshReadTest, MultiRankDistribution) {
+// Test multi-rank distribution
+TEST_F(MeshReadBinaryTest, MultiRankDistribution) {
     // Create larger coordinate files for testing rank distribution
     std::vector<float> x_coords(100), y_coords(100), z_coords(100);
     for (int i = 0; i < 100; i++) {
@@ -155,27 +144,105 @@ TEST_F(MeshReadTest, MultiRankDistribution) {
     createConnectivityFile("i2.int32", i2);
     createConnectivityFile("i3.int32", i3);
     
-    // Test with multiple ranks
-    using ElementType = TetTag;
-    using AccelType = cstone::GpuTag;
-    using Domain = ElementDomain<ElementType, AccelType>;
-    
     // Test rank 0 of 2
     {
-        Domain domain0(testDir.string(), 0, 2);
-        EXPECT_EQ(domain0.getNodeCount(), 50); // First half of nodes
-        EXPECT_EQ(domain0.getElementCount(), 25); // First half of elements
+        auto [nodeCount0, nodeStartIdx0, x0, y0, z0] = 
+            mars::readMeshCoordinatesBinary(testDir.string(), 0, 2);
+        
+        EXPECT_EQ(nodeCount0, 50); // First half of nodes
+        EXPECT_EQ(nodeStartIdx0, 0);
+        EXPECT_FLOAT_EQ(x0[0], 0.0f);
+        EXPECT_FLOAT_EQ(x0[49], 49.0f);
+        
+        auto [elemCount0, conn0] = 
+            mars::readMeshConnectivityBinaryTuple<4>(testDir.string(), nodeStartIdx0, 0, 2);
+        
+        EXPECT_EQ(elemCount0, 25); // First half of elements
     }
     
     // Test rank 1 of 2
     {
-        Domain domain1(testDir.string(), 1, 2);
-        EXPECT_EQ(domain1.getNodeCount(), 50); // Second half of nodes
-        EXPECT_EQ(domain1.getElementCount(), 25); // Second half of elements
+        auto [nodeCount1, nodeStartIdx1, x1, y1, z1] = 
+            mars::readMeshCoordinatesBinary(testDir.string(), 1, 2);
         
-        // Check specific node value that should be offset
-        EXPECT_FLOAT_EQ(domain1.x()[0], 50.0f); // First node of rank 1
+        EXPECT_EQ(nodeCount1, 50); // Second half of nodes
+        EXPECT_EQ(nodeStartIdx1, 50);
+        EXPECT_FLOAT_EQ(x1[0], 50.0f); // First node of rank 1
+        
+        auto [elemCount1, conn1] = 
+            mars::readMeshConnectivityBinaryTuple<4>(testDir.string(), nodeStartIdx1, 1, 2);
+        
+        EXPECT_EQ(elemCount1, 25); // Second half of elements
+        
+        // Verify that indices are adjusted for local numbering
+        // Element at rank 1 should have its indices adjusted by nodeStartIdx1
+        EXPECT_EQ(std::get<0>(conn1)[0], i0[25] - nodeStartIdx1);
     }
+}
+
+// Test error handling for missing files
+TEST_F(MeshReadBinaryTest, HandleMissingFiles) {
+    fs::remove(testDir / "x.float32"); // Delete a coordinate file
+    
+    // Should throw an exception for missing file
+    EXPECT_THROW({
+        mars::readMeshCoordinatesBinary(testDir.string(), rank, numRanks);
+    }, std::runtime_error);
+    
+    // Also test connectivity error
+    fs::remove(testDir / "i0.int32");
+    EXPECT_THROW({
+        mars::readMeshConnectivityBinaryTuple<4>(testDir.string(), 0, rank, numRanks);
+    }, std::runtime_error);
+}
+
+// Test to print mesh connectivity in a pretty format
+TEST_F(MeshReadBinaryTest, PrintMeshConnectivity) {
+    // Read coordinates and connectivity
+    auto [nodeCount, nodeStartIdx, x_data, y_data, z_data] = 
+        mars::readMeshCoordinatesBinary(testDir.string(), rank, numRanks);
+    
+    auto [elementCount, conn_tuple] = 
+        mars::readMeshConnectivityBinaryTuple<4>(testDir.string(), 0, rank, numRanks);
+    
+    // Print mesh summary
+    std::cout << "\n=== MESH SUMMARY ===" << std::endl;
+    std::cout << "Nodes: " << nodeCount << ", Elements: " << elementCount << std::endl;
+    
+    // Print node coordinates
+    std::cout << "\n=== NODE COORDINATES ===" << std::endl;
+    std::cout << "Index  |     X     |     Y     |     Z     " << std::endl;
+    std::cout << "----------------------------------------" << std::endl;
+    for (size_t i = 0; i < nodeCount; i++) {
+        printf("%5zu | %9.4f | %9.4f | %9.4f\n", 
+               i, x_data[i], y_data[i], z_data[i]);
+    }
+    
+    // Extract connectivity arrays for easier access
+    const auto& i0 = std::get<0>(conn_tuple);
+    const auto& i1 = std::get<1>(conn_tuple);
+    const auto& i2 = std::get<2>(conn_tuple);
+    const auto& i3 = std::get<3>(conn_tuple);
+    
+    // Print element connectivity
+    std::cout << "\n=== ELEMENT CONNECTIVITY ===" << std::endl;
+    std::cout << "Element |  Node 0  |  Node 1  |  Node 2  |  Node 3  " << std::endl;
+    std::cout << "---------------------------------------------------" << std::endl;
+    for (size_t e = 0; e < elementCount; e++) {
+        printf("%7zu | %8d | %8d | %8d | %8d\n", 
+               e, i0[e], i1[e], i2[e], i3[e]);
+    }
+    
+    // Visualize the mesh structure (simplified ASCII representation)
+    std::cout << "\n=== MESH VISUALIZATION ===" << std::endl;
+    std::cout << "Each row represents an element with connections between its nodes:" << std::endl;
+    
+    for (size_t e = 0; e < elementCount; e++) {
+        std::cout << "Element " << e << ": ";
+        std::cout << i0[e] << " -- " << i1[e] << " -- " << i2[e] << " -- " << i3[e] << " -- " << i0[e];
+        std::cout << " (tetrahedron)" << std::endl;
+    }
+    EXPECT_TRUE(elementCount > 0) << "Mesh connectivity printed for visual inspection"; 
 }
 
 int main(int argc, char **argv) {

@@ -2,15 +2,6 @@
 #include "cstone/sfc/sfc.hpp"
 #include "domain.hpp"
 
-#define cudaCheckError()                                                                 \
-    {                                                                                    \
-        cudaError_t e = cudaGetLastError();                                              \
-        if (e != cudaSuccess) {                                                          \
-            printf("CUDA error %s:%d: %s\n", __FILE__, __LINE__, cudaGetErrorString(e)); \
-            exit(EXIT_FAILURE);                                                          \
-        }                                                                                \
-    }
-
 // CUDA kernel to calculate element characteristic sizes
 template <typename ElementTag>
 __global__ void computeCharacteristicSizesKernel(const Real* x,

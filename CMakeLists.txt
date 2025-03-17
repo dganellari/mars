@@ -20,6 +20,12 @@ if(MARS_ENABLE_CUDA)
     enable_language(CUDA)
 endif()
 
+# Add near the top, after enabling CUDA but before any add_subdirectory calls
+if(CMAKE_CUDA_COMPILER)
+    add_compile_options($<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+    add_compile_options($<$<COMPILE_LANGUAGE:CUDA>:--expt-relaxed-constexpr>)
+endif()
+
 # Std CMake imports
 include(CMakePackageConfigHelpers)
 include(CMakeDependentOption)
@@ -61,6 +67,13 @@ if(MARS_ENABLE_CXXOPTS)
 endif()
 
 add_library(mars ${MARS_HEADERS} ${MARS_SOURCES})
+
+if(CMAKE_CUDA_COMPILER AND TARGET mars)
+    # Add CUDA flags to the mars target
+    target_compile_options(mars PRIVATE 
+        $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>
+        $<$<COMPILE_LANGUAGE:CUDA>:--expt-relaxed-constexpr>)
+endif()
 
 foreach(include ${MARS_BUILD_INCLUDES})
   target_include_directories(mars BEFORE PUBLIC $<BUILD_INTERFACE:${include}>)

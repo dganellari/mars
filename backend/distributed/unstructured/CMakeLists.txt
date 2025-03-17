@@ -41,9 +41,6 @@ if(MARS_ENABLE_CUDA AND NOT CMAKE_CUDA_COMPILER_ID)
     set(CMAKE_CUDA_FLAGS_DEBUG "" CACHE STRING "CUDA Debug flags" FORCE)
     set(CMAKE_CUDA_FLAGS_RELEASE "-O3" CACHE STRING "CUDA Release flags" FORCE)
     set(CMAKE_CUDA_FLAGS_RELWITHDEBINFO "-O2 -g" CACHE STRING "CUDA RelWithDebInfo flags" FORCE)
-
-    # Add ONLY the flags we specifically want for CUDA
-    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} --expt-relaxed-constexpr")
 endif()
 
 # 2. FIND DEPENDENCIES
@@ -71,8 +68,11 @@ endif()
 set(CSTONE_CUDA_STANDARD 17 CACHE STRING "CUDA standard for Cornerstone" FORCE)
 set(CSTONE_CUDA_ARCHITECTURES ${CMAKE_CUDA_ARCHITECTURES} CACHE STRING "CUDA architectures for Cornerstone" FORCE)
 set(CSTONE_WITH_CUDA ON CACHE BOOL "Build Cornerstone with CUDA support" FORCE)
-# Add this to ensure Cornerstone uses the right CUDA standard
-set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} --expt-relaxed-constexpr -std=c++17" CACHE STRING "CUDA flags for all targets" FORCE)
+
+# Set global CUDA flags (this ensures all CUDA code gets these flags)
+if(CMAKE_CUDA_COMPILER)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} --expt-relaxed-constexpr --extended-lambda -std=c++17" CACHE STRING "CUDA flags for all targets" FORCE)
+endif()
 
 # Find Cornerstone
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake")
@@ -132,64 +132,59 @@ message(STATUS "MPI_CXX_INCLUDE_DIRS: ${MPI_CXX_INCLUDE_DIRS}")
 message(STATUS "MPI_CXX_COMPILER: ${MPI_CXX_COMPILER}")
 
 # 3. CREATE TARGET AND CONFIGURATION
-
-# Create target for the unstructured implementation
-add_library(mars_unstructured "")
-
-# Export include directories properly for consumers
-target_include_directories(mars_unstructured PUBLIC
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>  # Current dir with domain.hpp
-    $<INSTALL_INTERFACE:include/mars/backend/distributed/unstructured>
-)
-
-# Link against Mars to inherit all include directories and dependencies
-target_link_libraries(mars_unstructured PUBLIC mars)
-
-# Check for empty MPI include dirs (common with Cray MPICH)
-if("${MPI_CXX_INCLUDE_DIRS}" STREQUAL "")
-    message(STATUS "MPI_CXX_INCLUDE_DIRS is empty, using paths derived from MPI_CXX_COMPILER")
-    # Add MPI include directory to target
-    target_include_directories(mars_unstructured PUBLIC
-        ${MPI_BASE_DIR}/include
-    )
-    # Special handling for CUDA compilation
-    if(CMAKE_CUDA_COMPILER)
-        set_property(SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/domain.cu
-                     PROPERTY COMPILE_OPTIONS "-I${MPI_BASE_DIR}/include")
-    endif()
-else()
-    # Standard case - use MPI_CXX_INCLUDE_DIRS
-    target_include_directories(mars_unstructured PUBLIC
-        ${MPI_CXX_INCLUDE_DIRS}
-    )
-endif()
-
-# Link against MPI
-target_link_libraries(mars_unstructured PUBLIC MPI::MPI_CXX)
-
-# ADIOS2 integration
-if(ADIOS2_FOUND)
-    target_include_directories(mars_unstructured PUBLIC ${ADIOS2_INCLUDE_DIRS})
-    target_link_libraries(mars_unstructured PUBLIC ${ADIOS2_LIBRARIES})
+if(NOT TARGET mars_unstructured)
+    # 1. Target creation
+    add_library(mars_unstructured "")
     
-    # Special handling for CUDA compilation
+    # 2. Target properties - CUDA separable compilation
     if(CMAKE_CUDA_COMPILER)
-        foreach(ADIOS_DIR ${ADIOS2_INCLUDE_DIRS})
-            set_property(SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/domain.cu
-                        APPEND PROPERTY COMPILE_OPTIONS "-I${ADIOS_DIR}")
-        endforeach()
+      set_target_properties(mars_unstructured PROPERTIES 
+        CUDA_SEPARABLE_COMPILATION ON)
     endif()
+    
+    # 3. Include directories
+    target_include_directories(mars_unstructured PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
+        $<INSTALL_INTERFACE:include/mars/backend/distributed/unstructured>
+    )
+    
+    # 4. All link libraries
+    target_link_libraries(mars_unstructured PUBLIC mars)
+    
+    # 5. MPI-specific configurations
+    if("${MPI_CXX_INCLUDE_DIRS}" STREQUAL "")
+        target_include_directories(mars_unstructured PUBLIC ${MPI_BASE_DIR}/include)
+        if(CMAKE_CUDA_COMPILER)
+            set_property(SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/domain.cu
+                         PROPERTY COMPILE_OPTIONS "-I${MPI_BASE_DIR}/include")
+        endif()
+    else()
+        target_include_directories(mars_unstructured PUBLIC ${MPI_CXX_INCLUDE_DIRS})
+    endif()
+    target_link_libraries(mars_unstructured PUBLIC MPI::MPI_CXX)
+    
+    # 6. ADIOS2 integration
+    if(ADIOS2_FOUND)
+        target_include_directories(mars_unstructured PUBLIC ${ADIOS2_INCLUDE_DIRS})
+        target_link_libraries(mars_unstructured PUBLIC ${ADIOS2_LIBRARIES})
+        if(CMAKE_CUDA_COMPILER)
+            foreach(ADIOS_DIR ${ADIOS2_INCLUDE_DIRS})
+                set_property(SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/domain.cu
+                            APPEND PROPERTY COMPILE_OPTIONS "-I${ADIOS_DIR}")
+            endforeach()
+        endif()
+    endif()
+    
+    # 7. Cornerstone integration
+    if(TARGET cornerstone_headers)
+        target_link_libraries(mars_unstructured PUBLIC cornerstone_headers)
+    endif()
+    
+    # 8. Sources and language properties
+    target_sources(mars_unstructured PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/domain.cu)
+    set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/domain.cu PROPERTIES LANGUAGE CUDA)
 endif()
 
-# Cornerstone integration
-if(TARGET cornerstone_headers)
-    target_link_libraries(mars_unstructured PUBLIC cornerstone_headers)
-endif()
-
-# Add domain.cu as a source file
-target_sources(mars_unstructured PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/domain.cu)
-set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/domain.cu PROPERTIES LANGUAGE CUDA)
-
-# Add to export set
+# These can stay outside the guard
 list(APPEND MARS_TARGETS mars_unstructured)
 set(MARS_TARGETS ${MARS_TARGETS} PARENT_SCOPE)

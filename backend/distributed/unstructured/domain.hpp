@@ -20,6 +20,7 @@ using std::get;
 #include <vector>
 #include "mars.hpp"
 #include "mars_globals.hpp"
+#include "mars_cuda_utils.hpp"
 #include "mars_read_mesh_adios2.hpp"
 #include "mars_read_mesh_binary.hpp"
 
@@ -193,9 +194,55 @@ public:
     // Get all elements in a given octree node
     // std::vector<size_t> getElementsInOctreeNode(int octreeNodeIndex);
 
-    // Launch a CUDA kernel to compute something on elements
+    // CUDA kernel launcher specialization for GPU tag
     template<typename KernelFunc>
-    void computeOnElements(KernelFunc kernel);
+    void computeOnElements(KernelFunc kernel)
+    {
+        int blockSize = 256;
+        int numBlocks = (elementCount_ + blockSize - 1) / blockSize;
+
+        // Extract raw pointers from tuple elements for kernel call
+        auto& d_x = std::get<0>(d_coords_);
+        auto& d_y = std::get<1>(d_coords_);
+        auto& d_z = std::get<2>(d_coords_);
+
+        // Get connectivity pointers based on element type
+        if constexpr (std::is_same_v<ElementTag, TetTag>)
+        {
+            auto& d_i0 = std::get<0>(d_conn_);
+            auto& d_i1 = std::get<1>(d_conn_);
+            auto& d_i2 = std::get<2>(d_conn_);
+            auto& d_i3 = std::get<3>(d_conn_);
+
+            kernel<<<numBlocks, blockSize>>>(
+                thrust::raw_pointer_cast(d_x.data()), thrust::raw_pointer_cast(d_y.data()),
+                thrust::raw_pointer_cast(d_z.data()), thrust::raw_pointer_cast(d_i0.data()),
+                thrust::raw_pointer_cast(d_i1.data()), thrust::raw_pointer_cast(d_i2.data()),
+                thrust::raw_pointer_cast(d_i3.data()), elementCount_);
+            cudaCheckError();
+        }
+        else if constexpr (std::is_same_v<ElementTag, HexTag>)
+        {
+            auto& d_i0 = std::get<0>(d_conn_);
+            auto& d_i1 = std::get<1>(d_conn_);
+            auto& d_i2 = std::get<2>(d_conn_);
+            auto& d_i3 = std::get<3>(d_conn_);
+            auto& d_i4 = std::get<4>(d_conn_);
+            auto& d_i5 = std::get<5>(d_conn_);
+            auto& d_i6 = std::get<6>(d_conn_);
+            auto& d_i7 = std::get<7>(d_conn_);
+
+            kernel<<<numBlocks, blockSize>>>(
+                thrust::raw_pointer_cast(d_x.data()), thrust::raw_pointer_cast(d_y.data()),
+                thrust::raw_pointer_cast(d_z.data()), thrust::raw_pointer_cast(d_i0.data()),
+                thrust::raw_pointer_cast(d_i1.data()), thrust::raw_pointer_cast(d_i2.data()),
+                thrust::raw_pointer_cast(d_i3.data()), thrust::raw_pointer_cast(d_i4.data()),
+                thrust::raw_pointer_cast(d_i5.data()), thrust::raw_pointer_cast(d_i6.data()),
+                thrust::raw_pointer_cast(d_i7.data()), elementCount_);
+            cudaCheckError();
+        }
+        // Add cases for other element types
+    }
 
     // Access methods for coordinate data
     const DeviceVector<Real>& x() const { return std::get<0>(d_coords_); }
@@ -237,65 +284,6 @@ private:
     // Helper methods
     void readMeshDataSoA(const std::string& meshFile, CoordsTuple& h_coords_, ConnectivityTuple& h_conn_);
 };
-
-// CUDA kernel launcher specialization for GPU tag
-template<typename ElementTag>
-template<typename KernelFunc>
-void ElementDomain<ElementTag, cstone::GpuTag>::computeOnElements(KernelFunc kernel)
-{
-    int blockSize = 256;
-    int numBlocks = (elementCount_ + blockSize - 1) / blockSize;
-
-    // Extract raw pointers from tuple elements for kernel call
-    auto& d_x = std::get<0>(d_coords_);
-    auto& d_y = std::get<1>(d_coords_);
-    auto& d_z = std::get<2>(d_coords_);
-
-    // Get connectivity pointers based on element type
-    if constexpr (std::is_same_v<ElementTag, TetTag>)
-    {
-        auto& d_i0 = std::get<0>(d_conn_);
-        auto& d_i1 = std::get<1>(d_conn_);
-        auto& d_i2 = std::get<2>(d_conn_);
-        auto& d_i3 = std::get<3>(d_conn_);
-
-        kernel<<<numBlocks, blockSize>>>(thrust::raw_pointer_cast(d_x.data()), thrust::raw_pointer_cast(d_y.data()),
-                                         thrust::raw_pointer_cast(d_z.data()), thrust::raw_pointer_cast(d_i0.data()),
-                                         thrust::raw_pointer_cast(d_i1.data()), thrust::raw_pointer_cast(d_i2.data()),
-                                         thrust::raw_pointer_cast(d_i3.data()), elementCount_);
-        cudaCheckError();
-    }
-    else if constexpr (std::is_same_v<ElementTag, HexTag>)
-    {
-        auto& d_i0 = std::get<0>(d_conn_);
-        auto& d_i1 = std::get<1>(d_conn_);
-        auto& d_i2 = std::get<2>(d_conn_);
-        auto& d_i3 = std::get<3>(d_conn_);
-        auto& d_i4 = std::get<4>(d_conn_);
-        auto& d_i5 = std::get<5>(d_conn_);
-        auto& d_i6 = std::get<6>(d_conn_);
-        auto& d_i7 = std::get<7>(d_conn_);
-
-        kernel<<<numBlocks, blockSize>>>(thrust::raw_pointer_cast(d_x.data()), thrust::raw_pointer_cast(d_y.data()),
-                                         thrust::raw_pointer_cast(d_z.data()), thrust::raw_pointer_cast(d_i0.data()),
-                                         thrust::raw_pointer_cast(d_i1.data()), thrust::raw_pointer_cast(d_i2.data()),
-                                         thrust::raw_pointer_cast(d_i3.data()), thrust::raw_pointer_cast(d_i4.data()),
-                                         thrust::raw_pointer_cast(d_i5.data()), thrust::raw_pointer_cast(d_i6.data()),
-                                         thrust::raw_pointer_cast(d_i7.data()), elementCount_);
-        cudaCheckError();
-    }
-    // Add cases for other element types
-}
-
-// CPU version that doesn't use CUDA syntax
-template<typename ElementTag, typename AcceleratorTag>
-template<typename KernelFunc>
-void ElementDomain<ElementTag, AcceleratorTag>::computeOnElements(KernelFunc kernel)
-{
-    // CPU implementation - this would need to be implemented differently
-    // Perhaps a serial loop or OpenMP parallelization
-    std::cerr << "Warning: computeOnElements not implemented for CPU mode\n";
-}
 
 // Create a bounding box from a coordinate tuple
 template<typename CoordTuple>
