@@ -71,38 +71,76 @@ set(CSTONE_WITH_CUDA ON CACHE BOOL "Build Cornerstone with CUDA support" FORCE)
 
 # Set global CUDA flags (this ensures all CUDA code gets these flags)
 if(CMAKE_CUDA_COMPILER)
-    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} --expt-relaxed-constexpr --extended-lambda -std=c++17" CACHE STRING "CUDA flags for all targets" FORCE)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} --expt-relaxed-constexpr --extended-lambda" CACHE STRING "CUDA flags for all targets" FORCE)
 endif()
 
-# Find Cornerstone
+
+# Find Cornerstone source
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake")
 find_package(cornerstone REQUIRED)
 
 if(cornerstone_FOUND)
-    # Add explicit include directory for cornerstone
-    message(STATUS "Cornerstone include directory: ${cornerstone_INCLUDE_DIR}")
     # Get the actual source directory from FetchContent
     set(CORNERSTONE_SRC_DIR "${CMAKE_BINARY_DIR}/_deps/cornerstone_fetch-src")
+    
     # Check if headers exist in the expected location
     if(EXISTS "${CORNERSTONE_SRC_DIR}/include/cstone/domain/domain.hpp")
         message(STATUS "Found domain.hpp in expected location")
 
-        # Create an interface library for cornerstone
-        add_library(cornerstone_headers INTERFACE)
-        target_include_directories(cornerstone_headers INTERFACE
-            $<BUILD_INTERFACE:${CORNERSTONE_SRC_DIR}/include>
-            $<INSTALL_INTERFACE:include>
-        )
-        # Add cornerstone_headers to the list of targets to install
-        list(APPEND MARS_TARGETS cornerstone_headers)
-    else()
-        message(STATUS "Could not find domain.hpp in expected location")
-        # Try alternate approach - copy headers to build directory include path
-        file(COPY ${CORNERSTONE_SRC_DIR}/include/ DESTINATION ${CMAKE_BINARY_DIR}/include/)
-        message(STATUS "Copied cornerstone headers to ${CMAKE_BINARY_DIR}/include/")
+        # FIX LINKING ISSUE - Explicitly build cornerstone with all components
+        if(CMAKE_CUDA_COMPILER AND NOT TARGET cornerstone AND NOT TARGET cstone_gpu)
+            # Set options for cornerstone
+            set(CSTONE_WITH_CUDA ON CACHE BOOL "Build Cornerstone with CUDA support" FORCE)
+            set(CSTONE_WITH_GPU_AWARE_MPI ${MARS_ENABLE_CUDA} CACHE BOOL "Enable GPU-aware MPI" FORCE)
+            set(CSTONE_BUILD_EXAMPLES OFF CACHE BOOL "Don't build examples" FORCE)
+            set(CSTONE_INSTALL_HEADERS ON CACHE BOOL "Install header files" FORCE)
+            set(CSTONE_DISABLE_ERROR_ON_WARNINGS ON CACHE BOOL "Disable warnings as errors" FORCE)
+
+            # Build cornerstone first, separately
+            execute_process(
+                COMMAND ${CMAKE_COMMAND} -E echo "Building cornerstone in ${CMAKE_BINARY_DIR}/cornerstone_build"
+                COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/cornerstone_build"
+                COMMAND ${CMAKE_COMMAND} ${CORNERSTONE_SRC_DIR}
+                    -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
+                    -DCSTONE_WITH_CUDA=ON
+                    -DCSTONE_WITH_GPU_AWARE_MPI=${MARS_ENABLE_CUDA}
+                WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/cornerstone_build"
+                RESULT_VARIABLE result
+            )
+
+            if(result EQUAL 0)
+                execute_process(
+                    COMMAND ${CMAKE_COMMAND} --build .
+                    WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/cornerstone_build"
+                    RESULT_VARIABLE build_result
+                )
+
+                if(build_result EQUAL 0)
+                    message(STATUS "Successfully built cornerstone")
+                    # Now add as subdirectory for the targets
+                    add_subdirectory(${CORNERSTONE_SRC_DIR} ${CMAKE_BINARY_DIR}/cornerstone_build EXCLUDE_FROM_ALL)
+                else()
+                    message(FATAL_ERROR "Failed to build cornerstone: ${build_result}")
+                endif()
+            else()
+                message(FATAL_ERROR "Failed to configure cornerstone: ${result}")
+            endif()
+        endif()
+        
     endif()
-else()
-    message(FATAL_ERROR "Cornerstone not found. Unstructured mesh support will be limited.")
+endif()
+
+# Explicitly add cornerstone include directory to domain.cu
+if(cornerstone_FOUND)
+    # Make sure the include directory is available
+    if(EXISTS "${CORNERSTONE_SRC_DIR}/include")
+        message(STATUS "Adding cornerstone include path: ${CORNERSTONE_SRC_DIR}/include")
+        include_directories(${CORNERSTONE_SRC_DIR}/include)
+
+        #also add to specific files
+        set_property(SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/domain.cu 
+                    APPEND PROPERTY COMPILE_OPTIONS "-I${CORNERSTONE_SRC_DIR}/include")
+    endif()
 endif()
 
 # Find MPI
@@ -175,10 +213,15 @@ if(NOT TARGET mars_unstructured)
         endif()
     endif()
     
-    # 7. Cornerstone integration
-    if(TARGET cornerstone_headers)
-        target_link_libraries(mars_unstructured PUBLIC cornerstone_headers)
-    endif()
+    # 7. Link the header-only interface
+    target_link_libraries(mars_unstructured PUBLIC cornerstone::cornerstone)
+    
+    # Also link to the implementation target
+    if(TARGET cstone_gpu)
+        target_link_libraries(mars_unstructured PUBLIC cstone_gpu)
+        # Add cstone_gpu to exported targets list
+        list(APPEND MARS_TARGETS cstone_gpu)
+    endif() 
     
     # 8. Sources and language properties
     target_sources(mars_unstructured PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/domain.cu)

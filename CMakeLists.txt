@@ -91,20 +91,20 @@ target_link_libraries(mars PUBLIC ${MARS_DEP_LIBRARIES})
 # Configure cornerstone and ADIOS2 for main target if available from unstructured module
 if(MARS_ENABLE_UNSTRUCTURED)
     # Define a preprocessor macro to indicate cornerstone support
-    target_compile_definitions(mars PUBLIC MARS_HAS_CORNERSTONE)
+    target_compile_definitions(mars PRIVATE MARS_HAS_CORNERSTONE)
 
      # Make sure ADIOS2 targets are available in this scope
     find_package(ADIOS2 QUIET)
     
     # Link dependencies if variables have been set
     if(ADIOS2_FOUND)
-        target_include_directories(mars PUBLIC ${ADIOS2_INCLUDE_DIRS})
-        target_link_libraries(mars PUBLIC ${ADIOS2_LIBRARIES})
+        target_include_directories(mars PRIVATE ${ADIOS2_INCLUDE_DIRS})
+        target_link_libraries(mars PRIVATE ${ADIOS2_LIBRARIES})
     endif()
     
     # Link against cornerstone headers if available
     if(TARGET cornerstone_headers)
-        target_link_libraries(mars PUBLIC cornerstone_headers)
+        target_link_libraries(mars PRIVATE cornerstone_headers)
     endif()
     
     # Add ADIOS2 subdirectories
