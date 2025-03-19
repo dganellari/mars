@@ -33,7 +33,7 @@ auto createNVectors(size_t size) {
  * @param numRanks Total MPI ranks
  * @return Tuple containing: node count, node start index, coordinates (x,y,z)
  */
-std::tuple<size_t, size_t, std::vector<float>, std::vector<float>, std::vector<float>> 
+inline std::tuple<size_t, size_t, std::vector<float>, std::vector<float>, std::vector<float>> 
 readMeshCoordinatesBinary(const std::string& meshDir, int rank, int numRanks) {
     // Open the mesh directory and read coordinate files
     std::ifstream x_file(meshDir + "/x.float32", std::ios::binary);
@@ -132,7 +132,7 @@ auto readMeshConnectivityBinaryTuple(const std::string& meshDir, size_t nodeStar
  * @param numRanks Total MPI ranks
  * @return Tuple containing: element count, element indices arrays
  */
-std::tuple<size_t, std::vector<std::vector<int>>> 
+inline std::tuple<size_t, std::vector<std::vector<int>>> 
 readMeshConnectivityBinary(const std::string& meshDir, int nodesPerElement, size_t nodeStartIdx, int rank, int numRanks) {
     // Open all index files based on element type
     std::vector<std::ifstream> index_files;

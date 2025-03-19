@@ -24,7 +24,7 @@ namespace {
     }
 
     // Helper function to read mesh metadata
-    void readMeshMetadata(adios2::IO& io, int& numPoints, int& numCells, bool printInfo = false, int rank = 0) {
+    inline void readMeshMetadata(adios2::IO& io, int& numPoints, int& numCells, bool printInfo = false, int rank = 0) {
         auto attrNumPoints = io.InquireAttribute<int>("NumPoints");
         if (attrNumPoints) {
             numPoints = attrNumPoints.Data()[0];
@@ -79,7 +79,7 @@ namespace {
 }  // namespace
 
 // Utility function to read mesh data - returns data
-void readMeshData(const std::string& filename,
+inline void readMeshData(const std::string& filename,
                   int rank,
                   int size,
                   std::vector<double>& nodes,
@@ -133,7 +133,7 @@ void readMeshData(const std::string& filename,
 }
 
 // Original function - prints data
-void readMeshInParallel(const std::string& filename, int rank, int size) {
+inline void readMeshInParallel(const std::string& filename, int rank, int size) {
     // Use the data-returning version to read the mesh
     std::vector<double> nodes;
     std::vector<int> tets;

@@ -2,6 +2,23 @@
 #include "cstone/sfc/sfc.hpp"
 #include "domain.hpp"
 
+// Then define the implementations in domain.cu:
+__global__ void transformCharacteristicSizesKernel(Real* d_h, size_t size, Real meshFactor, Real minH, Real maxH) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < size) {
+        Real val = d_h[idx];
+        Real result = val * meshFactor;
+        d_h[idx] = max(minH, min(maxH, result));
+    }
+}
+
+__global__ void fillCharacteristicSizesKernel(Real* d_h, size_t size, Real value) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < size) {
+        d_h[idx] = value;
+    }
+}
+
 // CUDA kernel to calculate element characteristic sizes
 template <typename ElementTag>
 __global__ void computeCharacteristicSizesKernel(const Real* x,
@@ -181,7 +198,6 @@ __global__ void findRepresentativeNodesKernel(const int* indices0,
     }
 }
 
-// Use cornerstone's implementation for SFC key computation
 template <typename KeyType>
 void computeSfcKeysGpu(const Real* x,
                        const Real* y,
@@ -189,9 +205,10 @@ void computeSfcKeysGpu(const Real* x,
                        KeyType* keys,
                        size_t numKeys,
                        const cstone::Box<Real>& box) {
-    // Call the cornerstone library's implementation directly
-    cstone::computeSfcKeysGpu(x, y, z, keys, numKeys, box);
-
+    // Use sfcKindPointer to match cornerstone's template instantiation
+    cstone::computeSfcKeysGpu(x, y, z, 
+                             cstone::sfcKindPointer(keys), 
+                             numKeys, box);
     cudaCheckError();
 }
 
