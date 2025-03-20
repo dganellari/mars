@@ -100,33 +100,30 @@ TEST_F(MeshReadTest, ReadTetMeshDouble)
     using ElementType = TetTag;
     using AccelType   = cstone::GpuTag;
 
-    // This is a specialized test that explicitly sets Real to double
+    // Use FLOAT_EQ instead of DOUBLE_EQ since Real is defined as float
     class TestDomain : public ElementDomain<ElementType, AccelType>
     {
     public:
         using ElementDomain<ElementType, AccelType>::ElementDomain;
 
-        // Test method that calls readMeshDataSoA directly for testing
         void testRead(const std::string& meshFile)
         {
-            // Use HostCoordsTuple and HostConnectivityTuple explicitly
             HostCoordsTuple h_coords;
             HostConnectivityTuple h_conn;
             readMeshDataSoA(meshFile, h_coords, h_conn);
         
-            // Direct access to host vectors (no need for toHost)
             const auto& host_x = std::get<0>(h_coords);  
             const auto& host_y = std::get<1>(h_coords);
             const auto& host_z = std::get<2>(h_coords);
             const auto& host_i0 = std::get<0>(h_conn);
         
-            // Verify data is properly converted to double
             EXPECT_EQ(host_x.size(), 8);
             EXPECT_EQ(host_i0.size(), 4);
         
-            EXPECT_DOUBLE_EQ(host_x[0], 1.0);
-            EXPECT_DOUBLE_EQ(host_y[2], 0.3);
-            EXPECT_DOUBLE_EQ(host_z[5], 60.0);
+            // Use FLOAT_EQ instead of DOUBLE_EQ
+            EXPECT_FLOAT_EQ(host_x[0], 1.0f);
+            EXPECT_FLOAT_EQ(host_y[2], 0.3f);
+            EXPECT_FLOAT_EQ(host_z[5], 60.0f);
         }
     };
 
