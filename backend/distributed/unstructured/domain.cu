@@ -2,35 +2,39 @@
 #include "cstone/sfc/sfc.hpp"
 #include "domain.hpp"
 
-// Then define the implementations in domain.cu:
-__global__ void transformCharacteristicSizesKernel(Real* d_h, size_t size, Real meshFactor, Real minH, Real maxH)
+namespace mars
+{
+// CUDA kernels with RealType template parameter instead of Real
+template<typename RealType>
+__global__ void transformCharacteristicSizesKernel(RealType* d_h, size_t size, RealType meshFactor, RealType minH, RealType maxH)
 {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < size)
     {
-        Real val    = d_h[idx];
-        Real result = val * meshFactor;
+        RealType val    = d_h[idx];
+        RealType result = val * meshFactor;
         d_h[idx]    = max(minH, min(maxH, result));
     }
 }
 
-__global__ void fillCharacteristicSizesKernel(Real* d_h, size_t size, Real value)
+template<typename RealType>
+__global__ void fillCharacteristicSizesKernel(RealType* d_h, size_t size, RealType value)
 {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < size) { d_h[idx] = value; }
 }
 
 // CUDA kernel to calculate element characteristic sizes
-template<typename ElementTag>
-__global__ void computeCharacteristicSizesKernel(const Real* x,
-                                                 const Real* y,
-                                                 const Real* z,
+template<typename ElementTag, typename RealType>
+__global__ void computeCharacteristicSizesKernel(const RealType* x,
+                                                 const RealType* y,
+                                                 const RealType* z,
                                                  const int* indices0,
                                                  const int* indices1,
                                                  const int* indices2,
                                                  const int* indices3,
                                                  int* nodeTetCount,
-                                                 Real* h,
+                                                 RealType* h,
                                                  int numElements)
 {
     int elemIdx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -47,10 +51,10 @@ __global__ void computeCharacteristicSizesKernel(const Real* x,
 
             // Calculate edge lengths and contribute to characteristic size
             // Edge n0-n1
-            Real dx         = x[n0] - x[n1];
-            Real dy         = y[n0] - y[n1];
-            Real dz         = z[n0] - z[n1];
-            Real edgeLength = sqrt(dx * dx + dy * dy + dz * dz);
+            RealType dx         = x[n0] - x[n1];
+            RealType dy         = y[n0] - y[n1];
+            RealType dz         = z[n0] - z[n1];
+            RealType edgeLength = sqrt(dx * dx + dy * dy + dz * dz);
             atomicAdd(&h[n0], edgeLength);
             atomicAdd(&h[n1], edgeLength);
             atomicAdd(&nodeTetCount[n0], 1);
@@ -115,7 +119,8 @@ __global__ void computeCharacteristicSizesKernel(const Real* x,
     }
 }
 
-__global__ void finalizeCharacteristicSizesKernel(Real* h, int* nodeTetCount, int numNodes)
+template<typename RealType>
+__global__ void finalizeCharacteristicSizesKernel(RealType* h, int* nodeTetCount, int numNodes)
 {
     int nodeIdx = blockIdx.x * blockDim.x + threadIdx.x;
 
@@ -130,12 +135,12 @@ __global__ void finalizeCharacteristicSizesKernel(Real* h, int* nodeTetCount, in
 }
 
 // Generic kernel for finding representative nodes
-template<typename ElementTag>
+template<typename ElementTag, typename KeyType, typename RealType>
 __global__ void findRepresentativeNodesKernel(const int* indices0,
                                               const int* indices1,
                                               const int* indices2,
                                               const int* indices3,
-                                              const unsigned* sfcCodes,
+                                              const KeyType* sfcCodes,
                                               int* elemToNodeMap,
                                               int numElements)
 {
@@ -218,9 +223,9 @@ __global__ void findRepresentativeNodesKernel(const int* indices0,
     }
 }
 
-template<typename KeyType>
-void computeSfcKeysGpu(
-    const Real* x, const Real* y, const Real* z, KeyType* keys, size_t numKeys, const cstone::Box<Real>& box)
+template<typename KeyType, typename RealType>
+void generateSfcKeys(
+    const RealType* x, const RealType* y, const RealType* z, KeyType* keys, size_t numKeys, const cstone::Box<RealType>& box)
 {
     // Use sfcKindPointer to match cornerstone's template instantiation
     cstone::computeSfcKeysGpu(x, y, z, cstone::sfcKindPointer(keys), numKeys, box);
@@ -228,16 +233,16 @@ void computeSfcKeysGpu(
 }
 
 // Kernel to extract representative node coordinates and compute SFC keys
-template<typename ElementTag>
-__global__ void extractRepCoordinatesKernel(const Real* x,
-                                            const Real* y,
-                                            const Real* z,
-                                            const Real* h,
+template<typename ElementTag, typename RealType>
+__global__ void extractRepCoordinatesKernel(const RealType* x,
+                                            const RealType* y,
+                                            const RealType* z,
+                                            const RealType* h,
                                             const int* elemToNodeMap,
-                                            Real* elemX,
-                                            Real* elemY,
-                                            Real* elemZ,
-                                            Real* elemH,
+                                            RealType* elemX,
+                                            RealType* elemY,
+                                            RealType* elemZ,
+                                            RealType* elemH,
                                             int numElements)
 {
     int elemIdx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -255,15 +260,15 @@ __global__ void extractRepCoordinatesKernel(const Real* x,
 }
 
 // Compute tetrahedron volumes
-template<typename ElementTag>
-__global__ void computeElementVolumesKernel(const Real* x,
-                                            const Real* y,
-                                            const Real* z,
+template<typename ElementTag, typename RealType>
+__global__ void computeElementVolumesKernel(const RealType* x,
+                                            const RealType* y,
+                                            const RealType* z,
                                             const int* indices0,
                                             const int* indices1,
                                             const int* indices2,
                                             const int* indices3,
-                                            Real* volumes,
+                                            RealType* volumes,
                                             int numElements)
 {
     int elemIdx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -279,15 +284,15 @@ __global__ void computeElementVolumesKernel(const Real* x,
             int n3 = indices3[elemIdx];
 
             // Get node coordinates
-            Real x0 = x[n0], y0 = y[n0], z0 = z[n0];
-            Real x1 = x[n1], y1 = y[n1], z1 = z[n1];
-            Real x2 = x[n2], y2 = y[n2], z2 = z[n2];
-            Real x3 = x[n3], y3 = y[n3], z3 = z[n3];
+            RealType x0 = x[n0], y0 = y[n0], z0 = z[n0];
+            RealType x1 = x[n1], y1 = y[n1], z1 = z[n1];
+            RealType x2 = x[n2], y2 = y[n2], z2 = z[n2];
+            RealType x3 = x[n3], y3 = y[n3], z3 = z[n3];
 
             // Compute vectors for volume calculation
-            Real v1x = x1 - x0, v1y = y1 - y0, v1z = z1 - z0;
-            Real v2x = x2 - x0, v2y = y2 - y0, v2z = z2 - z0;
-            Real v3x = x3 - x0, v3y = y3 - y0, v3z = z3 - z0;
+            RealType v1x = x1 - x0, v1y = y1 - y0, v1z = z1 - z0;
+            RealType v2x = x2 - x0, v2y = y2 - y0, v2z = z2 - z0;
+            RealType v3x = x3 - x0, v3y = y3 - y0, v3z = z3 - z0;
 
             // Compute volume using the scalar triple product
             volumes[elemIdx] =
@@ -302,51 +307,109 @@ __global__ void computeElementVolumesKernel(const Real* x,
     }
 }
 
-// Explicit instantiation for each element type
-template __global__ void computeCharacteristicSizesKernel<TetTag>(const Real* x,
-                                                                  const Real* y,
-                                                                  const Real* z,
+// Explicit instantiations for float
+template __global__ void transformCharacteristicSizesKernel<float>(float* d_h, size_t size, float meshFactor, float minH, float maxH);
+template __global__ void fillCharacteristicSizesKernel<float>(float* d_h, size_t size, float value);
+template __global__ void finalizeCharacteristicSizesKernel<float>(float* h, int* nodeTetCount, int numNodes);
+
+// Explicit instantiations for double
+template __global__ void transformCharacteristicSizesKernel<double>(double* d_h, size_t size, double meshFactor, double minH, double maxH);
+template __global__ void fillCharacteristicSizesKernel<double>(double* d_h, size_t size, double value);
+template __global__ void finalizeCharacteristicSizesKernel<double>(double* h, int* nodeTetCount, int numNodes);
+
+// Explicit instantiation for each element type with float
+template __global__ void computeCharacteristicSizesKernel<TetTag, float>(const float* x,
+                                                                  const float* y,
+                                                                  const float* z,
                                                                   const int* indices0,
                                                                   const int* indices1,
                                                                   const int* indices2,
                                                                   const int* indices3,
                                                                   int* nodeTetCount,
-                                                                  Real* h,
+                                                                  float* h,
                                                                   int numElements);
 
-template __global__ void findRepresentativeNodesKernel<TetTag>(const int* indices0,
-                                                               const int* indices1,
-                                                               const int* indices2,
-                                                               const int* indices3,
-                                                               const unsigned* sfcCodes,
-                                                               int* elemToNodeMap,
-                                                               int numElements);
-
-template __global__ void extractRepCoordinatesKernel<TetTag>(const Real* x,
-                                                             const Real* y,
-                                                             const Real* z,
-                                                             const Real* h,
+template __global__ void extractRepCoordinatesKernel<TetTag, float>(const float* x,
+                                                             const float* y,
+                                                             const float* z,
+                                                             const float* h,
                                                              const int* elemToNodeMap,
-                                                             Real* elemX,
-                                                             Real* elemY,
-                                                             Real* elemZ,
-                                                             Real* elemH,
+                                                             float* elemX,
+                                                             float* elemY,
+                                                             float* elemZ,
+                                                             float* elemH,
                                                              int numElements);
 
-template __global__ void computeElementVolumesKernel<TetTag>(const Real* x,
-                                                             const Real* y,
-                                                             const Real* z,
+template __global__ void computeElementVolumesKernel<TetTag, float>(const float* x,
+                                                             const float* y,
+                                                             const float* z,
                                                              const int* indices0,
                                                              const int* indices1,
                                                              const int* indices2,
                                                              const int* indices3,
-                                                             Real* volumes,
+                                                             float* volumes,
                                                              int numElements);
 
-// Instantiation for hex elements would follow
-// template __global__ void computeCharacteristicSizesKernel<HexTag>...
-// etc.
+// Explicit instantiation for each element type with double
+template __global__ void computeCharacteristicSizesKernel<TetTag, double>(const double* x,
+                                                                  const double* y,
+                                                                  const double* z,
+                                                                  const int* indices0,
+                                                                  const int* indices1,
+                                                                  const int* indices2,
+                                                                  const int* indices3,
+                                                                  int* nodeTetCount,
+                                                                  double* h,
+                                                                  int numElements);
 
-// Explicit instantiation for the type used in our code
-template void computeSfcKeysGpu<KeyType>(
-    const Real* x, const Real* y, const Real* z, KeyType* keys, size_t numKeys, const cstone::Box<Real>& box);
+template __global__ void extractRepCoordinatesKernel<TetTag, double>(const double* x,
+                                                             const double* y,
+                                                             const double* z,
+                                                             const double* h,
+                                                             const int* elemToNodeMap,
+                                                             double* elemX,
+                                                             double* elemY,
+                                                             double* elemZ,
+                                                             double* elemH,
+                                                             int numElements);
+
+template __global__ void computeElementVolumesKernel<TetTag, double>(const double* x,
+                                                             const double* y,
+                                                             const double* z,
+                                                             const int* indices0,
+                                                             const int* indices1,
+                                                             const int* indices2,
+                                                             const int* indices3,
+                                                             double* volumes,
+                                                             int numElements);
+
+// For float with unsigned keys
+template __global__ void findRepresentativeNodesKernel<TetTag, unsigned, float>(
+    const int* indices0, const int* indices1, const int* indices2, const int* indices3,
+    const unsigned* sfcCodes, int* elemToNodeMap, int numElements);
+
+// For double with unsigned keys
+template __global__ void findRepresentativeNodesKernel<TetTag, unsigned, double>(
+    const int* indices0, const int* indices1, const int* indices2, const int* indices3,
+    const unsigned* sfcCodes, int* elemToNodeMap, int numElements);
+
+// For float with uint64_t keys
+template __global__ void findRepresentativeNodesKernel<TetTag, uint64_t, float>(
+    const int* indices0, const int* indices1, const int* indices2, const int* indices3,
+    const uint64_t* sfcCodes, int* elemToNodeMap, int numElements);
+
+// For double with uint64_t keys
+template __global__ void findRepresentativeNodesKernel<TetTag, uint64_t, double>(
+    const int* indices0, const int* indices1, const int* indices2, const int* indices3,
+    const uint64_t* sfcCodes, int* elemToNodeMap, int numElements);                                                          
+
+// Explicit instantiation for computeSfcKeysGpu with common combinations
+template void generateSfcKeys<unsigned, float>(
+    const float* x, const float* y, const float* z, unsigned* keys, size_t numKeys, const cstone::Box<float>& box);
+template void generateSfcKeys<unsigned, double>(
+    const double* x, const double* y, const double* z, unsigned* keys, size_t numKeys, const cstone::Box<double>& box);
+template void generateSfcKeys<uint64_t, float>(
+    const float* x, const float* y, const float* z, uint64_t* keys, size_t numKeys, const cstone::Box<float>& box);
+template void generateSfcKeys<uint64_t, double>(
+    const double* x, const double* y, const double* z, uint64_t* keys, size_t numKeys, const cstone::Box<double>& box);
+} // namespace mars

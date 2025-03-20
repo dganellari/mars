@@ -5,9 +5,9 @@
 #include "mars.hpp"
 #include "mars_globals.hpp"
 
-namespace {
+namespace mars {
     // Helper function to open mesh file
-    bool openMeshFile(const std::string& filename, adios2::ADIOS& adios, adios2::IO& io, adios2::Engine& engine) {
+    inline bool openMeshFile(const std::string& filename, adios2::ADIOS& adios, adios2::IO& io, adios2::Engine& engine) {
         try {
             io = adios.DeclareIO("MeshIO");
             engine = io.Open(filename, adios2::Mode::ReadRandomAccess);
@@ -42,7 +42,7 @@ namespace {
     }
 
     // Helper function to inquire mesh variables
-    bool inquireMeshVariables(adios2::IO& io,
+    inline bool inquireMeshVariables(adios2::IO& io,
                               adios2::Variable<double>& varNodes,
                               adios2::Variable<int>& varTets,
                               adios2::Variable<uint8_t>& varTypes,
@@ -56,7 +56,7 @@ namespace {
     }
 
     // Helper function to calculate partitioning
-    void calculatePartitioning(const adios2::Variable<double>& varNodes,
+    inline void calculatePartitioning(const adios2::Variable<double>& varNodes,
                                const adios2::Variable<int>& varTets,
                                int rank,
                                int size,
@@ -76,7 +76,6 @@ namespace {
         startTet = rank * tetsPerProcess + std::min<std::size_t>(rank, remainderTets);
         countTet = tetsPerProcess + (rank < remainderTets ? 1 : 0);
     }
-}  // namespace
 
 // Utility function to read mesh data - returns data
 inline void readMeshData(const std::string& filename,
@@ -212,3 +211,4 @@ inline void readMeshInParallel(const std::string& filename, int rank, int size) 
         }
     }
 }
+}  // namespace mars

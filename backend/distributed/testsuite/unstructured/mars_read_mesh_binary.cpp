@@ -6,6 +6,7 @@
 #include "mars_read_mesh_binary.hpp"  // Include only this header
 
 namespace fs = std::filesystem;
+using namespace mars;
 
 // Test fixture that creates test mesh files
 class MeshReadBinaryTest : public ::testing::Test {
@@ -57,7 +58,7 @@ protected:
 TEST_F(MeshReadBinaryTest, ReadCoordinates) {
     // Test reading coordinates using the function directly
     auto [nodeCount, nodeStartIdx, x_data, y_data, z_data] = 
-        mars::readMeshCoordinatesBinary(testDir.string(), rank, numRanks);
+        mars::readMeshCoordinatesBinary<float>(testDir.string(), rank, numRanks);
     
     // Verify node count
     EXPECT_EQ(nodeCount, 8);
@@ -149,7 +150,7 @@ TEST_F(MeshReadBinaryTest, MultiRankDistribution) {
     // Test rank 0 of 2
     {
         auto [nodeCount0, nodeStartIdx0, x0, y0, z0] = 
-            mars::readMeshCoordinatesBinary(testDir.string(), 0, 2);
+            mars::readMeshCoordinatesBinary<float>(testDir.string(), 0, 2);
         
         EXPECT_EQ(nodeCount0, 50); // First half of nodes
         EXPECT_EQ(nodeStartIdx0, 0);
@@ -165,7 +166,7 @@ TEST_F(MeshReadBinaryTest, MultiRankDistribution) {
     // Test rank 1 of 2
     {
         auto [nodeCount1, nodeStartIdx1, x1, y1, z1] = 
-            mars::readMeshCoordinatesBinary(testDir.string(), 1, 2);
+            mars::readMeshCoordinatesBinary<float>(testDir.string(), 1, 2);
         
         EXPECT_EQ(nodeCount1, 50); // Second half of nodes
         EXPECT_EQ(nodeStartIdx1, 50);
@@ -182,13 +183,50 @@ TEST_F(MeshReadBinaryTest, MultiRankDistribution) {
     }
 }
 
+// Test reading coordinates with double precision
+TEST_F(MeshReadBinaryTest, ReadCoordinatesDouble) {
+    // Convert test data to double precision
+    std::vector<double> x_double = {1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0};
+    std::vector<double> y_double = {0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8};
+    std::vector<double> z_double = {10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0};
+    
+    // Create double-precision binary files
+    std::ofstream x_file((testDir / "x.double").string(), std::ios::binary);
+    std::ofstream y_file((testDir / "y.double").string(), std::ios::binary);
+    std::ofstream z_file((testDir / "z.double").string(), std::ios::binary);
+    
+    x_file.write(reinterpret_cast<const char*>(x_double.data()), x_double.size() * sizeof(double));
+    y_file.write(reinterpret_cast<const char*>(y_double.data()), y_double.size() * sizeof(double));
+    z_file.write(reinterpret_cast<const char*>(z_double.data()), z_double.size() * sizeof(double));
+
+    x_file.close();
+    y_file.close();
+    z_file.close();
+
+    // Add debug output to check if files exist and have the right size
+std::cout << "Double files created at: " << testDir << std::endl;
+std::cout << "x.double exists: " << (fs::exists(testDir / "x.double") ? "yes" : "no") << std::endl;
+    
+    // Test reading double-precision coordinates
+    auto [nodeCount, nodeStartIdx, x_data, y_data, z_data] = 
+        mars::readMeshCoordinatesBinary<double>(testDir.string(), rank, numRanks);
+    
+    // Verify node count
+    EXPECT_EQ(nodeCount, 8);
+    
+    // Verify coordinate values with double precision
+    EXPECT_DOUBLE_EQ(x_data[0], 1.0);
+    EXPECT_DOUBLE_EQ(y_data[2], 0.3);
+    EXPECT_DOUBLE_EQ(z_data[5], 60.0);
+}
+
 // Test error handling for missing files
 TEST_F(MeshReadBinaryTest, HandleMissingFiles) {
     fs::remove(testDir / "x.float32"); // Delete a coordinate file
     
     // Should throw an exception for missing file
     EXPECT_THROW({
-        mars::readMeshCoordinatesBinary(testDir.string(), rank, numRanks);
+        mars::readMeshCoordinatesBinary<float>(testDir.string(), rank, numRanks);
     }, std::runtime_error);
     
     // Also test connectivity error
@@ -202,7 +240,7 @@ TEST_F(MeshReadBinaryTest, HandleMissingFiles) {
 TEST_F(MeshReadBinaryTest, PrintMeshConnectivity) {
     // Read coordinates and connectivity
     auto [nodeCount, nodeStartIdx, x_data, y_data, z_data] = 
-        mars::readMeshCoordinatesBinary(testDir.string(), rank, numRanks);
+        mars::readMeshCoordinatesBinary<float>(testDir.string(), rank, numRanks);
     
     auto [elementCount, conn_tuple] = 
         mars::readMeshConnectivityBinaryTuple<4>(testDir.string(), 0, rank, numRanks);
@@ -246,6 +284,70 @@ TEST_F(MeshReadBinaryTest, PrintMeshConnectivity) {
     }
     EXPECT_TRUE(elementCount > 0) << "Mesh connectivity printed for visual inspection"; 
 }
+
+
+
+// ########################External meshes########################
+
+// Simple test for external meshes that uses environment variables
+TEST(MeshReadingExternal, ReadExistingMeshEnvVar) {
+    // Get mesh path from environment variable
+    const char* meshPathEnv = std::getenv("MESH_PATH");
+    std::string meshPath = meshPathEnv ? meshPathEnv : "";
+    
+    if (meshPath.empty() || !fs::exists(meshPath)) {
+        GTEST_SKIP() << "Set MESH_PATH environment variable to an existing mesh file path";
+        return;
+    }
+    
+    int rank = 0;
+    int numRanks = 1;
+    
+    // Try reading with float precision
+    std::cout << "Testing mesh reading with float precision from: " << meshPath << std::endl;
+    auto [nodeCount, nodeStartIdx, x_data, y_data, z_data] = 
+        mars::readMeshCoordinatesBinary<float>(meshPath, rank, numRanks);
+    
+    EXPECT_GT(nodeCount, 0) << "Expected positive node count";
+    
+    // Try reading connectivity
+    try {
+        auto [tetCount, tet_conn] = 
+            mars::readMeshConnectivityBinaryTuple<4>(meshPath, nodeStartIdx, rank, numRanks);
+        
+        EXPECT_GT(tetCount, 0) << "Expected positive tetrahedron count";
+        
+        // Print mesh summary
+        std::cout << "Read mesh with " << nodeCount << " nodes and " 
+                  << tetCount << " tetrahedra." << std::endl;
+        
+        // Validate indices are within node range
+        if (tetCount > 0) {
+            for (size_t i = 0; i < std::min(tetCount, size_t(10)); i++) {
+                EXPECT_GE(std::get<0>(tet_conn)[i], 0);
+                EXPECT_LT(std::get<0>(tet_conn)[i], nodeCount);
+            }
+        }
+    } catch (const std::exception& e) {
+        std::cout << "Could not read tetrahedron connectivity: " << e.what() << std::endl;
+    }
+    
+    // Try reading with double precision
+    try {
+        std::cout << "Testing mesh reading with double precision from: " << meshPath << std::endl;
+        auto [nodeCount2, nodeStartIdx2, x_data2, y_data2, z_data2] = 
+            mars::readMeshCoordinatesBinary<double>(meshPath, rank, numRanks);
+        
+        EXPECT_GT(nodeCount2, 0) << "Expected positive node count";
+        std::cout << "Read mesh with " << nodeCount2 << " nodes (double precision)" << std::endl;
+    } catch (const std::exception& e) {
+        std::cout << "Could not read double precision coordinates: " << e.what() << std::endl;
+    }
+}
+
+
+
+
 
 int main(int argc, char **argv) {
     ::testing::InitGoogleTest(&argc, argv);

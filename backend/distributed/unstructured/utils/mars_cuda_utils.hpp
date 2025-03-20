@@ -1,3 +1,5 @@
+namespace mars
+{
 #define cudaCheckError()                                                                 \
     {                                                                                    \
         cudaError_t e = cudaGetLastError();                                              \
@@ -43,3 +45,4 @@ decltype(auto) getTupleElement(Tuple& t, std::size_t i) {
     constexpr std::size_t size = std::tuple_size_v<std::remove_reference_t<Tuple>>;
     return get_tuple_element_impl(t, i, std::make_index_sequence<size>{});
 }
+} // namespace mars

@@ -8,6 +8,8 @@
 
 namespace fs = std::filesystem;
 
+using namespace mars;
+
 // Test fixture that creates test mesh files
 class MeshReadTest : public ::testing::Test
 {
@@ -56,14 +58,10 @@ protected:
     }
 };
 
-// Test reading tetrahedral mesh with float precision
-TEST_F(MeshReadTest, ReadTetMeshFloat)
+// Test reading tetrahedral mesh with float precision and unsigned keys
+TEST_F(MeshReadTest, ReadTetMeshFloatUnsigned)
 {
-    // Test with Real as float
-    using Real        = float;
-    using ElementType = TetTag;
-    using AccelType   = cstone::GpuTag;
-    using Domain      = ElementDomain<ElementType, AccelType>;
+    using Domain = ElementDomain<TetTag, float, unsigned, cstone::GpuTag>;
 
     // Create a domain object to test the readMeshDataSoA method
     Domain domain(testDir.string(), rank, numRanks);
@@ -96,39 +94,69 @@ TEST_F(MeshReadTest, ReadTetMeshFloat)
 // Test reading tetrahedral mesh with double precision
 TEST_F(MeshReadTest, ReadTetMeshDouble)
 {
-    // Test with Real as double to test conversion
-    using ElementType = TetTag;
-    using AccelType   = cstone::GpuTag;
+    // Test with double precision
+    using Domain = ElementDomain<TetTag, double, unsigned, cstone::GpuTag>;
 
-    // Use FLOAT_EQ instead of DOUBLE_EQ since Real is defined as float
-    class TestDomain : public ElementDomain<ElementType, AccelType>
-    {
-    public:
-        using ElementDomain<ElementType, AccelType>::ElementDomain;
+    // Create a domain object
+    Domain domain(testDir.string(), rank, numRanks);
 
-        void testRead(const std::string& meshFile)
-        {
-            HostCoordsTuple h_coords;
-            HostConnectivityTuple h_conn;
-            readMeshDataSoA(meshFile, h_coords, h_conn);
-        
-            const auto& host_x = std::get<0>(h_coords);  
-            const auto& host_y = std::get<1>(h_coords);
-            const auto& host_z = std::get<2>(h_coords);
-            const auto& host_i0 = std::get<0>(h_conn);
-        
-            EXPECT_EQ(host_x.size(), 8);
-            EXPECT_EQ(host_i0.size(), 4);
-        
-            // Use FLOAT_EQ instead of DOUBLE_EQ
-            EXPECT_FLOAT_EQ(host_x[0], 1.0f);
-            EXPECT_FLOAT_EQ(host_y[2], 0.3f);
-            EXPECT_FLOAT_EQ(host_z[5], 60.0f);
-        }
-    };
+    // Access results
+    EXPECT_EQ(domain.getNodeCount(), 8);
+    EXPECT_EQ(domain.getElementCount(), 4);
 
-    TestDomain domain(testDir.string(), rank, numRanks);
-    domain.testRead(testDir.string());
+    // Convert to host for checking
+    auto h_x = toHost(domain.x());
+    auto h_y = toHost(domain.y());
+    auto h_z = toHost(domain.z());
+
+    // Check coordinates with double precision
+    EXPECT_NEAR(h_x[0], 1.0, 1e-6);
+    EXPECT_NEAR(h_y[2], 0.3, 1e-6);
+    EXPECT_NEAR(h_z[5], 60.0, 1e-6);
+}
+
+// Test reading tetrahedral mesh with uint64_t keys
+TEST_F(MeshReadTest, ReadTetMeshUint64Keys)
+{
+    // Test with uint64_t keys
+    using Domain = ElementDomain<TetTag, float, uint64_t, cstone::GpuTag>;
+
+    // Create a domain object
+    Domain domain(testDir.string(), rank, numRanks);
+
+    // Access results
+    EXPECT_EQ(domain.getNodeCount(), 8);
+    EXPECT_EQ(domain.getElementCount(), 4);
+
+    // Convert to host for checking
+    auto h_x = toHost(domain.x());
+    
+    // Check a coordinate value
+    EXPECT_FLOAT_EQ(h_x[0], 1.0f);
+}
+
+// Test with both double precision and uint64_t keys
+TEST_F(MeshReadTest, ReadTetMeshDoubleUint64Keys)
+{
+    // Test double precision with uint64_t keys
+    using Domain = ElementDomain<TetTag, double, uint64_t, cstone::GpuTag>;
+
+    // Create a domain object
+    Domain domain(testDir.string(), rank, numRanks);
+
+    // Access results
+    EXPECT_EQ(domain.getNodeCount(), 8);
+    EXPECT_EQ(domain.getElementCount(), 4);
+
+    // Convert to host for checking
+    auto h_x = toHost(domain.x());
+    auto h_y = toHost(domain.y());
+    auto h_z = toHost(domain.z());
+
+    // Check coordinates with double precision
+    EXPECT_NEAR(h_x[0], 1.0, 1e-6);
+    EXPECT_NEAR(h_y[2], 0.3, 1e-6);
+    EXPECT_NEAR(h_z[5], 60.0, 1e-6);
 }
 
 // Test error handling for missing files
@@ -136,9 +164,7 @@ TEST_F(MeshReadTest, HandleMissingFiles)
 {
     fs::remove(testDir / "x.float32"); // Delete a coordinate file
 
-    using ElementType = TetTag;
-    using AccelType   = cstone::GpuTag;
-    using Domain      = ElementDomain<ElementType, AccelType>;
+    using Domain = ElementDomain<TetTag, float, unsigned, cstone::GpuTag>;
 
     // Should throw an exception for missing file
     EXPECT_THROW({ Domain domain(testDir.string(), rank, numRanks); }, std::runtime_error);
@@ -176,9 +202,7 @@ TEST_F(MeshReadTest, MultiRankDistribution)
     createConnectivityFile("i3.int32", i3);
 
     // Test with multiple ranks
-    using ElementType = TetTag;
-    using AccelType   = cstone::GpuTag;
-    using Domain      = ElementDomain<ElementType, AccelType>;
+    using Domain = ElementDomain<TetTag, float, unsigned, cstone::GpuTag>;
 
     // Test rank 0 of 2
     {

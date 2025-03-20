@@ -6,6 +6,7 @@
 #include <vector>
 #include <stdexcept>
 #include <tuple>
+#include <filesystem>
 
 namespace mars {
 
@@ -33,20 +34,35 @@ auto createNVectors(size_t size) {
  * @param numRanks Total MPI ranks
  * @return Tuple containing: node count, node start index, coordinates (x,y,z)
  */
-inline std::tuple<size_t, size_t, std::vector<float>, std::vector<float>, std::vector<float>> 
+template<typename RealType=float>
+inline std::tuple<size_t, size_t, std::vector<RealType>, std::vector<RealType>, std::vector<RealType>> 
 readMeshCoordinatesBinary(const std::string& meshDir, int rank, int numRanks) {
+    // Determine the file extension based on RealType
+    std::string ext;
+    if constexpr (std::is_same_v<RealType, float>) {
+        ext = "float32";
+    } else if constexpr (std::is_same_v<RealType, double>) {
+        ext = "double";
+    } else {
+        throw std::runtime_error("Unsupported RealType for coordinate reading");
+    }
+    
     // Open the mesh directory and read coordinate files
-    std::ifstream x_file(meshDir + "/x.float32", std::ios::binary);
-    std::ifstream y_file(meshDir + "/y.float32", std::ios::binary);
-    std::ifstream z_file(meshDir + "/z.float32", std::ios::binary);
+    std::string x_path = meshDir + "/x." + ext;
+    std::string y_path = meshDir + "/y." + ext;
+    std::string z_path = meshDir + "/z." + ext;
+    
+    std::ifstream x_file(x_path, std::ios::binary);
+    std::ifstream y_file(y_path, std::ios::binary);
+    std::ifstream z_file(z_path, std::ios::binary);
 
     if (!x_file || !y_file || !z_file) {
-        throw std::runtime_error("Failed to open coordinate files");
+        throw std::runtime_error("Failed to open coordinate files: " + x_path);
     }
 
     // Get file size to determine node count
     x_file.seekg(0, std::ios::end);
-    size_t total_nodes = x_file.tellg() / sizeof(float);
+    size_t total_nodes = x_file.tellg() / sizeof(RealType);
     x_file.seekg(0, std::ios::beg);
 
     // Calculate this rank's portion
@@ -56,15 +72,15 @@ readMeshCoordinatesBinary(const std::string& meshDir, int rank, int numRanks) {
     size_t nodeCount = nodeEndIdx - nodeStartIdx;
 
     // Read coordinate data
-    std::vector<float> x_data(nodeCount), y_data(nodeCount), z_data(nodeCount);
+    std::vector<RealType> x_data(nodeCount), y_data(nodeCount), z_data(nodeCount);
 
-    x_file.seekg(nodeStartIdx * sizeof(float));
-    y_file.seekg(nodeStartIdx * sizeof(float));
-    z_file.seekg(nodeStartIdx * sizeof(float));
+    x_file.seekg(nodeStartIdx * sizeof(RealType));
+    y_file.seekg(nodeStartIdx * sizeof(RealType));
+    z_file.seekg(nodeStartIdx * sizeof(RealType));
 
-    x_file.read(reinterpret_cast<char*>(x_data.data()), nodeCount * sizeof(float));
-    y_file.read(reinterpret_cast<char*>(y_data.data()), nodeCount * sizeof(float));
-    z_file.read(reinterpret_cast<char*>(z_data.data()), nodeCount * sizeof(float));
+    x_file.read(reinterpret_cast<char*>(x_data.data()), nodeCount * sizeof(RealType));
+    y_file.read(reinterpret_cast<char*>(y_data.data()), nodeCount * sizeof(RealType));
+    z_file.read(reinterpret_cast<char*>(z_data.data()), nodeCount * sizeof(RealType));
 
     // Use std::move to avoid copying
     return {nodeCount, nodeStartIdx, std::move(x_data), std::move(y_data), std::move(z_data)};
@@ -97,7 +113,7 @@ auto readMeshConnectivityBinaryTuple(const std::string& meshDir, size_t nodeStar
     size_t elemEndIdx = (rank == numRanks - 1) ? total_elements : elemStartIdx + elemPerRank;
     size_t elementCount = elemEndIdx - elemStartIdx;
     
-    // Then use it:
+    // Create the tuple of vectors
     auto result = createNVectors<N>(elementCount);
     
     // Read data into each vector in the tuple

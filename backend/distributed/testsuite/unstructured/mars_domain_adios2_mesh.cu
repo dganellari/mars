@@ -7,6 +7,7 @@
 #include "mars_globals.hpp"
 #include "mars_read_mesh_adios2.hpp"
 
+using namespace mars;
 // Define computation kernel for tetrahedral volumes
 __global__ void computeTetrahedralVolumesKernel(const Real* x,
                                                 const Real* y,
