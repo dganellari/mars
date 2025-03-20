@@ -3,8 +3,17 @@
 #include <tuple>
 #include <utility>
 
-// Use std::get for tuple access
-using std::get;
+// Add this line BEFORE including cornerstone headers
+namespace cstone {
+  using std::get;
+}
+
+// At the top of your domain.hpp file, after the existing includes:
+#include "cstone/domain/domain.hpp"
+#include "cstone/cuda/cuda_utils.hpp"
+#include "cstone/sfc/sfc.hpp"
+#include "cstone/domain/assignment.hpp"      // Add this
+#include "cstone/domain/assignment_gpu.cuh"  // Add this
 
 // Cornerstone includes
 #include "cstone/domain/domain.hpp"
@@ -183,8 +192,14 @@ struct HostConnectivityTupleHelper<TetTag>
 template<>
 struct HostConnectivityTupleHelper<HexTag>
 {
-    using type = std::tuple<HostVector<int>, HostVector<int>, HostVector<int>, HostVector<int>,
-                           HostVector<int>, HostVector<int>, HostVector<int>, HostVector<int>>;
+    using type = std::tuple<HostVector<int>,
+                            HostVector<int>,
+                            HostVector<int>,
+                            HostVector<int>,
+                            HostVector<int>,
+                            HostVector<int>,
+                            HostVector<int>,
+                            HostVector<int>>;
 };
 
 // Specialization for triangles (host)
@@ -219,13 +234,13 @@ public:
     using HostVector = std::vector<T>;
 
     // SoA data structures using tuples - device versions
-    using DeviceCoordsTuple = std::tuple<DeviceVector<Real>, DeviceVector<Real>, DeviceVector<Real>>;
-    using DevicePropsTuple = std::tuple<DeviceVector<Real>>;
+    using DeviceCoordsTuple       = std::tuple<DeviceVector<Real>, DeviceVector<Real>, DeviceVector<Real>>;
+    using DevicePropsTuple        = std::tuple<DeviceVector<Real>>;
     using DeviceConnectivityTuple = typename ConnectivityTupleHelper<ElementTag, AcceleratorTag>::type;
 
     // SoA data structures using tuples - host versions
-    using HostCoordsTuple = std::tuple<HostVector<Real>, HostVector<Real>, HostVector<Real>>;
-    using HostPropsTuple = std::tuple<HostVector<Real>>;
+    using HostCoordsTuple       = std::tuple<HostVector<Real>, HostVector<Real>, HostVector<Real>>;
+    using HostPropsTuple        = std::tuple<HostVector<Real>>;
     using HostConnectivityTuple = typename HostConnectivityTupleHelper<ElementTag>::type;
 
     ElementDomain(const std::string& meshFile, int rank, int numRanks);
@@ -240,7 +255,7 @@ public:
     void transferDataToGPU(const HostCoordsTuple& h_coords_, const HostConnectivityTuple& h_conn_);
 
     // Domain synchronization (following cornerstone API pattern)
-    // void sync();
+    void sync();
 
     // CUDA kernel launcher specialization for GPU tag
     template<typename KernelFunc>
@@ -326,9 +341,9 @@ private:
     std::size_t nodeCount_    = 0;
 
     // Device data in SoA format
-    DeviceCoordsTuple d_coords_;       // (x, y, z)
-    DevicePropsTuple d_props_;         // (h)
-    DeviceConnectivityTuple d_conn_;   // (i0, i1, i2, ...) depends on element type
+    DeviceCoordsTuple d_coords_;     // (x, y, z)
+    DevicePropsTuple d_props_;       // (h)
+    DeviceConnectivityTuple d_conn_; // (i0, i1, i2, ...) depends on element type
     DeviceVector<int> d_elemToNodeMap_;
     DeviceVector<KeyType> d_elemSfcCodes_;
 };
@@ -339,7 +354,7 @@ cstone::Box<Real> createBoundingBox(const CoordTuple& coords, Real padding = 0.0
 {
     // Convert device vectors to host vectors first if needed
     std::vector<Real> h_x, h_y, h_z;
-    
+
     // Get the vectors either directly or convert from device to host
     if constexpr (std::is_same_v<std::decay_t<decltype(std::get<0>(coords))>, std::vector<Real>>)
     {
@@ -347,12 +362,12 @@ cstone::Box<Real> createBoundingBox(const CoordTuple& coords, Real padding = 0.0
         const auto& x = std::get<0>(coords);
         const auto& y = std::get<1>(coords);
         const auto& z = std::get<2>(coords);
-        
+
         // Find min/max coordinates
         auto minmax_x = std::minmax_element(x.begin(), x.end());
         auto minmax_y = std::minmax_element(y.begin(), y.end());
         auto minmax_z = std::minmax_element(z.begin(), z.end());
-        
+
         // Create box with padding
         Real x_min = *minmax_x.first - padding;
         Real x_max = *minmax_x.second + padding;
@@ -360,7 +375,7 @@ cstone::Box<Real> createBoundingBox(const CoordTuple& coords, Real padding = 0.0
         Real y_max = *minmax_y.second + padding;
         Real z_min = *minmax_z.first - padding;
         Real z_max = *minmax_z.second + padding;
-        
+
         return cstone::Box<Real>(x_min, x_max, y_min, y_max, z_min, z_max);
     }
     else
@@ -369,12 +384,12 @@ cstone::Box<Real> createBoundingBox(const CoordTuple& coords, Real padding = 0.0
         h_x = toHost(std::get<0>(coords));
         h_y = toHost(std::get<1>(coords));
         h_z = toHost(std::get<2>(coords));
-        
+
         // Find min/max coordinates on host vectors
         auto minmax_x = std::minmax_element(h_x.begin(), h_x.end());
         auto minmax_y = std::minmax_element(h_y.begin(), h_y.end());
         auto minmax_z = std::minmax_element(h_z.begin(), h_z.end());
-        
+
         // Create box with padding
         Real x_min = *minmax_x.first - padding;
         Real x_max = *minmax_x.second + padding;
@@ -382,7 +397,7 @@ cstone::Box<Real> createBoundingBox(const CoordTuple& coords, Real padding = 0.0
         Real y_max = *minmax_y.second + padding;
         Real z_min = *minmax_z.first - padding;
         Real z_max = *minmax_z.second + padding;
-        
+
         return cstone::Box<Real>(x_min, x_max, y_min, y_max, z_min, z_max);
     }
 }
@@ -396,14 +411,14 @@ ElementDomain<ElementTag, AcceleratorTag>::ElementDomain(const std::string& mesh
     // Host data in SoA format
     HostCoordsTuple h_coords;     // (x, y, z)
     HostConnectivityTuple h_conn; // (i0, i1, i2, ...) depends on element type
-    
+
     // Read the mesh in SoA format
     readMeshDataSoA(meshFile, h_coords, h_conn);
 
     // Initialize cornerstone domain
-    int bucketSize = 64;
+    int bucketSize           = 64;
     unsigned bucketSizeFocus = 8;
-    Real theta = 0.5f;
+    Real theta               = 0.5f;
 
     // Create a bounding box with some padding
     auto box = createBoundingBox(h_coords);
@@ -414,13 +429,13 @@ ElementDomain<ElementTag, AcceleratorTag>::ElementDomain(const std::string& mesh
     transferDataToGPU(h_coords, h_conn);
 
     // Calculate characteristic sizes
-    // calculateCharacteristicSizes();
+    calculateCharacteristicSizes();
 
     // Map elements to their representative nodes
     mapElementsToNodes();
 
     // Perform sync
-    // sync();
+    sync();
 
     std::cout << "Rank " << rank_ << " initialized " << ElementTag::Name << " domain with " << nodeCount_
               << " nodes and " << elementCount_ << " elements." << std::endl;
@@ -505,76 +520,76 @@ void ElementDomain<ElementTag, AcceleratorTag>::readMeshDataSoA(const std::strin
 }
 
 // Calculate characteristic sizes for elements - GPU-only version
-// template<typename ElementTag, typename AcceleratorTag>
-// void ElementDomain<ElementTag, AcceleratorTag>::calculateCharacteristicSizes()
-// {
-//     // Work directly with device data
-//     auto& d_h = std::get<0>(d_props_);
-//     d_h.resize(nodeCount_); // Don't provide initialization value
+template<typename ElementTag, typename AcceleratorTag>
+void ElementDomain<ElementTag, AcceleratorTag>::calculateCharacteristicSizes()
+{
+    // Work directly with device data
+    auto& d_h = std::get<0>(d_props_);
+    d_h.resize(nodeCount_);
 
-//     // For tetrahedra, compute based on average edge lengths
-//     if constexpr (std::is_same_v<ElementTag, TetTag> && std::is_same_v<AcceleratorTag, cstone::GpuTag>)
-//     {
-//         // Device vectors for calculation
-//         DeviceVector</nt> d_nodeTetCount(nodeCount_);
+    // For tetrahedra, compute based on average edge lengths
+    if constexpr (std::is_same_v<ElementTag, TetTag> && std::is_same_v<AcceleratorTag, cstone::GpuTag>)
+    {
+        // Fix: Correct the device vector declaration
+        DeviceVector<int> d_nodeTetCount(nodeCount_);
 
-//         // Extract raw pointers for kernel
-//         auto& d_x  = std::get<0>(d_coords_);
-//         auto& d_y  = std::get<1>(d_coords_);
-//         auto& d_z  = std::get<2>(d_coords_);
-//         auto& d_i0 = std::get<0>(d_conn_);
-//         auto& d_i1 = std::get<1>(d_conn_);
-//         auto& d_i2 = std::get<2>(d_conn_);
-//         auto& d_i3 = std::get<3>(d_conn_);
+        // Extract raw pointers for kernel
+        auto& d_x  = std::get<0>(d_coords_);
+        auto& d_y  = std::get<1>(d_coords_);
+        auto& d_z  = std::get<2>(d_coords_);
+        auto& d_i0 = std::get<0>(d_conn_);
+        auto& d_i1 = std::get<1>(d_conn_);
+        auto& d_i2 = std::get<2>(d_conn_);
+        auto& d_i3 = std::get<3>(d_conn_);
 
-//         // First accumulate edge lengths per node
-//         int blockSize = 256;
-//         int numBlocks = (elementCount_ + blockSize - 1) / blockSize;
+        // First accumulate edge lengths per node
+        int blockSize = 256;
+        int numBlocks = (elementCount_ + blockSize - 1) / blockSize;
 
-//         computeCharacteristicSizesKernel<TetTag><<<numBlocks, blockSize>>>(
-//             thrust::raw_pointer_cast(d_x.data()), thrust::raw_pointer_cast(d_y.data()),
-//             thrust::raw_pointer_cast(d_z.data()), thrust::raw_pointer_cast(d_i0.data()),
-//             thrust::raw_pointer_cast(d_i1.data()), thrust::raw_pointer_cast(d_i2.data()),
-//             thrust::raw_pointer_cast(d_i3.data()), thrust::raw_pointer_cast(d_nodeTetCount.data()),
-//             thrust::raw_pointer_cast(d_h.data()), elementCount_);
+        computeCharacteristicSizesKernel<TetTag><<<numBlocks, blockSize>>>(
+            thrust::raw_pointer_cast(d_x.data()), thrust::raw_pointer_cast(d_y.data()),
+            thrust::raw_pointer_cast(d_z.data()), thrust::raw_pointer_cast(d_i0.data()),
+            thrust::raw_pointer_cast(d_i1.data()), thrust::raw_pointer_cast(d_i2.data()),
+            thrust::raw_pointer_cast(d_i3.data()), thrust::raw_pointer_cast(d_nodeTetCount.data()),
+            thrust::raw_pointer_cast(d_h.data()), elementCount_);
 
-//         cudaCheckError();
+        cudaCheckError();
 
-//         // Then normalize by number of contributions
-//         numBlocks = (nodeCount_ + blockSize - 1) / blockSize;
-//         finalizeCharacteristicSizesKernel<<<numBlocks, blockSize>>>(
-//             thrust::raw_pointer_cast(d_h.data()), thrust::raw_pointer_cast(d_nodeTetCount.data()), nodeCount_);
+        // Then normalize by number of contributions
+        numBlocks = (nodeCount_ + blockSize - 1) / blockSize;
+        finalizeCharacteristicSizesKernel<<<numBlocks, blockSize>>>(
+            thrust::raw_pointer_cast(d_h.data()), thrust::raw_pointer_cast(d_nodeTetCount.data()), nodeCount_);
 
-//         cudaCheckError();
+        cudaCheckError();
 
-//         // For mesh-based methods (FEM/FDM)
-//         constexpr Real meshFactor = 1.0;    // No reduction for FEM (adjust based on element order)
-//         constexpr Real minH       = 1.0e-6; // Prevent extremely small values that cause instability
-//         constexpr Real maxH       = 1.0;    // Upper bound based on problem domain
+        // For mesh-based methods (FEM/FDM)
+        constexpr Real meshFactor = 1.0;    // No reduction for FEM (adjust based on element order)
+        constexpr Real minH       = 1.0e-6; // Prevent extremely small values that cause instability
+        constexpr Real maxH       = 1.0;    // Upper bound based on problem domain
 
-//         // Use the proper kernel
-//         transformCharacteristicSizesKernel<<<numBlocks, blockSize>>>(
-//             thrust::raw_pointer_cast(d_h.data()),
-//             nodeCount_, meshFactor, minH, maxH);
-//         cudaCheckError();
-//     }
-//     else
-//     {
-//         // For non-GPU or non-tetrahedral cases, use a default value
-//         Real domainDiagonal = std::sqrt(std::pow(domain_->box().xmax() - domain_->box().xmin(), 2) +
-//                                         std::pow(domain_->box().ymax() - domain_->box().ymin(), 2) +
-//                                         std::pow(domain_->box().zmax() - domain_->box().zmin(), 2));
-//         Real defaultH = domainDiagonal * 0.01; // 1% of domain diagonal
-        
-//         // Use the proper kernel
-//         int blockSize = 256;
-//         int numBlocks = (nodeCount_ + blockSize - 1) / blockSize;
-//         fillCharacteristicSizesKernel<<<numBlocks, blockSize>>>(
-//             thrust::raw_pointer_cast(d_h.data()),
-//             nodeCount_, defaultH);
-//         cudaCheckError();
-//     }
-// }
+        // Use the proper kernel
+        transformCharacteristicSizesKernel<<<numBlocks, blockSize>>>(
+            thrust::raw_pointer_cast(d_h.data()),
+            nodeCount_, meshFactor, minH, maxH);
+        cudaCheckError();
+    }
+    else
+    {
+        // For non-GPU or non-tetrahedral cases, use a default value
+        Real domainDiagonal = std::sqrt(std::pow(domain_->box().xmax() - domain_->box().xmin(), 2) +
+                                       std::pow(domain_->box().ymax() - domain_->box().ymin(), 2) +
+                                       std::pow(domain_->box().zmax() - domain_->box().zmin(), 2));
+        Real defaultH = domainDiagonal * 0.01; // 1% of domain diagonal
+
+        // Use the proper kernel
+        int blockSize = 256;
+        int numBlocks = (nodeCount_ + blockSize - 1) / blockSize;
+        fillCharacteristicSizesKernel<<<numBlocks, blockSize>>>(
+            thrust::raw_pointer_cast(d_h.data()),
+            nodeCount_, defaultH);
+        cudaCheckError();
+    }
+}
 
 // Map elements to representative nodes
 template<typename ElementTag, typename AcceleratorTag>
@@ -625,131 +640,138 @@ void ElementDomain<ElementTag, AcceleratorTag>::mapElementsToNodes()
 
 // Transfer data to GPU for computations
 template<typename ElementTag, typename AcceleratorTag>
-void ElementDomain<ElementTag, AcceleratorTag>::transferDataToGPU(const HostCoordsTuple& h_coords_, 
-                                                                 const HostConnectivityTuple& h_conn_)
+void ElementDomain<ElementTag, AcceleratorTag>::transferDataToGPU(const HostCoordsTuple& h_coords_,
+                                                                  const HostConnectivityTuple& h_conn_)
 {
     if constexpr (std::is_same_v<AcceleratorTag, cstone::GpuTag>)
     {
         // Copy coordinate data from host to device
         copyTupleElements(d_coords_, h_coords_);
-        
+
         // Copy connectivity data from host to device
         copyTupleElements(d_conn_, h_conn_);
-        
+
         // Initialize properties (h values)
         d_props_ = std::tuple<DeviceVector<Real>>(DeviceVector<Real>(nodeCount_));
     }
 }
 
-// Domain synchronization
-// template<typename ElementTag, typename AcceleratorTag>
-// void ElementDomain<ElementTag, AcceleratorTag>::sync()
-// {
-//     if constexpr (std::is_same_v<AcceleratorTag, cstone::GpuTag>)
-//     {
-//         // Extract coordinates for clarity
-//         auto& d_x = std::get<0>(d_coords_);
-//         auto& d_y = std::get<1>(d_coords_);
-//         auto& d_z = std::get<2>(d_coords_);
-//         auto& d_h = std::get<0>(d_props_);
+/* Domain synchronization */
+template<typename ElementTag, typename AcceleratorTag>
+void ElementDomain<ElementTag, AcceleratorTag>::sync()
+{
+    if constexpr (std::is_same_v<AcceleratorTag, cstone::GpuTag>)
+    {
+        // Extract coordinates for clarity
+        auto& d_x = std::get<0>(d_coords_);
+        auto& d_y = std::get<1>(d_coords_);
+        auto& d_z = std::get<2>(d_coords_);
+        auto& d_h = std::get<0>(d_props_);
 
-//         // Calculate SFC codes for nodes
-//         DeviceVector<KeyType> d_nodeSfcCodes(nodeCount_);
-//         computeSfcKeysGpu(thrust::raw_pointer_cast(d_x.data()), 
-//                         thrust::raw_pointer_cast(d_y.data()),
-//                         thrust::raw_pointer_cast(d_z.data()), 
-//                         thrust::raw_pointer_cast(d_nodeSfcCodes.data()),
-//                         nodeCount_, domain_->box());
+        // Calculate SFC codes for nodes
+        DeviceVector<KeyType> d_nodeSfcCodes(nodeCount_);
+        computeSfcKeysGpu(thrust::raw_pointer_cast(d_x.data()), thrust::raw_pointer_cast(d_y.data()),
+                          thrust::raw_pointer_cast(d_z.data()), thrust::raw_pointer_cast(d_nodeSfcCodes.data()),
+                          nodeCount_, domain_->box());
 
-//         // Find representative nodes for each element
-//         d_elemToNodeMap_.resize(elementCount_);
-//         int blockSize = 256;
-//         int numBlocks = (elementCount_ + blockSize - 1) / blockSize;
+        // Find representative nodes for each element
+        d_elemToNodeMap_.resize(elementCount_);
+        int blockSize = 256;
+        int numBlocks = (elementCount_ + blockSize - 1) / blockSize;
 
-//         // Direct access to connectivity vectors using compile-time indices
-//         if constexpr (std::is_same_v<ElementTag, TetTag>)
-//         {
-//             // Extract tet connectivity directly
-//             auto& d_i0 = std::get<0>(d_conn_);
-//             auto& d_i1 = std::get<1>(d_conn_);
-//             auto& d_i2 = std::get<2>(d_conn_);
-//             auto& d_i3 = std::get<3>(d_conn_);
+        // Direct access to connectivity vectors using compile-time indices
+        if constexpr (std::is_same_v<ElementTag, TetTag>)
+        {
+            // Extract tet connectivity directly
+            auto& d_i0 = std::get<0>(d_conn_);
+            auto& d_i1 = std::get<1>(d_conn_);
+            auto& d_i2 = std::get<2>(d_conn_);
+            auto& d_i3 = std::get<3>(d_conn_);
 
-//             findRepresentativeNodesKernel<TetTag><<<numBlocks, blockSize>>>(
-//                 thrust::raw_pointer_cast(d_i0.data()), 
-//                 thrust::raw_pointer_cast(d_i1.data()),
-//                 thrust::raw_pointer_cast(d_i2.data()), 
-//                 thrust::raw_pointer_cast(d_i3.data()),
-//                 thrust::raw_pointer_cast(d_nodeSfcCodes.data()), 
-//                 thrust::raw_pointer_cast(d_elemToNodeMap_.data()),
-//                 elementCount_);
-//             cudaCheckError();
-//         }
-//         else if constexpr (std::is_same_v<ElementTag, HexTag>)
-//         {
-//             // Extract hex connectivity directly
-//             auto& d_i0 = std::get<0>(d_conn_);
-//             auto& d_i1 = std::get<1>(d_conn_);
-//             auto& d_i2 = std::get<2>(d_conn_);
-//             auto& d_i3 = std::get<3>(d_conn_);
-//             auto& d_i4 = std::get<4>(d_conn_);
-//             auto& d_i5 = std::get<5>(d_conn_);
-//             auto& d_i6 = std::get<6>(d_conn_);
-//             auto& d_i7 = std::get<7>(d_conn_);
+            findRepresentativeNodesKernel<TetTag>
+                <<<numBlocks, blockSize>>>(thrust::raw_pointer_cast(d_i0.data()), thrust::raw_pointer_cast(d_i1.data()),
+                                           thrust::raw_pointer_cast(d_i2.data()), thrust::raw_pointer_cast(d_i3.data()),
+                                           thrust::raw_pointer_cast(d_nodeSfcCodes.data()),
+                                           thrust::raw_pointer_cast(d_elemToNodeMap_.data()), elementCount_);
+            cudaCheckError();
+        }
+        else if constexpr (std::is_same_v<ElementTag, HexTag>)
+        {
+            // Extract hex connectivity directly
+            auto& d_i0 = std::get<0>(d_conn_);
+            auto& d_i1 = std::get<1>(d_conn_);
+            auto& d_i2 = std::get<2>(d_conn_);
+            auto& d_i3 = std::get<3>(d_conn_);
+            auto& d_i4 = std::get<4>(d_conn_);
+            auto& d_i5 = std::get<5>(d_conn_);
+            auto& d_i6 = std::get<6>(d_conn_);
+            auto& d_i7 = std::get<7>(d_conn_);
 
-//             // Hex kernel would be similar but with 8 node indices
-//             findRepresentativeNodesKernel<HexTag><<<numBlocks, blockSize>>>(
-//                 thrust::raw_pointer_cast(d_i0.data()), 
-//                 thrust::raw_pointer_cast(d_i1.data()),
-//                 thrust::raw_pointer_cast(d_i2.data()), 
-//                 thrust::raw_pointer_cast(d_i3.data()),
-//                 thrust::raw_pointer_cast(d_i4.data()), 
-//                 thrust::raw_pointer_cast(d_i5.data()),
-//                 thrust::raw_pointer_cast(d_i6.data()), 
-//                 thrust::raw_pointer_cast(d_i7.data()),
-//                 thrust::raw_pointer_cast(d_nodeSfcCodes.data()), 
-//                 thrust::raw_pointer_cast(d_elemToNodeMap_.data()),
-//                 elementCount_);
-//             cudaCheckError();
-//         }
+            // Hex kernel would be similar but with 8 node indices
+            findRepresentativeNodesKernel<HexTag>
+                <<<numBlocks, blockSize>>>(thrust::raw_pointer_cast(d_i0.data()), thrust::raw_pointer_cast(d_i1.data()),
+                                           thrust::raw_pointer_cast(d_i2.data()), thrust::raw_pointer_cast(d_i3.data()),
+                                           thrust::raw_pointer_cast(d_i4.data()), thrust::raw_pointer_cast(d_i5.data()),
+                                           thrust::raw_pointer_cast(d_i6.data()), thrust::raw_pointer_cast(d_i7.data()),
+                                           thrust::raw_pointer_cast(d_nodeSfcCodes.data()),
+                                           thrust::raw_pointer_cast(d_elemToNodeMap_.data()), elementCount_);
+            cudaCheckError();
+        }
 
-//         // Extract coordinates of representative nodes
-//         DeviceVector<Real> d_elemX(elementCount_);
-//         DeviceVector<Real> d_elemY(elementCount_);
-//         DeviceVector<Real> d_elemZ(elementCount_);
-//         DeviceVector<Real> d_elemH(elementCount_);
-//         d_elemSfcCodes_.resize(elementCount_);
+        // Create temporary vectors for elements
+        DeviceVector<Real> d_elemX(elementCount_);
+        DeviceVector<Real> d_elemY(elementCount_);
+        DeviceVector<Real> d_elemZ(elementCount_);
+        DeviceVector<Real> d_elemH(elementCount_);
+        d_elemSfcCodes_.resize(elementCount_);
         
-//         extractRepCoordinatesKernel<ElementTag><<<numBlocks, blockSize>>>(
-//             thrust::raw_pointer_cast(d_x.data()), 
-//             thrust::raw_pointer_cast(d_y.data()),
-//             thrust::raw_pointer_cast(d_z.data()), 
-//             thrust::raw_pointer_cast(d_h.data()),
-//             thrust::raw_pointer_cast(d_elemToNodeMap_.data()), 
-//             thrust::raw_pointer_cast(d_elemX.data()),
-//             thrust::raw_pointer_cast(d_elemY.data()), 
-//             thrust::raw_pointer_cast(d_elemZ.data()),
-//             thrust::raw_pointer_cast(d_elemH.data()), 
-//             elementCount_);
-//         cudaCheckError();
+        // Extract element coordinates
+        extractRepCoordinatesKernel<ElementTag><<<numBlocks, blockSize>>>(
+            thrust::raw_pointer_cast(d_x.data()), thrust::raw_pointer_cast(d_y.data()),
+            thrust::raw_pointer_cast(d_z.data()), thrust::raw_pointer_cast(d_h.data()),
+            thrust::raw_pointer_cast(d_elemToNodeMap_.data()), thrust::raw_pointer_cast(d_elemX.data()),
+            thrust::raw_pointer_cast(d_elemY.data()), thrust::raw_pointer_cast(d_elemZ.data()),
+            thrust::raw_pointer_cast(d_elemH.data()), elementCount_);
         
-//         // Sync domain with element representatives
-//         DeviceVector<Real> scratch1, scratch2, scratch3;
+        cudaCheckError();
         
-//         // Call sync with individual vectors, exactly matching domain_gpu.cpp
-//         domain_->sync(d_elemSfcCodes_, d_elemX, d_elemY, d_elemZ, d_elemH,
-//                     std::tie(d_elemToNodeMap_),  // Data tuple
-//                     std::tie(scratch1, scratch2, scratch3));  // Scratch tuple
-            
-//         size_t localElements = domain_->endIndex() - domain_->startIndex();
-//         size_t totalElements = domain_->nParticles();
-//     }
-//     else
-//     {
-//         // CPU implementation - this would need to be implemented differently
-//         // Perhaps a serial loop or OpenMP parallelization
-//         std::cerr << "Warning: sync not implemented for CPU mode\n";
 
-//         // Would implement similar logic but with host vectors
-//     }
-// }
+    //     DeviceVector<Real> scratch1, scratch2, scratch3;
+
+
+    // auto numParticles = 1000;
+    // cstone::Box<Real> box(0, 1);
+    // int bucketSize      = 20;
+    // int bucketSizeFocus = 10;
+
+    // // Note: NOT sorted in SFC order
+    // std::vector<KeyType> keys(numParticles);
+    // std::vector<Real> m(numParticles, 1.0 / (numParticles * numRanks_));
+    // std::vector<uint8_t> rungs(numParticles, rank_);
+
+    // DeviceVector<KeyType> d_keys;
+    // reallocate(d_keys, numParticles, 1.0);
+    // DeviceVector<Real> d_m           = m;
+    // DeviceVector<uint8_t> d_rungs = rungs;
+
+    // cstone::Domain<KeyType, Real, cstone::GpuTag> domainGpu(rank_, numRanks_, bucketSize, bucketSizeFocus, 1.0, box);
+    // DeviceVector<Real> s1, s2, s3;
+    // domainGpu.sync(d_keys, d_x, d_y, d_z, d_h, std::tie(d_m, d_rungs), std::tie(s1, s2, s3));
+        
+        // domain_->sync(d_elemSfcCodes_, d_elemX, d_elemY, d_elemZ, d_elemH,
+        //     std::tie(d_elemH, d_elemFlags_),
+        //     std::tie(scratch1, scratch2, scratch3));
+        
+        // // Get updated element count
+        // size_t localElements = domain_->endIndex() - domain_->startIndex();
+        // size_t totalElements = domain_->nParticles();
+    }
+    else
+    {
+        // CPU implementation - this would need to be implemented differently
+        // Perhaps a serial loop or OpenMP parallelization
+        std::cerr << "Warning: sync not implemented for CPU mode\n";
+
+        // Would implement similar logic but with host vectors
+    }
+}
