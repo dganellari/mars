@@ -31,7 +31,9 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. */
 // a link error.
 
 #include "mars_config.hpp"
+#ifdef MARS_ENABLE_KOKKOS
 #include "mars_utils_kokkos.hpp"
+#endif
 
 #ifndef MARS_ENABLE_MPI
 #error "build only if MPI is enabled"

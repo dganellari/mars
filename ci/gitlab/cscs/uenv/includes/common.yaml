@@ -2,8 +2,10 @@
 variables:
   BUILD_DIR: "$CI_PROJECT_DIR/build"
   INSTALL_DIR: "$CI_PROJECT_DIR/install"
+  SPACK_DIR: "$CI_PROJECT_DIR/spack-dir"
   CMAKE_BUILD_TYPE: "Release"
   CUDA_ARCH: "90"
+  IMAGE_NAME: "prgenv-gnu/24.11:v1"
 
 ########################### SLURM Default Variables ###########################
 .default_slurm_vars: &default_slurm_vars
@@ -23,75 +25,119 @@ variables:
 
 ########################## uenv Image Definition ##########################
 .uenv_image:
-  image: prgenv-gnu/24.11:rc1
+  image: $IMAGE_NAME
   script:
     - gcc --version
   variables:
-    UENV_VIEW: 'default'
+    WITH_UENV_VIEW: 'default'
 
 ########################## uenv Runner Test Job ##########################
-.test-uenv-runner:
-  extends: .uenv_image
-  stage: test
-  script:
-    - gcc --version | grep 13.2.0
-  variables:
-    <<: *default_slurm_vars
-    SLURM_TIMELIMIT: "00:30:00"
+# .test-uenv-runner:
+  # extends: .uenv_image
+  # stage: test
+  # script:
+  #   - gcc --version | grep 13.2.0
+  # variables:
+  #   <<: *default_slurm_vars
+#     SLURM_TIMELIMIT: "00:30:00"
 
 
 ######################## Build Job Template ########################
-.build_template:
-  extends: .uenv_image
-  stage: build
-  script:
-    - mkdir -p $BUILD_DIR $INSTALL_DIR
-    - |
-        CXX=`which g++` CC=`which gcc` cmake \
-          -S $CI_PROJECT_DIR \
-          -B $BUILD_DIR \
-          -DCMAKE_BUILD_TYPE=$CMAKE_BUILD_TYPE \
-          -DCMAKE_INSTALL_PREFIX=$INSTALL_DIR \
-          -DCMAKE_CXX_COMPILER=`which nvcc_wrapper` \
-          -DMARS_ENABLE_KOKKOS=ON \
-          -DMARS_ENABLE_CUDA=ON \
-          -DMARS_BUILD_TESTS=ON \
-          -DMARS_ENABLE_EXAMPLES=ON \
-          -DCMAKE_CUDA_ARCHITECTURES=${CUDA_ARCH}
-    - |
-        if [ -z "$SLURM_CPUS_PER_TASK" ]; then
-          echo "SLURM_CPUS_PER_TASK is not set, using 32 cores for building"
-          cmake --build $BUILD_DIR -- -j32
-        else
-          echo "Building with $SLURM_CPUS_PER_TASK cores"
-          cmake --build $BUILD_DIR -- -j${SLURM_CPUS_PER_TASK}
-        fi
-    - cmake --install $BUILD_DIR
-  variables:
-    <<: *default_slurm_vars
-  artifacts:
-    paths:
-      - $BUILD_DIR/bin
-      - $BUILD_DIR/lib
-      - $INSTALL_DIR
-
+# .build_template:
+  # extends: .uenv_image
+  # stage: build
+  # script:
+  #   - mkdir -p $BUILD_DIR $INSTALL_DIR
+  #   - |
+  #       CXX=`which g++` CC=`which gcc` cmake \
+  #         -S $CI_PROJECT_DIR \
+  #         -B $BUILD_DIR \
+  #         -DCMAKE_BUILD_TYPE=$CMAKE_BUILD_TYPE \
+  #         -DCMAKE_INSTALL_PREFIX=$INSTALL_DIR \
+  #         -DCMAKE_CXX_COMPILER=`which nvcc_wrapper` \
+  #         -DMARS_ENABLE_KOKKOS=ON \
+  #         -DMARS_ENABLE_CUDA=ON \
+  #         -DMARS_BUILD_TESTS=ON \
+  #         -DMARS_ENABLE_EXAMPLES=ON \
+  #         -DCMAKE_CUDA_ARCHITECTURES=${CUDA_ARCH}
+  #   - |
+  #       if [ -z "$SLURM_CPUS_PER_TASK" ]; then
+  #         echo "SLURM_CPUS_PER_TASK is not set, using 32 cores for building"
+  #         cmake --build $BUILD_DIR -- -j32
+  #       else
+  #         echo "Building with $SLURM_CPUS_PER_TASK cores"
+  #         cmake --build $BUILD_DIR -- -j${SLURM_CPUS_PER_TASK}
+  #       fi
+  #   - cmake --install $BUILD_DIR
+  # variables:
+  #   <<: *default_slurm_vars
+  # artifacts:
+  #   paths:
+  #     - $BUILD_DIR/bin
+  #     - $BUILD_DIR/lib
+  #     - $INSTALL_DIR
+#
 ######################## Unit Test Job Template ########################
+# .test_unit_template1:
+  # extends: .uenv_image
+  # stage: test
+  # script:
+  #   - pwd
+  #   - git clone --branch alps https://github.com/eth-cscs/cscs-reframe-tests.git
+  #   - git clone --filter=tree:0 $(jq -r .spack.repo /user-environment/meta/configure.json) $SPACK_DIR
+  #   - git -C $SPACK_DIR checkout $(jq -r .spack.commit /user-environment/meta/configure.json)
+  #   - export SPACK_SYSTEM_CONFIG_PATH=/user-environment/config
+  #   - source $SPACK_DIR/share/spack/setup-env.sh
+  #   - ls /user-environment/config
+  #   - spack --version
+  #   - spack install py-filelock py-tabulate py-lxml
+  #   - spack load py-filelock py-tabulate py-lxml
+  #   - python3 -m venv reframe-env
+  #   - source reframe-env/bin/activate
+  #   - pip install hostlist
+  #   - sed -i -e "s-\"tutorials\",--" -e "s-\"config\",--" $SPACK_DIR/var/spack/repos/builtin/packages/reframe/package.py
+  #   - spack install reframe@develop
+  #   - spack load reframe
+  #   - reframe --version
+  #   - reframe -C cscs-reframe-tests/config/cscs.py -c $CI_PROJECT_DIR/ci/gitlab/cscs/reframe/mars-dev.py -S $CI_PROJECT_DIR -r --performance-report --exec-policy=serial --keep-stage-files
+  # variables:
+  #   <<: *default_slurm_vars
+#     SLURM_TIMELIMIT: "00:30:00"
+
 .test_unit_template:
   extends: .uenv_image
   stage: test
   script:
-    - cd ${BUILD_DIR}
-    - ctest -V
+    - pwd
+    - export rfm_meta_path=/user-environment/meta/extra/reframe.yaml
+    - export sqfs_path=$(uenv image inspect --format '{path}' $IMAGE_NAME)
+    - echo "Copying $rfm_meta_path to $sqfs_path/store.yaml"
+    - cp  $rfm_meta_path $sqfs_path/store.yaml
+    - uenv status
+    - rm -rf rfm_venv
+    - python3 -m venv rfm_venv
+    - source rfm_venv/bin/activate
+    - git clone https://github.com/reframe-hpc/reframe.git
+    - (cd reframe; git checkout v4.7.1; ./bootstrap.sh)
+    - export PATH="$(pwd)/reframe/bin:$PATH"
+    - rm -rf cscs-reframe-tests
+    - git clone -b alps https://github.com/eth-cscs/cscs-reframe-tests.git
+    - pip install python-hostlist
+    - pip install pyfirecrest
+    - export UENV=$IMAGE_NAME
+    - reframe --version
+    - reframe -C cscs-reframe-tests/config/cscs.py -c $CI_PROJECT_DIR/ci/gitlab/cscs/reframe/mars-dev.py -r --performance-report --exec-policy=serial --keep-stage-files -J p=debug
   variables:
     <<: *default_slurm_vars
     SLURM_TIMELIMIT: "00:30:00"
 
-.test_distributed_template:
-  extends: .uenv_image
-  stage: test
-  script:
-    - cd ${BUILD_DIR}
-    - ctest -V
-  variables:
-    <<: *distributed_slurm_vars
-    SLURM_TIMELIMIT: "00:15:00"
+
+# .test_distributed_template:
+  # extends: .uenv_image
+  # stage: test
+  # script:
+  #   - cd $INSTALL_DIR
+  #   - ctest -V
+  # variables:
+  #   <<: *distributed_slurm_vars
+#     SLURM_TIMELIMIT: "00:15:00"

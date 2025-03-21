@@ -25,3 +25,7 @@ option(MARS_ENABLE_AMR_BACKEND "Use -DMARS_ENABLE_AMR_BACKEND=ON for enabling th
 
 option(MARS_ENABLE_EXAMPLES "Enable examples" OFF)
 option(MARS_ENABLE_CXXOPTS "Enable cxxopts" ON)
+
+# New options for unstructured and octree modules
+option(MARS_ENABLE_UNSTRUCTURED "Enable unstructured module" ON)
+option(MARS_ENABLE_OCTREE "Enable octree module" ON)

@@ -1,35 +1,3 @@
-// For some reason this does not compile with c++14
-
-// #include "gtest/gtest.h"
-
-// #include "mars.hpp"
-// using namespace mars;
-
-// template <typename MeshType>
-// class Adios2IOTest : public testing::Test {
-// public:
-//     void SetUp() override {
-//         constexpr Integer n_x_dim = 10;
-//         for (Integer d = 0; d < MeshType::Dim; ++d) {
-//             dims[d] = n_x_dim;
-//         }
-//     }
-
-// protected:
-//     std::array<Integer, 4> dims{0, 0, 0, 0};
-// };
-
-// using Adios2IOTestTypes = ::testing::Types<Mesh2, Mesh3>;
-
-// TYPED_TEST_SUITE(Adios2IOTest, Adios2IOTestTypes);
-
-// TYPED_TEST(Adios2IOTest, Generate) {
-//     TypeParam mesh;
-//     generate_cube(mesh, this->dims[0], this->dims[1], this->dims[2]);
-//     mesh.build_dual_graph();
-//     EXPECT_TRUE(mesh.check_side_ordering());
-// }
-
 #include "gtest/gtest.h"
 #include "mars.hpp"
 #include "mars_adios2_IO.hpp"

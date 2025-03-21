@@ -1,14 +1,9 @@
 #include "mars_adios2_IO.hpp"
+#include "mars_base.hpp"
 
 #include "mars_distributed_base_data_management.hpp"
 #include "mars_distributed_dof_management.hpp"
 #include "mars_distributed_finite_element.hpp"
-
-#include "mars_config.hpp"
-
-#include "mars_globals.hpp"
-// #include "mars_mesh.hpp"
-// #include "mars_mesh_generation.hpp"
 
 #ifdef MARS_ENABLE_KOKKOS
 #include "mars_mesh_kokkos.hpp"
@@ -320,8 +315,8 @@ namespace mars {
                 Adios2Helper::write_nodes(mesh, points);
 
 #ifdef MARS_ENABLE_CUDA
-                var_connectivity.SetMemorySpace(::adios2::MemorySpace::CUDA);
-                var_vertices.SetMemorySpace(::adios2::MemorySpace::CUDA);
+                var_connectivity.SetMemorySpace(::adios2::MemorySpace::GPU);
+                var_vertices.SetMemorySpace(::adios2::MemorySpace::GPU);
 #endif
                 // put the buffers into the adios variables
                 engine.Put<uint64_t>(var_connectivity, cells.data());
@@ -370,7 +365,7 @@ namespace mars {
             ViewVectorType<Real> local_data;
             Adios2Helper::write_field(mesh, local_data, this->data);
 #ifdef MARS_ENABLE_CUDA
-            var.SetMemorySpace(::adios2::MemorySpace::CUDA);
+            var.SetMemorySpace(::adios2::MemorySpace::GPU);
 #endif
             engine.Put<Real>(var, local_data.data());
             engine.PerformPuts();

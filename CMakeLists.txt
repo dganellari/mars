@@ -16,6 +16,16 @@ project(
     "Mars is an open-source mesh management library designed to handle N-dimensional elements (N <= 4)"
 )
 
+if(MARS_ENABLE_CUDA)
+    enable_language(CUDA)
+endif()
+
+# Add near the top, after enabling CUDA but before any add_subdirectory calls
+if(CMAKE_CUDA_COMPILER)
+    add_compile_options($<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+    add_compile_options($<$<COMPILE_LANGUAGE:CUDA>:--expt-relaxed-constexpr>)
+endif()
+
 # Std CMake imports
 include(CMakePackageConfigHelpers)
 include(CMakeDependentOption)
@@ -25,10 +35,6 @@ include(cmake/MarsOptions.cmake)
 include(cmake/MarsCMakeFunctions.cmake)
 include(cmake/MarsDependencies.cmake)
 include(cmake/MarsClangFormat.cmake)
-
-if(MARS_ENABLE_CUDA)
-    message(STATUS "${Magenta}For MARS with Cuda make sure to pass the option -DCMAKE_CXX_COMPILER=/path/to/nvcc_wrapper. Otherwise it will be set automatically to the Kokkos CXX Compiler.${ColourReset}")
-endif()
 
 # ######################### Library Configuration #############################
 
@@ -43,6 +49,7 @@ if(MARS_ENABLE_SERIAL_BACKEND)
     add_subdirectory("backend/serial")
 endif()
 
+# Now add distributed backend - dependencies handled in unstructured directory
 if(MARS_ENABLE_DISTRIBUTED_BACKEND)
     add_subdirectory("backend/distributed")
 endif()
@@ -51,14 +58,26 @@ if(MARS_ENABLE_AMR_BACKEND)
     add_subdirectory("backend/amr")
 endif()
 
+if(MARS_ENABLE_MOONOLITH)
+  add_subdirectory(moonolith_adapter)
+endif()
+
+if(MARS_ENABLE_CXXOPTS)
+  include(cxxopts/cxxopts.cmake)
+endif()
 
 add_library(mars ${MARS_HEADERS} ${MARS_SOURCES})
 
+if(CMAKE_CUDA_COMPILER AND TARGET mars)
+    # Add CUDA flags to the mars target
+    target_compile_options(mars PRIVATE 
+        $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>
+        $<$<COMPILE_LANGUAGE:CUDA>:--expt-relaxed-constexpr>)
+endif()
 
 foreach(include ${MARS_BUILD_INCLUDES})
   target_include_directories(mars BEFORE PUBLIC $<BUILD_INTERFACE:${include}>)
 endforeach()
-
 
 target_include_directories(
   mars BEFORE
@@ -68,6 +87,32 @@ target_include_directories(
 
 target_include_directories(mars PUBLIC ${MARS_DEP_INCLUDES})
 target_link_libraries(mars PUBLIC ${MARS_DEP_LIBRARIES})
+
+# Configure cornerstone and ADIOS2 for main target if available from unstructured module
+if(MARS_ENABLE_UNSTRUCTURED)
+    # Define a preprocessor macro to indicate cornerstone support
+    target_compile_definitions(mars PRIVATE MARS_HAS_CORNERSTONE)
+
+     # Make sure ADIOS2 targets are available in this scope
+    find_package(ADIOS2 QUIET)
+    
+    # Link dependencies if variables have been set
+    if(ADIOS2_FOUND)
+        target_include_directories(mars PRIVATE ${ADIOS2_INCLUDE_DIRS})
+        target_link_libraries(mars PRIVATE ${ADIOS2_LIBRARIES})
+    endif()
+    
+    # Link against cornerstone headers if available
+    if(TARGET cornerstone_headers)
+        target_link_libraries(mars PRIVATE cornerstone_headers)
+    endif()
+    
+    # Add ADIOS2 subdirectories
+    add_subdirectory(backend/adios2)
+    if(MARS_ENABLE_TESTS)
+        add_subdirectory("backend/adios2/testsuite")
+    endif()
+endif()
 
 if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE
@@ -83,7 +128,6 @@ endif(NOT CMAKE_BUILD_TYPE)
 if(MARS_ENABLE_TESTS)
   include(cmake/Tests.cmake)
   add_subdirectory("backend/distributed/testsuite")
-  add_subdirectory("backend/adios2/testsuite")
 endif()
 
 if(MARS_ENABLE_VTK)
@@ -94,7 +138,6 @@ if(MARS_ENABLE_VTK)
     REQUIRED)
   add_subdirectory(backend/vtk)
 endif()
-
 
 # #################  EXECUTABLES AND INSTALL ##################
 

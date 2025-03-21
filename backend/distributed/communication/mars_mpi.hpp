@@ -39,7 +39,9 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. */
 #include <vector>
 
 #include "mars_gathered_vector.hpp"
+#ifdef MARS_ENABLE_KOKKOS
 #include "mars_utils_kokkos.hpp"
+#endif
 
 namespace mars {
     namespace mpi {
