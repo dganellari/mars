@@ -419,7 +419,7 @@ TEST_P(ExternalMeshTest, ReadPerformance) {
 }
 
 // Multi-rank simulation
-TEST_P(ExternalMeshTest, MultiRankSimulation) {
+TEST_P(ExternalMeshTest, TwoRankSimulation) {
     // Try with 2 ranks
     int simulatedRanks = 2;
     std::cout << "\nTesting " << simulatedRanks << "-way partitioning:" << std::endl;
@@ -443,6 +443,97 @@ TEST_P(ExternalMeshTest, MultiRankSimulation) {
     std::cout << "Nodes in single-rank read: " << fullNodeCount << std::endl;
     
     EXPECT_EQ(totalNodes, fullNodeCount) << "Multi-rank node count should match single-rank";
+}
+
+// Multi-rank simulation with flexible rank configurations
+TEST_P(ExternalMeshTest, MultiRankSimulation) {
+    // Test with various rank configurations
+    std::vector<int> rankConfigs = {2, 3, 4, 8};
+    
+    // Read the full mesh once for reference
+    auto [fullNodeCount, _, x_full, y_full, z_full] = 
+        mars::readMeshCoordinatesBinary<float>(meshPath, 0, 1);
+    
+    // Skip tests for very small meshes
+    if (fullNodeCount < 10) {
+        GTEST_SKIP() << "Mesh too small for meaningful rank partitioning tests";
+        return;
+    }
+    
+    // Limit the maximum number of ranks based on mesh size
+    // (avoid testing with more ranks than nodes)
+    int maxRanks = static_cast<int>(std::min(fullNodeCount / 2, static_cast<size_t>(8)));
+    
+    for (int numRanks : rankConfigs) {
+        // Skip if too many ranks for this mesh
+        if (numRanks > maxRanks) continue;
+        
+        std::cout << "\nTesting " << numRanks << "-way partitioning:" << std::endl;
+        
+        size_t totalNodes = 0;
+        size_t totalElements = 0;
+        
+        // Verify node distribution and element distribution across ranks
+        for (int r = 0; r < numRanks; r++) {
+            // Read coordinates for this simulated rank
+            auto [nodeCount, nodeStartIdx, x_data, y_data, z_data] = 
+                mars::readMeshCoordinatesBinary<float>(meshPath, r, numRanks);
+            
+            totalNodes += nodeCount;
+            
+            // Calculate expected node count for this rank
+            size_t expectedNodeCount = fullNodeCount / numRanks;
+            if (r == numRanks - 1) {
+                // Last rank may get remainder nodes
+                expectedNodeCount = fullNodeCount - (numRanks - 1) * (fullNodeCount / numRanks);
+            }
+            
+            // Check if node count is approximately as expected (within 20%)
+            // This test is flexible since partitioning may not be exactly even
+            EXPECT_NEAR(static_cast<double>(nodeCount), 
+                       static_cast<double>(expectedNodeCount),
+                       expectedNodeCount * 0.2) << "Rank " << r << " node count not within expected range";
+                       
+            // Verify node start index
+            EXPECT_EQ(nodeStartIdx, r * (fullNodeCount / numRanks)) 
+                << "Incorrect node start index for rank " << r;
+            
+            std::cout << "Rank " << r << ": " << nodeCount << " nodes starting at " << nodeStartIdx << std::endl;
+            
+            // Try to read connectivity
+            try {
+                auto [elemCount, elem_conn] = 
+                    mars::readMeshConnectivityBinaryTuple<4>(meshPath, nodeStartIdx, r, numRanks);
+                
+                totalElements += elemCount;
+            } catch (const std::exception& e) {
+                // Not a critical error - some meshes might not have connectivity
+                std::cout << "No connectivity data for rank " << r << ": " << e.what() << std::endl;
+            }
+        }
+        
+        // Verify total node count matches full mesh
+        std::cout << "Total nodes across " << numRanks << " ranks: " << totalNodes << std::endl;
+        std::cout << "Nodes in single-rank read: " << fullNodeCount << std::endl;
+        
+        EXPECT_EQ(totalNodes, fullNodeCount) 
+            << "Total node count across " << numRanks << " ranks should match full mesh";
+        
+        // If we successfully read elements, verify total element count
+        try {
+            auto [fullElemCount, _] = 
+                mars::readMeshConnectivityBinaryTuple<4>(meshPath, 0, 0, 1);
+                
+            std::cout << "Total elements across ranks: " << totalElements << std::endl;
+            std::cout << "Elements in single-rank read: " << fullElemCount << std::endl;
+            
+            EXPECT_EQ(totalElements, fullElemCount) 
+                << "Total element count across " << numRanks << " ranks should match full mesh";
+        } catch (const std::exception& e) {
+            // Skip element verification if connectivity not available
+            std::cout << "Skipping element verification: " << e.what() << std::endl;
+        }
+    }
 }
 
 // Find available mesh directories containing the binary format files
@@ -498,14 +589,32 @@ INSTANTIATE_TEST_SUITE_P(
     ExternalMeshTest,
     ::testing::ValuesIn(GetMeshFiles()),
     [](const testing::TestParamInfo<std::string>& info) {
-        // Create test name from directory name
-        std::string name = fs::path(info.param).filename().string();
-        if (name.empty() || name == "DUMMY_PATH_NO_MESH_FOUND") {
+        // Check if this is our dummy path
+        if (info.param == "DUMMY_PATH_NO_MESH_FOUND") {
             return std::string("NoMeshFound");
         }
         
+        // For real paths, use the last directory component as the test name
+        fs::path p(info.param);
+        std::string name;
+        
+        if (fs::is_directory(p)) {
+            // Get the last directory component
+            name = p.filename().string();
+        } else {
+            // Fallback to the full path
+            name = p.string();
+        }
+        
+        // Replace non-alphanumeric characters
         std::replace_if(name.begin(), name.end(), 
                        [](char c) { return !std::isalnum(c); }, '_');
+        
+        // Ensure the name is not empty
+        if (name.empty()) {
+            name = "Mesh";
+        }
+        
         return name;
     }
 );
@@ -582,6 +691,190 @@ TEST(ExternalMeshTest, ReadExistingMeshEnvVar) {
         std::cout << "Could not read double precision coordinates: " << e.what() << std::endl;
     }
 }
+
+// Test to visualize mesh in ParaView by writing to standard VTK format
+TEST_P(ExternalMeshTest, WriteStandardVTK) {
+    std::cout << "Reading mesh for standard VTK export: " << meshPath << std::endl;
+    
+    // Read coordinates with float precision
+    auto [nodeCount, nodeStartIdx, x_data, y_data, z_data] = 
+        mars::readMeshCoordinatesBinary<float>(meshPath, rank, numRanks);
+    
+    if (nodeCount == 0) {
+        GTEST_SKIP() << "Empty mesh, skipping VTK export";
+    }
+    
+    // Create output filename in the same directory as the input
+    fs::path inputDir = fs::path(meshPath).parent_path();
+    fs::path outputPath = inputDir / "mesh_visualization.vtk";
+    std::cout << "Writing VTK file to: " << outputPath << std::endl;
+    
+    // Open file for writing
+    std::ofstream vtkFile(outputPath, std::ios::out);
+    if (!vtkFile) {
+        FAIL() << "Failed to open VTK file for writing";
+    }
+    
+    // Write VTK header
+    vtkFile << "# vtk DataFile Version 3.0\n";
+    vtkFile << "Mesh exported from MARS binary format\n";
+    vtkFile << "ASCII\n";
+    vtkFile << "DATASET UNSTRUCTURED_GRID\n";
+    
+    // Write points
+    vtkFile << "POINTS " << nodeCount << " float\n";
+    for (size_t i = 0; i < nodeCount; i++) {
+        vtkFile << x_data[i] << " " << y_data[i] << " " << z_data[i] << "\n";
+    }
+    
+    // Try reading connectivity
+    int numElements = 0;
+    
+    try {
+        auto [tetCount, tet_conn] = 
+            mars::readMeshConnectivityBinaryTuple<4>(meshPath, nodeStartIdx, rank, numRanks);
+        
+        numElements = tetCount;
+        
+        // Extract connectivity arrays for easier access
+        const auto& i0 = std::get<0>(tet_conn);
+        const auto& i1 = std::get<1>(tet_conn);
+        const auto& i2 = std::get<2>(tet_conn);
+        const auto& i3 = std::get<3>(tet_conn);
+        
+        // Write cells (must do this inside the try block where tet_conn is in scope)
+        vtkFile << "CELLS " << numElements << " " << numElements * 5 << "\n";
+        for (size_t i = 0; i < tetCount; i++) {
+            vtkFile << "4 " 
+                   << i0[i] << " " 
+                   << i1[i] << " " 
+                   << i2[i] << " " 
+                   << i3[i] << "\n";
+        }
+        
+        // Write cell types (10 = VTK_TETRA)
+        vtkFile << "CELL_TYPES " << numElements << "\n";
+        for (int i = 0; i < numElements; i++) {
+            vtkFile << "10\n";  // 10 is the VTK type for tetrahedron
+        }
+    } catch (const std::exception& e) {
+        std::cout << "No tetrahedral connectivity found, exporting point cloud only: " << e.what() << std::endl;
+    }
+    
+    vtkFile.close();
+    
+    std::cout << "VTK file written with " << nodeCount << " nodes and " 
+              << numElements << " tetrahedral elements" << std::endl;
+    std::cout << "VTK file path: " << outputPath << std::endl;
+    
+    // Verify file was written
+    EXPECT_TRUE(fs::exists(outputPath)) << "VTK file was not created";
+    EXPECT_GT(fs::file_size(outputPath), 0) << "VTK file is empty";
+}
+
+// Test to visualize mesh using ADIOS2 for VTK output
+#ifdef ADIOS2_HAVE_MPI
+TEST_P(ExternalMeshTest, WriteADIOS2VTK) {
+    std::cout << "Reading mesh for ADIOS2 VTK export: " << meshPath << std::endl;
+    
+    // Read coordinates with float precision
+    auto [nodeCount, nodeStartIdx, x_data, y_data, z_data] = 
+        mars::readMeshCoordinatesBinary<float>(meshPath, rank, numRanks);
+    
+    if (nodeCount == 0) {
+        GTEST_SKIP() << "Empty mesh, skipping ADIOS2 export";
+    }
+    
+    // Try reading connectivity
+    std::vector<int> cellTypes;
+    std::vector<int> connectivity;
+    std::vector<int> cellOffsets;
+    int numElements = 0;
+    
+    try {
+        auto [tetCount, tet_conn] = 
+            mars::readMeshConnectivityBinaryTuple<4>(meshPath, nodeStartIdx, rank, numRanks);
+        
+        numElements = tetCount;
+        
+        // For ADIOS2 VTK, we need to prepare connectivity in special format
+        connectivity.reserve(tetCount * 4);  // 4 nodes per tetrahedron
+        cellTypes.reserve(tetCount);
+        cellOffsets.reserve(tetCount);
+        
+        int offset = 0;
+        for (size_t i = 0; i < tetCount; i++) {
+            connectivity.push_back(std::get<0>(tet_conn)[i]);
+            connectivity.push_back(std::get<1>(tet_conn)[i]);
+            connectivity.push_back(std::get<2>(tet_conn)[i]);
+            connectivity.push_back(std::get<3>(tet_conn)[i]);
+            
+            cellTypes.push_back(10);  // 10 = VTK_TETRA
+            cellOffsets.push_back(offset);
+            offset += 4;  // 4 nodes per tetrahedron
+        }
+    } catch (const std::exception& e) {
+        std::cout << "No tetrahedral connectivity found, exporting point cloud only: " << e.what() << std::endl;
+    }
+    
+    // Create output filename in the same directory as the input
+    fs::path inputDir = fs::path(meshPath).parent_path();
+    fs::path outputPath = inputDir / "mesh_visualization_adios2.bp";
+    std::cout << "Writing ADIOS2 file to: " << outputPath << std::endl;
+    
+    // Initialize ADIOS2
+    adios2::ADIOS adios(MPI_COMM_SELF);
+    adios2::IO io = adios.DeclareIO("VTKWriter");
+    
+    // VTK output in ADIOS2 format
+    io.SetEngine("BP4");
+    
+    // Define variables
+    adios2::Variable<float> varX = 
+        io.DefineVariable<float>("coordinates/x", {nodeCount}, {0}, {nodeCount});
+    adios2::Variable<float> varY = 
+        io.DefineVariable<float>("coordinates/y", {nodeCount}, {0}, {nodeCount});
+    adios2::Variable<float> varZ = 
+        io.DefineVariable<float>("coordinates/z", {nodeCount}, {0}, {nodeCount});
+    
+    // Define connectivity variables if we have elements
+    if (numElements > 0) {
+        io.DefineVariable<int>("connectivity", 
+                               {connectivity.size()}, {0}, {connectivity.size()});
+        io.DefineVariable<int>("types", 
+                               {cellTypes.size()}, {0}, {cellTypes.size()});
+        io.DefineVariable<int>("offsets", 
+                               {cellOffsets.size()}, {0}, {cellOffsets.size()});
+    }
+    
+    // Open file and write data
+    adios2::Engine engine = io.Open(outputPath.string(), adios2::Mode::Write);
+    engine.BeginStep();
+    
+    // Write coordinates
+    engine.Put(varX, x_data.data());
+    engine.Put(varY, y_data.data());
+    engine.Put(varZ, z_data.data());
+    
+    // Write connectivity if available
+    if (numElements > 0) {
+        engine.Put("connectivity", connectivity.data());
+        engine.Put("types", cellTypes.data());
+        engine.Put("offsets", cellOffsets.data());
+    }
+    
+    engine.EndStep();
+    engine.Close();
+    
+    std::cout << "ADIOS2 file written with " << nodeCount << " nodes and " 
+              << numElements << " tetrahedral elements" << std::endl;
+    std::cout << "ADIOS2 file path: " << outputPath << std::endl;
+    
+    // Verify file was written
+    EXPECT_TRUE(fs::exists(outputPath)) << "ADIOS2 file was not created";
+    EXPECT_GT(fs::file_size(outputPath), 0) << "ADIOS2 file is empty";
+}
+#endif // ADIOS2_HAVE_MPI
 
 int main(int argc, char **argv) {
     ::testing::InitGoogleTest(&argc, argv);
