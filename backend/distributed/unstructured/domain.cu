@@ -1,3 +1,5 @@
+#include "cornerstone_patch.hpp"
+
 #include "cstone/cuda/cuda_utils.hpp"
 #include "cstone/sfc/sfc.hpp"
 #include "domain.hpp"

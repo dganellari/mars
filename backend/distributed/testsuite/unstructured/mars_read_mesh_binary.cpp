@@ -3,6 +3,7 @@
 #include <gtest/gtest.h>
 #include <fstream>
 #include <filesystem>
+#include <cmath>
 #include "mars_read_mesh_binary.hpp"  // Include only this header
 
 namespace fs = std::filesystem;

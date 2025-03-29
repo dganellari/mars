@@ -15,9 +15,17 @@ project(
   DESCRIPTION
     "Mars is an open-source mesh management library designed to handle N-dimensional elements (N <= 4)"
 )
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 if(MARS_ENABLE_CUDA)
     enable_language(CUDA)
+
+    set(CMAKE_CUDA_STANDARD 17)
+    set(CMAKE_CUDA_STANDARD_REQUIRED ON)
+    
+    # Critical: Use the direct flag approach which overrides any CMake standard settings
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -std=c++17" CACHE STRING "CUDA flags" FORCE)
 endif()
 
 # Add near the top, after enabling CUDA but before any add_subdirectory calls

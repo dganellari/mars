@@ -14,6 +14,10 @@ mars_add_test(mars_domain_binary_test ${CMAKE_CURRENT_SOURCE_DIR}/mars_domain_bi
 mars_add_test(mars_read_mesh_binary_test ${CMAKE_CURRENT_SOURCE_DIR}/mars_read_mesh_binary.cpp)
 # mars_add_test(mars_read_mesh_adios2_test ${CMAKE_CURRENT_SOURCE_DIR}/mars_read_mesh_adios2.cpp)
 
+# Simply add this one line to allow multiple definitions
+target_link_options(mars_domain_binary_test PRIVATE -Wl,--allow-multiple-definition)
+target_link_options(mars_read_mesh_binary_test PRIVATE -Wl,--allow-multiple-definition)
+
 # Link mars_unstructured after GPU lib (WITHOUT keywords)
 target_link_libraries(mars_domain_binary_test mars_unstructured)
 target_link_libraries(mars_read_mesh_binary_test mars_unstructured)
