@@ -101,10 +101,37 @@ if(NOT USING_PREBUILT_CORNERSTONE)
     set(CORNERSTONE_INCLUDE_DIRS "${CORNERSTONE_SRC_DIR}/include" 
         CACHE PATH "Cornerstone include directories" FORCE)
     
-    message(STATUS "Found Cornerstone source: ${CORNERSTONE_SRC_DIR}")
-    message(STATUS "Cornerstone include dirs: ${CORNERSTONE_INCLUDE_DIRS}")
-    message(STATUS "Cornerstone version: ${cornerstone_VERSION}")
-    message(STATUS "Cornerstone libraries: ${cornerstone_LIBRARIES}")
+    # Path to the tuple_util.hpp file that needs patching
+    set(TUPLE_UTIL_FILE "${CORNERSTONE_SRC_DIR}/include/cstone/util/tuple_util.hpp")
+
+    # Check if the file exists
+    if(EXISTS "${TUPLE_UTIL_FILE}")
+        # Read the content
+        file(READ "${TUPLE_UTIL_FILE}" TUPLE_UTIL_CONTENT)
+        
+        # Create a backup if needed
+        if(NOT EXISTS "${TUPLE_UTIL_FILE}.original")
+            file(WRITE "${TUPLE_UTIL_FILE}.original" "${TUPLE_UTIL_CONTENT}")
+        endif()
+
+        # Find the zipTuples function with a more robust pattern
+        string(REGEX MATCH "template[^{]*zipTuples[^{]*\\{" FOUND_ZIPTUPLE "${TUPLE_UTIL_CONTENT}")
+    
+        string(REGEX REPLACE 
+            "(template[ \t]*<[ \t]*class[ \t]*\\.\\.\\.[ \t]*Tps[ \t]*>[ \t]*\n[ \t]*constexpr[ \t]+auto[ \t]+zipTuples[ \t]*\\()" 
+            "#ifndef CSTONE_UTIL_TUPLE_UTIL_HPP_ZIPTUPLE_DEFINED\\n\\1" 
+            MODIFIED_CONTENT "${TUPLE_UTIL_CONTENT}")    
+
+        string(REGEX REPLACE 
+            "(return std::apply\\(zip, makeIntegralTuple\\(std::make_index_sequence<N>\\{\\}\\)\\);[^\n]*\n[ \t]*)(\\})" 
+            "\\1\\2\\n#endif // CSTONE_UTIL_TUPLE_UTIL_HPP_ZIPTUPLE_DEFINED\\n" 
+            MODIFIED_CONTENT "${MODIFIED_CONTENT}")
+
+        # Write the modified content back to the file
+        file(WRITE "${TUPLE_UTIL_FILE}" "${MODIFIED_CONTENT}")
+    else()
+        message(WARNING "Could not find ${TUPLE_UTIL_FILE} to apply patch")
+    endif()
 
     # CONFIGURE CORNERSTONE - MATCH CORNERSTONE'S SETTINGS EXACTLY
     if(MARS_ENABLE_CUDA)
@@ -151,9 +178,6 @@ endif()
 message(STATUS "C++ Standard: ${CMAKE_CXX_STANDARD}")
 message(STATUS "CUDA Standard: ${CMAKE_CUDA_STANDARD}")
 message(STATUS "CUDA Flags: ${CMAKE_CUDA_FLAGS}")
-message(STATUS "CXX Compiler ID: ${CMAKE_CXX_COMPILER_ID}")
-message(STATUS "CXX Compiler Version: ${CMAKE_CXX_COMPILER_VERSION}")
-message(STATUS "CUDA Compiler ID: ${CMAKE_CUDA_COMPILER_ID}")
 
 # CREATE TARGET
 add_library(mars_unstructured "")
