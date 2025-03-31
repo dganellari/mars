@@ -23,7 +23,6 @@ if(MARS_ENABLE_CUDA)
 
     set(CMAKE_CUDA_STANDARD 17)
     set(CMAKE_CUDA_STANDARD_REQUIRED ON)
-    
     # Critical: Use the direct flag approach which overrides any CMake standard settings
     set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -std=c++17" CACHE STRING "CUDA flags" FORCE)
 endif()
@@ -78,7 +77,7 @@ add_library(mars ${MARS_HEADERS} ${MARS_SOURCES})
 
 if(CMAKE_CUDA_COMPILER AND TARGET mars)
     # Add CUDA flags to the mars target
-    target_compile_options(mars PRIVATE 
+    target_compile_options(mars PRIVATE
         $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>
         $<$<COMPILE_LANGUAGE:CUDA>:--expt-relaxed-constexpr>)
 endif()
@@ -103,18 +102,18 @@ if(MARS_ENABLE_UNSTRUCTURED)
 
      # Make sure ADIOS2 targets are available in this scope
     find_package(ADIOS2 QUIET)
-    
+
     # Link dependencies if variables have been set
     if(ADIOS2_FOUND)
         target_include_directories(mars PRIVATE ${ADIOS2_INCLUDE_DIRS})
         target_link_libraries(mars PRIVATE ${ADIOS2_LIBRARIES})
     endif()
-    
+
     # Link against cornerstone headers if available
     if(TARGET cornerstone_headers)
         target_link_libraries(mars PRIVATE cornerstone_headers)
     endif()
-    
+
     # Add ADIOS2 subdirectories
     add_subdirectory(backend/adios2)
     if(MARS_ENABLE_TESTS)
@@ -151,6 +150,118 @@ endif()
 
 include_directories(${CMAKE_BINARY_DIR})
 
+# Look for information about cstone_gpu target
+message(STATUS "Checking for cstone_gpu target information")
+
+# Direct approach: try to recreate the target using the library path
+if(EXISTS "${CORNERSTONE_GPU_LIBRARY}")
+    message(STATUS "Found Cornerstone GPU library at ${CORNERSTONE_GPU_LIBRARY}")
+    # Create the target if it doesn't exist yet
+    if(NOT TARGET cstone_gpu)
+        message(STATUS "Creating cstone_gpu target from library: ${CORNERSTONE_GPU_LIBRARY}")
+        add_library(cstone_gpu STATIC IMPORTED GLOBAL)
+        set_target_properties(cstone_gpu PROPERTIES
+            IMPORTED_LOCATION "${CORNERSTONE_GPU_LIBRARY}"
+        )
+        # Add include directories if we know them
+        if(cornerstone_INCLUDE_DIR)
+            set_property(TARGET cstone_gpu PROPERTY
+                INTERFACE_INCLUDE_DIRECTORIES "${cornerstone_INCLUDE_DIR}"
+            )
+        endif()
+        # Add CUDA dependencies
+        if(MARS_ENABLE_CUDA)
+            find_package(CUDAToolkit REQUIRED)
+            set_property(TARGET cstone_gpu PROPERTY
+                INTERFACE_LINK_LIBRARIES "CUDA::cudart"
+            )
+        endif()
+    endif()
+elseif(EXISTS "${MARS_CSTONE_GPU_LIBRARY}")
+    message(STATUS "Found Cornerstone GPU library in cache: ${MARS_CSTONE_GPU_LIBRARY}")
+    # Create the target if it doesn't exist yet
+    if(NOT TARGET cstone_gpu)
+        message(STATUS "Creating cstone_gpu target from cache: ${MARS_CSTONE_GPU_LIBRARY}")
+        add_library(cstone_gpu STATIC IMPORTED GLOBAL)
+        set_target_properties(cstone_gpu PROPERTIES
+            IMPORTED_LOCATION "${MARS_CSTONE_GPU_LIBRARY}"
+        )
+        # Add include directories if we know them
+        if(MARS_CSTONE_GPU_INCLUDES)
+            set_property(TARGET cstone_gpu PROPERTY
+                INTERFACE_INCLUDE_DIRECTORIES "${MARS_CSTONE_GPU_INCLUDES}"
+            )
+        endif()
+        # Add CUDA dependencies
+        if(MARS_ENABLE_CUDA)
+            find_package(CUDAToolkit REQUIRED)
+            set_property(TARGET cstone_gpu PROPERTY
+                INTERFACE_LINK_LIBRARIES "CUDA::cudart"
+            )
+        endif()
+    endif()
+else()
+    # Try to find the library path in a file
+    if(EXISTS "${CMAKE_BINARY_DIR}/cstone_gpu_lib_path.txt")
+        file(READ "${CMAKE_BINARY_DIR}/cstone_gpu_lib_path.txt" GPU_LIB_PATH)
+        string(STRIP "${GPU_LIB_PATH}" GPU_LIB_PATH)
+        if(EXISTS "${GPU_LIB_PATH}")
+            message(STATUS "Found Cornerstone GPU library path in file: ${GPU_LIB_PATH}")
+            # Create the target if needed
+            if(NOT TARGET cstone_gpu)
+                add_library(cstone_gpu STATIC IMPORTED GLOBAL)
+                set_target_properties(cstone_gpu PROPERTIES
+                    IMPORTED_LOCATION "${GPU_LIB_PATH}"
+                )
+                # Add CUDA dependencies
+                if(MARS_ENABLE_CUDA)
+                    find_package(CUDAToolkit REQUIRED)
+                    set_property(TARGET cstone_gpu PROPERTY
+                        INTERFACE_LINK_LIBRARIES "CUDA::cudart"
+                    )
+                endif()
+            endif()
+        else()
+            message(STATUS "Cornerstone GPU library not found at path from file: ${GPU_LIB_PATH}")
+        endif()
+    else()
+        message(STATUS "No information found about Cornerstone GPU library")
+    endif()
+endif()
+
+# Final check to see if we created the target
+if(TARGET cstone_gpu)
+    message(STATUS "cstone_gpu target is available for installation")
+    get_target_property(GPU_LOCATION cstone_gpu IMPORTED_LOCATION)
+    message(STATUS "cstone_gpu location: ${GPU_LOCATION}")
+    # Add to MARS_TARGETS only if it exists in this scope
+    list(APPEND MARS_TARGETS cstone_gpu)
+    # Install the target (avoid installation for imported targets)
+    if(EXISTS "${GPU_LOCATION}")
+        message(STATUS "Installing GPU library directly: ${GPU_LOCATION}")
+        get_filename_component(GPU_LIB_NAME "${GPU_LOCATION}" NAME)
+        install(FILES "${GPU_LOCATION}"
+                DESTINATION ${CMAKE_INSTALL_LIBDIR}
+                RENAME "${GPU_LIB_NAME}")
+    endif()
+else()
+    message(STATUS "cstone_gpu target not created, skipping installation")
+    # Fallback: try using CORNERSTONE_GPU_LIBRARY directly
+    if(EXISTS "${CORNERSTONE_GPU_LIBRARY}")
+        message(STATUS "Installing GPU library directly from specified path: ${CORNERSTONE_GPU_LIBRARY}")
+        get_filename_component(GPU_LIB_NAME "${CORNERSTONE_GPU_LIBRARY}" NAME)
+        install(FILES "${CORNERSTONE_GPU_LIBRARY}"
+                DESTINATION ${CMAKE_INSTALL_LIBDIR}
+                RENAME "${GPU_LIB_NAME}")
+    endif()
+endif()
+
+# Install the standard targets, but remove cstone_gpu from MARS_TARGETS if it exists
+if(TARGET cstone_gpu)
+    list(REMOVE_ITEM MARS_TARGETS cstone_gpu)
+endif()
+
+# Install the standard targets
 install(
   TARGETS mars ${MARS_TARGETS}
   EXPORT MarsTargets
