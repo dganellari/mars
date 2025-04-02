@@ -90,4 +90,52 @@ if(MARS_ENABLE_TESTS)
         endif()
     endmacro()
 
+       # Macro for adding MPI-enabled tests
+    macro(mars_add_mpi_test TESTNAME)
+        # Parse arguments
+        set(options FAILURE_EXPECTED RUN_SERIAL)
+        set(one_value_args EXECUTABLE RANKS TIMEOUT)
+        set(multi_value_args ARGS)
+        cmake_parse_arguments(
+            TEST "${options}" "${one_value_args}" "${multi_value_args}" ${ARGN}
+        )
+        
+        # Default to 1 rank if not specified
+        if(NOT TEST_RANKS)
+            set(TEST_RANKS 1)
+        endif()
+        
+        # Default to the test name as the executable if not specified
+        if(NOT TEST_EXECUTABLE)
+            set(TEST_EXECUTABLE ${TESTNAME})
+        endif()
+        
+        # Make sure the executable target exists
+        if(NOT TARGET ${TEST_EXECUTABLE})
+            message(FATAL_ERROR "Executable target '${TEST_EXECUTABLE}' not found")
+        endif()
+        
+        # Add the test command with MPI
+        add_test(
+            NAME ${TESTNAME}
+            COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${TEST_RANKS}
+                    ${MPIEXEC_PREFLAGS} $<TARGET_FILE:${TEST_EXECUTABLE}> ${MPIEXEC_POSTFLAGS} ${TEST_ARGS}
+        )
+        
+        # Set test properties
+        if(TEST_RUN_SERIAL)
+            set_tests_properties(${TESTNAME} PROPERTIES RUN_SERIAL TRUE)
+        endif()
+        if(TEST_TIMEOUT)
+            set_tests_properties(${TESTNAME} PROPERTIES TIMEOUT ${TEST_TIMEOUT})
+        endif()
+        if(TEST_FAILURE_EXPECTED)
+            set_tests_properties(${TESTNAME} PROPERTIES WILL_FAIL TRUE)
+        endif()
+        
+        # Add this test to global properties - store both test name and target name
+        set_property(GLOBAL APPEND PROPERTY MARS_TESTS ${TESTNAME})
+        set_property(GLOBAL APPEND PROPERTY MARS_TEST_TARGETS ${TEST_EXECUTABLE})
+    endmacro() 
+
 endif(MARS_ENABLE_TESTS)

@@ -1,7 +1,3 @@
-#include "cornerstone_patch.hpp"
-
-#include "cstone/cuda/cuda_utils.hpp"
-#include "cstone/sfc/sfc.hpp"
 #include "domain.hpp"
 
 namespace mars
@@ -15,7 +11,7 @@ __global__ void transformCharacteristicSizesKernel(RealType* d_h, size_t size, R
     {
         RealType val    = d_h[idx];
         RealType result = val * meshFactor;
-        d_h[idx]    = max(minH, min(maxH, result));
+        d_h[idx]    = fmaxf(minH, fminf(maxH, result));
     }
 }
 

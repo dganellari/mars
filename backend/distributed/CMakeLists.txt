@@ -25,6 +25,7 @@ if(MARS_ENABLE_UNSTRUCTURED)
     # Add directories to search paths
     list(APPEND DISTRIBUTED_MODULES
         octree
+        unstructured
         unstructured/utils
         )
     
@@ -34,7 +35,7 @@ if(MARS_ENABLE_UNSTRUCTURED)
     # Link directly to mars (not through MARS_DEP_LIBRARIES)
     if(TARGET mars_unstructured AND TARGET mars)
         # Link privately so dependencies don't propagate
-        target_link_libraries(mars PRIVATE mars_unstructured)
+        target_link_libraries(mars PUBLIC mars_unstructured)
     endif()
 endif()
 

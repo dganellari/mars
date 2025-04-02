@@ -4,7 +4,7 @@
 #include <fstream>
 #include <filesystem>
 #include "domain.hpp"
-#include "cstone/cuda/cuda_utils.hpp" // For toHost utility
+// #include "cstone/cuda/cuda_utils.hpp" // For toHost utility
 
 namespace fs = std::filesystem;
 

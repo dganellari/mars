@@ -3,8 +3,6 @@
 #include <tuple>
 #include <utility>
 
-#include "cornerstone_patch.hpp"
-
 namespace cstone
 {
 using std::get;
@@ -18,7 +16,7 @@ using std::get;
 #include "cstone/domain/assignment_gpu.cuh"
 
 // stl includes
-#include <adios2.h>
+// #include <adios2.h>
 #include <thrust/device_vector.h>
 #include <thrust/execution_policy.h>
 #include <thrust/extrema.h>
@@ -33,7 +31,7 @@ using std::get;
 #include "mars.hpp"
 #include "mars_globals.hpp"
 #include "mars_cuda_utils.hpp"
-#include "mars_read_mesh_adios2.hpp"
+// #include "mars_read_mesh_adios2.hpp"
 #include "mars_read_mesh_binary.hpp"
 
 namespace mars
