@@ -221,6 +221,27 @@ __global__ void findRepresentativeNodesKernel(const int* indices0,
     }
 }
 
+// Implementation of mapElementsToNodes for GPU
+template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
+void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::mapElementsToNodes()
+{
+    // This is a stub implementation - the actual mapping happens in the sync() method
+    // Just ensure the vectors are sized correctly
+    if constexpr (std::is_same_v<AcceleratorTag, cstone::GpuTag>)
+    {
+        if (d_elemToNodeMap_.size() != elementCount_)
+        {
+            d_elemToNodeMap_.resize(elementCount_);
+        }
+    }
+}
+
+// Explicit instantiations for mapElementsToNodes
+template void ElementDomain<TetTag, float, unsigned int, cstone::GpuTag>::mapElementsToNodes();
+template void ElementDomain<TetTag, double, unsigned int, cstone::GpuTag>::mapElementsToNodes();
+template void ElementDomain<TetTag, float, uint64_t, cstone::GpuTag>::mapElementsToNodes();
+template void ElementDomain<TetTag, double, uint64_t, cstone::GpuTag>::mapElementsToNodes();
+
 template<typename KeyType, typename RealType>
 void generateSfcKeys(
     const RealType* x, const RealType* y, const RealType* z, KeyType* keys, size_t numKeys, const cstone::Box<RealType>& box)

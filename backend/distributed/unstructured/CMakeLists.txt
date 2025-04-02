@@ -5,9 +5,21 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # Create main library target
 add_library(mars_unstructured "")
 
-# Add sources and set language properties
-target_sources(mars_unstructured PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/domain.cu)
-set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/domain.cu PROPERTIES LANGUAGE CUDA)
+# Add the implementation file to the target
+target_sources(mars_unstructured PRIVATE 
+    ${CMAKE_CURRENT_SOURCE_DIR}/domain.cu
+    ${CMAKE_CURRENT_SOURCE_DIR}/domain_cuda_impl.cpp  # Add this line
+)
+
+# Set language properties to ensure correct compilation
+set_source_files_properties(
+    ${CMAKE_CURRENT_SOURCE_DIR}/domain.cu 
+    PROPERTIES LANGUAGE CUDA
+)
+set_source_files_properties(
+    ${CMAKE_CURRENT_SOURCE_DIR}/domain_cuda_impl.cpp 
+    PROPERTIES LANGUAGE CXX
+)
 
 # Configure CUDA properties if enabled
 if(MARS_ENABLE_CUDA)
