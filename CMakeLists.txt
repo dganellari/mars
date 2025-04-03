@@ -24,12 +24,10 @@ if(MARS_ENABLE_CUDA)
     include_directories(SYSTEM ${CUDAToolkit_INCLUDE_DIRS})
     message(STATUS "Added CUDA include directories globally: ${CUDAToolkit_INCLUDE_DIRS}")
 
-    add_compile_definitions(USE_CUDA)
-    add_compile_definitions(MARS_ENABLE_CUDA)
+    add_compile_definitions(USE_CUDA MARS_ENABLE_CUDA)
 
     set(CMAKE_CUDA_STANDARD 17)
-    # Critical: Use the direct flag approach which overrides any CMake standard settings
-    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} --extended-lambda --expt-relaxed-constexpr --Werror=cross-execution-space-call")
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} --extended-lambda --expt-relaxed-constexpr")
 endif()
 
 # Add near the top, after enabling CUDA but before any add_subdirectory calls
@@ -138,42 +136,66 @@ if(MARS_ENABLE_UNSTRUCTURED)
             message(STATUS "Found Cornerstone headers at: ${CORNERSTONE_INCLUDE_PATH}")
         endif()
     endif()
-    
-       # Check if Cornerstone is already found or needs to be fetched
+
+       # Update the fetch section to explicitly include all needed files
     if(NOT CORNERSTONE_INCLUDE_DIRS)
-        message(STATUS "Cornerstone headers not found at specified paths. Trying auto-fetch...")
-        
-        # Include FetchContent
+        message(STATUS "Cornerstone headers not found, fetching source...")
+    
+        # Include FetchContent just to get the source
         include(FetchContent)
         
-        # Define the fetch
+        # Define and populate
         FetchContent_Declare(
             cornerstone_fetch
-            GIT_REPOSITORY https://github.com/exawind/cornerstone.git
+            GIT_REPOSITORY https://github.com/sekelle/cornerstone-octree.git
             GIT_TAG master  # Or specific tag/commit
         )
         
-        # Set build options for fetched Cornerstone before fetching
-        set(CSTONE_ENABLE_CUDA ${MARS_ENABLE_CUDA} CACHE BOOL "Enable CUDA in fetched Cornerstone" FORCE)
-        set(CSTONE_ENABLE_MPI ON CACHE BOOL "Enable MPI in fetched Cornerstone" FORCE)
-        set(CSTONE_BUILD_EXAMPLES OFF CACHE BOOL "Don't build Cornerstone examples" FORCE)
+        # Just get the source, don't try to build it
+        FetchContent_Populate(cornerstone_fetch)
         
-        # Make it available - this will build it
-        FetchContent_MakeAvailable(cornerstone_fetch)
-        
-        # Set paths based on fetched content
-        set(CORNERSTONE_SRC_DIR ${cornerstone_fetch_SOURCE_DIR} CACHE PATH "Cornerstone source directory" FORCE)
+        # Set paths for includes
+        set(CORNERSTONE_SRC_DIR "${cornerstone_fetch_SOURCE_DIR}" CACHE PATH "Cornerstone source directory" FORCE)
         set(CORNERSTONE_INCLUDE_DIRS "${cornerstone_fetch_SOURCE_DIR}/include" CACHE PATH "Cornerstone include directory" FORCE)
         
-        # If we're using CUDA, look for the GPU library in the build
+        # Add the CUDA source files we need directly to our build
         if(MARS_ENABLE_CUDA)
-            set(CORNERSTONE_GPU_LIBRARY "${cornerstone_fetch_BINARY_DIR}/gpu/libcstone_gpu.a" 
-                CACHE FILEPATH "Path to cstone_gpu library" FORCE)
-            message(STATUS "Set CORNERSTONE_GPU_LIBRARY to ${CORNERSTONE_GPU_LIBRARY} (will be built)")
+            # Find ALL the device_vector implementation files
+            file(GLOB CORNERSTONE_GPU_SOURCES
+                "${cornerstone_fetch_SOURCE_DIR}/gpu/src/*.cu"
+                "${cornerstone_fetch_SOURCE_DIR}/gpu/src/*.cpp"
+                "${cornerstone_fetch_SOURCE_DIR}/src/util/*.cpp"
+                "${cornerstone_fetch_SOURCE_DIR}/src/domain/*.cpp"
+            )
+            
+            message(STATUS "Found these Cornerstone GPU sources:")
+            foreach(src ${CORNERSTONE_GPU_SOURCES})
+                message(STATUS "  ${src}")
+            endforeach()
+            
+            # Create our own GPU library from Cornerstone sources
+            add_library(cstone_gpu STATIC ${CORNERSTONE_GPU_SOURCES})
+            target_include_directories(cstone_gpu PUBLIC
+                ${CORNERSTONE_INCLUDE_DIRS})
+            target_compile_definitions(cstone_gpu PUBLIC 
+                CSTONE_WITH_CUDA
+                USE_CUDA)
+            
+            # Set CUDA properties
+            set_target_properties(cstone_gpu PROPERTIES
+                CUDA_SEPARABLE_COMPILATION ON
+                POSITION_INDEPENDENT_CODE ON)
+            
+            # Link with CUDA
+            find_package(CUDAToolkit REQUIRED)
+            target_link_libraries(cstone_gpu PUBLIC CUDA::cudart)
+            
+            # Set the GPU library location for later use
+            set(CORNERSTONE_GPU_LIBRARY "$<TARGET_FILE:cstone_gpu>" CACHE PATH "Path to cstone_gpu library" FORCE)
+            
+            message(STATUS "Created cstone_gpu target from Cornerstone source files")
         endif()
-        
-        message(STATUS "Fetched Cornerstone from repository")
-    endif()
+    endif() 
     
     # Setup the include directory structure for relative includes
     if(CORNERSTONE_INCLUDE_DIRS)

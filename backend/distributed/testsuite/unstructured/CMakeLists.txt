@@ -34,34 +34,30 @@ function(addMarsMpiTest source exename testname ranks)
     endif()
 endfunction()
 
-# Function for adding GPU-enabled tests
+# Modify the addMarsGpuMpiTest function to use this variable
 function(addMarsGpuMpiTest source exename testname ranks)
     addMarsMpiTest("${source}" ${exename} ${testname} ${ranks})
     
     # Add mars_unstructured which contains domain.cu implementation
     target_link_libraries(${exename} PRIVATE mars_unstructured)
-    
+
     # Add Cornerstone includes directly
     target_include_directories(${exename} PRIVATE
         ${CMAKE_BINARY_DIR}/cornerstone_includes
         ${CORNERSTONE_INCLUDE_DIRS}
     )
     
-    # DIRECTLY link with the specified GPU library from command line
-    if(EXISTS "${CORNERSTONE_GPU_LIBRARY}")
-        message(STATUS "Directly linking with GPU library: ${CORNERSTONE_GPU_LIBRARY}")
-        target_link_libraries(${exename} PRIVATE ${CORNERSTONE_GPU_LIBRARY})
-    endif()
+    # Link to GPU target - either real or stub
+    message(STATUS "Linking to GPU target: cstone_gpu")
+    target_link_libraries(${exename} PRIVATE cstone_gpu)
     
     # Add CUDA libraries
     target_link_libraries(${exename} PRIVATE 
         CUDA::cudart 
-        CUDA::cuda_driver
         -lcudadevrt)
     
-    # Print diagnostic messages
+    # Print diagnostic info
     message(STATUS "Test executable: ${exename}")
-    message(STATUS "CORNERSTONE_GPU_LIBRARY: ${CORNERSTONE_GPU_LIBRARY}")
     message(STATUS "CORNERSTONE_INCLUDE_DIRS: ${CORNERSTONE_INCLUDE_DIRS}")
 endfunction()
 
