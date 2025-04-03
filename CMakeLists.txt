@@ -139,6 +139,42 @@ if(MARS_ENABLE_UNSTRUCTURED)
         endif()
     endif()
     
+       # Check if Cornerstone is already found or needs to be fetched
+    if(NOT CORNERSTONE_INCLUDE_DIRS)
+        message(STATUS "Cornerstone headers not found at specified paths. Trying auto-fetch...")
+        
+        # Include FetchContent
+        include(FetchContent)
+        
+        # Define the fetch
+        FetchContent_Declare(
+            cornerstone_fetch
+            GIT_REPOSITORY https://github.com/exawind/cornerstone.git
+            GIT_TAG master  # Or specific tag/commit
+        )
+        
+        # Set build options for fetched Cornerstone before fetching
+        set(CSTONE_ENABLE_CUDA ${MARS_ENABLE_CUDA} CACHE BOOL "Enable CUDA in fetched Cornerstone" FORCE)
+        set(CSTONE_ENABLE_MPI ON CACHE BOOL "Enable MPI in fetched Cornerstone" FORCE)
+        set(CSTONE_BUILD_EXAMPLES OFF CACHE BOOL "Don't build Cornerstone examples" FORCE)
+        
+        # Make it available - this will build it
+        FetchContent_MakeAvailable(cornerstone_fetch)
+        
+        # Set paths based on fetched content
+        set(CORNERSTONE_SRC_DIR ${cornerstone_fetch_SOURCE_DIR} CACHE PATH "Cornerstone source directory" FORCE)
+        set(CORNERSTONE_INCLUDE_DIRS "${cornerstone_fetch_SOURCE_DIR}/include" CACHE PATH "Cornerstone include directory" FORCE)
+        
+        # If we're using CUDA, look for the GPU library in the build
+        if(MARS_ENABLE_CUDA)
+            set(CORNERSTONE_GPU_LIBRARY "${cornerstone_fetch_BINARY_DIR}/gpu/libcstone_gpu.a" 
+                CACHE FILEPATH "Path to cstone_gpu library" FORCE)
+            message(STATUS "Set CORNERSTONE_GPU_LIBRARY to ${CORNERSTONE_GPU_LIBRARY} (will be built)")
+        endif()
+        
+        message(STATUS "Fetched Cornerstone from repository")
+    endif()
+    
     # Setup the include directory structure for relative includes
     if(CORNERSTONE_INCLUDE_DIRS)
         # Create a directory for symlinks to make relative paths work
@@ -188,6 +224,7 @@ if(MARS_ENABLE_UNSTRUCTURED)
         # Make this a global include path with high priority
         include_directories(BEFORE ${CMAKE_BINARY_DIR}/cornerstone_includes)
         message(STATUS "Created Cornerstone include structure at: ${CMAKE_BINARY_DIR}/cornerstone_includes")
+        
         # Create the interface target if it doesn't exist
         if(NOT TARGET cornerstone::cornerstone)
             add_library(cornerstone::cornerstone INTERFACE IMPORTED)
@@ -196,22 +233,28 @@ if(MARS_ENABLE_UNSTRUCTURED)
             message(STATUS "Created cornerstone::cornerstone target with include directories")
         endif()
         
-        # Find GPU library if we're using CUDA
+        # Handle GPU library
         if(MARS_ENABLE_CUDA)
-            find_library(CORNERSTONE_GPU_LIBRARY
-                NAMES cstone_gpu libcstone_gpu
-                HINTS
-                ${CORNERSTONE_SRC_DIR}
-                ${CORNERSTONE_SRC_DIR}/build
-                ${CORNERSTONE_SRC_DIR}/lib
-                ${CORNERSTONE_SRC_DIR}/gpu
-                ${CORNERSTONE_SRC_DIR}/gpu/include/cstone
-                ${CMAKE_BINARY_DIR}/cornerstone_build
-                ${CMAKE_BINARY_DIR}/_deps/cornerstone_fetch-build
-                NO_DEFAULT_PATH
-            )
+            # If we fetched Cornerstone, the GPU library path is already set
+            # Otherwise, search for it
+            if(NOT CORNERSTONE_GPU_LIBRARY OR NOT EXISTS "${CORNERSTONE_GPU_LIBRARY}")
+                find_library(CORNERSTONE_GPU_LIBRARY
+                    NAMES cstone_gpu libcstone_gpu
+                    HINTS
+                    ${CORNERSTONE_SRC_DIR}
+                    ${CORNERSTONE_SRC_DIR}/build
+                    ${CORNERSTONE_SRC_DIR}/lib
+                    ${CORNERSTONE_SRC_DIR}/gpu
+                    ${CORNERSTONE_SRC_DIR}/gpu/include/cstone
+                    ${cornerstone_fetch_BINARY_DIR}/gpu
+                    ${CMAKE_BINARY_DIR}/cornerstone_build
+                    ${CMAKE_BINARY_DIR}/_deps/cornerstone_fetch-build
+                    ${CMAKE_BINARY_DIR}/_deps/cornerstone_fetch-build/gpu
+                    NO_DEFAULT_PATH
+                )
+            endif()
             
-            if(CORNERSTONE_GPU_LIBRARY)
+            if(CORNERSTONE_GPU_LIBRARY AND EXISTS "${CORNERSTONE_GPU_LIBRARY}")
                 message(STATUS "Found Cornerstone GPU library: ${CORNERSTONE_GPU_LIBRARY}")
                 if(NOT TARGET cstone_gpu)
                     add_library(cstone_gpu STATIC IMPORTED GLOBAL)
@@ -226,7 +269,7 @@ if(MARS_ENABLE_UNSTRUCTURED)
                     message(STATUS "Created cstone_gpu target")
                 endif()
             else()
-                message(WARNING "Cornerstone GPU library not found")
+                message(WARNING "Cornerstone GPU library not found: ${CORNERSTONE_GPU_LIBRARY}")
             endif()
         endif()
                     
@@ -239,7 +282,7 @@ if(MARS_ENABLE_UNSTRUCTURED)
         # Link to the cornerstone target
         target_link_libraries(mars PUBLIC cornerstone::cornerstone)
         
-                # Also directly add the include directories for absolute certainty
+        # Also directly add the include directories for absolute certainty
         target_include_directories(mars PUBLIC 
             $<BUILD_INTERFACE:${CMAKE_BINARY_DIR}/cornerstone_includes>
             $<BUILD_INTERFACE:${CORNERSTONE_INCLUDE_DIRS}>
@@ -247,7 +290,7 @@ if(MARS_ENABLE_UNSTRUCTURED)
     else()
         set(CORNERSTONE_FOUND FALSE)
         message(WARNING "Cornerstone headers not found, falling back to ADIOS2")
-    endif()
+    endif() 
     
     # Make sure ADIOS2 targets are available in this scope
     find_package(ADIOS2 QUIET)
@@ -276,11 +319,6 @@ RelWithDebInfo MinSizeRel." FORCE)
 endif(NOT CMAKE_BUILD_TYPE)
 
 # ###############################Extra Targets##################################
-
-if(MARS_ENABLE_TESTS)
-  include(cmake/Tests.cmake)
-  add_subdirectory("backend/distributed/testsuite")
-endif()
 
 if(MARS_ENABLE_VTK)
   find_package(
