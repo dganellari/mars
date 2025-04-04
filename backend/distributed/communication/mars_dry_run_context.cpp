@@ -34,7 +34,9 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. */
 
 #include "mars_base.hpp"
 #include "mars_gathered_vector.hpp"
+#ifdef MARS_ENABLE_KOKKOS
 #include "mars_utils_kokkos.hpp"
+#endif
 
 #ifdef MARS_ENABLE_MPI
 #include "mars_distributed_context.hpp"
