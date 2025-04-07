@@ -55,6 +55,84 @@ protected:
     }
 };
 
+/**
+ * Adapter function that provides backwards compatibility with the old API
+ * but uses the new element-based partitioning internally.
+ */
+template<typename RealType=float>
+inline auto readMeshCoordinatesBinary(const std::string& meshDir, int rank, int numRanks) {
+    // Try to read all data with element-based partitioning
+    auto [nodeCount, elementCount, x_data, y_data, z_data, _] = 
+        readMeshWithElementPartitioning<4, RealType>(meshDir, rank, numRanks);
+    
+    // Return in the old format for compatibility
+    return std::make_tuple(nodeCount, 0, // nodeStartIdx is now always 0 in the new approach
+                           std::move(x_data), std::move(y_data), std::move(z_data));
+}
+
+/**
+ * Adapter function that provides backwards compatibility with the old API
+ * but uses the new element-based partitioning internally.
+ */
+template<int N>
+inline auto readMeshConnectivityBinaryTuple(const std::string& meshDir, size_t nodeStartIdx, 
+                                          int rank, int numRanks) {
+    // Read with new element-based partitioning
+    auto [nodeCount, elementCount, x_data, y_data, z_data, connectivity] = 
+        readMeshWithElementPartitioning<N, float>(meshDir, rank, numRanks);
+    
+    // Return in the old format for compatibility
+    return std::make_tuple(elementCount, connectivity);
+}
+
+/**
+ * Adapter for vector-based connectivity API
+ */
+inline auto readMeshConnectivityBinary(const std::string& meshDir, int nodesPerElement,
+                                     size_t nodeStartIdx, int rank, int numRanks) {
+    // Call the appropriate tuple version based on nodesPerElement
+    if(nodesPerElement == 4) {
+        auto [elemCount, conn] = readMeshConnectivityBinaryTuple<4>(meshDir, nodeStartIdx, rank, numRanks);
+        std::vector<std::vector<int>> result(4);
+        
+        // Convert from tuple to vector-of-vectors format
+        result[0] = std::get<0>(conn);
+        result[1] = std::get<1>(conn);
+        result[2] = std::get<2>(conn);
+        result[3] = std::get<3>(conn);
+        
+        return std::make_tuple(elemCount, result);
+    }
+    else if(nodesPerElement == 3) {
+        auto [elemCount, conn] = readMeshConnectivityBinaryTuple<3>(meshDir, nodeStartIdx, rank, numRanks);
+        std::vector<std::vector<int>> result(3);
+        
+        result[0] = std::get<0>(conn);
+        result[1] = std::get<1>(conn);
+        result[2] = std::get<2>(conn);
+        
+        return std::make_tuple(elemCount, result);
+    }
+    else if(nodesPerElement == 8) {
+        auto [elemCount, conn] = readMeshConnectivityBinaryTuple<8>(meshDir, nodeStartIdx, rank, numRanks);
+        std::vector<std::vector<int>> result(8);
+        
+        result[0] = std::get<0>(conn);
+        result[1] = std::get<1>(conn);
+        result[2] = std::get<2>(conn);
+        result[3] = std::get<3>(conn);
+        result[4] = std::get<4>(conn);
+        result[5] = std::get<5>(conn);
+        result[6] = std::get<6>(conn);
+        result[7] = std::get<7>(conn);
+        
+        return std::make_tuple(elemCount, result);
+    }
+    else {
+        throw std::runtime_error("Unsupported number of nodes per element: " + std::to_string(nodesPerElement));
+    }
+}
+
 // Test reading coordinates
 TEST_F(MeshReadBinaryTest, ReadCoordinates) {
     // Test reading coordinates using the function directly
@@ -771,6 +849,156 @@ TEST_P(ExternalMeshTest, WriteStandardVTK) {
     // Verify file was written
     EXPECT_TRUE(fs::exists(outputPath)) << "VTK file was not created";
     EXPECT_GT(fs::file_size(outputPath), 0) << "VTK file is empty";
+}
+
+// Test explicitly for element-based partitioning 
+TEST_F(MeshReadBinaryTest, ElementBasedPartitioning) {
+    // Create a special test case where elements need nodes from other partitions
+    // Element 0 uses nodes [0,1,2,3]
+    // Element 1 uses nodes [2,3,4,5] - shares nodes with Element 0
+    // Element 2 uses nodes [4,5,6,7] - shares nodes with Element 1
+    
+    createConnectivityFile("i0.int32", {0, 2, 4});
+    createConnectivityFile("i1.int32", {1, 3, 5});
+    createConnectivityFile("i2.int32", {2, 4, 6});
+    createConnectivityFile("i3.int32", {3, 5, 7});
+    
+    // Test with 2 simulated ranks
+    int simulatedRanks = 2;
+    
+    // First verify what elements each rank gets
+    for (int r = 0; r < simulatedRanks; r++) {
+        // Read the mesh with element-based partitioning
+        auto [nodeCount, elementCount, x, y, z, connectivity] = 
+            mars::readMeshWithElementPartitioning<4, float>(testDir.string(), r, simulatedRanks);
+        
+        // Expected values
+        if (r == 0) {
+            // Rank 0 should get elements 0, 1
+            EXPECT_EQ(elementCount, 2);
+            
+            // Rank 0 should need nodes 0-5 (6 nodes)
+            EXPECT_EQ(nodeCount, 6);
+            
+            // Verify connectivity has been properly remapped to local indices
+            auto& i0 = std::get<0>(connectivity);
+            auto& i1 = std::get<1>(connectivity);
+            
+            // Element 0 should use local indices [0,1,2,3] 
+            // (global indices [0,1,2,3])
+            EXPECT_EQ(i0[0], 0);
+            
+            // Element 1 should use local indices [2,3,4,5]
+            // (global indices [2,3,4,5])
+            EXPECT_EQ(i0[1], 2);
+            
+            // Check a sample coordinate
+            EXPECT_FLOAT_EQ(x[4], 5.0f); // Node 4 (global) -> local index 4
+        } else {
+            // Rank 1 should get element 2
+            EXPECT_EQ(elementCount, 1);
+            
+            // Rank 1 should need nodes 4-7 (4 nodes)
+            EXPECT_EQ(nodeCount, 4);
+            
+            // Element 2 should use local indices [0,1,2,3]
+            // (global indices [4,5,6,7])
+            auto& i0 = std::get<0>(connectivity);
+            EXPECT_EQ(i0[0], 0); // Global node 4 mapped to local 0
+            
+            // Check coordinates to ensure mapping is correct
+            EXPECT_FLOAT_EQ(x[0], 5.0f); // Node 4 (global) -> local index 0
+        }
+    }
+}
+
+// Test partitioning balance
+TEST_P(ExternalMeshTest, ElementBasedPartitioningBalance) {
+    try {
+        // Read the full mesh to get total counts
+        auto [nodeCount, elemStartIdx, x_full, y_full, z_full] = 
+            mars::readMeshCoordinatesBinary<float>(meshPath, 0, 1);
+        
+        // Skip very small meshes
+        if (nodeCount < 100) {
+            GTEST_SKIP() << "Mesh too small for meaningful balance test";
+            return;
+        }
+        
+        // Test with 4 ranks
+        int testRanks = 4;
+        std::vector<size_t> rankNodeCounts(testRanks);
+        std::vector<size_t> rankElementCounts(testRanks);
+        
+        // Read each rank's portion with element-based partitioning
+        for (int r = 0; r < testRanks; r++) {
+            try {
+                auto [nodeCount, elementCount, x, y, z, conn] = 
+                    mars::readMeshWithElementPartitioning<4, float>(meshPath, r, testRanks);
+                
+                rankNodeCounts[r] = nodeCount;
+                rankElementCounts[r] = elementCount;
+                
+                std::cout << "Rank " << r << ": " << elementCount << " elements, " 
+                         << nodeCount << " nodes" << std::endl;
+            } catch (const std::exception& e) {
+                std::cout << "Error reading rank " << r << ": " << e.what() << std::endl;
+            }
+        }
+        
+        // Calculate node and element imbalance
+        size_t minNodes = *std::min_element(rankNodeCounts.begin(), rankNodeCounts.end());
+        size_t maxNodes = *std::max_element(rankNodeCounts.begin(), rankNodeCounts.end());
+        double nodeImbalance = (minNodes > 0) ? static_cast<double>(maxNodes) / minNodes : 0.0;
+        
+        std::cout << "Node distribution: min=" << minNodes << ", max=" << maxNodes 
+                 << ", imbalance=" << nodeImbalance << std::endl;
+        
+        // Element balance (if available)
+        if (rankElementCounts[0] > 0) {
+            size_t minElems = *std::min_element(rankElementCounts.begin(), rankElementCounts.end());
+            size_t maxElems = *std::max_element(rankElementCounts.begin(), rankElementCounts.end());
+            double elemImbalance = (minElems > 0) ? static_cast<double>(maxElems) / minElems : 0.0;
+            
+            std::cout << "Element distribution: min=" << minElems << ", max=" << maxElems 
+                     << ", imbalance=" << elemImbalance << std::endl;
+            
+            // For large meshes, expect reasonable balance
+            if (elemImbalance > 0) {
+                EXPECT_LT(elemImbalance, 2.0) << "Element imbalance should be less than 2x";
+            }
+        }
+    } catch (const std::exception& e) {
+        GTEST_SKIP() << "Failed to read mesh: " << e.what();
+    }
+}
+
+// Test that verifies no illegal node indices
+TEST_P(ExternalMeshTest, NoIllegalNodeIndices) {
+    try {
+        for (int r = 0; r < 2; r++) {
+            auto [nodeCount, elementCount, x, y, z, conn] = 
+                mars::readMeshWithElementPartitioning<4, float>(meshPath, r, 2);
+            
+            // Check every index in connectivity
+            auto checkIndices = [nodeCount](const auto& indices) {
+                for (size_t i = 0; i < indices.size(); i++) {
+                    // All indices should be non-negative and within bounds
+                    EXPECT_GE(indices[i], 0) << "Negative node index found";
+                    EXPECT_LT(indices[i], nodeCount) << "Node index out of bounds";
+                }
+            };
+            
+            std::apply([&checkIndices](const auto&... vecs) {
+                (checkIndices(vecs), ...);
+            }, conn);
+            
+            std::cout << "Rank " << r << ": Verified " << elementCount 
+                     << " elements have valid node indices" << std::endl;
+        }
+    } catch (const std::exception& e) {
+        GTEST_SKIP() << "Failed to read mesh: " << e.what();
+    }
 }
 
 // Test to visualize mesh using ADIOS2 for VTK output

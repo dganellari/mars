@@ -457,7 +457,7 @@ ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(cons
               << " nodes and " << elementCount_ << " elements." << std::endl;
 }
 
-// Read mesh data in SoA format; assumes float32 for coordinates and int32 for indices
+// Read mesh data in SoA format; uses element-based partitioning for better data locality
 template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
 void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::readMeshDataSoA(const std::string& meshFile,
                                                                                    HostCoordsTuple& h_coords_,
@@ -470,11 +470,14 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::readMeshDataS
 
     try
     {
-        // Read coordinates using utility function
+        // Read coordinates using utility function which now uses element-based partitioning internally
         auto [readNodeCount, nodeStartIdx, x_data, y_data, z_data] =
             mars::readMeshCoordinatesBinary(meshFile, rank_, numRanks_);
 
         nodeCount_ = readNodeCount;
+        
+        // With element-based partitioning, nodeStartIdx is always 0 since we use local indices
+        assert(nodeStartIdx == 0 && "Element-based partitioning should use local indices");
 
         // If RealType is float, we can move directly
         if constexpr (std::is_same_v<RealType, float>)
@@ -498,32 +501,32 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::readMeshDataS
             }
         }
 
-        // Read connectivity using tuple-specific template function
+        // Read connectivity using tuple-specific template function (nodeStartIdx is always 0 now)
         if constexpr (std::is_same_v<ElementTag, TetTag>)
         {
             auto [readElementCount, conn_tuple] =
-                mars::readMeshConnectivityBinaryTuple<4>(meshFile, nodeStartIdx, rank_, numRanks_);
+                mars::readMeshConnectivityBinaryTuple<4>(meshFile, 0, rank_, numRanks_);
             elementCount_ = readElementCount;
             h_conn_       = std::move(conn_tuple); // Direct move - no copying needed
         }
         else if constexpr (std::is_same_v<ElementTag, HexTag>)
         {
             auto [readElementCount, conn_tuple] =
-                mars::readMeshConnectivityBinaryTuple<8>(meshFile, nodeStartIdx, rank_, numRanks_);
+                mars::readMeshConnectivityBinaryTuple<8>(meshFile, 0, rank_, numRanks_);
             elementCount_ = readElementCount;
             h_conn_       = std::move(conn_tuple); // Direct move - no copying needed
         }
         else if constexpr (std::is_same_v<ElementTag, TriTag>)
         {
             auto [readElementCount, conn_tuple] =
-                mars::readMeshConnectivityBinaryTuple<3>(meshFile, nodeStartIdx, rank_, numRanks_);
+                mars::readMeshConnectivityBinaryTuple<3>(meshFile, 0, rank_, numRanks_);
             elementCount_ = readElementCount;
             h_conn_       = std::move(conn_tuple);
         }
         else if constexpr (std::is_same_v<ElementTag, QuadTag>)
         {
             auto [readElementCount, conn_tuple] =
-                mars::readMeshConnectivityBinaryTuple<4>(meshFile, nodeStartIdx, rank_, numRanks_);
+                mars::readMeshConnectivityBinaryTuple<4>(meshFile, 0, rank_, numRanks_);
             elementCount_ = readElementCount;
             h_conn_       = std::move(conn_tuple);
         }
