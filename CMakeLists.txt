@@ -1,5 +1,6 @@
-cmake_minimum_required(VERSION 3.5...3.19)
-cmake_policy(SET CMP0048 NEW)
+cmake_minimum_required(VERSION 3.22)
+
+include(CheckLanguage)
 
 #Check if the compiler is set at command line.
 #Needs to be before project(...) where the cxx compiler is set to the default value.
@@ -19,22 +20,99 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 if(MARS_ENABLE_CUDA)
-    enable_language(CUDA)
-    find_package(CUDAToolkit REQUIRED)
-    include_directories(SYSTEM ${CUDAToolkit_INCLUDE_DIRS})
-    message(STATUS "Added CUDA include directories globally: ${CUDAToolkit_INCLUDE_DIRS}")
-
-    add_compile_definitions(USE_CUDA MARS_ENABLE_CUDA)
-
-    set(CMAKE_CUDA_STANDARD 17)
-    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} --extended-lambda --expt-relaxed-constexpr")
+    check_language(CUDA)
+    if(CMAKE_CUDA_COMPILER)
+        enable_language(CUDA)
+        find_package(CUDAToolkit REQUIRED)
+        set(CMAKE_CUDA_STANDARD 17)
+        add_compile_definitions(USE_CUDA MARS_ENABLE_CUDA)
+        set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} --extended-lambda --expt-relaxed-constexpr")
+    else()
+        message(STATUS "No CUDA support")
+        set(MARS_ENABLE_CUDA OFF CACHE BOOL "Disable CUDA support" FORCE)
+        set(CSTONE_WITH_CUDA OFF CACHE BOOL "Disable CUDA support" FORCE)
+    endif()
 endif()
 
-# Add near the top, after enabling CUDA but before any add_subdirectory calls
-# if(CMAKE_CUDA_COMPILER)
-#     add_compile_options($<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
-#     add_compile_options($<$<COMPILE_LANGUAGE:CUDA>:--expt-relaxed-constexpr>)
-# endif()
+if(MARS_ENABLE_HIP)
+    check_language(HIP)
+    if(CMAKE_HIP_COMPILER)
+        enable_language(HIP)
+        include(cmake/rocmlibs_target.cmake)
+        set(CMAKE_HIP_STANDARD 17)
+        add_compile_definitions(USE_HIP MARS_ENABLE_HIP)
+
+        # Find rocThrust headers for proper HIP compilation
+        find_path(ROCTHRUST_INCLUDE_DIR 
+            NAMES rocthrust/rocthrust.hpp
+            HINTS
+                /opt/rocm/include
+                /opt/rocm/rocthrust/include
+                ENV ROCM_PATH
+        )
+        
+        if(ROCTHRUST_INCLUDE_DIR)
+            message(STATUS "Found rocThrust at: ${ROCTHRUST_INCLUDE_DIR}")
+            
+            # Create a thrust directory that maps to rocthrust
+            file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/hip_includes)
+            
+            # Create a symbolic link from thrust to rocthrust
+            execute_process(
+                COMMAND ${CMAKE_COMMAND} -E create_symlink
+                        ${ROCTHRUST_INCLUDE_DIR}/rocthrust
+                        ${CMAKE_BINARY_DIR}/hip_includes/thrust
+            )
+            
+            # Add to include paths with high priority
+            include_directories(BEFORE ${CMAKE_BINARY_DIR}/hip_includes)
+            
+            # Add definitions to use HIP for Thrust
+            add_compile_definitions(THRUST_DEVICE_SYSTEM=THRUST_DEVICE_SYSTEM_HIP)
+            add_compile_definitions(THRUST_HOST_SYSTEM=THRUST_HOST_SYSTEM_CPP)
+        else()
+            message(WARNING "rocThrust not found - HIP compilation may fail")
+        endif()
+
+        set(CMAKE_HIP_SOURCE_FILE_EXTENSIONS hip;cu;hip.cpp)
+        file(GLOB_RECURSE HIP_FILES 
+
+            "${CMAKE_SOURCE_DIR}/**/*.hip.cpp"
+            "${CMAKE_SOURCE_DIR}/**/*.hip"
+            "${CMAKE_SOURCE_DIR}/**/*.cu")
+                 
+        foreach(HIP_FILE ${HIP_FILES})
+            set_source_files_properties(${HIP_FILE}
+                PROPERTIES LANGUAGE HIP)
+        endforeach()
+        
+        # Set the platform flag for all HIP compilations
+        add_compile_definitions(__HIP_PLATFORM_AMD__=1)
+        
+        # Set correct flags for hipcc
+        set(HIP_STANDARD ${CMAKE_CXX_STANDARD})
+        set(CMAKE_HIP_STANDARD_REQUIRED ${CMAKE_CXX_STANDARD_REQUIRED})
+        
+        message(STATUS "HIP compiler: ${CMAKE_HIP_COMPILER}")
+        message(STATUS "HIP source extensions: ${CMAKE_HIP_SOURCE_FILE_EXTENSIONS}")
+    else()
+        message(STATUS "No HIP support")
+        set(MARS_ENABLE_HIP OFF CACHE BOOL "Disable HIP support" FORCE)
+        set(CSTONE_WITH_HIP OFF CACHE BOOL "Disable HIP support" FORCE)
+    endif() 
+endif()
+
+if(MARS_ENABLE_HIP AND MARS_ENABLE_CUDA)
+    message(FATAL_ERROR "Cannot enable both HIP and CUDA at the same time.")
+endif()
+
+# Near the beginning of your CMakeLists.txt, add this if it doesn't exist:
+if(MARS_ENABLE_HIP)
+    if(NOT DEFINED HIP_GPU_ARCHITECTURES)
+        set(HIP_GPU_ARCHITECTURES "gfx942" CACHE STRING "AMD GPU targets (e.g., gfx90a, gfx942)")
+    endif()
+    set(CMAKE_HIP_ARCHITECTURES ${HIP_GPU_ARCHITECTURES})
+endif()
 
 # Std CMake imports
 include(CMakePackageConfigHelpers)
@@ -95,6 +173,12 @@ if(MARS_ENABLE_CUDA AND TARGET mars)
     message(STATUS "Added CUDA include directories to mars target")
 endif()
 
+# Add HIP include paths directly to mars target for C++ compilation of HIP headers
+if(MARS_ENABLE_HIP AND TARGET mars)
+    target_include_directories(mars SYSTEM PRIVATE ${HIP_INCLUDE_DIRS})
+    message(STATUS "Added HIP include directories to mars target")
+endif()
+
 target_include_directories(
   mars BEFORE
   PUBLIC $<BUILD_INTERFACE:${CMAKE_BINARY_DIR}>
@@ -137,11 +221,11 @@ if(MARS_ENABLE_UNSTRUCTURED)
         endif()
     endif()
 
-       # Update the fetch section to explicitly include all needed files
+        # In the Cornerstone fetch section of your main CMakeLists.txt
     if(NOT CORNERSTONE_INCLUDE_DIRS)
         message(STATUS "Cornerstone headers not found, fetching source...")
     
-        # Include FetchContent just to get the source
+        # Include FetchContent
         include(FetchContent)
         
         # Define and populate
@@ -150,52 +234,36 @@ if(MARS_ENABLE_UNSTRUCTURED)
             GIT_REPOSITORY https://github.com/sekelle/cornerstone-octree.git
             GIT_TAG master  # Or specific tag/commit
         )
+
+        # Set options for Cornerstone before making available
+        if(MARS_ENABLE_CUDA)
+            set(CSTONE_WITH_CUDA ON CACHE BOOL "Enable CUDA for Cornerstone" FORCE)
+        elseif(MARS_ENABLE_HIP)
+            set(CSTONE_WITH_HIP ON CACHE BOOL "Enable HIP for Cornerstone" FORCE)
+        endif()        
+
+        # Any other Cornerstone options you want to control
+        set(CSTONE_BUILD_TESTS OFF CACHE BOOL "Disable Cornerstone tests" FORCE)
+        set(CSTONE_BUILD_EXAMPLES OFF CACHE BOOL "Disable Cornerstone examples" FORCE)
+ 
+        # Make the content available to use
+        FetchContent_MakeAvailable(cornerstone_fetch)
         
-        # Just get the source, don't try to build it
-        FetchContent_Populate(cornerstone_fetch)
-        
-        # Set paths for includes
+        # Set paths for includes - these will be used later
         set(CORNERSTONE_SRC_DIR "${cornerstone_fetch_SOURCE_DIR}" CACHE PATH "Cornerstone source directory" FORCE)
         set(CORNERSTONE_INCLUDE_DIRS "${cornerstone_fetch_SOURCE_DIR}/include" CACHE PATH "Cornerstone include directory" FORCE)
         
-        # Add the CUDA source files we need directly to our build
-        if(MARS_ENABLE_CUDA)
-            # Find ALL the device_vector implementation files
-            file(GLOB CORNERSTONE_GPU_SOURCES
-                "${cornerstone_fetch_SOURCE_DIR}/gpu/src/*.cu"
-                "${cornerstone_fetch_SOURCE_DIR}/gpu/src/*.cpp"
-                "${cornerstone_fetch_SOURCE_DIR}/src/util/*.cpp"
-                "${cornerstone_fetch_SOURCE_DIR}/src/domain/*.cpp"
-            )
-            
-            message(STATUS "Found these Cornerstone GPU sources:")
-            foreach(src ${CORNERSTONE_GPU_SOURCES})
-                message(STATUS "  ${src}")
-            endforeach()
-            
-            # Create our own GPU library from Cornerstone sources
-            add_library(cstone_gpu STATIC ${CORNERSTONE_GPU_SOURCES})
-            target_include_directories(cstone_gpu PUBLIC
-                ${CORNERSTONE_INCLUDE_DIRS})
-            target_compile_definitions(cstone_gpu PUBLIC 
-                CSTONE_WITH_CUDA
-                USE_CUDA)
-            
-            # Set CUDA properties
-            set_target_properties(cstone_gpu PROPERTIES
-                CUDA_SEPARABLE_COMPILATION ON
-                POSITION_INDEPENDENT_CODE ON)
-            
-            # Link with CUDA
-            find_package(CUDAToolkit REQUIRED)
-            target_link_libraries(cstone_gpu PUBLIC CUDA::cudart)
-            
-            # Set the GPU library location for later use
-            set(CORNERSTONE_GPU_LIBRARY "$<TARGET_FILE:cstone_gpu>" CACHE PATH "Path to cstone_gpu library" FORCE)
-            
-            message(STATUS "Created cstone_gpu target from Cornerstone source files")
+        # Add the subdirectory to build it using its own CMakeLists.txt
+        add_subdirectory(${cornerstone_fetch_SOURCE_DIR})
+        
+        # Now cstone_gpu target should be available if GPU was enabled
+        if(MARS_ENABLE_CUDA OR MARS_ENABLE_HIP)
+            if(TARGET cstone_gpu)
+                message(STATUS "Using cstone_gpu target from Cornerstone's own build system")
+                set(CORNERSTONE_GPU_LIBRARY "$<TARGET_FILE:cstone_gpu>" CACHE PATH "Path to cstone_gpu library" FORCE)
+            endif()
         endif()
-    endif() 
+    endif()
     
     # Setup the include directory structure for relative includes
     if(CORNERSTONE_INCLUDE_DIRS)
@@ -291,7 +359,55 @@ if(MARS_ENABLE_UNSTRUCTURED)
                     message(STATUS "Created cstone_gpu target")
                 endif()
             else()
-                message(WARNING "Cornerstone GPU library not found: ${CORNERSTONE_GPU_LIBRARY}")
+                if(TARGET cstone_gpu)
+                    message(STATUS "Using Cornerstone GPU library built from source")
+                else()
+                    message(WARNING "No Cornerstone GPU library found or built: ${CORNERSTONE_GPU_LIBRARY}")
+                endif()
+            endif()
+        elseif(MARS_ENABLE_HIP)
+            # If we fetched Cornerstone, the GPU library path is already set
+            # Otherwise, search for it
+            if(NOT CORNERSTONE_GPU_LIBRARY OR NOT EXISTS "${CORNERSTONE_GPU_LIBRARY}")
+                find_library(CORNERSTONE_GPU_LIBRARY
+                    NAMES cstone_gpu libcstone_gpu
+                    HINTS
+                    ${CORNERSTONE_SRC_DIR}
+                    ${CORNERSTONE_SRC_DIR}/build
+                    ${CORNERSTONE_SRC_DIR}/lib
+                    ${CORNERSTONE_SRC_DIR}/gpu
+                    ${CORNERSTONE_SRC_DIR}/gpu/include/cstone
+                    ${cornerstone_fetch_BINARY_DIR}/gpu
+                    ${CMAKE_BINARY_DIR}/cornerstone_build
+                    ${CMAKE_BINARY_DIR}/_deps/cornerstone_fetch-build
+                    ${CMAKE_BINARY_DIR}/_deps/cornerstone_fetch-build/gpu
+                    NO_DEFAULT_PATH
+                )
+            endif()
+            
+            if(CORNERSTONE_GPU_LIBRARY AND EXISTS "${CORNERSTONE_GPU_LIBRARY}")
+                message(STATUS "Found Cornerstone GPU library for HIP: ${CORNERSTONE_GPU_LIBRARY}")
+                if(NOT TARGET cstone_gpu)
+                    add_library(cstone_gpu STATIC IMPORTED GLOBAL)
+                    set_target_properties(cstone_gpu PROPERTIES
+                        IMPORTED_LOCATION "${CORNERSTONE_GPU_LIBRARY}"
+                        INTERFACE_INCLUDE_DIRECTORIES "$<BUILD_INTERFACE:${CMAKE_BINARY_DIR}/cornerstone_includes>;$<BUILD_INTERFACE:${CORNERSTONE_INCLUDE_DIRS}>")
+                    
+                    if(NOT TARGET mars::rocmlibs)
+                        include(cmake/rocmlibs_target.cmake)
+                    endif()
+
+                    set_property(TARGET cstone_gpu PROPERTY
+                        INTERFACE_LINK_LIBRARIES "mars::rocmlibs")
+                    
+                    message(STATUS "Created cstone_gpu target")
+                endif()
+            else()
+                if(TARGET cstone_gpu)
+                    message(STATUS "Using Cornerstone GPU library built from source")
+                else()
+                    message(WARNING "No Cornerstone GPU library found or built: ${CORNERSTONE_GPU_LIBRARY}")
+                endif()
             endif()
         endif()
                     
@@ -303,6 +419,20 @@ if(MARS_ENABLE_UNSTRUCTURED)
         
         # Link to the cornerstone target
         target_link_libraries(mars PUBLIC cornerstone::cornerstone)
+
+                # Add this after creating the cornerstone::cornerstone target
+        if(MARS_ENABLE_CUDA)
+            # Make sure CUDA runtime headers are available to cornerstone
+            if(TARGET cornerstone::cornerstone)
+                target_include_directories(cornerstone::cornerstone SYSTEM INTERFACE ${CUDAToolkit_INCLUDE_DIRS})
+                message(STATUS "Added CUDA include directories to cornerstone target: ${CUDAToolkit_INCLUDE_DIRS}")
+            endif()
+            
+            # Also add to cstone_gpu if it exists
+            if(TARGET cstone_gpu)
+                target_include_directories(cstone_gpu SYSTEM INTERFACE ${CUDAToolkit_INCLUDE_DIRS})
+            endif()
+        endif()
         
         # Also directly add the include directories for absolute certainty
         target_include_directories(mars PUBLIC 

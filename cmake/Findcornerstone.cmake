@@ -37,9 +37,10 @@ endif()
 if(NOT cornerstone_FOUND AND NOT CORNERSTONE_NO_GIT_FETCH)
     message(STATUS "Cornerstone headers not found, fetching from GitHub...")
     include(FetchContent)
-    set(BUILD_TESTING OFF CACHE BOOL "Disable Cornerstone tests" FORCE)
+    set(BUILD_TESTING ON CACHE BOOL "Disable Cornerstone tests" FORCE)
     if(MARS_ENABLE_CUDA)
         set(CSTONE_WITH_CUDA ON CACHE BOOL "Enable CUDA for Cornerstone" FORCE)
+        set(CSTONE_WITH_HIP OFF CACHE BOOL "Disable HIP for Cornerstone" FORCE)
         set(CSTONE_WITH_GPU_AWARE_MPI ON CACHE BOOL "Enable GPU-aware MPI" FORCE)
         if(DEFINED CMAKE_CUDA_ARCHITECTURES)
             set(CSTONE_CUDA_ARCHITECTURES ${CMAKE_CUDA_ARCHITECTURES} CACHE STRING "CUDA architectures" FORCE)
@@ -48,8 +49,16 @@ if(NOT cornerstone_FOUND AND NOT CORNERSTONE_NO_GIT_FETCH)
             set(CSTONE_CUDA_FLAGS "-std=c++17 -ccbin=${MPI_CXX_COMPILER} --expt-relaxed-constexpr --extended-lambda"
                 CACHE STRING "CUDA flags for Cornerstone" FORCE)
         endif()
+    elseif(MARS_ENABLE_HIP)
+        set(CSTONE_WITH_CUDA OFF CACHE BOOL "Disable CUDA for Cornerstone" FORCE)
+        set(CSTONE_WITH_HIP ON CACHE BOOL "Enable HIP for Cornerstone" FORCE)
+        set(CSTONE_WITH_GPU_AWARE_MPI ON CACHE BOOL "Enable GPU-aware MPI" FORCE)
+        if(DEFINED CMAKE_HIP_ARCHITECTURES)
+            set(CSTONE_HIP_ARCHITECTURES ${CMAKE_HIP_ARCHITECTURES} CACHE STRING "HIP architectures" FORCE)
+        endif()
     else()
         set(CSTONE_WITH_CUDA OFF CACHE BOOL "Disable CUDA for Cornerstone" FORCE)
+        set(CSTONE_WITH_HIP OFF CACHE BOOL "Disable HIP for Cornerstone" FORCE)
         set(CSTONE_WITH_GPU_AWARE_MPI OFF CACHE BOOL "Disable GPU-aware MPI" FORCE)
     endif()
     FetchContent_Declare(
@@ -61,15 +70,19 @@ if(NOT cornerstone_FOUND AND NOT CORNERSTONE_NO_GIT_FETCH)
     set(cornerstone_INCLUDE_DIR "${cornerstone_fetch_SOURCE_DIR}/include")
     set(CORNERSTONE_SRC_DIR "${cornerstone_fetch_SOURCE_DIR}" CACHE PATH "Cornerstone source directory" FORCE)
     set(cornerstone_FOUND TRUE)
+    set(CORNERSTONE_FETCHED "TRUE" CACHE BOOL "Cornerstone was fetched from GitHub" FORCE)
     message(STATUS "Fetched Cornerstone from GitHub: ${CORNERSTONE_SRC_DIR}")
 endif()
 
 # Handle CUDA-specific configurations
-if(MARS_ENABLE_CUDA AND cornerstone_FOUND)
+if((MARS_ENABLE_CUDA OR MARS_ENABLE_HIP) AND cornerstone_FOUND AND NOT CORNERSTONE_FETCHED)
     find_library(CORNERSTONE_GPU_LIBRARY
         NAMES cstone_gpu libcstone_gpu
         PATHS
             "${CORNERSTONE_SRC_DIR}"
+            "${CORNERSTONE_SRC_DIR}/lib"
+            "${CORNERSTONE_SRC_DIR}/lib64"
+            "${CORNERSTONE_SRC_DIR}/build"
             "${CMAKE_BINARY_DIR}/cornerstone_build"
             "${CMAKE_BINARY_DIR}/_deps/cornerstone_fetch-build"
         NO_DEFAULT_PATH
@@ -99,6 +112,19 @@ if(CORNERSTONE_GPU_LIBRARY AND NOT TARGET cstone_gpu)
     if(MARS_ENABLE_CUDA)
         find_package(CUDAToolkit REQUIRED)
         target_link_libraries(cstone_gpu INTERFACE CUDA::cudart)
+        set_property(TARGET cstone_gpu PROPERTY 
+            INTERFACE_COMPILE_DEFINITIONS "CSTONE_WITH_CUDA;USE_CUDA")
+        message(STATUS "Configured cstone_gpu target with CUDA support")
+    elseif(MARS_ENABLE_HIP)
+        if(NOT TARGET mars::rocmlibs)
+            include(${CMAKE_SOURCE_DIR}/cmake/rocmlibs_target.cmake)
+        endif()
+        target_link_libraries(cstone_gpu INTERFACE mars::rocmlibs)
+        set_property(TARGET cstone_gpu PROPERTY 
+            INTERFACE_COMPILE_DEFINITIONS "CSTONE_WITH_HIP;USE_HIP;THRUST_DEVICE_SYSTEM=THRUST_DEVICE_SYSTEM_HIP")
+        message(STATUS "Configured cstone_gpu target with HIP support")
+    else()
+        message(WARNING "No GPU support enabled. cstone_gpu target will not be linked.")
     endif()
     message(STATUS "Created cstone_gpu target with library: ${CORNERSTONE_GPU_LIBRARY}")
 endif()

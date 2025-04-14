@@ -1,5 +1,9 @@
 # First, find required packages
-find_package(CUDAToolkit REQUIRED)
+if(MARS_ENABLE_CUDA)
+    find_package(CUDAToolkit REQUIRED)
+elseif(MARS_ENABLE_HIP)
+    include(${CMAKE_SOURCE_DIR}/cmake/rocmlibs_target.cmake)
+endif()
 find_package(MPI REQUIRED)
 
 # Make sure Tests.cmake is included here if not already included higher up
@@ -34,7 +38,7 @@ function(addMarsMpiTest source exename testname ranks)
     endif()
 endfunction()
 
-# Modify the addMarsGpuMpiTest function to use this variable
+# Modify the addMarsGpuMpiTest function to support both CUDA and HIP
 function(addMarsGpuMpiTest source exename testname ranks)
     addMarsMpiTest("${source}" ${exename} ${testname} ${ranks})
     
@@ -47,14 +51,37 @@ function(addMarsGpuMpiTest source exename testname ranks)
         ${CORNERSTONE_INCLUDE_DIRS}
     )
     
-    # Link to GPU target - either real or stub
+    # Link to GPU target
     message(STATUS "Linking to GPU target: cstone_gpu")
     target_link_libraries(${exename} PRIVATE cstone_gpu)
     
-    # Add CUDA libraries
-    target_link_libraries(${exename} PRIVATE 
-        CUDA::cudart 
-        -lcudadevrt)
+    # Add GPU-specific libraries based on enabled backend
+    if(MARS_ENABLE_CUDA)
+        # For CUDA backend
+        target_link_libraries(${exename} PRIVATE 
+            CUDA::cudart 
+            -lcudadevrt)
+        
+        # Set CUDA language for the source file
+        set_source_files_properties(${source} PROPERTIES LANGUAGE CUDA)
+        
+        # Set CUDA-specific properties
+        set_target_properties(${exename} PROPERTIES 
+            CUDA_SEPARABLE_COMPILATION ON
+            CUDA_HOST_COMPILER ${MPI_CXX_COMPILER})
+            
+    elseif(MARS_ENABLE_HIP)
+        # For HIP backend
+        target_link_libraries(${exename} PRIVATE mars::rocmlibs)
+        
+        # Set HIP language for the source file
+        set_source_files_properties(${source} PROPERTIES LANGUAGE HIP)
+        
+        # Set HIP-specific properties
+        set_target_properties(${exename} PROPERTIES 
+            HIP_SEPARABLE_COMPILATION ON
+            HIP_ARCHITECTURES "${HIP_GPU_ARCHITECTURES}")
+    endif()
     
     # Print diagnostic info
     message(STATUS "Test executable: ${exename}")

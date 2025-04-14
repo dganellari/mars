@@ -38,20 +38,20 @@ endif()
 
 # ##############################################################################
 
-# Kokkos
-cmake_dependent_option(MARS_ENABLE_CUDA "Enable CUDA backend for Kokkos"
-                       OFF "MARS_ENABLE_KOKKOS" OFF)
-cmake_dependent_option(MARS_ENABLE_HIP "Enable HIP backend for Kokkos"
-                       OFF "MARS_ENABLE_KOKKOS" OFF)
-
-cmake_dependent_option(
-  MARS_ENABLE_CUDAUVM "Kokkos use as default memory space CUDAUVM" OFF
-  "MARS_ENABLE_KOKKOS;MARS_ENABLE_CUDA" OFF)
-cmake_dependent_option(MARS_ENABLE_KOKKOS_KERNELS "Enable Kokkos Kernels" ON
-                       "MARS_ENABLE_KOKKOS" OFF)
-cmake_dependent_option(MARS_ENABLE_CXXOPTS "Enable cxxopts" ON "MARS_ENABLE_EXAMPLES" OFF)
-
 if(MARS_ENABLE_KOKKOS)
+# Kokkos
+  cmake_dependent_option(MARS_ENABLE_CUDA "Enable CUDA backend for Kokkos"
+                       OFF "MARS_ENABLE_KOKKOS" OFF)
+  cmake_dependent_option(MARS_ENABLE_HIP "Enable HIP backend for Kokkos"
+                       OFF "MARS_ENABLE_KOKKOS" OFF)
+
+  cmake_dependent_option(
+    MARS_ENABLE_CUDAUVM "Kokkos use as default memory space CUDAUVM" OFF
+    "MARS_ENABLE_KOKKOS;MARS_ENABLE_CUDA" OFF)
+  cmake_dependent_option(MARS_ENABLE_KOKKOS_KERNELS "Enable Kokkos Kernels" ON
+                         "MARS_ENABLE_KOKKOS" OFF)
+  cmake_dependent_option(MARS_ENABLE_CXXOPTS "Enable cxxopts" ON "MARS_ENABLE_EXAMPLES" OFF)
+
   message(STATUS "Setup Kokkos")
   list(APPEND CMAKE_MESSAGE_INDENT "${MARS_CMAKE_INDENT}")
 
