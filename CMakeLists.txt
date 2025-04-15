@@ -19,14 +19,28 @@ project(
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Modify your CUDA setup section (around line 21):
 if(MARS_ENABLE_CUDA)
     check_language(CUDA)
     if(CMAKE_CUDA_COMPILER)
         enable_language(CUDA)
         find_package(CUDAToolkit REQUIRED)
         set(CMAKE_CUDA_STANDARD 17)
+        
+        # 1. Add global-scope settings to ensure CUDA includes are visible everywhere
+        include_directories(SYSTEM BEFORE ${CUDAToolkit_INCLUDE_DIRS})
+        
+        # 2. Add via compiler flags to ensure they're used in command-line compilation
+        add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-isystem${CUDAToolkit_INCLUDE_DIRS}>)
+        add_compile_options($<$<COMPILE_LANGUAGE:CUDA>:-isystem${CUDAToolkit_INCLUDE_DIRS}>)
+        
+        # 3. Define macros but only via CMake (not in source files)
         add_compile_definitions(USE_CUDA MARS_ENABLE_CUDA)
+        
+        # 4. Set CUDA flags (unchanged)
         set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} --extended-lambda --expt-relaxed-constexpr")
+        
+        message(STATUS "Configured CUDA includes globally: ${CUDAToolkit_INCLUDE_DIRS}")
     else()
         message(STATUS "No CUDA support")
         set(MARS_ENABLE_CUDA OFF CACHE BOOL "Disable CUDA support" FORCE)
@@ -224,7 +238,7 @@ if(MARS_ENABLE_UNSTRUCTURED)
         # In the Cornerstone fetch section of your main CMakeLists.txt
     if(NOT CORNERSTONE_INCLUDE_DIRS)
         message(STATUS "Cornerstone headers not found, fetching source...")
-    
+
         # Include FetchContent
         include(FetchContent)
         
@@ -420,7 +434,6 @@ if(MARS_ENABLE_UNSTRUCTURED)
         # Link to the cornerstone target
         target_link_libraries(mars PUBLIC cornerstone::cornerstone)
 
-                # Add this after creating the cornerstone::cornerstone target
         if(MARS_ENABLE_CUDA)
             # Make sure CUDA runtime headers are available to cornerstone
             if(TARGET cornerstone::cornerstone)
