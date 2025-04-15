@@ -1,5 +1,3 @@
-#define USE_CUDA
-
 #include <gtest/gtest.h>
 #include <fstream>
 #include <filesystem>
@@ -54,84 +52,6 @@ protected:
         file.close();
     }
 };
-
-/**
- * Adapter function that provides backwards compatibility with the old API
- * but uses the new element-based partitioning internally.
- */
-template<typename RealType=float>
-inline auto readMeshCoordinatesBinary(const std::string& meshDir, int rank, int numRanks) {
-    // Try to read all data with element-based partitioning
-    auto [nodeCount, elementCount, x_data, y_data, z_data, _] = 
-        readMeshWithElementPartitioning<4, RealType>(meshDir, rank, numRanks);
-    
-    // Return in the old format for compatibility
-    return std::make_tuple(nodeCount, 0, // nodeStartIdx is now always 0 in the new approach
-                           std::move(x_data), std::move(y_data), std::move(z_data));
-}
-
-/**
- * Adapter function that provides backwards compatibility with the old API
- * but uses the new element-based partitioning internally.
- */
-template<int N>
-inline auto readMeshConnectivityBinaryTuple(const std::string& meshDir, size_t nodeStartIdx, 
-                                          int rank, int numRanks) {
-    // Read with new element-based partitioning
-    auto [nodeCount, elementCount, x_data, y_data, z_data, connectivity] = 
-        readMeshWithElementPartitioning<N, float>(meshDir, rank, numRanks);
-    
-    // Return in the old format for compatibility
-    return std::make_tuple(elementCount, connectivity);
-}
-
-/**
- * Adapter for vector-based connectivity API
- */
-inline auto readMeshConnectivityBinary(const std::string& meshDir, int nodesPerElement,
-                                     size_t nodeStartIdx, int rank, int numRanks) {
-    // Call the appropriate tuple version based on nodesPerElement
-    if(nodesPerElement == 4) {
-        auto [elemCount, conn] = readMeshConnectivityBinaryTuple<4>(meshDir, nodeStartIdx, rank, numRanks);
-        std::vector<std::vector<int>> result(4);
-        
-        // Convert from tuple to vector-of-vectors format
-        result[0] = std::get<0>(conn);
-        result[1] = std::get<1>(conn);
-        result[2] = std::get<2>(conn);
-        result[3] = std::get<3>(conn);
-        
-        return std::make_tuple(elemCount, result);
-    }
-    else if(nodesPerElement == 3) {
-        auto [elemCount, conn] = readMeshConnectivityBinaryTuple<3>(meshDir, nodeStartIdx, rank, numRanks);
-        std::vector<std::vector<int>> result(3);
-        
-        result[0] = std::get<0>(conn);
-        result[1] = std::get<1>(conn);
-        result[2] = std::get<2>(conn);
-        
-        return std::make_tuple(elemCount, result);
-    }
-    else if(nodesPerElement == 8) {
-        auto [elemCount, conn] = readMeshConnectivityBinaryTuple<8>(meshDir, nodeStartIdx, rank, numRanks);
-        std::vector<std::vector<int>> result(8);
-        
-        result[0] = std::get<0>(conn);
-        result[1] = std::get<1>(conn);
-        result[2] = std::get<2>(conn);
-        result[3] = std::get<3>(conn);
-        result[4] = std::get<4>(conn);
-        result[5] = std::get<5>(conn);
-        result[6] = std::get<6>(conn);
-        result[7] = std::get<7>(conn);
-        
-        return std::make_tuple(elemCount, result);
-    }
-    else {
-        throw std::runtime_error("Unsupported number of nodes per element: " + std::to_string(nodesPerElement));
-    }
-}
 
 // Test reading coordinates
 TEST_F(MeshReadBinaryTest, ReadCoordinates) {

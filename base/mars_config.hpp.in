@@ -5,7 +5,9 @@
 #cmakedefine MARS_ENABLE_KOKKOS
 #cmakedefine MARS_ENABLE_KOKKOS_KERNELS
 #cmakedefine MARS_ENABLE_CXXOPTS
+#ifndef MARS_ENABLE_CUDA
 #cmakedefine MARS_ENABLE_CUDA
+#endif
 #cmakedefine MARS_ENABLE_CUDAUVM
 #cmakedefine MARS_ENABLE_HIP
 #cmakedefine MARS_ENABLE_RDMA

@@ -1,7 +1,5 @@
 #include <gtest/gtest.h>
 
-#define USE_CUDA
-
 #include "domain.hpp"
 #include "mars.hpp"
 #include "mars_globals.hpp"

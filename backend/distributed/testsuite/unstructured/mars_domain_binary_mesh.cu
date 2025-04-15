@@ -1,5 +1,3 @@
-#define USE_CUDA
-
 #include <gtest/gtest.h>
 #include <fstream>
 #include <filesystem>
