@@ -1,7 +1,15 @@
-// domain_cuda_impl.hpp
 #pragma once
 
 #include <cstddef>  // For size_t definition
+
+// Handle both CUDA and HIP includes
+#ifdef MARS_ENABLE_CUDA
+#include <cuda_runtime.h>
+#endif
+
+#ifdef MARS_ENABLE_HIP
+#include <hip/hip_runtime.h>
+#endif
 
 namespace cstone {
     // Forward declaration of Domain class
@@ -14,6 +22,10 @@ namespace cstone {
     // Forward declaration of DeviceVector
     template<typename T>
     class DeviceVector;
+    
+    // Forward declarations of GPU-specific classes
+    template<class KeyType, class T>
+    class GlobalAssignmentGpu;
 }
 
 namespace mars {

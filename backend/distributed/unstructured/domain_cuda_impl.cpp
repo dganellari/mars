@@ -1,6 +1,21 @@
 // domain_cuda_impl.cpp
 #include "domain_cuda_impl.hpp"
-#include <cstone/domain/domain.hpp>  // Include complex templates here
+
+// GPU-specific includes
+#ifdef MARS_ENABLE_CUDA
+#include <cuda_runtime.h>
+#include "cstone/cuda/cuda_utils.hpp"
+#endif
+
+#ifdef MARS_ENABLE_HIP
+#include <hip/hip_runtime.h>
+// Include both for compatibility - HIP can use CUDA headers too
+#include "cstone/cuda/cuda_utils.hpp"
+#endif
+
+#include <cstone/domain/domain.hpp>
+#include <cstone/domain/assignment_gpu.cuh>
+#include <cstone/domain/assignment.hpp>
 #include <tuple>
 
 namespace mars {

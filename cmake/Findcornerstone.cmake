@@ -121,7 +121,7 @@ if(CORNERSTONE_GPU_LIBRARY AND NOT TARGET cstone_gpu)
         endif()
         target_link_libraries(cstone_gpu INTERFACE mars::rocmlibs)
         set_property(TARGET cstone_gpu PROPERTY 
-            INTERFACE_COMPILE_DEFINITIONS "CSTONE_WITH_HIP;USE_HIP;THRUST_DEVICE_SYSTEM=THRUST_DEVICE_SYSTEM_HIP")
+            INTERFACE_COMPILE_DEFINITIONS "CSTONE_WITH_HIP;USE_CUDA;THRUST_DEVICE_SYSTEM=THRUST_DEVICE_SYSTEM_HIP")
         message(STATUS "Configured cstone_gpu target with HIP support")
     else()
         message(WARNING "No GPU support enabled. cstone_gpu target will not be linked.")

@@ -59,6 +59,20 @@ set_source_files_properties(
     PROPERTIES LANGUAGE CXX
 )
 
+# Add after line 47 in your unstructured CMakeLists.txt
+# Add include paths directly to the cpp file for GPU header compatibility
+if(MARS_ENABLE_HIP)
+    set_source_files_properties(
+        ${CMAKE_CURRENT_SOURCE_DIR}/domain_cuda_impl.cpp 
+        PROPERTIES COMPILE_FLAGS "-isystem${HIP_INCLUDE_DIRS}"
+    )
+elseif(MARS_ENABLE_CUDA)
+    set_source_files_properties(
+        ${CMAKE_CURRENT_SOURCE_DIR}/domain_cuda_impl.cpp 
+        PROPERTIES COMPILE_FLAGS "-isystem${CUDAToolkit_INCLUDE_DIRS}"
+    )
+endif()
+
 # Set include directories
 target_include_directories(mars_unstructured PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>

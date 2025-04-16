@@ -39,6 +39,10 @@ if(MARS_ENABLE_CUDA)
         
         # 4. Set CUDA flags (unchanged)
         set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} --extended-lambda --expt-relaxed-constexpr")
+
+        # Add environment variables for CUDA paths
+        set(ENV{CPATH} "${CUDAToolkit_INCLUDE_DIRS}:$ENV{CPATH}")
+        set(CUDA_TOOLKIT_ROOT_DIR "${CUDAToolkit_ROOT}" CACHE PATH "Path to CUDA Toolkit" FORCE)
         
         message(STATUS "Configured CUDA includes globally: ${CUDAToolkit_INCLUDE_DIRS}")
     else()
@@ -54,39 +58,11 @@ if(MARS_ENABLE_HIP)
         enable_language(HIP)
         include(cmake/rocmlibs_target.cmake)
         set(CMAKE_HIP_STANDARD 17)
-        add_compile_definitions(USE_HIP MARS_ENABLE_HIP)
+        add_compile_definitions(USE_CUDA MARS_ENABLE_HIP)
 
-        # Find rocThrust headers for proper HIP compilation
-        find_path(ROCTHRUST_INCLUDE_DIR 
-            NAMES rocthrust/rocthrust.hpp
-            HINTS
-                /opt/rocm/include
-                /opt/rocm/rocthrust/include
-                ENV ROCM_PATH
-        )
-        
-        if(ROCTHRUST_INCLUDE_DIR)
-            message(STATUS "Found rocThrust at: ${ROCTHRUST_INCLUDE_DIR}")
-            
-            # Create a thrust directory that maps to rocthrust
-            file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/hip_includes)
-            
-            # Create a symbolic link from thrust to rocthrust
-            execute_process(
-                COMMAND ${CMAKE_COMMAND} -E create_symlink
-                        ${ROCTHRUST_INCLUDE_DIR}/rocthrust
-                        ${CMAKE_BINARY_DIR}/hip_includes/thrust
-            )
-            
-            # Add to include paths with high priority
-            include_directories(BEFORE ${CMAKE_BINARY_DIR}/hip_includes)
-            
-            # Add definitions to use HIP for Thrust
-            add_compile_definitions(THRUST_DEVICE_SYSTEM=THRUST_DEVICE_SYSTEM_HIP)
-            add_compile_definitions(THRUST_HOST_SYSTEM=THRUST_HOST_SYSTEM_CPP)
-        else()
-            message(WARNING "rocThrust not found - HIP compilation may fail")
-        endif()
+        include_directories(SYSTEM BEFORE ${HIP_INCLUDE_DIRS})
+        add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-isystem${HIP_INCLUDE_DIRS}>)
+        add_compile_options($<$<COMPILE_LANGUAGE:HIP>:-isystem${HIP_INCLUDE_DIRS}>)
 
         set(CMAKE_HIP_SOURCE_FILE_EXTENSIONS hip;cu;hip.cpp)
         file(GLOB_RECURSE HIP_FILES 
@@ -109,6 +85,11 @@ if(MARS_ENABLE_HIP)
         
         message(STATUS "HIP compiler: ${CMAKE_HIP_COMPILER}")
         message(STATUS "HIP source extensions: ${CMAKE_HIP_SOURCE_FILE_EXTENSIONS}")
+
+        set(ENV{CPATH} "${HIP_INCLUDE_DIRS}:$ENV{CPATH}")
+        set(HIP_ROOT_DIR "${HIP_ROOT_DIR}" CACHE PATH "Path to HIP Root" FORCE)
+        message(STATUS "Configured HIP includes globally: ${HIP_INCLUDE_DIRS}")
+
     else()
         message(STATUS "No HIP support")
         set(MARS_ENABLE_HIP OFF CACHE BOOL "Disable HIP support" FORCE)
@@ -252,8 +233,10 @@ if(MARS_ENABLE_UNSTRUCTURED)
         # Set options for Cornerstone before making available
         if(MARS_ENABLE_CUDA)
             set(CSTONE_WITH_CUDA ON CACHE BOOL "Enable CUDA for Cornerstone" FORCE)
+            set(CSTONE_WITH_GPU_AWARE_MPI ON CACHE BOOL "Enable GPU-aware MPI in Cornerstone" FORCE)
         elseif(MARS_ENABLE_HIP)
             set(CSTONE_WITH_HIP ON CACHE BOOL "Enable HIP for Cornerstone" FORCE)
+            set(CSTONE_WITH_GPU_AWARE_MPI ON CACHE BOOL "Enable GPU-aware MPI in Cornerstone" FORCE)  
         endif()        
 
         # Any other Cornerstone options you want to control
@@ -444,6 +427,19 @@ if(MARS_ENABLE_UNSTRUCTURED)
             # Also add to cstone_gpu if it exists
             if(TARGET cstone_gpu)
                 target_include_directories(cstone_gpu SYSTEM INTERFACE ${CUDAToolkit_INCLUDE_DIRS})
+            endif()
+        endif()
+
+        if(MARS_ENABLE_HIP)
+            # Make sure HIP runtime headers are available to cornerstone
+            if(TARGET cornerstone::cornerstone)
+                target_include_directories(cornerstone::cornerstone SYSTEM INTERFACE ${HIP_INCLUDE_DIRS})
+                message(STATUS "Added HIP include directories to cornerstone target: ${HIP_INCLUDE_DIRS}")
+            endif()
+            
+            # Also add to cstone_gpu if it exists
+            if(TARGET cstone_gpu)
+                target_include_directories(cstone_gpu SYSTEM INTERFACE ${HIP_INCLUDE_DIRS})
             endif()
         endif()
         
