@@ -1026,6 +1026,7 @@ TEST_P(ExternalMeshTest, WriteADIOS2VTK) {
 #endif // ADIOS2_HAVE_MPI
 
 int main(int argc, char **argv) {
+    mars::Env env(argc, argv);
     ::testing::InitGoogleTest(&argc, argv);
     return RUN_ALL_TESTS();
 }

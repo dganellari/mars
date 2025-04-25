@@ -64,7 +64,6 @@ set(MARS_SOURCES ${MARS_SOURCES} PARENT_SCOPE)
 
 # Handle test directories separately, only if tests are enabled
 if(MARS_ENABLE_TESTS)
-    include(${CMAKE_SOURCE_DIR}/cmake/Tests.cmake)
     # Process test modules but don't add them to MARS_SOURCES
     foreach(TEST_DIR ${DISTRIBUTED_TEST_MODULES})
         # Add the directory to the build

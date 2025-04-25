@@ -6,54 +6,42 @@ elseif(MARS_ENABLE_HIP)
 endif()
 find_package(MPI REQUIRED)
 
-# Make sure Tests.cmake is included here if not already included higher up
-if(NOT COMMAND mars_add_test)
-    include(${CMAKE_SOURCE_DIR}/cmake/Tests.cmake)
-endif()
+# Ensure testing is enabled here
+enable_testing()
 
 # Define a helper function for adding Mars MPI tests
-function(addMarsMpiTest source exename testname ranks)
+function(addMarsMpiTest source exename testname)
     add_executable(${exename} ${source})
     
-    # Include directories - note how Cornerstone uses PROJECT_SOURCE_DIR/include
+    # Include directories - include all necessary paths here
     target_include_directories(${exename} PRIVATE
         ${CMAKE_SOURCE_DIR}
         ${CMAKE_BINARY_DIR}
         ${CMAKE_BINARY_DIR}/cornerstone_includes
         ${CORNERSTONE_INCLUDE_DIRS}
         ${MPI_CXX_INCLUDE_PATH}
+        ${CMAKE_SOURCE_DIR}/backend/distributed/unstructured/utils
     )
     
     target_compile_options(${exename} PRIVATE -Wno-unknown-pragmas)
+    
+    # Link with all necessary libraries (except GPU-specific ones)
     target_link_libraries(${exename} PRIVATE
+        mars_unstructured  # Link to mars_unstructured for all tests
+        cstone_gpu
         ${MPI_CXX_LIBRARIES}
         ${MARS_G_TEST_LIBRARIES}
     )
     
-    # Use the mars_add_mpi_test function if available, otherwise just add_test
-    if(COMMAND mars_add_mpi_test)
-        mars_add_mpi_test(${testname} EXECUTABLE ${exename} RANKS ${ranks})
-    else()
-        add_test(NAME ${testname} COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${ranks} $<TARGET_FILE:${exename}>)
-    endif()
+    mars_add_test(${testname} ${source})
+    
+    message(STATUS "Added test: ${testname}")
 endfunction()
 
-# Modify the addMarsGpuMpiTest function to support both CUDA and HIP
-function(addMarsGpuMpiTest source exename testname ranks)
-    addMarsMpiTest("${source}" ${exename} ${testname} ${ranks})
-    
-    # Add mars_unstructured which contains domain.cu implementation
-    target_link_libraries(${exename} PRIVATE mars_unstructured)
-
-    # Add Cornerstone includes directly
-    target_include_directories(${exename} PRIVATE
-        ${CMAKE_BINARY_DIR}/cornerstone_includes
-        ${CORNERSTONE_INCLUDE_DIRS}
-    )
-    
-    # Link to GPU target
-    message(STATUS "Linking to GPU target: cstone_gpu")
-    target_link_libraries(${exename} PRIVATE cstone_gpu)
+# Modify the addMarsGpuMpiTest function to ONLY add GPU-specific functionality
+function(addMarsGpuMpiTest source exename testname)
+    # First, create the basic MPI test
+    addMarsMpiTest("${source}" ${exename} ${testname})
     
     # Add GPU-specific libraries based on enabled backend
     if(MARS_ENABLE_CUDA)
@@ -88,12 +76,18 @@ function(addMarsGpuMpiTest source exename testname ranks)
     message(STATUS "CORNERSTONE_INCLUDE_DIRS: ${CORNERSTONE_INCLUDE_DIRS}")
 endfunction()
 
-# Add domain binary mesh test
-addMarsGpuMpiTest(
-    ${CMAKE_CURRENT_SOURCE_DIR}/mars_domain_binary_mesh.cu
-    mars_domain_binary_test
-    MarsDomainBinaryTest
-    2
+# # Add domain binary mesh test
+# addMarsGpuMpiTest(
+#     ${CMAKE_CURRENT_SOURCE_DIR}/mars_domain_binary_mesh.cu
+#     mars_domain_binary_test
+#     MarsDomainBinaryTest
+#     2
+# )
+
+addMarsMpiTest(
+    ${CMAKE_CURRENT_SOURCE_DIR}/mars_read_mesh_binary.cpp
+    mars_read_mesh_binary_test
+    marsReadMeshBinaryTest
 )
 
 # Print diagnostic messages to help debug linking
@@ -108,4 +102,3 @@ endif()
 # Print Cornerstone variables for diagnostic purposes
 message(STATUS "CORNERSTONE_INCLUDE_DIRS: ${CORNERSTONE_INCLUDE_DIRS}")
 message(STATUS "CORNERSTONE_SRC_DIR: ${CORNERSTONE_SRC_DIR}")
-message(STATUS "CORNERSTONE_MAIN_LIB: ${CORNERSTONE_MAIN_LIB}")

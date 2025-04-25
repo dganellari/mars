@@ -19,6 +19,11 @@ project(
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+enable_testing()
+if(MARS_ENABLE_TESTS)
+    include(cmake/Tests.cmake)
+endif()
+
 # Modify your CUDA setup section (around line 21):
 if(MARS_ENABLE_CUDA)
     check_language(CUDA)
