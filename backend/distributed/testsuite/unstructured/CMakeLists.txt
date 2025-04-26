@@ -76,6 +76,24 @@ function(addMarsGpuMpiTest source exename testname)
     message(STATUS "CORNERSTONE_INCLUDE_DIRS: ${CORNERSTONE_INCLUDE_DIRS}")
 endfunction()
 
+addMarsMpiTest(
+    ${CMAKE_CURRENT_SOURCE_DIR}/mars_read_mesh_binary_basic.cpp
+    mars_read_mesh_binary_basic_test
+    marsReadMeshBinaryBasicTest
+)
+
+addMarsMpiTest(
+    ${CMAKE_CURRENT_SOURCE_DIR}/mars_read_mesh_binary_mpi.cpp
+    mars_read_mesh_binary_mpi_test
+    marsReadMeshBinaryMpiTest
+)
+
+addMarsMpiTest(
+    ${CMAKE_CURRENT_SOURCE_DIR}/mars_read_mesh_binary_external_mesh.cpp
+    mars_read_mesh_binary_external_mesh_test
+    marsReadMeshBinaryExternalMeshTest
+)
+
 # # Add domain binary mesh test
 # addMarsGpuMpiTest(
 #     ${CMAKE_CURRENT_SOURCE_DIR}/mars_domain_binary_mesh.cu
@@ -83,12 +101,6 @@ endfunction()
 #     MarsDomainBinaryTest
 #     2
 # )
-
-addMarsMpiTest(
-    ${CMAKE_CURRENT_SOURCE_DIR}/mars_read_mesh_binary.cpp
-    mars_read_mesh_binary_test
-    marsReadMeshBinaryTest
-)
 
 # Print diagnostic messages to help debug linking
 if(TARGET cstone_gpu)
