@@ -156,7 +156,7 @@ inline auto readMeshWithElementPartitioning(const std::string& meshDir, int rank
         rawConnectivity);
 
     return std::make_tuple(nodeCount, elementCount, std::move(x_data), std::move(y_data), std::move(z_data),
-                           std::move(localConnectivity));
+                           std::move(localConnectivity), neededNodes);
 }
 
 /**
@@ -167,7 +167,7 @@ template<typename RealType = float>
 inline auto readMeshCoordinatesBinary(const std::string& meshDir, int rank, int numRanks)
 {
     // Try to read all data with element-based partitioning
-    auto [nodeCount, elementCount, x_data, y_data, z_data, _] =
+    auto [nodeCount, elementCount, x_data, y_data, z_data, _, localToGlobal] =
         readMeshWithElementPartitioning<4, RealType>(meshDir, rank, numRanks);
 
     // Return in the old format for compatibility
@@ -183,7 +183,7 @@ template<int N, typename RealType = float>
 inline auto readMeshConnectivityBinaryTuple(const std::string& meshDir, int nodeStartIdx, int rank, int numRanks)
 {
     // Try to read all data with element-based partitioning - reuse existing data
-    auto [nodeCount, elementCount, x_data, y_data, z_data, connectivity] =
+    auto [nodeCount, elementCount, x_data, y_data, z_data, connectivity, localToGlobal] =
         readMeshWithElementPartitioning<N, RealType>(meshDir, rank, numRanks);
 
     // Return in the old format for compatibility - nodeStartIdx is ignored

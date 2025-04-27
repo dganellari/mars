@@ -150,14 +150,14 @@ TEST_P(ExternalMeshTest, ReadPerformance) {
 TEST_P(ExternalMeshTest, WriteStandardVTK) {
     // Skip test if not on rank 0
     if (rank != 0) {
-        GTEST_SKIP() << "VTK export only runs on rank 0";
+        GTEST_SKIP() << "VTK export only ran on rank 0";
     }
 
     std::cout << "Reading mesh for standard VTK export: " << meshPath << std::endl;
     
     // Read coordinates with float precision
     auto [nodeCount, nodeStartIdx, x_data, y_data, z_data] = 
-        mars::readMeshCoordinatesBinary<float>(meshPath, rank, numRanks);
+        mars::readMeshCoordinatesBinary<float>(meshPath, 0, 1);
     
     if (nodeCount == 0) {
         GTEST_SKIP() << "Empty mesh, skipping VTK export";
@@ -191,7 +191,7 @@ TEST_P(ExternalMeshTest, WriteStandardVTK) {
     
     try {
         auto [tetCount, tet_conn] = 
-            mars::readMeshConnectivityBinaryTuple<4>(meshPath, nodeStartIdx, rank, numRanks);
+            mars::readMeshConnectivityBinaryTuple<4>(meshPath, nodeStartIdx, 0, 1);
         
         numElements = tetCount;
         
@@ -231,8 +231,216 @@ TEST_P(ExternalMeshTest, WriteStandardVTK) {
     EXPECT_GT(fs::file_size(outputPath), 0) << "VTK file is empty";
 }
 
+// Test to visualize mesh in ParaView using actual MPI distribution
+TEST_P(ExternalMeshTest, WriteVTKWithActualMpiDistribution) {
+    // Read this rank's portion of the mesh with element-based partitioning
+    // Now with localToGlobal included in the return tuple
+    auto [nodeCount, elementCount, x, y, z, conn, localToGlobal] = 
+        mars::readMeshWithElementPartitioning<4, float>(meshPath, rank, numRanks);
+    
+    // Gather all node data to rank 0 for VTK writing
+    std::vector<float> allX, allY, allZ;
+    std::vector<int> allI0, allI1, allI2, allI3;
+    size_t totalNodes = 0, totalElements = 0;
+    
+    // First, gather the counts to allocate space
+    std::vector<int> nodeCounts(numRanks);
+    std::vector<int> elemCounts(numRanks);
+    int myNodeCount = static_cast<int>(nodeCount);
+    int myElemCount = static_cast<int>(elementCount);
+    
+    MPI_Gather(&myNodeCount, 1, MPI_INT, nodeCounts.data(), 1, MPI_INT, 0, MPI_COMM_WORLD);
+    MPI_Gather(&myElemCount, 1, MPI_INT, elemCounts.data(), 1, MPI_INT, 0, MPI_COMM_WORLD);
+    
+    // We need global node IDs to create a consistent combined mesh
+    std::vector<int> globalNodeIDs;
+    if (nodeCount > 0) {
+        globalNodeIDs.resize(nodeCount);
+        for (size_t i = 0; i < nodeCount; ++i) {
+            globalNodeIDs[i] = localToGlobal[i]; // Copy the global IDs
+        }
+    }
+    
+    // Prepare displacement arrays for gathering
+    std::vector<int> nodeDispls(numRanks, 0);
+    std::vector<int> elemDispls(numRanks, 0);
+    std::vector<int> allGlobalNodeIds; // Will hold all global node IDs in order
+    
+    if (rank == 0) {
+        // Calculate total counts and displacements
+        for (int i = 0; i < numRanks; i++) {
+            if (i > 0) {
+                nodeDispls[i] = nodeDispls[i-1] + nodeCounts[i-1];
+                elemDispls[i] = elemDispls[i-1] + elemCounts[i-1];
+            }
+            totalNodes += nodeCounts[i];
+            totalElements += elemCounts[i];
+        }
+        
+        // Allocate space for the gathered data
+        allX.resize(totalNodes);
+        allY.resize(totalNodes);
+        allZ.resize(totalNodes);
+        allGlobalNodeIds.resize(totalNodes);
+        
+        if (totalElements > 0) {
+            allI0.resize(totalElements);
+            allI1.resize(totalElements);
+            allI2.resize(totalElements);
+            allI3.resize(totalElements);
+        }
+    }
+    
+    // Gather coordinate data
+    MPI_Gatherv(x.data(), myNodeCount, MPI_FLOAT, 
+               allX.data(), nodeCounts.data(), nodeDispls.data(), 
+               MPI_FLOAT, 0, MPI_COMM_WORLD);
+    MPI_Gatherv(y.data(), myNodeCount, MPI_FLOAT, 
+               allY.data(), nodeCounts.data(), nodeDispls.data(), 
+               MPI_FLOAT, 0, MPI_COMM_WORLD);
+    MPI_Gatherv(z.data(), myNodeCount, MPI_FLOAT, 
+               allZ.data(), nodeCounts.data(), nodeDispls.data(), 
+               MPI_FLOAT, 0, MPI_COMM_WORLD);
+    
+    // Gather global node IDs
+    MPI_Gatherv(globalNodeIDs.data(), myNodeCount, MPI_INT,
+               allGlobalNodeIds.data(), nodeCounts.data(), nodeDispls.data(),
+               MPI_INT, 0, MPI_COMM_WORLD);
+    
+    // Gather connectivity data if available
+    if (elementCount > 0) {
+        // Extract connectivity arrays
+        const auto& i0 = std::get<0>(conn);
+        const auto& i1 = std::get<1>(conn);
+        const auto& i2 = std::get<2>(conn);
+        const auto& i3 = std::get<3>(conn);
+        
+        // Create vectors to hold the connectivity with corrected global indices
+        std::vector<int> globalI0(elementCount);
+        std::vector<int> globalI1(elementCount);
+        std::vector<int> globalI2(elementCount);
+        std::vector<int> globalI3(elementCount);
+        
+        // Convert local indices to global indices
+        for (size_t i = 0; i < elementCount; i++) {
+            // The local index i0[i] corresponds to global node localToGlobal[i0[i]]
+            globalI0[i] = localToGlobal[i0[i]];
+            globalI1[i] = localToGlobal[i1[i]];
+            globalI2[i] = localToGlobal[i2[i]];
+            globalI3[i] = localToGlobal[i3[i]];
+        }
+        
+        // Gather the global connectivity
+        MPI_Gatherv(globalI0.data(), myElemCount, MPI_INT,
+                  allI0.data(), elemCounts.data(), elemDispls.data(),
+                  MPI_INT, 0, MPI_COMM_WORLD);
+        MPI_Gatherv(globalI1.data(), myElemCount, MPI_INT,
+                  allI1.data(), elemCounts.data(), elemDispls.data(),
+                  MPI_INT, 0, MPI_COMM_WORLD);
+        MPI_Gatherv(globalI2.data(), myElemCount, MPI_INT,
+                  allI2.data(), elemCounts.data(), elemDispls.data(),
+                  MPI_INT, 0, MPI_COMM_WORLD);
+        MPI_Gatherv(globalI3.data(), myElemCount, MPI_INT,
+                  allI3.data(), elemCounts.data(), elemDispls.data(),
+                  MPI_INT, 0, MPI_COMM_WORLD);
+    }
+    
+    // Create a coherent mesh on rank 0
+    if (rank == 0 && totalNodes > 0) {
+        // First, create a mapping from global node IDs to positions in gathered arrays
+        std::unordered_map<int, int> globalToIndex;
+        for (size_t i = 0; i < totalNodes; ++i) {
+            globalToIndex[allGlobalNodeIds[i]] = i;
+        }
+        
+        // Fix connectivity to refer to positions in gathered arrays
+        if (totalElements > 0) {
+            for (size_t i = 0; i < totalElements; ++i) {
+                allI0[i] = globalToIndex[allI0[i]];
+                allI1[i] = globalToIndex[allI1[i]];
+                allI2[i] = globalToIndex[allI2[i]];
+                allI3[i] = globalToIndex[allI3[i]];
+            }
+        }
+        
+        // Verify indices are valid
+        bool indicesValid = true;
+        for (size_t i = 0; i < totalElements && indicesValid; i++) {
+            if (allI0[i] < 0 || allI0[i] >= totalNodes ||
+                allI1[i] < 0 || allI1[i] >= totalNodes ||
+                allI2[i] < 0 || allI2[i] >= totalNodes ||
+                allI3[i] < 0 || allI3[i] >= totalNodes) {
+                std::cout << "Invalid index at element " << i 
+                         << ": [" << allI0[i] << ", " << allI1[i] 
+                         << ", " << allI2[i] << ", " << allI3[i] 
+                         << "]" << std::endl;
+                indicesValid = false;
+            }
+        }
+        
+        if (!indicesValid) {
+            std::cout << "Warning: Invalid node indices found in connectivity data" << std::endl;
+        } else {
+            std::cout << "All connectivity indices verified valid" << std::endl;
+        }
+        
+        // Write VTK file
+        fs::path inputDir = fs::path(meshPath).parent_path();
+        fs::path outputPath = inputDir / ("mesh_visualization_mpi_" + std::to_string(numRanks) + "_ranks.vtk");
+        std::cout << "Writing MPI-distributed VTK file to: " << outputPath << std::endl;
+        
+        // Write VTK file with gathered data
+        std::ofstream vtkFile(outputPath, std::ios::out);
+        if (!vtkFile) {
+            GTEST_SKIP() << "Failed to open VTK file for writing: " << outputPath;
+        }
+        
+        // Write VTK header
+        vtkFile << "# vtk DataFile Version 3.0\n";
+        vtkFile << "Mesh exported from MARS using MPI distribution\n";
+        vtkFile << "ASCII\n";
+        vtkFile << "DATASET UNSTRUCTURED_GRID\n";
+        
+        // Write points
+        vtkFile << "POINTS " << totalNodes << " float\n";
+        for (size_t i = 0; i < totalNodes; i++) {
+            vtkFile << allX[i] << " " << allY[i] << " " << allZ[i] << "\n";
+        }
+        
+        // Write cells if available
+        if (totalElements > 0) {
+            vtkFile << "CELLS " << totalElements << " " << totalElements * 5 << "\n";
+            for (size_t i = 0; i < totalElements; i++) {
+                vtkFile << "4 " 
+                       << allI0[i] << " " 
+                       << allI1[i] << " " 
+                       << allI2[i] << " " 
+                       << allI3[i] << "\n";
+            }
+            
+            // Write cell types (10 = VTK_TETRA)
+            vtkFile << "CELL_TYPES " << totalElements << "\n";
+            for (size_t i = 0; i < totalElements; i++) {
+                vtkFile << "10\n";  // 10 is the VTK type for tetrahedron
+            }
+        }
+        
+        vtkFile.close();
+        
+        std::cout << "VTK file written with " << totalNodes << " nodes and " 
+                  << totalElements << " tetrahedral elements" << std::endl;
+        
+        // Verify file was written
+        EXPECT_TRUE(fs::exists(outputPath)) << "VTK file was not created";
+        EXPECT_GT(fs::file_size(outputPath), 0) << "VTK file is empty";
+    }
+    
+    // Ensure all ranks finish before proceeding
+    MPI_Barrier(MPI_COMM_WORLD);
+}
+
 // Test partitioning balance with element-based partitioning
-TEST_P(ExternalMeshTest, ElementBasedPartitioningBalance) {
+TEST_P(ExternalMeshTest, ElementPartitioningBalanceSingleRank) {
     try {
         // Skip if we're not on rank 0
         if (rank != 0) {
@@ -257,7 +465,7 @@ TEST_P(ExternalMeshTest, ElementBasedPartitioningBalance) {
         // Read each rank's portion with element-based partitioning
         for (int r = 0; r < testRanks; r++) {
             try {
-                auto [nodeCount, elementCount, x, y, z, conn] = 
+                auto [nodeCount, elementCount, x, y, z, conn, localToGlobal] = 
                     mars::readMeshWithElementPartitioning<4, float>(meshPath, r, testRanks);
                 
                 rankNodeCounts[r] = nodeCount;
@@ -316,8 +524,66 @@ TEST_P(ExternalMeshTest, ElementBasedPartitioningBalance) {
     }
 }
 
+// Test actual MPI-based distribution
+TEST_P(ExternalMeshTest, ElementPartitioningBalanceMultipleRanks) {
+    // This test runs on all ranks
+    
+    // Read this rank's portion of the mesh with element-based partitioning
+    auto [nodeCount, elementCount, x, y, z, conn, localToGlobal] =
+        mars::readMeshWithElementPartitioning<4, float>(meshPath, rank, numRanks);
+    
+    // Each rank verifies its own data
+    EXPECT_GE(nodeCount, 0) << "Node count should be non-negative";
+    EXPECT_GE(elementCount, 0) << "Element count should be non-negative";
+    
+    // Gather all element counts to rank 0 to verify distribution
+    std::vector<size_t> allElementCounts(numRanks);
+    MPI_Gather(&elementCount, 1, MPI_UNSIGNED_LONG, 
+              allElementCounts.data(), 1, MPI_UNSIGNED_LONG, 
+              0, MPI_COMM_WORLD);
+    
+    // Rank 0 verifies the distribution is reasonable
+    if (rank == 0 && numRanks > 1) {
+        // Filter out zeros
+        std::vector<size_t> nonZeroCounts;
+        for (auto count : allElementCounts) {
+            if (count > 0) nonZeroCounts.push_back(count);
+        }
+        
+        if (nonZeroCounts.size() > 1) {
+            size_t minElems = *std::min_element(nonZeroCounts.begin(), nonZeroCounts.end());
+            size_t maxElems = *std::max_element(nonZeroCounts.begin(), nonZeroCounts.end());
+            double elemImbalance = static_cast<double>(maxElems) / minElems;
+            
+            std::cout << "Actual MPI element distribution: min=" << minElems 
+                     << ", max=" << maxElems << ", imbalance=" << elemImbalance << std::endl;
+            
+            // For large meshes, expect reasonable balance
+            EXPECT_LT(elemImbalance, 2.0) << "Element imbalance should be less than 2x";
+        }
+    }
+    
+    // Have each rank verify its node indices are valid
+    if (elementCount > 0) {
+        auto checkIndices = [nodeCount](const auto& indices) {
+            for (size_t i = 0; i < indices.size(); i++) {
+                // All indices should be non-negative and within bounds
+                EXPECT_GE(indices[i], 0) << "Negative node index found";
+                EXPECT_LT(indices[i], nodeCount) << "Node index out of bounds";
+            }
+        };
+        
+        std::apply([&checkIndices](const auto&... vecs) {
+            (checkIndices(vecs), ...);
+        }, conn);
+    }
+    
+    // Make sure all ranks complete testing before ending
+    MPI_Barrier(MPI_COMM_WORLD);
+}
+
 // Test that verifies no illegal node indices with element-based partitioning
-TEST_P(ExternalMeshTest, NoIllegalNodeIndices) {
+TEST_P(ExternalMeshTest, NoIllegalNodeIndicesSingleRank) {
     try {
         // Skip if we're not on rank 0
         if (rank != 0) {
@@ -326,7 +592,7 @@ TEST_P(ExternalMeshTest, NoIllegalNodeIndices) {
         
         // Test with 2 simulated ranks
         for (int r = 0; r < 2; r++) {
-            auto [nodeCount, elementCount, x, y, z, conn] = 
+            auto [nodeCount, elementCount, x, y, z, conn, localToGlobal] =
                 mars::readMeshWithElementPartitioning<4, float>(meshPath, r, 2);
             
             // Skip if no elements
@@ -351,6 +617,53 @@ TEST_P(ExternalMeshTest, NoIllegalNodeIndices) {
     } catch (const std::exception& e) {
         GTEST_SKIP() << "Failed to read mesh: " << e.what();
     }
+}
+
+// Updated test that uses actual MPI processes rather than simulation
+TEST_P(ExternalMeshTest, NoIllegalNodeIndicesMultipleRanks) {
+    // Read this rank's portion of the mesh with element-based partitioning
+    auto [nodeCount, elementCount, x, y, z, conn, localToGlobal] = 
+        mars::readMeshWithElementPartitioning<4, float>(meshPath, rank, numRanks);
+    
+    // Each rank verifies its own data
+    EXPECT_GE(nodeCount, 0) << "Node count should be non-negative";
+    EXPECT_GE(elementCount, 0) << "Element count should be non-negative";
+    
+    // Have each rank verify its own node indices are valid
+    if (elementCount > 0) {
+        int currRank = rank;
+        auto checkIndices = [nodeCount, currRank](const auto& indices) {
+            for (size_t i = 0; i < indices.size(); i++) {
+                // All indices should be non-negative and within bounds
+                EXPECT_GE(indices[i], 0) << "Negative node index found on rank " << currRank;
+                EXPECT_LT(indices[i], nodeCount) << "Node index out of bounds on rank " << currRank;
+            }
+        };
+        
+        std::apply([&checkIndices](const auto&... vecs) {
+            (checkIndices(vecs), ...);
+        }, conn);
+        
+        // Only print from rank 0 to avoid flooding output
+        if (rank == 0) {
+            std::cout << "Rank " << rank << ": Verified " << elementCount 
+                     << " elements have valid node indices" << std::endl;
+        }
+    }
+    
+    // Collect verification status from all ranks
+    int localVerificationSuccess = (elementCount == 0) ? 1 : 0;  // 0 means successful verification with elements
+    int globalVerificationStatus = 0;
+    
+    MPI_Allreduce(&localVerificationSuccess, &globalVerificationStatus, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+    
+    // If no rank had elements to verify, print a message from rank 0
+    if (rank == 0 && globalVerificationStatus == numRanks) {
+        std::cout << "No elements to verify across any rank" << std::endl;
+    }
+    
+    // Make sure all ranks complete testing before ending
+    MPI_Barrier(MPI_COMM_WORLD);
 }
 
 // Find available mesh directories containing the binary format files

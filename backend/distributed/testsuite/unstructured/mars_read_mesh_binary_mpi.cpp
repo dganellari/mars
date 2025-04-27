@@ -105,7 +105,7 @@ TEST_F(MeshReadBinaryMPITest, MultiRankDistribution) {
         
         // For each rank, read its portion of the mesh
         for (int rank = 0; rank < numRanks; rank++) {
-            auto [nodeCount, elementCount, x, y, z, conn] = 
+            auto [nodeCount, elementCount, x, y, z, conn, localToGlobal] =
                 mars::readMeshWithElementPartitioning<4, float>(testDir.string(), rank, numRanks);
             
             // Track total elements
@@ -178,7 +178,7 @@ TEST_F(MeshReadBinaryMPITest, ElementBasedPartitioning) {
     std::cout << "Running on rank " << rank << " of " << size << std::endl;
     
     // Read this rank's portion of the mesh
-    auto [nodeCount, elementCount, x, y, z, connectivity] = 
+    auto [nodeCount, elementCount, x, y, z, connectivity, localToGlobal] =
         mars::readMeshWithElementPartitioning<4, float>(testDir.string(), rank, size);
     
     // Gather element and node counts from all ranks for validation
