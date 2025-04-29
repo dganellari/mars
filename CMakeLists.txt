@@ -505,35 +505,6 @@ endif()
 
 include_directories(${CMAKE_BINARY_DIR})
 
-# Final check to see if we created the target
-if(TARGET cstone_gpu)
-    message(STATUS "cstone_gpu target is available for installation")
-    get_target_property(GPU_LOCATION cstone_gpu IMPORTED_LOCATION)
-    message(STATUS "cstone_gpu location: ${GPU_LOCATION}")
-    # Add to MARS_TARGETS only if it exists in this scope
-    list(APPEND MARS_TARGETS cstone_gpu)
-    # Install the target (avoid installation for imported targets)
-    if(EXISTS "${GPU_LOCATION}")
-        message(STATUS "Installing GPU library directly: ${GPU_LOCATION}")
-        get_filename_component(GPU_LIB_NAME "${GPU_LOCATION}" NAME)
-        install(FILES "${GPU_LOCATION}"
-                DESTINATION ${CMAKE_INSTALL_LIBDIR}
-                RENAME "${GPU_LIB_NAME}")
-    endif()
-else()
-    message(STATUS "cstone_gpu target not created, skipping installation")
-    # Fallback: try using CORNERSTONE_GPU_LIBRARY directly
-    if(EXISTS "${CORNERSTONE_GPU_LIBRARY}")
-        message(STATUS "Installing GPU library directly from specified path: ${CORNERSTONE_GPU_LIBRARY}")
-        get_filename_component(GPU_LIB_NAME "${CORNERSTONE_GPU_LIBRARY}" NAME)
-        install(FILES "${CORNERSTONE_GPU_LIBRARY}"
-                DESTINATION ${CMAKE_INSTALL_LIBDIR}
-                RENAME "${GPU_LIB_NAME}")
-    endif()
-endif()
-
-# Delete both existing blocks (lines 512-556) and replace with this:
-
 # Final check for cstone_gpu and installation handling
 if(TARGET cstone_gpu)
     message(STATUS "cstone_gpu target is available")
