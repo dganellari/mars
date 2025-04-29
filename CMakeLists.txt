@@ -24,6 +24,7 @@ if(MARS_ENABLE_TESTS)
     include(cmake/Tests.cmake)
 endif()
 
+
 # Modify your CUDA setup section (around line 21):
 if(MARS_ENABLE_CUDA)
     check_language(CUDA)
@@ -123,70 +124,7 @@ include(cmake/MarsOptions.cmake)
 include(cmake/MarsCMakeFunctions.cmake)
 include(cmake/MarsDependencies.cmake)
 include(cmake/MarsClangFormat.cmake)
-
 # ######################### Library Configuration #############################
-
-# set(MARS_MODULES base core distributed examples io kokkos)
-set(MARS_MODULES base core examples io kokkos)
-
-foreach(MODULE ${MARS_MODULES})
-  add_subdirectory("${MODULE}")
-endforeach(MODULE)
-
-if(MARS_ENABLE_SERIAL_BACKEND)
-    add_subdirectory("backend/serial")
-endif()
-
-# Now add distributed backend - dependencies handled in unstructured directory
-if(MARS_ENABLE_DISTRIBUTED_BACKEND)
-    add_subdirectory("backend/distributed")
-endif()
-
-if(MARS_ENABLE_AMR_BACKEND)
-    add_subdirectory("backend/amr")
-endif()
-
-if(MARS_ENABLE_MOONOLITH)
-  add_subdirectory(moonolith_adapter)
-endif()
-
-if(MARS_ENABLE_CXXOPTS)
-  include(cxxopts/cxxopts.cmake)
-endif()
-
-add_library(mars ${MARS_HEADERS} ${MARS_SOURCES})
-
-if(CMAKE_CUDA_COMPILER AND TARGET mars)
-    # Add CUDA flags to the mars target
-    target_compile_options(mars PRIVATE
-        $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>
-        $<$<COMPILE_LANGUAGE:CUDA>:--expt-relaxed-constexpr>)
-endif()
-
-foreach(include ${MARS_BUILD_INCLUDES})
-  target_include_directories(mars BEFORE PUBLIC $<BUILD_INTERFACE:${include}>)
-endforeach()
-
-# Add CUDA include paths directly to mars target for C++ compilation of CUDA headers
-if(MARS_ENABLE_CUDA AND TARGET mars)
-    target_include_directories(mars SYSTEM PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
-    message(STATUS "Added CUDA include directories to mars target")
-endif()
-
-# Add HIP include paths directly to mars target for C++ compilation of HIP headers
-if(MARS_ENABLE_HIP AND TARGET mars)
-    target_include_directories(mars SYSTEM PRIVATE ${HIP_INCLUDE_DIRS})
-    message(STATUS "Added HIP include directories to mars target")
-endif()
-
-target_include_directories(
-  mars BEFORE
-  PUBLIC $<BUILD_INTERFACE:${CMAKE_BINARY_DIR}>
-         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
-         $<INSTALL_INTERFACE:include>)
-
-target_include_directories(mars PUBLIC ${MARS_DEP_INCLUDES})
-target_link_libraries(mars PUBLIC ${MARS_DEP_LIBRARIES})
 
 # Find Cornerstone - centralize all Cornerstone finding and setup here
 if(MARS_ENABLE_UNSTRUCTURED)
@@ -416,12 +354,6 @@ if(MARS_ENABLE_UNSTRUCTURED)
         # Mark that we found Cornerstone
         set(CORNERSTONE_FOUND TRUE)
         
-        # Define a preprocessor macro to indicate cornerstone support
-        target_compile_definitions(mars PUBLIC MARS_HAS_CORNERSTONE)
-        
-        # Link to the cornerstone target
-        target_link_libraries(mars PUBLIC cornerstone::cornerstone)
-
         if(MARS_ENABLE_CUDA)
             # Make sure CUDA runtime headers are available to cornerstone
             if(TARGET cornerstone::cornerstone)
@@ -447,26 +379,37 @@ if(MARS_ENABLE_UNSTRUCTURED)
                 target_include_directories(cstone_gpu SYSTEM INTERFACE ${HIP_INCLUDE_DIRS})
             endif()
         endif()
-        
-        # Also directly add the include directories for absolute certainty
-        target_include_directories(mars PUBLIC 
-            $<BUILD_INTERFACE:${CMAKE_BINARY_DIR}/cornerstone_includes>
-            $<BUILD_INTERFACE:${CORNERSTONE_INCLUDE_DIRS}>
-            $<INSTALL_INTERFACE:include>) 
     else()
         set(CORNERSTONE_FOUND FALSE)
         message(WARNING "Cornerstone headers not found, falling back to ADIOS2")
-    endif() 
-    
-    # Make sure ADIOS2 targets are available in this scope
-    find_package(ADIOS2 QUIET)
-    
-    # Link ADIOS2 dependencies if found
-    if(ADIOS2_FOUND)
-        target_include_directories(mars PUBLIC ${ADIOS2_INCLUDE_DIRS})
-        target_link_libraries(mars PUBLIC ${ADIOS2_LIBRARIES})
-    endif()
-    
+    endif()     
+endif()
+
+# set(MARS_MODULES base core distributed examples io kokkos)
+set(MARS_MODULES base core examples io kokkos)
+
+foreach(MODULE ${MARS_MODULES})
+  add_subdirectory("${MODULE}")
+endforeach(MODULE)
+
+if(MARS_ENABLE_SERIAL_BACKEND)
+    add_subdirectory("backend/serial")
+endif()
+
+# Now add distributed backend - dependencies handled in unstructured directory
+if(MARS_ENABLE_DISTRIBUTED_BACKEND)
+    add_subdirectory("backend/distributed")
+endif()
+
+if(MARS_ENABLE_AMR_BACKEND)
+    add_subdirectory("backend/amr")
+endif()
+
+if(MARS_ENABLE_MOONOLITH)
+  add_subdirectory(moonolith_adapter)
+endif()
+
+if(MARS_ENABLE_UNSTRUCTURED AND MARS_ENABLE_ADIOS2)
     # Add ADIOS2 subdirectories
     add_subdirectory(backend/adios2)
     if(MARS_ENABLE_TESTS)
@@ -474,6 +417,69 @@ if(MARS_ENABLE_UNSTRUCTURED)
     endif()
 endif()
 
+if(MARS_ENABLE_CXXOPTS)
+  include(cxxopts/cxxopts.cmake)
+endif()
+
+add_library(mars ${MARS_HEADERS} ${MARS_SOURCES})
+
+# Move these lines from the Cornerstone setup to after add_library(mars)
+if(CORNERSTONE_FOUND)
+    # Define a preprocessor macro to indicate cornerstone support
+    target_compile_definitions(mars PUBLIC MARS_HAS_CORNERSTONE)
+    
+    # Link to the cornerstone target
+    target_link_libraries(mars PUBLIC cornerstone::cornerstone)
+    
+    # Also directly add the include directories for absolute certainty
+    target_include_directories(mars PUBLIC 
+        $<BUILD_INTERFACE:${CMAKE_BINARY_DIR}/cornerstone_includes>
+        $<BUILD_INTERFACE:${CORNERSTONE_INCLUDE_DIRS}>
+        $<INSTALL_INTERFACE:include>) 
+endif()
+
+if(MARS_ENABLE_UNSTRUCTURED AND MARS_ENABLE_ADIOS2)
+    # Make sure ADIOS2 targets are available in this scope
+    find_package(ADIOS2 QUIET)
+        
+    # Link ADIOS2 dependencies if found
+    if(ADIOS2_FOUND)
+        target_include_directories(mars PUBLIC ${ADIOS2_INCLUDE_DIRS})
+        target_link_libraries(mars PUBLIC ${ADIOS2_LIBRARIES})
+    endif()
+endif()
+
+if(CMAKE_CUDA_COMPILER AND TARGET mars)
+    # Add CUDA flags to the mars target
+    target_compile_options(mars PRIVATE
+        $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>
+        $<$<COMPILE_LANGUAGE:CUDA>:--expt-relaxed-constexpr>)
+endif()
+
+foreach(include ${MARS_BUILD_INCLUDES})
+  target_include_directories(mars BEFORE PUBLIC $<BUILD_INTERFACE:${include}>)
+endforeach()
+
+# Add CUDA include paths directly to mars target for C++ compilation of CUDA headers
+if(MARS_ENABLE_CUDA AND TARGET mars)
+    target_include_directories(mars SYSTEM PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
+    message(STATUS "Added CUDA include directories to mars target")
+endif()
+
+# Add HIP include paths directly to mars target for C++ compilation of HIP headers
+if(MARS_ENABLE_HIP AND TARGET mars)
+    target_include_directories(mars SYSTEM PRIVATE ${HIP_INCLUDE_DIRS})
+    message(STATUS "Added HIP include directories to mars target")
+endif()
+
+target_include_directories(
+  mars BEFORE
+  PUBLIC $<BUILD_INTERFACE:${CMAKE_BINARY_DIR}>
+         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
+         $<INSTALL_INTERFACE:include>)
+
+target_include_directories(mars PUBLIC ${MARS_DEP_INCLUDES})
+target_link_libraries(mars PUBLIC ${MARS_DEP_LIBRARIES})
 
 if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE
@@ -526,19 +532,41 @@ else()
     endif()
 endif()
 
-# Install the standard targets, but remove cstone_gpu from MARS_TARGETS if it exists
-if(TARGET cstone_gpu)
-    list(REMOVE_ITEM MARS_TARGETS cstone_gpu)
-endif()
+# Delete both existing blocks (lines 512-556) and replace with this:
 
-# Install the standard targets
-install(
-  TARGETS mars ${MARS_TARGETS}
-  EXPORT MarsTargets
-  RUNTIME DESTINATION bin
-  LIBRARY DESTINATION lib
-  ARCHIVE DESTINATION lib
-  INCLUDES DESTINATION include)
+# Final check for cstone_gpu and installation handling
+if(TARGET cstone_gpu)
+    message(STATUS "cstone_gpu target is available")
+    get_target_property(GPU_LOCATION cstone_gpu IMPORTED_LOCATION)
+    message(STATUS "cstone_gpu location: ${GPU_LOCATION}")
+
+    # Check if it's an imported target
+    get_target_property(IS_IMPORTED cstone_gpu IMPORTED)
+    
+    if(IS_IMPORTED)
+        # For imported targets, install the library file directly
+        if(EXISTS "${GPU_LOCATION}")
+            message(STATUS "Installing GPU library directly")
+            get_filename_component(GPU_LIB_NAME "${GPU_LOCATION}" NAME)
+            install(FILES "${GPU_LOCATION}"
+                    DESTINATION lib
+                    RENAME "${GPU_LIB_NAME}")
+        endif()
+    else()
+        # For locally built targets, add to export set
+        list(APPEND MARS_TARGETS cstone_gpu)
+        set_property(TARGET cstone_gpu PROPERTY EXPORT_NAME Mars::cstone_gpu)
+    endif()
+else()
+    # Fallback for when target doesn't exist but we have a path
+    if(EXISTS "${CORNERSTONE_GPU_LIBRARY}")
+        message(STATUS "Installing GPU library from path")
+        get_filename_component(GPU_LIB_NAME "${CORNERSTONE_GPU_LIBRARY}" NAME)
+        install(FILES "${CORNERSTONE_GPU_LIBRARY}"
+                DESTINATION lib
+                RENAME "${GPU_LIB_NAME}")
+    endif()
+endif()
 
 # Export the cxxopts target if it was fetched
 if(TARGET cxxopts)

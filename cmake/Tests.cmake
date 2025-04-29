@@ -42,9 +42,11 @@ if(MARS_ENABLE_TESTS)
 
     # Macro for adding standard tests
     macro(mars_add_test TESTNAME TEST_FILE)
-        # Create the test executable
-        add_executable(${TESTNAME} ${TEST_FILE} ${ARGN})
-        target_link_libraries(${TESTNAME} mars ${MARS_G_TEST_LIBRARIES})
+        if(NOT TARGET ${TESTNAME})
+            # Create the test executable only if it doesn't exist
+            add_executable(${TESTNAME} ${TEST_FILE} ${ARGN})
+            target_link_libraries(${TESTNAME} mars ${MARS_G_TEST_LIBRARIES})
+        endif()
 
         # Add to test system - always use add_test directly first
         add_test(NAME ${TESTNAME} COMMAND ${TESTNAME})

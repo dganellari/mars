@@ -460,80 +460,92 @@ ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(cons
 // Read mesh data in SoA format; uses element-based partitioning for better data locality
 template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
 void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::readMeshDataSoA(const std::string& meshFile,
-                                                                                   HostCoordsTuple& h_coords_,
-                                                                                   HostConnectivityTuple& h_conn_)
+                                                                                  HostCoordsTuple& h_coords_,
+                                                                                  HostConnectivityTuple& h_conn_)
 {
-    // Get references to coordinate vectors for clarity
-    auto& h_x = std::get<0>(h_coords_);
-    auto& h_y = std::get<1>(h_coords_);
-    auto& h_z = std::get<2>(h_coords_);
-
     try
     {
-        // Read coordinates using utility function which now uses element-based partitioning internally
-        auto [readNodeCount, nodeStartIdx, x_data, y_data, z_data] =
-            mars::readMeshCoordinatesBinary(meshFile, rank_, numRanks_);
-
-        nodeCount_ = readNodeCount;
-        
-        // With element-based partitioning, nodeStartIdx is always 0 since we use local indices
-        assert(nodeStartIdx == 0 && "Element-based partitioning should use local indices");
-
-        // If RealType is float, we can move directly
-        if constexpr (std::is_same_v<RealType, float>)
-        {
-            std::get<0>(h_coords_) = std::move(x_data);
-            std::get<1>(h_coords_) = std::move(y_data);
-            std::get<2>(h_coords_) = std::move(z_data);
-        }
-        else
-        {
-            // Otherwise convert
-            h_x.resize(nodeCount_);
-            h_y.resize(nodeCount_);
-            h_z.resize(nodeCount_);
-
-            for (size_t i = 0; i < nodeCount_; ++i)
+        // Helper to handle coordinate conversion based on type
+        auto processCoordinates = [&](const std::vector<float>& x_data, 
+                                     const std::vector<float>& y_data, 
+                                     const std::vector<float>& z_data) {
+            auto& h_x = std::get<0>(h_coords_);
+            auto& h_y = std::get<1>(h_coords_);
+            auto& h_z = std::get<2>(h_coords_);
+            
+            if constexpr (std::is_same_v<RealType, float>)
             {
-                h_x[i] = static_cast<RealType>(x_data[i]);
-                h_y[i] = static_cast<RealType>(y_data[i]);
-                h_z[i] = static_cast<RealType>(z_data[i]);
+                // If RealType is float, we can move directly
+                h_x = std::move(x_data);
+                h_y = std::move(y_data);
+                h_z = std::move(z_data);
             }
-        }
+            else
+            {
+                // Otherwise convert
+                h_x.resize(nodeCount_);
+                h_y.resize(nodeCount_);
+                h_z.resize(nodeCount_);
 
-        // Read connectivity using tuple-specific template function (nodeStartIdx is always 0 now)
+                for (size_t i = 0; i < nodeCount_; ++i)
+                {
+                    h_x[i] = static_cast<RealType>(x_data[i]);
+                    h_y[i] = static_cast<RealType>(y_data[i]);
+                    h_z[i] = static_cast<RealType>(z_data[i]);
+                }
+            }
+        };
+
+        // Use compile-time branching to select element type
         if constexpr (std::is_same_v<ElementTag, TetTag>)
         {
-            auto [readElementCount, conn_tuple] =
-                mars::readMeshConnectivityBinaryTuple<4>(meshFile, 0, rank_, numRanks_);
+            auto [readNodeCount, readElementCount, x_data, y_data, z_data, conn_tuple, localToGlobal] =
+                mars::readMeshWithElementPartitioning<4, float>(meshFile, rank_, numRanks_);
+            
+            nodeCount_ = readNodeCount;
             elementCount_ = readElementCount;
-            h_conn_       = std::move(conn_tuple); // Direct move - no copying needed
+            processCoordinates(x_data, y_data, z_data);
+            h_conn_ = std::move(conn_tuple);
         }
         else if constexpr (std::is_same_v<ElementTag, HexTag>)
         {
-            auto [readElementCount, conn_tuple] =
-                mars::readMeshConnectivityBinaryTuple<8>(meshFile, 0, rank_, numRanks_);
+            auto [readNodeCount, readElementCount, x_data, y_data, z_data, conn_tuple, localToGlobal] =
+                mars::readMeshWithElementPartitioning<8, float>(meshFile, rank_, numRanks_);
+            
+            nodeCount_ = readNodeCount;
             elementCount_ = readElementCount;
-            h_conn_       = std::move(conn_tuple); // Direct move - no copying needed
+            processCoordinates(x_data, y_data, z_data);
+            h_conn_ = std::move(conn_tuple);
         }
         else if constexpr (std::is_same_v<ElementTag, TriTag>)
         {
-            auto [readElementCount, conn_tuple] =
-                mars::readMeshConnectivityBinaryTuple<3>(meshFile, 0, rank_, numRanks_);
+            auto [readNodeCount, readElementCount, x_data, y_data, z_data, conn_tuple, localToGlobal] =
+                mars::readMeshWithElementPartitioning<3, float>(meshFile, rank_, numRanks_);
+            
+            nodeCount_ = readNodeCount;
             elementCount_ = readElementCount;
-            h_conn_       = std::move(conn_tuple);
+            processCoordinates(x_data, y_data, z_data);
+            h_conn_ = std::move(conn_tuple);
         }
         else if constexpr (std::is_same_v<ElementTag, QuadTag>)
         {
-            auto [readElementCount, conn_tuple] =
-                mars::readMeshConnectivityBinaryTuple<4>(meshFile, 0, rank_, numRanks_);
+            auto [readNodeCount, readElementCount, x_data, y_data, z_data, conn_tuple, localToGlobal] =
+                mars::readMeshWithElementPartitioning<4, float>(meshFile, rank_, numRanks_);
+            
+            nodeCount_ = readNodeCount;
             elementCount_ = readElementCount;
-            h_conn_       = std::move(conn_tuple);
+            processCoordinates(x_data, y_data, z_data);
+            h_conn_ = std::move(conn_tuple);
+        }
+        else
+        {
+            constexpr bool dependent_false = sizeof(ElementTag) != sizeof(ElementTag);
+            static_assert(dependent_false, "Unsupported element type in readMeshDataSoA");
         }
     }
     catch (const std::exception& e)
     {
-        std::cerr << "Error reading mesh: " << e.what() << std::endl;
+        std::cerr << "Error reading mesh from " << meshFile << ": " << e.what() << std::endl;
         throw;
     }
 }
