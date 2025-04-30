@@ -67,7 +67,7 @@ if(MARS_ENABLE_HIP)
         add_compile_definitions(USE_CUDA MARS_ENABLE_HIP)
 
         include_directories(SYSTEM BEFORE ${HIP_INCLUDE_DIRS})
-        add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-isystem${HIP_INCLUDE_DIRS}>)
+        add_compile_options($<$<AND:$<COMPILE_LANGUAGE:CXX>,$<NOT:$<STREQUAL:$<TARGET_PROPERTY:TYPE>,EXECUTABLE>>>:-isystem${HIP_INCLUDE_DIRS}>)
         add_compile_options($<$<COMPILE_LANGUAGE:HIP>:-isystem${HIP_INCLUDE_DIRS}>)
 
         set(CMAKE_HIP_SOURCE_FILE_EXTENSIONS hip;cu;hip.cpp)
@@ -113,6 +113,8 @@ if(MARS_ENABLE_HIP)
         set(HIP_GPU_ARCHITECTURES "gfx942" CACHE STRING "AMD GPU targets (e.g., gfx90a, gfx942)")
     endif()
     set(CMAKE_HIP_ARCHITECTURES ${HIP_GPU_ARCHITECTURES})
+    message(STATUS "HIP GPU architectures: ${CMAKE_HIP_ARCHITECTURES}")
+    message(STATUS "HIP GPU architectures: ${HIP_GPU_ARCHITECTURES}")
 endif()
 
 # Std CMake imports

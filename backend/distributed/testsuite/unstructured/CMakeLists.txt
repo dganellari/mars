@@ -9,11 +9,15 @@ find_package(MPI REQUIRED)
 # Ensure testing is enabled here
 enable_testing()
 
-# Define a helper function for adding Mars MPI tests
 function(addMarsMpiTest source exename testname)
+    # First create the executable
     add_executable(${exename} ${source})
     
-    # Include directories - include all necessary paths here
+    # Explicitly mark as CXX source with -x c++ flag
+    set_source_files_properties(${source} PROPERTIES 
+        LANGUAGE CXX)
+
+    # Include all necessary paths
     target_include_directories(${exename} PRIVATE
         ${CMAKE_SOURCE_DIR}
         ${CMAKE_BINARY_DIR}
@@ -23,17 +27,43 @@ function(addMarsMpiTest source exename testname)
         ${CMAKE_SOURCE_DIR}/backend/distributed/unstructured/utils
     )
     
-    target_compile_options(${exename} PRIVATE -Wno-unknown-pragmas)
-    
-    # Link with all necessary libraries (except GPU-specific ones)
+    if(MARS_ENABLE_HIP)
+        # Set properties for test executables - DON'T set empty HIP_ARCHITECTURES
+        set_target_properties(${exename} PROPERTIES 
+            LINKER_LANGUAGE CXX)  # Force C++ linker
+            
+        # Force C++ compilation with explicit flags
+        target_compile_options(${exename} PRIVATE 
+            -x c++   # Force C++ language
+            -DHIP_DISABLE_GPU_CODE=ON  # Disable GPU code
+            -Wno-unknown-pragmas)
+            
+        # This ensures HIP flags don't get applied
+        set_property(TARGET ${exename} PROPERTY EXCLUDE_FROM_ALL TRUE)
+    elseif(MARS_ENABLE_CUDA)
+        # CUDA-specific overrides - keep as-is
+        set_target_properties(${exename} PROPERTIES
+            LINKER_LANGUAGE CXX  # Force C++ linker
+            CUDA_SEPARABLE_COMPILATION OFF)
+        target_compile_options(${exename} PRIVATE -Wno-unknown-pragmas)
+    else()
+        # CPU-only case
+        target_compile_options(${exename} PRIVATE -Wno-unknown-pragmas)
+    endif()
+        
+    # Link libraries
     target_link_libraries(${exename} PRIVATE
-        mars_unstructured  # Link to mars_unstructured for all tests
+        mars_unstructured
         cstone_gpu
         ${MPI_CXX_LIBRARIES}
         ${MARS_G_TEST_LIBRARIES}
     )
     
+    # Register the test
     mars_add_test(${testname} ${source})
+    
+    # Debug output
+    message(STATUS "Created test executable ${exename} for test ${testname}")
 endfunction()
 
 # Modify the addMarsGpuMpiTest function to support both CUDA and HIP
