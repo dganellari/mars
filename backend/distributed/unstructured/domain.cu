@@ -4,14 +4,15 @@ namespace mars
 {
 // CUDA kernels with RealType template parameter instead of Real
 template<typename RealType>
-__global__ void transformCharacteristicSizesKernel(RealType* d_h, size_t size, RealType meshFactor, RealType minH, RealType maxH)
+__global__ void
+transformCharacteristicSizesKernel(RealType* d_h, size_t size, RealType meshFactor, RealType minH, RealType maxH)
 {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < size)
     {
         RealType val    = d_h[idx];
         RealType result = val * meshFactor;
-        d_h[idx]    = fmaxf(minH, fminf(maxH, result));
+        d_h[idx]        = fmaxf(minH, fminf(maxH, result));
     }
 }
 
@@ -229,10 +230,7 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::mapElementsTo
     // Just ensure the vectors are sized correctly
     if constexpr (std::is_same_v<AcceleratorTag, cstone::GpuTag>)
     {
-        if (d_elemToNodeMap_.size() != elementCount_)
-        {
-            d_elemToNodeMap_.resize(elementCount_);
-        }
+        if (d_elemToNodeMap_.size() != elementCount_) { d_elemToNodeMap_.resize(elementCount_); }
     }
 }
 
@@ -243,8 +241,12 @@ template void ElementDomain<TetTag, float, uint64_t, cstone::GpuTag>::mapElement
 template void ElementDomain<TetTag, double, uint64_t, cstone::GpuTag>::mapElementsToNodes();
 
 template<typename KeyType, typename RealType>
-void generateSfcKeys(
-    const RealType* x, const RealType* y, const RealType* z, KeyType* keys, size_t numKeys, const cstone::Box<RealType>& box)
+void generateSfcKeys(const RealType* x,
+                     const RealType* y,
+                     const RealType* z,
+                     KeyType* keys,
+                     size_t numKeys,
+                     const cstone::Box<RealType>& box)
 {
     // Use sfcKindPointer to match cornerstone's template instantiation
     cstone::computeSfcKeysGpu(x, y, z, cstone::sfcKindPointer(keys), numKeys, box);
@@ -327,100 +329,118 @@ __global__ void computeElementVolumesKernel(const RealType* x,
 }
 
 // Explicit instantiations for float
-template __global__ void transformCharacteristicSizesKernel<float>(float* d_h, size_t size, float meshFactor, float minH, float maxH);
+template __global__ void
+transformCharacteristicSizesKernel<float>(float* d_h, size_t size, float meshFactor, float minH, float maxH);
 template __global__ void fillCharacteristicSizesKernel<float>(float* d_h, size_t size, float value);
 template __global__ void finalizeCharacteristicSizesKernel<float>(float* h, int* nodeTetCount, int numNodes);
 
 // Explicit instantiations for double
-template __global__ void transformCharacteristicSizesKernel<double>(double* d_h, size_t size, double meshFactor, double minH, double maxH);
+template __global__ void
+transformCharacteristicSizesKernel<double>(double* d_h, size_t size, double meshFactor, double minH, double maxH);
 template __global__ void fillCharacteristicSizesKernel<double>(double* d_h, size_t size, double value);
 template __global__ void finalizeCharacteristicSizesKernel<double>(double* h, int* nodeTetCount, int numNodes);
 
 // Explicit instantiation for each element type with float
 template __global__ void computeCharacteristicSizesKernel<TetTag, float>(const float* x,
-                                                                  const float* y,
-                                                                  const float* z,
-                                                                  const int* indices0,
-                                                                  const int* indices1,
-                                                                  const int* indices2,
-                                                                  const int* indices3,
-                                                                  int* nodeTetCount,
-                                                                  float* h,
-                                                                  int numElements);
+                                                                         const float* y,
+                                                                         const float* z,
+                                                                         const int* indices0,
+                                                                         const int* indices1,
+                                                                         const int* indices2,
+                                                                         const int* indices3,
+                                                                         int* nodeTetCount,
+                                                                         float* h,
+                                                                         int numElements);
 
 template __global__ void extractRepCoordinatesKernel<TetTag, float>(const float* x,
-                                                             const float* y,
-                                                             const float* z,
-                                                             const float* h,
-                                                             const int* elemToNodeMap,
-                                                             float* elemX,
-                                                             float* elemY,
-                                                             float* elemZ,
-                                                             float* elemH,
-                                                             int numElements);
+                                                                    const float* y,
+                                                                    const float* z,
+                                                                    const float* h,
+                                                                    const int* elemToNodeMap,
+                                                                    float* elemX,
+                                                                    float* elemY,
+                                                                    float* elemZ,
+                                                                    float* elemH,
+                                                                    int numElements);
 
 template __global__ void computeElementVolumesKernel<TetTag, float>(const float* x,
-                                                             const float* y,
-                                                             const float* z,
-                                                             const int* indices0,
-                                                             const int* indices1,
-                                                             const int* indices2,
-                                                             const int* indices3,
-                                                             float* volumes,
-                                                             int numElements);
+                                                                    const float* y,
+                                                                    const float* z,
+                                                                    const int* indices0,
+                                                                    const int* indices1,
+                                                                    const int* indices2,
+                                                                    const int* indices3,
+                                                                    float* volumes,
+                                                                    int numElements);
 
 // Explicit instantiation for each element type with double
 template __global__ void computeCharacteristicSizesKernel<TetTag, double>(const double* x,
-                                                                  const double* y,
-                                                                  const double* z,
-                                                                  const int* indices0,
-                                                                  const int* indices1,
-                                                                  const int* indices2,
-                                                                  const int* indices3,
-                                                                  int* nodeTetCount,
-                                                                  double* h,
-                                                                  int numElements);
+                                                                          const double* y,
+                                                                          const double* z,
+                                                                          const int* indices0,
+                                                                          const int* indices1,
+                                                                          const int* indices2,
+                                                                          const int* indices3,
+                                                                          int* nodeTetCount,
+                                                                          double* h,
+                                                                          int numElements);
 
 template __global__ void extractRepCoordinatesKernel<TetTag, double>(const double* x,
-                                                             const double* y,
-                                                             const double* z,
-                                                             const double* h,
-                                                             const int* elemToNodeMap,
-                                                             double* elemX,
-                                                             double* elemY,
-                                                             double* elemZ,
-                                                             double* elemH,
-                                                             int numElements);
+                                                                     const double* y,
+                                                                     const double* z,
+                                                                     const double* h,
+                                                                     const int* elemToNodeMap,
+                                                                     double* elemX,
+                                                                     double* elemY,
+                                                                     double* elemZ,
+                                                                     double* elemH,
+                                                                     int numElements);
 
 template __global__ void computeElementVolumesKernel<TetTag, double>(const double* x,
-                                                             const double* y,
-                                                             const double* z,
-                                                             const int* indices0,
-                                                             const int* indices1,
-                                                             const int* indices2,
-                                                             const int* indices3,
-                                                             double* volumes,
-                                                             int numElements);
+                                                                     const double* y,
+                                                                     const double* z,
+                                                                     const int* indices0,
+                                                                     const int* indices1,
+                                                                     const int* indices2,
+                                                                     const int* indices3,
+                                                                     double* volumes,
+                                                                     int numElements);
 
 // For float with unsigned keys
-template __global__ void findRepresentativeNodesKernel<TetTag, unsigned, float>(
-    const int* indices0, const int* indices1, const int* indices2, const int* indices3,
-    const unsigned* sfcCodes, int* elemToNodeMap, int numElements);
+template __global__ void findRepresentativeNodesKernel<TetTag, unsigned, float>(const int* indices0,
+                                                                                const int* indices1,
+                                                                                const int* indices2,
+                                                                                const int* indices3,
+                                                                                const unsigned* sfcCodes,
+                                                                                int* elemToNodeMap,
+                                                                                int numElements);
 
 // For double with unsigned keys
-template __global__ void findRepresentativeNodesKernel<TetTag, unsigned, double>(
-    const int* indices0, const int* indices1, const int* indices2, const int* indices3,
-    const unsigned* sfcCodes, int* elemToNodeMap, int numElements);
+template __global__ void findRepresentativeNodesKernel<TetTag, unsigned, double>(const int* indices0,
+                                                                                 const int* indices1,
+                                                                                 const int* indices2,
+                                                                                 const int* indices3,
+                                                                                 const unsigned* sfcCodes,
+                                                                                 int* elemToNodeMap,
+                                                                                 int numElements);
 
 // For float with uint64_t keys
-template __global__ void findRepresentativeNodesKernel<TetTag, uint64_t, float>(
-    const int* indices0, const int* indices1, const int* indices2, const int* indices3,
-    const uint64_t* sfcCodes, int* elemToNodeMap, int numElements);
+template __global__ void findRepresentativeNodesKernel<TetTag, uint64_t, float>(const int* indices0,
+                                                                                const int* indices1,
+                                                                                const int* indices2,
+                                                                                const int* indices3,
+                                                                                const uint64_t* sfcCodes,
+                                                                                int* elemToNodeMap,
+                                                                                int numElements);
 
 // For double with uint64_t keys
-template __global__ void findRepresentativeNodesKernel<TetTag, uint64_t, double>(
-    const int* indices0, const int* indices1, const int* indices2, const int* indices3,
-    const uint64_t* sfcCodes, int* elemToNodeMap, int numElements);                                                          
+template __global__ void findRepresentativeNodesKernel<TetTag, uint64_t, double>(const int* indices0,
+                                                                                 const int* indices1,
+                                                                                 const int* indices2,
+                                                                                 const int* indices3,
+                                                                                 const uint64_t* sfcCodes,
+                                                                                 int* elemToNodeMap,
+                                                                                 int numElements);
 
 // Explicit instantiation for computeSfcKeysGpu with common combinations
 template void generateSfcKeys<unsigned, float>(

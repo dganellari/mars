@@ -12,9 +12,8 @@ enable_testing()
 function(addMarsMpiTest source exename testname)
     # First create the executable
     add_executable(${exename} ${source})
-    
     # Explicitly mark as CXX source with -x c++ flag
-    set_source_files_properties(${source} PROPERTIES 
+    set_source_files_properties(${source} PROPERTIES
         LANGUAGE CXX)
 
     # Include all necessary paths
@@ -26,18 +25,17 @@ function(addMarsMpiTest source exename testname)
         ${MPI_CXX_INCLUDE_PATH}
         ${CMAKE_SOURCE_DIR}/backend/distributed/unstructured/utils
     )
-    
+
     if(MARS_ENABLE_HIP)
         # Set properties for test executables - DON'T set empty HIP_ARCHITECTURES
-        set_target_properties(${exename} PROPERTIES 
+        set_target_properties(${exename} PROPERTIES
             LINKER_LANGUAGE CXX)  # Force C++ linker
-            
+
         # Force C++ compilation with explicit flags
-        target_compile_options(${exename} PRIVATE 
+        target_compile_options(${exename} PRIVATE
             -x c++   # Force C++ language
             -DHIP_DISABLE_GPU_CODE=ON  # Disable GPU code
             -Wno-unknown-pragmas)
-            
         # This ensures HIP flags don't get applied
         set_property(TARGET ${exename} PROPERTY EXCLUDE_FROM_ALL TRUE)
     elseif(MARS_ENABLE_CUDA)
@@ -50,7 +48,6 @@ function(addMarsMpiTest source exename testname)
         # CPU-only case
         target_compile_options(${exename} PRIVATE -Wno-unknown-pragmas)
     endif()
-        
     # Link libraries
     target_link_libraries(${exename} PRIVATE
         mars_unstructured
@@ -58,20 +55,15 @@ function(addMarsMpiTest source exename testname)
         ${MPI_CXX_LIBRARIES}
         ${MARS_G_TEST_LIBRARIES}
     )
-    
     # Register the test
     mars_add_test(${testname} ${source})
-    
     # Debug output
     message(STATUS "Created test executable ${exename} for test ${testname}")
 endfunction()
 
-# Modify the addMarsGpuMpiTest function to support both CUDA and HIP
-# and properly register the test without rank constraints
 function(addMarsGpuMpiTest source exename testname)
     # Create the executable directly
     add_executable(${exename} ${source})
-    
     # Include all necessary directories
     target_include_directories(${exename} PRIVATE
         ${CMAKE_SOURCE_DIR}
@@ -80,10 +72,8 @@ function(addMarsGpuMpiTest source exename testname)
         ${CORNERSTONE_INCLUDE_DIRS}
         ${MPI_CXX_INCLUDE_PATH}
     )
-    
     # Basic compile options
     target_compile_options(${exename} PRIVATE -Wno-unknown-pragmas)
-    
     # Link with standard test libraries first
     target_link_libraries(${exename} PRIVATE
         cstone_gpu
@@ -92,7 +82,6 @@ function(addMarsGpuMpiTest source exename testname)
         ${MARS_G_TEST_LIBRARIES}
     )
 
-        # ADD THESE LINES - Force-link GPU library to include all symbols
     if(TARGET cstone_gpu)
         get_target_property(GPU_LIB cstone_gpu IMPORTED_LOCATION)
         if(GPU_LIB)
@@ -107,7 +96,6 @@ function(addMarsGpuMpiTest source exename testname)
         endif()
     endif()
 
-    # Add this inside your function where you set up includes
     if(TARGET cstone_gpu)
         get_target_property(GPU_INCLUDES cstone_gpu INTERFACE_INCLUDE_DIRECTORIES)
         if(GPU_INCLUDES)
@@ -116,31 +104,26 @@ function(addMarsGpuMpiTest source exename testname)
         endif()
     endif()
 
-    # Add GPU-specific libraries and settings based on enabled backend
+    # GPU-specific libraries and settings based on enabled backend
     if(MARS_ENABLE_CUDA)
         # For CUDA backend
-        target_link_libraries(${exename} PRIVATE 
-            CUDA::cudart 
+        target_link_libraries(${exename} PRIVATE
+            CUDA::cudart
             -lcudadevrt)
-        
         # Set CUDA language for the source file
         set_source_files_properties(${source} PROPERTIES LANGUAGE CUDA)
-        
         # Set CUDA-specific properties
-        set_target_properties(${exename} PROPERTIES 
+        set_target_properties(${exename} PROPERTIES
             CUDA_SEPARABLE_COMPILATION ON
             CUDA_RESOLVE_DEVICE_SYMBOLS ON
             CUDA_HOST_COMPILER ${MPI_CXX_COMPILER})
-            
     elseif(MARS_ENABLE_HIP)
         # For HIP backend
         target_link_libraries(${exename} PRIVATE mars::rocmlibs)
-        
         # Set HIP language for the source file
         set_source_files_properties(${source} PROPERTIES LANGUAGE HIP)
-        
         # Set HIP-specific properties
-        set_target_properties(${exename} PROPERTIES 
+        set_target_properties(${exename} PROPERTIES
             HIP_SEPARABLE_COMPILATION ON
             HIP_ARCHITECTURES "${HIP_GPU_ARCHITECTURES}")
     endif()
@@ -175,12 +158,18 @@ addMarsMpiTest(
     marsReadMeshBinaryExternalMeshTest
 )
 
-# Add domain binary mesh test
 addMarsGpuMpiTest(
     ${CMAKE_CURRENT_SOURCE_DIR}/mars_domain_binary_mesh.cu
     mars_domain_binary_test
     MarsDomainBinaryTest
     MarsDomainBinaryTest
+)
+
+addMarsGpuMpiTest(
+    ${CMAKE_CURRENT_SOURCE_DIR}/mars_domain_binary_external_mesh.cu
+    mars_domain_binary_external_mesh_test
+    MarsDomainBinaryExternalMeshTest
+    MarsDomainBinaryExternalMeshTest
 )
 
 # Print diagnostic messages to help debug linking
