@@ -13,75 +13,80 @@ class ExternalMeshDomainTest : public ::testing::Test
 protected:
     int rank;
     int numRanks;
+    std::string meshPath;
+    int deviceCount = 0;
 
     void SetUp() override
     {
         // Get MPI rank and size
         MPI_Comm_rank(MPI_COMM_WORLD, &rank);
         MPI_Comm_size(MPI_COMM_WORLD, &numRanks);
-        printf("Rank %d of %d\n", rank, numRanks);
+        
+        // Find mesh path once for all tests
+        meshPath = getMeshPath();
+        
+        // Check device availability once
+        cudaGetDeviceCount(&deviceCount);
+        
+        // Print diagnostic message only once
+        if (rank == 0) {
+            std::cout << "Test setup: Found " << deviceCount << " CUDA devices" << std::endl;
+            std::cout << "Using mesh at: " << (meshPath.empty() ? "none" : meshPath) << std::endl;
+        }
     }
 
     // Get mesh paths from environment variable
     std::string getMeshPath() const
     {
         const char* meshPathEnv = std::getenv("MESH_PATH");
-        std::string meshPath    = meshPathEnv ? meshPathEnv : "";
+        std::string path = meshPathEnv ? meshPathEnv : "";
 
-        if (meshPath.empty() || !fs::exists(meshPath))
+        if (path.empty() || !fs::exists(path))
         {
             // Fallback to common test locations
             std::vector<std::string> commonLocations = {"./test_data", "../test_data", "./meshes", "../meshes"};
 
-            for (const auto& path : commonLocations)
+            for (const auto& loc : commonLocations)
             {
-                if (fs::exists(path) && fs::is_directory(fs::path(path)))
+                if (fs::exists(loc) && fs::is_directory(fs::path(loc)))
                 {
-                    // Check if directory contains required mesh files
-                    if (fs::exists(fs::path(path) / "x.float32") || fs::exists(fs::path(path) / "x.double"))
+                    if (fs::exists(fs::path(loc) / "x.float32") || fs::exists(fs::path(loc) / "x.double"))
                     {
-                        return path;
+                        return loc;
                     }
                 }
             }
         }
+        return path;
+    }
+    
+    // Centralized check for test prerequisites
+    void checkPrerequisites(const std::string& testName)
+    {
+        if (meshPath.empty() || !fs::exists(meshPath))
+        {
+            GTEST_SKIP() << testName << ": No valid mesh directory found";
+        }
 
-        return meshPath;
+        if (!fs::exists(fs::path(meshPath) / "x.float32") && !fs::exists(fs::path(meshPath) / "x.double"))
+        {
+            GTEST_SKIP() << testName << ": Mesh directory does not contain required coordinate files";
+        }
+
+        if (deviceCount == 0)
+        {
+            GTEST_SKIP() << testName << ": No CUDA devices available or device initialization failed";
+        }
     }
 };
 
 // Basic test for external mesh domain creation
 TEST_F(ExternalMeshDomainTest, BasicDomainCreation)
 {
-    // Get mesh path
-    std::string meshPath = getMeshPath();
-    if (meshPath.empty() || !fs::exists(meshPath))
-    {
-        GTEST_SKIP() << "No valid mesh directory found";
-        return;
-    }
+    checkPrerequisites("BasicDomainCreation");
 
-    // Check if directory contains required files
-    if (!fs::exists(fs::path(meshPath) / "x.float32") && !fs::exists(fs::path(meshPath) / "x.double"))
-    {
-        GTEST_SKIP() << "Mesh directory does not contain required coordinate files";
-        return;
-    }
-
-    std::cout << "Creating domain from mesh at: " << meshPath << std::endl;
-
-    // Create a catch block to handle exceptions
     try
     {
-        // Set device - critical for multi-rank runs
-        int deviceCount;
-        cudaGetDeviceCount(&deviceCount);
-        if (deviceCount == 0)
-        {
-            GTEST_SKIP() << "No CUDA devices available, skipping test";
-            return;
-        }
-
         // Create domain with tetrahedral elements
         using Domain = ElementDomain<TetTag, float, unsigned, cstone::GpuTag>;
         Domain domain(meshPath, rank, numRanks);
@@ -90,23 +95,21 @@ TEST_F(ExternalMeshDomainTest, BasicDomainCreation)
         EXPECT_GT(domain.getNodeCount(), 0) << "Domain should have nodes";
         EXPECT_GT(domain.getElementCount(), 0) << "Domain should have elements";
 
-        // Print basic information
-        std::cout << "Rank " << rank << " domain: " << domain.getNodeCount() << " nodes, " << domain.getElementCount()
-                  << " elements" << std::endl;
+        printf("Rank %d: Domain created with %zu nodes and %zu elements\n", rank, domain.getNodeCount(), domain.getElementCount());
 
         // Gather total counts across ranks
         size_t localElementCount = domain.getElementCount();
-        size_t localNodeCount    = domain.getNodeCount();
+        size_t localNodeCount = domain.getNodeCount();
         size_t totalElementCount = 0;
-        size_t totalNodeCount    = 0;
+        size_t totalNodeCount = 0;
 
         MPI_Allreduce(&localElementCount, &totalElementCount, 1, MPI_UNSIGNED_LONG, MPI_SUM, MPI_COMM_WORLD);
         MPI_Allreduce(&localNodeCount, &totalNodeCount, 1, MPI_UNSIGNED_LONG, MPI_SUM, MPI_COMM_WORLD);
 
         if (rank == 0)
         {
-            std::cout << "Total across all ranks: " << totalNodeCount << " nodes, " << totalElementCount << " elements"
-                      << std::endl;
+            std::cout << "Total across all ranks: " << totalNodeCount << " nodes, " 
+                      << totalElementCount << " elements" << std::endl;
         }
 
         // Verify coordinate data
@@ -128,7 +131,7 @@ TEST_F(ExternalMeshDomainTest, BasicDomainCreation)
 
             EXPECT_EQ(h_i0.size(), domain.getElementCount());
 
-            // Check first element's node indices are valid
+            // Check element node indices
             for (size_t i = 0; i < std::min(domain.getElementCount(), size_t(5)); i++)
             {
                 EXPECT_LT(h_i0[i], domain.getNodeCount()) << "Invalid node index in element " << i;
@@ -140,9 +143,6 @@ TEST_F(ExternalMeshDomainTest, BasicDomainCreation)
 
         // Check domain bounding box
         auto box = domain.getDomain().box();
-        std::cout << "Domain box: [" << box.xmin() << ", " << box.xmax() << "] x [" << box.ymin() << ", " << box.ymax()
-                  << "] x [" << box.zmin() << ", " << box.zmax() << "]" << std::endl;
-
         EXPECT_LT(box.xmin(), box.xmax()) << "Invalid X dimension in bounding box";
         EXPECT_LT(box.ymin(), box.ymax()) << "Invalid Y dimension in bounding box";
         EXPECT_LT(box.zmin(), box.zmax()) << "Invalid Z dimension in bounding box";
@@ -156,23 +156,7 @@ TEST_F(ExternalMeshDomainTest, BasicDomainCreation)
 // Test with different precisions - float and double
 TEST_F(ExternalMeshDomainTest, DifferentPrecisions)
 {
-    // Get mesh path
-    std::string meshPath = getMeshPath();
-    if (meshPath.empty() || !fs::exists(meshPath))
-    {
-        GTEST_SKIP() << "No valid mesh directory found";
-        return;
-    }
-
-    // Check for device availability
-    int deviceCount;
-    cudaGetDeviceCount(&deviceCount);
-    if (deviceCount == 0)
-    {
-        GTEST_SKIP() << "No CUDA devices available, skipping test";
-        return;
-    }
-    cudaSetDevice(rank % deviceCount);
+    checkPrerequisites("DifferentPrecisions");
 
     try
     {
@@ -180,10 +164,6 @@ TEST_F(ExternalMeshDomainTest, DifferentPrecisions)
         {
             using FloatDomain = ElementDomain<TetTag, float, unsigned, cstone::GpuTag>;
             FloatDomain domain(meshPath, rank, numRanks);
-
-            std::cout << "Float domain on rank " << rank << ": " << domain.getNodeCount() << " nodes, "
-                      << domain.getElementCount() << " elements" << std::endl;
-
             EXPECT_GT(domain.getNodeCount(), 0);
         }
 
@@ -192,10 +172,6 @@ TEST_F(ExternalMeshDomainTest, DifferentPrecisions)
         {
             using DoubleDomain = ElementDomain<TetTag, double, uint64_t, cstone::GpuTag>;
             DoubleDomain domain(meshPath, rank, numRanks);
-
-            std::cout << "Double domain on rank " << rank << ": " << domain.getNodeCount() << " nodes, "
-                      << domain.getElementCount() << " elements" << std::endl;
-
             EXPECT_GT(domain.getNodeCount(), 0);
         }
     }
