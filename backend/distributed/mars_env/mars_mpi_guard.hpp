@@ -38,32 +38,44 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. */
 namespace marsenv {
 
     struct mpi_guard {
-        mpi_guard(int &argc, char **&argv, bool fatal_errors = true) { init(&argc, &argv, fatal_errors); }
+        mpi_guard(int &argc, char **&argv, bool fatal_errors = true) { 
+            init(&argc, &argv, fatal_errors); 
+        }
 
-        explicit mpi_guard(bool fatal_errors = true) { init(nullptr, nullptr, fatal_errors); }
+        explicit mpi_guard(bool fatal_errors = true) { 
+            init(nullptr, nullptr, fatal_errors); 
+        }
 
         ~mpi_guard() {
-            // Test if the stack is being unwound because of an exception.
-            // If other ranks have not thrown an exception, there is a very
-            // high likelihood that the MPI_Finalize will hang due to the other
-            // ranks calling other MPI calls.
-            // We don't directly call MPI_Abort in this case because that would
-            // force exit the application before the exception that is unwinding
-            // the stack has been caught, which would deny the opportunity to print
-            // an error message explaining the cause of the exception.
-            if (!std::uncaught_exceptions()) {
+            // Only finalize if we initialized MPI ourselves
+            if (should_finalize_ && !std::uncaught_exceptions()) {
                 MPI_Finalize();
             }
         }
 
     private:
+        // Flag to indicate if this guard should finalize MPI
+        bool should_finalize_ = false;
+        
         void init(int *argcp, char ***argvp, bool fatal_errors) {
-            int provided;
-            int ev = MPI_Init_thread(argcp, argvp, MPI_THREAD_SERIALIZED, &provided);
-            if (ev) {
-                throw mars::mpi_error(ev, "MPI_Init_thread");
-            } else if (provided < MPI_THREAD_SERIALIZED) {
-                throw mars::mpi_error(MPI_ERR_OTHER, "MPI_Init_thread: MPI_THREAD_SERIALIZED unsupported");
+            // Check if MPI is already initialized
+            int initialized;
+            MPI_Initialized(&initialized);
+            
+            if (!initialized) {
+                // Only initialize if not already initialized
+                int provided;
+                int ev = MPI_Init_thread(argcp, argvp, MPI_THREAD_SERIALIZED, &provided);
+                if (ev) {
+                    throw mars::mpi_error(ev, "MPI_Init_thread");
+                } else if (provided < MPI_THREAD_SERIALIZED) {
+                    throw mars::mpi_error(MPI_ERR_OTHER, "MPI_Init_thread: MPI_THREAD_SERIALIZED unsupported");
+                }
+                // Mark that we initialized MPI and should finalize it
+                should_finalize_ = true;
+            } else {
+                // MPI was already initialized, don't finalize it
+                should_finalize_ = false;
             }
 
             if (!fatal_errors) {

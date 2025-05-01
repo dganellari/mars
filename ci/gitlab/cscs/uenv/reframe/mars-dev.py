@@ -7,7 +7,6 @@ import os
 import reframe as rfm
 import reframe.utility.sanity as sn
 import reframe.utility.udeps as udeps
-import mars.reframe.utils as mars_utils
 from collections import defaultdict
 import uenv
 
@@ -29,20 +28,20 @@ mars_references = {
     }
 }
 
-class cscs_reframe_tests_download(rfm.RunOnlyRegressionTest):
-    descr = 'Fetch MARS sources code'
-    sourcesdir = None
-    executable = 'git'
-    executable_opts = [
-        'clone', 'git@github.com:dganellari/mars.git'
-        '&&', 'cd', 'mars'
-        '&&', 'git', 'checkout', 'master'
-    ]
-    local = True
-
-    @sanity_function
-    def validate_download(self):
-        return sn.assert_eq(self.job.exitcode, 0)
+#  class cscs_reframe_tests_download(rfm.RunOnlyRegressionTest):
+    #  descr = 'Fetch MARS sources code'
+    #  sourcesdir = None
+    #  executable = 'git'
+    #  executable_opts = [
+    #      'clone', 'git@github.com:dganellari/mars.git'
+    #      '&&', 'cd', 'mars'
+    #      '&&', 'git', 'checkout', 'master'
+    #  ]
+    #  local = True
+    #
+    #  @sanity_function
+    #  def validate_download(self):
+#          return sn.assert_eq(self.job.exitcode, 0)
 
 
 class mars_download(rfm.RunOnlyRegressionTest):
@@ -62,7 +61,7 @@ class mars_download(rfm.RunOnlyRegressionTest):
 
 class mars_build(rfm.CompileOnlyRegressionTest):
     descr = 'Build MARS'
-    valid_systems = ['+uenv']
+    valid_systems = ['*']
     valid_prog_environs = ['+mpi']
     build_system = 'CMake'
     sourcedir = None
@@ -113,7 +112,7 @@ class mars_build(rfm.CompileOnlyRegressionTest):
 @rfm.simple_test
 class mars_unit(rfm.RunOnlyRegressionTest):
     descr = 'Run the mars unit tests'
-    valid_systems = ['+uenv ']
+    valid_systems = ['*']
     valid_prog_environs = ['+mpi']
     target_executable = variable(str, value='ctest')
     time_limit = '5m'
@@ -135,7 +134,7 @@ class mars_unit(rfm.RunOnlyRegressionTest):
 @rfm.simple_test
 class mars_discretization(rfm.RunOnlyRegressionTest):
     descr = 'Run the mars FEM discretization tests small and medium mesh'
-    valid_systems = ['uenv']
+    valid_systems = ['*']
     valid_prog_environs = ['+mpi']
     target_executable = variable(str, value='ctest')
     maintainers = ['dganellari']
@@ -156,12 +155,12 @@ class mars_discretization(rfm.RunOnlyRegressionTest):
         # for the uarch of the current partition.
         # * self.uarch is one of the alps arch: gh200, zen2, a100, ... or None
         # * self.current_partition.fullname is the vcluster:partition string,
-        #   for example "daint:normal" or "todi:debug".
+        #   for example "daint:normal" or "daint:debug".
         self.uarch = uenv.uarch(self.current_partition)
         if (self.uarch is not None) and (self.uarch in mars_references):
             self.reference = {
                 self.current_partition.fullname:
-                    arbor_references[self.uarch]['serial'][self.model_size]
+                    mars_references[self.uarch]['serial'][self.model_size]
             }
 
     @sanity_function
@@ -184,7 +183,7 @@ class mars_discretization_mpi(mars_discretization):
     adapt the mars discretization test to run with MPI
     """
 
-    descr = 'arbor busyring model MPI on a single node'
+    descr = 'marbusyring model MPI on a single node'
     model_size = parameter(['medium'])
 
     @run_before('run')
@@ -204,5 +203,5 @@ class mars_discretization_mpi(mars_discretization):
         if (self.uarch is not None) and (self.uarch in mars_references):
             self.reference = {
                 self.current_partition.fullname:
-                    arbor_references[self.uarch]['distributed'][self.model_size]
+                    mars_references[self.uarch]['distributed_mesh'][self.model_size]
             }

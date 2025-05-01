@@ -32,11 +32,11 @@ namespace mars {
             Kokkos::initialize(argc, argv);
 #endif  // MARS_ENABLE_KOKKOS
 
-#ifdef MARS_ENABLE_CUDA
-            cudaDeviceSetLimit(cudaLimitStackSize,
-                               32768);  // set stack to 32KB only for cuda since it is
-                                        // not yet supported in kokkos.
-#endif
+// #ifdef MARS_ENABLE_CUDA
+//             cudaDeviceSetLimit(cudaLimitStackSize,
+//                                32768);  // set stack to 32KB only for cuda since it is
+//                                         // not yet supported in kokkos.
+// #endif
         }
 
         ~Impl() {

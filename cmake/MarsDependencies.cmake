@@ -38,20 +38,20 @@ endif()
 
 # ##############################################################################
 
-# Kokkos
-cmake_dependent_option(MARS_ENABLE_CUDA "Enable CUDA backend for Kokkos"
-                       OFF "MARS_ENABLE_KOKKOS" OFF)
-cmake_dependent_option(MARS_ENABLE_HIP "Enable HIP backend for Kokkos"
-                       OFF "MARS_ENABLE_KOKKOS" OFF)
-
-cmake_dependent_option(
-  MARS_ENABLE_CUDAUVM "Kokkos use as default memory space CUDAUVM" OFF
-  "MARS_ENABLE_KOKKOS;MARS_ENABLE_CUDA" OFF)
-cmake_dependent_option(MARS_ENABLE_KOKKOS_KERNELS "Enable Kokkos Kernels" ON
-                       "MARS_ENABLE_KOKKOS" OFF)
-cmake_dependent_option(MARS_ENABLE_CXXOPTS "Enable cxxopts" ON "MARS_ENABLE_EXAMPLES" OFF)
-
 if(MARS_ENABLE_KOKKOS)
+# Kokkos
+  cmake_dependent_option(MARS_ENABLE_CUDA "Enable CUDA backend for Kokkos"
+                       OFF "MARS_ENABLE_KOKKOS" OFF)
+  cmake_dependent_option(MARS_ENABLE_HIP "Enable HIP backend for Kokkos"
+                       OFF "MARS_ENABLE_KOKKOS" OFF)
+
+  cmake_dependent_option(
+    MARS_ENABLE_CUDAUVM "Kokkos use as default memory space CUDAUVM" OFF
+    "MARS_ENABLE_KOKKOS;MARS_ENABLE_CUDA" OFF)
+  cmake_dependent_option(MARS_ENABLE_KOKKOS_KERNELS "Enable Kokkos Kernels" ON
+                         "MARS_ENABLE_KOKKOS" OFF)
+  cmake_dependent_option(MARS_ENABLE_CXXOPTS "Enable cxxopts" ON "MARS_ENABLE_EXAMPLES" OFF)
+
   message(STATUS "Setup Kokkos")
   list(APPEND CMAKE_MESSAGE_INDENT "${MARS_CMAKE_INDENT}")
 
@@ -283,31 +283,5 @@ if(MARS_ENABLE_KOKKOS)
   endif()
 
   # list(POP_BACK CMAKE_MESSAGE_INDENT)
-endif()
-
-# ##############################################################################
-# Moonolith
-
-if(MARS_ENABLE_MOONOLITH)
-  add_subdirectory(moonolith_adapter)
-endif()
-
-if(MARS_ENABLE_CXXOPTS)
-  include(cxxopts/cxxopts.cmake)
-endif()
-
-if(MARS_ENABLE_ADIOS2)
-  find_package(ADIOS2 REQUIRED)
-  if(ADIOS2_FOUND)
-    message(STATUS "Adios2 found.")
-    # set(MARS_ENABLE_ADIOS2 ON)
-    add_subdirectory(backend/adios2)
-
-    set(ADIOS2_INCLUDE_DIRS ${ADIOS2_DIR}/../../../include)
-    set(MARS_DEP_LIBRARIES "${MARS_DEP_LIBRARIES};${ADIOS2_LIBRARIES}")
-    set(MARS_DEP_INCLUDES "${MARS_DEP_INCLUDES};${ADIOS2_INCLUDE_DIRS}")
-  else()
-    message(STATUS "Adios2 not found.")
-  endif()
 endif()
 
