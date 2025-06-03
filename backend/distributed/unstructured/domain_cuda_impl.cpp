@@ -21,7 +21,7 @@
 namespace mars
 {
 
-template<typename KeyType, typename RealType, typename ConnTuple, typename SfcConnTuple>
+template<typename KeyType, typename RealType, typename SfcConnTuple>
 void syncDomainImpl(cstone::Domain<KeyType, RealType, cstone::GpuTag>* domain,
                     cstone::DeviceVector<KeyType>& elemSfcCodes,
                     cstone::DeviceVector<RealType>& elemX,
@@ -29,8 +29,7 @@ void syncDomainImpl(cstone::Domain<KeyType, RealType, cstone::GpuTag>* domain,
                     cstone::DeviceVector<RealType>& elemZ,
                     cstone::DeviceVector<RealType>& elemH,
                     size_t& elementCount,
-                    SfcConnTuple& d_conn_keys_,
-                    ConnTuple& d_conn_)
+                    SfcConnTuple& d_conn_keys_)
 {
     // Create scratch buffers to match the data types being synced:
     // - First 3 for coordinates (x, y, z) -> RealType
@@ -60,11 +59,6 @@ void syncDomainImpl(cstone::Domain<KeyType, RealType, cstone::GpuTag>* domain,
 // For tet elements with unsigned int keys and float coordinates
 template void syncDomainImpl<unsigned int,
                              float,
-
-                             std::tuple<cstone::DeviceVector<unsigned int>,
-                                        cstone::DeviceVector<unsigned int>,
-                                        cstone::DeviceVector<unsigned int>,
-                                        cstone::DeviceVector<unsigned int>>,
                              std::tuple<cstone::DeviceVector<unsigned int>,
                                         cstone::DeviceVector<unsigned int>,
                                         cstone::DeviceVector<unsigned int>,
@@ -79,19 +73,11 @@ template void syncDomainImpl<unsigned int,
     std::tuple<cstone::DeviceVector<unsigned int>,
                cstone::DeviceVector<unsigned int>,
                cstone::DeviceVector<unsigned int>,
-               cstone::DeviceVector<unsigned int>>& d_conn_keys_,
-    std::tuple<cstone::DeviceVector<unsigned int>,
-               cstone::DeviceVector<unsigned int>,
-               cstone::DeviceVector<unsigned int>,
-               cstone::DeviceVector<unsigned int>>& d_conn_);
+               cstone::DeviceVector<unsigned int>>& d_conn_keys_);
 
 // For tet elements with unsigned int keys and double coordinates
 template void syncDomainImpl<unsigned int,
                              double,
-                             std::tuple<cstone::DeviceVector<unsigned int>,
-                                        cstone::DeviceVector<unsigned int>,
-                                        cstone::DeviceVector<unsigned int>,
-                                        cstone::DeviceVector<unsigned int>>,
                              std::tuple<cstone::DeviceVector<unsigned int>,
                                         cstone::DeviceVector<unsigned int>,
                                         cstone::DeviceVector<unsigned int>,
@@ -106,20 +92,12 @@ template void syncDomainImpl<unsigned int,
     std::tuple<cstone::DeviceVector<unsigned int>,
                cstone::DeviceVector<unsigned int>,
                cstone::DeviceVector<unsigned int>,
-               cstone::DeviceVector<unsigned int>>& d_conn_keys_,
-    std::tuple<cstone::DeviceVector<unsigned int>,
-               cstone::DeviceVector<unsigned int>,
-               cstone::DeviceVector<unsigned int>,
-               cstone::DeviceVector<unsigned int>>& d_conn_);
+               cstone::DeviceVector<unsigned int>>& d_conn_keys_);
 
 // For tet elements with uint64_t keys and float coordinates
 template void
 syncDomainImpl<uint64_t,
                float,
-               std::tuple<cstone::DeviceVector<uint64_t>,
-                          cstone::DeviceVector<uint64_t>,
-                          cstone::DeviceVector<uint64_t>,
-                          cstone::DeviceVector<uint64_t>>,
                std::tuple<cstone::DeviceVector<uint64_t>,
                           cstone::DeviceVector<uint64_t>,
                           cstone::DeviceVector<uint64_t>,
@@ -133,20 +111,12 @@ syncDomainImpl<uint64_t,
                                                            std::tuple<cstone::DeviceVector<uint64_t>,
                                                                       cstone::DeviceVector<uint64_t>,
                                                                       cstone::DeviceVector<uint64_t>,
-                                                                      cstone::DeviceVector<uint64_t>>& d_conn_keys_,
-                                                           std::tuple<cstone::DeviceVector<uint64_t>,
-                                                                      cstone::DeviceVector<uint64_t>,
-                                                                      cstone::DeviceVector<uint64_t>,
-                                                                      cstone::DeviceVector<uint64_t>>& d_conn_);
+                                                                      cstone::DeviceVector<uint64_t>>& d_conn_keys_);
 
 // For tet elements with uint64_t keys and double coordinates
 template void
 syncDomainImpl<uint64_t,
                double,
-               std::tuple<cstone::DeviceVector<uint64_t>,
-                          cstone::DeviceVector<uint64_t>,
-                          cstone::DeviceVector<uint64_t>,
-                          cstone::DeviceVector<uint64_t>>,
                std::tuple<cstone::DeviceVector<uint64_t>,
                           cstone::DeviceVector<uint64_t>,
                           cstone::DeviceVector<uint64_t>,
@@ -160,10 +130,6 @@ syncDomainImpl<uint64_t,
                                                            std::tuple<cstone::DeviceVector<uint64_t>,
                                                                       cstone::DeviceVector<uint64_t>,
                                                                       cstone::DeviceVector<uint64_t>,
-                                                                      cstone::DeviceVector<uint64_t>>& d_conn_keys_,
-                                                           std::tuple<cstone::DeviceVector<uint64_t>,
-                                                                      cstone::DeviceVector<uint64_t>,
-                                                                      cstone::DeviceVector<uint64_t>,
-                                                                      cstone::DeviceVector<uint64_t>>& d_conn_);
+                                                                      cstone::DeviceVector<uint64_t>>& d_conn_keys_);
 
 } // namespace mars

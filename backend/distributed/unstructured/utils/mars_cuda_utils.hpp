@@ -1,3 +1,9 @@
+#include "cstone/cuda/cuda_utils.cuh"  // For IsDeviceVector, memcpyH2D, memcpyD2H, memcpyD2D
+#include <tuple>
+#include <type_traits>
+#include <algorithm>
+#include <stdexcept>
+
 namespace mars
 {
 #define cudaCheckError()                                                                 \
@@ -9,42 +15,42 @@ namespace mars
         }                                                                                \
     }
 
-// Recursive compile-time tuple copy
-template<size_t I = 0, typename Tuple1, typename Tuple2>
-void copyTupleElements(Tuple1& dst, const Tuple2& src)
-{
-    if constexpr (I < std::tuple_size_v<Tuple1>)
-    {
-        std::get<I>(dst) = std::get<I>(src);
-        copyTupleElements<I + 1>(dst, src);
-    }
-}
-
+// In mars_cuda_utils.hpp - Simple implementation using only cornerstone utilities
 template<typename DstTuple, typename SrcTuple, std::size_t I = 0>
 void copyTupleElements(DstTuple& dst, const SrcTuple& src)
 {
     if constexpr (I < std::tuple_size_v<DstTuple>)
     {
-        using DstType = typename std::tuple_element_t<I, DstTuple>::value_type;
-        using SrcType = typename std::tuple_element_t<I, SrcTuple>::value_type;
+        auto& dstVec = std::get<I>(dst);
+        const auto& srcVec = std::get<I>(src);
         
-        if constexpr (std::is_same_v<DstType, SrcType>)
+        // Resize destination to match source
+        dstVec.resize(srcVec.size());
+        
+        // Determine copy direction based on vector types
+        if constexpr (IsDeviceVector<std::decay_t<decltype(srcVec)>>::value &&
+                      IsDeviceVector<std::decay_t<decltype(dstVec)>>::value)
         {
-            // Same types - direct assignment
-            std::get<I>(dst) = std::get<I>(src);
+            // Device to Device
+            memcpyD2D(srcVec.data(), srcVec.size(), dstVec.data());
+        }
+        else if constexpr (IsDeviceVector<std::decay_t<decltype(dstVec)>>::value)
+        {
+            // Host to Device  
+            memcpyH2D(srcVec.data(), srcVec.size(), dstVec.data());
+        }
+        else if constexpr (IsDeviceVector<std::decay_t<decltype(srcVec)>>::value)
+        {
+            // Device to Host
+            memcpyD2H(srcVec.data(), srcVec.size(), dstVec.data());
         }
         else
         {
-            // Different types - convert element by element
-            const auto& srcVec = std::get<I>(src);
-            auto& dstVec = std::get<I>(dst);
-            
-            std::vector<DstType> converted(srcVec.size());
-            std::transform(srcVec.begin(), srcVec.end(), converted.begin(),
-                          [](const auto& val) { return static_cast<DstType>(val); });
-            dstVec = converted;
+            // Host to Host
+            std::copy(srcVec.begin(), srcVec.end(), dstVec.begin());
         }
         
+        // Recursive call for next tuple element
         copyTupleElements<DstTuple, SrcTuple, I + 1>(dst, src);
     }
 }

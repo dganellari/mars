@@ -155,7 +155,7 @@ struct VectorSelector<T, cstone::GpuTag>
 template<typename T>
 struct VectorSelector<T, cstone::CpuTag>
 {
-    using type = cstone::DeviceVector<T>;
+    using type = std::vector<T>;
 };
 
 // Helper for creating element connectivity type for device memory
@@ -279,7 +279,7 @@ public:
     // SoA data structures using tuples - host versions
     using HostCoordsTuple       = std::tuple<HostVector<RealType>, HostVector<RealType>, HostVector<RealType>>;
     using HostPropsTuple        = std::tuple<HostVector<RealType>>;
-    using HostConnectivityTuple = typename HostConnectivityTupleHelper<ElementTag, int>::type;
+    using HostConnectivityTuple = typename HostConnectivityTupleHelper<ElementTag, KeyType>::type;
 
     ElementDomain(const std::string& meshFile, int rank, int numRanks);
 
@@ -617,7 +617,7 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::readMeshDataS
         if constexpr (std::is_same_v<ElementTag, TetTag>)
         {
             auto [readNodeCount, readElementCount, x_data, y_data, z_data, conn_tuple, localToGlobal] =
-                mars::readMeshWithElementPartitioning<4, float>(meshFile, rank_, numRanks_);
+                mars::readMeshWithElementPartitioning<4, float, KeyType>(meshFile, rank_, numRanks_);
 
             nodeCount_    = readNodeCount;
             elementCount_ = readElementCount;
@@ -627,7 +627,7 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::readMeshDataS
         else if constexpr (std::is_same_v<ElementTag, HexTag>)
         {
             auto [readNodeCount, readElementCount, x_data, y_data, z_data, conn_tuple, localToGlobal] =
-                mars::readMeshWithElementPartitioning<8, float>(meshFile, rank_, numRanks_);
+                mars::readMeshWithElementPartitioning<8, float, KeyType>(meshFile, rank_, numRanks_);
 
             nodeCount_    = readNodeCount;
             elementCount_ = readElementCount;
@@ -637,7 +637,7 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::readMeshDataS
         else if constexpr (std::is_same_v<ElementTag, TriTag>)
         {
             auto [readNodeCount, readElementCount, x_data, y_data, z_data, conn_tuple, localToGlobal] =
-                mars::readMeshWithElementPartitioning<3, float>(meshFile, rank_, numRanks_);
+                mars::readMeshWithElementPartitioning<3, float, KeyType>(meshFile, rank_, numRanks_);
 
             nodeCount_    = readNodeCount;
             elementCount_ = readElementCount;
@@ -647,7 +647,7 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::readMeshDataS
         else if constexpr (std::is_same_v<ElementTag, QuadTag>)
         {
             auto [readNodeCount, readElementCount, x_data, y_data, z_data, conn_tuple, localToGlobal] =
-                mars::readMeshWithElementPartitioning<4, float>(meshFile, rank_, numRanks_);
+                mars::readMeshWithElementPartitioning<4, float, KeyType>(meshFile, rank_, numRanks_);
 
             nodeCount_    = readNodeCount;
             elementCount_ = readElementCount;
@@ -679,7 +679,7 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::calculateChar
     if constexpr (std::is_same_v<ElementTag, TetTag> && std::is_same_v<AcceleratorTag, cstone::GpuTag>)
     {
         // Fix: Correct the device vector declaration
-        DeviceVector<KeyType> d_nodeTetCount(nodeCount_, 0);
+        DeviceVector<int> d_nodeTetCount(nodeCount_, 0);
 
         // Extract raw pointers for kernel
         auto& d_x  = std::get<0>(d_coords_);
@@ -778,9 +778,7 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::sync()
             thrust::raw_pointer_cast(d_elemH.data()), elementCount_);
         cudaCheckError();
 
-        // Rest of the function...
-        syncDomainImpl(domain_.get(), d_elemSfcCodes_, d_elemX, d_elemY, d_elemZ, d_elemH, elementCount_, d_conn_keys_,
-                       d_conn_);
+        syncDomainImpl(domain_.get(), d_elemSfcCodes_, d_elemX, d_elemY, d_elemZ, d_elemH, elementCount_, d_conn_keys_);
 
         size_t newElementCount = domain_->endIndex() - domain_->startIndex();
         elementCount_          = newElementCount;

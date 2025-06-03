@@ -32,14 +32,15 @@ class GlobalAssignmentGpu;
 namespace mars
 {
 // Forward declaration of sync implementation function
-template<typename KeyType, typename RealType>
+template<typename KeyType, typename RealType, typename SfcConnTuple>
 void syncDomainImpl(cstone::Domain<KeyType, RealType, cstone::GpuTag>* domain,
                     cstone::DeviceVector<KeyType>& elemSfcCodes,
                     cstone::DeviceVector<RealType>& elemX,
                     cstone::DeviceVector<RealType>& elemY,
                     cstone::DeviceVector<RealType>& elemZ,
                     cstone::DeviceVector<RealType>& elemH,
-                    size_t elementCount);
+                    size_t& elementCount,
+                    SfcConnTuple& d_conn_keys_);
 
 // Forward declarations of CUDA kernels
 template<typename KeyType, typename SfcConnTuple>
