@@ -15,6 +15,13 @@ namespace mars
         }                                                                                \
     }
 
+    // Add this macro near the top after includes (around line 25)
+#ifdef __CUDACC__
+    #define MARS_HOST_DEVICE __host__ __device__
+#else
+    #define MARS_HOST_DEVICE
+#endif
+
 // In mars_cuda_utils.hpp - Simple implementation using only cornerstone utilities
 template<typename DstTuple, typename SrcTuple, std::size_t I = 0>
 void copyTupleElements(DstTuple& dst, const SrcTuple& src)

@@ -32,7 +32,7 @@ using std::get;
 // Mars includes
 #include "mars.hpp"
 #include "mars_globals.hpp"
-#include "mars_cuda_utils.hpp"
+#include "mars_domain_utils.hpp"
 // #include "mars_read_mesh_adios2.hpp"
 #include "mars_read_mesh_binary.hpp"
 
@@ -120,8 +120,8 @@ void generateSfcKeys(const RealType* x,
 
 // GPU function to rebuild connectivity with SFC keys
 // This will be implemented in domain.cu
-template<typename KeyType, typename SfcConnTuple, typename ConnTuple>
-void rebuildElementConnectivity(SfcConnTuple& d_conn_keys_, ConnTuple& d_conn_, size_t newElementCount);
+// template<typename KeyType, typename SfcConnTple, typename ConnTuple>
+// void rebuildElementConnectivity(SfcConnTuple& d_conn_keys_, ConnTuple& d_conn_, size_t newElementCount);
 
 // Add this with your other forward declarations around line 120
 template<typename ElementTag, typename KeyType, typename RealType>
@@ -135,6 +135,31 @@ __global__ void buildSfcConnectivity(const KeyType* indices0,
                                     KeyType* conn_key2,
                                     KeyType* conn_key3,
                                     int numElements);
+
+// Add these forward declarations after line 130
+template<typename KeyType>
+__global__ void decodeSfcToIntegersKernel(const KeyType* keys,
+                                          unsigned* x,
+                                          unsigned* y, 
+                                          unsigned* z,
+                                          size_t numKeys);
+
+template<typename RealType, typename KeyType>
+__global__ void integerToPhysicalKernel(const unsigned* ix,
+                                        const unsigned* iy,
+                                        const unsigned* iz,
+                                        RealType* x,
+                                        RealType* y, 
+                                        RealType* z,
+                                        size_t numKeys,
+                                        cstone::Box<RealType> box);
+
+template<typename KeyType>
+__global__ void convertSfcToNodeIndicesKernel(const KeyType* sfcIndices,
+                                              KeyType* nodeIndices,
+                                              const KeyType* particleKeys,
+                                              size_t numElements,
+                                              size_t numNodes);
 
 // Template struct to select the correct vector type based on accelerator tag
 template<typename T, typename AcceleratorTag>
@@ -284,74 +309,22 @@ public:
     ElementDomain(const std::string& meshFile, int rank, int numRanks);
 
     // GPU-accelerated calculation of characteristic sizes
-    void calculateCharacteristicSizes();
+    void calculateCharacteristicSizes(const DeviceConnectivityTuple& d_conn_,
+                                      const DeviceCoordsTuple& d_coords_);
 
     // Transfer data to GPU for computations
-    void transferDataToGPU(const HostCoordsTuple& h_coords_, const HostConnectivityTuple& h_conn_);
+    void transferDataToGPU(const HostCoordsTuple& h_coords_, const HostConnectivityTuple& h_conn_, DeviceCoordsTuple& d_coords_,
+                           DeviceConnectivityTuple& d_conn_);
 
     // Domain synchronization (following cornerstone API pattern)
-    void sync();
-
-    // CUDA kernel launcher specialization for GPU tag
-    // template<typename KernelFunc>
-    // void computeOnElements(KernelFunc kernel)
-    // {
-    //     int blockSize = 256;
-    //     int numBlocks = (elementCount_ + blockSize - 1) / blockSize;
-
-    //     // Extract raw pointers from tuple elements for kernel call
-    //     auto& d_x = std::get<0>(d_coords_);
-    //     auto& d_y = std::get<1>(d_coords_);
-    //     auto& d_z = std::get<2>(d_coords_);
-
-    //     // Get connectivity pointers based on element type
-    //     if constexpr (std::is_same_v<ElementTag, TetTag>)
-    //     {
-    //         auto& d_i0 = std::get<0>(d_conn_);
-    //         auto& d_i1 = std::get<1>(d_conn_);
-    //         auto& d_i2 = std::get<2>(d_conn_);
-    //         auto& d_i3 = std::get<3>(d_conn_);
-
-    //         kernel<<<numBlocks, blockSize>>>(
-    //             thrust::raw_pointer_cast(d_x.data()), thrust::raw_pointer_cast(d_y.data()),
-    //             thrust::raw_pointer_cast(d_z.data()), thrust::raw_pointer_cast(d_i0.data()),
-    //             thrust::raw_pointer_cast(d_i1.data()), thrust::raw_pointer_cast(d_i2.data()),
-    //             thrust::raw_pointer_cast(d_i3.data()), elementCount_);
-    //         cudaCheckError();
-    //     }
-    //     else if constexpr (std::is_same_v<ElementTag, HexTag>)
-    //     {
-    //         auto& d_i0 = std::get<0>(d_conn_);
-    //         auto& d_i1 = std::get<1>(d_conn_);
-    //         auto& d_i2 = std::get<2>(d_conn_);
-    //         auto& d_i3 = std::get<3>(d_conn_);
-    //         auto& d_i4 = std::get<4>(d_conn_);
-    //         auto& d_i5 = std::get<5>(d_conn_);
-    //         auto& d_i6 = std::get<6>(d_conn_);
-    //         auto& d_i7 = std::get<7>(d_conn_);
-
-    //         kernel<<<numBlocks, blockSize>>>(
-    //             thrust::raw_pointer_cast(d_x.data()), thrust::raw_pointer_cast(d_y.data()),
-    //             thrust::raw_pointer_cast(d_z.data()), thrust::raw_pointer_cast(d_i0.data()),
-    //             thrust::raw_pointer_cast(d_i1.data()), thrust::raw_pointer_cast(d_i2.data()),
-    //             thrust::raw_pointer_cast(d_i3.data()), thrust::raw_pointer_cast(d_i4.data()),
-    //             thrust::raw_pointer_cast(d_i5.data()), thrust::raw_pointer_cast(d_i6.data()),
-    //             thrust::raw_pointer_cast(d_i7.data()), elementCount_);
-    //         cudaCheckError();
-    //     }
-    //     // Add cases for other element types
-    // }
-
-    // Access methods for coordinate data
-    const DeviceVector<RealType>& x() const { return std::get<0>(d_coords_); }
-    const DeviceVector<RealType>& y() const { return std::get<1>(d_coords_); }
-    const DeviceVector<RealType>& z() const { return std::get<2>(d_coords_); }
+    void sync(const DeviceConnectivityTuple& d_conn_,
+              const DeviceCoordsTuple& d_coords_);
 
     // Access to connectivity - template parameter to select index array
     template<int I>
     const DeviceVector<KeyType>& indices() const
     {
-        return std::get<I>(d_conn_);
+        return std::get<I>(d_conn_keys_);
     }
 
     // Get element/node counts
@@ -368,6 +341,32 @@ public:
     // Helper methods
     void readMeshDataSoA(const std::string& meshFile, HostCoordsTuple& h_coords_, HostConnectivityTuple& h_conn_);
 
+    // Real coordinate conversion from SFC
+    MARS_HOST_DEVICE std::tuple<RealType, RealType, RealType> sfcToPhysicalCoordinate(KeyType sfcKey) const;
+    MARS_HOST_DEVICE RealType sfcToPhysicalCoordinateX(KeyType sfcKey) const;
+    MARS_HOST_DEVICE RealType sfcToPhysicalCoordinateY(KeyType sfcKey) const;
+    MARS_HOST_DEVICE RealType sfcToPhysicalCoordinateZ(KeyType sfcKey) const;
+    
+    // Integer coordinate conversion from SFC (for spatial operations/hashing)
+    MARS_HOST_DEVICE std::tuple<unsigned, unsigned, unsigned> sfcToSpatialCoordinate(KeyType sfcKey) const;
+    MARS_HOST_DEVICE unsigned sfcToSpatialCoordinateX(KeyType sfcKey) const;
+    MARS_HOST_DEVICE unsigned sfcToSpatialCoordinateY(KeyType sfcKey) const;
+    MARS_HOST_DEVICE unsigned sfcToSpatialCoordinateZ(KeyType sfcKey) const;
+
+    // On-demand connectivity access 
+    template<int I>
+    DeviceVector<KeyType> getConnectivity() const;
+    DeviceConnectivityTuple getConnectivity() const;
+    
+    // Single connectivity access
+    template<int I>
+    KeyType getConnectivity(size_t elementIndex) const;
+    std::tuple<KeyType, KeyType, KeyType, KeyType> getConnectivity(size_t elementIndex) const;
+    
+    // Device connectivity functions
+    template<int I>
+    __device__ KeyType getConnectivityDevice(size_t elementIndex) const;
+    
 private:
     int rank_;
     int numRanks_;
@@ -376,15 +375,14 @@ private:
     std::size_t nodeCount_    = 0;
 
     // Device data in SoA format
-    DeviceCoordsTuple d_coords_;     // (x, y, z)
     DevicePropsTuple d_props_;       // (h)
-    DeviceConnectivityTuple d_conn_; // (i0, i1, i2, ...) depends on element type
-    DeviceConnectivityTuple
-        d_conn_keys_; // (sfc_i0, sfc_i1, sfc_i2, ...) depends on element type; store sfc instead of coordinates
+    DeviceConnectivityTuple d_conn_keys_; // (sfc_i0, sfc_i1, sfc_i2, ...) depends on element type; store sfc instead of coordinates
     DeviceVector<KeyType> d_elemToNodeMap_;
     DeviceVector<KeyType> d_elemSfcCodes_;
 
-    void syncImpl(DeviceVector<KeyType>& d_nodeSfcCodes, int blockSize, int numBlocks)
+    void initializeConnectivityKeys();
+
+    void syncImpl(DeviceVector<KeyType>& d_nodeSfcCodes, const DeviceConnectivityTuple& d_conn_, int blockSize, int numBlocks)
     {
         if constexpr (std::is_same_v<ElementTag, TetTag>)
         {
@@ -536,6 +534,37 @@ cstone::Box<RealType> createBoundingBox(const CoordTuple& coords, RealType paddi
     }
 }
 
+template<typename KeyType, typename RealType>
+void testSfcPrecision(const cstone::Box<RealType>& box, int rank = 0)
+{
+#ifndef NDEBUG  // Only run in debug builds (when NDEBUG is NOT defined)
+    RealType domainSizeX = box.xmax() - box.xmin();
+    RealType domainSizeY = box.ymax() - box.ymin(); 
+    RealType domainSizeZ = box.zmax() - box.zmin();
+    RealType maxDomainSize = std::max({domainSizeX, domainSizeY, domainSizeZ});
+    
+    constexpr int totalBits = sizeof(KeyType) * 8;
+    constexpr int bitsPerDim = totalBits / 3;
+    RealType sfcPrecision = maxDomainSize / (1ULL << bitsPerDim);
+    
+    if (rank == 0) {
+        std::cout << "=== SFC Precision Analysis (DEBUG) ===" << std::endl;
+        std::cout << "KeyType: " << (sizeof(KeyType) == 4 ? "uint32_t" : "uint64_t") 
+                  << " (" << totalBits << " bits)" << std::endl;
+        std::cout << "Domain size: [" << domainSizeX << " x " << domainSizeY 
+                  << " x " << domainSizeZ << "]" << std::endl;
+        std::cout << "SFC precision: " << sfcPrecision << " units" << std::endl;
+        
+        if (sizeof(KeyType) == 4 && sfcPrecision > 0.001) {
+            std::cout << "⚠️  WARNING: Consider using uint64_t KeyType!" << std::endl;
+        } else {
+            std::cout << "✅ SFC precision should be sufficient." << std::endl;
+        }
+        std::cout << "=======================================" << std::endl;
+    }
+#endif // !NDEBUG
+}
+
 // Element domain constructor
 template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
 ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(const std::string& meshFile,
@@ -548,6 +577,9 @@ ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(cons
     HostCoordsTuple h_coords;     // (x, y, z)
     HostConnectivityTuple h_conn; // (i0, i1, i2, ...) depends on element type
 
+    DeviceConnectivityTuple d_conn_; // (i0, i1, i2, ...) depends on element type
+    DeviceCoordsTuple d_coords_; // (x, y, z)
+
     // Read the mesh in SoA format
     readMeshDataSoA(meshFile, h_coords, h_conn);
 
@@ -559,16 +591,19 @@ ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(cons
     // Create a bounding box with some padding
     auto box = createBoundingBox<RealType>(h_coords);
 
+    // Test SFC precision for this domain (debug only)
+    testSfcPrecision<KeyType, RealType>(box, rank_);
+
     domain_ = std::make_unique<DomainType>(rank, numRanks, bucketSize, bucketSizeFocus, theta, box);
 
     // Transfer data to GPU before sync
-    transferDataToGPU(h_coords, h_conn);
+    transferDataToGPU(h_coords, h_conn, d_coords_, d_conn_);
 
     // Calculate characteristic sizes
-    calculateCharacteristicSizes();
+    calculateCharacteristicSizes(d_conn_, d_coords_);
 
     // Perform sync
-    sync();
+    sync(d_conn_, d_coords_);
 
     std::cout << "Rank " << rank_ << " initialized " << ElementTag::Name << " domain with " << nodeCount_
               << " nodes and " << elementCount_ << " elements." << std::endl;
@@ -669,7 +704,7 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::readMeshDataS
 
 // Calculate characteristic sizes for elements - GPU-only version
 template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
-void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::calculateCharacteristicSizes()
+void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::calculateCharacteristicSizes(const DeviceConnectivityTuple& d_conn_, const DeviceCoordsTuple& d_coords_)
 {
     // Work directly with device data
     auto& d_h = std::get<0>(d_props_);
@@ -738,7 +773,8 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::calculateChar
 }
 
 template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
-void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::sync()
+void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::sync(const DeviceConnectivityTuple& d_conn_,
+                                                                 const DeviceCoordsTuple& d_coords_)
 {
     if constexpr (std::is_same_v<AcceleratorTag, cstone::GpuTag>)
     {
@@ -756,11 +792,15 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::sync()
 
         // Find representative nodes for each element
         d_elemToNodeMap_.resize(elementCount_);
+
+        //initialize connectivity keys storage
+        initializeConnectivityKeys();
+
         int blockSize = 256;
         int numBlocks = (elementCount_ + blockSize - 1) / blockSize;
 
         // Call element-specific implementation
-        syncImpl(d_nodeSfcCodes, blockSize, numBlocks);
+        syncImpl(d_nodeSfcCodes, d_conn_, blockSize, numBlocks);
 
         // Create element arrays
         DeviceVector<RealType> d_elemX(elementCount_);
@@ -783,18 +823,16 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::sync()
         size_t newElementCount = domain_->endIndex() - domain_->startIndex();
         elementCount_          = newElementCount;
 
-        if (newElementCount == 0) {
-            return;
-        }
-        
-        rebuildElementConnectivity<KeyType, DeviceConnectivityTuple, DeviceConnectivityTuple>(d_conn_keys_, d_conn_, newElementCount);
+        assert(newElementCount > 0 && newElementCount <= std::numeric_limits<KeyType>::max());
+        // rebuildElementConnectivity<KeyType, DeviceConnectivityTuple, DeviceConnectivityTuple>(d_conn_keys_, d_conn_, newElementCount);
     }
 }
 
 // Transfer data to GPU for computations
 template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
 void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::transferDataToGPU(
-    const HostCoordsTuple& h_coords_, const HostConnectivityTuple& h_conn_)
+    const HostCoordsTuple& h_coords_, const HostConnectivityTuple& h_conn_, DeviceCoordsTuple& d_coords_,
+    DeviceConnectivityTuple& d_conn_)
 {
     if constexpr (std::is_same_v<AcceleratorTag, cstone::GpuTag>)
     {
@@ -808,4 +846,140 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::transferDataT
         d_props_ = std::tuple<DeviceVector<RealType>>(DeviceVector<RealType>(nodeCount_));
     }
 }
+
+// Implementation of SFC-to-coordinate functions
+template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
+MARS_HOST_DEVICE std::tuple<RealType, RealType, RealType> 
+ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::sfcToPhysicalCoordinate(KeyType sfcKey) const
+{
+    auto [ix, iy, iz] = cstone::decodeSfc(sfcKey);
+    
+    constexpr unsigned maxCoord = (1u << cstone::maxTreeLevel<KeyType>{}) - 1;
+    RealType invMaxCoord = RealType(1.0) / maxCoord;
+    auto box = domain_->box();
+    
+    RealType x = box.xmin() + ix * invMaxCoord * (box.xmax() - box.xmin());
+    RealType y = box.ymin() + iy * invMaxCoord * (box.ymax() - box.ymin());
+    RealType z = box.zmin() + iz * invMaxCoord * (box.zmax() - box.zmin());
+    
+    return std::make_tuple(x, y, z);
+}
+
+template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
+MARS_HOST_DEVICE RealType 
+ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::sfcToPhysicalCoordinateX(KeyType sfcKey) const
+{
+    auto [ix, iy, iz] = cstone::decodeSfc(sfcKey);
+    
+    constexpr unsigned maxCoord = (1u << cstone::maxTreeLevel<KeyType>{}) - 1;
+    RealType invMaxCoord = RealType(1.0) / maxCoord;
+    auto box = domain_->box();
+    
+    return box.xmin() + ix * invMaxCoord * (box.xmax() - box.xmin());
+}
+
+template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
+MARS_HOST_DEVICE RealType 
+ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::sfcToPhysicalCoordinateY(KeyType sfcKey) const
+{
+    auto [ix, iy, iz] = cstone::decodeSfc(sfcKey);
+    
+    constexpr unsigned maxCoord = (1u << cstone::maxTreeLevel<KeyType>{}) - 1;
+    RealType invMaxCoord = RealType(1.0) / maxCoord;
+    auto box = domain_->box();
+    
+    return box.ymin() + iy * invMaxCoord * (box.ymax() - box.ymin());
+}
+
+template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
+MARS_HOST_DEVICE RealType 
+ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::sfcToPhysicalCoordinateZ(KeyType sfcKey) const
+{
+    auto [ix, iy, iz] = cstone::decodeSfc(sfcKey);
+    
+    constexpr unsigned maxCoord = (1u << cstone::maxTreeLevel<KeyType>{}) - 1;
+    RealType invMaxCoord = RealType(1.0) / maxCoord;
+    auto box = domain_->box();
+    
+    return box.zmin() + iz * invMaxCoord * (box.zmax() - box.zmin());
+}
+
+template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
+MARS_HOST_DEVICE std::tuple<unsigned, unsigned, unsigned> 
+ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::sfcToSpatialCoordinate(KeyType sfcKey) const
+{
+    auto [ix, iy, iz] = cstone::decodeSfc(sfcKey);
+    return std::make_tuple(ix, iy, iz);
+}
+
+template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
+MARS_HOST_DEVICE unsigned 
+ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::sfcToSpatialCoordinateX(KeyType sfcKey) const
+{
+    auto [ix, iy, iz] = cstone::decodeSfc(sfcKey);
+    return ix;
+}
+
+template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
+MARS_HOST_DEVICE unsigned 
+ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::sfcToSpatialCoordinateY(KeyType sfcKey) const
+{
+    auto [ix, iy, iz] = cstone::decodeSfc(sfcKey);
+    return iy;
+}
+
+template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
+MARS_HOST_DEVICE unsigned 
+ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::sfcToSpatialCoordinateZ(KeyType sfcKey) const
+{
+    auto [ix, iy, iz] = cstone::decodeSfc(sfcKey);
+    return iz;
+}
+
+template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
+template<int I>
+KeyType ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::getConnectivity(size_t elementIndex) const
+{
+    static_assert(I >= 0 && I < NodesPerElement, "Index out of range for element connectivity");
+    
+    if (elementIndex >= elementCount_) return KeyType(0);
+    
+    // Direct access to SFC key - no host transfer
+    return std::get<I>(d_conn_keys_)[elementIndex];
+}
+
+// Initialize d_conn_keys_ in constructor - missing resize calls
+template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
+void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::initializeConnectivityKeys()
+{
+    // Initialize all connectivity key vectors based on element type
+    if constexpr (std::is_same_v<ElementTag, TetTag>) {
+        std::get<0>(d_conn_keys_).resize(elementCount_);
+        std::get<1>(d_conn_keys_).resize(elementCount_);
+        std::get<2>(d_conn_keys_).resize(elementCount_);
+        std::get<3>(d_conn_keys_).resize(elementCount_);
+    }
+    else if constexpr (std::is_same_v<ElementTag, HexTag>) {
+        std::get<0>(d_conn_keys_).resize(elementCount_);
+        std::get<1>(d_conn_keys_).resize(elementCount_);
+        std::get<2>(d_conn_keys_).resize(elementCount_);
+        std::get<3>(d_conn_keys_).resize(elementCount_);
+        std::get<4>(d_conn_keys_).resize(elementCount_);
+        std::get<5>(d_conn_keys_).resize(elementCount_);
+        std::get<6>(d_conn_keys_).resize(elementCount_);
+        std::get<7>(d_conn_keys_).resize(elementCount_);
+    }
+    else if constexpr (std::is_same_v<ElementTag, TriTag>) {
+        std::get<0>(d_conn_keys_).resize(elementCount_);
+        std::get<1>(d_conn_keys_).resize(elementCount_);
+        std::get<2>(d_conn_keys_).resize(elementCount_);
+    }
+    else if constexpr (std::is_same_v<ElementTag, QuadTag>) {
+        std::get<0>(d_conn_keys_).resize(elementCount_);
+        std::get<1>(d_conn_keys_).resize(elementCount_);
+        std::get<2>(d_conn_keys_).resize(elementCount_);
+        std::get<3>(d_conn_keys_).resize(elementCount_);
+    }
+}
+
 } // namespace mars
