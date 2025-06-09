@@ -333,6 +333,10 @@ public:
 
     // Access to cornerstone domain
     DomainType& getDomain() { return *domain_; }
+    const DomainType& getDomain() const { return *domain_; }
+
+    MARS_HOST_DEVICE
+    const cstone::Box<RealType>& getBoundingBox() const { return box_; }
 
     // Start and end indices for local work assignment
     std::size_t startIndex() const { return domain_->startIndex(); }
@@ -374,11 +378,17 @@ private:
     std::size_t elementCount_ = 0;
     std::size_t nodeCount_    = 0;
 
+    // element unique identifiers (SFC codes)
+    DeviceVector<KeyType> d_elemSfcCodes_;
+
     // Device data in SoA format
     DevicePropsTuple d_props_;       // (h)
     DeviceConnectivityTuple d_conn_keys_; // (sfc_i0, sfc_i1, sfc_i2, ...) depends on element type; store sfc instead of coordinates
+    //TODO: check if domain_->box() is a device function in cstone to avoid storing box_ here
+    cstone::Box<RealType> box_; // bounding box for the domain
+
+    //useful mapping from element to node indices
     DeviceVector<KeyType> d_elemToNodeMap_;
-    DeviceVector<KeyType> d_elemSfcCodes_;
 
     void initializeConnectivityKeys();
 
@@ -572,6 +582,7 @@ ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(cons
                                                                             int numRanks)
     : rank_(rank)
     , numRanks_(numRanks)
+    , box_(0, 1)
 {
     // Host data in SoA format
     HostCoordsTuple h_coords;     // (x, y, z)
@@ -589,12 +600,12 @@ ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(cons
     RealType theta           = 0.5;
 
     // Create a bounding box with some padding
-    auto box = createBoundingBox<RealType>(h_coords);
+    box_ = createBoundingBox<RealType>(h_coords);
 
     // Test SFC precision for this domain (debug only)
-    testSfcPrecision<KeyType, RealType>(box, rank_);
+    testSfcPrecision<KeyType, RealType>(box_, rank_);
 
-    domain_ = std::make_unique<DomainType>(rank, numRanks, bucketSize, bucketSizeFocus, theta, box);
+    domain_ = std::make_unique<DomainType>(rank, numRanks, bucketSize, bucketSizeFocus, theta, box_);
 
     // Transfer data to GPU before sync
     transferDataToGPU(h_coords, h_conn, d_coords_, d_conn_);
@@ -852,11 +863,14 @@ template<typename ElementTag, typename RealType, typename KeyType, typename Acce
 MARS_HOST_DEVICE std::tuple<RealType, RealType, RealType> 
 ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::sfcToPhysicalCoordinate(KeyType sfcKey) const
 {
-    auto [ix, iy, iz] = cstone::decodeSfc(sfcKey);
+    // Convert raw key to SfcKind strong type
+    auto sfcKindKey = cstone::SfcKind<KeyType>(sfcKey);
+    auto [ix, iy, iz] = cstone::decodeSfc(sfcKindKey);
     
-    constexpr unsigned maxCoord = (1u << cstone::maxTreeLevel<KeyType>{}) - 1;
+    // Use SfcKind for maxTreeLevel
+    constexpr unsigned maxCoord = (1u << cstone::maxTreeLevel<cstone::SfcKind<KeyType>>{}) - 1;
     RealType invMaxCoord = RealType(1.0) / maxCoord;
-    auto box = domain_->box();
+    auto box = getBoundingBox();
     
     RealType x = box.xmin() + ix * invMaxCoord * (box.xmax() - box.xmin());
     RealType y = box.ymin() + iy * invMaxCoord * (box.ymax() - box.ymin());
@@ -869,11 +883,14 @@ template<typename ElementTag, typename RealType, typename KeyType, typename Acce
 MARS_HOST_DEVICE RealType 
 ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::sfcToPhysicalCoordinateX(KeyType sfcKey) const
 {
-    auto [ix, iy, iz] = cstone::decodeSfc(sfcKey);
+    // Convert raw key to SfcKind strong type
+    auto sfcKindKey = cstone::SfcKind<KeyType>(sfcKey);
+    auto [ix, iy, iz] = cstone::decodeSfc(sfcKindKey);
     
-    constexpr unsigned maxCoord = (1u << cstone::maxTreeLevel<KeyType>{}) - 1;
+    // Use SfcKind for maxTreeLevel
+    constexpr unsigned maxCoord = (1u << cstone::maxTreeLevel<cstone::SfcKind<KeyType>>{}) - 1;
     RealType invMaxCoord = RealType(1.0) / maxCoord;
-    auto box = domain_->box();
+    auto box = getBoundingBox();
     
     return box.xmin() + ix * invMaxCoord * (box.xmax() - box.xmin());
 }
@@ -882,11 +899,14 @@ template<typename ElementTag, typename RealType, typename KeyType, typename Acce
 MARS_HOST_DEVICE RealType 
 ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::sfcToPhysicalCoordinateY(KeyType sfcKey) const
 {
-    auto [ix, iy, iz] = cstone::decodeSfc(sfcKey);
+    // Convert raw key to SfcKind strong type
+    auto sfcKindKey = cstone::SfcKind<KeyType>(sfcKey);
+    auto [ix, iy, iz] = cstone::decodeSfc(sfcKindKey);
     
-    constexpr unsigned maxCoord = (1u << cstone::maxTreeLevel<KeyType>{}) - 1;
+    // Use SfcKind for maxTreeLevel
+    constexpr unsigned maxCoord = (1u << cstone::maxTreeLevel<cstone::SfcKind<KeyType>>{}) - 1;
     RealType invMaxCoord = RealType(1.0) / maxCoord;
-    auto box = domain_->box();
+    auto box = getBoundingBox();
     
     return box.ymin() + iy * invMaxCoord * (box.ymax() - box.ymin());
 }
@@ -895,11 +915,14 @@ template<typename ElementTag, typename RealType, typename KeyType, typename Acce
 MARS_HOST_DEVICE RealType 
 ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::sfcToPhysicalCoordinateZ(KeyType sfcKey) const
 {
-    auto [ix, iy, iz] = cstone::decodeSfc(sfcKey);
+    // Convert raw key to SfcKind strong type
+    auto sfcKindKey = cstone::SfcKind<KeyType>(sfcKey);
+    auto [ix, iy, iz] = cstone::decodeSfc(sfcKindKey);
     
-    constexpr unsigned maxCoord = (1u << cstone::maxTreeLevel<KeyType>{}) - 1;
+    // Use SfcKind for maxTreeLevel
+    constexpr unsigned maxCoord = (1u << cstone::maxTreeLevel<cstone::SfcKind<KeyType>>{}) - 1;
     RealType invMaxCoord = RealType(1.0) / maxCoord;
-    auto box = domain_->box();
+    auto box = getBoundingBox();
     
     return box.zmin() + iz * invMaxCoord * (box.zmax() - box.zmin());
 }
@@ -908,7 +931,9 @@ template<typename ElementTag, typename RealType, typename KeyType, typename Acce
 MARS_HOST_DEVICE std::tuple<unsigned, unsigned, unsigned> 
 ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::sfcToSpatialCoordinate(KeyType sfcKey) const
 {
-    auto [ix, iy, iz] = cstone::decodeSfc(sfcKey);
+    // Convert raw key to SfcKind strong type
+    auto sfcKindKey = cstone::SfcKind<KeyType>(sfcKey);
+    auto [ix, iy, iz] = cstone::decodeSfc(sfcKindKey);
     return std::make_tuple(ix, iy, iz);
 }
 
@@ -916,7 +941,9 @@ template<typename ElementTag, typename RealType, typename KeyType, typename Acce
 MARS_HOST_DEVICE unsigned 
 ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::sfcToSpatialCoordinateX(KeyType sfcKey) const
 {
-    auto [ix, iy, iz] = cstone::decodeSfc(sfcKey);
+    // Convert raw key to SfcKind strong type
+    auto sfcKindKey = cstone::SfcKind<KeyType>(sfcKey);
+    auto [ix, iy, iz] = cstone::decodeSfc(sfcKindKey);
     return ix;
 }
 
@@ -924,7 +951,9 @@ template<typename ElementTag, typename RealType, typename KeyType, typename Acce
 MARS_HOST_DEVICE unsigned 
 ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::sfcToSpatialCoordinateY(KeyType sfcKey) const
 {
-    auto [ix, iy, iz] = cstone::decodeSfc(sfcKey);
+    // Convert raw key to SfcKind strong type
+    auto sfcKindKey = cstone::SfcKind<KeyType>(sfcKey);
+    auto [ix, iy, iz] = cstone::decodeSfc(sfcKindKey);
     return iy;
 }
 
@@ -932,12 +961,15 @@ template<typename ElementTag, typename RealType, typename KeyType, typename Acce
 MARS_HOST_DEVICE unsigned 
 ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::sfcToSpatialCoordinateZ(KeyType sfcKey) const
 {
-    auto [ix, iy, iz] = cstone::decodeSfc(sfcKey);
+    // Convert raw key to SfcKind strong type
+    auto sfcKindKey = cstone::SfcKind<KeyType>(sfcKey);
+    auto [ix, iy, iz] = cstone::decodeSfc(sfcKindKey);
     return iz;
 }
 
 template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
 template<int I>
+MARS_HOST_DEVICE
 KeyType ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::getConnectivity(size_t elementIndex) const
 {
     static_assert(I >= 0 && I < NodesPerElement, "Index out of range for element connectivity");
@@ -945,7 +977,7 @@ KeyType ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::getConnect
     if (elementIndex >= elementCount_) return KeyType(0);
     
     // Direct access to SFC key - no host transfer
-    return std::get<I>(d_conn_keys_)[elementIndex];
+    return std::get<I>(d_conn_keys_).data()[elementIndex];
 }
 
 // Initialize d_conn_keys_ in constructor - missing resize calls

@@ -381,7 +381,7 @@ TEST_F(ElementDomainTest, SfcKeyGeneration)
             std::cout << "SfcKeyGeneration test completed successfully" << std::endl;
         }
     }
-    catch (the std::exception& e)
+    catch (std::exception& e)
     {
         FAIL() << "Exception in SfcKeyGeneration: " << e.what();
     }

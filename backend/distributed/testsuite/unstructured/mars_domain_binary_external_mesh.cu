@@ -10,6 +10,22 @@
 namespace fs = std::filesystem;
 using namespace mars;
 
+__global__ void sfcCoordinateConversionKernel(const unsigned* sfcKeys, float* coords, 
+                                              size_t numKeys, cstone::Box<float> box) 
+{
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    if (tid >= numKeys) return;
+
+    auto sfcKindKey = cstone::SfcKind<unsigned>(sfcKeys[tid]);
+    auto [ix, iy, iz] = cstone::decodeSfc(sfcKindKey);
+    constexpr unsigned maxCoord = (1u << cstone::maxTreeLevel<cstone::SfcKind<unsigned>>{}) - 1;
+    float invMaxCoord = 1.0f / maxCoord;
+    
+    coords[tid * 3 + 0] = box.xmin() + ix * invMaxCoord * (box.xmax() - box.xmin());
+    coords[tid * 3 + 1] = box.ymin() + iy * invMaxCoord * (box.ymax() - box.ymin());
+    coords[tid * 3 + 2] = box.zmin() + iz * invMaxCoord * (box.zmax() - box.zmin());
+}
+
 class ExternalMeshDomainTest : public ::testing::Test
 {
 protected:
@@ -474,28 +490,13 @@ TEST_F(ExternalMeshDomainTest, GpuSfcCoordinateConversionPerformance)
             h_sfcKeys[i * 4 + 2] = domain.getConnectivity<2>(i);
             h_sfcKeys[i * 4 + 3] = domain.getConnectivity<3>(i);
         }
-        copyToDevice(d_sfcKeys, h_sfcKeys);
 
-        // GPU kernel for coordinate conversion
-        auto coordinateKernel = [] __device__ (const unsigned* sfcKeys, float* coords, 
-                                              size_t numKeys, cstone::Box<float> box) 
-        {
-            int tid = blockIdx.x * blockDim.x + threadIdx.x;
-            if (tid >= numKeys) return;
-            
-            auto [ix, iy, iz] = cstone::decodeSfc(sfcKeys[tid]);
-            constexpr unsigned maxCoord = (1u << cstone::maxTreeLevel<unsigned>{}) - 1;
-            float invMaxCoord = 1.0f / maxCoord;
-            
-            coords[tid * 3 + 0] = box.xmin() + ix * invMaxCoord * (box.xmax() - box.xmin());
-            coords[tid * 3 + 1] = box.ymin() + iy * invMaxCoord * (box.ymax() - box.ymin());
-            coords[tid * 3 + 2] = box.zmin() + iz * invMaxCoord * (box.zmax() - box.zmin());
-        };
+        d_sfcKeys = h_sfcKeys; // Copy to device
 
         // Warm up GPU
         int blockSize = 256;
         int numBlocks = (numCoordinates + blockSize - 1) / blockSize;
-        coordinateKernel<<<numBlocks, blockSize>>>(
+        sfcCoordinateConversionKernel<<<numBlocks, blockSize>>>(
             thrust::raw_pointer_cast(d_sfcKeys.data()),
             thrust::raw_pointer_cast(d_coordinates.data()),
             numCoordinates,
@@ -511,7 +512,7 @@ TEST_F(ExternalMeshDomainTest, GpuSfcCoordinateConversionPerformance)
         
         cudaEventRecord(start);
         for (int iter = 0; iter < iterations; iter++) {
-            coordinateKernel<<<numBlocks, blockSize>>>(
+            sfcCoordinateConversionKernel<<<numBlocks, blockSize>>>(
                 thrust::raw_pointer_cast(d_sfcKeys.data()),
                 thrust::raw_pointer_cast(d_coordinates.data()),
                 numCoordinates,
@@ -676,4 +677,5 @@ int main(int argc, char** argv)
     // Initialize MPI through Mars environment
     mars::Env env(argc, argv);
     ::testing::InitGoogleTest(&argc, argv);
+}
     
