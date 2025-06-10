@@ -327,6 +327,12 @@ public:
         return std::get<I>(d_conn_keys_);
     }
 
+    template<int I>
+    DeviceVector<KeyType>& getConnectivity()
+    {
+        return std::get<I>(d_conn_keys_);
+    }
+
     // Get element/node counts
     std::size_t getNodeCount() const { return nodeCount_; }
     std::size_t getElementCount() const { return elementCount_; }
@@ -364,7 +370,8 @@ public:
     
     // Single connectivity access
     template<int I>
-    KeyType getConnectivity(size_t elementIndex) const;
+    MARS_HOST_DEVICE KeyType getConnectivity(size_t elementIndex) const;
+
     std::tuple<KeyType, KeyType, KeyType, KeyType> getConnectivity(size_t elementIndex) const;
     
     // Device connectivity functions
@@ -967,9 +974,9 @@ ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::sfcToSpatialCoordi
     return iz;
 }
 
+//host function to get connectivity for a specific element index
 template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
 template<int I>
-MARS_HOST_DEVICE
 KeyType ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::getConnectivity(size_t elementIndex) const
 {
     static_assert(I >= 0 && I < NodesPerElement, "Index out of range for element connectivity");
@@ -977,7 +984,18 @@ KeyType ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::getConnect
     if (elementIndex >= elementCount_) return KeyType(0);
     
     // Direct access to SFC key - no host transfer
-    return std::get<I>(d_conn_keys_).data()[elementIndex];
+    return std::get<I>(d_conn_keys_)[elementIndex];
+}
+
+// Add this implementation after line 1025
+
+template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
+template<int I>
+typename ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::template DeviceVector<KeyType> 
+ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::getConnectivity() const
+{
+    static_assert(I >= 0 && I < NodesPerElement, "Index out of range for element connectivity");
+    return std::get<I>(d_conn_keys_);
 }
 
 // Initialize d_conn_keys_ in constructor - missing resize calls
