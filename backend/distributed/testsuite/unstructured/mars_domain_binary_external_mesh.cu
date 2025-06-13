@@ -37,6 +37,12 @@ __global__ void validateConnectivityKernel(const unsigned* sfc0_ptr, const unsig
         results[tid] = 0;
         return;
     }
+
+    // FAIL if ALL SFC keys are 0 (indicates initialization bug)
+    if (sfc0 == 0 && sfc1 == 0 && sfc2 == 0 && sfc3 == 0) {
+        results[tid] = 0;
+        return;
+    }
     
     // If any SFC key is 0, it maps to the minimum corner of the box
     // This is valid and expected in some elements after domain decomposition
@@ -262,7 +268,7 @@ protected:
     {
         if (domain.getElementCount() == 0) return;
             
-        auto h_i0 = toHost(domain.template getConnectivity<0>());
+        auto h_i0 = toHost(domain.template indices<0>());
         if (h_i0.empty()) return;
             
         auto sfc0 = h_i0[0];
@@ -293,34 +299,103 @@ protected:
             
         size_t samplesToCheck = std::min(domain.getElementCount(), size_t(10));
             
-        auto h_i0 = toHost(domain.template getConnectivity<0>());
-        auto h_i1 = toHost(domain.template getConnectivity<1>());
-        auto h_i2 = toHost(domain.template getConnectivity<2>());
-        auto h_i3 = toHost(domain.template getConnectivity<3>());
+        auto h_i0 = toHost(domain.template indices<0>());
+        auto h_i1 = toHost(domain.template indices<1>());
+        auto h_i2 = toHost(domain.template indices<2>());
+        auto h_i3 = toHost(domain.template indices<3>());
+    
+        // Check for suspicious patterns that indicate bugs
+        size_t zeroCount = 0;
+        size_t allZeroCount = 0;
+        size_t totalElements = std::min(samplesToCheck, h_i0.size());
             
-        for (size_t i = 0; i < samplesToCheck; i++) {
-            if (i >= h_i0.size()) break;
-                
+        for (size_t i = 0; i < totalElements; i++) {
             auto sfc0 = h_i0[i];
             auto sfc1 = h_i1[i];
             auto sfc2 = h_i2[i];
             auto sfc3 = h_i3[i];
+            
+            // Count elements with zero keys
+            if (sfc0 == 0 || sfc1 == 0 || sfc2 == 0 || sfc3 == 0) {
+                zeroCount++;
+            }
+            
+            // FAIL if ALL nodes of an element are zero (initialization bug)
+            if (sfc0 == 0 && sfc1 == 0 && sfc2 == 0 && sfc3 == 0) {
+                allZeroCount++;
+                EXPECT_FALSE(true) << "Element " << i << " has all zero SFC keys - indicates initialization bug";
+            }
                 
-            // Check that connectivity values are reasonable (non-zero for valid meshes)
-            EXPECT_GT(sfc0, 0u) << "Connectivity 0 should be non-zero for element " << i;
-            EXPECT_GT(sfc1, 0u) << "Connectivity 1 should be non-zero for element " << i;
-            EXPECT_GT(sfc2, 0u) << "Connectivity 2 should be non-zero for element " << i;
-            EXPECT_GT(sfc3, 0u) << "Connectivity 3 should be non-zero for element " << i;
-                
-            // Check that nodes are distinct
+            // SFC keys must be distinct
             EXPECT_NE(sfc0, sfc1) << "Element " << i << " has duplicate nodes 0,1";
             EXPECT_NE(sfc0, sfc2) << "Element " << i << " has duplicate nodes 0,2";
             EXPECT_NE(sfc0, sfc3) << "Element " << i << " has duplicate nodes 0,3";
             EXPECT_NE(sfc1, sfc2) << "Element " << i << " has duplicate nodes 1,2";
             EXPECT_NE(sfc1, sfc3) << "Element " << i << " has duplicate nodes 1,3";
             EXPECT_NE(sfc2, sfc3) << "Element " << i << " has duplicate nodes 2,3";
+            
+            // For coordinate validation, handle zero keys properly
+            auto box = domain.getDomain().box();
+            auto convertSfc = [&](unsigned sfc) -> std::tuple<float, float, float> {
+                if (sfc == 0) {
+                    // SFC key 0 maps to minimum corner
+                    return {box.xmin(), box.ymin(), box.zmin()};
+                }
+                
+                auto sfcKindKey = cstone::SfcKind<unsigned>(sfc);
+                auto [ix, iy, iz] = cstone::decodeSfc(sfcKindKey);
+                constexpr unsigned maxCoord = (1u << cstone::maxTreeLevel<cstone::SfcKind<unsigned>>{}) - 1;
+                float invMaxCoord = 1.0f / maxCoord;
+                
+                float x = box.xmin() + ix * invMaxCoord * (box.xmax() - box.xmin());
+                float y = box.ymin() + iy * invMaxCoord * (box.ymax() - box.ymin());
+                float z = box.zmin() + iz * invMaxCoord * (box.zmax() - box.zmin());
+                return {x, y, z};
+            };
+    
+            auto [x0, y0, z0] = convertSfc(sfc0);
+            auto [x1, y1, z1] = convertSfc(sfc1);
+            auto [x2, y2, z2] = convertSfc(sfc2);
+            auto [x3, y3, z3] = convertSfc(sfc3);
+            
+            // Validate coordinates are within bounds with tolerance
+            const float tolerance = 1e-5f;
+            
+            auto validateCoord = [&](float coord, float min_val, float max_val, const std::string& axis, int node) {
+                EXPECT_GE(coord, min_val - tolerance) << "Element " << i << " Node " << node << " " << axis << " coordinate below domain minimum";
+                EXPECT_LE(coord, max_val + tolerance) << "Element " << i << " Node " << node << " " << axis << " coordinate above domain maximum";
+            };
+            
+            validateCoord(x0, box.xmin(), box.xmax(), "X", 0);
+            validateCoord(y0, box.ymin(), box.ymax(), "Y", 0);
+            validateCoord(z0, box.zmin(), box.zmax(), "Z", 0);
+            
+            // Check that nodes are spatially distinct
+            bool nodesDiffer = (x0 != x1 || y0 != y1 || z0 != z1) &&
+                              (x0 != x2 || y0 != y2 || z0 != z2) &&
+                              (x0 != x3 || y0 != y3 || z0 != z3) &&
+                              (x1 != x2 || y1 != y2 || z1 != z2) &&
+                              (x1 != x3 || y1 != y3 || z1 != z3) &&
+                              (x2 != x3 || y2 != y3 || z2 != z3);
+            EXPECT_TRUE(nodesDiffer) << "Element " << i << " nodes should have different coordinates";
         }
-    }    
+        
+        // Only fail if elements have ALL zero keys (real initialization bug)
+        float allZeroPercentage = (float)allZeroCount / totalElements * 100.0f;
+        
+        EXPECT_EQ(allZeroCount, 0) 
+            << allZeroCount << " elements (" << allZeroPercentage 
+            << "%) have all zero SFC keys on rank " << rank
+            << " - indicates initialization bug";
+        
+        // Optional: Log info about boundary elements (but don't fail)
+        if (zeroCount > 0) {
+            float zeroPercentage = (float)zeroCount / totalElements * 100.0f;
+            std::cout << "Rank " << rank << ": " << zeroCount 
+                      << " elements (" << zeroPercentage 
+                      << "%) have at least one zero SFC key (boundary elements)" << std::endl;
+        }
+    }
     
     template<typename Domain>
     void printDomainStatistics(const Domain& domain, const std::string& testName)
@@ -355,10 +430,10 @@ TEST_F(ExternalMeshDomainTest, HostSfcConnectivityValidation)
 
         size_t samplesToCheck = std::min(domain.getElementCount(), size_t(100));
         
-        auto h_i0 = toHost(domain.template getConnectivity<0>());
-        auto h_i1 = toHost(domain.template getConnectivity<1>());
-        auto h_i2 = toHost(domain.template getConnectivity<2>());
-        auto h_i3 = toHost(domain.template getConnectivity<3>());
+        auto h_i0 = toHost(domain.template indices<0>());
+        auto h_i1 = toHost(domain.template indices<1>());
+        auto h_i2 = toHost(domain.template indices<2>());
+        auto h_i3 = toHost(domain.template indices<3>());
         
         for (size_t i = 0; i < samplesToCheck; i++) {
             if (i >= h_i0.size()) break;
