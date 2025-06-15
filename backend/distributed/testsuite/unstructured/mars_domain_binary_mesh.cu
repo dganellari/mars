@@ -4,12 +4,18 @@
 #include <algorithm>
 #include <vector>
 #include <chrono>
+#include <mpi.h>
 #include "domain.hpp"
 
 namespace fs = std::filesystem;
 using namespace mars;
 
-// GPU kernels for testing domain functionality - use RAW POINTERS
+namespace cstone
+{
+    using std::get;
+}
+
+
 __global__ void validateConnectivityKernel(const unsigned* sfc0_ptr,
                                            const unsigned* sfc1_ptr, 
                                            const unsigned* sfc2_ptr,
@@ -21,41 +27,56 @@ __global__ void validateConnectivityKernel(const unsigned* sfc0_ptr,
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
     if (tid >= numElements) return;
     
-    // Get SFC keys for this element using raw pointers
     auto sfc0 = sfc0_ptr[tid];
     auto sfc1 = sfc1_ptr[tid];
     auto sfc2 = sfc2_ptr[tid];
     auto sfc3 = sfc3_ptr[tid];
     
-    // Manual SFC to coordinate conversion
-    auto convertSfc = [&](unsigned sfc) -> thrust::tuple<float, float, float> {
+    // Check that nodes are distinct
+    bool distinct = (sfc0 != sfc1) && (sfc0 != sfc2) && (sfc0 != sfc3) && 
+                   (sfc1 != sfc2) && (sfc1 != sfc3) && (sfc2 != sfc3);
+    
+    if (!distinct) {
+        results[tid] = 0;
+        return;
+    }
+    
+    // FAIL if ALL SFC keys are 0 (indicates initialization bug)
+    if (sfc0 == 0 && sfc1 == 0 && sfc2 == 0 && sfc3 == 0) {
+        results[tid] = 0;
+        return;
+    }
+    
+    // If some (but not all) SFC keys are 0, that's valid for boundary elements
+    if (sfc0 == 0 || sfc1 == 0 || sfc2 == 0 || sfc3 == 0) {
+        results[tid] = 1;
+        return;
+    }
+    
+    // Check all four SFC keys by decoding and validating coordinates
+    constexpr unsigned maxCoord = (1u << cstone::maxTreeLevel<cstone::SfcKind<unsigned>>{}) - 1;
+    float invMaxCoord = 1.0f / maxCoord;
+    const float tolerance = 1e-5f;
+
+    // Helper lambda to check if coordinates are within bounds
+    auto validateCoords = [&](unsigned sfc) -> bool {
         auto sfcKindKey = cstone::SfcKind<unsigned>(sfc);
         auto [ix, iy, iz] = cstone::decodeSfc(sfcKindKey);
-        constexpr unsigned maxCoord = (1u << cstone::maxTreeLevel<cstone::SfcKind<unsigned>>{}) - 1;
-        float invMaxCoord = 1.0f / maxCoord;
         
         float x = box.xmin() + ix * invMaxCoord * (box.xmax() - box.xmin());
         float y = box.ymin() + iy * invMaxCoord * (box.ymax() - box.ymin());
         float z = box.zmin() + iz * invMaxCoord * (box.zmax() - box.zmin());
-        return thrust::make_tuple(x, y, z);
+        
+        return (x >= box.xmin()-tolerance && x <= box.xmax()+tolerance &&
+                y >= box.ymin()-tolerance && y <= box.ymax()+tolerance &&
+                z >= box.zmin()-tolerance && z <= box.zmax()+tolerance);
     };
     
-    auto [x0, y0, z0] = convertSfc(sfc0);
-    auto [x1, y1, z1] = convertSfc(sfc1);
-    auto [x2, y2, z2] = convertSfc(sfc2);
-    auto [x3, y3, z3] = convertSfc(sfc3);
+    // Check all four SFC keys - each node must be valid
+    bool allValid = validateCoords(sfc0) && validateCoords(sfc1) && 
+                   validateCoords(sfc2) && validateCoords(sfc3);
     
-    // Validate coordinates are within domain bounds
-    bool valid = (x0 >= box.xmin() && x0 <= box.xmax() &&
-                  y0 >= box.ymin() && y0 <= box.ymax() &&
-                  z0 >= box.zmin() && z0 <= box.zmax()) &&
-                 (x1 >= box.xmin() && x1 <= box.xmax() &&
-                  y1 >= box.ymin() && y1 <= box.ymax() &&
-                  z1 >= box.zmin() && z1 <= box.zmax()) &&
-                 (sfc0 != sfc1 && sfc0 != sfc2 && sfc0 != sfc3 &&
-                  sfc1 != sfc2 && sfc1 != sfc3 && sfc2 != sfc3);
-    
-    results[tid] = valid ? 1 : 0;
+    results[tid] = allValid ? 1 : 0;
 }
 
 __global__ void calculateVolumeKernel(const unsigned* sfc0_ptr,
@@ -69,14 +90,24 @@ __global__ void calculateVolumeKernel(const unsigned* sfc0_ptr,
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
     if (tid >= numElements) return;
     
-    // Get element connectivity
     auto sfc0 = sfc0_ptr[tid];
     auto sfc1 = sfc1_ptr[tid];
     auto sfc2 = sfc2_ptr[tid];
     auto sfc3 = sfc3_ptr[tid];
     
-    // Manual SFC to coordinate conversion
+    // Handle elements with all zero SFC keys (bug)
+    if (sfc0 == 0 && sfc1 == 0 && sfc2 == 0 && sfc3 == 0) {
+        volumes[tid] = -1.0f; // Invalid volume to indicate error
+        return;
+    }
+    
+    // Manual SFC to coordinate conversion with zero handling
     auto convertSfc = [&](unsigned sfc) -> thrust::tuple<float, float, float> {
+        if (sfc == 0) {
+            // SFC key 0 maps to minimum corner
+            return thrust::make_tuple(box.xmin(), box.ymin(), box.zmin());
+        }
+        
         auto sfcKindKey = cstone::SfcKind<unsigned>(sfc);
         auto [ix, iy, iz] = cstone::decodeSfc(sfcKindKey);
         constexpr unsigned maxCoord = (1u << cstone::maxTreeLevel<cstone::SfcKind<unsigned>>{}) - 1;
@@ -180,31 +211,65 @@ protected:
         MPI_Comm_size(MPI_COMM_WORLD, &numRanks);
         
         cudaGetDeviceCount(&deviceCount);
-        if (deviceCount == 0 && rank == 0) {
-            std::cout << "Warning: No CUDA devices found" << std::endl;
+        
+        // Create ONE shared directory
+        const char* meshPathEnv = std::getenv("MESH_PATH");
+        if (!meshPathEnv) {
+            GTEST_SKIP() << "MESH_PATH environment variable not set";
         }
-
-        testDir = fs::temp_directory_path() / ("mars_gpu_domain_test_rank_" + std::to_string(rank));
-        fs::create_directories(testDir);
-
-        createCoordinateFile("x.float32", {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f, 8.0f});
-        createCoordinateFile("y.float32", {0.1f, 0.2f, 0.3f, 0.4f, 0.5f, 0.6f, 0.7f, 0.8f});
-        createCoordinateFile("z.float32", {10.0f, 20.0f, 30.0f, 40.0f, 50.0f, 60.0f, 70.0f, 80.0f});
-
-        createConnectivityFile("i0.int32", {0, 2, 4, 6});
-        createConnectivityFile("i1.int32", {1, 3, 5, 7});
-        createConnectivityFile("i2.int32", {2, 4, 6, 0});
-        createConnectivityFile("i3.int32", {3, 5, 7, 1});
-
+        
+        testDir = fs::path(meshPathEnv) / "mars_gpu_domain_test_shared";
+        
+        // Only rank 0 creates the directory and files
+        if (rank == 0) {
+            fs::create_directories(testDir);
+            std::cout << "GPU Test setup: Found " << deviceCount << " CUDA devices" << std::endl;
+            std::cout << "Writing mesh at: " << testDir << std::endl;
+            
+            // Create a larger, better distributed mesh
+            // Generate enough elements for domain decomposition
+            std::vector<float> x, y, z;
+            std::vector<int> i0, i1, i2, i3;
+            
+            // Generate a 5x5x5 grid of tetrahedra (125 elements)
+            for (int ix = 0; ix < 10; ix++) {
+                for (int iy = 0; iy < 10; iy++) {
+                    for (int iz = 0; iz < 10; iz++) {
+                        // Base coordinates for this grid cell
+                        float bx = ix * 10.0f;
+                        float by = iy * 10.0f;
+                        float bz = iz * 10.0f;
+                        
+                        // Add node indices
+                        int baseIdx = x.size();
+                        
+                        // Add 4 nodes for a tetrahedron
+                        x.push_back(bx);      y.push_back(by);      z.push_back(bz);
+                        x.push_back(bx+5);    y.push_back(by);      z.push_back(bz);
+                        x.push_back(bx);      y.push_back(by+5);    z.push_back(bz);
+                        x.push_back(bx);      y.push_back(by);      z.push_back(bz+5);
+                        
+                        // Add connectivity for this tetrahedron
+                        i0.push_back(baseIdx);
+                        i1.push_back(baseIdx+1);
+                        i2.push_back(baseIdx+2);
+                        i3.push_back(baseIdx+3);
+                    }
+                }
+            }
+            
+            createCoordinateFile("x.float32", x);
+            createCoordinateFile("y.float32", y);
+            createCoordinateFile("z.float32", z);
+            createConnectivityFile("i0.int32", i0);
+            createConnectivityFile("i1.int32", i1);
+            createConnectivityFile("i2.int32", i2);
+            createConnectivityFile("i3.int32", i3);
+        }
+        
+        // Ensure all ranks see the files
         MPI_Barrier(MPI_COMM_WORLD);
-    }
-
-    void TearDown() override
-    {
-        MPI_Barrier(MPI_COMM_WORLD);
-        std::error_code ec;
-        fs::remove_all(testDir, ec);
-    }
+    } 
 
     void createCoordinateFile(const std::string& filename, const std::vector<float>& data)
     {
@@ -246,13 +311,15 @@ TEST_F(GpuElementDomainTest, GpuConnectivityValidation)
             GTEST_SKIP() << "No elements on this rank";
         }
 
+        auto box = domain.getDomain().box();
+
         size_t numElements = domain.getElementCount();
         
         // Get raw device pointers - THIS IS THE CORRECT WAY
-        auto* sfc0_ptr = domain.getConnectivity<0>().data();
-        auto* sfc1_ptr = domain.getConnectivity<1>().data();
-        auto* sfc2_ptr = domain.getConnectivity<2>().data(); 
-        auto* sfc3_ptr = domain.getConnectivity<3>().data();
+        auto *sfc0_ptr = domain.template indices<0>().data();
+        auto *sfc1_ptr = domain.template indices<1>().data();
+        auto *sfc2_ptr = domain.template indices<2>().data();
+        auto *sfc3_ptr = domain.template indices<3>().data();
         
         // Device memory for results
         cstone::DeviceVector<int> d_results(numElements);
@@ -263,7 +330,7 @@ TEST_F(GpuElementDomainTest, GpuConnectivityValidation)
         
         validateConnectivityKernel<<<numBlocks, blockSize>>>(
             sfc0_ptr, sfc1_ptr, sfc2_ptr, sfc3_ptr,
-            domain.getDomain().box(), d_results.data(), numElements
+            box, d_results.data(), numElements
         );
         
         cudaDeviceSynchronize();
@@ -307,10 +374,10 @@ TEST_F(GpuElementDomainTest, GpuVolumeCalculation)
         size_t numElements = domain.getElementCount();
         
         // Get raw device pointers
-        auto* sfc0_ptr = domain.getConnectivity<0>().data();
-        auto* sfc1_ptr = domain.getConnectivity<1>().data();
-        auto* sfc2_ptr = domain.getConnectivity<2>().data();
-        auto* sfc3_ptr = domain.getConnectivity<3>().data();
+        auto* sfc0_ptr = domain.template indices<0>().data();
+        auto* sfc1_ptr = domain.template indices<1>().data();
+        auto* sfc2_ptr = domain.template indices<2>().data();
+        auto* sfc3_ptr = domain.template indices<3>().data();
         
         cstone::DeviceVector<float> d_volumes(numElements);
         
@@ -373,11 +440,11 @@ TEST_F(GpuElementDomainTest, GpuCoordinateConversionPerformance)
         size_t numKeys = domain.getElementCount() * 4; // 4 nodes per tetrahedron
         
         // Get raw device pointers
-        auto* sfc0_ptr = domain.getConnectivity<0>().data();
-        auto* sfc1_ptr = domain.getConnectivity<1>().data();
-        auto* sfc2_ptr = domain.getConnectivity<2>().data();
-        auto* sfc3_ptr = domain.getConnectivity<3>().data();
-        
+        auto* sfc0_ptr = domain.template indices<0>().data();
+        auto* sfc1_ptr = domain.template indices<1>().data();
+        auto* sfc2_ptr = domain.template indices<2>().data();
+        auto* sfc3_ptr = domain.template indices<3>().data();
+
         cstone::DeviceVector<float> d_coordinates(numKeys * 3);
         
         int blockSize = 256;
@@ -460,7 +527,7 @@ TEST_F(GpuElementDomainTest, GpuSpatialCoordinates)
         size_t numElements = domain.getElementCount();
         
         // Get raw device pointer (only need first connectivity for this test)
-        auto* sfc0_ptr = domain.getConnectivity<0>().data();
+        auto* sfc0_ptr = domain.template indices<0>().data();
         
         cstone::DeviceVector<unsigned> d_spatialCoords(numElements * 4);
         

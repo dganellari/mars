@@ -377,6 +377,9 @@ public:
     // Device connectivity functions
     template<int I>
     __device__ KeyType getConnectivityDevice(size_t elementIndex) const;
+
+    int numRanks() const { return numRanks_; }
+    int rank() const { return rank_; }
     
 private:
     int rank_;
@@ -601,6 +604,8 @@ ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(cons
     // Read the mesh in SoA format
     readMeshDataSoA(meshFile, h_coords, h_conn);
 
+
+
     // Initialize cornerstone domain
     int bucketSize           = 64;
     unsigned bucketSizeFocus = 8;
@@ -633,6 +638,7 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::readMeshDataS
                                                                                    HostCoordsTuple& h_coords_,
                                                                                    HostConnectivityTuple& h_conn_)
 {
+    std::cout << "Reading mesh data from " << meshFile << " on rank " << rank_ << std::endl;
     try
     {
         // Helper to handle coordinate conversion based on type

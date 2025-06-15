@@ -21,6 +21,7 @@
 namespace mars
 {
 
+// Implementation of syncDomainImpl for various KeyType and RealType combinations
 template<typename KeyType, typename RealType, typename SfcConnTuple>
 void syncDomainImpl(cstone::Domain<KeyType, RealType, cstone::GpuTag>* domain,
                     cstone::DeviceVector<KeyType>& elemSfcCodes,
@@ -31,6 +32,16 @@ void syncDomainImpl(cstone::Domain<KeyType, RealType, cstone::GpuTag>* domain,
                     size_t& elementCount,
                     SfcConnTuple& d_conn_keys_)
 {
+    int numRanks;
+    MPI_Comm_size(MPI_COMM_WORLD, &numRanks);
+    // Early check for insufficient elements
+    if (elementCount < numRanks)
+    {
+        throw std::runtime_error("Mesh has fewer elements (" + std::to_string(elementCount) + 
+                               ") than MPI ranks (" + std::to_string(numRanks) +
+                               "). Each rank must get at least one element for domain decomposition.");
+    }
+
     // Create scratch buffers to match the data types being synced:
     // - First 3 for coordinates (x, y, z) -> RealType
     // - Next 4+ for SFC connectivity keys -> KeyType
@@ -44,12 +55,27 @@ void syncDomainImpl(cstone::Domain<KeyType, RealType, cstone::GpuTag>* domain,
 
     // Create a tuple of references to match the expected signature
     auto properties_refs = std::tie(std::get<0>(d_conn_keys_), std::get<1>(d_conn_keys_), 
-                                    std::get<2>(d_conn_keys_), std::get<3>(d_conn_keys_));
+                                  std::get<2>(d_conn_keys_), std::get<3>(d_conn_keys_));
 
-    // Call sync with mixed-type scratch buffers
-    domain->sync(elemSfcCodes, elemX, elemY, elemZ, elemH,
-                 properties_refs,                                    // 4 properties of KeyType
-                 std::tie(s1, s2, s3, s4, s5, s6, s7));             // Mixed scratch types
+    try {
+        // Call sync with mixed-type scratch buffers
+        domain->sync(elemSfcCodes, elemX, elemY, elemZ, elemH,
+                   properties_refs,                                    // 4 properties of KeyType
+                   std::tie(s1, s2, s3, s4, s5, s6, s7));             // Mixed scratch types
+    } catch (const std::exception& e) {
+        std::string errorMsg = e.what();
+        // If there's any sync error and element count is low, provide a more helpful message
+        if (errorMsg.find("invalid device ordinal") != std::string::npos)
+        {
+            throw std::runtime_error("Domain decomposition failed. This may be due to insufficient elements (" + 
+                                   std::to_string(elementCount) + ") for " + std::to_string(numRanks) +
+                                   " ranks. Possibly causing a size-0 CUDA kernel launch \n" +
+                                   "Original error: " + e.what());
+        } else {
+            // Re-throw the original exception
+            throw;
+        }
+    }
 
     // Update element count after sync
     elementCount = domain->endIndex() - domain->startIndex();
