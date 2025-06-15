@@ -77,49 +77,47 @@ __global__ void validateConnectivityKernel(const unsigned* sfc0_ptr, const unsig
     results[tid] = allValid ? 1 : 0;
 }
 
-__global__ void performanceTestKernel(const unsigned* sfcKeys, float* coords,
-                                     size_t numKeys, cstone::Box<float> box)
+__global__ void performanceTestKernel(const unsigned* sfc0_ptr,
+                                     const unsigned* sfc1_ptr,
+                                     const unsigned* sfc2_ptr,
+                                     const unsigned* sfc3_ptr,
+                                     cstone::Box<float> box,
+                                     float* coordinates, 
+                                     size_t numKeys)
 {
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
     if (tid >= numKeys) return;
     
-    auto sfcKindKey = cstone::SfcKind<unsigned>(sfcKeys[tid]);
-    auto [ix, iy, iz] = cstone::decodeSfc(sfcKindKey);
+    size_t elemIdx = tid / 4;  // 4 nodes per tetrahedron
+    int nodeIdx = tid % 4;     // Which node (0,1,2,3)
     
+    // Get the appropriate SFC key based on node index
+    unsigned sfcKey;
+    switch(nodeIdx) {
+        case 0: sfcKey = sfc0_ptr[elemIdx]; break;
+        case 1: sfcKey = sfc1_ptr[elemIdx]; break;
+        case 2: sfcKey = sfc2_ptr[elemIdx]; break;
+        case 3: sfcKey = sfc3_ptr[elemIdx]; break;
+        default: return;
+    }
+    
+    // Skip zero SFC keys (boundary elements)
+    if (sfcKey == 0) {
+        coordinates[tid * 3 + 0] = box.xmin();
+        coordinates[tid * 3 + 1] = box.ymin();
+        coordinates[tid * 3 + 2] = box.zmin();
+        return;
+    }
+    
+    // Manual SFC to coordinate conversion
+    auto sfcKindKey = cstone::SfcKind<unsigned>(sfcKey);
+    auto [ix, iy, iz] = cstone::decodeSfc(sfcKindKey);
     constexpr unsigned maxCoord = (1u << cstone::maxTreeLevel<cstone::SfcKind<unsigned>>{}) - 1;
     float invMaxCoord = 1.0f / maxCoord;
     
-    coords[tid * 3 + 0] = box.xmin() + ix * invMaxCoord * (box.xmax() - box.xmin());
-    coords[tid * 3 + 1] = box.ymin() + iy * invMaxCoord * (box.ymax() - box.ymin());
-    coords[tid * 3 + 2] = box.zmin() + iz * invMaxCoord * (box.zmax() - box.zmin());
-}
-
-__global__ void binarySearchTestKernel(const unsigned* sortedKeys, const unsigned* queryKeys,
-                                      int* results, size_t numSorted, size_t numQueries)
-{
-    int tid = blockIdx.x * blockDim.x + threadIdx.x;
-    if (tid >= numQueries) return;
-    
-    unsigned key = queryKeys[tid];
-    
-    // Binary search implementation
-    int left = 0;
-    int right = numSorted - 1;
-    int result = -1;
-    
-    while (left <= right) {
-        int mid = left + (right - left) / 2;
-        if (sortedKeys[mid] == key) {
-            result = mid;
-            break;
-        } else if (sortedKeys[mid] < key) {
-            left = mid + 1;
-        } else {
-            right = mid - 1;
-        }
-    }
-    
-    results[tid] = result;
+    coordinates[tid * 3 + 0] = box.xmin() + ix * invMaxCoord * (box.xmax() - box.xmin());
+    coordinates[tid * 3 + 1] = box.ymin() + iy * invMaxCoord * (box.ymax() - box.ymin());
+    coordinates[tid * 3 + 2] = box.zmin() + iz * invMaxCoord * (box.zmax() - box.zmin());
 }
 
 __global__ void volumeCalculationKernel(const unsigned* sfc0_ptr, const unsigned* sfc1_ptr,
@@ -614,6 +612,163 @@ TEST_F(ExternalMeshDomainTest, BasicSfcDomainCreation)
     }
 }
 
+TEST_F(ExternalMeshDomainTest, GpuVolumeCalculation)
+{
+    checkPrerequisites("GpuVolumeCalculation");
+
+    try
+    {
+        using Domain = ElementDomain<TetTag, float, unsigned, cstone::GpuTag>;
+        Domain domain(meshPath, rank, numRanks);
+
+        if (domain.getElementCount() == 0) {
+            GTEST_SKIP() << "No elements on this rank";
+        }
+
+        size_t numElements = domain.getElementCount();
+        
+        auto* sfc0_ptr = domain.template indices<0>().data();
+        auto* sfc1_ptr = domain.template indices<1>().data();
+        auto* sfc2_ptr = domain.template indices<2>().data();
+        auto* sfc3_ptr = domain.template indices<3>().data();
+        
+        cstone::DeviceVector<float> d_volumes(numElements);
+        
+        int blockSize = 256;
+        int numBlocks = (numElements + blockSize - 1) / blockSize;
+        
+        auto box = domain.getDomain().box();
+        
+        volumeCalculationKernel<<<numBlocks, blockSize>>>(
+            sfc0_ptr, sfc1_ptr, sfc2_ptr, sfc3_ptr,
+            box, d_volumes.data(), numElements);
+        
+        cudaDeviceSynchronize();
+        cudaError_t err = cudaGetLastError();
+        ASSERT_EQ(err, cudaSuccess) << "CUDA kernel execution failed: " << cudaGetErrorString(err);
+        
+        // Verify volumes
+        auto h_volumes = toHost(d_volumes);
+        float totalVolume = 0.0f;
+        int negativeOrZeroCount = 0;
+        
+        for (size_t i = 0; i < numElements; i++) {
+            if (h_volumes[i] <= 0.0f) {
+                negativeOrZeroCount++;
+            }
+            totalVolume += h_volumes[i];
+        }
+        
+        // Allow a small percentage of zero/negative volumes due to degenerate elements
+        float badElementPercentage = 100.0f * negativeOrZeroCount / numElements;
+        EXPECT_LT(badElementPercentage, 1.0f) << negativeOrZeroCount << " elements have zero or negative volume";
+        
+        // Check total volume is positive
+        EXPECT_GT(totalVolume, 0.0f) << "Total tetrahedral volume should be positive";
+        
+        // Report statistics
+        if (rank == 0) {
+            std::cout << "Total tetrahedral volume on rank 0: " << totalVolume << std::endl;
+            if (negativeOrZeroCount > 0) {
+                std::cout << "Warning: " << negativeOrZeroCount << " elements (" 
+                          << badElementPercentage << "%) have zero or negative volume" << std::endl;
+            }
+        }
+    }
+    catch (const std::exception& e)
+    {
+        FAIL() << "Exception in GPU volume calculation test: " << e.what();
+    }
+}
+
+TEST_F(ExternalMeshDomainTest, GpuCoordinateConversionPerformance)
+{
+    checkPrerequisites("GpuCoordinateConversionPerformance");
+
+    try
+    {
+        using Domain = ElementDomain<TetTag, float, unsigned, cstone::GpuTag>;
+        Domain domain(meshPath, rank, numRanks);
+
+        if (domain.getElementCount() < 100) {
+            GTEST_SKIP() << "Mesh too small for performance test";
+        }
+
+        size_t numKeys = domain.getElementCount() * 4; // 4 nodes per tetrahedron
+        
+        // Get raw device pointers - same as in binary_mesh.cu
+        auto* sfc0_ptr = domain.template indices<0>().data();
+        auto* sfc1_ptr = domain.template indices<1>().data();
+        auto* sfc2_ptr = domain.template indices<2>().data();
+        auto* sfc3_ptr = domain.template indices<3>().data();
+
+        cstone::DeviceVector<float> d_coordinates(numKeys * 3);
+        
+        int blockSize = 256;
+        int numBlocks = (numKeys + blockSize - 1) / blockSize;
+        
+        auto box = domain.getDomain().box();
+        
+        // Warmup run
+        performanceTestKernel<<<numBlocks, blockSize>>>(
+            sfc0_ptr, sfc1_ptr, sfc2_ptr, sfc3_ptr,
+            box, d_coordinates.data(), numKeys);
+            
+        cudaDeviceSynchronize();
+        
+        // Performance measurement using CUDA events like in binary_mesh.cu
+        cudaEvent_t start, stop;
+        cudaEventCreate(&start);
+        cudaEventCreate(&stop);
+        
+        const int iterations = 100;
+        cudaEventRecord(start);
+        for (int iter = 0; iter < iterations; iter++) {
+            performanceTestKernel<<<numBlocks, blockSize>>>(
+                sfc0_ptr, sfc1_ptr, sfc2_ptr, sfc3_ptr,
+                box, d_coordinates.data(), numKeys);
+        }
+        cudaEventRecord(stop);
+        cudaEventSynchronize(stop);
+        
+        float milliseconds = 0;
+        cudaEventElapsedTime(&milliseconds, start, stop);
+        
+        // Validate some results
+        auto h_coords = toHost(d_coordinates);
+        
+        int validCoords = 0;
+        for (size_t i = 0; i < std::min(size_t(100), numKeys); i++) {
+            float x = h_coords[i * 3 + 0];
+            float y = h_coords[i * 3 + 1];
+            float z = h_coords[i * 3 + 2];
+            
+            if (x >= box.xmin() && x <= box.xmax() && 
+                y >= box.ymin() && y <= box.ymax() &&
+                z >= box.zmin() && z <= box.zmax()) {
+                validCoords++;
+            }
+        }
+        
+        EXPECT_GT(validCoords, 90) << "Most coordinates should be within bounds";
+
+        if (rank == 0) {
+            float avgTime = milliseconds / iterations;
+            float throughput = (numKeys * 1000.0f) / avgTime;
+            std::cout << "GPU coordinate conversion performance:" << std::endl;
+            std::cout << "  " << numKeys << " coordinates converted" << std::endl;
+            std::cout << "  Average time: " << avgTime << " ms" << std::endl;
+            std::cout << "  Throughput: " << throughput / 1e6 << " million coords/second" << std::endl;
+        }
+
+        cudaEventDestroy(start);
+        cudaEventDestroy(stop);
+    }
+    catch (const std::exception& e)
+    {
+        FAIL() << "Exception in GPU coordinate conversion performance test: " << e.what();
+    }
+}
 int main(int argc, char** argv)
 {
     mars::Env env(argc, argv);
