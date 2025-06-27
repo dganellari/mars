@@ -125,7 +125,9 @@ inline auto readMeshWithElementPartitioning(const std::string& meshDir, int rank
     std::ifstream y_file(meshDir + "/y." + ext, std::ios::binary);
     std::ifstream z_file(meshDir + "/z." + ext, std::ios::binary);
 
-    if (!x_file || !y_file || !z_file) { throw std::runtime_error("Failed to open coordinate files"); }
+    if (!x_file || !y_file || !z_file) { throw std::runtime_error("Failed to open coordinate files" + meshDir + "/x." + ext + ", " +
+                                                                    meshDir + "/y." + ext + ", " +
+                                                                    meshDir + "/z." + ext); }
 
     // Read coordinates for each needed node
     for (size_t i = 0; i < neededNodes.size(); i++)

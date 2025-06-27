@@ -1008,519 +1008,17 @@ TEST_F(ExternalMeshDomainTest, AnalyzeTetrahedronOrientations)
     }
 }
 
-TEST_F(ExternalMeshDomainTest, VisualizePartitioning)
-{
-    checkPrerequisites("VisualizePartitioning");
-
-    try
-    {
-        using Domain = ElementDomain<TetTag, float, unsigned, cstone::GpuTag>;
-        Domain domain(meshPath, rank, numRanks);
-
-        if (domain.getElementCount() == 0)
-        {
-            std::cout << "Rank " << rank << " has zero elements, skipping visualization" << std::endl;
-            return;
-        }
-
-        // Get SFC keys for each tetrahedron node
-        auto h_sfc0 = toHost(domain.template indices<0>());
-        auto h_sfc1 = toHost(domain.template indices<1>());
-        auto h_sfc2 = toHost(domain.template indices<2>());
-        auto h_sfc3 = toHost(domain.template indices<3>());
-
-        size_t numElements = domain.getElementCount();
-        auto box           = domain.getDomain().box();
-
-        // Create output file for this rank
-        std::string outputDir = meshPath + "/vtk_output";
-        if (rank == 0) { std::filesystem::create_directories(outputDir); }
-        MPI_Barrier(MPI_COMM_WORLD);
-
-        std::string filename = outputDir + "/domain_rank" + std::to_string(rank) + ".vtk";
-        std::ofstream file(filename);
-
-        // VTK header
-        file << "# vtk DataFile Version 3.0\n";
-        file << "Domain decomposition visualization\n";
-        file << "ASCII\n";
-        file << "DATASET UNSTRUCTURED_GRID\n";
-
-        // Convert SFC keys to coordinates
-        std::vector<float> vertices;
-        std::map<unsigned, size_t> vertexMap; // Maps SFC key to vertex index
-
-        // Helper to add vertex and return its index
-        auto addVertex = [&](unsigned sfcKey) -> size_t
-        {
-            if (vertexMap.find(sfcKey) != vertexMap.end()) { return vertexMap[sfcKey]; }
-
-            float x, y, z;
-            if (sfcKey == 0)
-            {
-                // Special case for boundary or invalid key
-                x = box.xmin();
-                y = box.ymin();
-                z = box.zmin();
-            }
-            else
-            {
-                auto sfcKindKey             = cstone::SfcKind<unsigned>(sfcKey);
-                auto [ix, iy, iz]           = cstone::decodeSfc(sfcKindKey);
-                constexpr unsigned maxCoord = (1u << cstone::maxTreeLevel<cstone::SfcKind<unsigned>>{}) - 1;
-                float invMaxCoord           = 1.0f / maxCoord;
-
-                x = box.xmin() + ix * invMaxCoord * (box.xmax() - box.xmin());
-                y = box.ymin() + iy * invMaxCoord * (box.ymax() - box.ymin());
-                z = box.zmin() + iz * invMaxCoord * (box.zmax() - box.zmin());
-            }
-
-            size_t idx = vertices.size() / 3;
-            vertices.push_back(x);
-            vertices.push_back(y);
-            vertices.push_back(z);
-            vertexMap[sfcKey] = idx;
-            return idx;
-        };
-
-        // Build connectivity list for tetrahedra
-        std::vector<size_t> connectivity;
-        for (size_t i = 0; i < numElements; i++)
-        {
-            size_t v0 = addVertex(h_sfc0[i]);
-            size_t v1 = addVertex(h_sfc1[i]);
-            size_t v2 = addVertex(h_sfc2[i]);
-            size_t v3 = addVertex(h_sfc3[i]);
-
-            connectivity.push_back(v0);
-            connectivity.push_back(v1);
-            connectivity.push_back(v2);
-            connectivity.push_back(v3);
-        }
-
-        // Write vertices
-        file << "POINTS " << vertices.size() / 3 << " float\n";
-        for (size_t i = 0; i < vertices.size(); i += 3)
-        {
-            file << vertices[i] << " " << vertices[i + 1] << " " << vertices[i + 2] << "\n";
-        }
-
-        // Write cells
-        file << "CELLS " << numElements << " " << numElements * 5 << "\n";
-        for (size_t i = 0; i < connectivity.size(); i += 4)
-        {
-            file << "4 " << connectivity[i] << " " << connectivity[i + 1] << " " << connectivity[i + 2] << " "
-                 << connectivity[i + 3] << "\n";
-        }
-
-        // Write cell types (10 = VTK_TETRA)
-        file << "CELL_TYPES " << numElements << "\n";
-        for (size_t i = 0; i < numElements; i++)
-        {
-            file << "10\n"; // VTK_TETRA
-        }
-
-        // Write cell data (rank ID for coloring)
-        file << "CELL_DATA " << numElements << "\n";
-        file << "SCALARS rank int 1\n";
-        file << "LOOKUP_TABLE default\n";
-        for (size_t i = 0; i < numElements; i++)
-        {
-            file << rank << "\n";
-        }
-
-        file.close();
-
-        // Create a Python script to combine the files
-        if (rank == 0)
-        {
-            std::string scriptPath = outputDir + "/combine_vtk.py";
-            std::ofstream scriptFile(scriptPath);
-
-            scriptFile << "#!/usr/bin/env python3\n";
-            scriptFile << "import pyvista as pv\n";
-            scriptFile << "import os\n\n";
-
-            scriptFile << "# Create MultiBlock dataset\n";
-            scriptFile << "blocks = pv.MultiBlock()\n\n";
-
-            scriptFile << "# Add each rank's mesh\n";
-            scriptFile << "for rank in range(" << numRanks << "):\n";
-            scriptFile << "    filename = './vtk_output/domain_rank{}.vtk'.format(rank)\n";
-            scriptFile << "    if os.path.exists(filename):\n";
-            scriptFile << "        mesh = pv.read(filename)\n";
-            scriptFile << "        blocks.append(mesh)\n";
-            scriptFile << "        print('Added mesh from rank', rank)\n\n";
-
-            scriptFile << "# Save combined dataset\n";
-            scriptFile << "blocks.save('./vtk_output/domain_combined.vtm')\n\n";
-
-            scriptFile << "# Visualize\n";
-            scriptFile << "p = pv.Plotter()\n";
-            scriptFile << "p.add_mesh(blocks, scalars='rank', cmap='tab20', show_scalar_bar=True)\n";
-            scriptFile << "p.add_text('Domain Decomposition - {} Ranks'.format(" << numRanks << "))\n";
-            scriptFile << "p.show()\n";
-
-            scriptFile.close();
-            std::cout << "Files written to ./vtk_output/\n";
-            std::cout << "To visualize: python " << scriptPath << std::endl;
-        }
-    }
-    catch (const std::exception& e)
-    {
-        FAIL() << "Exception in domain visualization: " << e.what();
-    }
-}
-
-TEST_F(ExternalMeshDomainTest, VisualizePartitioningRawSFC)
-{
-    checkPrerequisites("VisualizePartitioningRawSFC");
-
-    try
-    {
-        using Domain = ElementDomain<TetTag, float, uint64_t, cstone::GpuTag>;
-        Domain domain(meshPath, rank, numRanks);
-
-        if (domain.getElementCount() == 0)
-        {
-            std::cout << "Rank " << rank << " has zero elements, skipping raw SFC visualization" << std::endl;
-            return;
-        }
-
-        // Get SFC keys
-        auto h_sfc0 = toHost(domain.template indices<0>());
-        auto h_sfc1 = toHost(domain.template indices<1>());
-        auto h_sfc2 = toHost(domain.template indices<2>());
-        auto h_sfc3 = toHost(domain.template indices<3>());
-
-        size_t numElements       = domain.getElementCount();
-        size_t localStart        = domain.startIndex();
-        size_t localEnd          = domain.endIndex();
-        size_t localElementCount = localEnd - localStart;
-
-        std::cout << "Rank " << rank << ": Total elements in arrays: " << numElements
-                  << ", Local elements: " << localElementCount << ", Global range: [" << localStart << ", " << localEnd
-                  << ")" << std::endl;
-
-        // Add this debugging right after getting the arrays:
-        std::cout << "Rank " << rank << " Array structure debug:" << std::endl;
-        std::cout << "  Array size: " << h_sfc0.size() << std::endl;
-        std::cout << "  numElements: " << numElements << std::endl;
-        std::cout << "  localStart: " << localStart << std::endl;
-        std::cout << "  localEnd: " << localEnd << std::endl;
-        std::cout << "  localElementCount: " << localElementCount << std::endl;
-
-        std::string outputDir = meshPath + "./vtk_output";
-        if (rank == 0) { std::filesystem::create_directories(outputDir); }
-        MPI_Barrier(MPI_COMM_WORLD);
-
-        std::string filename = outputDir + "/raw_sfc_rank" + std::to_string(rank) + ".vtk";
-        std::ofstream file(filename);
-
-        // VTK header
-        file << "# vtk DataFile Version 3.0\n";
-        file << "Domain decomposition (Raw SFC coordinates)\n";
-        file << "ASCII\n";
-        file << "DATASET UNSTRUCTURED_GRID\n";
-
-        // Map SFC keys to RAW coordinates - NO normalization or box scaling
-        std::vector<float> vertices;
-        std::map<uint64_t, size_t> vertexMap;
-
-        auto addVertex = [&](uint64_t sfcKey) -> size_t
-        {
-            if (vertexMap.find(sfcKey) != vertexMap.end()) { return vertexMap[sfcKey]; }
-
-            float x_coord, y_coord, z_coord;
-
-            try
-            {
-                // Convert to SfcKind and decode
-                auto sfcKindKey   = cstone::sfcKey(sfcKey);
-                auto [ix, iy, iz] = cstone::decodeSfc(sfcKindKey);
-
-                // NORMALIZE to [0,1] range first
-                constexpr uint64_t maxCoord = (1ULL << cstone::maxTreeLevel<cstone::SfcKind<uint64_t>>{}) - 1;
-                float nx                    = static_cast<float>(ix) / static_cast<float>(maxCoord);
-                float ny                    = static_cast<float>(iy) / static_cast<float>(maxCoord);
-                float nz                    = static_cast<float>(iz) / static_cast<float>(maxCoord);
-
-                // Then scale to a reasonable visualization range [0, 100]
-                x_coord = nx * 100.0f;
-                y_coord = ny * 100.0f;
-                z_coord = nz * 100.0f;
-            }
-            catch (...)
-            {
-                std::cout << "Rank " << rank << ": Exception decoding SFC key 0x" << std::hex << sfcKey << std::dec
-                          << std::endl;
-                x_coord = 50.0f; // Center of [0,100] range
-                y_coord = 50.0f;
-                z_coord = 50.0f;
-            }
-
-            size_t idx = vertices.size() / 3;
-            vertices.push_back(x_coord);
-            vertices.push_back(y_coord);
-            vertices.push_back(z_coord);
-            vertexMap[sfcKey] = idx;
-            return idx;
-        };
-
-        // Build tetrahedra - CORRECT INDEXING: use local array indices [0, localElementCount)
-        std::vector<size_t> connectivity;
-        int skippedElements = 0;
-        int validElements   = 0;
-
-        for (size_t i = localStart; i < localEnd; i++)
-        {
-            size_t v0 = addVertex(h_sfc0[i]);
-            size_t v1 = addVertex(h_sfc1[i]);
-            size_t v2 = addVertex(h_sfc2[i]);
-            size_t v3 = addVertex(h_sfc3[i]);
-
-            // Check for degenerate tetrahedra (identical vertices)
-            std::set<size_t> uniqueVertices = {v0, v1, v2, v3};
-            if (uniqueVertices.size() < 4)
-            {
-                skippedElements++;
-                continue;
-            }
-
-            connectivity.push_back(v0);
-            connectivity.push_back(v1);
-            connectivity.push_back(v2);
-            connectivity.push_back(v3);
-            validElements++;
-        }
-
-        // ADD DEBUGGING HERE - Check for invalid SFC keys
-        std::cout << "Rank " << rank << ": Checking for invalid SFC keys..." << std::endl;
-        constexpr uint64_t maxValidSfc = (1ULL << cstone::maxTreeLevel<cstone::SfcKind<uint64_t>>{}) - 1;
-        int invalidKeys                = 0;
-        for (size_t i = localStart; i < std::min(localEnd, h_sfc0.size()); i++)
-        {
-            try
-            {
-                auto sfcKindKey   = cstone::sfcKey(h_sfc0[i]);
-                auto [ix, iy, iz] = cstone::decodeSfc(sfcKindKey);
-                if (ix > maxValidSfc || iy > maxValidSfc || iz > maxValidSfc)
-                {
-                    if (invalidKeys < 5)
-                    { // Print first 5 invalid keys
-                        std::cout << "  Invalid SFC key at [" << i << "]: " << h_sfc0[i] << " -> (" << ix << ", " << iy
-                                  << ", " << iz << ")" << std::endl;
-                    }
-                    invalidKeys++;
-                }
-            }
-            catch (...)
-            {
-                if (invalidKeys < 5)
-                {
-                    std::cout << "  Exception decoding SFC key at [" << i << "]: " << h_sfc0[i] << std::endl;
-                }
-                invalidKeys++;
-            }
-        }
-        std::cout << "Rank " << rank << ": Found " << invalidKeys << " invalid SFC keys out of "
-                  << (localEnd - localStart) << " elements" << std::endl;
-
-        std::cout << "Rank " << rank << ": Processed " << localElementCount << " local elements, "
-                  << "valid: " << validElements << ", skipped: " << skippedElements << std::endl;
-
-        std::cout << "Rank " << rank << ": Processed " << localElementCount << " local elements, "
-                  << "valid: " << validElements << ", skipped: " << skippedElements << std::endl;
-
-        // Add after your current SFC debugging
-        std::cout << "Rank " << rank << ": Checking element connectivity patterns..." << std::endl;
-        for (size_t i = localStart; i < std::min(localStart + 3, localEnd); i++)
-        {
-            std::cout << "  Element " << i << " SFC keys: " << h_sfc0[i] << ", " << h_sfc1[i] << ", " << h_sfc2[i]
-                      << ", " << h_sfc3[i] << std::endl;
-        }
-
-        // Check if neighboring elements share SFC keys (indicating shared nodes)
-        int sharedNodeCount = 0;
-        for (size_t i = localStart; i < std::min(localStart + 10, localEnd - 1); i++)
-        {
-            uint64_t keys1[4] = {h_sfc0[i], h_sfc1[i], h_sfc2[i], h_sfc3[i]};
-            uint64_t keys2[4] = {h_sfc0[i + 1], h_sfc1[i + 1], h_sfc2[i + 1], h_sfc3[i + 1]};
-
-            int shared = 0;
-            for (int j = 0; j < 4; j++)
-            {
-                for (int k = 0; k < 4; k++)
-                {
-                    if (keys1[j] == keys2[k] && keys1[j] != 0) shared++;
-                }
-            }
-            if (shared > 0) sharedNodeCount++;
-        }
-        std::cout << "Rank " << rank << ": " << sharedNodeCount << " out of 10 consecutive elements share nodes"
-                  << std::endl;
-
-        // Add this right after your connectivity debugging
-        std::cout << "Rank " << rank << ": Checking tetrahedron orientation..." << std::endl;
-
-        int invertedTets = 0;
-        int totalChecked = 0;
-
-        for (size_t i = localStart; i < std::min(localStart + 50, localEnd); i++)
-        {
-            try
-            {
-                // Get the 4 vertices
-                auto sfcKindKey0 = cstone::sfcKey(h_sfc0[i]);
-                auto sfcKindKey1 = cstone::sfcKey(h_sfc1[i]);
-                auto sfcKindKey2 = cstone::sfcKey(h_sfc2[i]);
-                auto sfcKindKey3 = cstone::sfcKey(h_sfc3[i]);
-
-                auto [ix0, iy0, iz0] = cstone::decodeSfc(sfcKindKey0);
-                auto [ix1, iy1, iz1] = cstone::decodeSfc(sfcKindKey1);
-                auto [ix2, iy2, iz2] = cstone::decodeSfc(sfcKindKey2);
-                auto [ix3, iy3, iz3] = cstone::decodeSfc(sfcKindKey3);
-
-                // Convert to float coordinates
-                constexpr uint64_t maxCoord = (1ULL << cstone::maxTreeLevel<cstone::SfcKind<uint64_t>>{}) - 1;
-                float invMaxCoord           = 1.0f / static_cast<float>(maxCoord);
-
-                float x0 = static_cast<float>(ix0) * invMaxCoord * 100.0f;
-                float y0 = static_cast<float>(iy0) * invMaxCoord * 100.0f;
-                float z0 = static_cast<float>(iz0) * invMaxCoord * 100.0f;
-
-                float x1 = static_cast<float>(ix1) * invMaxCoord * 100.0f;
-                float y1 = static_cast<float>(iy1) * invMaxCoord * 100.0f;
-                float z1 = static_cast<float>(iz1) * invMaxCoord * 100.0f;
-
-                float x2 = static_cast<float>(ix2) * invMaxCoord * 100.0f;
-                float y2 = static_cast<float>(iy2) * invMaxCoord * 100.0f;
-                float z2 = static_cast<float>(iz2) * invMaxCoord * 100.0f;
-
-                float x3 = static_cast<float>(ix3) * invMaxCoord * 100.0f;
-                float y3 = static_cast<float>(iy3) * invMaxCoord * 100.0f;
-                float z3 = static_cast<float>(iz3) * invMaxCoord * 100.0f;
-
-                // Calculate tetrahedron volume using determinant
-                // Volume = (1/6) * det|v1-v0, v2-v0, v3-v0|
-                float v1x = x1 - x0, v1y = y1 - y0, v1z = z1 - z0;
-                float v2x = x2 - x0, v2y = y2 - y0, v2z = z2 - z0;
-                float v3x = x3 - x0, v3y = y3 - y0, v3z = z3 - z0;
-
-                float det =
-                    v1x * (v2y * v3z - v2z * v3y) - v1y * (v2x * v3z - v2z * v3x) + v1z * (v2x * v3y - v2y * v3x);
-
-                float volume = det / 6.0f;
-
-                if (volume < 0)
-                {
-                    invertedTets++;
-                    if (invertedTets <= 3)
-                    { // Print first 3 inverted tets
-                        std::cout << "  Inverted tet at element " << i << ": volume = " << volume << std::endl;
-                        std::cout << "    Nodes: (" << x0 << "," << y0 << "," << z0 << ") -> "
-                                  << "(" << x1 << "," << y1 << "," << z1 << ") -> "
-                                  << "(" << x2 << "," << y2 << "," << z2 << ") -> "
-                                  << "(" << x3 << "," << y3 << "," << z3 << ")" << std::endl;
-                    }
-                }
-                totalChecked++;
-            }
-            catch (...)
-            {
-                // Skip problematic elements
-                continue;
-            }
-        }
-
-        float invertedPercentage = (totalChecked > 0) ? (100.0f * invertedTets / totalChecked) : 0.0f;
-        std::cout << "Rank " << rank << ": " << invertedTets << " out of " << totalChecked
-                  << " tetrahedra are inverted (" << invertedPercentage << "%)" << std::endl;
-
-        // Calculate coordinate statistics
-        if (!vertices.empty())
-        {
-            float minCoord = *std::min_element(vertices.begin(), vertices.end());
-            float maxCoord = *std::max_element(vertices.begin(), vertices.end());
-            std::cout << "Rank " << rank << ": Raw SFC coordinate range: [" << minCoord << ", " << maxCoord << "]"
-                      << std::endl;
-        }
-
-        // Write vertices
-        file << "POINTS " << vertices.size() / 3 << " float\n";
-        for (size_t i = 0; i < vertices.size(); i += 3)
-        {
-            file << vertices[i] << " " << vertices[i + 1] << " " << vertices[i + 2] << "\n";
-        }
-
-        // Write cells
-        int numValidTets = connectivity.size() / 4;
-        file << "CELLS " << numValidTets << " " << numValidTets * 5 << "\n";
-        for (size_t i = 0; i < connectivity.size(); i += 4)
-        {
-            file << "4 " << connectivity[i] << " " << connectivity[i + 1] << " " << connectivity[i + 2] << " "
-                 << connectivity[i + 3] << "\n";
-        }
-
-        // Write cell types
-        file << "CELL_TYPES " << numValidTets << "\n";
-        for (int i = 0; i < numValidTets; i++)
-        {
-            file << "10\n"; // VTK_TETRA
-        }
-
-        // Write rank data for coloring
-        file << "CELL_DATA " << numValidTets << "\n";
-        file << "SCALARS rank int 1\n";
-        file << "LOOKUP_TABLE default\n";
-        for (int i = 0; i < numValidTets; i++)
-        {
-            file << rank << "\n";
-        }
-
-        file.close();
-
-        if (rank == 0)
-        {
-            std::string infoPath = outputDir + "/raw_sfc_info.txt";
-            std::ofstream info(infoPath);
-            info << "Raw SFC Coordinate Visualization\n";
-            info << "================================\n\n";
-            info << "This visualization uses RAW SFC integer coordinates\n";
-            info << "WITHOUT any normalization or box scaling.\n\n";
-            info << "Key characteristics:\n";
-            info << "- Coordinates are direct output from decodeSfc()\n";
-            info << "- No domain box transformation applied\n";
-            info << "- Should eliminate any coordinate transformation artifacts\n";
-            info << "Statistics:\n";
-            info << "Viewing in ParaView:\n";
-            info << "1. Open all raw_sfc_rank*.vtk files\n";
-            info << "2. Group them (select all, Filters > Group)\n";
-            info << "3. Color by 'rank'\n";
-            info << "4. The mesh will be in SFC integer coordinate space\n";
-            info << "5. Compare with the box-normalized version to identify issues\n\n";
-            info << "Expected behavior:\n";
-            info << "- If this shows proper connectivity but normalized version doesn't,\n";
-            info << "  the issue is in the box normalization process\n";
-            info << "- If both show the same artifacts, the issue is in the SFC\n";
-            info << "  connectivity data itself\n";
-            info.close();
-
-            // Print max SFC coordinate for reference
-            constexpr uint64_t maxSfcCoord = (1ULL << cstone::maxTreeLevel<cstone::SfcKind<uint64_t>>{}) - 1;
-            std::cout << "Raw SFC visualization completed:" << std::endl;
-            std::cout << "  Maximum possible SFC coordinate: " << maxSfcCoord << std::endl;
-            std::cout << "  Files: " << outputDir << "/raw_sfc_rank*.vtk" << std::endl;
-        }
-    }
-    catch (const std::exception& e)
-    {
-        FAIL() << "Exception in raw SFC visualization: " << e.what();
-    }
+template<typename T>
+std::string getTypeName() {
+    if constexpr (std::is_same_v<T, float>) return "float";
+    else if constexpr (std::is_same_v<T, double>) return "double";
+    else if constexpr (std::is_same_v<T, unsigned>) return "uint32";
+    else if constexpr (std::is_same_v<T, uint64_t>) return "uint64";
+    else return "unknown";
 }
 
 // Helper template function that contains the actual test logic
-template<typename CoordType, typename KeyType>
+template<typename CoordType, typename KeyType, bool halos = false>
 void testSFCVisualization(ExternalMeshDomainTest* testInstance)
 {
     using Domain = ElementDomain<TetTag, CoordType, KeyType, cstone::GpuTag>;
@@ -1538,14 +1036,11 @@ void testSFCVisualization(ExternalMeshDomainTest* testInstance)
     auto h_sfc2 = toHost(domain.template indices<2>());
     auto h_sfc3 = toHost(domain.template indices<3>());
 
-    size_t localStart = domain.startIndex();
-    size_t localEnd   = domain.endIndex();
-
     std::string typeStr = (sizeof(CoordType) == 4) ? "float" : "double";
     std::cout << "Rank " << testInstance->rank << ": Testing with " << typeStr << " precision" << std::endl;
 
-    // Create output directory
-    std::string outputDir = testInstance->meshPath + "/vtk_output";
+    std::string outputDir = testInstance->meshPath + "/vtk_output_" + getTypeName<CoordType>() + "_" + getTypeName<KeyType>() +
+                        (halos ? "_halos" : "_no_halos");
     if (testInstance->rank == 0) { std::filesystem::create_directories(outputDir); }
     MPI_Barrier(MPI_COMM_WORLD);
 
@@ -1571,34 +1066,15 @@ void testSFCVisualization(ExternalMeshDomainTest* testInstance)
         auto sfcKindKey   = cstone::sfcKey(sfcKey);
         auto [ix, iy, iz] = cstone::decodeSfc(sfcKindKey);
 
-constexpr auto treeLevel = cstone::maxTreeLevel<cstone::SfcKind<uint64_t>>{};
-std::cout << "SFC tree level: " << treeLevel << std::endl;
-std::cout << "Max coord value: " << ((1ULL << treeLevel) - 1) << std::endl;
-std::cout << "Quantization step: " << (1.0 / ((1ULL << treeLevel) - 1)) << std::endl;
-
      // Convert with template precision
         constexpr KeyType maxCoord = (1ULL << cstone::maxTreeLevel<cstone::SfcKind<KeyType>>{}) - 1;
         CoordType invMaxCoord       = static_cast<CoordType>(1.0) / static_cast<CoordType>(maxCoord);
-
-
-
-
-
 
         auto bbox = domain.getBoundingBox();
 
         CoordType x = bbox.xmin() + (static_cast<CoordType>(ix) * invMaxCoord) * (bbox.xmax() - bbox.xmin());
         CoordType y = bbox.ymin() + (static_cast<CoordType>(iy) * invMaxCoord) * (bbox.ymax() - bbox.ymin());
         CoordType z = bbox.zmin() + (static_cast<CoordType>(iz) * invMaxCoord) * (bbox.zmax() - bbox.zmin());
-
-            std::cout << "  SFC key: " << sfcKey << std::endl;
-    std::cout << "  Decoded: (" << ix << ", " << iy << ", " << iz << ")" << std::endl;
-    std::cout << "  MaxCoord: " << maxCoord << std::endl;
-    std::cout << "  InvMaxCoord: " << invMaxCoord << std::endl;
-    std::cout << "  Bbox: [" << bbox.xmin() << "," << bbox.xmax() << "] [" 
-              << bbox.ymin() << "," << bbox.ymax() << "] [" 
-              << bbox.zmin() << "," << bbox.zmax() << "]" << std::endl;
-    std::cout << "  Final coords: (" << x << ", " << y << ", " << z << ")" << std::endl;
 
         size_t idx = vertices.size() / 3;
         vertices.push_back(x);
@@ -1609,8 +1085,16 @@ std::cout << "Quantization step: " << (1.0 / ((1ULL << treeLevel) - 1)) << std::
         return idx;
     };
 
+    size_t localStart = domain.startIndex();
+    size_t localEnd   = domain.endIndex();
     // Build connectivity
     std::vector<size_t> connectivity;
+    if constexpr (halos)
+    {
+        localStart = 0;
+        localEnd   = domain.getElementCount();
+    }
+
     for (size_t i = localStart; i < localEnd; i++)
     {
         size_t v0 = addVertex(h_sfc0[i]);
@@ -1623,6 +1107,18 @@ std::cout << "Quantization step: " << (1.0 / ((1ULL << treeLevel) - 1)) << std::
         connectivity.push_back(v2);
         connectivity.push_back(v3);
     }
+
+    // Ensure all ranks have the same number of vertices
+#ifndef NDEBUG
+    auto bbox = domain.getBoundingBox();
+    constexpr auto treeLevel = cstone::maxTreeLevel<cstone::SfcKind<KeyType>>{};
+    std::cout << "SFC tree level: " << treeLevel << std::endl;
+    std::cout << "Max coord value: " << ((1ULL << treeLevel) - 1) << std::endl;
+    std::cout << "Quantization step: " << (1.0 / ((1ULL << treeLevel) - 1)) << std::endl;
+    std::cout << "  Bbox: [" << bbox.xmin() << "," << bbox.xmax() << "] [" 
+          << bbox.ymin() << "," << bbox.ymax() << "] [" 
+          << bbox.zmin() << "," << bbox.zmax() << "]" << std::endl;
+#endif
 
     // Write VTK data (VTK always uses float for coordinates)
     file << "POINTS " << vertices.size() / 3 << " float\n";
@@ -1700,41 +1196,42 @@ TEST_F(ExternalMeshDomainTest, VisualizeRawSFCDecodingFloat)
     }
 }
 
-TEST_F(ExternalMeshDomainTest, VisualizeRawSFCDecodingDouble)
-{
-    checkPrerequisites("VisualizeRawSFCDecodingDouble");
-
-    try
-    {
-        testSFCVisualization<double, uint64_t>(this);
-    }
-    catch (const std::exception& e)
-    {
-        FAIL() << "Exception in double SFC visualization: " << e.what();
-    }
-}
-
-TEST_F(ExternalMeshDomainTest, VisualizeRawSFCDecodingDoubleUnsigned)
-{
-    checkPrerequisites("VisualizeRawSFCDecodingDouble");
-
-    try
-    {
-        testSFCVisualization<double, unsigned>(this);
-    }
-    catch (const std::exception& e)
-    {
-        FAIL() << "Exception in double SFC visualization: " << e.what();
-    }
-}
-
-TEST_F(ExternalMeshDomainTest, VisualizeRawSFCDecodingfloatUint64)
+TEST_F(ExternalMeshDomainTest, VisualizeRawSFCDecodingFloatUint64)
 {
     checkPrerequisites("VisualizeRawSFCDecodingDouble");
 
     try
     {
         testSFCVisualization<float, uint64_t>(this);
+    }
+    catch (const std::exception& e)
+    {
+        FAIL() << "Exception in double SFC visualization: " << e.what();
+    }
+}
+
+// Now your actual test functions just call the template
+TEST_F(ExternalMeshDomainTest, VisualizeRawSFCDecodingWithHalosFloat)
+{
+    checkPrerequisites("VisualizeRawSFCDecodingFloat");
+
+    try
+    {
+        testSFCVisualization<float, unsigned, true>(this);
+    }
+    catch (const std::exception& e)
+    {
+        FAIL() << "Exception in float SFC visualization: " << e.what();
+    }
+}
+
+TEST_F(ExternalMeshDomainTest, VisualizeRawSFCDecodingWithHalosFloatUint64)
+{
+    checkPrerequisites("VisualizeRawSFCDecodingDouble");
+
+    try
+    {
+        testSFCVisualization<float, uint64_t, true>(this);
     }
     catch (const std::exception& e)
     {

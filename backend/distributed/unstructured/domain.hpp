@@ -520,7 +520,8 @@ cstone::Box<RealType> computeGlobalBoundingBox(const std::string& meshDir)
     std::ifstream z_file(meshDir + "/z." + ext, std::ios::binary);
 
     if (!x_file || !y_file || !z_file) {
-        throw std::runtime_error("Failed to open coordinate files for global bounding box computation: " + meshDir);
+        throw std::runtime_error("Failed to open coordinate files for global bounding box computation: " + meshDir + "/x." + ext + ", " +
+                                 meshDir + "/y." + ext + ", " + meshDir + "/z." + ext);
     }
 
     // Get total node count
@@ -677,8 +678,6 @@ ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(cons
     // Read the mesh in SoA format
     readMeshDataSoA(meshFile, h_coords, h_conn);
 
-
-
     // Initialize cornerstone domain
     int bucketSize           = 64;
     unsigned bucketSizeFocus = 8;
@@ -707,7 +706,7 @@ ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(cons
     sync(d_conn_, d_coords_);
 
     std::cout << "Rank " << rank_ << " initialized " << ElementTag::Name << " domain with " << nodeCount_
-              << " nodes and " << elementCount_ << " elements." << std::endl;
+              << " nodes and " << elementCount_ << " elements and " << localElementCount() << " local elements." << std::endl;
 }
 
 // Read mesh data in SoA format; uses element-based partitioning for better data locality
@@ -919,13 +918,10 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::sync(const De
             thrust::raw_pointer_cast(d_elemY.data()), thrust::raw_pointer_cast(d_elemZ.data()),
             thrust::raw_pointer_cast(d_elemH.data()), elementCount_);
         cudaCheckError();
+
         std::cout << "Rank " << rank_ << " syncing" << ElementTag::Name << " domain with "
                   << elementCount_ << " elements." << std::endl;
         syncDomainImpl(domain_.get(), d_elemSfcCodes_, d_elemX, d_elemY, d_elemZ, d_elemH, elementCount_, d_conn_keys_);
-        assert(newElementCount > 0 && newElementCount <= std::numeric_limits<KeyType>::max());
-        std::cout << "Rank " << rank_ << " synced " << ElementTag::Name << " domain with "
-                  << elementCount_ << " elements." << std::endl;
-        // rebuildElementConnectivity<KeyType, DeviceConnectivityTuple, DeviceConnectivityTuple>(d_conn_keys_, d_conn_, newElementCount);
     }
 }
 
