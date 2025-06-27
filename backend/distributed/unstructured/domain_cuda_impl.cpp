@@ -62,6 +62,9 @@ void syncDomainImpl(cstone::Domain<KeyType, RealType, cstone::GpuTag>* domain,
         domain->sync(elemSfcCodes, elemX, elemY, elemZ, elemH,
                    properties_refs,                                    // 4 properties of KeyType
                    std::tie(s1, s2, s3, s4, s5, s6, s7));             // Mixed scratch types
+        domain->exchangeHalos(properties_refs, s4, s5);
+                              
+
     } catch (const std::exception& e) {
         std::string errorMsg = e.what();
         // If there's any sync error and element count is low, provide a more helpful message
@@ -78,7 +81,7 @@ void syncDomainImpl(cstone::Domain<KeyType, RealType, cstone::GpuTag>* domain,
     }
 
     // Update element count after sync
-    elementCount = domain->endIndex() - domain->startIndex();
+    elementCount = domain->nParticlesWithHalos();
 }
 
 // Explicit template instantiations for syncDomainWithSfcConn

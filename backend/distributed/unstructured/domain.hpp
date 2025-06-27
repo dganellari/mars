@@ -347,6 +347,11 @@ public:
     // Start and end indices for local work assignment
     std::size_t startIndex() const { return domain_->startIndex(); }
     std::size_t endIndex() const { return domain_->endIndex(); }
+    std::size_t localElementCount() const { return endIndex() - startIndex(); }
+    std::size_t haloElementCount() const
+    {
+        return getElementCount() - localElementCount();
+    }
 
     // Helper methods
     void readMeshDataSoA(const std::string& meshFile, HostCoordsTuple& h_coords_, HostConnectivityTuple& h_conn_);
@@ -500,10 +505,78 @@ private:
     }
 };
 
-// Create a bounding box from a coordinate tuple
+// Add this function to domain.hpp (before the ElementDomain class)
+template<typename RealType>
+cstone::Box<RealType> computeGlobalBoundingBox(const std::string& meshDir)
+{
+    // Determine the file extension based on RealType
+    std::string ext;
+    if constexpr (std::is_same_v<RealType, float>) { ext = "float32"; }
+    else if constexpr (std::is_same_v<RealType, double>) { ext = "double"; }
+    else { throw std::runtime_error("Unsupported RealType for coordinate reading"); }
+
+    std::ifstream x_file(meshDir + "/x." + ext, std::ios::binary);
+    std::ifstream y_file(meshDir + "/y." + ext, std::ios::binary);
+    std::ifstream z_file(meshDir + "/z." + ext, std::ios::binary);
+
+    if (!x_file || !y_file || !z_file) {
+        throw std::runtime_error("Failed to open coordinate files for global bounding box computation: " + meshDir);
+    }
+
+    // Get total node count
+    x_file.seekg(0, std::ios::end);
+    size_t totalNodes = x_file.tellg() / sizeof(RealType);
+    x_file.seekg(0, std::ios::beg);
+
+    RealType xmin = std::numeric_limits<RealType>::max();
+    RealType xmax = std::numeric_limits<RealType>::lowest();
+    RealType ymin = std::numeric_limits<RealType>::max();
+    RealType ymax = std::numeric_limits<RealType>::lowest();
+    RealType zmin = std::numeric_limits<RealType>::max();
+    RealType zmax = std::numeric_limits<RealType>::lowest();
+
+    // Read in chunks for efficiency
+    constexpr size_t chunkSize = 8192;
+    std::vector<RealType> x_chunk(chunkSize), y_chunk(chunkSize), z_chunk(chunkSize);
+
+    for (size_t offset = 0; offset < totalNodes; offset += chunkSize) {
+        size_t readSize = std::min(chunkSize, totalNodes - offset);
+        
+        x_file.read(reinterpret_cast<char*>(x_chunk.data()), readSize * sizeof(RealType));
+        y_file.read(reinterpret_cast<char*>(y_chunk.data()), readSize * sizeof(RealType));
+        z_file.read(reinterpret_cast<char*>(z_chunk.data()), readSize * sizeof(RealType));
+
+        for (size_t i = 0; i < readSize; ++i) {
+            xmin = std::min(xmin, x_chunk[i]);
+            xmax = std::max(xmax, x_chunk[i]);
+            ymin = std::min(ymin, y_chunk[i]);
+            ymax = std::max(ymax, y_chunk[i]);
+            zmin = std::min(zmin, z_chunk[i]);
+            zmax = std::max(zmax, z_chunk[i]);
+        }
+    }
+
+    // Add padding
+    RealType padding = 0.05;
+    RealType xRange = xmax - xmin;
+    RealType yRange = ymax - ymin;
+    RealType zRange = zmax - zmin;
+
+    return cstone::Box<RealType>(
+        xmin - padding * xRange, xmax + padding * xRange,
+        ymin - padding * yRange, ymax + padding * yRange,
+        zmin - padding * zRange, zmax + padding * zRange
+    );
+}
+
+// Warning: This would create a local bounding box if called on a part on local coords.
 template<typename RealType, typename CoordTuple>
 cstone::Box<RealType> createBoundingBox(const CoordTuple& coords, RealType padding = 0.05)
 {
+    std::cout << "⚠️  WARNING: Creating LOCAL bounding box!" << std::endl;
+    std::cout << "    This may cause coordinate displacement in multi-rank SFC applications!" << std::endl;
+    std::cout << "    Consider using computeGlobalBoundingBox() instead." << std::endl;
+
     // Convert device vectors to host vectors first if needed
     std::vector<RealType> h_x, h_y, h_z;
 
@@ -612,7 +685,12 @@ ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(cons
     RealType theta           = 0.5;
 
     // Create a bounding box with some padding
-    box_ = createBoundingBox<RealType>(h_coords);
+    box_ = computeGlobalBoundingBox<RealType>(meshFile);
+
+    std::cout << "Rank " << rank_ << ": Created bounding box: [" 
+          << box_.xmin() << "," << box_.xmax() << "] [" 
+          << box_.ymin() << "," << box_.ymax() << "] [" 
+          << box_.zmin() << "," << box_.zmax() << "]" << std::endl;
 
     // Test SFC precision for this domain (debug only)
     testSfcPrecision<KeyType, RealType>(box_, rank_);
@@ -812,7 +890,7 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::sync(const De
         DeviceVector<KeyType> d_nodeSfcCodes(nodeCount_);
         generateSfcKeys<KeyType, RealType>(thrust::raw_pointer_cast(d_x.data()), thrust::raw_pointer_cast(d_y.data()),
                                            thrust::raw_pointer_cast(d_z.data()),
-                                           thrust::raw_pointer_cast(d_nodeSfcCodes.data()), nodeCount_, domain_->box());
+                                           thrust::raw_pointer_cast(d_nodeSfcCodes.data()), nodeCount_, getBoundingBox());
 
         // Find representative nodes for each element
         d_elemToNodeMap_.resize(elementCount_);
@@ -841,13 +919,12 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::sync(const De
             thrust::raw_pointer_cast(d_elemY.data()), thrust::raw_pointer_cast(d_elemZ.data()),
             thrust::raw_pointer_cast(d_elemH.data()), elementCount_);
         cudaCheckError();
-
+        std::cout << "Rank " << rank_ << " syncing" << ElementTag::Name << " domain with "
+                  << elementCount_ << " elements." << std::endl;
         syncDomainImpl(domain_.get(), d_elemSfcCodes_, d_elemX, d_elemY, d_elemZ, d_elemH, elementCount_, d_conn_keys_);
-
-        size_t newElementCount = domain_->endIndex() - domain_->startIndex();
-        elementCount_          = newElementCount;
-
         assert(newElementCount > 0 && newElementCount <= std::numeric_limits<KeyType>::max());
+        std::cout << "Rank " << rank_ << " synced " << ElementTag::Name << " domain with "
+                  << elementCount_ << " elements." << std::endl;
         // rebuildElementConnectivity<KeyType, DeviceConnectivityTuple, DeviceConnectivityTuple>(d_conn_keys_, d_conn_, newElementCount);
     }
 }
