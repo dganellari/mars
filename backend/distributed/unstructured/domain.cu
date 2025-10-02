@@ -1,17 +1,27 @@
 #include "domain.hpp"
+#include "thrust/sort.h"
+#include "thrust/unique.h"
+#include "thrust/device_vector.h"
+#include "cub/cub.cuh"
 
 namespace mars
 {
 // CUDA kernels with RealType template parameter instead of Real
 template<typename RealType>
-__global__ void transformCharacteristicSizesKernel(RealType* d_h, size_t size, RealType meshFactor, RealType minH, RealType maxH)
+__global__ void
+transformCharacteristicSizesKernel(RealType* d_h, size_t size, RealType meshFactor, RealType minH, RealType maxH)
 {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < size)
     {
         RealType val    = d_h[idx];
         RealType result = val * meshFactor;
-        d_h[idx]    = fmaxf(minH, fminf(maxH, result));
+
+        if constexpr (std::is_same_v<RealType, float>) {
+            d_h[idx] = fmaxf(minH, fminf(maxH, result));
+        } else {
+            d_h[idx] = fmax(minH, fmin(maxH, result));  // For double
+        }
     }
 }
 
@@ -23,14 +33,14 @@ __global__ void fillCharacteristicSizesKernel(RealType* d_h, size_t size, RealTy
 }
 
 // CUDA kernel to calculate element characteristic sizes
-template<typename ElementTag, typename RealType>
+template<typename ElementTag, typename KeyType, typename RealType>
 __global__ void computeCharacteristicSizesKernel(const RealType* x,
                                                  const RealType* y,
                                                  const RealType* z,
-                                                 const int* indices0,
-                                                 const int* indices1,
-                                                 const int* indices2,
-                                                 const int* indices3,
+                                                 const KeyType* indices0,
+                                                 const KeyType* indices1,
+                                                 const KeyType* indices2,
+                                                 const KeyType* indices3,
                                                  int* nodeTetCount,
                                                  RealType* h,
                                                  int numElements)
@@ -42,10 +52,10 @@ __global__ void computeCharacteristicSizesKernel(const RealType* x,
         if constexpr (std::is_same_v<ElementTag, TetTag>)
         {
             // Get the four nodes of this tetrahedron
-            int n0 = indices0[elemIdx];
-            int n1 = indices1[elemIdx];
-            int n2 = indices2[elemIdx];
-            int n3 = indices3[elemIdx];
+            auto n0 = indices0[elemIdx];
+            auto n1 = indices1[elemIdx];
+            auto n2 = indices2[elemIdx];
+            auto n3 = indices3[elemIdx];
 
             // Calculate edge lengths and contribute to characteristic size
             // Edge n0-n1
@@ -117,7 +127,7 @@ __global__ void computeCharacteristicSizesKernel(const RealType* x,
     }
 }
 
-template<typename RealType>
+template<typename KeyType, typename RealType>
 __global__ void finalizeCharacteristicSizesKernel(RealType* h, int* nodeTetCount, int numNodes)
 {
     int nodeIdx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -134,12 +144,12 @@ __global__ void finalizeCharacteristicSizesKernel(RealType* h, int* nodeTetCount
 
 // Generic kernel for finding representative nodes
 template<typename ElementTag, typename KeyType, typename RealType>
-__global__ void findRepresentativeNodesKernel(const int* indices0,
-                                              const int* indices1,
-                                              const int* indices2,
-                                              const int* indices3,
+__global__ void findRepresentativeNodesKernel(const KeyType* indices0,
+                                              const KeyType* indices1,
+                                              const KeyType* indices2,
+                                              const KeyType* indices3,
                                               const KeyType* sfcCodes,
-                                              int* elemToNodeMap,
+                                              KeyType* elemToNodeMap,
                                               int numElements)
 {
     int elemIdx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -149,20 +159,20 @@ __global__ void findRepresentativeNodesKernel(const int* indices0,
         if constexpr (std::is_same_v<ElementTag, TetTag>)
         {
             // Get the four nodes of this tetrahedron
-            int node0 = indices0[elemIdx];
-            int node1 = indices1[elemIdx];
-            int node2 = indices2[elemIdx];
-            int node3 = indices3[elemIdx];
+            auto node0 = indices0[elemIdx];
+            auto node1 = indices1[elemIdx];
+            auto node2 = indices2[elemIdx];
+            auto node3 = indices3[elemIdx];
 
             // Get SFC codes
-            unsigned sfc0 = sfcCodes[node0];
-            unsigned sfc1 = sfcCodes[node1];
-            unsigned sfc2 = sfcCodes[node2];
-            unsigned sfc3 = sfcCodes[node3];
+            auto sfc0 = sfcCodes[node0];
+            auto sfc1 = sfcCodes[node1];
+            auto sfc2 = sfcCodes[node2];
+            auto sfc3 = sfcCodes[node3];
 
             // Find minimum SFC code
-            int repNode     = node0;
-            unsigned minSfc = sfc0;
+            auto repNode     = node0;
+            auto minSfc = sfc0;
 
             if (sfc1 < minSfc)
             {
@@ -193,16 +203,16 @@ __global__ void findRepresentativeNodesKernel(const int* indices0,
         else if constexpr (std::is_same_v<ElementTag, TriTag>)
         {
             // For triangles - would use only indices0-2
-            int node0 = indices0[elemIdx];
-            int node1 = indices1[elemIdx];
-            int node2 = indices2[elemIdx];
+            auto node0 = indices0[elemIdx];
+            auto node1 = indices1[elemIdx];
+            auto node2 = indices2[elemIdx];
 
-            unsigned sfc0 = sfcCodes[node0];
-            unsigned sfc1 = sfcCodes[node1];
-            unsigned sfc2 = sfcCodes[node2];
+            auto sfc0 = sfcCodes[node0];
+            auto sfc1 = sfcCodes[node1];
+            auto sfc2 = sfcCodes[node2];
 
-            int repNode     = node0;
-            unsigned minSfc = sfc0;
+            auto repNode     = node0;
+            auto minSfc = sfc0;
 
             if (sfc1 < minSfc)
             {
@@ -221,30 +231,13 @@ __global__ void findRepresentativeNodesKernel(const int* indices0,
     }
 }
 
-// Implementation of mapElementsToNodes for GPU
-template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
-void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::mapElementsToNodes()
-{
-    // This is a stub implementation - the actual mapping happens in the sync() method
-    // Just ensure the vectors are sized correctly
-    if constexpr (std::is_same_v<AcceleratorTag, cstone::GpuTag>)
-    {
-        if (d_elemToNodeMap_.size() != elementCount_)
-        {
-            d_elemToNodeMap_.resize(elementCount_);
-        }
-    }
-}
-
-// Explicit instantiations for mapElementsToNodes
-template void ElementDomain<TetTag, float, unsigned int, cstone::GpuTag>::mapElementsToNodes();
-template void ElementDomain<TetTag, double, unsigned int, cstone::GpuTag>::mapElementsToNodes();
-template void ElementDomain<TetTag, float, uint64_t, cstone::GpuTag>::mapElementsToNodes();
-template void ElementDomain<TetTag, double, uint64_t, cstone::GpuTag>::mapElementsToNodes();
-
 template<typename KeyType, typename RealType>
-void generateSfcKeys(
-    const RealType* x, const RealType* y, const RealType* z, KeyType* keys, size_t numKeys, const cstone::Box<RealType>& box)
+void generateSfcKeys(const RealType* x,
+                     const RealType* y,
+                     const RealType* z,
+                     KeyType* keys,
+                     size_t numKeys,
+                     const cstone::Box<RealType>& box)
 {
     // Use sfcKindPointer to match cornerstone's template instantiation
     cstone::computeSfcKeysGpu(x, y, z, cstone::sfcKindPointer(keys), numKeys, box);
@@ -252,12 +245,12 @@ void generateSfcKeys(
 }
 
 // Kernel to extract representative node coordinates and compute SFC keys
-template<typename ElementTag, typename RealType>
+template<typename ElementTag, typename KeyType, typename RealType>
 __global__ void extractRepCoordinatesKernel(const RealType* x,
                                             const RealType* y,
                                             const RealType* z,
                                             const RealType* h,
-                                            const int* elemToNodeMap,
+                                            const KeyType* elemToNodeMap,
                                             RealType* elemX,
                                             RealType* elemY,
                                             RealType* elemZ,
@@ -268,7 +261,7 @@ __global__ void extractRepCoordinatesKernel(const RealType* x,
 
     if (elemIdx < numElements)
     {
-        int repNodeIdx = elemToNodeMap[elemIdx];
+        auto repNodeIdx = elemToNodeMap[elemIdx];
 
         // Extract coordinates and properties
         elemX[elemIdx] = x[repNodeIdx];
@@ -277,6 +270,203 @@ __global__ void extractRepCoordinatesKernel(const RealType* x,
         elemH[elemIdx] = h[repNodeIdx];
     }
 }
+
+template<typename KeyType>
+__global__ void extractAllTupleComponentsKernel(const KeyType* conn_key0,
+                                               const KeyType* conn_key1,
+                                               const KeyType* conn_key2,
+                                               const KeyType* conn_key3,
+                                               KeyType* flattenedKeys,
+                                               int numElements,
+                                               int nodeCount)
+{
+    int elemIdx = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (elemIdx < numElements)
+    {
+        flattenedKeys[elemIdx * nodeCount + 0] = conn_key0[elemIdx];
+        if (nodeCount >= 2) flattenedKeys[elemIdx * nodeCount + 1] = conn_key1[elemIdx];
+        if (nodeCount >= 3) flattenedKeys[elemIdx * nodeCount + 2] = conn_key2[elemIdx];
+        if (nodeCount >= 4) flattenedKeys[elemIdx * nodeCount + 3] = conn_key3[elemIdx];
+    }
+}
+
+template<typename KeyType>
+__global__ void connectivityRebuildKernel(
+    const KeyType* sfcKeys, KeyType* connectivity, const KeyType* uniqueSfcKeys, int numElements, int numUniqueKeys)
+{
+    int elemIdx = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (elemIdx < numElements)
+    {
+        KeyType key = sfcKeys[elemIdx];
+        // Use CUB's device-side binary search
+        auto localId = cub::LowerBound(uniqueSfcKeys, numUniqueKeys, key);
+        // If the key is not found, localId will be numUniqueKeys
+        connectivity[elemIdx] = localId;
+        // Ensure the key is valid
+        // This assertion is for debugging purposes, it will fail if the key is not found
+        assert(localId < numUniqueKeys && uniqueSfcKeys[localId] == key);
+    }
+}
+
+// Generic kernel for finding representative nodes
+template<typename ElementTag, typename KeyType, typename RealType>
+__global__ void buildSfcConnectivity(const KeyType* indices0,
+                                     const KeyType* indices1,
+                                     const KeyType* indices2,
+                                     const KeyType* indices3,
+                                     const KeyType* sfcCodes,
+                                     KeyType* keys0,
+                                     KeyType* keys1,
+                                     KeyType* keys2,
+                                     KeyType* keys3,
+                                     int numElements)
+{
+    int elemIdx = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (elemIdx < numElements)
+    {
+        if constexpr (std::is_same_v<ElementTag, TetTag>)
+        {
+            // Get the four nodes of this tetrahedron
+            auto node0 = indices0[elemIdx];
+            auto node1 = indices1[elemIdx];
+            auto node2 = indices2[elemIdx];
+            auto node3 = indices3[elemIdx];
+
+            keys0[elemIdx] = sfcCodes[node0];
+            keys1[elemIdx] = sfcCodes[node1];
+            keys2[elemIdx] = sfcCodes[node2];
+            keys3[elemIdx] = sfcCodes[node3];
+        }
+        else if constexpr (std::is_same_v<ElementTag, HexTag>)
+        {
+            // For hexahedra - would need additional parameters for indices4-7
+            // Implementation would be similar but with 8 nodes
+        }
+        else if constexpr (std::is_same_v<ElementTag, TriTag>)
+        {
+            // For triangles - would use only indices0-2
+            auto node0 = indices0[elemIdx];
+            auto node1 = indices1[elemIdx];
+            auto node2 = indices2[elemIdx];
+
+            keys0[elemIdx] = sfcCodes[node0];
+            keys1[elemIdx] = sfcCodes[node1];
+            keys2[elemIdx] = sfcCodes[node2];
+        }
+    }
+}
+
+template<typename KeyType, typename SfcConnTuple, typename ConnTuple>
+void rebuildElementConnectivity(
+    SfcConnTuple& d_conn_keys_,
+    ConnTuple& d_conn_,
+    size_t newElementCount)
+{
+    constexpr size_t NodesPerElement = std::tuple_size_v<SfcConnTuple>;
+    size_t totalNodeEntries = newElementCount * NodesPerElement;
+
+    thrust::device_vector<KeyType> d_flattenedKeys(totalNodeEntries);
+
+    int blockSize = 256;
+    int numBlocks = (newElementCount + blockSize - 1) / blockSize;
+
+    extractAllTupleComponentsKernel<KeyType><<<numBlocks, blockSize>>>(
+        thrust::raw_pointer_cast(std::get<0>(d_conn_keys_).data()),
+        NodesPerElement >= 2 ? thrust::raw_pointer_cast(std::get<1>(d_conn_keys_).data()) : nullptr,
+        NodesPerElement >= 3 ? thrust::raw_pointer_cast(std::get<2>(d_conn_keys_).data()) : nullptr,
+        NodesPerElement >= 4 ? thrust::raw_pointer_cast(std::get<3>(d_conn_keys_).data()) : nullptr,
+        thrust::raw_pointer_cast(d_flattenedKeys.data()),
+        newElementCount, NodesPerElement);
+    cudaCheckError();
+
+    thrust::sort(d_flattenedKeys.begin(), d_flattenedKeys.end());
+
+    thrust::device_vector<KeyType> d_uniqueSfcKeys(totalNodeEntries);
+    auto endIter = thrust::unique_copy(d_flattenedKeys.begin(), d_flattenedKeys.end(), d_uniqueSfcKeys.begin());
+
+    size_t uniqueKeyCount = endIter - d_uniqueSfcKeys.begin();
+    d_uniqueSfcKeys.resize(uniqueKeyCount);
+
+    ConnTuple newConn;
+    if constexpr (NodesPerElement >= 1) { std::get<0>(newConn).resize(newElementCount); }
+    if constexpr (NodesPerElement >= 2) { std::get<1>(newConn).resize(newElementCount); }
+    if constexpr (NodesPerElement >= 3) { std::get<2>(newConn).resize(newElementCount); }
+    if constexpr (NodesPerElement >= 4) { std::get<3>(newConn).resize(newElementCount); }
+
+    // Use thrust's optimized binary search
+    if constexpr (NodesPerElement >= 1)
+    {
+        connectivityRebuildKernel<<<numBlocks, blockSize>>>(
+            thrust::raw_pointer_cast(std::get<0>(d_conn_keys_).data()),
+            thrust::raw_pointer_cast(std::get<0>(newConn).data()), 
+            thrust::raw_pointer_cast(d_uniqueSfcKeys.data()),
+            newElementCount, uniqueKeyCount);
+        cudaCheckError();
+    }
+
+    if constexpr (NodesPerElement >= 2)
+    {
+        connectivityRebuildKernel<<<numBlocks, blockSize>>>(
+            thrust::raw_pointer_cast(std::get<1>(d_conn_keys_).data()),
+            thrust::raw_pointer_cast(std::get<1>(newConn).data()), 
+            thrust::raw_pointer_cast(d_uniqueSfcKeys.data()),
+            newElementCount, uniqueKeyCount);
+        cudaCheckError();
+    }
+
+    if constexpr (NodesPerElement >= 3)
+    {
+        connectivityRebuildKernel<<<numBlocks, blockSize>>>(
+            thrust::raw_pointer_cast(std::get<2>(d_conn_keys_).data()),
+            thrust::raw_pointer_cast(std::get<2>(newConn).data()), 
+            thrust::raw_pointer_cast(d_uniqueSfcKeys.data()),
+            newElementCount, uniqueKeyCount);
+        cudaCheckError();
+    }
+
+    if constexpr (NodesPerElement >= 4)
+    {
+        connectivityRebuildKernel<<<numBlocks, blockSize>>>(
+            thrust::raw_pointer_cast(std::get<3>(d_conn_keys_).data()),
+            thrust::raw_pointer_cast(std::get<3>(newConn).data()), 
+            thrust::raw_pointer_cast(d_uniqueSfcKeys.data()),
+            newElementCount, uniqueKeyCount);
+        cudaCheckError();
+    }
+
+    std::swap(d_conn_, newConn);
+}
+
+template __global__ void connectivityRebuildKernel<unsigned int>
+    (const unsigned int*, unsigned int*, const unsigned int*, int, int);
+
+template __global__ void connectivityRebuildKernel<uint64_t>
+    (const uint64_t*, uint64_t*, const uint64_t*, int, int);
+
+template void rebuildElementConnectivity<unsigned int, 
+    std::tuple<cstone::DeviceVector<unsigned int>, cstone::DeviceVector<unsigned int>, 
+               cstone::DeviceVector<unsigned int>, cstone::DeviceVector<unsigned int>>,
+    std::tuple<cstone::DeviceVector<unsigned int>, cstone::DeviceVector<unsigned int>, 
+               cstone::DeviceVector<unsigned int>, cstone::DeviceVector<unsigned int>>>(
+    std::tuple<cstone::DeviceVector<unsigned int>, cstone::DeviceVector<unsigned int>, 
+               cstone::DeviceVector<unsigned int>, cstone::DeviceVector<unsigned int>>& d_conn_keys_,
+    std::tuple<cstone::DeviceVector<unsigned int>, cstone::DeviceVector<unsigned int>, 
+               cstone::DeviceVector<unsigned int>, cstone::DeviceVector<unsigned int>>& d_conn_,
+    size_t newElementCount);
+
+template void rebuildElementConnectivity<uint64_t, 
+    std::tuple<cstone::DeviceVector<uint64_t>, cstone::DeviceVector<uint64_t>, 
+               cstone::DeviceVector<uint64_t>, cstone::DeviceVector<uint64_t>>,
+    std::tuple<cstone::DeviceVector<uint64_t>, cstone::DeviceVector<uint64_t>,    
+               cstone::DeviceVector<uint64_t>, cstone::DeviceVector<uint64_t>>>(  
+    std::tuple<cstone::DeviceVector<uint64_t>, cstone::DeviceVector<uint64_t>, 
+               cstone::DeviceVector<uint64_t>, cstone::DeviceVector<uint64_t>>& d_conn_keys_,
+    std::tuple<cstone::DeviceVector<uint64_t>, cstone::DeviceVector<uint64_t>,    
+               cstone::DeviceVector<uint64_t>, cstone::DeviceVector<uint64_t>>& d_conn_,  
+    size_t newElementCount);
 
 // Compute tetrahedron volumes
 template<typename ElementTag, typename RealType>
@@ -326,101 +516,125 @@ __global__ void computeElementVolumesKernel(const RealType* x,
     }
 }
 
-// Explicit instantiations for float
-template __global__ void transformCharacteristicSizesKernel<float>(float* d_h, size_t size, float meshFactor, float minH, float maxH);
-template __global__ void fillCharacteristicSizesKernel<float>(float* d_h, size_t size, float value);
-template __global__ void finalizeCharacteristicSizesKernel<float>(float* h, int* nodeTetCount, int numNodes);
+/*! @brief Flattens the tuple-of-vectors connectivity into a single vector of node keys.
+ *
+ *  Each thread processes one element, writing all of its node keys to the output array.
+ *  This is a "gather" operation that prepares the data for sorting and uniqueness.
+ */
+template<typename KeyType, typename DeviceConnectivityTuple>
+__global__ void flattenConnectivityKernel(const DeviceConnectivityTuple conn, KeyType* flat_keys, size_t numElements)
+{
+    size_t elementIdx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (elementIdx >= numElements) return;
 
-// Explicit instantiations for double
-template __global__ void transformCharacteristicSizesKernel<double>(double* d_h, size_t size, double meshFactor, double minH, double maxH);
-template __global__ void fillCharacteristicSizesKernel<double>(double* d_h, size_t size, double value);
-template __global__ void finalizeCharacteristicSizesKernel<double>(double* h, int* nodeTetCount, int numNodes);
+    constexpr size_t NodesPerElement = std::tuple_size_v<DeviceConnectivityTuple>;
+    
+    // Use fold expression to write all nodes for this element
+    size_t baseIdx = elementIdx * NodesPerElement;
+    
+    // Manual unrolling for common cases (more efficient than runtime loop)
+    if constexpr (NodesPerElement == 4) {
+        // Tetrahedron or Quad
+        flat_keys[baseIdx + 0] = thrust::raw_pointer_cast(std::get<0>(conn).data())[elementIdx];
+        flat_keys[baseIdx + 1] = thrust::raw_pointer_cast(std::get<1>(conn).data())[elementIdx];
+        flat_keys[baseIdx + 2] = thrust::raw_pointer_cast(std::get<2>(conn).data())[elementIdx];
+        flat_keys[baseIdx + 3] = thrust::raw_pointer_cast(std::get<3>(conn).data())[elementIdx];
+    }
+    else if constexpr (NodesPerElement == 3) {
+        // Triangle
+        flat_keys[baseIdx + 0] = thrust::raw_pointer_cast(std::get<0>(conn).data())[elementIdx];
+        flat_keys[baseIdx + 1] = thrust::raw_pointer_cast(std::get<1>(conn).data())[elementIdx];
+        flat_keys[baseIdx + 2] = thrust::raw_pointer_cast(std::get<2>(conn).data())[elementIdx];
+    }
+    else if constexpr (NodesPerElement == 8) {
+        // Hexahedron
+        flat_keys[baseIdx + 0] = thrust::raw_pointer_cast(std::get<0>(conn).data())[elementIdx];
+        flat_keys[baseIdx + 1] = thrust::raw_pointer_cast(std::get<1>(conn).data())[elementIdx];
+        flat_keys[baseIdx + 2] = thrust::raw_pointer_cast(std::get<2>(conn).data())[elementIdx];
+        flat_keys[baseIdx + 3] = thrust::raw_pointer_cast(std::get<3>(conn).data())[elementIdx];
+        flat_keys[baseIdx + 4] = thrust::raw_pointer_cast(std::get<4>(conn).data())[elementIdx];
+        flat_keys[baseIdx + 5] = thrust::raw_pointer_cast(std::get<5>(conn).data())[elementIdx];
+        flat_keys[baseIdx + 6] = thrust::raw_pointer_cast(std::get<6>(conn).data())[elementIdx];
+        flat_keys[baseIdx + 7] = thrust::raw_pointer_cast(std::get<7>(conn).data())[elementIdx];
+    }
+}
 
-// Explicit instantiation for each element type with float
-template __global__ void computeCharacteristicSizesKernel<TetTag, float>(const float* x,
-                                                                  const float* y,
-                                                                  const float* z,
-                                                                  const int* indices0,
-                                                                  const int* indices1,
-                                                                  const int* indices2,
-                                                                  const int* indices3,
-                                                                  int* nodeTetCount,
-                                                                  float* h,
-                                                                  int numElements);
+// ===== For unsigned KeyType =====
+// Float combinations
+template __global__ void computeCharacteristicSizesKernel<TetTag, unsigned, float>(
+    const float* x, const float* y, const float* z,
+    const unsigned* indices0, const unsigned* indices1, const unsigned* indices2, const unsigned* indices3,
+    int* nodeTetCount, float* h, int numElements);
 
-template __global__ void extractRepCoordinatesKernel<TetTag, float>(const float* x,
-                                                             const float* y,
-                                                             const float* z,
-                                                             const float* h,
-                                                             const int* elemToNodeMap,
-                                                             float* elemX,
-                                                             float* elemY,
-                                                             float* elemZ,
-                                                             float* elemH,
-                                                             int numElements);
+template __global__ void extractRepCoordinatesKernel<TetTag, unsigned, float>(
+    const float* x, const float* y, const float* z, const float* h,
+    const unsigned* elemToNodeMap, float* elemX, float* elemY, float* elemZ, float* elemH, int numElements);
 
-template __global__ void computeElementVolumesKernel<TetTag, float>(const float* x,
-                                                             const float* y,
-                                                             const float* z,
-                                                             const int* indices0,
-                                                             const int* indices1,
-                                                             const int* indices2,
-                                                             const int* indices3,
-                                                             float* volumes,
-                                                             int numElements);
-
-// Explicit instantiation for each element type with double
-template __global__ void computeCharacteristicSizesKernel<TetTag, double>(const double* x,
-                                                                  const double* y,
-                                                                  const double* z,
-                                                                  const int* indices0,
-                                                                  const int* indices1,
-                                                                  const int* indices2,
-                                                                  const int* indices3,
-                                                                  int* nodeTetCount,
-                                                                  double* h,
-                                                                  int numElements);
-
-template __global__ void extractRepCoordinatesKernel<TetTag, double>(const double* x,
-                                                             const double* y,
-                                                             const double* z,
-                                                             const double* h,
-                                                             const int* elemToNodeMap,
-                                                             double* elemX,
-                                                             double* elemY,
-                                                             double* elemZ,
-                                                             double* elemH,
-                                                             int numElements);
-
-template __global__ void computeElementVolumesKernel<TetTag, double>(const double* x,
-                                                             const double* y,
-                                                             const double* z,
-                                                             const int* indices0,
-                                                             const int* indices1,
-                                                             const int* indices2,
-                                                             const int* indices3,
-                                                             double* volumes,
-                                                             int numElements);
-
-// For float with unsigned keys
 template __global__ void findRepresentativeNodesKernel<TetTag, unsigned, float>(
-    const int* indices0, const int* indices1, const int* indices2, const int* indices3,
-    const unsigned* sfcCodes, int* elemToNodeMap, int numElements);
+    const unsigned* indices0, const unsigned* indices1, const unsigned* indices2, const unsigned* indices3,
+    const unsigned* sfcCodes, unsigned* elemToNodeMap, int numElements);
 
-// For double with unsigned keys
+template __global__ void finalizeCharacteristicSizesKernel<unsigned, float>(float* h, int* nodeTetCount, int numNodes);
+
+// Double combinations
+template __global__ void computeCharacteristicSizesKernel<TetTag, unsigned, double>(
+    const double* x, const double* y, const double* z,
+    const unsigned* indices0, const unsigned* indices1, const unsigned* indices2, const unsigned* indices3,
+    int* nodeTetCount, double* h, int numElements);
+
+template __global__ void extractRepCoordinatesKernel<TetTag, unsigned, double>(
+    const double* x, const double* y, const double* z, const double* h,
+    const unsigned* elemToNodeMap, double* elemX, double* elemY, double* elemZ, double* elemH, int numElements);
+
 template __global__ void findRepresentativeNodesKernel<TetTag, unsigned, double>(
-    const int* indices0, const int* indices1, const int* indices2, const int* indices3,
-    const unsigned* sfcCodes, int* elemToNodeMap, int numElements);
+    const unsigned* indices0, const unsigned* indices1, const unsigned* indices2, const unsigned* indices3,
+    const unsigned* sfcCodes, unsigned* elemToNodeMap, int numElements);
 
-// For float with uint64_t keys
+template __global__ void finalizeCharacteristicSizesKernel<unsigned, double>(double* h, int* nodeTetCount, int numNodes);
+
+// ===== For uint64_t KeyType =====
+// Float combinations
+template __global__ void computeCharacteristicSizesKernel<TetTag, uint64_t, float>(
+    const float* x, const float* y, const float* z,
+    const uint64_t* indices0, const uint64_t* indices1, const uint64_t* indices2, const uint64_t* indices3,
+    int* nodeTetCount, float* h, int numElements);
+
+template __global__ void extractRepCoordinatesKernel<TetTag, uint64_t, float>(
+    const float* x, const float* y, const float* z, const float* h,
+    const uint64_t* elemToNodeMap, float* elemX, float* elemY, float* elemZ, float* elemH, int numElements);
+
 template __global__ void findRepresentativeNodesKernel<TetTag, uint64_t, float>(
-    const int* indices0, const int* indices1, const int* indices2, const int* indices3,
-    const uint64_t* sfcCodes, int* elemToNodeMap, int numElements);
+    const uint64_t* indices0, const uint64_t* indices1, const uint64_t* indices2, const uint64_t* indices3,
+    const uint64_t* sfcCodes, uint64_t* elemToNodeMap, int numElements);
 
-// For double with uint64_t keys
+template __global__ void finalizeCharacteristicSizesKernel<uint64_t, float>(float* h, int* nodeTetCount, int numNodes);
+
+// Double combinations
+template __global__ void computeCharacteristicSizesKernel<TetTag, uint64_t, double>(
+    const double* x, const double* y, const double* z,
+    const uint64_t* indices0, const uint64_t* indices1, const uint64_t* indices2, const uint64_t* indices3,
+    int* nodeTetCount, double* h, int numElements);
+
+template __global__ void extractRepCoordinatesKernel<TetTag, uint64_t, double>(
+    const double* x, const double* y, const double* z, const double* h,
+    const uint64_t* elemToNodeMap, double* elemX, double* elemY, double* elemZ, double* elemH, int numElements);
+
 template __global__ void findRepresentativeNodesKernel<TetTag, uint64_t, double>(
-    const int* indices0, const int* indices1, const int* indices2, const int* indices3,
-    const uint64_t* sfcCodes, int* elemToNodeMap, int numElements);                                                          
+    const uint64_t* indices0, const uint64_t* indices1, const uint64_t* indices2, const uint64_t* indices3,
+    const uint64_t* sfcCodes, uint64_t* elemToNodeMap, int numElements);
+
+template __global__ void finalizeCharacteristicSizesKernel<uint64_t, double>(double* h, int* nodeTetCount, int numNodes);
+
+template __global__ void transformCharacteristicSizesKernel<float>(float* d_h, size_t size, float meshFactor, float minH, float maxH);
+template __global__ void transformCharacteristicSizesKernel<double>(double* d_h, size_t size, double meshFactor, double minH, double maxH);
+template __global__ void fillCharacteristicSizesKernel<float>(float* d_h, size_t size, float value);
+template __global__ void fillCharacteristicSizesKernel<double>(double* d_h, size_t size, double value);
+
+template __global__ void computeElementVolumesKernel<TetTag, float>(const float* x, const float* y, const float* z,
+    const int* indices0, const int* indices1, const int* indices2, const int* indices3, float* volumes, int numElements);
+
+template __global__ void computeElementVolumesKernel<TetTag, double>(const double* x, const double* y, const double* z,
+    const int* indices0, const int* indices1, const int* indices2, const int* indices3, double* volumes, int numElements);
 
 // Explicit instantiation for computeSfcKeysGpu with common combinations
 template void generateSfcKeys<unsigned, float>(
@@ -431,4 +645,48 @@ template void generateSfcKeys<uint64_t, float>(
     const float* x, const float* y, const float* z, uint64_t* keys, size_t numKeys, const cstone::Box<float>& box);
 template void generateSfcKeys<uint64_t, double>(
     const double* x, const double* y, const double* z, uint64_t* keys, size_t numKeys, const cstone::Box<double>& box);
+
+
+// Instantiations for buildSfcConnectivity kernel
+// For tet elements with unsigned int keys
+template __global__ void buildSfcConnectivity<TetTag, unsigned int, float>
+    (const unsigned int*, const unsigned int*, const unsigned int*, const unsigned int*,
+     const unsigned int*, unsigned int*, unsigned int*, 
+     unsigned int*, unsigned int*, int);
+
+template __global__ void buildSfcConnectivity<TetTag, unsigned int, double>
+    (const unsigned int*, const unsigned int*, const unsigned int*, const unsigned int*,
+     const unsigned int*, unsigned int*, unsigned int*, 
+     unsigned int*, unsigned int*, int);
+
+// For tet elements with uint64_t keys
+template __global__ void buildSfcConnectivity<TetTag, uint64_t, float>
+    (const uint64_t*, const uint64_t*, const uint64_t*, const uint64_t*,
+     const uint64_t*, uint64_t*, uint64_t*, 
+     uint64_t*, uint64_t*, int);
+
+template __global__ void buildSfcConnectivity<TetTag, uint64_t, double>
+    (const uint64_t*, const uint64_t*, const uint64_t*, const uint64_t*,
+     const uint64_t*, uint64_t*, uint64_t*, 
+     uint64_t*, uint64_t*, int);
+
+// Explicit instantiations for flattenConnectivityKernel
+// For tetrahedra (4 nodes) with unsigned int keys
+template __global__ void flattenConnectivityKernel<unsigned int, 
+    std::tuple<cstone::DeviceVector<unsigned int>, cstone::DeviceVector<unsigned int>, 
+               cstone::DeviceVector<unsigned int>, cstone::DeviceVector<unsigned int>>>(
+    std::tuple<cstone::DeviceVector<unsigned int>, cstone::DeviceVector<unsigned int>, 
+               cstone::DeviceVector<unsigned int>, cstone::DeviceVector<unsigned int>> conn, 
+    unsigned int* flat_keys, size_t numElements);
+
+// For tetrahedra (4 nodes) with uint64_t keys
+template __global__ void flattenConnectivityKernel<uint64_t, 
+    std::tuple<cstone::DeviceVector<uint64_t>, cstone::DeviceVector<uint64_t>, 
+               cstone::DeviceVector<uint64_t>, cstone::DeviceVector<uint64_t>>>(
+    std::tuple<cstone::DeviceVector<uint64_t>, cstone::DeviceVector<uint64_t>, 
+               cstone::DeviceVector<uint64_t>, cstone::DeviceVector<uint64_t>> conn, 
+    uint64_t* flat_keys, size_t numElements);
+
+} // namespace mars
+
 } // namespace mars
