@@ -33,49 +33,8 @@ if(NOT cornerstone_FOUND)
     endif()
 endif()
 
-# If still not found, fetch Cornerstone from GitHub
-if(NOT cornerstone_FOUND AND NOT CORNERSTONE_NO_GIT_FETCH)
-    message(STATUS "Cornerstone headers not found, fetching from GitHub...")
-    include(FetchContent)
-    set(BUILD_TESTING ON CACHE BOOL "Disable Cornerstone tests" FORCE)
-    if(MARS_ENABLE_CUDA)
-        set(CSTONE_WITH_CUDA ON CACHE BOOL "Enable CUDA for Cornerstone" FORCE)
-        set(CSTONE_WITH_HIP OFF CACHE BOOL "Disable HIP for Cornerstone" FORCE)
-        set(CSTONE_WITH_GPU_AWARE_MPI ON CACHE BOOL "Enable GPU-aware MPI" FORCE)
-        if(DEFINED CMAKE_CUDA_ARCHITECTURES)
-            set(CSTONE_CUDA_ARCHITECTURES ${CMAKE_CUDA_ARCHITECTURES} CACHE STRING "CUDA architectures" FORCE)
-        endif()
-        if(DEFINED MPI_CXX_COMPILER)
-            set(CSTONE_CUDA_FLAGS "-std=c++17 -ccbin=${MPI_CXX_COMPILER} --expt-relaxed-constexpr --extended-lambda"
-                CACHE STRING "CUDA flags for Cornerstone" FORCE)
-        endif()
-    elseif(MARS_ENABLE_HIP)
-        set(CSTONE_WITH_CUDA OFF CACHE BOOL "Disable CUDA for Cornerstone" FORCE)
-        set(CSTONE_WITH_HIP ON CACHE BOOL "Enable HIP for Cornerstone" FORCE)
-        set(CSTONE_WITH_GPU_AWARE_MPI ON CACHE BOOL "Enable GPU-aware MPI" FORCE)
-        if(DEFINED CMAKE_HIP_ARCHITECTURES)
-            set(CSTONE_HIP_ARCHITECTURES ${CMAKE_HIP_ARCHITECTURES} CACHE STRING "HIP architectures" FORCE)
-        endif()
-    else()
-        set(CSTONE_WITH_CUDA OFF CACHE BOOL "Disable CUDA for Cornerstone" FORCE)
-        set(CSTONE_WITH_HIP OFF CACHE BOOL "Disable HIP for Cornerstone" FORCE)
-        set(CSTONE_WITH_GPU_AWARE_MPI OFF CACHE BOOL "Disable GPU-aware MPI" FORCE)
-    endif()
-    FetchContent_Declare(
-        cornerstone_fetch
-        GIT_REPOSITORY https://github.com/sekelle/cornerstone-octree
-        GIT_TAG master
-    )
-    FetchContent_MakeAvailable(cornerstone_fetch)
-    set(cornerstone_INCLUDE_DIR "${cornerstone_fetch_SOURCE_DIR}/include")
-    set(CORNERSTONE_SRC_DIR "${cornerstone_fetch_SOURCE_DIR}" CACHE PATH "Cornerstone source directory" FORCE)
-    set(cornerstone_FOUND TRUE)
-    set(CORNERSTONE_FETCHED "TRUE" CACHE BOOL "Cornerstone was fetched from GitHub" FORCE)
-    message(STATUS "Fetched Cornerstone from GitHub: ${CORNERSTONE_SRC_DIR}")
-endif()
-
 # Handle CUDA-specific configurations
-if((MARS_ENABLE_CUDA OR MARS_ENABLE_HIP) AND cornerstone_FOUND AND NOT CORNERSTONE_FETCHED)
+if((MARS_ENABLE_CUDA OR MARS_ENABLE_HIP) AND cornerstone_FOUND)
     find_library(CORNERSTONE_GPU_LIBRARY
         NAMES cstone_gpu libcstone_gpu
         PATHS
