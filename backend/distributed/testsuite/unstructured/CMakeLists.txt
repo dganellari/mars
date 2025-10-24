@@ -116,7 +116,8 @@ function(addMarsGpuMpiTest source exename testname)
         set_target_properties(${exename} PROPERTIES
             CUDA_SEPARABLE_COMPILATION ON
             CUDA_RESOLVE_DEVICE_SYMBOLS ON
-            CUDA_HOST_COMPILER ${MPI_CXX_COMPILER})
+            CUDA_HOST_COMPILER ${MPI_CXX_COMPILER}
+            CUDA_ARCHITECTURES "${CMAKE_CUDA_ARCHITECTURES}")
     elseif(MARS_ENABLE_HIP)
         # For HIP backend
         target_link_libraries(${exename} PRIVATE mars::rocmlibs)

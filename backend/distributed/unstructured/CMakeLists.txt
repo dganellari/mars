@@ -61,6 +61,7 @@ elseif(MARS_ENABLE_CUDA)
     
     # CUDA-specific properties
     set_target_properties(mars_unstructured PROPERTIES
+        CUDA_ARCHITECTURES "${CMAKE_CUDA_ARCHITECTURES}"
         CUDA_SEPARABLE_COMPILATION ON
         CUDA_HOST_COMPILER ${MPI_CXX_COMPILER})
 endif()
