@@ -13,7 +13,6 @@ using std::get;
 #include "cstone/cuda/cuda_utils.hpp"
 #include "cstone/sfc/sfc.hpp"
 #include "cstone/domain/assignment.hpp"
-#include "cstone/domain/assignment_gpu.cuh"
 
 #include "domain_cuda_impl.hpp"
 
@@ -23,6 +22,15 @@ using std::get;
 #include <thrust/execution_policy.h>
 #include <thrust/extrema.h>
 #include <thrust/host_vector.h>
+#include <thrust/sort.h>
+#include <thrust/unique.h>
+#include <thrust/copy.h>
+#include <thrust/sequence.h>
+#include <thrust/reduce.h>
+#include <thrust/scatter.h>
+#include <thrust/scan.h>
+#include <thrust/fill.h>
+#include <thrust/iterator/constant_iterator.h>
 #include <algorithm>
 #include <array>
 #include <iostream>
@@ -159,9 +167,26 @@ __global__ void convertSfcToNodeIndicesKernel(const KeyType* sfcIndices,
                                               size_t numElements,
                                               size_t numNodes);
                                     
-template<typename KeyType, typename DeviceConnectivityTuple>
-__global__ void flattenConnectivityKernel(const DeviceConnectivityTuple conn, KeyType* flat_keys, size_t numElements);
+// Better: use std::array for compile-time indexing
+template<typename KeyType, size_t NodesPerElement>
+struct ConnPtrs {
+    const KeyType* ptrs[NodesPerElement];
+};
 
+template<typename KeyType, size_t NodesPerElement>
+__global__ void flattenConnectivityKernel(
+    ConnPtrs<KeyType, NodesPerElement> conn,
+    KeyType* flat_keys, 
+    size_t numElements);
+
+
+template<typename KeyType>
+__global__ void mapSfcToLocalIdKernel(const KeyType* sfc_conn, 
+                                      KeyType* local_conn, 
+                                      const KeyType* sorted_sfc, 
+                                      size_t num_elements, 
+                                      size_t num_nodes);
+ 
 // Template struct to select the correct vector type based on accelerator tag
 template<typename T, typename AcceleratorTag>
 struct VectorSelector
@@ -397,11 +422,11 @@ public:
     const DeviceConnectivityTuple& getElementToNodeConnectivity() const { return d_conn_local_ids_; }
 
     //! Returns the offsets for the Node->Element CSR map.
-    const DeviceVector<int>& getNodeToElementOffsets() const { return d_nodeToElementOffsets_; }
+    const DeviceVector<KeyType>& getNodeToElementOffsets() const { return d_nodeToElementOffsets_; }
 
     //! Returns the list for the Node->Element CSR map.
-    const DeviceVector<int>& getNodeToElementList() const { return d_nodeToElementList_; }
-    
+    const DeviceVector<KeyType>& getNodeToElementList() const { return d_nodeToElementList_; }
+   
 private:
     int rank_;
     int numRanks_;
@@ -425,10 +450,10 @@ private:
     // Maps a dense local node ID [0...N-1] to its sparse global SFC Key
     DeviceVector<KeyType> d_localToGlobalSfcMap_;
     // Element->Node connectivity using dense local IDs [0...N-1]
-    DeviceLocalConnectivityTuple d_conn_local_ids_;
+    DeviceConnectivityTuple d_conn_local_ids_;
     // Node-to-Element connectivity in CSR format
-    DeviceVector<int> d_nodeToElementOffsets_;
-    DeviceVector<int> d_nodeToElementList_;
+    DeviceVector<KeyType> d_nodeToElementOffsets_;
+    DeviceVector<KeyType> d_nodeToElementList_;
 
     void initializeConnectivityKeys();
 
@@ -1203,6 +1228,15 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::buildAdjacenc
     }
 }
 
+// Helper to populate the ConnPtrs struct from tuple
+template<typename KeyType, size_t... Is, typename Tuple>
+auto makeConnPtrs(const Tuple& tuple, std::index_sequence<Is...>)
+{
+    ConnPtrs<KeyType, sizeof...(Is)> result;
+    ((result.ptrs[Is] = thrust::raw_pointer_cast(std::get<Is>(tuple).data())), ...);
+    return result;
+}
+
 template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
 void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::createLocalToGlobalSfcMap()
 {
@@ -1217,24 +1251,27 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::createLocalTo
         
         DeviceVector<KeyType> allNodeKeys(numConnectivityEntries);
 
+        auto conn_ptrs = makeConnPtrs<KeyType>(d_conn_keys_, std::make_index_sequence<NodesPerElement>{});
         // 2. Launch the optimized kernel to flatten the tuple-of-vectors
         int blockSize = 256;
         int numBlocks = (elementCount_ + blockSize - 1) / blockSize;
         flattenConnectivityKernel<<<numBlocks, blockSize>>>(
-            d_conn_keys_, 
+            conn_ptrs,
             thrust::raw_pointer_cast(allNodeKeys.data()), 
             elementCount_
         );
         cudaCheckError();
 
         // 3. Sort the keys using Thrust's highly optimized parallel sort
-        thrust::sort(thrust::device, allNodeKeys.begin(), allNodeKeys.end());
+        auto start = thrust::device_ptr<KeyType>(thrust::raw_pointer_cast(allNodeKeys.data()));
+        auto end = start + allNodeKeys.size();
+        thrust::sort(thrust::device, start, end);
 
         // 4. Find the unique keys - moves duplicates to the end
-        auto newEnd = thrust::unique(thrust::device, allNodeKeys.begin(), allNodeKeys.end());
+        auto newEnd = thrust::unique(thrust::device, start, end);
 
         // 5. Resize to discard duplicates
-        allNodeKeys.resize(newEnd - allNodeKeys.begin());
+        allNodeKeys.resize(newEnd - start);
         
         // 6. Move the result to the member variable
         d_localToGlobalSfcMap_ = std::move(allNodeKeys);
@@ -1251,112 +1288,150 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::buildNodeToEl
     {
         size_t numConnectivityEntries = elementCount_ * NodesPerElement;
         if (numConnectivityEntries == 0) {
-            d_nodeToElementOffsets_.resize(nodeCount_ + 1, 0);
-            d_nodeToElementList_.clear();
+            d_nodeToElementOffsets_.resize(nodeCount_ + 1);
+            thrust::fill(thrust::device, 
+                        thrust::device_ptr<KeyType>(thrust::raw_pointer_cast(d_nodeToElementOffsets_.data())),
+                        thrust::device_ptr<KeyType>(thrust::raw_pointer_cast(d_nodeToElementOffsets_.data()) + nodeCount_ + 1),
+                        KeyType(0));
+            d_nodeToElementList_.resize(0);
             return;
         }
 
         // Step 1: Create flat list of (local_node_id, element_id) pairs
-        DeviceVector<int> flatNodeIds(numConnectivityEntries);
-        DeviceVector<int> flatElemIds(numConnectivityEntries);
-
-        // Flatten the connectivity into (node, element) pairs
-        auto flattenPairs = [&](int nodeIdx, const auto& conn_vec) {
-            size_t offset = nodeIdx * elementCount_;
-            for (size_t i = 0; i < elementCount_; ++i) {
-                flatNodeIds[offset + i] = conn_vec[i];
-                flatElemIds[offset + i] = static_cast<int>(i);
-            }
-        };
+        DeviceVector<KeyType> flatNodeIds(numConnectivityEntries);
+        DeviceVector<KeyType> flatElemIds(numConnectivityEntries);
 
         // Copy all connectivity data to flat arrays
         if constexpr (NodesPerElement >= 1) {
             thrust::copy(thrust::device, 
-                        std::get<0>(d_conn_local_ids_).begin(), 
-                        std::get<0>(d_conn_local_ids_).end(),
-                        flatNodeIds.begin());
+                        thrust::device_ptr<KeyType>(thrust::raw_pointer_cast(std::get<0>(d_conn_local_ids_).data())), 
+                        thrust::device_ptr<KeyType>(thrust::raw_pointer_cast(std::get<0>(d_conn_local_ids_).data()) + elementCount_),
+                        thrust::device_ptr<KeyType>(thrust::raw_pointer_cast(flatNodeIds.data())));
             thrust::sequence(thrust::device, 
-                           flatElemIds.begin(), 
-                           flatElemIds.begin() + elementCount_);
+                           thrust::device_ptr<KeyType>(thrust::raw_pointer_cast(flatElemIds.data())), 
+                           thrust::device_ptr<KeyType>(thrust::raw_pointer_cast(flatElemIds.data()) + elementCount_));
         }
         
-        for (int nodeIdx = 1; nodeIdx < NodesPerElement; ++nodeIdx) {
-            size_t offset = nodeIdx * elementCount_;
-            if (nodeIdx == 1 && NodesPerElement >= 2) {
-                thrust::copy(thrust::device, 
-                           std::get<1>(d_conn_local_ids_).begin(), 
-                           std::get<1>(d_conn_local_ids_).end(),
-                           flatNodeIds.begin() + offset);
-            } else if (nodeIdx == 2 && NodesPerElement >= 3) {
-                thrust::copy(thrust::device, 
-                           std::get<2>(d_conn_local_ids_).begin(), 
-                           std::get<2>(d_conn_local_ids_).end(),
-                           flatNodeIds.begin() + offset);
-            } else if (nodeIdx == 3 && NodesPerElement >= 4) {
-                thrust::copy(thrust::device, 
-                           std::get<3>(d_conn_local_ids_).begin(), 
-                           std::get<3>(d_conn_local_ids_).end(),
-                           flatNodeIds.begin() + offset);
-            } else if (nodeIdx == 4 && NodesPerElement >= 5) {
-                thrust::copy(thrust::device, 
-                           std::get<4>(d_conn_local_ids_).begin(), 
-                           std::get<4>(d_conn_local_ids_).end(),
-                           flatNodeIds.begin() + offset);
-            } else if (nodeIdx == 5 && NodesPerElement >= 6) {
-                thrust::copy(thrust::device, 
-                           std::get<5>(d_conn_local_ids_).begin(), 
-                           std::get<5>(d_conn_local_ids_).end(),
-                           flatNodeIds.begin() + offset);
-            } else if (nodeIdx == 6 && NodesPerElement >= 7) {
-                thrust::copy(thrust::device, 
-                           std::get<6>(d_conn_local_ids_).begin(), 
-                           std::get<6>(d_conn_local_ids_).end(),
-                           flatNodeIds.begin() + offset);
-            } else if (nodeIdx == 7 && NodesPerElement >= 8) {
-                thrust::copy(thrust::device, 
-                           std::get<7>(d_conn_local_ids_).begin(), 
-                           std::get<7>(d_conn_local_ids_).end(),
-                           flatNodeIds.begin() + offset);
-            }
-            
+        if constexpr (NodesPerElement >= 2) {
+            size_t offset = 1 * elementCount_;
+            thrust::copy(thrust::device, 
+                       thrust::device_ptr<KeyType>(thrust::raw_pointer_cast(std::get<1>(d_conn_local_ids_).data())), 
+                       thrust::device_ptr<KeyType>(thrust::raw_pointer_cast(std::get<1>(d_conn_local_ids_).data()) + elementCount_),
+                       thrust::device_ptr<KeyType>(thrust::raw_pointer_cast(flatNodeIds.data()) + offset));
             thrust::sequence(thrust::device, 
-                           flatElemIds.begin() + offset, 
-                           flatElemIds.begin() + offset + elementCount_);
+                           thrust::device_ptr<KeyType>(thrust::raw_pointer_cast(flatElemIds.data()) + offset), 
+                           thrust::device_ptr<KeyType>(thrust::raw_pointer_cast(flatElemIds.data()) + offset + elementCount_));
+        }
+        
+        if constexpr (NodesPerElement >= 3) {
+            size_t offset = 2 * elementCount_;
+            thrust::copy(thrust::device, 
+                       thrust::device_ptr<KeyType>(thrust::raw_pointer_cast(std::get<2>(d_conn_local_ids_).data())), 
+                       thrust::device_ptr<KeyType>(thrust::raw_pointer_cast(std::get<2>(d_conn_local_ids_).data()) + elementCount_),
+                       thrust::device_ptr<KeyType>(thrust::raw_pointer_cast(flatNodeIds.data()) + offset));
+            thrust::sequence(thrust::device, 
+                           thrust::device_ptr<KeyType>(thrust::raw_pointer_cast(flatElemIds.data()) + offset), 
+                           thrust::device_ptr<KeyType>(thrust::raw_pointer_cast(flatElemIds.data()) + offset + elementCount_));
+        }
+        
+        if constexpr (NodesPerElement >= 4) {
+            size_t offset = 3 * elementCount_;
+            thrust::copy(thrust::device, 
+                       thrust::device_ptr<KeyType>(thrust::raw_pointer_cast(std::get<3>(d_conn_local_ids_).data())), 
+                       thrust::device_ptr<KeyType>(thrust::raw_pointer_cast(std::get<3>(d_conn_local_ids_).data()) + elementCount_),
+                       thrust::device_ptr<KeyType>(thrust::raw_pointer_cast(flatNodeIds.data()) + offset));
+            thrust::sequence(thrust::device, 
+                           thrust::device_ptr<KeyType>(thrust::raw_pointer_cast(flatElemIds.data()) + offset), 
+                           thrust::device_ptr<KeyType>(thrust::raw_pointer_cast(flatElemIds.data()) + offset + elementCount_));
+        }
+        
+        if constexpr (NodesPerElement >= 5) {
+            size_t offset = 4 * elementCount_;
+            thrust::copy(thrust::device, 
+                       thrust::device_ptr<KeyType>(thrust::raw_pointer_cast(std::get<4>(d_conn_local_ids_).data())), 
+                       thrust::device_ptr<KeyType>(thrust::raw_pointer_cast(std::get<4>(d_conn_local_ids_).data()) + elementCount_),
+                       thrust::device_ptr<KeyType>(thrust::raw_pointer_cast(flatNodeIds.data()) + offset));
+            thrust::sequence(thrust::device, 
+                           thrust::device_ptr<KeyType>(thrust::raw_pointer_cast(flatElemIds.data()) + offset), 
+                           thrust::device_ptr<KeyType>(thrust::raw_pointer_cast(flatElemIds.data()) + offset + elementCount_));
+        }
+        
+        if constexpr (NodesPerElement >= 6) {
+            size_t offset = 5 * elementCount_;
+            thrust::copy(thrust::device, 
+                       thrust::device_ptr<KeyType>(thrust::raw_pointer_cast(std::get<5>(d_conn_local_ids_).data())), 
+                       thrust::device_ptr<KeyType>(thrust::raw_pointer_cast(std::get<5>(d_conn_local_ids_).data()) + elementCount_),
+                       thrust::device_ptr<KeyType>(thrust::raw_pointer_cast(flatNodeIds.data()) + offset));
+            thrust::sequence(thrust::device, 
+                           thrust::device_ptr<KeyType>(thrust::raw_pointer_cast(flatElemIds.data()) + offset), 
+                           thrust::device_ptr<KeyType>(thrust::raw_pointer_cast(flatElemIds.data()) + offset + elementCount_));
+        }
+        
+        if constexpr (NodesPerElement >= 7) {
+            size_t offset = 6 * elementCount_;
+            thrust::copy(thrust::device, 
+                       thrust::device_ptr<KeyType>(thrust::raw_pointer_cast(std::get<6>(d_conn_local_ids_).data())), 
+                       thrust::device_ptr<KeyType>(thrust::raw_pointer_cast(std::get<6>(d_conn_local_ids_).data()) + elementCount_),
+                       thrust::device_ptr<KeyType>(thrust::raw_pointer_cast(flatNodeIds.data()) + offset));
+            thrust::sequence(thrust::device, 
+                           thrust::device_ptr<KeyType>(thrust::raw_pointer_cast(flatElemIds.data()) + offset), 
+                           thrust::device_ptr<KeyType>(thrust::raw_pointer_cast(flatElemIds.data()) + offset + elementCount_));
+        }
+        
+        if constexpr (NodesPerElement >= 8) {
+            size_t offset = 7 * elementCount_;
+            thrust::copy(thrust::device, 
+                       thrust::device_ptr<KeyType>(thrust::raw_pointer_cast(std::get<7>(d_conn_local_ids_).data())), 
+                       thrust::device_ptr<KeyType>(thrust::raw_pointer_cast(std::get<7>(d_conn_local_ids_).data()) + elementCount_),
+                       thrust::device_ptr<KeyType>(thrust::raw_pointer_cast(flatNodeIds.data()) + offset));
+            thrust::sequence(thrust::device, 
+                           thrust::device_ptr<KeyType>(thrust::raw_pointer_cast(flatElemIds.data()) + offset), 
+                           thrust::device_ptr<KeyType>(thrust::raw_pointer_cast(flatElemIds.data()) + offset + elementCount_));
         }
 
         // Step 2: Sort by node ID to group all elements per node
         thrust::sort_by_key(thrust::device, 
-                          flatNodeIds.begin(), flatNodeIds.end(), 
-                          flatElemIds.begin());
+                          thrust::device_ptr<KeyType>(thrust::raw_pointer_cast(flatNodeIds.data())), 
+                          thrust::device_ptr<KeyType>(thrust::raw_pointer_cast(flatNodeIds.data()) + flatNodeIds.size()),
+                          thrust::device_ptr<KeyType>(thrust::raw_pointer_cast(flatElemIds.data())));
 
         // Step 3: Build CSR structure using reduce_by_key to count entries per node
-        DeviceVector<int> uniqueNodeIds;
-        DeviceVector<int> countsPerNode;
+        DeviceVector<KeyType> uniqueNodeIds(nodeCount_);
+        DeviceVector<KeyType> countsPerNode(nodeCount_);
         
         // Count how many times each node appears
         auto new_end = thrust::reduce_by_key(
             thrust::device,
-            flatNodeIds.begin(), flatNodeIds.end(),
-            thrust::constant_iterator<int>(1),
-            thrust::back_inserter(uniqueNodeIds),
-            thrust::back_inserter(countsPerNode)
+            thrust::device_ptr<KeyType>(thrust::raw_pointer_cast(flatNodeIds.data())), 
+            thrust::device_ptr<KeyType>(thrust::raw_pointer_cast(flatNodeIds.data()) + flatNodeIds.size()),
+            thrust::constant_iterator<KeyType>(1),
+            thrust::device_ptr<KeyType>(thrust::raw_pointer_cast(uniqueNodeIds.data())),
+            thrust::device_ptr<KeyType>(thrust::raw_pointer_cast(countsPerNode.data()))
         );
+        
+        // Resize to actual size
+        uniqueNodeIds.resize(new_end.first - thrust::device_ptr<KeyType>(thrust::raw_pointer_cast(uniqueNodeIds.data())));
+        countsPerNode.resize(new_end.second - thrust::device_ptr<KeyType>(thrust::raw_pointer_cast(countsPerNode.data())));
 
         // Step 4: Build offset array (prefix sum of counts)
         d_nodeToElementOffsets_.resize(nodeCount_ + 1);
-        thrust::fill(thrust::device, d_nodeToElementOffsets_.begin(), d_nodeToElementOffsets_.end(), 0);
-        
+        thrust::fill(thrust::device, 
+                    thrust::device_ptr<KeyType>(thrust::raw_pointer_cast(d_nodeToElementOffsets_.data())), 
+                    thrust::device_ptr<KeyType>(thrust::raw_pointer_cast(d_nodeToElementOffsets_.data()) + d_nodeToElementOffsets_.size()), 
+                    KeyType(0));
+
         // Scatter counts into the offset array
         thrust::scatter(thrust::device,
-                       countsPerNode.begin(), countsPerNode.end(),
-                       uniqueNodeIds.begin(),
-                       d_nodeToElementOffsets_.begin() + 1);
+                       thrust::device_ptr<KeyType>(thrust::raw_pointer_cast(countsPerNode.data())), 
+                       thrust::device_ptr<KeyType>(thrust::raw_pointer_cast(countsPerNode.data()) + countsPerNode.size()),
+                       thrust::device_ptr<KeyType>(thrust::raw_pointer_cast(uniqueNodeIds.data())),
+                       thrust::device_ptr<KeyType>(thrust::raw_pointer_cast(d_nodeToElementOffsets_.data()) + 1));
         
         // Compute prefix sum to get offsets
         thrust::inclusive_scan(thrust::device,
-                             d_nodeToElementOffsets_.begin(),
-                             d_nodeToElementOffsets_.end(),
-                             d_nodeToElementOffsets_.begin());
+                             thrust::device_ptr<KeyType>(thrust::raw_pointer_cast(d_nodeToElementOffsets_.data())),
+                             thrust::device_ptr<KeyType>(thrust::raw_pointer_cast(d_nodeToElementOffsets_.data()) + d_nodeToElementOffsets_.size()),
+                             thrust::device_ptr<KeyType>(thrust::raw_pointer_cast(d_nodeToElementOffsets_.data())));
 
         // Step 5: Copy the element list
         d_nodeToElementList_ = flatElemIds;
@@ -1364,15 +1439,88 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::buildNodeToEl
 }
 
 template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
-void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::buildNodeToElementMap()
+void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::createElementToNodeLocalIdMap()
 {
     if constexpr (std::is_same_v<AcceleratorTag, cstone::GpuTag>)
     {
-        // TODO: Implement Node->Element CSR map construction
-        // This is more complex and can be implemented in a follow-up step
-        // For now, just initialize empty structures
-        d_nodeToElementOffsets_.resize(nodeCount_ + 1, 0);
-        d_nodeToElementList_.clear();
+        // Resize local ID connectivity to match element count
+        if constexpr (NodesPerElement >= 1) std::get<0>(d_conn_local_ids_).resize(elementCount_);
+        if constexpr (NodesPerElement >= 2) std::get<1>(d_conn_local_ids_).resize(elementCount_);
+        if constexpr (NodesPerElement >= 3) std::get<2>(d_conn_local_ids_).resize(elementCount_);
+        if constexpr (NodesPerElement >= 4) std::get<3>(d_conn_local_ids_).resize(elementCount_);
+        if constexpr (NodesPerElement >= 5) std::get<4>(d_conn_local_ids_).resize(elementCount_);
+        if constexpr (NodesPerElement >= 6) std::get<5>(d_conn_local_ids_).resize(elementCount_);
+        if constexpr (NodesPerElement >= 7) std::get<6>(d_conn_local_ids_).resize(elementCount_);
+        if constexpr (NodesPerElement >= 8) std::get<7>(d_conn_local_ids_).resize(elementCount_);
+
+        int blockSize = 256;
+        int numBlocks = (elementCount_ + blockSize - 1) / blockSize;
+
+        // Map each connectivity array from SFC keys to local IDs
+        if constexpr (NodesPerElement >= 1) {
+            mapSfcToLocalIdKernel<<<numBlocks, blockSize>>>(
+                thrust::raw_pointer_cast(std::get<0>(d_conn_keys_).data()),
+                thrust::raw_pointer_cast(std::get<0>(d_conn_local_ids_).data()),
+                thrust::raw_pointer_cast(d_localToGlobalSfcMap_.data()),
+                elementCount_, nodeCount_);
+            cudaCheckError();
+        }
+        if constexpr (NodesPerElement >= 2) {
+            mapSfcToLocalIdKernel<<<numBlocks, blockSize>>>(
+                thrust::raw_pointer_cast(std::get<1>(d_conn_keys_).data()),
+                thrust::raw_pointer_cast(std::get<1>(d_conn_local_ids_).data()),
+                thrust::raw_pointer_cast(d_localToGlobalSfcMap_.data()),
+                elementCount_, nodeCount_);
+            cudaCheckError();
+        }
+        if constexpr (NodesPerElement >= 3) {
+            mapSfcToLocalIdKernel<<<numBlocks, blockSize>>>(
+                thrust::raw_pointer_cast(std::get<2>(d_conn_keys_).data()),
+                thrust::raw_pointer_cast(std::get<2>(d_conn_local_ids_).data()),
+                thrust::raw_pointer_cast(d_localToGlobalSfcMap_.data()),
+                elementCount_, nodeCount_);
+            cudaCheckError();
+        }
+        if constexpr (NodesPerElement >= 4) {
+            mapSfcToLocalIdKernel<<<numBlocks, blockSize>>>(
+                thrust::raw_pointer_cast(std::get<3>(d_conn_keys_).data()),
+                thrust::raw_pointer_cast(std::get<3>(d_conn_local_ids_).data()),
+                thrust::raw_pointer_cast(d_localToGlobalSfcMap_.data()),
+                elementCount_, nodeCount_);
+            cudaCheckError();
+        }
+        if constexpr (NodesPerElement >= 5) {
+            mapSfcToLocalIdKernel<<<numBlocks, blockSize>>>(
+                thrust::raw_pointer_cast(std::get<4>(d_conn_keys_).data()),
+                thrust::raw_pointer_cast(std::get<4>(d_conn_local_ids_).data()),
+                thrust::raw_pointer_cast(d_localToGlobalSfcMap_.data()),
+                elementCount_, nodeCount_);
+            cudaCheckError();
+        }
+        if constexpr (NodesPerElement >= 6) {
+            mapSfcToLocalIdKernel<<<numBlocks, blockSize>>>(
+                thrust::raw_pointer_cast(std::get<5>(d_conn_keys_).data()),
+                thrust::raw_pointer_cast(std::get<5>(d_conn_local_ids_).data()),
+                thrust::raw_pointer_cast(d_localToGlobalSfcMap_.data()),
+                elementCount_, nodeCount_);
+            cudaCheckError();
+        }
+        if constexpr (NodesPerElement >= 7) {
+            mapSfcToLocalIdKernel<<<numBlocks, blockSize>>>(
+                thrust::raw_pointer_cast(std::get<6>(d_conn_keys_).data()),
+                thrust::raw_pointer_cast(std::get<6>(d_conn_local_ids_).data()),
+                thrust::raw_pointer_cast(d_localToGlobalSfcMap_.data()),
+                elementCount_, nodeCount_);
+            cudaCheckError();
+        }
+        if constexpr (NodesPerElement >= 8) {
+            mapSfcToLocalIdKernel<<<numBlocks, blockSize>>>(
+                thrust::raw_pointer_cast(std::get<7>(d_conn_keys_).data()),
+                thrust::raw_pointer_cast(std::get<7>(d_conn_local_ids_).data()),
+                thrust::raw_pointer_cast(d_localToGlobalSfcMap_.data()),
+                elementCount_, nodeCount_);
+            cudaCheckError();
+        }
     }
 }
 

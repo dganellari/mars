@@ -14,7 +14,6 @@
 #endif
 
 #include <cstone/domain/domain.hpp>
-#include <cstone/domain/assignment_gpu.cuh>
 #include <cstone/domain/assignment.hpp>
 #include <tuple>
 

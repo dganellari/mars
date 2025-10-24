@@ -6,6 +6,7 @@
 
 namespace mars
 {
+
 // CUDA kernels with RealType template parameter instead of Real
 template<typename RealType>
 __global__ void
@@ -516,47 +517,43 @@ __global__ void computeElementVolumesKernel(const RealType* x,
     }
 }
 
-/*! @brief Flattens the tuple-of-vectors connectivity into a single vector of node keys.
- *
- *  Each thread processes one element, writing all of its node keys to the output array.
- *  This is a "gather" operation that prepares the data for sorting and uniqueness.
- */
-template<typename KeyType, typename DeviceConnectivityTuple>
-__global__ void flattenConnectivityKernel(const DeviceConnectivityTuple conn, KeyType* flat_keys, size_t numElements)
+template<typename KeyType, size_t NodesPerElement>
+__global__ void flattenConnectivityKernel(
+    ConnPtrs<KeyType, NodesPerElement> conn,
+    KeyType* flat_keys, 
+    size_t numElements)
 {
     size_t elementIdx = blockIdx.x * blockDim.x + threadIdx.x;
     if (elementIdx >= numElements) return;
 
-    constexpr size_t NodesPerElement = std::tuple_size_v<DeviceConnectivityTuple>;
-    
-    // Use fold expression to write all nodes for this element
     size_t baseIdx = elementIdx * NodesPerElement;
     
-    // Manual unrolling for common cases (more efficient than runtime loop)
-    if constexpr (NodesPerElement == 4) {
-        // Tetrahedron or Quad
-        flat_keys[baseIdx + 0] = thrust::raw_pointer_cast(std::get<0>(conn).data())[elementIdx];
-        flat_keys[baseIdx + 1] = thrust::raw_pointer_cast(std::get<1>(conn).data())[elementIdx];
-        flat_keys[baseIdx + 2] = thrust::raw_pointer_cast(std::get<2>(conn).data())[elementIdx];
-        flat_keys[baseIdx + 3] = thrust::raw_pointer_cast(std::get<3>(conn).data())[elementIdx];
+    // Clean loop - compiler will unroll automatically
+    #pragma unroll
+    for (int i = 0; i < NodesPerElement; ++i) {
+        flat_keys[baseIdx + i] = conn.ptrs[i][elementIdx];
     }
-    else if constexpr (NodesPerElement == 3) {
-        // Triangle
-        flat_keys[baseIdx + 0] = thrust::raw_pointer_cast(std::get<0>(conn).data())[elementIdx];
-        flat_keys[baseIdx + 1] = thrust::raw_pointer_cast(std::get<1>(conn).data())[elementIdx];
-        flat_keys[baseIdx + 2] = thrust::raw_pointer_cast(std::get<2>(conn).data())[elementIdx];
-    }
-    else if constexpr (NodesPerElement == 8) {
-        // Hexahedron
-        flat_keys[baseIdx + 0] = thrust::raw_pointer_cast(std::get<0>(conn).data())[elementIdx];
-        flat_keys[baseIdx + 1] = thrust::raw_pointer_cast(std::get<1>(conn).data())[elementIdx];
-        flat_keys[baseIdx + 2] = thrust::raw_pointer_cast(std::get<2>(conn).data())[elementIdx];
-        flat_keys[baseIdx + 3] = thrust::raw_pointer_cast(std::get<3>(conn).data())[elementIdx];
-        flat_keys[baseIdx + 4] = thrust::raw_pointer_cast(std::get<4>(conn).data())[elementIdx];
-        flat_keys[baseIdx + 5] = thrust::raw_pointer_cast(std::get<5>(conn).data())[elementIdx];
-        flat_keys[baseIdx + 6] = thrust::raw_pointer_cast(std::get<6>(conn).data())[elementIdx];
-        flat_keys[baseIdx + 7] = thrust::raw_pointer_cast(std::get<7>(conn).data())[elementIdx];
-    }
+}
+
+template<typename KeyType>
+__global__ void mapSfcToLocalIdKernel(const KeyType* sfc_conn, 
+                                      KeyType* local_conn, 
+                                      const KeyType* sorted_sfc, 
+                                      size_t num_elements, 
+                                      size_t num_nodes)
+{
+    size_t elemIdx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (elemIdx >= num_elements) return;
+
+    KeyType sfc_key = sfc_conn[elemIdx];
+    
+    // Binary search using CUB for optimal performance
+    KeyType local_id = cub::LowerBound(sorted_sfc, static_cast<int>(num_nodes), sfc_key);
+    
+    // Verify the key was found (debug check)
+    assert(local_id < num_nodes && sorted_sfc[local_id] == sfc_key);
+    
+    local_conn[elemIdx] = local_id;
 }
 
 // ===== For unsigned KeyType =====
@@ -670,23 +667,29 @@ template __global__ void buildSfcConnectivity<TetTag, uint64_t, double>
      const uint64_t*, uint64_t*, uint64_t*, 
      uint64_t*, uint64_t*, int);
 
-// Explicit instantiations for flattenConnectivityKernel
-// For tetrahedra (4 nodes) with unsigned int keys
-template __global__ void flattenConnectivityKernel<unsigned int, 
-    std::tuple<cstone::DeviceVector<unsigned int>, cstone::DeviceVector<unsigned int>, 
-               cstone::DeviceVector<unsigned int>, cstone::DeviceVector<unsigned int>>>(
-    std::tuple<cstone::DeviceVector<unsigned int>, cstone::DeviceVector<unsigned int>, 
-               cstone::DeviceVector<unsigned int>, cstone::DeviceVector<unsigned int>> conn, 
-    unsigned int* flat_keys, size_t numElements);
+// Update instantiations
+template __global__ void flattenConnectivityKernel<unsigned int, 3>(
+    ConnPtrs<unsigned int, 3>, unsigned int*, size_t);
 
-// For tetrahedra (4 nodes) with uint64_t keys
-template __global__ void flattenConnectivityKernel<uint64_t, 
-    std::tuple<cstone::DeviceVector<uint64_t>, cstone::DeviceVector<uint64_t>, 
-               cstone::DeviceVector<uint64_t>, cstone::DeviceVector<uint64_t>>>(
-    std::tuple<cstone::DeviceVector<uint64_t>, cstone::DeviceVector<uint64_t>, 
-               cstone::DeviceVector<uint64_t>, cstone::DeviceVector<uint64_t>> conn, 
-    uint64_t* flat_keys, size_t numElements);
+template __global__ void flattenConnectivityKernel<unsigned int, 4>(
+    ConnPtrs<unsigned int, 4>, unsigned int*, size_t);
 
-} // namespace mars
+template __global__ void flattenConnectivityKernel<unsigned int, 8>(
+    ConnPtrs<unsigned int, 8>, unsigned int*, size_t);
+
+template __global__ void flattenConnectivityKernel<uint64_t, 3>(
+    ConnPtrs<uint64_t, 3>, uint64_t*, size_t);
+
+template __global__ void flattenConnectivityKernel<uint64_t, 4>(
+    ConnPtrs<uint64_t, 4>, uint64_t*, size_t);
+
+template __global__ void flattenConnectivityKernel<uint64_t, 8>(
+    ConnPtrs<uint64_t, 8>, uint64_t*, size_t);
+
+template __global__ void mapSfcToLocalIdKernel<unsigned int>(
+    const unsigned int*, unsigned int*, const unsigned int*, size_t, size_t);
+
+template __global__ void mapSfcToLocalIdKernel<uint64_t>(
+    const uint64_t*, uint64_t*, const uint64_t*, size_t, size_t);
 
 } // namespace mars
