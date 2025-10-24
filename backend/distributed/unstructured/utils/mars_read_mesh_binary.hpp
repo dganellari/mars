@@ -16,26 +16,25 @@
 namespace mars
 {
 
-// Helper function to create a tuple of N vector<int>
-template<int N>
+template<int N, typename KeyType = unsigned>
 auto createNVectors(size_t size)
 {
     if constexpr (N == 3)
     {
-        return std::tuple<std::vector<int>, std::vector<int>, std::vector<int>>(
-            std::vector<int>(size), std::vector<int>(size), std::vector<int>(size));
+        return std::tuple<std::vector<KeyType>, std::vector<KeyType>, std::vector<KeyType>>(
+            std::vector<KeyType>(size), std::vector<KeyType>(size), std::vector<KeyType>(size));
     }
     else if constexpr (N == 4)
     {
-        return std::tuple<std::vector<int>, std::vector<int>, std::vector<int>, std::vector<int>>(
-            std::vector<int>(size), std::vector<int>(size), std::vector<int>(size), std::vector<int>(size));
+        return std::tuple<std::vector<KeyType>, std::vector<KeyType>, std::vector<KeyType>, std::vector<KeyType>>(
+            std::vector<KeyType>(size), std::vector<KeyType>(size), std::vector<KeyType>(size), std::vector<KeyType>(size));
     }
     else if constexpr (N == 8)
     {
-        return std::tuple<std::vector<int>, std::vector<int>, std::vector<int>, std::vector<int>, std::vector<int>,
-                          std::vector<int>, std::vector<int>, std::vector<int>>(
-            std::vector<int>(size), std::vector<int>(size), std::vector<int>(size), std::vector<int>(size),
-            std::vector<int>(size), std::vector<int>(size), std::vector<int>(size), std::vector<int>(size));
+        return std::tuple<std::vector<KeyType>, std::vector<KeyType>, std::vector<KeyType>, std::vector<KeyType>, 
+                          std::vector<KeyType>, std::vector<KeyType>, std::vector<KeyType>, std::vector<KeyType>>(
+            std::vector<KeyType>(size), std::vector<KeyType>(size), std::vector<KeyType>(size), std::vector<KeyType>(size),
+            std::vector<KeyType>(size), std::vector<KeyType>(size), std::vector<KeyType>(size), std::vector<KeyType>(size));
     }
 }
 
@@ -48,7 +47,7 @@ auto createNVectors(size_t size)
  * @param numRanks Total MPI ranks
  * @return Tuple containing: node count, element count, coordinates (x,y,z), and element connectivity
  */
-template<int N, typename RealType = float>
+template<int N, typename RealType = float, typename KeyType = unsigned>
 inline auto readMeshWithElementPartitioning(const std::string& meshDir, int rank, int numRanks)
 {
     // Determine the file extension based on RealType
@@ -74,7 +73,7 @@ inline auto readMeshWithElementPartitioning(const std::string& meshDir, int rank
     size_t elementCount = elemEndIdx - elemStartIdx;
 
     // Read element connectivity
-    auto rawConnectivity = createNVectors<N>(elementCount);
+    auto rawConnectivity = createNVectors<N, KeyType>(elementCount);
 
     int i                  = 0;
     auto read_connectivity = [&](auto& vec)
@@ -83,13 +82,19 @@ inline auto readMeshWithElementPartitioning(const std::string& meshDir, int rank
         if (!idx_file) { throw std::runtime_error("Failed to open index file i" + std::to_string(i - 1)); }
 
         idx_file.seekg(elemStartIdx * sizeof(int32_t));
-        idx_file.read(reinterpret_cast<char*>(vec.data()), elementCount * sizeof(int32_t));
+
+        std::vector<int32_t> tempVec(elementCount);
+        idx_file.read(reinterpret_cast<char*>(tempVec.data()), elementCount * sizeof(int32_t));
+
+        //convert to KeyType
+        std::transform(tempVec.begin(), tempVec.end(), vec.begin(),
+                       [](int32_t val) { return static_cast<KeyType>(val); });
     };
 
     std::apply([&](auto&... vecs) { (read_connectivity(vecs), ...); }, rawConnectivity);
 
     // STEP 2: Identify unique nodes needed by this rank
-    std::unordered_set<int> uniqueNodes;
+    std::unordered_set<KeyType> uniqueNodes;
 
     auto collect_nodes = [&](const auto& vec)
     {
@@ -102,15 +107,15 @@ inline auto readMeshWithElementPartitioning(const std::string& meshDir, int rank
     std::apply([&](const auto&... vecs) { (collect_nodes(vecs), ...); }, rawConnectivity);
 
     // Create a sorted vector of unique node IDs for efficient file reading
-    std::vector<int> neededNodes(uniqueNodes.begin(), uniqueNodes.end());
+    std::vector<KeyType> neededNodes(uniqueNodes.begin(), uniqueNodes.end());
     std::sort(neededNodes.begin(), neededNodes.end());
     size_t nodeCount = neededNodes.size();
 
     // STEP 3: Create global-to-local node ID mapping
-    std::unordered_map<int, int> globalToLocal;
+    std::unordered_map<KeyType, KeyType> globalToLocal;
     for (size_t i = 0; i < neededNodes.size(); i++)
     {
-        globalToLocal[neededNodes[i]] = i;
+        globalToLocal[neededNodes[i]] = static_cast<KeyType>(i);
     }
 
     // STEP 4: Read only needed node coordinates
@@ -120,12 +125,14 @@ inline auto readMeshWithElementPartitioning(const std::string& meshDir, int rank
     std::ifstream y_file(meshDir + "/y." + ext, std::ios::binary);
     std::ifstream z_file(meshDir + "/z." + ext, std::ios::binary);
 
-    if (!x_file || !y_file || !z_file) { throw std::runtime_error("Failed to open coordinate files"); }
+    if (!x_file || !y_file || !z_file) { throw std::runtime_error("Failed to open coordinate files" + meshDir + "/x." + ext + ", " +
+                                                                    meshDir + "/y." + ext + ", " +
+                                                                    meshDir + "/z." + ext); }
 
     // Read coordinates for each needed node
     for (size_t i = 0; i < neededNodes.size(); i++)
     {
-        int globalNodeId = neededNodes[i];
+        auto globalNodeId = neededNodes[i];
 
         x_file.seekg(globalNodeId * sizeof(RealType));
         y_file.seekg(globalNodeId * sizeof(RealType));
@@ -137,7 +144,7 @@ inline auto readMeshWithElementPartitioning(const std::string& meshDir, int rank
     }
 
     // STEP 5: Adjust connectivity to use local indices
-    auto localConnectivity = createNVectors<N>(elementCount);
+    auto localConnectivity = createNVectors<N, KeyType>(elementCount);
 
     auto adjust_indices = [&](const auto& global_vec, auto& local_vec)
     {
@@ -163,12 +170,12 @@ inline auto readMeshWithElementPartitioning(const std::string& meshDir, int rank
  * Adapter function that provides backwards compatibility with the old API
  * but uses the new element-based partitioning internally.
  */
-template<typename RealType = float>
+template<typename RealType = float, typename KeyType = unsigned>
 inline auto readMeshCoordinatesBinary(const std::string& meshDir, int rank, int numRanks)
 {
     // Try to read all data with element-based partitioning
     auto [nodeCount, elementCount, x_data, y_data, z_data, _, localToGlobal] =
-        readMeshWithElementPartitioning<4, RealType>(meshDir, rank, numRanks);
+        readMeshWithElementPartitioning<4, RealType, KeyType>(meshDir, rank, numRanks);
 
     // Return in the old format for compatibility
     return std::make_tuple(nodeCount, 0, // nodeStartIdx is now always 0 in the new approach
@@ -179,12 +186,12 @@ inline auto readMeshCoordinatesBinary(const std::string& meshDir, int rank, int 
  * Adapter function for connectivity data that provides backwards compatibility
  * with the old API but uses the new element-based partitioning internally.
  */
-template<int N, typename RealType = float>
+template<int N, typename RealType = float, typename KeyType = unsigned>
 inline auto readMeshConnectivityBinaryTuple(const std::string& meshDir, int nodeStartIdx, int rank, int numRanks)
 {
     // Try to read all data with element-based partitioning - reuse existing data
     auto [nodeCount, elementCount, x_data, y_data, z_data, connectivity, localToGlobal] =
-        readMeshWithElementPartitioning<N, RealType>(meshDir, rank, numRanks);
+        readMeshWithElementPartitioning<N, RealType, KeyType>(meshDir, rank, numRanks);
 
     // Return in the old format for compatibility - nodeStartIdx is ignored
     return std::make_tuple(elementCount, std::move(connectivity));
@@ -193,14 +200,15 @@ inline auto readMeshConnectivityBinaryTuple(const std::string& meshDir, int node
 /**
  * Adapter for vector-based connectivity API
  */
+template<typename RealType = float, typename KeyType = unsigned>
 inline auto
 readMeshConnectivityBinary(const std::string& meshDir, int nodesPerElement, size_t nodeStartIdx, int rank, int numRanks)
 {
     // Call the appropriate tuple version based on nodesPerElement
     if (nodesPerElement == 4)
     {
-        auto [elemCount, conn] = readMeshConnectivityBinaryTuple<4>(meshDir, nodeStartIdx, rank, numRanks);
-        std::vector<std::vector<int>> result(4);
+        auto [elemCount, conn] = readMeshConnectivityBinaryTuple<4, RealType, KeyType>(meshDir, nodeStartIdx, rank, numRanks);
+        std::vector<std::vector<KeyType>> result(4);
 
         // Convert from tuple to vector-of-vectors format
         result[0] = std::get<0>(conn);
@@ -213,8 +221,8 @@ readMeshConnectivityBinary(const std::string& meshDir, int nodesPerElement, size
     else if (nodesPerElement == 3)
     {
         // Same implementation for triangles...
-        auto [elemCount, conn] = readMeshConnectivityBinaryTuple<3>(meshDir, nodeStartIdx, rank, numRanks);
-        std::vector<std::vector<int>> result(3);
+        auto [elemCount, conn] = readMeshConnectivityBinaryTuple<3, RealType, KeyType>(meshDir, nodeStartIdx, rank, numRanks);
+        std::vector<std::vector<KeyType>> result(3);
 
         result[0] = std::get<0>(conn);
         result[1] = std::get<1>(conn);
@@ -225,8 +233,8 @@ readMeshConnectivityBinary(const std::string& meshDir, int nodesPerElement, size
     else if (nodesPerElement == 8)
     {
         // Same implementation for hexahedra...
-        auto [elemCount, conn] = readMeshConnectivityBinaryTuple<8>(meshDir, nodeStartIdx, rank, numRanks);
-        std::vector<std::vector<int>> result(8);
+        auto [elemCount, conn] = readMeshConnectivityBinaryTuple<8, RealType, KeyType>(meshDir, nodeStartIdx, rank, numRanks);
+        std::vector<std::vector<KeyType>> result(8);
 
         result[0] = std::get<0>(conn);
         result[1] = std::get<1>(conn);

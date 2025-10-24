@@ -53,9 +53,15 @@ elseif(MARS_ENABLE_CUDA)
         ${CMAKE_CURRENT_SOURCE_DIR}/domain.cu 
         PROPERTIES LANGUAGE CUDA
     )
+    # Add CUDA-specific instantiations if needed
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cstone_instantiations.cu")
+        target_sources(mars_unstructured PRIVATE cstone_instantiations.cu)
+        set_source_files_properties(cstone_instantiations.cu PROPERTIES LANGUAGE CUDA)
+    endif()
     
     # CUDA-specific properties
     set_target_properties(mars_unstructured PROPERTIES
+        CUDA_ARCHITECTURES "${CMAKE_CUDA_ARCHITECTURES}"
         CUDA_SEPARABLE_COMPILATION ON
         CUDA_HOST_COMPILER ${MPI_CXX_COMPILER})
 endif()
