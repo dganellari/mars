@@ -1,0 +1,5 @@
+if(EXISTS "/Users/gandanie/scratch/santis/mars/mac/backend/distributed/testsuite/mesh_manager/mesh_manager_test[1]_tests.cmake")
+  include("/Users/gandanie/scratch/santis/mars/mac/backend/distributed/testsuite/mesh_manager/mesh_manager_test[1]_tests.cmake")
+else()
+  add_test(mesh_manager_test_NOT_BUILT mesh_manager_test_NOT_BUILT)
+endif()
