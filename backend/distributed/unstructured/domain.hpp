@@ -359,6 +359,43 @@ public:
         return std::get<I>(d_conn_keys_);
     }
 
+     
+    // User-friendly coordinate access (uses cached coords if available, otherwise decodes on-the-fly)
+    auto getElementNodeCoordinates(size_t elemIdx) {
+        std::array<RealType, NodesPerElement> x, y, z;
+        
+        // Check if we have cached coordinates (non-zero size means cacheNodeCoordinates() was called)
+        bool hasCachedCoords = (d_node_x_.size() == nodeCount_);
+        
+        if (hasCachedCoords) {
+            // Use cached coordinates via local IDs
+            for (int i = 0; i < NodesPerElement; ++i) {
+                KeyType localId = getLocalNodeId<i>(elemIdx);  // Get local ID from d_conn_local_ids_
+                x[i] = d_node_x_[localId];
+                y[i] = d_node_y_[localId];
+                z[i] = d_node_z_[localId];
+            }
+        } else {
+            // Decode from SFC keys on-the-fly
+            for (int i = 0; i < NodesPerElement; ++i) {
+                KeyType sfcKey = getConnectivity<i>(elemIdx);
+                auto [xi, yi, zi] = sfcToPhysicalCoordinate(sfcKey);
+                x[i] = xi; y[i] = yi; z[i] = zi;
+            }
+        }
+        
+        return std::make_tuple(x, y, z);
+    }
+    
+    // Helper to get local node ID from connectivity
+    template<int I>
+    KeyType getLocalNodeId(size_t elemIdx) const {
+        static_assert(I >= 0 && I < NodesPerElement, "Index out of range");
+        if (elemIdx >= elementCount_) return KeyType(0);
+        return std::get<I>(d_conn_local_ids_)[elemIdx];
+    }
+
+
     // Get element/node counts
     std::size_t getNodeCount() const { return nodeCount_; }
     std::size_t getElementCount() const { return elementCount_; }
@@ -377,6 +414,41 @@ public:
     std::size_t haloElementCount() const
     {
         return getElementCount() - localElementCount();
+    }
+
+    const DeviceVector<KeyType>& getHaloElementIndices() const { return d_haloElementIndices_; }
+
+    // Getter for halo count
+    size_t getHaloElementCount() const { 
+        assert( d_haloElementIndices_.size() == getHaloElementCount() );    
+        return d_haloElementIndices_.size(); 
+    }
+   
+    // Get ranges for local elements (can modify in FEM assembly)
+    std::pair<size_t, size_t> localElementRange() const {
+        return {startIndex(), endIndex()};
+    }
+    
+    // Get all halo ranges (read-only for FEM)
+    std::vector<std::pair<size_t, size_t>> haloElementRanges() const {
+        std::vector<std::pair<size_t, size_t>> ranges;
+        if (startIndex() > 0) {
+            ranges.emplace_back(0, startIndex());  // Halos before local
+        }
+        if (endIndex() < getElementCount()) {
+            ranges.emplace_back(endIndex(), getElementCount());  // Halos after local
+        }
+        return ranges;
+    }
+    
+    // Check if an element is local (for FEM: can assemble contributions)
+    bool isLocalElement(size_t elementIndex) const {
+        return elementIndex >= startIndex() && elementIndex < endIndex();
+    }
+    
+    // Check if an element is a halo (for FEM: read-only, used for stencils)
+    bool isHaloElement(size_t elementIndex) const {
+        return !isLocalElement(elementIndex);
     }
 
     // Helper methods
@@ -405,6 +477,9 @@ public:
 
     std::tuple<KeyType, KeyType, KeyType, KeyType> getConnectivity(size_t elementIndex) const;
 
+    //getter for ownership map
+    const DeviceVector<bool>& getNodeOwnershipMap() const { return d_nodeOwnership_; }
+
     //build adjacency after sync
     void buildAdjacency();
 
@@ -426,7 +501,7 @@ public:
 
     //! Returns the list for the Node->Element CSR map.
     const DeviceVector<KeyType>& getNodeToElementList() const { return d_nodeToElementList_; }
-   
+
 private:
     int rank_;
     int numRanks_;
@@ -455,12 +530,23 @@ private:
     DeviceVector<KeyType> d_nodeToElementOffsets_;
     DeviceVector<KeyType> d_nodeToElementList_;
 
+    DeviceVector<bool> d_nodeOwnership_;
+
+    // cached halo indices for faster access during assembly
+    DeviceVector<KeyType> d_haloElementIndices_;
+
     void initializeConnectivityKeys();
 
     // Helper methods for building maps
     void createLocalToGlobalSfcMap();
     void createElementToNodeLocalIdMap();
     void buildNodeToElementMap();
+    void buildNodeOwnership();
+
+    //optional: Cache node coordinates for faster access during assembly. On the fly sfc decoding by default
+    void cacheNodeCoordinates();
+    // build halo element indices for faster access during assembly
+    void buildHaloElementIndices();
 
     void syncImpl(DeviceVector<KeyType>& d_nodeSfcCodes, const DeviceConnectivityTuple& d_conn_, int blockSize, int numBlocks)
     {
@@ -1225,6 +1311,12 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::buildAdjacenc
         buildNodeToElementMap();
         
         std::cout << "Rank " << rank_ << " built adjacency maps. Final node count: " << nodeCount_ << std::endl;
+
+        //step 4: build node ownership map
+        buildNodeOwnership();
+
+        //step 5: cache halo element indices
+        cacheHaloElementIndices();
     }
 }
 
@@ -1278,6 +1370,96 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::createLocalTo
 
         // 7. Update the final node count
         nodeCount_ = d_localToGlobalSfcMap_.size();
+    }
+}
+
+template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
+void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::cacheNodeCoordinates(){
+    // Optional: Cache decoded node coordinates for performance
+    if constexpr (std::is_same_v<AcceleratorTag, cstone::GpuTag>) {
+        d_node_x_.resize(nodeCount_);
+        d_node_y_.resize(nodeCount_);
+        d_node_z_.resize(nodeCount_);
+            
+        // Decode all SFC keys to coordinates (parallel kernel)
+        int blockSize = 256;
+        int numBlocks = (nodeCount_ + blockSize - 1) / blockSize;
+        decodeAllNodesKernel<<<numBlocks, blockSize>>>(
+            thrust::raw_pointer_cast(d_localToGlobalSfcMap_.data()),
+            thrust::raw_pointer_cast(d_node_x_.data()),
+            thrust::raw_pointer_cast(d_node_y_.data()),
+            thrust::raw_pointer_cast(d_node_z_.data()),
+            nodeCount_, box_);
+        cudaCheckError();
+            
+        std::cout << "Rank " << rank_ << " cached " << nodeCount_ << " node coordinates." << std::endl;
+    }
+}
+   
+// In ElementDomain class, update buildNodeOwnership() to focus on tetrahedra
+template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
+void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::buildNodeOwnership() {
+    static_assert(std::is_same_v<ElementTag, TetTag>, "Currently only TetTag is supported for node ownership");
+    
+    if constexpr (std::is_same_v<AcceleratorTag, cstone::GpuTag>)
+    {
+        d_nodeOwnership_.resize(nodeCount_);
+        
+        int blockSize = 256;
+        
+        // Phase 1: Initialize all nodes as halo (false)
+        int numBlocks = (nodeCount_ + blockSize - 1) / blockSize;
+        initNodeOwnershipKernel<<<numBlocks, blockSize>>>(
+            thrust::raw_pointer_cast(d_nodeOwnership_.data()),
+            nodeCount_);
+        cudaCheckError();
+        
+        // Phase 2: Mark nodes of local elements as owned (tetrahedra: 4 nodes each)
+        size_t localCount = localElementCount();
+        numBlocks = (localCount + blockSize - 1) / blockSize;
+        
+        markLocalElementNodesKernel<KeyType, 4><<<numBlocks, blockSize>>>(
+            thrust::raw_pointer_cast(d_nodeOwnership_.data()),
+            thrust::raw_pointer_cast(std::get<0>(d_conn_local_ids_).data()),
+            thrust::raw_pointer_cast(std::get<1>(d_conn_local_ids_).data()),
+            thrust::raw_pointer_cast(std::get<2>(d_conn_local_ids_).data()),
+            thrust::raw_pointer_cast(std::get<3>(d_conn_local_ids_).data()),
+            localCount,
+            startIndex());
+        cudaCheckError();
+    }
+}
+
+template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
+void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::buildHaloElementIndices()
+    if constexpr (std::is_same_v<AcceleratorTag, cstone::GpuTag>) {
+        auto haloRanges = haloElementRanges();
+        
+        // Calculate total halo count
+        size_t totalHalos = 0;
+        for (auto [start, end] : haloRanges) {
+            totalHalos += (end - start);
+        }
+        
+        if (totalHalos == 0) {
+            d_haloElementIndices_.resize(0);
+            return;
+        }
+        
+        d_haloElementIndices_.resize(totalHalos);
+        
+        // Flatten the ranges into a single contiguous vector
+        size_t offset = 0;
+        for (auto [start, end] : haloRanges) {
+            size_t rangeSize = end - start;
+            thrust::sequence(thrust::device,
+                           d_haloElementIndices_.begin() + offset,
+                           d_haloElementIndices_.begin() + offset + rangeSize,
+                           start);  // Fill with element indices from [start, end)
+            offset += rangeSize;
+        }
+        
+        std::cout << "Rank " << rank_ << " built halo indices list with " << totalHalos << " halos." << std::endl;
     }
 }
 
