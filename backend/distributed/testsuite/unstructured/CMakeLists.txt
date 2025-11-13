@@ -173,6 +173,13 @@ addMarsGpuMpiTest(
     MarsDomainBinaryExternalMeshTest
 )
 
+addMarsGpuMpiTest(
+    ${CMAKE_CURRENT_SOURCE_DIR}/mars_domain_adjacency_and_halo.cu
+    mars_domain_adjacency_and_halo_test
+    MarsDomainAdjacencyAndHaloTest
+    MarsDomainAdjacencyAndHaloTest
+)
+
 # Print diagnostic messages to help debug linking
 if(TARGET cstone_gpu)
     get_target_property(LOCATION cstone_gpu IMPORTED_LOCATION)
