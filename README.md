@@ -21,6 +21,8 @@ The main features of MARS consist of:
 
 6. Performance portable space filling curves algorithms for efficient mesh management.
 
+7. Unstructured mesh support through cornerstone library, enabling octree-based adaptive mesh refinement for complex geometries.
+
 MARS targets multi-core CPUs and GPUs using the C++ Kokkos programming model. The mesh is entirely constructed and stored on the device (GPUs). This enables libraries using MARS to perform further operations directly on the device, avoiding going through the host. 
 
 Currently, MARS supports as its performance portable, parallel, adaptive refinement based algorithm the LEPP (Longest edge propagation path) from Rivara. Mesh generation is fully supported in parallel.
@@ -64,8 +66,31 @@ cmake -DCMAKE_VERBOSE_MAKEFILE=ON -DCMAKE_BUILD_TYPE=Release -DMARS_ENABLE_KOKKO
 
 If compiled for CUDA then Kokkos should also be compiled with CUDA (Kokkos_ENABLE_CUDA=ON) and CUDA_LAMBDA (Kokkos_ENABLE_CUDA_LAMBDA=ON) support.
 
+## Unstructured Mesh Support ##
+
+MARS supports unstructured meshes through integration with the Cornerstone library, enabling octree-based adaptive mesh refinement (AMR) for complex geometries and dynamic simulations. 
+
+Key features of the unstructured backend:
+- Octree data structures for efficient spatial indexing
+- Domain Decompostion through octrees
+- Discretization features
+- GPU-aware MPI support for distributed computing
+
+To enable unstructured support:
+- Set `-DMARS_ENABLE_UNSTRUCTURED=ON` during CMake configuration
+- Cornerstone is fetched automatically if not found on the system
+- For GPU support, also set `-DMARS_ENABLE_CUDA=ON` or `-DMARS_ENABLE_HIP=ON`
+
+Example CMake command for unstructured with CUDA:
+
+```
+cmake .. -DMARS_ENABLE_KOKKOS=OFF -DMARS_ENABLE_CUDA=ON -DMARS_ENABLE_TESTS=ON -DMARS_ENABLE_UNSTRUCTURED=ON -DCMAKE_CUDA_ARCHITECTURES=90
+```
+
+For more details, see the `backend/distributed/unstructured` directory and its testsuite.
+
 # Contributors
-Zulian Patrick, Ganellari Daniel and Ramelli Dylan.
+Ganellari Daniel, Zulian Patrick and Ramelli Dylan.
 
 # License
 The software is realized with NO WARRANTY and it is licenzed under [BSD 3-Clause license](https://opensource.org/licenses/BSD-3-Clause)
@@ -75,13 +100,12 @@ Copyright (c) 2015 Institute of Computational Science - USI Università della Sv
 
 ## Cite MARS ##
 
-If you use MARS CPU please use the following bibliographic entry
-
+If you use the MARS Serial backend please use the following bibliographic entry
 
 ```
 #!bibtex
 
-@misc{marscpu,
+@misc{mars_serial,
     author = {Zulian, Patrick and Ganellari, Daniel and Rovi, Gabriele and Ramelli, Dylan},
     title = {{MARS} - {M}esh {A}daptive {R}efinement for {S}upercomputing. {G}it repository},
     url = {https://bitbucket.org/zulianp/mars},
@@ -89,13 +113,13 @@ If you use MARS CPU please use the following bibliographic entry
 }
 ```
 
-If you use MARS GPU please use the following bibliographic entry
+If you use the MARS Distributed backends (Kokkos, AMR and Unstructured) please use the following bibliographic entry
 
 
 ```
 #!bibtex
 
-@misc{marsgpu,
+@misc{mars_distributed,
     author = {Ganellari, Daniel and Zulian, Patrick and Rovi, Gabriele and Ramelli, Dylan},
     title = {{MARS} - {M}esh {A}daptive {R}efinement for {S}upercomputing. {G}it repository},
     url = {https://bitbucket.org/zulianp/mars},
