@@ -105,8 +105,8 @@ If you use the MARS Serial backend please use the following bibliographic entry
 ```
 #!bibtex
 
-@misc{mars_serial
-    author = {Zulian, Patrick and Ganellari, Daniel and Rovi, Gabriele},
+@misc{mars_serial,
+    author = {Zulian, Patrick and Ganellari, Daniel and Rovi, Gabriele and Ramelli, Dylan},
     title = {{MARS} - {M}esh {A}daptive {R}efinement for {S}upercomputing. {G}it repository},
     url = {https://bitbucket.org/zulianp/mars},
     year = {2018}
@@ -120,7 +120,7 @@ If you use the MARS Distributed backends (Kokkos, AMR and Unstructured) please u
 #!bibtex
 
 @misc{mars_distributed,
-    author = {Ganellari, Daniel and Zulian, Patrick and Rovi, Gabriele},
+    author = {Ganellari, Daniel and Zulian, Patrick and Rovi, Gabriele and Ramelli, Dylan},
     title = {{MARS} - {M}esh {A}daptive {R}efinement for {S}upercomputing. {G}it repository},
     url = {https://bitbucket.org/zulianp/mars},
     year = {2018}
