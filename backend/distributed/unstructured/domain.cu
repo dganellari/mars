@@ -7,6 +7,24 @@
 namespace mars
 {
 
+// Single source of truth for SFC-to-physical conversion
+template<typename KeyType, typename RealType>
+__device__ __host__ std::tuple<RealType, RealType, RealType> decodeSfcToPhysical(KeyType sfcKey, const cstone::Box<RealType>& box) {
+    // Convert raw key to SfcKind strong type
+    auto sfcKindKey = cstone::SfcKind<KeyType>(sfcKey);
+    auto [ix, iy, iz] = cstone::decodeSfc(sfcKindKey);
+    
+    // Use SfcKind for maxTreeLevel
+    constexpr unsigned maxCoord = (1u << cstone::maxTreeLevel<cstone::SfcKind<KeyType>>{}) - 1;
+    RealType invMaxCoord = RealType(1.0) / maxCoord;
+    
+    RealType x = box.xmin() + ix * invMaxCoord * (box.xmax() - box.xmin());
+    RealType y = box.ymin() + iy * invMaxCoord * (box.ymax() - box.ymin());
+    RealType z = box.zmin() + iz * invMaxCoord * (box.zmax() - box.zmin());
+    
+    return std::make_tuple(x, y, z);
+}
+
 // CUDA kernels with RealType template parameter instead of Real
 template<typename RealType>
 __global__ void
@@ -567,7 +585,7 @@ __global__ void decodeAllNodesKernel(const KeyType* sfcKeys, RealType* x, RealTy
 }
 
 template<typename KeyType>
-__global__ void markHaloNodesKernel(bool* nodeOwnership,
+__global__ void markHaloNodesKernel(uint8_t* nodeOwnership,
                                     const KeyType* nodeToElementList,
                                     const KeyType* nodeToElementOffsets,
                                     size_t nodeCount,
@@ -582,13 +600,13 @@ __global__ void markHaloNodesKernel(bool* nodeOwnership,
     KeyType endOffset = nodeToElementOffsets[nodeIdx + 1];
     
     // Check if ANY element referencing this node is local (owned)
-    bool hasLocalElement = false;
+    uint8_t hasLocalElement = 0;
     for (KeyType i = startOffset; i < endOffset; ++i) {
         KeyType elemIdx = nodeToElementList[i];
         
         // Element is local if it's in [localStartIdx, localEndIdx)
         if (elemIdx >= localStartIdx && elemIdx < localEndIdx) {
-            hasLocalElement = true;
+            hasLocalElement = 1;
             break;
         }
     }
@@ -599,18 +617,16 @@ __global__ void markHaloNodesKernel(bool* nodeOwnership,
 }
 
 // Phase 1: Initialize all nodes as halo
-template<typename KeyType>
-__global__ void initNodeOwnershipKernel(bool* nodeOwnership, size_t nodeCount) {
+__global__ void initNodeOwnershipKernel(uint8_t* nodeOwnership, size_t nodeCount) {
     size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < nodeCount) {
-        nodeOwnership[idx] = false;  // All halo initially
+        nodeOwnership[idx] = 0;  // All halo initially
     }
 }
 
 // Phase 2: Mark nodes of local elements as owned (optimized for tets: 4 nodes)
-//coalesced accesses, modern gpu handle atomicOr with minimal contention 
 template<typename KeyType, int NodesPerElement>
-__global__ void markLocalElementNodesKernel(bool* nodeOwnership,
+__global__ void markLocalElementNodesKernel(uint8_t* nodeOwnership,
                                             const KeyType* conn0,
                                             const KeyType* conn1,
                                             const KeyType* conn2,
@@ -623,22 +639,18 @@ __global__ void markLocalElementNodesKernel(bool* nodeOwnership,
     
     size_t elemIdx = idx + localStartIdx;
     
-    // Mark all 4 nodes of this local tetrahedron as owned
-    // Using byte-wise atomic OR for better performance on bool
-    atomicOr((int*)&nodeOwnership[conn0[elemIdx]], 1);
-    atomicOr((int*)&nodeOwnership[conn1[elemIdx]], 1);
-    atomicOr((int*)&nodeOwnership[conn2[elemIdx]], 1);
-    atomicOr((int*)&nodeOwnership[conn3[elemIdx]], 1);
+    // Mark all 4 nodes of this local tetrahedron as owned (1 = owned)
+    // Direct assignment is safe since we're only setting to 1
+    nodeOwnership[conn0[elemIdx]] = 1;
+    nodeOwnership[conn1[elemIdx]] = 1;
+    nodeOwnership[conn2[elemIdx]] = 1;
+    nodeOwnership[conn3[elemIdx]] = 1;
 }
 
-// Explicit instantiations for tetrahedra (uint32_t and uint64_t)
-template __global__ void initNodeOwnershipKernel<unsigned int>(bool*, size_t);
-template __global__ void initNodeOwnershipKernel<uint64_t>(bool*, size_t);
-
 template __global__ void markLocalElementNodesKernel<unsigned int, 4>(
-    bool*, const unsigned int*, const unsigned int*, const unsigned int*, const unsigned int*, size_t, size_t);
+    uint8_t*, const unsigned int*, const unsigned int*, const unsigned int*, const unsigned int*, size_t, size_t);
 template __global__ void markLocalElementNodesKernel<uint64_t, 4>(
-    bool*, const uint64_t*, const uint64_t*, const uint64_t*, const uint64_t*, size_t, size_t);
+    uint8_t*, const uint64_t*, const uint64_t*, const uint64_t*, const uint64_t*, size_t, size_t);
 
 // ===== For unsigned KeyType =====
 // Float combinations
@@ -776,6 +788,12 @@ template __global__ void mapSfcToLocalIdKernel<unsigned int>(
 template __global__ void mapSfcToLocalIdKernel<uint64_t>(
     const uint64_t*, uint64_t*, const uint64_t*, size_t, size_t);
 
+// Explicit instantiations for decodeSfcToPhysical
+template __device__ __host__ std::tuple<float, float, float> decodeSfcToPhysical<unsigned, float>(unsigned, const cstone::Box<float>&);
+template __device__ __host__ std::tuple<double, double, double> decodeSfcToPhysical<unsigned, double>(unsigned, const cstone::Box<double>&);
+template __device__ __host__ std::tuple<float, float, float> decodeSfcToPhysical<uint64_t, float>(uint64_t, const cstone::Box<float>&);
+template __device__ __host__ std::tuple<double, double, double> decodeSfcToPhysical<uint64_t, double>(uint64_t, const cstone::Box<double>&);
+
 template __global__ void decodeAllNodesKernel<unsigned int, float>(
     const unsigned int*, float*, float*, float*, size_t, cstone::Box<float>);
 template __global__ void decodeAllNodesKernel<unsigned int, double>(
@@ -786,8 +804,8 @@ template __global__ void decodeAllNodesKernel<uint64_t, double>(
     const uint64_t*, double*, double*, double*, size_t, cstone::Box<double>);
 
 template __global__ void markHaloNodesKernel<unsigned int>(
-    bool*, const unsigned int*, const unsigned int*, size_t, size_t, size_t);
+    uint8_t*, const unsigned int*, const unsigned int*, size_t, size_t, size_t);
 template __global__ void markHaloNodesKernel<uint64_t>(
-    bool*, const uint64_t*, const uint64_t*, size_t, size_t, size_t);
+    uint8_t*, const uint64_t*, const uint64_t*, size_t, size_t, size_t);
 
 } // namespace mars
