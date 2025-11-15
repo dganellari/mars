@@ -1,0 +1,38 @@
+site_name: MARS Unstructured Meshes Documentation
+site_description: Documentation for unstructured mesh handling in MARS
+site_author: MARS Team
+repo_url: https://github.com/dganellari/mars
+repo_name: mars
+
+# Theme and plugins
+theme:
+  name: material
+  palette:
+    primary: blue
+    accent: blue
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - toc.integrate
+    - search.suggest
+    - search.highlight
+
+plugins:
+  - search
+
+# Navigation structure
+nav:
+  - Home: index.md
+  - Core Components:
+      - ElementDomain Overview: ElementDomain-Overview.md
+      - Mesh Reading and Partitioning: Mesh-Reading-and-Partitioning.md
+      - SFC Mapping: SFC-Mapping.md
+  - Advanced Features:
+      - Adjacency Structures: Adjacency-Structures.md
+      - Halo Management: Halo-Management.md
+      - Coordinate Caching: Coordinate-Caching.md
+      - Characteristic Sizes: Characteristic-Sizes.md
+      - Connectivity Management: Connectivity-Management.md
+  - Technical Details:
+      - GPU Acceleration: GPU-Acceleration.md
+      - Multi-Rank Support: Multi-Rank-Support.md
