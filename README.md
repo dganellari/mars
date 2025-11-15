@@ -1,10 +1,10 @@
-[![License](https://img.shields.io/badge/License-BSD%203--Clause-blue.svg)](https://opensource.org/licenses/BSD-3-Clause) [![Build status](https://ci.appveyor.com/api/projects/status/a6kjacwk5e5pd4by/branch/development?svg=true)](https://ci.appveyor.com/project/zulianp/mars/branch/development) [![Documentation](https://readthedocs.org/projects/mars/badge/?version=latest)](https://mars.readthedocs.io/en/latest/?badge=latest)
+[![License](https://img.shields.io/badge/License-BSD%203--Clause-blue.svg)](https://opensource.org/licenses/BSD-3-Clause) [![Build status](https://ci.appveyor.com/api/projects/status/a6kjacwk5e5pd4by/branch/development?svg=true)](https://ci.appveyor.com/project/zulianp/mars/branch/development) [![Documentation](https://readthedocs.org/projects/mesh-adaptive-refinement-for-supercomputing-mars/badge/?version=latest)](https://mesh-adaptive-refinement-for-supercomputing-mars.readthedocs.io/en/latest/?badge=latest)
 
 
 # M.A.R.S #
 ## Mesh Adaptive Refinement for Supercomputing ##
 
-**[Read the Full Documentation](https://mars.readthedocs.io/en/latest/)**
+**[Read the Full Documentation](https://mesh-adaptive-refinement-for-supercomputing-mars.readthedocs.io/en/latest/)**
 
 MARS is an open-source mesh management library designed to handle N-dimensional elements (N <= 4). 
 MARS is developed in C++ and makes use of template meta-programming to have compile time dimensions of elements and vectors, thus allowing for both compile time performance optimizations and concise and reusable code.
@@ -117,16 +117,16 @@ cmake .. \
 
 For comprehensive guides and API references, see:
 
-- **[Unstructured Meshes Documentation](https://mars.readthedocs.io/en/latest/)**
-- **[ElementDomain Overview](https://mars.readthedocs.io/en/latest/ElementDomain-Overview/)** - Core mesh management class
-- **[Mesh Reading & Partitioning](https://mars.readthedocs.io/en/latest/Mesh-Reading-and-Partitioning/)** - Binary mesh format and loading
-- **[SFC Mapping](https://mars.readthedocs.io/en/latest/SFC-Mapping/)** - Space-filling curve based load balancing
-- **[Adjacency Structures](https://mars.readthedocs.io/en/latest/Adjacency-Structures/)** - CSR-based neighbor finding
-- **[Halo Management](https://mars.readthedocs.io/en/latest/Halo-Management/)** - Ghost element handling
-- **[Coordinate Caching](https://mars.readthedocs.io/en/latest/Coordinate-Caching/)** - GPU SoA coordinate storage
-- **[Characteristic Sizes](https://mars.readthedocs.io/en/latest/Characteristic-Sizes/)** - Mesh quality metrics
-- **[GPU Acceleration](https://mars.readthedocs.io/en/latest/GPU-Acceleration/)** - CUDA kernel implementation
-- **[Multi-Rank Support](https://mars.readthedocs.io/en/latest/Multi-Rank-Support/)** - MPI distributed computing
+- **[Unstructured Meshes Documentation](https://mesh-adaptive-refinement-for-supercomputing-mars.readthedocs.io/en/latest/)**
+- **[ElementDomain Overview](https://mesh-adaptive-refinement-for-supercomputing-mars.readthedocs.io/en/latest/ElementDomain-Overview/)** - Core mesh management class
+- **[Mesh Reading & Partitioning](https://mesh-adaptive-refinement-for-supercomputing-mars.readthedocs.io/en/latest/Mesh-Reading-and-Partitioning/)** - Binary mesh format and loading
+- **[SFC Mapping](https://mesh-adaptive-refinement-for-supercomputing-mars.readthedocs.io/en/latest/SFC-Mapping/)** - Space-filling curve based load balancing
+- **[Adjacency Structures](https://mesh-adaptive-refinement-for-supercomputing-mars.readthedocs.io/en/latest/Adjacency-Structures/)** - CSR-based neighbor finding
+- **[Halo Management](https://mesh-adaptive-refinement-for-supercomputing-mars.readthedocs.io/en/latest/Halo-Management/)** - Ghost element handling
+- **[Coordinate Caching](https://mesh-adaptive-refinement-for-supercomputing-mars.readthedocs.io/en/latest/Coordinate-Caching/)** - GPU SoA coordinate storage
+- **[Characteristic Sizes](https://mesh-adaptive-refinement-for-supercomputing-mars.readthedocs.io/en/latest/Characteristic-Sizes/)** - Mesh quality metrics
+- **[GPU Acceleration](https://mesh-adaptive-refinement-for-supercomputing-mars.readthedocs.io/en/latest/GPU-Acceleration/)** - CUDA kernel implementation
+- **[Multi-Rank Support](https://mesh-adaptive-refinement-for-supercomputing-mars.readthedocs.io/en/latest/Multi-Rank-Support/)** - MPI distributed computing
 
 ### Implementation Details
 
