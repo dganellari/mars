@@ -1,8 +1,10 @@
-[![License](https://img.shields.io/badge/License-BSD%203--Clause-blue.svg)](https://opensource.org/licenses/BSD-3-Clause) [![Build status](https://ci.appveyor.com/api/projects/status/a6kjacwk5e5pd4by/branch/development?svg=true)](https://ci.appveyor.com/project/zulianp/mars/branch/development)
+[![License](https://img.shields.io/badge/License-BSD%203--Clause-blue.svg)](https://opensource.org/licenses/BSD-3-Clause) [![Build status](https://ci.appveyor.com/api/projects/status/a6kjacwk5e5pd4by/branch/development?svg=true)](https://ci.appveyor.com/project/zulianp/mars/branch/development) [![Documentation](https://readthedocs.org/projects/mars/badge/?version=latest)](https://mars.readthedocs.io/en/latest/?badge=latest)
 
 
 # M.A.R.S #
 ## Mesh Adaptive Refinement for Supercomputing ##
+
+**[Read the Full Documentation](https://mars.readthedocs.io/en/latest/)**
 
 MARS is an open-source mesh management library designed to handle N-dimensional elements (N <= 4). 
 MARS is developed in C++ and makes use of template meta-programming to have compile time dimensions of elements and vectors, thus allowing for both compile time performance optimizations and concise and reusable code.
@@ -68,24 +70,72 @@ If compiled for CUDA then Kokkos should also be compiled with CUDA (Kokkos_ENABL
 
 ## Unstructured Mesh Support ##
 
-MARS supports unstructured meshes through integration with the Cornerstone library, enabling octree-based adaptive mesh refinement (AMR) for complex geometries and dynamic simulations. 
+MARS supports GPU-native unstructured meshes through integration with the Cornerstone library, enabling space-filling curve (SFC) based mesh management for complex geometries and distributed simulations.
 
-Key features of the unstructured backend:
-- Octree data structures for efficient spatial indexing
-- Domain Decompostion through octrees
-- Discretization features
-- GPU-aware MPI support for distributed computing
+### Key Features
+
+- **GPU-Native Architecture**: All data structures live in device memory (`DeviceVector` via Cornerstone)
+- **SFC-Based Partitioning**: Elements identified by space-filling curve keys for optimal load balancing
+- **Lazy Composition**: Components (adjacency, halo, coordinates) allocated on-demand to minimize VRAM usage
+- **Thrust Algorithms**: CSR building, sorting, and reductions use GPU-optimized Thrust primitives
+- **MPI Integration**: Multi-rank support via Cornerstone domain decomposition
+- **Element Support**: Tetrahedra, hexahedra, triangles, and quadrilaterals
+
+### Quick Start
+
+```cpp
+#include "domain.hpp"
+
+// Create GPU-native unstructured domain
+ElementDomain<TetTag, float, unsigned> domain("mesh_dir", rank, numRanks);
+
+// Components built lazily on first access
+auto offsets = domain.getNodeToElementOffsets();  // Builds adjacency
+auto coords = domain.getNodeCoordinates();        // Caches coordinates
+auto sizes = domain.getCharacteristicSizes();     // Computes sizes
+```
+
+### Build Configuration
 
 To enable unstructured support:
 - Set `-DMARS_ENABLE_UNSTRUCTURED=ON` during CMake configuration
 - Cornerstone is fetched automatically if not found on the system
-- For GPU support, also set `-DMARS_ENABLE_CUDA=ON` or `-DMARS_ENABLE_HIP=ON`
+- GPU support requires `-DMARS_ENABLE_CUDA=ON` or `-DMARS_ENABLE_HIP=ON`
 
 Example CMake command for unstructured with CUDA:
 
+```bash
+cmake .. \
+  -DMARS_ENABLE_KOKKOS=OFF \
+  -DMARS_ENABLE_CUDA=ON \
+  -DMARS_ENABLE_TESTS=ON \
+  -DMARS_ENABLE_UNSTRUCTURED=ON \
+  -DCMAKE_CUDA_ARCHITECTURES=90
 ```
-cmake .. -DMARS_ENABLE_KOKKOS=OFF -DMARS_ENABLE_CUDA=ON -DMARS_ENABLE_TESTS=ON -DMARS_ENABLE_UNSTRUCTURED=ON -DCMAKE_CUDA_ARCHITECTURES=90
-```
+
+### Documentation
+
+For comprehensive guides and API references, see:
+
+- **[Unstructured Meshes Documentation](https://mars.readthedocs.io/en/latest/)**
+- **[ElementDomain Overview](https://mars.readthedocs.io/en/latest/ElementDomain-Overview/)** - Core mesh management class
+- **[Mesh Reading & Partitioning](https://mars.readthedocs.io/en/latest/Mesh-Reading-and-Partitioning/)** - Binary mesh format and loading
+- **[SFC Mapping](https://mars.readthedocs.io/en/latest/SFC-Mapping/)** - Space-filling curve based load balancing
+- **[Adjacency Structures](https://mars.readthedocs.io/en/latest/Adjacency-Structures/)** - CSR-based neighbor finding
+- **[Halo Management](https://mars.readthedocs.io/en/latest/Halo-Management/)** - Ghost element handling
+- **[Coordinate Caching](https://mars.readthedocs.io/en/latest/Coordinate-Caching/)** - GPU SoA coordinate storage
+- **[Characteristic Sizes](https://mars.readthedocs.io/en/latest/Characteristic-Sizes/)** - Mesh quality metrics
+- **[GPU Acceleration](https://mars.readthedocs.io/en/latest/GPU-Acceleration/)** - CUDA kernel implementation
+- **[Multi-Rank Support](https://mars.readthedocs.io/en/latest/Multi-Rank-Support/)** - MPI distributed computing
+
+### Implementation Details
+
+The unstructured backend uses:
+- **Lazy initialization** for memory efficiency (adjacency, halo, coordinates built on-demand)
+- **SFC keys as connectivity** for sparse global element identification
+- **Thrust-based CSR** building via `sort_by_key`, `reduce_by_key`, `exclusive_scan`
+- **Lowest SFC corner** representation (not centroids) for element identification
+- **Friend access patterns** for zero-copy GPU operations between components
 
 For more details, see the `backend/distributed/unstructured` directory and its testsuite.
 
