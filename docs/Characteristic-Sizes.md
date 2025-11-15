@@ -14,19 +14,19 @@ Characteristic sizes are essential for:
 
 ## Key Components
 
-### CharacteristicSize Class
+### Characteristic Size Computation (GPU)
 ```cpp
-class CharacteristicSize {
-public:
-    std::vector<double> element_sizes;
-    std::vector<double> node_sizes;
-    
-    void compute_sizes(const std::vector<Element>& elements,
-                      const CoordinateCache& coordinates);
-    
-    double get_element_size(size_t element_id) const;
-    double get_nodal_size(size_t node_id) const;
-};
+// GPU kernel computes sizes for all elements in parallel
+template<typename ElementTag, typename KeyType, typename RealType>
+__global__ void computeCharacteristicSizesKernel(
+    const RealType* x, const RealType* y, const RealType* z,
+    const KeyType* indices0, /* ... other connectivity pointers */
+    RealType* h,              // Output: nodal sizes
+    int* nodeTetCount,        // Atomic counter for averaging
+    int numElements);
+
+// Stored in device memory
+DeviceVector<RealType> d_h_;  // Characteristic sizes per node
 ```
 
 ### Size Metrics
@@ -59,23 +59,23 @@ for (size_t i = 0; i < domain.get_coordinates().size(); ++i) {
 
 ## Size Computation Methods
 
-### Volume-Based Sizing
-For tetrahedral elements:
+### Edge-Based Sizing (GPU Kernel)
+For each element, characteristic size computed from edge lengths:
 ```cpp
-double tet_volume(const std::vector<Point>& nodes) {
-    // Compute volume using scalar triple product
-    Vector3 a = nodes[1] - nodes[0];
-    Vector3 b = nodes[2] - nodes[0];
-    Vector3 c = nodes[3] - nodes[0];
-    
-    return std::abs(scalar_triple_product(a, b, c)) / 6.0;
-}
+// Inside computeCharacteristicSizesKernel
+// Decode SFC keys to physical coordinates
+auto [x0, y0, z0] = decodeSfcToPhysical(indices0[elemIdx], box);
+auto [x1, y1, z1] = decodeSfcToPhysical(indices1[elemIdx], box);
+// ... repeat for all nodes
 
-double tet_characteristic_size(const std::vector<Point>& nodes) {
-    double volume = tet_volume(nodes);
-    // Characteristic size based on volume
-    return std::pow(volume, 1.0/3.0);
-}
+// Compute edge lengths and characteristic size
+RealType dx = x1 - x0, dy = y1 - y0, dz = z1 - z0;
+RealType edgeLen = sqrt(dx*dx + dy*dy + dz*dz);
+RealType elemSize = /* average of all edge lengths */;
+
+// Atomically accumulate at nodes for averaging
+atomicAdd(&h[node0], elemSize);
+atomicAdd(&nodeTetCount[node0], 1);
 ```
 
 ### Edge-Based Sizing

@@ -13,27 +13,25 @@ Coordinate caching addresses performance bottlenecks in:
 
 ## Key Components
 
-### CoordinateCache Class
+### CoordinateCache Struct (GPU SoA)
 ```cpp
-class CoordinateCache {
-public:
-    void set_coordinates(const std::vector<Point>& coords);
-    const Point& get_coordinate(size_t node_id) const;
+template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
+struct CoordinateCache {
+    using DeviceVector = typename VectorSelector<RealType, AcceleratorTag>::type;
     
-    // Bulk access methods
-    void get_coordinates(const std::vector<size_t>& node_ids, 
-                        std::vector<Point>& output) const;
+    DeviceVector d_node_x_;  // X coordinates in device memory
+    DeviceVector d_node_y_;  // Y coordinates in device memory
+    DeviceVector d_node_z_;  // Z coordinates in device memory
     
-    // Memory management
-    size_t memory_usage() const;
-    void optimize_layout();
+    void cacheNodeCoordinates(const ElementDomain& domain);
 };
 ```
 
-### Memory Layout Options
-- **Array of Structures (AoS)**: `Point coords[N]`
-- **Structure of Arrays (SoA)**: `float x[N], y[N], z[N]`
-- **Hybrid**: Combination based on access patterns
+### Memory Layout (GPU SoA Only)
+- **Structure of Arrays (SoA)**: Three separate `DeviceVector<RealType>` for X, Y, Z
+- **Coalesced GPU Access**: Threads access contiguous memory within each array
+- **No AoS Option**: SoA mandatory for GPU performance
+- **Decoded from SFC**: Coordinates extracted from SFC keys via `decodeSfcToPhysical()`
 
 ## Usage Example
 
@@ -66,16 +64,16 @@ for (const auto& coord : element_coords) {
 - Memory allocated only when needed
 - Automatic cleanup when unused
 
-### Prefetching
+### Lazy GPU Allocation
 ```cpp
-// Prefetch coordinates for upcoming elements
-std::vector<size_t> upcoming_nodes;
-for (size_t i = 0; i < prefetch_count; ++i) {
-    auto elem = domain.get_element(current + i);
-    upcoming_nodes.insert(upcoming_nodes.end(), 
-                         elem.nodes.begin(), elem.nodes.end());
+// Coordinates decoded from SFC keys only when first accessed
+const auto& getNodeCoordinates() {
+    if (!coordinate_cache_) {
+        coordinate_cache_ = std::make_unique<CoordinateCache>(...);
+        coordinate_cache_->cacheNodeCoordinates(*this);
+    }
+    return coordinate_cache_;
 }
-cache.prefetch_coordinates(upcoming_nodes);
 ```
 
 ### Memory Pool Allocation

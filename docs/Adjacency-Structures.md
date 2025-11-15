@@ -14,16 +14,18 @@ Adjacency information is crucial for:
 
 ## Key Components
 
-### AdjacencyData Class
+### AdjacencyData Struct (GPU)
 ```cpp
-class AdjacencyData {
-public:
-    std::vector<std::vector<size_t>> element_to_element;
-    std::vector<std::vector<size_t>> element_to_faces;
-    std::vector<std::vector<size_t>> face_to_elements;
+template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
+struct AdjacencyData {
+    using DeviceVector = typename VectorSelector<KeyType, AcceleratorTag>::type;
     
-    void build_adjacency(const std::vector<Element>& elements);
-    std::vector<size_t> get_neighbors(size_t element_id) const;
+    DeviceVector d_nodeToElementOffsets_;  // CSR row offsets
+    DeviceVector d_nodeToElementList_;     // CSR column indices
+    DeviceVector d_conn_local_ids_;        // SFC keys mapped to local IDs
+    
+    void buildNodeToElementMap(const ElementDomain& domain);
+    void createElementToNodeLocalIdMap(const ElementDomain& domain);
 };
 ```
 
@@ -61,11 +63,11 @@ for (size_t i = 0; i < elem_to_elem.size(); ++i) {
 
 ## Building Adjacency
 
-### Algorithm Overview
-1. **Face Extraction**: Get all faces for each element
-2. **Face Matching**: Find elements sharing each face
-3. **Connectivity Building**: Create element-to-element maps
-4. **Boundary Detection**: Identify boundary faces
+### Algorithm Overview (GPU-based)
+1. **Flatten Connectivity**: Convert tuple-of-vectors to flat device array (GPU kernel)
+2. **Build Node-to-Element CSR**: Use Thrust `sort_by_key`, `reduce_by_key`, `exclusive_scan` on device
+3. **Map SFC to Local IDs**: Convert SFC keys to dense local indices (GPU kernel)
+4. **Store in Device Memory**: All CSR structures remain on GPU (`DeviceVector`)
 
 ### Face Representation
 ```cpp

@@ -56,13 +56,14 @@ auto sizes = domain.get_characteristic_sizes();
 
 ## Architecture
 
-The unstructured mesh system in MARS uses a lazy composition pattern where components are initialized on-demand to minimize memory usage and startup time. Key architectural decisions include:
+The unstructured mesh system in MARS is built on Cornerstone octree and uses a lazy composition pattern where GPU components are initialized on-demand to minimize VRAM usage and startup time. Key architectural decisions include:
 
-- **Template-based Design**: Type-safe mesh element handling
-- **Lazy Initialization**: Components built only when needed
-- **Memory Efficiency**: Shared ownership and caching
-- **Parallel Support**: MPI and CUDA integration
-- **Extensibility**: Plugin architecture for new mesh types
+- **GPU-Native Design**: All data structures live in device memory (Cornerstone `DeviceVector`)
+- **Template-based Design**: Type-safe mesh element handling via `AcceleratorTag`
+- **Lazy Initialization**: GPU components (adjacency, halo, coordinates) built only when needed
+- **SFC-Centric**: Elements identified by space-filling curve keys, not integer indices
+- **Thrust Algorithms**: CSR building, sorting, and reductions use Thrust primitives
+- **MPI Partitioning**: Multi-rank support via Cornerstone domain decomposition
 
 ## Contributing
 

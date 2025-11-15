@@ -14,19 +14,22 @@ Connectivity information enables:
 
 ## Key Components
 
-### ConnectivityManager Class
+### Connectivity Storage (GPU)
 ```cpp
-class ConnectivityManager {
-public:
-    std::vector<std::vector<size_t>> element_to_nodes;
-    std::vector<std::vector<size_t>> node_to_elements;
-    std::vector<std::vector<size_t>> element_to_faces;
-    std::vector<std::vector<size_t>> face_to_elements;
-    
-    void build_connectivity(const std::vector<Element>& elements);
-    std::vector<size_t> get_adjacent_elements(size_t element_id) const;
-    std::vector<size_t> get_elements_at_node(size_t node_id) const;
+// Connectivity stored as tuple of device vectors (SFC keys)
+template<typename ElementTag, typename AcceleratorTag, typename T>
+struct ConnectivityTupleHelper<TetTag, AcceleratorTag, T> {
+    using type = std::tuple<
+        typename VectorSelector<T, AcceleratorTag>::type,  // indices0
+        typename VectorSelector<T, AcceleratorTag>::type,  // indices1
+        typename VectorSelector<T, AcceleratorTag>::type,  // indices2
+        typename VectorSelector<T, AcceleratorTag>::type   // indices3
+    >;
 };
+
+// Usage in ElementDomain
+using ConnTuple = typename ConnectivityTupleHelper<ElementTag, AcceleratorTag, KeyType>::type;
+ConnTuple d_conn_keys_;  // SFC keys, not integer indices
 ```
 
 ### Topological Relationships

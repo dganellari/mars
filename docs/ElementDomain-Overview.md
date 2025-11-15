@@ -26,19 +26,19 @@ class ElementDomain;
 ## Key Features
 
 ### Element Management
-- Stores mesh elements with their connectivity
-- Provides random access to elements by index
-- Supports element iteration and filtering
+- Stores mesh elements as SFC keys in device memory (`DeviceVector<KeyType>`)
+- Elements represented by lowest SFC corner node, not centroids
+- Connectivity stored as tuple of device vectors via `VectorSelector<T, GpuTag>`
 
 ### Coordinate Handling
-- Manages vertex coordinates in 3D space
-- Provides coordinate access and transformation
-- Supports coordinate caching for performance
+- Vertex coordinates stored as Structure-of-Arrays (SoA) on GPU
+- Lazy coordinate caching in device memory for performance
+- No host mirroring - data stays on GPU after initialization
 
 ### Partitioning Support
-- Handles domain decomposition for parallel processing
-- Manages local vs. global element indices
-- Supports multi-rank MPI operations
+- Domain decomposition via Cornerstone SFC partitioning
+- Local-to-global SFC map for sparse element ownership
+- MPI operations only for metadata sync, data stays on GPU
 
 ## Usage Example
 
@@ -64,11 +64,12 @@ for (auto node : elem.nodes) {
 
 ## Lazy Composition
 
-The `ElementDomain` uses lazy initialization for performance:
+The `ElementDomain` uses lazy initialization for GPU memory efficiency:
 
-- Components are created only when first accessed
-- Reduces memory usage and startup time
+- GPU components (`AdjacencyData`, `HaloData`, `CoordinateCache`) allocated on first access
+- Reduces VRAM footprint and startup time
 - Thread-safe initialization with mutex protection
+- Uses `std::unique_ptr` for optional GPU allocations
 
 ## Dependencies
 

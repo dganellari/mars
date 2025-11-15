@@ -40,9 +40,10 @@ public:
 ```
 
 ### Element-to-SFC Mapping
-- Computes centroid of each element
-- Maps 3D centroid to 1D SFC index
-- Handles various element types (tets, hexes, etc.)
+- Identifies lowest SFC corner node of each element (not centroid)
+- Maps 3D corner coordinates to 1D SFC key via Cornerstone encoding
+- GPU kernel (`findRepresentativeNodesKernel`) processes all elements in parallel
+- Handles various element types (tets, hexes, triangles, quads)
 
 ## Usage Example
 
@@ -71,11 +72,11 @@ for (size_t i = 0; i < elements.size(); ++i) {
 
 ## Algorithm Details
 
-### Hilbert Curve Mapping
-1. **Centroid Calculation**: Compute element centroids
-2. **Coordinate Transformation**: Map to unit cube [0,1]³
-3. **Bit Interleaving**: Convert to Hilbert index
-4. **Sorting**: Order elements by Hilbert index
+### SFC Encoding (GPU-based)
+1. **Corner Identification**: Find lowest SFC corner per element (GPU kernel)
+2. **Coordinate Decoding**: Extract physical coordinates from SFC keys
+3. **Key Generation**: Cornerstone `sfcKey()` encoding on GPU
+4. **Sorting**: Thrust `sort_by_key()` orders elements by SFC index on device
 
 ### Load Balancing
 - **Equal Partitioning**: Divide SFC range equally among ranks
@@ -102,17 +103,12 @@ auto sfc_map = domain.get_sfc_mapping();
 auto local_sfc_range = sfc_map.get_local_range(rank);
 ```
 
-## Advanced Features
+## Integration with Cornerstone
 
-### Dynamic Repartitioning
-- Recompute SFC mapping during simulation
-- Migrate elements between ranks
-- Maintain load balance during adaptation
-
-### Quality Metrics
-- **Locality Ratio**: Measure spatial clustering
-- **Communication Volume**: Estimate inter-rank data transfer
-- **Load Imbalance**: Monitor computational balance
+- **SFC Key Encoding**: Uses Cornerstone `sfcKey<KeyType>(x, y, z, box)` for encoding
+- **Box Management**: Global bounding box from Cornerstone domain
+- **Decoding**: `decodeSfcToPhysical()` converts keys back to coordinates (host/device compatible)
+- **Local-to-Global Mapping**: Sparse mapping via device vectors for distributed ownership
 
 ## See Also
 

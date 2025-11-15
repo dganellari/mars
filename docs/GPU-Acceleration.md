@@ -4,34 +4,32 @@ GPU acceleration provides CUDA-based parallel processing for unstructured mesh o
 
 ## Purpose
 
-GPU acceleration addresses computational bottlenecks in:
+**GPU execution is mandatory** in MARS unstructured mesh system. All data structures and algorithms are GPU-native:
 
-- Large-scale mesh processing
-- Finite element computations
-- Mesh adaptation algorithms
-- Parallel data transfers
-- Memory-intensive operations
+- Mesh storage in device memory (`DeviceVector` via `VectorSelector<T, GpuTag>`)
+- SFC key generation and sorting (Thrust algorithms)
+- Adjacency/halo building (GPU kernels + Thrust primitives)
+- Characteristic size computation (parallel GPU kernels)
+- No CPU fallback - `AcceleratorTag = GpuTag` required
 
 ## Key Components
 
-### GPUAccelerator Class
+### VectorSelector Pattern
 ```cpp
-class GPUAccelerator {
-public:
-    void initialize(int device_id = 0);
-    
-    // Memory management
-    template<typename T>
-    T* allocate_device(size_t size);
-    
-    template<typename T>
-    void copy_to_device(T* host_data, T* device_data, size_t size);
-    
-    // Kernel launches
-    void launch_element_processing(const Element* elements, size_t num_elements);
-    void launch_adjacency_computation(const Element* elements, size_t num_elements);
-    void launch_coordinate_transformation(float* coords, size_t num_coords);
+// Template-based device vector selection
+template<typename T, typename AcceleratorTag>
+struct VectorSelector;
+
+// Specialization for GPU (Cornerstone DeviceVector)
+template<typename T>
+struct VectorSelector<T, cstone::GpuTag> {
+    using type = cstone::DeviceVector<T>;
 };
+
+// Usage in ElementDomain
+using DeviceVector = typename VectorSelector<KeyType, AcceleratorTag>::type;
+DeviceVector d_localToGlobalSfcMap_;  // Lives in GPU memory
+DeviceVector d_conn_local_ids_;       // All connectivity on GPU
 ```
 
 ### CUDA Kernel Organization
@@ -68,30 +66,25 @@ gpu.copy_to_host(d_results, results.data(), results.size());
 
 ## CUDA Kernel Examples
 
-### Element Processing Kernel
+### SFC Representative Node Kernel
 ```cpp
-__global__ void process_elements_kernel(const Element* elements, 
-                                      const float* coords_x, 
-                                      const float* coords_y, 
-                                      const float* coords_z,
-                                      double* results, 
-                                      size_t num_elements) {
-    size_t elem_id = blockIdx.x * blockDim.x + threadIdx.x;
+template<typename ElementTag, typename KeyType, typename RealType>
+__global__ void findRepresentativeNodesKernel(
+    const KeyType* indices0,  // First node SFC keys
+    const KeyType* indices1,  // Second node SFC keys
+    // ... other node indices
+    KeyType* repNodes,        // Output: lowest SFC key per element
+    size_t numElements) {
     
-    if (elem_id < num_elements) {
-        const Element& elem = elements[elem_id];
-        
-        // Load element coordinates into shared memory
-        __shared__ float shared_coords[256 * 3];
-        load_element_coordinates(elem, coords_x, coords_y, coords_z, 
-                               shared_coords, threadIdx.x);
-        
-        // Compute element properties
-        double volume = compute_tet_volume(shared_coords, threadIdx.x);
-        double quality = compute_element_quality(shared_coords, threadIdx.x);
-        
-        results[elem_id] = volume * quality;
-    }
+    size_t elemIdx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (elemIdx >= numElements) return;
+    
+    // Find minimum SFC key among element nodes
+    KeyType minKey = indices0[elemIdx];
+    minKey = min(minKey, indices1[elemIdx]);
+    // ... check all nodes
+    
+    repNodes[elemIdx] = minKey;  // Lowest corner, not centroid
 }
 ```
 

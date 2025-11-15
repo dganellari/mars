@@ -13,18 +13,17 @@ In parallel computing, halo (ghost) elements are needed for:
 
 ## Key Components
 
-### HaloData Class
+### HaloData Struct (GPU)
 ```cpp
-class HaloData {
-public:
-    std::vector<size_t> local_halo_elements;    // Elements owned by this rank but needed by others
-    std::vector<size_t> remote_halo_elements;   // Elements owned by others but needed locally
+template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
+struct HaloData {
+    using DeviceVector = typename VectorSelector<uint8_t, AcceleratorTag>::type;
     
-    std::vector<int> send_ranks;                // Ranks to send data to
-    std::vector<int> recv_ranks;                // Ranks to receive data from
+    DeviceVector d_nodeOwnership_;          // Node ownership flags (0=local, 1=halo)
+    DeviceVector d_haloElementIndices_;     // Indices of halo elements
     
-    void build_halo_data(const AdjacencyData& adjacency, int rank, int num_ranks);
-    void exchange_data(std::vector<double>& data) const;
+    void buildNodeOwnership(const ElementDomain& domain, int rank, int numRanks);
+    void buildHaloElementIndices(const ElementDomain& domain);
 };
 ```
 
@@ -81,32 +80,25 @@ for (size_t elem_id = 0; elem_id < domain.size(); ++elem_id) {
 - Allocate communication buffers
 - Set up MPI data types
 
-## Data Exchange Patterns
+## Halo Element Identification
 
-### Synchronous Exchange
+### GPU-based Node Ownership
 ```cpp
-void HaloData::exchange_data(std::vector<double>& data) const {
-    // Post receives
-    for (size_t i = 0; i < recv_ranks.size(); ++i) {
-        MPI_Irecv(recv_buffers[i], recv_counts[i], MPI_DOUBLE, 
-                 recv_ranks[i], tag, comm, &recv_requests[i]);
-    }
-    
-    // Pack and send data
-    for (size_t i = 0; i < send_ranks.size(); ++i) {
-        pack_send_buffer(data, send_buffers[i], send_ranks[i]);
-        MPI_Isend(send_buffers[i], send_counts[i], MPI_DOUBLE,
-                 send_ranks[i], tag, comm, &send_requests[i]);
-    }
-    
-    // Wait for completion
-    MPI_Waitall(recv_requests.size(), recv_requests.data(), MPI_STATUSES_IGNORE);
-    MPI_Waitall(send_requests.size(), send_requests.data(), MPI_STATUSES_IGNORE);
-    
-    // Unpack received data
-    unpack_recv_buffers(data);
-}
+// Mark nodes as local (0) or halo (1) based on element ownership
+// Uses Cornerstone domain to determine rank boundaries
+__global__ void markLocalElementNodesKernel(
+    uint8_t* nodeOwnership,
+    const KeyType* sfc_conn,
+    const KeyType* localToGlobalSfcMap,
+    size_t localElementCount);
+
+// Extract halo element indices from ownership flags
+void buildHaloElementIndices(DeviceVector& d_haloIndices,
+                            const DeviceVector& d_nodeOwnership,
+                            size_t elementCount);
 ```
+
+**Note**: Actual MPI data exchange is handled by Cornerstone domain, not directly by MARS.
 
 ### Asynchronous Exchange
 - Overlapping computation with communication

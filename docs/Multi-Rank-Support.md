@@ -14,27 +14,23 @@ Multi-rank support enables:
 
 ## Key Components
 
-### MultiRankManager Class
+### Cornerstone Domain Integration
 ```cpp
-class MultiRankManager {
-public:
-    MultiRankManager(MPI_Comm comm = MPI_COMM_WORLD);
+// MARS integrates with Cornerstone for MPI coordination
+template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
+class ElementDomain {
+private:
+    cstone::Domain<KeyType, RealType, AcceleratorTag> cstone_domain_;
+    int rank_, numRanks_;
     
-    int get_rank() const { return rank_; }
-    int get_num_ranks() const { return num_ranks_; }
+    // Local-to-global SFC mapping for distributed elements
+    DeviceVector d_localToGlobalSfcMap_;  // Sparse ownership
     
-    // Domain decomposition
-    void decompose_domain(const std::vector<Element>& global_elements,
-                         std::vector<Element>& local_elements);
-    
-    // Communication
-    void allreduce(double* sendbuf, double* recvbuf, int count, MPI_Op op);
-    void allgather(const void* sendbuf, int sendcount, MPI_Datatype sendtype,
-                   void* recvbuf, int recvcount, MPI_Datatype recvtype);
-    
-    // Synchronization
-    void barrier();
-    double time() const;
+    // Sync with Cornerstone after mesh loading
+    void sync() {
+        // Build SFC keys and integrate with Cornerstone domain
+        // All MPI coordination handled by Cornerstone
+    }
 };
 ```
 
@@ -81,39 +77,26 @@ MPI_Finalize();
 
 ## Domain Decomposition
 
-### SFC-Based Partitioning
+### Per-Rank Binary File Reading
 ```cpp
-void decompose_domain_sfc(const std::vector<Element>& global_elements,
-                         std::vector<std::vector<Element>>& rank_elements,
-                         int num_ranks) {
-    
-    // Compute SFC indices for all elements
-    SFCMapping sfc_mapper;
-    auto sfc_indices = sfc_mapper.map_elements_to_sfc(global_elements, coordinates);
-    
-    // Sort elements by SFC index
-    std::vector<size_t> element_order(global_elements.size());
-    std::iota(element_order.begin(), element_order.end(), 0);
-    std::sort(element_order.begin(), element_order.end(),
-              [&](size_t a, size_t b) {
-                  return sfc_indices[a] < sfc_indices[b];
-              });
-    
-    // Distribute elements to ranks
-    rank_elements.resize(num_ranks);
-    size_t elements_per_rank = global_elements.size() / num_ranks;
-    size_t remainder = global_elements.size() % num_ranks;
-    
-    size_t start_idx = 0;
-    for (int rank = 0; rank < num_ranks; ++rank) {
-        size_t count = elements_per_rank + (rank < remainder ? 1 : 0);
-        for (size_t i = 0; i < count; ++i) {
-            size_t elem_idx = element_order[start_idx + i];
-            rank_elements[rank].push_back(global_elements[elem_idx]);
-        }
-        start_idx += count;
-    }
-}
+// Each rank reads its own pre-partitioned binary file
+auto meshData = readMeshDataSoA<float, unsigned>(
+    meshPath, rank, numRanks,
+    [](const std::vector<float>& coords_in) {
+        // Convert float to RealType if needed
+        std::vector<RealType> coords_out(coords_in.begin(), coords_in.end());
+        return coords_out;
+    });
+
+// Transfer to GPU immediately
+d_x_.assign(meshData.x.begin(), meshData.x.end());
+d_y_.assign(meshData.y.begin(), meshData.y.end());
+d_z_.assign(meshData.z.begin(), meshData.z.end());
+// ... connectivity also copied to device
+
+// Generate SFC keys on GPU
+generateSfcKeys(d_x_.data(), d_y_.data(), d_z_.data(),
+               d_localToGlobalSfcMap_.data(), elementCount, box);
 ```
 
 ### Load Balancing
@@ -142,44 +125,25 @@ void rebalance_load(const std::vector<double>& computational_costs,
 
 ## Communication Patterns
 
-### Halo Exchange
+### GPU-Resident Halo Management
 ```cpp
-void exchange_halo_data(const HaloData& halo,
-                       std::vector<double>& data,
-                       MultiRankManager& mpi_mgr) {
+// Halo elements identified on GPU, data never leaves device
+struct HaloData {
+    DeviceVector<uint8_t> d_nodeOwnership_;      // 0=local, 1=halo
+    DeviceVector<size_t> d_haloElementIndices_;  // Halo element IDs
     
-    // Post non-blocking receives
-    std::vector<MPI_Request> recv_requests(halo.recv_ranks.size());
-    std::vector<std::vector<double>> recv_buffers(halo.recv_ranks.size());
-    
-    for (size_t i = 0; i < halo.recv_ranks.size(); ++i) {
-        size_t count = halo.recv_counts[i];
-        recv_buffers[i].resize(count);
-        MPI_Irecv(recv_buffers[i].data(), count, MPI_DOUBLE,
-                 halo.recv_ranks[i], halo_tag, mpi_mgr.get_comm(),
-                 &recv_requests[i]);
+    void buildNodeOwnership(const ElementDomain& domain, int rank, int numRanks) {
+        // Mark nodes based on Cornerstone domain boundaries
+        // All operations on GPU
+        markLocalElementNodesKernel<<<...>>>(
+            d_nodeOwnership_.data(),
+            domain.d_conn_sfc_keys_,
+            domain.d_localToGlobalSfcMap_.data(),
+            domain.localElementCount());
     }
-    
-    // Pack and send data
-    std::vector<MPI_Request> send_requests(halo.send_ranks.size());
-    for (size_t i = 0; i < halo.send_ranks.size(); ++i) {
-        std::vector<double> send_buffer;
-        pack_halo_data(data, halo.send_elements[i], send_buffer);
-        
-        MPI_Isend(send_buffer.data(), send_buffer.size(), MPI_DOUBLE,
-                 halo.send_ranks[i], halo_tag, mpi_mgr.get_comm(),
-                 &send_requests[i]);
-    }
-    
-    // Wait for receives and unpack
-    MPI_Waitall(recv_requests.size(), recv_requests.data(), MPI_STATUSES_IGNORE);
-    for (size_t i = 0; i < recv_buffers.size(); ++i) {
-        unpack_halo_data(data, halo.recv_elements[i], recv_buffers[i]);
-    }
-    
-    // Wait for sends to complete
-    MPI_Waitall(send_requests.size(), send_requests.data(), MPI_STATUSES_IGNORE);
-}
+};
+
+// Note: Actual MPI exchange handled by Cornerstone, not exposed in MARS API
 ```
 
 ### Collective Operations

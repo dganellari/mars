@@ -13,10 +13,11 @@ The mesh reading system provides:
 
 ## Supported Formats
 
-- **VTK**: Visualization Toolkit format (.vtk)
-- **ExodusII**: Sandia National Labs format (.exo)
-- **Custom Binary**: MARS-specific optimized format
-- **Partitioned Files**: Multi-file mesh representations
+- **Custom Binary**: MARS-specific SoA binary format (primary)
+  - Stores coordinates as separate X, Y, Z arrays (float precision)
+  - Element connectivity as flat index arrays
+  - Optimized for direct GPU transfer
+- **Partitioned Files**: Multi-rank binary mesh files per MPI rank
 
 ## Key Components
 
@@ -51,11 +52,11 @@ std::cout << "Total elements: " << domain.get_global_element_count() << std::end
 
 ## Partitioning Algorithm
 
-1. **Load Global Mesh**: Read complete mesh on root rank
-2. **Compute SFC**: Assign Hilbert curve indices to elements
-3. **Distribute Elements**: Partition based on SFC ranges
-4. **Build Local Domains**: Create rank-local element collections
-5. **Exchange Halos**: Identify and exchange ghost elements
+1. **Load Local Mesh**: Each rank reads its partition from binary file
+2. **Transfer to GPU**: Coordinates and connectivity copied to device memory
+3. **Generate SFC Keys**: Compute space-filling curve keys for lowest corner of each element (GPU kernel)
+4. **Build Local-to-Global Map**: Create sparse SFC key mapping via Thrust sorting
+5. **Sync with Cornerstone**: Integrate with Cornerstone domain for MPI coordination
 
 ## Performance Considerations
 
