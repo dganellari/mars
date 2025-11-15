@@ -1,4 +1,4 @@
-version: 0.1
+version: 2
 
 build:
   os: ubuntu-22.04
@@ -11,8 +11,4 @@ mkdocs:
 
 python:
   install:
-    - method: pip
-      path: .
-      extra_requirements:
-        - mkdocs
-        - mkdocs-material
+    - requirements: docs/requirements.txt
