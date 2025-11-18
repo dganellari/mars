@@ -367,6 +367,10 @@ if(MARS_ENABLE_MOONOLITH)
   add_subdirectory(moonolith_adapter)
 endif()
 
+if(MARS_ENABLE_FEM_EXAMPLES)
+  add_subdirectory(examples/distributed/unstructured)
+endif()
+
 if(MARS_ENABLE_UNSTRUCTURED AND MARS_ENABLE_ADIOS2)
     # Add ADIOS2 subdirectories
     add_subdirectory(backend/adios2)
@@ -380,6 +384,18 @@ if(MARS_ENABLE_CXXOPTS)
 endif()
 
 add_library(mars ${MARS_HEADERS} ${MARS_SOURCES})
+
+# Link mars to mars_unstructured now that mars exists
+if(TARGET mars_unstructured)
+    target_link_libraries(mars PUBLIC mars_unstructured)
+    # Ensure mars re-exports mars_unstructured symbols
+    if(MARS_ENABLE_CUDA)
+        # Force mars to include all symbols from mars_unstructured
+        set_target_properties(mars PROPERTIES 
+            CUDA_SEPARABLE_COMPILATION ON
+            CUDA_RESOLVE_DEVICE_SYMBOLS ON)
+    endif()
+endif()
 
 if(CORNERSTONE_FOUND)
     # Define a preprocessor macro to indicate cornerstone support
@@ -536,6 +552,23 @@ install(FILES ${CMAKE_CURRENT_BINARY_DIR}/MarsConfig.cmake
 include(cmake/PostInstall.cmake)
 
 # #################  Extra Targets, Complete ##################
+
+# Ensure DeviceVector instantiations are available through mars_unstructured linkage
+# Note: cstone_instantiations.cu is compiled into mars_unstructured, which is linked to mars
+if(MARS_ENABLE_UNSTRUCTURED AND MARS_ENABLE_CUDA)
+    # Ensure cstone_gpu is linked to mars
+    if(TARGET cstone_gpu)
+        target_link_libraries(mars PUBLIC cstone_gpu)
+    endif()
+
+    # Link Cuda libraries required for unstructured backend
+    target_link_libraries(mars PUBLIC 
+        CUDA::cudart
+        CUDA::cublas
+        CUDA::cusolver
+        CUDA::cusparse
+    )
+endif()
 
 add_custom_target(mars_complete)
 

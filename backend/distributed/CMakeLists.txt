@@ -42,11 +42,6 @@ if(MARS_ENABLE_UNSTRUCTURED)
     
     # Add the unstructured subdirectory
     add_subdirectory(unstructured)
-    
-    # Link directly to mars
-    if(TARGET mars_unstructured AND TARGET mars)
-        target_link_libraries(mars PUBLIC mars_unstructured)
-    endif()
 endif()
 
 # Export variables to parent scope
