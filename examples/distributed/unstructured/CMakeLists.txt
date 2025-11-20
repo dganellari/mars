@@ -15,3 +15,8 @@ target_link_libraries(mars_ex1_poisson PRIVATE mars)
 
 # Install
 install(TARGETS mars_ex1_poisson RUNTIME DESTINATION bin/examples)
+
+# Beam-tet mesh example - MFEM validation test
+add_executable(mars_ex_beam_tet mars_ex_beam_tet.cu)
+target_link_libraries(mars_ex_beam_tet PRIVATE mars)
+install(TARGETS mars_ex_beam_tet RUNTIME DESTINATION bin/examples)

@@ -404,7 +404,15 @@ public:
     using HostPropsTuple        = std::tuple<HostVector<RealType>>;
     using HostConnectivityTuple = typename HostConnectivityTupleHelper<ElementTag, KeyType>::type;
 
+    // Constructor from file
     ElementDomain(const std::string& meshFile, int rank, int numRanks);
+    
+    // Constructor from mesh data (for MFEM or other formats)
+    ElementDomain(const HostCoordsTuple& h_coords,
+                  const HostConnectivityTuple& h_conn,
+                  const cstone::Box<RealType>& box,
+                  int rank,
+                  int numRanks);
 
     // GPU-accelerated calculation of characteristic sizes
     void calculateCharacteristicSizes(const DeviceConnectivityTuple& d_conn_, const DeviceCoordsTuple& d_coords_);
@@ -584,6 +592,13 @@ public:
 
     // optional: explicitly request coordinate caching
     void cacheNodeCoordinates() { ensureCoordinateCache(); }
+
+    // Exchange halo data for DOF vectors (MPI communication to sum shared node contributions)
+    template<class... Vectors, class SendBuffer, class ReceiveBuffer>
+    void exchangeHalos(std::tuple<Vectors&...> arrays, SendBuffer& sendBuffer, ReceiveBuffer& receiveBuffer) const
+    {
+        domain_->exchangeHalos(arrays, sendBuffer, receiveBuffer);
+    }
 
     // Device connectivity functions
     template<int I>
@@ -1023,6 +1038,57 @@ ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(cons
 
     // Adjacency maps are now built lazily on first access
     // Users can explicitly call buildAdjacency() if they want to build it immediately
+
+    std::cout << "Rank " << rank_ << " initialized " << ElementTag::Name << " domain with " << nodeCount_
+              << " nodes and " << elementCount_ << " elements and " << localElementCount() << " local elements."
+              << std::endl;
+}
+
+// Constructor from mesh data (for MFEM or other formats)
+template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
+ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(
+    const HostCoordsTuple& h_coords,
+    const HostConnectivityTuple& h_conn,
+    const cstone::Box<RealType>& box,
+    int rank,
+    int numRanks)
+    : rank_(rank)
+    , numRanks_(numRanks)
+    , box_(box)
+{
+    DeviceConnectivityTuple d_conn_;
+    DeviceCoordsTuple d_coords_;
+
+    // Set counts from input data
+    nodeCount_ = std::get<0>(h_coords).size();
+    elementCount_ = std::get<0>(h_conn).size();
+
+    // Initialize cornerstone domain
+    int bucketSize           = 128;
+    unsigned bucketSizeFocus = 64;
+    RealType theta           = 0.5;
+
+    std::cout << "Rank " << rank_ << ": Using provided bounding box: [" << box_.xmin() << "," << box_.xmax() << "] ["
+              << box_.ymin() << "," << box_.ymax() << "] [" << box_.zmin() << "," << box_.zmax() << "]" << std::endl;
+
+    // Test SFC precision for this domain (debug only)
+    testSfcPrecision<KeyType, RealType>(box_, rank_);
+
+    domain_ = std::make_unique<DomainType>(rank, numRanks, bucketSize, bucketSizeFocus, theta, box_);
+
+    // Transfer data to GPU before sync
+    transferDataToGPU(h_coords, h_conn, d_coords_, d_conn_);
+
+    // Calculate characteristic sizes
+    calculateCharacteristicSizes(d_conn_, d_coords_);
+
+    // Perform sync
+    sync(d_conn_, d_coords_);
+
+    // needed by all other lazy structures
+    createLocalToGlobalSfcMap();
+
+    // Adjacency maps are now built lazily on first access
 
     std::cout << "Rank " << rank_ << " initialized " << ElementTag::Name << " domain with " << nodeCount_
               << " nodes and " << elementCount_ << " elements and " << localElementCount() << " local elements."

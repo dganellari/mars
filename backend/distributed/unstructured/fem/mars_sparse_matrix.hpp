@@ -6,6 +6,14 @@
 namespace mars {
 namespace fem {
 
+// Forward declare kernel
+template<typename RealType, typename IndexType>
+__global__ void extractDiagonalKernel(const IndexType* rowOffsets,
+                                      const IndexType* colIndices,
+                                      const RealType* values,
+                                      RealType* diagonal,
+                                      IndexType numRows);
+
 // CSR Sparse Matrix for GPU
 template<typename IndexType, typename RealType, typename AcceleratorTag>
 class SparseMatrix {
@@ -69,6 +77,28 @@ public:
     IndexType* colIndicesPtr() { return thrust::raw_pointer_cast(d_colIndices_.data()); }
     const IndexType* colIndicesPtr() const { return thrust::raw_pointer_cast(d_colIndices_.data()); }
     
+    // Extract diagonal values
+    DeviceVectorReal getDiagonal() const {
+        DeviceVectorReal diag(numRows_);
+        thrust::fill(thrust::device_pointer_cast(diag.data()),
+                     thrust::device_pointer_cast(diag.data() + diag.size()),
+                     RealType(0));
+        
+        // Kernel to extract diagonal
+        const int blockSize = 256;
+        const int gridSize = (numRows_ + blockSize - 1) / blockSize;
+        
+        extractDiagonalKernel<<<gridSize, blockSize>>>(
+            thrust::raw_pointer_cast(d_rowOffsets_.data()),
+            thrust::raw_pointer_cast(d_colIndices_.data()),
+            thrust::raw_pointer_cast(d_values_.data()),
+            thrust::raw_pointer_cast(diag.data()),
+            numRows_);
+        
+        cudaDeviceSynchronize();
+        return diag;
+    }
+    
 private:
     IndexType numRows_;
     IndexType numCols_;
@@ -78,6 +108,28 @@ private:
     DeviceVectorIndex d_colIndices_;   // Size: nnz
     DeviceVectorReal d_values_;        // Size: nnz
 };
+
+// CUDA kernel to extract diagonal
+template<typename RealType, typename IndexType>
+__global__ void extractDiagonalKernel(const IndexType* rowOffsets,
+                                      const IndexType* colIndices,
+                                      const RealType* values,
+                                      RealType* diagonal,
+                                      IndexType numRows)
+{
+    IndexType row = blockIdx.x * blockDim.x + threadIdx.x;
+    if (row >= numRows) return;
+    
+    IndexType rowStart = rowOffsets[row];
+    IndexType rowEnd = rowOffsets[row + 1];
+    
+    for (IndexType i = rowStart; i < rowEnd; ++i) {
+        if (colIndices[i] == row) {
+            diagonal[row] = values[i];
+            return;
+        }
+    }
+}
 
 // Device function to find column index in CSR row
 template<typename IndexType>

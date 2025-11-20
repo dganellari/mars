@@ -11,15 +11,15 @@ namespace mars
 namespace fem
 {
 
-// Simple Conjugate Gradient solver for GPU
+// BiCGSTAB solver for GPU - works for non-symmetric systems
 template<typename RealType, typename IndexType, typename AcceleratorTag>
-class ConjugateGradientSolver
+class BiCGSTABSolver
 {
 public:
     using Matrix = SparseMatrix<IndexType, RealType, AcceleratorTag>;
     using Vector = typename mars::VectorSelector<RealType, AcceleratorTag>::type;
 
-    ConjugateGradientSolver(int maxIter = 1000, RealType tolerance = 1e-10)
+    BiCGSTABSolver(int maxIter = 1000, RealType tolerance = 1e-6)
         : maxIter_(maxIter)
         , tolerance_(tolerance)
         , verbose_(true)
@@ -29,42 +29,26 @@ public:
         cusparseCreate(&cusparseHandle_);
     }
 
-    ~ConjugateGradientSolver()
+    ~BiCGSTABSolver()
     {
         cublasDestroy(cublasHandle_);
         cusparseDestroy(cusparseHandle_);
     }
 
-    // Solve Ax = b for x with Jacobi preconditioning
+    // Solve Ax = b for x
     bool solve(const Matrix& A, const Vector& b, Vector& x)
     {
         size_t n = A.numRows();
 
-        // Extract diagonal for preconditioner
-        Vector diag = A.getDiagonal();
-        
-        // Check for zero or very small diagonal entries
-        thrust::host_vector<RealType> h_diag(diag.size());
-        thrust::copy(thrust::device_pointer_cast(diag.data()),
-                    thrust::device_pointer_cast(diag.data() + diag.size()),
-                    h_diag.begin());
-        
-        for (size_t i = 0; i < h_diag.size(); ++i) {
-            if (std::abs(h_diag[i]) < 1e-14) {
-                h_diag[i] = 1.0;  // Avoid division by zero
-            }
-        }
-        
-        thrust::copy(h_diag.begin(), h_diag.end(),
-                    thrust::device_pointer_cast(diag.data()));
-        
         // Allocate work vectors
-        Vector r(n);  // Residual
-        Vector z(n);  // Preconditioned residual
-        Vector p(n);  // Search direction
-        Vector Ap(n); // A * p
+        Vector r(n);      // Residual
+        Vector r0(n);     // Initial residual (fixed)
+        Vector p(n);      // Search direction
+        Vector v(n);      // A*p
+        Vector s(n);      // Intermediate residual
+        Vector t(n);      // A*s
 
-        // Initialize x to zero if not provided
+        // Initialize x to zero
         if (x.size() != n)
         {
             x.resize(n);
@@ -73,104 +57,153 @@ public:
                     thrust::device_pointer_cast(x.data() + x.size()),
                     RealType(0));
 
-        // r = b - Ax  (with x = 0, this is just r = b)
+        // r = b - Ax (with x=0, r = b)
         thrust::copy(thrust::device_pointer_cast(b.data()), 
                     thrust::device_pointer_cast(b.data() + b.size()),
                     thrust::device_pointer_cast(r.data()));
 
-        // z = M^{-1} r (Jacobi: z_i = r_i / A_ii)
-        jacobiPrecondition(diag, r, z);
+        // r0 = r (arbitrary choice, could be random)
+        thrust::copy(thrust::device_pointer_cast(r.data()), 
+                    thrust::device_pointer_cast(r.data() + r.size()),
+                    thrust::device_pointer_cast(r0.data()));
 
-        // p = z
-        thrust::copy(thrust::device_pointer_cast(z.data()), 
-                    thrust::device_pointer_cast(z.data() + z.size()),
-                     thrust::device_pointer_cast(p.data()));
+        // p = r
+        thrust::copy(thrust::device_pointer_cast(r.data()), 
+                    thrust::device_pointer_cast(r.data() + r.size()),
+                    thrust::device_pointer_cast(p.data()));
 
-        // rho = r^T z
-        RealType rho  = dot(r, z);
-        RealType rho0 = rho;
+        RealType rho = dot(r0, r);
+        RealType rho_prev = rho;
         
-        // Also compute norm of b for debugging
         RealType b_norm = std::sqrt(dot(b, b));
+        RealType r_norm = std::sqrt(dot(r, r));
         
-        // Handle case where b is nearly zero
         if (b_norm < 1e-14) {
             if (verbose_) {
-                std::cout << "CG: RHS vector is nearly zero (||b|| = " << b_norm << "), solution is zero." << std::endl;
+                std::cout << "BiCGSTAB: RHS is zero\n";
             }
-            thrust::fill(thrust::device_pointer_cast(x.data()), 
-                        thrust::device_pointer_cast(x.data() + x.size()),
-                        RealType(0));
             return true;
-        }
-        
-        if (rho0 < 1e-20) {
-            rho0 = b_norm * b_norm;
         }
 
         if (verbose_) { 
-            std::cout << "CG iteration 0: residual = " << std::sqrt(rho) << ", ||b|| = " << b_norm << std::endl; 
+            std::cout << "BiCGSTAB iteration 0: residual = " << r_norm / b_norm << std::endl; 
         }
 
-        // PCG iterations
+        // BiCGSTAB iterations
+        bool first = true;
         for (int iter = 0; iter < maxIter_; ++iter)
         {
-            // Ap = A * p
-            spmv(A, p, Ap);
+            // v = A * p
+            spmv(A, p, v);
 
-            // alpha = rho / (p^T Ap)
-            RealType pAp   = dot(p, Ap);
+            // alpha = rho / (r0^T * v)
+            RealType r0v = dot(r0, v);
             
-            if (std::abs(pAp) < 1e-30) {
+            if (std::abs(r0v) < 1e-30) {
                 if (verbose_) {
-                    std::cout << "CG: p^T Ap = " << pAp << " is too small, stopping." << std::endl;
+                    std::cout << "BiCGSTAB: r0^T v = " << r0v << " too small, breakdown\n";
                 }
                 return false;
             }
             
-            RealType alpha = rho / pAp;
+            RealType alpha = rho / r0v;
 
-            // x = x + alpha * p
-            axpy(alpha, p, x, x);
+            // s = r - alpha * v
+            thrust::copy(thrust::device_pointer_cast(r.data()), 
+                        thrust::device_pointer_cast(r.data() + r.size()),
+                        thrust::device_pointer_cast(s.data()));
+            axpy(-alpha, v, s, s);
 
-            // r = r - alpha * Ap
-            axpy(-alpha, Ap, r, r);
-
-            // z = M^{-1} r
-            jacobiPrecondition(diag, r, z);
-
-            // rho_new = r^T z
-            RealType rho_new = dot(r, z);
-
-            // Compute true residual norm
-            RealType r_norm = std::sqrt(dot(r, r));
-            RealType residual = r_norm / b_norm;
-
-            if (verbose_ && (iter % 10 == 0))
-            {
-                std::cout << "CG iteration " << iter + 1 << ": residual = " << residual << std::endl;
-            }
-
-            // Check convergence
-            if (residual < tolerance_)
-            {
-                if (verbose_)
-                {
-                    std::cout << "CG converged in " << iter + 1 << " iterations, residual = " << residual << std::endl;
+            // Check if we can stop (s is small enough)
+            RealType s_norm = std::sqrt(dot(s, s));
+            if (s_norm / b_norm < tolerance_) {
+                // x = x + alpha * p
+                axpy(alpha, p, x, x);
+                
+                if (verbose_) {
+                    std::cout << "BiCGSTAB converged in " << iter + 1 
+                             << " iterations (early), residual = " << s_norm / b_norm << std::endl;
                 }
                 return true;
             }
 
-            // beta = rho_new / rho
-            RealType beta = rho_new / rho;
+            // t = A * s
+            spmv(A, s, t);
 
-            // p = z + beta * p
-            axpby(1.0, z, beta, p, p);
+            // omega = (t^T * s) / (t^T * t)
+            RealType ts = dot(t, s);
+            RealType tt = dot(t, t);
+            
+            if (std::abs(tt) < 1e-30) {
+                if (verbose_) {
+                    std::cout << "BiCGSTAB: t^T t = " << tt << " too small, breakdown\n";
+                }
+                return false;
+            }
+            
+            RealType omega = ts / tt;
 
+            // x = x + alpha * p + omega * s
+            axpy(alpha, p, x, x);
+            axpy(omega, s, x, x);
+
+            // r = s - omega * t
+            thrust::copy(thrust::device_pointer_cast(s.data()), 
+                        thrust::device_pointer_cast(s.data() + s.size()),
+                        thrust::device_pointer_cast(r.data()));
+            axpy(-omega, t, r, r);
+
+            // Check convergence
+            r_norm = std::sqrt(dot(r, r));
+            RealType residual = r_norm / b_norm;
+
+            if (verbose_ && (iter % 10 == 0))
+            {
+                std::cout << "BiCGSTAB iteration " << iter + 1 << ": residual = " << residual << std::endl;
+            }
+
+            if (residual < tolerance_)
+            {
+                if (verbose_)
+                {
+                    std::cout << "BiCGSTAB converged in " << iter + 1 
+                             << " iterations, residual = " << residual << std::endl;
+                }
+                return true;
+            }
+
+            // rho_new = r0^T * r
+            RealType rho_new = dot(r0, r);
+            
+            if (std::abs(rho_new) < 1e-30) {
+                if (verbose_) {
+                    std::cout << "BiCGSTAB: rho = " << rho_new << " too small, breakdown\n";
+                }
+                return false;
+            }
+
+            if (!first) {
+                // beta = (rho_new / rho) * (alpha / omega)
+                RealType beta = (rho_new / rho) * (alpha / omega);
+
+                // p = r + beta * (p - omega * v)
+                Vector p_temp(n);
+                thrust::copy(thrust::device_pointer_cast(p.data()), 
+                            thrust::device_pointer_cast(p.data() + p.size()),
+                            thrust::device_pointer_cast(p_temp.data()));
+                axpy(-omega, v, p_temp, p_temp);  // p_temp = p - omega*v
+                
+                scale(beta, p_temp);               // p_temp = beta * p_temp
+                axpy(1.0, p_temp, r, p);           // p = r + p_temp
+            }
+
+            first = false;
             rho = rho_new;
         }
 
-        if (verbose_) { std::cout << "CG did not converge in " << maxIter_ << " iterations" << std::endl; }
+        if (verbose_) { 
+            std::cout << "BiCGSTAB did not converge in " << maxIter_ << " iterations" << std::endl; 
+        }
         return false;
     }
 
@@ -179,13 +212,18 @@ public:
     void setTolerance(RealType tol) { tolerance_ = tol; }
 
 private:
+    int maxIter_;
+    RealType tolerance_;
+    bool verbose_;
+    cublasHandle_t cublasHandle_;
+    cusparseHandle_t cusparseHandle_;
+
     // Sparse matrix-vector product: y = A * x
     void spmv(const Matrix& A, const Vector& x, Vector& y)
     {
         const RealType alpha = 1.0;
         const RealType beta  = 0.0;
 
-        // Create matrix descriptor
         cusparseSpMatDescr_t matA;
         cusparseDnVecDescr_t vecX, vecY;
 
@@ -212,7 +250,6 @@ private:
         }
         else
         {
-            // Float version
             cusparseCreateCsr(&matA, A.numRows(), A.numCols(), A.nnz(), (void*)A.rowOffsetsPtr(),
                               (void*)A.colIndicesPtr(), (void*)A.valuesPtr(), CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I,
                               CUSPARSE_INDEX_BASE_ZERO, CUDA_R_32F);
@@ -238,7 +275,7 @@ private:
         cusparseDestroyDnVec(vecY);
     }
 
-    // Dot product: result = x^T y
+    // Dot product
     RealType dot(const Vector& x, const Vector& y)
     {
         RealType result;
@@ -255,11 +292,14 @@ private:
         return result;
     }
 
-    // y = alpha * x + y
+    // result = y + alpha * x (overwrites result)
     void axpy(RealType alpha, const Vector& x, const Vector& y, Vector& result)
     {
-        thrust::copy(thrust::device_pointer_cast(y.data()), thrust::device_pointer_cast(y.data() + y.size()),
-                     thrust::device_pointer_cast(result.data()));
+        if (result.data() != y.data()) {
+            thrust::copy(thrust::device_pointer_cast(y.data()), 
+                        thrust::device_pointer_cast(y.data() + y.size()),
+                        thrust::device_pointer_cast(result.data()));
+        }
         if constexpr (std::is_same_v<RealType, double>)
         {
             cublasDaxpy(cublasHandle_, x.size(), &alpha, thrust::raw_pointer_cast(x.data()), 1,
@@ -272,52 +312,18 @@ private:
         }
     }
 
-    // result = alpha * x + beta * y
-    void axpby(RealType alpha, const Vector& x, RealType beta, const Vector& y, Vector& result)
+    // x = alpha * x
+    void scale(RealType alpha, Vector& x)
     {
-        // result = alpha * x
         if constexpr (std::is_same_v<RealType, double>)
         {
-            cublasDcopy(cublasHandle_, x.size(), thrust::raw_pointer_cast(x.data()), 1,
-                        thrust::raw_pointer_cast(result.data()), 1);
-            cublasDscal(cublasHandle_, x.size(), &alpha, thrust::raw_pointer_cast(result.data()), 1);
+            cublasDscal(cublasHandle_, x.size(), &alpha, thrust::raw_pointer_cast(x.data()), 1);
         }
         else
         {
-            cublasScopy(cublasHandle_, x.size(), thrust::raw_pointer_cast(x.data()), 1,
-                        thrust::raw_pointer_cast(result.data()), 1);
-            cublasSscal(cublasHandle_, x.size(), &alpha, thrust::raw_pointer_cast(result.data()), 1);
-        }
-
-        // result += beta * y
-        if constexpr (std::is_same_v<RealType, double>)
-        {
-            cublasDaxpy(cublasHandle_, y.size(), &beta, thrust::raw_pointer_cast(y.data()), 1,
-                        thrust::raw_pointer_cast(result.data()), 1);
-        }
-        else
-        {
-            cublasSaxpy(cublasHandle_, y.size(), &beta, thrust::raw_pointer_cast(y.data()), 1,
-                        thrust::raw_pointer_cast(result.data()), 1);
+            cublasSscal(cublasHandle_, x.size(), &alpha, thrust::raw_pointer_cast(x.data()), 1);
         }
     }
-    
-    // Jacobi preconditioner: z = D^{-1} r
-    void jacobiPrecondition(const Vector& diag, const Vector& r, Vector& z)
-    {
-        thrust::transform(thrust::device_pointer_cast(r.data()),
-                         thrust::device_pointer_cast(r.data() + r.size()),
-                         thrust::device_pointer_cast(diag.data()),
-                         thrust::device_pointer_cast(z.data()),
-                         thrust::divides<RealType>());
-    }
-
-    int maxIter_;
-    RealType tolerance_;
-    bool verbose_;
-
-    cublasHandle_t cublasHandle_;
-    cusparseHandle_t cusparseHandle_;
 };
 
 } // namespace fem

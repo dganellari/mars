@@ -179,8 +179,9 @@ if(MARS_ENABLE_UNSTRUCTURED)
         # Get the source directory that was populated
         FetchContent_GetProperties(cornerstone_fetch SOURCE_DIR CORNERSTONE_SRC_DIR)
         
-        # Set paths for includes
+        # Set paths for includes (both plural and singular for compatibility)
         set(CORNERSTONE_INCLUDE_DIRS "${CORNERSTONE_SRC_DIR}/include" CACHE PATH "Cornerstone include directory" FORCE)
+        set(cornerstone_INCLUDE_DIR "${CORNERSTONE_SRC_DIR}/include" CACHE PATH "Cornerstone include directory (singular)" FORCE)
         
         message(STATUS "Fetched Cornerstone from: ${CORNERSTONE_SRC_DIR}")
         

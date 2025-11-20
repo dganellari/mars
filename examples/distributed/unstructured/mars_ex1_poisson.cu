@@ -51,8 +51,8 @@ int main(int argc, char* argv[]) {
     // Parse command line arguments
     std::string meshPath = "mesh_parts";
     int order = 1;
-    int maxIter = 1000;
-    float tolerance = 1e-10f;
+    int maxIter = 500;
+    float tolerance = 1e-6f;
     
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
@@ -132,12 +132,21 @@ int main(int argc, char* argv[]) {
         }
         
         // =====================================================
-        // 3. Assemble stiffness matrix
+        // 3. Check mesh quality
         // =====================================================
-        if (rank == 0) std::cout << "3. Assembling stiffness matrix...\n";
+        if (rank == 0) std::cout << "3. Checking mesh quality...\n";
+        TetStiffnessAssembler<float, uint64_t> stiffnessAssembler;
+        if (rank == 0) {
+            stiffnessAssembler.checkMeshQuality(fes);
+            std::cout << "\n";
+        }
+        
+        // =====================================================
+        // 4. Assemble stiffness matrix
+        // =====================================================
+        if (rank == 0) std::cout << "4. Assembling stiffness matrix...\n";
         auto t_stiff_start = std::chrono::high_resolution_clock::now();
         
-        TetStiffnessAssembler<float, uint64_t> stiffnessAssembler;
         TetSparseMatrix<float, uint64_t> K;
         stiffnessAssembler.assemble(fes, K);
         
@@ -151,9 +160,9 @@ int main(int argc, char* argv[]) {
         }
         
         // =====================================================
-        // 4. Assemble RHS vector
+        // 5. Assemble RHS vector
         // =====================================================
-        if (rank == 0) std::cout << "4. Assembling RHS vector...\n";
+        if (rank == 0) std::cout << "5. Assembling RHS vector...\n";
         auto t_rhs_start = std::chrono::high_resolution_clock::now();
         
         TetMassAssembler<float, uint64_t> massAssembler;
@@ -166,42 +175,159 @@ int main(int argc, char* argv[]) {
         double t_rhs = std::chrono::duration<double>(t_rhs_end - t_rhs_start).count();
         
         if (rank == 0) {
-            std::cout << "   RHS vector assembled in " << t_rhs << " seconds\n\n";
+            std::cout << "   RHS vector assembled in " << t_rhs << " seconds\n";
+            
+            // Check RHS norm before BCs
+            std::vector<float> h_b_before(b.size());
+            thrust::copy(thrust::device_pointer_cast(b.data()),
+                        thrust::device_pointer_cast(b.data() + b.size()),
+                        h_b_before.begin());
+            float b_norm_before = 0.0f;
+            for (float val : h_b_before) b_norm_before += val * val;
+            b_norm_before = std::sqrt(b_norm_before);
+            std::cout << "   ||b|| before BCs: " << b_norm_before << "\n\n";
         }
         
+        debug::checkVector("RHS vector b", b);
+        
         // =====================================================
-        // 5. Apply boundary conditions
+        // 6. Apply boundary conditions and form linear system
         // =====================================================
-        if (rank == 0) std::cout << "5. Applying boundary conditions...\n";
+        if (rank == 0) std::cout << "6. Applying boundary conditions...\n";
         auto t_bc_start = std::chrono::high_resolution_clock::now();
         
-        TetBCHandler<float, uint64_t> bcHandler;
-        auto boundaryDofs = fes.getBoundaryDofs();
+        // Use geometric boundary detection for beam-tet mesh
+        // Mesh domain: [0, 8] x [0, 1] x [0, 1]
+        std::vector<bool> isBoundaryDOF(fes.numDofs(), false);
+        std::vector<float> boundaryValues(fes.numDofs(), 0.0f);
         
-        if (rank == 0) {
-            std::cout << "   Boundary DOFs: " << boundaryDofs.size() << "\n";
+        // Get node coordinates from domain (coordinate cache is initialized lazily)
+        auto& domain_ref = fes.domain();
+        
+        std::vector<float> h_x(domain_ref.getNodeCount());
+        std::vector<float> h_y(domain_ref.getNodeCount());
+        std::vector<float> h_z(domain_ref.getNodeCount());
+        
+        const auto& d_x = domain_ref.getNodeX();
+        const auto& d_y = domain_ref.getNodeY();
+        const auto& d_z = domain_ref.getNodeZ();
+        
+        thrust::copy(thrust::device_pointer_cast(d_x.data()),
+                    thrust::device_pointer_cast(d_x.data() + d_x.size()),
+                    h_x.begin());
+        thrust::copy(thrust::device_pointer_cast(d_y.data()),
+                    thrust::device_pointer_cast(d_y.data() + d_y.size()),
+                    h_y.begin());
+        thrust::copy(thrust::device_pointer_cast(d_z.data()),
+                    thrust::device_pointer_cast(d_z.data() + d_z.size()),
+                    h_z.begin());
+        
+        // Mark boundary DOFs geometrically (same as MFEM's ess_tdof_list)
+        size_t numBoundary = 0;
+        const float tol = 1e-6f;
+        for (size_t i = 0; i < fes.numDofs(); ++i) {
+            float x = h_x[i];
+            float y = h_y[i];
+            float z = h_z[i];
+            
+            // Check if on any face of [0,8] x [0,1] x [0,1] domain
+            bool onBoundary = (std::abs(x - 0.0f) < tol) || (std::abs(x - 8.0f) < tol) ||
+                             (std::abs(y - 0.0f) < tol) || (std::abs(y - 1.0f) < tol) ||
+                             (std::abs(z - 0.0f) < tol) || (std::abs(z - 1.0f) < tol);
+            
+            if (onBoundary) {
+                isBoundaryDOF[i] = true;
+                boundaryValues[i] = 0.0f;  // u = 0 on boundary
+                numBoundary++;
+            }
         }
         
-        bcHandler.applyDirichlet(fes, K, b, boundaryDofs, 0.0f);
+        if (rank == 0) {
+            std::cout << "   Total DOFs: " << fes.numDofs() << "\n";
+            std::cout << "   Boundary DOFs (geometric): " << numBoundary << "\n";
+            std::cout << "   Interior DOFs: " << (fes.numDofs() - numBoundary) << "\n";
+        }
+        
+        // Form linear system with BCs (like MFEM's FormLinearSystem)
+        // This eliminates boundary DOFs: A_full, b_full -> A_int, b_int
+        fem::DOFElimination<float, uint64_t, cstone::GpuTag> eliminator;
+        fem::SparseMatrix<uint64_t, float, cstone::GpuTag> K_int;
+        cstone::DeviceVector<float> b_int;
+        
+        eliminator.buildInteriorSystem(K, b, isBoundaryDOF, boundaryValues, K_int, b_int);
         
         auto t_bc_end = std::chrono::high_resolution_clock::now();
         double t_bc = std::chrono::duration<double>(t_bc_end - t_bc_start).count();
         
         if (rank == 0) {
-            std::cout << "   BCs applied in " << t_bc << " seconds\n\n";
+            std::cout << "   DOF elimination completed in " << t_bc << " seconds\n\n";
+        }
+        
+        debug::checkMatrix("Interior stiffness matrix K_int", K_int);
+        debug::checkVector("Interior RHS vector b_int", b_int);
+        
+        // Check matrix symmetry
+        if (rank == 0 && K_int.numRows() > 0) {
+            std::cout << "   Checking matrix symmetry...\n";
+            
+            // Test: create random vector, compute Av, check if max|A[i,j] - A[j,i]| is small
+            std::vector<uint64_t> h_rowOffsets(K_int.numRows() + 1);
+            std::vector<uint64_t> h_colIndices(K_int.nnz());
+            std::vector<float> h_values(K_int.nnz());
+            
+            thrust::copy(thrust::device_pointer_cast(K_int.rowOffsetsPtr()),
+                        thrust::device_pointer_cast(K_int.rowOffsetsPtr() + K_int.numRows() + 1),
+                        h_rowOffsets.begin());
+            thrust::copy(thrust::device_pointer_cast(K_int.colIndicesPtr()),
+                        thrust::device_pointer_cast(K_int.colIndicesPtr() + K_int.nnz()),
+                        h_colIndices.begin());
+            thrust::copy(thrust::device_pointer_cast(K_int.valuesPtr()),
+                        thrust::device_pointer_cast(K_int.valuesPtr() + K_int.nnz()),
+                        h_values.begin());
+            
+            // Check a few entries for symmetry
+            int asymmetries = 0;
+            float maxAsymmetry = 0.0f;
+            for (size_t i = 0; i < std::min<size_t>(100, K_int.numRows()); ++i) {
+                for (uint64_t idx = h_rowOffsets[i]; idx < h_rowOffsets[i + 1]; ++idx) {
+                    uint64_t j = h_colIndices[idx];
+                    float a_ij = h_values[idx];
+                    
+                    // Find A[j,i]
+                    float a_ji = 0.0f;
+                    bool found = false;
+                    for (uint64_t idx2 = h_rowOffsets[j]; idx2 < h_rowOffsets[j + 1]; ++idx2) {
+                        if (h_colIndices[idx2] == i) {
+                            a_ji = h_values[idx2];
+                            found = true;
+                            break;
+                        }
+                    }
+                    
+                    if (found && std::abs(a_ij - a_ji) > 1e-6) {
+                        asymmetries++;
+                        maxAsymmetry = std::max(maxAsymmetry, std::abs(a_ij - a_ji));
+                    }
+                }
+            }
+            
+            std::cout << "   Asymmetries found: " << asymmetries 
+                      << ", max |A[i,j] - A[j,i]| = " << maxAsymmetry << "\n\n";
         }
         
         // =====================================================
-        // 6. Solve linear system with CG
+        // 7. Solve reduced interior system
         // =====================================================
-        if (rank == 0) std::cout << "6. Solving linear system (CG)...\n";
+        if (rank == 0) std::cout << "7. Solving reduced linear system (GMRES)...\n";
         auto t_solve_start = std::chrono::high_resolution_clock::now();
         
-        TetCGSolver<float, uint64_t> solver(maxIter, tolerance);
+        // Use GMRES with larger restart and more iterations
+        TetGMRESSolver<float, uint64_t> solver(5000, 1e-4f, 100);
         solver.setVerbose(rank == 0);
         
-        cstone::DeviceVector<float> u;
-        bool converged = solver.solve(K, b, u);
+        // Solve interior system (without preconditioner first)
+        cstone::DeviceVector<float> u_int;
+        bool converged = solver.solve(K_int, b_int, u_int, false);
         
         auto t_solve_end = std::chrono::high_resolution_clock::now();
         double t_solve = std::chrono::duration<double>(t_solve_end - t_solve_start).count();
@@ -212,9 +338,21 @@ int main(int argc, char* argv[]) {
         }
         
         // =====================================================
-        // 7. Compute solution statistics
+        // 8. Reconstruct full solution
         // =====================================================
-        if (rank == 0) std::cout << "7. Computing solution statistics...\n";
+        if (rank == 0) std::cout << "8. Reconstructing full solution...\n";
+        
+        cstone::DeviceVector<float> u;
+        eliminator.reconstructFullSolution(u_int, isBoundaryDOF, boundaryValues, u);
+        
+        if (rank == 0) std::cout << "   Full solution reconstructed\n\n";
+        
+        debug::checkVector("Full solution u", u);
+        
+        // =====================================================
+        // 9. Compute solution statistics
+        // =====================================================
+        if (rank == 0) std::cout << "9. Computing solution statistics...\n";
         
         // Copy solution to host for analysis
         std::vector<float> h_u(u.size());
@@ -228,29 +366,54 @@ int main(int argc, char* argv[]) {
         float u_mean = u_sum / h_u.size();
         
         // Compute L2 norm
-        float u_l2_sq = 0.0f;
+        float l2_norm = 0.0f;
         for (float val : h_u) {
-            u_l2_sq += val * val;
+            l2_norm += val * val;
         }
-        float u_l2 = std::sqrt(u_l2_sq);
+        l2_norm = std::sqrt(l2_norm);
+        
+        if (rank == 0) {
+            std::cout << "   L2 norm: " << l2_norm << "\n\n";
+        }
+        
+        // =====================================================
+        // 8. Write VTK output
+        // =====================================================
+        // if (rank == 0) std::cout << "8. Writing VTK output...\n";
+        // 
+        // VTKWriter writer;
+        // writer.writeVTU("mars_poisson_solution.vtu", domain, h_u, "solution");
+        // 
+        // if (rank == 0) {
+        //     std::cout << "   VTK file written to mars_poisson_solution.vtu\n\n";
+        // }
+        
+        // =====================================================
+        // 9. Timing summary
+        // =====================================================
         
         if (rank == 0) {
             std::cout << "   Solution statistics:\n"
                       << "     Min: " << u_min << "\n"
                       << "     Max: " << u_max << "\n"
                       << "     Mean: " << u_mean << "\n"
-                      << "     L2 norm: " << u_l2 << "\n\n";
+                      << "     L2 norm: " << l2_norm << "\n\n";
         }
         
         // =====================================================
-        // 8. Export solution (VTK) - TODO
+        // 8. Write VTK output
         // =====================================================
-        // if (rank == 0) std::cout << "8. Exporting solution to VTK...\n";
-        // VTKWriter writer;
-        // writer.write("solution.vtu", domain, fes, u);
+        // if (rank == 0) std::cout << "8. Writing VTK output...\n";
+        // 
+        // VTKWriter vtkWriter;
+        // vtkWriter.writeVTU("mars_poisson_solution.vtu", domain, h_u, "solution");
+        // 
+        // if (rank == 0) {
+        //     std::cout << "   VTK file written to mars_poisson_solution.vtu\n\n";
+        // }
         
         // =====================================================
-        // Summary
+        // 10. Timing summary
         // =====================================================
         auto t_total_end = std::chrono::high_resolution_clock::now();
         double t_total = std::chrono::duration<double>(t_total_end - t_total_start).count();

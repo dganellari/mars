@@ -30,7 +30,7 @@ __global__ void assembleMassKernel(const RealType* node_x,
     IndexType elemIdx = blockIdx.x * blockDim.x + threadIdx.x;
     if (elemIdx >= numElements) return;
 
-    // Get element nodes from tuple connectivity
+    // Get element nodes from tuple connectivity (already local IDs)
     IndexType dofs[4];
     dofs[0] = conn0[elemIdx];
     dofs[1] = conn1[elemIdx];
@@ -119,7 +119,7 @@ __global__ void assembleRHSKernel(const RealType* node_x,
     IndexType elemIdx = blockIdx.x * blockDim.x + threadIdx.x;
     if (elemIdx >= numElements) return;
 
-    // Get element nodes from tuple connectivity
+    // Get element nodes from tuple connectivity (already local IDs)
     IndexType dofs[4];
     dofs[0] = conn0[elemIdx];
     dofs[1] = conn1[elemIdx];
@@ -139,7 +139,8 @@ __global__ void assembleRHSKernel(const RealType* node_x,
     RefElem::computeJacobian(elem_x, elem_y, elem_z, J);
     RealType detJ = RefElem::computeJacobianDeterminant(J);
 
-    if (detJ <= 0.0) return;
+    if (detJ == 0.0) return;  // Skip degenerate elements
+    detJ = std::abs(detJ);    // Use absolute value to handle inverted elements
 
     // Local RHS vector
     RealType localB[RefElem::numNodes];
@@ -264,8 +265,8 @@ public:
         const int gridSize  = (numElements + blockSize - 1) / blockSize;
 
         assembleRHSKernel<ElementTag, RealType, KeyType>
-            <<<gridSize, blockSize>>>(d_x.data(), d_y.data(), d_z.data(), conn0.data(), conn1.data(), conn2.data(),
-                                      conn3.data(), numElements, f, b.data());
+            <<<gridSize, blockSize>>>(d_x.data(), d_y.data(), d_z.data(), conn0.data(), conn1.data(), conn2.data(), conn3.data(),
+                                      numElements, f, thrust::raw_pointer_cast(b.data()));
 
         cudaDeviceSynchronize();
     }
