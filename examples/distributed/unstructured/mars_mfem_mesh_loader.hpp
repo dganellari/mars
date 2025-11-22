@@ -72,6 +72,11 @@ public:
         // Extract boundary vertices from boundary faces
         extract_boundary_vertices();
         
+        // If no boundary faces found, detect geometrically
+        if (boundary_faces.empty()) {
+            detect_boundary_geometrically();
+        }
+        
         std::cout << "Loaded MFEM mesh:" << std::endl;
         std::cout << "  Vertices: " << vertices.size() << std::endl;
         std::cout << "  Elements: " << elements.size() << std::endl;
@@ -236,6 +241,41 @@ private:
         
         // Sort for consistency
         std::sort(boundary_vertices.begin(), boundary_vertices.end());
+    }
+    
+    void detect_boundary_geometrically() {
+        // For tetrahedral meshes, detect boundary faces geometrically
+        // A face is boundary if it appears in exactly one tetrahedron
+        
+        // Face representation: sorted triple of node indices
+        using Face = std::array<int, 3>;
+        std::map<Face, int> face_count;
+        
+        // Count face occurrences
+        for (const auto& elem : elements) {
+            // Tet faces: (0,1,2), (0,1,3), (0,2,3), (1,2,3)
+            std::vector<Face> faces = {
+                {elem[0], elem[1], elem[2]},
+                {elem[0], elem[1], elem[3]},
+                {elem[0], elem[2], elem[3]},
+                {elem[1], elem[2], elem[3]}
+            };
+            
+            for (auto& face : faces) {
+                std::sort(face.begin(), face.end());
+                face_count[face]++;
+            }
+        }
+        
+        // Collect boundary faces (count == 1)
+        for (const auto& [face, count] : face_count) {
+            if (count == 1) {
+                boundary_faces.push_back(face);
+            }
+        }
+        
+        // Extract boundary vertices from detected boundary faces
+        extract_boundary_vertices();
     }
 };
 

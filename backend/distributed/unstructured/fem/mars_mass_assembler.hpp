@@ -4,6 +4,9 @@
 #include "mars_h1_fe_space.hpp"
 #include "mars_reference_element.hpp"
 #include <thrust/fill.h>
+#include <thrust/copy.h>
+#include <thrust/host_vector.h>
+#include <unordered_set>
 
 namespace mars
 {
@@ -23,7 +26,8 @@ __global__ void assembleMassKernel(const RealType* node_x,
                                    IndexType numElements,
                                    const IndexType* rowOffsets,
                                    const IndexType* colIndices,
-                                   RealType* values)
+                                   RealType* values,
+                                   const IndexType* nodeToDof)
 {
     using RefElem = ReferenceElement<ElementTag, RealType>;
 
@@ -31,11 +35,24 @@ __global__ void assembleMassKernel(const RealType* node_x,
     if (elemIdx >= numElements) return;
 
     // Get element nodes from tuple connectivity (already local IDs)
+    IndexType nodes[4];
+    nodes[0] = conn0[elemIdx];
+    nodes[1] = conn1[elemIdx];
+    nodes[2] = conn2[elemIdx];
+    nodes[3] = conn3[elemIdx];
+    
+    // Check if ALL nodes are owned and map to DOF indices
+    bool allOwned = true;
     IndexType dofs[4];
-    dofs[0] = conn0[elemIdx];
-    dofs[1] = conn1[elemIdx];
-    dofs[2] = conn2[elemIdx];
-    dofs[3] = conn3[elemIdx];
+    for (int i = 0; i < 4; ++i) {
+        dofs[i] = nodeToDof[nodes[i]];
+        if (dofs[i] == static_cast<IndexType>(-1)) {
+            allOwned = false;
+            break;
+        }
+    }
+    
+    if (!allOwned) return;  // Skip elements with ghost nodes
 
     RealType elem_x[4], elem_y[4], elem_z[4];
     for (int i = 0; i < 4; ++i)
@@ -112,7 +129,8 @@ __global__ void assembleRHSKernel(const RealType* node_x,
                                   const IndexType* conn3,
                                   IndexType numElements,
                                   SourceFunc sourceTerm,
-                                  RealType* rhs)
+                                  RealType* rhs,
+                                  const IndexType* nodeToDof)
 {
     using RefElem = ReferenceElement<ElementTag, RealType>;
 
@@ -120,18 +138,31 @@ __global__ void assembleRHSKernel(const RealType* node_x,
     if (elemIdx >= numElements) return;
 
     // Get element nodes from tuple connectivity (already local IDs)
+    IndexType nodes[4];
+    nodes[0] = conn0[elemIdx];
+    nodes[1] = conn1[elemIdx];
+    nodes[2] = conn2[elemIdx];
+    nodes[3] = conn3[elemIdx];
+    
+    // Check if ALL nodes are owned and map to DOF indices
+    bool allOwned = true;
     IndexType dofs[4];
-    dofs[0] = conn0[elemIdx];
-    dofs[1] = conn1[elemIdx];
-    dofs[2] = conn2[elemIdx];
-    dofs[3] = conn3[elemIdx];
+    for (int i = 0; i < 4; ++i) {
+        dofs[i] = nodeToDof[nodes[i]];
+        if (dofs[i] == static_cast<IndexType>(-1)) {
+            allOwned = false;
+            break;
+        }
+    }
+    
+    if (!allOwned) return;  // Skip elements with ghost nodes
 
     RealType elem_x[4], elem_y[4], elem_z[4];
     for (int i = 0; i < 4; ++i)
     {
-        elem_x[i] = node_x[dofs[i]];
-        elem_y[i] = node_y[dofs[i]];
-        elem_z[i] = node_z[dofs[i]];
+        elem_x[i] = node_x[nodes[i]];
+        elem_y[i] = node_y[nodes[i]];
+        elem_z[i] = node_z[nodes[i]];
     }
 
     // Compute Jacobian
@@ -196,7 +227,7 @@ public:
     using Vector  = typename mars::VectorSelector<RealType, AcceleratorTag>::type;
     using Domain  = typename FESpace::Domain;
 
-    void assemble(FESpace& fes, Matrix& M)
+    void assemble(FESpace& fes, Matrix& M, const std::vector<KeyType>& nodeToDof)
     {
         auto& domain = fes.domain();
 
@@ -224,6 +255,9 @@ public:
         const auto& conn3      = std::get<3>(conn_tuple);
 
         size_t numElements = domain.localElementCount();
+        
+        // Use provided node-to-DOF mapping
+        cstone::DeviceVector<KeyType> d_nodeToDof = nodeToDof;
 
         // Launch kernel
         const int blockSize = 256;
@@ -231,14 +265,15 @@ public:
 
         assembleMassKernel<ElementTag, RealType, KeyType>
             <<<gridSize, blockSize>>>(d_x.data(), d_y.data(), d_z.data(), conn0.data(), conn1.data(), conn2.data(),
-                                      conn3.data(), numElements, M.rowOffsetsPtr(), M.colIndicesPtr(), M.valuesPtr());
+                                      conn3.data(), numElements, M.rowOffsetsPtr(), M.colIndicesPtr(), M.valuesPtr(),
+                                      d_nodeToDof.data());
 
         cudaDeviceSynchronize();
     }
 
     // Assemble RHS vector with source term
     template<typename SourceFunc>
-    void assembleRHS(FESpace& fes, Vector& b, SourceFunc f)
+    void assembleRHS(FESpace& fes, Vector& b, SourceFunc f, const std::vector<KeyType>& nodeToDof)
     {
         auto& domain = fes.domain();
 
@@ -259,6 +294,9 @@ public:
         const auto& conn3      = std::get<3>(conn_tuple);
 
         size_t numElements = domain.localElementCount();
+        
+        // Use provided node-to-DOF mapping
+        cstone::DeviceVector<KeyType> d_nodeToDof = nodeToDof;
 
         // Launch kernel
         const int blockSize = 256;
@@ -266,7 +304,7 @@ public:
 
         assembleRHSKernel<ElementTag, RealType, KeyType>
             <<<gridSize, blockSize>>>(d_x.data(), d_y.data(), d_z.data(), conn0.data(), conn1.data(), conn2.data(), conn3.data(),
-                                      numElements, f, thrust::raw_pointer_cast(b.data()));
+                                      numElements, f, thrust::raw_pointer_cast(b.data()), d_nodeToDof.data());
 
         cudaDeviceSynchronize();
     }

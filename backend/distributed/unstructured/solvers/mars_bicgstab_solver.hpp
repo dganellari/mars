@@ -1,6 +1,6 @@
 #pragma once
 
-#include "mars_sparse_matrix.hpp"
+#include "../fem/mars_sparse_matrix.hpp"
 #include <cusparse.h>
 #include <cublas_v2.h>
 #include <iostream>

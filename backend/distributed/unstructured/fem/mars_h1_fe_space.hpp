@@ -1,9 +1,11 @@
 #pragma once
 
 #include <set>
+#include <unordered_set>
 #include <vector>
 #include <map>
 #include <algorithm>
+#include <mpi.h>
 #include "mars.hpp"
 #include "mars_sparse_matrix.hpp"
 #include "domain.hpp"
@@ -29,23 +31,35 @@ public:
         : domain_(domain)
         , order_(order)
     {
-        // Count owned nodes (where ownership == 1)
+        // Count DOFs: ALL owned nodes 
+        // In distributed FEM, we need DOFs for all owned nodes, even interface nodes
         const auto& ownership = domain_.getNodeOwnershipMap();
         size_t numNodes = domain_.getNodeCount();
             
+        if (numNodes == 0) {
+            std::cerr << "H1FESpace: ERROR - Domain has 0 nodes" << std::endl;
+            numDofs_ = 0;
+            return;
+        }
+        
         thrust::host_vector<uint8_t> h_ownership(numNodes);
         thrust::copy(thrust::device_pointer_cast(ownership.data()),
                     thrust::device_pointer_cast(ownership.data() + numNodes),
                     h_ownership.begin());
-            
-        size_t ownedCount = 0;
+        
+        numDofs_ = 0;
         for (size_t i = 0; i < numNodes; ++i) {
             if (h_ownership[i] == 1) {
-                ownedCount++;
+                numDofs_++;
             }
         }
-            
-        numDofs_ = ownedCount;
+        
+        // Debug output
+        int rank;
+        MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+        if (rank == 0 || rank == 1) {
+            std::cout << "Rank " << rank << ": FE space counted " << numDofs_ << " owned nodes out of " << numNodes << " total" << std::endl;
+        }
     }
     
     // Get total number of degrees of freedom

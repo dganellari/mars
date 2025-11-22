@@ -274,10 +274,48 @@ inline auto readMFEMMeshWithElementPartitioning(const std::string& meshFile, int
         },
         rawConnectivity);
 
+    // STEP 5: Read boundary elements to collect boundary nodes
+    std::unordered_set<KeyType> boundaryNodes;
+    
+    // Go back to boundary section
+    file.clear();
+    file.seekg(0, std::ios::beg);
+    
+    while (std::getline(file, line)) {
+        if (line.find("boundary") != std::string::npos) {
+            size_t num_boundary;
+            file >> num_boundary;
+            std::getline(file, line);
+            
+            // Read all boundary elements and collect their nodes
+            for (size_t i = 0; i < num_boundary; i++) {
+                int attr, geom_type;
+                file >> attr >> geom_type;
+                
+                // Read boundary element nodes (triangles for 3D tets, edges for 2D tris)
+                if (dimension == 3) {
+                    // Triangular boundary elements
+                    KeyType n0, n1, n2;
+                    file >> n0 >> n1 >> n2;
+                    boundaryNodes.insert(n0);
+                    boundaryNodes.insert(n1);
+                    boundaryNodes.insert(n2);
+                } else if (dimension == 2) {
+                    // Edge boundary elements
+                    KeyType n0, n1;
+                    file >> n0 >> n1;
+                    boundaryNodes.insert(n0);
+                    boundaryNodes.insert(n1);
+                }
+            }
+            break;
+        }
+    }
+
     file.close();
 
     return std::make_tuple(nodeCount, elementCount, std::move(x_data), std::move(y_data), std::move(z_data),
-                           std::move(localConnectivity), std::move(uniqueNodes));
+                           std::move(localConnectivity), std::move(uniqueNodes), std::move(boundaryNodes));
 }
 
 /**
@@ -296,96 +334,96 @@ inline auto readMFEMMeshWithElementPartitioning(const std::string& meshFile, int
  * @param nodeCount Current node count (will be updated)
  * @param elementCount Current element count (will be updated)
  */
-template<int N, typename RealType, typename KeyType>
-inline void uniformRefineMFEMMesh(std::vector<RealType>& x_data,
-                                  std::vector<RealType>& y_data,
-                                  std::vector<RealType>& z_data,
-                                  auto& connectivity,
-                                  size_t& nodeCount,
-                                  size_t& elementCount)
-{
-    if constexpr (N != 4) {
-        throw std::runtime_error("Uniform refinement currently only supported for tetrahedra (N=4)");
-    }
+// template<int N, typename RealType, typename KeyType>
+// inline void uniformRefineMFEMMesh(std::vector<RealType>& x_data,
+//                                   std::vector<RealType>& y_data,
+//                                   std::vector<RealType>& z_data,
+//                                   auto& connectivity,
+//                                   size_t& nodeCount,
+//                                   size_t& elementCount)
+// {
+//     if constexpr (N != 4) {
+//         throw std::runtime_error("Uniform refinement currently only supported for tetrahedra (N=4)");
+//     }
 
-    size_t old_elem_count = elementCount;
-    size_t old_node_count = nodeCount;
+//     size_t old_elem_count = elementCount;
+//     size_t old_node_count = nodeCount;
 
-    // Extract old connectivity
-    auto& i0 = std::get<0>(connectivity);
-    auto& i1 = std::get<1>(connectivity);
-    auto& i2 = std::get<2>(connectivity);
-    auto& i3 = std::get<3>(connectivity);
+//     // Extract old connectivity
+//     auto& i0 = std::get<0>(connectivity);
+//     auto& i1 = std::get<1>(connectivity);
+//     auto& i2 = std::get<2>(connectivity);
+//     auto& i3 = std::get<3>(connectivity);
 
-    // Map to store edge midpoints: (min_node, max_node) -> new_node_id
-    std::map<std::pair<KeyType, KeyType>, KeyType> edge_to_midpoint;
-    KeyType next_node_id = old_node_count;
+//     // Map to store edge midpoints: (min_node, max_node) -> new_node_id
+//     std::map<std::pair<KeyType, KeyType>, KeyType> edge_to_midpoint;
+//     KeyType next_node_id = old_node_count;
 
-    // Helper to get or create edge midpoint
-    auto get_edge_midpoint = [&](KeyType n0, KeyType n1) -> KeyType {
-        KeyType min_n = std::min(n0, n1);
-        KeyType max_n = std::max(n0, n1);
-        auto edge = std::make_pair(min_n, max_n);
+//     // Helper to get or create edge midpoint
+//     auto get_edge_midpoint = [&](KeyType n0, KeyType n1) -> KeyType {
+//         KeyType min_n = std::min(n0, n1);
+//         KeyType max_n = std::max(n0, n1);
+//         auto edge = std::make_pair(min_n, max_n);
 
-        auto it = edge_to_midpoint.find(edge);
-        if (it != edge_to_midpoint.end()) {
-            return it->second;
-        }
+//         auto it = edge_to_midpoint.find(edge);
+//         if (it != edge_to_midpoint.end()) {
+//             return it->second;
+//         }
 
-        // Create new midpoint node
-        KeyType mid_id = next_node_id++;
-        edge_to_midpoint[edge] = mid_id;
+//         // Create new midpoint node
+//         KeyType mid_id = next_node_id++;
+//         edge_to_midpoint[edge] = mid_id;
 
-        // Add coordinates
-        x_data.push_back((x_data[n0] + x_data[n1]) / 2);
-        y_data.push_back((y_data[n0] + y_data[n1]) / 2);
-        z_data.push_back((z_data[n0] + z_data[n1]) / 2);
+//         // Add coordinates
+//         x_data.push_back((x_data[n0] + x_data[n1]) / 2);
+//         y_data.push_back((y_data[n0] + y_data[n1]) / 2);
+//         z_data.push_back((z_data[n0] + z_data[n1]) / 2);
 
-        return mid_id;
-    };
+//         return mid_id;
+//     };
 
-    // New connectivity storage (8 children per parent)
-    std::vector<KeyType> new_i0, new_i1, new_i2, new_i3;
-    new_i0.reserve(old_elem_count * 8);
-    new_i1.reserve(old_elem_count * 8);
-    new_i2.reserve(old_elem_count * 8);
-    new_i3.reserve(old_elem_count * 8);
+//     // New connectivity storage (8 children per parent)
+//     std::vector<KeyType> new_i0, new_i1, new_i2, new_i3;
+//     new_i0.reserve(old_elem_count * 8);
+//     new_i1.reserve(old_elem_count * 8);
+//     new_i2.reserve(old_elem_count * 8);
+//     new_i3.reserve(old_elem_count * 8);
 
-    // Refine each tetrahedron
-    for (size_t e = 0; e < old_elem_count; e++) {
-        KeyType v0 = i0[e], v1 = i1[e], v2 = i2[e], v3 = i3[e];
+//     // Refine each tetrahedron
+//     for (size_t e = 0; e < old_elem_count; e++) {
+//         KeyType v0 = i0[e], v1 = i1[e], v2 = i2[e], v3 = i3[e];
 
-        // Get edge midpoints (6 edges in a tet)
-        KeyType m01 = get_edge_midpoint(v0, v1);
-        KeyType m02 = get_edge_midpoint(v0, v2);
-        KeyType m03 = get_edge_midpoint(v0, v3);
-        KeyType m12 = get_edge_midpoint(v1, v2);
-        KeyType m13 = get_edge_midpoint(v1, v3);
-        KeyType m23 = get_edge_midpoint(v2, v3);
+//         // Get edge midpoints (6 edges in a tet)
+//         KeyType m01 = get_edge_midpoint(v0, v1);
+//         KeyType m02 = get_edge_midpoint(v0, v2);
+//         KeyType m03 = get_edge_midpoint(v0, v3);
+//         KeyType m12 = get_edge_midpoint(v1, v2);
+//         KeyType m13 = get_edge_midpoint(v1, v3);
+//         KeyType m23 = get_edge_midpoint(v2, v3);
 
-        // Create 8 child tetrahedra (4 corner + 4 octahedral)
-        // Corner tets at original vertices
-        new_i0.push_back(v0);  new_i1.push_back(m01); new_i2.push_back(m02); new_i3.push_back(m03);
-        new_i0.push_back(m01); new_i1.push_back(v1);  new_i2.push_back(m12); new_i3.push_back(m13);
-        new_i0.push_back(m02); new_i1.push_back(m12); new_i2.push_back(v2);  new_i3.push_back(m23);
-        new_i0.push_back(m03); new_i1.push_back(m13); new_i2.push_back(m23); new_i3.push_back(v3);
+//         // Create 8 child tetrahedra (4 corner + 4 octahedral)
+//         // Corner tets at original vertices
+//         new_i0.push_back(v0);  new_i1.push_back(m01); new_i2.push_back(m02); new_i3.push_back(m03);
+//         new_i0.push_back(m01); new_i1.push_back(v1);  new_i2.push_back(m12); new_i3.push_back(m13);
+//         new_i0.push_back(m02); new_i1.push_back(m12); new_i2.push_back(v2);  new_i3.push_back(m23);
+//         new_i0.push_back(m03); new_i1.push_back(m13); new_i2.push_back(m23); new_i3.push_back(v3);
 
-        // Octahedral split into 4 tets (interior)
-        new_i0.push_back(m01); new_i1.push_back(m02); new_i2.push_back(m03); new_i3.push_back(m12);
-        new_i0.push_back(m01); new_i1.push_back(m02); new_i2.push_back(m12); new_i3.push_back(m13);
-        new_i0.push_back(m02); new_i1.push_back(m03); new_i2.push_back(m12); new_i3.push_back(m23);
-        new_i0.push_back(m02); new_i1.push_back(m12); new_i2.push_back(m13); new_i3.push_back(m23);
-    }
+//         // Octahedral split into 4 tets (interior)
+//         new_i0.push_back(m01); new_i1.push_back(m02); new_i2.push_back(m03); new_i3.push_back(m12);
+//         new_i0.push_back(m01); new_i1.push_back(m02); new_i2.push_back(m12); new_i3.push_back(m13);
+//         new_i0.push_back(m02); new_i1.push_back(m03); new_i2.push_back(m12); new_i3.push_back(m23);
+//         new_i0.push_back(m02); new_i1.push_back(m12); new_i2.push_back(m13); new_i3.push_back(m23);
+//     }
 
-    // Update connectivity with refined mesh
-    i0 = std::move(new_i0);
-    i1 = std::move(new_i1);
-    i2 = std::move(new_i2);
-    i3 = std::move(new_i3);
+//     // Update connectivity with refined mesh
+//     i0 = std::move(new_i0);
+//     i1 = std::move(new_i1);
+//     i2 = std::move(new_i2);
+//     i3 = std::move(new_i3);
 
-    // Update counts
-    nodeCount = x_data.size();
-    elementCount = i0.size();
-}
+//     // Update counts
+//     nodeCount = x_data.size();
+//     elementCount = i0.size();
+// }
 
 } // namespace mars

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "mars_sparse_matrix.hpp"
+#include "../fem/mars_sparse_matrix.hpp"
 #include <cusparse.h>
 #include <cublas_v2.h>
 #include <iostream>
@@ -45,7 +45,7 @@ public:
         if (x.size() != n) {
             x.resize(n);
         }
-        thrust::fill(thrust::device_pointer_cast(x.data()), 
+        thrust::fill(thrust::device_pointer_cast(x.data()),
                     thrust::device_pointer_cast(x.data() + x.size()),
                     RealType(0));
 
@@ -107,14 +107,14 @@ public:
             }
 
             RealType beta = std::sqrt(dot(r, r));
-            
+
             if (verbose_ && totalIter % 10 == 0) {
                 std::cout << "GMRES iteration " << totalIter << ": residual = " << beta / b_norm << std::endl;
             }
 
             if (beta / b_norm < tolerance_) {
                 if (verbose_) {
-                    std::cout << "GMRES converged in " << totalIter 
+                    std::cout << "GMRES converged in " << totalIter
                              << " iterations, residual = " << beta / b_norm << std::endl;
                 }
                 return true;
@@ -217,7 +217,7 @@ public:
 
             if (std::abs(s[m]) / b_norm < tolerance_) {
                 if (verbose_) {
-                    std::cout << "GMRES converged in " << totalIter 
+                    std::cout << "GMRES converged in " << totalIter
                              << " iterations, residual = " << std::abs(s[m]) / b_norm << std::endl;
                 }
                 return true;
@@ -304,7 +304,7 @@ private:
     void axpy(RealType alpha, const Vector& x, const Vector& y, Vector& result)
     {
         if (result.data() != y.data()) {
-            thrust::copy(thrust::device_pointer_cast(y.data()), 
+            thrust::copy(thrust::device_pointer_cast(y.data()),
                         thrust::device_pointer_cast(y.data() + y.size()),
                         thrust::device_pointer_cast(result.data()));
         }

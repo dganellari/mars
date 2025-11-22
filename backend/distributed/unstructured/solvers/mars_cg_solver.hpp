@@ -1,10 +1,11 @@
 #pragma once
 
-#include "mars_sparse_matrix.hpp"
+#include "../fem/mars_sparse_matrix.hpp"
 #include <cusparse.h>
 #include <cublas_v2.h>
 #include <iostream>
 #include <cmath>
+#include <functional>
 
 namespace mars
 {
@@ -23,6 +24,7 @@ public:
         : maxIter_(maxIter)
         , tolerance_(tolerance)
         , verbose_(true)
+        , haloExchangeCallback_(nullptr)
     {
         // Initialize cuBLAS and cuSPARSE
         cublasCreate(&cublasHandle_);
@@ -36,11 +38,13 @@ public:
     }
 
     // Solve Ax = b for x with Jacobi preconditioning
+    // Handles rectangular matrices (rows=owned DOFs, cols=owned+ghost DOFs)
     bool solve(const Matrix& A, const Vector& b, Vector& x)
     {
-        size_t n = A.numRows();
+        size_t m = A.numRows();  // Number of owned DOFs (rows)
+        size_t n = A.numCols();  // Number of local DOFs including ghosts (columns)
 
-        // Extract diagonal for preconditioner
+        // Extract diagonal for preconditioner (only for owned DOFs)
         Vector diag = A.getDiagonal();
         
         // Check for zero or very small diagonal entries
@@ -59,10 +63,12 @@ public:
                     thrust::device_pointer_cast(diag.data()));
         
         // Allocate work vectors
-        Vector r(n);  // Residual
-        Vector z(n);  // Preconditioned residual
-        Vector p(n);  // Search direction
-        Vector Ap(n); // A * p
+        // r, z, Ap are size m (owned DOFs only)
+        // p, x are size n (owned + ghost DOFs for matrix compatibility)
+        Vector r(m);   // Residual
+        Vector z(m);   // Preconditioned residual
+        Vector p(n);   // Search direction (includes ghost DOF slots)
+        Vector Ap(m);  // A * p (result is owned DOFs only)
 
         // Initialize x to zero if not provided
         if (x.size() != n)
@@ -81,10 +87,11 @@ public:
         // z = M^{-1} r (Jacobi: z_i = r_i / A_ii)
         jacobiPrecondition(diag, r, z);
 
-        // p = z
+        // p = z (copy to owned portion of p, ghost portion remains zero initially)
         thrust::copy(thrust::device_pointer_cast(z.data()), 
                     thrust::device_pointer_cast(z.data() + z.size()),
-                     thrust::device_pointer_cast(p.data()));
+                    thrust::device_pointer_cast(p.data()));
+        // Ghost portion of p will be filled by halo exchange before first SpMV
 
         // rho = r^T z
         RealType rho  = dot(r, z);
@@ -108,13 +115,22 @@ public:
             rho0 = b_norm * b_norm;
         }
 
+        // Compute norms for MFEM-style output
+        RealType r_norm_0 = std::sqrt(dot(r, r));
+        RealType z_norm_0 = std::sqrt(dot(z, z));
+
         if (verbose_) { 
-            std::cout << "CG iteration 0: residual = " << std::sqrt(rho) << ", ||b|| = " << b_norm << std::endl; 
+            std::cout << "Iteration : 0,   ||r||_B = " << z_norm_0 << ",   ||r||_2 = " << r_norm_0 << std::endl; 
         }
 
         // PCG iterations
         for (int iter = 0; iter < maxIter_; ++iter)
         {
+            // Call halo exchange before SpMV if callback is set
+            if (haloExchangeCallback_) {
+                haloExchangeCallback_(p);
+            }
+            
             // Ap = A * p
             spmv(A, p, Ap);
 
@@ -142,21 +158,23 @@ public:
             // rho_new = r^T z
             RealType rho_new = dot(r, z);
 
-            // Compute true residual norm
+            // Compute norms for MFEM-style output
             RealType r_norm = std::sqrt(dot(r, r));
-            RealType residual = r_norm / b_norm;
+            RealType z_norm = std::sqrt(dot(z, z));
 
-            if (verbose_ && (iter % 10 == 0))
+            if (verbose_)
             {
-                std::cout << "CG iteration " << iter + 1 << ": residual = " << residual << std::endl;
+                std::cout << "Iteration : " << iter + 1 << ",   ||r||_B = " << z_norm << ",   ||r||_2 = " << r_norm << std::endl;
             }
 
             // Check convergence
-            if (residual < tolerance_)
+            if (r_norm / b_norm < tolerance_)
             {
                 if (verbose_)
                 {
-                    std::cout << "CG converged in " << iter + 1 << " iterations, residual = " << residual << std::endl;
+                    std::cout << "CG converged in " << iter + 1 << " iterations" << std::endl;
+                    RealType avg_reduction = std::pow(r_norm / r_norm_0, 1.0 / (iter + 1));
+                    std::cout << "Average reduction factor = " << avg_reduction << std::endl;
                 }
                 return true;
             }
@@ -164,8 +182,9 @@ public:
             // beta = rho_new / rho
             RealType beta = rho_new / rho;
 
-            // p = z + beta * p
-            axpby(1.0, z, beta, p, p);
+            // p = z + beta * p (only update owned portion, ghost updated by halo exchange)
+            // p[0:m] = z + beta * p[0:m]
+            axpbyPartial(1.0, z, beta, p, m);
 
             rho = rho_new;
         }
@@ -177,9 +196,13 @@ public:
     void setVerbose(bool verbose) { verbose_ = verbose; }
     void setMaxIterations(int maxIter) { maxIter_ = maxIter; }
     void setTolerance(RealType tol) { tolerance_ = tol; }
+    
+    // Set callback for halo exchange before SpMV (for distributed solves)
+    void setHaloExchangeCallback(std::function<void(Vector&)> callback) {
+        haloExchangeCallback_ = callback;
+    }
 
-private:
-    // Sparse matrix-vector product: y = A * x
+    // Sparse matrix-vector product: y = A * x (public for debugging)
     void spmv(const Matrix& A, const Vector& x, Vector& y)
     {
         const RealType alpha = 1.0;
@@ -237,6 +260,8 @@ private:
         cusparseDestroyDnVec(vecX);
         cusparseDestroyDnVec(vecY);
     }
+
+private:
 
     // Dot product: result = x^T y
     RealType dot(const Vector& x, const Vector& y)
@@ -302,6 +327,25 @@ private:
         }
     }
     
+    // Partial axpby: result[0:n] = alpha * x + beta * result[0:n]
+    // Used when x is size n but result is larger (has ghost DOFs)
+    void axpbyPartial(RealType alpha, const Vector& x, RealType beta, Vector& result, size_t n)
+    {
+        // Scale owned portion: result[0:n] *= beta
+        if constexpr (std::is_same_v<RealType, double>)
+        {
+            cublasDscal(cublasHandle_, n, &beta, thrust::raw_pointer_cast(result.data()), 1);
+            cublasDaxpy(cublasHandle_, n, &alpha, thrust::raw_pointer_cast(x.data()), 1,
+                       thrust::raw_pointer_cast(result.data()), 1);
+        }
+        else
+        {
+            cublasSscal(cublasHandle_, n, &beta, thrust::raw_pointer_cast(result.data()), 1);
+            cublasSaxpy(cublasHandle_, n, &alpha, thrust::raw_pointer_cast(x.data()), 1,
+                       thrust::raw_pointer_cast(result.data()), 1);
+        }
+    }
+    
     // Jacobi preconditioner: z = D^{-1} r
     void jacobiPrecondition(const Vector& diag, const Vector& r, Vector& z)
     {
@@ -315,6 +359,8 @@ private:
     int maxIter_;
     RealType tolerance_;
     bool verbose_;
+    
+    std::function<void(Vector&)> haloExchangeCallback_;
 
     cublasHandle_t cublasHandle_;
     cusparseHandle_t cusparseHandle_;

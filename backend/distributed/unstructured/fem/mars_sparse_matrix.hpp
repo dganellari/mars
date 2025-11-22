@@ -99,6 +99,91 @@ public:
         return diag;
     }
     
+    // Sort columns within each row (required for cuSPARSE)
+    void sortColumns() {
+        // Copy all data to host for sorting
+        std::vector<IndexType> h_rowOffsets(numRows_ + 1);
+        std::vector<IndexType> h_colIndices(nnz_);
+        std::vector<RealType> h_values(nnz_);
+        
+        // Copy from device to host
+        thrust::copy(thrust::device_pointer_cast(d_rowOffsets_.data()),
+                     thrust::device_pointer_cast(d_rowOffsets_.data() + numRows_ + 1),
+                     h_rowOffsets.begin());
+        thrust::copy(thrust::device_pointer_cast(d_colIndices_.data()),
+                     thrust::device_pointer_cast(d_colIndices_.data() + nnz_),
+                     h_colIndices.begin());
+        thrust::copy(thrust::device_pointer_cast(d_values_.data()),
+                     thrust::device_pointer_cast(d_values_.data() + nnz_),
+                     h_values.begin());
+        
+        // Sort columns within each row
+        for (IndexType row = 0; row < numRows_; ++row) {
+            IndexType rowStart = h_rowOffsets[row];
+            IndexType rowEnd = h_rowOffsets[row + 1];
+            IndexType rowSize = rowEnd - rowStart;
+            
+            if (rowSize <= 1) continue;  // Already sorted
+            
+            // Create indices for sorting
+            std::vector<size_t> indices(rowSize);
+            for (size_t i = 0; i < indices.size(); ++i) {
+                indices[i] = rowStart + i;
+            }
+            
+            // Sort indices based on column indices
+            std::sort(indices.begin(), indices.end(),
+                      [&](size_t a, size_t b) {
+                          return h_colIndices[a] < h_colIndices[b];
+                      });
+            
+            // Apply permutation to colIndices and values
+            std::vector<IndexType> sortedCols(rowSize);
+            std::vector<RealType> sortedVals(rowSize);
+            for (size_t i = 0; i < indices.size(); ++i) {
+                sortedCols[i] = h_colIndices[indices[i]];
+                sortedVals[i] = h_values[indices[i]];
+            }
+            
+            // Copy back to original arrays
+            std::copy(sortedCols.begin(), sortedCols.end(), h_colIndices.begin() + rowStart);
+            std::copy(sortedVals.begin(), sortedVals.end(), h_values.begin() + rowStart);
+        }
+        
+        // Copy sorted data back to device
+        thrust::copy(h_rowOffsets.begin(), h_rowOffsets.end(),
+                     thrust::device_pointer_cast(d_rowOffsets_.data()));
+        thrust::copy(h_colIndices.begin(), h_colIndices.end(),
+                     thrust::device_pointer_cast(d_colIndices_.data()));
+        thrust::copy(h_values.begin(), h_values.end(),
+                     thrust::device_pointer_cast(d_values_.data()));
+    }
+    
+    // Check if columns are sorted within each row
+    bool isSorted() const {
+        std::vector<IndexType> h_rowOffsets(numRows_ + 1);
+        std::vector<IndexType> h_colIndices(nnz_);
+        
+        thrust::copy(thrust::device_pointer_cast(d_rowOffsets_.data()),
+                    thrust::device_pointer_cast(d_rowOffsets_.data() + numRows_ + 1),
+                    h_rowOffsets.begin());
+        thrust::copy(thrust::device_pointer_cast(d_colIndices_.data()),
+                    thrust::device_pointer_cast(d_colIndices_.data() + nnz_),
+                    h_colIndices.begin());
+        
+        for (IndexType row = 0; row < numRows_; ++row) {
+            IndexType rowStart = h_rowOffsets[row];
+            IndexType rowEnd = h_rowOffsets[row + 1];
+            
+            for (IndexType i = rowStart + 1; i < rowEnd; ++i) {
+                if (h_colIndices[i] < h_colIndices[i - 1]) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+    
 private:
     IndexType numRows_;
     IndexType numCols_;

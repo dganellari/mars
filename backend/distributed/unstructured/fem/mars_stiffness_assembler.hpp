@@ -7,6 +7,7 @@
 #include <thrust/copy.h>
 #include <thrust/host_vector.h>
 #include <vector>
+#include <unordered_set>
 #include <algorithm>
 
 namespace mars {
@@ -73,10 +74,11 @@ __global__ void assembleStiffnessKernel(
     const IndexType* conn2,  // Connectivity node 2
     const IndexType* conn3,  // Connectivity node 3
     IndexType numElements,
-    const IndexType* rowOffsets,   // CSR row pointers
-    const IndexType* colIndices,   // CSR column indices
-    RealType* values,              // CSR values (output)
-    const IndexType* nodeToDof     // Node-to-DOF mapping (-1 for ghosts)
+    const IndexType* rowOffsets,      // CSR row pointers (local DOF indexing)
+    const IndexType* colIndices,      // CSR column indices (local DOF indexing with ghosts)
+    RealType* values,                 // CSR values (output)
+    const IndexType* nodeToLocalDof,  // Node to local DOF mapping (includes ghosts)
+    const uint8_t* nodeOwnership      // Node ownership (1 = owned, 0 = ghost)
 )
 {
     using RefElem = ReferenceElement<ElementTag, RealType>;
@@ -84,31 +86,34 @@ __global__ void assembleStiffnessKernel(
     IndexType elemIdx = blockIdx.x * blockDim.x + threadIdx.x;
     if (elemIdx >= numElements) return;
 
-    // Get element nodes from tuple connectivity (already local IDs)
-    IndexType dofs[4];
-    dofs[0] = conn0[elemIdx];
-    dofs[1] = conn1[elemIdx];
-    dofs[2] = conn2[elemIdx];
-    dofs[3] = conn3[elemIdx];
+    // Get element nodes from tuple connectivity (local node indices)
+    IndexType nodes[4];
+    nodes[0] = conn0[elemIdx];
+    nodes[1] = conn1[elemIdx];
+    nodes[2] = conn2[elemIdx];
+    nodes[3] = conn3[elemIdx];
 
-    // Check if ALL nodes are owned (no ghosts) and map to DOF indices
-    bool allOwned = true;
-    IndexType ownedDofs[4];
+    // Check if element has at least one owned node
+    bool hasOwnedNode = false;
     for (int i = 0; i < 4; ++i) {
-        ownedDofs[i] = nodeToDof[dofs[i]];
-        if (ownedDofs[i] == static_cast<IndexType>(-1)) {
-            allOwned = false;
+        if (nodeOwnership[nodes[i]] == 1) {
+            hasOwnedNode = true;
             break;
         }
     }
+    if (!hasOwnedNode) return;  // Skip elements with no owned nodes
     
-    if (!allOwned) return;  // Skip elements with ghost nodes
+    // Map nodes to local DOF indices (includes both owned and ghost DOFs)
+    IndexType localDofs[4];
+    for (int i = 0; i < 4; ++i) {
+        localDofs[i] = nodeToLocalDof[nodes[i]];
+    }
 
     RealType elem_x[4], elem_y[4], elem_z[4];
     for (int i = 0; i < 4; ++i) {
-        elem_x[i] = node_x[dofs[i]];
-        elem_y[i] = node_y[dofs[i]];
-        elem_z[i] = node_z[dofs[i]];
+        elem_x[i] = node_x[nodes[i]];
+        elem_y[i] = node_y[nodes[i]];
+        elem_z[i] = node_z[nodes[i]];
     }    // Compute Jacobian (constant for tetrahedra)
     RealType J[3][3];
     RefElem::computeJacobian(elem_x, elem_y, elem_z, J);
@@ -174,22 +179,40 @@ __global__ void assembleStiffnessKernel(
     }
     
     // Assemble into global matrix (atomic operations)
+    // Rows: only owned nodes; Columns: owned or ghost nodes (local indices)
     for (int i = 0; i < RefElem::numNodes; ++i) {
-        IndexType globalRow = ownedDofs[i];
-        IndexType rowStart = rowOffsets[globalRow];
-        IndexType rowEnd = rowOffsets[globalRow + 1];
+        // Skip if this node is not owned
+        if (nodeOwnership[nodes[i]] != 1) continue;
+        
+        IndexType localRow = localDofs[i];     // Local row index (owned DOF)
+        IndexType rowStart = rowOffsets[localRow];
+        IndexType rowEnd = rowOffsets[localRow + 1];
         
         for (int j = 0; j < RefElem::numNodes; ++j) {
-            IndexType globalCol = ownedDofs[j];
+            // Column uses local index (can reference owned or ghost DOF)
+            IndexType localCol = localDofs[j];
             
             // Find column index and add atomically
             atomicAddSparseEntry(values, colIndices, rowStart, rowEnd, 
-                               globalCol, localK[i][j]);
+                               localCol, localK[i][j]);
         }
     }
 }
 
 // Stiffness matrix assembler class
+// 
+// Production-ready distributed implementation with LOCAL-LOCAL indexing:
+//   - Rows: LOCAL DOF indices (0 to numLocalDofs-1) - owned DOFs only
+//   - Columns: LOCAL DOF indices (0 to numLocalDofs+numGhostDofs-1) - includes ghosts
+//
+// Matrix structure for multi-rank:
+//   - Square matrix: (numLocalDofs) x (numLocalDofs + numGhostDofs)
+//   - SpMV compatible: all column indices are in local storage range
+//   - Requires halo exchange after SpMV to communicate ghost updates
+//
+// Single-rank optimization:
+//   - When numRanks==1, no ghosts exist, reduces to standard local assembly
+//
 template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
 class StiffnessAssembler {
 public:
@@ -197,12 +220,12 @@ public:
     using Matrix = SparseMatrix<KeyType, RealType, AcceleratorTag>;
     using Domain = typename FESpace::Domain;
     
-    void assemble(FESpace& fes, Matrix& K) {
+    void assemble(FESpace& fes, Matrix& K, const std::vector<KeyType>& nodeToLocalDof) {
         auto& domain = fes.domain();
         
         // Build sparsity pattern if not already done
         if (K.nnz() == 0) {
-            buildSparsityPattern(fes, K);
+            buildSparsityPattern(fes, K, nodeToLocalDof);
         }
         
         // Zero matrix values
@@ -222,22 +245,11 @@ public:
         size_t numElements = domain.localElementCount();
         int nodesPerElem = FESpace::dofsPerElement();
         
-        // Build node-to-DOF mapping
+        // Use provided node-to-DOF mapping
+        cstone::DeviceVector<KeyType> d_nodeToLocalDof = nodeToLocalDof;
+        
+        // Get ownership map
         const auto& ownership = domain.getNodeOwnershipMap();
-        thrust::host_vector<uint8_t> h_ownership(domain.getNodeCount());
-        thrust::copy(thrust::device_pointer_cast(ownership.data()),
-                     thrust::device_pointer_cast(ownership.data() + domain.getNodeCount()),
-                     h_ownership.begin());
-        
-        std::vector<KeyType> nodeToDof(domain.getNodeCount(), static_cast<KeyType>(-1));
-        KeyType dofIdx = 0;
-        for (size_t nodeIdx = 0; nodeIdx < domain.getNodeCount(); ++nodeIdx) {
-            if (h_ownership[nodeIdx] == 1) {
-                nodeToDof[nodeIdx] = dofIdx++;
-            }
-        }
-        
-        cstone::DeviceVector<KeyType> d_nodeToDof = nodeToDof;
         
         // Launch assembly kernel
         const int blockSize = 256;
@@ -256,7 +268,8 @@ public:
                 K.rowOffsetsPtr(),
                 K.colIndicesPtr(),
                 K.valuesPtr(),
-                d_nodeToDof.data()
+                d_nodeToLocalDof.data(),
+                ownership.data()
             );
         
         cudaDeviceSynchronize();
@@ -332,18 +345,26 @@ public:
     }
     
 private:
-    void buildSparsityPattern(FESpace& fes, Matrix& K);
+    void buildSparsityPattern(FESpace& fes, Matrix& K, const std::vector<KeyType>& nodeToLocalDof);
 };
 
 // Build sparsity pattern for finite element matrix
 template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
 void StiffnessAssembler<ElementTag, RealType, KeyType, AcceleratorTag>::buildSparsityPattern(
-    FESpace& fes, Matrix& K) 
+    FESpace& fes, Matrix& K, const std::vector<KeyType>& nodeToLocalDof) 
 {
     auto& domain = fes.domain();
     
     size_t numDofs = fes.numDofs();
     size_t numElements = domain.localElementCount();
+    size_t numNodes = domain.getNodeCount();
+    
+    // Validate input sizes
+    if (nodeToLocalDof.size() != numNodes) {
+        std::cerr << "Error: nodeToLocalDof.size() " << nodeToLocalDof.size() 
+                  << " != numNodes " << numNodes << std::endl;
+        return;
+    }
     
     // Get connectivity
     const auto& conn_tuple = domain.getElementToNodeConnectivity();
@@ -371,50 +392,78 @@ void StiffnessAssembler<ElementTag, RealType, KeyType, AcceleratorTag>::buildSpa
                  thrust::device_pointer_cast(conn3.data() + conn3.size()),
                  h_conn3.begin());
     
-    // Get ownership map to filter owned DOFs
-    size_t numNodes = domain.getNodeCount();
+    // Get ownership map to check which elements are fully owned
     const auto& ownership = domain.getNodeOwnershipMap();
     thrust::host_vector<uint8_t> h_ownership(numNodes);
     thrust::copy(thrust::device_pointer_cast(ownership.data()),
                  thrust::device_pointer_cast(ownership.data() + numNodes),
                  h_ownership.begin());
     
-    // Build node-to-DOF mapping (owned nodes only)
-    std::vector<KeyType> nodeToLocalDof(numNodes, static_cast<KeyType>(-1));
-    KeyType dofIdx = 0;
-    for (size_t i = 0; i < numNodes; ++i) {
-        if (h_ownership[i] == 1) {
-            nodeToLocalDof[i] = dofIdx++;
+    // Build sparsity pattern:
+    // - Rows: LOCAL owned DOF indices (0 to numDofs-1)
+    // - Columns: LOCAL DOF indices including ghosts (0 to numDofs+numGhostDofs-1)
+    //
+    // Count total local DOFs (owned + ghost)
+    KeyType maxLocalDof = 0;
+    for (size_t i = 0; i < nodeToLocalDof.size(); ++i) {
+        if (nodeToLocalDof[i] > maxLocalDof) {
+            maxLocalDof = nodeToLocalDof[i];
         }
     }
+    size_t numLocalDofsWithGhosts = maxLocalDof + 1;  // Total local storage
     
-    // Build sparsity pattern by collecting all DOF pairs that appear in elements
-    std::vector<std::vector<KeyType>> rowCols(numDofs);
+    std::vector<std::vector<KeyType>> rowCols(numDofs);  // Only rows for owned DOFs
     
-    // For each element, add all DOF pairs (skip elements with ghost nodes)
+    // For each element, add all DOF pairs
+    // Only rows corresponding to owned nodes, columns can be owned or ghost
     for (size_t elem = 0; elem < numElements; ++elem) {
         KeyType nodes[4] = {h_conn0[elem], h_conn1[elem], h_conn2[elem], h_conn3[elem]};
         
-        // Check if element has any ghost nodes
-        bool hasGhost = false;
+        // Validate node indices
+        bool invalidNodes = false;
         for (int i = 0; i < 4; ++i) {
-            if (h_ownership[nodes[i]] != 1) {
-                hasGhost = true;
+            if (nodes[i] >= numNodes) {
+                invalidNodes = true;
                 break;
             }
         }
-        if (hasGhost) continue;
+        if (invalidNodes) continue;
         
-        // Get local DOF indices for this element
-        KeyType localDofs[4];
+        // Check if element has any owned nodes
+        bool hasOwnedNode = false;
         for (int i = 0; i < 4; ++i) {
+            if (h_ownership[nodes[i]] == 1) {
+                hasOwnedNode = true;
+                break;
+            }
+        }
+        if (!hasOwnedNode) continue;
+        
+        // Get local DOF indices for this element (includes ghosts)
+        KeyType localDofs[4];
+        bool invalidDofs = false;
+        
+        for (int i = 0; i < 4; ++i) {
+            if (nodes[i] >= nodeToLocalDof.size()) {
+                invalidDofs = true;
+                break;
+            }
             localDofs[i] = nodeToLocalDof[nodes[i]];
         }
+        if (invalidDofs) continue;
         
-        // Add all pairs within this element
+        // Add all pairs: for each owned node (row), add coupling to all nodes (columns)
         for (int i = 0; i < 4; ++i) {
+            // Only add rows for owned nodes
+            if (h_ownership[nodes[i]] != 1) continue;
+            
+            KeyType localRow = localDofs[i];
+            if (localRow >= numDofs) continue;  // Safety check
+            
             for (int j = 0; j < 4; ++j) {
-                rowCols[localDofs[i]].push_back(localDofs[j]);
+                // Column can be owned or ghost - use local index
+                KeyType localCol = localDofs[j];
+                rowCols[localRow].push_back(localCol);
             }
         }
     }
@@ -429,8 +478,9 @@ void StiffnessAssembler<ElementTag, RealType, KeyType, AcceleratorTag>::buildSpa
         totalNnz += row.size();
     }
     
-    // Allocate matrix
-    K.allocate(numDofs, numDofs, totalNnz);
+    // Allocate matrix (rectangular: rows=owned DOFs, cols=owned+ghost DOFs)
+    // Ghost DOF values will be updated via halo exchange before each SpMV
+    K.allocate(numDofs, numLocalDofsWithGhosts, totalNnz);
     
     // Build CSR format
     auto rowOffsets = K.rowOffsetsPtr();

@@ -102,6 +102,10 @@ int main(int argc, char* argv[]) {
         using Domain = ElementDomain<TetTag, float, uint64_t, cstone::GpuTag>;
         Domain domain(meshPath, rank, numRanks);
         
+        // Force domain initialization before creating FE space
+        domain.getNodeOwnershipMap();  // Trigger lazy initialization
+        domain.getHaloElementIndices();  // Ensure halo structures are built
+        
         auto t_mesh_end = std::chrono::high_resolution_clock::now();
         double t_mesh = std::chrono::duration<double>(t_mesh_end - t_mesh_start).count();
         
@@ -132,9 +136,28 @@ int main(int argc, char* argv[]) {
         }
         
         // =====================================================
+        // 2.5. Initialize distributed DOF handler
+        // =====================================================
+        if (rank == 0) std::cout << "2.5. Initializing distributed DOF handler...\n";
+        
+        mars::fem::TetUnstructuredDofHandler<float, uint64_t> dof_handler(domain, rank, numRanks);
+        dof_handler.enumerate_dofs();
+        
+        // Get node-to-DOF mappings from DOF handler
+        const auto& nodeToLocalDof = dof_handler.get_node_to_local_dof();
+        const auto& nodeToGlobalDof = dof_handler.get_node_to_global_dof();
+        
+        // Get node ownership for boundary condition application
+        const auto& nodeOwnership = domain.getNodeOwnershipMap();
+        std::vector<uint8_t> h_ownership(domain.getNodeCount());
+        thrust::copy(thrust::device_pointer_cast(nodeOwnership.data()),
+                    thrust::device_pointer_cast(nodeOwnership.data() + nodeOwnership.size()),
+                    h_ownership.begin());
+        
+        // =====================================================
         // 3. Check mesh quality
         // =====================================================
-        if (rank == 0) std::cout << "3. Checking mesh quality...\n";
+        if (rank == 0) std::cout << "\n3. Checking mesh quality...\n";
         TetStiffnessAssembler<float, uint64_t> stiffnessAssembler;
         if (rank == 0) {
             stiffnessAssembler.checkMeshQuality(fes);
@@ -148,7 +171,7 @@ int main(int argc, char* argv[]) {
         auto t_stiff_start = std::chrono::high_resolution_clock::now();
         
         TetSparseMatrix<float, uint64_t> K;
-        stiffnessAssembler.assemble(fes, K);
+        stiffnessAssembler.assemble(fes, K, nodeToLocalDof);
         
         auto t_stiff_end = std::chrono::high_resolution_clock::now();
         double t_stiff = std::chrono::duration<double>(t_stiff_end - t_stiff_start).count();
@@ -169,7 +192,7 @@ int main(int argc, char* argv[]) {
         cstone::DeviceVector<float> b;
         
         SourceTerm f;
-        massAssembler.assembleRHS(fes, b, f);
+        massAssembler.assembleRHS(fes, b, f, nodeToLocalDof);
         
         auto t_rhs_end = std::chrono::high_resolution_clock::now();
         double t_rhs = std::chrono::duration<double>(t_rhs_end - t_rhs_start).count();
@@ -196,10 +219,15 @@ int main(int argc, char* argv[]) {
         if (rank == 0) std::cout << "6. Applying boundary conditions...\n";
         auto t_bc_start = std::chrono::high_resolution_clock::now();
         
+        // Get DOF counts
+        size_t numOwnedDofs = dof_handler.get_num_local_dofs();
+        size_t totalLocalDofs = dof_handler.get_num_local_dofs_with_ghosts();
+        
         // Use geometric boundary detection for beam-tet mesh
         // Mesh domain: [0, 8] x [0, 1] x [0, 1]
-        std::vector<bool> isBoundaryDOF(fes.numDofs(), false);
-        std::vector<float> boundaryValues(fes.numDofs(), 0.0f);
+        // Note: Size to totalLocalDofs to handle ghost DOF column indices in matrix
+        std::vector<bool> isBoundaryDOF(totalLocalDofs, false);
+        std::vector<float> boundaryValues(totalLocalDofs, 0.0f);
         
         // Get node coordinates from domain (coordinate cache is initialized lazily)
         auto& domain_ref = fes.domain();
@@ -222,13 +250,23 @@ int main(int argc, char* argv[]) {
                     thrust::device_pointer_cast(d_z.data() + d_z.size()),
                     h_z.begin());
         
-        // Mark boundary DOFs geometrically (same as MFEM's ess_tdof_list)
+        // Mark boundary DOFs geometrically (using DOF handler)
         size_t numBoundary = 0;
         const float tol = 1e-6f;
-        for (size_t i = 0; i < fes.numDofs(); ++i) {
-            float x = h_x[i];
-            float y = h_y[i];
-            float z = h_z[i];
+        for (size_t nodeIdx = 0; nodeIdx < domain_ref.getNodeCount(); ++nodeIdx) {
+            // Skip ghost nodes - only owned nodes should apply BCs
+            if (h_ownership[nodeIdx] != 1) continue;
+            
+            size_t dof = nodeToLocalDof[nodeIdx];
+            if (dof >= numOwnedDofs) {
+                std::cerr << "Rank " << rank << ": Error - owned node " << nodeIdx 
+                          << " has local DOF " << dof << " >= numOwnedDofs " << numOwnedDofs << "\n";
+                continue;
+            }
+            
+            float x = h_x[nodeIdx];
+            float y = h_y[nodeIdx];
+            float z = h_z[nodeIdx];
             
             // Check if on any face of [0,8] x [0,1] x [0,1] domain
             bool onBoundary = (std::abs(x - 0.0f) < tol) || (std::abs(x - 8.0f) < tol) ||
@@ -236,16 +274,20 @@ int main(int argc, char* argv[]) {
                              (std::abs(z - 0.0f) < tol) || (std::abs(z - 1.0f) < tol);
             
             if (onBoundary) {
-                isBoundaryDOF[i] = true;
-                boundaryValues[i] = 0.0f;  // u = 0 on boundary
+                isBoundaryDOF[dof] = true;
+                boundaryValues[dof] = 0.0f;  // u = 0 on boundary
                 numBoundary++;
             }
         }
         
+        // DO NOT mark ghost DOFs as boundary - they represent coupling to neighbor ranks
+        // Ghost DOFs will be updated via halo exchange during solve
+        
         if (rank == 0) {
-            std::cout << "   Total DOFs: " << fes.numDofs() << "\n";
+            std::cout << "   Owned DOFs: " << numOwnedDofs << "\n";
+            std::cout << "   Ghost DOFs: " << (totalLocalDofs - numOwnedDofs) << "\n";
             std::cout << "   Boundary DOFs (geometric): " << numBoundary << "\n";
-            std::cout << "   Interior DOFs: " << (fes.numDofs() - numBoundary) << "\n";
+            std::cout << "   Interior DOFs: " << (numOwnedDofs - numBoundary) << "\n";
         }
         
         // Form linear system with BCs (like MFEM's FormLinearSystem)
@@ -322,7 +364,7 @@ int main(int argc, char* argv[]) {
         auto t_solve_start = std::chrono::high_resolution_clock::now();
         
         // Use GMRES with larger restart and more iterations
-        TetGMRESSolver<float, uint64_t> solver(5000, 1e-4f, 100);
+        TetGMRESSolver<float, uint64_t> solver(maxIter, tolerance, 100);
         solver.setVerbose(rank == 0);
         
         // Solve interior system (without preconditioner first)
@@ -343,7 +385,7 @@ int main(int argc, char* argv[]) {
         if (rank == 0) std::cout << "8. Reconstructing full solution...\n";
         
         cstone::DeviceVector<float> u;
-        eliminator.reconstructFullSolution(u_int, isBoundaryDOF, boundaryValues, u);
+        eliminator.reconstructFullSolution(u_int, numOwnedDofs, isBoundaryDOF, boundaryValues, u);
         
         if (rank == 0) std::cout << "   Full solution reconstructed\n\n";
         
