@@ -17,6 +17,10 @@
 #include "backend/distributed/unstructured/fem/mars_fem.hpp"
 #include "backend/distributed/unstructured/fem/mars_unstructured_dof_handler.hpp"
 #include "backend/distributed/unstructured/fem/mars_unstructured_dm.hpp"
+#include "backend/distributed/unstructured/solvers/mars_cg_solver_with_preconditioner.hpp"
+#ifdef MARS_ENABLE_HYPRE
+#include "backend/distributed/unstructured/solvers/mars_hypre_pcg_solver.hpp"
+#endif
 #include "mars_mfem_mesh_loader.hpp"
 #include <thrust/copy.h>
 #include <algorithm>
@@ -436,125 +440,114 @@ int main(int argc, char** argv) {
     
     // Apply boundary conditions using TOPOLOGICAL detection (matching MFEM ex1)
     // =====================================================
-    if (rank == 0) std::cout << "\n4. Applying boundary conditions using topological detection (matching MFEM)...\n";
+    if (rank == 0) std::cout << "\n4. Applying boundary conditions using full-system modification...\n";
     auto t_bc_start = std::chrono::high_resolution_clock::now();
 
-    // boundaryDofs contains LOCAL owned DOF indices (0 to numOwnedDofs-1)
-    // This gives ALL DOFs on external boundaries, matching MFEM ex1
-
-    // Get sizes for proper memory allocation
+    // For full-system approach: modify matrix and RHS directly
+    // K[i,i] = 1, K[i,j] = 0 for j != i, rhs[i] = 0 for boundary DOFs i
+    
+    // Get the full matrix before elimination
+    TetSparseMatrix<float, unsigned> K_full = K;  // Copy the full matrix
+    
+    // Modify matrix and RHS for boundary conditions
+    // boundaryDofs contains LOCAL owned DOF indices
     size_t numOwnedDofs = dof_handler.get_num_local_dofs();
-    size_t totalLocalDofs = dof_handler.get_num_local_dofs_with_ghosts();
-
-    // Debug: Check if boundary DOFs are within valid range
-    if (rank == 0) {
-        bool validRange = true;
-        for (auto dof : boundaryDofs) {
-            if (dof >= numOwnedDofs) {
-                std::cout << "ERROR: Boundary DOF " << dof << " >= numOwnedDofs " << numOwnedDofs << std::endl;
-                validRange = false;
+    
+    // Get matrix data
+    std::vector<unsigned> h_rowOffsets(K_full.numRows() + 1);
+    std::vector<unsigned> h_colIndices(K_full.nnz());
+    std::vector<float> h_values(K_full.nnz());
+    
+    thrust::copy(thrust::device_pointer_cast(K_full.rowOffsetsPtr()),
+                thrust::device_pointer_cast(K_full.rowOffsetsPtr() + K_full.numRows() + 1),
+                h_rowOffsets.begin());
+    thrust::copy(thrust::device_pointer_cast(K_full.colIndicesPtr()),
+                thrust::device_pointer_cast(K_full.colIndicesPtr() + K_full.nnz()),
+                h_colIndices.begin());
+    thrust::copy(thrust::device_pointer_cast(K_full.valuesPtr()),
+                thrust::device_pointer_cast(K_full.valuesPtr() + K_full.nnz()),
+                h_values.begin());
+    
+    // Get RHS data
+    std::vector<float> h_rhs_full(numOwnedDofs);
+    dm.copy_to_host<1>(h_rhs_full);
+    
+    // Modify for boundary conditions
+    for (auto localDof : boundaryDofs) {
+        if (localDof < numOwnedDofs) {
+            // Find the diagonal entry and set it to 1
+            for (unsigned idx = h_rowOffsets[localDof]; idx < h_rowOffsets[localDof+1]; ++idx) {
+                if (h_colIndices[idx] == localDof) {
+                    h_values[idx] = 1.0f;  // K[i,i] = 1
+                } else {
+                    h_values[idx] = 0.0f;  // K[i,j] = 0 for j != i
+                }
             }
-        }
-        if (!validRange) {
-            std::cout << "ERROR: Invalid boundary DOF indices detected!" << std::endl;
-        }
-    }
-
-    // Apply Dirichlet BCs directly to data manager (owned DOFs only)
-    // Copy to host, set boundary values, copy back
-    std::vector<float> h_sol(numOwnedDofs);
-    std::vector<float> h_rhs(numOwnedDofs);
-    
-    dm.copy_to_host<0>(h_sol);
-    dm.copy_to_host<1>(h_rhs);
-    
-    // Set boundary values to 0
-    for (auto localDof : boundaryDofs) {
-        if (localDof < numOwnedDofs) {
-            h_sol[localDof] = 0.0f;
-            h_rhs[localDof] = 0.0f;
+            h_rhs_full[localDof] = 0.0f;  // rhs[i] = 0
         }
     }
     
-    dm.copy_from_host<0>(h_sol);
-    dm.copy_from_host<1>(h_rhs);
+    // Copy modified matrix back to device
+    thrust::copy(h_values.begin(), h_values.end(),
+                thrust::device_pointer_cast(K_full.valuesPtr()));
     
-    // Get references to device data for elimination
-    auto& sol = dm.get_data<0>();  // Size: numOwnedDofs
-    auto& rhs = dm.get_data<1>();  // Size: numOwnedDofs    // Prepare boundary DOF markers for elimination (size: total local DOFs including ghosts)
-    std::vector<bool> isBoundaryDOF(totalLocalDofs, false);
-    std::vector<float> boundaryValues(totalLocalDofs, 0.0f);
-
-    // Mark boundary DOFs (only owned ones, ghosts are not boundaries)
-    for (auto localDof : boundaryDofs) {
-        if (localDof < numOwnedDofs) {
-            isBoundaryDOF[localDof] = true;
-            boundaryValues[localDof] = 0.0f;
-        }
-    }
-
-    // Eliminate boundary DOFs from the system
-    fem::DOFElimination<float, unsigned, cstone::GpuTag> eliminator;
-    fem::SparseMatrix<unsigned, float, cstone::GpuTag> K_int;
-    cstone::DeviceVector<float> b_int;
-
-    // Use RHS data directly from data manager (boundary conditions already applied)
-    eliminator.buildInteriorSystem(K, rhs, isBoundaryDOF, boundaryValues, K_int, b_int);
-    
-    // Sort matrix columns within each row (required for cuSPARSE)
-    if (rank == 0) std::cout << "   Sorting matrix columns for cuSPARSE compatibility...\n";
-    K_int.sortColumns();
+    // Copy modified RHS back
+    dm.copy_from_host<1>(h_rhs_full);
     
     auto t_bc_end = std::chrono::high_resolution_clock::now();
     double t_bc = std::chrono::duration<double>(t_bc_end - t_bc_start).count();
     
     if (rank == 0) {
-        std::cout << "   Eliminating BCs: " << numOwnedDofs << " DOFs -> " << K_int.numRows() << " interior DOFs\n";
-        std::cout << "   Boundary value range: [0, 0]\n";
-        std::cout << "   Interior matrix: " << K_int.numRows() << " x " << K_int.numCols() << ", nnz = " << K_int.nnz() << "\n";
-        std::cout << "   DOF elimination completed in " << t_bc << " seconds\n";
+        std::cout << "   Full-system BC modification completed in " << t_bc << " seconds\n";
         std::cout << "   Boundary DOFs: " << boundaryDofs.size() << "\n";
     }
     
     // =====================================================
-    // 5. Solve linear system (PCG with Gauss-Seidel preconditioner - matching MFEM ex1)
+    // 5. Solve linear system (PCG with preconditioner)
     // =====================================================
-    if (rank == 0) std::cout << "\n5. Solving linear system (PCG + Jacobi)...\n";
+    if (rank == 0) std::cout << "\n5. Solving linear system (PCG with preconditioner)...\n";
     
     // Validate matrix dimensions before solving
-    if (K_int.numRows() != K_int.numCols()) {
-        std::cerr << "Rank " << rank << ": ERROR - Interior matrix not square: "
-                  << K_int.numRows() << " x " << K_int.numCols() << std::endl;
+    if (K_full.numRows() != K_full.numCols()) {
+        std::cerr << "Rank " << rank << ": ERROR - Matrix not square: "
+                  << K_full.numRows() << " x " << K_full.numCols() << std::endl;
         MPI_Abort(MPI_COMM_WORLD, 1);
     }
-    if (K_int.numRows() != b_int.size()) {
+    if (K_full.numRows() != numOwnedDofs) {
         std::cerr << "Rank " << rank << ": ERROR - Matrix/RHS size mismatch: "
-                  << K_int.numRows() << " vs " << b_int.size() << std::endl;
+                  << K_full.numRows() << " vs " << numOwnedDofs << std::endl;
         MPI_Abort(MPI_COMM_WORLD, 1);
     }
     
     if (rank == 0 || rank == 1) {
-        std::cout << "Rank " << rank << ": Interior system size: " << K_int.numRows() 
-                  << " x " << K_int.numCols() << ", nnz=" << K_int.nnz() << std::endl;
+        std::cout << "Rank " << rank << ": Full system size: " << K_full.numRows() 
+                  << " x " << K_full.numCols() << ", nnz=" << K_full.nnz() << std::endl;
     }
     
     // Check if matrix is sorted
     if (rank == 0) {
-        std::cout << "Matrix columns sorted: " << (K_int.isSorted() ? "YES" : "NO") << std::endl;
+        std::cout << "Matrix columns sorted: " << (K_full.isSorted() ? "YES" : "NO") << std::endl;
     }
     
     auto t_solve_start = std::chrono::high_resolution_clock::now();
     
-    cstone::DeviceVector<float> u_int(K_int.numRows(), 0.0f);  // Interior solution vector
+    // Solution vector (full system)
+    auto& u_full = dm.get_data<0>();  // Solution vector from data manager (size: owned DOFs)
+    auto& rhs_full = dm.get_data<1>();  // RHS vector (size: owned DOFs)
     
-    // CG solver with tolerance and max iterations matching MFEM ex1.cpp
-    ConjugateGradientSolver<float, unsigned, cstone::GpuTag> cg(400, 1e-6f);
-    cg.setVerbose(rank == 0);  // Only rank 0 prints
-    
-    // Note: No halo exchange needed for interior system (boundary DOFs eliminated)
-    // The interior system only operates on owned DOFs
-    
-    bool converged = cg.solve(K_int, b_int, u_int);
+#ifdef MARS_ENABLE_HYPRE
+    // Use full Hypre PCG + BoomerAMG (most MFEM-like)
+    if (rank == 0) std::cout << "Using full Hypre PCG + BoomerAMG solver" << std::endl;
+    mars::fem::HyprePCGSolver<float, unsigned, cstone::GpuTag> hypre_solver(MPI_COMM_WORLD, 400, 1e-6f);
+    hypre_solver.setVerbose(rank == 0);
+    bool converged = hypre_solver.solve(K_full, rhs_full, u_full);
+#else
+    // Fallback to custom CG with Jacobi preconditioner
+    if (rank == 0) std::cout << "Using custom CG + Jacobi preconditioner" << std::endl;
+    mars::fem::PreconditionedConjugateGradientSolver<float, unsigned, cstone::GpuTag> cg(400, 1e-6f);
+    cg.setVerbose(rank == 0);
+    bool converged = cg.solve(K_full, rhs_full, u_full);
+#endif
     
     auto t_solve_end = std::chrono::high_resolution_clock::now();
     double t_solve = std::chrono::duration<double>(t_solve_end - t_solve_start).count();
@@ -563,14 +556,6 @@ int main(int argc, char** argv) {
         std::cout << "   Solver " << (converged ? "converged" : "did NOT converge") 
                   << " in " << t_solve << " seconds\n";
     }
-    
-    // =====================================================
-    // 6. Reconstruct full solution
-    // =====================================================
-    auto& u_full = dm.get_data<0>();  // Solution vector from data manager (size: owned DOFs)
-
-    // Reconstruct full solution (owned DOFs only, boundary values already set)
-    eliminator.reconstructFullSolution(u_int, numOwnedDofs, isBoundaryDOF, boundaryValues, u_full);
     
     // =====================================================
     // 7. Exchange ghost DOF values across ranks (if multi-rank)

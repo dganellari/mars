@@ -285,3 +285,55 @@ if(MARS_ENABLE_KOKKOS)
   # list(POP_BACK CMAKE_MESSAGE_INDENT)
 endif()
 
+# ##############################################################################
+if(MARS_ENABLE_HYPRE)
+  message(STATUS "Setup Hypre")
+  list(APPEND CMAKE_MESSAGE_INDENT "${MARS_CMAKE_INDENT}")
+
+  # Try to find Hypre using pkg-config first
+  find_package(PkgConfig QUIET)
+  if(PKG_CONFIG_FOUND)
+    pkg_check_modules(HYPRE_PC QUIET hypre)
+  endif()
+
+  if(HYPRE_PC_FOUND)
+    # Found via pkg-config
+    set(HYPRE_FOUND TRUE)
+    set(HYPRE_INCLUDE_DIRS ${HYPRE_PC_INCLUDE_DIRS})
+    set(HYPRE_LIBRARIES ${HYPRE_PC_LIBRARIES})
+    set(HYPRE_LIBRARY_DIRS ${HYPRE_PC_LIBRARY_DIRS})
+  else()
+    # Try manual finding
+    find_path(HYPRE_INCLUDE_DIR
+      NAMES HYPRE.h
+      PATHS $ENV{HYPRE_DIR}/include ${HYPRE_DIR}/include
+      PATH_SUFFIXES hypre
+    )
+
+    find_library(HYPRE_LIBRARY
+      NAMES HYPRE hypre
+      PATHS $ENV{HYPRE_DIR}/lib ${HYPRE_DIR}/lib
+    )
+
+    if(HYPRE_INCLUDE_DIR AND HYPRE_LIBRARY)
+      set(HYPRE_FOUND TRUE)
+      set(HYPRE_INCLUDE_DIRS ${HYPRE_INCLUDE_DIR})
+      set(HYPRE_LIBRARIES ${HYPRE_LIBRARY})
+    endif()
+  endif()
+
+  if(NOT HYPRE_FOUND)
+    message(FATAL_ERROR "Hypre not found. Please install Hypre and set HYPRE_DIR or ensure pkg-config can find it.")
+  endif()
+
+  message(VERBOSE "Found Hypre")
+  message(STATUS "HYPRE_INCLUDE_DIRS = ${HYPRE_INCLUDE_DIRS}")
+  message(STATUS "HYPRE_LIBRARIES = ${HYPRE_LIBRARIES}")
+
+  set(MARS_DEP_INCLUDES "${MARS_DEP_INCLUDES};${HYPRE_INCLUDE_DIRS}")
+  set(MARS_DEP_LIBRARIES "${MARS_DEP_LIBRARIES};${HYPRE_LIBRARIES}")
+
+  list(POP_BACK CMAKE_MESSAGE_INDENT)
+endif()
+
+# ##############################################################################
