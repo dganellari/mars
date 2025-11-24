@@ -26,6 +26,7 @@
 #include "mars_mfem_mesh_loader.hpp"
 #include <thrust/copy.h>
 #include <algorithm>
+#include <limits>
 
 #include <mpi.h>
 #include <iostream>
@@ -413,13 +414,22 @@ int main(int argc, char** argv) {
     const auto& fullNodeToLocalDof = dof_handler.get_node_to_local_dof();
     const auto& ownership = domain.getNodeOwnershipMap();
     
+    // Copy ownership to host for CPU access
+    thrust::host_vector<uint8_t> h_ownership(domain.getNodeCount());
+    thrust::copy(thrust::device_pointer_cast(ownership.data()),
+                thrust::device_pointer_cast(ownership.data() + domain.getNodeCount()),
+                h_ownership.begin());
+    
     // Create owned-only node-to-DOF mapping for Hypre (each rank owns its rows)
-    std::vector<IndexType> nodeToOwnedDof(domain.getNodeCount(), -1);
+    std::vector<IndexType> nodeToOwnedDof(domain.getNodeCount(), 0);  // Initialize to 0, will be set properly
     size_t ownedDofCount = 0;
     
     for (size_t nodeIdx = 0; nodeIdx < domain.getNodeCount(); ++nodeIdx) {
-        if (ownership[nodeIdx] == rank) {  // Node owned by this rank
+        if (h_ownership[nodeIdx] == 1) {  // Node owned by this rank (1 = owned, 0 = ghost)
             nodeToOwnedDof[nodeIdx] = ownedDofCount++;
+        } else {
+            // For ghost nodes, set to a large value to indicate invalid
+            nodeToOwnedDof[nodeIdx] = std::numeric_limits<IndexType>::max();
         }
     }
     
