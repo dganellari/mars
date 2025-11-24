@@ -41,20 +41,20 @@ using namespace mars::fem;
 // Source term: f(x,y,z) = 1
 struct SourceTerm {
     __device__ __host__
-    float operator()(float x, float y, float z) const {
-        return 1.0f;
+    double operator()(double x, double y, double z) const {
+        return 1.0;
     }
 };
 
 // Save solution to MFEM GridFunction format
-void saveSolutionToGridFunction(const cstone::DeviceVector<float>& u_local, 
-                               const mars::fem::UnstructuredDofHandler<TetTag, float, unsigned, cstone::GpuTag>& dof_handler,
+void saveSolutionToGridFunction(const cstone::DeviceVector<double>& u_local, 
+                               const mars::fem::UnstructuredDofHandler<TetTag, double, Unsigned, cstone::GpuTag>& dof_handler,
                                int rank, int numRanks) {
     if (rank != 0) return;  // Only rank 0 writes the file
     
     // For now, just save the local solution (rank 0's owned DOFs)
     // In a full implementation, we'd gather all DOFs from all ranks
-    std::vector<float> h_solution(u_local.size());
+    std::vector<double> h_solution(u_local.size());
     thrust::copy(thrust::device_pointer_cast(u_local.data()),
                  thrust::device_pointer_cast(u_local.data() + u_local.size()),
                  h_solution.begin());
@@ -149,27 +149,27 @@ int main(int argc, char** argv) {
     
     // Convert MFEM mesh data to ElementDomain format
     // HostCoordsTuple: tuple<x_coords, y_coords, z_coords>
-    std::vector<float> x_coords(loader.vertices.size());
-    std::vector<float> y_coords(loader.vertices.size());
-    std::vector<float> z_coords(loader.vertices.size());
+    std::vector<double> x_coords(loader.vertices.size());
+    std::vector<double> y_coords(loader.vertices.size());
+    std::vector<double> z_coords(loader.vertices.size());
     
     for (size_t i = 0; i < loader.vertices.size(); ++i) {
-        x_coords[i] = static_cast<float>(loader.vertices[i][0]);
-        y_coords[i] = static_cast<float>(loader.vertices[i][1]);
-        z_coords[i] = static_cast<float>(loader.vertices[i][2]);
+        x_coords[i] = static_cast<double>(loader.vertices[i][0]);
+        y_coords[i] = static_cast<double>(loader.vertices[i][1]);
+        z_coords[i] = static_cast<double>(loader.vertices[i][2]);
     }
     
     // HostConnectivityTuple for TetTag: tuple<i0, i1, i2, i3>
-    std::vector<unsigned> i0(loader.elements.size());
-    std::vector<unsigned> i1(loader.elements.size());
-    std::vector<unsigned> i2(loader.elements.size());
-    std::vector<unsigned> i3(loader.elements.size());
+    std::vector<Unsigned> i0(loader.elements.size());
+    std::vector<Unsigned> i1(loader.elements.size());
+    std::vector<Unsigned> i2(loader.elements.size());
+    std::vector<Unsigned> i3(loader.elements.size());
     
     for (size_t i = 0; i < loader.elements.size(); ++i) {
-        i0[i] = static_cast<unsigned>(loader.elements[i][0]);
-        i1[i] = static_cast<unsigned>(loader.elements[i][1]);
-        i2[i] = static_cast<unsigned>(loader.elements[i][2]);
-        i3[i] = static_cast<unsigned>(loader.elements[i][3]);
+        i0[i] = static_cast<Unsigned>(loader.elements[i][0]);
+        i1[i] = static_cast<Unsigned>(loader.elements[i][1]);
+        i2[i] = static_cast<Unsigned>(loader.elements[i][2]);
+        i3[i] = static_cast<Unsigned>(loader.elements[i][3]);
     }
     
     // HostBoundaryTuple for boundary nodes: tuple<isBoundaryNode>
@@ -189,7 +189,7 @@ int main(int argc, char** argv) {
     
     // Create ElementDomain using direct constructor with MFEM mesh data and boundary info
     // The bounding box will be computed automatically from the coordinate data
-    using Domain = ElementDomain<TetTag, float, unsigned, cstone::GpuTag>;
+    using Domain = ElementDomain<TetTag, double, Unsigned, cstone::GpuTag>;
     Domain domain(std::make_tuple(x_coords, y_coords, z_coords),
                   std::make_tuple(i0, i1, i2, i3),
                   std::make_tuple(isBoundaryNode),
@@ -222,7 +222,7 @@ int main(int argc, char** argv) {
     if (rank == 0) std::cout << "\nCreating finite element space...\n";
     
     // Create FESpace and get boundary DOFs (like MFEM's GetBoundaryTrueDofs)
-    TetFESpace<float, unsigned> fes(domain, 1);  // Order 1 like MFEM ex1
+    TetFESpace<double, Unsigned> fes(domain, 1);  // Order 1 like MFEM ex1
     size_t numDofs = fes.numDofs();
     
     if (rank == 0) {
@@ -234,7 +234,7 @@ int main(int argc, char** argv) {
     // =====================================================
     if (rank == 0) std::cout << "\n1.5. Creating distributed DOF handler...\n";
     
-    using DofHandler = mars::fem::UnstructuredDofHandler<TetTag, float, unsigned, cstone::GpuTag>;
+    using DofHandler = mars::fem::UnstructuredDofHandler<TetTag, double, Unsigned, cstone::GpuTag>;
     DofHandler dof_handler(domain, rank, numRanks);
     dof_handler.enumerate_dofs();
     
@@ -247,9 +247,9 @@ int main(int argc, char** argv) {
     const auto& d_y = domain.getNodeY(); 
     const auto& d_z = domain.getNodeZ();
     
-    std::vector<float> h_x(domain.getNodeCount());
-    std::vector<float> h_y(domain.getNodeCount());
-    std::vector<float> h_z(domain.getNodeCount());
+    std::vector<double> h_x(domain.getNodeCount());
+    std::vector<double> h_y(domain.getNodeCount());
+    std::vector<double> h_z(domain.getNodeCount());
     
     thrust::copy(thrust::device_pointer_cast(d_x.data()),
                  thrust::device_pointer_cast(d_x.data() + domain.getNodeCount()),
@@ -263,18 +263,18 @@ int main(int argc, char** argv) {
     
     // Detect boundary nodes geometrically (more robust)
     // Check if coordinates are near the boundary extents
-    float x_min = *std::min_element(h_x.begin(), h_x.end());
-    float x_max = *std::max_element(h_x.begin(), h_x.end());
-    float y_min = *std::min_element(h_y.begin(), h_y.end());
-    float y_max = *std::max_element(h_y.begin(), h_y.end());
-    float z_min = *std::min_element(h_z.begin(), h_z.end());
-    float z_max = *std::max_element(h_z.begin(), h_z.end());
+    double x_min = *std::min_element(h_x.begin(), h_x.end());
+    double x_max = *std::max_element(h_x.begin(), h_x.end());
+    double y_min = *std::min_element(h_y.begin(), h_y.end());
+    double y_max = *std::max_element(h_y.begin(), h_y.end());
+    double z_min = *std::min_element(h_z.begin(), h_z.end());
+    double z_max = *std::max_element(h_z.begin(), h_z.end());
     
-    float tol = 1e-3f;  // More tolerant boundary detection
+    double tol = 1e-3;  // More tolerant boundary detection
     
     size_t boundaryCount = 0;
     for (size_t i = 0; i < domain.getNodeCount(); ++i) {
-        float x = h_x[i], y = h_y[i], z = h_z[i];
+        double x = h_x[i], y = h_y[i], z = h_z[i];
         // Check if near any boundary
         if (fabs(x - x_min) < tol || fabs(x - x_max) < tol ||
             fabs(y - y_min) < tol || fabs(y - y_max) < tol ||
@@ -297,8 +297,8 @@ int main(int argc, char** argv) {
     
     // Get boundary DOFs using DOF handler (like MFEM's GetBoundaryTrueDofs)
     // Boundary detection uses GPU computation with local boundary data
-    std::vector<unsigned> boundaryDofs;
-    dof_handler.boundary_owned_dof_iterate([&](unsigned localDof) {
+    std::vector<Unsigned> boundaryDofs;
+    dof_handler.boundary_owned_dof_iterate([&](Unsigned localDof) {
         boundaryDofs.push_back(localDof);
     });
     
@@ -328,7 +328,7 @@ int main(int argc, char** argv) {
     auto t_fes_start = std::chrono::high_resolution_clock::now();
     
     // Create H1 finite element space
-    using FESpace = mars::fem::H1FESpace<TetTag, float, unsigned, cstone::GpuTag>;
+    using FESpace = mars::fem::H1FESpace<TetTag, double, Unsigned, cstone::GpuTag>;
     FESpace fe_space(domain);
     
     auto t_fes_end = std::chrono::high_resolution_clock::now();
@@ -346,9 +346,9 @@ int main(int argc, char** argv) {
     
     // Create distributed data manager
     // Note: Data manager stores owned DOFs only (ghosts updated via halo exchange)
-    mars::fem::UnstructuredDM<DofHandler, float, cstone::GpuTag> dm(dof_handler);
-    dm.add_data_field<float>();  // Solution vector
-    dm.add_data_field<float>();  // RHS vector
+    mars::fem::UnstructuredDM<DofHandler, double, cstone::GpuTag> dm(dof_handler);
+    dm.add_data_field<double>();  // Solution vector
+    dm.add_data_field<double>();  // RHS vector
     dm.resize(numDofs);  // Owned DOFs only
     
     if (rank == 0) {
@@ -363,8 +363,8 @@ int main(int argc, char** argv) {
     if (rank == 0) std::cout << "\n2. Assembling stiffness matrix...\n";
     auto t_stiff_start = std::chrono::high_resolution_clock::now();
     
-    TetStiffnessAssembler<float, unsigned> stiffnessAssembler;
-    TetSparseMatrix<float, unsigned> K;
+    TetStiffnessAssembler<double, Unsigned> stiffnessAssembler;
+    TetSparseMatrix<double, Unsigned> K;
     
     // Get node-to-DOF mapping from distributed DOF handler (includes ghosts)
     const auto& nodeToLocalDof = dof_handler.get_node_to_local_dof();
@@ -381,9 +381,9 @@ int main(int argc, char** argv) {
         
         // Check matrix symmetry
         std::cout << "   Checking matrix properties...\n";
-        std::vector<unsigned> h_rowOffsets(K.numRows() + 1);
-        std::vector<unsigned> h_colIndices(K.nnz());
-        std::vector<float> h_values(K.nnz());
+        std::vector<Unsigned> h_rowOffsets(K.numRows() + 1);
+        std::vector<Unsigned> h_colIndices(K.nnz());
+        std::vector<double> h_values(K.nnz());
         
         thrust::copy(thrust::device_pointer_cast(K.rowOffsetsPtr()),
                     thrust::device_pointer_cast(K.rowOffsetsPtr() + K.numRows() + 1),
@@ -396,12 +396,12 @@ int main(int argc, char** argv) {
                     h_values.begin());
         
         // Check diagonal
-        float minDiag = 1e30f, maxDiag = -1e30f;
+        double minDiag = 1e30, maxDiag = -1e30;
         int zeroDiag = 0, negDiag = 0;
         for (size_t i = 0; i < K.numRows(); ++i) {
-            float diagVal = 0.0f;
+            double diagVal = 0.0;
             bool foundDiag = false;
-            for (unsigned idx = h_rowOffsets[i]; idx < h_rowOffsets[i+1]; ++idx) {
+            for (Unsigned idx = h_rowOffsets[i]; idx < h_rowOffsets[i+1]; ++idx) {
                 if (h_colIndices[idx] == i) {
                     diagVal = h_values[idx];
                     foundDiag = true;
@@ -410,7 +410,7 @@ int main(int argc, char** argv) {
             }
             if (!foundDiag) zeroDiag++;
             else {
-                if (diagVal <= 0.0f) negDiag++;
+                if (diagVal <= 0.0) negDiag++;
                 minDiag = std::min(minDiag, diagVal);
                 maxDiag = std::max(maxDiag, diagVal);
             }
@@ -426,7 +426,7 @@ int main(int argc, char** argv) {
     if (rank == 0) std::cout << "\n3. Assembling RHS vector...\n";
     auto t_rhs_start = std::chrono::high_resolution_clock::now();
     
-    TetMassAssembler<float, unsigned> massAssembler;
+    TetMassAssembler<double, Unsigned> massAssembler;
     
     SourceTerm f;
     massAssembler.assembleRHS(fe_space, dm.get_data<1>(), f, nodeToLocalDof);
@@ -447,16 +447,16 @@ int main(int argc, char** argv) {
     // K[i,i] = 1, K[i,j] = 0 for j != i, rhs[i] = 0 for boundary DOFs i
     
     // Get the full matrix before elimination
-    TetSparseMatrix<float, unsigned> K_full = K;  // Copy the full matrix
+    TetSparseMatrix<double, Unsigned> K_full = K;  // Copy the full matrix
     
     // Modify matrix and RHS for boundary conditions
     // boundaryDofs contains LOCAL owned DOF indices
     size_t numOwnedDofs = dof_handler.get_num_local_dofs();
     
     // Get matrix data
-    std::vector<unsigned> h_rowOffsets(K_full.numRows() + 1);
-    std::vector<unsigned> h_colIndices(K_full.nnz());
-    std::vector<float> h_values(K_full.nnz());
+    std::vector<Unsigned> h_rowOffsets(K_full.numRows() + 1);
+    std::vector<Unsigned> h_colIndices(K_full.nnz());
+    std::vector<double> h_values(K_full.nnz());
     
     thrust::copy(thrust::device_pointer_cast(K_full.rowOffsetsPtr()),
                 thrust::device_pointer_cast(K_full.rowOffsetsPtr() + K_full.numRows() + 1),
@@ -469,14 +469,14 @@ int main(int argc, char** argv) {
                 h_values.begin());
     
     // Get RHS data
-    std::vector<float> h_rhs_full(numOwnedDofs);
+    std::vector<double> h_rhs_full(numOwnedDofs);
     dm.copy_to_host<1>(h_rhs_full);
     
     // Modify for boundary conditions
     for (auto localDof : boundaryDofs) {
         if (localDof < numOwnedDofs) {
             // Find the diagonal entry and set it to 1
-            for (unsigned idx = h_rowOffsets[localDof]; idx < h_rowOffsets[localDof+1]; ++idx) {
+            for (Unsigned idx = h_rowOffsets[localDof]; idx < h_rowOffsets[localDof+1]; ++idx) {
                 if (h_colIndices[idx] == localDof) {
                     h_values[idx] = 1.0f;  // K[i,i] = 1
                 } else {
@@ -538,13 +538,13 @@ int main(int argc, char** argv) {
 #ifdef MARS_ENABLE_HYPRE
     // Use full Hypre PCG + BoomerAMG (most MFEM-like)
     if (rank == 0) std::cout << "Using full Hypre PCG + BoomerAMG solver" << std::endl;
-    mars::fem::HyprePCGSolver<float, unsigned, cstone::GpuTag> hypre_solver(MPI_COMM_WORLD, 400, 1e-6f);
+    mars::fem::HyprePCGSolver<double, Unsigned, cstone::GpuTag> hypre_solver(MPI_COMM_WORLD, 400, 1e-10);
     hypre_solver.setVerbose(rank == 0);
     bool converged = hypre_solver.solve(K_full, rhs_full, u_full);
 #else
     // Fallback to custom CG with Jacobi preconditioner
     if (rank == 0) std::cout << "Using custom CG + Jacobi preconditioner" << std::endl;
-    mars::fem::PreconditionedConjugateGradientSolver<float, unsigned, cstone::GpuTag> cg(400, 1e-6f);
+    mars::fem::PreconditionedConjugateGradientSolver<double, Unsigned, cstone::GpuTag> cg(400, 1e-10);
     cg.setVerbose(rank == 0);
     bool converged = cg.solve(K_full, rhs_full, u_full);
 #endif
@@ -580,25 +580,25 @@ int main(int argc, char** argv) {
     
     // Compute solution statistics (after exchange)
     
-    float u_min = *thrust::min_element(thrust::device_pointer_cast(u_full.data()), 
+    double u_min = *thrust::min_element(thrust::device_pointer_cast(u_full.data()), 
                                       thrust::device_pointer_cast(u_full.data() + numOwnedDofs));
-    float u_max = *thrust::max_element(thrust::device_pointer_cast(u_full.data()), 
+    double u_max = *thrust::max_element(thrust::device_pointer_cast(u_full.data()), 
                                       thrust::device_pointer_cast(u_full.data() + numOwnedDofs));
-    float u_norm_sq = thrust::transform_reduce(thrust::device_pointer_cast(u_full.data()), 
+    double u_norm_sq = thrust::transform_reduce(thrust::device_pointer_cast(u_full.data()), 
                                              thrust::device_pointer_cast(u_full.data() + numOwnedDofs), 
-                                             [] __host__ __device__ (float x) { return x*x; }, 
-                                             0.0f, thrust::plus<float>());
-    float u_norm = std::sqrt(u_norm_sq);
+                                             [] __host__ __device__ (double x) { return x*x; }, 
+                                             0.0, thrust::plus<double>());
+    double u_norm = std::sqrt(u_norm_sq);
     
     // Print per-rank solution statistics for debugging
     std::cout << "Rank " << rank << ": min(u) = " << u_min 
               << ", max(u) = " << u_max << ", ||u|| = " << u_norm << std::endl;
     
     // Compute global solution statistics
-    float global_u_min, global_u_max, global_u_norm_sq;
-    MPI_Allreduce(&u_min, &global_u_min, 1, MPI_FLOAT, MPI_MIN, MPI_COMM_WORLD);
-    MPI_Allreduce(&u_max, &global_u_max, 1, MPI_FLOAT, MPI_MAX, MPI_COMM_WORLD);
-    MPI_Allreduce(&u_norm_sq, &global_u_norm_sq, 1, MPI_FLOAT, MPI_SUM, MPI_COMM_WORLD);
+    double global_u_min, global_u_max, global_u_norm_sq;
+    MPI_Allreduce(&u_min, &global_u_min, 1, MPI_DOUBLE, MPI_MIN, MPI_COMM_WORLD);
+    MPI_Allreduce(&u_max, &global_u_max, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+    MPI_Allreduce(&u_norm_sq, &global_u_norm_sq, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
     
     auto t_total_end = std::chrono::high_resolution_clock::now();
     double t_total = std::chrono::duration<double>(t_total_end - t_total_start).count();
