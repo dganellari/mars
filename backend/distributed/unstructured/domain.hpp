@@ -180,6 +180,7 @@ template<typename KeyType>
 __global__ void mapSfcToLocalIdKernel(
     const KeyType* sfc_conn, KeyType* local_conn, const KeyType* sorted_sfc, size_t num_elements, size_t num_nodes);
 
+// Phase 2: Mark nodes of local elements as owned (optimized for tets: 4 nodes)
 template<typename KeyType, int NodesPerElement>
 __global__ void markLocalElementNodesKernel(uint8_t* nodeOwnership,
                                             const KeyType* conn0,
@@ -188,6 +189,16 @@ __global__ void markLocalElementNodesKernel(uint8_t* nodeOwnership,
                                             const KeyType* conn3,
                                             size_t numLocalElements,
                                             size_t localStartIdx);
+
+// Phase 3: Mark shared nodes (appear in both local and halo elements)
+template<typename KeyType, int NodesPerElement>
+__global__ void markSharedNodesKernel(uint8_t* nodeOwnership,
+                                     const KeyType* conn0,
+                                     const KeyType* conn1,
+                                     const KeyType* conn2,
+                                     const KeyType* conn3,
+                                     size_t numHaloElements,
+                                     const KeyType* haloIndices);
 
 __global__ void initNodeOwnershipKernel(uint8_t* nodeOwnership, size_t nodeCount);
 
@@ -342,7 +353,7 @@ struct HaloData
     template<typename T>
     using DeviceVector = typename VectorSelector<T, AcceleratorTag>::type;
 
-    // Node ownership: 0=halo (not owned), 1=owned by this rank
+    // Node ownership: 0=pure ghost (halo only), 1=pure owned (local only), 2=shared (local+halo boundary)
     DeviceVector<uint8_t> d_nodeOwnership_;
 
     // Cached list of halo element indices for faster iteration
@@ -1854,8 +1865,9 @@ template<typename ElementTag, typename RealType, typename KeyType, typename Acce
 HaloData<ElementTag, RealType, KeyType, AcceleratorTag>::HaloData(
     const ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>& domain)
 {
-    buildNodeOwnership(domain);
+    // Build halo elements first, then ownership (so Phase 3 can detect shared nodes)
     buildHaloElementIndices(domain);
+    buildNodeOwnership(domain);
 }
 
 template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
@@ -1871,7 +1883,7 @@ void HaloData<ElementTag, RealType, KeyType, AcceleratorTag>::buildNodeOwnership
 
         int blockSize = 256;
 
-        // Phase 1: Initialize all nodes as halo (0)
+        // Phase 1: Initialize all nodes as ghost (0)
         int numBlocks = (nodeCount + blockSize - 1) / blockSize;
         initNodeOwnershipKernel<<<numBlocks, blockSize>>>(thrust::raw_pointer_cast(d_nodeOwnership_.data()), nodeCount);
         cudaCheckError();
@@ -1889,6 +1901,29 @@ void HaloData<ElementTag, RealType, KeyType, AcceleratorTag>::buildNodeOwnership
             thrust::raw_pointer_cast(std::get<2>(conn_local).data()),
             thrust::raw_pointer_cast(std::get<3>(conn_local).data()), localCount, domain.startIndex());
         cudaCheckError();
+        
+        // Phase 3: Mark shared nodes (those in both local and halo elements)
+        // Build halo element indices first if not already built
+        if (!d_haloElementIndices_.size()) {
+            // Halo elements haven't been built yet, skip Phase 3
+            // This can happen if buildNodeOwnership is called before buildHaloElementIndices
+            // In that case, we'll have a simplified 2-state system temporarily
+        } else {
+            size_t numHaloElements = d_haloElementIndices_.size();
+            if (numHaloElements > 0) {
+                numBlocks = (numHaloElements + blockSize - 1) / blockSize;
+                
+                markSharedNodesKernel<KeyType, 4><<<numBlocks, blockSize>>>(
+                    thrust::raw_pointer_cast(d_nodeOwnership_.data()),
+                    thrust::raw_pointer_cast(std::get<0>(conn_local).data()),
+                    thrust::raw_pointer_cast(std::get<1>(conn_local).data()),
+                    thrust::raw_pointer_cast(std::get<2>(conn_local).data()),
+                    thrust::raw_pointer_cast(std::get<3>(conn_local).data()),
+                    numHaloElements,
+                    thrust::raw_pointer_cast(d_haloElementIndices_.data()));
+                cudaCheckError();
+            }
+        }
     }
 }
 

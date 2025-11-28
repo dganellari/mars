@@ -49,7 +49,7 @@ public:
         
         numDofs_ = 0;
         for (size_t i = 0; i < numNodes; ++i) {
-            if (h_ownership[i] == 1) {
+            if (h_ownership[i] == 1 || h_ownership[i] == 2) {  // Owned (1) or shared (2)
                 numDofs_++;
             }
         }
@@ -58,7 +58,7 @@ public:
         int rank;
         MPI_Comm_rank(MPI_COMM_WORLD, &rank);
         if (rank == 0 || rank == 1) {
-            std::cout << "Rank " << rank << ": FE space counted " << numDofs_ << " owned nodes out of " << numNodes << " total" << std::endl;
+            std::cout << "Rank " << rank << ": FE space counted " << numDofs_ << " owned nodes (including shared) out of " << numNodes << " total" << std::endl;
         }
     }
     

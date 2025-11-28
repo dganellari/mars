@@ -616,11 +616,11 @@ __global__ void markHaloNodesKernel(uint8_t* nodeOwnership,
     nodeOwnership[nodeIdx] = hasLocalElement;
 }
 
-// Phase 1: Initialize all nodes as halo
+// Phase 1: Initialize all nodes as halo (pure ghost)
 __global__ void initNodeOwnershipKernel(uint8_t* nodeOwnership, size_t nodeCount) {
     size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < nodeCount) {
-        nodeOwnership[idx] = 0;  // All halo initially
+        nodeOwnership[idx] = 0;  // All ghost initially
     }
 }
 
@@ -640,17 +640,50 @@ __global__ void markLocalElementNodesKernel(uint8_t* nodeOwnership,
     size_t elemIdx = idx + localStartIdx;
     
     // Mark all 4 nodes of this local tetrahedron as owned (1 = owned)
-    // Direct assignment is safe since we're only setting to 1
     nodeOwnership[conn0[elemIdx]] = 1;
     nodeOwnership[conn1[elemIdx]] = 1;
     nodeOwnership[conn2[elemIdx]] = 1;
     nodeOwnership[conn3[elemIdx]] = 1;
 }
 
+// Phase 3: Mark nodes that appear in BOTH local and halo elements as shared (2)
+// These are partition boundary nodes
+template<typename KeyType, int NodesPerElement>
+__global__ void markSharedNodesKernel(uint8_t* nodeOwnership,
+                                      const KeyType* conn0,
+                                      const KeyType* conn1,
+                                      const KeyType* conn2,
+                                      const KeyType* conn3,
+                                      size_t numHaloElements,
+                                      const KeyType* haloIndices)
+{
+    size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= numHaloElements) return;
+    
+    size_t elemIdx = haloIndices[idx];
+    
+    // Check all 4 nodes of this halo element
+    // If a node is marked as owned (1), it's also in a halo element, so mark as shared (2)
+    KeyType n0 = conn0[elemIdx];
+    KeyType n1 = conn1[elemIdx];
+    KeyType n2 = conn2[elemIdx];
+    KeyType n3 = conn3[elemIdx];
+    
+    if (nodeOwnership[n0] == 1) nodeOwnership[n0] = 2;  // Owned + halo = shared
+    if (nodeOwnership[n1] == 1) nodeOwnership[n1] = 2;
+    if (nodeOwnership[n2] == 1) nodeOwnership[n2] = 2;
+    if (nodeOwnership[n3] == 1) nodeOwnership[n3] = 2;
+}
+
 template __global__ void markLocalElementNodesKernel<unsigned int, 4>(
     uint8_t*, const unsigned int*, const unsigned int*, const unsigned int*, const unsigned int*, size_t, size_t);
 template __global__ void markLocalElementNodesKernel<uint64_t, 4>(
     uint8_t*, const uint64_t*, const uint64_t*, const uint64_t*, const uint64_t*, size_t, size_t);
+
+template __global__ void markSharedNodesKernel<unsigned int, 4>(
+    uint8_t*, const unsigned int*, const unsigned int*, const unsigned int*, const unsigned int*, size_t, const unsigned int*);
+template __global__ void markSharedNodesKernel<uint64_t, 4>(
+    uint8_t*, const uint64_t*, const uint64_t*, const uint64_t*, const uint64_t*, size_t, const uint64_t*);
 
 // ===== For unsigned KeyType =====
 // Float combinations
