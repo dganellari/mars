@@ -24,6 +24,16 @@ function(addMarsMpiTest source exename testname)
         ${CORNERSTONE_INCLUDE_DIRS}
         ${MPI_CXX_INCLUDE_PATH}
         ${CMAKE_SOURCE_DIR}/backend/distributed/unstructured/utils
+        ${CMAKE_SOURCE_DIR}/base
+        ${CMAKE_SOURCE_DIR}/core
+        ${CMAKE_SOURCE_DIR}/backend/distributed
+        ${CMAKE_SOURCE_DIR}/backend/distributed/mars_env
+        ${CMAKE_SOURCE_DIR}/backend/distributed/communication
+        ${CMAKE_SOURCE_DIR}/backend/distributed/communication/util
+        ${CMAKE_SOURCE_DIR}/backend/distributed/mesh
+        ${CMAKE_SOURCE_DIR}/backend/distributed/mesh_manager
+        ${CMAKE_SOURCE_DIR}/backend/distributed/octree
+        ${CMAKE_SOURCE_DIR}/backend/distributed/sfc
     )
 
     if(MARS_ENABLE_HIP)
@@ -50,6 +60,7 @@ function(addMarsMpiTest source exename testname)
     endif()
     # Link libraries
     target_link_libraries(${exename} PRIVATE
+        mars
         mars_unstructured
         cstone_gpu
         ${MPI_CXX_LIBRARIES}
@@ -76,6 +87,7 @@ function(addMarsGpuMpiTest source exename testname)
     target_compile_options(${exename} PRIVATE -Wno-unknown-pragmas)
     # Link with standard test libraries first
     target_link_libraries(${exename} PRIVATE
+        mars
         cstone_gpu
         mars_unstructured
         ${MPI_CXX_LIBRARIES}

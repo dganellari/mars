@@ -26,4 +26,10 @@ if(MARS_ENABLE_EXAMPLES)
 
     add_executable(mars_examples mars_discretization.cpp)
     target_link_libraries(mars_examples PRIVATE mars)
+    
+    # Build MFEM to MARS binary converter tool
+    add_executable(mfem_to_mars_binary 
+        distributed/unstructured/mfem_to_mars_binary.cpp)
+    target_include_directories(mfem_to_mars_binary PRIVATE
+        ${CMAKE_SOURCE_DIR}/backend/distributed/unstructured/utils)
 endif()

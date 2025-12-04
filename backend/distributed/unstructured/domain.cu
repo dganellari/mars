@@ -584,73 +584,261 @@ __global__ void decodeAllNodesKernel(const KeyType* sfcKeys, RealType* x, RealTy
     x[idx] = xi; y[idx] = yi; z[idx] = zi;
 }
 
-template<typename KeyType>
-__global__ void markHaloNodesKernel(uint8_t* nodeOwnership,
-                                    const KeyType* nodeToElementList,
-                                    const KeyType* nodeToElementOffsets,
-                                    size_t nodeCount,
-                                    size_t localStartIdx,
-                                    size_t localEndIdx)
+template <typename KeyType>
+__global__ void markNodesInElementRangeKernel(
+    unsigned int* nodeFlags,
+    const KeyType* conn0,
+    const KeyType* conn1,
+    const KeyType* conn2,
+    const KeyType* conn3,
+    const KeyType* localToGlobalSfcMap,
+    size_t elementStart,
+    size_t elementEnd,
+    size_t nodeCount,
+    unsigned int flagValue)
 {
-    size_t nodeIdx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (nodeIdx >= nodeCount) return;
-    
-    // Get the range of elements that reference this node
-    KeyType startOffset = nodeToElementOffsets[nodeIdx];
-    KeyType endOffset = nodeToElementOffsets[nodeIdx + 1];
-    
-    // Check if ANY element referencing this node is local (owned)
-    uint8_t hasLocalElement = 0;
-    for (KeyType i = startOffset; i < endOffset; ++i) {
-        KeyType elemIdx = nodeToElementList[i];
+    size_t elemIdx = blockIdx.x * blockDim.x + threadIdx.x + elementStart;
+    if (elemIdx < elementEnd)
+    {
+        // For each node in this element, find its local node ID and set flag
+        KeyType sfcKeys[4] = {conn0[elemIdx], conn1[elemIdx], conn2[elemIdx], conn3[elemIdx]};
         
-        // Element is local if it's in [localStartIdx, localEndIdx)
-        if (elemIdx >= localStartIdx && elemIdx < localEndIdx) {
-            hasLocalElement = 1;
-            break;
+        for (int i = 0; i < 4; ++i) {
+            KeyType targetSfc = sfcKeys[i];
+            // Binary search to find this SFC key in localToGlobalSfcMap
+            int left = 0, right = nodeCount - 1;
+            while (left <= right) {
+                int mid = left + (right - left) / 2;
+                KeyType midSfc = localToGlobalSfcMap[mid];
+                if (midSfc == targetSfc) {
+                    atomicOr(&nodeFlags[mid], flagValue);
+                    break;
+                }
+                if (midSfc < targetSfc) left = mid + 1;
+                else right = mid - 1;
+            }
         }
     }
-    
-    // Node is owned (local) if it has at least one local element
-    // Otherwise, it's a halo node (appears only in halo elements)
-    nodeOwnership[nodeIdx] = hasLocalElement;
 }
 
-// Phase 1: Initialize all nodes as halo
-__global__ void initNodeOwnershipKernel(uint8_t* nodeOwnership, size_t nodeCount) {
-    size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx < nodeCount) {
-        nodeOwnership[idx] = 0;  // All halo initially
+template <typename KeyType>
+__global__ void determineOwnershipDirectKernel(
+    uint8_t* nodeOwnership, 
+    const KeyType* nodeSfcKeys,
+    const KeyType* assignment, 
+    int numRanks, 
+    int myRank, 
+    size_t numNodes)
+{
+    size_t nodeIdx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (nodeIdx < numNodes)
+    {
+        KeyType sfc = nodeSfcKeys[nodeIdx];
+        
+        // Find owner rank using binary search on assignment array
+        int owner = -1;
+        int left = 0;
+        int right = numRanks - 1;
+        
+        while (left <= right) {
+            int mid = left + (right - left) / 2;
+            if (sfc >= assignment[mid] && sfc < assignment[mid+1]) {
+                owner = mid;
+                break;
+            }
+            if (sfc < assignment[mid]) {
+                right = mid - 1;
+            } else {
+                left = mid + 1;
+            }
+        }
+        
+        // Mark ownership: 1 if owned by this rank, 0 if ghost
+        nodeOwnership[nodeIdx] = (owner == myRank) ? 1 : 0;
     }
 }
 
-// Phase 2: Mark nodes of local elements as owned (optimized for tets: 4 nodes)
-template<typename KeyType, int NodesPerElement>
-__global__ void markLocalElementNodesKernel(uint8_t* nodeOwnership,
-                                            const KeyType* conn0,
-                                            const KeyType* conn1,
-                                            const KeyType* conn2,
-                                            const KeyType* conn3,
-                                            size_t numLocalElements,
-                                            size_t localStartIdx)
+template <typename KeyType>
+__global__ void detectSharedNodesKernel(
+    uint8_t* nodeOwnership,
+    const unsigned int* nodeFlags,
+    size_t numNodes)
 {
-    size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx >= numLocalElements) return;
-    
-    size_t elemIdx = idx + localStartIdx;
-    
-    // Mark all 4 nodes of this local tetrahedron as owned (1 = owned)
-    // Direct assignment is safe since we're only setting to 1
-    nodeOwnership[conn0[elemIdx]] = 1;
-    nodeOwnership[conn1[elemIdx]] = 1;
-    nodeOwnership[conn2[elemIdx]] = 1;
-    nodeOwnership[conn3[elemIdx]] = 1;
+    size_t nodeIdx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (nodeIdx < numNodes)
+    {
+        unsigned int flags = nodeFlags[nodeIdx];
+        uint8_t ownership = nodeOwnership[nodeIdx];
+        
+        // Upgrade owned nodes to shared if they appear in both local and halo elements
+        // Note: Some owned nodes may not appear in local elements (only in halo)
+        // These will have zero diagonals but we keep them as owned to avoid orphaning them
+        
+        if (ownership == 1 && (flags & 0x03) == 0x03) {
+            // In both local and halo → shared boundary
+            nodeOwnership[nodeIdx] = 2;
+        }
+        // Keep SFC-based ownership otherwise (don't downgrade based on element participation)
+    }
 }
 
-template __global__ void markLocalElementNodesKernel<unsigned int, 4>(
-    uint8_t*, const unsigned int*, const unsigned int*, const unsigned int*, const unsigned int*, size_t, size_t);
-template __global__ void markLocalElementNodesKernel<uint64_t, 4>(
-    uint8_t*, const uint64_t*, const uint64_t*, const uint64_t*, const uint64_t*, size_t, size_t);
+template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
+void HaloData<ElementTag, RealType, KeyType, AcceleratorTag>::buildNodeOwnership(
+    const ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>& domain)
+{
+    std::cout << "Rank " << domain.rank() << ": Building node ownership..." << std::endl;
+    std::cout.flush();
+    
+    size_t nodeCount = domain.getNodeCount();
+    d_nodeOwnership_.resize(nodeCount);
+    
+    if (domain.numRanks() == 1)
+    {
+        thrust::fill(thrust::device, 
+                    thrust::device_pointer_cast(d_nodeOwnership_.data()),
+                    thrust::device_pointer_cast(d_nodeOwnership_.data() + nodeCount), 
+                    1); // All owned
+        return;
+    }
+
+    
+    // NEW APPROACH: SFC-key-based ownership (matches cornerstone's assignment)
+    // This ensures neighbor detection works correctly with findRank()
+    // - Nodes with SFC keys in [assignmentStart, assignmentEnd) → owned (1)
+    // - Shared boundaries will be detected by checking if nodes appear in both local and halo elements
+    
+    const auto& nodeSfcKeys = domain.getLocalToGlobalSfcMap();
+    const auto& conn_sfc = domain.getConnectivity();
+    
+    if (nodeSfcKeys.size() != nodeCount) {
+        std::cerr << "Rank " << domain.rank() << ": ERROR - nodeSfcKeys.size()=" << nodeSfcKeys.size() 
+                  << " != nodeCount=" << nodeCount << std::endl;
+        return;
+    }
+
+    // Get SFC assignment range for this rank
+    KeyType assignmentStart = domain.getDomain().assignmentStart();
+    
+    int blockSize = 256;
+    
+    // Initialize all nodes as ghost (0)
+    thrust::fill(thrust::device, 
+                thrust::device_pointer_cast(d_nodeOwnership_.data()),
+                thrust::device_pointer_cast(d_nodeOwnership_.data() + nodeCount), 
+                0);
+    
+    // Phase 1: Gather all rank assignments for SFC-key-based ownership
+    cstone::DeviceVector<KeyType> d_assignment(domain.numRanks() + 1);
+    std::vector<KeyType> h_assignment(domain.numRanks() + 1);
+    
+    MPI_Datatype mpiKeyType = (sizeof(KeyType) == 8) ? MPI_UNSIGNED_LONG : MPI_UNSIGNED;
+    MPI_Allgather(&assignmentStart, 1, mpiKeyType,
+                  h_assignment.data(), 1, mpiKeyType,
+                  MPI_COMM_WORLD);
+    h_assignment[domain.numRanks()] = std::numeric_limits<KeyType>::max();
+    
+    thrust::copy(h_assignment.begin(), h_assignment.end(), 
+                thrust::device_pointer_cast(d_assignment.data()));
+    
+    // Phase 2: Assign ownership based on SFC key ranges
+    int numBlocks = (nodeCount + blockSize - 1) / blockSize;
+    determineOwnershipDirectKernel<KeyType><<<numBlocks, blockSize>>>(
+        thrust::raw_pointer_cast(d_nodeOwnership_.data()),
+        thrust::raw_pointer_cast(nodeSfcKeys.data()),
+        thrust::raw_pointer_cast(d_assignment.data()),
+        domain.numRanks(),
+        domain.rank(),
+        nodeCount);
+    cudaCheckError();
+    
+    // Phase 3: Mark nodes in LOCAL elements to detect potential shared boundaries
+    cstone::DeviceVector<unsigned int> d_nodeFlags(nodeCount, 0);
+    
+    auto conn0 = std::get<0>(conn_sfc);
+    auto conn1 = std::get<1>(conn_sfc);
+    auto conn2 = std::get<2>(conn_sfc);
+    auto conn3 = std::get<3>(conn_sfc);
+    
+    size_t localElementCount = domain.localElementCount();
+    
+    if (localElementCount > 0) {
+        int numBlocks = (localElementCount + blockSize - 1) / blockSize;
+        markNodesInElementRangeKernel<KeyType><<<numBlocks, blockSize>>>(
+            thrust::raw_pointer_cast(d_nodeFlags.data()),
+            thrust::raw_pointer_cast(conn0.data()),
+            thrust::raw_pointer_cast(conn1.data()),
+            thrust::raw_pointer_cast(conn2.data()),
+            thrust::raw_pointer_cast(conn3.data()),
+            thrust::raw_pointer_cast(nodeSfcKeys.data()),
+            0, localElementCount, nodeCount, 0x01);
+        cudaCheckError();
+    }
+    
+    // Phase 4: Mark nodes in HALO elements
+    size_t totalElementCount = domain.getElementCount();
+    
+    if (totalElementCount > localElementCount) {
+        int numBlocks = (totalElementCount - localElementCount + blockSize - 1) / blockSize;
+        markNodesInElementRangeKernel<KeyType><<<numBlocks, blockSize>>>(
+            thrust::raw_pointer_cast(d_nodeFlags.data()),
+            thrust::raw_pointer_cast(conn0.data()),
+            thrust::raw_pointer_cast(conn1.data()),
+            thrust::raw_pointer_cast(conn2.data()),
+            thrust::raw_pointer_cast(conn3.data()),
+            thrust::raw_pointer_cast(nodeSfcKeys.data()),
+            localElementCount, totalElementCount, nodeCount, 0x02);
+        cudaCheckError();
+    }
+    
+    // Phase 5: Upgrade owned nodes (state 1) to shared (state 2) if they appear in both local and halo
+    numBlocks = (nodeCount + blockSize - 1) / blockSize;
+    detectSharedNodesKernel<KeyType><<<numBlocks, blockSize>>>(
+        thrust::raw_pointer_cast(d_nodeOwnership_.data()),
+        thrust::raw_pointer_cast(d_nodeFlags.data()),
+        nodeCount);
+    cudaCheckError();
+    
+    // Debug: Count ownership states and verify element-node associations
+    if (domain.rank() == 0 || domain.rank() == 1) {
+        thrust::host_vector<uint8_t> h_ownership(nodeCount);
+        thrust::host_vector<unsigned int> h_flags(nodeCount);
+        thrust::copy(thrust::device_pointer_cast(d_nodeOwnership_.data()),
+                    thrust::device_pointer_cast(d_nodeOwnership_.data() + nodeCount),
+                    h_ownership.begin());
+        thrust::copy(thrust::device_pointer_cast(d_nodeFlags.data()),
+                    thrust::device_pointer_cast(d_nodeFlags.data() + nodeCount),
+                    h_flags.begin());
+        
+        size_t cnt_ghost = 0, cnt_owned = 0, cnt_shared = 0;
+        size_t cnt_in_local = 0, cnt_in_halo = 0, cnt_in_both = 0, cnt_in_neither = 0;
+        size_t cnt_owned_not_in_local = 0;  // Problematic: owned but not in local elements
+        for (size_t i = 0; i < nodeCount; ++i) {
+            if (h_ownership[i] == 0) cnt_ghost++;
+            else if (h_ownership[i] == 1) cnt_owned++;
+            else if (h_ownership[i] == 2) cnt_shared++;
+            
+            if ((h_flags[i] & 0x01) && (h_flags[i] & 0x02)) cnt_in_both++;
+            else if (h_flags[i] & 0x01) cnt_in_local++;
+            else if (h_flags[i] & 0x02) cnt_in_halo++;
+            else cnt_in_neither++;
+            
+            // Check for owned nodes not in local elements (will have zero diagonal)
+            if ((h_ownership[i] == 1 || h_ownership[i] == 2) && !(h_flags[i] & 0x01)) {
+                cnt_owned_not_in_local++;
+            }
+        }
+        std::cout << "Rank " << domain.rank() << ": Ownership states after 3-phase - " 
+                  << cnt_ghost << " ghost, " << cnt_owned << " pure owned, " 
+                  << cnt_shared << " shared\n";
+        std::cout << "Rank " << domain.rank() << ": Element flags - " 
+                  << cnt_in_local << " local only, " << cnt_in_halo << " halo only, "
+                  << cnt_in_both << " both, " << cnt_in_neither << " neither\n";
+        if (cnt_owned_not_in_local > 0) {
+            std::cout << "Rank " << domain.rank() << ": WARNING - " << cnt_owned_not_in_local 
+                      << " owned nodes NOT in local elements (will have zero diagonals!)\n";
+        }
+    }
+}
 
 // ===== For unsigned KeyType =====
 // Float combinations
@@ -803,9 +991,10 @@ template __global__ void decodeAllNodesKernel<uint64_t, float>(
 template __global__ void decodeAllNodesKernel<uint64_t, double>(
     const uint64_t*, double*, double*, double*, size_t, cstone::Box<double>);
 
-template __global__ void markHaloNodesKernel<unsigned int>(
-    uint8_t*, const unsigned int*, const unsigned int*, size_t, size_t, size_t);
-template __global__ void markHaloNodesKernel<uint64_t>(
-    uint8_t*, const uint64_t*, const uint64_t*, size_t, size_t, size_t);
+// Explicit instantiations for HaloData
+template struct HaloData<TetTag, float, unsigned, cstone::GpuTag>;
+template struct HaloData<TetTag, double, unsigned, cstone::GpuTag>;
+template struct HaloData<TetTag, float, uint64_t, cstone::GpuTag>;
+template struct HaloData<TetTag, double, uint64_t, cstone::GpuTag>;
 
 } // namespace mars

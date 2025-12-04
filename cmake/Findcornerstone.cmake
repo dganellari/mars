@@ -15,9 +15,15 @@ endif()
 
 # If not found, search for Cornerstone headers in standard locations
 if(NOT cornerstone_FOUND)
+    # Clear cached value if it was NOTFOUND to allow re-searching
+    if(cornerstone_INCLUDE_DIR STREQUAL "cornerstone_INCLUDE_DIR-NOTFOUND")
+        unset(cornerstone_INCLUDE_DIR CACHE)
+    endif()
+    
     find_path(cornerstone_INCLUDE_DIR
         NAMES cstone/domain/domain.hpp
         PATHS
+            ${CMAKE_BINARY_DIR}/_deps/cornerstone_fetch-src/include
             ${CMAKE_INSTALL_PREFIX}/include
             $ENV{CORNERSTONE_DIR}/include
             /usr/include
@@ -55,14 +61,24 @@ endif()
 
 # Create an interface library for Cornerstone
 if(cornerstone_FOUND AND NOT TARGET cornerstone::cornerstone)
-    add_library(cornerstone::cornerstone INTERFACE IMPORTED)
-    set_target_properties(cornerstone::cornerstone PROPERTIES
-        INTERFACE_INCLUDE_DIRECTORIES "${cornerstone_INCLUDE_DIR}"
-    )
+    if(cornerstone_INCLUDE_DIR AND NOT cornerstone_INCLUDE_DIR STREQUAL "cornerstone_INCLUDE_DIR-NOTFOUND")
+        add_library(cornerstone::cornerstone INTERFACE IMPORTED)
+        set_target_properties(cornerstone::cornerstone PROPERTIES
+            INTERFACE_INCLUDE_DIRECTORIES "${cornerstone_INCLUDE_DIR}"
+        )
+    else()
+        message(WARNING "Cornerstone headers not found, skipping target creation")
+        set(cornerstone_FOUND FALSE)
+    endif()
 endif()
 
 # Create GPU target if the library was found
 if(CORNERSTONE_GPU_LIBRARY AND NOT TARGET cstone_gpu)
+    # Validate that include directory is valid
+    if(NOT cornerstone_INCLUDE_DIR OR cornerstone_INCLUDE_DIR STREQUAL "cornerstone_INCLUDE_DIR-NOTFOUND")
+        message(FATAL_ERROR "Cannot create cstone_gpu target: cornerstone_INCLUDE_DIR is not set properly")
+    endif()
+    
     add_library(cstone_gpu STATIC IMPORTED GLOBAL)
     set_target_properties(cstone_gpu PROPERTIES
         IMPORTED_LOCATION "${CORNERSTONE_GPU_LIBRARY}"

@@ -10,6 +10,7 @@
 #endif
 #cmakedefine MARS_ENABLE_CUDAUVM
 #cmakedefine MARS_ENABLE_HIP
+#cmakedefine MARS_ENABLE_HYPRE
 #cmakedefine MARS_ENABLE_RDMA
 #cmakedefine MARS_ENBABLE_PAR_MOONOLITH
 #cmakedefine MARS_ENABLE_ADIOS2
