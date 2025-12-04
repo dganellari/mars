@@ -3,6 +3,9 @@
 #include "mars.hpp"
 #include "backend/distributed/unstructured/domain.hpp"
 #include <mpi.h>
+#ifdef MARS_ENABLE_HYPRE
+#include <HYPRE.h>
+#endif
 #include <functional>
 #include <thrust/host_vector.h>
 #include <thrust/device_vector.h>
@@ -100,11 +103,11 @@ public:
         
         size_t numOwnedNodes = 0;
         for (size_t i = 0; i < numTotalNodes; ++i) {
-            if (h_ownership[i] == 1) numOwnedNodes++;
+            if (h_ownership[i] == 1 || h_ownership[i] == 2) numOwnedNodes++;  // Owned (1) + shared (2)
         }
         
-        if (rank_ == 0 || rank_ == 1) {
-            std::cout << "Rank " << rank_ << ": DOF handler counted " << numOwnedNodes << " owned nodes, total nodes " << numTotalNodes << std::endl;
+        if (rank_ == 0) {
+            std::cout << "Rank " << rank_ << ": DOF handler counted " << numOwnedNodes << " owned nodes (including shared), total nodes " << numTotalNodes << std::endl;
         }
         
         if (numOwnedNodes == 0) {
@@ -113,15 +116,16 @@ public:
         
         size_t globalDofOffset = 0;
         
-        // Calculate global offset for this rank
-        // Simple partitioning: each rank owns consecutive global DOF indices
+        // Calculate global offset for this rank using exclusive scan
+        // Each rank's offset is the sum of all previous ranks' owned DOF counts
         size_t totalGlobalNodes = 0;
         MPI_Allreduce(&numOwnedNodes, &totalGlobalNodes, 1, MPI_UNSIGNED_LONG, MPI_SUM, MPI_COMM_WORLD);
         
-        size_t nodesPerRank = totalGlobalNodes / numRanks_;
-        size_t remainder = totalGlobalNodes % numRanks_;
-        
-        globalDofOffset = rank_ * nodesPerRank + std::min(static_cast<size_t>(rank_), remainder);
+        // Use MPI_Exscan to compute prefix sum (exclusive scan)
+        // Rank 0 gets 0, Rank 1 gets rank 0's count, etc.
+        size_t prefixSum = 0;
+        MPI_Exscan(&numOwnedNodes, &prefixSum, 1, MPI_UNSIGNED_LONG, MPI_SUM, MPI_COMM_WORLD);
+        globalDofOffset = (rank_ == 0) ? 0 : prefixSum;
         
         // For now, assume 1 DOF per node (linear elements)
         // In the future, this could be extended for higher-order elements
@@ -143,41 +147,71 @@ public:
     /**
      * @brief Build node-to-DOF mappings for assembly
      * Creates mappings from node indices to local and global DOF indices
+     * Uses SFC-based ordering for owned DOFs to improve spatial locality
      */
     void buildNodeToDofMappings() {
         size_t numTotalNodes = domain_.getNodeCount();
         
-        // Copy ownership to host
+        // Copy ownership and SFC keys to host
         const auto& nodeOwnership = domain_.getNodeOwnershipMap();
+        const auto& nodeSfcKeys = domain_.getLocalToGlobalSfcMap();
+        
         thrust::host_vector<uint8_t> h_ownership(numTotalNodes);
+        thrust::host_vector<KeyType> h_sfcKeys(numTotalNodes);
+        
         thrust::copy(thrust::device_pointer_cast(nodeOwnership.data()),
                     thrust::device_pointer_cast(nodeOwnership.data() + numTotalNodes),
                     h_ownership.begin());
+        thrust::copy(thrust::device_pointer_cast(nodeSfcKeys.data()),
+                    thrust::device_pointer_cast(nodeSfcKeys.data() + numTotalNodes),
+                    h_sfcKeys.begin());
         
         // Initialize mappings
         nodeToLocalDof_.assign(numTotalNodes, static_cast<KeyType>(-1));
         nodeToGlobalDof_.assign(numTotalNodes, static_cast<KeyType>(-1));
         
-        // PASS 1: Build mappings for owned nodes (local indices 0 to numOwnedNodes-1)
-        size_t localDofCounter = 0;
+        // PASS 1: Build mappings for owned nodes using SFC-based ordering
+        // Collect owned node indices with their SFC keys
+        std::vector<std::pair<KeyType, size_t>> ownedNodesSfc;  // (sfcKey, nodeIdx)
         for (size_t nodeIdx = 0; nodeIdx < numTotalNodes; ++nodeIdx) {
-            if (h_ownership[nodeIdx] == 1) {  // Owned node
-                nodeToLocalDof_[nodeIdx] = localDofCounter;
-                nodeToGlobalDof_[nodeIdx] = localToGlobalDof_[localDofCounter];
-                localDofCounter++;
+            if (h_ownership[nodeIdx] == 1 || h_ownership[nodeIdx] == 2) {  // Owned (1) or shared (2)
+                ownedNodesSfc.push_back({h_sfcKeys[nodeIdx], nodeIdx});
             }
+        }
+        
+        // Sort owned nodes by SFC key for spatial locality
+        std::sort(ownedNodesSfc.begin(), ownedNodesSfc.end(),
+                  [](const auto& a, const auto& b) { return a.first < b.first; });
+        
+        // Assign DOF indices in SFC order
+        size_t localDofCounter = 0;
+        for (const auto& [sfcKey, nodeIdx] : ownedNodesSfc) {
+            nodeToLocalDof_[nodeIdx] = localDofCounter;
+            nodeToGlobalDof_[nodeIdx] = localToGlobalDof_[localDofCounter];
+            localDofCounter++;
         }
         
         numLocalDofs_ = localDofCounter;
         
         // PASS 2: Assign local indices to ghost nodes (after owned DOFs)
         // This enables LOCAL-LOCAL matrix indexing for cuSPARSE compatibility
+        // Ghost = pure ghost (0), NOT shared (2) since shared nodes are treated as owned
         size_t ghostDofCounter = 0;
+        ghostDofToNode_.clear();
+        
+        // First count ghosts to reserve space
+        size_t numGhosts = 0;
         for (size_t nodeIdx = 0; nodeIdx < numTotalNodes; ++nodeIdx) {
-            if (h_ownership[nodeIdx] == 0) {  // Ghost node
+            if (h_ownership[nodeIdx] == 0) numGhosts++;
+        }
+        ghostDofToNode_.resize(numGhosts);
+        
+        for (size_t nodeIdx = 0; nodeIdx < numTotalNodes; ++nodeIdx) {
+            if (h_ownership[nodeIdx] == 0) {  // Pure ghost node (state 0)
                 nodeToLocalDof_[nodeIdx] = numLocalDofs_ + ghostDofCounter;
-                // Global DOF index for ghosts needs MPI communication (placeholder -1 for now)
+                // Global DOF index for ghosts/shared needs MPI communication (placeholder -1 for now)
                 nodeToGlobalDof_[nodeIdx] = static_cast<KeyType>(-1);
+                ghostDofToNode_[ghostDofCounter] = nodeIdx;
                 ghostDofCounter++;
             }
         }
@@ -185,9 +219,24 @@ public:
         numLocalGhostDofs_ = ghostDofCounter;
         
         if (rank_ == 0 || rank_ == 1) {
-            std::cout << "Rank " << rank_ << ": Built DOF mappings - " 
+            std::cout << "Rank " << rank_ << ": Built DOF mappings (SFC-ordered) - " 
                       << numLocalDofs_ << " owned + " << numLocalGhostDofs_ << " ghost = " 
                       << (numLocalDofs_ + numLocalGhostDofs_) << " total local DOFs\n";
+            
+            // Debug: count ownership states (0=pure ghost, 1=pure owned, 2=shared boundary)
+            size_t cnt_owned = 0, cnt_ghost = 0, cnt_shared = 0;
+            const auto& nodeOwnership = domain_.getNodeOwnershipMap();
+            thrust::host_vector<uint8_t> h_own_debug(numTotalNodes);
+            thrust::copy(thrust::device_pointer_cast(nodeOwnership.data()),
+                        thrust::device_pointer_cast(nodeOwnership.data() + numTotalNodes),
+                        h_own_debug.begin());
+            for (size_t i = 0; i < numTotalNodes; ++i) {
+                if (h_own_debug[i] == 1) cnt_owned++;
+                else if (h_own_debug[i] == 0) cnt_ghost++;
+                else if (h_own_debug[i] == 2) cnt_shared++;
+            }
+            std::cout << "Rank " << rank_ << ": Ownership states - " << cnt_owned << " pure owned, " 
+                      << cnt_shared << " shared, " << cnt_ghost << " pure ghost\n";
         }
         
         // Exchange ghost DOF global indices with owning ranks
@@ -220,7 +269,7 @@ public:
         // Build mapping from owned node SFC keys to global DOF indices for fast lookup
         std::unordered_map<KeyType, KeyType> ownedSfcToGlobalDof;
         for (size_t nodeIdx = 0; nodeIdx < numTotalNodes; ++nodeIdx) {
-            if (h_ownership[nodeIdx] == 1) {  // Owned node
+            if (h_ownership[nodeIdx] == 1 || h_ownership[nodeIdx] == 2) {  // Owned (1) or shared (2)
                 ownedSfcToGlobalDof[h_sfcKeys[nodeIdx]] = nodeToGlobalDof_[nodeIdx];
             }
         }
@@ -251,7 +300,7 @@ public:
         std::map<int, std::vector<KeyType>> sfcKeysByRank;    // rank -> list of SFC keys to query
         
         for (size_t nodeIdx = 0; nodeIdx < numTotalNodes; ++nodeIdx) {
-            if (h_ownership[nodeIdx] == 0) {  // Ghost node
+            if (h_ownership[nodeIdx] == 0) {  // Pure ghost node (state 0, not shared)
                 KeyType sfcKey = h_sfcKeys[nodeIdx];
                 
                 // Find which rank owns this SFC key
@@ -427,7 +476,7 @@ public:
         // Build lists of ghost nodes grouped by owning rank
         std::map<int, std::vector<size_t>> ghostNodesByRank;
         for (size_t nodeIdx = 0; nodeIdx < numTotalNodes; ++nodeIdx) {
-            if (h_ownership[nodeIdx] == 0) {  // Ghost node
+            if (h_ownership[nodeIdx] == 0) {  // Pure ghost node (state 0)
                 KeyType sfcKey = h_sfcKeys[nodeIdx];
                 int ownerRank = findRank(sfcKey);
                 
@@ -773,6 +822,17 @@ public:
     }
     
     /**
+     * @brief Get global DOF index for a local ghost DOF index
+     */
+    KeyType get_ghost_global_dof(KeyType localGhostIdx) const {
+        if (localGhostIdx >= ghostDofToNode_.size()) {
+            return static_cast<KeyType>(-1);
+        }
+        KeyType nodeIdx = ghostDofToNode_[localGhostIdx];
+        return nodeToGlobalDof_[nodeIdx];
+    }
+    
+    /**
      * @brief Get owned DOF range
      */
     std::pair<size_t, size_t> get_owned_dof_range() const {
@@ -800,17 +860,143 @@ public:
         }
         
         size_t nodeCount = domain_.getNodeCount();
-        if (dofValues.size() != nodeCount) {
+        size_t expectedSize = get_num_local_dofs_with_ghosts();
+        if (dofValues.size() != expectedSize) {
+            std::cerr << "Rank " << rank_ << ": Error - vector size " << dofValues.size() 
+                      << " != expected " << expectedSize << " (owned+ghost)\n";
             throw std::runtime_error("UnstructuredDofHandler::scatterAddGhostData: vector size mismatch");
         }
         
-        // Exchange data directly on device with GPU-aware MPI
-        exchangeNodeData(dofValues);
+        // Use robust global exchange (Allgather) instead of broken point-to-point
+        exchangeNodeDataGlobal(dofValues);
     }
     
     size_t numBoundaryNodes() const { return boundaryNodes_.size(); }
     size_t numGhostNodes() const { return ghostNodes_.size(); }
     bool isInitialized() const { return initialized_; }
+
+    /**
+     * @brief Robust global exchange of ghost contributions
+     * 
+     * 1. Collects all local ghost contributions (GlobalDOF, Value)
+     * 2. Allgathers them to all ranks
+     * 3. Each rank adds contributions for DOFs it owns
+     */
+    template<typename VectorType>
+    void exchangeNodeDataGlobal(VectorType& dofValues) {
+        using T = typename VectorType::value_type;
+        
+        // 1. Extract ghost values from device
+        size_t numGhosts = numLocalGhostDofs_;
+        if (numGhosts == 0) {
+            // Even if we have no ghosts, we must participate in Allgather
+            // But we can send empty data
+        }
+
+        // Copy ghost values to host
+        // Ghost DOFs are stored after owned DOFs: [0..numLocalDofs_-1] owned, [numLocalDofs_..end] ghost
+        std::vector<T> h_ghostValues(numGhosts);
+        if (numGhosts > 0) {
+            thrust::copy(thrust::device_pointer_cast(dofValues.data()) + numLocalDofs_, 
+                         thrust::device_pointer_cast(dofValues.data()) + numLocalDofs_ + numGhosts, 
+                         h_ghostValues.begin());
+        }
+
+        // Prepare send buffers: (GlobalDOF, Value) pairs
+        // We split into two arrays for simpler MPI types
+        std::vector<KeyType> sendGlobalDofs;
+        std::vector<T> sendValues;
+        sendGlobalDofs.reserve(numGhosts);
+        sendValues.reserve(numGhosts);
+
+        int skipped_invalid = 0;
+        int skipped_zero = 0;
+        for (size_t i = 0; i < numGhosts; ++i) {
+            T val = h_ghostValues[i];
+            if (std::abs(val) < 1e-20) {
+                skipped_zero++;
+                continue; // Optimization: only send non-zero contributions
+            }
+            KeyType globalDof = get_ghost_global_dof(i);
+            if (globalDof == static_cast<KeyType>(-1)) {
+                skipped_invalid++;
+                if (rank_ == 0 && skipped_invalid <= 5) {
+                    std::cerr << "Rank " << rank_ << ": Ghost DOF " << i << " has invalid global DOF (-1), value=" << val << std::endl;
+                }
+                continue;
+            }
+            sendGlobalDofs.push_back(globalDof);
+            sendValues.push_back(val);
+        }
+        
+        if (rank_ == 0 || rank_ == 1) {
+            std::cout << "Rank " << rank_ << ": Ghost exchange - " << numGhosts << " ghosts, "
+                      << skipped_zero << " zero, " << skipped_invalid << " invalid, "
+                      << sendGlobalDofs.size() << " to send" << std::endl;
+        }
+
+        // 2. Allgatherv
+        // First exchange counts
+        int myCount = static_cast<int>(sendGlobalDofs.size());
+        std::vector<int> allCounts(numRanks_);
+        MPI_Allgather(&myCount, 1, MPI_INT, allCounts.data(), 1, MPI_INT, MPI_COMM_WORLD);
+
+        // Calculate displacements
+        std::vector<int> displs(numRanks_);
+        int totalCount = 0;
+        for (int i = 0; i < numRanks_; ++i) {
+            displs[i] = totalCount;
+            totalCount += allCounts[i];
+        }
+
+        // Exchange Keys (GlobalDOFs)
+        std::vector<KeyType> recvGlobalDofs(totalCount);
+        // Use MPI_UINT64_T for KeyType (assuming uint64_t)
+        MPI_Allgatherv(sendGlobalDofs.data(), myCount, MPI_UINT64_T,
+                       recvGlobalDofs.data(), allCounts.data(), displs.data(), MPI_UINT64_T, MPI_COMM_WORLD);
+
+        // Exchange Values
+        std::vector<T> recvValues(totalCount);
+        MPI_Allgatherv(sendValues.data(), myCount, getMPIType<T>(),
+                       recvValues.data(), allCounts.data(), displs.data(), getMPIType<T>(), MPI_COMM_WORLD);
+
+        // 3. Accumulate to owned DOFs
+        std::vector<T> h_ownedUpdates(numLocalDofs_, 0.0);
+        bool anyUpdates = false;
+        int myContributions = 0;
+
+        for (int i = 0; i < totalCount; ++i) {
+            KeyType globalDof = recvGlobalDofs[i];
+            T val = recvValues[i];
+
+            // Check if I own this DOF
+            if (globalDof >= ownedDofStart_ && globalDof < ownedDofEnd_) {
+                size_t localIdx = globalDof - ownedDofStart_;
+                h_ownedUpdates[localIdx] += val;
+                anyUpdates = true;
+                myContributions++;
+            }
+        }
+        
+        if (rank_ == 0 || rank_ == 1) {
+            std::cout << "Rank " << rank_ << ": Received " << totalCount << " contributions, "
+                      << myContributions << " for my DOFs [" << ownedDofStart_ << ", " << ownedDofEnd_ << ")" << std::endl;
+        }
+
+        // 4. Update device vector (owned part)
+        if (anyUpdates) {
+            // We need to add h_ownedUpdates to the existing values on device
+            // Copy updates to device
+            DeviceVector<T> d_updates = h_ownedUpdates;
+            
+            // Add to owned part of dofValues
+            thrust::transform(thrust::device_pointer_cast(dofValues.data()), 
+                              thrust::device_pointer_cast(dofValues.data()) + numLocalDofs_,
+                              thrust::device_pointer_cast(d_updates.data()),
+                              thrust::device_pointer_cast(dofValues.data()),
+                              thrust::plus<T>());
+        }
+    }
     
     /**
      * @brief Exchange node data via GPU-aware MPI point-to-point communication
@@ -991,7 +1177,8 @@ public:
                                                  allHaloNodes.data(),
                                                  allHaloNodes.data() + allHaloNodes.size(),
                                                  [=] __device__ (KeyType nodeIdx) {
-                                                     return ownership_ptr[nodeIdx] == 1;
+                                                     uint8_t own = ownership_ptr[nodeIdx];
+                                                     return own == 1 || own == 2;  // Owned (1) or shared (2) nodes
                                                  });
         
         // Copy boundary and ghost nodes to host vectors
@@ -1039,6 +1226,7 @@ private:
     // Node-to-DOF mappings for assembly
     std::vector<KeyType> nodeToLocalDof_;   // Node index -> local DOF index (row)
     std::vector<KeyType> nodeToGlobalDof_;  // Node index -> global DOF index (column)
+    std::vector<KeyType> ghostDofToNode_;   // Local ghost DOF index -> Node index
     
     // Ghost DOF management for local-local matrix assembly
     std::map<KeyType, KeyType> globalToLocalGhostDof_;  // Global DOF -> local ghost DOF index

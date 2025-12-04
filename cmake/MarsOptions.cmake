@@ -17,6 +17,7 @@ option(MARS_ENABLE_TESTS "Enable tests" ON)
 # FIXME Extra backends 
 option(MARS_ENABLE_MOONOLITH "Use -DMARS_ENABLE_MOONOLITH=ON for enabling mesh transfer functions." OFF)
 option(MARS_ENABLE_VTK "Uses VTK IO" OFF)
+option(MARS_ENABLE_HYPRE "Use -DMARS_ENABLE_HYPRE=ON for enabling Hypre AMG preconditioner" OFF)
 
 # FIXME  and turn on!
 option(MARS_ENABLE_SERIAL_BACKEND "Use -DMARS_ENABLE_SERIAL_BACKEND=ON for enabling the serial backend" OFF)

@@ -20,3 +20,8 @@ install(TARGETS mars_ex1_poisson RUNTIME DESTINATION bin/examples)
 add_executable(mars_ex_beam_tet mars_ex_beam_tet.cu)
 target_link_libraries(mars_ex_beam_tet PRIVATE mars)
 install(TARGETS mars_ex_beam_tet RUNTIME DESTINATION bin/examples)
+
+# Distributed GPU beam-tet example
+add_executable(mars_ex_beam_tet_distributed mars_ex_beam_tet_distributed.cu)
+target_link_libraries(mars_ex_beam_tet_distributed PRIVATE mars)
+install(TARGETS mars_ex_beam_tet_distributed RUNTIME DESTINATION bin/examples)

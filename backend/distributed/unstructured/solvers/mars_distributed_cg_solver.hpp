@@ -1,6 +1,6 @@
 #pragma once
 
-#include "mars_cg_solver.hpp"
+#include "mars_cg_solver_with_preconditioner.hpp"
 #include "../fem/mars_unstructured_dof_handler.hpp"
 
 namespace mars {
@@ -18,7 +18,7 @@ public:
     using Matrix = SparseMatrix<IndexType, RealType, AcceleratorTag>;
     using Vector = typename mars::VectorSelector<RealType, AcceleratorTag>::type;
     using DofHandler = UnstructuredDofHandler<ElementTag, RealType, IndexType, AcceleratorTag>;
-    using CGSolver = ConjugateGradientSolver<RealType, IndexType, AcceleratorTag>;
+    using CGSolver = PreconditionedConjugateGradientSolver<RealType, IndexType, AcceleratorTag>;
     
     DistributedCGSolver(DofHandler& dofHandler, int maxIter = 1000, RealType tolerance = 1e-10)
         : dofHandler_(dofHandler)

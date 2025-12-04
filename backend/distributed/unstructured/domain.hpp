@@ -180,15 +180,6 @@ template<typename KeyType>
 __global__ void mapSfcToLocalIdKernel(
     const KeyType* sfc_conn, KeyType* local_conn, const KeyType* sorted_sfc, size_t num_elements, size_t num_nodes);
 
-template<typename KeyType, int NodesPerElement>
-__global__ void markLocalElementNodesKernel(uint8_t* nodeOwnership,
-                                            const KeyType* conn0,
-                                            const KeyType* conn1,
-                                            const KeyType* conn2,
-                                            const KeyType* conn3,
-                                            size_t numLocalElements,
-                                            size_t localStartIdx);
-
 __global__ void initNodeOwnershipKernel(uint8_t* nodeOwnership, size_t nodeCount);
 
 template<typename KeyType, typename RealType>
@@ -342,7 +333,7 @@ struct HaloData
     template<typename T>
     using DeviceVector = typename VectorSelector<T, AcceleratorTag>::type;
 
-    // Node ownership: 0=halo (not owned), 1=owned by this rank
+    // Node ownership: 0=pure ghost (halo only), 1=pure owned (local only), 2=shared (local+halo boundary)
     DeviceVector<uint8_t> d_nodeOwnership_;
 
     // Cached list of halo element indices for faster iteration
@@ -1637,6 +1628,13 @@ ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::getConnectivity() 
     return std::get<I>(d_conn_keys_);
 }
 
+template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
+typename ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::DeviceConnectivityTuple
+ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::getConnectivity() const
+{
+    return d_conn_keys_;
+}
+
 // Initialize d_conn_keys_ in constructor - missing resize calls
 template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
 void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::initializeConnectivityKeys()
@@ -1684,7 +1682,6 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ensureAdjacen
     if (!adjacency_)
     {
         adjacency_ = std::make_unique<AdjacencyData<ElementTag, RealType, KeyType, AcceleratorTag>>(*this);
-        std::cout << "Rank " << rank_ << " built adjacency lazily. Node count: " << nodeCount_ << std::endl;
     }
 }
 
@@ -1693,10 +1690,8 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ensureHalo() 
 {
     if (!halo_)
     {
-        // Halo depends on adjacency (needs d_conn_local_ids_)
-        ensureAdjacency();
+        // HaloData now works directly with SFC keys - no adjacency needed!
         halo_ = std::make_unique<HaloData<ElementTag, RealType, KeyType, AcceleratorTag>>(*this);
-        std::cout << "Rank " << rank_ << " built halo structures lazily." << std::endl;
     }
 }
 
@@ -1854,42 +1849,9 @@ template<typename ElementTag, typename RealType, typename KeyType, typename Acce
 HaloData<ElementTag, RealType, KeyType, AcceleratorTag>::HaloData(
     const ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>& domain)
 {
-    buildNodeOwnership(domain);
+    // Build halo elements first, then ownership (so Phase 3 can detect shared nodes)
     buildHaloElementIndices(domain);
-}
-
-template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
-void HaloData<ElementTag, RealType, KeyType, AcceleratorTag>::buildNodeOwnership(
-    const ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>& domain)
-{
-    static_assert(std::is_same_v<ElementTag, TetTag>, "Currently only TetTag is supported for node ownership");
-
-    if constexpr (std::is_same_v<AcceleratorTag, cstone::GpuTag>)
-    {
-        size_t nodeCount = domain.getNodeCount();
-        d_nodeOwnership_.resize(nodeCount);
-
-        int blockSize = 256;
-
-        // Phase 1: Initialize all nodes as halo (0)
-        int numBlocks = (nodeCount + blockSize - 1) / blockSize;
-        initNodeOwnershipKernel<<<numBlocks, blockSize>>>(thrust::raw_pointer_cast(d_nodeOwnership_.data()), nodeCount);
-        cudaCheckError();
-
-        // Phase 2: Mark nodes of local elements as owned (tetrahedra: 4 nodes each)
-        size_t localCount = domain.localElementCount();
-        numBlocks         = (localCount + blockSize - 1) / blockSize;
-
-        // Access adjacency's local connectivity
-        const auto& conn_local = domain.getElementToNodeConnectivity();
-
-        markLocalElementNodesKernel<KeyType, 4><<<numBlocks, blockSize>>>(
-            thrust::raw_pointer_cast(d_nodeOwnership_.data()), thrust::raw_pointer_cast(std::get<0>(conn_local).data()),
-            thrust::raw_pointer_cast(std::get<1>(conn_local).data()),
-            thrust::raw_pointer_cast(std::get<2>(conn_local).data()),
-            thrust::raw_pointer_cast(std::get<3>(conn_local).data()), localCount, domain.startIndex());
-        cudaCheckError();
-    }
+    buildNodeOwnership(domain);
 }
 
 template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
@@ -1928,9 +1890,6 @@ void HaloData<ElementTag, RealType, KeyType, AcceleratorTag>::buildHaloElementIn
                 start);
             offset += rangeSize;
         }
-
-        std::cout << "Rank " << domain.rank() << " built halo indices list with " << totalHalos << " halos."
-                  << std::endl;
     }
 }
 

@@ -130,7 +130,8 @@ __global__ void assembleRHSKernel(const RealType* node_x,
                                   IndexType numElements,
                                   SourceFunc sourceTerm,
                                   RealType* rhs,
-                                  const IndexType* nodeToDof)
+                                  const IndexType* nodeToDof,
+                                  IndexType numOwnedDofs)
 {
     using RefElem = ReferenceElement<ElementTag, RealType>;
 
@@ -144,18 +145,22 @@ __global__ void assembleRHSKernel(const RealType* node_x,
     nodes[2] = conn2[elemIdx];
     nodes[3] = conn3[elemIdx];
     
-    // Check if ALL nodes are owned and map to DOF indices
-    bool allOwned = true;
+    // Map nodes to local DOF indices (includes ghosts)
     IndexType dofs[4];
     for (int i = 0; i < 4; ++i) {
         dofs[i] = nodeToDof[nodes[i]];
-        if (dofs[i] == static_cast<IndexType>(-1)) {
-            allOwned = false;
+    }
+    
+    // Check if element contributes to any owned DOF
+    bool contributesToOwned = false;
+    for (int i = 0; i < 4; ++i) {
+        if (dofs[i] < numOwnedDofs) {
+            contributesToOwned = true;
             break;
         }
     }
     
-    if (!allOwned) return;  // Skip elements with ghost nodes
+    if (!contributesToOwned) return;  // Skip elements that only touch ghost nodes
 
     RealType elem_x[4], elem_y[4], elem_z[4];
     for (int i = 0; i < 4; ++i)
@@ -199,23 +204,26 @@ __global__ void assembleRHSKernel(const RealType* node_x,
             z += phi * elem_z[i];
         }
 
-        // Evaluate source term at quadrature point
-        RealType f = sourceTerm(x, y, z);
+        RealType f_val = sourceTerm(x, y, z);
 
-        // Integrate
         for (int i = 0; i < RefElem::numNodes; ++i)
         {
-            RealType phi_i = RefElem::evaluateBasis(i, xi, eta, zeta);
-            localB[i] += weight * detJ * f * phi_i;
+            RealType phi = RefElem::evaluateBasis(i, xi, eta, zeta);
+            localB[i] += weight * detJ * f_val * phi;
         }
     }
 
-    // Assemble into global vector
+    // Assemble into global vector (atomic add)
     for (int i = 0; i < RefElem::numNodes; ++i)
     {
-        atomicAdd(&rhs[dofs[i]], localB[i]);
+        IndexType dofIdx = dofs[i];
+        // Only add to owned DOFs (ghost DOFs are handled by their owner rank)
+        if (dofIdx < numOwnedDofs) {
+            atomicAdd(&rhs[dofIdx], localB[i]);
+        }
     }
 }
+
 
 // Mass matrix assembler class
 template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
@@ -271,14 +279,27 @@ public:
         cudaDeviceSynchronize();
     }
 
-    // Assemble RHS vector with source term
+    // Overload for backward compatibility (assumes serial execution where numOwnedDofs == numDofs)
     template<typename SourceFunc>
     void assembleRHS(FESpace& fes, Vector& b, SourceFunc f, const std::vector<KeyType>& nodeToDof)
     {
+        assembleRHS(fes, b, f, nodeToDof, static_cast<KeyType>(fes.numDofs()));
+    }
+
+    // Assemble RHS vector with source term
+    template<typename SourceFunc>
+    void assembleRHS(FESpace& fes, Vector& b, SourceFunc f, const std::vector<KeyType>& nodeToDof, KeyType numOwnedDofs)
+    {
         auto& domain = fes.domain();
 
-        size_t numDofs = fes.numDofs();
-        b.resize(numDofs);
+        // NOTE: For distributed assembly, the caller should pre-size b to include ghosts (owned+ghost DOFs)
+        // We only resize if the vector is empty (backward compatibility with serial code)
+        if (b.size() == 0) {
+            size_t numDofs = fes.numDofs();
+            b.resize(numDofs);
+        }
+        
+        // Zero the vector
         thrust::fill(thrust::device_pointer_cast(b.data()), thrust::device_pointer_cast(b.data() + b.size()),
                      RealType(0));
 
@@ -304,7 +325,7 @@ public:
 
         assembleRHSKernel<ElementTag, RealType, KeyType>
             <<<gridSize, blockSize>>>(d_x.data(), d_y.data(), d_z.data(), conn0.data(), conn1.data(), conn2.data(), conn3.data(),
-                                      numElements, f, thrust::raw_pointer_cast(b.data()), d_nodeToDof.data());
+                                      numElements, f, thrust::raw_pointer_cast(b.data()), d_nodeToDof.data(), numOwnedDofs);
 
         cudaDeviceSynchronize();
     }
