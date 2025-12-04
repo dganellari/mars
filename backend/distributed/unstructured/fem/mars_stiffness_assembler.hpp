@@ -73,18 +73,20 @@ __global__ void assembleStiffnessKernel(
     const IndexType* conn1,  // Connectivity node 1
     const IndexType* conn2,  // Connectivity node 2
     const IndexType* conn3,  // Connectivity node 3
-    IndexType numElements,
+    IndexType elementStart,           // Start of local element range
+    IndexType elementEnd,             // End of local element range  
+    IndexType numDofs,                // Number of owned DOFs (for square matrix)
     const IndexType* rowOffsets,      // CSR row pointers (local DOF indexing)
-    const IndexType* colIndices,      // CSR column indices (local DOF indexing with ghosts)
+    const IndexType* colIndices,      // CSR column indices (local DOF indexing)
     RealType* values,                 // CSR values (output)
     const IndexType* nodeToLocalDof,  // Node to local DOF mapping (includes ghosts)
-    const uint8_t* nodeOwnership      // Node ownership (1 = owned, 0 = ghost)
+    const uint8_t* nodeOwnership      // Node ownership (0=ghost, 1=owned, 2=shared)
 )
 {
     using RefElem = ReferenceElement<ElementTag, RealType>;
     
-    IndexType elemIdx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (elemIdx >= numElements) return;
+    IndexType elemIdx = blockIdx.x * blockDim.x + threadIdx.x + elementStart;
+    if (elemIdx >= elementEnd) return;
 
     // Get element nodes from tuple connectivity (local node indices)
     IndexType nodes[4];
@@ -93,15 +95,15 @@ __global__ void assembleStiffnessKernel(
     nodes[2] = conn2[elemIdx];
     nodes[3] = conn3[elemIdx];
 
-    // Check if element has at least one owned node
+    // Check if element has at least one owned or shared node (states 1 or 2)
     bool hasOwnedNode = false;
     for (int i = 0; i < 4; ++i) {
-        if (nodeOwnership[nodes[i]] == 1) {
+        if (nodeOwnership[nodes[i]] == 1 || nodeOwnership[nodes[i]] == 2) {
             hasOwnedNode = true;
             break;
         }
     }
-    if (!hasOwnedNode) return;  // Skip elements with no owned nodes
+    if (!hasOwnedNode) return;  // Skip elements with no owned/shared nodes
     
     // Map nodes to local DOF indices (includes both owned and ghost DOFs)
     IndexType localDofs[4];
@@ -179,20 +181,20 @@ __global__ void assembleStiffnessKernel(
     }
     
     // Assemble into global matrix (atomic operations)
-    // Rows: only owned nodes; Columns: owned or ghost nodes (local indices)
+    // Rows: only owned or shared nodes (states 1 or 2); Columns: owned nodes only
     for (int i = 0; i < RefElem::numNodes; ++i) {
-        // Skip if this node is not owned
-        if (nodeOwnership[nodes[i]] != 1) continue;
+        // Skip if this node is not owned or shared (must be state 1 or 2)
+        if (nodeOwnership[nodes[i]] != 1 && nodeOwnership[nodes[i]] != 2) continue;
         
         IndexType localRow = localDofs[i];     // Local row index (owned DOF)
         IndexType rowStart = rowOffsets[localRow];
         IndexType rowEnd = rowOffsets[localRow + 1];
         
         for (int j = 0; j < RefElem::numNodes; ++j) {
-            // Column uses local index (can reference owned or ghost DOF)
             IndexType localCol = localDofs[j];
             
-            // Find column index and add atomically
+            // Include all columns (owned + ghost) for distributed matrix
+            // Hypre will handle off-diagonal blocks automatically
             atomicAddSparseEntry(values, colIndices, rowStart, rowEnd, 
                                localCol, localK[i][j]);
         }
@@ -242,7 +244,9 @@ public:
         const auto& conn2 = std::get<2>(conn_tuple);
         const auto& conn3 = std::get<3>(conn_tuple);
         
-        size_t numElements = domain.localElementCount();
+        size_t numElements = domain.getElementCount();    // Total elements
+        size_t localElementCount = domain.localElementCount();  // Owned elements
+        size_t numDofs = fes.numDofs();  // Number of owned DOFs
         int nodesPerElem = FESpace::dofsPerElement();
         
         // Use provided node-to-DOF mapping
@@ -251,9 +255,9 @@ public:
         // Get ownership map
         const auto& ownership = domain.getNodeOwnershipMap();
         
-        // Launch assembly kernel
+        // Launch assembly kernel for LOCAL elements only [0, localElementCount)
         const int blockSize = 256;
-        const int gridSize = (numElements + blockSize - 1) / blockSize;
+        const int gridSize = (localElementCount + blockSize - 1) / blockSize;
         
         assembleStiffnessKernel<ElementTag, RealType, KeyType>
             <<<gridSize, blockSize>>>(
@@ -264,7 +268,9 @@ public:
                 conn1.data(),
                 conn2.data(),
                 conn3.data(),
-                numElements,
+                0,                       // Start from 0
+                localElementCount,       // End at localElementCount
+                numDofs,                     // Number of owned DOFs for square matrix
                 K.rowOffsetsPtr(),
                 K.colIndicesPtr(),
                 K.valuesPtr(),
@@ -356,7 +362,8 @@ void StiffnessAssembler<ElementTag, RealType, KeyType, AcceleratorTag>::buildSpa
     auto& domain = fes.domain();
     
     size_t numDofs = fes.numDofs();
-    size_t numElements = domain.localElementCount();
+    size_t numElements = domain.getElementCount();  // Total elements in arrays
+    size_t localElementCount = domain.localElementCount();  // Owned elements
     size_t numNodes = domain.getNodeCount();
     
     // Validate input sizes
@@ -414,9 +421,12 @@ void StiffnessAssembler<ElementTag, RealType, KeyType, AcceleratorTag>::buildSpa
     
     std::vector<std::vector<KeyType>> rowCols(numDofs);  // Only rows for owned DOFs
     
-    // For each element, add all DOF pairs
-    // Only rows corresponding to owned nodes, columns can be owned or ghost
-    for (size_t elem = 0; elem < numElements; ++elem) {
+    // Debug: count elements with mixed ownership
+    int totalElems = 0, mixedElems = 0, ownedOnlyElems = 0;
+    
+    // Loop over LOCAL elements: [0, localElementCount)
+    // Cornerstone places owned elements first in connectivity arrays
+    for (size_t elem = 0; elem < localElementCount; ++elem) {
         KeyType nodes[4] = {h_conn0[elem], h_conn1[elem], h_conn2[elem], h_conn3[elem]};
         
         // Validate node indices
@@ -429,15 +439,22 @@ void StiffnessAssembler<ElementTag, RealType, KeyType, AcceleratorTag>::buildSpa
         }
         if (invalidNodes) continue;
         
-        // Check if element has any owned nodes
+        totalElems++;
+        
+        // Check if element has any owned or shared nodes (states 1 or 2)
         bool hasOwnedNode = false;
+        bool hasGhostNode = false;
         for (int i = 0; i < 4; ++i) {
-            if (h_ownership[nodes[i]] == 1) {
+            if (h_ownership[nodes[i]] == 1 || h_ownership[nodes[i]] == 2) {
                 hasOwnedNode = true;
-                break;
+            }
+            if (h_ownership[nodes[i]] == 0) {
+                hasGhostNode = true;
             }
         }
         if (!hasOwnedNode) continue;
+        if (hasOwnedNode && hasGhostNode) mixedElems++;
+        if (hasOwnedNode && !hasGhostNode) ownedOnlyElems++;
         
         // Get local DOF indices for this element (includes ghosts)
         KeyType localDofs[4];
@@ -452,19 +469,39 @@ void StiffnessAssembler<ElementTag, RealType, KeyType, AcceleratorTag>::buildSpa
         }
         if (invalidDofs) continue;
         
-        // Add all pairs: for each owned node (row), add coupling to all nodes (columns)
+        // Add all pairs: for each owned/shared node (row), add coupling to all nodes (columns)
         for (int i = 0; i < 4; ++i) {
-            // Only add rows for owned nodes
-            if (h_ownership[nodes[i]] != 1) continue;
+            // Only add rows for owned or shared nodes (states 1 or 2)
+            if (h_ownership[nodes[i]] != 1 && h_ownership[nodes[i]] != 2) continue;
             
             KeyType localRow = localDofs[i];
             if (localRow >= numDofs) continue;  // Safety check
             
             for (int j = 0; j < 4; ++j) {
-                // Column can be owned or ghost - use local index
+                // Include all columns (owned + ghost) for distributed matrix
+                // Hypre will handle off-diagonal blocks automatically
                 KeyType localCol = localDofs[j];
                 rowCols[localRow].push_back(localCol);
             }
+        }
+    }
+    
+    // Debug output
+    int rank;
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    if (rank == 0 || rank == 1) {
+        std::cout << "Rank " << rank << ": Sparsity - processed " << totalElems 
+                  << " elements in range [0, " << localElementCount << "): "
+                  << mixedElems << " mixed (owned+ghost), "
+                  << ownedOnlyElems << " owned-only\n";
+    }
+    
+    // Ensure all owned DOFs have at least a diagonal entry
+    // This is critical for boundary DOFs that may not participate in any elements
+    for (size_t i = 0; i < numDofs; ++i) {
+        if (rowCols[i].empty()) {
+            // Add diagonal entry for empty rows
+            rowCols[i].push_back(static_cast<KeyType>(i));
         }
     }
     
@@ -478,8 +515,9 @@ void StiffnessAssembler<ElementTag, RealType, KeyType, AcceleratorTag>::buildSpa
         totalNnz += row.size();
     }
     
-    // Allocate matrix (rectangular: rows=owned DOFs, cols=owned+ghost DOFs)
-    // Ghost DOF values will be updated via halo exchange before each SpMV
+    // Allocate rectangular matrix (owned rows × owned+ghost columns)
+    // For distributed solvers like Hypre, each rank has rectangular local matrix
+    // with global column indices spanning multiple ranks
     K.allocate(numDofs, numLocalDofsWithGhosts, totalNnz);
     
     // Build CSR format

@@ -19,7 +19,7 @@
 #include "backend/distributed/unstructured/fem/mars_fem.hpp"
 #include "backend/distributed/unstructured/fem/mars_unstructured_dof_handler.hpp"
 #include "backend/distributed/unstructured/fem/mars_unstructured_dm.hpp"
-#include "backend/distributed/unstructured/solvers/mars_cg_solver_with_preconditioner.hpp"
+#include "backend/distributed/unstructured/fem/mars_form_linear_system.hpp"
 #ifdef MARS_ENABLE_HYPRE
 #include "backend/distributed/unstructured/solvers/mars_hypre_pcg_solver.hpp"
 #endif
@@ -27,6 +27,7 @@
 #include <thrust/copy.h>
 #include <algorithm>
 #include <limits>
+#include <unordered_set>
 
 #include <mpi.h>
 #include <iostream>
@@ -97,10 +98,16 @@ int main(int argc, char** argv) {
     int rank, numRanks;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &numRanks);
+    
+    if (rank == 0) {
+        std::cout << "=== BINARY COMPILED: " << __DATE__ << " " << __TIME__ << " ===" << std::endl;
+        std::cout.flush();
+    }
 
     // Parse command line arguments
     std::string meshPath = "";  // No default, user must specify
     int order = 1;
+    std::string solver = "elimination-boomeramg";  // Default: MFEM-like elimination with BoomerAMG
 
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
@@ -108,6 +115,8 @@ int main(int argc, char** argv) {
             meshPath = argv[++i];
         } else if (arg == "--order" && i + 1 < argc) {
             order = std::atoi(argv[++i]);
+        } else if (arg == "--solver" && i + 1 < argc) {
+            solver = argv[++i];
         } else if (arg == "--help" || arg == "-h") {
             if (rank == 0) {
                 std::cout << "Usage: " << argv[0] << " --mesh <path> [options]\n\n"
@@ -115,11 +124,17 @@ int main(int argc, char** argv) {
                           << "Options:\n"
                           << "  --mesh <path>      Path to mesh (MFEM .mesh or MARS binary dir)\n"
                           << "  --order <n>        Polynomial order (default: 1)\n"
+                          << "  --solver <type>    Solver: elimination-boomeramg (default), elimination-jacobi, elimination, or jacobi\n"
                           << "  --help, -h         Print this help\n\n"
+                          << "Solvers:\n"
+                          << "  elimination-boomeramg - PCG + BoomerAMG with DOF elimination (default, MFEM ex1p style)\n"
+                          << "  elimination-jacobi    - PCG + Jacobi with DOF elimination (for debugging)\n"
+                          << "  elimination           - PCG + BoomerAMG with DOF elimination (legacy alias)\n"
+                          << "  jacobi                - PCG + Jacobi with penalty BC (not yet implemented)\n\n"
                           << "MFEM meshes are automatically converted to binary format.\n\n"
                           << "Examples:\n"
                           << "  mpirun -np 4 " << argv[0] << " --mesh beam-tet.mesh\n"
-                          << "  mpirun -np 8 " << argv[0] << " --mesh my-binary-mesh-dir\n";
+                          << "  mpirun -np 4 " << argv[0] << " --mesh beam-tet.mesh --solver elimination\n";
             }
             MPI_Finalize();
             return 0;
@@ -141,7 +156,10 @@ int main(int argc, char** argv) {
         std::cout << "Problem: -Δu = 1 in Ω, u = 0 on ∂Ω" << std::endl;
         std::cout << "Ranks: " << numRanks << std::endl;
         std::cout << "Order: " << order << std::endl;
+        std::cout << "Solver: " << solver << std::endl;
     }
+
+    { // Start of scope to ensure destructors run before MPI_Finalize
 
     auto start_time = std::chrono::high_resolution_clock::now();
 
@@ -287,6 +305,7 @@ int main(int argc, char** argv) {
     if (rank == 0) std::cout << "\n2. Creating distributed DOF handler...\n";
 
     DofHandler dof_handler(domain, rank, numRanks);
+    dof_handler.initialize();
     dof_handler.enumerate_dofs();
 
     size_t numDofs_check = dof_handler.get_num_local_dofs();
@@ -331,16 +350,19 @@ int main(int argc, char** argv) {
     // For beam-tet mesh: boundary nodes have x=0, x=8.4, y=0, y=1.05, z=0, or z=1.05
     std::vector<uint8_t> localBoundaryData(domain.getNodeCount(), 0);
 
-    // Detect boundary nodes geometrically (more robust)
-    // Check if coordinates are near the boundary extents
-    double x_min = *std::min_element(h_x.begin(), h_x.end());
-    double x_max = *std::max_element(h_x.begin(), h_x.end());
-    double y_min = *std::min_element(h_y.begin(), h_y.end());
-    double y_max = *std::max_element(h_y.begin(), h_y.end());
-    double z_min = *std::min_element(h_z.begin(), h_z.end());
-    double z_max = *std::max_element(h_z.begin(), h_z.end());
+    // CRITICAL: Use GLOBAL bounding box, not local min/max!
+    // Local min/max would mark partition boundaries as physical boundaries
+    const auto& globalBox = domain.getBoundingBox();
+    double x_min = globalBox.xmin();
+    double x_max = globalBox.xmax();
+    double y_min = globalBox.ymin();
+    double y_max = globalBox.ymax();
+    double z_min = globalBox.zmin();
+    double z_max = globalBox.zmax();
 
-    double tol = 1e-3;  // Match single-rank tolerance
+    // NOTE: Bounding box may have epsilon expansion, so use larger tolerance
+    // or compute actual min/max from node coordinates
+    double tol = 0.1;  // Increased tolerance to handle bounding box expansion
 
     size_t boundaryCount = 0;
     for (size_t i = 0; i < domain.getNodeCount(); ++i) {
@@ -410,37 +432,13 @@ int main(int argc, char** argv) {
     TetStiffnessAssembler<double, IndexType> stiffnessAssembler;
     TetSparseMatrix<double, IndexType> K;
 
-    // Get node-to-DOF mapping from distributed DOF handler (includes ghosts)
-    const auto& fullNodeToLocalDof = dof_handler.get_node_to_local_dof();
-    const auto& ownership = domain.getNodeOwnershipMap();
-    
-    // Copy ownership to host for CPU access
-    thrust::host_vector<uint8_t> h_ownership(domain.getNodeCount());
-    thrust::copy(thrust::device_pointer_cast(ownership.data()),
-                thrust::device_pointer_cast(ownership.data() + domain.getNodeCount()),
-                h_ownership.begin());
-    
-    // Create owned-only node-to-DOF mapping for Hypre (each rank owns its rows)
-    std::vector<IndexType> nodeToOwnedDof(domain.getNodeCount(), 0);  // Initialize to 0, will be set properly
-    size_t ownedDofCount = 0;
-    
-    for (size_t nodeIdx = 0; nodeIdx < domain.getNodeCount(); ++nodeIdx) {
-        if (h_ownership[nodeIdx] == 1) {  // Node owned by this rank (1 = owned, 0 = ghost)
-            nodeToOwnedDof[nodeIdx] = ownedDofCount++;
-        } else {
-            // For ghost nodes, set to a large value to indicate invalid
-            nodeToOwnedDof[nodeIdx] = std::numeric_limits<IndexType>::max();
-        }
-    }
-    
-    // Verify owned DOF count matches expected
-    if (ownedDofCount != dof_handler.get_num_local_dofs()) {
-        std::cerr << "Rank " << rank << ": ERROR - Owned DOF count mismatch: " 
-                  << ownedDofCount << " vs " << dof_handler.get_num_local_dofs() << std::endl;
-        MPI_Abort(MPI_COMM_WORLD, 1);
-    }
+    // Get node-to-DOF mapping from distributed DOF handler
+    // DOF handler already provides correct mapping:
+    //   - Owned nodes: indices [0, numLocalDofs)
+    //   - Ghost nodes: indices [numLocalDofs, numLocalDofs+numGhostDofs)
+    const auto& nodeToLocalDof = dof_handler.get_node_to_local_dof();
 
-    stiffnessAssembler.assemble(fes, K, nodeToOwnedDof);
+    stiffnessAssembler.assemble(fes, K, nodeToLocalDof);
 
     auto assembly_end = std::chrono::high_resolution_clock::now();
     double assembly_time = std::chrono::duration<double>(assembly_end - assembly_start).count();
@@ -500,124 +498,492 @@ int main(int argc, char** argv) {
     TetMassAssembler<double, IndexType> massAssembler;
 
     SourceTerm f;
-    massAssembler.assembleRHS(fes, dm.get_data<1>(), f, nodeToOwnedDof);
+    
+    size_t numOwnedDofs = dof_handler.get_num_local_dofs();
+    
+    if (rank == 0) {
+        std::cout << "Before RHS assembly: fes.numDofs()=" << fes.numDofs() 
+                  << ", owned DOFs=" << numOwnedDofs << std::endl;
+    }
+    
+    // Assemble directly into owned DOFs (no ghost exchange needed - MFEM style)
+    // Each rank assembles contributions from its local elements into owned DOFs only
+    massAssembler.assembleRHS(fes, dm.get_data<1>(), f, nodeToLocalDof, numOwnedDofs);
+    
+    if (rank == 0) {
+        std::cout << "After RHS assembly: dm vector size=" << dm.get_data<1>().size() << std::endl;
+    }
 
     auto rhs_end = std::chrono::high_resolution_clock::now();
     double rhs_time = std::chrono::duration<double>(rhs_end - rhs_start).count();
 
     if (rank == 0) {
         std::cout << "RHS vector assembled in " << rhs_time << " seconds" << std::endl;
+        
+        // Check RHS values
+        auto& rhs_vec = dm.get_data<1>();
+        std::vector<double> h_rhs(rhs_vec.size());
+        thrust::copy(thrust::device_pointer_cast(rhs_vec.data()),
+                     thrust::device_pointer_cast(rhs_vec.data() + rhs_vec.size()),
+                     h_rhs.begin());
+        
+        double sum = 0.0, min_val = 1e100, max_val = -1e100;
+        int nan_count = 0;
+        for (auto v : h_rhs) {
+            if (!std::isfinite(v)) nan_count++;
+            else {
+                sum += v;
+                min_val = std::min(min_val, v);
+                max_val = std::max(max_val, v);
+            }
+        }
+        
+        std::cout << "RHS stats: sum=" << sum << ", range=[" << min_val << ", " << max_val << "], NaNs=" << nan_count << std::endl;
     }
 
-    // Apply boundary conditions using TOPOLOGICAL detection (matching MFEM ex1)
+    // Form linear system based on solver type
+    if (solver == "jacobi") {
+        // Penalty method - no DOF elimination
+        if (rank == 0) std::cout << "\n7. Applying penalty method for boundary conditions...\n";
+        
+        // Apply penalty to boundary DOFs (large diagonal + zero RHS)
+        // This keeps the matrix square and avoids elimination complexity
+        
+        if (rank == 0) std::cerr << "ERROR: Penalty method not yet implemented in distributed version\n";
+        MPI_Finalize();
+        return 1;
+    }
+    
+    // DOF elimination methods (elimination, elimination-jacobi, elimination-boomeramg)
     // =====================================================
-    if (rank == 0) std::cout << "\n7. Applying boundary conditions using full-system modification...\n";
+    if (rank == 0) {
+        std::cout << "\n7. Forming linear system (eliminating essential BCs)...\n";
+    }
     auto bc_start = std::chrono::high_resolution_clock::now();
 
-    // For full-system approach: modify matrix and RHS directly
-    // K[i,i] = 1, K[i,j] = 0 for j != i, rhs[i] = 0 for boundary DOFs i
-
-    // Get the full matrix before elimination
-    TetSparseMatrix<double, IndexType> K_full = K;  // Copy the full matrix
-
-    // Modify matrix and RHS for boundary conditions
-    // boundaryDofs contains LOCAL owned DOF indices
-    size_t numOwnedDofs = dof_handler.get_num_local_dofs();
-
-    // Get matrix data
-    std::vector<IndexType> h_rowOffsets(K_full.numRows() + 1);
-    std::vector<IndexType> h_colIndices(K_full.nnz());
-    std::vector<double> h_values(K_full.nnz());
-
-    thrust::copy(thrust::device_pointer_cast(K_full.rowOffsetsPtr()),
-                thrust::device_pointer_cast(K_full.rowOffsetsPtr() + K_full.numRows() + 1),
-                h_rowOffsets.begin());
-    thrust::copy(thrust::device_pointer_cast(K_full.colIndicesPtr()),
-                thrust::device_pointer_cast(K_full.colIndicesPtr() + K_full.nnz()),
-                h_colIndices.begin());
-    thrust::copy(thrust::device_pointer_cast(K_full.valuesPtr()),
-                thrust::device_pointer_cast(K_full.valuesPtr() + K_full.nnz()),
-                h_values.begin());
-
-    // Get RHS data
-    std::vector<double> h_rhs_full(numOwnedDofs);
-    dm.copy_to_host<1>(h_rhs_full);
-
-    // Modify for boundary conditions
-    for (auto localDof : boundaryDofs) {
-        if (localDof < numOwnedDofs) {
-            // Find the diagonal entry and set it to 1
-            for (IndexType idx = h_rowOffsets[localDof]; idx < h_rowOffsets[localDof+1]; ++idx) {
-                if (h_colIndices[idx] == localDof) {
-                    h_values[idx] = 1.0f;  // K[i,i] = 1
-                } else {
-                    h_values[idx] = 0.0f;  // K[i,j] = 0 for j != i
-                }
+    TetSparseMatrix<double, IndexType> A_r;
+    mars::VectorSelector<double, cstone::GpuTag>::type B_r;
+    std::vector<IndexType> dof_mapping;
+    
+    // IndexType numOwnedDofs = dof_handler.get_num_local_dofs(); // Already declared above
+    IndexType numTotalLocalDofs = K.numCols();  // Owned + ghost
+    IndexType numGhostDofs = numTotalLocalDofs - numOwnedDofs;
+    
+    // PRE-PROCESSING: Detect DOFs with zero diagonals (not in any local element)
+    // These will be eliminated by FormLinearSystem, so we need to share them as "boundary" DOFs
+    if (rank == 0 || rank == 1) {
+        std::cout << "Rank " << rank << ": Checking for zero-diagonal DOFs among " << numOwnedDofs << " owned DOFs\n";
+    }
+    
+    std::vector<IndexType> h_rowOffsets_check(numOwnedDofs + 1);
+    std::vector<IndexType> h_colIndices_check;
+    std::vector<double> h_values_check;
+    thrust::copy(thrust::device_pointer_cast(K.rowOffsetsPtr()),
+                 thrust::device_pointer_cast(K.rowOffsetsPtr() + numOwnedDofs + 1),
+                 h_rowOffsets_check.begin());
+    h_colIndices_check.resize(h_rowOffsets_check[numOwnedDofs]);
+    h_values_check.resize(h_rowOffsets_check[numOwnedDofs]);
+    thrust::copy(thrust::device_pointer_cast(K.colIndicesPtr()),
+                 thrust::device_pointer_cast(K.colIndicesPtr() + h_colIndices_check.size()),
+                 h_colIndices_check.begin());
+    thrust::copy(thrust::device_pointer_cast(K.valuesPtr()),
+                 thrust::device_pointer_cast(K.valuesPtr() + h_values_check.size()),
+                 h_values_check.begin());
+    
+    std::vector<IndexType> zeroDiagDofs;
+    for (IndexType i = 0; i < numOwnedDofs; ++i) {
+        // Skip if already a boundary DOF
+        if (std::find(boundaryDofs.begin(), boundaryDofs.end(), i) != boundaryDofs.end()) continue;
+        
+        // Check if diagonal exists and is non-zero
+        bool hasNonZeroDiag = false;
+        for (IndexType idx = h_rowOffsets_check[i]; idx < h_rowOffsets_check[i + 1]; ++idx) {
+            if (h_colIndices_check[idx] == i && std::abs(h_values_check[idx]) > 1e-14) {
+                hasNonZeroDiag = true;
+                break;
             }
-            h_rhs_full[localDof] = 0.0f;  // rhs[i] = 0
+        }
+        
+        if (!hasNonZeroDiag) {
+            zeroDiagDofs.push_back(i);
         }
     }
-
-    // Copy modified matrix back to device
-    thrust::copy(h_values.begin(), h_values.end(),
-                thrust::device_pointer_cast(K_full.valuesPtr()));
-
-    // Copy modified RHS back
-    dm.copy_from_host<1>(h_rhs_full);
-
+    
+    if (rank == 0 || rank == 1) {
+        std::cout << "Rank " << rank << ": Found " << zeroDiagDofs.size() 
+                  << " zero-diagonal DOFs (will be eliminated)\n";
+        if (!zeroDiagDofs.empty()) {
+            std::cout << "Rank " << rank << ": Adding zero-diagonal DOFs to boundary set\n";
+        }
+    }
+    
+    // Add zero-diagonal DOFs to boundary set so they get properly communicated
+    boundaryDofs.insert(boundaryDofs.end(), zeroDiagDofs.begin(), zeroDiagDofs.end());
+    
+    // Exchange boundary DOF information to identify boundary ghosts
+    // Each rank broadcasts its boundary DOFs in global numbering
+    std::vector<int> boundaryCountPerRank(numRanks);
+    int myBoundaryCount = static_cast<int>(boundaryDofs.size());
+    MPI_Allgather(&myBoundaryCount, 1, MPI_INT, boundaryCountPerRank.data(), 1, MPI_INT, MPI_COMM_WORLD);
+    
+    std::vector<int> boundaryOffsets(numRanks + 1, 0);
+    for (int r = 0; r < numRanks; ++r) {
+        boundaryOffsets[r + 1] = boundaryOffsets[r] + boundaryCountPerRank[r];
+    }
+    
+    // Collect all boundary DOFs in global numbering
+    std::vector<IndexType> myBoundaryGlobalDofs;
+    myBoundaryGlobalDofs.reserve(boundaryDofs.size());
+    for (auto bdof : boundaryDofs) {
+        myBoundaryGlobalDofs.push_back(dof_handler.local_to_global(bdof));
+    }
+    
+    std::vector<IndexType> allBoundaryGlobalDofs(boundaryOffsets[numRanks]);
+    MPI_Allgatherv(myBoundaryGlobalDofs.data(), myBoundaryCount, MPI_UINT64_T,
+                   allBoundaryGlobalDofs.data(), boundaryCountPerRank.data(), 
+                   boundaryOffsets.data(), MPI_UINT64_T, MPI_COMM_WORLD);
+    
+    // Build set for fast lookup
+    std::unordered_set<IndexType> globalBoundarySet(allBoundaryGlobalDofs.begin(), 
+                                                      allBoundaryGlobalDofs.end());
+    
+    // Identify boundary ghost DOFs using global boundary set
+    std::vector<IndexType> ess_ghost_dofs;
+    for (IndexType ghostIdx = 0; ghostIdx < numGhostDofs; ++ghostIdx) {
+        // IMPORTANT: ghostIdx is a local index in the range [0, numGhostDofs-1]
+        // It needs to be mapped to the full local DOF index space [numOwnedDofs, numTotalLocalDofs-1]
+        IndexType fullGhostLocalIndex = numOwnedDofs + ghostIdx;
+        
+        // Find the global DOF for this ghost
+        // This requires a reverse mapping from local ghost index to global DOF, which should be in the dof_handler
+        // Assuming dof_handler.get_ghost_global_dof(ghostIdx) exists and is correct
+        IndexType ghostGlobalDof = dof_handler.get_ghost_global_dof(ghostIdx);
+        
+        if (ghostGlobalDof != static_cast<IndexType>(-1) && globalBoundarySet.count(ghostGlobalDof) > 0) {
+            ess_ghost_dofs.push_back(ghostIdx);
+        }
+    }
+    
+    if (rank == 0) {
+        std::cout << "Found " << boundaryDofs.size() << " owned boundary DOFs, "
+                  << ess_ghost_dofs.size() << " ghost boundary DOFs\n";
+    }
+    
+    IndexType reducedSize = mars::fem::FormLinearSystem(
+        K, dm.get_data<1>(), boundaryDofs, A_r, B_r, dof_mapping, numGhostDofs, ess_ghost_dofs);
+    
+    if (rank == 0) {
+        std::cout << "Reduced system size: " << reducedSize << " DOFs (eliminated " 
+                  << boundaryDofs.size() << ")\n";
+    }
+    
+    // Validate reduced matrix has diagonals
+    std::vector<IndexType> h_rowOffsets(reducedSize + 1);
+    std::vector<IndexType> h_colIndices(A_r.nnz());
+    std::vector<double> h_values(A_r.nnz());
+    
+    thrust::copy(thrust::device_pointer_cast(A_r.rowOffsetsPtr()),
+                 thrust::device_pointer_cast(A_r.rowOffsetsPtr() + reducedSize + 1),
+                 h_rowOffsets.begin());
+    thrust::copy(thrust::device_pointer_cast(A_r.colIndicesPtr()),
+                 thrust::device_pointer_cast(A_r.colIndicesPtr() + A_r.nnz()),
+                 h_colIndices.begin());
+    thrust::copy(thrust::device_pointer_cast(A_r.valuesPtr()),
+                 thrust::device_pointer_cast(A_r.valuesPtr() + A_r.nnz()),
+                 h_values.begin());
+    
+    int missingDiag = 0, zeroDiag = 0;
+    double minDiag = 1e100, maxDiag = -1e100;
+    for (IndexType i = 0; i < reducedSize; ++i) {
+        bool foundDiag = false;
+        for (IndexType idx = h_rowOffsets[i]; idx < h_rowOffsets[i+1]; ++idx) {
+            if (h_colIndices[idx] == i) {
+                foundDiag = true;
+                double diagVal = h_values[idx];
+                if (std::abs(diagVal) < 1e-14) zeroDiag++;
+                minDiag = std::min(minDiag, diagVal);
+                maxDiag = std::max(maxDiag, diagVal);
+                break;
+            }
+        }
+        if (!foundDiag) missingDiag++;
+    }
+    
+    std::cout << "Rank " << rank << ": Reduced matrix diagonal check - missing=" << missingDiag 
+              << ", zero=" << zeroDiag << ", range=[" << minDiag << ", " << maxDiag << "]\n";
+    
+    if (missingDiag > 0 || zeroDiag > 0) {
+        std::cerr << "Rank " << rank << ": ERROR - Reduced matrix has " << missingDiag 
+                  << " missing diagonals and " << zeroDiag << " zero diagonals!\n";
+    }
+    
+    // Check for inter-rank coupling
+    bool hasInterRankCoupling = (A_r.numCols() > reducedSize);
+    int globalHasInterRankCoupling = 0;
+    int localHasInterRankCoupling = hasInterRankCoupling ? 1 : 0;
+    MPI_Allreduce(&localHasInterRankCoupling, &globalHasInterRankCoupling, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+    
+    // Determine actual column count from matrix (not allocated size)
+    IndexType maxColInMatrix = 0;
+    for (IndexType row = 0; row < reducedSize; ++row) {
+        for (IndexType idx = h_rowOffsets[row]; idx < h_rowOffsets[row + 1]; ++idx) {
+            maxColInMatrix = std::max(maxColInMatrix, h_colIndices[idx]);
+        }
+    }
+    IndexType actualNumCols = maxColInMatrix + 1;  // columns are 0-indexed
+    
+    if (rank == 0) {
+        std::cout << "\nRank " << rank << ": actualNumCols from max=" << actualNumCols 
+                  << ", A_r.numCols()=" << A_r.numCols() << ", reducedSize=" << reducedSize << std::endl;
+    }
+    
+    // Use the actual number of columns that need to be mapped (from FormLinearSystem)
+    // This is reducedSize + numInteriorGhostDofs where numInteriorGhostDofs = columns in [reducedSize, actualNumCols)
+    IndexType reducedLocalCount = A_r.numCols();  // Use allocated size from FormLinearSystem
+    
+    if (rank == 0 && actualNumCols == reducedSize) {
+        std::cout << "\nNOTE: Matrix is square (no ghost columns), indicating block-diagonal system.\n";
+        std::cout << "      All inter-rank connections are through boundary DOFs only.\n";
+    } else if (rank == 0 && actualNumCols > reducedSize) {
+        std::cout << "\nNOTE: Matrix has ghost columns: " << (actualNumCols - reducedSize) 
+                  << " ghost DOFs (columns [" << reducedSize << ", " << (actualNumCols-1) << "])\n";
+    }
+    
+    if (!globalHasInterRankCoupling && rank == 0) {
+        std::cout << "\nNOTE: No inter-rank coupling detected (block-diagonal system).\n";
+        std::cout << "      Each rank can solve independently. Using local CG solver.\n";
+    }
+    
+    // Keep the rectangular matrix structure like MFEM ex1p
+    // A_r is (reducedSize × numTotalLocalDofs) with ghost columns preserved
+    
     auto bc_end = std::chrono::high_resolution_clock::now();
     double bc_time = std::chrono::duration<double>(bc_end - bc_start).count();
 
-    if (rank == 0) {
-        std::cout << "Full-system BC modification completed in " << bc_time << " seconds" << std::endl;
-        std::cout << "Boundary DOFs: " << boundaryDofs.size() << std::endl;
-    }
-
     // =====================================================
-    // 8. Solve linear system (Distributed GPU Hypre)
+    // 8. Solve: A_r * X_r = B_r with Hypre PCG + BoomerAMG
     // =====================================================
-    if (rank == 0) std::cout << "\n8. Solving linear system (Distributed GPU Hypre PCG + BoomerAMG)...\n";
+    if (rank == 0) std::cout << "\n8. Solving with Hypre PCG + BoomerAMG...\n";
 
     auto solve_start = std::chrono::high_resolution_clock::now();
 
-    // Validate matrix dimensions before solving
-    if (K_full.numRows() != K_full.numCols()) {
-        std::cerr << "Rank " << rank << ": ERROR - Matrix not square: "
-                  << K_full.numRows() << " x " << K_full.numCols() << std::endl;
-        MPI_Abort(MPI_COMM_WORLD, 1);
-    }
-    if (K_full.numRows() != numOwnedDofs) {
-        std::cerr << "Rank " << rank << ": ERROR - Matrix/RHS size mismatch: "
-                  << K_full.numRows() << " vs " << numOwnedDofs << std::endl;
-        MPI_Abort(MPI_COMM_WORLD, 1);
-    }
-
-    if (rank == 0 || rank == 1) {
-        std::cout << "Rank " << rank << ": Full system size: " << K_full.numRows()
-                  << " x " << K_full.numCols() << ", nnz=" << K_full.nnz() << std::endl;
-    }
-
-    // Check if matrix is sorted
-    if (rank == 0) {
-        std::cout << "Matrix columns sorted: " << (K_full.isSorted() ? "YES" : "NO") << std::endl;
-    }
-
-    // Get solution and RHS vectors from data manager
-    auto& u_full = dm.get_data<0>();  // Solution vector
-    auto& rhs_full_data = dm.get_data<1>();  // RHS vector
-
 #ifdef MARS_ENABLE_HYPRE
-    // Use full Hypre PCG + BoomerAMG (most MFEM-like)
-    if (rank == 0) std::cout << "Using full Hypre PCG + BoomerAMG solver" << std::endl;
-    mars::fem::HyprePCGSolver<double, IndexType, cstone::GpuTag> hypre_solver(MPI_COMM_WORLD, 400, 1e-10);
+    // Build local-to-global DOF mapping for reduced system
+    // Use contiguous global numbering for interior (non-boundary) DOFs
+    // Each rank gets a contiguous block [globalRowStart, globalRowEnd)
+    
+    // The reducedSize is the number of interior DOFs on this rank (after BC elimination)
+    IndexType numInteriorLocal = reducedSize;
+    IndexType globalRowStart = 0, globalRowEnd = 0;
+    
+    // Compute global offset for this rank's interior DOFs using exclusive prefix sum
+    MPI_Scan(&numInteriorLocal, &globalRowStart, 1, MPI_UINT64_T, MPI_SUM, MPI_COMM_WORLD);
+    globalRowStart -= numInteriorLocal;  // Convert to start index (exclusive scan)
+    globalRowEnd = globalRowStart + numInteriorLocal;
+    
+    IndexType numInteriorGlobal = 0;
+    MPI_Allreduce(&numInteriorLocal, &numInteriorGlobal, 1, MPI_UINT64_T, MPI_SUM, MPI_COMM_WORLD);
+    
+    if (rank == 0) {
+        std::cout << "Interior DOF distribution: rank 0 [" << globalRowStart << ", " << globalRowEnd 
+                  << "), total interior DOFs: " << numInteriorGlobal << std::endl;
+    }
+    if (rank == 1) {
+        std::cout << "Interior DOF distribution: rank 1 [" << globalRowStart << ", " << globalRowEnd 
+                  << "), total interior DOFs: " << numInteriorGlobal << std::endl;
+    }
+    
+    std::vector<IndexType> localToGlobalDof_all(reducedLocalCount);
+    
+    // Simple contiguous numbering for owned interior DOFs
+    // Owned interior: [globalRowStart, globalRowEnd)
+    for (IndexType j = 0; j < reducedSize; ++j) {
+        localToGlobalDof_all[j] = globalRowStart + j;
+    }
+    
+    if (rank == 0 && reducedSize >= 3) {
+        std::cout << "Column mapping sample (rank 0): [0]→" << localToGlobalDof_all[0] 
+                  << ", [1]→" << localToGlobalDof_all[1] 
+                  << ", [" << (reducedSize-1) << "]→" << localToGlobalDof_all[reducedSize-1] << std::endl;
+    }
+    
+    // Ghost interior DOFs: need to find which rank owns each ghost and map to that rank's global range
+    // Build a mapping of original global DOF ID → contiguous global DOF ID
+    // First, collect all ranks' global ranges
+    std::vector<IndexType> rankStarts(numRanks + 1);
+    MPI_Allgather(&globalRowStart, 1, MPI_UINT64_T, rankStarts.data(), 1, MPI_UINT64_T, MPI_COMM_WORLD);
+    rankStarts[numRanks] = numInteriorGlobal;
+    
+    // For each ghost, we need to:
+    // 1. Get its original global DOF ID from dof_handler
+    // 2. Find which rank owns it (via MPI communication or storing owner info)
+    // 3. Find its position within that rank's interior DOFs
+    // 4. Map to contiguous global ID
+    
+    // This requires knowing which original global DOF IDs each rank has after BC elimination
+    // Build list of survived original global DOF IDs on this rank
+    // Use dof_handler to get ALL owned DOFs (including those not in local elements)
+    std::vector<IndexType> myOriginalGlobalDofs;
+    myOriginalGlobalDofs.reserve(reducedSize);
+    
+    // Method 1: Use dof_mapping which only has DOFs from FE space (in local elements)
+    // This misses owned DOFs that aren't in local elements!
+    // for (IndexType localDof = 0; localDof < numOwnedDofs; ++localDof) {
+    //     IndexType reducedIdx = dof_mapping[localDof];
+    //     if (reducedIdx != static_cast<IndexType>(-1)) {
+    //         myOriginalGlobalDofs.push_back(dof_handler.local_to_global(localDof));
+    //     }
+    // }
+    
+    // Method 2: Directly use reducedSize and assume first reducedSize DOFs in reduced matrix
+    // correspond to owned DOFs that survived BC elimination
+    // This should work because FormLinearSystem maintains the order
+    for (IndexType reducedDof = 0; reducedDof < reducedSize; ++reducedDof) {
+        // Find which original DOF this reduced DOF came from
+        // Inverse of dof_mapping: find localDof where dof_mapping[localDof] == reducedDof
+        IndexType originalLocalDof = static_cast<IndexType>(-1);
+        for (IndexType localDof = 0; localDof < numOwnedDofs; ++localDof) {
+            if (dof_mapping[localDof] == reducedDof) {
+                originalLocalDof = localDof;
+                break;
+            }
+        }
+        
+        if (originalLocalDof != static_cast<IndexType>(-1)) {
+            myOriginalGlobalDofs.push_back(dof_handler.local_to_global(originalLocalDof));
+        } else {
+            std::cerr << "Rank " << rank << ": WARNING - Reduced DOF " << reducedDof 
+                      << " has no corresponding original DOF!\n";
+        }
+    }
+    
+    // Allgatherv to collect all ranks' original global DOF lists
+    std::vector<int> recvCounts(numRanks);
+    std::vector<int> recvOffsets(numRanks + 1, 0);
+    int myCount = static_cast<int>(myOriginalGlobalDofs.size());
+    MPI_Allgather(&myCount, 1, MPI_INT, recvCounts.data(), 1, MPI_INT, MPI_COMM_WORLD);
+    
+    for (int r = 0; r < numRanks; ++r) {
+        recvOffsets[r + 1] = recvOffsets[r] + recvCounts[r];
+    }
+    
+    std::vector<IndexType> allOriginalGlobalDofs(recvOffsets[numRanks]);
+    MPI_Allgatherv(myOriginalGlobalDofs.data(), myCount, MPI_UINT64_T,
+                   allOriginalGlobalDofs.data(), recvCounts.data(), recvOffsets.data(),
+                   MPI_UINT64_T, MPI_COMM_WORLD);
+    
+    // Build mapping: original global DOF ID → contiguous global DOF ID
+    std::unordered_map<IndexType, IndexType> originalToContiguous;
+    for (IndexType contiguousIdx = 0; contiguousIdx < allOriginalGlobalDofs.size(); ++contiguousIdx) {
+        originalToContiguous[allOriginalGlobalDofs[contiguousIdx]] = contiguousIdx;
+    }
+    
+    // Ghost interior: [reducedSize, reducedLocalCount) 
+    IndexType numInteriorGhostDofs = reducedLocalCount - reducedSize;
+    
+    if (rank == 0 || rank == 1) {
+        std::cout << "Rank " << rank << ": numInteriorGhostDofs=" << numInteriorGhostDofs 
+                  << ", reducedLocalCount=" << reducedLocalCount << ", reducedSize=" << reducedSize << "\n";
+    }
+    
+    if (numInteriorGhostDofs > 0) {
+        // FormLinearSystem already filtered boundary ghosts, so all remaining ghosts are interior
+        // Build list of interior ghost global DOFs once
+        std::vector<IndexType> interiorGhostGlobalDofs;
+        for (IndexType g = 0; g < numGhostDofs; ++g) {
+            // Check if NOT a boundary ghost
+            bool isBoundary = (std::find(ess_ghost_dofs.begin(), ess_ghost_dofs.end(), g) != ess_ghost_dofs.end());
+            if (!isBoundary) {
+                IndexType ghostGlobalDof = dof_handler.get_ghost_global_dof(g);
+                // Also check if this global DOF is in the interior (not eliminated by owner rank)
+                if (originalToContiguous.find(ghostGlobalDof) != originalToContiguous.end()) {
+                    interiorGhostGlobalDofs.push_back(ghostGlobalDof);
+                }
+            }
+        }
+        
+        if (numInteriorGhostDofs != interiorGhostGlobalDofs.size()) {
+            std::cerr << "Rank " << rank << ": ERROR - Mismatch in interior ghost count: expected " 
+                      << numInteriorGhostDofs << ", got " << interiorGhostGlobalDofs.size() << "\n";
+        } else if (rank == 0 || rank == 1) {
+            std::cout << "Rank " << rank << ": Interior ghost count matches: " << numInteriorGhostDofs << "\n";
+        }
+        
+        for (IndexType ghostIdx = 0; ghostIdx < numInteriorGhostDofs && ghostIdx < interiorGhostGlobalDofs.size(); ++ghostIdx) {
+            IndexType reducedCol = reducedSize + ghostIdx;
+            IndexType ghostGlobalDof = interiorGhostGlobalDofs[ghostIdx];
+            
+            // Convert to contiguous global DOF
+            auto it = originalToContiguous.find(ghostGlobalDof);
+            if (it != originalToContiguous.end()) {
+                localToGlobalDof_all[reducedCol] = it->second;
+            } else {
+                std::cerr << "Rank " << rank << ": ERROR - Interior ghost DOF " << ghostGlobalDof 
+                          << " not found in contiguous mapping!\n";
+                localToGlobalDof_all[reducedCol] = static_cast<IndexType>(-1);
+            }
+        }
+    }
+    
+    // Validate reduced RHS before solver
+    std::vector<double> h_B_r(reducedSize);
+    thrust::copy(thrust::device_pointer_cast(B_r.data()),
+                 thrust::device_pointer_cast(B_r.data() + reducedSize),
+                 h_B_r.begin());
+    
+    double sum_B_r = 0.0, min_B_r = 1e100, max_B_r = -1e100;
+    int nan_count_B_r = 0;
+    for (IndexType i = 0; i < reducedSize; ++i) {
+        if (!std::isfinite(h_B_r[i])) {
+            nan_count_B_r++;
+        } else {
+            sum_B_r += h_B_r[i];
+            min_B_r = std::min(min_B_r, h_B_r[i]);
+            max_B_r = std::max(max_B_r, h_B_r[i]);
+        }
+    }
+    
+    std::cout << "Rank " << rank << ": Reduced RHS before solver - sum=" << sum_B_r 
+              << ", range=[" << min_B_r << ", " << max_B_r << "], NaNs=" << nan_count_B_r << "/" << reducedSize << std::endl;
+    
+    if (nan_count_B_r > 0) {
+        std::cerr << "Rank " << rank << ": ERROR - Reduced RHS contains NaN/Inf!" << std::endl;
+        MPI_Abort(MPI_COMM_WORLD, 1);
+    }
+    
+    if (rank == 0) {
+        std::cout << "Using contiguous global DOF numbering for interior DOFs: rows [" << globalRowStart 
+                  << ", " << globalRowEnd << "), columns [0, " << numInteriorGlobal << ")" << std::endl;
+    }
+    
+    mars::VectorSelector<double, cstone::GpuTag>::type X_r(reducedSize, 0.0);
+    
+    // Select preconditioner based on solver argument
+    using PrecondType = mars::fem::HyprePCGSolver<double, IndexType, cstone::GpuTag>::PrecondType;
+    PrecondType precondType = PrecondType::BOOMERAMG;  // Default to BoomerAMG
+    if (solver == "elimination-jacobi") {
+        precondType = PrecondType::JACOBI;
+    }
+    
+    if (rank == 0) {
+        std::cout << "Using preconditioner: " << (precondType == PrecondType::JACOBI ? "Jacobi" : "BoomerAMG") << std::endl;
+    }
+    
+    mars::fem::HyprePCGSolver<double, IndexType, cstone::GpuTag> hypre_solver(MPI_COMM_WORLD, 400, 1e-10, precondType);
     hypre_solver.setVerbose(rank == 0);
-    bool converged = hypre_solver.solve(K_full, rhs_full_data, u_full);
+    
+    // Pass the rectangular matrix with contiguous global numbering
+    bool converged = hypre_solver.solve(A_r, B_r, X_r, globalRowStart, globalRowEnd, 
+                                       0, numInteriorGlobal,
+                                       localToGlobalDof_all);
+    
+    // Recover full solution (boundary DOFs = 0)
+    auto& u_solution = dm.get_data<0>();
+    mars::fem::RecoverFEMSolution<IndexType, double, cstone::GpuTag>(X_r, dof_mapping, u_solution);
 #else
-    // Fallback to custom CG with Jacobi preconditioner
-    if (rank == 0) std::cout << "Using custom CG + Jacobi preconditioner" << std::endl;
-    mars::fem::PreconditionedConjugateGradientSolver<double, IndexType, cstone::GpuTag> cg(400, 1e-10);
-    cg.setVerbose(rank == 0);
-    bool converged = cg.solve(K_full, rhs_full_data, u_full);
+    if (rank == 0) std::cerr << "ERROR: Hypre not available\n";
+    MPI_Finalize();
+    return 1;
 #endif
 
     auto solve_end = std::chrono::high_resolution_clock::now();
@@ -629,17 +995,20 @@ int main(int argc, char** argv) {
     if (rank == 0) std::cout << "\n9. Computing solution statistics...\n";
 
     // Exchange ghost values between ranks
-    dm.gather_ghost_data();  // Send owned data to neighbors
-    dm.scatter_ghost_data(); // Receive ghost data from neighbors
+    dm.gather_ghost_data();
+    dm.scatter_ghost_data();
+
+    auto& u_full = dm.get_data<0>();
+    IndexType numOwnedDofsForStats = dof_handler.get_num_local_dofs();
 
     // Compute local statistics
     double u_min_local = *thrust::min_element(thrust::device_pointer_cast(u_full.data()),
-                                             thrust::device_pointer_cast(u_full.data() + numOwnedDofs));
+                                             thrust::device_pointer_cast(u_full.data() + numOwnedDofsForStats));
     double u_max_local = *thrust::max_element(thrust::device_pointer_cast(u_full.data()),
-                                             thrust::device_pointer_cast(u_full.data() + numOwnedDofs));
+                                             thrust::device_pointer_cast(u_full.data() + numOwnedDofsForStats));
 
     double u_norm_sq_local = thrust::transform_reduce(thrust::device_pointer_cast(u_full.data()),
-                                                     thrust::device_pointer_cast(u_full.data() + numOwnedDofs),
+                                                     thrust::device_pointer_cast(u_full.data() + numOwnedDofsForStats),
                                                      [] __host__ __device__ (double x) { return x * x; },
                                                      0.0, thrust::plus<double>());
 
@@ -719,6 +1088,7 @@ int main(int argc, char** argv) {
         std::cout << "Distributed GPU solve completed successfully!\n";
         std::cout << "========================================\n\n";
     }
+    } // End of scope to ensure destructors run before MPI_Finalize
 
     MPI_Finalize();
     return 0;

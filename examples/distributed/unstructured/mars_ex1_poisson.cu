@@ -141,6 +141,7 @@ int main(int argc, char* argv[]) {
         if (rank == 0) std::cout << "2.5. Initializing distributed DOF handler...\n";
         
         mars::fem::TetUnstructuredDofHandler<float, uint64_t> dof_handler(domain, rank, numRanks);
+        dof_handler.initialize();
         dof_handler.enumerate_dofs();
         
         // Get node-to-DOF mappings from DOF handler
@@ -189,10 +190,13 @@ int main(int argc, char* argv[]) {
         auto t_rhs_start = std::chrono::high_resolution_clock::now();
         
         TetMassAssembler<float, uint64_t> massAssembler;
+        
+        size_t numOwnedDofs = dof_handler.get_num_local_dofs();
         cstone::DeviceVector<float> b;
         
         SourceTerm f;
-        massAssembler.assembleRHS(fes, b, f, nodeToLocalDof);
+        // Assemble directly into owned DOFs only (MFEM style - no ghost exchange)
+        massAssembler.assembleRHS(fes, b, f, nodeToLocalDof, numOwnedDofs);
         
         auto t_rhs_end = std::chrono::high_resolution_clock::now();
         double t_rhs = std::chrono::duration<double>(t_rhs_end - t_rhs_start).count();
@@ -220,7 +224,7 @@ int main(int argc, char* argv[]) {
         auto t_bc_start = std::chrono::high_resolution_clock::now();
         
         // Get DOF counts
-        size_t numOwnedDofs = dof_handler.get_num_local_dofs();
+        // size_t numOwnedDofs = dof_handler.get_num_local_dofs(); // Already declared above
         size_t totalLocalDofs = dof_handler.get_num_local_dofs_with_ghosts();
         
         // Use geometric boundary detection for beam-tet mesh
