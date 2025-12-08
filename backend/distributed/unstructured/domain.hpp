@@ -78,6 +78,10 @@ __global__ void findRepresentativeNodesKernel(const KeyType* indices0,
                                               const KeyType* indices1,
                                               const KeyType* indices2,
                                               const KeyType* indices3,
+                                              const KeyType* indices4,
+                                              const KeyType* indices5,
+                                              const KeyType* indices6,
+                                              const KeyType* indices7,
                                               const KeyType* sfcCodes,
                                               KeyType* elemToNodeMap,
                                               int numElements);
@@ -102,6 +106,10 @@ __global__ void computeCharacteristicSizesKernel(const RealType* x,
                                                  const KeyType* indices1,
                                                  const KeyType* indices2,
                                                  const KeyType* indices3,
+                                                 const KeyType* indices4,
+                                                 const KeyType* indices5,
+                                                 const KeyType* indices6,
+                                                 const KeyType* indices7,
                                                  int* nodeTetCount,
                                                  RealType* h,
                                                  int numElements);
@@ -136,11 +144,19 @@ __global__ void buildSfcConnectivity(const KeyType* indices0,
                                      const KeyType* indices1,
                                      const KeyType* indices2,
                                      const KeyType* indices3,
+                                     const KeyType* indices4,
+                                     const KeyType* indices5,
+                                     const KeyType* indices6,
+                                     const KeyType* indices7,
                                      const KeyType* nodeSfcCodes,
                                      KeyType* conn_key0,
                                      KeyType* conn_key1,
                                      KeyType* conn_key2,
                                      KeyType* conn_key3,
+                                     KeyType* conn_key4,
+                                     KeyType* conn_key5,
+                                     KeyType* conn_key6,
+                                     KeyType* conn_key7,
                                      int numElements);
 
 template<typename KeyType>
@@ -742,6 +758,7 @@ private:
             findRepresentativeNodesKernel<TetTag, KeyType, RealType>
                 <<<numBlocks, blockSize>>>(thrust::raw_pointer_cast(d_i0.data()), thrust::raw_pointer_cast(d_i1.data()),
                                            thrust::raw_pointer_cast(d_i2.data()), thrust::raw_pointer_cast(d_i3.data()),
+                                           nullptr, nullptr, nullptr, nullptr,
                                            thrust::raw_pointer_cast(d_nodeSfcCodes.data()),
                                            thrust::raw_pointer_cast(d_elemToNodeMap_.data()), elementCount_);
             cudaCheckError();
@@ -750,11 +767,13 @@ private:
             buildSfcConnectivity<TetTag, KeyType, RealType>
                 <<<numBlocks, blockSize>>>(thrust::raw_pointer_cast(d_i0.data()), thrust::raw_pointer_cast(d_i1.data()),
                                            thrust::raw_pointer_cast(d_i2.data()), thrust::raw_pointer_cast(d_i3.data()),
+                                           nullptr, nullptr, nullptr, nullptr,
                                            thrust::raw_pointer_cast(d_nodeSfcCodes.data()),
                                            thrust::raw_pointer_cast(std::get<0>(d_conn_keys_).data()),
                                            thrust::raw_pointer_cast(std::get<1>(d_conn_keys_).data()),
                                            thrust::raw_pointer_cast(std::get<2>(d_conn_keys_).data()),
-                                           thrust::raw_pointer_cast(std::get<3>(d_conn_keys_).data()), elementCount_);
+                                           thrust::raw_pointer_cast(std::get<3>(d_conn_keys_).data()),
+                                           nullptr, nullptr, nullptr, nullptr, elementCount_);
             cudaCheckError();
         }
         else if constexpr (std::is_same_v<ElementTag, HexTag>)
@@ -768,7 +787,7 @@ private:
             auto& d_i6 = std::get<6>(d_conn_);
             auto& d_i7 = std::get<7>(d_conn_);
 
-            // Find representative nodes (would need 8-node version)
+            // Find representative nodes
             findRepresentativeNodesKernel<HexTag, KeyType, RealType>
                 <<<numBlocks, blockSize>>>(thrust::raw_pointer_cast(d_i0.data()), thrust::raw_pointer_cast(d_i1.data()),
                                            thrust::raw_pointer_cast(d_i2.data()), thrust::raw_pointer_cast(d_i3.data()),
@@ -778,8 +797,22 @@ private:
                                            thrust::raw_pointer_cast(d_elemToNodeMap_.data()), elementCount_);
             cudaCheckError();
 
-            // Build SFC connectivity for hex (would need 8-node version)
-            // buildSfcConnectivity<HexTag, KeyType, RealType><<<...>>>(...);
+            // Build SFC connectivity for hex
+            buildSfcConnectivity<HexTag, KeyType, RealType>
+                <<<numBlocks, blockSize>>>(thrust::raw_pointer_cast(d_i0.data()), thrust::raw_pointer_cast(d_i1.data()),
+                                           thrust::raw_pointer_cast(d_i2.data()), thrust::raw_pointer_cast(d_i3.data()),
+                                           thrust::raw_pointer_cast(d_i4.data()), thrust::raw_pointer_cast(d_i5.data()),
+                                           thrust::raw_pointer_cast(d_i6.data()), thrust::raw_pointer_cast(d_i7.data()),
+                                           thrust::raw_pointer_cast(d_nodeSfcCodes.data()),
+                                           thrust::raw_pointer_cast(std::get<0>(d_conn_keys_).data()),
+                                           thrust::raw_pointer_cast(std::get<1>(d_conn_keys_).data()),
+                                           thrust::raw_pointer_cast(std::get<2>(d_conn_keys_).data()),
+                                           thrust::raw_pointer_cast(std::get<3>(d_conn_keys_).data()),
+                                           thrust::raw_pointer_cast(std::get<4>(d_conn_keys_).data()),
+                                           thrust::raw_pointer_cast(std::get<5>(d_conn_keys_).data()),
+                                           thrust::raw_pointer_cast(std::get<6>(d_conn_keys_).data()),
+                                           thrust::raw_pointer_cast(std::get<7>(d_conn_keys_).data()), elementCount_);
+            cudaCheckError();
         }
         else if constexpr (std::is_same_v<ElementTag, TriTag>)
         {
@@ -1068,8 +1101,9 @@ ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(cons
     HostCoordsTuple h_coords;     // (x, y, z)
     HostConnectivityTuple h_conn; // (i0, i1, i2, ...) depends on element type
 
-    DeviceConnectivityTuple d_conn_; // (i0, i1, i2, ...) depends on element type
-    DeviceCoordsTuple d_coords_;     // (x, y, z)
+    // Device data (will be filled by transferDataToGPU)
+    DeviceConnectivityTuple d_conn_;
+    DeviceCoordsTuple d_coords_;
 
     // Read the mesh in SoA format
     readMeshDataSoA(meshFile, h_coords, h_conn);
@@ -1360,16 +1394,49 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::calculateChar
         auto& d_i1 = std::get<1>(d_conn_);
         auto& d_i2 = std::get<2>(d_conn_);
         auto& d_i3 = std::get<3>(d_conn_);
+        
+        constexpr int NodesPerElem = ElementTag::NodesPerElement;
+        
+        // Extract additional connectivity pointers conditionally at compile time
+        const KeyType* d_i4_ptr;
+        const KeyType* d_i5_ptr;
+        const KeyType* d_i6_ptr;
+        const KeyType* d_i7_ptr;
+        
+        if constexpr (NodesPerElem > 4) {
+            d_i4_ptr = thrust::raw_pointer_cast(std::get<4>(d_conn_).data());
+        } else {
+            d_i4_ptr = nullptr;
+        }
+        
+        if constexpr (NodesPerElem > 5) {
+            d_i5_ptr = thrust::raw_pointer_cast(std::get<5>(d_conn_).data());
+        } else {
+            d_i5_ptr = nullptr;
+        }
+        
+        if constexpr (NodesPerElem > 6) {
+            d_i6_ptr = thrust::raw_pointer_cast(std::get<6>(d_conn_).data());
+        } else {
+            d_i6_ptr = nullptr;
+        }
+        
+        if constexpr (NodesPerElem > 7) {
+            d_i7_ptr = thrust::raw_pointer_cast(std::get<7>(d_conn_).data());
+        } else {
+            d_i7_ptr = nullptr;
+        }
 
         // First accumulate edge lengths per node
         int blockSize = 256;
         int numBlocks = (elementCount_ + blockSize - 1) / blockSize;
 
-        computeCharacteristicSizesKernel<TetTag, KeyType, RealType><<<numBlocks, blockSize>>>(
+        computeCharacteristicSizesKernel<ElementTag, KeyType, RealType><<<numBlocks, blockSize>>>(
             thrust::raw_pointer_cast(d_x.data()), thrust::raw_pointer_cast(d_y.data()),
             thrust::raw_pointer_cast(d_z.data()), thrust::raw_pointer_cast(d_i0.data()),
             thrust::raw_pointer_cast(d_i1.data()), thrust::raw_pointer_cast(d_i2.data()),
-            thrust::raw_pointer_cast(d_i3.data()), thrust::raw_pointer_cast(d_nodeTetCount.data()),
+            thrust::raw_pointer_cast(d_i3.data()), d_i4_ptr, d_i5_ptr, d_i6_ptr, d_i7_ptr,
+            thrust::raw_pointer_cast(d_nodeTetCount.data()),
             thrust::raw_pointer_cast(d_h.data()), elementCount_);
 
         cudaCheckError();

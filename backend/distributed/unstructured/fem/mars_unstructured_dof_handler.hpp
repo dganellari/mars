@@ -103,7 +103,7 @@ public:
         
         size_t numOwnedNodes = 0;
         for (size_t i = 0; i < numTotalNodes; ++i) {
-            if (h_ownership[i] == 1 || h_ownership[i] == 2) numOwnedNodes++;  // Owned (1) + shared (2)
+            if (h_ownership[i] == 1) numOwnedNodes++;  // Only purely owned, not shared
         }
         
         if (rank_ == 0) {
@@ -174,7 +174,7 @@ public:
         // Collect owned node indices with their SFC keys
         std::vector<std::pair<KeyType, size_t>> ownedNodesSfc;  // (sfcKey, nodeIdx)
         for (size_t nodeIdx = 0; nodeIdx < numTotalNodes; ++nodeIdx) {
-            if (h_ownership[nodeIdx] == 1 || h_ownership[nodeIdx] == 2) {  // Owned (1) or shared (2)
+            if (h_ownership[nodeIdx] == 1) {  // Only purely owned, not shared
                 ownedNodesSfc.push_back({h_sfcKeys[nodeIdx], nodeIdx});
             }
         }
@@ -195,19 +195,19 @@ public:
         
         // PASS 2: Assign local indices to ghost nodes (after owned DOFs)
         // This enables LOCAL-LOCAL matrix indexing for cuSPARSE compatibility
-        // Ghost = pure ghost (0), NOT shared (2) since shared nodes are treated as owned
+        // Ghost = pure ghost (0) OR shared (2) - both need ghost treatment
         size_t ghostDofCounter = 0;
         ghostDofToNode_.clear();
-        
+
         // First count ghosts to reserve space
         size_t numGhosts = 0;
         for (size_t nodeIdx = 0; nodeIdx < numTotalNodes; ++nodeIdx) {
-            if (h_ownership[nodeIdx] == 0) numGhosts++;
+            if (h_ownership[nodeIdx] == 0 || h_ownership[nodeIdx] == 2) numGhosts++;
         }
         ghostDofToNode_.resize(numGhosts);
-        
+
         for (size_t nodeIdx = 0; nodeIdx < numTotalNodes; ++nodeIdx) {
-            if (h_ownership[nodeIdx] == 0) {  // Pure ghost node (state 0)
+            if (h_ownership[nodeIdx] == 0 || h_ownership[nodeIdx] == 2) {  // Ghost or shared
                 nodeToLocalDof_[nodeIdx] = numLocalDofs_ + ghostDofCounter;
                 // Global DOF index for ghosts/shared needs MPI communication (placeholder -1 for now)
                 nodeToGlobalDof_[nodeIdx] = static_cast<KeyType>(-1);
