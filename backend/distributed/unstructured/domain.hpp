@@ -33,6 +33,7 @@ using std::get;
 #include <thrust/iterator/constant_iterator.h>
 #include <algorithm>
 #include <array>
+#include <filesystem>
 #include <iostream>
 #include <memory>
 #include <vector>
@@ -43,6 +44,7 @@ using std::get;
 #include "mars_domain_utils.hpp"
 // #include "mars_read_mesh_adios2.hpp"
 #include "mars_read_mesh_binary.hpp"
+#include "mars_read_mfem_mesh.hpp"
 
 namespace mars
 {
@@ -1132,11 +1134,21 @@ ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(cons
     // Calculate characteristic sizes
     calculateCharacteristicSizes(d_conn_, d_coords_);
 
+    std::cout << "Rank " << rank_ << ": Before sync - bucketSize=" << bucketSize
+              << ", bucketSizeFocus=" << bucketSizeFocus << ", theta=" << theta << std::endl;
+
     // Perform sync
     sync(d_conn_, d_coords_);
 
+    std::cout << "Rank " << rank_ << ": After sync - elementCount=" << elementCount_
+              << ", startIndex=" << startIndex() << ", endIndex=" << endIndex()
+              << ", localElements=" << localElementCount() << std::endl;
+
     // needed by all other lazy structures
     createLocalToGlobalSfcMap();
+
+    std::cout << "Rank " << rank_ << ": After createLocalToGlobalSfcMap - nodeCount=" << nodeCount_
+              << " (unique SFC keys from all elements)" << std::endl;
 
     // Adjacency maps are now built lazily on first access
     // Users can explicitly call buildAdjacency() if they want to build it immediately
@@ -1188,11 +1200,22 @@ ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(
     // Calculate characteristic sizes
     calculateCharacteristicSizes(d_conn_, d_coords_);
 
+    std::cout << "Rank " << rank_ << ": Before sync - bucketSize=" << bucketSize
+              << ", bucketSizeFocus=" << bucketSizeFocus << ", theta=" << theta
+              << ", input nodes=" << nodeCount_ << ", input elements=" << elementCount_ << std::endl;
+
     // Perform sync
     sync(d_conn_, d_coords_);
 
+    std::cout << "Rank " << rank_ << ": After sync - elementCount=" << elementCount_
+              << ", startIndex=" << startIndex() << ", endIndex=" << endIndex()
+              << ", localElements=" << localElementCount() << std::endl;
+
     // needed by all other lazy structures
     createLocalToGlobalSfcMap();
+
+    std::cout << "Rank " << rank_ << ": After createLocalToGlobalSfcMap - nodeCount=" << nodeCount_
+              << " (unique SFC keys from all elements)" << std::endl;
 
     // Adjacency maps are now built lazily on first access
 
@@ -1244,11 +1267,22 @@ ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(
     // Calculate characteristic sizes
     calculateCharacteristicSizes(d_conn_, d_coords_);
 
+    std::cout << "Rank " << rank_ << ": Before sync - bucketSize=" << bucketSize
+              << ", bucketSizeFocus=" << bucketSizeFocus << ", theta=" << theta
+              << ", input nodes=" << nodeCount_ << ", input elements=" << elementCount_ << std::endl;
+
     // Perform sync
     sync(d_conn_, d_coords_);
 
+    std::cout << "Rank " << rank_ << ": After sync - elementCount=" << elementCount_
+              << ", startIndex=" << startIndex() << ", endIndex=" << endIndex()
+              << ", localElements=" << localElementCount() << std::endl;
+
     // needed by all other lazy structures
     createLocalToGlobalSfcMap();
+
+    std::cout << "Rank " << rank_ << ": After createLocalToGlobalSfcMap - nodeCount=" << nodeCount_
+              << " (unique SFC keys from all elements)" << std::endl;
 
     // Adjacency maps are now built lazily on first access
 
@@ -1297,21 +1331,44 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::readMeshDataS
             }
         };
 
+        // Detect if meshFile is an MFEM file or binary mesh directory
+        // MFEM meshes are files with .mesh extension
+        // Binary meshes are directories containing coordinate files
+        namespace fs = std::filesystem;
+        bool isMFEMFile = !fs::is_directory(meshFile) && meshFile.find(".mesh") != std::string::npos;
+
         // Use compile-time branching to select element type
         if constexpr (std::is_same_v<ElementTag, TetTag>)
         {
-            auto [readNodeCount, readElementCount, x_data, y_data, z_data, conn_tuple, localToGlobal] =
-                mars::readMeshWithElementPartitioning<4, float, KeyType>(meshFile, rank_, numRanks_);
+            if (isMFEMFile) {
+                // Use MFEM mesh reader
+                auto [readNodeCount, readElementCount, x_data, y_data, z_data, conn_tuple, localToGlobal, boundaryNodes] =
+                    mars::readMFEMMeshWithElementPartitioning<4, float, KeyType>(meshFile, rank_, numRanks_);
 
-            nodeCount_    = readNodeCount;
-            elementCount_ = readElementCount;
-            processCoordinates(x_data, y_data, z_data);
-            h_conn_ = std::move(conn_tuple);
-            
-            // Store the global node indices
-            d_localToGlobalNodeMap_.resize(localToGlobal.size());
-            thrust::copy(localToGlobal.begin(), localToGlobal.end(),
-                         thrust::device_pointer_cast(d_localToGlobalNodeMap_.data()));
+                nodeCount_    = readNodeCount;
+                elementCount_ = readElementCount;
+                processCoordinates(x_data, y_data, z_data);
+                h_conn_ = std::move(conn_tuple);
+
+                // Store the global node indices
+                d_localToGlobalNodeMap_.resize(localToGlobal.size());
+                thrust::copy(localToGlobal.begin(), localToGlobal.end(),
+                             thrust::device_pointer_cast(d_localToGlobalNodeMap_.data()));
+            } else {
+                // Use binary mesh reader
+                auto [readNodeCount, readElementCount, x_data, y_data, z_data, conn_tuple, localToGlobal] =
+                    mars::readMeshWithElementPartitioning<4, float, KeyType>(meshFile, rank_, numRanks_);
+
+                nodeCount_    = readNodeCount;
+                elementCount_ = readElementCount;
+                processCoordinates(x_data, y_data, z_data);
+                h_conn_ = std::move(conn_tuple);
+
+                // Store the global node indices
+                d_localToGlobalNodeMap_.resize(localToGlobal.size());
+                thrust::copy(localToGlobal.begin(), localToGlobal.end(),
+                             thrust::device_pointer_cast(d_localToGlobalNodeMap_.data()));
+            }
         }
         else if constexpr (std::is_same_v<ElementTag, HexTag>)
         {

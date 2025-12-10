@@ -807,7 +807,7 @@ __global__ void determineOwnershipDirectKernel(
 }
 
 template <typename KeyType>
-__global__ void detectSharedNodesKernel(
+__global__ void refineOwnershipForFEMKernel(
     uint8_t* nodeOwnership,
     const unsigned int* nodeFlags,
     size_t numNodes)
@@ -816,17 +816,20 @@ __global__ void detectSharedNodesKernel(
     if (nodeIdx < numNodes)
     {
         unsigned int flags = nodeFlags[nodeIdx];
-        uint8_t ownership = nodeOwnership[nodeIdx];
-        
-        // Upgrade owned nodes to shared if they appear in both local and halo elements
-        // Note: Some owned nodes may not appear in local elements (only in halo)
-        // These will have zero diagonals but we keep them as owned to avoid orphaning them
-        
-        if (ownership == 1 && (flags & 0x03) == 0x03) {
-            // In both local and halo → shared boundary
-            nodeOwnership[nodeIdx] = 2;
+
+        // Simple ownership: own nodes that appear in LOCAL elements
+        // This creates "overlapping" ownership for shared boundary nodes,
+        // but the DOF handler will use SFC-based global indices to ensure
+        // all ranks use the same global DOF index for each node.
+
+        if (flags & 0x01) {
+            // In local elements → owned (will contribute to matrix)
+            nodeOwnership[nodeIdx] = 1;
         }
-        // Keep SFC-based ownership otherwise (don't downgrade based on element participation)
+        else {
+            // Not in local elements → ghost (receive values from owner)
+            nodeOwnership[nodeIdx] = 0;
+        }
     }
 }
 
@@ -955,18 +958,21 @@ void HaloData<ElementTag, RealType, KeyType, AcceleratorTag>::buildNodeOwnership
         cudaCheckError();
     }
     
-    // Phase 5: Upgrade owned nodes (state 1) to shared (state 2) if they appear in both local and halo
+    // Phase 5: Refine ownership for FEM - overlapping ownership model
+    // Nodes in local elements → owned, others → ghost
+    // Shared nodes are owned by ALL ranks with local elements (overlapping)
+    // The DOF handler uses SFC-based global indexing to handle this correctly
     if (nodeCount > 0) {
         int numBlocks = (nodeCount + blockSize - 1) / blockSize;
-        detectSharedNodesKernel<KeyType><<<numBlocks, blockSize>>>(
+        refineOwnershipForFEMKernel<KeyType><<<numBlocks, blockSize>>>(
             thrust::raw_pointer_cast(d_nodeOwnership_.data()),
             thrust::raw_pointer_cast(d_nodeFlags.data()),
             nodeCount);
         cudaCheckError();
     }
     
-    // Debug: Count ownership states and verify element-node associations
-    if (domain.rank() == 0 || domain.rank() == 1) {
+    // Debug: Count ownership states - only report critical issues
+    if (domain.rank() == 0) {
         thrust::host_vector<uint8_t> h_ownership(nodeCount);
         thrust::host_vector<unsigned int> h_flags(nodeCount);
         thrust::copy(thrust::device_pointer_cast(d_nodeOwnership_.data()),
@@ -975,35 +981,20 @@ void HaloData<ElementTag, RealType, KeyType, AcceleratorTag>::buildNodeOwnership
         thrust::copy(thrust::device_pointer_cast(d_nodeFlags.data()),
                     thrust::device_pointer_cast(d_nodeFlags.data() + nodeCount),
                     h_flags.begin());
-        
-        size_t cnt_ghost = 0, cnt_owned = 0, cnt_shared = 0;
-        size_t cnt_in_local = 0, cnt_in_halo = 0, cnt_in_both = 0, cnt_in_neither = 0;
-        size_t cnt_owned_not_in_local = 0;  // Problematic: owned but not in local elements
+
+        size_t cnt_owned = 0;
+        size_t cnt_owned_not_in_local = 0;
         for (size_t i = 0; i < nodeCount; ++i) {
-            if (h_ownership[i] == 0) cnt_ghost++;
-            else if (h_ownership[i] == 1) cnt_owned++;
-            else if (h_ownership[i] == 2) cnt_shared++;
-            
-            if ((h_flags[i] & 0x01) && (h_flags[i] & 0x02)) cnt_in_both++;
-            else if (h_flags[i] & 0x01) cnt_in_local++;
-            else if (h_flags[i] & 0x02) cnt_in_halo++;
-            else cnt_in_neither++;
-            
-            // Check for owned nodes not in local elements (will have zero diagonal)
-            if ((h_ownership[i] == 1 || h_ownership[i] == 2) && !(h_flags[i] & 0x01)) {
-                cnt_owned_not_in_local++;
+            if (h_ownership[i] == 1 || h_ownership[i] == 2) {
+                cnt_owned++;
+                if (!(h_flags[i] & 0x01)) cnt_owned_not_in_local++;
             }
         }
-        std::cout << "Rank " << domain.rank() << ": Ownership states after 3-phase - " 
-                  << cnt_ghost << " ghost, " << cnt_owned << " pure owned, " 
-                  << cnt_shared << " shared\n";
-        std::cout << "Rank " << domain.rank() << ": Element flags - " 
-                  << cnt_in_local << " local only, " << cnt_in_halo << " halo only, "
-                  << cnt_in_both << " both, " << cnt_in_neither << " neither\n";
+        std::cout << "Rank 0: " << cnt_owned << " owned nodes";
         if (cnt_owned_not_in_local > 0) {
-            std::cout << "Rank " << domain.rank() << ": WARNING - " << cnt_owned_not_in_local 
-                      << " owned nodes NOT in local elements (will have zero diagonals!)\n";
+            std::cout << " (WARNING: " << cnt_owned_not_in_local << " not in local elements!)";
         }
+        std::cout << "\n";
     }
 }
 

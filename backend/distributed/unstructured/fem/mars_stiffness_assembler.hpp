@@ -223,37 +223,60 @@ public:
     using Domain = typename FESpace::Domain;
     
     void assemble(FESpace& fes, Matrix& K, const std::vector<KeyType>& nodeToLocalDof) {
+        // Use domain's ownership (original behavior)
         auto& domain = fes.domain();
-        
+        const auto& ownership = domain.getNodeOwnershipMap();
+        thrust::host_vector<uint8_t> h_ownership(ownership.size());
+        thrust::copy(thrust::device_pointer_cast(ownership.data()),
+                     thrust::device_pointer_cast(ownership.data() + ownership.size()),
+                     h_ownership.begin());
+        std::vector<uint8_t> ownershipVec(h_ownership.begin(), h_ownership.end());
+        assemble(fes, K, nodeToLocalDof, ownershipVec);
+    }
+
+    void assemble(FESpace& fes, Matrix& K, const std::vector<KeyType>& nodeToLocalDof,
+                  const std::vector<uint8_t>& resolvedOwnership) {
+        // Count owned DOFs from resolved ownership
+        size_t numOwnedDofs = 0;
+        for (auto ownership : resolvedOwnership) {
+            if (ownership == 1) numOwnedDofs++;
+        }
+        assemble(fes, K, nodeToLocalDof, resolvedOwnership, numOwnedDofs);
+    }
+
+    void assemble(FESpace& fes, Matrix& K, const std::vector<KeyType>& nodeToLocalDof,
+                  const std::vector<uint8_t>& resolvedOwnership, size_t numOwnedDofs) {
+        auto& domain = fes.domain();
+
         // Build sparsity pattern if not already done
         if (K.nnz() == 0) {
-            buildSparsityPattern(fes, K, nodeToLocalDof);
+            buildSparsityPattern(fes, K, nodeToLocalDof, resolvedOwnership, numOwnedDofs);
         }
-        
+
         // Zero matrix values
         K.zero();
-        
+
         // Get mesh data
         const auto& d_x = domain.getNodeX();
         const auto& d_y = domain.getNodeY();
         const auto& d_z = domain.getNodeZ();
-        
+
         const auto& conn_tuple = domain.getElementToNodeConnectivity();
         const auto& conn0 = std::get<0>(conn_tuple);
         const auto& conn1 = std::get<1>(conn_tuple);
         const auto& conn2 = std::get<2>(conn_tuple);
         const auto& conn3 = std::get<3>(conn_tuple);
-        
+
         size_t numElements = domain.getElementCount();    // Total elements
         size_t localElementCount = domain.localElementCount();  // Owned elements
-        size_t numDofs = fes.numDofs();  // Number of owned DOFs
+        size_t numDofs = numOwnedDofs;  // Number of owned DOFs (from resolved ownership)
         int nodesPerElem = FESpace::dofsPerElement();
-        
+
         // Use provided node-to-DOF mapping
         cstone::DeviceVector<KeyType> d_nodeToLocalDof = nodeToLocalDof;
-        
-        // Get ownership map
-        const auto& ownership = domain.getNodeOwnershipMap();
+
+        // Use provided resolved ownership
+        cstone::DeviceVector<uint8_t> d_ownership = resolvedOwnership;
         
         // Launch assembly kernel for LOCAL elements only [0, localElementCount)
         const int blockSize = 256;
@@ -275,7 +298,7 @@ public:
                 K.colIndicesPtr(),
                 K.valuesPtr(),
                 d_nodeToLocalDof.data(),
-                ownership.data()
+                d_ownership.data()       // Use resolved ownership
             );
         
         cudaDeviceSynchronize();
@@ -351,41 +374,65 @@ public:
     }
     
 private:
-    void buildSparsityPattern(FESpace& fes, Matrix& K, const std::vector<KeyType>& nodeToLocalDof);
+    void buildSparsityPattern(FESpace& fes, Matrix& K, const std::vector<KeyType>& nodeToLocalDof) {
+        // Use domain's ownership (original behavior)
+        auto& domain = fes.domain();
+        const auto& ownership = domain.getNodeOwnershipMap();
+        thrust::host_vector<uint8_t> h_ownership(ownership.size());
+        thrust::copy(thrust::device_pointer_cast(ownership.data()),
+                     thrust::device_pointer_cast(ownership.data() + ownership.size()),
+                     h_ownership.begin());
+        std::vector<uint8_t> ownershipVec(h_ownership.begin(), h_ownership.end());
+        buildSparsityPattern(fes, K, nodeToLocalDof, ownershipVec);
+    }
+
+    void buildSparsityPattern(FESpace& fes, Matrix& K, const std::vector<KeyType>& nodeToLocalDof,
+                              const std::vector<uint8_t>& resolvedOwnership) {
+        // Count owned DOFs from resolved ownership
+        size_t numOwnedDofs = 0;
+        for (auto ownership : resolvedOwnership) {
+            if (ownership == 1) numOwnedDofs++;
+        }
+        buildSparsityPattern(fes, K, nodeToLocalDof, resolvedOwnership, numOwnedDofs);
+    }
+
+    void buildSparsityPattern(FESpace& fes, Matrix& K, const std::vector<KeyType>& nodeToLocalDof,
+                              const std::vector<uint8_t>& resolvedOwnership, size_t numOwnedDofs);
 };
 
 // Build sparsity pattern for finite element matrix
 template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
 void StiffnessAssembler<ElementTag, RealType, KeyType, AcceleratorTag>::buildSparsityPattern(
-    FESpace& fes, Matrix& K, const std::vector<KeyType>& nodeToLocalDof) 
+    FESpace& fes, Matrix& K, const std::vector<KeyType>& nodeToLocalDof,
+    const std::vector<uint8_t>& resolvedOwnership, size_t numOwnedDofs)
 {
     auto& domain = fes.domain();
-    
-    size_t numDofs = fes.numDofs();
+
+    size_t numDofs = numOwnedDofs;
     size_t numElements = domain.getElementCount();  // Total elements in arrays
     size_t localElementCount = domain.localElementCount();  // Owned elements
     size_t numNodes = domain.getNodeCount();
-    
+
     // Validate input sizes
     if (nodeToLocalDof.size() != numNodes) {
-        std::cerr << "Error: nodeToLocalDof.size() " << nodeToLocalDof.size() 
+        std::cerr << "Error: nodeToLocalDof.size() " << nodeToLocalDof.size()
                   << " != numNodes " << numNodes << std::endl;
         return;
     }
-    
+
     // Get connectivity
     const auto& conn_tuple = domain.getElementToNodeConnectivity();
     const auto& conn0 = std::get<0>(conn_tuple);
     const auto& conn1 = std::get<1>(conn_tuple);
     const auto& conn2 = std::get<2>(conn_tuple);
     const auto& conn3 = std::get<3>(conn_tuple);
-    
+
     // Copy connectivity to host for sparsity pattern construction
     thrust::host_vector<KeyType> h_conn0(conn0.size());
     thrust::host_vector<KeyType> h_conn1(conn1.size());
     thrust::host_vector<KeyType> h_conn2(conn2.size());
     thrust::host_vector<KeyType> h_conn3(conn3.size());
-    
+
     thrust::copy(thrust::device_pointer_cast(conn0.data()),
                  thrust::device_pointer_cast(conn0.data() + conn0.size()),
                  h_conn0.begin());
@@ -398,13 +445,9 @@ void StiffnessAssembler<ElementTag, RealType, KeyType, AcceleratorTag>::buildSpa
     thrust::copy(thrust::device_pointer_cast(conn3.data()),
                  thrust::device_pointer_cast(conn3.data() + conn3.size()),
                  h_conn3.begin());
-    
-    // Get ownership map to check which elements are fully owned
-    const auto& ownership = domain.getNodeOwnershipMap();
-    thrust::host_vector<uint8_t> h_ownership(numNodes);
-    thrust::copy(thrust::device_pointer_cast(ownership.data()),
-                 thrust::device_pointer_cast(ownership.data() + numNodes),
-                 h_ownership.begin());
+
+    // Use provided resolved ownership
+    const std::vector<uint8_t>& h_ownership = resolvedOwnership;
     
     // Build sparsity pattern:
     // - Rows: LOCAL owned DOF indices (0 to numDofs-1)

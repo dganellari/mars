@@ -694,8 +694,9 @@ int main(int argc, char** argv) {
     //   - Owned nodes: indices [0, numLocalDofs)
     //   - Ghost nodes: indices [numLocalDofs, numLocalDofs+numGhostDofs)
     const auto& nodeToLocalDof = dof_handler.get_node_to_local_dof();
+    const auto& resolvedOwnership = dof_handler.get_resolved_ownership();
 
-    stiffnessAssembler.assemble(fes, K, nodeToLocalDof);
+    stiffnessAssembler.assemble(fes, K, nodeToLocalDof, resolvedOwnership);
 
     auto assembly_end = std::chrono::high_resolution_clock::now();
     double assembly_time = std::chrono::duration<double>(assembly_end - assembly_start).count();
@@ -943,6 +944,26 @@ int main(int argc, char** argv) {
                   << ess_ghost_dofs.size() << " ghost boundary DOFs\n";
     }
 
+    // Gather global statistics
+    size_t totalElements = 0;
+    size_t totalOwnedDofs = 0;
+    size_t totalBoundaryDofs = 0;
+    size_t myElements = domain.localElementCount();
+    size_t myBoundaryDofs = boundaryDofs.size();
+
+    MPI_Reduce(&myElements, &totalElements, 1, MPI_UNSIGNED_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
+    MPI_Reduce(&numOwnedDofs, &totalOwnedDofs, 1, MPI_UNSIGNED_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
+    MPI_Reduce(&myBoundaryDofs, &totalBoundaryDofs, 1, MPI_UNSIGNED_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
+
+    if (rank == 0) {
+        std::cout << "\n=== Global Mesh Statistics ===\n";
+        std::cout << "Total elements (owned by all ranks): " << totalElements << "\n";
+        std::cout << "Total owned DOFs (before BC): " << totalOwnedDofs << "\n";
+        std::cout << "Total boundary DOFs: " << totalBoundaryDofs << "\n";
+        std::cout << "Total interior DOFs: " << (totalOwnedDofs - totalBoundaryDofs) << "\n";
+        std::cout << "==============================\n\n";
+    }
+
     // Debug: validate input sizes before FormLinearSystem
     std::cout << "Rank " << rank << ": FormLinearSystem inputs - K: " << K.numRows() << "x" << K.numCols()
               << ", RHS size: " << dm.get_data<1>().size()
@@ -951,8 +972,12 @@ int main(int argc, char** argv) {
               << ", ess_ghost_dofs: " << ess_ghost_dofs.size() << "\n";
     MPI_Barrier(MPI_COMM_WORLD);  // Sync before FormLinearSystem
 
+    // Get ghost DOF mapping from FormLinearSystem
+    std::vector<IndexType> ghost_dof_mapping;
+    IndexType reducedLocalCount = 0;
     IndexType reducedSize = mars::fem::FormLinearSystem(
-        K, dm.get_data<1>(), boundaryDofs, A_r, B_r, dof_mapping, numGhostDofs, ess_ghost_dofs);
+        K, dm.get_data<1>(), boundaryDofs, A_r, B_r, dof_mapping, numGhostDofs, ess_ghost_dofs,
+        &ghost_dof_mapping, &reducedLocalCount);
     
     if (rank == 0) {
         std::cout << "Reduced system size: " << reducedSize << " DOFs (eliminated " 
@@ -1019,9 +1044,8 @@ int main(int argc, char** argv) {
                   << ", A_r.numCols()=" << A_r.numCols() << ", reducedSize=" << reducedSize << std::endl;
     }
     
-    // Use the actual number of columns that need to be mapped (from FormLinearSystem)
-    // This is reducedSize + numInteriorGhostDofs where numInteriorGhostDofs = columns in [reducedSize, actualNumCols)
-    IndexType reducedLocalCount = A_r.numCols();  // Use allocated size from FormLinearSystem
+    // reducedLocalCount is now returned directly from FormLinearSystem
+    // Verify it matches the matrix allocation
     
     if (rank == 0 && actualNumCols == reducedSize) {
         std::cout << "\nNOTE: Matrix is square (no ghost columns), indicating block-diagonal system.\n";
@@ -1075,8 +1099,8 @@ int main(int argc, char** argv) {
                   << "), total interior DOFs: " << numInteriorGlobal << std::endl;
     }
     
-    std::vector<IndexType> localToGlobalDof_all(reducedLocalCount);
-    
+    std::vector<IndexType> localToGlobalDof_all(reducedLocalCount, static_cast<IndexType>(-1));
+
     // Simple contiguous numbering for owned interior DOFs
     // Owned interior: [globalRowStart, globalRowEnd)
     for (IndexType j = 0; j < reducedSize; ++j) {
@@ -1159,54 +1183,142 @@ int main(int argc, char** argv) {
     for (IndexType contiguousIdx = 0; contiguousIdx < allOriginalGlobalDofs.size(); ++contiguousIdx) {
         originalToContiguous[allOriginalGlobalDofs[contiguousIdx]] = contiguousIdx;
     }
-    
-    // Ghost interior: [reducedSize, reducedLocalCount) 
-    IndexType numInteriorGhostDofs = reducedLocalCount - reducedSize;
-    
-    if (rank == 0 || rank == 1) {
-        std::cout << "Rank " << rank << ": numInteriorGhostDofs=" << numInteriorGhostDofs 
-                  << ", reducedLocalCount=" << reducedLocalCount << ", reducedSize=" << reducedSize << "\n";
+
+    // Filter ghost_dof_mapping to only include ghosts that survived BC elimination on owner rank
+    // Build a compacted mapping and count actual interior ghosts
+    std::vector<IndexType> validInteriorGhostGlobalDofs;
+    std::vector<IndexType> validGhostReducedIndices;
+
+    for (IndexType g = 0; g < numGhostDofs; ++g) {
+        IndexType reducedGhostIdx = ghost_dof_mapping[g];
+        if (reducedGhostIdx != static_cast<IndexType>(-1)) {
+            // This ghost was not a boundary ghost locally
+            IndexType ghostGlobalDof = dof_handler.get_ghost_global_dof(g);
+
+            // Check if it survived BC elimination on its owner rank
+            if (originalToContiguous.find(ghostGlobalDof) != originalToContiguous.end()) {
+                validInteriorGhostGlobalDofs.push_back(ghostGlobalDof);
+                validGhostReducedIndices.push_back(reducedGhostIdx);
+            }
+        }
     }
-    
-    if (numInteriorGhostDofs > 0) {
-        // FormLinearSystem already filtered boundary ghosts, so all remaining ghosts are interior
-        // Build list of interior ghost global DOFs once
-        std::vector<IndexType> interiorGhostGlobalDofs;
-        for (IndexType g = 0; g < numGhostDofs; ++g) {
-            // Check if NOT a boundary ghost
-            bool isBoundary = (std::find(ess_ghost_dofs.begin(), ess_ghost_dofs.end(), g) != ess_ghost_dofs.end());
-            if (!isBoundary) {
-                IndexType ghostGlobalDof = dof_handler.get_ghost_global_dof(g);
-                // Also check if this global DOF is in the interior (not eliminated by owner rank)
-                if (originalToContiguous.find(ghostGlobalDof) != originalToContiguous.end()) {
-                    interiorGhostGlobalDofs.push_back(ghostGlobalDof);
+
+    IndexType actualInteriorGhostDofs = validInteriorGhostGlobalDofs.size();
+    IndexType numInteriorGhostDofs = reducedLocalCount - reducedSize;
+
+    if (rank == 0 || rank == 1) {
+        std::cout << "Rank " << rank << ": FormLinearSystem reported " << numInteriorGhostDofs
+                  << " interior ghosts, but only " << actualInteriorGhostDofs
+                  << " survived BC elimination on owner rank\n";
+        std::cout << "Rank " << rank << ": reducedLocalCount=" << reducedLocalCount
+                  << ", reducedSize=" << reducedSize << "\n";
+    }
+
+    // Map the valid interior ghost DOFs
+    for (size_t i = 0; i < validInteriorGhostGlobalDofs.size(); ++i) {
+        IndexType reducedGhostIdx = validGhostReducedIndices[i];
+        IndexType reducedCol = reducedSize + reducedGhostIdx;
+        IndexType ghostGlobalDof = validInteriorGhostGlobalDofs[i];
+
+        auto it = originalToContiguous.find(ghostGlobalDof);
+        localToGlobalDof_all[reducedCol] = it->second;
+    }
+
+    if (rank == 0 || rank == 1) {
+        std::cout << "Rank " << rank << ": Successfully mapped " << actualInteriorGhostDofs
+                  << " valid interior ghost DOFs\n";
+    }
+
+    // Check for unmapped columns and build compacted column mapping
+    IndexType unmappedCount = 0;
+    std::vector<IndexType> compactedColMapping(reducedLocalCount);
+    std::vector<IndexType> compactedGlobalMapping;
+    compactedGlobalMapping.reserve(reducedLocalCount);
+
+    // First pass: owned columns (always mapped)
+    for (IndexType col = 0; col < reducedSize; ++col) {
+        compactedColMapping[col] = col;
+        compactedGlobalMapping.push_back(localToGlobalDof_all[col]);
+    }
+
+    // Second pass: compact ghost columns (only keep mapped ones)
+    IndexType compactedGhostIdx = reducedSize;
+    for (IndexType col = reducedSize; col < reducedLocalCount; ++col) {
+        if (localToGlobalDof_all[col] != static_cast<IndexType>(-1)) {
+            compactedColMapping[col] = compactedGhostIdx++;
+            compactedGlobalMapping.push_back(localToGlobalDof_all[col]);
+        } else {
+            compactedColMapping[col] = static_cast<IndexType>(-1);
+            unmappedCount++;
+        }
+    }
+
+    IndexType compactedLocalCount = compactedGhostIdx;
+
+    if (unmappedCount > 0 && (rank == 0 || rank == 1)) {
+        std::cout << "Rank " << rank << ": Compacting matrix: removing " << unmappedCount
+                  << " unmapped ghost columns (out of " << (reducedLocalCount - reducedSize) << ")\n";
+        std::cout << "Rank " << rank << ": Compacted size: " << reducedSize << " rows × "
+                  << compactedLocalCount << " cols (was " << reducedLocalCount << ")\n";
+    }
+
+    // If we have unmapped columns, compact the matrix
+    if (unmappedCount > 0) {
+        // Read current matrix from device
+        std::vector<IndexType> h_rowOffsets(reducedSize + 1);
+        std::vector<IndexType> h_colIndices(A_r.nnz());
+        std::vector<double> h_values(A_r.nnz());
+
+        thrust::copy(thrust::device_pointer_cast(A_r.rowOffsetsPtr()),
+                     thrust::device_pointer_cast(A_r.rowOffsetsPtr() + reducedSize + 1),
+                     h_rowOffsets.begin());
+        thrust::copy(thrust::device_pointer_cast(A_r.colIndicesPtr()),
+                     thrust::device_pointer_cast(A_r.colIndicesPtr() + A_r.nnz()),
+                     h_colIndices.begin());
+        thrust::copy(thrust::device_pointer_cast(A_r.valuesPtr()),
+                     thrust::device_pointer_cast(A_r.valuesPtr() + A_r.nnz()),
+                     h_values.begin());
+
+        // Compact the matrix: remap column indices
+        std::vector<IndexType> h_rowOffsets_compact(reducedSize + 1, 0);
+        std::vector<IndexType> h_colIndices_compact;
+        std::vector<double> h_values_compact;
+        h_colIndices_compact.reserve(A_r.nnz());
+        h_values_compact.reserve(A_r.nnz());
+
+        for (IndexType row = 0; row < reducedSize; ++row) {
+            for (IndexType idx = h_rowOffsets[row]; idx < h_rowOffsets[row + 1]; ++idx) {
+                IndexType oldCol = h_colIndices[idx];
+                IndexType newCol = compactedColMapping[oldCol];
+
+                // Only keep columns that are mapped
+                if (newCol != static_cast<IndexType>(-1)) {
+                    h_colIndices_compact.push_back(newCol);
+                    h_values_compact.push_back(h_values[idx]);
                 }
             }
+            h_rowOffsets_compact[row + 1] = h_colIndices_compact.size();
         }
-        
-        if (numInteriorGhostDofs != interiorGhostGlobalDofs.size()) {
-            std::cerr << "Rank " << rank << ": ERROR - Mismatch in interior ghost count: expected " 
-                      << numInteriorGhostDofs << ", got " << interiorGhostGlobalDofs.size() << "\n";
-        } else if (rank == 0 || rank == 1) {
-            std::cout << "Rank " << rank << ": Interior ghost count matches: " << numInteriorGhostDofs << "\n";
+
+        // Reallocate compacted matrix
+        A_r.allocate(reducedSize, compactedLocalCount, h_colIndices_compact.size());
+        thrust::copy(h_rowOffsets_compact.begin(), h_rowOffsets_compact.end(),
+                     thrust::device_pointer_cast(A_r.rowOffsetsPtr()));
+        thrust::copy(h_colIndices_compact.begin(), h_colIndices_compact.end(),
+                     thrust::device_pointer_cast(A_r.colIndicesPtr()));
+        thrust::copy(h_values_compact.begin(), h_values_compact.end(),
+                     thrust::device_pointer_cast(A_r.valuesPtr()));
+
+        if (rank == 0 || rank == 1) {
+            std::cout << "Rank " << rank << ": Compacted matrix nnz: " << A_r.nnz()
+                      << " (removed " << (h_values.size() - h_values_compact.size()) << " entries)\n";
         }
-        
-        for (IndexType ghostIdx = 0; ghostIdx < numInteriorGhostDofs && ghostIdx < interiorGhostGlobalDofs.size(); ++ghostIdx) {
-            IndexType reducedCol = reducedSize + ghostIdx;
-            IndexType ghostGlobalDof = interiorGhostGlobalDofs[ghostIdx];
-            
-            // Convert to contiguous global DOF
-            auto it = originalToContiguous.find(ghostGlobalDof);
-            if (it != originalToContiguous.end()) {
-                localToGlobalDof_all[reducedCol] = it->second;
-            } else {
-                std::cerr << "Rank " << rank << ": ERROR - Interior ghost DOF " << ghostGlobalDof 
-                          << " not found in contiguous mapping!\n";
-                localToGlobalDof_all[reducedCol] = static_cast<IndexType>(-1);
-            }
-        }
+
+        // Update the global mapping to use compacted version
+        localToGlobalDof_all = compactedGlobalMapping;
+        reducedLocalCount = compactedLocalCount;
     }
-    
+
     // Validate reduced RHS before solver
     std::vector<double> h_B_r(reducedSize);
     thrust::copy(thrust::device_pointer_cast(B_r.data()),

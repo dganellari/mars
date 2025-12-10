@@ -3,6 +3,7 @@
 #include "mars.hpp"
 #include "backend/distributed/unstructured/domain.hpp"
 #include <mpi.h>
+#include <unordered_map>
 #ifdef MARS_ENABLE_HYPRE
 #include <HYPRE.h>
 #endif
@@ -76,70 +77,190 @@ public:
      * Creates consistent global DOF numbering across ranks
      */
     void enumerate_dofs() {
-        // For unstructured meshes, DOFs are associated with nodes
-        // Each owned node gets a global DOF index
-        
-        // Count owned nodes (exclude ghosts)
-        const auto& nodeOwnership = domain_.getNodeOwnershipMap();
+        // Standard parallel FEM: Node owned by rank that owns a LOCAL element containing it
+        // Use Cornerstone's element partition directly
+
+        const auto& nodeSfcKeys = domain_.getLocalToGlobalSfcMap();
         size_t numTotalNodes = domain_.getNodeCount();
-        
-        // Validate domain data
+        size_t localElementCount = domain_.localElementCount();
+
         if (numTotalNodes == 0) {
             std::cerr << "Rank " << rank_ << ": Error - domain has 0 nodes\n";
             MPI_Abort(MPI_COMM_WORLD, 1);
         }
-        
-        if (nodeOwnership.size() != numTotalNodes) {
-            std::cerr << "Rank " << rank_ << ": Error - nodeOwnership size (" << nodeOwnership.size() 
-                      << ") != numTotalNodes (" << numTotalNodes << ")\n";
-            MPI_Abort(MPI_COMM_WORLD, 1);
+
+        // Copy SFC keys to host
+        thrust::host_vector<KeyType> h_sfcKeys(numTotalNodes);
+        thrust::copy(thrust::device_pointer_cast(nodeSfcKeys.data()),
+                    thrust::device_pointer_cast(nodeSfcKeys.data() + numTotalNodes),
+                    h_sfcKeys.begin());
+
+        // Get element connectivity (only LOCAL elements [0, localElementCount))
+        const auto& conn_tuple = domain_.getElementToNodeConnectivity();
+        const auto& conn0 = std::get<0>(conn_tuple);
+        const auto& conn1 = std::get<1>(conn_tuple);
+        const auto& conn2 = std::get<2>(conn_tuple);
+        const auto& conn3 = std::get<3>(conn_tuple);
+
+        // Copy LOCAL element connectivity to host
+        thrust::host_vector<KeyType> h_conn0(localElementCount);
+        thrust::host_vector<KeyType> h_conn1(localElementCount);
+        thrust::host_vector<KeyType> h_conn2(localElementCount);
+        thrust::host_vector<KeyType> h_conn3(localElementCount);
+        thrust::copy_n(thrust::device_pointer_cast(conn0.data()), localElementCount, h_conn0.begin());
+        thrust::copy_n(thrust::device_pointer_cast(conn1.data()), localElementCount, h_conn1.begin());
+        thrust::copy_n(thrust::device_pointer_cast(conn2.data()), localElementCount, h_conn2.begin());
+        thrust::copy_n(thrust::device_pointer_cast(conn3.data()), localElementCount, h_conn3.begin());
+
+        // Find node SFC keys that appear in my LOCAL elements
+        // Connectivity uses local node indices, so convert to SFC keys
+        std::set<KeyType> myLocalNodeSfcs;
+        for (size_t e = 0; e < localElementCount; ++e) {
+            // Each conn value is a local node index
+            KeyType idx0 = h_conn0[e];
+            KeyType idx1 = h_conn1[e];
+            KeyType idx2 = h_conn2[e];
+            KeyType idx3 = h_conn3[e];
+
+            // Convert to SFC keys
+            if (idx0 < numTotalNodes) myLocalNodeSfcs.insert(h_sfcKeys[idx0]);
+            if (idx1 < numTotalNodes) myLocalNodeSfcs.insert(h_sfcKeys[idx1]);
+            if (idx2 < numTotalNodes) myLocalNodeSfcs.insert(h_sfcKeys[idx2]);
+            if (idx3 < numTotalNodes) myLocalNodeSfcs.insert(h_sfcKeys[idx3]);
         }
-        
-        // Copy ownership to host for counting
-        thrust::host_vector<uint8_t> h_ownership(numTotalNodes);
-        thrust::copy(thrust::device_pointer_cast(nodeOwnership.data()),
-                    thrust::device_pointer_cast(nodeOwnership.data() + numTotalNodes),
-                    h_ownership.begin());
-        
-        size_t numOwnedNodes = 0;
+
+        std::vector<KeyType> myOwnedNodeSfcs(myLocalNodeSfcs.begin(), myLocalNodeSfcs.end());
+
+        // MPI: Gather all ranks' owned node SFC keys
+        std::vector<int> allCounts(numRanks_);
+        int myCount = static_cast<int>(myOwnedNodeSfcs.size());
+        MPI_Allgather(&myCount, 1, MPI_INT, allCounts.data(), 1, MPI_INT, MPI_COMM_WORLD);
+
+        std::vector<int> displacements(numRanks_);
+        size_t totalCandidates = 0;
+        for (int r = 0; r < numRanks_; ++r) {
+            displacements[r] = static_cast<int>(totalCandidates);
+            totalCandidates += allCounts[r];
+        }
+
+        std::vector<KeyType> allOwnedNodeSfcs(totalCandidates);
+        MPI_Datatype mpiKeyType = (sizeof(KeyType) == 8) ? MPI_UNSIGNED_LONG : MPI_UNSIGNED;
+        MPI_Allgatherv(myOwnedNodeSfcs.data(), myCount, mpiKeyType,
+                      allOwnedNodeSfcs.data(), allCounts.data(), displacements.data(),
+                      mpiKeyType, MPI_COMM_WORLD);
+
+        // Build map: node SFC → owner rank (balanced tie-breaking)
+        // First, collect all ranks that have each node in local elements
+        std::unordered_map<KeyType, std::vector<int>> nodeSfcToCandidates;
+        for (int r = 0; r < numRanks_; ++r) {
+            int start = displacements[r];
+            int end = start + allCounts[r];
+            for (int i = start; i < end; ++i) {
+                KeyType sfc = allOwnedNodeSfcs[i];
+                nodeSfcToCandidates[sfc].push_back(r);
+            }
+        }
+
+        // Resolve ownership: for shared nodes, use SFC-based hash for balanced distribution
+        std::unordered_map<KeyType, int> nodeSfcToOwner;
+        for (const auto& [sfc, candidates] : nodeSfcToCandidates) {
+            if (candidates.size() == 1) {
+                // Unshared node - owned by the only candidate
+                nodeSfcToOwner[sfc] = candidates[0];
+            } else {
+                // Shared node - use SFC hash modulo number of candidates
+                size_t winner_idx = sfc % candidates.size();
+                nodeSfcToOwner[sfc] = candidates[winner_idx];
+            }
+        }
+
+        // Assign resolved ownership based on this mapping
+        resolvedOwnership_.resize(numTotalNodes);
+        size_t numTrueOwned = 0;
         for (size_t i = 0; i < numTotalNodes; ++i) {
-            if (h_ownership[i] == 1) numOwnedNodes++;  // Only purely owned, not shared
+            KeyType sfc = h_sfcKeys[i];
+            auto it = nodeSfcToOwner.find(sfc);
+            if (it != nodeSfcToOwner.end() && it->second == rank_) {
+                resolvedOwnership_[i] = 1;
+                numTrueOwned++;
+            } else {
+                resolvedOwnership_[i] = 0;
+            }
         }
-        
+
+        // Verify ownership totals via MPI reduction
+        size_t globalOwnedCount = 0;
+        MPI_Reduce(&numTrueOwned, &globalOwnedCount, 1, MPI_UNSIGNED_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
+
+        // Also check total local nodes across all ranks
+        size_t totalLocalNodes = 0;
+        size_t myLocalNodes = numTotalNodes;
+        MPI_Reduce(&myLocalNodes, &totalLocalNodes, 1, MPI_UNSIGNED_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
+
         if (rank_ == 0) {
-            std::cout << "Rank " << rank_ << ": DOF handler counted " << numOwnedNodes << " owned nodes (including shared), total nodes " << numTotalNodes << std::endl;
+            std::cout << "\n=== Ownership Resolution Summary ===\n";
+            std::cout << "Total unique nodes in domain: " << nodeSfcToOwner.size() << "\n";
+            std::cout << "Total owned nodes across all ranks: " << globalOwnedCount << "\n";
+            std::cout << "Total local nodes (with overlaps): " << totalLocalNodes << "\n";
+            std::cout << "Average nodes per rank: " << (totalLocalNodes / numRanks_) << "\n";
+            std::cout << "Missing nodes (if < original mesh): " << (5265 - nodeSfcToOwner.size()) << " nodes\n";
+            if (globalOwnedCount != nodeSfcToOwner.size()) {
+                std::cout << "ERROR: Ownership mismatch! Expected " << nodeSfcToOwner.size()
+                          << " but got " << globalOwnedCount << "\n";
+            }
         }
-        
-        if (numOwnedNodes == 0) {
-            std::cerr << "Rank " << rank_ << ": Warning - no owned nodes found\n";
+
+        std::cout << "Rank " << rank_ << ": After MPI consensus - "
+                  << numTrueOwned << " owned nodes out of " << numTotalNodes
+                  << " total nodes (from " << myOwnedNodeSfcs.size() << " candidates in local elements)\n";
+
+        // Build unique global DOF list (sorted SFC keys)
+        std::vector<KeyType> uniqueSfcKeys;
+        uniqueSfcKeys.reserve(nodeSfcToOwner.size());
+        for (const auto& [sfc, rank] : nodeSfcToOwner) {
+            uniqueSfcKeys.push_back(sfc);
         }
-        
-        size_t globalDofOffset = 0;
-        
-        // Calculate global offset for this rank using exclusive scan
-        // Each rank's offset is the sum of all previous ranks' owned DOF counts
-        size_t totalGlobalNodes = 0;
-        MPI_Allreduce(&numOwnedNodes, &totalGlobalNodes, 1, MPI_UNSIGNED_LONG, MPI_SUM, MPI_COMM_WORLD);
-        
-        // Use MPI_Exscan to compute prefix sum (exclusive scan)
-        // Rank 0 gets 0, Rank 1 gets rank 0's count, etc.
-        size_t prefixSum = 0;
-        MPI_Exscan(&numOwnedNodes, &prefixSum, 1, MPI_UNSIGNED_LONG, MPI_SUM, MPI_COMM_WORLD);
-        globalDofOffset = (rank_ == 0) ? 0 : prefixSum;
-        
-        // For now, assume 1 DOF per node (linear elements)
-        // In the future, this could be extended for higher-order elements
-        numGlobalDofs_ = totalGlobalNodes;
-        localToGlobalDof_.resize(numOwnedNodes);
-        
-        for (size_t i = 0; i < numOwnedNodes; ++i) {
-            localToGlobalDof_[i] = globalDofOffset + i;
+        std::sort(uniqueSfcKeys.begin(), uniqueSfcKeys.end());
+
+        numGlobalDofs_ = uniqueSfcKeys.size();
+
+        // Build SFC-to-global-DOF map
+        std::unordered_map<KeyType, KeyType> sfcToGlobalDof;
+        for (size_t i = 0; i < uniqueSfcKeys.size(); ++i) {
+            sfcToGlobalDof[uniqueSfcKeys[i]] = static_cast<KeyType>(i);
         }
-        
+
+        // Build localToGlobalDof_ for truly owned nodes (in SFC order)
+        std::vector<std::pair<KeyType, size_t>> ownedNodesSfc;
+        for (size_t i = 0; i < numTotalNodes; ++i) {
+            if (resolvedOwnership_[i] == 1) {
+                ownedNodesSfc.push_back({h_sfcKeys[i], i});
+            }
+        }
+        std::sort(ownedNodesSfc.begin(), ownedNodesSfc.end());
+
+        localToGlobalDof_.resize(numTrueOwned);
+        for (size_t i = 0; i < ownedNodesSfc.size(); ++i) {
+            localToGlobalDof_[i] = sfcToGlobalDof[ownedNodesSfc[i].first];
+        }
+
         // Store owned DOF range
-        ownedDofStart_ = globalDofOffset;
-        ownedDofEnd_ = globalDofOffset + numOwnedNodes;
-        
+        if (numTrueOwned > 0) {
+            ownedDofStart_ = localToGlobalDof_[0];
+            ownedDofEnd_ = localToGlobalDof_[numTrueOwned - 1] + 1;
+        } else {
+            ownedDofStart_ = 0;
+            ownedDofEnd_ = 0;
+        }
+
+        if (rank_ == 0) {
+            std::cout << "Global DOFs: " << numGlobalDofs_ << " (resolved from "
+                      << totalCandidates << " candidates)\n";
+        }
+
+        // Store maps for use in buildNodeToDofMappings
+        sfcToGlobalDof_ = std::move(sfcToGlobalDof);
+
         // Build node-to-DOF mappings for assembly
         buildNodeToDofMappings();
     }
@@ -147,96 +268,81 @@ public:
     /**
      * @brief Build node-to-DOF mappings for assembly
      * Creates mappings from node indices to local and global DOF indices
-     * Uses SFC-based ordering for owned DOFs to improve spatial locality
+     * Uses resolved ownership (after MPI consensus) for non-overlapping DOF assignment
      */
     void buildNodeToDofMappings() {
         size_t numTotalNodes = domain_.getNodeCount();
-        
-        // Copy ownership and SFC keys to host
-        const auto& nodeOwnership = domain_.getNodeOwnershipMap();
+
+        // Get SFC keys from domain
         const auto& nodeSfcKeys = domain_.getLocalToGlobalSfcMap();
-        
-        thrust::host_vector<uint8_t> h_ownership(numTotalNodes);
         thrust::host_vector<KeyType> h_sfcKeys(numTotalNodes);
-        
-        thrust::copy(thrust::device_pointer_cast(nodeOwnership.data()),
-                    thrust::device_pointer_cast(nodeOwnership.data() + numTotalNodes),
-                    h_ownership.begin());
         thrust::copy(thrust::device_pointer_cast(nodeSfcKeys.data()),
                     thrust::device_pointer_cast(nodeSfcKeys.data() + numTotalNodes),
                     h_sfcKeys.begin());
-        
+
         // Initialize mappings
         nodeToLocalDof_.assign(numTotalNodes, static_cast<KeyType>(-1));
         nodeToGlobalDof_.assign(numTotalNodes, static_cast<KeyType>(-1));
-        
-        // PASS 1: Build mappings for owned nodes using SFC-based ordering
-        // Collect owned node indices with their SFC keys
+
+        // PASS 1: Build mappings for truly owned nodes (using resolvedOwnership_)
         std::vector<std::pair<KeyType, size_t>> ownedNodesSfc;  // (sfcKey, nodeIdx)
         for (size_t nodeIdx = 0; nodeIdx < numTotalNodes; ++nodeIdx) {
-            if (h_ownership[nodeIdx] == 1) {  // Only purely owned, not shared
+            if (resolvedOwnership_[nodeIdx] == 1) {
                 ownedNodesSfc.push_back({h_sfcKeys[nodeIdx], nodeIdx});
             }
         }
-        
+
         // Sort owned nodes by SFC key for spatial locality
-        std::sort(ownedNodesSfc.begin(), ownedNodesSfc.end(),
-                  [](const auto& a, const auto& b) { return a.first < b.first; });
-        
-        // Assign DOF indices in SFC order
+        std::sort(ownedNodesSfc.begin(), ownedNodesSfc.end());
+
+        // Assign DOF indices
         size_t localDofCounter = 0;
         for (const auto& [sfcKey, nodeIdx] : ownedNodesSfc) {
             nodeToLocalDof_[nodeIdx] = localDofCounter;
-            nodeToGlobalDof_[nodeIdx] = localToGlobalDof_[localDofCounter];
+            auto it = sfcToGlobalDof_.find(sfcKey);
+            if (it != sfcToGlobalDof_.end()) {
+                nodeToGlobalDof_[nodeIdx] = it->second;
+            } else {
+                nodeToGlobalDof_[nodeIdx] = static_cast<KeyType>(-1);
+            }
             localDofCounter++;
         }
-        
+
         numLocalDofs_ = localDofCounter;
-        
+
         // PASS 2: Assign local indices to ghost nodes (after owned DOFs)
-        // This enables LOCAL-LOCAL matrix indexing for cuSPARSE compatibility
-        // Ghost = pure ghost (0) OR shared (2) - both need ghost treatment
+        // Ghost = resolvedOwnership_ == 0 (includes nodes lost in tie-breaking)
         size_t ghostDofCounter = 0;
         ghostDofToNode_.clear();
 
-        // First count ghosts to reserve space
+        // Count ghosts
         size_t numGhosts = 0;
         for (size_t nodeIdx = 0; nodeIdx < numTotalNodes; ++nodeIdx) {
-            if (h_ownership[nodeIdx] == 0 || h_ownership[nodeIdx] == 2) numGhosts++;
+            if (resolvedOwnership_[nodeIdx] == 0) numGhosts++;
         }
         ghostDofToNode_.resize(numGhosts);
 
         for (size_t nodeIdx = 0; nodeIdx < numTotalNodes; ++nodeIdx) {
-            if (h_ownership[nodeIdx] == 0 || h_ownership[nodeIdx] == 2) {  // Ghost or shared
+            if (resolvedOwnership_[nodeIdx] == 0) {  // Ghost
                 nodeToLocalDof_[nodeIdx] = numLocalDofs_ + ghostDofCounter;
-                // Global DOF index for ghosts/shared needs MPI communication (placeholder -1 for now)
-                nodeToGlobalDof_[nodeIdx] = static_cast<KeyType>(-1);
+                // Ghost nodes also get global DOF from SFC map
+                KeyType sfcKey = h_sfcKeys[nodeIdx];
+                auto it = sfcToGlobalDof_.find(sfcKey);
+                if (it != sfcToGlobalDof_.end()) {
+                    nodeToGlobalDof_[nodeIdx] = it->second;
+                } else {
+                    nodeToGlobalDof_[nodeIdx] = static_cast<KeyType>(-1);
+                }
                 ghostDofToNode_[ghostDofCounter] = nodeIdx;
                 ghostDofCounter++;
             }
         }
-        
+
         numLocalGhostDofs_ = ghostDofCounter;
-        
-        if (rank_ == 0 || rank_ == 1) {
-            std::cout << "Rank " << rank_ << ": Built DOF mappings (SFC-ordered) - " 
-                      << numLocalDofs_ << " owned + " << numLocalGhostDofs_ << " ghost = " 
-                      << (numLocalDofs_ + numLocalGhostDofs_) << " total local DOFs\n";
-            
-            // Debug: count ownership states (0=pure ghost, 1=pure owned, 2=shared boundary)
-            size_t cnt_owned = 0, cnt_ghost = 0, cnt_shared = 0;
-            const auto& nodeOwnership = domain_.getNodeOwnershipMap();
-            thrust::host_vector<uint8_t> h_own_debug(numTotalNodes);
-            thrust::copy(thrust::device_pointer_cast(nodeOwnership.data()),
-                        thrust::device_pointer_cast(nodeOwnership.data() + numTotalNodes),
-                        h_own_debug.begin());
-            for (size_t i = 0; i < numTotalNodes; ++i) {
-                if (h_own_debug[i] == 1) cnt_owned++;
-                else if (h_own_debug[i] == 0) cnt_ghost++;
-                else if (h_own_debug[i] == 2) cnt_shared++;
-            }
-            std::cout << "Rank " << rank_ << ": Ownership states - " << cnt_owned << " pure owned, " 
-                      << cnt_shared << " shared, " << cnt_ghost << " pure ghost\n";
+
+        if (rank_ == 0) {
+            std::cout << "Built DOF mappings: " << numLocalDofs_ << " owned + "
+                      << numLocalGhostDofs_ << " ghost DOFs (rank 0)\n";
         }
         
         // Exchange ghost DOF global indices with owning ranks
@@ -324,10 +430,7 @@ public:
         std::vector<MPI_Request> recvRequests;
         std::map<int, std::vector<KeyType>> sendBuffers;
         
-        if (rank_ == 0 || rank_ == 1) {
-            std::cout << "Rank " << rank_ << ": Starting ghost DOF exchange, " 
-                      << neighborRanks.size() << " neighbors\n";
-        }
+        // Ghost DOF exchange with neighbors (silent)
         
         // Use MPI_Alltoall to exchange counts reliably
         std::vector<int> sendCountsVec(numRanks_, 0);
@@ -352,9 +455,6 @@ public:
         MPI_Waitall(sendRequests.size(), sendRequests.data(), MPI_STATUSES_IGNORE);
         sendRequests.clear();
         
-        if (rank_ == 0 || rank_ == 1) {
-            std::cout << "Rank " << rank_ << ": Exchanging SFC keys with neighbors\n";
-        }
         
         // Now exchange SFC keys
         for (auto& [neighborRank, sfcKeys] : sfcKeysByRank) {
@@ -375,9 +475,6 @@ public:
         MPI_Waitall(recvRequests.size(), recvRequests.data(), MPI_STATUSES_IGNORE);
         recvRequests.clear();
         
-        if (rank_ == 0 || rank_ == 1) {
-            std::cout << "Rank " << rank_ << ": Looking up global DOF indices\n";
-        }
         
         // Lookup global DOF indices for received SFC keys and send back
         std::map<int, std::vector<KeyType>> globalDofResponses;
@@ -424,8 +521,7 @@ public:
                     numResolvedGhosts++;
                 }
             }
-            std::cout << "Rank " << rank_ << ": Resolved " << numResolvedGhosts 
-                      << " / " << numLocalGhostDofs_ << " ghost DOF global indices\n";
+            // Ghost DOF resolution complete (silent)
         }
         
         // Build neighbor communication lists for halo exchange
@@ -558,10 +654,13 @@ public:
             sendOwnedNodes_[neighborRank] = ownedLocalDofs;
         }
         
-        if (rank_ == 0 || rank_ == 1) {
-            std::cout << "Rank " << rank_ << ": Communication with " << neighborRanks_.size() << " neighbors\n";
+        if (rank_ == 0) {
+            std::cout << "Ghost exchange: " << neighborRanks_.size() << " neighbors (rank 0)\n";
+        }
+
+        if (false && rank_ == 0) {
             for (int neighborRank : neighborRanks_) {
-                std::cout << "  -> Neighbor rank " << neighborRank 
+                std::cout << "  -> Neighbor " << neighborRank
                           << ": send " << sendOwnedNodes_[neighborRank].size()
                           << ", recv " << recvGhostNodes_[neighborRank].size() << "\n";
             }
@@ -754,7 +853,15 @@ public:
     const std::vector<KeyType>& get_node_to_global_dof() const {
         return nodeToGlobalDof_;
     }
-    
+
+    /**
+     * @brief Get resolved ownership (after MPI consensus)
+     * 1 = truly owned by this rank, 0 = ghost (including nodes lost in tie-breaking)
+     */
+    const std::vector<uint8_t>& get_resolved_ownership() const {
+        return resolvedOwnership_;
+    }
+
     /**
      * @brief Get coordinates for a DOF using SFC key
      * For unstructured meshes, SFC keys correspond to node indices
@@ -1227,6 +1334,8 @@ private:
     std::vector<KeyType> nodeToLocalDof_;   // Node index -> local DOF index (row)
     std::vector<KeyType> nodeToGlobalDof_;  // Node index -> global DOF index (column)
     std::vector<KeyType> ghostDofToNode_;   // Local ghost DOF index -> Node index
+    std::unordered_map<KeyType, KeyType> sfcToGlobalDof_;  // SFC key -> global DOF index
+    std::vector<uint8_t> resolvedOwnership_;  // Resolved ownership after MPI consensus
     
     // Ghost DOF management for local-local matrix assembly
     std::map<KeyType, KeyType> globalToLocalGhostDof_;  // Global DOF -> local ghost DOF index
