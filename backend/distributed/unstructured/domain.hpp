@@ -407,30 +407,27 @@ public:
     using DeviceCoordsTuple       = std::tuple<DeviceVector<RealType>, DeviceVector<RealType>, DeviceVector<RealType>>;
     using DevicePropsTuple        = std::tuple<DeviceVector<RealType>>;
     using DeviceConnectivityTuple = typename ConnectivityTupleHelper<ElementTag, AcceleratorTag, KeyType>::type;
-    using DeviceBoundaryTuple     = std::tuple<DeviceVector<uint8_t>>;  // (isBoundaryNode)
+    using DeviceBoundaryTuple     = std::tuple<DeviceVector<uint8_t>>; // (isBoundaryNode)
 
     // SoA data structures using tuples - host versions
     using HostCoordsTuple       = std::tuple<HostVector<RealType>, HostVector<RealType>, HostVector<RealType>>;
     using HostPropsTuple        = std::tuple<HostVector<RealType>>;
     using HostConnectivityTuple = typename HostConnectivityTupleHelper<ElementTag, KeyType>::type;
-    using HostBoundaryTuple     = std::tuple<HostVector<uint8_t>>;  // (isBoundaryNode)
+    using HostBoundaryTuple     = std::tuple<HostVector<uint8_t>>; // (isBoundaryNode)
 
     // Constructor from file
     ElementDomain(const std::string& meshFile, int rank, int numRanks);
-    
+
     // Constructor from mesh data (for MFEM or other formats) - automatically computes bounding box
-    ElementDomain(const HostCoordsTuple& h_coords,
-                  const HostConnectivityTuple& h_conn,
-                  int rank,
-                  int numRanks);
-    
+    ElementDomain(const HostCoordsTuple& h_coords, const HostConnectivityTuple& h_conn, int rank, int numRanks);
+
     // Constructor from mesh data with boundary info - automatically computes bounding box
     ElementDomain(const HostCoordsTuple& h_coords,
                   const HostConnectivityTuple& h_conn,
                   const HostBoundaryTuple& h_boundary,
                   int rank,
                   int numRanks);
-    
+
     // Constructor from mesh data with explicit bounding box (for backward compatibility)
     ElementDomain(const HostCoordsTuple& h_coords,
                   const HostConnectivityTuple& h_conn,
@@ -640,8 +637,12 @@ public:
     int rank() const { return rank_; }
 
     //! Returns the map from a dense local node ID to its sparse global SFC Key.
-    const DeviceVector<KeyType>& getLocalToGlobalSfcMap() const { return d_localToGlobalSfcMap_; }
-    
+    const DeviceVector<KeyType>& getLocalToGlobalSfcMap() const
+    {
+        ensureSfcMap();
+        return d_localToGlobalSfcMap_;
+    }
+
     const DeviceVector<KeyType>& getLocalToGlobalNodeMap() const { return d_localToGlobalNodeMap_; }
 
     //! Returns the Element->Node connectivity table using dense local node IDs (lazy).
@@ -685,16 +686,10 @@ public:
     }
 
     //! Returns boundary node flags (true if node is on boundary).
-    const DeviceVector<uint8_t>& getBoundaryNodes() const
-    {
-        return std::get<0>(d_boundary_);
-    }
+    const DeviceVector<uint8_t>& getBoundaryNodes() const { return std::get<0>(d_boundary_); }
 
     //! Returns true if boundary information is available.
-    bool hasBoundaryInfo() const
-    {
-        return std::get<0>(d_boundary_).size() > 0;
-    }
+    bool hasBoundaryInfo() const { return std::get<0>(d_boundary_).size() > 0; }
 
 private:
     int rank_;
@@ -721,7 +716,7 @@ private:
     // Lazily-initialized components (allocated on demand)
     // Maps a dense local node ID [0...N-1] to its sparse global SFC Key
     DeviceVector<KeyType> d_localToGlobalSfcMap_;
-    
+
     // Maps a dense local node ID [0...N-1] to its global node index
     DeviceVector<KeyType> d_localToGlobalNodeMap_;
 
@@ -740,6 +735,7 @@ private:
     void createLocalToGlobalSfcMap();
 
     // Lazy initialization methods (called by public getters)
+    void ensureSfcMap() const;
     void ensureAdjacency() const;
     void ensureHalo() const;
     void ensureCoordinateCache() const;
@@ -757,25 +753,23 @@ private:
             auto& d_i3 = std::get<3>(d_conn_);
 
             // Find representative nodes
-            findRepresentativeNodesKernel<TetTag, KeyType, RealType>
-                <<<numBlocks, blockSize>>>(thrust::raw_pointer_cast(d_i0.data()), thrust::raw_pointer_cast(d_i1.data()),
-                                           thrust::raw_pointer_cast(d_i2.data()), thrust::raw_pointer_cast(d_i3.data()),
-                                           nullptr, nullptr, nullptr, nullptr,
-                                           thrust::raw_pointer_cast(d_nodeSfcCodes.data()),
-                                           thrust::raw_pointer_cast(d_elemToNodeMap_.data()), elementCount_);
+            findRepresentativeNodesKernel<TetTag, KeyType, RealType><<<numBlocks, blockSize>>>(
+                thrust::raw_pointer_cast(d_i0.data()), thrust::raw_pointer_cast(d_i1.data()),
+                thrust::raw_pointer_cast(d_i2.data()), thrust::raw_pointer_cast(d_i3.data()), nullptr, nullptr, nullptr,
+                nullptr, thrust::raw_pointer_cast(d_nodeSfcCodes.data()),
+                thrust::raw_pointer_cast(d_elemToNodeMap_.data()), elementCount_);
             cudaCheckError();
 
             // Build SFC connectivity
-            buildSfcConnectivity<TetTag, KeyType, RealType>
-                <<<numBlocks, blockSize>>>(thrust::raw_pointer_cast(d_i0.data()), thrust::raw_pointer_cast(d_i1.data()),
-                                           thrust::raw_pointer_cast(d_i2.data()), thrust::raw_pointer_cast(d_i3.data()),
-                                           nullptr, nullptr, nullptr, nullptr,
-                                           thrust::raw_pointer_cast(d_nodeSfcCodes.data()),
-                                           thrust::raw_pointer_cast(std::get<0>(d_conn_keys_).data()),
-                                           thrust::raw_pointer_cast(std::get<1>(d_conn_keys_).data()),
-                                           thrust::raw_pointer_cast(std::get<2>(d_conn_keys_).data()),
-                                           thrust::raw_pointer_cast(std::get<3>(d_conn_keys_).data()),
-                                           nullptr, nullptr, nullptr, nullptr, elementCount_);
+            buildSfcConnectivity<TetTag, KeyType, RealType><<<numBlocks, blockSize>>>(
+                thrust::raw_pointer_cast(d_i0.data()), thrust::raw_pointer_cast(d_i1.data()),
+                thrust::raw_pointer_cast(d_i2.data()), thrust::raw_pointer_cast(d_i3.data()), nullptr, nullptr, nullptr,
+                nullptr, thrust::raw_pointer_cast(d_nodeSfcCodes.data()),
+                thrust::raw_pointer_cast(std::get<0>(d_conn_keys_).data()),
+                thrust::raw_pointer_cast(std::get<1>(d_conn_keys_).data()),
+                thrust::raw_pointer_cast(std::get<2>(d_conn_keys_).data()),
+                thrust::raw_pointer_cast(std::get<3>(d_conn_keys_).data()), nullptr, nullptr, nullptr, nullptr,
+                elementCount_);
             cudaCheckError();
         }
         else if constexpr (std::is_same_v<ElementTag, HexTag>)
@@ -865,35 +859,20 @@ private:
 template<typename RealType>
 cstone::Box<RealType> computeGlobalBoundingBox(const std::string& meshDir)
 {
-    // Try float32 first (since that's what most meshes use), then double
-    std::vector<std::string> extensions;
-    if constexpr (std::is_same_v<RealType, float>) { extensions = {"float32", "double"}; }
-    else { extensions = {"double", "float32"}; }
-
+    // Use the SAME extension logic as readMeshWithElementPartitioning to ensure consistency
     std::string ext;
-    std::ifstream x_file, y_file, z_file;
+    if constexpr (std::is_same_v<RealType, float>) { ext = "float32"; }
+    else if constexpr (std::is_same_v<RealType, double>) { ext = "double"; }
+    else { throw std::runtime_error("Unsupported RealType for coordinate reading"); }
 
-    // Try different file extensions
-    for (const auto& test_ext : extensions)
-    {
-        x_file.open(meshDir + "/x." + test_ext, std::ios::binary);
-        y_file.open(meshDir + "/y." + test_ext, std::ios::binary);
-        z_file.open(meshDir + "/z." + test_ext, std::ios::binary);
-
-        if (x_file && y_file && z_file)
-        {
-            ext = test_ext;
-            break;
-        }
-
-        x_file.close();
-        y_file.close();
-        z_file.close();
-    }
+    std::ifstream x_file(meshDir + "/x." + ext, std::ios::binary);
+    std::ifstream y_file(meshDir + "/y." + ext, std::ios::binary);
+    std::ifstream z_file(meshDir + "/z." + ext, std::ios::binary);
 
     if (!x_file || !y_file || !z_file)
     {
-        throw std::runtime_error("Failed to open coordinate files for global bounding box computation: " + meshDir);
+        throw std::runtime_error("Failed to open coordinate files for global bounding box computation: " + meshDir +
+                                 " (looking for ." + ext + " files)");
     }
 
     // Get total node count
@@ -1036,26 +1015,41 @@ cstone::Box<RealType> computeGlobalBoundingBoxFromCoords(const std::vector<RealT
         throw std::runtime_error("Cannot compute bounding box from empty coordinate data");
     }
 
-    // Find min/max coordinates
+    // Find LOCAL min/max coordinates
     auto [xmin_it, xmax_it] = std::minmax_element(x_coords.begin(), x_coords.end());
     auto [ymin_it, ymax_it] = std::minmax_element(y_coords.begin(), y_coords.end());
     auto [zmin_it, zmax_it] = std::minmax_element(z_coords.begin(), z_coords.end());
 
-    RealType xmin = *xmin_it;
-    RealType xmax = *xmax_it;
-    RealType ymin = *ymin_it;
-    RealType ymax = *ymax_it;
-    RealType zmin = *zmin_it;
-    RealType zmax = *zmax_it;
+    RealType local_xmin = *xmin_it;
+    RealType local_xmax = *xmax_it;
+    RealType local_ymin = *ymin_it;
+    RealType local_ymax = *ymax_it;
+    RealType local_zmin = *zmin_it;
+    RealType local_zmax = *zmax_it;
 
-    // Add padding based on ranges
-    RealType xRange = xmax - xmin;
-    RealType yRange = ymax - ymin;
-    RealType zRange = zmax - zmin;
+    // Compute GLOBAL min/max across all ranks using MPI
+    RealType global_xmin, global_xmax, global_ymin, global_ymax, global_zmin, global_zmax;
+    MPI_Allreduce(&local_xmin, &global_xmin, 1, std::is_same_v<RealType, float> ? MPI_FLOAT : MPI_DOUBLE, MPI_MIN,
+                  MPI_COMM_WORLD);
+    MPI_Allreduce(&local_xmax, &global_xmax, 1, std::is_same_v<RealType, float> ? MPI_FLOAT : MPI_DOUBLE, MPI_MAX,
+                  MPI_COMM_WORLD);
+    MPI_Allreduce(&local_ymin, &global_ymin, 1, std::is_same_v<RealType, float> ? MPI_FLOAT : MPI_DOUBLE, MPI_MIN,
+                  MPI_COMM_WORLD);
+    MPI_Allreduce(&local_ymax, &global_ymax, 1, std::is_same_v<RealType, float> ? MPI_FLOAT : MPI_DOUBLE, MPI_MAX,
+                  MPI_COMM_WORLD);
+    MPI_Allreduce(&local_zmin, &global_zmin, 1, std::is_same_v<RealType, float> ? MPI_FLOAT : MPI_DOUBLE, MPI_MIN,
+                  MPI_COMM_WORLD);
+    MPI_Allreduce(&local_zmax, &global_zmax, 1, std::is_same_v<RealType, float> ? MPI_FLOAT : MPI_DOUBLE, MPI_MAX,
+                  MPI_COMM_WORLD);
 
-    return cstone::Box<RealType>(xmin - padding * xRange, xmax + padding * xRange,
-                                 ymin - padding * yRange, ymax + padding * yRange,
-                                 zmin - padding * zRange, zmax + padding * zRange);
+    // Add padding based on GLOBAL ranges
+    RealType xRange = global_xmax - global_xmin;
+    RealType yRange = global_ymax - global_ymin;
+    RealType zRange = global_zmax - global_zmin;
+
+    return cstone::Box<RealType>(global_xmin - padding * xRange, global_xmax + padding * xRange,
+                                 global_ymin - padding * yRange, global_ymax + padding * yRange,
+                                 global_zmin - padding * zRange, global_zmax + padding * zRange);
 }
 
 template<typename KeyType, typename RealType>
@@ -1110,17 +1104,15 @@ ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(cons
     // Read the mesh in SoA format
     readMeshDataSoA(meshFile, h_coords, h_conn);
 
-    // Compute global bounding box from the coordinate data we just read
-    box_ = computeGlobalBoundingBoxFromCoords<RealType>(std::get<0>(h_coords),
-                                                        std::get<1>(h_coords),
-                                                        std::get<2>(h_coords));
-
     // Initialize cornerstone domain
-    int bucketSize           = 128;
-    unsigned bucketSizeFocus = 64;
+    int bucketSize           = 64;
+    unsigned bucketSizeFocus = 8;
     RealType theta           = 0.5;
 
-    std::cout << "Rank " << rank_ << ": Created bounding box from mesh data: [" << box_.xmin() << "," << box_.xmax() << "] ["
+    box_ = computeGlobalBoundingBoxFromCoords<RealType>(std::get<0>(h_coords), std::get<1>(h_coords),
+                                                        std::get<2>(h_coords));
+
+    std::cout << "Rank " << rank_ << ": Created bounding box: [" << box_.xmin() << "," << box_.xmax() << "] ["
               << box_.ymin() << "," << box_.ymax() << "] [" << box_.zmin() << "," << box_.zmax() << "]" << std::endl;
 
     // Test SFC precision for this domain (debug only)
@@ -1140,31 +1132,16 @@ ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(cons
     // Perform sync
     sync(d_conn_, d_coords_);
 
-    std::cout << "Rank " << rank_ << ": After sync - elementCount=" << elementCount_
-              << ", startIndex=" << startIndex() << ", endIndex=" << endIndex()
-              << ", localElements=" << localElementCount() << std::endl;
-
-    // needed by all other lazy structures
-    createLocalToGlobalSfcMap();
-
-    std::cout << "Rank " << rank_ << ": After createLocalToGlobalSfcMap - nodeCount=" << nodeCount_
-              << " (unique SFC keys from all elements)" << std::endl;
-
-    // Adjacency maps are now built lazily on first access
-    // Users can explicitly call buildAdjacency() if they want to build it immediately
-
     std::cout << "Rank " << rank_ << " initialized " << ElementTag::Name << " domain with " << nodeCount_
-              << " nodes and " << elementCount_ << " elements and " << localElementCount() << " local elements."
-              << std::endl;
+              << " nodes and " << elementCount_ << " elements." << std::endl;
 }
 
 // Constructor from mesh data (for MFEM or other formats) - automatically computes bounding box
 template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
-ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(
-    const HostCoordsTuple& h_coords,
-    const HostConnectivityTuple& h_conn,
-    int rank,
-    int numRanks)
+ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(const HostCoordsTuple& h_coords,
+                                                                            const HostConnectivityTuple& h_conn,
+                                                                            int rank,
+                                                                            int numRanks)
     : rank_(rank)
     , numRanks_(numRanks)
     , box_(0, 1)
@@ -1173,21 +1150,21 @@ ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(
     DeviceCoordsTuple d_coords_;
 
     // Set counts from input data
-    nodeCount_ = std::get<0>(h_coords).size();
+    nodeCount_    = std::get<0>(h_coords).size();
     elementCount_ = std::get<0>(h_conn).size();
 
     // Compute global bounding box from the provided coordinate data
-    box_ = computeGlobalBoundingBoxFromCoords<RealType>(std::get<0>(h_coords),
-                                                        std::get<1>(h_coords),
+    box_ = computeGlobalBoundingBoxFromCoords<RealType>(std::get<0>(h_coords), std::get<1>(h_coords),
                                                         std::get<2>(h_coords));
 
     // Initialize cornerstone domain
-    int bucketSize           = 128;
-    unsigned bucketSizeFocus = 64;
+    int bucketSize           = 64;
+    unsigned bucketSizeFocus = 8;
     RealType theta           = 0.5;
 
-    std::cout << "Rank " << rank_ << ": Computed bounding box from coordinates: [" << box_.xmin() << "," << box_.xmax() << "] ["
-              << box_.ymin() << "," << box_.ymax() << "] [" << box_.zmin() << "," << box_.zmax() << "]" << std::endl;
+    std::cout << "Rank " << rank_ << ": Computed bounding box from coordinates: [" << box_.xmin() << "," << box_.xmax()
+              << "] [" << box_.ymin() << "," << box_.ymax() << "] [" << box_.zmin() << "," << box_.zmax() << "]"
+              << std::endl;
 
     // Test SFC precision for this domain (debug only)
     testSfcPrecision<KeyType, RealType>(box_, rank_);
@@ -1201,37 +1178,23 @@ ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(
     calculateCharacteristicSizes(d_conn_, d_coords_);
 
     std::cout << "Rank " << rank_ << ": Before sync - bucketSize=" << bucketSize
-              << ", bucketSizeFocus=" << bucketSizeFocus << ", theta=" << theta
-              << ", input nodes=" << nodeCount_ << ", input elements=" << elementCount_ << std::endl;
+              << ", bucketSizeFocus=" << bucketSizeFocus << ", theta=" << theta << ", input nodes=" << nodeCount_
+              << ", input elements=" << elementCount_ << std::endl;
 
     // Perform sync
     sync(d_conn_, d_coords_);
 
-    std::cout << "Rank " << rank_ << ": After sync - elementCount=" << elementCount_
-              << ", startIndex=" << startIndex() << ", endIndex=" << endIndex()
-              << ", localElements=" << localElementCount() << std::endl;
-
-    // needed by all other lazy structures
-    createLocalToGlobalSfcMap();
-
-    std::cout << "Rank " << rank_ << ": After createLocalToGlobalSfcMap - nodeCount=" << nodeCount_
-              << " (unique SFC keys from all elements)" << std::endl;
-
-    // Adjacency maps are now built lazily on first access
-
     std::cout << "Rank " << rank_ << " initialized " << ElementTag::Name << " domain with " << nodeCount_
-              << " nodes and " << elementCount_ << " elements and " << localElementCount() << " local elements."
-              << std::endl;
+              << " nodes and " << elementCount_ << " elements." << std::endl;
 }
 
 // Constructor from mesh data with boundary info - automatically computes bounding box
 template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
-ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(
-    const HostCoordsTuple& h_coords,
-    const HostConnectivityTuple& h_conn,
-    const HostBoundaryTuple& h_boundary,
-    int rank,
-    int numRanks)
+ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(const HostCoordsTuple& h_coords,
+                                                                            const HostConnectivityTuple& h_conn,
+                                                                            const HostBoundaryTuple& h_boundary,
+                                                                            int rank,
+                                                                            int numRanks)
     : rank_(rank)
     , numRanks_(numRanks)
     , box_(0, 1)
@@ -1240,21 +1203,21 @@ ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(
     DeviceCoordsTuple d_coords_;
 
     // Set counts from input data
-    nodeCount_ = std::get<0>(h_coords).size();
+    nodeCount_    = std::get<0>(h_coords).size();
     elementCount_ = std::get<0>(h_conn).size();
 
     // Compute global bounding box from the provided coordinate data
-    box_ = computeGlobalBoundingBoxFromCoords<RealType>(std::get<0>(h_coords),
-                                                        std::get<1>(h_coords),
+    box_ = computeGlobalBoundingBoxFromCoords<RealType>(std::get<0>(h_coords), std::get<1>(h_coords),
                                                         std::get<2>(h_coords));
 
     // Initialize cornerstone domain
-    int bucketSize           = 128;
-    unsigned bucketSizeFocus = 64;
+    int bucketSize           = 64;
+    unsigned bucketSizeFocus = 8;
     RealType theta           = 0.5;
 
-    std::cout << "Rank " << rank_ << ": Computed bounding box from coordinates: [" << box_.xmin() << "," << box_.xmax() << "] ["
-              << box_.ymin() << "," << box_.ymax() << "] [" << box_.zmin() << "," << box_.zmax() << "]" << std::endl;
+    std::cout << "Rank " << rank_ << ": Computed bounding box from coordinates: [" << box_.xmin() << "," << box_.xmax()
+              << "] [" << box_.ymin() << "," << box_.ymax() << "] [" << box_.zmin() << "," << box_.zmax() << "]"
+              << std::endl;
 
     // Test SFC precision for this domain (debug only)
     testSfcPrecision<KeyType, RealType>(box_, rank_);
@@ -1268,27 +1231,14 @@ ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(
     calculateCharacteristicSizes(d_conn_, d_coords_);
 
     std::cout << "Rank " << rank_ << ": Before sync - bucketSize=" << bucketSize
-              << ", bucketSizeFocus=" << bucketSizeFocus << ", theta=" << theta
-              << ", input nodes=" << nodeCount_ << ", input elements=" << elementCount_ << std::endl;
+              << ", bucketSizeFocus=" << bucketSizeFocus << ", theta=" << theta << ", input nodes=" << nodeCount_
+              << ", input elements=" << elementCount_ << std::endl;
 
     // Perform sync
     sync(d_conn_, d_coords_);
 
-    std::cout << "Rank " << rank_ << ": After sync - elementCount=" << elementCount_
-              << ", startIndex=" << startIndex() << ", endIndex=" << endIndex()
-              << ", localElements=" << localElementCount() << std::endl;
-
-    // needed by all other lazy structures
-    createLocalToGlobalSfcMap();
-
-    std::cout << "Rank " << rank_ << ": After createLocalToGlobalSfcMap - nodeCount=" << nodeCount_
-              << " (unique SFC keys from all elements)" << std::endl;
-
-    // Adjacency maps are now built lazily on first access
-
     std::cout << "Rank " << rank_ << " initialized " << ElementTag::Name << " domain with " << nodeCount_
-              << " nodes and " << elementCount_ << " elements and " << localElementCount() << " local elements."
-              << std::endl;
+              << " nodes and " << elementCount_ << " elements." << std::endl;
 }
 
 // Read mesh data in SoA format; uses element-based partitioning for better data locality
@@ -1334,15 +1284,17 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::readMeshDataS
         // Detect if meshFile is an MFEM file or binary mesh directory
         // MFEM meshes are files with .mesh extension
         // Binary meshes are directories containing coordinate files
-        namespace fs = std::filesystem;
+        namespace fs    = std::filesystem;
         bool isMFEMFile = !fs::is_directory(meshFile) && meshFile.find(".mesh") != std::string::npos;
 
         // Use compile-time branching to select element type
         if constexpr (std::is_same_v<ElementTag, TetTag>)
         {
-            if (isMFEMFile) {
+            if (isMFEMFile)
+            {
                 // Use MFEM mesh reader
-                auto [readNodeCount, readElementCount, x_data, y_data, z_data, conn_tuple, localToGlobal, boundaryNodes] =
+                auto [readNodeCount, readElementCount, x_data, y_data, z_data, conn_tuple, localToGlobal,
+                      boundaryNodes] =
                     mars::readMFEMMeshWithElementPartitioning<4, float, KeyType>(meshFile, rank_, numRanks_);
 
                 nodeCount_    = readNodeCount;
@@ -1354,7 +1306,9 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::readMeshDataS
                 d_localToGlobalNodeMap_.resize(localToGlobal.size());
                 thrust::copy(localToGlobal.begin(), localToGlobal.end(),
                              thrust::device_pointer_cast(d_localToGlobalNodeMap_.data()));
-            } else {
+            }
+            else
+            {
                 // Use binary mesh reader
                 auto [readNodeCount, readElementCount, x_data, y_data, z_data, conn_tuple, localToGlobal] =
                     mars::readMeshWithElementPartitioning<4, float, KeyType>(meshFile, rank_, numRanks_);
@@ -1379,7 +1333,7 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::readMeshDataS
             elementCount_ = readElementCount;
             processCoordinates(x_data, y_data, z_data);
             h_conn_ = std::move(conn_tuple);
-            
+
             // Store the global node indices
             d_localToGlobalNodeMap_.resize(localToGlobal.size());
             thrust::copy(localToGlobal.begin(), localToGlobal.end(),
@@ -1394,7 +1348,7 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::readMeshDataS
             elementCount_ = readElementCount;
             processCoordinates(x_data, y_data, z_data);
             h_conn_ = std::move(conn_tuple);
-            
+
             // Store the global node indices
             d_localToGlobalNodeMap_.resize(localToGlobal.size());
             thrust::copy(localToGlobal.begin(), localToGlobal.end(),
@@ -1409,7 +1363,7 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::readMeshDataS
             elementCount_ = readElementCount;
             processCoordinates(x_data, y_data, z_data);
             h_conn_ = std::move(conn_tuple);
-            
+
             // Store the global node indices
             d_localToGlobalNodeMap_.resize(localToGlobal.size());
             thrust::copy(localToGlobal.begin(), localToGlobal.end(),
@@ -1451,38 +1405,26 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::calculateChar
         auto& d_i1 = std::get<1>(d_conn_);
         auto& d_i2 = std::get<2>(d_conn_);
         auto& d_i3 = std::get<3>(d_conn_);
-        
+
         constexpr int NodesPerElem = ElementTag::NodesPerElement;
-        
+
         // Extract additional connectivity pointers conditionally at compile time
         const KeyType* d_i4_ptr;
         const KeyType* d_i5_ptr;
         const KeyType* d_i6_ptr;
         const KeyType* d_i7_ptr;
-        
-        if constexpr (NodesPerElem > 4) {
-            d_i4_ptr = thrust::raw_pointer_cast(std::get<4>(d_conn_).data());
-        } else {
-            d_i4_ptr = nullptr;
-        }
-        
-        if constexpr (NodesPerElem > 5) {
-            d_i5_ptr = thrust::raw_pointer_cast(std::get<5>(d_conn_).data());
-        } else {
-            d_i5_ptr = nullptr;
-        }
-        
-        if constexpr (NodesPerElem > 6) {
-            d_i6_ptr = thrust::raw_pointer_cast(std::get<6>(d_conn_).data());
-        } else {
-            d_i6_ptr = nullptr;
-        }
-        
-        if constexpr (NodesPerElem > 7) {
-            d_i7_ptr = thrust::raw_pointer_cast(std::get<7>(d_conn_).data());
-        } else {
-            d_i7_ptr = nullptr;
-        }
+
+        if constexpr (NodesPerElem > 4) { d_i4_ptr = thrust::raw_pointer_cast(std::get<4>(d_conn_).data()); }
+        else { d_i4_ptr = nullptr; }
+
+        if constexpr (NodesPerElem > 5) { d_i5_ptr = thrust::raw_pointer_cast(std::get<5>(d_conn_).data()); }
+        else { d_i5_ptr = nullptr; }
+
+        if constexpr (NodesPerElem > 6) { d_i6_ptr = thrust::raw_pointer_cast(std::get<6>(d_conn_).data()); }
+        else { d_i6_ptr = nullptr; }
+
+        if constexpr (NodesPerElem > 7) { d_i7_ptr = thrust::raw_pointer_cast(std::get<7>(d_conn_).data()); }
+        else { d_i7_ptr = nullptr; }
 
         // First accumulate edge lengths per node
         int blockSize = 256;
@@ -1493,8 +1435,7 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::calculateChar
             thrust::raw_pointer_cast(d_z.data()), thrust::raw_pointer_cast(d_i0.data()),
             thrust::raw_pointer_cast(d_i1.data()), thrust::raw_pointer_cast(d_i2.data()),
             thrust::raw_pointer_cast(d_i3.data()), d_i4_ptr, d_i5_ptr, d_i6_ptr, d_i7_ptr,
-            thrust::raw_pointer_cast(d_nodeTetCount.data()),
-            thrust::raw_pointer_cast(d_h.data()), elementCount_);
+            thrust::raw_pointer_cast(d_nodeTetCount.data()), thrust::raw_pointer_cast(d_h.data()), elementCount_);
 
         cudaCheckError();
 
@@ -1626,7 +1567,7 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::transferDataT
 
         // Copy boundary data from host to device
         std::get<0>(d_boundary_).resize(std::get<0>(h_boundary_).size());
-        cudaMemcpy(std::get<0>(d_boundary_).data(), std::get<0>(h_boundary_).data(), 
+        cudaMemcpy(std::get<0>(d_boundary_).data(), std::get<0>(h_boundary_).data(),
                    std::get<0>(h_boundary_).size() * sizeof(uint8_t), cudaMemcpyHostToDevice);
 
         // Initialize properties (h values)
@@ -1801,10 +1742,22 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::initializeCon
 // Lazy initialization methods
 // ============================================================================
 template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
+void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ensureSfcMap() const
+{
+    if (d_localToGlobalSfcMap_.empty())
+    {
+        // Need to call non-const version, so cast away const
+        const_cast<ElementDomain*>(this)->createLocalToGlobalSfcMap();
+    }
+}
+
+template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
 void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ensureAdjacency() const
 {
     if (!adjacency_)
     {
+        // Adjacency needs the SFC map to be built first
+        ensureSfcMap();
         adjacency_ = std::make_unique<AdjacencyData<ElementTag, RealType, KeyType, AcceleratorTag>>(*this);
     }
 }
@@ -1814,6 +1767,8 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ensureHalo() 
 {
     if (!halo_)
     {
+        // Halo data needs the SFC map to be built first (for correct nodeCount)
+        ensureSfcMap();
         // HaloData now works directly with SFC keys - no adjacency needed!
         halo_ = std::make_unique<HaloData<ElementTag, RealType, KeyType, AcceleratorTag>>(*this);
     }
