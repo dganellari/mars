@@ -364,6 +364,10 @@ struct HaloData
     void buildHaloElementIndices(const ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>& domain);
 };
 
+// Forward declaration - implementation in mars_face_topology.hpp
+template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
+class FaceTopology;
+
 // ============================================================================
 // CoordinateCache: Pre-decoded node coordinates from SFC keys
 // Optional caching to avoid repeated SFC decoding (trading memory for speed)
@@ -691,6 +695,68 @@ public:
     //! Returns true if boundary information is available.
     bool hasBoundaryInfo() const { return std::get<0>(d_boundary_).size() > 0; }
 
+    //! Face topology access (lazy initialization for CVFEM)
+    void buildFaceTopology() { ensureFaceTopology(); }
+    
+    KeyType getNumFaces() const { 
+        ensureFaceTopology(); 
+        return faceTopology_->numFaces_; 
+    }
+    
+    KeyType getNumBoundaryFaces() const { 
+        ensureFaceTopology(); 
+        return faceTopology_->numBoundaryFaces_; 
+    }
+    
+    KeyType getNumInteriorFaces() const { 
+        ensureFaceTopology(); 
+        return faceTopology_->numInteriorFaces_; 
+    }
+
+    const DeviceVector<KeyType>& getElementToFaces() const {
+        ensureFaceTopology();
+        return faceTopology_->d_elementToFaces_;
+    }
+
+    const DeviceVector<KeyType>& getFaceToElementOffsets() const {
+        ensureFaceTopology();
+        return faceTopology_->d_faceToElementOffsets_;
+    }
+
+    const DeviceVector<KeyType>& getFaceToElementList() const {
+        ensureFaceTopology();
+        return faceTopology_->d_faceToElementList_;
+    }
+
+    const DeviceVector<KeyType>& getFaceNodes() const {
+        ensureFaceTopology();
+        return faceTopology_->d_faceNodes_;
+    }
+
+    const DeviceVector<RealType>& getFaceNormals(int component) const {
+        ensureFaceTopology();
+        if (component == 0) return faceTopology_->d_faceNormalX_;
+        if (component == 1) return faceTopology_->d_faceNormalY_;
+        return faceTopology_->d_faceNormalZ_;
+    }
+
+    const DeviceVector<RealType>& getFaceAreas() const {
+        ensureFaceTopology();
+        return faceTopology_->d_faceArea_;
+    }
+
+    const DeviceVector<RealType>& getFaceCentroids(int component) const {
+        ensureFaceTopology();
+        if (component == 0) return faceTopology_->d_faceCentroidX_;
+        if (component == 1) return faceTopology_->d_faceCentroidY_;
+        return faceTopology_->d_faceCentroidZ_;
+    }
+
+    const DeviceVector<uint8_t>& getIsBoundaryFace() const {
+        ensureFaceTopology();
+        return faceTopology_->d_isBoundaryFace_;
+    }
+
 private:
     int rank_;
     int numRanks_;
@@ -724,10 +790,12 @@ private:
     friend struct AdjacencyData<ElementTag, RealType, KeyType, AcceleratorTag>;
     friend struct HaloData<ElementTag, RealType, KeyType, AcceleratorTag>;
     friend struct CoordinateCache<ElementTag, RealType, KeyType, AcceleratorTag>;
+    friend struct FaceTopology<ElementTag, RealType, KeyType, AcceleratorTag>;
 
     mutable std::unique_ptr<AdjacencyData<ElementTag, RealType, KeyType, AcceleratorTag>> adjacency_;
     mutable std::unique_ptr<HaloData<ElementTag, RealType, KeyType, AcceleratorTag>> halo_;
     mutable std::unique_ptr<CoordinateCache<ElementTag, RealType, KeyType, AcceleratorTag>> coordCache_;
+    mutable std::unique_ptr<FaceTopology<ElementTag, RealType, KeyType, AcceleratorTag>> faceTopology_;
 
     void initializeConnectivityKeys();
 
@@ -739,6 +807,7 @@ private:
     void ensureAdjacency() const;
     void ensureHalo() const;
     void ensureCoordinateCache() const;
+    void ensureFaceTopology() const;
 
     void syncImpl(DeviceVector<KeyType>& d_nodeSfcCodes,
                   const DeviceConnectivityTuple& d_conn_,
@@ -1326,48 +1395,111 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::readMeshDataS
         }
         else if constexpr (std::is_same_v<ElementTag, HexTag>)
         {
-            auto [readNodeCount, readElementCount, x_data, y_data, z_data, conn_tuple, localToGlobal] =
-                mars::readMeshWithElementPartitioning<8, float, KeyType>(meshFile, rank_, numRanks_);
+            if (isMFEMFile)
+            {
+                // Use MFEM mesh reader for hex elements
+                auto [readNodeCount, readElementCount, x_data, y_data, z_data, conn_tuple, localToGlobal,
+                      boundaryNodes] =
+                    mars::readMFEMMeshWithElementPartitioning<8, float, KeyType>(meshFile, rank_, numRanks_);
 
-            nodeCount_    = readNodeCount;
-            elementCount_ = readElementCount;
-            processCoordinates(x_data, y_data, z_data);
-            h_conn_ = std::move(conn_tuple);
+                nodeCount_    = readNodeCount;
+                elementCount_ = readElementCount;
+                processCoordinates(x_data, y_data, z_data);
+                h_conn_ = std::move(conn_tuple);
 
-            // Store the global node indices
-            d_localToGlobalNodeMap_.resize(localToGlobal.size());
-            thrust::copy(localToGlobal.begin(), localToGlobal.end(),
-                         thrust::device_pointer_cast(d_localToGlobalNodeMap_.data()));
+                // Store the global node indices
+                d_localToGlobalNodeMap_.resize(localToGlobal.size());
+                thrust::copy(localToGlobal.begin(), localToGlobal.end(),
+                             thrust::device_pointer_cast(d_localToGlobalNodeMap_.data()));
+            }
+            else
+            {
+                // Use binary mesh reader
+                auto [readNodeCount, readElementCount, x_data, y_data, z_data, conn_tuple, localToGlobal] =
+                    mars::readMeshWithElementPartitioning<8, float, KeyType>(meshFile, rank_, numRanks_);
+
+                nodeCount_    = readNodeCount;
+                elementCount_ = readElementCount;
+                processCoordinates(x_data, y_data, z_data);
+                h_conn_ = std::move(conn_tuple);
+
+                // Store the global node indices
+                d_localToGlobalNodeMap_.resize(localToGlobal.size());
+                thrust::copy(localToGlobal.begin(), localToGlobal.end(),
+                             thrust::device_pointer_cast(d_localToGlobalNodeMap_.data()));
+            }
         }
         else if constexpr (std::is_same_v<ElementTag, TriTag>)
         {
-            auto [readNodeCount, readElementCount, x_data, y_data, z_data, conn_tuple, localToGlobal] =
-                mars::readMeshWithElementPartitioning<3, float, KeyType>(meshFile, rank_, numRanks_);
+            if (isMFEMFile)
+            {
+                // Use MFEM mesh reader for triangle elements
+                auto [readNodeCount, readElementCount, x_data, y_data, z_data, conn_tuple, localToGlobal,
+                      boundaryNodes] =
+                    mars::readMFEMMeshWithElementPartitioning<3, float, KeyType>(meshFile, rank_, numRanks_);
 
-            nodeCount_    = readNodeCount;
-            elementCount_ = readElementCount;
-            processCoordinates(x_data, y_data, z_data);
-            h_conn_ = std::move(conn_tuple);
+                nodeCount_    = readNodeCount;
+                elementCount_ = readElementCount;
+                processCoordinates(x_data, y_data, z_data);
+                h_conn_ = std::move(conn_tuple);
 
-            // Store the global node indices
-            d_localToGlobalNodeMap_.resize(localToGlobal.size());
-            thrust::copy(localToGlobal.begin(), localToGlobal.end(),
-                         thrust::device_pointer_cast(d_localToGlobalNodeMap_.data()));
+                // Store the global node indices
+                d_localToGlobalNodeMap_.resize(localToGlobal.size());
+                thrust::copy(localToGlobal.begin(), localToGlobal.end(),
+                             thrust::device_pointer_cast(d_localToGlobalNodeMap_.data()));
+            }
+            else
+            {
+                // Use binary mesh reader
+                auto [readNodeCount, readElementCount, x_data, y_data, z_data, conn_tuple, localToGlobal] =
+                    mars::readMeshWithElementPartitioning<3, float, KeyType>(meshFile, rank_, numRanks_);
+
+                nodeCount_    = readNodeCount;
+                elementCount_ = readElementCount;
+                processCoordinates(x_data, y_data, z_data);
+                h_conn_ = std::move(conn_tuple);
+
+                // Store the global node indices
+                d_localToGlobalNodeMap_.resize(localToGlobal.size());
+                thrust::copy(localToGlobal.begin(), localToGlobal.end(),
+                             thrust::device_pointer_cast(d_localToGlobalNodeMap_.data()));
+            }
         }
         else if constexpr (std::is_same_v<ElementTag, QuadTag>)
         {
-            auto [readNodeCount, readElementCount, x_data, y_data, z_data, conn_tuple, localToGlobal] =
-                mars::readMeshWithElementPartitioning<4, float, KeyType>(meshFile, rank_, numRanks_);
+            if (isMFEMFile)
+            {
+                // Use MFEM mesh reader for quad elements
+                auto [readNodeCount, readElementCount, x_data, y_data, z_data, conn_tuple, localToGlobal,
+                      boundaryNodes] =
+                    mars::readMFEMMeshWithElementPartitioning<4, float, KeyType>(meshFile, rank_, numRanks_);
 
-            nodeCount_    = readNodeCount;
-            elementCount_ = readElementCount;
-            processCoordinates(x_data, y_data, z_data);
-            h_conn_ = std::move(conn_tuple);
+                nodeCount_    = readNodeCount;
+                elementCount_ = readElementCount;
+                processCoordinates(x_data, y_data, z_data);
+                h_conn_ = std::move(conn_tuple);
 
-            // Store the global node indices
-            d_localToGlobalNodeMap_.resize(localToGlobal.size());
-            thrust::copy(localToGlobal.begin(), localToGlobal.end(),
-                         thrust::device_pointer_cast(d_localToGlobalNodeMap_.data()));
+                // Store the global node indices
+                d_localToGlobalNodeMap_.resize(localToGlobal.size());
+                thrust::copy(localToGlobal.begin(), localToGlobal.end(),
+                             thrust::device_pointer_cast(d_localToGlobalNodeMap_.data()));
+            }
+            else
+            {
+                // Use binary mesh reader
+                auto [readNodeCount, readElementCount, x_data, y_data, z_data, conn_tuple, localToGlobal] =
+                    mars::readMeshWithElementPartitioning<4, float, KeyType>(meshFile, rank_, numRanks_);
+
+                nodeCount_    = readNodeCount;
+                elementCount_ = readElementCount;
+                processCoordinates(x_data, y_data, z_data);
+                h_conn_ = std::move(conn_tuple);
+
+                // Store the global node indices
+                d_localToGlobalNodeMap_.resize(localToGlobal.size());
+                thrust::copy(localToGlobal.begin(), localToGlobal.end(),
+                             thrust::device_pointer_cast(d_localToGlobalNodeMap_.data()));
+            }
         }
         else
         {
@@ -1784,6 +1916,21 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ensureCoordin
     }
 }
 
+template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
+void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ensureFaceTopology() const
+{
+    if (!faceTopology_)
+    {
+        // Face topology needs coordinate cache and adjacency
+        ensureCoordinateCache();
+        ensureAdjacency();
+        faceTopology_ = std::make_unique<FaceTopology<ElementTag, RealType, KeyType, AcceleratorTag>>(*this);
+        std::cout << "Rank " << rank_ << " built face topology: " << faceTopology_->numFaces_ 
+                  << " faces (" << faceTopology_->numBoundaryFaces_ << " boundary, " 
+                  << faceTopology_->numInteriorFaces_ << " interior)" << std::endl;
+    }
+}
+
 // ============================================================================
 // AdjacencyData implementation
 // ============================================================================
@@ -2051,3 +2198,7 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::createLocalTo
 }
 
 } // namespace mars
+
+// Include FaceTopology implementation (GPU version)
+#include "mars_face_topology_gpu.hpp"
+
