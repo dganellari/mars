@@ -57,7 +57,7 @@ int main(int argc, char** argv) {
         std::cout << std::endl;
     }
 
-    // Count owned DOFs
+    // Count owned DOFs (owned + shared nodes)
     std::vector<uint8_t> h_ownership(nodeCount);
     thrust::copy(thrust::device_pointer_cast(d_nodeOwnership.data()),
                  thrust::device_pointer_cast(d_nodeOwnership.data() + nodeCount),
@@ -163,21 +163,67 @@ int main(int argc, char** argv) {
     cstone::DeviceVector<RealType> d_values(nnz, 0.0);
     cstone::DeviceVector<RealType> d_rhs(numOwnedDofs, 0.0);
 
-    // Initialize fields
+    // Initialize fields to match STK reference
     domain.cacheNodeCoordinates();
     const auto& d_x = domain.getNodeX();
     const auto& d_y = domain.getNodeY();
     const auto& d_z = domain.getNodeZ();
 
-    cstone::DeviceVector<RealType> d_gamma(nodeCount, 0.1);     // diffusion
-    cstone::DeviceVector<RealType> d_phi(nodeCount, 1.0);       // solution
-    cstone::DeviceVector<RealType> d_beta(nodeCount, 1.0);      // upwind
-    cstone::DeviceVector<RealType> d_grad_phi_x(nodeCount, 0.0);
-    cstone::DeviceVector<RealType> d_grad_phi_y(nodeCount, 0.0);
-    cstone::DeviceVector<RealType> d_grad_phi_z(nodeCount, 0.0);
+    // Copy coordinates to host for field initialization
+    std::vector<RealType> h_x(nodeCount), h_y(nodeCount), h_z(nodeCount);
+    thrust::copy(thrust::device_pointer_cast(d_x.data()),
+                 thrust::device_pointer_cast(d_x.data() + nodeCount),
+                 h_x.begin());
+    thrust::copy(thrust::device_pointer_cast(d_y.data()),
+                 thrust::device_pointer_cast(d_y.data() + nodeCount),
+                 h_y.begin());
+    thrust::copy(thrust::device_pointer_cast(d_z.data()),
+                 thrust::device_pointer_cast(d_z.data() + nodeCount),
+                 h_z.begin());
+
+    // Initialize fields using STK reference functions
+    std::vector<RealType> h_gamma(nodeCount);
+    std::vector<RealType> h_phi(nodeCount);
+    std::vector<RealType> h_beta(nodeCount);
+    std::vector<RealType> h_grad_phi_x(nodeCount);
+    std::vector<RealType> h_grad_phi_y(nodeCount);
+    std::vector<RealType> h_grad_phi_z(nodeCount);
+
+    for (size_t i = 0; i < nodeCount; ++i) {
+        RealType x = h_x[i];
+        RealType y = h_y[i];
+        RealType z = h_z[i];
+
+        // phi = sin(x) + 3*cos(y) + 4*sin(5*x*y*z)
+        h_phi[i] = std::sin(x) + 3.0 * std::cos(y) + 4.0 * std::sin(5.0 * x * y * z);
+
+        // gradPhi_x = cos(x) + 20*y*z*cos(5*x*y*z)
+        h_grad_phi_x[i] = std::cos(x) + 20.0 * y * z * std::cos(5.0 * x * y * z);
+
+        // gradPhi_y = 20*x*z*cos(5*x*y*z) - 3*sin(y)
+        h_grad_phi_y[i] = 20.0 * x * z * std::cos(5.0 * x * y * z) - 3.0 * std::sin(y);
+
+        // gradPhi_z = 20*x*y*cos(5*x*y*z)
+        h_grad_phi_z[i] = 20.0 * x * y * std::cos(5.0 * x * y * z);
+
+        // gamma = 0.1 (constant diffusion coefficient)
+        h_gamma[i] = 0.1;
+
+        // beta = 1.234 (constant upwind parameter) - matches STK reference
+        h_beta[i] = 1.234;
+    }
+
+    // Copy initialized fields to device
+    cstone::DeviceVector<RealType> d_gamma(h_gamma.data(), h_gamma.data() + nodeCount);
+    cstone::DeviceVector<RealType> d_phi(h_phi.data(), h_phi.data() + nodeCount);
+    cstone::DeviceVector<RealType> d_beta(h_beta.data(), h_beta.data() + nodeCount);
+    cstone::DeviceVector<RealType> d_grad_phi_x(h_grad_phi_x.data(), h_grad_phi_x.data() + nodeCount);
+    cstone::DeviceVector<RealType> d_grad_phi_y(h_grad_phi_y.data(), h_grad_phi_y.data() + nodeCount);
+    cstone::DeviceVector<RealType> d_grad_phi_z(h_grad_phi_z.data(), h_grad_phi_z.data() + nodeCount);
 
     // Element-based data (12 SCS per hex element)
-    cstone::DeviceVector<RealType> d_mdot(elementCount * 12, 1.0);
+    // NOTE: STK reference sets mdot=0 (no advection), only diffusion
+    cstone::DeviceVector<RealType> d_mdot(elementCount * 12, 0.0);
     cstone::DeviceVector<RealType> d_areaVec_x(elementCount * 12, 1.0);
     cstone::DeviceVector<RealType> d_areaVec_y(elementCount * 12, 0.0);
     cstone::DeviceVector<RealType> d_areaVec_z(elementCount * 12, 0.0);
@@ -269,7 +315,7 @@ int main(int argc, char** argv) {
     auto end = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double, std::milli> elapsed = end - start;
 
-    // Compute matrix norm (L2/Frobenius) - matching STK reference
+    // Compute matrix norm (L2/Frobenius)
     auto square_op = [] __host__ __device__ (RealType x) -> RealType {
         return x * x;
     };
@@ -290,7 +336,8 @@ int main(int argc, char** argv) {
         thrust::plus<RealType>()
     );
 
-    // Gather squared norms and timing from all ranks
+    // For single rank, this works fine. For multiple ranks, we need special handling
+    // to avoid double-counting shared nodes (TODO: implement proper MPI assembly)
     RealType global_matrix_norm2, global_rhs_norm2;
     MPI_Allreduce(&local_matrix_norm2, &global_matrix_norm2, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
     MPI_Allreduce(&local_rhs_norm2, &global_rhs_norm2, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
