@@ -1,0 +1,61 @@
+From b3b1199041c4f7f68597521b2924a21c37975cff Mon Sep 17 00:00:00 2001
+From: Fabian Wermelinger <info@0xfab.ch>
+Date: Thu, 15 May 2025 15:16:25 +0200
+Subject: [PATCH 1/5] Adapt CMake build definitions for Daint
+
+---
+ CMakeLists.txt | 15 +++++++++------
+ 1 file changed, 9 insertions(+), 6 deletions(-)
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 5f1b8a5..7323fea 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -1,5 +1,7 @@
+ cmake_minimum_required(VERSION 3.23.0 FATAL_ERROR)
+ 
++project(MeshTest VERSION 0.1.0 LANGUAGES C CXX)
++
+ # project(MeshTest VERSION 0.1.0 LANGUAGES C CXX)
+ 
+ # For Trilinos
+@@ -38,21 +40,22 @@ MESSAGE("   CMAKE_CXX_COMPILER = ${Trilinos_CXX_COMPILER}")
+ MESSAGE("End of Trilinos details\n")
+ 
+ # Make sure to use same compilers and flags as Trilinos
+-SET(CMAKE_CXX_COMPILER ${Trilinos_CXX_COMPILER})
+-SET(CMAKE_C_COMPILER ${Trilinos_C_COMPILER})
+-SET(CMAKE_Fortran_COMPILER ${Trilinos_Fortran_COMPILER})
++# SET(CMAKE_CXX_COMPILER ${Trilinos_CXX_COMPILER})
++# SET(CMAKE_C_COMPILER ${Trilinos_C_COMPILER})
++# SET(CMAKE_Fortran_COMPILER ${Trilinos_Fortran_COMPILER})
+ 
++# SET(CMAKE_CXX_FLAGS "${Trilinos_CXX_COMPILER_FLAGS} ${CMAKE_CXX_FLAGS} --relocatable-device-code=true")
+ SET(CMAKE_CXX_FLAGS "${Trilinos_CXX_COMPILER_FLAGS} ${CMAKE_CXX_FLAGS}")
+ SET(CMAKE_C_FLAGS "${Trilinos_C_COMPILER_FLAGS} ${CMAKE_C_FLAGS}")
+ SET(CMAKE_Fortran_FLAGS "${Trilinos_Fortran_COMPILER_FLAGS} ${CMAKE_Fortran_FLAGS}")
+ 
+ message(STATUS "OMPI_CXX environment variable: $ENV{OMPI_CXX}")
+ 
+-project(MeshTest VERSION 0.1.0 LANGUAGES C CXX)
+-
+ INCLUDE_DIRECTORIES(${Trilinos_INCLUDE_DIRS} ${Trilinos_TPL_INCLUDE_DIRS} . ./external ./external_old)
+ LINK_DIRECTORIES(${Trilinos_LIBRARY_DIRS} ${Trilinos_TPL_LIBRARY_DIRS})
+ 
++find_package(yaml-cpp REQUIRED)
++
+ # Also controls kokkos setting of linear solver library here
+ set(USE_KOKKOS true)
+ 
+@@ -94,7 +97,7 @@ endforeach()
+ 
+ target_include_directories(AssemblyTest.exe PRIVATE ${MPI_INCLUDE_PATH} ${libLinSolve_INC})
+ 
+-TARGET_LINK_LIBRARIES(AssemblyTest.exe ${Trilinos_LIBRARIES} ${Trilinos_TPL_LIBRARIES} ${libLinSolve} ${MPI_CXX_LIBRARIES})
++TARGET_LINK_LIBRARIES(AssemblyTest.exe ${Trilinos_LIBRARIES} ${Trilinos_TPL_LIBRARIES} ${libLinSolve} ${MPI_CXX_LIBRARIES} yaml-cpp::yaml-cpp)
+ 
+ # target_compile_options(AssemblyTest.exe PRIVATE -fvisibility=hidden)
+ 
+-- 
+2.35.3
+

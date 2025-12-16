@@ -1,0 +1,45 @@
+From 84f413cd63b70f49085765b506912757750ed668 Mon Sep 17 00:00:00 2001
+From: Fabian Wermelinger <info@0xfab.ch>
+Date: Wed, 21 May 2025 14:02:03 +0200
+Subject: [PATCH 3/5] Fix race-condition on ws_shape_function
+
+---
+ src/myAssembler.h | 20 ++++++++++++--------
+ 1 file changed, 12 insertions(+), 8 deletions(-)
+
+diff --git a/src/myAssembler.h b/src/myAssembler.h
+index 97413b2..e4128e5 100644
+--- a/src/myAssembler.h
++++ b/src/myAssembler.h
+@@ -274,16 +274,20 @@ public:
+                 const label rhsSize = nodesPerElement * N;
+ 
+                 // extract shape function
+-                if (isShifted) //(phi_->isShifted())
++                if (teamMember.team_rank() == 0)
+                 {
+-                    meSCS->shifted_shape_fcn<>(
+-                        ws_shape_function); // IMPORTANT: don't forget <>
+-                }
+-                else
+-                {
+-                    meSCS->shape_fcn<>(
+-                        ws_shape_function); // IMPORTANT: don't forget <>
++                    if (isShifted) //(phi_->isShifted())
++                    {
++                        meSCS->shifted_shape_fcn<>(
++                            ws_shape_function); // IMPORTANT: don't forget <>
++                    }
++                    else
++                    {
++                        meSCS->shape_fcn<>(
++                            ws_shape_function); // IMPORTANT: don't forget <>
++                    }
+                 }
++                teamMember.team_barrier();
+ 
+                 Kokkos::parallel_for(
+                     Kokkos::TeamThreadRange(teamMember, 0u, nElementsPerBucket),
+-- 
+2.35.3
+

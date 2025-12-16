@@ -26,7 +26,7 @@ add_executable(mars_ex_beam_tet_distributed mars_ex_beam_tet_distributed.cu)
 target_link_libraries(mars_ex_beam_tet_distributed PRIVATE mars)
 install(TARGETS mars_ex_beam_tet_distributed RUNTIME DESTINATION bin/examples)
 
-# CVFEM example - face-based control volume finite element method
-add_executable(mars_cvfem_example mars_cvfem_example.cu)
-target_link_libraries(mars_cvfem_example PRIVATE mars)
-install(TARGETS mars_cvfem_example RUNTIME DESTINATION bin/examples)
+# CVFEM example - element-based control volume finite element method (simple)
+add_executable(mars_cvfem_simple mars_cvfem_simple.cu)
+target_link_libraries(mars_cvfem_simple PRIVATE mars)
+install(TARGETS mars_cvfem_simple RUNTIME DESTINATION bin/examples)

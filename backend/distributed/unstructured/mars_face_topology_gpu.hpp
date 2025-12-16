@@ -18,17 +18,19 @@ namespace mars
 template<typename KeyType>
 struct FaceElementPair {
     KeyType faceHash;  // Unique hash for face (based on sorted nodes)
-    KeyType node0, node1, node2;  // Sorted face nodes
+    KeyType node0, node1, node2, node3;  // Sorted face nodes (max 4 for hex)
     KeyType elementId;
     
     __device__ __host__ bool operator<(const FaceElementPair& other) const {
         if (node0 != other.node0) return node0 < other.node0;
         if (node1 != other.node1) return node1 < other.node1;
-        return node2 < other.node2;
+        if (node2 != other.node2) return node2 < other.node2;
+        return node3 < other.node3;
     }
     
     __device__ __host__ bool operator==(const FaceElementPair& other) const {
-        return node0 == other.node0 && node1 == other.node1 && node2 == other.node2;
+        return node0 == other.node0 && node1 == other.node1 && 
+               node2 == other.node2 && node3 == other.node3;
     }
 };
 
@@ -240,6 +242,7 @@ __global__ void computeFaceGeometryKernel(
     const RealType* __restrict__ y,
     const RealType* __restrict__ z,
     size_t numFaces,
+    int nodesPerFace,
     RealType* normalX,
     RealType* normalY,
     RealType* normalZ,
@@ -251,67 +254,100 @@ __global__ void computeFaceGeometryKernel(
     int faceIdx = blockIdx.x * blockDim.x + threadIdx.x;
     if (faceIdx >= numFaces) return;
     
-    // Get face nodes (triangular face)
-    KeyType sfc0 = faceNodes[faceIdx * 3 + 0];
-    KeyType sfc1 = faceNodes[faceIdx * 3 + 1];
-    KeyType sfc2 = faceNodes[faceIdx * 3 + 2];
-    
-    // Binary search for local IDs
-    auto findLocal = [&](KeyType target) -> int {
-        int left = 0, right = nodeCount - 1;
-        while (left <= right) {
-            int mid = (left + right) / 2;
-            if (sfc_to_local[mid] == target) return mid;
-            if (sfc_to_local[mid] < target) left = mid + 1;
-            else right = mid - 1;
-        }
-        return -1;
-    };
-    
-    int local0 = findLocal(sfc0);
-    int local1 = findLocal(sfc1);
-    int local2 = findLocal(sfc2);
-    
-    if (local0 < 0 || local1 < 0 || local2 < 0) return;  // Invalid face
-    
-    // Get coordinates
-    RealType x0 = x[local0], y0 = y[local0], z0 = z[local0];
-    RealType x1 = x[local1], y1 = y[local1], z1 = z[local1];
-    RealType x2 = x[local2], y2 = y[local2], z2 = z[local2];
-    
-    // Edge vectors
-    RealType v1x = x1 - x0, v1y = y1 - y0, v1z = z1 - z0;
-    RealType v2x = x2 - x0, v2y = y2 - y0, v2z = z2 - z0;
-    
-    // Cross product for normal (not normalized)
-    RealType nx = v1y * v2z - v1z * v2y;
-    RealType ny = v1z * v2x - v1x * v2z;
-    RealType nz = v1x * v2y - v1y * v2x;
-    
-    // Area = 0.5 * |cross product|
-    RealType norm = sqrt(nx*nx + ny*ny + nz*nz);
-    RealType faceArea = 0.5 * norm;
-    
-    // Normalize normal vector
-    if (norm > 1e-14) {
-        nx /= norm;
-        ny /= norm;
-        nz /= norm;
+    // Get face nodes (now local indices)
+    KeyType local_nodes[4];
+    for (int i = 0; i < nodesPerFace; ++i) {
+        local_nodes[i] = faceNodes[faceIdx * nodesPerFace + i];
     }
     
-    // Face centroid
-    RealType cx = (x0 + x1 + x2) / 3.0;
-    RealType cy = (y0 + y1 + y2) / 3.0;
-    RealType cz = (z0 + z1 + z2) / 3.0;
+    // Get SFC keys from local indices
+    KeyType sfc_nodes[4];
+    for (int i = 0; i < nodesPerFace; ++i) {
+        sfc_nodes[i] = sfc_to_local[local_nodes[i]];
+    }
+    
+    // Get coordinates
+    RealType faceX[4], faceY[4], faceZ[4];
+    RealType centroidX_val = 0, centroidY_val = 0, centroidZ_val = 0;
+    for (int i = 0; i < nodesPerFace; ++i) {
+        faceX[i] = x[local_nodes[i]];
+        faceY[i] = y[local_nodes[i]];
+        faceZ[i] = z[local_nodes[i]];
+        centroidX_val += faceX[i] / nodesPerFace;
+        centroidY_val += faceY[i] / nodesPerFace;
+        centroidZ_val += faceZ[i] / nodesPerFace;
+    }
+    
+    // Compute normal and area
+    RealType nx = 0, ny = 0, nz = 0;
+    RealType faceArea = 0;
+    
+    if (nodesPerFace == 3) {
+        // Triangle
+        RealType ax = faceX[1] - faceX[0];
+        RealType ay = faceY[1] - faceY[0];
+        RealType az = faceZ[1] - faceZ[0];
+        RealType bx = faceX[2] - faceX[0];
+        RealType by = faceY[2] - faceY[0];
+        RealType bz = faceZ[2] - faceZ[0];
+        
+        nx = ay * bz - az * by;
+        ny = az * bx - ax * bz;
+        nz = ax * by - ay * bx;
+        
+        RealType norm = sqrt(nx*nx + ny*ny + nz*nz);
+        faceArea = 0.5 * norm;
+        if (norm > 1e-14) {
+            nx /= norm;
+            ny /= norm;
+            nz /= norm;
+        }
+    } else if (nodesPerFace == 4) {
+        // Quad - use cross product of two adjacent edges
+        RealType ax = faceX[1] - faceX[0];
+        RealType ay = faceY[1] - faceY[0];
+        RealType az = faceZ[1] - faceZ[0];
+        RealType bx = faceX[3] - faceX[0];  // Use diagonal
+        RealType by = faceY[3] - faceY[0];
+        RealType bz = faceZ[3] - faceZ[0];
+        
+        nx = ay * bz - az * by;
+        ny = az * bx - ax * bz;
+        nz = ax * by - ay * bx;
+        
+        RealType norm = sqrt(nx*nx + ny*ny + nz*nz);
+        if (norm > 1e-14) {
+            nx /= norm;
+            ny /= norm;
+            nz /= norm;
+            
+            // Area as sum of two triangles
+            RealType cx = faceX[2] - faceX[0];
+            RealType cy = faceY[2] - faceY[0];
+            RealType cz = faceZ[2] - faceZ[0];
+            
+            RealType area1 = 0.5 * sqrt(
+                ((ay*cz - az*cy)*(ay*cz - az*cy) + 
+                 (az*cx - ax*cz)*(az*cx - ax*cz) + 
+                 (ax*cy - ay*cx)*(ax*cy - ay*cx)));
+            
+            RealType area2 = 0.5 * sqrt(
+                ((by*cz - bz*cy)*(by*cz - bz*cy) + 
+                 (bz*cx - bx*cz)*(bz*cx - bx*cz) + 
+                 (bx*cy - by*cx)*(bx*cy - by*cx)));
+            
+            faceArea = area1 + area2;
+        }
+    }
     
     // Write results
     normalX[faceIdx] = nx;
     normalY[faceIdx] = ny;
     normalZ[faceIdx] = nz;
     area[faceIdx] = faceArea;
-    centroidX[faceIdx] = cx;
-    centroidY[faceIdx] = cy;
-    centroidZ[faceIdx] = cz;
+    centroidX[faceIdx] = centroidX_val;
+    centroidY[faceIdx] = centroidY_val;
+    centroidZ[faceIdx] = centroidZ_val;
 }
 
 // ============================================================================
@@ -517,12 +553,12 @@ void FaceTopology<ElementTag, RealType, KeyType, AcceleratorTag>::extractAndDedu
         std::vector<FaceElementPair<KeyType>> h_pairs(numElements * 6);
         thrust::copy(d_faceElemPairs.begin(), d_faceElemPairs.end(), h_pairs.begin());
         
-        std::vector<std::array<KeyType, 3>> uniqueFaceNodes;  // Still using 3 for consistency
+        std::vector<std::array<KeyType, 4>> uniqueFaceNodes;  // Store all 4 nodes
         std::vector<std::vector<KeyType>> faceElements;
         
         for (size_t i = 0; i < h_pairs.size(); ) {
-            // Start of new face (quad face, but we store first 3 nodes)
-            std::array<KeyType, 3> faceNodes = {h_pairs[i].node0, h_pairs[i].node1, h_pairs[i].node2};
+            // Start of new face (quad face with 4 nodes)
+            std::array<KeyType, 4> faceNodes = {h_pairs[i].node0, h_pairs[i].node1, h_pairs[i].node2, h_pairs[i].node3};
             std::vector<KeyType> elems;
             elems.push_back(h_pairs[i].elementId);
             
@@ -548,7 +584,7 @@ void FaceTopology<ElementTag, RealType, KeyType, AcceleratorTag>::extractAndDedu
         }
         
         // Build device arrays
-        d_faceNodes_.resize(numFaces_ * 3);
+        d_faceNodes_.resize(numFaces_ * 4);  // 4 nodes per quad face
         d_isBoundaryFace_.resize(numFaces_);
         d_faceToElementOffsets_.resize(numFaces_ + 1);
         
@@ -559,16 +595,17 @@ void FaceTopology<ElementTag, RealType, KeyType, AcceleratorTag>::extractAndDedu
         d_faceToElementList_.resize(totalConnectivity);
         
         // Fill device arrays
-        std::vector<KeyType> h_faceNodes(numFaces_ * 3);
+        std::vector<KeyType> h_faceNodes(numFaces_ * 4);
         std::vector<uint8_t> h_isBoundary(numFaces_);
         std::vector<KeyType> h_offsets(numFaces_ + 1);
         std::vector<KeyType> h_elemList(totalConnectivity);
         
         size_t offset = 0;
         for (size_t faceId = 0; faceId < numFaces_; ++faceId) {
-            h_faceNodes[faceId * 3 + 0] = uniqueFaceNodes[faceId][0];
-            h_faceNodes[faceId * 3 + 1] = uniqueFaceNodes[faceId][1];
-            h_faceNodes[faceId * 3 + 2] = uniqueFaceNodes[faceId][2];
+            h_faceNodes[faceId * 4 + 0] = uniqueFaceNodes[faceId][0];
+            h_faceNodes[faceId * 4 + 1] = uniqueFaceNodes[faceId][1];
+            h_faceNodes[faceId * 4 + 2] = uniqueFaceNodes[faceId][2];
+            h_faceNodes[faceId * 4 + 3] = uniqueFaceNodes[faceId][3];
             
             h_isBoundary[faceId] = (faceElements[faceId].size() == 1) ? 1 : 0;
             
@@ -582,6 +619,19 @@ void FaceTopology<ElementTag, RealType, KeyType, AcceleratorTag>::extractAndDedu
         // Copy to device
         thrust::copy(h_faceNodes.begin(), h_faceNodes.end(), 
                      thrust::device_pointer_cast(d_faceNodes_.data()));
+        
+        // Map SFC keys to local indices
+        const auto& d_sfc_map = domain.getLocalToGlobalSfcMap();
+        int blockSizeMap = 256;
+        int numBlocksMap = (d_faceNodes_.size() + blockSizeMap - 1) / blockSizeMap;
+        mapSfcToLocalIdKernel<<<numBlocksMap, blockSizeMap>>>(
+            d_faceNodes_.data(),
+            d_faceNodes_.data(),  // in place
+            d_sfc_map.data(),
+            d_faceNodes_.size(),
+            domain.getNodeCount()
+        );
+        
         thrust::copy(h_isBoundary.begin(), h_isBoundary.end(), 
                      thrust::device_pointer_cast(d_isBoundaryFace_.data()));
         thrust::copy(h_offsets.begin(), h_offsets.end(), 
@@ -623,6 +673,7 @@ void FaceTopology<ElementTag, RealType, KeyType, AcceleratorTag>::computeFaceGeo
         d_y.data(),
         d_z.data(),
         numFaces_,
+        NodesPerFace,
         d_faceNormalX_.data(),
         d_faceNormalY_.data(),
         d_faceNormalZ_.data(),

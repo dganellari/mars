@@ -11,7 +11,7 @@ namespace mars {
 template<typename KeyType, typename RealType>
 __global__ void cvfem_face_assembly_kernel(
     // Face topology
-    const KeyType* __restrict__ d_faceNodes,        // [numFaces * nodesPerFace] SFC keys
+    const KeyType* __restrict__ d_faceNodes,        // [numFaces * nodesPerFace] local SFC indices
     const KeyType* __restrict__ d_faceToElemOffsets, // [numFaces + 1] CSR offsets
     const KeyType* __restrict__ d_faceToElemList,    // [numInteriorFaces*2 + numBoundaryFaces] element IDs
     const uint8_t* __restrict__ d_isBoundaryFace,   // [numFaces]
@@ -21,8 +21,7 @@ __global__ void cvfem_face_assembly_kernel(
     const RealType* __restrict__ d_faceArea,        // [numFaces]
     size_t numFaces,
     int nodesPerFace,
-    // Node data
-    const KeyType* __restrict__ d_sfc_to_local,
+    // Node data - removed d_sfc_to_local since connectivity contains local SFC indices
     size_t nodeCount,
     const RealType* __restrict__ d_x,
     const RealType* __restrict__ d_y,
@@ -60,32 +59,17 @@ __global__ void cvfem_face_assembly_kernel(
     
     // Gather face node data
     for (int n = 0; n < nodesPerFace; ++n) {
-        KeyType sfc_key = d_faceNodes[face_id * nodesPerFace + n];
-        sfc_face_nodes[n] = sfc_key;
-        
-        // Binary search for local node ID
-        int left = 0, right = nodeCount - 1;
-        int local_id = -1;
-        while (left <= right) {
-            int mid = (left + right) / 2;
-            if (d_sfc_to_local[mid] == sfc_key) {
-                local_id = mid;
-                break;
-            }
-            if (d_sfc_to_local[mid] < sfc_key) left = mid + 1;
-            else right = mid - 1;
-        }
-        
-        local_face_nodes[n] = local_id;
-        face_node_coords[n][0] = d_x[local_id];
-        face_node_coords[n][1] = d_y[local_id];
-        face_node_coords[n][2] = d_z[local_id];
-        phi_face[n] = d_phi[local_id];
-        gamma_face[n] = d_gamma[local_id];
-        beta_face[n] = d_beta[local_id];
-        grad_phi_face[n][0] = d_grad_phi_x[local_id];
-        grad_phi_face[n][1] = d_grad_phi_y[local_id];
-        grad_phi_face[n][2] = d_grad_phi_z[local_id];
+        KeyType local_sfc_id = d_faceNodes[face_id * nodesPerFace + n];
+        local_face_nodes[n] = local_sfc_id;
+        face_node_coords[n][0] = d_x[local_sfc_id];
+        face_node_coords[n][1] = d_y[local_sfc_id];
+        face_node_coords[n][2] = d_z[local_sfc_id];
+        phi_face[n] = d_phi[local_sfc_id];
+        gamma_face[n] = d_gamma[local_sfc_id];
+        beta_face[n] = d_beta[local_sfc_id];
+        grad_phi_face[n][0] = d_grad_phi_x[local_sfc_id];
+        grad_phi_face[n][1] = d_grad_phi_y[local_sfc_id];
+        grad_phi_face[n][2] = d_grad_phi_z[local_sfc_id];
     }
     
     // Get face geometry
