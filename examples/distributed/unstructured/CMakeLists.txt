@@ -26,7 +26,17 @@ add_executable(mars_ex_beam_tet_distributed mars_ex_beam_tet_distributed.cu)
 target_link_libraries(mars_ex_beam_tet_distributed PRIVATE mars)
 install(TARGETS mars_ex_beam_tet_distributed RUNTIME DESTINATION bin/examples)
 
-# CVFEM example - element-based control volume finite element method (simple)
+# CVFEM example - full element-based assembly (27 NNZ/row, mathematically consistent)
+add_executable(mars_cvfem_full mars_cvfem_full.cu)
+target_link_libraries(mars_cvfem_full PRIVATE mars)
+install(TARGETS mars_cvfem_full RUNTIME DESTINATION bin/examples)
+
+# CVFEM example - graph-based assembly matching STK (7 NNZ/row, optimized sparsity)
+add_executable(mars_cvfem_graph mars_cvfem_graph.cu)
+target_link_libraries(mars_cvfem_graph PRIVATE mars)
+install(TARGETS mars_cvfem_graph RUNTIME DESTINATION bin/examples)
+
+# Legacy name for backwards compatibility
 add_executable(mars_cvfem_simple mars_cvfem_simple.cu)
 target_link_libraries(mars_cvfem_simple PRIVATE mars)
 install(TARGETS mars_cvfem_simple RUNTIME DESTINATION bin/examples)

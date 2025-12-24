@@ -628,8 +628,29 @@ void preCalcAreaV(const stk::mesh::BulkData& bulkData)
                 }
 
                 meSCS->determinant(ws_coordinates, ws_scs_areav);
+
+                // Debug: Print element 0 coordinates and area vectors
+                if (elemFastIndex == 0) {
+                    printf("\n=== STK Element 0 Node Coordinates ===\n");
+                    for (int ni = 0; ni < 8; ++ni) {
+                        printf("Node %d: [%.10e, %.10e, %.10e]\n",
+                               ni, ws_coordinates(ni, 0)._data.get(),
+                               ws_coordinates(ni, 1)._data.get(),
+                               ws_coordinates(ni, 2)._data.get());
+                    }
+                    printf("\n");
+                }
+
                 for (label ip = 0; ip < numScsIp; ++ip)
                 {
+                    // Debug: Print element 0 area vectors
+                    if (elemFastIndex == 0) {
+                        printf("STK Element 0, SCS %d: areaVec = [%.10e, %.10e, %.10e]\n",
+                               ip, ws_scs_areav(ip, 0)._data.get(),
+                               ws_scs_areav(ip, 1)._data.get(),
+                               ws_scs_areav(ip, 2)._data.get());
+                    }
+
                     for (unsigned j = 0; j < SPATIAL_DIM; ++j)
                     {
                         const scalar axj = ws_scs_areav(ip, j)._data.get();

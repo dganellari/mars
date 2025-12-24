@@ -1,8 +1,9 @@
 #include "mars.hpp"
 #include "backend/distributed/unstructured/domain.hpp"
 #include "backend/distributed/unstructured/fem/mars_fem.hpp"
-#include "backend/distributed/unstructured/fem/mars_cvfem_hex_kernel.hpp"
+#include "backend/distributed/unstructured/fem/mars_cvfem_hex_kernel_graph.hpp"
 #include <thrust/device_vector.h>
+#include <set>
 #include <thrust/reduce.h>
 #include <mpi.h>
 #include <iomanip>
@@ -22,6 +23,7 @@ int main(int argc, char** argv) {
     if (argc < 2) {
         if (rank == 0) {
             std::cout << "Usage: " << argv[0] << " <mesh_file>" << std::endl;
+            std::cout << "  mesh_file: .mesh format mesh file" << std::endl;
         }
         MPI_Finalize();
         return 1;
@@ -96,19 +98,21 @@ int main(int argc, char** argv) {
     thrust::copy(h_nodeToDof.begin(), h_nodeToDof.end(),
                  thrust::device_pointer_cast(d_nodeToDof.data()));
 
-    // Build sparsity pattern from LOCAL elements only (not halos)
+    // Build reduced sparsity pattern from MARS element connectivity
+    // This follows STK's approach: only include face-adjacent neighbors (edge of each SCS)
+    // For hex elements with 12 SCS faces, each SCS connects nodeL and nodeR
     if (rank == 0) {
-        std::cout << "Building sparsity pattern..." << std::endl;
+        std::cout << "Building reduced sparsity pattern from element connectivity..." << std::endl;
     }
     MPI_Barrier(MPI_COMM_WORLD);
 
-    std::set<std::pair<int,int>> pattern_set;
+    // Get element connectivity
     const auto& d_conn = domain.getElementToNodeConnectivity();
 
-    // Copy LOCAL elements from [startIdx, endIdx) range
+    // Copy connectivity to host
     std::vector<KeyType> h_conn[8];
     for (int i = 0; i < 8; ++i) {
-        h_conn[i].resize(localElementCount);
+        h_conn[i].resize(elementCount);
         auto& d_conni = (i==0) ? std::get<0>(d_conn) :
                         (i==1) ? std::get<1>(d_conn) :
                         (i==2) ? std::get<2>(d_conn) :
@@ -117,58 +121,90 @@ int main(int argc, char** argv) {
                         (i==5) ? std::get<5>(d_conn) :
                         (i==6) ? std::get<6>(d_conn) :
                                  std::get<7>(d_conn);
-        // Copy from startIdx to endIdx (local element range)
-        thrust::copy(thrust::device_pointer_cast(d_conni.data() + startIdx),
-                     thrust::device_pointer_cast(d_conni.data() + endIdx),
+        thrust::copy(thrust::device_pointer_cast(d_conni.data()),
+                     thrust::device_pointer_cast(d_conni.data() + elementCount),
                      h_conn[i].begin());
     }
 
-    for (size_t e = 0; e < localElementCount; ++e) {
+    // hexLRSCV from the kernel: maps SCS index to left/right nodes
+    // This defines which pairs of nodes share an SCS face
+    static const int hexLRSCV[24] = {
+        0, 1,   // SCS 0: nodes 0-1
+        1, 2,   // SCS 1: nodes 1-2
+        2, 3,   // SCS 2: nodes 2-3
+        0, 3,   // SCS 3: nodes 0-3
+        4, 5,   // SCS 4: nodes 4-5
+        5, 6,   // SCS 5: nodes 5-6
+        6, 7,   // SCS 6: nodes 6-7
+        4, 7,   // SCS 7: nodes 4-7
+        0, 4,   // SCS 8: nodes 0-4
+        1, 5,   // SCS 9: nodes 1-5
+        2, 6,   // SCS 10: nodes 2-6
+        3, 7    // SCS 11: nodes 3-7
+    };
+
+    // Build adjacency set: for each DOF, collect its SCS-adjacent DOFs
+    std::vector<std::set<int>> adj(numOwnedDofs);
+
+    for (size_t e = 0; e < elementCount; ++e) {
         KeyType nodes[8];
         for (int i = 0; i < 8; ++i) {
             nodes[i] = h_conn[i][e];
-            // Bounds check
-            if (nodes[i] >= nodeCount) {
-                std::cerr << "Rank " << rank << ": Element " << e << " node " << i
-                          << " index " << nodes[i] << " exceeds nodeCount " << nodeCount << std::endl;
-                MPI_Abort(MPI_COMM_WORLD, 1);
-            }
         }
 
-        for (int i = 0; i < 8; ++i) {
-            int row_dof = h_nodeToDof[nodes[i]];
-            if (row_dof < 0) continue;  // skip ghost
+        // For each SCS, connect nodeL and nodeR
+        for (int scs = 0; scs < 12; ++scs) {
+            int nodeL_local = hexLRSCV[scs * 2];
+            int nodeR_local = hexLRSCV[scs * 2 + 1];
 
-            for (int j = 0; j < 8; ++j) {
-                int col_dof = h_nodeToDof[nodes[j]];
-                if (col_dof < 0) continue;  // skip ghost
+            KeyType nodeL = nodes[nodeL_local];
+            KeyType nodeR = nodes[nodeR_local];
 
-                pattern_set.insert({row_dof, col_dof});
+            int dofL = h_nodeToDof[nodeL];
+            int dofR = h_nodeToDof[nodeR];
+
+            // Add bidirectional adjacency for owned DOFs
+            if (dofL >= 0) {
+                adj[dofL].insert(dofL);  // diagonal
+                if (dofR >= 0) adj[dofL].insert(dofR);
+            }
+            if (dofR >= 0) {
+                adj[dofR].insert(dofR);  // diagonal
+                if (dofL >= 0) adj[dofR].insert(dofL);
             }
         }
     }
 
-    // Build CSR structure
-    std::vector<std::pair<int,int>> pattern_vec(pattern_set.begin(), pattern_set.end());
-    std::sort(pattern_vec.begin(), pattern_vec.end());
+    // Convert to CSR format
+    std::vector<int> rowPtr(numOwnedDofs + 1);
+    std::vector<int> colInd;
 
-    std::vector<int> rowPtr(numOwnedDofs + 1, 0);
-    for (auto& p : pattern_vec) {
-        rowPtr[p.first + 1]++;
-    }
-    for (int i = 1; i <= numOwnedDofs; ++i) {
-        rowPtr[i] += rowPtr[i-1];
+    rowPtr[0] = 0;
+    for (int d = 0; d < numOwnedDofs; ++d) {
+        for (int col : adj[d]) {
+            colInd.push_back(col);
+        }
+        rowPtr[d + 1] = colInd.size();
     }
 
-    int nnz = pattern_vec.size();
-    std::vector<int> colInd(nnz);
-    for (int i = 0; i < nnz; ++i) {
-        colInd[i] = pattern_vec[i].second;
-    }
+    int nnz = colInd.size();
 
     if (rank == 0) {
-        std::cout << "Sparsity pattern built. NNZ = " << nnz << std::endl;
+        std::cout << "Built reduced graph with " << nnz << " nonzeros" << std::endl;
+        std::cout << "Average NNZ per row: " << static_cast<double>(nnz) / numOwnedDofs << std::endl;
+
+        // Debug: show row structure for first few DOFs
+        std::cout << "First 5 DOF row structure (mars_dof: [mars_col_indices]):" << std::endl;
+        for (int d = 0; d < 5 && d < numOwnedDofs; ++d) {
+            std::cout << "  DOF " << d << ": [";
+            for (int j = rowPtr[d]; j < rowPtr[d + 1]; ++j) {
+                std::cout << colInd[j];
+                if (j < rowPtr[d + 1] - 1) std::cout << ", ";
+            }
+            std::cout << "] (nnz=" << (rowPtr[d + 1] - rowPtr[d]) << ")" << std::endl;
+        }
     }
+
     MPI_Barrier(MPI_COMM_WORLD);
 
     // Allocate matrix and RHS on device
@@ -257,11 +293,12 @@ int main(int argc, char** argv) {
     cudaMemcpy(d_matrix, &h_matrix, sizeof(MatrixType), cudaMemcpyHostToDevice);
 
     // Launch assembly kernel with timing
+    // (d_conn already defined above when building sparsity pattern)
     int blockSize = 256;
     int numBlocks = (elementCount + blockSize - 1) / blockSize;
 
     // Warm-up run
-    fem::cvfem_hex_assembly_kernel<<<numBlocks, blockSize>>>(
+    fem::cvfem_hex_assembly_kernel_graph<<<numBlocks, blockSize>>>(
         std::get<0>(d_conn).data(),
         std::get<1>(d_conn).data(),
         std::get<2>(d_conn).data(),
@@ -298,7 +335,7 @@ int main(int argc, char** argv) {
     // Timed run
     auto start = std::chrono::high_resolution_clock::now();
 
-    fem::cvfem_hex_assembly_kernel<<<numBlocks, blockSize>>>(
+    fem::cvfem_hex_assembly_kernel_graph<<<numBlocks, blockSize>>>(
         std::get<0>(d_conn).data(),
         std::get<1>(d_conn).data(),
         std::get<2>(d_conn).data(),
@@ -404,7 +441,7 @@ int main(int argc, char** argv) {
 
     if (rank == 0) {
         std::cout << std::scientific << std::setprecision(6);
-        std::cout << "Assembler: MARS CVFEM Hex..................: "
+        std::cout << "Assembler: MARS CVFEM Hex (Graph+Lump).....: "
                   << elapsed.count() << " milliseconds @ "
                   << throughput_gbs << " GB/s (average of 1 samples) [matrix norm: "
                   << matrix_norm << "]" << std::endl;
