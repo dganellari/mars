@@ -1,0 +1,84 @@
+From 66ba95e6b6c13bdc590296ab5dc9ff1a47ca7a3a Mon Sep 17 00:00:00 2001
+From: Fabian Wermelinger <info@0xfab.ch>
+Date: Wed, 28 May 2025 16:05:45 +0200
+Subject: [PATCH 5/5] Use NGP assertions
+
+---
+ external/master_element/Hex8FEM.C          | 18 +++++++++---------
+ external/master_element/Tet4CVFEM.C        |  2 +-
+ external/master_element/utils/StkHelpers.h | 10 +++++-----
+ 3 files changed, 15 insertions(+), 15 deletions(-)
+
+diff --git a/external/master_element/Hex8FEM.C b/external/master_element/Hex8FEM.C
+index 3d7bd38..9fc234e 100644
+--- a/external/master_element/Hex8FEM.C
++++ b/external/master_element/Hex8FEM.C
+@@ -59,12 +59,12 @@ generic_grad_op_3d(
+   static_assert(OutputViewType::rank == 3, "Weight view assumed to be 3D");
+   static_assert(AlgTraits::nDim_ == 3, "3D method");
+ 
+-  STK_ThrowAssert(
+-    AlgTraits::nodesPerElement_ == referenceGradWeights.extent(1));
+-  STK_ThrowAssert(AlgTraits::nDim_ == referenceGradWeights.extent(2));
+-  STK_ThrowAssert(weights.extent(0) == referenceGradWeights.extent(0));
+-  STK_ThrowAssert(weights.extent(1) == referenceGradWeights.extent(1));
+-  STK_ThrowAssert(weights.extent(2) == referenceGradWeights.extent(2));
++  STK_NGP_ThrowAssert(AlgTraits::nodesPerElement_ ==
++                      referenceGradWeights.extent(1));
++  STK_NGP_ThrowAssert(AlgTraits::nDim_ == referenceGradWeights.extent(2));
++  STK_NGP_ThrowAssert(weights.extent(0) == referenceGradWeights.extent(0));
++  STK_NGP_ThrowAssert(weights.extent(1) == referenceGradWeights.extent(1));
++  STK_NGP_ThrowAssert(weights.extent(2) == referenceGradWeights.extent(2));
+ 
+   for (unsigned ip = 0; ip < AlgTraits::numGp_; ++ip) {
+     ftype jact[3][3] = {{0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}};
+@@ -95,9 +95,9 @@ generic_grad_op_3d(
+ 
+     detj(ip) = jact[0][0] * invJac[0][0] + jact[1][0] * invJac[1][0] +
+                jact[2][0] * invJac[2][0];
+-    STK_ThrowAssertMsg(
+-      stk::simd::are_any(detj(ip) > +tiny_positive_value()),
+-      "Problem with determinant");
++    STK_NGP_ThrowAssertMsg(
++        stk::simd::are_any(detj(ip) > +tiny_positive_value()),
++        "Problem with determinant");
+ 
+     const ftype inv_detj = ftype(1.0) / detj(ip);
+     for (int d_outer = 0; d_outer < 3; ++d_outer) {
+diff --git a/external/master_element/Tet4CVFEM.C b/external/master_element/Tet4CVFEM.C
+index ad3362b..ef94a20 100644
+--- a/external/master_element/Tet4CVFEM.C
++++ b/external/master_element/Tet4CVFEM.C
+@@ -335,7 +335,7 @@ TetSCV::determinant_scv(
+     // compute volume using an equivalent polyhedron
+     volume(icv) = hex_volume_grandy(ehexcoords);
+     // check for negative volume
+-    // STK_ThrowAssertMsg( volume(icv) < 0.0, "ERROR in TetSCV::determinant,
++    // STK_NGP_ThrowAssertMsg( volume(icv) < 0.0, "ERROR in TetSCV::determinant,
+     // negative volume.");
+   }
+ }
+diff --git a/external/master_element/utils/StkHelpers.h b/external/master_element/utils/StkHelpers.h
+index 7230562..4c0354e 100644
+--- a/external/master_element/utils/StkHelpers.h
++++ b/external/master_element/utils/StkHelpers.h
+@@ -91,11 +91,11 @@ get_node_field(
+   std::string name,
+   stk::mesh::FieldState state = stk::mesh::StateNP1)
+ {
+-  STK_ThrowAssert(meta.get_field(stk::topology::NODE_RANK, name));
+-  STK_ThrowAssert(
+-    meta.get_field(stk::topology::NODE_RANK, name)->field_state(state));
+-  return stk::mesh::get_updated_ngp_field<T>(
+-    *meta.get_field(stk::topology::NODE_RANK, name)->field_state(state));
++    STK_NGP_ThrowAssert(meta.get_field(stk::topology::NODE_RANK, name));
++    STK_NGP_ThrowAssert(
++        meta.get_field(stk::topology::NODE_RANK, name)->field_state(state));
++    return stk::mesh::get_updated_ngp_field<T>(
++        *meta.get_field(stk::topology::NODE_RANK, name)->field_state(state));
+ }
+ 
+ // Can replace this function with field.max_extent(0) when
+-- 
+2.35.3
+

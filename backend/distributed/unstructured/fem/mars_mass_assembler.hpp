@@ -23,6 +23,10 @@ __global__ void assembleMassKernel(const RealType* node_x,
                                    const IndexType* conn1,
                                    const IndexType* conn2,
                                    const IndexType* conn3,
+                                   const IndexType* conn4,
+                                   const IndexType* conn5,
+                                   const IndexType* conn6,
+                                   const IndexType* conn7,
                                    IndexType numElements,
                                    const IndexType* rowOffsets,
                                    const IndexType* colIndices,
@@ -35,16 +39,21 @@ __global__ void assembleMassKernel(const RealType* node_x,
     if (elemIdx >= numElements) return;
 
     // Get element nodes from tuple connectivity (already local IDs)
-    IndexType nodes[4];
+    constexpr int NodesPerElem = ElementTag::NodesPerElement;
+    IndexType nodes[NodesPerElem > 8 ? NodesPerElem : 8];
     nodes[0] = conn0[elemIdx];
     nodes[1] = conn1[elemIdx];
     nodes[2] = conn2[elemIdx];
     nodes[3] = conn3[elemIdx];
+    if constexpr (NodesPerElem > 4) nodes[4] = conn4[elemIdx];
+    if constexpr (NodesPerElem > 5) nodes[5] = conn5[elemIdx];
+    if constexpr (NodesPerElem > 6) nodes[6] = conn6[elemIdx];
+    if constexpr (NodesPerElem > 7) nodes[7] = conn7[elemIdx];
     
     // Check if ALL nodes are owned and map to DOF indices
     bool allOwned = true;
-    IndexType dofs[4];
-    for (int i = 0; i < 4; ++i) {
+    IndexType dofs[NodesPerElem > 8 ? NodesPerElem : 8];
+    for (int i = 0; i < RefElem::numNodes; ++i) {
         dofs[i] = nodeToDof[nodes[i]];
         if (dofs[i] == static_cast<IndexType>(-1)) {
             allOwned = false;
@@ -68,9 +77,10 @@ __global__ void assembleMassKernel(const RealType* node_x,
     RealType detJ = RefElem::computeJacobianDeterminant(J);
 
     if (detJ <= 0.0) return;
+    detJ = fabs(detJ);
 
     // Local mass matrix
-    RealType localM[RefElem::numNodes][RefElem::numNodes];
+    RealType localM[NodesPerElem > 8 ? NodesPerElem : 8][NodesPerElem > 8 ? NodesPerElem : 8];
 
     for (int i = 0; i < RefElem::numNodes; ++i)
     {
@@ -88,6 +98,12 @@ __global__ void assembleMassKernel(const RealType* node_x,
         RealType eta    = qpt.eta;
         RealType zeta   = qpt.zeta;
         RealType weight = qpt.weight;
+        
+        // For hex elements, recompute Jacobian at each quadrature point
+        if constexpr (std::is_same_v<ElementTag, HexTag>) {
+            RefElem::computeJacobian(elem_x, elem_y, elem_z, J, xi, eta, zeta);
+            detJ = fabs(RefElem::computeJacobianDeterminant(J));
+        }
 
         for (int i = 0; i < RefElem::numNodes; ++i)
         {
@@ -127,6 +143,10 @@ __global__ void assembleRHSKernel(const RealType* node_x,
                                   const IndexType* conn1,
                                   const IndexType* conn2,
                                   const IndexType* conn3,
+                                  const IndexType* conn4,
+                                  const IndexType* conn5,
+                                  const IndexType* conn6,
+                                  const IndexType* conn7,
                                   IndexType numElements,
                                   SourceFunc sourceTerm,
                                   RealType* rhs,
@@ -139,21 +159,26 @@ __global__ void assembleRHSKernel(const RealType* node_x,
     if (elemIdx >= numElements) return;
 
     // Get element nodes from tuple connectivity (already local IDs)
-    IndexType nodes[4];
+    constexpr int NodesPerElem = ElementTag::NodesPerElement;
+    IndexType nodes[NodesPerElem > 8 ? NodesPerElem : 8];
     nodes[0] = conn0[elemIdx];
     nodes[1] = conn1[elemIdx];
     nodes[2] = conn2[elemIdx];
     nodes[3] = conn3[elemIdx];
+    if constexpr (NodesPerElem > 4) nodes[4] = conn4[elemIdx];
+    if constexpr (NodesPerElem > 5) nodes[5] = conn5[elemIdx];
+    if constexpr (NodesPerElem > 6) nodes[6] = conn6[elemIdx];
+    if constexpr (NodesPerElem > 7) nodes[7] = conn7[elemIdx];
     
     // Map nodes to local DOF indices (includes ghosts)
-    IndexType dofs[4];
-    for (int i = 0; i < 4; ++i) {
+    IndexType dofs[NodesPerElem > 8 ? NodesPerElem : 8];
+    for (int i = 0; i < RefElem::numNodes; ++i) {
         dofs[i] = nodeToDof[nodes[i]];
     }
     
     // Check if element contributes to any owned DOF
     bool contributesToOwned = false;
-    for (int i = 0; i < 4; ++i) {
+    for (int i = 0; i < RefElem::numNodes; ++i) {
         if (dofs[i] < numOwnedDofs) {
             contributesToOwned = true;
             break;
@@ -162,8 +187,10 @@ __global__ void assembleRHSKernel(const RealType* node_x,
     
     if (!contributesToOwned) return;  // Skip elements that only touch ghost nodes
 
-    RealType elem_x[4], elem_y[4], elem_z[4];
-    for (int i = 0; i < 4; ++i)
+    RealType elem_x[NodesPerElem > 8 ? NodesPerElem : 8];
+    RealType elem_y[NodesPerElem > 8 ? NodesPerElem : 8];
+    RealType elem_z[NodesPerElem > 8 ? NodesPerElem : 8];
+    for (int i = 0; i < RefElem::numNodes; ++i)
     {
         elem_x[i] = node_x[nodes[i]];
         elem_y[i] = node_y[nodes[i]];
@@ -179,7 +206,7 @@ __global__ void assembleRHSKernel(const RealType* node_x,
     detJ = std::abs(detJ);    // Use absolute value to handle inverted elements
 
     // Local RHS vector
-    RealType localB[RefElem::numNodes];
+    RealType localB[NodesPerElem > 8 ? NodesPerElem : 8];
     for (int i = 0; i < RefElem::numNodes; ++i)
     {
         localB[i] = 0.0;
@@ -193,6 +220,12 @@ __global__ void assembleRHSKernel(const RealType* node_x,
         RealType eta    = qpt.eta;
         RealType zeta   = qpt.zeta;
         RealType weight = qpt.weight;
+        
+        // For hex elements, recompute Jacobian at each quadrature point
+        if constexpr (std::is_same_v<ElementTag, HexTag>) {
+            RefElem::computeJacobian(elem_x, elem_y, elem_z, J, xi, eta, zeta);
+            detJ = std::abs(RefElem::computeJacobianDeterminant(J));
+        }
 
         // Map quadrature point to physical coordinates
         RealType x = 0.0, y = 0.0, z = 0.0;
@@ -261,6 +294,37 @@ public:
         const auto& conn1      = std::get<1>(conn_tuple);
         const auto& conn2      = std::get<2>(conn_tuple);
         const auto& conn3      = std::get<3>(conn_tuple);
+        
+        // Extract additional connectivity pointers conditionally at compile time
+        constexpr int NodesPerElem = ElementTag::NodesPerElement;
+        const KeyType* conn4_ptr;
+        const KeyType* conn5_ptr;
+        const KeyType* conn6_ptr;
+        const KeyType* conn7_ptr;
+        
+        if constexpr (NodesPerElem > 4) {
+            conn4_ptr = std::get<4>(conn_tuple).data();
+        } else {
+            conn4_ptr = nullptr;
+        }
+        
+        if constexpr (NodesPerElem > 5) {
+            conn5_ptr = std::get<5>(conn_tuple).data();
+        } else {
+            conn5_ptr = nullptr;
+        }
+        
+        if constexpr (NodesPerElem > 6) {
+            conn6_ptr = std::get<6>(conn_tuple).data();
+        } else {
+            conn6_ptr = nullptr;
+        }
+        
+        if constexpr (NodesPerElem > 7) {
+            conn7_ptr = std::get<7>(conn_tuple).data();
+        } else {
+            conn7_ptr = nullptr;
+        }
 
         size_t numElements = domain.localElementCount();
         
@@ -272,8 +336,10 @@ public:
         const int gridSize  = (numElements + blockSize - 1) / blockSize;
 
         assembleMassKernel<ElementTag, RealType, KeyType>
-            <<<gridSize, blockSize>>>(d_x.data(), d_y.data(), d_z.data(), conn0.data(), conn1.data(), conn2.data(),
-                                      conn3.data(), numElements, M.rowOffsetsPtr(), M.colIndicesPtr(), M.valuesPtr(),
+            <<<gridSize, blockSize>>>(d_x.data(), d_y.data(), d_z.data(), 
+                                      conn0.data(), conn1.data(), conn2.data(), conn3.data(),
+                                      conn4_ptr, conn5_ptr, conn6_ptr, conn7_ptr,
+                                      numElements, M.rowOffsetsPtr(), M.colIndicesPtr(), M.valuesPtr(),
                                       d_nodeToDof.data());
 
         cudaDeviceSynchronize();
@@ -313,6 +379,36 @@ public:
         const auto& conn1      = std::get<1>(conn_tuple);
         const auto& conn2      = std::get<2>(conn_tuple);
         const auto& conn3      = std::get<3>(conn_tuple);
+        
+        constexpr int NodesPerElem = ElementTag::NodesPerElement;
+        const KeyType* conn4_ptr;
+        const KeyType* conn5_ptr;
+        const KeyType* conn6_ptr;
+        const KeyType* conn7_ptr;
+
+        if constexpr (NodesPerElem > 4) {
+            conn4_ptr = std::get<4>(conn_tuple).data();
+        } else {
+            conn4_ptr = nullptr;
+        }
+
+        if constexpr (NodesPerElem > 5) {
+            conn5_ptr = std::get<5>(conn_tuple).data();
+        } else {
+            conn5_ptr = nullptr;
+        }
+
+        if constexpr (NodesPerElem > 6) {
+            conn6_ptr = std::get<6>(conn_tuple).data();
+        } else {
+            conn6_ptr = nullptr;
+        }
+
+        if constexpr (NodesPerElem > 7) {
+            conn7_ptr = std::get<7>(conn_tuple).data();
+        } else {
+            conn7_ptr = nullptr;
+        }
 
         size_t numElements = domain.localElementCount();
         
@@ -324,7 +420,9 @@ public:
         const int gridSize  = (numElements + blockSize - 1) / blockSize;
 
         assembleRHSKernel<ElementTag, RealType, KeyType>
-            <<<gridSize, blockSize>>>(d_x.data(), d_y.data(), d_z.data(), conn0.data(), conn1.data(), conn2.data(), conn3.data(),
+            <<<gridSize, blockSize>>>(d_x.data(), d_y.data(), d_z.data(), 
+                                      conn0.data(), conn1.data(), conn2.data(), conn3.data(),
+                                      conn4_ptr, conn5_ptr, conn6_ptr, conn7_ptr,
                                       numElements, f, thrust::raw_pointer_cast(b.data()), d_nodeToDof.data(), numOwnedDofs);
 
         cudaDeviceSynchronize();

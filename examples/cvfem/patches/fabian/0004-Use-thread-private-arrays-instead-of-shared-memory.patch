@@ -1,0 +1,232 @@
+From f3a16b95d0403034bb3aac854b4f7b917432517e Mon Sep 17 00:00:00 2001
+From: Fabian Wermelinger <info@0xfab.ch>
+Date: Mon, 26 May 2025 09:38:11 +0200
+Subject: [PATCH 4/5] Use thread private arrays instead of shared memory
+
+This frees 1184 bytes shared memory per thread.  The speed-up is
+moderate (~1.2x) since determinant and grad_op is the main bottleneck
+and still present in this commit.
+---
+ src/myAssembler.h | 127 ++++++++++++++++++++--------------------------
+ 1 file changed, 55 insertions(+), 72 deletions(-)
+
+diff --git a/src/myAssembler.h b/src/myAssembler.h
+index e4128e5..e8dfc86 100644
+--- a/src/myAssembler.h
++++ b/src/myAssembler.h
+@@ -1,6 +1,7 @@
+ #ifndef MY_ASSEMBLER
+ #define MY_ASSEMBLER
+ 
++#include "KokkosInterface.h"
+ #include "linearSolverContext.h"
+ #include <MasterElement.h>
+ #include <MasterElementRepo.h>
+@@ -13,6 +14,7 @@ public:
+     using Context = ::linearSolver::Context<N>;
+     using Matrix = typename Context::Matrix;
+     using Vector = typename Context::Vector;
++    using Index = typename Context::Index;
+     using ScratchViewIndex = Kokkos::View<typename Context::Index*,
+                                           MyExecSpace::scratch_memory_space>;
+ 
+@@ -23,8 +25,8 @@ public:
+     }
+ 
+     KOKKOS_INLINE_FUNCTION
+-    void performSortPermutations(const ScratchViewIndex& arrayA,
+-                                 const ScratchViewIndex& arrayB,
++    void performSortPermutations(Index arrayA[],
++                                 const Index arrayB[],
+                                  size_t numVals) const
+     {
+         for (size_t i = 0; i < numVals; ++i)
+@@ -36,7 +38,9 @@ public:
+         for (size_t i = 1; i < numVals; ++i)
+         {
+             size_t key = arrayA[i];
+-            int keyVal = arrayB(key);
++            // NOTE: [fab4100@posteo.net; 2025-05-21] the following indexing
++            // pattern may be inefficient since `key` is different for threads
++            int keyVal = arrayB[key];
+             size_t j = i;
+ 
+             while (j > 0 && arrayB[arrayA[j - 1]] > keyVal)
+@@ -168,10 +172,13 @@ public:
+             ScratchView2D::shmem_size(numScsIpMax, nodesPerElementMax);
+ 
+         // scratch size required for each thread
++        // const size_t totalThreadScratchSize =
++        //     (scalarScratchSize + labelScratchSize + entityScratchSize +
++        //      indexScratchSize + coordinatesScratchSize + scsAreaVScratchSize
++        //      + dndxScratchSize + derivScratchSize);
+         const size_t totalThreadScratchSize =
+-            (scalarScratchSize + labelScratchSize + entityScratchSize +
+-             indexScratchSize + coordinatesScratchSize + scsAreaVScratchSize +
+-             dndxScratchSize + derivScratchSize);
++            (coordinatesScratchSize + scsAreaVScratchSize + dndxScratchSize +
++             derivScratchSize);
+ 
+         // scratch size required for each team
+         const size_t totalTeamScratchSize = shapeFunctionScratchSize;
+@@ -197,38 +204,23 @@ public:
+                 // TODO: [fab4100@posteo.net; 2024-02-29] BLOCKSIZE
+                 // space for LHS/RHS; nodesPerElem*nodesPerElem* and
+                 // nodesPerElem
+-                ScratchViewScalar lhs(
+-                    teamMember.thread_scratch(SCRATCH_SPACE_LEVEL), lhsSize);
+-                ScratchViewScalar rhs(
+-                    teamMember.thread_scratch(SCRATCH_SPACE_LEVEL), rhsSize);
+-                ScratchViewLabel scratchIds(
+-                    teamMember.thread_scratch(SCRATCH_SPACE_LEVEL),
+-                    scratchIdsSize);
+-                ScratchViewScalar scratchVals(
+-                    teamMember.thread_scratch(SCRATCH_SPACE_LEVEL),
+-                    scratchValsSize);
+-                ScratchViewEntity connectedNodes(
+-                    teamMember.thread_scratch(SCRATCH_SPACE_LEVEL),
+-                    connectedNodesSize);
++                //
++                // clang-format off
++                NALU_ALIGNED scalar lhs[nodesPerElementMax * N * nodesPerElementMax * N];
++                NALU_ALIGNED scalar rhs[nodesPerElementMax * N];
+ 
+-                // new index arrays to replace the class members
+-                ScratchViewIndex matrixColumnIds(
+-                    teamMember.thread_scratch(SCRATCH_SPACE_LEVEL),
+-                    connectedNodesSize);
+-                ScratchViewIndex sortPermutation(
+-                    teamMember.thread_scratch(SCRATCH_SPACE_LEVEL),
+-                    connectedNodesSize);
++                NALU_ALIGNED label scratchIds[nodesPerElementMax * N];
++                NALU_ALIGNED scalar *scratchVals = nullptr; // not required
+ 
+-                // nodal fields to gather
+-                ScratchViewScalar ws_phi(
+-                    teamMember.thread_scratch(SCRATCH_SPACE_LEVEL), phiSize);
+-                ScratchViewScalar ws_beta(
+-                    teamMember.thread_scratch(SCRATCH_SPACE_LEVEL), betaSize);
+-                ScratchViewScalar ws_gradPhi(
+-                    teamMember.thread_scratch(SCRATCH_SPACE_LEVEL),
+-                    gradPhiSize);
+-                ScratchViewScalar ws_Gamma(
+-                    teamMember.thread_scratch(SCRATCH_SPACE_LEVEL), gammaSize);
++                NALU_ALIGNED stk::mesh::Entity connectedNodes[nodesPerElementMax];
++                NALU_ALIGNED Index matrixColumnIds[nodesPerElementMax];
++                NALU_ALIGNED Index sortPermutation[nodesPerElementMax];
++
++                NALU_ALIGNED scalar ws_phi[nodesPerElementMax * N];
++                NALU_ALIGNED scalar ws_beta[nodesPerElementMax * N];
++                NALU_ALIGNED scalar ws_gradPhi[nodesPerElementMax * N * SPATIAL_DIM];
++                NALU_ALIGNED scalar ws_Gamma[nodesPerElementMax]; // scalar
++                // clang-format on
+ 
+                 // geometry related to populate
+                 ScratchView2D ws_coordinates(
+@@ -302,12 +294,12 @@ public:
+                     scalar* p_Gamma = &ws_Gamma[0];
+ 
+                     // ip values
+-                    scalar phiIp[N];
+-                    scalar coordIp[SPATIAL_DIM];
++                    NALU_ALIGNED scalar phiIp[N];
++                    NALU_ALIGNED scalar coordIp[SPATIAL_DIM];
+ 
+                     // extrapolated value from the L/R direction
+-                    scalar phiIpL[N];
+-                    scalar phiIpR[N];
++                    NALU_ALIGNED scalar phiIpL[N];
++                    NALU_ALIGNED scalar phiIpR[N];
+ 
+                     // pointers
+                     scalar* p_phiIp = &phiIp[0];
+@@ -580,7 +572,6 @@ public:
+                                 b,
+                                 connectedNodes,
+                                 scratchIds,
+-                                scratchVals,
+                                 matrixColumnIds,
+                                 sortPermutation,
+                                 rhs,
+@@ -696,7 +687,6 @@ public:
+                 //             b,
+                 //             connectedNodes,
+                 //             scratchIds,
+-                //             scratchVals,
+                 //             matrixColumnIds,
+                 //             sortPermutation,
+                 //             rhs,
+@@ -726,36 +716,30 @@ protected:
+ 
+     // helper methods
+     KOKKOS_FUNCTION
+-    void applyCoeff_(
+-        const Matrix& A,
+-        const Vector& b,
+-        const ScratchViewEntity& connectedNodes,
+-        const ScratchViewLabel& scratchIds,
+-        const ScratchViewScalar& /* scratchVals */, // FIXME:
+-                                                    // [fab4100@posteo.net;
+-                                                    // 2024-02-29] unused
+-        const ScratchViewIndex& matrixColumnIds,
+-        const ScratchViewIndex& sortPermutation,
+-        const ScratchViewScalar& rhs,
+-        const ScratchViewScalar& lhs,
+-        label nodesPerElement,
+-        bool deductUnfound = true) const;
++    void applyCoeff_(const Matrix& A,
++                     const Vector& b,
++                     const stk::mesh::Entity connectedNodes[],
++                     label scratchIds[],
++                     Index matrixColumnIds[],
++                     Index sortPermutation[],
++                     const scalar rhs[],
++                     const scalar lhs[],
++                     label nodesPerElement,
++                     bool deductUnfound = true) const;
+ };
+ 
+ template <size_t N>
+-KOKKOS_FUNCTION void MyAssembler<N>::applyCoeff_(
+-    const Matrix& A,
+-    const Vector& b,
+-    const ScratchViewEntity& connectedNodes,
+-    const ScratchViewLabel& scratchIds,
+-    const ScratchViewScalar& /* scratchVals */, // FIXME: [fab4100@posteo.net;
+-                                                // 2024-02-29] unused
+-    const ScratchViewIndex& matrixColumnIds,
+-    const ScratchViewIndex& sortPermutation,
+-    const ScratchViewScalar& rhs,
+-    const ScratchViewScalar& lhs,
+-    label nodesPerElement,
+-    bool deductUnfound) const
++KOKKOS_FUNCTION void
++MyAssembler<N>::applyCoeff_(const Matrix& A,
++                            const Vector& b,
++                            const stk::mesh::Entity connectedNodes[],
++                            label scratchIds[],
++                            Index matrixColumnIds[],
++                            Index sortPermutation[],
++                            const scalar rhs[],
++                            const scalar lhs[],
++                            label nodesPerElement,
++                            bool deductUnfound) const
+ {
+     // const auto& mesh = field_broker_->meshRef();
+     // const auto& mesh = this->meshRef();
+@@ -767,10 +751,9 @@ KOKKOS_FUNCTION void MyAssembler<N>::applyCoeff_(
+     // const label nOwnedRows = mesh.nNodes();
+     const label nOwnedRows = this->numNodes_;
+ 
+-    STK_NGP_ThrowAssert(BLOCKSIZE * numRows <=
+-                        static_cast<unsigned>(rhs.size()));
++    STK_NGP_ThrowAssert(BLOCKSIZE * numRows <= nodesPerElementMax * N);
+     STK_NGP_ThrowAssert(BLOCKSIZE * BLOCKSIZE * numRows * numRows <=
+-                        static_cast<unsigned>(lhs.size()));
++                        nodesPerElementMax * N * nodesPerElementMax * N);
+ 
+     if (A.getGraph()->isLocalColumnOrder())
+     {
+-- 
+2.35.3
+

@@ -25,6 +25,8 @@ namespace fem {
  * @param b_reduced Output: reduced RHS vector (interior owned DOFs only)
  * @param dof_mapping Output: mapping from full DOF indices to reduced indices (owned DOFs only)
  * @param numGhostDofs Number of ghost DOFs in the full system
+ * @param ghost_dof_mapping Output: mapping from full ghost DOF indices to reduced ghost indices (ghost DOFs only)
+ * @param reducedLocalCount Output: total number of columns in reduced system (owned + interior ghosts)
  * @return Number of interior owned DOFs in reduced system
  */
 template<typename KeyType, typename RealType, typename AcceleratorTag>
@@ -36,7 +38,9 @@ KeyType FormLinearSystem(
     typename mars::VectorSelector<RealType, AcceleratorTag>::type& b_reduced,
     std::vector<KeyType>& dof_mapping,
     KeyType numGhostDofs = 0,
-    const std::vector<KeyType>& ess_ghost_dofs = {})
+    const std::vector<KeyType>& ess_ghost_dofs = {},
+    std::vector<KeyType>* ghost_dof_mapping = nullptr,
+    KeyType* reducedLocalCount = nullptr)
 {
     using Vector = typename mars::VectorSelector<RealType, AcceleratorTag>::type;
     
@@ -131,13 +135,13 @@ KeyType FormLinearSystem(
     }
     
     // Build reduced system (rectangular: owned rows × owned+interior_ghost columns)
-    KeyType reducedLocalCount = reducedOwnedCount + numInteriorGhostDofs;
-    
+    KeyType totalReducedCols = reducedOwnedCount + numInteriorGhostDofs;
+
     std::vector<KeyType> h_rowOffsets_r(reducedOwnedCount + 1, 0);
     std::vector<KeyType> h_colIndices_r;
     std::vector<RealType> h_values_r;
     std::vector<RealType> h_b_r(reducedOwnedCount);
-    
+
     h_colIndices_r.reserve(A_full.nnz());
     h_values_r.reserve(A_full.nnz());
     
@@ -150,10 +154,12 @@ KeyType FormLinearSystem(
     }
     // Map interior ghost DOFs only (skip boundary ghosts)
     KeyType reducedGhostIdx = 0;
+    std::vector<KeyType> ghostMapping(numGhostDofs, static_cast<KeyType>(-1));
     for (KeyType g = 0; g < numGhostDofs; ++g) {
         if (!ess_ghost_marker[g]) {
             KeyType j = numOwnedDofs + g;
             colMapping[j] = reducedOwnedCount + reducedGhostIdx;
+            ghostMapping[g] = reducedGhostIdx;  // Store mapping for ghost DOFs
             reducedGhostIdx++;
         }
     }
@@ -202,28 +208,28 @@ KeyType FormLinearSystem(
     }
     
     // Copy reduced system to device
-    A_reduced.allocate(reducedOwnedCount, reducedLocalCount, h_values_r.size());
-    
+    A_reduced.allocate(reducedOwnedCount, totalReducedCols, h_values_r.size());
+
     // Validate column indices
-    KeyType maxCol = 0, minCol = reducedLocalCount;
+    KeyType maxCol = 0, minCol = totalReducedCols;
     int outOfRange = 0, missingDiag = 0;
     std::vector<bool> hasDiag(reducedOwnedCount, false);
-    
+
     for (KeyType row = 0; row < reducedOwnedCount; ++row) {
         for (KeyType idx = h_rowOffsets_r[row]; idx < h_rowOffsets_r[row + 1]; ++idx) {
             auto col = h_colIndices_r[idx];
-            if (col >= reducedLocalCount || col < 0) outOfRange++;
+            if (col >= totalReducedCols || col < 0) outOfRange++;
             if (col == row) hasDiag[row] = true;
             maxCol = std::max(maxCol, col);
             minCol = std::min(minCol, col);
         }
     }
     for (auto d : hasDiag) if (!d) missingDiag++;
-    
-    std::cout << "Reduced matrix: " << reducedOwnedCount << "x" << reducedLocalCount
-              << " (owned x local), nnz=" << h_values_r.size() 
+
+    std::cout << "Reduced matrix: " << reducedOwnedCount << "x" << totalReducedCols
+              << " (owned x local), nnz=" << h_values_r.size()
               << ", col range=[" << minCol << ", " << maxCol << "]"
-              << ", out_of_range=" << outOfRange 
+              << ", out_of_range=" << outOfRange
               << ", missing_diag=" << missingDiag << std::endl;
     
     thrust::copy(h_rowOffsets_r.begin(), h_rowOffsets_r.end(),
@@ -249,9 +255,17 @@ KeyType FormLinearSystem(
             max_b = std::max(max_b, static_cast<double>(h_b_r[i]));
         }
     }
-    std::cout << "Reduced RHS: sum=" << sum_b << ", range=[" << min_b << ", " << max_b 
+    std::cout << "Reduced RHS: sum=" << sum_b << ", range=[" << min_b << ", " << max_b
               << "], NaNs=" << nan_count << "/" << reducedOwnedCount << std::endl;
-    
+
+    // Return optional outputs
+    if (ghost_dof_mapping) {
+        *ghost_dof_mapping = ghostMapping;
+    }
+    if (reducedLocalCount) {
+        *reducedLocalCount = reducedOwnedCount + numInteriorGhostDofs;
+    }
+
     return reducedOwnedCount;
 }
 

@@ -1,0 +1,165 @@
+diff --git a/src/myAssembler.h b/src/myAssembler.h
+index e8dfc86..abfcbd6 100644
+--- a/src/myAssembler.h
++++ b/src/myAssembler.h
+@@ -189,10 +189,9 @@ public:
+                   << '\n';
+ 
+         Kokkos::parallel_for(
+-            teamPolicy.set_scratch_size(
+-                SCRATCH_SPACE_LEVEL,
+-                Kokkos::PerTeam(totalTeamScratchSize),
+-                Kokkos::PerThread(totalThreadScratchSize)),
++            teamPolicy.set_scratch_size(SCRATCH_SPACE_LEVEL,
++                                        Kokkos::PerTeam(totalTeamScratchSize)),
++            // Kokkos::PerThread(totalThreadScratchSize)),
+             KOKKOS_CLASS_LAMBDA( // TODO: class lambda here for numNodes_
+                 const TeamHandleType& teamMember) {
+                 const int bucketIndex =
+@@ -223,24 +222,24 @@ public:
+                 // clang-format on
+ 
+                 // geometry related to populate
+-                ScratchView2D ws_coordinates(
+-                    teamMember.thread_scratch(SCRATCH_SPACE_LEVEL),
+-                    nodesPerElementMax,
+-                    SPATIAL_DIM);
+-                ScratchView2D ws_scs_areav(
+-                    teamMember.thread_scratch(SCRATCH_SPACE_LEVEL),
+-                    numScsIpMax,
+-                    SPATIAL_DIM);
+-                ScratchView3D ws_dndx(
+-                    teamMember.thread_scratch(SCRATCH_SPACE_LEVEL),
+-                    numScsIpMax,
+-                    nodesPerElementMax,
+-                    SPATIAL_DIM); // CHANGED ORDER!
+-                ScratchView3D ws_deriv(
+-                    teamMember.thread_scratch(SCRATCH_SPACE_LEVEL),
+-                    numScsIpMax,
+-                    nodesPerElementMax,
+-                    SPATIAL_DIM); // CHANGED ORDER!
++                // ScratchView2D ws_coordinates(
++                //     teamMember.thread_scratch(SCRATCH_SPACE_LEVEL),
++                //     nodesPerElementMax,
++                //     SPATIAL_DIM);
++                // ScratchView2D ws_scs_areav(
++                //     teamMember.thread_scratch(SCRATCH_SPACE_LEVEL),
++                //     numScsIpMax,
++                //     SPATIAL_DIM);
++                // ScratchView3D ws_dndx(
++                //     teamMember.thread_scratch(SCRATCH_SPACE_LEVEL),
++                //     numScsIpMax,
++                //     nodesPerElementMax,
++                //     SPATIAL_DIM); // CHANGED ORDER!
++                // ScratchView3D ws_deriv(
++                //     teamMember.thread_scratch(SCRATCH_SPACE_LEVEL),
++                //     numScsIpMax,
++                //     nodesPerElementMax,
++                //     SPATIAL_DIM); // CHANGED ORDER!
+ 
+                 // allocated for entire team
+                 ScratchView2D ws_shape_function(
+@@ -356,11 +355,11 @@ public:
+ 
+                         // gather vectors
+                         // const label niNdim = ni * SPATIAL_DIM;
+-                        for (label i = 0; i < SPATIAL_DIM; ++i)
+-                        {
+-                            ws_coordinates(ni, i) =
+-                                ngpCoordinatesRef(nodeFastIndex, i);
+-                        }
++                        // for (label i = 0; i < SPATIAL_DIM; ++i)
++                        // {
++                        //     ws_coordinates(ni, i) =
++                        //         ngpCoordinatesRef(nodeFastIndex, i);
++                        // }
+ 
+                         // gather N-dim fields
+                         const scalar* phi =
+@@ -384,19 +383,19 @@ public:
+                         }
+                     }
+ 
+-                    // compute geometry
+-                    // scalar scs_error = 0.0;
+-                    meSCS->determinant(ws_coordinates, ws_scs_areav);
+-                    // compute dndx
+-                    if (isShifted) //(phi_->isShifted())
+-                    {
+-                        meSCS->shifted_grad_op(
+-                            ws_coordinates, ws_dndx, ws_deriv);
+-                    }
+-                    else
+-                    {
+-                        meSCS->grad_op(ws_coordinates, ws_dndx, ws_deriv);
+-                    }
++                    // // compute geometry
++                    // // scalar scs_error = 0.0;
++                    // meSCS->determinant(ws_coordinates, ws_scs_areav);
++                    // // compute dndx
++                    // if (isShifted) //(phi_->isShifted())
++                    // {
++                    //     meSCS->shifted_grad_op(
++                    //         ws_coordinates, ws_dndx, ws_deriv);
++                    // }
++                    // else
++                    // {
++                    //     meSCS->grad_op(ws_coordinates, ws_dndx, ws_deriv);
++                    // }
+ 
+                     for (label ip = 0; ip < numScsIp; ++ip)
+                     {
+@@ -438,8 +437,8 @@ public:
+                             }
+                             for (label i = 0; i < SPATIAL_DIM; ++i)
+                             {
+-                                p_coordIp[i] +=
+-                                    r * ws_coordinates(ic, i)._data.get();
++                                p_coordIp[i] += r * 1.0;
++                                // r * ws_coordinates(ic, i)._data.get();
+                             }
+                         }
+ 
+@@ -466,9 +465,8 @@ public:
+                                 // deferred correction
+                                 for (label j = 0; j < SPATIAL_DIM; ++j)
+                                 {
+-                                    const scalar dxj =
+-                                        p_coordIp[j] -
+-                                        ws_coordinates(il, j)._data.get();
++                                    const scalar dxj = p_coordIp[j] - 1.0;
++                                    // ws_coordinates(il, j)._data.get();
+                                     dcorr += p_beta[il * N + i] * dxj *
+                                              p_gradPhi[il * N * SPATIAL_DIM +
+                                                        i * SPATIAL_DIM + j];
+@@ -481,9 +479,8 @@ public:
+                                 // deferred correction
+                                 for (label j = 0; j < SPATIAL_DIM; ++j)
+                                 {
+-                                    const scalar dxj =
+-                                        p_coordIp[j] -
+-                                        ws_coordinates(ir, j)._data.get();
++                                    const scalar dxj = p_coordIp[j] - 1.0;
++                                    // ws_coordinates(ir, j)._data.get();
+                                     dcorr += p_beta[ir * N + i] * dxj *
+                                              p_gradPhi[ir * N * SPATIAL_DIM +
+                                                        i * SPATIAL_DIM + j];
+@@ -543,14 +540,13 @@ public:
+                                 scalar lhs_riC_i = 0.0;
+                                 for (label j = 0; j < SPATIAL_DIM; ++j)
+                                 {
+-                                    const scalar axj =
+-                                        ws_scs_areav(ip, j)._data.get();
++                                    const scalar axj = 1.0;
++                                    // ws_scs_areav(ip, j)._data.get();
+ 
+                                     // -Gamma*dphi/dxj*A_j; fixed i over j loop;
+                                     // see below..
+-                                    const scalar lhsfacDiff_i =
+-                                        -GammaIp *
+-                                        ws_dndx(ip, ic, j)._data.get() * axj;
++                                    const scalar lhsfacDiff_i = -GammaIp * 1.0;
++                                    // ws_dndx(ip, ic, j)._data.get() * axj;
+ 
+                                     // lhs; il then ir
+                                     lhs_riC_i += lhsfacDiff_i;

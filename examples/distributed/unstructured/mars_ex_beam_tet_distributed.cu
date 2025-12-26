@@ -1,15 +1,24 @@
 /**
- * MFEM beam-tet.mesh Distributed GPU Poisson solver
+ * MFEM mesh Distributed GPU Poisson solver
  *
  * Problem: -Δu = 1 in Ω, u = 0 on ∂Ω
  *
- * Usage: mpirun -np N mars_ex_beam_tet_distributed --mesh beam-tet.mesh
+ * Usage: 
+ *   For tetrahedral meshes: mpirun -np N mars_ex_beam_tet_distributed --mesh beam-tet.mesh
+ *   For hexahedral meshes: mpirun -np N mars_ex_beam_tet_distributed --mesh beam-hex.mesh
+ *                          (requires recompilation with -DUSE_HEX_TAG)
  *
  * Features:
  * - MPI distributed across multiple ranks
  * - GPU acceleration throughout (no CPU transfers)
  * - Hypre GPU-accelerated PCG + BoomerAMG
  * - Domain decomposition with halo exchange
+ * - Supports both tetrahedral and hexahedral meshes (compile-time selection)
+ *
+ * Element Type Support:
+ * - Tetrahedral meshes (default): compile without flags
+ * - Hexahedral meshes: compile with -DUSE_HEX_TAG
+ * - Runtime validation ensures mesh type matches compiled ElementTag
  *
  * Expected: Fast convergence with distributed AMG
  */
@@ -42,11 +51,38 @@
 using namespace mars;
 using namespace mars::fem;
 
+// Element type selection - RUNTIME DETECTION from mesh!
+// Compile-time element tag selection
+// To support hexahedral meshes, recompile with -DUSE_HEX_TAG
+#ifdef USE_HEX_TAG
+using ElementTag = mars::HexTag;
+#else
+using ElementTag = mars::TetTag;  // Default: tetrahedral meshes
+#endif
+
 // MFEM-style bigint handling for Hypre compatibility
 typedef uint64_t IndexType;
 
-// DOF handler typedef for convenience
-using DofHandler = mars::fem::UnstructuredDofHandler<TetTag, double, IndexType, cstone::GpuTag>;
+// DOF handler typedef for convenience  
+template<typename ElemTag>
+using DofHandlerT = mars::fem::UnstructuredDofHandler<ElemTag, double, IndexType, cstone::GpuTag>;
+
+// FE space typedef for convenience
+template<typename ElemTag>
+using FESpaceT = mars::fem::H1FESpace<ElemTag, double, IndexType, cstone::GpuTag>;
+
+// Assembler typedefs for convenience
+template<typename ElemTag>
+using StiffnessAssemblerT = mars::fem::StiffnessAssembler<ElemTag, double, IndexType, cstone::GpuTag>;
+template<typename ElemTag>
+using MassAssemblerT = mars::fem::MassAssembler<ElemTag, double, IndexType, cstone::GpuTag>;
+
+// Matrix typedef (doesn't depend on element tag)
+using SparseMatrixType = mars::fem::SparseMatrix<IndexType, double, cstone::GpuTag>;
+
+// Backward compatibility - use full type names to avoid conflicts
+using DofHandler = DofHandlerT<ElementTag>;
+using FESpace = FESpaceT<ElementTag>;
 
 // Source term: f(x,y,z) = 1
 struct SourceTerm {
@@ -57,8 +93,9 @@ struct SourceTerm {
 };
 
 // Save solution to MFEM GridFunction format (rank 0 only)
+template<typename ElementTag>
 void saveSolutionToGridFunction(const cstone::DeviceVector<double>& u_local,
-                               const DofHandler& dof_handler,
+                               const DofHandlerT<ElementTag>& dof_handler,
                                int rank, int numRanks) {
     if (rank != 0) return;  // Only rank 0 writes the file
 
@@ -108,6 +145,9 @@ int main(int argc, char** argv) {
     std::string meshPath = "";  // No default, user must specify
     int order = 1;
     std::string solver = "elimination-boomeramg";  // Default: MFEM-like elimination with BoomerAMG
+    bool use_geometric_bc = false;  // Use geometric boundaries instead of topological
+    bool use_all_bc = false;  // Use ALL topological boundaries (all mesh boundary faces)
+    std::vector<int> bc_attributes;  // Boundary attributes to apply Dirichlet BC (empty = default to attr 1)
 
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
@@ -117,6 +157,12 @@ int main(int argc, char** argv) {
             order = std::atoi(argv[++i]);
         } else if (arg == "--solver" && i + 1 < argc) {
             solver = argv[++i];
+        } else if (arg == "--geometric-bc") {
+            use_geometric_bc = true;
+        } else if (arg == "--topological-bc" || arg == "--all-bc") {
+            use_all_bc = true;
+        } else if (arg == "--bc-attr" && i + 1 < argc) {
+            bc_attributes.push_back(std::atoi(argv[++i]));
         } else if (arg == "--help" || arg == "-h") {
             if (rank == 0) {
                 std::cout << "Usage: " << argv[0] << " --mesh <path> [options]\n\n"
@@ -125,16 +171,25 @@ int main(int argc, char** argv) {
                           << "  --mesh <path>      Path to mesh (MFEM .mesh or MARS binary dir)\n"
                           << "  --order <n>        Polynomial order (default: 1)\n"
                           << "  --solver <type>    Solver: elimination-boomeramg (default), elimination-jacobi, elimination, or jacobi\n"
+                          << "  --bc-attr <n>      Apply Dirichlet BC only to boundary attribute <n> (can be repeated; default: attr 1)\n"
+                          << "  --topological-bc   Use ALL topological boundaries from mesh (all boundary faces)\n"
+                          << "  --geometric-bc     Use geometric boundary detection (x=min and x=max faces)\n"
                           << "  --help, -h         Print this help\n\n"
+                          << "Boundary Condition Modes:\n"
+                          << "  (default)          Apply BC to boundary attribute 1 only (MFEM ex1p style)\n"
+                          << "  --bc-attr <n>      Apply BC to specified attribute(s)\n"
+                          << "  --topological-bc   Apply BC to ALL mesh boundary faces (all attributes)\n"
+                          << "  --geometric-bc     Apply BC to geometric boundaries (x endpoints)\n\n"
                           << "Solvers:\n"
                           << "  elimination-boomeramg - PCG + BoomerAMG with DOF elimination (default, MFEM ex1p style)\n"
                           << "  elimination-jacobi    - PCG + Jacobi with DOF elimination (for debugging)\n"
                           << "  elimination           - PCG + BoomerAMG with DOF elimination (legacy alias)\n"
                           << "  jacobi                - PCG + Jacobi with penalty BC (not yet implemented)\n\n"
-                          << "MFEM meshes are automatically converted to binary format.\n\n"
                           << "Examples:\n"
-                          << "  mpirun -np 4 " << argv[0] << " --mesh beam-tet.mesh\n"
-                          << "  mpirun -np 4 " << argv[0] << " --mesh beam-tet.mesh --solver elimination\n";
+                          << "  mpirun -np 4 " << argv[0] << " --mesh beam-tet.mesh              # BC on attr 1\n"
+                          << "  mpirun -np 4 " << argv[0] << " --mesh beam-tet.mesh --bc-attr 1  # BC on attr 1\n"
+                          << "  mpirun -np 4 " << argv[0] << " --mesh beam-tet.mesh --topological-bc  # BC on all faces\n"
+                          << "  mpirun -np 4 " << argv[0] << " --mesh beam-tet.mesh --geometric-bc    # BC on x endpoints\n";
             }
             MPI_Finalize();
             return 0;
@@ -181,6 +236,10 @@ int main(int argc, char** argv) {
         std::cout << "Broadcasting mesh data to all ranks..." << std::endl;
     }
 
+    // Broadcast element geometry type
+    int element_geom_type = loader.element_geometry_type;
+    MPI_Bcast(&element_geom_type, 1, MPI_INT, 0, MPI_COMM_WORLD);
+
     // Broadcast vertices
     size_t numVertices = loader.vertices.size();
     MPI_Bcast(&numVertices, 1, MPI_UNSIGNED_LONG, 0, MPI_COMM_WORLD);
@@ -190,32 +249,141 @@ int main(int argc, char** argv) {
     }
     MPI_Bcast(loader.vertices.data(), numVertices * 3, MPI_DOUBLE, 0, MPI_COMM_WORLD);
 
-    // Broadcast elements
-    size_t numElements = loader.elements.size();
+    // Broadcast elements (tet or hex depending on type)
+    size_t numElements = (element_geom_type == 4) ? loader.elements.size() : loader.hex_elements.size();
     MPI_Bcast(&numElements, 1, MPI_UNSIGNED_LONG, 0, MPI_COMM_WORLD);
 
-    if (rank != 0) {
-        loader.elements.resize(numElements);
+    if (element_geom_type == 4) {  // Tetrahedra
+        if (rank != 0) {
+            loader.elements.resize(numElements);
+        }
+        MPI_Bcast(loader.elements.data(), numElements * 4, MPI_INT, 0, MPI_COMM_WORLD);
+    } else if (element_geom_type == 5) {  // Hexahedra
+        if (rank != 0) {
+            loader.hex_elements.resize(numElements);
+        }
+        MPI_Bcast(loader.hex_elements.data(), numElements * 8, MPI_INT, 0, MPI_COMM_WORLD);
     }
-    MPI_Bcast(loader.elements.data(), numElements * 4, MPI_INT, 0, MPI_COMM_WORLD);
 
-    // Broadcast boundary vertices
-    size_t numBoundaryVertices = loader.boundary_vertices.size();
-    MPI_Bcast(&numBoundaryVertices, 1, MPI_UNSIGNED_LONG, 0, MPI_COMM_WORLD);
+    // Broadcast boundary faces and attributes (needed for attribute-filtered BC extraction)
+    // For tet meshes: triangular faces; for hex meshes: quadrilateral faces
+    size_t numBoundaryFaces = loader.boundary_faces.size();
+    size_t numBoundaryQuads = loader.boundary_quads.size();
+    MPI_Bcast(&numBoundaryFaces, 1, MPI_UNSIGNED_LONG, 0, MPI_COMM_WORLD);
+    MPI_Bcast(&numBoundaryQuads, 1, MPI_UNSIGNED_LONG, 0, MPI_COMM_WORLD);
 
     if (rank != 0) {
-        loader.boundary_vertices.resize(numBoundaryVertices);
+        loader.boundary_faces.resize(numBoundaryFaces);
+        loader.boundary_quads.resize(numBoundaryQuads);
+        loader.boundary_face_attributes.resize(numBoundaryFaces + numBoundaryQuads);
     }
-    MPI_Bcast(loader.boundary_vertices.data(), numBoundaryVertices, MPI_INT, 0, MPI_COMM_WORLD);
+    if (numBoundaryFaces > 0) {
+        MPI_Bcast(loader.boundary_faces.data(), numBoundaryFaces * 3, MPI_INT, 0, MPI_COMM_WORLD);
+    }
+    if (numBoundaryQuads > 0) {
+        MPI_Bcast(loader.boundary_quads.data(), numBoundaryQuads * 4, MPI_INT, 0, MPI_COMM_WORLD);
+    }
+    MPI_Bcast(loader.boundary_face_attributes.data(), numBoundaryFaces + numBoundaryQuads, MPI_INT, 0, MPI_COMM_WORLD);
 
     if (rank == 0) {
-        std::cout << "Global mesh: " << numVertices << " vertices, "
-                  << numElements << " elements" << std::endl;
-        std::cout << "Boundary info: " << numBoundaryVertices << " boundary vertices" << std::endl;
+        std::cout << "\n=== Boundary Condition Setup ===" << std::endl;
+        std::cout << "Boundary triangular faces: " << numBoundaryFaces << std::endl;
+        std::cout << "Boundary quadrilateral faces: " << numBoundaryQuads << std::endl;
+        std::cout << "Total boundary faces: " << (numBoundaryFaces + numBoundaryQuads) << std::endl;
+        std::cout << "Boundary face attributes vector size: " << loader.boundary_face_attributes.size() << std::endl;
+        if (!loader.boundary_face_attributes.empty()) {
+            std::map<int, int> attr_count;
+            for (int attr : loader.boundary_face_attributes) {
+                attr_count[attr]++;
+            }
+            std::cout << "Attribute distribution: ";
+            for (const auto& [attr, count] : attr_count) {
+                std::cout << "attr_" << attr << "=" << count << " ";
+            }
+            std::cout << std::endl;
+        }
+        std::cout << "User-specified bc_attributes.size() = " << bc_attributes.size() << std::endl;
+        std::cout << "use_all_bc = " << (use_all_bc ? "true" : "false") << std::endl;
+        std::cout << "use_geometric_bc = " << (use_geometric_bc ? "true" : "false") << std::endl;
     }
 
-    // Convert MFEM mesh data to ElementDomain format
-    // HostCoordsTuple: tuple<x_coords, y_coords, z_coords>
+    // Determine boundary condition mode
+    if (use_all_bc) {
+        // Use ALL topological boundaries - clear bc_attributes to use all faces
+        bc_attributes.clear();
+        if (rank == 0) {
+            std::cout << "Mode: Using ALL topological boundaries (--topological-bc)" << std::endl;
+        }
+    } else if (use_geometric_bc) {
+        // Geometric BC handled later
+        if (rank == 0) {
+            std::cout << "Mode: Using geometric boundaries (--geometric-bc)" << std::endl;
+        }
+    } else if (bc_attributes.empty() && !loader.boundary_face_attributes.empty()) {
+        // Default: use attribute 1 if it exists (MFEM ex1p style)
+        bool has_attr_1 = false;
+        for (int attr : loader.boundary_face_attributes) {
+            if (attr == 1) {
+                has_attr_1 = true;
+                break;
+            }
+        }
+        if (has_attr_1) {
+            bc_attributes.push_back(1);
+            if (rank == 0) {
+                std::cout << "Mode: Defaulting to boundary attribute 1 (MFEM ex1p style)" << std::endl;
+                std::cout << "      (Use --topological-bc for all boundaries, --bc-attr <n> for specific)" << std::endl;
+            }
+        }
+    }
+
+    // Extract boundary vertices with specified attributes (all ranks compute identically)
+    if (!use_geometric_bc && !bc_attributes.empty()) {
+        // Re-extract boundary vertices with specified attributes only
+        loader.boundary_vertices.clear();
+        loader.extract_boundary_vertices(bc_attributes);
+        if (rank == 0) {
+            std::cout << "Applying Dirichlet BC to attributes: ";
+            for (int attr : bc_attributes) std::cout << attr << " ";
+            std::cout << std::endl;
+            std::cout << "Boundary vertices with these attributes: " << loader.boundary_vertices.size() << std::endl;
+        }
+    } else if (!use_geometric_bc) {
+        // use_all_bc or no attributes specified - use ALL boundary vertices
+        // For consistency, don't recompute on other ranks - use original from load()
+        if (rank == 0) {
+            std::cout << "Using ALL boundary vertices (all topological boundaries)" << std::endl;
+            std::cout << "Boundary vertices: " << loader.boundary_vertices.size() << std::endl;
+        }
+        // Rank != 0 keeps the original boundary_vertices from load() (which were broadcast)
+    } else {
+        // use_geometric_bc - boundary vertices will be computed later from geometry
+        // Clear boundary_vertices for geometric BC since we don't use mesh topology
+        loader.boundary_vertices.clear();
+        if (rank == 0) {
+            std::cout << "Geometric BC mode - boundary will be detected from coordinates" << std::endl;
+        }
+    }
+    
+    if (rank == 0) {
+        std::cout << "=== End Boundary Setup ===\n" << std::endl;
+        std::cout << "Global mesh: " << numVertices << " vertices, "
+                  << numElements << " " << (element_geom_type == 4 ? "tetrahedra" : "hexahedra") << std::endl;
+        std::cout << "Boundary info: " << loader.boundary_vertices.size() << " boundary vertices" << std::endl;
+    }
+
+    // Broadcast boundary vertices to all ranks (skip for geometric BC)
+    if (!use_geometric_bc) {
+        size_t numBoundaryVertices = loader.boundary_vertices.size();
+        MPI_Bcast(&numBoundaryVertices, 1, MPI_UNSIGNED_LONG, 0, MPI_COMM_WORLD);
+        
+        if (rank != 0) {
+            loader.boundary_vertices.resize(numBoundaryVertices);
+        }
+        MPI_Bcast(loader.boundary_vertices.data(), numBoundaryVertices, MPI_INT, 0, MPI_COMM_WORLD);
+    }
+
+    // Convert MFEM mesh data to ElementDomain format (shared by both types)
     std::vector<double> x_coords(numVertices);
     std::vector<double> y_coords(numVertices);
     std::vector<double> z_coords(numVertices);
@@ -226,20 +394,7 @@ int main(int argc, char** argv) {
         z_coords[i] = static_cast<double>(loader.vertices[i][2]);
     }
 
-    // HostConnectivityTuple for TetTag: tuple<i0, i1, i2, i3>
-    std::vector<IndexType> i0(numElements);
-    std::vector<IndexType> i1(numElements);
-    std::vector<IndexType> i2(numElements);
-    std::vector<IndexType> i3(numElements);
-
-    for (size_t i = 0; i < numElements; ++i) {
-        i0[i] = static_cast<IndexType>(loader.elements[i][0]);
-        i1[i] = static_cast<IndexType>(loader.elements[i][1]);
-        i2[i] = static_cast<IndexType>(loader.elements[i][2]);
-        i3[i] = static_cast<IndexType>(loader.elements[i][3]);
-    }
-
-    // HostBoundaryTuple for boundary nodes: tuple<isBoundaryNode>
+    // HostBoundaryTuple for boundary nodes
     std::vector<uint8_t> isBoundaryNode(numVertices, 0);
     for (int boundaryVertex : loader.boundary_vertices) {
         if (boundaryVertex >= 0 && boundaryVertex < static_cast<int>(numVertices)) {
@@ -247,19 +402,99 @@ int main(int argc, char** argv) {
         }
     }
 
+    // Convert connectivity based on element type
+    std::vector<IndexType> i0(numElements), i1(numElements), i2(numElements), i3(numElements);
+    std::vector<IndexType> i4, i5, i6, i7;  // For hex elements or padding for tet elements
+
+    // Validate mesh type - now supports both tetrahedral and hexahedral meshes automatically
+    if (element_geom_type != 4 && element_geom_type != 5) {
+        if (rank == 0) {
+            std::cerr << "ERROR: Unsupported mesh element type: " << element_geom_type << "\\n";
+            std::cerr << "  Supported types: 4 (Tetrahedra) or 5 (Hexahedra)\\n";
+        }
+        MPI_Finalize();
+        return 1;
+    }
+
+    if (rank == 0) {
+        std::cout << "Mesh type: " << (element_geom_type == 4 ? "Tetrahedral" : "Hexahedral") << " (auto-detected)" << std::endl;
+    }
+    
+    if (element_geom_type == 4) {
+        // Tetrahedra
+        if (rank == 0) std::cout << "\\nElement type: TETRAHEDRA (matches TetTag)\\n" << std::endl;
+        for (size_t i = 0; i < numElements; ++i) {
+            i0[i] = static_cast<IndexType>(loader.elements[i][0]);
+            i1[i] = static_cast<IndexType>(loader.elements[i][1]);
+            i2[i] = static_cast<IndexType>(loader.elements[i][2]);
+            i3[i] = static_cast<IndexType>(loader.elements[i][3]);
+        }
+    } else if (element_geom_type == 5) {
+        // Hexahedra
+        if (rank == 0) std::cout << "\\nElement type: HEXAHEDRA (matches HexTag)\\n" << std::endl;
+        i4.resize(numElements);
+        i5.resize(numElements);
+        i6.resize(numElements);
+        i7.resize(numElements);
+        for (size_t i = 0; i < numElements; ++i) {
+            i0[i] = static_cast<IndexType>(loader.hex_elements[i][0]);
+            i1[i] = static_cast<IndexType>(loader.hex_elements[i][1]);
+            i2[i] = static_cast<IndexType>(loader.hex_elements[i][2]);
+            i3[i] = static_cast<IndexType>(loader.hex_elements[i][3]);
+            i4[i] = static_cast<IndexType>(loader.hex_elements[i][4]);
+            i5[i] = static_cast<IndexType>(loader.hex_elements[i][5]);
+            i6[i] = static_cast<IndexType>(loader.hex_elements[i][6]);
+            i7[i] = static_cast<IndexType>(loader.hex_elements[i][7]);
+        }
+    } else {
+        std::cerr << "ERROR: Unsupported element geometry type: " << element_geom_type << std::endl;
+        MPI_Finalize();
+        return 1;
+    }
+
     if (rank == 0) {
         std::cout << "Creating distributed ElementDomain (automatic SFC partitioning)..." << std::endl;
     }
 
-    // Create ElementDomain using direct constructor with MFEM mesh data and boundary info
-    // The bounding box will be computed automatically from the coordinate data
-    using Domain = mars::ElementDomain<mars::TetTag, double, IndexType, cstone::GpuTag>;
-    Domain domain(std::make_tuple(x_coords, y_coords, z_coords),
-                  std::make_tuple(i0, i1, i2, i3),
-                  std::make_tuple(isBoundaryNode),
-                  rank, numRanks);
+    // Create ElementDomain with compile-time ElementTag selection
+    using Domain = mars::ElementDomain<ElementTag, double, IndexType, cstone::GpuTag>;
 
-    // Force domain initialization before creating FE space
+    // Validate mesh type matches compiled ElementTag and create domain
+    std::unique_ptr<Domain> domain_ptr;
+    
+    if constexpr (ElementTag::NodesPerElement == 4) {
+        // TetTag: validate tetrahedral mesh
+        if (element_geom_type != 4) {
+            if (rank == 0) {
+                std::cerr << "ERROR: Hexahedral mesh detected but compiled with TetTag.\n"
+                         << "       Recompile with -DUSE_HEX_TAG to use hexahedral meshes." << std::endl;
+            }
+            MPI_Finalize();
+            return 1;
+        }
+        domain_ptr = std::make_unique<Domain>(
+            std::make_tuple(x_coords, y_coords, z_coords),
+            std::make_tuple(i0, i1, i2, i3),
+            std::make_tuple(isBoundaryNode),
+            rank, numRanks);
+    } else {
+        // HexTag: validate hexahedral mesh
+        if (element_geom_type != 5) {
+            if (rank == 0) {
+                std::cerr << "ERROR: Tetrahedral mesh detected but compiled with HexTag.\n"
+                         << "       Recompile without -DUSE_HEX_TAG to use tetrahedral meshes." << std::endl;
+            }
+            MPI_Finalize();
+            return 1;
+        }
+        domain_ptr = std::make_unique<Domain>(
+            std::make_tuple(x_coords, y_coords, z_coords),
+            std::make_tuple(i0, i1, i2, i3, i4, i5, i6, i7),
+            std::make_tuple(isBoundaryNode),
+            rank, numRanks);
+    }
+    
+    Domain& domain = *domain_ptr;    // Force domain initialization before creating FE space
     domain.getNodeOwnershipMap();  // Trigger lazy initialization
     domain.getHaloElementIndices();  // Ensure halo structures are built
 
@@ -288,7 +523,7 @@ int main(int argc, char** argv) {
     auto fes_start = std::chrono::high_resolution_clock::now();
 
     // Create FE space (like MFEM ex1)
-    TetFESpace<double, IndexType> fes(domain, 1);  // Order 1 like MFEM ex1
+    FESpace fes(domain, 1);  // Order 1 like MFEM ex1
     size_t numDofs = fes.numDofs();
 
     auto fes_end = std::chrono::high_resolution_clock::now();
@@ -323,60 +558,96 @@ int main(int argc, char** argv) {
     }
 
     // =====================================================
-    // 4. Geometric boundary detection
+    // 4. Boundary conditions: u=0 on ALL external faces
     // =====================================================
-    if (rank == 0) std::cout << "\n4. Performing geometric boundary detection...\n";
-
-    // Get local node coordinates
-    const auto& d_x = domain.getNodeX();
-    const auto& d_y = domain.getNodeY();
-    const auto& d_z = domain.getNodeZ();
-
-    std::vector<double> h_x(domain.getNodeCount());
-    std::vector<double> h_y(domain.getNodeCount());
-    std::vector<double> h_z(domain.getNodeCount());
-
-    thrust::copy(thrust::device_pointer_cast(d_x.data()),
-                 thrust::device_pointer_cast(d_x.data() + domain.getNodeCount()),
-                 h_x.begin());
-    thrust::copy(thrust::device_pointer_cast(d_y.data()),
-                 thrust::device_pointer_cast(d_y.data() + domain.getNodeCount()),
-                 h_y.begin());
-    thrust::copy(thrust::device_pointer_cast(d_z.data()),
-                 thrust::device_pointer_cast(d_z.data() + domain.getNodeCount()),
-                 h_z.begin());
-
-    // Create local boundary data using geometric boundary detection
-    // For beam-tet mesh: boundary nodes have x=0, x=8.4, y=0, y=1.05, z=0, or z=1.05
-    std::vector<uint8_t> localBoundaryData(domain.getNodeCount(), 0);
-
-    // CRITICAL: Use GLOBAL bounding box, not local min/max!
-    // Local min/max would mark partition boundaries as physical boundaries
-    const auto& globalBox = domain.getBoundingBox();
-    double x_min = globalBox.xmin();
-    double x_max = globalBox.xmax();
-    double y_min = globalBox.ymin();
-    double y_max = globalBox.ymax();
-    double z_min = globalBox.zmin();
-    double z_max = globalBox.zmax();
-
-    // NOTE: Bounding box may have epsilon expansion, so use larger tolerance
-    // or compute actual min/max from node coordinates
-    double tol = 0.1;  // Increased tolerance to handle bounding box expansion
-
-    size_t boundaryCount = 0;
-    for (size_t i = 0; i < domain.getNodeCount(); ++i) {
-        double x = h_x[i], y = h_y[i], z = h_z[i];
-        // Check if near any boundary
-        if (fabs(x - x_min) < tol || fabs(x - x_max) < tol ||
-            fabs(y - y_min) < tol || fabs(y - y_max) < tol ||
-            fabs(z - z_min) < tol || fabs(z - z_max) < tol) {
-            localBoundaryData[i] = 1;
-            boundaryCount++;
-        }
+    if (rank == 0) {
+        std::cout << "\n4. Applying boundary conditions (u=0 on " 
+                  << (use_geometric_bc ? "geometric boundaries" : "all external faces") << ")...\n";
     }
 
-    // Set local boundary data for GPU-based boundary detection
+    std::vector<uint8_t> localBoundaryData(domain.getNodeCount(), 0);
+    
+    if (use_geometric_bc) {
+        // Geometric BC: identify boundary nodes by position
+        // For Poisson problem: boundary is at ALL 6 faces (x, y, z min/max)
+        const auto& d_x = domain.getNodeX();
+        const auto& d_y = domain.getNodeY();
+        const auto& d_z = domain.getNodeZ();
+
+        std::vector<double> h_x(domain.getNodeCount());
+        std::vector<double> h_y(domain.getNodeCount());
+        std::vector<double> h_z(domain.getNodeCount());
+
+        thrust::copy(thrust::device_pointer_cast(d_x.data()),
+                    thrust::device_pointer_cast(d_x.data() + domain.getNodeCount()),
+                    h_x.begin());
+        thrust::copy(thrust::device_pointer_cast(d_y.data()),
+                    thrust::device_pointer_cast(d_y.data() + domain.getNodeCount()),
+                    h_y.begin());
+        thrust::copy(thrust::device_pointer_cast(d_z.data()),
+                    thrust::device_pointer_cast(d_z.data() + domain.getNodeCount()),
+                    h_z.begin());
+
+        double x_min = *std::min_element(h_x.begin(), h_x.end());
+        double x_max = *std::max_element(h_x.begin(), h_x.end());
+        double y_min = *std::min_element(h_y.begin(), h_y.end());
+        double y_max = *std::max_element(h_y.begin(), h_y.end());
+        double z_min = *std::min_element(h_z.begin(), h_z.end());
+        double z_max = *std::max_element(h_z.begin(), h_z.end());
+
+        double tol = 1e-3;  // Tolerance for boundary detection
+
+        for (size_t i = 0; i < h_x.size(); ++i) {
+            double x = h_x[i], y = h_y[i], z = h_z[i];
+            // Check if near any of the 6 boundaries
+            if (std::abs(x - x_min) < tol || std::abs(x - x_max) < tol ||
+                std::abs(y - y_min) < tol || std::abs(y - y_max) < tol ||
+                std::abs(z - z_min) < tol || std::abs(z - z_max) < tol) {
+                localBoundaryData[i] = 1;
+            }
+        }
+
+        size_t geom_boundary_count = std::count(localBoundaryData.begin(), localBoundaryData.end(), 1);
+        if (rank == 0) {
+            std::cout << "Rank 0: Geometric boundary count: " << geom_boundary_count
+                      << " nodes at domain boundaries" << std::endl;
+            std::cout << "       Domain bounds: x=[" << x_min << "," << x_max
+                      << "] y=[" << y_min << "," << y_max
+                      << "] z=[" << z_min << "," << z_max << "]" << std::endl;
+        }
+    } else {
+        // Topological BC: use mesh boundary information
+        if (!domain.hasBoundaryInfo()) {
+            std::cerr << "ERROR: Domain has no boundary information from mesh file!" << std::endl;
+            MPI_Abort(MPI_COMM_WORLD, 1);
+        }
+
+        // Use ALL boundary nodes from mesh topology (all 6 faces)
+        const auto& d_boundaryNodes = domain.getBoundaryNodes();
+        thrust::copy(thrust::device_pointer_cast(d_boundaryNodes.data()),
+                     thrust::device_pointer_cast(d_boundaryNodes.data() + domain.getNodeCount()),
+                     localBoundaryData.begin());
+    }
+
+    size_t boundaryCount = 0;
+    for (size_t i = 0; i < localBoundaryData.size(); ++i) {
+        if (localBoundaryData[i]) boundaryCount++;
+    }
+
+    if (rank == 0) {
+        std::cout << "Rank 0: Local boundary node count: " << boundaryCount
+                  << " out of " << localBoundaryData.size() << " nodes ("
+                  << (100.0 * boundaryCount / localBoundaryData.size()) << "%)" << std::endl;
+    }
+
+    // Global reduction to get total boundary nodes across all ranks
+    size_t totalBoundaryNodes = 0;
+    MPI_Reduce(&boundaryCount, &totalBoundaryNodes, 1, MPI_UNSIGNED_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
+    if (rank == 0) {
+        std::cout << "Total boundary nodes across all ranks: " << totalBoundaryNodes << std::endl;
+    }
+
+    // Set local boundary data for DOF handler
     dof_handler.set_boundary_data(localBoundaryData);
 
     // Get boundary DOFs using DOF handler (like MFEM's GetBoundaryTrueDofs)
@@ -386,22 +657,8 @@ int main(int argc, char** argv) {
     });
 
     if (rank == 0 || rank == 1) {
-        std::cout << "Rank " << rank << ": Geometric boundary detection - domain bounds: ["
-                  << x_min << "," << x_max << "] [" << y_min << "," << y_max << "] ["
-                  << z_min << "," << z_max << "]" << std::endl;
-        std::cout << "Rank " << rank << ": Found " << boundaryCount
-                  << " boundary nodes out of " << domain.getNodeCount() << " total nodes" << std::endl;
         std::cout << "Rank " << rank << ": Found " << boundaryDofs.size() 
                   << " boundary DOFs out of " << numDofs << " total DOFs" << std::endl;
-    }
-
-    if (rank == 0) {
-        std::cout << "Rank " << rank << ": Geometric boundary detection - domain bounds: ["
-                  << x_min << "," << x_max << "] [" << y_min << "," << y_max << "] ["
-                  << z_min << "," << z_max << "]" << std::endl;
-        std::cout << "Rank " << rank << ": Found " << boundaryCount
-                  << " boundary nodes out of " << domain.getNodeCount() << " total nodes" << std::endl;
-        std::cout << "Found " << boundaryDofs.size() << " boundary DOFs (DOF handler: topological detection like MFEM), numDofs = " << numDofs << std::endl;
     }
 
     // =====================================================
@@ -429,16 +686,17 @@ int main(int argc, char** argv) {
 
     auto assembly_start = std::chrono::high_resolution_clock::now();
 
-    TetStiffnessAssembler<double, IndexType> stiffnessAssembler;
-    TetSparseMatrix<double, IndexType> K;
+    StiffnessAssemblerT<ElementTag> stiffnessAssembler;
+    SparseMatrixType K;
 
     // Get node-to-DOF mapping from distributed DOF handler
     // DOF handler already provides correct mapping:
     //   - Owned nodes: indices [0, numLocalDofs)
     //   - Ghost nodes: indices [numLocalDofs, numLocalDofs+numGhostDofs)
     const auto& nodeToLocalDof = dof_handler.get_node_to_local_dof();
+    const auto& resolvedOwnership = dof_handler.get_resolved_ownership();
 
-    stiffnessAssembler.assemble(fes, K, nodeToLocalDof);
+    stiffnessAssembler.assemble(fes, K, nodeToLocalDof, resolvedOwnership);
 
     auto assembly_end = std::chrono::high_resolution_clock::now();
     double assembly_time = std::chrono::duration<double>(assembly_end - assembly_start).count();
@@ -486,6 +744,21 @@ int main(int argc, char** argv) {
         std::cout << "Diagonal range: [" << minDiag << ", " << maxDiag << "]" << std::endl;
         std::cout << "Zero diagonal entries: " << zeroDiag << std::endl;
         std::cout << "Negative diagonal entries: " << negDiag << std::endl;
+        
+        // Check row sums (should be ~0 for Laplacian)
+        double maxRowSum = 0.0, minRowSum = 1e30;
+        int nonZeroRowSums = 0;
+        for (size_t i = 0; i < K.numRows(); ++i) {
+            double rowSum = 0.0;
+            for (IndexType idx = h_rowOffsets[i]; idx < h_rowOffsets[i+1]; ++idx) {
+                rowSum += h_values[idx];
+            }
+            maxRowSum = std::max(maxRowSum, std::abs(rowSum));
+            minRowSum = std::min(minRowSum, std::abs(rowSum));
+            if (std::abs(rowSum) > 1e-10) nonZeroRowSums++;
+        }
+        std::cout << "Row sum range: [" << minRowSum << ", " << maxRowSum << "]" << std::endl;
+        std::cout << "Rows with non-zero sum (|sum| > 1e-10): " << nonZeroRowSums << " / " << K.numRows() << std::endl;
     }
 
     // =====================================================
@@ -495,7 +768,7 @@ int main(int argc, char** argv) {
 
     auto rhs_start = std::chrono::high_resolution_clock::now();
 
-    TetMassAssembler<double, IndexType> massAssembler;
+    MassAssemblerT<ElementTag> massAssembler;
 
     SourceTerm f;
     
@@ -561,7 +834,7 @@ int main(int argc, char** argv) {
     }
     auto bc_start = std::chrono::high_resolution_clock::now();
 
-    TetSparseMatrix<double, IndexType> A_r;
+    SparseMatrixType A_r;
     mars::VectorSelector<double, cstone::GpuTag>::type B_r;
     std::vector<IndexType> dof_mapping;
     
@@ -570,7 +843,8 @@ int main(int argc, char** argv) {
     IndexType numGhostDofs = numTotalLocalDofs - numOwnedDofs;
     
     // PRE-PROCESSING: Detect DOFs with zero diagonals (not in any local element)
-    // These will be eliminated by FormLinearSystem, so we need to share them as "boundary" DOFs
+    // In multi-rank simulations, ghost DOFs may have zero diagonals because they're not 
+    // in any local elements - this is expected and correct
     if (rank == 0 || rank == 1) {
         std::cout << "Rank " << rank << ": Checking for zero-diagonal DOFs among " << numOwnedDofs << " owned DOFs\n";
     }
@@ -611,14 +885,15 @@ int main(int argc, char** argv) {
     
     if (rank == 0 || rank == 1) {
         std::cout << "Rank " << rank << ": Found " << zeroDiagDofs.size() 
-                  << " zero-diagonal DOFs (will be eliminated)\n";
-        if (!zeroDiagDofs.empty()) {
-            std::cout << "Rank " << rank << ": Adding zero-diagonal DOFs to boundary set\n";
+                  << " zero-diagonal DOFs among owned DOFs\n";
+        if (!zeroDiagDofs.empty() && numRanks == 1) {
+            std::cerr << "Rank " << rank << ": WARNING - Zero-diagonal DOFs in single-rank run may indicate assembly issues\n";
         }
     }
     
-    // Add zero-diagonal DOFs to boundary set so they get properly communicated
-    boundaryDofs.insert(boundaryDofs.end(), zeroDiagDofs.begin(), zeroDiagDofs.end());
+    // DO NOT add zero-diagonal DOFs to boundary set
+    // Zero diagonals in multi-rank runs indicate nodes without local elements (expected)
+    // Only true topological boundary DOFs should be in boundaryDofs
     
     // Exchange boundary DOF information to identify boundary ghosts
     // Each rank broadcasts its boundary DOFs in global numbering
@@ -668,9 +943,41 @@ int main(int argc, char** argv) {
         std::cout << "Found " << boundaryDofs.size() << " owned boundary DOFs, "
                   << ess_ghost_dofs.size() << " ghost boundary DOFs\n";
     }
-    
+
+    // Gather global statistics
+    size_t totalElements = 0;
+    size_t totalOwnedDofs = 0;
+    size_t totalBoundaryDofs = 0;
+    size_t myElements = domain.localElementCount();
+    size_t myBoundaryDofs = boundaryDofs.size();
+
+    MPI_Reduce(&myElements, &totalElements, 1, MPI_UNSIGNED_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
+    MPI_Reduce(&numOwnedDofs, &totalOwnedDofs, 1, MPI_UNSIGNED_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
+    MPI_Reduce(&myBoundaryDofs, &totalBoundaryDofs, 1, MPI_UNSIGNED_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
+
+    if (rank == 0) {
+        std::cout << "\n=== Global Mesh Statistics ===\n";
+        std::cout << "Total elements (owned by all ranks): " << totalElements << "\n";
+        std::cout << "Total owned DOFs (before BC): " << totalOwnedDofs << "\n";
+        std::cout << "Total boundary DOFs: " << totalBoundaryDofs << "\n";
+        std::cout << "Total interior DOFs: " << (totalOwnedDofs - totalBoundaryDofs) << "\n";
+        std::cout << "==============================\n\n";
+    }
+
+    // Debug: validate input sizes before FormLinearSystem
+    std::cout << "Rank " << rank << ": FormLinearSystem inputs - K: " << K.numRows() << "x" << K.numCols()
+              << ", RHS size: " << dm.get_data<1>().size()
+              << ", boundaryDofs: " << boundaryDofs.size()
+              << ", numGhostDofs: " << numGhostDofs
+              << ", ess_ghost_dofs: " << ess_ghost_dofs.size() << "\n";
+    MPI_Barrier(MPI_COMM_WORLD);  // Sync before FormLinearSystem
+
+    // Get ghost DOF mapping from FormLinearSystem
+    std::vector<IndexType> ghost_dof_mapping;
+    IndexType reducedLocalCount = 0;
     IndexType reducedSize = mars::fem::FormLinearSystem(
-        K, dm.get_data<1>(), boundaryDofs, A_r, B_r, dof_mapping, numGhostDofs, ess_ghost_dofs);
+        K, dm.get_data<1>(), boundaryDofs, A_r, B_r, dof_mapping, numGhostDofs, ess_ghost_dofs,
+        &ghost_dof_mapping, &reducedLocalCount);
     
     if (rank == 0) {
         std::cout << "Reduced system size: " << reducedSize << " DOFs (eliminated " 
@@ -737,9 +1044,8 @@ int main(int argc, char** argv) {
                   << ", A_r.numCols()=" << A_r.numCols() << ", reducedSize=" << reducedSize << std::endl;
     }
     
-    // Use the actual number of columns that need to be mapped (from FormLinearSystem)
-    // This is reducedSize + numInteriorGhostDofs where numInteriorGhostDofs = columns in [reducedSize, actualNumCols)
-    IndexType reducedLocalCount = A_r.numCols();  // Use allocated size from FormLinearSystem
+    // reducedLocalCount is now returned directly from FormLinearSystem
+    // Verify it matches the matrix allocation
     
     if (rank == 0 && actualNumCols == reducedSize) {
         std::cout << "\nNOTE: Matrix is square (no ghost columns), indicating block-diagonal system.\n";
@@ -793,8 +1099,8 @@ int main(int argc, char** argv) {
                   << "), total interior DOFs: " << numInteriorGlobal << std::endl;
     }
     
-    std::vector<IndexType> localToGlobalDof_all(reducedLocalCount);
-    
+    std::vector<IndexType> localToGlobalDof_all(reducedLocalCount, static_cast<IndexType>(-1));
+
     // Simple contiguous numbering for owned interior DOFs
     // Owned interior: [globalRowStart, globalRowEnd)
     for (IndexType j = 0; j < reducedSize; ++j) {
@@ -877,54 +1183,142 @@ int main(int argc, char** argv) {
     for (IndexType contiguousIdx = 0; contiguousIdx < allOriginalGlobalDofs.size(); ++contiguousIdx) {
         originalToContiguous[allOriginalGlobalDofs[contiguousIdx]] = contiguousIdx;
     }
-    
-    // Ghost interior: [reducedSize, reducedLocalCount) 
-    IndexType numInteriorGhostDofs = reducedLocalCount - reducedSize;
-    
-    if (rank == 0 || rank == 1) {
-        std::cout << "Rank " << rank << ": numInteriorGhostDofs=" << numInteriorGhostDofs 
-                  << ", reducedLocalCount=" << reducedLocalCount << ", reducedSize=" << reducedSize << "\n";
+
+    // Filter ghost_dof_mapping to only include ghosts that survived BC elimination on owner rank
+    // Build a compacted mapping and count actual interior ghosts
+    std::vector<IndexType> validInteriorGhostGlobalDofs;
+    std::vector<IndexType> validGhostReducedIndices;
+
+    for (IndexType g = 0; g < numGhostDofs; ++g) {
+        IndexType reducedGhostIdx = ghost_dof_mapping[g];
+        if (reducedGhostIdx != static_cast<IndexType>(-1)) {
+            // This ghost was not a boundary ghost locally
+            IndexType ghostGlobalDof = dof_handler.get_ghost_global_dof(g);
+
+            // Check if it survived BC elimination on its owner rank
+            if (originalToContiguous.find(ghostGlobalDof) != originalToContiguous.end()) {
+                validInteriorGhostGlobalDofs.push_back(ghostGlobalDof);
+                validGhostReducedIndices.push_back(reducedGhostIdx);
+            }
+        }
     }
-    
-    if (numInteriorGhostDofs > 0) {
-        // FormLinearSystem already filtered boundary ghosts, so all remaining ghosts are interior
-        // Build list of interior ghost global DOFs once
-        std::vector<IndexType> interiorGhostGlobalDofs;
-        for (IndexType g = 0; g < numGhostDofs; ++g) {
-            // Check if NOT a boundary ghost
-            bool isBoundary = (std::find(ess_ghost_dofs.begin(), ess_ghost_dofs.end(), g) != ess_ghost_dofs.end());
-            if (!isBoundary) {
-                IndexType ghostGlobalDof = dof_handler.get_ghost_global_dof(g);
-                // Also check if this global DOF is in the interior (not eliminated by owner rank)
-                if (originalToContiguous.find(ghostGlobalDof) != originalToContiguous.end()) {
-                    interiorGhostGlobalDofs.push_back(ghostGlobalDof);
+
+    IndexType actualInteriorGhostDofs = validInteriorGhostGlobalDofs.size();
+    IndexType numInteriorGhostDofs = reducedLocalCount - reducedSize;
+
+    if (rank == 0 || rank == 1) {
+        std::cout << "Rank " << rank << ": FormLinearSystem reported " << numInteriorGhostDofs
+                  << " interior ghosts, but only " << actualInteriorGhostDofs
+                  << " survived BC elimination on owner rank\n";
+        std::cout << "Rank " << rank << ": reducedLocalCount=" << reducedLocalCount
+                  << ", reducedSize=" << reducedSize << "\n";
+    }
+
+    // Map the valid interior ghost DOFs
+    for (size_t i = 0; i < validInteriorGhostGlobalDofs.size(); ++i) {
+        IndexType reducedGhostIdx = validGhostReducedIndices[i];
+        IndexType reducedCol = reducedSize + reducedGhostIdx;
+        IndexType ghostGlobalDof = validInteriorGhostGlobalDofs[i];
+
+        auto it = originalToContiguous.find(ghostGlobalDof);
+        localToGlobalDof_all[reducedCol] = it->second;
+    }
+
+    if (rank == 0 || rank == 1) {
+        std::cout << "Rank " << rank << ": Successfully mapped " << actualInteriorGhostDofs
+                  << " valid interior ghost DOFs\n";
+    }
+
+    // Check for unmapped columns and build compacted column mapping
+    IndexType unmappedCount = 0;
+    std::vector<IndexType> compactedColMapping(reducedLocalCount);
+    std::vector<IndexType> compactedGlobalMapping;
+    compactedGlobalMapping.reserve(reducedLocalCount);
+
+    // First pass: owned columns (always mapped)
+    for (IndexType col = 0; col < reducedSize; ++col) {
+        compactedColMapping[col] = col;
+        compactedGlobalMapping.push_back(localToGlobalDof_all[col]);
+    }
+
+    // Second pass: compact ghost columns (only keep mapped ones)
+    IndexType compactedGhostIdx = reducedSize;
+    for (IndexType col = reducedSize; col < reducedLocalCount; ++col) {
+        if (localToGlobalDof_all[col] != static_cast<IndexType>(-1)) {
+            compactedColMapping[col] = compactedGhostIdx++;
+            compactedGlobalMapping.push_back(localToGlobalDof_all[col]);
+        } else {
+            compactedColMapping[col] = static_cast<IndexType>(-1);
+            unmappedCount++;
+        }
+    }
+
+    IndexType compactedLocalCount = compactedGhostIdx;
+
+    if (unmappedCount > 0 && (rank == 0 || rank == 1)) {
+        std::cout << "Rank " << rank << ": Compacting matrix: removing " << unmappedCount
+                  << " unmapped ghost columns (out of " << (reducedLocalCount - reducedSize) << ")\n";
+        std::cout << "Rank " << rank << ": Compacted size: " << reducedSize << " rows × "
+                  << compactedLocalCount << " cols (was " << reducedLocalCount << ")\n";
+    }
+
+    // If we have unmapped columns, compact the matrix
+    if (unmappedCount > 0) {
+        // Read current matrix from device
+        std::vector<IndexType> h_rowOffsets(reducedSize + 1);
+        std::vector<IndexType> h_colIndices(A_r.nnz());
+        std::vector<double> h_values(A_r.nnz());
+
+        thrust::copy(thrust::device_pointer_cast(A_r.rowOffsetsPtr()),
+                     thrust::device_pointer_cast(A_r.rowOffsetsPtr() + reducedSize + 1),
+                     h_rowOffsets.begin());
+        thrust::copy(thrust::device_pointer_cast(A_r.colIndicesPtr()),
+                     thrust::device_pointer_cast(A_r.colIndicesPtr() + A_r.nnz()),
+                     h_colIndices.begin());
+        thrust::copy(thrust::device_pointer_cast(A_r.valuesPtr()),
+                     thrust::device_pointer_cast(A_r.valuesPtr() + A_r.nnz()),
+                     h_values.begin());
+
+        // Compact the matrix: remap column indices
+        std::vector<IndexType> h_rowOffsets_compact(reducedSize + 1, 0);
+        std::vector<IndexType> h_colIndices_compact;
+        std::vector<double> h_values_compact;
+        h_colIndices_compact.reserve(A_r.nnz());
+        h_values_compact.reserve(A_r.nnz());
+
+        for (IndexType row = 0; row < reducedSize; ++row) {
+            for (IndexType idx = h_rowOffsets[row]; idx < h_rowOffsets[row + 1]; ++idx) {
+                IndexType oldCol = h_colIndices[idx];
+                IndexType newCol = compactedColMapping[oldCol];
+
+                // Only keep columns that are mapped
+                if (newCol != static_cast<IndexType>(-1)) {
+                    h_colIndices_compact.push_back(newCol);
+                    h_values_compact.push_back(h_values[idx]);
                 }
             }
+            h_rowOffsets_compact[row + 1] = h_colIndices_compact.size();
         }
-        
-        if (numInteriorGhostDofs != interiorGhostGlobalDofs.size()) {
-            std::cerr << "Rank " << rank << ": ERROR - Mismatch in interior ghost count: expected " 
-                      << numInteriorGhostDofs << ", got " << interiorGhostGlobalDofs.size() << "\n";
-        } else if (rank == 0 || rank == 1) {
-            std::cout << "Rank " << rank << ": Interior ghost count matches: " << numInteriorGhostDofs << "\n";
+
+        // Reallocate compacted matrix
+        A_r.allocate(reducedSize, compactedLocalCount, h_colIndices_compact.size());
+        thrust::copy(h_rowOffsets_compact.begin(), h_rowOffsets_compact.end(),
+                     thrust::device_pointer_cast(A_r.rowOffsetsPtr()));
+        thrust::copy(h_colIndices_compact.begin(), h_colIndices_compact.end(),
+                     thrust::device_pointer_cast(A_r.colIndicesPtr()));
+        thrust::copy(h_values_compact.begin(), h_values_compact.end(),
+                     thrust::device_pointer_cast(A_r.valuesPtr()));
+
+        if (rank == 0 || rank == 1) {
+            std::cout << "Rank " << rank << ": Compacted matrix nnz: " << A_r.nnz()
+                      << " (removed " << (h_values.size() - h_values_compact.size()) << " entries)\n";
         }
-        
-        for (IndexType ghostIdx = 0; ghostIdx < numInteriorGhostDofs && ghostIdx < interiorGhostGlobalDofs.size(); ++ghostIdx) {
-            IndexType reducedCol = reducedSize + ghostIdx;
-            IndexType ghostGlobalDof = interiorGhostGlobalDofs[ghostIdx];
-            
-            // Convert to contiguous global DOF
-            auto it = originalToContiguous.find(ghostGlobalDof);
-            if (it != originalToContiguous.end()) {
-                localToGlobalDof_all[reducedCol] = it->second;
-            } else {
-                std::cerr << "Rank " << rank << ": ERROR - Interior ghost DOF " << ghostGlobalDof 
-                          << " not found in contiguous mapping!\n";
-                localToGlobalDof_all[reducedCol] = static_cast<IndexType>(-1);
-            }
-        }
+
+        // Update the global mapping to use compacted version
+        localToGlobalDof_all = compactedGlobalMapping;
+        reducedLocalCount = compactedLocalCount;
     }
-    
+
     // Validate reduced RHS before solver
     std::vector<double> h_B_r(reducedSize);
     thrust::copy(thrust::device_pointer_cast(B_r.data()),
