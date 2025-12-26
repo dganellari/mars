@@ -34,6 +34,7 @@ using std::get;
 #include <algorithm>
 #include <array>
 #include <filesystem>
+#include <iomanip>
 #include <iostream>
 #include <memory>
 #include <vector>
@@ -677,7 +678,12 @@ public:
     void buildAdjacency() { ensureAdjacency(); }
 
     // optional: explicitly request coordinate caching
-    void cacheNodeCoordinates() { ensureCoordinateCache(); }
+    void cacheNodeCoordinates()
+    {
+        // If using original coordinates, they're already stored - no need to cache
+        if (originalCoords_) return;
+        ensureCoordinateCache();
+    }
 
     // Exchange halo data for DOF vectors (MPI communication to sum shared node contributions)
     template<class... Vectors, class SendBuffer, class ReceiveBuffer>
@@ -727,7 +733,13 @@ public:
     const DeviceVector<RealType>& getNodeX() const
     {
         if (originalCoords_) {
+            if (rank_ == 0) {
+                std::cout << "DEBUG: getNodeX() using ORIGINAL coordinates (size=" << originalCoords_->d_node_x_.size() << ")" << std::endl;
+            }
             return originalCoords_->d_node_x_;
+        }
+        if (rank_ == 0) {
+            std::cout << "DEBUG: getNodeX() using SFC-DECODED coordinates" << std::endl;
         }
         ensureCoordinateCache();
         return coordCache_->d_node_x_;
@@ -1324,34 +1336,18 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::readMeshDataS
     try
     {
         // Helper to handle coordinate conversion based on type
+        // Now uses RealType directly since mesh readers use RealType for precision
         auto processCoordinates =
-            [&](const std::vector<float>& x_data, const std::vector<float>& y_data, const std::vector<float>& z_data)
+            [&](std::vector<RealType>& x_data, std::vector<RealType>& y_data, std::vector<RealType>& z_data)
         {
             auto& h_x = std::get<0>(h_coords_);
             auto& h_y = std::get<1>(h_coords_);
             auto& h_z = std::get<2>(h_coords_);
 
-            if constexpr (std::is_same_v<RealType, float>)
-            {
-                // If RealType is float, we can move directly
-                h_x = std::move(x_data);
-                h_y = std::move(y_data);
-                h_z = std::move(z_data);
-            }
-            else
-            {
-                // Otherwise convert
-                h_x.resize(nodeCount_);
-                h_y.resize(nodeCount_);
-                h_z.resize(nodeCount_);
-
-                for (size_t i = 0; i < nodeCount_; ++i)
-                {
-                    h_x[i] = static_cast<RealType>(x_data[i]);
-                    h_y[i] = static_cast<RealType>(y_data[i]);
-                    h_z[i] = static_cast<RealType>(z_data[i]);
-                }
-            }
+            // Direct move since mesh readers now use RealType
+            h_x = std::move(x_data);
+            h_y = std::move(y_data);
+            h_z = std::move(z_data);
         };
 
         // Detect if meshFile is an MFEM file or binary mesh directory
@@ -1366,9 +1362,10 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::readMeshDataS
             if (isMFEMFile)
             {
                 // Use MFEM mesh reader
+                // NOTE: Use RealType for coordinate precision (not float) to preserve exact values
                 auto [readNodeCount, readElementCount, x_data, y_data, z_data, conn_tuple, localToGlobal,
                       boundaryNodes] =
-                    mars::readMFEMMeshWithElementPartitioning<4, float, KeyType>(meshFile, rank_, numRanks_);
+                    mars::readMFEMMeshWithElementPartitioning<4, RealType, KeyType>(meshFile, rank_, numRanks_);
 
                 nodeCount_    = readNodeCount;
                 elementCount_ = readElementCount;
@@ -1383,8 +1380,9 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::readMeshDataS
             else
             {
                 // Use binary mesh reader
+                // NOTE: Use RealType for coordinate precision (not float) to preserve exact values
                 auto [readNodeCount, readElementCount, x_data, y_data, z_data, conn_tuple, localToGlobal] =
-                    mars::readMeshWithElementPartitioning<4, float, KeyType>(meshFile, rank_, numRanks_);
+                    mars::readMeshWithElementPartitioning<4, RealType, KeyType>(meshFile, rank_, numRanks_);
 
                 nodeCount_    = readNodeCount;
                 elementCount_ = readElementCount;
@@ -1402,9 +1400,10 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::readMeshDataS
             if (isMFEMFile)
             {
                 // Use MFEM mesh reader for hex elements
+                // NOTE: Use RealType for coordinate precision (not float) to preserve exact values
                 auto [readNodeCount, readElementCount, x_data, y_data, z_data, conn_tuple, localToGlobal,
                       boundaryNodes] =
-                    mars::readMFEMMeshWithElementPartitioning<8, float, KeyType>(meshFile, rank_, numRanks_);
+                    mars::readMFEMMeshWithElementPartitioning<8, RealType, KeyType>(meshFile, rank_, numRanks_);
 
                 nodeCount_    = readNodeCount;
                 elementCount_ = readElementCount;
@@ -1419,8 +1418,9 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::readMeshDataS
             else
             {
                 // Use binary mesh reader
+                // NOTE: Use RealType for coordinate precision (not float) to preserve exact values
                 auto [readNodeCount, readElementCount, x_data, y_data, z_data, conn_tuple, localToGlobal] =
-                    mars::readMeshWithElementPartitioning<8, float, KeyType>(meshFile, rank_, numRanks_);
+                    mars::readMeshWithElementPartitioning<8, RealType, KeyType>(meshFile, rank_, numRanks_);
 
                 nodeCount_    = readNodeCount;
                 elementCount_ = readElementCount;
@@ -1438,9 +1438,10 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::readMeshDataS
             if (isMFEMFile)
             {
                 // Use MFEM mesh reader for triangle elements
+                // NOTE: Use RealType for coordinate precision (not float) to preserve exact values
                 auto [readNodeCount, readElementCount, x_data, y_data, z_data, conn_tuple, localToGlobal,
                       boundaryNodes] =
-                    mars::readMFEMMeshWithElementPartitioning<3, float, KeyType>(meshFile, rank_, numRanks_);
+                    mars::readMFEMMeshWithElementPartitioning<3, RealType, KeyType>(meshFile, rank_, numRanks_);
 
                 nodeCount_    = readNodeCount;
                 elementCount_ = readElementCount;
@@ -1455,8 +1456,9 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::readMeshDataS
             else
             {
                 // Use binary mesh reader
+                // NOTE: Use RealType for coordinate precision (not float) to preserve exact values
                 auto [readNodeCount, readElementCount, x_data, y_data, z_data, conn_tuple, localToGlobal] =
-                    mars::readMeshWithElementPartitioning<3, float, KeyType>(meshFile, rank_, numRanks_);
+                    mars::readMeshWithElementPartitioning<3, RealType, KeyType>(meshFile, rank_, numRanks_);
 
                 nodeCount_    = readNodeCount;
                 elementCount_ = readElementCount;
@@ -1474,9 +1476,10 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::readMeshDataS
             if (isMFEMFile)
             {
                 // Use MFEM mesh reader for quad elements
+                // NOTE: Use RealType for coordinate precision (not float) to preserve exact values
                 auto [readNodeCount, readElementCount, x_data, y_data, z_data, conn_tuple, localToGlobal,
                       boundaryNodes] =
-                    mars::readMFEMMeshWithElementPartitioning<4, float, KeyType>(meshFile, rank_, numRanks_);
+                    mars::readMFEMMeshWithElementPartitioning<4, RealType, KeyType>(meshFile, rank_, numRanks_);
 
                 nodeCount_    = readNodeCount;
                 elementCount_ = readElementCount;
@@ -1491,8 +1494,9 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::readMeshDataS
             else
             {
                 // Use binary mesh reader
+                // NOTE: Use RealType for coordinate precision (not float) to preserve exact values
                 auto [readNodeCount, readElementCount, x_data, y_data, z_data, conn_tuple, localToGlobal] =
-                    mars::readMeshWithElementPartitioning<4, float, KeyType>(meshFile, rank_, numRanks_);
+                    mars::readMeshWithElementPartitioning<4, RealType, KeyType>(meshFile, rank_, numRanks_);
 
                 nodeCount_    = readNodeCount;
                 elementCount_ = readElementCount;
@@ -1682,6 +1686,7 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::sync(const De
                 auto& d_i6 = std::get<6>(d_conn_);
                 auto& d_i7 = std::get<7>(d_conn_);
 
+
             extractElementNodeCoordsKernel<ElementTag, KeyType, RealType><<<numBlocks, blockSize>>>(
                 thrust::raw_pointer_cast(d_x.data()), thrust::raw_pointer_cast(d_y.data()), thrust::raw_pointer_cast(d_z.data()),
                 thrust::raw_pointer_cast(d_i0.data()), thrust::raw_pointer_cast(d_i1.data()),
@@ -1715,12 +1720,38 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::sync(const De
             syncDomainImplWithOrigCoords(domain_.get(), d_elemSfcCodes_, d_elemX, d_elemY, d_elemZ, d_elemH,
                                         elementCount_, d_conn_keys_, d_orig_coords);
 
-            // Allocate and rebuild node coordinate arrays from synced element properties
-            originalCoords_ = std::make_unique<OriginalCoordinates<ElementTag, RealType, KeyType, AcceleratorTag>>(nodeCount_);
-
             // Build adjacency to get local IDs (d_conn_keys_ -> d_conn_local_ids_)
             // This is needed because d_conn_keys_ contains SFC keys, not local node indices
+            // IMPORTANT: Must call BEFORE allocating originalCoords_ because ensureAdjacency()
+            // updates nodeCount_ via createLocalToGlobalSfcMap()
             ensureAdjacency();
+
+            // DEBUG: Check coord arrays AFTER sync
+            if (rank_ == 0) {
+                std::cout << "\n=== AFTER SYNC (before rebuild) ===" << std::endl;
+                std::cout << "d_elemOrigX0 size = " << d_elemOrigX0.size() << " (elementCount=" << elementCount_ << ")" << std::endl;
+                std::cout << "nodeCount_ (after ensureAdjacency) = " << nodeCount_ << std::endl;
+
+                // Check first few values with full precision
+                std::vector<RealType> h_check(std::min(size_t(5), d_elemOrigX0.size()));
+                cudaMemcpy(h_check.data(), thrust::raw_pointer_cast(d_elemOrigX0.data()),
+                          h_check.size() * sizeof(RealType), cudaMemcpyDeviceToHost);
+                std::cout << std::setprecision(15);  // Full precision
+                for (size_t i = 0; i < h_check.size(); ++i) {
+                    std::cout << "  d_elemOrigX0[" << i << "] = " << h_check[i] << std::endl;
+                }
+
+                // Check if any are exactly 0 (origin)
+                bool foundZero = false;
+                for (size_t i = 0; i < h_check.size(); ++i) {
+                    if (std::abs(h_check[i]) < 1e-10) foundZero = true;
+                }
+                std::cout << "  Found zero X coord in first 5 elements: " << (foundZero ? "YES" : "NO") << std::endl;
+                std::cout << "==================================\n" << std::endl;
+            }
+
+            // Allocate node coordinate arrays using updated nodeCount_ (after ensureAdjacency)
+            originalCoords_ = std::make_unique<OriginalCoordinates<ElementTag, RealType, KeyType, AcceleratorTag>>(nodeCount_);
 
             // Rebuild node arrays using post-sync LOCAL connectivity (d_conn_local_ids_)
             int newNumBlocks = (elementCount_ + blockSize - 1) / blockSize;
@@ -1746,6 +1777,37 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::sync(const De
                 thrust::raw_pointer_cast(originalCoords_->d_node_z_.data()),
                 elementCount_);
             cudaCheckError();
+
+            // DEBUG: Verify rebuilt coordinates
+            if (rank_ == 0) {
+                std::vector<RealType> h_rebuilt_x(std::min(size_t(30), originalCoords_->d_node_x_.size()));
+                std::vector<RealType> h_rebuilt_y(std::min(size_t(30), originalCoords_->d_node_y_.size()));
+                std::vector<RealType> h_rebuilt_z(std::min(size_t(30), originalCoords_->d_node_z_.size()));
+
+                cudaMemcpy(h_rebuilt_x.data(), thrust::raw_pointer_cast(originalCoords_->d_node_x_.data()),
+                          h_rebuilt_x.size() * sizeof(RealType), cudaMemcpyDeviceToHost);
+                cudaMemcpy(h_rebuilt_y.data(), thrust::raw_pointer_cast(originalCoords_->d_node_y_.data()),
+                          h_rebuilt_y.size() * sizeof(RealType), cudaMemcpyDeviceToHost);
+                cudaMemcpy(h_rebuilt_z.data(), thrust::raw_pointer_cast(originalCoords_->d_node_z_.data()),
+                          h_rebuilt_z.size() * sizeof(RealType), cudaMemcpyDeviceToHost);
+
+                std::cout << "\n=== DEBUG REBUILT COORDINATES ===" << std::endl;
+                std::cout << std::setprecision(15);  // Full precision
+                std::cout << "First 30 REBUILT coordinates (after sync and rebuild):" << std::endl;
+                std::cout << "Expected exact value: 1/127 = " << (1.0/127.0) << std::endl;
+                bool foundOrigin = false;
+                for (size_t i = 0; i < h_rebuilt_x.size(); ++i) {
+                    std::cout << "  rebuilt_node[" << i << "] = [" << h_rebuilt_x[i] << ", "
+                             << h_rebuilt_y[i] << ", " << h_rebuilt_z[i] << "]" << std::endl;
+                    if (std::abs(h_rebuilt_x[i]) < 1e-10 && std::abs(h_rebuilt_y[i]) < 1e-10 && std::abs(h_rebuilt_z[i]) < 1e-10) {
+                        foundOrigin = true;
+                    }
+                }
+                if (!foundOrigin) {
+                    std::cout << "  WARNING: No node at origin in rebuilt coords!" << std::endl;
+                }
+                std::cout << "==================================\n" << std::endl;
+            }
 
                 std::cout << "Rank " << rank_ << " stored exact original coordinates for " << nodeCount_ << " nodes." << std::endl;
             } else {

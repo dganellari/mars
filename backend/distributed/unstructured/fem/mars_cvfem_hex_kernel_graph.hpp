@@ -134,6 +134,11 @@ __global__ void cvfem_hex_assembly_kernel_graph(
     double lhs[64] = {0.0};
     double rhs[8] = {0.0};
 
+    // Debug: Print full element matrix for origin element BEFORE assembly
+    if (isOriginElement) {
+        printf("\n=== MARS Origin Element LOCAL MATRIX (before assembly) ===\n");
+    }
+
     // Loop over 12 sub-control surfaces (SCS)
     for (int ip = 0; ip < 12; ++ip) {
         int nodeL = hexLRSCV[ip * 2];
@@ -217,6 +222,33 @@ __global__ void cvfem_hex_assembly_kernel_graph(
             rhs[nodeL] -= diff_coeff * phi[node];
             rhs[nodeR] += diff_coeff * phi[node];
         }
+    }
+
+    // Debug: Print full 8x8 element matrix for origin element
+    if (isOriginElement) {
+        printf("MARS Origin Element 8x8 LHS matrix:\n");
+        for (int row = 0; row < 8; ++row) {
+            printf("  row %d: [", row);
+            for (int col = 0; col < 8; ++col) {
+                printf("%.6e", lhs[row * 8 + col]);
+                if (col < 7) printf(", ");
+            }
+            printf("]\n");
+        }
+        printf("MARS Origin Element RHS: [");
+        for (int i = 0; i < 8; ++i) {
+            printf("%.6e", rhs[i]);
+            if (i < 7) printf(", ");
+        }
+        printf("]\n");
+        printf("Row sums (should be ~0 for diffusion-only): [");
+        for (int row = 0; row < 8; ++row) {
+            double rowsum = 0;
+            for (int col = 0; col < 8; ++col) rowsum += lhs[row * 8 + col];
+            printf("%.6e", rowsum);
+            if (row < 7) printf(", ");
+        }
+        printf("]\n\n");
     }
 
     // Assemble into global system with diagonal lumping for missing entries
