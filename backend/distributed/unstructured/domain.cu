@@ -399,6 +399,143 @@ __global__ void extractRepCoordinatesKernel(const RealType* x,
     }
 }
 
+// Kernel to extract original coordinates of all 8 nodes for each hex8 element
+// This extracts 24 per-element properties (8 nodes × 3 coords)
+template<typename ElementTag, typename KeyType, typename RealType>
+__global__ void extractElementNodeCoordsKernel(const RealType* x,
+                                               const RealType* y,
+                                               const RealType* z,
+                                               const KeyType* idx0,
+                                               const KeyType* idx1,
+                                               const KeyType* idx2,
+                                               const KeyType* idx3,
+                                               const KeyType* idx4,
+                                               const KeyType* idx5,
+                                               const KeyType* idx6,
+                                               const KeyType* idx7,
+                                               RealType* elemOrigX0, RealType* elemOrigY0, RealType* elemOrigZ0,
+                                               RealType* elemOrigX1, RealType* elemOrigY1, RealType* elemOrigZ1,
+                                               RealType* elemOrigX2, RealType* elemOrigY2, RealType* elemOrigZ2,
+                                               RealType* elemOrigX3, RealType* elemOrigY3, RealType* elemOrigZ3,
+                                               RealType* elemOrigX4, RealType* elemOrigY4, RealType* elemOrigZ4,
+                                               RealType* elemOrigX5, RealType* elemOrigY5, RealType* elemOrigZ5,
+                                               RealType* elemOrigX6, RealType* elemOrigY6, RealType* elemOrigZ6,
+                                               RealType* elemOrigX7, RealType* elemOrigY7, RealType* elemOrigZ7,
+                                               int numElements)
+{
+    int elemIdx = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (elemIdx < numElements)
+    {
+        // Extract coordinates for all 8 nodes of this element
+        elemOrigX0[elemIdx] = x[idx0[elemIdx]];
+        elemOrigY0[elemIdx] = y[idx0[elemIdx]];
+        elemOrigZ0[elemIdx] = z[idx0[elemIdx]];
+
+        elemOrigX1[elemIdx] = x[idx1[elemIdx]];
+        elemOrigY1[elemIdx] = y[idx1[elemIdx]];
+        elemOrigZ1[elemIdx] = z[idx1[elemIdx]];
+
+        elemOrigX2[elemIdx] = x[idx2[elemIdx]];
+        elemOrigY2[elemIdx] = y[idx2[elemIdx]];
+        elemOrigZ2[elemIdx] = z[idx2[elemIdx]];
+
+        elemOrigX3[elemIdx] = x[idx3[elemIdx]];
+        elemOrigY3[elemIdx] = y[idx3[elemIdx]];
+        elemOrigZ3[elemIdx] = z[idx3[elemIdx]];
+
+        elemOrigX4[elemIdx] = x[idx4[elemIdx]];
+        elemOrigY4[elemIdx] = y[idx4[elemIdx]];
+        elemOrigZ4[elemIdx] = z[idx4[elemIdx]];
+
+        elemOrigX5[elemIdx] = x[idx5[elemIdx]];
+        elemOrigY5[elemIdx] = y[idx5[elemIdx]];
+        elemOrigZ5[elemIdx] = z[idx5[elemIdx]];
+
+        elemOrigX6[elemIdx] = x[idx6[elemIdx]];
+        elemOrigY6[elemIdx] = y[idx6[elemIdx]];
+        elemOrigZ6[elemIdx] = z[idx6[elemIdx]];
+
+        elemOrigX7[elemIdx] = x[idx7[elemIdx]];
+        elemOrigY7[elemIdx] = y[idx7[elemIdx]];
+        elemOrigZ7[elemIdx] = z[idx7[elemIdx]];
+    }
+}
+
+// Kernel to rebuild node coordinate arrays from element properties after sync
+// Inverse of extractElementNodeCoordsKernel: elements → nodes
+template<typename ElementTag, typename KeyType, typename RealType>
+__global__ void rebuildNodeCoordsFromElementsKernel(
+    const KeyType* connKey0, const KeyType* connKey1, const KeyType* connKey2, const KeyType* connKey3,
+    const KeyType* connKey4, const KeyType* connKey5, const KeyType* connKey6, const KeyType* connKey7,
+    const RealType* elemOrigX0, const RealType* elemOrigY0, const RealType* elemOrigZ0,
+    const RealType* elemOrigX1, const RealType* elemOrigY1, const RealType* elemOrigZ1,
+    const RealType* elemOrigX2, const RealType* elemOrigY2, const RealType* elemOrigZ2,
+    const RealType* elemOrigX3, const RealType* elemOrigY3, const RealType* elemOrigZ3,
+    const RealType* elemOrigX4, const RealType* elemOrigY4, const RealType* elemOrigZ4,
+    const RealType* elemOrigX5, const RealType* elemOrigY5, const RealType* elemOrigZ5,
+    const RealType* elemOrigX6, const RealType* elemOrigY6, const RealType* elemOrigZ6,
+    const RealType* elemOrigX7, const RealType* elemOrigY7, const RealType* elemOrigZ7,
+    RealType* nodeX, RealType* nodeY, RealType* nodeZ,
+    int numElements)
+{
+    int elemIdx = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (elemIdx < numElements)
+    {
+        // For each element, write the original coordinates to the node arrays
+        // using the post-sync local node IDs from d_conn_keys_
+
+        // Node 0
+        KeyType nodeId0 = connKey0[elemIdx];
+        nodeX[nodeId0] = elemOrigX0[elemIdx];
+        nodeY[nodeId0] = elemOrigY0[elemIdx];
+        nodeZ[nodeId0] = elemOrigZ0[elemIdx];
+
+        // Node 1
+        KeyType nodeId1 = connKey1[elemIdx];
+        nodeX[nodeId1] = elemOrigX1[elemIdx];
+        nodeY[nodeId1] = elemOrigY1[elemIdx];
+        nodeZ[nodeId1] = elemOrigZ1[elemIdx];
+
+        // Node 2
+        KeyType nodeId2 = connKey2[elemIdx];
+        nodeX[nodeId2] = elemOrigX2[elemIdx];
+        nodeY[nodeId2] = elemOrigY2[elemIdx];
+        nodeZ[nodeId2] = elemOrigZ2[elemIdx];
+
+        // Node 3
+        KeyType nodeId3 = connKey3[elemIdx];
+        nodeX[nodeId3] = elemOrigX3[elemIdx];
+        nodeY[nodeId3] = elemOrigY3[elemIdx];
+        nodeZ[nodeId3] = elemOrigZ3[elemIdx];
+
+        // Node 4
+        KeyType nodeId4 = connKey4[elemIdx];
+        nodeX[nodeId4] = elemOrigX4[elemIdx];
+        nodeY[nodeId4] = elemOrigY4[elemIdx];
+        nodeZ[nodeId4] = elemOrigZ4[elemIdx];
+
+        // Node 5
+        KeyType nodeId5 = connKey5[elemIdx];
+        nodeX[nodeId5] = elemOrigX5[elemIdx];
+        nodeY[nodeId5] = elemOrigY5[elemIdx];
+        nodeZ[nodeId5] = elemOrigZ5[elemIdx];
+
+        // Node 6
+        KeyType nodeId6 = connKey6[elemIdx];
+        nodeX[nodeId6] = elemOrigX6[elemIdx];
+        nodeY[nodeId6] = elemOrigY6[elemIdx];
+        nodeZ[nodeId6] = elemOrigZ6[elemIdx];
+
+        // Node 7
+        KeyType nodeId7 = connKey7[elemIdx];
+        nodeX[nodeId7] = elemOrigX7[elemIdx];
+        nodeY[nodeId7] = elemOrigY7[elemIdx];
+        nodeZ[nodeId7] = elemOrigZ7[elemIdx];
+    }
+}
+
 template<typename KeyType>
 __global__ void extractAllTupleComponentsKernel(const KeyType* conn_key0,
                                                const KeyType* conn_key1,
@@ -1160,6 +1297,120 @@ template __global__ void extractRepCoordinatesKernel<HexTag, uint64_t, float>(
 template __global__ void extractRepCoordinatesKernel<HexTag, uint64_t, double>(
     const double* x, const double* y, const double* z, const double* h,
     const uint64_t* elemToNodeMap, double* elemX, double* elemY, double* elemZ, double* elemH, int numElements);
+
+// Template instantiations for extractElementNodeCoordsKernel (HexTag only)
+template __global__ void extractElementNodeCoordsKernel<HexTag, unsigned, float>(
+    const float* x, const float* y, const float* z,
+    const unsigned* idx0, const unsigned* idx1, const unsigned* idx2, const unsigned* idx3,
+    const unsigned* idx4, const unsigned* idx5, const unsigned* idx6, const unsigned* idx7,
+    float* elemOrigX0, float* elemOrigY0, float* elemOrigZ0,
+    float* elemOrigX1, float* elemOrigY1, float* elemOrigZ1,
+    float* elemOrigX2, float* elemOrigY2, float* elemOrigZ2,
+    float* elemOrigX3, float* elemOrigY3, float* elemOrigZ3,
+    float* elemOrigX4, float* elemOrigY4, float* elemOrigZ4,
+    float* elemOrigX5, float* elemOrigY5, float* elemOrigZ5,
+    float* elemOrigX6, float* elemOrigY6, float* elemOrigZ6,
+    float* elemOrigX7, float* elemOrigY7, float* elemOrigZ7,
+    int numElements);
+
+template __global__ void extractElementNodeCoordsKernel<HexTag, unsigned, double>(
+    const double* x, const double* y, const double* z,
+    const unsigned* idx0, const unsigned* idx1, const unsigned* idx2, const unsigned* idx3,
+    const unsigned* idx4, const unsigned* idx5, const unsigned* idx6, const unsigned* idx7,
+    double* elemOrigX0, double* elemOrigY0, double* elemOrigZ0,
+    double* elemOrigX1, double* elemOrigY1, double* elemOrigZ1,
+    double* elemOrigX2, double* elemOrigY2, double* elemOrigZ2,
+    double* elemOrigX3, double* elemOrigY3, double* elemOrigZ3,
+    double* elemOrigX4, double* elemOrigY4, double* elemOrigZ4,
+    double* elemOrigX5, double* elemOrigY5, double* elemOrigZ5,
+    double* elemOrigX6, double* elemOrigY6, double* elemOrigZ6,
+    double* elemOrigX7, double* elemOrigY7, double* elemOrigZ7,
+    int numElements);
+
+template __global__ void extractElementNodeCoordsKernel<HexTag, uint64_t, float>(
+    const float* x, const float* y, const float* z,
+    const uint64_t* idx0, const uint64_t* idx1, const uint64_t* idx2, const uint64_t* idx3,
+    const uint64_t* idx4, const uint64_t* idx5, const uint64_t* idx6, const uint64_t* idx7,
+    float* elemOrigX0, float* elemOrigY0, float* elemOrigZ0,
+    float* elemOrigX1, float* elemOrigY1, float* elemOrigZ1,
+    float* elemOrigX2, float* elemOrigY2, float* elemOrigZ2,
+    float* elemOrigX3, float* elemOrigY3, float* elemOrigZ3,
+    float* elemOrigX4, float* elemOrigY4, float* elemOrigZ4,
+    float* elemOrigX5, float* elemOrigY5, float* elemOrigZ5,
+    float* elemOrigX6, float* elemOrigY6, float* elemOrigZ6,
+    float* elemOrigX7, float* elemOrigY7, float* elemOrigZ7,
+    int numElements);
+
+template __global__ void extractElementNodeCoordsKernel<HexTag, uint64_t, double>(
+    const double* x, const double* y, const double* z,
+    const uint64_t* idx0, const uint64_t* idx1, const uint64_t* idx2, const uint64_t* idx3,
+    const uint64_t* idx4, const uint64_t* idx5, const uint64_t* idx6, const uint64_t* idx7,
+    double* elemOrigX0, double* elemOrigY0, double* elemOrigZ0,
+    double* elemOrigX1, double* elemOrigY1, double* elemOrigZ1,
+    double* elemOrigX2, double* elemOrigY2, double* elemOrigZ2,
+    double* elemOrigX3, double* elemOrigY3, double* elemOrigZ3,
+    double* elemOrigX4, double* elemOrigY4, double* elemOrigZ4,
+    double* elemOrigX5, double* elemOrigY5, double* elemOrigZ5,
+    double* elemOrigX6, double* elemOrigY6, double* elemOrigZ6,
+    double* elemOrigX7, double* elemOrigY7, double* elemOrigZ7,
+    int numElements);
+
+// Template instantiations for rebuildNodeCoordsFromElementsKernel (HexTag only)
+template __global__ void rebuildNodeCoordsFromElementsKernel<HexTag, unsigned, float>(
+    const unsigned* connKey0, const unsigned* connKey1, const unsigned* connKey2, const unsigned* connKey3,
+    const unsigned* connKey4, const unsigned* connKey5, const unsigned* connKey6, const unsigned* connKey7,
+    const float* elemOrigX0, const float* elemOrigY0, const float* elemOrigZ0,
+    const float* elemOrigX1, const float* elemOrigY1, const float* elemOrigZ1,
+    const float* elemOrigX2, const float* elemOrigY2, const float* elemOrigZ2,
+    const float* elemOrigX3, const float* elemOrigY3, const float* elemOrigZ3,
+    const float* elemOrigX4, const float* elemOrigY4, const float* elemOrigZ4,
+    const float* elemOrigX5, const float* elemOrigY5, const float* elemOrigZ5,
+    const float* elemOrigX6, const float* elemOrigY6, const float* elemOrigZ6,
+    const float* elemOrigX7, const float* elemOrigY7, const float* elemOrigZ7,
+    float* nodeX, float* nodeY, float* nodeZ,
+    int numElements);
+
+template __global__ void rebuildNodeCoordsFromElementsKernel<HexTag, unsigned, double>(
+    const unsigned* connKey0, const unsigned* connKey1, const unsigned* connKey2, const unsigned* connKey3,
+    const unsigned* connKey4, const unsigned* connKey5, const unsigned* connKey6, const unsigned* connKey7,
+    const double* elemOrigX0, const double* elemOrigY0, const double* elemOrigZ0,
+    const double* elemOrigX1, const double* elemOrigY1, const double* elemOrigZ1,
+    const double* elemOrigX2, const double* elemOrigY2, const double* elemOrigZ2,
+    const double* elemOrigX3, const double* elemOrigY3, const double* elemOrigZ3,
+    const double* elemOrigX4, const double* elemOrigY4, const double* elemOrigZ4,
+    const double* elemOrigX5, const double* elemOrigY5, const double* elemOrigZ5,
+    const double* elemOrigX6, const double* elemOrigY6, const double* elemOrigZ6,
+    const double* elemOrigX7, const double* elemOrigY7, const double* elemOrigZ7,
+    double* nodeX, double* nodeY, double* nodeZ,
+    int numElements);
+
+template __global__ void rebuildNodeCoordsFromElementsKernel<HexTag, uint64_t, float>(
+    const uint64_t* connKey0, const uint64_t* connKey1, const uint64_t* connKey2, const uint64_t* connKey3,
+    const uint64_t* connKey4, const uint64_t* connKey5, const uint64_t* connKey6, const uint64_t* connKey7,
+    const float* elemOrigX0, const float* elemOrigY0, const float* elemOrigZ0,
+    const float* elemOrigX1, const float* elemOrigY1, const float* elemOrigZ1,
+    const float* elemOrigX2, const float* elemOrigY2, const float* elemOrigZ2,
+    const float* elemOrigX3, const float* elemOrigY3, const float* elemOrigZ3,
+    const float* elemOrigX4, const float* elemOrigY4, const float* elemOrigZ4,
+    const float* elemOrigX5, const float* elemOrigY5, const float* elemOrigZ5,
+    const float* elemOrigX6, const float* elemOrigY6, const float* elemOrigZ6,
+    const float* elemOrigX7, const float* elemOrigY7, const float* elemOrigZ7,
+    float* nodeX, float* nodeY, float* nodeZ,
+    int numElements);
+
+template __global__ void rebuildNodeCoordsFromElementsKernel<HexTag, uint64_t, double>(
+    const uint64_t* connKey0, const uint64_t* connKey1, const uint64_t* connKey2, const uint64_t* connKey3,
+    const uint64_t* connKey4, const uint64_t* connKey5, const uint64_t* connKey6, const uint64_t* connKey7,
+    const double* elemOrigX0, const double* elemOrigY0, const double* elemOrigZ0,
+    const double* elemOrigX1, const double* elemOrigY1, const double* elemOrigZ1,
+    const double* elemOrigX2, const double* elemOrigY2, const double* elemOrigZ2,
+    const double* elemOrigX3, const double* elemOrigY3, const double* elemOrigZ3,
+    const double* elemOrigX4, const double* elemOrigY4, const double* elemOrigZ4,
+    const double* elemOrigX5, const double* elemOrigY5, const double* elemOrigZ5,
+    const double* elemOrigX6, const double* elemOrigY6, const double* elemOrigZ6,
+    const double* elemOrigX7, const double* elemOrigY7, const double* elemOrigZ7,
+    double* nodeX, double* nodeY, double* nodeZ,
+    int numElements);
 
 template __global__ void transformCharacteristicSizesKernel<float>(float* d_h, size_t size, float meshFactor, float minH, float maxH);
 template __global__ void transformCharacteristicSizesKernel<double>(double* d_h, size_t size, double meshFactor, double minH, double maxH);

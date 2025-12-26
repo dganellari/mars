@@ -161,6 +161,44 @@ __global__ void buildSfcConnectivity(const KeyType* indices0,
                                      KeyType* conn_key7,
                                      int numElements);
 
+// Forward declarations for kernels that handle original coordinates
+template<typename ElementTag, typename KeyType, typename RealType>
+__global__ void extractElementNodeCoordsKernel(const RealType* x,
+                                               const RealType* y,
+                                               const RealType* z,
+                                               const KeyType* idx0,
+                                               const KeyType* idx1,
+                                               const KeyType* idx2,
+                                               const KeyType* idx3,
+                                               const KeyType* idx4,
+                                               const KeyType* idx5,
+                                               const KeyType* idx6,
+                                               const KeyType* idx7,
+                                               RealType* elemOrigX0, RealType* elemOrigY0, RealType* elemOrigZ0,
+                                               RealType* elemOrigX1, RealType* elemOrigY1, RealType* elemOrigZ1,
+                                               RealType* elemOrigX2, RealType* elemOrigY2, RealType* elemOrigZ2,
+                                               RealType* elemOrigX3, RealType* elemOrigY3, RealType* elemOrigZ3,
+                                               RealType* elemOrigX4, RealType* elemOrigY4, RealType* elemOrigZ4,
+                                               RealType* elemOrigX5, RealType* elemOrigY5, RealType* elemOrigZ5,
+                                               RealType* elemOrigX6, RealType* elemOrigY6, RealType* elemOrigZ6,
+                                               RealType* elemOrigX7, RealType* elemOrigY7, RealType* elemOrigZ7,
+                                               int numElements);
+
+template<typename ElementTag, typename KeyType, typename RealType>
+__global__ void rebuildNodeCoordsFromElementsKernel(
+    const KeyType* connKey0, const KeyType* connKey1, const KeyType* connKey2, const KeyType* connKey3,
+    const KeyType* connKey4, const KeyType* connKey5, const KeyType* connKey6, const KeyType* connKey7,
+    const RealType* elemOrigX0, const RealType* elemOrigY0, const RealType* elemOrigZ0,
+    const RealType* elemOrigX1, const RealType* elemOrigY1, const RealType* elemOrigZ1,
+    const RealType* elemOrigX2, const RealType* elemOrigY2, const RealType* elemOrigZ2,
+    const RealType* elemOrigX3, const RealType* elemOrigY3, const RealType* elemOrigZ3,
+    const RealType* elemOrigX4, const RealType* elemOrigY4, const RealType* elemOrigZ4,
+    const RealType* elemOrigX5, const RealType* elemOrigY5, const RealType* elemOrigZ5,
+    const RealType* elemOrigX6, const RealType* elemOrigY6, const RealType* elemOrigZ6,
+    const RealType* elemOrigX7, const RealType* elemOrigY7, const RealType* elemOrigZ7,
+    RealType* nodeX, RealType* nodeY, RealType* nodeZ,
+    int numElements);
+
 template<typename KeyType>
 __global__ void decodeSfcToIntegersKernel(const KeyType* keys, unsigned* x, unsigned* y, unsigned* z, size_t numKeys);
 
@@ -383,6 +421,25 @@ struct CoordinateCache
     CoordinateCache(const ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>& domain);
 };
 
+// ============================================================================
+// OriginalCoordinates: Exact original node coordinates from mesh file
+// Alternative to SFC-decoded coordinates for high-precision applications
+// ============================================================================
+template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
+struct OriginalCoordinates
+{
+    template<typename T>
+    using DeviceVector = typename VectorSelector<T, AcceleratorTag>::type;
+
+    // Original coordinates from mesh file (exact precision)
+    DeviceVector<RealType> d_node_x_;
+    DeviceVector<RealType> d_node_y_;
+    DeviceVector<RealType> d_node_z_;
+
+    // Constructor: allocate storage for nodeCount nodes
+    OriginalCoordinates(size_t nodeCount);
+};
+
 // Main domain class templated on element type, real type, key type, and accelerator type
 template<typename ElementTag     = TetTag,
          typename RealType       = float,
@@ -416,7 +473,7 @@ public:
     using HostBoundaryTuple     = std::tuple<HostVector<uint8_t>>; // (isBoundaryNode)
 
     // Constructor from file
-    ElementDomain(const std::string& meshFile, int rank, int numRanks);
+    ElementDomain(const std::string& meshFile, int rank, int numRanks, bool storeOriginalCoords = false);
 
     // Constructor from mesh data (for MFEM or other formats) - automatically computes bounding box
     ElementDomain(const HostCoordsTuple& h_coords, const HostConnectivityTuple& h_conn, int rank, int numRanks);
@@ -669,18 +726,27 @@ public:
     //! Returns cached node coordinates (lazy, initializes if not already cached).
     const DeviceVector<RealType>& getNodeX() const
     {
+        if (originalCoords_) {
+            return originalCoords_->d_node_x_;
+        }
         ensureCoordinateCache();
         return coordCache_->d_node_x_;
     }
 
     const DeviceVector<RealType>& getNodeY() const
     {
+        if (originalCoords_) {
+            return originalCoords_->d_node_y_;
+        }
         ensureCoordinateCache();
         return coordCache_->d_node_y_;
     }
 
     const DeviceVector<RealType>& getNodeZ() const
     {
+        if (originalCoords_) {
+            return originalCoords_->d_node_z_;
+        }
         ensureCoordinateCache();
         return coordCache_->d_node_z_;
     }
@@ -697,6 +763,9 @@ private:
     std::unique_ptr<DomainType> domain_;
     std::size_t elementCount_ = 0;
     std::size_t nodeCount_    = 0;
+
+    // Flag to store original coordinates instead of SFC-decoded coords
+    bool storeOriginalCoords_ = false;
 
     // Core mesh data (always allocated)
     // element unique identifiers (SFC codes)
@@ -724,10 +793,12 @@ private:
     friend struct AdjacencyData<ElementTag, RealType, KeyType, AcceleratorTag>;
     friend struct HaloData<ElementTag, RealType, KeyType, AcceleratorTag>;
     friend struct CoordinateCache<ElementTag, RealType, KeyType, AcceleratorTag>;
+    friend struct OriginalCoordinates<ElementTag, RealType, KeyType, AcceleratorTag>;
 
     mutable std::unique_ptr<AdjacencyData<ElementTag, RealType, KeyType, AcceleratorTag>> adjacency_;
     mutable std::unique_ptr<HaloData<ElementTag, RealType, KeyType, AcceleratorTag>> halo_;
     mutable std::unique_ptr<CoordinateCache<ElementTag, RealType, KeyType, AcceleratorTag>> coordCache_;
+    mutable std::unique_ptr<OriginalCoordinates<ElementTag, RealType, KeyType, AcceleratorTag>> originalCoords_;
 
     void initializeConnectivityKeys();
 
@@ -1088,10 +1159,12 @@ void testSfcPrecision(const cstone::Box<RealType>& box, int rank = 0)
 template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
 ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(const std::string& meshFile,
                                                                             int rank,
-                                                                            int numRanks)
+                                                                            int numRanks,
+                                                                            bool storeOriginalCoords)
     : rank_(rank)
     , numRanks_(numRanks)
     , box_(0, 1)
+    , storeOriginalCoords_(storeOriginalCoords)
 {
     // Host data in SoA format
     HostCoordsTuple h_coords;     // (x, y, z)
@@ -1583,9 +1656,106 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::sync(const De
             thrust::raw_pointer_cast(d_elemH.data()), elementCount_);
         cudaCheckError();
 
-        std::cout << "Rank " << rank_ << " syncing" << ElementTag::Name << " domain with " << elementCount_
+        std::cout << "Rank " << rank_ << " syncing " << ElementTag::Name << " domain with " << elementCount_
                   << " elements." << std::endl;
-        syncDomainImpl(domain_.get(), d_elemSfcCodes_, d_elemX, d_elemY, d_elemZ, d_elemH, elementCount_, d_conn_keys_);
+
+        // Check if we need to sync with original coordinates (compile-time check for hex8)
+        if constexpr (std::is_same_v<ElementTag, HexTag>) {
+            if (storeOriginalCoords_) {
+                // Extract original coordinates for all 8 nodes of each element (24 arrays total)
+                DeviceVector<RealType> d_elemOrigX0(elementCount_), d_elemOrigY0(elementCount_), d_elemOrigZ0(elementCount_);
+                DeviceVector<RealType> d_elemOrigX1(elementCount_), d_elemOrigY1(elementCount_), d_elemOrigZ1(elementCount_);
+                DeviceVector<RealType> d_elemOrigX2(elementCount_), d_elemOrigY2(elementCount_), d_elemOrigZ2(elementCount_);
+                DeviceVector<RealType> d_elemOrigX3(elementCount_), d_elemOrigY3(elementCount_), d_elemOrigZ3(elementCount_);
+                DeviceVector<RealType> d_elemOrigX4(elementCount_), d_elemOrigY4(elementCount_), d_elemOrigZ4(elementCount_);
+                DeviceVector<RealType> d_elemOrigX5(elementCount_), d_elemOrigY5(elementCount_), d_elemOrigZ5(elementCount_);
+                DeviceVector<RealType> d_elemOrigX6(elementCount_), d_elemOrigY6(elementCount_), d_elemOrigZ6(elementCount_);
+                DeviceVector<RealType> d_elemOrigX7(elementCount_), d_elemOrigY7(elementCount_), d_elemOrigZ7(elementCount_);
+
+                // Extract original coordinates from input arrays
+                auto& d_i0 = std::get<0>(d_conn_);
+                auto& d_i1 = std::get<1>(d_conn_);
+                auto& d_i2 = std::get<2>(d_conn_);
+                auto& d_i3 = std::get<3>(d_conn_);
+                auto& d_i4 = std::get<4>(d_conn_);
+                auto& d_i5 = std::get<5>(d_conn_);
+                auto& d_i6 = std::get<6>(d_conn_);
+                auto& d_i7 = std::get<7>(d_conn_);
+
+            extractElementNodeCoordsKernel<ElementTag, KeyType, RealType><<<numBlocks, blockSize>>>(
+                thrust::raw_pointer_cast(d_x.data()), thrust::raw_pointer_cast(d_y.data()), thrust::raw_pointer_cast(d_z.data()),
+                thrust::raw_pointer_cast(d_i0.data()), thrust::raw_pointer_cast(d_i1.data()),
+                thrust::raw_pointer_cast(d_i2.data()), thrust::raw_pointer_cast(d_i3.data()),
+                thrust::raw_pointer_cast(d_i4.data()), thrust::raw_pointer_cast(d_i5.data()),
+                thrust::raw_pointer_cast(d_i6.data()), thrust::raw_pointer_cast(d_i7.data()),
+                thrust::raw_pointer_cast(d_elemOrigX0.data()), thrust::raw_pointer_cast(d_elemOrigY0.data()), thrust::raw_pointer_cast(d_elemOrigZ0.data()),
+                thrust::raw_pointer_cast(d_elemOrigX1.data()), thrust::raw_pointer_cast(d_elemOrigY1.data()), thrust::raw_pointer_cast(d_elemOrigZ1.data()),
+                thrust::raw_pointer_cast(d_elemOrigX2.data()), thrust::raw_pointer_cast(d_elemOrigY2.data()), thrust::raw_pointer_cast(d_elemOrigZ2.data()),
+                thrust::raw_pointer_cast(d_elemOrigX3.data()), thrust::raw_pointer_cast(d_elemOrigY3.data()), thrust::raw_pointer_cast(d_elemOrigZ3.data()),
+                thrust::raw_pointer_cast(d_elemOrigX4.data()), thrust::raw_pointer_cast(d_elemOrigY4.data()), thrust::raw_pointer_cast(d_elemOrigZ4.data()),
+                thrust::raw_pointer_cast(d_elemOrigX5.data()), thrust::raw_pointer_cast(d_elemOrigY5.data()), thrust::raw_pointer_cast(d_elemOrigZ5.data()),
+                thrust::raw_pointer_cast(d_elemOrigX6.data()), thrust::raw_pointer_cast(d_elemOrigY6.data()), thrust::raw_pointer_cast(d_elemOrigZ6.data()),
+                thrust::raw_pointer_cast(d_elemOrigX7.data()), thrust::raw_pointer_cast(d_elemOrigY7.data()), thrust::raw_pointer_cast(d_elemOrigZ7.data()),
+                elementCount_);
+            cudaCheckError();
+
+            // Package into tuple for sync (direct tie, not std::ref)
+            auto d_orig_coords = std::tie(
+                d_elemOrigX0, d_elemOrigY0, d_elemOrigZ0,
+                d_elemOrigX1, d_elemOrigY1, d_elemOrigZ1,
+                d_elemOrigX2, d_elemOrigY2, d_elemOrigZ2,
+                d_elemOrigX3, d_elemOrigY3, d_elemOrigZ3,
+                d_elemOrigX4, d_elemOrigY4, d_elemOrigZ4,
+                d_elemOrigX5, d_elemOrigY5, d_elemOrigZ5,
+                d_elemOrigX6, d_elemOrigY6, d_elemOrigZ6,
+                d_elemOrigX7, d_elemOrigY7, d_elemOrigZ7
+            );
+
+            // Sync with original coordinates
+            syncDomainImplWithOrigCoords(domain_.get(), d_elemSfcCodes_, d_elemX, d_elemY, d_elemZ, d_elemH,
+                                        elementCount_, d_conn_keys_, d_orig_coords);
+
+            // Allocate and rebuild node coordinate arrays from synced element properties
+            originalCoords_ = std::make_unique<OriginalCoordinates<ElementTag, RealType, KeyType, AcceleratorTag>>(nodeCount_);
+
+            // Build adjacency to get local IDs (d_conn_keys_ -> d_conn_local_ids_)
+            // This is needed because d_conn_keys_ contains SFC keys, not local node indices
+            ensureAdjacency();
+
+            // Rebuild node arrays using post-sync LOCAL connectivity (d_conn_local_ids_)
+            int newNumBlocks = (elementCount_ + blockSize - 1) / blockSize;
+            rebuildNodeCoordsFromElementsKernel<ElementTag, KeyType, RealType><<<newNumBlocks, blockSize>>>(
+                thrust::raw_pointer_cast(std::get<0>(adjacency_->d_conn_local_ids_).data()),
+                thrust::raw_pointer_cast(std::get<1>(adjacency_->d_conn_local_ids_).data()),
+                thrust::raw_pointer_cast(std::get<2>(adjacency_->d_conn_local_ids_).data()),
+                thrust::raw_pointer_cast(std::get<3>(adjacency_->d_conn_local_ids_).data()),
+                thrust::raw_pointer_cast(std::get<4>(adjacency_->d_conn_local_ids_).data()),
+                thrust::raw_pointer_cast(std::get<5>(adjacency_->d_conn_local_ids_).data()),
+                thrust::raw_pointer_cast(std::get<6>(adjacency_->d_conn_local_ids_).data()),
+                thrust::raw_pointer_cast(std::get<7>(adjacency_->d_conn_local_ids_).data()),
+                thrust::raw_pointer_cast(d_elemOrigX0.data()), thrust::raw_pointer_cast(d_elemOrigY0.data()), thrust::raw_pointer_cast(d_elemOrigZ0.data()),
+                thrust::raw_pointer_cast(d_elemOrigX1.data()), thrust::raw_pointer_cast(d_elemOrigY1.data()), thrust::raw_pointer_cast(d_elemOrigZ1.data()),
+                thrust::raw_pointer_cast(d_elemOrigX2.data()), thrust::raw_pointer_cast(d_elemOrigY2.data()), thrust::raw_pointer_cast(d_elemOrigZ2.data()),
+                thrust::raw_pointer_cast(d_elemOrigX3.data()), thrust::raw_pointer_cast(d_elemOrigY3.data()), thrust::raw_pointer_cast(d_elemOrigZ3.data()),
+                thrust::raw_pointer_cast(d_elemOrigX4.data()), thrust::raw_pointer_cast(d_elemOrigY4.data()), thrust::raw_pointer_cast(d_elemOrigZ4.data()),
+                thrust::raw_pointer_cast(d_elemOrigX5.data()), thrust::raw_pointer_cast(d_elemOrigY5.data()), thrust::raw_pointer_cast(d_elemOrigZ5.data()),
+                thrust::raw_pointer_cast(d_elemOrigX6.data()), thrust::raw_pointer_cast(d_elemOrigY6.data()), thrust::raw_pointer_cast(d_elemOrigZ6.data()),
+                thrust::raw_pointer_cast(d_elemOrigX7.data()), thrust::raw_pointer_cast(d_elemOrigY7.data()), thrust::raw_pointer_cast(d_elemOrigZ7.data()),
+                thrust::raw_pointer_cast(originalCoords_->d_node_x_.data()),
+                thrust::raw_pointer_cast(originalCoords_->d_node_y_.data()),
+                thrust::raw_pointer_cast(originalCoords_->d_node_z_.data()),
+                elementCount_);
+            cudaCheckError();
+
+                std::cout << "Rank " << rank_ << " stored exact original coordinates for " << nodeCount_ << " nodes." << std::endl;
+            } else {
+                // Standard sync with SFC-decoded coordinates
+                syncDomainImpl(domain_.get(), d_elemSfcCodes_, d_elemX, d_elemY, d_elemZ, d_elemH, elementCount_, d_conn_keys_);
+            }
+        } else {
+            // For non-hex elements, always use standard sync
+            syncDomainImpl(domain_.get(), d_elemSfcCodes_, d_elemX, d_elemY, d_elemZ, d_elemH, elementCount_, d_conn_keys_);
+        }
     }
 }
 
@@ -2060,6 +2230,19 @@ CoordinateCache<ElementTag, RealType, KeyType, AcceleratorTag>::CoordinateCache(
 
         std::cout << "Rank " << domain.rank() << " cached " << nodeCount << " node coordinates." << std::endl;
     }
+}
+
+// ============================================================================
+// OriginalCoordinates implementation
+// ============================================================================
+template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
+OriginalCoordinates<ElementTag, RealType, KeyType, AcceleratorTag>::OriginalCoordinates(size_t nodeCount)
+{
+    // Allocate storage for exact original coordinates
+    // Actual values will be filled during sync() after node reordering
+    d_node_x_.resize(nodeCount);
+    d_node_y_.resize(nodeCount);
+    d_node_z_.resize(nodeCount);
 }
 
 // Helper to populate the ConnPtrs struct from tuple

@@ -42,6 +42,18 @@ void syncDomainImpl(cstone::Domain<KeyType, RealType, cstone::GpuTag>* domain,
                     size_t& elementCount,
                     SfcConnTuple& d_conn_keys_);
 
+// Overload for syncing with original coordinates (24 additional properties for hex8)
+template<typename KeyType, typename RealType, typename SfcConnTuple, typename OrigCoordsTuple>
+void syncDomainImplWithOrigCoords(cstone::Domain<KeyType, RealType, cstone::GpuTag>* domain,
+                                   cstone::DeviceVector<KeyType>& elemSfcCodes,
+                                   cstone::DeviceVector<RealType>& elemX,
+                                   cstone::DeviceVector<RealType>& elemY,
+                                   cstone::DeviceVector<RealType>& elemZ,
+                                   cstone::DeviceVector<RealType>& elemH,
+                                   size_t& elementCount,
+                                   SfcConnTuple& d_conn_keys_,
+                                   OrigCoordsTuple& d_orig_coords_);
+
 // Forward declarations of CUDA kernels
 template<typename KeyType, typename SfcConnTuple>
 __global__ void extractAllTupleComponentsKernel(const SfcConnTuple conn_keys,

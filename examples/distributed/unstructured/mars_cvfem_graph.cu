@@ -22,11 +22,13 @@ int main(int argc, char** argv) {
 
     if (argc < 2) {
         if (rank == 0) {
-            std::cout << "Usage: " << argv[0] << " <mesh_file> [--key-bits=32|64]" << std::endl;
+            std::cout << "Usage: " << argv[0] << " <mesh_file> [--key-bits=32|64] [--exact-coords]" << std::endl;
             std::cout << "  mesh_file: .mesh format mesh file" << std::endl;
             std::cout << "  --key-bits: SFC key size (default: 64 for better precision)" << std::endl;
             std::cout << "              32-bit: 10 bits/axis = 1024 levels (~0.7% coord error)" << std::endl;
             std::cout << "              64-bit: 21 bits/axis = 2M levels (much better precision)" << std::endl;
+            std::cout << "  --exact-coords: Store exact original coordinates from mesh file" << std::endl;
+            std::cout << "                  (default: decode coordinates from SFC keys)" << std::endl;
         }
         MPI_Finalize();
         return 1;
@@ -34,8 +36,9 @@ int main(int argc, char** argv) {
 
     std::string meshFile = argv[1];
 
-    // Parse key-bits option
+    // Parse command-line options
     int keyBits = 64;  // Default to 64-bit for better precision
+    bool useExactCoords = false;
     for (int i = 2; i < argc; ++i) {
         std::string arg = argv[i];
         if (arg.find("--key-bits=") == 0) {
@@ -47,11 +50,18 @@ int main(int argc, char** argv) {
                 MPI_Finalize();
                 return 1;
             }
+        } else if (arg == "--exact-coords") {
+            useExactCoords = true;
         }
     }
 
     if (rank == 0) {
         std::cout << "Using " << keyBits << "-bit SFC keys" << std::endl;
+        if (useExactCoords) {
+            std::cout << "Coordinate mode: EXACT (original from mesh file)" << std::endl;
+        } else {
+            std::cout << "Coordinate mode: SFC-decoded (quantized)" << std::endl;
+        }
     }
 
     // Use 64-bit SFC keys by default for better coordinate precision
@@ -66,8 +76,8 @@ int main(int argc, char** argv) {
     using RealType = double;
     using ElemTag = HexTag;
 
-    // Create domain
-    ElementDomain<ElemTag, RealType, KeyType, cstone::GpuTag> domain(meshFile, rank, numRanks);
+    // Create domain with optional exact coordinate storage
+    ElementDomain<ElemTag, RealType, KeyType, cstone::GpuTag> domain(meshFile, rank, numRanks, useExactCoords);
 
     // Build halo for node ownership (this triggers SFC map creation which updates node count)
     const auto& d_nodeOwnership = domain.getNodeOwnershipMap();
