@@ -22,8 +22,11 @@ int main(int argc, char** argv) {
 
     if (argc < 2) {
         if (rank == 0) {
-            std::cout << "Usage: " << argv[0] << " <mesh_file>" << std::endl;
+            std::cout << "Usage: " << argv[0] << " <mesh_file> [--key-bits=32|64]" << std::endl;
             std::cout << "  mesh_file: .mesh format mesh file" << std::endl;
+            std::cout << "  --key-bits: SFC key size (default: 64 for better precision)" << std::endl;
+            std::cout << "              32-bit: 10 bits/axis = 1024 levels (~0.7% coord error)" << std::endl;
+            std::cout << "              64-bit: 21 bits/axis = 2M levels (much better precision)" << std::endl;
         }
         MPI_Finalize();
         return 1;
@@ -31,7 +34,35 @@ int main(int argc, char** argv) {
 
     std::string meshFile = argv[1];
 
+    // Parse key-bits option
+    int keyBits = 64;  // Default to 64-bit for better precision
+    for (int i = 2; i < argc; ++i) {
+        std::string arg = argv[i];
+        if (arg.find("--key-bits=") == 0) {
+            keyBits = std::stoi(arg.substr(11));
+            if (keyBits != 32 && keyBits != 64) {
+                if (rank == 0) {
+                    std::cerr << "Error: --key-bits must be 32 or 64, got " << keyBits << std::endl;
+                }
+                MPI_Finalize();
+                return 1;
+            }
+        }
+    }
+
+    if (rank == 0) {
+        std::cout << "Using " << keyBits << "-bit SFC keys" << std::endl;
+    }
+
+    // Use 64-bit SFC keys by default for better coordinate precision
+    // 32-bit keys: 10 bits/axis = 1024 levels (causes ~0.7% coordinate error)
+    // 64-bit keys: 21 bits/axis = 2M levels (much higher precision)
+    // Note: This is set at compile time, so to use 32-bit keys, compile with -DUSE_32BIT_KEYS
+#ifdef USE_32BIT_KEYS
     using KeyType = unsigned int;
+#else
+    using KeyType = uint64_t;
+#endif
     using RealType = double;
     using ElemTag = HexTag;
 
@@ -298,7 +329,7 @@ int main(int argc, char** argv) {
     int numBlocks = (elementCount + blockSize - 1) / blockSize;
 
     // Warm-up run
-    fem::cvfem_hex_assembly_kernel_graph<<<numBlocks, blockSize>>>(
+    fem::cvfem_hex_assembly_kernel_graph<KeyType, RealType><<<numBlocks, blockSize>>>(
         std::get<0>(d_conn).data(),
         std::get<1>(d_conn).data(),
         std::get<2>(d_conn).data(),
@@ -335,7 +366,7 @@ int main(int argc, char** argv) {
     // Timed run
     auto start = std::chrono::high_resolution_clock::now();
 
-    fem::cvfem_hex_assembly_kernel_graph<<<numBlocks, blockSize>>>(
+    fem::cvfem_hex_assembly_kernel_graph<KeyType, RealType><<<numBlocks, blockSize>>>(
         std::get<0>(d_conn).data(),
         std::get<1>(d_conn).data(),
         std::get<2>(d_conn).data(),

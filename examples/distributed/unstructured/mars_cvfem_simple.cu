@@ -29,7 +29,10 @@ int main(int argc, char** argv) {
 
     std::string meshFile = argv[1];
 
-    using KeyType = unsigned int;
+    // Use 64-bit SFC keys for better coordinate precision
+    // 32-bit keys: 10 bits/axis = 1024 levels (causes ~0.7% coordinate error)
+    // 64-bit keys: 21 bits/axis = 2M levels (much higher precision)
+    using KeyType = uint64_t;
     using RealType = double;
     using ElemTag = HexTag;
 
@@ -261,7 +264,7 @@ int main(int argc, char** argv) {
     int numBlocks = (elementCount + blockSize - 1) / blockSize;
 
     // Warm-up run
-    fem::cvfem_hex_assembly_kernel<<<numBlocks, blockSize>>>(
+    fem::cvfem_hex_assembly_kernel<KeyType, RealType><<<numBlocks, blockSize>>>(
         std::get<0>(d_conn).data(),
         std::get<1>(d_conn).data(),
         std::get<2>(d_conn).data(),
@@ -298,7 +301,7 @@ int main(int argc, char** argv) {
     // Timed run
     auto start = std::chrono::high_resolution_clock::now();
 
-    fem::cvfem_hex_assembly_kernel<<<numBlocks, blockSize>>>(
+    fem::cvfem_hex_assembly_kernel<KeyType, RealType><<<numBlocks, blockSize>>>(
         std::get<0>(d_conn).data(),
         std::get<1>(d_conn).data(),
         std::get<2>(d_conn).data(),

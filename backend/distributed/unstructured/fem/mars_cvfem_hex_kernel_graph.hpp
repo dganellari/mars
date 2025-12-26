@@ -46,6 +46,11 @@ __global__ void cvfem_hex_assembly_kernel_graph(
     int elemIdx = blockIdx.x * blockDim.x + threadIdx.x;
     if (elemIdx >= numElements) return;
 
+    // Debug: Print KeyType size on first thread
+    if (elemIdx == 0 && blockIdx.x == 0 && threadIdx.x == 0) {
+        printf("KERNEL: sizeof(KeyType) = %d bytes (%d bits)\n", (int)sizeof(KeyType), (int)(sizeof(KeyType) * 8));
+    }
+
     // Get element nodes
     KeyType nodes[8];
     nodes[0] = d_conn0[elemIdx];
@@ -57,6 +62,13 @@ __global__ void cvfem_hex_assembly_kernel_graph(
     nodes[6] = d_conn6[elemIdx];
     nodes[7] = d_conn7[elemIdx];
 
+    // Debug: Print first element's connectivity with proper format
+    if (elemIdx == 0) {
+        printf("Element 0 RAW connectivity: [%llu, %llu, %llu, %llu, %llu, %llu, %llu, %llu]\n",
+               (unsigned long long)nodes[0], (unsigned long long)nodes[1], (unsigned long long)nodes[2], (unsigned long long)nodes[3],
+               (unsigned long long)nodes[4], (unsigned long long)nodes[5], (unsigned long long)nodes[6], (unsigned long long)nodes[7]);
+    }
+
     // Gather nodal coordinates
     double coords[8][3];
     for (int n = 0; n < 8; ++n) {
@@ -65,14 +77,43 @@ __global__ void cvfem_hex_assembly_kernel_graph(
         coords[n][2] = d_z[nodes[n]];
     }
 
-    // Debug: print element 0 coordinates
-    if (elemIdx == 0 && blockIdx.x == 0 && threadIdx.x == 0) {
-        printf("\n=== MARS Element 0 Node Info ===\n");
-        printf("Local node IDs: [%u, %u, %u, %u, %u, %u, %u, %u]\n",
-               nodes[0], nodes[1], nodes[2], nodes[3], nodes[4], nodes[5], nodes[6], nodes[7]);
+    // Debug: find element closest to origin
+    // Check if any node is very close to origin
+    double minDist = 1e10;
+    int closestNode = -1;
+    for (int ni = 0; ni < 8; ++ni) {
+        double dist = coords[ni][0]*coords[ni][0] + coords[ni][1]*coords[ni][1] + coords[ni][2]*coords[ni][2];
+        if (dist < minDist) {
+            minDist = dist;
+            closestNode = ni;
+        }
+    }
+
+    // Flag if this element has a node very close to origin (within 1e-4)
+    bool isOriginElement = (minDist < 1e-8);
+
+    // Also print element 0 for reference
+    if (elemIdx == 0) {
+        printf("\n=== MARS Element 0 (for reference) ===\n");
+        printf("Local node IDs: [%llu, %llu, %llu, %llu, %llu, %llu, %llu, %llu]\n",
+               (unsigned long long)nodes[0], (unsigned long long)nodes[1], (unsigned long long)nodes[2], (unsigned long long)nodes[3],
+               (unsigned long long)nodes[4], (unsigned long long)nodes[5], (unsigned long long)nodes[6], (unsigned long long)nodes[7]);
         for (int ni = 0; ni < 8; ++ni) {
-            printf("Node %d (local=%u): [%.10e, %.10e, %.10e]\n",
-                   ni, nodes[ni], coords[ni][0], coords[ni][1], coords[ni][2]);
+            printf("Node %d (local=%llu): [%.10e, %.10e, %.10e]\n",
+                   ni, (unsigned long long)nodes[ni], coords[ni][0], coords[ni][1], coords[ni][2]);
+        }
+        printf("Closest node to origin: %d, dist^2=%.10e\n\n", closestNode, minDist);
+    }
+
+    if (isOriginElement) {
+        printf("\n=== MARS Element at Origin ===\n");
+        printf("Element index: %d\n", elemIdx);
+        printf("Local node IDs: [%llu, %llu, %llu, %llu, %llu, %llu, %llu, %llu]\n",
+               (unsigned long long)nodes[0], (unsigned long long)nodes[1], (unsigned long long)nodes[2], (unsigned long long)nodes[3],
+               (unsigned long long)nodes[4], (unsigned long long)nodes[5], (unsigned long long)nodes[6], (unsigned long long)nodes[7]);
+        for (int ni = 0; ni < 8; ++ni) {
+            printf("Node %d (local=%llu): [%.10e, %.10e, %.10e]\n",
+                   ni, (unsigned long long)nodes[ni], coords[ni][0], coords[ni][1], coords[ni][2]);
         }
         printf("\n");
     }
@@ -104,9 +145,9 @@ __global__ void cvfem_hex_assembly_kernel_graph(
         double areaVec[3];
         computeAreaVector(ip, coords, areaVec);
 
-        // Debug: print element 0 area vectors
-        if (elemIdx == 0 && blockIdx.x == 0 && threadIdx.x == 0) {
-            printf("MARS Element 0, SCS %d: areaVec = [%.10e, %.10e, %.10e]\n",
+        // Debug: print area vectors for origin element
+        if (isOriginElement) {
+            printf("MARS Origin Element, SCS %d: areaVec = [%.10e, %.10e, %.10e]\n",
                    ip, areaVec[0], areaVec[1], areaVec[2]);
         }
 
@@ -228,9 +269,9 @@ __global__ void cvfem_hex_assembly_kernel_graph(
             }
         }
 
-        // Debug: print stats for first element
-        if (elemIdx == 0 && i == 0 && blockIdx.x == 0 && threadIdx.x == 0) {
-            printf("Element 0, node 0: found=%d, lumped=%d, diag_lump=%.6e, diag_orig=%.6e\n",
+        // Debug: print stats for origin element
+        if (isOriginElement && i == 0) {
+            printf("Origin Element, node 0: found=%d, lumped=%d, diag_lump=%.6e, diag_orig=%.6e\n",
                    num_found, num_lumped, diag_lump, lhs[i * 8 + i]);
             printf("  row_dof=%d, graph row has %d entries: [",
                    row_dof, matrix->rowPtr[row_dof + 1] - matrix->rowPtr[row_dof]);
