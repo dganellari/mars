@@ -3,10 +3,139 @@
 #include "backend/distributed/unstructured/fem/mars_fem.hpp"
 #include "backend/distributed/unstructured/fem/mars_cvfem_hex_kernel.hpp"
 #include <thrust/device_vector.h>
+#include <set>
 #include <thrust/reduce.h>
 #include <mpi.h>
 #include <iomanip>
 #include <chrono>
+#include <numeric>
+
+// Performance counter structure for detailed timing
+struct PerfCounters {
+    // Timing (in milliseconds)
+    float meshLoadTime = 0.0f;
+    float sparsityBuildTime = 0.0f;
+    float fieldInitTime = 0.0f;
+    float assemblyWarmupTime = 0.0f;
+    float assemblyTime = 0.0f;       // Total time for all iterations
+    float assemblyMinTime = 1e9f;
+    float assemblyMaxTime = 0.0f;
+    int   assemblyIterations = 0;
+
+    // Data sizes (in bytes)
+    size_t inputFieldBytes = 0;      // Field data read per element
+    size_t outputMatrixBytes = 0;    // Matrix/RHS data written
+    size_t connectivityBytes = 0;    // Connectivity data read
+    size_t coordinateBytes = 0;      // Coordinate data read
+
+    // Counts
+    size_t numElements = 0;
+    size_t numNodes = 0;
+    size_t numDofs = 0;
+    size_t matrixNnz = 0;
+
+    // Computed metrics
+    double avgAssemblyTimeMs() const {
+        return assemblyIterations > 0 ? assemblyTime / assemblyIterations : 0.0;
+    }
+
+    size_t totalBytesPerAssembly() const {
+        return inputFieldBytes + outputMatrixBytes + connectivityBytes + coordinateBytes;
+    }
+
+    double bandwidthGBs() const {
+        double timeS = avgAssemblyTimeMs() / 1000.0;
+        return timeS > 0 ? (totalBytesPerAssembly() / 1e9) / timeS : 0.0;
+    }
+
+    double elementsPerSecond() const {
+        double timeS = avgAssemblyTimeMs() / 1000.0;
+        return timeS > 0 ? numElements / timeS : 0.0;
+    }
+
+    // FLOP estimate for CVFEM hex assembly (approximate)
+    // Per element: 12 SCS * (shape functions + Jacobian + diffusion) ~ 2000 FLOPs
+    double estimatedGFLOPs() const {
+        const double flopsPerElement = 2000.0;
+        double timeS = avgAssemblyTimeMs() / 1000.0;
+        return timeS > 0 ? (numElements * flopsPerElement / 1e9) / timeS : 0.0;
+    }
+
+    void print(int rank) const {
+        if (rank != 0) return;
+
+        std::cout << "\n";
+        std::cout << "================================================================================\n";
+        std::cout << "                         PERFORMANCE SUMMARY\n";
+        std::cout << "================================================================================\n";
+        std::cout << std::fixed << std::setprecision(3);
+
+        std::cout << "\n--- Problem Size ---\n";
+        std::cout << "  Elements:              " << std::setw(12) << numElements << "\n";
+        std::cout << "  Nodes:                 " << std::setw(12) << numNodes << "\n";
+        std::cout << "  DOFs:                  " << std::setw(12) << numDofs << "\n";
+        std::cout << "  Matrix NNZ:            " << std::setw(12) << matrixNnz << "\n";
+        std::cout << "  Avg NNZ/row:           " << std::setw(12) << std::setprecision(1)
+                  << (numDofs > 0 ? static_cast<double>(matrixNnz) / numDofs : 0.0) << "\n";
+
+        std::cout << "\n--- Data Transfer (per assembly) ---\n";
+        std::cout << std::setprecision(2);
+        std::cout << "  Input fields:          " << std::setw(12) << inputFieldBytes / 1024.0 / 1024.0 << " MB\n";
+        std::cout << "  Coordinates:           " << std::setw(12) << coordinateBytes / 1024.0 / 1024.0 << " MB\n";
+        std::cout << "  Connectivity:          " << std::setw(12) << connectivityBytes / 1024.0 / 1024.0 << " MB\n";
+        std::cout << "  Output (matrix+RHS):   " << std::setw(12) << outputMatrixBytes / 1024.0 / 1024.0 << " MB\n";
+        std::cout << "  Total:                 " << std::setw(12) << totalBytesPerAssembly() / 1024.0 / 1024.0 << " MB\n";
+
+        std::cout << "\n--- Timing Breakdown ---\n";
+        std::cout << std::setprecision(3);
+        std::cout << "  Mesh loading:          " << std::setw(12) << meshLoadTime << " ms\n";
+        std::cout << "  Sparsity build:        " << std::setw(12) << sparsityBuildTime << " ms\n";
+        std::cout << "  Field initialization:  " << std::setw(12) << fieldInitTime << " ms\n";
+        std::cout << "  Assembly warmup:       " << std::setw(12) << assemblyWarmupTime << " ms\n";
+
+        std::cout << "\n--- Assembly Performance (" << assemblyIterations << " iterations) ---\n";
+        std::cout << "  Average time:          " << std::setw(12) << avgAssemblyTimeMs() << " ms\n";
+        std::cout << "  Min time:              " << std::setw(12) << assemblyMinTime << " ms\n";
+        std::cout << "  Max time:              " << std::setw(12) << assemblyMaxTime << " ms\n";
+        std::cout << "  Bandwidth:             " << std::setw(12) << bandwidthGBs() << " GB/s\n";
+        std::cout << "  Throughput:            " << std::setw(12) << elementsPerSecond() / 1e6 << " M elem/s\n";
+        std::cout << "  Est. compute:          " << std::setw(12) << estimatedGFLOPs() << " GFLOP/s\n";
+
+        std::cout << "================================================================================\n";
+    }
+};
+
+// CUDA event-based GPU timer
+class GpuTimer {
+public:
+    GpuTimer() {
+        cudaEventCreate(&start_);
+        cudaEventCreate(&stop_);
+    }
+
+    ~GpuTimer() {
+        cudaEventDestroy(start_);
+        cudaEventDestroy(stop_);
+    }
+
+    void start(cudaStream_t stream = 0) {
+        cudaEventRecord(start_, stream);
+    }
+
+    void stop(cudaStream_t stream = 0) {
+        cudaEventRecord(stop_, stream);
+    }
+
+    float elapsedMs() {
+        cudaEventSynchronize(stop_);
+        float ms = 0.0f;
+        cudaEventElapsedTime(&ms, start_, stop_);
+        return ms;
+    }
+
+private:
+    cudaEvent_t start_, stop_;
+};
 
 using namespace mars;
 using namespace mars::fem;
@@ -21,7 +150,14 @@ int main(int argc, char** argv) {
 
     if (argc < 2) {
         if (rank == 0) {
-            std::cout << "Usage: " << argv[0] << " <mesh_file>" << std::endl;
+            std::cout << "Usage: " << argv[0] << " <mesh_file> [options]" << std::endl;
+            std::cout << "  mesh_file: .mesh or .exo format mesh file" << std::endl;
+            std::cout << "\nOptions:" << std::endl;
+            std::cout << "  --key-bits=32|64    SFC key size (default: 64)" << std::endl;
+            std::cout << "  --exact-coords      Store exact original coordinates" << std::endl;
+            std::cout << "  --iterations=N      Number of assembly iterations (default: 10)" << std::endl;
+            std::cout << "  --block-size=N      CUDA block size (default: 256)" << std::endl;
+            std::cout << "  --quiet             Suppress detailed debug output" << std::endl;
         }
         MPI_Finalize();
         return 1;
@@ -29,34 +165,84 @@ int main(int argc, char** argv) {
 
     std::string meshFile = argv[1];
 
-    // Use 64-bit SFC keys for better coordinate precision
-    // 32-bit keys: 10 bits/axis = 1024 levels (causes ~0.7% coordinate error)
-    // 64-bit keys: 21 bits/axis = 2M levels (much higher precision)
+    // Parse command-line options
+    int keyBits = 64;
+    bool useExactCoords = false;
+    int numIterations = 10;
+    int blockSize = 256;
+    bool quiet = false;
+
+    for (int i = 2; i < argc; ++i) {
+        std::string arg = argv[i];
+        if (arg.find("--key-bits=") == 0) {
+            keyBits = std::stoi(arg.substr(11));
+            if (keyBits != 32 && keyBits != 64) {
+                if (rank == 0) {
+                    std::cerr << "Error: --key-bits must be 32 or 64" << std::endl;
+                }
+                MPI_Finalize();
+                return 1;
+            }
+        } else if (arg == "--exact-coords") {
+            useExactCoords = true;
+        } else if (arg.find("--iterations=") == 0) {
+            numIterations = std::stoi(arg.substr(13));
+        } else if (arg.find("--block-size=") == 0) {
+            blockSize = std::stoi(arg.substr(13));
+        } else if (arg == "--quiet") {
+            quiet = true;
+        }
+    }
+
+    // Initialize performance counters
+    PerfCounters perf;
+    GpuTimer timer;
+
+    if (rank == 0 && !quiet) {
+        std::cout << "CVFEM Full Assembly (27 NNZ/row sparsity pattern)" << std::endl;
+        std::cout << "Configuration:" << std::endl;
+        std::cout << "  SFC key bits:    " << keyBits << std::endl;
+        std::cout << "  Coord mode:      " << (useExactCoords ? "exact" : "SFC-decoded") << std::endl;
+        std::cout << "  Iterations:      " << numIterations << std::endl;
+        std::cout << "  Block size:      " << blockSize << std::endl;
+        std::cout << std::endl;
+    }
+
+    // Use 64-bit SFC keys by default for better coordinate precision
+#ifdef USE_32BIT_KEYS
+    using KeyType = unsigned int;
+#else
     using KeyType = uint64_t;
+#endif
     using RealType = double;
     using ElemTag = HexTag;
 
-    // Create domain
-    ElementDomain<ElemTag, RealType, KeyType, cstone::GpuTag> domain(meshFile, rank, numRanks);
+    // Create domain with optional exact coordinate storage
+    auto meshLoadStart = std::chrono::high_resolution_clock::now();
+    ElementDomain<ElemTag, RealType, KeyType, cstone::GpuTag> domain(meshFile, rank, numRanks, useExactCoords);
 
     // Build halo for node ownership (this triggers SFC map creation which updates node count)
     const auto& d_nodeOwnership = domain.getNodeOwnershipMap();
+    cudaDeviceSynchronize();
+    auto meshLoadEnd = std::chrono::high_resolution_clock::now();
+    perf.meshLoadTime = std::chrono::duration<float, std::milli>(meshLoadEnd - meshLoadStart).count();
 
-    // Get counts AFTER node ownership map is built (node count is updated during SFC map creation)
+    // Get counts AFTER node ownership map is built
     size_t nodeCount = domain.getNodeCount();
-    size_t elementCount = domain.getElementCount();  // Total elements (includes halos for kernel)
+    size_t elementCount = domain.getElementCount();
 
     // Get element range for local (owned) elements
-    // After sync, elements are ordered as: [halos_before, local, halos_after]
     auto [startIdx, endIdx] = domain.localElementRange();
     size_t localElementCount = endIdx - startIdx;
 
-    if (rank == 0) {
-        std::cout << std::endl;
-        std::cout << "DEBUG: startIdx=" << startIdx << " endIdx=" << endIdx << " diff=" << localElementCount << std::endl;
-        std::cout << "DEBUG: elementCount (total with halos)=" << elementCount << std::endl;
-        std::cout << "Mesh Size (Nodes):    " << nodeCount << std::endl;
-        std::cout << "Mesh Size (Elements): " << localElementCount << std::endl;
+    // Store counts in perf counters
+    perf.numNodes = nodeCount;
+    perf.numElements = elementCount;
+
+    if (rank == 0 && !quiet) {
+        std::cout << "Mesh loaded in " << perf.meshLoadTime << " ms" << std::endl;
+        std::cout << "  Total nodes:    " << nodeCount << std::endl;
+        std::cout << "  Total elements: " << elementCount << " (local: " << localElementCount << ")" << std::endl;
         std::cout << std::endl;
     }
 
@@ -68,50 +254,52 @@ int main(int argc, char** argv) {
 
     int numOwnedDofs = 0;
     for (auto o : h_ownership) {
-        if (o == 1 || o == 2) numOwnedDofs++;  // owned or shared
+        if (o == 1 || o == 2) numOwnedDofs++;
     }
 
     // Debug: Print node ownership statistics
-    int num_ghost = 0, num_owned = 0, num_shared = 0;
-    for (auto o : h_ownership) {
-        if (o == 0) num_ghost++;
-        else if (o == 1) num_owned++;
-        else if (o == 2) num_shared++;
-    }
-    if (rank == 0) {
-        std::cout << "Node ownership: ghost=" << num_ghost
-                  << " owned=" << num_owned
-                  << " shared=" << num_shared
-                  << " total=" << nodeCount << std::endl;
+    if (!quiet) {
+        int num_ghost = 0, num_owned = 0, num_shared = 0;
+        for (auto o : h_ownership) {
+            if (o == 0) num_ghost++;
+            else if (o == 1) num_owned++;
+            else if (o == 2) num_shared++;
+        }
+        if (rank == 0) {
+            std::cout << "Node ownership: ghost=" << num_ghost
+                      << " owned=" << num_owned
+                      << " shared=" << num_shared << std::endl;
+        }
     }
 
-    // Create DOF mapping (simple: local node ID = DOF ID for owned nodes)
+    // Create DOF mapping
     cstone::DeviceVector<int> d_nodeToDof(nodeCount);
     std::vector<int> h_nodeToDof(nodeCount);
     int dofCounter = 0;
     for (size_t i = 0; i < nodeCount; ++i) {
-        if (h_ownership[i] != 0) {  // owned or shared
+        if (h_ownership[i] != 0) {
             h_nodeToDof[i] = dofCounter++;
         } else {
-            h_nodeToDof[i] = -1;  // ghost node
+            h_nodeToDof[i] = -1;
         }
     }
     thrust::copy(h_nodeToDof.begin(), h_nodeToDof.end(),
                  thrust::device_pointer_cast(d_nodeToDof.data()));
 
-    // Build sparsity pattern from LOCAL elements only (not halos)
-    if (rank == 0) {
-        std::cout << "Building sparsity pattern..." << std::endl;
+    // Build FULL sparsity pattern (all 8x8 = 64 entries per element, ~27 NNZ/row)
+    auto sparsityStart = std::chrono::high_resolution_clock::now();
+    if (rank == 0 && !quiet) {
+        std::cout << "Building full sparsity pattern (27 NNZ/row)..." << std::endl;
     }
     MPI_Barrier(MPI_COMM_WORLD);
 
-    std::set<std::pair<int,int>> pattern_set;
+    // Get element connectivity
     const auto& d_conn = domain.getElementToNodeConnectivity();
 
-    // Copy LOCAL elements from [startIdx, endIdx) range
+    // Copy connectivity to host
     std::vector<KeyType> h_conn[8];
     for (int i = 0; i < 8; ++i) {
-        h_conn[i].resize(localElementCount);
+        h_conn[i].resize(elementCount);
         auto& d_conni = (i==0) ? std::get<0>(d_conn) :
                         (i==1) ? std::get<1>(d_conn) :
                         (i==2) ? std::get<2>(d_conn) :
@@ -120,58 +308,58 @@ int main(int argc, char** argv) {
                         (i==5) ? std::get<5>(d_conn) :
                         (i==6) ? std::get<6>(d_conn) :
                                  std::get<7>(d_conn);
-        // Copy from startIdx to endIdx (local element range)
-        thrust::copy(thrust::device_pointer_cast(d_conni.data() + startIdx),
-                     thrust::device_pointer_cast(d_conni.data() + endIdx),
+        thrust::copy(thrust::device_pointer_cast(d_conni.data()),
+                     thrust::device_pointer_cast(d_conni.data() + elementCount),
                      h_conn[i].begin());
     }
 
-    for (size_t e = 0; e < localElementCount; ++e) {
+    // Build full adjacency (all node pairs in each element)
+    std::vector<std::set<int>> adj(numOwnedDofs);
+
+    for (size_t e = 0; e < elementCount; ++e) {
         KeyType nodes[8];
         for (int i = 0; i < 8; ++i) {
             nodes[i] = h_conn[i][e];
-            // Bounds check
-            if (nodes[i] >= nodeCount) {
-                std::cerr << "Rank " << rank << ": Element " << e << " node " << i
-                          << " index " << nodes[i] << " exceeds nodeCount " << nodeCount << std::endl;
-                MPI_Abort(MPI_COMM_WORLD, 1);
-            }
         }
 
+        // Full 8x8 coupling
         for (int i = 0; i < 8; ++i) {
             int row_dof = h_nodeToDof[nodes[i]];
-            if (row_dof < 0) continue;  // skip ghost
+            if (row_dof < 0) continue;
 
             for (int j = 0; j < 8; ++j) {
                 int col_dof = h_nodeToDof[nodes[j]];
-                if (col_dof < 0) continue;  // skip ghost
-
-                pattern_set.insert({row_dof, col_dof});
+                if (col_dof >= 0) {
+                    adj[row_dof].insert(col_dof);
+                }
             }
         }
     }
 
-    // Build CSR structure
-    std::vector<std::pair<int,int>> pattern_vec(pattern_set.begin(), pattern_set.end());
-    std::sort(pattern_vec.begin(), pattern_vec.end());
+    // Convert to CSR format
+    std::vector<int> rowPtr(numOwnedDofs + 1);
+    std::vector<int> colInd;
 
-    std::vector<int> rowPtr(numOwnedDofs + 1, 0);
-    for (auto& p : pattern_vec) {
-        rowPtr[p.first + 1]++;
-    }
-    for (int i = 1; i <= numOwnedDofs; ++i) {
-        rowPtr[i] += rowPtr[i-1];
-    }
-
-    int nnz = pattern_vec.size();
-    std::vector<int> colInd(nnz);
-    for (int i = 0; i < nnz; ++i) {
-        colInd[i] = pattern_vec[i].second;
+    rowPtr[0] = 0;
+    for (int d = 0; d < numOwnedDofs; ++d) {
+        for (int col : adj[d]) {
+            colInd.push_back(col);
+        }
+        rowPtr[d + 1] = colInd.size();
     }
 
-    if (rank == 0) {
-        std::cout << "Sparsity pattern built. NNZ = " << nnz << std::endl;
+    int nnz = colInd.size();
+    auto sparsityEnd = std::chrono::high_resolution_clock::now();
+    perf.sparsityBuildTime = std::chrono::duration<float, std::milli>(sparsityEnd - sparsityStart).count();
+    perf.numDofs = numOwnedDofs;
+    perf.matrixNnz = nnz;
+
+    if (rank == 0 && !quiet) {
+        std::cout << "  NNZ: " << nnz << ", avg/row: "
+                  << std::setprecision(1) << std::fixed
+                  << static_cast<double>(nnz) / numOwnedDofs << std::endl;
     }
+
     MPI_Barrier(MPI_COMM_WORLD);
 
     // Allocate matrix and RHS on device
@@ -181,6 +369,7 @@ int main(int argc, char** argv) {
     cstone::DeviceVector<RealType> d_rhs(numOwnedDofs, 0.0);
 
     // Initialize fields to match STK reference
+    auto fieldInitStart = std::chrono::high_resolution_clock::now();
     domain.cacheNodeCoordinates();
     const auto& d_x = domain.getNodeX();
     const auto& d_y = domain.getNodeY();
@@ -211,22 +400,11 @@ int main(int argc, char** argv) {
         RealType y = h_y[i];
         RealType z = h_z[i];
 
-        // phi = sin(x) + 3*cos(y) + 4*sin(5*x*y*z)
         h_phi[i] = std::sin(x) + 3.0 * std::cos(y) + 4.0 * std::sin(5.0 * x * y * z);
-
-        // gradPhi_x = cos(x) + 20*y*z*cos(5*x*y*z)
         h_grad_phi_x[i] = std::cos(x) + 20.0 * y * z * std::cos(5.0 * x * y * z);
-
-        // gradPhi_y = 20*x*z*cos(5*x*y*z) - 3*sin(y)
         h_grad_phi_y[i] = 20.0 * x * z * std::cos(5.0 * x * y * z) - 3.0 * std::sin(y);
-
-        // gradPhi_z = 20*x*y*cos(5*x*y*z)
         h_grad_phi_z[i] = 20.0 * x * y * std::cos(5.0 * x * y * z);
-
-        // gamma = 0.1 (constant diffusion coefficient)
         h_gamma[i] = 0.1;
-
-        // beta = 1.234 (constant upwind parameter) - matches STK reference
         h_beta[i] = 1.234;
     }
 
@@ -239,13 +417,22 @@ int main(int argc, char** argv) {
     cstone::DeviceVector<RealType> d_grad_phi_z(h_grad_phi_z.data(), h_grad_phi_z.data() + nodeCount);
 
     // Element-based data (12 SCS per hex element)
-    // NOTE: STK reference sets mdot=0 (no advection), only diffusion
     cstone::DeviceVector<RealType> d_mdot(elementCount * 12, 0.0);
     cstone::DeviceVector<RealType> d_areaVec_x(elementCount * 12, 1.0);
     cstone::DeviceVector<RealType> d_areaVec_y(elementCount * 12, 0.0);
     cstone::DeviceVector<RealType> d_areaVec_z(elementCount * 12, 0.0);
 
-    // Create simple CSR wrapper (matches kernel definition)
+    cudaDeviceSynchronize();
+    auto fieldInitEnd = std::chrono::high_resolution_clock::now();
+    perf.fieldInitTime = std::chrono::duration<float, std::milli>(fieldInitEnd - fieldInitStart).count();
+
+    // Calculate data sizes for bandwidth calculation
+    perf.coordinateBytes = 3 * nodeCount * sizeof(RealType);
+    perf.inputFieldBytes = 6 * nodeCount * sizeof(RealType);
+    perf.connectivityBytes = 8 * elementCount * sizeof(KeyType);
+    perf.outputMatrixBytes = nnz * sizeof(RealType) + numOwnedDofs * sizeof(RealType);
+
+    // Create simple CSR wrapper
     using MatrixType = mars::fem::CSRMatrix<RealType>;
 
     MatrixType* d_matrix;
@@ -260,77 +447,88 @@ int main(int argc, char** argv) {
     cudaMemcpy(d_matrix, &h_matrix, sizeof(MatrixType), cudaMemcpyHostToDevice);
 
     // Launch assembly kernel with timing
-    int blockSize = 256;
     int numBlocks = (elementCount + blockSize - 1) / blockSize;
 
-    // Warm-up run
-    fem::cvfem_hex_assembly_kernel<KeyType, RealType><<<numBlocks, blockSize>>>(
-        std::get<0>(d_conn).data(),
-        std::get<1>(d_conn).data(),
-        std::get<2>(d_conn).data(),
-        std::get<3>(d_conn).data(),
-        std::get<4>(d_conn).data(),
-        std::get<5>(d_conn).data(),
-        std::get<6>(d_conn).data(),
-        std::get<7>(d_conn).data(),
-        elementCount,
-        d_x.data(), d_y.data(), d_z.data(),
-        d_gamma.data(),
-        d_phi.data(),
-        d_beta.data(),
-        d_grad_phi_x.data(),
-        d_grad_phi_y.data(),
-        d_grad_phi_z.data(),
-        d_mdot.data(),
-        d_areaVec_x.data(),
-        d_areaVec_y.data(),
-        d_areaVec_z.data(),
-        d_nodeToDof.data(),
-        d_nodeOwnership.data(),
-        d_matrix,
-        d_rhs.data()
-    );
-    cudaDeviceSynchronize();
+    if (rank == 0 && !quiet) {
+        std::cout << "\nAssembly kernel: " << numBlocks << " blocks x " << blockSize << " threads\n";
+    }
 
-    // Reset for timed run
-    thrust::fill(thrust::device_pointer_cast(d_values.data()),
-                 thrust::device_pointer_cast(d_values.data() + nnz), 0.0);
-    thrust::fill(thrust::device_pointer_cast(d_rhs.data()),
-                 thrust::device_pointer_cast(d_rhs.data() + numOwnedDofs), 0.0);
+    // Lambda to run the assembly kernel
+    auto runAssembly = [&]() {
+        fem::cvfem_hex_assembly_kernel<KeyType, RealType><<<numBlocks, blockSize>>>(
+            std::get<0>(d_conn).data(),
+            std::get<1>(d_conn).data(),
+            std::get<2>(d_conn).data(),
+            std::get<3>(d_conn).data(),
+            std::get<4>(d_conn).data(),
+            std::get<5>(d_conn).data(),
+            std::get<6>(d_conn).data(),
+            std::get<7>(d_conn).data(),
+            elementCount,
+            d_x.data(), d_y.data(), d_z.data(),
+            d_gamma.data(),
+            d_phi.data(),
+            d_beta.data(),
+            d_grad_phi_x.data(),
+            d_grad_phi_y.data(),
+            d_grad_phi_z.data(),
+            d_mdot.data(),
+            d_areaVec_x.data(),
+            d_areaVec_y.data(),
+            d_areaVec_z.data(),
+            d_nodeToDof.data(),
+            d_nodeOwnership.data(),
+            d_matrix,
+            d_rhs.data()
+        );
+    };
 
-    // Timed run
-    auto start = std::chrono::high_resolution_clock::now();
+    // Lambda to reset matrix and RHS
+    auto resetSystem = [&]() {
+        thrust::fill(thrust::device_pointer_cast(d_values.data()),
+                     thrust::device_pointer_cast(d_values.data() + nnz), 0.0);
+        thrust::fill(thrust::device_pointer_cast(d_rhs.data()),
+                     thrust::device_pointer_cast(d_rhs.data() + numOwnedDofs), 0.0);
+    };
 
-    fem::cvfem_hex_assembly_kernel<KeyType, RealType><<<numBlocks, blockSize>>>(
-        std::get<0>(d_conn).data(),
-        std::get<1>(d_conn).data(),
-        std::get<2>(d_conn).data(),
-        std::get<3>(d_conn).data(),
-        std::get<4>(d_conn).data(),
-        std::get<5>(d_conn).data(),
-        std::get<6>(d_conn).data(),
-        std::get<7>(d_conn).data(),
-        elementCount,
-        d_x.data(), d_y.data(), d_z.data(),
-        d_gamma.data(),
-        d_phi.data(),
-        d_beta.data(),
-        d_grad_phi_x.data(),
-        d_grad_phi_y.data(),
-        d_grad_phi_z.data(),
-        d_mdot.data(),
-        d_areaVec_x.data(),
-        d_areaVec_y.data(),
-        d_areaVec_z.data(),
-        d_nodeToDof.data(),
-        d_nodeOwnership.data(),
-        d_matrix,
-        d_rhs.data()
-    );
-    cudaDeviceSynchronize();
+    // Warmup run
+    timer.start();
+    runAssembly();
+    timer.stop();
+    perf.assemblyWarmupTime = timer.elapsedMs();
 
-    auto end = std::chrono::high_resolution_clock::now();
-    std::chrono::duration<double, std::milli> elapsed = end - start;
+    if (rank == 0 && !quiet) {
+        std::cout << "  Warmup: " << perf.assemblyWarmupTime << " ms\n";
+    }
+
+    // Timed iterations
+    perf.assemblyIterations = numIterations;
+    std::vector<float> iterTimes(numIterations);
+
+    for (int iter = 0; iter < numIterations; ++iter) {
+        resetSystem();
+        cudaDeviceSynchronize();
+
+        timer.start();
+        runAssembly();
+        timer.stop();
+
+        float iterTime = timer.elapsedMs();
+        iterTimes[iter] = iterTime;
+        perf.assemblyTime += iterTime;
+        perf.assemblyMinTime = std::min(perf.assemblyMinTime, iterTime);
+        perf.assemblyMaxTime = std::max(perf.assemblyMaxTime, iterTime);
+    }
+
+    // Show per-iteration timing if verbose
+    if (rank == 0 && !quiet && numIterations <= 20) {
+        std::cout << "  Per-iteration times: ";
+        for (int i = 0; i < numIterations; ++i) {
+            std::cout << std::fixed << std::setprecision(2) << iterTimes[i];
+            if (i < numIterations - 1) std::cout << ", ";
+        }
+        std::cout << " ms\n";
+    }
 
     // Compute matrix norm (L2/Frobenius)
     auto square_op = [] __host__ __device__ (RealType x) -> RealType {
@@ -353,8 +551,6 @@ int main(int argc, char** argv) {
         thrust::plus<RealType>()
     );
 
-    // For single rank, this works fine. For multiple ranks, we need special handling
-    // to avoid double-counting shared nodes (TODO: implement proper MPI assembly)
     RealType global_matrix_norm2, global_rhs_norm2;
     MPI_Allreduce(&local_matrix_norm2, &global_matrix_norm2, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
     MPI_Allreduce(&local_rhs_norm2, &global_rhs_norm2, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
@@ -362,57 +558,18 @@ int main(int argc, char** argv) {
     RealType matrix_norm = std::sqrt(global_matrix_norm2);
     RealType rhs_norm = std::sqrt(global_rhs_norm2);
 
-    // Debug: Print matrix statistics and first diagonal entries
-    if (rank == 0) {
-        size_t sample_size = std::min(size_t(100), size_t(nnz));
-        size_t row_sample = std::min(size_t(10), size_t(numOwnedDofs + 1));
-        std::vector<RealType> h_values(sample_size);
-        std::vector<int> h_rowPtr(row_sample);
-        std::vector<int> h_colInd(sample_size);
-
-        thrust::copy(thrust::device_pointer_cast(d_values.data()),
-                     thrust::device_pointer_cast(d_values.data() + h_values.size()),
-                     h_values.begin());
-        thrust::copy(thrust::device_pointer_cast(d_rowPtr.data()),
-                     thrust::device_pointer_cast(d_rowPtr.data() + h_rowPtr.size()),
-                     h_rowPtr.begin());
-        thrust::copy(thrust::device_pointer_cast(d_colInd.data()),
-                     thrust::device_pointer_cast(d_colInd.data() + h_colInd.size()),
-                     h_colInd.begin());
-
-        std::cout << "  Matrix rows (owned): " << numOwnedDofs << std::endl;
-        std::cout << "  Matrix NNZ: " << nnz << std::endl;
-        std::cout << "  Average NNZ per row: " << std::scientific
-                  << static_cast<double>(nnz) / numOwnedDofs << std::endl;
-        std::cout << "  First 5 diagonal entries: ";
-        for (int row = 0; row < std::min(5, numOwnedDofs); ++row) {
-            // Find diagonal entry in this row
-            for (int j = h_rowPtr[row]; j < h_rowPtr[row + 1]; ++j) {
-                if (h_colInd[j] == row) {
-                    std::cout << std::scientific << h_values[j] << " ";
-                    break;
-                }
-            }
-        }
-        std::cout << std::endl;
-    }
-
-    // Calculate throughput (bytes read/written per element assembly)
-    // Estimate: 8 nodes * (3 coords + 4 fields + 3 grads) * 8 bytes = ~640 bytes per element
-    // Plus output: 64 matrix entries + 8 RHS entries * 8 bytes = ~576 bytes
-    size_t bytes_per_element = 8 * (3 + 4 + 3) * sizeof(RealType) +
-                                (64 + 8) * sizeof(RealType);
-    double total_bytes_gb = (bytes_per_element * elementCount) / 1e9;
-    double throughput_gbs = total_bytes_gb / (elapsed.count() / 1000.0);
-
+    // Print STK-compatible single-line summary
     if (rank == 0) {
         std::cout << std::scientific << std::setprecision(6);
-        std::cout << "Assembler: MARS CVFEM Hex..................: "
-                  << elapsed.count() << " milliseconds @ "
-                  << throughput_gbs << " GB/s (average of 1 samples) [matrix norm: "
-                  << matrix_norm << "]" << std::endl;
-        std::cout << std::endl;
+        std::cout << "Assembler: MARS CVFEM Hex (Full 27-NNZ)....: "
+                  << perf.avgAssemblyTimeMs() << " milliseconds @ "
+                  << perf.bandwidthGBs() << " GB/s (average of " << numIterations
+                  << " samples) [matrix norm: " << matrix_norm
+                  << ", rhs norm: " << rhs_norm << "]" << std::endl;
     }
+
+    // Print detailed performance summary
+    perf.print(rank);
 
     cudaFree(d_matrix);
     MPI_Finalize();

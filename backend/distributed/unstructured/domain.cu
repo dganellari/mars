@@ -427,16 +427,6 @@ __global__ void extractElementNodeCoordsKernel(const RealType* x,
 
     if (elemIdx < numElements)
     {
-        // DEBUG: Print first few elements to diagnose indexing issue
-        if (elemIdx < 3) {
-            printf("DEBUG extractKernel elem %d: idx0=%llu idx1=%llu\n",
-                   elemIdx, (unsigned long long)idx0[elemIdx], (unsigned long long)idx1[elemIdx]);
-            printf("  node0 coord=[%.10e, %.10e, %.10e]\n",
-                   x[idx0[elemIdx]], y[idx0[elemIdx]], z[idx0[elemIdx]]);
-            printf("  node1 coord=[%.10e, %.10e, %.10e]\n",
-                   x[idx1[elemIdx]], y[idx1[elemIdx]], z[idx1[elemIdx]]);
-        }
-
         // Extract coordinates for all 8 nodes of this element
         elemOrigX0[elemIdx] = x[idx0[elemIdx]];
         elemOrigY0[elemIdx] = y[idx0[elemIdx]];
@@ -493,13 +483,6 @@ __global__ void rebuildNodeCoordsFromElementsKernel(
 
     if (elemIdx < numElements)
     {
-        // DEBUG: Print first few elements
-        if (elemIdx < 3) {
-            printf("REBUILD elem %d: nodeId0=%llu, writing coord=[%.10e, %.10e, %.10e]\n",
-                   elemIdx, (unsigned long long)connKey0[elemIdx],
-                   elemOrigX0[elemIdx], elemOrigY0[elemIdx], elemOrigZ0[elemIdx]);
-        }
-
         // For each element, write the original coordinates to the node arrays
         // using the post-sync local node IDs from d_conn_keys_
 

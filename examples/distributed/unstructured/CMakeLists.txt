@@ -35,8 +35,3 @@ install(TARGETS mars_cvfem_full RUNTIME DESTINATION bin/examples)
 add_executable(mars_cvfem_graph mars_cvfem_graph.cu)
 target_link_libraries(mars_cvfem_graph PRIVATE mars)
 install(TARGETS mars_cvfem_graph RUNTIME DESTINATION bin/examples)
-
-# Legacy name for backwards compatibility
-add_executable(mars_cvfem_simple mars_cvfem_simple.cu)
-target_link_libraries(mars_cvfem_simple PRIVATE mars)
-install(TARGETS mars_cvfem_simple RUNTIME DESTINATION bin/examples)

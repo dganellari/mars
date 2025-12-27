@@ -46,11 +46,6 @@ __global__ void cvfem_hex_assembly_kernel_graph(
     int elemIdx = blockIdx.x * blockDim.x + threadIdx.x;
     if (elemIdx >= numElements) return;
 
-    // Debug: Print KeyType size on first thread
-    if (elemIdx == 0 && blockIdx.x == 0 && threadIdx.x == 0) {
-        printf("KERNEL: sizeof(KeyType) = %d bytes (%d bits)\n", (int)sizeof(KeyType), (int)(sizeof(KeyType) * 8));
-    }
-
     // Get element nodes
     KeyType nodes[8];
     nodes[0] = d_conn0[elemIdx];
@@ -62,60 +57,12 @@ __global__ void cvfem_hex_assembly_kernel_graph(
     nodes[6] = d_conn6[elemIdx];
     nodes[7] = d_conn7[elemIdx];
 
-    // Debug: Print first element's connectivity with proper format
-    if (elemIdx == 0) {
-        printf("Element 0 RAW connectivity: [%llu, %llu, %llu, %llu, %llu, %llu, %llu, %llu]\n",
-               (unsigned long long)nodes[0], (unsigned long long)nodes[1], (unsigned long long)nodes[2], (unsigned long long)nodes[3],
-               (unsigned long long)nodes[4], (unsigned long long)nodes[5], (unsigned long long)nodes[6], (unsigned long long)nodes[7]);
-    }
-
     // Gather nodal coordinates
     double coords[8][3];
     for (int n = 0; n < 8; ++n) {
         coords[n][0] = d_x[nodes[n]];
         coords[n][1] = d_y[nodes[n]];
         coords[n][2] = d_z[nodes[n]];
-    }
-
-    // Debug: find element closest to origin
-    // Check if any node is very close to origin
-    double minDist = 1e10;
-    int closestNode = -1;
-    for (int ni = 0; ni < 8; ++ni) {
-        double dist = coords[ni][0]*coords[ni][0] + coords[ni][1]*coords[ni][1] + coords[ni][2]*coords[ni][2];
-        if (dist < minDist) {
-            minDist = dist;
-            closestNode = ni;
-        }
-    }
-
-    // Flag if this element has a node very close to origin (within 1e-4)
-    bool isOriginElement = (minDist < 1e-8);
-
-    // Also print element 0 for reference
-    if (elemIdx == 0) {
-        printf("\n=== MARS Element 0 (for reference) ===\n");
-        printf("Local node IDs: [%llu, %llu, %llu, %llu, %llu, %llu, %llu, %llu]\n",
-               (unsigned long long)nodes[0], (unsigned long long)nodes[1], (unsigned long long)nodes[2], (unsigned long long)nodes[3],
-               (unsigned long long)nodes[4], (unsigned long long)nodes[5], (unsigned long long)nodes[6], (unsigned long long)nodes[7]);
-        for (int ni = 0; ni < 8; ++ni) {
-            printf("Node %d (local=%llu): [%.10e, %.10e, %.10e]\n",
-                   ni, (unsigned long long)nodes[ni], coords[ni][0], coords[ni][1], coords[ni][2]);
-        }
-        printf("Closest node to origin: %d, dist^2=%.10e\n\n", closestNode, minDist);
-    }
-
-    if (isOriginElement) {
-        printf("\n=== MARS Element at Origin ===\n");
-        printf("Element index: %d\n", elemIdx);
-        printf("Local node IDs: [%llu, %llu, %llu, %llu, %llu, %llu, %llu, %llu]\n",
-               (unsigned long long)nodes[0], (unsigned long long)nodes[1], (unsigned long long)nodes[2], (unsigned long long)nodes[3],
-               (unsigned long long)nodes[4], (unsigned long long)nodes[5], (unsigned long long)nodes[6], (unsigned long long)nodes[7]);
-        for (int ni = 0; ni < 8; ++ni) {
-            printf("Node %d (local=%llu): [%.10e, %.10e, %.10e]\n",
-                   ni, (unsigned long long)nodes[ni], coords[ni][0], coords[ni][1], coords[ni][2]);
-        }
-        printf("\n");
     }
 
     // Gather nodal field values
@@ -134,11 +81,6 @@ __global__ void cvfem_hex_assembly_kernel_graph(
     double lhs[64] = {0.0};
     double rhs[8] = {0.0};
 
-    // Debug: Print full element matrix for origin element BEFORE assembly
-    if (isOriginElement) {
-        printf("\n=== MARS Origin Element LOCAL MATRIX (before assembly) ===\n");
-    }
-
     // Loop over 12 sub-control surfaces (SCS)
     for (int ip = 0; ip < 12; ++ip) {
         int nodeL = hexLRSCV[ip * 2];
@@ -146,15 +88,9 @@ __global__ void cvfem_hex_assembly_kernel_graph(
 
         double mdot = d_mdot[elemIdx * 12 + ip];
 
-        // Compute area vector from geometry (like STK does)
+        // Compute area vector from geometry
         double areaVec[3];
         computeAreaVector(ip, coords, areaVec);
-
-        // Debug: print area vectors for origin element
-        if (isOriginElement) {
-            printf("MARS Origin Element, SCS %d: areaVec = [%.10e, %.10e, %.10e]\n",
-                   ip, areaVec[0], areaVec[1], areaVec[2]);
-        }
 
         // Interpolate fields to SCS integration point
         double phi_ip = 0.0, gamma_ip = 0.0;
@@ -224,33 +160,6 @@ __global__ void cvfem_hex_assembly_kernel_graph(
         }
     }
 
-    // Debug: Print full 8x8 element matrix for origin element
-    if (isOriginElement) {
-        printf("MARS Origin Element 8x8 LHS matrix:\n");
-        for (int row = 0; row < 8; ++row) {
-            printf("  row %d: [", row);
-            for (int col = 0; col < 8; ++col) {
-                printf("%.6e", lhs[row * 8 + col]);
-                if (col < 7) printf(", ");
-            }
-            printf("]\n");
-        }
-        printf("MARS Origin Element RHS: [");
-        for (int i = 0; i < 8; ++i) {
-            printf("%.6e", rhs[i]);
-            if (i < 7) printf(", ");
-        }
-        printf("]\n");
-        printf("Row sums (should be ~0 for diffusion-only): [");
-        for (int row = 0; row < 8; ++row) {
-            double rowsum = 0;
-            for (int col = 0; col < 8; ++col) rowsum += lhs[row * 8 + col];
-            printf("%.6e", rowsum);
-            if (row < 7) printf(", ");
-        }
-        printf("]\n\n");
-    }
-
     // Assemble into global system with diagonal lumping for missing entries
     for (int i = 0; i < 8; ++i) {
         KeyType row_node = nodes[i];
@@ -264,8 +173,6 @@ __global__ void cvfem_hex_assembly_kernel_graph(
 
         // Diagonal accumulator for lumped entries
         double diag_lump = 0.0;
-        int num_found = 0;
-        int num_lumped = 0;
 
         // Assemble LHS with diagonal lumping
         for (int j = 0; j < 8; ++j) {
@@ -289,35 +196,14 @@ __global__ void cvfem_hex_assembly_kernel_graph(
                 if (matrix->colInd[k] == col_dof) {
                     atomicAdd(&matrix->values[k], value);
                     found = true;
-                    num_found++;
                     break;
                 }
             }
 
-            // If entry not found in sparsity pattern, lump to diagonal (STK behavior)
+            // If entry not found in sparsity pattern, lump to diagonal
             if (!found) {
                 diag_lump += value;
-                num_lumped++;
             }
-        }
-
-        // Debug: print stats for origin element
-        if (isOriginElement && i == 0) {
-            printf("Origin Element, node 0: found=%d, lumped=%d, diag_lump=%.6e, diag_orig=%.6e\n",
-                   num_found, num_lumped, diag_lump, lhs[i * 8 + i]);
-            printf("  row_dof=%d, graph row has %d entries: [",
-                   row_dof, matrix->rowPtr[row_dof + 1] - matrix->rowPtr[row_dof]);
-            for (int k = matrix->rowPtr[row_dof]; k < matrix->rowPtr[row_dof + 1]; ++k) {
-                printf("%d", matrix->colInd[k]);
-                if (k < matrix->rowPtr[row_dof + 1] - 1) printf(", ");
-            }
-            printf("]\n");
-            printf("  element nodes col_dofs: [");
-            for (int jj = 0; jj < 8; ++jj) {
-                printf("%d", d_node_to_dof[nodes[jj]]);
-                if (jj < 7) printf(", ");
-            }
-            printf("]\n");
         }
 
         // Add diagonal entry + lumped contributions
