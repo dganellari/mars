@@ -3,6 +3,7 @@
 #include "mars_cvfem_hex_kernel.hpp"
 #include "mars_cvfem_hex_kernel_graph.hpp"
 #include "mars_cvfem_hex_kernel_optimized.hpp"
+#include "mars_cvfem_hex_kernel_shmem.hpp"
 #include <cuda_runtime.h>
 
 namespace mars {
@@ -10,9 +11,10 @@ namespace fem {
 
 // Kernel variant for CVFEM assembly
 enum class CvfemKernelVariant {
-    Original,    // Original implementation with linear search
+    Original,    // Original graph kernel with linear search
     Optimized,   // Binary search, pragma unroll optimizations
-    Team         // Team-based with shared memory (warp per element)
+    Shmem,       // Block-level shared memory staging + vectorized column search + direct diagonal access
+    Team         // Warp-cooperative (32 threads/element) with shared memory + parallel SCS integration
 };
 
 // High-level CVFEM assembler for hex elements
@@ -95,8 +97,23 @@ public:
                 );
                 break;
 
+            case CvfemKernelVariant::Shmem:
+                // Thread-per-element with vectorized column search
+                cvfem_hex_assembly_kernel_shmem<KeyType, RealType, 256><<<numBlocks, blockSize, 0, config.stream>>>(
+                    d_conn0, d_conn1, d_conn2, d_conn3,
+                    d_conn4, d_conn5, d_conn6, d_conn7,
+                    numElements,
+                    d_x, d_y, d_z,
+                    d_gamma, d_phi, d_beta,
+                    d_grad_phi_x, d_grad_phi_y, d_grad_phi_z,
+                    d_mdot, d_areaVec_x, d_areaVec_y, d_areaVec_z,
+                    d_node_to_dof, d_ownership,
+                    d_matrix, d_rhs
+                );
+                break;
+
             case CvfemKernelVariant::Team: {
-                // Team kernel uses 32 threads per element
+                // Team kernel uses 32 threads per element (one warp per element)
                 int teamBlocks = (numElements * 32 + blockSize - 1) / blockSize;
                 cvfem_hex_assembly_kernel_team<KeyType, RealType, 256><<<teamBlocks, blockSize, 0, config.stream>>>(
                     d_conn0, d_conn1, d_conn2, d_conn3,
@@ -166,6 +183,7 @@ public:
         switch (variant) {
             case CvfemKernelVariant::Original: return "original";
             case CvfemKernelVariant::Optimized: return "optimized";
+            case CvfemKernelVariant::Shmem: return "shmem";
             case CvfemKernelVariant::Team: return "team";
             default: return "unknown";
         }

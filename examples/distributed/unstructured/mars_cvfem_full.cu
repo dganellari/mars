@@ -432,7 +432,7 @@ int main(int argc, char** argv) {
     perf.connectivityBytes = 8 * elementCount * sizeof(KeyType);
     perf.outputMatrixBytes = nnz * sizeof(RealType) + numOwnedDofs * sizeof(RealType);
 
-    // Create simple CSR wrapper
+    // Create simple CSR wrapper (diagPtr not needed for full sparsity)
     using MatrixType = mars::fem::CSRMatrix<RealType>;
 
     MatrixType* d_matrix;
@@ -441,6 +441,7 @@ int main(int argc, char** argv) {
         d_rowPtr.data(),
         d_colInd.data(),
         d_values.data(),
+        nullptr,  // diagPtr not needed for full sparsity (no lumping)
         numOwnedDofs,
         nnz
     };

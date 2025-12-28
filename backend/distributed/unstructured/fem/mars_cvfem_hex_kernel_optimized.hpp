@@ -465,17 +465,9 @@ __global__ void cvfem_hex_assembly_kernel_team(
                 }
             }
 
-            // Diagonal
+            // Diagonal - use direct accessor via diagPtr
             double diag_value = s_lhs[teamId][i * 8 + i] + diag_lump;
-            int lo = start, hi = end;
-            while (lo < hi) {
-                int mid = (lo + hi) >> 1;
-                if (matrix->colInd[mid] < row_dof) lo = mid + 1;
-                else hi = mid;
-            }
-            if (lo < end && matrix->colInd[lo] == row_dof) {
-                atomicAdd(&matrix->values[lo], diag_value);
-            }
+            atomicAdd(matrix->diag(row_dof), diag_value);
         }
     }
 }

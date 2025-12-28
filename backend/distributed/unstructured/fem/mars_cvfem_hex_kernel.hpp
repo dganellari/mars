@@ -12,6 +12,7 @@ struct CSRMatrix {
     int* rowPtr;
     int* colInd;
     RealType* values;
+    int* diagPtr;   // Direct pointer to diagonal position for each row
     int numRows;
     int nnz;
 
@@ -24,6 +25,15 @@ struct CSRMatrix {
                 return;
             }
         }
+    }
+
+    // Fast diagonal access (like STK's A.diag(rowID))
+    __device__ __forceinline__ RealType* diag(int row) {
+        return &values[diagPtr[row]];
+    }
+
+    __device__ __forceinline__ int diagPos(int row) const {
+        return diagPtr[row];
     }
 };
 
