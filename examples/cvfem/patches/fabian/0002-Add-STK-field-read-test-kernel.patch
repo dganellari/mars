@@ -1,0 +1,343 @@
+From 10ffc8ca7c7af0ebd8f0b6a474751fc6c626655a Mon Sep 17 00:00:00 2001
+From: Fabian Wermelinger <info@0xfab.ch>
+Date: Fri, 16 May 2025 15:35:52 +0200
+Subject: [PATCH 2/5] Add STK field read test kernel
+
+Measurements result in 3.36TB/s bandwidth for this implementation.
+---
+ src/main.cpp      | 135 ++++++++++++++++++++++++++++++++++++----------
+ src/myAssembler.h | 123 ++++++++++++++++++++++++++++++++++++++++++
+ 2 files changed, 231 insertions(+), 27 deletions(-)
+
+diff --git a/src/main.cpp b/src/main.cpp
+index 01d7dae..066fef6 100644
+--- a/src/main.cpp
++++ b/src/main.cpp
+@@ -147,6 +147,7 @@ int main(int argc, char* argv[])
+ 
+         // fill gamma field
+         set_field_on_host(bulkData, GammaSTKFieldRef, 0.1);
++        set_field_on_host(bulkData, betaSTKFieldRef, 1.234);
+ 
+         unsigned numNodes = stk::mesh::count_entities(
+             *bulkDataPtr_,
+@@ -159,6 +160,29 @@ int main(int argc, char* argv[])
+         std::cout << "Mesh Size (Nodes): " << numNodes << std::endl;
+         std::cout << "Mesh Size (Elements): " << numElems << std::endl;
+ 
++        // minimum field bytes accessed (depending on cache/shared memory
++        // utilization, this may be more in actual measurement)
++        size_t total_field_bytes = 0;
++
++        // clang-format off
++        total_field_bytes += stk::mesh::get_total_ngp_field_allocation_bytes(GammaSTKFieldRef);
++        // total_field_bytes += stk::mesh::get_total_ngp_field_allocation_bytes(mdotSTKFieldRef);
++        total_field_bytes += stk::mesh::get_total_ngp_field_allocation_bytes(phiSTKFieldRef);
++        total_field_bytes += stk::mesh::get_total_ngp_field_allocation_bytes(gradPhiSTKFieldRef);
++        // total_field_bytes += stk::mesh::get_total_ngp_field_allocation_bytes(betaSTKFieldRef);
++        // total_field_bytes += stk::mesh::get_total_ngp_field_allocation_bytes(coordinatesRef);
++        // clang-format on
++
++        const size_t total_buckets =
++            bulkDataPtr_
++                ->get_buckets(stk::topology::NODE_RANK,
++                              bulkDataPtr_->mesh_meta_data().universal_part())
++                .size();
++
++        std::cout << "Total buckets: " << total_buckets << std::endl;
++        std::cout << "Total NGP field bytes (MB): "
++                  << total_field_bytes / 1024 / 1024 << std::endl;
++
+         // read nodegraph
+         accel::myNodeGraph nodegraph(
+             baseName + ".bin",
+@@ -170,9 +194,16 @@ int main(int argc, char* argv[])
+         nodegraph.syncToDevice();
+ 
+         // create crsMatrix
+-        linearSolver::coefficients<N> coeffs(&nodegraph);
+-        linearSolver::coefficients<N>::Matrix& A = coeffs.getAMatrix();
+-        linearSolver::coefficients<N>::Vector& b = coeffs.getBVector();
++        using Coefficients = linearSolver::coefficients<N>;
++        Coefficients coeffs(&nodegraph);
++        Coefficients::Matrix& A = coeffs.getAMatrix();
++        Coefficients::Vector& b = coeffs.getBVector();
++
++        const size_t total_lin_sys_bytes =
++            (A.nnzGlobal() + b.size()) *
++            sizeof(typename Coefficients::DataType);
++        std::cout << "Total linear system bytes (MB): "
++                  << total_lin_sys_bytes / 1024 / 1024 << std::endl;
+ 
+         // linearSolver::coefficients<N>::Matrix* A_p = &A;
+         // linearSolver::coefficients<N>::Vector* b_p = &b;
+@@ -183,7 +214,16 @@ int main(int argc, char* argv[])
+ 
+         MyAssembler<N> assembler(bulkData);
+ 
+-        /******* FIRST PASS  *******/
++        // NOTE: [fab4100@posteo.net; 2025-05-16] The minimum amount of floating
++        // point data bytes required to stream the problem through the hardware.
++        // This is the ideal amount of bytes if there was a perfect cache
++        // (read/write to DRAM once).
++        const size_t n_read = 1;
++        const size_t n_write = 1;
++        const size_t total_bytes =
++            n_read * total_field_bytes + n_write * total_lin_sys_bytes;
++
++        /******* FIRST PASS (warmup)  *******/
+         auto startTime = std::chrono::high_resolution_clock::now();
+ 
+         assembler.fill_matrix<double, SPATIAL_DIM>(A,
+@@ -203,43 +243,84 @@ int main(int argc, char* argv[])
+ 
+         auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(
+             stopTime - startTime);
+-        std::cout << "Team (first pass): " << duration.count()
++        std::cout << "Team (first pass): " << std::fixed << duration.count()
+                   << " milliseconds " << std::endl;
+ 
+         A.syncToHost();
+-        A.dump(5, 5);
++        // A.dump(5, 5);
+ 
+         /******* SECOND PASS  *******/
++        const int n_reps = 10;
++        double t_accum = 0;
++        for (int i = 0; i < n_reps; i++)
++        {
++            // reset A and b
++            coeffs.zeroALL();
+ 
+-        // reset A and b
+-        coeffs.zeroALL();
++            startTime = std::chrono::high_resolution_clock::now();
+ 
+-        startTime = std::chrono::high_resolution_clock::now();
++            assembler.fill_matrix<double, SPATIAL_DIM>(A,
++                                                       b,
++                                                       metaData,
++                                                       bulkData,
++                                                       GammaSTKFieldPtr_,
++                                                       mdotSTKFieldPtr_,
++                                                       phiSTKFieldRef,
++                                                       gradPhiSTKFieldRef,
++                                                       betaSTKFieldRef,
++                                                       coordinatesRef);
+ 
+-        assembler.fill_matrix<double, SPATIAL_DIM>(A,
+-                                                   b,
+-                                                   metaData,
+-                                                   bulkData,
+-                                                   GammaSTKFieldPtr_,
+-                                                   mdotSTKFieldPtr_,
+-                                                   phiSTKFieldRef,
+-                                                   gradPhiSTKFieldRef,
+-                                                   betaSTKFieldRef,
+-                                                   coordinatesRef);
++            Kokkos::fence();
+ 
+-        Kokkos::fence();
++            stopTime = std::chrono::high_resolution_clock::now();
+ 
+-        stopTime = std::chrono::high_resolution_clock::now();
++            duration = std::chrono::duration_cast<std::chrono::milliseconds>(
++                stopTime - startTime);
++            t_accum += duration.count();
++        }
++        std::cout << "Team (second pass): " << std::fixed << t_accum / n_reps
++                  << " milliseconds (" << n_reps
++                  << " samples): FP throughput = "
++                  << n_reps * total_bytes * 1.0e-9 / (t_accum * 1.0e-3)
++                  << " GB/s\n";
+ 
+-        duration = std::chrono::duration_cast<std::chrono::milliseconds>(
+-            stopTime - startTime);
+-        std::cout << "Team (second pass): " << duration.count()
+-                  << " milliseconds " << std::endl;
++        // field read stream
++        t_accum = 0;
++        scalar stream_result = 0.0;
++        for (int i = 0; i < n_reps; i++)
++        {
++            startTime = std::chrono::high_resolution_clock::now();
++
++            stream_result += assembler.fill_matrix_stream<double, SPATIAL_DIM>(
++                A,
++                b,
++                metaData,
++                bulkData,
++                GammaSTKFieldPtr_,
++                mdotSTKFieldPtr_,
++                phiSTKFieldRef,
++                gradPhiSTKFieldRef,
++                betaSTKFieldRef,
++                coordinatesRef);
++
++            Kokkos::fence();
++
++            stopTime = std::chrono::high_resolution_clock::now();
++
++            duration = std::chrono::duration_cast<std::chrono::milliseconds>(
++                stopTime - startTime);
++            t_accum += duration.count();
++        }
++        std::cout << "Team (field read stream): " << std::fixed
++                  << t_accum / n_reps << " milliseconds (" << n_reps
++                  << " samples): FP throughput = "
++                  << n_reps * total_field_bytes * 1.0e-9 / (t_accum * 1.0e-3)
++                  << " GB/s (result = " << stream_result << ")\n";
+ 
+         A.syncToHost();
+-        A.dump(5, 5);
++        // A.dump(5, 5);
+ 
+-        A.writeMatrix("matrixDump");
++        // A.writeMatrix("matrixDump");
+         //         // // write all fields
+         //         // size_t outputFileIndex =
+         //         stkIoPtr_->create_output_mesh("output.exo",
+diff --git a/src/myAssembler.h b/src/myAssembler.h
+index aad27bc..97413b2 100644
+--- a/src/myAssembler.h
++++ b/src/myAssembler.h
+@@ -176,6 +176,11 @@ public:
+         // scratch size required for each team
+         const size_t totalTeamScratchSize = shapeFunctionScratchSize;
+ 
++        std::cout << "Total thread scratch size: " << totalThreadScratchSize
++                  << '\n';
++        std::cout << "Total team scratch size:   " << totalTeamScratchSize
++                  << '\n';
++
+         Kokkos::parallel_for(
+             teamPolicy.set_scratch_size(
+                 SCRATCH_SPACE_LEVEL,
+@@ -584,6 +589,124 @@ public:
+         b.modifyDevice();
+     }
+ 
++    template <typename T, unsigned SPATIAL_DIM>
++    scalar fill_matrix_stream(Matrix& A,
++                              Vector& b,
++                              const stk::mesh::MetaData& metaData,
++                              const stk::mesh::BulkData& bulkData,
++                              stk::mesh::Field<T>* GammaSTKFieldPtr_,
++                              stk::mesh::Field<T>* mdotSTKFieldPtr_,
++                              stk::mesh::Field<T>& phiSTKFieldRef,
++                              stk::mesh::Field<T>& gradPhiSTKFieldRef,
++                              stk::mesh::Field<T>& betaSTKFieldRef,
++                              const stk::mesh::Field<T>& coordinatesRef)
++    {
++        // init ngp data
++        const stk::mesh::NgpMesh& ngpMesh =
++            stk::mesh::get_updated_ngp_mesh(bulkData);
++        stk::mesh::NgpField<T>& ngpGammaSTKFieldRef =
++            stk::mesh::get_updated_ngp_field<T>(*GammaSTKFieldPtr_);
++        stk::mesh::NgpField<T>& ngpMdotSTKFieldRef =
++            stk::mesh::get_updated_ngp_field<T>(*mdotSTKFieldPtr_);
++        stk::mesh::NgpField<T>& ngpPhiSTKFieldRef =
++            stk::mesh::get_updated_ngp_field<T>(phiSTKFieldRef);
++        stk::mesh::NgpField<T>& ngpGradPhiSTKFieldRef =
++            stk::mesh::get_updated_ngp_field<T>(gradPhiSTKFieldRef);
++        stk::mesh::NgpField<T>& ngpBetaSTKFieldRef =
++            stk::mesh::get_updated_ngp_field<T>(betaSTKFieldRef);
++        stk::mesh::NgpField<T>& ngpCoordinatesRef =
++            stk::mesh::get_updated_ngp_field<T>(coordinatesRef);
++
++        stk::NgpVector<unsigned> bucketIds = ngpMesh.get_bucket_ids(
++            stk::topology::NODE_RANK, metaData.universal_part());
++        unsigned numBuckets = bucketIds.size();
++
++        auto teamPolicy =
++            stk::ngp::TeamPolicy<MyExecSpace>(numBuckets, Kokkos::AUTO);
++
++        scalar global_sum = 0.0;
++        Kokkos::parallel_reduce(
++            teamPolicy,
++            KOKKOS_CLASS_LAMBDA( // TODO: class lambda here for numNodes_
++                const TeamHandleType& teamMember,
++                scalar& gsum) {
++                const int bkt_idx =
++                    bucketIds.get<MyExecSpace>(teamMember.league_rank());
++                const stk::mesh::NgpMesh::BucketType& node_bkt =
++                    ngpMesh.get_bucket(stk::topology::NODE_RANK, bkt_idx);
++                unsigned n_bucket_nodes = node_bkt.size();
++
++                scalar sum = 0.0;
++                Kokkos::parallel_reduce(
++                    Kokkos::TeamThreadRange(teamMember, 0u, n_bucket_nodes),
++                    [&](const int& node_idx, scalar& local_sum)
++                {
++                    stk::mesh::Entity node = node_bkt[node_idx];
++                    stk::mesh::FastMeshIndex nodeFastIndex =
++                        ngpMesh.fast_mesh_index(node);
++
++                    const scalar v_0 = ngpGammaSTKFieldRef(nodeFastIndex, 0);
++
++                    // const scalar v_1 = ngpMdotSTKFieldRef(nodeFastIndex, 0);
++                    // const scalar v_2 = ngpMdotSTKFieldRef(nodeFastIndex, 1);
++                    // const scalar v_3 = ngpMdotSTKFieldRef(nodeFastIndex, 2);
++                    // const scalar v_4 = ngpMdotSTKFieldRef(nodeFastIndex, 3);
++                    // const scalar v_5 = ngpMdotSTKFieldRef(nodeFastIndex, 4);
++                    // const scalar v_6 = ngpMdotSTKFieldRef(nodeFastIndex, 5);
++                    // const scalar v_7 = ngpMdotSTKFieldRef(nodeFastIndex, 6);
++                    // const scalar v_8 = ngpMdotSTKFieldRef(nodeFastIndex, 7);
++                    // const scalar v_9 = ngpMdotSTKFieldRef(nodeFastIndex, 8);
++                    // const scalar v_10 = ngpMdotSTKFieldRef(nodeFastIndex, 9);
++                    // const scalar v_11 = ngpMdotSTKFieldRef(nodeFastIndex,
++                    // 10); const scalar v_12 =
++                    // ngpMdotSTKFieldRef(nodeFastIndex, 11);
++
++                    const scalar v_13 = ngpPhiSTKFieldRef(nodeFastIndex, 0);
++
++                    const scalar v_14 = ngpGradPhiSTKFieldRef(nodeFastIndex, 0);
++                    const scalar v_15 = ngpGradPhiSTKFieldRef(nodeFastIndex, 1);
++                    const scalar v_16 = ngpGradPhiSTKFieldRef(nodeFastIndex, 2);
++
++                    // const scalar v_17 = ngpBetaSTKFieldRef(nodeFastIndex, 0);
++
++                    // const scalar v_18 = ngpCoordinatesRef(nodeFastIndex, 0);
++                    // const scalar v_19 = ngpCoordinatesRef(nodeFastIndex, 1);
++                    // const scalar v_20 = ngpCoordinatesRef(nodeFastIndex, 2);
++
++                    // local_sum += v_0 + v_1 + v_2 + v_3 + v_4 + v_5 + v_6 +
++                    // v_7 +
++                    //              v_8 + v_9 + v_10 + v_11 + v_12 + v_13 + v_14
++                    //              + v_15 + v_16 + v_17 + v_18 + v_19 + v_20;
++
++                    // local_sum += v_0 + v_1 + v_2 + v_3 + v_4 + v_5 + v_6 +
++                    // v_7 +
++                    //              v_8 + v_9 + v_10 + v_11 + v_12;
++                    local_sum += v_0 + v_13 + v_14 + v_15 + v_16;
++                },
++                    sum);
++
++                if (teamMember.team_rank() == 0)
++                    gsum += sum;
++
++                // applyCoeff_(A,
++                //             b,
++                //             connectedNodes,
++                //             scratchIds,
++                //             scratchVals,
++                //             matrixColumnIds,
++                //             sortPermutation,
++                //             rhs,
++                //             lhs,
++                //             nodesPerElement);
++            },
++            global_sum);
++
++        // A.modifyDevice();
++        // b.modifyDevice();
++
++        return global_sum;
++    }
++
+     // TODO: DO NOT USE BULKDATA ON DEVICE!
+     const stk::mesh::BulkData& bulkDataRef() const
+     {
+-- 
+2.35.3
+

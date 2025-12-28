@@ -2,6 +2,8 @@
 
 #include <memory>
 #include <vector>
+#include <thrust/fill.h>
+#include <thrust/system/cuda/memory.h>
 
 namespace mars {
 namespace fem {
@@ -26,7 +28,10 @@ public:
     SparseMatrix(IndexType numRows, IndexType numCols)
         : numRows_(numRows), numCols_(numCols), nnz_(0) {
         // Initialize with empty CSR structure
-        d_rowOffsets_.resize(numRows_ + 1, 0);
+        d_rowOffsets_.resize(numRows_ + 1);
+        thrust::fill(thrust::device_pointer_cast(d_rowOffsets_.data()),
+                     thrust::device_pointer_cast(d_rowOffsets_.data() + numRows_ + 1),
+                     IndexType(0));
     }
     
     // Allocate matrix with known sparsity pattern

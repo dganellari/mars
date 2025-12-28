@@ -76,11 +76,51 @@ if(MARS_ENABLE_CUDA)
     )
 endif()
 
+# Find netCDF for Exodus mesh reading
+find_package(PkgConfig QUIET)
+if(PkgConfig_FOUND)
+    pkg_check_modules(NETCDF QUIET IMPORTED_TARGET netcdf)
+endif()
+
+if(NOT NETCDF_FOUND)
+    find_path(NETCDF_INCLUDE_DIRS netcdf.h
+        HINTS ENV NETCDF_DIR ENV NETCDF_ROOT
+        PATH_SUFFIXES include)
+    find_library(NETCDF_LIBRARY netcdf
+        HINTS ENV NETCDF_DIR ENV NETCDF_ROOT
+        PATH_SUFFIXES lib lib64)
+    if(NETCDF_INCLUDE_DIRS AND NETCDF_LIBRARY)
+        set(NETCDF_FOUND TRUE)
+    endif()
+endif()
+
+if(NETCDF_FOUND)
+    if(TARGET PkgConfig::NETCDF)
+        message(STATUS "Found netCDF via pkg-config: ${NETCDF_LINK_LIBRARIES}")
+        target_compile_definitions(mars_unstructured PUBLIC MARS_HAVE_NETCDF)
+    else()
+        message(STATUS "Found netCDF: ${NETCDF_LIBRARY}")
+        target_include_directories(mars_unstructured PUBLIC ${NETCDF_INCLUDE_DIRS})
+        target_compile_definitions(mars_unstructured PUBLIC MARS_HAVE_NETCDF)
+    endif()
+else()
+    message(WARNING "netCDF not found - Exodus mesh reading will be disabled")
+endif()
+
 # Link against dependencies
 target_link_libraries(mars_unstructured PUBLIC
     ${MARS_DEP_LIBRARIES}
     MPI::MPI_CXX
 )
+
+# Link netCDF if found
+if(NETCDF_FOUND)
+    if(TARGET PkgConfig::NETCDF)
+        target_link_libraries(mars_unstructured PUBLIC PkgConfig::NETCDF)
+    else()
+        target_link_libraries(mars_unstructured PUBLIC ${NETCDF_LIBRARY})
+    endif()
+endif()
 
 # Link to Cornerstone if available
 if(TARGET cornerstone::cornerstone)

@@ -33,6 +33,8 @@ using std::get;
 #include <thrust/iterator/constant_iterator.h>
 #include <algorithm>
 #include <array>
+#include <filesystem>
+#include <iomanip>
 #include <iostream>
 #include <memory>
 #include <vector>
@@ -43,6 +45,8 @@ using std::get;
 #include "mars_domain_utils.hpp"
 // #include "mars_read_mesh_adios2.hpp"
 #include "mars_read_mesh_binary.hpp"
+#include "mars_read_mfem_mesh.hpp"
+#include "mars_read_exodus_mesh.hpp"
 
 namespace mars
 {
@@ -78,6 +82,10 @@ __global__ void findRepresentativeNodesKernel(const KeyType* indices0,
                                               const KeyType* indices1,
                                               const KeyType* indices2,
                                               const KeyType* indices3,
+                                              const KeyType* indices4,
+                                              const KeyType* indices5,
+                                              const KeyType* indices6,
+                                              const KeyType* indices7,
                                               const KeyType* sfcCodes,
                                               KeyType* elemToNodeMap,
                                               int numElements);
@@ -102,6 +110,10 @@ __global__ void computeCharacteristicSizesKernel(const RealType* x,
                                                  const KeyType* indices1,
                                                  const KeyType* indices2,
                                                  const KeyType* indices3,
+                                                 const KeyType* indices4,
+                                                 const KeyType* indices5,
+                                                 const KeyType* indices6,
+                                                 const KeyType* indices7,
                                                  int* nodeTetCount,
                                                  RealType* h,
                                                  int numElements);
@@ -136,12 +148,58 @@ __global__ void buildSfcConnectivity(const KeyType* indices0,
                                      const KeyType* indices1,
                                      const KeyType* indices2,
                                      const KeyType* indices3,
+                                     const KeyType* indices4,
+                                     const KeyType* indices5,
+                                     const KeyType* indices6,
+                                     const KeyType* indices7,
                                      const KeyType* nodeSfcCodes,
                                      KeyType* conn_key0,
                                      KeyType* conn_key1,
                                      KeyType* conn_key2,
                                      KeyType* conn_key3,
+                                     KeyType* conn_key4,
+                                     KeyType* conn_key5,
+                                     KeyType* conn_key6,
+                                     KeyType* conn_key7,
                                      int numElements);
+
+// Forward declarations for kernels that handle original coordinates
+template<typename ElementTag, typename KeyType, typename RealType>
+__global__ void extractElementNodeCoordsKernel(const RealType* x,
+                                               const RealType* y,
+                                               const RealType* z,
+                                               const KeyType* idx0,
+                                               const KeyType* idx1,
+                                               const KeyType* idx2,
+                                               const KeyType* idx3,
+                                               const KeyType* idx4,
+                                               const KeyType* idx5,
+                                               const KeyType* idx6,
+                                               const KeyType* idx7,
+                                               RealType* elemOrigX0, RealType* elemOrigY0, RealType* elemOrigZ0,
+                                               RealType* elemOrigX1, RealType* elemOrigY1, RealType* elemOrigZ1,
+                                               RealType* elemOrigX2, RealType* elemOrigY2, RealType* elemOrigZ2,
+                                               RealType* elemOrigX3, RealType* elemOrigY3, RealType* elemOrigZ3,
+                                               RealType* elemOrigX4, RealType* elemOrigY4, RealType* elemOrigZ4,
+                                               RealType* elemOrigX5, RealType* elemOrigY5, RealType* elemOrigZ5,
+                                               RealType* elemOrigX6, RealType* elemOrigY6, RealType* elemOrigZ6,
+                                               RealType* elemOrigX7, RealType* elemOrigY7, RealType* elemOrigZ7,
+                                               int numElements);
+
+template<typename ElementTag, typename KeyType, typename RealType>
+__global__ void rebuildNodeCoordsFromElementsKernel(
+    const KeyType* connKey0, const KeyType* connKey1, const KeyType* connKey2, const KeyType* connKey3,
+    const KeyType* connKey4, const KeyType* connKey5, const KeyType* connKey6, const KeyType* connKey7,
+    const RealType* elemOrigX0, const RealType* elemOrigY0, const RealType* elemOrigZ0,
+    const RealType* elemOrigX1, const RealType* elemOrigY1, const RealType* elemOrigZ1,
+    const RealType* elemOrigX2, const RealType* elemOrigY2, const RealType* elemOrigZ2,
+    const RealType* elemOrigX3, const RealType* elemOrigY3, const RealType* elemOrigZ3,
+    const RealType* elemOrigX4, const RealType* elemOrigY4, const RealType* elemOrigZ4,
+    const RealType* elemOrigX5, const RealType* elemOrigY5, const RealType* elemOrigZ5,
+    const RealType* elemOrigX6, const RealType* elemOrigY6, const RealType* elemOrigZ6,
+    const RealType* elemOrigX7, const RealType* elemOrigY7, const RealType* elemOrigZ7,
+    RealType* nodeX, RealType* nodeY, RealType* nodeZ,
+    int numElements);
 
 template<typename KeyType>
 __global__ void decodeSfcToIntegersKernel(const KeyType* keys, unsigned* x, unsigned* y, unsigned* z, size_t numKeys);
@@ -365,6 +423,25 @@ struct CoordinateCache
     CoordinateCache(const ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>& domain);
 };
 
+// ============================================================================
+// OriginalCoordinates: Exact original node coordinates from mesh file
+// Alternative to SFC-decoded coordinates for high-precision applications
+// ============================================================================
+template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
+struct OriginalCoordinates
+{
+    template<typename T>
+    using DeviceVector = typename VectorSelector<T, AcceleratorTag>::type;
+
+    // Original coordinates from mesh file (exact precision)
+    DeviceVector<RealType> d_node_x_;
+    DeviceVector<RealType> d_node_y_;
+    DeviceVector<RealType> d_node_z_;
+
+    // Constructor: allocate storage for nodeCount nodes
+    OriginalCoordinates(size_t nodeCount);
+};
+
 // Main domain class templated on element type, real type, key type, and accelerator type
 template<typename ElementTag     = TetTag,
          typename RealType       = float,
@@ -389,30 +466,27 @@ public:
     using DeviceCoordsTuple       = std::tuple<DeviceVector<RealType>, DeviceVector<RealType>, DeviceVector<RealType>>;
     using DevicePropsTuple        = std::tuple<DeviceVector<RealType>>;
     using DeviceConnectivityTuple = typename ConnectivityTupleHelper<ElementTag, AcceleratorTag, KeyType>::type;
-    using DeviceBoundaryTuple     = std::tuple<DeviceVector<uint8_t>>;  // (isBoundaryNode)
+    using DeviceBoundaryTuple     = std::tuple<DeviceVector<uint8_t>>; // (isBoundaryNode)
 
     // SoA data structures using tuples - host versions
     using HostCoordsTuple       = std::tuple<HostVector<RealType>, HostVector<RealType>, HostVector<RealType>>;
     using HostPropsTuple        = std::tuple<HostVector<RealType>>;
     using HostConnectivityTuple = typename HostConnectivityTupleHelper<ElementTag, KeyType>::type;
-    using HostBoundaryTuple     = std::tuple<HostVector<uint8_t>>;  // (isBoundaryNode)
+    using HostBoundaryTuple     = std::tuple<HostVector<uint8_t>>; // (isBoundaryNode)
 
     // Constructor from file
-    ElementDomain(const std::string& meshFile, int rank, int numRanks);
-    
+    ElementDomain(const std::string& meshFile, int rank, int numRanks, bool storeOriginalCoords = false);
+
     // Constructor from mesh data (for MFEM or other formats) - automatically computes bounding box
-    ElementDomain(const HostCoordsTuple& h_coords,
-                  const HostConnectivityTuple& h_conn,
-                  int rank,
-                  int numRanks);
-    
+    ElementDomain(const HostCoordsTuple& h_coords, const HostConnectivityTuple& h_conn, int rank, int numRanks);
+
     // Constructor from mesh data with boundary info - automatically computes bounding box
     ElementDomain(const HostCoordsTuple& h_coords,
                   const HostConnectivityTuple& h_conn,
                   const HostBoundaryTuple& h_boundary,
                   int rank,
                   int numRanks);
-    
+
     // Constructor from mesh data with explicit bounding box (for backward compatibility)
     ElementDomain(const HostCoordsTuple& h_coords,
                   const HostConnectivityTuple& h_conn,
@@ -605,7 +679,12 @@ public:
     void buildAdjacency() { ensureAdjacency(); }
 
     // optional: explicitly request coordinate caching
-    void cacheNodeCoordinates() { ensureCoordinateCache(); }
+    void cacheNodeCoordinates()
+    {
+        // If using original coordinates, they're already stored - no need to cache
+        if (originalCoords_) return;
+        ensureCoordinateCache();
+    }
 
     // Exchange halo data for DOF vectors (MPI communication to sum shared node contributions)
     template<class... Vectors, class SendBuffer, class ReceiveBuffer>
@@ -622,8 +701,12 @@ public:
     int rank() const { return rank_; }
 
     //! Returns the map from a dense local node ID to its sparse global SFC Key.
-    const DeviceVector<KeyType>& getLocalToGlobalSfcMap() const { return d_localToGlobalSfcMap_; }
-    
+    const DeviceVector<KeyType>& getLocalToGlobalSfcMap() const
+    {
+        ensureSfcMap();
+        return d_localToGlobalSfcMap_;
+    }
+
     const DeviceVector<KeyType>& getLocalToGlobalNodeMap() const { return d_localToGlobalNodeMap_; }
 
     //! Returns the Element->Node connectivity table using dense local node IDs (lazy).
@@ -650,33 +733,36 @@ public:
     //! Returns cached node coordinates (lazy, initializes if not already cached).
     const DeviceVector<RealType>& getNodeX() const
     {
+        if (originalCoords_) {
+            return originalCoords_->d_node_x_;
+        }
         ensureCoordinateCache();
         return coordCache_->d_node_x_;
     }
 
     const DeviceVector<RealType>& getNodeY() const
     {
+        if (originalCoords_) {
+            return originalCoords_->d_node_y_;
+        }
         ensureCoordinateCache();
         return coordCache_->d_node_y_;
     }
 
     const DeviceVector<RealType>& getNodeZ() const
     {
+        if (originalCoords_) {
+            return originalCoords_->d_node_z_;
+        }
         ensureCoordinateCache();
         return coordCache_->d_node_z_;
     }
 
     //! Returns boundary node flags (true if node is on boundary).
-    const DeviceVector<uint8_t>& getBoundaryNodes() const
-    {
-        return std::get<0>(d_boundary_);
-    }
+    const DeviceVector<uint8_t>& getBoundaryNodes() const { return std::get<0>(d_boundary_); }
 
     //! Returns true if boundary information is available.
-    bool hasBoundaryInfo() const
-    {
-        return std::get<0>(d_boundary_).size() > 0;
-    }
+    bool hasBoundaryInfo() const { return std::get<0>(d_boundary_).size() > 0; }
 
 private:
     int rank_;
@@ -684,6 +770,9 @@ private:
     std::unique_ptr<DomainType> domain_;
     std::size_t elementCount_ = 0;
     std::size_t nodeCount_    = 0;
+
+    // Flag to store original coordinates instead of SFC-decoded coords
+    bool storeOriginalCoords_ = false;
 
     // Core mesh data (always allocated)
     // element unique identifiers (SFC codes)
@@ -703,7 +792,7 @@ private:
     // Lazily-initialized components (allocated on demand)
     // Maps a dense local node ID [0...N-1] to its sparse global SFC Key
     DeviceVector<KeyType> d_localToGlobalSfcMap_;
-    
+
     // Maps a dense local node ID [0...N-1] to its global node index
     DeviceVector<KeyType> d_localToGlobalNodeMap_;
 
@@ -711,10 +800,12 @@ private:
     friend struct AdjacencyData<ElementTag, RealType, KeyType, AcceleratorTag>;
     friend struct HaloData<ElementTag, RealType, KeyType, AcceleratorTag>;
     friend struct CoordinateCache<ElementTag, RealType, KeyType, AcceleratorTag>;
+    friend struct OriginalCoordinates<ElementTag, RealType, KeyType, AcceleratorTag>;
 
     mutable std::unique_ptr<AdjacencyData<ElementTag, RealType, KeyType, AcceleratorTag>> adjacency_;
     mutable std::unique_ptr<HaloData<ElementTag, RealType, KeyType, AcceleratorTag>> halo_;
     mutable std::unique_ptr<CoordinateCache<ElementTag, RealType, KeyType, AcceleratorTag>> coordCache_;
+    mutable std::unique_ptr<OriginalCoordinates<ElementTag, RealType, KeyType, AcceleratorTag>> originalCoords_;
 
     void initializeConnectivityKeys();
 
@@ -722,6 +813,7 @@ private:
     void createLocalToGlobalSfcMap();
 
     // Lazy initialization methods (called by public getters)
+    void ensureSfcMap() const;
     void ensureAdjacency() const;
     void ensureHalo() const;
     void ensureCoordinateCache() const;
@@ -739,22 +831,23 @@ private:
             auto& d_i3 = std::get<3>(d_conn_);
 
             // Find representative nodes
-            findRepresentativeNodesKernel<TetTag, KeyType, RealType>
-                <<<numBlocks, blockSize>>>(thrust::raw_pointer_cast(d_i0.data()), thrust::raw_pointer_cast(d_i1.data()),
-                                           thrust::raw_pointer_cast(d_i2.data()), thrust::raw_pointer_cast(d_i3.data()),
-                                           thrust::raw_pointer_cast(d_nodeSfcCodes.data()),
-                                           thrust::raw_pointer_cast(d_elemToNodeMap_.data()), elementCount_);
+            findRepresentativeNodesKernel<TetTag, KeyType, RealType><<<numBlocks, blockSize>>>(
+                thrust::raw_pointer_cast(d_i0.data()), thrust::raw_pointer_cast(d_i1.data()),
+                thrust::raw_pointer_cast(d_i2.data()), thrust::raw_pointer_cast(d_i3.data()), nullptr, nullptr, nullptr,
+                nullptr, thrust::raw_pointer_cast(d_nodeSfcCodes.data()),
+                thrust::raw_pointer_cast(d_elemToNodeMap_.data()), elementCount_);
             cudaCheckError();
 
             // Build SFC connectivity
-            buildSfcConnectivity<TetTag, KeyType, RealType>
-                <<<numBlocks, blockSize>>>(thrust::raw_pointer_cast(d_i0.data()), thrust::raw_pointer_cast(d_i1.data()),
-                                           thrust::raw_pointer_cast(d_i2.data()), thrust::raw_pointer_cast(d_i3.data()),
-                                           thrust::raw_pointer_cast(d_nodeSfcCodes.data()),
-                                           thrust::raw_pointer_cast(std::get<0>(d_conn_keys_).data()),
-                                           thrust::raw_pointer_cast(std::get<1>(d_conn_keys_).data()),
-                                           thrust::raw_pointer_cast(std::get<2>(d_conn_keys_).data()),
-                                           thrust::raw_pointer_cast(std::get<3>(d_conn_keys_).data()), elementCount_);
+            buildSfcConnectivity<TetTag, KeyType, RealType><<<numBlocks, blockSize>>>(
+                thrust::raw_pointer_cast(d_i0.data()), thrust::raw_pointer_cast(d_i1.data()),
+                thrust::raw_pointer_cast(d_i2.data()), thrust::raw_pointer_cast(d_i3.data()), nullptr, nullptr, nullptr,
+                nullptr, thrust::raw_pointer_cast(d_nodeSfcCodes.data()),
+                thrust::raw_pointer_cast(std::get<0>(d_conn_keys_).data()),
+                thrust::raw_pointer_cast(std::get<1>(d_conn_keys_).data()),
+                thrust::raw_pointer_cast(std::get<2>(d_conn_keys_).data()),
+                thrust::raw_pointer_cast(std::get<3>(d_conn_keys_).data()), nullptr, nullptr, nullptr, nullptr,
+                elementCount_);
             cudaCheckError();
         }
         else if constexpr (std::is_same_v<ElementTag, HexTag>)
@@ -768,7 +861,7 @@ private:
             auto& d_i6 = std::get<6>(d_conn_);
             auto& d_i7 = std::get<7>(d_conn_);
 
-            // Find representative nodes (would need 8-node version)
+            // Find representative nodes
             findRepresentativeNodesKernel<HexTag, KeyType, RealType>
                 <<<numBlocks, blockSize>>>(thrust::raw_pointer_cast(d_i0.data()), thrust::raw_pointer_cast(d_i1.data()),
                                            thrust::raw_pointer_cast(d_i2.data()), thrust::raw_pointer_cast(d_i3.data()),
@@ -778,8 +871,22 @@ private:
                                            thrust::raw_pointer_cast(d_elemToNodeMap_.data()), elementCount_);
             cudaCheckError();
 
-            // Build SFC connectivity for hex (would need 8-node version)
-            // buildSfcConnectivity<HexTag, KeyType, RealType><<<...>>>(...);
+            // Build SFC connectivity for hex
+            buildSfcConnectivity<HexTag, KeyType, RealType>
+                <<<numBlocks, blockSize>>>(thrust::raw_pointer_cast(d_i0.data()), thrust::raw_pointer_cast(d_i1.data()),
+                                           thrust::raw_pointer_cast(d_i2.data()), thrust::raw_pointer_cast(d_i3.data()),
+                                           thrust::raw_pointer_cast(d_i4.data()), thrust::raw_pointer_cast(d_i5.data()),
+                                           thrust::raw_pointer_cast(d_i6.data()), thrust::raw_pointer_cast(d_i7.data()),
+                                           thrust::raw_pointer_cast(d_nodeSfcCodes.data()),
+                                           thrust::raw_pointer_cast(std::get<0>(d_conn_keys_).data()),
+                                           thrust::raw_pointer_cast(std::get<1>(d_conn_keys_).data()),
+                                           thrust::raw_pointer_cast(std::get<2>(d_conn_keys_).data()),
+                                           thrust::raw_pointer_cast(std::get<3>(d_conn_keys_).data()),
+                                           thrust::raw_pointer_cast(std::get<4>(d_conn_keys_).data()),
+                                           thrust::raw_pointer_cast(std::get<5>(d_conn_keys_).data()),
+                                           thrust::raw_pointer_cast(std::get<6>(d_conn_keys_).data()),
+                                           thrust::raw_pointer_cast(std::get<7>(d_conn_keys_).data()), elementCount_);
+            cudaCheckError();
         }
         else if constexpr (std::is_same_v<ElementTag, TriTag>)
         {
@@ -830,35 +937,20 @@ private:
 template<typename RealType>
 cstone::Box<RealType> computeGlobalBoundingBox(const std::string& meshDir)
 {
-    // Try float32 first (since that's what most meshes use), then double
-    std::vector<std::string> extensions;
-    if constexpr (std::is_same_v<RealType, float>) { extensions = {"float32", "double"}; }
-    else { extensions = {"double", "float32"}; }
-
+    // Use the SAME extension logic as readMeshWithElementPartitioning to ensure consistency
     std::string ext;
-    std::ifstream x_file, y_file, z_file;
+    if constexpr (std::is_same_v<RealType, float>) { ext = "float32"; }
+    else if constexpr (std::is_same_v<RealType, double>) { ext = "double"; }
+    else { throw std::runtime_error("Unsupported RealType for coordinate reading"); }
 
-    // Try different file extensions
-    for (const auto& test_ext : extensions)
-    {
-        x_file.open(meshDir + "/x." + test_ext, std::ios::binary);
-        y_file.open(meshDir + "/y." + test_ext, std::ios::binary);
-        z_file.open(meshDir + "/z." + test_ext, std::ios::binary);
-
-        if (x_file && y_file && z_file)
-        {
-            ext = test_ext;
-            break;
-        }
-
-        x_file.close();
-        y_file.close();
-        z_file.close();
-    }
+    std::ifstream x_file(meshDir + "/x." + ext, std::ios::binary);
+    std::ifstream y_file(meshDir + "/y." + ext, std::ios::binary);
+    std::ifstream z_file(meshDir + "/z." + ext, std::ios::binary);
 
     if (!x_file || !y_file || !z_file)
     {
-        throw std::runtime_error("Failed to open coordinate files for global bounding box computation: " + meshDir);
+        throw std::runtime_error("Failed to open coordinate files for global bounding box computation: " + meshDir +
+                                 " (looking for ." + ext + " files)");
     }
 
     // Get total node count
@@ -1001,26 +1093,41 @@ cstone::Box<RealType> computeGlobalBoundingBoxFromCoords(const std::vector<RealT
         throw std::runtime_error("Cannot compute bounding box from empty coordinate data");
     }
 
-    // Find min/max coordinates
+    // Find LOCAL min/max coordinates
     auto [xmin_it, xmax_it] = std::minmax_element(x_coords.begin(), x_coords.end());
     auto [ymin_it, ymax_it] = std::minmax_element(y_coords.begin(), y_coords.end());
     auto [zmin_it, zmax_it] = std::minmax_element(z_coords.begin(), z_coords.end());
 
-    RealType xmin = *xmin_it;
-    RealType xmax = *xmax_it;
-    RealType ymin = *ymin_it;
-    RealType ymax = *ymax_it;
-    RealType zmin = *zmin_it;
-    RealType zmax = *zmax_it;
+    RealType local_xmin = *xmin_it;
+    RealType local_xmax = *xmax_it;
+    RealType local_ymin = *ymin_it;
+    RealType local_ymax = *ymax_it;
+    RealType local_zmin = *zmin_it;
+    RealType local_zmax = *zmax_it;
 
-    // Add padding based on ranges
-    RealType xRange = xmax - xmin;
-    RealType yRange = ymax - ymin;
-    RealType zRange = zmax - zmin;
+    // Compute GLOBAL min/max across all ranks using MPI
+    RealType global_xmin, global_xmax, global_ymin, global_ymax, global_zmin, global_zmax;
+    MPI_Allreduce(&local_xmin, &global_xmin, 1, std::is_same_v<RealType, float> ? MPI_FLOAT : MPI_DOUBLE, MPI_MIN,
+                  MPI_COMM_WORLD);
+    MPI_Allreduce(&local_xmax, &global_xmax, 1, std::is_same_v<RealType, float> ? MPI_FLOAT : MPI_DOUBLE, MPI_MAX,
+                  MPI_COMM_WORLD);
+    MPI_Allreduce(&local_ymin, &global_ymin, 1, std::is_same_v<RealType, float> ? MPI_FLOAT : MPI_DOUBLE, MPI_MIN,
+                  MPI_COMM_WORLD);
+    MPI_Allreduce(&local_ymax, &global_ymax, 1, std::is_same_v<RealType, float> ? MPI_FLOAT : MPI_DOUBLE, MPI_MAX,
+                  MPI_COMM_WORLD);
+    MPI_Allreduce(&local_zmin, &global_zmin, 1, std::is_same_v<RealType, float> ? MPI_FLOAT : MPI_DOUBLE, MPI_MIN,
+                  MPI_COMM_WORLD);
+    MPI_Allreduce(&local_zmax, &global_zmax, 1, std::is_same_v<RealType, float> ? MPI_FLOAT : MPI_DOUBLE, MPI_MAX,
+                  MPI_COMM_WORLD);
 
-    return cstone::Box<RealType>(xmin - padding * xRange, xmax + padding * xRange,
-                                 ymin - padding * yRange, ymax + padding * yRange,
-                                 zmin - padding * zRange, zmax + padding * zRange);
+    // Add padding based on GLOBAL ranges
+    RealType xRange = global_xmax - global_xmin;
+    RealType yRange = global_ymax - global_ymin;
+    RealType zRange = global_zmax - global_zmin;
+
+    return cstone::Box<RealType>(global_xmin - padding * xRange, global_xmax + padding * xRange,
+                                 global_ymin - padding * yRange, global_ymax + padding * yRange,
+                                 global_zmin - padding * zRange, global_zmax + padding * zRange);
 }
 
 template<typename KeyType, typename RealType>
@@ -1059,32 +1166,33 @@ void testSfcPrecision(const cstone::Box<RealType>& box, int rank = 0)
 template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
 ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(const std::string& meshFile,
                                                                             int rank,
-                                                                            int numRanks)
+                                                                            int numRanks,
+                                                                            bool storeOriginalCoords)
     : rank_(rank)
     , numRanks_(numRanks)
     , box_(0, 1)
+    , storeOriginalCoords_(storeOriginalCoords)
 {
     // Host data in SoA format
     HostCoordsTuple h_coords;     // (x, y, z)
     HostConnectivityTuple h_conn; // (i0, i1, i2, ...) depends on element type
 
-    DeviceConnectivityTuple d_conn_; // (i0, i1, i2, ...) depends on element type
-    DeviceCoordsTuple d_coords_;     // (x, y, z)
+    // Device data (will be filled by transferDataToGPU)
+    DeviceConnectivityTuple d_conn_;
+    DeviceCoordsTuple d_coords_;
 
     // Read the mesh in SoA format
     readMeshDataSoA(meshFile, h_coords, h_conn);
 
-    // Compute global bounding box from the coordinate data we just read
-    box_ = computeGlobalBoundingBoxFromCoords<RealType>(std::get<0>(h_coords),
-                                                        std::get<1>(h_coords),
-                                                        std::get<2>(h_coords));
-
     // Initialize cornerstone domain
-    int bucketSize           = 128;
-    unsigned bucketSizeFocus = 64;
+    int bucketSize           = 64;
+    unsigned bucketSizeFocus = 8;
     RealType theta           = 0.5;
 
-    std::cout << "Rank " << rank_ << ": Created bounding box from mesh data: [" << box_.xmin() << "," << box_.xmax() << "] ["
+    box_ = computeGlobalBoundingBoxFromCoords<RealType>(std::get<0>(h_coords), std::get<1>(h_coords),
+                                                        std::get<2>(h_coords));
+
+    std::cout << "Rank " << rank_ << ": Created bounding box: [" << box_.xmin() << "," << box_.xmax() << "] ["
               << box_.ymin() << "," << box_.ymax() << "] [" << box_.zmin() << "," << box_.zmax() << "]" << std::endl;
 
     // Test SFC precision for this domain (debug only)
@@ -1098,27 +1206,22 @@ ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(cons
     // Calculate characteristic sizes
     calculateCharacteristicSizes(d_conn_, d_coords_);
 
+    std::cout << "Rank " << rank_ << ": Before sync - bucketSize=" << bucketSize
+              << ", bucketSizeFocus=" << bucketSizeFocus << ", theta=" << theta << std::endl;
+
     // Perform sync
     sync(d_conn_, d_coords_);
 
-    // needed by all other lazy structures
-    createLocalToGlobalSfcMap();
-
-    // Adjacency maps are now built lazily on first access
-    // Users can explicitly call buildAdjacency() if they want to build it immediately
-
     std::cout << "Rank " << rank_ << " initialized " << ElementTag::Name << " domain with " << nodeCount_
-              << " nodes and " << elementCount_ << " elements and " << localElementCount() << " local elements."
-              << std::endl;
+              << " nodes and " << elementCount_ << " elements." << std::endl;
 }
 
 // Constructor from mesh data (for MFEM or other formats) - automatically computes bounding box
 template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
-ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(
-    const HostCoordsTuple& h_coords,
-    const HostConnectivityTuple& h_conn,
-    int rank,
-    int numRanks)
+ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(const HostCoordsTuple& h_coords,
+                                                                            const HostConnectivityTuple& h_conn,
+                                                                            int rank,
+                                                                            int numRanks)
     : rank_(rank)
     , numRanks_(numRanks)
     , box_(0, 1)
@@ -1127,21 +1230,21 @@ ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(
     DeviceCoordsTuple d_coords_;
 
     // Set counts from input data
-    nodeCount_ = std::get<0>(h_coords).size();
+    nodeCount_    = std::get<0>(h_coords).size();
     elementCount_ = std::get<0>(h_conn).size();
 
     // Compute global bounding box from the provided coordinate data
-    box_ = computeGlobalBoundingBoxFromCoords<RealType>(std::get<0>(h_coords),
-                                                        std::get<1>(h_coords),
+    box_ = computeGlobalBoundingBoxFromCoords<RealType>(std::get<0>(h_coords), std::get<1>(h_coords),
                                                         std::get<2>(h_coords));
 
     // Initialize cornerstone domain
-    int bucketSize           = 128;
-    unsigned bucketSizeFocus = 64;
+    int bucketSize           = 64;
+    unsigned bucketSizeFocus = 8;
     RealType theta           = 0.5;
 
-    std::cout << "Rank " << rank_ << ": Computed bounding box from coordinates: [" << box_.xmin() << "," << box_.xmax() << "] ["
-              << box_.ymin() << "," << box_.ymax() << "] [" << box_.zmin() << "," << box_.zmax() << "]" << std::endl;
+    std::cout << "Rank " << rank_ << ": Computed bounding box from coordinates: [" << box_.xmin() << "," << box_.xmax()
+              << "] [" << box_.ymin() << "," << box_.ymax() << "] [" << box_.zmin() << "," << box_.zmax() << "]"
+              << std::endl;
 
     // Test SFC precision for this domain (debug only)
     testSfcPrecision<KeyType, RealType>(box_, rank_);
@@ -1154,27 +1257,24 @@ ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(
     // Calculate characteristic sizes
     calculateCharacteristicSizes(d_conn_, d_coords_);
 
+    std::cout << "Rank " << rank_ << ": Before sync - bucketSize=" << bucketSize
+              << ", bucketSizeFocus=" << bucketSizeFocus << ", theta=" << theta << ", input nodes=" << nodeCount_
+              << ", input elements=" << elementCount_ << std::endl;
+
     // Perform sync
     sync(d_conn_, d_coords_);
 
-    // needed by all other lazy structures
-    createLocalToGlobalSfcMap();
-
-    // Adjacency maps are now built lazily on first access
-
     std::cout << "Rank " << rank_ << " initialized " << ElementTag::Name << " domain with " << nodeCount_
-              << " nodes and " << elementCount_ << " elements and " << localElementCount() << " local elements."
-              << std::endl;
+              << " nodes and " << elementCount_ << " elements." << std::endl;
 }
 
 // Constructor from mesh data with boundary info - automatically computes bounding box
 template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
-ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(
-    const HostCoordsTuple& h_coords,
-    const HostConnectivityTuple& h_conn,
-    const HostBoundaryTuple& h_boundary,
-    int rank,
-    int numRanks)
+ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(const HostCoordsTuple& h_coords,
+                                                                            const HostConnectivityTuple& h_conn,
+                                                                            const HostBoundaryTuple& h_boundary,
+                                                                            int rank,
+                                                                            int numRanks)
     : rank_(rank)
     , numRanks_(numRanks)
     , box_(0, 1)
@@ -1183,21 +1283,21 @@ ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(
     DeviceCoordsTuple d_coords_;
 
     // Set counts from input data
-    nodeCount_ = std::get<0>(h_coords).size();
+    nodeCount_    = std::get<0>(h_coords).size();
     elementCount_ = std::get<0>(h_conn).size();
 
     // Compute global bounding box from the provided coordinate data
-    box_ = computeGlobalBoundingBoxFromCoords<RealType>(std::get<0>(h_coords),
-                                                        std::get<1>(h_coords),
+    box_ = computeGlobalBoundingBoxFromCoords<RealType>(std::get<0>(h_coords), std::get<1>(h_coords),
                                                         std::get<2>(h_coords));
 
     // Initialize cornerstone domain
-    int bucketSize           = 128;
-    unsigned bucketSizeFocus = 64;
+    int bucketSize           = 64;
+    unsigned bucketSizeFocus = 8;
     RealType theta           = 0.5;
 
-    std::cout << "Rank " << rank_ << ": Computed bounding box from coordinates: [" << box_.xmin() << "," << box_.xmax() << "] ["
-              << box_.ymin() << "," << box_.ymax() << "] [" << box_.zmin() << "," << box_.zmax() << "]" << std::endl;
+    std::cout << "Rank " << rank_ << ": Computed bounding box from coordinates: [" << box_.xmin() << "," << box_.xmax()
+              << "] [" << box_.ymin() << "," << box_.ymax() << "] [" << box_.zmin() << "," << box_.zmax() << "]"
+              << std::endl;
 
     // Test SFC precision for this domain (debug only)
     testSfcPrecision<KeyType, RealType>(box_, rank_);
@@ -1210,17 +1310,15 @@ ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(
     // Calculate characteristic sizes
     calculateCharacteristicSizes(d_conn_, d_coords_);
 
+    std::cout << "Rank " << rank_ << ": Before sync - bucketSize=" << bucketSize
+              << ", bucketSizeFocus=" << bucketSizeFocus << ", theta=" << theta << ", input nodes=" << nodeCount_
+              << ", input elements=" << elementCount_ << std::endl;
+
     // Perform sync
     sync(d_conn_, d_coords_);
 
-    // needed by all other lazy structures
-    createLocalToGlobalSfcMap();
-
-    // Adjacency maps are now built lazily on first access
-
     std::cout << "Rank " << rank_ << " initialized " << ElementTag::Name << " domain with " << nodeCount_
-              << " nodes and " << elementCount_ << " elements and " << localElementCount() << " local elements."
-              << std::endl;
+              << " nodes and " << elementCount_ << " elements." << std::endl;
 }
 
 // Read mesh data in SoA format; uses element-based partitioning for better data locality
@@ -1233,96 +1331,212 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::readMeshDataS
     try
     {
         // Helper to handle coordinate conversion based on type
+        // Now uses RealType directly since mesh readers use RealType for precision
         auto processCoordinates =
-            [&](const std::vector<float>& x_data, const std::vector<float>& y_data, const std::vector<float>& z_data)
+            [&](std::vector<RealType>& x_data, std::vector<RealType>& y_data, std::vector<RealType>& z_data)
         {
             auto& h_x = std::get<0>(h_coords_);
             auto& h_y = std::get<1>(h_coords_);
             auto& h_z = std::get<2>(h_coords_);
 
-            if constexpr (std::is_same_v<RealType, float>)
-            {
-                // If RealType is float, we can move directly
-                h_x = std::move(x_data);
-                h_y = std::move(y_data);
-                h_z = std::move(z_data);
-            }
-            else
-            {
-                // Otherwise convert
-                h_x.resize(nodeCount_);
-                h_y.resize(nodeCount_);
-                h_z.resize(nodeCount_);
-
-                for (size_t i = 0; i < nodeCount_; ++i)
-                {
-                    h_x[i] = static_cast<RealType>(x_data[i]);
-                    h_y[i] = static_cast<RealType>(y_data[i]);
-                    h_z[i] = static_cast<RealType>(z_data[i]);
-                }
-            }
+            // Direct move since mesh readers now use RealType
+            h_x = std::move(x_data);
+            h_y = std::move(y_data);
+            h_z = std::move(z_data);
         };
+
+        // Detect mesh file format based on extension
+        // - .mesh = MFEM format
+        // - .exo  = Exodus II format (netCDF)
+        // - directory = binary mesh format
+        namespace fs      = std::filesystem;
+        bool isMFEMFile   = !fs::is_directory(meshFile) && meshFile.find(".mesh") != std::string::npos;
+        bool isExodusFile = !fs::is_directory(meshFile) &&
+                            (meshFile.find(".exo") != std::string::npos ||
+                             meshFile.find(".e") != std::string::npos);
 
         // Use compile-time branching to select element type
         if constexpr (std::is_same_v<ElementTag, TetTag>)
         {
-            auto [readNodeCount, readElementCount, x_data, y_data, z_data, conn_tuple, localToGlobal] =
-                mars::readMeshWithElementPartitioning<4, float, KeyType>(meshFile, rank_, numRanks_);
+            if (isExodusFile)
+            {
+                // Use Exodus mesh reader for tet elements
+                auto [readNodeCount, readElementCount, x_data, y_data, z_data, conn_tuple, localToGlobal,
+                      boundaryNodes] =
+                    mars::readExodusMeshWithElementPartitioning<4, RealType, KeyType>(meshFile, rank_, numRanks_);
 
-            nodeCount_    = readNodeCount;
-            elementCount_ = readElementCount;
-            processCoordinates(x_data, y_data, z_data);
-            h_conn_ = std::move(conn_tuple);
-            
-            // Store the global node indices
-            d_localToGlobalNodeMap_.resize(localToGlobal.size());
-            thrust::copy(localToGlobal.begin(), localToGlobal.end(),
-                         thrust::device_pointer_cast(d_localToGlobalNodeMap_.data()));
+                nodeCount_    = readNodeCount;
+                elementCount_ = readElementCount;
+                processCoordinates(x_data, y_data, z_data);
+                h_conn_ = std::move(conn_tuple);
+
+                // Store the global node indices
+                d_localToGlobalNodeMap_.resize(localToGlobal.size());
+                thrust::copy(localToGlobal.begin(), localToGlobal.end(),
+                             thrust::device_pointer_cast(d_localToGlobalNodeMap_.data()));
+            }
+            else if (isMFEMFile)
+            {
+                // Use MFEM mesh reader
+                auto [readNodeCount, readElementCount, x_data, y_data, z_data, conn_tuple, localToGlobal,
+                      boundaryNodes] =
+                    mars::readMFEMMeshWithElementPartitioning<4, RealType, KeyType>(meshFile, rank_, numRanks_);
+
+                nodeCount_    = readNodeCount;
+                elementCount_ = readElementCount;
+                processCoordinates(x_data, y_data, z_data);
+                h_conn_ = std::move(conn_tuple);
+
+                // Store the global node indices
+                d_localToGlobalNodeMap_.resize(localToGlobal.size());
+                thrust::copy(localToGlobal.begin(), localToGlobal.end(),
+                             thrust::device_pointer_cast(d_localToGlobalNodeMap_.data()));
+            }
+            else
+            {
+                // Use binary mesh reader
+                auto [readNodeCount, readElementCount, x_data, y_data, z_data, conn_tuple, localToGlobal] =
+                    mars::readMeshWithElementPartitioning<4, RealType, KeyType>(meshFile, rank_, numRanks_);
+
+                nodeCount_    = readNodeCount;
+                elementCount_ = readElementCount;
+                processCoordinates(x_data, y_data, z_data);
+                h_conn_ = std::move(conn_tuple);
+
+                // Store the global node indices
+                d_localToGlobalNodeMap_.resize(localToGlobal.size());
+                thrust::copy(localToGlobal.begin(), localToGlobal.end(),
+                             thrust::device_pointer_cast(d_localToGlobalNodeMap_.data()));
+            }
         }
         else if constexpr (std::is_same_v<ElementTag, HexTag>)
         {
-            auto [readNodeCount, readElementCount, x_data, y_data, z_data, conn_tuple, localToGlobal] =
-                mars::readMeshWithElementPartitioning<8, float, KeyType>(meshFile, rank_, numRanks_);
+            if (isExodusFile)
+            {
+                // Use Exodus mesh reader for hex elements
+                auto [readNodeCount, readElementCount, x_data, y_data, z_data, conn_tuple, localToGlobal,
+                      boundaryNodes] =
+                    mars::readExodusMeshWithElementPartitioning<8, RealType, KeyType>(meshFile, rank_, numRanks_);
 
-            nodeCount_    = readNodeCount;
-            elementCount_ = readElementCount;
-            processCoordinates(x_data, y_data, z_data);
-            h_conn_ = std::move(conn_tuple);
-            
-            // Store the global node indices
-            d_localToGlobalNodeMap_.resize(localToGlobal.size());
-            thrust::copy(localToGlobal.begin(), localToGlobal.end(),
-                         thrust::device_pointer_cast(d_localToGlobalNodeMap_.data()));
+                nodeCount_    = readNodeCount;
+                elementCount_ = readElementCount;
+                processCoordinates(x_data, y_data, z_data);
+                h_conn_ = std::move(conn_tuple);
+
+                // Store the global node indices
+                d_localToGlobalNodeMap_.resize(localToGlobal.size());
+                thrust::copy(localToGlobal.begin(), localToGlobal.end(),
+                             thrust::device_pointer_cast(d_localToGlobalNodeMap_.data()));
+            }
+            else if (isMFEMFile)
+            {
+                // Use MFEM mesh reader for hex elements
+                auto [readNodeCount, readElementCount, x_data, y_data, z_data, conn_tuple, localToGlobal,
+                      boundaryNodes] =
+                    mars::readMFEMMeshWithElementPartitioning<8, RealType, KeyType>(meshFile, rank_, numRanks_);
+
+                nodeCount_    = readNodeCount;
+                elementCount_ = readElementCount;
+                processCoordinates(x_data, y_data, z_data);
+                h_conn_ = std::move(conn_tuple);
+
+                // Store the global node indices
+                d_localToGlobalNodeMap_.resize(localToGlobal.size());
+                thrust::copy(localToGlobal.begin(), localToGlobal.end(),
+                             thrust::device_pointer_cast(d_localToGlobalNodeMap_.data()));
+            }
+            else
+            {
+                // Use binary mesh reader
+                auto [readNodeCount, readElementCount, x_data, y_data, z_data, conn_tuple, localToGlobal] =
+                    mars::readMeshWithElementPartitioning<8, RealType, KeyType>(meshFile, rank_, numRanks_);
+
+                nodeCount_    = readNodeCount;
+                elementCount_ = readElementCount;
+                processCoordinates(x_data, y_data, z_data);
+                h_conn_ = std::move(conn_tuple);
+
+                // Store the global node indices
+                d_localToGlobalNodeMap_.resize(localToGlobal.size());
+                thrust::copy(localToGlobal.begin(), localToGlobal.end(),
+                             thrust::device_pointer_cast(d_localToGlobalNodeMap_.data()));
+            }
         }
         else if constexpr (std::is_same_v<ElementTag, TriTag>)
         {
-            auto [readNodeCount, readElementCount, x_data, y_data, z_data, conn_tuple, localToGlobal] =
-                mars::readMeshWithElementPartitioning<3, float, KeyType>(meshFile, rank_, numRanks_);
+            if (isMFEMFile)
+            {
+                // Use MFEM mesh reader for triangle elements
+                // NOTE: Use RealType for coordinate precision (not float) to preserve exact values
+                auto [readNodeCount, readElementCount, x_data, y_data, z_data, conn_tuple, localToGlobal,
+                      boundaryNodes] =
+                    mars::readMFEMMeshWithElementPartitioning<3, RealType, KeyType>(meshFile, rank_, numRanks_);
 
-            nodeCount_    = readNodeCount;
-            elementCount_ = readElementCount;
-            processCoordinates(x_data, y_data, z_data);
-            h_conn_ = std::move(conn_tuple);
-            
-            // Store the global node indices
-            d_localToGlobalNodeMap_.resize(localToGlobal.size());
-            thrust::copy(localToGlobal.begin(), localToGlobal.end(),
-                         thrust::device_pointer_cast(d_localToGlobalNodeMap_.data()));
+                nodeCount_    = readNodeCount;
+                elementCount_ = readElementCount;
+                processCoordinates(x_data, y_data, z_data);
+                h_conn_ = std::move(conn_tuple);
+
+                // Store the global node indices
+                d_localToGlobalNodeMap_.resize(localToGlobal.size());
+                thrust::copy(localToGlobal.begin(), localToGlobal.end(),
+                             thrust::device_pointer_cast(d_localToGlobalNodeMap_.data()));
+            }
+            else
+            {
+                // Use binary mesh reader
+                // NOTE: Use RealType for coordinate precision (not float) to preserve exact values
+                auto [readNodeCount, readElementCount, x_data, y_data, z_data, conn_tuple, localToGlobal] =
+                    mars::readMeshWithElementPartitioning<3, RealType, KeyType>(meshFile, rank_, numRanks_);
+
+                nodeCount_    = readNodeCount;
+                elementCount_ = readElementCount;
+                processCoordinates(x_data, y_data, z_data);
+                h_conn_ = std::move(conn_tuple);
+
+                // Store the global node indices
+                d_localToGlobalNodeMap_.resize(localToGlobal.size());
+                thrust::copy(localToGlobal.begin(), localToGlobal.end(),
+                             thrust::device_pointer_cast(d_localToGlobalNodeMap_.data()));
+            }
         }
         else if constexpr (std::is_same_v<ElementTag, QuadTag>)
         {
-            auto [readNodeCount, readElementCount, x_data, y_data, z_data, conn_tuple, localToGlobal] =
-                mars::readMeshWithElementPartitioning<4, float, KeyType>(meshFile, rank_, numRanks_);
+            if (isMFEMFile)
+            {
+                // Use MFEM mesh reader for quad elements
+                // NOTE: Use RealType for coordinate precision (not float) to preserve exact values
+                auto [readNodeCount, readElementCount, x_data, y_data, z_data, conn_tuple, localToGlobal,
+                      boundaryNodes] =
+                    mars::readMFEMMeshWithElementPartitioning<4, RealType, KeyType>(meshFile, rank_, numRanks_);
 
-            nodeCount_    = readNodeCount;
-            elementCount_ = readElementCount;
-            processCoordinates(x_data, y_data, z_data);
-            h_conn_ = std::move(conn_tuple);
-            
-            // Store the global node indices
-            d_localToGlobalNodeMap_.resize(localToGlobal.size());
-            thrust::copy(localToGlobal.begin(), localToGlobal.end(),
-                         thrust::device_pointer_cast(d_localToGlobalNodeMap_.data()));
+                nodeCount_    = readNodeCount;
+                elementCount_ = readElementCount;
+                processCoordinates(x_data, y_data, z_data);
+                h_conn_ = std::move(conn_tuple);
+
+                // Store the global node indices
+                d_localToGlobalNodeMap_.resize(localToGlobal.size());
+                thrust::copy(localToGlobal.begin(), localToGlobal.end(),
+                             thrust::device_pointer_cast(d_localToGlobalNodeMap_.data()));
+            }
+            else
+            {
+                // Use binary mesh reader
+                // NOTE: Use RealType for coordinate precision (not float) to preserve exact values
+                auto [readNodeCount, readElementCount, x_data, y_data, z_data, conn_tuple, localToGlobal] =
+                    mars::readMeshWithElementPartitioning<4, RealType, KeyType>(meshFile, rank_, numRanks_);
+
+                nodeCount_    = readNodeCount;
+                elementCount_ = readElementCount;
+                processCoordinates(x_data, y_data, z_data);
+                h_conn_ = std::move(conn_tuple);
+
+                // Store the global node indices
+                d_localToGlobalNodeMap_.resize(localToGlobal.size());
+                thrust::copy(localToGlobal.begin(), localToGlobal.end(),
+                             thrust::device_pointer_cast(d_localToGlobalNodeMap_.data()));
+            }
         }
         else
         {
@@ -1361,16 +1575,36 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::calculateChar
         auto& d_i2 = std::get<2>(d_conn_);
         auto& d_i3 = std::get<3>(d_conn_);
 
+        constexpr int NodesPerElem = ElementTag::NodesPerElement;
+
+        // Extract additional connectivity pointers conditionally at compile time
+        const KeyType* d_i4_ptr;
+        const KeyType* d_i5_ptr;
+        const KeyType* d_i6_ptr;
+        const KeyType* d_i7_ptr;
+
+        if constexpr (NodesPerElem > 4) { d_i4_ptr = thrust::raw_pointer_cast(std::get<4>(d_conn_).data()); }
+        else { d_i4_ptr = nullptr; }
+
+        if constexpr (NodesPerElem > 5) { d_i5_ptr = thrust::raw_pointer_cast(std::get<5>(d_conn_).data()); }
+        else { d_i5_ptr = nullptr; }
+
+        if constexpr (NodesPerElem > 6) { d_i6_ptr = thrust::raw_pointer_cast(std::get<6>(d_conn_).data()); }
+        else { d_i6_ptr = nullptr; }
+
+        if constexpr (NodesPerElem > 7) { d_i7_ptr = thrust::raw_pointer_cast(std::get<7>(d_conn_).data()); }
+        else { d_i7_ptr = nullptr; }
+
         // First accumulate edge lengths per node
         int blockSize = 256;
         int numBlocks = (elementCount_ + blockSize - 1) / blockSize;
 
-        computeCharacteristicSizesKernel<TetTag, KeyType, RealType><<<numBlocks, blockSize>>>(
+        computeCharacteristicSizesKernel<ElementTag, KeyType, RealType><<<numBlocks, blockSize>>>(
             thrust::raw_pointer_cast(d_x.data()), thrust::raw_pointer_cast(d_y.data()),
             thrust::raw_pointer_cast(d_z.data()), thrust::raw_pointer_cast(d_i0.data()),
             thrust::raw_pointer_cast(d_i1.data()), thrust::raw_pointer_cast(d_i2.data()),
-            thrust::raw_pointer_cast(d_i3.data()), thrust::raw_pointer_cast(d_nodeTetCount.data()),
-            thrust::raw_pointer_cast(d_h.data()), elementCount_);
+            thrust::raw_pointer_cast(d_i3.data()), d_i4_ptr, d_i5_ptr, d_i6_ptr, d_i7_ptr,
+            thrust::raw_pointer_cast(d_nodeTetCount.data()), thrust::raw_pointer_cast(d_h.data()), elementCount_);
 
         cudaCheckError();
 
@@ -1455,9 +1689,107 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::sync(const De
             thrust::raw_pointer_cast(d_elemH.data()), elementCount_);
         cudaCheckError();
 
-        std::cout << "Rank " << rank_ << " syncing" << ElementTag::Name << " domain with " << elementCount_
+        std::cout << "Rank " << rank_ << " syncing " << ElementTag::Name << " domain with " << elementCount_
                   << " elements." << std::endl;
-        syncDomainImpl(domain_.get(), d_elemSfcCodes_, d_elemX, d_elemY, d_elemZ, d_elemH, elementCount_, d_conn_keys_);
+
+        // Check if we need to sync with original coordinates (compile-time check for hex8)
+        if constexpr (std::is_same_v<ElementTag, HexTag>) {
+            if (storeOriginalCoords_) {
+                // Extract original coordinates for all 8 nodes of each element (24 arrays total)
+                DeviceVector<RealType> d_elemOrigX0(elementCount_), d_elemOrigY0(elementCount_), d_elemOrigZ0(elementCount_);
+                DeviceVector<RealType> d_elemOrigX1(elementCount_), d_elemOrigY1(elementCount_), d_elemOrigZ1(elementCount_);
+                DeviceVector<RealType> d_elemOrigX2(elementCount_), d_elemOrigY2(elementCount_), d_elemOrigZ2(elementCount_);
+                DeviceVector<RealType> d_elemOrigX3(elementCount_), d_elemOrigY3(elementCount_), d_elemOrigZ3(elementCount_);
+                DeviceVector<RealType> d_elemOrigX4(elementCount_), d_elemOrigY4(elementCount_), d_elemOrigZ4(elementCount_);
+                DeviceVector<RealType> d_elemOrigX5(elementCount_), d_elemOrigY5(elementCount_), d_elemOrigZ5(elementCount_);
+                DeviceVector<RealType> d_elemOrigX6(elementCount_), d_elemOrigY6(elementCount_), d_elemOrigZ6(elementCount_);
+                DeviceVector<RealType> d_elemOrigX7(elementCount_), d_elemOrigY7(elementCount_), d_elemOrigZ7(elementCount_);
+
+                // Extract original coordinates from input arrays
+                auto& d_i0 = std::get<0>(d_conn_);
+                auto& d_i1 = std::get<1>(d_conn_);
+                auto& d_i2 = std::get<2>(d_conn_);
+                auto& d_i3 = std::get<3>(d_conn_);
+                auto& d_i4 = std::get<4>(d_conn_);
+                auto& d_i5 = std::get<5>(d_conn_);
+                auto& d_i6 = std::get<6>(d_conn_);
+                auto& d_i7 = std::get<7>(d_conn_);
+
+
+            extractElementNodeCoordsKernel<ElementTag, KeyType, RealType><<<numBlocks, blockSize>>>(
+                thrust::raw_pointer_cast(d_x.data()), thrust::raw_pointer_cast(d_y.data()), thrust::raw_pointer_cast(d_z.data()),
+                thrust::raw_pointer_cast(d_i0.data()), thrust::raw_pointer_cast(d_i1.data()),
+                thrust::raw_pointer_cast(d_i2.data()), thrust::raw_pointer_cast(d_i3.data()),
+                thrust::raw_pointer_cast(d_i4.data()), thrust::raw_pointer_cast(d_i5.data()),
+                thrust::raw_pointer_cast(d_i6.data()), thrust::raw_pointer_cast(d_i7.data()),
+                thrust::raw_pointer_cast(d_elemOrigX0.data()), thrust::raw_pointer_cast(d_elemOrigY0.data()), thrust::raw_pointer_cast(d_elemOrigZ0.data()),
+                thrust::raw_pointer_cast(d_elemOrigX1.data()), thrust::raw_pointer_cast(d_elemOrigY1.data()), thrust::raw_pointer_cast(d_elemOrigZ1.data()),
+                thrust::raw_pointer_cast(d_elemOrigX2.data()), thrust::raw_pointer_cast(d_elemOrigY2.data()), thrust::raw_pointer_cast(d_elemOrigZ2.data()),
+                thrust::raw_pointer_cast(d_elemOrigX3.data()), thrust::raw_pointer_cast(d_elemOrigY3.data()), thrust::raw_pointer_cast(d_elemOrigZ3.data()),
+                thrust::raw_pointer_cast(d_elemOrigX4.data()), thrust::raw_pointer_cast(d_elemOrigY4.data()), thrust::raw_pointer_cast(d_elemOrigZ4.data()),
+                thrust::raw_pointer_cast(d_elemOrigX5.data()), thrust::raw_pointer_cast(d_elemOrigY5.data()), thrust::raw_pointer_cast(d_elemOrigZ5.data()),
+                thrust::raw_pointer_cast(d_elemOrigX6.data()), thrust::raw_pointer_cast(d_elemOrigY6.data()), thrust::raw_pointer_cast(d_elemOrigZ6.data()),
+                thrust::raw_pointer_cast(d_elemOrigX7.data()), thrust::raw_pointer_cast(d_elemOrigY7.data()), thrust::raw_pointer_cast(d_elemOrigZ7.data()),
+                elementCount_);
+            cudaCheckError();
+
+            // Package into tuple for sync (direct tie, not std::ref)
+            auto d_orig_coords = std::tie(
+                d_elemOrigX0, d_elemOrigY0, d_elemOrigZ0,
+                d_elemOrigX1, d_elemOrigY1, d_elemOrigZ1,
+                d_elemOrigX2, d_elemOrigY2, d_elemOrigZ2,
+                d_elemOrigX3, d_elemOrigY3, d_elemOrigZ3,
+                d_elemOrigX4, d_elemOrigY4, d_elemOrigZ4,
+                d_elemOrigX5, d_elemOrigY5, d_elemOrigZ5,
+                d_elemOrigX6, d_elemOrigY6, d_elemOrigZ6,
+                d_elemOrigX7, d_elemOrigY7, d_elemOrigZ7
+            );
+
+            // Sync with original coordinates
+            syncDomainImplWithOrigCoords(domain_.get(), d_elemSfcCodes_, d_elemX, d_elemY, d_elemZ, d_elemH,
+                                        elementCount_, d_conn_keys_, d_orig_coords);
+
+            // Build adjacency to get local IDs (d_conn_keys_ -> d_conn_local_ids_)
+            // This is needed because d_conn_keys_ contains SFC keys, not local node indices
+            // IMPORTANT: Must call BEFORE allocating originalCoords_ because ensureAdjacency()
+            // updates nodeCount_ via createLocalToGlobalSfcMap()
+            ensureAdjacency();
+
+            // Allocate node coordinate arrays using updated nodeCount_ (after ensureAdjacency)
+            originalCoords_ = std::make_unique<OriginalCoordinates<ElementTag, RealType, KeyType, AcceleratorTag>>(nodeCount_);
+
+            // Rebuild node arrays using post-sync LOCAL connectivity (d_conn_local_ids_)
+            int newNumBlocks = (elementCount_ + blockSize - 1) / blockSize;
+            rebuildNodeCoordsFromElementsKernel<ElementTag, KeyType, RealType><<<newNumBlocks, blockSize>>>(
+                thrust::raw_pointer_cast(std::get<0>(adjacency_->d_conn_local_ids_).data()),
+                thrust::raw_pointer_cast(std::get<1>(adjacency_->d_conn_local_ids_).data()),
+                thrust::raw_pointer_cast(std::get<2>(adjacency_->d_conn_local_ids_).data()),
+                thrust::raw_pointer_cast(std::get<3>(adjacency_->d_conn_local_ids_).data()),
+                thrust::raw_pointer_cast(std::get<4>(adjacency_->d_conn_local_ids_).data()),
+                thrust::raw_pointer_cast(std::get<5>(adjacency_->d_conn_local_ids_).data()),
+                thrust::raw_pointer_cast(std::get<6>(adjacency_->d_conn_local_ids_).data()),
+                thrust::raw_pointer_cast(std::get<7>(adjacency_->d_conn_local_ids_).data()),
+                thrust::raw_pointer_cast(d_elemOrigX0.data()), thrust::raw_pointer_cast(d_elemOrigY0.data()), thrust::raw_pointer_cast(d_elemOrigZ0.data()),
+                thrust::raw_pointer_cast(d_elemOrigX1.data()), thrust::raw_pointer_cast(d_elemOrigY1.data()), thrust::raw_pointer_cast(d_elemOrigZ1.data()),
+                thrust::raw_pointer_cast(d_elemOrigX2.data()), thrust::raw_pointer_cast(d_elemOrigY2.data()), thrust::raw_pointer_cast(d_elemOrigZ2.data()),
+                thrust::raw_pointer_cast(d_elemOrigX3.data()), thrust::raw_pointer_cast(d_elemOrigY3.data()), thrust::raw_pointer_cast(d_elemOrigZ3.data()),
+                thrust::raw_pointer_cast(d_elemOrigX4.data()), thrust::raw_pointer_cast(d_elemOrigY4.data()), thrust::raw_pointer_cast(d_elemOrigZ4.data()),
+                thrust::raw_pointer_cast(d_elemOrigX5.data()), thrust::raw_pointer_cast(d_elemOrigY5.data()), thrust::raw_pointer_cast(d_elemOrigZ5.data()),
+                thrust::raw_pointer_cast(d_elemOrigX6.data()), thrust::raw_pointer_cast(d_elemOrigY6.data()), thrust::raw_pointer_cast(d_elemOrigZ6.data()),
+                thrust::raw_pointer_cast(d_elemOrigX7.data()), thrust::raw_pointer_cast(d_elemOrigY7.data()), thrust::raw_pointer_cast(d_elemOrigZ7.data()),
+                thrust::raw_pointer_cast(originalCoords_->d_node_x_.data()),
+                thrust::raw_pointer_cast(originalCoords_->d_node_y_.data()),
+                thrust::raw_pointer_cast(originalCoords_->d_node_z_.data()),
+                elementCount_);
+            cudaCheckError();
+            } else {
+                // Standard sync with SFC-decoded coordinates
+                syncDomainImpl(domain_.get(), d_elemSfcCodes_, d_elemX, d_elemY, d_elemZ, d_elemH, elementCount_, d_conn_keys_);
+            }
+        } else {
+            // For non-hex elements, always use standard sync
+            syncDomainImpl(domain_.get(), d_elemSfcCodes_, d_elemX, d_elemY, d_elemZ, d_elemH, elementCount_, d_conn_keys_);
+        }
     }
 }
 
@@ -1502,7 +1834,7 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::transferDataT
 
         // Copy boundary data from host to device
         std::get<0>(d_boundary_).resize(std::get<0>(h_boundary_).size());
-        cudaMemcpy(std::get<0>(d_boundary_).data(), std::get<0>(h_boundary_).data(), 
+        cudaMemcpy(std::get<0>(d_boundary_).data(), std::get<0>(h_boundary_).data(),
                    std::get<0>(h_boundary_).size() * sizeof(uint8_t), cudaMemcpyHostToDevice);
 
         // Initialize properties (h values)
@@ -1677,10 +2009,22 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::initializeCon
 // Lazy initialization methods
 // ============================================================================
 template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
+void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ensureSfcMap() const
+{
+    if (d_localToGlobalSfcMap_.empty())
+    {
+        // Need to call non-const version, so cast away const
+        const_cast<ElementDomain*>(this)->createLocalToGlobalSfcMap();
+    }
+}
+
+template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
 void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ensureAdjacency() const
 {
     if (!adjacency_)
     {
+        // Adjacency needs the SFC map to be built first
+        ensureSfcMap();
         adjacency_ = std::make_unique<AdjacencyData<ElementTag, RealType, KeyType, AcceleratorTag>>(*this);
     }
 }
@@ -1690,6 +2034,8 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ensureHalo() 
 {
     if (!halo_)
     {
+        // Halo data needs the SFC map to be built first (for correct nodeCount)
+        ensureSfcMap();
         // HaloData now works directly with SFC keys - no adjacency needed!
         halo_ = std::make_unique<HaloData<ElementTag, RealType, KeyType, AcceleratorTag>>(*this);
     }
@@ -1918,6 +2264,19 @@ CoordinateCache<ElementTag, RealType, KeyType, AcceleratorTag>::CoordinateCache(
 
         std::cout << "Rank " << domain.rank() << " cached " << nodeCount << " node coordinates." << std::endl;
     }
+}
+
+// ============================================================================
+// OriginalCoordinates implementation
+// ============================================================================
+template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
+OriginalCoordinates<ElementTag, RealType, KeyType, AcceleratorTag>::OriginalCoordinates(size_t nodeCount)
+{
+    // Allocate storage for exact original coordinates
+    // Actual values will be filled during sync() after node reordering
+    d_node_x_.resize(nodeCount);
+    d_node_y_.resize(nodeCount);
+    d_node_z_.resize(nodeCount);
 }
 
 // Helper to populate the ConnPtrs struct from tuple
