@@ -1,0 +1,1475 @@
+// Copyright 2017 National Technology & Engineering Solutions of Sandia, LLC
+// (NTESS), National Renewable Energy Laboratory, University of Texas Austin,
+// Northwest Research Associates. Under the terms of Contract DE-NA0003525
+// with NTESS, the U.S. Government retains certain rights in this software.
+//
+// This software is released under the BSD 3-clause license. See LICENSE file
+// for more details.
+//
+
+#include <master_element/MasterElement.h>
+#include <master_element/Pyr5CVFEM.h>
+#include <master_element/Hex8GeometryFunctions.h>
+#include <master_element/MasterElementFunctions.h>
+
+#include <AlgTraits.h>
+
+#include <NaluEnv.h>
+
+#include <stk_util/util/ReportHandler.hpp>
+#include <stk_topology/topology.hpp>
+
+#include <iostream>
+
+#include <cmath>
+#include <limits>
+#include <array>
+#include <map>
+#include <memory>
+
+namespace accel {
+
+int
+pyr_gradient_operator(
+  const SharedMemView<const double***, HostShmem>& cordel,
+  const SharedMemView<const double***, HostShmem>& deriv,
+  SharedMemView<double****, HostShmem>& gradop,
+  SharedMemView<double**, HostShmem>& det_j,
+  SharedMemView<double*, HostShmem>& err)
+{
+
+  //**********************************************************************
+  //**********************************************************************
+  //
+  // description:
+  //    This  routine returns the gradient operator, determinate of
+  //    the Jacobian, and error count for an element workset of 3D
+  //    subcontrol surface elements The gradient operator and the
+  //    determinate of the jacobians are computed at the center of
+  //    each control surface (the locations for the integration rule
+  //    are at the center of each control surface).
+  //
+  // formal parameters - input:
+  //    deriv         real  shape function derivatives evaluated at the
+  //                        integration stations
+  //    cordel        real  element local coordinates
+  //
+  // formal parameters - output:
+  //    gradop        real  element gradient operator at each integration
+  //                        station
+  //    det_j         real  determinate of the jacobian at each integration
+  //                        station
+  //    err           real  positive volume check (0 = no error, 1 = error))
+  //**********************************************************************
+  //
+  const unsigned nint = deriv.extent(0);
+  const unsigned npe = deriv.extent(1);
+  STK_ThrowRequireMsg(
+    3 == deriv.extent(2), "pyr_gradient_operator: Error in derivative array");
+
+  const unsigned nelem = cordel.extent(0);
+  STK_ThrowRequireMsg(
+    npe == cordel.extent(1),
+    "pyr_gradient_operator: Error in coorindate array");
+  STK_ThrowRequireMsg(
+    3 == cordel.extent(2), "pyr_gradient_operator: Error in coorindate array");
+
+  STK_ThrowRequireMsg(
+    nint == gradop.extent(0), "pyr_gradient_operator: Error in gradient array");
+  STK_ThrowRequireMsg(
+    nelem == gradop.extent(1),
+    "pyr_gradient_operator: Error in gradient array");
+  STK_ThrowRequireMsg(
+    npe == gradop.extent(2), "pyr_gradient_operator: Error in gradient array");
+  STK_ThrowRequireMsg(
+    3 == gradop.extent(3), "pyr_gradient_operator: Error in gradient array");
+
+  STK_ThrowRequireMsg(
+    nint == det_j.extent(0),
+    "pyr_gradient_operator: Error in determinent array");
+  STK_ThrowRequireMsg(
+    nelem == det_j.extent(1),
+    "pyr_gradient_operator: Error in determinent array");
+
+  STK_ThrowRequireMsg(
+    nelem == err.extent(0), "pyr_gradient_operator: Error in error array");
+
+  const double realmin = std::numeric_limits<double>::min();
+
+  for (unsigned ke = 0; ke < nelem; ++ke)
+    err(ke) = 0;
+
+  for (unsigned ki = 0; ki < nint; ++ki) {
+    for (unsigned ke = 0; ke < nelem; ++ke) {
+      double dx_ds0 = 0;
+      double dx_ds1 = 0;
+      double dx_ds2 = 0;
+      double dy_ds0 = 0;
+      double dy_ds1 = 0;
+      double dy_ds2 = 0;
+      double dz_ds0 = 0;
+      double dz_ds1 = 0;
+      double dz_ds2 = 0;
+
+      // calculate the jacobian at the integration station -
+      for (unsigned kn = 0; kn < npe; ++kn) {
+
+        dx_ds0 += deriv(ki, kn, 0) * cordel(ke, kn, 0);
+        dx_ds1 += deriv(ki, kn, 1) * cordel(ke, kn, 0);
+        dx_ds2 += deriv(ki, kn, 2) * cordel(ke, kn, 0);
+
+        dy_ds0 += deriv(ki, kn, 0) * cordel(ke, kn, 1);
+        dy_ds1 += deriv(ki, kn, 1) * cordel(ke, kn, 1);
+        dy_ds2 += deriv(ki, kn, 2) * cordel(ke, kn, 1);
+
+        dz_ds0 += deriv(ki, kn, 0) * cordel(ke, kn, 2);
+        dz_ds1 += deriv(ki, kn, 1) * cordel(ke, kn, 2);
+        dz_ds2 += deriv(ki, kn, 2) * cordel(ke, kn, 2);
+      }
+
+      // calculate the determinate of the jacobian at the integration station -
+      det_j(ki, ke) = dx_ds0 * (dy_ds1 * dz_ds2 - dz_ds1 * dy_ds2) +
+                      dy_ds0 * (dz_ds1 * dx_ds2 - dx_ds1 * dz_ds2) +
+                      dz_ds0 * (dx_ds1 * dy_ds2 - dy_ds1 * dx_ds2);
+
+      // protect against a negative or small value for the determinate of the
+      // jacobian. The value of real_min (set in precision.par) represents
+      // the smallest Real value (based upon the precision set for this
+      // compilation) which the machine can represent -
+      double test = det_j(ke, ki);
+      if (test <= 1.e6 * realmin) {
+        test = 1;
+        err(ke) = 1;
+      }
+      const double denom = 1.0 / test;
+
+      // compute the gradient operators at the integration station -
+
+      const double ds0_dx = denom * (dy_ds1 * dz_ds2 - dz_ds1 * dy_ds2);
+      const double ds1_dx = denom * (dz_ds0 * dy_ds2 - dy_ds0 * dz_ds2);
+      const double ds2_dx = denom * (dy_ds0 * dz_ds1 - dz_ds0 * dy_ds1);
+
+      const double ds0_dy = denom * (dz_ds1 * dx_ds2 - dx_ds1 * dz_ds2);
+      const double ds1_dy = denom * (dx_ds0 * dz_ds2 - dz_ds0 * dx_ds2);
+      const double ds2_dy = denom * (dz_ds0 * dx_ds1 - dx_ds0 * dz_ds1);
+
+      const double ds0_dz = denom * (dx_ds1 * dy_ds2 - dy_ds1 * dx_ds2);
+      const double ds1_dz = denom * (dy_ds0 * dx_ds2 - dx_ds0 * dy_ds2);
+      const double ds2_dz = denom * (dx_ds0 * dy_ds1 - dy_ds0 * dx_ds1);
+
+      for (unsigned kn = 0; kn < npe; ++kn) {
+
+        gradop(ki, ke, kn, 0) = deriv(ki, kn, 0) * ds0_dx +
+                                deriv(ki, kn, 1) * ds1_dx +
+                                deriv(ki, kn, 2) * ds2_dx;
+
+        gradop(ki, ke, kn, 1) = deriv(ki, kn, 0) * ds0_dy +
+                                deriv(ki, kn, 1) * ds1_dy +
+                                deriv(ki, kn, 2) * ds2_dy;
+
+        gradop(ki, ke, kn, 2) = deriv(ki, kn, 0) * ds0_dz +
+                                deriv(ki, kn, 1) * ds1_dz +
+                                deriv(ki, kn, 2) * ds2_dz;
+      }
+    }
+  }
+
+  // summarize volume error checks -
+  double sum = 0;
+  for (unsigned ke = 0; ke < nelem; ++ke)
+    sum += err(ke);
+  int nerr = 0;
+  if (sum)
+    // flag error -
+    for (unsigned ke = 0; ke < nelem; ++ke)
+      if (err(ke))
+        nerr = ke;
+  return nerr;
+}
+
+KOKKOS_FUNCTION double
+regularize_apex(double t_tmp)
+{
+  constexpr double eps = 10. * std::numeric_limits<double>::epsilon();
+  const double one_minus_t = 1.0 - t_tmp;
+  const double t = (std::fabs(one_minus_t) > eps)
+                     ? t_tmp
+                     : 1.0 + std::copysign(eps, one_minus_t);
+  return t;
+}
+
+template <typename SCALAR, typename SHMEM>
+KOKKOS_FUNCTION void
+pyramid_shape_fcn(
+  const int npts,
+  const double* par_coord,
+  SharedMemView<SCALAR**, SHMEM>& shape_fcn)
+{
+  for (int j = 0; j < npts; ++j) {
+    const int k = 3 * j;
+    const double r = par_coord[k + 0];
+    const double s = par_coord[k + 1];
+    const double t = regularize_apex(par_coord[k + 2]);
+    const double quarter_inv_tm1 = 0.25 / (1.0 - t);
+
+    shape_fcn(j, 0) = (1.0 - r - t) * (1.0 - s - t) * quarter_inv_tm1;
+    shape_fcn(j, 1) = (1.0 + r - t) * (1.0 - s - t) * quarter_inv_tm1;
+    shape_fcn(j, 2) = (1.0 + r - t) * (1.0 + s - t) * quarter_inv_tm1;
+    shape_fcn(j, 3) = (1.0 - r - t) * (1.0 + s - t) * quarter_inv_tm1;
+    shape_fcn(j, 4) = t;
+  }
+}
+
+template <typename SCALAR, typename SHMEM>
+KOKKOS_FUNCTION void
+pyramid_shifted_shape_fcn(
+  const int npts,
+  const double* par_coord,
+  SharedMemView<SCALAR**, SHMEM>& shape_fcn)
+{
+  const double one = 1.0;
+  for (int j = 0; j < npts; ++j) {
+    const int k = 3 * j;
+    const double r = par_coord[k + 0];
+    const double s = par_coord[k + 1];
+    const double t = par_coord[k + 2];
+
+    shape_fcn(j, 0) = 0.25 * (1.0 - r) * (1.0 - s) * (one - t);
+    shape_fcn(j, 1) = 0.25 * (1.0 + r) * (1.0 - s) * (one - t);
+    shape_fcn(j, 2) = 0.25 * (1.0 + r) * (1.0 + s) * (one - t);
+    shape_fcn(j, 3) = 0.25 * (1.0 - r) * (1.0 + s) * (one - t);
+    shape_fcn(j, 4) = t;
+  }
+}
+
+//-------- pyr_deriv -------------------------------------------------------
+template <typename DerivType>
+KOKKOS_FUNCTION void
+pyr_deriv(const int npts, const double* intgLoc, DerivType& deriv)
+{
+  // d3d(c,s,j) = deriv[c + 3*(s + 5*j)] = deriv[c+3s+15j]
+
+  for (int j = 0; j < npts; ++j) {
+    const int k = j * 3;
+
+    const double r = intgLoc[k + 0];
+    const double s = intgLoc[k + 1];
+    const double t = regularize_apex(intgLoc[k + 2]);
+    const double quarter_inv_tm1 = 0.25 / (1.0 - t);
+    const double t_term = 4.0 * r * s * quarter_inv_tm1 * quarter_inv_tm1;
+
+    deriv(j, 0, 0) = -(1.0 - s - t) * quarter_inv_tm1;
+    deriv(j, 0, 1) = -(1.0 - r - t) * quarter_inv_tm1;
+    deriv(j, 0, 2) = (+t_term - 0.25);
+
+    // node 1
+    deriv(j, 1, 0) = +(1.0 - s - t) * quarter_inv_tm1;
+    deriv(j, 1, 1) = -(1.0 + r - t) * quarter_inv_tm1;
+    deriv(j, 1, 2) = (-t_term - 0.25);
+
+    // node 2
+    deriv(j, 2, 0) = +(1.0 + s - t) * quarter_inv_tm1;
+    deriv(j, 2, 1) = +(1.0 + r - t) * quarter_inv_tm1;
+    deriv(j, 2, 2) = (+t_term - 0.25);
+
+    // node 3
+    deriv(j, 3, 0) = -(1.0 + s - t) * quarter_inv_tm1;
+    deriv(j, 3, 1) = +(1.0 - r - t) * quarter_inv_tm1;
+    deriv(j, 3, 2) = (-t_term - 0.25);
+
+    // node 4
+    deriv(j, 4, 0) = 0.0;
+    deriv(j, 4, 1) = 0.0;
+    deriv(j, 4, 2) = 1.0;
+  }
+}
+
+//-------- shifted_pyr_deriv
+//-------------------------------------------------------
+template <typename DerivType>
+KOKKOS_FUNCTION void
+shifted_pyr_deriv(const int npts, const double* intgLoc, DerivType& deriv)
+{
+  // d3d(c,s,j) = deriv[c + 3*(s + 5*j)] = deriv[c+3s+15j]
+
+  for (int j = 0; j < npts; ++j) {
+    const int k = j * 3;
+
+    const double r = intgLoc[k + 0];
+    const double s = intgLoc[k + 1];
+    const double t = intgLoc[k + 2];
+
+    deriv(j, 0, 0) = -0.25 * (1.0 - s) * (1.0 - t); // d(N_1)/ d(r) = deriv[0]
+    deriv(j, 0, 1) = -0.25 * (1.0 - r) * (1.0 - t); // d(N_1)/ d(s) = deriv[1]
+    deriv(j, 0, 2) = -0.25 * (1.0 - r) * (1.0 - s); // d(N_1)/ d(t) = deriv[2]
+
+    deriv(j, 1, 0) = 0.25 * (1.0 - s) * (1.0 - t);  // d(N_2)/ d(r) = deriv[0+3]
+    deriv(j, 1, 1) = -0.25 * (1.0 + r) * (1.0 - t); // d(N_2)/ d(s) = deriv[1+3]
+    deriv(j, 1, 2) = -0.25 * (1.0 + r) * (1.0 - s); // d(N_2)/ d(t) = deriv[2+3]
+
+    deriv(j, 2, 0) = 0.25 * (1.0 + s) * (1.0 - t);  // d(N_3)/ d(r) = deriv[0+6]
+    deriv(j, 2, 1) = 0.25 * (1.0 + r) * (1.0 - t);  // d(N_3)/ d(s) = deriv[1+6]
+    deriv(j, 2, 2) = -0.25 * (1.0 + r) * (1.0 + s); // d(N_3)/ d(t) = deriv[2+6]
+
+    deriv(j, 3, 0) = -0.25 * (1.0 + s) * (1.0 - t); // d(N_4)/ d(r) = deriv[0+9]
+    deriv(j, 3, 1) = 0.25 * (1.0 - r) * (1.0 - t);  // d(N_4)/ d(s) = deriv[1+9]
+    deriv(j, 3, 2) = -0.25 * (1.0 - r) * (1.0 + s); // d(N_4)/ d(t) = deriv[2+9]
+
+    deriv(j, 4, 0) = 0.0; // d(N_5)/ d(r) = deriv[0+12]
+    deriv(j, 4, 1) = 0.0; // d(N_5)/ d(s) = deriv[1+12]
+    deriv(j, 4, 2) = 1.0; // d(N_5)/ d(t) = deriv[2+12]
+  }
+}
+
+//--------------------------------------------------------------------------
+//-------- constructor -----------------------------------------------------
+//--------------------------------------------------------------------------
+KOKKOS_FUNCTION
+PyrSCV::PyrSCV() : MasterElement()
+{
+  MasterElement::nDim_ = nDim_;
+  MasterElement::nodesPerElement_ = nodesPerElement_;
+  MasterElement::numIntPoints_ = numIntPoints_;
+}
+
+//--------------------------------------------------------------------------
+//-------- ipNodeMap -------------------------------------------------------
+//--------------------------------------------------------------------------
+KOKKOS_FUNCTION
+const int*
+PyrSCV::ipNodeMap(int /*ordinal*/) const
+{
+  // define scv->node mappings
+  return ipNodeMap_;
+}
+
+template <typename DBLTYPE>
+KOKKOS_FUNCTION DBLTYPE
+polyhedral_volume_by_faces(
+  int /* ncoords */,
+  const DBLTYPE volcoords[][3],
+  int ntriangles,
+  const int triangleFaceTable[][3])
+{
+  DBLTYPE xface[3];
+
+  DBLTYPE volume = 0.0;
+
+  // loop over each triangular facet
+  for (int itriangle = 0; itriangle < ntriangles; ++itriangle) {
+    // c-index ordering is used in the table, so change to fortran
+    int ip = triangleFaceTable[itriangle][0];
+    int iq = triangleFaceTable[itriangle][1];
+    int ir = triangleFaceTable[itriangle][2];
+    // set spatial coordinate of integration point
+    for (int k = 0; k < 3; ++k) {
+      xface[k] = volcoords[ip][k] + volcoords[iq][k] + volcoords[ir][k];
+    }
+    // calculate contribution of triangular face to volume
+    volume = volume +
+             xface[0] * ((volcoords[iq][1] - volcoords[ip][1]) *
+                           (volcoords[ir][2] - volcoords[ip][2]) -
+                         (volcoords[ir][1] - volcoords[ip][1]) *
+                           (volcoords[iq][2] - volcoords[ip][2])) -
+             xface[1] * ((volcoords[iq][0] - volcoords[ip][0]) *
+                           (volcoords[ir][2] - volcoords[ip][2]) -
+                         (volcoords[ir][0] - volcoords[ip][0]) *
+                           (volcoords[iq][2] - volcoords[ip][2])) +
+             xface[2] * ((volcoords[iq][0] - volcoords[ip][0]) *
+                           (volcoords[ir][1] - volcoords[ip][1]) -
+                         (volcoords[ir][0] - volcoords[ip][0]) *
+                           (volcoords[iq][1] - volcoords[ip][1]));
+  }
+
+  // apply constants that were factored out for calculation of
+  // the integration point, the area, and the gauss divergence
+  // theorem.
+  volume = volume / 18.0;
+  return volume;
+}
+
+template <typename DBLTYPE>
+KOKKOS_FUNCTION DBLTYPE
+octohedron_volume_by_triangle_facets(const DBLTYPE volcoords[10][3])
+{
+  DBLTYPE coords[14][3];
+  const int triangularFacetTable[24][3] = {
+    {1, 3, 10}, {2, 10, 3}, {2, 9, 10}, {10, 9, 1}, {4, 3, 11}, {3, 1, 11},
+    {11, 1, 5}, {4, 11, 5}, {1, 12, 5}, {1, 7, 12}, {12, 7, 6}, {5, 12, 6},
+    {9, 8, 13}, {13, 8, 7}, {13, 7, 1}, {9, 13, 1}, {4, 5, 0},  {5, 6, 0},
+    {6, 7, 0},  {7, 8, 0},  {0, 8, 9},  {0, 9, 2},  {0, 2, 3},  {0, 3, 4}};
+
+  // the first ten coordinates are the vertices of the octohedron
+  for (int j = 0; j < 10; ++j) {
+    for (int k = 0; k < 3; ++k) {
+      coords[j][k] = volcoords[j][k];
+    }
+  }
+  // we now add face midpoints only for the four faces that are
+  // not planar
+  for (int k = 0; k < 3; ++k) {
+    coords[10][k] = 0.50 * (volcoords[3][k] + volcoords[9][k]);
+  }
+  for (int k = 0; k < 3; ++k) {
+    coords[11][k] = 0.50 * (volcoords[3][k] + volcoords[5][k]);
+  }
+  for (int k = 0; k < 3; ++k) {
+    coords[12][k] = 0.50 * (volcoords[5][k] + volcoords[7][k]);
+  }
+  for (int k = 0; k < 3; ++k) {
+    coords[13][k] = 0.50 * (volcoords[7][k] + volcoords[9][k]);
+  }
+
+  int ncoords = 14;
+  int ntriangles = 24;
+
+  // compute the volume using the new equivalent polyhedron
+  return polyhedral_volume_by_faces(
+    ncoords, coords, ntriangles, triangularFacetTable);
+}
+
+//--------------------------------------------------------------------------
+//-------- determinant -----------------------------------------------------
+//--------------------------------------------------------------------------
+template <typename DBLTYPE, typename SHMEM>
+KOKKOS_INLINE_FUNCTION void
+PyrSCV::determinant_scv(
+  const SharedMemView<DBLTYPE**, SHMEM>& cordel,
+  SharedMemView<DBLTYPE*, SHMEM>& vol)
+{
+  constexpr int npe = nodesPerElement_;
+  constexpr int nscv = numIntPoints_;
+  DBLTYPE coords[19][3];
+  DBLTYPE ehexcoords[8][3];
+  DBLTYPE epyrcoords[10][3];
+
+  const int pyramidSubcontrolNodeTable[5][10] = {
+    {0, 5, 9, 8, 11, 12, 18, 17, -1, -1},
+    {1, 6, 9, 5, 10, 14, 18, 12, -1, -1},
+    {2, 7, 9, 6, 13, 16, 18, 14, -1, -1},
+    {3, 8, 9, 7, 15, 17, 18, 16, -1, -1},
+    {4, 18, 15, 17, 11, 12, 10, 14, 13, 16}};
+  const double one3rd = 1.0 / 3.0;
+
+  for (int j = 0; j < 5; ++j) {
+    for (int k = 0; k < 3; ++k) {
+      coords[j][k] = cordel(j, k);
+    }
+  }
+
+  // face 1 (quad)
+  // 4++++8+++3
+  // +         +
+  // +         +
+  // 9   10    7
+  // +         +
+  // +         +
+  // 1++++6++++2
+
+  // edge midpoints
+  for (int k = 0; k < 3; ++k) {
+    coords[5][k] = 0.5 * (cordel(0, k) + cordel(1, k));
+  }
+  for (int k = 0; k < 3; ++k) {
+    coords[6][k] = 0.5 * (cordel(1, k) + cordel(2, k));
+  }
+  for (int k = 0; k < 3; ++k) {
+    coords[7][k] = 0.5 * (cordel(2, k) + cordel(3, k));
+  }
+  for (int k = 0; k < 3; ++k) {
+    coords[8][k] = 0.5 * (cordel(3, k) + cordel(0, k));
+  }
+
+  // face midpoint
+  for (int k = 0; k < 3; ++k) {
+    coords[9][k] =
+      0.25 * (cordel(0, k) + cordel(1, k) + cordel(2, k) + cordel(3, k));
+  }
+
+  // face 2 (tri)
+  //
+  // edge midpoints
+  for (int k = 0; k < 3; ++k) {
+    coords[10][k] = 0.5 * (cordel(1, k) + cordel(4, k));
+  }
+  for (int k = 0; k < 3; ++k) {
+    coords[11][k] = 0.5 * (cordel(4, k) + cordel(0, k));
+  }
+
+  // face midpoint
+  for (int k = 0; k < 3; ++k) {
+    coords[12][k] = one3rd * (cordel(0, k) + cordel(1, k) + cordel(4, k));
+  }
+
+  // face 3 (tri)
+
+  // edge midpoint
+  for (int k = 0; k < 3; ++k) {
+    coords[13][k] = 0.5 * (cordel(2, k) + cordel(4, k));
+  }
+
+  // face midpoint
+  for (int k = 0; k < 3; ++k) {
+    coords[14][k] = one3rd * (cordel(1, k) + cordel(2, k) + cordel(4, k));
+  }
+
+  // face 4 (tri)
+
+  // edge midpoint
+  for (int k = 0; k < 3; ++k) {
+    coords[15][k] = 0.5 * (cordel(3, k) + cordel(4, k));
+  }
+
+  // face midpoint
+  for (int k = 0; k < 3; ++k) {
+    coords[16][k] = one3rd * (cordel(3, k) + cordel(4, k) + cordel(2, k));
+  }
+
+  // face 5 (tri)
+
+  // face midpoint
+  for (int k = 0; k < 3; ++k) {
+    coords[17][k] = one3rd * (cordel(0, k) + cordel(4, k) + cordel(3, k));
+  }
+
+  // element centroid
+  for (int k = 0; k < 3; ++k) {
+    coords[18][k] = 0.0;
+  }
+  for (int j = 0; j < npe; ++j) {
+    for (int k = 0; k < 3; ++k) {
+      coords[18][k] += 0.2 * cordel(j, k);
+    }
+  }
+
+  // loop over hexahedral volumes first
+  for (int icv = 0; icv < nscv - 1; ++icv) {
+    // loop over vertices of hexahedral scv
+    for (int inode = 0; inode < 8; ++inode) {
+      // set coordinates of scv from node table
+      for (int k = 0; k < 3; ++k) {
+        ehexcoords[inode][k] =
+          coords[pyramidSubcontrolNodeTable[icv][inode]][k];
+      }
+    }
+    // compute volume use an equivalent polyhedron
+    vol(icv) = bhex_volume_grandy(ehexcoords);
+  }
+
+  // now do octohedron on pyramid tip
+  int icv = nscv - 1;
+  // loop over vertices of octohedral scv
+  for (int inode = 0; inode < 10; ++inode) {
+    // set coordinates based on node table
+    for (int k = 0; k < 3; ++k) {
+      epyrcoords[inode][k] = coords[pyramidSubcontrolNodeTable[icv][inode]][k];
+    }
+  }
+  // compute volume using an equivalent polyhedron
+  vol(icv) = octohedron_volume_by_triangle_facets(epyrcoords);
+}
+
+KOKKOS_FUNCTION void
+PyrSCV::determinant(
+  const SharedMemView<DoubleType**, DeviceShmem>& cordel,
+  SharedMemView<DoubleType*, DeviceShmem>& vol)
+{
+  determinant_scv(cordel, vol);
+}
+
+void
+PyrSCV::determinant(
+  const SharedMemView<double**>& cordel, SharedMemView<double*>& vol)
+{
+  determinant_scv(cordel, vol);
+}
+
+//--------------------------------------------------------------------------
+//-------- grad_op ---------------------------------------------------------
+//--------------------------------------------------------------------------
+KOKKOS_FUNCTION
+void
+PyrSCV::grad_op(
+  const SharedMemView<DoubleType**, DeviceShmem>& coords,
+  SharedMemView<DoubleType***, DeviceShmem>& gradop,
+  SharedMemView<DoubleType***, DeviceShmem>& deriv)
+{
+  pyr_deriv(numIntPoints_, &intgLoc_[0], deriv);
+  generic_grad_op<AlgTraitsPyr5>(deriv, coords, gradop);
+}
+
+//--------------------------------------------------------------------------
+//-------- shifted_grad_op
+//---------------------------------------------------------
+//--------------------------------------------------------------------------
+KOKKOS_FUNCTION
+void
+PyrSCV::shifted_grad_op(
+  SharedMemView<DoubleType**, DeviceShmem>& coords,
+  SharedMemView<DoubleType***, DeviceShmem>& gradop,
+  SharedMemView<DoubleType***, DeviceShmem>& deriv)
+{
+  shifted_pyr_deriv(numIntPoints_, &intgLocShift_[0], deriv);
+  generic_grad_op<AlgTraitsPyr5>(deriv, coords, gradop);
+}
+
+template <typename SCALAR, typename SHMEM>
+KOKKOS_FUNCTION void
+PyrSCV::shape_fcn(SharedMemView<SCALAR**, SHMEM>& shpfc)
+{
+  pyramid_shape_fcn(numIntPoints_, &intgLoc_[0], shpfc);
+}
+KOKKOS_FUNCTION void
+PyrSCV::shape_fcn(SharedMemView<DoubleType**, DeviceShmem>& shpfc)
+{
+  shape_fcn<>(shpfc);
+}
+void
+PyrSCV::shape_fcn(SharedMemView<double**, HostShmem>& shpfc)
+{
+  shape_fcn<>(shpfc);
+}
+
+template <typename SCALAR, typename SHMEM>
+KOKKOS_FUNCTION void
+PyrSCV::shifted_shape_fcn(SharedMemView<SCALAR**, SHMEM>& shpfc)
+{
+  pyramid_shifted_shape_fcn(numIntPoints_, &intgLocShift_[0], shpfc);
+}
+KOKKOS_FUNCTION void
+PyrSCV::shifted_shape_fcn(SharedMemView<DoubleType**, DeviceShmem>& shpfc)
+{
+  shifted_shape_fcn<>(shpfc);
+}
+void
+PyrSCV::shifted_shape_fcn(SharedMemView<double**, HostShmem>& shpfc)
+{
+  shifted_shape_fcn<>(shpfc);
+}
+
+//--------------------------------------------------------------------------
+//-------- pyr_shape_fcn ---------------------------------------------------
+//--------------------------------------------------------------------------
+void
+PyrSCV::pyr_shape_fcn(
+  const int npts, const double* par_coord, double* shape_fcn)
+{
+  for (int j = 0; j < npts; ++j) {
+    const int fivej = 5 * j;
+    const int k = 3 * j;
+    const double r = par_coord[k + 0];
+    const double s = par_coord[k + 1];
+    const double t = regularize_apex(par_coord[k + 2]);
+    const double quarter_inv_tm1 = 0.25 / (1.0 - t);
+
+    shape_fcn[0 + fivej] = (1.0 - r - t) * (1.0 - s - t) * quarter_inv_tm1;
+    shape_fcn[1 + fivej] = (1.0 + r - t) * (1.0 - s - t) * quarter_inv_tm1;
+    shape_fcn[2 + fivej] = (1.0 + r - t) * (1.0 + s - t) * quarter_inv_tm1;
+    shape_fcn[3 + fivej] = (1.0 - r - t) * (1.0 + s - t) * quarter_inv_tm1;
+    shape_fcn[4 + fivej] = t;
+  }
+}
+
+//--------------------------------------------------------------------------
+//-------- shifted_pyr_shape_fcn -------------------------------------------
+//--------------------------------------------------------------------------
+void
+PyrSCV::shifted_pyr_shape_fcn(
+  const int npts, const double* par_coord, double* shape_fcn)
+{
+  const double one = 1.0;
+  for (int j = 0; j < npts; ++j) {
+    const int fivej = 5 * j;
+    const int k = 3 * j;
+    const double r = par_coord[k + 0];
+    const double s = par_coord[k + 1];
+    const double t = par_coord[k + 2];
+
+    shape_fcn[0 + fivej] = 0.25 * (1.0 - r) * (1.0 - s) * (one - t);
+    shape_fcn[1 + fivej] = 0.25 * (1.0 + r) * (1.0 - s) * (one - t);
+    shape_fcn[2 + fivej] = 0.25 * (1.0 + r) * (1.0 + s) * (one - t);
+    shape_fcn[3 + fivej] = 0.25 * (1.0 - r) * (1.0 + s) * (one - t);
+    shape_fcn[4 + fivej] = t;
+  }
+}
+
+//--------------------------------------------------------------------------
+//-------- Mij -------------------------------------------------------------
+//--------------------------------------------------------------------------
+void
+PyrSCS::Mij(const double* coords, double* metric, double* deriv)
+{
+  generic_Mij_3d<AlgTraitsPyr5>(numIntPoints_, deriv, coords, metric);
+}
+//-------------------------------------------------------------------------
+KOKKOS_FUNCTION
+void
+PyrSCS::Mij(
+  SharedMemView<DoubleType**, DeviceShmem>& coords,
+  SharedMemView<DoubleType***, DeviceShmem>& metric,
+  SharedMemView<DoubleType***, DeviceShmem>& deriv)
+{
+  pyr_deriv(numIntPoints_, &intgLoc_[0], deriv);
+  generic_Mij_3d<AlgTraitsPyr5>(deriv, coords, metric);
+}
+
+void
+fill_intg_exp_face_shift(double* intgExpFaceShift, const int* sideNodeOrdinals)
+{
+  const double nodeLocations[5][3] = {
+    {-1.0, -1.0, +0.0},
+    {+1.0, -1.0, +0.0},
+    {+1.0, +1.0, +0.0},
+    {-1.0, +1.0, +0.0},
+    {0.0, 0.0, +1.0}};
+
+  int index = 0;
+  stk::topology topo = stk::topology::PYRAMID_5;
+  for (unsigned k = 0; k < topo.num_sides(); ++k) {
+    stk::topology side_topo = topo.side_topology(k);
+    const int* ordinals = &sideNodeOrdinals[k * 3];
+    for (unsigned n = 0; n < side_topo.num_nodes(); ++n) {
+      intgExpFaceShift[3 * index + 0] = nodeLocations[ordinals[n]][0];
+      intgExpFaceShift[3 * index + 1] = nodeLocations[ordinals[n]][1];
+      intgExpFaceShift[3 * index + 2] = nodeLocations[ordinals[n]][2];
+      ++index;
+    }
+  }
+}
+
+//--------------------------------------------------------------------------
+//-------- constructor -----------------------------------------------------
+//--------------------------------------------------------------------------
+KOKKOS_FUNCTION
+PyrSCS::PyrSCS() : MasterElement()
+{
+  MasterElement::nDim_ = nDim_;
+  MasterElement::nodesPerElement_ = nodesPerElement_;
+  MasterElement::numIntPoints_ = numIntPoints_;
+#if !defined(KOKKOS_ENABLE_GPU)
+  fill_intg_exp_face_shift(intgExpFaceShift_, sideNodeOrdinals_);
+#endif
+}
+
+//--------------------------------------------------------------------------
+//-------- side_node_ordinals ----------------------------------------------
+//--------------------------------------------------------------------------
+KOKKOS_FUNCTION
+const int*
+PyrSCS::side_node_ordinals(int ordinal) const
+{
+  // define face_ordinal->node_ordinal mappings for each face (ordinal);
+  return &sideNodeOrdinals_[ordinal * 3];
+}
+
+//--------------------------------------------------------------------------
+//-------- determinant -----------------------------------------------------
+//--------------------------------------------------------------------------
+template <typename DBLTYPE, typename SHMEM>
+KOKKOS_INLINE_FUNCTION void
+PyrSCS::determinant_scs(
+  const SharedMemView<DBLTYPE**, SHMEM>& cordel,
+  SharedMemView<DBLTYPE**, SHMEM>& areav)
+{
+  const int pyramidEdgeFacetTable[12][4] = {
+    {5, 9, 18, 12},   // sc face 1  -- points from 1 -> 2
+    {6, 9, 18, 14},   // sc face 2  -- points from 2 -> 3
+    {7, 9, 18, 16},   // sc face 3  -- points from 3 -> 4
+    {8, 17, 18, 9},   // sc face 4  -- points from 1 -> 4
+    {12, 12, 18, 17}, // sc face 5  -- points from 1 -> 5 I
+    {11, 12, 12, 17}, // sc face 6  -- points from 1 -> 5 O
+    {14, 14, 18, 12}, // sc face 7  -- points from 2 -> 5 I
+    {10, 14, 14, 12}, // sc face 8  -- points from 2 -> 5 O
+    {16, 16, 18, 14}, // sc face 9  -- points from 3 -> 5 I
+    {13, 16, 16, 14}, // sc face 10 -- points from 3 -> 5 O
+    {17, 17, 18, 16}, // sc face 11 -- points from 4 -> 5 I
+    {15, 17, 17, 16}  // sc face 12 -- points from 4 -> 5 O
+  };
+  DBLTYPE coords[19][3];
+  DBLTYPE scscoords[4][3];
+  const double half = 0.5;
+  const double one3rd = 1.0 / 3.0;
+  const double one4th = 1.0 / 4.0;
+
+  // element vertices
+  for (int j = 0; j < 5; ++j) {
+    for (int k = 0; k < 3; ++k) {
+      coords[j][k] = cordel(j, k);
+    }
+  }
+
+  // face 1 (quad)
+  // 4++++8+++3
+  // +         +
+  // +         +
+  // 9   10    7
+  // +         +
+  // +         +
+  // 1++++6++++2
+
+  // edge midpoints
+  for (int k = 0; k < 3; ++k) {
+    coords[5][k] = half * (cordel(0, k) + cordel(1, k));
+  }
+  for (int k = 0; k < 3; ++k) {
+    coords[6][k] = half * (cordel(1, k) + cordel(2, k));
+  }
+  for (int k = 0; k < 3; ++k) {
+    coords[7][k] = half * (cordel(2, k) + cordel(3, k));
+  }
+  for (int k = 0; k < 3; ++k) {
+    coords[8][k] = half * (cordel(3, k) + cordel(0, k));
+  }
+
+  // face midpoint
+  for (int k = 0; k < 3; ++k) {
+    coords[9][k] =
+      one4th * (cordel(0, k) + cordel(1, k) + cordel(2, k) + cordel(3, k));
+  }
+
+  // face 2 (tri)
+  //
+  // edge midpoints
+  for (int k = 0; k < 3; ++k) {
+    coords[10][k] = half * (cordel(1, k) + cordel(4, k));
+  }
+  for (int k = 0; k < 3; ++k) {
+    coords[11][k] = half * (cordel(4, k) + cordel(0, k));
+  }
+
+  // face midpoint
+  for (int k = 0; k < 3; ++k) {
+    coords[12][k] = one3rd * (cordel(0, k) + cordel(1, k) + cordel(4, k));
+  }
+  // face 3 (tri)
+
+  // edge midpoint
+  for (int k = 0; k < 3; ++k) {
+    coords[13][k] = half * (cordel(2, k) + cordel(4, k));
+  }
+
+  // face midpoint
+  for (int k = 0; k < 3; ++k) {
+    coords[14][k] = one3rd * (cordel(1, k) + cordel(2, k) + cordel(4, k));
+  }
+
+  // face 4 (tri)
+
+  // edge midpoint
+  for (int k = 0; k < 3; ++k) {
+    coords[15][k] = half * (cordel(3, k) + cordel(4, k));
+  }
+
+  // face midpoint
+  for (int k = 0; k < 3; ++k) {
+    coords[16][k] = one3rd * (cordel(3, k) + cordel(4, k) + cordel(2, k));
+  }
+
+  // face 5 (tri)
+
+  // face midpoint
+  for (int k = 0; k < 3; ++k) {
+    coords[17][k] = one3rd * (cordel(0, k) + cordel(4, k) + cordel(3, k));
+  }
+
+  // element centroid
+  for (int k = 0; k < 3; ++k) {
+    coords[18][k] = 0.0;
+  }
+  for (int j = 0; j < nodesPerElement_; ++j) {
+    for (int k = 0; k < 3; ++k) {
+      coords[18][k] += 0.2 * cordel(j, k);
+    }
+  }
+
+  // loop over subcontrol surfaces
+  for (int ics = 0; ics < numIntPoints_; ++ics) {
+    // loop over vertices of scs
+    for (int inode = 0; inode < 4; ++inode) {
+      // set coordinates of vertices using node table
+      int itrianglenode = pyramidEdgeFacetTable[ics][inode];
+      for (int k = 0; k < 3; ++k) {
+        scscoords[inode][k] = coords[itrianglenode][k];
+      }
+    }
+    // compute area vector using triangle decomposition
+    quad_area_by_triangulation(ics, scscoords, areav);
+  }
+}
+
+KOKKOS_FUNCTION void
+PyrSCS::determinant(
+  const SharedMemView<DoubleType**, DeviceShmem>& cordel,
+  SharedMemView<DoubleType**, DeviceShmem>& areav)
+{
+  determinant_scs(cordel, areav);
+}
+
+void
+PyrSCS::determinant(
+  const SharedMemView<double**>& cordel, SharedMemView<double**>& areav)
+{
+  determinant_scs(cordel, areav);
+}
+
+//--------------------------------------------------------------------------
+//-------- grad_op ---------------------------------------------------------
+//--------------------------------------------------------------------------
+KOKKOS_FUNCTION
+void
+PyrSCS::grad_op(
+  const SharedMemView<DoubleType**, DeviceShmem>& coords,
+  SharedMemView<DoubleType***, DeviceShmem>& gradop,
+  SharedMemView<DoubleType***, DeviceShmem>& deriv)
+{
+  pyr_deriv(numIntPoints_, &intgLoc_[0], deriv);
+  generic_grad_op<AlgTraitsPyr5>(deriv, coords, gradop);
+}
+
+void
+PyrSCS::grad_op(
+  const SharedMemView<double**>& coords,
+  SharedMemView<double***>& gradop,
+  SharedMemView<double***>& deriv)
+{
+  pyr_deriv(numIntPoints_, &intgLoc_[0], deriv);
+  generic_grad_op<AlgTraitsPyr5>(deriv, coords, gradop);
+}
+
+//--------------------------------------------------------------------------
+//-------- shifted_grad_op -------------------------------------------------
+//--------------------------------------------------------------------------
+KOKKOS_FUNCTION
+void
+PyrSCS::shifted_grad_op(
+  SharedMemView<DoubleType**, DeviceShmem>& coords,
+  SharedMemView<DoubleType***, DeviceShmem>& gradop,
+  SharedMemView<DoubleType***, DeviceShmem>& deriv)
+{
+  shifted_pyr_deriv(numIntPoints_, &intgLocShift_[0], deriv);
+  generic_grad_op<AlgTraitsPyr5>(deriv, coords, gradop);
+}
+
+//--------------------------------------------------------------------------
+//-------- face_grad_op ----------------------------------------------------
+//--------------------------------------------------------------------------
+KOKKOS_FUNCTION
+void
+PyrSCS::face_grad_op(
+  int face_ordinal,
+  SharedMemView<DoubleType**, DeviceShmem>& coords,
+  SharedMemView<DoubleType***, DeviceShmem>& gradop,
+  SharedMemView<DoubleType***, DeviceShmem>& deriv)
+{
+  using tri_traits = AlgTraitsTri3Wed6;
+  using quad_traits = AlgTraitsQuad4Wed6;
+  constexpr int dim = 3;
+
+  const int numFaceIps =
+    (face_ordinal == 4) ? quad_traits::numFaceIp_ : tri_traits::numFaceIp_;
+
+  const int offset = tri_traits::numFaceIp_ * face_ordinal;
+  pyr_deriv(numFaceIps, &intgExpFace_[dim * offset], deriv);
+  generic_grad_op<AlgTraitsPyr5>(deriv, coords, gradop);
+}
+
+//--------------------------------------------------------------------------
+//-------- shifted_face_grad_op --------------------------------------------
+//--------------------------------------------------------------------------
+KOKKOS_FUNCTION
+void
+PyrSCS::shifted_face_grad_op(
+  int face_ordinal,
+  SharedMemView<DoubleType**, DeviceShmem>& coords,
+  SharedMemView<DoubleType***, DeviceShmem>& gradop,
+  SharedMemView<DoubleType***, DeviceShmem>& deriv)
+{
+  using tri_traits = AlgTraitsTri3Wed6;
+  using quad_traits = AlgTraitsQuad4Wed6;
+  constexpr int dim = 3;
+
+  const int numFaceIps =
+    (face_ordinal == 4) ? quad_traits::numFaceIp_ : tri_traits::numFaceIp_;
+
+  const int offset = tri_traits::numFaceIp_ * face_ordinal;
+  shifted_pyr_deriv(numFaceIps, &intgExpFaceShift_[dim * offset], deriv);
+  generic_grad_op<AlgTraitsPyr5>(deriv, coords, gradop);
+}
+double
+PyrSCS::parametric_distance(const std::array<double, 3>& x)
+{
+  const double X = x[0];
+  const double Y = x[1];
+  const double Z = x[2] - 1. / 3.;
+  const double dist0 = (3. / 2.) * (Z + std::max(std::fabs(X), std::fabs(Y)));
+  const double dist1 = -3 * Z;
+  const double dist = std::max(dist0, dist1);
+  return dist;
+}
+
+double
+dot5(const double* u, const double* v)
+{
+  return (u[0] * v[0] + u[1] * v[1] + u[2] * v[2] + u[3] * v[3] + u[4] * v[4]);
+}
+
+//--------------------------------------------------------------------------
+//-------- interpolatePoint ------------------------------------------------
+//--------------------------------------------------------------------------
+void
+PyrSCS::interpolatePoint(
+  const int& nComp,
+  const double* isoParCoord,
+  const double* field,
+  double* result)
+{
+  double shapefct[5];
+  pyr_shape_fcn(1, isoParCoord, shapefct);
+
+  for (int i = 0; i < nComp; i++) {
+    result[i] = dot5(shapefct, field + 5 * i);
+  }
+}
+
+//--------------------------------------------------------------------------
+//-------- isInElement -----------------------------------------------------
+//--------------------------------------------------------------------------
+double
+PyrSCS::isInElement(
+  const double* elemNodalCoord, const double* pointCoord, double* isoParCoord)
+{
+  // control the interation
+  double isInElemConverged =
+    1.0e-16; // NOTE: the square of the tolerance on the distance
+  int N_MAX_ITER = 100;
+
+  constexpr int dim = 3;
+  std::array<double, dim> guess = {{0.0, 0.0, 1.0 / 3.0}};
+  std::array<double, dim> delta;
+  int iter = 0;
+
+  bool solve_failed = false;
+  do {
+    // interpolate coordinate at guess
+    constexpr int nNodes = 5;
+    std::array<double, nNodes> weights;
+    pyr_shape_fcn(1, guess.data(), weights.data());
+
+    // compute difference between coordinates interpolated to the guessed
+    // isoParametric coordinates and the actual point's coordinates
+    std::array<double, dim> error_vec;
+    error_vec[0] =
+      pointCoord[0] - dot5(weights.data(), elemNodalCoord + 0 * nNodes);
+    error_vec[1] =
+      pointCoord[1] - dot5(weights.data(), elemNodalCoord + 1 * nNodes);
+    error_vec[2] =
+      pointCoord[2] - dot5(weights.data(), elemNodalCoord + 2 * nNodes);
+
+    // Break early if the error vector becomes nearly zero
+    if (vector_norm_sq(error_vec.data(), 3) < isInElemConverged) {
+      break;
+    }
+
+    // update guess along gradient of mapping from physical-to-reference
+    // coordinates transpose of the jacobian of the forward mapping
+    constexpr int deriv_size = nNodes * dim;
+    std::array<double, deriv_size> deriv;
+    pyr_derivative(1, guess.data(), deriv.data());
+
+    std::array<double, dim * dim> jact{};
+    for (int j = 0; j < nNodes; ++j) {
+      jact[0] += deriv[0 + j * dim] * elemNodalCoord[j + 0 * nNodes];
+      jact[1] += deriv[1 + j * dim] * elemNodalCoord[j + 0 * nNodes];
+      jact[2] += deriv[2 + j * dim] * elemNodalCoord[j + 0 * nNodes];
+
+      jact[3] += deriv[0 + j * dim] * elemNodalCoord[j + 1 * nNodes];
+      jact[4] += deriv[1 + j * dim] * elemNodalCoord[j + 1 * nNodes];
+      jact[5] += deriv[2 + j * dim] * elemNodalCoord[j + 1 * nNodes];
+
+      jact[6] += deriv[0 + j * dim] * elemNodalCoord[j + 2 * nNodes];
+      jact[7] += deriv[1 + j * dim] * elemNodalCoord[j + 2 * nNodes];
+      jact[8] += deriv[2 + j * dim] * elemNodalCoord[j + 2 * nNodes];
+    }
+
+    // apply its inverse on the error vector
+    auto status = solve33(jact.data(), error_vec.data(), delta.data());
+
+    if (status == SolveStatus::FAILED) {
+      solve_failed = true;
+      break;
+    }
+
+    // update guess
+    guess[0] += delta[0];
+    guess[1] += delta[1];
+    guess[2] += delta[2];
+
+    // continue to iterate if update was larger than the set tolerance until max
+    // iterations are reached
+  } while (
+    !within_tolerance(vector_norm_sq(delta.data(), 3), isInElemConverged) &&
+    (++iter < N_MAX_ITER));
+
+  // output if failed:
+  isoParCoord[0] = std::numeric_limits<double>::max();
+  isoParCoord[1] = std::numeric_limits<double>::max();
+  isoParCoord[2] = std::numeric_limits<double>::max();
+  double dist = std::numeric_limits<double>::max();
+
+  if (iter < N_MAX_ITER && !solve_failed) {
+    // output if succeeded:
+    isoParCoord[0] = guess[0];
+    isoParCoord[1] = guess[1];
+    isoParCoord[2] = guess[2];
+    dist = parametric_distance(guess);
+  }
+  return dist;
+}
+
+//--------------------------------------------------------------------------
+//-------- general_face_grad_op --------------------------------------------
+//--------------------------------------------------------------------------
+void
+PyrSCS::general_face_grad_op(
+  const int /* face_ordinal */,
+  const double* isoParCoord,
+  const double* coords,
+  double* gradop,
+  double* det_j,
+  double* error)
+{
+  const int npe = nodesPerElement_;
+  const int nface = 1;
+  double dpsi[15];
+
+  pyr_derivative(nface, &isoParCoord[0], dpsi);
+
+  const SharedMemView<double***, HostShmem> deriv(
+    dpsi, nface, nodesPerElement_, nDim_);
+  const SharedMemView<const double***, HostShmem> cordel(coords, nface, npe, 3);
+  SharedMemView<double****, HostShmem> grad(gradop, nface, nface, npe, 3);
+  SharedMemView<double**, HostShmem> det(det_j, nface, nface);
+  SharedMemView<double*, HostShmem> err(error, nface);
+  const int lerr = pyr_gradient_operator(cordel, deriv, grad, det, err);
+
+  if (lerr)
+    NaluEnv::self().naluOutput()
+      << "PyrSCS::general_face_grad_op: issue.." << std::endl;
+}
+
+//--------------------------------------------------------------------------
+//-------- pyr_derivative --------------------------------------------------
+//--------------------------------------------------------------------------
+void
+PyrSCS::pyr_derivative(const int npts, const double* intgLoc, double* deriv)
+{
+  // d3d(c,s,j) = deriv[c + 3*(s + 5*j)] = deriv[c+3s+15j]
+  for (int j = 0; j < npts; ++j) {
+    const int k = j * 3;
+    const int p = 15 * j;
+
+    const double r = intgLoc[k + 0];
+    const double s = intgLoc[k + 1];
+    const double t = regularize_apex(intgLoc[k + 2]);
+    const double quarter_inv_tm1 = 0.25 / (1.0 - t);
+    const double t_term = 4.0 * r * s * quarter_inv_tm1 * quarter_inv_tm1;
+
+    // node 0
+    deriv[0 + 3 * 0 + p] = -(1.0 - s - t) * quarter_inv_tm1;
+    deriv[1 + 3 * 0 + p] = -(1.0 - r - t) * quarter_inv_tm1;
+    deriv[2 + 3 * 0 + p] = (+t_term - 0.25);
+
+    // node 1
+    deriv[0 + 3 * 1 + p] = +(1.0 - s - t) * quarter_inv_tm1;
+    deriv[1 + 3 * 1 + p] = -(1.0 + r - t) * quarter_inv_tm1;
+    deriv[2 + 3 * 1 + p] = (-t_term - 0.25);
+
+    // node 2
+    deriv[0 + 3 * 2 + p] = +(1.0 + s - t) * quarter_inv_tm1;
+    deriv[1 + 3 * 2 + p] = +(1.0 + r - t) * quarter_inv_tm1;
+    deriv[2 + 3 * 2 + p] = (+t_term - 0.25);
+
+    // node 3
+    deriv[0 + 3 * 3 + p] = -(1.0 + s - t) * quarter_inv_tm1;
+    deriv[1 + 3 * 3 + p] = +(1.0 - r - t) * quarter_inv_tm1;
+    deriv[2 + 3 * 3 + p] = (-t_term - 0.25);
+
+    // node 4
+    deriv[0 + 3 * 4 + p] = 0.0;
+    deriv[1 + 3 * 4 + p] = 0.0;
+    deriv[2 + 3 * 4 + p] = 1.0;
+  }
+}
+
+//--------------------------------------------------------------------------
+//-------- shifted_pyr_derivative ------------------------------------------
+//--------------------------------------------------------------------------
+void
+PyrSCS::shifted_pyr_derivative(
+  const int npts, const double* intgLoc, double* deriv)
+{
+  // d3d(c,s,j) = deriv[c + 3*(s + 5*j)] = deriv[c+3s+15j]
+
+  for (int j = 0; j < npts; ++j) {
+    const int k = j * 3;
+    const int p = 15 * j;
+
+    double r = intgLoc[k + 0];
+    double s = intgLoc[k + 1];
+    double t = intgLoc[k + 2];
+
+    deriv[0 + 3 * 0 + p] =
+      -0.25 * (1.0 - s) * (1.0 - t); // d(N_1)/ d(r) = deriv[0]
+    deriv[1 + 3 * 0 + p] =
+      -0.25 * (1.0 - r) * (1.0 - t); // d(N_1)/ d(s) = deriv[1]
+    deriv[2 + 3 * 0 + p] =
+      -0.25 * (1.0 - r) * (1.0 - s); // d(N_1)/ d(t) = deriv[2]
+
+    deriv[0 + 3 * 1 + p] =
+      0.25 * (1.0 - s) * (1.0 - t); // d(N_2)/ d(r) = deriv[0+3]
+    deriv[1 + 3 * 1 + p] =
+      -0.25 * (1.0 + r) * (1.0 - t); // d(N_2)/ d(s) = deriv[1+3]
+    deriv[2 + 3 * 1 + p] =
+      -0.25 * (1.0 + r) * (1.0 - s); // d(N_2)/ d(t) = deriv[2+3]
+
+    deriv[0 + 3 * 2 + p] =
+      0.25 * (1.0 + s) * (1.0 - t); // d(N_3)/ d(r) = deriv[0+6]
+    deriv[1 + 3 * 2 + p] =
+      0.25 * (1.0 + r) * (1.0 - t); // d(N_3)/ d(s) = deriv[1+6]
+    deriv[2 + 3 * 2 + p] =
+      -0.25 * (1.0 + r) * (1.0 + s); // d(N_3)/ d(t) = deriv[2+6]
+
+    deriv[0 + 3 * 3 + p] =
+      -0.25 * (1.0 + s) * (1.0 - t); // d(N_4)/ d(r) = deriv[0+9]
+    deriv[1 + 3 * 3 + p] =
+      0.25 * (1.0 - r) * (1.0 - t); // d(N_4)/ d(s) = deriv[1+9]
+    deriv[2 + 3 * 3 + p] =
+      -0.25 * (1.0 - r) * (1.0 + s); // d(N_4)/ d(t) = deriv[2+9]
+
+    deriv[0 + 3 * 4 + p] = 0.0; // d(N_5)/ d(r) = deriv[0+12]
+    deriv[1 + 3 * 4 + p] = 0.0; // d(N_5)/ d(s) = deriv[1+12]
+    deriv[2 + 3 * 4 + p] = 1.0; // d(N_5)/ d(t) = deriv[2+12]
+  }
+}
+
+//--------------------------------------------------------------------------
+//-------- gij -------------------------------------------------------------
+//--------------------------------------------------------------------------
+KOKKOS_FUNCTION
+void
+PyrSCS::gij(
+  const SharedMemView<DoubleType**, DeviceShmem>& coords,
+  SharedMemView<DoubleType***, DeviceShmem>& gupper,
+  SharedMemView<DoubleType***, DeviceShmem>& glower,
+  SharedMemView<DoubleType***, DeviceShmem>& deriv)
+{
+  generic_gij_3d<AlgTraitsPyr5>(deriv, coords, gupper, glower);
+}
+
+//--------------------------------------------------------------------------
+//-------- Mij -------------------------------------------------------------
+//--------------------------------------------------------------------------
+void
+PyrSCV::Mij(const double* coords, double* metric, double* deriv)
+{
+  generic_Mij_3d<AlgTraitsPyr5>(numIntPoints_, deriv, coords, metric);
+}
+//-------------------------------------------------------------------------
+KOKKOS_FUNCTION
+void
+PyrSCV::Mij(
+  SharedMemView<DoubleType**, DeviceShmem>& coords,
+  SharedMemView<DoubleType***, DeviceShmem>& metric,
+  SharedMemView<DoubleType***, DeviceShmem>& deriv)
+{
+  pyr_deriv(numIntPoints_, &intgLoc_[0], deriv);
+  generic_Mij_3d<AlgTraitsPyr5>(deriv, coords, metric);
+}
+
+//--------------------------------------------------------------------------
+//-------- adjacentNodes ---------------------------------------------------
+//--------------------------------------------------------------------------
+KOKKOS_FUNCTION
+const int*
+PyrSCS::adjacentNodes()
+{
+  // define L/R mappings
+  return lrscv_;
+}
+
+//--------------------------------------------------------------------------
+//-------- scsIpEdgeOrd ----------------------------------------------------
+//--------------------------------------------------------------------------
+KOKKOS_FUNCTION
+const int*
+PyrSCS::scsIpEdgeOrd()
+{
+  return &scsIpEdgeOrd_[0];
+}
+
+template <typename SCALAR, typename SHMEM>
+KOKKOS_FUNCTION void
+PyrSCS::shape_fcn(SharedMemView<SCALAR**, SHMEM>& shpfc)
+{
+  pyramid_shape_fcn(numIntPoints_, &intgLoc_[0], shpfc);
+}
+KOKKOS_FUNCTION void
+PyrSCS::shape_fcn(SharedMemView<DoubleType**, DeviceShmem>& shpfc)
+{
+  shape_fcn<>(shpfc);
+}
+void
+PyrSCS::shape_fcn(SharedMemView<double**, HostShmem>& shpfc)
+{
+  shape_fcn<>(shpfc);
+}
+
+template <typename SCALAR, typename SHMEM>
+KOKKOS_FUNCTION void
+PyrSCS::shifted_shape_fcn(SharedMemView<SCALAR**, SHMEM>& shpfc)
+{
+  pyramid_shifted_shape_fcn(numIntPoints_, &intgLocShift_[0], shpfc);
+}
+KOKKOS_FUNCTION void
+PyrSCS::shifted_shape_fcn(SharedMemView<DoubleType**, DeviceShmem>& shpfc)
+{
+  shifted_shape_fcn<>(shpfc);
+}
+void
+PyrSCS::shifted_shape_fcn(SharedMemView<double**, HostShmem>& shpfc)
+{
+  shifted_shape_fcn<>(shpfc);
+}
+
+//--------------------------------------------------------------------------
+//-------- pyr_shape_fcn ---------------------------------------------------
+//--------------------------------------------------------------------------
+void
+PyrSCS::pyr_shape_fcn(
+  const int npts, const double* par_coord, double* shape_fcn)
+{
+  for (int j = 0; j < npts; ++j) {
+    const int fivej = 5 * j;
+    const int k = 3 * j;
+    const double r = par_coord[k + 0];
+    const double s = par_coord[k + 1];
+    const double t = regularize_apex(par_coord[k + 2]);
+    const double quarter_inv_tm1 = 0.25 / (1.0 - t);
+
+    shape_fcn[0 + fivej] = (1.0 - r - t) * (1.0 - s - t) * quarter_inv_tm1;
+    shape_fcn[1 + fivej] = (1.0 + r - t) * (1.0 - s - t) * quarter_inv_tm1;
+    shape_fcn[2 + fivej] = (1.0 + r - t) * (1.0 + s - t) * quarter_inv_tm1;
+    shape_fcn[3 + fivej] = (1.0 - r - t) * (1.0 + s - t) * quarter_inv_tm1;
+    shape_fcn[4 + fivej] = t;
+  }
+}
+
+//--------------------------------------------------------------------------
+//-------- shifted_pyr_shape_fcn -------------------------------------------
+//--------------------------------------------------------------------------
+void
+PyrSCS::shifted_pyr_shape_fcn(
+  const int npts, const double* par_coord, double* shape_fcn)
+{
+  const double one = 1.0;
+  for (int j = 0; j < npts; ++j) {
+    const int fivej = 5 * j;
+    const int k = 3 * j;
+    const double r = par_coord[k + 0];
+    const double s = par_coord[k + 1];
+    const double t = par_coord[k + 2];
+
+    shape_fcn[0 + fivej] = 0.25 * (1.0 - r) * (1.0 - s) * (one - t);
+    shape_fcn[1 + fivej] = 0.25 * (1.0 + r) * (1.0 - s) * (one - t);
+    shape_fcn[2 + fivej] = 0.25 * (1.0 + r) * (1.0 + s) * (one - t);
+    shape_fcn[3 + fivej] = 0.25 * (1.0 - r) * (1.0 + s) * (one - t);
+    shape_fcn[4 + fivej] = t;
+  }
+}
+
+//--------------------------------------------------------------------------
+//-------- opposingNodes --------------------------------------------------
+//--------------------------------------------------------------------------
+KOKKOS_FUNCTION
+int
+PyrSCS::opposingNodes(const int ordinal, const int node)
+{
+  return oppNode_[ordinal * 4 + node];
+}
+
+//--------------------------------------------------------------------------
+//-------- opposingFace --------------------------------------------------
+//--------------------------------------------------------------------------
+KOKKOS_FUNCTION
+int
+PyrSCS::opposingFace(const int ordinal, const int node)
+{
+  return oppNode_[ordinal * 4 + node];
+}
+
+//--------------------------------------------------------------------------
+//-------- ipNodeMap -------------------------------------------------------
+//--------------------------------------------------------------------------
+KOKKOS_FUNCTION
+const int*
+PyrSCS::ipNodeMap(int ordinal) const
+{
+  // define ip->node mappings for each face (ordinal);
+  return &ipNodeMap_[ordinal * 3];
+}
+
+//--------------------------------------------------------------------------
+//-------- sidePcoords_to_elemPcoords --------------------------------------
+//--------------------------------------------------------------------------
+void
+PyrSCS::sidePcoords_to_elemPcoords(
+  const int& side_ordinal,
+  const int& npoints,
+  const double* side_pcoords,
+  double* elem_pcoords)
+{
+  STK_ThrowRequireMsg(
+    side_ordinal >= 0 && side_ordinal <= 4,
+    "Invalid pyramid side ordinal " + std::to_string(side_ordinal));
+
+  for (int i = 0; i < npoints; i++) {
+    const double x = side_pcoords[2 * i + 0];
+    const double y = side_pcoords[2 * i + 1];
+    switch (side_ordinal) {
+    case 0: {
+      elem_pcoords[i * 3 + 0] = -1 + 2 * x + y;
+      elem_pcoords[i * 3 + 1] = -1 + y;
+      elem_pcoords[i * 3 + 2] = y;
+      break;
+    }
+    case 1: {
+      elem_pcoords[i * 3 + 0] = 1 - y;
+      elem_pcoords[i * 3 + 1] = -1 + 2 * x + y;
+      elem_pcoords[i * 3 + 2] = y;
+      break;
+    }
+    case 2: {
+      elem_pcoords[i * 3 + 0] = 1 - 2 * x - y;
+      elem_pcoords[i * 3 + 1] = 1 - y;
+      elem_pcoords[i * 3 + 2] = y;
+      break;
+    }
+    case 3: {
+      elem_pcoords[i * 3 + 0] = -1 + x;
+      elem_pcoords[i * 3 + 1] = -1 + x + 2 * y;
+      elem_pcoords[i * 3 + 2] = x;
+      break;
+    }
+    case 4: {
+      elem_pcoords[i * 3 + 0] = y;
+      elem_pcoords[i * 3 + 1] = x;
+      elem_pcoords[i * 3 + 2] = 0;
+      break;
+    }
+    default:
+      break;
+    }
+  }
+}
+
+} // namespace accel

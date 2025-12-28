@@ -60,6 +60,10 @@ __global__ void computeCharacteristicSizesKernel(const RealType* x,
                                                  const KeyType* indices1,
                                                  const KeyType* indices2,
                                                  const KeyType* indices3,
+                                                 const KeyType* indices4,
+                                                 const KeyType* indices5,
+                                                 const KeyType* indices6,
+                                                 const KeyType* indices7,
                                                  int* nodeTetCount,
                                                  RealType* h,
                                                  int numElements)
@@ -139,9 +143,81 @@ __global__ void computeCharacteristicSizesKernel(const RealType* x,
         }
         else if constexpr (std::is_same_v<ElementTag, HexTag>)
         {
-            // Hexahedral element implementation
-            // This would need all 8 node indices and 12 edges
-            // ...
+            // Get all eight nodes of this hexahedron
+            auto n0 = indices0[elemIdx];
+            auto n1 = indices1[elemIdx];
+            auto n2 = indices2[elemIdx];
+            auto n3 = indices3[elemIdx];
+            auto n4 = indices4[elemIdx];
+            auto n5 = indices5[elemIdx];
+            auto n6 = indices6[elemIdx];
+            auto n7 = indices7[elemIdx];
+            
+            // Calculate edge lengths for all 12 edges of the hexahedron
+            RealType dx, dy, dz, edgeLength;
+            
+            // Bottom face edges (0-1, 1-2, 2-3, 3-0)
+            dx = x[n0] - x[n1]; dy = y[n0] - y[n1]; dz = z[n0] - z[n1];
+            edgeLength = sqrt(dx * dx + dy * dy + dz * dz);
+            atomicAdd(&h[n0], edgeLength); atomicAdd(&h[n1], edgeLength);
+            atomicAdd(&nodeTetCount[n0], 1); atomicAdd(&nodeTetCount[n1], 1);
+
+            dx = x[n1] - x[n2]; dy = y[n1] - y[n2]; dz = z[n1] - z[n2];
+            edgeLength = sqrt(dx * dx + dy * dy + dz * dz);
+            atomicAdd(&h[n1], edgeLength); atomicAdd(&h[n2], edgeLength);
+            atomicAdd(&nodeTetCount[n1], 1); atomicAdd(&nodeTetCount[n2], 1);
+
+            dx = x[n2] - x[n3]; dy = y[n2] - y[n3]; dz = z[n2] - z[n3];
+            edgeLength = sqrt(dx * dx + dy * dy + dz * dz);
+            atomicAdd(&h[n2], edgeLength); atomicAdd(&h[n3], edgeLength);
+            atomicAdd(&nodeTetCount[n2], 1); atomicAdd(&nodeTetCount[n3], 1);
+
+            dx = x[n3] - x[n0]; dy = y[n3] - y[n0]; dz = z[n3] - z[n0];
+            edgeLength = sqrt(dx * dx + dy * dy + dz * dz);
+            atomicAdd(&h[n3], edgeLength); atomicAdd(&h[n0], edgeLength);
+            atomicAdd(&nodeTetCount[n3], 1); atomicAdd(&nodeTetCount[n0], 1);
+
+            // Top face edges (4-5, 5-6, 6-7, 7-4)
+            dx = x[n4] - x[n5]; dy = y[n4] - y[n5]; dz = z[n4] - z[n5];
+            edgeLength = sqrt(dx * dx + dy * dy + dz * dz);
+            atomicAdd(&h[n4], edgeLength); atomicAdd(&h[n5], edgeLength);
+            atomicAdd(&nodeTetCount[n4], 1); atomicAdd(&nodeTetCount[n5], 1);
+
+            dx = x[n5] - x[n6]; dy = y[n5] - y[n6]; dz = z[n5] - z[n6];
+            edgeLength = sqrt(dx * dx + dy * dy + dz * dz);
+            atomicAdd(&h[n5], edgeLength); atomicAdd(&h[n6], edgeLength);
+            atomicAdd(&nodeTetCount[n5], 1); atomicAdd(&nodeTetCount[n6], 1);
+
+            dx = x[n6] - x[n7]; dy = y[n6] - y[n7]; dz = z[n6] - z[n7];
+            edgeLength = sqrt(dx * dx + dy * dy + dz * dz);
+            atomicAdd(&h[n6], edgeLength); atomicAdd(&h[n7], edgeLength);
+            atomicAdd(&nodeTetCount[n6], 1); atomicAdd(&nodeTetCount[n7], 1);
+
+            dx = x[n7] - x[n4]; dy = y[n7] - y[n4]; dz = z[n7] - z[n4];
+            edgeLength = sqrt(dx * dx + dy * dy + dz * dz);
+            atomicAdd(&h[n7], edgeLength); atomicAdd(&h[n4], edgeLength);
+            atomicAdd(&nodeTetCount[n7], 1); atomicAdd(&nodeTetCount[n4], 1);
+
+            // Vertical edges (0-4, 1-5, 2-6, 3-7)
+            dx = x[n0] - x[n4]; dy = y[n0] - y[n4]; dz = z[n0] - z[n4];
+            edgeLength = sqrt(dx * dx + dy * dy + dz * dz);
+            atomicAdd(&h[n0], edgeLength); atomicAdd(&h[n4], edgeLength);
+            atomicAdd(&nodeTetCount[n0], 1); atomicAdd(&nodeTetCount[n4], 1);
+
+            dx = x[n1] - x[n5]; dy = y[n1] - y[n5]; dz = z[n1] - z[n5];
+            edgeLength = sqrt(dx * dx + dy * dy + dz * dz);
+            atomicAdd(&h[n1], edgeLength); atomicAdd(&h[n5], edgeLength);
+            atomicAdd(&nodeTetCount[n1], 1); atomicAdd(&nodeTetCount[n5], 1);
+
+            dx = x[n2] - x[n6]; dy = y[n2] - y[n6]; dz = z[n2] - z[n6];
+            edgeLength = sqrt(dx * dx + dy * dy + dz * dz);
+            atomicAdd(&h[n2], edgeLength); atomicAdd(&h[n6], edgeLength);
+            atomicAdd(&nodeTetCount[n2], 1); atomicAdd(&nodeTetCount[n6], 1);
+
+            dx = x[n3] - x[n7]; dy = y[n3] - y[n7]; dz = z[n3] - z[n7];
+            edgeLength = sqrt(dx * dx + dy * dy + dz * dz);
+            atomicAdd(&h[n3], edgeLength); atomicAdd(&h[n7], edgeLength);
+            atomicAdd(&nodeTetCount[n3], 1); atomicAdd(&nodeTetCount[n7], 1);
         }
     }
 }
@@ -167,6 +243,10 @@ __global__ void findRepresentativeNodesKernel(const KeyType* indices0,
                                               const KeyType* indices1,
                                               const KeyType* indices2,
                                               const KeyType* indices3,
+                                              const KeyType* indices4,
+                                              const KeyType* indices5,
+                                              const KeyType* indices6,
+                                              const KeyType* indices7,
                                               const KeyType* sfcCodes,
                                               KeyType* elemToNodeMap,
                                               int numElements)
@@ -216,8 +296,37 @@ __global__ void findRepresentativeNodesKernel(const KeyType* indices0,
         }
         else if constexpr (std::is_same_v<ElementTag, HexTag>)
         {
-            // For hexahedra - would need additional parameters for indices4-7
-            // Implementation would be similar but with 8 nodes
+            // For hexahedra - find node with minimum SFC code among all 8 nodes
+            auto node0 = indices0[elemIdx];
+            auto node1 = indices1[elemIdx];
+            auto node2 = indices2[elemIdx];
+            auto node3 = indices3[elemIdx];
+            auto node4 = indices4[elemIdx];
+            auto node5 = indices5[elemIdx];
+            auto node6 = indices6[elemIdx];
+            auto node7 = indices7[elemIdx];
+
+            auto sfc0 = sfcCodes[node0];
+            auto sfc1 = sfcCodes[node1];
+            auto sfc2 = sfcCodes[node2];
+            auto sfc3 = sfcCodes[node3];
+            auto sfc4 = sfcCodes[node4];
+            auto sfc5 = sfcCodes[node5];
+            auto sfc6 = sfcCodes[node6];
+            auto sfc7 = sfcCodes[node7];
+
+            auto repNode = node0;
+            auto minSfc = sfc0;
+
+            if (sfc1 < minSfc) { minSfc = sfc1; repNode = node1; }
+            if (sfc2 < minSfc) { minSfc = sfc2; repNode = node2; }
+            if (sfc3 < minSfc) { minSfc = sfc3; repNode = node3; }
+            if (sfc4 < minSfc) { minSfc = sfc4; repNode = node4; }
+            if (sfc5 < minSfc) { minSfc = sfc5; repNode = node5; }
+            if (sfc6 < minSfc) { minSfc = sfc6; repNode = node6; }
+            if (sfc7 < minSfc) { minSfc = sfc7; repNode = node7; }
+
+            elemToNodeMap[elemIdx] = repNode;
         }
         else if constexpr (std::is_same_v<ElementTag, TriTag>)
         {
@@ -290,6 +399,143 @@ __global__ void extractRepCoordinatesKernel(const RealType* x,
     }
 }
 
+// Kernel to extract original coordinates of all 8 nodes for each hex8 element
+// This extracts 24 per-element properties (8 nodes × 3 coords)
+template<typename ElementTag, typename KeyType, typename RealType>
+__global__ void extractElementNodeCoordsKernel(const RealType* x,
+                                               const RealType* y,
+                                               const RealType* z,
+                                               const KeyType* idx0,
+                                               const KeyType* idx1,
+                                               const KeyType* idx2,
+                                               const KeyType* idx3,
+                                               const KeyType* idx4,
+                                               const KeyType* idx5,
+                                               const KeyType* idx6,
+                                               const KeyType* idx7,
+                                               RealType* elemOrigX0, RealType* elemOrigY0, RealType* elemOrigZ0,
+                                               RealType* elemOrigX1, RealType* elemOrigY1, RealType* elemOrigZ1,
+                                               RealType* elemOrigX2, RealType* elemOrigY2, RealType* elemOrigZ2,
+                                               RealType* elemOrigX3, RealType* elemOrigY3, RealType* elemOrigZ3,
+                                               RealType* elemOrigX4, RealType* elemOrigY4, RealType* elemOrigZ4,
+                                               RealType* elemOrigX5, RealType* elemOrigY5, RealType* elemOrigZ5,
+                                               RealType* elemOrigX6, RealType* elemOrigY6, RealType* elemOrigZ6,
+                                               RealType* elemOrigX7, RealType* elemOrigY7, RealType* elemOrigZ7,
+                                               int numElements)
+{
+    int elemIdx = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (elemIdx < numElements)
+    {
+        // Extract coordinates for all 8 nodes of this element
+        elemOrigX0[elemIdx] = x[idx0[elemIdx]];
+        elemOrigY0[elemIdx] = y[idx0[elemIdx]];
+        elemOrigZ0[elemIdx] = z[idx0[elemIdx]];
+
+        elemOrigX1[elemIdx] = x[idx1[elemIdx]];
+        elemOrigY1[elemIdx] = y[idx1[elemIdx]];
+        elemOrigZ1[elemIdx] = z[idx1[elemIdx]];
+
+        elemOrigX2[elemIdx] = x[idx2[elemIdx]];
+        elemOrigY2[elemIdx] = y[idx2[elemIdx]];
+        elemOrigZ2[elemIdx] = z[idx2[elemIdx]];
+
+        elemOrigX3[elemIdx] = x[idx3[elemIdx]];
+        elemOrigY3[elemIdx] = y[idx3[elemIdx]];
+        elemOrigZ3[elemIdx] = z[idx3[elemIdx]];
+
+        elemOrigX4[elemIdx] = x[idx4[elemIdx]];
+        elemOrigY4[elemIdx] = y[idx4[elemIdx]];
+        elemOrigZ4[elemIdx] = z[idx4[elemIdx]];
+
+        elemOrigX5[elemIdx] = x[idx5[elemIdx]];
+        elemOrigY5[elemIdx] = y[idx5[elemIdx]];
+        elemOrigZ5[elemIdx] = z[idx5[elemIdx]];
+
+        elemOrigX6[elemIdx] = x[idx6[elemIdx]];
+        elemOrigY6[elemIdx] = y[idx6[elemIdx]];
+        elemOrigZ6[elemIdx] = z[idx6[elemIdx]];
+
+        elemOrigX7[elemIdx] = x[idx7[elemIdx]];
+        elemOrigY7[elemIdx] = y[idx7[elemIdx]];
+        elemOrigZ7[elemIdx] = z[idx7[elemIdx]];
+    }
+}
+
+// Kernel to rebuild node coordinate arrays from element properties after sync
+// Inverse of extractElementNodeCoordsKernel: elements → nodes
+template<typename ElementTag, typename KeyType, typename RealType>
+__global__ void rebuildNodeCoordsFromElementsKernel(
+    const KeyType* connKey0, const KeyType* connKey1, const KeyType* connKey2, const KeyType* connKey3,
+    const KeyType* connKey4, const KeyType* connKey5, const KeyType* connKey6, const KeyType* connKey7,
+    const RealType* elemOrigX0, const RealType* elemOrigY0, const RealType* elemOrigZ0,
+    const RealType* elemOrigX1, const RealType* elemOrigY1, const RealType* elemOrigZ1,
+    const RealType* elemOrigX2, const RealType* elemOrigY2, const RealType* elemOrigZ2,
+    const RealType* elemOrigX3, const RealType* elemOrigY3, const RealType* elemOrigZ3,
+    const RealType* elemOrigX4, const RealType* elemOrigY4, const RealType* elemOrigZ4,
+    const RealType* elemOrigX5, const RealType* elemOrigY5, const RealType* elemOrigZ5,
+    const RealType* elemOrigX6, const RealType* elemOrigY6, const RealType* elemOrigZ6,
+    const RealType* elemOrigX7, const RealType* elemOrigY7, const RealType* elemOrigZ7,
+    RealType* nodeX, RealType* nodeY, RealType* nodeZ,
+    int numElements)
+{
+    int elemIdx = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (elemIdx < numElements)
+    {
+        // For each element, write the original coordinates to the node arrays
+        // using the post-sync local node IDs from d_conn_keys_
+
+        // Node 0
+        KeyType nodeId0 = connKey0[elemIdx];
+        nodeX[nodeId0] = elemOrigX0[elemIdx];
+        nodeY[nodeId0] = elemOrigY0[elemIdx];
+        nodeZ[nodeId0] = elemOrigZ0[elemIdx];
+
+        // Node 1
+        KeyType nodeId1 = connKey1[elemIdx];
+        nodeX[nodeId1] = elemOrigX1[elemIdx];
+        nodeY[nodeId1] = elemOrigY1[elemIdx];
+        nodeZ[nodeId1] = elemOrigZ1[elemIdx];
+
+        // Node 2
+        KeyType nodeId2 = connKey2[elemIdx];
+        nodeX[nodeId2] = elemOrigX2[elemIdx];
+        nodeY[nodeId2] = elemOrigY2[elemIdx];
+        nodeZ[nodeId2] = elemOrigZ2[elemIdx];
+
+        // Node 3
+        KeyType nodeId3 = connKey3[elemIdx];
+        nodeX[nodeId3] = elemOrigX3[elemIdx];
+        nodeY[nodeId3] = elemOrigY3[elemIdx];
+        nodeZ[nodeId3] = elemOrigZ3[elemIdx];
+
+        // Node 4
+        KeyType nodeId4 = connKey4[elemIdx];
+        nodeX[nodeId4] = elemOrigX4[elemIdx];
+        nodeY[nodeId4] = elemOrigY4[elemIdx];
+        nodeZ[nodeId4] = elemOrigZ4[elemIdx];
+
+        // Node 5
+        KeyType nodeId5 = connKey5[elemIdx];
+        nodeX[nodeId5] = elemOrigX5[elemIdx];
+        nodeY[nodeId5] = elemOrigY5[elemIdx];
+        nodeZ[nodeId5] = elemOrigZ5[elemIdx];
+
+        // Node 6
+        KeyType nodeId6 = connKey6[elemIdx];
+        nodeX[nodeId6] = elemOrigX6[elemIdx];
+        nodeY[nodeId6] = elemOrigY6[elemIdx];
+        nodeZ[nodeId6] = elemOrigZ6[elemIdx];
+
+        // Node 7
+        KeyType nodeId7 = connKey7[elemIdx];
+        nodeX[nodeId7] = elemOrigX7[elemIdx];
+        nodeY[nodeId7] = elemOrigY7[elemIdx];
+        nodeZ[nodeId7] = elemOrigZ7[elemIdx];
+    }
+}
+
 template<typename KeyType>
 __global__ void extractAllTupleComponentsKernel(const KeyType* conn_key0,
                                                const KeyType* conn_key1,
@@ -335,11 +581,19 @@ __global__ void buildSfcConnectivity(const KeyType* indices0,
                                      const KeyType* indices1,
                                      const KeyType* indices2,
                                      const KeyType* indices3,
+                                     const KeyType* indices4,
+                                     const KeyType* indices5,
+                                     const KeyType* indices6,
+                                     const KeyType* indices7,
                                      const KeyType* sfcCodes,
                                      KeyType* keys0,
                                      KeyType* keys1,
                                      KeyType* keys2,
                                      KeyType* keys3,
+                                     KeyType* keys4,
+                                     KeyType* keys5,
+                                     KeyType* keys6,
+                                     KeyType* keys7,
                                      int numElements)
 {
     int elemIdx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -361,8 +615,24 @@ __global__ void buildSfcConnectivity(const KeyType* indices0,
         }
         else if constexpr (std::is_same_v<ElementTag, HexTag>)
         {
-            // For hexahedra - would need additional parameters for indices4-7
-            // Implementation would be similar but with 8 nodes
+            // For hexahedra - store SFC keys for all 8 nodes
+            auto node0 = indices0[elemIdx];
+            auto node1 = indices1[elemIdx];
+            auto node2 = indices2[elemIdx];
+            auto node3 = indices3[elemIdx];
+            auto node4 = indices4[elemIdx];
+            auto node5 = indices5[elemIdx];
+            auto node6 = indices6[elemIdx];
+            auto node7 = indices7[elemIdx];
+
+            keys0[elemIdx] = sfcCodes[node0];
+            keys1[elemIdx] = sfcCodes[node1];
+            keys2[elemIdx] = sfcCodes[node2];
+            keys3[elemIdx] = sfcCodes[node3];
+            keys4[elemIdx] = sfcCodes[node4];
+            keys5[elemIdx] = sfcCodes[node5];
+            keys6[elemIdx] = sfcCodes[node6];
+            keys7[elemIdx] = sfcCodes[node7];
         }
         else if constexpr (std::is_same_v<ElementTag, TriTag>)
         {
@@ -584,13 +854,17 @@ __global__ void decodeAllNodesKernel(const KeyType* sfcKeys, RealType* x, RealTy
     x[idx] = xi; y[idx] = yi; z[idx] = zi;
 }
 
-template <typename KeyType>
+template <typename KeyType, int NodesPerElement>
 __global__ void markNodesInElementRangeKernel(
     unsigned int* nodeFlags,
     const KeyType* conn0,
     const KeyType* conn1,
     const KeyType* conn2,
     const KeyType* conn3,
+    const KeyType* conn4,
+    const KeyType* conn5,
+    const KeyType* conn6,
+    const KeyType* conn7,
     const KeyType* localToGlobalSfcMap,
     size_t elementStart,
     size_t elementEnd,
@@ -601,10 +875,21 @@ __global__ void markNodesInElementRangeKernel(
     if (elemIdx < elementEnd)
     {
         // For each node in this element, find its local node ID and set flag
-        KeyType sfcKeys[4] = {conn0[elemIdx], conn1[elemIdx], conn2[elemIdx], conn3[elemIdx]};
+        KeyType sfcKeys[8];
+        sfcKeys[0] = conn0[elemIdx];
+        sfcKeys[1] = conn1[elemIdx];
+        sfcKeys[2] = conn2[elemIdx];
+        sfcKeys[3] = conn3[elemIdx];
+        if constexpr (NodesPerElement > 4) {
+            sfcKeys[4] = conn4[elemIdx];
+            sfcKeys[5] = conn5[elemIdx];
+            sfcKeys[6] = conn6[elemIdx];
+            sfcKeys[7] = conn7[elemIdx];
+        }
         
-        for (int i = 0; i < 4; ++i) {
+        for (int i = 0; i < NodesPerElement; ++i) {
             KeyType targetSfc = sfcKeys[i];
+            if (targetSfc == 0 && NodesPerElement > 4 && i >= 4) continue; // Skip padded zeros for tet in hex domain
             // Binary search to find this SFC key in localToGlobalSfcMap
             int left = 0, right = nodeCount - 1;
             while (left <= right) {
@@ -659,7 +944,7 @@ __global__ void determineOwnershipDirectKernel(
 }
 
 template <typename KeyType>
-__global__ void detectSharedNodesKernel(
+__global__ void refineOwnershipForFEMKernel(
     uint8_t* nodeOwnership,
     const unsigned int* nodeFlags,
     size_t numNodes)
@@ -668,17 +953,20 @@ __global__ void detectSharedNodesKernel(
     if (nodeIdx < numNodes)
     {
         unsigned int flags = nodeFlags[nodeIdx];
-        uint8_t ownership = nodeOwnership[nodeIdx];
-        
-        // Upgrade owned nodes to shared if they appear in both local and halo elements
-        // Note: Some owned nodes may not appear in local elements (only in halo)
-        // These will have zero diagonals but we keep them as owned to avoid orphaning them
-        
-        if (ownership == 1 && (flags & 0x03) == 0x03) {
-            // In both local and halo → shared boundary
-            nodeOwnership[nodeIdx] = 2;
+
+        // Simple ownership: own nodes that appear in LOCAL elements
+        // This creates "overlapping" ownership for shared boundary nodes,
+        // but the DOF handler will use SFC-based global indices to ensure
+        // all ranks use the same global DOF index for each node.
+
+        if (flags & 0x01) {
+            // In local elements → owned (will contribute to matrix)
+            nodeOwnership[nodeIdx] = 1;
         }
-        // Keep SFC-based ownership otherwise (don't downgrade based on element participation)
+        else {
+            // Not in local elements → ghost (receive values from owner)
+            nodeOwnership[nodeIdx] = 0;
+        }
     }
 }
 
@@ -741,34 +1029,50 @@ void HaloData<ElementTag, RealType, KeyType, AcceleratorTag>::buildNodeOwnership
                 thrust::device_pointer_cast(d_assignment.data()));
     
     // Phase 2: Assign ownership based on SFC key ranges
-    int numBlocks = (nodeCount + blockSize - 1) / blockSize;
-    determineOwnershipDirectKernel<KeyType><<<numBlocks, blockSize>>>(
-        thrust::raw_pointer_cast(d_nodeOwnership_.data()),
-        thrust::raw_pointer_cast(nodeSfcKeys.data()),
-        thrust::raw_pointer_cast(d_assignment.data()),
-        domain.numRanks(),
-        domain.rank(),
-        nodeCount);
-    cudaCheckError();
+    if (nodeCount > 0) {
+        int numBlocks = (nodeCount + blockSize - 1) / blockSize;
+        determineOwnershipDirectKernel<KeyType><<<numBlocks, blockSize>>>(
+            thrust::raw_pointer_cast(d_nodeOwnership_.data()),
+            thrust::raw_pointer_cast(nodeSfcKeys.data()),
+            thrust::raw_pointer_cast(d_assignment.data()),
+            domain.numRanks(),
+            domain.rank(),
+            nodeCount);
+        cudaCheckError();
+    }
     
     // Phase 3: Mark nodes in LOCAL elements to detect potential shared boundaries
     cstone::DeviceVector<unsigned int> d_nodeFlags(nodeCount, 0);
     
+    constexpr int NodesPerElem = ElementTag::NodesPerElement;
     auto conn0 = std::get<0>(conn_sfc);
     auto conn1 = std::get<1>(conn_sfc);
     auto conn2 = std::get<2>(conn_sfc);
     auto conn3 = std::get<3>(conn_sfc);
     
+    // For HexTag, get all 8 connectivity vectors; for TetTag, use nullptr placeholders
+    const KeyType* conn4_ptr = nullptr;
+    const KeyType* conn5_ptr = nullptr;
+    const KeyType* conn6_ptr = nullptr;
+    const KeyType* conn7_ptr = nullptr;
+    if constexpr (NodesPerElem == 8) {
+        conn4_ptr = thrust::raw_pointer_cast(std::get<4>(conn_sfc).data());
+        conn5_ptr = thrust::raw_pointer_cast(std::get<5>(conn_sfc).data());
+        conn6_ptr = thrust::raw_pointer_cast(std::get<6>(conn_sfc).data());
+        conn7_ptr = thrust::raw_pointer_cast(std::get<7>(conn_sfc).data());
+    }
+    
     size_t localElementCount = domain.localElementCount();
     
     if (localElementCount > 0) {
         int numBlocks = (localElementCount + blockSize - 1) / blockSize;
-        markNodesInElementRangeKernel<KeyType><<<numBlocks, blockSize>>>(
+        markNodesInElementRangeKernel<KeyType, NodesPerElem><<<numBlocks, blockSize>>>(
             thrust::raw_pointer_cast(d_nodeFlags.data()),
             thrust::raw_pointer_cast(conn0.data()),
             thrust::raw_pointer_cast(conn1.data()),
             thrust::raw_pointer_cast(conn2.data()),
             thrust::raw_pointer_cast(conn3.data()),
+            conn4_ptr, conn5_ptr, conn6_ptr, conn7_ptr,
             thrust::raw_pointer_cast(nodeSfcKeys.data()),
             0, localElementCount, nodeCount, 0x01);
         cudaCheckError();
@@ -779,27 +1083,33 @@ void HaloData<ElementTag, RealType, KeyType, AcceleratorTag>::buildNodeOwnership
     
     if (totalElementCount > localElementCount) {
         int numBlocks = (totalElementCount - localElementCount + blockSize - 1) / blockSize;
-        markNodesInElementRangeKernel<KeyType><<<numBlocks, blockSize>>>(
+        markNodesInElementRangeKernel<KeyType, NodesPerElem><<<numBlocks, blockSize>>>(
             thrust::raw_pointer_cast(d_nodeFlags.data()),
             thrust::raw_pointer_cast(conn0.data()),
             thrust::raw_pointer_cast(conn1.data()),
             thrust::raw_pointer_cast(conn2.data()),
             thrust::raw_pointer_cast(conn3.data()),
+            conn4_ptr, conn5_ptr, conn6_ptr, conn7_ptr,
             thrust::raw_pointer_cast(nodeSfcKeys.data()),
             localElementCount, totalElementCount, nodeCount, 0x02);
         cudaCheckError();
     }
     
-    // Phase 5: Upgrade owned nodes (state 1) to shared (state 2) if they appear in both local and halo
-    numBlocks = (nodeCount + blockSize - 1) / blockSize;
-    detectSharedNodesKernel<KeyType><<<numBlocks, blockSize>>>(
-        thrust::raw_pointer_cast(d_nodeOwnership_.data()),
-        thrust::raw_pointer_cast(d_nodeFlags.data()),
-        nodeCount);
-    cudaCheckError();
+    // Phase 5: Refine ownership for FEM - overlapping ownership model
+    // Nodes in local elements → owned, others → ghost
+    // Shared nodes are owned by ALL ranks with local elements (overlapping)
+    // The DOF handler uses SFC-based global indexing to handle this correctly
+    if (nodeCount > 0) {
+        int numBlocks = (nodeCount + blockSize - 1) / blockSize;
+        refineOwnershipForFEMKernel<KeyType><<<numBlocks, blockSize>>>(
+            thrust::raw_pointer_cast(d_nodeOwnership_.data()),
+            thrust::raw_pointer_cast(d_nodeFlags.data()),
+            nodeCount);
+        cudaCheckError();
+    }
     
-    // Debug: Count ownership states and verify element-node associations
-    if (domain.rank() == 0 || domain.rank() == 1) {
+    // Debug: Count ownership states - only report critical issues
+    if (domain.rank() == 0) {
         thrust::host_vector<uint8_t> h_ownership(nodeCount);
         thrust::host_vector<unsigned int> h_flags(nodeCount);
         thrust::copy(thrust::device_pointer_cast(d_nodeOwnership_.data()),
@@ -808,35 +1118,20 @@ void HaloData<ElementTag, RealType, KeyType, AcceleratorTag>::buildNodeOwnership
         thrust::copy(thrust::device_pointer_cast(d_nodeFlags.data()),
                     thrust::device_pointer_cast(d_nodeFlags.data() + nodeCount),
                     h_flags.begin());
-        
-        size_t cnt_ghost = 0, cnt_owned = 0, cnt_shared = 0;
-        size_t cnt_in_local = 0, cnt_in_halo = 0, cnt_in_both = 0, cnt_in_neither = 0;
-        size_t cnt_owned_not_in_local = 0;  // Problematic: owned but not in local elements
+
+        size_t cnt_owned = 0;
+        size_t cnt_owned_not_in_local = 0;
         for (size_t i = 0; i < nodeCount; ++i) {
-            if (h_ownership[i] == 0) cnt_ghost++;
-            else if (h_ownership[i] == 1) cnt_owned++;
-            else if (h_ownership[i] == 2) cnt_shared++;
-            
-            if ((h_flags[i] & 0x01) && (h_flags[i] & 0x02)) cnt_in_both++;
-            else if (h_flags[i] & 0x01) cnt_in_local++;
-            else if (h_flags[i] & 0x02) cnt_in_halo++;
-            else cnt_in_neither++;
-            
-            // Check for owned nodes not in local elements (will have zero diagonal)
-            if ((h_ownership[i] == 1 || h_ownership[i] == 2) && !(h_flags[i] & 0x01)) {
-                cnt_owned_not_in_local++;
+            if (h_ownership[i] == 1 || h_ownership[i] == 2) {
+                cnt_owned++;
+                if (!(h_flags[i] & 0x01)) cnt_owned_not_in_local++;
             }
         }
-        std::cout << "Rank " << domain.rank() << ": Ownership states after 3-phase - " 
-                  << cnt_ghost << " ghost, " << cnt_owned << " pure owned, " 
-                  << cnt_shared << " shared\n";
-        std::cout << "Rank " << domain.rank() << ": Element flags - " 
-                  << cnt_in_local << " local only, " << cnt_in_halo << " halo only, "
-                  << cnt_in_both << " both, " << cnt_in_neither << " neither\n";
+        std::cout << "Rank 0: " << cnt_owned << " owned nodes";
         if (cnt_owned_not_in_local > 0) {
-            std::cout << "Rank " << domain.rank() << ": WARNING - " << cnt_owned_not_in_local 
-                      << " owned nodes NOT in local elements (will have zero diagonals!)\n";
+            std::cout << " (WARNING: " << cnt_owned_not_in_local << " not in local elements!)";
         }
+        std::cout << "\n";
     }
 }
 
@@ -845,6 +1140,7 @@ void HaloData<ElementTag, RealType, KeyType, AcceleratorTag>::buildNodeOwnership
 template __global__ void computeCharacteristicSizesKernel<TetTag, unsigned, float>(
     const float* x, const float* y, const float* z,
     const unsigned* indices0, const unsigned* indices1, const unsigned* indices2, const unsigned* indices3,
+    const unsigned* indices4, const unsigned* indices5, const unsigned* indices6, const unsigned* indices7,
     int* nodeTetCount, float* h, int numElements);
 
 template __global__ void extractRepCoordinatesKernel<TetTag, unsigned, float>(
@@ -853,6 +1149,7 @@ template __global__ void extractRepCoordinatesKernel<TetTag, unsigned, float>(
 
 template __global__ void findRepresentativeNodesKernel<TetTag, unsigned, float>(
     const unsigned* indices0, const unsigned* indices1, const unsigned* indices2, const unsigned* indices3,
+    const unsigned* indices4, const unsigned* indices5, const unsigned* indices6, const unsigned* indices7,
     const unsigned* sfcCodes, unsigned* elemToNodeMap, int numElements);
 
 template __global__ void finalizeCharacteristicSizesKernel<unsigned, float>(float* h, int* nodeTetCount, int numNodes);
@@ -861,6 +1158,7 @@ template __global__ void finalizeCharacteristicSizesKernel<unsigned, float>(floa
 template __global__ void computeCharacteristicSizesKernel<TetTag, unsigned, double>(
     const double* x, const double* y, const double* z,
     const unsigned* indices0, const unsigned* indices1, const unsigned* indices2, const unsigned* indices3,
+    const unsigned* indices4, const unsigned* indices5, const unsigned* indices6, const unsigned* indices7,
     int* nodeTetCount, double* h, int numElements);
 
 template __global__ void extractRepCoordinatesKernel<TetTag, unsigned, double>(
@@ -869,6 +1167,7 @@ template __global__ void extractRepCoordinatesKernel<TetTag, unsigned, double>(
 
 template __global__ void findRepresentativeNodesKernel<TetTag, unsigned, double>(
     const unsigned* indices0, const unsigned* indices1, const unsigned* indices2, const unsigned* indices3,
+    const unsigned* indices4, const unsigned* indices5, const unsigned* indices6, const unsigned* indices7,
     const unsigned* sfcCodes, unsigned* elemToNodeMap, int numElements);
 
 template __global__ void finalizeCharacteristicSizesKernel<unsigned, double>(double* h, int* nodeTetCount, int numNodes);
@@ -878,6 +1177,7 @@ template __global__ void finalizeCharacteristicSizesKernel<unsigned, double>(dou
 template __global__ void computeCharacteristicSizesKernel<TetTag, uint64_t, float>(
     const float* x, const float* y, const float* z,
     const uint64_t* indices0, const uint64_t* indices1, const uint64_t* indices2, const uint64_t* indices3,
+    const uint64_t* indices4, const uint64_t* indices5, const uint64_t* indices6, const uint64_t* indices7,
     int* nodeTetCount, float* h, int numElements);
 
 template __global__ void extractRepCoordinatesKernel<TetTag, uint64_t, float>(
@@ -886,6 +1186,7 @@ template __global__ void extractRepCoordinatesKernel<TetTag, uint64_t, float>(
 
 template __global__ void findRepresentativeNodesKernel<TetTag, uint64_t, float>(
     const uint64_t* indices0, const uint64_t* indices1, const uint64_t* indices2, const uint64_t* indices3,
+    const uint64_t* indices4, const uint64_t* indices5, const uint64_t* indices6, const uint64_t* indices7,
     const uint64_t* sfcCodes, uint64_t* elemToNodeMap, int numElements);
 
 template __global__ void finalizeCharacteristicSizesKernel<uint64_t, float>(float* h, int* nodeTetCount, int numNodes);
@@ -894,6 +1195,7 @@ template __global__ void finalizeCharacteristicSizesKernel<uint64_t, float>(floa
 template __global__ void computeCharacteristicSizesKernel<TetTag, uint64_t, double>(
     const double* x, const double* y, const double* z,
     const uint64_t* indices0, const uint64_t* indices1, const uint64_t* indices2, const uint64_t* indices3,
+    const uint64_t* indices4, const uint64_t* indices5, const uint64_t* indices6, const uint64_t* indices7,
     int* nodeTetCount, double* h, int numElements);
 
 template __global__ void extractRepCoordinatesKernel<TetTag, uint64_t, double>(
@@ -902,9 +1204,213 @@ template __global__ void extractRepCoordinatesKernel<TetTag, uint64_t, double>(
 
 template __global__ void findRepresentativeNodesKernel<TetTag, uint64_t, double>(
     const uint64_t* indices0, const uint64_t* indices1, const uint64_t* indices2, const uint64_t* indices3,
+    const uint64_t* indices4, const uint64_t* indices5, const uint64_t* indices6, const uint64_t* indices7,
     const uint64_t* sfcCodes, uint64_t* elemToNodeMap, int numElements);
 
 template __global__ void finalizeCharacteristicSizesKernel<uint64_t, double>(double* h, int* nodeTetCount, int numNodes);
+
+// ===== Hex8 instantiations =====
+// Float combinations
+template __global__ void computeCharacteristicSizesKernel<HexTag, unsigned, float>(
+    const float* x, const float* y, const float* z,
+    const unsigned* indices0, const unsigned* indices1, const unsigned* indices2, const unsigned* indices3,
+    const unsigned* indices4, const unsigned* indices5, const unsigned* indices6, const unsigned* indices7,
+    int* nodeTetCount, float* h, int numElements);
+
+template __global__ void findRepresentativeNodesKernel<HexTag, unsigned, float>(
+    const unsigned* indices0, const unsigned* indices1, const unsigned* indices2, const unsigned* indices3,
+    const unsigned* indices4, const unsigned* indices5, const unsigned* indices6, const unsigned* indices7,
+    const unsigned* sfcCodes, unsigned* elemToNodeMap, int numElements);
+
+template __global__ void buildSfcConnectivity<HexTag, unsigned, float>(
+    const unsigned* indices0, const unsigned* indices1, const unsigned* indices2, const unsigned* indices3,
+    const unsigned* indices4, const unsigned* indices5, const unsigned* indices6, const unsigned* indices7,
+    const unsigned* sfcCodes, unsigned* keys0, unsigned* keys1, unsigned* keys2, unsigned* keys3,
+    unsigned* keys4, unsigned* keys5, unsigned* keys6, unsigned* keys7, int numElements);
+
+// Double combinations
+template __global__ void computeCharacteristicSizesKernel<HexTag, unsigned, double>(
+    const double* x, const double* y, const double* z,
+    const unsigned* indices0, const unsigned* indices1, const unsigned* indices2, const unsigned* indices3,
+    const unsigned* indices4, const unsigned* indices5, const unsigned* indices6, const unsigned* indices7,
+    int* nodeTetCount, double* h, int numElements);
+
+template __global__ void findRepresentativeNodesKernel<HexTag, unsigned, double>(
+    const unsigned* indices0, const unsigned* indices1, const unsigned* indices2, const unsigned* indices3,
+    const unsigned* indices4, const unsigned* indices5, const unsigned* indices6, const unsigned* indices7,
+    const unsigned* sfcCodes, unsigned* elemToNodeMap, int numElements);
+
+template __global__ void buildSfcConnectivity<HexTag, unsigned, double>(
+    const unsigned* indices0, const unsigned* indices1, const unsigned* indices2, const unsigned* indices3,
+    const unsigned* indices4, const unsigned* indices5, const unsigned* indices6, const unsigned* indices7,
+    const unsigned* sfcCodes, unsigned* keys0, unsigned* keys1, unsigned* keys2, unsigned* keys3,
+    unsigned* keys4, unsigned* keys5, unsigned* keys6, unsigned* keys7, int numElements);
+
+// uint64_t combinations
+template __global__ void computeCharacteristicSizesKernel<HexTag, uint64_t, float>(
+    const float* x, const float* y, const float* z,
+    const uint64_t* indices0, const uint64_t* indices1, const uint64_t* indices2, const uint64_t* indices3,
+    const uint64_t* indices4, const uint64_t* indices5, const uint64_t* indices6, const uint64_t* indices7,
+    int* nodeTetCount, float* h, int numElements);
+
+template __global__ void findRepresentativeNodesKernel<HexTag, uint64_t, float>(
+    const uint64_t* indices0, const uint64_t* indices1, const uint64_t* indices2, const uint64_t* indices3,
+    const uint64_t* indices4, const uint64_t* indices5, const uint64_t* indices6, const uint64_t* indices7,
+    const uint64_t* sfcCodes, uint64_t* elemToNodeMap, int numElements);
+
+template __global__ void buildSfcConnectivity<HexTag, uint64_t, float>(
+    const uint64_t* indices0, const uint64_t* indices1, const uint64_t* indices2, const uint64_t* indices3,
+    const uint64_t* indices4, const uint64_t* indices5, const uint64_t* indices6, const uint64_t* indices7,
+    const uint64_t* sfcCodes, uint64_t* keys0, uint64_t* keys1, uint64_t* keys2, uint64_t* keys3,
+    uint64_t* keys4, uint64_t* keys5, uint64_t* keys6, uint64_t* keys7, int numElements);
+
+template __global__ void computeCharacteristicSizesKernel<HexTag, uint64_t, double>(
+    const double* x, const double* y, const double* z,
+    const uint64_t* indices0, const uint64_t* indices1, const uint64_t* indices2, const uint64_t* indices3,
+    const uint64_t* indices4, const uint64_t* indices5, const uint64_t* indices6, const uint64_t* indices7,
+    int* nodeTetCount, double* h, int numElements);
+
+template __global__ void findRepresentativeNodesKernel<HexTag, uint64_t, double>(
+    const uint64_t* indices0, const uint64_t* indices1, const uint64_t* indices2, const uint64_t* indices3,
+    const uint64_t* indices4, const uint64_t* indices5, const uint64_t* indices6, const uint64_t* indices7,
+    const uint64_t* sfcCodes, uint64_t* elemToNodeMap, int numElements);
+
+template __global__ void buildSfcConnectivity<HexTag, uint64_t, double>(
+    const uint64_t* indices0, const uint64_t* indices1, const uint64_t* indices2, const uint64_t* indices3,
+    const uint64_t* indices4, const uint64_t* indices5, const uint64_t* indices6, const uint64_t* indices7,
+    const uint64_t* sfcCodes, uint64_t* keys0, uint64_t* keys1, uint64_t* keys2, uint64_t* keys3,
+    uint64_t* keys4, uint64_t* keys5, uint64_t* keys6, uint64_t* keys7, int numElements);
+
+// Add extractRepCoordinatesKernel instantiations for HexTag
+template __global__ void extractRepCoordinatesKernel<HexTag, unsigned, float>(
+    const float* x, const float* y, const float* z, const float* h,
+    const unsigned* elemToNodeMap, float* elemX, float* elemY, float* elemZ, float* elemH, int numElements);
+
+template __global__ void extractRepCoordinatesKernel<HexTag, unsigned, double>(
+    const double* x, const double* y, const double* z, const double* h,
+    const unsigned* elemToNodeMap, double* elemX, double* elemY, double* elemZ, double* elemH, int numElements);
+
+template __global__ void extractRepCoordinatesKernel<HexTag, uint64_t, float>(
+    const float* x, const float* y, const float* z, const float* h,
+    const uint64_t* elemToNodeMap, float* elemX, float* elemY, float* elemZ, float* elemH, int numElements);
+
+template __global__ void extractRepCoordinatesKernel<HexTag, uint64_t, double>(
+    const double* x, const double* y, const double* z, const double* h,
+    const uint64_t* elemToNodeMap, double* elemX, double* elemY, double* elemZ, double* elemH, int numElements);
+
+// Template instantiations for extractElementNodeCoordsKernel (HexTag only)
+template __global__ void extractElementNodeCoordsKernel<HexTag, unsigned, float>(
+    const float* x, const float* y, const float* z,
+    const unsigned* idx0, const unsigned* idx1, const unsigned* idx2, const unsigned* idx3,
+    const unsigned* idx4, const unsigned* idx5, const unsigned* idx6, const unsigned* idx7,
+    float* elemOrigX0, float* elemOrigY0, float* elemOrigZ0,
+    float* elemOrigX1, float* elemOrigY1, float* elemOrigZ1,
+    float* elemOrigX2, float* elemOrigY2, float* elemOrigZ2,
+    float* elemOrigX3, float* elemOrigY3, float* elemOrigZ3,
+    float* elemOrigX4, float* elemOrigY4, float* elemOrigZ4,
+    float* elemOrigX5, float* elemOrigY5, float* elemOrigZ5,
+    float* elemOrigX6, float* elemOrigY6, float* elemOrigZ6,
+    float* elemOrigX7, float* elemOrigY7, float* elemOrigZ7,
+    int numElements);
+
+template __global__ void extractElementNodeCoordsKernel<HexTag, unsigned, double>(
+    const double* x, const double* y, const double* z,
+    const unsigned* idx0, const unsigned* idx1, const unsigned* idx2, const unsigned* idx3,
+    const unsigned* idx4, const unsigned* idx5, const unsigned* idx6, const unsigned* idx7,
+    double* elemOrigX0, double* elemOrigY0, double* elemOrigZ0,
+    double* elemOrigX1, double* elemOrigY1, double* elemOrigZ1,
+    double* elemOrigX2, double* elemOrigY2, double* elemOrigZ2,
+    double* elemOrigX3, double* elemOrigY3, double* elemOrigZ3,
+    double* elemOrigX4, double* elemOrigY4, double* elemOrigZ4,
+    double* elemOrigX5, double* elemOrigY5, double* elemOrigZ5,
+    double* elemOrigX6, double* elemOrigY6, double* elemOrigZ6,
+    double* elemOrigX7, double* elemOrigY7, double* elemOrigZ7,
+    int numElements);
+
+template __global__ void extractElementNodeCoordsKernel<HexTag, uint64_t, float>(
+    const float* x, const float* y, const float* z,
+    const uint64_t* idx0, const uint64_t* idx1, const uint64_t* idx2, const uint64_t* idx3,
+    const uint64_t* idx4, const uint64_t* idx5, const uint64_t* idx6, const uint64_t* idx7,
+    float* elemOrigX0, float* elemOrigY0, float* elemOrigZ0,
+    float* elemOrigX1, float* elemOrigY1, float* elemOrigZ1,
+    float* elemOrigX2, float* elemOrigY2, float* elemOrigZ2,
+    float* elemOrigX3, float* elemOrigY3, float* elemOrigZ3,
+    float* elemOrigX4, float* elemOrigY4, float* elemOrigZ4,
+    float* elemOrigX5, float* elemOrigY5, float* elemOrigZ5,
+    float* elemOrigX6, float* elemOrigY6, float* elemOrigZ6,
+    float* elemOrigX7, float* elemOrigY7, float* elemOrigZ7,
+    int numElements);
+
+template __global__ void extractElementNodeCoordsKernel<HexTag, uint64_t, double>(
+    const double* x, const double* y, const double* z,
+    const uint64_t* idx0, const uint64_t* idx1, const uint64_t* idx2, const uint64_t* idx3,
+    const uint64_t* idx4, const uint64_t* idx5, const uint64_t* idx6, const uint64_t* idx7,
+    double* elemOrigX0, double* elemOrigY0, double* elemOrigZ0,
+    double* elemOrigX1, double* elemOrigY1, double* elemOrigZ1,
+    double* elemOrigX2, double* elemOrigY2, double* elemOrigZ2,
+    double* elemOrigX3, double* elemOrigY3, double* elemOrigZ3,
+    double* elemOrigX4, double* elemOrigY4, double* elemOrigZ4,
+    double* elemOrigX5, double* elemOrigY5, double* elemOrigZ5,
+    double* elemOrigX6, double* elemOrigY6, double* elemOrigZ6,
+    double* elemOrigX7, double* elemOrigY7, double* elemOrigZ7,
+    int numElements);
+
+// Template instantiations for rebuildNodeCoordsFromElementsKernel (HexTag only)
+template __global__ void rebuildNodeCoordsFromElementsKernel<HexTag, unsigned, float>(
+    const unsigned* connKey0, const unsigned* connKey1, const unsigned* connKey2, const unsigned* connKey3,
+    const unsigned* connKey4, const unsigned* connKey5, const unsigned* connKey6, const unsigned* connKey7,
+    const float* elemOrigX0, const float* elemOrigY0, const float* elemOrigZ0,
+    const float* elemOrigX1, const float* elemOrigY1, const float* elemOrigZ1,
+    const float* elemOrigX2, const float* elemOrigY2, const float* elemOrigZ2,
+    const float* elemOrigX3, const float* elemOrigY3, const float* elemOrigZ3,
+    const float* elemOrigX4, const float* elemOrigY4, const float* elemOrigZ4,
+    const float* elemOrigX5, const float* elemOrigY5, const float* elemOrigZ5,
+    const float* elemOrigX6, const float* elemOrigY6, const float* elemOrigZ6,
+    const float* elemOrigX7, const float* elemOrigY7, const float* elemOrigZ7,
+    float* nodeX, float* nodeY, float* nodeZ,
+    int numElements);
+
+template __global__ void rebuildNodeCoordsFromElementsKernel<HexTag, unsigned, double>(
+    const unsigned* connKey0, const unsigned* connKey1, const unsigned* connKey2, const unsigned* connKey3,
+    const unsigned* connKey4, const unsigned* connKey5, const unsigned* connKey6, const unsigned* connKey7,
+    const double* elemOrigX0, const double* elemOrigY0, const double* elemOrigZ0,
+    const double* elemOrigX1, const double* elemOrigY1, const double* elemOrigZ1,
+    const double* elemOrigX2, const double* elemOrigY2, const double* elemOrigZ2,
+    const double* elemOrigX3, const double* elemOrigY3, const double* elemOrigZ3,
+    const double* elemOrigX4, const double* elemOrigY4, const double* elemOrigZ4,
+    const double* elemOrigX5, const double* elemOrigY5, const double* elemOrigZ5,
+    const double* elemOrigX6, const double* elemOrigY6, const double* elemOrigZ6,
+    const double* elemOrigX7, const double* elemOrigY7, const double* elemOrigZ7,
+    double* nodeX, double* nodeY, double* nodeZ,
+    int numElements);
+
+template __global__ void rebuildNodeCoordsFromElementsKernel<HexTag, uint64_t, float>(
+    const uint64_t* connKey0, const uint64_t* connKey1, const uint64_t* connKey2, const uint64_t* connKey3,
+    const uint64_t* connKey4, const uint64_t* connKey5, const uint64_t* connKey6, const uint64_t* connKey7,
+    const float* elemOrigX0, const float* elemOrigY0, const float* elemOrigZ0,
+    const float* elemOrigX1, const float* elemOrigY1, const float* elemOrigZ1,
+    const float* elemOrigX2, const float* elemOrigY2, const float* elemOrigZ2,
+    const float* elemOrigX3, const float* elemOrigY3, const float* elemOrigZ3,
+    const float* elemOrigX4, const float* elemOrigY4, const float* elemOrigZ4,
+    const float* elemOrigX5, const float* elemOrigY5, const float* elemOrigZ5,
+    const float* elemOrigX6, const float* elemOrigY6, const float* elemOrigZ6,
+    const float* elemOrigX7, const float* elemOrigY7, const float* elemOrigZ7,
+    float* nodeX, float* nodeY, float* nodeZ,
+    int numElements);
+
+template __global__ void rebuildNodeCoordsFromElementsKernel<HexTag, uint64_t, double>(
+    const uint64_t* connKey0, const uint64_t* connKey1, const uint64_t* connKey2, const uint64_t* connKey3,
+    const uint64_t* connKey4, const uint64_t* connKey5, const uint64_t* connKey6, const uint64_t* connKey7,
+    const double* elemOrigX0, const double* elemOrigY0, const double* elemOrigZ0,
+    const double* elemOrigX1, const double* elemOrigY1, const double* elemOrigZ1,
+    const double* elemOrigX2, const double* elemOrigY2, const double* elemOrigZ2,
+    const double* elemOrigX3, const double* elemOrigY3, const double* elemOrigZ3,
+    const double* elemOrigX4, const double* elemOrigY4, const double* elemOrigZ4,
+    const double* elemOrigX5, const double* elemOrigY5, const double* elemOrigZ5,
+    const double* elemOrigX6, const double* elemOrigY6, const double* elemOrigZ6,
+    const double* elemOrigX7, const double* elemOrigY7, const double* elemOrigZ7,
+    double* nodeX, double* nodeY, double* nodeZ,
+    int numElements);
 
 template __global__ void transformCharacteristicSizesKernel<float>(float* d_h, size_t size, float meshFactor, float minH, float maxH);
 template __global__ void transformCharacteristicSizesKernel<double>(double* d_h, size_t size, double meshFactor, double minH, double maxH);
@@ -932,24 +1438,28 @@ template void generateSfcKeys<uint64_t, double>(
 // For tet elements with unsigned int keys
 template __global__ void buildSfcConnectivity<TetTag, unsigned int, float>
     (const unsigned int*, const unsigned int*, const unsigned int*, const unsigned int*,
+     const unsigned int*, const unsigned int*, const unsigned int*, const unsigned int*,
      const unsigned int*, unsigned int*, unsigned int*, 
-     unsigned int*, unsigned int*, int);
+     unsigned int*, unsigned int*, unsigned int*, unsigned int*, unsigned int*, unsigned int*, int);
 
 template __global__ void buildSfcConnectivity<TetTag, unsigned int, double>
     (const unsigned int*, const unsigned int*, const unsigned int*, const unsigned int*,
+     const unsigned int*, const unsigned int*, const unsigned int*, const unsigned int*,
      const unsigned int*, unsigned int*, unsigned int*, 
-     unsigned int*, unsigned int*, int);
+     unsigned int*, unsigned int*, unsigned int*, unsigned int*, unsigned int*, unsigned int*, int);
 
 // For tet elements with uint64_t keys
 template __global__ void buildSfcConnectivity<TetTag, uint64_t, float>
     (const uint64_t*, const uint64_t*, const uint64_t*, const uint64_t*,
+     const uint64_t*, const uint64_t*, const uint64_t*, const uint64_t*,
      const uint64_t*, uint64_t*, uint64_t*, 
-     uint64_t*, uint64_t*, int);
+     uint64_t*, uint64_t*, uint64_t*, uint64_t*, uint64_t*, uint64_t*, int);
 
 template __global__ void buildSfcConnectivity<TetTag, uint64_t, double>
     (const uint64_t*, const uint64_t*, const uint64_t*, const uint64_t*,
+     const uint64_t*, const uint64_t*, const uint64_t*, const uint64_t*,
      const uint64_t*, uint64_t*, uint64_t*, 
-     uint64_t*, uint64_t*, int);
+     uint64_t*, uint64_t*, uint64_t*, uint64_t*, uint64_t*, uint64_t*, int);
 
 // Update instantiations
 template __global__ void flattenConnectivityKernel<unsigned int, 3>(
@@ -996,5 +1506,10 @@ template struct HaloData<TetTag, float, unsigned, cstone::GpuTag>;
 template struct HaloData<TetTag, double, unsigned, cstone::GpuTag>;
 template struct HaloData<TetTag, float, uint64_t, cstone::GpuTag>;
 template struct HaloData<TetTag, double, uint64_t, cstone::GpuTag>;
+
+template struct HaloData<HexTag, float, unsigned, cstone::GpuTag>;
+template struct HaloData<HexTag, double, unsigned, cstone::GpuTag>;
+template struct HaloData<HexTag, float, uint64_t, cstone::GpuTag>;
+template struct HaloData<HexTag, double, uint64_t, cstone::GpuTag>;
 
 } // namespace mars

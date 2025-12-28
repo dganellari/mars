@@ -57,8 +57,8 @@ public:
         // Debug output
         int rank;
         MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-        if (rank == 0 || rank == 1) {
-            std::cout << "Rank " << rank << ": FE space counted " << numDofs_ << " owned nodes (including shared) out of " << numNodes << " total" << std::endl;
+        if (rank == 0) {
+            std::cout << "FE space: " << numDofs_ << " owned DOFs (rank 0)\n";
         }
     }
     
