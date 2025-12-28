@@ -186,5 +186,199 @@ __global__ void countNnzPerRowKernel(
     }
 }
 
+// =============================================================================
+// Area vector pre-computation kernel
+// =============================================================================
+// Pre-computes area vectors for all SCS (12 per element) to avoid redundant
+// geometry computation in the assembly kernel.
+
+// SCS face quad node indices (into 27-point subdivision)
+__device__ __constant__ int d_hexEdgeFacetTable[12][4] = {
+    {20, 8, 12, 26},  {24, 9, 12, 26},  {10, 12, 26, 23}, {11, 25, 26, 12},
+    {13, 20, 26, 17}, {17, 14, 24, 26}, {17, 15, 23, 26}, {16, 17, 26, 25},
+    {19, 20, 26, 25}, {20, 18, 24, 26}, {22, 23, 26, 24}, {21, 25, 26, 23}
+};
+
+// Subdivide hex into 27 points for SCS geometry
+// MUST match mars_cvfem_hex_kernel.hpp::subdivide_hex_8 exactly!
+template<typename RealType>
+__device__ inline void subdivide_hex_8_generic(const RealType coords[8][3], RealType coordv[27][3])
+{
+    // Copy 8 corner nodes
+    for (int n = 0; n < 8; ++n) {
+        for (int d = 0; d < 3; ++d) {
+            coordv[n][d] = coords[n][d];
+        }
+    }
+
+    for (int d = 0; d < 3; ++d) {
+        // 12 edge midpoints (indices 8-11, 13-16, 18-19, 21-22)
+        coordv[8][d] = RealType(0.5) * (coords[0][d] + coords[1][d]);   // edge 1
+        coordv[9][d] = RealType(0.5) * (coords[1][d] + coords[2][d]);   // edge 2
+        coordv[10][d] = RealType(0.5) * (coords[2][d] + coords[3][d]);  // edge 3
+        coordv[11][d] = RealType(0.5) * (coords[3][d] + coords[0][d]);  // edge 4
+        coordv[13][d] = RealType(0.5) * (coords[4][d] + coords[5][d]);  // edge 5
+        coordv[14][d] = RealType(0.5) * (coords[5][d] + coords[6][d]);  // edge 6
+        coordv[15][d] = RealType(0.5) * (coords[6][d] + coords[7][d]);  // edge 7
+        coordv[16][d] = RealType(0.5) * (coords[7][d] + coords[4][d]);  // edge 8
+        coordv[18][d] = RealType(0.5) * (coords[1][d] + coords[5][d]);  // edge 9
+        coordv[19][d] = RealType(0.5) * (coords[0][d] + coords[4][d]);  // edge 10
+        coordv[21][d] = RealType(0.5) * (coords[3][d] + coords[7][d]);  // edge 11
+        coordv[22][d] = RealType(0.5) * (coords[2][d] + coords[6][d]);  // edge 12
+
+        // 6 face centers (indices 12, 17, 20, 23, 24, 25)
+        coordv[12][d] = RealType(0.25) * (coords[0][d] + coords[1][d] + coords[2][d] + coords[3][d]); // face 0
+        coordv[17][d] = RealType(0.25) * (coords[4][d] + coords[5][d] + coords[6][d] + coords[7][d]); // face 1
+        coordv[20][d] = RealType(0.25) * (coords[0][d] + coords[1][d] + coords[4][d] + coords[5][d]); // face 2
+        coordv[23][d] = RealType(0.25) * (coords[2][d] + coords[3][d] + coords[6][d] + coords[7][d]); // face 3
+        coordv[24][d] = RealType(0.25) * (coords[1][d] + coords[2][d] + coords[5][d] + coords[6][d]); // face 4
+        coordv[25][d] = RealType(0.25) * (coords[0][d] + coords[3][d] + coords[4][d] + coords[7][d]); // face 5
+
+        // Volume centroid (index 26)
+        coordv[26][d] = RealType(0.0);
+        for (int n = 0; n < 8; ++n) {
+            coordv[26][d] += coords[n][d];
+        }
+        coordv[26][d] *= RealType(0.125);
+    }
+}
+
+// Compute area vector by quad triangulation (Grandy algorithm)
+template<typename RealType>
+__device__ inline void quad_area_by_triangulation_generic(const RealType areacoords[4][3], RealType areaVec[3])
+{
+    areaVec[0] = 0.0;
+    areaVec[1] = 0.0;
+    areaVec[2] = 0.0;
+
+    // Quad centroid
+    RealType xmid[3] = {
+        RealType(0.25) * (areacoords[0][0] + areacoords[1][0] + areacoords[2][0] + areacoords[3][0]),
+        RealType(0.25) * (areacoords[0][1] + areacoords[1][1] + areacoords[2][1] + areacoords[3][1]),
+        RealType(0.25) * (areacoords[0][2] + areacoords[1][2] + areacoords[2][2] + areacoords[3][2])
+    };
+
+    RealType r1[3] = {
+        areacoords[0][0] - xmid[0],
+        areacoords[0][1] - xmid[1],
+        areacoords[0][2] - xmid[2]
+    };
+
+    // Sum cross products for 4 triangles
+    for (int itri = 0; itri < 4; ++itri) {
+        int t_index = (itri + 1) % 4;
+        RealType r2[3] = {
+            areacoords[t_index][0] - xmid[0],
+            areacoords[t_index][1] - xmid[1],
+            areacoords[t_index][2] - xmid[2]
+        };
+
+        // Cross product r1 x r2
+        areaVec[0] += r1[1] * r2[2] - r2[1] * r1[2];
+        areaVec[1] += r1[2] * r2[0] - r2[2] * r1[0];
+        areaVec[2] += r1[0] * r2[1] - r2[0] * r1[1];
+
+        r1[0] = r2[0];
+        r1[1] = r2[1];
+        r1[2] = r2[2];
+    }
+
+    areaVec[0] *= RealType(0.5);
+    areaVec[1] *= RealType(0.5);
+    areaVec[2] *= RealType(0.5);
+}
+
+// Pre-compute area vectors for all elements and all SCS
+template<typename KeyType, typename RealType>
+__global__ void precomputeAreaVectorsKernel(
+    const KeyType* __restrict__ d_conn0,
+    const KeyType* __restrict__ d_conn1,
+    const KeyType* __restrict__ d_conn2,
+    const KeyType* __restrict__ d_conn3,
+    const KeyType* __restrict__ d_conn4,
+    const KeyType* __restrict__ d_conn5,
+    const KeyType* __restrict__ d_conn6,
+    const KeyType* __restrict__ d_conn7,
+    size_t numElements,
+    const RealType* __restrict__ d_x,
+    const RealType* __restrict__ d_y,
+    const RealType* __restrict__ d_z,
+    RealType* __restrict__ d_areaVec_x,
+    RealType* __restrict__ d_areaVec_y,
+    RealType* __restrict__ d_areaVec_z)
+{
+    size_t elemIdx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (elemIdx >= numElements) return;
+
+    // Load element connectivity
+    KeyType nodes[8];
+    nodes[0] = d_conn0[elemIdx];
+    nodes[1] = d_conn1[elemIdx];
+    nodes[2] = d_conn2[elemIdx];
+    nodes[3] = d_conn3[elemIdx];
+    nodes[4] = d_conn4[elemIdx];
+    nodes[5] = d_conn5[elemIdx];
+    nodes[6] = d_conn6[elemIdx];
+    nodes[7] = d_conn7[elemIdx];
+
+    // Load coordinates
+    RealType coords[8][3];
+    for (int n = 0; n < 8; ++n) {
+        KeyType node = nodes[n];
+        coords[n][0] = d_x[node];
+        coords[n][1] = d_y[node];
+        coords[n][2] = d_z[node];
+    }
+
+    // Subdivide hex into 27 points
+    RealType coordv[27][3];
+    subdivide_hex_8_generic(coords, coordv);
+
+    // Compute area vector for each SCS
+    for (int scs = 0; scs < 12; ++scs) {
+        // Get the 4 quad nodes for this SCS
+        RealType scscoords[4][3];
+        for (int inode = 0; inode < 4; ++inode) {
+            int idx = d_hexEdgeFacetTable[scs][inode];
+            for (int d = 0; d < 3; ++d) {
+                scscoords[inode][d] = coordv[idx][d];
+            }
+        }
+
+        // Compute area vector
+        RealType areaVec[3];
+        quad_area_by_triangulation_generic(scscoords, areaVec);
+
+        // Store
+        size_t offset = elemIdx * 12 + scs;
+        d_areaVec_x[offset] = areaVec[0];
+        d_areaVec_y[offset] = areaVec[1];
+        d_areaVec_z[offset] = areaVec[2];
+    }
+}
+
+// Host function to pre-compute area vectors
+template<typename KeyType, typename RealType>
+void precomputeAreaVectorsGpu(
+    const KeyType* d_conn0, const KeyType* d_conn1,
+    const KeyType* d_conn2, const KeyType* d_conn3,
+    const KeyType* d_conn4, const KeyType* d_conn5,
+    const KeyType* d_conn6, const KeyType* d_conn7,
+    size_t numElements,
+    const RealType* d_x, const RealType* d_y, const RealType* d_z,
+    RealType* d_areaVec_x, RealType* d_areaVec_y, RealType* d_areaVec_z,
+    cudaStream_t stream = 0)
+{
+    int blockSize = 256;
+    int numBlocks = (numElements + blockSize - 1) / blockSize;
+    precomputeAreaVectorsKernel<KeyType, RealType><<<numBlocks, blockSize, 0, stream>>>(
+        d_conn0, d_conn1, d_conn2, d_conn3,
+        d_conn4, d_conn5, d_conn6, d_conn7,
+        numElements,
+        d_x, d_y, d_z,
+        d_areaVec_x, d_areaVec_y, d_areaVec_z
+    );
+}
+
 } // namespace fem
 } // namespace mars

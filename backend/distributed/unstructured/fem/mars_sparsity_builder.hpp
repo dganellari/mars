@@ -223,10 +223,30 @@ int CvfemSparsityBuilder<KeyType>::buildGraphSparsity(
     }
 
     // Compute diagonal positions if requested
-    // Since diagonal is always first entry in sorted row (col[row] == row),
-    // diagPtr[row] = rowPtr[row]
-    if (d_diagPtr != nullptr) {
-        cudaMemcpy(d_diagPtr, d_rowPtr, numDofs * sizeof(int), cudaMemcpyDeviceToDevice);
+    // For each row r, find position k where colInd[k] == r
+    if (d_diagPtr != nullptr && d_colInd != nullptr) {
+        // Launch kernel to find diagonal positions
+        thrust::for_each(
+            thrust::device,
+            thrust::make_counting_iterator(0),
+            thrust::make_counting_iterator(numDofs),
+            [rowPtr = d_rowPtr, colInd = d_colInd, diagPtr = d_diagPtr] __device__ (int row) {
+                int start = rowPtr[row];
+                int end = rowPtr[row + 1];
+                // Binary search for diagonal (columns are sorted)
+                int lo = start, hi = end;
+                while (lo < hi) {
+                    int mid = (lo + hi) / 2;
+                    if (colInd[mid] < row) {
+                        lo = mid + 1;
+                    } else {
+                        hi = mid;
+                    }
+                }
+                // lo should now point to the diagonal
+                diagPtr[row] = lo;
+            }
+        );
     }
 
     return nnz;

@@ -161,9 +161,20 @@ int main(int argc, char** argv) {
     );
 
     cstone::DeviceVector<RealType> d_mdot(elementCount * 12, 0.0);
-    cstone::DeviceVector<RealType> d_areaVec_x(elementCount * 12, 1.0);
-    cstone::DeviceVector<RealType> d_areaVec_y(elementCount * 12, 0.0);
-    cstone::DeviceVector<RealType> d_areaVec_z(elementCount * 12, 0.0);
+    cstone::DeviceVector<RealType> d_areaVec_x(elementCount * 12);
+    cstone::DeviceVector<RealType> d_areaVec_y(elementCount * 12);
+    cstone::DeviceVector<RealType> d_areaVec_z(elementCount * 12);
+
+    // Pre-compute area vectors from geometry (required for correct diffusion)
+    precomputeAreaVectorsGpu<KeyType, RealType>(
+        std::get<0>(d_conn).data(), std::get<1>(d_conn).data(),
+        std::get<2>(d_conn).data(), std::get<3>(d_conn).data(),
+        std::get<4>(d_conn).data(), std::get<5>(d_conn).data(),
+        std::get<6>(d_conn).data(), std::get<7>(d_conn).data(),
+        elementCount,
+        d_x.data(), d_y.data(), d_z.data(),
+        d_areaVec_x.data(), d_areaVec_y.data(), d_areaVec_z.data()
+    );
 
     cudaDeviceSynchronize();
     auto fieldInitEnd = std::chrono::high_resolution_clock::now();
