@@ -6,19 +6,27 @@ namespace mars {
 namespace fem {
 
 // =============================================================================
-// Low-register CVFEM assembly kernel
+// Full Matrix CVFEM assembly kernel
 // =============================================================================
-// Key insight: Eliminating lhs[64] array reduces register usage from 255 to ~80
-// This dramatically improves occupancy (11% -> 50%+)
+// Alternative approach: assemble full 8×8 local stiffness matrix then scatter
 //
-// Strategy:
-// - Keep only rhs[8] and diag[8] accumulators (16 values vs 72)
-// - Assemble LHS contributions directly per-SCS via atomics
-// - Pre-compute CSR positions once, reuse for all SCS
+// Key differences from shmem kernel:
+// - Assembles complete lhs[8][8] matrix locally (simpler logic)
+// - Scatters all 64 entries to CSR with atomics
+// - Uses 64 doubles for lhs[] vs 16 doubles (rhs[8] + diag[8]) in shmem
+//
+// Trade-offs:
+// + Simpler assembly logic (no conditional atomic paths)
+// + Better vectorization potential for matrix operations
+// + Enables future tensor core optimizations
+// - More register pressure (64 vs 16 accumulators)
+// - More atomic operations (up to 64 vs ~32 per element)
+//
+// Best for: Architectures with abundant registers and fast atomics (GH200)
 // =============================================================================
 
 template<typename KeyType, typename RealType, int BlockSize = 256>
-__global__ void cvfem_hex_assembly_kernel_shmem(
+__global__ void cvfem_hex_assembly_kernel_tensor(
     const KeyType* __restrict__ d_conn0,
     const KeyType* __restrict__ d_conn1,
     const KeyType* __restrict__ d_conn2,
@@ -85,63 +93,21 @@ __global__ void cvfem_hex_assembly_kernel_shmem(
     }
 
     // ==========================================================================
-    // Pre-compute CSR positions for all 8x8 element entries (done once)
+    // Full 8×8 local element matrix and RHS vector
     // ==========================================================================
-    // positions[i][j] = CSR index for entry (dofs[i], dofs[j]), or -1 if not found
-    int positions[8][8];
-    int diag_pos[8];
+    // Assemble full local matrix for better compute patterns
+    // Trade-off: 64 doubles (48 more than shmem) but simpler assembly logic
+    RealType lhs[64];
+    RealType rhs[8];
 
+    // Initialize to zero
     #pragma unroll
-    for (int i = 0; i < 8; ++i) {
-        #pragma unroll
-        for (int j = 0; j < 8; ++j) {
-            positions[i][j] = -1;
-        }
-        diag_pos[i] = -1;
-    }
-
-    // Find CSR positions for all owned rows using binary search (colInd is sorted)
+    for (int i = 0; i < 64; ++i) lhs[i] = 0.0;
     #pragma unroll
-    for (int i = 0; i < 8; ++i) {
-        if (own[i] == 0 || dofs[i] < 0) continue;
-
-        int row_start = matrix->rowPtr[dofs[i]];
-        int row_end = matrix->rowPtr[dofs[i] + 1];
-        diag_pos[i] = matrix->diagPtr[dofs[i]];
-
-        // Binary search for each column DOF
-        #pragma unroll
-        for (int j = 0; j < 8; ++j) {
-            if (j == i || dofs[j] < 0) continue;
-
-            int target = dofs[j];
-            int left = row_start;
-            int right = row_end - 1;
-
-            while (left <= right) {
-                int mid = (left + right) >> 1;
-                int col = matrix->colInd[mid];
-
-                if (col == target) {
-                    positions[i][j] = mid;
-                    break;
-                } else if (col < target) {
-                    left = mid + 1;
-                } else {
-                    right = mid - 1;
-                }
-            }
-        }
-    }
+    for (int i = 0; i < 8; ++i) rhs[i] = 0.0;
 
     // ==========================================================================
-    // Accumulators: only RHS and diagonal (saves 64 registers!)
-    // ==========================================================================
-    RealType rhs_acc[8] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
-    RealType diag_acc[8] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
-
-    // ==========================================================================
-    // SCS integration loop - assemble directly without full lhs matrix
+    // SCS integration loop
     // ==========================================================================
     #pragma unroll
     for (int ip = 0; ip < 12; ++ip) {
@@ -187,33 +153,17 @@ __global__ void cvfem_hex_assembly_kernel_shmem(
         dcorr *= beta_upwind;
 
         RealType adv_flux = mdot * (phi_upwind + dcorr);
-        rhs_acc[nodeL] -= adv_flux;
-        rhs_acc[nodeR] += adv_flux;
+        rhs[nodeL] -= adv_flux;
+        rhs[nodeR] += adv_flux;
 
-        // Advection LHS contributions - assemble directly
+        // Advection LHS contributions
         RealType lhsfac_L = 0.5 * (mdot + fabs(mdot));
         RealType lhsfac_R = 0.5 * (mdot - fabs(mdot));
 
-        // (nodeL, nodeL) += lhsfac_L
-        diag_acc[nodeL] += lhsfac_L;
-        // (nodeR, nodeL) -= lhsfac_L
-        if (own[nodeR] != 0 && dofs[nodeR] >= 0) {
-            if (positions[nodeR][nodeL] >= 0) {
-                atomicAdd(&matrix->values[positions[nodeR][nodeL]], -lhsfac_L);
-            } else {
-                diag_acc[nodeR] -= lhsfac_L;
-            }
-        }
-        // (nodeL, nodeR) += lhsfac_R
-        if (own[nodeL] != 0 && dofs[nodeL] >= 0) {
-            if (positions[nodeL][nodeR] >= 0) {
-                atomicAdd(&matrix->values[positions[nodeL][nodeR]], lhsfac_R);
-            } else {
-                diag_acc[nodeL] += lhsfac_R;
-            }
-        }
-        // (nodeR, nodeR) -= lhsfac_R
-        diag_acc[nodeR] -= lhsfac_R;
+        lhs[nodeL * 8 + nodeL] += lhsfac_L;
+        lhs[nodeR * 8 + nodeL] -= lhsfac_L;
+        lhs[nodeL * 8 + nodeR] += lhsfac_R;
+        lhs[nodeR * 8 + nodeR] -= lhsfac_R;
 
         // Diffusion - compute shape derivatives on-the-fly
         RealType dndx[8][3];
@@ -226,42 +176,74 @@ __global__ void cvfem_hex_assembly_kernel_shmem(
                                                  dndx[n][2] * areaVec[2]));
 
             // RHS contributions
-            rhs_acc[nodeL] -= diff_coeff * phi[n];
-            rhs_acc[nodeR] += diff_coeff * phi[n];
+            rhs[nodeL] -= diff_coeff * phi[n];
+            rhs[nodeR] += diff_coeff * phi[n];
 
-            // LHS contributions - assemble directly
-            // (nodeL, n) += diff_coeff
-            if (own[nodeL] != 0 && dofs[nodeL] >= 0) {
-                if (n == nodeL) {
-                    diag_acc[nodeL] += diff_coeff;
-                } else if (positions[nodeL][n] >= 0) {
-                    atomicAdd(&matrix->values[positions[nodeL][n]], diff_coeff);
-                } else {
-                    diag_acc[nodeL] += diff_coeff;
-                }
-            }
-            // (nodeR, n) -= diff_coeff
-            if (own[nodeR] != 0 && dofs[nodeR] >= 0) {
-                if (n == nodeR) {
-                    diag_acc[nodeR] -= diff_coeff;
-                } else if (positions[nodeR][n] >= 0) {
-                    atomicAdd(&matrix->values[positions[nodeR][n]], -diff_coeff);
-                } else {
-                    diag_acc[nodeR] -= diff_coeff;
-                }
-            }
+            // LHS contributions (full matrix)
+            lhs[nodeL * 8 + n] += diff_coeff;
+            lhs[nodeR * 8 + n] -= diff_coeff;
         }
     }
 
     // ==========================================================================
-    // Final assembly: RHS and diagonal
+    // Potential tensor core optimization (future work)
+    // ==========================================================================
+    // WMMA API could accelerate certain matrix operations, but requires:
+    // - Specific data layout (column-major fragments)
+    // - Alignment constraints
+    // - Warp-synchronous execution
+    // Current scalar assembly is simpler and may be sufficient
+
+    // ==========================================================================
+    // Assemble into global CSR matrix
     // ==========================================================================
     #pragma unroll
     for (int i = 0; i < 8; ++i) {
-        if (own[i] == 0 || dofs[i] < 0) continue;
+        KeyType row_node = nodes[i];
+        int row_dof = dofs[i];
+        uint8_t ownership = own[i];
 
-        atomicAdd(&d_rhs[dofs[i]], rhs_acc[i]);
-        atomicAdd(&matrix->values[diag_pos[i]], diag_acc[i]);
+        if (ownership == 0 || row_dof < 0) continue;
+
+        // Assemble RHS
+        atomicAdd(&d_rhs[row_dof], rhs[i]);
+
+        // Assemble LHS - find positions in CSR
+        int row_start = matrix->rowPtr[row_dof];
+        int row_end = matrix->rowPtr[row_dof + 1];
+        int diag_pos = matrix->diagPtr[row_dof];
+
+        #pragma unroll
+        for (int j = 0; j < 8; ++j) {
+            int col_dof = dofs[j];
+            if (col_dof < 0) continue;
+
+            RealType value = lhs[i * 8 + j];
+            if (value == 0.0) continue; // Skip zeros
+
+            if (i == j) {
+                // Diagonal
+                atomicAdd(&matrix->values[diag_pos], value);
+            } else {
+                // Off-diagonal - binary search
+                int left = row_start;
+                int right = row_end - 1;
+
+                while (left <= right) {
+                    int mid = (left + right) >> 1;
+                    int col = matrix->colInd[mid];
+
+                    if (col == col_dof) {
+                        atomicAdd(&matrix->values[mid], value);
+                        break;
+                    } else if (col < col_dof) {
+                        left = mid + 1;
+                    } else {
+                        right = mid - 1;
+                    }
+                }
+            }
+        }
     }
 }
 

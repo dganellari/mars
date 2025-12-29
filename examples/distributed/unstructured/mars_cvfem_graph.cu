@@ -53,6 +53,7 @@ int main(int argc, char** argv) {
             else if (v == "optimized") kernelVariant = CvfemKernelVariant::Optimized;
             else if (v == "shmem") kernelVariant = CvfemKernelVariant::Shmem;
             else if (v == "team") kernelVariant = CvfemKernelVariant::Team;
+            else if (v == "tensor") kernelVariant = CvfemKernelVariant::Tensor;
         } else if (arg == "--quiet") {
             quiet = true;
         }
