@@ -21,29 +21,18 @@ int main(int argc, char** argv) {
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &numRanks);
 
-    if (argc < 2) {
-        if (rank == 0) {
-            std::cout << "Usage: " << argv[0] << " <mesh_file> [options]\n";
-            std::cout << "Options:\n";
-            std::cout << "  --iterations=N      Number of assembly iterations (default: 10)\n";
-            std::cout << "  --block-size=N      CUDA block size (default: 256)\n";
-            std::cout << "  --kernel=VARIANT    original, optimized, shmem, team (default: original)\n";
-            std::cout << "  --quiet             Suppress detailed output\n";
-        }
-        MPI_Finalize();
-        return 1;
-    }
-
-    std::string meshFile = argv[1];
-
+    // Parse command-line options
+    std::string meshFile;
     int numIterations = 10;
     int blockSize = 256;
     bool quiet = false;
     CvfemKernelVariant kernelVariant = CvfemKernelVariant::Original;
 
-    for (int i = 2; i < argc; ++i) {
+    for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
-        if (arg.find("--iterations=") == 0) {
+        if (arg.find("--mesh=") == 0) {
+            meshFile = arg.substr(7);
+        } else if (arg.find("--iterations=") == 0) {
             numIterations = std::stoi(arg.substr(13));
         } else if (arg.find("--block-size=") == 0) {
             blockSize = std::stoi(arg.substr(13));
@@ -54,9 +43,35 @@ int main(int argc, char** argv) {
             else if (v == "shmem") kernelVariant = CvfemKernelVariant::Shmem;
             else if (v == "team") kernelVariant = CvfemKernelVariant::Team;
             else if (v == "tensor") kernelVariant = CvfemKernelVariant::Tensor;
+            else {
+                if (rank == 0) {
+                    std::cerr << "Error: Unknown kernel variant: " << v << std::endl;
+                }
+                MPI_Finalize();
+                return 1;
+            }
         } else if (arg == "--quiet") {
             quiet = true;
+        } else if (arg[0] != '-' && meshFile.empty()) {
+            // Positional argument (backward compatibility)
+            meshFile = arg;
         }
+    }
+
+    if (meshFile.empty()) {
+        if (rank == 0) {
+            std::cout << "Usage: " << argv[0] << " [options]\n";
+            std::cout << "\nOptions:\n";
+            std::cout << "  --mesh=FILE         Mesh file (.mesh or .exo format) [REQUIRED]\n";
+            std::cout << "  --kernel=VARIANT    tensor, shmem, optimized, team, original (default: original)\n";
+            std::cout << "  --block-size=N      CUDA block size (default: 256)\n";
+            std::cout << "  --iterations=N      Number of assembly iterations (default: 10)\n";
+            std::cout << "  --quiet             Suppress detailed output\n";
+            std::cout << "\nBackward compatible positional syntax:\n";
+            std::cout << "  " << argv[0] << " <mesh_file> [options]\n";
+        }
+        MPI_Finalize();
+        return 1;
     }
 
     using KeyType = uint64_t;

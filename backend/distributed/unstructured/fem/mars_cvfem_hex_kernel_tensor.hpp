@@ -1,6 +1,7 @@
 #pragma once
 
 #include "mars_cvfem_hex_kernel.hpp"
+#include "mars_cvfem_hex_kernel_common.hpp"
 
 namespace mars {
 namespace fem {
