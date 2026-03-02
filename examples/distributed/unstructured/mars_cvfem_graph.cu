@@ -7,9 +7,18 @@
 #include "backend/distributed/unstructured/fem/mars_sparsity_builder.hpp"
 #include <thrust/device_vector.h>
 #include <thrust/reduce.h>
+#include <thrust/system/cuda/execution_policy.h>
 #include <mpi.h>
 #include <iomanip>
 #include <chrono>
+#ifndef MARS_DISABLE_NVTX
+#include <nvToolsExt.h>
+#define MARS_NVTX_PUSH(name) nvtxRangePush(name)
+#define MARS_NVTX_POP()      nvtxRangePop()
+#else
+#define MARS_NVTX_PUSH(name)
+#define MARS_NVTX_POP()
+#endif
 
 using namespace mars;
 using namespace mars::fem;
@@ -25,6 +34,7 @@ int main(int argc, char** argv) {
     std::string meshFile;
     int numIterations = 10;
     int blockSize = 256;
+    int bucketSize = 64;  // Cornerstone octree bucket size (smaller = finer partitioning)
     bool quiet = false;
     CvfemKernelVariant kernelVariant = CvfemKernelVariant::Original;
 
@@ -36,6 +46,8 @@ int main(int argc, char** argv) {
             numIterations = std::stoi(arg.substr(13));
         } else if (arg.find("--block-size=") == 0) {
             blockSize = std::stoi(arg.substr(13));
+        } else if (arg.find("--bucket-size=") == 0) {
+            bucketSize = std::stoi(arg.substr(14));
         } else if (arg.find("--kernel=") == 0) {
             std::string v = arg.substr(9);
             if (v == "original") kernelVariant = CvfemKernelVariant::Original;
@@ -65,6 +77,7 @@ int main(int argc, char** argv) {
             std::cout << "  --mesh=FILE         Mesh file (.mesh or .exo format) [REQUIRED]\n";
             std::cout << "  --kernel=VARIANT    tensor, shmem, optimized, team, original (default: original)\n";
             std::cout << "  --block-size=N      CUDA block size (default: 256)\n";
+            std::cout << "  --bucket-size=N     Cornerstone octree bucket size (default: 64, try 32 or 16 for 16+ ranks)\n";
             std::cout << "  --iterations=N      Number of assembly iterations (default: 10)\n";
             std::cout << "  --quiet             Suppress detailed output\n";
             std::cout << "\nBackward compatible positional syntax:\n";
@@ -84,13 +97,24 @@ int main(int argc, char** argv) {
 
     const char* kernelName = Assembler::variantName(kernelVariant);
 
-    // Load mesh
+    if (rank == 0) {
+        std::cout << "Command-line parameters:" << std::endl;
+        std::cout << "  Mesh: " << meshFile << std::endl;
+        std::cout << "  Kernel: " << kernelName << std::endl;
+        std::cout << "  Block size: " << blockSize << std::endl;
+        std::cout << "  Bucket size: " << bucketSize << std::endl;
+        std::cout << "  Iterations: " << numIterations << std::endl;
+    }
+
+    // Load mesh with custom bucket size
+    MARS_NVTX_PUSH("Mesh Loading");
     auto meshLoadStart = std::chrono::high_resolution_clock::now();
-    ElementDomain<ElemTag, RealType, KeyType, cstone::GpuTag> domain(meshFile, rank, numRanks, true);
+    ElementDomain<ElemTag, RealType, KeyType, cstone::GpuTag> domain(meshFile, rank, numRanks, true, bucketSize);
     const auto& d_nodeOwnership = domain.getNodeOwnershipMap();
     cudaDeviceSynchronize();
     auto meshLoadEnd = std::chrono::high_resolution_clock::now();
     perf.meshLoadTime = std::chrono::duration<float, std::milli>(meshLoadEnd - meshLoadStart).count();
+    MARS_NVTX_POP();
 
     size_t nodeCount = domain.getNodeCount();
     size_t elementCount = domain.getElementCount();
@@ -197,12 +221,17 @@ int main(int argc, char** argv) {
     perf.fieldInitTime = std::chrono::duration<float, std::milli>(fieldInitEnd - fieldInitStart).count();
 
     // Data sizes for bandwidth
-    perf.coordinateBytes = 3 * nodeCount * sizeof(RealType);
-    perf.inputFieldBytes = 6 * nodeCount * sizeof(RealType);
-    perf.connectivityBytes = 8 * elementCount * sizeof(KeyType);
+    // perf.coordinateBytes = 3 * nodeCount * sizeof(RealType);
+    perf.inputFieldBytes = 5 * nodeCount * sizeof(RealType);
+    // perf.connectivityBytes = 8 * elementCount * sizeof(KeyType);
     perf.outputMatrixBytes = nnz * sizeof(RealType) + numDofs * sizeof(RealType);
 
     // Create CSR matrix wrapper with diagonal positions
+    // Create CUDA streams for overlapping operations
+    cudaStream_t assemblyStream, resetStream;
+    cudaStreamCreate(&assemblyStream);
+    cudaStreamCreate(&resetStream);
+
     using MatrixType = CSRMatrix<RealType>;
     MatrixType* d_matrix;
     cudaMalloc(&d_matrix, sizeof(MatrixType));
@@ -213,6 +242,7 @@ int main(int argc, char** argv) {
     Assembler::Config config;
     config.blockSize = blockSize;
     config.variant = kernelVariant;
+    config.stream = assemblyStream;  // Use dedicated stream
 
     auto runAssembly = [&]() {
         Assembler::assembleGraphLump(
@@ -232,29 +262,61 @@ int main(int argc, char** argv) {
     };
 
     auto resetSystem = [&]() {
-        thrust::fill(thrust::device_pointer_cast(d_values.data()),
+        // Use resetStream to potentially overlap with other operations
+        thrust::fill(thrust::cuda::par.on(resetStream),
+                     thrust::device_pointer_cast(d_values.data()),
                      thrust::device_pointer_cast(d_values.data() + nnz), 0.0);
-        thrust::fill(thrust::device_pointer_cast(d_rhs.data()),
+        thrust::fill(thrust::cuda::par.on(resetStream),
+                     thrust::device_pointer_cast(d_rhs.data()),
                      thrust::device_pointer_cast(d_rhs.data() + numDofs), 0.0);
     };
 
     // Warmup
     timer.start();
     runAssembly();
+    cudaStreamSynchronize(assemblyStream);  // Only sync assembly stream
     timer.stop();
     perf.assemblyWarmupTime = timer.elapsedMs();
 
-    // Timed iterations
+    // Timed iterations with load balance tracking
+    std::vector<double> perIterationTimes(numIterations);
     for (int iter = 0; iter < numIterations; ++iter) {
+        MARS_NVTX_PUSH("Assembly Iteration");
+        // Reset system on dedicated stream (can overlap with CPU work)
+        MARS_NVTX_PUSH("Reset System");
         resetSystem();
-        cudaDeviceSynchronize();
+        cudaStreamSynchronize(resetStream);  // Ensure reset completes before assembly
+        MARS_NVTX_POP();
+        
+        MARS_NVTX_PUSH("Assembly Kernel");
         timer.start();
         runAssembly();
+        cudaStreamSynchronize(assemblyStream);  // Only sync assembly stream
         timer.stop();
-        perf.recordIteration(timer.elapsedMs());
+        MARS_NVTX_POP();
+        double iterTime = timer.elapsedMs();
+        perf.recordIteration(iterTime);
+        perIterationTimes[iter] = iterTime;
+        MARS_NVTX_POP();
     }
 
-    // Compute matrix norm
+    // Compute DD load imbalance from element counts (owned / ghost / total)
+    MARS_NVTX_PUSH("Post-processing");
+    double sendBuf[3] = {
+        static_cast<double>(domain.localElementCount()),
+        static_cast<double>(domain.haloElementCount()),
+        static_cast<double>(domain.getElementCount())
+    };
+    double recvMin[3], recvMax[3], recvSum[3];
+    MPI_Request req[3];
+    MARS_NVTX_PUSH("MPI DD Imbalance");
+    MPI_Iallreduce(sendBuf, recvMin, 3, MPI_DOUBLE, MPI_MIN, MPI_COMM_WORLD, &req[0]);
+    MPI_Iallreduce(sendBuf, recvMax, 3, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD, &req[1]);
+    MPI_Iallreduce(sendBuf, recvSum, 3, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD, &req[2]);
+    MARS_NVTX_POP();
+
+    // Compute matrix norm (overlapped with load balance computation)
+    MARS_NVTX_PUSH("Norm Computation");
     auto sq = [] __host__ __device__ (RealType x) { return x * x; };
     RealType norm2 = thrust::transform_reduce(
         thrust::device_pointer_cast(d_values.data()),
@@ -266,12 +328,34 @@ int main(int argc, char** argv) {
         thrust::device_pointer_cast(d_rhs.data() + numDofs),
         sq, RealType(0.0), thrust::plus<RealType>()
     );
+    MARS_NVTX_POP();
 
+    // Start non-blocking norm reductions
+    MARS_NVTX_PUSH("MPI Norm Reduction");
     RealType global_norm2, global_rhs_norm2;
-    MPI_Allreduce(&norm2, &global_norm2, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-    MPI_Allreduce(&rhs_norm2, &global_rhs_norm2, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+    MPI_Request normReq[2];
+    MPI_Iallreduce(&norm2, &global_norm2, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD, &normReq[0]);
+    MPI_Iallreduce(&rhs_norm2, &global_rhs_norm2, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD, &normReq[1]);
+
+    // Wait for DD imbalance reductions
+    MPI_Waitall(3, req, MPI_STATUSES_IGNORE);
+    auto ddImbalance = [&](int k) -> double {
+        double mean = recvSum[k] / numRanks;
+        return mean > 0.0 ? (recvMax[k] - recvMin[k]) / mean * 100.0 : 0.0;
+    };
+    perf.ddOwnedImbalancePct = ddImbalance(0);
+    perf.ddGhostImbalancePct = ddImbalance(1);
+    perf.ddTotalImbalancePct = ddImbalance(2);
+    perf.ddOwnedMin  = recvMin[0]; perf.ddOwnedMax  = recvMax[0]; perf.ddOwnedMean  = recvSum[0] / numRanks;
+    perf.ddGhostMin  = recvMin[1]; perf.ddGhostMax  = recvMax[1]; perf.ddGhostMean  = recvSum[1] / numRanks;
+    perf.ddTotalMin  = recvMin[2]; perf.ddTotalMax  = recvMax[2]; perf.ddTotalMean  = recvSum[2] / numRanks;
+
+    // Wait for norm reductions to complete
+    MPI_Waitall(2, normReq, MPI_STATUSES_IGNORE);
+    MARS_NVTX_POP();
     RealType matrix_norm = std::sqrt(global_norm2);
     RealType rhs_norm = std::sqrt(global_rhs_norm2);
+    MARS_NVTX_POP();
 
     // Print summary
     if (rank == 0) {
@@ -281,11 +365,16 @@ int main(int argc, char** argv) {
                   << perf.bandwidthGBs() << " GB/s (average of " << numIterations
                   << " samples) [matrix norm: " << matrix_norm
                   << ", rhs norm: " << rhs_norm << "]\n";
+
     }
 
     if (!quiet) {
         perf.print(rank);
     }
+
+    // Cleanup streams
+    cudaStreamDestroy(assemblyStream);
+    cudaStreamDestroy(resetStream);
 
     cudaFree(d_matrix);
     MPI_Finalize();

@@ -240,7 +240,6 @@ public:
                 break;
 
             case CvfemKernelVariant::Team: {
-                // Team kernel uses 32 threads per element (one warp per element)
                 int teamBlocks = (numElements * 32 + blockSize - 1) / blockSize;
                 cvfem_hex_assembly_kernel_team<KeyType, RealType><<<teamBlocks, blockSize, 0, config.stream>>>(
                     d_conn0, d_conn1, d_conn2, d_conn3,
@@ -265,7 +264,7 @@ public:
             case CvfemKernelVariant::Optimized: return "optimized";
             case CvfemKernelVariant::Shmem: return "shmem";
             case CvfemKernelVariant::Team: return "team";
-            case CvfemKernelVariant::Tensor: return "tensor";
+            case CvfemKernelVariant::Tensor:   return "tensor";
             default: return "unknown";
         }
     }

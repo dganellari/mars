@@ -236,10 +236,11 @@ public:
 
     void assemble(FESpace& fes, Matrix& K, const std::vector<KeyType>& nodeToLocalDof,
                   const std::vector<uint8_t>& resolvedOwnership) {
-        // Count owned DOFs from resolved ownership
+        // Count owned + shared DOFs from domain ownership (states 1 and 2)
+        // This matches FE space's numDofs() count
         size_t numOwnedDofs = 0;
         for (auto ownership : resolvedOwnership) {
-            if (ownership == 1) numOwnedDofs++;
+            if (ownership == 1 || ownership == 2) numOwnedDofs++;
         }
         assemble(fes, K, nodeToLocalDof, resolvedOwnership, numOwnedDofs);
     }
@@ -388,10 +389,10 @@ private:
 
     void buildSparsityPattern(FESpace& fes, Matrix& K, const std::vector<KeyType>& nodeToLocalDof,
                               const std::vector<uint8_t>& resolvedOwnership) {
-        // Count owned DOFs from resolved ownership
+        // Count owned + shared DOFs from domain ownership (states 1 and 2)
         size_t numOwnedDofs = 0;
         for (auto ownership : resolvedOwnership) {
-            if (ownership == 1) numOwnedDofs++;
+            if (ownership == 1 || ownership == 2) numOwnedDofs++;
         }
         buildSparsityPattern(fes, K, nodeToLocalDof, resolvedOwnership, numOwnedDofs);
     }
@@ -521,10 +522,12 @@ void StiffnessAssembler<ElementTag, RealType, KeyType, AcceleratorTag>::buildSpa
             if (localRow >= numDofs) continue;  // Safety check
             
             for (int j = 0; j < 4; ++j) {
-                // Include all columns (owned + ghost) for distributed matrix
-                // Hypre will handle off-diagonal blocks automatically
+                // Only include OWNED columns to create square matrix (like CVFEM)
+                // Skip ghost columns - their contributions are handled by owning rank
                 KeyType localCol = localDofs[j];
-                rowCols[localRow].push_back(localCol);
+                if (localCol < numDofs) {  // Only owned DOFs
+                    rowCols[localRow].push_back(localCol);
+                }
             }
         }
     }
@@ -558,10 +561,9 @@ void StiffnessAssembler<ElementTag, RealType, KeyType, AcceleratorTag>::buildSpa
         totalNnz += row.size();
     }
     
-    // Allocate rectangular matrix (owned rows × owned+ghost columns)
-    // For distributed solvers like Hypre, each rank has rectangular local matrix
-    // with global column indices spanning multiple ranks
-    K.allocate(numDofs, numLocalDofsWithGhosts, totalNnz);
+    // Allocate SQUARE matrix (owned rows × owned columns)
+    // Using CVFEM-style assembly: ghost columns excluded, square matrix on each rank
+    K.allocate(numDofs, numDofs, totalNnz);
     
     // Build CSR format
     auto rowOffsets = K.rowOffsetsPtr();
