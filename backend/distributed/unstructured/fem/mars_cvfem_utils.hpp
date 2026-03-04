@@ -11,26 +11,30 @@ namespace mars {
 namespace fem {
 
 // GPU kernel: Build DOF mapping from ownership array
-// ownership: 0=ghost (SFC key belongs to a different rank), 1=owned (SFC key belongs to this rank)
-// nodeToDof: output mapping (-1 for ghosts)
+// All nodes get DOFs: owned → [0, numOwned), ghost → [numOwned, numNodes)
+// This ensures ghost columns exist in the CSR for correct off-diagonal assembly.
 template<typename KeyType>
 __global__ void buildDofMappingKernel(
     const uint8_t* __restrict__ ownership,
-    const int* __restrict__ prefixSum,
+    const int* __restrict__ ownedPrefixSum,
+    const int* __restrict__ ghostPrefixSum,
     int* __restrict__ nodeToDof,
+    int numOwned,
     size_t numNodes)
 {
     size_t i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= numNodes) return;
 
     if (ownership[i] != 0) {
-        nodeToDof[i] = prefixSum[i];
+        nodeToDof[i] = ownedPrefixSum[i];            // [0, numOwned)
     } else {
-        nodeToDof[i] = -1;
+        nodeToDof[i] = numOwned + ghostPrefixSum[i]; // [numOwned, numNodes)
     }
 }
 
 // Build DOF mapping on GPU
+// Returns numOwned (number of owned DOFs). All nodes get DOFs:
+//   owned → [0, numOwned), ghost → [numOwned, numNodes)
 template<typename KeyType>
 int buildDofMappingGpu(
     const uint8_t* d_ownership,
@@ -38,11 +42,12 @@ int buildDofMappingGpu(
     size_t numNodes,
     cudaStream_t stream = 0)
 {
-    // Create temporary array for prefix sum
     thrust::device_vector<int> d_isOwned(numNodes);
-    thrust::device_vector<int> d_prefixSum(numNodes);
+    thrust::device_vector<int> d_isGhost(numNodes);
+    thrust::device_vector<int> d_ownedPrefix(numNodes);
+    thrust::device_vector<int> d_ghostPrefix(numNodes);
 
-    // Mark owned nodes (ownership != 0)
+    // Mark owned and ghost nodes
     thrust::transform(
         thrust::device,
         thrust::device_pointer_cast(d_ownership),
@@ -50,27 +55,37 @@ int buildDofMappingGpu(
         d_isOwned.begin(),
         [] __device__ (uint8_t o) { return (o != 0) ? 1 : 0; }
     );
+    thrust::transform(
+        thrust::device,
+        thrust::device_pointer_cast(d_ownership),
+        thrust::device_pointer_cast(d_ownership + numNodes),
+        d_isGhost.begin(),
+        [] __device__ (uint8_t o) { return (o == 0) ? 1 : 0; }
+    );
 
-    // Exclusive prefix sum to get DOF indices
-    thrust::exclusive_scan(thrust::device, d_isOwned.begin(), d_isOwned.end(), d_prefixSum.begin());
+    // Exclusive prefix sums for contiguous DOF numbering
+    thrust::exclusive_scan(thrust::device, d_isOwned.begin(), d_isOwned.end(), d_ownedPrefix.begin());
+    thrust::exclusive_scan(thrust::device, d_isGhost.begin(), d_isGhost.end(), d_ghostPrefix.begin());
 
-    // Get total number of DOFs
+    // Get total number of owned DOFs
     int lastOwned, lastPrefix;
     cudaMemcpy(&lastOwned, thrust::raw_pointer_cast(d_isOwned.data() + numNodes - 1), sizeof(int), cudaMemcpyDeviceToHost);
-    cudaMemcpy(&lastPrefix, thrust::raw_pointer_cast(d_prefixSum.data() + numNodes - 1), sizeof(int), cudaMemcpyDeviceToHost);
-    int numDofs = lastPrefix + lastOwned;
+    cudaMemcpy(&lastPrefix, thrust::raw_pointer_cast(d_ownedPrefix.data() + numNodes - 1), sizeof(int), cudaMemcpyDeviceToHost);
+    int numOwned = lastPrefix + lastOwned;
 
-    // Launch kernel to build mapping
+    // Build mapping: owned → [0, numOwned), ghost → [numOwned, numNodes)
     int blockSize = 256;
     int numBlocks = (numNodes + blockSize - 1) / blockSize;
     buildDofMappingKernel<KeyType><<<numBlocks, blockSize, 0, stream>>>(
         d_ownership,
-        thrust::raw_pointer_cast(d_prefixSum.data()),
+        thrust::raw_pointer_cast(d_ownedPrefix.data()),
+        thrust::raw_pointer_cast(d_ghostPrefix.data()),
         d_nodeToDof,
+        numOwned,
         numNodes
     );
 
-    return numDofs;
+    return numOwned;
 }
 
 // GPU kernel: Initialize CVFEM fields from coordinates

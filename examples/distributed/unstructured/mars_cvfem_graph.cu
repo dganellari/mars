@@ -120,12 +120,15 @@ int main(int argc, char** argv) {
     size_t elementCount = domain.getElementCount();
 
     // Build DOF mapping on GPU
+    // All nodes get DOFs: owned → [0, numDofs), ghost → [numDofs, nodeCount)
+    // Ghost DOFs are needed as CSR column indices for correct off-diagonal assembly.
     cstone::DeviceVector<int> d_nodeToDof(nodeCount);
     int numDofs = buildDofMappingGpu<KeyType>(
         d_nodeOwnership.data(),
         d_nodeToDof.data(),
         nodeCount
     );
+    int numTotalDofs = static_cast<int>(nodeCount);    // owned + ghost (for CSR sizing)
     perf.numDofs    = numDofs;
     perf.numNodes   = numDofs;                         // owned nodes (DOF = node for scalar problem)
     perf.numElements = domain.localElementCount();
@@ -135,12 +138,12 @@ int main(int argc, char** argv) {
 
     const auto& d_conn = domain.getElementToNodeConnectivity();
 
-    // Allocate CSR structure with diagonal positions
-    cstone::DeviceVector<int> d_rowPtr(numDofs + 1);
+    // Allocate CSR structure with diagonal positions (sized for all DOFs: owned + ghost)
+    cstone::DeviceVector<int> d_rowPtr(numTotalDofs + 1);
     cstone::DeviceVector<int> d_colInd;
-    cstone::DeviceVector<int> d_diagPtr(numDofs);
+    cstone::DeviceVector<int> d_diagPtr(numTotalDofs);
 
-    // Build sparsity pattern entirely on GPU
+    // Build sparsity pattern entirely on GPU (using numTotalDofs for rows to include ghost columns)
     int nnz = CvfemSparsityBuilder<KeyType>::buildGraphSparsity(
         std::get<0>(d_conn).data(), std::get<1>(d_conn).data(),
         std::get<2>(d_conn).data(), std::get<3>(d_conn).data(),
@@ -148,7 +151,7 @@ int main(int argc, char** argv) {
         std::get<6>(d_conn).data(), std::get<7>(d_conn).data(),
         elementCount,
         d_nodeToDof.data(),
-        numDofs,
+        numTotalDofs,
         d_rowPtr.data(),
         nullptr,  // First pass to get nnz
         nullptr,
@@ -164,7 +167,7 @@ int main(int argc, char** argv) {
         std::get<6>(d_conn).data(), std::get<7>(d_conn).data(),
         elementCount,
         d_nodeToDof.data(),
-        numDofs,
+        numTotalDofs,
         d_rowPtr.data(),
         d_colInd.data(),
         d_diagPtr.data(),
@@ -176,7 +179,7 @@ int main(int argc, char** argv) {
     perf.sparsityBuildTime = std::chrono::duration<float, std::milli>(sparsityEnd - sparsityStart).count();
     perf.matrixNnz = nnz;
     cstone::DeviceVector<RealType> d_values(nnz, 0.0);
-    cstone::DeviceVector<RealType> d_rhs(numDofs, 0.0);
+    cstone::DeviceVector<RealType> d_rhs(numTotalDofs, 0.0);
 
     // Initialize fields on GPU (no CPU copies!)
     auto fieldInitStart = std::chrono::high_resolution_clock::now();
@@ -236,7 +239,7 @@ int main(int argc, char** argv) {
     using MatrixType = CSRMatrix<RealType>;
     MatrixType* d_matrix;
     cudaMalloc(&d_matrix, sizeof(MatrixType));
-    MatrixType h_matrix{d_rowPtr.data(), d_colInd.data(), d_values.data(), d_diagPtr.data(), numDofs, nnz};
+    MatrixType h_matrix{d_rowPtr.data(), d_colInd.data(), d_values.data(), d_diagPtr.data(), numTotalDofs, nnz};
     cudaMemcpy(d_matrix, &h_matrix, sizeof(MatrixType), cudaMemcpyHostToDevice);
 
     // Configure assembler
