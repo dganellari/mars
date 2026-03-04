@@ -925,8 +925,6 @@ int main(int argc, char** argv) {
     // Identify boundary ghost DOFs using global boundary set
     std::vector<IndexType> ess_ghost_dofs;
     for (IndexType ghostIdx = 0; ghostIdx < numGhostDofs; ++ghostIdx) {
-        // IMPORTANT: ghostIdx is a local index in the range [0, numGhostDofs-1]
-        // It needs to be mapped to the full local DOF index space [numOwnedDofs, numTotalLocalDofs-1]
         IndexType fullGhostLocalIndex = numOwnedDofs + ghostIdx;
         
         // Find the global DOF for this ghost

@@ -195,9 +195,8 @@ int main(int argc, char** argv) {
                   std::make_tuple(isBoundaryNode),
                   rank, numRanks);
     
-    // Force domain initialization before creating FE space
-    // This ensures ownership map is complete before FE space counts DOFs
-    domain.getNodeOwnershipMap();  // Trigger lazy initialization
+    // Force lazy initialization before creating FE space
+    domain.getNodeOwnershipMap();
     domain.getHaloElementIndices();  // Ensure halo structures are built
     
     // Validate domain data consistency
@@ -306,8 +305,6 @@ int main(int argc, char** argv) {
         std::cout << "Found " << boundaryDofs.size() << " owned boundary DOFs, numDofs = " << numDofs << std::endl;
     }
     
-    // Note: Adjacency is built lazily when needed by FE space
-    
     if (rank == 0) {
         std::cout << "\n=== ElementDomain Created Successfully ===" << std::endl;
         std::cout << "Domain info:" << std::endl;
@@ -344,8 +341,6 @@ int main(int argc, char** argv) {
     // =====================================================
     if (rank == 0) std::cout << "\n1.5. Creating distributed data manager...\n";
     
-    // Create distributed data manager
-    // Note: Data manager stores owned DOFs only (ghosts updated via halo exchange)
     mars::fem::UnstructuredDM<DofHandler, double, cstone::GpuTag> dm(dof_handler);
     dm.add_data_field<double>();  // Solution vector
     dm.add_data_field<double>();  // RHS vector
@@ -369,8 +364,6 @@ int main(int argc, char** argv) {
     // Get node-to-DOF mapping from distributed DOF handler (includes ghosts)
     const auto& nodeToLocalDof = dof_handler.get_node_to_local_dof();
 
-    // Get resolved ownership from DOF handler (2 states: 0=ghost, 1=owned)
-    // This ensures assembler uses same ownership as DOF handler
     const auto& resolvedOwnership = dof_handler.get_resolved_ownership();
 
     // Count owned DOFs from DOF handler's resolved ownership
@@ -480,9 +473,7 @@ int main(int argc, char** argv) {
     // Get the full matrix before elimination
     TetSparseMatrix<double, Unsigned> K_full = K;  // Copy the full matrix
     
-    // Modify matrix and RHS for boundary conditions
-    // boundaryDofs contains LOCAL owned DOF indices
-    // Note: numOwnedDofs and ghostBoundaryDofs already declared earlier
+    // Modify matrix and RHS for boundary conditions (boundaryDofs: local owned DOF indices)
 
     // Get matrix data
     std::vector<Unsigned> h_rowOffsets(K_full.numRows() + 1);
@@ -517,9 +508,6 @@ int main(int argc, char** argv) {
             h_rhs_full[localDof] = 0.0f;  // rhs[i] = 0
         }
     }
-
-    // Note: Ghost boundary column zeroing no longer needed - matrix is square (CVFEM-style)
-    // Ghost columns are excluded from the sparsity pattern entirely
 
     // Copy modified matrix back to device
     thrust::copy(h_values.begin(), h_values.end(),
@@ -608,8 +596,6 @@ int main(int argc, char** argv) {
     // =====================================================
     // 7. Exchange ghost DOF values across ranks (if multi-rank)
     // =====================================================
-    // Note: Ghost exchange not yet implemented in UnstructuredDofHandler
-    // For single-partition problems, this is not needed
     if (numRanks > 1 && false) {  // Disabled until ghost exchange is implemented
         if (rank == 0) std::cout << "\n6. Exchanging ghost DOF values...\n";
         auto t_exchange_start = std::chrono::high_resolution_clock::now();

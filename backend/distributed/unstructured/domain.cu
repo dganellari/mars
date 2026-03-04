@@ -954,19 +954,8 @@ __global__ void refineOwnershipForFEMKernel(
     {
         unsigned int flags = nodeFlags[nodeIdx];
 
-        // Simple ownership: own nodes that appear in LOCAL elements
-        // This creates "overlapping" ownership for shared boundary nodes,
-        // but the DOF handler will use SFC-based global indices to ensure
-        // all ranks use the same global DOF index for each node.
-
-        if (flags & 0x01) {
-            // In local elements → owned (will contribute to matrix)
-            nodeOwnership[nodeIdx] = 1;
-        }
-        else {
-            // Not in local elements → ghost (receive values from owner)
-            nodeOwnership[nodeIdx] = 0;
-        }
+        // Own nodes that appear in local elements (overlapping ownership at partition boundary)
+        nodeOwnership[nodeIdx] = (flags & 0x01) ? 1 : 0;
     }
 }
 
@@ -990,11 +979,6 @@ void HaloData<ElementTag, RealType, KeyType, AcceleratorTag>::buildNodeOwnership
     }
 
     
-    // NEW APPROACH: SFC-key-based ownership (matches cornerstone's assignment)
-    // This ensures neighbor detection works correctly with findRank()
-    // - Nodes with SFC keys in [assignmentStart, assignmentEnd) → owned (1)
-    // - Shared boundaries will be detected by checking if nodes appear in both local and halo elements
-    
     const auto& nodeSfcKeys = domain.getLocalToGlobalSfcMap();
     const auto& conn_sfc = domain.getConnectivity();
     
@@ -1015,7 +999,7 @@ void HaloData<ElementTag, RealType, KeyType, AcceleratorTag>::buildNodeOwnership
                 thrust::device_pointer_cast(d_nodeOwnership_.data() + nodeCount), 
                 0);
     
-    // Phase 1: Gather all rank assignments for SFC-key-based ownership
+    // Gather assignment boundaries from all ranks
     cstone::DeviceVector<KeyType> d_assignment(domain.numRanks() + 1);
     std::vector<KeyType> h_assignment(domain.numRanks() + 1);
     
@@ -1028,7 +1012,7 @@ void HaloData<ElementTag, RealType, KeyType, AcceleratorTag>::buildNodeOwnership
     thrust::copy(h_assignment.begin(), h_assignment.end(), 
                 thrust::device_pointer_cast(d_assignment.data()));
     
-    // Phase 2: Assign ownership based on SFC key ranges
+    // Mark owned nodes
     if (nodeCount > 0) {
         int numBlocks = (nodeCount + blockSize - 1) / blockSize;
         determineOwnershipDirectKernel<KeyType><<<numBlocks, blockSize>>>(
@@ -1041,98 +1025,10 @@ void HaloData<ElementTag, RealType, KeyType, AcceleratorTag>::buildNodeOwnership
         cudaCheckError();
     }
     
-    // Phase 3: Mark nodes in LOCAL elements to detect potential shared boundaries
-    cstone::DeviceVector<unsigned int> d_nodeFlags(nodeCount, 0);
-    
-    constexpr int NodesPerElem = ElementTag::NodesPerElement;
-    auto conn0 = std::get<0>(conn_sfc);
-    auto conn1 = std::get<1>(conn_sfc);
-    auto conn2 = std::get<2>(conn_sfc);
-    auto conn3 = std::get<3>(conn_sfc);
-    
-    // For HexTag, get all 8 connectivity vectors; for TetTag, use nullptr placeholders
-    const KeyType* conn4_ptr = nullptr;
-    const KeyType* conn5_ptr = nullptr;
-    const KeyType* conn6_ptr = nullptr;
-    const KeyType* conn7_ptr = nullptr;
-    if constexpr (NodesPerElem == 8) {
-        conn4_ptr = thrust::raw_pointer_cast(std::get<4>(conn_sfc).data());
-        conn5_ptr = thrust::raw_pointer_cast(std::get<5>(conn_sfc).data());
-        conn6_ptr = thrust::raw_pointer_cast(std::get<6>(conn_sfc).data());
-        conn7_ptr = thrust::raw_pointer_cast(std::get<7>(conn_sfc).data());
-    }
-    
-    size_t localElementCount = domain.localElementCount();
-    
-    if (localElementCount > 0) {
-        int numBlocks = (localElementCount + blockSize - 1) / blockSize;
-        markNodesInElementRangeKernel<KeyType, NodesPerElem><<<numBlocks, blockSize>>>(
-            thrust::raw_pointer_cast(d_nodeFlags.data()),
-            thrust::raw_pointer_cast(conn0.data()),
-            thrust::raw_pointer_cast(conn1.data()),
-            thrust::raw_pointer_cast(conn2.data()),
-            thrust::raw_pointer_cast(conn3.data()),
-            conn4_ptr, conn5_ptr, conn6_ptr, conn7_ptr,
-            thrust::raw_pointer_cast(nodeSfcKeys.data()),
-            0, localElementCount, nodeCount, 0x01);
-        cudaCheckError();
-    }
-    
-    // Phase 4: Mark nodes in HALO elements
-    size_t totalElementCount = domain.getElementCount();
-    
-    if (totalElementCount > localElementCount) {
-        int numBlocks = (totalElementCount - localElementCount + blockSize - 1) / blockSize;
-        markNodesInElementRangeKernel<KeyType, NodesPerElem><<<numBlocks, blockSize>>>(
-            thrust::raw_pointer_cast(d_nodeFlags.data()),
-            thrust::raw_pointer_cast(conn0.data()),
-            thrust::raw_pointer_cast(conn1.data()),
-            thrust::raw_pointer_cast(conn2.data()),
-            thrust::raw_pointer_cast(conn3.data()),
-            conn4_ptr, conn5_ptr, conn6_ptr, conn7_ptr,
-            thrust::raw_pointer_cast(nodeSfcKeys.data()),
-            localElementCount, totalElementCount, nodeCount, 0x02);
-        cudaCheckError();
-    }
-    
-    // Phase 5: Refine ownership for FEM - overlapping ownership model
-    // Nodes in local elements → owned, others → ghost
-    // Shared nodes are owned by ALL ranks with local elements (overlapping)
-    // The DOF handler uses SFC-based global indexing to handle this correctly
-    if (nodeCount > 0) {
-        int numBlocks = (nodeCount + blockSize - 1) / blockSize;
-        refineOwnershipForFEMKernel<KeyType><<<numBlocks, blockSize>>>(
-            thrust::raw_pointer_cast(d_nodeOwnership_.data()),
-            thrust::raw_pointer_cast(d_nodeFlags.data()),
-            nodeCount);
-        cudaCheckError();
-    }
-    
-    // Debug: Count ownership states - only report critical issues
-    if (domain.rank() == 0) {
-        thrust::host_vector<uint8_t> h_ownership(nodeCount);
-        thrust::host_vector<unsigned int> h_flags(nodeCount);
-        thrust::copy(thrust::device_pointer_cast(d_nodeOwnership_.data()),
-                    thrust::device_pointer_cast(d_nodeOwnership_.data() + nodeCount),
-                    h_ownership.begin());
-        thrust::copy(thrust::device_pointer_cast(d_nodeFlags.data()),
-                    thrust::device_pointer_cast(d_nodeFlags.data() + nodeCount),
-                    h_flags.begin());
-
-        size_t cnt_owned = 0;
-        size_t cnt_owned_not_in_local = 0;
-        for (size_t i = 0; i < nodeCount; ++i) {
-            if (h_ownership[i] == 1 || h_ownership[i] == 2) {
-                cnt_owned++;
-                if (!(h_flags[i] & 0x01)) cnt_owned_not_in_local++;
-            }
-        }
-        std::cout << "Rank 0: " << cnt_owned << " owned nodes";
-        if (cnt_owned_not_in_local > 0) {
-            std::cout << " (WARNING: " << cnt_owned_not_in_local << " not in local elements!)";
-        }
-        std::cout << "\n";
-    }
+    // SFC-based ownership is now final: each node is owned by exactly one rank (the one
+    // whose SFC assignment range contains the node's key). Ghost elements are still
+    // assembled in the FEM kernel — they contribute to rows of SFC-owned nodes on this rank
+    // without any double-counting of boundary equations.
 }
 
 // ===== For unsigned KeyType =====

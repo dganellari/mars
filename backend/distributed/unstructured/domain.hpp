@@ -1570,20 +1570,14 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::calculateChar
     auto& d_h = std::get<0>(d_props_);
     d_h.resize(nodeCount_);
 
-    // For tetrahedra and hexahedra on GPU, compute per-element h from actual edge lengths.
-    // NOTE: computeCharacteristicSizesKernel already has HexTag specialisation (12 edges).
-    // The old condition (TetTag only) caused hex elements to fall through to the domainDiagonal*0.01
-    // fallback – a fixed constant ~10–12× larger than a typical mesh element size.  Cornerstone
-    // treats h as an SPH smoothing length: actual interaction radius = 2*h.  An oversized h brings
-    // in O(10^3) times more octree leaf cells than are topologically adjacent, explaining the 3.7×
-    // ghost-element excess measured in weak-scaling experiments.
+    // Compute per-element h from actual edge lengths for Tet and Hex elements.
+    // Cornerstone uses h as an SPH smoothing length (interaction radius = 2*h),
+    // so h should reflect the local mesh size to avoid over-fetching ghost elements.
     if constexpr (std::is_same_v<AcceleratorTag, cstone::GpuTag> &&
                   (std::is_same_v<ElementTag, TetTag> || std::is_same_v<ElementTag, HexTag>))
     {
-        // Fix: Correct the device vector declaration
         DeviceVector<int> d_nodeTetCount(nodeCount_, 0);
 
-        // Extract raw pointers for kernel
         auto& d_x  = std::get<0>(d_coords_);
         auto& d_y  = std::get<1>(d_coords_);
         auto& d_z  = std::get<2>(d_coords_);
@@ -1594,7 +1588,6 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::calculateChar
 
         constexpr int NodesPerElem = ElementTag::NodesPerElement;
 
-        // Extract additional connectivity pointers conditionally at compile time
         const KeyType* d_i4_ptr;
         const KeyType* d_i5_ptr;
         const KeyType* d_i6_ptr;
@@ -1612,7 +1605,7 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::calculateChar
         if constexpr (NodesPerElem > 7) { d_i7_ptr = thrust::raw_pointer_cast(std::get<7>(d_conn_).data()); }
         else { d_i7_ptr = nullptr; }
 
-        // First accumulate edge lengths per node
+        // accumulate edge lengths per node
         int blockSize = 256;
         int numBlocks = (elementCount_ + blockSize - 1) / blockSize;
 
@@ -1625,36 +1618,30 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::calculateChar
 
         cudaCheckError();
 
-        // Then normalize by number of contributions
+        // normalize by number of contributions
         numBlocks = (nodeCount_ + blockSize - 1) / blockSize;
         finalizeCharacteristicSizesKernel<KeyType, RealType><<<numBlocks, blockSize>>>(
             thrust::raw_pointer_cast(d_h.data()), thrust::raw_pointer_cast(d_nodeTetCount.data()), nodeCount_);
 
         cudaCheckError();
 
-        // For mesh-based methods (FEM/FDM)
-        constexpr RealType meshFactor = 1.0;    // No reduction for FEM (adjust based on element order)
-        constexpr RealType minH       = 1.0e-6; // Prevent extremely small values that cause instability
-        constexpr RealType maxH       = 1.0;    // Upper bound based on problem domain
+        constexpr RealType meshFactor = 1.0;
+        constexpr RealType minH       = 1.0e-6;
+        constexpr RealType maxH       = 1.0;
 
-        // Use the proper kernel
         transformCharacteristicSizesKernel<RealType>
             <<<numBlocks, blockSize>>>(thrust::raw_pointer_cast(d_h.data()), nodeCount_, meshFactor, minH, maxH);
         cudaCheckError();
     }
     else
     {
-        // Fallback for Tri/Quad on GPU, or CPU path: estimate h from mesh density.
-        // Avoid the old domainDiagonal*0.01 constant which made h ~10-12× too large for
-        // typical meshes, causing Cornerstone to import far more ghost elements than needed.
-        // Estimate: element_size ≈ (domainVolume / elementCount)^(1/D), use D=2 for surface elements.
+        // Fallback for Tri/Quad elements or CPU path: estimate h from mesh density.
+        // Use cbrt(volume/count) as characteristic element size; factor 0.5 so 2h ~ element size.
         RealType domainVolume = (domain_->box().xmax() - domain_->box().xmin()) *
                                 (domain_->box().ymax() - domain_->box().ymin()) *
                                 (domain_->box().zmax() - domain_->box().zmin());
-        // cbrt gives characteristic length scale per element; factor 0.5 makes 2h ≈ element_size
         RealType defaultH = RealType(0.5) * std::cbrt(domainVolume / static_cast<RealType>(elementCount_));
 
-        // Use the proper kernel
         int blockSize = 256;
         int numBlocks = (nodeCount_ + blockSize - 1) / blockSize;
         fillCharacteristicSizesKernel<RealType>

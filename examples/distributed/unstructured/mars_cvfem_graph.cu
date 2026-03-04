@@ -118,8 +118,6 @@ int main(int argc, char** argv) {
 
     size_t nodeCount = domain.getNodeCount();
     size_t elementCount = domain.getElementCount();
-    perf.numNodes = nodeCount;
-    perf.numElements = elementCount;
 
     // Build DOF mapping on GPU
     cstone::DeviceVector<int> d_nodeToDof(nodeCount);
@@ -128,7 +126,9 @@ int main(int argc, char** argv) {
         d_nodeToDof.data(),
         nodeCount
     );
-    perf.numDofs = numDofs;
+    perf.numDofs    = numDofs;
+    perf.numNodes   = numDofs;                         // owned nodes (DOF = node for scalar problem)
+    perf.numElements = domain.localElementCount();
 
     // Build sparsity pattern on GPU
     auto sparsityStart = std::chrono::high_resolution_clock::now();
@@ -220,10 +220,11 @@ int main(int argc, char** argv) {
     auto fieldInitEnd = std::chrono::high_resolution_clock::now();
     perf.fieldInitTime = std::chrono::duration<float, std::milli>(fieldInitEnd - fieldInitStart).count();
 
-    // Data sizes for bandwidth
-    // perf.coordinateBytes = 3 * nodeCount * sizeof(RealType);
-    perf.inputFieldBytes = 5 * nodeCount * sizeof(RealType);
-    // perf.connectivityBytes = 8 * elementCount * sizeof(KeyType);
+    // Data sizes for bandwidth (owned counts only, matching STK convention:
+    // total_bytes x p = constant for a fixed problem, ghost overhead shows as efficiency loss)
+    perf.coordinateBytes   = 3 * numDofs * sizeof(RealType);
+    perf.inputFieldBytes   = 5 * numDofs * sizeof(RealType);
+    perf.connectivityBytes = 8 * domain.localElementCount() * sizeof(int);
     perf.outputMatrixBytes = nnz * sizeof(RealType) + numDofs * sizeof(RealType);
 
     // Create CSR matrix wrapper with diagonal positions
@@ -300,12 +301,13 @@ int main(int argc, char** argv) {
         MARS_NVTX_POP();
     }
 
-    // Compute DD load imbalance from element counts (owned / ghost / total)
+    // Compute DD load imbalance from node counts (owned / ghost / total)
     MARS_NVTX_PUSH("Post-processing");
+    size_t ghostNodeCount = nodeCount - static_cast<size_t>(numDofs);
     double sendBuf[3] = {
-        static_cast<double>(domain.localElementCount()),
-        static_cast<double>(domain.haloElementCount()),
-        static_cast<double>(domain.getElementCount())
+        static_cast<double>(numDofs),
+        static_cast<double>(ghostNodeCount),
+        static_cast<double>(nodeCount)
     };
     double recvMin[3], recvMax[3], recvSum[3];
     MPI_Request req[3];
@@ -339,13 +341,13 @@ int main(int argc, char** argv) {
 
     // Wait for DD imbalance reductions
     MPI_Waitall(3, req, MPI_STATUSES_IGNORE);
-    auto ddImbalance = [&](int k) -> double {
-        double mean = recvSum[k] / numRanks;
+    auto ddImbalance = [&](int k, int normK) -> double {
+        double mean = recvSum[normK] / numRanks;
         return mean > 0.0 ? (recvMax[k] - recvMin[k]) / mean * 100.0 : 0.0;
     };
-    perf.ddOwnedImbalancePct = ddImbalance(0);
-    perf.ddGhostImbalancePct = ddImbalance(1);
-    perf.ddTotalImbalancePct = ddImbalance(2);
+    perf.ddOwnedImbalancePct = ddImbalance(0, 0);  // owned spread / owned mean
+    perf.ddGhostImbalancePct = ddImbalance(1, 2);  // ghost spread / total mean (avoids inflated % from small denominator)
+    perf.ddTotalImbalancePct = ddImbalance(2, 2);  // total spread / total mean
     perf.ddOwnedMin  = recvMin[0]; perf.ddOwnedMax  = recvMax[0]; perf.ddOwnedMean  = recvSum[0] / numRanks;
     perf.ddGhostMin  = recvMin[1]; perf.ddGhostMax  = recvMax[1]; perf.ddGhostMean  = recvSum[1] / numRanks;
     perf.ddTotalMin  = recvMin[2]; perf.ddTotalMax  = recvMax[2]; perf.ddTotalMean  = recvSum[2] / numRanks;

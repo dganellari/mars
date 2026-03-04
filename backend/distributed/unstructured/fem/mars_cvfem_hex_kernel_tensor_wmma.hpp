@@ -66,8 +66,6 @@ __global__ void cvfem_hex_assembly_kernel_tensor_wmma(
     // Current bottleneck: Atomic scatter to global CSR matrix (~70% of time)
     // Tensor cores can't help with atomics or sparse operations
     //
-    // Recommendation: Focus on reducing atomic contention instead
-    //                 (e.g., warp-level aggregation, better partitioning)
     
     // Fall back to original scalar implementation
     // This is a placeholder showing why tensor cores aren't practical here

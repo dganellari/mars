@@ -122,7 +122,7 @@ struct PerfCounters {
         std::cout << "================================================================================\n";
         std::cout << std::fixed << std::setprecision(3);
 
-        std::cout << "\n--- Problem Size ---\n";
+        std::cout << "\n--- Problem Size (rank 0, owned only) ---\n";
         std::cout << "  Elements:              " << std::setw(12) << numElements << "\n";
         std::cout << "  Nodes:                 " << std::setw(12) << numNodes << "\n";
         std::cout << "  DOFs:                  " << std::setw(12) << numDofs << "\n";
@@ -154,18 +154,20 @@ struct PerfCounters {
         std::cout << "  Est. compute:          " << std::setw(12) << estimatedGFLOPs() << " GFLOP/s\n";
         std::cout << "\n--- Domain Decomposition Imbalance ---\n";
         std::cout << std::setprecision(1);
-        std::cout << "                    " << std::setw(12) << "min" << std::setw(12) << "mean" << std::setw(12) << "max" << std::setw(10) << "imbalance" << "\n";
-        std::cout << "  Owned elements:   "
+        std::cout << "                    " << std::setw(12) << "min" << std::setw(12) << "mean" << std::setw(12) << "max" << std::setw(10) << "imbalance" << "   (ghost: spread/total_mean)\n";
+        std::cout << "  Owned nodes:      "
                   << std::setw(12) << static_cast<size_t>(ddOwnedMin)
                   << std::setw(12) << static_cast<size_t>(ddOwnedMean)
                   << std::setw(12) << static_cast<size_t>(ddOwnedMax)
                   << std::setw(9)  << std::setprecision(2) << ddOwnedImbalancePct << " %\n";
-        std::cout << "  Ghost elements:   "
+        double ghostOverheadPct = ddTotalMean > 0.0 ? ddGhostMean / ddTotalMean * 100.0 : 0.0;
+        std::cout << "  Ghost nodes:      "
                   << std::setw(12) << static_cast<size_t>(ddGhostMin)
                   << std::setw(12) << static_cast<size_t>(ddGhostMean)
                   << std::setw(12) << static_cast<size_t>(ddGhostMax)
-                  << std::setw(9)  << std::setprecision(2) << ddGhostImbalancePct << " %\n";
-        std::cout << "  Total elements:   "
+                  << std::setw(9)  << std::setprecision(2) << ddGhostImbalancePct << " %"
+                  << "   (" << std::setprecision(1) << ghostOverheadPct << "% of rank workload)\n";
+        std::cout << "  Total nodes:      "
                   << std::setw(12) << static_cast<size_t>(ddTotalMin)
                   << std::setw(12) << static_cast<size_t>(ddTotalMean)
                   << std::setw(12) << static_cast<size_t>(ddTotalMax)

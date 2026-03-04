@@ -460,7 +460,7 @@ __global__ void cvfem_hex_assembly_kernel(
         int row_dof = d_node_to_dof[row_node];
         uint8_t ownership = d_ownership[row_node];
 
-        // Only assemble owned and shared nodes (skip pure ghosts)
+        // Skip ghost nodes (SFC-ownership 0 means this rank does not own this DOF)
         if (ownership == 0 || row_dof < 0) continue;
 
         // Assemble RHS

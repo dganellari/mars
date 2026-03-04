@@ -11,7 +11,7 @@ namespace mars {
 namespace fem {
 
 // GPU kernel: Build DOF mapping from ownership array
-// ownership: 0=ghost, 1=owned, 2=shared
+// ownership: 0=ghost (SFC key belongs to a different rank), 1=owned (SFC key belongs to this rank)
 // nodeToDof: output mapping (-1 for ghosts)
 template<typename KeyType>
 __global__ void buildDofMappingKernel(
