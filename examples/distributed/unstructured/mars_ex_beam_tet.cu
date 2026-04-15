@@ -195,9 +195,8 @@ int main(int argc, char** argv) {
                   std::make_tuple(isBoundaryNode),
                   rank, numRanks);
     
-    // Force domain initialization before creating FE space
-    // This ensures ownership map is complete before FE space counts DOFs
-    domain.getNodeOwnershipMap();  // Trigger lazy initialization
+    // Force lazy initialization before creating FE space
+    domain.getNodeOwnershipMap();
     domain.getHaloElementIndices();  // Ensure halo structures are built
     
     // Validate domain data consistency
@@ -301,12 +300,10 @@ int main(int argc, char** argv) {
     dof_handler.boundary_owned_dof_iterate([&](Unsigned localDof) {
         boundaryDofs.push_back(localDof);
     });
-    
+
     if (rank == 0) {
-        std::cout << "Found " << boundaryDofs.size() << " boundary DOFs (DOF handler: topological detection like MFEM), numDofs = " << numDofs << std::endl;
+        std::cout << "Found " << boundaryDofs.size() << " owned boundary DOFs, numDofs = " << numDofs << std::endl;
     }
-    
-    // Note: Adjacency is built lazily when needed by FE space
     
     if (rank == 0) {
         std::cout << "\n=== ElementDomain Created Successfully ===" << std::endl;
@@ -344,12 +341,10 @@ int main(int argc, char** argv) {
     // =====================================================
     if (rank == 0) std::cout << "\n1.5. Creating distributed data manager...\n";
     
-    // Create distributed data manager
-    // Note: Data manager stores owned DOFs only (ghosts updated via halo exchange)
     mars::fem::UnstructuredDM<DofHandler, double, cstone::GpuTag> dm(dof_handler);
     dm.add_data_field<double>();  // Solution vector
     dm.add_data_field<double>();  // RHS vector
-    dm.resize(numDofs);  // Owned DOFs only
+    // Resize will be done after we know actual matrix size
     
     if (rank == 0) {
         auto [start, end] = dof_handler.get_owned_dof_range();
@@ -365,19 +360,36 @@ int main(int argc, char** argv) {
     
     TetStiffnessAssembler<double, Unsigned> stiffnessAssembler;
     TetSparseMatrix<double, Unsigned> K;
-    
+
     // Get node-to-DOF mapping from distributed DOF handler (includes ghosts)
     const auto& nodeToLocalDof = dof_handler.get_node_to_local_dof();
-    
-    stiffnessAssembler.assemble(fe_space, K, nodeToLocalDof);
+
+    const auto& resolvedOwnership = dof_handler.get_resolved_ownership();
+
+    // Count owned DOFs from DOF handler's resolved ownership
+    size_t numOwnedFromDofHandler = dof_handler.get_num_local_dofs();
+
+    if (rank == 0 || rank == 1) {
+        std::cout << "Rank " << rank << ": DOF handler has " << numOwnedFromDofHandler
+                  << " owned DOFs, nodeToLocalDof size=" << nodeToLocalDof.size() << std::endl;
+    }
+
+    stiffnessAssembler.assemble(fe_space, K, nodeToLocalDof, resolvedOwnership, numOwnedFromDofHandler);
     
     auto t_stiff_end = std::chrono::high_resolution_clock::now();
     double t_stiff = std::chrono::duration<double>(t_stiff_end - t_stiff_start).count();
-    
-    if (rank == 0) {
-        std::cout << "   Stiffness matrix assembled in " << t_stiff << " seconds\n"
-                  << "   Matrix size: " << K.numRows() << " x " << K.numCols() << "\n"
-                  << "   Non-zeros: " << K.nnz() << "\n";
+
+    // Matrix is now SQUARE using CVFEM-style assembly (no ghost columns)
+    size_t numOwnedDofs = K.numRows();  // Use actual matrix size
+
+    // NOW resize the data manager to match matrix size
+    dm.resize(numOwnedDofs);
+
+    if (rank == 0 || rank == 1) {
+        std::cout << "Rank " << rank << ": Stiffness matrix assembled in " << t_stiff << " seconds\n";
+        std::cout << "Rank " << rank << ":   Matrix size: " << K.numRows() << " x " << K.numCols() << "\n";
+        std::cout << "Rank " << rank << ":   Non-zeros: " << K.nnz() << "\n";
+        std::cout << "Rank " << rank << ":   Data manager resized to: " << numOwnedDofs << "\n";
         
         // Check matrix symmetry
         std::cout << "   Checking matrix properties...\n";
@@ -433,7 +445,19 @@ int main(int argc, char** argv) {
     
     auto t_rhs_end = std::chrono::high_resolution_clock::now();
     double t_rhs = std::chrono::duration<double>(t_rhs_end - t_rhs_start).count();
-    
+
+    // Debug: Check RHS values on all ranks
+    {
+        auto& rhs = dm.get_data<1>();
+        double rhs_sum = thrust::reduce(thrust::device_pointer_cast(rhs.data()),
+                                        thrust::device_pointer_cast(rhs.data() + rhs.size()),
+                                        0.0, thrust::plus<double>());
+        double rhs_max = *thrust::max_element(thrust::device_pointer_cast(rhs.data()),
+                                              thrust::device_pointer_cast(rhs.data() + rhs.size()));
+        std::cout << "Rank " << rank << ": RHS assembled - size=" << rhs.size()
+                  << ", sum=" << rhs_sum << ", max=" << rhs_max << std::endl;
+    }
+
     if (rank == 0) {
         std::cout << "   RHS vector assembled in " << t_rhs << " seconds\n";
     }
@@ -449,10 +473,8 @@ int main(int argc, char** argv) {
     // Get the full matrix before elimination
     TetSparseMatrix<double, Unsigned> K_full = K;  // Copy the full matrix
     
-    // Modify matrix and RHS for boundary conditions
-    // boundaryDofs contains LOCAL owned DOF indices
-    size_t numOwnedDofs = dof_handler.get_num_local_dofs();
-    
+    // Modify matrix and RHS for boundary conditions (boundaryDofs: local owned DOF indices)
+
     // Get matrix data
     std::vector<Unsigned> h_rowOffsets(K_full.numRows() + 1);
     std::vector<Unsigned> h_colIndices(K_full.nnz());
@@ -472,7 +494,7 @@ int main(int argc, char** argv) {
     std::vector<double> h_rhs_full(numOwnedDofs);
     dm.copy_to_host<1>(h_rhs_full);
     
-    // Modify for boundary conditions
+    // Step 1: Modify rows for owned boundary DOFs
     for (auto localDof : boundaryDofs) {
         if (localDof < numOwnedDofs) {
             // Find the diagonal entry and set it to 1
@@ -486,7 +508,7 @@ int main(int argc, char** argv) {
             h_rhs_full[localDof] = 0.0f;  // rhs[i] = 0
         }
     }
-    
+
     // Copy modified matrix back to device
     thrust::copy(h_values.begin(), h_values.end(),
                 thrust::device_pointer_cast(K_full.valuesPtr()));
@@ -497,9 +519,9 @@ int main(int argc, char** argv) {
     auto t_bc_end = std::chrono::high_resolution_clock::now();
     double t_bc = std::chrono::duration<double>(t_bc_end - t_bc_start).count();
     
-    if (rank == 0) {
-        std::cout << "   Full-system BC modification completed in " << t_bc << " seconds\n";
-        std::cout << "   Boundary DOFs: " << boundaryDofs.size() << "\n";
+    if (rank == 0 || rank == 1) {
+        std::cout << "Rank " << rank << ": Full-system BC modification completed in " << t_bc << " seconds\n";
+        std::cout << "Rank " << rank << ":   Owned boundary DOFs: " << boundaryDofs.size() << "\n";
     }
     
     // =====================================================
@@ -507,7 +529,7 @@ int main(int argc, char** argv) {
     // =====================================================
     if (rank == 0) std::cout << "\n5. Solving linear system (PCG with preconditioner)...\n";
     
-    // Validate matrix dimensions before solving
+    // Matrix should now be SQUARE using CVFEM-style assembly
     if (K_full.numRows() != K_full.numCols()) {
         std::cerr << "Rank " << rank << ": ERROR - Matrix not square: "
                   << K_full.numRows() << " x " << K_full.numCols() << std::endl;
@@ -540,7 +562,21 @@ int main(int argc, char** argv) {
     if (rank == 0) std::cout << "Using full Hypre PCG + BoomerAMG solver" << std::endl;
     mars::fem::HyprePCGSolver<double, Unsigned, cstone::GpuTag> hypre_solver(MPI_COMM_WORLD, 400, 1e-10);
     hypre_solver.setVerbose(rank == 0);
-    bool converged = hypre_solver.solve(K_full, rhs_full, u_full);
+
+    // Compute global DOF range from matrix dimensions using MPI
+    // Each rank owns a contiguous block of global DOFs
+    Unsigned localDofs = K_full.numRows();
+    Unsigned globalDofStart = 0;
+    MPI_Exscan(&localDofs, &globalDofStart, 1, MPI_UNSIGNED, MPI_SUM, MPI_COMM_WORLD);
+    Unsigned globalDofEnd = globalDofStart + localDofs;
+
+    if (rank == 0 || rank == 1) {
+        std::cout << "Rank " << rank << ": Using computed global DOF range ["
+                  << globalDofStart << ", " << globalDofEnd << ")" << std::endl;
+    }
+
+    // Matrix is now SQUARE (owned rows x owned cols) using CVFEM-style assembly
+    bool converged = hypre_solver.solve(K_full, rhs_full, u_full, globalDofStart, globalDofEnd);
 #else
     // Fallback to custom CG with Jacobi preconditioner
     if (rank == 0) std::cout << "Using custom CG + Jacobi preconditioner" << std::endl;
@@ -560,8 +596,6 @@ int main(int argc, char** argv) {
     // =====================================================
     // 7. Exchange ghost DOF values across ranks (if multi-rank)
     // =====================================================
-    // Note: Ghost exchange not yet implemented in UnstructuredDofHandler
-    // For single-partition problems, this is not needed
     if (numRanks > 1 && false) {  // Disabled until ghost exchange is implemented
         if (rank == 0) std::cout << "\n6. Exchanging ghost DOF values...\n";
         auto t_exchange_start = std::chrono::high_resolution_clock::now();

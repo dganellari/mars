@@ -475,24 +475,26 @@ public:
     using HostBoundaryTuple     = std::tuple<HostVector<uint8_t>>; // (isBoundaryNode)
 
     // Constructor from file
-    ElementDomain(const std::string& meshFile, int rank, int numRanks, bool storeOriginalCoords = false);
+    ElementDomain(const std::string& meshFile, int rank, int numRanks, bool storeOriginalCoords = false, int bucketSize = 64);
 
     // Constructor from mesh data (for MFEM or other formats) - automatically computes bounding box
-    ElementDomain(const HostCoordsTuple& h_coords, const HostConnectivityTuple& h_conn, int rank, int numRanks);
+    ElementDomain(const HostCoordsTuple& h_coords, const HostConnectivityTuple& h_conn, int rank, int numRanks, int bucketSize = 64);
 
     // Constructor from mesh data with boundary info - automatically computes bounding box
     ElementDomain(const HostCoordsTuple& h_coords,
                   const HostConnectivityTuple& h_conn,
                   const HostBoundaryTuple& h_boundary,
                   int rank,
-                  int numRanks);
+                  int numRanks,
+                  int bucketSize = 64);
 
     // Constructor from mesh data with explicit bounding box (for backward compatibility)
     ElementDomain(const HostCoordsTuple& h_coords,
                   const HostConnectivityTuple& h_conn,
                   const cstone::Box<RealType>& box,
                   int rank,
-                  int numRanks);
+                  int numRanks,
+                  int bucketSize = 64);
 
     // GPU-accelerated calculation of characteristic sizes
     void calculateCharacteristicSizes(const DeviceConnectivityTuple& d_conn_, const DeviceCoordsTuple& d_coords_);
@@ -1167,12 +1169,18 @@ template<typename ElementTag, typename RealType, typename KeyType, typename Acce
 ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(const std::string& meshFile,
                                                                             int rank,
                                                                             int numRanks,
-                                                                            bool storeOriginalCoords)
+                                                                            bool storeOriginalCoords,
+                                                                            int bucketSize)
     : rank_(rank)
     , numRanks_(numRanks)
     , box_(0, 1)
     , storeOriginalCoords_(storeOriginalCoords)
 {
+    if (rank == 0) {
+        std::cout << "ElementDomain: Using bucketSize=" << bucketSize 
+                  << " (passed as parameter)" << std::endl;
+    }
+    
     // Host data in SoA format
     HostCoordsTuple h_coords;     // (x, y, z)
     HostConnectivityTuple h_conn; // (i0, i1, i2, ...) depends on element type
@@ -1184,8 +1192,8 @@ ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(cons
     // Read the mesh in SoA format
     readMeshDataSoA(meshFile, h_coords, h_conn);
 
-    // Initialize cornerstone domain
-    int bucketSize           = 64;
+    // Initialize cornerstone domain with custom bucket size
+    // int bucketSize           = 64;  // Now passed as parameter
     unsigned bucketSizeFocus = 8;
     RealType theta           = 0.5;
 
@@ -1221,7 +1229,8 @@ template<typename ElementTag, typename RealType, typename KeyType, typename Acce
 ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(const HostCoordsTuple& h_coords,
                                                                             const HostConnectivityTuple& h_conn,
                                                                             int rank,
-                                                                            int numRanks)
+                                                                            int numRanks,
+                                                                            int bucketSize)
     : rank_(rank)
     , numRanks_(numRanks)
     , box_(0, 1)
@@ -1237,8 +1246,8 @@ ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(cons
     box_ = computeGlobalBoundingBoxFromCoords<RealType>(std::get<0>(h_coords), std::get<1>(h_coords),
                                                         std::get<2>(h_coords));
 
-    // Initialize cornerstone domain
-    int bucketSize           = 64;
+    // Initialize cornerstone domain with custom bucket size
+    // int bucketSize           = 64;  // Now passed as parameter
     unsigned bucketSizeFocus = 8;
     RealType theta           = 0.5;
 
@@ -1274,7 +1283,8 @@ ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(cons
                                                                             const HostConnectivityTuple& h_conn,
                                                                             const HostBoundaryTuple& h_boundary,
                                                                             int rank,
-                                                                            int numRanks)
+                                                                            int numRanks,
+                                                                            int bucketSize)
     : rank_(rank)
     , numRanks_(numRanks)
     , box_(0, 1)
@@ -1290,8 +1300,8 @@ ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(cons
     box_ = computeGlobalBoundingBoxFromCoords<RealType>(std::get<0>(h_coords), std::get<1>(h_coords),
                                                         std::get<2>(h_coords));
 
-    // Initialize cornerstone domain
-    int bucketSize           = 64;
+    // Initialize cornerstone domain with custom bucket size
+    // int bucketSize           = 64;  // Now passed as parameter
     unsigned bucketSizeFocus = 8;
     RealType theta           = 0.5;
 
@@ -1560,13 +1570,14 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::calculateChar
     auto& d_h = std::get<0>(d_props_);
     d_h.resize(nodeCount_);
 
-    // For tetrahedra, compute based on average edge lengths
-    if constexpr (std::is_same_v<ElementTag, TetTag> && std::is_same_v<AcceleratorTag, cstone::GpuTag>)
+    // Compute per-element h from actual edge lengths for Tet and Hex elements.
+    // Cornerstone uses h as an SPH smoothing length (interaction radius = 2*h),
+    // so h should reflect the local mesh size to avoid over-fetching ghost elements.
+    if constexpr (std::is_same_v<AcceleratorTag, cstone::GpuTag> &&
+                  (std::is_same_v<ElementTag, TetTag> || std::is_same_v<ElementTag, HexTag>))
     {
-        // Fix: Correct the device vector declaration
         DeviceVector<int> d_nodeTetCount(nodeCount_, 0);
 
-        // Extract raw pointers for kernel
         auto& d_x  = std::get<0>(d_coords_);
         auto& d_y  = std::get<1>(d_coords_);
         auto& d_z  = std::get<2>(d_coords_);
@@ -1577,7 +1588,6 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::calculateChar
 
         constexpr int NodesPerElem = ElementTag::NodesPerElement;
 
-        // Extract additional connectivity pointers conditionally at compile time
         const KeyType* d_i4_ptr;
         const KeyType* d_i5_ptr;
         const KeyType* d_i6_ptr;
@@ -1595,7 +1605,7 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::calculateChar
         if constexpr (NodesPerElem > 7) { d_i7_ptr = thrust::raw_pointer_cast(std::get<7>(d_conn_).data()); }
         else { d_i7_ptr = nullptr; }
 
-        // First accumulate edge lengths per node
+        // accumulate edge lengths per node
         int blockSize = 256;
         int numBlocks = (elementCount_ + blockSize - 1) / blockSize;
 
@@ -1608,32 +1618,30 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::calculateChar
 
         cudaCheckError();
 
-        // Then normalize by number of contributions
+        // normalize by number of contributions
         numBlocks = (nodeCount_ + blockSize - 1) / blockSize;
         finalizeCharacteristicSizesKernel<KeyType, RealType><<<numBlocks, blockSize>>>(
             thrust::raw_pointer_cast(d_h.data()), thrust::raw_pointer_cast(d_nodeTetCount.data()), nodeCount_);
 
         cudaCheckError();
 
-        // For mesh-based methods (FEM/FDM)
-        constexpr RealType meshFactor = 1.0;    // No reduction for FEM (adjust based on element order)
-        constexpr RealType minH       = 1.0e-6; // Prevent extremely small values that cause instability
-        constexpr RealType maxH       = 1.0;    // Upper bound based on problem domain
+        constexpr RealType meshFactor = 1.0;
+        constexpr RealType minH       = 1.0e-6;
+        constexpr RealType maxH       = 1.0;
 
-        // Use the proper kernel
         transformCharacteristicSizesKernel<RealType>
             <<<numBlocks, blockSize>>>(thrust::raw_pointer_cast(d_h.data()), nodeCount_, meshFactor, minH, maxH);
         cudaCheckError();
     }
     else
     {
-        // For non-GPU or non-tetrahedral cases, use a default value
-        RealType domainDiagonal = std::sqrt(std::pow(domain_->box().xmax() - domain_->box().xmin(), 2) +
-                                            std::pow(domain_->box().ymax() - domain_->box().ymin(), 2) +
-                                            std::pow(domain_->box().zmax() - domain_->box().zmin(), 2));
-        RealType defaultH       = domainDiagonal * 0.01; // 1% of domain diagonal
+        // Fallback for Tri/Quad elements or CPU path: estimate h from mesh density.
+        // Use cbrt(volume/count) as characteristic element size; factor 0.5 so 2h ~ element size.
+        RealType domainVolume = (domain_->box().xmax() - domain_->box().xmin()) *
+                                (domain_->box().ymax() - domain_->box().ymin()) *
+                                (domain_->box().zmax() - domain_->box().zmin());
+        RealType defaultH = RealType(0.5) * std::cbrt(domainVolume / static_cast<RealType>(elementCount_));
 
-        // Use the proper kernel
         int blockSize = 256;
         int numBlocks = (nodeCount_ + blockSize - 1) / blockSize;
         fillCharacteristicSizesKernel<RealType>

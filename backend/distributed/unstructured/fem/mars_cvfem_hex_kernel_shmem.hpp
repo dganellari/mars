@@ -100,7 +100,7 @@ __global__ void cvfem_hex_assembly_kernel_shmem(
         diag_pos[i] = -1;
     }
 
-    // Find CSR positions for all owned rows
+    // Find CSR positions for all owned rows using binary search (colInd is sorted)
     #pragma unroll
     for (int i = 0; i < 8; ++i) {
         if (own[i] == 0 || dofs[i] < 0) continue;
@@ -109,12 +109,26 @@ __global__ void cvfem_hex_assembly_kernel_shmem(
         int row_end = matrix->rowPtr[dofs[i] + 1];
         diag_pos[i] = matrix->diagPtr[dofs[i]];
 
-        for (int k = row_start; k < row_end; ++k) {
-            int col = matrix->colInd[k];
-            #pragma unroll
-            for (int j = 0; j < 8; ++j) {
-                if (col == dofs[j] && j != i) {
-                    positions[i][j] = k;
+        // Binary search for each column DOF
+        #pragma unroll
+        for (int j = 0; j < 8; ++j) {
+            if (j == i || dofs[j] < 0) continue;
+
+            int target = dofs[j];
+            int left = row_start;
+            int right = row_end - 1;
+
+            while (left <= right) {
+                int mid = (left + right) >> 1;
+                int col = matrix->colInd[mid];
+
+                if (col == target) {
+                    positions[i][j] = mid;
+                    break;
+                } else if (col < target) {
+                    left = mid + 1;
+                } else {
+                    right = mid - 1;
                 }
             }
         }
@@ -201,7 +215,7 @@ __global__ void cvfem_hex_assembly_kernel_shmem(
         // (nodeR, nodeR) -= lhsfac_R
         diag_acc[nodeR] -= lhsfac_R;
 
-        // Diffusion - compute shape derivatives
+        // Diffusion - compute shape derivatives on-the-fly
         RealType dndx[8][3];
         computeShapeDerivatives(ip, coords, dndx);
 

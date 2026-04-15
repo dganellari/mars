@@ -11,26 +11,30 @@ namespace mars {
 namespace fem {
 
 // GPU kernel: Build DOF mapping from ownership array
-// ownership: 0=ghost, 1=owned, 2=shared
-// nodeToDof: output mapping (-1 for ghosts)
+// All nodes get DOFs: owned → [0, numOwned), ghost → [numOwned, numNodes)
+// This ensures ghost columns exist in the CSR for correct off-diagonal assembly.
 template<typename KeyType>
 __global__ void buildDofMappingKernel(
     const uint8_t* __restrict__ ownership,
-    const int* __restrict__ prefixSum,
+    const int* __restrict__ ownedPrefixSum,
+    const int* __restrict__ ghostPrefixSum,
     int* __restrict__ nodeToDof,
+    int numOwned,
     size_t numNodes)
 {
     size_t i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= numNodes) return;
 
     if (ownership[i] != 0) {
-        nodeToDof[i] = prefixSum[i];
+        nodeToDof[i] = ownedPrefixSum[i];            // [0, numOwned)
     } else {
-        nodeToDof[i] = -1;
+        nodeToDof[i] = numOwned + ghostPrefixSum[i]; // [numOwned, numNodes)
     }
 }
 
 // Build DOF mapping on GPU
+// Returns numOwned (number of owned DOFs). All nodes get DOFs:
+//   owned → [0, numOwned), ghost → [numOwned, numNodes)
 template<typename KeyType>
 int buildDofMappingGpu(
     const uint8_t* d_ownership,
@@ -38,11 +42,12 @@ int buildDofMappingGpu(
     size_t numNodes,
     cudaStream_t stream = 0)
 {
-    // Create temporary array for prefix sum
     thrust::device_vector<int> d_isOwned(numNodes);
-    thrust::device_vector<int> d_prefixSum(numNodes);
+    thrust::device_vector<int> d_isGhost(numNodes);
+    thrust::device_vector<int> d_ownedPrefix(numNodes);
+    thrust::device_vector<int> d_ghostPrefix(numNodes);
 
-    // Mark owned nodes (ownership != 0)
+    // Mark owned and ghost nodes
     thrust::transform(
         thrust::device,
         thrust::device_pointer_cast(d_ownership),
@@ -50,27 +55,37 @@ int buildDofMappingGpu(
         d_isOwned.begin(),
         [] __device__ (uint8_t o) { return (o != 0) ? 1 : 0; }
     );
+    thrust::transform(
+        thrust::device,
+        thrust::device_pointer_cast(d_ownership),
+        thrust::device_pointer_cast(d_ownership + numNodes),
+        d_isGhost.begin(),
+        [] __device__ (uint8_t o) { return (o == 0) ? 1 : 0; }
+    );
 
-    // Exclusive prefix sum to get DOF indices
-    thrust::exclusive_scan(thrust::device, d_isOwned.begin(), d_isOwned.end(), d_prefixSum.begin());
+    // Exclusive prefix sums for contiguous DOF numbering
+    thrust::exclusive_scan(thrust::device, d_isOwned.begin(), d_isOwned.end(), d_ownedPrefix.begin());
+    thrust::exclusive_scan(thrust::device, d_isGhost.begin(), d_isGhost.end(), d_ghostPrefix.begin());
 
-    // Get total number of DOFs
+    // Get total number of owned DOFs
     int lastOwned, lastPrefix;
     cudaMemcpy(&lastOwned, thrust::raw_pointer_cast(d_isOwned.data() + numNodes - 1), sizeof(int), cudaMemcpyDeviceToHost);
-    cudaMemcpy(&lastPrefix, thrust::raw_pointer_cast(d_prefixSum.data() + numNodes - 1), sizeof(int), cudaMemcpyDeviceToHost);
-    int numDofs = lastPrefix + lastOwned;
+    cudaMemcpy(&lastPrefix, thrust::raw_pointer_cast(d_ownedPrefix.data() + numNodes - 1), sizeof(int), cudaMemcpyDeviceToHost);
+    int numOwned = lastPrefix + lastOwned;
 
-    // Launch kernel to build mapping
+    // Build mapping: owned → [0, numOwned), ghost → [numOwned, numNodes)
     int blockSize = 256;
     int numBlocks = (numNodes + blockSize - 1) / blockSize;
     buildDofMappingKernel<KeyType><<<numBlocks, blockSize, 0, stream>>>(
         d_ownership,
-        thrust::raw_pointer_cast(d_prefixSum.data()),
+        thrust::raw_pointer_cast(d_ownedPrefix.data()),
+        thrust::raw_pointer_cast(d_ghostPrefix.data()),
         d_nodeToDof,
+        numOwned,
         numNodes
     );
 
-    return numDofs;
+    return numOwned;
 }
 
 // GPU kernel: Initialize CVFEM fields from coordinates
@@ -377,6 +392,162 @@ void precomputeAreaVectorsGpu(
         numElements,
         d_x, d_y, d_z,
         d_areaVec_x, d_areaVec_y, d_areaVec_z
+    );
+}
+
+// =============================================================================
+// Shape derivative pre-computation kernel
+// =============================================================================
+// Pre-computes shape function derivatives dndx[12][8][3] for all SCS
+// to avoid Jacobian inversion in the assembly kernel (12 times per element).
+
+// Import invert3x3 and hexDerivConst from mars_cvfem_hex_kernel.hpp
+// Invert 3x3 matrix
+template<typename RealType>
+__device__ inline void invert3x3_generic(const RealType J[3][3], RealType invJ[3][3])
+{
+    RealType det = J[0][0]*(J[1][1]*J[2][2] - J[1][2]*J[2][1])
+                 - J[0][1]*(J[1][0]*J[2][2] - J[1][2]*J[2][0])
+                 + J[0][2]*(J[1][0]*J[2][1] - J[1][1]*J[2][0]);
+
+    RealType invDet = RealType(1.0) / det;
+
+    invJ[0][0] = (J[1][1]*J[2][2] - J[1][2]*J[2][1]) * invDet;
+    invJ[0][1] = (J[0][2]*J[2][1] - J[0][1]*J[2][2]) * invDet;
+    invJ[0][2] = (J[0][1]*J[1][2] - J[0][2]*J[1][1]) * invDet;
+    invJ[1][0] = (J[1][2]*J[2][0] - J[1][0]*J[2][2]) * invDet;
+    invJ[1][1] = (J[0][0]*J[2][2] - J[0][2]*J[2][0]) * invDet;
+    invJ[1][2] = (J[0][2]*J[1][0] - J[0][0]*J[1][2]) * invDet;
+    invJ[2][0] = (J[1][0]*J[2][1] - J[1][1]*J[2][0]) * invDet;
+    invJ[2][1] = (J[0][1]*J[2][0] - J[0][0]*J[2][1]) * invDet;
+    invJ[2][2] = (J[0][0]*J[1][1] - J[0][1]*J[1][0]) * invDet;
+}
+
+// Parametric derivatives of hex8 shape functions (EXACT copy from mars_cvfem_hex_kernel.hpp)
+__device__ __constant__ double d_hexDerivConst[12][8][3] = {
+    // ip 0: s1= 0.00, s2=-0.50, s3=-0.50
+    {{-1.0, -0.5, -0.5}, {1.0, -0.5, -0.5}, {0.0, 0.5, 0.0}, {0.0, 0.5, 0.0}, {0.0, 0.0, 0.5}, {0.0, 0.0, 0.5}, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}},
+    // ip 1: s1= 0.50, s2= 0.00, s3=-0.50
+    {{-0.5, 0.0, 0.0}, {0.5, -1.0, -0.5}, {0.5, 1.0, -0.5}, {-0.5, 0.0, 0.0}, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.5}, {0.0, 0.0, 0.5}, {0.0, 0.0, 0.0}},
+    // ip 2: s1= 0.00, s2= 0.50, s3=-0.50
+    {{0.0, -0.5, 0.0}, {0.0, -0.5, 0.0}, {1.0, 0.5, -0.5}, {-1.0, 0.5, -0.5}, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.5}, {0.0, 0.0, 0.5}},
+    // ip 3: s1=-0.50, s2= 0.00, s3=-0.50
+    {{-0.5, -1.0, -0.5}, {0.5, 0.0, 0.0}, {0.5, 0.0, 0.0}, {-0.5, 1.0, -0.5}, {0.0, 0.0, 0.5}, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.5}},
+    // ip 4: s1= 0.00, s2=-0.50, s3= 0.50
+    {{0.0, 0.0, -0.5}, {0.0, 0.0, -0.5}, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}, {-1.0, -0.5, 0.5}, {1.0, -0.5, 0.5}, {0.0, 0.5, 0.0}, {0.0, 0.5, 0.0}},
+    // ip 5: s1= 0.50, s2= 0.00, s3= 0.50
+    {{0.0, 0.0, 0.0}, {0.0, 0.0, -0.5}, {0.0, 0.0, -0.5}, {0.0, 0.0, 0.0}, {-0.5, 0.0, 0.0}, {0.5, -1.0, 0.5}, {0.5, 1.0, 0.5}, {-0.5, 0.0, 0.0}},
+    // ip 6: s1= 0.00, s2= 0.50, s3= 0.50
+    {{0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}, {0.0, 0.0, -0.5}, {0.0, 0.0, -0.5}, {0.0, -0.5, 0.0}, {0.0, -0.5, 0.0}, {1.0, 0.5, 0.5}, {-1.0, 0.5, 0.5}},
+    // ip 7: s1=-0.50, s2= 0.00, s3= 0.50
+    {{0.0, 0.0, -0.5}, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}, {0.0, 0.0, -0.5}, {-0.5, -1.0, 0.5}, {0.5, 0.0, 0.0}, {0.5, 0.0, 0.0}, {-0.5, 1.0, 0.5}},
+    // ip 8: s1=-0.50, s2=-0.50, s3= 0.00
+    {{-0.5, -0.5, -1.0}, {0.5, 0.0, 0.0}, {0.0, 0.0, 0.0}, {0.0, 0.5, 0.0}, {-0.5, -0.5, 1.0}, {0.5, 0.0, 0.0}, {0.0, 0.0, 0.0}, {0.0, 0.5, 0.0}},
+    // ip 9: s1= 0.50, s2=-0.50, s3= 0.00
+    {{-0.5, 0.0, 0.0}, {0.5, -0.5, -1.0}, {0.0, 0.5, 0.0}, {0.0, 0.0, 0.0}, {-0.5, 0.0, 0.0}, {0.5, -0.5, 1.0}, {0.0, 0.5, 0.0}, {0.0, 0.0, 0.0}},
+    // ip 10: s1= 0.50, s2= 0.50, s3= 0.00
+    {{0.0, -0.5, 0.0}, {0.0, -0.5, 0.0}, {0.5, 0.5, -1.0}, {-0.5, 0.5, 0.0}, {0.0, -0.5, 0.0}, {0.0, -0.5, 0.0}, {0.5, 0.5, 1.0}, {-0.5, 0.5, 0.0}},
+    // ip 11: s1=-0.50, s2= 0.50, s3= 0.00
+    {{-0.5, -0.5, 0.0}, {0.5, 0.0, 0.0}, {0.5, 0.0, 0.0}, {-0.5, 0.5, -1.0}, {-0.5, -0.5, 0.0}, {0.5, 0.0, 0.0}, {0.5, 0.0, 0.0}, {-0.5, 0.5, 1.0}}
+};
+
+// Pre-compute shape derivatives for all elements and all SCS
+template<typename KeyType, typename RealType>
+__global__ void precomputeShapeDerivativesKernel(
+    const KeyType* __restrict__ d_conn0,
+    const KeyType* __restrict__ d_conn1,
+    const KeyType* __restrict__ d_conn2,
+    const KeyType* __restrict__ d_conn3,
+    const KeyType* __restrict__ d_conn4,
+    const KeyType* __restrict__ d_conn5,
+    const KeyType* __restrict__ d_conn6,
+    const KeyType* __restrict__ d_conn7,
+    size_t numElements,
+    const RealType* __restrict__ d_x,
+    const RealType* __restrict__ d_y,
+    const RealType* __restrict__ d_z,
+    RealType* __restrict__ d_dndx,    // Output: [numElements * 12 * 8 * 3]
+    RealType* __restrict__ d_dndy,
+    RealType* __restrict__ d_dndz)
+{
+    size_t elemIdx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (elemIdx >= numElements) return;
+
+    // Load element connectivity
+    KeyType nodes[8];
+    nodes[0] = d_conn0[elemIdx];
+    nodes[1] = d_conn1[elemIdx];
+    nodes[2] = d_conn2[elemIdx];
+    nodes[3] = d_conn3[elemIdx];
+    nodes[4] = d_conn4[elemIdx];
+    nodes[5] = d_conn5[elemIdx];
+    nodes[6] = d_conn6[elemIdx];
+    nodes[7] = d_conn7[elemIdx];
+
+    // Load coordinates
+    RealType coords[8][3];
+    for (int n = 0; n < 8; ++n) {
+        KeyType node = nodes[n];
+        coords[n][0] = d_x[node];
+        coords[n][1] = d_y[node];
+        coords[n][2] = d_z[node];
+    }
+
+    // Compute shape derivatives for each SCS
+    for (int ip = 0; ip < 12; ++ip) {
+        // Compute Jacobian at integration point ip
+        RealType J[3][3] = {{0,0,0},{0,0,0},{0,0,0}};
+
+        for (int node = 0; node < 8; ++node) {
+            for (int i = 0; i < 3; ++i) {
+                for (int j = 0; j < 3; ++j) {
+                    J[i][j] += d_hexDerivConst[ip][node][j] * coords[node][i];
+                }
+            }
+        }
+
+        // Invert Jacobian
+        RealType invJ[3][3];
+        invert3x3_generic(J, invJ);
+
+        // Transform parametric derivatives to physical derivatives
+        for (int node = 0; node < 8; ++node) {
+            RealType dndx_val[3] = {0, 0, 0};
+            for (int i = 0; i < 3; ++i) {
+                for (int j = 0; j < 3; ++j) {
+                    dndx_val[i] += invJ[i][j] * d_hexDerivConst[ip][node][j];
+                }
+            }
+
+            // Store in structure-of-arrays format
+            size_t offset = (elemIdx * 12 + ip) * 8 + node;
+            d_dndx[offset] = dndx_val[0];
+            d_dndy[offset] = dndx_val[1];
+            d_dndz[offset] = dndx_val[2];
+        }
+    }
+}
+
+// Host function to pre-compute shape derivatives
+template<typename KeyType, typename RealType>
+void precomputeShapeDerivativesGpu(
+    const KeyType* d_conn0, const KeyType* d_conn1,
+    const KeyType* d_conn2, const KeyType* d_conn3,
+    const KeyType* d_conn4, const KeyType* d_conn5,
+    const KeyType* d_conn6, const KeyType* d_conn7,
+    size_t numElements,
+    const RealType* d_x, const RealType* d_y, const RealType* d_z,
+    RealType* d_dndx, RealType* d_dndy, RealType* d_dndz,
+    cudaStream_t stream = 0)
+{
+    int blockSize = 256;
+    int numBlocks = (numElements + blockSize - 1) / blockSize;
+    precomputeShapeDerivativesKernel<KeyType, RealType><<<numBlocks, blockSize, 0, stream>>>(
+        d_conn0, d_conn1, d_conn2, d_conn3,
+        d_conn4, d_conn5, d_conn6, d_conn7,
+        numElements,
+        d_x, d_y, d_z,
+        d_dndx, d_dndy, d_dndz
     );
 }
 

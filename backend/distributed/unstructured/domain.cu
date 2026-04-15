@@ -906,68 +906,29 @@ __global__ void markNodesInElementRangeKernel(
     }
 }
 
-template <typename KeyType>
-__global__ void determineOwnershipDirectKernel(
-    uint8_t* nodeOwnership, 
-    const KeyType* nodeSfcKeys,
-    const KeyType* assignment, 
-    int numRanks, 
-    int myRank, 
-    size_t numNodes)
+// Generic kernel: mark nodes of elements with a given ownership value.
+// connPtrs is a device array of NodesPerElem pointers to connectivity arrays.
+template <typename KeyType, int NodesPerElem>
+__global__ void markElementNodesOwnership(
+    uint8_t* nodeOwnership,
+    const KeyType* const* connPtrs,
+    uint8_t value,
+    size_t startElem, size_t numElems)
 {
-    size_t nodeIdx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (nodeIdx < numNodes)
-    {
-        KeyType sfc = nodeSfcKeys[nodeIdx];
-        
-        // Find owner rank using binary search on assignment array
-        int owner = -1;
-        int left = 0;
-        int right = numRanks - 1;
-        
-        while (left <= right) {
-            int mid = left + (right - left) / 2;
-            if (sfc >= assignment[mid] && sfc < assignment[mid+1]) {
-                owner = mid;
-                break;
-            }
-            if (sfc < assignment[mid]) {
-                right = mid - 1;
-            } else {
-                left = mid + 1;
-            }
-        }
-        
-        // Mark ownership: 1 if owned by this rank, 0 if ghost
-        nodeOwnership[nodeIdx] = (owner == myRank) ? 1 : 0;
-    }
+    size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= numElems) return;
+    size_t e = startElem + idx;
+
+    #pragma unroll
+    for (int n = 0; n < NodesPerElem; ++n)
+        nodeOwnership[connPtrs[n][e]] = value;
 }
 
-template <typename KeyType>
-__global__ void refineOwnershipForFEMKernel(
-    uint8_t* nodeOwnership,
-    const unsigned int* nodeFlags,
-    size_t numNodes)
+// Helper to extract raw pointers from a tuple of device vectors
+template <typename KeyType, typename Tuple, std::size_t... Is>
+void extractConnPtrs(const Tuple& t, const KeyType* ptrs[], std::index_sequence<Is...>)
 {
-    size_t nodeIdx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (nodeIdx < numNodes)
-    {
-        unsigned int flags = nodeFlags[nodeIdx];
-
-        // Simple ownership: own nodes that appear in LOCAL elements
-        // This creates "overlapping" ownership for shared boundary nodes,
-        // but the DOF handler will use SFC-based global indices to ensure
-        // all ranks use the same global DOF index for each node.
-
-        if (flags & 0x01) {
-            // In local elements → owned (will contribute to matrix)
-            nodeOwnership[nodeIdx] = 1;
-        }
-        else {
-            // Not in local elements → ghost (receive values from owner)
-            nodeOwnership[nodeIdx] = 0;
-        }
-    }
+    ((ptrs[Is] = thrust::raw_pointer_cast(std::get<Is>(t).data())), ...);
 }
 
 template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
@@ -989,24 +950,7 @@ void HaloData<ElementTag, RealType, KeyType, AcceleratorTag>::buildNodeOwnership
         return;
     }
 
-    
-    // NEW APPROACH: SFC-key-based ownership (matches cornerstone's assignment)
-    // This ensures neighbor detection works correctly with findRank()
-    // - Nodes with SFC keys in [assignmentStart, assignmentEnd) → owned (1)
-    // - Shared boundaries will be detected by checking if nodes appear in both local and halo elements
-    
-    const auto& nodeSfcKeys = domain.getLocalToGlobalSfcMap();
-    const auto& conn_sfc = domain.getConnectivity();
-    
-    if (nodeSfcKeys.size() != nodeCount) {
-        std::cerr << "Rank " << domain.rank() << ": ERROR - nodeSfcKeys.size()=" << nodeSfcKeys.size() 
-                  << " != nodeCount=" << nodeCount << std::endl;
-        return;
-    }
-
-    // Get SFC assignment range for this rank
-    KeyType assignmentStart = domain.getDomain().assignmentStart();
-    
+    constexpr int NPC = ElementTag::NodesPerElement;
     int blockSize = 256;
     
     // Initialize all nodes as ghost (0)
@@ -1014,125 +958,44 @@ void HaloData<ElementTag, RealType, KeyType, AcceleratorTag>::buildNodeOwnership
                 thrust::device_pointer_cast(d_nodeOwnership_.data()),
                 thrust::device_pointer_cast(d_nodeOwnership_.data() + nodeCount), 
                 0);
-    
-    // Phase 1: Gather all rank assignments for SFC-key-based ownership
-    cstone::DeviceVector<KeyType> d_assignment(domain.numRanks() + 1);
-    std::vector<KeyType> h_assignment(domain.numRanks() + 1);
-    
-    MPI_Datatype mpiKeyType = (sizeof(KeyType) == 8) ? MPI_UNSIGNED_LONG : MPI_UNSIGNED;
-    MPI_Allgather(&assignmentStart, 1, mpiKeyType,
-                  h_assignment.data(), 1, mpiKeyType,
-                  MPI_COMM_WORLD);
-    h_assignment[domain.numRanks()] = std::numeric_limits<KeyType>::max();
-    
-    thrust::copy(h_assignment.begin(), h_assignment.end(), 
-                thrust::device_pointer_cast(d_assignment.data()));
-    
-    // Phase 2: Assign ownership based on SFC key ranges
-    if (nodeCount > 0) {
-        int numBlocks = (nodeCount + blockSize - 1) / blockSize;
-        determineOwnershipDirectKernel<KeyType><<<numBlocks, blockSize>>>(
-            thrust::raw_pointer_cast(d_nodeOwnership_.data()),
-            thrust::raw_pointer_cast(nodeSfcKeys.data()),
-            thrust::raw_pointer_cast(d_assignment.data()),
-            domain.numRanks(),
-            domain.rank(),
-            nodeCount);
-        cudaCheckError();
-    }
-    
-    // Phase 3: Mark nodes in LOCAL elements to detect potential shared boundaries
-    cstone::DeviceVector<unsigned int> d_nodeFlags(nodeCount, 0);
-    
-    constexpr int NodesPerElem = ElementTag::NodesPerElement;
-    auto conn0 = std::get<0>(conn_sfc);
-    auto conn1 = std::get<1>(conn_sfc);
-    auto conn2 = std::get<2>(conn_sfc);
-    auto conn3 = std::get<3>(conn_sfc);
-    
-    // For HexTag, get all 8 connectivity vectors; for TetTag, use nullptr placeholders
-    const KeyType* conn4_ptr = nullptr;
-    const KeyType* conn5_ptr = nullptr;
-    const KeyType* conn6_ptr = nullptr;
-    const KeyType* conn7_ptr = nullptr;
-    if constexpr (NodesPerElem == 8) {
-        conn4_ptr = thrust::raw_pointer_cast(std::get<4>(conn_sfc).data());
-        conn5_ptr = thrust::raw_pointer_cast(std::get<5>(conn_sfc).data());
-        conn6_ptr = thrust::raw_pointer_cast(std::get<6>(conn_sfc).data());
-        conn7_ptr = thrust::raw_pointer_cast(std::get<7>(conn_sfc).data());
-    }
-    
-    size_t localElementCount = domain.localElementCount();
-    
-    if (localElementCount > 0) {
-        int numBlocks = (localElementCount + blockSize - 1) / blockSize;
-        markNodesInElementRangeKernel<KeyType, NodesPerElem><<<numBlocks, blockSize>>>(
-            thrust::raw_pointer_cast(d_nodeFlags.data()),
-            thrust::raw_pointer_cast(conn0.data()),
-            thrust::raw_pointer_cast(conn1.data()),
-            thrust::raw_pointer_cast(conn2.data()),
-            thrust::raw_pointer_cast(conn3.data()),
-            conn4_ptr, conn5_ptr, conn6_ptr, conn7_ptr,
-            thrust::raw_pointer_cast(nodeSfcKeys.data()),
-            0, localElementCount, nodeCount, 0x01);
-        cudaCheckError();
-    }
-    
-    // Phase 4: Mark nodes in HALO elements
-    size_t totalElementCount = domain.getElementCount();
-    
-    if (totalElementCount > localElementCount) {
-        int numBlocks = (totalElementCount - localElementCount + blockSize - 1) / blockSize;
-        markNodesInElementRangeKernel<KeyType, NodesPerElem><<<numBlocks, blockSize>>>(
-            thrust::raw_pointer_cast(d_nodeFlags.data()),
-            thrust::raw_pointer_cast(conn0.data()),
-            thrust::raw_pointer_cast(conn1.data()),
-            thrust::raw_pointer_cast(conn2.data()),
-            thrust::raw_pointer_cast(conn3.data()),
-            conn4_ptr, conn5_ptr, conn6_ptr, conn7_ptr,
-            thrust::raw_pointer_cast(nodeSfcKeys.data()),
-            localElementCount, totalElementCount, nodeCount, 0x02);
-        cudaCheckError();
-    }
-    
-    // Phase 5: Refine ownership for FEM - overlapping ownership model
-    // Nodes in local elements → owned, others → ghost
-    // Shared nodes are owned by ALL ranks with local elements (overlapping)
-    // The DOF handler uses SFC-based global indexing to handle this correctly
-    if (nodeCount > 0) {
-        int numBlocks = (nodeCount + blockSize - 1) / blockSize;
-        refineOwnershipForFEMKernel<KeyType><<<numBlocks, blockSize>>>(
-            thrust::raw_pointer_cast(d_nodeOwnership_.data()),
-            thrust::raw_pointer_cast(d_nodeFlags.data()),
-            nodeCount);
-        cudaCheckError();
-    }
-    
-    // Debug: Count ownership states - only report critical issues
-    if (domain.rank() == 0) {
-        thrust::host_vector<uint8_t> h_ownership(nodeCount);
-        thrust::host_vector<unsigned int> h_flags(nodeCount);
-        thrust::copy(thrust::device_pointer_cast(d_nodeOwnership_.data()),
-                    thrust::device_pointer_cast(d_nodeOwnership_.data() + nodeCount),
-                    h_ownership.begin());
-        thrust::copy(thrust::device_pointer_cast(d_nodeFlags.data()),
-                    thrust::device_pointer_cast(d_nodeFlags.data() + nodeCount),
-                    h_flags.begin());
 
-        size_t cnt_owned = 0;
-        size_t cnt_owned_not_in_local = 0;
-        for (size_t i = 0; i < nodeCount; ++i) {
-            if (h_ownership[i] == 1 || h_ownership[i] == 2) {
-                cnt_owned++;
-                if (!(h_flags[i] & 0x01)) cnt_owned_not_in_local++;
-            }
-        }
-        std::cout << "Rank 0: " << cnt_owned << " owned nodes";
-        if (cnt_owned_not_in_local > 0) {
-            std::cout << " (WARNING: " << cnt_owned_not_in_local << " not in local elements!)";
-        }
-        std::cout << "\n";
+    // Get element connectivity (dense local node IDs)
+    const auto& d_conn = domain.getElementToNodeConnectivity();
+    size_t startIdx = domain.startIndex();
+    size_t endIdx   = domain.endIndex();
+
+    // Build device pointer array for connectivity columns
+    const KeyType* h_ptrs[NPC];
+    extractConnPtrs<KeyType>(d_conn, h_ptrs, std::make_index_sequence<NPC>{});
+
+    const KeyType** d_ptrs;
+    cudaMalloc(&d_ptrs, NPC * sizeof(const KeyType*));
+    cudaMemcpy(d_ptrs, h_ptrs, NPC * sizeof(const KeyType*), cudaMemcpyHostToDevice);
+
+    // Step 1: Mark all nodes in LOCAL elements as owned
+    size_t numLocal = endIdx - startIdx;
+    if (numLocal > 0) {
+        int numBlocks = (numLocal + blockSize - 1) / blockSize;
+        markElementNodesOwnership<KeyType, NPC><<<numBlocks, blockSize>>>(
+            thrust::raw_pointer_cast(d_nodeOwnership_.data()),
+            d_ptrs, 1, startIdx, numLocal);
+        cudaCheckError();
     }
+
+    // Step 2: Yield boundary nodes to lower-SFC-key ranks.
+    // Elements at indices [0, startIndex) are halo from lower-ranked partitions.
+    // Those elements are LOCAL on lower-ranked ranks, so those ranks can fully
+    // assemble the boundary nodes. Yielding ensures unique ownership: among all
+    // ranks that have a node in their local elements, the lowest rank wins.
+    if (startIdx > 0) {
+        int numBlocks = (startIdx + blockSize - 1) / blockSize;
+        markElementNodesOwnership<KeyType, NPC><<<numBlocks, blockSize>>>(
+            thrust::raw_pointer_cast(d_nodeOwnership_.data()),
+            d_ptrs, 0, 0, startIdx);
+        cudaCheckError();
+    }
+
+    cudaFree(d_ptrs);
 }
 
 // ===== For unsigned KeyType =====

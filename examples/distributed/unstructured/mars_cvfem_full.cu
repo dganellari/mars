@@ -2,6 +2,8 @@
 #include "backend/distributed/unstructured/domain.hpp"
 #include "backend/distributed/unstructured/fem/mars_fem.hpp"
 #include "backend/distributed/unstructured/fem/mars_cvfem_hex_kernel.hpp"
+#include "backend/distributed/unstructured/fem/mars_cvfem_assembler.hpp"
+#include "backend/distributed/unstructured/fem/mars_cvfem_utils.hpp"
 #include <thrust/device_vector.h>
 #include <set>
 #include <thrust/reduce.h>
@@ -148,33 +150,28 @@ int main(int argc, char** argv) {
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &numRanks);
 
-    if (argc < 2) {
-        if (rank == 0) {
-            std::cout << "Usage: " << argv[0] << " <mesh_file> [options]" << std::endl;
-            std::cout << "  mesh_file: .mesh or .exo format mesh file" << std::endl;
-            std::cout << "\nOptions:" << std::endl;
-            std::cout << "  --key-bits=32|64    SFC key size (default: 64)" << std::endl;
-            std::cout << "  --exact-coords      Store exact original coordinates" << std::endl;
-            std::cout << "  --iterations=N      Number of assembly iterations (default: 10)" << std::endl;
-            std::cout << "  --block-size=N      CUDA block size (default: 256)" << std::endl;
-            std::cout << "  --quiet             Suppress detailed debug output" << std::endl;
-        }
-        MPI_Finalize();
-        return 1;
+    // Set CUDA device based on local MPI rank (for multi-GPU nodes)
+    int deviceCount = 0;
+    cudaGetDeviceCount(&deviceCount);
+    if (deviceCount > 0) {
+        int device = rank % deviceCount;
+        cudaSetDevice(device);
     }
 
-    std::string meshFile = argv[1];
-
     // Parse command-line options
+    std::string meshFile;
     int keyBits = 64;
     bool useExactCoords = false;
     int numIterations = 10;
     int blockSize = 256;
     bool quiet = false;
+    CvfemKernelVariant kernelVariant = CvfemKernelVariant::Original;
 
-    for (int i = 2; i < argc; ++i) {
+    for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
-        if (arg.find("--key-bits=") == 0) {
+        if (arg.find("--mesh=") == 0) {
+            meshFile = arg.substr(7);
+        } else if (arg.find("--key-bits=") == 0) {
             keyBits = std::stoi(arg.substr(11));
             if (keyBits != 32 && keyBits != 64) {
                 if (rank == 0) {
@@ -189,9 +186,43 @@ int main(int argc, char** argv) {
             numIterations = std::stoi(arg.substr(13));
         } else if (arg.find("--block-size=") == 0) {
             blockSize = std::stoi(arg.substr(13));
+        } else if (arg.find("--kernel=") == 0) {
+            std::string v = arg.substr(9);
+            if (v == "original") kernelVariant = CvfemKernelVariant::Original;
+            else if (v == "optimized") kernelVariant = CvfemKernelVariant::Optimized;
+            else if (v == "shmem") kernelVariant = CvfemKernelVariant::Shmem;
+            else if (v == "tensor") kernelVariant = CvfemKernelVariant::Tensor;
+            else {
+                if (rank == 0) {
+                    std::cerr << "Error: Unknown kernel variant: " << v << std::endl;
+                }
+                MPI_Finalize();
+                return 1;
+            }
         } else if (arg == "--quiet") {
             quiet = true;
+        } else if (arg[0] != '-' && meshFile.empty()) {
+            // Positional argument (backward compatibility)
+            meshFile = arg;
         }
+    }
+
+    if (meshFile.empty()) {
+        if (rank == 0) {
+            std::cout << "Usage: " << argv[0] << " [options]" << std::endl;
+            std::cout << "\nOptions:" << std::endl;
+            std::cout << "  --mesh=FILE         Mesh file (.mesh or .exo format) [REQUIRED]" << std::endl;
+            std::cout << "  --kernel=VARIANT    tensor, shmem, optimized, original (default: original)" << std::endl;
+            std::cout << "  --block-size=N      CUDA block size (default: 256)" << std::endl;
+            std::cout << "  --iterations=N      Number of assembly iterations (default: 10)" << std::endl;
+            std::cout << "  --key-bits=32|64    SFC key size (default: 64)" << std::endl;
+            std::cout << "  --exact-coords      Store exact original coordinates" << std::endl;
+            std::cout << "  --quiet             Suppress detailed debug output" << std::endl;
+            std::cout << "\nBackward compatible positional syntax:" << std::endl;
+            std::cout << "  " << argv[0] << " <mesh_file> [options]" << std::endl;
+        }
+        MPI_Finalize();
+        return 1;
     }
 
     // Initialize performance counters
@@ -205,6 +236,15 @@ int main(int argc, char** argv) {
         std::cout << "  Coord mode:      " << (useExactCoords ? "exact" : "SFC-decoded") << std::endl;
         std::cout << "  Iterations:      " << numIterations << std::endl;
         std::cout << "  Block size:      " << blockSize << std::endl;
+        std::cout << "  Kernel variant:  ";
+        switch (kernelVariant) {
+            case CvfemKernelVariant::Original: std::cout << "original"; break;
+            case CvfemKernelVariant::Optimized: std::cout << "optimized"; break;
+            case CvfemKernelVariant::Shmem: std::cout << "shmem"; break;
+            case CvfemKernelVariant::Tensor: std::cout << "tensor"; break;
+            default: std::cout << "unknown"; break;
+        }
+        std::cout << std::endl;
         std::cout << std::endl;
     }
 
@@ -339,12 +379,18 @@ int main(int argc, char** argv) {
     // Convert to CSR format
     std::vector<int> rowPtr(numOwnedDofs + 1);
     std::vector<int> colInd;
+    std::vector<int> diagPtr(numOwnedDofs);  // Diagonal pointers for fast diagonal access
 
     rowPtr[0] = 0;
     for (int d = 0; d < numOwnedDofs; ++d) {
+        int diagFound = -1;
         for (int col : adj[d]) {
+            if (col == d) {
+                diagFound = colInd.size();  // Record diagonal position
+            }
             colInd.push_back(col);
         }
+        diagPtr[d] = diagFound;  // Store diagonal position for this row
         rowPtr[d + 1] = colInd.size();
     }
 
@@ -365,6 +411,7 @@ int main(int argc, char** argv) {
     // Allocate matrix and RHS on device
     cstone::DeviceVector<int> d_rowPtr(rowPtr.data(), rowPtr.data() + rowPtr.size());
     cstone::DeviceVector<int> d_colInd(colInd.data(), colInd.data() + colInd.size());
+    cstone::DeviceVector<int> d_diagPtr(diagPtr.data(), diagPtr.data() + diagPtr.size());
     cstone::DeviceVector<RealType> d_values(nnz, 0.0);
     cstone::DeviceVector<RealType> d_rhs(numOwnedDofs, 0.0);
 
@@ -418,9 +465,20 @@ int main(int argc, char** argv) {
 
     // Element-based data (12 SCS per hex element)
     cstone::DeviceVector<RealType> d_mdot(elementCount * 12, 0.0);
-    cstone::DeviceVector<RealType> d_areaVec_x(elementCount * 12, 1.0);
-    cstone::DeviceVector<RealType> d_areaVec_y(elementCount * 12, 0.0);
-    cstone::DeviceVector<RealType> d_areaVec_z(elementCount * 12, 0.0);
+    cstone::DeviceVector<RealType> d_areaVec_x(elementCount * 12);
+    cstone::DeviceVector<RealType> d_areaVec_y(elementCount * 12);
+    cstone::DeviceVector<RealType> d_areaVec_z(elementCount * 12);
+
+    // Precompute area vectors for all elements and SCS integration points
+    precomputeAreaVectorsGpu<KeyType, RealType>(
+        std::get<0>(d_conn).data(), std::get<1>(d_conn).data(),
+        std::get<2>(d_conn).data(), std::get<3>(d_conn).data(),
+        std::get<4>(d_conn).data(), std::get<5>(d_conn).data(),
+        std::get<6>(d_conn).data(), std::get<7>(d_conn).data(),
+        elementCount,
+        d_x.data(), d_y.data(), d_z.data(),
+        d_areaVec_x.data(), d_areaVec_y.data(), d_areaVec_z.data()
+    );
 
     cudaDeviceSynchronize();
     auto fieldInitEnd = std::chrono::high_resolution_clock::now();
@@ -432,7 +490,7 @@ int main(int argc, char** argv) {
     perf.connectivityBytes = 8 * elementCount * sizeof(KeyType);
     perf.outputMatrixBytes = nnz * sizeof(RealType) + numOwnedDofs * sizeof(RealType);
 
-    // Create simple CSR wrapper (diagPtr not needed for full sparsity)
+    // Create CSR wrapper with diagPtr for tensor kernel compatibility
     using MatrixType = mars::fem::CSRMatrix<RealType>;
 
     MatrixType* d_matrix;
@@ -441,7 +499,7 @@ int main(int argc, char** argv) {
         d_rowPtr.data(),
         d_colInd.data(),
         d_values.data(),
-        nullptr,  // diagPtr not needed for full sparsity (no lumping)
+        d_diagPtr.data(),  // Diagonal pointers for fast diagonal access
         numOwnedDofs,
         nnz
     };
@@ -456,7 +514,11 @@ int main(int argc, char** argv) {
 
     // Lambda to run the assembly kernel
     auto runAssembly = [&]() {
-        fem::cvfem_hex_assembly_kernel<KeyType, RealType><<<numBlocks, blockSize>>>(
+        CvfemHexAssembler<KeyType, RealType>::Config config;
+        config.blockSize = blockSize;
+        config.variant = kernelVariant;
+
+        CvfemHexAssembler<KeyType, RealType>::assembleFull(
             std::get<0>(d_conn).data(),
             std::get<1>(d_conn).data(),
             std::get<2>(d_conn).data(),
@@ -480,7 +542,8 @@ int main(int argc, char** argv) {
             d_nodeToDof.data(),
             d_nodeOwnership.data(),
             d_matrix,
-            d_rhs.data()
+            d_rhs.data(),
+            config
         );
     };
 
