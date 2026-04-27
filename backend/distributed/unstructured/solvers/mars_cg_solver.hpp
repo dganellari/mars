@@ -6,6 +6,8 @@
 #include <iostream>
 #include <cmath>
 #include <functional>
+#include <mpi.h>
+#include <type_traits>
 
 namespace mars
 {
@@ -202,6 +204,13 @@ public:
         haloExchangeCallback_ = callback;
     }
 
+    // Set the number of locally-owned DOFs for distributed dot products.
+    // When > 0, dot products sum only the first ownedSize entries per rank
+    // and MPI_Allreduce to get the global value. Set this in multi-rank
+    // setups to avoid double-counting ghost entries (or reading past
+    // Ap's allocation when Ap is owned-sized but p is total-sized).
+    void setOwnedSize(int ownedSize) { ownedSize_ = ownedSize; }
+
     // Sparse matrix-vector product: y = A * x (public for debugging)
     void spmv(const Matrix& A, const Vector& x, Vector& y)
     {
@@ -263,21 +272,38 @@ public:
 
 private:
 
-    // Dot product: result = x^T y
+    // Dot product: result = x^T y. When ownedSize_ > 0, sums only the first
+    // ownedSize entries per rank and MPI_Allreduce's the partial sum to get
+    // a global dot product (correct for distributed CG on owned DOFs).
+    // Otherwise sums over min(x.size(), y.size()).
     RealType dot(const Vector& x, const Vector& y)
     {
-        RealType result;
+        size_t n = (ownedSize_ > 0) ? size_t(ownedSize_) : std::min(x.size(), y.size());
+        RealType local = 0;
         if constexpr (std::is_same_v<RealType, double>)
         {
-            cublasDdot(cublasHandle_, x.size(), thrust::raw_pointer_cast(x.data()), 1,
-                       thrust::raw_pointer_cast(y.data()), 1, &result);
+            cublasDdot(cublasHandle_, int(n), thrust::raw_pointer_cast(x.data()), 1,
+                       thrust::raw_pointer_cast(y.data()), 1, &local);
         }
         else
         {
-            cublasSdot(cublasHandle_, x.size(), thrust::raw_pointer_cast(x.data()), 1,
-                       thrust::raw_pointer_cast(y.data()), 1, &result);
+            cublasSdot(cublasHandle_, int(n), thrust::raw_pointer_cast(x.data()), 1,
+                       thrust::raw_pointer_cast(y.data()), 1, &local);
         }
-        return result;
+
+        if (ownedSize_ > 0)
+        {
+            int initialized = 0;
+            MPI_Initialized(&initialized);
+            if (initialized)
+            {
+                RealType global = 0;
+                auto type = std::is_same_v<RealType, double> ? MPI_DOUBLE : MPI_FLOAT;
+                MPI_Allreduce(&local, &global, 1, type, MPI_SUM, MPI_COMM_WORLD);
+                return global;
+            }
+        }
+        return local;
     }
 
     // y = alpha * x + y
@@ -361,6 +387,7 @@ private:
     bool verbose_;
     
     std::function<void(Vector&)> haloExchangeCallback_;
+    int ownedSize_ = 0;  // > 0 enables MPI_Allreduce on dot products
 
     cublasHandle_t cublasHandle_;
     cusparseHandle_t cusparseHandle_;

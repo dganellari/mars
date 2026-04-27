@@ -2,6 +2,8 @@
 #include "backend/distributed/unstructured/domain.hpp"
 #include "backend/distributed/unstructured/fem/mars_fem.hpp"
 #include "backend/distributed/unstructured/fem/mars_cvfem_assembler.hpp"
+#include "backend/distributed/unstructured/fem/mars_cvfem_coloring.hpp"
+#include "backend/distributed/unstructured/fem/mars_cvfem_node_data.hpp"
 #include "backend/distributed/unstructured/fem/mars_perf_counters.hpp"
 #include "backend/distributed/unstructured/fem/mars_cvfem_utils.hpp"
 #include "backend/distributed/unstructured/fem/mars_sparsity_builder.hpp"
@@ -54,7 +56,14 @@ int main(int argc, char** argv) {
             else if (v == "optimized") kernelVariant = CvfemKernelVariant::Optimized;
             else if (v == "shmem") kernelVariant = CvfemKernelVariant::Shmem;
             else if (v == "team") kernelVariant = CvfemKernelVariant::Team;
-            else if (v == "tensor") kernelVariant = CvfemKernelVariant::Tensor;
+            else if (v == "tensor")         kernelVariant = CvfemKernelVariant::Tensor;
+            else if (v == "tensor_colored") kernelVariant = CvfemKernelVariant::TensorColored;
+            else if (v == "tensor_aos")      kernelVariant = CvfemKernelVariant::TensorAoS;
+            else if (v == "tensor_perip")    kernelVariant = CvfemKernelVariant::TensorPerip;
+            else if (v == "tensor_perip_lb2") kernelVariant = CvfemKernelVariant::TensorPeripLb2;
+            else if (v == "smem_cache")       kernelVariant = CvfemKernelVariant::SmemCache;
+            else if (v == "wmma_tensor")    kernelVariant = CvfemKernelVariant::WmmaTensor;
+            else if (v == "wgmma_tensor")   kernelVariant = CvfemKernelVariant::WgmmaTensor;
             else {
                 if (rank == 0) {
                     std::cerr << "Error: Unknown kernel variant: " << v << std::endl;
@@ -110,14 +119,17 @@ int main(int argc, char** argv) {
     MARS_NVTX_PUSH("Mesh Loading");
     auto meshLoadStart = std::chrono::high_resolution_clock::now();
     ElementDomain<ElemTag, RealType, KeyType, cstone::GpuTag> domain(meshFile, rank, numRanks, true, bucketSize);
+    if (rank == 0) { std::cout << "PHASE: domain constructed" << std::endl; std::cout.flush(); }
     const auto& d_nodeOwnership = domain.getNodeOwnershipMap();
     cudaDeviceSynchronize();
+    if (rank == 0) { std::cout << "PHASE: domain synced" << std::endl; std::cout.flush(); }
     auto meshLoadEnd = std::chrono::high_resolution_clock::now();
     perf.meshLoadTime = std::chrono::duration<float, std::milli>(meshLoadEnd - meshLoadStart).count();
     MARS_NVTX_POP();
 
     size_t nodeCount = domain.getNodeCount();
     size_t elementCount = domain.getElementCount();
+    if (rank == 0) { std::cout << "PHASE: nodeCount=" << nodeCount << " elementCount=" << elementCount << std::endl; std::cout.flush(); }
 
     // Build DOF mapping on GPU
     // All nodes get DOFs: owned → [0, numDofs), ghost → [numDofs, nodeCount)
@@ -129,6 +141,7 @@ int main(int argc, char** argv) {
         nodeCount
     );
     int numTotalDofs = static_cast<int>(nodeCount);    // owned + ghost (for CSR sizing)
+    if (rank == 0) { std::cout << "PHASE: DOF mapping done, numDofs=" << numDofs << " numTotalDofs=" << numTotalDofs << std::endl; std::cout.flush(); }
     perf.numDofs    = numDofs;
     perf.numNodes   = numDofs;                         // owned nodes (DOF = node for scalar problem)
     perf.numElements = domain.localElementCount();
@@ -137,6 +150,7 @@ int main(int argc, char** argv) {
     auto sparsityStart = std::chrono::high_resolution_clock::now();
 
     const auto& d_conn = domain.getElementToNodeConnectivity();
+    if (rank == 0) { std::cout << "PHASE: starting sparsity build" << std::endl; std::cout.flush(); }
 
     // Allocate CSR structure with diagonal positions (sized for all DOFs: owned + ghost)
     cstone::DeviceVector<int> d_rowPtr(numTotalDofs + 1);
@@ -175,6 +189,7 @@ int main(int argc, char** argv) {
     );
 
     cudaDeviceSynchronize();
+    if (rank == 0) { std::cout << "PHASE: sparsity done, nnz=" << nnz << std::endl; std::cout.flush(); }
     auto sparsityEnd = std::chrono::high_resolution_clock::now();
     perf.sparsityBuildTime = std::chrono::duration<float, std::milli>(sparsityEnd - sparsityStart).count();
     perf.matrixNnz = nnz;
@@ -242,11 +257,61 @@ int main(int argc, char** argv) {
     MatrixType h_matrix{d_rowPtr.data(), d_colInd.data(), d_values.data(), d_diagPtr.data(), numTotalDofs, nnz};
     cudaMemcpy(d_matrix, &h_matrix, sizeof(MatrixType), cudaMemcpyHostToDevice);
 
+    // Build graph coloring (one-time setup for TensorColored variant)
+    CvfemColoringData coloringData;
+    if (kernelVariant == CvfemKernelVariant::TensorColored) {
+        if (rank == 0) std::cout << "Building element graph coloring..." << std::endl;
+        auto colorStart = std::chrono::high_resolution_clock::now();
+
+        // Copy connectivity from device to host for the coloring algorithm
+        std::vector<KeyType> h_conn0(elementCount), h_conn1(elementCount),
+                             h_conn2(elementCount), h_conn3(elementCount),
+                             h_conn4(elementCount), h_conn5(elementCount),
+                             h_conn6(elementCount), h_conn7(elementCount);
+        cudaMemcpy(h_conn0.data(), std::get<0>(d_conn).data(), elementCount*sizeof(KeyType), cudaMemcpyDeviceToHost);
+        cudaMemcpy(h_conn1.data(), std::get<1>(d_conn).data(), elementCount*sizeof(KeyType), cudaMemcpyDeviceToHost);
+        cudaMemcpy(h_conn2.data(), std::get<2>(d_conn).data(), elementCount*sizeof(KeyType), cudaMemcpyDeviceToHost);
+        cudaMemcpy(h_conn3.data(), std::get<3>(d_conn).data(), elementCount*sizeof(KeyType), cudaMemcpyDeviceToHost);
+        cudaMemcpy(h_conn4.data(), std::get<4>(d_conn).data(), elementCount*sizeof(KeyType), cudaMemcpyDeviceToHost);
+        cudaMemcpy(h_conn5.data(), std::get<5>(d_conn).data(), elementCount*sizeof(KeyType), cudaMemcpyDeviceToHost);
+        cudaMemcpy(h_conn6.data(), std::get<6>(d_conn).data(), elementCount*sizeof(KeyType), cudaMemcpyDeviceToHost);
+        cudaMemcpy(h_conn7.data(), std::get<7>(d_conn).data(), elementCount*sizeof(KeyType), cudaMemcpyDeviceToHost);
+
+        buildCvfemColoring(
+            h_conn0.data(), h_conn1.data(), h_conn2.data(), h_conn3.data(),
+            h_conn4.data(), h_conn5.data(), h_conn6.data(), h_conn7.data(),
+            elementCount, nodeCount, coloringData);
+
+        auto colorEnd = std::chrono::high_resolution_clock::now();
+        float colorMs = std::chrono::duration<float, std::milli>(colorEnd - colorStart).count();
+        if (rank == 0)
+            std::cout << "Coloring done in " << colorMs << " ms ("
+                      << coloringData.numColors << " colors)" << std::endl;
+    }
+
+    // Pack AoS node data (one-time, for TensorAoS variant)
+    NodeData* d_nodeData = nullptr;
+    if (kernelVariant == CvfemKernelVariant::TensorAoS) {
+        if (rank == 0) std::cout << "Packing AoS node data..." << std::endl;
+        d_nodeData = packNodeData<RealType>(
+            d_x.data(), d_y.data(), d_z.data(),
+            d_phi.data(), d_gamma.data(), d_beta.data(),
+            d_grad_phi_x.data(), d_grad_phi_y.data(), d_grad_phi_z.data(),
+            nodeCount);
+        cudaDeviceSynchronize();
+        if (rank == 0) std::cout << "AoS node data packed (" << nodeCount << " nodes, "
+                                 << nodeCount * sizeof(NodeData) / 1024 / 1024 << " MB)" << std::endl;
+    }
+
     // Configure assembler
     Assembler::Config config;
     config.blockSize = blockSize;
     config.variant = kernelVariant;
     config.stream = assemblyStream;  // Use dedicated stream
+    if (kernelVariant == CvfemKernelVariant::TensorColored)
+        config.coloring = &coloringData;
+    if (kernelVariant == CvfemKernelVariant::TensorAoS)
+        config.nodeData = d_nodeData;
 
     auto runAssembly = [&]() {
         Assembler::assembleGraphLump(
@@ -382,6 +447,7 @@ int main(int argc, char** argv) {
     cudaStreamDestroy(resetStream);
 
     cudaFree(d_matrix);
+    if (d_nodeData) cudaFree(d_nodeData);
     MPI_Finalize();
     return 0;
 }

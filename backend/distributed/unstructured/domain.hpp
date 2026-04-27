@@ -33,6 +33,8 @@ using std::get;
 #include <thrust/iterator/constant_iterator.h>
 #include <algorithm>
 #include <array>
+#include <limits>
+#include <mpi.h>
 #include <filesystem>
 #include <iomanip>
 #include <iostream>
@@ -405,6 +407,39 @@ struct HaloData
 };
 
 // ============================================================================
+// NodeHaloTopology: per-neighbor send/recv lists of LOCAL node IDs for direct
+// CUDA-aware MPI exchange of node-DOF arrays (replaces cstone-element-halo
+// transport for the per-iteration solve communication path).
+//
+// Layout:
+//   peers_                  list of peer ranks (those we send to or receive from)
+//   sendOffsets_[p+1]       CSR offsets into sendNodeIds_ for peer index p
+//   sendNodeIds_            flat list of local owned-node IDs to send
+//   recvOffsets_[p+1]       CSR offsets into recvNodeIds_ for peer index p
+//   recvNodeIds_            flat list of local ghost-node IDs to receive
+//
+// Exchange: pack via thrust::gather; MPI Isend/Irecv on device pointers
+// (CUDA-aware MPI required); scatter via thrust::scatter on receive.
+// ============================================================================
+template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
+struct NodeHaloTopology
+{
+    template<typename T>
+    using DeviceVector = typename VectorSelector<T, AcceleratorTag>::type;
+
+    std::vector<int>      peers_;
+    std::vector<int>      sendOffsets_;        // size = peers.size() + 1, host
+    std::vector<int>      recvOffsets_;
+    DeviceVector<int>     sendNodeIds_;        // size = sendOffsets_.back()
+    DeviceVector<int>     recvNodeIds_;        // size = recvOffsets_.back()
+    // Persistent send/recv staging buffers (RealType only; resized lazily)
+    mutable DeviceVector<RealType> sendBuf_;
+    mutable DeviceVector<RealType> recvBuf_;
+
+    NodeHaloTopology(const ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>& domain);
+};
+
+// ============================================================================
 // CoordinateCache: Pre-decoded node coordinates from SFC keys
 // Optional caching to avoid repeated SFC decoding (trading memory for speed)
 // ============================================================================
@@ -492,6 +527,17 @@ public:
     ElementDomain(const HostCoordsTuple& h_coords,
                   const HostConnectivityTuple& h_conn,
                   const cstone::Box<RealType>& box,
+                  int rank,
+                  int numRanks,
+                  int bucketSize = 64);
+
+    // Device-data constructor (no host round-trip).
+    // The caller hands in already-on-device coords + connectivity. Bbox is
+    // computed on GPU + MPI. Used for AMR mesh rebuild after refinement.
+    // The input vectors are consumed (moved into the domain's owned buffers
+    // for sync scratch space; coords are passed straight to sync()).
+    ElementDomain(DeviceCoordsTuple&& d_coords,
+                  DeviceConnectivityTuple&& d_conn,
                   int rank,
                   int numRanks,
                   int bucketSize = 64);
@@ -695,6 +741,109 @@ public:
         domain_->exchangeHalos(arrays, sendBuffer, receiveBuffer);
     }
 
+    // Per-NODE halo exchange built on top of cstone's per-ELEMENT halo.
+    //
+    // Inputs:
+    //   nodeArray  size = nodeCount, holds per-node DOF values. Owned-node slots
+    //              must contain authoritative local values; ghost-node slots are
+    //              overwritten with their owners' values on return.
+    //   nodeToDof  size = nodeCount; node -> DOF index in nodeArray. Pass nullptr
+    //              if nodeArray is indexed directly by local node id.
+    //
+    // Algorithm: pack per-element corner arrays gated by node ownership (sentinel
+    // NaN where THIS rank doesn't own the corner node). cstone halo-exchanges the
+    // 8/4 corner arrays element-keyed. Unpack writes into ghost-node slots only,
+    // and only when the received value is non-sentinel. This guarantees ghost-DOF
+    // values come from each ghost node's actual owner rank (not from an
+    // intermediate rank that holds the same node as a stale ghost).
+    //
+    // Correctness invariant: for every ghost node N on this rank, the cstone
+    // halo must include at least one element owned by N's owner. Holds for
+    // typical FEM partitions where halo width covers full neighbor element layers.
+    template<class VectorType>
+    void exchangeNodeHalo(VectorType& nodeArray, const int* nodeToDof = nullptr) const
+    {
+        if (numRanks_ == 1) return;
+
+        using T = typename VectorType::value_type;
+        static_assert(std::is_same_v<T, RealType>,
+                      "exchangeNodeHalo: vector element type must match domain RealType");
+
+        ensureNodeHaloTopo();
+        const auto& topo = *nodeHaloTopo_;
+
+        // Resize staging buffers (lazy)
+        size_t sendTotal = topo.sendOffsets_.empty() ? 0 : size_t(topo.sendOffsets_.back());
+        size_t recvTotal = topo.recvOffsets_.empty() ? 0 : size_t(topo.recvOffsets_.back());
+        if (topo.sendBuf_.size() != sendTotal) topo.sendBuf_.resize(sendTotal);
+        if (topo.recvBuf_.size() != recvTotal) topo.recvBuf_.resize(recvTotal);
+
+        // Pack: gather nodeArray[nodeToDof[sendNodeIds]] into sendBuf
+        T*           arr  = thrust::raw_pointer_cast(nodeArray.data());
+        const int*   snds = thrust::raw_pointer_cast(topo.sendNodeIds_.data());
+        T*           sbuf = thrust::raw_pointer_cast(topo.sendBuf_.data());
+        if (sendTotal > 0)
+        {
+            thrust::for_each(thrust::device,
+                              thrust::counting_iterator<size_t>(0),
+                              thrust::counting_iterator<size_t>(sendTotal),
+                              [arr, snds, sbuf, nodeToDof] __device__ (size_t i) {
+                                  int n = snds[i];
+                                  int idx = (nodeToDof != nullptr) ? nodeToDof[n] : n;
+                                  sbuf[i] = (idx >= 0) ? arr[idx] : T(0);
+                              });
+            cudaDeviceSynchronize();
+        }
+
+        // Post recvs and sends. CUDA-aware MPI: pass device pointers directly.
+        T*           rbuf = thrust::raw_pointer_cast(topo.recvBuf_.data());
+        auto mpiType = std::is_same_v<T, double> ? MPI_DOUBLE : MPI_FLOAT;
+        std::vector<MPI_Request> reqs;
+        reqs.reserve(2 * topo.peers_.size());
+
+        for (size_t p = 0; p < topo.peers_.size(); ++p)
+        {
+            int peer = topo.peers_[p];
+            int rcnt = topo.recvOffsets_[p+1] - topo.recvOffsets_[p];
+            if (rcnt > 0)
+            {
+                MPI_Request r;
+                MPI_Irecv(rbuf + topo.recvOffsets_[p], rcnt, mpiType, peer,
+                          /*tag=*/777, MPI_COMM_WORLD, &r);
+                reqs.push_back(r);
+            }
+        }
+        for (size_t p = 0; p < topo.peers_.size(); ++p)
+        {
+            int peer = topo.peers_[p];
+            int scnt = topo.sendOffsets_[p+1] - topo.sendOffsets_[p];
+            if (scnt > 0)
+            {
+                MPI_Request r;
+                MPI_Isend(sbuf + topo.sendOffsets_[p], scnt, mpiType, peer,
+                          /*tag=*/777, MPI_COMM_WORLD, &r);
+                reqs.push_back(r);
+            }
+        }
+        if (!reqs.empty()) MPI_Waitall(int(reqs.size()), reqs.data(), MPI_STATUSES_IGNORE);
+
+        // Scatter recvBuf into nodeArray[nodeToDof[recvNodeIds]]
+        const int* rnds = thrust::raw_pointer_cast(topo.recvNodeIds_.data());
+        if (recvTotal > 0)
+        {
+            thrust::for_each(thrust::device,
+                              thrust::counting_iterator<size_t>(0),
+                              thrust::counting_iterator<size_t>(recvTotal),
+                              [arr, rnds, rbuf, nodeToDof] __device__ (size_t i) {
+                                  int n = rnds[i];
+                                  int idx = (nodeToDof != nullptr) ? nodeToDof[n] : n;
+                                  if (idx >= 0) arr[idx] = rbuf[i];
+                              });
+            cudaDeviceSynchronize();
+        }
+        return;
+    }
+
     // Device connectivity functions
     template<int I>
     __device__ KeyType getConnectivityDevice(size_t elementIndex) const;
@@ -801,11 +950,13 @@ private:
     // Friend declarations to allow helper structs access to private members
     friend struct AdjacencyData<ElementTag, RealType, KeyType, AcceleratorTag>;
     friend struct HaloData<ElementTag, RealType, KeyType, AcceleratorTag>;
+    friend struct NodeHaloTopology<ElementTag, RealType, KeyType, AcceleratorTag>;
     friend struct CoordinateCache<ElementTag, RealType, KeyType, AcceleratorTag>;
     friend struct OriginalCoordinates<ElementTag, RealType, KeyType, AcceleratorTag>;
 
     mutable std::unique_ptr<AdjacencyData<ElementTag, RealType, KeyType, AcceleratorTag>> adjacency_;
     mutable std::unique_ptr<HaloData<ElementTag, RealType, KeyType, AcceleratorTag>> halo_;
+    mutable std::unique_ptr<NodeHaloTopology<ElementTag, RealType, KeyType, AcceleratorTag>> nodeHaloTopo_;
     mutable std::unique_ptr<CoordinateCache<ElementTag, RealType, KeyType, AcceleratorTag>> coordCache_;
     mutable std::unique_ptr<OriginalCoordinates<ElementTag, RealType, KeyType, AcceleratorTag>> originalCoords_;
 
@@ -818,7 +969,9 @@ private:
     void ensureSfcMap() const;
     void ensureAdjacency() const;
     void ensureHalo() const;
+    void ensureNodeHaloTopo() const;
     void ensureCoordinateCache() const;
+
 
     void syncImpl(DeviceVector<KeyType>& d_nodeSfcCodes,
                   const DeviceConnectivityTuple& d_conn_,
@@ -1329,6 +1482,73 @@ ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(cons
 
     std::cout << "Rank " << rank_ << " initialized " << ElementTag::Name << " domain with " << nodeCount_
               << " nodes and " << elementCount_ << " elements." << std::endl;
+}
+
+// Device-data constructor: no host round-trip
+template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
+ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(DeviceCoordsTuple&& d_coords,
+                                                                              DeviceConnectivityTuple&& d_conn,
+                                                                              int rank,
+                                                                              int numRanks,
+                                                                              int bucketSize)
+    : rank_(rank)
+    , numRanks_(numRanks)
+    , box_(0, 1)
+{
+    if constexpr (!std::is_same_v<AcceleratorTag, cstone::GpuTag>)
+    {
+        throw std::runtime_error("ElementDomain device-data constructor requires GpuTag");
+    }
+
+    auto& d_x = std::get<0>(d_coords);
+    auto& d_y = std::get<1>(d_coords);
+    auto& d_z = std::get<2>(d_coords);
+
+    nodeCount_    = d_x.size();
+    elementCount_ = std::get<0>(d_conn).size();
+
+    // Bounding box on GPU + MPI
+    RealType lxmin, lxmax, lymin, lymax, lzmin, lzmax;
+    {
+        auto xb = thrust::device_pointer_cast(d_x.data());
+        auto yb = thrust::device_pointer_cast(d_y.data());
+        auto zb = thrust::device_pointer_cast(d_z.data());
+        lxmin = thrust::reduce(xb, xb + nodeCount_, std::numeric_limits<RealType>::max(),    thrust::minimum<RealType>());
+        lxmax = thrust::reduce(xb, xb + nodeCount_, std::numeric_limits<RealType>::lowest(), thrust::maximum<RealType>());
+        lymin = thrust::reduce(yb, yb + nodeCount_, std::numeric_limits<RealType>::max(),    thrust::minimum<RealType>());
+        lymax = thrust::reduce(yb, yb + nodeCount_, std::numeric_limits<RealType>::lowest(), thrust::maximum<RealType>());
+        lzmin = thrust::reduce(zb, zb + nodeCount_, std::numeric_limits<RealType>::max(),    thrust::minimum<RealType>());
+        lzmax = thrust::reduce(zb, zb + nodeCount_, std::numeric_limits<RealType>::lowest(), thrust::maximum<RealType>());
+    }
+
+    auto mpiType = std::is_same_v<RealType, double> ? MPI_DOUBLE : MPI_FLOAT;
+    RealType gxmin, gxmax, gymin, gymax, gzmin, gzmax;
+    MPI_Allreduce(&lxmin, &gxmin, 1, mpiType, MPI_MIN, MPI_COMM_WORLD);
+    MPI_Allreduce(&lxmax, &gxmax, 1, mpiType, MPI_MAX, MPI_COMM_WORLD);
+    MPI_Allreduce(&lymin, &gymin, 1, mpiType, MPI_MIN, MPI_COMM_WORLD);
+    MPI_Allreduce(&lymax, &gymax, 1, mpiType, MPI_MAX, MPI_COMM_WORLD);
+    MPI_Allreduce(&lzmin, &gzmin, 1, mpiType, MPI_MIN, MPI_COMM_WORLD);
+    MPI_Allreduce(&lzmax, &gzmax, 1, mpiType, MPI_MAX, MPI_COMM_WORLD);
+
+    RealType pad   = RealType(0.05);
+    RealType rx    = gxmax - gxmin, ry = gymax - gymin, rz = gzmax - gzmin;
+    box_ = cstone::Box<RealType>(gxmin - pad * rx, gxmax + pad * rx,
+                                  gymin - pad * ry, gymax + pad * ry,
+                                  gzmin - pad * rz, gzmax + pad * rz);
+
+    unsigned bucketSizeFocus = 8;
+    RealType theta           = 0.5;
+
+    domain_ = std::make_unique<DomainType>(rank, numRanks, bucketSize, bucketSizeFocus, theta, box_);
+
+    // d_props_ is initialized in calculateCharacteristicSizes; no transferDataToGPU needed
+    DeviceConnectivityTuple d_conn_local = std::move(d_conn);
+    DeviceCoordsTuple       d_coords_local = std::move(d_coords);
+    calculateCharacteristicSizes(d_conn_local, d_coords_local);
+    sync(d_conn_local, d_coords_local);
+
+    std::cout << "Rank " << rank_ << " initialized " << ElementTag::Name << " domain (device ctor) with "
+              << nodeCount_ << " nodes and " << elementCount_ << " elements." << std::endl;
 }
 
 // Read mesh data in SoA format; uses element-based partitioning for better data locality
@@ -2046,6 +2266,14 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ensureHalo() 
         ensureSfcMap();
         // HaloData now works directly with SFC keys - no adjacency needed!
         halo_ = std::make_unique<HaloData<ElementTag, RealType, KeyType, AcceleratorTag>>(*this);
+        // Build the per-node halo topology immediately. Its constructor also
+        // fixes duplicate ownership (lowest-rank-wins via Allgatherv) which
+        // must happen BEFORE any caller reads d_nodeOwnership_ to size DOF
+        // mappings or build sparsity.
+        if (numRanks_ > 1)
+        {
+            nodeHaloTopo_ = std::make_unique<NodeHaloTopology<ElementTag, RealType, KeyType, AcceleratorTag>>(*this);
+        }
     }
 }
 
@@ -2056,6 +2284,16 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ensureCoordin
     {
         coordCache_ = std::make_unique<CoordinateCache<ElementTag, RealType, KeyType, AcceleratorTag>>(*this);
         std::cout << "Rank " << rank_ << " cached coordinates lazily." << std::endl;
+    }
+}
+
+template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
+void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ensureNodeHaloTopo() const
+{
+    if (!nodeHaloTopo_)
+    {
+        // ensureHalo() builds both halo_ and nodeHaloTopo_ in one shot.
+        ensureHalo();
     }
 }
 

@@ -48,7 +48,27 @@ public:
         int numDofs,
         int* d_rowPtr,
         int* d_colInd,
-        int* d_diagPtr = nullptr,  // Output: diagonal position for each row
+        int* d_diagPtr = nullptr,
+        cudaStream_t stream = 0);
+
+    // Full sparsity pattern (27 NNZ/row): every (i,j) pair within each
+    // hex8's 8 nodes contributes a NNZ entry. Required when assembling
+    // with assembleFull (full element-local 8x8 stiffness).
+    static int buildFullSparsity(
+        const KeyType* d_conn0,
+        const KeyType* d_conn1,
+        const KeyType* d_conn2,
+        const KeyType* d_conn3,
+        const KeyType* d_conn4,
+        const KeyType* d_conn5,
+        const KeyType* d_conn6,
+        const KeyType* d_conn7,
+        size_t numElements,
+        const int* d_nodeToDof,
+        int numDofs,
+        int* d_rowPtr,
+        int* d_colInd,
+        int* d_diagPtr = nullptr,
         cudaStream_t stream = 0);
 };
 
@@ -247,6 +267,152 @@ int CvfemSparsityBuilder<KeyType>::buildGraphSparsity(
                 diagPtr[row] = lo;
             }
         );
+    }
+
+    return nnz;
+}
+
+// Full element-local sparsity: emit all 8x8 = 64 (dofI, dofJ) pairs per hex.
+template<typename KeyType>
+__global__ void buildFullEdgeListKernel(
+    const KeyType* __restrict__ conn0,
+    const KeyType* __restrict__ conn1,
+    const KeyType* __restrict__ conn2,
+    const KeyType* __restrict__ conn3,
+    const KeyType* __restrict__ conn4,
+    const KeyType* __restrict__ conn5,
+    const KeyType* __restrict__ conn6,
+    const KeyType* __restrict__ conn7,
+    const int* __restrict__ nodeToDof,
+    size_t numElements,
+    int* edgeListRow,
+    int* edgeListCol)
+{
+    size_t e = blockIdx.x * blockDim.x + threadIdx.x;
+    if (e >= numElements) return;
+
+    KeyType nodes[8];
+    nodes[0] = conn0[e]; nodes[1] = conn1[e]; nodes[2] = conn2[e]; nodes[3] = conn3[e];
+    nodes[4] = conn4[e]; nodes[5] = conn5[e]; nodes[6] = conn6[e]; nodes[7] = conn7[e];
+
+    int dofs[8];
+    for (int n = 0; n < 8; ++n) dofs[n] = nodeToDof[nodes[n]];
+
+    size_t base = e * 64;
+    for (int i = 0; i < 8; ++i)
+    {
+        for (int j = 0; j < 8; ++j)
+        {
+            size_t idx = base + i * 8 + j;
+            if (dofs[i] >= 0 && dofs[j] >= 0)
+            {
+                edgeListRow[idx] = dofs[i];
+                edgeListCol[idx] = dofs[j];
+            }
+            else
+            {
+                edgeListRow[idx] = -1;
+                edgeListCol[idx] = -1;
+            }
+        }
+    }
+}
+
+template<typename KeyType>
+int CvfemSparsityBuilder<KeyType>::buildFullSparsity(
+    const KeyType* d_conn0,
+    const KeyType* d_conn1,
+    const KeyType* d_conn2,
+    const KeyType* d_conn3,
+    const KeyType* d_conn4,
+    const KeyType* d_conn5,
+    const KeyType* d_conn6,
+    const KeyType* d_conn7,
+    size_t numElements,
+    const int* d_nodeToDof,
+    int numDofs,
+    int* d_rowPtr,
+    int* d_colInd,
+    int* d_diagPtr,
+    cudaStream_t stream)
+{
+    size_t numEdges = numElements * 64;
+    thrust::device_vector<int> d_edgeRow(numEdges);
+    thrust::device_vector<int> d_edgeCol(numEdges);
+
+    int blockSize = 256;
+    int numBlocks = (numElements + blockSize - 1) / blockSize;
+    buildFullEdgeListKernel<<<numBlocks, blockSize, 0, stream>>>(
+        d_conn0, d_conn1, d_conn2, d_conn3,
+        d_conn4, d_conn5, d_conn6, d_conn7,
+        d_nodeToDof, numElements,
+        thrust::raw_pointer_cast(d_edgeRow.data()),
+        thrust::raw_pointer_cast(d_edgeCol.data()));
+
+    auto new_end = thrust::remove_if(
+        thrust::device,
+        thrust::make_zip_iterator(thrust::make_tuple(d_edgeRow.begin(), d_edgeCol.begin())),
+        thrust::make_zip_iterator(thrust::make_tuple(d_edgeRow.end(), d_edgeCol.end())),
+        [] __device__(const thrust::tuple<int, int>& t) { return thrust::get<0>(t) < 0; });
+
+    size_t validEntries = thrust::distance(
+        thrust::make_zip_iterator(thrust::make_tuple(d_edgeRow.begin(), d_edgeCol.begin())), new_end);
+    d_edgeRow.resize(validEntries);
+    d_edgeCol.resize(validEntries);
+
+    thrust::sort(
+        thrust::device,
+        thrust::make_zip_iterator(thrust::make_tuple(d_edgeRow.begin(), d_edgeCol.begin())),
+        thrust::make_zip_iterator(thrust::make_tuple(d_edgeRow.end(), d_edgeCol.end())));
+
+    auto unique_end = thrust::unique(
+        thrust::device,
+        thrust::make_zip_iterator(thrust::make_tuple(d_edgeRow.begin(), d_edgeCol.begin())),
+        thrust::make_zip_iterator(thrust::make_tuple(d_edgeRow.end(), d_edgeCol.end())));
+
+    int nnz = thrust::distance(
+        thrust::make_zip_iterator(thrust::make_tuple(d_edgeRow.begin(), d_edgeCol.begin())), unique_end);
+    d_edgeRow.resize(nnz);
+    d_edgeCol.resize(nnz);
+
+    thrust::device_vector<int> d_rowCounts(numDofs, 0);
+    thrust::for_each(
+        thrust::device, d_edgeRow.begin(), d_edgeRow.end(),
+        [counts = thrust::raw_pointer_cast(d_rowCounts.data())] __device__(int row) { atomicAdd(&counts[row], 1); });
+
+    thrust::device_vector<int> d_rowPtrTemp(numDofs + 1);
+    thrust::exclusive_scan(thrust::device, d_rowCounts.begin(), d_rowCounts.end(), d_rowPtrTemp.begin());
+    int lastCount, lastPtr;
+    cudaMemcpy(&lastCount, thrust::raw_pointer_cast(d_rowCounts.data() + numDofs - 1), sizeof(int), cudaMemcpyDeviceToHost);
+    cudaMemcpy(&lastPtr, thrust::raw_pointer_cast(d_rowPtrTemp.data() + numDofs - 1), sizeof(int), cudaMemcpyDeviceToHost);
+    int finalVal = lastPtr + lastCount;
+    cudaMemcpy(thrust::raw_pointer_cast(d_rowPtrTemp.data() + numDofs), &finalVal, sizeof(int), cudaMemcpyHostToDevice);
+
+    cudaMemcpy(d_rowPtr, thrust::raw_pointer_cast(d_rowPtrTemp.data()), (numDofs + 1) * sizeof(int),
+                cudaMemcpyDeviceToDevice);
+
+    if (d_colInd != nullptr)
+    {
+        cudaMemcpy(d_colInd, thrust::raw_pointer_cast(d_edgeCol.data()), nnz * sizeof(int), cudaMemcpyDeviceToDevice);
+    }
+
+    if (d_diagPtr != nullptr && d_colInd != nullptr)
+    {
+        thrust::for_each(
+            thrust::device, thrust::make_counting_iterator(0), thrust::make_counting_iterator(numDofs),
+            [rowPtr = d_rowPtr, colInd = d_colInd, diagPtr = d_diagPtr] __device__(int row)
+            {
+                int start = rowPtr[row];
+                int end   = rowPtr[row + 1];
+                int lo = start, hi = end;
+                while (lo < hi)
+                {
+                    int mid = lo + (hi - lo) / 2;
+                    if (colInd[mid] < row) lo = mid + 1;
+                    else hi = mid;
+                }
+                diagPtr[row] = lo;
+            });
     }
 
     return nnz;

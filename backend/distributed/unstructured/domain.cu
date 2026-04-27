@@ -3,6 +3,8 @@
 #include "thrust/unique.h"
 #include "thrust/device_vector.h"
 #include "cub/cub.cuh"
+#include <unordered_map>
+#include <algorithm>
 
 namespace mars
 {
@@ -924,6 +926,7 @@ __global__ void markElementNodesOwnership(
         nodeOwnership[connPtrs[n][e]] = value;
 }
 
+
 // Helper to extract raw pointers from a tuple of device vectors
 template <typename KeyType, typename Tuple, std::size_t... Is>
 void extractConnPtrs(const Tuple& t, const KeyType* ptrs[], std::index_sequence<Is...>)
@@ -995,7 +998,228 @@ void HaloData<ElementTag, RealType, KeyType, AcceleratorTag>::buildNodeOwnership
         cudaCheckError();
     }
 
+    // Known limitation: a small number of corner-shared nodes (e.g. ~9 on
+    // cube16/4-rank) end up doubly-owned because cstone's halo width does not
+    // include the OPPOSITE-rank elements that touch corner-only contact nodes.
+    // An attempted Step 3 (atomicMin claim across element halos) is ineffective
+    // for the same reason: those elements aren't in any peer's halo set. A real
+    // fix needs an MPI_Allgatherv of (sfc_key, owner_rank) pairs and a global
+    // tiebreaker. Deferred until per-node halo topology is in place (#2).
+
     cudaFree(d_ptrs);
+}
+
+// ============================================================================
+// NodeHaloTopology constructor implementation
+// ============================================================================
+//
+// Builds per-peer send/recv lists of LOCAL node IDs for direct MPI exchange of
+// node-DOF arrays. Two-stage protocol at init time:
+//
+// Stage 1: MPI_Allgatherv of (sfc_key, owner_rank) for OWNED nodes only.
+//          Resulting global table has every (key, owner) pair across all ranks.
+//          Apply lowest-rank-wins rule to detect & fix duplicates (the 9-node
+//          ownership overlap from cstone halo-width gaps).
+//
+// Stage 2: For each ghost node N on this rank, look up its owner from the
+//          global table -> append N's local id to recvNodeIds_[ownerRank].
+//          For each owner R of mine, send R the list of N's sfc_keys I want
+//          (Alltoallv). R receives the keys and resolves each to a local node
+//          id via its sfc-map -> populates sendNodeIds_[requestingRank].
+//
+// Note: Stage 1 size = sum_r |owned_nodes_r| ~ globalNodes; tiny.
+//       Stage 2 size = sum_r |ghost_nodes_r|; bounded by partition surface.
+template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
+NodeHaloTopology<ElementTag, RealType, KeyType, AcceleratorTag>::NodeHaloTopology(
+    const ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>& domain)
+{
+    int rank     = domain.rank();
+    int numRanks = domain.numRanks();
+
+    if (numRanks == 1)
+    {
+        sendOffsets_.assign(1, 0);
+        recvOffsets_.assign(1, 0);
+        return;
+    }
+
+    size_t nodeCount = domain.getNodeCount();
+
+    // ----- Pull node ownership and SFC keys to host -----
+    std::vector<uint8_t> h_owned(nodeCount);
+    {
+        const auto& d_own = domain.getNodeOwnershipMap();
+        cudaMemcpy(h_owned.data(), thrust::raw_pointer_cast(d_own.data()),
+                   nodeCount * sizeof(uint8_t), cudaMemcpyDeviceToHost);
+    }
+    std::vector<KeyType> h_sfc(nodeCount);
+    {
+        const auto& d_map = domain.getLocalToGlobalSfcMap();
+        cudaMemcpy(h_sfc.data(), thrust::raw_pointer_cast(d_map.data()),
+                   nodeCount * sizeof(KeyType), cudaMemcpyDeviceToHost);
+    }
+
+    // ----- Build my local owned-keys list: (sfc, localNodeId) -----
+    std::vector<KeyType> myOwnedKeys;
+    std::vector<int>     myOwnedLocalIds;
+    myOwnedKeys.reserve(nodeCount);
+    myOwnedLocalIds.reserve(nodeCount);
+    for (size_t n = 0; n < nodeCount; ++n)
+    {
+        if (h_owned[n] == 1)
+        {
+            myOwnedKeys.push_back(h_sfc[n]);
+            myOwnedLocalIds.push_back(int(n));
+        }
+    }
+
+    // ----- Stage 1: MPI_Allgatherv of OWNED sfc keys + ranks -----
+    int myOwnedCount = int(myOwnedKeys.size());
+    std::vector<int> ownedCounts(numRanks), ownedDispls(numRanks);
+    MPI_Allgather(&myOwnedCount, 1, MPI_INT, ownedCounts.data(), 1, MPI_INT, MPI_COMM_WORLD);
+    int totalOwned = 0;
+    for (int r = 0; r < numRanks; ++r) { ownedDispls[r] = totalOwned; totalOwned += ownedCounts[r]; }
+
+    std::vector<KeyType> globalKeys(totalOwned);
+    auto mpiKeyType = (sizeof(KeyType) == 8) ? MPI_UINT64_T : MPI_UNSIGNED;
+    MPI_Allgatherv(myOwnedKeys.data(), myOwnedCount, mpiKeyType,
+                   globalKeys.data(), ownedCounts.data(), ownedDispls.data(), mpiKeyType,
+                   MPI_COMM_WORLD);
+
+    // Build sfc -> first-claiming-rank map (lowest-rank wins for duplicates)
+    std::unordered_map<KeyType, int> keyOwner;
+    keyOwner.reserve(totalOwned);
+    for (int r = 0; r < numRanks; ++r)
+    {
+        int beg = ownedDispls[r], end = beg + ownedCounts[r];
+        for (int i = beg; i < end; ++i)
+        {
+            auto it = keyOwner.find(globalKeys[i]);
+            if (it == keyOwner.end() || r < it->second) keyOwner[globalKeys[i]] = r;
+        }
+    }
+
+    // Fix duplicates on this rank: if keyOwner[myKey] != myrank, yield ownership
+    int yielded = 0;
+    {
+        auto& d_own = const_cast<typename HaloData<ElementTag, RealType, KeyType, AcceleratorTag>::template DeviceVector<uint8_t>&>(
+            domain.halo_->d_nodeOwnership_);
+        std::vector<uint8_t> h_ownNew = h_owned;
+        for (size_t n = 0; n < nodeCount; ++n)
+        {
+            if (h_ownNew[n] == 1)
+            {
+                auto it = keyOwner.find(h_sfc[n]);
+                if (it != keyOwner.end() && it->second != rank)
+                {
+                    h_ownNew[n] = 0;  // yield
+                    ++yielded;
+                }
+            }
+        }
+        if (yielded > 0)
+        {
+            cudaMemcpy(thrust::raw_pointer_cast(d_own.data()), h_ownNew.data(),
+                       nodeCount * sizeof(uint8_t), cudaMemcpyHostToDevice);
+            h_owned = std::move(h_ownNew);
+        }
+        std::cout << "Rank " << rank << ": NodeHaloTopo yielded " << yielded
+                  << " duplicate-owned nodes" << std::endl;
+        std::cout.flush();
+    }
+
+    // ----- Stage 2: build recv lists (my ghosts grouped by owner) -----
+    // Per-peer: keys I want (to send as request) + my local node ids (to populate recvNodeIds_)
+    std::vector<std::vector<KeyType>> reqKeysPerPeer(numRanks);
+    std::vector<std::vector<int>>     reqLocalIdsPerPeer(numRanks);
+    for (size_t n = 0; n < nodeCount; ++n)
+    {
+        if (h_owned[n] == 0)
+        {
+            auto it = keyOwner.find(h_sfc[n]);
+            if (it == keyOwner.end()) continue;  // unowned globally? skip
+            int owner = it->second;
+            reqKeysPerPeer[owner].push_back(h_sfc[n]);
+            reqLocalIdsPerPeer[owner].push_back(int(n));
+        }
+    }
+
+    // Stage 2a: Alltoall to learn how many keys each peer wants from me
+    std::vector<int> sendCounts(numRanks), recvCounts(numRanks);
+    for (int p = 0; p < numRanks; ++p) sendCounts[p] = int(reqKeysPerPeer[p].size());
+    MPI_Alltoall(sendCounts.data(), 1, MPI_INT, recvCounts.data(), 1, MPI_INT, MPI_COMM_WORLD);
+
+    std::vector<int> sendDispls(numRanks), recvDispls(numRanks);
+    int totalReqSend = 0, totalReqRecv = 0;
+    for (int p = 0; p < numRanks; ++p)
+    {
+        sendDispls[p] = totalReqSend; totalReqSend += sendCounts[p];
+        recvDispls[p] = totalReqRecv; totalReqRecv += recvCounts[p];
+    }
+
+    // Flatten request keys to send
+    std::vector<KeyType> reqKeysFlat(totalReqSend);
+    for (int p = 0; p < numRanks; ++p)
+        std::copy(reqKeysPerPeer[p].begin(), reqKeysPerPeer[p].end(),
+                  reqKeysFlat.begin() + sendDispls[p]);
+
+    // Stage 2b: Alltoallv to exchange the actual sfc keys
+    std::vector<KeyType> recvReqKeys(totalReqRecv);
+    MPI_Alltoallv(reqKeysFlat.data(),  sendCounts.data(), sendDispls.data(), mpiKeyType,
+                  recvReqKeys.data(),  recvCounts.data(), recvDispls.data(), mpiKeyType,
+                  MPI_COMM_WORLD);
+
+    // Build sfc -> myLocalId map for fast lookup
+    std::unordered_map<KeyType, int> myKeyToLocal;
+    myKeyToLocal.reserve(nodeCount);
+    for (size_t n = 0; n < nodeCount; ++n) myKeyToLocal[h_sfc[n]] = int(n);
+
+    // Resolve received-keys -> local node ids; group by requester
+    // recvReqKeys is already grouped by source rank via recvDispls
+    std::vector<std::vector<int>> sendIdsPerPeer(numRanks);
+    for (int p = 0; p < numRanks; ++p)
+    {
+        sendIdsPerPeer[p].reserve(recvCounts[p]);
+        for (int i = 0; i < recvCounts[p]; ++i)
+        {
+            auto it = myKeyToLocal.find(recvReqKeys[recvDispls[p] + i]);
+            // Owner side MUST find the key locally; if not, MPI bookkeeping bug.
+            sendIdsPerPeer[p].push_back(it != myKeyToLocal.end() ? it->second : -1);
+        }
+    }
+
+    // ----- Compact into peer-list / CSR structure -----
+    peers_.clear();
+    sendOffsets_.assign(1, 0);
+    recvOffsets_.assign(1, 0);
+    std::vector<int> sendNodesHost, recvNodesHost;
+
+    for (int p = 0; p < numRanks; ++p)
+    {
+        int sCnt = int(sendIdsPerPeer[p].size());
+        int rCnt = int(reqLocalIdsPerPeer[p].size());
+        if (sCnt == 0 && rCnt == 0) continue;
+        peers_.push_back(p);
+        for (int v : sendIdsPerPeer[p]) sendNodesHost.push_back(v);
+        for (int v : reqLocalIdsPerPeer[p]) recvNodesHost.push_back(v);
+        sendOffsets_.push_back(int(sendNodesHost.size()));
+        recvOffsets_.push_back(int(recvNodesHost.size()));
+    }
+
+    // Upload node-id arrays to device
+    sendNodeIds_.resize(sendNodesHost.size());
+    recvNodeIds_.resize(recvNodesHost.size());
+    if (!sendNodesHost.empty())
+        cudaMemcpy(thrust::raw_pointer_cast(sendNodeIds_.data()), sendNodesHost.data(),
+                   sendNodesHost.size() * sizeof(int), cudaMemcpyHostToDevice);
+    if (!recvNodesHost.empty())
+        cudaMemcpy(thrust::raw_pointer_cast(recvNodeIds_.data()), recvNodesHost.data(),
+                   recvNodesHost.size() * sizeof(int), cudaMemcpyHostToDevice);
+
+    std::cout << "Rank " << rank << ": NodeHaloTopo " << peers_.size() << " peers, "
+              << sendNodesHost.size() << " send nodes, "
+              << recvNodesHost.size() << " recv nodes" << std::endl;
+    std::cout.flush();
 }
 
 // ===== For unsigned KeyType =====
@@ -1374,5 +1598,15 @@ template struct HaloData<HexTag, float, unsigned, cstone::GpuTag>;
 template struct HaloData<HexTag, double, unsigned, cstone::GpuTag>;
 template struct HaloData<HexTag, float, uint64_t, cstone::GpuTag>;
 template struct HaloData<HexTag, double, uint64_t, cstone::GpuTag>;
+
+// Explicit instantiations for NodeHaloTopology
+template struct NodeHaloTopology<TetTag, float, unsigned, cstone::GpuTag>;
+template struct NodeHaloTopology<TetTag, double, unsigned, cstone::GpuTag>;
+template struct NodeHaloTopology<TetTag, float, uint64_t, cstone::GpuTag>;
+template struct NodeHaloTopology<TetTag, double, uint64_t, cstone::GpuTag>;
+template struct NodeHaloTopology<HexTag, float, unsigned, cstone::GpuTag>;
+template struct NodeHaloTopology<HexTag, double, unsigned, cstone::GpuTag>;
+template struct NodeHaloTopology<HexTag, float, uint64_t, cstone::GpuTag>;
+template struct NodeHaloTopology<HexTag, double, uint64_t, cstone::GpuTag>;
 
 } // namespace mars

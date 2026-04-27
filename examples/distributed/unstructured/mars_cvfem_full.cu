@@ -192,6 +192,8 @@ int main(int argc, char** argv) {
             else if (v == "optimized") kernelVariant = CvfemKernelVariant::Optimized;
             else if (v == "shmem") kernelVariant = CvfemKernelVariant::Shmem;
             else if (v == "tensor") kernelVariant = CvfemKernelVariant::Tensor;
+            else if (v == "wmma_tensor")  kernelVariant = CvfemKernelVariant::WmmaTensor;
+            else if (v == "wgmma_tensor") kernelVariant = CvfemKernelVariant::WgmmaTensor;
             else {
                 if (rank == 0) {
                     std::cerr << "Error: Unknown kernel variant: " << v << std::endl;

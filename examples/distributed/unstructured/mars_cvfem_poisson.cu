@@ -12,6 +12,7 @@
 #include <thrust/device_vector.h>
 #include <thrust/reduce.h>
 #include <thrust/extrema.h>
+#include <thrust/inner_product.h>
 #include <set>
 #include <mpi.h>
 #include <iomanip>
@@ -41,9 +42,9 @@ int main(int argc, char** argv) {
     std::string meshFile;
     CvfemKernelVariant kernelVariant = CvfemKernelVariant::Tensor;
     int blockSize = 256;
-    RealType sourceTerm = 1.0;  // RHS: -Δu = f
+    double sourceTerm = 1.0;  // RHS: -Δu = f
     int maxIter = 1000;
-    RealType tolerance = 1e-10;
+    double tolerance = 1e-10;
 
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
@@ -55,6 +56,8 @@ int main(int argc, char** argv) {
             else if (v == "shmem") kernelVariant = CvfemKernelVariant::Shmem;
             else if (v == "optimized") kernelVariant = CvfemKernelVariant::Optimized;
             else if (v == "original") kernelVariant = CvfemKernelVariant::Original;
+            else if (v == "wmma_tensor")  kernelVariant = CvfemKernelVariant::WmmaTensor;
+            else if (v == "wgmma_tensor") kernelVariant = CvfemKernelVariant::WgmmaTensor;
         } else if (arg.find("--block-size=") == 0) {
             blockSize = std::stoi(arg.substr(13));
         } else if (arg.find("--source=") == 0) {
@@ -105,8 +108,11 @@ int main(int argc, char** argv) {
 
     size_t nodeCount = domain.getNodeCount();
     size_t elementCount = domain.getElementCount();
-    const auto& d_conn = domain.getConnectivity();
-    const auto& d_coords = domain.getCoordinates();
+    const auto& d_conn = domain.getElementToNodeConnectivity();
+    domain.cacheNodeCoordinates();
+    const auto& d_x = domain.getNodeX();
+    const auto& d_y = domain.getNodeY();
+    const auto& d_z = domain.getNodeZ();
 
     if (rank == 0) {
         std::cout << "Mesh loaded:\n";
@@ -127,7 +133,8 @@ int main(int argc, char** argv) {
         }
     }
 
-    cstone::DeviceVector<int> d_node_to_dof(h_node_to_dof.begin(), h_node_to_dof.end());
+    cstone::DeviceVector<int> d_node_to_dof(nodeCount);
+    cudaMemcpy(d_node_to_dof.data(), h_node_to_dof.data(), nodeCount * sizeof(int), cudaMemcpyHostToDevice);
 
     if (rank == 0) {
         std::cout << "DOF mapping:\n";
@@ -207,11 +214,11 @@ int main(int argc, char** argv) {
                  thrust::device_pointer_cast(A.valuesPtr() + nnz),
                  RealType(0));
 
-    // Create temporary CsrMatrix for assembly (CVFEM kernels need this format)
-    cstone::DeviceVector<int> d_diagPtr(diagPtr.begin(), diagPtr.end());
-    CsrMatrix<RealType> assemblyMatrix;
+    // Create temporary CSRMatrix for assembly (CVFEM kernels need this format)
+    cstone::DeviceVector<int> d_diagPtr(numOwnedDofs);
+    cudaMemcpy(d_diagPtr.data(), diagPtr.data(), numOwnedDofs * sizeof(int), cudaMemcpyHostToDevice);
+    CSRMatrix<RealType> assemblyMatrix;
     assemblyMatrix.numRows = numOwnedDofs;
-    assemblyMatrix.numCols = numOwnedDofs;
     assemblyMatrix.nnz = nnz;
     assemblyMatrix.rowPtr = A.rowOffsetsPtr();
     assemblyMatrix.colInd = A.colIndicesPtr();
@@ -243,7 +250,7 @@ int main(int argc, char** argv) {
         std::get<4>(d_conn).data(), std::get<5>(d_conn).data(),
         std::get<6>(d_conn).data(), std::get<7>(d_conn).data(),
         elementCount,
-        std::get<0>(d_coords).data(), std::get<1>(d_coords).data(), std::get<2>(d_coords).data(),
+        d_x.data(), d_y.data(), d_z.data(),
         d_areaVec_x.data(), d_areaVec_y.data(), d_areaVec_z.data()
     );
 
@@ -267,7 +274,7 @@ int main(int argc, char** argv) {
         std::get<4>(d_conn).data(), std::get<5>(d_conn).data(),
         std::get<6>(d_conn).data(), std::get<7>(d_conn).data(),
         elementCount,
-        std::get<0>(d_coords).data(), std::get<1>(d_coords).data(), std::get<2>(d_coords).data(),
+        d_x.data(), d_y.data(), d_z.data(),
         d_gamma.data(), d_phi.data(), d_beta.data(),
         d_grad_phi_x.data(), d_grad_phi_y.data(), d_grad_phi_z.data(),
         d_mdot.data(),
@@ -293,18 +300,18 @@ int main(int argc, char** argv) {
 
     // Apply boundary conditions: u = 0 on boundary
     // Detect boundary nodes geometrically
-    std::vector<RealType> h_x(nodeCount), h_y(nodeCount), h_z(nodeCount);
-    cudaMemcpy(h_x.data(), std::get<0>(d_coords).data(), nodeCount * sizeof(RealType), cudaMemcpyDeviceToHost);
-    cudaMemcpy(h_y.data(), std::get<1>(d_coords).data(), nodeCount * sizeof(RealType), cudaMemcpyDeviceToHost);
-    cudaMemcpy(h_z.data(), std::get<2>(d_coords).data(), nodeCount * sizeof(RealType), cudaMemcpyDeviceToHost);
+    std::vector<RealType> h_cx(nodeCount), h_cy(nodeCount), h_cz(nodeCount);
+    cudaMemcpy(h_cx.data(), d_x.data(), nodeCount * sizeof(RealType), cudaMemcpyDeviceToHost);
+    cudaMemcpy(h_cy.data(), d_y.data(), nodeCount * sizeof(RealType), cudaMemcpyDeviceToHost);
+    cudaMemcpy(h_cz.data(), d_z.data(), nodeCount * sizeof(RealType), cudaMemcpyDeviceToHost);
 
     // Find bounding box
-    RealType xmin = *std::min_element(h_x.begin(), h_x.end());
-    RealType xmax = *std::max_element(h_x.begin(), h_x.end());
-    RealType ymin = *std::min_element(h_y.begin(), h_y.end());
-    RealType ymax = *std::max_element(h_y.begin(), h_y.end());
-    RealType zmin = *std::min_element(h_z.begin(), h_z.end());
-    RealType zmax = *std::max_element(h_z.begin(), h_z.end());
+    RealType xmin = *std::min_element(h_cx.begin(), h_cx.end());
+    RealType xmax = *std::max_element(h_cx.begin(), h_cx.end());
+    RealType ymin = *std::min_element(h_cy.begin(), h_cy.end());
+    RealType ymax = *std::max_element(h_cy.begin(), h_cy.end());
+    RealType zmin = *std::min_element(h_cz.begin(), h_cz.end());
+    RealType zmax = *std::max_element(h_cz.begin(), h_cz.end());
 
     RealType eps = 1e-10 * std::max({xmax - xmin, ymax - ymin, zmax - zmin});
 
@@ -314,9 +321,9 @@ int main(int argc, char** argv) {
 
     for (size_t i = 0; i < nodeCount; ++i) {
         if (h_ownership[i] == 1) {
-            bool onBoundary = (std::abs(h_x[i] - xmin) < eps || std::abs(h_x[i] - xmax) < eps ||
-                               std::abs(h_y[i] - ymin) < eps || std::abs(h_y[i] - ymax) < eps ||
-                               std::abs(h_z[i] - zmin) < eps || std::abs(h_z[i] - zmax) < eps);
+            bool onBoundary = (std::abs(h_cx[i] - xmin) < eps || std::abs(h_cx[i] - xmax) < eps ||
+                               std::abs(h_cy[i] - ymin) < eps || std::abs(h_cy[i] - ymax) < eps ||
+                               std::abs(h_cz[i] - zmin) < eps || std::abs(h_cz[i] - zmax) < eps);
             if (onBoundary) {
                 int dof = h_node_to_dof[i];
                 if (dof >= 0) {
