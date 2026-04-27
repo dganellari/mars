@@ -7,8 +7,6 @@
 #include <stdexcept>
 #include <tuple>
 #include <filesystem>
-#include <unordered_set>
-#include <unordered_map>
 #include <algorithm>
 #include "mars.hpp"
 
@@ -31,7 +29,7 @@ auto createNVectors(size_t size)
     }
     else if constexpr (N == 8)
     {
-        return std::tuple<std::vector<KeyType>, std::vector<KeyType>, std::vector<KeyType>, std::vector<KeyType>, 
+        return std::tuple<std::vector<KeyType>, std::vector<KeyType>, std::vector<KeyType>, std::vector<KeyType>,
                           std::vector<KeyType>, std::vector<KeyType>, std::vector<KeyType>, std::vector<KeyType>>(
             std::vector<KeyType>(size), std::vector<KeyType>(size), std::vector<KeyType>(size), std::vector<KeyType>(size),
             std::vector<KeyType>(size), std::vector<KeyType>(size), std::vector<KeyType>(size), std::vector<KeyType>(size));
@@ -50,111 +48,233 @@ auto createNVectors(size_t size)
 template<int N, typename RealType = float, typename KeyType = unsigned>
 inline auto readMeshWithElementPartitioning(const std::string& meshDir, int rank, int numRanks)
 {
-    // Determine the file extension based on RealType
-    std::string ext;
-    if constexpr (std::is_same_v<RealType, float>) { ext = "float32"; }
-    else if constexpr (std::is_same_v<RealType, double>) { ext = "double"; }
-    else { throw std::runtime_error("Unsupported RealType for coordinate reading"); }
+    // Detect coordinate file format on disk (float32 or double)
+    // The file may not match RealType — e.g., RealType=double but files are x.float32
+    bool coordIsFloat32 = false;
+    std::string coordExt;
+    {
+        std::ifstream test_coord(meshDir + "/x.float32", std::ios::binary);
+        if (test_coord)
+        {
+            coordExt = "float32";
+            coordIsFloat32 = true;
+        }
+        else
+        {
+            std::ifstream test_coord2(meshDir + "/x.double", std::ios::binary);
+            if (test_coord2)
+            {
+                coordExt = "double";
+                coordIsFloat32 = false;
+            }
+            else
+            {
+                throw std::runtime_error("Failed to find coordinate files: neither x.float32 nor x.double in " + meshDir);
+            }
+        }
+    }
+    size_t coordDiskSize = coordIsFloat32 ? sizeof(float) : sizeof(double);
 
-    // STEP 1: Read element connectivity for this rank's portion
-    // Open the first index file to determine total element count
-    std::ifstream test_file(meshDir + "/i0.int32", std::ios::binary);
-    if (!test_file) { throw std::runtime_error("Failed to open index file i0"); }
+    // STEP 1: Detect connectivity file format (int64 vs int32) and read element count
+    bool useInt64 = false;
+    size_t indexSize = sizeof(int32_t);
+    std::string indexExt = "int32";
 
-    test_file.seekg(0, std::ios::end);
-    size_t total_elements = test_file.tellg() / sizeof(int32_t);
-    test_file.seekg(0, std::ios::beg);
-    test_file.close();
+    // Try int64 first, fall back to int32
+    {
+        std::ifstream test_file(meshDir + "/i0.int64", std::ios::binary);
+        if (test_file)
+        {
+            useInt64 = true;
+            indexSize = sizeof(int64_t);
+            indexExt = "int64";
+        }
+        else
+        {
+            test_file.open(meshDir + "/i0.int32", std::ios::binary);
+            if (!test_file) { throw std::runtime_error("Failed to open index file: neither i0.int64 nor i0.int32 found in " + meshDir); }
+        }
+    }
+
+    // Determine total element count from first index file
+    size_t total_elements;
+    {
+        std::ifstream test_file(meshDir + "/i0." + indexExt, std::ios::binary);
+        test_file.seekg(0, std::ios::end);
+        total_elements = static_cast<size_t>(test_file.tellg()) / indexSize;
+        test_file.close();
+    }
+
+    if (rank == 0)
+    {
+        std::cout << "Binary mesh: " << total_elements << " elements, index=" << indexExt << ", coords=" << coordExt << std::endl;
+    }
 
     // Calculate this rank's element portion
     size_t elemPerRank  = total_elements / numRanks;
-    size_t elemStartIdx = rank * elemPerRank;
+    size_t elemStartIdx = static_cast<size_t>(rank) * elemPerRank;
     size_t elemEndIdx   = (rank == numRanks - 1) ? total_elements : elemStartIdx + elemPerRank;
     size_t elementCount = elemEndIdx - elemStartIdx;
 
     // Read element connectivity
     auto rawConnectivity = createNVectors<N, KeyType>(elementCount);
 
-    int i                  = 0;
+    int i = 0;
     auto read_connectivity = [&](auto& vec)
     {
-        std::ifstream idx_file(meshDir + "/i" + std::to_string(i++) + ".int32", std::ios::binary);
-        if (!idx_file) { throw std::runtime_error("Failed to open index file i" + std::to_string(i - 1)); }
+        std::ifstream idx_file(meshDir + "/i" + std::to_string(i++) + "." + indexExt, std::ios::binary);
+        if (!idx_file) { throw std::runtime_error("Failed to open index file i" + std::to_string(i - 1) + "." + indexExt); }
 
-        idx_file.seekg(elemStartIdx * sizeof(int32_t));
+        idx_file.seekg(static_cast<std::streamoff>(elemStartIdx * indexSize));
 
-        std::vector<int32_t> tempVec(elementCount);
-        idx_file.read(reinterpret_cast<char*>(tempVec.data()), elementCount * sizeof(int32_t));
-
-        //convert to KeyType
-        std::transform(tempVec.begin(), tempVec.end(), vec.begin(),
-                       [](int32_t val) { return static_cast<KeyType>(val); });
+        if (useInt64)
+        {
+            std::vector<int64_t> tempVec(elementCount);
+            idx_file.read(reinterpret_cast<char*>(tempVec.data()), elementCount * sizeof(int64_t));
+            std::transform(tempVec.begin(), tempVec.end(), vec.begin(),
+                           [](int64_t val) { return static_cast<KeyType>(val); });
+        }
+        else
+        {
+            std::vector<int32_t> tempVec(elementCount);
+            idx_file.read(reinterpret_cast<char*>(tempVec.data()), elementCount * sizeof(int32_t));
+            std::transform(tempVec.begin(), tempVec.end(), vec.begin(),
+                           [](int32_t val) { return static_cast<KeyType>(val); });
+        }
     };
 
     std::apply([&](auto&... vecs) { (read_connectivity(vecs), ...); }, rawConnectivity);
 
-    // STEP 2: Identify unique nodes needed by this rank
-    std::unordered_set<KeyType> uniqueNodes;
+    // STEP 2: Identify unique nodes needed by this rank using sorted vector (no hash tables)
+    std::vector<KeyType> allNodes;
+    allNodes.reserve(elementCount * N);
 
     auto collect_nodes = [&](const auto& vec)
     {
-        for (auto nodeId : vec)
-        {
-            uniqueNodes.insert(nodeId);
-        }
+        allNodes.insert(allNodes.end(), vec.begin(), vec.end());
     };
 
     std::apply([&](const auto&... vecs) { (collect_nodes(vecs), ...); }, rawConnectivity);
 
-    // Create a sorted vector of unique node IDs for efficient file reading
-    std::vector<KeyType> neededNodes(uniqueNodes.begin(), uniqueNodes.end());
-    std::sort(neededNodes.begin(), neededNodes.end());
+    std::sort(allNodes.begin(), allNodes.end());
+    auto last = std::unique(allNodes.begin(), allNodes.end());
+    allNodes.erase(last, allNodes.end());
+
+    std::vector<KeyType> neededNodes = std::move(allNodes);
     size_t nodeCount = neededNodes.size();
 
-    // STEP 3: Create global-to-local node ID mapping
-    std::unordered_map<KeyType, KeyType> globalToLocal;
-    for (size_t i = 0; i < neededNodes.size(); i++)
-    {
-        globalToLocal[neededNodes[i]] = static_cast<KeyType>(i);
-    }
-
-    // STEP 4: Read only needed node coordinates
+    // STEP 3: Read coordinates using contiguous range read
     std::vector<RealType> x_data(nodeCount), y_data(nodeCount), z_data(nodeCount);
 
-    std::ifstream x_file(meshDir + "/x." + ext, std::ios::binary);
-    std::ifstream y_file(meshDir + "/y." + ext, std::ios::binary);
-    std::ifstream z_file(meshDir + "/z." + ext, std::ios::binary);
+    std::ifstream x_file(meshDir + "/x." + coordExt, std::ios::binary);
+    std::ifstream y_file(meshDir + "/y." + coordExt, std::ios::binary);
+    std::ifstream z_file(meshDir + "/z." + coordExt, std::ios::binary);
 
-    if (!x_file || !y_file || !z_file) { throw std::runtime_error("Failed to open coordinate files" + meshDir + "/x." + ext + ", " +
-                                                                    meshDir + "/y." + ext + ", " +
-                                                                    meshDir + "/z." + ext); }
+    if (!x_file || !y_file || !z_file) { throw std::runtime_error("Failed to open coordinate files in " + meshDir); }
 
-    // Read coordinates for each needed node
-    for (size_t i = 0; i < neededNodes.size(); i++)
+    // Read coordinates: use contiguous range if dense, chunked reads if sparse
+    KeyType minNode = neededNodes.front();
+    KeyType maxNode = neededNodes.back();
+    size_t rangeCount = static_cast<size_t>(maxNode - minNode) + 1;
+
+    // Density ratio: if needed nodes are >25% of the range, read contiguous block
+    // Otherwise, read in chunks to avoid huge temporary buffers
+    double density = static_cast<double>(nodeCount) / static_cast<double>(rangeCount);
+    // Also cap the buffer at 512 MB to avoid OOM
+    size_t maxBufBytes = 512ULL * 1024 * 1024;
+    size_t rangeBufBytes = rangeCount * coordDiskSize;
+
+    if (density > 0.25 && rangeBufBytes <= maxBufBytes)
     {
-        auto globalNodeId = neededNodes[i];
+        // Dense case: read contiguous range and scatter
+        auto readAndScatter = [&](std::ifstream& file, std::vector<RealType>& out)
+        {
+            file.seekg(static_cast<std::streamoff>(static_cast<size_t>(minNode) * coordDiskSize));
 
-        x_file.seekg(globalNodeId * sizeof(RealType));
-        y_file.seekg(globalNodeId * sizeof(RealType));
-        z_file.seekg(globalNodeId * sizeof(RealType));
+            if (coordIsFloat32)
+            {
+                std::vector<float> buf(rangeCount);
+                file.read(reinterpret_cast<char*>(buf.data()), rangeCount * sizeof(float));
+                for (size_t j = 0; j < nodeCount; j++)
+                    out[j] = static_cast<RealType>(buf[static_cast<size_t>(neededNodes[j] - minNode)]);
+            }
+            else
+            {
+                std::vector<double> buf(rangeCount);
+                file.read(reinterpret_cast<char*>(buf.data()), rangeCount * sizeof(double));
+                for (size_t j = 0; j < nodeCount; j++)
+                    out[j] = static_cast<RealType>(buf[static_cast<size_t>(neededNodes[j] - minNode)]);
+            }
+        };
 
-        x_file.read(reinterpret_cast<char*>(&x_data[i]), sizeof(RealType));
-        y_file.read(reinterpret_cast<char*>(&y_data[i]), sizeof(RealType));
-        z_file.read(reinterpret_cast<char*>(&z_data[i]), sizeof(RealType));
+        readAndScatter(x_file, x_data);
+        readAndScatter(y_file, y_data);
+        readAndScatter(z_file, z_data);
+    }
+    else
+    {
+        // Sparse case: read in chunks along the sorted neededNodes list
+        // Each chunk reads a contiguous sub-range of the coordinate file
+        size_t maxChunkNodes = maxBufBytes / coordDiskSize;
+
+        auto readChunked = [&](std::ifstream& file, std::vector<RealType>& out)
+        {
+            size_t j = 0;
+            while (j < nodeCount)
+            {
+                // Find chunk: start from neededNodes[j], include as many consecutive-ish nodes
+                // as fit in the buffer
+                size_t chunkStart = j;
+                KeyType chunkMinNode = neededNodes[j];
+                // Extend chunk until the range exceeds buffer or we run out of nodes
+                size_t chunkEnd = j + 1;
+                while (chunkEnd < nodeCount)
+                {
+                    size_t chunkRange = static_cast<size_t>(neededNodes[chunkEnd] - chunkMinNode) + 1;
+                    if (chunkRange > maxChunkNodes) break;
+                    chunkEnd++;
+                }
+
+                size_t chunkRange = static_cast<size_t>(neededNodes[chunkEnd - 1] - chunkMinNode) + 1;
+
+                file.seekg(static_cast<std::streamoff>(static_cast<size_t>(chunkMinNode) * coordDiskSize));
+
+                if (coordIsFloat32)
+                {
+                    std::vector<float> buf(chunkRange);
+                    file.read(reinterpret_cast<char*>(buf.data()), chunkRange * sizeof(float));
+                    for (size_t k = chunkStart; k < chunkEnd; k++)
+                        out[k] = static_cast<RealType>(buf[static_cast<size_t>(neededNodes[k] - chunkMinNode)]);
+                }
+                else
+                {
+                    std::vector<double> buf(chunkRange);
+                    file.read(reinterpret_cast<char*>(buf.data()), chunkRange * sizeof(double));
+                    for (size_t k = chunkStart; k < chunkEnd; k++)
+                        out[k] = static_cast<RealType>(buf[static_cast<size_t>(neededNodes[k] - chunkMinNode)]);
+                }
+
+                j = chunkEnd;
+            }
+        };
+
+        readChunked(x_file, x_data);
+        readChunked(y_file, y_data);
+        readChunked(z_file, z_data);
     }
 
-    // STEP 5: Adjust connectivity to use local indices
+    // STEP 4: Adjust connectivity to use local indices (binary search instead of hash map)
     auto localConnectivity = createNVectors<N, KeyType>(elementCount);
 
     auto adjust_indices = [&](const auto& global_vec, auto& local_vec)
     {
         for (size_t j = 0; j < elementCount; j++)
         {
-            local_vec[j] = globalToLocal[global_vec[j]];
+            auto it = std::lower_bound(neededNodes.begin(), neededNodes.end(), global_vec[j]);
+            local_vec[j] = static_cast<KeyType>(std::distance(neededNodes.begin(), it));
         }
     };
 
-    // Apply the index adjustment to each connectivity vector
     std::apply(
         [&](const auto&... global_vecs)
         {

@@ -40,3 +40,24 @@ else()
     target_compile_definitions(mars_cvfem_graph PRIVATE MARS_DISABLE_NVTX)
 endif()
 install(TARGETS mars_cvfem_graph RUNTIME DESTINATION bin/examples)
+
+# CVFEM Poisson solver
+add_executable(mars_cvfem_poisson mars_cvfem_poisson.cu)
+target_link_libraries(mars_cvfem_poisson PRIVATE mars)
+install(TARGETS mars_cvfem_poisson RUNTIME DESTINATION bin/examples)
+
+# AMR Poisson solver - adaptive mesh refinement with CVFEM
+add_executable(mars_amr_poisson mars_amr_poisson.cu)
+target_link_libraries(mars_amr_poisson PRIVATE mars)
+target_include_directories(mars_amr_poisson PRIVATE
+    ${CMAKE_SOURCE_DIR}/backend/distributed/unstructured/amr
+)
+install(TARGETS mars_amr_poisson RUNTIME DESTINATION bin/examples)
+
+# AMR CVFEM Graph solver - adaptive mesh refinement with graph-based assembly
+add_executable(mars_amr_cvfem_graph mars_amr_cvfem_graph.cu)
+target_link_libraries(mars_amr_cvfem_graph PRIVATE mars)
+target_include_directories(mars_amr_cvfem_graph PRIVATE
+    ${CMAKE_SOURCE_DIR}/backend/distributed/unstructured/amr
+)
+install(TARGETS mars_amr_cvfem_graph RUNTIME DESTINATION bin/examples)

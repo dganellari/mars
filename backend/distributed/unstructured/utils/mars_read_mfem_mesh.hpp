@@ -7,6 +7,7 @@
 #include <stdexcept>
 #include <tuple>
 #include <map>
+#include <unordered_set>
 #include <sstream>
 #include <algorithm>
 #include "mars.hpp"
