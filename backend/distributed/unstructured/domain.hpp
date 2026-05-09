@@ -33,6 +33,7 @@ using std::get;
 #include <thrust/iterator/constant_iterator.h>
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <limits>
 #include <mpi.h>
 #include <filesystem>
@@ -432,11 +433,28 @@ struct NodeHaloTopology
     std::vector<int>      recvOffsets_;
     DeviceVector<int>     sendNodeIds_;        // size = sendOffsets_.back()
     DeviceVector<int>     recvNodeIds_;        // size = recvOffsets_.back()
-    // Persistent send/recv staging buffers (RealType only; resized lazily)
+    // Persistent send/recv staging buffers. Pre-sized in NodeHaloTopology ctor;
+    // never resized on hot path. mutable so exchangeNodeHalo() can be const,
+    // matching cstone Halos::exchangeHalos pattern; safe because pre-sizing
+    // removes the race that bit v1.
     mutable DeviceVector<RealType> sendBuf_;
     mutable DeviceVector<RealType> recvBuf_;
+    // Epoch counter for unique MPI tags across multiple exchangeNodeHalo() calls
+    // between MPI collectives (matches cstone Halos::haloEpoch_ convention).
+    mutable int epoch_{0};
 
+    NodeHaloTopology() = default;
     NodeHaloTopology(const ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>& domain);
+
+    // Gate 1 helper: build via the device-resident path consuming cstone's
+    // incomingHaloIndices/outgoingHaloIndices instead of host MPI_Allgatherv.
+    // Selected at runtime via env MARS_NODEHALO_V2; both paths populate the
+    // same fields so callers don't change.
+    void buildFromCstoneHalos(const ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>& domain);
+
+    // Gate 1 validation: build with both paths and diff per-peer node-id lists.
+    // Prints first mismatch to stderr; returns true if identical (after sort).
+    static bool validateAgainstHost(const ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>& domain);
 };
 
 // ============================================================================
@@ -510,10 +528,13 @@ public:
     using HostBoundaryTuple     = std::tuple<HostVector<uint8_t>>; // (isBoundaryNode)
 
     // Constructor from file
-    ElementDomain(const std::string& meshFile, int rank, int numRanks, bool storeOriginalCoords = false, int bucketSize = 64);
+    ElementDomain(const std::string& meshFile, int rank, int numRanks, bool storeOriginalCoords = false,
+                  int bucketSize = 64, unsigned bucketSizeFocus = 8);
 
     // Constructor from mesh data (for MFEM or other formats) - automatically computes bounding box
-    ElementDomain(const HostCoordsTuple& h_coords, const HostConnectivityTuple& h_conn, int rank, int numRanks, int bucketSize = 64);
+    ElementDomain(const HostCoordsTuple& h_coords, const HostConnectivityTuple& h_conn,
+                  int rank, int numRanks, int bucketSize = 64, bool storeOriginalCoords = false,
+                  unsigned bucketSizeFocus = 8);
 
     // Constructor from mesh data with boundary info - automatically computes bounding box
     ElementDomain(const HostCoordsTuple& h_coords,
@@ -521,7 +542,8 @@ public:
                   const HostBoundaryTuple& h_boundary,
                   int rank,
                   int numRanks,
-                  int bucketSize = 64);
+                  int bucketSize = 64,
+                  unsigned bucketSizeFocus = 8);
 
     // Constructor from mesh data with explicit bounding box (for backward compatibility)
     ElementDomain(const HostCoordsTuple& h_coords,
@@ -529,7 +551,8 @@ public:
                   const cstone::Box<RealType>& box,
                   int rank,
                   int numRanks,
-                  int bucketSize = 64);
+                  int bucketSize = 64,
+                  unsigned bucketSizeFocus = 8);
 
     // Device-data constructor (no host round-trip).
     // The caller hands in already-on-device coords + connectivity. Bbox is
@@ -540,7 +563,18 @@ public:
                   DeviceConnectivityTuple&& d_conn,
                   int rank,
                   int numRanks,
-                  int bucketSize = 64);
+                  int bucketSize = 64,
+                  unsigned bucketSizeFocus = 8);
+
+    // Per-phase timings populated by the ctor (in ms, rank-local).
+    // All cudaDeviceSynchronize-fenced so they reflect actual elapsed time.
+    // Sub-phases sum to ~ctor time minus any unaccounted overhead (logging, etc).
+    float readMeshTimeMs   = 0.0f;
+    float bboxTimeMs       = 0.0f;
+    float h2dTimeMs        = 0.0f;
+    float charSizeTimeMs   = 0.0f;
+    float syncTimeMs       = 0.0f;
+    float nodeHaloTimeMs   = 0.0f;
 
     // GPU-accelerated calculation of characteristic sizes
     void calculateCharacteristicSizes(const DeviceConnectivityTuple& d_conn_, const DeviceCoordsTuple& d_coords_);
@@ -772,13 +806,14 @@ public:
         ensureNodeHaloTopo();
         const auto& topo = *nodeHaloTopo_;
 
-        // Resize staging buffers (lazy)
+        // Buffers pre-sized in NodeHaloTopology ctor; no hot-path resize.
         size_t sendTotal = topo.sendOffsets_.empty() ? 0 : size_t(topo.sendOffsets_.back());
         size_t recvTotal = topo.recvOffsets_.empty() ? 0 : size_t(topo.recvOffsets_.back());
-        if (topo.sendBuf_.size() != sendTotal) topo.sendBuf_.resize(sendTotal);
-        if (topo.recvBuf_.size() != recvTotal) topo.recvBuf_.resize(recvTotal);
 
-        // Pack: gather nodeArray[nodeToDof[sendNodeIds]] into sendBuf
+        // Pack: index-driven gather. No sentinel: the recv list on the peer
+        // side determines which slots get overwritten on unpack, so any value
+        // we pack here that doesn't correspond to a valid DOF will simply
+        // never be read by anyone.
         T*           arr  = thrust::raw_pointer_cast(nodeArray.data());
         const int*   snds = thrust::raw_pointer_cast(topo.sendNodeIds_.data());
         T*           sbuf = thrust::raw_pointer_cast(topo.sendBuf_.data());
@@ -790,14 +825,22 @@ public:
                               [arr, snds, sbuf, nodeToDof] __device__ (size_t i) {
                                   int n = snds[i];
                                   int idx = (nodeToDof != nullptr) ? nodeToDof[n] : n;
-                                  sbuf[i] = (idx >= 0) ? arr[idx] : T(0);
+                                  // idx<0 means node is not a DOF on this rank.
+                                  // Pack arr[0] as a placeholder; the corresponding
+                                  // recv-side slot (if any) will be filtered the
+                                  // same way on unpack so the value is discarded.
+                                  sbuf[i] = (idx >= 0) ? arr[idx] : arr[0];
                               });
             cudaDeviceSynchronize();
         }
 
         // Post recvs and sends. CUDA-aware MPI: pass device pointers directly.
+        // Tag = nodeHaloTagBase + epoch_, matching cstone's haloEpoch_ pattern
+        // so multiple exchanges between MPI collectives don't tag-collide.
         T*           rbuf = thrust::raw_pointer_cast(topo.recvBuf_.data());
         auto mpiType = std::is_same_v<T, double> ? MPI_DOUBLE : MPI_FLOAT;
+        constexpr int nodeHaloTagBase = 0x4d52;  // "MR" — disambiguate from cstone tags
+        const int tag = nodeHaloTagBase + topo.epoch_;
         std::vector<MPI_Request> reqs;
         reqs.reserve(2 * topo.peers_.size());
 
@@ -809,7 +852,7 @@ public:
             {
                 MPI_Request r;
                 MPI_Irecv(rbuf + topo.recvOffsets_[p], rcnt, mpiType, peer,
-                          /*tag=*/777, MPI_COMM_WORLD, &r);
+                          tag, MPI_COMM_WORLD, &r);
                 reqs.push_back(r);
             }
         }
@@ -821,13 +864,16 @@ public:
             {
                 MPI_Request r;
                 MPI_Isend(sbuf + topo.sendOffsets_[p], scnt, mpiType, peer,
-                          /*tag=*/777, MPI_COMM_WORLD, &r);
+                          tag, MPI_COMM_WORLD, &r);
                 reqs.push_back(r);
             }
         }
         if (!reqs.empty()) MPI_Waitall(int(reqs.size()), reqs.data(), MPI_STATUSES_IGNORE);
+        ++topo.epoch_;
 
-        // Scatter recvBuf into nodeArray[nodeToDof[recvNodeIds]]
+        // Scatter recvBuf into nodeArray[nodeToDof[recvNodeIds]].
+        // idx<0 case skipped: the slot was packed by the peer with a placeholder
+        // and we don't have a real DOF to write it to.
         const int* rnds = thrust::raw_pointer_cast(topo.recvNodeIds_.data());
         if (recvTotal > 0)
         {
@@ -953,6 +999,11 @@ private:
     friend struct NodeHaloTopology<ElementTag, RealType, KeyType, AcceleratorTag>;
     friend struct CoordinateCache<ElementTag, RealType, KeyType, AcceleratorTag>;
     friend struct OriginalCoordinates<ElementTag, RealType, KeyType, AcceleratorTag>;
+
+    // Free-function builder for NodeHaloTopology's host path needs access to halo_ and friends.
+    template<typename ET, typename RT, typename KT, typename AT>
+    friend void buildNodeHaloTopologyHostPath(NodeHaloTopology<ET, RT, KT, AT>& topo,
+                                              const ElementDomain<ET, RT, KT, AT>& domain);
 
     mutable std::unique_ptr<AdjacencyData<ElementTag, RealType, KeyType, AcceleratorTag>> adjacency_;
     mutable std::unique_ptr<HaloData<ElementTag, RealType, KeyType, AcceleratorTag>> halo_;
@@ -1317,23 +1368,37 @@ void testSfcPrecision(const cstone::Box<RealType>& box, int rank = 0)
 #endif // !NDEBUG
 }
 
+// Log free/total GPU memory at every rank around the cstone sync. Lets us
+// pinpoint which rank hit the OOM ceiling and how close the survivors got.
+inline void logGpuMemAroundSync(int rank, const char* tag)
+{
+    size_t freeBytes = 0, totalBytes = 0;
+    cudaError_t err = cudaMemGetInfo(&freeBytes, &totalBytes);
+    if (err != cudaSuccess) return;
+    double freeGiB  = static_cast<double>(freeBytes)  / (1024.0 * 1024.0 * 1024.0);
+    double totalGiB = static_cast<double>(totalBytes) / (1024.0 * 1024.0 * 1024.0);
+    std::cout << "[GPU mem r" << rank << " " << tag << "] free=" << freeGiB
+              << " GiB / " << totalGiB << " GiB" << std::endl;
+}
+
 // Element domain constructor
 template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
 ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(const std::string& meshFile,
                                                                             int rank,
                                                                             int numRanks,
                                                                             bool storeOriginalCoords,
-                                                                            int bucketSize)
+                                                                            int bucketSize,
+                                                                            unsigned bucketSizeFocus)
     : rank_(rank)
     , numRanks_(numRanks)
     , box_(0, 1)
     , storeOriginalCoords_(storeOriginalCoords)
 {
     if (rank == 0) {
-        std::cout << "ElementDomain: Using bucketSize=" << bucketSize 
-                  << " (passed as parameter)" << std::endl;
+        std::cout << "ElementDomain: Using bucketSize=" << bucketSize
+                  << ", bucketSizeFocus=" << bucketSizeFocus << " (passed as parameters)" << std::endl;
     }
-    
+
     // Host data in SoA format
     HostCoordsTuple h_coords;     // (x, y, z)
     HostConnectivityTuple h_conn; // (i0, i1, i2, ...) depends on element type
@@ -1342,16 +1407,20 @@ ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(cons
     DeviceConnectivityTuple d_conn_;
     DeviceCoordsTuple d_coords_;
 
-    // Read the mesh in SoA format
-    readMeshDataSoA(meshFile, h_coords, h_conn);
+    using clk = std::chrono::high_resolution_clock;
+    auto t0 = clk::now();
 
-    // Initialize cornerstone domain with custom bucket size
-    // int bucketSize           = 64;  // Now passed as parameter
-    unsigned bucketSizeFocus = 8;
-    RealType theta           = 0.5;
+    // Read the mesh in SoA format (host-side: disk + GPU dedup + remap)
+    readMeshDataSoA(meshFile, h_coords, h_conn);
+    auto t1 = clk::now();
+    readMeshTimeMs = std::chrono::duration<float, std::milli>(t1 - t0).count();
+
+    RealType theta = 0.5;
 
     box_ = computeGlobalBoundingBoxFromCoords<RealType>(std::get<0>(h_coords), std::get<1>(h_coords),
                                                         std::get<2>(h_coords));
+    auto t2 = clk::now();
+    bboxTimeMs = std::chrono::duration<float, std::milli>(t2 - t1).count();
 
     std::cout << "Rank " << rank_ << ": Created bounding box: [" << box_.xmin() << "," << box_.xmax() << "] ["
               << box_.ymin() << "," << box_.ymax() << "] [" << box_.zmin() << "," << box_.zmax() << "]" << std::endl;
@@ -1362,16 +1431,27 @@ ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(cons
     domain_ = std::make_unique<DomainType>(rank, numRanks, bucketSize, bucketSizeFocus, theta, box_);
 
     // Transfer data to GPU before sync
+    auto t3 = clk::now();
     transferDataToGPU(h_coords, h_conn, d_coords_, d_conn_);
+    cudaDeviceSynchronize();
+    auto t4 = clk::now();
+    h2dTimeMs = std::chrono::duration<float, std::milli>(t4 - t3).count();
 
     // Calculate characteristic sizes
     calculateCharacteristicSizes(d_conn_, d_coords_);
+    cudaDeviceSynchronize();
+    auto t5 = clk::now();
+    charSizeTimeMs = std::chrono::duration<float, std::milli>(t5 - t4).count();
 
     std::cout << "Rank " << rank_ << ": Before sync - bucketSize=" << bucketSize
               << ", bucketSizeFocus=" << bucketSizeFocus << ", theta=" << theta << std::endl;
 
-    // Perform sync
+    logGpuMemAroundSync(rank_, "pre-sync");
     sync(d_conn_, d_coords_);
+    cudaDeviceSynchronize();
+    logGpuMemAroundSync(rank_, "post-sync");
+    auto t6 = clk::now();
+    syncTimeMs = std::chrono::duration<float, std::milli>(t6 - t5).count();
 
     std::cout << "Rank " << rank_ << " initialized " << ElementTag::Name << " domain with " << nodeCount_
               << " nodes and " << elementCount_ << " elements." << std::endl;
@@ -1383,10 +1463,13 @@ ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(cons
                                                                             const HostConnectivityTuple& h_conn,
                                                                             int rank,
                                                                             int numRanks,
-                                                                            int bucketSize)
+                                                                            int bucketSize,
+                                                                            bool storeOriginalCoords,
+                                                                            unsigned bucketSizeFocus)
     : rank_(rank)
     , numRanks_(numRanks)
     , box_(0, 1)
+    , storeOriginalCoords_(storeOriginalCoords)
 {
     DeviceConnectivityTuple d_conn_;
     DeviceCoordsTuple d_coords_;
@@ -1399,10 +1482,7 @@ ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(cons
     box_ = computeGlobalBoundingBoxFromCoords<RealType>(std::get<0>(h_coords), std::get<1>(h_coords),
                                                         std::get<2>(h_coords));
 
-    // Initialize cornerstone domain with custom bucket size
-    // int bucketSize           = 64;  // Now passed as parameter
-    unsigned bucketSizeFocus = 8;
-    RealType theta           = 0.5;
+    RealType theta = 0.5;
 
     std::cout << "Rank " << rank_ << ": Computed bounding box from coordinates: [" << box_.xmin() << "," << box_.xmax()
               << "] [" << box_.ymin() << "," << box_.ymax() << "] [" << box_.zmin() << "," << box_.zmax() << "]"
@@ -1423,8 +1503,9 @@ ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(cons
               << ", bucketSizeFocus=" << bucketSizeFocus << ", theta=" << theta << ", input nodes=" << nodeCount_
               << ", input elements=" << elementCount_ << std::endl;
 
-    // Perform sync
+    logGpuMemAroundSync(rank_, "pre-sync");
     sync(d_conn_, d_coords_);
+    logGpuMemAroundSync(rank_, "post-sync");
 
     std::cout << "Rank " << rank_ << " initialized " << ElementTag::Name << " domain with " << nodeCount_
               << " nodes and " << elementCount_ << " elements." << std::endl;
@@ -1437,7 +1518,8 @@ ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(cons
                                                                             const HostBoundaryTuple& h_boundary,
                                                                             int rank,
                                                                             int numRanks,
-                                                                            int bucketSize)
+                                                                            int bucketSize,
+                                                                            unsigned bucketSizeFocus)
     : rank_(rank)
     , numRanks_(numRanks)
     , box_(0, 1)
@@ -1453,10 +1535,7 @@ ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(cons
     box_ = computeGlobalBoundingBoxFromCoords<RealType>(std::get<0>(h_coords), std::get<1>(h_coords),
                                                         std::get<2>(h_coords));
 
-    // Initialize cornerstone domain with custom bucket size
-    // int bucketSize           = 64;  // Now passed as parameter
-    unsigned bucketSizeFocus = 8;
-    RealType theta           = 0.5;
+    RealType theta = 0.5;
 
     std::cout << "Rank " << rank_ << ": Computed bounding box from coordinates: [" << box_.xmin() << "," << box_.xmax()
               << "] [" << box_.ymin() << "," << box_.ymax() << "] [" << box_.zmin() << "," << box_.zmax() << "]"
@@ -1477,8 +1556,9 @@ ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(cons
               << ", bucketSizeFocus=" << bucketSizeFocus << ", theta=" << theta << ", input nodes=" << nodeCount_
               << ", input elements=" << elementCount_ << std::endl;
 
-    // Perform sync
+    logGpuMemAroundSync(rank_, "pre-sync");
     sync(d_conn_, d_coords_);
+    logGpuMemAroundSync(rank_, "post-sync");
 
     std::cout << "Rank " << rank_ << " initialized " << ElementTag::Name << " domain with " << nodeCount_
               << " nodes and " << elementCount_ << " elements." << std::endl;
@@ -1490,7 +1570,8 @@ ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(Devi
                                                                               DeviceConnectivityTuple&& d_conn,
                                                                               int rank,
                                                                               int numRanks,
-                                                                              int bucketSize)
+                                                                              int bucketSize,
+                                                                              unsigned bucketSizeFocus)
     : rank_(rank)
     , numRanks_(numRanks)
     , box_(0, 1)
@@ -1536,8 +1617,7 @@ ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(Devi
                                   gymin - pad * ry, gymax + pad * ry,
                                   gzmin - pad * rz, gzmax + pad * rz);
 
-    unsigned bucketSizeFocus = 8;
-    RealType theta           = 0.5;
+    RealType theta = 0.5;
 
     domain_ = std::make_unique<DomainType>(rank, numRanks, bucketSize, bucketSizeFocus, theta, box_);
 
@@ -1545,7 +1625,10 @@ ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(Devi
     DeviceConnectivityTuple d_conn_local = std::move(d_conn);
     DeviceCoordsTuple       d_coords_local = std::move(d_coords);
     calculateCharacteristicSizes(d_conn_local, d_coords_local);
+
+    logGpuMemAroundSync(rank_, "pre-sync");
     sync(d_conn_local, d_coords_local);
+    logGpuMemAroundSync(rank_, "post-sync");
 
     std::cout << "Rank " << rank_ << " initialized " << ElementTag::Name << " domain (device ctor) with "
               << nodeCount_ << " nodes and " << elementCount_ << " elements." << std::endl;
@@ -1557,7 +1640,9 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::readMeshDataS
                                                                                    HostCoordsTuple& h_coords_,
                                                                                    HostConnectivityTuple& h_conn_)
 {
-    std::cout << "Reading mesh data from " << meshFile << " on rank " << rank_ << std::endl;
+    int rank = rank_;
+    int numRanks = numRanks_;
+    std::cout << "Reading mesh data from " << meshFile << " on rank " << rank << std::endl;
     try
     {
         // Helper to handle coordinate conversion based on type
@@ -1593,7 +1678,7 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::readMeshDataS
                 // Use Exodus mesh reader for tet elements
                 auto [readNodeCount, readElementCount, x_data, y_data, z_data, conn_tuple, localToGlobal,
                       boundaryNodes] =
-                    mars::readExodusMeshWithElementPartitioning<4, RealType, KeyType>(meshFile, rank_, numRanks_);
+                    mars::readExodusMeshWithElementPartitioning<4, RealType, KeyType>(meshFile, rank, numRanks);
 
                 nodeCount_    = readNodeCount;
                 elementCount_ = readElementCount;
@@ -1610,7 +1695,7 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::readMeshDataS
                 // Use MFEM mesh reader
                 auto [readNodeCount, readElementCount, x_data, y_data, z_data, conn_tuple, localToGlobal,
                       boundaryNodes] =
-                    mars::readMFEMMeshWithElementPartitioning<4, RealType, KeyType>(meshFile, rank_, numRanks_);
+                    mars::readMFEMMeshWithElementPartitioning<4, RealType, KeyType>(meshFile, rank, numRanks);
 
                 nodeCount_    = readNodeCount;
                 elementCount_ = readElementCount;
@@ -1626,7 +1711,7 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::readMeshDataS
             {
                 // Use binary mesh reader
                 auto [readNodeCount, readElementCount, x_data, y_data, z_data, conn_tuple, localToGlobal] =
-                    mars::readMeshWithElementPartitioning<4, RealType, KeyType>(meshFile, rank_, numRanks_);
+                    mars::readMeshWithElementPartitioning<4, RealType, KeyType>(meshFile, rank, numRanks);
 
                 nodeCount_    = readNodeCount;
                 elementCount_ = readElementCount;
@@ -1646,7 +1731,7 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::readMeshDataS
                 // Use Exodus mesh reader for hex elements
                 auto [readNodeCount, readElementCount, x_data, y_data, z_data, conn_tuple, localToGlobal,
                       boundaryNodes] =
-                    mars::readExodusMeshWithElementPartitioning<8, RealType, KeyType>(meshFile, rank_, numRanks_);
+                    mars::readExodusMeshWithElementPartitioning<8, RealType, KeyType>(meshFile, rank, numRanks);
 
                 nodeCount_    = readNodeCount;
                 elementCount_ = readElementCount;
@@ -1663,7 +1748,7 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::readMeshDataS
                 // Use MFEM mesh reader for hex elements
                 auto [readNodeCount, readElementCount, x_data, y_data, z_data, conn_tuple, localToGlobal,
                       boundaryNodes] =
-                    mars::readMFEMMeshWithElementPartitioning<8, RealType, KeyType>(meshFile, rank_, numRanks_);
+                    mars::readMFEMMeshWithElementPartitioning<8, RealType, KeyType>(meshFile, rank, numRanks);
 
                 nodeCount_    = readNodeCount;
                 elementCount_ = readElementCount;
@@ -1679,7 +1764,7 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::readMeshDataS
             {
                 // Use binary mesh reader
                 auto [readNodeCount, readElementCount, x_data, y_data, z_data, conn_tuple, localToGlobal] =
-                    mars::readMeshWithElementPartitioning<8, RealType, KeyType>(meshFile, rank_, numRanks_);
+                    mars::readMeshWithElementPartitioning<8, RealType, KeyType>(meshFile, rank, numRanks);
 
                 nodeCount_    = readNodeCount;
                 elementCount_ = readElementCount;
@@ -1700,7 +1785,7 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::readMeshDataS
                 // NOTE: Use RealType for coordinate precision (not float) to preserve exact values
                 auto [readNodeCount, readElementCount, x_data, y_data, z_data, conn_tuple, localToGlobal,
                       boundaryNodes] =
-                    mars::readMFEMMeshWithElementPartitioning<3, RealType, KeyType>(meshFile, rank_, numRanks_);
+                    mars::readMFEMMeshWithElementPartitioning<3, RealType, KeyType>(meshFile, rank, numRanks);
 
                 nodeCount_    = readNodeCount;
                 elementCount_ = readElementCount;
@@ -1717,7 +1802,7 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::readMeshDataS
                 // Use binary mesh reader
                 // NOTE: Use RealType for coordinate precision (not float) to preserve exact values
                 auto [readNodeCount, readElementCount, x_data, y_data, z_data, conn_tuple, localToGlobal] =
-                    mars::readMeshWithElementPartitioning<3, RealType, KeyType>(meshFile, rank_, numRanks_);
+                    mars::readMeshWithElementPartitioning<3, RealType, KeyType>(meshFile, rank, numRanks);
 
                 nodeCount_    = readNodeCount;
                 elementCount_ = readElementCount;
@@ -1738,7 +1823,7 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::readMeshDataS
                 // NOTE: Use RealType for coordinate precision (not float) to preserve exact values
                 auto [readNodeCount, readElementCount, x_data, y_data, z_data, conn_tuple, localToGlobal,
                       boundaryNodes] =
-                    mars::readMFEMMeshWithElementPartitioning<4, RealType, KeyType>(meshFile, rank_, numRanks_);
+                    mars::readMFEMMeshWithElementPartitioning<4, RealType, KeyType>(meshFile, rank, numRanks);
 
                 nodeCount_    = readNodeCount;
                 elementCount_ = readElementCount;
@@ -1755,7 +1840,7 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::readMeshDataS
                 // Use binary mesh reader
                 // NOTE: Use RealType for coordinate precision (not float) to preserve exact values
                 auto [readNodeCount, readElementCount, x_data, y_data, z_data, conn_tuple, localToGlobal] =
-                    mars::readMeshWithElementPartitioning<4, RealType, KeyType>(meshFile, rank_, numRanks_);
+                    mars::readMeshWithElementPartitioning<4, RealType, KeyType>(meshFile, rank, numRanks);
 
                 nodeCount_    = readNodeCount;
                 elementCount_ = readElementCount;
