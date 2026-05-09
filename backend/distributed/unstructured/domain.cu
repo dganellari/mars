@@ -1,10 +1,15 @@
 #include "domain.hpp"
 #include "thrust/sort.h"
 #include "thrust/unique.h"
+#include "thrust/binary_search.h"
 #include "thrust/device_vector.h"
 #include "cub/cub.cuh"
 #include <unordered_map>
 #include <algorithm>
+#include <cstdlib>
+#include <climits>
+#include <map>
+#include <string>
 
 namespace mars
 {
@@ -1029,10 +1034,103 @@ void HaloData<ElementTag, RealType, KeyType, AcceleratorTag>::buildNodeOwnership
 //
 // Note: Stage 1 size = sum_r |owned_nodes_r| ~ globalNodes; tiny.
 //       Stage 2 size = sum_r |ghost_nodes_r|; bounded by partition surface.
+
+namespace {
+
+// True when env var is set to a truthy value (1/true/on/yes).
+inline bool envFlag(const char* name)
+{
+    const char* env = std::getenv(name);
+    if (!env) return false;
+    std::string s(env);
+    std::transform(s.begin(), s.end(), s.begin(), ::tolower);
+    return s == "1" || s == "true" || s == "on" || s == "yes";
+}
+
+// v2 device-resident path is the default since cube1024/256 was validated
+// bit-exact against host. MARS_NODEHALO_HOST=1 opts out (host O(global)
+// fallback). MARS_NODEHALO_VALIDATE=1 runs both and aborts on mismatch.
+inline bool nodeHaloHostFallbackEnabled() { return envFlag("MARS_NODEHALO_HOST"); }
+inline bool nodeHaloValidateEnabled()     { return envFlag("MARS_NODEHALO_VALIDATE"); }
+
+} // anonymous namespace
+
+// Forward declaration of the host-driven path (the body that used to be the
+// constructor). Now invocable both as the default and from validation.
+template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
+static void buildNodeHaloTopologyHostPath(
+    NodeHaloTopology<ElementTag, RealType, KeyType, AcceleratorTag>& topo,
+    const ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>& domain);
+
 template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
 NodeHaloTopology<ElementTag, RealType, KeyType, AcceleratorTag>::NodeHaloTopology(
     const ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>& domain)
 {
+    int rank     = domain.rank();
+    int numRanks = domain.numRanks();
+
+    if (numRanks == 1)
+    {
+        sendOffsets_.assign(1, 0);
+        recvOffsets_.assign(1, 0);
+        return;
+    }
+
+    // Runtime path selection. v2 is the default since cube1024/256 was
+    // validated bit-exact (matrix=2.071203e+01, rhs=1.555497e-03 match host
+    // reference; NodeHaloTopo phase 130 ms vs ~70 s host at cube512/32).
+    // MARS_NODEHALO_HOST=1 opts out to the original O(global) Allgatherv path.
+    // MARS_NODEHALO_VALIDATE=1 runs both and aborts on per-peer node-id mismatch.
+    bool useHost  = nodeHaloHostFallbackEnabled();
+    bool validate = nodeHaloValidateEnabled();
+
+    if (validate)
+    {
+        bool ok = NodeHaloTopology::validateAgainstHost(domain);
+        if (!ok)
+        {
+            std::cerr << "[Rank " << rank << "] NodeHaloTopology v2 vs host MISMATCH — aborting" << std::endl;
+            std::cerr.flush();
+            MPI_Abort(MPI_COMM_WORLD, 1);
+        }
+        this->buildFromCstoneHalos(domain);
+    }
+    else if (useHost) { buildNodeHaloTopologyHostPath(*this, domain); }
+    else              { this->buildFromCstoneHalos(domain); }
+
+    // Pre-size hot-path staging buffers (Gate 4 fix for v1 race).
+    size_t sendTotal = sendOffsets_.empty() ? 0 : size_t(sendOffsets_.back());
+    size_t recvTotal = recvOffsets_.empty() ? 0 : size_t(recvOffsets_.back());
+    sendBuf_.resize(sendTotal);
+    recvBuf_.resize(recvTotal);
+}
+
+// =====================================================================
+// HOST FALLBACK PATH (NOT THE DEFAULT)
+// =====================================================================
+// O(global) construction using MPI_Allgatherv + MPI_Alltoallv. Active
+// only when MARS_NODEHALO_HOST=1, or transiently inside
+// MARS_NODEHALO_VALIDATE=1 for cross-checking.
+//
+// All MPI_Allgather*, MPI_Alltoall* in this file live in this function.
+// The default path (buildFromCstoneHalos) uses only point-to-point
+// MPI_Isend/Irecv in the peer subgroup — no collectives.
+//
+// Body is unchanged from commit 1d90501; refactored into a free
+// function so the new constructor can call it as a fallback.
+// =====================================================================
+template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
+static void buildNodeHaloTopologyHostPath(
+    NodeHaloTopology<ElementTag, RealType, KeyType, AcceleratorTag>& topo,
+    const ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>& domain)
+{
+    using TopoT = NodeHaloTopology<ElementTag, RealType, KeyType, AcceleratorTag>;
+    auto& peers_       = topo.peers_;
+    auto& sendOffsets_ = topo.sendOffsets_;
+    auto& recvOffsets_ = topo.recvOffsets_;
+    auto& sendNodeIds_ = topo.sendNodeIds_;
+    auto& recvNodeIds_ = topo.recvNodeIds_;
+
     int rank     = domain.rank();
     int numRanks = domain.numRanks();
 
@@ -1220,6 +1318,886 @@ NodeHaloTopology<ElementTag, RealType, KeyType, AcceleratorTag>::NodeHaloTopolog
               << sendNodesHost.size() << " send nodes, "
               << recvNodesHost.size() << " recv nodes" << std::endl;
     std::cout.flush();
+}
+
+// ============================================================================
+// Gate 1-4: Device-resident NodeHaloTopology construction
+//
+// Builds per-peer (sendNodeIds_, recvNodeIds_) CSRs by consuming cstone's
+// element-halo bookkeeping (incomingHaloIndices, outgoingHaloIndices) and
+// filtering by node ownership. O(local boundary), no MPI_Allgatherv.
+//
+// Gate 1 contract: same fields populated as buildNodeHaloTopologyHostPath,
+// just via a different algorithm. Validation harness (validateAgainstHost)
+// diffs per-peer sorted node-id lists; bit-exact match expected.
+//
+// UNTESTED on hardware. Build, then on the cluster:
+//   MARS_NODEHALO_VALIDATE=1 mpirun ... ./mars_cvfem_graph ...
+//      → runs both paths and aborts on first mismatch
+//   MARS_NODEHALO_V2=1 mpirun ... ./mars_cvfem_graph ...
+//      → runs only v2 path (use after Gate 1 passes)
+//   (no env)            → host O(global) path (default, current production)
+//
+// KNOWN GAP: this builder consumes d_nodeOwnership_ as produced by
+// HaloData::buildNodeOwnership() Steps 1+2 only. It does NOT run a
+// global tiebreaker exchange to resolve corner-shared duplicate ownership
+// (the host path does that via MPI_Allgatherv at L1085 and the keyOwner
+// map at L1090).
+//
+// Consequence: on cube/structured meshes where Steps 1+2 already produce
+// unambiguous ownership, v2 should match host bit-exactly. On meshes
+// where multiple ranks initially own the same SFC key (corner-shared
+// nodes on >=4-rank partitions), v2 will diverge from host. Gate 1's
+// validateAgainstHost is precisely how we detect this — if it fires,
+// we add a tiebreaker pass before flipping v2 on by default.
+// ============================================================================
+
+// Send-side per-node kernel: for each node N where I'm the authoritative
+// owner, emit (claimant_rank, N) for every other rank that claimed N's
+// SFC key (i.e. every peer that touches N and therefore needs it as a
+// ghost). Using the merged peer-claim CSR avoids relying on cstone's
+// outgoing-element-halo to peer P, which can miss corner-only contacts.
+template<typename KeyType>
+__global__ void emitSendNodesKernel(
+    const KeyType* d_localToGlobalSfc,    // [nodeCount]
+    const int*     d_authoritativeOwner,  // [nodeCount]
+    const int*     d_claimRanks,          // [numClaims], sorted by key
+    const int*     d_claimKeyOffsets,     // [numUniqueKeys+1]
+    const KeyType* d_uniqueClaimKeys,     // [numUniqueKeys] sorted
+    int            numUniqueKeys,
+    int            myRank,
+    int            outStride,             // bound on number of claimants per node
+    int*           d_outPeer,             // [nodeCount * outStride]
+    int*           d_outNodeId,           // [nodeCount * outStride]
+    int            nodeCount)
+{
+    int n = blockIdx.x * blockDim.x + threadIdx.x;
+    if (n >= nodeCount) return;
+
+    int outBase = n * outStride;
+    // Default-fill with sentinels.
+    for (int s = 0; s < outStride; ++s)
+    {
+        d_outPeer[outBase + s]   = -1;
+        d_outNodeId[outBase + s] = -1;
+    }
+
+    if (d_authoritativeOwner[n] != myRank) return;  // I don't own → don't send
+
+    // Look up my key in unique-claims.
+    KeyType myKey = d_localToGlobalSfc[n];
+    int lo = 0, hi = numUniqueKeys;
+    while (lo < hi)
+    {
+        int mid = lo + (hi - lo) / 2;
+        if (d_uniqueClaimKeys[mid] < myKey) lo = mid + 1;
+        else                                 hi = mid;
+    }
+    if (lo >= numUniqueKeys || d_uniqueClaimKeys[lo] != myKey) return;
+
+    int beg = d_claimKeyOffsets[lo];
+    int end = d_claimKeyOffsets[lo + 1];
+    int slot = 0;
+    constexpr int TOUCH_FLAG_LOCAL = (int)0x80000000;
+    for (int i = beg; i < end && slot < outStride; ++i)
+    {
+        int rLabel = d_claimRanks[i];
+        int r = rLabel & ~TOUCH_FLAG_LOCAL;  // strip touch flag
+        if (r != myRank)  // skip self
+        {
+            d_outPeer[outBase + slot]   = r;
+            d_outNodeId[outBase + slot] = n;
+            ++slot;
+        }
+    }
+}
+
+// Recv-side per-node kernel: for each node N where I'm not the owner,
+// emit (owner_rank, N) so I receive N from owner.
+__global__ void emitRecvNodesKernel(
+    const int* d_authoritativeOwner,      // [nodeCount]
+    int        myRank,
+    int*       d_outPeer,                  // [nodeCount]
+    int*       d_outNodeId,                // [nodeCount]
+    int        nodeCount)
+{
+    int n = blockIdx.x * blockDim.x + threadIdx.x;
+    if (n >= nodeCount) return;
+
+    int owner = d_authoritativeOwner[n];
+    bool keep = (owner != myRank) && (owner >= 0);
+    d_outPeer[n]   = keep ? owner : -1;
+    d_outNodeId[n] = keep ? n     : -1;
+}
+
+// Per-node kernel: collect the SFC keys of all "boundary candidate" nodes —
+// nodes that appear in any halo element corner (in or out). Boundary
+// candidates are exactly the nodes whose ownership might be contested with
+// peers; non-candidates are interior nodes owned exclusively by us.
+template<typename KeyType, int NPC>
+__global__ void markBoundaryCandidatesKernel(
+    const KeyType* const* d_conn_local_ids,
+    const int*     d_rangeStart,
+    const int*     d_rangeEnd,
+    int            numRanges,
+    uint8_t*       d_isBoundary,               // [nodeCount]
+    int            totalElems)
+{
+    int e = blockIdx.x * blockDim.x + threadIdx.x;
+    if (e >= totalElems) return;
+
+    int elemIdx = -1;
+    int cumulative = 0;
+    for (int r = 0; r < numRanges; ++r)
+    {
+        int len = d_rangeEnd[r] - d_rangeStart[r];
+        if (e < cumulative + len)
+        {
+            elemIdx = d_rangeStart[r] + (e - cumulative);
+            break;
+        }
+        cumulative += len;
+    }
+    if (elemIdx < 0) return;
+
+#pragma unroll
+    for (int c = 0; c < NPC; ++c)
+    {
+        int n = static_cast<int>(d_conn_local_ids[c][elemIdx]);
+        if (n >= 0) d_isBoundary[n] = 1;
+    }
+}
+
+// Per-element kernel: mark every node touched by any LOCAL element [startIdx,endIdx)
+// as claimable by this rank. This is the "I claim because I have a local
+// element with this corner" flag — the right starting point for the
+// tiebreaker, before Step 2's halo-direction bias is applied.
+template<typename KeyType, int NPC>
+__global__ void markLocallyClaimedKernel(
+    const KeyType* const* d_conn_local_ids,
+    size_t startIdx, size_t endIdx,
+    uint8_t* d_locallyClaimed)        // [nodeCount]
+{
+    size_t off = blockIdx.x * blockDim.x + threadIdx.x;
+    size_t numLocal = endIdx - startIdx;
+    if (off >= numLocal) return;
+    size_t e = startIdx + off;
+
+#pragma unroll
+    for (int c = 0; c < NPC; ++c)
+    {
+        int n = static_cast<int>(d_conn_local_ids[c][e]);
+        if (n >= 0) d_locallyClaimed[n] = 1;
+    }
+}
+
+// Reduce per-node SFC key claims using min-rank-wins. For each boundary
+// node N: the authoritative owner is the lowest-ranked rank that claimed
+// the node's SFC key. "Claim" includes my own only if I currently flag
+// the node as owned (d_nodeOwnership ∈ {1,2}); otherwise I'm just an
+// observer and don't compete.
+//
+// Cases per boundary node N:
+//   I claim (own=1/2):
+//     - peer_min exists & < myRank → peer wins
+//     - else                         → I win
+//   I don't claim (own=0):
+//     - peer_min exists              → peer with lowest rank wins
+//     - peer_min absent              → no claimant; mark INT_MAX (will be
+//                                       filtered out by emit kernel — neither
+//                                       "owner==myRank" nor "owner==peer" hits)
+template<typename KeyType>
+__global__ void resolveOwnershipKernel(
+    const KeyType* d_localToGlobalSfc,    // [nodeCount], sorted ascending
+    const KeyType* d_claimKeys,           // [numClaims], sorted by key (unused, kept for API stability)
+    const int*     d_claimRanks,          // [numClaims], same order
+    const int*     d_claimKeyOffsets,     // [numUniqueKeys+1] CSR
+    const KeyType* d_uniqueClaimKeys,     // [numUniqueKeys] unique keys sorted
+    int            numUniqueKeys,
+    const uint8_t* d_isBoundary,          // [nodeCount] (unused, kept for API stability)
+    const uint8_t* d_locallyClaimed,      // [nodeCount], 1 if I have a local element with this corner
+    int*           d_authoritativeOwner,  // [nodeCount] output
+    int            myRank,
+    int            nodeCount)
+{
+    int n = blockIdx.x * blockDim.x + threadIdx.x;
+    if (n >= nodeCount) return;
+    (void)d_claimKeys; (void)d_isBoundary;  // suppress unused warnings
+
+    bool iClaim = (d_locallyClaimed[n] != 0);
+
+    // Look up our key in the unique claim list. Don't short-circuit on
+    // d_isBoundary — corner-shared nodes (the bug we're chasing) are NOT
+    // in cstone halo elements but ARE in peer claim lists; the lookup
+    // must happen for them too.
+    KeyType myKey = d_localToGlobalSfc[n];
+    int lo = 0, hi = numUniqueKeys;
+    while (lo < hi)
+    {
+        int mid = lo + (hi - lo) / 2;
+        if (d_uniqueClaimKeys[mid] < myKey) lo = mid + 1;
+        else                                 hi = mid;
+    }
+    bool found = (lo < numUniqueKeys && d_uniqueClaimKeys[lo] == myKey);
+
+    // Ownership competes only among true claimants (rank label without
+    // touch-flag set). Touchers don't compete for ownership but their
+    // presence in the claim list signals they need the value.
+    constexpr int TOUCH_FLAG_LOCAL = (int)0x80000000;
+    int peerMin = INT_MAX;
+    if (found)
+    {
+        int beg = d_claimKeyOffsets[lo];
+        int end = d_claimKeyOffsets[lo + 1];
+        for (int i = beg; i < end; ++i)
+        {
+            int rLabel = d_claimRanks[i];
+            if ((rLabel & TOUCH_FLAG_LOCAL) != 0) continue;  // skip touchers
+            if (rLabel < peerMin) peerMin = rLabel;
+        }
+    }
+
+    if (iClaim)
+    {
+        d_authoritativeOwner[n] = (peerMin < myRank) ? peerMin : myRank;
+    }
+    else
+    {
+        // I don't claim it locally. If a true claimant peer exists, they own.
+        d_authoritativeOwner[n] = (peerMin != INT_MAX) ? peerMin : -1;
+    }
+}
+
+template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
+void NodeHaloTopology<ElementTag, RealType, KeyType, AcceleratorTag>::buildFromCstoneHalos(
+    const ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>& domain)
+{
+    constexpr int NPC = ElementTag::NodesPerElement;
+    int rank     = domain.rank();
+    int numRanks = domain.numRanks();
+
+    if (numRanks == 1)
+    {
+        sendOffsets_.assign(1, 0);
+        recvOffsets_.assign(1, 0);
+        return;
+    }
+
+    // ----- Pull cstone halo bookkeeping (host-side) -----
+    const auto& cstoneDom    = domain.getDomain();
+    const auto& incomingHalo = cstoneDom.incomingHaloIndices();
+    const auto& outgoingHalo = cstoneDom.outgoingHaloIndices();
+
+    // Derive peer list: any rank with non-empty incoming or outgoing halo.
+    std::vector<int> peers;
+    peers.reserve(numRanks);
+    for (int r = 0; r < numRanks; ++r)
+    {
+        if (r == rank) continue;
+        bool inHas  = (size_t(r) < incomingHalo.size()) &&
+                      (incomingHalo[r].count() > 0);
+        bool outHas = (size_t(r) < outgoingHalo.size()) &&
+                      (outgoingHalo[r].totalCount() > 0);
+        if (inHas || outHas) peers.push_back(r);
+    }
+
+    // ----- Build flat range tables for incoming (recv) and outgoing (send) -----
+    // incomingHalo[peer] is one contiguous range; one entry per peer.
+    // outgoingHalo[peer] is a SendManifest with potentially multiple ranges.
+    std::vector<int> h_inStart, h_inEnd, h_inPeer;
+    std::vector<int> h_outStart, h_outEnd, h_outPeer;
+    int totalInElems = 0, totalOutElems = 0;
+    for (int p : peers)
+    {
+        if (size_t(p) < incomingHalo.size() && incomingHalo[p].count() > 0)
+        {
+            h_inStart.push_back(int(incomingHalo[p].start()));
+            h_inEnd.push_back(int(incomingHalo[p].end()));
+            h_inPeer.push_back(p);
+            totalInElems += int(incomingHalo[p].count());
+        }
+        if (size_t(p) < outgoingHalo.size() && outgoingHalo[p].totalCount() > 0)
+        {
+            const auto& mfst = outgoingHalo[p];
+            for (size_t r = 0; r < mfst.nRanges(); ++r)
+            {
+                h_outStart.push_back(int(mfst.rangeStart(r)));
+                h_outEnd.push_back(int(mfst.rangeEnd(r)));
+                h_outPeer.push_back(p);
+                totalOutElems += int(mfst.count(r));
+            }
+        }
+    }
+
+    // ----- Pull connectivity (NPC device pointers) and ownership pointer -----
+    const auto& d_conn_tuple = domain.getElementToNodeConnectivity();
+    const KeyType* h_connPtrs[NPC];
+    extractConnPtrs<KeyType>(d_conn_tuple, h_connPtrs, std::make_index_sequence<NPC>{});
+    // Upload pointer array to device
+    thrust::device_vector<const KeyType*> d_connPtrs(h_connPtrs, h_connPtrs + NPC);
+
+    size_t nodeCount = domain.getNodeCount();
+    const KeyType* d_sfcMap = thrust::raw_pointer_cast(domain.getLocalToGlobalSfcMap().data());
+
+    // ====================================================================
+    // TIEBREAKER STAGE A: identify boundary candidate nodes (corners of any
+    // halo element) so we don't publish claims for interior nodes.
+    // ====================================================================
+    thrust::device_vector<uint8_t> d_isBoundary(nodeCount, 0u);
+    {
+        // Combine in+out element ranges into one pass so a node touched by
+        // either side gets marked.
+        std::vector<int> hAllStart  = h_inStart;  hAllStart.insert (hAllStart.end(),  h_outStart.begin(),  h_outStart.end());
+        std::vector<int> hAllEnd    = h_inEnd;    hAllEnd.insert   (hAllEnd.end(),    h_outEnd.begin(),    h_outEnd.end());
+        int              totalAll   = totalInElems + totalOutElems;
+        if (totalAll > 0)
+        {
+            thrust::device_vector<int> d_aStart(hAllStart.begin(), hAllStart.end());
+            thrust::device_vector<int> d_aEnd  (hAllEnd.begin(),   hAllEnd.end());
+            const int blockSize = 256;
+            int blocks = (totalAll + blockSize - 1) / blockSize;
+            markBoundaryCandidatesKernel<KeyType, NPC><<<blocks, blockSize>>>(
+                thrust::raw_pointer_cast(d_connPtrs.data()),
+                thrust::raw_pointer_cast(d_aStart.data()),
+                thrust::raw_pointer_cast(d_aEnd.data()),
+                int(hAllStart.size()),
+                thrust::raw_pointer_cast(d_isBoundary.data()),
+                totalAll);
+            cudaDeviceSynchronize();
+        }
+    }
+
+    // ====================================================================
+    // TIEBREAKER STAGE B: gather (sfc_key) of locally-CLAIMED boundary
+    // nodes. The "claim" predicate is "I have a local element [startIdx,
+    // endIdx) whose corner is N" — NOT d_nodeOwnership, which has Step 2's
+    // direction-biased yield baked in. Using d_nodeOwnership here is wrong
+    // because Step 2 yields too aggressively: any node touched by a halo
+    // element from a lower-SFC peer is yielded even if the global lowest-
+    // rank claimant is actually us. We re-derive the unbiased claim flag
+    // here directly from local element corners.
+    // ====================================================================
+    thrust::device_vector<uint8_t> d_locallyClaimed(nodeCount, 0u);
+    {
+        size_t startIdx = domain.startIndex();
+        size_t endIdx   = domain.endIndex();
+        size_t numLocal = endIdx - startIdx;
+        if (numLocal > 0)
+        {
+            const int blockSize = 256;
+            int blocks = (numLocal + blockSize - 1) / blockSize;
+            markLocallyClaimedKernel<KeyType, NPC><<<blocks, blockSize>>>(
+                thrust::raw_pointer_cast(d_connPtrs.data()),
+                startIdx, endIdx,
+                thrust::raw_pointer_cast(d_locallyClaimed.data()));
+            cudaDeviceSynchronize();
+        }
+    }
+    const uint8_t* d_claimedPtr  = thrust::raw_pointer_cast(d_locallyClaimed.data());
+
+    // Build my publish list on device: keys of all nodes I "touch" — i.e.
+    // any node N that's a corner of any element I see, whether the element
+    // is local [startIdx, endIdx) OR a halo element on this rank. This is
+    // a TOUCH list, not an OWNERSHIP CLAIM list:
+    //
+    //   - For ownership resolution, what matters is whether I have a local
+    //     element with N (we use d_locallyClaimed for that, downstream).
+    //   - For the "who needs N as a ghost" question (send-side derivation),
+    //     we need to know which peers touch N, even if they don't own it.
+    //     A peer that has N only in a halo element from me still needs me
+    //     to send N's value at every CG iteration.
+    //
+    // Publishing TOUCH (= d_isBoundary, includes halo-element corners on
+    // this rank) lets every rank reconstruct the full set of ranks that
+    // need each node, without a request-back protocol.
+    //
+    // We tag each published rank with a flag bit:
+    //   bit 31 set       → "I touch this key but don't own it (halo only)"
+    //   bit 31 not set   → "I own this key (have a local element with this corner)"
+    //
+    // Ownership resolution looks only at unflagged entries (true owners
+    // compete for min-rank).
+    // Send-side derivation looks at ALL entries (touchers and other owners
+    // both need values).
+    static constexpr int TOUCH_FLAG = (int)0x80000000;  // high bit; -ve when interpreted signed
+
+    thrust::device_vector<KeyType> d_myClaimKeys(nodeCount);
+    thrust::device_vector<int>     d_myClaimRanks(nodeCount);
+    int myClaimCount = 0;
+    {
+        thrust::device_vector<KeyType> d_keysAll(nodeCount);
+        thrust::device_vector<int>     d_ranksAll(nodeCount);
+        thrust::device_vector<uint8_t> d_flagAll(nodeCount);
+        const uint8_t* dIsB = thrust::raw_pointer_cast(d_isBoundary.data());
+        thrust::for_each(
+            thrust::counting_iterator<int>(0),
+            thrust::counting_iterator<int>(int(nodeCount)),
+            [d_keysAll_ptr = thrust::raw_pointer_cast(d_keysAll.data()),
+             d_ranksAll_ptr = thrust::raw_pointer_cast(d_ranksAll.data()),
+             d_flagAll_ptr = thrust::raw_pointer_cast(d_flagAll.data()),
+             dIsB, d_claimedPtr, d_sfcMap, rank]
+            __device__ (int n) {
+                d_keysAll_ptr[n] = d_sfcMap[n];
+                bool touch = (dIsB[n] != 0u);
+                bool claim = (d_claimedPtr[n] != 0u);
+                bool publish = (touch || claim);
+                int  rankLabel = claim ? rank : (rank | TOUCH_FLAG);
+                d_ranksAll_ptr[n] = rankLabel;
+                d_flagAll_ptr[n]  = publish ? 1u : 0u;
+            });
+
+        // Compact keys + ranks together using zip iterators.
+        auto begIn  = thrust::make_zip_iterator(thrust::make_tuple(d_keysAll.begin(),  d_ranksAll.begin()));
+        auto endIn  = thrust::make_zip_iterator(thrust::make_tuple(d_keysAll.end(),    d_ranksAll.end()));
+        auto begOut = thrust::make_zip_iterator(thrust::make_tuple(d_myClaimKeys.begin(), d_myClaimRanks.begin()));
+        auto endOut = thrust::copy_if(begIn, endIn, d_flagAll.begin(), begOut,
+            [] __device__ (uint8_t f) { return f != 0; });
+        myClaimCount = endOut - begOut;
+        d_myClaimKeys.resize(myClaimCount);
+        d_myClaimRanks.resize(myClaimCount);
+
+        // Sort by key (zip).
+        if (myClaimCount > 1)
+        {
+            thrust::sort_by_key(d_myClaimKeys.begin(), d_myClaimKeys.end(),
+                                d_myClaimRanks.begin());
+        }
+    }
+
+    // Exchange claim counts with each peer (point-to-point Isend/Irecv on
+    // host counters; tiny — int per peer).
+    int numPeers = int(peers.size());
+    std::vector<int> peerSendCount(numPeers, myClaimCount);  // we send same list to each peer
+    std::vector<int> peerRecvCount(numPeers, 0);
+    {
+        std::vector<MPI_Request> reqs;
+        reqs.reserve(2 * numPeers);
+        constexpr int tagCount = 0x4d54;  // "MT" — disambiguate
+        for (int i = 0; i < numPeers; ++i)
+        {
+            MPI_Request r;
+            MPI_Irecv(&peerRecvCount[i], 1, MPI_INT, peers[i], tagCount, MPI_COMM_WORLD, &r);
+            reqs.push_back(r);
+        }
+        for (int i = 0; i < numPeers; ++i)
+        {
+            MPI_Request r;
+            MPI_Isend(&peerSendCount[i], 1, MPI_INT, peers[i], tagCount, MPI_COMM_WORLD, &r);
+            reqs.push_back(r);
+        }
+        MPI_Waitall(int(reqs.size()), reqs.data(), MPI_STATUSES_IGNORE);
+    }
+
+    // Exchange the actual claim keys AND flagged rank labels via CUDA-aware MPI.
+    int totalRecvKeys = 0;
+    std::vector<int> peerRecvDispl(numPeers + 1, 0);
+    for (int i = 0; i < numPeers; ++i)
+    {
+        peerRecvDispl[i + 1] = peerRecvDispl[i] + peerRecvCount[i];
+    }
+    totalRecvKeys = peerRecvDispl.back();
+
+    thrust::device_vector<KeyType> d_recvClaimKeys(totalRecvKeys);
+    thrust::device_vector<int>     d_recvClaimRanks(totalRecvKeys);
+    auto mpiKeyType = (sizeof(KeyType) == 8) ? MPI_UINT64_T : MPI_UNSIGNED;
+    {
+        std::vector<MPI_Request> reqs;
+        reqs.reserve(4 * numPeers);
+        constexpr int tagKeys  = 0x4d55;  // "MU"
+        constexpr int tagRanks = 0x4d56;  // "MV" — flagged rank labels
+        for (int i = 0; i < numPeers; ++i)
+        {
+            int rcnt = peerRecvCount[i];
+            if (rcnt == 0) continue;
+            MPI_Request rk, rr;
+            MPI_Irecv(thrust::raw_pointer_cast(d_recvClaimKeys.data()) + peerRecvDispl[i],
+                      rcnt, mpiKeyType, peers[i], tagKeys, MPI_COMM_WORLD, &rk);
+            MPI_Irecv(thrust::raw_pointer_cast(d_recvClaimRanks.data()) + peerRecvDispl[i],
+                      rcnt, MPI_INT, peers[i], tagRanks, MPI_COMM_WORLD, &rr);
+            reqs.push_back(rk);
+            reqs.push_back(rr);
+        }
+        for (int i = 0; i < numPeers; ++i)
+        {
+            int scnt = myClaimCount;
+            if (scnt == 0) continue;
+            MPI_Request sk, sr;
+            MPI_Isend(thrust::raw_pointer_cast(d_myClaimKeys.data()),
+                      scnt, mpiKeyType, peers[i], tagKeys, MPI_COMM_WORLD, &sk);
+            MPI_Isend(thrust::raw_pointer_cast(d_myClaimRanks.data()),
+                      scnt, MPI_INT, peers[i], tagRanks, MPI_COMM_WORLD, &sr);
+            reqs.push_back(sk);
+            reqs.push_back(sr);
+        }
+        MPI_Waitall(int(reqs.size()), reqs.data(), MPI_STATUSES_IGNORE);
+    }
+
+    // Sort received claims by (key, rank) so per-key min-rank reduces correctly.
+    if (totalRecvKeys > 0)
+    {
+        thrust::sort_by_key(d_recvClaimKeys.begin(), d_recvClaimKeys.end(),
+                            d_recvClaimRanks.begin());
+    }
+
+    // Build CSR of (unique_key → claim range) so resolveOwnershipKernel can
+    // look up by binary search.
+    thrust::device_vector<KeyType> d_uniqueKeys;
+    thrust::device_vector<int>     d_uniqueOffsets;
+    int numUnique = 0;
+    if (totalRecvKeys > 0)
+    {
+        d_uniqueKeys.resize(totalRecvKeys);
+        thrust::copy(d_recvClaimKeys.begin(), d_recvClaimKeys.end(), d_uniqueKeys.begin());
+        auto uend = thrust::unique(d_uniqueKeys.begin(), d_uniqueKeys.end());
+        numUnique = int(uend - d_uniqueKeys.begin());
+        d_uniqueKeys.resize(numUnique);
+        // For each unique key, lower_bound gives its first index in d_recvClaimKeys.
+        // We need numUnique+1 offsets; last is totalRecvKeys.
+        d_uniqueOffsets.resize(numUnique + 1);
+        thrust::lower_bound(d_recvClaimKeys.begin(), d_recvClaimKeys.end(),
+                            d_uniqueKeys.begin(), d_uniqueKeys.end(),
+                            d_uniqueOffsets.begin());
+        // Set the sentinel offset[numUnique] = totalRecvKeys.
+        int lastOff = totalRecvKeys;
+        cudaMemcpy(thrust::raw_pointer_cast(d_uniqueOffsets.data()) + numUnique,
+                   &lastOff, sizeof(int), cudaMemcpyHostToDevice);
+    }
+
+    // ====================================================================
+    // TIEBREAKER STAGE C: per-node compute authoritative owner.
+    //   non-boundary owned → myRank
+    //   boundary node not in unique-key claims → myRank (no peer claimed)
+    //   boundary node in claims → min(myRank, all claimant ranks) if I own,
+    //                              else min(claimant ranks)
+    // ====================================================================
+    thrust::device_vector<int> d_authoritativeOwner(nodeCount, -1);
+    {
+        const int blockSize = 256;
+        int blocks = (int(nodeCount) + blockSize - 1) / blockSize;
+        resolveOwnershipKernel<KeyType><<<blocks, blockSize>>>(
+            d_sfcMap,
+            thrust::raw_pointer_cast(d_recvClaimKeys.data()),
+            thrust::raw_pointer_cast(d_recvClaimRanks.data()),
+            thrust::raw_pointer_cast(d_uniqueOffsets.data()),
+            thrust::raw_pointer_cast(d_uniqueKeys.data()),
+            numUnique,
+            thrust::raw_pointer_cast(d_isBoundary.data()),
+            d_claimedPtr,
+            thrust::raw_pointer_cast(d_authoritativeOwner.data()),
+            rank,
+            int(nodeCount));
+        cudaDeviceSynchronize();
+    }
+    const int* d_authPtr = thrust::raw_pointer_cast(d_authoritativeOwner.data());
+
+    // Mutate d_nodeOwnership_ to match the post-tiebreaker state, just as
+    // host path does at L1212-1213. Required for downstream FEM code (DOF
+    // handler, RHS assembly) to see the correct "owned vs ghost" flag.
+    // Without this, ranks that lost the tiebreaker still report ownership=1
+    // for nodes they no longer own, causing duplicate RHS contributions
+    // and the matrix/rhs norm drift between host and v2 paths.
+    {
+        auto& dOwnMutable = const_cast<typename HaloData<ElementTag, RealType, KeyType, AcceleratorTag>::
+                                       template DeviceVector<uint8_t>&>(domain.getNodeOwnershipMap());
+        thrust::for_each(
+            thrust::counting_iterator<int>(0),
+            thrust::counting_iterator<int>(int(nodeCount)),
+            [d_own_ptr = thrust::raw_pointer_cast(dOwnMutable.data()), d_authPtr, rank]
+            __device__ (int n) {
+                int owner = d_authPtr[n];
+                // -1 = no owner found (interior unowned, shouldn't happen in
+                // practice). Otherwise set to 1 iff this rank is the owner.
+                d_own_ptr[n] = (owner == rank) ? uint8_t(1) : uint8_t(0);
+            });
+        cudaDeviceSynchronize();
+    }
+
+    // ----- Helper: emit per-peer (peer, node) tuples then compact -----
+    // For send: emit one tuple per (owned node, peer claimant) using
+    // emitSendNodesKernel. Output stride bounds claimants/node — use the
+    // largest unique-claim range as upper bound.
+    // For recv: emit at most one tuple per node (owner != me).
+    auto compactSortBin = [&](
+        thrust::device_vector<int>& d_outPeer,
+        thrust::device_vector<int>& d_outNode,
+        std::vector<std::vector<int>>& outIdsPerPeer)
+    {
+        outIdsPerPeer.assign(peers.size(), {});
+
+        // Stream-compact: drop entries with peer < 0
+        thrust::device_vector<int> d_keepPeer(d_outPeer.size());
+        thrust::device_vector<int> d_keepNode(d_outNode.size());
+        auto end = thrust::copy_if(
+            thrust::make_zip_iterator(thrust::make_tuple(d_outPeer.begin(), d_outNode.begin())),
+            thrust::make_zip_iterator(thrust::make_tuple(d_outPeer.end(),   d_outNode.end())),
+            thrust::make_zip_iterator(thrust::make_tuple(d_keepPeer.begin(), d_keepNode.begin())),
+            [] __device__ (const thrust::tuple<int,int>& t) {
+                return thrust::get<0>(t) >= 0;
+            });
+        size_t kept = end - thrust::make_zip_iterator(thrust::make_tuple(d_keepPeer.begin(), d_keepNode.begin()));
+        d_keepPeer.resize(kept);
+        d_keepNode.resize(kept);
+
+        // Sort by (peer, node) so per-peer dedup with one unique pass works.
+        thrust::sort(
+            thrust::make_zip_iterator(thrust::make_tuple(d_keepPeer.begin(), d_keepNode.begin())),
+            thrust::make_zip_iterator(thrust::make_tuple(d_keepPeer.end(),   d_keepNode.end())));
+        auto uend = thrust::unique(
+            thrust::make_zip_iterator(thrust::make_tuple(d_keepPeer.begin(), d_keepNode.begin())),
+            thrust::make_zip_iterator(thrust::make_tuple(d_keepPeer.end(),   d_keepNode.end())));
+        size_t uniq = uend - thrust::make_zip_iterator(thrust::make_tuple(d_keepPeer.begin(), d_keepNode.begin()));
+
+        std::vector<int> hPeerOut(uniq), hNodeOut(uniq);
+        if (uniq > 0)
+        {
+            cudaMemcpy(hPeerOut.data(), thrust::raw_pointer_cast(d_keepPeer.data()),
+                       uniq * sizeof(int), cudaMemcpyDeviceToHost);
+            cudaMemcpy(hNodeOut.data(), thrust::raw_pointer_cast(d_keepNode.data()),
+                       uniq * sizeof(int), cudaMemcpyDeviceToHost);
+        }
+
+        std::unordered_map<int, size_t> peerIdx;
+        for (size_t i = 0; i < peers.size(); ++i) peerIdx[peers[i]] = i;
+        for (size_t i = 0; i < uniq; ++i)
+        {
+            auto it = peerIdx.find(hPeerOut[i]);
+            if (it != peerIdx.end()) outIdsPerPeer[it->second].push_back(hNodeOut[i]);
+        }
+    };
+
+    // ===== SEND side =====
+    // Emit owned nodes to every claimant peer (excluding self). Bound output
+    // stride at numPeers (max possible claimants per node). At cube
+    // partitions worst case is 7 (8-way corner with 8 ranks: 7 peer claimants).
+    std::vector<std::vector<int>> sendIdsPerPeer;
+    {
+        int outStride = std::max(1, std::min(numPeers, 32));
+        thrust::device_vector<int> d_outPeer(size_t(nodeCount) * outStride, -1);
+        thrust::device_vector<int> d_outNode(size_t(nodeCount) * outStride, -1);
+        const int blockSize = 256;
+        int blocks = (int(nodeCount) + blockSize - 1) / blockSize;
+        emitSendNodesKernel<KeyType><<<blocks, blockSize>>>(
+            d_sfcMap,
+            d_authPtr,
+            thrust::raw_pointer_cast(d_recvClaimRanks.data()),
+            thrust::raw_pointer_cast(d_uniqueOffsets.data()),
+            thrust::raw_pointer_cast(d_uniqueKeys.data()),
+            numUnique,
+            rank,
+            outStride,
+            thrust::raw_pointer_cast(d_outPeer.data()),
+            thrust::raw_pointer_cast(d_outNode.data()),
+            int(nodeCount));
+        cudaDeviceSynchronize();
+        cudaError_t err = cudaGetLastError();
+        if (err != cudaSuccess)
+        {
+            std::cerr << "[Rank " << rank << "] emitSendNodesKernel failed: "
+                      << cudaGetErrorString(err) << std::endl;
+            MPI_Abort(MPI_COMM_WORLD, 1);
+        }
+        compactSortBin(d_outPeer, d_outNode, sendIdsPerPeer);
+    }
+
+    // ===== RECV side =====
+    std::vector<std::vector<int>> recvIdsPerPeer;
+    {
+        thrust::device_vector<int> d_outPeer(size_t(nodeCount), -1);
+        thrust::device_vector<int> d_outNode(size_t(nodeCount), -1);
+        const int blockSize = 256;
+        int blocks = (int(nodeCount) + blockSize - 1) / blockSize;
+        emitRecvNodesKernel<<<blocks, blockSize>>>(
+            d_authPtr, rank,
+            thrust::raw_pointer_cast(d_outPeer.data()),
+            thrust::raw_pointer_cast(d_outNode.data()),
+            int(nodeCount));
+        cudaDeviceSynchronize();
+        cudaError_t err = cudaGetLastError();
+        if (err != cudaSuccess)
+        {
+            std::cerr << "[Rank " << rank << "] emitRecvNodesKernel failed: "
+                      << cudaGetErrorString(err) << std::endl;
+            MPI_Abort(MPI_COMM_WORLD, 1);
+        }
+        compactSortBin(d_outPeer, d_outNode, recvIdsPerPeer);
+    }
+
+    // ----- Compact into peer-list / CSR structure -----
+    peers_.clear();
+    sendOffsets_.assign(1, 0);
+    recvOffsets_.assign(1, 0);
+    std::vector<int> sendNodesHost, recvNodesHost;
+    for (size_t i = 0; i < peers.size(); ++i)
+    {
+        int sCnt = int(sendIdsPerPeer[i].size());
+        int rCnt = int(recvIdsPerPeer[i].size());
+        if (sCnt == 0 && rCnt == 0) continue;
+        peers_.push_back(peers[i]);
+        for (int v : sendIdsPerPeer[i]) sendNodesHost.push_back(v);
+        for (int v : recvIdsPerPeer[i]) recvNodesHost.push_back(v);
+        sendOffsets_.push_back(int(sendNodesHost.size()));
+        recvOffsets_.push_back(int(recvNodesHost.size()));
+    }
+
+    // Upload node-id arrays to device
+    sendNodeIds_.resize(sendNodesHost.size());
+    recvNodeIds_.resize(recvNodesHost.size());
+    if (!sendNodesHost.empty())
+        cudaMemcpy(thrust::raw_pointer_cast(sendNodeIds_.data()), sendNodesHost.data(),
+                   sendNodesHost.size() * sizeof(int), cudaMemcpyHostToDevice);
+    if (!recvNodesHost.empty())
+        cudaMemcpy(thrust::raw_pointer_cast(recvNodeIds_.data()), recvNodesHost.data(),
+                   recvNodesHost.size() * sizeof(int), cudaMemcpyHostToDevice);
+
+    std::cout << "Rank " << rank << ": NodeHaloTopo[v2] " << peers_.size() << " peers, "
+              << sendNodesHost.size() << " send nodes, "
+              << recvNodesHost.size() << " recv nodes" << std::endl;
+    std::cout.flush();
+}
+
+// ============================================================================
+// validateAgainstHost: build both paths into separate topos, diff per-peer
+// sorted node-id lists. Returns true on bit-exact match.
+//
+// Implementation note: we cannot reuse the constructor because it would
+// recurse via the env flag. Build host path manually, then v2 path
+// manually, then compare on host.
+//
+// Subtle: the host path mutates d_nodeOwnership_ during its tiebreaker
+// yield step (host-path L1102-1129). We snapshot ownership before the
+// host build and restore before the v2 build. This means v2 runs
+// against the *original* (pre-yield) ownership. If host's tiebreaker
+// changed any ownership flags, v2's send/recv lists will differ — that's
+// the expected signal that v2 needs its own tiebreaker pass before
+// becoming default.
+// ============================================================================
+template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
+bool NodeHaloTopology<ElementTag, RealType, KeyType, AcceleratorTag>::validateAgainstHost(
+    const ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>& domain)
+{
+    int rank     = domain.rank();
+    int numRanks = domain.numRanks();
+    if (numRanks == 1) return true;
+
+    // Snapshot d_nodeOwnership_ before running host path, since the host
+    // path mutates it (yields duplicate ownership to lowest rank). v2 must
+    // see the same starting ownership state to make the comparison fair.
+    auto& dOwn = const_cast<typename HaloData<ElementTag, RealType, KeyType, AcceleratorTag>::
+                            template DeviceVector<uint8_t>&>(domain.getNodeOwnershipMap());
+    std::vector<uint8_t> ownSnapshot(dOwn.size());
+    if (!ownSnapshot.empty())
+        cudaMemcpy(ownSnapshot.data(), thrust::raw_pointer_cast(dOwn.data()),
+                   ownSnapshot.size() * sizeof(uint8_t), cudaMemcpyDeviceToHost);
+
+    NodeHaloTopology<ElementTag, RealType, KeyType, AcceleratorTag> hostTopo{};
+    NodeHaloTopology<ElementTag, RealType, KeyType, AcceleratorTag> v2Topo{};
+    buildNodeHaloTopologyHostPath(hostTopo, domain);
+
+    // Restore ownership before v2 build so it sees pre-yield state.
+    if (!ownSnapshot.empty())
+        cudaMemcpy(thrust::raw_pointer_cast(dOwn.data()), ownSnapshot.data(),
+                   ownSnapshot.size() * sizeof(uint8_t), cudaMemcpyHostToDevice);
+
+    v2Topo.buildFromCstoneHalos(domain);
+
+    auto pullToHost = [](const auto& d_vec) {
+        std::vector<int> h(d_vec.size());
+        if (!h.empty())
+            cudaMemcpy(h.data(), thrust::raw_pointer_cast(d_vec.data()),
+                       h.size() * sizeof(int), cudaMemcpyDeviceToHost);
+        return h;
+    };
+
+    auto buildPerPeerSorted = [&](const auto& topo) {
+        std::vector<std::vector<int>> sendByPeer, recvByPeer;
+        std::vector<int> hSend = pullToHost(topo.sendNodeIds_);
+        std::vector<int> hRecv = pullToHost(topo.recvNodeIds_);
+        sendByPeer.resize(topo.peers_.size());
+        recvByPeer.resize(topo.peers_.size());
+        for (size_t i = 0; i < topo.peers_.size(); ++i)
+        {
+            int sb = topo.sendOffsets_[i],  se = topo.sendOffsets_[i+1];
+            int rb = topo.recvOffsets_[i],  re = topo.recvOffsets_[i+1];
+            sendByPeer[i].assign(hSend.begin() + sb, hSend.begin() + se);
+            recvByPeer[i].assign(hRecv.begin() + rb, hRecv.begin() + re);
+            std::sort(sendByPeer[i].begin(), sendByPeer[i].end());
+            std::sort(recvByPeer[i].begin(), recvByPeer[i].end());
+        }
+        return std::make_tuple(std::move(sendByPeer), std::move(recvByPeer));
+    };
+
+    auto [hSend, hRecv] = buildPerPeerSorted(hostTopo);
+    auto [vSend, vRecv] = buildPerPeerSorted(v2Topo);
+
+    // Build peer-rank -> sorted lists maps to compare order-independently.
+    auto byPeerMap = [](const auto& topo, const auto& byPeerVec) {
+        std::map<int, std::vector<int>> m;
+        for (size_t i = 0; i < topo.peers_.size(); ++i) m[topo.peers_[i]] = byPeerVec[i];
+        return m;
+    };
+    auto hSendMap = byPeerMap(hostTopo, hSend);
+    auto hRecvMap = byPeerMap(hostTopo, hRecv);
+    auto vSendMap = byPeerMap(v2Topo,   vSend);
+    auto vRecvMap = byPeerMap(v2Topo,   vRecv);
+
+    bool ok = true;
+    auto diffMap = [&](const char* label, const auto& a, const auto& b) {
+        if (a.size() != b.size())
+        {
+            std::cerr << "[Rank " << rank << "] " << label
+                      << " peer-count mismatch: host=" << a.size()
+                      << " v2=" << b.size() << std::endl;
+            ok = false;
+        }
+        for (const auto& [peer, hList] : a)
+        {
+            auto it = b.find(peer);
+            if (it == b.end())
+            {
+                std::cerr << "[Rank " << rank << "] " << label
+                          << " peer " << peer << " present in host but not v2" << std::endl;
+                ok = false;
+                continue;
+            }
+            const auto& vList = it->second;
+            if (hList.size() != vList.size())
+            {
+                std::cerr << "[Rank " << rank << "] " << label
+                          << " peer " << peer << " size: host=" << hList.size()
+                          << " v2=" << vList.size() << std::endl;
+                ok = false;
+                continue;
+            }
+            for (size_t i = 0; i < hList.size(); ++i)
+            {
+                if (hList[i] != vList[i])
+                {
+                    std::cerr << "[Rank " << rank << "] " << label
+                              << " peer " << peer << " idx " << i
+                              << " host=" << hList[i] << " v2=" << vList[i] << std::endl;
+                    ok = false;
+                    break;
+                }
+            }
+        }
+        // Check for v2-only peers
+        for (const auto& [peer, vList] : b)
+        {
+            if (a.find(peer) == a.end())
+            {
+                std::cerr << "[Rank " << rank << "] " << label
+                          << " peer " << peer << " present in v2 but not host" << std::endl;
+                ok = false;
+            }
+        }
+    };
+    diffMap("send", hSendMap, vSendMap);
+    diffMap("recv", hRecvMap, vRecvMap);
+    if (ok)
+        std::cout << "[Rank " << rank << "] NodeHaloTopo v2 == host (Gate 1 pass)" << std::endl;
+    std::cout.flush();
+    std::cerr.flush();
+    return ok;
 }
 
 // ===== For unsigned KeyType =====
