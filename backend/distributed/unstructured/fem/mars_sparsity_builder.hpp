@@ -707,5 +707,169 @@ int CvfemSparsityBuilder<KeyType>::buildFullSparsity(
     return nnz;
 }
 
+// ============================================================================
+// Tet variant of buildGraphSparsity.
+// ============================================================================
+// Each tet has 6 SCS edges (one per element edge): (0,1) (1,2) (0,2) (0,3) (1,3) (2,3).
+// Each edge contributes 2 directed entries (L->R and R->L) plus the diagonal
+// is added after the dedup. Reuses the same thrust dedup pipeline as the hex
+// path; the only difference is the edge enumeration in the launch kernel.
+template<typename KeyType>
+__global__ void buildSparsityEdgeListKernelTet(
+    const KeyType* __restrict__ conn0,
+    const KeyType* __restrict__ conn1,
+    const KeyType* __restrict__ conn2,
+    const KeyType* __restrict__ conn3,
+    const int* __restrict__ nodeToDof,
+    size_t numElements,
+    int* edgeListRow,
+    int* edgeListCol)
+{
+    size_t e = blockIdx.x * blockDim.x + threadIdx.x;
+    if (e >= numElements) return;
+
+    KeyType nodes[4];
+    nodes[0] = conn0[e];
+    nodes[1] = conn1[e];
+    nodes[2] = conn2[e];
+    nodes[3] = conn3[e];
+
+    // Tet4CVFEM SCS pairs (matches mars_cvfem_kernel.hpp Tet4CVFEM::get_scs_nodes).
+    const int lr_pairs[12] = {0,1, 1,2, 0,2, 0,3, 1,3, 2,3};
+
+    for (int scs = 0; scs < 6; ++scs) {
+        int nodeL = lr_pairs[scs * 2];
+        int nodeR = lr_pairs[scs * 2 + 1];
+
+        int dofL = nodeToDof[nodes[nodeL]];
+        int dofR = nodeToDof[nodes[nodeR]];
+
+        size_t edgeIdx = e * 6 + scs;
+
+        if (dofL >= 0 && dofR >= 0) {
+            edgeListRow[edgeIdx * 2]     = dofL;
+            edgeListCol[edgeIdx * 2]     = dofR;
+            edgeListRow[edgeIdx * 2 + 1] = dofR;
+            edgeListCol[edgeIdx * 2 + 1] = dofL;
+        } else {
+            edgeListRow[edgeIdx * 2]     = -1;
+            edgeListCol[edgeIdx * 2]     = -1;
+            edgeListRow[edgeIdx * 2 + 1] = -1;
+            edgeListCol[edgeIdx * 2 + 1] = -1;
+        }
+    }
+}
+
+template<typename KeyType>
+class CvfemTetSparsityBuilder {
+public:
+    // Build reduced sparsity pattern from tet connectivity.
+    // Returns number of non-zeros. Pipeline mirrors CvfemSparsityBuilder::
+    // buildGraphSparsity (thrust path); does not yet expose the CUB variant
+    // since the perf-critical hex build covers the optimization budget.
+    static int buildGraphSparsity(
+        const KeyType* d_conn0,
+        const KeyType* d_conn1,
+        const KeyType* d_conn2,
+        const KeyType* d_conn3,
+        size_t numElements,
+        const int* d_nodeToDof,
+        int numDofs,
+        int* d_rowPtr,
+        int* d_colInd,
+        int* d_diagPtr = nullptr,
+        cudaStream_t stream = 0)
+    {
+        size_t numEdges = numElements * 6 * 2;
+        thrust::device_vector<int> d_edgeRow(numEdges);
+        thrust::device_vector<int> d_edgeCol(numEdges);
+
+        int blockSize = 256;
+        int numBlocks = (numElements + blockSize - 1) / blockSize;
+        buildSparsityEdgeListKernelTet<<<numBlocks, blockSize, 0, stream>>>(
+            d_conn0, d_conn1, d_conn2, d_conn3,
+            d_nodeToDof, numElements,
+            thrust::raw_pointer_cast(d_edgeRow.data()),
+            thrust::raw_pointer_cast(d_edgeCol.data()));
+
+        thrust::device_vector<int> d_diagRow(numDofs);
+        thrust::device_vector<int> d_diagCol(numDofs);
+        thrust::sequence(thrust::device, d_diagRow.begin(), d_diagRow.end());
+        thrust::sequence(thrust::device, d_diagCol.begin(), d_diagCol.end());
+
+        thrust::device_vector<int> d_allRow(numEdges + numDofs);
+        thrust::device_vector<int> d_allCol(numEdges + numDofs);
+        thrust::copy(thrust::device, d_edgeRow.begin(), d_edgeRow.end(), d_allRow.begin());
+        thrust::copy(thrust::device, d_diagRow.begin(), d_diagRow.end(), d_allRow.begin() + numEdges);
+        thrust::copy(thrust::device, d_edgeCol.begin(), d_edgeCol.end(), d_allCol.begin());
+        thrust::copy(thrust::device, d_diagCol.begin(), d_diagCol.end(), d_allCol.begin() + numEdges);
+
+        auto new_end = thrust::remove_if(
+            thrust::device,
+            thrust::make_zip_iterator(thrust::make_tuple(d_allRow.begin(), d_allCol.begin())),
+            thrust::make_zip_iterator(thrust::make_tuple(d_allRow.end(), d_allCol.end())),
+            [] __device__ (const thrust::tuple<int, int>& t) {
+                return thrust::get<0>(t) < 0;
+            });
+        size_t validEntries = thrust::distance(
+            thrust::make_zip_iterator(thrust::make_tuple(d_allRow.begin(), d_allCol.begin())),
+            new_end);
+        d_allRow.resize(validEntries);
+        d_allCol.resize(validEntries);
+
+        thrust::sort(thrust::device,
+            thrust::make_zip_iterator(thrust::make_tuple(d_allRow.begin(), d_allCol.begin())),
+            thrust::make_zip_iterator(thrust::make_tuple(d_allRow.end(),   d_allCol.end())));
+
+        auto unique_end = thrust::unique(thrust::device,
+            thrust::make_zip_iterator(thrust::make_tuple(d_allRow.begin(), d_allCol.begin())),
+            thrust::make_zip_iterator(thrust::make_tuple(d_allRow.end(),   d_allCol.end())));
+        int nnz = thrust::distance(
+            thrust::make_zip_iterator(thrust::make_tuple(d_allRow.begin(), d_allCol.begin())),
+            unique_end);
+        d_allRow.resize(nnz);
+        d_allCol.resize(nnz);
+
+        thrust::device_vector<int> d_rowCounts(numDofs, 0);
+        thrust::for_each(thrust::device, d_allRow.begin(), d_allRow.end(),
+            [counts = thrust::raw_pointer_cast(d_rowCounts.data())] __device__ (int row) {
+                atomicAdd(&counts[row], 1);
+            });
+
+        thrust::device_vector<int> d_rowPtrTemp(numDofs + 1);
+        thrust::exclusive_scan(thrust::device, d_rowCounts.begin(), d_rowCounts.end(), d_rowPtrTemp.begin());
+        int lastCount, lastPtr;
+        cudaMemcpy(&lastCount, thrust::raw_pointer_cast(d_rowCounts.data() + numDofs - 1), sizeof(int), cudaMemcpyDeviceToHost);
+        cudaMemcpy(&lastPtr,   thrust::raw_pointer_cast(d_rowPtrTemp.data() + numDofs - 1), sizeof(int), cudaMemcpyDeviceToHost);
+        int finalVal = lastPtr + lastCount;
+        cudaMemcpy(thrust::raw_pointer_cast(d_rowPtrTemp.data() + numDofs), &finalVal, sizeof(int), cudaMemcpyHostToDevice);
+
+        cudaMemcpy(d_rowPtr, thrust::raw_pointer_cast(d_rowPtrTemp.data()),
+                   (numDofs + 1) * sizeof(int), cudaMemcpyDeviceToDevice);
+        if (d_colInd != nullptr) {
+            cudaMemcpy(d_colInd, thrust::raw_pointer_cast(d_allCol.data()),
+                       nnz * sizeof(int), cudaMemcpyDeviceToDevice);
+        }
+
+        if (d_diagPtr != nullptr && d_colInd != nullptr) {
+            thrust::for_each(thrust::device,
+                thrust::counting_iterator<int>(0),
+                thrust::counting_iterator<int>(numDofs),
+                [rowPtr = d_rowPtr, colInd = d_colInd, diagPtr = d_diagPtr] __device__ (int row) {
+                    int lo = rowPtr[row];
+                    int hi = rowPtr[row + 1];
+                    while (lo < hi) {
+                        int mid = (lo + hi) >> 1;
+                        if (colInd[mid] < row) lo = mid + 1;
+                        else hi = mid;
+                    }
+                    diagPtr[row] = lo;
+                });
+        }
+
+        return nnz;
+    }
+};
+
 } // namespace fem
 } // namespace mars

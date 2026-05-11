@@ -41,6 +41,16 @@ else()
 endif()
 install(TARGETS mars_cvfem_graph RUNTIME DESTINATION bin/examples)
 
+# CVFEM tet driver: graph-based assembly for linear tetrahedra
+add_executable(mars_cvfem_graph_tet mars_cvfem_graph_tet.cu)
+if(TARGET CUDA::nvToolsExt)
+    target_link_libraries(mars_cvfem_graph_tet PRIVATE mars CUDA::nvToolsExt)
+else()
+    target_link_libraries(mars_cvfem_graph_tet PRIVATE mars)
+    target_compile_definitions(mars_cvfem_graph_tet PRIVATE MARS_DISABLE_NVTX)
+endif()
+install(TARGETS mars_cvfem_graph_tet RUNTIME DESTINATION bin/examples)
+
 # CVFEM Poisson solver
 add_executable(mars_cvfem_poisson mars_cvfem_poisson.cu)
 target_link_libraries(mars_cvfem_poisson PRIVATE mars)
@@ -61,3 +71,13 @@ target_include_directories(mars_amr_cvfem_graph PRIVATE
     ${CMAKE_SOURCE_DIR}/backend/distributed/unstructured/amr
 )
 install(TARGETS mars_amr_cvfem_graph RUNTIME DESTINATION bin/examples)
+
+# AMR pressure-Poisson solver: same CVFEM operator + AMR loop as
+# mars_amr_cvfem_graph, but with f = -div(v . grad v) for a prescribed
+# free-stream + 2D tip-vortex velocity field. NASA wing-tip demo target.
+add_executable(mars_amr_pressure_poisson mars_amr_pressure_poisson.cu)
+target_link_libraries(mars_amr_pressure_poisson PRIVATE mars)
+target_include_directories(mars_amr_pressure_poisson PRIVATE
+    ${CMAKE_SOURCE_DIR}/backend/distributed/unstructured/amr
+)
+install(TARGETS mars_amr_pressure_poisson RUNTIME DESTINATION bin/examples)
