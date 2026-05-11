@@ -37,6 +37,7 @@ int main(int argc, char** argv) {
     int numIterations = 10;
     int blockSize = 256;
     int bucketSize = 64;  // Cornerstone octree bucket size (smaller = finer partitioning)
+    int bucketSizeFocus = 8;  // Focus tree bucket size (per-rank refined view; smaller = finer halo)
     bool quiet = false;
     CvfemKernelVariant kernelVariant = CvfemKernelVariant::Original;
 
@@ -50,6 +51,8 @@ int main(int argc, char** argv) {
             blockSize = std::stoi(arg.substr(13));
         } else if (arg.find("--bucket-size=") == 0) {
             bucketSize = std::stoi(arg.substr(14));
+        } else if (arg.find("--bucket-size-focus=") == 0) {
+            bucketSizeFocus = std::stoi(arg.substr(20));
         } else if (arg.find("--kernel=") == 0) {
             std::string v = arg.substr(9);
             if (v == "original") kernelVariant = CvfemKernelVariant::Original;
@@ -87,6 +90,7 @@ int main(int argc, char** argv) {
             std::cout << "  --kernel=VARIANT    tensor, shmem, optimized, team, original (default: original)\n";
             std::cout << "  --block-size=N      CUDA block size (default: 256)\n";
             std::cout << "  --bucket-size=N     Cornerstone octree bucket size (default: 64, try 32 or 16 for 16+ ranks)\n";
+            std::cout << "  --bucket-size-focus=N  Focus tree bucket size (default: 8, lower = finer halo at cost of memory)\n";
             std::cout << "  --iterations=N      Number of assembly iterations (default: 10)\n";
             std::cout << "  --quiet             Suppress detailed output\n";
             std::cout << "\nBackward compatible positional syntax:\n";
@@ -112,19 +116,34 @@ int main(int argc, char** argv) {
         std::cout << "  Kernel: " << kernelName << std::endl;
         std::cout << "  Block size: " << blockSize << std::endl;
         std::cout << "  Bucket size: " << bucketSize << std::endl;
+        std::cout << "  Bucket size (focus): " << bucketSizeFocus << std::endl;
         std::cout << "  Iterations: " << numIterations << std::endl;
     }
 
     // Load mesh with custom bucket size
     MARS_NVTX_PUSH("Mesh Loading");
     auto meshLoadStart = std::chrono::high_resolution_clock::now();
-    ElementDomain<ElemTag, RealType, KeyType, cstone::GpuTag> domain(meshFile, rank, numRanks, true, bucketSize);
+    ElementDomain<ElemTag, RealType, KeyType, cstone::GpuTag> domain(
+        meshFile, rank, numRanks, true, bucketSize, static_cast<unsigned>(bucketSizeFocus));
     if (rank == 0) { std::cout << "PHASE: domain constructed" << std::endl; std::cout.flush(); }
+
+    // NodeHaloTopo is built lazily on first access; time it separately so the
+    // mesh-load breakdown attributes the cost correctly.
+    auto haloStart = std::chrono::high_resolution_clock::now();
     const auto& d_nodeOwnership = domain.getNodeOwnershipMap();
     cudaDeviceSynchronize();
+    auto haloEnd = std::chrono::high_resolution_clock::now();
+    perf.nodeHaloTime = std::chrono::duration<float, std::milli>(haloEnd - haloStart).count();
     if (rank == 0) { std::cout << "PHASE: domain synced" << std::endl; std::cout.flush(); }
     auto meshLoadEnd = std::chrono::high_resolution_clock::now();
     perf.meshLoadTime = std::chrono::duration<float, std::milli>(meshLoadEnd - meshLoadStart).count();
+
+    // Pull rank-0 ctor-internal timings into perf for the breakdown printout.
+    perf.readMeshTime = domain.readMeshTimeMs;
+    perf.bboxTime     = domain.bboxTimeMs;
+    perf.h2dTime      = domain.h2dTimeMs;
+    perf.charSizeTime = domain.charSizeTimeMs;
+    perf.syncTime     = domain.syncTimeMs;
     MARS_NVTX_POP();
 
     size_t nodeCount = domain.getNodeCount();
@@ -366,6 +385,8 @@ int main(int argc, char** argv) {
         double iterTime = timer.elapsedMs();
         perf.recordIteration(iterTime);
         perIterationTimes[iter] = iterTime;
+        // Per-iteration logging on rank 0: helps diagnose warm-up / clock / contention behavior.
+        if (rank == 0) std::cout << "iter " << iter << ": " << iterTime << " ms" << std::endl;
         MARS_NVTX_POP();
     }
 

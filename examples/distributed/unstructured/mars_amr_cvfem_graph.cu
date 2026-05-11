@@ -28,6 +28,52 @@ using namespace mars;
 using namespace mars::fem;
 using namespace mars::amr;
 
+// PhaseTimer: cudaDeviceSynchronize + MPI_Barrier on entry/lap so wall-clock
+// reflects all-rank work, not just rank-0. Stores millisecond timings keyed
+// by phase name; printed at end of each level.
+struct PhaseTimer
+{
+    using clk = std::chrono::high_resolution_clock;
+    clk::time_point t0;
+    std::vector<std::pair<std::string, float>> phases;
+    bool sync;
+
+    explicit PhaseTimer(bool sync_ = true) : sync(sync_) { reset(); }
+
+    void reset()
+    {
+        if (sync) { cudaDeviceSynchronize(); MPI_Barrier(MPI_COMM_WORLD); }
+        t0 = clk::now();
+    }
+
+    void lap(const std::string& name)
+    {
+        if (sync) { cudaDeviceSynchronize(); MPI_Barrier(MPI_COMM_WORLD); }
+        auto t1 = clk::now();
+        phases.emplace_back(name, std::chrono::duration<float, std::milli>(t1 - t0).count());
+        t0 = t1;
+    }
+
+    void report(int rank, const std::string& header)
+    {
+        if (rank != 0) return;
+        std::cout << "  [" << header << "] phase breakdown:\n";
+        float total = 0;
+        for (auto& [n, ms] : phases) total += ms;
+        for (auto& [n, ms] : phases)
+        {
+            std::cout << "    " << std::left << std::setw(28) << n
+                      << std::right << std::fixed << std::setprecision(2)
+                      << std::setw(10) << ms << " ms ("
+                      << std::setw(5) << std::setprecision(1)
+                      << (100.0f * ms / std::max(total, 1e-3f)) << "%)\n";
+        }
+        std::cout << "    " << std::left << std::setw(28) << "TOTAL"
+                  << std::right << std::fixed << std::setprecision(2)
+                  << std::setw(10) << total << " ms\n";
+    }
+};
+
 // GPU kernel: apply Dirichlet BC on boundary nodes (zero on all faces of bounding box)
 template<typename RealType>
 __global__ void applyBCKernel(const RealType* nodeX,
@@ -164,20 +210,28 @@ void solvePoissonGraph(ElementDomain<HexTag, RealType, KeyType, cstone::GpuTag>&
                        cstone::DeviceVector<RealType>& d_nodeSolution,
                        cstone::DeviceVector<RealType>& d_errorPerElement)
 {
+    PhaseTimer pt;
+
     size_t nodeCount    = domain.getNodeCount();
     size_t elementCount = domain.getElementCount();
 
+    // domain getters trigger lazy halo + topology + adjacency + coord caching.
+    // Time them as one bucket: "lazy domain prep". Halo+topology was already
+    // done at amr.initialize on level 0; this captures only the post-AMR-rebuild
+    // re-trigger + coord cache.
     const auto& d_nodeOwnership = domain.getNodeOwnershipMap();
     const auto& d_conn          = domain.getElementToNodeConnectivity();
     domain.cacheNodeCoordinates();
     const auto& d_x = domain.getNodeX();
     const auto& d_y = domain.getNodeY();
     const auto& d_z = domain.getNodeZ();
+    pt.lap("lazy domain prep");
 
     // 1) GPU DOF mapping: owned nodes -> [0, numOwnedDofs), ghost -> [numOwnedDofs, nodeCount)
     cstone::DeviceVector<int> d_node_to_dof(nodeCount);
     int numOwnedDofs   = buildDofMappingGpu<KeyType>(d_nodeOwnership.data(), d_node_to_dof.data(), nodeCount);
     int numTotalDofs   = static_cast<int>(nodeCount);
+    pt.lap("DOF mapping");
 
     // 2) GPU sparsity (FULL 27-NNZ pattern matching assembleFull's 8x8 stencil).
     //    Using graph (7-NNZ) pattern would silently drop entries in addValue,
@@ -201,6 +255,7 @@ void solvePoissonGraph(ElementDomain<HexTag, RealType, KeyType, cstone::GpuTag>&
 
     cstone::DeviceVector<RealType> d_values(nnz, RealType(0));
     cstone::DeviceVector<RealType> d_rhs(numTotalDofs, RealType(0));
+    pt.lap("sparsity build");
 
     // CSR wrapper for the assembler
     using MatrixType = CSRMatrix<RealType>;
@@ -240,6 +295,7 @@ void solvePoissonGraph(ElementDomain<HexTag, RealType, KeyType, cstone::GpuTag>&
         d_mdot.data(), d_areaVec_x.data(), d_areaVec_y.data(), d_areaVec_z.data(),
         d_node_to_dof.data(), d_nodeOwnership.data(), d_matrix, d_rhs.data(), config);
     cudaDeviceSynchronize();
+    pt.lap("assembly (LHS+RHS)");
 
     // Source term: integrate sourceTerm against trilinear shape functions per element.
     // Each owned node's RHS gets contribution sourceTerm * V_elem / 8 from each
@@ -256,6 +312,7 @@ void solvePoissonGraph(ElementDomain<HexTag, RealType, KeyType, cstone::GpuTag>&
             d_rhs.data(), elementCount, sourceTerm);
         cudaDeviceSynchronize();
     }
+    pt.lap("source integration");
 
     // 4) GPU bounding box (per-rank) + MPI_Allreduce for global box
     auto xb = thrust::device_pointer_cast(d_x.data());
@@ -289,6 +346,7 @@ void solvePoissonGraph(ElementDomain<HexTag, RealType, KeyType, cstone::GpuTag>&
     enforceBCKernel<<<dofBlocks, blockSize>>>(d_isBdryDof.data(), d_rowPtr.data(), d_colInd.data(), d_diagPtr.data(),
                                                d_values.data(), d_rhs.data(), numOwnedDofs);
     cudaDeviceSynchronize();
+    pt.lap("BC enforcement");
 
     // 6) CG solve. SparseMatrix is m x n: m=numOwnedDofs rows (one per owned DOF),
     // n=numTotalDofs columns (entries reference both owned and ghost DOFs).
@@ -339,8 +397,11 @@ void solvePoissonGraph(ElementDomain<HexTag, RealType, KeyType, cstone::GpuTag>&
             });
     }
 
+    pt.lap("CG setup (Matrix alloc + halo cb)");
+
     solver.solve(A, b, x);
     cudaDeviceSynchronize();
+    pt.lap("CG solve");
 
     // DOF -> per-node solution
     d_nodeSolution.resize(nodeCount);
@@ -364,6 +425,7 @@ void solvePoissonGraph(ElementDomain<HexTag, RealType, KeyType, cstone::GpuTag>&
         std::get<3>(d_conn).data(), std::get<4>(d_conn).data(), std::get<5>(d_conn).data(),
         std::get<6>(d_conn).data(), std::get<7>(d_conn).data(), d_nodeSolution.data(), d_x.data(), d_y.data(),
         d_z.data(), d_node_to_dof.data(), elementCount, blockSize);
+    pt.lap("error indicator");
 
     cudaFree(d_matrix);
 
@@ -394,6 +456,9 @@ void solvePoissonGraph(ElementDomain<HexTag, RealType, KeyType, cstone::GpuTag>&
                   << solNorm << ", ||err||=" << errNorm << "\n"
                   << std::defaultfloat;
     }
+
+    // Phase breakdown for this level's solve (everything inside solvePoissonGraph)
+    pt.report(rank, "solve phases");
 }
 
 int main(int argc, char** argv)
@@ -504,15 +569,20 @@ int main(int argc, char** argv)
 
     AmrManager<HexTag, KeyType, RealType> amr(amrConfig);
     amr.initialize(meshFile, rank, numRanks);
-    std::cerr << "MAIN r" << rank << " amr.initialize returned" << std::endl; std::cerr.flush();
-    MPI_Barrier(MPI_COMM_WORLD);
-    std::cerr << "MAIN r" << rank << " past barrier" << std::endl; std::cerr.flush();
+    auto initT = amr.initTimings();
 
     if (rank == 0)
     {
         std::cout << "Initial mesh:\n";
         std::cout << "  Elements: " << amr.domain().getElementCount() << "\n";
-        std::cout << "  Nodes:    " << amr.domain().getNodeCount() << "\n\n";
+        std::cout << "  Nodes:    " << amr.domain().getNodeCount() << "\n";
+        std::cout << "  Init breakdown (ms):\n";
+        std::cout << "    domain (file read + sync):    " << std::fixed << initT.domainSyncTimeMs << "\n";
+        std::cout << "    halo + node topology:         " << initT.haloTopoTimeMs   << "\n";
+        std::cout << "    adjacency CSR (e2n + n2e):    " << initT.adjacencyTimeMs  << "\n";
+        std::cout << "    coord cache (SFC decode):     " << initT.coordCacheTimeMs << "\n";
+        std::cout << "    AMR octree state:             " << initT.octreeTimeMs     << "\n";
+        std::cout << "    TOTAL:                        " << initT.totalMs          << "\n\n";
     }
 
     // AMR loop
@@ -549,12 +619,18 @@ int main(int argc, char** argv)
 
         if (level >= amrLevels) break;
 
-        // Adapt mesh
+        // Adapt mesh (mark + refine + rebuild + transfer). adaptMesh fills
+        // stats.totalTimeMs which is the total wall-clock for the whole AMR
+        // step (mark, refine, cstone-rebuild, transfer, halo exchange).
         cstone::DeviceVector<RealType> d_newSolution;
-        std::cerr << "MAIN r" << rank << " before adaptMesh L" << level << std::endl; std::cerr.flush();
+        auto amrStart = std::chrono::high_resolution_clock::now();
         stats = amr.adaptMesh(d_errorPerElement.data(), d_nodeSolution.data(), d_newSolution);
-        std::cerr << "MAIN r" << rank << " adaptMesh L" << level << " done" << std::endl; std::cerr.flush();
+        cudaDeviceSynchronize();
+        MPI_Barrier(MPI_COMM_WORLD);
+        auto amrEnd = std::chrono::high_resolution_clock::now();
+        float amrMs = std::chrono::duration<float, std::milli>(amrEnd - amrStart).count();
         AmrManager<HexTag, KeyType, RealType>::printStats(stats, rank);
+        if (rank == 0) std::cout << "    AMR wall: " << std::fixed << amrMs << " ms\n";
 
         d_nodeSolution = std::move(d_newSolution);
 

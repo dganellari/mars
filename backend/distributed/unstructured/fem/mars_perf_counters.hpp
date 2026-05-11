@@ -45,6 +45,19 @@ private:
 struct PerfCounters {
     // Timing (in milliseconds)
     float meshLoadTime = 0.0f;
+    // Sub-phases of meshLoadTime, all cudaDeviceSynchronize-fenced.
+    // readMesh covers host disk read + GPU dedup + global->local remap (all in readMeshDataSoA).
+    // bbox is the global bounding box MPI_Allreduce ladder.
+    // h2d is host->device coord+conn transfer.
+    // charSize is the calculateCharacteristicSizes GPU work.
+    // sync is cstone domain.sync() — usually the heaviest phase at scale.
+    // nodeHalo is lazy NodeHaloTopo construction (triggered by getNodeOwnershipMap).
+    float readMeshTime = 0.0f;
+    float bboxTime = 0.0f;
+    float h2dTime = 0.0f;
+    float charSizeTime = 0.0f;
+    float syncTime = 0.0f;
+    float nodeHaloTime = 0.0f;
     float sparsityBuildTime = 0.0f;
     float fieldInitTime = 0.0f;
     float assemblyWarmupTime = 0.0f;
@@ -140,7 +153,13 @@ struct PerfCounters {
 
         std::cout << "\n--- Timing Breakdown ---\n";
         std::cout << std::setprecision(3);
-        std::cout << "  Mesh loading:          " << std::setw(12) << meshLoadTime << " ms\n";
+        std::cout << "  Mesh loading (total):  " << std::setw(12) << meshLoadTime << " ms\n";
+        std::cout << "    Read mesh (host):    " << std::setw(12) << readMeshTime << " ms\n";
+        std::cout << "    Bounding box:        " << std::setw(12) << bboxTime << " ms\n";
+        std::cout << "    H2D transfer:        " << std::setw(12) << h2dTime << " ms\n";
+        std::cout << "    Char sizes (GPU):    " << std::setw(12) << charSizeTime << " ms\n";
+        std::cout << "    Cstone sync:         " << std::setw(12) << syncTime << " ms\n";
+        std::cout << "    NodeHaloTopo:        " << std::setw(12) << nodeHaloTime << " ms\n";
         std::cout << "  Sparsity build:        " << std::setw(12) << sparsityBuildTime << " ms\n";
         std::cout << "  Field initialization:  " << std::setw(12) << fieldInitTime << " ms\n";
         std::cout << "  Assembly warmup:       " << std::setw(12) << assemblyWarmupTime << " ms\n";
