@@ -598,9 +598,28 @@ private:
     // device-data ElementDomain constructor. cstone's sync redistributes
     // elements globally based on their SFC keys, establishing halos and
     // restoring partition consistency.
+    //
+    // Two paths, runtime-selected via env MARS_AMR_REUSE_DOMAIN:
+    //
+    //   default (env unset / 0):
+    //     Reconstructs the ElementDomain from scratch. The new cstone::Domain
+    //     has firstCall_=true and triggers focusTree_.converge(). At cube256/16
+    //     this dominates AMR rebuild time (~80% of cstone sync = ~3 s at 977M).
+    //
+    //   MARS_AMR_REUSE_DOMAIN=1:
+    //     EXPERIMENTAL / NOT BIT-EXACT. Reuses the existing cstone::Domain
+    //     via resyncFromDevice. firstCall_ stays false. Drift observed in
+    //     three iterations (5.9% to 78% L2 norm). cstone's internal state
+    //     model is SPH-centric and cannot be retrofitted via downstream patches;
+    //     proper fix requires upstream Domain::amrSync(). Kept here as a known
+    //     follow-up; see docs/reference/10_cstone_domain_reuse_status.md.
     template<typename ResultType>
     void rebuildDomainFromDevice(ResultType& refined)
     {
+        const char* reuseEnv = std::getenv("MARS_AMR_REUSE_DOMAIN");
+        const bool reuseDomain = (reuseEnv != nullptr && std::string(reuseEnv) != "0"
+                                  && domain_); // can only reuse if a Domain already exists
+
         typename Domain::DeviceCoordsTuple coords = std::make_tuple(
             std::move(refined.d_x), std::move(refined.d_y), std::move(refined.d_z));
 
@@ -611,20 +630,35 @@ private:
                 std::move(refined.d_conn2), std::move(refined.d_conn3),
                 std::move(refined.d_conn4), std::move(refined.d_conn5),
                 std::move(refined.d_conn6), std::move(refined.d_conn7));
-            domain_ = std::make_unique<Domain>(std::move(coords), std::move(conn),
-                                                rank_, numRanks_, config_.bucketSize);
+            if (reuseDomain)
+            {
+                domain_->resyncFromDevice(std::move(coords), std::move(conn));
+            }
+            else
+            {
+                domain_ = std::make_unique<Domain>(std::move(coords), std::move(conn),
+                                                    rank_, numRanks_, config_.bucketSize);
+            }
         }
         else if constexpr (std::is_same_v<ElementTag, TetTag>)
         {
             typename Domain::DeviceConnectivityTuple conn = std::make_tuple(
                 std::move(refined.d_conn0), std::move(refined.d_conn1),
                 std::move(refined.d_conn2), std::move(refined.d_conn3));
-            domain_ = std::make_unique<Domain>(std::move(coords), std::move(conn),
-                                                rank_, numRanks_, config_.bucketSize);
+            if (reuseDomain)
+            {
+                domain_->resyncFromDevice(std::move(coords), std::move(conn));
+            }
+            else
+            {
+                domain_ = std::make_unique<Domain>(std::move(coords), std::move(conn),
+                                                    rank_, numRanks_, config_.bucketSize);
+            }
         }
 
         // Lazy-init order matching mars_cvfem_graph: ownership first, then conn,
-        // coords, then AMR octree state
+        // coords, then AMR octree state. resyncFromDevice already cleared lazy
+        // state, so first access triggers re-init.
         (void)domain_->getNodeOwnershipMap();
         cudaDeviceSynchronize();
         (void)domain_->getElementToNodeConnectivity();
