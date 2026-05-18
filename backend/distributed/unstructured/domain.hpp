@@ -910,6 +910,113 @@ public:
         return;
     }
 
+    // Reverse of exchangeNodeHalo: ghost-side contributions are SUMMED into the
+    // owner-side slots on the owning rank. Used by conservative scatter kernels
+    // (CVFEM face-flux divergence, mass-conserving advection RHS) where the
+    // owner of a node must receive contributions from elements that touch the
+    // node but live on a different rank and are NOT in the owner's cstone halo
+    // (corner-only neighbors, the case `buildNodeOwnership` calls out).
+    //
+    // Algorithm:
+    //   - Pack ghost-slot values (positions recvNodeIds_) into a buffer sized
+    //     recvOffsets_.back() and send to each peer p.
+    //   - On each peer the corresponding sendNodeIds_ entry is the LOCAL OWNED
+    //     id for the same global node; atomicAdd the received value into the
+    //     owner's slot.
+    //
+    // Postcondition: ghost slots are LEFT UNTOUCHED on this rank (caller decides
+    // whether to overwrite them via a follow-up forward exchangeNodeHalo).
+    template<class VectorType>
+    void reverseExchangeNodeHaloAdd(VectorType& nodeArray, const int* nodeToDof = nullptr) const
+    {
+        if (numRanks_ == 1) return;
+
+        using T = typename VectorType::value_type;
+        static_assert(std::is_same_v<T, RealType>,
+                      "reverseExchangeNodeHaloAdd: vector element type must match domain RealType");
+
+        ensureNodeHaloTopo();
+        const auto& topo = *nodeHaloTopo_;
+
+        size_t sendTotal = topo.sendOffsets_.empty() ? 0 : size_t(topo.sendOffsets_.back());
+        size_t recvTotal = topo.recvOffsets_.empty() ? 0 : size_t(topo.recvOffsets_.back());
+
+        // Reverse: we SEND from ghost slots (recvNodeIds_) and RECV into owned
+        // slots (sendNodeIds_). Reuse the pre-sized staging buffers but with
+        // their roles swapped: sendBuf_ has length sendTotal (matches the
+        // sendNodeIds_ list, which is what we RECV into); recvBuf_ has length
+        // recvTotal (matches recvNodeIds_, which is what we SEND from).
+        T*           arr   = thrust::raw_pointer_cast(nodeArray.data());
+        const int*   rnds  = thrust::raw_pointer_cast(topo.recvNodeIds_.data());
+        const int*   snds  = thrust::raw_pointer_cast(topo.sendNodeIds_.data());
+        T*           gbuf  = thrust::raw_pointer_cast(topo.recvBuf_.data()); // SEND buffer (length recvTotal)
+        T*           obuf  = thrust::raw_pointer_cast(topo.sendBuf_.data()); // RECV buffer (length sendTotal)
+
+        if (recvTotal > 0)
+        {
+            thrust::for_each(thrust::device,
+                              thrust::counting_iterator<size_t>(0),
+                              thrust::counting_iterator<size_t>(recvTotal),
+                              [arr, rnds, gbuf, nodeToDof] __device__ (size_t i) {
+                                  int n = rnds[i];
+                                  int idx = (nodeToDof != nullptr) ? nodeToDof[n] : n;
+                                  gbuf[i] = (idx >= 0) ? arr[idx] : T(0);
+                              });
+            cudaDeviceSynchronize();
+        }
+
+        auto mpiType = std::is_same_v<T, double> ? MPI_DOUBLE : MPI_FLOAT;
+        constexpr int reverseHaloTagBase = 0x4d53;  // "MS" — distinct from forward "MR"
+        const int tag = reverseHaloTagBase + topo.epoch_;
+        std::vector<MPI_Request> reqs;
+        reqs.reserve(2 * topo.peers_.size());
+
+        // Recv from each peer p into our owned-slot staging area (sized by sendOffsets_).
+        for (size_t p = 0; p < topo.peers_.size(); ++p)
+        {
+            int peer = topo.peers_[p];
+            int rcnt = topo.sendOffsets_[p+1] - topo.sendOffsets_[p];
+            if (rcnt > 0)
+            {
+                MPI_Request r;
+                MPI_Irecv(obuf + topo.sendOffsets_[p], rcnt, mpiType, peer,
+                          tag, MPI_COMM_WORLD, &r);
+                reqs.push_back(r);
+            }
+        }
+        // Send to each peer p from our ghost-slot staging area (sized by recvOffsets_).
+        for (size_t p = 0; p < topo.peers_.size(); ++p)
+        {
+            int peer = topo.peers_[p];
+            int scnt = topo.recvOffsets_[p+1] - topo.recvOffsets_[p];
+            if (scnt > 0)
+            {
+                MPI_Request r;
+                MPI_Isend(gbuf + topo.recvOffsets_[p], scnt, mpiType, peer,
+                          tag, MPI_COMM_WORLD, &r);
+                reqs.push_back(r);
+            }
+        }
+        if (!reqs.empty()) MPI_Waitall(int(reqs.size()), reqs.data(), MPI_STATUSES_IGNORE);
+        ++topo.epoch_;
+
+        // Atomic-add received contributions into owner-side slots. atomicAdd is
+        // needed: multiple peers may send contributions for the same owned node
+        // (when several other ranks have it as a ghost).
+        if (sendTotal > 0)
+        {
+            thrust::for_each(thrust::device,
+                              thrust::counting_iterator<size_t>(0),
+                              thrust::counting_iterator<size_t>(sendTotal),
+                              [arr, snds, obuf, nodeToDof] __device__ (size_t i) {
+                                  int n = snds[i];
+                                  int idx = (nodeToDof != nullptr) ? nodeToDof[n] : n;
+                                  if (idx >= 0) atomicAdd(&arr[idx], obuf[i]);
+                              });
+            cudaDeviceSynchronize();
+        }
+    }
+
     // Device connectivity functions
     template<int I>
     __device__ KeyType getConnectivityDevice(size_t elementIndex) const;

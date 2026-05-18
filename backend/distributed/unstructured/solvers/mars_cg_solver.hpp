@@ -107,9 +107,10 @@ public:
             if (verbose_) {
                 std::cout << "CG: RHS vector is nearly zero (||b|| = " << b_norm << "), solution is zero." << std::endl;
             }
-            thrust::fill(thrust::device_pointer_cast(x.data()), 
+            thrust::fill(thrust::device_pointer_cast(x.data()),
                         thrust::device_pointer_cast(x.data() + x.size()),
                         RealType(0));
+            lastIterations_ = 0;
             return true;
         }
         
@@ -143,6 +144,7 @@ public:
                 if (verbose_) {
                     std::cout << "CG: p^T Ap = " << pAp << " is too small, stopping." << std::endl;
                 }
+                lastIterations_ = iter + 1;
                 return false;
             }
             
@@ -178,6 +180,7 @@ public:
                     RealType avg_reduction = std::pow(r_norm / r_norm_0, 1.0 / (iter + 1));
                     std::cout << "Average reduction factor = " << avg_reduction << std::endl;
                 }
+                lastIterations_ = iter + 1;
                 return true;
             }
 
@@ -192,8 +195,13 @@ public:
         }
 
         if (verbose_) { std::cout << "CG did not converge in " << maxIter_ << " iterations" << std::endl; }
+        lastIterations_ = maxIter_;
         return false;
     }
+
+    // Iterations taken by the most recent solve(). 0 means b was treated as zero.
+    // Updated on every solve() return path.
+    int getIterations() const { return lastIterations_; }
 
     void setVerbose(bool verbose) { verbose_ = verbose; }
     void setMaxIterations(int maxIter) { maxIter_ = maxIter; }
@@ -385,7 +393,8 @@ private:
     int maxIter_;
     RealType tolerance_;
     bool verbose_;
-    
+    int lastIterations_ = 0;
+
     std::function<void(Vector&)> haloExchangeCallback_;
     int ownedSize_ = 0;  // > 0 enables MPI_Allreduce on dot products
 

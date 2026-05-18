@@ -72,12 +72,73 @@ target_include_directories(mars_amr_cvfem_graph PRIVATE
 )
 install(TARGETS mars_amr_cvfem_graph RUNTIME DESTINATION bin/examples)
 
+# AMR + CVFEM Poisson for linear tetrahedra (full 4x4 assembly + CG)
+add_executable(mars_amr_cvfem_graph_tet mars_amr_cvfem_graph_tet.cu)
+target_link_libraries(mars_amr_cvfem_graph_tet PRIVATE mars)
+target_include_directories(mars_amr_cvfem_graph_tet PRIVATE
+    ${CMAKE_SOURCE_DIR}/backend/distributed/unstructured/amr
+)
+install(TARGETS mars_amr_cvfem_graph_tet RUNTIME DESTINATION bin/examples)
+
 # AMR pressure-Poisson solver: same CVFEM operator + AMR loop as
 # mars_amr_cvfem_graph, but with f = -div(v . grad v) for a prescribed
 # free-stream + 2D tip-vortex velocity field. NASA wing-tip demo target.
+# When MARS_ENABLE_HYPRE=ON, --solver=hypre selects PCG+BoomerAMG; the
+# MARS_ENABLE_HYPRE define and Hypre link flags arrive transitively through
+# the mars target (mars_config.hpp + MARS_DEP_LIBRARIES), same as
+# mars_ex_beam_tet_distributed -- no extra CMake plumbing needed here.
 add_executable(mars_amr_pressure_poisson mars_amr_pressure_poisson.cu)
 target_link_libraries(mars_amr_pressure_poisson PRIVATE mars)
 target_include_directories(mars_amr_pressure_poisson PRIVATE
     ${CMAKE_SOURCE_DIR}/backend/distributed/unstructured/amr
 )
 install(TARGETS mars_amr_pressure_poisson RUNTIME DESTINATION bin/examples)
+
+# Advection-diffusion validator: fixed cube mesh, backward Euler, Gaussian IC
+# transported by a prescribed solid-body rotation. Phase B.2 of the
+# NS-projection plan -- reuses CvfemHexAssembler::assembleFull with gamma=nu
+# and nonzero mdot to verify the advection branch before building a full NS
+# driver. omega=0 falls back to the Phase B.1 heat-equation regression.
+# Picks up Hypre transitively through the mars target.
+add_executable(mars_amr_advdiff mars_amr_advdiff.cu)
+target_link_libraries(mars_amr_advdiff PRIVATE mars)
+target_include_directories(mars_amr_advdiff PRIVATE
+    ${CMAKE_SOURCE_DIR}/backend/distributed/unstructured/amr
+)
+install(TARGETS mars_amr_advdiff RUNTIME DESTINATION bin/examples)
+
+# Divergence operator validator: fixed cube mesh, prescribed velocity field,
+# compares CVFEM SCS-face discrete div(u) against analytical references
+# (rotation -> 0, sinx -> pi*cos(pi*x)). Phase B.3 of the NS-projection plan
+# -- validates the RHS of the pressure Poisson equation before wiring it into
+# a full projection driver.
+add_executable(mars_amr_div mars_amr_div.cu)
+target_link_libraries(mars_amr_div PRIVATE mars)
+target_include_directories(mars_amr_div PRIVATE
+    ${CMAKE_SOURCE_DIR}/backend/distributed/unstructured/amr
+)
+install(TARGETS mars_amr_div RUNTIME DESTINATION bin/examples)
+
+# Gradient operator validator: fixed cube mesh, prescribed scalar p field,
+# compares CVFEM SCS-face discrete grad(p) against analytical references
+# (linear -> (a,b,c), sin -> pi-products, constant -> 0). Phase B.4 of the
+# NS-projection plan -- dual of B.3; validates the pressure-correction
+# operator u^{n+1} = u* - dt * grad p.
+add_executable(mars_amr_grad mars_amr_grad.cu)
+target_link_libraries(mars_amr_grad PRIVATE mars)
+target_include_directories(mars_amr_grad PRIVATE
+    ${CMAKE_SOURCE_DIR}/backend/distributed/unstructured/amr
+)
+install(TARGETS mars_amr_grad RUNTIME DESTINATION bin/examples)
+
+# Chorin projection NS driver (Phase C): ties B.1-B.4 together into an
+# unsteady incompressible Navier-Stokes solver. Per step: explicit predictor
+# (advection + grad p^n), implicit diffusion (3 CG/Hypre solves), pressure
+# Poisson (1 solve), corrector (subtract dt/rho * grad phi), pressure update.
+# Test case: lid-driven cavity. Picks up Hypre transitively through mars.
+add_executable(mars_amr_ns_projection mars_amr_ns_projection.cu)
+target_link_libraries(mars_amr_ns_projection PRIVATE mars)
+target_include_directories(mars_amr_ns_projection PRIVATE
+    ${CMAKE_SOURCE_DIR}/backend/distributed/unstructured/amr
+)
+install(TARGETS mars_amr_ns_projection RUNTIME DESTINATION bin/examples)
