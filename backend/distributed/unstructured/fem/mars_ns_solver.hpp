@@ -61,14 +61,19 @@ using namespace mars::fem;
 using namespace mars::amr;
 
 // Sync on lap so wall-clock reflects all-rank work, not rank-0's stragglers.
+// Also live-prints each phase on rank 0 so long setup phases on large meshes
+// (e.g. 15M-hex wing) show progress in real time instead of a silent block
+// before the final summary.
 struct PhaseTimer
 {
     using clk = std::chrono::high_resolution_clock;
     clk::time_point t0;
     std::vector<std::pair<std::string, float>> phases;
     bool sync;
+    int  liveRank = -1;       // rank that should print laps live (-1 = no live print)
 
     explicit PhaseTimer(bool sync_ = true) : sync(sync_) { reset(); }
+    explicit PhaseTimer(bool sync_, int liveRank_) : sync(sync_), liveRank(liveRank_) { reset(); }
 
     void reset()
     {
@@ -80,8 +85,20 @@ struct PhaseTimer
     {
         if (sync) { cudaDeviceSynchronize(); MPI_Barrier(MPI_COMM_WORLD); }
         auto t1 = clk::now();
-        phases.emplace_back(name, std::chrono::duration<float, std::milli>(t1 - t0).count());
+        float ms = std::chrono::duration<float, std::milli>(t1 - t0).count();
+        phases.emplace_back(name, ms);
         t0 = t1;
+        int worldRank = 0;
+        if (liveRank >= 0)
+        {
+            MPI_Comm_rank(MPI_COMM_WORLD, &worldRank);
+            if (worldRank == liveRank)
+            {
+                std::cout << "  [lap] " << std::left << std::setw(36) << name
+                          << std::right << std::fixed << std::setprecision(2)
+                          << std::setw(12) << ms << " ms\n" << std::flush;
+            }
+        }
     }
 
     void report(int rank, const std::string& header)
@@ -955,12 +972,26 @@ struct NSStepper
     // BC configuration. Cavity: Dirichlet u=lidU on top face, u=0 on others.
     // Channel: Dirichlet u=Uinf on x=xmin inflow, u=v=w=0 on y/z walls,
     // natural (Neumann) on x=xmax outflow.
+    // Wing: per-side-set Dirichlet driven by Exodus side-sets. blade=no-slip
+    //   (u=v=w=0), in=Uinf, out=Dirichlet p=0, other named side-sets get
+    //   full Dirichlet u=Uinf (free-stream tunnel walls; true slip BCs are
+    //   a follow-up). Side-set local-node lists must be populated before
+    //   setupNSStepper(). NSStepper does not allocate or free them.
     // Periodic: triply periodic box. No Dirichlet on velocity. Pressure
     // null-space removed by global-mean subtraction every step. Requires
     // periodicMap to be set before setupNSStepper().
-    enum class BCKind { Cavity, Channel, Periodic };
+    enum class BCKind { Cavity, Channel, Wing, Periodic };
     BCKind bcKind = BCKind::Cavity;
-    RealType Uinf = 1;   // channel inflow speed; reuses lidU value via CLI
+    RealType Uinf = 1;   // channel/wing inflow speed; reuses lidU value via CLI
+
+    // Wing-mode side-set local-node lists. Each vector holds owned-or-ghost
+    // LOCAL node indices (size_t) that the driver mapped from global Exodus
+    // node IDs via cstone's d_localToGlobalNodeMap_. Populated only when
+    // bcKind == Wing. Names match the Exodus mesh side-set names.
+    std::vector<int> wingBladeNodes;    // no-slip
+    std::vector<int> wingInletNodes;    // u = Uinf
+    std::vector<int> wingOutletNodes;   // Dirichlet p = 0
+    std::vector<int> wingFarFieldNodes; // top/bottom/side/sym -- u = Uinf (full Dirichlet shortcut)
 
     // Optional. When bcKind == Periodic, must point to a built PeriodicMap.
     // Owned by the driver; NSStepper does not allocate or free it. The map
@@ -1053,7 +1084,8 @@ void setupNSStepper(NSStepper<KeyType, RealType>& s,
                     RealType dt,
                     CvfemKernelVariant kernelVariant)
 {
-    PhaseTimer pt;
+    // Live-print each setup lap on rank 0; the final report still summarizes.
+    PhaseTimer pt(/*sync=*/true, /*liveRank=*/0);
 
     s.nodeCount    = s.domain.getNodeCount();
     s.elementCount = s.domain.getElementCount();
@@ -1301,6 +1333,63 @@ void setupNSStepper(NSStepper<KeyType, RealType>& s,
                 s.nodeCount, s.xmin, s.xmax, s.ymin, s.ymax, s.zmin, s.zmax,
                 s.bboxEps, s.Uinf);
         }
+        else if (s.bcKind == BCK::Wing)
+        {
+            // Wing BC: per-side-set Dirichlet driven by the local-node lists
+            // populated by the driver. Build host arrays then copy to device:
+            //   - isBdryDof[dof] = 1 for nodes on blade/inlet/farfield.
+            //   - uTarget/vTarget/wTarget per side-set.
+            // Pressure BC (outlet) is handled in the pressure-BC block below.
+            std::vector<uint8_t> hostIsBdry(s.numOwnedDofs, 0);
+            std::vector<RealType> hostUTgt(s.nodeCount, RealType(0));
+            std::vector<RealType> hostVTgt(s.nodeCount, RealType(0));
+            std::vector<RealType> hostWTgt(s.nodeCount, RealType(0));
+            // Mirror node_to_dof + ownership to host so we can resolve DOF IDs.
+            std::vector<int> hostNodeToDof(s.nodeCount, -1);
+            std::vector<uint8_t> hostOwn(s.nodeCount, 0);
+            thrust::copy(thrust::device_pointer_cast(s.d_node_to_dof.data()),
+                         thrust::device_pointer_cast(s.d_node_to_dof.data() + s.nodeCount),
+                         hostNodeToDof.begin());
+            thrust::copy(thrust::device_pointer_cast(d_nodeOwnership.data()),
+                         thrust::device_pointer_cast(d_nodeOwnership.data() + s.nodeCount),
+                         hostOwn.begin());
+
+            auto tag = [&] (const std::vector<int>& nodes, RealType u, RealType v, RealType w) {
+                for (int li : nodes)
+                {
+                    if (li < 0 || (size_t)li >= s.nodeCount) continue;
+                    // Target velocity is set on EVERY local copy (owned or ghost)
+                    // so predictor/corrector see consistent values across rank
+                    // boundaries.
+                    hostUTgt[li] = u;
+                    hostVTgt[li] = v;
+                    hostWTgt[li] = w;
+                    // Dirichlet mask is per OWNED DOF only.
+                    if (hostOwn[li] != 1) continue;
+                    int dof = hostNodeToDof[li];
+                    if (dof < 0 || dof >= s.numOwnedDofs) continue;
+                    hostIsBdry[dof] = 1;
+                }
+            };
+            tag(s.wingBladeNodes,    RealType(0),     RealType(0), RealType(0));
+            tag(s.wingInletNodes,    RealType(s.Uinf), RealType(0), RealType(0));
+            tag(s.wingFarFieldNodes, RealType(s.Uinf), RealType(0), RealType(0));
+
+            thrust::copy(hostIsBdry.begin(), hostIsBdry.end(),
+                         thrust::device_pointer_cast(s.d_isBdryDof.data()));
+            thrust::copy(hostUTgt.begin(), hostUTgt.end(),
+                         thrust::device_pointer_cast(s.d_uTarget.data()));
+            thrust::copy(hostVTgt.begin(), hostVTgt.end(),
+                         thrust::device_pointer_cast(s.d_vTarget.data()));
+            thrust::copy(hostWTgt.begin(), hostWTgt.end(),
+                         thrust::device_pointer_cast(s.d_wTarget.data()));
+            if (s.rank == 0)
+            {
+                std::cout << "  wing BC: " << s.wingBladeNodes.size()    << " blade nodes (no-slip), "
+                          << s.wingInletNodes.size()    << " inlet nodes (u=" << s.Uinf << "), "
+                          << s.wingFarFieldNodes.size() << " far-field nodes (u=" << s.Uinf << ")\n";
+            }
+        }
         // Periodic: no boundary DOFs (mask stays zero) and no per-node targets
         // (targets stay zero; predictor/corrector write the field on every node).
         cudaDeviceSynchronize();
@@ -1370,6 +1459,48 @@ void setupNSStepper(NSStepper<KeyType, RealType>& s,
         s.pressurePinRank = -1;
         if (s.rank == 0)
             std::cout << "  pressure BC: Dirichlet p=0 on outflow face x=" << s.xmax << "\n";
+    }
+    else if (s.bcKind == BCK::Wing)
+    {
+        // Wing: pressure Dirichlet p=0 on the 'out' side-set (outlet face).
+        s.d_isPressureBdryDof.resize(s.numOwnedDofs);
+        thrust::fill(thrust::device_pointer_cast(s.d_isPressureBdryDof.data()),
+                     thrust::device_pointer_cast(s.d_isPressureBdryDof.data() + s.numOwnedDofs),
+                     uint8_t(0));
+        // Host-side scatter from the outlet local-node list. Owned DOFs only.
+        std::vector<uint8_t> hostMask(s.numOwnedDofs, 0);
+        std::vector<int> hostNodeToDof(s.nodeCount, -1);
+        std::vector<uint8_t> hostOwn(s.nodeCount, 0);
+        thrust::copy(thrust::device_pointer_cast(s.d_node_to_dof.data()),
+                     thrust::device_pointer_cast(s.d_node_to_dof.data() + s.nodeCount),
+                     hostNodeToDof.begin());
+        thrust::copy(thrust::device_pointer_cast(d_nodeOwnership.data()),
+                     thrust::device_pointer_cast(d_nodeOwnership.data() + s.nodeCount),
+                     hostOwn.begin());
+        size_t ownedOutletCount = 0;
+        for (int li : s.wingOutletNodes)
+        {
+            if (li < 0 || (size_t)li >= s.nodeCount) continue;
+            if (hostOwn[li] != 1) continue;
+            int dof = hostNodeToDof[li];
+            if (dof < 0 || dof >= s.numOwnedDofs) continue;
+            hostMask[dof] = 1;
+            ++ownedOutletCount;
+        }
+        thrust::copy(hostMask.begin(), hostMask.end(),
+                     thrust::device_pointer_cast(s.d_isPressureBdryDof.data()));
+
+        int dofBlocks = (s.numOwnedDofs + s.blockSize - 1) / s.blockSize;
+        enforceBcMatrixKernel<RealType><<<dofBlocks, s.blockSize>>>(
+            s.d_isPressureBdryDof.data(), s.d_rowPtr.data(), s.d_colInd.data(),
+            s.d_diagPtr.data(), s.d_valuesPre.data(), s.numOwnedDofs);
+        cudaDeviceSynchronize();
+
+        s.pressurePinDof  = -1;
+        s.pressurePinRank = -1;
+        if (s.rank == 0)
+            std::cout << "  pressure BC: Dirichlet p=0 on outlet side-set ("
+                      << ownedOutletCount << " owned DOFs on rank 0)\n";
     }
     else  // Cavity
     {
@@ -1526,12 +1657,20 @@ __global__ void initialConditionKernel(const uint8_t* isBdryDof,
                                        RealType* u,
                                        RealType* v,
                                        RealType* w,
-                                       size_t numNodes)
+                                       size_t numNodes,
+                                       // If nonzero, set interior u=interiorU
+                                       // instead of u=0 (wing free-stream IC).
+                                       RealType interiorU,
+                                       RealType interiorV,
+                                       RealType interiorW)
 {
     size_t i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= numNodes) return;
-    // Default to 0; the halo exchange will refresh ghosts after this kernel.
-    RealType uu = 0, vv = 0, ww = 0;
+    // Default interior = (interiorU, interiorV, interiorW). For cavity that is
+    // (0,0,0); for wing flow it is the free-stream (Uinf, 0, 0) so step 1's
+    // predictor doesn't see a 1-cell-thick velocity discontinuity at the inlet
+    // and far-field Dirichlet faces.
+    RealType uu = interiorU, vv = interiorV, ww = interiorW;
     if (ownership[i] == 1)
     {
         int dof = nodeToDof[i];
@@ -1548,11 +1687,19 @@ void applyInitialCondition(NSStepper<KeyType, RealType>& s)
 {
     const auto& d_nodeOwnership = s.domain.getNodeOwnershipMap();
     int nBlocks = (s.nodeCount + s.blockSize - 1) / s.blockSize;
+    // Interior IC: cavity/channel default to (0,0,0). Wing starts at free-stream
+    // (Uinf, 0, 0) so step 1's predictor doesn't see a velocity discontinuity
+    // at the inlet/far-field boundaries.
+    RealType iu = 0, iv = 0, iw = 0;
+    if (s.bcKind == NSStepper<KeyType, RealType>::BCKind::Wing)
+    {
+        iu = s.Uinf;
+    }
     initialConditionKernel<RealType><<<nBlocks, s.blockSize>>>(
         s.d_isBdryDof.data(), s.d_node_to_dof.data(), d_nodeOwnership.data(),
         s.d_uTarget.data(), s.d_vTarget.data(), s.d_wTarget.data(),
         s.d_u.data(), s.d_v.data(), s.d_w.data(),
-        s.nodeCount);
+        s.nodeCount, iu, iv, iw);
     thrust::fill(thrust::device_pointer_cast(s.d_p.data()),
                  thrust::device_pointer_cast(s.d_p.data() + s.nodeCount),
                  RealType(0));
@@ -1872,6 +2019,10 @@ int solvePressureDDT(NSStepper<KeyType, RealType>& s,
     const RealType absTol = s.tolerance * r0_norm;
 
     int iters = -2;
+    // Live progress every N CG iterations on rank 0 so large-mesh runs show
+    // residual-decay rate instead of going silent for minutes. Each line
+    // prints |r|/|r0| so the user can extrapolate iters-to-convergence.
+    const int liveEvery = (s.maxIter >= 500) ? 100 : 25;
     for (int it = 0; it < s.maxIter; ++it)
     {
         // Ghost slots of p must be valid: A's D^T reads p[L],p[R] at every face.
@@ -1893,6 +2044,13 @@ int solvePressureDDT(NSStepper<KeyType, RealType>& s,
 
         RealType rho_new = ownedDot<RealType>(r, r, s.d_node_to_dof,
                                               d_nodeOwnership.data(), s.nodeCount);
+        if (s.rank == 0 && (it == 0 || (it + 1) % liveEvery == 0))
+        {
+            std::cout << "    [cg-ddt] iter " << std::setw(6) << (it + 1)
+                      << "  |r|/|r0| = " << std::scientific << std::setprecision(3)
+                      << (std::sqrt(rho_new) / std::max(r0_norm, std::numeric_limits<RealType>::min()))
+                      << std::defaultfloat << "\n" << std::flush;
+        }
         if (std::sqrt(rho_new) < absTol) { iters = it + 1; break; }
         RealType beta = rho_new / rho_old;
         axpyOwnedKernel<RealType><<<nodeBlocks, s.blockSize>>>(
@@ -2320,6 +2478,27 @@ void runPressureSolveStep(NSStepper<KeyType, RealType>& s, RealType dt, RealType
                 s.d_isPressureBdryDof.data(), b.data(), s.numOwnedDofs);
             cudaDeviceSynchronize();
         }
+        // Periodic: project the RHS onto range(K) by subtracting its global
+        // mean. The pure-Neumann Laplacian K has a constant-mode null space,
+        // so K phi = b is solvable only when sum(b) = 0. Without this, CG hits
+        // pAp <= 0 on the null-space direction and bails.
+        if (s.bcKind == NSStepper<KeyType, RealType>::BCKind::Periodic && s.numOwnedDofs > 0)
+        {
+            auto bp = thrust::device_pointer_cast(b.data());
+            RealType localSum = thrust::reduce(thrust::device, bp, bp + s.numOwnedDofs,
+                                                RealType(0), thrust::plus<RealType>());
+            RealType globalSum = 0;
+            long long localN = s.numOwnedDofs, globalN = 0;
+            MPI_Datatype mpiR = std::is_same<RealType, double>::value ? MPI_DOUBLE : MPI_FLOAT;
+            MPI_Allreduce(&localSum, &globalSum, 1, mpiR,        MPI_SUM, MPI_COMM_WORLD);
+            MPI_Allreduce(&localN,   &globalN,   1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+            if (globalN > 0)
+            {
+                RealType mean = globalSum / RealType(globalN);
+                thrust::transform(thrust::device, bp, bp + s.numOwnedDofs, bp,
+                                  [mean] __device__ (RealType v) { return v - mean; });
+            }
+        }
         // Fresh warm-start: phi is per-step correction, not cumulative.
         cudaMemset(xVec.data(), 0, s.numTotalDofs * sizeof(RealType));
         s.lastPressureIters = solveOneComponent<KeyType, RealType>(s, b, xVec, s.d_phi, s.Apre);
@@ -2332,6 +2511,13 @@ void runPressureSolveStep(NSStepper<KeyType, RealType>& s, RealType dt, RealType
             d_divAccNode.data(), s.d_node_to_dof.data(),
             d_nodeOwnership.data(), coef, d_bNode.data(), s.nodeCount);
         cudaDeviceSynchronize();
+        // Periodic: D M^{-1} D^T is pure-Neumann with a constant null space.
+        // Project the per-NODE RHS onto the range by removing the global mean
+        // over owned interior nodes.
+        if (s.bcKind == NSStepper<KeyType, RealType>::BCKind::Periodic)
+        {
+            mars::fem::removeMean<RealType>(s.domain, d_bNode, MPI_COMM_WORLD);
+        }
         s.lastPressureIters = solvePressureDDT<KeyType, RealType>(s, d_bNode, s.d_phi);
     }
 
@@ -2523,13 +2709,61 @@ void runCorrectorStep(NSStepper<KeyType, RealType>& s, RealType dt, RealType rho
 // (assembled once at setup time), not used here directly -- but the parameter
 // remains for API stability with the original signature.
 // =============================================================================
+// Max absolute value of an owned-portion device vector (skip NaN; report
+// Inf-equivalent if found). Diagnostic only.
+template<typename RealType>
+inline RealType maxAbsOwned(const cstone::DeviceVector<RealType>& v, size_t n)
+{
+    if (n == 0) return RealType(0);
+    auto bp = thrust::device_pointer_cast(v.data());
+    auto mm = thrust::transform_reduce(
+        thrust::device, bp, bp + n,
+        [] __device__ (RealType x) -> RealType {
+            return isnan(x) ? RealType(-1) : fabs(x);
+        },
+        RealType(0), thrust::maximum<RealType>());
+    return mm;
+}
+
+// Set to >0 to dump per-phase diagnostics for the first N calls.
+static int g_nsDebugStepsLeft = 0;
+
 template<typename KeyType, typename RealType>
 void runNsStep(NSStepper<KeyType, RealType>& s, RealType dt, RealType /*nu*/, RealType rho)
 {
+    bool dbg = (g_nsDebugStepsLeft > 0);
+    if (dbg && s.rank == 0)
+        std::cout << "    [ns-debug] step entry: |u|max=" << maxAbsOwned(s.d_u, s.nodeCount)
+                  << " |p|max=" << maxAbsOwned(s.d_p, s.nodeCount) << "\n";
+
     runPredictorStep<KeyType, RealType>(s, dt, rho);
+    if (dbg && s.rank == 0)
+        std::cout << "    [ns-debug] post-predictor: |u*|max=" << maxAbsOwned(s.d_uStar, s.nodeCount)
+                  << " |v*|max=" << maxAbsOwned(s.d_vStar, s.nodeCount)
+                  << " |w*|max=" << maxAbsOwned(s.d_wStar, s.nodeCount)
+                  << " |gradPx|max=" << maxAbsOwned(s.d_gradPx, s.nodeCount) << "\n";
+
     runImplicitDiffusionStep<KeyType, RealType>(s, dt);
+    if (dbg && s.rank == 0)
+        std::cout << "    [ns-debug] post-diffusion: |u**|max=" << maxAbsOwned(s.d_uStarStar, s.nodeCount)
+                  << " |v**|max=" << maxAbsOwned(s.d_vStarStar, s.nodeCount)
+                  << " |w**|max=" << maxAbsOwned(s.d_wStarStar, s.nodeCount)
+                  << " cg(u,v,w)=" << s.lastUIters << "/" << s.lastVIters << "/" << s.lastWIters << "\n";
+
     runPressureSolveStep<KeyType, RealType>(s, dt, rho);
+    if (dbg && s.rank == 0)
+        std::cout << "    [ns-debug] post-pressure-solve: |phi|max=" << maxAbsOwned(s.d_phi, s.nodeCount)
+                  << " cg(p)=" << s.lastPressureIters << "\n";
+
     runCorrectorStep<KeyType, RealType>(s, dt, rho);
+    if (dbg && s.rank == 0)
+        std::cout << "    [ns-debug] post-corrector: |u|max=" << maxAbsOwned(s.d_u, s.nodeCount)
+                  << " |v|max=" << maxAbsOwned(s.d_v, s.nodeCount)
+                  << " |w|max=" << maxAbsOwned(s.d_w, s.nodeCount)
+                  << " |p|max=" << maxAbsOwned(s.d_p, s.nodeCount)
+                  << " div_max=" << s.lastDivMax << "\n";
+
+    if (g_nsDebugStepsLeft > 0) --g_nsDebugStepsLeft;
 }
 
 // =============================================================================

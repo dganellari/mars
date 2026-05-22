@@ -45,6 +45,9 @@
 // shared header so multiple drivers can reuse them.
 #include "backend/distributed/unstructured/fem/mars_ns_solver.hpp"
 #include "backend/distributed/unstructured/utils/mars_vtu_parallel_writer.hpp"
+#include "backend/distributed/unstructured/utils/mars_read_exodus_mesh.hpp"
+
+#include <unordered_map>
 
 
 // =============================================================================
@@ -167,10 +170,10 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    if (bcKind != "cavity" && bcKind != "channel")
+    if (bcKind != "cavity" && bcKind != "channel" && bcKind != "wing")
     {
         if (rank == 0)
-            std::cerr << "Error: --bc must be 'cavity' or 'channel', got '" << bcKind << "'\n";
+            std::cerr << "Error: --bc must be 'cavity', 'channel', or 'wing', got '" << bcKind << "'\n";
         MPI_Finalize();
         return 1;
     }
@@ -185,6 +188,9 @@ int main(int argc, char** argv)
         std::cout << "========================================\n";
         if (bcKind == "channel")
             std::cout << "BC:        channel flow, Uinf=" << lidU << " inflow on x=xmin, no-slip walls, natural outflow on x=xmax\n";
+        else if (bcKind == "wing")
+            std::cout << "BC:        wing flow (Exodus side-sets): blade=no-slip, in=Uinf=" << lidU
+                      << ", out=Dirichlet p=0, top/bottom/side/sym=Uinf (full-Dirichlet shortcut)\n";
         else
             std::cout << "BC:        lid-driven cavity, u=" << lidU << " on top face\n";
         std::cout << "rho       = " << rho << "\n";
@@ -232,10 +238,90 @@ int main(int argc, char** argv)
                                    RealType(tolerance), rank, numRanks};
     s.lidU = RealType(lidU);
     s.Uinf = RealType(lidU);   // reuse the --lid-u CLI flag as channel inflow speed
-    s.bcKind = (bcKind == "channel") ? NSStepper<KeyType, RealType>::BCKind::Channel
-                                      : NSStepper<KeyType, RealType>::BCKind::Cavity;
+    if      (bcKind == "channel") s.bcKind = NSStepper<KeyType, RealType>::BCKind::Channel;
+    else if (bcKind == "wing")    s.bcKind = NSStepper<KeyType, RealType>::BCKind::Wing;
+    else                          s.bcKind = NSStepper<KeyType, RealType>::BCKind::Cavity;
     s.useLegacyGradient = useLegacyGradient;
     s.pressureSolve = pressureSolve;
+
+    // Wing-mode side-set loading. Read all named side-sets globally, then
+    // resolve each side-set's global-node-IDs against this rank's local-to-
+    // global map (cstone d_localToGlobalNodeMap_). Owned + ghost local nodes
+    // that match are added to the corresponding wingXxxNodes list. Side-set
+    // grouping policy is the full-Dirichlet shortcut: blade=no-slip, in=Uinf,
+    // out=Dirichlet p=0, and {top,bottom,side,sym} all merged into the
+    // far-field bucket = full Dirichlet u=Uinf. True slip BCs are a follow-up.
+    if (s.bcKind == NSStepper<KeyType, RealType>::BCKind::Wing)
+    {
+        ExodusSideSets ss = readExodusSideSetsHex8(meshFile, rank);
+        // Pull cstone's local->global node map to host once.
+        const auto& d_l2g = amr.domain().getLocalToGlobalNodeMap();
+        std::vector<KeyType> hostL2G(d_l2g.size());
+        thrust::copy(thrust::device_pointer_cast(d_l2g.data()),
+                     thrust::device_pointer_cast(d_l2g.data() + d_l2g.size()),
+                     hostL2G.begin());
+        // Build reverse map: global -> local (CPU hash; ~few hundred MB at
+        // 15M nodes if total, but per-rank only ~4.5M, so <100 MB).
+        std::unordered_map<uint64_t, int> g2l;
+        g2l.reserve(hostL2G.size() * 2);
+        for (size_t li = 0; li < hostL2G.size(); ++li)
+            g2l.emplace(static_cast<uint64_t>(hostL2G[li]), static_cast<int>(li));
+
+        auto resolve = [&] (const std::vector<uint64_t>& globalIds) {
+            std::vector<int> local;
+            local.reserve(globalIds.size());
+            for (uint64_t g : globalIds)
+            {
+                auto it = g2l.find(g);
+                if (it != g2l.end()) local.push_back(it->second);
+            }
+            return local;
+        };
+
+        auto take = [&] (const char* name) -> std::vector<uint64_t> {
+            auto it = ss.nodesByName.find(name);
+            if (it == ss.nodesByName.end()) return {};
+            return it->second;
+        };
+
+        s.wingBladeNodes  = resolve(take("blade"));
+        s.wingInletNodes  = resolve(take("in"));
+        s.wingOutletNodes = resolve(take("out"));
+
+        // Far-field = union of {top, bottom, side, sym}, deduplicated.
+        std::vector<int> ff;
+        for (const char* nm : {"top","bottom","side","sym"})
+        {
+            auto r = resolve(take(nm));
+            ff.insert(ff.end(), r.begin(), r.end());
+        }
+        std::sort(ff.begin(), ff.end());
+        ff.erase(std::unique(ff.begin(), ff.end()), ff.end());
+        // Subtract blade/inlet/outlet (a far-field face can geometrically share
+        // a node with the inlet edge; if it does, the more-specific BC wins).
+        std::vector<int> protectedSet;
+        protectedSet.insert(protectedSet.end(), s.wingBladeNodes.begin(),  s.wingBladeNodes.end());
+        protectedSet.insert(protectedSet.end(), s.wingInletNodes.begin(),  s.wingInletNodes.end());
+        protectedSet.insert(protectedSet.end(), s.wingOutletNodes.begin(), s.wingOutletNodes.end());
+        std::sort(protectedSet.begin(), protectedSet.end());
+        protectedSet.erase(std::unique(protectedSet.begin(), protectedSet.end()), protectedSet.end());
+        std::vector<int> ffFiltered;
+        ffFiltered.reserve(ff.size());
+        std::set_difference(ff.begin(), ff.end(),
+                            protectedSet.begin(), protectedSet.end(),
+                            std::back_inserter(ffFiltered));
+        s.wingFarFieldNodes = std::move(ffFiltered);
+
+        if (rank == 0)
+        {
+            std::cout << "  wing side-sets resolved on rank 0:\n"
+                      << "    blade (no-slip):    " << s.wingBladeNodes.size()    << " local nodes\n"
+                      << "    in    (u=Uinf):     " << s.wingInletNodes.size()    << " local nodes\n"
+                      << "    out   (p=0):        " << s.wingOutletNodes.size()   << " local nodes\n"
+                      << "    far-field (u=Uinf): " << s.wingFarFieldNodes.size() << " local nodes (top+bottom+side+sym minus overlap)\n";
+        }
+    }
+
     setupNSStepper<KeyType, RealType>(s, RealType(nu), RealType(dt), kernelVariant);
 
     // IC: u = lid on top face, 0 elsewhere; p = 0.
