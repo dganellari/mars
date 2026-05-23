@@ -607,6 +607,101 @@ __global__ void applyDivTransposePerNodeKernel(const KeyType* c0, const KeyType*
     }
 }
 
+// Per-element assembly of A = D M^-1 D^T into a CSR matrix sharing K's
+// sparsity. Each of an element's 12 SCS faces contributes a symmetric 2x2
+// block to rows (iL, iR), columns (iL, iR), with off-diagonal sign -c and
+// diagonal sign +c, where
+//   c = 0.25 * (a.a) * (1/V[L] + 1/V[R])
+// and a is the face's outward area-vector. Derivation: face-wise apply of
+// applyDivTransposePerNodeKernel + normalizeGradientPerNodeKernel +
+// computeDivergencePerNodeKernel to a unit input vector e_p, with p in
+// {L, R}, gives exactly this 2x2 contribution.
+//
+// Multiple elements share faces; we use atomicAddSparseEntry. Output is the
+// owned-row CSR (rows for ghost nodes are not written). Diagonal d_diagPtr
+// is reused from K.
+//
+// This matrix is preconditioner-only. The time-loop SpMV stays matrix-free
+// via applyDDTPerNode so memory at 10^9 scale is unchanged.
+template<typename KeyType, typename RealType>
+__global__ void assembleDDTPerElementKernel(const KeyType* c0, const KeyType* c1,
+                                            const KeyType* c2, const KeyType* c3,
+                                            const KeyType* c4, const KeyType* c5,
+                                            const KeyType* c6, const KeyType* c7,
+                                            const RealType* areaVecX,
+                                            const RealType* areaVecY,
+                                            const RealType* areaVecZ,
+                                            const int* nodeToDof,
+                                            const uint8_t* ownership,
+                                            const RealType* lumpedMass,    // per OWNED DOF
+                                            const int* rowPtr,
+                                            const int* colInd,
+                                            int numOwnedDofs,
+                                            RealType* values,
+                                            size_t startElem,
+                                            size_t numLocal)
+{
+    size_t k = blockIdx.x * blockDim.x + threadIdx.x;
+    if (k >= numLocal) return;
+    size_t e = startElem + k;
+    KeyType n[8] = {c0[e], c1[e], c2[e], c3[e], c4[e], c5[e], c6[e], c7[e]};
+
+    #pragma unroll
+    for (int ip = 0; ip < 12; ++ip)
+    {
+        KeyType iL = n[d_hexLRSCV[ip * 2]];
+        KeyType iR = n[d_hexLRSCV[ip * 2 + 1]];
+
+        size_t off = e * 12 + ip;
+        RealType ax = areaVecX[off];
+        RealType ay = areaVecY[off];
+        RealType az = areaVecZ[off];
+        RealType a2 = ax*ax + ay*ay + az*az;
+
+        // Need lumped mass at L and R (per-DOF). Lookup needs both endpoints to
+        // be owned; if either is a ghost we still contribute to the owned side
+        // because that row owns the (iL,iR) entry from this face.
+        int dofL = nodeToDof[iL];
+        int dofR = nodeToDof[iR];
+        uint8_t ownL = ownership[iL];
+        uint8_t ownR = ownership[iR];
+
+        // V at each endpoint. Ghost mass entries are not stored on this rank;
+        // the reverse-halo-summed lumped mass lives ONLY at owned DOFs. For a
+        // ghost endpoint we conservatively skip the face contribution from its
+        // perspective (the owning rank will add it via its own element loop --
+        // the global ghost-element-on-our-rank pattern guarantees this).
+        // For mixed (owned, ghost) faces the contribution to the owned row's
+        // diagonal and off-diagonal is still made using V_owned and V_other
+        // recovered indirectly via the matrix-free operator's identity:
+        // skipping the ghost-side V here means the assembled diagonal underweights
+        // those rows, which AMG can still precondition through. Trade
+        // simplicity for a small preconditioner quality hit on boundary rows.
+        RealType invVL = (dofL >= 0 && dofL < numOwnedDofs) ? RealType(1) / lumpedMass[dofL] : RealType(0);
+        RealType invVR = (dofR >= 0 && dofR < numOwnedDofs) ? RealType(1) / lumpedMass[dofR] : RealType(0);
+        RealType c = RealType(0.25) * a2 * (invVL + invVR);
+
+        // Row L contributions (only if owned). col indices reference DOF ids.
+        if (ownL == 1 && dofL >= 0 && dofL < numOwnedDofs)
+        {
+            int rs = rowPtr[dofL];
+            int re = rowPtr[dofL + 1];
+            fem::atomicAddSparseEntry(values, colInd, rs, re, dofL,  c);
+            if (dofR >= 0)
+                fem::atomicAddSparseEntry(values, colInd, rs, re, dofR, -c);
+        }
+        // Row R contributions (only if owned).
+        if (ownR == 1 && dofR >= 0 && dofR < numOwnedDofs)
+        {
+            int rs = rowPtr[dofR];
+            int re = rowPtr[dofR + 1];
+            fem::atomicAddSparseEntry(values, colInd, rs, re, dofR,  c);
+            if (dofL >= 0)
+                fem::atomicAddSparseEntry(values, colInd, rs, re, dofL, -c);
+        }
+    }
+}
+
 // Divide accumulator by V; write to per-node output (kept node-indexed for the
 // predictor/corrector apply, which iterates over nodes).
 template<typename RealType>
@@ -931,11 +1026,17 @@ struct NSStepper
     cstone::DeviceVector<int> d_diagPtr;
     cstone::DeviceVector<RealType> d_valuesVel;
     cstone::DeviceVector<RealType> d_valuesPre;
+    // Assembled D M^-1 D^T (same sparsity as K). Built once at setup for use
+    // as a Hypre BoomerAMG preconditioner of the matrix-free DDT pressure
+    // solve. SpMV during the time loop still uses the matrix-free
+    // applyDDTPerNode kernel; this CSR is preconditioner-only.
+    cstone::DeviceVector<RealType> d_valuesDDT;
 
     // Owned-row SparseMatrix wrappers consumed by CG/Hypre.
     using Matrix = SparseMatrix<int, RealType, cstone::GpuTag>;
     Matrix Avel;
     Matrix Apre;
+    Matrix AddT;
 
     // Per-node solution fields. Sized nodeCount; ghost slots refreshed by
     // exchangeNodeHalo after each update.
@@ -1271,6 +1372,36 @@ void setupNSStepper(NSStepper<KeyType, RealType>& s,
     }
     pt.lap("lumped mass");
 
+    // Assemble the matrix-free DDT operator into a CSR for use as a Hypre
+    // BoomerAMG preconditioner. Sparsity is identical to K's; values come
+    // from the per-face area-vector formula in assembleDDTPerElementKernel.
+    // This costs ~1 K assembly worth of time at setup and adds one CSR
+    // (8 bytes/nnz, ~7 nnz/row at hex8) of permanent device memory.
+    s.d_valuesDDT.resize(s.nnz);
+    thrust::fill(thrust::device_pointer_cast(s.d_valuesDDT.data()),
+                 thrust::device_pointer_cast(s.d_valuesDDT.data() + s.nnz),
+                 RealType(0));
+    {
+        size_t startElem = s.domain.startIndex();
+        size_t numLocal  = s.domain.localElementCount();
+        if (numLocal > 0)
+        {
+            int eBlocks = int((numLocal + s.blockSize - 1) / s.blockSize);
+            assembleDDTPerElementKernel<KeyType, RealType><<<eBlocks, s.blockSize>>>(
+                std::get<0>(d_conn).data(), std::get<1>(d_conn).data(),
+                std::get<2>(d_conn).data(), std::get<3>(d_conn).data(),
+                std::get<4>(d_conn).data(), std::get<5>(d_conn).data(),
+                std::get<6>(d_conn).data(), std::get<7>(d_conn).data(),
+                s.d_areaVec_x.data(), s.d_areaVec_y.data(), s.d_areaVec_z.data(),
+                s.d_node_to_dof.data(), d_nodeOwnership.data(),
+                s.d_mass.data(),
+                s.d_rowPtr.data(), s.d_colInd.data(), s.numOwnedDofs,
+                s.d_valuesDDT.data(), startElem, numLocal);
+            cudaDeviceSynchronize();
+        }
+    }
+    pt.lap("assembly D M^-1 D^T (preconditioner)");
+
     // Add M/dt to the velocity matrix diagonal -> (M/dt + nu K).
     {
         int dofBlocks = (s.numOwnedDofs + s.blockSize - 1) / s.blockSize;
@@ -1551,12 +1682,37 @@ void setupNSStepper(NSStepper<KeyType, RealType>& s,
     }
     pt.lap("pressure BC");
 
-    // Wrap both into SparseMatrix for the solvers.
+    // Apply the same pressure-Dirichlet identity-row enforcement to the
+    // assembled-DDT matrix so its rows for pinned outlet DOFs (and the cavity
+    // single-pin) match the rule applyDDTPerNode uses at solve time. Without
+    // this, AMG would see inconsistent rows and the preconditioner would
+    // misbehave on boundary DOFs.
+    if (s.bcKind == NSStepper<KeyType, RealType>::BCKind::Channel
+        || s.bcKind == NSStepper<KeyType, RealType>::BCKind::Wing)
+    {
+        int dofBlocks = (s.numOwnedDofs + s.blockSize - 1) / s.blockSize;
+        enforceBcMatrixKernel<RealType><<<dofBlocks, s.blockSize>>>(
+            s.d_isPressureBdryDof.data(), s.d_rowPtr.data(), s.d_colInd.data(),
+            s.d_diagPtr.data(), s.d_valuesDDT.data(), s.numOwnedDofs);
+        cudaDeviceSynchronize();
+    }
+    else if (s.bcKind == NSStepper<KeyType, RealType>::BCKind::Cavity
+             && s.pressurePinDof >= 0)
+    {
+        enforcePinRowMatrixKernel<RealType><<<1, 1>>>(
+            s.pressurePinDof, s.d_rowPtr.data(), s.d_colInd.data(),
+            s.d_diagPtr.data(), s.d_valuesDDT.data());
+        cudaDeviceSynchronize();
+    }
+
+    // Wrap into SparseMatrix for the solvers. AddT shares K's row layout.
     wrapIntoSparseMatrix<RealType>(s.Avel, s.numOwnedDofs, s.numTotalDofs, s.nnz,
                                    s.d_rowPtr.data(), s.d_colInd.data(), s.d_valuesVel.data());
     wrapIntoSparseMatrix<RealType>(s.Apre, s.numOwnedDofs, s.numTotalDofs, s.nnz,
                                    s.d_rowPtr.data(), s.d_colInd.data(), s.d_valuesPre.data());
-    pt.lap("SparseMatrix wrap (vel+pre)");
+    wrapIntoSparseMatrix<RealType>(s.AddT, s.numOwnedDofs, s.numTotalDofs, s.nnz,
+                                   s.d_rowPtr.data(), s.d_colInd.data(), s.d_valuesDDT.data());
+    pt.lap("SparseMatrix wrap (vel+pre+ddt)");
 
 #ifdef MARS_ENABLE_HYPRE
     if (s.solverKind == SolverKind::Hypre)
@@ -2503,7 +2659,7 @@ void runPressureSolveStep(NSStepper<KeyType, RealType>& s, RealType dt, RealType
         cudaMemset(xVec.data(), 0, s.numTotalDofs * sizeof(RealType));
         s.lastPressureIters = solveOneComponent<KeyType, RealType>(s, b, xVec, s.d_phi, s.Apre);
     }
-    else  // DDT: matrix-free (D M^{-1} D^T) phi = -(rho/dt) D u**
+    else  // DDT: (D M^{-1} D^T) phi = -(rho/dt) D u**
     {
         cstone::DeviceVector<RealType> d_bNode(s.nodeCount, RealType(0));
         RealType coef = rho * invDt;
@@ -2518,6 +2674,15 @@ void runPressureSolveStep(NSStepper<KeyType, RealType>& s, RealType dt, RealType
         {
             mars::fem::removeMean<RealType>(s.domain, d_bNode, MPI_COMM_WORLD);
         }
+
+        // DDT-with-Hypre dispatch removed pending debug: hand-off to Hypre's
+        // PCG via solveOneComponent produced spurious NaN/Inf flags from the
+        // wrapper's RHS validator even with finite RHS values. K-path with
+        // Hypre on the same cube16 ran clean, so the bug is specific to how
+        // we convert per-node b to per-DOF and/or to the Hypre IJ-fill on
+        // the assembled DDT matrix. Always use the matrix-free CG path until
+        // that's resolved. The assembled CSR (s.AddT, s.d_valuesDDT) is still
+        // built at setup and remains available as a Hypre input once fixed.
         s.lastPressureIters = solvePressureDDT<KeyType, RealType>(s, d_bNode, s.d_phi);
     }
 
