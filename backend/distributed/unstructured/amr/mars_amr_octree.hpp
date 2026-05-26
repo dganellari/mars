@@ -137,6 +137,52 @@ __global__ void enforce1IrregularKernel(const int* elemLevels,
     marksOut[e] = mark;
 }
 
+// Tet variant: 4 corner nodes per element (vs 8 for hex). Same algorithm.
+template<typename KeyType>
+__global__ void enforce1IrregularKernelTet(const int* elemLevels,
+                                            const uint8_t* marksIn,
+                                            uint8_t* marksOut,
+                                            const KeyType* conn0,
+                                            const KeyType* conn1,
+                                            const KeyType* conn2,
+                                            const KeyType* conn3,
+                                            const KeyType* nodeToElemOffsets,
+                                            const KeyType* nodeToElemList,
+                                            size_t numElements)
+{
+    size_t e = blockIdx.x * blockDim.x + threadIdx.x;
+    if (e >= numElements) return;
+
+    uint8_t myMark = marksIn[e];
+    int myLevel    = elemLevels[e];
+    int myNewLevel = myLevel + ((myMark > 0) ? 1 : 0);
+
+    KeyType nodes[4] = {conn0[e], conn1[e], conn2[e], conn3[e]};
+
+    uint8_t mark = myMark;
+
+    for (int ni = 0; ni < 4; ++ni)
+    {
+        KeyType node  = nodes[ni];
+        KeyType start = nodeToElemOffsets[node];
+        KeyType end   = nodeToElemOffsets[node + 1];
+
+        for (KeyType j = start; j < end; ++j)
+        {
+            KeyType neighbor = nodeToElemList[j];
+            if (neighbor == e) continue;
+
+            int neighborLevel    = elemLevels[neighbor];
+            uint8_t neighborMark = marksIn[neighbor];
+            int neighborNewLevel = neighborLevel + ((neighborMark > 0) ? 1 : 0);
+
+            if (neighborNewLevel > myNewLevel + 1) { mark = 1; }
+        }
+    }
+
+    marksOut[e] = mark;
+}
+
 template<typename KeyType, typename RealType>
 class AmrOctree
 {
@@ -154,14 +200,39 @@ public:
     void initialize(const ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>& domain)
     {
         size_t numElements = domain.getElementCount();
-
-        // Element levels start at 0 and increment with each refinement.
-        // Per-element levels could be derived from the cstone tree leaves,
-        // but ElementDomain does not currently expose its element SFC codes.
-        // Initialize to zero; markFromErrorKernel will treat all elements as
-        // level 0 (unrefined), so level < maxLevel is always true initially.
         d_elemLevels_.resize(numElements);
-        thrust::fill(thrust::device, d_elemLevels_.begin(), d_elemLevels_.end(), 0);
+        if (numElements == 0) return;
+
+        // Derive per-element refinement level from cstone's focus-tree leaves.
+        // Each element has an SFC key (from sync()); the leaf containing that
+        // key has an SFC range nodeRange(0) / 8^L, which gives L.
+        //
+        // Before this fix, levels were zeroed on every initialize() and never
+        // updated, so markFromErrorKernel always saw level=0. That broke
+        // Doerfler refinement: every cell looked "refinable" forever, so each
+        // adapt step refined the entire mesh uniformly (or stopped only when
+        // cstone's bucketSize/tree-depth cap kicked in). After this fix, the
+        // marker can correctly gate at maxLevel and reach a true adaptive
+        // distribution of base + L1 + L2 cells.
+        const auto& cstoneDom = domain.getDomain();
+        const auto  leavesView = cstoneDom.focusTree().treeLeaves();
+        size_t      numLeaves  = (leavesView.size() > 0) ? (leavesView.size() - 1) : 0;
+        const KeyType* d_leaves = leavesView.data();
+
+        const auto& d_elemKeys = domain.getElementSfcCodes();
+        if (numLeaves == 0 || d_elemKeys.size() < numElements)
+        {
+            thrust::fill(thrust::device, d_elemLevels_.begin(), d_elemLevels_.end(), 0);
+            return;
+        }
+
+        int numBlocks = (numElements + config_.blockSize - 1) / config_.blockSize;
+        assignLevelsFromTreeKernel<KeyType><<<numBlocks, config_.blockSize>>>(
+            d_leaves, numLeaves,
+            thrust::raw_pointer_cast(d_elemKeys.data()),
+            thrust::raw_pointer_cast(d_elemLevels_.data()),
+            numElements);
+        cudaDeviceSynchronize();
     }
 
     // Doerfler marking: refine top fraction of error, coarsen bottom fraction
@@ -204,11 +275,26 @@ public:
 
         for (int iter = 0; iter < config_.irregularityIters; ++iter)
         {
-            enforce1IrregularKernel<<<numBlocks, config_.blockSize>>>(
-                d_elemLevels_.data(), d_marks.data(), d_marksTemp.data(), std::get<0>(d_conn).data(),
-                std::get<1>(d_conn).data(), std::get<2>(d_conn).data(), std::get<3>(d_conn).data(),
-                std::get<4>(d_conn).data(), std::get<5>(d_conn).data(), std::get<6>(d_conn).data(),
-                std::get<7>(d_conn).data(), n2eOff.data(), n2eLst.data(), numElements);
+            if constexpr (ElementTag::NodesPerElement == 8)
+            {
+                enforce1IrregularKernel<<<numBlocks, config_.blockSize>>>(
+                    d_elemLevels_.data(), d_marks.data(), d_marksTemp.data(), std::get<0>(d_conn).data(),
+                    std::get<1>(d_conn).data(), std::get<2>(d_conn).data(), std::get<3>(d_conn).data(),
+                    std::get<4>(d_conn).data(), std::get<5>(d_conn).data(), std::get<6>(d_conn).data(),
+                    std::get<7>(d_conn).data(), n2eOff.data(), n2eLst.data(), numElements);
+            }
+            else if constexpr (ElementTag::NodesPerElement == 4)
+            {
+                enforce1IrregularKernelTet<<<numBlocks, config_.blockSize>>>(
+                    d_elemLevels_.data(), d_marks.data(), d_marksTemp.data(), std::get<0>(d_conn).data(),
+                    std::get<1>(d_conn).data(), std::get<2>(d_conn).data(), std::get<3>(d_conn).data(),
+                    n2eOff.data(), n2eLst.data(), numElements);
+            }
+            else
+            {
+                static_assert(ElementTag::NodesPerElement == 8 || ElementTag::NodesPerElement == 4,
+                              "enforce1Irregular: only hex8 and tet4 are supported");
+            }
             cudaDeviceSynchronize();
 
             auto m_b = thrust::device_pointer_cast(d_marks.data());

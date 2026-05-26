@@ -445,33 +445,27 @@ public:
         // cstone via the device-data ElementDomain constructor below; cstone
         // re-derives SFC keys, redistributes by SFC, and rebuilds halos.
         // No host round-trip, no per-rank "global mesh" reconstruction.
+        // Element-type dispatch is in doRefineLocal / doTransferSolution so
+        // the hex 8-conn body never gets parsed in the TetTag instantiation
+        // (and vice versa).
+        using Refine = OctreeAlignedRefine<KeyType, RealType, ElementTag>;
         size_t localCount = endIdx - startIdx;
-        auto refined = OctreeAlignedRefine<KeyType, RealType>::refineLocal(
-            std::get<0>(d_conn).data() + startIdx, std::get<1>(d_conn).data() + startIdx,
-            std::get<2>(d_conn).data() + startIdx, std::get<3>(d_conn).data() + startIdx,
-            std::get<4>(d_conn).data() + startIdx, std::get<5>(d_conn).data() + startIdx,
-            std::get<6>(d_conn).data() + startIdx, std::get<7>(d_conn).data() + startIdx,
-            d_x.data(), d_y.data(), d_z.data(),
-            d_marks.data() + startIdx, localCount, numNodes, config_.blockSize);
+        typename Refine::Result refined =
+            doRefineLocal(d_conn, d_x, d_y, d_z, d_marks, startIdx, localCount, numNodes);
         stats.refineTimeMs = phaseLap();
 
-        // Solution transfer: trilinear-interpolate each old field onto the
-        // pre-cstone-sync node layout (size = numNodes + 19*numMarked, matching
-        // refineLocal's d_x/y/z output). After rebuildDomainFromDevice, cstone
-        // redistributes nodes by SFC and dedupes coincident-coord emissions.
-        // Multiple ranks may emit the same SFC key for a shared boundary node;
-        // both compute the same trilinear value (same parent corners), so dedup
-        // preserves correctness.
+        // Solution transfer onto the pre-cstone-sync node layout. Hex uses
+        // trilinear at 19 child positions per refined parent; tet uses linear
+        // at edge midpoints (numUniqueEdges new positions). After
+        // rebuildDomainFromDevice, cstone redistributes nodes by SFC and dedupes
+        // coincident-coord emissions; both element types are bit-exact-symmetric
+        // across rank boundaries because all ranks compute the same interpolant
+        // at a shared parent edge / face / vertex.
         std::vector<cstone::DeviceVector<RealType>> transferred(oldFields.size());
         for (size_t f = 0; f < oldFields.size(); ++f)
         {
-            OctreeAlignedRefine<KeyType, RealType>::transferSolution(
-                std::get<0>(d_conn).data() + startIdx, std::get<1>(d_conn).data() + startIdx,
-                std::get<2>(d_conn).data() + startIdx, std::get<3>(d_conn).data() + startIdx,
-                std::get<4>(d_conn).data() + startIdx, std::get<5>(d_conn).data() + startIdx,
-                std::get<6>(d_conn).data() + startIdx, std::get<7>(d_conn).data() + startIdx,
-                oldFields[f], d_marks.data() + startIdx,
-                localCount, numNodes, transferred[f], config_.blockSize);
+            doTransferSolution(d_conn, oldFields[f], d_marks, refined,
+                                startIdx, localCount, numNodes, transferred[f]);
         }
 
         // Save pre-sync coords before they're moved into cstone by rebuild.
@@ -623,13 +617,16 @@ private:
         typename Domain::DeviceCoordsTuple coords = std::make_tuple(
             std::move(refined.d_x), std::move(refined.d_y), std::move(refined.d_z));
 
+        // Refined.d_conn is std::array<DeviceVector<KeyType>, NodesPerElement>.
+        // Hex: pack-expand the 8 conn columns into the 8-tuple constructor arg.
+        // Tet: same shape, just 4 columns.
         if constexpr (std::is_same_v<ElementTag, HexTag>)
         {
             typename Domain::DeviceConnectivityTuple conn = std::make_tuple(
-                std::move(refined.d_conn0), std::move(refined.d_conn1),
-                std::move(refined.d_conn2), std::move(refined.d_conn3),
-                std::move(refined.d_conn4), std::move(refined.d_conn5),
-                std::move(refined.d_conn6), std::move(refined.d_conn7));
+                std::move(refined.d_conn[0]), std::move(refined.d_conn[1]),
+                std::move(refined.d_conn[2]), std::move(refined.d_conn[3]),
+                std::move(refined.d_conn[4]), std::move(refined.d_conn[5]),
+                std::move(refined.d_conn[6]), std::move(refined.d_conn[7]));
             if (reuseDomain)
             {
                 domain_->resyncFromDevice(std::move(coords), std::move(conn));
@@ -643,8 +640,8 @@ private:
         else if constexpr (std::is_same_v<ElementTag, TetTag>)
         {
             typename Domain::DeviceConnectivityTuple conn = std::make_tuple(
-                std::move(refined.d_conn0), std::move(refined.d_conn1),
-                std::move(refined.d_conn2), std::move(refined.d_conn3));
+                std::move(refined.d_conn[0]), std::move(refined.d_conn[1]),
+                std::move(refined.d_conn[2]), std::move(refined.d_conn[3]));
             if (reuseDomain)
             {
                 domain_->resyncFromDevice(std::move(coords), std::move(conn));
@@ -663,6 +660,67 @@ private:
         cudaDeviceSynchronize();
         (void)domain_->getElementToNodeConnectivity();
         domain_->cacheNodeCoordinates();
+    }
+
+    // Element-type-dispatched refinement helper. Templated on the conn tuple
+    // so the 8-conn body is only parsed when `ConnTupleT` is a hex 8-tuple
+    // (and vice versa for tet). Without this layer the if constexpr branches
+    // inside adaptMeshMultiField are non-dependent at the point of parsing
+    // and nvcc complains about std::get<7> on a 4-tuple even for TetTag.
+    template<typename ConnTupleT, typename CoordVecT, typename MarkVecT>
+    typename OctreeAlignedRefine<KeyType, RealType, ElementTag>::Result
+    doRefineLocal(const ConnTupleT& d_conn,
+                  const CoordVecT& d_x, const CoordVecT& d_y, const CoordVecT& d_z,
+                  const MarkVecT& d_marks,
+                  size_t startIdx, size_t localCount, size_t numNodes)
+    {
+        using Refine = OctreeAlignedRefine<KeyType, RealType, ElementTag>;
+        if constexpr (std::tuple_size_v<ConnTupleT> == 8)
+        {
+            return Refine::refineLocal(
+                std::get<0>(d_conn).data() + startIdx, std::get<1>(d_conn).data() + startIdx,
+                std::get<2>(d_conn).data() + startIdx, std::get<3>(d_conn).data() + startIdx,
+                std::get<4>(d_conn).data() + startIdx, std::get<5>(d_conn).data() + startIdx,
+                std::get<6>(d_conn).data() + startIdx, std::get<7>(d_conn).data() + startIdx,
+                d_x.data(), d_y.data(), d_z.data(),
+                d_marks.data() + startIdx, localCount, numNodes, config_.blockSize);
+        }
+        else if constexpr (std::tuple_size_v<ConnTupleT> == 4)
+        {
+            return Refine::refineLocal(
+                std::get<0>(d_conn).data() + startIdx, std::get<1>(d_conn).data() + startIdx,
+                std::get<2>(d_conn).data() + startIdx, std::get<3>(d_conn).data() + startIdx,
+                d_x.data(), d_y.data(), d_z.data(),
+                d_marks.data() + startIdx, localCount, numNodes, config_.blockSize);
+        }
+    }
+
+    template<typename ConnTupleT, typename MarkVecT, typename RefinedT, typename OutVecT>
+    void doTransferSolution(const ConnTupleT& d_conn,
+                             const RealType* oldField,
+                             const MarkVecT& d_marks,
+                             const RefinedT& refined,
+                             size_t startIdx, size_t localCount, size_t numNodes,
+                             OutVecT& transferred)
+    {
+        using Refine = OctreeAlignedRefine<KeyType, RealType, ElementTag>;
+        if constexpr (std::tuple_size_v<ConnTupleT> == 8)
+        {
+            Refine::transferSolution(
+                std::get<0>(d_conn).data() + startIdx, std::get<1>(d_conn).data() + startIdx,
+                std::get<2>(d_conn).data() + startIdx, std::get<3>(d_conn).data() + startIdx,
+                std::get<4>(d_conn).data() + startIdx, std::get<5>(d_conn).data() + startIdx,
+                std::get<6>(d_conn).data() + startIdx, std::get<7>(d_conn).data() + startIdx,
+                oldField, d_marks.data() + startIdx,
+                localCount, numNodes, transferred, config_.blockSize);
+        }
+        else if constexpr (std::tuple_size_v<ConnTupleT> == 4)
+        {
+            Refine::transferSolution(
+                std::get<0>(d_conn).data() + startIdx, std::get<1>(d_conn).data() + startIdx,
+                std::get<2>(d_conn).data() + startIdx, std::get<3>(d_conn).data() + startIdx,
+                oldField, refined, localCount, transferred, config_.blockSize);
+        }
     }
 
     Config config_;

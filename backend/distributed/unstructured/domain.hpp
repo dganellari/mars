@@ -697,6 +697,11 @@ public:
     DomainType& getDomain() { return *domain_; }
     const DomainType& getDomain() const { return *domain_; }
 
+    // Per-element SFC keys (one per local element, in cstone's local order).
+    // Filled by sync(). Used by AMR to compute per-element refinement level
+    // from the cstone focus-tree leaves.
+    const DeviceVector<KeyType>& getElementSfcCodes() const { return d_elemSfcCodes_; }
+
     MARS_HOST_DEVICE
     const cstone::Box<RealType>& getBoundingBox() const { return box_; }
 

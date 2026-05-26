@@ -131,14 +131,40 @@ target_include_directories(mars_amr_grad PRIVATE
 )
 install(TARGETS mars_amr_grad RUNTIME DESTINATION bin/examples)
 
+# Galerkin Laplacian A = D M^{-1} D^T standalone validator (Phase E, Stage 1).
+# Matrix-free SpMV with the same per-node + reverse-halo D / D^T scatter as the
+# NS driver. Runs five correctness tests (linear, symmetry, nullspace, psd, cg)
+# in isolation so the operator math can be locked down before any NS wiring.
+add_executable(mars_amr_ddt mars_amr_ddt.cu)
+target_link_libraries(mars_amr_ddt PRIVATE mars)
+target_include_directories(mars_amr_ddt PRIVATE
+    ${CMAKE_SOURCE_DIR}/backend/distributed/unstructured/amr
+)
+install(TARGETS mars_amr_ddt RUNTIME DESTINATION bin/examples)
+
 # Chorin projection NS driver (Phase C): ties B.1-B.4 together into an
 # unsteady incompressible Navier-Stokes solver. Per step: explicit predictor
 # (advection + grad p^n), implicit diffusion (3 CG/Hypre solves), pressure
 # Poisson (1 solve), corrector (subtract dt/rho * grad phi), pressure update.
-# Test case: lid-driven cavity. Picks up Hypre transitively through mars.
+# Test case: lid-driven cavity / channel flow. The solver kernels and
+# NSStepper struct live in backend/.../fem/mars_ns_solver.hpp so other
+# drivers (TGV, future flow-past-sphere) can reuse them. Picks up Hypre
+# transitively through mars.
 add_executable(mars_amr_ns_projection mars_amr_ns_projection.cu)
 target_link_libraries(mars_amr_ns_projection PRIVATE mars)
 target_include_directories(mars_amr_ns_projection PRIVATE
     ${CMAKE_SOURCE_DIR}/backend/distributed/unstructured/amr
 )
 install(TARGETS mars_amr_ns_projection RUNTIME DESTINATION bin/examples)
+
+# Taylor-Green vortex driver. Periodic-cube NS solver + AMR. Currently a
+# skeleton that loads a mesh, builds the periodic node-pair map, applies the
+# TGV initial condition, and writes the IC as VTU. The full projection time
+# loop will be wired against mars_ns_solver.hpp in a follow-up commit once
+# BCKind::Periodic is added to NSStepper.
+add_executable(mars_tgv mars_tgv.cu)
+target_link_libraries(mars_tgv PRIVATE mars)
+target_include_directories(mars_tgv PRIVATE
+    ${CMAKE_SOURCE_DIR}/backend/distributed/unstructured/amr
+)
+install(TARGETS mars_tgv RUNTIME DESTINATION bin/examples)
