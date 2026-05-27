@@ -1,160 +1,41 @@
 #pragma once
 
-#include "../fem/mars_sparse_matrix.hpp"
-#include <HYPRE.h>
-#include <HYPRE_parcsr_ls.h>
-#include <HYPRE_utilities.h>
-#include <mpi.h>
-#include <cuda_runtime.h>
-#include <thrust/device_vector.h>
-#include <thrust/device_ptr.h>
-#include <thrust/copy.h>
-#include <thrust/sequence.h>
-#include <thrust/scan.h>
-#include <thrust/reduce.h>
-#include <thrust/transform_reduce.h>
-#include <thrust/logical.h>
-#include <thrust/iterator/counting_iterator.h>
-#include <thrust/functional.h>
-#include <cmath>
-#include <iostream>
-#include <vector>
+// All shared utilities (HypreInitGuard, countValidPerRowKernel,
+// compactGlobalCsrKernel, fillGlobalRowIndicesKernel, IsNonFinite, the
+// HYPRE_/thrust/mpi headers, the namespace declarations) come from the PCG
+// header. Including it here means we don't redefine those symbols.
+#include "mars_hypre_pcg_solver.hpp"
 
 namespace mars {
 namespace fem {
 
-// One-time Hypre init/finalize for GPU execution.
-// Constructed lazily on first solve() so MPI_Init is guaranteed to have run.
-struct HypreInitGuard {
-    HypreInitGuard() {
-#if defined(HYPRE_RELEASE_NUMBER) && HYPRE_RELEASE_NUMBER >= 22000
-        HYPRE_Initialize();
-#else
-        HYPRE_Init();
-#endif
-        HYPRE_SetMemoryLocation(HYPRE_MEMORY_DEVICE);
-        HYPRE_SetExecutionPolicy(HYPRE_EXEC_DEVICE);
-    }
-    ~HypreInitGuard() {
-#if defined(HYPRE_RELEASE_NUMBER) && HYPRE_RELEASE_NUMBER >= 22000
-        HYPRE_Finalize();
-#else
-        HYPRE_Finalize();
-#endif
-    }
-};
 
-// Pass 1: per-row count valid entries + record whether the diagonal is present.
-// One thread per owned row. Walks that row's CSR slice, bounds-checks each
-// local column, looks up the global column, and counts valid entries.
-template<typename IndexType, typename HBigInt>
-__global__ void countValidPerRowKernel(
-    const IndexType* d_rowOffsets,
-    const IndexType* d_colIndicesLocal,
-    const HBigInt*   d_localToGlobalDof,
-    size_t           numLocalCols,
-    HBigInt          ilower,
-    IndexType        m,
-    int*             d_perRowCount,
-    int*             d_hasDiagonal)
-{
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i >= m) return;
-
-    IndexType rowStart = d_rowOffsets[i];
-    IndexType rowEnd   = d_rowOffsets[i + 1];
-    HBigInt globalRow  = ilower + static_cast<HBigInt>(i);
-
-    int valid = 0;
-    int hasDiag = 0;
-    for (IndexType j = rowStart; j < rowEnd; ++j) {
-        IndexType localCol = d_colIndicesLocal[j];
-        // signed-safe bound check
-        if (localCol < 0) continue;
-        size_t lc = static_cast<size_t>(localCol);
-        if (lc >= numLocalCols) continue;
-        HBigInt globalCol = d_localToGlobalDof[lc];
-        if (globalCol < 0) continue;
-        ++valid;
-        if (globalCol == globalRow) hasDiag = 1;
-    }
-    d_perRowCount[i] = valid;
-    d_hasDiagonal[i] = hasDiag;
-}
-
-// Pass 2: compact filtered (globalCol, value) entries into per-row contiguous slots.
-// One thread per owned row. Uses the exclusive-scanned d_outOffsets as the
-// write base, so the output is dense (CSR-shaped, but with width = perRowCount[i]).
-template<typename IndexType, typename RealType, typename HBigInt, typename HReal>
-__global__ void compactGlobalCsrKernel(
-    const IndexType* d_rowOffsets,
-    const IndexType* d_colIndicesLocal,
-    const RealType*  d_valuesLocal,
-    const HBigInt*   d_localToGlobalDof,
-    size_t           numLocalCols,
-    const int*       d_outOffsets,
-    IndexType        m,
-    HBigInt*         d_colsGlobalCompact,
-    HReal*           d_valsCompact)
-{
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i >= m) return;
-
-    IndexType rowStart = d_rowOffsets[i];
-    IndexType rowEnd   = d_rowOffsets[i + 1];
-    int writeBase      = d_outOffsets[i];
-    int written        = 0;
-
-    for (IndexType j = rowStart; j < rowEnd; ++j) {
-        IndexType localCol = d_colIndicesLocal[j];
-        if (localCol < 0) continue;
-        size_t lc = static_cast<size_t>(localCol);
-        if (lc >= numLocalCols) continue;
-        HBigInt globalCol = d_localToGlobalDof[lc];
-        if (globalCol < 0) continue;
-        d_colsGlobalCompact[writeBase + written] = globalCol;
-        d_valsCompact      [writeBase + written] = static_cast<HReal>(d_valuesLocal[j]);
-        ++written;
-    }
-}
-
-// Fill global row-index array [ilower, ilower+m) on device.
-template<typename HBigInt>
-__global__ void fillGlobalRowIndicesKernel(HBigInt* d_rows, HBigInt ilower, int m)
-{
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i < m) d_rows[i] = ilower + static_cast<HBigInt>(i);
-}
-
-// NaN/Inf scan reduction predicate.
-template<typename T>
-struct IsNonFinite {
-    __host__ __device__ bool operator()(T v) const {
-#if defined(__CUDA_ARCH__)
-        return !isfinite(static_cast<double>(v));
-#else
-        return !std::isfinite(static_cast<double>(v));
-#endif
-    }
-};
-
-// GPU-resident Hypre PCG + BoomerAMG solver.
-// All matrix/RHS/solution data stays on device end-to-end.
+// GPU-resident Hypre GMRES + BoomerAMG solver.
+// API-identical drop-in for HyprePCGSolver. Uses Hypre's restarted GMRES
+// (HYPRE_ParCSRGMRES) instead of PCG, which removes the strict SPD
+// requirement: works for SPSD pressure-Poisson with constant null space
+// (D M^-1 D^T) where PCG returns error 1.
+//
+// Memory cost: GMRES(k) restart length stores ~k+5 Krylov vectors of size
+// numOwnedDofs. Default k=30 -> 35 vectors of 8 bytes per rank for FP64.
+// At wing scale (15M DOFs, 4 ranks): 35*3.75M*8 = ~1 GB per rank. Fine.
 template<typename RealType, typename IndexType, typename AcceleratorTag>
-class HyprePCGSolver {
+class HypreGMRESSolver {
 public:
     using Matrix = SparseMatrix<IndexType, RealType, AcceleratorTag>;
     using Vector = typename mars::VectorSelector<RealType, AcceleratorTag>::type;
 
     enum PrecondType { BOOMERAMG, JACOBI };
 
-    HyprePCGSolver(MPI_Comm comm = MPI_COMM_WORLD, int maxIter = 1000, RealType tolerance = 1e-6, PrecondType precondType = BOOMERAMG)
+    HypreGMRESSolver(MPI_Comm comm = MPI_COMM_WORLD, int maxIter = 1000, RealType tolerance = 1e-6,
+                     PrecondType precondType = BOOMERAMG, int kDim = 30)
         : comm_(comm), maxIter_(maxIter), tolerance_(tolerance),
           solver_(nullptr), precond_(nullptr), A_hypre_(nullptr),
-          b_hypre_(nullptr), x_hypre_(nullptr), verbose_(true), precondType_(precondType) {
+          b_hypre_(nullptr), x_hypre_(nullptr), verbose_(true), precondType_(precondType),
+          kDim_(kDim) {
     }
 
-    ~HyprePCGSolver() {
+    ~HypreGMRESSolver() {
         destroy();
     }
 
@@ -252,7 +133,7 @@ public:
     void setVerbose(bool verbose) { verbose_ = verbose; }
 
     // Iteration count and final relative residual from the most recent solve.
-    // Hypre fills these via HYPRE_PCGGetNumIterations / GetFinalRelativeResidualNorm
+    // Hypre fills these via HYPRE_GMRESGetNumIterations / GetFinalRelativeResidualNorm
     // at end of solve. Driver code reads these for per-step diagnostics so a
     // silently-non-converged AMG run (returns success but residual stagnates
     // above tol) is visible in the step log instead of buried in Hypre's own
@@ -352,110 +233,104 @@ public:
             HYPRE_BoomerAMGCreate(&precond_);
             // Env var MARS_HYPRE_VERBOSE=1 turns on per-iter Hypre prints so a
             // stalled AMG solve shows its residual history without rebuilding.
-            const char* vbEnv = std::getenv("MARS_HYPRE_VERBOSE");
-            int hyprePrintLevel = (vbEnv && std::string(vbEnv) != "0") ? 3 : 0;
+            const char* ev = std::getenv("MARS_HYPRE_VERBOSE");
+            int hyprePrintLevel = (ev && std::string(ev) != "0") ? 3 : 0;
             HYPRE_BoomerAMGSetPrintLevel(precond_, hyprePrintLevel);
-            // The custom Galerkin-Laplacian AMG parameter set is OPT-IN via env
-            // MARS_HYPRE_AMG_TUNED=1. Default behavior is Hypre's untuned
-            // defaults, which is what worked for the velocity matrix
-            // (M/dt + nu*K) and K-path pressure in the original code. The
-            // tuned set (RelaxType=18 l1-Jacobi, PMIS, ext+i, etc.) was added
-            // for the DDT pressure operator but breaks PCG on the velocity
-            // matrix in this Hypre build. Gate it so it only activates when
-            // explicitly requested.
-            const char* tunedEnv = std::getenv("MARS_HYPRE_AMG_TUNED");
-            if (tunedEnv && std::string(tunedEnv) != "0")
+            // GPU-required + tuned-for-Galerkin-Laplacian parameters. Defaults
+            // are tuned for diffusion on CPU and produce a "9x wrong answer at
+            // first solve" failure mode on a D M^-1 D^T projection operator
+            // (CG accepts what AMG can't precondition cleanly).
+            //   CoarsenType=8  = PMIS (mandatory on GPU; cheaper than CLJP)
+            //   InterpType=6   = ext+i (long-range, works with PMIS)
+            //   RelaxType=18   = l1-Jacobi (SYMMETRIC -- required for PCG;
+            //                   default GS becomes non-symmetric on GPU)
+            //   RelaxOrder=0   = lexicographic (mandatory on GPU)
+            //   KeepTranspose=1= avoid SpMTV on GPU
+            //   StrongThr=0.5  = default 0.25 too loose for 3D Laplacians
+            //   PMaxElmts=4    = truncate P (GPU memory + perf)
+            //   AggNumLevels=1 = aggressive coarsening on level 0 only
+            HYPRE_BoomerAMGSetCoarsenType(precond_, 8);
+            HYPRE_BoomerAMGSetInterpType(precond_, 6);
+            HYPRE_BoomerAMGSetRelaxType(precond_, 18);
+            HYPRE_BoomerAMGSetRelaxOrder(precond_, 0);
+            HYPRE_BoomerAMGSetKeepTranspose(precond_, 1);
+            HYPRE_BoomerAMGSetStrongThreshold(precond_, 0.5);
+            HYPRE_BoomerAMGSetPMaxElmts(precond_, 4);
+            HYPRE_BoomerAMGSetAggNumLevels(precond_, 1);
+            HYPRE_BoomerAMGSetNumSweeps(precond_, 1);
+            HYPRE_BoomerAMGSetMaxLevels(precond_, 25);
+            HYPRE_BoomerAMGSetMinCoarseSize(precond_, 32);  // avoid too-small coarse grid on small problems
+            HYPRE_BoomerAMGSetMaxCoarseSize(precond_, 128); // upper bound on coarsest direct solve
+            HYPRE_BoomerAMGSetTol(precond_, 0.0);           // GMRES controls outer tol
+            HYPRE_BoomerAMGSetMaxIter(precond_, 1);         // 1 V-cycle per GMRES iter
+            // MARS_HYPRE_VERBOSE=1 also enables BoomerAMG setup-phase prints
+            // (level structure, complexity, row sums per level).
             {
-                //   CoarsenType=8  = PMIS (mandatory on GPU; cheaper than CLJP)
-                //   InterpType=6   = ext+i (long-range, works with PMIS)
-                //   RelaxType=18   = l1-Jacobi (SYMMETRIC -- required for PCG;
-                //                   default GS becomes non-symmetric on GPU)
-                //   RelaxOrder=0   = lexicographic (mandatory on GPU)
-                //   KeepTranspose=1= avoid SpMTV on GPU
-                //   StrongThr=0.5  = default 0.25 too loose for 3D Laplacians
-                //   PMaxElmts=4    = truncate P (GPU memory + perf)
-                //   AggNumLevels=1 = aggressive coarsening on level 0 only
-                HYPRE_BoomerAMGSetCoarsenType(precond_, 8);
-                HYPRE_BoomerAMGSetInterpType(precond_, 6);
-                HYPRE_BoomerAMGSetRelaxType(precond_, 18);
-                HYPRE_BoomerAMGSetRelaxOrder(precond_, 0);
-                HYPRE_BoomerAMGSetKeepTranspose(precond_, 1);
-                HYPRE_BoomerAMGSetStrongThreshold(precond_, 0.5);
-                HYPRE_BoomerAMGSetPMaxElmts(precond_, 4);
-                HYPRE_BoomerAMGSetAggNumLevels(precond_, 1);
-                HYPRE_BoomerAMGSetNumSweeps(precond_, 1);
-                HYPRE_BoomerAMGSetMaxLevels(precond_, 25);
-                HYPRE_BoomerAMGSetMinCoarseSize(precond_, 32);
-                HYPRE_BoomerAMGSetMaxCoarseSize(precond_, 128);
-                HYPRE_BoomerAMGSetTol(precond_, 0.0);
-                HYPRE_BoomerAMGSetMaxIter(precond_, 1);
-            }
-            if (vbEnv && std::string(vbEnv) != "0") {
-                HYPRE_BoomerAMGSetPrintLevel(precond_, 3);
+                const char* ev = std::getenv("MARS_HYPRE_VERBOSE");
+                if (ev && std::string(ev) != "0") {
+                    HYPRE_BoomerAMGSetPrintLevel(precond_, 3);
+                }
             }
         } else if (precondType_ == JACOBI) {
             if (verbose_ && rank == 0) std::cout << "Using Jacobi preconditioner" << std::endl;
             precond_ = (HYPRE_Solver) parcsr_A_;
         }
 
-        if (verbose_ && rank == 0) std::cout << "Creating PCG solver..." << std::endl;
-        HYPRE_ParCSRPCGCreate(comm_, &solver_);
+        if (verbose_ && rank == 0) std::cout << "Creating GMRES solver..." << std::endl;
+        HYPRE_ParCSRGMRESCreate(comm_, &solver_);
         if (!solver_) {
-            std::cerr << "Failed to create Hypre PCG solver" << std::endl;
+            std::cerr << "Failed to create Hypre GMRES solver" << std::endl;
             return false;
         }
-        HYPRE_PCGSetMaxIter(solver_, maxIter_);
-        HYPRE_PCGSetTol(solver_, tolerance_);
-        // PCG print level: 0 silent, 2 per-iter residuals. Env var
+        HYPRE_GMRESSetMaxIter(solver_, maxIter_);
+        HYPRE_GMRESSetTol(solver_, tolerance_);
+        HYPRE_GMRESSetKDim(solver_, kDim_);  // restart length
+        // GMRES print level: 0 silent, 2 per-iter residuals. Env var
         // MARS_HYPRE_VERBOSE=1 turns it on without rebuild.
         {
             const char* ev = std::getenv("MARS_HYPRE_VERBOSE");
-            int pcgPrint = (verbose_ || (ev && std::string(ev) != "0")) ? 2 : 0;
-            HYPRE_PCGSetPrintLevel(solver_, pcgPrint);
+            int gmresPrint = (verbose_ || (ev && std::string(ev) != "0")) ? 2 : 0;
+            HYPRE_GMRESSetPrintLevel(solver_, gmresPrint);
         }
 
         if (precondType_ == BOOMERAMG && precond_) {
             if (verbose_ && rank == 0) std::cout << "Setting BoomerAMG preconditioner..." << std::endl;
-            HYPRE_PCGSetPrecond(solver_,
+            HYPRE_GMRESSetPrecond(solver_,
                                (HYPRE_Int (*)(HYPRE_Solver, HYPRE_Matrix, HYPRE_Vector, HYPRE_Vector))HYPRE_BoomerAMGSolve,
                                (HYPRE_Int (*)(HYPRE_Solver, HYPRE_Matrix, HYPRE_Vector, HYPRE_Vector))HYPRE_BoomerAMGSetup,
                                precond_);
         } else if (precondType_ == JACOBI) {
             if (verbose_ && rank == 0) std::cout << "Setting Jacobi (diagonal) preconditioner..." << std::endl;
-            HYPRE_PCGSetPrecond(solver_,
+            HYPRE_GMRESSetPrecond(solver_,
                                (HYPRE_Int (*)(HYPRE_Solver, HYPRE_Matrix, HYPRE_Vector, HYPRE_Vector))HYPRE_ParCSRDiagScale,
                                (HYPRE_Int (*)(HYPRE_Solver, HYPRE_Matrix, HYPRE_Vector, HYPRE_Vector))HYPRE_ParCSRDiagScaleSetup,
                                (HYPRE_Solver) parcsr_A_);
         }
 
-        if (verbose_ && rank == 0) std::cout << "Setting up PCG solver..." << std::endl;
+        if (verbose_ && rank == 0) std::cout << "Setting up GMRES solver..." << std::endl;
         MPI_Barrier(comm_);
-        HYPRE_Int setup_err = HYPRE_ParCSRPCGSetup(solver_, parcsr_A_, par_b_, par_x_);
+        HYPRE_Int setup_err = HYPRE_ParCSRGMRESSetup(solver_, parcsr_A_, par_b_, par_x_);
         if (setup_err != 0 && rank == 0) {
-            std::cerr << "[HyprePCG] Setup returned error " << setup_err
+            std::cerr << "[HypreGMRES] Setup returned error " << setup_err
                       << " (HYPRE_GetError=" << HYPRE_GetError() << ")\n";
             char errbuf[256];
             HYPRE_DescribeError(HYPRE_GetError(), errbuf);
-            std::cerr << "[HyprePCG] " << errbuf << "\n";
+            std::cerr << "[HypreGMRES] " << errbuf << "\n";
             HYPRE_ClearAllErrors();
         }
-        if (verbose_ && rank == 0) std::cout << "PCG setup complete, starting solve..." << std::endl;
+        if (verbose_ && rank == 0) std::cout << "GMRES setup complete, starting solve..." << std::endl;
 
-        // AMG hierarchy diagnostic removed: HYPRE_BoomerAMGGetNumLevels/
-        // GetOperatorComplexity/GetGridComplexity not available in this Hypre
-        // build on Alps. Set MARS_HYPRE_VERBOSE=1 to get per-iter PCG residual
-        // prints instead, which gives equivalent insight into AMG quality.
         MPI_Barrier(comm_);
-        HYPRE_Int solve_err = HYPRE_ParCSRPCGSolve(solver_, parcsr_A_, par_b_, par_x_);
+        HYPRE_Int solve_err = HYPRE_ParCSRGMRESSolve(solver_, parcsr_A_, par_b_, par_x_);
         if (solve_err != 0 && rank == 0) {
-            std::cerr << "[HyprePCG] Solve returned error " << solve_err
+            std::cerr << "[HypreGMRES] Solve returned error " << solve_err
                       << " (HYPRE_GetError=" << HYPRE_GetError() << ")\n";
             char errbuf[256];
             HYPRE_DescribeError(HYPRE_GetError(), errbuf);
-            std::cerr << "[HyprePCG] " << errbuf << "\n";
+            std::cerr << "[HypreGMRES] " << errbuf << "\n";
             HYPRE_ClearAllErrors();
         }
-        if (verbose_ && rank == 0) std::cout << "PCG solve complete." << std::endl;
+        if (verbose_ && rank == 0) std::cout << "GMRES solve complete." << std::endl;
 
         // Read solution directly into device storage.
         if constexpr (std::is_same_v<RealType, HYPRE_Real>) {
@@ -473,13 +348,13 @@ public:
 
         int    num_iterations = 0;
         double final_res_norm = 0.0;
-        HYPRE_PCGGetNumIterations(solver_, &num_iterations);
-        HYPRE_PCGGetFinalRelativeResidualNorm(solver_, &final_res_norm);
+        HYPRE_GMRESGetNumIterations(solver_, &num_iterations);
+        HYPRE_GMRESGetFinalRelativeResidualNorm(solver_, &final_res_norm);
         lastNumIters_ = num_iterations;
         lastFinalRes_ = final_res_norm;
 
         if (verbose_) {
-            std::cout << "Hypre PCG converged in " << num_iterations
+            std::cout << "Hypre GMRES converged in " << num_iterations
                       << " iterations, final residual: " << final_res_norm << std::endl;
         }
 
@@ -683,7 +558,7 @@ public:
 
     void destroy() {
         if (solver_) {
-            HYPRE_ParCSRPCGDestroy(solver_);
+            HYPRE_ParCSRGMRESDestroy(solver_);
             solver_ = nullptr;
         }
         if (precond_ && precondType_ == BOOMERAMG) {
@@ -731,6 +606,9 @@ private:
 
     // Device-resident local->global DOF map, uploaded once per solve.
     thrust::device_vector<HYPRE_BigInt> d_localToGlobalDof_;
+
+    // GMRES(k) restart length.
+    int kDim_;
 };
 
 } // namespace fem
