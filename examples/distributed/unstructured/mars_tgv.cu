@@ -343,6 +343,13 @@ int main(int argc, char** argv)
     amrConfig.strategy         = mars::amr::MarkingStrategy::Doerfler;
 
     AmrManager<HexTag, KeyType, RealType> amr(amrConfig);
+    // NOTE: mesh-level coordinate collapse (periodicAxesMask) is NOT used.
+    // Moving a max-face vertex to its min-face coord makes the wrap-around
+    // element geometrically degenerate (it then spans the whole box
+    // backwards), breaking the CVFEM Jacobian/area-vectors at the seam.
+    // Periodicity is instead handled at the DOF level by buildPeriodicMap
+    // below (slave DOF == master DOF, geometry untouched). Multi-rank
+    // periodic requires extending that DOF map across ranks -- pending.
     amr.initialize(meshFile, rank, numRanks);
 
     auto& domain = amr.domain();

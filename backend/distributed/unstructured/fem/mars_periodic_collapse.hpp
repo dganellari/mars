@@ -178,6 +178,90 @@ inline std::size_t applyPeriodicCollapse(const std::vector<RealType>& h_x,
 }
 
 // =============================================================================
+// MFEM-style mesh-level periodic identification for MARS / cstone.
+//
+// **Strategy chosen after tracing the MARS data flow**:
+//   - cstone dedups vertices by SFC key, which is a pure coord->key
+//     quantization (cstone::sfc3D is NOT periodic-aware).
+//   - Two vertices at the same physical position get the same SFC key.
+//   - cstone's host-fallback peer discovery (MARS_NODEHALO_V2=0) detects
+//     cross-rank shared vertices by MPI_Allgatherv of owned-node SFC keys.
+//   - Therefore: collapse periodic pairs by rewriting the SLAVE'S
+//     COORDINATES to match the master's. Then cstone naturally identifies
+//     the two physical locations as one vertex (locally via thrust::unique
+//     on SFC keys, cross-rank via the Allgatherv key-match in
+//     buildNodeHaloTopologyHostPath at domain.cu:1174-1198).
+//
+// This means **no MPI is needed at collapse time** -- each rank's slaves
+// just shift their own (x,y,z) by the periodicity vector. The cross-rank
+// pairing happens later, automatically, in cstone's existing halo build.
+//
+// Inputs:
+//   h_x, h_y, h_z   -- per-rank local node coordinates (modified in-place)
+//   boxLo, boxHi    -- periodic domain extent (same on every rank)
+//   periodicX/Y/Z   -- which axes are periodic
+//   epsRel          -- face-detection tolerance, fraction of box width
+//
+// Returns: number of local vertices whose coords were shifted (one per
+// max-face boundary node per active axis).
+//
+// h_conn is NOT modified. Element connectivity still references the same
+// local indices; what changes is that two distinct local indices now
+// resolve to the same SFC key and get merged by cstone's sync().
+// =============================================================================
+template<typename RealType>
+inline std::size_t collapsePeriodicCoordinatesInPlace(
+    std::vector<RealType>& h_x,
+    std::vector<RealType>& h_y,
+    std::vector<RealType>& h_z,
+    RealType boxLo, RealType boxHi,
+    bool periodicX = true,
+    bool periodicY = true,
+    bool periodicZ = true,
+    RealType epsRel = RealType(1e-6))
+{
+    const std::size_t numNodes = h_x.size();
+    if (numNodes == 0) return 0;
+
+    const RealType L   = boxHi - boxLo;
+    const RealType eps = epsRel * L;
+
+    std::size_t shifted = 0;
+
+    // For each axis, find local nodes on the max-face (x=boxHi) and shift
+    // their corresponding coord to boxLo. Since the master at boxLo has
+    // identical perpendicular coords, the resulting vertex has identical
+    // SFC key as the master's image (whether the master lives locally or
+    // on another rank).
+    if (periodicX) {
+        for (std::size_t i = 0; i < numNodes; ++i) {
+            if (std::fabs(h_x[i] - boxHi) < eps) {
+                h_x[i] = boxLo;
+                ++shifted;
+            }
+        }
+    }
+    if (periodicY) {
+        for (std::size_t i = 0; i < numNodes; ++i) {
+            if (std::fabs(h_y[i] - boxHi) < eps) {
+                h_y[i] = boxLo;
+                ++shifted;
+            }
+        }
+    }
+    if (periodicZ) {
+        for (std::size_t i = 0; i < numNodes; ++i) {
+            if (std::fabs(h_z[i] - boxHi) < eps) {
+                h_z[i] = boxLo;
+                ++shifted;
+            }
+        }
+    }
+
+    return shifted;
+}
+
+// =============================================================================
 // MPI-parallel periodic vertex collapse.
 //
 // Each rank holds a per-rank slice of the mesh: local node coordinates

@@ -50,6 +50,7 @@ using std::get;
 #include "mars_read_mesh_binary.hpp"
 #include "mars_read_mfem_mesh.hpp"
 #include "mars_read_exodus_mesh.hpp"
+#include "backend/distributed/unstructured/fem/mars_periodic_collapse.hpp"
 
 namespace mars
 {
@@ -527,9 +528,27 @@ public:
     using HostConnectivityTuple = typename HostConnectivityTupleHelper<ElementTag, KeyType>::type;
     using HostBoundaryTuple     = std::tuple<HostVector<uint8_t>>; // (isBoundaryNode)
 
-    // Constructor from file
+    // Constructor from file.
+    //
+    // periodicAxesMask: bit 0 = X, bit 1 = Y, bit 2 = Z. When non-zero,
+    // applies MFEM-style mesh-level periodic identification by rewriting
+    // max-face vertex coordinates to match their min-face image. cstone's
+    // SFC-based vertex dedup then merges the pair into a single logical
+    // vertex automatically, both locally (thrust::unique) and cross-rank
+    // (MPI_Allgatherv key-match in the host fallback halo path).
+    //
+    // periodicBoxLo / periodicBoxHi: the periodic domain bounds. Required
+    // when periodicAxesMask != 0; ignored otherwise.
+    //
+    // Multi-rank periodic currently requires MARS_NODEHALO_V2=0 (host
+    // fallback), because the device v2 peer discovery derives peers from
+    // cstone element halos and periodic-seam elements are at opposite
+    // ends of SFC order, so they're not in each other's element halos.
     ElementDomain(const std::string& meshFile, int rank, int numRanks, bool storeOriginalCoords = false,
-                  int bucketSize = 64, unsigned bucketSizeFocus = 8);
+                  int bucketSize = 64, unsigned bucketSizeFocus = 8,
+                  int periodicAxesMask = 0,
+                  RealType periodicBoxLo = RealType(0),
+                  RealType periodicBoxHi = RealType(0));
 
     // Constructor from mesh data (for MFEM or other formats) - automatically computes bounding box
     ElementDomain(const HostCoordsTuple& h_coords, const HostConnectivityTuple& h_conn,
@@ -1114,6 +1133,11 @@ private:
     DeviceBoundaryTuple d_boundary_; // (isBoundaryNode) - optional boundary node flags
     // TODO: check if domain_->box() is a device function in cstone to avoid storing box_ here
     cstone::Box<RealType> box_; // bounding box for the domain
+    // Per-axis periodicity (bit 0 = X, 1 = Y, 2 = Z). Set from the file ctor's
+    // periodicAxesMask; reused when box_ is rebuilt during AMR resync so the
+    // periodic boundary flags survive re-partitioning. 0 = fully open (default,
+    // non-periodic) -- cavity / channel / wing are unaffected.
+    int periodicAxesMask_ = 0;
 
     // useful mapping from element to node indices
     DeviceVector<KeyType> d_elemToNodeMap_;
@@ -1419,12 +1443,22 @@ cstone::Box<RealType> createBoundingBox(const CoordTuple& coords, RealType paddi
     }
 }
 
-// Compute global bounding box from coordinate data (host vectors)
+// Compute global bounding box from coordinate data (host vectors).
+//
+// periodicAxesMask (bit 0=X,1=Y,2=Z): for a periodic axis the box is the
+// EXACT [periodicLo, periodicHi] extent with NO padding and the cstone
+// boundary set to periodic -- cstone uses the box length as the wrap period,
+// so a padded extent would make applyPbc wrap to the wrong position. Open
+// axes keep the usual padded min/max. Default 0 -> fully open / padded,
+// identical to the original behavior (cavity / channel / wing unaffected).
 template<typename RealType>
 cstone::Box<RealType> computeGlobalBoundingBoxFromCoords(const std::vector<RealType>& x_coords,
                                                          const std::vector<RealType>& y_coords,
                                                          const std::vector<RealType>& z_coords,
-                                                         RealType padding = 0.05)
+                                                         RealType padding = 0.05,
+                                                         int periodicAxesMask = 0,
+                                                         RealType periodicLo = RealType(0),
+                                                         RealType periodicHi = RealType(0))
 {
     if (x_coords.empty() || y_coords.empty() || z_coords.empty())
     {
@@ -1463,9 +1497,25 @@ cstone::Box<RealType> computeGlobalBoundingBoxFromCoords(const std::vector<RealT
     RealType yRange = global_ymax - global_ymin;
     RealType zRange = global_zmax - global_zmin;
 
-    return cstone::Box<RealType>(global_xmin - padding * xRange, global_xmax + padding * xRange,
-                                 global_ymin - padding * yRange, global_ymax + padding * yRange,
-                                 global_zmin - padding * zRange, global_zmax + padding * zRange);
+    using BT = cstone::BoundaryType;
+    const bool px = (periodicAxesMask & 1) != 0;
+    const bool py = (periodicAxesMask & 2) != 0;
+    const bool pz = (periodicAxesMask & 4) != 0;
+
+    // For periodic axes use the exact [periodicLo, periodicHi] extent with no
+    // padding (cstone wraps modulo the box length); for open axes keep the
+    // padded min/max.
+    RealType xlo = px ? periodicLo : (global_xmin - padding * xRange);
+    RealType xhi = px ? periodicHi : (global_xmax + padding * xRange);
+    RealType ylo = py ? periodicLo : (global_ymin - padding * yRange);
+    RealType yhi = py ? periodicHi : (global_ymax + padding * yRange);
+    RealType zlo = pz ? periodicLo : (global_zmin - padding * zRange);
+    RealType zhi = pz ? periodicHi : (global_zmax + padding * zRange);
+
+    return cstone::Box<RealType>(xlo, xhi, ylo, yhi, zlo, zhi,
+                                 px ? BT::periodic : BT::open,
+                                 py ? BT::periodic : BT::open,
+                                 pz ? BT::periodic : BT::open);
 }
 
 template<typename KeyType, typename RealType>
@@ -1520,7 +1570,10 @@ ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(cons
                                                                             int numRanks,
                                                                             bool storeOriginalCoords,
                                                                             int bucketSize,
-                                                                            unsigned bucketSizeFocus)
+                                                                            unsigned bucketSizeFocus,
+                                                                            int periodicAxesMask,
+                                                                            RealType periodicBoxLo,
+                                                                            RealType periodicBoxHi)
     : rank_(rank)
     , numRanks_(numRanks)
     , box_(0, 1)
@@ -1547,10 +1600,41 @@ ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(cons
     auto t1 = clk::now();
     readMeshTimeMs = std::chrono::duration<float, std::milli>(t1 - t0).count();
 
+    // MFEM-style periodic vertex identification (before cstone sees the
+    // coords). Rewrite max-face vertex coords to match their min-face image
+    // so cstone's coord->SFC-key quantizer produces identical keys for
+    // periodic pairs; cstone's thrust::unique-by-key dedup then merges them
+    // locally, and the host-fallback halo path (MARS_NODEHALO_V2=0) finds
+    // cross-rank shared vertices via MPI_Allgatherv of owned-node keys.
+    //
+    // Connectivity (h_conn) is not modified; the merge happens at SFC-key
+    // time inside sync(). Coords are still the "raw" mesh coords for the
+    // bounding-box pass below, except the max-face vertices now sit at
+    // boxLo on their periodic axis -- which is consistent with the periodic
+    // box geometry.
+    periodicAxesMask_ = periodicAxesMask;   // remember for AMR-resync box rebuilds
+    if (periodicAxesMask != 0) {
+        std::size_t shifted = mars::fem::collapsePeriodicCoordinatesInPlace<RealType>(
+            std::get<0>(h_coords), std::get<1>(h_coords), std::get<2>(h_coords),
+            periodicBoxLo, periodicBoxHi,
+            (periodicAxesMask & 1) != 0,
+            (periodicAxesMask & 2) != 0,
+            (periodicAxesMask & 4) != 0);
+        if (rank_ == 0) {
+            std::cout << "Periodic collapse (MFEM-style): " << shifted
+                      << " max-face vertex coords shifted to their periodic image. "
+                      << "cstone SFC dedup merges them; box set periodic so v2 "
+                      << "peer discovery finds cross-rank periodic neighbors." << std::endl;
+        }
+    }
+
     RealType theta = 0.5;
 
     box_ = computeGlobalBoundingBoxFromCoords<RealType>(std::get<0>(h_coords), std::get<1>(h_coords),
-                                                        std::get<2>(h_coords));
+                                                        std::get<2>(h_coords),
+                                                        RealType(0.05),
+                                                        periodicAxesMask,
+                                                        periodicBoxLo, periodicBoxHi);
     auto t2 = clk::now();
     bboxTimeMs = std::chrono::duration<float, std::milli>(t2 - t1).count();
 
@@ -1745,9 +1829,26 @@ ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(Devi
 
     RealType pad   = RealType(0.05);
     RealType rx    = gxmax - gxmin, ry = gymax - gymin, rz = gzmax - gzmin;
-    box_ = cstone::Box<RealType>(gxmin - pad * rx, gxmax + pad * rx,
-                                  gymin - pad * ry, gymax + pad * ry,
-                                  gzmin - pad * rz, gzmax + pad * rz);
+    {
+        using BT = cstone::BoundaryType;
+        const bool px = (periodicAxesMask_ & 1) != 0;
+        const bool py = (periodicAxesMask_ & 2) != 0;
+        const bool pz = (periodicAxesMask_ & 4) != 0;
+        // Preserve the periodic extent across this rebuild. For periodic axes
+        // reuse the box bounds already established by the file ctor (the
+        // periodic period must stay fixed -- it is NOT the coord min/max,
+        // which after collapse excludes the max face). Open axes re-pad.
+        RealType xlo = px ? box_.xmin() : (gxmin - pad * rx);
+        RealType xhi = px ? box_.xmax() : (gxmax + pad * rx);
+        RealType ylo = py ? box_.ymin() : (gymin - pad * ry);
+        RealType yhi = py ? box_.ymax() : (gymax + pad * ry);
+        RealType zlo = pz ? box_.zmin() : (gzmin - pad * rz);
+        RealType zhi = pz ? box_.zmax() : (gzmax + pad * rz);
+        box_ = cstone::Box<RealType>(xlo, xhi, ylo, yhi, zlo, zhi,
+                                     px ? BT::periodic : BT::open,
+                                     py ? BT::periodic : BT::open,
+                                     pz ? BT::periodic : BT::open);
+    }
 
     RealType theta = 0.5;
 
@@ -2862,9 +2963,24 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::resyncFromDev
 
     RealType pad = RealType(0.05);
     RealType rx  = gxmax - gxmin, ry = gymax - gymin, rz = gzmax - gzmin;
-    box_ = cstone::Box<RealType>(gxmin - pad * rx, gxmax + pad * rx,
-                                  gymin - pad * ry, gymax + pad * ry,
-                                  gzmin - pad * rz, gzmax + pad * rz);
+    {
+        using BT = cstone::BoundaryType;
+        const bool px = (periodicAxesMask_ & 1) != 0;
+        const bool py = (periodicAxesMask_ & 2) != 0;
+        const bool pz = (periodicAxesMask_ & 4) != 0;
+        // Keep the periodic extent fixed across AMR resync (reuse the old
+        // periodic bounds from box_; open axes re-pad from the new coords).
+        RealType xlo = px ? box_.xmin() : (gxmin - pad * rx);
+        RealType xhi = px ? box_.xmax() : (gxmax + pad * rx);
+        RealType ylo = py ? box_.ymin() : (gymin - pad * ry);
+        RealType yhi = py ? box_.ymax() : (gymax + pad * ry);
+        RealType zlo = pz ? box_.zmin() : (gzmin - pad * rz);
+        RealType zhi = pz ? box_.zmax() : (gzmax + pad * rz);
+        box_ = cstone::Box<RealType>(xlo, xhi, ylo, yhi, zlo, zhi,
+                                     px ? BT::periodic : BT::open,
+                                     py ? BT::periodic : BT::open,
+                                     pz ? BT::periodic : BT::open);
+    }
     // NOTE: cstone Domain captured the OLD box at construction; cstone's
     // Box is mostly used by sync() at call time (passed via box() accessor),
     // so the new bbox is picked up on the next sync(). If cstone caches box
