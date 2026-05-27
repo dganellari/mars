@@ -30,6 +30,7 @@
 #include <iostream>
 #include <tuple>
 #include <vector>
+#include <mpi.h>
 
 namespace mars { namespace fem {
 
@@ -172,6 +173,234 @@ inline std::size_t applyPeriodicCollapse(const std::vector<RealType>& h_x,
         remapColumn(std::get<2>(h_conn));
         remapColumn(std::get<3>(h_conn));
     }
+
+    return total;
+}
+
+// =============================================================================
+// MPI-parallel periodic vertex collapse.
+//
+// Each rank holds a per-rank slice of the mesh: local node coordinates
+// h_x/h_y/h_z and a connectivity h_conn where each entry is a GLOBAL node
+// index (the binary format stores global IDs). After this call, h_conn
+// has periodic-image global IDs rewritten to their primary -- consistently
+// across all ranks -- so handing the result to cstone's ElementDomain
+// gives every periodic pair the same logical vertex.
+//
+// Algorithm:
+//   1. Each rank scans its local nodes, gathers (perp_key, my_global_id)
+//      pairs for boundary nodes on the min-face along each periodic axis.
+//   2. MPI_Allgatherv combines per-rank min-face pair lists into a sorted
+//      global master table.
+//   3. Each rank scans its local max-face nodes, binary-searches the
+//      global master table, and records (own_global_id -> master_global_id)
+//      mappings.
+//   4. MPI_Allgatherv combines the mappings; path-compress so corner nodes
+//      that are simultaneously max-faces on 2 or 3 axes resolve to the
+//      single lowest-index primary.
+//   5. Each rank rewrites its h_conn through the global mapping.
+//
+// `localToGlobal` is the per-rank table mapping local node index -> global
+// node ID (the file-format ID). Pass an empty vector if h_conn already
+// holds local indices (single-rank case).
+//
+// Returns the total number of distinct global IDs that were merged into
+// a smaller primary (across all ranks).
+// =============================================================================
+template<typename RealType, typename HostConnT>
+inline std::size_t applyPeriodicCollapseMpi(const std::vector<RealType>& h_x,
+                                            const std::vector<RealType>& h_y,
+                                            const std::vector<RealType>& h_z,
+                                            const std::vector<std::int64_t>& localToGlobal,
+                                            HostConnT& h_conn,
+                                            RealType boxLo, RealType boxHi,
+                                            bool periodicX,
+                                            bool periodicY,
+                                            bool periodicZ,
+                                            MPI_Comm comm,
+                                            RealType epsRel = RealType(1e-6))
+{
+    const std::size_t numLocalNodes = h_x.size();
+    const RealType L   = boxHi - boxLo;
+    const RealType eps = epsRel * L;
+
+    int rank = 0, numRanks = 1;
+    MPI_Comm_rank(comm, &rank);
+    MPI_Comm_size(comm, &numRanks);
+
+    // Quantize two perpendicular coords into one 64-bit key so floating
+    // noise doesn't break matches across ranks.
+    auto quantize = [&](RealType a, RealType b) -> std::uint64_t {
+        constexpr std::uint64_t MASK = 0x7FFFFFFFu;
+        std::uint64_t ai = std::uint64_t(((a - boxLo) / L) * RealType(double(MASK))) & MASK;
+        std::uint64_t bi = std::uint64_t(((b - boxLo) / L) * RealType(double(MASK))) & MASK;
+        return (ai << 32) | bi;
+    };
+
+    // For each axis, build a global master table via Allgatherv of
+    // (perp_key, master_global_id) pairs from each rank's min-face nodes,
+    // then each rank rewrites its max-face nodes' global IDs.
+    //
+    // Net change in h_conn after all three axes: every max-face vertex's
+    // global ID is replaced by its periodic primary's global ID. Path
+    // compression for corners (vertex on 2 or 3 max-faces) is handled by
+    // running the axes in sequence and using the *latest* h_conn IDs each
+    // pass, with the global master table re-gathered each axis (cheap;
+    // boundary count is O(N^(2/3))).
+
+    auto matchAxisGlobal = [&](int axis) -> std::size_t {
+        // --- 1. Collect min-face masters on this rank ---
+        struct Pair { std::uint64_t key; std::int64_t gid; };
+        std::vector<Pair> localMasters;
+        std::vector<Pair> localSlaves;   // (perp_key, this rank's own global_id for the max-face vertex)
+        localMasters.reserve(numLocalNodes / 32);
+        localSlaves.reserve(numLocalNodes / 32);
+
+        for (std::size_t i = 0; i < numLocalNodes; ++i) {
+            RealType ci = (axis == 0) ? h_x[i] : (axis == 1) ? h_y[i] : h_z[i];
+            RealType pa = (axis == 0) ? h_y[i] : (axis == 1) ? h_x[i] : h_x[i];
+            RealType pb = (axis == 0) ? h_z[i] : (axis == 1) ? h_z[i] : h_y[i];
+            std::int64_t gid = localToGlobal.empty() ? std::int64_t(i)
+                                                     : localToGlobal[i];
+            if (std::fabs(ci - boxLo) < eps) {
+                localMasters.push_back({quantize(pa, pb), gid});
+            } else if (std::fabs(ci - boxHi) < eps) {
+                localSlaves.push_back({quantize(pa, pb), gid});
+            }
+        }
+
+        // --- 2. Allgatherv of (perp_key, master_global_id) ---
+        int nLocal = int(localMasters.size());
+        std::vector<int> recvCounts(numRanks), recvDispls(numRanks + 1, 0);
+        MPI_Allgather(&nLocal, 1, MPI_INT, recvCounts.data(), 1, MPI_INT, comm);
+        for (int r = 0; r < numRanks; ++r)
+            recvDispls[r + 1] = recvDispls[r] + recvCounts[r];
+        int globalCount = recvDispls[numRanks];
+
+        // Pack Pair as two parallel arrays for portable MPI types.
+        std::vector<std::uint64_t> localKeys(nLocal);
+        std::vector<std::int64_t>  localGids(nLocal);
+        for (int i = 0; i < nLocal; ++i) {
+            localKeys[i] = localMasters[i].key;
+            localGids[i] = localMasters[i].gid;
+        }
+
+        std::vector<std::uint64_t> globalKeys(globalCount);
+        std::vector<std::int64_t>  globalGids(globalCount);
+        MPI_Allgatherv(localKeys.data(), nLocal, MPI_UINT64_T,
+                       globalKeys.data(), recvCounts.data(), recvDispls.data(),
+                       MPI_UINT64_T, comm);
+        MPI_Allgatherv(localGids.data(), nLocal, MPI_INT64_T,
+                       globalGids.data(), recvCounts.data(), recvDispls.data(),
+                       MPI_INT64_T, comm);
+
+        // --- 3. Sort the global master table by perp_key ---
+        std::vector<int> order(globalCount);
+        for (int i = 0; i < globalCount; ++i) order[i] = i;
+        std::sort(order.begin(), order.end(),
+                  [&](int a, int b) { return globalKeys[a] < globalKeys[b]; });
+        std::vector<std::uint64_t> sortedKeys(globalCount);
+        std::vector<std::int64_t>  sortedGids(globalCount);
+        for (int i = 0; i < globalCount; ++i) {
+            sortedKeys[i] = globalKeys[order[i]];
+            sortedGids[i] = globalGids[order[i]];
+        }
+
+        // --- 4. For each local slave, binary-search and record mapping ---
+        // mappings[i] = (own_gid, master_gid)
+        std::vector<std::pair<std::int64_t, std::int64_t>> mappings;
+        mappings.reserve(localSlaves.size());
+        for (const auto& s : localSlaves) {
+            auto it = std::lower_bound(sortedKeys.begin(), sortedKeys.end(), s.key);
+            if (it != sortedKeys.end() && *it == s.key) {
+                std::int64_t masterGid = sortedGids[it - sortedKeys.begin()];
+                // Make the smaller-index gid the primary, like the union-find
+                // version does locally. This keeps the result independent
+                // of which rank owned which side of the pair.
+                std::int64_t primary = std::min(s.gid, masterGid);
+                std::int64_t replica = std::max(s.gid, masterGid);
+                if (primary != replica)
+                    mappings.emplace_back(replica, primary);
+            }
+        }
+
+        // --- 5. Allgatherv the mappings so every rank knows the full
+        //         (replica_gid -> primary_gid) table for this axis ---
+        int nMaps = int(mappings.size());
+        std::vector<int> mapCounts(numRanks), mapDispls(numRanks + 1, 0);
+        MPI_Allgather(&nMaps, 1, MPI_INT, mapCounts.data(), 1, MPI_INT, comm);
+        for (int r = 0; r < numRanks; ++r)
+            mapDispls[r + 1] = mapDispls[r] + mapCounts[r];
+        int globalMaps = mapDispls[numRanks];
+
+        std::vector<std::int64_t> myRep(nMaps), myPri(nMaps);
+        for (int i = 0; i < nMaps; ++i) {
+            myRep[i] = mappings[i].first;
+            myPri[i] = mappings[i].second;
+        }
+        std::vector<std::int64_t> gRep(globalMaps), gPri(globalMaps);
+        MPI_Allgatherv(myRep.data(), nMaps, MPI_INT64_T,
+                       gRep.data(), mapCounts.data(), mapDispls.data(),
+                       MPI_INT64_T, comm);
+        MPI_Allgatherv(myPri.data(), nMaps, MPI_INT64_T,
+                       gPri.data(), mapCounts.data(), mapDispls.data(),
+                       MPI_INT64_T, comm);
+
+        // --- 6. Path compression: build a global gid -> primary gid map.
+        // Use std::sort + linear sweep instead of std::map for speed.
+        std::vector<std::pair<std::int64_t, std::int64_t>> remap(globalMaps);
+        for (int i = 0; i < globalMaps; ++i) remap[i] = {gRep[i], gPri[i]};
+        std::sort(remap.begin(), remap.end());
+        // Repeatedly resolve chains: replica -> primary -> primary's primary -> ...
+        bool changed = true;
+        int pcIters = 0;
+        while (changed && pcIters < 8) {
+            changed = false;
+            for (auto& m : remap) {
+                auto it = std::lower_bound(remap.begin(), remap.end(),
+                                           std::make_pair(m.second, std::int64_t(-1)));
+                if (it != remap.end() && it->first == m.second) {
+                    if (it->second != m.second) {
+                        m.second = it->second;
+                        changed = true;
+                    }
+                }
+            }
+            ++pcIters;
+        }
+
+        // --- 7. Apply remap to local h_conn entries (which hold global IDs) ---
+        const std::size_t numElems = std::get<0>(h_conn).size();
+        constexpr int NCORNERS = std::tuple_size<HostConnT>::value;
+        auto remapCol = [&](auto& col) {
+            for (std::size_t e = 0; e < numElems; ++e) {
+                auto it = std::lower_bound(remap.begin(), remap.end(),
+                                           std::make_pair(std::int64_t(col[e]),
+                                                          std::int64_t(-1)));
+                if (it != remap.end() && it->first == std::int64_t(col[e])) {
+                    col[e] = static_cast<typename std::remove_reference<decltype(col[e])>::type>(
+                        it->second);
+                }
+            }
+        };
+        if constexpr (NCORNERS == 8) {
+            remapCol(std::get<0>(h_conn));
+            remapCol(std::get<1>(h_conn));
+            remapCol(std::get<2>(h_conn));
+            remapCol(std::get<3>(h_conn));
+            remapCol(std::get<4>(h_conn));
+            remapCol(std::get<5>(h_conn));
+            remapCol(std::get<6>(h_conn));
+            remapCol(std::get<7>(h_conn));
+        }
+
+        return std::size_t(globalMaps);
+    };
+
+    std::size_t total = 0;
+    if (periodicX) total += matchAxisGlobal(0);
+    if (periodicY) total += matchAxisGlobal(1);
+    if (periodicZ) total += matchAxisGlobal(2);
 
     return total;
 }
