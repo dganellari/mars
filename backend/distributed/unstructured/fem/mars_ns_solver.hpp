@@ -1474,6 +1474,15 @@ __global__ void scatterDofToNodeKernel(const RealType* sol,
 
 enum class SolverKind { CG, Hypre };
 
+// Krylov method hint for solveOneComponent. PCG is the default for velocity
+// (Avel) and K-path pressure (Apre). GMRES is required for the DDT pressure
+// operator (D M^-1 D^T), which is SPSD with a constant null space and is
+// rejected by Hypre PCG (error 1). Only consulted when s.solverKind == Hypre;
+// the in-house CG path ignores it.
+//
+// Env MARS_HYPRE_KRYLOV=pcg|gmres (DEBUG ONLY) overrides the caller's hint.
+enum class KrylovHint { PCG, GMRES };
+
 // Phase E: matrix-free pressure-Poisson choice.
 //   K   -> existing CVFEM stiffness matrix K phi = -(rho/dt) D u**  (Galerkin
 //          Laplacian; not discretely D D^T, so D u^{n+1} only decays slowly).
@@ -2190,6 +2199,40 @@ void setupNSStepper(NSStepper<KeyType, RealType>& s,
                 s.d_rowPtrDDT.data(), s.d_colIndDDT.data(), s.numOwnedDofs,
                 s.d_valuesDDT.data(), s.nodeCount);
             cudaDeviceSynchronize();
+        }
+        // NaN/Inf scan on owned-row portion of d_valuesDDT. Hypre's PCG and
+        // GMRES both return HYPRE_ERROR_GENERIC (1) on the first SpMV if A
+        // contains any non-finite entry (verified by reading Hypre 2.20+
+        // src/krylov/pcg.c + gmres.c). Symptom: zero solution writeback.
+        // Detect at assembly time so we don't waste a solve.
+        {
+            int ownedNnzEnd = 0;
+            cudaMemcpy(&ownedNnzEnd,
+                       s.d_rowPtrDDT.data() + s.numOwnedDofs,
+                       sizeof(int), cudaMemcpyDeviceToHost);
+            std::vector<RealType> hVals(ownedNnzEnd);
+            cudaMemcpy(hVals.data(), s.d_valuesDDT.data(),
+                       ownedNnzEnd * sizeof(RealType), cudaMemcpyDeviceToHost);
+            int nNonFinite = 0;
+            RealType maxAbs = 0;
+            int firstBadIdx = -1;
+            for (int k = 0; k < ownedNnzEnd; ++k)
+            {
+                RealType v = hVals[k];
+                if (!std::isfinite(static_cast<double>(v))) {
+                    nNonFinite++;
+                    if (firstBadIdx < 0) firstBadIdx = k;
+                }
+                if (std::abs(v) > maxAbs) maxAbs = std::abs(v);
+            }
+            if (s.rank == 0)
+            {
+                std::cout << "  [DDT-assembly] owned nnz=" << ownedNnzEnd
+                          << " |A|_max=" << maxAbs
+                          << " non-finite=" << nNonFinite;
+                if (nNonFinite > 0) std::cout << " (first at idx " << firstBadIdx << ")";
+                std::cout << "\n";
+            }
         }
     }
     pt.lap("assembly D M^-1 D^T (node-driven, 27-NNZ)");
@@ -2994,7 +3037,8 @@ int solveOneComponent(NSStepper<KeyType, RealType>& s,
                       cstone::DeviceVector<RealType>& b_rhs,
                       cstone::DeviceVector<RealType>& xVec,
                       cstone::DeviceVector<RealType>& qOut,
-                      typename NSStepper<KeyType, RealType>::Matrix& A)
+                      typename NSStepper<KeyType, RealType>::Matrix& A,
+                      KrylovHint krylov = KrylovHint::PCG)
 {
     bool converged = false;
     int iters = 0;
@@ -3020,27 +3064,65 @@ int solveOneComponent(NSStepper<KeyType, RealType>& s,
     else
     {
 #ifdef MARS_ENABLE_HYPRE
-        // Original PCG path (restored). Env MARS_HYPRE_PRECOND=jacobi switches
-        // BoomerAMG -> Jacobi for debugging.
-        using HSol = mars::fem::HyprePCGSolver<RealType, int, cstone::GpuTag>;
-        auto precond = HSol::BOOMERAMG;
+        // Env MARS_HYPRE_PRECOND=jacobi switches BoomerAMG -> Jacobi for debug.
+        // Env MARS_HYPRE_KRYLOV=pcg|gmres (DEBUG ONLY) overrides the caller's
+        // hint. Production behavior: PCG default; DDT pressure call passes
+        // GMRES explicitly.
+        KrylovHint krylovEff = krylov;
         {
-            const char* p = std::getenv("MARS_HYPRE_PRECOND");
-            if (p && std::string(p) == "jacobi") precond = HSol::JACOBI;
+            const char* kEnv = std::getenv("MARS_HYPRE_KRYLOV");
+            if (kEnv)
+            {
+                std::string v(kEnv);
+                if      (v == "pcg")   krylovEff = KrylovHint::PCG;
+                else if (v == "gmres") krylovEff = KrylovHint::GMRES;
+            }
         }
-        HSol hypreSolver(MPI_COMM_WORLD, s.maxIter, s.tolerance, precond);
-        hypreSolver.setVerbose(false);
-        converged = hypreSolver.solve(
-            A, b_rhs, xVec,
-            static_cast<int>(s.globalRowStart), static_cast<int>(s.globalRowEnd),
-            0, static_cast<int>(s.numInteriorGlobal),
-            s.d_localToGlobalDof);
-        iters = converged ? hypreSolver.getLastIterations() : -2;
-        if (s.rank == 0 && hypreSolver.getLastFinalResidual() > s.tolerance * 10)
+        if (krylovEff == KrylovHint::PCG)
         {
-            std::cout << "  [hypre] iters=" << hypreSolver.getLastIterations()
-                      << " final_res=" << hypreSolver.getLastFinalResidual()
-                      << " (tol=" << s.tolerance << ", looser than expected)\n";
+            using HSol = mars::fem::HyprePCGSolver<RealType, int, cstone::GpuTag>;
+            auto precond = HSol::BOOMERAMG;
+            {
+                const char* p = std::getenv("MARS_HYPRE_PRECOND");
+                if (p && std::string(p) == "jacobi") precond = HSol::JACOBI;
+            }
+            HSol hypreSolver(MPI_COMM_WORLD, s.maxIter, s.tolerance, precond);
+            hypreSolver.setVerbose(false);
+            converged = hypreSolver.solve(
+                A, b_rhs, xVec,
+                static_cast<int>(s.globalRowStart), static_cast<int>(s.globalRowEnd),
+                0, static_cast<int>(s.numInteriorGlobal),
+                s.d_localToGlobalDof);
+            iters = converged ? hypreSolver.getLastIterations() : -2;
+            if (s.rank == 0 && hypreSolver.getLastFinalResidual() > s.tolerance * 10)
+            {
+                std::cout << "  [hypre-pcg] iters=" << hypreSolver.getLastIterations()
+                          << " final_res=" << hypreSolver.getLastFinalResidual()
+                          << " (tol=" << s.tolerance << ", looser than expected)\n";
+            }
+        }
+        else  // KrylovHint::GMRES
+        {
+            using HSol = mars::fem::HypreGMRESSolver<RealType, int, cstone::GpuTag>;
+            auto precond = HSol::BOOMERAMG;
+            {
+                const char* p = std::getenv("MARS_HYPRE_PRECOND");
+                if (p && std::string(p) == "jacobi") precond = HSol::JACOBI;
+            }
+            HSol hypreSolver(MPI_COMM_WORLD, s.maxIter, s.tolerance, precond);
+            hypreSolver.setVerbose(false);
+            converged = hypreSolver.solve(
+                A, b_rhs, xVec,
+                static_cast<int>(s.globalRowStart), static_cast<int>(s.globalRowEnd),
+                0, static_cast<int>(s.numInteriorGlobal),
+                s.d_localToGlobalDof);
+            iters = converged ? hypreSolver.getLastIterations() : -2;
+            if (s.rank == 0 && hypreSolver.getLastFinalResidual() > s.tolerance * 10)
+            {
+                std::cout << "  [hypre-gmres] iters=" << hypreSolver.getLastIterations()
+                          << " final_res=" << hypreSolver.getLastFinalResidual()
+                          << " (tol=" << s.tolerance << ", looser than expected)\n";
+            }
         }
 #else
         if (s.rank == 0)
@@ -4033,8 +4115,11 @@ void runPressureSolveStep(NSStepper<KeyType, RealType>& s, RealType dt, RealType
                 cudaDeviceSynchronize();
             }
             cudaMemset(xVec.data(), 0, s.numTotalDofs * sizeof(RealType));
+            // DDT operator (D M^-1 D^T) is SPSD with constant null space; Hypre
+            // PCG rejects it (error 1). GMRES tolerates it. Hint passes through
+            // to solveOneComponent which selects HypreGMRESSolver wrapper.
             s.lastPressureIters = solveOneComponent<KeyType, RealType>(
-                s, b, xVec, s.d_phi, s.AddT);
+                s, b, xVec, s.d_phi, s.AddT, KrylovHint::GMRES);
             // DIAGNOSTIC: sample WHOLE vectors via D2H, compute max-abs on
             // host. Lets us see whether the solution actually propagated.
             // Active only when env MARS_DDT_DIAG_AFTER_HYPRE is set.

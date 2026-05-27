@@ -95,10 +95,13 @@ def lut(name, low, high, preset="Cool to Warm"):
 vortLUT = lut("omega",    vlo, vhi, "Blue Orange (divergent)")
 pLUT    = lut("p",        plo, phi, "Blue Orange (divergent)")
 uLUT    = lut("u",        ulo, uhi, "Blue Orange (divergent)")
-# |velocity| LUT. Turbo: vibrant blue->cyan->green->yellow->orange across the
-# whole range, no dark purple low end and no saturated red high end. Works
-# well for the iso ropes (BL) and the cube-face coloring (TL).
-vmagLUT = lut("vmag",     0.0, 1.0, "Turbo")
+# |velocity| LUT. "Cool to Warm" (non-extended) maps low to a *medium* blue
+# (#3b4cc0), not dark navy / black. Important because the TGV initial field
+# has |velocity| = 0 at the cube corners and 8 isolated interior points;
+# Turbo and the *Extended* variant of Cool-to-Warm both bottom out near
+# black there, which made the AMR-refined corners look bad. The plain
+# "Cool to Warm" preset stays in a saturated mid-range across all values.
+vmagLUT = lut("vmag",     0.0, 1.0, "Cool to Warm")
 # Discrete 3-bin LUT for refinement level (0, 1, 2). Set the colors here;
 # `InterpretValuesAsCategories` is enabled on TR's display side below.
 levelLUT= lut("level",    0,   2,   "Viridis (matplotlib)")
@@ -168,9 +171,18 @@ def make_view(w, h, bg=(0.0, 0.0, 0.0)):
 half_w = args.width  // 2
 half_h = args.height // 2
 
+# Per-panel padding so the cube renders don't touch the panel borders. The
+# simulation panels (TL/TR/BL) render at a tighter inner box; the AMR panel
+# (BR) renders at a smaller box still so it reads as a SUMMARY view, not a
+# competing main panel.
+panel_pad   = 24   # padding around all panels
+amr_shrink  = 96   # extra inset just for the BR (AMR) panel
+
 # Standard isometric-ish camera shared across all four views.
 cam_focal = [cx, cy, cz]
-cam_pos   = [cx + 1.8 * L, cy - 1.6 * L, cz + 1.4 * L]
+# Camera at ~2.2 L: pulled back slightly from 2.0 L because the bottom
+# corner of the cube was clipping out of the view at the previous distance.
+cam_pos   = [cx + 2.25 * L, cy - 2.00 * L, cz + 1.74 * L]
 cam_up    = [0, 0, 1]
 def aim(view):
     view.CameraFocalPoint = cam_focal
@@ -188,26 +200,31 @@ if _has_level:
     levelLUT.Annotations  = ["3", "coarsened",
                              "4", "base",
                              "5", "refined"]
-    # Coarsened = teal, base = light gray, refined = amber/gold. No saturated
-    # red or dark purple. Refined cells pop against the gray base + black bg.
-    levelLUT.IndexedColors = [0.20, 0.60, 0.65,   # level 3 -> teal
+    # Yellow refinement (#facc15). Strongest contrast against the dominant
+    # blue palette (TL Cool-to-Warm blue end, TR Blue-Orange omega blue cloud,
+    # BL Cool-to-Warm Extended iso). Cyan blended into the blue cloud and
+    # was hard to read; yellow is the complementary high-contrast pick.
+    levelLUT.IndexedColors = [0.21, 0.49, 0.72,   # level 3 -> tab:blue
                               0.85, 0.85, 0.85,   # level 4 -> light gray
-                              0.97, 0.74, 0.21]   # level 5 -> amber/gold
+                              0.98, 0.80, 0.08]   # level 5 -> bright yellow
 
 # Top-Left: 3D mesh + |velocity| surface. Using |u| instead of u so all six
 # cube faces show signal. The x-component u is identically zero on the x=0
 # and x=1 faces (because sin(k*0) = sin(k*L) = 0 for one full period),
 # which left two faces unlit when we colored by raw u.
-view_TL = make_view(half_w, half_h)
+view_TL = make_view(half_w - 2 * panel_pad, half_h - 2 * panel_pad)
 dispTL = Show(vmagCalc, view_TL)
 dispTL.Representation = "Surface With Edges"
-dispTL.EdgeColor      = [0, 0, 0]
+# Light gray edges: visible against both the dark-blue low-velocity faces
+# and the warm high-velocity ones. Pure black edges merged into the dark
+# blue corners of the cube and the AMR-refined corners looked black on black.
+dispTL.EdgeColor      = [0.75, 0.75, 0.75]
 ColorBy(dispTL, ("POINTS", "vmag"))
 dispTL.RescaleTransferFunctionToDataRange(True, False)
 aim(view_TL)
 
 # Top-Right: vorticity volume render (the yellow panel) for ALL runs.
-view_TR = make_view(half_w, half_h)
+view_TR = make_view(half_w - 2 * panel_pad, half_h - 2 * panel_pad)
 dispTR = Show(reader, view_TR)
 dispTR.Representation = "Volume"
 ColorBy(dispTR, ("POINTS", "omega"))
@@ -216,7 +233,7 @@ aim(view_TR)
 
 # Bottom-Left: vorticity isosurface colored by |velocity|. Phong-shaded for the
 # ONERA "twisted ropes" look -- specular highlight from a single key light.
-view_BL = make_view(half_w, half_h)
+view_BL = make_view(half_w - 2 * panel_pad, half_h - 2 * panel_pad)
 dispBL = Show(vortIso, view_BL)
 dispBL.Representation = "Surface"
 ColorBy(dispBL, ("POINTS", "vmag"))
@@ -236,7 +253,8 @@ aim(view_BL)
 # For AMR the refined-cells-only Threshold view is the "AMR-only" panel the
 # user asked for: it floats just the refined cells in empty space so the
 # spatial pattern of where AMR cares is immediately readable.
-view_BR = make_view(half_w, half_h)
+view_BR = make_view(half_w - 2 * panel_pad - amr_shrink,
+                    half_h - 2 * panel_pad - amr_shrink)
 if _has_level:
     amrRefined = Threshold(Input=reader)
     amrRefined.Scalars         = ["CELLS", "level"]
@@ -247,6 +265,14 @@ if _has_level:
     dispBR.Representation = "Surface With Edges"
     dispBR.EdgeColor      = [0.2, 0.2, 0.2]
     ColorBy(dispBR, ("CELLS", "level"))
+    # Boost ambient lighting so the refined-cells color reads as bright orange
+    # not brown. Phong shading on small cubes dims them substantially otherwise.
+    try:
+        dispBR.Ambient  = 0.55
+        dispBR.Diffuse  = 0.55
+        dispBR.Specular = 0.05
+    except Exception:
+        pass
 else:
     dispBR_slice = Show(uSlice, view_BR)
     dispBR_slice.Representation = "Surface"
@@ -289,12 +315,17 @@ def _load_font():
             continue
     return ImageFont.load_default()
 _font = _load_font()
-_font_big = None
+_font_big   = None
+_font_small = None
 if have_pil:
     try:
         _font_big = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", 40)
     except Exception:
         _font_big = _font
+    try:
+        _font_small = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", 14)
+    except Exception:
+        _font_small = _font
 
 # Pull dataset stats out of the current reader state. KE is a lumped sum that
 # matches what the solver writes (0.5 * |u|^2 over cells), computed locally
@@ -394,10 +425,15 @@ def render_step(step_idx, t):
     if have_pil:
         imgs = {k: Image.open(p) for k, p in paths.items()}
         canvas = Image.new("RGB", (canvas_w, canvas_h), (0, 0, 0))
-        canvas.paste(imgs["TL"], (0, 0))
-        canvas.paste(imgs["TR"], (half_w, 0))
-        canvas.paste(imgs["BL"], (0, half_h))
-        canvas.paste(imgs["BR"], (half_w, half_h))
+        # Each panel sits inside its slot with `panel_pad` margin. The BR slot
+        # is the AMR view: drawn smaller so it reads as a summary, not a main
+        # panel of the simulation.
+        canvas.paste(imgs["TL"], (panel_pad,           panel_pad))
+        canvas.paste(imgs["TR"], (half_w + panel_pad,  panel_pad))
+        canvas.paste(imgs["BL"], (panel_pad,           half_h + panel_pad))
+        amr_off = amr_shrink // 2
+        canvas.paste(imgs["BR"], (half_w + panel_pad + amr_off,
+                                  half_h + panel_pad + amr_off))
 
         draw = ImageDraw.Draw(canvas)
 
@@ -406,10 +442,15 @@ def render_step(step_idx, t):
         # because each panel renders its own background there, and the inset
         # straddling all 4 panels reads as "global summary".
         if len(keVsT) > 0:
-            iw, ih = 320, 180
+            # Bigger inset (was 320x180); ticks and title use _font_small so
+            # the text doesn't look bloated at the larger plot size. Inset
+            # is centered horizontally; vertically offset DOWN into the
+            # bottom-row panels so the top-row labels (which now sit at
+            # y=half_h-30) are not occluded.
+            iw, ih = 440, 270
             px = (canvas_w - iw) // 2
             py = (canvas_h - ih) // 2
-            pad_l, pad_r, pad_t, pad_b = 60, 12, 24, 28
+            pad_l, pad_r, pad_t, pad_b = 70, 18, 32, 38
             plot_x0 = px + pad_l
             plot_y0 = py + pad_t
             plot_w  = iw - pad_l - pad_r
@@ -442,23 +483,24 @@ def render_step(step_idx, t):
             draw.ellipse([(cur[0] - 5, cur[1] - 5), (cur[0] + 5, cur[1] + 5)],
                          fill=(245, 150, 30), outline=(255, 255, 255), width=1)
             # 3 x-ticks, 3 y-ticks (sparse so the inset stays readable).
-            for tk in range(3):
-                tt = tmin + tk * (tmax - tmin) / 2
-                tx = plot_x0 + tk * plot_w / 2
+            # 5 x-ticks and 5 y-ticks for the bigger inset, small font.
+            for tk in range(5):
+                tt = tmin + tk * (tmax - tmin) / 4
+                tx = plot_x0 + tk * plot_w / 4
                 draw.line([(tx, plot_y0 + plot_h), (tx, plot_y0 + plot_h + 3)],
                           fill=(60, 60, 60), width=1)
-                draw.text((tx - 10, plot_y0 + plot_h + 6), f"{tt:.2f}",
-                          fill=(40, 40, 40), font=_font)
-            for tk in range(3):
-                ly  = ymin + tk * (ymax - ymin) / 2
-                ty  = plot_y0 + (1.0 - tk / 2) * plot_h
+                draw.text((tx - 12, plot_y0 + plot_h + 6), f"{tt:.2f}",
+                          fill=(40, 40, 40), font=_font_small)
+            for tk in range(5):
+                ly  = ymin + tk * (ymax - ymin) / 4
+                ty  = plot_y0 + (1.0 - tk / 4) * plot_h
                 draw.line([(plot_x0 - 3, ty), (plot_x0, ty)],
                           fill=(60, 60, 60), width=1)
-                draw.text((plot_x0 - 56, ty - 10), f"1e{ly:+.1f}",
-                          fill=(40, 40, 40), font=_font)
-            # Title.
-            draw.text((px + 8, py + 4), "KE vs t (log)",
-                      fill=(20, 20, 20), font=_font)
+                draw.text((plot_x0 - 62, ty - 7), f"1e{ly:+.1f}",
+                          fill=(40, 40, 40), font=_font_small)
+            # Title (small).
+            draw.text((px + 10, py + 6), "KE vs t (log)",
+                      fill=(20, 20, 20), font=_font_small)
 
         # Per-frame overlay: time, n_cells, n_points + panel labels.
         n_cells, n_pts, _ = _frame_stats()
@@ -474,9 +516,16 @@ def render_step(step_idx, t):
             "BR": ("AMR refined cells (level 5)" if _has_level
                    else "u-slice + pressure isosurfaces"),
         }
+        # Labels at the BOTTOM-LEFT corner of each panel (per user request).
+        # TL bottom-left, BL/BR bottom-left of their respective bottom-row
+        # panels. TR's natural bottom-left (half_w+10, half_h-30) lands
+        # inside the centered KE inset, so TR's label is shifted to the
+        # bottom-RIGHT of its panel where there's empty space.
         positions = {
-            "TL": (10, 70),                 "TR": (half_w + 10, 70),
-            "BL": (10, half_h + 10),        "BR": (half_w + 10, half_h + 10),
+            "TL": (10,                  half_h - 30),
+            "TR": (canvas_w - 250,      half_h - 30),
+            "BL": (10,                  canvas_h - 30),
+            "BR": (half_w + 10,         canvas_h - 30),
         }
         # Labels for the four real panels (no longer a bottom AMR strip).
         label_slots = [("TL",), ("TR",), ("BL",), ("BR",)]

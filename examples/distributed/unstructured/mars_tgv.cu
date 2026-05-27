@@ -206,9 +206,9 @@ int main(int argc, char** argv)
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &numRanks);
 
-    int device = 0;
-    cudaGetDevice(&device);
-    cudaSetDevice(rank % 4);   // typical Alps 4-GPU-per-node layout
+    // Device selection is handled by the affinity script (bind_numa.sh +
+    // CUDA_VISIBLE_DEVICES). Each rank already sees only its own GPU as
+    // device 0, so no cudaSetDevice call is needed here.
 
     using KeyType  = uint64_t;
     using RealType = double;
