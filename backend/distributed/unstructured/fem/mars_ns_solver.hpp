@@ -2200,40 +2200,7 @@ void setupNSStepper(NSStepper<KeyType, RealType>& s,
                 s.d_valuesDDT.data(), s.nodeCount);
             cudaDeviceSynchronize();
         }
-        // NaN/Inf scan on owned-row portion of d_valuesDDT. Hypre's PCG and
-        // GMRES both return HYPRE_ERROR_GENERIC (1) on the first SpMV if A
-        // contains any non-finite entry (verified by reading Hypre 2.20+
-        // src/krylov/pcg.c + gmres.c). Symptom: zero solution writeback.
-        // Detect at assembly time so we don't waste a solve.
-        {
-            int ownedNnzEnd = 0;
-            cudaMemcpy(&ownedNnzEnd,
-                       s.d_rowPtrDDT.data() + s.numOwnedDofs,
-                       sizeof(int), cudaMemcpyDeviceToHost);
-            std::vector<RealType> hVals(ownedNnzEnd);
-            cudaMemcpy(hVals.data(), s.d_valuesDDT.data(),
-                       ownedNnzEnd * sizeof(RealType), cudaMemcpyDeviceToHost);
-            int nNonFinite = 0;
-            RealType maxAbs = 0;
-            int firstBadIdx = -1;
-            for (int k = 0; k < ownedNnzEnd; ++k)
-            {
-                RealType v = hVals[k];
-                if (!std::isfinite(static_cast<double>(v))) {
-                    nNonFinite++;
-                    if (firstBadIdx < 0) firstBadIdx = k;
-                }
-                if (std::abs(v) > maxAbs) maxAbs = std::abs(v);
-            }
-            if (s.rank == 0)
-            {
-                std::cout << "  [DDT-assembly] owned nnz=" << ownedNnzEnd
-                          << " |A|_max=" << maxAbs
-                          << " non-finite=" << nNonFinite;
-                if (nNonFinite > 0) std::cout << " (first at idx " << firstBadIdx << ")";
-                std::cout << "\n";
-            }
-        }
+        // (DDT-assembly NaN scan diagnostic removed; assembler verified clean.)
     }
     pt.lap("assembly D M^-1 D^T (node-driven, 27-NNZ)");
 
