@@ -264,8 +264,10 @@ __global__ void cvfem_hex_assembly_kernel_tensor(
             RealType value = lhs[i * 8 + j];
             if (value == 0.0) continue; // Skip zeros
 
-            if (i == j) {
-                // Diagonal
+            // Use DOF equality, not corner-index equality. Under periodic DOF
+            // collapse two different element corners can map to the same DOF,
+            // and the diagonal entry must catch all such contributions.
+            if (col_dof == row_dof) {
                 atomicAdd(&matrix->values[diag_pos], value);
             } else {
                 // Off-diagonal - binary search

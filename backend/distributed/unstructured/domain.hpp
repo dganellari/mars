@@ -596,6 +596,26 @@ public:
     // Domain synchronization (following cornerstone API pattern)
     void sync(const DeviceConnectivityTuple& d_conn_, const DeviceCoordsTuple& d_coords_);
 
+    // Resync against a refined mesh WITHOUT reconstructing the cstone Domain.
+    // Avoids firing focusTree_.converge() (which is firstCall_-only and dominates
+    // AMR rebuild time at scale: ~80% of cstone sync at 977M elements/16 ranks).
+    //
+    // Contract:
+    //   - Replaces the per-instance mesh state (coords, conn, props, sfc keys)
+    //   - Recomputes bounding box via MPI_Allreduce (cheap, < 1 ms)
+    //   - Resets all lazy-cached sub-objects (adjacency_, halo_, nodeHaloTopo_,
+    //     coordCache_, originalCoords_) so they re-init against the new mesh
+    //   - Reuses the existing cstone Domain object: subsequent sync() observes
+    //     firstCall_=false and skips focusTree_.converge()
+    //   - cstone's do-while retry loop in sync() handles the element-count
+    //     change via its updateTree convergence check
+    //
+    // Required for Gordon-Bell scale: at 10^5+ ranks, firstCall_=true is also
+    // gated on a host-replicated global octree Allgather, which is the actual
+    // scaling wall. Domain reuse eliminates that as well.
+    void resyncFromDevice(DeviceCoordsTuple&& d_coords_new,
+                          DeviceConnectivityTuple&& d_conn_new);
+
     // Access to connectivity - template parameter to select index array
     template<int I>
     const DeviceVector<KeyType>& indices() const
@@ -676,6 +696,11 @@ public:
     // Access to cornerstone domain
     DomainType& getDomain() { return *domain_; }
     const DomainType& getDomain() const { return *domain_; }
+
+    // Per-element SFC keys (one per local element, in cstone's local order).
+    // Filled by sync(). Used by AMR to compute per-element refinement level
+    // from the cstone focus-tree leaves.
+    const DeviceVector<KeyType>& getElementSfcCodes() const { return d_elemSfcCodes_; }
 
     MARS_HOST_DEVICE
     const cstone::Box<RealType>& getBoundingBox() const { return box_; }
@@ -888,6 +913,113 @@ public:
             cudaDeviceSynchronize();
         }
         return;
+    }
+
+    // Reverse of exchangeNodeHalo: ghost-side contributions are SUMMED into the
+    // owner-side slots on the owning rank. Used by conservative scatter kernels
+    // (CVFEM face-flux divergence, mass-conserving advection RHS) where the
+    // owner of a node must receive contributions from elements that touch the
+    // node but live on a different rank and are NOT in the owner's cstone halo
+    // (corner-only neighbors, the case `buildNodeOwnership` calls out).
+    //
+    // Algorithm:
+    //   - Pack ghost-slot values (positions recvNodeIds_) into a buffer sized
+    //     recvOffsets_.back() and send to each peer p.
+    //   - On each peer the corresponding sendNodeIds_ entry is the LOCAL OWNED
+    //     id for the same global node; atomicAdd the received value into the
+    //     owner's slot.
+    //
+    // Postcondition: ghost slots are LEFT UNTOUCHED on this rank (caller decides
+    // whether to overwrite them via a follow-up forward exchangeNodeHalo).
+    template<class VectorType>
+    void reverseExchangeNodeHaloAdd(VectorType& nodeArray, const int* nodeToDof = nullptr) const
+    {
+        if (numRanks_ == 1) return;
+
+        using T = typename VectorType::value_type;
+        static_assert(std::is_same_v<T, RealType>,
+                      "reverseExchangeNodeHaloAdd: vector element type must match domain RealType");
+
+        ensureNodeHaloTopo();
+        const auto& topo = *nodeHaloTopo_;
+
+        size_t sendTotal = topo.sendOffsets_.empty() ? 0 : size_t(topo.sendOffsets_.back());
+        size_t recvTotal = topo.recvOffsets_.empty() ? 0 : size_t(topo.recvOffsets_.back());
+
+        // Reverse: we SEND from ghost slots (recvNodeIds_) and RECV into owned
+        // slots (sendNodeIds_). Reuse the pre-sized staging buffers but with
+        // their roles swapped: sendBuf_ has length sendTotal (matches the
+        // sendNodeIds_ list, which is what we RECV into); recvBuf_ has length
+        // recvTotal (matches recvNodeIds_, which is what we SEND from).
+        T*           arr   = thrust::raw_pointer_cast(nodeArray.data());
+        const int*   rnds  = thrust::raw_pointer_cast(topo.recvNodeIds_.data());
+        const int*   snds  = thrust::raw_pointer_cast(topo.sendNodeIds_.data());
+        T*           gbuf  = thrust::raw_pointer_cast(topo.recvBuf_.data()); // SEND buffer (length recvTotal)
+        T*           obuf  = thrust::raw_pointer_cast(topo.sendBuf_.data()); // RECV buffer (length sendTotal)
+
+        if (recvTotal > 0)
+        {
+            thrust::for_each(thrust::device,
+                              thrust::counting_iterator<size_t>(0),
+                              thrust::counting_iterator<size_t>(recvTotal),
+                              [arr, rnds, gbuf, nodeToDof] __device__ (size_t i) {
+                                  int n = rnds[i];
+                                  int idx = (nodeToDof != nullptr) ? nodeToDof[n] : n;
+                                  gbuf[i] = (idx >= 0) ? arr[idx] : T(0);
+                              });
+            cudaDeviceSynchronize();
+        }
+
+        auto mpiType = std::is_same_v<T, double> ? MPI_DOUBLE : MPI_FLOAT;
+        constexpr int reverseHaloTagBase = 0x4d53;  // "MS" — distinct from forward "MR"
+        const int tag = reverseHaloTagBase + topo.epoch_;
+        std::vector<MPI_Request> reqs;
+        reqs.reserve(2 * topo.peers_.size());
+
+        // Recv from each peer p into our owned-slot staging area (sized by sendOffsets_).
+        for (size_t p = 0; p < topo.peers_.size(); ++p)
+        {
+            int peer = topo.peers_[p];
+            int rcnt = topo.sendOffsets_[p+1] - topo.sendOffsets_[p];
+            if (rcnt > 0)
+            {
+                MPI_Request r;
+                MPI_Irecv(obuf + topo.sendOffsets_[p], rcnt, mpiType, peer,
+                          tag, MPI_COMM_WORLD, &r);
+                reqs.push_back(r);
+            }
+        }
+        // Send to each peer p from our ghost-slot staging area (sized by recvOffsets_).
+        for (size_t p = 0; p < topo.peers_.size(); ++p)
+        {
+            int peer = topo.peers_[p];
+            int scnt = topo.recvOffsets_[p+1] - topo.recvOffsets_[p];
+            if (scnt > 0)
+            {
+                MPI_Request r;
+                MPI_Isend(gbuf + topo.recvOffsets_[p], scnt, mpiType, peer,
+                          tag, MPI_COMM_WORLD, &r);
+                reqs.push_back(r);
+            }
+        }
+        if (!reqs.empty()) MPI_Waitall(int(reqs.size()), reqs.data(), MPI_STATUSES_IGNORE);
+        ++topo.epoch_;
+
+        // Atomic-add received contributions into owner-side slots. atomicAdd is
+        // needed: multiple peers may send contributions for the same owned node
+        // (when several other ranks have it as a ghost).
+        if (sendTotal > 0)
+        {
+            thrust::for_each(thrust::device,
+                              thrust::counting_iterator<size_t>(0),
+                              thrust::counting_iterator<size_t>(sendTotal),
+                              [arr, snds, obuf, nodeToDof] __device__ (size_t i) {
+                                  int n = snds[i];
+                                  int idx = (nodeToDof != nullptr) ? nodeToDof[n] : n;
+                                  if (idx >= 0) atomicAdd(&arr[idx], obuf[i]);
+                              });
+            cudaDeviceSynchronize();
+        }
     }
 
     // Device connectivity functions
@@ -2658,6 +2790,148 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::createLocalTo
 
         // 7. Update the final node count
         nodeCount_ = d_localToGlobalSfcMap_.size();
+    }
+}
+
+// ============================================================================
+// resyncFromDevice: AMR rebuild path that reuses the cstone Domain object
+// ============================================================================
+// Diagnosis (cube256/16, AMR Level 1, 977M elements):
+//   focusTree.converge:  2942 ms  (firstCall_-only; 80% of cstone sync time)
+//   focusTree.updateTree: 421 ms
+//   setupHalos:            78 ms
+//   ... others, summing to ~650 ms outside converge
+//
+// Saving converge alone is ~2.5 s per AMR rebuild at this scale. At Gordon-Bell
+// scale (10^5+ ranks), firstCall_=true also fires the global-octree Allgather
+// inside distribute(), which scales as O(numRanks * bucketSize) host-side work
+// and becomes the actual scaling wall. Reusing the Domain bypasses both.
+//
+// Mechanism:
+//   - cstone::Domain::sync() runs `if (firstCall_) focusTree_.converge();`
+//   - On second and subsequent calls, firstCall_=false, converge is skipped
+//   - The do-while retry loop in cstone sync() handles element-count change
+//     via updateTree's incremental rebalance (cstone's design intent: "particles
+//     moved between syncs" — AMR is a more aggressive case of that)
+template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
+void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::resyncFromDevice(
+    DeviceCoordsTuple&& d_coords_new,
+    DeviceConnectivityTuple&& d_conn_new)
+{
+    if constexpr (!std::is_same_v<AcceleratorTag, cstone::GpuTag>)
+    {
+        throw std::runtime_error("resyncFromDevice requires GpuTag");
+    }
+
+    if (!domain_)
+    {
+        throw std::runtime_error("resyncFromDevice: cstone Domain has not been constructed yet");
+    }
+
+    auto& d_x = std::get<0>(d_coords_new);
+    auto& d_y = std::get<1>(d_coords_new);
+    auto& d_z = std::get<2>(d_coords_new);
+
+    nodeCount_    = d_x.size();
+    elementCount_ = std::get<0>(d_conn_new).size();
+
+    // Recompute bounding box. AMR refinement preserves geometric extents in
+    // theory, but recomputing is cheap (< 1 ms) and protects against any
+    // floating-point drift in refinement coords.
+    RealType lxmin, lxmax, lymin, lymax, lzmin, lzmax;
+    {
+        auto xb = thrust::device_pointer_cast(d_x.data());
+        auto yb = thrust::device_pointer_cast(d_y.data());
+        auto zb = thrust::device_pointer_cast(d_z.data());
+        lxmin = thrust::reduce(xb, xb + nodeCount_, std::numeric_limits<RealType>::max(),    thrust::minimum<RealType>());
+        lxmax = thrust::reduce(xb, xb + nodeCount_, std::numeric_limits<RealType>::lowest(), thrust::maximum<RealType>());
+        lymin = thrust::reduce(yb, yb + nodeCount_, std::numeric_limits<RealType>::max(),    thrust::minimum<RealType>());
+        lymax = thrust::reduce(yb, yb + nodeCount_, std::numeric_limits<RealType>::lowest(), thrust::maximum<RealType>());
+        lzmin = thrust::reduce(zb, zb + nodeCount_, std::numeric_limits<RealType>::max(),    thrust::minimum<RealType>());
+        lzmax = thrust::reduce(zb, zb + nodeCount_, std::numeric_limits<RealType>::lowest(), thrust::maximum<RealType>());
+    }
+
+    auto mpiType = std::is_same_v<RealType, double> ? MPI_DOUBLE : MPI_FLOAT;
+    RealType gxmin, gxmax, gymin, gymax, gzmin, gzmax;
+    MPI_Allreduce(&lxmin, &gxmin, 1, mpiType, MPI_MIN, MPI_COMM_WORLD);
+    MPI_Allreduce(&lxmax, &gxmax, 1, mpiType, MPI_MAX, MPI_COMM_WORLD);
+    MPI_Allreduce(&lymin, &gymin, 1, mpiType, MPI_MIN, MPI_COMM_WORLD);
+    MPI_Allreduce(&lymax, &gymax, 1, mpiType, MPI_MAX, MPI_COMM_WORLD);
+    MPI_Allreduce(&lzmin, &gzmin, 1, mpiType, MPI_MIN, MPI_COMM_WORLD);
+    MPI_Allreduce(&lzmax, &gzmax, 1, mpiType, MPI_MAX, MPI_COMM_WORLD);
+
+    RealType pad = RealType(0.05);
+    RealType rx  = gxmax - gxmin, ry = gymax - gymin, rz = gzmax - gzmin;
+    box_ = cstone::Box<RealType>(gxmin - pad * rx, gxmax + pad * rx,
+                                  gymin - pad * ry, gymax + pad * ry,
+                                  gzmin - pad * rz, gzmax + pad * rz);
+    // NOTE: cstone Domain captured the OLD box at construction; cstone's
+    // Box is mostly used by sync() at call time (passed via box() accessor),
+    // so the new bbox is picked up on the next sync(). If cstone caches box
+    // internally between syncs, we may need a setter. Verified by inspection
+    // that cstone Domain stores box in global_ and reads it via global_.box()
+    // at sync time, so this is safe.
+
+    // Reset all lazy-cached state. They'll re-init on next access against the
+    // new mesh. Storage of the prior versions is freed here (RAII via unique_ptr).
+    adjacency_.reset();
+    halo_.reset();
+    nodeHaloTopo_.reset();
+    coordCache_.reset();
+    originalCoords_.reset();
+
+    // Clear per-instance device vectors that depend on element/node counts.
+    // The actual storage will be re-allocated by sync() / lazy init.
+    // (cstone::DeviceVector exposes resize() but not clear().)
+    d_elemSfcCodes_.resize(0);
+    d_elemToNodeMap_.resize(0);
+    d_localToGlobalSfcMap_.resize(0);
+    d_localToGlobalNodeMap_.resize(0);
+    // d_conn_keys_ and d_props_ are rebuilt during sync(); explicit clear()
+    // not strictly needed, but reduces peak memory footprint during the
+    // transition.
+
+    // Allocate per-element h-property storage at the new size. (sync() expects
+    // d_props_ to exist; calculateCharacteristicSizes populates it.)
+    std::get<0>(d_props_).resize(nodeCount_);
+
+    // Move the new mesh into local variables (sync() reads them by const ref).
+    DeviceConnectivityTuple d_conn_local   = std::move(d_conn_new);
+    DeviceCoordsTuple       d_coords_local = std::move(d_coords_new);
+    calculateCharacteristicSizes(d_conn_local, d_coords_local);
+
+    // CRITICAL: cstone Domain's bufDesc_/layout_/focusTree state was
+    // initialized on firstCall_ to the OLD particle distribution and does not
+    // auto-reset on count change. setEndIndex() alone is insufficient (only
+    // updates bufDesc_.end; .start/.size and focus-tree rebalanceStatus_ stay
+    // stale → segfault on next updateTree precondition).
+    //
+    // The cstone patch (scripts/patch_cstone_amr_reset.py) adds
+    // resetForAMRRefinement(newCount) which resets every persistent field that
+    // makes "AMR-style sync after refinement" work:
+    //   - bufDesc_.{start,end,size} → {0, newCount, newCount}
+    //   - prevBufDesc_              → match new bufDesc_
+    //   - layout_                   → {0, newCount}
+    //   - focusTree_.{prevFocusStart,prevFocusEnd,rebalanceStatus_}
+    //
+    // After this, cstone's distribute() rebuilds global_ from scratch (it
+    // does so regardless of firstCall_), updateMinMac re-arms rebalanceStatus_
+    // back to `valid`, and updateTree runs incrementally on the new
+    // distribution. firstCall_ stays `false` so the expensive converge() loop
+    // is skipped — that's the win we're after.
+    domain_->resetForAMRRefinement(static_cast<cstone::LocalIndex>(elementCount_));
+
+    logGpuMemAroundSync(rank_, "pre-resync");
+    // Calls cstone Domain::sync() under the hood. Since domain_ already had
+    // a successful first sync, firstCall_=false on entry → converge skipped.
+    sync(d_conn_local, d_coords_local);
+    logGpuMemAroundSync(rank_, "post-resync");
+
+    if (rank_ == 0)
+    {
+        std::cout << "Rank " << rank_ << " resynced " << ElementTag::Name
+                  << " domain (Domain reuse, no firstCall_ converge) with "
+                  << nodeCount_ << " nodes and " << elementCount_ << " elements." << std::endl;
     }
 }
 

@@ -166,10 +166,18 @@ if(MARS_ENABLE_UNSTRUCTURED)
         set(CSTONE_BUILD_PERFORMANCE_TESTS OFF CACHE BOOL "Disable Cornerstone performance tests" FORCE)
         
         # Declare the content
+        #
+        # MARS pins cstone to the `mars-extensions` branch which carries:
+        #   1. Public halo-index accessors (required by NodeHaloTopology v2).
+        #   2. Env-gated sync phase timing (CSTONE_SYNC_TIMING=1).
+        #   3. Experimental Domain::resetForAMRRefinement (WIP, env-gated
+        #      on the MARS side via MARS_AMR_REUSE_DOMAIN=1).
+        # The branch is maintained alongside upstream master; halo accessors
+        # are PR-able to upstream when ready.
         FetchContent_Declare(
             cornerstone_fetch
             GIT_REPOSITORY https://github.com/sekelle/cornerstone-octree.git
-            GIT_TAG master
+            GIT_TAG mars-extensions
             OVERRIDE_FIND_PACKAGE
         )
     

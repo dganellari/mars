@@ -1,0 +1,35 @@
+# Local build / cache dirs
+.cache/
+.clangd
+.claude/
+.vscode/
+build/
+mac/
+daint-gpu/
+*.dSYM/
+
+# Mesh archives / local datasets
+*.zip
+cube*.mesh/
+BHV_meshes.zip
+
+# Local notes (planning, summaries) — not source of truth
+plan.md
+CLAUDE.md
+CVFEM_OPTIMIZATION_SUMMARY.md
+CVFEM_QUICKSTART.md
+DISTRIBUTED_FEM_FIX.md
+FEM_VALIDATION_PLAN.md
+
+# Local debugging / one-off scripts
+compute_shape_deriv.py
+compute_shape_fcn.py
+sinfo.sh
+test_bc_attributes.sh
+test_beam_tet_debug.sh
+test_distributed_solver.sh
+test_lazy_refactoring.sh
+
+# Vendored cstone (lives separately, will become submodule)
+cornerstone-octree/
+patches/
