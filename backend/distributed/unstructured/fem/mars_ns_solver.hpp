@@ -54,6 +54,7 @@
 #include <algorithm>
 #include <vector>
 #include <string>
+#include <cstdlib>
 #include <iostream>
 #include <sstream>
 
@@ -316,6 +317,32 @@ __global__ void enforcePinRowMatrixKernel(int pinDof,
     if (dp >= 0) values[dp] = RealType(1);
 }
 
+// Pin enforcement that PRESERVES the diagonal magnitude: zero the row's
+// off-diagonals, keep A[pin,pin] at its assembled value (do NOT force it to
+// 1). The DDT operator has tiny diagonals (~0.04-0.14); forcing the pin row
+// to 1.0 makes it 10-25x its neighbors -- CG tolerates that spike, but
+// BoomerAMG's strength-of-connection coarsening degrades and Hypre setup
+// returns generic error 1. Keeping the native diagonal removes the spike so
+// AMG sees a uniformly-scaled SPD row. Pin value = 0, so RHS needs no lift.
+template<typename RealType>
+__global__ void enforcePinRowKeepDiagKernel(int pinDof,
+                                            const int* rowPtr,
+                                            const int* colInd,
+                                            const int* diagPtr,
+                                            RealType* values)
+{
+    int t = blockIdx.x * blockDim.x + threadIdx.x;
+    if (t != 0) return;
+    if (pinDof < 0) return;
+    int dp = diagPtr[pinDof];
+    for (int j = rowPtr[pinDof]; j < rowPtr[pinDof + 1]; ++j)
+        if (j != dp) values[j] = RealType(0);
+    // Leave values[dp] as assembled. If the diagonal is somehow absent or
+    // non-positive, fall back to 1 so the row stays well-posed.
+    if (dp < 0) return;
+    if (!(values[dp] > RealType(0))) values[dp] = RealType(1);
+}
+
 // Zero RHS at the pin (called every step before the pressure solve).
 template<typename RealType>
 __global__ void enforcePinRhsKernel(int pinDof, RealType* rhs)
@@ -522,6 +549,7 @@ __global__ void computeLumpedMassPerNodeKernel(const KeyType* c0, const KeyType*
                                                const RealType* nodeX,
                                                const RealType* nodeY,
                                                const RealType* nodeZ,
+                                               const uint8_t* ownership,
                                                RealType* massNode,
                                                size_t startElem,
                                                size_t numLocal)
@@ -547,8 +575,13 @@ __global__ void computeLumpedMassPerNodeKernel(const KeyType* c0, const KeyType*
     }
     RealType contrib = (xmax - xmin) * (ymax - ymin) * (zmax - zmin) * RealType(0.125);
 
+    // Owned-row filter (same pattern as matrix assembly): iterate owned+halo
+    // elements but write only to owned-node slots. Each physical node receives
+    // contributions from all elements touching it, regardless of whether the
+    // element is locally owned or in the halo. No reverse-halo needed.
     for (int i = 0; i < 8; ++i)
-        atomicAdd(&massNode[n[i]], contrib);
+        if (ownership[n[i]] == 1)
+            atomicAdd(&massNode[n[i]], contrib);
 }
 
 // Owned-node mass slots -> per-DOF mass array (post reverse halo). atomicAdd
@@ -581,6 +614,46 @@ __global__ void addLumpedMassDiagonalKernel(const RealType* mass,
     if (dof >= numOwnedDofs) return;
     int dp = diagPtr[dof];
     if (dp >= 0) values[dp] += mass[dof] * invDt;
+}
+
+// O(1)-per-row diagonal extraction using the precomputed d_diagPtr indirection.
+// Cached at setup once (after BC enforcement + optional MARS_DDT_DIAG_SHIFT)
+// and reused as the Jacobi preconditioner in solvePressureDDT every CG iter.
+// Floor by 1e-30 so the 1/diag step in jacobiPrecondKernel cannot divide by
+// zero on a (pathological) empty/zero-diag row.
+template<typename RealType>
+__global__ void extractDiagByDiagPtrKernel(const int* diagPtr,
+                                           const RealType* values,
+                                           RealType* diag,
+                                           int numOwnedDofs)
+{
+    int dof = blockIdx.x * blockDim.x + threadIdx.x;
+    if (dof >= numOwnedDofs) return;
+    int dp = diagPtr[dof];
+    RealType d = (dp >= 0) ? values[dp] : RealType(0);
+    // Defensive: a non-positive diagonal would break Jacobi. Floor to keep CG
+    // robust without changing the SpMV (we only divide r by this).
+    if (!(d > RealType(1e-30))) d = RealType(1);
+    diag[dof] = d;
+}
+
+// Jacobi preconditioner step on a per-NODE vector: z[i] = r[i] / diag[dof(i)]
+// for owned nodes, 0 elsewhere. Mirrors mars_amr_ddt.cu's jacobiPrecondKernel
+// so DDT in production uses the same form that was validated by --test=cg-jacobi.
+template<typename RealType>
+__global__ void jacobiPrecondNodeKernel(const RealType* r,
+                                        const RealType* diag,
+                                        const int* nodeToDof,
+                                        const uint8_t* ownership,
+                                        RealType* z,
+                                        size_t numNodes)
+{
+    size_t i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= numNodes) return;
+    if (ownership[i] != 1) { z[i] = RealType(0); return; }
+    int dof = nodeToDof[i];
+    if (dof < 0) { z[i] = RealType(0); return; }
+    z[i] = r[i] / diag[dof];
 }
 
 // =============================================================================
@@ -1596,6 +1669,10 @@ struct NSStepper
     cstone::DeviceVector<int> d_diagPtrDDT;
     int nnzDDT = 0;
     cstone::DeviceVector<RealType> d_valuesDDT;
+    // Cached diagonal of the BC-modified DDT operator (size numOwnedDofs),
+    // used as the Jacobi preconditioner by solvePressureDDT. Extracted once
+    // at setup after BC enforcement + optional shift.
+    cstone::DeviceVector<RealType> d_diagDDT;
 
     // Owned-row SparseMatrix wrappers consumed by CG/Hypre.
     using Matrix = SparseMatrix<int, RealType, cstone::GpuTag>;
@@ -1735,6 +1812,13 @@ struct NSStepper
     // question but don't fit a face-flux discretization.
     bool useRhieChow      = false;
     RealType rhieChowTau  = -1;   // <=0 => auto-pick = dt/rho
+
+    // Ownership map every kernel uses. Always the domain's cached map -- we no
+    // longer demote periodic slaves (see setupNSStepper). Kept as a single
+    // accessor so all kernels bind through one place.
+    const cstone::DeviceVector<uint8_t>& ownershipMap() const {
+        return domain.getNodeOwnershipMap();
+    }
 };
 
 // =============================================================================
@@ -1752,7 +1836,7 @@ void assembleLaplacian(NSStepper<KeyType, RealType>& s,
                        cstone::DeviceVector<RealType>& d_valuesOut,
                        CvfemKernelVariant kernelVariant)
 {
-    const auto& d_nodeOwnership = s.domain.getNodeOwnershipMap();
+    const auto& d_nodeOwnership = s.ownershipMap();
     const auto& d_conn          = s.domain.getElementToNodeConnectivity();
     const auto& d_x = s.domain.getNodeX();
     const auto& d_y = s.domain.getNodeY();
@@ -1906,7 +1990,7 @@ __global__ void assembleBDStabilizationKernel(const KeyType* c0, const KeyType* 
 template<typename KeyType, typename RealType>
 void addBochevDohrmannStab(NSStepper<KeyType, RealType>& s, RealType tau)
 {
-    const auto& d_nodeOwnership = s.domain.getNodeOwnershipMap();
+    const auto& d_nodeOwnership = s.ownershipMap();
     const auto& d_conn          = s.domain.getElementToNodeConnectivity();
     const auto& d_x = s.domain.getNodeX();
     const auto& d_y = s.domain.getNodeY();
@@ -1947,7 +2031,97 @@ void setupNSStepper(NSStepper<KeyType, RealType>& s,
     s.nodeCount    = s.domain.getNodeCount();
     s.elementCount = s.domain.getElementCount();
 
+    // Optional one-shot diagnostic: count halo elements per rank and how many
+    // touch the periodic-min faces. Confirms cstone delivers periodic-image
+    // halo elements (verified yes on cube16/4-rank: 1238 halo elements touch
+    // min-faces). Set MARS_PERIODIC_HALO_DBG=1 to enable.
+    if (std::getenv("MARS_PERIODIC_HALO_DBG") != nullptr)
+    {
+        size_t startE  = s.domain.startIndex();
+        size_t endE    = s.domain.endIndex();
+        size_t numOwn  = endE - startE;
+        size_t numHalo = s.elementCount > numOwn ? s.elementCount - numOwn : 0;
+
+        // Local bbox + Allreduce to get global box (s.xmin etc. not yet set).
+        const auto& d_cn = s.domain.getElementToNodeConnectivity();
+        const auto& d_x  = s.domain.getNodeX();
+        const auto& d_y  = s.domain.getNodeY();
+        const auto& d_z  = s.domain.getNodeZ();
+        RealType lxmin = thrust::reduce(thrust::device, d_x.data(), d_x.data() + s.nodeCount, RealType(1e30),  thrust::minimum<RealType>());
+        RealType lxmax = thrust::reduce(thrust::device, d_x.data(), d_x.data() + s.nodeCount, RealType(-1e30), thrust::maximum<RealType>());
+        RealType lymin = thrust::reduce(thrust::device, d_y.data(), d_y.data() + s.nodeCount, RealType(1e30),  thrust::minimum<RealType>());
+        RealType lymax = thrust::reduce(thrust::device, d_y.data(), d_y.data() + s.nodeCount, RealType(-1e30), thrust::maximum<RealType>());
+        RealType lzmin = thrust::reduce(thrust::device, d_z.data(), d_z.data() + s.nodeCount, RealType(1e30),  thrust::minimum<RealType>());
+        RealType lzmax = thrust::reduce(thrust::device, d_z.data(), d_z.data() + s.nodeCount, RealType(-1e30), thrust::maximum<RealType>());
+        RealType xmin, xmax, ymin, ymax, zmin, zmax;
+        MPI_Datatype mpiType = std::is_same<RealType, double>::value ? MPI_DOUBLE : MPI_FLOAT;
+        MPI_Allreduce(&lxmin, &xmin, 1, mpiType, MPI_MIN, MPI_COMM_WORLD);
+        MPI_Allreduce(&lxmax, &xmax, 1, mpiType, MPI_MAX, MPI_COMM_WORLD);
+        MPI_Allreduce(&lymin, &ymin, 1, mpiType, MPI_MIN, MPI_COMM_WORLD);
+        MPI_Allreduce(&lymax, &ymax, 1, mpiType, MPI_MAX, MPI_COMM_WORLD);
+        MPI_Allreduce(&lzmin, &zmin, 1, mpiType, MPI_MIN, MPI_COMM_WORLD);
+        MPI_Allreduce(&lzmax, &zmax, 1, mpiType, MPI_MAX, MPI_COMM_WORLD);
+        RealType eps  = RealType(1e-3) * std::max({xmax - xmin, ymax - ymin, zmax - zmin});
+
+        long long localOnMin = 0;
+        if (numHalo > 0)
+        {
+            localOnMin = thrust::count_if(
+                thrust::device,
+                thrust::counting_iterator<size_t>(0),
+                thrust::counting_iterator<size_t>(s.elementCount),
+                [startE, endE,
+                 c0 = std::get<0>(d_cn).data(), c1 = std::get<1>(d_cn).data(),
+                 c2 = std::get<2>(d_cn).data(), c3 = std::get<3>(d_cn).data(),
+                 c4 = std::get<4>(d_cn).data(), c5 = std::get<5>(d_cn).data(),
+                 c6 = std::get<6>(d_cn).data(), c7 = std::get<7>(d_cn).data(),
+                 x = d_x.data(), y = d_y.data(), z = d_z.data(),
+                 xmin, ymin, zmin, eps]
+                __device__ (size_t e) -> bool {
+                    if (e >= startE && e < endE) return false;
+                    KeyType n[8] = {c0[e], c1[e], c2[e], c3[e],
+                                    c4[e], c5[e], c6[e], c7[e]};
+                    for (int i = 0; i < 8; ++i)
+                    {
+                        if (fabs(double(x[n[i]] - xmin)) < double(eps) ||
+                            fabs(double(y[n[i]] - ymin)) < double(eps) ||
+                            fabs(double(z[n[i]] - zmin)) < double(eps))
+                            return true;
+                    }
+                    return false;
+                });
+        }
+
+        long long lOwn  = (long long)numOwn;
+        long long lHalo = (long long)numHalo;
+        long long gOwn = 0, gHalo = 0, gOnMin = 0;
+        MPI_Reduce(&lOwn,       &gOwn,   1, MPI_LONG_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
+        MPI_Reduce(&lHalo,      &gHalo,  1, MPI_LONG_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
+        MPI_Reduce(&localOnMin, &gOnMin, 1, MPI_LONG_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
+        if (s.rank == 0)
+        {
+            std::cout << "[DBG halo] sum owned=" << gOwn
+                      << " sum halo=" << gHalo
+                      << " sum halo-on-min-face=" << gOnMin
+                      << "  (rank0 own=" << lOwn << " halo=" << lHalo
+                      << " onMin=" << localOnMin << ")\n";
+        }
+    }
+
+    // Ownership: normally the domain's cached map. For PERIODIC multi-rank we
+    // Periodic slaves are NOT demoted. MARS's multi-rank matrix-assembly
+    // invariant requires every owned DOF to receive all its element stiffness
+    // locally (the assembler loops over cstone's halo-extended element set and
+    // scatters owned rows only -- no cross-rank matrix coupling). With the
+    // periodic cstone Box, the periodic-image element + master node arrive in
+    // each rank's halo, so a periodic master's owned row is filled on its
+    // owner rank exactly as for an interior node. Slaves keep ownership=1 and
+    // the DOF collapse below identifies slave_dof with the (now locally
+    // present, owned-or-halo) master_dof. Demoting slaves broke this invariant
+    // (under-filled master rows -> velocity CG NaN), so we use the domain's
+    // ownership map unchanged.
     const auto& d_nodeOwnership = s.domain.getNodeOwnershipMap();
+
     const auto& d_conn          = s.domain.getElementToNodeConnectivity();
     s.domain.cacheNodeCoordinates();
     const auto& d_x = s.domain.getNodeX();
@@ -1960,30 +2134,43 @@ void setupNSStepper(NSStepper<KeyType, RealType>& s,
     s.numOwnedDofs = buildDofMappingGpu<KeyType>(d_nodeOwnership.data(), s.d_node_to_dof.data(), s.nodeCount);
     s.numTotalDofs = static_cast<int>(s.nodeCount);
 
-    // PERIODIC DOF COLLAPSE: slave nodes share their master's DOF index, and
-    // we then COMPACT the DOF numbering so there are no orphan rows in the
-    // sparsity. After this pass:
-    //   - nodeToDof[slave] = nodeToDof[master]
+    // PERIODIC DOF COLLAPSE: a slave node shares its master's DOF index, then
+    // we COMPACT the DOF numbering so there are no orphan rows. After this:
+    //   - nodeToDof[slave] = nodeToDof[master]  (only for LOCAL-OWNED masters)
     //   - all surviving DOF indices are dense in [0, nLive)
     //   - s.numOwnedDofs = nLive
-    // The downstream sparsity builder / assembler / kernels read nodeToDof
-    // unchanged, so they index through the compact DOF space transparently.
+    //
+    // MULTI-RANK: we ONLY collapse a slave onto its master when the master is
+    // locally OWNED (own==1). Then the merged DOF is a real owned row on this
+    // rank and the assembler fills it from the local halo-extended element set.
+    //
+    // When the master is a REMOTE node (present only as a periodic-halo ghost
+    // here, own!=1), we do NOT collapse: the slave keeps its own owned DOF.
+    // The slave and the remote master are the same periodic point but each
+    // rank owns its own copy's row -- exactly how cstone treats any shared
+    // node. cstone's periodic element halo fills each owned row locally, and
+    // exchangeNodeHalo keeps the slave's value synced to the master's owner.
+    // Collapsing across ranks would point the slave at a ghost DOF (out of the
+    // owned range) and orphan its row -> velocity CG NaN (the bug we hit).
     if (s.bcKind == NSStepper<KeyType, RealType>::BCKind::Periodic && s.periodicMap)
     {
         const int* d_partner = s.periodicMap->d_periodicPartner.data();
+        const uint8_t* d_own = d_nodeOwnership.data();
         int* d_n2d           = s.d_node_to_dof.data();
         size_t nNodes        = s.nodeCount;
         int numOwned         = s.numOwnedDofs;
 
-        // Pass 1: redirect slave -> master DOF (using OLD master dof).
+        // Pass 1: redirect slave -> master DOF, but ONLY when the master is
+        // locally owned (its DOF is a real owned DOF on this rank). Remote
+        // masters are skipped (slave keeps its own DOF; cstone halo syncs it).
         cstone::DeviceVector<int> d_oldDof(s.d_node_to_dof);
         thrust::for_each(thrust::device,
                          thrust::counting_iterator<size_t>(0),
                          thrust::counting_iterator<size_t>(nNodes),
-                         [d_partner, d_old = d_oldDof.data(), d_n2d]
+                         [d_partner, d_own, d_old = d_oldDof.data(), d_n2d]
                          __device__ (size_t i) {
                              int master = d_partner[i];
-                             if (master >= 0)
+                             if (master >= 0 && d_own[master] == 1)
                                  d_n2d[i] = d_old[master];
                          });
         cudaDeviceSynchronize();
@@ -2112,18 +2299,24 @@ void setupNSStepper(NSStepper<KeyType, RealType>& s,
                  thrust::device_pointer_cast(s.d_massNode.data() + s.nodeCount),
                  RealType(0));
     {
-        size_t startElem = s.domain.startIndex();
-        size_t numLocal  = s.domain.localElementCount();
-        if (numLocal > 0)
+        // Loop ALL elements (owned + halo) and write only to OWNED-node slots
+        // (ownership filter inside the kernel). Same pattern matrix assembly
+        // uses: each physical node receives contributions from all elements
+        // touching it via its owner-rank's per-element loop. cstone delivers
+        // periodic-image elements as halo so periodic-seam owners see both
+        // sides' element contributions. No reverse-halo needed afterwards.
+        size_t nElem = s.elementCount;
+        if (nElem > 0)
         {
-            int eBlocks = int((numLocal + s.blockSize - 1) / s.blockSize);
+            int eBlocks = int((nElem + s.blockSize - 1) / s.blockSize);
             computeLumpedMassPerNodeKernel<KeyType, RealType><<<eBlocks, s.blockSize>>>(
                 std::get<0>(d_conn).data(), std::get<1>(d_conn).data(),
                 std::get<2>(d_conn).data(), std::get<3>(d_conn).data(),
                 std::get<4>(d_conn).data(), std::get<5>(d_conn).data(),
                 std::get<6>(d_conn).data(), std::get<7>(d_conn).data(),
                 d_x.data(), d_y.data(), d_z.data(),
-                s.d_massNode.data(), startElem, numLocal);
+                d_nodeOwnership.data(),
+                s.d_massNode.data(), size_t(0), nElem);
             cudaDeviceSynchronize();
         }
         s.domain.reverseExchangeNodeHaloAdd(s.d_massNode);
@@ -2200,7 +2393,53 @@ void setupNSStepper(NSStepper<KeyType, RealType>& s,
                 s.d_valuesDDT.data(), s.nodeCount);
             cudaDeviceSynchronize();
         }
-        // (DDT-assembly NaN scan diagnostic removed; assembler verified clean.)
+        // Post-assembly health check: every owned row must have a non-zero
+        // diagonal entry (Hypre BoomerAMG strength-of-connection asserts on
+        // |A[i,i]| > 0; missing or zero diag is a documented cause of
+        // HYPRE_ERROR_GENERIC on setup). Run on rank 0 only since this is
+        // a structural property -- all ranks should see the same answer for
+        // their own owned rows. (Print only if a defect is found.)
+        if (s.rank == 0)
+        {
+            std::vector<int> hRowPtr(s.numOwnedDofs + 1);
+            cudaMemcpy(hRowPtr.data(), s.d_rowPtrDDT.data(),
+                       (s.numOwnedDofs + 1) * sizeof(int), cudaMemcpyDeviceToHost);
+            std::vector<int> hColInd(hRowPtr[s.numOwnedDofs]);
+            std::vector<RealType> hVals(hRowPtr[s.numOwnedDofs]);
+            cudaMemcpy(hColInd.data(), s.d_colIndDDT.data(),
+                       hRowPtr[s.numOwnedDofs] * sizeof(int), cudaMemcpyDeviceToHost);
+            cudaMemcpy(hVals.data(), s.d_valuesDDT.data(),
+                       hRowPtr[s.numOwnedDofs] * sizeof(RealType), cudaMemcpyDeviceToHost);
+            int emptyRows = 0, missingDiag = 0, zeroDiag = 0, negDiag = 0;
+            int firstEmpty = -1, firstMissingDiag = -1;
+            RealType minDiag = 1e30, maxDiag = -1e30;
+            for (int r = 0; r < s.numOwnedDofs; ++r)
+            {
+                int rs = hRowPtr[r], re = hRowPtr[r + 1];
+                if (re == rs) { emptyRows++; if (firstEmpty<0) firstEmpty=r; continue; }
+                int diagIdx = -1;
+                for (int k = rs; k < re; ++k) if (hColInd[k] == r) { diagIdx = k; break; }
+                if (diagIdx < 0) {
+                    missingDiag++;
+                    if (firstMissingDiag<0) firstMissingDiag=r;
+                    continue;
+                }
+                RealType d = hVals[diagIdx];
+                if (d == RealType(0)) zeroDiag++;
+                else if (d < RealType(0)) negDiag++;
+                if (d < minDiag) minDiag = d;
+                if (d > maxDiag) maxDiag = d;
+            }
+            std::cout << "  [DDT-health] emptyRows=" << emptyRows
+                      << " missingDiag=" << missingDiag
+                      << " zeroDiag=" << zeroDiag
+                      << " negDiag=" << negDiag
+                      << " diag range=[" << minDiag << ", " << maxDiag << "]\n";
+            if (emptyRows > 0)
+                std::cout << "    first empty row: " << firstEmpty << "\n";
+            if (missingDiag > 0)
+                std::cout << "    first missing-diag row: " << firstMissingDiag << "\n";
+        }
     }
     pt.lap("assembly D M^-1 D^T (node-driven, 27-NNZ)");
 
@@ -2616,29 +2855,25 @@ void setupNSStepper(NSStepper<KeyType, RealType>& s,
     else if (s.bcKind == NSStepper<KeyType, RealType>::BCKind::Cavity
              && s.pressurePinDof >= 0)
     {
-        // Row enforcement on pin row (one DOF, owning rank only).
-        enforcePinRowMatrixKernel<RealType><<<1, 1>>>(
+        // Row enforcement on pin row, KEEPING the assembled diagonal magnitude
+        // (not forcing it to 1). The DDT operator's diagonal range is ~0.04 to
+        // 0.14; a pin row with diag=1 is 10-25x its neighbors, which CG
+        // tolerates but BoomerAMG's coarsening does not -- Hypre setup returns
+        // generic error 1 on that conditioning spike. Preserving the native
+        // diagonal removes the spike so AMG sees a uniformly-scaled SPD row.
+        enforcePinRowKeepDiagKernel<RealType><<<1, 1>>>(
             s.pressurePinDof, s.d_rowPtrDDT.data(), s.d_colIndDDT.data(),
             s.d_diagPtrDDT.data(), s.d_valuesDDT.data());
     }
-    // Re-enable cavity-mode column-zero on the DDT matrix. Hypre PCG requires
-    // a symmetric matrix; without the col-clear, A is asymmetric (row 0 has
-    // A[0,0]=1 with all other A[0,j]=0 from row-clear, but column 0 still has
-    // A[r,0] != 0 from neighbour rows). PCG on an asymmetric matrix produces
-    // garbage including NaN by step 2. The K-path matrix happens to work
-    // without col-clear because it has different scaling; the DDT matrix
-    // does not. With pin value b[pin]=0, symmetric treatment is just
-    // row-clear + col-clear (no RHS modification needed).
-    if (s.bcKind == NSStepper<KeyType, RealType>::BCKind::Cavity)
-    {
-        int dofBlocks = (s.numOwnedDofs + s.blockSize - 1) / s.blockSize;
-        enforceBcColMatrixKernelByNode<RealType><<<dofBlocks, s.blockSize>>>(
-            s.d_isPressureBdryNode.data(),
-            s.d_node_to_dof.data(), s.d_dofToNode.data(), s.numTotalDofs,
-            s.d_rowPtrDDT.data(), s.d_colIndDDT.data(),
-            s.d_valuesDDT.data(), s.numOwnedDofs);
-        cudaDeviceSynchronize();
-    }
+    // Cavity DDT: column-clear stays disabled. A symmetric col-clear changed
+    // neighboring rows' row-sum from ~0 to ~|A[r,pin]|, breaking AMG's
+    // strength-of-connection metric (earlier attempt -> Hypre setup error 1).
+    // K-path doesn't col-clear for cavity and works fine; matching that
+    // asymmetric-pin treatment for DDT-cavity, now with a scale-matched pin
+    // diagonal so AMG can coarsen the resulting SPD row uniformly. For
+    // channel/wing the col-clear above is kept since those have an entire
+    // Dirichlet face, not a single pin, and the row-sum drift is negligible
+    // relative to the boundary mass.
 
     // Bochev-Dohrmann polynomial pressure projection stabilization. Added to
     // the assembled K-path pressure matrix (d_valuesPre, full 27-NNZ
@@ -2680,6 +2915,26 @@ void setupNSStepper(NSStepper<KeyType, RealType>& s,
             std::cout << "  pressure stabilization: Bochev-Dohrmann polynomial projection (K-path matrix + DDT matrix-free), tau=" << tau << "\n";
         pt.lap("BD pressure stabilization");
     }
+
+    // Cache the DDT diagonal (BC-modified, post-shift) for use as the Jacobi
+    // preconditioner in solvePressureDDT. Single O(numOwnedDofs) kernel; the
+    // diagonal stays valid for the whole run because BC enforcement and the
+    // optional shift are setup-time-only modifications of s.d_valuesDDT.
+    // Note: BD-periodic adds matrix-free terms inside applyDDTPerNode that are
+    // NOT reflected in s.d_valuesDDT, so this cached diagonal will be slightly
+    // off the actual operator diagonal on periodic runs. Acceptable: Jacobi
+    // is a preconditioner, not the exact inverse; a small mismatch only slows
+    // convergence, not correctness.
+    if (s.numOwnedDofs > 0 && s.nnzDDT > 0)
+    {
+        s.d_diagDDT.resize(s.numOwnedDofs);
+        int dofBlocks = (s.numOwnedDofs + s.blockSize - 1) / s.blockSize;
+        extractDiagByDiagPtrKernel<RealType><<<dofBlocks, s.blockSize>>>(
+            s.d_diagPtrDDT.data(), s.d_valuesDDT.data(),
+            s.d_diagDDT.data(), s.numOwnedDofs);
+        cudaDeviceSynchronize();
+    }
+    pt.lap("DDT diagonal cache (for Jacobi PCG)");
 
     // Wrap into SparseMatrix for the solvers. Avel and Apre share K's 27-NNZ
     // layout; AddT uses its own reduced 7-NNZ layout (rowPtrDDT/colIndDDT).
@@ -2966,7 +3221,7 @@ __global__ void initialConditionKernel(const uint8_t* isBdryDof,
 template<typename KeyType, typename RealType>
 void applyInitialCondition(NSStepper<KeyType, RealType>& s)
 {
-    const auto& d_nodeOwnership = s.domain.getNodeOwnershipMap();
+    const auto& d_nodeOwnership = s.ownershipMap();
     int nBlocks = (s.nodeCount + s.blockSize - 1) / s.blockSize;
     // Interior IC: cavity/channel default to (0,0,0). Wing starts at free-stream
     // (Uinf, 0, 0) so step 1's predictor doesn't see a velocity discontinuity
@@ -3019,10 +3274,30 @@ int solveOneComponent(NSStepper<KeyType, RealType>& s,
         {
             const int* dofMapPtr = s.d_node_to_dof.data();
             auto& dom = s.domain;
+            // Periodic-aware halo exchange. The standard cstone exchange syncs
+            // owners->ghosts for ordinary shared nodes. For multi-rank periodic
+            // we additionally broadcast master->slave on the search vector p
+            // every iteration, otherwise the periodic-image DOF columns that
+            // the assembler put in the matrix reference stale values, A*p
+            // produces garbage, and pAp<=0 -> CG breakdown -> NaN.
+            const int* partnerPtr = (s.bcKind == NSStepper<KeyType, RealType>::BCKind::Periodic
+                                     && s.periodicMap)
+                                    ? s.periodicMap->d_periodicPartner.data()
+                                    : nullptr;
+            size_t nNodes = s.nodeCount;
+            int bs = s.blockSize;
             solver.setHaloExchangeCallback(
-                [&dom, dofMapPtr](cstone::DeviceVector<RealType>& p)
+                [&dom, dofMapPtr, partnerPtr, nNodes, bs]
+                (cstone::DeviceVector<RealType>& p)
                 {
                     dom.exchangeNodeHalo(p, dofMapPtr);
+                    if (partnerPtr)
+                    {
+                        int grd = int((nNodes + bs - 1) / bs);
+                        mars::fem::periodicBroadcastDofKernel<RealType>
+                            <<<grd, bs>>>(partnerPtr, dofMapPtr, nNodes, p.data());
+                        cudaDeviceSynchronize();
+                    }
                 });
         }
         converged = solver.solve(A, b_rhs, xVec);
@@ -3099,11 +3374,19 @@ int solveOneComponent(NSStepper<KeyType, RealType>& s,
     }
     cudaDeviceSynchronize();
 
-    // x -> qOut (per-node scatter).
-    int nBlocks = (s.nodeCount + s.blockSize - 1) / s.blockSize;
-    scatterDofToNodeKernel<RealType><<<nBlocks, s.blockSize>>>(
-        xVec.data(), s.d_node_to_dof.data(), qOut.data(), s.nodeCount);
-    cudaDeviceSynchronize();
+    // Only scatter a CONVERGED solution into qOut. A failed Hypre solve
+    // (error 1 on the near-singular DDT operator) can leave xVec holding
+    // partial garbage; scattering it would poison qOut (= phi) and the
+    // corrector would turn that into a NaN velocity field, cascading the
+    // whole run. On failure we leave qOut untouched (caller warm-started it
+    // to its previous value) and signal -2 so the step is recognizably bad.
+    if (converged)
+    {
+        int nBlocks = (s.nodeCount + s.blockSize - 1) / s.blockSize;
+        scatterDofToNodeKernel<RealType><<<nBlocks, s.blockSize>>>(
+            xVec.data(), s.d_node_to_dof.data(), qOut.data(), s.nodeCount);
+        cudaDeviceSynchronize();
+    }
 
     return converged ? iters : -2;
 }
@@ -3138,14 +3421,18 @@ void applyDDTPerNode(NSStepper<KeyType, RealType>& s,
                      cstone::DeviceVector<RealType>& gyAcc,
                      cstone::DeviceVector<RealType>& gzAcc)
 {
-    const auto& d_nodeOwnership = s.domain.getNodeOwnershipMap();
+    const auto& d_nodeOwnership = s.ownershipMap();
     const auto& d_conn          = s.domain.getElementToNodeConnectivity();
     auto c0 = std::get<0>(d_conn).data(); auto c1 = std::get<1>(d_conn).data();
     auto c2 = std::get<2>(d_conn).data(); auto c3 = std::get<3>(d_conn).data();
     auto c4 = std::get<4>(d_conn).data(); auto c5 = std::get<5>(d_conn).data();
     auto c6 = std::get<6>(d_conn).data(); auto c7 = std::get<7>(d_conn).data();
-    const size_t startElem = s.domain.startIndex();
-    const size_t numLocal  = s.domain.localElementCount();
+    // Loop ALL elements (owned + halo) on per-element scatter so that periodic-
+    // image halo elements delivered by cstone contribute to shared boundary
+    // nodes; reverseExchangeNodeHaloAdd then routes ghost contributions back to
+    // owners. Same pattern matrix assembly uses.
+    const size_t startElem = 0;
+    const size_t numLocal  = s.elementCount;
     const int eBlocks    = numLocal > 0 ? int((numLocal + s.blockSize - 1) / s.blockSize) : 0;
     const int nodeBlocks = (s.nodeCount + s.blockSize - 1) / s.blockSize;
 
@@ -3363,15 +3650,59 @@ int solvePressureDDT(NSStepper<KeyType, RealType>& s,
                      cstone::DeviceVector<RealType>& b_node,
                      cstone::DeviceVector<RealType>& phi_node)
 {
-    const auto& d_nodeOwnership = s.domain.getNodeOwnershipMap();
+    const auto& d_nodeOwnership = s.ownershipMap();
     const int nodeBlocks = (s.nodeCount + s.blockSize - 1) / s.blockSize;
 
     cstone::DeviceVector<RealType> r(s.nodeCount, RealType(0));
     cstone::DeviceVector<RealType> p(s.nodeCount, RealType(0));
     cstone::DeviceVector<RealType> Ap(s.nodeCount, RealType(0));
+    cstone::DeviceVector<RealType> z(s.nodeCount, RealType(0));   // M^-1 r
     cstone::DeviceVector<RealType> gx(s.nodeCount, RealType(0));
     cstone::DeviceVector<RealType> gy(s.nodeCount, RealType(0));
     cstone::DeviceVector<RealType> gz(s.nodeCount, RealType(0));
+
+    // Jacobi preconditioning is OFF by default. An earlier run with the cached
+    // s.d_valuesDDT diagonal as the Jacobi preconditioner converged the CG
+    // residual to 1e-8 (~480 iters) but produced |gphi| ~3-5 that injected
+    // MORE divergence into the corrector than the predictor created (step 1
+    // div_max=2.78 vs div_pre=0.195 -> 14x amplification, then blow-up by
+    // step 100). This is the same class of bug as the historical "corrector
+    // amplifying divergence by 11x" entry in project_phase_e_state.md, and
+    // means the projection identity D u^{n+1} = 0 is no longer satisfied with
+    // the Jacobi-preconditioned phi. Reverted to un-precond CG (default) which
+    // matches the proven-green regression numbers (cube16 cavity steady state:
+    // div_max=1.65e-5, cg_iter_p=104). Set MARS_DDT_JACOBI=1 to opt back in
+    // for diagnostic comparison only.
+    bool useJacobi = false;
+    {
+        const char* ev = std::getenv("MARS_DDT_JACOBI");
+        if (ev && std::string(ev) != "0")
+            useJacobi = (s.d_diagDDT.size() == static_cast<size_t>(s.numOwnedDofs)
+                         && s.numOwnedDofs > 0);
+    }
+    if (s.rank == 0)
+    {
+        static bool printedOnce = false;
+        if (!printedOnce)
+        {
+            std::cout << "[cg-ddt] preconditioner = "
+                      << (useJacobi ? "Jacobi (diag from s.d_valuesDDT)" : "NONE (un-precond)")
+                      << "\n";
+            if (useJacobi)
+            {
+                // One-shot diag range print so we see what we're dividing by.
+                auto dp = thrust::device_pointer_cast(s.d_diagDDT.data());
+                auto mm = thrust::minmax_element(thrust::device, dp,
+                                                  dp + s.numOwnedDofs);
+                RealType dmin = 0, dmax = 0;
+                cudaMemcpy(&dmin, thrust::raw_pointer_cast(&*mm.first),  sizeof(RealType), cudaMemcpyDeviceToHost);
+                cudaMemcpy(&dmax, thrust::raw_pointer_cast(&*mm.second), sizeof(RealType), cudaMemcpyDeviceToHost);
+                std::cout << "[cg-ddt] cached diag range on rank 0: ["
+                          << dmin << ", " << dmax << "]\n";
+            }
+            printedOnce = true;
+        }
+    }
 
     // Fresh start: phi = 0. With b[i]=0 at every pinned DOF and out[i]=phi[i]
     // in the SpMV, the pinned-row equation reads 0 = phi[i] => phi[i] stays 0.
@@ -3400,17 +3731,36 @@ int solvePressureDDT(NSStepper<KeyType, RealType>& s,
         cudaDeviceSynchronize();
     }
 
-    // r = b - A*phi  (phi=0 so r = b on owned slots). p = r.
+    // r = b - A*phi  (phi=0 so r = b on owned slots). z = M^-1 r. p = z.
     thrust::copy(thrust::device_pointer_cast(b_node.data()),
                  thrust::device_pointer_cast(b_node.data() + s.nodeCount),
                  thrust::device_pointer_cast(r.data()));
-    thrust::copy(thrust::device_pointer_cast(r.data()),
-                 thrust::device_pointer_cast(r.data() + s.nodeCount),
+    if (useJacobi)
+    {
+        jacobiPrecondNodeKernel<RealType><<<nodeBlocks, s.blockSize>>>(
+            r.data(), s.d_diagDDT.data(),
+            s.d_node_to_dof.data(), d_nodeOwnership.data(),
+            z.data(), s.nodeCount);
+        cudaDeviceSynchronize();
+    }
+    else
+    {
+        thrust::copy(thrust::device_pointer_cast(r.data()),
+                     thrust::device_pointer_cast(r.data() + s.nodeCount),
+                     thrust::device_pointer_cast(z.data()));
+    }
+    thrust::copy(thrust::device_pointer_cast(z.data()),
+                 thrust::device_pointer_cast(z.data() + s.nodeCount),
                  thrust::device_pointer_cast(p.data()));
 
-    RealType rho_old = ownedDot<RealType>(r, r, s.d_node_to_dof,
+    // rho = (r, z): preconditioned inner product drives alpha/beta.
+    // Convergence check still uses the Euclidean residual |r| so the tolerance
+    // semantics match the un-preconditioned baseline and the K-path numbers.
+    RealType rho_old = ownedDot<RealType>(r, z, s.d_node_to_dof,
                                           d_nodeOwnership.data(), s.nodeCount);
-    RealType r0_norm = std::sqrt(rho_old);
+    RealType rr0     = ownedDot<RealType>(r, r, s.d_node_to_dof,
+                                          d_nodeOwnership.data(), s.nodeCount);
+    RealType r0_norm = std::sqrt(rr0);
     if (r0_norm < std::numeric_limits<RealType>::min()) return 0;
     const RealType absTol = s.tolerance * r0_norm;
 
@@ -3438,19 +3788,40 @@ int solvePressureDDT(NSStepper<KeyType, RealType>& s,
             s.d_node_to_dof.data(), d_nodeOwnership.data(), s.nodeCount);
         cudaDeviceSynchronize();
 
-        RealType rho_new = ownedDot<RealType>(r, r, s.d_node_to_dof,
+        // Convergence on the Euclidean residual; alpha/beta on the
+        // preconditioned (r,z) inner product. Equivalent to un-precond CG when
+        // z == r (the useJacobi=false fallback path).
+        RealType rr_new  = ownedDot<RealType>(r, r, s.d_node_to_dof,
                                               d_nodeOwnership.data(), s.nodeCount);
         if (s.rank == 0 && (it == 0 || (it + 1) % liveEvery == 0))
         {
             std::cout << "    [cg-ddt] iter " << std::setw(6) << (it + 1)
                       << "  |r|/|r0| = " << std::scientific << std::setprecision(3)
-                      << (std::sqrt(rho_new) / std::max(r0_norm, std::numeric_limits<RealType>::min()))
+                      << (std::sqrt(rr_new) / std::max(r0_norm, std::numeric_limits<RealType>::min()))
                       << std::defaultfloat << "\n" << std::flush;
         }
-        if (std::sqrt(rho_new) < absTol) { iters = it + 1; break; }
-        RealType beta = rho_new / rho_old;
+        if (std::sqrt(rr_new) < absTol) { iters = it + 1; break; }
+        // z = M^-1 r (or z := r if no preconditioner).
+        if (useJacobi)
+        {
+            jacobiPrecondNodeKernel<RealType><<<nodeBlocks, s.blockSize>>>(
+                r.data(), s.d_diagDDT.data(),
+                s.d_node_to_dof.data(), d_nodeOwnership.data(),
+                z.data(), s.nodeCount);
+            cudaDeviceSynchronize();
+        }
+        else
+        {
+            thrust::copy(thrust::device_pointer_cast(r.data()),
+                         thrust::device_pointer_cast(r.data() + s.nodeCount),
+                         thrust::device_pointer_cast(z.data()));
+        }
+        RealType rho_new = ownedDot<RealType>(r, z, s.d_node_to_dof,
+                                              d_nodeOwnership.data(), s.nodeCount);
+        RealType beta    = rho_new / rho_old;
+        // p = z + beta * p   (un-precond reduces to p = r + beta*p when z=r).
         axpyOwnedKernel<RealType><<<nodeBlocks, s.blockSize>>>(
-            p.data(), r.data(), p.data(), beta,
+            p.data(), z.data(), p.data(), beta,
             s.d_node_to_dof.data(), d_nodeOwnership.data(), s.nodeCount);
         cudaDeviceSynchronize();
 
@@ -3517,7 +3888,7 @@ RealType rmsOwnedInterior3(NSStepper<KeyType, RealType>& s,
                             const cstone::DeviceVector<RealType>& d_gy,
                             const cstone::DeviceVector<RealType>& d_gz)
 {
-    const auto& d_nodeOwnership = s.domain.getNodeOwnershipMap();
+    const auto& d_nodeOwnership = s.ownershipMap();
     const uint8_t* ownPtr = d_nodeOwnership.data();
     const int* dofPtr     = s.d_node_to_dof.data();
     const uint8_t* bnd    = s.d_isBdryDof.data();
@@ -3563,7 +3934,7 @@ template<typename KeyType, typename RealType>
 RealType rmsOwnedInterior1(NSStepper<KeyType, RealType>& s,
                             const cstone::DeviceVector<RealType>& d_q)
 {
-    const auto& d_nodeOwnership = s.domain.getNodeOwnershipMap();
+    const auto& d_nodeOwnership = s.ownershipMap();
     const uint8_t* ownPtr = d_nodeOwnership.data();
     const int* dofPtr     = s.d_node_to_dof.data();
     const uint8_t* bnd    = s.d_isBdryDof.data();
@@ -3603,7 +3974,7 @@ template<typename KeyType, typename RealType>
 RealType maxOwnedInteriorAbs(NSStepper<KeyType, RealType>& s,
                              const cstone::DeviceVector<RealType>& d_q)
 {
-    const auto& d_nodeOwnership = s.domain.getNodeOwnershipMap();
+    const auto& d_nodeOwnership = s.ownershipMap();
     const uint8_t* ownPtr = d_nodeOwnership.data();
     const int* dofPtr     = s.d_node_to_dof.data();
     const uint8_t* bnd    = s.d_isBdryDof.data();
@@ -3640,14 +4011,17 @@ RealType maxOwnedInteriorAbs(NSStepper<KeyType, RealType>& s,
 template<typename KeyType, typename RealType>
 void runPredictorStep(NSStepper<KeyType, RealType>& s, RealType dt, RealType rho)
 {
-    const auto& d_nodeOwnership = s.domain.getNodeOwnershipMap();
+    const auto& d_nodeOwnership = s.ownershipMap();
     const auto& d_conn          = s.domain.getElementToNodeConnectivity();
     auto c0 = std::get<0>(d_conn).data(); auto c1 = std::get<1>(d_conn).data();
     auto c2 = std::get<2>(d_conn).data(); auto c3 = std::get<3>(d_conn).data();
     auto c4 = std::get<4>(d_conn).data(); auto c5 = std::get<5>(d_conn).data();
     auto c6 = std::get<6>(d_conn).data(); auto c7 = std::get<7>(d_conn).data();
-    const size_t startElem = s.domain.startIndex();
-    const size_t numLocal  = s.domain.localElementCount();
+    // Loop ALL elements (owned + halo) on per-element scatter so periodic-image
+    // halo elements contribute to shared boundary nodes; reverseExchangeNodeHaloAdd
+    // routes ghost contributions back to owners.
+    const size_t startElem = 0;
+    const size_t numLocal  = s.elementCount;
     const int nodeBlocks   = (s.nodeCount + s.blockSize - 1) / s.blockSize;
     const int eBlocks      = numLocal > 0 ? int((numLocal + s.blockSize - 1) / s.blockSize) : 0;
     const RealType invRho  = RealType(1) / rho;
@@ -3831,7 +4205,7 @@ void runPredictorStep(NSStepper<KeyType, RealType>& s, RealType dt, RealType rho
 template<typename KeyType, typename RealType>
 void runImplicitDiffusionStep(NSStepper<KeyType, RealType>& s, RealType dt)
 {
-    const auto& d_nodeOwnership = s.domain.getNodeOwnershipMap();
+    const auto& d_nodeOwnership = s.ownershipMap();
     const int nodeBlocks  = (s.nodeCount + s.blockSize - 1) / s.blockSize;
     // BDF1 (step 0): mass coefficient = 1/dt, matrix = Avel.
     // BDF2 (step >= 1): mass coefficient = 3/(2*dt), matrix = Avel_bdf2.
@@ -3923,14 +4297,17 @@ void runImplicitDiffusionStep(NSStepper<KeyType, RealType>& s, RealType dt)
 template<typename KeyType, typename RealType>
 void runPressureSolveStep(NSStepper<KeyType, RealType>& s, RealType dt, RealType rho)
 {
-    const auto& d_nodeOwnership = s.domain.getNodeOwnershipMap();
+    const auto& d_nodeOwnership = s.ownershipMap();
     const auto& d_conn          = s.domain.getElementToNodeConnectivity();
     auto c0 = std::get<0>(d_conn).data(); auto c1 = std::get<1>(d_conn).data();
     auto c2 = std::get<2>(d_conn).data(); auto c3 = std::get<3>(d_conn).data();
     auto c4 = std::get<4>(d_conn).data(); auto c5 = std::get<5>(d_conn).data();
     auto c6 = std::get<6>(d_conn).data(); auto c7 = std::get<7>(d_conn).data();
-    const size_t startElem = s.domain.startIndex();
-    const size_t numLocal  = s.domain.localElementCount();
+    // Loop ALL elements (owned + halo) on per-element scatter so periodic-image
+    // halo elements contribute to shared boundary nodes; reverseExchangeNodeHaloAdd
+    // routes ghost contributions back to owners.
+    const size_t startElem = 0;
+    const size_t numLocal  = s.elementCount;
     const int nodeBlocks   = (s.nodeCount + s.blockSize - 1) / s.blockSize;
     const int eBlocks      = numLocal > 0 ? int((numLocal + s.blockSize - 1) / s.blockSize) : 0;
     const RealType invDt   = RealType(1) / dt;
@@ -3974,6 +4351,39 @@ void runPressureSolveStep(NSStepper<KeyType, RealType>& s, RealType dt, RealType
     }
     s.domain.reverseExchangeNodeHaloAdd(d_divAccNode);
     maybePeriodicSum<KeyType, RealType>(s, d_divAccNode);
+
+    // Source-of-NaN trace: count non-finite divAccNode over ALL owned nodes and
+    // over the owned-BOUNDARY subset separately. The interior diagnostic below
+    // (maxOwnedInteriorAbs) excludes boundary DOFs, so a boundary NaN is
+    // invisible to it -- this catches it. Gated behind env, free in production.
+    if (std::getenv("MARS_DDT_RHS_TRACE"))
+    {
+        const uint8_t* ownPtr = s.domain.getNodeOwnershipMap().data();
+        const int*     dofPtr = s.d_node_to_dof.data();
+        const uint8_t* bndPtr = s.d_isBdryDof.data();
+        const RealType* dP    = d_divAccNode.data();
+        size_t nN = s.nodeCount;
+        long long locBadAll = thrust::transform_reduce(thrust::device,
+            thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(nN),
+            [ownPtr, dofPtr, dP] __device__ (size_t i) -> long long {
+                if (ownPtr[i] != 1 || dofPtr[i] < 0) return 0LL;
+                return isfinite(static_cast<double>(dP[i])) ? 0LL : 1LL;
+            }, 0LL, thrust::plus<long long>());
+        long long locBadBnd = thrust::transform_reduce(thrust::device,
+            thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(nN),
+            [ownPtr, dofPtr, bndPtr, dP] __device__ (size_t i) -> long long {
+                if (ownPtr[i] != 1) return 0LL;
+                int dof = dofPtr[i];
+                if (dof < 0 || !bndPtr[dof]) return 0LL;
+                return isfinite(static_cast<double>(dP[i])) ? 0LL : 1LL;
+            }, 0LL, thrust::plus<long long>());
+        long long gBadAll = 0, gBadBnd = 0;
+        MPI_Allreduce(&locBadAll, &gBadAll, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+        MPI_Allreduce(&locBadBnd, &gBadBnd, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+        if (s.rank == 0)
+            std::cout << "  [DDT-rhs] post-divexch divAccNode owned: nonfinite(all)="
+                      << gBadAll << " nonfinite(boundary)=" << gBadBnd << "\n";
+    }
 
     // Diagnostic: |div(u**)| max BEFORE the corrector. This is the source term
     // the pressure solve must cancel. Compare with lastDivMax (post-corrector)
@@ -4047,16 +4457,25 @@ void runPressureSolveStep(NSStepper<KeyType, RealType>& s, RealType dt, RealType
     }
     else  // DDT: (D M^{-1} D^T) phi = -(rho/dt) D u**
     {
-        // DIAGNOSTIC: env MARS_DDT_USE_ASSEMBLED_CG=1 forces CG to use the
-        // assembled s.AddT matrix. With the buildDDTSparsity dedicated
-        // pattern (cross-element 2-hop pairs included) and the node-driven
-        // assembleDDTPerNodeKernel, the assembled matrix equals the matrix-
-        // free apply bit-for-bit -- so this diagnostic should give identical
-        // numbers to matrix-free CG (and use the same iteration count).
+        // DDT pressure ALWAYS uses the matrix-free path (the else branch
+        // below). The assembled DDT operator s.AddT holds POSITIVE off-
+        // diagonals at boundary rows (D M^-1 D^T is not an M-matrix),
+        // which BoomerAMG's classical strength-of-connection rejects --
+        // every Hypre Setup attempt on s.AddT returned HYPRE_ERROR_GENERIC
+        // (cg_iter_p=FAIL every step on cube16 cavity). The matrix-free
+        // CG path with Jacobi preconditioning (see solvePressureDDT) is
+        // the working production route. The Hypre wrappers still serve
+        // velocity solves and the K-path pressure solve, both of which
+        // are well-conditioned M-matrices where AMG works as designed.
+        //
+        // The diagnostic env MARS_DDT_USE_ASSEMBLED_CG=1 still runs the
+        // assembled-CG path so we can verify the assembled matrix equals
+        // the matrix-free apply bit-for-bit (useful when changing the
+        // DDT assembler). It only fires when --solver=cg.
         const char* useAsmEv = std::getenv("MARS_DDT_USE_ASSEMBLED_CG");
         bool useAssembledCG = (useAsmEv && std::string(useAsmEv) != "0")
                               && (s.solverKind == SolverKind::CG);
-        if (s.solverKind == SolverKind::Hypre || useAssembledCG)
+        if (useAssembledCG)
         {
             // DDT + (Hypre or assembled-CG): use the assembled DDT matrix
             // (s.AddT, built at setup). Build per-OWNED-DOF b exactly like the
@@ -4079,6 +4498,73 @@ void runPressureSolveStep(NSStepper<KeyType, RealType>& s, RealType dt, RealType
                 int dofBlocks = (s.numOwnedDofs + s.blockSize - 1) / s.blockSize;
                 enforcePressureBcRhsKernel<RealType><<<dofBlocks, s.blockSize>>>(
                     s.d_isPressureBdryDof.data(), b.data(), s.numOwnedDofs);
+                cudaDeviceSynchronize();
+            }
+            // RHS finiteness check. A non-finite entry here (e.g. a boundary
+            // node whose divergence went bad upstream) would, if fed into the
+            // SUM-Allreduce below, poison b on EVERY rank and make Hypre return
+            // a generic error. The masked reduce localizes the source instead
+            // of smearing NaN across the whole vector. Gated behind env so it
+            // costs nothing in production.
+            if (s.numOwnedDofs > 0 && std::getenv("MARS_DDT_RHS_TRACE"))
+            {
+                auto bp = thrust::device_pointer_cast(b.data());
+                long long localBad = thrust::transform_reduce(thrust::device,
+                    bp, bp + s.numOwnedDofs,
+                    [] __device__ (RealType v) -> long long {
+                        return isfinite(static_cast<double>(v)) ? 0LL : 1LL;
+                    }, 0LL, thrust::plus<long long>());
+                RealType localMax = thrust::transform_reduce(thrust::device,
+                    bp, bp + s.numOwnedDofs,
+                    [] __device__ (RealType v) -> RealType {
+                        double d = static_cast<double>(v);
+                        return isfinite(d) ? static_cast<RealType>(fabs(d)) : RealType(0);
+                    }, RealType(0), thrust::maximum<RealType>());
+                long long gBad = 0; RealType gMax = 0;
+                MPI_Datatype mpiR = std::is_same<RealType, double>::value ? MPI_DOUBLE : MPI_FLOAT;
+                MPI_Allreduce(&localBad, &gBad, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+                MPI_Allreduce(&localMax, &gMax, 1, mpiR, MPI_MAX, MPI_COMM_WORLD);
+                if (s.rank == 0)
+                    std::cout << "  [DDT-rhs] post-build owned-b: nonfinite=" << gBad
+                              << " |b|max(finite)=" << gMax << "\n";
+            }
+            // Null-space projection: subtract mean(b)*1 so b lies in range(A).
+            // Required ONLY for the pure-Neumann (periodic) operator, whose
+            // constant null mode makes A phi = b solvable iff sum(b)=0. For
+            // cavity (single Dirichlet pin) and channel/wing (Dirichlet outflow
+            // face) the pin/face already removes the constant mode, so the K
+            // path does NOT project there -- we match it exactly. Subtracting a
+            // global mean from a pinned system is both unnecessary and, when an
+            // upstream non-finite entry sneaks in, the mechanism that turned all
+            // of b into NaN on every rank. The sum still uses a finiteness mask
+            // as defense in depth.
+            if (s.bcKind == NSStepper<KeyType, RealType>::BCKind::Periodic
+                && s.numOwnedDofs > 0)
+            {
+                auto bp = thrust::device_pointer_cast(b.data());
+                RealType localSum = thrust::transform_reduce(thrust::device,
+                    bp, bp + s.numOwnedDofs,
+                    [] __device__ (RealType v) -> RealType {
+                        double d = static_cast<double>(v);
+                        return isfinite(d) ? static_cast<RealType>(d) : RealType(0);
+                    }, RealType(0), thrust::plus<RealType>());
+                RealType globalSum = 0;
+                long long localN = s.numOwnedDofs, globalN = 0;
+                MPI_Datatype mpiR = std::is_same<RealType, double>::value
+                                    ? MPI_DOUBLE : MPI_FLOAT;
+                MPI_Allreduce(&localSum, &globalSum, 1, mpiR, MPI_SUM, MPI_COMM_WORLD);
+                MPI_Allreduce(&localN,   &globalN,   1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+                if (globalN > 0)
+                {
+                    RealType mean = globalSum / RealType(globalN);
+                    thrust::transform(thrust::device, bp, bp + s.numOwnedDofs, bp,
+                                      [mean] __device__ (RealType v) { return v - mean; });
+                }
+            }
+            // Re-enforce the pin (RHS at pin must be 0).
+            if (s.pressurePinDof >= 0)
+            {
+                enforcePinRhsKernel<RealType><<<1, 1>>>(s.pressurePinDof, b.data());
                 cudaDeviceSynchronize();
             }
             cudaMemset(xVec.data(), 0, s.numTotalDofs * sizeof(RealType));
@@ -4166,14 +4652,17 @@ void runPressureSolveStep(NSStepper<KeyType, RealType>& s, RealType dt, RealType
 template<typename KeyType, typename RealType>
 void runCorrectorStep(NSStepper<KeyType, RealType>& s, RealType dt, RealType rho)
 {
-    const auto& d_nodeOwnership = s.domain.getNodeOwnershipMap();
+    const auto& d_nodeOwnership = s.ownershipMap();
     const auto& d_conn          = s.domain.getElementToNodeConnectivity();
     auto c0 = std::get<0>(d_conn).data(); auto c1 = std::get<1>(d_conn).data();
     auto c2 = std::get<2>(d_conn).data(); auto c3 = std::get<3>(d_conn).data();
     auto c4 = std::get<4>(d_conn).data(); auto c5 = std::get<5>(d_conn).data();
     auto c6 = std::get<6>(d_conn).data(); auto c7 = std::get<7>(d_conn).data();
-    const size_t startElem = s.domain.startIndex();
-    const size_t numLocal  = s.domain.localElementCount();
+    // Loop ALL elements (owned + halo) on per-element scatter so periodic-image
+    // halo elements contribute to shared boundary nodes; reverseExchangeNodeHaloAdd
+    // routes ghost contributions back to owners.
+    const size_t startElem = 0;
+    const size_t numLocal  = s.elementCount;
     const int nodeBlocks   = (s.nodeCount + s.blockSize - 1) / s.blockSize;
     const int eBlocks      = numLocal > 0 ? int((numLocal + s.blockSize - 1) / s.blockSize) : 0;
     const RealType invRho  = RealType(1) / rho;
@@ -4479,8 +4968,10 @@ inline void divMaxAndRmsOwned(NSStepper<KeyType, RealType>& s,
     auto c2 = std::get<2>(d_conn).data(); auto c3 = std::get<3>(d_conn).data();
     auto c4 = std::get<4>(d_conn).data(); auto c5 = std::get<5>(d_conn).data();
     auto c6 = std::get<6>(d_conn).data(); auto c7 = std::get<7>(d_conn).data();
-    size_t startElem = s.domain.startIndex();
-    size_t numLocal  = s.domain.localElementCount();
+    // Loop ALL elements (owned + halo) so periodic-image halo elements
+    // contribute; reverseExchangeNodeHaloAdd routes ghost contributions back.
+    size_t startElem = 0;
+    size_t numLocal  = s.elementCount;
     int eBlocks = numLocal > 0 ? int((numLocal + s.blockSize - 1) / s.blockSize) : 0;
     int nodeBlocks = (s.nodeCount + s.blockSize - 1) / s.blockSize;
 
@@ -4520,14 +5011,16 @@ void computeVorticityMagnitudePerNode(NSStepper<KeyType, RealType>& s,
                                       cstone::DeviceVector<RealType>& d_w,
                                       cstone::DeviceVector<RealType>& d_omegaMag)
 {
-    const auto& d_nodeOwnership = s.domain.getNodeOwnershipMap();
+    const auto& d_nodeOwnership = s.ownershipMap();
     const auto& d_conn          = s.domain.getElementToNodeConnectivity();
     auto c0 = std::get<0>(d_conn).data(); auto c1 = std::get<1>(d_conn).data();
     auto c2 = std::get<2>(d_conn).data(); auto c3 = std::get<3>(d_conn).data();
     auto c4 = std::get<4>(d_conn).data(); auto c5 = std::get<5>(d_conn).data();
     auto c6 = std::get<6>(d_conn).data(); auto c7 = std::get<7>(d_conn).data();
-    const size_t startElem = s.domain.startIndex();
-    const size_t numLocal  = s.domain.localElementCount();
+    // Loop ALL elements (owned + halo) so periodic-image halo elements
+    // contribute; reverseExchangeNodeHaloAdd routes ghost contributions back.
+    const size_t startElem = 0;
+    const size_t numLocal  = s.elementCount;
     const int nodeBlocks   = (s.nodeCount + s.blockSize - 1) / s.blockSize;
     const int eBlocks      = numLocal > 0 ? int((numLocal + s.blockSize - 1) / s.blockSize) : 0;
 
@@ -4604,42 +5097,50 @@ void runNsStep(NSStepper<KeyType, RealType>& s, RealType dt, RealType nu, RealTy
     bool dbg = (g_nsDebugStepsLeft > 0);
 
     // ENTRY: state of u^n, p^n before the step.
-    if (dbg && s.rank == 0)
+    // IMPORTANT: keOwned / divMaxAndRmsOwned / computeWeightedL2Norm all do an
+    // MPI_Allreduce internally. They MUST be called on EVERY rank or the
+    // collective deadlocks. Compute on all ranks; print only on rank 0.
+    // (maxAbsOwned is a local thrust reduce -- no collective -- so it can stay
+    // inside the rank-0 print.)
+    if (dbg)
     {
         RealType KE_n      = keOwned<KeyType, RealType>(s, s.d_u, s.d_v, s.d_w);
         RealType div_n_max = 0, div_n_rms = 0;
         divMaxAndRmsOwned<KeyType, RealType>(s, s.d_u, s.d_v, s.d_w, div_n_max, div_n_rms);
-        std::cout << "    [ns-dbg ENTRY] KE_n=" << std::scientific << std::setprecision(6) << KE_n
-                  << " |u_n|max=" << maxAbsOwned(s.d_u, s.nodeCount)
-                  << " |p_n|max=" << maxAbsOwned(s.d_p, s.nodeCount)
-                  << " div(u_n)max=" << div_n_max
-                  << " div(u_n)rms=" << div_n_rms << "\n";
+        if (s.rank == 0)
+            std::cout << "    [ns-dbg ENTRY] KE_n=" << std::scientific << std::setprecision(6) << KE_n
+                      << " |u_n|max=" << maxAbsOwned(s.d_u, s.nodeCount)
+                      << " |p_n|max=" << maxAbsOwned(s.d_p, s.nodeCount)
+                      << " div(u_n)max=" << div_n_max
+                      << " div(u_n)rms=" << div_n_rms << "\n";
     }
 
     runPredictorStep<KeyType, RealType>(s, dt, rho);
-    if (dbg && s.rank == 0)
+    if (dbg)
     {
         RealType KE_star      = keOwned<KeyType, RealType>(s, s.d_uStar, s.d_vStar, s.d_wStar);
         RealType div_star_max = 0, div_star_rms = 0;
         divMaxAndRmsOwned<KeyType, RealType>(s, s.d_uStar, s.d_vStar, s.d_wStar, div_star_max, div_star_rms);
-        std::cout << "    [ns-dbg PRED ] KE*=" << KE_star
-                  << " |u*|max="    << maxAbsOwned(s.d_uStar, s.nodeCount)
-                  << " |gP|max="    << maxAbsOwned(s.d_gradPx, s.nodeCount)
-                  << " div(u*)max=" << div_star_max
-                  << " div(u*)rms=" << div_star_rms << "\n";
+        if (s.rank == 0)
+            std::cout << "    [ns-dbg PRED ] KE*=" << KE_star
+                      << " |u*|max="    << maxAbsOwned(s.d_uStar, s.nodeCount)
+                      << " |gP|max="    << maxAbsOwned(s.d_gradPx, s.nodeCount)
+                      << " div(u*)max=" << div_star_max
+                      << " div(u*)rms=" << div_star_rms << "\n";
     }
 
     runImplicitDiffusionStep<KeyType, RealType>(s, dt);
-    if (dbg && s.rank == 0)
+    if (dbg)
     {
         RealType KE_ss      = keOwned<KeyType, RealType>(s, s.d_uStarStar, s.d_vStarStar, s.d_wStarStar);
         RealType div_ss_max = 0, div_ss_rms = 0;
         divMaxAndRmsOwned<KeyType, RealType>(s, s.d_uStarStar, s.d_vStarStar, s.d_wStarStar, div_ss_max, div_ss_rms);
-        std::cout << "    [ns-dbg DIFF ] KE**=" << KE_ss
-                  << " |u**|max="    << maxAbsOwned(s.d_uStarStar, s.nodeCount)
-                  << " div(u**)max=" << div_ss_max
-                  << " div(u**)rms=" << div_ss_rms
-                  << " cg_uvw="      << s.lastUIters << "/" << s.lastVIters << "/" << s.lastWIters << "\n";
+        if (s.rank == 0)
+            std::cout << "    [ns-dbg DIFF ] KE**=" << KE_ss
+                      << " |u**|max="    << maxAbsOwned(s.d_uStarStar, s.nodeCount)
+                      << " div(u**)max=" << div_ss_max
+                      << " div(u**)rms=" << div_ss_rms
+                      << " cg_uvw="      << s.lastUIters << "/" << s.lastVIters << "/" << s.lastWIters << "\n";
     }
 
     runPressureSolveStep<KeyType, RealType>(s, dt, rho);
@@ -4664,14 +5165,17 @@ void runNsStep(NSStepper<KeyType, RealType>& s, RealType dt, RealType nu, RealTy
     }
 
     runCorrectorStep<KeyType, RealType>(s, dt, rho);
-    if (dbg && s.rank == 0)
+    if (dbg)
     {
-        RealType KE_np1 = keOwned<KeyType, RealType>(s, s.d_u, s.d_v, s.d_w);
-        std::cout << "    [ns-dbg CORR ] KE_(n+1)=" << KE_np1
-                  << " |u_(n+1)|max=" << maxAbsOwned(s.d_u, s.nodeCount)
-                  << " |p_(n+1)|max=" << maxAbsOwned(s.d_p, s.nodeCount)
-                  << " div_max=" << s.lastDivMax << "\n";
-        std::cout << std::defaultfloat;
+        RealType KE_np1 = keOwned<KeyType, RealType>(s, s.d_u, s.d_v, s.d_w);   // collective: all ranks
+        if (s.rank == 0)
+        {
+            std::cout << "    [ns-dbg CORR ] KE_(n+1)=" << KE_np1
+                      << " |u_(n+1)|max=" << maxAbsOwned(s.d_u, s.nodeCount)
+                      << " |p_(n+1)|max=" << maxAbsOwned(s.d_p, s.nodeCount)
+                      << " div_max=" << s.lastDivMax << "\n";
+            std::cout << std::defaultfloat;
+        }
     }
 
     // BDF2 advection-history shuffle + bootstrap promotion.
@@ -4700,7 +5204,7 @@ template<typename KeyType, typename RealType>
 RealType computeWeightedL2Norm(NSStepper<KeyType, RealType>& s,
                                const cstone::DeviceVector<RealType>& d_q)
 {
-    const auto& d_nodeOwnership = s.domain.getNodeOwnershipMap();
+    const auto& d_nodeOwnership = s.ownershipMap();
     cstone::DeviceVector<RealType> d_sq(s.numOwnedDofs, RealType(0));
     thrust::for_each(thrust::device,
                       thrust::counting_iterator<size_t>(0),
