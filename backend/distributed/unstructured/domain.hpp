@@ -50,7 +50,6 @@ using std::get;
 #include "mars_read_mesh_binary.hpp"
 #include "mars_read_mfem_mesh.hpp"
 #include "mars_read_exodus_mesh.hpp"
-#include "backend/distributed/unstructured/fem/mars_periodic_collapse.hpp"
 
 namespace mars
 {
@@ -539,11 +538,6 @@ public:
     //
     // periodicBoxLo / periodicBoxHi: the periodic domain bounds. Required
     // when periodicAxesMask != 0; ignored otherwise.
-    //
-    // Multi-rank periodic currently requires MARS_NODEHALO_V2=0 (host
-    // fallback), because the device v2 peer discovery derives peers from
-    // cstone element halos and periodic-seam elements are at opposite
-    // ends of SFC order, so they're not in each other's element halos.
     ElementDomain(const std::string& meshFile, int rank, int numRanks, bool storeOriginalCoords = false,
                   int bucketSize = 64, unsigned bucketSizeFocus = 8,
                   int periodicAxesMask = 0,
@@ -1613,19 +1607,22 @@ ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(cons
     // boxLo on their periodic axis -- which is consistent with the periodic
     // box geometry.
     periodicAxesMask_ = periodicAxesMask;   // remember for AMR-resync box rebuilds
-    if (periodicAxesMask != 0) {
-        std::size_t shifted = mars::fem::collapsePeriodicCoordinatesInPlace<RealType>(
-            std::get<0>(h_coords), std::get<1>(h_coords), std::get<2>(h_coords),
-            periodicBoxLo, periodicBoxHi,
-            (periodicAxesMask & 1) != 0,
-            (periodicAxesMask & 2) != 0,
-            (periodicAxesMask & 4) != 0);
-        if (rank_ == 0) {
-            std::cout << "Periodic collapse (MFEM-style): " << shifted
-                      << " max-face vertex coords shifted to their periodic image. "
-                      << "cstone SFC dedup merges them; box set periodic so v2 "
-                      << "peer discovery finds cross-rank periodic neighbors." << std::endl;
-        }
+    // NOTE: we deliberately do NOT shift vertex coordinates here. Moving a
+    // max-face vertex to its min-face image makes the wrap-around CVFEM
+    // element geometrically degenerate (it would span the whole box
+    // backwards), corrupting the Jacobian / area vectors. Instead we keep
+    // coordinates real and only set the cstone Box to periodic (below).
+    // The periodic Box makes cstone's halo collision test periodic-aware
+    // (applyPbc), so each rank receives the opposite-face nodes as halo
+    // ghosts -- giving us cross-rank periodic communication for free.
+    // The periodic DOF identity (slave DOF == master DOF) is applied later
+    // in setupNSStepper via buildPeriodicMap, which finds the master among
+    // the local halo ghosts and relies on cstone's reverse-halo exchange
+    // for cross-rank accumulation.
+    if (periodicAxesMask != 0 && rank_ == 0) {
+        std::cout << "Periodic box: axes mask=" << periodicAxesMask
+                  << " (cstone Box set periodic; coords NOT shifted; DOF "
+                  << "identity handled in setupNSStepper)." << std::endl;
     }
 
     RealType theta = 0.5;

@@ -27,6 +27,7 @@ public:
         , tolerance_(tolerance)
         , verbose_(true)
         , haloExchangeCallback_(nullptr)
+        , spmvPostCallback_(nullptr)
     {
         // Initialize cuBLAS and cuSPARSE
         cublasCreate(&cublasHandle_);
@@ -137,6 +138,13 @@ public:
             // Ap = A * p
             spmv(A, p, Ap);
 
+            // Post-SpMV cross-rank coupling enforcement (periodic-pair Ap sync,
+            // etc). Without this, cross-rank periodic slave+master rows hold
+            // independent residual values and pAp can go negative.
+            if (spmvPostCallback_) {
+                spmvPostCallback_(Ap);
+            }
+
             // alpha = rho / (p^T Ap)
             RealType pAp   = dot(p, Ap);
             
@@ -210,6 +218,13 @@ public:
     // Set callback for halo exchange before SpMV (for distributed solves)
     void setHaloExchangeCallback(std::function<void(Vector&)> callback) {
         haloExchangeCallback_ = callback;
+    }
+
+    // Post-SpMV callback to enforce cross-rank coupling on Ap (e.g. periodic
+    // pairs whose slave and master live on different ranks: their two rows are
+    // independent equations and must be summed/synced for CG to converge).
+    void setSpmvPostCallback(std::function<void(Vector&)> callback) {
+        spmvPostCallback_ = callback;
     }
 
     // Set the number of locally-owned DOFs for distributed dot products.
@@ -396,6 +411,7 @@ private:
     int lastIterations_ = 0;
 
     std::function<void(Vector&)> haloExchangeCallback_;
+    std::function<void(Vector&)> spmvPostCallback_;
     int ownedSize_ = 0;  // > 0 enables MPI_Allreduce on dot products
 
     cublasHandle_t cublasHandle_;
