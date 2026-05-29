@@ -5,6 +5,7 @@
 #include <cublas_v2.h>
 #include <iostream>
 #include <cmath>
+#include <cstdlib>
 #include <functional>
 #include <mpi.h>
 #include <type_traits>
@@ -40,6 +41,12 @@ public:
         cusparseDestroy(cusparseHandle_);
     }
 
+    // Override the Jacobi diagonal for this solve. Pass a vector sized
+    // numOwnedDofs; the solve will use it instead of A.getDiagonal(). Caller
+    // is responsible for any cross-rank coupling fixups (e.g. periodic-pair
+    // sum on cross-rank seam DOFs). Cleared at the end of every solve().
+    void setPreconditionerDiagOverride(const Vector& diag) { diagOverride_ = &diag; }
+
     // Solve Ax = b for x with Jacobi preconditioning
     // Handles rectangular matrices (rows=owned DOFs, cols=owned+ghost DOFs)
     bool solve(const Matrix& A, const Vector& b, Vector& x)
@@ -47,8 +54,11 @@ public:
         size_t m = A.numRows();  // Number of owned DOFs (rows)
         size_t n = A.numCols();  // Number of local DOFs including ghosts (columns)
 
-        // Extract diagonal for preconditioner (only for owned DOFs)
-        Vector diag = A.getDiagonal();
+        // Extract diagonal for preconditioner (only for owned DOFs).
+        // If the caller provided an override (e.g. for cross-rank periodic
+        // diagonal sum), use that instead.
+        Vector diag = diagOverride_ ? *diagOverride_ : A.getDiagonal();
+        diagOverride_ = nullptr;  // single-shot override
         
         // Check for zero or very small diagonal entries
         thrust::host_vector<RealType> h_diag(diag.size());
@@ -127,6 +137,15 @@ public:
             std::cout << "Iteration : 0,   ||r||_B = " << z_norm_0 << ",   ||r||_2 = " << r_norm_0 << std::endl; 
         }
 
+        // Optional CG-state instrumentation: per-iter pAp / rho / alpha /
+        // ||r||. Enable with MARS_CG_TRACE=1. Used to debug multi-rank periodic
+        // pAp<=0 breakdowns -- see TGV_HANDOFF.md.
+        const bool cgTrace = (std::getenv("MARS_CG_TRACE") != nullptr);
+        int cgTraceRank = 0;
+        if (cgTrace) {
+            int rk; MPI_Comm_rank(MPI_COMM_WORLD, &rk); cgTraceRank = rk;
+        }
+
         // PCG iterations
         for (int iter = 0; iter < maxIter_; ++iter)
         {
@@ -134,7 +153,7 @@ public:
             if (haloExchangeCallback_) {
                 haloExchangeCallback_(p);
             }
-            
+
             // Ap = A * p
             spmv(A, p, Ap);
 
@@ -147,7 +166,20 @@ public:
 
             // alpha = rho / (p^T Ap)
             RealType pAp   = dot(p, Ap);
-            
+
+            // CG trace: dot(r,r) is an MPI_Allreduce -- ALL ranks must call it
+            // even though only rank 0 prints. Earlier version gated the dot
+            // inside the rank-0 print and deadlocked multi-rank periodic.
+            if (cgTrace) {
+                RealType r_norm = std::sqrt(dot(r, r));
+                if (cgTraceRank == 0) {
+                    std::cout << "  [cg-trace iter=" << iter
+                              << "] pAp=" << pAp
+                              << " rho=" << rho
+                              << " |r|=" << r_norm << std::endl;
+                }
+            }
+
             if (std::abs(pAp) < 1e-30) {
                 if (verbose_) {
                     std::cout << "CG: p^T Ap = " << pAp << " is too small, stopping." << std::endl;
@@ -155,7 +187,7 @@ public:
                 lastIterations_ = iter + 1;
                 return false;
             }
-            
+
             RealType alpha = rho / pAp;
 
             // x = x + alpha * p
@@ -412,6 +444,7 @@ private:
 
     std::function<void(Vector&)> haloExchangeCallback_;
     std::function<void(Vector&)> spmvPostCallback_;
+    const Vector* diagOverride_ = nullptr;  // single-shot override for Jacobi diagonal
     int ownedSize_ = 0;  // > 0 enables MPI_Allreduce on dot products
 
     cublasHandle_t cublasHandle_;

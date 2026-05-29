@@ -718,6 +718,8 @@ public:
     MARS_HOST_DEVICE
     const cstone::Box<RealType>& getBoundingBox() const { return box_; }
 
+    int getPeriodicAxesMask() const { return periodicAxesMask_; }
+
     // Start and end indices for local work assignment
     std::size_t startIndex() const { return domain_->startIndex(); }
     std::size_t endIndex() const { return domain_->endIndex(); }
@@ -786,6 +788,16 @@ public:
     {
         ensureHalo();
         return halo_->d_nodeOwnership_;
+    }
+
+    // Public accessor for the per-node halo topology. Needed by helpers that
+    // build cross-rank pair tables (e.g. periodic-pair MPI exchange) using
+    // cstone's discovered peer set + recv-node-id lists.
+    const NodeHaloTopology<ElementTag, RealType, KeyType, AcceleratorTag>&
+    getNodeHaloTopology() const
+    {
+        ensureNodeHaloTopo();
+        return *nodeHaloTopo_;
     }
 
     // getter for halo element indices (lazy)
