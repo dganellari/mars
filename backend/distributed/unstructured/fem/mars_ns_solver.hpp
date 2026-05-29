@@ -2899,7 +2899,8 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
                 int slave_node = h_sendIds[xr.sendOffsets_[pi] + k];
                 int master_ghost_node = h_partner[slave_node];
                 int slave_dof = h_n2d[slave_node];
-                int master_ghost_dof = h_n2d[master_ghost_node];
+                int master_ghost_dof = (master_ghost_node >= 0)
+                                       ? h_n2d[master_ghost_node] : -2;
                 if (slave_dof < 0 || slave_dof >= s.numOwnedDofs || master_ghost_dof < 0) continue;
                 int rs = h_rowPtr[slave_dof];
                 int re = h_rowPtr[slave_dof + 1];
@@ -2920,7 +2921,6 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
             for (int k = 0; k < std::min(nProbe, rCnt); ++k)
             {
                 int master_node = h_recvIds[xr.recvOffsets_[pi] + k];
-                int slave_ghost_node = h_partner[master_node]; // partner stored on master side too? probably -1
                 int master_dof = h_n2d[master_node];
                 if (master_dof < 0 || master_dof >= s.numOwnedDofs) continue;
                 // Walk the master row; pick the off-diagonal entry whose column is
@@ -2947,7 +2947,7 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
             // meaningful side for this check.
             if (sCnt > 0)
             {
-                std::cout << "[xr-symcheck rank " << s.rank
+                std::cerr << "[xr-symcheck rank " << s.rank
                           << " (slave-owner) <-> peer " << peer
                           << " (master-owner)] sCnt=" << sCnt
                           << " rCnt=" << rCnt
@@ -2960,7 +2960,7 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
                     int slave_dof = h_n2d[slave_node];
                     int master_ghost_dof = (master_ghost_node >= 0)
                                            ? h_n2d[master_ghost_node] : -2;
-                    std::cout << "  k=" << k
+                    std::cerr << "  k=" << k
                               << "  slave_node=" << slave_node
                               << " (dof=" << slave_dof << ")"
                               << "  master_ghost=" << master_ghost_node
@@ -2970,9 +2970,9 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
                               << "  diff=" << (sendVals[k] - peerMasterVals[k])
                               << std::endl;
                 }
-                std::cout.flush();
             }
         }
+        MPI_Barrier(xr.comm_);
     }
 
     // Pressure null-space removal.
