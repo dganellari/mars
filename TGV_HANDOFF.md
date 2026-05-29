@@ -272,3 +272,32 @@ srun --export=ALL,MARS_AMR_REUSE_DOMAIN=1 \
   --box-lo=0 --box-hi=1 --V0=1 --nu=0.05 --dt=1e-4 --num-steps=50 \
   --pressure-solve=DDT --skew=1
 ```
+
+---
+
+## 2026-05-29 update — cross-rank MPI exchange landed; CG breakdown root cause isolated
+
+Setup works on cube16/4-rank periodic: `[periodic-xr] peers=3 recv=323`, `[DBG mass] uniform 2.44e-04`, `Step 0 KE = 1.582e-01` (matches single-rank exactly).
+
+Velocity CG still diverges at step 1. `MARS_PERIODIC_XR_SYMCHECK=1` proves why:
+- `A[slave_row, master_ghost_col] = 0` on slave-owner ranks
+- `A[master_row, slave_ghost_col] != 0` on master-owner ranks
+
+Periodic-image halo elements on the slave-owner rank have 8 corners that are ALL ghosts (rank D's owned masters). NONE is rank A's owned slave node. So the sparsity builder never emits the `slave_dof → master_ghost_dof` edge. The matrix is structurally non-symmetric on the seam.
+
+Next session: pick one of
+- **(A) Sparsity surgery** — MPI-fetch master rows, inject matching values into slave rows. Architecturally correct, non-trivial.
+- **(B) Dirichlet-style slave row + post-solve patch** — `A[slave,:]=0, A[slave,slave]=1`, `b[slave]=0`, then `x[slave] = x[master]` via MPI after solve.
+- **(C) spmvPostCallback zeros `Ap[slave]` each iter + final exchange.** Lightest, no matrix surgery.
+
+Infrastructure for (B)/(C) is in this commit: `crossRankPeriodicPairSum[Dof]` in `mars_periodic_bc.hpp`, `setSpmvPostCallback` in `mars_cg_solver.hpp`.
+
+Test command for next session:
+```bash
+srun --export=ALL,MARS_AMR_REUSE_DOMAIN=1,MARS_PERIODIC_HALO_DBG=1,MARS_CG_TRACE=1,MARS_PERIODIC_XR_SYMCHECK=1 \
+  --account=csstaff --time=00:03:00 --nodes=1 --ntasks-per-node=4 ~/affinity/bind_numa.sh \
+  /capstor/scratch/cscs/gandanie/git/mars/daint-gpu/examples/distributed/unstructured/mars_tgv \
+  --mesh=/capstor/scratch/cscs/gandanie/git/mars/cube16.mesh \
+  --box-lo=0 --box-hi=1 --V0=1 --nu=0.05 --dt=1e-4 --num-steps=50 \
+  --pressure-solve=DDT --skew=1 2>&1 | grep -E "DBG mass|cg-trace|^Step|periodic-xr|xr-symcheck|cg_uvw"
+```
