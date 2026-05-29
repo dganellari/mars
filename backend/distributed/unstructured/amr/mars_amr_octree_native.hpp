@@ -36,6 +36,20 @@ __device__ KeyType computeElemSfc(const KeyType* nodeSfc,
     return k;
 }
 
+// 4-corner overload for tet.
+template<typename KeyType>
+__device__ KeyType computeElemSfcTet(const KeyType* nodeSfc,
+                                      const KeyType* conn0, const KeyType* conn1,
+                                      const KeyType* conn2, const KeyType* conn3,
+                                      size_t e)
+{
+    KeyType k = nodeSfc[conn0[e]];
+    KeyType k1 = nodeSfc[conn1[e]]; if (k1 < k) k = k1;
+    KeyType k2 = nodeSfc[conn2[e]]; if (k2 < k) k = k2;
+    KeyType k3 = nodeSfc[conn3[e]]; if (k3 < k) k = k3;
+    return k;
+}
+
 // Scatter per-element error to per-leaf max using atomic CAS
 // (atomicMax not available for double)
 template<typename KeyType, typename RealType>
@@ -55,6 +69,47 @@ __global__ void scatterErrorToLeavesKernel(const RealType* errorPerElement,
     if (e >= endIdx) return;
 
     KeyType key  = computeElemSfc(nodeSfc, conn0, conn1, conn2, conn3, conn4, conn5, conn6, conn7, e);
+    RealType err = errorPerElement[e];
+
+    size_t lo = 0, hi = numLeaves;
+    while (lo < hi)
+    {
+        size_t mid = (lo + hi) / 2;
+        if (treeLeaves[mid + 1] <= key) lo = mid + 1;
+        else hi = mid;
+    }
+
+    if (lo < numLeaves)
+    {
+        unsigned long long* addr = reinterpret_cast<unsigned long long*>(&leafError[lo]);
+        unsigned long long assumed, old_val;
+        old_val = *addr;
+        do
+        {
+            assumed          = old_val;
+            RealType old_err = __longlong_as_double(assumed);
+            if (err <= old_err) break;
+            old_val = atomicCAS(addr, assumed, __double_as_longlong(err));
+        } while (assumed != old_val);
+    }
+}
+
+// Tet variant of scatterErrorToLeavesKernel (4 corner nodes per element).
+template<typename KeyType, typename RealType>
+__global__ void scatterErrorToLeavesKernelTet(const RealType* errorPerElement,
+                                               const KeyType* nodeSfc,
+                                               const KeyType* conn0, const KeyType* conn1,
+                                               const KeyType* conn2, const KeyType* conn3,
+                                               const KeyType* treeLeaves,
+                                               size_t numLeaves,
+                                               RealType* leafError,
+                                               size_t startIdx,
+                                               size_t endIdx)
+{
+    size_t e = blockIdx.x * blockDim.x + threadIdx.x + startIdx;
+    if (e >= endIdx) return;
+
+    KeyType key  = computeElemSfcTet(nodeSfc, conn0, conn1, conn2, conn3, e);
     RealType err = errorPerElement[e];
 
     size_t lo = 0, hi = numLeaves;
@@ -153,6 +208,44 @@ __global__ void leafOpsToElementMarksKernel(const KeyType* nodeSfc,
     }
 }
 
+// Tet variant of leafOpsToElementMarksKernel (4 corner nodes per element).
+template<typename KeyType>
+__global__ void leafOpsToElementMarksKernelTet(const KeyType* nodeSfc,
+                                                const KeyType* conn0, const KeyType* conn1,
+                                                const KeyType* conn2, const KeyType* conn3,
+                                                const KeyType* treeLeaves,
+                                                const cstone::TreeNodeIndex* nodeOps,
+                                                size_t numLeaves,
+                                                uint8_t* elementMarks,
+                                                size_t startIdx,
+                                                size_t endIdx)
+{
+    size_t e = blockIdx.x * blockDim.x + threadIdx.x + startIdx;
+    if (e >= endIdx) return;
+
+    KeyType key = computeElemSfcTet(nodeSfc, conn0, conn1, conn2, conn3, e);
+
+    size_t lo = 0, hi = numLeaves;
+    while (lo < hi)
+    {
+        size_t mid = (lo + hi) / 2;
+        if (treeLeaves[mid + 1] <= key) lo = mid + 1;
+        else hi = mid;
+    }
+
+    if (lo < numLeaves)
+    {
+        cstone::TreeNodeIndex diff = nodeOps[lo + 1] - nodeOps[lo];
+        if (diff >= 8)      elementMarks[e] = 1;
+        else if (diff == 0) elementMarks[e] = 2;
+        else                elementMarks[e] = 0;
+    }
+    else
+    {
+        elementMarks[e] = 0;
+    }
+}
+
 // Octree-native AMR: the octree IS the AMR data structure.
 //
 // Flow:
@@ -218,14 +311,26 @@ public:
         int numBlocks = (localCount + config.blockSize - 1) / config.blockSize;
         if (numBlocks > 0)
         {
-            scatterErrorToLeavesKernel<KeyType, RealType><<<numBlocks, config.blockSize>>>(
-                d_errorPerElement, d_sfcMap.data(),
-                std::get<0>(d_conn).data(), std::get<1>(d_conn).data(),
-                std::get<2>(d_conn).data(), std::get<3>(d_conn).data(),
-                std::get<4>(d_conn).data(), std::get<5>(d_conn).data(),
-                std::get<6>(d_conn).data(), std::get<7>(d_conn).data(),
-                treeLeaves, numLeaves,
-                d_leafError.data(), startIdx, endIdx);
+            if constexpr (ElementTag::NodesPerElement == 8)
+            {
+                scatterErrorToLeavesKernel<KeyType, RealType><<<numBlocks, config.blockSize>>>(
+                    d_errorPerElement, d_sfcMap.data(),
+                    std::get<0>(d_conn).data(), std::get<1>(d_conn).data(),
+                    std::get<2>(d_conn).data(), std::get<3>(d_conn).data(),
+                    std::get<4>(d_conn).data(), std::get<5>(d_conn).data(),
+                    std::get<6>(d_conn).data(), std::get<7>(d_conn).data(),
+                    treeLeaves, numLeaves,
+                    d_leafError.data(), startIdx, endIdx);
+            }
+            else if constexpr (ElementTag::NodesPerElement == 4)
+            {
+                scatterErrorToLeavesKernelTet<KeyType, RealType><<<numBlocks, config.blockSize>>>(
+                    d_errorPerElement, d_sfcMap.data(),
+                    std::get<0>(d_conn).data(), std::get<1>(d_conn).data(),
+                    std::get<2>(d_conn).data(), std::get<3>(d_conn).data(),
+                    treeLeaves, numLeaves,
+                    d_leafError.data(), startIdx, endIdx);
+            }
             cudaDeviceSynchronize();
         }
 
@@ -279,14 +384,26 @@ public:
         cstone::DeviceVector<uint8_t> d_marks(numElements, 0);
         if (numBlocks > 0)
         {
-            leafOpsToElementMarksKernel<<<numBlocks, config.blockSize>>>(
-                d_sfcMap.data(),
-                std::get<0>(d_conn).data(), std::get<1>(d_conn).data(),
-                std::get<2>(d_conn).data(), std::get<3>(d_conn).data(),
-                std::get<4>(d_conn).data(), std::get<5>(d_conn).data(),
-                std::get<6>(d_conn).data(), std::get<7>(d_conn).data(),
-                treeLeaves, d_nodeOps.data(),
-                numLeaves, d_marks.data(), startIdx, endIdx);
+            if constexpr (ElementTag::NodesPerElement == 8)
+            {
+                leafOpsToElementMarksKernel<<<numBlocks, config.blockSize>>>(
+                    d_sfcMap.data(),
+                    std::get<0>(d_conn).data(), std::get<1>(d_conn).data(),
+                    std::get<2>(d_conn).data(), std::get<3>(d_conn).data(),
+                    std::get<4>(d_conn).data(), std::get<5>(d_conn).data(),
+                    std::get<6>(d_conn).data(), std::get<7>(d_conn).data(),
+                    treeLeaves, d_nodeOps.data(),
+                    numLeaves, d_marks.data(), startIdx, endIdx);
+            }
+            else if constexpr (ElementTag::NodesPerElement == 4)
+            {
+                leafOpsToElementMarksKernelTet<<<numBlocks, config.blockSize>>>(
+                    d_sfcMap.data(),
+                    std::get<0>(d_conn).data(), std::get<1>(d_conn).data(),
+                    std::get<2>(d_conn).data(), std::get<3>(d_conn).data(),
+                    treeLeaves, d_nodeOps.data(),
+                    numLeaves, d_marks.data(), startIdx, endIdx);
+            }
             cudaDeviceSynchronize();
         }
 
