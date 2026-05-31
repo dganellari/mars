@@ -1219,6 +1219,13 @@ void crossRankSumVelocityRows(const DomainT& domain,
     const auto& xr = map.cross_;
     if (numRanks <= 1 || xr.peers_.empty()) return;
 
+    // Cray-MPICH's CUDA-aware Alltoallv can leave the calling thread on a
+    // different device ordinal than the one MARS uses. Pin the device for
+    // the duration of this function and restore on return so downstream
+    // thrust kernels see the expected device.
+    int savedDevice = 0;
+    cudaGetDevice(&savedDevice);
+
     const size_t numNodes = domain.getNodeCount();
 
     // Stage CSR + dof maps + SFC map + ownership to host. One-shot, small.
@@ -1380,6 +1387,11 @@ void crossRankSumVelocityRows(const DomainT& domain,
     MPI_Alltoallv(sendValsFlat.data(), sendValCounts.data(), sendValDispls.data(), mpiRealType,
                   recvValsFlat.data(), recvValCounts.data(), recvValDispls.data(), mpiRealType,
                   comm);
+
+    // Restore the device ordinal in case Cray-MPICH switched it during the
+    // Alltoallv. Without this, the next thrust call (or DeviceVector ctor)
+    // fails with cudaErrorInvalidDevice on cray-mpich CUDA-aware builds.
+    cudaSetDevice(savedDevice);
 
     // Receiver: resolve each (master_key, col_key) -> (masterDof, colDof),
     // locate the slot in h_rowPtr/h_colInd, accumulate into a host slot->delta

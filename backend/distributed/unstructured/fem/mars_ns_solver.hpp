@@ -2346,6 +2346,8 @@ void assembleLaplacian(NSStepper<KeyType, RealType, ElementTag>& s,
     const auto& d_y = s.domain.getNodeY();
     const auto& d_z = s.domain.getNodeZ();
 
+    const uint8_t* effectiveOwnership = d_nodeOwnership.data();
+
     using MatrixT = CSRMatrix<RealType>;
     MatrixT* d_matrix;
     cudaMalloc(&d_matrix, sizeof(MatrixT));
@@ -2387,7 +2389,7 @@ void assembleLaplacian(NSStepper<KeyType, RealType, ElementTag>& s,
             d_gamma.data(), d_phi.data(), d_beta.data(),
             d_gphi_x.data(), d_gphi_y.data(), d_gphi_z.data(),
             d_mdot_zero.data(), s.d_areaVec_x.data(), s.d_areaVec_y.data(), s.d_areaVec_z.data(),
-            s.d_node_to_dof.data(), d_nodeOwnership.data(), d_matrix, d_rhs_unused.data(), config);
+            s.d_node_to_dof.data(), effectiveOwnership, d_matrix, d_rhs_unused.data(), config);
     }
     else
     {
@@ -2401,7 +2403,7 @@ void assembleLaplacian(NSStepper<KeyType, RealType, ElementTag>& s,
             d_gamma.data(), d_phi.data(), d_beta.data(),
             d_gphi_x.data(), d_gphi_y.data(), d_gphi_z.data(),
             d_mdot_zero.data(),
-            s.d_node_to_dof.data(), d_nodeOwnership.data(), d_matrix, d_rhs_unused.data(), tetConfig);
+            s.d_node_to_dof.data(), effectiveOwnership, d_matrix, d_rhs_unused.data(), tetConfig);
     }
     cudaDeviceSynchronize();
     cudaFree(d_matrix);
@@ -2696,29 +2698,32 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
         size_t nNodes        = s.nodeCount;
         int numOwned         = s.numOwnedDofs;
 
-        // Pass 1: redirect slave -> master DOF (UNCONDITIONAL).
-        // - Same-rank pair: master is locally owned, slave's DOF points at
-        //   master's owned DOF in [0, numOwned). Pass 2 marks the master DOF
-        //   live; the slave's original owned DOF becomes orphan (compacted out).
-        // - Cross-rank pair: master is a GHOST on this rank (delivered by
-        //   cstone's periodic-image halo). slave's DOF points at master's
-        //   GHOST DOF in [numOwned, numTotalDofs). Pass 2's "dof < numOwned"
-        //   check skips it -> slave's original owned DOF is orphan too.
-        //   numOwnedDofs drops to the truly-unique count.
-        //   The slave node now indirects through a ghost DOF, exactly the
-        //   single-rank pattern -- assembler doesn't need to know the seam is
-        //   periodic. cstone halo exchange syncs p[slave] = p[master_owned_on_D]
-        //   every iter via the existing per-DOF halo path. No row-zero / no
-        //   matrix exchange / no fold-to-diagonal needed.
+        // Pass 1: redirect slave -> master DOF ONLY for SAME-RANK pairs (both
+        // the slave and the master are locally owned). Cross-rank pairs (only
+        // one is owned, the other is a ghost via cstone's periodic-image halo)
+        // are NOT collapsed. Doing so would break the matrix symmetry:
+        //   - On rank A (slave owner, master is ghost): the slave row would
+        //     have a column for the master-ghost, but rank D's master row
+        //     would lose its column for the slave-ghost (because the redirect
+        //     maps slave-ghost-DOF back onto master-owned-DOF, eliminating
+        //     the off-diagonal slot).
+        //
+        // For cross-rank pairs, each owner keeps its own owned DOF and its
+        // own row. The slave-master identity is enforced post-solve via
+        // crossRankPeriodicBroadcastDof: x[slave_on_A] := x[master_owned_on_D].
+        // The matrix stays SPD with paired (slave,master) and (master,slave)
+        // off-diagonal entries on the two ranks.
         std::cerr << "[collapse-trace rank=" << s.rank << "] entering Pass 1, nNodes=" << nNodes << " numOwned=" << numOwned << std::endl;
         cstone::DeviceVector<int> d_oldDof(s.d_node_to_dof);
         thrust::for_each(thrust::device,
                          thrust::counting_iterator<size_t>(0),
                          thrust::counting_iterator<size_t>(nNodes),
-                         [d_partner, d_old = d_oldDof.data(), d_n2d]
+                         [d_partner, d_old = d_oldDof.data(), d_n2d, d_own]
                          __device__ (size_t i) {
                              int master = d_partner[i];
-                             if (master >= 0)
+                             // Same-rank pair only: BOTH the current node (slave)
+                             // and the master must be locally owned.
+                             if (master >= 0 && d_own[master] == 1 && d_own[i] == 1)
                                  d_n2d[i] = d_old[master];
                          });
         cudaDeviceSynchronize();
@@ -2873,53 +2878,9 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
     // ghost there). Without this MPI exchange the master row is missing
     // ~70% of its off-diagonal stiffness. One-shot at setup. No-op when
     // numRanks==1 or no cross-rank peers exist.
-    if (s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Periodic
-        && s.periodicMap != nullptr)
-    {
-        // crossRankSumVelocityRows reads d_dofToNode on the host to resolve
-        // column indices back to local-node ids. It's normally built later
-        // in setupNSStepper (around line ~3385) for the BC step. We need it
-        // here, before the cross-rank merge runs. The later rebuild is
-        // idempotent.
-        if (s.d_dofToNode.size() != size_t(s.numTotalDofs))
-        {
-            s.d_dofToNode.resize(s.numTotalDofs);
-            thrust::fill(thrust::device_pointer_cast(s.d_dofToNode.data()),
-                         thrust::device_pointer_cast(s.d_dofToNode.data() + s.numTotalDofs),
-                         -1);
-            int nodeBlocks = int((s.nodeCount + s.blockSize - 1) / s.blockSize);
-            buildDofToNodeKernel<<<nodeBlocks, s.blockSize>>>(
-                s.d_node_to_dof.data(), s.d_dofToNode.data(),
-                s.numTotalDofs, s.nodeCount);
-            cudaDeviceSynchronize();
-        }
-
-        crossRankSumVelocityRows<KeyType, RealType>(
-            s.domain, *s.periodicMap,
-            s.d_rowPtr, s.d_colInd, s.d_diagPtr, s.d_valuesVel,
-            s.d_dofToNode, s.d_node_to_dof,
-            s.numTotalDofs, s.numOwnedDofs,
-            s.rank, s.numRanks, MPI_COMM_WORLD);
-        pt.lap("cross-rank periodic Avel merge");
-    }
-
     // Pressure matrix: same K (no nu scale). Assemble into d_valuesPre.
     assembleLaplacian<KeyType, RealType, ElementTag>(s, s.d_node_to_dof, s.d_valuesPre, kernelVariant);
     pt.lap("assembly K (pressure)");
-
-    // Same seam fix for the pressure matrix (raw K, no nu). Pressure CG
-    // sees the same master-row gap if we don't ship slave-row stiffness.
-    if (s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Periodic
-        && s.periodicMap != nullptr)
-    {
-        crossRankSumVelocityRows<KeyType, RealType>(
-            s.domain, *s.periodicMap,
-            s.d_rowPtr, s.d_colInd, s.d_diagPtr, s.d_valuesPre,
-            s.d_dofToNode, s.d_node_to_dof,
-            s.numTotalDofs, s.numOwnedDofs,
-            s.rank, s.numRanks, MPI_COMM_WORLD);
-        pt.lap("cross-rank periodic Apre merge");
-    }
 
     // Lumped mass (per-node + reverse-halo). Identical to B.2/B.3/B.4 pattern.
     s.d_mass.resize(s.numOwnedDofs);
@@ -3622,23 +3583,16 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
         }
         else if (s.periodicMap != nullptr)
         {
-            // Slave-row Dirichlet identity. The slave row's stiffness was
-            // already shipped to the master-owner rank and accumulated into
-            // the master row by crossRankSumVelocityRows above (right after
-            // nu*K assembly), so overwriting the slave row here is safe.
-            // Local kernel, no collectives -- no-op on ranks where
-            // d_isPeriodicXRSlaveDof is all zeros.
-            enforceBcMatrixKernel<RealType><<<dofBlocks, s.blockSize>>>(
-                s.d_isPeriodicXRSlaveDof.data(),
-                s.d_rowPtr.data(), s.d_colInd.data(),
-                s.d_diagPtr.data(), s.d_valuesVel.data(), s.numOwnedDofs);
-            if (s.useBdf2 && s.d_valuesVel_bdf2.size() > 0)
-            {
-                enforceBcMatrixKernel<RealType><<<dofBlocks, s.blockSize>>>(
-                    s.d_isPeriodicXRSlaveDof.data(),
-                    s.d_rowPtr.data(), s.d_colInd.data(),
-                    s.d_diagPtr.data(), s.d_valuesVel_bdf2.data(), s.numOwnedDofs);
-            }
+            // Periodic, conditional-collapse design (pump-pattern): cross-rank
+            // slaves keep their own owned DOF. Their rows are real physics
+            // rows assembled in full from their owner's xmax-side elements.
+            // DO NOT row-zero them -- that would identity-Dirichlet the
+            // slave row to u[slave]=0 and kill the field.
+            //
+            // Slave-master identity is enforced at FIELD EXCHANGE time:
+            // crossRankPeriodicBroadcastDof post-solve copies the master's
+            // owned value into the slave's owned slot, and standard halo
+            // exchange syncs the ghost copies.
         }
         cudaDeviceSynchronize();
     }
@@ -5400,11 +5354,71 @@ int solvePressureDDT(NSStepper<KeyType, RealType, ElementTag>& s,
             if (v > 0) liveEvery = v;
         }
     }
+    // Use ASSEMBLED DDT CSR for the SpMV instead of the matrix-free
+    // applyDDTPerNode. The matrix-free op relies on field-level cross-rank
+    // sums (maybePeriodicSum on outAcc) that were designed for the OLD
+    // shared-DOF collapse and break SPD under the new conditional-collapse
+    // design where cross-rank slave/master are separate owned DOFs.
+    // The assembled CSR is built per-OWNED-row from local + halo elements
+    // and is symmetric by construction (atomic CSR scatter pattern in
+    // assembleDDTPerNodeKernel), so the multi-rank seam is captured via
+    // matrix entries + the standard halo-exchanged ghost p values.
+    const bool useAssembledDDT =
+        (s.nnzDDT > 0) && (s.d_valuesDDT.size() == size_t(s.nnzDDT))
+        && (s.d_rowPtrDDT.size() == size_t(s.numTotalDofs + 1))
+        && (s.d_dofToNode.size() == size_t(s.numTotalDofs));
     for (int it = 0; it < s.maxIter; ++it)
     {
         // Ghost slots of p must be valid: A's D^T reads p[L],p[R] at every face.
         s.domain.exchangeNodeHalo(p);
-        applyDDTPerNode<KeyType, RealType, ElementTag>(s, p, Ap, gx, gy, gz);
+        if (useAssembledDDT)
+        {
+            // Assembled SpMV in node-storage via node<->dof indirection.
+            // Ap[node_i] = sum_j values[j] * p[d_dofToNode[colInd[j]]]
+            // for every OWNED node i with d_node_to_dof[i] in [0, numOwnedDofs).
+            // For ghost / out-of-range nodes, Ap stays 0 (will be set by
+            // reverseExchangeNodeHaloAdd if needed, or left as zero since the
+            // dot product is owned-only).
+            thrust::fill(thrust::device_pointer_cast(Ap.data()),
+                         thrust::device_pointer_cast(Ap.data() + s.nodeCount),
+                         RealType(0));
+            const int* rpPtr = s.d_rowPtrDDT.data();
+            const int* ciPtr = s.d_colIndDDT.data();
+            const RealType* vPtr = s.d_valuesDDT.data();
+            const int* n2dPtr = s.d_node_to_dof.data();
+            const int* d2nPtr = s.d_dofToNode.data();
+            const uint8_t* ownPtr = d_nodeOwnership.data();
+            const RealType* pPtr = p.data();
+            RealType* ApPtr = Ap.data();
+            int nOwnedDofs = s.numOwnedDofs;
+            size_t nNodes = s.nodeCount;
+            thrust::for_each(thrust::device,
+                thrust::counting_iterator<size_t>(0),
+                thrust::counting_iterator<size_t>(nNodes),
+                [rpPtr, ciPtr, vPtr, n2dPtr, d2nPtr, ownPtr, pPtr, ApPtr, nOwnedDofs]
+                __device__ (size_t i)
+                {
+                    if (ownPtr[i] != 1) return;
+                    int dofI = n2dPtr[i];
+                    if (dofI < 0 || dofI >= nOwnedDofs) return;
+                    int rs = rpPtr[dofI], re = rpPtr[dofI + 1];
+                    RealType acc = RealType(0);
+                    for (int j = rs; j < re; ++j)
+                    {
+                        int colDof = ciPtr[j];
+                        if (colDof < 0) continue;
+                        int colNode = d2nPtr[colDof];
+                        if (colNode < 0) continue;
+                        acc += vPtr[j] * pPtr[colNode];
+                    }
+                    ApPtr[i] = acc;
+                });
+            cudaDeviceSynchronize();
+        }
+        else
+        {
+            applyDDTPerNode<KeyType, RealType, ElementTag>(s, p, Ap, gx, gy, gz);
+        }
 
         RealType pAp = ownedDot<RealType>(p, Ap, s.d_node_to_dof,
                                           d_nodeOwnership.data(), s.nodeCount);
@@ -5810,6 +5824,13 @@ void runPredictorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
             s.d_bjQmin.resize(s.nodeCount); s.d_bjQmax.resize(s.nodeCount); s.d_bjPhi.resize(s.nodeCount);
         }
 
+        // Green-Gauss node gradient grad(q) = (1/V_i) sum_f q_face*A_f, same
+        // pattern as grad(p): SCS-face scatter -> reverse-halo SUM -> periodic
+        // sum -> normalize by lumped mass -> forward-exchange so ghosts carry the
+        // owner gradient. (An edge-stencil LSQ gradient was tried; it did NOT
+        // change the multi-rank behaviour -- the blow-up was an explicit-BJ+EXT2
+        // CFL limit, not a gradient-stencil issue -- so the cheaper Green-Gauss
+        // form is kept.)
         auto computeNodeGradient = [&] (cstone::DeviceVector<RealType>& qField,
                                         cstone::DeviceVector<RealType>& gx,
                                         cstone::DeviceVector<RealType>& gy,
