@@ -301,3 +301,52 @@ srun --export=ALL,MARS_AMR_REUSE_DOMAIN=1,MARS_PERIODIC_HALO_DBG=1,MARS_CG_TRACE
   --box-lo=0 --box-hi=1 --V0=1 --nu=0.05 --dt=1e-4 --num-steps=50 \
   --pressure-solve=DDT --skew=1 2>&1 | grep -E "DBG mass|cg-trace|^Step|periodic-xr|xr-symcheck|cg_uvw"
 ```
+
+---
+
+## 2026-05-31 update — cross-rank DOF collapse implemented; one final fix left
+
+Committed: ec41ec9. Architectural cross-rank DOF collapse landed. Setup runs clean, no NaN/OOB. Velocity CG still returns -2 because master row's off-diagonal stiffness is ~30% of expected (avel-probe rank 0: nnzOff=5 vs expected 17, sumAbsOff=0.009 vs 0.04).
+
+Root cause: rank D's assembler skips the periodic-image-halo elements from rank A because none of their corners are rank-D-owned. With Pass-1 redirect, slave_ghost_on_D has nodeToDof=master_owned_dof_on_D, but the gate `if (ownership[i] == 0) continue` doesn't see that.
+
+**Fix for next session (one-line change in two files):**
+
+In `backend/distributed/unstructured/fem/mars_cvfem_hex_kernel.hpp:464` and `backend/distributed/unstructured/fem/mars_cvfem_hex_kernel_tensor.hpp:249`, relax the row-corner ownership gate from:
+```cpp
+if (ownership == 0 || row_dof < 0 || row_dof >= numOwnedRows) continue;
+```
+to:
+```cpp
+// Accept ownership==0 corners whose nodeToDof was redirected (via periodic
+// DOF collapse) to a LOCAL OWNED DOF. Lets rank D's periodic-image halo
+// elements scatter slave-side stiffness into the master row.
+if ((ownership == 0 && (row_dof < 0 || row_dof >= numOwnedRows))
+    || row_dof < 0
+    || row_dof >= numOwnedRows) continue;
+// Equivalent shorter form:
+// if (row_dof < 0 || row_dof >= numOwnedRows) continue;
+```
+The shorter form drops the `ownership` check entirely: any corner whose dof is a valid owned row is allowed through. Cross-rank slave_ghosts now scatter into the master row; ghost corners that don't map to a local owned DOF still get filtered by the `row_dof < 0 || row_dof >= numOwnedRows` bound.
+
+Test:
+```bash
+make -j40 mars_tgv
+srun --export=ALL,MARS_AMR_REUSE_DOMAIN=1,MARS_PERIODIC_AVEL_DBG=1,MARS_CG_TRACE=1 \
+  --account=csstaff --time=00:03:00 --nodes=1 --ntasks-per-node=4 ~/affinity/bind_numa.sh \
+  /capstor/scratch/cscs/gandanie/git/mars/daint-gpu/examples/distributed/unstructured/mars_tgv \
+  --mesh=/capstor/scratch/cscs/gandanie/git/mars/cube16.mesh \
+  --box-lo=0 --box-hi=1 --V0=1 --nu=0.05 --dt=1e-4 --num-steps=50 \
+  --pressure-solve=DDT --skew=1
+```
+Success: `[avel-probe rank 0]` shows `nnzOff ~ 17, sumAbsOff ~ 0.04`. CG converges with `cg_uvw=3-5/step`. KE decays smoothly from 0.158.
+
+Per-rank periodic DOF collapse counts (these are correct and verified):
+- rank 0: 81 → 1296 active
+- rank 1: 216 → 1008
+- rank 2: 344 → 952
+- rank 3: 176 → 840
+- total: 4096 (= 16³, truly unique)
+
+Diagnostics available via env vars (all one-shot, gated):
+`MARS_PERIODIC_HALO_DBG`, `MARS_PERIODIC_XR_CHECK`, `MARS_PERIODIC_XR_SYMCHECK`, `MARS_PERIODIC_PATHB_DBG`, `MARS_PERIODIC_AVEL_DBG`, `MARS_CG_TRACE`.
