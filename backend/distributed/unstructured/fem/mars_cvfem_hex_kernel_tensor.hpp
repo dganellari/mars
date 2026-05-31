@@ -240,13 +240,19 @@ __global__ void cvfem_hex_assembly_kernel_tensor(
     // ==========================================================================
     // Assemble into global CSR matrix
     // ==========================================================================
+    const int numOwnedRows = (matrix->numOwnedRows >= 0) ? matrix->numOwnedRows : matrix->numRows;
     #pragma unroll
     for (int i = 0; i < 8; ++i) {
         KeyType row_node = nodes[i];
         int row_dof = dofs[i];
         uint8_t ownership = own[i];
 
-        if (ownership == 0 || row_dof < 0) continue;
+        // See cvfem_hex_assembly_kernel for the row_dof >= numOwnedRows
+        // rationale: periodic DOF collapse can redirect an owned slave to a
+        // master ghost row that exists in CSR for addressability but is never
+        // solved/exchanged. The master rank assembles that stencil itself
+        // from its periodic-image halo elements.
+        if (ownership == 0 || row_dof < 0 || row_dof >= numOwnedRows) continue;
 
         // Assemble RHS
         atomicAdd(&d_rhs[row_dof], rhs[i]);

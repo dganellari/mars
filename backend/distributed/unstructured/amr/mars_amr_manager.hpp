@@ -245,7 +245,10 @@ public:
     };
     const InitTimings& initTimings() const { return initTimings_; }
 
-    void initialize(const std::string& meshFile, int rank, int numRanks)
+    void initialize(const std::string& meshFile, int rank, int numRanks,
+                    int periodicAxesMask = 0,
+                    RealType periodicBoxLo = RealType(0),
+                    RealType periodicBoxHi = RealType(0))
     {
         rank_     = rank;
         numRanks_ = numRanks;
@@ -263,7 +266,13 @@ public:
         // intermediate "Created bounding box" message that splits them in the
         // log, but we can't separate the times from outside without restructuring.
         // For now: keep them combined in domainSyncTimeMs; fileReadTimeMs stays 0.
-        domain_ = std::make_unique<Domain>(meshFile, rank, numRanks, true, config_.bucketSize);
+        // periodicAxesMask / periodicBoxLo / periodicBoxHi are threaded through
+        // to ElementDomain for MFEM-style mesh-level periodic identification.
+        domain_ = std::make_unique<Domain>(meshFile, rank, numRanks, true,
+                                            config_.bucketSize,
+                                            /*bucketSizeFocus*/ 8,
+                                            periodicAxesMask,
+                                            periodicBoxLo, periodicBoxHi);
         initTimings_.domainSyncTimeMs = lap();
 
         (void)domain_->getNodeOwnershipMap();   // builds HaloData + NodeHaloTopology

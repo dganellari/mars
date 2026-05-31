@@ -343,7 +343,15 @@ int main(int argc, char** argv)
     amrConfig.strategy         = mars::amr::MarkingStrategy::Doerfler;
 
     AmrManager<HexTag, KeyType, RealType> amr(amrConfig);
-    amr.initialize(meshFile, rank, numRanks);
+    // periodicAxesMask=7 sets the cstone Box periodic on all 3 axes (NO coord
+    // shift -- geometry stays real). This makes cstone deliver opposite-face
+    // nodes as halo ghosts, so buildPeriodicMap (below) finds each slave's
+    // master among the local ghosts and cstone's halo exchange accumulates
+    // the periodic contribution across ranks. Single-rank is unaffected
+    // (no ghosts; masters are local owned nodes, found the same way).
+    amr.initialize(meshFile, rank, numRanks,
+                   /*periodicAxesMask=*/ 7,
+                   RealType(boxLo), RealType(boxHi));
 
     auto& domain = amr.domain();
     size_t numNodes = domain.getNodeCount();
@@ -360,7 +368,7 @@ int main(int argc, char** argv)
     RealType faceEps = (boxHi - boxLo) * 1e-6;
     buildPeriodicMap<KeyType, RealType>(domain, pmap,
                                         boxLo, boxHi, boxLo, boxHi, boxLo, boxHi,
-                                        faceEps);
+                                        faceEps, MPI_COMM_WORLD);
     if (rank == 0) {
         std::cout << "Periodic map: " << pmap.numSlaves
                   << " slave nodes (on max-faces) linked to masters\n";
@@ -610,7 +618,7 @@ int main(int argc, char** argv)
         }
         buildPeriodicMap<KeyType, RealType>(newDomain, pmap,
                                             boxLo, boxHi, boxLo, boxHi, boxLo, boxHi,
-                                            faceEpsAmr);
+                                            faceEpsAmr, MPI_COMM_WORLD);
 
         // Rebuild NSStepper in place. NSStepper's copy/move-assign is deleted
         // (it contains thrust/cstone device vectors that don't support it),

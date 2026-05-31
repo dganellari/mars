@@ -6,13 +6,20 @@
 // computed from corner coords. Resulting element list has SFC keys consistent
 // with cstone's global octree refinement, so Domain::sync redistributes them
 // without ambiguity.
+//
+// Tet path: delegates to TetRefiner (Bey red refinement). One unified
+// OctreeAlignedRefine<KeyType, RealType, ElementTag> entry point.
 
+#include <array>
 #include <thrust/device_vector.h>
 #include <thrust/scan.h>
 #include <thrust/transform.h>
 #include "cstone/cuda/cuda_utils.hpp"
 #include "cstone/sfc/common.hpp"
 #include "cstone/sfc/sfc.hpp"
+#include "backend/distributed/unstructured/domain.hpp"   // HexTag, TetTag
+#include "mars_amr_tet_refine.hpp"
+#include "mars_amr_solution_transfer.hpp"   // SolutionTransfer::transferByParentageTet
 
 namespace mars
 {
@@ -223,20 +230,34 @@ __global__ void interpolateChildSolutionKernel(const KeyType* conn0,
         RealType(0.125) * (u[0] + u[1] + u[2] + u[3] + u[4] + u[5] + u[6] + u[7]);
 }
 
-// Top-level: refine local hex elements in-place on GPU. Returns new device-side
+// Top-level: refine local elements in-place on GPU. Returns new device-side
 // connectivity + coords ready to hand to ElementDomain device-data constructor.
-template<typename KeyType, typename RealType>
+// Templated on ElementTag so hex and tet share a Result shape (std::array of
+// NodesPerElement conn columns), with element-specific kernels behind the
+// scenes (emitChildHexesKernel for hex, TetRefiner::refine for tet).
+template<typename KeyType, typename RealType, typename ElementTag = HexTag>
 struct OctreeAlignedRefine
 {
+    static constexpr int NodesPerElement = ElementTag::NodesPerElement;
+
     struct Result
     {
-        cstone::DeviceVector<KeyType>  d_conn0, d_conn1, d_conn2, d_conn3;
-        cstone::DeviceVector<KeyType>  d_conn4, d_conn5, d_conn6, d_conn7;
+        std::array<cstone::DeviceVector<KeyType>, NodesPerElement> d_conn;
         cstone::DeviceVector<RealType> d_x, d_y, d_z;
         size_t numNodes    = 0;
         size_t numElements = 0;
+
+        // Reserved for tet parentage-based solution transfer (mars_amr_tet_refine).
+        // Hex path leaves these empty.
+        cstone::DeviceVector<uint64_t> d_edgeKeys;
+        cstone::DeviceVector<uint64_t> d_markedPrefix;
+        cstone::DeviceVector<uint8_t>  d_marks;
+        size_t numUniqueEdges = 0;
+        size_t numMarked      = 0;
+        size_t oldNumNodes    = 0;
     };
 
+    // Hex entry: takes 8 conn pointers, drives emitChildHexesKernel.
     static Result refineLocal(
         const KeyType* conn0, const KeyType* conn1, const KeyType* conn2, const KeyType* conn3,
         const KeyType* conn4, const KeyType* conn5, const KeyType* conn6, const KeyType* conn7,
@@ -279,12 +300,10 @@ struct OctreeAlignedRefine
         Result res;
         res.numElements = totalNewElements;
         res.numNodes    = numNodes + 19ULL * numMarked;
+        res.oldNumNodes = numNodes;
+        res.numMarked   = numMarked;
 
-        res.d_conn0.resize(totalNewElements); res.d_conn1.resize(totalNewElements);
-        res.d_conn2.resize(totalNewElements); res.d_conn3.resize(totalNewElements);
-        res.d_conn4.resize(totalNewElements); res.d_conn5.resize(totalNewElements);
-        res.d_conn6.resize(totalNewElements); res.d_conn7.resize(totalNewElements);
-
+        for (int i = 0; i < 8; ++i) res.d_conn[i].resize(totalNewElements);
         res.d_x.resize(res.numNodes); res.d_y.resize(res.numNodes); res.d_z.resize(res.numNodes);
 
         // Copy original node coords (positions [0, numNodes))
@@ -298,21 +317,47 @@ struct OctreeAlignedRefine
             nodeX, nodeY, nodeZ, marks,
             d_elemPrefix.data(), d_markedPrefix.data(),
             numElements, numNodes,
-            res.d_conn0.data(), res.d_conn1.data(), res.d_conn2.data(), res.d_conn3.data(),
-            res.d_conn4.data(), res.d_conn5.data(), res.d_conn6.data(), res.d_conn7.data(),
+            res.d_conn[0].data(), res.d_conn[1].data(), res.d_conn[2].data(), res.d_conn[3].data(),
+            res.d_conn[4].data(), res.d_conn[5].data(), res.d_conn[6].data(), res.d_conn[7].data(),
             res.d_x.data(), res.d_y.data(), res.d_z.data());
         cudaDeviceSynchronize();
         return res;
     }
 
-    // Interpolate a per-node solution field onto the refined node array.
-    // Output layout matches refineLocal's coord output:
-    //   newSol size = numNodes + 19*numMarked
-    //   [0, numNodes)   <- copied from oldSolution
-    //   [numNodes, ...) <- trilinear-interpolated at edge/face/body positions
-    //
-    // Caller must compute markedPrefix the same way as refineLocal (or call
-    // this immediately after refineLocal so the prefix array is consistent).
+    // Tet entry: takes 4 conn pointers, delegates to TetRefiner (Bey red refinement).
+    static Result refineLocal(
+        const KeyType* conn0, const KeyType* conn1, const KeyType* conn2, const KeyType* conn3,
+        const RealType* nodeX, const RealType* nodeY, const RealType* nodeZ,
+        const uint8_t* marks,
+        size_t numElements, size_t numNodes,
+        int blockSize = 256)
+    {
+        auto tetRes = TetRefiner<KeyType, RealType>::refine(
+            conn0, conn1, conn2, conn3, marks, numElements, nodeX, nodeY, nodeZ, numNodes, blockSize);
+
+        Result res;
+        res.numElements    = tetRes.numElements;
+        res.numNodes       = tetRes.numNodes;
+        res.oldNumNodes    = tetRes.oldNumNodes;
+        res.numMarked      = tetRes.numMarked;
+        res.numUniqueEdges = tetRes.numUniqueEdges;
+        res.d_x            = std::move(tetRes.d_x);
+        res.d_y            = std::move(tetRes.d_y);
+        res.d_z            = std::move(tetRes.d_z);
+        res.d_conn[0]      = std::move(tetRes.d_conn0);
+        res.d_conn[1]      = std::move(tetRes.d_conn1);
+        res.d_conn[2]      = std::move(tetRes.d_conn2);
+        res.d_conn[3]      = std::move(tetRes.d_conn3);
+        res.d_edgeKeys     = std::move(tetRes.d_edgeKeys);
+        res.d_markedPrefix = std::move(tetRes.d_markedPrefix);
+        res.d_marks        = std::move(tetRes.d_marks);
+        return res;
+    }
+
+    // Hex: trilinear interpolation of a per-node solution field at the 19
+    // new node positions per refined hex (edge mids + face centers + body).
+    // Output layout: [0, numNodes) copied; [numNodes, numNodes + 19*numMarked)
+    // interpolated.
     static void transferSolution(
         const KeyType* conn0, const KeyType* conn1, const KeyType* conn2, const KeyType* conn3,
         const KeyType* conn4, const KeyType* conn5, const KeyType* conn6, const KeyType* conn7,
@@ -353,6 +398,25 @@ struct OctreeAlignedRefine
             oldSolution, marks, d_markedPrefix.data(),
             numElements, numNodes, newSolution.data());
         cudaDeviceSynchronize();
+    }
+
+    // Tet: edge-midpoint solution transfer using the dedup'd edgeKeys from
+    // refineLocal's Result. Caller must pass the same Result here so the
+    // markedPrefix / edge dedup match what produced the new node layout.
+    static void transferSolution(
+        const KeyType* conn0, const KeyType* conn1, const KeyType* conn2, const KeyType* conn3,
+        const RealType* oldSolution,
+        const Result& refined,
+        size_t numElements,
+        cstone::DeviceVector<RealType>& newSolution,
+        int blockSize = 256)
+    {
+        newSolution = SolutionTransfer<KeyType, RealType>::transferByParentageTet(
+            conn0, conn1, conn2, conn3,
+            refined.d_marks.data(), numElements,
+            oldSolution, refined.oldNumNodes,
+            refined.d_edgeKeys.data(), refined.numUniqueEdges,
+            refined.numNodes, blockSize);
     }
 };
 

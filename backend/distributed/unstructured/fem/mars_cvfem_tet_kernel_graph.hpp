@@ -57,9 +57,9 @@ __global__ void cvfem_tet_assembly_kernel_graph(
     nodes[2] = d_conn2[elemIdx];
     nodes[3] = d_conn3[elemIdx];
 
-    double coords[nnodes][ndim];
-    double phi[nnodes], gamma[nnodes], beta[nnodes];
-    double grad_phi[nnodes][ndim];
+    RealType coords[nnodes][ndim];
+    RealType phi[nnodes], gamma[nnodes], beta[nnodes];
+    RealType grad_phi[nnodes][ndim];
     for (int n = 0; n < nnodes; ++n) {
         coords[n][0] = d_x[nodes[n]];
         coords[n][1] = d_y[nodes[n]];
@@ -72,48 +72,36 @@ __global__ void cvfem_tet_assembly_kernel_graph(
         grad_phi[n][2] = d_grad_phi_z[nodes[n]];
     }
 
-    // Jacobian: J[i][j] = sum_n coords[n][i] * dNdxi[n][j].
-    // dNdxi is constant for linear tet:
-    //   dNdxi[0] = (-1,-1,-1), dNdxi[1] = (1,0,0), dNdxi[2] = (0,1,0), dNdxi[3] = (0,0,1)
-    // so J[i][j] = coords[1][i]-coords[0][i] for j=0, etc.
-    double J[ndim][ndim];
-    for (int i = 0; i < ndim; ++i) {
-        J[i][0] = coords[1][i] - coords[0][i];
-        J[i][1] = coords[2][i] - coords[0][i];
-        J[i][2] = coords[3][i] - coords[0][i];
+    RealType det;
+    RealType dNdx[nnodes][ndim];
+    Tet4CVFEM::jacobian_and_dNdx<RealType>(coords, det, dNdx);
+
+    RealType lhs[nnodes * nnodes] = {RealType(0)};
+    RealType rhs[nnodes]          = {RealType(0)};
+
+    RealType vol_scale = fabs(det) / RealType(6);   // tet volume
+
+    // Diffusion: classical linear-tet stiffness K_ij = vol * gamma_elem *
+    // (dNdx_i . dNdx_j). dNdx is element-constant for a linear tet, so this
+    // is exact with a 1-point centroid rule (gamma at the centroid = mean of
+    // the 4 nodal gammas). Same operator as the full kernel; assembled once
+    // per element rather than per SCS. The graph CSR scatter below lumps any
+    // (i,j) entry missing from the reduced sparsity onto the diagonal, so a
+    // dense 4x4 stencil stays consistent (row-sum preserved).
+    RealType gamma_elem = RealType(0.25) * (gamma[0] + gamma[1] + gamma[2] + gamma[3]);
+    for (int i = 0; i < nnodes; ++i) {
+        for (int j = 0; j < nnodes; ++j) {
+            RealType k_ij = RealType(0);
+            for (int d = 0; d < ndim; ++d) k_ij += dNdx[i][d] * dNdx[j][d];
+            lhs[i * nnodes + j] += vol_scale * gamma_elem * k_ij;
+        }
     }
-    double det = J[0][0]*(J[1][1]*J[2][2] - J[1][2]*J[2][1])
-               - J[0][1]*(J[1][0]*J[2][2] - J[1][2]*J[2][0])
-               + J[0][2]*(J[1][0]*J[2][1] - J[1][1]*J[2][0]);
-    double inv_det = 1.0 / det;
-
-    double Jinv[ndim][ndim];
-    Jinv[0][0] = (J[1][1]*J[2][2] - J[1][2]*J[2][1]) * inv_det;
-    Jinv[0][1] = (J[0][2]*J[2][1] - J[0][1]*J[2][2]) * inv_det;
-    Jinv[0][2] = (J[0][1]*J[1][2] - J[0][2]*J[1][1]) * inv_det;
-    Jinv[1][0] = (J[1][2]*J[2][0] - J[1][0]*J[2][2]) * inv_det;
-    Jinv[1][1] = (J[0][0]*J[2][2] - J[0][2]*J[2][0]) * inv_det;
-    Jinv[1][2] = (J[0][2]*J[1][0] - J[0][0]*J[1][2]) * inv_det;
-    Jinv[2][0] = (J[1][0]*J[2][1] - J[1][1]*J[2][0]) * inv_det;
-    Jinv[2][1] = (J[0][1]*J[2][0] - J[0][0]*J[2][1]) * inv_det;
-    Jinv[2][2] = (J[0][0]*J[1][1] - J[0][1]*J[1][0]) * inv_det;
-
-    // Physical-space gradients: dN/dx = dN/dxi * Jinv.
-    // For linear tet, dNdx is constant per element.
-    double dNdx[nnodes][ndim];
-    // dNdxi[0] = (-1,-1,-1)
-    for (int d = 0; d < ndim; ++d) dNdx[0][d] = -Jinv[0][d] - Jinv[1][d] - Jinv[2][d];
-    // dNdxi[1] = (1,0,0)
-    for (int d = 0; d < ndim; ++d) dNdx[1][d] =  Jinv[0][d];
-    // dNdxi[2] = (0,1,0)
-    for (int d = 0; d < ndim; ++d) dNdx[2][d] =  Jinv[1][d];
-    // dNdxi[3] = (0,0,1)
-    for (int d = 0; d < ndim; ++d) dNdx[3][d] =  Jinv[2][d];
-
-    double lhs[nnodes * nnodes] = {0.0};
-    double rhs[nnodes]          = {0.0};
-
-    double vol_scale = fabs(det) / 6.0;   // tet volume
+    // Residual form: rhs -= K * phi (matches assembleFull; no-op when phi=0).
+    for (int i = 0; i < nnodes; ++i) {
+        RealType r = RealType(0);
+        for (int j = 0; j < nnodes; ++j) r += lhs[i * nnodes + j] * phi[j];
+        rhs[i] -= r;
+    }
 
     for (int ip = 0; ip < nscs; ++ip) {
         int nodeL, nodeR;
@@ -125,66 +113,46 @@ __global__ void cvfem_tet_assembly_kernel_graph(
         double N[nnodes];
         Tet4CVFEM::shape_fcn(xi, eta, zeta, N);
 
-        double gamma_ip = 0.0;
-        double coords_ip[ndim] = {0.0, 0.0, 0.0};
+        // coords_ip: SCS integration point, used by the advection deferred
+        // correction below. Diffusion is handled element-wise above, not here.
+        RealType coords_ip[ndim] = {RealType(0), RealType(0), RealType(0)};
         for (int n = 0; n < nnodes; ++n) {
-            gamma_ip += N[n] * gamma[n];
             for (int d = 0; d < ndim; ++d) coords_ip[d] += N[n] * coords[n][d];
         }
 
-        // Simplified SCS area vector: edge vector scaled by element volume / nscs.
-        double areaVec[ndim];
-        for (int d = 0; d < ndim; ++d) {
-            areaVec[d] = (coords[nodeR][d] - coords[nodeL][d]) * vol_scale / nscs;
-        }
-
-        double mdot = d_mdot[elemIdx * nscs + ip];
+        RealType mdot = d_mdot[elemIdx * nscs + ip];
 
         // Advection (upwind + deferred-correction matching the hex kernel pattern).
-        double phi_L = phi[nodeL];
-        double phi_R = phi[nodeR];
-        double phi_upwind, beta_upwind, dcorr = 0.0;
-        if (mdot > 0.0) {
+        RealType phi_L = phi[nodeL];
+        RealType phi_R = phi[nodeR];
+        RealType phi_upwind, beta_upwind, dcorr = RealType(0);
+        if (mdot > RealType(0)) {
             phi_upwind  = phi_L;
             beta_upwind = beta[nodeL];
             for (int d = 0; d < ndim; ++d) {
-                double dx = coords_ip[d] - coords[nodeL][d];
+                RealType dx = coords_ip[d] - coords[nodeL][d];
                 dcorr += grad_phi[nodeL][d] * dx;
             }
         } else {
             phi_upwind  = phi_R;
             beta_upwind = beta[nodeR];
             for (int d = 0; d < ndim; ++d) {
-                double dx = coords_ip[d] - coords[nodeR][d];
+                RealType dx = coords_ip[d] - coords[nodeR][d];
                 dcorr += grad_phi[nodeR][d] * dx;
             }
         }
         dcorr *= beta_upwind;
-        double adv_flux = mdot * (phi_upwind + dcorr);
+        RealType adv_flux = mdot * (phi_upwind + dcorr);
 
         rhs[nodeL] -= adv_flux;
         rhs[nodeR] += adv_flux;
 
-        double lhsfac_L = 0.5 * (mdot + fabs(mdot));
-        double lhsfac_R = 0.5 * (mdot - fabs(mdot));
+        RealType lhsfac_L = RealType(0.5) * (mdot + fabs(mdot));
+        RealType lhsfac_R = RealType(0.5) * (mdot - fabs(mdot));
         lhs[nodeL * nnodes + nodeL] += lhsfac_L;
         lhs[nodeR * nnodes + nodeL] -= lhsfac_L;
         lhs[nodeL * nnodes + nodeR] += lhsfac_R;
         lhs[nodeR * nnodes + nodeR] -= lhsfac_R;
-
-        // Diffusion: per-node contribution. dNdx is element-constant so
-        // hoist outside the SCS loop conceptually, but kept inside for
-        // structural parity with the hex kernel; cost is negligible (4 nodes).
-        for (int n = 0; n < nnodes; ++n) {
-            double diff_coeff = 0.0;
-            for (int d = 0; d < ndim; ++d) {
-                diff_coeff -= gamma_ip * dNdx[n][d] * areaVec[d];
-            }
-            lhs[nodeL * nnodes + n] += diff_coeff;
-            lhs[nodeR * nnodes + n] -= diff_coeff;
-            rhs[nodeL] -= diff_coeff * phi[n];
-            rhs[nodeR] += diff_coeff * phi[n];
-        }
     }
 
     // Scatter into CSR with graph-sparsity + diagonal lumping for missing entries.
@@ -196,7 +164,7 @@ __global__ void cvfem_tet_assembly_kernel_graph(
 
         atomicAdd(&d_rhs[row_dof], rhs[i]);
 
-        double diag_lump = 0.0;
+        RealType diag_lump = RealType(0);
         int start = matrix->rowPtr[row_dof];
         int end   = matrix->rowPtr[row_dof + 1];
 
@@ -205,7 +173,7 @@ __global__ void cvfem_tet_assembly_kernel_graph(
             int col_dof      = d_node_to_dof[col_node];
             if (col_dof < 0) continue;
 
-            double value = lhs[i * nnodes + j];
+            RealType value = lhs[i * nnodes + j];
             if (row_dof == col_dof) continue;
 
             bool found = false;
@@ -219,7 +187,7 @@ __global__ void cvfem_tet_assembly_kernel_graph(
             if (!found) diag_lump += value;
         }
 
-        double diag_value = lhs[i * nnodes + i] + diag_lump;
+        RealType diag_value = lhs[i * nnodes + i] + diag_lump;
         for (int k = start; k < end; ++k) {
             if (matrix->colInd[k] == row_dof) {
                 atomicAdd(&matrix->values[k], diag_value);
