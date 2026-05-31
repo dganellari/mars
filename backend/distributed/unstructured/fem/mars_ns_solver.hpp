@@ -1087,13 +1087,13 @@ __global__ void bjSeedMinMaxKernel(const RealType* q, RealType* qmin, RealType* 
 
 // Neighbor min/max over edge-connected nodes. For each SCS edge (iL,iR) push
 // the neighbor's value into this node's running min/max. After this scatter
-// qmin[i]/qmax[i] hold min/max of q over {i} U {edge neighbors of i}.
+// qmin[i]/qmax[i] hold min/max of q over {i} U {edge neighbors of i} that are
+// reachable from this rank's OWNED elements.
 //
-// Halo note: min/max must be published to ghosts with a FORWARD exchange
-// (exchangeNodeHalo), NOT reverseExchangeNodeHaloAdd -- the reverse path is a
-// SUM reduction and would corrupt a min/max. So we loop owned+halo elements
-// here (every face touching an owned node, including from ghost elements, is
-// visited) and then forward-exchange so ghosts carry the owner's bounds.
+// Halo: run over OWNED elements only; an owned boundary node's off-rank
+// neighbors are completed by reverseExchangeNodeHaloMin/Max in the caller (a
+// MIN/MAX fold -- the SUM-based reverse fold would corrupt min/max), then a
+// forward exchangeNodeHalo publishes the complete owner bounds to ghosts.
 template<typename KeyType, typename RealType, typename ElementTag = HexTag>
 __global__ void bjNeighborMinMaxScatterKernel(const KeyType* c0, const KeyType* c1,
                                               const KeyType* c2, const KeyType* c3,
@@ -2876,6 +2876,24 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
     if (s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Periodic
         && s.periodicMap != nullptr)
     {
+        // crossRankSumVelocityRows reads d_dofToNode on the host to resolve
+        // column indices back to local-node ids. It's normally built later
+        // in setupNSStepper (around line ~3385) for the BC step. We need it
+        // here, before the cross-rank merge runs. The later rebuild is
+        // idempotent.
+        if (s.d_dofToNode.size() != size_t(s.numTotalDofs))
+        {
+            s.d_dofToNode.resize(s.numTotalDofs);
+            thrust::fill(thrust::device_pointer_cast(s.d_dofToNode.data()),
+                         thrust::device_pointer_cast(s.d_dofToNode.data() + s.numTotalDofs),
+                         -1);
+            int nodeBlocks = int((s.nodeCount + s.blockSize - 1) / s.blockSize);
+            buildDofToNodeKernel<<<nodeBlocks, s.blockSize>>>(
+                s.d_node_to_dof.data(), s.d_dofToNode.data(),
+                s.numTotalDofs, s.nodeCount);
+            cudaDeviceSynchronize();
+        }
+
         crossRankSumVelocityRows<KeyType, RealType>(
             s.domain, *s.periodicMap,
             s.d_rowPtr, s.d_colInd, s.d_diagPtr, s.d_valuesVel,
@@ -4170,6 +4188,23 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
         // diagonal matrix-free from the SCS area vectors + node lumped mass,
         // matching the matrix-free applyDDTPerNode operator. Without this the
         // tet DDT CG runs unpreconditioned and stalls at the iter cap.
+        //
+        // HARD DEPENDENCY: this build reads s.d_areaVec_{x,y,z} (filled by
+        // precomputeTetAreaVectorsGpu) and s.d_massNode (filled by the lumped-
+        // mass step). Both run earlier in setupNSStepper, so they are populated
+        // here. If a future refactor moves this block ahead of either, the
+        // accumulator comes back all-zero -> floored to a constant 1.0 -> the
+        // Jacobi preconditioner becomes a no-op (useJacobi stays true but CG
+        // runs effectively un-preconditioned). Catch that at the source.
+        if (s.d_areaVec_x.size() != s.elementCount * ElemTraits<ElementTag>::ScsPerElem
+            || s.d_massNode.size() != s.nodeCount)
+        {
+            if (s.rank == 0)
+                std::cout << "[cg-ddt] WARNING: tet DDT diagonal build ran before its "
+                             "inputs were ready (areaVec/massNode unsized) -> Jacobi "
+                             "preconditioner will be a useless constant. Move this block "
+                             "AFTER the area-vector + lumped-mass steps.\n";
+        }
         s.d_diagDDT.resize(s.numOwnedDofs);
         thrust::fill(thrust::device_pointer_cast(s.d_diagDDT.data()),
                      thrust::device_pointer_cast(s.d_diagDDT.data() + s.numOwnedDofs),
@@ -5249,7 +5284,11 @@ int solvePressureDDT(NSStepper<KeyType, RealType, ElementTag>& s,
         if (!printedOnce)
         {
             std::cout << "[cg-ddt] preconditioner = "
-                      << (useJacobi ? "Jacobi (diag from s.d_valuesDDT)" : "NONE (un-precond)")
+                      << (useJacobi
+                          ? (std::is_same_v<ElementTag, TetTag>
+                             ? "Jacobi (diag from s.d_diagDDT; matrix-free area+mass)"
+                             : "Jacobi (diag from s.d_diagDDT; extracted from assembled s.d_valuesDDT)")
+                          : "NONE (un-precond)")
                       << "\n";
             if (useJacobi)
             {
@@ -5262,6 +5301,21 @@ int solvePressureDDT(NSStepper<KeyType, RealType, ElementTag>& s,
                 cudaMemcpy(&dmax, thrust::raw_pointer_cast(&*mm.second), sizeof(RealType), cudaMemcpyDeviceToHost);
                 std::cout << "[cg-ddt] cached diag range on rank 0: ["
                           << dmin << ", " << dmax << "]\n";
+                // A constant diagonal carries no per-DOF scaling: Jacobi then
+                // reduces to z = r / const, i.e. CG runs effectively
+                // UN-preconditioned even though useJacobi==true. For tet this
+                // means the matrix-free area+mass accumulator came back empty
+                // (all zero -> floored to 1.0): check that d_areaVec and
+                // d_massNode were populated before this build. Loud on purpose
+                // so the "preconditioner present but useless" state is never
+                // silent (it only shows up as a sluggish, high-iter solve).
+                if (dmin == dmax)
+                    std::cout << "[cg-ddt] WARNING: DDT Jacobi diagonal is CONSTANT ("
+                              << dmin << ") -> no per-DOF preconditioning; CG will be slow. "
+                              << (std::is_same_v<ElementTag, TetTag>
+                                  ? "Tet matrix-free diag accumulator was empty/uniform."
+                                  : "Assembled diag was empty/uniform.")
+                              << "\n";
             }
             printedOnce = true;
         }
@@ -5816,47 +5870,55 @@ void runPredictorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
                               cstone::DeviceVector<RealType>& gradQz)
     {
         // Barth-Jespersen per-component limiter: neighbor min/max over edge
-        // neighbors (loop owned+halo so ghost-element faces are seen), then phi.
-        // Must finish + forward-exchange BEFORE the flux kernel reads them.
+        // neighbors (owned scatter + reverse MIN/MAX fold for the cross-rank
+        // ring), then phi. Must finish + be published to ghosts BEFORE the flux
+        // kernel reads phi[up]/grad[up] (up may be a ghost on a rank boundary).
         if (bjMode)
         {
-            // min/max scatter sweeps ALL elements [0, getElementCount()) =
-            // local + halos (cornerstone places halos before and/or after the
-            // owned range), so every face touching an owned node is counted and
-            // the forward exchange can publish owner bounds to ghosts.
-            const size_t allStart = 0;
-            const size_t allElems = s.domain.getElementCount();
-            const int allEBlocks  = allElems > 0 ? int((allElems + s.blockSize - 1) / s.blockSize) : 0;
-
             bjSeedMinMaxKernel<RealType><<<nodeBlocks, s.blockSize>>>(
                 qN.data(), s.d_bjQmin.data(), s.d_bjQmax.data(), s.nodeCount);
             cudaDeviceSynchronize();
-            if (allEBlocks > 0)
+            // Scatter over OWNED elements only. An owned boundary node's full
+            // edge-neighbor ring is completed across ranks by the reverse
+            // min/max fold below -- exactly as the gradient/divergence use the
+            // reverse SUM fold. (Looping the cstone element halo here would
+            // STILL miss corner-only off-rank neighbors, so it is both
+            // insufficient and a double-count risk; the reverse fold is the
+            // correct mechanism.)
+            if (eBlocks > 0)
             {
-                bjNeighborMinMaxScatterKernel<KeyType, RealType, ElementTag><<<allEBlocks, s.blockSize>>>(
+                bjNeighborMinMaxScatterKernel<KeyType, RealType, ElementTag><<<eBlocks, s.blockSize>>>(
                     c0, c1, c2, c3, c4, c5, c6, c7,
                     qN.data(), s.d_bjQmin.data(), s.d_bjQmax.data(),
-                    allStart, allElems);
+                    startElem, numLocal);
                 cudaDeviceSynchronize();
             }
-            // Forward (not reverse): min/max is not a SUM, so publish owner
-            // bounds to ghosts via the forward halo. (Owned nodes already saw
-            // every incident face above, including from ghost elements.)
+            // Reduce each owner's bounds across all ranks holding the node as a
+            // ghost (MIN for qmin, MAX for qmax) -- this is the cross-rank
+            // completion the forward exchange cannot do -- THEN publish the
+            // complete owner bounds to ghosts. Without this fold the limiter is
+            // too permissive at rank boundaries and the reconstruction overshoots
+            // (multi-rank blow-up).
+            s.domain.reverseExchangeNodeHaloMin(s.d_bjQmin);
+            s.domain.reverseExchangeNodeHaloMax(s.d_bjQmax);
             s.domain.exchangeNodeHalo(s.d_bjQmin);
             s.domain.exchangeNodeHalo(s.d_bjQmax);
 
             bjSeedPhiKernel<RealType><<<nodeBlocks, s.blockSize>>>(s.d_bjPhi.data(), s.nodeCount);
             cudaDeviceSynchronize();
-            if (allEBlocks > 0)
+            if (eBlocks > 0)
             {
-                bjLimiterScatterKernel<KeyType, RealType, ElementTag><<<allEBlocks, s.blockSize>>>(
+                bjLimiterScatterKernel<KeyType, RealType, ElementTag><<<eBlocks, s.blockSize>>>(
                     c0, c1, c2, c3, c4, c5, c6, c7,
                     qN.data(), s.d_bjQmin.data(), s.d_bjQmax.data(),
                     gradQx.data(), gradQy.data(), gradQz.data(),
                     d_bjNodeX.data(), d_bjNodeY.data(), d_bjNodeZ.data(),
-                    s.d_bjPhi.data(), allStart, allElems);
+                    s.d_bjPhi.data(), startElem, numLocal);
                 cudaDeviceSynchronize();
             }
+            // phi is a per-node MIN over incident faces; an owned boundary node's
+            // off-rank faces are folded in with reverse-MIN, then published.
+            s.domain.reverseExchangeNodeHaloMin(s.d_bjPhi);
             s.domain.exchangeNodeHalo(s.d_bjPhi);
         }
 
