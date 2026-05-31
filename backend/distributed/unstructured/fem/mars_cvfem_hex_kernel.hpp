@@ -15,6 +15,14 @@ struct CSRMatrix {
     int* diagPtr;   // Direct pointer to diagonal position for each row
     int numRows;
     int nnz;
+    // Only rows in [0, numOwnedRows) are solved + halo-exchanged. Rows in
+    // [numOwnedRows, numRows) exist for ghost addressability (matrix is
+    // sized for numTotalDofs so column indices into ghosts are valid), but
+    // scatters into them are silent leaks: they're never solved and never
+    // sent. Periodic DOF collapse can redirect a slave row_dof to a master
+    // ghost in this range — kernels MUST skip such rows. Defaults to numRows
+    // so non-distributed/legacy call sites keep their current behavior.
+    int numOwnedRows = -1;
 
     __device__ void addValue(int row, int col, RealType val) {
         int start = rowPtr[row];
@@ -455,13 +463,19 @@ __global__ void cvfem_hex_assembly_kernel(
     //======================================
     // ASSEMBLE INTO GLOBAL SYSTEM
     //======================================
+    const int numOwnedRows = (matrix->numOwnedRows >= 0) ? matrix->numOwnedRows : matrix->numRows;
     for (int i = 0; i < 8; ++i) {
         KeyType row_node = nodes[i];
         int row_dof = d_node_to_dof[row_node];
         uint8_t ownership = d_ownership[row_node];
 
-        // Skip ghost nodes (SFC-ownership 0 means this rank does not own this DOF)
-        if (ownership == 0 || row_dof < 0) continue;
+        // Skip ghost nodes (SFC-ownership 0 means this rank does not own this DOF).
+        // Also skip rows redirected past the owned range by periodic DOF collapse:
+        // a slave node with ownership==1 can have row_dof >= numOwnedRows (master
+        // is a cross-rank ghost). Scattering there silently leaks because that
+        // row is never solved nor halo-exchanged. The corresponding stencil is
+        // assembled on the master rank from its periodic-image halo elements.
+        if (ownership == 0 || row_dof < 0 || row_dof >= numOwnedRows) continue;
 
         // Assemble RHS
         atomicAdd(&d_rhs[row_dof], rhs[i]);

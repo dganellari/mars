@@ -60,20 +60,68 @@ public:
         Vector diag = diagOverride_ ? *diagOverride_ : A.getDiagonal();
         diagOverride_ = nullptr;  // single-shot override
         
-        // Check for zero or very small diagonal entries
+        // Check for zero or very small diagonal entries + clip tiny diagonals
+        // to a fraction of max(diag). Without the clip, anisotropic meshes
+        // (e.g. wing-tip boundary-layer cells where the velocity matrix has
+        // 5+ OOM diag spread) cause the Jacobi step z = r/diag to amplify
+        // residuals at tiny-diag rows by ~max/min => biases the CG search
+        // direction and slows convergence to maxIter on wing (validated this
+        // session via MARS_CG_DIAG: exit=MAXITER with pAp positive). Same
+        // class of fix as MARS_DDT_JACOBI_CLIP_FRAC on the DDT operator.
+        // Env override: MARS_CG_JACOBI_CLIP_FRAC=F sets clip = F * max(diag).
+        // Default 1e-3 (PETSc/Hypre standard fraction). 0 disables.
         thrust::host_vector<RealType> h_diag(diag.size());
         thrust::copy(thrust::device_pointer_cast(diag.data()),
                     thrust::device_pointer_cast(diag.data() + diag.size()),
                     h_diag.begin());
-        
+
+        RealType localMax = RealType(0);
+        for (size_t i = 0; i < h_diag.size(); ++i) {
+            RealType ad = std::abs(h_diag[i]);
+            if (ad > localMax) localMax = ad;
+        }
+        RealType globalMax = localMax;
+        {
+            int worldSize = 1;
+            MPI_Comm_size(MPI_COMM_WORLD, &worldSize);
+            if (worldSize > 1) {
+                MPI_Datatype mpiR = std::is_same<RealType, double>::value
+                                    ? MPI_DOUBLE : MPI_FLOAT;
+                MPI_Allreduce(&localMax, &globalMax, 1, mpiR, MPI_MAX, MPI_COMM_WORLD);
+            }
+        }
+        RealType clipFrac = RealType(1e-3);
+        {
+            const char* ev = std::getenv("MARS_CG_JACOBI_CLIP_FRAC");
+            if (ev) { double v = std::atof(ev); if (v >= 0) clipFrac = RealType(v); }
+        }
+        RealType clipFloor = clipFrac * globalMax;
         for (size_t i = 0; i < h_diag.size(); ++i) {
             if (std::abs(h_diag[i]) < 1e-14) {
                 h_diag[i] = 1.0;  // Avoid division by zero
+            } else if (h_diag[i] > 0 && h_diag[i] < clipFloor) {
+                h_diag[i] = clipFloor;  // Clip tiny positive diagonals
+            } else if (h_diag[i] < 0 && h_diag[i] > -clipFloor) {
+                h_diag[i] = -clipFloor;
             }
         }
-        
+
         thrust::copy(h_diag.begin(), h_diag.end(),
                     thrust::device_pointer_cast(diag.data()));
+        // One-shot diagnostic to know what got clipped on the first solve.
+        {
+            static bool clipDiagFired = false;
+            const char* ev = std::getenv("MARS_CG_DIAG");
+            if (ev && !clipDiagFired) {
+                int rk = 0; MPI_Comm_rank(MPI_COMM_WORLD, &rk);
+                if (rk == 0) {
+                    std::cout << "[cg-jacobi-clip] max_diag=" << globalMax
+                              << " clip_frac=" << clipFrac
+                              << " clip_floor=" << clipFloor << std::endl;
+                }
+                clipDiagFired = true;
+            }
+        }
         
         // Allocate work vectors
         // r, z, Ap are size m (owned DOFs only)
@@ -146,6 +194,20 @@ public:
             int rk; MPI_Comm_rank(MPI_COMM_WORLD, &rk); cgTraceRank = rk;
         }
 
+        // MARS_CG_DIAG: rank-0 single-line summary on the FIRST call only.
+        // Prints b_norm, r0_norm, pAp at iter 0, exit reason, and final iters.
+        // Used to classify why cg_iter_uvw=FAIL on the wing-tip mesh -- whether
+        // it is pAp<1e-30 breakdown (non-SPD / asymmetric BC), max-iter (slow
+        // convergence), or trivial early-exit. No behavior change when env unset.
+        const bool cgDiag = (std::getenv("MARS_CG_DIAG") != nullptr);
+        static bool cgDiagFired = false;
+        const bool cgDiagActive = cgDiag && !cgDiagFired;
+        int cgDiagRank = 0;
+        if (cgDiagActive) { MPI_Comm_rank(MPI_COMM_WORLD, &cgDiagRank); }
+        RealType cgDiagPAp0 = 0;
+        const RealType cgDiagR0 = r_norm_0;
+        const RealType cgDiagB  = b_norm;
+
         // PCG iterations
         for (int iter = 0; iter < maxIter_; ++iter)
         {
@@ -166,6 +228,7 @@ public:
 
             // alpha = rho / (p^T Ap)
             RealType pAp   = dot(p, Ap);
+            if (cgDiagActive && iter == 0) { cgDiagPAp0 = pAp; }
 
             // CG trace: dot(r,r) is an MPI_Allreduce -- ALL ranks must call it
             // even though only rank 0 prints. Earlier version gated the dot
@@ -183,6 +246,14 @@ public:
             if (std::abs(pAp) < 1e-30) {
                 if (verbose_) {
                     std::cout << "CG: p^T Ap = " << pAp << " is too small, stopping." << std::endl;
+                }
+                if (cgDiagActive && cgDiagRank == 0) {
+                    std::cout << "[cg-diag] b_norm=" << cgDiagB
+                              << " r0_norm=" << cgDiagR0
+                              << " pAp_iter0=" << cgDiagPAp0
+                              << " pAp_now=" << pAp
+                              << " exit=PAPSMALL iters=" << (iter+1) << std::endl;
+                    cgDiagFired = true;
                 }
                 lastIterations_ = iter + 1;
                 return false;
@@ -220,6 +291,14 @@ public:
                     RealType avg_reduction = std::pow(r_norm / r_norm_0, 1.0 / (iter + 1));
                     std::cout << "Average reduction factor = " << avg_reduction << std::endl;
                 }
+                if (cgDiagActive && cgDiagRank == 0) {
+                    std::cout << "[cg-diag] b_norm=" << cgDiagB
+                              << " r0_norm=" << cgDiagR0
+                              << " pAp_iter0=" << cgDiagPAp0
+                              << " final_r=" << r_norm
+                              << " exit=CONVERGED iters=" << (iter+1) << std::endl;
+                    cgDiagFired = true;
+                }
                 lastIterations_ = iter + 1;
                 return true;
             }
@@ -235,6 +314,13 @@ public:
         }
 
         if (verbose_) { std::cout << "CG did not converge in " << maxIter_ << " iterations" << std::endl; }
+        if (cgDiagActive && cgDiagRank == 0) {
+            std::cout << "[cg-diag] b_norm=" << cgDiagB
+                      << " r0_norm=" << cgDiagR0
+                      << " pAp_iter0=" << cgDiagPAp0
+                      << " exit=MAXITER iters=" << maxIter_ << std::endl;
+            cgDiagFired = true;
+        }
         lastIterations_ = maxIter_;
         return false;
     }

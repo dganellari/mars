@@ -326,11 +326,19 @@ __global__ void periodicBroadcastKernel(const int* d_partner, size_t numNodes,
 // slave's DOF value tracks its master's DOF value every iteration. Without
 // this, the multi-rank velocity CG references unsynced periodic-ghost DOF
 // columns inside A*p and breaks down (pAp<=0 -> NaN).
+//
+// Path-B addition: d_skipMask (sized numOwnedDofs, can be nullptr) lets the
+// caller exclude DOFs from the broadcast. Used by the velocity CG to keep
+// p[slave_owned_dof] = 0 for cross-rank slaves whose row is now a Dirichlet
+// identity; otherwise the broadcast would set p[slave]=p[master_ghost]!=0 and
+// reintroduce the spurious row coupling we just removed.
 template<typename RealType>
 __global__ void periodicBroadcastDofKernel(const int* d_partner,
                                            const int* d_nodeToDof,
                                            size_t numNodes,
-                                           RealType* d_dofField)
+                                           RealType* d_dofField,
+                                           const uint8_t* d_skipMask = nullptr,
+                                           int numOwnedDofs = 0)
 {
     size_t i = size_t(blockIdx.x) * blockDim.x + threadIdx.x;
     if (i >= numNodes) return;
@@ -340,6 +348,7 @@ __global__ void periodicBroadcastDofKernel(const int* d_partner,
     int mdof = d_nodeToDof[master];
     if (sdof < 0 || mdof < 0) return;
     if (sdof == mdof) return;   // already collapsed (same-rank pair)
+    if (d_skipMask != nullptr && sdof < numOwnedDofs && d_skipMask[sdof]) return;
     d_dofField[sdof] = d_dofField[mdof];
 }
 
@@ -1086,6 +1095,387 @@ void crossRankPeriodicPairSumDof(const PeriodicMap<KeyType, RealType>& map,
             xr.sendBuf_.data(), d_dof_field.data(), sendTotal);
         cudaDeviceSynchronize();
     }
+}
+
+// Path-B per-DOF master->slave overwrite (single leg of crossRankPeriodicPairSumDof).
+// Used after CG converges to restore x[slave_owned_dof_on_A] = x[master_owned_dof_on_D]
+// via a single Isend/Irecv round-trip. No accumulation, no zeroing -- just an
+// overwrite from the master's current value on its owner rank. No-op when
+// xr.peers_.empty() (single-rank or no cross-rank pairs).
+template<typename KeyType, typename RealType>
+void crossRankPeriodicBroadcastDof(const PeriodicMap<KeyType, RealType>& map,
+                                   const int* d_nodeToDof,
+                                   cstone::DeviceVector<RealType>& d_dof_field)
+{
+    const auto& xr = map.cross_;
+    if (xr.peers_.empty()) return;
+
+    auto mpiType = std::is_same_v<RealType, double> ? MPI_DOUBLE : MPI_FLOAT;
+    const int numPeers = int(xr.peers_.size());
+    int sendTotal = xr.sendOffsets_.back();
+    int recvTotal = xr.recvOffsets_.back();
+
+    // Pack master values into recvBuf_ (one slot per local-owned master dof).
+    if (recvTotal > 0)
+    {
+        int blk = 256, grd = (recvTotal + blk - 1) / blk;
+        packCrossRankSendDofKernel<RealType><<<grd, blk>>>(
+            xr.d_recvOwnedMasterIds_.data(), d_nodeToDof,
+            d_dof_field.data(), xr.recvBuf_.data(), recvTotal);
+        cudaDeviceSynchronize();
+    }
+
+    // Send recvBuf_ (master values) to the slave-owner rank; receive into sendBuf_.
+    {
+        const int tag = 0x5046 + xr.epoch_;
+        std::vector<MPI_Request> reqs; reqs.reserve(2 * numPeers);
+        for (int p = 0; p < numPeers; ++p)
+        {
+            int peer = xr.peers_[p];
+            int rcnt = xr.sendOffsets_[p + 1] - xr.sendOffsets_[p];
+            if (rcnt > 0)
+            {
+                MPI_Request r;
+                MPI_Irecv(xr.sendBuf_.data() + xr.sendOffsets_[p], rcnt,
+                          mpiType, peer, tag, xr.comm_, &r);
+                reqs.push_back(r);
+            }
+        }
+        for (int p = 0; p < numPeers; ++p)
+        {
+            int peer = xr.peers_[p];
+            int scnt = xr.recvOffsets_[p + 1] - xr.recvOffsets_[p];
+            if (scnt > 0)
+            {
+                MPI_Request r;
+                MPI_Isend(xr.recvBuf_.data() + xr.recvOffsets_[p], scnt,
+                          mpiType, peer, tag, xr.comm_, &r);
+                reqs.push_back(r);
+            }
+        }
+        if (!reqs.empty()) MPI_Waitall(int(reqs.size()), reqs.data(), MPI_STATUSES_IGNORE);
+        ++xr.epoch_;
+    }
+
+    // Overwrite slave DOFs on the slave-owner rank.
+    if (sendTotal > 0)
+    {
+        int blk = 256, grd = (sendTotal + blk - 1) / blk;
+        overwriteCrossRankRecvDofKernel<RealType><<<grd, blk>>>(
+            xr.d_sendOwnedSlaveIds_.data(), d_nodeToDof,
+            xr.sendBuf_.data(), d_dof_field.data(), sendTotal);
+        cudaDeviceSynchronize();
+    }
+}
+
+// Tiny apply kernel for Fix Y: adds host-resolved (slot, delta) pairs into the
+// CSR values array. One thread per slot. No atomics required because the host
+// side already accumulated all incoming triples that resolve to the same slot
+// into a single delta entry.
+template<typename RealType>
+__global__ void applyVelocityRowDeltasKernel(const int* d_slotIdx,
+                                             const RealType* d_delta,
+                                             RealType* d_valuesVel,
+                                             int n)
+{
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= n) return;
+    d_valuesVel[d_slotIdx[i]] += d_delta[i];
+}
+
+// Fix Y: cross-rank merge of velocity-matrix rows for periodic slave nodes.
+//
+// Problem (Probe 4): on the master-owner rank D, the assembled master row of
+// Avel only carries the rank-D-side half-stencil; the rank-A-side half (from
+// owned elements on rank A that touch the slave node at xmax) was never
+// emitted into the master row by the sparsity builder, because A and D do
+// not share that node in cstone -- the periodic image lives under a DISTINCT
+// SFC key.
+//
+// Fix: each slave-owner rank packs (master_sfc_key, col_sfc_key, value)
+// triples for every nonzero in every owned cross-rank slave row and ships
+// them to the corresponding master-owner rank via MPI_Alltoallv. The
+// receiver resolves keys -> local DOFs, locates the matching slot in its
+// own CSR row, and accumulates the value. Slots that are missing from the
+// master's pre-allocated row indicate a sparsity-pattern gap and are
+// reported once to stderr but otherwise skipped (no halt).
+//
+// One-shot at setup time -- not in the CG hot loop. Host-side implementation
+// is fine; payload is ~few KB per rank on cube16.
+template<typename KeyType, typename RealType, typename DomainT>
+void crossRankSumVelocityRows(const DomainT& domain,
+                              const PeriodicMap<KeyType, RealType>& map,
+                              const cstone::DeviceVector<int>& d_rowPtr,
+                              const cstone::DeviceVector<int>& d_colInd,
+                              const cstone::DeviceVector<int>& d_diagPtr,
+                              cstone::DeviceVector<RealType>& d_valuesVel,
+                              const cstone::DeviceVector<int>& d_dofToNode,
+                              const cstone::DeviceVector<int>& d_nodeToDof,
+                              int numTotalDofs,
+                              int numOwnedDofs,
+                              int rank, int numRanks,
+                              MPI_Comm comm)
+{
+    const auto& xr = map.cross_;
+    if (numRanks <= 1 || xr.peers_.empty()) return;
+
+    const size_t numNodes = domain.getNodeCount();
+
+    // Stage CSR + dof maps + SFC map + ownership to host. One-shot, small.
+    const int rowPtrSize = numOwnedDofs + 1;
+    std::vector<int>      h_rowPtr(rowPtrSize);
+    cudaMemcpy(h_rowPtr.data(), d_rowPtr.data(),
+               rowPtrSize * sizeof(int), cudaMemcpyDeviceToHost);
+    const int nnzOwned = h_rowPtr.back();
+    std::vector<int>      h_colInd(nnzOwned);
+    std::vector<RealType> h_values(nnzOwned);
+    cudaMemcpy(h_colInd.data(), d_colInd.data(),
+               nnzOwned * sizeof(int), cudaMemcpyDeviceToHost);
+    cudaMemcpy(h_values.data(), d_valuesVel.data(),
+               nnzOwned * sizeof(RealType), cudaMemcpyDeviceToHost);
+
+    std::vector<int> h_dofToNode(numTotalDofs);
+    std::vector<int> h_nodeToDof(numNodes);
+    cudaMemcpy(h_dofToNode.data(), d_dofToNode.data(),
+               numTotalDofs * sizeof(int), cudaMemcpyDeviceToHost);
+    cudaMemcpy(h_nodeToDof.data(), d_nodeToDof.data(),
+               numNodes * sizeof(int), cudaMemcpyDeviceToHost);
+
+    // Diagonal slot index per owned DOF. Used as a fallback target when a
+    // (master_dof, col_dof) coupling delivered by Fix Y has no allocated
+    // slot in the master row's CSR: we fold the value into the diagonal so
+    // the row sum is preserved (Dirichlet-style condensation).
+    std::vector<int> h_diagPtr(numOwnedDofs);
+    cudaMemcpy(h_diagPtr.data(), d_diagPtr.data(),
+               numOwnedDofs * sizeof(int), cudaMemcpyDeviceToHost);
+
+    std::vector<KeyType> h_sfc(numNodes);
+    {
+        const auto& d_sfc = domain.getLocalToGlobalSfcMap();
+        cudaMemcpy(h_sfc.data(), d_sfc.data(),
+                   numNodes * sizeof(KeyType), cudaMemcpyDeviceToHost);
+    }
+    std::vector<uint8_t> h_own(numNodes);
+    {
+        const auto& d_own = domain.getNodeOwnershipMap();
+        cudaMemcpy(h_own.data(), d_own.data(),
+                   numNodes * sizeof(uint8_t), cudaMemcpyDeviceToHost);
+    }
+
+    // keyToLocal: SFC key -> local node id (owned OR ghost). The receiver
+    // needs to resolve column SFC keys to local columns; columns can be
+    // ghost as well as owned, so cover all local nodes here. Ties: prefer
+    // an owned node over a ghost (owned entries inserted second overwrite
+    // earlier ghost entries).
+    std::unordered_map<KeyType, int> keyToLocal;
+    keyToLocal.reserve(numNodes);
+    for (size_t n = 0; n < numNodes; ++n) if (h_own[n] != 1) keyToLocal[h_sfc[n]] = int(n);
+    for (size_t n = 0; n < numNodes; ++n) if (h_own[n] == 1) keyToLocal[h_sfc[n]] = int(n);
+
+    // Stage owned-slave node ids (sender side) to host once per peer block.
+    std::vector<int> h_sendSlaveIds(xr.d_sendOwnedSlaveIds_.size());
+    if (!h_sendSlaveIds.empty())
+    {
+        cudaMemcpy(h_sendSlaveIds.data(), xr.d_sendOwnedSlaveIds_.data(),
+                   h_sendSlaveIds.size() * sizeof(int), cudaMemcpyDeviceToHost);
+    }
+
+    const int numPeers = int(xr.peers_.size());
+
+    // Stage partner map (needed for master_sfc_key per slave).
+    std::vector<int> h_partner(numNodes);
+    cudaMemcpy(h_partner.data(), map.d_periodicPartner.data(),
+               numNodes * sizeof(int), cudaMemcpyDeviceToHost);
+
+    // Per-rank triple buffers. Keys are sent as KeyType pairs; values as RealType.
+    std::vector<std::vector<KeyType>>  sendKeysPerRank(numRanks);
+    std::vector<std::vector<RealType>> sendValsPerRank(numRanks);
+
+    for (int p = 0; p < numPeers; ++p)
+    {
+        const int peer = xr.peers_[p];
+        const int lo = xr.sendOffsets_[p];
+        const int hi = xr.sendOffsets_[p + 1];
+
+        auto& outKeys = sendKeysPerRank[peer];
+        auto& outVals = sendValsPerRank[peer];
+
+        for (int k = lo; k < hi; ++k)
+        {
+            const int slaveNode = h_sendSlaveIds[k];
+            if (slaveNode < 0 || slaveNode >= int(numNodes)) continue;
+            const int masterNodeGhost = h_partner[slaveNode];
+            if (masterNodeGhost < 0 || masterNodeGhost >= int(numNodes)) continue;
+            const KeyType masterKey = h_sfc[masterNodeGhost];
+
+            const int slaveDof = h_nodeToDof[slaveNode];
+            if (slaveDof < 0 || slaveDof >= numOwnedDofs) continue;
+
+            const int rs = h_rowPtr[slaveDof];
+            const int re = h_rowPtr[slaveDof + 1];
+            for (int j = rs; j < re; ++j)
+            {
+                const int    colDof = h_colInd[j];
+                const RealType v    = h_values[j];
+                if (v == RealType(0)) continue;
+                if (colDof < 0 || colDof >= numTotalDofs) continue;
+                const int colNode = h_dofToNode[colDof];
+                if (colNode < 0 || colNode >= int(numNodes)) continue;
+                const KeyType colKey = h_sfc[colNode];
+
+                // Pack (master_sfc_key, col_sfc_key) as a KeyType pair.
+                outKeys.push_back(masterKey);
+                outKeys.push_back(colKey);
+                outVals.push_back(v);
+            }
+        }
+    }
+
+    // Alltoall of value-counts (= triple counts; key-count = 2 * triples).
+    std::vector<int> sendValCounts(numRanks, 0), recvValCounts(numRanks, 0);
+    for (int r = 0; r < numRanks; ++r) sendValCounts[r] = int(sendValsPerRank[r].size());
+    MPI_Alltoall(sendValCounts.data(), 1, MPI_INT,
+                 recvValCounts.data(), 1, MPI_INT, comm);
+
+    std::vector<int> sendValDispls(numRanks, 0), recvValDispls(numRanks, 0);
+    int sendValTotal = 0, recvValTotal = 0;
+    for (int r = 0; r < numRanks; ++r)
+    {
+        sendValDispls[r] = sendValTotal; sendValTotal += sendValCounts[r];
+        recvValDispls[r] = recvValTotal; recvValTotal += recvValCounts[r];
+    }
+
+    // Flatten send-side buffers.
+    std::vector<KeyType>  sendKeysFlat(2 * sendValTotal);
+    std::vector<RealType> sendValsFlat(sendValTotal);
+    for (int r = 0; r < numRanks; ++r)
+    {
+        std::copy(sendValsPerRank[r].begin(), sendValsPerRank[r].end(),
+                  sendValsFlat.begin() + sendValDispls[r]);
+        std::copy(sendKeysPerRank[r].begin(), sendKeysPerRank[r].end(),
+                  sendKeysFlat.begin() + 2 * sendValDispls[r]);
+    }
+
+    // Key counts/displs = 2 * value counts/displs.
+    std::vector<int> sendKeyCounts(numRanks, 0), recvKeyCounts(numRanks, 0);
+    std::vector<int> sendKeyDispls(numRanks, 0), recvKeyDispls(numRanks, 0);
+    for (int r = 0; r < numRanks; ++r)
+    {
+        sendKeyCounts[r] = 2 * sendValCounts[r];
+        recvKeyCounts[r] = 2 * recvValCounts[r];
+        sendKeyDispls[r] = 2 * sendValDispls[r];
+        recvKeyDispls[r] = 2 * recvValDispls[r];
+    }
+
+    MPI_Datatype mpiKeyType = (sizeof(KeyType) == 8) ? MPI_UNSIGNED_LONG_LONG
+                                                     : MPI_UNSIGNED;
+    MPI_Datatype mpiRealType = std::is_same_v<RealType, double> ? MPI_DOUBLE : MPI_FLOAT;
+
+    std::vector<KeyType>  recvKeysFlat(2 * recvValTotal);
+    std::vector<RealType> recvValsFlat(recvValTotal);
+
+    MPI_Alltoallv(sendKeysFlat.data(), sendKeyCounts.data(), sendKeyDispls.data(), mpiKeyType,
+                  recvKeysFlat.data(), recvKeyCounts.data(), recvKeyDispls.data(), mpiKeyType,
+                  comm);
+    MPI_Alltoallv(sendValsFlat.data(), sendValCounts.data(), sendValDispls.data(), mpiRealType,
+                  recvValsFlat.data(), recvValCounts.data(), recvValDispls.data(), mpiRealType,
+                  comm);
+
+    // Receiver: resolve each (master_key, col_key) -> (masterDof, colDof),
+    // locate the slot in h_rowPtr/h_colInd, accumulate into a host slot->delta
+    // table. Then push that table to device and apply.
+    std::unordered_map<int, RealType> slotDelta;
+    slotDelta.reserve(recvValTotal);
+    long long missingSlots  = 0; // master row/key not resolvable -> value lost
+    long long resolvedSlots = 0; // exact (master,col) slot found and accumulated
+    long long foldedSlots   = 0; // master ok but col slot absent -> folded to diagonal
+
+    for (int t = 0; t < recvValTotal; ++t)
+    {
+        const KeyType masterKey = recvKeysFlat[2 * t + 0];
+        const KeyType colKey    = recvKeysFlat[2 * t + 1];
+        const RealType v        = recvValsFlat[t];
+
+        auto mit = keyToLocal.find(masterKey);
+        if (mit == keyToLocal.end()) { ++missingSlots; continue; }
+        const int masterNode = mit->second;
+        if (h_own[masterNode] != 1)  { ++missingSlots; continue; }
+        const int masterDof = h_nodeToDof[masterNode];
+        if (masterDof < 0 || masterDof >= numOwnedDofs) { ++missingSlots; continue; }
+
+        // Try to resolve the column to a local DOF and locate its slot in
+        // the master row. If anything along that chain fails the sparsity
+        // pattern simply has no entry for this coupling -- the slave's
+        // rank-A-side interior neighbor isn't a ghost on the master-owner
+        // rank, so the slot was never emitted at sparsity-build time.
+        // Fall back to folding the value into the diagonal so the row sum
+        // is preserved (Dirichlet-style condensation). The diagonal slot
+        // is guaranteed to exist for every owned row.
+        int slot = -1;
+        auto cit = keyToLocal.find(colKey);
+        if (cit != keyToLocal.end())
+        {
+            const int colNode = cit->second;
+            const int colDof  = h_nodeToDof[colNode];
+            if (colDof >= 0 && colDof < numTotalDofs)
+            {
+                const int rs = h_rowPtr[masterDof];
+                const int re = h_rowPtr[masterDof + 1];
+                for (int j = rs; j < re; ++j)
+                {
+                    if (h_colInd[j] == colDof) { slot = j; break; }
+                }
+            }
+        }
+
+        if (slot >= 0)
+        {
+            slotDelta[slot] += v;
+            ++resolvedSlots;
+        }
+        else
+        {
+            const int diagSlot = h_diagPtr[masterDof];
+            slotDelta[diagSlot] += v;
+            ++foldedSlots;
+        }
+    }
+
+    if (foldedSlots > 0 || missingSlots > 0)
+    {
+        static bool warned = false;
+        if (!warned)
+        {
+            std::cerr << "[Fix Y rank " << rank << "] crossRankSumVelocityRows:"
+                      << " resolved=" << resolvedSlots
+                      << " folded=" << foldedSlots
+                      << " missing=" << missingSlots
+                      << " (folded entries condensed into diagonal;"
+                      << " missing entries had no local master key)."
+                      << " One-shot warning." << std::endl;
+            warned = true;
+        }
+    }
+
+    if (slotDelta.empty()) return;
+
+    // Push slot/delta table to device and apply.
+    std::vector<int>      h_slotIdx; h_slotIdx.reserve(slotDelta.size());
+    std::vector<RealType> h_deltaVal; h_deltaVal.reserve(slotDelta.size());
+    for (auto& kv : slotDelta) { h_slotIdx.push_back(kv.first); h_deltaVal.push_back(kv.second); }
+
+    cstone::DeviceVector<int>      d_slotIdx(h_slotIdx.size());
+    cstone::DeviceVector<RealType> d_deltaVal(h_deltaVal.size());
+    cudaMemcpy(d_slotIdx.data(), h_slotIdx.data(),
+               h_slotIdx.size() * sizeof(int), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_deltaVal.data(), h_deltaVal.data(),
+               h_deltaVal.size() * sizeof(RealType), cudaMemcpyHostToDevice);
+    int blk = 256;
+    int grd = int((h_slotIdx.size() + blk - 1) / blk);
+    applyVelocityRowDeltasKernel<RealType><<<grd, blk>>>(
+        d_slotIdx.data(), d_deltaVal.data(), d_valuesVel.data(),
+        int(h_slotIdx.size()));
+    cudaDeviceSynchronize();
 }
 
 // Top-level: call this after every per-node accumulation kernel that produced
