@@ -857,6 +857,19 @@ __global__ void jacobiPrecondNodeKernel(const RealType* r,
 //     Energy conservation is a SPATIAL property; works with any time
 //     integrator (forward Euler still has O(dt) time-truncation drift).
 //
+//   MARS_NS_ADV_BJ (2nd-order Barth-Jespersen limited upwind; tet-only):
+//     Like upwind, but the upwind node value is linearly reconstructed to the
+//     face with a limited node gradient:
+//       up      = (mdot>0) ? L : R
+//       q_face  = q[up] + phi[up] * grad_q[up] . (M - x_up)
+//     M is the SCS-edge midpoint, so (M - x_up) = +-0.5*(xR - xL). phi in [0,1]
+//     is the Barth-Jespersen limiter that keeps q_face monotone (no new
+//     extrema vs the edge-neighbor min/max). phi=0 collapses to 1st-order
+//     upwind; phi=1 is the unlimited 2nd-order reconstruction. This matches
+//     the mesh developers' legacy advection. Gradient and phi are computed in
+//     runPredictorStep and halo-exchanged before this kernel runs.
+//
+// advMode selects the form at runtime: 0=skew, 1=upwind, 2=Barth-Jespersen.
 // Sign convention matches the legacy upwind path: net flux out of L, into R.
 // =============================================================================
 
@@ -875,7 +888,18 @@ __global__ void explicitAdvectionFluxScatterPerNodeKernel(const KeyType* c0, con
                                                           RealType* dqdtNode,
                                                           size_t startElem,
                                                           size_t numLocal,
-                                                          bool useSkewSymmetric)
+                                                          int advMode,
+                                                          // Barth-Jespersen inputs (advMode==2 only). For the convected
+                                                          // component q: limiter phi[node] in [0,1] and node gradient
+                                                          // grad_q. nodeX/Y/Z give the edge midpoint for reconstruction.
+                                                          // All nullptr / unread for skew and plain upwind.
+                                                          const RealType* phiQ,
+                                                          const RealType* gradQx,
+                                                          const RealType* gradQy,
+                                                          const RealType* gradQz,
+                                                          const RealType* nodeX,
+                                                          const RealType* nodeY,
+                                                          const RealType* nodeZ)
 {
     size_t k = blockIdx.x * blockDim.x + threadIdx.x;
     if (k >= numLocal) return;
@@ -900,7 +924,7 @@ __global__ void explicitAdvectionFluxScatterPerNodeKernel(const KeyType* c0, con
         size_t off = e * NSCS + ip;
         RealType mdot = vfx * areaVecX[off] + vfy * areaVecY[off] + vfz * areaVecZ[off];
 
-        if (useSkewSymmetric)
+        if (advMode == 0)
         {
             // Verstappen-Veldman discrete skew-symmetric advection.
             //
@@ -925,10 +949,31 @@ __global__ void explicitAdvectionFluxScatterPerNodeKernel(const KeyType* c0, con
             atomicAdd(&dqdtNode[iL], -RealType(0.5) * mdot * (RealType(2) * qL + qR));
             atomicAdd(&dqdtNode[iR], +RealType(0.5) * mdot * (qL + RealType(2) * qR));
         }
-        else
+        else if (advMode == 1)
         {
             // 1st-order upwind (standard CVFEM, used by cavity/channel).
             RealType q_face = (mdot > RealType(0)) ? q[iL] : q[iR];
+            RealType flux   = mdot * q_face;
+            atomicAdd(&dqdtNode[iL], -flux);
+            atomicAdd(&dqdtNode[iR], +flux);
+        }
+        else
+        {
+            // 2nd-order Barth-Jespersen limited upwind.
+            // Reconstruct the upwind node value to the SCS-edge midpoint M and
+            // limit the slope with the precomputed per-node phi. Midpoint
+            // reconstruction (r = M - x_up = +-0.5*(xR-xL)) is a defensible
+            // 2nd-order CVFEM target that needs only node coords; the full
+            // dual-quad-centroid IP is a later refinement.
+            KeyType up = (mdot > RealType(0)) ? iL : iR;
+            RealType mx = RealType(0.5) * (nodeX[iL] + nodeX[iR]);
+            RealType my = RealType(0.5) * (nodeY[iL] + nodeY[iR]);
+            RealType mz = RealType(0.5) * (nodeZ[iL] + nodeZ[iR]);
+            RealType rx = mx - nodeX[up];
+            RealType ry = my - nodeY[up];
+            RealType rz = mz - nodeZ[up];
+            RealType recon = gradQx[up] * rx + gradQy[up] * ry + gradQz[up] * rz;
+            RealType q_face = q[up] + phiQ[up] * recon;
             RealType flux   = mdot * q_face;
             atomicAdd(&dqdtNode[iL], -flux);
             atomicAdd(&dqdtNode[iR], +flux);
@@ -986,6 +1031,178 @@ __global__ void computeGradientPerNodeKernel(const KeyType* c0, const KeyType* c
         atomicAdd(&gxAccNode[iR], -cx);
         atomicAdd(&gyAccNode[iR], -cy);
         atomicAdd(&gzAccNode[iR], -cz);
+    }
+}
+
+// =============================================================================
+// Barth-Jespersen limiter support kernels (used only when advScheme==
+// BarthJespersen). Defined here, ABOVE runPredictorStep, so the predictor can
+// launch them without a forward reference.
+//
+// CUDA has no native atomicMin/Max on double, so we do the standard atomicCAS
+// loop on the 64-bit pattern. Monotone bit order of IEEE-754 doubles is NOT
+// preserved across sign, so we compare the decoded double each iteration rather
+// than comparing the raw bits. This is a limiter (not exactness-critical), but
+// the CAS loop is exact anyway.
+// =============================================================================
+template<typename RealType>
+__device__ __forceinline__ void atomicMinDouble(RealType* addr, RealType val)
+{
+    unsigned long long* a = reinterpret_cast<unsigned long long*>(addr);
+    unsigned long long  old = *a, assumed;
+    do {
+        double cur = __longlong_as_double(static_cast<long long>(old));
+        if (cur <= double(val)) break;               // already <= val, done
+        assumed = old;
+        old = atomicCAS(a, assumed,
+                        static_cast<unsigned long long>(__double_as_longlong(double(val))));
+    } while (assumed != old);
+}
+
+template<typename RealType>
+__device__ __forceinline__ void atomicMaxDouble(RealType* addr, RealType val)
+{
+    unsigned long long* a = reinterpret_cast<unsigned long long*>(addr);
+    unsigned long long  old = *a, assumed;
+    do {
+        double cur = __longlong_as_double(static_cast<long long>(old));
+        if (cur >= double(val)) break;               // already >= val, done
+        assumed = old;
+        old = atomicCAS(a, assumed,
+                        static_cast<unsigned long long>(__double_as_longlong(double(val))));
+    } while (assumed != old);
+}
+
+// Seed qmin = qmax = q at every node before the neighbor min/max scatter, so a
+// node with no scattered neighbor (shouldn't happen on a valid mesh, but is
+// safe) still bounds itself.
+template<typename RealType>
+__global__ void bjSeedMinMaxKernel(const RealType* q, RealType* qmin, RealType* qmax, size_t numNodes)
+{
+    size_t i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= numNodes) return;
+    qmin[i] = q[i];
+    qmax[i] = q[i];
+}
+
+// Neighbor min/max over edge-connected nodes. For each SCS edge (iL,iR) push
+// the neighbor's value into this node's running min/max. After this scatter
+// qmin[i]/qmax[i] hold min/max of q over {i} U {edge neighbors of i}.
+//
+// Halo note: min/max must be published to ghosts with a FORWARD exchange
+// (exchangeNodeHalo), NOT reverseExchangeNodeHaloAdd -- the reverse path is a
+// SUM reduction and would corrupt a min/max. So we loop owned+halo elements
+// here (every face touching an owned node, including from ghost elements, is
+// visited) and then forward-exchange so ghosts carry the owner's bounds.
+template<typename KeyType, typename RealType, typename ElementTag = HexTag>
+__global__ void bjNeighborMinMaxScatterKernel(const KeyType* c0, const KeyType* c1,
+                                              const KeyType* c2, const KeyType* c3,
+                                              const KeyType* c4, const KeyType* c5,
+                                              const KeyType* c6, const KeyType* c7,
+                                              const RealType* q,
+                                              RealType* qmin, RealType* qmax,
+                                              size_t startElem, size_t numElems)
+{
+    size_t k = blockIdx.x * blockDim.x + threadIdx.x;
+    if (k >= numElems) return;
+    size_t e = startElem + k;
+    constexpr int NPE = ElemTraits<ElementTag>::NodesPerElem;
+    constexpr int NSCS = ElemTraits<ElementTag>::ScsPerElem;
+    const KeyType* cc[8] = {c0, c1, c2, c3, c4, c5, c6, c7};
+    KeyType n[NPE];
+    for (int i = 0; i < NPE; ++i) n[i] = cc[i][e];
+
+    #pragma unroll
+    for (int ip = 0; ip < NSCS; ++ip)
+    {
+        int nodeL, nodeR; scsLR<ElementTag>(ip, nodeL, nodeR);
+        KeyType iL = n[nodeL];
+        KeyType iR = n[nodeR];
+        RealType qL = q[iL];
+        RealType qR = q[iR];
+        atomicMinDouble<RealType>(&qmin[iL], qR);
+        atomicMaxDouble<RealType>(&qmax[iL], qR);
+        atomicMinDouble<RealType>(&qmin[iR], qL);
+        atomicMaxDouble<RealType>(&qmax[iR], qL);
+    }
+}
+
+// Barth-Jespersen limiter phi per node. For each face incident to a node, the
+// reconstruction predicts a face delta Delta = grad_q[i] . (M - x_i). phi_face
+// caps the slope so q[i]+phi*Delta does not exceed the neighbor bounds:
+//   Delta > eps : phi = min(1, (qmax-q)/Delta)
+//   Delta < -eps: phi = min(1, (qmin-q)/Delta)
+//   else        : phi = 1
+// phi[i] is the MIN of phi_face over all faces incident to i. Seed phi=1
+// (bjSeedPhi) then atomicMin each face's phi into both endpoints.
+template<typename RealType>
+__global__ void bjSeedPhiKernel(RealType* phi, size_t numNodes)
+{
+    size_t i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= numNodes) return;
+    phi[i] = RealType(1);
+}
+
+template<typename KeyType, typename RealType, typename ElementTag = HexTag>
+__global__ void bjLimiterScatterKernel(const KeyType* c0, const KeyType* c1,
+                                       const KeyType* c2, const KeyType* c3,
+                                       const KeyType* c4, const KeyType* c5,
+                                       const KeyType* c6, const KeyType* c7,
+                                       const RealType* q,
+                                       const RealType* qmin, const RealType* qmax,
+                                       const RealType* gradQx,
+                                       const RealType* gradQy,
+                                       const RealType* gradQz,
+                                       const RealType* nodeX,
+                                       const RealType* nodeY,
+                                       const RealType* nodeZ,
+                                       RealType* phi,
+                                       size_t startElem, size_t numElems)
+{
+    size_t k = blockIdx.x * blockDim.x + threadIdx.x;
+    if (k >= numElems) return;
+    size_t e = startElem + k;
+    constexpr int NPE = ElemTraits<ElementTag>::NodesPerElem;
+    constexpr int NSCS = ElemTraits<ElementTag>::ScsPerElem;
+    const KeyType* cc[8] = {c0, c1, c2, c3, c4, c5, c6, c7};
+    KeyType n[NPE];
+    for (int i = 0; i < NPE; ++i) n[i] = cc[i][e];
+
+    const RealType eps = RealType(1e-12);
+
+    #pragma unroll
+    for (int ip = 0; ip < NSCS; ++ip)
+    {
+        int nodeL, nodeR; scsLR<ElementTag>(ip, nodeL, nodeR);
+        KeyType iL = n[nodeL];
+        KeyType iR = n[nodeR];
+
+        RealType mx = RealType(0.5) * (nodeX[iL] + nodeX[iR]);
+        RealType my = RealType(0.5) * (nodeY[iL] + nodeY[iR]);
+        RealType mz = RealType(0.5) * (nodeZ[iL] + nodeZ[iR]);
+
+        // phi_face seen from each endpoint of this edge.
+        #pragma unroll
+        for (int side = 0; side < 2; ++side)
+        {
+            KeyType i = (side == 0) ? iL : iR;
+            RealType rx = mx - nodeX[i];
+            RealType ry = my - nodeY[i];
+            RealType rz = mz - nodeZ[i];
+            RealType delta = gradQx[i] * rx + gradQy[i] * ry + gradQz[i] * rz;
+            RealType phi_face;
+            if (delta > eps)
+                phi_face = fmin(RealType(1), (qmax[i] - q[i]) / delta);
+            else if (delta < -eps)
+                phi_face = fmin(RealType(1), (qmin[i] - q[i]) / delta);
+            else
+                phi_face = RealType(1);
+            // Clamp to [0,1]: (qmax-q) is >=0 and (qmin-q) is <=0 by
+            // construction, so the ratio is >=0; the fmin caps at 1. Guard the
+            // floor anyway against roundoff that could make qmax<q by an ulp.
+            phi_face = fmax(RealType(0), phi_face);
+            atomicMinDouble<RealType>(&phi[i], phi_face);
+        }
     }
 }
 
@@ -1441,7 +1658,7 @@ __global__ void computeDivergencePerNodeKernel(const KeyType* c0, const KeyType*
 // inverse momentum-matrix diagonal 1/A_diag (the SIMPLE/PISO weight).
 // =============================================================================
 
-template<typename KeyType, typename RealType>
+template<typename KeyType, typename RealType, typename ElementTag = HexTag>
 __global__ void computeDivergenceRhieChowKernel(const KeyType* c0, const KeyType* c1,
                                                 const KeyType* c2, const KeyType* c3,
                                                 const KeyType* c4, const KeyType* c5,
@@ -1467,13 +1684,16 @@ __global__ void computeDivergenceRhieChowKernel(const KeyType* c0, const KeyType
     size_t k = blockIdx.x * blockDim.x + threadIdx.x;
     if (k >= numLocal) return;
     size_t e = startElem + k;
-    KeyType n[8] = {c0[e], c1[e], c2[e], c3[e], c4[e], c5[e], c6[e], c7[e]};
+    constexpr int NPE = ElemTraits<ElementTag>::NodesPerElem;
+    constexpr int NSCS = ElemTraits<ElementTag>::ScsPerElem;
+    const KeyType* cc[8] = {c0, c1, c2, c3, c4, c5, c6, c7};
+    KeyType n[NPE];
+    for (int i = 0; i < NPE; ++i) n[i] = cc[i][e];
 
     #pragma unroll
-    for (int ip = 0; ip < 12; ++ip)
+    for (int ip = 0; ip < NSCS; ++ip)
     {
-        int nodeL = d_hexLRSCV[ip * 2];
-        int nodeR = d_hexLRSCV[ip * 2 + 1];
+        int nodeL, nodeR; scsLR<ElementTag>(ip, nodeL, nodeR);
         KeyType iL = n[nodeL];
         KeyType iR = n[nodeR];
 
@@ -1482,7 +1702,7 @@ __global__ void computeDivergenceRhieChowKernel(const KeyType* c0, const KeyType
         RealType vfy = RealType(0.5) * (vy[iL] + vy[iR]);
         RealType vfz = RealType(0.5) * (vz[iL] + vz[iR]);
 
-        size_t off = e * 12 + ip;
+        size_t off = e * NSCS + ip;
         RealType Ax = areaVecX[off];
         RealType Ay = areaVecY[off];
         RealType Az = areaVecZ[off];
@@ -1921,12 +2141,33 @@ struct NSStepper
     cstone::DeviceVector<RealType> d_divUStar;
     bool rotationalPressureCorrection = false;
     RealType nuCached = 0;  // remember nu so runCorrectorStep can apply -nu*div(u*)
-    // Advection form: false = 1st-order upwind (default, stable at any Re; the
-    // form used by cavity/channel). true = central skew-symmetric (discrete KE
-    // conservation; needed for periodic NS where there is no wall dissipation).
+    // Advection form selector. The flux kernel branches on advScheme:
+    //   Skew   = Verstappen central skew-symmetric (discrete KE conservation;
+    //            needed for periodic NS where no wall dissipation exists).
+    //   Upwind = 1st-order upwind (stable at any Re; cavity/channel default).
+    //   BarthJespersen = 2nd-order upwind with a node gradient reconstruction
+    //            limited by Barth-Jespersen, matching the mesh developers'
+    //            legacy advection. Tet-only path built in this file.
+    enum class AdvScheme { Skew, Upwind, BarthJespersen };
+    AdvScheme advScheme = AdvScheme::Skew;
+    // Back-compat shim for the tgv driver which still flips a bool. advScheme is
+    // authoritative for the kernel; drivers wanting BJ set advScheme directly.
     bool useSkewSymmetricAdvection = false;
     cstone::DeviceVector<RealType> d_gradPx, d_gradPy, d_gradPz;
     cstone::DeviceVector<RealType> d_gradPhix, d_gradPhiy, d_gradPhiz;
+
+    // Barth-Jespersen state (allocated lazily in runPredictorStep only when
+    // advScheme==BarthJespersen; non-BJ runs never touch these). Per-component
+    // node velocity gradients grad(u), grad(v), grad(w), each (1/V_i) sum_f
+    // q_face*A_f, then halo-exchanged. Limiter phi and neighbor min/max are
+    // recomputed per component into the scratch buffers below.
+    cstone::DeviceVector<RealType> d_gradUx, d_gradUy, d_gradUz;
+    cstone::DeviceVector<RealType> d_gradVx, d_gradVy, d_gradVz;
+    cstone::DeviceVector<RealType> d_gradWx, d_gradWy, d_gradWz;
+    // Per-component scratch reused across the 3 momentum components: neighbor
+    // min/max over edge-connected nodes (seed = node's own value) and the
+    // Barth-Jespersen limiter phi in [0,1]. Sized nodeCount, halo-exchanged.
+    cstone::DeviceVector<RealType> d_bjQmin, d_bjQmax, d_bjPhi;
 
     // BDF2 / EXT2 (Karniadakis-Israeli-Orszag 1991) history.
     // ----------------------------------------------------------
@@ -1967,9 +2208,10 @@ struct NSStepper
     // Per-step diagnostics
     int lastPressureIters = 0;
     int lastUIters = 0, lastVIters = 0, lastWIters = 0;
-    RealType lastDivMax     = 0;  // |div(u^{n+1})| max -- post-corrector
+    RealType lastDivMax     = 0;  // |div(u^{n+1})| max -- post-corrector, PLAIN nodal operator
     RealType lastDivRms     = 0;  // |div(u^{n+1})| RMS over interior owned DOFs; less ring-sensitive
     RealType lastDivMaxPre  = 0;  // |div(u**)|    max -- pre-corrector (= b magnitude / V scaled)
+    RealType lastDivRC      = 0;  // |div_RC(u^{n+1})| max -- the operator RC actually zeros (only set when useRhieChow)
     RealType lastGradPRms   = 0;  // RMS of grad(p^n) magnitude  -- predictor input
     RealType lastGradPhiRms = 0;  // RMS of grad(phi)  magnitude -- corrector input
 
@@ -2014,6 +2256,7 @@ struct NSStepper
     // legacy natural-Neumann outflow.
     RealType outletU = -1;
     RealType outletDirX = 1, outletDirY = 0, outletDirZ = 0;
+    bool outletDoNothing = true;  // do-nothing outlet (free velocity + p=0 face); false = mass-conserving velocity outlet
 
     // Constant streamwise (and orthogonal) momentum body force, added in the
     // predictor as +dt*f/rho (BDF1) and +(2dt/3)*f/rho (BDF2). Defaults to 0
@@ -2623,9 +2866,42 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
     }
     pt.lap("assembly nu*K (velocity)");
 
+    // Cross-rank periodic seam: ship rank A's slave-row stiffness to the
+    // master-owner rank and accumulate into the master row. cstone delivers
+    // the periodic-image elements as halos, but the assembler's ownership
+    // gate skips them on the master-owner rank (the slave-image node is a
+    // ghost there). Without this MPI exchange the master row is missing
+    // ~70% of its off-diagonal stiffness. One-shot at setup. No-op when
+    // numRanks==1 or no cross-rank peers exist.
+    if (s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Periodic
+        && s.periodicMap != nullptr)
+    {
+        crossRankSumVelocityRows<KeyType, RealType>(
+            s.domain, *s.periodicMap,
+            s.d_rowPtr, s.d_colInd, s.d_diagPtr, s.d_valuesVel,
+            s.d_dofToNode, s.d_node_to_dof,
+            s.numTotalDofs, s.numOwnedDofs,
+            s.rank, s.numRanks, MPI_COMM_WORLD);
+        pt.lap("cross-rank periodic Avel merge");
+    }
+
     // Pressure matrix: same K (no nu scale). Assemble into d_valuesPre.
     assembleLaplacian<KeyType, RealType, ElementTag>(s, s.d_node_to_dof, s.d_valuesPre, kernelVariant);
     pt.lap("assembly K (pressure)");
+
+    // Same seam fix for the pressure matrix (raw K, no nu). Pressure CG
+    // sees the same master-row gap if we don't ship slave-row stiffness.
+    if (s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Periodic
+        && s.periodicMap != nullptr)
+    {
+        crossRankSumVelocityRows<KeyType, RealType>(
+            s.domain, *s.periodicMap,
+            s.d_rowPtr, s.d_colInd, s.d_diagPtr, s.d_valuesPre,
+            s.d_dofToNode, s.d_node_to_dof,
+            s.numTotalDofs, s.numOwnedDofs,
+            s.rank, s.numRanks, MPI_COMM_WORLD);
+        pt.lap("cross-rank periodic Apre merge");
+    }
 
     // Lumped mass (per-node + reverse-halo). Identical to B.2/B.3/B.4 pattern.
     s.d_mass.resize(s.numOwnedDofs);
@@ -3328,11 +3604,12 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
         }
         else if (s.periodicMap != nullptr)
         {
-            // Row-zero only. Fix Y already injected the slave row's stencil
-            // into the master row upstream (crossRankSumVelocityRows), so the
-            // slave row is now safe to overwrite with the Dirichlet identity.
-            // Local kernel, no collectives -- safe on every rank (no-op on
-            // rank 0 where d_isPeriodicXRSlaveDof is all zeros).
+            // Slave-row Dirichlet identity. The slave row's stiffness was
+            // already shipped to the master-owner rank and accumulated into
+            // the master row by crossRankSumVelocityRows above (right after
+            // nu*K assembly), so overwriting the slave row here is safe.
+            // Local kernel, no collectives -- no-op on ranks where
+            // d_isPeriodicXRSlaveDof is all zeros.
             enforceBcMatrixKernel<RealType><<<dofBlocks, s.blockSize>>>(
                 s.d_isPeriodicXRSlaveDof.data(),
                 s.d_rowPtr.data(), s.d_colInd.data(),
@@ -3344,14 +3621,6 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
                     s.d_rowPtr.data(), s.d_colInd.data(),
                     s.d_diagPtr.data(), s.d_valuesVel_bdf2.data(), s.numOwnedDofs);
             }
-            // Fix Y: master-row col-zero is dropped here. Probe 4 proved the
-            // master row has nnzSlaveGhostCol=0 already on rank 0 -- the
-            // sparsity builder never emitted master->slave-ghost entries, so
-            // col-zero only harms by killing legit ghost-interior coupling.
-            // The slave row stays a Dirichlet identity (enforceBcMatrixKernel
-            // above) + b[slave]=0 + post-solve crossRankPeriodicBroadcastDof
-            // overwrite. The missing master-side coupling is now injected
-            // upstream by crossRankSumVelocityRows (mars_periodic_bc.hpp).
         }
         cudaDeviceSynchronize();
     }
@@ -5366,6 +5635,13 @@ void runPredictorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
     const int eBlocks      = numLocal > 0 ? int((numLocal + s.blockSize - 1) / s.blockSize) : 0;
     const RealType invRho  = RealType(1) / rho;
 
+    using AdvScheme = typename NSStepper<KeyType, RealType, ElementTag>::AdvScheme;
+    const bool   bjMode  = (s.advScheme == AdvScheme::BarthJespersen);
+    // Runtime mode passed to the flux kernel: 0=skew, 1=upwind, 2=Barth-Jespersen.
+    const int    advMode = (s.advScheme == AdvScheme::Skew)   ? 0
+                         : (s.advScheme == AdvScheme::Upwind) ? 1
+                                                              : 2;
+
     s.domain.exchangeNodeHalo(s.d_u);
     s.domain.exchangeNodeHalo(s.d_v);
     s.domain.exchangeNodeHalo(s.d_w);
@@ -5456,6 +5732,73 @@ void runPredictorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
             s, s.d_gradPx, s.d_gradPy, s.d_gradPz);
     }
 
+    // Node coords for the Barth-Jespersen midpoint reconstruction. Always valid
+    // (read by the BJ flux branch and the limiter); cheap to fetch.
+    const auto& d_bjNodeX = s.domain.getNodeX();
+    const auto& d_bjNodeY = s.domain.getNodeY();
+    const auto& d_bjNodeZ = s.domain.getNodeZ();
+
+    // ---- Barth-Jespersen pre-pass: node velocity gradients ----
+    // Only when advScheme==BarthJespersen; skew/upwind pay zero cost. Build the
+    // per-component node gradient grad(q) = (1/V_i) sum_f q_face*A_f exactly like
+    // the grad(p) block above (SCS-face scatter -> reverse-halo SUM -> periodic
+    // sum -> normalize by lumped mass), then forward-exchange so ghosts carry the
+    // owner gradient. The per-component min/max and limiter phi are computed
+    // inside runPredictor (they depend on qN and this gradient).
+    if (bjMode)
+    {
+        // Lazy-allocate the 9 gradient fields + 3 scratch buffers once.
+        if (s.d_gradUx.size() != s.nodeCount)
+        {
+            s.d_gradUx.resize(s.nodeCount); s.d_gradUy.resize(s.nodeCount); s.d_gradUz.resize(s.nodeCount);
+            s.d_gradVx.resize(s.nodeCount); s.d_gradVy.resize(s.nodeCount); s.d_gradVz.resize(s.nodeCount);
+            s.d_gradWx.resize(s.nodeCount); s.d_gradWy.resize(s.nodeCount); s.d_gradWz.resize(s.nodeCount);
+            s.d_bjQmin.resize(s.nodeCount); s.d_bjQmax.resize(s.nodeCount); s.d_bjPhi.resize(s.nodeCount);
+        }
+
+        auto computeNodeGradient = [&] (cstone::DeviceVector<RealType>& qField,
+                                        cstone::DeviceVector<RealType>& gx,
+                                        cstone::DeviceVector<RealType>& gy,
+                                        cstone::DeviceVector<RealType>& gz)
+        {
+            cstone::DeviceVector<RealType> d_gxAcc(s.nodeCount, RealType(0));
+            cstone::DeviceVector<RealType> d_gyAcc(s.nodeCount, RealType(0));
+            cstone::DeviceVector<RealType> d_gzAcc(s.nodeCount, RealType(0));
+            if (eBlocks > 0)
+            {
+                computeGradientPerNodeKernel<KeyType, RealType, ElementTag><<<eBlocks, s.blockSize>>>(
+                    c0, c1, c2, c3, c4, c5, c6, c7,
+                    qField.data(),
+                    s.d_areaVec_x.data(), s.d_areaVec_y.data(), s.d_areaVec_z.data(),
+                    d_gxAcc.data(), d_gyAcc.data(), d_gzAcc.data(),
+                    startElem, numLocal);
+                cudaDeviceSynchronize();
+            }
+            s.domain.reverseExchangeNodeHaloAdd(d_gxAcc);
+            s.domain.reverseExchangeNodeHaloAdd(d_gyAcc);
+            s.domain.reverseExchangeNodeHaloAdd(d_gzAcc);
+            maybePeriodicSum<KeyType, RealType, ElementTag>(s, d_gxAcc);
+            maybePeriodicSum<KeyType, RealType, ElementTag>(s, d_gyAcc);
+            maybePeriodicSum<KeyType, RealType, ElementTag>(s, d_gzAcc);
+            normalizeGradientPerNodeKernel<RealType><<<nodeBlocks, s.blockSize>>>(
+                d_gxAcc.data(), d_gyAcc.data(), d_gzAcc.data(),
+                s.d_massNode.data(),
+                s.d_node_to_dof.data(), d_nodeOwnership.data(),
+                gx.data(), gy.data(), gz.data(),
+                s.nodeCount);
+            cudaDeviceSynchronize();
+            // Ghosts must carry the owner gradient: the BJ flux branch reads
+            // grad_q[up] where up may be a ghost node on a rank boundary.
+            s.domain.exchangeNodeHalo(gx);
+            s.domain.exchangeNodeHalo(gy);
+            s.domain.exchangeNodeHalo(gz);
+        };
+
+        computeNodeGradient(s.d_u, s.d_gradUx, s.d_gradUy, s.d_gradUz);
+        computeNodeGradient(s.d_v, s.d_gradVx, s.d_gradVy, s.d_gradVz);
+        computeNodeGradient(s.d_w, s.d_gradWx, s.d_gradWy, s.d_gradWz);
+    }
+
     // Per-component advection scatter + predictor apply. Each scatter writes
     // into a PERSISTENT advection-accumulator (s.d_advU_n etc.) so it can be
     // reused as N(u^(n-1)) at step n+1 via EXT2 extrapolation. Predictor
@@ -5467,8 +5810,56 @@ void runPredictorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
                               cstone::DeviceVector<RealType>& advNm1,
                               cstone::DeviceVector<RealType>& gradPnq,
                               cstone::DeviceVector<RealType>& qTarget,
-                              RealType bodyForce)
+                              RealType bodyForce,
+                              cstone::DeviceVector<RealType>& gradQx,
+                              cstone::DeviceVector<RealType>& gradQy,
+                              cstone::DeviceVector<RealType>& gradQz)
     {
+        // Barth-Jespersen per-component limiter: neighbor min/max over edge
+        // neighbors (loop owned+halo so ghost-element faces are seen), then phi.
+        // Must finish + forward-exchange BEFORE the flux kernel reads them.
+        if (bjMode)
+        {
+            // min/max scatter sweeps ALL elements [0, getElementCount()) =
+            // local + halos (cornerstone places halos before and/or after the
+            // owned range), so every face touching an owned node is counted and
+            // the forward exchange can publish owner bounds to ghosts.
+            const size_t allStart = 0;
+            const size_t allElems = s.domain.getElementCount();
+            const int allEBlocks  = allElems > 0 ? int((allElems + s.blockSize - 1) / s.blockSize) : 0;
+
+            bjSeedMinMaxKernel<RealType><<<nodeBlocks, s.blockSize>>>(
+                qN.data(), s.d_bjQmin.data(), s.d_bjQmax.data(), s.nodeCount);
+            cudaDeviceSynchronize();
+            if (allEBlocks > 0)
+            {
+                bjNeighborMinMaxScatterKernel<KeyType, RealType, ElementTag><<<allEBlocks, s.blockSize>>>(
+                    c0, c1, c2, c3, c4, c5, c6, c7,
+                    qN.data(), s.d_bjQmin.data(), s.d_bjQmax.data(),
+                    allStart, allElems);
+                cudaDeviceSynchronize();
+            }
+            // Forward (not reverse): min/max is not a SUM, so publish owner
+            // bounds to ghosts via the forward halo. (Owned nodes already saw
+            // every incident face above, including from ghost elements.)
+            s.domain.exchangeNodeHalo(s.d_bjQmin);
+            s.domain.exchangeNodeHalo(s.d_bjQmax);
+
+            bjSeedPhiKernel<RealType><<<nodeBlocks, s.blockSize>>>(s.d_bjPhi.data(), s.nodeCount);
+            cudaDeviceSynchronize();
+            if (allEBlocks > 0)
+            {
+                bjLimiterScatterKernel<KeyType, RealType, ElementTag><<<allEBlocks, s.blockSize>>>(
+                    c0, c1, c2, c3, c4, c5, c6, c7,
+                    qN.data(), s.d_bjQmin.data(), s.d_bjQmax.data(),
+                    gradQx.data(), gradQy.data(), gradQz.data(),
+                    d_bjNodeX.data(), d_bjNodeY.data(), d_bjNodeZ.data(),
+                    s.d_bjPhi.data(), allStart, allElems);
+                cudaDeviceSynchronize();
+            }
+            s.domain.exchangeNodeHalo(s.d_bjPhi);
+        }
+
         // Compute current-step advection into advN.
         if (advN.size() != s.nodeCount) advN.resize(s.nodeCount);
         thrust::fill(thrust::device_pointer_cast(advN.data()),
@@ -5482,7 +5873,10 @@ void runPredictorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
                 qN.data(),
                 s.d_areaVec_x.data(), s.d_areaVec_y.data(), s.d_areaVec_z.data(),
                 advN.data(), startElem, numLocal,
-                s.useSkewSymmetricAdvection);
+                advMode,
+                s.d_bjPhi.data(),
+                gradQx.data(), gradQy.data(), gradQz.data(),
+                d_bjNodeX.data(), d_bjNodeY.data(), d_bjNodeZ.data());
             cudaDeviceSynchronize();
         }
         s.domain.reverseExchangeNodeHaloAdd(advN);
@@ -5510,9 +5904,12 @@ void runPredictorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
         cudaDeviceSynchronize();
     };
 
-    runPredictor(s.d_u, s.d_u_nm1, s.d_uStar, s.d_advU_n, s.d_advU_nm1, s.d_gradPx, s.d_uTarget, s.bodyForceX);
-    runPredictor(s.d_v, s.d_v_nm1, s.d_vStar, s.d_advV_n, s.d_advV_nm1, s.d_gradPy, s.d_vTarget, s.bodyForceY);
-    runPredictor(s.d_w, s.d_w_nm1, s.d_wStar, s.d_advW_n, s.d_advW_nm1, s.d_gradPz, s.d_wTarget, s.bodyForceZ);
+    runPredictor(s.d_u, s.d_u_nm1, s.d_uStar, s.d_advU_n, s.d_advU_nm1, s.d_gradPx, s.d_uTarget, s.bodyForceX,
+                 s.d_gradUx, s.d_gradUy, s.d_gradUz);
+    runPredictor(s.d_v, s.d_v_nm1, s.d_vStar, s.d_advV_n, s.d_advV_nm1, s.d_gradPy, s.d_vTarget, s.bodyForceY,
+                 s.d_gradVx, s.d_gradVy, s.d_gradVz);
+    runPredictor(s.d_w, s.d_w_nm1, s.d_wStar, s.d_advW_n, s.d_advW_nm1, s.d_gradPz, s.d_wTarget, s.bodyForceZ,
+                 s.d_gradWx, s.d_gradWy, s.d_gradWz);
 
     // Sync ghosts of q* so the implicit RHS / CG warm-start read correct ghosts.
     s.domain.exchangeNodeHalo(s.d_uStar);
@@ -5693,35 +6090,28 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
     cstone::DeviceVector<RealType> d_divAccNode(s.nodeCount, RealType(0));
     if (eBlocks > 0)
     {
-        // Rhie-Chow is a hex-only deferred kernel (std::get<7>, fixed hex face
-        // incidence). useRC is forced false for tet so the if constexpr branch
-        // that instantiates the RC kernel is never reached, and tet always runs
-        // the templated plain-divergence kernel.
-        bool useRC = false;
-        if constexpr (std::is_same_v<ElementTag, HexTag>) useRC = s.useRhieChow;
+        // Rhie-Chow corrected divergence: adds the compact pressure-velocity
+        // coupling term that suppresses the checkerboard pressure mode on
+        // Q1-Q1 co-located grids. Standard CVFEM/co-located-FV stabilization
+        // (Nalu-Wind, OpenFOAM). Element-generic via scsLR<ElementTag> +
+        // ElemTraits<ElementTag>::ScsPerElem. tau auto = dt/rho.
+        bool useRC = s.useRhieChow;
         if (useRC)
         {
-            // Rhie-Chow corrected divergence: adds the pressure-velocity
-            // coupling term that suppresses checkerboard on Q1-Q1 periodic
-            // grids. This is the standard CVFEM/co-located-FV stabilization
-            // used by Nalu-Wind and OpenFOAM. tau auto = dt/rho.
-            if constexpr (std::is_same_v<ElementTag, HexTag>)
-            {
-                RealType tauRC = s.rhieChowTau;
-                if (tauRC <= 0) tauRC = dt / rho;
-                const auto& d_x = s.domain.getNodeX();
-                const auto& d_y = s.domain.getNodeY();
-                const auto& d_z = s.domain.getNodeZ();
-                computeDivergenceRhieChowKernel<KeyType, RealType><<<eBlocks, s.blockSize>>>(
-                    c0, c1, c2, c3, c4, c5, c6, c7,
-                    s.d_uStarStar.data(), s.d_vStarStar.data(), s.d_wStarStar.data(),
-                    s.d_p.data(),
-                    s.d_gradPx.data(), s.d_gradPy.data(), s.d_gradPz.data(),
-                    d_x.data(), d_y.data(), d_z.data(),
-                    s.d_areaVec_x.data(), s.d_areaVec_y.data(), s.d_areaVec_z.data(),
-                    tauRC,
-                    d_divAccNode.data(), startElem, numLocal);
-            }
+            RealType tauRC = s.rhieChowTau;
+            if (tauRC <= 0) tauRC = dt / rho;
+            const auto& d_x = s.domain.getNodeX();
+            const auto& d_y = s.domain.getNodeY();
+            const auto& d_z = s.domain.getNodeZ();
+            computeDivergenceRhieChowKernel<KeyType, RealType, ElementTag><<<eBlocks, s.blockSize>>>(
+                c0, c1, c2, c3, c4, c5, c6, c7,
+                s.d_uStarStar.data(), s.d_vStarStar.data(), s.d_wStarStar.data(),
+                s.d_p.data(),
+                s.d_gradPx.data(), s.d_gradPy.data(), s.d_gradPz.data(),
+                d_x.data(), d_y.data(), d_z.data(),
+                s.d_areaVec_x.data(), s.d_areaVec_y.data(), s.d_areaVec_z.data(),
+                tauRC,
+                d_divAccNode.data(), startElem, numLocal);
         }
         else
         {
@@ -6029,6 +6419,59 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
 // Step 4: CORRECTOR + pressure update + divergence diagnostic.
 //   q^{n+1} = q** - (dt/rho) (grad phi)_q  on interior
 //   q^{n+1} = qTarget                       on boundary (already correct)
+// Divergence of the Rhie-Chow-CORRECTED face flux, not the plain nodal flux.
+// This is the operator the pressure solve actually drives to zero when RC is on.
+// The plain divMaxAndRmsOwned still "sees" the checkerboard mode that RC has
+// decoupled from the flux, so it can stay O(1) even when RC works -- use THIS
+// to tell whether RC is doing its job. tau matches the solve (s.rhieChowTau or
+// dt/rho). Returns roundoff-level max when the projection is consistent.
+template<typename KeyType, typename RealType, typename ElementTag>
+inline void divMaxRhieChowOwned(NSStepper<KeyType, RealType, ElementTag>& s,
+                                RealType dt, RealType rho,
+                                RealType& outMax, RealType& outRms)
+{
+    const auto& d_own  = s.domain.getNodeOwnershipMap();
+    const auto& d_conn = s.domain.getElementToNodeConnectivity();
+    auto cp = connPtrs<ElementTag, KeyType>(d_conn);
+    const KeyType* c0 = cp[0]; const KeyType* c1 = cp[1];
+    const KeyType* c2 = cp[2]; const KeyType* c3 = cp[3];
+    const KeyType* c4 = nullptr; const KeyType* c5 = nullptr;
+    const KeyType* c6 = nullptr; const KeyType* c7 = nullptr;
+    if constexpr (std::is_same_v<ElementTag, HexTag>) { c4 = cp[4]; c5 = cp[5]; c6 = cp[6]; c7 = cp[7]; }
+    size_t startElem = s.domain.startIndex();
+    size_t numLocal  = s.domain.localElementCount();
+    int eBlocks = numLocal > 0 ? int((numLocal + s.blockSize - 1) / s.blockSize) : 0;
+    int nodeBlocks = (s.nodeCount + s.blockSize - 1) / s.blockSize;
+
+    RealType tauRC = s.rhieChowTau;
+    if (tauRC <= 0) tauRC = dt / rho;
+    const auto& d_x = s.domain.getNodeX();
+    const auto& d_y = s.domain.getNodeY();
+    const auto& d_z = s.domain.getNodeZ();
+
+    cstone::DeviceVector<RealType> d_divAcc(s.nodeCount, RealType(0));
+    if (eBlocks > 0) {
+        computeDivergenceRhieChowKernel<KeyType, RealType, ElementTag><<<eBlocks, s.blockSize>>>(
+            c0, c1, c2, c3, c4, c5, c6, c7,
+            s.d_u.data(), s.d_v.data(), s.d_w.data(),
+            s.d_p.data(),
+            s.d_gradPx.data(), s.d_gradPy.data(), s.d_gradPz.data(),
+            d_x.data(), d_y.data(), d_z.data(),
+            s.d_areaVec_x.data(), s.d_areaVec_y.data(), s.d_areaVec_z.data(),
+            tauRC, d_divAcc.data(), startElem, numLocal);
+        cudaDeviceSynchronize();
+    }
+    s.domain.reverseExchangeNodeHaloAdd(d_divAcc);
+    cstone::DeviceVector<RealType> d_divNorm(s.nodeCount, RealType(0));
+    normalizeDivergencePerNodeKernel<RealType><<<nodeBlocks, s.blockSize>>>(
+        d_divAcc.data(), s.d_massNode.data(),
+        s.d_node_to_dof.data(), d_own.data(),
+        d_divNorm.data(), s.nodeCount);
+    cudaDeviceSynchronize();
+    outMax = maxOwnedInteriorAbs<KeyType, RealType, ElementTag>(s, d_divNorm);
+    outRms = rmsOwnedInterior1<KeyType, RealType, ElementTag>(s, d_divNorm);
+}
+
 //   p^{n+1} = p^n + phi
 // grad(phi) computed once via the same B.4 kernel, applied per-component.
 // Writes s.lastDivMax for monitoring.
@@ -6267,6 +6710,16 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
         // max. Channel-flow with a wide pressure mask shows RMS << max if the
         // projection is doing its job.
         s.lastDivRms = rmsOwnedInterior1<KeyType, RealType, ElementTag>(s, d_divNorm);
+    }
+    // When RC is on, also report the divergence of the RC-corrected flux -- the
+    // operator the pressure solve drives to zero. The plain lastDivMax above can
+    // stay O(1) (it still resolves the checkerboard mode RC decoupled from the
+    // flux), so lastDivRC is the honest "is RC working" signal.
+    if (s.useRhieChow)
+    {
+        RealType rcMax = 0, rcRms = 0;
+        divMaxRhieChowOwned<KeyType, RealType, ElementTag>(s, dt, rho, rcMax, rcRms);
+        s.lastDivRC = rcMax;
     }
 }
 
