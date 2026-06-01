@@ -2792,6 +2792,21 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
     }
     pt.lap("DOF mapping");
 
+    // DIAGNOSTIC: owned-node partition health. Sum of per-rank owned DOFs across
+    // ranks MUST equal the global unique-DOF count -- if it is LARGER, some nodes
+    // are doubly-owned (counted on >1 rank), which double-counts them in the CG
+    // inner products and corrupts the projection (multi-rank div != single-rank).
+    {
+        long long localOwned = s.numOwnedDofs;
+        long long sumOwned = 0, maxOwned = 0;
+        MPI_Allreduce(&localOwned, &sumOwned, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+        MPI_Allreduce(&localOwned, &maxOwned, 1, MPI_LONG_LONG, MPI_MAX, MPI_COMM_WORLD);
+        if (s.rank == 0)
+            std::cout << "  [owned-node check] sum(numOwnedDofs over ranks)=" << sumOwned
+                      << "  (this should EQUAL the global unique node/DOF count; "
+                      << "larger => doubly-owned boundary nodes)\n";
+    }
+
     // FULL 27-NNZ sparsity (same pattern used by both matrices). Building once
     // means the velocity and pressure matrices share row/col/diag pointers.
     s.d_rowPtr.resize(s.numTotalDofs + 1);
@@ -5025,7 +5040,26 @@ void applyDDTPerNode(NSStepper<KeyType, RealType, ElementTag>& s,
         cudaDeviceSynchronize();
     }
     s.domain.reverseExchangeNodeHaloAdd(outAcc);
-    maybePeriodicSum<KeyType, RealType, ElementTag>(s, outAcc);
+    // Diagnostic gate: MARS_DDT_NO_PERIODIC_SUM=1 disables the cross-rank
+    // slave->master Ap sum on the SpMV result. Under the conditional-collapse
+    // design, slave_on_A and master_on_D are separate owned DOFs representing
+    // two distinct equations. The cross-rank slave->master sum was designed
+    // for the OLD shared-DOF design and now merges two equations -> non-SPD.
+    // Standard cstone reverseExchangeNodeHaloAdd already routes per-node
+    // ghost accumulations to their owners by SFC key, so the cross-rank
+    // physics SHOULD be captured by the reverseExchange alone -- as long as
+    // the matrix-free operator emits the correct per-node face contributions
+    // and the periodic-image element is iterated on both ranks.
+    if (std::getenv("MARS_DDT_NO_PERIODIC_SUM") == nullptr)
+    {
+        maybePeriodicSum<KeyType, RealType, ElementTag>(s, outAcc);
+    }
+    else if (std::getenv("MARS_DDT_PROBE") != nullptr && s.rank == 0)
+    {
+        // One-shot print so we see the gate is active.
+        static bool printed = false;
+        if (!printed) { std::cerr << "[ddt] periodic-sum DISABLED on Ap" << std::endl; printed = true; }
+    }
 
     // NOTE: BD is intentionally NOT applied to the matrix-free DDT operator.
     // Adding S*phi to (D M^-1 D^T) phi breaks the algebraic identity
@@ -5094,7 +5128,11 @@ void applyDDTPerNode(NSStepper<KeyType, RealType, ElementTag>& s,
             });
         cudaDeviceSynchronize();
         s.domain.reverseExchangeNodeHaloAdd(outAcc);
-        maybePeriodicSum<KeyType, RealType, ElementTag>(s, outAcc);
+        // BD scatter: same gate as the main DDT sum above.
+        if (std::getenv("MARS_DDT_NO_PERIODIC_SUM") == nullptr)
+        {
+            maybePeriodicSum<KeyType, RealType, ElementTag>(s, outAcc);
+        }
     }
 
     // Identity-row enforcement on pinned pressure DOFs (cavity: single corner;
