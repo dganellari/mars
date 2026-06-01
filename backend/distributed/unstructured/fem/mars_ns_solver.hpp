@@ -2150,9 +2150,6 @@ struct NSStepper
     //            legacy advection. Tet-only path built in this file.
     enum class AdvScheme { Skew, Upwind, BarthJespersen };
     AdvScheme advScheme = AdvScheme::Skew;
-    // Back-compat shim for the tgv driver which still flips a bool. advScheme is
-    // authoritative for the kernel; drivers wanting BJ set advScheme directly.
-    bool useSkewSymmetricAdvection = false;
     cstone::DeviceVector<RealType> d_gradPx, d_gradPy, d_gradPz;
     cstone::DeviceVector<RealType> d_gradPhix, d_gradPhiy, d_gradPhiz;
 
@@ -5354,71 +5351,11 @@ int solvePressureDDT(NSStepper<KeyType, RealType, ElementTag>& s,
             if (v > 0) liveEvery = v;
         }
     }
-    // Use ASSEMBLED DDT CSR for the SpMV instead of the matrix-free
-    // applyDDTPerNode. The matrix-free op relies on field-level cross-rank
-    // sums (maybePeriodicSum on outAcc) that were designed for the OLD
-    // shared-DOF collapse and break SPD under the new conditional-collapse
-    // design where cross-rank slave/master are separate owned DOFs.
-    // The assembled CSR is built per-OWNED-row from local + halo elements
-    // and is symmetric by construction (atomic CSR scatter pattern in
-    // assembleDDTPerNodeKernel), so the multi-rank seam is captured via
-    // matrix entries + the standard halo-exchanged ghost p values.
-    const bool useAssembledDDT =
-        (s.nnzDDT > 0) && (s.d_valuesDDT.size() == size_t(s.nnzDDT))
-        && (s.d_rowPtrDDT.size() == size_t(s.numTotalDofs + 1))
-        && (s.d_dofToNode.size() == size_t(s.numTotalDofs));
     for (int it = 0; it < s.maxIter; ++it)
     {
         // Ghost slots of p must be valid: A's D^T reads p[L],p[R] at every face.
         s.domain.exchangeNodeHalo(p);
-        if (useAssembledDDT)
-        {
-            // Assembled SpMV in node-storage via node<->dof indirection.
-            // Ap[node_i] = sum_j values[j] * p[d_dofToNode[colInd[j]]]
-            // for every OWNED node i with d_node_to_dof[i] in [0, numOwnedDofs).
-            // For ghost / out-of-range nodes, Ap stays 0 (will be set by
-            // reverseExchangeNodeHaloAdd if needed, or left as zero since the
-            // dot product is owned-only).
-            thrust::fill(thrust::device_pointer_cast(Ap.data()),
-                         thrust::device_pointer_cast(Ap.data() + s.nodeCount),
-                         RealType(0));
-            const int* rpPtr = s.d_rowPtrDDT.data();
-            const int* ciPtr = s.d_colIndDDT.data();
-            const RealType* vPtr = s.d_valuesDDT.data();
-            const int* n2dPtr = s.d_node_to_dof.data();
-            const int* d2nPtr = s.d_dofToNode.data();
-            const uint8_t* ownPtr = d_nodeOwnership.data();
-            const RealType* pPtr = p.data();
-            RealType* ApPtr = Ap.data();
-            int nOwnedDofs = s.numOwnedDofs;
-            size_t nNodes = s.nodeCount;
-            thrust::for_each(thrust::device,
-                thrust::counting_iterator<size_t>(0),
-                thrust::counting_iterator<size_t>(nNodes),
-                [rpPtr, ciPtr, vPtr, n2dPtr, d2nPtr, ownPtr, pPtr, ApPtr, nOwnedDofs]
-                __device__ (size_t i)
-                {
-                    if (ownPtr[i] != 1) return;
-                    int dofI = n2dPtr[i];
-                    if (dofI < 0 || dofI >= nOwnedDofs) return;
-                    int rs = rpPtr[dofI], re = rpPtr[dofI + 1];
-                    RealType acc = RealType(0);
-                    for (int j = rs; j < re; ++j)
-                    {
-                        int colDof = ciPtr[j];
-                        if (colDof < 0) continue;
-                        int colNode = d2nPtr[colDof];
-                        if (colNode < 0) continue;
-                        acc += vPtr[j] * pPtr[colNode];
-                    }
-                    ApPtr[i] = acc;
-                });
-            cudaDeviceSynchronize();
-        }
-        else
-        {
-            applyDDTPerNode<KeyType, RealType, ElementTag>(s, p, Ap, gx, gy, gz);
-        }
+        applyDDTPerNode<KeyType, RealType, ElementTag>(s, p, Ap, gx, gy, gz);
 
         RealType pAp = ownedDot<RealType>(p, Ap, s.d_node_to_dof,
                                           d_nodeOwnership.data(), s.nodeCount);
