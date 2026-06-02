@@ -2204,6 +2204,8 @@ struct NSStepper
 
     // Per-step diagnostics
     int lastPressureIters = 0;
+    RealType lastPressR0    = 0;  // initial absolute residual |r0| of the pressure CG this step
+    RealType lastPressResid = 0;  // final relative residual |r|/|r0| at the pressure CG's exit
     int lastUIters = 0, lastVIters = 0, lastWIters = 0;
     RealType lastDivMax     = 0;  // |div(u^{n+1})| max -- post-corrector, PLAIN nodal operator
     RealType lastDivRms     = 0;  // |div(u^{n+1})| RMS over interior owned DOFs; less ring-sensitive
@@ -2944,6 +2946,29 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
             s.d_node_to_dof.data(), d_nodeOwnership.data(),
             s.d_mass.data(), s.nodeCount, s.numOwnedDofs);
         cudaDeviceSynchronize();
+
+        // DIAGNOSTIC: total control volume = sum of OWNED-node lumped mass over
+        // ALL ranks. This MUST equal the single-rank total (the domain volume) --
+        // it is rank-count-invariant. If multi-rank sum < single-rank, boundary
+        // nodes are MISSING off-rank element volume => their 1/V_i is too large
+        // => grad(p) and the corrector blow up there (seen as |gP|max ~ 1e4).
+        {
+            const uint8_t* ownPtr = d_nodeOwnership.data();
+            const RealType* mP    = s.d_massNode.data();
+            double localMass = thrust::transform_reduce(thrust::device,
+                thrust::counting_iterator<size_t>(0),
+                thrust::counting_iterator<size_t>(s.nodeCount),
+                [ownPtr, mP] __device__ (size_t i) -> double {
+                    return (ownPtr[i] == 1) ? double(mP[i]) : 0.0;
+                }, 0.0, thrust::plus<double>());
+            double globalMass = 0;
+            MPI_Allreduce(&localMass, &globalMass, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+            if (s.rank == 0)
+                std::cout << "  [mass-sum check] sum(owned d_massNode over ranks)=" << std::scientific
+                          << std::setprecision(8) << globalMass << std::defaultfloat
+                          << "  (rank-count-INVARIANT = domain volume; if 4-rank < 1-rank, "
+                          << "boundary nodes miss off-rank volume)\n";
+        }
     }
     pt.lap("lumped mass");
 
@@ -3138,6 +3163,55 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
         cudaDeviceSynchronize();
     }
     pt.lap("add M/dt (velocity)");
+
+    // DIAGNOSTIC: velocity diffusion matrix (nu K + M/dt) INTERIOR-row consistency
+    // across ranks. K is a Laplacian -> its rows sum ~0, so each interior row of
+    // (nu K + M/dt) sums to ~ mass[row]/dt -- a PHYSICAL, rank-count-INVARIANT
+    // value. The matrix is assembled over OWNED+HALO elements; if a halo element
+    // is double-counted (or an owned row's stencil differs across ranks), the
+    // interior row-sum will DIFFER on 4 ranks vs 1 -> the diffusion solve injects
+    // a bulk perturbation every step (suspected cause of div(u*) 17x on 4 ranks).
+    // We report global max |rowsum - mass/dt| over interior owned rows: ~0 if
+    // assembly is rank-consistent, large if not.
+    {
+        // Compare the velocity-matrix DIAGONAL (nu K_diag + mass/dt) across ranks
+        // on a per-DOF basis. Uses d_diagPtr indirection -- the SAME proven-safe
+        // indexing as addLumpedMassDiagonalKernel above (diagPtr[dof], guarded
+        // dp>=0) -- so no rowPtr walk (that crashed: tet rowPtr layout is not a
+        // plain owned-row CSR here). We report max and SUM of the K-diagonal
+        // part (diag - mass/dt) over owned DOFs; both are rank-count-INVARIANT if
+        // the owned+halo assembly is consistent. A rank-VARYING sum => an owned
+        // row's stencil differs across ranks (suspected div(u*) 17x cause).
+        const int* dptr      = s.d_diagPtr.data();
+        const RealType* vv   = s.d_valuesVel.data();
+        const RealType* mass = s.d_mass.data();
+        RealType invdt = RealType(1) / dt;
+        double localKsum = thrust::transform_reduce(thrust::device,
+            thrust::counting_iterator<int>(0),
+            thrust::counting_iterator<int>(s.numOwnedDofs),
+            [dptr, vv, mass, invdt] __device__ (int r) -> double {
+                int dp = dptr[r];
+                if (dp < 0) return 0.0;
+                return double(vv[dp] - mass[r] * invdt);   // nu*K diagonal part
+            }, 0.0, thrust::plus<double>());
+        RealType localKmax = thrust::transform_reduce(thrust::device,
+            thrust::counting_iterator<int>(0),
+            thrust::counting_iterator<int>(s.numOwnedDofs),
+            [dptr, vv, mass, invdt] __device__ (int r) -> RealType {
+                int dp = dptr[r];
+                if (dp < 0) return RealType(0);
+                return fabs(vv[dp] - mass[r] * invdt);
+            }, RealType(0), thrust::maximum<RealType>());
+        auto mt = std::is_same_v<RealType, double> ? MPI_DOUBLE : MPI_FLOAT;
+        double gKsum = 0; RealType gKmax = 0;
+        MPI_Allreduce(&localKsum, &gKsum, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+        MPI_Allreduce(&localKmax, &gKmax, 1, mt, MPI_MAX, MPI_COMM_WORLD);
+        if (s.rank == 0)
+            std::cout << "  [Avel-diag check] sum(nu*K_diag over owned)=" << std::scientific
+                      << std::setprecision(8) << gKsum << "  max=" << gKmax << std::defaultfloat
+                      << "  (BOTH rank-count-INVARIANT if owned+halo assembly is consistent; "
+                      << "rank-varying => the bug)\n";
+    }
 
     // Probe: dump master row stats on each rank that owns masters. Gated by
     // MARS_PERIODIC_AVEL_DBG=1. Distinguishes:
@@ -3343,6 +3417,45 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
         // (targets stay zero; predictor/corrector write the field on every node).
         cudaDeviceSynchronize();
     }
+
+    // DIAGNOSTIC: global count of OWNED Dirichlet-velocity DOFs (d_isBdryDof==1)
+    // and the owned-sum of |uTarget|^2. Both are rank-count-INVARIANT: a global
+    // node is owned by exactly one rank, so summed over ranks the tagged-DOF
+    // count and the target energy must MATCH the single-rank values. If 4-rank
+    // differs from 1-rank, BC nodes are being dropped or double-counted across
+    // ranks -- the direct cause of u* (and KE*) differing from step 1.
+    {
+        const uint8_t* bnd = s.d_isBdryDof.data();
+        long long locBnd = thrust::transform_reduce(thrust::device,
+            thrust::counting_iterator<int>(0),
+            thrust::counting_iterator<int>(s.numOwnedDofs),
+            [bnd] __device__ (int d) -> long long { return bnd[d] ? 1LL : 0LL; },
+            0LL, thrust::plus<long long>());
+        // owned-sum of |uTarget|^2 over Dirichlet nodes (positive => no cancel).
+        const uint8_t* ownPtr = d_nodeOwnership.data();
+        const int* dofPtr     = s.d_node_to_dof.data();
+        const uint8_t* bnode  = (s.d_isBdryNode.size() == s.nodeCount) ? s.d_isBdryNode.data() : nullptr;
+        const RealType* uT = s.d_uTarget.data();
+        const RealType* vT = s.d_vTarget.data();
+        const RealType* wT = s.d_wTarget.data();
+        double locTgt = thrust::transform_reduce(thrust::device,
+            thrust::counting_iterator<size_t>(0),
+            thrust::counting_iterator<size_t>(s.nodeCount),
+            [ownPtr, dofPtr, uT, vT, wT] __device__ (size_t i) -> double {
+                if (ownPtr[i] != 1 || dofPtr[i] < 0) return 0.0;
+                double u = uT[i], v = vT[i], w = wT[i];
+                return u*u + v*v + w*w;
+            }, 0.0, thrust::plus<double>());
+        (void)bnode;
+        long long gBnd = 0; double gTgt = 0;
+        MPI_Allreduce(&locBnd, &gBnd, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+        MPI_Allreduce(&locTgt, &gTgt, 1, MPI_DOUBLE,    MPI_SUM, MPI_COMM_WORLD);
+        if (s.rank == 0)
+            std::cout << "  [bc-count check] owned Dirichlet-vel DOFs (sum over ranks)=" << gBnd
+                      << "  sum|uTarget|^2(owned)=" << std::scientific << std::setprecision(8) << gTgt
+                      << std::defaultfloat << "  (BOTH rank-count-INVARIANT; differ 1 vs 4 => BC nodes dropped/doubled)\n";
+    }
+
     // Sync ghost slots of the target arrays so per-node corrector/predictor
     // can read them on owned-boundary nodes even when those nodes are touched
     // by ghost elements on other ranks.
@@ -5368,7 +5481,12 @@ int solvePressureDDT(NSStepper<KeyType, RealType, ElementTag>& s,
     RealType rr0     = ownedDot<RealType>(r, r, s.d_node_to_dof,
                                           d_nodeOwnership.data(), s.nodeCount);
     RealType r0_norm = std::sqrt(rr0);
-    if (r0_norm < std::numeric_limits<RealType>::min()) return 0;
+    // Diagnostic capture (every step, regardless of the gated per-iter print):
+    // |r0| is the pressure RHS magnitude; lastPressResid starts at the not-yet-
+    // iterated ratio 1 and is overwritten with the latest |r|/|r0| in the loop.
+    s.lastPressR0    = r0_norm;
+    s.lastPressResid = RealType(1);
+    if (r0_norm < std::numeric_limits<RealType>::min()) { s.lastPressResid = RealType(0); return 0; }
     const RealType absTol = s.tolerance * r0_norm;
 
     int iters = -2;
@@ -5413,11 +5531,14 @@ int solvePressureDDT(NSStepper<KeyType, RealType, ElementTag>& s,
         // z == r (the useJacobi=false fallback path).
         RealType rr_new  = ownedDot<RealType>(r, r, s.d_node_to_dof,
                                               d_nodeOwnership.data(), s.nodeCount);
+        // Keep the diagnostic resid current on every iter (the print below is
+        // gated; this store is not, so lastPressResid is the true exit ratio).
+        s.lastPressResid = std::sqrt(rr_new) / std::max(r0_norm, std::numeric_limits<RealType>::min());
         if (s.rank == 0 && (it == 0 || (it + 1) % liveEvery == 0))
         {
             std::cout << "    [cg-ddt] iter " << std::setw(6) << (it + 1)
                       << "  |r|/|r0| = " << std::scientific << std::setprecision(3)
-                      << (std::sqrt(rr_new) / std::max(r0_norm, std::numeric_limits<RealType>::min()))
+                      << s.lastPressResid
                       << std::defaultfloat << "\n" << std::flush;
         }
         if (std::sqrt(rr_new) < absTol) { iters = it + 1; break; }
@@ -5652,6 +5773,10 @@ RealType maxOwnedInteriorAbs(NSStepper<KeyType, RealType, ElementTag>& s,
 // consistent (ghost-synced) state. runNsStep handles the chaining; isolated
 // callers must do their own halo sync of inputs.
 // =============================================================================
+
+// Set to >0 to dump per-phase diagnostics for the first N calls. Declared here
+// (before the predictor/corrector) so all step functions can read it.
+static int g_nsDebugStepsLeft = 0;
 
 template<typename KeyType, typename RealType, typename ElementTag = HexTag>
 void runPredictorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, RealType rho)
@@ -5939,6 +6064,32 @@ void runPredictorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
         }
         s.domain.reverseExchangeNodeHaloAdd(advN);
         maybePeriodicSum<KeyType, RealType, ElementTag>(s, advN);
+
+        // DIAGNOSTIC: owned-sum of the (folded) advection term. This is a
+        // rank-count-INVARIANT physical quantity if the advection scatter +
+        // reverse-fold is cross-rank-consistent. If sum(advN[owned]) differs on
+        // 1 vs 4 ranks at the same step, the advection -- the unmeasured
+        // predictor input -- is where the cross-rank inconsistency (div(u*) 17x)
+        // enters. Owned-only sum; compare 1-rank vs 4-rank at the same step.
+        if (g_nsDebugStepsLeft > 0)
+        {
+            const uint8_t* ownPtr = s.ownershipMap().data();
+            const int* dofPtr     = s.d_node_to_dof.data();
+            const RealType* aP    = advN.data();
+            double locSum = thrust::transform_reduce(thrust::device,
+                thrust::counting_iterator<size_t>(0),
+                thrust::counting_iterator<size_t>(s.nodeCount),
+                [ownPtr, dofPtr, aP] __device__ (size_t i) -> double {
+                    if (ownPtr[i] != 1 || dofPtr[i] < 0) return 0.0;
+                    return double(aP[i]);
+                }, 0.0, thrust::plus<double>());
+            double gSum = 0;
+            MPI_Allreduce(&locSum, &gSum, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+            if (s.rank == 0)
+                std::cout << "    [advN-sum] sum(advN[owned])=" << std::scientific
+                          << std::setprecision(8) << gSum << std::defaultfloat
+                          << " (rank-INVARIANT if advection is cross-rank-consistent)\n";
+        }
 
         if (s.useBdf2 && s.bdfStep >= 1 && advNm1.size() == s.nodeCount)
         {
@@ -6768,6 +6919,73 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
         // max. Channel-flow with a wide pressure mask shows RMS << max if the
         // projection is doing its job.
         s.lastDivRms = rmsOwnedInterior1<KeyType, RealType, ElementTag>(s, d_divNorm);
+
+        // DIAGNOSTIC: split div RMS into RANK-BOUNDARY-owned vs INTERIOR-owned
+        // nodes. If the multi-rank divergence excess is boundary-localized, the
+        // boundary RMS >> interior RMS => a cross-rank halo-completeness bug at
+        // shared nodes. If both are inflated equally => a global issue. Builds a
+        // per-node boundary mask from the node-halo topology's sendNodeIds_
+        // (owned nodes shared with a peer). Runs only when g_nsDebugStepsLeft>0.
+        if (s.numRanks > 1 && g_nsDebugStepsLeft > 0)
+        {
+            cstone::DeviceVector<uint8_t> d_isBndNode(s.nodeCount, uint8_t(0));
+            const auto& topo = s.domain.getNodeHaloTopology();
+            size_t nSend = topo.sendNodeIds_.size();
+            if (nSend > 0)
+            {
+                const int* snd = topo.sendNodeIds_.data();
+                uint8_t* bnd = d_isBndNode.data();
+                size_t nn = s.nodeCount;
+                thrust::for_each(thrust::device,
+                    thrust::counting_iterator<size_t>(0),
+                    thrust::counting_iterator<size_t>(nSend),
+                    [snd, bnd, nn] __device__ (size_t k) {
+                        int nid = snd[k];
+                        if (nid >= 0 && size_t(nid) < nn) bnd[nid] = uint8_t(1);
+                    });
+                cudaDeviceSynchronize();
+            }
+            const uint8_t* ownPtr = s.ownershipMap().data();
+            const int* dofPtr     = s.d_node_to_dof.data();
+            const uint8_t* bndPtr = d_isBndNode.data();
+            const RealType* dP    = d_divNorm.data();
+            // (sumSq, count) for boundary and interior separately.
+            auto accum = [&] (bool wantBoundary) {
+                RealType locSq = thrust::transform_reduce(thrust::device,
+                    thrust::counting_iterator<size_t>(0),
+                    thrust::counting_iterator<size_t>(s.nodeCount),
+                    [ownPtr, dofPtr, bndPtr, dP, wantBoundary] __device__ (size_t i) -> RealType {
+                        if (ownPtr[i] != 1) return RealType(0);
+                        if (dofPtr[i] < 0)  return RealType(0);
+                        bool isB = (bndPtr[i] != 0);
+                        if (isB != wantBoundary) return RealType(0);
+                        RealType q = dP[i]; return q * q;
+                    }, RealType(0), thrust::plus<RealType>());
+                long long locCnt = thrust::transform_reduce(thrust::device,
+                    thrust::counting_iterator<size_t>(0),
+                    thrust::counting_iterator<size_t>(s.nodeCount),
+                    [ownPtr, dofPtr, bndPtr, wantBoundary] __device__ (size_t i) -> long long {
+                        if (ownPtr[i] != 1) return 0LL;
+                        if (dofPtr[i] < 0)  return 0LL;
+                        bool isB = (bndPtr[i] != 0);
+                        return (isB == wantBoundary) ? 1LL : 0LL;
+                    }, 0LL, thrust::plus<long long>());
+                auto mt = std::is_same_v<RealType, double> ? MPI_DOUBLE : MPI_FLOAT;
+                RealType gSq = 0; long long gCnt = 0;
+                MPI_Allreduce(&locSq, &gSq, 1, mt, MPI_SUM, MPI_COMM_WORLD);
+                MPI_Allreduce(&locCnt, &gCnt, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+                RealType rms = (gCnt > 0) ? std::sqrt(gSq / RealType(gCnt)) : RealType(0);
+                return std::make_pair(rms, gCnt);
+            };
+            auto bRms = accum(true);
+            auto iRms = accum(false);
+            if (s.rank == 0)
+                std::cout << "    [div-split] boundary RMS=" << std::scientific << std::setprecision(3)
+                          << bRms.first << " (" << bRms.second << " nodes)  interior RMS="
+                          << iRms.first << " (" << iRms.second << " nodes)  ratio="
+                          << (iRms.first > 0 ? bRms.first / iRms.first : RealType(0))
+                          << std::defaultfloat << "\n";
+        }
     }
     // When RC is on, also report the divergence of the RC-corrected flux -- the
     // operator the pressure solve drives to zero. The plain lastDivMax above can
@@ -6998,9 +7216,6 @@ void computeVorticityMagnitudePerNode(NSStepper<KeyType, RealType, ElementTag>& 
         });
     cudaDeviceSynchronize();
 }
-
-// Set to >0 to dump per-phase diagnostics for the first N calls.
-static int g_nsDebugStepsLeft = 0;
 
 template<typename KeyType, typename RealType, typename ElementTag = HexTag>
 void runNsStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, RealType nu, RealType rho)

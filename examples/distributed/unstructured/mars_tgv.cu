@@ -389,7 +389,8 @@ int main(int argc, char** argv)
     // identity requires div u_discrete = 0, which depends on whether DDT
     // pressure projection drives div(u^{n+1}) to roundoff). For now we keep
     // upwind: dissipative, stable, and the dissipation is bounded.
-    s.useSkewSymmetricAdvection    = useSkewAdvection;
+    s.advScheme = useSkewAdvection ? NSStepper<KeyType, RealType>::AdvScheme::Skew
+                                   : NSStepper<KeyType, RealType>::AdvScheme::Upwind;
 
     // Rhie-Chow pressure-velocity coupling on the divergence operator.
     // Uses the CHORIN-COMPATIBLE form: compact-pressure-gradient term only
@@ -630,7 +631,8 @@ int main(int argc, char** argv)
         s.periodicMap                  = &pmap;
         s.pressureSolve                = pressureSolve;
         s.rotationalPressureCorrection = false;
-        s.useSkewSymmetricAdvection    = useSkewAdvection;
+        s.advScheme = useSkewAdvection ? NSStepper<KeyType, RealType>::AdvScheme::Skew
+                                       : NSStepper<KeyType, RealType>::AdvScheme::Upwind;
         s.stabBochevDohrmann           = true;
         s.stabPressureTau              = -1;
         s.useLegacyGradient            = false;
