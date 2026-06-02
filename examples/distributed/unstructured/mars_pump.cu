@@ -249,37 +249,12 @@ int main(int argc, char** argv)
     {
         ExodusSideSets ss = readExodusSideSetsTet4(meshFile, rank);
 
-        // Resolve a side-set node to its RUNTIME local id by its COORDINATE, not
-        // its Exodus id. After mesh ingest MARS/cstone index nodes by SFC-sorted
-        // local id (getLocalToGlobalSfcMap holds the sorted Hilbert keys; a node's
-        // local id is LowerBound(sortedKeys, key)). The Exodus node id is a
-        // different, dead index space -- using it (the old g2l) tagged the wrong
-        // nodes on >1 rank. We recompute each node's Hilbert key from its coord
-        // with the SAME cstone::sfc3D + global box the domain used on device, so
-        // the host key matches bit-for-bit, then LowerBound into the SFC map.
-        const auto& d_sfcMap = amr.domain().getLocalToGlobalSfcMap();
-        std::vector<KeyType> hostSfc(d_sfcMap.size());
-        thrust::copy(thrust::device_pointer_cast(d_sfcMap.data()),
-                     thrust::device_pointer_cast(d_sfcMap.data() + d_sfcMap.size()),
-                     hostSfc.begin());
-        const auto& sfcBox = amr.domain().getBoundingBox();
-        using HKey = cstone::HilbertKey<KeyType>;
-
-        // Resolve from per-node COORDINATES (aligned with nodesByName). Returns
-        // SFC local ids; a coord whose key isn't in this rank's SFC map is not
-        // local here and is skipped (same semantics as the old g2l miss).
+        // Resolve a side-set node to its RUNTIME local id by its COORDINATE
+        // (the Exodus id is a dead index after ingest). Shared domain helper:
+        // coord -> Hilbert key (same cstone::sfc3D + box the domain used) ->
+        // LowerBound in the SFC map. Same resolver the projection driver uses.
         auto resolveCoords = [&] (const std::vector<std::array<double, 3>>& coords) {
-            std::vector<int> local;
-            local.reserve(coords.size());
-            for (const auto& c : coords)
-            {
-                KeyType key = cstone::sfc3D<HKey>(RealType(c[0]), RealType(c[1]),
-                                                  RealType(c[2]), sfcBox).value();
-                auto it = std::lower_bound(hostSfc.begin(), hostSfc.end(), key);
-                if (it != hostSfc.end() && *it == key)
-                    local.push_back(int(it - hostSfc.begin()));
-            }
-            return local;
+            return amr.domain().resolveSideSetNodesToLocal(coords);
         };
 
         // Inlet + outlet by name; every other side-set is a no-slip wall.
@@ -397,30 +372,31 @@ int main(int argc, char** argv)
                          thrust::device_pointer_cast(d_own.data() + d_own.size()),
                          hostOwnFA.begin());
         }
-        auto sfcLocalOf = [&](const std::array<double,3>& c) -> int {
-            KeyType key = cstone::sfc3D<HKey>(RealType(c[0]), RealType(c[1]),
-                                              RealType(c[2]), sfcBox).value();
-            auto it = std::lower_bound(hostSfc.begin(), hostSfc.end(), key);
-            return (it != hostSfc.end() && *it == key) ? int(it - hostSfc.begin()) : -1;
-        };
         auto faceAreaVec = [&](const std::string& nm, double out[3]) -> double {
             double nx = 0, ny = 0, nz = 0;
             auto tit = ss.triangleCoordsByName.find(nm);
             if (tit != ss.triangleCoordsByName.end())
+            {
+                // Resolve all triangle nodes to SFC local ids in ONE batch via
+                // the shared domain resolver (returns -1 for nodes not local to
+                // this rank, preserving alignment). Count each face only on the
+                // rank that OWNS its first node, so the MPI sum is once-per-face.
+                std::vector<int> triLocal =
+                    amr.domain().resolveSideSetNodesToLocalKeepMisses(tit->second);
                 for (size_t f = 0; f + 2 < tit->second.size(); f += 3)
                 {
+                    int la = triLocal[f];
+                    if (la < 0 || hostOwnFA[la] != 1) continue;   // not owned here
                     const auto& A = tit->second[f];
                     const auto& B = tit->second[f + 1];
                     const auto& C = tit->second[f + 2];
-                    // Count this face only on the rank that owns its first node.
-                    int la = sfcLocalOf(A);
-                    if (la < 0 || hostOwnFA[la] != 1) continue;
                     double e1x = B[0]-A[0], e1y = B[1]-A[1], e1z = B[2]-A[2];
                     double e2x = C[0]-A[0], e2y = C[1]-A[1], e2z = C[2]-A[2];
                     nx += 0.5*(e1y*e2z - e1z*e2y);
                     ny += 0.5*(e1z*e2x - e1x*e2z);
                     nz += 0.5*(e1x*e2y - e1y*e2x);
                 }
+            }
             double l[3] = {nx, ny, nz};
             MPI_Allreduce(l, out, 3, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
             return std::sqrt(out[0]*out[0] + out[1]*out[1] + out[2]*out[2]);

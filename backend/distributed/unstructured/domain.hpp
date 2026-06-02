@@ -1190,7 +1190,57 @@ public:
         return d_localToGlobalSfcMap_;
     }
 
-    const DeviceVector<KeyType>& getLocalToGlobalNodeMap() const { return d_localToGlobalNodeMap_; }
+    // WARNING: this is the EXODUS-READER node order (the pre-SFC-sort numbering
+    // from mesh read), NOT the runtime node index. Runtime arrays (coords,
+    // ownership, node_to_dof, solver fields) are indexed by the SFC-sorted local
+    // id. Do NOT use this map to index runtime arrays or to resolve boundary
+    // nodes -- that silently hits the wrong nodes on >1 rank. To map an Exodus
+    // node to its runtime local id, use resolveSideSetNodesToLocal() (by
+    // coordinate). Kept only for legacy/debug.
+    const DeviceVector<KeyType>& getExodusReaderNodeMap() const { return d_localToGlobalNodeMap_; }
+
+    // Resolve boundary/side-set nodes (given by COORDINATE) to their runtime
+    // SFC-sorted local ids -- the index every runtime array uses. Each coord is
+    // turned into the same Hilbert key the domain computed on device (identical
+    // cstone::sfc3D + global box), then located in the sorted SFC map by binary
+    // search. A coord not present on this rank (key not found) is skipped, so
+    // each rank returns only the nodes it actually holds (owned or ghost) --
+    // mirroring a per-rank side-set resolution. Host-side; call once at setup.
+    // Same as above but keeps alignment with `coords`: a coord not local to
+    // this rank yields -1 (instead of being dropped). Use when you need the
+    // result index to line up 1:1 with the input (e.g. per-face lookups).
+    std::vector<int>
+    resolveSideSetNodesToLocalKeepMisses(const std::vector<std::array<double, 3>>& coords) const
+    {
+        ensureSfcMap();
+        std::vector<KeyType> hostSfc(d_localToGlobalSfcMap_.size());
+        thrust::copy(thrust::device_pointer_cast(d_localToGlobalSfcMap_.data()),
+                     thrust::device_pointer_cast(d_localToGlobalSfcMap_.data()
+                                                 + d_localToGlobalSfcMap_.size()),
+                     hostSfc.begin());
+        using HKey = cstone::HilbertKey<KeyType>;
+        std::vector<int> local(coords.size(), -1);
+        for (size_t i = 0; i < coords.size(); ++i)
+        {
+            const auto& c = coords[i];
+            KeyType key = cstone::sfc3D<HKey>(RealType(c[0]), RealType(c[1]),
+                                              RealType(c[2]), box_).value();
+            auto it = std::lower_bound(hostSfc.begin(), hostSfc.end(), key);
+            if (it != hostSfc.end() && *it == key)
+                local[i] = int(it - hostSfc.begin());
+        }
+        return local;
+    }
+
+    std::vector<int>
+    resolveSideSetNodesToLocal(const std::vector<std::array<double, 3>>& coords) const
+    {
+        std::vector<int> withMisses = resolveSideSetNodesToLocalKeepMisses(coords);
+        std::vector<int> local;
+        local.reserve(withMisses.size());
+        for (int id : withMisses) if (id >= 0) local.push_back(id);
+        return local;
+    }
 
     //! Returns the Element->Node connectivity table using dense local node IDs (lazy).
     const DeviceConnectivityTuple& getElementToNodeConnectivity() const

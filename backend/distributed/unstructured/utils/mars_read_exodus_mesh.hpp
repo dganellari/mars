@@ -355,6 +355,26 @@ inline ExodusSideSets readExodusSideSetsHex8(const std::string& meshFile, int ra
     std::vector<int> connBlock1(num_el_in_blk1 * 8);
     NC_CHECK(nc_get_var_int(ncid, conn_id, connBlock1.data()));
 
+    // Global node coordinates (0-based global id), so each side-set node can be
+    // resolved to its runtime SFC local id by coordinate (the Exodus id is not
+    // the runtime id). See readExodusSideSetsTet4 for the same rationale.
+    size_t total_nodes = 0;
+    {
+        int num_nodes_dim;
+        NC_CHECK(nc_inq_dimid(ncid, "num_nodes", &num_nodes_dim));
+        NC_CHECK(nc_inq_dimlen(ncid, num_nodes_dim, &total_nodes));
+    }
+    std::vector<double> all_x(total_nodes), all_y(total_nodes), all_z(total_nodes);
+    {
+        int cx, cy, cz;
+        NC_CHECK(nc_inq_varid(ncid, "coordx", &cx));
+        NC_CHECK(nc_inq_varid(ncid, "coordy", &cy));
+        NC_CHECK(nc_inq_varid(ncid, "coordz", &cz));
+        NC_CHECK(nc_get_var_double(ncid, cx, all_x.data()));
+        NC_CHECK(nc_get_var_double(ncid, cy, all_y.data()));
+        NC_CHECK(nc_get_var_double(ncid, cz, all_z.data()));
+    }
+
     // For each side-set: read elem_ss<id> + side_ss<id>, expand to 4 face-nodes
     // per face, dedup, sort, store in out.nodesByName[name].
     for (size_t k = 0; k < num_side_sets; ++k)
@@ -415,12 +435,16 @@ inline ExodusSideSets readExodusSideSetsHex8(const std::string& meshFile, int ra
 
         std::vector<uint64_t> nodeVec(nodeSet.begin(), nodeSet.end());
         std::sort(nodeVec.begin(), nodeVec.end());
+        std::vector<std::array<double, 3>> nodeCoords;
+        nodeCoords.reserve(nodeVec.size());
+        for (uint64_t g0 : nodeVec) nodeCoords.push_back({ all_x[g0], all_y[g0], all_z[g0] });
         if (rank == 0)
         {
             std::cout << "Exodus side-set [" << ssName << "] id=" << ssId
                       << ": " << num_faces << " faces, " << nodeVec.size() << " unique nodes\n";
         }
-        out.nodesByName[ssName] = std::move(nodeVec);
+        out.nodesByName[ssName]      = std::move(nodeVec);
+        out.nodeCoordsByName[ssName] = std::move(nodeCoords);
     }
 
     NC_CHECK(nc_close(ncid));
