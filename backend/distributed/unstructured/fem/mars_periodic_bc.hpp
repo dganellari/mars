@@ -1191,6 +1191,91 @@ void crossRankPeriodicBroadcastDof(const PeriodicMap<KeyType, RealType>& map,
     }
 }
 
+// NODE-indexed master->slave overwrite. Same one-leg broadcast as
+// crossRankPeriodicBroadcastDof but on a per-NODE field (size = nodeCount),
+// so it indexes d_field[node_id] directly with NO nodeToDof remap. This is
+// exactly leg 2 of crossRankPeriodicPairSum extracted standalone.
+//
+// Needed by the matrix-free DDT pressure CG, whose state vectors r/p/phi/g are
+// node-indexed. A cross-rank periodic slave is OWNED on its rank with its own
+// distinct node slot (it was NOT collapsed onto the remote master's DOF, see
+// the same-rank-only collapse in setupNSStepper). The same-rank broadcast
+// (periodicBroadcastSameRankKernel) skips it because ownership[master]!=1, and
+// the cstone halo never refreshes it because it is an owned node, not a ghost.
+// So its slot drifts from the master's value on the master-owner rank, and the
+// matrix-free D^T scatter then reads asymmetric p across the periodic seam.
+// This call refreshes it every iteration, mirroring crossRankPeriodicPairSum's
+// cross-rank leg for the SUM direction.
+//
+// No-op when xr.peers_.empty() (single-rank or no cross-rank pairs).
+template<typename KeyType, typename RealType>
+void crossRankPeriodicBroadcast(const PeriodicMap<KeyType, RealType>& map,
+                                cstone::DeviceVector<RealType>& d_field)
+{
+    const auto& xr = map.cross_;
+    if (xr.peers_.empty()) return;
+
+    auto mpiType = std::is_same_v<RealType, double> ? MPI_DOUBLE : MPI_FLOAT;
+    const int numPeers = int(xr.peers_.size());
+    int sendTotal = xr.sendOffsets_.back();
+    int recvTotal = xr.recvOffsets_.back();
+
+    // Pack owned-master node values into recvBuf_ (one slot per local master).
+    if (recvTotal > 0)
+    {
+        int blk = 256, grd = (recvTotal + blk - 1) / blk;
+        packCrossRankSendKernel<RealType><<<grd, blk>>>(
+            xr.d_recvOwnedMasterIds_.data(), d_field.data(),
+            xr.recvBuf_.data(), recvTotal);
+        cudaDeviceSynchronize();
+    }
+
+    // Send recvBuf_ (master values) to the slave-owner rank; receive into sendBuf_.
+    // Distinct tag base (0x5048) so it never collides with the SUM legs
+    // (0x5041..0x5044), the per-DOF broadcast (0x5046), or cstone halo tags;
+    // epoch_ increments per call so back-to-back in-loop calls stay distinct.
+    {
+        const int tag = 0x5048 + xr.epoch_;
+        std::vector<MPI_Request> reqs; reqs.reserve(2 * numPeers);
+        for (int p = 0; p < numPeers; ++p)
+        {
+            int peer = xr.peers_[p];
+            int rcnt = xr.sendOffsets_[p + 1] - xr.sendOffsets_[p];
+            if (rcnt > 0)
+            {
+                MPI_Request r;
+                MPI_Irecv(xr.sendBuf_.data() + xr.sendOffsets_[p], rcnt,
+                          mpiType, peer, tag, xr.comm_, &r);
+                reqs.push_back(r);
+            }
+        }
+        for (int p = 0; p < numPeers; ++p)
+        {
+            int peer = xr.peers_[p];
+            int scnt = xr.recvOffsets_[p + 1] - xr.recvOffsets_[p];
+            if (scnt > 0)
+            {
+                MPI_Request r;
+                MPI_Isend(xr.recvBuf_.data() + xr.recvOffsets_[p], scnt,
+                          mpiType, peer, tag, xr.comm_, &r);
+                reqs.push_back(r);
+            }
+        }
+        if (!reqs.empty()) MPI_Waitall(int(reqs.size()), reqs.data(), MPI_STATUSES_IGNORE);
+        ++xr.epoch_;
+    }
+
+    // Overwrite owned-slave node slots on the slave-owner rank.
+    if (sendTotal > 0)
+    {
+        int blk = 256, grd = (sendTotal + blk - 1) / blk;
+        overwriteCrossRankRecvKernel<RealType><<<grd, blk>>>(
+            xr.d_sendOwnedSlaveIds_.data(), xr.sendBuf_.data(),
+            d_field.data(), sendTotal);
+        cudaDeviceSynchronize();
+    }
+}
+
 // Tiny apply kernel for Fix Y: adds host-resolved (slot, delta) pairs into the
 // CSR values array. One thread per slot. No atomics required because the host
 // side already accumulated all incoming triples that resolve to the same slot

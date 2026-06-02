@@ -5156,6 +5156,18 @@ void applyDDTPerNode(NSStepper<KeyType, RealType, ElementTag>& s,
         mars::fem::periodicBroadcastSameRankKernel<RealType><<<nodeBlocks, s.blockSize>>>(
             d_partner, d_nodeOwnership.data(), s.nodeCount, gzAcc.data());
         cudaDeviceSynchronize();
+        // Cross-rank leg: refresh a cross-rank slave's OWNED g slot from the
+        // master's owner rank. The forward halo above only touches ghosts, and
+        // the same-rank kernel skipped this pair (master is a ghost here). The
+        // subsequent D-scatter (step c) reads g[slave] and g[master] at the
+        // seam; they must be equal or D is asymmetric there. No-op when peers_
+        // empty (single-rank / no cross-rank pairs).
+        if (s.numRanks > 1)
+        {
+            mars::fem::crossRankPeriodicBroadcast<KeyType, RealType>(*s.periodicMap, gxAcc);
+            mars::fem::crossRankPeriodicBroadcast<KeyType, RealType>(*s.periodicMap, gyAcc);
+            mars::fem::crossRankPeriodicBroadcast<KeyType, RealType>(*s.periodicMap, gzAcc);
+        }
     }
 
     // Step c: out = D g (un-normalized per-node divergence accumulator).
@@ -5402,9 +5414,21 @@ int solvePressureDDT(NSStepper<KeyType, RealType, ElementTag>& s,
                             ? s.periodicMap->d_periodicPartner.data() : nullptr;
     auto bcastMasterToSlave = [&](cstone::DeviceVector<RealType>& v) {
         if (!partnerPtr) return;
+        // (a) same-rank leg: collapsed slave node slot := its owned master's slot.
         mars::fem::periodicBroadcastSameRankKernel<RealType><<<nodeBlocks, s.blockSize>>>(
             partnerPtr, d_nodeOwnership.data(), s.nodeCount, v.data());
         cudaDeviceSynchronize();
+        // (b) cross-rank leg: a cross-rank slave is OWNED here but its master is
+        // a ghost, so the same-rank kernel skipped it and the cstone halo (owners
+        // ->ghosts) never touches an owned slot. Without this refresh its node
+        // slot drifts from the master's value on the master-owner rank, and the
+        // matrix-free D^T scatter reads asymmetric p across the periodic seam ->
+        // seam divergence blows up. Mirrors maybePeriodicSum's cross-rank leg for
+        // the SUM direction. No-op when peers_ empty (single-rank / no XR pairs).
+        if (s.numRanks > 1)
+        {
+            mars::fem::crossRankPeriodicBroadcast<KeyType, RealType>(*s.periodicMap, v);
+        }
     };
 
     // Jacobi preconditioning is ON by default. Two earlier session bugs masked
