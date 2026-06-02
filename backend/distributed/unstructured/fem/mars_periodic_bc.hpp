@@ -1634,15 +1634,15 @@ void enforcePeriodicSum(const DomainT& domain, const PeriodicMap<KeyType, RealTy
 
 // Pressure null-space removal: subtract the global mean of the pressure DOF
 // vector. d_partner (optional) is the periodic partner table; when given, a
-// same-rank periodic slave (partner>=0 AND its master is locally owned) ALIASES
-// its master's DOF -- it is the SAME equation on a second node. Counting it
-// would weight collapsed periodic DOFs by their face multiplicity (2x on a
-// face, 4x edge, 8x corner) and subtract a biased constant, leaving the DDT RHS
-// not mean-zero in DOF space (out of range(A)). So we sum and count over
-// CANONICAL nodes only (one per DOF) and divide by the true DOF count.
-// Cross-rank slaves keep their own distinct owned DOF (master is a ghost,
-// ownership!=1) and ARE counted. d_partner==nullptr (Dirichlet/pump, no
-// collapse) reduces to the old owned-node sum exactly.
+// periodic slave (partner>=0) ALIASES its master's DOF -- it is the SAME equation
+// on a second node (the DDT path merges slave onto master and mirrors the slot).
+// Counting it would weight collapsed periodic DOFs by their face multiplicity
+// (2x face, 4x edge, 8x corner) for same-rank pairs, and globally (slave here +
+// master on its owner rank) for cross-rank pairs, biasing the subtracted constant
+// so the DDT RHS is not mean-zero in DOF space (out of range(A)). So we sum and
+// count over CANONICAL nodes only (one per DOF) -- skip ALL slaves; the DOF is
+// counted once on the rank that owns its master. d_partner==nullptr (Dirichlet/
+// pump, no collapse) reduces to the old owned-node sum exactly.
 template<typename RealType, typename DomainT>
 void removeMean(const DomainT& domain, cstone::DeviceVector<RealType>& d_p,
                 MPI_Comm comm, const int* d_partner = nullptr)
@@ -1658,8 +1658,7 @@ void removeMean(const DomainT& domain, cstone::DeviceVector<RealType>& d_p,
         [d_p_ptr = d_p.data(), own_ptr = d_ownership.data(), d_partner]
         __device__ (size_t i) -> RealType {
             if (own_ptr[i] != 1) return RealType(0);
-            if (d_partner && d_partner[i] >= 0 && own_ptr[d_partner[i]] == 1)
-                return RealType(0);
+            if (d_partner && d_partner[i] >= 0) return RealType(0);
             return d_p_ptr[i];
         },
         RealType(0), thrust::plus<RealType>());
@@ -1671,8 +1670,7 @@ void removeMean(const DomainT& domain, cstone::DeviceVector<RealType>& d_p,
         [own_ptr = d_ownership.data(), d_partner]
         __device__ (size_t i) -> long long {
             if (own_ptr[i] != 1) return 0LL;
-            if (d_partner && d_partner[i] >= 0 && own_ptr[d_partner[i]] == 1)
-                return 0LL;
+            if (d_partner && d_partner[i] >= 0) return 0LL;
             return 1LL;
         },
         0LL, thrust::plus<long long>());

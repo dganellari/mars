@@ -5305,14 +5305,15 @@ void applyDDTPerNode(NSStepper<KeyType, RealType, ElementTag>& s,
 }
 
 // Plain Euclidean dot over owned nodes (CG operates on un-normalized acc form).
-// d_partner (optional): the periodic partner table. A same-rank periodic slave
-// (partner>=0 AND master locally owned) ALIASES its master's DOF -- it is the
-// SAME equation living on a second node. Counting both the slave and the master
-// node would weight that one DOF by its periodic-face multiplicity (2x face, 4x
-// edge, 8x corner) and corrupt every CG inner product. So we skip same-rank
-// slaves: each collapsed DOF is counted exactly once on its (canonical) master
-// node. Cross-rank slaves keep their own distinct owned DOF (master is a ghost,
-// ownership!=1) and ARE counted. d_partner==nullptr (Dirichlet/pump, no
+// d_partner (optional): the periodic partner table. A periodic slave (partner>=0)
+// ALIASES its master's DOF -- it is the SAME equation living on a second node.
+// In the DDT path maybePeriodicSum merges the slave onto the master and zeroes/
+// mirrors the slave slot, and bcastMasterToSlave keeps slave==master, so the pair
+// is ONE DOF. Counting the slave would weight that DOF twice: by face multiplicity
+// for a same-rank pair, and GLOBALLY (slave on this rank + master on the owner
+// rank) for a cross-rank pair. The latter breaks SPD -> pAp<=0 -> CG breakdown.
+// So we skip ALL slaves; the DOF is counted exactly once on the rank that owns its
+// master (where ownership[master]==1). d_partner==nullptr (Dirichlet/pump, no
 // collapse) reduces to the old owned-node dot exactly.
 template<typename RealType>
 RealType ownedDot(const cstone::DeviceVector<RealType>& a,
@@ -5330,8 +5331,7 @@ RealType ownedDot(const cstone::DeviceVector<RealType>& a,
         thrust::counting_iterator<size_t>(numNodes),
         [aPtr, bPtr, dofPtr, d_ownership, d_partner] __device__ (size_t i) -> RealType {
             if (d_ownership[i] != 1 || dofPtr[i] < 0) return RealType(0);
-            if (d_partner && d_partner[i] >= 0 && d_ownership[d_partner[i]] == 1)
-                return RealType(0);
+            if (d_partner && d_partner[i] >= 0) return RealType(0);
             return aPtr[i] * bPtr[i];
         }, RealType(0), thrust::plus<RealType>());
     RealType globalSum = 0;
