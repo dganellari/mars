@@ -3927,13 +3927,73 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
     using BCK = typename NSStepper<KeyType, RealType, ElementTag>::BCKind;
     if (s.bcKind == BCK::Periodic)
     {
-        // Periodic: pressure has a 1D constant-mode null space that the solver
-        // tolerates and the per-step removeMean call cleans up. No pin, no
-        // outflow Dirichlet, no matrix-row enforcement on the pressure matrix.
-        s.pressurePinDof  = -1;
-        s.pressurePinRank = -1;
-        if (s.rank == 0)
-            std::cout << "  pressure BC: periodic (no pin; null-space removed each step via removeMean)\n";
+        // Periodic: pressure is pure-Neumann with a 1D constant-mode null space.
+        // Default: leave it Neumann and clean up with per-step removeMean.
+        //
+        // MARS_PERIODIC_PIN: pin ONE owned DOF (nearest the box corner) to break
+        // the null space explicitly, exactly like the cavity. On >1 rank the
+        // Neumann+removeMean route was observed to break down (the assembled
+        // operator's numerical null vector is not exactly the constant across the
+        // cross-rank seam, so the mean projection is inconsistent -> CG search
+        // direction lands in the near-null space -> pAp<=0). A hard pin removes
+        // the null direction outright and does not depend on seam completeness.
+        // Same mechanism as the cavity pin below (findPressurePinCandidateKernel
+        // + global MINLOC + enforcePinRowMatrixKernel).
+        const char* pinEv = std::getenv("MARS_PERIODIC_PIN");
+        bool periodicPin = (pinEv && std::string(pinEv) != "0");
+        if (!periodicPin)
+        {
+            s.pressurePinDof  = -1;
+            s.pressurePinRank = -1;
+            if (s.rank == 0)
+                std::cout << "  pressure BC: periodic (no pin; null-space removed each step via removeMean)\n";
+        }
+        else
+        {
+            cstone::DeviceVector<RealType> d_d2(s.numOwnedDofs, RealType(1e30));
+            cstone::DeviceVector<int>      d_dofId(s.numOwnedDofs, -1);
+            int nBlocks = (s.nodeCount + s.blockSize - 1) / s.blockSize;
+            findPressurePinCandidateKernel<RealType><<<nBlocks, s.blockSize>>>(
+                d_x.data(), d_y.data(), d_z.data(),
+                d_nodeOwnership.data(), s.d_node_to_dof.data(),
+                d_d2.data(), d_dofId.data(),
+                s.nodeCount, s.numOwnedDofs,
+                s.xmin, s.ymin, s.zmin);
+            cudaDeviceSynchronize();
+
+            int localBestDof = -1;
+            RealType localBestD2 = RealType(1e30);
+            if (s.numOwnedDofs > 0)
+            {
+                auto dp = thrust::device_pointer_cast(d_d2.data());
+                auto minIt = thrust::min_element(thrust::device, dp, dp + s.numOwnedDofs);
+                size_t bestIdx = static_cast<size_t>(minIt - dp);
+                thrust::copy(thrust::device_pointer_cast(d_d2.data() + bestIdx),
+                             thrust::device_pointer_cast(d_d2.data() + bestIdx + 1),
+                             &localBestD2);
+                thrust::copy(thrust::device_pointer_cast(d_dofId.data() + bestIdx),
+                             thrust::device_pointer_cast(d_dofId.data() + bestIdx + 1),
+                             &localBestDof);
+            }
+
+            struct { double d; int r; } in{static_cast<double>(localBestD2), s.rank}, out{};
+            MPI_Allreduce(&in, &out, 1, MPI_DOUBLE_INT, MPI_MINLOC, MPI_COMM_WORLD);
+            s.pressurePinRank = out.r;
+            s.pressurePinDof  = (s.rank == out.r) ? localBestDof : -1;
+
+            if (s.pressurePinDof >= 0)
+            {
+                enforcePinRowMatrixKernel<RealType><<<1, 1>>>(
+                    s.pressurePinDof, s.d_rowPtr.data(), s.d_colInd.data(),
+                    s.d_diagPtr.data(), s.d_valuesPre.data());
+                cudaDeviceSynchronize();
+            }
+            if (s.rank == 0)
+                std::cout << "  pressure BC: periodic + single-DOF pin (MARS_PERIODIC_PIN): rank="
+                          << s.pressurePinRank << ", dof="
+                          << ((s.rank == s.pressurePinRank) ? s.pressurePinDof : -1)
+                          << " (anchor near corner (" << s.xmin << "," << s.ymin << "," << s.zmin << "))\n";
+        }
     }
     else if (s.bcKind == BCK::Channel)
     {
@@ -5581,9 +5641,16 @@ int solvePressureDDT(NSStepper<KeyType, RealType, ElementTag>& s,
                            s.elementCount * sizeof(KeyType), cudaMemcpyDeviceToHost);
             }
 
-            // For each master i, scan its incident elements and take the first
-            // owned neighbor node j with a distinct valid owned DOF that is NOT
-            // itself a periodic alias (partner<0) -- a clean interior DOF.
+            // For each master i, scan its incident elements (node->element CSR)
+            // and pick a neighbor node j off the SAME element via the
+            // element->node connectivity. Sharing an element makes A[i,j] a real
+            // nonzero entry of the 27-pt D M^-1 D^T stencil (A[i,j]!=0 iff i,j
+            // share an element), so |A[i,j]-A[j,i]| actually measures asymmetry
+            // instead of probing a structural zero. j is required owned with a
+            // distinct valid owned DOF and partner<0 (a clean interior DOF, not a
+            // periodic alias). Owned-on-this-rank => i,j are same-rank here; the
+            // print labels that, and a future remotely-owned j would auto-label
+            // cross-rank via the ownerOfJ reduction below.
             std::vector<std::pair<int,int>> pairsIJ;  // (masterNode i, neighbor j)
             for (int mi : hMasters)
             {
@@ -5685,22 +5752,47 @@ int solvePressureDDT(NSStepper<KeyType, RealType, ElementTag>& s,
                     applyDDTPerNode<KeyType, RealType, ElementTag>(s, phiE, ApE, gx, gy, gz);
                     RealType Aij_local = readAt(dofI, ownerHere);
 
+                    // A[i,i] = (A e_i)[i]: diagonal sanity. If this comes back 0
+                    // the unit-vector/readAt machinery itself is broken (a node
+                    // is always coupled to itself in the 27-pt DDT stencil), so a
+                    // zero here, not just |Aij-Aji|=0, is the first thing to check:
+                    // it means setUnit/exchange/applyDDTPerNode/readAt are wrong
+                    // and the off-diagonal numbers are meaningless. A[i,i] must be
+                    // > 0 (SPD diagonal). Same collective shape as the legs above.
+                    setUnit(dofI, ownerHere);
+                    applyDDTPerNode<KeyType, RealType, ElementTag>(s, phiE, ApE, gx, gy, gz);
+                    RealType Aii_local = readAt(dofI, ownerHere);
+
                     // Each entry is owned by exactly one rank (owner of i for
-                    // A[i,j], owner of j for A[j,i]); everyone else packed 0,
-                    // so SUM merges them with no double-count and no miss.
-                    RealType Aji = 0, Aij = 0;
+                    // A[i,j]/A[i,i], owner of j for A[j,i]); everyone else packed
+                    // 0, so SUM merges them with no double-count and no miss.
+                    RealType Aji = 0, Aij = 0, Aii = 0;
                     MPI_Allreduce(&Aji_local, &Aji, 1, mpiType, MPI_SUM, MPI_COMM_WORLD);
                     MPI_Allreduce(&Aij_local, &Aij, 1, mpiType, MPI_SUM, MPI_COMM_WORLD);
+                    MPI_Allreduce(&Aii_local, &Aii, 1, mpiType, MPI_SUM, MPI_COMM_WORLD);
+
+                    // Rank that owns j (the proposing rank r owns both i and j
+                    // because the neighbor walk only accepts owned nodes; -1 from
+                    // everyone else, MAX picks the real owner). Report same-rank
+                    // vs cross-rank so a future selection that picks a remotely
+                    // owned j is labelled correctly without further changes.
+                    int ownerOfJ_local = ownerHere ? s.rank : -1;
+                    int ownerOfJ = -1;
+                    MPI_Allreduce(&ownerOfJ_local, &ownerOfJ, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
                     if (s.rank == 0)
                     {
                         // dofI/dofJ are owner-local; report owner rank + locals
-                        // for traceability. The signal is |Aij-Aji|.
+                        // for traceability. The signal is |Aij-Aji|; A[i,i]>0
+                        // gates whether that signal is trustworthy at all.
                         int repI = -1, repJ = -1;
                         if (r == 0) { repI = dofI; repJ = dofJ; }
-                        std::cout << "  [MARS_DDT_SYMPROBE] seam pair (ownerRank=" << r
+                        const char* loc = (ownerOfJ == r) ? "same-rank" : "cross-rank";
+                        std::cout << "  [MARS_DDT_SYMPROBE] seam pair (ownerRank(i)=" << r
+                                  << ", ownerRank(j)=" << ownerOfJ << ", " << loc
                                   << ", dofI=" << repI << ", dofJ=" << repJ << "): "
                                   << std::scientific << std::setprecision(6)
-                                  << "A[i,j]=" << Aij << " A[j,i]=" << Aji
+                                  << "A[i,i]=" << Aii
+                                  << " A[i,j]=" << Aij << " A[j,i]=" << Aji
                                   << " |diff|=" << std::abs(Aij - Aji)
                                   << std::defaultfloat << "\n";
                     }
