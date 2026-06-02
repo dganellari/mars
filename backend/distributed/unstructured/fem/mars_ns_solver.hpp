@@ -5148,21 +5148,34 @@ void applyDDTPerNode(NSStepper<KeyType, RealType, ElementTag>& s,
     // Dirichlet/pump (no periodic map) and for cross-rank slaves.
     if (s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Periodic && s.periodicMap)
     {
+        // Diagnostic toggles (MARS_DDT_SYMPROBE workflow): the master->slave
+        // broadcast of g overwrites the slave slot, which is NOT self-adjoint;
+        // inserting it unpaired between M^-1 and the D-scatter can break the
+        // symmetry of A = D M^-1 D^T. These two env vars let us disable each
+        // broadcast independently (without recompiling) to MEASURE which one
+        // breaks adjointness via the symmetry probe. Default (unset) = both
+        // broadcasts ON = current behavior. Read once, cache in a static bool.
+        static const bool skipSrGbcast = (std::getenv("MARS_DDT_NO_SR_GBCAST") != nullptr);
+        static const bool skipXrGbcast = (std::getenv("MARS_DDT_NO_XR_GBCAST") != nullptr);
+
         const int* d_partner = s.periodicMap->d_periodicPartner.data();
-        mars::fem::periodicBroadcastSameRankKernel<RealType><<<nodeBlocks, s.blockSize>>>(
-            d_partner, d_nodeOwnership.data(), s.nodeCount, gxAcc.data());
-        mars::fem::periodicBroadcastSameRankKernel<RealType><<<nodeBlocks, s.blockSize>>>(
-            d_partner, d_nodeOwnership.data(), s.nodeCount, gyAcc.data());
-        mars::fem::periodicBroadcastSameRankKernel<RealType><<<nodeBlocks, s.blockSize>>>(
-            d_partner, d_nodeOwnership.data(), s.nodeCount, gzAcc.data());
-        cudaDeviceSynchronize();
+        if (!skipSrGbcast)
+        {
+            mars::fem::periodicBroadcastSameRankKernel<RealType><<<nodeBlocks, s.blockSize>>>(
+                d_partner, d_nodeOwnership.data(), s.nodeCount, gxAcc.data());
+            mars::fem::periodicBroadcastSameRankKernel<RealType><<<nodeBlocks, s.blockSize>>>(
+                d_partner, d_nodeOwnership.data(), s.nodeCount, gyAcc.data());
+            mars::fem::periodicBroadcastSameRankKernel<RealType><<<nodeBlocks, s.blockSize>>>(
+                d_partner, d_nodeOwnership.data(), s.nodeCount, gzAcc.data());
+            cudaDeviceSynchronize();
+        }
         // Cross-rank leg: refresh a cross-rank slave's OWNED g slot from the
         // master's owner rank. The forward halo above only touches ghosts, and
         // the same-rank kernel skipped this pair (master is a ghost here). The
         // subsequent D-scatter (step c) reads g[slave] and g[master] at the
         // seam; they must be equal or D is asymmetric there. No-op when peers_
         // empty (single-rank / no cross-rank pairs).
-        if (s.numRanks > 1)
+        if (s.numRanks > 1 && !skipXrGbcast)
         {
             mars::fem::crossRankPeriodicBroadcast<KeyType, RealType>(*s.periodicMap, gxAcc);
             mars::fem::crossRankPeriodicBroadcast<KeyType, RealType>(*s.periodicMap, gyAcc);
@@ -5492,6 +5505,210 @@ int solvePressureDDT(NSStepper<KeyType, RealType, ElementTag>& s,
                               << "\n";
             }
             printedOnce = true;
+        }
+    }
+
+    // ---- MARS_DDT_SYMPROBE: cross-rank operator-symmetry measurement ----
+    // A = D M^-1 D^T must be symmetric for CG (pAp>0). On >1 rank with a
+    // periodic seam the CG breaks (pAp<=0) even with Jacobi off, so A itself
+    // is non-SPD across the seam. The suspect is the master->slave g-broadcast
+    // (an overwrite is not self-adjoint) inserted between M^-1 and the
+    // D-scatter inside applyDDTPerNode. This probe MEASURES adjointness:
+    // for a cross-rank seam pair of DOFs (i,j) it computes A[i,j]=(A e_j)[i]
+    // and A[j,i]=(A e_i)[j] and prints |A[i,j]-A[j,i]|. Symmetric => roundoff;
+    // asymmetric => O(operator). Run it under the two NO_*_GBCAST toggles to
+    // isolate which broadcast breaks symmetry. Runs ONCE (static guard), only
+    // on the first solve, and is fully gated -- default behavior unchanged.
+    if constexpr (std::is_same_v<ElementTag, HexTag>)
+    {
+        static bool symProbeDone = false;
+        if (!symProbeDone && std::getenv("MARS_DDT_SYMPROBE") != nullptr
+            && s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Periodic
+            && s.periodicMap != nullptr)
+        {
+            symProbeDone = true;
+
+            // Step 1 (host, tiny): each rank picks up to 3 of its OWNED
+            // cross-rank periodic masters i (those with a remote slave) and,
+            // for each, an OWNED interior neighbor j that shares an element
+            // with i (via the node->element CSR + element->node connectivity).
+            // We gather (masterNode i, neighborNode j) pairs to host so the
+            // collective apply below can build e_i / e_j on device. Only the
+            // rank that owns the master proposes -- the others contribute 0 to
+            // the MPI reduction, so no DOF is counted twice and none is missed.
+            const auto& xr = s.periodicMap->cross_;
+            std::vector<int> hMasters;
+            const int wantPairs = 3;
+            if (!xr.d_recvOwnedMasterIds_.empty())
+            {
+                int nMasters = std::min<int>(int(xr.d_recvOwnedMasterIds_.size()), wantPairs);
+                hMasters.resize(nMasters);
+                cudaMemcpy(hMasters.data(), xr.d_recvOwnedMasterIds_.data(),
+                           nMasters * sizeof(int), cudaMemcpyDeviceToHost);
+            }
+
+            // Pull the small CSR + connectivity + dof/partner/ownership arrays
+            // to host once to find neighbors. nodeCount-sized D2H, but the
+            // probe is one-shot and diagnostic-only (no steady-state cost).
+            const auto& d_n2eOff = s.domain.getNodeToElementOffsets();
+            const auto& d_n2eLst = s.domain.getNodeToElementList();
+            const auto& d_conn   = s.domain.getElementToNodeConnectivity();
+            auto cp = connPtrs<ElementTag, KeyType>(d_conn);
+            constexpr int NPE = ElemTraits<ElementTag>::NodesPerElem;
+
+            std::vector<KeyType> hOff(s.nodeCount + 1);
+            cudaMemcpy(hOff.data(), d_n2eOff.data(),
+                       (s.nodeCount + 1) * sizeof(KeyType), cudaMemcpyDeviceToHost);
+            std::vector<KeyType> hLst(hOff.empty() ? 0 : size_t(hOff.back()));
+            if (!hLst.empty())
+                cudaMemcpy(hLst.data(), d_n2eLst.data(),
+                           hLst.size() * sizeof(KeyType), cudaMemcpyDeviceToHost);
+            std::vector<int>     hN2D(s.nodeCount);
+            std::vector<uint8_t> hOwn(s.nodeCount);
+            std::vector<int>     hPartner(s.nodeCount, -1);
+            cudaMemcpy(hN2D.data(), s.d_node_to_dof.data(),
+                       s.nodeCount * sizeof(int), cudaMemcpyDeviceToHost);
+            cudaMemcpy(hOwn.data(), d_nodeOwnership.data(),
+                       s.nodeCount * sizeof(uint8_t), cudaMemcpyDeviceToHost);
+            cudaMemcpy(hPartner.data(), s.periodicMap->d_periodicPartner.data(),
+                       s.nodeCount * sizeof(int), cudaMemcpyDeviceToHost);
+            // Element connectivity columns (NPE node-id arrays). Hex only here.
+            std::vector<std::vector<KeyType>> hCol(NPE);
+            for (int c = 0; c < NPE; ++c)
+            {
+                hCol[c].resize(s.elementCount);
+                cudaMemcpy(hCol[c].data(), cp[c],
+                           s.elementCount * sizeof(KeyType), cudaMemcpyDeviceToHost);
+            }
+
+            // For each master i, scan its incident elements and take the first
+            // owned neighbor node j with a distinct valid owned DOF that is NOT
+            // itself a periodic alias (partner<0) -- a clean interior DOF.
+            std::vector<std::pair<int,int>> pairsIJ;  // (masterNode i, neighbor j)
+            for (int mi : hMasters)
+            {
+                if (mi < 0 || mi >= int(s.nodeCount)) continue;
+                int dofI = hN2D[mi];
+                if (dofI < 0 || dofI >= s.numOwnedDofs) continue;
+                int found = -1;
+                KeyType b = hOff[mi], e = hOff[mi + 1];
+                for (KeyType t = b; t < e && found < 0; ++t)
+                {
+                    size_t elem = size_t(hLst[t]);
+                    if (elem >= s.elementCount) continue;
+                    for (int c = 0; c < NPE; ++c)
+                    {
+                        int nj = int(hCol[c][elem]);
+                        if (nj < 0 || nj >= int(s.nodeCount)) continue;
+                        if (nj == mi) continue;
+                        if (hOwn[nj] != 1) continue;
+                        if (hPartner[nj] >= 0) continue;            // skip slaves/aliases
+                        int dofJ = hN2D[nj];
+                        if (dofJ < 0 || dofJ >= s.numOwnedDofs) continue;
+                        if (dofJ == dofI) continue;                 // distinct DOF
+                        found = nj;
+                        break;
+                    }
+                }
+                if (found >= 0) pairsIJ.emplace_back(mi, found);
+            }
+
+            // Step 2: round-robin a GLOBAL list of pairs across ranks so the
+            // collective applyDDTPerNode is called the same number of times on
+            // every rank. Each rank announces how many pairs it has; we then
+            // process up to wantPairs pairs total, one per (rank, slot).
+            int myPairs = int(pairsIJ.size());
+            std::vector<int> allCounts(s.numRanks, 0);
+            MPI_Allgather(&myPairs, 1, MPI_INT, allCounts.data(), 1, MPI_INT, MPI_COMM_WORLD);
+
+            // Device scratch for the unit vectors and the operator output. Sized
+            // like the existing scaffold (phi over nodeCount, Ap over nodeCount).
+            cstone::DeviceVector<RealType> phiE(s.nodeCount, RealType(0));
+            cstone::DeviceVector<RealType> ApE(s.nodeCount, RealType(0));
+            const int*     n2dPtr = s.d_node_to_dof.data();
+            const uint8_t* ownPtr = d_nodeOwnership.data();
+
+            // Set phiE = e_{dof} on the owner rank only (others leave it 0); the
+            // halo exchange then fills any ghost copies of that node so the
+            // collective D^T scatter sees a globally-consistent unit vector.
+            auto setUnit = [&](int targetDof, bool ownerHere) {
+                cudaMemset(phiE.data(), 0, s.nodeCount * sizeof(RealType));
+                if (ownerHere)
+                {
+                    thrust::for_each(thrust::device,
+                        thrust::counting_iterator<size_t>(0),
+                        thrust::counting_iterator<size_t>(s.nodeCount),
+                        [n2dPtr, ownPtr, targetDof, p = phiE.data()] __device__ (size_t k) {
+                            if (ownPtr[k] == 1 && n2dPtr[k] == targetDof) p[k] = RealType(1);
+                        });
+                    cudaDeviceSynchronize();
+                }
+                s.domain.exchangeNodeHalo(phiE);
+            };
+            // Read (A e)[node with owned dof==targetDof] on the owner rank only;
+            // returns 0 on non-owners so MPI_SUM picks exactly one contributor.
+            auto readAt = [&](int targetDof, bool ownerHere) -> RealType {
+                if (!ownerHere) return RealType(0);
+                RealType acc = thrust::transform_reduce(thrust::device,
+                    thrust::counting_iterator<size_t>(0),
+                    thrust::counting_iterator<size_t>(s.nodeCount),
+                    [n2dPtr, ownPtr, targetDof, a = ApE.data()] __device__ (size_t k) -> RealType {
+                        return (ownPtr[k] == 1 && n2dPtr[k] == targetDof) ? a[k] : RealType(0);
+                    }, RealType(0), thrust::plus<RealType>());
+                return acc;
+            };
+
+            auto mpiType = std::is_same_v<RealType, double> ? MPI_DOUBLE : MPI_FLOAT;
+            int printed = 0;
+            for (int r = 0; r < s.numRanks && printed < wantPairs; ++r)
+            {
+                int slots = std::min(allCounts[r], wantPairs - printed);
+                for (int sIdx = 0; sIdx < slots; ++sIdx, ++printed)
+                {
+                    bool ownerHere = (s.rank == r);
+                    // Local DOF indices of this pair live ONLY on the owner rank
+                    // r; other ranks pass -1 (their set/read self-select to 0).
+                    int dofI = -1, dofJ = -1;
+                    if (ownerHere)
+                    {
+                        dofI = hN2D[pairsIJ[sIdx].first];
+                        dofJ = hN2D[pairsIJ[sIdx].second];
+                    }
+
+                    // A[j,i] = (A e_i)[j]: collective apply with phi=e_i.
+                    setUnit(dofI, ownerHere);
+                    applyDDTPerNode<KeyType, RealType, ElementTag>(s, phiE, ApE, gx, gy, gz);
+                    RealType Aji_local = readAt(dofJ, ownerHere);
+
+                    // A[i,j] = (A e_j)[i]: collective apply with phi=e_j.
+                    setUnit(dofJ, ownerHere);
+                    applyDDTPerNode<KeyType, RealType, ElementTag>(s, phiE, ApE, gx, gy, gz);
+                    RealType Aij_local = readAt(dofI, ownerHere);
+
+                    // Each entry is owned by exactly one rank (owner of i for
+                    // A[i,j], owner of j for A[j,i]); everyone else packed 0,
+                    // so SUM merges them with no double-count and no miss.
+                    RealType Aji = 0, Aij = 0;
+                    MPI_Allreduce(&Aji_local, &Aji, 1, mpiType, MPI_SUM, MPI_COMM_WORLD);
+                    MPI_Allreduce(&Aij_local, &Aij, 1, mpiType, MPI_SUM, MPI_COMM_WORLD);
+                    if (s.rank == 0)
+                    {
+                        // dofI/dofJ are owner-local; report owner rank + locals
+                        // for traceability. The signal is |Aij-Aji|.
+                        int repI = -1, repJ = -1;
+                        if (r == 0) { repI = dofI; repJ = dofJ; }
+                        std::cout << "  [MARS_DDT_SYMPROBE] seam pair (ownerRank=" << r
+                                  << ", dofI=" << repI << ", dofJ=" << repJ << "): "
+                                  << std::scientific << std::setprecision(6)
+                                  << "A[i,j]=" << Aij << " A[j,i]=" << Aji
+                                  << " |diff|=" << std::abs(Aij - Aji)
+                                  << std::defaultfloat << "\n";
+                    }
+                }
+            }
+            if (printed == 0 && s.rank == 0)
+                std::cout << "  [MARS_DDT_SYMPROBE] no cross-rank seam masters found "
+                             "(single-rank or no cross-rank periodic pairs)\n";
         }
     }
 
