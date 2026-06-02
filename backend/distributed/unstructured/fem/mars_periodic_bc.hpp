@@ -319,6 +319,29 @@ __global__ void periodicBroadcastKernel(const int* d_partner, size_t numNodes,
     d_field[i] = d_field[master];
 }
 
+// Same-rank-only master->slave broadcast: field[slave] = field[master], but
+// ONLY when the master is locally OWNED. This is the in-rank periodic-collapse
+// case where slave and master are TWO distinct nodes sharing ONE DOF, so their
+// per-node field slots must be kept identical. Used inside the matrix-free DDT
+// CG (node-indexed vectors) to keep r/p/phi/g consistent across a collapsed
+// pair every iteration -- this is the gate periodicPairSumKernel uses to merge,
+// run in reverse. Cross-rank slaves (master is a ghost here, ownership!=1) keep
+// their own distinct owned DOF and are skipped; their slave<->master identity
+// is handled by crossRankPeriodicBroadcastDof, not here.
+template<typename RealType>
+__global__ void periodicBroadcastSameRankKernel(const int*     d_partner,
+                                                 const uint8_t* d_ownership,
+                                                 size_t         numNodes,
+                                                 RealType*      d_field)
+{
+    size_t i = size_t(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (i >= numNodes) return;
+    int master = d_partner[i];
+    if (master < 0) return;
+    if (d_ownership[master] != 1) return;
+    d_field[i] = d_field[master];
+}
+
 // Per-DOF variant of periodicBroadcastKernel. Used inside the velocity CG's
 // halo callback: the CG search vector p is sized numTotalDofs and indexed by
 // DOF, but the periodic partner table is indexed by NODE. We remap via the
@@ -1524,22 +1547,35 @@ void enforcePeriodicSum(const DomainT& domain, const PeriodicMap<KeyType, RealTy
     domain.exchangeNodeHalo(d_field, dofMapPtr);
 }
 
-// Pressure null-space removal: subtract global mean.
+// Pressure null-space removal: subtract the global mean of the pressure DOF
+// vector. d_partner (optional) is the periodic partner table; when given, a
+// same-rank periodic slave (partner>=0 AND its master is locally owned) ALIASES
+// its master's DOF -- it is the SAME equation on a second node. Counting it
+// would weight collapsed periodic DOFs by their face multiplicity (2x on a
+// face, 4x edge, 8x corner) and subtract a biased constant, leaving the DDT RHS
+// not mean-zero in DOF space (out of range(A)). So we sum and count over
+// CANONICAL nodes only (one per DOF) and divide by the true DOF count.
+// Cross-rank slaves keep their own distinct owned DOF (master is a ghost,
+// ownership!=1) and ARE counted. d_partner==nullptr (Dirichlet/pump, no
+// collapse) reduces to the old owned-node sum exactly.
 template<typename RealType, typename DomainT>
 void removeMean(const DomainT& domain, cstone::DeviceVector<RealType>& d_p,
-                MPI_Comm comm)
+                MPI_Comm comm, const int* d_partner = nullptr)
 {
     const auto& d_ownership = domain.getNodeOwnershipMap();
     size_t numNodes = d_p.size();
 
-    // sum p over owned nodes
+    // sum p over canonical owned nodes (each DOF once)
     RealType local_sum = thrust::transform_reduce(
         thrust::device,
         thrust::make_counting_iterator(size_t(0)),
         thrust::make_counting_iterator(numNodes),
-        [d_p_ptr = d_p.data(), own_ptr = d_ownership.data()]
+        [d_p_ptr = d_p.data(), own_ptr = d_ownership.data(), d_partner]
         __device__ (size_t i) -> RealType {
-            return (own_ptr[i] == 1) ? d_p_ptr[i] : RealType(0);
+            if (own_ptr[i] != 1) return RealType(0);
+            if (d_partner && d_partner[i] >= 0 && own_ptr[d_partner[i]] == 1)
+                return RealType(0);
+            return d_p_ptr[i];
         },
         RealType(0), thrust::plus<RealType>());
 
@@ -1547,9 +1583,12 @@ void removeMean(const DomainT& domain, cstone::DeviceVector<RealType>& d_p,
         thrust::device,
         thrust::make_counting_iterator(size_t(0)),
         thrust::make_counting_iterator(numNodes),
-        [own_ptr = d_ownership.data()]
+        [own_ptr = d_ownership.data(), d_partner]
         __device__ (size_t i) -> long long {
-            return (own_ptr[i] == 1) ? 1LL : 0LL;
+            if (own_ptr[i] != 1) return 0LL;
+            if (d_partner && d_partner[i] >= 0 && own_ptr[d_partner[i]] == 1)
+                return 0LL;
+            return 1LL;
         },
         0LL, thrust::plus<long long>());
 

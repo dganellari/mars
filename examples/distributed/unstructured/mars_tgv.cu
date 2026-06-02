@@ -441,8 +441,10 @@ int main(int argc, char** argv)
     domain.exchangeNodeHalo(s.d_p);
 
     // Subtract the mean of pressure once at t=0 so we start in the same gauge
-    // the solver will maintain.
-    mars::fem::removeMean<RealType>(domain, s.d_p, MPI_COMM_WORLD);
+    // the solver will maintain. DOF-weighted (partner table) so collapsed
+    // periodic DOFs are counted once, matching the solver's removeMean.
+    mars::fem::removeMean<RealType>(domain, s.d_p, MPI_COMM_WORLD,
+                                    pmap.d_periodicPartner.data());
     domain.exchangeNodeHalo(s.d_p);
 
     // ------------------------------------------------------------------------
@@ -651,7 +653,8 @@ int main(int argc, char** argv)
         newDomain.exchangeNodeHalo(s.d_v);
         newDomain.exchangeNodeHalo(s.d_w);
         newDomain.exchangeNodeHalo(s.d_p);
-        mars::fem::removeMean<RealType>(newDomain, s.d_p, MPI_COMM_WORLD);
+        mars::fem::removeMean<RealType>(newDomain, s.d_p, MPI_COMM_WORLD,
+                                        pmap.d_periodicPartner.data());
         newDomain.exchangeNodeHalo(s.d_p);
 
         // Resize per-frame scratch (umag, omega) to match new node count.
