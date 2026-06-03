@@ -7410,6 +7410,32 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
             s.periodicMap->d_periodicPartner.data(), s.nodeCount, s.d_phi.data());
         cudaDeviceSynchronize();
         s.domain.exchangeNodeHalo(s.d_phi);
+
+        // MARS_DDT_PHIREC: measure whether phi[slave]==phi[master] after recovery.
+        // For a cross-rank slave, partner is the master's local ghost slot; this
+        // checks the recovery actually landed. Large max-diff => recovery broken
+        // (the |phi| blowup cause); ~0 => recovery works, blowup is elsewhere.
+        if (std::getenv("MARS_DDT_PHIREC"))
+        {
+            std::vector<int> hPart(s.nodeCount);
+            std::vector<RealType> hPhi(s.nodeCount);
+            cudaMemcpy(hPart.data(), s.periodicMap->d_periodicPartner.data(),
+                       s.nodeCount * sizeof(int), cudaMemcpyDeviceToHost);
+            cudaMemcpy(hPhi.data(), s.d_phi.data(),
+                       s.nodeCount * sizeof(RealType), cudaMemcpyDeviceToHost);
+            double maxdiff = 0.0; int npairs = 0, badpart = 0;
+            for (int i = 0; i < int(s.nodeCount); ++i) {
+                int m = hPart[i];
+                if (m < 0) continue;
+                ++npairs;
+                if (m >= int(s.nodeCount)) { ++badpart; continue; }
+                double d = std::abs(double(hPhi[i]) - double(hPhi[m]));
+                if (d > maxdiff) maxdiff = d;
+            }
+            std::cout << "  [DDT-phirec rank " << s.rank << "] pairs=" << npairs
+                      << " max|phi[slave]-phi[master]|=" << maxdiff
+                      << " badPartnerIdx=" << badpart << "\n" << std::flush;
+        }
     }
 }
 
