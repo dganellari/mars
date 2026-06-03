@@ -6948,6 +6948,14 @@ RealType maxOwnedInteriorAbs(NSStepper<KeyType, RealType, ElementTag>& s,
 // (before the predictor/corrector) so all step functions can read it.
 static int g_nsDebugStepsLeft = 0;
 
+// MARS_PROJ_PROBE=1: measure the discrete projection identity on the reduced
+// periodic path. P1 confirms CG solved A phi = b (|A*phi-b|/|b|). P2/P3 measure
+// whether the corrector's RAW velocity (before any broadcast/halo) is actually
+// divergence-free in the operator-EXACT reduction (fold-then-reverse-halo), so a
+// growing printed div_max can be told apart from a real corrector failure. Off
+// by default => byte-identical behavior.
+static const bool g_projProbe = (std::getenv("MARS_PROJ_PROBE") != nullptr);
+
 template<typename KeyType, typename RealType, typename ElementTag = HexTag>
 void runPredictorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, RealType rho)
 {
@@ -7914,6 +7922,32 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
             s.lastPressureIters =
                 solvePressureDDTReduced<KeyType, RealType, ElementTag>(s, b, phi_dof);
 
+            if (g_projProbe)
+            {
+                // P1: recompute A*phi with the EXACT reduced operator CG used and
+                // compare to b. reldiff ~1e-7 => CG genuinely solved A phi = b
+                // (so any projection failure is in the corrector, not the solve).
+                const int  n         = s.numOwnedDofs;
+                const int  dofBlocks = (n + s.blockSize - 1) / s.blockSize;
+                const uint8_t* xrMask = (!s.d_isPeriodicXRSlaveDof.empty())
+                                        ? s.d_isPeriodicXRSlaveDof.data() : nullptr;
+                cstone::DeviceVector<RealType> Aphi(n, RealType(0)), rdif(n, RealType(0));
+                cstone::DeviceVector<RealType> pn(s.nodeCount, RealType(0)), apn(s.nodeCount, RealType(0)),
+                                               g1(s.nodeCount, RealType(0)), g2(s.nodeCount, RealType(0)),
+                                               g3(s.nodeCount, RealType(0));
+                applyDDTReduced<KeyType, RealType, ElementTag>(s, phi_dof, Aphi, pn, apn, g1, g2, g3);
+                axpyDofKernel<RealType><<<dofBlocks, s.blockSize>>>(
+                    rdif.data(), Aphi.data(), b.data(), RealType(-1), n);
+                cudaDeviceSynchronize();
+                RealType nb = std::sqrt(dotDof<RealType>(b,    b,    n, xrMask));
+                RealType nA = std::sqrt(dotDof<RealType>(Aphi, Aphi, n, xrMask));
+                RealType nr = std::sqrt(dotDof<RealType>(rdif, rdif, n, xrMask));
+                if (s.rank == 0)
+                    std::cout << "  [PROJ-P1] |b|=" << nb << " |A*phi|=" << nA
+                              << " |A*phi-b|/|b|=" << (nr / (nb > 0 ? nb : RealType(1)))
+                              << " iters=" << s.lastPressureIters << "\n";
+            }
+
             // Pin phi (constant null mode) in DOF space, then prolong dof->node so
             // the rest of the step (gradient, corrector, VTU) reads s.d_phi as a
             // per-node field. exchangeNodeHalo syncs ghosts for the gradient.
@@ -7925,6 +7959,27 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
                 s.numOwnedDofs);
             cudaDeviceSynchronize();
             s.domain.exchangeNodeHalo(s.d_phi);
+            // CRITICAL: the corrector reads s.d_phi through D^T, so its input MUST
+            // equal the operator's P*phi (the prolongation A inverted). The reduced
+            // operator's STEP P does scatter -> halo -> periodicBroadcastKernel, so
+            // A saw phi[slave]=phi[master]. But the slave DOF is Dirichlet-zero, so
+            // the scatter above wrote phi[slave]=0 into s.d_phi -- WITHOUT the
+            // broadcast the corrector's D^T reads phi[slave]=0 while A read
+            // phi[slave]=phi[master]. The gradient is then NOT the D^T phi that CG
+            // inverted, so D(u**-G phi)!=0 and the projection removes ~0% of the
+            // divergence (div_in==div_out, pressure grows geometrically). The error
+            // is one element deep around every periodic face, which on a 16^3 mesh
+            // reaches nearly every node -> interior RMS grows too. Run the SAME
+            // periodicBroadcastKernel the operator's P uses so the corrector's phi
+            // is byte-identical to P*phi.
+            if (s.periodicMap)
+            {
+                int blk = 256, grd = int((s.nodeCount + blk - 1) / blk);
+                mars::fem::periodicBroadcastKernel<<<grd, blk>>>(
+                    s.periodicMap->d_periodicPartner.data(), s.nodeCount, s.d_phi.data());
+                cudaDeviceSynchronize();
+                s.domain.exchangeNodeHalo(s.d_phi);
+            }
         }
         else
         {
@@ -8266,6 +8321,53 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
     runCorrector(s.d_u, s.d_uStarStar, s.d_gradPhix, s.d_uTarget);
     runCorrector(s.d_v, s.d_vStarStar, s.d_gradPhiy, s.d_vTarget);
     runCorrector(s.d_w, s.d_wStarStar, s.d_gradPhiz, s.d_wTarget);
+
+    if (g_projProbe && routeReducedPeriodicCorr)
+    {
+        // P2/P3: does the projection actually reduce divergence? Measure ||D u**||
+        // (in) and ||D u^{n+1}|| of the RAW corrected velocity (out, before any
+        // periodic broadcast/halo -- those are gated off on this path so s.d_u/v/w
+        // are the corrector's true output) in the OPERATOR-EXACT reduction
+        // (scatter -> periodicFoldToMasterKernel -> reverseExchangeNodeHaloAdd ->
+        // M^-1 normalize, the same fold-before-reverse-halo as the operator and
+        // RHS). ratio ~0 => projection works (and a growing printed div_max is a
+        // diagnostic reduction-order artifact); ratio ~1 => corrector's D really
+        // is not the D CG inverted.
+        cstone::DeviceVector<RealType> divAcc(s.nodeCount, RealType(0)),
+                                       divNorm(s.nodeCount, RealType(0));
+        auto opDiv = [&](cstone::DeviceVector<RealType>& U,
+                         cstone::DeviceVector<RealType>& V,
+                         cstone::DeviceVector<RealType>& W) -> RealType {
+            thrust::fill(thrust::device_pointer_cast(divAcc.data()),
+                         thrust::device_pointer_cast(divAcc.data() + s.nodeCount), RealType(0));
+            if (eBlocks > 0) {
+                computeDivergencePerNodeKernel<KeyType, RealType, ElementTag><<<eBlocks, s.blockSize>>>(
+                    c0, c1, c2, c3, c4, c5, c6, c7, U.data(), V.data(), W.data(),
+                    s.d_areaVec_x.data(), s.d_areaVec_y.data(), s.d_areaVec_z.data(),
+                    divAcc.data(), startElem, numLocal);
+                cudaDeviceSynchronize();
+            }
+            if (s.periodicMap) {
+                int blk = 256, grd = int((s.nodeCount + blk - 1) / blk);
+                mars::fem::periodicFoldToMasterKernel<RealType><<<grd, blk>>>(
+                    s.periodicMap->d_periodicPartner.data(), s.nodeCount, divAcc.data());
+                cudaDeviceSynchronize();
+            }
+            s.domain.reverseExchangeNodeHaloAdd(divAcc);
+            thrust::fill(thrust::device_pointer_cast(divNorm.data()),
+                         thrust::device_pointer_cast(divNorm.data() + s.nodeCount), RealType(0));
+            normalizeDivergencePerNodeKernel<RealType><<<nodeBlocks, s.blockSize>>>(
+                divAcc.data(), s.d_massNode.data(), s.d_node_to_dof.data(),
+                d_nodeOwnership.data(), divNorm.data(), s.nodeCount);
+            cudaDeviceSynchronize();
+            return maxOwnedInteriorAbs<KeyType, RealType, ElementTag>(s, divNorm);
+        };
+        RealType dIn  = opDiv(s.d_uStarStar, s.d_vStarStar, s.d_wStarStar);
+        RealType dOut = opDiv(s.d_u,         s.d_v,         s.d_w);
+        if (s.rank == 0)
+            std::cout << "  [PROJ-P2] |Du**|=" << dIn << " |Du^{n+1}|=" << dOut
+                      << "  [PROJ-P3] ratio=" << (dOut / (dIn > 0 ? dIn : RealType(1))) << "\n";
+    }
 
     // Pressure update + ghost sync (next step's predictor needs ghost p^{n+1}).
     // Standard incremental Chorin: p^{n+1} = p^n + phi.
