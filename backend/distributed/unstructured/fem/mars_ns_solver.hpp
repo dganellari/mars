@@ -3816,7 +3816,6 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
             }
         }
         else if (s.periodicMap != nullptr)
-        else if (s.periodicMap != nullptr)
         {
             // Multi-rank periodic Path B: cross-rank slave DOFs (their master is
             // owned on another rank) are made trivial Dirichlet-identity rows
