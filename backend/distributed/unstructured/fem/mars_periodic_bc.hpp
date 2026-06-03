@@ -466,6 +466,39 @@ __global__ void zeroCrossRankSlavesKernel(const int* d_send_ids,
     d_field[d_send_ids[i]] = RealType(0);
 }
 
+// Bounds-guarded pack/overwrite for the NODE-indexed master->slave broadcast.
+// The per-DOF broadcast (packCrossRankSendDofKernel / overwriteCrossRankRecvDofKernel)
+// masks a stale id via nodeToDof[id]<0; the plain node kernels above index
+// d_field[id] directly with no guard. On the reduced-DOF pressure path the
+// periodic tables can carry an id that is out of range for a plain nodeCount
+// field, and an unguarded device read/write there faults asynchronously --
+// the sticky CUDA error then surfaces at the next CUDA-aware MPI_Isend as
+// CUDA_ERROR_ILLEGAL_ADDRESS in cuMemGetAddressRange. These variants drop any
+// id outside [0, fieldSize) so the broadcast is safe for every caller.
+template<typename RealType>
+__global__ void packCrossRankSendNodeGuardedKernel(const int* d_send_ids,
+                                                   const RealType* d_field,
+                                                   RealType* d_send_buf,
+                                                   int n, int fieldSize)
+{
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= n) return;
+    int id = d_send_ids[i];
+    d_send_buf[i] = (id >= 0 && id < fieldSize) ? d_field[id] : RealType(0);
+}
+
+template<typename RealType>
+__global__ void overwriteCrossRankRecvNodeGuardedKernel(const int* d_recv_ids,
+                                                        const RealType* d_recv_buf,
+                                                        RealType* d_field,
+                                                        int n, int fieldSize)
+{
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= n) return;
+    int id = d_recv_ids[i];
+    if (id >= 0 && id < fieldSize) d_field[id] = d_recv_buf[i];
+}
+
 // Build the cross-rank periodic-pair table. Called from the end of
 // buildPeriodicMap. Single-rank or no-cross-rank-pairs case leaves
 // map.cross_ default-constructed (empty) and the per-step exchange becomes
@@ -1231,14 +1264,19 @@ void crossRankPeriodicBroadcast(const PeriodicMap<KeyType, RealType>& map,
     const int numPeers = int(xr.peers_.size());
     int sendTotal = xr.sendOffsets_.back();
     int recvTotal = xr.recvOffsets_.back();
+    const int fieldSize = int(d_field.size());
 
     // Pack owned-master node values into recvBuf_ (one slot per local master).
+    // Guarded by fieldSize: the node ids come from the periodic tables, which on
+    // the reduced-DOF path can reference an id outside this plain node field; an
+    // unguarded read would fault and resurface as a bogus MPI_Isend illegal
+    // address. The per-DOF broadcast relies on the same masking via nodeToDof.
     if (recvTotal > 0)
     {
         int blk = 256, grd = (recvTotal + blk - 1) / blk;
-        packCrossRankSendKernel<RealType><<<grd, blk>>>(
+        packCrossRankSendNodeGuardedKernel<RealType><<<grd, blk>>>(
             xr.d_recvOwnedMasterIds_.data(), d_field.data(),
-            xr.recvBuf_.data(), recvTotal);
+            xr.recvBuf_.data(), recvTotal, fieldSize);
         cudaDeviceSynchronize();
     }
 
@@ -1277,13 +1315,14 @@ void crossRankPeriodicBroadcast(const PeriodicMap<KeyType, RealType>& map,
         ++xr.epoch_;
     }
 
-    // Overwrite owned-slave node slots on the slave-owner rank.
+    // Overwrite owned-slave node slots on the slave-owner rank. Same fieldSize
+    // guard as the pack above.
     if (sendTotal > 0)
     {
         int blk = 256, grd = (sendTotal + blk - 1) / blk;
-        overwriteCrossRankRecvKernel<RealType><<<grd, blk>>>(
+        overwriteCrossRankRecvNodeGuardedKernel<RealType><<<grd, blk>>>(
             xr.d_sendOwnedSlaveIds_.data(), xr.sendBuf_.data(),
-            d_field.data(), sendTotal);
+            d_field.data(), sendTotal, fieldSize);
         cudaDeviceSynchronize();
     }
 }
