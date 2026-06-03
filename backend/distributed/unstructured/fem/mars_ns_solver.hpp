@@ -55,6 +55,7 @@
 #include <iomanip>
 #include <chrono>
 #include <cmath>
+#include <cassert>
 #include <limits>
 #include <algorithm>
 #include <vector>
@@ -2070,14 +2071,19 @@ enum class PressureSolveKind { K, DDT };
 template<typename KeyType, typename RealType, typename ElementTag = HexTag> struct NSStepper;
 
 // Forward declaration so the setup-time MARS_DDT_PROBE_DIFF diagnostic can
-// call applyDDTPerNode (defined later in this file).
+// call applyDDTPerNode (defined later in this file). applyPeriodic default
+// lives HERE (on the forward decl) -- repeating it on the definition below is a
+// C++ redefinition-of-default-argument error. applyPeriodic=false drops every
+// periodic leg, leaving a bare self-adjoint element op + cstone halo (the
+// reduced P^T A P matvec); default true keeps all existing callers identical.
 template<typename KeyType, typename RealType, typename ElementTag = HexTag>
 void applyDDTPerNode(NSStepper<KeyType, RealType, ElementTag>& s,
                      cstone::DeviceVector<RealType>& phi,
                      cstone::DeviceVector<RealType>& outAcc,
                      cstone::DeviceVector<RealType>& gxAcc,
                      cstone::DeviceVector<RealType>& gyAcc,
-                     cstone::DeviceVector<RealType>& gzAcc);
+                     cstone::DeviceVector<RealType>& gzAcc,
+                     bool applyPeriodic = true);
 
 template<typename KeyType, typename RealType, typename ElementTag>
 struct NSStepper
@@ -5286,7 +5292,8 @@ void applyDDTPerNode(NSStepper<KeyType, RealType, ElementTag>& s,
                      cstone::DeviceVector<RealType>& outAcc,
                      cstone::DeviceVector<RealType>& gxAcc,
                      cstone::DeviceVector<RealType>& gyAcc,
-                     cstone::DeviceVector<RealType>& gzAcc)
+                     cstone::DeviceVector<RealType>& gzAcc,
+                     bool applyPeriodic)  // default on the forward decl above
 {
     // Matrix-free D M^-1 D^T operator. Element-generic: steps a/b/c go through
     // the templated applyDivTransposePerNodeKernel / computeDivergencePerNodeKernel
@@ -5336,7 +5343,15 @@ void applyDDTPerNode(NSStepper<KeyType, RealType, ElementTag>& s,
     // documented anti-pattern that stalled CG on >1 rank. No-op for Dirichlet/
     // pump (no periodic map). The slave's own incoming value is overwritten and
     // inert -- it never contributes to a dot product (ownedDot skips slaves).
-    if (s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Periodic && s.periodicMap)
+    // applyPeriodic=false (reduced P^T A P path): the caller has ALREADY done the
+    // node-indexed prolongation P (scatter dof->node + periodic master->slave +
+    // plain node halo) before this matvec, so the input is already periodic-
+    // consistent. Re-applying P here would double the prolongation. Gated so the
+    // bare element-op-only operator (this branch off, the g-bcast off, the output
+    // P^T off) is structurally self-adjoint. Default true keeps every existing
+    // node-indexed caller bit-identical.
+    if (applyPeriodic
+        && s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Periodic && s.periodicMap)
     {
         const int* d_partner = s.periodicMap->d_periodicPartner.data();
         mars::fem::periodicBroadcastSameRankKernel<RealType><<<nodeBlocks, s.blockSize>>>(
@@ -5362,9 +5377,16 @@ void applyDDTPerNode(NSStepper<KeyType, RealType, ElementTag>& s,
     s.domain.reverseExchangeNodeHaloAdd(gxAcc);
     s.domain.reverseExchangeNodeHaloAdd(gyAcc);
     s.domain.reverseExchangeNodeHaloAdd(gzAcc);
-    maybePeriodicSum<KeyType, RealType, ElementTag>(s, gxAcc);
-    maybePeriodicSum<KeyType, RealType, ElementTag>(s, gyAcc);
-    maybePeriodicSum<KeyType, RealType, ElementTag>(s, gzAcc);
+    // Periodic P^T on the intermediate gradient. Off on the reduced path: there
+    // the single restriction P^T is applied once on the final output (in the
+    // caller, sum-only), and folding the slave g onto the master here too would
+    // be a second, unpaired P^T inside the operator -> asymmetric.
+    if (applyPeriodic)
+    {
+        maybePeriodicSum<KeyType, RealType, ElementTag>(s, gxAcc);
+        maybePeriodicSum<KeyType, RealType, ElementTag>(s, gyAcc);
+        maybePeriodicSum<KeyType, RealType, ElementTag>(s, gzAcc);
+    }
 
     // Step b: g <- M^{-1} g (in-place; gather is same-index, safe).
     normalizeGradientPerNodeKernel<RealType><<<nodeBlocks, s.blockSize>>>(
@@ -5386,7 +5408,12 @@ void applyDDTPerNode(NSStepper<KeyType, RealType, ElementTag>& s,
     // Broadcast g master->slave (same-rank only) so both node slots of the one
     // collapsed DOF hold the same value -> symmetric D-scatter. No-op for
     // Dirichlet/pump (no periodic map) and for cross-rank slaves.
-    if (s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Periodic && s.periodicMap)
+    // applyPeriodic=false (reduced path): this master->slave g-overwrite is the
+    // documented adjointness-breaker (an overwrite is not self-adjoint). The
+    // reduced P^T A P operator must be BARE (element op + cstone halo only), so
+    // it is gated entirely off there.
+    if (applyPeriodic
+        && s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Periodic && s.periodicMap)
     {
         // Diagnostic toggles (MARS_DDT_SYMPROBE workflow): the master->slave
         // broadcast of g overwrites the slave slot, which is NOT self-adjoint;
@@ -5445,11 +5472,15 @@ void applyDDTPerNode(NSStepper<KeyType, RealType, ElementTag>& s,
     // physics SHOULD be captured by the reverseExchange alone -- as long as
     // the matrix-free operator emits the correct per-node face contributions
     // and the periodic-image element is iterated on both ranks.
-    if (std::getenv("MARS_DDT_NO_PERIODIC_SUM") == nullptr)
+    // applyPeriodic=false (reduced path): the single restriction P^T is applied
+    // once by the caller (sum-only maybePeriodicSum + node->dof gather). Doing it
+    // here too would be a double P^T. The bare reverseExchangeNodeHaloAdd above
+    // (real cstone ghost->owner, NOT periodic) stays unconditional.
+    if (applyPeriodic && std::getenv("MARS_DDT_NO_PERIODIC_SUM") == nullptr)
     {
         maybePeriodicSum<KeyType, RealType, ElementTag>(s, outAcc);
     }
-    else if (std::getenv("MARS_DDT_PROBE") != nullptr && s.rank == 0)
+    else if (applyPeriodic && std::getenv("MARS_DDT_PROBE") != nullptr && s.rank == 0)
     {
         // One-shot print so we see the gate is active.
         static bool printed = false;
@@ -5532,10 +5563,13 @@ void applyDDTPerNode(NSStepper<KeyType, RealType, ElementTag>& s,
 
     // Identity-row enforcement on pinned pressure DOFs (cavity: single corner;
     // channel: outflow-face mask). out[i] = phi[i] makes the row act as identity.
+    // applyPeriodic=false (reduced path): TGV is pure-Neumann periodic with no
+    // pin/mask, so this is a no-op there anyway; gating it keeps the reduced
+    // operator strictly bare (element op + cstone halo) and self-adjoint.
     const int pinDof          = s.pressurePinDof;
     const uint8_t* maskPtr    = (s.d_isPressureBdryDof.size() > 0)
                                 ? s.d_isPressureBdryDof.data() : nullptr;
-    if (pinDof >= 0 || maskPtr != nullptr)
+    if (applyPeriodic && (pinDof >= 0 || maskPtr != nullptr))
     {
         const int  numOwnedDofs = s.numOwnedDofs;
         const int* dofPtr       = s.d_node_to_dof.data();
@@ -5555,6 +5589,170 @@ void applyDDTPerNode(NSStepper<KeyType, RealType, ElementTag>& s,
             });
         cudaDeviceSynchronize();
     }
+}
+
+// =============================================================================
+// DOF-space helpers for the reduced (P^T A P) periodic-pressure CG. These run
+// over [0, numOwnedDofs) -- the single unknown per periodic pair. The slave DOF
+// of a cross-rank pair does NOT exist as a live unknown here (its node slot is
+// summed onto the master by the sum-only P^T and then counted once via the
+// xr-slave mask). All trivial / element-agnostic, hence templated on RealType.
+// Defined before applyDDTReduced / solvePressureDDTReduced so the kernel names
+// are visible at their use sites.
+// =============================================================================
+
+// P^T (restriction) node->dof: fold every owned node's value onto its DOF.
+// For a same-rank periodic pair both node slots already carry node_to_dof[]==
+// the same DOF, so both slots atomicAdd onto the one DOF automatically (the
+// same-rank collapse the setup did). For a cross-rank pair the caller has
+// already run the sum-only periodic P^T (maybePeriodicSum) on the NODE array,
+// which zeroed the slave's node slot, so this gather adds 0 from the slave.
+template<typename RealType>
+__global__ void gatherNodeToDofSumKernel(const RealType* nodeIn,
+                                         const int* nodeToDof,
+                                         const uint8_t* ownership,
+                                         RealType* dofOut,
+                                         size_t numNodes,
+                                         int numOwnedDofs)
+{
+    size_t i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= numNodes) return;
+    if (ownership[i] != 1) return;
+    int dof = nodeToDof[i];
+    if (dof < 0 || dof >= numOwnedDofs) return;
+    atomicAdd(&dofOut[dof], nodeIn[i]);
+}
+
+// Jacobi precond in DOF space: z = r / max(diag, eps) over [0,n).
+template<typename RealType>
+__global__ void jacobiPrecondDofKernel(const RealType* r, const RealType* diag,
+                                       RealType eps, RealType* z, int n)
+{
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= n) return;
+    RealType d = diag[i];
+    if (d < eps) d = eps;
+    z[i] = r[i] / d;
+}
+
+// axpy in DOF space: out = a + alpha * b over [0,n).
+template<typename RealType>
+__global__ void axpyDofKernel(RealType* out, const RealType* a, const RealType* b,
+                              RealType alpha, int n)
+{
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= n) return;
+    out[i] = a[i] + alpha * b[i];
+}
+
+// DOF-space inner product, counting the co-owned cross-rank seam DOF ONCE
+// globally: a cross-rank pair has its slave DOF owned HERE and its master DOF
+// owned on the partner rank; both rank-local sums would otherwise add the same
+// physical unknown twice. Skip i where xrSlaveMask[i] (the slave copy) so the
+// master copy on the owner rank is the sole contributor, then Allreduce SUM.
+// xrSlaveMask == nullptr (single-rank or no cross-rank pairs) -> plain owned-DOF
+// dot, unchanged.
+template<typename RealType>
+RealType dotDof(const cstone::DeviceVector<RealType>& a,
+                const cstone::DeviceVector<RealType>& b,
+                int numOwnedDofs,
+                const uint8_t* xrSlaveMask)
+{
+    const RealType* aPtr = a.data();
+    const RealType* bPtr = b.data();
+    RealType localSum = thrust::transform_reduce(thrust::device,
+        thrust::counting_iterator<int>(0),
+        thrust::counting_iterator<int>(numOwnedDofs),
+        [aPtr, bPtr, xrSlaveMask] __device__ (int i) -> RealType {
+            if (xrSlaveMask && xrSlaveMask[i]) return RealType(0);
+            return aPtr[i] * bPtr[i];
+        }, RealType(0), thrust::plus<RealType>());
+    RealType globalSum = 0;
+    auto mpiType = std::is_same_v<RealType, double> ? MPI_DOUBLE : MPI_FLOAT;
+    MPI_Allreduce(&localSum, &globalSum, 1, mpiType, MPI_SUM, MPI_COMM_WORLD);
+    return globalSum;
+}
+
+// =============================================================================
+// Reduced (P^T A P) matrix-free DDT operator for MULTI-RANK periodic pressure.
+// The CG that calls this runs in REDUCED DOF space: one unknown per periodic
+// pair, the slave DOF is NOT a live unknown. The seam stays symmetric because
+// the operator is assembled as a clean P^T A P:
+//
+//   p_dof  --P-->  phiNode  --A(bare)-->  ApNode  --P^T(sum-only)-->  Ap_dof
+//
+//   P   (prolongation, NODE-indexed): scatter dof->node, then broadcast the
+//       master's value into the slave's NODE slot (same-rank kernel + cross-
+//       rank broadcast), then a PLAIN node halo. This makes phiNode periodic-
+//       consistent in exactly the layout applyDivTransposePerNodeKernel reads
+//       (phi[iL], phi[iR] by NODE index).
+//   A   bare self-adjoint element op + cstone halo (applyPeriodic=false): no
+//       g-broadcast, no in-operator P^T, no identity rows.
+//   P^T (restriction, sum-only): maybePeriodicSum's cross leg is broadcastBack
+//       =false, so the slave NODE slot is summed onto the master and left ZERO
+//       -- the transpose of the node-indexed P above. Then node->dof gather.
+//
+// After this the slave DOF's Ap is structurally 0 (its node contribution was
+// summed onto the master); combined with dotDof skipping xr-slave DOFs, the
+// slave is a Dirichlet identity in reduced space, counted once -> SYMMETRIC by
+// construction. Gated numRanks>1 by the caller (single rank uses the proven
+// node-indexed solvePressureDDT, byte-identical).
+//
+// phiNode / ApNode / gx / gy / gz are nodeCount-sized scratch. p_dof / Ap_dof
+// are numOwnedDofs-sized.
+// =============================================================================
+template<typename KeyType, typename RealType, typename ElementTag = HexTag>
+void applyDDTReduced(NSStepper<KeyType, RealType, ElementTag>& s,
+                     const cstone::DeviceVector<RealType>& p_dof,
+                     cstone::DeviceVector<RealType>& Ap_dof,
+                     cstone::DeviceVector<RealType>& phiNode,
+                     cstone::DeviceVector<RealType>& ApNode,
+                     cstone::DeviceVector<RealType>& gx,
+                     cstone::DeviceVector<RealType>& gy,
+                     cstone::DeviceVector<RealType>& gz)
+{
+    const auto& d_nodeOwnership = s.ownershipMap();
+    const int nodeBlocks = (s.nodeCount + s.blockSize - 1) / s.blockSize;
+
+    // STEP P: prolong p_dof -> phiNode (NODE-indexed), then make the slave NODE
+    // slot carry the master's value so the element D^T read is periodic.
+    scatterDofToNodeKernel<RealType><<<nodeBlocks, s.blockSize>>>(
+        p_dof.data(), s.d_node_to_dof.data(), phiNode.data(), s.nodeCount);
+    cudaDeviceSynchronize();
+    if (s.periodicMap)
+    {
+        mars::fem::periodicBroadcastSameRankKernel<RealType><<<nodeBlocks, s.blockSize>>>(
+            s.periodicMap->d_periodicPartner.data(), d_nodeOwnership.data(),
+            s.nodeCount, phiNode.data());
+        cudaDeviceSynchronize();
+        if (s.numRanks > 1)
+            mars::fem::crossRankPeriodicBroadcast<KeyType, RealType>(*s.periodicMap, phiNode);
+    }
+    // PLAIN node-indexed halo (NO nodeToDof arg). phiNode is NODE-indexed -- a
+    // dof-routed halo would index it as DOF-indexed, breaking P != P^T at the
+    // seam (pAp<=0). The plain halo fills the master-ghost NODE slot by node
+    // index, matching what applyDivTransposePerNodeKernel reads.
+    s.domain.exchangeNodeHalo(phiNode);
+
+    // STEP A: bare self-adjoint operator (no periodic legs inside).
+    applyDDTPerNode<KeyType, RealType, ElementTag>(s, phiNode, ApNode, gx, gy, gz,
+                                                   /*applyPeriodic=*/false);
+
+    // STEP P^T: sum-only restriction. maybePeriodicSum's cross-rank leg is
+    // broadcastBack=false -- slave summed onto master, slave node slot left ZERO.
+    // This is the transpose of the node-indexed P. Do NOT use the 2-leg
+    // crossRankPeriodicPairSumDof (it overwrites slave:=master, the P^T-then-P
+    // anti-pattern that breaks conjugacy -> converge-then-diverge).
+    maybePeriodicSum<KeyType, RealType, ElementTag>(s, ApNode);
+
+    // node->dof sum: the DOF-space half of P^T. Slave node slot is 0 (summed
+    // onto master above), so the slave DOF gathers 0 and stays Dirichlet-zero.
+    thrust::fill(thrust::device_pointer_cast(Ap_dof.data()),
+                 thrust::device_pointer_cast(Ap_dof.data() + s.numOwnedDofs), RealType(0));
+    gatherNodeToDofSumKernel<RealType><<<nodeBlocks, s.blockSize>>>(
+        ApNode.data(), s.d_node_to_dof.data(), d_nodeOwnership.data(),
+        Ap_dof.data(), s.nodeCount, s.numOwnedDofs);
+    cudaDeviceSynchronize();
 }
 
 // Plain Euclidean dot over owned nodes (CG operates on un-normalized acc form).
@@ -5629,6 +5827,223 @@ __global__ void buildPressureRhsDDTKernel(const RealType* divAccNode,
     // for phi=coord^2). Closing the projection D u^{n+1}=0 with corrector
     // u = u** - (dt/rho) grad(phi) requires A phi = -(rho/dt) D u**.
     rhsNode[i] = -coef * divAccNode[i];
+}
+
+// DOF-space mean removal for the reduced periodic-pressure path ONLY. The
+// reduced DDT operator is pure-Neumann (constant null mode), so b must be
+// projected onto range(A) (sum=0) and phi pinned by removing its mean. We skip
+// xr-slave DOFs from BOTH the sum and the count so the co-owned seam DOF is
+// counted exactly once globally (it is the master copy on the owner rank that
+// counts), then subtract the mean from every NON-slave DOF (slave rows stay at
+// their Dirichlet-zero value). This is a NEW function used only on b_dof/phi_dof
+// in the reduced path -- the existing NODE-space removeMean calls on d_bNode and
+// s.d_phi are deliberately NOT routed through it (they operate on node arrays
+// with a different counting rule and are shared by the K / single-rank paths).
+template<typename KeyType, typename RealType, typename ElementTag = HexTag>
+void removeMeanDof(NSStepper<KeyType, RealType, ElementTag>& s,
+                   cstone::DeviceVector<RealType>& vec_dof)
+{
+    if (s.numOwnedDofs <= 0) return;
+    const uint8_t* xrMask = (!s.d_isPeriodicXRSlaveDof.empty())
+                            ? s.d_isPeriodicXRSlaveDof.data() : nullptr;
+    RealType* vp = vec_dof.data();
+    RealType localSum = thrust::transform_reduce(thrust::device,
+        thrust::counting_iterator<int>(0),
+        thrust::counting_iterator<int>(s.numOwnedDofs),
+        [vp, xrMask] __device__ (int i) -> RealType {
+            if (xrMask && xrMask[i]) return RealType(0);
+            return vp[i];
+        }, RealType(0), thrust::plus<RealType>());
+    long long localN = thrust::transform_reduce(thrust::device,
+        thrust::counting_iterator<int>(0),
+        thrust::counting_iterator<int>(s.numOwnedDofs),
+        [xrMask] __device__ (int i) -> long long {
+            return (xrMask && xrMask[i]) ? 0LL : 1LL;
+        }, 0LL, thrust::plus<long long>());
+    RealType globalSum = 0;
+    long long globalN = 0;
+    auto mpiType = std::is_same_v<RealType, double> ? MPI_DOUBLE : MPI_FLOAT;
+    MPI_Allreduce(&localSum, &globalSum, 1, mpiType, MPI_SUM, MPI_COMM_WORLD);
+    MPI_Allreduce(&localN,   &globalN,   1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+    if (globalN <= 0) return;
+    RealType mean = globalSum / RealType(globalN);
+    thrust::for_each(thrust::device,
+        thrust::counting_iterator<int>(0),
+        thrust::counting_iterator<int>(s.numOwnedDofs),
+        [vp, xrMask, mean] __device__ (int i) {
+            if (xrMask && xrMask[i]) return;
+            vp[i] -= mean;
+        });
+}
+
+// Reduced-DOF Jacobi-PCG for the multi-rank periodic DDT pressure solve. Runs
+// in REDUCED space ([0,numOwnedDofs), one unknown per periodic pair) with
+// applyDDTReduced as the matvec (P^T A P). The slave DOF is never a live
+// unknown and the iterate is NEVER mutated to enforce slave==master -- that is
+// the whole point: the P/P^T pairing keeps A symmetric across the seam so the
+// Krylov recurrence stays conjugate. Multi-rank only (asserted); single-rank
+// stays on the node-indexed solvePressureDDT. Mirrors that CG's recurrence but
+// over dof-space vectors via dotDof / axpyDofKernel / jacobiPrecondDofKernel.
+template<typename KeyType, typename RealType, typename ElementTag = HexTag>
+int solvePressureDDTReduced(NSStepper<KeyType, RealType, ElementTag>& s,
+                            cstone::DeviceVector<RealType>& b_dof,
+                            cstone::DeviceVector<RealType>& phi_dof)
+{
+    assert(s.numRanks > 1);
+
+    const int n          = s.numOwnedDofs;
+    const int dofBlocks  = (n + s.blockSize - 1) / s.blockSize;
+
+    cstone::DeviceVector<RealType> r_dof(n, RealType(0));
+    cstone::DeviceVector<RealType> p_dof(n, RealType(0));
+    cstone::DeviceVector<RealType> z_dof(n, RealType(0));
+    cstone::DeviceVector<RealType> Ap_dof(n, RealType(0));
+    // Node-sized scratch for the P / A / P^T legs inside applyDDTReduced.
+    cstone::DeviceVector<RealType> phiNode(s.nodeCount, RealType(0));
+    cstone::DeviceVector<RealType> ApNode(s.nodeCount, RealType(0));
+    cstone::DeviceVector<RealType> gx(s.nodeCount, RealType(0));
+    cstone::DeviceVector<RealType> gy(s.nodeCount, RealType(0));
+    cstone::DeviceVector<RealType> gz(s.nodeCount, RealType(0));
+
+    // xr-slave mask: dotDof counts the co-owned seam DOF once (master on owner
+    // rank). nullptr -> plain owned-DOF dot (no cross-rank pairs on this rank).
+    const uint8_t* xrMask = (!s.d_isPeriodicXRSlaveDof.empty())
+                            ? s.d_isPeriodicXRSlaveDof.data() : nullptr;
+
+    // ---- MARS_DDT_SYMPROBE (reduced-DOF): the go/no-go symmetry test ----
+    // A_reduced = P^T A P must be self-adjoint for CG. Bilinear form: for any two
+    // DOF vectors u,v we must have <u, A_reduced v> == <v, A_reduced u>. Build two
+    // deterministic dof vectors (skip xr-slaves so they stay Dirichlet-zero), run
+    // each through applyDDTReduced, compare the cross dots via dotDof. rel ~
+    // roundoff PROVES the node-indexed P prolongation is the exact transpose of
+    // the sum-only P^T restriction (the two verified fixes). Runs once, gated.
+    {
+        static bool symProbeReducedDone = false;
+        if (!symProbeReducedDone && std::getenv("MARS_DDT_SYMPROBE") != nullptr)
+        {
+            symProbeReducedDone = true;
+            cstone::DeviceVector<RealType> uD(n, RealType(0)), vD(n, RealType(0));
+            cstone::DeviceVector<RealType> AuD(n, RealType(0)), AvD(n, RealType(0));
+            cstone::DeviceVector<RealType> phiS(s.nodeCount, RealType(0));
+            cstone::DeviceVector<RealType> ApS(s.nodeCount, RealType(0));
+            cstone::DeviceVector<RealType> g1(s.nodeCount, RealType(0));
+            cstone::DeviceVector<RealType> g2(s.nodeCount, RealType(0));
+            cstone::DeviceVector<RealType> g3(s.nodeCount, RealType(0));
+            {
+                RealType* uP = uD.data();
+                RealType* vP = vD.data();
+                thrust::for_each(thrust::device,
+                    thrust::counting_iterator<int>(0),
+                    thrust::counting_iterator<int>(n),
+                    [uP, vP, xrMask] __device__ (int i) {
+                        if (xrMask && xrMask[i]) return;   // slave stays 0
+                        uP[i] = RealType(1) + RealType(i % 7);
+                        vP[i] = RealType(1) + RealType((i * 3 + 1) % 11);
+                    });
+                cudaDeviceSynchronize();
+            }
+            applyDDTReduced<KeyType, RealType, ElementTag>(s, vD, AvD, phiS, ApS, g1, g2, g3);
+            applyDDTReduced<KeyType, RealType, ElementTag>(s, uD, AuD, phiS, ApS, g1, g2, g3);
+            RealType uAv = dotDof<RealType>(uD, AvD, n, xrMask);
+            RealType vAu = dotDof<RealType>(vD, AuD, n, xrMask);
+            if (s.rank == 0)
+            {
+                RealType denom = std::max(std::abs(uAv), std::abs(vAu));
+                RealType rel = (denom > RealType(0)) ? std::abs(uAv - vAu) / denom : RealType(0);
+                std::cout << "  [SYMPROBE-reduced] <u,Av>=" << uAv << "  <v,Au>=" << vAu
+                          << "  |diff|=" << std::abs(uAv - vAu) << "  rel=" << rel
+                          << "   (symmetric => rel~roundoff; asymmetric => rel~O(1))\n";
+            }
+        }
+    }
+
+    bool useJacobi = (s.d_diagDDT.size() == static_cast<size_t>(n) && n > 0);
+    {
+        const char* ev = std::getenv("MARS_DDT_NO_JACOBI");
+        if (ev && std::string(ev) != "0") useJacobi = false;
+    }
+
+    // phi = 0 fresh start; r = b - A*phi = b. z = M^-1 r. p = z.
+    thrust::fill(thrust::device_pointer_cast(phi_dof.data()),
+                 thrust::device_pointer_cast(phi_dof.data() + n), RealType(0));
+    thrust::copy(thrust::device_pointer_cast(b_dof.data()),
+                 thrust::device_pointer_cast(b_dof.data() + n),
+                 thrust::device_pointer_cast(r_dof.data()));
+    if (useJacobi)
+    {
+        jacobiPrecondDofKernel<RealType><<<dofBlocks, s.blockSize>>>(
+            r_dof.data(), s.d_diagDDT.data(), s.diagDDTEpsClip, z_dof.data(), n);
+        cudaDeviceSynchronize();
+    }
+    else
+    {
+        thrust::copy(thrust::device_pointer_cast(r_dof.data()),
+                     thrust::device_pointer_cast(r_dof.data() + n),
+                     thrust::device_pointer_cast(z_dof.data()));
+    }
+    thrust::copy(thrust::device_pointer_cast(z_dof.data()),
+                 thrust::device_pointer_cast(z_dof.data() + n),
+                 thrust::device_pointer_cast(p_dof.data()));
+
+    RealType rho_old = dotDof<RealType>(r_dof, z_dof, n, xrMask);
+    RealType rr0     = dotDof<RealType>(r_dof, r_dof, n, xrMask);
+    RealType r0_norm = std::sqrt(rr0);
+    s.lastPressR0    = r0_norm;
+    s.lastPressResid = RealType(1);
+    if (r0_norm < std::numeric_limits<RealType>::min()) { s.lastPressResid = RealType(0); return 0; }
+    const RealType absTol = s.tolerance * r0_norm;
+
+    int liveEvery = (s.maxIter >= 500) ? 100 : 25;
+    {
+        const char* ev = std::getenv("MARS_DDT_CG_PRINT_EVERY");
+        if (ev) { int v = std::atoi(ev); if (v > 0) liveEvery = v; }
+    }
+
+    int iters = -2;
+    for (int it = 0; it < s.maxIter; ++it)
+    {
+        applyDDTReduced<KeyType, RealType, ElementTag>(s, p_dof, Ap_dof,
+                                                       phiNode, ApNode, gx, gy, gz);
+        RealType pAp = dotDof<RealType>(p_dof, Ap_dof, n, xrMask);
+        if (pAp <= RealType(0)) { iters = -2; break; }
+        RealType alpha = rho_old / pAp;
+
+        axpyDofKernel<RealType><<<dofBlocks, s.blockSize>>>(
+            phi_dof.data(), phi_dof.data(), p_dof.data(), alpha, n);
+        axpyDofKernel<RealType><<<dofBlocks, s.blockSize>>>(
+            r_dof.data(), r_dof.data(), Ap_dof.data(), -alpha, n);
+        cudaDeviceSynchronize();
+
+        RealType rr_new = dotDof<RealType>(r_dof, r_dof, n, xrMask);
+        s.lastPressResid = std::sqrt(rr_new) / std::max(r0_norm, std::numeric_limits<RealType>::min());
+        if (s.rank == 0 && (it == 0 || (it + 1) % liveEvery == 0))
+        {
+            std::cout << "    [cg-ddt-reduced] iter " << std::setw(6) << (it + 1)
+                      << "  |r|/|r0| = " << std::scientific << std::setprecision(3)
+                      << s.lastPressResid << std::defaultfloat << "\n" << std::flush;
+        }
+        if (std::sqrt(rr_new) < absTol) { iters = it + 1; break; }
+
+        if (useJacobi)
+        {
+            jacobiPrecondDofKernel<RealType><<<dofBlocks, s.blockSize>>>(
+                r_dof.data(), s.d_diagDDT.data(), s.diagDDTEpsClip, z_dof.data(), n);
+            cudaDeviceSynchronize();
+        }
+        else
+        {
+            thrust::copy(thrust::device_pointer_cast(r_dof.data()),
+                         thrust::device_pointer_cast(r_dof.data() + n),
+                         thrust::device_pointer_cast(z_dof.data()));
+        }
+        RealType rho_new = dotDof<RealType>(r_dof, z_dof, n, xrMask);
+        RealType beta    = rho_new / rho_old;
+        axpyDofKernel<RealType><<<dofBlocks, s.blockSize>>>(
+            p_dof.data(), z_dof.data(), p_dof.data(), beta, n);
+        cudaDeviceSynchronize();
+        rho_old = rho_new;
+    }
+    return iters;
 }
 
 // Unpreconditioned matrix-free CG for (D M^{-1} D^T) phi = b. Returns iters
@@ -7191,15 +7606,29 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
         // POSITIVE boundary off-diagonals; the in-house cstone PCG breaks down on
         // it (this is exactly why the matrix-free Jacobi-CG path exists for
         // single-rank). Hypre GMRES+BoomerAMG is the route that tolerates it.
-        // Under --solver=cg multi-rank periodic DDT stays on the matrix-free path
-        // (unchanged, no regression). Single-rank (numRanks==1) is bit-identical
-        // on the matrix-free path: the gate is OFF there. Needs the assembled
-        // operator to exist (hex builds s.AddT, nnzDDT>0; tet has none).
+        // Under --solver=cg (the DEFAULT) multi-rank periodic DDT now takes the
+        // reduced P^T A P matrix-free path (routeReducedPeriodic below), NOT this
+        // assembled Hypre detour. Single-rank (numRanks==1) is bit-identical on
+        // the node-indexed matrix-free path (both gates OFF there). Needs the
+        // assembled operator to exist (hex builds s.AddT, nnzDDT>0; tet has none).
         bool routeMultiRankPeriodic =
             s.numRanks > 1
             && s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Periodic
             && s.solverKind == SolverKind::Hypre
             && s.nnzDDT > 0;
+
+        // DEFAULT (--solver=cg) multi-rank periodic DDT: the reduced P^T A P
+        // matrix-free CG (solvePressureDDTReduced). Runs in REDUCED DOF space
+        // (one unknown per periodic pair, slave eliminated) so the operator is
+        // symmetric across the cross-rank seam -- the architecturally-correct
+        // fix that replaces the both-slots node-indexed emulation. No Hypre, no
+        // assembled matrix. EXACTLY numRanks>1 (single-rank stays byte-identical
+        // on the proven node-indexed solvePressureDDT in the final else branch).
+        bool routeReducedPeriodic =
+            s.numRanks > 1
+            && s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Periodic
+            && s.solverKind == SolverKind::CG
+            && !useAssembledCG;
 
         if (useAssembledCG || routeMultiRankPeriodic)
         {
@@ -7364,6 +7793,37 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
                           << "  iters=" << s.lastPressureIters << "\n";
             }
         }
+        else if (routeReducedPeriodic)
+        {
+            // Reduced (P^T A P) matrix-free CG in DOF space. Build the DOF-indexed
+            // RHS directly (buildPressureRhsKernel folds both node slots of each
+            // same-rank pair onto the one DOF, and the cross-rank slave's node
+            // divergence was already summed onto the master by maybePeriodicSum on
+            // d_divAccNode above). Project onto range(A) with the DOF-space mean
+            // removal, solve, then scatter phi_dof -> s.d_phi.
+            thrust::fill(thrust::device_pointer_cast(b.data()),
+                         thrust::device_pointer_cast(b.data() + s.numOwnedDofs),
+                         RealType(0));
+            RealType coef = rho * invDt;
+            buildPressureRhsKernel<RealType><<<nodeBlocks, s.blockSize>>>(
+                d_divAccNode.data(), s.d_node_to_dof.data(),
+                d_nodeOwnership.data(), coef, b.data(), s.nodeCount, s.numOwnedDofs);
+            cudaDeviceSynchronize();
+            removeMeanDof<KeyType, RealType, ElementTag>(s, b);
+
+            cstone::DeviceVector<RealType> phi_dof(s.numOwnedDofs, RealType(0));
+            s.lastPressureIters =
+                solvePressureDDTReduced<KeyType, RealType, ElementTag>(s, b, phi_dof);
+
+            // Pin phi (constant null mode) in DOF space, then prolong dof->node so
+            // the rest of the step (gradient, corrector, VTU) reads s.d_phi as a
+            // per-node field. exchangeNodeHalo syncs ghosts for the gradient.
+            removeMeanDof<KeyType, RealType, ElementTag>(s, phi_dof);
+            scatterDofToNodeKernel<RealType><<<nodeBlocks, s.blockSize>>>(
+                phi_dof.data(), s.d_node_to_dof.data(), s.d_phi.data(), s.nodeCount);
+            cudaDeviceSynchronize();
+            s.domain.exchangeNodeHalo(s.d_phi);
+        }
         else
         {
             cstone::DeviceVector<RealType> d_bNode(s.nodeCount, RealType(0));
@@ -7388,6 +7848,13 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
     // Periodic: pure-Neumann pressure has a constant-mode null space. Subtract
     // the DOF-space mean so phi is uniquely defined (and the constant doesn't
     // drift step over step). Partner table => collapsed DOFs counted once.
+    //
+    // DO NOT refactor this shared NODE-space removeMean to use removeMeanDof:
+    // this call operates on the per-node s.d_phi (partner-weighted node counting)
+    // and is shared by the K path, the single-rank matrix-free path, and the new
+    // reduced path. removeMeanDof is DOF-space and is used ONLY inside the reduced
+    // path on b_dof/phi_dof. Routing this through it would change the K and
+    // single-rank numbers (different array layout + counting rule).
     if (s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Periodic)
     {
         const int* partnerPtr = s.periodicMap
