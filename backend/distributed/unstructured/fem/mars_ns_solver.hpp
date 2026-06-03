@@ -7449,6 +7449,44 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
             s, s.d_gradPhix, s.d_gradPhiy, s.d_gradPhiz);
     }
 
+    // Cross-rank periodic seam: make grad(phi) consistent at the slave before the
+    // corrector subtracts it. maybePeriodicSum above is P^T (sum-only): it merged
+    // the slave's grad accumulator onto the master and ZEROED the slave slot, so
+    // normalize left grad(phi)[slave]=0 while grad(phi)[master] holds the full
+    // M^{-1} D^T phi. With grad(phi)[slave]=0 the corrector applies NO pressure
+    // correction at the seam slave node -- div(u^{n+1}) then stays O(1e-1) at the
+    // periodic boundary (boundary RMS ~30x interior) and leaks until it blows up
+    // over ~40 steps. The matrix-free operator already fixes this internally
+    // (applyDDTPerNode broadcasts g master->slave before its D-scatter); the
+    // corrector reconstructs grad(phi) the same way and must do the same P
+    // prolongation so q[slave] = q**[slave] - (dt/rho) grad(phi)[master], the
+    // value periodicity requires. Gated on cross-rank pairs: single-rank periodic
+    // is bit-identical (block skipped) and already closes via the post-corrector
+    // velocity broadcast. No-op for Dirichlet/pump (no periodic map).
+    if (s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Periodic
+        && s.periodicMap != nullptr
+        && s.numRanks > 1
+        && !s.periodicMap->cross_.d_sendOwnedSlaveIds_.empty())
+    {
+        // Same-rank leg: a multi-rank run still has same-rank periodic pairs on
+        // non-seam faces; copy master->slave so their one collapsed DOF holds the
+        // same grad in both node slots.
+        const int* d_partner = s.periodicMap->d_periodicPartner.data();
+        mars::fem::periodicBroadcastSameRankKernel<RealType><<<nodeBlocks, s.blockSize>>>(
+            d_partner, d_nodeOwnership.data(), s.nodeCount, s.d_gradPhix.data());
+        mars::fem::periodicBroadcastSameRankKernel<RealType><<<nodeBlocks, s.blockSize>>>(
+            d_partner, d_nodeOwnership.data(), s.nodeCount, s.d_gradPhiy.data());
+        mars::fem::periodicBroadcastSameRankKernel<RealType><<<nodeBlocks, s.blockSize>>>(
+            d_partner, d_nodeOwnership.data(), s.nodeCount, s.d_gradPhiz.data());
+        cudaDeviceSynchronize();
+        // Cross-rank leg: pull the owned master's grad from its owner rank onto
+        // this rank's owned slave slot (the same-rank kernel skipped it -- master
+        // is a ghost here -- and the cstone halo never refreshes an owned slot).
+        mars::fem::crossRankPeriodicBroadcast<KeyType, RealType>(*s.periodicMap, s.d_gradPhix);
+        mars::fem::crossRankPeriodicBroadcast<KeyType, RealType>(*s.periodicMap, s.d_gradPhiy);
+        mars::fem::crossRankPeriodicBroadcast<KeyType, RealType>(*s.periodicMap, s.d_gradPhiz);
+    }
+
     auto runCorrector = [&] (cstone::DeviceVector<RealType>& qOut,
                               cstone::DeviceVector<RealType>& qStarStar,
                               cstone::DeviceVector<RealType>& gradPhiq,
