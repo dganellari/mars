@@ -2091,7 +2091,8 @@ void applyDDTPerNode(NSStepper<KeyType, RealType, ElementTag>& s,
                      cstone::DeviceVector<RealType>& gxAcc,
                      cstone::DeviceVector<RealType>& gyAcc,
                      cstone::DeviceVector<RealType>& gzAcc,
-                     bool applyPeriodic = true);
+                     bool applyPeriodic = true,
+                     bool reducedPeriodicFold = false);
 
 template<typename KeyType, typename RealType, typename ElementTag>
 struct NSStepper
@@ -5301,7 +5302,8 @@ void applyDDTPerNode(NSStepper<KeyType, RealType, ElementTag>& s,
                      cstone::DeviceVector<RealType>& gxAcc,
                      cstone::DeviceVector<RealType>& gyAcc,
                      cstone::DeviceVector<RealType>& gzAcc,
-                     bool applyPeriodic)  // default on the forward decl above
+                     bool applyPeriodic,  // defaults on the forward decl above
+                     bool reducedPeriodicFold)
 {
     // Matrix-free D M^-1 D^T operator. Element-generic: steps a/b/c go through
     // the templated applyDivTransposePerNodeKernel / computeDivergencePerNodeKernel
@@ -5467,6 +5469,24 @@ void applyDDTPerNode(NSStepper<KeyType, RealType, ElementTag>& s,
             gxAcc.data(), gyAcc.data(), gzAcc.data(),
             s.d_areaVec_x.data(), s.d_areaVec_y.data(), s.d_areaVec_z.data(),
             outAcc.data(), startElem, numLocal);
+        cudaDeviceSynchronize();
+    }
+    // Reduced-DOF P^T: fold the periodic slave's contribution onto its partner
+    // (master, possibly a GHOST) BEFORE the reverse-halo. This is the exact
+    // transpose of STEP P's order (scatter -> halo -> broadcast): P^T must be
+    // fold -> reverse-halo -> gather. periodicFoldToMasterKernel = transpose of
+    // periodicBroadcastKernel (no ownership gate, so cross-rank slaves fold onto
+    // the master-GHOST); the reverseExchangeNodeHaloAdd below then carries those
+    // ghost contributions to the master's owner -- the transpose of the halo that
+    // delivered the master value to the ghost in STEP P. Same-rank slaves fold
+    // directly onto the owned master. Doing this AFTER the reverse-halo (the old
+    // order) left cross-rank folds on a ghost the halo had already processed ->
+    // asymmetric A (SYMPROBE rel~0.2). Only on the reduced path.
+    if (reducedPeriodicFold && s.periodicMap)
+    {
+        int blk = 256, grd = int((s.nodeCount + blk - 1) / blk);
+        mars::fem::periodicFoldToMasterKernel<RealType><<<grd, blk>>>(
+            s.periodicMap->d_periodicPartner.data(), s.nodeCount, outAcc.data());
         cudaDeviceSynchronize();
     }
     s.domain.reverseExchangeNodeHaloAdd(outAcc);
@@ -5756,32 +5776,19 @@ void applyDDTReduced(NSStepper<KeyType, RealType, ElementTag>& s,
         cudaDeviceSynchronize();
     }
 
-    // STEP A: bare self-adjoint operator (no periodic legs inside).
+    // STEP A + STEP P^T (fold leg): applyDDTPerNode with reducedPeriodicFold=true.
+    // The bare element op runs (applyPeriodic=false), then INSIDE applyDDTPerNode
+    // the correct-order P^T fold happens: periodicFoldToMasterKernel(outAcc)
+    // [slave->partner, incl. cross-rank slave->master-GHOST] BEFORE its
+    // reverseExchangeNodeHaloAdd [ghost->owner]. That ordering (fold THEN
+    // reverse-halo) is the exact transpose of STEP P (halo THEN broadcast), so
+    // A = P^T A P is symmetric across the seam. After this ApNode has every
+    // periodic contribution summed onto the (owned) master and slave slots zero.
     applyDDTPerNode<KeyType, RealType, ElementTag>(s, phiNode, ApNode, gx, gy, gz,
-                                                   /*applyPeriodic=*/false);
+                                                   /*applyPeriodic=*/false,
+                                                   /*reducedPeriodicFold=*/true);
 
-    // STEP P^T: sum-only restriction, cstone-comm ONLY (transpose of STEP P).
-    //  - CROSS-RANK fold is ALREADY done: applyDDTPerNode ran
-    //    reverseExchangeNodeHaloAdd(outAcc) unconditionally (cstone ghost->owner
-    //    sum), which folds each cross-rank slave's contribution onto its master
-    //    (the master is the slave's ghost partner). That is the exact transpose
-    //    of STEP P's exchangeNodeHalo. No bespoke periodic MPI.
-    //  - SAME-RANK fold is local-only: a same-rank slave and master are two
-    //    distinct OWNED nodes (not a halo pair), so cstone's reverse-halo does
-    //    NOT touch them. periodicBroadcastKernel's sibling periodicPairSumKernel
-    //    sums slave->master (ownership[master]==1 gate) and zeroes the slave slot
-    //    -- a pure-local kernel, no MPI. This is the sum-only P^T (no master->
-    //    slave re-broadcast, so no conjugacy-breaking P^T-then-P).
-    if (s.periodicMap)
-    {
-        int blk = 256, grd = int((s.nodeCount + blk - 1) / blk);
-        mars::fem::periodicPairSumKernel<RealType><<<grd, blk>>>(
-            s.periodicMap->d_periodicPartner.data(), d_nodeOwnership.data(),
-            s.nodeCount, ApNode.data());
-        cudaDeviceSynchronize();
-    }
-
-    // node->dof sum: the DOF-space half of P^T. Slave node slot is 0 (summed
+    // node->dof sum: the DOF-space half of P^T. Slave node slot is 0 (folded
     // onto master above), so the slave DOF gathers 0 and stays Dirichlet-zero.
     thrust::fill(thrust::device_pointer_cast(Ap_dof.data()),
                  thrust::device_pointer_cast(Ap_dof.data() + s.numOwnedDofs), RealType(0));

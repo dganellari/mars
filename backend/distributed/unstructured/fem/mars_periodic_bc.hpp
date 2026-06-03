@@ -319,6 +319,26 @@ __global__ void periodicBroadcastKernel(const int* d_partner, size_t numNodes,
     d_field[i] = d_field[master];
 }
 
+// Exact TRANSPOSE of periodicBroadcastKernel: for every slave (partner>=0),
+// field[partner] += field[slave]; field[slave] = 0. NO ownership gate -- the
+// partner may be a master GHOST (cross-rank), and we WANT the contribution to
+// land on that ghost slot so a subsequent reverseExchangeNodeHaloAdd carries it
+// to the master's owner. This is the restriction half-leg whose adjoint is the
+// master->slave broadcast: (broadcast)^T = this fold. Used by the reduced-DOF
+// P^T A P operator (applyDDTReduced) to keep A symmetric across the periodic
+// seam. atomicAdd because several slaves can map to one master at a corner.
+template<typename RealType>
+__global__ void periodicFoldToMasterKernel(const int* d_partner, size_t numNodes,
+                                           RealType* d_field)
+{
+    size_t i = size_t(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (i >= numNodes) return;
+    int master = d_partner[i];
+    if (master < 0) return;
+    atomicAdd(&d_field[master], d_field[i]);
+    d_field[i] = RealType(0);
+}
+
 // Same-rank-only master->slave broadcast: field[slave] = field[master], but
 // ONLY when the master is locally OWNED. This is the in-rank periodic-collapse
 // case where slave and master are TWO distinct nodes sharing ONE DOF, so their
