@@ -5581,8 +5581,70 @@ int solvePressureDDT(NSStepper<KeyType, RealType, ElementTag>& s,
     // on the first solve, and is fully gated -- default behavior unchanged.
     if constexpr (std::is_same_v<ElementTag, HexTag>)
     {
+        static bool symProbeDoneV2 = false;
+        if (!symProbeDoneV2 && std::getenv("MARS_DDT_SYMPROBE") != nullptr
+            && s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Periodic
+            && s.periodicMap != nullptr)
+        {
+            symProbeDoneV2 = true;
+
+            // Bilinear-form symmetry test (no pair/coupling guesswork): for the
+            // self-adjoint operator A=D M^-1 D^T we must have <u,A v> == <v,A u>
+            // for ANY u,v. Build two arbitrary OWNED vectors, apply A to each,
+            // and compare the two cross inner products. The gap IS the asymmetry.
+            // No RNG (unavailable on device-build); use deterministic index hashes.
+            // Run under the NO_*_GBCAST toggles to see which broadcast breaks it.
+            cstone::DeviceVector<RealType> uVec(s.nodeCount, RealType(0));
+            cstone::DeviceVector<RealType> vVec(s.nodeCount, RealType(0));
+            cstone::DeviceVector<RealType> AuVec(s.nodeCount, RealType(0));
+            cstone::DeviceVector<RealType> AvVec(s.nodeCount, RealType(0));
+            cstone::DeviceVector<RealType> g1(s.nodeCount, RealType(0));
+            cstone::DeviceVector<RealType> g2(s.nodeCount, RealType(0));
+            cstone::DeviceVector<RealType> g3(s.nodeCount, RealType(0));
+            {
+                RealType* uP = uVec.data();
+                RealType* vP = vVec.data();
+                const int*     dofP = s.d_node_to_dof.data();
+                const uint8_t* ownP = d_nodeOwnership.data();
+                const int*     parP = partnerPtr;
+                // owned, non-slave nodes get a smooth deterministic value; the
+                // exact values don't matter, only that u != v and both nonzero.
+                thrust::for_each(thrust::device,
+                    thrust::counting_iterator<size_t>(0),
+                    thrust::counting_iterator<size_t>(s.nodeCount),
+                    [uP, vP, dofP, ownP, parP] __device__ (size_t i) {
+                        if (ownP[i] != 1 || dofP[i] < 0) return;
+                        if (parP && parP[i] >= 0) return;
+                        int d = dofP[i];
+                        uP[i] = RealType(1) + RealType(d % 7);
+                        vP[i] = RealType(1) + RealType((d * 3 + 1) % 11);
+                    });
+                cudaDeviceSynchronize();
+            }
+            // Av and Au through the SAME operator path the CG uses (incl. the
+            // master->slave broadcasts + halo the toggles control).
+            bcastMasterToSlave(vVec); s.domain.exchangeNodeHalo(vVec);
+            applyDDTPerNode<KeyType, RealType, ElementTag>(s, vVec, AvVec, g1, g2, g3);
+            bcastMasterToSlave(uVec); s.domain.exchangeNodeHalo(uVec);
+            applyDDTPerNode<KeyType, RealType, ElementTag>(s, uVec, AuVec, g1, g2, g3);
+
+            RealType uAv = ownedDot<RealType>(uVec, AvVec, s.d_node_to_dof,
+                                              d_nodeOwnership.data(), s.nodeCount, partnerPtr);
+            RealType vAu = ownedDot<RealType>(vVec, AuVec, s.d_node_to_dof,
+                                              d_nodeOwnership.data(), s.nodeCount, partnerPtr);
+            if (s.rank == 0)
+            {
+                RealType denom = std::max(std::abs(uAv), std::abs(vAu));
+                RealType rel = (denom > RealType(0)) ? std::abs(uAv - vAu) / denom : RealType(0);
+                std::cout << "  [SYMPROBE] <u,Av>=" << uAv << "  <v,Au>=" << vAu
+                          << "  |diff|=" << std::abs(uAv - vAu)
+                          << "  rel=" << rel
+                          << "   (symmetric => rel~roundoff; asymmetric => rel~O(1))\n";
+            }
+        }
+        // ---- legacy pair-probe (kept disabled; superseded by the bilinear test) ----
         static bool symProbeDone = false;
-        if (!symProbeDone && std::getenv("MARS_DDT_SYMPROBE") != nullptr
+        if (false && !symProbeDone && std::getenv("MARS_DDT_SYMPROBE_PAIRS") != nullptr
             && s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Periodic
             && s.periodicMap != nullptr)
         {
