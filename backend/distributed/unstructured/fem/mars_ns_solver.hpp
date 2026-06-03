@@ -6111,6 +6111,16 @@ int solvePressureDDT(NSStepper<KeyType, RealType, ElementTag>& s,
         rho_old = rho_new;
     }
 
+    // cg_p=-2 means the loop ran all maxIter without hitting absTol (iters stays
+    // at its -2 init) -- a NON-convergence, NOT a pAp<=0 breakdown (that path
+    // sets -2 too but we instrument pAp separately). Print the exit state so we
+    // can tell "slow but decreasing" from "stalled" from "residual went NaN".
+    if (iters == -2 && std::getenv("MARS_DDT_PAP_DEBUG") != nullptr && s.rank == 0)
+    {
+        std::cout << "  [cg-exit] ran maxIter=" << s.maxIter
+                  << " without converging: final |r|/|r0|=" << s.lastPressResid
+                  << "  absTol/|r0|=" << s.tolerance << "\n";
+    }
     s.domain.exchangeNodeHalo(phi_node);
     return iters;
 }
