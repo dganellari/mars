@@ -5167,6 +5167,30 @@ void applyDDTPerNode(NSStepper<KeyType, RealType, ElementTag>& s,
                      thrust::device_pointer_cast(v.data() + s.nodeCount), RealType(0));
     };
 
+    // Periodic prolongation P (input side): copy phi[master] -> phi[slave] for
+    // every collapsed periodic pair BEFORE D^T reads phi. This is the MFEM/
+    // deal.II P^T A P pattern: the operator is A_reduced = P^T A P, where P
+    // spreads the single periodic DOF's value to both its node slots and P^T
+    // (maybePeriodicSum on outAcc in step c) sums both slots' contributions back
+    // onto the one DOF. Applying P here -- inside the matvec, on the operator
+    // input -- makes the D^T read transpose-consistent with the D/P^T write, so
+    // A is symmetric across the cross-rank seam. Doing this on the OPERATOR input
+    // (not by mutating the CG iterate r/p between matvecs) is what keeps the
+    // Krylov recurrence conjugate; the per-iteration broadcast it replaces is the
+    // documented anti-pattern that stalled CG on >1 rank. No-op for Dirichlet/
+    // pump (no periodic map). The slave's own incoming value is overwritten and
+    // inert -- it never contributes to a dot product (ownedDot skips slaves).
+    if (s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Periodic && s.periodicMap)
+    {
+        const int* d_partner = s.periodicMap->d_periodicPartner.data();
+        mars::fem::periodicBroadcastSameRankKernel<RealType><<<nodeBlocks, s.blockSize>>>(
+            d_partner, d_nodeOwnership.data(), s.nodeCount, phi.data());
+        cudaDeviceSynchronize();
+        if (s.numRanks > 1)
+            mars::fem::crossRankPeriodicBroadcast<KeyType, RealType>(*s.periodicMap, phi);
+        s.domain.exchangeNodeHalo(phi);
+    }
+
     // Step a: g = D^T phi (un-normalized per-node 3-vector accumulator).
     zeroVec(gxAcc); zeroVec(gyAcc); zeroVec(gzAcc);
     if (eBlocks > 0)
@@ -5898,11 +5922,13 @@ int solvePressureDDT(NSStepper<KeyType, RealType, ElementTag>& s,
     thrust::copy(thrust::device_pointer_cast(b_node.data()),
                  thrust::device_pointer_cast(b_node.data() + s.nodeCount),
                  thrust::device_pointer_cast(r.data()));
-    // b came from maybePeriodicSum (slave slot zeroed, merged value on master),
-    // so r[slave]=0 != r[master]. Broadcast master->slave so the one collapsed
-    // DOF holds the same residual on both node slots; z=M^-1 r and p=z then
-    // inherit that consistency (same DOF -> same diag in the Jacobi divide).
-    bcastMasterToSlave(r);
+    // NOTE: the periodic master<->slave identity is now applied INSIDE the
+    // operator (P on phi at the top of applyDDTPerNode, P^T = maybePeriodicSum on
+    // outAcc) -- the P^T A P pattern. The CG iterate r/p/phi is therefore NEVER
+    // re-broadcast between matvecs (that was the anti-pattern that broke Krylov
+    // conjugacy on >1 rank). The slave slot of r is left at b[slave]=0 by the RHS
+    // assembly; it rides along inert because ownedDot skips slaves and the next
+    // matvec's P re-establishes phi[slave]=phi[master].
     if (useJacobi)
     {
         jacobiPrecondNodeKernel<RealType><<<nodeBlocks, s.blockSize>>>(
@@ -5957,13 +5983,8 @@ int solvePressureDDT(NSStepper<KeyType, RealType, ElementTag>& s,
     }
     for (int it = 0; it < s.maxIter; ++it)
     {
-        // p must be consistent across each collapsed pair BEFORE the operator
-        // reads it: the SpMV's D^T reads p at the slave AND the master node, so
-        // a drifted p[slave] would make A asymmetric at the periodic face.
-        // Broadcast master->slave, then halo-sync ghosts. No-op off periodic.
-        bcastMasterToSlave(p);
-        // Ghost slots of p must be valid: A's D^T reads p[L],p[R] at every face.
-        s.domain.exchangeNodeHalo(p);
+        // applyDDTPerNode applies P (periodic master->slave) and the ghost halo
+        // to its input internally, so we pass p straight in -- no iterate mutation.
         applyDDTPerNode<KeyType, RealType, ElementTag>(s, p, Ap, gx, gy, gz);
 
         RealType pAp = ownedDot<RealType>(p, Ap, s.d_node_to_dof,
@@ -6043,14 +6064,12 @@ int solvePressureDDT(NSStepper<KeyType, RealType, ElementTag>& s,
             r.data(), r.data(), Ap.data(), -alpha,
             s.d_node_to_dof.data(), d_nodeOwnership.data(), s.nodeCount);
         cudaDeviceSynchronize();
-        // maybePeriodicSum left Ap[slave]=0 (merged onto master), so the axpy
-        // updated r[master] but not r[slave] -> the two slots of the one DOF
-        // would DRIFT apart. Re-sync r (and phi) master->slave so each collapsed
-        // DOF stays a single consistent value. This is the per-iteration
-        // broadcast the disabled inner-loop projection should have been; see the
-        // risk note at the end of the loop.
-        bcastMasterToSlave(r);
-        bcastMasterToSlave(phi_node);
+        // No iterate re-broadcast: r[slave] (and phi[slave]) ride along inert.
+        // The slave is excluded from every ownedDot, and each matvec re-applies
+        // P (phi[slave]:=phi[master]) inside applyDDTPerNode, so the stale slave
+        // slots never enter a reduction or the operator. Re-broadcasting them
+        // here is the documented anti-pattern (a projection between matvecs that
+        // breaks CG conjugacy -> the >1-rank converge-then-diverge stall).
 
         // Convergence on the Euclidean residual; alpha/beta on the
         // preconditioned (r,z) inner product. Equivalent to un-precond CG when
@@ -6091,23 +6110,10 @@ int solvePressureDDT(NSStepper<KeyType, RealType, ElementTag>& s,
             p.data(), z.data(), p.data(), beta,
             s.d_node_to_dof.data(), d_nodeOwnership.data(), s.nodeCount);
         cudaDeviceSynchronize();
-        // Keep the freshly formed search direction consistent across each
-        // collapsed pair (z is consistent because r is and same DOF -> same
-        // diag, but make it explicit so p[slave]==p[master] at every read).
-        bcastMasterToSlave(p);
-
-        // NOTE: an earlier attempt put a null-space ORTHO-PROJECTION (subtract
-        // the running mean of p) here and it diverged immediately. That is a
-        // DIFFERENT operation from the master->slave broadcasts above and was
-        // wrong for two reasons: it mutated the search direction with a
-        // mean computed over un-halo-synced ghost slots, and it conflated the
-        // pure-Neumann constant null space (handled once by removeMean on the
-        // RHS, which is now DOF-weighted) with the periodic DOF aliasing
-        // (handled here by keeping each collapsed DOF's node slots equal). The
-        // broadcasts are an IDEMPOTENT projection onto "slave==master" -- the
-        // exact constraint the collapse imposes -- so they cannot inject energy
-        // or shift the gauge; they only remove the slave/master drift. Hence
-        // they are safe where the mean-subtraction projection was not.
+        // p is NOT re-broadcast: its slave slot rides along inert (excluded from
+        // ownedDot; re-established by P inside the next matvec). Mutating the
+        // search direction here breaks M-conjugacy -- the P^T A P structure keeps
+        // the iterate consistent without touching it (MFEM/deal.II pattern).
         rho_old = rho_new;
     }
 
