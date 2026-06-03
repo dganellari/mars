@@ -3816,17 +3816,30 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
             }
         }
         else if (s.periodicMap != nullptr)
+        else if (s.periodicMap != nullptr)
         {
-            // Periodic, conditional-collapse design (pump-pattern): cross-rank
-            // slaves keep their own owned DOF. Their rows are real physics
-            // rows assembled in full from their owner's xmax-side elements.
-            // DO NOT row-zero them -- that would identity-Dirichlet the
-            // slave row to u[slave]=0 and kill the field.
-            //
-            // Slave-master identity is enforced at FIELD EXCHANGE time:
-            // crossRankPeriodicBroadcastDof post-solve copies the master's
-            // owned value into the slave's owned slot, and standard halo
-            // exchange syncs the ghost copies.
+            // Multi-rank periodic Path B: cross-rank slave DOFs (their master is
+            // owned on another rank) are made trivial Dirichlet-identity rows
+            // (row=0, diag=1, b[slave]=0), and the post-solve
+            // crossRankPeriodicBroadcastDof restores x[slave]:=x[master]. This is
+            // a MATCHED PAIR -- the identity row and the broadcast must BOTH be on.
+            // Leaving the slave as a full physics row (the old no-op here) made the
+            // cross-rank slave an independent, seam-inconsistent unknown: the
+            // implicit velocity solve then took ~10x iters (cg_uvw~20 vs ~3 single
+            // rank) and produced u** with div ~0.01 (vs 1e-5), which poisoned the
+            // pressure projection downstream. d_isPeriodicXRSlaveDof marks exactly
+            // the cross-rank slave DOFs; same-rank pairs are already collapsed in
+            // Pass 1 and are not in this mask.
+            int dofBlocks = (s.numOwnedDofs + s.blockSize - 1) / s.blockSize;
+            enforceBcMatrixKernel<RealType><<<dofBlocks, s.blockSize>>>(
+                s.d_isPeriodicXRSlaveDof.data(), s.d_rowPtr.data(), s.d_colInd.data(),
+                s.d_diagPtr.data(), s.d_valuesVel.data(), s.numOwnedDofs);
+            if (s.useBdf2 && s.d_valuesVel_bdf2.size() > 0)
+            {
+                enforceBcMatrixKernel<RealType><<<dofBlocks, s.blockSize>>>(
+                    s.d_isPeriodicXRSlaveDof.data(), s.d_rowPtr.data(), s.d_colInd.data(),
+                    s.d_diagPtr.data(), s.d_valuesVel_bdf2.data(), s.numOwnedDofs);
+            }
         }
         cudaDeviceSynchronize();
     }
@@ -5219,12 +5232,14 @@ int solveOneComponent(NSStepper<KeyType, RealType, ElementTag>& s,
         // solve produced x[slave]=0; the broadcast overwrites that with the
         // master's converged value so the scatter writes the correct per-node
         // value. No-op on single-rank / non-periodic / empty cross-rank-pair.
-        // Post-solve broadcast disabled: the new cross-rank DOF collapse points
-        // slave nodeToDof at the master's ghost DOF, so scatterDofToNodeKernel
-        // below writes x[master_ghost_dof] (synced by cstone halo from
-        // master_owned on the master rank) into the slave's per-node slot
-        // automatically. No MPI patch needed.
-        if (false && s.numRanks > 1
+        // Post-solve broadcast: the cross-rank slave row was made Dirichlet-identity
+        // (b[slave]=0) above, so the solve produced x[slave]=0. Overwrite it with the
+        // master's converged value via MPI from the master's owner rank, enforcing the
+        // periodic constraint u[slave]=u[master]. Matched pair with the identity row in
+        // the velocity matrix BC above -- both must be on, or the cross-rank slave is an
+        // independent unknown and the seam is inconsistent. No-op on single-rank /
+        // non-periodic / empty cross-rank-pair.
+        if (s.numRanks > 1
             && s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Periodic
             && s.periodicMap != nullptr
             && !s.periodicMap->cross_.peers_.empty())
