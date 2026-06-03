@@ -6183,11 +6183,18 @@ inline void maybePeriodicSum(NSStepper<KeyType, RealType, ElementTag>& s,
         d_own.data(), nNodes, d_field.data());
     cudaDeviceSynchronize();
 
-    // (b) Cross-rank pair sum. No-op when peers_ empty.
+    // (b) Cross-rank pair sum -- SUM-ONLY (broadcastBack=false). This is the
+    // operator's restriction P^T: slave summed onto master, owned slave slot left
+    // at zero, EXACTLY matching the same-rank periodicPairSumKernel above. The
+    // master->slave re-broadcast (Leg 2) is deliberately NOT done here -- it would
+    // make P^T into P^T followed by P, breaking the transpose pairing with the D^T
+    // read and hence the symmetry of A across the cross-rank seam. Slave slots are
+    // re-established for the next matvec by the P prolongation on the operator
+    // INPUT (top of applyDDTPerNode), not by mutating the output here.
     if (s.numRanks > 1)
     {
         mars::fem::crossRankPeriodicPairSum<KeyType, RealType>(
-            *s.periodicMap, d_field);
+            *s.periodicMap, d_field, /*broadcastBack=*/false);
     }
 }
 

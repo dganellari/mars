@@ -869,9 +869,19 @@ void buildPeriodicMap(const DomainT& domain, PeriodicMap<KeyType, RealType>& map
 // have distinct SFC keys when periodicity is implemented via cstone Box).
 //
 // No-op when xr.peers_.empty() (single-rank or no cross-rank pairs).
+// broadcastBack: if true (default), Leg 2 copies the merged master value back
+// onto the owned slave slot (master->slave overwrite). For the matrix-free DDT
+// operator's RESTRICTION (P^T on g/out) this MUST be false: P^T is sum-only
+// (slave summed onto master, slave slot left zero), exactly like the same-rank
+// periodicPairSumKernel. The Leg-2 re-broadcast turns P^T into P^T followed by
+// P, which is NOT a transpose pair -> breaks symmetry of A=D M^-1 D^T across the
+// cross-rank seam (the documented multi-rank converge-then-diverge bug). Slave
+// consistency for the NEXT matvec is established by the P prolongation on the
+// operator input, not here.
 template<typename KeyType, typename RealType>
 void crossRankPeriodicPairSum(const PeriodicMap<KeyType, RealType>& map,
-                              cstone::DeviceVector<RealType>& d_field)
+                              cstone::DeviceVector<RealType>& d_field,
+                              bool broadcastBack = true)
 {
     const auto& xr = map.cross_;
     if (xr.peers_.empty()) return;
@@ -943,6 +953,8 @@ void crossRankPeriodicPairSum(const PeriodicMap<KeyType, RealType>& map,
     }
 
     // -------- Leg 2: MASTER owner -> SLAVE owner, overwrite --------
+    // Skipped for the operator restriction (broadcastBack=false): P^T is sum-only.
+    if (!broadcastBack) return;
     if (recvTotal > 0)
     {
         int blk = 256, grd = (recvTotal + blk - 1) / blk;
