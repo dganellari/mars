@@ -4339,6 +4339,52 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
         cudaDeviceSynchronize();
     }
 
+    // MARS_DDT_ROWSUM: dump row-sums of the FINAL assembled s.AddT (after Stage-2
+    // fold). A D M^-1 D^T Laplacian row MUST sum to ~0 (it annihilates constants).
+    // If multi-rank row-sums are large where single-rank are ~0, the assembled
+    // operator is wrong multi-rank -> phi comes back wrong-magnitude even though
+    // Hypre "converges". Reports per-rank: max|rowsum| over owned rows, split by
+    // whether the row's node is an XR-slave-mask node. Reads CSR to host (one-shot
+    // diagnostic, gated, costs nothing in production).
+    if (std::getenv("MARS_DDT_ROWSUM") && s.nnzDDT > 0 && s.numOwnedDofs > 0)
+    {
+        std::vector<int> hRowPtr(s.numOwnedDofs + 1);
+        cudaMemcpy(hRowPtr.data(), s.d_rowPtrDDT.data(),
+                   (s.numOwnedDofs + 1) * sizeof(int), cudaMemcpyDeviceToHost);
+        int nnzOwned = hRowPtr[s.numOwnedDofs];
+        std::vector<int> hColInd(nnzOwned);
+        std::vector<RealType> hVals(nnzOwned);
+        cudaMemcpy(hColInd.data(), s.d_colIndDDT.data(),
+                   nnzOwned * sizeof(int), cudaMemcpyDeviceToHost);
+        cudaMemcpy(hVals.data(), s.d_valuesDDT.data(),
+                   nnzOwned * sizeof(RealType), cudaMemcpyDeviceToHost);
+        std::vector<uint8_t> hSlaveNode;
+        const bool haveMask = (s.d_isPeriodicXRSlaveNode.size() == static_cast<size_t>(s.nodeCount));
+        if (haveMask) {
+            hSlaveNode.resize(s.nodeCount);
+            cudaMemcpy(hSlaveNode.data(), s.d_isPeriodicXRSlaveNode.data(),
+                       s.nodeCount * sizeof(uint8_t), cudaMemcpyDeviceToHost);
+        }
+        std::vector<int> hDofToNode(s.numTotalDofs, -1);
+        if (s.d_dofToNode.size() == static_cast<size_t>(s.numTotalDofs))
+            cudaMemcpy(hDofToNode.data(), s.d_dofToNode.data(),
+                       s.numTotalDofs * sizeof(int), cudaMemcpyDeviceToHost);
+        double maxAbsNormal = 0.0, maxAbsSlave = 0.0;
+        int rNormal = -1, rSlave = -1, nNormal = 0, nSlave = 0;
+        for (int r = 0; r < s.numOwnedDofs; ++r) {
+            double rowsum = 0.0;
+            for (int k = hRowPtr[r]; k < hRowPtr[r + 1]; ++k) rowsum += double(hVals[k]);
+            int node = hDofToNode[r];
+            bool isSlave = haveMask && node >= 0 && hSlaveNode[node];
+            if (isSlave) { ++nSlave; if (std::abs(rowsum) > maxAbsSlave) { maxAbsSlave = std::abs(rowsum); rSlave = r; } }
+            else         { ++nNormal; if (std::abs(rowsum) > maxAbsNormal) { maxAbsNormal = std::abs(rowsum); rNormal = r; } }
+        }
+        std::cout << "  [DDT-rowsum rank " << s.rank << "] non-slave rows=" << nNormal
+                  << " max|rowsum|=" << maxAbsNormal << " (row " << rNormal << ");  "
+                  << "XR-slave rows=" << nSlave << " max|rowsum|=" << maxAbsSlave
+                  << " (row " << rSlave << ")  -- Laplacian rows should be ~0\n" << std::flush;
+    }
+
     // Cavity DDT: column-clear stays disabled. A symmetric col-clear changed
     // neighboring rows' row-sum from ~0 to ~|A[r,pin]|, breaking AMG's
     // strength-of-connection metric (earlier attempt -> Hypre setup error 1).
