@@ -2020,15 +2020,23 @@ __global__ void buildPressureRhsKernel(const RealType* divAccNode,
 // DOF-indexed solver output -> per-node array. Reused for all velocity solves
 // and the pressure solve.
 template<typename RealType>
+// dofBound (optional): if >0, only scatter from sol[dof] when dof < dofBound.
+// The reduced-DOF pressure path passes sol sized numOwnedDofs but loops over ALL
+// nodes incl. ghosts, whose nodeToDof >= numOwnedDofs -> sol[dof] would be an
+// out-of-bounds read (Warp Illegal Address). Bounding to numOwnedDofs leaves
+// ghost node slots untouched; the caller's exchangeNodeHalo fills them from the
+// owners. dofBound==0 (default) = old behavior (velocity path passes a
+// numTotalDofs-sized sol, so ghost dofs ARE valid and intended).
 __global__ void scatterDofToNodeKernel(const RealType* sol,
                                        const int* nodeToDof,
                                        RealType* nodeOut,
-                                       size_t numNodes)
+                                       size_t numNodes,
+                                       int dofBound = 0)
 {
     size_t i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= numNodes) return;
     int dof = nodeToDof[i];
-    if (dof >= 0) nodeOut[i] = sol[dof];
+    if (dof >= 0 && (dofBound == 0 || dof < dofBound)) nodeOut[i] = sol[dof];
 }
 
 // =============================================================================
@@ -5726,8 +5734,12 @@ void applyDDTReduced(NSStepper<KeyType, RealType, ElementTag>& s,
     // This replaces crossRankPeriodicBroadcast (a hand-rolled, redundant
     // Isend/Irecv layer that duplicated the halo and crashed on the asymmetric
     // seam). cstone's exchangeNodeHalo is the single, proven, index-safe comm.
+    // dofBound=numOwnedDofs: p_dof is numOwnedDofs-sized, but we loop all nodes
+    // incl. ghosts (nodeToDof>=numOwnedDofs) -> bound the read so owned node slots
+    // get p_dof and ghost slots stay 0 (the halo below fills them from owners).
     scatterDofToNodeKernel<RealType><<<nodeBlocks, s.blockSize>>>(
-        p_dof.data(), s.d_node_to_dof.data(), phiNode.data(), s.nodeCount);
+        p_dof.data(), s.d_node_to_dof.data(), phiNode.data(), s.nodeCount,
+        s.numOwnedDofs);
     cudaDeviceSynchronize();
     // PLAIN node-indexed halo (NO nodeToDof): phiNode is NODE-indexed; this fills
     // the master-ghost NODE slot by node index, matching applyDivTransposePerNodeKernel.
@@ -7843,8 +7855,11 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
             // the rest of the step (gradient, corrector, VTU) reads s.d_phi as a
             // per-node field. exchangeNodeHalo syncs ghosts for the gradient.
             removeMeanDof<KeyType, RealType, ElementTag>(s, phi_dof);
+            // dofBound=numOwnedDofs: phi_dof is numOwnedDofs-sized; bound the read
+            // so ghost node slots stay 0 and are filled by the halo below.
             scatterDofToNodeKernel<RealType><<<nodeBlocks, s.blockSize>>>(
-                phi_dof.data(), s.d_node_to_dof.data(), s.d_phi.data(), s.nodeCount);
+                phi_dof.data(), s.d_node_to_dof.data(), s.d_phi.data(), s.nodeCount,
+                s.numOwnedDofs);
             cudaDeviceSynchronize();
             s.domain.exchangeNodeHalo(s.d_phi);
         }
