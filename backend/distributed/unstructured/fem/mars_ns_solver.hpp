@@ -6993,21 +6993,48 @@ void runPredictorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
     // solve. If grad(p) and the advection mdot at periodic faces read
     // mismatched slave/master values, the discrete operator is asymmetric
     // and pressure-velocity coupling drifts -- the classic "pressure
-    // doubles every 2-3 steps while KE stays flat" signature. Found by
-    // multi-agent DDT-path audit (round 7).
+    // doubles every 2-3 steps while KE stays flat" signature.
+    //
+    // EXCEPTION (multi-rank reduced-DOF path): on routeReducedPeriodicCorr the
+    // reduced operator A = P^T D M^-1 D^T P inverted a BARE per-node picture
+    // where the corrector left u[slave] = u**[slave] - (dt/rho) g[slave] with
+    // the slave's OWN bare gradient g[slave] (the g master->slave broadcast is
+    // gated OFF inside the reduced operator). Across a cross-rank seam
+    // g[slave] != g[master], so u[slave] LEGITIMATELY differs from u[master] --
+    // that difference IS the projected solution CG produced. Broadcasting
+    // u[slave]:=u[master] here would clobber it and re-inject
+    // (dt/rho)(g[master]-g[slave]) of divergence on the seam EVERY step (a
+    // divergence CG never zeroed: it zeroed the FOLDED reduced divergence, not
+    // the per-slot one) -> boundary-localized residual -> geometric pressure
+    // growth. So on the reduced path skip the u/v/w broadcast (slaves keep
+    // their projected velocity); pressure is gauge-fixed and stays slave==master,
+    // so broadcast p unconditionally. Single rank: g[slave]==g[master], the
+    // broadcast is a true no-op, so routeReducedPeriodicCorr is false and the
+    // original all-fields broadcast still runs. Mirrors the post-corrector
+    // gate at the velocity-broadcast block below.
     if (s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Periodic && s.periodicMap)
     {
+        const bool routeReducedPeriodicCorr =
+            s.numRanks > 1
+            && s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Periodic
+            && s.solverKind == SolverKind::CG;
         int blk = 256, grd = int((s.nodeCount + blk - 1) / blk);
         const int* d_partner = s.periodicMap->d_periodicPartner.data();
         size_t nN            = s.nodeCount;
-        mars::fem::periodicBroadcastKernel<<<grd, blk>>>(d_partner, nN, s.d_u.data());
-        mars::fem::periodicBroadcastKernel<<<grd, blk>>>(d_partner, nN, s.d_v.data());
-        mars::fem::periodicBroadcastKernel<<<grd, blk>>>(d_partner, nN, s.d_w.data());
+        if (!routeReducedPeriodicCorr)
+        {
+            mars::fem::periodicBroadcastKernel<<<grd, blk>>>(d_partner, nN, s.d_u.data());
+            mars::fem::periodicBroadcastKernel<<<grd, blk>>>(d_partner, nN, s.d_v.data());
+            mars::fem::periodicBroadcastKernel<<<grd, blk>>>(d_partner, nN, s.d_w.data());
+        }
         mars::fem::periodicBroadcastKernel<<<grd, blk>>>(d_partner, nN, s.d_p.data());
         cudaDeviceSynchronize();
-        s.domain.exchangeNodeHalo(s.d_u);
-        s.domain.exchangeNodeHalo(s.d_v);
-        s.domain.exchangeNodeHalo(s.d_w);
+        if (!routeReducedPeriodicCorr)
+        {
+            s.domain.exchangeNodeHalo(s.d_u);
+            s.domain.exchangeNodeHalo(s.d_v);
+            s.domain.exchangeNodeHalo(s.d_w);
+        }
         s.domain.exchangeNodeHalo(s.d_p);
     }
 
