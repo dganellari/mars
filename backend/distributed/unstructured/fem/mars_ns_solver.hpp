@@ -4229,6 +4229,49 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
             s.pressurePinDof, s.d_rowPtrDDT.data(), s.d_colIndDDT.data(),
             s.d_diagPtrDDT.data(), s.d_valuesDDT.data());
     }
+
+    // Stage 2 -- assembled DDT cross-rank periodic correctness. A cross-rank
+    // periodic slave keeps its OWN owned DOF (only same-rank pairs collapse onto
+    // the master in setupNSStepper). cstone gives slave and master DISTINCT SFC
+    // keys, so the assembler never emitted the slave_row<->master coupling on the
+    // slave-owner rank: the assembled slave AddT row is incomplete/asymmetric
+    // (MARS_PERIODIC_XR_SYMCHECK proved A[slave,master_ghost]=0). The MASTER row
+    // on the other rank IS complete -- the periodic-image halo delivers the
+    // slave-side elements to the master-owner, so the node-driven assembler
+    // walked them and emitted the slave-side ghost columns into the master row.
+    // So the correct, contiguous-row-partition-safe fix (the Hypre IJMatrix
+    // wrapper assigns each owned local row the global id ilower+i and only remaps
+    // COLUMNS through d_localToGlobalDof, so a global-id alias cannot merge the
+    // two rows) is: make the slave row a Dirichlet identity (row=0, diag=1) with
+    // b[slave]=0, then recover x[slave]:=x[master] post-solve from the master
+    // owner (crossRankPeriodicBroadcastDof in runPressureSolveStep, before the
+    // dof->node scatter). The master equation alone carries the merged physics.
+    // Same Path-B treatment the velocity matrix uses; d_isPeriodicXRSlaveDof was
+    // built above. No-op when there are no cross-rank pairs.
+    if (s.nnzDDT > 0
+        && s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Periodic
+        && s.periodicMap != nullptr
+        && !s.periodicMap->cross_.d_sendOwnedSlaveIds_.empty())
+    {
+        int dofBlocks = (s.numOwnedDofs + s.blockSize - 1) / s.blockSize;
+        enforceBcMatrixKernel<RealType><<<dofBlocks, s.blockSize>>>(
+            s.d_isPeriodicXRSlaveDof.data(), s.d_rowPtrDDT.data(), s.d_colIndDDT.data(),
+            s.d_diagPtrDDT.data(), s.d_valuesDDT.data(), s.numOwnedDofs);
+        // Symmetric column-zero: drop the slave column from every row that
+        // references it (per-NODE mask, halo-exchanged so it fires on the
+        // master-owner rank too, where the slave is a ghost column of the master
+        // row). Keeps AddT structurally symmetric -> SPSD, which BoomerAMG needs.
+        if (s.d_isPeriodicXRSlaveNode.size() == static_cast<size_t>(s.nodeCount))
+        {
+            enforceBcColMatrixKernelByNode<RealType><<<dofBlocks, s.blockSize>>>(
+                s.d_isPeriodicXRSlaveNode.data(),
+                s.d_node_to_dof.data(), s.d_dofToNode.data(), s.numTotalDofs,
+                s.d_rowPtrDDT.data(), s.d_colIndDDT.data(),
+                s.d_valuesDDT.data(), s.numOwnedDofs);
+        }
+        cudaDeviceSynchronize();
+    }
+
     // Cavity DDT: column-clear stays disabled. A symmetric col-clear changed
     // neighboring rows' row-sum from ~0 to ~|A[r,pin]|, breaking AMG's
     // strength-of-connection metric (earlier attempt -> Hypre setup error 1).
@@ -7014,7 +7057,38 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
         const char* useAsmEv = std::getenv("MARS_DDT_USE_ASSEMBLED_CG");
         bool useAssembledCG = (useAsmEv && std::string(useAsmEv) != "0")
                               && (s.solverKind == SolverKind::CG);
-        if (useAssembledCG)
+
+        // Stage 1 -- multi-rank periodic routes DDT through the ASSEMBLED,
+        // DOF-indexed solveOneComponent(s.AddT) instead of the matrix-free
+        // solvePressureDDT. The matrix-free path keeps a NODE-indexed both-slots
+        // emulation (P on input + P^T via maybePeriodicSum) that is provably
+        // asymmetric across a CROSS-RANK periodic seam (the documented ~4% op
+        // asymmetry + mass double-count -> converge-then-diverge CG). The
+        // assembled path is genuinely DOF-indexed: same-rank periodic slaves
+        // already share the master's DOF (collapse in setupNSStepper), so their
+        // rows merge automatically. Cross-rank slaves keep their own owned DOF;
+        // their AddT row is the incomplete (asymmetric) row, so Stage 2 makes it
+        // a Dirichlet identity (x[slave]=0) and recovers x[slave]:=x[master] from
+        // the master-owner post-solve (crossRankPeriodicBroadcastDof, just before
+        // the dof->node scatter). The MASTER row is already complete because the
+        // periodic-image halo delivers the slave-side elements to the master-owner
+        // rank, so the assembler emitted the slave-side ghost columns there.
+        //
+        // Gated on solverKind==Hypre: the assembled DDT operator is SPSD with
+        // POSITIVE boundary off-diagonals; the in-house cstone PCG breaks down on
+        // it (this is exactly why the matrix-free Jacobi-CG path exists for
+        // single-rank). Hypre GMRES+BoomerAMG is the route that tolerates it.
+        // Under --solver=cg multi-rank periodic DDT stays on the matrix-free path
+        // (unchanged, no regression). Single-rank (numRanks==1) is bit-identical
+        // on the matrix-free path: the gate is OFF there. Needs the assembled
+        // operator to exist (hex builds s.AddT, nnzDDT>0; tet has none).
+        bool routeMultiRankPeriodic =
+            s.numRanks > 1
+            && s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Periodic
+            && s.solverKind == SolverKind::Hypre
+            && s.nnzDDT > 0;
+
+        if (useAssembledCG || routeMultiRankPeriodic)
         {
             // DDT + (Hypre or assembled-CG): use the assembled DDT matrix
             // (s.AddT, built at setup). Build per-OWNED-DOF b exactly like the
@@ -7027,6 +7101,24 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
                 d_divAccNode.data(), s.d_node_to_dof.data(),
                 d_nodeOwnership.data(), coef, b.data(), s.nodeCount, s.numOwnedDofs);
             cudaDeviceSynchronize();
+            // Stage 2 -- zero b at cross-rank periodic slave DOFs. Their AddT row
+            // is a Dirichlet identity (x[slave]=0); a nonzero b[slave] would force
+            // a spurious slave value that is then clobbered by the post-solve
+            // master->slave broadcast, leaving an inconsistent residual. The
+            // slave's own divergence is NOT lost: maybePeriodicSum already merged
+            // it onto the master node above, so b[masterDof] (on the master-owner
+            // rank) carries it. No-op when no cross-rank pairs / single rank.
+            if (routeMultiRankPeriodic
+                && s.periodicMap != nullptr
+                && !s.periodicMap->cross_.d_sendOwnedSlaveIds_.empty())
+            {
+                int nSend = int(s.periodicMap->cross_.d_sendOwnedSlaveIds_.size());
+                int blk = (nSend + s.blockSize - 1) / s.blockSize;
+                zeroDofAtCrossRankSlavesKernel<RealType><<<blk, s.blockSize>>>(
+                    s.periodicMap->cross_.d_sendOwnedSlaveIds_.data(),
+                    s.d_node_to_dof.data(), nSend, s.numOwnedDofs, b.data());
+                cudaDeviceSynchronize();
+            }
             if (s.pressurePinDof >= 0)
             {
                 enforcePinRhsKernel<RealType><<<1, 1>>>(s.pressurePinDof, b.data());
@@ -7080,15 +7172,30 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
             if (s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Periodic
                 && s.numOwnedDofs > 0)
             {
-                auto bp = thrust::device_pointer_cast(b.data());
+                // Skip cross-rank slave DOFs (zeroed identity rows) from the sum
+                // AND the count so the subtracted constant matches the canonical-
+                // DOF mean -- same canonical-node-only rule removeMean uses on the
+                // K/matrix-free paths. Mask is empty (nullptr) for the cavity
+                // useAssembledCG diagnostic, leaving that path's mean bit-identical.
+                const uint8_t* xrMask = (routeMultiRankPeriodic
+                                         && !s.d_isPeriodicXRSlaveDof.empty())
+                                        ? s.d_isPeriodicXRSlaveDof.data() : nullptr;
                 RealType localSum = thrust::transform_reduce(thrust::device,
-                    bp, bp + s.numOwnedDofs,
-                    [] __device__ (RealType v) -> RealType {
-                        double d = static_cast<double>(v);
+                    thrust::counting_iterator<int>(0),
+                    thrust::counting_iterator<int>(s.numOwnedDofs),
+                    [bptr = b.data(), xrMask] __device__ (int i) -> RealType {
+                        if (xrMask && xrMask[i]) return RealType(0);
+                        double d = static_cast<double>(bptr[i]);
                         return isfinite(d) ? static_cast<RealType>(d) : RealType(0);
                     }, RealType(0), thrust::plus<RealType>());
+                long long localN = thrust::transform_reduce(thrust::device,
+                    thrust::counting_iterator<int>(0),
+                    thrust::counting_iterator<int>(s.numOwnedDofs),
+                    [xrMask] __device__ (int i) -> long long {
+                        return (xrMask && xrMask[i]) ? 0LL : 1LL;
+                    }, 0LL, thrust::plus<long long>());
                 RealType globalSum = 0;
-                long long localN = s.numOwnedDofs, globalN = 0;
+                long long globalN = 0;
                 MPI_Datatype mpiR = std::is_same<RealType, double>::value
                                     ? MPI_DOUBLE : MPI_FLOAT;
                 MPI_Allreduce(&localSum, &globalSum, 1, mpiR, MPI_SUM, MPI_COMM_WORLD);
@@ -7096,8 +7203,15 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
                 if (globalN > 0)
                 {
                     RealType mean = globalSum / RealType(globalN);
-                    thrust::transform(thrust::device, bp, bp + s.numOwnedDofs, bp,
-                                      [mean] __device__ (RealType v) { return v - mean; });
+                    // Subtract from canonical DOFs only; leave zeroed slave rows at
+                    // 0 so their Dirichlet-identity equation stays x[slave]=0.
+                    thrust::for_each(thrust::device,
+                        thrust::counting_iterator<int>(0),
+                        thrust::counting_iterator<int>(s.numOwnedDofs),
+                        [bptr = b.data(), xrMask, mean] __device__ (int i) {
+                            if (xrMask && xrMask[i]) return;
+                            bptr[i] -= mean;
+                        });
                 }
             }
             // Re-enforce the pin (RHS at pin must be 0).
