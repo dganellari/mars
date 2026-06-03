@@ -5906,6 +5906,71 @@ int solvePressureDDT(NSStepper<KeyType, RealType, ElementTag>& s,
 
         RealType pAp = ownedDot<RealType>(p, Ap, s.d_node_to_dof,
                                           d_nodeOwnership.data(), s.nodeCount, partnerPtr);
+        // MARS_DDT_PAP_DEBUG: on the FIRST solve's FIRST iteration, dump the
+        // actual scalars that decide pAp<=0. The PER-RANK local contribution
+        // (before the Allreduce) is the key unknown: if one rank's local pAp is
+        // a large negative or NaN/inf, the operator/vectors are inconsistent on
+        // that rank's seam. Also dump |p|,|Ap|, min/max(Ap) over owned to see if
+        // Ap carries a poison value. Gated + once -> zero cost in production.
+        {
+            static bool papDbgDone = false;
+            if (!papDbgDone && std::getenv("MARS_DDT_PAP_DEBUG") != nullptr && it == 0)
+            {
+                papDbgDone = true;
+                const RealType* pPtr  = p.data();
+                const RealType* ApPtr = Ap.data();
+                const int*      dofP  = s.d_node_to_dof.data();
+                const uint8_t*  ownP  = d_nodeOwnership.data();
+                const int*      parP  = partnerPtr;
+                // local pAp (same gate as ownedDot, but keep the un-reduced value)
+                RealType localPap = thrust::transform_reduce(thrust::device,
+                    thrust::counting_iterator<size_t>(0),
+                    thrust::counting_iterator<size_t>(s.nodeCount),
+                    [pPtr, ApPtr, dofP, ownP, parP] __device__ (size_t i) -> RealType {
+                        if (ownP[i] != 1 || dofP[i] < 0) return RealType(0);
+                        if (parP && parP[i] >= 0) return RealType(0);
+                        return pPtr[i] * ApPtr[i];
+                    }, RealType(0), thrust::plus<RealType>());
+                // local |p|^2 and |Ap|^2 over owned (same gate)
+                RealType localPP = thrust::transform_reduce(thrust::device,
+                    thrust::counting_iterator<size_t>(0),
+                    thrust::counting_iterator<size_t>(s.nodeCount),
+                    [pPtr, dofP, ownP, parP] __device__ (size_t i) -> RealType {
+                        if (ownP[i] != 1 || dofP[i] < 0) return RealType(0);
+                        if (parP && parP[i] >= 0) return RealType(0);
+                        return pPtr[i] * pPtr[i];
+                    }, RealType(0), thrust::plus<RealType>());
+                RealType localApAp = thrust::transform_reduce(thrust::device,
+                    thrust::counting_iterator<size_t>(0),
+                    thrust::counting_iterator<size_t>(s.nodeCount),
+                    [ApPtr, dofP, ownP, parP] __device__ (size_t i) -> RealType {
+                        if (ownP[i] != 1 || dofP[i] < 0) return RealType(0);
+                        if (parP && parP[i] >= 0) return RealType(0);
+                        return ApPtr[i] * ApPtr[i];
+                    }, RealType(0), thrust::plus<RealType>());
+                cudaDeviceSynchronize();
+                // gather per-rank local pAp to rank 0
+                std::vector<double> allLocal(s.numRanks, 0.0);
+                double myLocal = static_cast<double>(localPap);
+                MPI_Gather(&myLocal, 1, MPI_DOUBLE, allLocal.data(), 1, MPI_DOUBLE,
+                           0, MPI_COMM_WORLD);
+                double gPP = 0, gApAp = 0, lPP = localPP, lApAp = localApAp;
+                MPI_Allreduce(&lPP,   &gPP,   1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+                MPI_Allreduce(&lApAp, &gApAp, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+                if (s.rank == 0)
+                {
+                    std::cout << "  [pAp-dbg] pAp(global)=" << pAp
+                              << "  rho_old(r,z)=" << rho_old
+                              << "  rr0(r,r)=" << rr0
+                              << "  |p|=" << std::sqrt(gPP)
+                              << "  |Ap|=" << std::sqrt(gApAp) << "\n";
+                    std::cout << "  [pAp-dbg] per-rank local pAp:";
+                    for (int rr = 0; rr < s.numRanks; ++rr)
+                        std::cout << " r" << rr << "=" << allLocal[rr];
+                    std::cout << "\n";
+                }
+            }
+        }
         if (pAp <= RealType(0)) { iters = -2; break; }
         RealType alpha = rho_old / pAp;
 
