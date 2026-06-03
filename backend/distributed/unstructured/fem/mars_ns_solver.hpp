@@ -7502,8 +7502,37 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
         }
         cudaDeviceSynchronize();
     }
-    s.domain.reverseExchangeNodeHaloAdd(d_divAccNode);
-    maybePeriodicSum<KeyType, RealType, ElementTag>(s, d_divAccNode);
+    // CRITICAL: the RHS divergence D u** must use the SAME periodic reduction,
+    // IN THE SAME ORDER, as the reduced operator's P^T -- else the projection
+    // identity D(u** - dt/rho M^-1 D^T phi)=0 cannot close (RHS-D != operator-D
+    // -> div grows instead of -> 0). The reduced operator (applyDDTPerNode,
+    // reducedPeriodicFold) does: D -> periodicFoldToMasterKernel (fold every
+    // slave onto its partner incl. cross-rank master-ghost, no gate) -> THEN
+    // reverseExchangeNodeHaloAdd. So the RHS must match: fold BEFORE reverse-halo.
+    // maybePeriodicSum (ownership-gated same-rank + broadcastBack=false cross-rank,
+    // and applied AFTER the reverse-halo here) is a different reduction in the
+    // wrong order -> the mismatch that made div grow ~2x/step. Off the reduced
+    // path the node-path operator also uses reverse-halo-then-maybePeriodicSum,
+    // so keep that exactly there.
+    {
+        const bool routeReducedRhs =
+            s.numRanks > 1
+            && s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Periodic
+            && s.solverKind == SolverKind::CG;
+        if (routeReducedRhs && s.periodicMap)
+        {
+            int blk = 256, grd = int((s.nodeCount + blk - 1) / blk);
+            mars::fem::periodicFoldToMasterKernel<RealType><<<grd, blk>>>(
+                s.periodicMap->d_periodicPartner.data(), s.nodeCount, d_divAccNode.data());
+            cudaDeviceSynchronize();
+            s.domain.reverseExchangeNodeHaloAdd(d_divAccNode);
+        }
+        else
+        {
+            s.domain.reverseExchangeNodeHaloAdd(d_divAccNode);
+            maybePeriodicSum<KeyType, RealType, ElementTag>(s, d_divAccNode);
+        }
+    }
 
     // Source-of-NaN trace: count non-finite divAccNode over ALL owned nodes and
     // over the owned-BOUNDARY subset separately. The interior diagnostic below
