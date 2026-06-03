@@ -489,6 +489,68 @@ __global__ void enforceBcColMatrixKernelByNode(const uint8_t* isPressureBdryNode
     }
 }
 
+// Periodic seam variant of enforceBcColMatrixKernelByNode. For a CROSS-RANK
+// periodic slave the solve uses a Dirichlet identity (x[slave]=0), but
+// physically phi[slave]=phi[master] (one periodic DOF). So in any OTHER row r
+// that couples to the slave column, A[r,slave]*phi[slave] = A[r,slave]*phi[master]
+// -- the coupling must be FOLDED ONTO THE MASTER, not dropped. The master is the
+// slave's periodic partner; on the master-owner rank r IS the master row, so the
+// fold lands on r's own diagonal. Dropping it instead (plain col-zero) deletes a
+// nonzero off-diagonal from a row whose discrete-Laplacian row-sum must be ~0,
+// making the operator inconsistent at the seam -> the projection cannot zero
+// divergence there (boundary div 30x interior -> blowup). This matches what the
+// matrix-free operator's P-on-input (phi[slave]:=phi[master]) does implicitly.
+// d_partner[colNode] gives the master node of a slave column; we fold A[r,slave]
+// onto A[r, nodeToDof[master]] when that master DOF is present in row r, else
+// (master is a remote ghost, not a column of r) onto r's diagonal as the
+// row-sum-preserving fallback.
+template<typename RealType>
+__global__ void foldPeriodicSlaveColIntoMasterKernel(const uint8_t* isXRSlaveNode,
+                                                      const int* d_partner,
+                                                      const int* nodeToDof,
+                                                      const int* dofToNode,
+                                                      int numTotalDofs,
+                                                      const int* rowPtr,
+                                                      const int* colInd,
+                                                      const int* diagPtr,
+                                                      RealType* values,
+                                                      int numOwnedRows)
+{
+    int row = blockIdx.x * blockDim.x + threadIdx.x;
+    if (row >= numOwnedRows) return;
+    // Skip if THIS row is itself an XR-slave (already an identity row).
+    int rowNode = dofToNode[row];
+    if (rowNode >= 0 && isXRSlaveNode[rowNode]) return;
+    int rs = rowPtr[row];
+    int re = rowPtr[row + 1];
+    int dRow = diagPtr[row];
+    for (int j = rs; j < re; ++j)
+    {
+        int c = colInd[j];
+        if (c < 0 || c >= numTotalDofs) continue;
+        int cnode = dofToNode[c];
+        if (cnode < 0 || !isXRSlaveNode[cnode]) continue;
+        RealType a = values[j];
+        // Fold the slave-column coupling onto the master. phi[slave]=phi[master],
+        // so this preserves A*phi exactly while restoring the row-sum.
+        int masterNode = d_partner[cnode];
+        int masterDof = (masterNode >= 0) ? nodeToDof[masterNode] : -1;
+        bool folded = false;
+        if (masterDof >= 0 && masterDof != row)
+        {
+            for (int k = rs; k < re; ++k)
+            {
+                if (colInd[k] == masterDof) { values[k] += a; folded = true; break; }
+            }
+        }
+        // master is this row itself, or its column isn't stored in this row
+        // (remote ghost): fold onto the diagonal (row-sum preserved either way,
+        // and for the master row the master IS the diagonal).
+        if (!folded && dRow >= 0) values[dRow] += a;
+        values[j] = RealType(0);
+    }
+}
+
 // Build the inverse map: dofToNode[d] = local node that has nodeToDof[node] = d.
 // One thread per node. Multiple nodes can never share a DOF (in non-periodic
 // modes), so this is a simple scatter.
@@ -4257,16 +4319,21 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
         enforceBcMatrixKernel<RealType><<<dofBlocks, s.blockSize>>>(
             s.d_isPeriodicXRSlaveDof.data(), s.d_rowPtrDDT.data(), s.d_colIndDDT.data(),
             s.d_diagPtrDDT.data(), s.d_valuesDDT.data(), s.numOwnedDofs);
-        // Symmetric column-zero: drop the slave column from every row that
-        // references it (per-NODE mask, halo-exchanged so it fires on the
-        // master-owner rank too, where the slave is a ghost column of the master
-        // row). Keeps AddT structurally symmetric -> SPSD, which BoomerAMG needs.
+        // Fold the slave column onto the master (NOT a plain drop). phi[slave]=
+        // phi[master], so A[r,slave] must be added to A[r,master] (the master row
+        // -> its own diagonal). A bare col-zero deletes a nonzero off-diagonal
+        // from a row whose discrete-Laplacian row-sum must be ~0, leaving the
+        // seam operator inconsistent -> projection can't zero div there (boundary
+        // 30x -> blowup). The fold reproduces the matrix-free P-on-input exactly
+        // and keeps the row-sum. Per-NODE mask is halo-exchanged so it fires on
+        // the master-owner rank too (slave is a ghost column of the master row).
         if (s.d_isPeriodicXRSlaveNode.size() == static_cast<size_t>(s.nodeCount))
         {
-            enforceBcColMatrixKernelByNode<RealType><<<dofBlocks, s.blockSize>>>(
+            foldPeriodicSlaveColIntoMasterKernel<RealType><<<dofBlocks, s.blockSize>>>(
                 s.d_isPeriodicXRSlaveNode.data(),
+                s.periodicMap->d_periodicPartner.data(),
                 s.d_node_to_dof.data(), s.d_dofToNode.data(), s.numTotalDofs,
-                s.d_rowPtrDDT.data(), s.d_colIndDDT.data(),
+                s.d_rowPtrDDT.data(), s.d_colIndDDT.data(), s.d_diagPtrDDT.data(),
                 s.d_valuesDDT.data(), s.numOwnedDofs);
         }
         cudaDeviceSynchronize();
