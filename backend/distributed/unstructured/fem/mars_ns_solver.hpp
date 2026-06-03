@@ -8416,6 +8416,35 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
         }
         RealType duMax = maxOwnedInteriorAbs<KeyType, RealType, ElementTag>(s, dudiff);
 
+        // DISAMBIGUATOR 3: seam velocity mismatch. Over owned periodic pairs
+        // (partner>=0), max|u[slave]-u[master]| (and v,w). If LARGE (~3e-4), the
+        // corrector left the seam velocity field inconsistent (slave != master
+        // though they are one physical point) -> the post-corrector velocity
+        // broadcast (currently gated off on the reduced path) IS needed and the
+        // bare-D residual is that seam jump. If ~0, the seam is already consistent
+        // and the broadcast is a no-op -> the residual is elsewhere.
+        RealType seamMax;
+        {
+            const RealType* uP = s.d_u.data(); const RealType* vP = s.d_v.data();
+            const RealType* wP = s.d_w.data();
+            const int* partnerP = s.periodicMap ? s.periodicMap->d_periodicPartner.data() : nullptr;
+            const uint8_t* ownP = d_nodeOwnership.data();
+            RealType localMax = thrust::transform_reduce(thrust::device,
+                thrust::counting_iterator<size_t>(0),
+                thrust::counting_iterator<size_t>(s.nodeCount),
+                [uP, vP, wP, partnerP, ownP] __device__ (size_t i) -> RealType {
+                    if (!partnerP || partnerP[i] < 0 || ownP[i] != 1) return RealType(0);
+                    int m = partnerP[i];
+                    RealType du = fabs(uP[i] - uP[m]);
+                    RealType dv = fabs(vP[i] - vP[m]);
+                    RealType dw = fabs(wP[i] - wP[m]);
+                    RealType r = du > dv ? du : dv; return r > dw ? r : dw;
+                }, RealType(0), thrust::maximum<RealType>());
+            RealType g = 0; auto mt = std::is_same_v<RealType, double> ? MPI_DOUBLE : MPI_FLOAT;
+            MPI_Allreduce(&localMax, &g, 1, mt, MPI_MAX, MPI_COMM_WORLD);
+            seamMax = g;
+        }
+
         // DISAMBIGUATOR 2: recompute dOut WITHOUT the periodic fold (bare reduced D,
         // the D the corrector's gradient is the adjoint of). If dOutNoFold < dIn but
         // dOut(with fold)==dIn, the fold is exactly what hides the correction.
@@ -8444,7 +8473,8 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
             std::cout << "  [PROJ-P2] |Du**|=" << dIn << " |Du^{n+1}|=" << dOut
                       << "  [PROJ-P3] ratio=" << (dOut / (dIn > 0 ? dIn : RealType(1)))
                       << "  | max|u-u**|=" << duMax
-                      << "  |Du^{n+1}|noFold=" << dOutNoFold << "\n";
+                      << "  |Du^{n+1}|noFold=" << dOutNoFold
+                      << "  seam|u_s-u_m|=" << seamMax << "\n";
     }
 
     // Pressure update + ghost sync (next step's predictor needs ghost p^{n+1}).
