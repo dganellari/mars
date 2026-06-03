@@ -8400,9 +8400,51 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
         };
         RealType dIn  = opDiv(s.d_uStarStar, s.d_vStarStar, s.d_wStarStar);
         RealType dOut = opDiv(s.d_u,         s.d_v,         s.d_w);
+
+        // DISAMBIGUATOR 1: did the corrector actually change the velocity? Expect
+        // ~dt/rho*|gradPhi| ~ 3e-4. If ~0, the corrector is a no-op (and ratio=1.0
+        // is trivial); if ~3e-4, ratio=1.0 means the probe's D can't see the
+        // correction -> real operator/adjoint mismatch.
+        cstone::DeviceVector<RealType> dudiff(s.nodeCount, RealType(0));
+        {
+            const RealType* uP = s.d_u.data(); const RealType* uS = s.d_uStarStar.data();
+            RealType* dP = dudiff.data();
+            thrust::for_each(thrust::device, thrust::counting_iterator<size_t>(0),
+                thrust::counting_iterator<size_t>(s.nodeCount),
+                [uP, uS, dP] __device__ (size_t i){ dP[i] = uP[i] - uS[i]; });
+            cudaDeviceSynchronize();
+        }
+        RealType duMax = maxOwnedInteriorAbs<KeyType, RealType, ElementTag>(s, dudiff);
+
+        // DISAMBIGUATOR 2: recompute dOut WITHOUT the periodic fold (bare reduced D,
+        // the D the corrector's gradient is the adjoint of). If dOutNoFold < dIn but
+        // dOut(with fold)==dIn, the fold is exactly what hides the correction.
+        RealType dOutNoFold;
+        {
+            thrust::fill(thrust::device_pointer_cast(divAcc.data()),
+                         thrust::device_pointer_cast(divAcc.data() + s.nodeCount), RealType(0));
+            if (eBlocks > 0) {
+                computeDivergencePerNodeKernel<KeyType, RealType, ElementTag><<<eBlocks, s.blockSize>>>(
+                    c0, c1, c2, c3, c4, c5, c6, c7, s.d_u.data(), s.d_v.data(), s.d_w.data(),
+                    s.d_areaVec_x.data(), s.d_areaVec_y.data(), s.d_areaVec_z.data(),
+                    divAcc.data(), startElem, numLocal);
+                cudaDeviceSynchronize();
+            }
+            s.domain.reverseExchangeNodeHaloAdd(divAcc);  // NO periodicFold
+            thrust::fill(thrust::device_pointer_cast(divNorm.data()),
+                         thrust::device_pointer_cast(divNorm.data() + s.nodeCount), RealType(0));
+            normalizeDivergencePerNodeKernel<RealType><<<nodeBlocks, s.blockSize>>>(
+                divAcc.data(), s.d_massNode.data(), s.d_node_to_dof.data(),
+                d_nodeOwnership.data(), divNorm.data(), s.nodeCount);
+            cudaDeviceSynchronize();
+            dOutNoFold = maxOwnedInteriorAbs<KeyType, RealType, ElementTag>(s, divNorm);
+        }
+
         if (s.rank == 0)
             std::cout << "  [PROJ-P2] |Du**|=" << dIn << " |Du^{n+1}|=" << dOut
-                      << "  [PROJ-P3] ratio=" << (dOut / (dIn > 0 ? dIn : RealType(1))) << "\n";
+                      << "  [PROJ-P3] ratio=" << (dOut / (dIn > 0 ? dIn : RealType(1)))
+                      << "  | max|u-u**|=" << duMax
+                      << "  |Du^{n+1}|noFold=" << dOutNoFold << "\n";
     }
 
     // Pressure update + ghost sync (next step's predictor needs ghost p^{n+1}).
