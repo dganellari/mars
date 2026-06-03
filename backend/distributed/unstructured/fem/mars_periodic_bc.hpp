@@ -1286,6 +1286,26 @@ void crossRankPeriodicBroadcast(const PeriodicMap<KeyType, RealType>& map,
     // epoch_ increments per call so back-to-back in-loop calls stay distinct.
     {
         const int tag = 0x5048 + xr.epoch_;
+        // MARS_XR_BCAST_DBG: dump the exact buffer sizes + per-peer counts so we
+        // can see WHY MPI_Isend reports Invalid count / illegal address. If a
+        // rank's per-peer SEND count (recvOffsets delta) does not equal the
+        // PARTNER rank's per-peer RECV count (its sendOffsets delta), the offsets
+        // were built with mismatched per-peer orderings = the real bug.
+        static bool xrDbgDone = false;
+        if (!xrDbgDone && std::getenv("MARS_XR_BCAST_DBG") != nullptr)
+        {
+            int myRank = -1; MPI_Comm_rank(xr.comm_, &myRank);
+            std::cerr << "[xr-bcast-dbg rank " << myRank << "] sendBuf_.size="
+                      << xr.sendBuf_.size() << " recvBuf_.size=" << xr.recvBuf_.size()
+                      << " sendTotal=" << sendTotal << " recvTotal=" << recvTotal
+                      << " numPeers=" << numPeers << " | peers/sendOff/recvOff:";
+            for (int p = 0; p < numPeers; ++p)
+                std::cerr << " [p" << xr.peers_[p]
+                          << " sOff " << xr.sendOffsets_[p] << ".." << xr.sendOffsets_[p+1]
+                          << " rOff " << xr.recvOffsets_[p] << ".." << xr.recvOffsets_[p+1] << "]";
+            std::cerr << std::endl;
+            xrDbgDone = true;
+        }
         std::vector<MPI_Request> reqs; reqs.reserve(2 * numPeers);
         for (int p = 0; p < numPeers; ++p)
         {
