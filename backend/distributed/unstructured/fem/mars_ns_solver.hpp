@@ -3020,6 +3020,34 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
             s.d_mass.data(), s.nodeCount, s.numOwnedDofs);
         cudaDeviceSynchronize();
 
+        // Periodic seam mass mirror (AFTER the DOF gather, never before).
+        // maybePeriodicSum folded each slave's mass onto its master and set
+        // d_massNode[slave]=0. That zero makes normalizeGradientPerNodeKernel hit
+        // m==0 and ZERO the gradient/divergence at every owned slave node -- so the
+        // reduced operator A's internal D drops the seam slave-side flux while the
+        // physical/probe D (which reads the live velocity at the slave) keeps it.
+        // A is then a self-consistent symmetric operator (CG solves it to 1e-11)
+        // but NOT the true periodic D M^-1 D^T: the corrector leaves u[slave]
+        // uncorrected and only ~half the divergence is removed (PROJ-P3 ~0.5).
+        // Mirror the combined mass back onto the slave so every per-NODE mass
+        // consumer (A's M^-1, the corrector's M^-1, the RHS divergence normalize,
+        // the DDT diagonal, the probe) sees the same non-zero seam mass and the
+        // seam faces come alive. Done AFTER gatherOwnedNodeMassToDofKernel so the
+        // per-DOF mass d_mass (built once here, never re-derived from
+        // d_massNode[slave] later) is NOT double-counted: the gather already summed
+        // master+slave geometric mass into the single collapsed DOF. For a
+        // cross-rank pair the master is a ghost the forward halo above filled, so
+        // the broadcast reads the right value there too.
+        if (s.periodicMap)
+        {
+            mars::fem::periodicBroadcastKernel<<<nBlocks, s.blockSize>>>(
+                s.periodicMap->d_periodicPartner.data(), s.nodeCount, s.d_massNode.data());
+            cudaDeviceSynchronize();
+            // Re-sync ghost slots: a cross-rank master-ghost slave just got the
+            // master value; keep ghost copies consistent for the assembler.
+            s.domain.exchangeNodeHalo(s.d_massNode);
+        }
+
         // DIAGNOSTIC: total control volume = sum of OWNED-node lumped mass over
         // ALL ranks. This MUST equal the single-rank total (the domain volume) --
         // it is rank-count-invariant. If multi-rank sum < single-rank, boundary
@@ -3028,11 +3056,19 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
         {
             const uint8_t* ownPtr = d_nodeOwnership.data();
             const RealType* mP    = s.d_massNode.data();
+            // Skip periodic-slave nodes: after the seam mass mirror they carry the
+            // SAME combined mass as their master, so counting both would double the
+            // seam volume and break the "= domain volume" invariant. The slave's
+            // mass is already represented in its master (and its DOF). partner>=0
+            // marks a slave.
+            const int* partnerP = s.periodicMap ? s.periodicMap->d_periodicPartner.data() : nullptr;
             double localMass = thrust::transform_reduce(thrust::device,
                 thrust::counting_iterator<size_t>(0),
                 thrust::counting_iterator<size_t>(s.nodeCount),
-                [ownPtr, mP] __device__ (size_t i) -> double {
-                    return (ownPtr[i] == 1) ? double(mP[i]) : 0.0;
+                [ownPtr, mP, partnerP] __device__ (size_t i) -> double {
+                    if (ownPtr[i] != 1) return 0.0;
+                    if (partnerP && partnerP[i] >= 0) return 0.0;  // slave -> counted via master
+                    return double(mP[i]);
                 }, 0.0, thrust::plus<double>());
             double globalMass = 0;
             MPI_Allreduce(&localMass, &globalMass, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
