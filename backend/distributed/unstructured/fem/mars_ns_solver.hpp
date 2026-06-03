@@ -8278,9 +8278,22 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
         int blk = 256, grd = int((s.nodeCount + blk - 1) / blk);
         const int* d_partner = s.periodicMap->d_periodicPartner.data();
         size_t nN            = s.nodeCount;
-        mars::fem::periodicBroadcastKernel<<<grd, blk>>>(d_partner, nN, s.d_u.data());
-        mars::fem::periodicBroadcastKernel<<<grd, blk>>>(d_partner, nN, s.d_v.data());
-        mars::fem::periodicBroadcastKernel<<<grd, blk>>>(d_partner, nN, s.d_w.data());
+        // Reduced-DOF periodic projection: the corrector wrote u^{n+1}[slave] =
+        // u**[slave] - (dt/rho) g[slave] with the slave's OWN bare g (the reduced
+        // operator A inverted exactly that). Broadcasting u^{n+1}[slave]:=master
+        // here would clobber it with g[master], so the folded div(u^{n+1}) the
+        // diagnostic measures no longer matches what the pressure solve zeroed ->
+        // a boundary residual ~(dt/rho)Fold(D(g[master]-g[slave])) that advection
+        // amplifies. So SKIP the velocity broadcast on the reduced path; the slave
+        // keeps its correctly-projected velocity and the next predictor re-syncs
+        // u* master->slave itself. The PRESSURE broadcast stays (next predictor's
+        // grad(p) needs slave==master pressure; p is not in the divergence identity).
+        if (!routeReducedPeriodicCorr)
+        {
+            mars::fem::periodicBroadcastKernel<<<grd, blk>>>(d_partner, nN, s.d_u.data());
+            mars::fem::periodicBroadcastKernel<<<grd, blk>>>(d_partner, nN, s.d_v.data());
+            mars::fem::periodicBroadcastKernel<<<grd, blk>>>(d_partner, nN, s.d_w.data());
+        }
         mars::fem::periodicBroadcastKernel<<<grd, blk>>>(d_partner, nN, s.d_p.data());
         cudaDeviceSynchronize();
         s.domain.exchangeNodeHalo(s.d_u);
