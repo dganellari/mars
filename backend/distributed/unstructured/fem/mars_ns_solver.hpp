@@ -7447,6 +7447,33 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
         }
         s.lastGradPhiRms = rmsOwnedInterior3<KeyType, RealType, ElementTag>(
             s, s.d_gradPhix, s.d_gradPhiy, s.d_gradPhiz);
+
+        // Periodic seam: maybePeriodicSum above is P^T (sum-only) -> after
+        // normalize gradPhi[slave]=0, so a periodic slave node would receive NO
+        // pressure correction (q[slave]=q**[slave]-dt/rho*0) and div would not
+        // close at the periodic faces (boundary div ~30x interior -> blowup).
+        // Restore gradPhi[slave]=gradPhi[master] using the SAME deadlock-free
+        // pattern the post-solve phi/velocity consistency uses: a normal
+        // collective halo exchange (master value lands in the slave's ghost
+        // slot) followed by the pure-LOCAL periodicBroadcastKernel (no
+        // point-to-point MPI, no epoch tags -> cannot desync/deadlock). Covers
+        // same-rank AND cross-rank pairs: cross-rank masters arrive via the halo.
+        // No-op off the periodic path (empty partner table).
+        if (s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Periodic
+            && s.periodicMap != nullptr)
+        {
+            const int* dpart = s.periodicMap->d_periodicPartner.data();
+            s.domain.exchangeNodeHalo(s.d_gradPhix);
+            s.domain.exchangeNodeHalo(s.d_gradPhiy);
+            s.domain.exchangeNodeHalo(s.d_gradPhiz);
+            mars::fem::periodicBroadcastKernel<<<nodeBlocks, s.blockSize>>>(
+                dpart, s.nodeCount, s.d_gradPhix.data());
+            mars::fem::periodicBroadcastKernel<<<nodeBlocks, s.blockSize>>>(
+                dpart, s.nodeCount, s.d_gradPhiy.data());
+            mars::fem::periodicBroadcastKernel<<<nodeBlocks, s.blockSize>>>(
+                dpart, s.nodeCount, s.d_gradPhiz.data());
+            cudaDeviceSynchronize();
+        }
     }
 
     auto runCorrector = [&] (cstone::DeviceVector<RealType>& qOut,
