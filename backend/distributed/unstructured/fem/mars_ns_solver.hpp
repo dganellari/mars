@@ -8043,6 +8043,23 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
     const bool bdf2ActiveCorr = (s.useBdf2 && s.bdfStep >= 1 && s.d_valuesVel_bdf2.size() > 0);
     const RealType dtEff      = bdf2ActiveCorr ? (RealType(2) * dt / RealType(3)) : dt;
 
+    // Chorin closes div(u^{n+1})=0 ONLY if the corrector subtracts the SAME
+    // discrete M^-1 D^T phi that the pressure operator A = D M^-1 D^T inverted
+    // (correct with the transpose of what you solved). On the multi-rank
+    // periodic CG path the pressure solve uses the REDUCED P^T A P operator
+    // (routeReducedPeriodic in runPressureSolveStep): its intermediate
+    // g = M^-1 D^T phi is computed BARE -- D^T scatter, cstone reverse-halo,
+    // per-node-mass normalize, forward halo -- with NO maybePeriodicSum on g
+    // and NO gradPhi master->slave broadcast (those are gated off there because
+    // the reduced operator carries the single P/P^T on its in/out, not on g).
+    // So on that path the corrector must build grad(phi) with the IDENTICAL
+    // bare sequence; the periodic-sum + broadcast sequence below is a DIFFERENT
+    // operator and would leave div(u^{n+1}) != 0 (it grew ~10x/step). Mirror the
+    // exact gate the pressure solver uses (numRanks>1 && Periodic && CG).
+    const bool routeReducedPeriodicCorr =
+        s.numRanks > 1
+        && s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Periodic
+        && s.solverKind == SolverKind::CG;
     {
         cstone::DeviceVector<RealType> d_gxAcc(s.nodeCount, RealType(0));
         cstone::DeviceVector<RealType> d_gyAcc(s.nodeCount, RealType(0));
@@ -8051,6 +8068,55 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
         // projection identity D u^{n+1} = 0 algebraically exact. K mode keeps
         // the legacy SCS gradient unless --experimental-divT overrides.
         const bool useDivT = (s.pressureSolve == PressureSolveKind::DDT) || !s.useLegacyGradient;
+        if (routeReducedPeriodicCorr)
+        {
+            // Reduced-periodic corrector gradient: replicate applyDDTPerNode's
+            // steps a+b VERBATIM (the operator's g = M^-1 D^T phi). Input is the
+            // already-prolonged node field s.d_phi (P phi: scatter+halo+local
+            // broadcast happened post-solve in runPressureSolveStep), so D^T
+            // reads the correct node-space phi. Bare sequence, matching the
+            // reduced operator exactly: NO maybePeriodicSum, NO gradPhi
+            // master->slave broadcast. Always divT here (DDT is the only
+            // pressure mode on this route).
+            if (eBlocks > 0)
+            {
+                applyDivTransposePerNodeKernel<KeyType, RealType, ElementTag><<<eBlocks, s.blockSize>>>(
+                    c0, c1, c2, c3, c4, c5, c6, c7,
+                    s.d_phi.data(),
+                    s.d_areaVec_x.data(), s.d_areaVec_y.data(), s.d_areaVec_z.data(),
+                    d_gxAcc.data(), d_gyAcc.data(), d_gzAcc.data(),
+                    startElem, numLocal);
+                cudaDeviceSynchronize();
+            }
+            // Step a halo: owner sees neighbor ranks' corner-only contributions.
+            s.domain.reverseExchangeNodeHaloAdd(d_gxAcc);
+            s.domain.reverseExchangeNodeHaloAdd(d_gyAcc);
+            s.domain.reverseExchangeNodeHaloAdd(d_gzAcc);
+            // Step b: g <- M^-1 g (per-node mass).
+            normalizeGradientPerNodeKernel<RealType><<<nodeBlocks, s.blockSize>>>(
+                d_gxAcc.data(), d_gyAcc.data(), d_gzAcc.data(),
+                s.d_massNode.data(),
+                s.d_node_to_dof.data(), d_nodeOwnership.data(),
+                s.d_gradPhix.data(), s.d_gradPhiy.data(), s.d_gradPhiz.data(),
+                s.nodeCount);
+            cudaDeviceSynchronize();
+            // Forward halo: the velocity corrector reads gradPhi at ghost slots
+            // too (a ghost node's owned partner on this rank gets corrected).
+            // This is the operator's step-b forward exchangeNodeHalo.
+            s.domain.exchangeNodeHalo(s.d_gradPhix);
+            s.domain.exchangeNodeHalo(s.d_gradPhiy);
+            s.domain.exchangeNodeHalo(s.d_gradPhiz);
+            // applyDivTransposePerNodeKernel integrates to -V*grad, so
+            // M^-1 D^T phi = -grad; the corrector kernel wants +grad. Flip sign.
+            negateThreeOwnedKernel<RealType><<<nodeBlocks, s.blockSize>>>(
+                s.d_gradPhix.data(), s.d_gradPhiy.data(), s.d_gradPhiz.data(),
+                s.d_node_to_dof.data(), d_nodeOwnership.data(), s.nodeCount);
+            cudaDeviceSynchronize();
+            s.lastGradPhiRms = rmsOwnedInterior3<KeyType, RealType, ElementTag>(
+                s, s.d_gradPhix, s.d_gradPhiy, s.d_gradPhiz);
+        }
+        else
+        {
         if (eBlocks > 0)
         {
             if (!useDivT)
@@ -8125,6 +8191,7 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
             mars::fem::periodicBroadcastKernel<<<nodeBlocks, s.blockSize>>>(
                 dpart, s.nodeCount, s.d_gradPhiz.data());
             cudaDeviceSynchronize();
+        }
         }
     }
 
