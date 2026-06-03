@@ -5714,36 +5714,60 @@ void applyDDTReduced(NSStepper<KeyType, RealType, ElementTag>& s,
     const auto& d_nodeOwnership = s.ownershipMap();
     const int nodeBlocks = (s.nodeCount + s.blockSize - 1) / s.blockSize;
 
-    // STEP P: prolong p_dof -> phiNode (NODE-indexed), then make the slave NODE
-    // slot carry the master's value so the element D^T read is periodic.
+    // STEP P: prolong p_dof -> phiNode (NODE-indexed), then make every slave NODE
+    // slot carry its master's value so the element D^T read is periodic.
+    //
+    // Communication is cstone's halo ONLY -- no bespoke periodic MPI. The
+    // periodic image of a master IS a cstone ghost on the slave's rank, so a
+    // plain exchangeNodeHalo delivers the master value into the master-GHOST node
+    // slot; a LOCAL periodicBroadcastKernel (phiNode[slave]=phiNode[partner],
+    // partner = master's local node/ghost index) then copies it onto the slave.
+    // Order matters: scatter -> halo (master ghost now valid) -> local broadcast.
+    // This replaces crossRankPeriodicBroadcast (a hand-rolled, redundant
+    // Isend/Irecv layer that duplicated the halo and crashed on the asymmetric
+    // seam). cstone's exchangeNodeHalo is the single, proven, index-safe comm.
     scatterDofToNodeKernel<RealType><<<nodeBlocks, s.blockSize>>>(
         p_dof.data(), s.d_node_to_dof.data(), phiNode.data(), s.nodeCount);
     cudaDeviceSynchronize();
+    // PLAIN node-indexed halo (NO nodeToDof): phiNode is NODE-indexed; this fills
+    // the master-ghost NODE slot by node index, matching applyDivTransposePerNodeKernel.
+    s.domain.exchangeNodeHalo(phiNode);
     if (s.periodicMap)
     {
-        mars::fem::periodicBroadcastSameRankKernel<RealType><<<nodeBlocks, s.blockSize>>>(
-            s.periodicMap->d_periodicPartner.data(), d_nodeOwnership.data(),
-            s.nodeCount, phiNode.data());
+        // Local master->slave copy (no MPI). periodicBroadcastKernel reads
+        // phiNode[d_periodicPartner[slave]]: for a same-rank pair the master is
+        // owned here, for a cross-rank pair it is the master GHOST the halo above
+        // just filled. Either way the slave node slot gets the master value.
+        int blk = 256, grd = int((s.nodeCount + blk - 1) / blk);
+        mars::fem::periodicBroadcastKernel<<<grd, blk>>>(
+            s.periodicMap->d_periodicPartner.data(), s.nodeCount, phiNode.data());
         cudaDeviceSynchronize();
-        if (s.numRanks > 1)
-            mars::fem::crossRankPeriodicBroadcast<KeyType, RealType>(*s.periodicMap, phiNode);
     }
-    // PLAIN node-indexed halo (NO nodeToDof arg). phiNode is NODE-indexed -- a
-    // dof-routed halo would index it as DOF-indexed, breaking P != P^T at the
-    // seam (pAp<=0). The plain halo fills the master-ghost NODE slot by node
-    // index, matching what applyDivTransposePerNodeKernel reads.
-    s.domain.exchangeNodeHalo(phiNode);
 
     // STEP A: bare self-adjoint operator (no periodic legs inside).
     applyDDTPerNode<KeyType, RealType, ElementTag>(s, phiNode, ApNode, gx, gy, gz,
                                                    /*applyPeriodic=*/false);
 
-    // STEP P^T: sum-only restriction. maybePeriodicSum's cross-rank leg is
-    // broadcastBack=false -- slave summed onto master, slave node slot left ZERO.
-    // This is the transpose of the node-indexed P. Do NOT use the 2-leg
-    // crossRankPeriodicPairSumDof (it overwrites slave:=master, the P^T-then-P
-    // anti-pattern that breaks conjugacy -> converge-then-diverge).
-    maybePeriodicSum<KeyType, RealType, ElementTag>(s, ApNode);
+    // STEP P^T: sum-only restriction, cstone-comm ONLY (transpose of STEP P).
+    //  - CROSS-RANK fold is ALREADY done: applyDDTPerNode ran
+    //    reverseExchangeNodeHaloAdd(outAcc) unconditionally (cstone ghost->owner
+    //    sum), which folds each cross-rank slave's contribution onto its master
+    //    (the master is the slave's ghost partner). That is the exact transpose
+    //    of STEP P's exchangeNodeHalo. No bespoke periodic MPI.
+    //  - SAME-RANK fold is local-only: a same-rank slave and master are two
+    //    distinct OWNED nodes (not a halo pair), so cstone's reverse-halo does
+    //    NOT touch them. periodicBroadcastKernel's sibling periodicPairSumKernel
+    //    sums slave->master (ownership[master]==1 gate) and zeroes the slave slot
+    //    -- a pure-local kernel, no MPI. This is the sum-only P^T (no master->
+    //    slave re-broadcast, so no conjugacy-breaking P^T-then-P).
+    if (s.periodicMap)
+    {
+        int blk = 256, grd = int((s.nodeCount + blk - 1) / blk);
+        mars::fem::periodicPairSumKernel<RealType><<<grd, blk>>>(
+            s.periodicMap->d_periodicPartner.data(), d_nodeOwnership.data(),
+            s.nodeCount, ApNode.data());
+        cudaDeviceSynchronize();
+    }
 
     // node->dof sum: the DOF-space half of P^T. Slave node slot is 0 (summed
     // onto master above), so the slave DOF gathers 0 and stays Dirichlet-zero.
