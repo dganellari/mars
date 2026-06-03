@@ -2125,13 +2125,6 @@ struct NSStepper
     cstone::DeviceVector<int>     d_node_to_dof;
     cstone::DeviceVector<RealType> d_mass;       // per OWNED DOF
     cstone::DeviceVector<RealType> d_massNode;   // per NODE (owned + ghosts halo-exchanged); read by DDT assembler
-    // Per-NODE TRUE single-side mass: snapshot of d_massNode taken BEFORE the
-    // periodic seam fold/mirror, so a seam node keeps its own m (not the combined
-    // 2m). The folded reduced operator A wants 2m (it recombines the two slots),
-    // but the UN-folded velocity corrector and the bare-D divergence treat master
-    // and slave as two separate physical nodes that each own only m -> they must
-    // divide by this single-side mass, else they under-correct the seam by 2x.
-    cstone::DeviceVector<RealType> d_massNodeSingle;
     cstone::DeviceVector<uint8_t>  d_isBdryDof;
     // Path-B mask for multi-rank periodic: marks owned slave DOFs whose master
     // lives on a remote rank. enforceBcMatrixKernel zeros those rows and sets
@@ -3016,16 +3009,6 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
             cudaDeviceSynchronize();
         }
         s.domain.reverseExchangeNodeHaloAdd(s.d_massNode);
-        // Snapshot the TRUE single-side per-node mass NOW, after the reverse-halo
-        // sum but BEFORE the periodic fold/mirror collapses the seam. At this point
-        // each node (incl. seam master and slave) holds its own physical m. The
-        // un-folded corrector / bare-D normalize against THIS so the seam gets its
-        // full correction; A keeps the folded 2m below.
-        s.d_massNodeSingle.resize(s.nodeCount);
-        thrust::copy(thrust::device_pointer_cast(s.d_massNode.data()),
-                     thrust::device_pointer_cast(s.d_massNode.data() + s.nodeCount),
-                     thrust::device_pointer_cast(s.d_massNodeSingle.data()));
-        s.domain.exchangeNodeHalo(s.d_massNodeSingle);
         maybePeriodicSum<KeyType, RealType, ElementTag>(s, s.d_massNode);
         // Forward halo: ghost slots get owner-rank V values so DDT assembler
         // can read s.d_massNode[ghostNode] and get the correct V.
@@ -8256,15 +8239,10 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
             s.domain.reverseExchangeNodeHaloAdd(d_gxAcc);
             s.domain.reverseExchangeNodeHaloAdd(d_gyAcc);
             s.domain.reverseExchangeNodeHaloAdd(d_gzAcc);
-            // Step b: g <- M^-1 g (per-node mass). UN-folded corrector: each seam
-            // node owns only single-side mass m, so normalize against
-            // d_massNodeSingle (m), NOT d_massNode (2m at the seam). Using 2m here
-            // halves the seam velocity correction -> bare-D projection removes only
-            // ~half the divergence (measured ratio 0.5 flat). A keeps 2m because it
-            // recombines the two slots; the corrector does not.
+            // Step b: g <- M^-1 g (per-node mass).
             normalizeGradientPerNodeKernel<RealType><<<nodeBlocks, s.blockSize>>>(
                 d_gxAcc.data(), d_gyAcc.data(), d_gzAcc.data(),
-                s.d_massNodeSingle.data(),
+                s.d_massNode.data(),
                 s.d_node_to_dof.data(), d_nodeOwnership.data(),
                 s.d_gradPhix.data(), s.d_gradPhiy.data(), s.d_gradPhiz.data(),
                 s.nodeCount);
@@ -8405,16 +8383,17 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
                     divAcc.data(), startElem, numLocal);
                 cudaDeviceSynchronize();
             }
-            // NO periodicFoldToMasterKernel here: the corrector's velocity update
-            // is un-folded (per-node), so the divergence that measures whether it
-            // worked must ALSO be un-folded -- the bare D the corrector is the
-            // adjoint of. Folding here re-applies A's two-slot recombination and
-            // hides the seam correction (made the ratio read a spurious 1.0).
+            if (s.periodicMap) {
+                int blk = 256, grd = int((s.nodeCount + blk - 1) / blk);
+                mars::fem::periodicFoldToMasterKernel<RealType><<<grd, blk>>>(
+                    s.periodicMap->d_periodicPartner.data(), s.nodeCount, divAcc.data());
+                cudaDeviceSynchronize();
+            }
             s.domain.reverseExchangeNodeHaloAdd(divAcc);
             thrust::fill(thrust::device_pointer_cast(divNorm.data()),
                          thrust::device_pointer_cast(divNorm.data() + s.nodeCount), RealType(0));
             normalizeDivergencePerNodeKernel<RealType><<<nodeBlocks, s.blockSize>>>(
-                divAcc.data(), s.d_massNodeSingle.data(), s.d_node_to_dof.data(),
+                divAcc.data(), s.d_massNode.data(), s.d_node_to_dof.data(),
                 d_nodeOwnership.data(), divNorm.data(), s.nodeCount);
             cudaDeviceSynchronize();
             return maxOwnedInteriorAbs<KeyType, RealType, ElementTag>(s, divNorm);
@@ -8455,7 +8434,7 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
             thrust::fill(thrust::device_pointer_cast(divNorm.data()),
                          thrust::device_pointer_cast(divNorm.data() + s.nodeCount), RealType(0));
             normalizeDivergencePerNodeKernel<RealType><<<nodeBlocks, s.blockSize>>>(
-                divAcc.data(), s.d_massNodeSingle.data(), s.d_node_to_dof.data(),
+                divAcc.data(), s.d_massNode.data(), s.d_node_to_dof.data(),
                 d_nodeOwnership.data(), divNorm.data(), s.nodeCount);
             cudaDeviceSynchronize();
             dOutNoFold = maxOwnedInteriorAbs<KeyType, RealType, ElementTag>(s, divNorm);
