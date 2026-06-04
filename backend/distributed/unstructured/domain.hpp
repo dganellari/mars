@@ -1047,6 +1047,135 @@ public:
         }
     }
 
+    // Reverse MIN/MAX fold: like reverseExchangeNodeHaloAdd but combines ghost
+    // contributions into the owner slot with MIN (resp. MAX) instead of SUM.
+    // Needed by the Barth-Jespersen limiter: an owned boundary node's neighbor
+    // min/max must include neighbor elements that live on another rank and are
+    // NOT in this rank's cstone halo (corner-only neighbors). SUM would be
+    // wrong; min/max is the correct reduction. Call this BEFORE the forward
+    // exchangeNodeHalo that publishes the (now complete) owner bounds to ghosts.
+    // isMin selects the op; the pack uses +INF (min) / -INF (max) for non-DOF
+    // slots so they are no-ops under the reduction.
+    template<class VectorType>
+    void reverseExchangeNodeHaloMinMax(VectorType& nodeArray, bool isMin,
+                                       const int* nodeToDof = nullptr) const
+    {
+        if (numRanks_ == 1) return;
+
+        using T = typename VectorType::value_type;
+        static_assert(std::is_same_v<T, RealType>,
+                      "reverseExchangeNodeHaloMinMax: vector element type must match domain RealType");
+
+        ensureNodeHaloTopo();
+        const auto& topo = *nodeHaloTopo_;
+
+        size_t sendTotal = topo.sendOffsets_.empty() ? 0 : size_t(topo.sendOffsets_.back());
+        size_t recvTotal = topo.recvOffsets_.empty() ? 0 : size_t(topo.recvOffsets_.back());
+
+        T*           arr   = thrust::raw_pointer_cast(nodeArray.data());
+        const int*   rnds  = thrust::raw_pointer_cast(topo.recvNodeIds_.data());
+        const int*   snds  = thrust::raw_pointer_cast(topo.sendNodeIds_.data());
+        T*           gbuf  = thrust::raw_pointer_cast(topo.recvBuf_.data()); // SEND buffer (length recvTotal)
+        T*           obuf  = thrust::raw_pointer_cast(topo.sendBuf_.data()); // RECV buffer (length sendTotal)
+
+        // Identity element for the reduction: a non-DOF slot must not perturb it.
+        const T ident = isMin ? std::numeric_limits<T>::infinity()
+                              : -std::numeric_limits<T>::infinity();
+
+        if (recvTotal > 0)
+        {
+            thrust::for_each(thrust::device,
+                              thrust::counting_iterator<size_t>(0),
+                              thrust::counting_iterator<size_t>(recvTotal),
+                              [arr, rnds, gbuf, nodeToDof, ident] __device__ (size_t i) {
+                                  int n = rnds[i];
+                                  int idx = (nodeToDof != nullptr) ? nodeToDof[n] : n;
+                                  gbuf[i] = (idx >= 0) ? arr[idx] : ident;
+                              });
+            cudaDeviceSynchronize();
+        }
+
+        auto mpiType = std::is_same_v<T, double> ? MPI_DOUBLE : MPI_FLOAT;
+        constexpr int minmaxHaloTagBase = 0x4d4d;  // "MM" — distinct from add/forward tags
+        const int tag = minmaxHaloTagBase + topo.epoch_;
+        std::vector<MPI_Request> reqs;
+        reqs.reserve(2 * topo.peers_.size());
+
+        for (size_t p = 0; p < topo.peers_.size(); ++p)
+        {
+            int peer = topo.peers_[p];
+            int rcnt = topo.sendOffsets_[p+1] - topo.sendOffsets_[p];
+            if (rcnt > 0)
+            {
+                MPI_Request r;
+                MPI_Irecv(obuf + topo.sendOffsets_[p], rcnt, mpiType, peer,
+                          tag, MPI_COMM_WORLD, &r);
+                reqs.push_back(r);
+            }
+        }
+        for (size_t p = 0; p < topo.peers_.size(); ++p)
+        {
+            int peer = topo.peers_[p];
+            int scnt = topo.recvOffsets_[p+1] - topo.recvOffsets_[p];
+            if (scnt > 0)
+            {
+                MPI_Request r;
+                MPI_Isend(gbuf + topo.recvOffsets_[p], scnt, mpiType, peer,
+                          tag, MPI_COMM_WORLD, &r);
+                reqs.push_back(r);
+            }
+        }
+        if (!reqs.empty()) MPI_Waitall(int(reqs.size()), reqs.data(), MPI_STATUSES_IGNORE);
+        ++topo.epoch_;
+
+        // Combine received contributions into owner slots with min/max via a
+        // decoded-double CAS loop (atomicMin/Max for floating point are not
+        // built in). Multiple peers may target the same owned node.
+        if (sendTotal > 0)
+        {
+            thrust::for_each(thrust::device,
+                              thrust::counting_iterator<size_t>(0),
+                              thrust::counting_iterator<size_t>(sendTotal),
+                              [arr, snds, obuf, nodeToDof, isMin] __device__ (size_t i) {
+                                  int n = snds[i];
+                                  int idx = (nodeToDof != nullptr) ? nodeToDof[n] : n;
+                                  if (idx < 0) return;
+                                  T val = obuf[i];
+                                  // CAS loop comparing as the real value (sign-correct).
+                                  if constexpr (std::is_same_v<T, double>) {
+                                      unsigned long long* a =
+                                          reinterpret_cast<unsigned long long*>(&arr[idx]);
+                                      unsigned long long old = *a, assumed;
+                                      do {
+                                          double cur = __longlong_as_double((long long)old);
+                                          if (isMin ? (cur <= val) : (cur >= val)) break;
+                                          assumed = old;
+                                          old = atomicCAS(a, assumed,
+                                                          (unsigned long long)__double_as_longlong(val));
+                                      } while (assumed != old);
+                                  } else {
+                                      unsigned int* a = reinterpret_cast<unsigned int*>(&arr[idx]);
+                                      unsigned int old = *a, assumed;
+                                      do {
+                                          float cur = __int_as_float((int)old);
+                                          if (isMin ? (cur <= val) : (cur >= val)) break;
+                                          assumed = old;
+                                          old = atomicCAS(a, assumed,
+                                                          (unsigned int)__float_as_int(val));
+                                      } while (assumed != old);
+                                  }
+                              });
+            cudaDeviceSynchronize();
+        }
+    }
+
+    template<class VectorType>
+    void reverseExchangeNodeHaloMin(VectorType& a, const int* n2d = nullptr) const
+    { reverseExchangeNodeHaloMinMax(a, true,  n2d); }
+    template<class VectorType>
+    void reverseExchangeNodeHaloMax(VectorType& a, const int* n2d = nullptr) const
+    { reverseExchangeNodeHaloMinMax(a, false, n2d); }
+
     // Device connectivity functions
     template<int I>
     __device__ KeyType getConnectivityDevice(size_t elementIndex) const;
@@ -1061,7 +1190,57 @@ public:
         return d_localToGlobalSfcMap_;
     }
 
-    const DeviceVector<KeyType>& getLocalToGlobalNodeMap() const { return d_localToGlobalNodeMap_; }
+    // WARNING: this is the EXODUS-READER node order (the pre-SFC-sort numbering
+    // from mesh read), NOT the runtime node index. Runtime arrays (coords,
+    // ownership, node_to_dof, solver fields) are indexed by the SFC-sorted local
+    // id. Do NOT use this map to index runtime arrays or to resolve boundary
+    // nodes -- that silently hits the wrong nodes on >1 rank. To map an Exodus
+    // node to its runtime local id, use resolveSideSetNodesToLocal() (by
+    // coordinate). Kept only for legacy/debug.
+    const DeviceVector<KeyType>& getExodusReaderNodeMap() const { return d_localToGlobalNodeMap_; }
+
+    // Resolve boundary/side-set nodes (given by COORDINATE) to their runtime
+    // SFC-sorted local ids -- the index every runtime array uses. Each coord is
+    // turned into the same Hilbert key the domain computed on device (identical
+    // cstone::sfc3D + global box), then located in the sorted SFC map by binary
+    // search. A coord not present on this rank (key not found) is skipped, so
+    // each rank returns only the nodes it actually holds (owned or ghost) --
+    // mirroring a per-rank side-set resolution. Host-side; call once at setup.
+    // Same as above but keeps alignment with `coords`: a coord not local to
+    // this rank yields -1 (instead of being dropped). Use when you need the
+    // result index to line up 1:1 with the input (e.g. per-face lookups).
+    std::vector<int>
+    resolveSideSetNodesToLocalKeepMisses(const std::vector<std::array<double, 3>>& coords) const
+    {
+        ensureSfcMap();
+        std::vector<KeyType> hostSfc(d_localToGlobalSfcMap_.size());
+        thrust::copy(thrust::device_pointer_cast(d_localToGlobalSfcMap_.data()),
+                     thrust::device_pointer_cast(d_localToGlobalSfcMap_.data()
+                                                 + d_localToGlobalSfcMap_.size()),
+                     hostSfc.begin());
+        using HKey = cstone::HilbertKey<KeyType>;
+        std::vector<int> local(coords.size(), -1);
+        for (size_t i = 0; i < coords.size(); ++i)
+        {
+            const auto& c = coords[i];
+            KeyType key = cstone::sfc3D<HKey>(RealType(c[0]), RealType(c[1]),
+                                              RealType(c[2]), box_).value();
+            auto it = std::lower_bound(hostSfc.begin(), hostSfc.end(), key);
+            if (it != hostSfc.end() && *it == key)
+                local[i] = int(it - hostSfc.begin());
+        }
+        return local;
+    }
+
+    std::vector<int>
+    resolveSideSetNodesToLocal(const std::vector<std::array<double, 3>>& coords) const
+    {
+        std::vector<int> withMisses = resolveSideSetNodesToLocalKeepMisses(coords);
+        std::vector<int> local;
+        local.reserve(withMisses.size());
+        for (int id : withMisses) if (id >= 0) local.push_back(id);
+        return local;
+    }
 
     //! Returns the Element->Node connectivity table using dense local node IDs (lazy).
     const DeviceConnectivityTuple& getElementToNodeConnectivity() const

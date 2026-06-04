@@ -319,6 +319,73 @@ __global__ void periodicBroadcastKernel(const int* d_partner, size_t numNodes,
     d_field[i] = d_field[master];
 }
 
+// Exact TRANSPOSE of periodicBroadcastKernel: for every slave (partner>=0),
+// field[partner] += field[slave]; field[slave] = 0. NO ownership gate -- the
+// partner may be a master GHOST (cross-rank), and we WANT the contribution to
+// land on that ghost slot so a subsequent reverseExchangeNodeHaloAdd carries it
+// to the master's owner. This is the restriction half-leg whose adjoint is the
+// master->slave broadcast: (broadcast)^T = this fold. Used by the reduced-DOF
+// P^T A P operator (applyDDTReduced) to keep A symmetric across the periodic
+// seam. atomicAdd because several slaves can map to one master at a corner.
+template<typename RealType>
+__global__ void periodicFoldToMasterKernel(const int* d_partner, size_t numNodes,
+                                           RealType* d_field)
+{
+    size_t i = size_t(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (i >= numNodes) return;
+    int master = d_partner[i];
+    if (master < 0) return;
+    atomicAdd(&d_field[master], d_field[i]);
+    d_field[i] = RealType(0);
+}
+
+// Same-rank-only master->slave broadcast: field[slave] = field[master], but
+// ONLY when the master is locally OWNED. This is the in-rank periodic-collapse
+// case where slave and master are TWO distinct nodes sharing ONE DOF, so their
+// per-node field slots must be kept identical. Used inside the matrix-free DDT
+// CG (node-indexed vectors) to keep r/p/phi/g consistent across a collapsed
+// pair every iteration -- this is the gate periodicPairSumKernel uses to merge,
+// run in reverse. Cross-rank slaves (master is a ghost here, ownership!=1) keep
+// their own distinct owned DOF and are skipped; their slave<->master identity
+// is handled by crossRankPeriodicBroadcastDof, not here.
+template<typename RealType>
+__global__ void periodicBroadcastSameRankKernel(const int*     d_partner,
+                                                 const uint8_t* d_ownership,
+                                                 size_t         numNodes,
+                                                 RealType*      d_field)
+{
+    size_t i = size_t(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (i >= numNodes) return;
+    int master = d_partner[i];
+    if (master < 0) return;
+    if (d_ownership[master] != 1) return;
+    d_field[i] = d_field[master];
+}
+
+// Divide a folded SUM field by a folded COUNT field, but ONLY at master nodes
+// (partner<0) that actually own a group of more than one member (count>1).
+// Used by the periodic velocity group-average: after the periodic fold puts the
+// group sum on the master (slaves zeroed) and the SAME fold on a ones-vector
+// puts the group size 1+Nslaves on the master, this turns the master slot into
+// the group MEAN. Strict no-op everywhere else: a plain interior node keeps
+// count==1 (skipped), a slave was zeroed by the fold and its partner>=0 (skipped).
+// On a cross-rank group the master is owned remotely; this runs on the master's
+// OWNER rank after the cross-rank fold summed the slave legs in, so the divide
+// sees the complete sum and count there. d_count[master]>0 is guaranteed (the
+// master folds its own 1), so no divide-by-zero.
+template<typename RealType>
+__global__ void periodicDivideAtMastersKernel(const int*      d_partner,
+                                              const RealType* d_count,
+                                              size_t          numNodes,
+                                              RealType*       d_field)
+{
+    size_t i = size_t(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (i >= numNodes) return;
+    if (d_partner[i] >= 0) return;       // slave -> not a master, leave alone
+    if (d_count[i] <= RealType(1)) return; // lone node / count not >1 -> mean==self
+    d_field[i] /= d_count[i];
+}
+
 // Per-DOF variant of periodicBroadcastKernel. Used inside the velocity CG's
 // halo callback: the CG search vector p is sized numTotalDofs and indexed by
 // DOF, but the periodic partner table is indexed by NODE. We remap via the
@@ -441,6 +508,39 @@ __global__ void zeroCrossRankSlavesKernel(const int* d_send_ids,
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= n) return;
     d_field[d_send_ids[i]] = RealType(0);
+}
+
+// Bounds-guarded pack/overwrite for the NODE-indexed master->slave broadcast.
+// The per-DOF broadcast (packCrossRankSendDofKernel / overwriteCrossRankRecvDofKernel)
+// masks a stale id via nodeToDof[id]<0; the plain node kernels above index
+// d_field[id] directly with no guard. On the reduced-DOF pressure path the
+// periodic tables can carry an id that is out of range for a plain nodeCount
+// field, and an unguarded device read/write there faults asynchronously --
+// the sticky CUDA error then surfaces at the next CUDA-aware MPI_Isend as
+// CUDA_ERROR_ILLEGAL_ADDRESS in cuMemGetAddressRange. These variants drop any
+// id outside [0, fieldSize) so the broadcast is safe for every caller.
+template<typename RealType>
+__global__ void packCrossRankSendNodeGuardedKernel(const int* d_send_ids,
+                                                   const RealType* d_field,
+                                                   RealType* d_send_buf,
+                                                   int n, int fieldSize)
+{
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= n) return;
+    int id = d_send_ids[i];
+    d_send_buf[i] = (id >= 0 && id < fieldSize) ? d_field[id] : RealType(0);
+}
+
+template<typename RealType>
+__global__ void overwriteCrossRankRecvNodeGuardedKernel(const int* d_recv_ids,
+                                                        const RealType* d_recv_buf,
+                                                        RealType* d_field,
+                                                        int n, int fieldSize)
+{
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= n) return;
+    int id = d_recv_ids[i];
+    if (id >= 0 && id < fieldSize) d_field[id] = d_recv_buf[i];
 }
 
 // Build the cross-rank periodic-pair table. Called from the end of
@@ -846,9 +946,19 @@ void buildPeriodicMap(const DomainT& domain, PeriodicMap<KeyType, RealType>& map
 // have distinct SFC keys when periodicity is implemented via cstone Box).
 //
 // No-op when xr.peers_.empty() (single-rank or no cross-rank pairs).
+// broadcastBack: if true (default), Leg 2 copies the merged master value back
+// onto the owned slave slot (master->slave overwrite). For the matrix-free DDT
+// operator's RESTRICTION (P^T on g/out) this MUST be false: P^T is sum-only
+// (slave summed onto master, slave slot left zero), exactly like the same-rank
+// periodicPairSumKernel. The Leg-2 re-broadcast turns P^T into P^T followed by
+// P, which is NOT a transpose pair -> breaks symmetry of A=D M^-1 D^T across the
+// cross-rank seam (the documented multi-rank converge-then-diverge bug). Slave
+// consistency for the NEXT matvec is established by the P prolongation on the
+// operator input, not here.
 template<typename KeyType, typename RealType>
 void crossRankPeriodicPairSum(const PeriodicMap<KeyType, RealType>& map,
-                              cstone::DeviceVector<RealType>& d_field)
+                              cstone::DeviceVector<RealType>& d_field,
+                              bool broadcastBack = true)
 {
     const auto& xr = map.cross_;
     if (xr.peers_.empty()) return;
@@ -920,6 +1030,8 @@ void crossRankPeriodicPairSum(const PeriodicMap<KeyType, RealType>& map,
     }
 
     // -------- Leg 2: MASTER owner -> SLAVE owner, overwrite --------
+    // Skipped for the operator restriction (broadcastBack=false): P^T is sum-only.
+    if (!broadcastBack) return;
     if (recvTotal > 0)
     {
         int blk = 256, grd = (recvTotal + blk - 1) / blk;
@@ -1168,6 +1280,117 @@ void crossRankPeriodicBroadcastDof(const PeriodicMap<KeyType, RealType>& map,
     }
 }
 
+// NODE-indexed master->slave overwrite. Same one-leg broadcast as
+// crossRankPeriodicBroadcastDof but on a per-NODE field (size = nodeCount),
+// so it indexes d_field[node_id] directly with NO nodeToDof remap. This is
+// exactly leg 2 of crossRankPeriodicPairSum extracted standalone.
+//
+// Needed by the matrix-free DDT pressure CG, whose state vectors r/p/phi/g are
+// node-indexed. A cross-rank periodic slave is OWNED on its rank with its own
+// distinct node slot (it was NOT collapsed onto the remote master's DOF, see
+// the same-rank-only collapse in setupNSStepper). The same-rank broadcast
+// (periodicBroadcastSameRankKernel) skips it because ownership[master]!=1, and
+// the cstone halo never refreshes it because it is an owned node, not a ghost.
+// So its slot drifts from the master's value on the master-owner rank, and the
+// matrix-free D^T scatter then reads asymmetric p across the periodic seam.
+// This call refreshes it every iteration, mirroring crossRankPeriodicPairSum's
+// cross-rank leg for the SUM direction.
+//
+// No-op when xr.peers_.empty() (single-rank or no cross-rank pairs).
+template<typename KeyType, typename RealType>
+void crossRankPeriodicBroadcast(const PeriodicMap<KeyType, RealType>& map,
+                                cstone::DeviceVector<RealType>& d_field)
+{
+    const auto& xr = map.cross_;
+    if (xr.peers_.empty()) return;
+
+    auto mpiType = std::is_same_v<RealType, double> ? MPI_DOUBLE : MPI_FLOAT;
+    const int numPeers = int(xr.peers_.size());
+    int sendTotal = xr.sendOffsets_.back();
+    int recvTotal = xr.recvOffsets_.back();
+    const int fieldSize = int(d_field.size());
+
+    // Pack owned-master node values into recvBuf_ (one slot per local master).
+    // Guarded by fieldSize: the node ids come from the periodic tables, which on
+    // the reduced-DOF path can reference an id outside this plain node field; an
+    // unguarded read would fault and resurface as a bogus MPI_Isend illegal
+    // address. The per-DOF broadcast relies on the same masking via nodeToDof.
+    if (recvTotal > 0)
+    {
+        int blk = 256, grd = (recvTotal + blk - 1) / blk;
+        packCrossRankSendNodeGuardedKernel<RealType><<<grd, blk>>>(
+            xr.d_recvOwnedMasterIds_.data(), d_field.data(),
+            xr.recvBuf_.data(), recvTotal, fieldSize);
+        cudaDeviceSynchronize();
+    }
+
+    // Send recvBuf_ (master values) to the slave-owner rank; receive into sendBuf_.
+    // Distinct tag base (0x5048) so it never collides with the SUM legs
+    // (0x5041..0x5044), the per-DOF broadcast (0x5046), or cstone halo tags;
+    // epoch_ increments per call so back-to-back in-loop calls stay distinct.
+    {
+        const int tag = 0x5048 + xr.epoch_;
+        // MARS_XR_BCAST_DBG: dump the exact buffer sizes + per-peer counts so we
+        // can see WHY MPI_Isend reports Invalid count / illegal address. If a
+        // rank's per-peer SEND count (recvOffsets delta) does not equal the
+        // PARTNER rank's per-peer RECV count (its sendOffsets delta), the offsets
+        // were built with mismatched per-peer orderings = the real bug.
+        static bool xrDbgDone = false;
+        if (!xrDbgDone && std::getenv("MARS_XR_BCAST_DBG") != nullptr)
+        {
+            int myRank = -1; MPI_Comm_rank(xr.comm_, &myRank);
+            std::cerr << "[xr-bcast-dbg rank " << myRank << "] sendBuf_.size="
+                      << xr.sendBuf_.size() << " recvBuf_.size=" << xr.recvBuf_.size()
+                      << " sendTotal=" << sendTotal << " recvTotal=" << recvTotal
+                      << " numPeers=" << numPeers << " | peers/sendOff/recvOff:";
+            for (int p = 0; p < numPeers; ++p)
+                std::cerr << " [p" << xr.peers_[p]
+                          << " sOff " << xr.sendOffsets_[p] << ".." << xr.sendOffsets_[p+1]
+                          << " rOff " << xr.recvOffsets_[p] << ".." << xr.recvOffsets_[p+1] << "]";
+            std::cerr << std::endl;
+            xrDbgDone = true;
+        }
+        std::vector<MPI_Request> reqs; reqs.reserve(2 * numPeers);
+        for (int p = 0; p < numPeers; ++p)
+        {
+            int peer = xr.peers_[p];
+            int rcnt = xr.sendOffsets_[p + 1] - xr.sendOffsets_[p];
+            if (rcnt > 0)
+            {
+                MPI_Request r;
+                MPI_Irecv(xr.sendBuf_.data() + xr.sendOffsets_[p], rcnt,
+                          mpiType, peer, tag, xr.comm_, &r);
+                reqs.push_back(r);
+            }
+        }
+        for (int p = 0; p < numPeers; ++p)
+        {
+            int peer = xr.peers_[p];
+            int scnt = xr.recvOffsets_[p + 1] - xr.recvOffsets_[p];
+            if (scnt > 0)
+            {
+                MPI_Request r;
+                MPI_Isend(xr.recvBuf_.data() + xr.recvOffsets_[p], scnt,
+                          mpiType, peer, tag, xr.comm_, &r);
+                reqs.push_back(r);
+            }
+        }
+        if (!reqs.empty()) MPI_Waitall(int(reqs.size()), reqs.data(), MPI_STATUSES_IGNORE);
+        ++xr.epoch_;
+    }
+
+    // Overwrite owned-slave node slots on the slave-owner rank. Same fieldSize
+    // guard as the pack above.
+    if (sendTotal > 0)
+    {
+        int blk = 256, grd = (sendTotal + blk - 1) / blk;
+        overwriteCrossRankRecvNodeGuardedKernel<RealType><<<grd, blk>>>(
+            xr.d_sendOwnedSlaveIds_.data(), xr.sendBuf_.data(),
+            d_field.data(), sendTotal, fieldSize);
+        cudaDeviceSynchronize();
+    }
+}
+
 // Tiny apply kernel for Fix Y: adds host-resolved (slot, delta) pairs into the
 // CSR values array. One thread per slot. No atomics required because the host
 // side already accumulated all incoming triples that resolve to the same slot
@@ -1218,6 +1441,13 @@ void crossRankSumVelocityRows(const DomainT& domain,
 {
     const auto& xr = map.cross_;
     if (numRanks <= 1 || xr.peers_.empty()) return;
+
+    // Cray-MPICH's CUDA-aware Alltoallv can leave the calling thread on a
+    // different device ordinal than the one MARS uses. Pin the device for
+    // the duration of this function and restore on return so downstream
+    // thrust kernels see the expected device.
+    int savedDevice = 0;
+    cudaGetDevice(&savedDevice);
 
     const size_t numNodes = domain.getNodeCount();
 
@@ -1381,6 +1611,11 @@ void crossRankSumVelocityRows(const DomainT& domain,
                   recvValsFlat.data(), recvValCounts.data(), recvValDispls.data(), mpiRealType,
                   comm);
 
+    // Restore the device ordinal in case Cray-MPICH switched it during the
+    // Alltoallv. Without this, the next thrust call (or DeviceVector ctor)
+    // fails with cudaErrorInvalidDevice on cray-mpich CUDA-aware builds.
+    cudaSetDevice(savedDevice);
+
     // Receiver: resolve each (master_key, col_key) -> (masterDof, colDof),
     // locate the slot in h_rowPtr/h_colInd, accumulate into a host slot->delta
     // table. Then push that table to device and apply.
@@ -1512,22 +1747,34 @@ void enforcePeriodicSum(const DomainT& domain, const PeriodicMap<KeyType, RealTy
     domain.exchangeNodeHalo(d_field, dofMapPtr);
 }
 
-// Pressure null-space removal: subtract global mean.
+// Pressure null-space removal: subtract the global mean of the pressure DOF
+// vector. d_partner (optional) is the periodic partner table; when given, a
+// periodic slave (partner>=0) ALIASES its master's DOF -- it is the SAME equation
+// on a second node (the DDT path merges slave onto master and mirrors the slot).
+// Counting it would weight collapsed periodic DOFs by their face multiplicity
+// (2x face, 4x edge, 8x corner) for same-rank pairs, and globally (slave here +
+// master on its owner rank) for cross-rank pairs, biasing the subtracted constant
+// so the DDT RHS is not mean-zero in DOF space (out of range(A)). So we sum and
+// count over CANONICAL nodes only (one per DOF) -- skip ALL slaves; the DOF is
+// counted once on the rank that owns its master. d_partner==nullptr (Dirichlet/
+// pump, no collapse) reduces to the old owned-node sum exactly.
 template<typename RealType, typename DomainT>
 void removeMean(const DomainT& domain, cstone::DeviceVector<RealType>& d_p,
-                MPI_Comm comm)
+                MPI_Comm comm, const int* d_partner = nullptr)
 {
     const auto& d_ownership = domain.getNodeOwnershipMap();
     size_t numNodes = d_p.size();
 
-    // sum p over owned nodes
+    // sum p over canonical owned nodes (each DOF once)
     RealType local_sum = thrust::transform_reduce(
         thrust::device,
         thrust::make_counting_iterator(size_t(0)),
         thrust::make_counting_iterator(numNodes),
-        [d_p_ptr = d_p.data(), own_ptr = d_ownership.data()]
+        [d_p_ptr = d_p.data(), own_ptr = d_ownership.data(), d_partner]
         __device__ (size_t i) -> RealType {
-            return (own_ptr[i] == 1) ? d_p_ptr[i] : RealType(0);
+            if (own_ptr[i] != 1) return RealType(0);
+            if (d_partner && d_partner[i] >= 0) return RealType(0);
+            return d_p_ptr[i];
         },
         RealType(0), thrust::plus<RealType>());
 
@@ -1535,9 +1782,11 @@ void removeMean(const DomainT& domain, cstone::DeviceVector<RealType>& d_p,
         thrust::device,
         thrust::make_counting_iterator(size_t(0)),
         thrust::make_counting_iterator(numNodes),
-        [own_ptr = d_ownership.data()]
+        [own_ptr = d_ownership.data(), d_partner]
         __device__ (size_t i) -> long long {
-            return (own_ptr[i] == 1) ? 1LL : 0LL;
+            if (own_ptr[i] != 1) return 0LL;
+            if (d_partner && d_partner[i] >= 0) return 0LL;
+            return 1LL;
         },
         0LL, thrust::plus<long long>());
 

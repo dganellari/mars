@@ -82,6 +82,19 @@ int main(int argc, char** argv)
     PressureSolveKind pressureSolve = PressureSolveKind::K;
     std::string bcKind = "cavity";
     double lidU = 1.0;
+    // Constant streamwise momentum body force. Defaults to 0 (Nalu-Wind /
+    // NekRS / MFEM-Navier convention). Wing/free-stream tunnels typically
+    // set --body-force-x to drive the flow past the geometry; for cavity
+    // the lid shear is the driver and these stay 0.
+    double bodyForceX = 0.0;
+    double bodyForceY = 0.0;
+    double bodyForceZ = 0.0;
+    // IC velocity perturbation amplitude (eps; final magnitude = eps*Uinf).
+    // Required for wing/tunnel runs to break the discrete steady state on a
+    // uniform free-stream IC. NekRS userdat2 convention; default 1e-3 when
+    // active. Set 0 to disable. Default OFF (0) so cavity/channel runs are
+    // unchanged; the wing test path opts in.
+    double icPerturb = 0.0;
     bool useLegacyGradient = true;    // SCS gradient is the stable default; --experimental-divT swaps
 
     for (int i = 1; i < argc; ++i)
@@ -110,6 +123,10 @@ int main(int argc, char** argv)
         else if (arg.find("--vtu-every=") == 0)    vtuEvery   = std::stoi(arg.substr(12));
         else if (arg.find("--vtu-output=") == 0)   vtuPrefix  = arg.substr(13);
         else if (arg.find("--lid-u=") == 0)        lidU       = std::stod(arg.substr(8));
+        else if (arg.find("--body-force-x=") == 0) bodyForceX = std::stod(arg.substr(15));
+        else if (arg.find("--body-force-y=") == 0) bodyForceY = std::stod(arg.substr(15));
+        else if (arg.find("--body-force-z=") == 0) bodyForceZ = std::stod(arg.substr(15));
+        else if (arg.find("--ic-perturb=") == 0)   icPerturb  = std::stod(arg.substr(13));
         else if (arg.find("--bc=") == 0)           bcKind     = arg.substr(5);
         else if (arg.find("--solver=") == 0)
         {
@@ -147,15 +164,26 @@ int main(int argc, char** argv)
                       << "Chorin projection NS driver (Phase C).\n\n"
                       << "Options:\n"
                       << "  --mesh=FILE           Mesh file (.mesh or .exo) [REQUIRED]\n"
-                      << "  --bc=cavity|channel   BC config (default: cavity)\n"
+                      << "  --bc=cavity|channel|pump  BC config (default: cavity; 'wing' is an alias for 'pump')\n"
                       << "                          cavity:  lid u=lidU on top face, no-slip elsewhere\n"
                       << "                          channel: Dirichlet u=lidU inflow on x=xmin,\n"
                       << "                                   no-slip walls, natural outflow on x=xmax\n"
+                      << "                          pump:    per-side-set Dirichlet (Exodus side-sets):\n"
+                      << "                                   walls=no-slip, in=Uinf, out=p=0, extra=Uinf\n"
                       << "  --rho=VALUE           Density (default 1.0)\n"
                       << "  --nu=VALUE            Kinematic viscosity (default 0.01)\n"
                       << "  --dt=VALUE            Timestep (default 0.01)\n"
                       << "  --num-steps=N         Number of time steps (default 500)\n"
                       << "  --lid-u=VALUE         Lid velocity for cavity (default 1.0)\n"
+                      << "  --body-force-x=VALUE  Streamwise momentum body force (default 0)\n"
+                      << "  --body-force-y=VALUE  Spanwise momentum body force  (default 0)\n"
+                      << "  --body-force-z=VALUE  Vertical momentum body force  (default 0)\n"
+                      << "                          Drives free-stream tunnel flows (wing-tip).\n"
+                      << "                          Matches Nalu-Wind / NekRS / MFEM-Navier convention.\n"
+                      << "  --ic-perturb=EPS      IC velocity perturbation eps (default 0; NekRS uses ~1e-3).\n"
+                      << "                          Adds eps*Uinf * deterministic noise to interior (v,w) at\n"
+                      << "                          IC. Required for wing/tunnel runs to break the uniform-IC\n"
+                      << "                          fixed point and let body force / advection amplify flow.\n"
                       << "  --kernel=VARIANT      tensor (default), optimized, shmem, wmma_tensor, ...\n"
                       << "  --solver=KIND         cg | hypre (default cg)\n"
                       << "  --pressure-solve=KIND K | DDT (default K, matrix-free Galerkin if DDT)\n"
@@ -170,10 +198,10 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    if (bcKind != "cavity" && bcKind != "channel" && bcKind != "wing")
+    if (bcKind != "cavity" && bcKind != "channel" && bcKind != "wing" && bcKind != "pump")
     {
         if (rank == 0)
-            std::cerr << "Error: --bc must be 'cavity', 'channel', or 'wing', got '" << bcKind << "'\n";
+            std::cerr << "Error: --bc must be 'cavity', 'channel', 'pump' (alias 'wing'), got '" << bcKind << "'\n";
         MPI_Finalize();
         return 1;
     }
@@ -188,8 +216,8 @@ int main(int argc, char** argv)
         std::cout << "========================================\n";
         if (bcKind == "channel")
             std::cout << "BC:        channel flow, Uinf=" << lidU << " inflow on x=xmin, no-slip walls, natural outflow on x=xmax\n";
-        else if (bcKind == "wing")
-            std::cout << "BC:        wing flow (Exodus side-sets): blade=no-slip, in=Uinf=" << lidU
+        else if (bcKind == "wing" || bcKind == "pump")
+            std::cout << "BC:        per-side-set Dirichlet (Exodus side-sets): walls=no-slip, in=Uinf=" << lidU
                       << ", out=Dirichlet p=0, top/bottom/side/sym=Uinf (full-Dirichlet shortcut)\n";
         else
             std::cout << "BC:        lid-driven cavity, u=" << lidU << " on top face\n";
@@ -238,71 +266,62 @@ int main(int argc, char** argv)
                                    RealType(tolerance), rank, numRanks};
     s.lidU = RealType(lidU);
     s.Uinf = RealType(lidU);   // reuse the --lid-u CLI flag as channel inflow speed
-    if      (bcKind == "channel") s.bcKind = NSStepper<KeyType, RealType>::BCKind::Channel;
-    else if (bcKind == "wing")    s.bcKind = NSStepper<KeyType, RealType>::BCKind::Wing;
-    else                          s.bcKind = NSStepper<KeyType, RealType>::BCKind::Cavity;
+    s.bodyForceX = RealType(bodyForceX);
+    s.bodyForceY = RealType(bodyForceY);
+    s.bodyForceZ = RealType(bodyForceZ);
+    s.icPerturbMag = RealType(icPerturb);
+    if (rank == 0 && (bodyForceX != 0 || bodyForceY != 0 || bodyForceZ != 0))
+    {
+        std::cout << "Body force: (" << bodyForceX << ", " << bodyForceY
+                  << ", " << bodyForceZ << ")  -- added in predictor (Nalu-Wind / NekRS pattern)\n";
+    }
+    if      (bcKind == "channel")                       s.bcKind = NSStepper<KeyType, RealType>::BCKind::Channel;
+    else if (bcKind == "wing" || bcKind == "pump")      s.bcKind = NSStepper<KeyType, RealType>::BCKind::Pump;
+    else                                                s.bcKind = NSStepper<KeyType, RealType>::BCKind::Cavity;
     s.useLegacyGradient = useLegacyGradient;
     s.pressureSolve = pressureSolve;
 
-    // Wing-mode side-set loading. Read all named side-sets globally, then
+    // Pump-mode side-set loading. Read all named side-sets globally, then
     // resolve each side-set's global-node-IDs against this rank's local-to-
     // global map (cstone d_localToGlobalNodeMap_). Owned + ghost local nodes
-    // that match are added to the corresponding wingXxxNodes list. Side-set
-    // grouping policy is the full-Dirichlet shortcut: blade=no-slip, in=Uinf,
+    // that match are added to the corresponding bucket list. Side-set
+    // grouping policy is the full-Dirichlet shortcut: walls=no-slip, in=Uinf,
     // out=Dirichlet p=0, and {top,bottom,side,sym} all merged into the
-    // far-field bucket = full Dirichlet u=Uinf. True slip BCs are a follow-up.
-    if (s.bcKind == NSStepper<KeyType, RealType>::BCKind::Wing)
+    // extra bucket = full Dirichlet u=Uinf. True slip BCs are a follow-up.
+    if (s.bcKind == NSStepper<KeyType, RealType>::BCKind::Pump)
     {
         ExodusSideSets ss = readExodusSideSetsHex8(meshFile, rank);
-        // Pull cstone's local->global node map to host once.
-        const auto& d_l2g = amr.domain().getLocalToGlobalNodeMap();
-        std::vector<KeyType> hostL2G(d_l2g.size());
-        thrust::copy(thrust::device_pointer_cast(d_l2g.data()),
-                     thrust::device_pointer_cast(d_l2g.data() + d_l2g.size()),
-                     hostL2G.begin());
-        // Build reverse map: global -> local (CPU hash; ~few hundred MB at
-        // 15M nodes if total, but per-rank only ~4.5M, so <100 MB).
-        std::unordered_map<uint64_t, int> g2l;
-        g2l.reserve(hostL2G.size() * 2);
-        for (size_t li = 0; li < hostL2G.size(); ++li)
-            g2l.emplace(static_cast<uint64_t>(hostL2G[li]), static_cast<int>(li));
 
-        auto resolve = [&] (const std::vector<uint64_t>& globalIds) {
-            std::vector<int> local;
-            local.reserve(globalIds.size());
-            for (uint64_t g : globalIds)
-            {
-                auto it = g2l.find(g);
-                if (it != g2l.end()) local.push_back(it->second);
-            }
-            return local;
+        // Resolve a side-set to runtime SFC-local node ids BY COORDINATE. The
+        // Exodus node id is a dead index after ingest; runtime arrays use the
+        // SFC-sorted local id. The domain resolves coord -> Hilbert key ->
+        // SFC-local id, so this is correct on any rank count. (The old map from
+        // getLocalToGlobalNodeMap was the Exodus order -> wrong nodes on >1 rank.)
+        auto resolve = [&] (const char* name) -> std::vector<int> {
+            auto it = ss.nodeCoordsByName.find(name);
+            if (it == ss.nodeCoordsByName.end()) return {};
+            return amr.domain().resolveSideSetNodesToLocal(it->second);
         };
 
-        auto take = [&] (const char* name) -> std::vector<uint64_t> {
-            auto it = ss.nodesByName.find(name);
-            if (it == ss.nodesByName.end()) return {};
-            return it->second;
-        };
+        s.wallNodes   = resolve("blade");
+        s.inletNodes  = resolve("in");
+        s.outletNodes = resolve("out");
 
-        s.wingBladeNodes  = resolve(take("blade"));
-        s.wingInletNodes  = resolve(take("in"));
-        s.wingOutletNodes = resolve(take("out"));
-
-        // Far-field = union of {top, bottom, side, sym}, deduplicated.
+        // Extra Dirichlet = union of {top, bottom, side, sym}, deduplicated.
         std::vector<int> ff;
         for (const char* nm : {"top","bottom","side","sym"})
         {
-            auto r = resolve(take(nm));
+            auto r = resolve(nm);
             ff.insert(ff.end(), r.begin(), r.end());
         }
         std::sort(ff.begin(), ff.end());
         ff.erase(std::unique(ff.begin(), ff.end()), ff.end());
-        // Subtract blade/inlet/outlet (a far-field face can geometrically share
-        // a node with the inlet edge; if it does, the more-specific BC wins).
+        // Subtract walls/inlet/outlet (an extra-Dirichlet face can geometrically
+        // share a node with the inlet edge; if it does, the more-specific BC wins).
         std::vector<int> protectedSet;
-        protectedSet.insert(protectedSet.end(), s.wingBladeNodes.begin(),  s.wingBladeNodes.end());
-        protectedSet.insert(protectedSet.end(), s.wingInletNodes.begin(),  s.wingInletNodes.end());
-        protectedSet.insert(protectedSet.end(), s.wingOutletNodes.begin(), s.wingOutletNodes.end());
+        protectedSet.insert(protectedSet.end(), s.wallNodes.begin(),   s.wallNodes.end());
+        protectedSet.insert(protectedSet.end(), s.inletNodes.begin(),  s.inletNodes.end());
+        protectedSet.insert(protectedSet.end(), s.outletNodes.begin(), s.outletNodes.end());
         std::sort(protectedSet.begin(), protectedSet.end());
         protectedSet.erase(std::unique(protectedSet.begin(), protectedSet.end()), protectedSet.end());
         std::vector<int> ffFiltered;
@@ -310,15 +329,15 @@ int main(int argc, char** argv)
         std::set_difference(ff.begin(), ff.end(),
                             protectedSet.begin(), protectedSet.end(),
                             std::back_inserter(ffFiltered));
-        s.wingFarFieldNodes = std::move(ffFiltered);
+        s.extraNodes = std::move(ffFiltered);
 
         if (rank == 0)
         {
-            std::cout << "  wing side-sets resolved on rank 0:\n"
-                      << "    blade (no-slip):    " << s.wingBladeNodes.size()    << " local nodes\n"
-                      << "    in    (u=Uinf):     " << s.wingInletNodes.size()    << " local nodes\n"
-                      << "    out   (p=0):        " << s.wingOutletNodes.size()   << " local nodes\n"
-                      << "    far-field (u=Uinf): " << s.wingFarFieldNodes.size() << " local nodes (top+bottom+side+sym minus overlap)\n";
+            std::cout << "  side-sets resolved on rank 0:\n"
+                      << "    walls (no-slip):    " << s.wallNodes.size()   << " local nodes\n"
+                      << "    in    (u=Uinf):     " << s.inletNodes.size()  << " local nodes\n"
+                      << "    out   (p=0):        " << s.outletNodes.size() << " local nodes\n"
+                      << "    extra (u=Uinf):     " << s.extraNodes.size()  << " local nodes (top+bottom+side+sym minus overlap)\n";
         }
     }
 
