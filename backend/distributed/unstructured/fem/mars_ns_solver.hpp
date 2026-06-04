@@ -7344,6 +7344,35 @@ void runPredictorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
         s.domain.reverseExchangeNodeHaloAdd(advN);
         maybePeriodicSum<KeyType, RealType, ElementTag>(s, advN);
 
+        // Restore advN[slave] := advN[master] across the periodic seam. The fold
+        // above (maybePeriodicSum, broadcastBack=false) summed each slave's
+        // advection onto its master and ZEROED the slave slot. That is correct for
+        // a symmetric operator's output (the next matvec's input prolongation P
+        // re-establishes slaves), but advN is an EXPLICIT term consumed ONCE by the
+        // predictor (qStar = qN + dt*advN/V - ...) with NO subsequent P. Leaving
+        // advN[slave]=0 gives the cross-rank slave zero advection increment while
+        // its master gets the full merged value -> qStar[slave] != qStar[master]
+        // even when qN was equal -> a fresh seam velocity jump minted EVERY step,
+        // carried into the diffusion RHS before the end-of-step corrector
+        // group-average can smooth it. That standing, dt-independent, seam-
+        // concentrated source is the periodic-TGV instability (div-split ~6-7).
+        // Re-broadcast master->slave (same-rank gated kernel + cross-rank leg),
+        // mirroring the corrector group-average. Divergence-neutral: redistributing
+        // the already-merged master value back onto its slaves leaves the folded
+        // sum-of(D*advN) unchanged, only the slave/master bookkeeping split.
+        if (s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Periodic
+            && s.periodicMap)
+        {
+            const auto& d_own = s.ownershipMap();
+            int nBlk = (s.nodeCount + s.blockSize - 1) / s.blockSize;
+            mars::fem::periodicBroadcastSameRankKernel<RealType><<<nBlk, s.blockSize>>>(
+                s.periodicMap->d_periodicPartner.data(), d_own.data(), s.nodeCount, advN.data());
+            cudaDeviceSynchronize();
+            if (s.numRanks > 1)
+                mars::fem::crossRankPeriodicBroadcast<KeyType, RealType>(*s.periodicMap, advN);
+            s.domain.exchangeNodeHalo(advN);
+        }
+
         // DIAGNOSTIC: owned-sum of the (folded) advection term. This is a
         // rank-count-INVARIANT physical quantity if the advection scatter +
         // reverse-fold is cross-rank-consistent. If sum(advN[owned]) differs on
@@ -7355,11 +7384,18 @@ void runPredictorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
             const uint8_t* ownPtr = s.ownershipMap().data();
             const int* dofPtr     = s.d_node_to_dof.data();
             const RealType* aP    = advN.data();
+            // Skip periodic slaves: after the advN master->slave restore above a
+            // same-rank slave (own=1, dof aliased to its master) now holds the
+            // master's value, so counting both would double the seam advection and
+            // break the "rank-invariant" property. The slave's advection is already
+            // represented in its master (which IS counted).
+            const int* partPtr = s.periodicMap ? s.periodicMap->d_periodicPartner.data() : nullptr;
             double locSum = thrust::transform_reduce(thrust::device,
                 thrust::counting_iterator<size_t>(0),
                 thrust::counting_iterator<size_t>(s.nodeCount),
-                [ownPtr, dofPtr, aP] __device__ (size_t i) -> double {
+                [ownPtr, dofPtr, aP, partPtr] __device__ (size_t i) -> double {
                     if (ownPtr[i] != 1 || dofPtr[i] < 0) return 0.0;
+                    if (partPtr && partPtr[i] >= 0) return 0.0;  // slave -> counted via master
                     return double(aP[i]);
                 }, 0.0, thrust::plus<double>());
             double gSum = 0;
