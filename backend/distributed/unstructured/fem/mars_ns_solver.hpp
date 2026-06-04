@@ -5151,6 +5151,28 @@ int solveOneComponent(NSStepper<KeyType, RealType, ElementTag>& s,
             }
         }
 
+        // Strategy B parity: merge the Jacobi preconditioner diagonal across the
+        // seam too. The assembled diagonal at a cross-rank seam DOF is wrong --
+        // d_mass[slaveDof]=0 (the slave node mass was folded onto the master and
+        // zeroed before the DOF gather), so the slave row's M/dt diagonal term is
+        // 0 and the master's is the full pair mass. z=r/diag is then grossly
+        // under-scaled at the slave -> biased CG search direction that compounds
+        // every iteration (the source of the div-split ratio creeping 1.05->2.2
+        // and the eventual ~step-30 blowup). The Ap pair-sum fixes the operator
+        // but NOT the preconditioner. So build the diagonal and pair-sum it the
+        // same way (leg1 sum + leg2 broadcast -> diag[slave]=diag[master]=merged),
+        // then feed it through the single-shot diag override. Must outlive solve.
+        typename NSStepper<KeyType, RealType, ElementTag>::Matrix::DeviceVectorReal diagVelMerged;
+        if (s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Periodic
+            && s.periodicMap != nullptr
+            && !s.periodicMap->cross_.peers_.empty())
+        {
+            diagVelMerged = A.getDiagonal();
+            mars::fem::crossRankPeriodicPairSumDof<KeyType, RealType>(
+                *s.periodicMap, s.d_node_to_dof.data(), diagVelMerged);
+            solver.setPreconditionerDiagOverride(diagVelMerged);
+        }
+
         converged = solver.solve(A, b_rhs, xVec);
         iters = solver.getIterations();
     }
@@ -7438,6 +7460,24 @@ void runImplicitDiffusionStep(NSStepper<KeyType, RealType, ElementTag>& s, RealT
             s.d_node_to_dof.data(), d_nodeOwnership.data(),
             b.data(), s.nodeCount, s.numOwnedDofs);
         cudaDeviceSynchronize();
+
+        // Strategy B parity: merge the RHS across the seam too. b[slaveDof] is 0
+        // (d_mass[slaveDof]=0) while b[masterDof]=M_full*invDt*qStar. The
+        // per-matvec Ap pair-sum makes Ap[slave]=Ap[master]=merged, so the residual
+        // r=b-Ap is only consistent if b is also merged on both slots. Pair-sum b
+        // once here (leg1 adds slave 0 onto master -> master unchanged/correct;
+        // leg2 broadcasts b[slave]=b[master]=merged), the assembled-CG analog of the
+        // pressure path's fold + scatter. Without this r[slave] is wrong by the
+        // merged RHS and leaks a small per-step seam bias the dot mask only partly
+        // hides.
+        if (s.numRanks > 1
+            && s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Periodic
+            && s.periodicMap != nullptr
+            && !s.periodicMap->cross_.peers_.empty())
+        {
+            mars::fem::crossRankPeriodicPairSumDof<KeyType, RealType>(
+                *s.periodicMap, s.d_node_to_dof.data(), b);
+        }
 
         // Warm-start x with qStar scattered into DOF order.
         cudaMemset(xVec.data(), 0, s.numTotalDofs * sizeof(RealType));
