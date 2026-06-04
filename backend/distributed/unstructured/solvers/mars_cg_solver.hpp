@@ -18,6 +18,22 @@ namespace mars
 namespace fem
 {
 
+// Masked owned-range dot: sum x[i]*y[i] over [0,n) skipping entries where
+// mask[i]!=0. Free function because an extended __device__ lambda cannot live in
+// a private/protected member function (CUDA restriction). Used for cross-rank
+// periodic pairs so the co-owned merged seam DOF is counted once.
+template<typename RealType>
+RealType maskedOwnedDot(const RealType* x, const RealType* y,
+                        const uint8_t* mask, int n)
+{
+    return thrust::transform_reduce(thrust::device,
+        thrust::counting_iterator<int>(0),
+        thrust::counting_iterator<int>(n),
+        [x, y, mask] __device__ (int i) -> RealType {
+            return mask[i] ? RealType(0) : x[i] * y[i];
+        }, RealType(0), thrust::plus<RealType>());
+}
+
 // Simple Conjugate Gradient solver for GPU
 template<typename RealType, typename IndexType, typename AcceleratorTag>
 class ConjugateGradientSolver
@@ -434,15 +450,11 @@ private:
         {
             // Skip masked owned entries (cross-rank periodic slave copies) so a
             // co-owned merged DOF is counted once. Mirrors the DDT path's dotDof.
-            const RealType* xp = thrust::raw_pointer_cast(x.data());
-            const RealType* yp = thrust::raw_pointer_cast(y.data());
-            const uint8_t*  mp = dotMask_;
-            local = thrust::transform_reduce(thrust::device,
-                thrust::counting_iterator<int>(0),
-                thrust::counting_iterator<int>(int(n)),
-                [xp, yp, mp] __device__ (int i) -> RealType {
-                    return mp[i] ? RealType(0) : xp[i] * yp[i];
-                }, RealType(0), thrust::plus<RealType>());
+            // Reduction is a free function -- an extended __device__ lambda cannot
+            // be defined inside this private member.
+            local = maskedOwnedDot<RealType>(thrust::raw_pointer_cast(x.data()),
+                                             thrust::raw_pointer_cast(y.data()),
+                                             dotMask_, int(n));
         }
         else if constexpr (std::is_same_v<RealType, double>)
         {
