@@ -1,5 +1,70 @@
 # TGV / Periodic NS — Handoff for Next Session
 
+## UPDATE 2026-06-04 — multi-rank periodic: catastrophic blowup fixed, standing seam instability remains (NEW diagnosis)
+
+Branch `cstone`. 4-rank cube16 periodic TGV (`--pressure-solve=DDT --skew=1 --dt=1e-4`).
+
+### Where it stands
+- Single-rank periodic TGV: correct (div_max ~3e-6 flat, KE decays, |p|~0.4). This is the reference.
+- 4-rank: was an instant catastrophic blowup (|p| 0.13 -> 7447). Now STABLE for ~40-50 steps
+  (|p| flat ~0.41, KE decays cleanly, cg_uvw=3-4, cg_p~114), THEN diverges. So all the
+  catastrophic-mode bugs are fixed; a slower standing instability remains.
+
+### The 7 fixes that landed this session (all real, all KEEP — they made the pressure path
+### + the assembled velocity operator fully cross-rank periodic-consistent):
+1. RHS divergence fold order (518662d)
+2. predictor slave-velocity broadcast gate (f7d432b)
+3. post-solve phi master->slave prolongation + MARS_PROJ_PROBE (e776ad2)
+4. **seam mass mirror** — d_massNode[slave] was 0, zeroing the slave gradient; mirror the
+   combined pair mass to both slots (bf822ed). THIS killed the catastrophic blowup.
+5. velocity operator cross-rank consistency — XR-slave Dirichlet-identity rows + re-enabled
+   post-solve broadcast (cd1f0cd); then **Strategy B**: keep half-strength seam rows, merge
+   Ap per-matvec via crossRankPeriodicPairSumDof in the CG spmvPostCallback + dot mask
+   (31ffb59, f57bc00). Dropped cg_uvw from 19-20 to 4.
+6. velocity Jacobi diagonal + RHS seam merge for Strategy-B parity (a41bcb2).
+7. corrector seam velocity GROUP-AVERAGE — periodicDivideAtMastersKernel; sets all members
+   of a periodic group (master+slaves, edges=2 corners up to 8) to the group mean, which is
+   divergence-neutral (eaef201).
+
+### THE KEY NEW FINDING (do not repeat the projection grind):
+A dt-halving test REFUTED the "O(dt) projection/transpose accumulation" theory:
+- dt=1e-4  -> blows up ~step 50, physical t~0.005
+- dt=2.5e-5 (4x smaller, 4x more steps, same T) -> blows up ~step 80-90, physical t~0.002 (EARLIER)
+A true projection-consistency error would blow at the SAME or LATER physical time with smaller
+dt. It blew EARLIER. So the remaining instability is **NOT** a pressure-projection / D-vs-D^T
+transpose error. The pressure operator is correct (symmetric, CG->1e-9, |A phi - b|/|b|~9e-11).
+
+What the data says instead: the `[div-split]` boundary/interior RMS ratio is pinned ~6-7 from
+step 0 in BOTH runs (dt-independent), and div(u_n) ENTERING each step grows in physical time
+while all solves stay healthy. That signature = a **standing instability at the periodic seam
+in the ADVECTION / momentum-flux term** (the SCS face mdot / u.grad u across the seam faces),
+or an unstabilized checkerboard mode the periodic faces don't damp — NOT the projection.
+
+### NEXT SESSION SHOULD investigate (in order):
+1. The advection / SCS mass-flux (mdot) treatment at cross-rank periodic faces: is the
+   convective flux across the seam computed consistently (same mdot both sides, periodic-image
+   element seen once)? Compare the advection assembly's cross-rank/periodic handling to how the
+   diffusion operator was fixed (Strategy B). advN-sum diagnostic is already rank-invariant, so
+   the GLOBAL advection sum is fine — the issue is LOCAL at the seam.
+2. Whether the skew-symmetric advection (`--skew=1`) needs the same seam group-consistency the
+   velocity got; try `--skew=0` (upwind) as a cheap discriminator — if upwind is stable, it's a
+   skew-advection seam energy-conservation issue.
+3. Rhie-Chow / Bochev-Dohrmann stabilization behavior at the periodic seam (boundary RMS 6-7x
+   interior suggests the seam faces aren't getting the same pressure-velocity coupling damping).
+
+### Do NOT:
+- Chase more pressure-projection / D^T-transpose seam fixes (refuted by the dt test).
+- Switch to Hypre for this (Hypre is a pressure-operator alternative; the pressure operator is
+  not the problem — it would inherit the advection-seam instability).
+
+### Diagnostics available (env-gated, default off):
+MARS_PROJ_PROBE (P1 |A phi-b|/|b|, P3 ||Du^{n+1}||/||Du**||, seam|u_s-u_m|),
+MARS_PERIODIC_XR_SYMCHECK (assembled velocity seam row symmetry: A_local/A_peer).
+
+### Tutorial: docs/periodic_tgv_tutorial.md (beginner-level, real code refs).
+
+---
+
 Status as of 2026-05-24. Branch: `cstone`.
 
 ## What works (verified, do not undo)
