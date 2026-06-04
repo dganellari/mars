@@ -7109,39 +7109,14 @@ void runPredictorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
             mars::fem::periodicBroadcastKernel<<<grd, blk>>>(d_partner, nN, s.d_v.data());
             mars::fem::periodicBroadcastKernel<<<grd, blk>>>(d_partner, nN, s.d_w.data());
         }
-        else
-        {
-            // Reduced path: re-affirm u^n[slave] == u^n[master] at step ENTRY so
-            // the advection (skew flux reads u^n at both face nodes) sees a
-            // seam-consistent velocity. The corrector group-average (eaef201)
-            // already made them equal at the previous step END, so this is an
-            // idempotent re-sync, NOT a clobber. Earlier this was gated off (the
-            // slave was meant to keep its own projected velocity), but with the
-            // corrector now group-averaging that value IS the master's, so the
-            // slave reading != master at predictor entry just feeds the skew form
-            // an asymmetric flux -> residual seam div (div-split ~2.5 after the
-            // advN fix). Use the cross-rank-safe pattern (same-rank gated kernel +
-            // cross-rank broadcast), not the plain local broadcast.
-            const auto& d_own = s.ownershipMap();
-            mars::fem::periodicBroadcastSameRankKernel<RealType><<<grd, blk>>>(
-                d_partner, d_own.data(), nN, s.d_u.data());
-            mars::fem::periodicBroadcastSameRankKernel<RealType><<<grd, blk>>>(
-                d_partner, d_own.data(), nN, s.d_v.data());
-            mars::fem::periodicBroadcastSameRankKernel<RealType><<<grd, blk>>>(
-                d_partner, d_own.data(), nN, s.d_w.data());
-            cudaDeviceSynchronize();
-            if (s.numRanks > 1)
-            {
-                mars::fem::crossRankPeriodicBroadcast<KeyType, RealType>(*s.periodicMap, s.d_u);
-                mars::fem::crossRankPeriodicBroadcast<KeyType, RealType>(*s.periodicMap, s.d_v);
-                mars::fem::crossRankPeriodicBroadcast<KeyType, RealType>(*s.periodicMap, s.d_w);
-            }
-        }
         mars::fem::periodicBroadcastKernel<<<grd, blk>>>(d_partner, nN, s.d_p.data());
         cudaDeviceSynchronize();
-        s.domain.exchangeNodeHalo(s.d_u);
-        s.domain.exchangeNodeHalo(s.d_v);
-        s.domain.exchangeNodeHalo(s.d_w);
+        if (!routeReducedPeriodicCorr)
+        {
+            s.domain.exchangeNodeHalo(s.d_u);
+            s.domain.exchangeNodeHalo(s.d_v);
+            s.domain.exchangeNodeHalo(s.d_w);
+        }
         s.domain.exchangeNodeHalo(s.d_p);
     }
 
