@@ -3817,28 +3817,18 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
         }
         else if (s.periodicMap != nullptr)
         {
-            // Multi-rank periodic Path B: cross-rank slave DOFs (their master is
-            // owned on another rank) are made trivial Dirichlet-identity rows
-            // (row=0, diag=1, b[slave]=0), and the post-solve
-            // crossRankPeriodicBroadcastDof restores x[slave]:=x[master]. This is
-            // a MATCHED PAIR -- the identity row and the broadcast must BOTH be on.
-            // Leaving the slave as a full physics row (the old no-op here) made the
-            // cross-rank slave an independent, seam-inconsistent unknown: the
-            // implicit velocity solve then took ~10x iters (cg_uvw~20 vs ~3 single
-            // rank) and produced u** with div ~0.01 (vs 1e-5), which poisoned the
-            // pressure projection downstream. d_isPeriodicXRSlaveDof marks exactly
-            // the cross-rank slave DOFs; same-rank pairs are already collapsed in
-            // Pass 1 and are not in this mask.
-            int dofBlocks = (s.numOwnedDofs + s.blockSize - 1) / s.blockSize;
-            enforceBcMatrixKernel<RealType><<<dofBlocks, s.blockSize>>>(
-                s.d_isPeriodicXRSlaveDof.data(), s.d_rowPtr.data(), s.d_colInd.data(),
-                s.d_diagPtr.data(), s.d_valuesVel.data(), s.numOwnedDofs);
-            if (s.useBdf2 && s.d_valuesVel_bdf2.size() > 0)
-            {
-                enforceBcMatrixKernel<RealType><<<dofBlocks, s.blockSize>>>(
-                    s.d_isPeriodicXRSlaveDof.data(), s.d_rowPtr.data(), s.d_colInd.data(),
-                    s.d_diagPtr.data(), s.d_valuesVel_bdf2.data(), s.numOwnedDofs);
-            }
+            // Multi-rank periodic Strategy B: do NOT Dirichlet-identity the
+            // cross-rank slave rows. The assembler produces HALF-STRENGTH rows on
+            // both seam slots (slave row on its owner, master row on its owner,
+            // neither carrying the other's stiffness -- SYMCHECK confirmed). The
+            // velocity CG reconstructs the full merged operator matrix-free every
+            // matvec via crossRankPeriodicPairSumDof (spmvPostCallback), exactly
+            // like the proven pressure DDT operator. So the slave KEEPS its
+            // assembled half-strength physics here -- zeroing it to an identity row
+            // (the old Strategy-A attempt) left the master under-physics'd because
+            // the master never received the slave-side stiffness (no Fix-Y row
+            // merge), giving div(u**)~0.01. d_isPeriodicXRSlaveDof is still built
+            // (above) and is now reused as the CG dot mask, not a BC selector.
         }
         cudaDeviceSynchronize();
     }
@@ -5068,14 +5058,13 @@ int solveOneComponent(NSStepper<KeyType, RealType, ElementTag>& s,
                                     : nullptr;
             size_t nNodes = s.nodeCount;
             int bs = s.blockSize;
-            // Path B: pass the cross-rank-slave skip mask so the per-iter
-            // broadcast does NOT overwrite p[slave_owned_dof]. Slave rows are
-            // Dirichlet-identity (1 * x[slave] = 0), so we want p[slave] to
-            // stay 0 throughout the iteration -- otherwise the broadcast
-            // re-introduces the spurious coupling.
-            const uint8_t* xrSkipPtr = (s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Periodic
-                                        && !s.d_isPeriodicXRSlaveDof.empty())
-                                       ? s.d_isPeriodicXRSlaveDof.data() : nullptr;
+            // Strategy B: the slave is a LIVE unknown (its row keeps assembled
+            // half-strength physics), so the per-iter master->slave broadcast on
+            // the INPUT p MUST update p[slave] -- the matvec needs a periodic p
+            // across the seam, mirroring the DDT reduced operator's STEP-P input
+            // prolongation (no skip). So pass nullptr (no skip mask). The merge of
+            // the two half-rows happens AFTER the SpMV via crossRankPeriodicPairSumDof.
+            const uint8_t* xrSkipPtr = nullptr;
             int nOwnedDofs = s.numOwnedDofs;
             // Probe 3: capture firstSlaveDof and a flag for the first 2 callback
             // invocations so we can verify p[firstSlaveDof] stays 0.
@@ -5134,13 +5123,32 @@ int solveOneComponent(NSStepper<KeyType, RealType, ElementTag>& s,
                     ++(*callCounter);
                 });
 
-            // Path B end-state: slave rows are now Dirichlet-identity rows
-            // (A[slave,:]=0, A[slave,slave]=1, b[slave]=0). Master rows carry
-            // the full physics via the master-ghost columns the assembler
-            // already populated on the master-owner rank. The post-solve
-            // crossRankPeriodicBroadcastDof on xVec restores x[slave]=x[master].
-            // spmvPostCallback is not needed -- Ap[slave]=p[slave]=0, so the
-            // slave's contribution to dot(p,Ap) is bit-exact zero.
+            // Strategy B (mirrors the proven pressure DDT operator): the
+            // assembled velocity matrix has HALF-STRENGTH rows on the cross-rank
+            // seam -- the assembler scatters each cross-rank pair's two element
+            // halves into two independent owned rows (slave on its owner, master
+            // on its owner), and SYMCHECK confirms neither row carries the other
+            // side's stiffness. Reconstruct the full merged equation matrix-free
+            // every iteration: after each SpMV, crossRankPeriodicPairSumDof sums
+            // slave_Ap+master_Ap and broadcasts back (leg 1 + leg 2), so the
+            // matvec sees the complete operator across the seam. The dot mask
+            // then counts each merged DOF once (skip the slave copy). This is
+            // exactly the pressure path's crossRankPeriodicPairSum-around-the-
+            // matvec, ported to the assembled velocity CG.
+            solver.setDotMask(s.d_isPeriodicXRSlaveDof.empty()
+                              ? nullptr : s.d_isPeriodicXRSlaveDof.data());
+            if (s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Periodic
+                && s.periodicMap != nullptr
+                && !s.periodicMap->cross_.peers_.empty())
+            {
+                auto* pm = s.periodicMap;
+                const int* n2d = s.d_node_to_dof.data();
+                solver.setSpmvPostCallback(
+                    [pm, n2d](cstone::DeviceVector<RealType>& Ap)
+                    {
+                        mars::fem::crossRankPeriodicPairSumDof<KeyType, RealType>(*pm, n2d, Ap);
+                    });
+            }
         }
 
         converged = solver.solve(A, b_rhs, xVec);
@@ -5225,20 +5233,14 @@ int solveOneComponent(NSStepper<KeyType, RealType, ElementTag>& s,
     // to its previous value) and signal -2 so the step is recognizably bad.
     if (converged)
     {
-        // Path B: before scattering xVec back to per-node qOut, fix up
-        // cross-rank slave DOFs by an MPI broadcast from the master's owner
-        // rank. Slave rows were Dirichlet-identity with b[slave]=0, so the
-        // solve produced x[slave]=0; the broadcast overwrites that with the
-        // master's converged value so the scatter writes the correct per-node
-        // value. No-op on single-rank / non-periodic / empty cross-rank-pair.
-        // Post-solve broadcast: the cross-rank slave row was made Dirichlet-identity
-        // (b[slave]=0) above, so the solve produced x[slave]=0. Overwrite it with the
-        // master's converged value via MPI from the master's owner rank, enforcing the
-        // periodic constraint u[slave]=u[master]. Matched pair with the identity row in
-        // the velocity matrix BC above -- both must be on, or the cross-rank slave is an
-        // independent unknown and the seam is inconsistent. No-op on single-rank /
-        // non-periodic / empty cross-rank-pair.
-        if (s.numRanks > 1
+        // Strategy B: the post-solve master->slave broadcast is NOT needed. The
+        // per-matvec crossRankPeriodicPairSumDof (leg 2) already keeps x[slave]
+        // == x[master] at convergence, so the slave already holds the merged
+        // value. Re-running the broadcast here is redundant and would MASK any
+        // residual seam inconsistency (it forces equality regardless), making the
+        // verify meaningless. So it is gated off (kept for the optional
+        // MARS_PERIODIC_PATHB_CHECK diagnostic only).
+        if (false && s.numRanks > 1
             && s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Periodic
             && s.periodicMap != nullptr
             && !s.periodicMap->cross_.peers_.empty())
@@ -7450,32 +7452,12 @@ void runImplicitDiffusionStep(NSStepper<KeyType, RealType, ElementTag>& s, RealT
                           });
         cudaDeviceSynchronize();
 
-        // Path B: cross-rank slave rows are now Dirichlet-identity. Zero
-        // b[slave] AND x_warm[slave] so the initial residual r[slave] = 0
-        // throughout CG (the Ap[slave] = 1*p[slave] term plus the
-        // periodicBroadcastDofKernel skip-mask keep p[slave]=0 every iter,
-        // so r[slave] stays 0). Without this, r[slave] = -nu*Kdiag*qStar
-        // would freeze a non-zero floor that prevents ||r||/||b|| from ever
-        // hitting tolerance. Post-solve crossRankPeriodicBroadcastDof in
-        // solveOneComponent restores x[slave] := x[master_owned_D].
-        if (s.numRanks > 1
-            && s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Periodic
-            && s.periodicMap != nullptr
-            && !s.periodicMap->cross_.d_sendOwnedSlaveIds_.empty())
-        {
-            int nSend = int(s.periodicMap->cross_.d_sendOwnedSlaveIds_.size());
-            int blk = (nSend + s.blockSize - 1) / s.blockSize;
-            zeroDofAtCrossRankSlavesKernel<RealType><<<blk, s.blockSize>>>(
-                s.periodicMap->cross_.d_sendOwnedSlaveIds_.data(),
-                s.d_node_to_dof.data(),
-                nSend, s.numOwnedDofs, b.data());
-            // xVec is sized numTotalDofs but the slave dofs are in [0, numOwnedDofs)
-            zeroDofAtCrossRankSlavesKernel<RealType><<<blk, s.blockSize>>>(
-                s.periodicMap->cross_.d_sendOwnedSlaveIds_.data(),
-                s.d_node_to_dof.data(),
-                nSend, s.numOwnedDofs, xVec.data());
-            cudaDeviceSynchronize();
-        }
+        // Strategy B: the cross-rank slave row keeps its assembled half-strength
+        // physics (NOT a Dirichlet identity), so b[slave] must carry the slave's
+        // own-side RHS. Do NOT zero b[slave]/xVec here -- the per-matvec
+        // crossRankPeriodicPairSumDof merges the two half-rows, and the dot mask
+        // counts the merged DOF once. (The old Strategy-A zeroing went with the
+        // identity-slave row, both now reverted.)
 
         return solveOneComponent<KeyType, RealType, ElementTag>(
             s, b, xVec, qStarStar,

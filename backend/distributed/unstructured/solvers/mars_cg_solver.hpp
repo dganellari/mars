@@ -9,6 +9,9 @@
 #include <functional>
 #include <mpi.h>
 #include <type_traits>
+#include <thrust/transform_reduce.h>
+#include <thrust/iterator/counting_iterator.h>
+#include <thrust/execution_policy.h>
 
 namespace mars
 {
@@ -345,6 +348,12 @@ public:
         spmvPostCallback_ = callback;
     }
 
+    // Owned entries with mask==1 are skipped in dot(). Used for cross-rank
+    // periodic pairs: after the post-SpMV pair-sum makes slave==master on two
+    // different ranks, dot() would count that one physical unknown twice. Mask
+    // out the slave copy so each merged DOF contributes once. nullptr = no mask.
+    void setDotMask(const uint8_t* mask) { dotMask_ = mask; }
+
     // Set the number of locally-owned DOFs for distributed dot products.
     // When > 0, dot products sum only the first ownedSize entries per rank
     // and MPI_Allreduce to get the global value. Set this in multi-rank
@@ -421,7 +430,21 @@ private:
     {
         size_t n = (ownedSize_ > 0) ? size_t(ownedSize_) : std::min(x.size(), y.size());
         RealType local = 0;
-        if constexpr (std::is_same_v<RealType, double>)
+        if (dotMask_ != nullptr)
+        {
+            // Skip masked owned entries (cross-rank periodic slave copies) so a
+            // co-owned merged DOF is counted once. Mirrors the DDT path's dotDof.
+            const RealType* xp = thrust::raw_pointer_cast(x.data());
+            const RealType* yp = thrust::raw_pointer_cast(y.data());
+            const uint8_t*  mp = dotMask_;
+            local = thrust::transform_reduce(thrust::device,
+                thrust::counting_iterator<int>(0),
+                thrust::counting_iterator<int>(int(n)),
+                [xp, yp, mp] __device__ (int i) -> RealType {
+                    return mp[i] ? RealType(0) : xp[i] * yp[i];
+                }, RealType(0), thrust::plus<RealType>());
+        }
+        else if constexpr (std::is_same_v<RealType, double>)
         {
             cublasDdot(cublasHandle_, int(n), thrust::raw_pointer_cast(x.data()), 1,
                        thrust::raw_pointer_cast(y.data()), 1, &local);
@@ -532,6 +555,7 @@ private:
     std::function<void(Vector&)> spmvPostCallback_;
     const Vector* diagOverride_ = nullptr;  // single-shot override for Jacobi diagonal
     int ownedSize_ = 0;  // > 0 enables MPI_Allreduce on dot products
+    const uint8_t* dotMask_ = nullptr;  // owned entries with mask==1 skipped in dot()
 
     cublasHandle_t cublasHandle_;
     cusparseHandle_t cusparseHandle_;
