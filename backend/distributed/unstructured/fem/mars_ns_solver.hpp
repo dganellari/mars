@@ -8394,6 +8394,71 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
     runCorrector(s.d_v, s.d_vStarStar, s.d_gradPhiy, s.d_vTarget);
     runCorrector(s.d_w, s.d_wStarStar, s.d_gradPhiz, s.d_wTarget);
 
+    // Reduced-DOF periodic group-average of the corrected velocity.
+    // The corrector wrote u^{n+1} per NODE: every member of a periodic group
+    // (one master + its slaves, all the SAME physical point under periodicity)
+    // got its OWN bare gradient correction, so the slots end up UNEQUAL. The
+    // next predictor reads that slot-to-slot jump as a spurious divergence. Set
+    // every group member to the GROUP AVERAGE. This is divergence-neutral: all
+    // members are periodic images with identical area-vectors D, so replacing
+    // each by the mean leaves the folded sum-of(D*u) the pressure CG zeroed
+    // unchanged, while removing the jump. Only the final s.d_u/v/w are touched
+    // here -- u**, the gradient and the projection are left intact. Gated to the
+    // reduced-periodic multi-rank CG path (numRanks>1 && Periodic && CG); the
+    // raw master->slave velocity broadcast below stays gated OFF for it.
+    if (routeReducedPeriodicCorr && s.periodicMap)
+    {
+        const int* dpart = s.periodicMap->d_periodicPartner.data();
+        int gblk = 256, ggrd = int((s.nodeCount + gblk - 1) / gblk);
+
+        // Group COUNT = 1 + #slaves, built ONCE (group membership is fixed): fill
+        // ones, fold onto masters with the SAME restriction maybePeriodicSum uses
+        // for the velocity sum, so sum and count land on the identical master slot
+        // (same-rank owner via periodicPairSumKernel, cross-rank owner via
+        // crossRankPeriodicPairSum). No reverseExchangeNodeHaloAdd: this is a
+        // consistent per-node field (not an element-scatter accumulator), so the
+        // standard ghost-fold would wrongly multiply shared nodes by their share
+        // count. maybePeriodicSum folds ONLY the periodic membership.
+        cstone::DeviceVector<RealType> d_grpCount(s.nodeCount, RealType(1));
+        maybePeriodicSum<KeyType, RealType, ElementTag>(s, d_grpCount);
+
+        auto groupAverage = [&](cstone::DeviceVector<RealType>& d_field)
+        {
+            // Group SUM at master: same restriction as the count above.
+            cstone::DeviceVector<RealType> d_sum(s.nodeCount, RealType(0));
+            thrust::copy(thrust::device_pointer_cast(d_field.data()),
+                         thrust::device_pointer_cast(d_field.data() + s.nodeCount),
+                         thrust::device_pointer_cast(d_sum.data()));
+            maybePeriodicSum<KeyType, RealType, ElementTag>(s, d_sum);
+
+            // master-owner now holds group sum, count holds group size -> mean.
+            mars::fem::periodicDivideAtMastersKernel<RealType><<<ggrd, gblk>>>(
+                dpart, d_grpCount.data(), s.nodeCount, d_sum.data());
+            cudaDeviceSynchronize();
+
+            // Broadcast the mean master->slave: same-rank (gated master-owned)
+            // and cross-rank (leg-2 overwrite, mirroring crossRankPeriodicPairSum
+            // /the seam mass mirror's master->slave redistribute). Non-group nodes
+            // keep their original value in d_sum (never folded/zeroed/divided), so
+            // d_sum is the final field everywhere after the broadcast.
+            mars::fem::periodicBroadcastSameRankKernel<RealType><<<ggrd, gblk>>>(
+                dpart, d_nodeOwnership.data(), s.nodeCount, d_sum.data());
+            cudaDeviceSynchronize();
+            if (s.numRanks > 1)
+                mars::fem::crossRankPeriodicBroadcast<KeyType, RealType>(*s.periodicMap, d_sum);
+
+            thrust::copy(thrust::device_pointer_cast(d_sum.data()),
+                         thrust::device_pointer_cast(d_sum.data() + s.nodeCount),
+                         thrust::device_pointer_cast(d_field.data()));
+            // Forward halo so ghost master slots match the owner's mean, exactly
+            // as the seam mass mirror refreshes ghosts after its broadcast.
+            s.domain.exchangeNodeHalo(d_field);
+        };
+        groupAverage(s.d_u);
+        groupAverage(s.d_v);
+        groupAverage(s.d_w);
+    }
+
     if (g_projProbe && routeReducedPeriodicCorr)
     {
         // P2/P3: does the projection actually reduce divergence? Measure ||D u**||

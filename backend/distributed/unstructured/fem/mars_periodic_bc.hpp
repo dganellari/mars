@@ -362,6 +362,30 @@ __global__ void periodicBroadcastSameRankKernel(const int*     d_partner,
     d_field[i] = d_field[master];
 }
 
+// Divide a folded SUM field by a folded COUNT field, but ONLY at master nodes
+// (partner<0) that actually own a group of more than one member (count>1).
+// Used by the periodic velocity group-average: after the periodic fold puts the
+// group sum on the master (slaves zeroed) and the SAME fold on a ones-vector
+// puts the group size 1+Nslaves on the master, this turns the master slot into
+// the group MEAN. Strict no-op everywhere else: a plain interior node keeps
+// count==1 (skipped), a slave was zeroed by the fold and its partner>=0 (skipped).
+// On a cross-rank group the master is owned remotely; this runs on the master's
+// OWNER rank after the cross-rank fold summed the slave legs in, so the divide
+// sees the complete sum and count there. d_count[master]>0 is guaranteed (the
+// master folds its own 1), so no divide-by-zero.
+template<typename RealType>
+__global__ void periodicDivideAtMastersKernel(const int*      d_partner,
+                                              const RealType* d_count,
+                                              size_t          numNodes,
+                                              RealType*       d_field)
+{
+    size_t i = size_t(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (i >= numNodes) return;
+    if (d_partner[i] >= 0) return;       // slave -> not a master, leave alone
+    if (d_count[i] <= RealType(1)) return; // lone node / count not >1 -> mean==self
+    d_field[i] /= d_count[i];
+}
+
 // Per-DOF variant of periodicBroadcastKernel. Used inside the velocity CG's
 // halo callback: the CG search vector p is sized numTotalDofs and indexed by
 // DOF, but the periodic partner table is indexed by NODE. We remap via the
