@@ -1,5 +1,34 @@
 # TGV / Periodic NS — Handoff for Next Session
 
+## UPDATE 2026-06-04 (LATE) — advection seam fix landed; one secondary seam source remains
+
+Best state now = commit **afc48e9** (advN restore + revert of the u^n re-sync that regressed).
+- The ADVECTION seam fix (ea3dd76) was the big one this round: maybePeriodicSum(advN) folds
+  sum-only (broadcastBack=false) leaving advN[slave]=0, so the predictor gave the cross-rank
+  slave ZERO advection increment -> qStar[slave]!=qStar[master] every step (standing seam jump).
+  Restoring advN[slave]:=advN[master] after the fold (mirroring the corrector group-average)
+  dropped div-split from ~6-7 to ~2.2-2.5, stabilized |p| (~0.4-0.58, |phi| tiny) cleanly
+  through ~step 40, and is divergence-neutral. KEEP.
+- TRIED and REVERTED (b9c842f -> afc48e9): re-affirming u^n[slave]=u^n[master] at PREDICTOR
+  ENTRY (re-enabling the gated-off start-of-step velocity broadcast on the reduced path). It
+  REGRESSED (div-split back to ~5-6, blew up earlier). So u^n input seam-inconsistency was NOT
+  the secondary source; do not retry that.
+- REMAINING: still blows up ~step 40-50. div-split is ~2.2-2.5 (not ~1) and div(u_n) entering
+  still creeps. A smaller secondary seam source remains. Per the advection audit, the leading
+  remaining candidate is the skew form's -1/2 q (div u) term: while div(u^n) is nonzero at the
+  seam it pumps KE there (positive feedback). NEXT: confirm with the --skew=0 (upwind) run — if
+  upwind survives 110 steps where skew blows at ~50, the residual is the skew energy-conservation
+  term at the seam, and the fix is either (a) make the seam div(u^n) the corrector sees actually
+  ~0 (the projection closes interior but div-split ~2.5 says the seam still carries div), or (b)
+  use the pure-divergence advection form at seam faces. Do NOT keep re-broadcasting velocity
+  fields (that direction regressed).
+
+Lesson: each seam fix this session pushed the blowup later (immediate -> 30 -> 40 -> ~50) by
+removing one seam-consistency defect; the advN fix was real and large. Stopped iterating when a
+fix regressed — bank afc48e9, run the --skew=0 discriminator next to target the last term.
+
+---
+
 ## UPDATE 2026-06-04 — multi-rank periodic: catastrophic blowup fixed, standing seam instability remains (NEW diagnosis)
 
 Branch `cstone`. 4-rank cube16 periodic TGV (`--pressure-solve=DDT --skew=1 --dt=1e-4`).
