@@ -1,5 +1,46 @@
 # TGV / Periodic NS — Handoff for Next Session
 
+## UPDATE 2026-06-05 — TWO periodic paths exist; Hypre route is the genuinely-correct one (already wired)
+
+After eliminating geometry (area-vectors), edge/corner cross-rank pairing (probe FRAGMENTED=0),
+and the step-0 KE mismatch (an 8/9 DIAGNOSTIC double-count, now fixed — KE skips slaves) as the
+cause of the matrix-free residual, I read the Hypre path. Key findings:
+
+- `--solver=cg` (default): `routeReducedPeriodic` matrix-free P^T A P, gated to `solverKind==CG`
+  (ns_solver ~7842). This is the path we refined all session — stable ~40-50 steps, div-split ~2.5,
+  then a small scheme-independent seam residual blows it up. The cross-rank pairs here are NOT
+  collapsed: solved as TWO DOF rows, forced equal post-solve (the emulation; its residual is the
+  remaining bug). KEEP THIS PATH (user wants both).
+- `--solver=hypre`: `SolverKind::Hypre` -> `routeReducedPeriodic` is FALSE -> takes the ASSEMBLED
+  DDT branch (ns_solver ~7848, uses `s.AddT`). For periodic, the assembled cross-rank slave row is
+  made a Dirichlet identity AND its column is FOLDED into the master row
+  (`foldPeriodicSlaveColIntoMasterKernel`, ns_solver ~4385), so the master equation carries the
+  merged physics in an EXACTLY-symmetric assembled operator; `crossRankPeriodicBroadcastDof`
+  restores x[slave]=x[master] post-solve. THIS IS the genuinely-correct reduced-DOF treatment
+  (MFEM/deal.II style), and it is ALREADY FULLY WIRED — no code change was needed.
+
+NOTE I was wrong earlier that "Hypre uses true global numbering so sidesteps the seam" — the Hypre
+IJ wrapper assigns ROW global ids positionally (ilower+i) and only remaps COLUMNS, so it CANNOT
+merge two rows by aliasing; that is exactly why the code uses the identity-row + column-fold (Path
+B) instead. The fold makes the assembled operator correct; this is more robust than the matrix-free
+per-matvec emulation.
+
+### ACTION to get a working multi-rank periodic solver: build with Hypre and run --solver=hypre.
+```
+# build (Alps): add -DMARS_ENABLE_HYPRE=ON to the cmake config, rebuild mars_tgv.
+# run 4-rank periodic via the assembled-DDT + BoomerAMG path:
+srun ... mars_tgv --mesh=cube16.mesh --box-lo=0 --box-hi=1 --V0=1 --nu=0.05 --dt=1e-4 \
+    --num-steps=110 --pressure-solve=DDT --solver=hypre --skew=1 --adapt-every=0
+```
+Success = div_max stays ~roundoff, KE decays, survives 110+ steps (the assembled fold is exact, so
+no seam emulation residual). If Hypre BoomerAMG struggles on the near-singular pure-Neumann DDT
+operator, the DDT eps diagonal shift (MARS_DDT regularization, ns_solver ~3235) and the pin/removeMean
+are already in place. The CG matrix-free path stays the no-Hypre fallback (stable ~40 steps).
+
+Both `--solver=cg` and `--solver=hypre` are preserved (user requirement).
+
+
+
 ## UPDATE 2026-06-04 (LATE) — advection seam fix landed; one secondary seam source remains
 
 Best state now = commit **afc48e9** (advN restore + revert of the u^n re-sync that regressed).
