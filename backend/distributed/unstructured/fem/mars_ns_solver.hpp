@@ -8344,6 +8344,46 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
         // projection is doing its job.
         s.lastDivRms = rmsOwnedInterior1<KeyType, RealType, ElementTag>(s, d_divNorm);
 
+        // [div-global]: GLOBAL (MPI_Allreduce) signed and abs sum of div(u^{n+1})
+        // over owned-non-slave nodes. This is the TRUE rank-invariance test the
+        // per-rank [advN-sum] lines cannot give. Discriminates the residual seam
+        // leak: signed_sum MUST be ~0 and rank-invariant (1==4 ranks). If signed~0
+        // but abs_sum GROWS with step => a sign-canceling seam DIPOLE (projection
+        // closure leak). If signed_sum DRIFTS from 0 / differs 1 vs 4 ranks => the
+        // cross-rank fold is non-telescoping (coverage/double-count). Gated to the
+        // debug window so production is unaffected.
+        if (g_nsDebugStepsLeft > 0)
+        {
+            const uint8_t* ownP = d_nodeOwnership.data();
+            const int* dofP     = s.d_node_to_dof.data();
+            const int* partP    = s.periodicMap ? s.periodicMap->d_periodicPartner.data() : nullptr;
+            const RealType* dP  = d_divNorm.data();
+            auto signedOf = [ownP, dofP, partP, dP] __device__ (size_t i) -> double {
+                if (ownP[i] != 1 || dofP[i] < 0) return 0.0;
+                if (partP && partP[i] >= 0)      return 0.0;
+                return double(dP[i]);
+            };
+            auto absOf = [ownP, dofP, partP, dP] __device__ (size_t i) -> double {
+                if (ownP[i] != 1 || dofP[i] < 0) return 0.0;
+                if (partP && partP[i] >= 0)      return 0.0;
+                return fabs(double(dP[i]));
+            };
+            double locS = thrust::transform_reduce(thrust::device,
+                thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(s.nodeCount),
+                signedOf, 0.0, thrust::plus<double>());
+            double locA = thrust::transform_reduce(thrust::device,
+                thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(s.nodeCount),
+                absOf, 0.0, thrust::plus<double>());
+            double gS = 0, gA = 0;
+            MPI_Allreduce(&locS, &gS, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+            MPI_Allreduce(&locA, &gA, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+            if (s.rank == 0)
+                std::cout << "    [div-global] signed_sum=" << std::scientific << std::setprecision(8)
+                          << gS << " abs_sum=" << gA << std::defaultfloat
+                          << " (signed~0&rank-inv expected; signed~0&abs grows=>closure dipole;"
+                          << " signed drifts=>fold non-telescoping)\n";
+        }
+
         // DIAGNOSTIC: split div RMS into RANK-BOUNDARY-owned vs INTERIOR-owned
         // nodes. If the multi-rank divergence excess is boundary-localized, the
         // boundary RMS >> interior RMS => a cross-rank halo-completeness bug at
