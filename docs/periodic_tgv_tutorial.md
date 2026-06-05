@@ -1,11 +1,12 @@
 # Periodic Boundary Conditions in the MARS Navier–Stokes Solver
 
-### A beginner's tour of the Taylor–Green Vortex case, and how a multi-rank periodic bug was found and fixed
+### A beginner's tour of the Taylor–Green Vortex case, and how multi-rank periodicity is made correct
 
 This tutorial is for a developer who is new to FEM/CVFEM and to domain
 decomposition, but who needs to understand how MARS handles **periodic boundary
 conditions** in its GPU incompressible Navier–Stokes (NS) solver, and the story
-of a real multi-rank bug that took a while to corner.
+of how multi-rank periodicity went from a buggy "emulation" to the textbook
+**one-DOF-per-pair** collapse.
 
 You should be able to read it in about 20 minutes. Code snippets are quoted from
 the repo with `file:line` references so you can jump straight to the source.
@@ -14,8 +15,8 @@ The relevant files:
 
 | File | What lives there |
 |------|------------------|
-| `backend/distributed/unstructured/fem/mars_periodic_bc.hpp` | All periodic-pair logic: the partner table, the P / Pᵀ kernels, the cross-rank MPI exchange |
-| `backend/distributed/unstructured/fem/mars_ns_solver.hpp` | The NS time-stepper: lumped mass, the pressure operator, the velocity solve, the corrector |
+| `backend/distributed/unstructured/fem/mars_periodic_bc.hpp` | Periodic-pair logic: the partner table, the P / Pᵀ kernels |
+| `backend/distributed/unstructured/fem/mars_ns_solver.hpp` | The NS time-stepper: the cross-rank DOF collapse, lumped mass, the pressure operator, the velocity solve, the corrector |
 | `backend/distributed/unstructured/solvers/mars_cg_solver.hpp` | The Conjugate-Gradient (CG) linear solver and its callback hooks |
 | `examples/distributed/unstructured/mars_tgv.cu` | The TGV driver: initial condition + time loop |
 
@@ -356,20 +357,13 @@ slots literally share one solver unknown.
 
 Now **split the cube across N GPUs** (domain decomposition). Each rank owns a
 chunk of the mesh. The master of a periodic pair can now live on a **different
-rank** than its slave. This is the **cross-rank seam**. Enforcing "slave equals
-master" now requires the two ranks to *talk* — that means MPI.
+rank** than its slave. This is the **cross-rank seam**. The whole question of
+this tutorial is: how do we keep "two slots, one unknown" true when the two
+slots live on different GPUs?
 
-```
-   MULTI-RANK (the cross-rank seam):
-
-      rank A (owns x=1 face)           rank B (owns x=0 face)
-      -----------------------          -----------------------
-        slave_node (owned)               master_node (owned)
-        master_ghost  <----- cstone halo delivers the image ----- (master)
-              |                                |
-        node_to_dof = its OWN dof        node_to_dof = its own dof
-        (NOT collapsed!)                 (the real shared unknown)
-```
+There are two ways to answer that, and MARS used to do the harder, wrong-shaped
+one. The current code does the textbook one. The rest of this section explains
+the cstone halo that both approaches build on; §6 tells the story of the switch.
 
 The communication primitive MARS leans on is the **cstone node halo**:
 
@@ -388,13 +382,12 @@ amr.initialize(meshFile, rank, numRanks,
                RealType(boxLo), RealType(boxHi));
 ```
 
-But there is a catch that the rest of this tutorial is about: **the halo cannot
-bridge a periodic pair by itself.** The master and slave have *distinct SFC keys*
-(no coordinate shift), so cstone does not consider them the same shared node. The
-halo will deliver the master's *image* as a ghost, but it will not automatically
-sum the slave's contribution onto the master. That gap is what the cross-rank
-periodic code (and the bug below) is all about. From the header
-(`mars_periodic_bc.hpp:66-70`):
+There is a catch: **the halo cannot bridge a periodic pair as if it were one
+shared node.** The master and slave have *distinct SFC keys* (no coordinate
+shift), so cstone does not consider them the same shared node. The plain
+owner→ghost / ghost→owner halo for the master's *value* exists, but cstone will
+not, on its own, treat the slave's storage slot as a copy of the master's DOF.
+From the header (`mars_periodic_bc.hpp:66-70`):
 
 ```
 // reverseExchangeNodeHaloAdd cannot
@@ -402,12 +395,21 @@ periodic code (and the bug below) is all about. From the header
 // (no coord shift); they are NOT the same cstone-shared node.
 ```
 
+But there is a second, crucial thing cstone *does* deliver, and it is the whole
+basis of the modern fix. Because the box is periodic at the octree level, cstone
+delivers the **periodic-image element** (and the master node it contains) into
+the halo of the rank that owns the master. So the master's owner rank can see the
+slave-side brick that touches the seam. As §6 shows, that single fact is enough
+to assemble a *complete* master row locally — with no rank-to-rank shipping of
+matrix entries at all.
+
 ---
 
-## 6. The bug story
+## 6. The bug story — and the architecture switch that fixed it for good
 
-This is the heart of the tutorial. It is a detective story, and the moral is:
-**stop guessing, measure.**
+This is the heart of the tutorial. It is a detective story with two morals:
+**stop guessing, measure** — and, once you have measured, **fix the data model,
+don't emulate around it.**
 
 ### The symptom
 
@@ -504,121 +506,139 @@ records it (`mars_periodic_bc.hpp:1066-1070`):
 // Ap slot is half what the merged equation requires.
 ```
 
-### The fix — Strategy B: mirror the operator matrix-free, every CG iteration
+### The old fix — "emulation": keep two DOFs, force them equal
 
-The clean fix does **not** try to assemble the missing cross-rank entries into
-the matrix. Instead it keeps both seam rows half-strength and **reconstructs the
-merged operator on the fly, inside CG**, using one cross-rank primitive:
-`crossRankPeriodicPairSumDof` (`mars_periodic_bc.hpp:1074-1186`). It does a
-two-leg MPI exchange — slave → master sum, then master → slave broadcast — so
-after every matvec the two half-rows add up to the full equation on both sides.
+The first cross-rank fix did **not** try to make the pair one unknown. It kept
+*two* DOFs — a slave-owned row on rank A and a master-owned row on rank B — and
+spent a lot of machinery forcing them to behave like one. The half-strength rows
+stayed; the merged operator was **reconstructed on the fly, inside CG**, using a
+cross-rank primitive `crossRankPeriodicPairSumDof` (slave→master sum, then
+master→slave broadcast) wired into a per-matvec hook, `setSpmvPostCallback`.
 
-CG exposes a hook for exactly this: `setSpmvPostCallback`, called right after each
-sparse matvec (`mars_cg_solver.hpp:239-246`):
+That one mirror was not enough. A masked dot product (`setDotMask`) had to skip
+the slave copy so the one physical unknown was not counted twice; the Jacobi
+**preconditioner diagonal** had to be merged with the same primitive
+(`setPreconditionerDiagOverride`); and the **RHS** got the same pair-sum. The
+proven pressure path needed *four* CG-visible quantities — operator, dot,
+diagonal, RHS — all made seam-consistent every iteration. On the assembled
+matrix (the Hypre path) the analog was a Dirichlet-identity slave row plus a
+column fold into the master row.
 
-```cpp
-// Ap = A * p
-spmv(A, p, Ap);
+It worked, sort of — multi-rank reached single-rank parity for a while. But it
+was a lot of bespoke code (~500 lines), every piece had to stay perfectly in
+sync, and it had a hard ceiling: **a black-box AMG solver like Hypre cannot call
+a per-matvec callback**, so the emulation could never make the assembled-Hypre
+path correct. The whole thing was working *around* the real problem instead of
+fixing it: the pair was still two DOFs pretending to be one.
 
-// Post-SpMV cross-rank coupling enforcement (periodic-pair Ap sync,
-// etc). Without this, cross-rank periodic slave+master rows hold
-// independent residual values and pAp can go negative.
-if (spmvPostCallback_) {
-    spmvPostCallback_(Ap);
-}
-```
+### The real fix — true cross-rank collapse ("owner-migration")
 
-The velocity solve wires it up (`mars_ns_solver.hpp:5146-5151`):
+The textbook answer (MFEM / deal.II style) is the one §3 already gave for a
+single rank: **the slave does not own a DOF at all.** It migrates onto the
+master's DOF. The periodic pair becomes genuinely *one global row* in the matrix
+— even when the master lives on another GPU.
 
-```cpp
-solver.setSpmvPostCallback(
-    [pm, n2d](cstone::DeviceVector<RealType>& Ap)
-    {
-        mars::fem::crossRankPeriodicPairSumDof<KeyType, RealType>(*pm, n2d, Ap);
-    });
-```
-
-There is one more subtlety. After the pair-sum makes `slave == master` on two
-different ranks, a normal dot product would count that **one** physical unknown
-**twice** (once per rank). So CG also takes a **dot mask** that skips the slave
-copy (`mars_cg_solver.hpp:367-371`):
-
-```cpp
-// Owned entries with mask==1 are skipped in dot(). Used for cross-rank
-// periodic pairs: after the post-SpMV pair-sum makes slave==master on two
-// different ranks, dot() would count that one physical unknown twice. Mask
-// out the slave copy so each merged DOF contributes once. nullptr = no mask.
-void setDotMask(const uint8_t* mask) { dotMask_ = mask; }
-```
-
-wired as (`mars_ns_solver.hpp:5138-5139`):
+How can the slave point at a DOF on another rank? Because cstone already delivers
+the master to this rank as a **periodic-image halo ghost**. The ghost has a DOF
+slot (in the ghost range, `>= numOwnedDofs`). So the slave's `node_to_dof` is
+simply redirected to the master's *ghost* DOF, and then the DOF-compaction
+**drops the slave's own owned row**. This is the entire change, and it is one
+predicate in the DOF-collapse pass (`mars_ns_solver.hpp:2692-2721`):
 
 ```cpp
-solver.setDotMask(s.d_isPeriodicXRSlaveDof.empty()
-                  ? nullptr : s.d_isPeriodicXRSlaveDof.data());
+// Pass 1: redirect EVERY owned slave -> its master's DOF (owner-migration),
+// for both same-rank and cross-rank pairs ...
+int master = d_partner[i];
+if (master < 0 || d_own[i] != 1) return;
+// ... For a same-rank pair d_old[master] is the master's owned dof (<numOwned).
+// For a cross-rank pair the master is a local ghost (delivered by cstone's
+// periodic-image halo) and d_old[master] is a GHOST dof (>= numOwned), so the
+// compaction below drops the slave's OWN owned row -> the pair becomes ONE
+// global DOF.
+d_n2d[i] = d_old[master];
 ```
 
-The masked dot itself is a small free function (`mars_cg_solver.hpp:26-35`):
+The old code had an extra guard here — `if (... d_own[master] != 1) return;` —
+that *refused* to collapse when the master was a ghost. Removing that one guard
+is what turns "two DOFs, forced equal" into "one DOF". The slave becomes a
+ghost-valued node that reads the master's value through the ordinary cstone halo.
+
+**Why there is no orphan row** (the old failure that NaN-ed): when we drop the
+slave's row, nothing is left dangling, because the slave node now resolves to the
+master's ghost DOF and `exchangeNodeHalo` keeps it filled with the master's
+value. And **why there is no matrix to ship rank-to-rank**: recall from §5 that
+cstone delivered the periodic-image *element* into the master-owner rank's halo.
+The node-driven assembler walks that element too, so the master rank assembles a
+**complete master row** — its own-side stiffness *plus* the cross-seam slave-side
+contributions — all by itself. The slave's stiffness is simply re-assembled on
+the master's rank from the same periodic-image element. Nothing about the matrix
+crosses ranks; it is purely a DOF-numbering change.
+
+```
+   TRUE CROSS-RANK COLLAPSE (owner-migration):
+
+      rank A (owns x=1 face)            rank B (owns the master)
+      ----------------------           ------------------------
+        slave_node                       master_node (owns the ONE row)
+        node_to_dof --> master_ghost     periodic-image element also
+                          |  (a ghost      arrives here as a halo, so the
+                          |   DOF slot)     assembler fills the master row
+        slave's OWN row dropped            COMPLETE: own-side + slave-side
+                          |                          |
+                          \----- exchangeNodeHalo ---/
+                             (slave reads master's value)
+```
+
+### Proving it is correct — the 4096 invariant
+
+Here is the part worth memorizing, because it is how you *prove* a parallel
+periodic implementation is right with a single number. The DOF-collapse pass
+emits a diagnostic (`mars_ns_solver.hpp:2788-2801`): sum, across all ranks, the
+number of owned DOFs.
 
 ```cpp
-template<typename RealType>
-RealType maskedOwnedDot(const RealType* x, const RealType* y,
-                        const uint8_t* mask, int n)
-{
-    return thrust::transform_reduce(thrust::device,
-        thrust::counting_iterator<int>(0),
-        thrust::counting_iterator<int>(n),
-        [x, y, mask] __device__ (int i) -> RealType {
-            return mask[i] ? RealType(0) : x[i] * y[i];
-        }, RealType(0), thrust::plus<RealType>());
-}
+long long localOwned = s.numOwnedDofs;
+MPI_Allreduce(&localOwned, &sumOwned, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+// "[owned-node check] sum(numOwnedDofs over ranks)=" << sumOwned
+// (this should EQUAL the global unique node/DOF count; larger => doubly-owned)
 ```
 
-### The parity completion — four seam quantities, not two
+The rule is exact: **`sum(numOwnedDofs over ranks)` must equal the single-rank
+global unique DOF count.** If a periodic pair is genuinely one DOF, it is counted
+exactly once no matter how many ranks the seam is split across.
 
-Strategy B made the operator and the dot product seam-consistent — two of the
-quantities CG touches. A longer **110-step** run revealed it was *still* not
-done: the run was stable for about **30 steps, then blew up**. The residual was
-**compounding**: a small per-step inconsistency that quietly grew until it
-dominated.
+For cube16 on 4 ranks the single-rank unique DOF count is **4096**. With the old
+emulation the sum was **4657** — larger, because each cross-rank pair was counted
+*twice* (a slave row on one rank, a master row on the other). With true
+owner-migration it is **exactly 4096**. That one integer is the smoking gun:
+no orphan, no double-count, every pair is one DOF.
 
-The diagnosis (`mars_ns_solver.hpp:5154-5164`): the proven *pressure* path makes
-**four** seam quantities consistent — the operator/matvec, the dot product, the
-**Jacobi preconditioner diagonal**, and the **RHS**. Strategy B had only fixed
-the first two. The Jacobi diagonal at a seam DOF was wrong (the slave's mass was
-zeroed before the DOF gather, so its `M/dt` diagonal term was 0), which biased
-the CG search direction a little every iteration — exactly the kind of error that
-compounds.
+A second, physical check agrees: step-0 kinetic energy is now
+`KE = 0.125 = V0²/8` on 4 ranks — the exact analytic Taylor–Green value — matching
+single-rank. (Counting a seam DOF twice would have inflated it.)
 
-The cure was to merge the **diagonal** too, using the **same primitive**, fed
-through a single-shot override (`mars_ns_solver.hpp:5165-5174`):
+### What this bought, and what is left
 
-```cpp
-typename NSStepper<...>::Matrix::DeviceVectorReal diagVelMerged;
-if (s.bcKind == ...::BCKind::Periodic
-    && s.periodicMap != nullptr
-    && !s.periodicMap->cross_.peers_.empty())
-{
-    diagVelMerged = A.getDiagonal();
-    mars::fem::crossRankPeriodicPairSumDof<KeyType, RealType>(
-        *s.periodicMap, s.d_node_to_dof.data(), diagVelMerged);
-    solver.setPreconditionerDiagOverride(diagVelMerged);
-}
-```
+The payoff is large. Owner-migration **deletes the whole emulation layer** — the
+per-matvec pair-sum callback, the post-solve broadcast, the dot masks, the
+preconditioner-diagonal override, and (on the assembled side) the Path-B
+Dirichlet-identity slave row plus the column fold — about **500 lines** in all.
+In the current solver there are **zero call sites** of `setSpmvPostCallback`,
+`setDotMask`, `setPreconditionerDiagOverride`, or `crossRankPeriodicPairSumDof`.
 
-CG uses the override in place of the matrix diagonal (`mars_cg_solver.hpp:67`,
-`79`):
+It also fixes *both* solver paths at once. The matrix-free CG path is correct, and
+so is the **assembled Hypre path** — because there is no longer a slave row for
+Hypre to mishandle. The single complete master row is what a black-box AMG solver
+needs, which is exactly what the per-matvec emulation could never give it.
 
-```cpp
-void setPreconditionerDiagOverride(const Vector& diag) { diagOverride_ = &diag; }
-...
-Vector diag = diagOverride_ ? *diagOverride_ : A.getDiagonal();
-```
-
-The RHS gets the same pair-sum treatment. With all **four** CG-visible
-quantities — operator, dot, diagonal, RHS — made seam-consistent through the one
-primitive, the multi-rank run reached **single-rank parity** and the energy decay
-matched.
+**Honest current state.** The cross-rank DOF machinery is now correct *and
+provable* (the 4096 invariant). But the multi-rank run is not finished: a
+separate, smaller **advection-seam residual** remains. The discrete advection
+flux across the periodic boundary is not yet perfectly consistent between ranks —
+single-rank is clean (`div ~ 1e-14`), while multi-rank carries a residual that
+grows over many steps. This is a **different problem** from the DOF collapse.
+Frame it precisely: the DOF / identity problem is solved the right way; one
+advection-consistency item remains.
 
 ---
 
@@ -642,16 +662,20 @@ If you remember five things from this tutorial, make it these:
    exact broken stage. The pivotal moment was realizing the velocity solve, not
    the pressure solve, was the culprit.
 
-4. **For a distributed assembled operator, every CG-visible quantity must be made
-   seam-consistent — not just the matvec.** The operator, the preconditioner
-   diagonal, the RHS, and the dot product all have to agree. Fixing only two of
-   the four bought ~30 stable steps before the residual compounded into a blow-up.
+4. **Collapse the pair to one DOF, don't emulate it.** Keeping two DOFs and
+   forcing them equal every iteration (the operator, the diagonal, the RHS, the
+   dot product) is a lot of fragile code, and it can never make a black-box solver
+   like Hypre correct. Letting the slave *migrate* onto the master's DOF — so the
+   pair is genuinely one global row — is simpler, correct for both CG and Hypre,
+   and it deleted ~500 lines. When you find yourself bolting consistency onto many
+   places at once, ask whether the data model is wrong.
 
-5. **Reuse one proven primitive everywhere.** The whole cross-rank fix rides on a
-   single building block, `crossRankPeriodicPairSumDof`, applied to the operator,
-   the diagonal, and the RHS. One well-tested primitive used in four places beats
-   four bespoke patches — it is easier to reason about and far easier to get
-   right.
+5. **Prove correctness with one invariant.** `sum(numOwnedDofs over ranks)` must
+   equal the single-rank unique DOF count (4096 for cube16). It went from 4657
+   (emulation, double-counted) to exactly 4096 (true collapse). A single integer
+   that *must* match is worth more than any amount of "looks stable" — and it
+   isolated the remaining advection-seam issue as a separate problem, not a DOF
+   one.
 
 ---
 
@@ -663,13 +687,11 @@ If you remember five things from this tutorial, make it these:
 | P (master → slave copy) | `periodicBroadcastKernel` | `mars_periodic_bc.hpp:311` |
 | Pᵀ (slave → master sum, gated) | `periodicPairSumKernel` | `mars_periodic_bc.hpp:296` |
 | Pᵀ (slave → master sum, fold) | `periodicFoldToMasterKernel` | `mars_periodic_bc.hpp:330` |
-| Cross-rank merge (per-DOF) | `crossRankPeriodicPairSumDof` | `mars_periodic_bc.hpp:1074` |
-| Cross-rank broadcast (per-DOF) | `crossRankPeriodicBroadcastDof` | `mars_periodic_bc.hpp:1193` |
+| **True cross-rank collapse (owner-migration)** | DOF-collapse Pass 1 | `mars_ns_solver.hpp:2692-2721` |
+| **Correctness invariant** | `sum(numOwnedDofs)` == single-rank DOF count | `mars_ns_solver.hpp:2788-2801` |
 | Reduced pressure operator Pᵀ A P | `applyDDTReduced` | `mars_ns_solver.hpp:5807` |
 | Seam mass mirror | (lumped mass build) | `mars_ns_solver.hpp:3041` |
 | Velocity solve + CG wiring | `solveOneComponent` | `mars_ns_solver.hpp:5030` |
-| CG post-SpMV hook | `setSpmvPostCallback` | `mars_cg_solver.hpp:363` |
-| CG dot mask | `setDotMask` / `maskedOwnedDot` | `mars_cg_solver.hpp:371` / `26` |
-| CG diagonal override | `setPreconditionerDiagOverride` | `mars_cg_solver.hpp:67` |
 | Projection probes | `MARS_PROJ_PROBE` (P1/P3) | `mars_ns_solver.hpp:7031`, `8010`, `8508` |
 | Matrix symmetry probe | `MARS_PERIODIC_XR_SYMCHECK` | `mars_ns_solver.hpp:3906` |
+| Removed emulation (no longer wired) | `crossRankPeriodicPairSumDof`, `setSpmvPostCallback`, `setDotMask`, `setPreconditionerDiagOverride` | (defs remain in `mars_periodic_bc.hpp` / `mars_cg_solver.hpp`; zero call sites in solver) |
