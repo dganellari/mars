@@ -154,19 +154,30 @@ RealType computeKineticEnergy(const DomainT& domain,
                               const cstone::DeviceVector<RealType>& d_mass,
                               const cstone::DeviceVector<int>& d_nodeToDof,
                               int numOwnedDofs,
-                              MPI_Comm comm)
+                              MPI_Comm comm,
+                              const int* d_periodicPartner = nullptr)
 {
     const auto& d_ownership = domain.getNodeOwnershipMap();
     size_t numNodes = d_u.size();
 
+    // KE = sum over owned nodes of 0.5*m[dof]*|u|^2. m[dof] is the per-DOF mass,
+    // which for a collapsed periodic pair is the COMBINED pair mass (2m). A
+    // periodic slave NODE shares its master's DOF, so counting both the master
+    // and slave nodes would multiply that pair's energy by 2 -- and how many
+    // slave nodes are owned differs by partition, making the bare sum rank-
+    // dependent (single-rank counts all same-rank slaves, giving e.g. 0.1582 vs
+    // 0.1406 on 4 ranks at step 0; the 8/9 ratio is pure double-count, not a
+    // field difference). Skip periodic slaves (partner>=0): each pair is then
+    // counted ONCE via its master, making KE rank-invariant and physical.
     RealType local = thrust::transform_reduce(
         thrust::device,
         thrust::make_counting_iterator(size_t(0)),
         thrust::make_counting_iterator(numNodes),
         [u = d_u.data(), v = d_v.data(), w = d_w.data(), m = d_mass.data(),
          n2d = d_nodeToDof.data(), nOwn = numOwnedDofs,
-         own = d_ownership.data()] __device__ (size_t i) -> RealType {
+         own = d_ownership.data(), part = d_periodicPartner] __device__ (size_t i) -> RealType {
             if (own[i] != 1) return RealType(0);
+            if (part && part[i] >= 0) return RealType(0);  // slave -> counted via master
             int dof = n2d[i];
             if (dof < 0 || dof >= nOwn) return RealType(0);
             RealType uu = u[i], vv = v[i], ww = w[i];
@@ -519,9 +530,12 @@ int main(int argc, char** argv)
     // ------------------------------------------------------------------------
     auto reportStep = [&] (int step, double t, int cgU, int cgV, int cgW, int cgP)
     {
+        const int* d_part = (s.periodicMap != nullptr)
+                            ? s.periodicMap->d_periodicPartner.data() : nullptr;
         RealType KE = computeKineticEnergy<RealType>(domain, s.d_u, s.d_v, s.d_w,
                                                       s.d_mass, s.d_node_to_dof,
-                                                      s.numOwnedDofs, MPI_COMM_WORLD);
+                                                      s.numOwnedDofs, MPI_COMM_WORLD,
+                                                      d_part);
         RealType uN = computeWeightedL2Norm<KeyType, RealType>(s, s.d_u);
         RealType pN = computeWeightedL2Norm<KeyType, RealType>(s, s.d_p);
         if (rank == 0)
