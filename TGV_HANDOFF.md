@@ -27,6 +27,35 @@ Lesson: each seam fix this session pushed the blowup later (immediate -> 30 -> 4
 removing one seam-consistency defect; the advN fix was real and large. Stopped iterating when a
 fix regressed — bank afc48e9, run the --skew=0 discriminator next to target the last term.
 
+### --skew=0 DISCRIMINATOR RESULT (run 2026-06-04, decisive):
+UPWIND (--skew=0) blows up at essentially the SAME step (~40-50) as SKEW, with the SAME div-split
+(~2.5 early) and the SAME div(u_n) creep (0.001 -> 0.05-0.09 by step 30). So the residual
+instability is NOT scheme-specific — it is present in BOTH advection forms. This RULES OUT the
+skew -1/2 q(div u) energy term as the cause (which only exists for skew). Per the audit's own
+mapping, "upwind also blows up" points at suspect D: a residual SEAM-FLUX inconsistency common to
+any advection scheme — area-vector ORIENTATION or periodic-image-FACE double-count/sign at the
+cross-rank seam. NOTE: advN-sum being rank-invariant (a global scalar) CANNOT detect a sign-flipped
+pair of seam faces (they cancel in the sum), so the audit's earlier desk-refutation of D is not
+valid; D needs a DIRECT per-face check.
+
+### NEXT SESSION — target suspect D directly (do NOT add more field broadcasts; the velocity
+### re-sync already regressed):
+1. The advection/divergence read areaVec[off] per element-face (mars_ns_solver.hpp ~837/988/1081,
+   scsLR at 654). The periodic-image halo element (delivered by cstone's periodic Box) sits at its
+   REAL shifted coords; its precomputed area vector must have orientation CONSISTENT with the
+   on-rank element sharing that physical seam face. Check the area-vector precompute
+   (precomputeAreaVectorsGpu / wherever d_areaVec_{x,y,z} is filled) for whether a periodic-image
+   element's SCS face normal points the same physical direction as its on-rank twin. A sign flip
+   there is a per-face seam error invisible to advN-sum.
+2. Cheap probe: instrument max|advN[slave]-advN[master]| right AFTER the advN restore (it should be
+   ~0 now); and separately dump, for one known cross-rank seam face, the areaVec on both the owning
+   rank and the halo rank — they must be equal-and-opposite (outward from each element) i.e. the
+   shared face flux cancels. If they don't, that is D.
+3. If area vectors are clean, the remaining candidate is that the seam div(u^n) the corrector
+   leaves (~div-split 2.5) is real (not a measurement artifact) and the projection simply is not
+   closing the seam to roundoff — revisit whether the reduced operator's D and the corrector's D
+   are EXACT transposes at the seam ONE more time, but only after D (area vectors) is cleared.
+
 ---
 
 ## UPDATE 2026-06-04 — multi-rank periodic: catastrophic blowup fixed, standing seam instability remains (NEW diagnosis)
