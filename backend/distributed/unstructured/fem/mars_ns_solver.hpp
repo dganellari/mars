@@ -6943,35 +6943,11 @@ void runPredictorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
         }
         s.domain.reverseExchangeNodeHaloAdd(advN);
         maybePeriodicSum<KeyType, RealType, ElementTag>(s, advN);
-
-        // Restore advN[slave] := advN[master] across the periodic seam. The fold
-        // above (maybePeriodicSum, broadcastBack=false) summed each slave's
-        // advection onto its master and ZEROED the slave slot. That is correct for
-        // a symmetric operator's output (the next matvec's input prolongation P
-        // re-establishes slaves), but advN is an EXPLICIT term consumed ONCE by the
-        // predictor (qStar = qN + dt*advN/V - ...) with NO subsequent P. Leaving
-        // advN[slave]=0 gives the cross-rank slave zero advection increment while
-        // its master gets the full merged value -> qStar[slave] != qStar[master]
-        // even when qN was equal -> a fresh seam velocity jump minted EVERY step,
-        // carried into the diffusion RHS before the end-of-step corrector
-        // group-average can smooth it. That standing, dt-independent, seam-
-        // concentrated source is the periodic-TGV instability (div-split ~6-7).
-        // Re-broadcast master->slave (same-rank gated kernel + cross-rank leg),
-        // mirroring the corrector group-average. Divergence-neutral: redistributing
-        // the already-merged master value back onto its slaves leaves the folded
-        // sum-of(D*advN) unchanged, only the slave/master bookkeeping split.
-        if (s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Periodic
-            && s.periodicMap)
-        {
-            const auto& d_own = s.ownershipMap();
-            int nBlk = (s.nodeCount + s.blockSize - 1) / s.blockSize;
-            mars::fem::periodicBroadcastSameRankKernel<RealType><<<nBlk, s.blockSize>>>(
-                s.periodicMap->d_periodicPartner.data(), d_own.data(), s.nodeCount, advN.data());
-            cudaDeviceSynchronize();
-            if (s.numRanks > 1)
-                mars::fem::crossRankPeriodicBroadcast<KeyType, RealType>(*s.periodicMap, advN);
-            s.domain.exchangeNodeHalo(advN);
-        }
+        // advN[master] is now the full-control-volume advective flux (both half-CVs
+        // summed via the reverse-halo + periodic fold). Under owner-migration the
+        // predictor reads advN ONLY at owned master DOFs (dof<numOwnedDofs); the
+        // cross-rank slave is a ghost it skips, so no master->slave advN broadcast
+        // is needed -- that block was emulation-era scaffolding writing unread slots.
 
         // DIAGNOSTIC: owned-sum of the (folded) advection term. This is a
         // rank-count-INVARIANT physical quantity if the advection scatter +
@@ -6984,11 +6960,10 @@ void runPredictorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
             const uint8_t* ownPtr = s.ownershipMap().data();
             const int* dofPtr     = s.d_node_to_dof.data();
             const RealType* aP    = advN.data();
-            // Skip periodic slaves: after the advN master->slave restore above a
-            // same-rank slave (own=1, dof aliased to its master) now holds the
-            // master's value, so counting both would double the seam advection and
-            // break the "rank-invariant" property. The slave's advection is already
-            // represented in its master (which IS counted).
+            // Skip periodic slaves: the fold above (maybePeriodicSum) summed each
+            // slave's advection onto its master and zeroed the slave slot, so the
+            // slave's advection is already represented in its master (which IS
+            // counted). Skipping keeps the owned-sum rank-invariant.
             const int* partPtr = s.periodicMap ? s.periodicMap->d_periodicPartner.data() : nullptr;
             double locSum = thrust::transform_reduce(thrust::device,
                 thrust::counting_iterator<size_t>(0),
@@ -8256,22 +8231,17 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
         int blk = 256, grd = int((s.nodeCount + blk - 1) / blk);
         const int* d_partner = s.periodicMap->d_periodicPartner.data();
         size_t nN            = s.nodeCount;
-        // Reduced-DOF periodic projection: the corrector wrote u^{n+1}[slave] =
-        // u**[slave] - (dt/rho) g[slave] with the slave's OWN bare g (the reduced
-        // operator A inverted exactly that). Broadcasting u^{n+1}[slave]:=master
-        // here would clobber it with g[master], so the folded div(u^{n+1}) the
-        // diagnostic measures no longer matches what the pressure solve zeroed ->
-        // a boundary residual ~(dt/rho)Fold(D(g[master]-g[slave])) that advection
-        // amplifies. So SKIP the velocity broadcast on the reduced path; the slave
-        // keeps its correctly-projected velocity and the next predictor re-syncs
-        // u* master->slave itself. The PRESSURE broadcast stays (next predictor's
-        // grad(p) needs slave==master pressure; p is not in the divergence identity).
-        if (!routeReducedPeriodicCorr)
-        {
-            mars::fem::periodicBroadcastKernel<<<grd, blk>>>(d_partner, nN, s.d_u.data());
-            mars::fem::periodicBroadcastKernel<<<grd, blk>>>(d_partner, nN, s.d_v.data());
-            mars::fem::periodicBroadcastKernel<<<grd, blk>>>(d_partner, nN, s.d_w.data());
-        }
+        // Under owner-migration the periodic pair is ONE DOF: the slave does not
+        // own a row, so u^{n+1}[slave] must EQUAL u^{n+1}[master]. Broadcast the
+        // master velocity onto its slaves (and halo) so the next predictor's
+        // advection flux integrates a seam-consistent u^n on BOTH sides. The old
+        // "skip on the reduced path to protect the slave's own projected velocity"
+        // is obsolete -- there is no separate slave projection anymore; leaving the
+        // seam slave stale let the advection flux read a drifted velocity, the
+        // scheme-independent seam residual that grew div(u^n) and blew up ~step 40.
+        mars::fem::periodicBroadcastKernel<<<grd, blk>>>(d_partner, nN, s.d_u.data());
+        mars::fem::periodicBroadcastKernel<<<grd, blk>>>(d_partner, nN, s.d_v.data());
+        mars::fem::periodicBroadcastKernel<<<grd, blk>>>(d_partner, nN, s.d_w.data());
         mars::fem::periodicBroadcastKernel<<<grd, blk>>>(d_partner, nN, s.d_p.data());
         cudaDeviceSynchronize();
         s.domain.exchangeNodeHalo(s.d_u);
