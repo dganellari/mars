@@ -1,5 +1,41 @@
 # TGV / Periodic NS — Handoff for Next Session
 
+## UPDATE 2026-06-05 (corrector D^T adjoint fix, commit 75b454a) — the verified seam-leak fix
+
+History on this seam residual: collapse (4096) correct; then TWO refuted fixes — advN broadcast
+(inert, deleted) and post-corrector velocity broadcast (bea6d38, REFUTED by run: div_max still
+3.5@40/12@50, reverted 220375b). Seam VELOCITY drift was NOT the cause.
+
+ROOT CAUSE (mechanically confirmed by reading the code, not theory): the reduced-periodic CORRECTOR
+gradient g=M^-1 D^T phi (ns_solver.hpp ~7850) was NOT the exact adjoint of the D the reduced pressure
+CG inverted, AT CROSS-RANK SEAM MASTERS. The OPERATOR applyDDTReduced does, at its g=M^-1 D^T phi
+stage: applyDivTranspose -> reverseHalo -> **maybePeriodicSum (cross-rank fold)** ~5072 -> normalize
+-> **periodicBroadcastSameRank + crossRankPeriodicBroadcast** ~5117/5133 -> exchangeHalo. The corrector
+REPLICATED only applyDivTranspose -> reverseHalo -> normalize -> exchangeHalo, DROPPING the fold and
+the broadcast (its comment even claimed "matching the reduced operator exactly: NO maybePeriodicSum"
+-- which is wrong; the operator DOES maybePeriodicSum). So for a cross-rank pair (master+slave = two
+distinct owned DOFs), the operator used the MERGED both-half-CV value while the corrector applied each
+half SPLIT and separately mass-normalized -> M^-1 D^T(corrector) != M^-1 D^T(operator) at the seam ->
+the projection identity D(u** - dt/rho M^-1 D^T phi)=0 leaks a small div at the seam EVERY step,
+accumulates, blows ~step 40. This explains ALL observables: slow monotone growth (not step-0),
+seam-localized (div-split 3-8), single-rank perfectly clean (no cross-rank pair exists), and both
+velocity fixes refuted (the leak is in the gradient restriction/normalization pairing, not velocity).
+
+FIX (75b454a): the corrector gradient now does maybePeriodicSum x3 (fold) before normalize AND
+periodicBroadcastSameRank + crossRankPeriodicBroadcast x3 after normalize -- byte-for-byte mirroring
+the operator's g=M^-1 D^T phi stage, so the corrector's D^T is the exact adjoint of the operator's D
+at the seam. Single-rank safe (maybePeriodicSum/broadcast are no-ops with no cross-rank pairs).
+
+VERIFY (4-rank cube16 --solver=cg --pressure-solve=DDT --num-steps=110): div(u_n) ENTRY should STOP
+growing (was 1.7e-3@10 -> 1.3e-2@30 -> blow@40), div-split ratio relax toward ~1, survive 110 steps,
+KE match single-rank. Then --skew=0 (scheme-independent check) and --solver=hypre (same operator, the
+assembled DDT path -- this fix is on the matrix-free corrector so Hypre uses the same corrector and
+should also benefit). If it STILL leaks: add the [div-global] signed/abs MPI_Allreduce probe (in the
+wpruqm49u workflow output) -- signed~0 & abs grows => still a closure dipole; signed drifts => fold
+non-telescoping (H3).
+
+
+
 ## UPDATE 2026-06-05 (advection-seam fix, commit bea6d38) — the last isolated bug
 
 After the true collapse (4096) the only remaining blow-up (~step 40-50, scheme-independent) was the
