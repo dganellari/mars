@@ -605,6 +605,53 @@ void buildCrossRankPeriodicMap(const DomainT& domain,
         cudaMemcpy(h_sfc.data(), d_sfc.data(),
                    numNodes * sizeof(KeyType), cudaMemcpyDeviceToHost);
     }
+    // MARS_PERIODIC_EDGE_AUDIT: stage the periodic mask + node coords on host and
+    // check whether every edge/corner slave's flattened partner actually reaches
+    // its TRUE geometric ultimate master (every max-axis collapsed to min). A
+    // fragmented group (partner stops at an intermediate, not the collapsed
+    // corner) is the cross-rank multi-image pairing bug. Pure topology, no physics.
+    const bool edgeAudit = (std::getenv("MARS_PERIODIC_EDGE_AUDIT") != nullptr);
+    std::vector<uint8_t>  h_mask;
+    std::vector<RealType> h_px, h_py, h_pz;
+    if (edgeAudit)
+    {
+        h_mask.resize(numNodes); h_px.resize(numNodes);
+        h_py.resize(numNodes);   h_pz.resize(numNodes);
+        cudaMemcpy(h_mask.data(), map.d_periodicMask.data(),
+                   numNodes * sizeof(uint8_t), cudaMemcpyDeviceToHost);
+        cudaMemcpy(h_px.data(), domain.getNodeX().data(),
+                   numNodes * sizeof(RealType), cudaMemcpyDeviceToHost);
+        cudaMemcpy(h_py.data(), domain.getNodeY().data(),
+                   numNodes * sizeof(RealType), cudaMemcpyDeviceToHost);
+        cudaMemcpy(h_pz.data(), domain.getNodeZ().data(),
+                   numNodes * sizeof(RealType), cudaMemcpyDeviceToHost);
+        long long edgeCnt = 0, cornerCnt = 0, fragmented = 0, fragGhost = 0;
+        const RealType eps = map.faceEps;
+        for (size_t i = 0; i < numNodes; ++i)
+        {
+            if (h_own[i] != 1) continue;
+            int pc = __builtin_popcount(unsigned(h_mask[i]));
+            if (pc < 2) continue;                  // face-only or non-slave
+            if (pc == 2) ++edgeCnt; else ++cornerCnt;
+            int p = h_partner[i];
+            if (p < 0) { ++fragmented; continue; }  // multi-bit slave with NO partner
+            // true ultimate-master coord = collapse every set max-bit to its min
+            RealType tx = (h_mask[i] & 0x01) ? map.xmin : h_px[i];
+            RealType ty = (h_mask[i] & 0x02) ? map.ymin : h_py[i];
+            RealType tz = (h_mask[i] & 0x04) ? map.zmin : h_pz[i];
+            bool reaches = (std::fabs(h_px[p] - tx) < eps)
+                        && (std::fabs(h_py[p] - ty) < eps)
+                        && (std::fabs(h_pz[p] - tz) < eps);
+            if (!reaches) { ++fragmented; if (h_own[p] != 1) ++fragGhost; }
+        }
+        long long g[4] = {edgeCnt, cornerCnt, fragmented, fragGhost}, gg[4] = {0,0,0,0};
+        MPI_Reduce(g, gg, 4, MPI_LONG_LONG, MPI_SUM, 0, comm);
+        if (myRank == 0)
+            std::cerr << "[periodic-edge-audit] edges=" << gg[0] << " corners=" << gg[1]
+                      << " FRAGMENTED=" << gg[2] << " (of which partner-is-ghost=" << gg[3]
+                      << ") -- FRAGMENTED>0 means edge/corner groups split cross-rank "
+                      << "(the seam residual). Expect 0 on 1 rank.\n";
+    }
 
     // keyToOwned: SFC key -> local owned node id (for receive-side resolution).
     std::unordered_map<KeyType, int> keyToOwned;
