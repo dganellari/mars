@@ -8231,17 +8231,19 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
         int blk = 256, grd = int((s.nodeCount + blk - 1) / blk);
         const int* d_partner = s.periodicMap->d_periodicPartner.data();
         size_t nN            = s.nodeCount;
-        // Under owner-migration the periodic pair is ONE DOF: the slave does not
-        // own a row, so u^{n+1}[slave] must EQUAL u^{n+1}[master]. Broadcast the
-        // master velocity onto its slaves (and halo) so the next predictor's
-        // advection flux integrates a seam-consistent u^n on BOTH sides. The old
-        // "skip on the reduced path to protect the slave's own projected velocity"
-        // is obsolete -- there is no separate slave projection anymore; leaving the
-        // seam slave stale let the advection flux read a drifted velocity, the
-        // scheme-independent seam residual that grew div(u^n) and blew up ~step 40.
-        mars::fem::periodicBroadcastKernel<<<grd, blk>>>(d_partner, nN, s.d_u.data());
-        mars::fem::periodicBroadcastKernel<<<grd, blk>>>(d_partner, nN, s.d_v.data());
-        mars::fem::periodicBroadcastKernel<<<grd, blk>>>(d_partner, nN, s.d_w.data());
+        // Under owner-migration the periodic pair is ONE DOF, so u^{n+1}[slave]
+        // should equal u^{n+1}[master]. Broadcasting it master->slave here was
+        // tested (commit bea6d38) and did NOT fix the seam blow-up (div_max still
+        // 3.5@40, 12@50), so seam VELOCITY drift is not the cause -- re-gated to
+        // the pre-collapse behavior to keep the known-good collapse-only state
+        // while the real seam term is found. The slave value is consistent enough
+        // for the projection; the residual is elsewhere (advection flux input).
+        if (!routeReducedPeriodicCorr)
+        {
+            mars::fem::periodicBroadcastKernel<<<grd, blk>>>(d_partner, nN, s.d_u.data());
+            mars::fem::periodicBroadcastKernel<<<grd, blk>>>(d_partner, nN, s.d_v.data());
+            mars::fem::periodicBroadcastKernel<<<grd, blk>>>(d_partner, nN, s.d_w.data());
+        }
         mars::fem::periodicBroadcastKernel<<<grd, blk>>>(d_partner, nN, s.d_p.data());
         cudaDeviceSynchronize();
         s.domain.exchangeNodeHalo(s.d_u);
