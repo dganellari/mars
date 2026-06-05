@@ -1,5 +1,33 @@
 # TGV / Periodic NS — Handoff for Next Session
 
+## UPDATE 2026-06-05 (corrector fix landed + helps; residual isolated; PROBE NEEDS REBUILD)
+
+The corrector D^T adjoint fix (75b454a) is CONFIRMED working: 4-rank cube16 div_max@step40 went
+2.47 (pre-fix) -> 0.33 (with fix). It survives much further. The transpose-mismatch diagnosis was
+right and that leak is gone.
+
+A SMALLER residual remains (div(u_n) ENTRY still creeps ~1.5e-3 -> 4e-2 over 40 steps, div-split ~2-5,
+eventually blows). Two refuted velocity diagnoses earlier; do NOT guess again. The [div-global]
+signed/abs MPI_Allreduce probe (d6e094f, synced) was added to DISCRIMINATE the residual but the last
+cluster run used a STALE binary (no [div-global] line printed) -- REBUILD then rerun.
+
+CURRENT BEST INDICATOR (from [advN-sum], one of 4 ranks): one rank's owned advN-sum grows
+monotonically 1.9e-11 -> 1.5e-8 over 40 steps while others stay ~1e-5. This is CONSISTENT with H3
+(the maybePeriodicSum two-stage fold -- same-rank periodicPairSumKernel then cross-rank
+crossRankPeriodicPairSum, ns_solver.hpp:6457 -- NOT telescoping for multi-bit EDGE/CORNER nodes: a
+node that is both a same-rank slave AND in a cross-rank chain may be folded once-too-many or dropped).
+But NOT conclusive -- could be physical asymmetry.
+
+### NEXT (one decisive run): rebuild, rerun 40 steps, read [div-global]:
+- signed_sum ~0 AND rank-invariant, abs_sum GROWS  => closure DIPOLE (H1 residual). Fix: tighten the
+  seam projection (corrector/operator D^T still slightly mismatched somewhere subtle).
+- signed_sum DRIFTS from 0 / differs vs 1-rank      => fold NON-TELESCOPING (H3). Fix: maybePeriodicSum
+  (6457) double-counts or drops the edge/corner (multi-bit) nodes -- make the same-rank + cross-rank
+  fold apply each slave's contribution to its ultimate master EXACTLY once.
+Then fix the indicated branch. The corrector fix STAYS regardless (it removed the dominant leak).
+
+
+
 ## UPDATE 2026-06-05 (corrector D^T adjoint fix, commit 75b454a) — the verified seam-leak fix
 
 History on this seam residual: collapse (4096) correct; then TWO refuted fixes — advN broadcast
