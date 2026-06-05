@@ -1,5 +1,35 @@
 # TGV / Periodic NS — Handoff for Next Session
 
+## UPDATE 2026-06-05 (advection-seam fix, commit bea6d38) — the last isolated bug
+
+After the true collapse (4096) the only remaining blow-up (~step 40-50, scheme-independent) was the
+ADVECTION seam. Root cause (verified in code, not guessed): the post-corrector velocity broadcast
+master->slave on s.d_u/v/w (ns_solver.hpp ~8269) was gated OFF by `!routeReducedPeriodicCorr` --
+a leftover from the EMULATION era (when the slave owned a row and had its "own projected velocity"
+to protect). Under owner-migration the slave is a GHOST with no own projection: u^{n+1}[slave] must
+equal u^{n+1}[master]. With the broadcast skipped, the seam slave/ghost velocity drifted from its
+master by one step, and the next predictor's advection flux scatter (~6932) integrated the drifted
+u^n -> a seam momentum imbalance in mdot=vf.areaVec (common to upwind AND skew -> scheme-independent,
+matches the --skew=0==--skew=1 discriminator) that grew div(u^n) every step.
+
+FIX (bea6d38): (A) un-gate the post-corrector velocity broadcast so u^{n+1} syncs master->slave every
+step (seam-consistent u^n at the next predictor). (B) deleted the inert advN master->slave broadcast
+(predictor reads advN only at owned master DOFs, dof<numOwnedDofs; the slave-ghost slots it wrote
+were never read -- advN[master] is already the full-CV sum from reverseExchangeNodeHaloAdd +
+maybePeriodicSum). Single-rank safe: gate was numRanks>1; single-rank broadcast is master->same-rank-
+slave within rank, harmless. NOTE the prior afc48e9 u^n re-sync regression was WITH the emulation
+still present (it fought the reduced-DOF slave projection); that world is gone, so re-enabling the
+broadcast is now correct.
+
+VERIFY (run 4-rank cube16 --solver=cg --pressure-solve=DDT --num-steps=110): div(u_n) entering each
+step should STOP growing (was 0.49@35 -> 2.5@40 -> 7@50) and stay O(1e-3); div-split ratio should
+relax toward ~1 (was stuck 2.5-3.5); survive 110 steps; KE matches single-rank. Then --skew=0 and
+--solver=hypre should ALSO survive (same root cause). If it STILL grows, the secondary suspect is
+seam areaVec orientation (the [advN-sum] owned total would differ 1-rank vs 4-rank) -- but velocity
+drift is the verified primary.
+
+
+
 ## UPDATE 2026-06-05 (MILESTONE) — TRUE cross-rank collapse landed and is CORRECT (sum numOwnedDofs = 4096)
 
 Implemented owner-migration true cross-rank periodic collapse (commit 612faa2): a cross-rank slave
