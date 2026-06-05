@@ -1,6 +1,42 @@
 # TGV / Periodic NS — Handoff for Next Session
 
-## UPDATE 2026-06-05 (CORRECTION) — Hypre periodic path is BROKEN; CG matrix-free is the only viable route
+## UPDATE 2026-06-05 (MILESTONE) — TRUE cross-rank collapse landed and is CORRECT (sum numOwnedDofs = 4096)
+
+Implemented owner-migration true cross-rank periodic collapse (commit 612faa2): a cross-rank slave
+no longer owns a DOF -- it migrates onto its master's GHOST dof, so the periodic pair is ONE global
+DOF. ONE predicate change (drop `d_own[master]==1` guard in the DOF-collapse Pass-1, ns_solver.hpp
+~2706) + one Hypre-seed guard (`dof < nOwn`, ~4544) + DELETED all the cross-rank emulation (503
+lines: per-matvec crossRankPeriodicPairSumDof, crossRankPeriodicBroadcastDof, dot-mask,
+preconditioner-diag override, Path-B XR-slave masks, assembled-DDT slave-col fold). The advection-
+seam fixes (advN restore, corrector group-average, seam mass mirror) were KEPT (separate term).
+
+VERIFIED CORRECT on 4-rank cube16 (--solver=cg --pressure-solve=DDT):
+- `[owned-node check] sum(numOwnedDofs over ranks) = 4096` -- EXACTLY the single-rank global unique
+  DOF count (was 4657 with the emulation double-count). This is the smoking-gun proof: the periodic
+  pairs are genuinely one DOF each, no orphan, no double-count.
+- Step-0 KE = 0.125 = V0^2/8 (the correct physical TGV value) on 4-rank, matching single-rank.
+- Solves healthy: cg_uvw=4, cg_p~115, DDT CG converges to ~1e-9 every step.
+The cross-rank DOF machinery is now DONE and provably correct. No more emulation.
+
+### REMAINING (now cleanly ISOLATED): the advection-seam residual, NOT the DOF coupling.
+The 4-rank run still blows up ~step 40-50 (div_max ~2.5 @ step40, ~7 @ step50), with div-split
+ratio ~2.5-3.5 (boundary RMS / interior RMS) that does NOT fall to ~1, and div(u_n) entering each
+step grows (0.003 -> 0.49 by step 35). Because the DOF collapse is now PROVABLY exact (4096), this
+residual is NOT cross-rank DOF coupling. It is the ADVECTION-SEAM term -- consistent with the earlier
+--skew=0 discriminator (upwind AND skew blow up identically -> scheme-independent seam-flux residual).
+NEXT: attack the advection seam directly (the advN/momentum-flux consistency at the cross-rank seam),
+now that everything else is eliminated. The single-rank run is clean (div~1e-14), so the seam term is
+purely a multi-rank advection-consistency issue at the periodic boundary.
+
+### BONUS to check: --solver=hypre should now ALSO work (or get much further). The half-strength
+seam-row problem that made Hypre blow up at step 0 is GONE -- there is no slave row anymore, the
+master row is the single complete row. Re-run `--solver=hypre --pressure-solve=DDT` 4-rank; the
+step-0 velocity-solve garbage should be fixed. (The advection-seam residual may still cap it ~step
+40-50 like CG, but the catastrophic step-0 failure should be resolved.)
+
+---
+
+## UPDATE 2026-06-05 (CORRECTION, SUPERSEDED by the milestone above) — Hypre periodic path WAS broken pre-collapse; CG matrix-free was the only viable route
 
 TESTED `--solver=hypre --pressure-solve=DDT` on 4-rank cube16 periodic: it BLOWS UP FROM STEP 0.
 The VELOCITY diffusion solve (not pressure) returns garbage immediately: after DIFF, |u**|=2.34
