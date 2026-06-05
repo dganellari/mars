@@ -1,5 +1,34 @@
 # TGV / Periodic NS — Handoff for Next Session
 
+## UPDATE 2026-06-05 (CORRECTION) — Hypre periodic path is BROKEN; CG matrix-free is the only viable route
+
+TESTED `--solver=hypre --pressure-solve=DDT` on 4-rank cube16 periodic: it BLOWS UP FROM STEP 0.
+The VELOCITY diffusion solve (not pressure) returns garbage immediately: after DIFF, |u**|=2.34
+(should be ~1), div(u**)=5.76, cg_uvw=2/2/2 (Hypre "converged" in 2 iters to a wrong answer) ->
+|phi|=9048 -> NaN -> "RHS contains NaN/Inf" abort. (Step-0 KE=0.125 IS correct now = V0^2/8, so the
+KE-diagnostic slave-skip fix works; the field starts right and the velocity solve corrupts it.)
+
+WHY (the fundamental reason, do not retry Hypre for periodic without solving this): the Hypre
+velocity solve uses the ASSEMBLED nu*K matrix whose cross-rank periodic seam rows are HALF-STRENGTH
+(the master row lacks the slave-side stiffness -- the same bug the CG path had). The CG path fixed
+it with Strategy-B: per-matvec crossRankPeriodicPairSumDof in the spmvPostCallback, reconstructing
+the merged seam operator EVERY iteration. Hypre is a black-box AMG solver -- it CANNOT call a
+per-matvec callback, so it never gets the seam merge and diverges on the inconsistent assembled
+operator. This matches the pre-existing memory note "Stage 4 (Hypre AMG) reverted pending RHS-NaN
+debug" / "DDT+Hypre validation pending" -- Hypre periodic was ALREADY known-broken; we re-confirmed it.
+
+CONCLUSION: for multi-rank periodic, the matrix-free CG path (--solver=cg) is the ONLY viable
+architecture -- it is the only one that can apply the per-matvec seam reconstruction the periodic
+operator requires. Hypre would need the seam baked into the ASSEMBLED matrix (true global-DOF
+collapse: skip the slave row entirely, alias its column to the master's global id), which the
+current Hypre IJ wrapper cannot do (it assigns row ids positionally). That is a deeper IJ-wrapper
+change, not a config flag. Finish the CG path instead (the advection-seam residual is the last item).
+
+(Below was the earlier optimistic note that the Hypre route was "already correct" -- it is NOT;
+kept for context but superseded by the test above.)
+
+---
+
 ## UPDATE 2026-06-05 — TWO periodic paths exist; Hypre route is the genuinely-correct one (already wired)
 
 After eliminating geometry (area-vectors), edge/corner cross-rank pairing (probe FRAGMENTED=0),
