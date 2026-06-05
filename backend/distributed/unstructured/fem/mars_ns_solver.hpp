@@ -7861,6 +7861,19 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
             s.domain.reverseExchangeNodeHaloAdd(d_gxAcc);
             s.domain.reverseExchangeNodeHaloAdd(d_gyAcc);
             s.domain.reverseExchangeNodeHaloAdd(d_gzAcc);
+            // Cross-rank periodic fold BEFORE normalize -- this is what the reduced
+            // OPERATOR applyDDTReduced does at its g=M^-1 D^T phi stage
+            // (maybePeriodicSum, ~5072) but the corrector was MISSING. Without it
+            // the corrector's M^-1 D^T at a cross-rank seam master uses only the
+            // master's own half-CV (mass+flux) while the operator the pressure CG
+            // inverted used the MERGED both-half-CV value -> M^-1 D^T(corrector) !=
+            // M^-1 D^T(operator) at the seam -> the projection identity D(u** -
+            // dt/rho M^-1 D^T phi)=0 leaks a small div at the seam every step,
+            // which accumulates and blows up ~step 40. Folding here makes the
+            // corrector's D^T the exact adjoint of the operator's D.
+            maybePeriodicSum<KeyType, RealType, ElementTag>(s, d_gxAcc);
+            maybePeriodicSum<KeyType, RealType, ElementTag>(s, d_gyAcc);
+            maybePeriodicSum<KeyType, RealType, ElementTag>(s, d_gzAcc);
             // Step b: g <- M^-1 g (per-node mass).
             normalizeGradientPerNodeKernel<RealType><<<nodeBlocks, s.blockSize>>>(
                 d_gxAcc.data(), d_gyAcc.data(), d_gzAcc.data(),
@@ -7869,9 +7882,29 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
                 s.d_gradPhix.data(), s.d_gradPhiy.data(), s.d_gradPhiz.data(),
                 s.nodeCount);
             cudaDeviceSynchronize();
-            // Forward halo: the velocity corrector reads gradPhi at ghost slots
-            // too (a ghost node's owned partner on this rank gets corrected).
-            // This is the operator's step-b forward exchangeNodeHalo.
+            // Broadcast the merged master gradient back onto its slaves (same-rank
+            // gated + cross-rank), mirroring the operator's post-normalize
+            // periodicBroadcast (~5118/5133), so a cross-rank slave's velocity
+            // corrector reads the SAME gradPhi the master got. Then the forward
+            // halo fills ghost slots (a ghost node's owned partner gets corrected).
+            if (s.periodicMap)
+            {
+                const auto& d_own = s.ownershipMap();
+                int gnb = (s.nodeCount + s.blockSize - 1) / s.blockSize;
+                mars::fem::periodicBroadcastSameRankKernel<RealType><<<gnb, s.blockSize>>>(
+                    s.periodicMap->d_periodicPartner.data(), d_own.data(), s.nodeCount, s.d_gradPhix.data());
+                mars::fem::periodicBroadcastSameRankKernel<RealType><<<gnb, s.blockSize>>>(
+                    s.periodicMap->d_periodicPartner.data(), d_own.data(), s.nodeCount, s.d_gradPhiy.data());
+                mars::fem::periodicBroadcastSameRankKernel<RealType><<<gnb, s.blockSize>>>(
+                    s.periodicMap->d_periodicPartner.data(), d_own.data(), s.nodeCount, s.d_gradPhiz.data());
+                cudaDeviceSynchronize();
+                if (s.numRanks > 1)
+                {
+                    mars::fem::crossRankPeriodicBroadcast<KeyType, RealType>(*s.periodicMap, s.d_gradPhix);
+                    mars::fem::crossRankPeriodicBroadcast<KeyType, RealType>(*s.periodicMap, s.d_gradPhiy);
+                    mars::fem::crossRankPeriodicBroadcast<KeyType, RealType>(*s.periodicMap, s.d_gradPhiz);
+                }
+            }
             s.domain.exchangeNodeHalo(s.d_gradPhix);
             s.domain.exchangeNodeHalo(s.d_gradPhiy);
             s.domain.exchangeNodeHalo(s.d_gradPhiz);
