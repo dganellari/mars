@@ -22,7 +22,13 @@
 // --nu for a dimensional (e.g. water) setup. All BCs and properties are CLI-
 // driven so a case can be matched to the legacy reference without recompiling.
 
-#include "backend/distributed/unstructured/fem/mars_ns_solver.hpp"
+// Pump uses a FORKED NS solver pinned to the verified-good pump state (commit
+// 8bb0402, 2026-06-02: 1-rank==4-rank bit-identical, stable jet to ft=26). The
+// shared mars_ns_solver.hpp was heavily modified by the TGV multi-rank periodic
+// work (55 commits, +1587 lines) which regressed the pump's DDT pressure solve
+// (cg_p diverges). Keeping a separate header decouples them; reconcile to one
+// solver later. TGV keeps using mars_ns_solver.hpp unchanged.
+#include "backend/distributed/unstructured/fem/mars_ns_pump_solver.hpp"
 #include "backend/distributed/unstructured/utils/mars_vtu_parallel_writer.hpp"
 #include "backend/distributed/unstructured/utils/mars_read_exodus_mesh.hpp"
 
@@ -34,6 +40,7 @@
 #include <vector>
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 
 using namespace mars;
 using namespace mars::fem;
@@ -351,6 +358,43 @@ int main(int argc, char** argv)
                           << "  (resolved << found => global->local node-ID mismatch is dropping BC nodes)\n";
         }
 
+        // [diag] Per-rank inlet ownership audit (MARS_PUMP_BC_DEBUG=1). Confirms
+        // the multi-rank BC failure mode: each inlet node resolves as a GHOST on
+        // the ranks that hold it and is OWNED by none -> tag()'s ownership gate
+        // marks zero inlet Dirichlet DOFs. For each rank print:
+        //   coords  = inlet coords the reader handed this rank (global, all ranks)
+        //   resolved= inlet nodes this rank found in its SFC map (owned or ghost)
+        //   ownedOf = of those, how many this rank actually OWNS (hostOwn==1)
+        // If sum(ownedOf) over ranks < #global-inlet-nodes, some inlet nodes are
+        // owned by no rank (the bug). Healthy: sum(ownedOf) == #inlet-nodes.
+        if (std::getenv("MARS_PUMP_BC_DEBUG"))
+        {
+            const auto& d_own = amr.domain().getNodeOwnershipMap();
+            std::vector<uint8_t> hostOwn(amr.domain().getNodeCount(), 0);
+            thrust::copy(thrust::device_pointer_cast(d_own.data()),
+                         thrust::device_pointer_cast(d_own.data() + d_own.size()),
+                         hostOwn.begin());
+            long long coords   = (long long)ss.nodeCoordsByName[inletSS].size();
+            long long resolved = (long long)s.inletNodes.size();
+            long long ownedOf  = 0;
+            for (int li : s.inletNodes)
+                if (li >= 0 && (size_t)li < hostOwn.size() && hostOwn[li] == 1) ++ownedOf;
+            // Serialize the per-rank lines so they do not interleave.
+            for (int r = 0; r < numRanks; ++r)
+            {
+                MPI_Barrier(MPI_COMM_WORLD);
+                if (r == rank)
+                    std::cerr << "[bc-debug] rank " << rank << " inlet: coords=" << coords
+                              << " resolved=" << resolved << " ownedOf=" << ownedOf << "\n";
+            }
+            MPI_Barrier(MPI_COMM_WORLD);
+            long long gOwnedOf = 0;
+            MPI_Allreduce(&ownedOf, &gOwnedOf, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+            if (rank == 0)
+                std::cerr << "[bc-debug] inlet owned-of-resolved summed over ranks = "
+                          << gOwnedOf << " (must equal the #global inlet nodes; 0 => globally unowned)\n";
+        }
+
         // -------- Inlet/outlet face geometry --------
         // Compute the global area-weighted OUTWARD normal vector (sum of each
         // triangle's 0.5*(p1-p0)x(p2-p0); Exodus winding is outward) and its
@@ -433,6 +477,48 @@ int main(int argc, char** argv)
                       << s.inletDirX << "," << s.inletDirY << "," << s.inletDirZ << ")  Q=" << (double(inletU)*areaIn) << "\n"
                       << "    outlet: area=" << areaOut << "  U_out=" << s.outletU
                       << "  outflow dir=(" << s.outletDirX << "," << s.outletDirY << "," << s.outletDirZ << ")\n";
+
+        // MARS_BC_OWN_DEBUG=1: per-rank confirm of the resolve-vs-own relation
+        // for the inlet/outlet side-sets. For each side-set, on THIS rank:
+        //   coords   = # side-set node coords the reader gave us (per-rank
+        //              complete -> same on every rank)
+        //   resolved = # of those coords whose SFC key is in this rank's local
+        //              map (held owned-or-ghost here)
+        //   ownedRes = # of resolved nodes whose corrected ownership flag == 1
+        //              (this rank is the authoritative owner)
+        // Global SUM(ownedRes) MUST equal the # of distinct side-set nodes (a
+        // global node is owned by exactly one rank). If it is 0 while resolved
+        // sum > 0, the owner of every inlet node was demoted to ghost (the
+        // Step-2 over-yield orphan) -- every holder sees it only as a ghost.
+        if (std::getenv("MARS_BC_OWN_DEBUG"))
+        {
+            auto ownDbg = [&](const std::string& nm, const std::vector<int>& resolved) {
+                auto cit = ss.nodeCoordsByName.find(nm);
+                long long lc = (cit == ss.nodeCoordsByName.end()) ? 0
+                                                                  : (long long)cit->second.size();
+                long long lr = (long long)resolved.size();
+                long long lo = 0;
+                for (int li : resolved)
+                    if (li >= 0 && (size_t)li < hostOwnFA.size() && hostOwnFA[li] == 1) ++lo;
+                long long gc = 0, gr = 0, go = 0;
+                MPI_Allreduce(&lc, &gc, 1, MPI_LONG_LONG, MPI_MAX, MPI_COMM_WORLD);
+                MPI_Allreduce(&lr, &gr, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+                MPI_Allreduce(&lo, &go, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+                std::cout << "[bc-own-debug r" << rank << "] " << nm
+                          << ": coords=" << lc << " resolved=" << lr
+                          << " ownedRes=" << lo << std::endl;
+                std::cout.flush();
+                MPI_Barrier(MPI_COMM_WORLD);
+                if (rank == 0)
+                    std::cout << "[bc-own-debug GLOBAL] " << nm
+                              << ": found=" << gc << " resolved(sum)=" << gr
+                              << " ownedRes(sum)=" << go
+                              << "  (ownedRes(sum) must == found; 0 => owner demoted to ghost)"
+                              << std::endl;
+            };
+            ownDbg(inletSS,  s.inletNodes);
+            ownDbg(outletSS, s.outletNodes);
+        }
 
         // Fail fast on an ill-posed setup: if the inlet or outlet side-set
         // matched 0 nodes on EVERY rank, the velocity inflow / pressure
