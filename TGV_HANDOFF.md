@@ -1,5 +1,31 @@
 # TGV / Periodic NS — Handoff for Next Session
 
+## UPDATE 2026-06-06 (cross-rank send fix, commit e8b0c3a) — telescoping fold complete
+
+The direct-parent telescoping fold (3eb6dee) tripped the cross-rank corner-chain MPI_Abort(73).
+Root: crossRankPeriodicPairSum is a SINGLE MPI round (no remote->remote), and the abort guarded a
+real latent SILENT-DROP bug (keying the send by a direct parent that is itself a remote slave lands
+on a node the receiver does not own -> keyToOwned drops it).
+
+FIX (e8b0c3a, independently confirmed correct by workflow w0wlomvfo, high confidence): the cross-rank
+send GATES on the DIRECT parent (own[direct]!=1 -> a node folds cross-rank iff its direct parent is
+remote; a local-direct-parent node was already folded by the local 3-hop, must not double-send) but
+ROUTES/KEYS by the FLATTENED ULTIMATE-MASTER sfc key. flattenPartnerChainKernel always terminates on
+a node with no onward partner, so the ultimate master is TERMINAL + owned + never a slave -> the value
+lands DIRECTLY on the owned ultimate master in ONE round. No remote->remote, no iteration, single P^T
+(SPD symmetry preserved inside the matvec -- iterating the fold would have broken A=A^T). The order
+hazard (local fold runs before the cross-rank atomicAdd) is eliminated because the landing node is
+already terminal. Abort stays removed (its condition can never indicate an unhandled case now). Local
+3-hop fold stays on the DIRECT parent (collapses purely-local chains). Single-rank byte-identical.
+
+VERIFY GATES (4-rank cube16): (1) NO MPI_Abort(73). (2) MARS_PERIODIC_FOLDCOUNT=1 -> defect==0,
+nonzero_slave_residual==0. (3) MARS_PERIODIC_EDGE_AUDIT=1 -> FRAGMENTED==0. (4) SYMPROBE (the two
+applyDDTReduced + cross-dot, ns_solver ~5682) rel ~1e-12 confirms A=A^T unperturbed. (5) [advN-sum]
+stops the monotone one-signed single-rank drift. (6) 110 steps complete, div(u_n) not accumulating.
+This + the corrector D^T adjoint fix (75b454a) removes the LAST seam leak.
+
+
+
 ## UPDATE 2026-06-06 (telescoping fold fix, commit 3eb6dee) — the last seam leak (H3)
 
 After the corrector D^T fix (75b454a, div@step40 2.47->0.38) the residual seam leak was confirmed H3
