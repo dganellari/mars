@@ -8170,37 +8170,17 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
     runCorrector(s.d_v, s.d_vStarStar, s.d_gradPhiy, s.d_vTarget);
     runCorrector(s.d_w, s.d_wStarStar, s.d_gradPhiz, s.d_wTarget);
 
-    // Reduced-DOF periodic seam: BROADCAST master->slave on the corrected
-    // velocity (instead of group-averaging). The operator's discrete
-    // projection identity holds at the MASTER DOF (slave folded onto master
-    // by periodicFoldToMasterKernel). Setting u_slave_node = u_master_node
-    // makes the per-node-storage consistent for the next predictor's
-    // per-element scatter (which reads node values, not DOFs). Averaging
-    // (the previous groupAverage) would change u away from what the
-    // operator inverted, biasing the projection -- this is what PROJ-P3
-    // climbed 0.8 -> ~1 per step. The broadcast is the operator's input-P
-    // applied to the corrector's output. Gated to reduced-periodic
-    // multi-rank CG (numRanks>1 && Periodic && CG). The bare master-only
-    // value is the operator's master DOF value -> projection identity
-    // holds discretely at every master DOF.
-    if (routeReducedPeriodicCorr && s.periodicMap)
-    {
-        const int* dpart = s.periodicMap->d_periodicPartner.data();
-        int gblk = 256, ggrd = int((s.nodeCount + gblk - 1) / gblk);
-        auto broadcastMasterToSlave = [&](cstone::DeviceVector<RealType>& d_field)
-        {
-            mars::fem::periodicBroadcastSameRankKernel<RealType><<<ggrd, gblk>>>(
-                dpart, d_nodeOwnership.data(), s.nodeCount, d_field.data());
-            cudaDeviceSynchronize();
-            if (s.numRanks > 1)
-                mars::fem::crossRankPeriodicBroadcast<KeyType, RealType>(*s.periodicMap, d_field);
-            s.domain.exchangeNodeHalo(d_field);
-        };
-        broadcastMasterToSlave(s.d_u);
-        broadcastMasterToSlave(s.d_v);
-        broadcastMasterToSlave(s.d_w);
-    }
-
+    // NOTE: the master->slave broadcast on s.d_u/v/w is DEFERRED to AFTER the
+    // PROJ-P3 probe below (see end of this branch). The corrector's slot-wise
+    // output (u^{n+1}_slot = u**_slot - dt/rho * g_slot, with the BARE g of the
+    // reduced operator, not broadcast) is the EXACT field on which the
+    // operator's discrete projection identity D_folded(u^{n+1}) = 0 closes at
+    // every master DOF. Overwriting u^{n+1}_slave := u^{n+1}_master BEFORE the
+    // probe destroys that slot-wise field (the algebra needs
+    // u**_slave - dt/rho*g_slave in the slave slot, not u_master) and is what
+    // made PROJ-P3 read ~1.0. The broadcast IS still needed for the next-step
+    // predictor's per-node flux scatter to see u_slave == u_master, so we run
+    // it AFTER the probe, before updatePressureKernel / the next predictor.
     if (g_projProbe && routeReducedPeriodicCorr)
     {
         // P2/P3: does the projection actually reduce divergence? Measure ||D u**||
@@ -8318,6 +8298,36 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
                       << "  | max|u-u**|=" << duMax
                       << "  |Du^{n+1}|noFold=" << dOutNoFold
                       << "  seam|u_s-u_m|=" << seamMax << "\n";
+    }
+
+    // Reduced-DOF periodic seam: BROADCAST master->slave on the corrected
+    // velocity. Deferred to HERE (after the PROJ-P3 probe) so the probe reads
+    // the corrector's slot-wise output -- the EXACT field on which the
+    // operator's discrete projection identity D_folded(u^{n+1}) = 0 closes at
+    // every master DOF. Running this BEFORE the probe (the previous order)
+    // overwrote u^{n+1}_slave := u^{n+1}_master, replacing the
+    // u**_slave - dt/rho * g_slave value that closes the identity in the
+    // slave slot -- PROJ-P3 then read ~1.0. The broadcast itself is still
+    // required for the NEXT-step predictor's per-element flux scatter (which
+    // reads node values, not DOFs) to see u_slave == u_master.
+    // Gated to reduced-periodic multi-rank CG (numRanks>1 && Periodic && CG).
+    // Pump/Cavity (BCKind::Pump, periodicMap=nullptr) bypass entirely.
+    if (routeReducedPeriodicCorr && s.periodicMap)
+    {
+        const int* dpart = s.periodicMap->d_periodicPartner.data();
+        int gblk = 256, ggrd = int((s.nodeCount + gblk - 1) / gblk);
+        auto broadcastMasterToSlave = [&](cstone::DeviceVector<RealType>& d_field)
+        {
+            mars::fem::periodicBroadcastSameRankKernel<RealType><<<ggrd, gblk>>>(
+                dpart, d_nodeOwnership.data(), s.nodeCount, d_field.data());
+            cudaDeviceSynchronize();
+            if (s.numRanks > 1)
+                mars::fem::crossRankPeriodicBroadcast<KeyType, RealType>(*s.periodicMap, d_field);
+            s.domain.exchangeNodeHalo(d_field);
+        };
+        broadcastMasterToSlave(s.d_u);
+        broadcastMasterToSlave(s.d_v);
+        broadcastMasterToSlave(s.d_w);
     }
 
     // Pressure update + ghost sync (next step's predictor needs ghost p^{n+1}).
