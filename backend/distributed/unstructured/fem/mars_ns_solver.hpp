@@ -8183,6 +8183,20 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
     // it AFTER the probe, before updatePressureKernel / the next predictor.
     if (g_projProbe && routeReducedPeriodicCorr)
     {
+        // Refresh u/v/w ghost slots so opDiv's element kernel reads u^{n+1} at
+        // iL/iR across rank seams. The corrector kernel only writes OWNED slots
+        // (applyCorrectorPerNodeKernel early-returns on ownership[i]!=1), so
+        // ghost slots still carry u**. The operator's step c does the same
+        // forward halo on g at NS:5240-5242 before computeDivergencePerNodeKernel;
+        // the probe MUST mirror that on u^{n+1} or it measures
+        // D(u**[ghost], u^{n+1}[owned]) -- exactly the residual that made
+        // PROJ-P3 = 0.59 instead of ~0. exchangeNodeHalo writes only ghost
+        // slots (recvNodeIds_), so owned writes are preserved. Pump-safe:
+        // gated by g_projProbe (env-set diagnostic) AND routeReducedPeriodicCorr
+        // (Periodic && numRanks>1 && CG); pump short-circuits on both terms.
+        s.domain.exchangeNodeHalo(s.d_u);
+        s.domain.exchangeNodeHalo(s.d_v);
+        s.domain.exchangeNodeHalo(s.d_w);
         // P2/P3: does the projection actually reduce divergence? Measure ||D u**||
         // (in) and ||D u^{n+1}|| of the RAW corrected velocity (out, before any
         // periodic broadcast/halo -- those are gated off on this path so s.d_u/v/w
