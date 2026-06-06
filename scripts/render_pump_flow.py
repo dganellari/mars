@@ -41,8 +41,12 @@ def main():
                     help="extra orbit-only frames at the end on the final (developed) state")
     ap.add_argument("--preset", default="Viridis (matplotlib)", help="color preset")
     ap.add_argument("--streamlines", action="store_true",
-                    help="use StreamTracer tubes (prettier but SLOW/can hang on big tet meshes; "
-                         "default is fast jet-threshold + velocity glyphs)")
+                    help="use StreamTracer tubes (the real flow-path video; run under srun on a GPU "
+                         "compute node so it doesn't crash; default is the fast jet-threshold)")
+    ap.add_argument("--seed-inlet", default="",
+                    help="seed streamlines at 'x,y,z' (the inlet); default = auto peak-speed point")
+    ap.add_argument("--seed-radius", type=float, default=0.0,
+                    help="streamline seed-cloud radius as a fraction of bbox diagonal (default auto)")
     ap.add_argument("--jet-frac", type=float, default=0.08,
                     help="threshold isovolume keeps speed > jet_frac*max (the visible jet); lower=more fluid shown")
     ap.add_argument("--color-frac", type=float, default=0.6,
@@ -138,6 +142,36 @@ def main():
     flow_props = []  # (proxy, colorByName) to Show
 
     if args.streamlines:
+        # Seed center: by default the high-speed (inlet/jet) region of the LAST
+        # frame, so lines trace the actual pumped path; override with --seed-inlet.
+        seed_c = [cx, cy, cz]
+        seed_r = diag * (args.seed_radius if args.seed_radius > 0 else 0.45)
+        if args.seed_inlet:
+            try:
+                seed_c = [float(x) for x in args.seed_inlet.split(",")]
+            except Exception:
+                print("[render] bad --seed-inlet '%s', using center" % args.seed_inlet)
+        else:
+            # find the location of peak speed on the developed frame to seed there
+            try:
+                reader.UpdatePipeline(tvals[-1]); mag.UpdatePipeline(tvals[-1])
+                from paraview import servermanager as _sm
+                data = _sm.Fetch(mag)
+                pts = data.GetPoints(); arr = data.GetPointData().GetArray("speed")
+                if pts and arr:
+                    best_i, best_v = 0, -1.0
+                    n = arr.GetNumberOfTuples()
+                    step = max(1, n // 200000)  # subsample for speed
+                    for i in range(0, n, step):
+                        v = arr.GetValue(i)
+                        if v > best_v:
+                            best_v, best_i = v, i
+                    seed_c = list(pts.GetPoint(best_i))
+                    seed_r = diag * 0.18  # tighter cloud around the jet
+                    print("[render] seeding streamlines at peak-speed point %s (|u|=%.3g)" % (seed_c, best_v))
+            except Exception as e:  # noqa: BLE001
+                print("[render] peak-seed failed (%s), using center cloud" % e)
+
         stream = StreamTracer(Input=mag, SeedType="Point Cloud")
         stream.Vectors = ["POINTS", args.field]
         stream.IntegrationDirection = "BOTH"
@@ -146,12 +180,12 @@ def main():
         except Exception:
             pass
         stream.MaximumStreamlineLength = diag * 5.0
-        stream.SeedType.Center = [cx, cy, cz]
-        stream.SeedType.Radius = diag * 0.48
+        stream.SeedType.Center = seed_c
+        stream.SeedType.Radius = seed_r
         stream.SeedType.NumberOfPoints = args.n_streamlines
         stream.UpdatePipeline(tvals[-1])
         tubes = Tube(Input=stream)
-        tubes.Radius = diag * 0.0016
+        tubes.Radius = diag * 0.0018
         tubes.Capping = 1
         tubes.UpdatePipeline(tvals[-1])
         flow_props.append((tubes, "speed"))
