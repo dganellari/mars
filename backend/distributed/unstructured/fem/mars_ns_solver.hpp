@@ -6568,43 +6568,27 @@ inline void maybePeriodicSum(NSStepper<KeyType, RealType, ElementTag>& s,
     size_t nNodes = d_field.size();
     int blk = 256, grd = int((nNodes + blk - 1) / blk);
 
-    // (a) Gated intra-rank pair sum on the DIRECT parent, staged per hop,
-    // run to a fixed point.
-    // Same-rank pairs: master += slave (atomic), slave=0. Cross-rank (own[direct
-    // parent]!=1): no-op. The flattened table folds in ONE unordered pass which
-    // does NOT telescope a slave-of-a-local-intermediate (an edge/corner node whose
-    // direct parent is a same-rank node that is itself a cross-rank slave) -> a
-    // fixed seam node mis-folds the same way every step (the monotone advN-sum
-    // drift). Folding on the DIRECT parent and iterating up to the max chain depth
-    // (3 = x,y,z bits) telescopes every local chain S->M2->M3 to its locally-owned
-    // terminal before the cross-rank send below.
+    // (a) Gated intra-rank pair sum on the FLATTENED partner (ultimate master),
+    // ONE pass. Same-rank pairs (own[ultimate]==1): atomicAdd field[ult] += field[i];
+    // field[i] = 0. Cross-rank pairs (own[ultimate]!=1): no-op -- handled by (b).
     //
-    // STAGED per hop (snapshot -> atomic-add-from-snapshot -> zero slaves). The
-    // unstaged in-place kernel had a hop-internal read/write race for chain links
-    // k->j->i within ONE kernel launch: thread j reads field[j] while thread k
-    // atomicAdd-s into field[j]. On GPU the schedule tends to be deterministic
-    // enough that the race shows up as a FIXED defect (cube16/4-rank:
-    // [periodic-foldcount] defect=+551, max_master=13 with max group size 8).
-    // Reading the source from a hop-start snapshot makes the per-hop read/write
-    // sets independent.
-    {
-        cstone::DeviceVector<RealType> d_src(nNodes);
-        for (int hop = 0; hop < 3; ++hop)
-        {
-            thrust::copy(thrust::device_pointer_cast(d_field.data()),
-                         thrust::device_pointer_cast(d_field.data() + nNodes),
-                         thrust::device_pointer_cast(d_src.data()));
-            mars::fem::periodicPairSumStagedKernel<RealType><<<grd, blk>>>(
-                s.periodicMap->d_periodicPartnerDirect.data(),
-                d_own.data(), nNodes,
-                d_src.data(), d_field.data());
-            cudaDeviceSynchronize();
-            mars::fem::zeroSlavesOfOwnedMasterKernel<RealType><<<grd, blk>>>(
-                s.periodicMap->d_periodicPartnerDirect.data(),
-                d_own.data(), nNodes, d_field.data());
-            cudaDeviceSynchronize();
-        }
-    }
+    // This is race-free because source set (slaves: partner>=0) and destination
+    // set (terminals: partner==-1) are DISJOINT by flatten construction, so no
+    // thread reads what another thread writes. Multiple slaves at a corner
+    // chain to the same ultimate; concurrent atomicAdd handles that.
+    //
+    // Earlier attempts (3eb6dee + 70c8d36) tried a 3-hop telescoping loop on the
+    // DIRECT parent. The first version had a hop-internal read/write race
+    // (chain link j reads field[j] while link k atomicAdd-s to it). The staged
+    // variant removed that race but ZEROED the slave between hops, which dropped
+    // contributions just received from upstream chain links -> consistent
+    // under-fold at edges/corners (defect=+529, eq{4,8}={0,0}, max_master=12).
+    // The flattened-single-pass below is the original (pre-3eb6dee) algorithm
+    // and is structurally correct.
+    mars::fem::periodicPairSumKernel<RealType><<<grd, blk>>>(
+        s.periodicMap->d_periodicPartner.data(),
+        d_own.data(), nNodes, d_field.data());
+    cudaDeviceSynchronize();
 
     // (b) Cross-rank pair sum -- SUM-ONLY (broadcastBack=false). This is the
     // operator's restriction P^T: slave summed onto master, owned slave slot left

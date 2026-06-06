@@ -312,44 +312,6 @@ __global__ void periodicPairSumKernel(const int*     d_partner,
     d_field[i] = RealType(0);
 }
 
-// Staged variant: read source from d_src (a hop-start snapshot of d_field),
-// write to d_field. Eliminates the read/write race in the single-kernel
-// 3-hop loop where thread for chain-link j reads d_field[j] while thread
-// for chain-link k atomicAdds to d_field[j] (k->j->i chain). Inside ONE
-// kernel launch the source slot j is read by j's own thread while k's
-// thread is concurrently atomic-adding to it; on GPU the scheduling tends
-// to be deterministic enough that the race manifests as a FIXED miscount
-// (cube16/4-rank: defect=+551, max_master=13 >8). Staging makes hop 0
-// reads independent of hop 0 writes.
-template<typename RealType>
-__global__ void periodicPairSumStagedKernel(const int*     d_partner,
-                                            const uint8_t* d_ownership,
-                                            size_t         numNodes,
-                                            const RealType* d_src,
-                                            RealType*       d_field)
-{
-    size_t i = size_t(blockIdx.x) * blockDim.x + threadIdx.x;
-    if (i >= numNodes) return;
-    int master = d_partner[i];
-    if (master < 0) return;
-    if (d_ownership[master] != 1) return;
-    atomicAdd(&d_field[master], d_src[i]);
-}
-
-template<typename RealType>
-__global__ void zeroSlavesOfOwnedMasterKernel(const int*     d_partner,
-                                              const uint8_t* d_ownership,
-                                              size_t         numNodes,
-                                              RealType*      d_field)
-{
-    size_t i = size_t(blockIdx.x) * blockDim.x + threadIdx.x;
-    if (i >= numNodes) return;
-    int master = d_partner[i];
-    if (master < 0) return;
-    if (d_ownership[master] != 1) return;
-    d_field[i] = RealType(0);
-}
-
 template<typename RealType>
 __global__ void periodicBroadcastKernel(const int* d_partner, size_t numNodes,
                                         RealType* d_field)
@@ -740,24 +702,18 @@ void buildCrossRankPeriodicMap(const DomainT& domain,
     std::vector<int>     fallbackSlaves;
     std::vector<KeyType> fallbackMasterKeys;
 
-    // GATE on the DIRECT parent, ROUTE/KEY by the ULTIMATE master.
-    //   - Gate (own[direct]!=1): a node folds cross-rank iff its DIRECT parent is
-    //     remote. A node whose direct parent is LOCAL was already folded by the
-    //     local 3-hop stage, so it must NOT also send (else double-count).
-    //   - Route/key by the ULTIMATE master u = flattened partner: the value lands
-    //     DIRECTLY on the owned ultimate master in ONE MPI round. u is owned (never
-    //     itself a slave) by flatten construction and is delivered as a ghost here,
-    //     so ghostToPeer[u] resolves. This removes any remote->remote hop and keeps
-    //     a single P^T (SPD symmetry). The old corner-chain MPI_Abort guard (for the
-    //     flattened-only table) is unnecessary under this scheme.
+    // GATE on the ULTIMATE master, ROUTE/KEY by the ULTIMATE master. The local
+    // fold (maybePeriodicSum stage-a) runs a single pass on the FLATTENED
+    // partner and folds same-rank owned slaves (own[ult]==1) onto their
+    // ultimate. A node whose ultimate is REMOTE (own[ult]!=1) was NOT folded
+    // locally and must send cross-rank to its ultimate's owner. One MPI round,
+    // no telescoping needed on either side (flatten already collapsed chains).
     for (size_t i = 0; i < numNodes; ++i)
     {
         if (h_own[i] != 1) continue;
-        int m = h_partner[i];        // DIRECT parent -- gate
-        if (m < 0)                 continue;  // not a slave
-        if (h_own[m] == 1)         continue;  // same-rank pair (local fold handles)
-        int u = h_partnerUlt[i];     // ULTIMATE master -- route/key target
-        if (u < 0) u = m;            // 1-bit face slave: ultimate == direct
+        int u = h_partnerUlt[i];     // ULTIMATE master -- gate AND route/key
+        if (u < 0)                 continue;  // not a slave (terminal or non-pair)
+        if (h_own[u] == 1)         continue;  // same-rank: local fold handles
         KeyType masterKey = h_sfc[u];
         int peerIdx = ghostToPeer[u];
         if (peerIdx >= 0)
@@ -771,6 +727,7 @@ void buildCrossRankPeriodicMap(const DomainT& domain,
             fallbackMasterKeys.push_back(masterKey);
         }
     }
+    (void)h_partner;  // direct table no longer used for gating
 
     // STEP 2: per-rank send counts. For cstone-peer ranks: use the bucket
     // count. For fallback: broadcast count to every other rank.
