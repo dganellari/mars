@@ -68,6 +68,9 @@ def main():
                     help="threshold isovolume keeps speed > jet_frac*max (the visible jet); lower=more fluid shown")
     ap.add_argument("--color-frac", type=float, default=0.6,
                     help="color range clamped to [0, color_frac*max] so the jet stands out (not washed flat)")
+    ap.add_argument("--slice", action="store_true",
+                    help="show a cutting-plane cross-section colored by |velocity| (MRI-like; "
+                         "integration-free so it never hangs, unlike streamlines)")
     ap.add_argument("--glyphs", action="store_true",
                     help="add velocity-arrow glyphs (can crash on big tet meshes in headless PV; OFF by default)")
     ap.add_argument("--n-glyphs", type=int, default=4000, help="max velocity-arrow glyphs")
@@ -251,7 +254,25 @@ def main():
         tubes.Capping = 1
         tubes.UpdatePipeline(tvals[-1])
         flow_props.append((tubes, "speed"))
-    if not args.streamlines and not args.pathlines:
+    if args.slice and not args.streamlines and not args.pathlines:
+        # SLICE: a cutting plane through the pump colored by |velocity| -- an
+        # MRI-like cross-section of the flow. Integration-free, so it never hangs;
+        # shows the velocity field on the cut and evolves with time.
+        sl = Slice(Input=mag)
+        try:
+            sl.SliceType = "Plane"
+            sl.SliceType.Origin = [cx, cy, cz]
+            ext = [bounds[1]-bounds[0], bounds[3]-bounds[2], bounds[5]-bounds[4]]
+            # cut perpendicular to the SHORTEST extent so the slice spans the long flow axis
+            axis = ext.index(min(ext))
+            nrm = [0, 0, 0]; nrm[axis] = 1
+            sl.SliceType.Normal = nrm
+        except Exception:
+            pass
+        sl.UpdatePipeline(tvals[-1])
+        flow_props.append((sl, "speed"))
+
+    if not args.slice and not args.streamlines and not args.pathlines:
         # (1) fast-jet isovolume: keep cells where speed exceeds a fraction of the
         # peak. This is the moving jet; it must re-evaluate per timestep so it
         # grows with the flow.
