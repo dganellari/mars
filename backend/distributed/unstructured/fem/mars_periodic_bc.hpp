@@ -593,17 +593,21 @@ void buildCrossRankPeriodicMap(const DomainT& domain,
     const int    numRanks = domain.numRanks();
     const size_t numNodes = domain.getNodeCount();
 
-    // Stage to host. Use the DIRECT parent table for the cross-rank send-list
-    // classification below: with the local fold (stage a) telescoping same-rank
-    // chains hop-by-hop, an owned node folds cross-rank iff its DIRECT parent is
-    // remote, and ships to that direct parent's key -- so each owned slave folds
-    // onto its ultimate master EXACTLY once (telescoping). Using the flattened
-    // table here would mis-route a slave whose direct parent is local but whose
-    // ultimate master is remote (it was already folded locally) -> double/dropped.
-    std::vector<int>      h_partner(numNodes);
+    // Stage to host BOTH partner tables. The cross-rank send is GATED on the
+    // DIRECT parent (a node folds cross-rank iff its direct parent is remote --
+    // a node whose direct parent is LOCAL was already folded by the local 3-hop
+    // stage, so it must NOT also send), but it is ROUTED/KEYED to the ULTIMATE
+    // master (flattened). The ultimate master is owned (never itself a slave) by
+    // flatten construction and arrives as a ghost on this rank, so the slave lands
+    // DIRECTLY on its owned ultimate master in ONE MPI round -- no remote->remote
+    // hop, no iteration, single P^T (SPD symmetry preserved inside the matvec).
+    std::vector<int>      h_partner(numNodes);   // DIRECT parent (gate)
+    std::vector<int>      h_partnerUlt(numNodes); // ULTIMATE master (route/key)
     std::vector<uint8_t>  h_own(numNodes);
     std::vector<KeyType>  h_sfc(numNodes);
     cudaMemcpy(h_partner.data(), map.d_periodicPartnerDirect.data(),
+               numNodes * sizeof(int), cudaMemcpyDeviceToHost);
+    cudaMemcpy(h_partnerUlt.data(), map.d_periodicPartner.data(),
                numNodes * sizeof(int), cudaMemcpyDeviceToHost);
     {
         const auto& d_own = domain.getNodeOwnershipMap();
@@ -698,18 +702,26 @@ void buildCrossRankPeriodicMap(const DomainT& domain,
     std::vector<int>     fallbackSlaves;
     std::vector<KeyType> fallbackMasterKeys;
 
-    bool localChainTruncated = false;
+    // GATE on the DIRECT parent, ROUTE/KEY by the ULTIMATE master.
+    //   - Gate (own[direct]!=1): a node folds cross-rank iff its DIRECT parent is
+    //     remote. A node whose direct parent is LOCAL was already folded by the
+    //     local 3-hop stage, so it must NOT also send (else double-count).
+    //   - Route/key by the ULTIMATE master u = flattened partner: the value lands
+    //     DIRECTLY on the owned ultimate master in ONE MPI round. u is owned (never
+    //     itself a slave) by flatten construction and is delivered as a ghost here,
+    //     so ghostToPeer[u] resolves. This removes any remote->remote hop and keeps
+    //     a single P^T (SPD symmetry). The old corner-chain MPI_Abort guard (for the
+    //     flattened-only table) is unnecessary under this scheme.
     for (size_t i = 0; i < numNodes; ++i)
     {
         if (h_own[i] != 1) continue;
-        int m = h_partner[i];
+        int m = h_partner[i];        // DIRECT parent -- gate
         if (m < 0)                 continue;  // not a slave
-        if (h_own[m] == 1)         continue;  // same-rank pair (gated kernel handles)
-        // Detect cross-rank corner chain (flatten stopped at a remote ghost
-        // whose own partner is set on another rank).
-        if (h_partner[m] != -1)    localChainTruncated = true;
-        KeyType masterKey = h_sfc[m];
-        int peerIdx = ghostToPeer[m];
+        if (h_own[m] == 1)         continue;  // same-rank pair (local fold handles)
+        int u = h_partnerUlt[i];     // ULTIMATE master -- route/key target
+        if (u < 0) u = m;            // 1-bit face slave: ultimate == direct
+        KeyType masterKey = h_sfc[u];
+        int peerIdx = ghostToPeer[u];
         if (peerIdx >= 0)
         {
             slavesByPeer[peerIdx].push_back(int(i));
@@ -719,23 +731,6 @@ void buildCrossRankPeriodicMap(const DomainT& domain,
         {
             fallbackSlaves.push_back(int(i));
             fallbackMasterKeys.push_back(masterKey);
-        }
-    }
-
-    // Abort if any rank found a cross-rank corner chain (unsupported in v1).
-    {
-        int local = localChainTruncated ? 1 : 0;
-        int global = 0;
-        MPI_Allreduce(&local, &global, 1, MPI_INT, MPI_MAX, xr.comm_);
-        if (global != 0)
-        {
-            if (myRank == 0)
-            {
-                std::cerr << "buildCrossRankPeriodicMap: cross-rank corner-chain"
-                          << " detected (flatten stopped at a ghost whose own"
-                          << " partner is set). Unsupported in this pass.\n";
-            }
-            MPI_Abort(xr.comm_, 73);
         }
     }
 
