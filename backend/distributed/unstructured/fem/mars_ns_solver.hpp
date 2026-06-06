@@ -8588,6 +8588,14 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
             cudaDeviceSynchronize();
             return maxOwnedInteriorAbs<KeyType, RealType, ElementTag>(s, divNorm);
         };
+        // Forward halo u/v/w so opDiv's per-element scatter reads the corrector's
+        // u^{n+1} at GHOST corners, not the previous step's u^n. The corrector
+        // writes owned slots only; without this halo, owned elements touching
+        // a ghost read stale ghost values and the scatter produces wrong D.
+        // u** already has a fresh halo from upstream (predictor/diffusion).
+        s.domain.exchangeNodeHalo(s.d_u);
+        s.domain.exchangeNodeHalo(s.d_v);
+        s.domain.exchangeNodeHalo(s.d_w);
         RealType dIn  = opDiv(s.d_uStarStar, s.d_vStarStar, s.d_wStarStar);
         RealType dOut = opDiv(s.d_u,         s.d_v,         s.d_w);
 
