@@ -42,7 +42,15 @@ def main():
     ap.add_argument("--preset", default="Viridis (matplotlib)", help="color preset")
     ap.add_argument("--streamlines", action="store_true",
                     help="use StreamTracer tubes (prettier but SLOW/can hang on big tet meshes; "
-                         "default is a fast volume clip colored by |velocity|)")
+                         "default is fast jet-threshold + velocity glyphs)")
+    ap.add_argument("--jet-frac", type=float, default=0.08,
+                    help="threshold isovolume keeps speed > jet_frac*max (the visible jet); lower=more fluid shown")
+    ap.add_argument("--color-frac", type=float, default=0.6,
+                    help="color range clamped to [0, color_frac*max] so the jet stands out (not washed flat)")
+    ap.add_argument("--n-glyphs", type=int, default=4000, help="max velocity-arrow glyphs")
+    ap.add_argument("--glyph-stride", type=int, default=20, help="glyph subsample stride (Every Nth Point)")
+    ap.add_argument("--show-surface", dest="show_surface", action="store_true", default=True,
+                    help="show translucent geometry shell (default on)")
     args = ap.parse_args()
 
     if not os.path.exists(args.pvd):
@@ -115,10 +123,18 @@ def main():
         pass
 
     # ---- flow visualization ----
-    # DEFAULT (fast, robust): a CLIP through the volume colored by |velocity| --
-    # shows the inlet->outlet jet without the GPU StreamTracer (which hangs on
-    # large tet meshes in headless ParaView). Streamlines are opt-in via
-    # --streamlines (slow but prettier).
+    # The pump is a small jet into a big mostly-stagnant chamber: a plain clip is
+    # ~all one color (most fluid is slow). To SHOW THE FLOW we combine, by default:
+    #   (1) a THRESHOLD isovolume of the fast-moving fluid (speed > frac*max) --
+    #       this is literally "where the jet is", and it GROWS over time as the jet
+    #       penetrates, so the animation shows flow developing;
+    #   (2) velocity GLYPHS (arrows) sampled through the volume, colored by speed,
+    #       showing direction + magnitude (the actual flow vectors).
+    # Color is clamped to a meaningful band (not [0,max]) so slow fluid isn't flat.
+    # --streamlines switches to StreamTracer tubes (prettier, but can hang on big
+    # tet meshes in headless ParaView -- run it on a GPU compute node).
+    flow_props = []  # (proxy, colorByName) to Show
+
     if args.streamlines:
         stream = StreamTracer(Input=mag, SeedType="Point Cloud")
         stream.Vectors = ["POINTS", args.field]
@@ -136,29 +152,68 @@ def main():
         tubes.Radius = diag * 0.0016
         tubes.Capping = 1
         tubes.UpdatePipeline(tvals[-1])
-        flow = tubes
+        flow_props.append((tubes, "speed"))
     else:
-        # Clip the volume in half along the dominant flow axis so the interior
-        # jet is visible; color the cut volume by |velocity|.
-        clip = Clip(Input=mag)
+        # (1) fast-jet isovolume: keep cells where speed exceeds a fraction of the
+        # peak. This is the moving jet; it must re-evaluate per timestep so it
+        # grows with the flow.
+        thr = Threshold(Input=mag)
+        thr.Scalars = ["POINTS", "speed"]
+        lo = max(args.jet_frac * smax, 1e-12)
+        for setter in ("LowerThreshold", "UpperThreshold"):
+            try:
+                setattr(thr, setter, lo if setter == "LowerThreshold" else smax * 1.05)
+            except Exception:
+                pass
+        # ParaView >= 5.10 uses a single ThresholdMethod/range; guard both APIs
         try:
-            clip.ClipType = "Plane"
-            clip.ClipType.Origin = [cx, cy, cz]
-            # cut perpendicular to the largest extent (the flow usually runs along it)
-            ext = [bounds[1]-bounds[0], bounds[3]-bounds[2], bounds[5]-bounds[4]]
-            axis = ext.index(max(ext))
-            nrm = [0, 0, 0]; nrm[axis] = 1
-            clip.ClipType.Normal = nrm
+            thr.ThresholdMethod = "Above Lower Threshold"
         except Exception:
             pass
-        clip.UpdatePipeline(tvals[-1])
-        flow = clip
+        thr.UpdatePipeline(tvals[-1])
+        flow_props.append((thr, "speed"))
 
-    sdisp = Show(flow, view)
-    sdisp.Representation = "Surface"
-    ColorBy(sdisp, ("POINTS", "speed"))
-    sdisp.Specular = 0.4
-    sdisp.SetScalarBarVisibility(view, True)
+        # (2) velocity glyphs through the volume (downsampled for speed)
+        glyph = Glyph(Input=mag, GlyphType="Arrow")
+        glyph.OrientationArray = ["POINTS", args.field]
+        glyph.ScaleArray = ["POINTS", "speed"]
+        try:
+            glyph.ScaleFactor = diag * 0.04
+        except Exception:
+            pass
+        for mode in ("Uniform Spatial Distribution", "Every Nth Point"):
+            try:
+                glyph.GlyphMode = mode
+                break
+            except Exception:
+                continue
+        try:
+            glyph.MaximumNumberOfSamplePoints = args.n_glyphs
+        except Exception:
+            pass
+        try:
+            glyph.Stride = max(1, args.glyph_stride)
+        except Exception:
+            pass
+        glyph.UpdatePipeline(tvals[-1])
+        flow_props.append((glyph, "speed"))
+
+    # clamp color to a readable band: [0, jet_color_frac*max] so the jet stands out
+    cmax = max(args.color_frac * smax, smin + 1e-9)
+    lut.RescaleTransferFunction(smin, cmax)
+
+    sdisp = None
+    for proxy, cname in flow_props:
+        d = Show(proxy, view)
+        d.Representation = "Surface"
+        try:
+            ColorBy(d, ("POINTS", cname))
+        except Exception:
+            pass
+        d.Specular = 0.3
+        sdisp = d
+    if sdisp is not None:
+        sdisp.SetScalarBarVisibility(view, True)
 
     bar = GetScalarBar(lut, view)
     bar.Title = "|velocity|"
