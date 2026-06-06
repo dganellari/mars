@@ -5266,7 +5266,8 @@ void applyDDTPerNode(NSStepper<KeyType, RealType, ElementTag>& s,
     {
         int blk = 256, grd = int((s.nodeCount + blk - 1) / blk);
         mars::fem::periodicFoldToMasterKernel<RealType><<<grd, blk>>>(
-            s.periodicMap->d_periodicPartner.data(), s.nodeCount, outAcc.data());
+            s.periodicMap->d_periodicPartner.data(),
+            d_nodeOwnership.data(), s.nodeCount, outAcc.data());
         cudaDeviceSynchronize();
     }
     s.domain.reverseExchangeNodeHaloAdd(outAcc);
@@ -7339,7 +7340,8 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
         {
             int blk = 256, grd = int((s.nodeCount + blk - 1) / blk);
             mars::fem::periodicFoldToMasterKernel<RealType><<<grd, blk>>>(
-                s.periodicMap->d_periodicPartner.data(), s.nodeCount, d_divAccNode.data());
+                s.periodicMap->d_periodicPartner.data(),
+                s.ownershipMap().data(), s.nodeCount, d_divAccNode.data());
             cudaDeviceSynchronize();
             s.domain.reverseExchangeNodeHaloAdd(d_divAccNode);
         }

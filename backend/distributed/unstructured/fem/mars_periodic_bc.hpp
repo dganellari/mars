@@ -333,20 +333,29 @@ __global__ void periodicBroadcastKernel(const int* d_partner, size_t numNodes,
     d_field[i] = d_field[master];
 }
 
-// Exact TRANSPOSE of periodicBroadcastKernel: for every slave (partner>=0),
-// field[partner] += field[slave]; field[slave] = 0. NO ownership gate -- the
-// partner may be a master GHOST (cross-rank), and we WANT the contribution to
-// land on that ghost slot so a subsequent reverseExchangeNodeHaloAdd carries it
-// to the master's owner. This is the restriction half-leg whose adjoint is the
-// master->slave broadcast: (broadcast)^T = this fold. Used by the reduced-DOF
-// P^T A P operator (applyDDTReduced) to keep A symmetric across the periodic
-// seam. atomicAdd because several slaves can map to one master at a corner.
+// Exact TRANSPOSE of periodicBroadcastKernel: for every OWNED slave,
+// field[partner] += field[slave]; field[slave] = 0. partner may be a master
+// GHOST (cross-rank), and the contribution lands in that ghost slot so a
+// subsequent reverseExchangeNodeHaloAdd carries it to the master's owner.
+// Used by the reduced-DOF P^T A P operator (applyDDTReduced) to keep A
+// symmetric across the periodic seam.
+//
+// SLAVE-OWNED gate: without it, a rank that owns the master ALSO folds its
+// ghost copy of the slave's value into the master (atomicAdd on ghost->owned)
+// while the slave-owner rank simultaneously folds owned-slave->master-ghost
+// and reverseExchangeNodeHaloAdd ships that to the master-owner -> master
+// receives the contribution TWICE. The gate makes this kernel a pure
+// slave-side restriction; the master-owner rank's atomicAdd path is the
+// reverseExchange (the cstone-ghost mechanism).
 template<typename RealType>
-__global__ void periodicFoldToMasterKernel(const int* d_partner, size_t numNodes,
+__global__ void periodicFoldToMasterKernel(const int* d_partner,
+                                           const uint8_t* d_ownership,
+                                           size_t numNodes,
                                            RealType* d_field)
 {
     size_t i = size_t(blockIdx.x) * blockDim.x + threadIdx.x;
     if (i >= numNodes) return;
+    if (d_ownership[i] != 1) return;
     int master = d_partner[i];
     if (master < 0) return;
     atomicAdd(&d_field[master], d_field[i]);
