@@ -2945,31 +2945,34 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
         MPI_Allreduce(&lxmin, &xmin, 1, mt2, MPI_MIN, MPI_COMM_WORLD);
         MPI_Allreduce(&lxmax, &xmax, 1, mt2, MPI_MAX, MPI_COMM_WORLD);
         const RealType seamEps = RealType(1e-4) * (xmax - xmin);
-        auto sideSum = [=] __device__ (size_t e) -> thrust::tuple<RealType,RealType> {
+        // Two separate scalar reductions (one per seam side) -- thrust can't
+        // deduce tuple-return-type from a __device__ lambda without
+        // proclaim_return_type, and two reductions is simpler.
+        auto sideAccPicker = [=] __device__ (size_t e, int wantSide) -> RealType {
             KeyType n[8] = {c0p[e],c1p[e],c2p[e],c3p[e],c4p[e],c5p[e],c6p[e],c7p[e]};
             RealType cmn = xp[n[0]], cmx = xp[n[0]];
             for (int i = 1; i < 8; ++i) { RealType v = xp[n[i]]; if (v<cmn) cmn=v; if (v>cmx) cmx=v; }
             int side = (cmn < xmin + seamEps) ? 1 : ((cmx > xmax - seamEps) ? 2 : 0);
-            if (side == 0) return thrust::make_tuple(RealType(0), RealType(0));
+            if (side != wantSide) return RealType(0);
             RealType acc = RealType(0);
             const size_t base = e * NSCS;
             for (int f = 0; f < NSCS; ++f) {
                 RealType X = axp[base+f], Y = ayp[base+f], Z = azp[base+f];
                 if (X*X > Y*Y + Z*Z) acc += X;
             }
-            return (side == 1) ? thrust::make_tuple(acc, RealType(0))
-                               : thrust::make_tuple(RealType(0), acc);
+            return acc;
         };
-        auto tupAdd = [] __device__ (thrust::tuple<RealType,RealType> a,
-                                     thrust::tuple<RealType,RealType> b) {
-            return thrust::make_tuple(thrust::get<0>(a)+thrust::get<0>(b),
-                                      thrust::get<1>(a)+thrust::get<1>(b));
-        };
-        auto loc = thrust::transform_reduce(thrust::device,
-                       thrust::counting_iterator<size_t>(startE),
-                       thrust::counting_iterator<size_t>(endE),
-                       sideSum, thrust::make_tuple(RealType(0), RealType(0)), tupAdd);
-        RealType lpair[2] = { thrust::get<0>(loc), thrust::get<1>(loc) };
+        auto pickMaster = [=] __device__ (size_t e) -> RealType { return sideAccPicker(e, 1); };
+        auto pickSlave  = [=] __device__ (size_t e) -> RealType { return sideAccPicker(e, 2); };
+        RealType locM = thrust::transform_reduce(thrust::device,
+                          thrust::counting_iterator<size_t>(startE),
+                          thrust::counting_iterator<size_t>(endE),
+                          pickMaster, RealType(0), thrust::plus<RealType>());
+        RealType locS = thrust::transform_reduce(thrust::device,
+                          thrust::counting_iterator<size_t>(startE),
+                          thrust::counting_iterator<size_t>(endE),
+                          pickSlave, RealType(0), thrust::plus<RealType>());
+        RealType lpair[2] = { locM, locS };
         RealType gpair[2] = { RealType(0), RealType(0) };
         MPI_Allreduce(lpair, gpair, 2, mt2, MPI_SUM, MPI_COMM_WORLD);
         if (s.rank == 0) {
@@ -8161,22 +8164,27 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
                     const size_t nN = s.nodeCount;
                     auto begIt = thrust::counting_iterator<size_t>(0);
                     auto endIt = thrust::counting_iterator<size_t>(nN);
-                    auto local = thrust::transform_reduce(thrust::device, begIt, endIt,
-                        [dp, dOwn, dPhi, nN] __device__ (size_t i) -> thrust::pair<double,double> {
-                            int j = dp[i];
-                            if (j < 0 || j >= int(nN)) return thrust::make_pair(0.0, 0.0);
-                            double d = double(dPhi[i]) - double(dPhi[j]);
-                            if (d < 0) d = -d;
-                            bool xr = (dOwn[i] != dOwn[j]);
-                            return xr ? thrust::make_pair(d, 0.0)
-                                      : thrust::make_pair(0.0, d);
-                        },
-                        thrust::make_pair(0.0, 0.0),
-                        [] __device__ (thrust::pair<double,double> a, thrust::pair<double,double> b) {
-                            return thrust::make_pair(a.first  > b.first  ? a.first  : b.first,
-                                                     a.second > b.second ? a.second : b.second);
-                        });
-                    double loc[2] = {local.first, local.second};
+                    auto pickXr = [dp, dOwn, dPhi, nN] __device__ (size_t i) -> double {
+                        int j = dp[i];
+                        if (j < 0 || j >= int(nN)) return 0.0;
+                        bool xr = (dOwn[i] != dOwn[j]);
+                        if (!xr) return 0.0;
+                        double d = double(dPhi[i]) - double(dPhi[j]);
+                        return d < 0 ? -d : d;
+                    };
+                    auto pickSr = [dp, dOwn, dPhi, nN] __device__ (size_t i) -> double {
+                        int j = dp[i];
+                        if (j < 0 || j >= int(nN)) return 0.0;
+                        bool xr = (dOwn[i] != dOwn[j]);
+                        if (xr) return 0.0;
+                        double d = double(dPhi[i]) - double(dPhi[j]);
+                        return d < 0 ? -d : d;
+                    };
+                    double locXr = thrust::transform_reduce(thrust::device, begIt, endIt,
+                        pickXr, 0.0, thrust::maximum<double>());
+                    double locSr = thrust::transform_reduce(thrust::device, begIt, endIt,
+                        pickSr, 0.0, thrust::maximum<double>());
+                    double loc[2] = {locXr, locSr};
                     double glb[2] = {0.0, 0.0};
                     MPI_Allreduce(loc, glb, 2, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
                     if (s.rank == 0) {
