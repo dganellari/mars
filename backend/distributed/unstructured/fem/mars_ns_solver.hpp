@@ -2913,6 +2913,74 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
         }
     }
 
+    // MARS_PERIODIC_SEAMAX_PROBE: inter-element seam mirror-orientation falsifier.
+    // For triperiodic cube the seam at x=xmin (master side) and x=xmax (slave
+    // side) must have mirror-oriented SCS area vectors: master-side x-dominant
+    // SCS faces point +x (A.x>0), slave-side x-dominant SCS faces point -x
+    // (A.x<0). Sum the SIGNED A.x over x-dominant SCS faces of every owned hex
+    // whose bbox-touch is xmin (-> master accumulator) or xmax (-> slave
+    // accumulator). The intra-element closure check above is silent on this;
+    // this probe is the inter-element discriminator. Hex-only; Periodic-only;
+    // one-shot at setup; off by default; pump path never reaches.
+    if constexpr (std::is_same_v<ElementTag, HexTag>)
+    if (s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Periodic
+        && s.periodicMap != nullptr
+        && std::getenv("MARS_PERIODIC_SEAMAX_PROBE") != nullptr)
+    {
+        constexpr int NSCS = ElemTraits<ElementTag>::ScsPerElem;
+        const size_t startE = s.domain.startIndex();
+        const size_t endE   = s.domain.endIndex();
+        const RealType* axp = s.d_areaVec_x.data();
+        const RealType* ayp = s.d_areaVec_y.data();
+        const RealType* azp = s.d_areaVec_z.data();
+        const RealType* xp  = d_x.data();
+        const KeyType* c0p = std::get<0>(d_conn).data(); const KeyType* c1p = std::get<1>(d_conn).data();
+        const KeyType* c2p = std::get<2>(d_conn).data(); const KeyType* c3p = std::get<3>(d_conn).data();
+        const KeyType* c4p = std::get<4>(d_conn).data(); const KeyType* c5p = std::get<5>(d_conn).data();
+        const KeyType* c6p = std::get<6>(d_conn).data(); const KeyType* c7p = std::get<7>(d_conn).data();
+        RealType lxmin = thrust::reduce(thrust::device, xp, xp + s.nodeCount, RealType( 1e30), thrust::minimum<RealType>());
+        RealType lxmax = thrust::reduce(thrust::device, xp, xp + s.nodeCount, RealType(-1e30), thrust::maximum<RealType>());
+        RealType xmin = 0, xmax = 0;
+        MPI_Datatype mt2 = std::is_same<RealType,double>::value ? MPI_DOUBLE : MPI_FLOAT;
+        MPI_Allreduce(&lxmin, &xmin, 1, mt2, MPI_MIN, MPI_COMM_WORLD);
+        MPI_Allreduce(&lxmax, &xmax, 1, mt2, MPI_MAX, MPI_COMM_WORLD);
+        const RealType seamEps = RealType(1e-4) * (xmax - xmin);
+        auto sideSum = [=] __device__ (size_t e) -> thrust::tuple<RealType,RealType> {
+            KeyType n[8] = {c0p[e],c1p[e],c2p[e],c3p[e],c4p[e],c5p[e],c6p[e],c7p[e]};
+            RealType cmn = xp[n[0]], cmx = xp[n[0]];
+            for (int i = 1; i < 8; ++i) { RealType v = xp[n[i]]; if (v<cmn) cmn=v; if (v>cmx) cmx=v; }
+            int side = (cmn < xmin + seamEps) ? 1 : ((cmx > xmax - seamEps) ? 2 : 0);
+            if (side == 0) return thrust::make_tuple(RealType(0), RealType(0));
+            RealType acc = RealType(0);
+            const size_t base = e * NSCS;
+            for (int f = 0; f < NSCS; ++f) {
+                RealType X = axp[base+f], Y = ayp[base+f], Z = azp[base+f];
+                if (X*X > Y*Y + Z*Z) acc += X;
+            }
+            return (side == 1) ? thrust::make_tuple(acc, RealType(0))
+                               : thrust::make_tuple(RealType(0), acc);
+        };
+        auto tupAdd = [] __device__ (thrust::tuple<RealType,RealType> a,
+                                     thrust::tuple<RealType,RealType> b) {
+            return thrust::make_tuple(thrust::get<0>(a)+thrust::get<0>(b),
+                                      thrust::get<1>(a)+thrust::get<1>(b));
+        };
+        auto loc = thrust::transform_reduce(thrust::device,
+                       thrust::counting_iterator<size_t>(startE),
+                       thrust::counting_iterator<size_t>(endE),
+                       sideSum, thrust::make_tuple(RealType(0), RealType(0)), tupAdd);
+        RealType lpair[2] = { thrust::get<0>(loc), thrust::get<1>(loc) };
+        RealType gpair[2] = { RealType(0), RealType(0) };
+        MPI_Allreduce(lpair, gpair, 2, mt2, MPI_SUM, MPI_COMM_WORLD);
+        if (s.rank == 0) {
+            RealType M = gpair[0], S = gpair[1];
+            double ratio = (std::fabs((double)M) > 1e-30) ? double(S)/double(M) : 0.0;
+            std::cout << "  [seamax-probe] sum-x-dom-Ax  master(x=xmin)=" << M
+                      << "  slave(x=xmax)=" << S << "  ratio=S/M=" << ratio
+                      << "   (~ -1 => correct mirror; ~ +1 => SEAM SIGN FLIP)\n";
+        }
+    }
+
     // Velocity matrix: nu * K assembled first (then we add M/dt and apply BC).
     assembleLaplacian<KeyType, RealType, ElementTag>(s, s.d_node_to_dof, s.d_valuesVel, kernelVariant);
     // The Laplacian above was assembled with gamma=1 -> raw K. Scale by nu for
@@ -3120,6 +3188,56 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
             // Re-sync ghost slots: a cross-rank master-ghost slave just got the
             // master value; keep ghost copies consistent for the assembler.
             s.domain.exchangeNodeHalo(s.d_massNode);
+
+            // CROSS_RANK_SLAVE_MASS_ZERO_PROBE
+            // Count owned periodic slaves with partner==-1 (no local master)
+            // AND mass==0 after the broadcast: those are cross-rank slaves the
+            // mirror could not reach. One Allreduce, rank-0 prints a tuple.
+            // Hex+Periodic+env-gated -- tet/pump never reach this branch.
+            if constexpr (std::is_same_v<ElementTag, HexTag>) {
+                if (std::getenv("MARS_XRANK_SLAVE_MASS_PROBE") != nullptr) {
+                    const uint8_t* ownPtr   = d_nodeOwnership.data();
+                    const uint8_t* maskPtr  = s.periodicMap->d_periodicMask.data();
+                    const int*     partPtr  = s.periodicMap->d_periodicPartner.data();
+                    const RealType* mPtr    = s.d_massNode.data();
+                    const size_t nN = s.nodeCount;
+                    long long localZeroSlaves = thrust::transform_reduce(thrust::device,
+                        thrust::counting_iterator<size_t>(0),
+                        thrust::counting_iterator<size_t>(nN),
+                        [ownPtr, maskPtr, partPtr, mPtr] __device__ (size_t i) -> long long {
+                            if (ownPtr[i] != 1) return 0;
+                            if (maskPtr[i] == 0) return 0;
+                            if (partPtr[i] >= 0) return 0;
+                            return (double(mPtr[i]) < 1e-30) ? 1 : 0;
+                        }, (long long)0, thrust::plus<long long>());
+                    double localMaxMirroredMass = thrust::transform_reduce(thrust::device,
+                        thrust::counting_iterator<size_t>(0),
+                        thrust::counting_iterator<size_t>(nN),
+                        [ownPtr, maskPtr, partPtr, mPtr] __device__ (size_t i) -> double {
+                            if (ownPtr[i] != 1 || maskPtr[i] == 0 || partPtr[i] < 0) return 0.0;
+                            return double(mPtr[i]);
+                        }, 0.0, thrust::maximum<double>());
+                    long long localOwnedSlaves = thrust::transform_reduce(thrust::device,
+                        thrust::counting_iterator<size_t>(0),
+                        thrust::counting_iterator<size_t>(nN),
+                        [ownPtr, maskPtr] __device__ (size_t i) -> long long {
+                            return (ownPtr[i] == 1 && maskPtr[i] != 0) ? 1 : 0;
+                        }, (long long)0, thrust::plus<long long>());
+                    long long gZeroSlaves = 0, gOwnedSlaves = 0;
+                    double gMaxMirroredMass = 0.0;
+                    MPI_Allreduce(&localZeroSlaves, &gZeroSlaves, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+                    MPI_Allreduce(&localMaxMirroredMass, &gMaxMirroredMass, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+                    MPI_Allreduce(&localOwnedSlaves, &gOwnedSlaves, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+                    if (s.rank == 0) {
+                        std::cout << "  [XRANK-SLAVE-MASS] numCrossRankSlavesWithZeroMass="
+                                  << gZeroSlaves
+                                  << "  totalOwnedSlavesGlobal=" << gOwnedSlaves
+                                  << "  maxMassOnPartneredOwnedSlave=" << std::scientific
+                                  << std::setprecision(6) << gMaxMirroredMass << std::defaultfloat
+                                  << "\n";
+                    }
+                }
+            }
         }
 
         // DIAGNOSTIC: total control volume = sum of OWNED-node lumped mass over
@@ -8028,6 +8146,47 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
             // reduced operator exactly: NO maybePeriodicSum, NO gradPhi
             // master->slave broadcast. Always divT here (DDT is the only
             // pressure mode on this route).
+
+            // MARS_PHI_SEAM_PROBE: at corrector entry to D^T, measure
+            // |phi[i] - phi[partner[i]]| split by cross-rank vs same-rank pair.
+            // xr_max > 1e-6 => phi prolongation broken at cross-rank slaves.
+            if constexpr (std::is_same_v<ElementTag, HexTag>) {
+                if (s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Periodic
+                    && s.periodicMap
+                    && std::getenv("MARS_PHI_SEAM_PROBE") != nullptr)
+                {
+                    const int* dp = s.periodicMap->d_periodicPartner.data();
+                    const uint8_t* dOwn = d_nodeOwnership.data();
+                    const RealType* dPhi = s.d_phi.data();
+                    const size_t nN = s.nodeCount;
+                    auto begIt = thrust::counting_iterator<size_t>(0);
+                    auto endIt = thrust::counting_iterator<size_t>(nN);
+                    auto local = thrust::transform_reduce(thrust::device, begIt, endIt,
+                        [dp, dOwn, dPhi, nN] __device__ (size_t i) -> thrust::pair<double,double> {
+                            int j = dp[i];
+                            if (j < 0 || j >= int(nN)) return thrust::make_pair(0.0, 0.0);
+                            double d = double(dPhi[i]) - double(dPhi[j]);
+                            if (d < 0) d = -d;
+                            bool xr = (dOwn[i] != dOwn[j]);
+                            return xr ? thrust::make_pair(d, 0.0)
+                                      : thrust::make_pair(0.0, d);
+                        },
+                        thrust::make_pair(0.0, 0.0),
+                        [] __device__ (thrust::pair<double,double> a, thrust::pair<double,double> b) {
+                            return thrust::make_pair(a.first  > b.first  ? a.first  : b.first,
+                                                     a.second > b.second ? a.second : b.second);
+                        });
+                    double loc[2] = {local.first, local.second};
+                    double glb[2] = {0.0, 0.0};
+                    MPI_Allreduce(loc, glb, 2, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+                    if (s.rank == 0) {
+                        std::cout << "  [MARS_PHI_SEAM_PROBE]"
+                                  << " xr_max_|phi[s]-phi[m]|=" << glb[0]
+                                  << " sr_max_|phi[s]-phi[m]|=" << glb[1] << "\n";
+                    }
+                }
+            }
+
             if (eBlocks > 0)
             {
                 applyDivTransposePerNodeKernel<KeyType, RealType, ElementTag><<<eBlocks, s.blockSize>>>(
@@ -8065,6 +8224,65 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
             s.domain.exchangeNodeHalo(s.d_gradPhix);
             s.domain.exchangeNodeHalo(s.d_gradPhiy);
             s.domain.exchangeNodeHalo(s.d_gradPhiz);
+
+            // MARS_GRADSLOT_PROBE: over owned CROSS-rank periodic slaves
+            // (partner ghost on a different rank), compare gradPhi at slave slot
+            // S vs gradPhi at master ghost partner[S]. The reduced-periodic
+            // corrector path does NOT broadcast master->slave on gradPhi; if
+            // slot-S grad already equals master-ghost grad, broadcast would be
+            // a no-op (slot-grad hypothesis falsified). Hex+Periodic+env-gated.
+            if constexpr (std::is_same_v<ElementTag, HexTag>) {
+                if (s.periodicMap
+                    && std::getenv("MARS_GRADSLOT_PROBE") != nullptr) {
+                    const RealType* gxP = s.d_gradPhix.data();
+                    const RealType* gyP = s.d_gradPhiy.data();
+                    const RealType* gzP = s.d_gradPhiz.data();
+                    const int* partnerP = s.periodicMap->d_periodicPartner.data();
+                    const uint8_t* ownP = d_nodeOwnership.data();
+                    const size_t N = s.nodeCount;
+                    auto relK = [gxP,gyP,gzP,partnerP,ownP] __device__ (size_t i) -> RealType {
+                        if (ownP[i] != 1) return RealType(0);
+                        int m = partnerP[i];
+                        if (m < 0) return RealType(0);
+                        if (ownP[m] == 1) return RealType(0); // same-rank: skip
+                        RealType dx = gxP[i]-gxP[m], dy = gyP[i]-gyP[m], dz = gzP[i]-gzP[m];
+                        RealType nd = sqrt(dx*dx + dy*dy + dz*dz);
+                        RealType nS = sqrt(gxP[i]*gxP[i] + gyP[i]*gyP[i] + gzP[i]*gzP[i]);
+                        RealType nM = sqrt(gxP[m]*gxP[m] + gyP[m]*gyP[m] + gzP[m]*gzP[m]);
+                        RealType den = nS > nM ? nS : nM;
+                        if (den < RealType(1e-30)) return RealType(0);
+                        return nd / den;
+                    };
+                    auto absSk = [gxP,gyP,gzP,partnerP,ownP] __device__ (size_t i) -> RealType {
+                        if (ownP[i] != 1) return RealType(0);
+                        int m = partnerP[i]; if (m < 0 || ownP[m] == 1) return RealType(0);
+                        return sqrt(gxP[i]*gxP[i]+gyP[i]*gyP[i]+gzP[i]*gzP[i]);
+                    };
+                    auto absDk = [gxP,gyP,gzP,partnerP,ownP] __device__ (size_t i) -> RealType {
+                        if (ownP[i] != 1) return RealType(0);
+                        int m = partnerP[i]; if (m < 0 || ownP[m] == 1) return RealType(0);
+                        RealType dx = gxP[i]-gxP[m], dy = gyP[i]-gyP[m], dz = gzP[i]-gzP[m];
+                        return sqrt(dx*dx+dy*dy+dz*dz);
+                    };
+                    auto cit0 = thrust::counting_iterator<size_t>(0);
+                    auto citN = thrust::counting_iterator<size_t>(N);
+                    RealType locMaxRel = thrust::transform_reduce(thrust::device, cit0, citN,
+                        relK, RealType(0), thrust::maximum<RealType>());
+                    RealType locAbsS = thrust::transform_reduce(thrust::device, cit0, citN,
+                        absSk, RealType(0), thrust::maximum<RealType>());
+                    RealType locAbsD = thrust::transform_reduce(thrust::device, cit0, citN,
+                        absDk, RealType(0), thrust::maximum<RealType>());
+                    RealType loc[3] = {locMaxRel, locAbsD, locAbsS}, glb[3] = {0,0,0};
+                    auto mt3 = std::is_same_v<RealType, double> ? MPI_DOUBLE : MPI_FLOAT;
+                    MPI_Allreduce(loc, glb, 3, mt3, MPI_MAX, MPI_COMM_WORLD);
+                    if (s.rank == 0)
+                        std::cout << "  [PROJ-GRADSLOT] maxRel|gS-gM|/max(|gS|,|gM|)=" << glb[0]
+                                  << "  max|gS-gM|=" << glb[1]
+                                  << "  max|gS|=" << glb[2]
+                                  << "  (owned cross-rank periodic slaves)" << std::endl;
+                }
+            }
+
             // applyDivTransposePerNodeKernel integrates to -V*grad, so
             // M^-1 D^T phi = -grad; the corrector kernel wants +grad. Flip sign.
             negateThreeOwnedKernel<RealType><<<nodeBlocks, s.blockSize>>>(
