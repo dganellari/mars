@@ -27,6 +27,36 @@ bugs were found and fixed, each grounded in a confirmed code defect (not guesses
    so each slave lands directly on its owned ultimate master in ONE round. This also fixed a LATENT
    SILENT-DROP the abort had masked. Independently confirmed correct by workflow (high confidence).
 
+## LATEST RUN RESULT (2026-06-06, e8b0c3a built) — fix is CLOSE but NOT done: a DOUBLE-FOLD remains
+
+The 1-step MARS_PERIODIC_FOLDCOUNT run printed:
+```
+[periodic-foldcount] global_master_sum=5464 expected(owned_nodes)=4913 defect=551 max_master=13 nonzero_slave_residual=0
+```
+GOOD NEWS: no MPI_Abort (the e8b0c3a cross-rank routing fix worked), numOwnedDofs=4096 still correct,
+nonzero_slave_residual=0 (every slave slot was zeroed -> nothing DROPPED). The single step ran:
+[div-global] signed_sum=-2e-15 (rank-invariant, ~0 -- GOOD), but div_max=0.94 after one corrector
+(div-split ratio 784 -- still a big seam divergence).
+
+THE REMAINING BUG: defect = +551 (POSITIVE) and max_master=13. A telescoping fold gives each ultimate
+master EXACTLY its group_size and max_master <= 8 (a cube corner has 8 images). max_master=13 > 8 and
+positive defect => some masters are DOUBLE-COUNTED (a node's contribution lands on a master MORE than
+once). residual=0 rules out DROPPED; this is pure OVER-accumulation.
+
+LIKELY CAUSE (task #1 for next session): the LOCAL 3-hop fold (maybePeriodicSum stage-a,
+periodicPairSumKernel x3 on d_periodicPartnerDirect) and the CROSS-RANK send (stage-b, gate on direct
+parent, route to ultimate master) are NOT mutually exclusive for some edge/corner node -> it is folded
+locally AND sent cross-rank, OR the 3-hop loop folds a node onto an intermediate that ALSO receives it
+via another hop. Note: the local fold ZEROES the slave after folding, so a node folded locally then
+"sent" cross-rank would send 0 (harmless) -- UNLESS the send reads a slot the local fold did NOT zero
+(because stage-a's gate own[directParent]==1 skipped it, but stage-b's gate own[directParent]!=1 ALSO
+skipped it -> neither, OR a different node double-routes). The +551 and max_master=13 are a FIXED,
+reproducible miscount -> use MARS_PERIODIC_FOLDCOUNT to drive it to defect=0.
+DEBUG PLAN: instrument WHICH nodes have field>group_size after the fold (dump their mask popcount +
+direct vs ultimate partner) to see if it's edge (2-bit), corner (3-bit), or the same-rank vs cross-rank
+boundary. The defect 551 ~ the count of multi-bit seam nodes double-counted. Fix the stage-a/stage-b
+partition so each owned slave's contribution reaches its ultimate master EXACTLY once.
+
 ## THE ONE THING TO DO FIRST: verify the fix (it has NOT been run yet)
 
 The last code change (`e8b0c3a`) is committed + rsync'd to Alps but the user has NOT run it. Rebuild
