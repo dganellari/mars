@@ -8271,17 +8271,30 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
                               << "  gAccM=(" << h_gM[0] << "," << h_gM[1] << "," << h_gM[2] << ")" << std::endl;
                 }
             }
-            // BARE sequence (no maybePeriodicSum, no g-broadcasts): byte-for-byte
-            // mirror of applyDDTPerNode(applyPeriodic=false, reducedPeriodicFold=
-            // true) -- the operator the pressure CG inverted. SYMPROBE confirms
-            // that bare operator is self-adjoint to roundoff; adding maybePeriodic
-            // Sum + master->slave broadcasts here makes the corrector's M^-1 D^T
-            // DIFFERENT from the operator's M^-1 D^T (operator gates those off on
-            // the reduced path because they break adjointness). Earlier 75b454a
-            // added them with the OPPOSITE intent and PROJ-P3 climbs 0.8 -> 1.04
-            // every step (projection never closes). Removing them aligns
-            // corrector's D^T with operator's D^T exactly -> PROJ-P3 -> ~0 ->
-            // div(u^{n+1}) stays bounded -> simulation survives.
+            // MARS_CORR_FOLD_G=1 (default OFF): pre-normalize fold of unnormalized
+            // gAcc[slave] onto gAcc[master], then broadcast the merged value back
+            // master->slave after normalize. Probe data (GRADTRACE+GRADDUMP) shows
+            // gAcc at slot S = slave-side unnormalized contribution only; gAcc at
+            // slot M = master-side unnormalized contribution only. m_M = m_S =
+            // m_merged after seam mass mirror. Without fold, gradPhi[M] =
+            // master-side-unnormalized / m_merged ≈ half the physical gradient,
+            // same for slot S. Folding gives gradPhi = (g_M + g_S) / m_merged at
+            // both slots = full physical gradient. The corrector then subtracts
+            // the full gradient at both M and S. This DIFFERS from the bare
+            // operator (NS:5234-5242 normalizes without fold) -- if SYMPROBE
+            // still rel=0, the operator's A_red did not include the fold either
+            // and the projection identity required the corrector to subtract the
+            // per-slot HALF gradients, not the full one. If PROJ-P3 closes, the
+            // operator's effective A_red treats the seam pair as merged-CV and
+            // the corrector must too.
+            const char* corrFoldGEnv = std::getenv("MARS_CORR_FOLD_G");
+            const bool  corrFoldG    = (corrFoldGEnv && std::string(corrFoldGEnv) != "0");
+            if (corrFoldG && s.periodicMap)
+            {
+                maybePeriodicSum<KeyType, RealType, ElementTag>(s, d_gxAcc);
+                maybePeriodicSum<KeyType, RealType, ElementTag>(s, d_gyAcc);
+                maybePeriodicSum<KeyType, RealType, ElementTag>(s, d_gzAcc);
+            }
             // Step b: g <- M^-1 g (per-node mass).
             normalizeGradientPerNodeKernel<RealType><<<nodeBlocks, s.blockSize>>>(
                 d_gxAcc.data(), d_gyAcc.data(), d_gzAcc.data(),
@@ -8290,7 +8303,29 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
                 s.d_gradPhix.data(), s.d_gradPhiy.data(), s.d_gradPhiz.data(),
                 s.nodeCount);
             cudaDeviceSynchronize();
-            // Forward halo only (matches operator's post-normalize halo on g).
+            // MARS_CORR_FOLD_G=1: after normalize, broadcast master->slave so
+            // both seam slots carry the same merged gradient before the
+            // corrector subtracts it (otherwise the slave slot would be 0 from
+            // maybePeriodicSum's zero-after-fold). Same-rank and cross-rank.
+            if (corrFoldG && s.periodicMap)
+            {
+                const int* dpart = s.periodicMap->d_periodicPartner.data();
+                int gblk = 256, ggrd = int((s.nodeCount + gblk - 1) / gblk);
+                mars::fem::periodicBroadcastSameRankKernel<RealType><<<ggrd, gblk>>>(
+                    dpart, d_nodeOwnership.data(), s.nodeCount, s.d_gradPhix.data());
+                mars::fem::periodicBroadcastSameRankKernel<RealType><<<ggrd, gblk>>>(
+                    dpart, d_nodeOwnership.data(), s.nodeCount, s.d_gradPhiy.data());
+                mars::fem::periodicBroadcastSameRankKernel<RealType><<<ggrd, gblk>>>(
+                    dpart, d_nodeOwnership.data(), s.nodeCount, s.d_gradPhiz.data());
+                cudaDeviceSynchronize();
+                if (s.numRanks > 1)
+                {
+                    mars::fem::crossRankPeriodicBroadcast<KeyType, RealType>(*s.periodicMap, s.d_gradPhix);
+                    mars::fem::crossRankPeriodicBroadcast<KeyType, RealType>(*s.periodicMap, s.d_gradPhiy);
+                    mars::fem::crossRankPeriodicBroadcast<KeyType, RealType>(*s.periodicMap, s.d_gradPhiz);
+                }
+            }
+            // Forward halo (always, matches operator's post-normalize halo on g).
             s.domain.exchangeNodeHalo(s.d_gradPhix);
             s.domain.exchangeNodeHalo(s.d_gradPhiy);
             s.domain.exchangeNodeHalo(s.d_gradPhiz);
