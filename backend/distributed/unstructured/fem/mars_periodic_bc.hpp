@@ -106,7 +106,11 @@ struct PeriodicMap
     using DevVecInt = cstone::DeviceVector<int>;
     using DevVecU8  = cstone::DeviceVector<uint8_t>;
 
-    DevVecInt d_periodicPartner;   // [numNodes] -> master idx or -1
+    DevVecInt d_periodicPartner;   // [numNodes] -> ULTIMATE master idx (flattened) or -1
+    DevVecInt d_periodicPartnerDirect; // [numNodes] -> DIRECT parent (pre-flatten) or -1.
+                                   // The FOLD (restriction P^T) uses this so a slave of a
+                                   // local intermediate telescopes hop-by-hop; the flattened
+                                   // d_periodicPartner is for DOF-collapse/broadcast only.
     DevVecU8  d_periodicMask;      // [numNodes] -> bitmask as above
     int       numSlaves     = 0;
     int       numMasters    = 0;
@@ -589,11 +593,17 @@ void buildCrossRankPeriodicMap(const DomainT& domain,
     const int    numRanks = domain.numRanks();
     const size_t numNodes = domain.getNodeCount();
 
-    // Stage to host.
+    // Stage to host. Use the DIRECT parent table for the cross-rank send-list
+    // classification below: with the local fold (stage a) telescoping same-rank
+    // chains hop-by-hop, an owned node folds cross-rank iff its DIRECT parent is
+    // remote, and ships to that direct parent's key -- so each owned slave folds
+    // onto its ultimate master EXACTLY once (telescoping). Using the flattened
+    // table here would mis-route a slave whose direct parent is local but whose
+    // ultimate master is remote (it was already folded locally) -> double/dropped.
     std::vector<int>      h_partner(numNodes);
     std::vector<uint8_t>  h_own(numNodes);
     std::vector<KeyType>  h_sfc(numNodes);
-    cudaMemcpy(h_partner.data(), map.d_periodicPartner.data(),
+    cudaMemcpy(h_partner.data(), map.d_periodicPartnerDirect.data(),
                numNodes * sizeof(int), cudaMemcpyDeviceToHost);
     {
         const auto& d_own = domain.getNodeOwnershipMap();
@@ -961,6 +971,12 @@ void buildPeriodicMap(const DomainT& domain, PeriodicMap<KeyType, RealType>& map
                                            nm,
                                            map.d_periodicPartner.data());
     }
+
+    // Snapshot the DIRECT parent (matchSlavesKernel output) BEFORE flattening.
+    // The fold (P^T restriction) walks this hop-by-hop so a slave of a local
+    // intermediate telescopes onto the intermediate first; the flatten below then
+    // rewrites d_periodicPartner to the ULTIMATE master for DOF-collapse/broadcast.
+    map.d_periodicPartnerDirect = map.d_periodicPartner;
 
     flattenPartnerChainKernel<<<grid, block>>>(map.d_periodicPartner.data(), numNodes);
     cudaDeviceSynchronize();

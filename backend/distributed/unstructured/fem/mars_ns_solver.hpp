@@ -2887,6 +2887,54 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
     assembleLaplacian<KeyType, RealType, ElementTag>(s, s.d_node_to_dof, s.d_valuesPre, kernelVariant);
     pt.lap("assembly K (pressure)");
 
+    // MARS_PERIODIC_FOLDCOUNT: telescoping check. Fold an all-ones field through the
+    // SAME maybePeriodicSum the physics uses. A telescoping fold deposits exactly
+    // group_size on every ultimate master and 0 on every slave, so the global sum
+    // over owned non-slave nodes MUST equal the total owned-node count. defect =
+    // global_master_sum - total_owned: 0 => telescopes; <0 => a seam node folded
+    // ZERO times (dropped); >0 => DOUBLE-folded. Build-time, env-gated, no physics.
+    if (s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Periodic
+        && s.periodicMap != nullptr
+        && std::getenv("MARS_PERIODIC_FOLDCOUNT") != nullptr)
+    {
+        cstone::DeviceVector<RealType> d_ones(s.nodeCount, RealType(1));
+        maybePeriodicSum<KeyType, RealType, ElementTag>(s, d_ones);
+        const uint8_t* ownPtr  = s.ownershipMap().data();
+        const int*     partPtr = s.periodicMap->d_periodicPartner.data();
+        const RealType* onesP  = d_ones.data();
+        double locSum = thrust::transform_reduce(thrust::device,
+            thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(s.nodeCount),
+            [ownPtr, partPtr, onesP] __device__ (size_t i) -> double {
+                if (ownPtr[i] != 1 || partPtr[i] >= 0) return 0.0;  // slave folded away
+                return double(onesP[i]); }, 0.0, thrust::plus<double>());
+        double locMax = thrust::transform_reduce(thrust::device,
+            thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(s.nodeCount),
+            [ownPtr, partPtr, onesP] __device__ (size_t i) -> double {
+                if (ownPtr[i] != 1 || partPtr[i] >= 0) return 0.0;
+                return double(onesP[i]); }, 0.0, thrust::maximum<double>());
+        long long locResid = thrust::transform_reduce(thrust::device,
+            thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(s.nodeCount),
+            [ownPtr, partPtr, onesP] __device__ (size_t i) -> long long {
+                if (ownPtr[i] != 1 || partPtr[i] < 0) return 0LL;
+                return (onesP[i] != RealType(0)) ? 1LL : 0LL; }, 0LL, thrust::plus<long long>());
+        long long locOwned = thrust::transform_reduce(thrust::device,
+            thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(s.nodeCount),
+            [ownPtr] __device__ (size_t i) -> long long { return (ownPtr[i] == 1) ? 1LL : 0LL; },
+            0LL, thrust::plus<long long>());
+        double gSum = 0, gMax = 0; long long gResid = 0, gOwned = 0;
+        MPI_Allreduce(&locSum, &gSum, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+        MPI_Allreduce(&locMax, &gMax, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+        MPI_Allreduce(&locResid, &gResid, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+        MPI_Allreduce(&locOwned, &gOwned, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+        if (s.rank == 0)
+            std::cout << "[periodic-foldcount] global_master_sum=" << gSum
+                      << " expected(owned_nodes)=" << gOwned
+                      << " defect=" << (gSum - double(gOwned))
+                      << " max_master=" << gMax
+                      << " nonzero_slave_residual=" << gResid
+                      << "  (defect==0 && residual==0 => telescopes)\n";
+    }
+
     // Lumped mass (per-node + reverse-halo). Identical to B.2/B.3/B.4 pattern.
     s.d_mass.resize(s.numOwnedDofs);
     thrust::fill(thrust::device_pointer_cast(s.d_mass.data()),
@@ -6464,12 +6512,22 @@ inline void maybePeriodicSum(NSStepper<KeyType, RealType, ElementTag>& s,
     size_t nNodes = d_field.size();
     int blk = 256, grd = int((nNodes + blk - 1) / blk);
 
-    // (a) Gated intra-rank pair sum. Same-rank pairs: master += slave (atomic),
-    // slave=0. Cross-rank pairs (own[master]!=1): no-op.
-    mars::fem::periodicPairSumKernel<RealType><<<grd, blk>>>(
-        s.periodicMap->d_periodicPartner.data(),
-        d_own.data(), nNodes, d_field.data());
-    cudaDeviceSynchronize();
+    // (a) Gated intra-rank pair sum on the DIRECT parent, run to a fixed point.
+    // Same-rank pairs: master += slave (atomic), slave=0. Cross-rank (own[direct
+    // parent]!=1): no-op. The flattened table folds in ONE unordered pass which
+    // does NOT telescope a slave-of-a-local-intermediate (an edge/corner node whose
+    // direct parent is a same-rank node that is itself a cross-rank slave) -> a
+    // fixed seam node mis-folds the same way every step (the monotone advN-sum
+    // drift). Folding on the DIRECT parent and iterating up to the max chain depth
+    // (3 = x,y,z bits) telescopes every local chain S->M2->M3 to its locally-owned
+    // terminal before the cross-rank send below.
+    for (int hop = 0; hop < 3; ++hop)
+    {
+        mars::fem::periodicPairSumKernel<RealType><<<grd, blk>>>(
+            s.periodicMap->d_periodicPartnerDirect.data(),
+            d_own.data(), nNodes, d_field.data());
+        cudaDeviceSynchronize();
+    }
 
     // (b) Cross-rank pair sum -- SUM-ONLY (broadcastBack=false). This is the
     // operator's restriction P^T: slave summed onto master, owned slave slot left
