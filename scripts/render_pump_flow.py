@@ -68,6 +68,8 @@ def main():
                     help="threshold isovolume keeps speed > jet_frac*max (the visible jet); lower=more fluid shown")
     ap.add_argument("--color-frac", type=float, default=0.6,
                     help="color range clamped to [0, color_frac*max] so the jet stands out (not washed flat)")
+    ap.add_argument("--no-shell", action="store_true",
+                    help="skip the translucent geometry surface (heavy to render on big meshes)")
     ap.add_argument("--slice", action="store_true",
                     help="show a cutting-plane cross-section colored by |velocity| (MRI-like; "
                          "integration-free so it never hangs, unlike streamlines)")
@@ -108,25 +110,27 @@ def main():
     cx = 0.5 * (bounds[0] + bounds[1]); cy = 0.5 * (bounds[2] + bounds[3]); cz = 0.5 * (bounds[4] + bounds[5])
     diag = math.sqrt((bounds[1]-bounds[0])**2 + (bounds[3]-bounds[2])**2 + (bounds[5]-bounds[4])**2)
 
-    # ---- translucent geometry shell ----
-    surf = Show(reader, view)
-    surf.Representation = "Surface"
-    surf.Opacity = 0.10
-    surf.AmbientColor = [0.55, 0.62, 0.72]
-    surf.DiffuseColor = [0.55, 0.62, 0.72]
-    surf.Specular = 0.3
-    ColorBy(surf, None)
+    # ---- translucent geometry shell (heavy on big meshes -> opt-OUT with --no-shell) ----
+    if not args.no_shell:
+        surf = Show(reader, view)
+        surf.Representation = "Surface"
+        surf.Opacity = 0.10
+        surf.AmbientColor = [0.55, 0.62, 0.72]
+        surf.DiffuseColor = [0.55, 0.62, 0.72]
+        surf.Specular = 0.3
+        ColorBy(surf, None)
 
     # ---- |velocity| ----
     mag = Calculator(Input=reader)
     mag.ResultArrayName = "speed"
     mag.Function = "mag(%s)" % args.field
-    mag.UpdatePipeline()
 
-    # robust color range: use the LAST frame (developed jet) so colors don't wash
-    # out early. Rescale to ~98th percentile feel via the data range of frame -1.
+    # robust color range: evaluate ONCE at the last (developed) frame. (Do not
+    # also UpdatePipeline with no time -- on big meshes that doubles the cost.)
+    print("[render] computing |velocity| range on developed frame (this can take a while on big meshes)...")
     reader.UpdatePipeline(tvals[-1])
     mag.UpdatePipeline(tvals[-1])
+    print("[render] |velocity| range computed")
     srng = mag.PointData.GetArray("speed").GetRange() if mag.PointData.GetArray("speed") else (0.0, 1.0)
     smin, smax = srng[0], (srng[1] if srng[1] > srng[0] else srng[0] + 1.0)
     lut = GetColorTransferFunction("speed")
@@ -289,7 +293,9 @@ def main():
             thr.ThresholdMethod = "Above Lower Threshold"
         except Exception:
             pass
+        print("[render] building jet threshold (speed > %.3g)..." % lo)
         thr.UpdatePipeline(tvals[-1])
+        print("[render] threshold built")
         flow_props.append((thr, "speed"))
 
         # (2) OPTIONAL velocity glyphs (--glyphs). The Glyph filter with spatial
