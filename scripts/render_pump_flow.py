@@ -68,8 +68,11 @@ def main():
                     help="threshold isovolume keeps speed > jet_frac*max (the visible jet); lower=more fluid shown")
     ap.add_argument("--color-frac", type=float, default=0.6,
                     help="color range clamped to [0, color_frac*max] so the jet stands out (not washed flat)")
-    ap.add_argument("--no-shell", action="store_true",
-                    help="skip the translucent geometry surface (heavy to render on big meshes)")
+    ap.add_argument("--shell", action="store_true",
+                    help="add the full translucent geometry surface (prettier but HEAVY on big meshes; "
+                         "default is just a cheap always-visible bounding outline)")
+    ap.add_argument("--zoom", type=float, default=1.6,
+                    help="camera zoom: Dolly factor >1 moves IN so the pump fills the frame (default 1.6)")
     ap.add_argument("--slice", action="store_true",
                     help="show a cutting-plane cross-section colored by |velocity| (MRI-like; "
                          "integration-free so it never hangs, unlike streamlines)")
@@ -91,8 +94,9 @@ def main():
 
     view = GetActiveViewOrCreate("RenderView")
     view.ViewSize = [W, H]
-    view.Background = [0.03, 0.035, 0.05]      # near-black studio
-    view.Background2 = [0.10, 0.12, 0.16]      # subtle gradient top
+    # lighter slate-blue gradient (pure-black hid the pump when flow was low)
+    view.Background = [0.16, 0.18, 0.22]
+    view.Background2 = [0.30, 0.34, 0.40]
     view.UseColorPaletteForBackground = 0
     try:
         view.UseGradientBackground = 1
@@ -110,8 +114,23 @@ def main():
     cx = 0.5 * (bounds[0] + bounds[1]); cy = 0.5 * (bounds[2] + bounds[3]); cz = 0.5 * (bounds[4] + bounds[5])
     diag = math.sqrt((bounds[1]-bounds[0])**2 + (bounds[3]-bounds[2])**2 + (bounds[5]-bounds[4])**2)
 
-    # ---- translucent geometry shell (heavy on big meshes -> opt-OUT with --no-shell) ----
-    if not args.no_shell:
+    # ---- always-visible pump context ----
+    # An OUTLINE of the geometry is cheap (just bounding edges) and ALWAYS shows
+    # the pump shape, even at t=0 when there is no flow yet. The full translucent
+    # surface (--shell) is prettier but heavy on big meshes -> off by default.
+    try:
+        outline = Outline(Input=reader)
+        odisp = Show(outline, view)
+        odisp.DiffuseColor = [0.7, 0.75, 0.82]
+        odisp.AmbientColor = [0.7, 0.75, 0.82]
+        try:
+            odisp.LineWidth = 2
+        except Exception:
+            pass
+    except Exception as e:  # noqa: BLE001
+        print("[render] outline skipped: %s" % e)
+
+    if args.shell:
         surf = Show(reader, view)
         surf.Representation = "Surface"
         surf.Opacity = 0.10
@@ -390,8 +409,9 @@ def main():
     cam = GetActiveCamera()
     cam.Elevation(16); cam.Azimuth(25)
     view.CameraFocalPoint = [cx, cy, cz]
-    # pull back slightly for headroom
-    cam.Dolly(0.85)
+    # zoom IN so the pump fills the frame (Dolly>1 moves the camera TOWARD the
+    # focal point; the earlier 0.85 pulled it back and made the pump look tiny).
+    cam.Dolly(args.zoom)
     view.CameraParallelProjection = 0
 
     os.makedirs(args.frames_dir, exist_ok=True)
