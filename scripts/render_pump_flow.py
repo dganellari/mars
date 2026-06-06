@@ -47,6 +47,8 @@ def main():
                     help="threshold isovolume keeps speed > jet_frac*max (the visible jet); lower=more fluid shown")
     ap.add_argument("--color-frac", type=float, default=0.6,
                     help="color range clamped to [0, color_frac*max] so the jet stands out (not washed flat)")
+    ap.add_argument("--glyphs", action="store_true",
+                    help="add velocity-arrow glyphs (can crash on big tet meshes in headless PV; OFF by default)")
     ap.add_argument("--n-glyphs", type=int, default=4000, help="max velocity-arrow glyphs")
     ap.add_argument("--glyph-stride", type=int, default=20, help="glyph subsample stride (Every Nth Point)")
     ap.add_argument("--show-surface", dest="show_surface", action="store_true", default=True,
@@ -173,30 +175,34 @@ def main():
         thr.UpdatePipeline(tvals[-1])
         flow_props.append((thr, "speed"))
 
-        # (2) velocity glyphs through the volume (downsampled for speed)
-        glyph = Glyph(Input=mag, GlyphType="Arrow")
-        glyph.OrientationArray = ["POINTS", args.field]
-        glyph.ScaleArray = ["POINTS", "speed"]
-        try:
-            glyph.ScaleFactor = diag * 0.04
-        except Exception:
-            pass
-        for mode in ("Uniform Spatial Distribution", "Every Nth Point"):
+        # (2) OPTIONAL velocity glyphs (--glyphs). The Glyph filter with spatial
+        # sampling on a large tet mesh can hard-crash (core dump) in headless
+        # ParaView when re-run per frame, so it is OFF by default. The threshold
+        # isovolume alone already shows the jet developing.
+        if args.glyphs:
+            glyph = Glyph(Input=mag, GlyphType="Arrow")
+            glyph.OrientationArray = ["POINTS", args.field]
+            glyph.ScaleArray = ["POINTS", "speed"]
             try:
-                glyph.GlyphMode = mode
-                break
+                glyph.ScaleFactor = diag * 0.04
             except Exception:
-                continue
-        try:
-            glyph.MaximumNumberOfSamplePoints = args.n_glyphs
-        except Exception:
-            pass
-        try:
-            glyph.Stride = max(1, args.glyph_stride)
-        except Exception:
-            pass
-        glyph.UpdatePipeline(tvals[-1])
-        flow_props.append((glyph, "speed"))
+                pass
+            for mode in ("Every Nth Point", "Uniform Spatial Distribution"):
+                try:
+                    glyph.GlyphMode = mode
+                    break
+                except Exception:
+                    continue
+            try:
+                glyph.MaximumNumberOfSamplePoints = args.n_glyphs
+            except Exception:
+                pass
+            try:
+                glyph.Stride = max(1, args.glyph_stride)
+            except Exception:
+                pass
+            glyph.UpdatePipeline(tvals[-1])
+            flow_props.append((glyph, "speed"))
 
     # clamp color to a readable band: [0, jet_color_frac*max] so the jet stands out
     cmax = max(args.color_frac * smax, smin + 1e-9)
