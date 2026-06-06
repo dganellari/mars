@@ -8127,8 +8127,17 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
     // bare sequence; the periodic-sum + broadcast sequence below is a DIFFERENT
     // operator and would leave div(u^{n+1}) != 0 (it grew ~10x/step). Mirror the
     // exact gate the pressure solver uses (numRanks>1 && Periodic && CG).
+    // MARS_USE_REDUCED_CORR=1 enables the multi-rank reduced-CG corrector branch.
+    // Default OFF: take the else branch (same as single-rank), which does
+    // maybePeriodicSum + master->slave broadcast on gradPhi after normalize.
+    // WHEREMAX showed the multi-rank reduced branch (bare sequence, no
+    // fold/broadcast) leaks ~40% of divergence; the else branch is the
+    // empirically-verified correct corrector for periodic.
+    const char* envReducedCorr = std::getenv("MARS_USE_REDUCED_CORR");
+    const bool useReducedCorr  = envReducedCorr && std::string(envReducedCorr) != "0";
     const bool routeReducedPeriodicCorr =
-        s.numRanks > 1
+        useReducedCorr
+        && s.numRanks > 1
         && s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Periodic
         && s.solverKind == SolverKind::CG;
     {
