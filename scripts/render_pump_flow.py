@@ -36,7 +36,11 @@ def main():
     ap.add_argument("--res", default="1920x1080", help="WxH render resolution")
     ap.add_argument("--field", default="velocity", help="vector field (default velocity)")
     ap.add_argument("--n-streamlines", type=int, default=900, help="streamline seed count")
-    ap.add_argument("--orbit-deg", type=float, default=120.0, help="total azimuth sweep over the run")
+    ap.add_argument("--pathlines", action="store_true",
+                    help="PARTICLE TRACKS: release particles at the inlet and let the flow CARRY them "
+                         "over time (looks like real fluid moving through). Needs the time series.")
+    ap.add_argument("--orbit-deg", type=float, default=30.0,
+                    help="total azimuth sweep over the run (gentle sway; 0 = fixed camera)")
     ap.add_argument("--fps", type=int, default=30)
     ap.add_argument("--hold-frames", type=int, default=20,
                     help="extra orbit-only frames at the end on the final (developed) state")
@@ -141,8 +145,53 @@ def main():
     # --streamlines switches to StreamTracer tubes (prettier, but can hang on big
     # tet meshes in headless ParaView -- run it on a GPU compute node).
     flow_props = []  # (proxy, colorByName) to Show
+    pathline_tracer = None  # set if --pathlines: advanced per-frame in the loop
 
-    if args.streamlines:
+    if args.pathlines:
+        # PARTICLE TRACKS: seed particles at the inlet (peak-speed point) and let
+        # ParticleTracer integrate them ACROSS timesteps -- they get carried by the
+        # flow, so the animation shows real fluid moving through. Heavier than
+        # streamlines; run under srun on a GPU node.
+        seed_c = [cx, cy, cz]; seed_r = diag * 0.15
+        if args.seed_inlet:
+            try:
+                seed_c = [float(x) for x in args.seed_inlet.split(",")]
+            except Exception:
+                pass
+        else:
+            try:
+                reader.UpdatePipeline(tvals[-1]); mag.UpdatePipeline(tvals[-1])
+                from paraview import servermanager as _sm
+                data = _sm.Fetch(mag); pts = data.GetPoints(); arr = data.GetPointData().GetArray("speed")
+                if pts and arr:
+                    n = arr.GetNumberOfTuples(); step = max(1, n // 200000)
+                    bi, bv = 0, -1.0
+                    for i in range(0, n, step):
+                        v = arr.GetValue(i)
+                        if v > bv:
+                            bv, bi = v, i
+                    seed_c = list(pts.GetPoint(bi))
+                    print("[render] seeding particles at peak-speed point %s (|u|=%.3g)" % (seed_c, bv))
+            except Exception as e:  # noqa: BLE001
+                print("[render] peak-seed failed (%s)" % e)
+        try:
+            tracer = ParticleTracer(Input=mag, SeedSource="Point Cloud")
+            tracer.SelectInputVectors = ["POINTS", args.field]
+            tracer.SeedSource.Center = seed_c
+            tracer.SeedSource.Radius = seed_r
+            tracer.SeedSource.NumberOfPoints = args.n_streamlines
+            # render tracks as fading tails via a Tube on the tracer output
+            ptubes = Tube(Input=tracer)
+            ptubes.Radius = diag * 0.0016
+            pathline_tracer = (tracer, ptubes)
+            flow_props.append((ptubes, "speed"))
+            print("[render] pathline (ParticleTracer) mode")
+        except Exception as e:  # noqa: BLE001
+            print("[render] ParticleTracer unavailable (%s); falling back to streamlines" % e)
+            args.streamlines = True
+            args.pathlines = False
+
+    if args.streamlines and not args.pathlines:
         # Seed center: by default the high-speed (inlet/jet) region of the LAST
         # frame, so lines trace the actual pumped path; override with --seed-inlet.
         seed_c = [cx, cy, cz]
@@ -190,7 +239,7 @@ def main():
         tubes.Capping = 1
         tubes.UpdatePipeline(tvals[-1])
         flow_props.append((tubes, "speed"))
-    else:
+    if not args.streamlines and not args.pathlines:
         # (1) fast-jet isovolume: keep cells where speed exceeds a fraction of the
         # peak. This is the moving jet; it must re-evaluate per timestep so it
         # grows with the flow.
@@ -331,6 +380,13 @@ def main():
             reader.UpdatePipeline(t)
         except Exception as e:  # noqa: BLE001
             print("  [warn] UpdatePipeline t=%.4g failed (%s)" % (t, e))
+        # advance the particle tracer in time so particles get carried forward
+        if pathline_tracer is not None:
+            try:
+                pathline_tracer[0].UpdatePipeline(t)
+                pathline_tracer[1].UpdatePipeline(t)
+            except Exception as e:  # noqa: BLE001
+                print("  [warn] pathline update t=%.4g failed (%s)" % (t, e))
         cam.Azimuth(az_per_frame)
         if save_frame(fidx):
             written += 1
