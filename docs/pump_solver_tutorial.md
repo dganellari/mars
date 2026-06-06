@@ -5,6 +5,11 @@ MARS: what it solves, how it discretizes, why it makes the choices it does, how 
 read its output, and where it is fragile. Written for someone with a CFD/numerics
 background who needs to defend the method and compare it against an external code.
 
+> **New to this?** For a from-scratch explanation (what a pump simulation even is,
+> mesh → method → boundary conditions → running → reading output, assuming no prior
+> CFD), read [pump_cfd_tutorial.md](pump_cfd_tutorial.md) first. For making flow
+> videos, see [scripts/render_pump_flow.py](../scripts/render_pump_flow.py).
+
 Conventions used below:
 - **[verified]** — implemented and checked (unit test, invariant, or measurement).
 - **[weak]** — known limitation / open issue.
@@ -220,8 +225,14 @@ $Re = 500$ is an **input** (chosen test value); the rest are **outputs**.
 ## 7. Reading a run line
 
 ```
-Step 200  ft=0.23  u_rms=3.26e-4  u_max=1.50  uMax/U=3.00  d(u_rms)=2.6e-6  div*L/U=381  cg_p=624  cg_uvw=364
+# under-developed (early transient):
+Step 200   ft=0.23  u_rms=3.26e-4  u_max=1.50  uMax/U=3.00  d(u_rms)=2.6e-6  div*L/U=381  cg_p=624  cg_uvw=364
+# developed / converged (4-GPU, Re=100, skew, do-nothing outlet):
+Step 3000  ft=3.48  u_rms=3.02e-1  u_max=6.68  uMax/U=13.4  d(u_rms)=9.8e-6  div*L/U=2.66 cg_p=554  cg_uvw=63
 ```
+The contrast is the lesson: at `ft=0.23` the flow has barely entered (`div*L/U=381`,
+a big *transient*); by `ft=3.5` it is developed and converged (`div*L/U=2.7`,
+`d(u_rms)≈1e-5`). Always judge health on a developed run, not the first few steps.
 
 - `ft` — flow-throughs = $t / (L/U)$. Convergence needs several (the transient must
   flush). `ft = 0.23` means **not developed yet**; a comparable small-mesh run
@@ -243,12 +254,14 @@ with its kinetic energy and divergence, so the stage that injects error is visib
 
 ## 8. Where the method is fragile (and where the real work is)
 
-**(a) Discrete consistency / checkerboard — the dominant accuracy issue.** [weak]
-Equal-order P1–P1 velocity–pressure on an unstructured collocated layout is
-inf-sup (LBB) unstable → admits a spurious checkerboard pressure mode. DDT projects
-exactly onto the discrete divergence-free space, which helps, but $\text{div}\,L/U$ is not
-roundoff in practice: ~27 (small mesh), ~380 (larger mesh, under-developed). The
-consistency error appears to **grow with mesh size**. Standard fixes:
+**(a) Discrete consistency / checkerboard.** [weak] Equal-order P1–P1
+velocity–pressure on an unstructured collocated layout is inf-sup (LBB) unstable →
+admits a spurious checkerboard pressure mode. DDT projects exactly onto the discrete
+divergence-free space. The *nodal* `div*L/U` print is a conservative upper bound, not
+roundoff: it reads a few units even on a converged run (a developed 4-GPU run settles
+to `div*L/U≈2.7`; early/under-developed runs read much higher, e.g. ~380 at `ft=0.2`
+— that is transient, not the steady value). Whether the residual grows on *very*
+large meshes is still open; the standard cures are:
 - **Rhie–Chow momentum interpolation** — *tried; the compact $|\mathbf{A}|^2/(\mathbf{A}\cdot d\mathbf{x})$ form is
   geometrically unsafe on skewed tets ($\mathbf{A}$ not aligned with the edge → blows up).
   Abandoned for tets.*
@@ -264,21 +277,30 @@ developing jet can cross the limit. Remedies: smaller `dt`, `--bdf1`, or skew. A
 adaptive-CFL `dt` controller was attempted but it breaks BDF2's constant-`dt`
 coefficients and was shelved.
 
-**(c) Multi-rank correctness — KNOWN BUG; do not trust multi-GPU numbers.** [weak]
-The solution differs on 1 vs 4 ranks for *all* advection schemes. Status of the
-investigation (all by measurement):
-- *Ruled out*: doubly-owned nodes (ownership is a clean partition), lumped mass
-  (rank-identical), the DDT pressure operator (halo-complete), the diffusion-matrix
-  diagonal (rank-identical), halo topology (v2 path == host path).
-- *Localized*: the error is **present at step 1** with a zero initial condition
-  ($\text{div}(\mathbf{u}^*)_{\text{rms}} \approx 1.4$ on 1 rank vs $\approx 12.8$ on 4 ranks). At step 1 pressure is zero
-  ($\nabla p = 0$) and $\mathbf{u}^n = 0$, so $\mathbf{u}^*$ is set *only* by the inlet BC. The inlet
-  velocity magnitude and (globally-reduced) direction are identical across ranks,
-  so the inconsistency is in the **divergence operator at inlet-adjacent boundary
-  nodes**, not the BC values. This is the current lead.
-- **Single-rank is correct** and is what we report. Multi-rank is required for the
-  billion-element goal, so this must eventually be fixed, but it does not block the
-  single-rank pump validation.
+**(c) Multi-rank correctness — RESOLVED (2026-06-06).** [verified] Multi-rank now
+matches single-rank: a 4-GPU run was verified bit-identical to single-rank at the
+predictor (`div(u*)rms = 1.3171936`, `KE* = 5.6565327e-9` on both 1 and 4 ranks),
+and a developed 4-GPU run (Re=100, `--skew`, do-nothing outlet, 3000 steps) reaches
+`ft≈3.5`, `uMax/U≈13`, `d(u_rms)≈1e-5` (converged), `div*L/U≈2.7`, with `cg_p`
+converging to ~1e-9 each step.
+
+History worth keeping (the bug was real, then fixed, then *regressed*, then fixed
+again — and the regression had nothing to do with the partition):
+- The original multi-rank inlet-resolve bug (Exodus vs SFC index space) was fixed on
+  2026-06-02 and verified 1-rank ≡ 4-rank (commits `d1b324e`/`8bb0402`).
+- It later appeared to break again. After a long mis-diagnosis (chasing ownership /
+  orphan-node theories on the inlet BC), the `MARS_PUMP_BC_DEBUG` per-rank audit
+  proved the **inlet BC was never the problem** (every inlet node resolved and was
+  owned by exactly one rank; e.g. 14+5 = 19 = the global inlet count). The real
+  regression was in the **shared `mars_ns_solver.hpp`**: the TGV multi-rank-periodic
+  work (≈55 commits) altered the DDT pressure path and made `cg_p` diverge (`-2`) for
+  the pump. Fix: the pump now includes a **forked, verified-good solver**
+  `mars_ns_pump_solver.hpp` pinned to `8bb0402` (commit `7ea9978`); TGV keeps the
+  current shared header. Reconciling the two back into one solver is deferred.
+- **Lesson for readers:** rank-0-local diagnostic prints (`BC: 0 inlet nodes`,
+  `0 masked DOFs on rank 0`) are *not* global truth — a rank simply may hold no
+  inlet nodes. Trust the rank-count-invariant sums (`[bc-count check]`,
+  `MARS_PUMP_BC_DEBUG` global owned-of-resolved) instead.
 
 **(d) Under-resolution.** [weak] No turbulence model + transitional Re + tet mesh →
 a converged laminar/transitional solution, not resolved physics. No mesh-convergence
@@ -288,12 +310,18 @@ study yet.
 
 ## 9. Current validated status
 
-- **Single-rank: correct, stable, converges to steady state on multiple pump
-  meshes.** Physical inlet→outlet jet, `uMax/U ~ 2.3–3.0`.
+- **Single- AND multi-rank: correct, stable, converges to steady state.** Verified
+  1-rank ≡ 4-rank at the predictor; a developed 4-GPU run reaches `ft≈3.5`,
+  `uMax/U≈13`, `div*L/U≈2.7`, `d(u_rms)≈1e-5` (converged). Physical inlet→outlet jet.
 - The developers' Barth–Jespersen scheme runs, enabling a direct comparison.
-- GPU-native, matrix-free, cornerstone-octree partitioned (built for scale).
-- Open: (1) tet pressure stabilization for divergence consistency (worsens with mesh
-  size), (2) the multi-rank parallel-correctness bug.
+- GPU-native, matrix-free, cornerstone-octree partitioned (built for scale); the
+  multi-rank path is now trusted.
+- The pump runs from a **forked solver** (`mars_ns_pump_solver.hpp`, pinned to the
+  verified-good `8bb0402`) to insulate it from in-flight changes to the shared
+  `mars_ns_solver.hpp`. Reconciling the two is deferred.
+- Open: tet pressure stabilization for divergence consistency on very large meshes
+  (the *nodal* `div*L/U` diagnostic stays a few units even when the projection is
+  exact — a conservative upper bound, not "not converged").
 
 ---
 
@@ -307,9 +335,9 @@ study yet.
 > Jespersen** = the developers' 2nd-order limited scheme). It is GPU-native,
 > matrix-free, and cornerstone-octree-partitioned for billion-element scale. It runs
 > **stable to a steady state on multiple pump meshes single-rank**, with a physical
-> jet. Open issues: **discrete divergence consistency** (needs a tet-robust pressure
-> stabilization — PSPG; Rhie–Chow failed on tets) which worsens with mesh size, and
-> a **multi-rank parallel-correctness bug** under active debugging.
+> jet, **single- and multi-rank** (1-rank ≡ 4-rank verified). The remaining open
+> issue is **discrete divergence consistency** on very large meshes (a tet-robust
+> pressure stabilization — PSPG; Rhie–Chow failed on tets).
 
 ---
 
