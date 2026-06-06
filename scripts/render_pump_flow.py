@@ -24,7 +24,16 @@ import math
 import os
 import sys
 
-from paraview.simple import *  # noqa: F401,F403
+# The GPU/viskores backend HANGS on StreamTracer/ParticleTracer over large tet
+# meshes in headless ParaView (no progress, no crash). Force the CPU/serial VTK
+# filter backend BEFORE importing paraview, unless the user opts back in with
+# --gpu-filters. This makes the integrators slower-but-actually-finish.
+if "--gpu-filters" not in sys.argv:
+    os.environ.setdefault("VTK_DISABLE_VISKORES_OVERRIDES", "1")
+    os.environ.setdefault("VTKM_DEVICE", "Serial")
+    os.environ.setdefault("PARAVIEW_USE_ACCELERATED_FILTERS", "0")
+
+from paraview.simple import *  # noqa: F401,F403,E402
 
 
 def main():
@@ -35,7 +44,10 @@ def main():
     ap.add_argument("--frames-dir", default="pump_frames", help="PNG frames dir (always written)")
     ap.add_argument("--res", default="1920x1080", help="WxH render resolution")
     ap.add_argument("--field", default="velocity", help="vector field (default velocity)")
-    ap.add_argument("--n-streamlines", type=int, default=900, help="streamline seed count")
+    ap.add_argument("--n-streamlines", type=int, default=900, help="streamline/particle seed count")
+    ap.add_argument("--gpu-filters", action="store_true",
+                    help="allow the GPU/viskores filter backend (default forces CPU/serial because the "
+                         "GPU StreamTracer/ParticleTracer HANGS on large tet meshes in headless ParaView)")
     ap.add_argument("--pathlines", action="store_true",
                     help="PARTICLE TRACKS: release particles at the inlet and let the flow CARRY them "
                          "over time (looks like real fluid moving through). Needs the time series.")
