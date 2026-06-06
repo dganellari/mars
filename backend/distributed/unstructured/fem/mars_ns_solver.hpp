@@ -2933,6 +2933,62 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
                       << " max_master=" << gMax
                       << " nonzero_slave_residual=" << gResid
                       << "  (defect==0 && residual==0 => telescopes)\n";
+
+        // Over-fold breakdown: count owned non-slave masters whose accumulated
+        // value exceeds reasonable group_size thresholds. Triperiodic group
+        // sizes are 1 (interior), 2 (face), 4 (edge), 8 (corner). Anything
+        // above 8 is an over-fold. Counts and a dimensional split tell us
+        // which subset (face vs edge vs corner) is doubling.
+        const uint8_t* maskPtr = s.periodicMap->d_periodicMask.data();
+        long long lOver1=0, lOver2=0, lOver4=0, lOver8=0;
+        long long lG1=0, lG2=0, lG4=0, lG8=0;
+        auto countOver = [&](double thr) {
+            return thrust::transform_reduce(thrust::device,
+                thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(s.nodeCount),
+                [ownPtr, partPtr, onesP, thr] __device__ (size_t i) -> long long {
+                    if (ownPtr[i] != 1 || partPtr[i] >= 0) return 0LL;
+                    return (double(onesP[i]) > thr + 0.5) ? 1LL : 0LL;
+                }, 0LL, thrust::plus<long long>());
+        };
+        // Counts of owned-master nodes whose folded value EXCEEDS each threshold.
+        // Strict > so e.g. >1 catches a face master that double-summed (2 instead of 2... wait)
+        // -- triperiodic group sizes are 1/2/4/8 so a *correct* face master shows 2,
+        // edge master 4, corner master 8. We report counts ABOVE each canonical size.
+        lOver1 = countOver(1.0);   // >1 -> at least face-folded
+        lOver2 = countOver(2.0);   // >2 -> at least edge-folded
+        lOver4 = countOver(4.0);   // >4 -> at least corner-folded
+        lOver8 = countOver(8.0);   // >8 -> OVER-FOLDED, must be 0
+        // And exact group buckets (= per-mask popcount expectations):
+        auto countEq = [&](double tgt) {
+            return thrust::transform_reduce(thrust::device,
+                thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(s.nodeCount),
+                [ownPtr, partPtr, onesP, tgt] __device__ (size_t i) -> long long {
+                    if (ownPtr[i] != 1 || partPtr[i] >= 0) return 0LL;
+                    return (double(onesP[i]) > tgt - 0.5 && double(onesP[i]) < tgt + 0.5) ? 1LL : 0LL;
+                }, 0LL, thrust::plus<long long>());
+        };
+        lG1 = countEq(1.0);
+        lG2 = countEq(2.0);
+        lG4 = countEq(4.0);
+        lG8 = countEq(8.0);
+        long long gOver1=0,gOver2=0,gOver4=0,gOver8=0,gG1=0,gG2=0,gG4=0,gG8=0;
+        MPI_Allreduce(&lOver1, &gOver1, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+        MPI_Allreduce(&lOver2, &gOver2, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+        MPI_Allreduce(&lOver4, &gOver4, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+        MPI_Allreduce(&lOver8, &gOver8, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+        MPI_Allreduce(&lG1, &gG1, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+        MPI_Allreduce(&lG2, &gG2, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+        MPI_Allreduce(&lG4, &gG4, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+        MPI_Allreduce(&lG8, &gG8, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+        if (s.rank == 0)
+            std::cout << "[periodic-foldcount] buckets eq{1,2,4,8}={"
+                      << gG1 << "," << gG2 << "," << gG4 << "," << gG8
+                      << "} over{1,2,4,8}={"
+                      << gOver1 << "," << gOver2 << "," << gOver4 << "," << gOver8
+                      << "}  (cube16 triperiodic expects eq1=interior,"
+                      << " eq2=#faces-2-folded, eq4=#edges-4-folded,"
+                      << " eq8=#corners-8-folded; over8==0 required)\n";
+        (void)maskPtr;
     }
 
     // Lumped mass (per-node + reverse-halo). Identical to B.2/B.3/B.4 pattern.
@@ -6512,7 +6568,8 @@ inline void maybePeriodicSum(NSStepper<KeyType, RealType, ElementTag>& s,
     size_t nNodes = d_field.size();
     int blk = 256, grd = int((nNodes + blk - 1) / blk);
 
-    // (a) Gated intra-rank pair sum on the DIRECT parent, run to a fixed point.
+    // (a) Gated intra-rank pair sum on the DIRECT parent, staged per hop,
+    // run to a fixed point.
     // Same-rank pairs: master += slave (atomic), slave=0. Cross-rank (own[direct
     // parent]!=1): no-op. The flattened table folds in ONE unordered pass which
     // does NOT telescope a slave-of-a-local-intermediate (an edge/corner node whose
@@ -6521,12 +6578,32 @@ inline void maybePeriodicSum(NSStepper<KeyType, RealType, ElementTag>& s,
     // drift). Folding on the DIRECT parent and iterating up to the max chain depth
     // (3 = x,y,z bits) telescopes every local chain S->M2->M3 to its locally-owned
     // terminal before the cross-rank send below.
-    for (int hop = 0; hop < 3; ++hop)
+    //
+    // STAGED per hop (snapshot -> atomic-add-from-snapshot -> zero slaves). The
+    // unstaged in-place kernel had a hop-internal read/write race for chain links
+    // k->j->i within ONE kernel launch: thread j reads field[j] while thread k
+    // atomicAdd-s into field[j]. On GPU the schedule tends to be deterministic
+    // enough that the race shows up as a FIXED defect (cube16/4-rank:
+    // [periodic-foldcount] defect=+551, max_master=13 with max group size 8).
+    // Reading the source from a hop-start snapshot makes the per-hop read/write
+    // sets independent.
     {
-        mars::fem::periodicPairSumKernel<RealType><<<grd, blk>>>(
-            s.periodicMap->d_periodicPartnerDirect.data(),
-            d_own.data(), nNodes, d_field.data());
-        cudaDeviceSynchronize();
+        cstone::DeviceVector<RealType> d_src(nNodes);
+        for (int hop = 0; hop < 3; ++hop)
+        {
+            thrust::copy(thrust::device_pointer_cast(d_field.data()),
+                         thrust::device_pointer_cast(d_field.data() + nNodes),
+                         thrust::device_pointer_cast(d_src.data()));
+            mars::fem::periodicPairSumStagedKernel<RealType><<<grd, blk>>>(
+                s.periodicMap->d_periodicPartnerDirect.data(),
+                d_own.data(), nNodes,
+                d_src.data(), d_field.data());
+            cudaDeviceSynchronize();
+            mars::fem::zeroSlavesOfOwnedMasterKernel<RealType><<<grd, blk>>>(
+                s.periodicMap->d_periodicPartnerDirect.data(),
+                d_own.data(), nNodes, d_field.data());
+            cudaDeviceSynchronize();
+        }
     }
 
     // (b) Cross-rank pair sum -- SUM-ONLY (broadcastBack=false). This is the

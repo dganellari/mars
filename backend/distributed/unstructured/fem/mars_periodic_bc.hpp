@@ -312,6 +312,44 @@ __global__ void periodicPairSumKernel(const int*     d_partner,
     d_field[i] = RealType(0);
 }
 
+// Staged variant: read source from d_src (a hop-start snapshot of d_field),
+// write to d_field. Eliminates the read/write race in the single-kernel
+// 3-hop loop where thread for chain-link j reads d_field[j] while thread
+// for chain-link k atomicAdds to d_field[j] (k->j->i chain). Inside ONE
+// kernel launch the source slot j is read by j's own thread while k's
+// thread is concurrently atomic-adding to it; on GPU the scheduling tends
+// to be deterministic enough that the race manifests as a FIXED miscount
+// (cube16/4-rank: defect=+551, max_master=13 >8). Staging makes hop 0
+// reads independent of hop 0 writes.
+template<typename RealType>
+__global__ void periodicPairSumStagedKernel(const int*     d_partner,
+                                            const uint8_t* d_ownership,
+                                            size_t         numNodes,
+                                            const RealType* d_src,
+                                            RealType*       d_field)
+{
+    size_t i = size_t(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (i >= numNodes) return;
+    int master = d_partner[i];
+    if (master < 0) return;
+    if (d_ownership[master] != 1) return;
+    atomicAdd(&d_field[master], d_src[i]);
+}
+
+template<typename RealType>
+__global__ void zeroSlavesOfOwnedMasterKernel(const int*     d_partner,
+                                              const uint8_t* d_ownership,
+                                              size_t         numNodes,
+                                              RealType*      d_field)
+{
+    size_t i = size_t(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (i >= numNodes) return;
+    int master = d_partner[i];
+    if (master < 0) return;
+    if (d_ownership[master] != 1) return;
+    d_field[i] = RealType(0);
+}
+
 template<typename RealType>
 __global__ void periodicBroadcastKernel(const int* d_partner, size_t numNodes,
                                         RealType* d_field)
