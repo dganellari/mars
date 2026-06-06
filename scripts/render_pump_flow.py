@@ -40,6 +40,9 @@ def main():
     ap.add_argument("--hold-frames", type=int, default=20,
                     help="extra orbit-only frames at the end on the final (developed) state")
     ap.add_argument("--preset", default="Viridis (matplotlib)", help="color preset")
+    ap.add_argument("--streamlines", action="store_true",
+                    help="use StreamTracer tubes (prettier but SLOW/can hang on big tet meshes; "
+                         "default is a fast volume clip colored by |velocity|)")
     args = ap.parse_args()
 
     if not os.path.exists(args.pvd):
@@ -111,26 +114,47 @@ def main():
     except Exception:
         pass
 
-    # ---- streamlines (inlet-seeded, tubes) ----
-    stream = StreamTracer(Input=mag, SeedType="Point Cloud")
-    stream.Vectors = ["POINTS", args.field]
-    stream.IntegrationDirection = "BOTH"
-    try:
-        stream.IntegratorType = "Runge-Kutta 4-5"
-    except Exception:
-        pass
-    stream.MaximumStreamlineLength = diag * 5.0
-    stream.SeedType.Center = [cx, cy, cz]
-    stream.SeedType.Radius = diag * 0.48
-    stream.SeedType.NumberOfPoints = args.n_streamlines
-    stream.UpdatePipeline(tvals[-1])
+    # ---- flow visualization ----
+    # DEFAULT (fast, robust): a CLIP through the volume colored by |velocity| --
+    # shows the inlet->outlet jet without the GPU StreamTracer (which hangs on
+    # large tet meshes in headless ParaView). Streamlines are opt-in via
+    # --streamlines (slow but prettier).
+    if args.streamlines:
+        stream = StreamTracer(Input=mag, SeedType="Point Cloud")
+        stream.Vectors = ["POINTS", args.field]
+        stream.IntegrationDirection = "BOTH"
+        try:
+            stream.IntegratorType = "Runge-Kutta 4-5"
+        except Exception:
+            pass
+        stream.MaximumStreamlineLength = diag * 5.0
+        stream.SeedType.Center = [cx, cy, cz]
+        stream.SeedType.Radius = diag * 0.48
+        stream.SeedType.NumberOfPoints = args.n_streamlines
+        stream.UpdatePipeline(tvals[-1])
+        tubes = Tube(Input=stream)
+        tubes.Radius = diag * 0.0016
+        tubes.Capping = 1
+        tubes.UpdatePipeline(tvals[-1])
+        flow = tubes
+    else:
+        # Clip the volume in half along the dominant flow axis so the interior
+        # jet is visible; color the cut volume by |velocity|.
+        clip = Clip(Input=mag)
+        try:
+            clip.ClipType = "Plane"
+            clip.ClipType.Origin = [cx, cy, cz]
+            # cut perpendicular to the largest extent (the flow usually runs along it)
+            ext = [bounds[1]-bounds[0], bounds[3]-bounds[2], bounds[5]-bounds[4]]
+            axis = ext.index(max(ext))
+            nrm = [0, 0, 0]; nrm[axis] = 1
+            clip.ClipType.Normal = nrm
+        except Exception:
+            pass
+        clip.UpdatePipeline(tvals[-1])
+        flow = clip
 
-    tubes = Tube(Input=stream)
-    tubes.Radius = diag * 0.0016
-    tubes.Capping = 1
-    tubes.UpdatePipeline(tvals[-1])
-
-    sdisp = Show(tubes, view)
+    sdisp = Show(flow, view)
     sdisp.Representation = "Surface"
     ColorBy(sdisp, ("POINTS", "speed"))
     sdisp.Specular = 0.4
