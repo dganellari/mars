@@ -30,7 +30,8 @@ from paraview.simple import *  # noqa: F401,F403
 def main():
     ap = argparse.ArgumentParser(description="Render a great MARS pump flow video")
     ap.add_argument("--pvd", required=True, help="path to <prefix>.pvd from the pump run")
-    ap.add_argument("--out", default="pump_flow.mp4", help="output mp4")
+    ap.add_argument("--out", default="", help="output mp4 (needs ffmpeg). Leave empty to write frames only "
+                    "and print the ffmpeg command to run elsewhere (e.g. your laptop).")
     ap.add_argument("--frames-dir", default="pump_frames", help="PNG frames dir (always written)")
     ap.add_argument("--res", default="1920x1080", help="WxH render resolution")
     ap.add_argument("--field", default="velocity", help="vector field (default velocity)")
@@ -347,21 +348,24 @@ def main():
 
     # Encode FROM the PNG frames with ffmpeg -- do NOT use SaveAnimation (it
     # re-renders every frame and would crash the same way / waste the work).
-    if args.out:
-        import shutil
+    import shutil
+    out = args.out or "pump_flow.mp4"
+    ff = shutil.which("ffmpeg")
+    ffcmd = ("ffmpeg -y -framerate %d -i %s/frame_%%04d.png -c:v libx264 -pix_fmt yuv420p -crf 18 %s"
+             % (args.fps, args.frames_dir, out))
+    if args.out and ff:
         import subprocess
-        ff = shutil.which("ffmpeg")
-        ffcmd = ("%s -y -framerate %d -i %s/frame_%%04d.png -c:v libx264 -pix_fmt yuv420p -crf 18 %s"
-                 % (ff or "ffmpeg", args.fps, args.frames_dir, args.out))
-        if ff:
-            print("[render] encoding: %s" % ffcmd)
-            try:
-                subprocess.run(ffcmd.split(), check=True)
-                print("[render] wrote %s" % args.out)
-            except Exception as e:  # noqa: BLE001
-                print("[render] ffmpeg failed (%s). Run manually:\n  %s" % (e, ffcmd))
-        else:
-            print("[render] ffmpeg not found. Encode the frames yourself:\n  %s" % ffcmd)
+        print("[render] encoding: %s" % ffcmd)
+        try:
+            subprocess.run(ffcmd.split(), check=True)
+            print("[render] wrote %s" % out)
+        except Exception as e:  # noqa: BLE001
+            print("[render] ffmpeg failed (%s). Run manually:\n  %s" % (e, ffcmd))
+    else:
+        # frames-only (no ffmpeg on the cluster): print the command to run on a
+        # machine that has ffmpeg (e.g. your laptop, after rsync'ing the frames).
+        print("[render] frames-only. Encode where ffmpeg exists (e.g. your laptop):")
+        print("  %s" % ffcmd)
 
 
 if __name__ == "__main__":
