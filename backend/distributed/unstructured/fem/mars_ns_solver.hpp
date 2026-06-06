@@ -8242,7 +8242,8 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
             if (s.periodicMap) {
                 int blk = 256, grd = int((s.nodeCount + blk - 1) / blk);
                 mars::fem::periodicFoldToMasterKernel<RealType><<<grd, blk>>>(
-                    s.periodicMap->d_periodicPartner.data(), s.nodeCount, divAcc.data());
+                    s.periodicMap->d_periodicPartner.data(),
+                    d_nodeOwnership.data(), s.nodeCount, divAcc.data());
                 cudaDeviceSynchronize();
             }
             s.domain.reverseExchangeNodeHaloAdd(divAcc);
