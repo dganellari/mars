@@ -4072,7 +4072,22 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
             int haveOutlet = (firstOutletDof >= 0) ? s.rank : s.numRanks;
             int pinRank = s.numRanks;
             MPI_Allreduce(&haveOutlet, &pinRank, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
-            if (s.rank == pinRank && firstOutletDof >= 0)
+            if (pinRank == s.numRanks)
+            {
+                // FALLBACK: no rank owns an outlet DOF (the outlet face nodes are
+                // globally unowned on this partition -- they live only in halo
+                // elements everywhere, so firstOutletDof==-1 on every rank). Without
+                // a pin the pressure Poisson is pure-Neumann (singular) and the CG
+                // diverges from step 0 -> blowup. A reference pin only needs ONE
+                // owned DOF fixed to remove the constant null space; its location
+                // does not affect correctness. Pin rank 0's first owned pressure DOF.
+                if (s.rank == 0 && s.numOwnedDofs > 0)
+                {
+                    hostMask[0] = 1;
+                    ownedOutletCount = 1;
+                }
+            }
+            else if (s.rank == pinRank && firstOutletDof >= 0)
             {
                 hostMask[firstOutletDof] = 1;
                 ownedOutletCount = 1;
