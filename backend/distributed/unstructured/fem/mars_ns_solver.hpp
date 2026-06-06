@@ -1858,7 +1858,22 @@ __global__ void applyCorrectorPerNodeKernel(RealType* q,
     if (i >= numNodes) return;
     if (ownership[i] != 1) return;
     int dof = nodeToDof[i];
-    if (dof < 0 || dof >= numOwnedDofs) return;
+    if (dof < 0) return;
+
+    // Cross-rank periodic slave under owner-migration: dof points to master's
+    // GHOST dof (>= numOwnedDofs). The slave node IS owned on this rank and
+    // STILL needs the corrector update -- s.d_u[S]=u**[S]-dt/rho*gradPhi[S] --
+    // otherwise the next predictor's per-element scatter at S reads stale u^n,
+    // and the probe's D(u^{n+1}) measures un-cancelled S-half divergence
+    // (PROJ-P3 ~ 0.5 in 4-rank cube16 = exact periodic-image symmetry).
+    // BDF flag lookup requires dof < numOwnedDofs (isBdryDof is sized to
+    // numOwnedDofs); cross-rank slaves are not Dirichlet under owner-migration
+    // (the master DOF carries the BDF flag), so skip BDF check for them.
+    if (dof >= numOwnedDofs)
+    {
+        q[i] = qStarStar[i] - dt * invRho * gradPhiq[i];
+        return;
+    }
 
     if (isBdryDof[dof])
     {
