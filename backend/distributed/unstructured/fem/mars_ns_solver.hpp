@@ -2861,6 +2861,58 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
     }
     pt.lap("area vectors");
 
+    // MARS_PERIODIC_AREAVEC_PROBE: H1 falsifier. Per-element Stokes closure
+    // (sum of 12 SCS face area-vectors must be 0 over a closed CV). Scan OWNED
+    // and HALO element ranges separately; if a periodic-image halo element on
+    // the receiving rank has a sign-flipped face from a misordered SCS-table
+    // wrap, halo_max >> owned_max. One-shot at setup, rank-uniform gate.
+    // Hex-only (tet uses a different table); Periodic-only; pump path skipped.
+    if constexpr (std::is_same_v<ElementTag, HexTag>)
+    if (s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Periodic
+        && s.periodicMap != nullptr
+        && std::getenv("MARS_PERIODIC_AREAVEC_PROBE") != nullptr)
+    {
+        constexpr int NSCS = ElemTraits<ElementTag>::ScsPerElem;
+        const size_t startE = s.domain.startIndex();
+        const size_t endE   = s.domain.endIndex();
+        const size_t numOwn = endE - startE;
+        const size_t nElem  = s.elementCount;
+        const RealType* ax = s.d_areaVec_x.data();
+        const RealType* ay = s.d_areaVec_y.data();
+        const RealType* az = s.d_areaVec_z.data();
+        auto closureMagSq = [=] __device__ (size_t e) -> RealType {
+            RealType sx = 0, sy = 0, sz = 0;
+            const size_t base = e * NSCS;
+            for (int f = 0; f < NSCS; ++f) { sx += ax[base+f]; sy += ay[base+f]; sz += az[base+f]; }
+            return sx*sx + sy*sy + sz*sz;
+        };
+        RealType ownedMaxSq = thrust::transform_reduce(
+            thrust::device, thrust::counting_iterator<size_t>(startE),
+            thrust::counting_iterator<size_t>(endE), closureMagSq,
+            RealType(0), thrust::maximum<RealType>());
+        RealType haloMaxSq = RealType(0);
+        if (nElem > numOwn) {
+            RealType h1 = (startE > 0) ? thrust::transform_reduce(
+                thrust::device, thrust::counting_iterator<size_t>(0),
+                thrust::counting_iterator<size_t>(startE), closureMagSq,
+                RealType(0), thrust::maximum<RealType>()) : RealType(0);
+            RealType h2 = (nElem > endE) ? thrust::transform_reduce(
+                thrust::device, thrust::counting_iterator<size_t>(endE),
+                thrust::counting_iterator<size_t>(nElem), closureMagSq,
+                RealType(0), thrust::maximum<RealType>()) : RealType(0);
+            haloMaxSq = std::max(h1, h2);
+        }
+        RealType gOwn = 0, gHalo = 0;
+        MPI_Datatype mt = std::is_same<RealType,double>::value ? MPI_DOUBLE : MPI_FLOAT;
+        MPI_Allreduce(&ownedMaxSq, &gOwn,  1, mt, MPI_MAX, MPI_COMM_WORLD);
+        MPI_Allreduce(&haloMaxSq,  &gHalo, 1, mt, MPI_MAX, MPI_COMM_WORLD);
+        if (s.rank == 0) {
+            std::cout << "  [areavec-probe] sum-over-12-faces |.|_max  owned="
+                      << std::sqrt(gOwn) << "  halo=" << std::sqrt(gHalo)
+                      << "   (closure ~eps => H1 dead; halo>>owned => sign-flip on periodic-image)\n";
+        }
+    }
+
     // Velocity matrix: nu * K assembled first (then we add M/dt and apply BC).
     assembleLaplacian<KeyType, RealType, ElementTag>(s, s.d_node_to_dof, s.d_valuesVel, kernelVariant);
     // The Laplacian above was assembled with gamma=1 -> raw K. Scale by nu for
@@ -5740,7 +5792,13 @@ int solvePressureDDTReduced(NSStepper<KeyType, RealType, ElementTag>& s,
     // the sum-only P^T restriction (the two verified fixes). Runs once, gated.
     {
         static bool symProbeReducedDone = false;
-        if (!symProbeReducedDone && std::getenv("MARS_DDT_SYMPROBE") != nullptr)
+        const char* ev1 = std::getenv("MARS_PERIODIC_DDT_SYMPROBE");
+        const char* ev2 = std::getenv("MARS_DDT_SYMPROBE");
+        const bool symGate = (ev1 != nullptr) || (ev2 != nullptr);
+        const bool periodicGate =
+            (s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Periodic)
+            && (s.periodicMap != nullptr);
+        if (!symProbeReducedDone && symGate && periodicGate)
         {
             symProbeReducedDone = true;
             cstone::DeviceVector<RealType> uD(n, RealType(0)), vD(n, RealType(0));
@@ -5771,9 +5829,13 @@ int solvePressureDDTReduced(NSStepper<KeyType, RealType, ElementTag>& s,
             {
                 RealType denom = std::max(std::abs(uAv), std::abs(vAu));
                 RealType rel = (denom > RealType(0)) ? std::abs(uAv - vAu) / denom : RealType(0);
+                const char* srOff = std::getenv("MARS_DDT_NO_SR_GBCAST");
+                const char* xrOff = std::getenv("MARS_DDT_NO_XR_GBCAST");
                 std::cout << "  [SYMPROBE-reduced] <u,Av>=" << uAv << "  <v,Au>=" << vAu
                           << "  |diff|=" << std::abs(uAv - vAu) << "  rel=" << rel
-                          << "   (symmetric => rel~roundoff; asymmetric => rel~O(1))\n";
+                          << "  SR_GBCAST=" << (srOff ? "OFF" : "ON")
+                          << "  XR_GBCAST=" << (xrOff ? "OFF" : "ON")
+                          << "   (rel<=1e-6 => H2 dead; rel>=1e-3 => H2 lives)\n";
             }
         }
     }
