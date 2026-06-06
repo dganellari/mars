@@ -1,5 +1,41 @@
 # TGV / Periodic NS — Handoff for Next Session
 
+## UPDATE 2026-06-06 (telescoping fold fix, commit 3eb6dee) — the last seam leak (H3)
+
+After the corrector D^T fix (75b454a, div@step40 2.47->0.38) the residual seam leak was confirmed H3
+(fold non-telescoping): the [advN-sum] of ONE rank drifts MONOTONE one-signed (1.8e-11 -> 1.1e-8) over
+40 steps while the others oscillate physically -- a fixed seam node mis-folded the SAME way each step.
+
+ROOT CAUSE (line-verified): the periodic fold (maybePeriodicSum) ran periodicPairSumKernel on the
+FLATTENED d_periodicPartner in ONE unordered pass. flattenPartnerChainKernel rewrites the partner to
+the ULTIMATE master in place (with a read/write race), discarding the direct parent. For an edge/corner
+node S whose DIRECT parent M2 is a same-rank owned node that is ITSELF a cross-rank slave, a single
+unordered pass on the flattened table does NOT telescope S onto the ultimate master -> S's contribution
+is mis-accumulated the same way every step. (The earlier MARS_PERIODIC_EDGE_AUDIT FRAGMENTED=0 only
+proved partner REACHABILITY, never fold MULTIPLICITY -- exactly this gap.)
+
+FIX (3eb6dee): retain the DIRECT parent table (PeriodicMap::d_periodicPartnerDirect, snapshotted in
+buildPeriodicMap right BEFORE the flatten). The FOLD (P^T restriction) now runs on the DIRECT parent:
+maybePeriodicSum stage-a loops periodicPairSumKernel 3x (max chain depth = x,y,z bits) with a sync per
+hop, telescoping every local chain S->M2->M3 to its locally-owned terminal BEFORE the cross-rank send;
+the cross-rank send-list (buildCrossRankPeriodicMap STEP-1) now classifies on the direct parent too, so
+each owned slave folds onto its ultimate master EXACTLY once. The FLATTENED d_periodicPartner stays the
+table for DOF-collapse / periodicBroadcast / periodicFoldToMasterKernel (those want the ultimate master).
+periodicPairSumKernel zeroes the slave after folding, so the 3-hop loop is idempotent (a zeroed slave
+adds 0). Single-rank safe (every master owned -> cross-rank gated out; loop telescopes identically).
+
+VERIFY: (1) MARS_PERIODIC_FOLDCOUNT=1 (build-time, env-gated) prints [periodic-foldcount] -- defect
+should be 0 and nonzero_slave_residual 0 (a telescoping fold of all-ones gives each owned non-slave its
+group_size; before the fix 4-rank shows a fixed nonzero defect). (2) 110-step run: [advN-sum] stops the
+monotone one-signed single-rank drift (becomes rank-invariant/oscillating), div(u_n) stops growing,
+survives 110 steps. This + the corrector D^T fix removes the LAST seam leak.
+
+(Pump "0 inlet nodes" blowup is SEPARATE: inlet BC-resolve / mesh-match on the user side, NOT this
+work -- all periodic edits are Periodic-gated, inert for the pump. See memory
+reference_pump_inlet_resolve_failure.)
+
+
+
 ## UPDATE 2026-06-05 (corrector fix landed + helps; residual isolated; PROBE NEEDS REBUILD)
 
 The corrector D^T adjoint fix (75b454a) is CONFIRMED working: 4-rank cube16 div_max@step40 went
