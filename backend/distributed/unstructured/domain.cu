@@ -1226,6 +1226,79 @@ static void buildNodeHaloTopologyHostPath(
         std::cout.flush();
     }
 
+    // ----- Stage 1b: CLAIM globally-unowned nodes (lowest holder wins) -----
+    // A node that appears ONLY in halo elements on EVERY rank is in nobody's
+    // myOwnedKeys, so keyOwner has no entry for it -> it is owned by no rank.
+    // buildNodeOwnership only ever yields (1->0), never promotes, so such a node
+    // stays ownership==0 everywhere -> it never gets an owned DOF -> a Dirichlet
+    // BC on it (pump inlet/outlet on a partition where the boundary face elements
+    // are all halo) is never applied (owned Dirichlet count = 0, no inflow). This
+    // is the deferred "(sfc_key, owner_rank) global tiebreaker" noted in
+    // buildNodeOwnership. Here every rank already holds h_sfc/keyOwner, so claim
+    // each globally-unowned node for the LOWEST rank that HOLDS it (owned-or-ghost).
+    // NO-OP when there are no globally-unowned nodes (e.g. periodic TGV cube16,
+    // where every node is in some rank's owned-element range): the orphan set is
+    // empty, nothing is claimed, ownership/DOF counts are unchanged.
+    {
+        // My orphan keys = local keys with no global owner.
+        std::vector<KeyType> myOrphanKeys;
+        myOrphanKeys.reserve(64);
+        for (size_t n = 0; n < nodeCount; ++n)
+            if (keyOwner.find(h_sfc[n]) == keyOwner.end())
+                myOrphanKeys.push_back(h_sfc[n]);
+
+        long long localOrphans = (long long)myOrphanKeys.size();
+        long long globalOrphans = 0;
+        MPI_Allreduce(&localOrphans, &globalOrphans, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+
+        if (globalOrphans > 0)
+        {
+            // Allgatherv the (small) orphan key sets across ranks, lowest-rank wins.
+            int myCnt = (int)myOrphanKeys.size();
+            std::vector<int> cnts(numRanks), displs(numRanks);
+            MPI_Allgather(&myCnt, 1, MPI_INT, cnts.data(), 1, MPI_INT, MPI_COMM_WORLD);
+            int total = 0;
+            for (int r = 0; r < numRanks; ++r) { displs[r] = total; total += cnts[r]; }
+            std::vector<KeyType> allOrphans(total);
+            MPI_Allgatherv(myOrphanKeys.data(), myCnt, mpiKeyType,
+                           allOrphans.data(), cnts.data(), displs.data(), mpiKeyType,
+                           MPI_COMM_WORLD);
+            // orphanOwner[key] = lowest rank that HOLDS the orphan key.
+            std::unordered_map<KeyType, int> orphanOwner;
+            orphanOwner.reserve(total);
+            for (int r = 0; r < numRanks; ++r)
+                for (int i = displs[r]; i < displs[r] + cnts[r]; ++i)
+                {
+                    auto it = orphanOwner.find(allOrphans[i]);
+                    if (it == orphanOwner.end() || r < it->second) orphanOwner[allOrphans[i]] = r;
+                }
+            // Claim: this rank owns each orphan key for which it is the lowest holder.
+            // Update keyOwner too so the recv-list build below routes ghosts to the
+            // new owner.
+            int claimed = 0;
+            std::vector<uint8_t> h_ownNew = h_owned;
+            for (size_t n = 0; n < nodeCount; ++n)
+            {
+                if (h_ownNew[n] == 1) continue;
+                auto it = orphanOwner.find(h_sfc[n]);
+                if (it == orphanOwner.end()) continue;
+                keyOwner[h_sfc[n]] = it->second;     // record the global owner
+                if (it->second == rank) { h_ownNew[n] = 1; ++claimed; }
+            }
+            if (claimed > 0)
+            {
+                auto& d_own = const_cast<typename HaloData<ElementTag, RealType, KeyType, AcceleratorTag>::template DeviceVector<uint8_t>&>(
+                    domain.halo_->d_nodeOwnership_);
+                cudaMemcpy(thrust::raw_pointer_cast(d_own.data()), h_ownNew.data(),
+                           nodeCount * sizeof(uint8_t), cudaMemcpyHostToDevice);
+                h_owned = std::move(h_ownNew);
+            }
+            std::cout << "Rank " << rank << ": NodeHaloTopo claimed " << claimed
+                      << " globally-unowned nodes (of " << globalOrphans << " global)" << std::endl;
+            std::cout.flush();
+        }
+    }
+
     // ----- Stage 2: build recv lists (my ghosts grouped by owner) -----
     // Per-peer: keys I want (to send as request) + my local node ids (to populate recvNodeIds_)
     std::vector<std::vector<KeyType>> reqKeysPerPeer(numRanks);
@@ -1544,7 +1617,9 @@ __global__ void resolveOwnershipKernel(
     // touch-flag set). Touchers don't compete for ownership but their
     // presence in the claim list signals they need the value.
     constexpr int TOUCH_FLAG_LOCAL = (int)0x80000000;
-    int peerMin = INT_MAX;
+    int peerMin  = INT_MAX;  // lowest TRUE claimant (has a local element)
+    int holderMin = myRank;  // lowest rank that HOLDS n at all (claim or touch);
+                             // self always holds n, so seed with myRank
     if (found)
     {
         int beg = d_claimKeyOffsets[lo];
@@ -1552,7 +1627,9 @@ __global__ void resolveOwnershipKernel(
         for (int i = beg; i < end; ++i)
         {
             int rLabel = d_claimRanks[i];
-            if ((rLabel & TOUCH_FLAG_LOCAL) != 0) continue;  // skip touchers
+            int r      = rLabel & ~TOUCH_FLAG_LOCAL;  // holder rank, flag stripped
+            if (r < holderMin) holderMin = r;         // every holder competes here
+            if ((rLabel & TOUCH_FLAG_LOCAL) != 0) continue;  // touchers don't own
             if (rLabel < peerMin) peerMin = rLabel;
         }
     }
@@ -1561,10 +1638,21 @@ __global__ void resolveOwnershipKernel(
     {
         d_authoritativeOwner[n] = (peerMin < myRank) ? peerMin : myRank;
     }
+    else if (peerMin != INT_MAX)
+    {
+        // A true claimant peer exists (has a local element with n): they own.
+        d_authoritativeOwner[n] = peerMin;
+    }
     else
     {
-        // I don't claim it locally. If a true claimant peer exists, they own.
-        d_authoritativeOwner[n] = (peerMin != INT_MAX) ? peerMin : -1;
+        // Globally unowned: no rank has a local element with this corner
+        // (pump inlet/outlet seam — n arrives only as a halo copy everywhere).
+        // Give it to the lowest rank that holds it at all, so exactly one rank
+        // gets an owned DOF and can pin the Dirichlet BC. Closed/periodic
+        // meshes (TGV) never reach here: every node is locally claimed by some
+        // rank, so peerMin != INT_MAX above. holderMin >= myRank-seeded, never
+        // INT_MAX, so this is always a valid rank.
+        d_authoritativeOwner[n] = holderMin;
     }
 }
 
