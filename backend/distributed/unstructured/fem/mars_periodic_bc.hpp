@@ -333,29 +333,25 @@ __global__ void periodicBroadcastKernel(const int* d_partner, size_t numNodes,
     d_field[i] = d_field[master];
 }
 
-// Exact TRANSPOSE of periodicBroadcastKernel: for every OWNED slave,
+// Exact TRANSPOSE of periodicBroadcastKernel: for every slave node,
 // field[partner] += field[slave]; field[slave] = 0. partner may be a master
 // GHOST (cross-rank), and the contribution lands in that ghost slot so a
 // subsequent reverseExchangeNodeHaloAdd carries it to the master's owner.
-// Used by the reduced-DOF P^T A P operator (applyDDTReduced) to keep A
-// symmetric across the periodic seam.
-//
-// SLAVE-OWNED gate: without it, a rank that owns the master ALSO folds its
-// ghost copy of the slave's value into the master (atomicAdd on ghost->owned)
-// while the slave-owner rank simultaneously folds owned-slave->master-ghost
-// and reverseExchangeNodeHaloAdd ships that to the master-owner -> master
-// receives the contribution TWICE. The gate makes this kernel a pure
-// slave-side restriction; the master-owner rank's atomicAdd path is the
-// reverseExchange (the cstone-ghost mechanism).
+// Used by the reduced-DOF P^T A P operator (applyDDTReduced) and by the
+// RHS / corrector div-probe paths -- all run BEFORE reverseExchangeNodeHaloAdd
+// so the field here is per-rank owned-element scatter, not halo-merged yet.
+// No ownership gate: the master-owner rank's ghost-slave slot is empty
+// (zero from per-element scatter, since the master-owner does not own the
+// periodic-image element); the slave-owner rank's owned-slave slot folds
+// onto the master-ghost slot, then reverseExchange carries it to the
+// master's owner -- the correct cross-rank routing for the operator's P^T.
 template<typename RealType>
 __global__ void periodicFoldToMasterKernel(const int* d_partner,
-                                           const uint8_t* d_ownership,
                                            size_t numNodes,
                                            RealType* d_field)
 {
     size_t i = size_t(blockIdx.x) * blockDim.x + threadIdx.x;
     if (i >= numNodes) return;
-    if (d_ownership[i] != 1) return;
     int master = d_partner[i];
     if (master < 0) return;
     atomicAdd(&d_field[master], d_field[i]);
