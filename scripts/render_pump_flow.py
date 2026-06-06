@@ -216,32 +216,57 @@ def main():
     print("[render] %d frames (%d time + %d hold), %dx%d, seeds=%d, speed[%.3g,%.3g]"
           % (total, len(tvals), args.hold_frames, W, H, args.n_streamlines, smin, smax))
 
+    def save_frame(idx):
+        # Guard each frame: one bad timestep/render must NOT abort the whole run.
+        fn = os.path.join(args.frames_dir, "frame_%04d.png" % idx)
+        try:
+            Render(view)
+            SaveScreenshot(fn, view, ImageResolution=[W, H])
+            return True
+        except Exception as e:  # noqa: BLE001
+            print("  [warn] frame %d failed (%s) -- skipping" % (idx, e))
+            return False
+
     fidx = 0
+    written = 0
     for t in tvals:
         view.ViewTime = t
-        reader.UpdatePipeline(t)
+        try:
+            reader.UpdatePipeline(t)
+        except Exception as e:  # noqa: BLE001
+            print("  [warn] UpdatePipeline t=%.4g failed (%s)" % (t, e))
         cam.Azimuth(az_per_frame)
-        Render(view)
-        SaveScreenshot(os.path.join(args.frames_dir, "frame_%04d.png" % fidx), view, ImageResolution=[W, H])
+        if save_frame(fidx):
+            written += 1
         if fidx % 10 == 0:
             print("  frame %d/%d  t=%.4g" % (fidx + 1, total, t))
         fidx += 1
     # hold on the developed state, keep orbiting
     for _ in range(max(0, args.hold_frames)):
         cam.Azimuth(az_per_frame)
-        Render(view)
-        SaveScreenshot(os.path.join(args.frames_dir, "frame_%04d.png" % fidx), view, ImageResolution=[W, H])
+        if save_frame(fidx):
+            written += 1
         fidx += 1
 
+    print("[render] wrote %d/%d PNG frames to %s" % (written, total, args.frames_dir))
+
+    # Encode FROM the PNG frames with ffmpeg -- do NOT use SaveAnimation (it
+    # re-renders every frame and would crash the same way / waste the work).
     if args.out:
-        try:
-            SaveAnimation(args.out, view, ImageResolution=[W, H], FrameRate=args.fps,
-                          FrameWindow=[0, total - 1])
-            print("[render] wrote %s" % args.out)
-        except Exception as e:  # noqa: BLE001
-            print("[render] SaveAnimation unavailable (%s). Encode the frames:" % e)
-            print("  ffmpeg -framerate %d -i %s/frame_%%04d.png -c:v libx264 -pix_fmt yuv420p -crf 18 %s"
-                  % (args.fps, args.frames_dir, args.out))
+        import shutil
+        import subprocess
+        ff = shutil.which("ffmpeg")
+        ffcmd = ("%s -y -framerate %d -i %s/frame_%%04d.png -c:v libx264 -pix_fmt yuv420p -crf 18 %s"
+                 % (ff or "ffmpeg", args.fps, args.frames_dir, args.out))
+        if ff:
+            print("[render] encoding: %s" % ffcmd)
+            try:
+                subprocess.run(ffcmd.split(), check=True)
+                print("[render] wrote %s" % args.out)
+            except Exception as e:  # noqa: BLE001
+                print("[render] ffmpeg failed (%s). Run manually:\n  %s" % (e, ffcmd))
+        else:
+            print("[render] ffmpeg not found. Encode the frames yourself:\n  %s" % ffcmd)
 
 
 if __name__ == "__main__":
