@@ -305,6 +305,16 @@ __global__ void periodicPairSumKernel(const int*     d_partner,
 {
     size_t i = size_t(blockIdx.x) * blockDim.x + threadIdx.x;
     if (i >= numNodes) return;
+    // Gate on BOTH slave-owned AND master-owned. The slave-owned gate is the
+    // multi-rank fix: without it, a rank that owns the master ALSO folds the
+    // slave's GHOST value (delivered via cstone periodic-image halo). The
+    // slave-owner rank simultaneously cross-rank-sends the same slave value
+    // to the master-owner via stage-b -> the master gets the contribution
+    // TWICE. Result on cube16/4-rank: defect=+561, eq{2,4,8}={225,0,0}
+    // (2/3 of face masters + ALL edges/corners over-fold). Gating on
+    // own[i]==1 makes the local fold same-rank-only and exactly the same
+    // logical pass as on single-rank, where every node is owned.
+    if (d_ownership[i] != 1) return;
     int master = d_partner[i];
     if (master < 0) return;
     if (d_ownership[master] != 1) return;
