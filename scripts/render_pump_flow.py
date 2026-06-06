@@ -50,7 +50,12 @@ def main():
                          "GPU StreamTracer/ParticleTracer HANGS on large tet meshes in headless ParaView)")
     ap.add_argument("--pathlines", action="store_true",
                     help="PARTICLE TRACKS: release particles at the inlet and let the flow CARRY them "
-                         "over time (looks like real fluid moving through). Needs the time series.")
+                         "over time, rendered as little spheres -- looks like real liquid streaming "
+                         "through. Needs the time series. Slow on big meshes; let it run.")
+    ap.add_argument("--particle-size", type=float, default=0.006,
+                    help="particle sphere size as a fraction of the bbox diagonal (default 0.006)")
+    ap.add_argument("--reinject", type=int, default=5,
+                    help="re-inject particles at the inlet every N steps (keeps the inlet 'spraying')")
     ap.add_argument("--orbit-deg", type=float, default=30.0,
                     help="total azimuth sweep over the run (gentle sway; 0 = fixed camera)")
     ap.add_argument("--fps", type=int, default=30)
@@ -218,12 +223,28 @@ def main():
             tracer.SeedSource.Center = seed_c
             tracer.SeedSource.Radius = seed_r
             tracer.SeedSource.NumberOfPoints = args.n_streamlines
-            # render tracks as fading tails via a Tube on the tracer output
-            ptubes = Tube(Input=tracer)
-            ptubes.Radius = diag * 0.0016
-            pathline_tracer = (tracer, ptubes)
-            flow_props.append((ptubes, "speed"))
-            print("[render] pathline (ParticleTracer) mode")
+            # Continuously inject particles so the inlet keeps "spraying" liquid,
+            # not just a one-shot puff (if the build supports it).
+            for attr, val in (("ForceReinjectionEveryNSteps", max(1, args.reinject)),):
+                try:
+                    setattr(tracer, attr, val)
+                except Exception:
+                    pass
+            # Render the particles as little SPHERES -- reads like droplets of
+            # liquid streaming through the pump (much more "real fluid" than tubes).
+            blobs = Glyph(Input=tracer, GlyphType="Sphere")
+            try:
+                blobs.GlyphMode = "All Points"
+            except Exception:
+                pass
+            try:
+                blobs.ScaleFactor = diag * args.particle_size
+                blobs.GlyphType.Radius = 0.5
+            except Exception:
+                pass
+            pathline_tracer = (tracer, blobs)
+            flow_props.append((blobs, "speed"))
+            print("[render] pathline/particle mode (spheres carried by the flow)")
         except Exception as e:  # noqa: BLE001
             print("[render] ParticleTracer unavailable (%s); falling back to streamlines" % e)
             args.streamlines = True
