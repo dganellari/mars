@@ -490,68 +490,6 @@ __global__ void enforceBcColMatrixKernelByNode(const uint8_t* isPressureBdryNode
     }
 }
 
-// Periodic seam variant of enforceBcColMatrixKernelByNode. For a CROSS-RANK
-// periodic slave the solve uses a Dirichlet identity (x[slave]=0), but
-// physically phi[slave]=phi[master] (one periodic DOF). So in any OTHER row r
-// that couples to the slave column, A[r,slave]*phi[slave] = A[r,slave]*phi[master]
-// -- the coupling must be FOLDED ONTO THE MASTER, not dropped. The master is the
-// slave's periodic partner; on the master-owner rank r IS the master row, so the
-// fold lands on r's own diagonal. Dropping it instead (plain col-zero) deletes a
-// nonzero off-diagonal from a row whose discrete-Laplacian row-sum must be ~0,
-// making the operator inconsistent at the seam -> the projection cannot zero
-// divergence there (boundary div 30x interior -> blowup). This matches what the
-// matrix-free operator's P-on-input (phi[slave]:=phi[master]) does implicitly.
-// d_partner[colNode] gives the master node of a slave column; we fold A[r,slave]
-// onto A[r, nodeToDof[master]] when that master DOF is present in row r, else
-// (master is a remote ghost, not a column of r) onto r's diagonal as the
-// row-sum-preserving fallback.
-template<typename RealType>
-__global__ void foldPeriodicSlaveColIntoMasterKernel(const uint8_t* isXRSlaveNode,
-                                                      const int* d_partner,
-                                                      const int* nodeToDof,
-                                                      const int* dofToNode,
-                                                      int numTotalDofs,
-                                                      const int* rowPtr,
-                                                      const int* colInd,
-                                                      const int* diagPtr,
-                                                      RealType* values,
-                                                      int numOwnedRows)
-{
-    int row = blockIdx.x * blockDim.x + threadIdx.x;
-    if (row >= numOwnedRows) return;
-    // Skip if THIS row is itself an XR-slave (already an identity row).
-    int rowNode = dofToNode[row];
-    if (rowNode >= 0 && isXRSlaveNode[rowNode]) return;
-    int rs = rowPtr[row];
-    int re = rowPtr[row + 1];
-    int dRow = diagPtr[row];
-    for (int j = rs; j < re; ++j)
-    {
-        int c = colInd[j];
-        if (c < 0 || c >= numTotalDofs) continue;
-        int cnode = dofToNode[c];
-        if (cnode < 0 || !isXRSlaveNode[cnode]) continue;
-        RealType a = values[j];
-        // Fold the slave-column coupling onto the master. phi[slave]=phi[master],
-        // so this preserves A*phi exactly while restoring the row-sum.
-        int masterNode = d_partner[cnode];
-        int masterDof = (masterNode >= 0) ? nodeToDof[masterNode] : -1;
-        bool folded = false;
-        if (masterDof >= 0 && masterDof != row)
-        {
-            for (int k = rs; k < re; ++k)
-            {
-                if (colInd[k] == masterDof) { values[k] += a; folded = true; break; }
-            }
-        }
-        // master is this row itself, or its column isn't stored in this row
-        // (remote ghost): fold onto the diagonal (row-sum preserved either way,
-        // and for the master row the master IS the diagonal).
-        if (!folded && dRow >= 0) values[dRow] += a;
-        values[j] = RealType(0);
-    }
-}
-
 // Build the inverse map: dofToNode[d] = local node that has nodeToDof[node] = d.
 // One thread per node. Multiple nodes can never share a DOF (in non-periodic
 // modes), so this is a simple scatter.
@@ -585,26 +523,10 @@ __global__ void enforceBcMatrixKernel(const uint8_t* isBoundaryDof,
     if (dp >= 0) values[dp] = RealType(1);
 }
 
-// Path-B helper: mark owned slave DOFs of cross-rank periodic pairs in a
-// per-owned-DOF boolean mask. One thread per send-list entry. Writes are
-// race-free because each slave node maps to a distinct owned DOF.
-__global__ void markPeriodicXRSlaveDofKernel(const int* d_sendOwnedSlaveNodeIds,
-                                             const int* d_nodeToDof,
-                                             int numSendIds,
-                                             int numOwnedDofs,
-                                             uint8_t* d_mask)
-{
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i >= numSendIds) return;
-    int node = d_sendOwnedSlaveNodeIds[i];
-    int dof  = d_nodeToDof[node];
-    if (dof >= 0 && dof < numOwnedDofs) d_mask[dof] = 1;
-}
-
-// Path-B helper: zero the implicit-diffusion RHS at cross-rank slave DOFs so
-// the Dirichlet-identity slave row solves trivially to x[slave] = 0. The
-// post-solve crossRankPeriodicBroadcastDof then overwrites x[slave] with
-// x[master_owned_D] via MPI.
+// Zero the assembled-DDT pressure RHS at cross-rank slave DOFs. Under
+// owner-migration the slave's nodeToDof points at the master's ghost DOF
+// (>= numOwnedDofs), so the bound check below makes this a no-op for migrated
+// pairs; it stays only for the legacy same-rank send-list entries.
 template<typename RealType>
 __global__ void zeroDofAtCrossRankSlavesKernel(const int* d_sendOwnedSlaveNodeIds,
                                                const int* d_nodeToDof,
@@ -2126,13 +2048,6 @@ struct NSStepper
     cstone::DeviceVector<RealType> d_mass;       // per OWNED DOF
     cstone::DeviceVector<RealType> d_massNode;   // per NODE (owned + ghosts halo-exchanged); read by DDT assembler
     cstone::DeviceVector<uint8_t>  d_isBdryDof;
-    // Path-B mask for multi-rank periodic: marks owned slave DOFs whose master
-    // lives on a remote rank. enforceBcMatrixKernel zeros those rows and sets
-    // diag=1 (Dirichlet identity); the runImplicit RHS-zero step + post-solve
-    // crossRankPeriodicBroadcastDof restore x[slave]:=x[master]. Empty on
-    // single-rank or non-periodic runs.
-    cstone::DeviceVector<uint8_t>  d_isPeriodicXRSlaveDof;
-    cstone::DeviceVector<uint8_t>  d_isPeriodicXRSlaveNode;  // per-NODE Path-B mask, halo-exchanged so symmetric column-zero hits ghost copies too
     // Pressure BC: in cavity mode, use a single corner pin (pressurePinDof).
     // In channel mode, use a Dirichlet mask (d_isPressureBdryDof) over the
     // entire outflow face. Exactly one mechanism is active per run.
@@ -2774,21 +2689,12 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
         size_t nNodes        = s.nodeCount;
         int numOwned         = s.numOwnedDofs;
 
-        // Pass 1: redirect slave -> master DOF ONLY for SAME-RANK pairs (both
-        // the slave and the master are locally owned). Cross-rank pairs (only
-        // one is owned, the other is a ghost via cstone's periodic-image halo)
-        // are NOT collapsed. Doing so would break the matrix symmetry:
-        //   - On rank A (slave owner, master is ghost): the slave row would
-        //     have a column for the master-ghost, but rank D's master row
-        //     would lose its column for the slave-ghost (because the redirect
-        //     maps slave-ghost-DOF back onto master-owned-DOF, eliminating
-        //     the off-diagonal slot).
-        //
-        // For cross-rank pairs, each owner keeps its own owned DOF and its
-        // own row. The slave-master identity is enforced post-solve via
-        // crossRankPeriodicBroadcastDof: x[slave_on_A] := x[master_owned_on_D].
-        // The matrix stays SPD with paired (slave,master) and (master,slave)
-        // off-diagonal entries on the two ranks.
+        // Pass 1: redirect EVERY owned slave -> its master's DOF (owner-migration),
+        // for both same-rank and cross-rank pairs. For a same-rank pair the master
+        // is locally owned. For a cross-rank pair the master is a periodic-image
+        // ghost delivered by cstone's halo, so the redirect points the slave at a
+        // GHOST DOF (>= numOwned); the Pass-2 compaction (gated dof<numOwned) then
+        // drops the slave's own owned row, collapsing the pair to ONE global DOF.
         cstone::DeviceVector<int> d_oldDof(s.d_node_to_dof);
         thrust::for_each(thrust::device,
                          thrust::counting_iterator<size_t>(0),
@@ -2796,10 +2702,22 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
                          [d_partner, d_old = d_oldDof.data(), d_n2d, d_own]
                          __device__ (size_t i) {
                              int master = d_partner[i];
-                             // Same-rank pair only: BOTH the current node (slave)
-                             // and the master must be locally owned.
-                             if (master >= 0 && d_own[master] == 1 && d_own[i] == 1)
-                                 d_n2d[i] = d_old[master];
+                             if (master < 0 || d_own[i] != 1) return;
+                             // TRUE cross-rank collapse (owner-migration): redirect
+                             // EVERY owned slave onto its master's DOF, regardless of
+                             // whether the master is owned (same-rank) or a periodic-
+                             // image GHOST (cross-rank). For a same-rank pair d_old[master]
+                             // is the master's owned dof (< numOwned). For a cross-rank
+                             // pair the master is a local ghost (delivered by cstone's
+                             // periodic-image halo) and d_old[master] is a GHOST dof
+                             // (>= numOwned), so the compaction below (Pass 2 gates
+                             // dof<numOwned) drops the slave's OWN owned row -> the pair
+                             // becomes ONE global DOF. No orphan: the slave node is now a
+                             // ghost-valued node reading the master's value via halo; its
+                             // stiffness is re-assembled on the master-owner rank from the
+                             // SAME periodic-image element. This eliminates the cross-rank
+                             // emulation (no post-solve broadcast, no per-matvec pair-sum).
+                             d_n2d[i] = d_old[master];
                          });
         cudaDeviceSynchronize();
 
@@ -2968,6 +2886,110 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
     // Pressure matrix: same K (no nu scale). Assemble into d_valuesPre.
     assembleLaplacian<KeyType, RealType, ElementTag>(s, s.d_node_to_dof, s.d_valuesPre, kernelVariant);
     pt.lap("assembly K (pressure)");
+
+    // MARS_PERIODIC_FOLDCOUNT: telescoping check. Fold an all-ones field through the
+    // SAME maybePeriodicSum the physics uses. A telescoping fold deposits exactly
+    // group_size on every ultimate master and 0 on every slave, so the global sum
+    // over owned non-slave nodes MUST equal the total owned-node count. defect =
+    // global_master_sum - total_owned: 0 => telescopes; <0 => a seam node folded
+    // ZERO times (dropped); >0 => DOUBLE-folded. Build-time, env-gated, no physics.
+    if (s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Periodic
+        && s.periodicMap != nullptr
+        && std::getenv("MARS_PERIODIC_FOLDCOUNT") != nullptr)
+    {
+        cstone::DeviceVector<RealType> d_ones(s.nodeCount, RealType(1));
+        maybePeriodicSum<KeyType, RealType, ElementTag>(s, d_ones);
+        const uint8_t* ownPtr  = s.ownershipMap().data();
+        const int*     partPtr = s.periodicMap->d_periodicPartner.data();
+        const RealType* onesP  = d_ones.data();
+        double locSum = thrust::transform_reduce(thrust::device,
+            thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(s.nodeCount),
+            [ownPtr, partPtr, onesP] __device__ (size_t i) -> double {
+                if (ownPtr[i] != 1 || partPtr[i] >= 0) return 0.0;  // slave folded away
+                return double(onesP[i]); }, 0.0, thrust::plus<double>());
+        double locMax = thrust::transform_reduce(thrust::device,
+            thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(s.nodeCount),
+            [ownPtr, partPtr, onesP] __device__ (size_t i) -> double {
+                if (ownPtr[i] != 1 || partPtr[i] >= 0) return 0.0;
+                return double(onesP[i]); }, 0.0, thrust::maximum<double>());
+        long long locResid = thrust::transform_reduce(thrust::device,
+            thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(s.nodeCount),
+            [ownPtr, partPtr, onesP] __device__ (size_t i) -> long long {
+                if (ownPtr[i] != 1 || partPtr[i] < 0) return 0LL;
+                return (onesP[i] != RealType(0)) ? 1LL : 0LL; }, 0LL, thrust::plus<long long>());
+        long long locOwned = thrust::transform_reduce(thrust::device,
+            thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(s.nodeCount),
+            [ownPtr] __device__ (size_t i) -> long long { return (ownPtr[i] == 1) ? 1LL : 0LL; },
+            0LL, thrust::plus<long long>());
+        double gSum = 0, gMax = 0; long long gResid = 0, gOwned = 0;
+        MPI_Allreduce(&locSum, &gSum, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+        MPI_Allreduce(&locMax, &gMax, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+        MPI_Allreduce(&locResid, &gResid, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+        MPI_Allreduce(&locOwned, &gOwned, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+        if (s.rank == 0)
+            std::cout << "[periodic-foldcount] global_master_sum=" << gSum
+                      << " expected(owned_nodes)=" << gOwned
+                      << " defect=" << (gSum - double(gOwned))
+                      << " max_master=" << gMax
+                      << " nonzero_slave_residual=" << gResid
+                      << "  (defect==0 && residual==0 => telescopes)\n";
+
+        // Over-fold breakdown: count owned non-slave masters whose accumulated
+        // value exceeds reasonable group_size thresholds. Triperiodic group
+        // sizes are 1 (interior), 2 (face), 4 (edge), 8 (corner). Anything
+        // above 8 is an over-fold. Counts and a dimensional split tell us
+        // which subset (face vs edge vs corner) is doubling.
+        const uint8_t* maskPtr = s.periodicMap->d_periodicMask.data();
+        long long lOver1=0, lOver2=0, lOver4=0, lOver8=0;
+        long long lG1=0, lG2=0, lG4=0, lG8=0;
+        auto countOver = [&](double thr) {
+            return thrust::transform_reduce(thrust::device,
+                thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(s.nodeCount),
+                [ownPtr, partPtr, onesP, thr] __device__ (size_t i) -> long long {
+                    if (ownPtr[i] != 1 || partPtr[i] >= 0) return 0LL;
+                    return (double(onesP[i]) > thr + 0.5) ? 1LL : 0LL;
+                }, 0LL, thrust::plus<long long>());
+        };
+        // Counts of owned-master nodes whose folded value EXCEEDS each threshold.
+        // Strict > so e.g. >1 catches a face master that double-summed (2 instead of 2... wait)
+        // -- triperiodic group sizes are 1/2/4/8 so a *correct* face master shows 2,
+        // edge master 4, corner master 8. We report counts ABOVE each canonical size.
+        lOver1 = countOver(1.0);   // >1 -> at least face-folded
+        lOver2 = countOver(2.0);   // >2 -> at least edge-folded
+        lOver4 = countOver(4.0);   // >4 -> at least corner-folded
+        lOver8 = countOver(8.0);   // >8 -> OVER-FOLDED, must be 0
+        // And exact group buckets (= per-mask popcount expectations):
+        auto countEq = [&](double tgt) {
+            return thrust::transform_reduce(thrust::device,
+                thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(s.nodeCount),
+                [ownPtr, partPtr, onesP, tgt] __device__ (size_t i) -> long long {
+                    if (ownPtr[i] != 1 || partPtr[i] >= 0) return 0LL;
+                    return (double(onesP[i]) > tgt - 0.5 && double(onesP[i]) < tgt + 0.5) ? 1LL : 0LL;
+                }, 0LL, thrust::plus<long long>());
+        };
+        lG1 = countEq(1.0);
+        lG2 = countEq(2.0);
+        lG4 = countEq(4.0);
+        lG8 = countEq(8.0);
+        long long gOver1=0,gOver2=0,gOver4=0,gOver8=0,gG1=0,gG2=0,gG4=0,gG8=0;
+        MPI_Allreduce(&lOver1, &gOver1, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+        MPI_Allreduce(&lOver2, &gOver2, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+        MPI_Allreduce(&lOver4, &gOver4, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+        MPI_Allreduce(&lOver8, &gOver8, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+        MPI_Allreduce(&lG1, &gG1, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+        MPI_Allreduce(&lG2, &gG2, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+        MPI_Allreduce(&lG4, &gG4, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+        MPI_Allreduce(&lG8, &gG8, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+        if (s.rank == 0)
+            std::cout << "[periodic-foldcount] buckets eq{1,2,4,8}={"
+                      << gG1 << "," << gG2 << "," << gG4 << "," << gG8
+                      << "} over{1,2,4,8}={"
+                      << gOver1 << "," << gOver2 << "," << gOver4 << "," << gOver8
+                      << "}  (cube16 triperiodic expects eq1=interior,"
+                      << " eq2=#faces-2-folded, eq4=#edges-4-folded,"
+                      << " eq8=#corners-8-folded; over8==0 required)\n";
+        (void)maskPtr;
+    }
 
     // Lumped mass (per-node + reverse-halo). Identical to B.2/B.3/B.4 pattern.
     s.d_mass.resize(s.numOwnedDofs);
@@ -3634,137 +3656,18 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
         pt.lap("velocity per-node BC mask + halo");
     }
 
-    // Fix Y: ship each cross-rank slave's full assembled velocity row to its
-    // master-owner rank and accumulate into the master row. Runs BEFORE the
-    // row-zero step below so the slave row still carries its original
-    // off-diagonals. After this call, the master row on rank D holds the
-    // fully merged equation; the slave row will become a Dirichlet identity
-    // a few lines later (enforceBcMatrixKernel + d_isPeriodicXRSlaveDof).
-    // Fix Y (cross-rank velocity row sum) is intentionally DISABLED.
-    // The DOF-collapse Pass 1 above now redirects ALL slave nodeToDof entries
-    // to their master's DOF, including cross-rank pairs where the master is a
-    // ghost on this rank. After this, the slave's "row" doesn't exist as a
-    // separate owned DOF -- the assembler scatters straight into the master's
-    // row via the ghost DOF (cstone's periodic-image halo delivers the rank-A
-    // slave-side elements onto rank D, where the master is owned). No row-sum
-    // exchange needed; same flow as single-rank periodic.
-
-    // Path-B mask: flag owned slave DOFs of cross-rank periodic pairs. The
-    // sparsity builder didn't emit slave_row<->master_ghost_col edges on
-    // slave-owner ranks (MARS_PERIODIC_XR_SYMCHECK proved A_local=0), so the
-    // assembled slave row is structurally non-symmetric. Make it a Dirichlet
-    // identity row instead; the post-solve crossRankPeriodicBroadcastDof
-    // restores x[slave]:=x[master_owned_D] via MPI.
-    s.d_isPeriodicXRSlaveDof.resize(s.numOwnedDofs);
-    thrust::fill(thrust::device_pointer_cast(s.d_isPeriodicXRSlaveDof.data()),
-                 thrust::device_pointer_cast(s.d_isPeriodicXRSlaveDof.data() + s.numOwnedDofs),
-                 uint8_t(0));
-    if (s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Periodic
-        && s.periodicMap != nullptr
-        && !s.periodicMap->cross_.d_sendOwnedSlaveIds_.empty())
-    {
-        int nSend = int(s.periodicMap->cross_.d_sendOwnedSlaveIds_.size());
-        int blk = (nSend + s.blockSize - 1) / s.blockSize;
-        markPeriodicXRSlaveDofKernel<<<blk, s.blockSize>>>(
-            s.periodicMap->cross_.d_sendOwnedSlaveIds_.data(),
-            s.d_node_to_dof.data(),
-            nSend, s.numOwnedDofs,
-            s.d_isPeriodicXRSlaveDof.data());
-        cudaDeviceSynchronize();
-    }
-
-    // Per-NODE Path-B mask for symmetric column enforcement. The d_isPeriodicXRSlaveDof
-    // mask above flags OWNED slave DOFs; this per-NODE version is halo-exchanged so
-    // ghost-copies of slave nodes on neighboring ranks also carry the flag. That lets
-    // enforceBcColMatrixKernelByNode zero column entries on EVERY rank that has an
-    // edge to a slave column. Same pattern as d_isPressureBdryNode at line ~3302.
-    s.d_isPeriodicXRSlaveNode.resize(s.nodeCount);
-    thrust::fill(thrust::device_pointer_cast(s.d_isPeriodicXRSlaveNode.data()),
-                 thrust::device_pointer_cast(s.d_isPeriodicXRSlaveNode.data() + s.nodeCount),
-                 uint8_t(0));
-    // Halo-exchange ALWAYS runs on every rank in Periodic mode, regardless of
-    // whether THIS rank has local slaves: exchangeNodeHalo is an MPI collective.
-    // Earlier version gated the entire block on !cross_.d_sendOwnedSlaveIds_.empty()
-    // -- rank 0 (master-owner, no local slaves) skipped while ranks 1/2/3 entered
-    // and called exchangeNodeHalo -> classic MPI deadlock. The scatter that
-    // populates the mask is INSIDE its own !empty() guard so the H2D side of
-    // the scatter doesn't index into a zero-sized array.
-    if (s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Periodic
-        && s.periodicMap != nullptr)
-    {
-        if (!s.periodicMap->cross_.d_sendOwnedSlaveIds_.empty())
-        {
-            int nSend = int(s.periodicMap->cross_.d_sendOwnedSlaveIds_.size());
-            // Tiny scatter kernel inlined as a thrust::for_each: for each entry in
-            // d_sendOwnedSlaveIds_, set d_isPeriodicXRSlaveNode[node] = 1.
-            const int* d_sids = s.periodicMap->cross_.d_sendOwnedSlaveIds_.data();
-            uint8_t* d_mask = s.d_isPeriodicXRSlaveNode.data();
-            thrust::for_each(thrust::device,
-                             thrust::counting_iterator<int>(0),
-                             thrust::counting_iterator<int>(nSend),
-                             [d_sids, d_mask] __device__ (int i) {
-                                 d_mask[d_sids[i]] = 1;
-                             });
-            cudaDeviceSynchronize();
-        }
-
-        // Halo-exchange the mask via a RealType proxy (cstone exchangeNodeHalo is
-        // locked to the domain's RealType). Proxy values are 0.0/1.0; threshold
-        // 0.5 on the way back. Identical pattern to the pressure-DDT path. Runs
-        // on ALL ranks (rank 0 will receive 1s in ghost slots from rank 1/2/3
-        // slave-owners; rank 0's interior rows that reference those ghost columns
-        // then get column-zeroed correctly).
-        if (s.numRanks > 1)
-        {
-            cstone::DeviceVector<RealType> d_maskProxy(s.nodeCount, RealType(0));
-            thrust::transform(thrust::device,
-                              thrust::device_pointer_cast(s.d_isPeriodicXRSlaveNode.data()),
-                              thrust::device_pointer_cast(s.d_isPeriodicXRSlaveNode.data() + s.nodeCount),
-                              thrust::device_pointer_cast(d_maskProxy.data()),
-                              [] __device__ (uint8_t v) -> RealType { return v ? RealType(1) : RealType(0); });
-            s.domain.exchangeNodeHalo(d_maskProxy);
-            thrust::transform(thrust::device,
-                              thrust::device_pointer_cast(d_maskProxy.data()),
-                              thrust::device_pointer_cast(d_maskProxy.data() + s.nodeCount),
-                              thrust::device_pointer_cast(s.d_isPeriodicXRSlaveNode.data()),
-                              [] __device__ (RealType v) -> uint8_t { return (v > RealType(0.5)) ? uint8_t(1) : uint8_t(0); });
-            cudaDeviceSynchronize();
-        }
-    }
-
-    // Probe 1: per-rank count of marked slave DOFs. Should be ~equal to
-    // d_sendOwnedSlaveIds_.size() on slave-owner ranks, 0 on master-owner
-    // (e.g. rank 0). Gated by MARS_PERIODIC_PATHB_DBG=1.
-    if (std::getenv("MARS_PERIODIC_PATHB_DBG") != nullptr)
-    {
-        int sendListSize = s.periodicMap
-            ? int(s.periodicMap->cross_.d_sendOwnedSlaveIds_.size()) : 0;
-        long long maskOnes = thrust::count(
-            thrust::device,
-            thrust::device_pointer_cast(s.d_isPeriodicXRSlaveDof.data()),
-            thrust::device_pointer_cast(s.d_isPeriodicXRSlaveDof.data() + s.numOwnedDofs),
-            uint8_t(1));
-        // Probe 1b: per-NODE mask count (post halo-exchange). Rank 0 has no
-        // local slaves but should now carry GHOST flags from peer slave-owners,
-        // so nodeMaskOnes > 0 on rank 0 too -- proves the halo exchange landed.
-        long long nodeMaskOnes = thrust::count(
-            thrust::device,
-            thrust::device_pointer_cast(s.d_isPeriodicXRSlaveNode.data()),
-            thrust::device_pointer_cast(s.d_isPeriodicXRSlaveNode.data() + s.nodeCount),
-            uint8_t(1));
-        std::cerr << "[pathb-dbg rank " << s.rank
-                  << "] mask_ones=" << maskOnes
-                  << " send_list_size=" << sendListSize
-                  << " numOwnedDofs=" << s.numOwnedDofs
-                  << " nodeMaskOnes=" << nodeMaskOnes
-                  << " nodeCount=" << s.nodeCount << std::endl;
-    }
+    // No cross-rank velocity row-sum exchange needed. The DOF-collapse Pass 1
+    // above redirects ALL slave nodeToDof entries to their master's DOF,
+    // including cross-rank pairs where the master is a ghost on this rank. After
+    // this, the slave's "row" doesn't exist as a separate owned DOF -- the
+    // assembler scatters straight into the master's row via the ghost DOF
+    // (cstone's periodic-image halo delivers the rank-A slave-side elements onto
+    // rank D, where the master is owned). Same flow as single-rank periodic.
 
     // Enforce velocity Dirichlet on the velocity matrix (row=0, diag=1).
     // - Cavity/channel/pump: zero rows + diag=1 for d_isBdryDof slots.
-    // - Periodic: zero rows + diag=1 for d_isPeriodicXRSlaveDof slots
-    //   (Path B: slave row becomes trivial identity, master row carries the
-    //   physics; broadcast + post-solve patch handle the slave value).
+    // - Periodic: nothing to enforce. Periodic pairs collapse to one owned
+    //   merged DOF per pair (owner-migration), so there is no separate slave row.
     {
         int dofBlocks = (s.numOwnedDofs + s.blockSize - 1) / s.blockSize;
         if (s.bcKind != NSStepper<KeyType, RealType, ElementTag>::BCKind::Periodic)
@@ -3817,18 +3720,10 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
         }
         else if (s.periodicMap != nullptr)
         {
-            // Multi-rank periodic Strategy B: do NOT Dirichlet-identity the
-            // cross-rank slave rows. The assembler produces HALF-STRENGTH rows on
-            // both seam slots (slave row on its owner, master row on its owner,
-            // neither carrying the other's stiffness -- SYMCHECK confirmed). The
-            // velocity CG reconstructs the full merged operator matrix-free every
-            // matvec via crossRankPeriodicPairSumDof (spmvPostCallback), exactly
-            // like the proven pressure DDT operator. So the slave KEEPS its
-            // assembled half-strength physics here -- zeroing it to an identity row
-            // (the old Strategy-A attempt) left the master under-physics'd because
-            // the master never received the slave-side stiffness (no Fix-Y row
-            // merge), giving div(u**)~0.01. d_isPeriodicXRSlaveDof is still built
-            // (above) and is now reused as the CG dot mask, not a BC selector.
+            // Periodic: nothing to enforce on the velocity matrix. Each periodic
+            // pair collapses to one owned merged DOF (owner-migration), so the
+            // assembler already scattered the full merged row -- there is no
+            // separate slave row to Dirichlet-identity or mask.
         }
         cudaDeviceSynchronize();
     }
@@ -4345,97 +4240,31 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
             s.d_diagPtrDDT.data(), s.d_valuesDDT.data());
     }
 
-    // Stage 2 -- assembled DDT cross-rank periodic correctness. A cross-rank
-    // periodic slave keeps its OWN owned DOF (only same-rank pairs collapse onto
-    // the master in setupNSStepper). cstone gives slave and master DISTINCT SFC
-    // keys, so the assembler never emitted the slave_row<->master coupling on the
-    // slave-owner rank: the assembled slave AddT row is incomplete/asymmetric
-    // (MARS_PERIODIC_XR_SYMCHECK proved A[slave,master_ghost]=0). The MASTER row
-    // on the other rank IS complete -- the periodic-image halo delivers the
-    // slave-side elements to the master-owner, so the node-driven assembler
-    // walked them and emitted the slave-side ghost columns into the master row.
-    // So the correct, contiguous-row-partition-safe fix (the Hypre IJMatrix
-    // wrapper assigns each owned local row the global id ilower+i and only remaps
-    // COLUMNS through d_localToGlobalDof, so a global-id alias cannot merge the
-    // two rows) is: make the slave row a Dirichlet identity (row=0, diag=1) with
-    // b[slave]=0, then recover x[slave]:=x[master] post-solve from the master
-    // owner (crossRankPeriodicBroadcastDof in runPressureSolveStep, before the
-    // dof->node scatter). The master equation alone carries the merged physics.
-    // Same Path-B treatment the velocity matrix uses; d_isPeriodicXRSlaveDof was
-    // built above. No-op when there are no cross-rank pairs.
-    if (s.nnzDDT > 0
-        && s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Periodic
-        && s.periodicMap != nullptr
-        && !s.periodicMap->cross_.d_sendOwnedSlaveIds_.empty())
-    {
-        int dofBlocks = (s.numOwnedDofs + s.blockSize - 1) / s.blockSize;
-        enforceBcMatrixKernel<RealType><<<dofBlocks, s.blockSize>>>(
-            s.d_isPeriodicXRSlaveDof.data(), s.d_rowPtrDDT.data(), s.d_colIndDDT.data(),
-            s.d_diagPtrDDT.data(), s.d_valuesDDT.data(), s.numOwnedDofs);
-        // Fold the slave column onto the master (NOT a plain drop). phi[slave]=
-        // phi[master], so A[r,slave] must be added to A[r,master] (the master row
-        // -> its own diagonal). A bare col-zero deletes a nonzero off-diagonal
-        // from a row whose discrete-Laplacian row-sum must be ~0, leaving the
-        // seam operator inconsistent -> projection can't zero div there (boundary
-        // 30x -> blowup). The fold reproduces the matrix-free P-on-input exactly
-        // and keeps the row-sum. Per-NODE mask is halo-exchanged so it fires on
-        // the master-owner rank too (slave is a ghost column of the master row).
-        if (s.d_isPeriodicXRSlaveNode.size() == static_cast<size_t>(s.nodeCount))
-        {
-            foldPeriodicSlaveColIntoMasterKernel<RealType><<<dofBlocks, s.blockSize>>>(
-                s.d_isPeriodicXRSlaveNode.data(),
-                s.periodicMap->d_periodicPartner.data(),
-                s.d_node_to_dof.data(), s.d_dofToNode.data(), s.numTotalDofs,
-                s.d_rowPtrDDT.data(), s.d_colIndDDT.data(), s.d_diagPtrDDT.data(),
-                s.d_valuesDDT.data(), s.numOwnedDofs);
-        }
-        cudaDeviceSynchronize();
-    }
-
-    // MARS_DDT_ROWSUM: dump row-sums of the FINAL assembled s.AddT (after Stage-2
-    // fold). A D M^-1 D^T Laplacian row MUST sum to ~0 (it annihilates constants).
-    // If multi-rank row-sums are large where single-rank are ~0, the assembled
-    // operator is wrong multi-rank -> phi comes back wrong-magnitude even though
-    // Hypre "converges". Reports per-rank: max|rowsum| over owned rows, split by
-    // whether the row's node is an XR-slave-mask node. Reads CSR to host (one-shot
-    // diagnostic, gated, costs nothing in production).
+    // MARS_DDT_ROWSUM: dump row-sums of the FINAL assembled s.AddT. A D M^-1 D^T
+    // Laplacian row MUST sum to ~0 (it annihilates constants). If multi-rank
+    // row-sums are large where single-rank are ~0, the assembled operator is
+    // wrong multi-rank -> phi comes back wrong-magnitude even though Hypre
+    // "converges". Reports per-rank max|rowsum| over owned rows. Reads CSR to
+    // host (one-shot diagnostic, gated, costs nothing in production).
     if (std::getenv("MARS_DDT_ROWSUM") && s.nnzDDT > 0 && s.numOwnedDofs > 0)
     {
         std::vector<int> hRowPtr(s.numOwnedDofs + 1);
         cudaMemcpy(hRowPtr.data(), s.d_rowPtrDDT.data(),
                    (s.numOwnedDofs + 1) * sizeof(int), cudaMemcpyDeviceToHost);
         int nnzOwned = hRowPtr[s.numOwnedDofs];
-        std::vector<int> hColInd(nnzOwned);
         std::vector<RealType> hVals(nnzOwned);
-        cudaMemcpy(hColInd.data(), s.d_colIndDDT.data(),
-                   nnzOwned * sizeof(int), cudaMemcpyDeviceToHost);
         cudaMemcpy(hVals.data(), s.d_valuesDDT.data(),
                    nnzOwned * sizeof(RealType), cudaMemcpyDeviceToHost);
-        std::vector<uint8_t> hSlaveNode;
-        const bool haveMask = (s.d_isPeriodicXRSlaveNode.size() == static_cast<size_t>(s.nodeCount));
-        if (haveMask) {
-            hSlaveNode.resize(s.nodeCount);
-            cudaMemcpy(hSlaveNode.data(), s.d_isPeriodicXRSlaveNode.data(),
-                       s.nodeCount * sizeof(uint8_t), cudaMemcpyDeviceToHost);
-        }
-        std::vector<int> hDofToNode(s.numTotalDofs, -1);
-        if (s.d_dofToNode.size() == static_cast<size_t>(s.numTotalDofs))
-            cudaMemcpy(hDofToNode.data(), s.d_dofToNode.data(),
-                       s.numTotalDofs * sizeof(int), cudaMemcpyDeviceToHost);
-        double maxAbsNormal = 0.0, maxAbsSlave = 0.0;
-        int rNormal = -1, rSlave = -1, nNormal = 0, nSlave = 0;
+        double maxAbs = 0.0;
+        int rMax = -1;
         for (int r = 0; r < s.numOwnedDofs; ++r) {
             double rowsum = 0.0;
             for (int k = hRowPtr[r]; k < hRowPtr[r + 1]; ++k) rowsum += double(hVals[k]);
-            int node = hDofToNode[r];
-            bool isSlave = haveMask && node >= 0 && hSlaveNode[node];
-            if (isSlave) { ++nSlave; if (std::abs(rowsum) > maxAbsSlave) { maxAbsSlave = std::abs(rowsum); rSlave = r; } }
-            else         { ++nNormal; if (std::abs(rowsum) > maxAbsNormal) { maxAbsNormal = std::abs(rowsum); rNormal = r; } }
+            if (std::abs(rowsum) > maxAbs) { maxAbs = std::abs(rowsum); rMax = r; }
         }
-        std::cout << "  [DDT-rowsum rank " << s.rank << "] non-slave rows=" << nNormal
-                  << " max|rowsum|=" << maxAbsNormal << " (row " << rNormal << ");  "
-                  << "XR-slave rows=" << nSlave << " max|rowsum|=" << maxAbsSlave
-                  << " (row " << rSlave << ")  -- Laplacian rows should be ~0\n" << std::flush;
+        std::cout << "  [DDT-rowsum rank " << s.rank << "] owned rows=" << s.numOwnedDofs
+                  << " max|rowsum|=" << maxAbs << " (row " << rMax
+                  << ")  -- Laplacian rows should be ~0\n" << std::flush;
     }
 
     // Cavity DDT: column-clear stays disabled. A symmetric col-clear changed
@@ -4800,16 +4629,24 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
             const int* nodeToDofPtr = s.d_node_to_dof.data();
             const uint8_t* ownPtr   = d_nodeOwnership.data();
             RealType rs             = static_cast<RealType>(s.globalRowStart);
+            int nOwn                = s.numOwnedDofs;
             thrust::for_each(thrust::device,
                               thrust::counting_iterator<size_t>(0),
                               thrust::counting_iterator<size_t>(s.nodeCount),
-                              [nodeToDofPtr, ownPtr, rs,
+                              [nodeToDofPtr, ownPtr, rs, nOwn,
                                out = d_nodeGlobalDof.data()] __device__(size_t i)
                               {
                                   if (ownPtr[i] == 1)
                                   {
                                       int dof = nodeToDofPtr[i];
-                                      if (dof >= 0) out[i] = rs + static_cast<RealType>(dof);
+                                      // Bound to owned dofs: a migrated cross-rank slave
+                                      // is still cstone-owned but its dof is the master
+                                      // GHOST dof (>= numOwned). Seeding rs+ghostdof would
+                                      // publish a wrong owned global id; instead leave it -1
+                                      // and let exchangeNodeHalo below fill it with the
+                                      // master's global id (one global row per pair).
+                                      if (dof >= 0 && dof < nOwn)
+                                          out[i] = rs + static_cast<RealType>(dof);
                                   }
                               });
             s.domain.exchangeNodeHalo(d_nodeGlobalDof);
@@ -5058,12 +4895,10 @@ int solveOneComponent(NSStepper<KeyType, RealType, ElementTag>& s,
                                     : nullptr;
             size_t nNodes = s.nodeCount;
             int bs = s.blockSize;
-            // Strategy B: the slave is a LIVE unknown (its row keeps assembled
-            // half-strength physics), so the per-iter master->slave broadcast on
-            // the INPUT p MUST update p[slave] -- the matvec needs a periodic p
-            // across the seam, mirroring the DDT reduced operator's STEP-P input
-            // prolongation (no skip). So pass nullptr (no skip mask). The merge of
-            // the two half-rows happens AFTER the SpMV via crossRankPeriodicPairSumDof.
+            // The per-iter master->slave broadcast on the INPUT p keeps p periodic
+            // across the seam so the matvec reads consistent values. With pairs
+            // collapsed to one owned merged DOF (owner-migration) there is no slave
+            // copy to skip, so no skip mask.
             const uint8_t* xrSkipPtr = nullptr;
             int nOwnedDofs = s.numOwnedDofs;
             // Probe 3: capture firstSlaveDof and a flag for the first 2 callback
@@ -5122,55 +4957,6 @@ int solveOneComponent(NSStepper<KeyType, RealType, ElementTag>& s,
                     }
                     ++(*callCounter);
                 });
-
-            // Strategy B (mirrors the proven pressure DDT operator): the
-            // assembled velocity matrix has HALF-STRENGTH rows on the cross-rank
-            // seam -- the assembler scatters each cross-rank pair's two element
-            // halves into two independent owned rows (slave on its owner, master
-            // on its owner), and SYMCHECK confirms neither row carries the other
-            // side's stiffness. Reconstruct the full merged equation matrix-free
-            // every iteration: after each SpMV, crossRankPeriodicPairSumDof sums
-            // slave_Ap+master_Ap and broadcasts back (leg 1 + leg 2), so the
-            // matvec sees the complete operator across the seam. The dot mask
-            // then counts each merged DOF once (skip the slave copy). This is
-            // exactly the pressure path's crossRankPeriodicPairSum-around-the-
-            // matvec, ported to the assembled velocity CG.
-            solver.setDotMask(s.d_isPeriodicXRSlaveDof.empty()
-                              ? nullptr : s.d_isPeriodicXRSlaveDof.data());
-            if (s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Periodic
-                && s.periodicMap != nullptr
-                && !s.periodicMap->cross_.peers_.empty())
-            {
-                auto* pm = s.periodicMap;
-                const int* n2d = s.d_node_to_dof.data();
-                solver.setSpmvPostCallback(
-                    [pm, n2d](cstone::DeviceVector<RealType>& Ap)
-                    {
-                        mars::fem::crossRankPeriodicPairSumDof<KeyType, RealType>(*pm, n2d, Ap);
-                    });
-            }
-        }
-
-        // Strategy B parity: merge the Jacobi preconditioner diagonal across the
-        // seam too. The assembled diagonal at a cross-rank seam DOF is wrong --
-        // d_mass[slaveDof]=0 (the slave node mass was folded onto the master and
-        // zeroed before the DOF gather), so the slave row's M/dt diagonal term is
-        // 0 and the master's is the full pair mass. z=r/diag is then grossly
-        // under-scaled at the slave -> biased CG search direction that compounds
-        // every iteration (the source of the div-split ratio creeping 1.05->2.2
-        // and the eventual ~step-30 blowup). The Ap pair-sum fixes the operator
-        // but NOT the preconditioner. So build the diagonal and pair-sum it the
-        // same way (leg1 sum + leg2 broadcast -> diag[slave]=diag[master]=merged),
-        // then feed it through the single-shot diag override. Must outlive solve.
-        typename NSStepper<KeyType, RealType, ElementTag>::Matrix::DeviceVectorReal diagVelMerged;
-        if (s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Periodic
-            && s.periodicMap != nullptr
-            && !s.periodicMap->cross_.peers_.empty())
-        {
-            diagVelMerged = A.getDiagonal();
-            mars::fem::crossRankPeriodicPairSumDof<KeyType, RealType>(
-                *s.periodicMap, s.d_node_to_dof.data(), diagVelMerged);
-            solver.setPreconditionerDiagOverride(diagVelMerged);
         }
 
         converged = solver.solve(A, b_rhs, xVec);
@@ -5255,86 +5041,6 @@ int solveOneComponent(NSStepper<KeyType, RealType, ElementTag>& s,
     // to its previous value) and signal -2 so the step is recognizably bad.
     if (converged)
     {
-        // Strategy B: the post-solve master->slave broadcast is NOT needed. The
-        // per-matvec crossRankPeriodicPairSumDof (leg 2) already keeps x[slave]
-        // == x[master] at convergence, so the slave already holds the merged
-        // value. Re-running the broadcast here is redundant and would MASK any
-        // residual seam inconsistency (it forces equality regardless), making the
-        // verify meaningless. So it is gated off (kept for the optional
-        // MARS_PERIODIC_PATHB_CHECK diagnostic only).
-        if (false && s.numRanks > 1
-            && s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Periodic
-            && s.periodicMap != nullptr
-            && !s.periodicMap->cross_.peers_.empty())
-        {
-            mars::fem::crossRankPeriodicBroadcastDof<KeyType, RealType>(
-                *s.periodicMap, s.d_node_to_dof.data(), xVec);
-
-            // MARS_PERIODIC_PATHB_CHECK=1: assert x[slave_owned_dof_A] equals
-            // x[master_owned_dof_D] for up to N probed cross-rank pairs. Both
-            // sides should see the same value after the broadcast.
-            if (std::getenv("MARS_PERIODIC_PATHB_CHECK") != nullptr)
-            {
-                const auto& xr = s.periodicMap->cross_;
-                const int sendTotal = xr.sendOffsets_.empty() ? 0 : xr.sendOffsets_.back();
-                const int recvTotal = xr.recvOffsets_.empty() ? 0 : xr.recvOffsets_.back();
-                const int N_PROBE = 4;
-
-                std::vector<int> h_sendIds(sendTotal);
-                std::vector<int> h_recvIds(recvTotal);
-                std::vector<int> h_n2d(s.nodeCount);
-                std::vector<RealType> h_xVec(s.numOwnedDofs);
-                if (sendTotal > 0)
-                    cudaMemcpy(h_sendIds.data(), xr.d_sendOwnedSlaveIds_.data(),
-                               sendTotal*sizeof(int), cudaMemcpyDeviceToHost);
-                if (recvTotal > 0)
-                    cudaMemcpy(h_recvIds.data(), xr.d_recvOwnedMasterIds_.data(),
-                               recvTotal*sizeof(int), cudaMemcpyDeviceToHost);
-                cudaMemcpy(h_n2d.data(), s.d_node_to_dof.data(),
-                           s.nodeCount*sizeof(int), cudaMemcpyDeviceToHost);
-                cudaMemcpy(h_xVec.data(), xVec.data(),
-                           s.numOwnedDofs*sizeof(RealType), cudaMemcpyDeviceToHost);
-
-                auto mpiType = std::is_same_v<RealType, double> ? MPI_DOUBLE : MPI_FLOAT;
-                for (size_t pi = 0; pi < xr.peers_.size(); ++pi)
-                {
-                    int peer = xr.peers_[pi];
-                    int sCnt = xr.sendOffsets_[pi+1] - xr.sendOffsets_[pi];
-                    int rCnt = xr.recvOffsets_[pi+1] - xr.recvOffsets_[pi];
-                    int nProbe = std::min(N_PROBE, std::max(sCnt, rCnt));
-                    std::vector<RealType> mineMaster(nProbe, RealType(0));
-                    for (int k = 0; k < std::min(nProbe, rCnt); ++k)
-                    {
-                        int node = h_recvIds[xr.recvOffsets_[pi] + k];
-                        int dof = h_n2d[node];
-                        if (dof >= 0 && dof < s.numOwnedDofs) mineMaster[k] = h_xVec[dof];
-                    }
-                    std::vector<RealType> peerMaster(nProbe, RealType(0));
-                    MPI_Sendrecv(mineMaster.data(), nProbe, mpiType, peer, 0xB0B0,
-                                 peerMaster.data(), nProbe, mpiType, peer, 0xB0B0,
-                                 xr.comm_, MPI_STATUS_IGNORE);
-                    if (sCnt > 0)
-                    {
-                        int fails = 0;
-                        for (int k = 0; k < std::min(nProbe, sCnt); ++k)
-                        {
-                            int snode = h_sendIds[xr.sendOffsets_[pi] + k];
-                            int sdof  = h_n2d[snode];
-                            RealType mine = (sdof >= 0 && sdof < s.numOwnedDofs)
-                                            ? h_xVec[sdof] : RealType(0);
-                            if (mine != peerMaster[k]) ++fails;
-                        }
-                        std::cerr << "[pathb-check rank " << s.rank
-                                  << " <-> peer " << peer
-                                  << "] " << (fails == 0 ? "PASS" : "FAIL")
-                                  << " (" << fails << "/" << std::min(nProbe, sCnt)
-                                  << " slave!=master)" << std::endl;
-                    }
-                }
-                MPI_Barrier(xr.comm_);
-            }
-        }
-
         int nBlocks = (s.nodeCount + s.blockSize - 1) / s.blockSize;
         scatterDofToNodeKernel<RealType><<<nBlocks, s.blockSize>>>(
             xVec.data(), s.d_node_to_dof.data(), qOut.data(), s.nodeCount);
@@ -5961,8 +5667,7 @@ void removeMeanDof(NSStepper<KeyType, RealType, ElementTag>& s,
                    cstone::DeviceVector<RealType>& vec_dof)
 {
     if (s.numOwnedDofs <= 0) return;
-    const uint8_t* xrMask = (!s.d_isPeriodicXRSlaveDof.empty())
-                            ? s.d_isPeriodicXRSlaveDof.data() : nullptr;
+    const uint8_t* xrMask = nullptr;
     RealType* vp = vec_dof.data();
     RealType localSum = thrust::transform_reduce(thrust::device,
         thrust::counting_iterator<int>(0),
@@ -6022,10 +5727,9 @@ int solvePressureDDTReduced(NSStepper<KeyType, RealType, ElementTag>& s,
     cstone::DeviceVector<RealType> gy(s.nodeCount, RealType(0));
     cstone::DeviceVector<RealType> gz(s.nodeCount, RealType(0));
 
-    // xr-slave mask: dotDof counts the co-owned seam DOF once (master on owner
-    // rank). nullptr -> plain owned-DOF dot (no cross-rank pairs on this rank).
-    const uint8_t* xrMask = (!s.d_isPeriodicXRSlaveDof.empty())
-                            ? s.d_isPeriodicXRSlaveDof.data() : nullptr;
+    // Periodic pairs collapse to one owned merged DOF per pair (owner-migration),
+    // so there is no slave copy to skip -- plain owned-DOF dot.
+    const uint8_t* xrMask = nullptr;
 
     // ---- MARS_DDT_SYMPROBE (reduced-DOF): the go/no-go symmetry test ----
     // A_reduced = P^T A P must be self-adjoint for CG. Bilinear form: for any two
@@ -6864,8 +6568,23 @@ inline void maybePeriodicSum(NSStepper<KeyType, RealType, ElementTag>& s,
     size_t nNodes = d_field.size();
     int blk = 256, grd = int((nNodes + blk - 1) / blk);
 
-    // (a) Gated intra-rank pair sum. Same-rank pairs: master += slave (atomic),
-    // slave=0. Cross-rank pairs (own[master]!=1): no-op.
+    // (a) Gated intra-rank pair sum on the FLATTENED partner (ultimate master),
+    // ONE pass. Same-rank pairs (own[ultimate]==1): atomicAdd field[ult] += field[i];
+    // field[i] = 0. Cross-rank pairs (own[ultimate]!=1): no-op -- handled by (b).
+    //
+    // This is race-free because source set (slaves: partner>=0) and destination
+    // set (terminals: partner==-1) are DISJOINT by flatten construction, so no
+    // thread reads what another thread writes. Multiple slaves at a corner
+    // chain to the same ultimate; concurrent atomicAdd handles that.
+    //
+    // Earlier attempts (3eb6dee + 70c8d36) tried a 3-hop telescoping loop on the
+    // DIRECT parent. The first version had a hop-internal read/write race
+    // (chain link j reads field[j] while link k atomicAdd-s to it). The staged
+    // variant removed that race but ZEROED the slave between hops, which dropped
+    // contributions just received from upstream chain links -> consistent
+    // under-fold at edges/corners (defect=+529, eq{4,8}={0,0}, max_master=12).
+    // The flattened-single-pass below is the original (pre-3eb6dee) algorithm
+    // and is structurally correct.
     mars::fem::periodicPairSumKernel<RealType><<<grd, blk>>>(
         s.periodicMap->d_periodicPartner.data(),
         d_own.data(), nNodes, d_field.data());
@@ -7343,35 +7062,11 @@ void runPredictorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
         }
         s.domain.reverseExchangeNodeHaloAdd(advN);
         maybePeriodicSum<KeyType, RealType, ElementTag>(s, advN);
-
-        // Restore advN[slave] := advN[master] across the periodic seam. The fold
-        // above (maybePeriodicSum, broadcastBack=false) summed each slave's
-        // advection onto its master and ZEROED the slave slot. That is correct for
-        // a symmetric operator's output (the next matvec's input prolongation P
-        // re-establishes slaves), but advN is an EXPLICIT term consumed ONCE by the
-        // predictor (qStar = qN + dt*advN/V - ...) with NO subsequent P. Leaving
-        // advN[slave]=0 gives the cross-rank slave zero advection increment while
-        // its master gets the full merged value -> qStar[slave] != qStar[master]
-        // even when qN was equal -> a fresh seam velocity jump minted EVERY step,
-        // carried into the diffusion RHS before the end-of-step corrector
-        // group-average can smooth it. That standing, dt-independent, seam-
-        // concentrated source is the periodic-TGV instability (div-split ~6-7).
-        // Re-broadcast master->slave (same-rank gated kernel + cross-rank leg),
-        // mirroring the corrector group-average. Divergence-neutral: redistributing
-        // the already-merged master value back onto its slaves leaves the folded
-        // sum-of(D*advN) unchanged, only the slave/master bookkeeping split.
-        if (s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Periodic
-            && s.periodicMap)
-        {
-            const auto& d_own = s.ownershipMap();
-            int nBlk = (s.nodeCount + s.blockSize - 1) / s.blockSize;
-            mars::fem::periodicBroadcastSameRankKernel<RealType><<<nBlk, s.blockSize>>>(
-                s.periodicMap->d_periodicPartner.data(), d_own.data(), s.nodeCount, advN.data());
-            cudaDeviceSynchronize();
-            if (s.numRanks > 1)
-                mars::fem::crossRankPeriodicBroadcast<KeyType, RealType>(*s.periodicMap, advN);
-            s.domain.exchangeNodeHalo(advN);
-        }
+        // advN[master] is now the full-control-volume advective flux (both half-CVs
+        // summed via the reverse-halo + periodic fold). Under owner-migration the
+        // predictor reads advN ONLY at owned master DOFs (dof<numOwnedDofs); the
+        // cross-rank slave is a ghost it skips, so no master->slave advN broadcast
+        // is needed -- that block was emulation-era scaffolding writing unread slots.
 
         // DIAGNOSTIC: owned-sum of the (folded) advection term. This is a
         // rank-count-INVARIANT physical quantity if the advection scatter +
@@ -7384,11 +7079,10 @@ void runPredictorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
             const uint8_t* ownPtr = s.ownershipMap().data();
             const int* dofPtr     = s.d_node_to_dof.data();
             const RealType* aP    = advN.data();
-            // Skip periodic slaves: after the advN master->slave restore above a
-            // same-rank slave (own=1, dof aliased to its master) now holds the
-            // master's value, so counting both would double the seam advection and
-            // break the "rank-invariant" property. The slave's advection is already
-            // represented in its master (which IS counted).
+            // Skip periodic slaves: the fold above (maybePeriodicSum) summed each
+            // slave's advection onto its master and zeroed the slave slot, so the
+            // slave's advection is already represented in its master (which IS
+            // counted). Skipping keeps the owned-sum rank-invariant.
             const int* partPtr = s.periodicMap ? s.periodicMap->d_periodicPartner.data() : nullptr;
             double locSum = thrust::transform_reduce(thrust::device,
                 thrust::counting_iterator<size_t>(0),
@@ -7497,24 +7191,6 @@ void runImplicitDiffusionStep(NSStepper<KeyType, RealType, ElementTag>& s, RealT
             b.data(), s.nodeCount, s.numOwnedDofs);
         cudaDeviceSynchronize();
 
-        // Strategy B parity: merge the RHS across the seam too. b[slaveDof] is 0
-        // (d_mass[slaveDof]=0) while b[masterDof]=M_full*invDt*qStar. The
-        // per-matvec Ap pair-sum makes Ap[slave]=Ap[master]=merged, so the residual
-        // r=b-Ap is only consistent if b is also merged on both slots. Pair-sum b
-        // once here (leg1 adds slave 0 onto master -> master unchanged/correct;
-        // leg2 broadcasts b[slave]=b[master]=merged), the assembled-CG analog of the
-        // pressure path's fold + scatter. Without this r[slave] is wrong by the
-        // merged RHS and leaks a small per-step seam bias the dot mask only partly
-        // hides.
-        if (s.numRanks > 1
-            && s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Periodic
-            && s.periodicMap != nullptr
-            && !s.periodicMap->cross_.peers_.empty())
-        {
-            mars::fem::crossRankPeriodicPairSumDof<KeyType, RealType>(
-                *s.periodicMap, s.d_node_to_dof.data(), b);
-        }
-
         // Warm-start x with qStar scattered into DOF order.
         cudaMemset(xVec.data(), 0, s.numTotalDofs * sizeof(RealType));
         thrust::for_each(thrust::device,
@@ -7528,12 +7204,9 @@ void runImplicitDiffusionStep(NSStepper<KeyType, RealType, ElementTag>& s, RealT
                           });
         cudaDeviceSynchronize();
 
-        // Strategy B: the cross-rank slave row keeps its assembled half-strength
-        // physics (NOT a Dirichlet identity), so b[slave] must carry the slave's
-        // own-side RHS. Do NOT zero b[slave]/xVec here -- the per-matvec
-        // crossRankPeriodicPairSumDof merges the two half-rows, and the dot mask
-        // counts the merged DOF once. (The old Strategy-A zeroing went with the
-        // identity-slave row, both now reverted.)
+        // Periodic pairs collapse to one owned merged DOF (owner-migration), so
+        // there is no separate slave row/DOF to zero here -- the merged row already
+        // carries the full RHS.
 
         return solveOneComponent<KeyType, RealType, ElementTag>(
             s, b, xVec, qStarStar,
@@ -7929,14 +7602,11 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
             if (s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Periodic
                 && s.numOwnedDofs > 0)
             {
-                // Skip cross-rank slave DOFs (zeroed identity rows) from the sum
-                // AND the count so the subtracted constant matches the canonical-
-                // DOF mean -- same canonical-node-only rule removeMean uses on the
-                // K/matrix-free paths. Mask is empty (nullptr) for the cavity
-                // useAssembledCG diagnostic, leaving that path's mean bit-identical.
-                const uint8_t* xrMask = (routeMultiRankPeriodic
-                                         && !s.d_isPeriodicXRSlaveDof.empty())
-                                        ? s.d_isPeriodicXRSlaveDof.data() : nullptr;
+                // Periodic pairs collapse to one owned merged DOF per pair
+                // (owner-migration), so there is no slave copy to skip -- the sum
+                // and count run over every owned DOF, matching the canonical-DOF
+                // mean removeMean uses on the K/matrix-free paths.
+                const uint8_t* xrMask = nullptr;
                 RealType localSum = thrust::transform_reduce(thrust::device,
                     thrust::counting_iterator<int>(0),
                     thrust::counting_iterator<int>(s.numOwnedDofs),
@@ -8037,8 +7707,7 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
                 // (so any projection failure is in the corrector, not the solve).
                 const int  n         = s.numOwnedDofs;
                 const int  dofBlocks = (n + s.blockSize - 1) / s.blockSize;
-                const uint8_t* xrMask = (!s.d_isPeriodicXRSlaveDof.empty())
-                                        ? s.d_isPeriodicXRSlaveDof.data() : nullptr;
+                const uint8_t* xrMask = nullptr;
                 cstone::DeviceVector<RealType> Aphi(n, RealType(0)), rdif(n, RealType(0));
                 cstone::DeviceVector<RealType> pn(s.nodeCount, RealType(0)), apn(s.nodeCount, RealType(0)),
                                                g1(s.nodeCount, RealType(0)), g2(s.nodeCount, RealType(0)),
@@ -8311,6 +7980,19 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
             s.domain.reverseExchangeNodeHaloAdd(d_gxAcc);
             s.domain.reverseExchangeNodeHaloAdd(d_gyAcc);
             s.domain.reverseExchangeNodeHaloAdd(d_gzAcc);
+            // Cross-rank periodic fold BEFORE normalize -- this is what the reduced
+            // OPERATOR applyDDTReduced does at its g=M^-1 D^T phi stage
+            // (maybePeriodicSum, ~5072) but the corrector was MISSING. Without it
+            // the corrector's M^-1 D^T at a cross-rank seam master uses only the
+            // master's own half-CV (mass+flux) while the operator the pressure CG
+            // inverted used the MERGED both-half-CV value -> M^-1 D^T(corrector) !=
+            // M^-1 D^T(operator) at the seam -> the projection identity D(u** -
+            // dt/rho M^-1 D^T phi)=0 leaks a small div at the seam every step,
+            // which accumulates and blows up ~step 40. Folding here makes the
+            // corrector's D^T the exact adjoint of the operator's D.
+            maybePeriodicSum<KeyType, RealType, ElementTag>(s, d_gxAcc);
+            maybePeriodicSum<KeyType, RealType, ElementTag>(s, d_gyAcc);
+            maybePeriodicSum<KeyType, RealType, ElementTag>(s, d_gzAcc);
             // Step b: g <- M^-1 g (per-node mass).
             normalizeGradientPerNodeKernel<RealType><<<nodeBlocks, s.blockSize>>>(
                 d_gxAcc.data(), d_gyAcc.data(), d_gzAcc.data(),
@@ -8319,9 +8001,29 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
                 s.d_gradPhix.data(), s.d_gradPhiy.data(), s.d_gradPhiz.data(),
                 s.nodeCount);
             cudaDeviceSynchronize();
-            // Forward halo: the velocity corrector reads gradPhi at ghost slots
-            // too (a ghost node's owned partner on this rank gets corrected).
-            // This is the operator's step-b forward exchangeNodeHalo.
+            // Broadcast the merged master gradient back onto its slaves (same-rank
+            // gated + cross-rank), mirroring the operator's post-normalize
+            // periodicBroadcast (~5118/5133), so a cross-rank slave's velocity
+            // corrector reads the SAME gradPhi the master got. Then the forward
+            // halo fills ghost slots (a ghost node's owned partner gets corrected).
+            if (s.periodicMap)
+            {
+                const auto& d_own = s.ownershipMap();
+                int gnb = (s.nodeCount + s.blockSize - 1) / s.blockSize;
+                mars::fem::periodicBroadcastSameRankKernel<RealType><<<gnb, s.blockSize>>>(
+                    s.periodicMap->d_periodicPartner.data(), d_own.data(), s.nodeCount, s.d_gradPhix.data());
+                mars::fem::periodicBroadcastSameRankKernel<RealType><<<gnb, s.blockSize>>>(
+                    s.periodicMap->d_periodicPartner.data(), d_own.data(), s.nodeCount, s.d_gradPhiy.data());
+                mars::fem::periodicBroadcastSameRankKernel<RealType><<<gnb, s.blockSize>>>(
+                    s.periodicMap->d_periodicPartner.data(), d_own.data(), s.nodeCount, s.d_gradPhiz.data());
+                cudaDeviceSynchronize();
+                if (s.numRanks > 1)
+                {
+                    mars::fem::crossRankPeriodicBroadcast<KeyType, RealType>(*s.periodicMap, s.d_gradPhix);
+                    mars::fem::crossRankPeriodicBroadcast<KeyType, RealType>(*s.periodicMap, s.d_gradPhiy);
+                    mars::fem::crossRankPeriodicBroadcast<KeyType, RealType>(*s.periodicMap, s.d_gradPhiz);
+                }
+            }
             s.domain.exchangeNodeHalo(s.d_gradPhix);
             s.domain.exchangeNodeHalo(s.d_gradPhiy);
             s.domain.exchangeNodeHalo(s.d_gradPhiz);
@@ -8681,16 +8383,13 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
         int blk = 256, grd = int((s.nodeCount + blk - 1) / blk);
         const int* d_partner = s.periodicMap->d_periodicPartner.data();
         size_t nN            = s.nodeCount;
-        // Reduced-DOF periodic projection: the corrector wrote u^{n+1}[slave] =
-        // u**[slave] - (dt/rho) g[slave] with the slave's OWN bare g (the reduced
-        // operator A inverted exactly that). Broadcasting u^{n+1}[slave]:=master
-        // here would clobber it with g[master], so the folded div(u^{n+1}) the
-        // diagnostic measures no longer matches what the pressure solve zeroed ->
-        // a boundary residual ~(dt/rho)Fold(D(g[master]-g[slave])) that advection
-        // amplifies. So SKIP the velocity broadcast on the reduced path; the slave
-        // keeps its correctly-projected velocity and the next predictor re-syncs
-        // u* master->slave itself. The PRESSURE broadcast stays (next predictor's
-        // grad(p) needs slave==master pressure; p is not in the divergence identity).
+        // Under owner-migration the periodic pair is ONE DOF, so u^{n+1}[slave]
+        // should equal u^{n+1}[master]. Broadcasting it master->slave here was
+        // tested (commit bea6d38) and did NOT fix the seam blow-up (div_max still
+        // 3.5@40, 12@50), so seam VELOCITY drift is not the cause -- re-gated to
+        // the pre-collapse behavior to keep the known-good collapse-only state
+        // while the real seam term is found. The slave value is consistent enough
+        // for the projection; the residual is elsewhere (advection flux input).
         if (!routeReducedPeriodicCorr)
         {
             mars::fem::periodicBroadcastKernel<<<grd, blk>>>(d_partner, nN, s.d_u.data());
@@ -8763,6 +8462,46 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
         // max. Channel-flow with a wide pressure mask shows RMS << max if the
         // projection is doing its job.
         s.lastDivRms = rmsOwnedInterior1<KeyType, RealType, ElementTag>(s, d_divNorm);
+
+        // [div-global]: GLOBAL (MPI_Allreduce) signed and abs sum of div(u^{n+1})
+        // over owned-non-slave nodes. This is the TRUE rank-invariance test the
+        // per-rank [advN-sum] lines cannot give. Discriminates the residual seam
+        // leak: signed_sum MUST be ~0 and rank-invariant (1==4 ranks). If signed~0
+        // but abs_sum GROWS with step => a sign-canceling seam DIPOLE (projection
+        // closure leak). If signed_sum DRIFTS from 0 / differs 1 vs 4 ranks => the
+        // cross-rank fold is non-telescoping (coverage/double-count). Gated to the
+        // debug window so production is unaffected.
+        if (g_nsDebugStepsLeft > 0)
+        {
+            const uint8_t* ownP = d_nodeOwnership.data();
+            const int* dofP     = s.d_node_to_dof.data();
+            const int* partP    = s.periodicMap ? s.periodicMap->d_periodicPartner.data() : nullptr;
+            const RealType* dP  = d_divNorm.data();
+            auto signedOf = [ownP, dofP, partP, dP] __device__ (size_t i) -> double {
+                if (ownP[i] != 1 || dofP[i] < 0) return 0.0;
+                if (partP && partP[i] >= 0)      return 0.0;
+                return double(dP[i]);
+            };
+            auto absOf = [ownP, dofP, partP, dP] __device__ (size_t i) -> double {
+                if (ownP[i] != 1 || dofP[i] < 0) return 0.0;
+                if (partP && partP[i] >= 0)      return 0.0;
+                return fabs(double(dP[i]));
+            };
+            double locS = thrust::transform_reduce(thrust::device,
+                thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(s.nodeCount),
+                signedOf, 0.0, thrust::plus<double>());
+            double locA = thrust::transform_reduce(thrust::device,
+                thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(s.nodeCount),
+                absOf, 0.0, thrust::plus<double>());
+            double gS = 0, gA = 0;
+            MPI_Allreduce(&locS, &gS, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+            MPI_Allreduce(&locA, &gA, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+            if (s.rank == 0)
+                std::cout << "    [div-global] signed_sum=" << std::scientific << std::setprecision(8)
+                          << gS << " abs_sum=" << gA << std::defaultfloat
+                          << " (signed~0&rank-inv expected; signed~0&abs grows=>closure dipole;"
+                          << " signed drifts=>fold non-telescoping)\n";
+        }
 
         // DIAGNOSTIC: split div RMS into RANK-BOUNDARY-owned vs INTERIOR-owned
         // nodes. If the multi-rank divergence excess is boundary-localized, the

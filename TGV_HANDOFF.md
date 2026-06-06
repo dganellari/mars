@@ -1,5 +1,267 @@
 # TGV / Periodic NS — Handoff for Next Session
 
+## UPDATE 2026-06-06 (cross-rank send fix, commit e8b0c3a) — telescoping fold complete
+
+The direct-parent telescoping fold (3eb6dee) tripped the cross-rank corner-chain MPI_Abort(73).
+Root: crossRankPeriodicPairSum is a SINGLE MPI round (no remote->remote), and the abort guarded a
+real latent SILENT-DROP bug (keying the send by a direct parent that is itself a remote slave lands
+on a node the receiver does not own -> keyToOwned drops it).
+
+FIX (e8b0c3a, independently confirmed correct by workflow w0wlomvfo, high confidence): the cross-rank
+send GATES on the DIRECT parent (own[direct]!=1 -> a node folds cross-rank iff its direct parent is
+remote; a local-direct-parent node was already folded by the local 3-hop, must not double-send) but
+ROUTES/KEYS by the FLATTENED ULTIMATE-MASTER sfc key. flattenPartnerChainKernel always terminates on
+a node with no onward partner, so the ultimate master is TERMINAL + owned + never a slave -> the value
+lands DIRECTLY on the owned ultimate master in ONE round. No remote->remote, no iteration, single P^T
+(SPD symmetry preserved inside the matvec -- iterating the fold would have broken A=A^T). The order
+hazard (local fold runs before the cross-rank atomicAdd) is eliminated because the landing node is
+already terminal. Abort stays removed (its condition can never indicate an unhandled case now). Local
+3-hop fold stays on the DIRECT parent (collapses purely-local chains). Single-rank byte-identical.
+
+VERIFY GATES (4-rank cube16): (1) NO MPI_Abort(73). (2) MARS_PERIODIC_FOLDCOUNT=1 -> defect==0,
+nonzero_slave_residual==0. (3) MARS_PERIODIC_EDGE_AUDIT=1 -> FRAGMENTED==0. (4) SYMPROBE (the two
+applyDDTReduced + cross-dot, ns_solver ~5682) rel ~1e-12 confirms A=A^T unperturbed. (5) [advN-sum]
+stops the monotone one-signed single-rank drift. (6) 110 steps complete, div(u_n) not accumulating.
+This + the corrector D^T adjoint fix (75b454a) removes the LAST seam leak.
+
+
+
+## UPDATE 2026-06-06 (telescoping fold fix, commit 3eb6dee) — the last seam leak (H3)
+
+After the corrector D^T fix (75b454a, div@step40 2.47->0.38) the residual seam leak was confirmed H3
+(fold non-telescoping): the [advN-sum] of ONE rank drifts MONOTONE one-signed (1.8e-11 -> 1.1e-8) over
+40 steps while the others oscillate physically -- a fixed seam node mis-folded the SAME way each step.
+
+ROOT CAUSE (line-verified): the periodic fold (maybePeriodicSum) ran periodicPairSumKernel on the
+FLATTENED d_periodicPartner in ONE unordered pass. flattenPartnerChainKernel rewrites the partner to
+the ULTIMATE master in place (with a read/write race), discarding the direct parent. For an edge/corner
+node S whose DIRECT parent M2 is a same-rank owned node that is ITSELF a cross-rank slave, a single
+unordered pass on the flattened table does NOT telescope S onto the ultimate master -> S's contribution
+is mis-accumulated the same way every step. (The earlier MARS_PERIODIC_EDGE_AUDIT FRAGMENTED=0 only
+proved partner REACHABILITY, never fold MULTIPLICITY -- exactly this gap.)
+
+FIX (3eb6dee): retain the DIRECT parent table (PeriodicMap::d_periodicPartnerDirect, snapshotted in
+buildPeriodicMap right BEFORE the flatten). The FOLD (P^T restriction) now runs on the DIRECT parent:
+maybePeriodicSum stage-a loops periodicPairSumKernel 3x (max chain depth = x,y,z bits) with a sync per
+hop, telescoping every local chain S->M2->M3 to its locally-owned terminal BEFORE the cross-rank send;
+the cross-rank send-list (buildCrossRankPeriodicMap STEP-1) now classifies on the direct parent too, so
+each owned slave folds onto its ultimate master EXACTLY once. The FLATTENED d_periodicPartner stays the
+table for DOF-collapse / periodicBroadcast / periodicFoldToMasterKernel (those want the ultimate master).
+periodicPairSumKernel zeroes the slave after folding, so the 3-hop loop is idempotent (a zeroed slave
+adds 0). Single-rank safe (every master owned -> cross-rank gated out; loop telescopes identically).
+
+VERIFY: (1) MARS_PERIODIC_FOLDCOUNT=1 (build-time, env-gated) prints [periodic-foldcount] -- defect
+should be 0 and nonzero_slave_residual 0 (a telescoping fold of all-ones gives each owned non-slave its
+group_size; before the fix 4-rank shows a fixed nonzero defect). (2) 110-step run: [advN-sum] stops the
+monotone one-signed single-rank drift (becomes rank-invariant/oscillating), div(u_n) stops growing,
+survives 110 steps. This + the corrector D^T fix removes the LAST seam leak.
+
+(Pump "0 inlet nodes" blowup is SEPARATE: inlet BC-resolve / mesh-match on the user side, NOT this
+work -- all periodic edits are Periodic-gated, inert for the pump. See memory
+reference_pump_inlet_resolve_failure.)
+
+
+
+## UPDATE 2026-06-05 (corrector fix landed + helps; residual isolated; PROBE NEEDS REBUILD)
+
+The corrector D^T adjoint fix (75b454a) is CONFIRMED working: 4-rank cube16 div_max@step40 went
+2.47 (pre-fix) -> 0.33 (with fix). It survives much further. The transpose-mismatch diagnosis was
+right and that leak is gone.
+
+A SMALLER residual remains (div(u_n) ENTRY still creeps ~1.5e-3 -> 4e-2 over 40 steps, div-split ~2-5,
+eventually blows). Two refuted velocity diagnoses earlier; do NOT guess again. The [div-global]
+signed/abs MPI_Allreduce probe (d6e094f, synced) was added to DISCRIMINATE the residual but the last
+cluster run used a STALE binary (no [div-global] line printed) -- REBUILD then rerun.
+
+CURRENT BEST INDICATOR (from [advN-sum], one of 4 ranks): one rank's owned advN-sum grows
+monotonically 1.9e-11 -> 1.5e-8 over 40 steps while others stay ~1e-5. This is CONSISTENT with H3
+(the maybePeriodicSum two-stage fold -- same-rank periodicPairSumKernel then cross-rank
+crossRankPeriodicPairSum, ns_solver.hpp:6457 -- NOT telescoping for multi-bit EDGE/CORNER nodes: a
+node that is both a same-rank slave AND in a cross-rank chain may be folded once-too-many or dropped).
+But NOT conclusive -- could be physical asymmetry.
+
+### NEXT (one decisive run): rebuild, rerun 40 steps, read [div-global]:
+- signed_sum ~0 AND rank-invariant, abs_sum GROWS  => closure DIPOLE (H1 residual). Fix: tighten the
+  seam projection (corrector/operator D^T still slightly mismatched somewhere subtle).
+- signed_sum DRIFTS from 0 / differs vs 1-rank      => fold NON-TELESCOPING (H3). Fix: maybePeriodicSum
+  (6457) double-counts or drops the edge/corner (multi-bit) nodes -- make the same-rank + cross-rank
+  fold apply each slave's contribution to its ultimate master EXACTLY once.
+Then fix the indicated branch. The corrector fix STAYS regardless (it removed the dominant leak).
+
+
+
+## UPDATE 2026-06-05 (corrector D^T adjoint fix, commit 75b454a) — the verified seam-leak fix
+
+History on this seam residual: collapse (4096) correct; then TWO refuted fixes — advN broadcast
+(inert, deleted) and post-corrector velocity broadcast (bea6d38, REFUTED by run: div_max still
+3.5@40/12@50, reverted 220375b). Seam VELOCITY drift was NOT the cause.
+
+ROOT CAUSE (mechanically confirmed by reading the code, not theory): the reduced-periodic CORRECTOR
+gradient g=M^-1 D^T phi (ns_solver.hpp ~7850) was NOT the exact adjoint of the D the reduced pressure
+CG inverted, AT CROSS-RANK SEAM MASTERS. The OPERATOR applyDDTReduced does, at its g=M^-1 D^T phi
+stage: applyDivTranspose -> reverseHalo -> **maybePeriodicSum (cross-rank fold)** ~5072 -> normalize
+-> **periodicBroadcastSameRank + crossRankPeriodicBroadcast** ~5117/5133 -> exchangeHalo. The corrector
+REPLICATED only applyDivTranspose -> reverseHalo -> normalize -> exchangeHalo, DROPPING the fold and
+the broadcast (its comment even claimed "matching the reduced operator exactly: NO maybePeriodicSum"
+-- which is wrong; the operator DOES maybePeriodicSum). So for a cross-rank pair (master+slave = two
+distinct owned DOFs), the operator used the MERGED both-half-CV value while the corrector applied each
+half SPLIT and separately mass-normalized -> M^-1 D^T(corrector) != M^-1 D^T(operator) at the seam ->
+the projection identity D(u** - dt/rho M^-1 D^T phi)=0 leaks a small div at the seam EVERY step,
+accumulates, blows ~step 40. This explains ALL observables: slow monotone growth (not step-0),
+seam-localized (div-split 3-8), single-rank perfectly clean (no cross-rank pair exists), and both
+velocity fixes refuted (the leak is in the gradient restriction/normalization pairing, not velocity).
+
+FIX (75b454a): the corrector gradient now does maybePeriodicSum x3 (fold) before normalize AND
+periodicBroadcastSameRank + crossRankPeriodicBroadcast x3 after normalize -- byte-for-byte mirroring
+the operator's g=M^-1 D^T phi stage, so the corrector's D^T is the exact adjoint of the operator's D
+at the seam. Single-rank safe (maybePeriodicSum/broadcast are no-ops with no cross-rank pairs).
+
+VERIFY (4-rank cube16 --solver=cg --pressure-solve=DDT --num-steps=110): div(u_n) ENTRY should STOP
+growing (was 1.7e-3@10 -> 1.3e-2@30 -> blow@40), div-split ratio relax toward ~1, survive 110 steps,
+KE match single-rank. Then --skew=0 (scheme-independent check) and --solver=hypre (same operator, the
+assembled DDT path -- this fix is on the matrix-free corrector so Hypre uses the same corrector and
+should also benefit). If it STILL leaks: add the [div-global] signed/abs MPI_Allreduce probe (in the
+wpruqm49u workflow output) -- signed~0 & abs grows => still a closure dipole; signed drifts => fold
+non-telescoping (H3).
+
+
+
+## UPDATE 2026-06-05 (advection-seam fix, commit bea6d38) — the last isolated bug
+
+After the true collapse (4096) the only remaining blow-up (~step 40-50, scheme-independent) was the
+ADVECTION seam. Root cause (verified in code, not guessed): the post-corrector velocity broadcast
+master->slave on s.d_u/v/w (ns_solver.hpp ~8269) was gated OFF by `!routeReducedPeriodicCorr` --
+a leftover from the EMULATION era (when the slave owned a row and had its "own projected velocity"
+to protect). Under owner-migration the slave is a GHOST with no own projection: u^{n+1}[slave] must
+equal u^{n+1}[master]. With the broadcast skipped, the seam slave/ghost velocity drifted from its
+master by one step, and the next predictor's advection flux scatter (~6932) integrated the drifted
+u^n -> a seam momentum imbalance in mdot=vf.areaVec (common to upwind AND skew -> scheme-independent,
+matches the --skew=0==--skew=1 discriminator) that grew div(u^n) every step.
+
+FIX (bea6d38): (A) un-gate the post-corrector velocity broadcast so u^{n+1} syncs master->slave every
+step (seam-consistent u^n at the next predictor). (B) deleted the inert advN master->slave broadcast
+(predictor reads advN only at owned master DOFs, dof<numOwnedDofs; the slave-ghost slots it wrote
+were never read -- advN[master] is already the full-CV sum from reverseExchangeNodeHaloAdd +
+maybePeriodicSum). Single-rank safe: gate was numRanks>1; single-rank broadcast is master->same-rank-
+slave within rank, harmless. NOTE the prior afc48e9 u^n re-sync regression was WITH the emulation
+still present (it fought the reduced-DOF slave projection); that world is gone, so re-enabling the
+broadcast is now correct.
+
+VERIFY (run 4-rank cube16 --solver=cg --pressure-solve=DDT --num-steps=110): div(u_n) entering each
+step should STOP growing (was 0.49@35 -> 2.5@40 -> 7@50) and stay O(1e-3); div-split ratio should
+relax toward ~1 (was stuck 2.5-3.5); survive 110 steps; KE matches single-rank. Then --skew=0 and
+--solver=hypre should ALSO survive (same root cause). If it STILL grows, the secondary suspect is
+seam areaVec orientation (the [advN-sum] owned total would differ 1-rank vs 4-rank) -- but velocity
+drift is the verified primary.
+
+
+
+## UPDATE 2026-06-05 (MILESTONE) — TRUE cross-rank collapse landed and is CORRECT (sum numOwnedDofs = 4096)
+
+Implemented owner-migration true cross-rank periodic collapse (commit 612faa2): a cross-rank slave
+no longer owns a DOF -- it migrates onto its master's GHOST dof, so the periodic pair is ONE global
+DOF. ONE predicate change (drop `d_own[master]==1` guard in the DOF-collapse Pass-1, ns_solver.hpp
+~2706) + one Hypre-seed guard (`dof < nOwn`, ~4544) + DELETED all the cross-rank emulation (503
+lines: per-matvec crossRankPeriodicPairSumDof, crossRankPeriodicBroadcastDof, dot-mask,
+preconditioner-diag override, Path-B XR-slave masks, assembled-DDT slave-col fold). The advection-
+seam fixes (advN restore, corrector group-average, seam mass mirror) were KEPT (separate term).
+
+VERIFIED CORRECT on 4-rank cube16 (--solver=cg --pressure-solve=DDT):
+- `[owned-node check] sum(numOwnedDofs over ranks) = 4096` -- EXACTLY the single-rank global unique
+  DOF count (was 4657 with the emulation double-count). This is the smoking-gun proof: the periodic
+  pairs are genuinely one DOF each, no orphan, no double-count.
+- Step-0 KE = 0.125 = V0^2/8 (the correct physical TGV value) on 4-rank, matching single-rank.
+- Solves healthy: cg_uvw=4, cg_p~115, DDT CG converges to ~1e-9 every step.
+The cross-rank DOF machinery is now DONE and provably correct. No more emulation.
+
+### REMAINING (now cleanly ISOLATED): the advection-seam residual, NOT the DOF coupling.
+The 4-rank run still blows up ~step 40-50 (div_max ~2.5 @ step40, ~7 @ step50), with div-split
+ratio ~2.5-3.5 (boundary RMS / interior RMS) that does NOT fall to ~1, and div(u_n) entering each
+step grows (0.003 -> 0.49 by step 35). Because the DOF collapse is now PROVABLY exact (4096), this
+residual is NOT cross-rank DOF coupling. It is the ADVECTION-SEAM term -- consistent with the earlier
+--skew=0 discriminator (upwind AND skew blow up identically -> scheme-independent seam-flux residual).
+NEXT: attack the advection seam directly (the advN/momentum-flux consistency at the cross-rank seam),
+now that everything else is eliminated. The single-rank run is clean (div~1e-14), so the seam term is
+purely a multi-rank advection-consistency issue at the periodic boundary.
+
+### BONUS to check: --solver=hypre should now ALSO work (or get much further). The half-strength
+seam-row problem that made Hypre blow up at step 0 is GONE -- there is no slave row anymore, the
+master row is the single complete row. Re-run `--solver=hypre --pressure-solve=DDT` 4-rank; the
+step-0 velocity-solve garbage should be fixed. (The advection-seam residual may still cap it ~step
+40-50 like CG, but the catastrophic step-0 failure should be resolved.)
+
+---
+
+## UPDATE 2026-06-05 (CORRECTION, SUPERSEDED by the milestone above) — Hypre periodic path WAS broken pre-collapse; CG matrix-free was the only viable route
+
+TESTED `--solver=hypre --pressure-solve=DDT` on 4-rank cube16 periodic: it BLOWS UP FROM STEP 0.
+The VELOCITY diffusion solve (not pressure) returns garbage immediately: after DIFF, |u**|=2.34
+(should be ~1), div(u**)=5.76, cg_uvw=2/2/2 (Hypre "converged" in 2 iters to a wrong answer) ->
+|phi|=9048 -> NaN -> "RHS contains NaN/Inf" abort. (Step-0 KE=0.125 IS correct now = V0^2/8, so the
+KE-diagnostic slave-skip fix works; the field starts right and the velocity solve corrupts it.)
+
+WHY (the fundamental reason, do not retry Hypre for periodic without solving this): the Hypre
+velocity solve uses the ASSEMBLED nu*K matrix whose cross-rank periodic seam rows are HALF-STRENGTH
+(the master row lacks the slave-side stiffness -- the same bug the CG path had). The CG path fixed
+it with Strategy-B: per-matvec crossRankPeriodicPairSumDof in the spmvPostCallback, reconstructing
+the merged seam operator EVERY iteration. Hypre is a black-box AMG solver -- it CANNOT call a
+per-matvec callback, so it never gets the seam merge and diverges on the inconsistent assembled
+operator. This matches the pre-existing memory note "Stage 4 (Hypre AMG) reverted pending RHS-NaN
+debug" / "DDT+Hypre validation pending" -- Hypre periodic was ALREADY known-broken; we re-confirmed it.
+
+CONCLUSION: for multi-rank periodic, the matrix-free CG path (--solver=cg) is the ONLY viable
+architecture -- it is the only one that can apply the per-matvec seam reconstruction the periodic
+operator requires. Hypre would need the seam baked into the ASSEMBLED matrix (true global-DOF
+collapse: skip the slave row entirely, alias its column to the master's global id), which the
+current Hypre IJ wrapper cannot do (it assigns row ids positionally). That is a deeper IJ-wrapper
+change, not a config flag. Finish the CG path instead (the advection-seam residual is the last item).
+
+(Below was the earlier optimistic note that the Hypre route was "already correct" -- it is NOT;
+kept for context but superseded by the test above.)
+
+---
+
+## UPDATE 2026-06-05 — TWO periodic paths exist; Hypre route is the genuinely-correct one (already wired)
+
+After eliminating geometry (area-vectors), edge/corner cross-rank pairing (probe FRAGMENTED=0),
+and the step-0 KE mismatch (an 8/9 DIAGNOSTIC double-count, now fixed — KE skips slaves) as the
+cause of the matrix-free residual, I read the Hypre path. Key findings:
+
+- `--solver=cg` (default): `routeReducedPeriodic` matrix-free P^T A P, gated to `solverKind==CG`
+  (ns_solver ~7842). This is the path we refined all session — stable ~40-50 steps, div-split ~2.5,
+  then a small scheme-independent seam residual blows it up. The cross-rank pairs here are NOT
+  collapsed: solved as TWO DOF rows, forced equal post-solve (the emulation; its residual is the
+  remaining bug). KEEP THIS PATH (user wants both).
+- `--solver=hypre`: `SolverKind::Hypre` -> `routeReducedPeriodic` is FALSE -> takes the ASSEMBLED
+  DDT branch (ns_solver ~7848, uses `s.AddT`). For periodic, the assembled cross-rank slave row is
+  made a Dirichlet identity AND its column is FOLDED into the master row
+  (`foldPeriodicSlaveColIntoMasterKernel`, ns_solver ~4385), so the master equation carries the
+  merged physics in an EXACTLY-symmetric assembled operator; `crossRankPeriodicBroadcastDof`
+  restores x[slave]=x[master] post-solve. THIS IS the genuinely-correct reduced-DOF treatment
+  (MFEM/deal.II style), and it is ALREADY FULLY WIRED — no code change was needed.
+
+NOTE I was wrong earlier that "Hypre uses true global numbering so sidesteps the seam" — the Hypre
+IJ wrapper assigns ROW global ids positionally (ilower+i) and only remaps COLUMNS, so it CANNOT
+merge two rows by aliasing; that is exactly why the code uses the identity-row + column-fold (Path
+B) instead. The fold makes the assembled operator correct; this is more robust than the matrix-free
+per-matvec emulation.
+
+### ACTION to get a working multi-rank periodic solver: build with Hypre and run --solver=hypre.
+```
+# build (Alps): add -DMARS_ENABLE_HYPRE=ON to the cmake config, rebuild mars_tgv.
+# run 4-rank periodic via the assembled-DDT + BoomerAMG path:
+srun ... mars_tgv --mesh=cube16.mesh --box-lo=0 --box-hi=1 --V0=1 --nu=0.05 --dt=1e-4 \
+    --num-steps=110 --pressure-solve=DDT --solver=hypre --skew=1 --adapt-every=0
+```
+Success = div_max stays ~roundoff, KE decays, survives 110+ steps (the assembled fold is exact, so
+no seam emulation residual). If Hypre BoomerAMG struggles on the near-singular pure-Neumann DDT
+operator, the DDT eps diagonal shift (MARS_DDT regularization, ns_solver ~3235) and the pin/removeMean
+are already in place. The CG matrix-free path stays the no-Hypre fallback (stable ~40 steps).
+
+Both `--solver=cg` and `--solver=hypre` are preserved (user requirement).
+
+
+
 ## UPDATE 2026-06-04 (LATE) — advection seam fix landed; one secondary seam source remains
 
 Best state now = commit **afc48e9** (advN restore + revert of the u^n re-sync that regressed).
