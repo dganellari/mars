@@ -8591,6 +8591,75 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
         RealType dIn  = opDiv(s.d_uStarStar, s.d_vStarStar, s.d_wStarStar);
         RealType dOut = opDiv(s.d_u,         s.d_v,         s.d_w);
 
+        // MARS_WHEREMAX_PROBE: where does |Du^{n+1}|_max live? divNorm now
+        // holds D(u^{n+1}) per-node, post-fold, post-mass-normalize. Print the
+        // OWNED INTERIOR node index of the global max, its position (x,y,z),
+        // whether it's a periodic-pair node, and the abs divergence value.
+        // Tells us if PROJ-P3 leak is concentrated at seam nodes (periodic-
+        // collapse bug) or interior nodes (different bug entirely).
+        if (std::getenv("MARS_WHEREMAX_PROBE") != nullptr)
+        {
+            // Find max abs and its index over owned interior nodes
+            const RealType* dN = divNorm.data();
+            const uint8_t* ownP = d_nodeOwnership.data();
+            const int* n2dP = s.d_node_to_dof.data();
+            const RealType* xN = s.domain.getNodeX().data();
+            const RealType* yN = s.domain.getNodeY().data();
+            const RealType* zN = s.domain.getNodeZ().data();
+            const int* partnerP = s.periodicMap
+                                  ? s.periodicMap->d_periodicPartner.data() : nullptr;
+            const size_t N = s.nodeCount;
+            auto cit0 = thrust::counting_iterator<size_t>(0);
+            auto citN = thrust::counting_iterator<size_t>(N);
+            // First pass: max abs value
+            RealType locMaxAbs = thrust::transform_reduce(thrust::device, cit0, citN,
+                [dN, ownP, n2dP] __device__ (size_t i) -> RealType {
+                    if (ownP[i] != 1) return RealType(0);
+                    if (n2dP[i] < 0)  return RealType(0);
+                    return fabs(dN[i]);
+                }, RealType(0), thrust::maximum<RealType>());
+            RealType gMaxAbs = 0;
+            auto mt3 = std::is_same_v<RealType, double> ? MPI_DOUBLE : MPI_FLOAT;
+            MPI_Allreduce(&locMaxAbs, &gMaxAbs, 1, mt3, MPI_MAX, MPI_COMM_WORLD);
+            // Each rank: does it own the global max? If yes, find index.
+            long long localIdx = -1;
+            if (locMaxAbs >= gMaxAbs - RealType(1e-15)) {
+                localIdx = thrust::transform_reduce(thrust::device, cit0, citN,
+                    [dN, ownP, n2dP, gMaxAbs, N] __device__ (size_t i) -> long long {
+                        if (ownP[i] != 1 || n2dP[i] < 0) return (long long)N;
+                        return (fabs(dN[i]) >= gMaxAbs - RealType(1e-15))
+                               ? (long long)i : (long long)N;
+                    }, (long long)N, thrust::minimum<long long>());
+                if (localIdx >= (long long)N) localIdx = -1;
+            }
+            // Only one rank should now have localIdx >= 0; print from there.
+            if (localIdx >= 0) {
+                size_t i = (size_t)localIdx;
+                RealType h_div, h_x, h_y, h_z;
+                int h_partner = -2;
+                cudaMemcpy(&h_div, dN + i, sizeof(RealType), cudaMemcpyDeviceToHost);
+                cudaMemcpy(&h_x,   xN + i, sizeof(RealType), cudaMemcpyDeviceToHost);
+                cudaMemcpy(&h_y,   yN + i, sizeof(RealType), cudaMemcpyDeviceToHost);
+                cudaMemcpy(&h_z,   zN + i, sizeof(RealType), cudaMemcpyDeviceToHost);
+                if (partnerP)
+                    cudaMemcpy(&h_partner, partnerP + i, sizeof(int), cudaMemcpyDeviceToHost);
+                const RealType eps = RealType(1e-4);
+                bool onSeam = (h_x < eps || h_x > RealType(1) - eps
+                            || h_y < eps || h_y > RealType(1) - eps
+                            || h_z < eps || h_z > RealType(1) - eps);
+                std::cout << "  [WHEREMAX r" << s.rank << "] i=" << i
+                          << " div=" << h_div
+                          << " pos=(" << h_x << "," << h_y << "," << h_z << ")"
+                          << " partner=" << h_partner
+                          << " onPeriodicSeam=" << (onSeam ? "YES" : "no")
+                          << std::endl;
+            }
+            // All ranks print a one-liner globally; ensures rank 0 always emits
+            // even if it doesn't own the max.
+            if (s.rank == 0)
+                std::cout << "  [WHEREMAX] global_max_abs_div=" << gMaxAbs << std::endl;
+        }
+
         // DISAMBIGUATOR 1: did the corrector actually change the velocity? Expect
         // ~dt/rho*|gradPhi| ~ 3e-4. If ~0, the corrector is a no-op (and ratio=1.0
         // is trivial); if ~3e-4, ratio=1.0 means the probe's D can't see the
