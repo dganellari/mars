@@ -8205,10 +8205,72 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
                     startElem, numLocal);
                 cudaDeviceSynchronize();
             }
+            // MARS_GRADTRACE_PROBE: snapshot d_gxAcc at FIRST owned cross-rank
+            // slave PRE-reverseExchange (only this rank's owned-element scatter).
+            if (s.periodicMap && std::getenv("MARS_GRADTRACE_PROBE") != nullptr) {
+                const int* partnerP = s.periodicMap->d_periodicPartner.data();
+                const uint8_t* ownP = d_nodeOwnership.data();
+                const size_t N = s.nodeCount;
+                long long localFirst = thrust::transform_reduce(thrust::device,
+                    thrust::counting_iterator<size_t>(0),
+                    thrust::counting_iterator<size_t>(N),
+                    [partnerP, ownP, N] __device__ (size_t i) -> long long {
+                        if (ownP[i] != 1) return (long long)N;
+                        int m = partnerP[i];
+                        if (m < 0 || ownP[m] == 1) return (long long)N;
+                        return (long long)i;
+                    }, (long long)N, thrust::minimum<long long>());
+                if (localFirst < (long long)N) {
+                    size_t i = (size_t)localFirst;
+                    int h_m;
+                    RealType h_gS[3], h_gM[3];
+                    cudaMemcpy(&h_m, partnerP + i, sizeof(int), cudaMemcpyDeviceToHost);
+                    cudaMemcpy(&h_gS[0], d_gxAcc.data() + i,    sizeof(RealType), cudaMemcpyDeviceToHost);
+                    cudaMemcpy(&h_gS[1], d_gyAcc.data() + i,    sizeof(RealType), cudaMemcpyDeviceToHost);
+                    cudaMemcpy(&h_gS[2], d_gzAcc.data() + i,    sizeof(RealType), cudaMemcpyDeviceToHost);
+                    cudaMemcpy(&h_gM[0], d_gxAcc.data() + h_m,  sizeof(RealType), cudaMemcpyDeviceToHost);
+                    cudaMemcpy(&h_gM[1], d_gyAcc.data() + h_m,  sizeof(RealType), cudaMemcpyDeviceToHost);
+                    cudaMemcpy(&h_gM[2], d_gzAcc.data() + h_m,  sizeof(RealType), cudaMemcpyDeviceToHost);
+                    std::cout << "  [GRADTRACE-PRE-RHALO r" << s.rank << "] i=" << i << " m=" << h_m
+                              << "  gAccS=(" << h_gS[0] << "," << h_gS[1] << "," << h_gS[2] << ")"
+                              << "  gAccM=(" << h_gM[0] << "," << h_gM[1] << "," << h_gM[2] << ")" << std::endl;
+                }
+            }
             // Step a halo: owner sees neighbor ranks' corner-only contributions.
             s.domain.reverseExchangeNodeHaloAdd(d_gxAcc);
             s.domain.reverseExchangeNodeHaloAdd(d_gyAcc);
             s.domain.reverseExchangeNodeHaloAdd(d_gzAcc);
+            // MARS_GRADTRACE_PROBE: same snapshot POST-reverseExchange (after
+            // ghost contributions added from neighbor ranks).
+            if (s.periodicMap && std::getenv("MARS_GRADTRACE_PROBE") != nullptr) {
+                const int* partnerP = s.periodicMap->d_periodicPartner.data();
+                const uint8_t* ownP = d_nodeOwnership.data();
+                const size_t N = s.nodeCount;
+                long long localFirst = thrust::transform_reduce(thrust::device,
+                    thrust::counting_iterator<size_t>(0),
+                    thrust::counting_iterator<size_t>(N),
+                    [partnerP, ownP, N] __device__ (size_t i) -> long long {
+                        if (ownP[i] != 1) return (long long)N;
+                        int m = partnerP[i];
+                        if (m < 0 || ownP[m] == 1) return (long long)N;
+                        return (long long)i;
+                    }, (long long)N, thrust::minimum<long long>());
+                if (localFirst < (long long)N) {
+                    size_t i = (size_t)localFirst;
+                    int h_m;
+                    RealType h_gS[3], h_gM[3];
+                    cudaMemcpy(&h_m, partnerP + i, sizeof(int), cudaMemcpyDeviceToHost);
+                    cudaMemcpy(&h_gS[0], d_gxAcc.data() + i,    sizeof(RealType), cudaMemcpyDeviceToHost);
+                    cudaMemcpy(&h_gS[1], d_gyAcc.data() + i,    sizeof(RealType), cudaMemcpyDeviceToHost);
+                    cudaMemcpy(&h_gS[2], d_gzAcc.data() + i,    sizeof(RealType), cudaMemcpyDeviceToHost);
+                    cudaMemcpy(&h_gM[0], d_gxAcc.data() + h_m,  sizeof(RealType), cudaMemcpyDeviceToHost);
+                    cudaMemcpy(&h_gM[1], d_gyAcc.data() + h_m,  sizeof(RealType), cudaMemcpyDeviceToHost);
+                    cudaMemcpy(&h_gM[2], d_gzAcc.data() + h_m,  sizeof(RealType), cudaMemcpyDeviceToHost);
+                    std::cout << "  [GRADTRACE-POST-RHALO r" << s.rank << "] i=" << i << " m=" << h_m
+                              << "  gAccS=(" << h_gS[0] << "," << h_gS[1] << "," << h_gS[2] << ")"
+                              << "  gAccM=(" << h_gM[0] << "," << h_gM[1] << "," << h_gM[2] << ")" << std::endl;
+                }
+            }
             // BARE sequence (no maybePeriodicSum, no g-broadcasts): byte-for-byte
             // mirror of applyDDTPerNode(applyPeriodic=false, reducedPeriodicFold=
             // true) -- the operator the pressure CG inverted. SYMPROBE confirms
