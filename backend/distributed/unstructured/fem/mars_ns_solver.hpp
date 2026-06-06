@@ -8289,6 +8289,50 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
                                   << "  max|gS|=" << glb[2]
                                   << "  (owned cross-rank periodic slaves)" << std::endl;
                 }
+                // MARS_GRADDUMP_PROBE: at the FIRST owned cross-rank slave on
+                // each rank, print gS (slot at slave), gM (slot at master ghost
+                // partner) componentwise so we can READ what's there rather than
+                // guess. If gS = -gM the operator's master-DOF couples via a
+                // signed sum that no slot-wise corrector can match. If
+                // gS = gM but magnitudes differ, mass mismatch elsewhere.
+                if (std::getenv("MARS_GRADDUMP_PROBE") != nullptr) {
+                    const RealType* gxP = s.d_gradPhix.data();
+                    const RealType* gyP = s.d_gradPhiy.data();
+                    const RealType* gzP = s.d_gradPhiz.data();
+                    const int* partnerP = s.periodicMap->d_periodicPartner.data();
+                    const uint8_t* ownP = d_nodeOwnership.data();
+                    const RealType* mP  = s.d_massNode.data();
+                    const size_t N = s.nodeCount;
+                    // Search for first i with own[i]==1, partner[i]>=0, own[partner[i]]==0
+                    auto cit0 = thrust::counting_iterator<size_t>(0);
+                    auto citN = thrust::counting_iterator<size_t>(N);
+                    long long localFirst = thrust::transform_reduce(thrust::device, cit0, citN,
+                        [partnerP, ownP, N] __device__ (size_t i) -> long long {
+                            if (ownP[i] != 1) return (long long)N;
+                            int m = partnerP[i];
+                            if (m < 0 || ownP[m] == 1) return (long long)N;
+                            return (long long)i;
+                        }, (long long)N, thrust::minimum<long long>());
+                    if (localFirst < (long long)N) {
+                        size_t i = (size_t)localFirst;
+                        RealType h_gS[3], h_gM[3], h_mS, h_mM;
+                        int h_m;
+                        cudaMemcpy(&h_m, partnerP + i, sizeof(int), cudaMemcpyDeviceToHost);
+                        cudaMemcpy(&h_gS[0], gxP + i,    sizeof(RealType), cudaMemcpyDeviceToHost);
+                        cudaMemcpy(&h_gS[1], gyP + i,    sizeof(RealType), cudaMemcpyDeviceToHost);
+                        cudaMemcpy(&h_gS[2], gzP + i,    sizeof(RealType), cudaMemcpyDeviceToHost);
+                        cudaMemcpy(&h_gM[0], gxP + h_m,  sizeof(RealType), cudaMemcpyDeviceToHost);
+                        cudaMemcpy(&h_gM[1], gyP + h_m,  sizeof(RealType), cudaMemcpyDeviceToHost);
+                        cudaMemcpy(&h_gM[2], gzP + h_m,  sizeof(RealType), cudaMemcpyDeviceToHost);
+                        cudaMemcpy(&h_mS,    mP  + i,    sizeof(RealType), cudaMemcpyDeviceToHost);
+                        cudaMemcpy(&h_mM,    mP  + h_m,  sizeof(RealType), cudaMemcpyDeviceToHost);
+                        std::cout << "  [GRADDUMP r" << s.rank << "] i=" << i << " m=" << h_m
+                                  << "  gS=(" << h_gS[0] << "," << h_gS[1] << "," << h_gS[2] << ")"
+                                  << "  gM=(" << h_gM[0] << "," << h_gM[1] << "," << h_gM[2] << ")"
+                                  << "  gS+gM=(" << (h_gS[0]+h_gM[0]) << "," << (h_gS[1]+h_gM[1]) << "," << (h_gS[2]+h_gM[2]) << ")"
+                                  << "  mS=" << h_mS << " mM=" << h_mM << std::endl;
+                    }
+                }
             }
 
             // applyDivTransposePerNodeKernel integrates to -V*grad, so
