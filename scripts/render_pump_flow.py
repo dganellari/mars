@@ -93,15 +93,32 @@ def main():
     srng = mag.PointData.GetArray("speed").GetRange() if mag.PointData.GetArray("speed") else (0.0, 1.0)
     smin, smax = srng[0], (srng[1] if srng[1] > srng[0] else srng[0] + 1.0)
     lut = GetColorTransferFunction("speed")
-    lut.ApplyPreset(args.preset, True)
+    # Preset names vary across ParaView builds; try the requested one then a list
+    # of common synonyms, and just keep the default if none apply.
+    _preset_candidates = [args.preset, "Viridis (matplotlib)", "viridis", "Viridis",
+                          "Cool to Warm (Extended)", "Cool to Warm", "Turbo",
+                          "Inferno (matplotlib)", "Plasma (matplotlib)", "Rainbow Uniform"]
+    for _p in _preset_candidates:
+        try:
+            lut.ApplyPreset(_p, True)
+            print("[render] color preset: %s" % _p)
+            break
+        except Exception:
+            continue
     lut.RescaleTransferFunction(smin, smax)
-    lut.NanColor = [0.2, 0.2, 0.2]
+    try:
+        lut.NanColor = [0.2, 0.2, 0.2]
+    except Exception:
+        pass
 
     # ---- streamlines (inlet-seeded, tubes) ----
     stream = StreamTracer(Input=mag, SeedType="Point Cloud")
     stream.Vectors = ["POINTS", args.field]
     stream.IntegrationDirection = "BOTH"
-    stream.IntegratorType = "Runge-Kutta 4-5"
+    try:
+        stream.IntegratorType = "Runge-Kutta 4-5"
+    except Exception:
+        pass
     stream.MaximumStreamlineLength = diag * 5.0
     stream.SeedType.Center = [cx, cy, cz]
     stream.SeedType.Radius = diag * 0.48
@@ -124,21 +141,41 @@ def main():
     bar.ComponentTitle = ""
     bar.TitleColor = [1, 1, 1]; bar.LabelColor = [0.9, 0.9, 0.9]
     bar.TitleFontSize = 16; bar.LabelFontSize = 13
-    bar.WindowLocation = "Lower Right Corner"
-    bar.ScalarBarLength = 0.33
+    for attr, val in (("WindowLocation", "Lower Right Corner"), ("ScalarBarLength", 0.33)):
+        try:
+            setattr(bar, attr, val)
+        except Exception:
+            pass
 
-    # ---- title + time annotation ----
-    title = Text()
-    title.Text = "MARS pump  --  incompressible NS (CVFEM/DDT)"
-    tdisp = Show(title, view)
-    tdisp.Color = [1, 1, 1]; tdisp.FontSize = 18
-    tdisp.WindowLocation = "Upper Left Corner"
+    # ---- title + time annotation (all optional/cosmetic; never fail the render) ----
+    try:
+        title = Text()
+        title.Text = "MARS pump  --  incompressible NS (CVFEM/DDT)"
+        tdisp = Show(title, view)
+        tdisp.Color = [1, 1, 1]; tdisp.FontSize = 18
+        try:
+            tdisp.WindowLocation = "Upper Left Corner"
+        except Exception:
+            pass
+    except Exception as e:  # noqa: BLE001
+        print("[render] title annotation skipped: %s" % e)
 
-    tann = AnnotateTimeFilter(Input=reader)
-    tann.Format = "t = {time:.4f}"
-    adisp = Show(tann, view)
-    adisp.Color = [0.85, 0.9, 1.0]; adisp.FontSize = 16
-    adisp.WindowLocation = "Lower Left Corner"
+    try:
+        tann = AnnotateTimeFilter(Input=reader)
+        for fmt in ("t = {time:.4f}", "t = %f"):
+            try:
+                tann.Format = fmt
+                break
+            except Exception:
+                continue
+        adisp = Show(tann, view)
+        adisp.Color = [0.85, 0.9, 1.0]; adisp.FontSize = 16
+        try:
+            adisp.WindowLocation = "Lower Left Corner"
+        except Exception:
+            pass
+    except Exception as e:  # noqa: BLE001
+        print("[render] time annotation skipped: %s" % e)
 
     # ---- camera ----
     ResetCamera(view)
