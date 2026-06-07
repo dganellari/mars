@@ -249,7 +249,26 @@ def main():
     if args.mark_io:
         try:
             surf = ExtractSurface(Input=mag)
-            norm = GenerateSurfaceNormals(Input=surf)
+            # the surface-normals filter has different names across PV builds
+            # (PV 6.1 does NOT have GenerateSurfaceNormals); try the known ones.
+            import paraview.simple as _ps
+            norm = None
+            for fname in ("GenerateSurfaceNormals", "SurfaceNormals",
+                          "PolyDataNormals", "Normals", "ComputeNormals"):
+                ctor = getattr(_ps, fname, None)
+                if ctor is None:
+                    continue
+                try:
+                    norm = ctor(Input=surf)
+                    print("[render] surface normals via %s" % fname)
+                    break
+                except Exception:
+                    norm = None
+            if norm is None:
+                # last resort: the surface may already carry Normals, or we
+                # compute v.n with a fabricated outward direction (skip normals).
+                norm = surf
+                print("[render] no surface-normals filter found; using surface as-is")
             try:
                 norm.ComputePointNormals = 1
             except Exception:
