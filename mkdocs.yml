@@ -32,6 +32,7 @@ nav:
       - SFC Mapping: SFC-Mapping.md
   - FEM:
       - FEM Assembly: FEM-Assembly.md
+      - CVFEM Kernels (GPU): CVFEM-Kernels.md
   - Advanced Features:
       - Adjacency Structures: Adjacency-Structures.md
       - Halo Management: Halo-Management.md
