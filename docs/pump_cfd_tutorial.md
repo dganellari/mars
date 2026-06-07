@@ -262,9 +262,9 @@ possible future improvement).
 > inf-sup / LBB stability condition, which admits a spurious oscillating "checkerboard"
 > pressure pattern. The `D M⁻¹ Dᵀ` projection suppresses it well in practice, but it
 > leaves a small, bounded residual in the *nodal* divergence — which is why the
-> reported `div*L/U` settles at a few units rather than zero. Part 5 explains that
-> diagnostic, and what discretizations (PSPG/Bochev–Dohrmann stabilization, or
-> inf-sup-stable / staggered schemes) drive it lower.
+> reported `div*L/U` plateaus at a small nonzero value rather than zero. Part 5
+> explains that diagnostic, and what discretizations (PSPG/Bochev–Dohrmann
+> stabilization, or inf-sup-stable / staggered schemes) drive it lower.
 
 ### 3.5 Advection schemes (how fluid carries itself)
 
@@ -377,50 +377,59 @@ before you waste a long run:
 
 ### The per-step line
 
+The solver prints one status line per (group of) steps. The fields below are what to
+read; the values shown are an **illustrative format example**, not results for any
+particular mesh — your numbers depend entirely on your geometry, `Re`, and `dt`:
+
 ```
-Step 3000  ft=3.48  u_rms=3.02e-1  u_max=6.68  uMax/U=13.4  d(u_rms)=9.8e-6  div*L/U=2.66  cg_p=554  pres_res=9.8e-9  cg_uvw=63
+Step <n>  ft=<flow-throughs>  u_rms=<...>  u_max=<...>  uMax/U=<...>  d(u_rms)=<...>  div*L/U=<...>  cg_p=<iters>  pres_res=<...>  cg_uvw=<iters>
 ```
 
 - `ft` — **flow-throughs** elapsed (`= t / (L/U)`): how many times fluid has crossed
-  the pump. Developed flow needs several; `ft=3.5` is well-developed.
+  the geometry. Developed flow needs several flow-throughs.
 - `u_rms`, `u_max`, `uMax/U` — volume-RMS speed, peak interior speed, and peak over
-  inlet speed. `uMax/U = 13.4` means the jet accelerates to 13× the inlet speed
-  through a constriction — a strong, real jet.
+  inlet speed. `uMax/U` is the **jet acceleration ratio**: how much faster the fastest
+  interior fluid is than the inlet. A value above 1 means the flow speeds up through a
+  constriction; the exact ratio is geometry-dependent.
 - `div*L/U` — **dimensionless divergence** = how badly mass conservation is violated;
-  should be small. (Note: this *nodal* divergence reads a few units even when the
-  projection is doing its job; it's a conservative upper-bound diagnostic.)
+  should be small and bounded. (Note: this *nodal* divergence reads a few units even
+  when the projection is doing its job — a conservative upper bound. See "Why
+  `div*L/U` does not reach zero" below.)
 - `d(u_rms)` — steady-state residual (how much the flow changed this step). Shrinking
-  toward zero means converging to steady state; `9.8e-6` is essentially converged.
-- `cg_p` — pressure-CG iterations. A real number that converges (here `pres_res ≈
-  1e-9`) is healthy. **`cg_p = -2` means the pressure solve FAILED** — the run is
-  blowing up.
+  toward zero means converging to steady state.
+- `cg_p` — pressure-CG iterations. A real number that converges (small `pres_res`) is
+  healthy. **`cg_p = -2` means the pressure solve FAILED** — the run is blowing up.
 - `cg_uvw` — velocity-diffusion CG iterations.
 
-**Healthy run:** `cg_p` converging (not `-2`), `div*L/U` bounded and dropping,
-`uMax/U` building as the jet develops, `d(u_rms)` shrinking. **Blowing up:** `cg_p =
--2`, kinetic energy / `u_max` exploding to huge numbers (often from `--upwind` or
+**Healthy run:** `cg_p` converging (not `-2`), `div*L/U` bounded, `uMax/U` building as
+the jet develops, `d(u_rms)` shrinking toward zero. **Blowing up:** `cg_p = -2`,
+kinetic energy / `u_max` exploding to huge numbers (often from `--upwind` or
 `--outlet=mass-conserving`, or too large a `dt`).
 
-### What a converged pump run looks like
+### What a converged run looks like
 
-A healthy 4-GPU developed run (Re=100, skew, do-nothing outlet, 3000 steps) reaches
-`ft≈3.5`, `uMax/U≈13` (strong jet), `d(u_rms)≈1e-5` (converged), `div*L/U≈2.7`, with
-`cg_p` converging to `~1e-9` every step. That's a steady, physical inlet→outlet jet.
+A healthy developed run shows: `d(u_rms)` shrunk to a small residual (the flow has
+stopped changing), `cg_p` converging to a small `pres_res` every step (the pressure
+solve is well-behaved), `uMax/U` settled at a steady value (the jet is established),
+and `div*L/U` plateaued at a small bounded number rather than growing. The *specific*
+values are mesh- and regime-dependent; the *signatures* above — residual flat,
+pressure converging, divergence bounded — are what tell you the run is done and
+physical.
 
-### Why `div*L/U` does not reach zero (even at 6000 steps)
+### Why `div*L/U` does not reach zero
 
-A natural question: the run is converged (`d(u_rms)→1e-5`) and the pressure solve hits
-machine precision (`pres_res≈1e-9`), so why does `div*L/U` sit around 2–3 instead of
-dropping to 0? Running longer does not help — it **plateaus**. This is expected, and
-understanding it is the heart of incompressible CFD on collocated grids.
+A natural question: once a run is converged (`d(u_rms)` tiny) and the pressure solve
+hits machine precision (`pres_res` ~ 1e-9), why does `div*L/U` settle at a small but
+nonzero value instead of dropping to 0? Running longer does not help — it
+**plateaus**. This is expected, and understanding it is the heart of incompressible
+CFD on collocated grids.
 
 There are **two different divergences**, and they are not the same number:
 
 1. **The divergence the projection actually removes.** The corrector solves
    `(D M⁻¹ Dᵀ) φ = (ρ/dt) D u**` and subtracts `M⁻¹ Dᵀ φ`. By construction this makes
-   `D u^{n+1} = 0` *in the operator's own discrete space* — and indeed that residual is
-   driven to the CG tolerance (`pres_res≈1e-9`). The projection is doing its job
-   exactly.
+   `D u^{n+1} = 0` *in the operator's own discrete space* — and that residual is driven
+   to the CG tolerance (the small `pres_res`). The projection is doing its job exactly.
 2. **The `div*L/U` that gets printed.** This is a *separate, nodal* recomputation of
    the divergence. On an equal-order (P1–P1) collocated layout — velocity and pressure
    at the *same* nodes — this nodal measure also "sees" a component of the field that
@@ -428,17 +437,17 @@ There are **two different divergences**, and they are not the same number:
    the inf-sup (LBB) condition warns about. So it reads a few units even when the
    projected divergence is essentially zero.
 
-So `div*L/U≈2.7` is **not** unconverged iteration — it is a *fixed consistency floor*
-of the discretization. The tell is that it plateaus: it was ~2.7 by `ft≈3` and stays
-~2.65 through `ft≈6`, rather than slowly climbing (which would mean instability) or
-slowly falling (which would mean it is still iterating). Treat the printed `div*L/U` as
-a **conservative upper bound** on the incompressibility error, not the error the
+So a nonzero plateaued `div*L/U` is **not** unconverged iteration — it is a *fixed
+consistency floor* of the discretization. The tell is that it **plateaus**: it levels
+off at a steady value rather than slowly climbing (which would mean instability) or
+slowly falling (which would mean it is still iterating). Treat the printed `div*L/U`
+as a **conservative upper bound** on the incompressibility error, not the error the
 projection controls.
 
-(Early in a run, before the flow develops, `div*L/U` is *large and transient* — e.g.
-~380 at `ft≈0.2` — simply because the inlet jet has only just entered an otherwise
-empty domain. That is a startup transient, not the steady value. Always judge
-incompressibility on a developed run.)
+(Early in a run, before the flow develops, `div*L/U` is *large and transient* — much
+higher than its eventual plateau — simply because the inlet jet has only just entered
+an otherwise empty domain. That is a startup transient, not the steady value. Always
+judge incompressibility on a developed run, never the first few flow-throughs.)
 
 ### What works better than collocated P1–P1
 
