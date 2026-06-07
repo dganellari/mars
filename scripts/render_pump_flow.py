@@ -52,7 +52,9 @@ def main():
                     help="PARTICLE TRACKS: release particles at the inlet and let the flow CARRY them "
                          "over time, rendered as little spheres -- looks like real liquid streaming "
                          "through. Needs the time series. Slow on big meshes; let it run.")
-    ap.add_argument("--particle-size", type=float, default=0.004,
+    ap.add_argument("--no-outline", action="store_true",
+                    help="never draw the bounding-box outline (the white box)")
+    ap.add_argument("--particle-size", type=float, default=0.003,
                     help="particle sphere size as a fraction of the bbox diagonal (smaller=more liquid-like)")
     ap.add_argument("--reinject", type=int, default=2,
                     help="re-inject particles every N steps (smaller=denser continuous stream)")
@@ -130,20 +132,21 @@ def main():
     diag = math.sqrt((bounds[1]-bounds[0])**2 + (bounds[3]-bounds[2])**2 + (bounds[5]-bounds[4])**2)
 
     # ---- always-visible pump context ----
-    # An OUTLINE of the geometry is cheap (just bounding edges) and ALWAYS shows
-    # the pump shape, even at t=0 when there is no flow yet. The full translucent
-    # surface (--shell) is prettier but heavy on big meshes -> off by default.
-    try:
-        outline = Outline(Input=reader)
-        odisp = Show(outline, view)
-        odisp.DiffuseColor = [0.7, 0.75, 0.82]
-        odisp.AmbientColor = [0.7, 0.75, 0.82]
+    # A bounding-box OUTLINE shows the domain extent even at t=0. It's only useful
+    # WITHOUT the translucent surface; with --shell the body already shows the
+    # geometry, so skip the outline (it reads as a distracting white box).
+    if not args.shell and not args.no_outline:
         try:
-            odisp.LineWidth = 2
-        except Exception:
-            pass
-    except Exception as e:  # noqa: BLE001
-        print("[render] outline skipped: %s" % e)
+            outline = Outline(Input=reader)
+            odisp = Show(outline, view)
+            odisp.DiffuseColor = [0.7, 0.75, 0.82]
+            odisp.AmbientColor = [0.7, 0.75, 0.82]
+            try:
+                odisp.LineWidth = 2
+            except Exception:
+                pass
+        except Exception as e:  # noqa: BLE001
+            print("[render] outline skipped: %s" % e)
 
     if args.shell:
         surf = Show(reader, view)
