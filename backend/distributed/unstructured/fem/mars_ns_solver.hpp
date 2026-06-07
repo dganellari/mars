@@ -8573,9 +8573,21 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
         s.domain.reverseExchangeNodeHaloAdd(d_gxAcc);
         s.domain.reverseExchangeNodeHaloAdd(d_gyAcc);
         s.domain.reverseExchangeNodeHaloAdd(d_gzAcc);
-        maybePeriodicSum<KeyType, RealType, ElementTag>(s, d_gxAcc);
-        maybePeriodicSum<KeyType, RealType, ElementTag>(s, d_gyAcc);
-        maybePeriodicSum<KeyType, RealType, ElementTag>(s, d_gzAcc);
+        // MARS_CORR_NO_GFOLD=1 disables the pre-normalize maybePeriodicSum on g
+        // in the else-branch corrector. Per workflow w02rz2t9l hypothesis B
+        // discriminator: the operator (bare CG matvec at NS:5757 applyPeriodic=
+        // false) uses per-slot g_half at master and slave (no fold inside the
+        // matvec), but the corrector folds g pre-normalize and then broadcasts,
+        // so gradPhi=g_full at both slots. The corrector subtracts ~2x what the
+        // operator inverted phi for at the seam, leaving |Du^{n+1}| ~ |Du**|.
+        // With this env on, gradPhi[M]=g_M_half, gradPhi[S]=g_S_half (then
+        // master->slave broadcast makes them equal by periodic symmetry).
+        static const bool corrNoGFold = (std::getenv("MARS_CORR_NO_GFOLD") != nullptr);
+        if (!corrNoGFold) {
+            maybePeriodicSum<KeyType, RealType, ElementTag>(s, d_gxAcc);
+            maybePeriodicSum<KeyType, RealType, ElementTag>(s, d_gyAcc);
+            maybePeriodicSum<KeyType, RealType, ElementTag>(s, d_gzAcc);
+        }
         normalizeGradientPerNodeKernel<RealType><<<nodeBlocks, s.blockSize>>>(
             d_gxAcc.data(), d_gyAcc.data(), d_gzAcc.data(),
             s.d_massNode.data(),
