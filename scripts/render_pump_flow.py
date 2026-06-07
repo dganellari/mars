@@ -86,8 +86,11 @@ def main():
     ap.add_argument("--shell", action="store_true",
                     help="add the full translucent geometry surface (prettier but HEAVY on big meshes; "
                          "default is just a cheap always-visible bounding outline)")
-    ap.add_argument("--shell-opacity", type=float, default=0.18,
-                    help="translucent pump-body opacity (0..1; higher = more visible pump, default 0.18)")
+    ap.add_argument("--shell-opacity", type=float, default=0.08,
+                    help="translucent pump-body opacity (0..1; lower = more see-through, default 0.08)")
+    ap.add_argument("--wireframe", action="store_true",
+                    help="draw the pump body as a wireframe cage instead of a translucent surface "
+                         "(does not block the interior at all -- particles fully visible)")
     ap.add_argument("--zoom", type=float, default=1.6,
                     help="camera zoom: Dolly factor >1 moves IN so the pump fills the frame (default 1.6)")
     ap.add_argument("--slice", action="store_true",
@@ -150,8 +153,15 @@ def main():
 
     if args.shell:
         surf = Show(reader, view)
-        surf.Representation = "Surface"
-        surf.Opacity = args.shell_opacity
+        if args.wireframe:
+            # wireframe shows the pump shape WITHOUT blocking the interior at all
+            # -> particles fully visible inside; reads as a glass cage.
+            surf.Representation = "Wireframe"
+            surf.Opacity = max(args.shell_opacity, 0.25)
+            surf.LineWidth = 1
+        else:
+            surf.Representation = "Surface"
+            surf.Opacity = args.shell_opacity
         surf.AmbientColor = [0.55, 0.62, 0.72]
         surf.DiffuseColor = [0.55, 0.62, 0.72]
         surf.Specular = 0.3
