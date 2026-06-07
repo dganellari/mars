@@ -41,6 +41,19 @@ MARS provides comprehensive support for unstructured mesh processing, including:
 - [GPU Acceleration](GPU-Acceleration.md) - CUDA implementation details
 - [Multi-Rank Support](Multi-Rank-Support.md) - MPI parallel processing
 
+## Tutorials
+
+End-to-end walkthroughs of MARS' incompressible Navier–Stokes solvers on
+unstructured meshes:
+
+- **[Pump Flow — a From-Scratch CFD Tutorial](pump_cfd_tutorial.md)** — start here if
+  you are new to CFD. What an internal pump-flow simulation computes, from the mesh
+  through the numerical method (CVFEM, the matrix-free `D M⁻¹ Dᵀ` projection, BDF2,
+  advection schemes), boundary conditions, running, reading the output, and making
+  flow visualizations.
+- [Taylor–Green Vortex (periodic)](periodic_tgv_tutorial.md) - the canonical periodic
+  validation case for the same solver family.
+
 ## Quick Start
 
 ```cpp

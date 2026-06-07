@@ -23,6 +23,9 @@ plugins:
 # Navigation structure
 nav:
   - Home: index.md
+  - Tutorials:
+      - Pump Flow (CFD intro): pump_cfd_tutorial.md
+      - Taylor-Green Vortex (periodic): periodic_tgv_tutorial.md
   - Core Components:
       - ElementDomain Overview: ElementDomain-Overview.md
       - Mesh Reading and Partitioning: Mesh-Reading-and-Partitioning.md
@@ -30,9 +33,13 @@ nav:
   - Advanced Features:
       - Adjacency Structures: Adjacency-Structures.md
       - Halo Management: Halo-Management.md
+      - Node Halo Topology: Node-Halo-Topology.md
       - Coordinate Caching: Coordinate-Caching.md
       - Characteristic Sizes: Characteristic-Sizes.md
       - Connectivity Management: Connectivity-Management.md
+  - Adaptive Mesh Refinement:
+      - AMR Module: AMR-Module.md
+      - Solution Transfer: Solution-Transfer.md
   - Technical Details:
       - GPU Acceleration: GPU-Acceleration.md
       - Multi-Rank Support: Multi-Rank-Support.md

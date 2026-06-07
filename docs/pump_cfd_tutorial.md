@@ -3,12 +3,9 @@
 This tutorial explains, from the ground up, what the MARS pump simulation does and
 how it works. It assumes **no prior CFD knowledge** at the start and builds toward
 the real numerical methods, so it doubles as an introduction to computational fluid
-dynamics (CFD) for internal pump flow.
-
-If you already know CFD and want the dense engineer's reference (method
-justifications, comparison-to-legacy questions, fragilities), read
-[pump_solver_tutorial.md](pump_solver_tutorial.md) instead. This document is the
-gentle on-ramp; that one is the deep dive.
+dynamics (CFD) for internal pump flow. Later sections add enough depth (the
+discrete operators, the projection algebra, stabilization, accuracy orders) to serve
+as a working reference once you know the basics.
 
 ---
 
@@ -170,15 +167,25 @@ two endpoint nodes" — simple, conservative, GPU-friendly.
 
 ### 3.2 The three discrete operators
 
-- **Divergence `D`** — for each node, `(∇·u)_i ≈ (1/V_i) Σ_f (u_f · A_f)`. This is the
-  discrete "is mass conserved here?" measure.
-- **Gradient `Dᵀ`** — the *exact transpose* of `D`. Used to turn a pressure field
-  into a force on the velocity.
+- **Divergence `D`** — for each node, `(∇·u)_i ≈ (1/V_i) Σ_f (u_f · A_f)`, with the
+  face value `u_f = ½(u_L + u_R)`. This is the discrete "is mass conserved here?"
+  measure.
+- **Gradient `Dᵀ`** — the *exact transpose* of `D`: scatter `½(p_L − p_R)·A_f` to each
+  facet's two endpoints. Used to turn a pressure field into a force on the velocity.
 - **Lumped mass `M`** — a diagonal matrix whose entry `M_i` is just the volume of
   node `i`'s control cell.
 
-These three combine into the pressure operator (Part 3.4), which is the heart of the
-method.
+Why "scatter to two endpoints with opposite sign" matters: it makes the discrete
+operators **telescope**, so they satisfy the same identities as the continuous ones.
+MARS checks these as unit invariants: `D(constant) = 0` (a uniform flow has no
+divergence), `gradient(linear) = constant`, and the area-vector closure
+`Σ_f A_f·(x_R − x_L) = 3V` per tetrahedron (a discrete divergence theorem). The lumped
+mass is also rank-consistent — `Σ M` over owned nodes is bit-identical on 1 and N GPUs
+and equals the domain volume. These invariants are how you trust the geometry before
+trusting the flow.
+
+These three operators combine into the pressure operator (Part 3.4), which is the
+heart of the method.
 
 ### 3.3 Marching in time: BDF2 + projection
 
@@ -222,8 +229,12 @@ corrector's gradient have to be **consistent** — the gradient you correct with
 be the exact transpose of the divergence you're trying to kill. The "obvious"
 pressure operator (a standard finite-element Laplacian `K`) is **not** consistent
 with the median-dual gradient on tetrahedra. On tets the two are nearly at right
-angles to each other, so correcting with one while solving the other **leaves the
-divergence almost untouched — and it blows up**.
+angles to each other — the angle between the finite-element gradient and the
+median-dual gradient was *measured* at `cos ≈ −0.21` on tets (vs `−0.73` on hexes) —
+so correcting with one while solving the other **leaves the divergence almost
+untouched, and on tets it amplifies it each step — the run blows up**. This is a
+*consistency* failure, not a coding bug: the geometry can be perfectly correct and
+the projection still fails because the two operators don't match.
 
 MARS instead uses the **literal composition `A = D M⁻¹ Dᵀ`** as the pressure
 operator. Then the algebra closes exactly:
@@ -238,7 +249,23 @@ Because the *same* `D`, `M⁻¹`, `Dᵀ` kernels build both the pressure operato
 corrector gradient, the divergence cancels **algebraically**. This operator is never
 stored as a matrix — applying it inside CG is just three GPU passes (`Dᵀ` then `M⁻¹`
 then `D`), which is essential for huge meshes (a stored matrix would exhaust GPU
-memory). It's solved with a Jacobi-preconditioned CG.
+memory). The CG uses a **Jacobi preconditioner** built matrix-free from the same area
+vectors (each facet contributes `+0.25·|A_f|²·(1/M_L + 1/M_R)` to the diagonal,
+strictly positive so the operator stays well-posed). On stretched boundary-layer
+tetrahedra the diagonal spans several orders of magnitude, so Jacobi is a weak
+preconditioner and the pressure CG can take a few hundred iterations — that is normal
+for this operator, not a sign of trouble (a stronger multigrid preconditioner is a
+possible future improvement).
+
+> **Aside — the checkerboard mode (for the curious).** Putting velocity *and*
+> pressure at the same nodes (equal-order, "collocated") technically violates the
+> inf-sup / LBB stability condition, which admits a spurious oscillating "checkerboard"
+> pressure pattern. The `D M⁻¹ Dᵀ` projection suppresses it well in practice, but on
+> very large meshes a dedicated *pressure stabilization* may be needed. The textbook
+> cure (Rhie–Chow momentum interpolation) turns out to be geometrically unsafe on
+> skewed tetrahedra; the more robust route is a PSPG / Bochev–Dohrmann pressure
+> stabilization. This is an active area, not a solved one — worth knowing if you push
+> to very fine meshes.
 
 ### 3.5 Advection schemes (how fluid carries itself)
 
@@ -253,13 +280,12 @@ discretize. MARS offers three, selectable on the command line:
   essential — non-conserving schemes blow up).
 - **First-order upwind (`--upwind`).** Takes the value from the upstream node. Robust
   but adds heavy *numerical diffusion* that smears smooth flow — only 1st-order
-  accurate. Fine near shocks, "crap" (the developers' word) for smooth pump flow,
-  and here it actually blew up.
+  accurate. Fine near shocks, poor for smooth internal flow, and here it actually
+  blew up (no wall dissipation to absorb its error).
 - **Barth–Jespersen (`--bj`).** A 2nd-order *limited* reconstruction:
   `q_face = q_up + φ·(∇q·r)` where the limiter `φ ∈ [0,1]` keeps the reconstruction
-  from overshooting the local neighbor values (no spurious oscillations). This is the
-  scheme the pump's mesh developers use, so it's the apples-to-apples comparison
-  choice.
+  from overshooting the local neighbor values (no spurious oscillations) — a
+  monotone, TVD-like 2nd-order scheme widely used in production finite-volume CFD.
 
 ### 3.6 Orders of accuracy (summary)
 
@@ -428,8 +454,6 @@ Practical notes learned the hard way:
 
 ## Where to go next
 
-- The engineer's reference with method justifications, fragilities, and the
-  comparison-to-legacy-code questions: [pump_solver_tutorial.md](pump_solver_tutorial.md).
 - Mesh reading & partitioning internals: [Mesh-Reading-and-Partitioning.md](Mesh-Reading-and-Partitioning.md),
   [SFC-Mapping.md](SFC-Mapping.md), [Multi-Rank-Support.md](Multi-Rank-Support.md).
 - The related periodic Taylor–Green tutorial (same solver family, a canonical CFD
