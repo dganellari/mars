@@ -2,6 +2,9 @@
 
 Welcome to the MARS Unstructured Meshes Documentation. This section covers the unstructured mesh handling capabilities in the MARS (Multilevel Adaptive Refinement Solver) framework.
 
+> **New here?** Start with the **[Quickstart](Quickstart.md)** — clone, build,
+> generate a mesh, and run your first GPU assembly in a few minutes.
+
 ## Overview
 
 MARS provides comprehensive support for unstructured mesh processing, including:

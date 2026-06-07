@@ -125,7 +125,7 @@ whole mesh in which **spatially-close things are close in the list**. Then:
 Each GPU has **owned** elements (its chunk) plus a thin layer of **halo / ghost**
 elements — read-only copies of neighbors' elements right across the partition
 boundary, needed so a GPU can compute fluxes at the edge of its region. A node sitting
-on a partition seam is **owned by exactly one GPU** and seen as a ghost by the
+on a partition boundary is **owned by exactly one GPU** and seen as a ghost by the
 others; this "owned by exactly one" rule is what keeps global sums correct.
 
 Everything — coordinates, connectivity, the solution — lives in **GPU memory** and
@@ -195,7 +195,7 @@ advance momentum and (b) find the pressure that keeps `∇·u = 0`. MARS uses a
 then *project* the result back onto the divergence-free state. The per-step recipe:
 
 1. **Predictor** — compute a provisional velocity `u*` from the momentum equation
-   using the advection term and the *old* pressure. `u*` is generally **not**
+   using the advection term and the *old* pressure. `u*` is **not**
    divergence-free (it doesn't yet know the new pressure).
 2. **Implicit diffusion** — the viscous term is "stiff" (it would force a
    microscopic `dt` if done explicitly), so solve it implicitly: three linear

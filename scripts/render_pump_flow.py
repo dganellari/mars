@@ -52,7 +52,9 @@ def main():
                     help="PARTICLE TRACKS: release particles at the inlet and let the flow CARRY them "
                          "over time, rendered as little spheres -- looks like real liquid streaming "
                          "through. Needs the time series. Slow on big meshes; let it run.")
-    ap.add_argument("--particle-size", type=float, default=0.004,
+    ap.add_argument("--no-outline", action="store_true",
+                    help="never draw the bounding-box outline (the white box)")
+    ap.add_argument("--particle-size", type=float, default=0.003,
                     help="particle sphere size as a fraction of the bbox diagonal (smaller=more liquid-like)")
     ap.add_argument("--reinject", type=int, default=2,
                     help="re-inject particles every N steps (smaller=denser continuous stream)")
@@ -64,8 +66,8 @@ def main():
                          "them with a green/red sphere + a legend, so the intended flow path is clear")
     ap.add_argument("--marker-size", type=float, default=0.03,
                     help="inlet/outlet marker sphere size as a fraction of the bbox diagonal (default 0.03)")
-    ap.add_argument("--orbit-deg", type=float, default=30.0,
-                    help="total azimuth sweep over the run (gentle sway; 0 = fixed camera)")
+    ap.add_argument("--orbit-deg", type=float, default=0.0,
+                    help="total azimuth sweep over the run (default 0 = fixed camera; set e.g. 30 for a gentle sway)")
     ap.add_argument("--fps", type=int, default=30)
     ap.add_argument("--hold-frames", type=int, default=20,
                     help="extra orbit-only frames at the end on the final (developed) state")
@@ -84,10 +86,18 @@ def main():
     ap.add_argument("--shell", action="store_true",
                     help="add the full translucent geometry surface (prettier but HEAVY on big meshes; "
                          "default is just a cheap always-visible bounding outline)")
-    ap.add_argument("--shell-opacity", type=float, default=0.18,
-                    help="translucent pump-body opacity (0..1; higher = more visible pump, default 0.18)")
+    ap.add_argument("--shell-opacity", type=float, default=0.08,
+                    help="translucent pump-body opacity (0..1; lower = more see-through, default 0.08)")
+    ap.add_argument("--wireframe", action="store_true",
+                    help="draw the pump body as a wireframe cage instead of a translucent surface "
+                         "(does not block the interior at all -- particles fully visible)")
     ap.add_argument("--zoom", type=float, default=1.6,
                     help="camera zoom: Dolly factor >1 moves IN so the pump fills the frame (default 1.6)")
+    ap.add_argument("--frame-stride", type=int, default=1,
+                    help="render every Nth timestep (e.g. 4 = 4x fewer frames, 4x faster; the video "
+                         "is still smooth). Use this if the render hits the job time limit.")
+    ap.add_argument("--max-frames", type=int, default=0,
+                    help="cap the number of frames rendered (0 = no cap); another way to fit the time budget")
     ap.add_argument("--slice", action="store_true",
                     help="show a cutting-plane cross-section colored by |velocity| (MRI-like; "
                          "integration-free so it never hangs, unlike streamlines)")
@@ -106,6 +116,20 @@ def main():
     reader = PVDReader(FileName=args.pvd)
     reader.UpdatePipeline()
     tvals = list(reader.TimestepValues) if reader.TimestepValues else [0.0]
+    _ntotal = len(tvals)
+    if args.frame_stride > 1:
+        # always keep the last frame (the developed state) even if stride skips it
+        last = tvals[-1]
+        tvals = tvals[::args.frame_stride]
+        if tvals[-1] != last:
+            tvals.append(last)
+    if args.max_frames > 0 and len(tvals) > args.max_frames:
+        # subsample evenly down to max_frames
+        step = len(tvals) / float(args.max_frames)
+        tvals = [tvals[int(i * step)] for i in range(args.max_frames)]
+    if len(tvals) != _ntotal:
+        print("[render] rendering %d of %d timesteps (stride=%d, max=%s)"
+              % (len(tvals), _ntotal, args.frame_stride, args.max_frames or "none"))
 
     view = GetActiveViewOrCreate("RenderView")
     view.ViewSize = [W, H]
@@ -130,25 +154,33 @@ def main():
     diag = math.sqrt((bounds[1]-bounds[0])**2 + (bounds[3]-bounds[2])**2 + (bounds[5]-bounds[4])**2)
 
     # ---- always-visible pump context ----
-    # An OUTLINE of the geometry is cheap (just bounding edges) and ALWAYS shows
-    # the pump shape, even at t=0 when there is no flow yet. The full translucent
-    # surface (--shell) is prettier but heavy on big meshes -> off by default.
-    try:
-        outline = Outline(Input=reader)
-        odisp = Show(outline, view)
-        odisp.DiffuseColor = [0.7, 0.75, 0.82]
-        odisp.AmbientColor = [0.7, 0.75, 0.82]
+    # A bounding-box OUTLINE shows the domain extent even at t=0. It's only useful
+    # WITHOUT the translucent surface; with --shell the body already shows the
+    # geometry, so skip the outline (it reads as a distracting white box).
+    if not args.shell and not args.no_outline:
         try:
-            odisp.LineWidth = 2
-        except Exception:
-            pass
-    except Exception as e:  # noqa: BLE001
-        print("[render] outline skipped: %s" % e)
+            outline = Outline(Input=reader)
+            odisp = Show(outline, view)
+            odisp.DiffuseColor = [0.7, 0.75, 0.82]
+            odisp.AmbientColor = [0.7, 0.75, 0.82]
+            try:
+                odisp.LineWidth = 2
+            except Exception:
+                pass
+        except Exception as e:  # noqa: BLE001
+            print("[render] outline skipped: %s" % e)
 
     if args.shell:
         surf = Show(reader, view)
-        surf.Representation = "Surface"
-        surf.Opacity = args.shell_opacity
+        if args.wireframe:
+            # wireframe shows the pump shape WITHOUT blocking the interior at all
+            # -> particles fully visible inside; reads as a glass cage.
+            surf.Representation = "Wireframe"
+            surf.Opacity = max(args.shell_opacity, 0.25)
+            surf.LineWidth = 1
+        else:
+            surf.Representation = "Surface"
+            surf.Opacity = args.shell_opacity
         surf.AmbientColor = [0.55, 0.62, 0.72]
         surf.DiffuseColor = [0.55, 0.62, 0.72]
         surf.Specular = 0.3

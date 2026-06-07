@@ -23,6 +23,7 @@ plugins:
 # Navigation structure
 nav:
   - Home: index.md
+  - Quickstart: Quickstart.md
   - Tutorials:
       - Pump Flow (CFD intro): pump_cfd_tutorial.md
       - Taylor-Green Vortex (periodic): periodic_tgv_tutorial.md
@@ -30,6 +31,9 @@ nav:
       - ElementDomain Overview: ElementDomain-Overview.md
       - Mesh Reading and Partitioning: Mesh-Reading-and-Partitioning.md
       - SFC Mapping: SFC-Mapping.md
+  - FEM:
+      - FEM Assembly: FEM-Assembly.md
+      - CVFEM Kernels (GPU): CVFEM-Kernels.md
   - Advanced Features:
       - Adjacency Structures: Adjacency-Structures.md
       - Halo Management: Halo-Management.md

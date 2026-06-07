@@ -5379,6 +5379,53 @@ void applyDDTPerNode(NSStepper<KeyType, RealType, ElementTag>& s,
     s.domain.exchangeNodeHalo(gyAcc);
     s.domain.exchangeNodeHalo(gzAcc);
 
+    // MARS_OP_GRADDUMP=1 (one-shot, first matvec): dump g[M] and g[S] inside
+    // the operator at the first owned cross-rank periodic pair. Tells us whether
+    // |g[S]| ≈ 0.65*|g[M]| (matches FACTOR=1.65 = 1 + 0.65) so the missing
+    // master->slave g-broadcast is exactly the algebraic gap.
+    {
+        static int s_opGradDumpCount = 0;
+        const char* envDump = std::getenv("MARS_OP_GRADDUMP");
+        if (envDump && envDump[0] == '1' && s_opGradDumpCount < 1 && s.periodicMap)
+        {
+            s_opGradDumpCount++;
+            const int* partnerP = s.periodicMap->d_periodicPartner.data();
+            const uint8_t* ownP = d_nodeOwnership.data();
+            const size_t N = s.nodeCount;
+            // find first owned slave with cross-rank ghost master
+            long long localFirst = thrust::transform_reduce(thrust::device,
+                thrust::counting_iterator<size_t>(0),
+                thrust::counting_iterator<size_t>(N),
+                [partnerP, ownP, N] __device__ (size_t i) -> long long {
+                    if (ownP[i] != 1) return (long long)N;
+                    int m = partnerP[i];
+                    if (m < 0 || ownP[m] == 1) return (long long)N;
+                    return (long long)i;
+                }, (long long)N, thrust::minimum<long long>());
+            if (localFirst < (long long)N) {
+                size_t i = (size_t)localFirst;
+                int h_m;
+                RealType h_gS[3], h_gM[3];
+                cudaMemcpy(&h_m, partnerP + i, sizeof(int), cudaMemcpyDeviceToHost);
+                cudaMemcpy(&h_gS[0], gxAcc.data() + i,    sizeof(RealType), cudaMemcpyDeviceToHost);
+                cudaMemcpy(&h_gS[1], gyAcc.data() + i,    sizeof(RealType), cudaMemcpyDeviceToHost);
+                cudaMemcpy(&h_gS[2], gzAcc.data() + i,    sizeof(RealType), cudaMemcpyDeviceToHost);
+                cudaMemcpy(&h_gM[0], gxAcc.data() + h_m,  sizeof(RealType), cudaMemcpyDeviceToHost);
+                cudaMemcpy(&h_gM[1], gyAcc.data() + h_m,  sizeof(RealType), cudaMemcpyDeviceToHost);
+                cudaMemcpy(&h_gM[2], gzAcc.data() + h_m,  sizeof(RealType), cudaMemcpyDeviceToHost);
+                RealType nM = std::sqrt(h_gM[0]*h_gM[0]+h_gM[1]*h_gM[1]+h_gM[2]*h_gM[2]);
+                RealType nS = std::sqrt(h_gS[0]*h_gS[0]+h_gS[1]*h_gS[1]+h_gS[2]*h_gS[2]);
+                std::cout << "  [OP_GRADDUMP r" << s.rank << "] PRE-BCAST i=" << i
+                          << " m=" << h_m
+                          << "  g[M]=(" << h_gM[0] << "," << h_gM[1] << "," << h_gM[2] << ")"
+                          << "  g[S]=(" << h_gS[0] << "," << h_gS[1] << "," << h_gS[2] << ")"
+                          << "  |gM|=" << nM << "  |gS|=" << nS
+                          << "  ratio_|gS|/|gM|=" << (nM > 0 ? nS/nM : RealType(0))
+                          << std::endl;
+            }
+        }
+    }
+
     // Periodic g-consistency: maybePeriodicSum above merged the same-rank slave
     // accumulator onto the master and ZEROED the slave slot; normalize then left
     // g[slave]=0/mass=0 while g[master] carries M^-1 D^T phi. The forward halo
@@ -5392,7 +5439,17 @@ void applyDDTPerNode(NSStepper<KeyType, RealType, ElementTag>& s,
     // documented adjointness-breaker (an overwrite is not self-adjoint). The
     // reduced P^T A P operator must be BARE (element op + cstone halo only), so
     // it is gated entirely off there.
-    if (applyPeriodic
+    // MARS_OP_GBCAST_REDUCED=1: enable the master->slave g-broadcast on the
+    // reduced-CG path (applyPeriodic=false, reducedPeriodicFold=true). Per
+    // workflow w2luca219 algebra: the RHS path broadcasts u**[slave]=u**[master]
+    // before its D-scatter (NS:7434-7438), so b[master_DOF] sees u**[S]=u**[M].
+    // The bare reduced operator does NOT do the analogous g-broadcast, so the
+    // operator's slave-side D-scatter reads g[S]=G_S/m_merged (= ~0.65*|g[M]|
+    // per GRADDUMP empirics), producing FACTOR=1.65 and PROJ-P3=0.508. Enabling
+    // this mirrors the RHS path; algebra predicts PROJ-P3 -> 0. SYMPROBE may
+    // break (workflow's risk).
+    static const bool opGbcastReduced = (std::getenv("MARS_OP_GBCAST_REDUCED") != nullptr);
+    if ((applyPeriodic || (reducedPeriodicFold && opGbcastReduced))
         && s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Periodic && s.periodicMap)
     {
         // Diagnostic toggles (MARS_DDT_SYMPROBE workflow): the master->slave
@@ -7923,6 +7980,85 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
                     std::cout << "  [PROJ-P1] |b|=" << nb << " |A*phi|=" << nA
                               << " |A*phi-b|/|b|=" << (nr / (nb > 0 ? nb : RealType(1)))
                               << " iters=" << s.lastPressureIters << "\n";
+
+                // MARS_PROJ_FACTOR_PROBE: discriminating ratios per workflow w7jjyq1qc.
+                // Run A_red phi via applyDDTPerNode with applyPeriodic=TRUE on the
+                // converged phi (Option-C operator). Compare to the bare operator
+                // result Aphi already computed. r_op2/r_op tells us how the
+                // Option-C operator's master-DOF value compares to the bare:
+                //   ~1.0 => operator-side fix is irrelevant
+                //   ~2.0 => bare operator MISSED slave-side contribution
+                //   ~0.5 => bare operator DOUBLES what it should
+                // Compute |Aphi - Aphi_with_periodic| / |Aphi| over owned dofs.
+                if (std::getenv("MARS_PROJ_FACTOR_PROBE") != nullptr)
+                {
+                    cstone::DeviceVector<RealType> Aphi2(n, RealType(0));
+                    // Manually mimic applyDDTReduced but with applyPeriodic=true.
+                    // Step P input prolongation: scatter dof->node, halo, broadcast
+                    cstone::DeviceVector<RealType> phiNode2(s.nodeCount, RealType(0));
+                    cstone::DeviceVector<RealType> ApNode2(s.nodeCount, RealType(0));
+                    scatterDofToNodeKernel<RealType><<<nodeBlocks, s.blockSize>>>(
+                        phi_dof.data(), s.d_node_to_dof.data(), phiNode2.data(),
+                        s.nodeCount, s.numOwnedDofs);
+                    cudaDeviceSynchronize();
+                    s.domain.exchangeNodeHalo(phiNode2);
+                    if (s.periodicMap) {
+                        int blk = 256, grd = int((s.nodeCount + blk - 1) / blk);
+                        mars::fem::periodicBroadcastKernel<<<grd, blk>>>(
+                            s.periodicMap->d_periodicPartner.data(), s.nodeCount,
+                            phiNode2.data());
+                        cudaDeviceSynchronize();
+                    }
+                    cstone::DeviceVector<RealType> gx2(s.nodeCount, RealType(0));
+                    cstone::DeviceVector<RealType> gy2(s.nodeCount, RealType(0));
+                    cstone::DeviceVector<RealType> gz2(s.nodeCount, RealType(0));
+                    applyDDTPerNode<KeyType, RealType, ElementTag>(s, phiNode2,
+                        ApNode2, gx2, gy2, gz2,
+                        /*applyPeriodic=*/true,
+                        /*reducedPeriodicFold=*/true);
+                    thrust::fill(thrust::device_pointer_cast(Aphi2.data()),
+                                 thrust::device_pointer_cast(Aphi2.data() + n),
+                                 RealType(0));
+                    gatherNodeToDofSumKernel<RealType><<<nodeBlocks, s.blockSize>>>(
+                        ApNode2.data(), s.d_node_to_dof.data(),
+                        d_nodeOwnership.data(), Aphi2.data(), s.nodeCount, n);
+                    cudaDeviceSynchronize();
+                    // Compute |Aphi2 - Aphi| / |Aphi| over owned DOFs that are also
+                    // seam-master DOFs (partner table has entries pointing to them).
+                    const RealType* a1 = Aphi.data();
+                    const RealType* a2 = Aphi2.data();
+                    RealType locDiff = thrust::transform_reduce(thrust::device,
+                        thrust::counting_iterator<int>(0),
+                        thrust::counting_iterator<int>(n),
+                        [a1, a2] __device__ (int i) -> RealType {
+                            return fabs(a1[i] - a2[i]);
+                        }, RealType(0), thrust::maximum<RealType>());
+                    RealType locMaxA = thrust::transform_reduce(thrust::device,
+                        thrust::counting_iterator<int>(0),
+                        thrust::counting_iterator<int>(n),
+                        [a1] __device__ (int i) -> RealType {
+                            return fabs(a1[i]);
+                        }, RealType(0), thrust::maximum<RealType>());
+                    RealType locMaxB = thrust::transform_reduce(thrust::device,
+                        thrust::counting_iterator<int>(0),
+                        thrust::counting_iterator<int>(n),
+                        [a2] __device__ (int i) -> RealType {
+                            return fabs(a2[i]);
+                        }, RealType(0), thrust::maximum<RealType>());
+                    RealType gDiff = 0, gMaxA = 0, gMaxB = 0;
+                    auto mt = std::is_same_v<RealType, double> ? MPI_DOUBLE : MPI_FLOAT;
+                    MPI_Allreduce(&locDiff, &gDiff, 1, mt, MPI_MAX, MPI_COMM_WORLD);
+                    MPI_Allreduce(&locMaxA, &gMaxA, 1, mt, MPI_MAX, MPI_COMM_WORLD);
+                    MPI_Allreduce(&locMaxB, &gMaxB, 1, mt, MPI_MAX, MPI_COMM_WORLD);
+                    if (s.rank == 0)
+                        std::cout << "  [PROJ-FACTOR] max|A_bare|=" << gMaxA
+                                  << "  max|A_periodic|=" << gMaxB
+                                  << "  ratio_max(B/A)=" << (gMaxB / (gMaxA > 0 ? gMaxA : RealType(1)))
+                                  << "  max|B-A|=" << gDiff
+                                  << "  reldiff=" << (gDiff / (gMaxA > 0 ? gMaxA : RealType(1)))
+                                  << "  (~1.0 op-side fix dead; ~2.0 bare missed slave; ~0.5 bare doubles)"
+                                  << std::endl;
+                }
             }
 
             // Pin phi (constant null mode) in DOF space, then prolong dof->node so
@@ -8494,9 +8630,21 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
         s.domain.reverseExchangeNodeHaloAdd(d_gxAcc);
         s.domain.reverseExchangeNodeHaloAdd(d_gyAcc);
         s.domain.reverseExchangeNodeHaloAdd(d_gzAcc);
-        maybePeriodicSum<KeyType, RealType, ElementTag>(s, d_gxAcc);
-        maybePeriodicSum<KeyType, RealType, ElementTag>(s, d_gyAcc);
-        maybePeriodicSum<KeyType, RealType, ElementTag>(s, d_gzAcc);
+        // MARS_CORR_NO_GFOLD=1 disables the pre-normalize maybePeriodicSum on g
+        // in the else-branch corrector. Per workflow w02rz2t9l hypothesis B
+        // discriminator: the operator (bare CG matvec at NS:5757 applyPeriodic=
+        // false) uses per-slot g_half at master and slave (no fold inside the
+        // matvec), but the corrector folds g pre-normalize and then broadcasts,
+        // so gradPhi=g_full at both slots. The corrector subtracts ~2x what the
+        // operator inverted phi for at the seam, leaving |Du^{n+1}| ~ |Du**|.
+        // With this env on, gradPhi[M]=g_M_half, gradPhi[S]=g_S_half (then
+        // master->slave broadcast makes them equal by periodic symmetry).
+        static const bool corrNoGFold = (std::getenv("MARS_CORR_NO_GFOLD") != nullptr);
+        if (!corrNoGFold) {
+            maybePeriodicSum<KeyType, RealType, ElementTag>(s, d_gxAcc);
+            maybePeriodicSum<KeyType, RealType, ElementTag>(s, d_gyAcc);
+            maybePeriodicSum<KeyType, RealType, ElementTag>(s, d_gzAcc);
+        }
         normalizeGradientPerNodeKernel<RealType><<<nodeBlocks, s.blockSize>>>(
             d_gxAcc.data(), d_gyAcc.data(), d_gzAcc.data(),
             s.d_massNode.data(),
@@ -8764,12 +8912,17 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
             dOutNoFold = maxOwnedInteriorAbs<KeyType, RealType, ElementTag>(s, divNorm);
         }
 
-        if (s.rank == 0)
+        if (s.rank == 0) {
+            const auto oldPrec = std::cout.precision();
+            std::cout.precision(12);
             std::cout << "  [PROJ-P2] |Du**|=" << dIn << " |Du^{n+1}|=" << dOut
                       << "  [PROJ-P3] ratio=" << (dOut / (dIn > 0 ? dIn : RealType(1)))
+                      << "  |dOut-dIn|=" << std::abs(dOut - dIn)
                       << "  | max|u-u**|=" << duMax
                       << "  |Du^{n+1}|noFold=" << dOutNoFold
                       << "  seam|u_s-u_m|=" << seamMax << "\n";
+            std::cout.precision(oldPrec);
+        }
     }
 
     // Reduced-DOF periodic seam: BROADCAST master->slave on the corrected
