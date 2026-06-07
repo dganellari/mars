@@ -118,6 +118,20 @@ cmake .. \
 For comprehensive guides and API references, see:
 
 - **[Unstructured Meshes Documentation](https://mesh-adaptive-refinement-for-supercomputing-mars.readthedocs.io/en/latest/)**
+
+**Getting started & tutorials**
+
+- **[Quickstart](https://mesh-adaptive-refinement-for-supercomputing-mars.readthedocs.io/en/latest/Quickstart/)** - Clone, build, generate a mesh, run your first GPU assembly
+- **[Pump Flow — a From-Scratch CFD Tutorial](https://mesh-adaptive-refinement-for-supercomputing-mars.readthedocs.io/en/latest/pump_cfd_tutorial/)** - Incompressible Navier–Stokes, from the mesh to reading the output
+- **[Taylor–Green Vortex (periodic)](https://mesh-adaptive-refinement-for-supercomputing-mars.readthedocs.io/en/latest/periodic_tgv_tutorial/)** - Canonical periodic validation case
+
+**FEM**
+
+- **[FEM Assembly](https://mesh-adaptive-refinement-for-supercomputing-mars.readthedocs.io/en/latest/FEM-Assembly/)** - Mesh → DOF map → sparsity → assembled CSR (GPU-native)
+- **[CVFEM Kernels (GPU)](https://mesh-adaptive-refinement-for-supercomputing-mars.readthedocs.io/en/latest/CVFEM-Kernels/)** - Assembly kernel optimization variants
+
+**Mesh & infrastructure**
+
 - **[ElementDomain Overview](https://mesh-adaptive-refinement-for-supercomputing-mars.readthedocs.io/en/latest/ElementDomain-Overview/)** - Core mesh management class
 - **[Mesh Reading & Partitioning](https://mesh-adaptive-refinement-for-supercomputing-mars.readthedocs.io/en/latest/Mesh-Reading-and-Partitioning/)** - Binary mesh format and loading
 - **[SFC Mapping](https://mesh-adaptive-refinement-for-supercomputing-mars.readthedocs.io/en/latest/SFC-Mapping/)** - Space-filling curve based load balancing
