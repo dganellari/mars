@@ -8557,7 +8557,9 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
     // made PROJ-P3 read ~1.0. The broadcast IS still needed for the next-step
     // predictor's per-node flux scatter to see u_slave == u_master, so we run
     // it AFTER the probe, before updatePressureKernel / the next predictor.
-    if (g_projProbe && routeReducedPeriodicCorr)
+    if (g_projProbe
+        && s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Periodic
+        && s.solverKind == SolverKind::CG)
     {
         // P2/P3: does the projection actually reduce divergence? Measure ||D u**||
         // (in) and ||D u^{n+1}|| of the RAW corrected velocity (out, before any
