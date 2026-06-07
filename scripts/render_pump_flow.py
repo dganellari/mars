@@ -205,17 +205,24 @@ def main():
                     continue
             if norm is None:
                 norm = surf  # last resort; Normals may already exist
-            # velocity . normal: outward>0 (outlet), inward<0 (inlet)
+            # velocity . normal: outward>0 (outlet), inward<0 (inlet).
+            # PV 6.x wants dot(v1,v2); older builds use explicit components.
             dotc = Calculator(Input=norm)
             dotc.ResultArrayName = "vdotn"
-            dotc.Function = "%s.Normals" % args.field  # vector dot, build-robust
-            try:
-                dotc.UpdatePipeline(tvals[-1])
-            except Exception:
-                # fall back to explicit component form if dot syntax unsupported
-                dotc.Function = "%s_X*Normals_X+%s_Y*Normals_Y+%s_Z*Normals_Z" % (
-                    args.field, args.field, args.field)
-                dotc.UpdatePipeline(tvals[-1])
+            _ok = False
+            for fexpr in ("dot(%s, Normals)" % args.field,
+                          "%s_X*Normals_X+%s_Y*Normals_Y+%s_Z*Normals_Z" % (
+                              args.field, args.field, args.field)):
+                try:
+                    dotc.Function = fexpr
+                    dotc.UpdatePipeline(tvals[-1])
+                    if dotc.PointData.GetArray("vdotn") is not None:
+                        _ok = True
+                        break
+                except Exception:
+                    continue
+            if not _ok:
+                raise RuntimeError("could not compute velocity.normal for inlet/outlet detection")
             from paraview import servermanager as _sm
             sd = _sm.Fetch(dotc)
             spts = sd.GetPoints()
