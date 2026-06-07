@@ -125,7 +125,7 @@ whole mesh in which **spatially-close things are close in the list**. Then:
 Each GPU has **owned** elements (its chunk) plus a thin layer of **halo / ghost**
 elements — read-only copies of neighbors' elements right across the partition
 boundary, needed so a GPU can compute fluxes at the edge of its region. A node sitting
-on a partition seam is **owned by exactly one GPU** and seen as a ghost by the
+on a partition boundary is **owned by exactly one GPU** and seen as a ghost by the
 others; this "owned by exactly one" rule is what keeps global sums correct.
 
 Everything — coordinates, connectivity, the solution — lives in **GPU memory** and

@@ -55,13 +55,13 @@ Two everyday analogies:
   then `z=0` to `z=1`. The flat cube becomes a 3-D torus with no boundary at all.
 
 ```
-   A 2-D slice of the periodic box (the "seam" is where x=0 meets x=1):
+   A 2-D slice of the periodic box (the periodic interface is where x=0 meets x=1):
 
         y=1  +----------------------+
              |                      |
              |     flow that        |
    x=0  ===> |     leaves here  ----+---> ... re-enters at x=0
-   (seam)    |                      |    (same physical face!)
+ (interface) |                      |    (same physical face!)
              |                      |
         y=0  +----------------------+
             x=0                    x=1
@@ -81,14 +81,14 @@ of pinning a node — see `removeMean` in the driver (`mars_tgv.cu:446`).
 
 ---
 
-## 2. The mesh's role: what is a "node", and what is the periodic seam?
+## 2. The mesh's role: what is a "node", and what is the periodic interface?
 
 The cube is filled with hexahedral (brick) elements. The corners of those bricks
 are **nodes**. A node is just a point in space where we store one unknown per
 field (one `u`, one `v`, one `w`, one `p`). The solver's job is to find the
 field values at every node.
 
-Now look at the seam. A node sitting on the `x=0` face and a node sitting on the
+Now look at the periodic interface. A node sitting on the `x=0` face and a node sitting on the
 `x=1` face, at the same `(y, z)`, are — physically — **the same point**, because
 the box wraps. But in the mesh data they are stored as **two separate nodes with
 two separate storage slots**. This is the single most important idea in the
@@ -121,7 +121,7 @@ search: a slave on `x=1` looks for the master on `x=0` with the same `(y, z)`
 `matchSlaves` kernels).
 
 ```
-   Master/slave pairing across the x-seam:
+   Master/slave pairing across the periodic x-interface:
 
         master (x=0)                       slave (x=1)
         d_periodicPartner = -1             d_periodicPartner = master_idx
@@ -170,7 +170,7 @@ unknown) we need two operators that are exact transposes of each other.
 
 **P (prolongation): master → slave copy.** Take the one DOF value and write it
 into *both* the master slot and the slave slot, so the per-node kernels see a
-consistent field across the seam. This is `periodicBroadcastKernel`
+consistent field across the periodic interface. This is `periodicBroadcastKernel`
 (`mars_periodic_bc.hpp:311-320`):
 
 ```cpp
@@ -293,11 +293,11 @@ with the comment:
 // exactly.
 ```
 
-### Lumped mass M and the periodic seam
+### Lumped mass M and the periodic interface
 
 `M` is built per node by scattering each element's volume to its corner nodes,
 then summing. For periodic pairs, the master and slave together bound the same
-physical control volume, so **the seam node must carry the combined pair mass**.
+physical control volume, so **the interface node must carry the combined pair mass**.
 
 Here is the tricky bit that caused the first bug (see §6). After assembly,
 `maybePeriodicSum` folds the slave's mass onto the master *and zeroes the slave
@@ -326,7 +326,7 @@ if (s.periodicMap)
 ```
 
 The comment above it (`mars_ns_solver.hpp:3023-3040`) spells out the failure mode
-in full: a zeroed seam mass makes the operator's internal D drop the seam flux,
+in full: a zeroed interface mass makes the operator's internal D drop the interface flux,
 so only about *half* the divergence gets removed.
 
 ### The pressure operator as Pᵀ A P, matrix-free
@@ -357,7 +357,7 @@ slots literally share one solver unknown.
 
 Now **split the cube across N GPUs** (domain decomposition). Each rank owns a
 chunk of the mesh. The master of a periodic pair can now live on a **different
-rank** than its slave. This is the **cross-rank seam**. The whole question of
+rank** than its slave. This is the **cross-rank interface**. The whole question of
 this tutorial is: how do we keep "two slots, one unknown" true when the two
 slots live on different GPUs?
 
@@ -399,7 +399,7 @@ But there is a second, crucial thing cstone *does* deliver, and it is the whole
 basis of the modern fix. Because the box is periodic at the octree level, cstone
 delivers the **periodic-image element** (and the master node it contains) into
 the halo of the rank that owns the master. So the master's owner rank can see the
-slave-side brick that touches the seam. As §6 shows, that single fact is enough
+slave-side brick that touches the periodic interface. As §6 shows, that single fact is enough
 to assemble a *complete* master row locally — with no rank-to-rank shipping of
 matrix entries at all.
 
@@ -454,18 +454,18 @@ static const bool g_projProbe = (std::getenv("MARS_PROJ_PROBE") != nullptr);
             << "  [PROJ-P3] ratio=" << (dOut / (dIn > 0 ? dIn : RealType(1)))
   ```
 
-### Fix 1 — the seam mass mirror
+### Fix 1 — the interface mass mirror
 
 The first measurement pointed at the lumped mass. The slave's mass had been
 zeroed (§4), so `normalizeGradientPerNodeKernel` zeroed the slave's gradient,
-so the operator's internal D dropped the seam flux. The result: P3 ≈ 0.5 — the
-projection removed only **half** the divergence at the seam, and pressure ran
+so the operator's internal D dropped the interface flux. The result: P3 ≈ 0.5 — the
+projection removed only **half** the divergence at the periodic interface, and pressure ran
 away.
 
-The fix was the **seam mass mirror** shown in §4 (`mars_ns_solver.hpp:3041-3049`):
+The fix was the **interface mass mirror** shown in §4 (`mars_ns_solver.hpp:3041-3049`):
 mirror the combined pair mass back onto the slave so every mass consumer — the
 operator's M⁻¹, the corrector's M⁻¹, the RHS normalize, the DDT diagonal, and the
-probe — sees the same non-zero seam mass. This killed the catastrophic blowup
+probe — sees the same non-zero interface mass. This killed the catastrophic blowup
 (`|p|` no longer went to thousands).
 
 ### The pivotal redirect — "we were debugging the wrong stage"
@@ -484,18 +484,18 @@ The conclusion: **the velocity diffusion solve was already broken *before* the
 pressure stage ever ran.** All the earlier effort had been aimed at the pressure
 operator — the wrong stage.
 
-### Root cause — the half-strength seam rows (the symcheck)
+### Root cause — the half-strength interface rows (the symcheck)
 
 A second on-device probe, `MARS_PERIODIC_XR_SYMCHECK`
 (`mars_ns_solver.hpp:3906-3911`), inspects the **assembled velocity matrix**
-across a cross-rank seam. It compares `A[slave_row, master_ghost_col]` on the
+across a cross-rank interface. It compares `A[slave_row, master_ghost_col]` on the
 slave's rank against `A[master_row, slave_ghost_col]` on the master's rank. If
-the matrix were symmetric across the seam, these would match.
+the matrix were symmetric across the periodic interface, these would match.
 
-They did not. The symcheck found `A_local = 0` and `A_peer ≈ 0` at the seam: the
+They did not. The symcheck found `A_local = 0` and `A_peer ≈ 0` at the periodic interface: the
 master row did **not** carry the slave-side stiffness, and vice versa. The
 assembler had emitted **two independent half-strength rows** — one per side of
-the seam — that *never coupled across ranks*. The reason is the same SFC-key
+the periodic interface — that *never coupled across ranks*. The reason is the same SFC-key
 issue from §5: the assembler could not route the periodic-image column entries
 across ranks, so each rank built only its local half of the equation. The comment
 records it (`mars_periodic_bc.hpp:1066-1070`):
@@ -520,7 +520,7 @@ the slave copy so the one physical unknown was not counted twice; the Jacobi
 **preconditioner diagonal** had to be merged with the same primitive
 (`setPreconditionerDiagOverride`); and the **RHS** got the same pair-sum. The
 proven pressure path needed *four* CG-visible quantities — operator, dot,
-diagonal, RHS — all made seam-consistent every iteration. On the assembled
+diagonal, RHS — all made interface-consistent every iteration. On the assembled
 matrix (the Hypre path) the analog was a Dirichlet-identity slave row plus a
 column fold into the master row.
 
@@ -569,7 +569,7 @@ master's ghost DOF and `exchangeNodeHalo` keeps it filled with the master's
 value. And **why there is no matrix to ship rank-to-rank**: recall from §5 that
 cstone delivered the periodic-image *element* into the master-owner rank's halo.
 The node-driven assembler walks that element too, so the master rank assembles a
-**complete master row** — its own-side stiffness *plus* the cross-seam slave-side
+**complete master row** — its own-side stiffness *plus* the cross-interface slave-side
 contributions — all by itself. The slave's stiffness is simply re-assembled on
 the master's rank from the same periodic-image element. Nothing about the matrix
 crosses ranks; it is purely a DOF-numbering change.
@@ -605,7 +605,7 @@ MPI_Allreduce(&localOwned, &sumOwned, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD)
 
 The rule is exact: **`sum(numOwnedDofs over ranks)` must equal the single-rank
 global unique DOF count.** If a periodic pair is genuinely one DOF, it is counted
-exactly once no matter how many ranks the seam is split across.
+exactly once no matter how many ranks the periodic interface is split across.
 
 For cube16 on 4 ranks the single-rank unique DOF count is **4096**. With the old
 emulation the sum was **4657** — larger, because each cross-rank pair was counted
@@ -615,7 +615,7 @@ no orphan, no double-count, every pair is one DOF.
 
 A second, physical check agrees: step-0 kinetic energy is now
 `KE = 0.125 = V0²/8` on 4 ranks — the exact analytic Taylor–Green value — matching
-single-rank. (Counting a seam DOF twice would have inflated it.)
+single-rank. (Counting an interface DOF twice would have inflated it.)
 
 ### What this bought, and what is left
 
@@ -633,7 +633,7 @@ needs, which is exactly what the per-matvec emulation could never give it.
 
 **Honest current state.** The cross-rank DOF machinery is now correct *and
 provable* (the 4096 invariant). But the multi-rank run is not finished: a
-separate, smaller **advection-seam residual** remains. The discrete advection
+separate, smaller **advection-interface residual** remains. The discrete advection
 flux across the periodic boundary is not yet perfectly consistent between ranks —
 single-rank is clean (`div ~ 1e-14`), while multi-rank carries a residual that
 grows over many steps. This is a **different problem** from the DOF collapse.
@@ -648,7 +648,7 @@ If you remember five things from this tutorial, make it these:
 
 1. **Periodicity = "two storage slots, one physical unknown."** Every operator
    that reads those slots — mass, divergence, gradient, the matrix rows, the
-   preconditioner, the dot product — must agree about the seam, or the math
+   preconditioner, the dot product — must agree about the periodic interface, or the math
    silently breaks.
 
 2. **Single-rank can hide a multi-rank bug.** The same code that was perfect on
@@ -674,7 +674,7 @@ If you remember five things from this tutorial, make it these:
    equal the single-rank unique DOF count (4096 for cube16). It went from 4657
    (emulation, double-counted) to exactly 4096 (true collapse). A single integer
    that *must* match is worth more than any amount of "looks stable" — and it
-   isolated the remaining advection-seam issue as a separate problem, not a DOF
+   isolated the remaining advection-interface issue as a separate problem, not a DOF
    one.
 
 ---
@@ -690,7 +690,7 @@ If you remember five things from this tutorial, make it these:
 | **True cross-rank collapse (owner-migration)** | DOF-collapse Pass 1 | `mars_ns_solver.hpp:2692-2721` |
 | **Correctness invariant** | `sum(numOwnedDofs)` == single-rank DOF count | `mars_ns_solver.hpp:2788-2801` |
 | Reduced pressure operator Pᵀ A P | `applyDDTReduced` | `mars_ns_solver.hpp:5807` |
-| Seam mass mirror | (lumped mass build) | `mars_ns_solver.hpp:3041` |
+| Interface mass mirror | (lumped mass build) | `mars_ns_solver.hpp:3041` |
 | Velocity solve + CG wiring | `solveOneComponent` | `mars_ns_solver.hpp:5030` |
 | Projection probes | `MARS_PROJ_PROBE` (P1/P3) | `mars_ns_solver.hpp:7031`, `8010`, `8508` |
 | Matrix symmetry probe | `MARS_PERIODIC_XR_SYMCHECK` | `mars_ns_solver.hpp:3906` |
