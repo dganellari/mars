@@ -3001,6 +3001,143 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
         }
     }
 
+    // MARS_SCS_AREA_PROBE (hypothesis-4 A/B): pick the first owned cross-rank
+    // periodic master M on this rank, walk owned elements to find one E_M
+    // incident on M, then walk halo elements to find one E_S incident on the
+    // slave-image ghost partner S=partner[M] (visible here as a cstone
+    // periodic-image halo). Dump E_M's 8 corner coords + 12 SCS area-vec
+    // entries, and E_S's 8 corner coords + 12 SCS area-vec entries.
+    // Predicted (hyp-4 falsified): E_S corners = E_M corners + uniform (+L,0,0)
+    // (cstone does NOT wrap coordinate values, only SFC keys), and the 12 SCS
+    // area-vec entries at matching local slots are BIT-IDENTICAL (translation
+    // invariance of A = 0.5 sum r_i x r_{i+1}). If area vectors are NOT
+    // bit-identical, hyp-4 reopens. One-shot, rank-uniform gate; off by
+    // default; Hex+Periodic only; no physics effect.
+    if constexpr (std::is_same_v<ElementTag, HexTag>)
+    if (s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Periodic
+        && s.periodicMap != nullptr
+        && std::getenv("MARS_SCS_AREA_PROBE") != nullptr)
+    {
+        constexpr int NSCS = ElemTraits<ElementTag>::ScsPerElem;
+        const size_t startE = s.domain.startIndex();
+        const size_t endE   = s.domain.endIndex();
+        const size_t nElem  = s.elementCount;
+        const size_t N      = s.nodeCount;
+        const int* partnerP = s.periodicMap->d_periodicPartner.data();
+        const uint8_t* ownP = s.ownershipMap().data();
+        // Pick first owned master with cross-rank slave partner.
+        long long localFirst = thrust::transform_reduce(thrust::device,
+            thrust::counting_iterator<size_t>(0),
+            thrust::counting_iterator<size_t>(N),
+            [partnerP, ownP, N] __device__ (size_t i) -> long long {
+                if (ownP[i] != 1) return (long long)N;
+                int p = partnerP[i];
+                if (p < 0) return (long long)N;
+                // Master M: this rank owns i AND owns p only if same-rank.
+                // For cross-rank: ownP[p] == 0 (ghost slave-image).
+                if (ownP[p] == 1) return (long long)N;
+                return (long long)i;
+            }, (long long)N, thrust::minimum<long long>());
+        if (localFirst < (long long)N) {
+            const size_t iM = (size_t)localFirst;
+            int h_iS = -1;
+            cudaMemcpy(&h_iS, partnerP + iM, sizeof(int), cudaMemcpyDeviceToHost);
+            const KeyType* cc[8] = {
+                std::get<0>(d_conn).data(), std::get<1>(d_conn).data(),
+                std::get<2>(d_conn).data(), std::get<3>(d_conn).data(),
+                std::get<4>(d_conn).data(), std::get<5>(d_conn).data(),
+                std::get<6>(d_conn).data(), std::get<7>(d_conn).data()};
+            // Find one owned element E_M touching M, one halo element E_S
+            // touching S. Two passes (owned range, halo range = [0,startE) U
+            // [endE,nElem)). thrust::find_if returns the FIRST hit.
+            auto findE = [=] __device__ (KeyType target) {
+                return [=] __device__ (size_t e) -> bool {
+                    for (int k = 0; k < 8; ++k) if (cc[k][e] == target) return true;
+                    return false;
+                };
+            };
+            const KeyType keyM = (KeyType)iM;
+            const KeyType keyS = (KeyType)h_iS;
+            // Owned pass for E_M.
+            auto itM = thrust::find_if(thrust::device,
+                thrust::counting_iterator<size_t>(startE),
+                thrust::counting_iterator<size_t>(endE),
+                findE(keyM));
+            long long e_M = (itM != thrust::counting_iterator<size_t>(endE))
+                            ? (long long)(*itM) : -1LL;
+            // Halo pass for E_S: try low halo then high halo.
+            long long e_S = -1LL;
+            if (startE > 0) {
+                auto it1 = thrust::find_if(thrust::device,
+                    thrust::counting_iterator<size_t>(0),
+                    thrust::counting_iterator<size_t>(startE),
+                    findE(keyS));
+                if (it1 != thrust::counting_iterator<size_t>(startE)) e_S = (long long)(*it1);
+            }
+            if (e_S < 0 && nElem > endE) {
+                auto it2 = thrust::find_if(thrust::device,
+                    thrust::counting_iterator<size_t>(endE),
+                    thrust::counting_iterator<size_t>(nElem),
+                    findE(keyS));
+                if (it2 != thrust::counting_iterator<size_t>(nElem)) e_S = (long long)(*it2);
+            }
+            if (e_M >= 0 && e_S >= 0) {
+                KeyType h_nM[8], h_nS[8];
+                for (int k = 0; k < 8; ++k) {
+                    cudaMemcpy(&h_nM[k], cc[k] + e_M, sizeof(KeyType), cudaMemcpyDeviceToHost);
+                    cudaMemcpy(&h_nS[k], cc[k] + e_S, sizeof(KeyType), cudaMemcpyDeviceToHost);
+                }
+                RealType h_xM[8], h_yM[8], h_zM[8], h_xS[8], h_yS[8], h_zS[8];
+                for (int k = 0; k < 8; ++k) {
+                    cudaMemcpy(&h_xM[k], d_x.data() + h_nM[k], sizeof(RealType), cudaMemcpyDeviceToHost);
+                    cudaMemcpy(&h_yM[k], d_y.data() + h_nM[k], sizeof(RealType), cudaMemcpyDeviceToHost);
+                    cudaMemcpy(&h_zM[k], d_z.data() + h_nM[k], sizeof(RealType), cudaMemcpyDeviceToHost);
+                    cudaMemcpy(&h_xS[k], d_x.data() + h_nS[k], sizeof(RealType), cudaMemcpyDeviceToHost);
+                    cudaMemcpy(&h_yS[k], d_y.data() + h_nS[k], sizeof(RealType), cudaMemcpyDeviceToHost);
+                    cudaMemcpy(&h_zS[k], d_z.data() + h_nS[k], sizeof(RealType), cudaMemcpyDeviceToHost);
+                }
+                RealType h_aM[3*NSCS], h_aS[3*NSCS];
+                for (int f = 0; f < NSCS; ++f) {
+                    cudaMemcpy(&h_aM[3*f+0], s.d_areaVec_x.data() + e_M*NSCS+f, sizeof(RealType), cudaMemcpyDeviceToHost);
+                    cudaMemcpy(&h_aM[3*f+1], s.d_areaVec_y.data() + e_M*NSCS+f, sizeof(RealType), cudaMemcpyDeviceToHost);
+                    cudaMemcpy(&h_aM[3*f+2], s.d_areaVec_z.data() + e_M*NSCS+f, sizeof(RealType), cudaMemcpyDeviceToHost);
+                    cudaMemcpy(&h_aS[3*f+0], s.d_areaVec_x.data() + e_S*NSCS+f, sizeof(RealType), cudaMemcpyDeviceToHost);
+                    cudaMemcpy(&h_aS[3*f+1], s.d_areaVec_y.data() + e_S*NSCS+f, sizeof(RealType), cudaMemcpyDeviceToHost);
+                    cudaMemcpy(&h_aS[3*f+2], s.d_areaVec_z.data() + e_S*NSCS+f, sizeof(RealType), cudaMemcpyDeviceToHost);
+                }
+                // Aggregates: per-axis mean coord delta (S-M) and area-vec
+                // worst-case |A_S - A_M| / |A_M| at matching slot.
+                double dxs=0,dys=0,dzs=0;
+                for (int k = 0; k < 8; ++k) { dxs += double(h_xS[k]-h_xM[k]);
+                                              dys += double(h_yS[k]-h_yM[k]);
+                                              dzs += double(h_zS[k]-h_zM[k]); }
+                dxs /= 8.0; dys /= 8.0; dzs /= 8.0;
+                double worstRel = 0.0; int worstSlot = -1;
+                for (int f = 0; f < NSCS; ++f) {
+                    double am = std::sqrt(double(h_aM[3*f])*double(h_aM[3*f])
+                                        + double(h_aM[3*f+1])*double(h_aM[3*f+1])
+                                        + double(h_aM[3*f+2])*double(h_aM[3*f+2]));
+                    double dx = double(h_aS[3*f  ]) - double(h_aM[3*f  ]);
+                    double dy = double(h_aS[3*f+1]) - double(h_aM[3*f+1]);
+                    double dz = double(h_aS[3*f+2]) - double(h_aM[3*f+2]);
+                    double dn = std::sqrt(dx*dx + dy*dy + dz*dz);
+                    double rel = (am > 1e-30) ? dn/am : 0.0;
+                    if (rel > worstRel) { worstRel = rel; worstSlot = f; }
+                }
+                std::cout << "  [scs-area-probe r" << s.rank << "] M=" << iM
+                          << " S=" << h_iS << " e_M=" << e_M << " e_S=" << e_S
+                          << "  mean_delta=(" << dxs << "," << dys << "," << dzs << ")"
+                          << "  worst_rel_dA[" << worstSlot << "]=" << worstRel
+                          << "  (predicted: |delta|~L on one axis, worst_rel_dA~0 => hyp-4 FALSE;"
+                          << "  worst_rel_dA~2 or ~1 => hyp-4 OPEN)\n";
+            } else {
+                std::cout << "  [scs-area-probe r" << s.rank << "] M=" << iM
+                          << " S=" << h_iS << "  e_M=" << e_M << " e_S=" << e_S
+                          << "  (could not locate one or both incident elements; skip)\n";
+            }
+        }
+    }
+
     // Velocity matrix: nu * K assembled first (then we add M/dt and apply BC).
     assembleLaplacian<KeyType, RealType, ElementTag>(s, s.d_node_to_dof, s.d_valuesVel, kernelVariant);
     // The Laplacian above was assembled with gamma=1 -> raw K. Scale by nu for
@@ -8452,8 +8589,16 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
             // plus master->slave broadcast post-normalize. Variance-checked on
             // cube8/cube64: baseline 0.85/1.31 -> with-fold 0.64/0.76 PROJ-P3.
             // MARS_CORR_FOLD_G=0 opts out (kept for ablation tests).
+            // MARS_TGV_H2=1: per-slot g (NO fold, NO broadcast) on the corrector
+            // gradient. Algebra: with g[S]_n = -g[M]_n (OP_GRADDUMP confirms),
+            // per-slot corrector gives u^{n+1}_M = u^{n+1}_S = (u**_M+u**_S)/2,
+            // which when scattered with D_slave = -D_master gives D_folded = 0
+            // exactly. PROJ-P3 -> 0 by construction. Pairs with restoring the
+            // u-broadcast BEFORE the PROJ-P3 probe (TGV_H2 flag below).
+            const char* h2env = std::getenv("MARS_TGV_H2");
+            const bool tgvH2 = h2env && std::string(h2env) != "0";
             const char* corrFoldGEnv = std::getenv("MARS_CORR_FOLD_G");
-            const bool  corrFoldG    = !(corrFoldGEnv && std::string(corrFoldGEnv) == "0");
+            const bool  corrFoldG    = !tgvH2 && !(corrFoldGEnv && std::string(corrFoldGEnv) == "0");
             if (corrFoldG && s.periodicMap)
             {
                 maybePeriodicSum<KeyType, RealType, ElementTag>(s, d_gxAcc);
@@ -8725,6 +8870,33 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
     // made PROJ-P3 read ~1.0. The broadcast IS still needed for the next-step
     // predictor's per-node flux scatter to see u_slave == u_master, so we run
     // it AFTER the probe, before updatePressureKernel / the next predictor.
+    // MARS_TGV_H2=1: u-broadcast master->slave BEFORE the probe (workflow
+    // wibaxuy3q H2 algebra: with per-slot g, u^{n+1}_M = u^{n+1}_S already by
+    // symmetry; explicit broadcast guarantees bit-equality even with floating-
+    // point noise). Without H2, the broadcast stays deferred past the probe
+    // (commit 808140e). Gated on Periodic+CG+routeReducedPeriodicCorr because
+    // only that branch keeps the per-slot gradient that H2 requires.
+    {
+        const char* h2env = std::getenv("MARS_TGV_H2");
+        const bool tgvH2 = h2env && std::string(h2env) != "0";
+        if (tgvH2 && routeReducedPeriodicCorr && s.periodicMap)
+        {
+            const int* dpart = s.periodicMap->d_periodicPartner.data();
+            int gblk = 256, ggrd = int((s.nodeCount + gblk - 1) / gblk);
+            auto bcastH2 = [&](cstone::DeviceVector<RealType>& d_field) {
+                mars::fem::periodicBroadcastSameRankKernel<RealType><<<ggrd, gblk>>>(
+                    dpart, d_nodeOwnership.data(), s.nodeCount, d_field.data());
+                cudaDeviceSynchronize();
+                if (s.numRanks > 1)
+                    mars::fem::crossRankPeriodicBroadcast<KeyType, RealType>(*s.periodicMap, d_field);
+                s.domain.exchangeNodeHalo(d_field);
+            };
+            bcastH2(s.d_u);
+            bcastH2(s.d_v);
+            bcastH2(s.d_w);
+        }
+    }
+
     if (g_projProbe
         && s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Periodic
         && s.solverKind == SolverKind::CG)
