@@ -5379,6 +5379,53 @@ void applyDDTPerNode(NSStepper<KeyType, RealType, ElementTag>& s,
     s.domain.exchangeNodeHalo(gyAcc);
     s.domain.exchangeNodeHalo(gzAcc);
 
+    // MARS_OP_GRADDUMP=1 (one-shot, first matvec): dump g[M] and g[S] inside
+    // the operator at the first owned cross-rank periodic pair. Tells us whether
+    // |g[S]| ≈ 0.65*|g[M]| (matches FACTOR=1.65 = 1 + 0.65) so the missing
+    // master->slave g-broadcast is exactly the algebraic gap.
+    {
+        static int s_opGradDumpCount = 0;
+        const char* envDump = std::getenv("MARS_OP_GRADDUMP");
+        if (envDump && envDump[0] == '1' && s_opGradDumpCount < 1 && s.periodicMap)
+        {
+            s_opGradDumpCount++;
+            const int* partnerP = s.periodicMap->d_periodicPartner.data();
+            const uint8_t* ownP = d_nodeOwnership.data();
+            const size_t N = s.nodeCount;
+            // find first owned slave with cross-rank ghost master
+            long long localFirst = thrust::transform_reduce(thrust::device,
+                thrust::counting_iterator<size_t>(0),
+                thrust::counting_iterator<size_t>(N),
+                [partnerP, ownP, N] __device__ (size_t i) -> long long {
+                    if (ownP[i] != 1) return (long long)N;
+                    int m = partnerP[i];
+                    if (m < 0 || ownP[m] == 1) return (long long)N;
+                    return (long long)i;
+                }, (long long)N, thrust::minimum<long long>());
+            if (localFirst < (long long)N) {
+                size_t i = (size_t)localFirst;
+                int h_m;
+                RealType h_gS[3], h_gM[3];
+                cudaMemcpy(&h_m, partnerP + i, sizeof(int), cudaMemcpyDeviceToHost);
+                cudaMemcpy(&h_gS[0], gxAcc.data() + i,    sizeof(RealType), cudaMemcpyDeviceToHost);
+                cudaMemcpy(&h_gS[1], gyAcc.data() + i,    sizeof(RealType), cudaMemcpyDeviceToHost);
+                cudaMemcpy(&h_gS[2], gzAcc.data() + i,    sizeof(RealType), cudaMemcpyDeviceToHost);
+                cudaMemcpy(&h_gM[0], gxAcc.data() + h_m,  sizeof(RealType), cudaMemcpyDeviceToHost);
+                cudaMemcpy(&h_gM[1], gyAcc.data() + h_m,  sizeof(RealType), cudaMemcpyDeviceToHost);
+                cudaMemcpy(&h_gM[2], gzAcc.data() + h_m,  sizeof(RealType), cudaMemcpyDeviceToHost);
+                RealType nM = std::sqrt(h_gM[0]*h_gM[0]+h_gM[1]*h_gM[1]+h_gM[2]*h_gM[2]);
+                RealType nS = std::sqrt(h_gS[0]*h_gS[0]+h_gS[1]*h_gS[1]+h_gS[2]*h_gS[2]);
+                std::cout << "  [OP_GRADDUMP r" << s.rank << "] PRE-BCAST i=" << i
+                          << " m=" << h_m
+                          << "  g[M]=(" << h_gM[0] << "," << h_gM[1] << "," << h_gM[2] << ")"
+                          << "  g[S]=(" << h_gS[0] << "," << h_gS[1] << "," << h_gS[2] << ")"
+                          << "  |gM|=" << nM << "  |gS|=" << nS
+                          << "  ratio_|gS|/|gM|=" << (nM > 0 ? nS/nM : RealType(0))
+                          << std::endl;
+            }
+        }
+    }
+
     // Periodic g-consistency: maybePeriodicSum above merged the same-rank slave
     // accumulator onto the master and ZEROED the slave slot; normalize then left
     // g[slave]=0/mass=0 while g[master] carries M^-1 D^T phi. The forward halo
@@ -5392,7 +5439,17 @@ void applyDDTPerNode(NSStepper<KeyType, RealType, ElementTag>& s,
     // documented adjointness-breaker (an overwrite is not self-adjoint). The
     // reduced P^T A P operator must be BARE (element op + cstone halo only), so
     // it is gated entirely off there.
-    if (applyPeriodic
+    // MARS_OP_GBCAST_REDUCED=1: enable the master->slave g-broadcast on the
+    // reduced-CG path (applyPeriodic=false, reducedPeriodicFold=true). Per
+    // workflow w2luca219 algebra: the RHS path broadcasts u**[slave]=u**[master]
+    // before its D-scatter (NS:7434-7438), so b[master_DOF] sees u**[S]=u**[M].
+    // The bare reduced operator does NOT do the analogous g-broadcast, so the
+    // operator's slave-side D-scatter reads g[S]=G_S/m_merged (= ~0.65*|g[M]|
+    // per GRADDUMP empirics), producing FACTOR=1.65 and PROJ-P3=0.508. Enabling
+    // this mirrors the RHS path; algebra predicts PROJ-P3 -> 0. SYMPROBE may
+    // break (workflow's risk).
+    static const bool opGbcastReduced = (std::getenv("MARS_OP_GBCAST_REDUCED") != nullptr);
+    if ((applyPeriodic || (reducedPeriodicFold && opGbcastReduced))
         && s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Periodic && s.periodicMap)
     {
         // Diagnostic toggles (MARS_DDT_SYMPROBE workflow): the master->slave
