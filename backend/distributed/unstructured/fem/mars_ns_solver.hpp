@@ -8912,12 +8912,17 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
             dOutNoFold = maxOwnedInteriorAbs<KeyType, RealType, ElementTag>(s, divNorm);
         }
 
-        if (s.rank == 0)
+        if (s.rank == 0) {
+            const auto oldPrec = std::cout.precision();
+            std::cout.precision(12);
             std::cout << "  [PROJ-P2] |Du**|=" << dIn << " |Du^{n+1}|=" << dOut
                       << "  [PROJ-P3] ratio=" << (dOut / (dIn > 0 ? dIn : RealType(1)))
+                      << "  |dOut-dIn|=" << std::abs(dOut - dIn)
                       << "  | max|u-u**|=" << duMax
                       << "  |Du^{n+1}|noFold=" << dOutNoFold
                       << "  seam|u_s-u_m|=" << seamMax << "\n";
+            std::cout.precision(oldPrec);
+        }
     }
 
     // Reduced-DOF periodic seam: BROADCAST master->slave on the corrected
