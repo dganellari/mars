@@ -64,16 +64,16 @@ def main():
     ap.add_argument("--mark-io", action="store_true",
                     help="auto-detect inlet (most inward boundary flow) + outlet (most outward) and mark "
                          "them with a green/red sphere + a legend, so the intended flow path is clear")
-    ap.add_argument("--marker-size", type=float, default=0.05,
-                    help="inlet/outlet marker sphere size as a fraction of the bbox diagonal (default 0.05)")
+    ap.add_argument("--marker-size", type=float, default=0.08,
+                    help="inlet/outlet marker sphere size as a fraction of the bbox diagonal (default 0.08)")
     ap.add_argument("--orbit-deg", type=float, default=0.0,
                     help="total azimuth sweep over the run (default 0 = fixed camera; set e.g. 30 for a gentle sway)")
     ap.add_argument("--fps", type=int, default=30)
     ap.add_argument("--hold-frames", type=int, default=20,
                     help="extra orbit-only frames at the end on the final (developed) state")
-    ap.add_argument("--preset", default="Cool to Warm",
-                    help="color preset (default Cool to Warm: blue=slow water -> red=fast jet). "
-                         "Try 'Blue - Green - Orange', 'Viridis (matplotlib)', 'Turbo'")
+    ap.add_argument("--preset", default="",
+                    help="color preset name; default is a custom light-blue->deep-blue water ramp "
+                         "(no red). Pass a name to override, e.g. 'Cool to Warm', 'Viridis (matplotlib)'")
     ap.add_argument("--streamlines", action="store_true",
                     help="use StreamTracer tubes (the real flow-path video; run under srun on a GPU "
                          "compute node so it doesn't crash; default is the fast jet-threshold)")
@@ -203,19 +203,40 @@ def main():
     srng = mag.PointData.GetArray("speed").GetRange() if mag.PointData.GetArray("speed") else (0.0, 1.0)
     smin, smax = srng[0], (srng[1] if srng[1] > srng[0] else srng[0] + 1.0)
     lut = GetColorTransferFunction("speed")
-    # Preset names vary across ParaView builds; try the requested one then a list
-    # of common synonyms, and just keep the default if none apply.
-    _preset_candidates = [args.preset, "Cool to Warm", "Cool to Warm (Extended)",
-                          "Blue - Green - Orange", "Blue to Red Rainbow", "Turbo",
-                          "Viridis (matplotlib)", "viridis", "Rainbow Uniform"]
-    for _p in _preset_candidates:
+    if args.preset:
+        # explicit preset requested
+        for _p in (args.preset, "Cool to Warm", "Viridis (matplotlib)", "viridis"):
+            try:
+                lut.ApplyPreset(_p, True)
+                print("[render] color preset: %s" % _p)
+                break
+            except Exception:
+                continue
+        lut.RescaleTransferFunction(smin, smax)
+    else:
+        # custom WATER ramp: light/baby blue (slow) -> deep blue (fast). No red.
+        # RGBPoints = [value, r, g, b, ...] across [smin, smax].
+        lo, hi = smin, (smax if smax > smin else smin + 1.0)
+        def _mix(a, b, t):
+            return a + (b - a) * t
+        # light baby blue -> sky blue -> deep navy blue
+        stops = [(0.0, 0.78, 0.90, 0.98),   # baby blue (slow)
+                 (0.5, 0.25, 0.55, 0.85),   # mid blue
+                 (1.0, 0.03, 0.13, 0.42)]   # deep blue (fast)
+        rgb_points = []
+        for frac, r, g, b in stops:
+            rgb_points += [_mix(lo, hi, frac), r, g, b]
         try:
-            lut.ApplyPreset(_p, True)
-            print("[render] color preset: %s" % _p)
-            break
-        except Exception:
-            continue
-    lut.RescaleTransferFunction(smin, smax)
+            lut.RGBPoints = rgb_points
+            lut.ColorSpace = "RGB"
+            print("[render] custom water-blue colormap (light->deep blue, no red)")
+        except Exception as e:  # noqa: BLE001
+            print("[render] custom colormap failed (%s), falling back to Cool to Warm" % e)
+            try:
+                lut.ApplyPreset("Cool to Warm", True)
+            except Exception:
+                pass
+            lut.RescaleTransferFunction(lo, hi)
     try:
         lut.NanColor = [0.2, 0.2, 0.2]
     except Exception:
@@ -269,10 +290,13 @@ def main():
                     if v < in_v:
                         in_v, in_i = v, i
                 io_marks = []
+                # colors chosen to stand out against blue water + each other, no plain red
                 if in_i >= 0:
-                    io_marks.append(("INLET", list(spts.GetPoint(in_i)), [0.2, 1.0, 0.3]))
+                    io_marks.append(("INLET", list(spts.GetPoint(in_i)), [1.0, 0.85, 0.1]))   # gold
                 if out_i >= 0:
-                    io_marks.append(("OUTLET", list(spts.GetPoint(out_i)), [1.0, 0.3, 0.2]))
+                    io_marks.append(("OUTLET", list(spts.GetPoint(out_i)), [1.0, 0.2, 0.8]))   # magenta
+                print("[render] inlet found=%s (gold marker), outlet found=%s (magenta marker)"
+                      % (in_i >= 0, out_i >= 0))
                 for label, pos, col in io_marks:
                     ball = Sphere()
                     ball.Center = pos
@@ -297,7 +321,7 @@ def main():
                 # also a fixed corner legend as backup
                 try:
                     legend = Text()
-                    legend.Text = "green sphere = INLET    red sphere = OUTLET"
+                    legend.Text = "gold sphere = INLET    magenta sphere = OUTLET"
                     ld = Show(legend, view)
                     ld.Color = [1, 1, 1]; ld.FontSize = 16
                     try:
