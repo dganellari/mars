@@ -83,8 +83,9 @@ def main():
                     help="streamline seed-cloud radius as a fraction of bbox diagonal (default auto)")
     ap.add_argument("--jet-frac", type=float, default=0.08,
                     help="threshold isovolume keeps speed > jet_frac*max (the visible jet); lower=more fluid shown")
-    ap.add_argument("--color-frac", type=float, default=0.6,
-                    help="color range clamped to [0, color_frac*max] so the jet stands out (not washed flat)")
+    ap.add_argument("--color-frac", type=float, default=1.0,
+                    help="color range = [0, color_frac*max]. 1.0 uses the full speed range so you see the "
+                         "blue->red gradient across the whole flow; lower saturates the fast jet to red sooner")
     ap.add_argument("--shell", action="store_true",
                     help="add the full translucent geometry surface (prettier but HEAVY on big meshes; "
                          "default is just a cheap always-visible bounding outline)")
