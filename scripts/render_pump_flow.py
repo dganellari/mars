@@ -64,14 +64,16 @@ def main():
     ap.add_argument("--mark-io", action="store_true",
                     help="auto-detect inlet (most inward boundary flow) + outlet (most outward) and mark "
                          "them with a green/red sphere + a legend, so the intended flow path is clear")
-    ap.add_argument("--marker-size", type=float, default=0.03,
-                    help="inlet/outlet marker sphere size as a fraction of the bbox diagonal (default 0.03)")
+    ap.add_argument("--marker-size", type=float, default=0.05,
+                    help="inlet/outlet marker sphere size as a fraction of the bbox diagonal (default 0.05)")
     ap.add_argument("--orbit-deg", type=float, default=0.0,
                     help="total azimuth sweep over the run (default 0 = fixed camera; set e.g. 30 for a gentle sway)")
     ap.add_argument("--fps", type=int, default=30)
     ap.add_argument("--hold-frames", type=int, default=20,
                     help="extra orbit-only frames at the end on the final (developed) state")
-    ap.add_argument("--preset", default="Viridis (matplotlib)", help="color preset")
+    ap.add_argument("--preset", default="Cool to Warm",
+                    help="color preset (default Cool to Warm: blue=slow water -> red=fast jet). "
+                         "Try 'Blue - Green - Orange', 'Viridis (matplotlib)', 'Turbo'")
     ap.add_argument("--streamlines", action="store_true",
                     help="use StreamTracer tubes (the real flow-path video; run under srun on a GPU "
                          "compute node so it doesn't crash; default is the fast jet-threshold)")
@@ -202,9 +204,9 @@ def main():
     lut = GetColorTransferFunction("speed")
     # Preset names vary across ParaView builds; try the requested one then a list
     # of common synonyms, and just keep the default if none apply.
-    _preset_candidates = [args.preset, "Viridis (matplotlib)", "viridis", "Viridis",
-                          "Cool to Warm (Extended)", "Cool to Warm", "Turbo",
-                          "Inferno (matplotlib)", "Plasma (matplotlib)", "Rainbow Uniform"]
+    _preset_candidates = [args.preset, "Cool to Warm", "Cool to Warm (Extended)",
+                          "Blue - Green - Orange", "Blue to Red Rainbow", "Turbo",
+                          "Viridis (matplotlib)", "viridis", "Rainbow Uniform"]
     for _p in _preset_candidates:
         try:
             lut.ApplyPreset(_p, True)
@@ -278,19 +280,32 @@ def main():
                     bdisp = Show(ball, view)
                     bdisp.DiffuseColor = col; bdisp.AmbientColor = col
                     bdisp.Specular = 0.5
-                # fixed corner legend (2D overlay) instead of 3D labels at coords
+                    # floating 3D text label right at the opening (so you see
+                    # INLET/OUTLET ON the geometry, not just a corner legend)
+                    try:
+                        t3 = a3DText(Text=" " + label)
+                        td = Show(t3, view)
+                        td.DiffuseColor = col; td.AmbientColor = col
+                        # scale + place the text next to the marker sphere
+                        td.Scale = [diag * args.marker_size * 1.5] * 3
+                        td.Position = [pos[0] + diag*args.marker_size,
+                                       pos[1] + diag*args.marker_size, pos[2]]
+                        td.Orientation = [0, 0, 0]
+                    except Exception:
+                        pass
+                # also a fixed corner legend as backup
                 try:
                     legend = Text()
-                    legend.Text = "green = INLET    red = OUTLET"
+                    legend.Text = "green sphere = INLET    red sphere = OUTLET"
                     ld = Show(legend, view)
-                    ld.Color = [1, 1, 1]; ld.FontSize = 15
+                    ld.Color = [1, 1, 1]; ld.FontSize = 16
                     try:
                         ld.WindowLocation = "Upper Right Corner"
                     except Exception:
                         pass
                 except Exception:
                     pass
-                print("[render] marked inlet (green sphere) + outlet (red sphere) from boundary flow")
+                print("[render] marked inlet (green sphere) + outlet (red sphere) + 3D labels")
         except Exception as e:  # noqa: BLE001
             print("[render] inlet/outlet marking skipped (%s)" % e)
 
