@@ -7923,6 +7923,85 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
                     std::cout << "  [PROJ-P1] |b|=" << nb << " |A*phi|=" << nA
                               << " |A*phi-b|/|b|=" << (nr / (nb > 0 ? nb : RealType(1)))
                               << " iters=" << s.lastPressureIters << "\n";
+
+                // MARS_PROJ_FACTOR_PROBE: discriminating ratios per workflow w7jjyq1qc.
+                // Run A_red phi via applyDDTPerNode with applyPeriodic=TRUE on the
+                // converged phi (Option-C operator). Compare to the bare operator
+                // result Aphi already computed. r_op2/r_op tells us how the
+                // Option-C operator's master-DOF value compares to the bare:
+                //   ~1.0 => operator-side fix is irrelevant
+                //   ~2.0 => bare operator MISSED slave-side contribution
+                //   ~0.5 => bare operator DOUBLES what it should
+                // Compute |Aphi - Aphi_with_periodic| / |Aphi| over owned dofs.
+                if (std::getenv("MARS_PROJ_FACTOR_PROBE") != nullptr)
+                {
+                    cstone::DeviceVector<RealType> Aphi2(n, RealType(0));
+                    // Manually mimic applyDDTReduced but with applyPeriodic=true.
+                    // Step P input prolongation: scatter dof->node, halo, broadcast
+                    cstone::DeviceVector<RealType> phiNode2(s.nodeCount, RealType(0));
+                    cstone::DeviceVector<RealType> ApNode2(s.nodeCount, RealType(0));
+                    scatterDofToNodeKernel<RealType><<<nodeBlocks, s.blockSize>>>(
+                        phi_dof.data(), s.d_node_to_dof.data(), phiNode2.data(),
+                        s.nodeCount, s.numOwnedDofs);
+                    cudaDeviceSynchronize();
+                    s.domain.exchangeNodeHalo(phiNode2);
+                    if (s.periodicMap) {
+                        int blk = 256, grd = int((s.nodeCount + blk - 1) / blk);
+                        mars::fem::periodicBroadcastKernel<<<grd, blk>>>(
+                            s.periodicMap->d_periodicPartner.data(), s.nodeCount,
+                            phiNode2.data());
+                        cudaDeviceSynchronize();
+                    }
+                    cstone::DeviceVector<RealType> gx2(s.nodeCount, RealType(0));
+                    cstone::DeviceVector<RealType> gy2(s.nodeCount, RealType(0));
+                    cstone::DeviceVector<RealType> gz2(s.nodeCount, RealType(0));
+                    applyDDTPerNode<KeyType, RealType, ElementTag>(s, phiNode2,
+                        ApNode2, gx2, gy2, gz2,
+                        /*applyPeriodic=*/true,
+                        /*reducedPeriodicFold=*/true);
+                    thrust::fill(thrust::device_pointer_cast(Aphi2.data()),
+                                 thrust::device_pointer_cast(Aphi2.data() + n),
+                                 RealType(0));
+                    gatherNodeToDofSumKernel<RealType><<<nodeBlocks, s.blockSize>>>(
+                        ApNode2.data(), s.d_node_to_dof.data(),
+                        d_nodeOwnership.data(), Aphi2.data(), s.nodeCount, n);
+                    cudaDeviceSynchronize();
+                    // Compute |Aphi2 - Aphi| / |Aphi| over owned DOFs that are also
+                    // seam-master DOFs (partner table has entries pointing to them).
+                    const RealType* a1 = Aphi.data();
+                    const RealType* a2 = Aphi2.data();
+                    RealType locDiff = thrust::transform_reduce(thrust::device,
+                        thrust::counting_iterator<int>(0),
+                        thrust::counting_iterator<int>(n),
+                        [a1, a2] __device__ (int i) -> RealType {
+                            return fabs(a1[i] - a2[i]);
+                        }, RealType(0), thrust::maximum<RealType>());
+                    RealType locMaxA = thrust::transform_reduce(thrust::device,
+                        thrust::counting_iterator<int>(0),
+                        thrust::counting_iterator<int>(n),
+                        [a1] __device__ (int i) -> RealType {
+                            return fabs(a1[i]);
+                        }, RealType(0), thrust::maximum<RealType>());
+                    RealType locMaxB = thrust::transform_reduce(thrust::device,
+                        thrust::counting_iterator<int>(0),
+                        thrust::counting_iterator<int>(n),
+                        [a2] __device__ (int i) -> RealType {
+                            return fabs(a2[i]);
+                        }, RealType(0), thrust::maximum<RealType>());
+                    RealType gDiff = 0, gMaxA = 0, gMaxB = 0;
+                    auto mt = std::is_same_v<RealType, double> ? MPI_DOUBLE : MPI_FLOAT;
+                    MPI_Allreduce(&locDiff, &gDiff, 1, mt, MPI_MAX, MPI_COMM_WORLD);
+                    MPI_Allreduce(&locMaxA, &gMaxA, 1, mt, MPI_MAX, MPI_COMM_WORLD);
+                    MPI_Allreduce(&locMaxB, &gMaxB, 1, mt, MPI_MAX, MPI_COMM_WORLD);
+                    if (s.rank == 0)
+                        std::cout << "  [PROJ-FACTOR] max|A_bare|=" << gMaxA
+                                  << "  max|A_periodic|=" << gMaxB
+                                  << "  ratio_max(B/A)=" << (gMaxB / (gMaxA > 0 ? gMaxA : RealType(1)))
+                                  << "  max|B-A|=" << gDiff
+                                  << "  reldiff=" << (gDiff / (gMaxA > 0 ? gMaxA : RealType(1)))
+                                  << "  (~1.0 op-side fix dead; ~2.0 bare missed slave; ~0.5 bare doubles)"
+                                  << std::endl;
+                }
             }
 
             // Pin phi (constant null mode) in DOF space, then prolong dof->node so
