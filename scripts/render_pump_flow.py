@@ -76,6 +76,8 @@ def main():
     ap.add_argument("--shell", action="store_true",
                     help="add the full translucent geometry surface (prettier but HEAVY on big meshes; "
                          "default is just a cheap always-visible bounding outline)")
+    ap.add_argument("--shell-opacity", type=float, default=0.18,
+                    help="translucent pump-body opacity (0..1; higher = more visible pump, default 0.18)")
     ap.add_argument("--zoom", type=float, default=1.6,
                     help="camera zoom: Dolly factor >1 moves IN so the pump fills the frame (default 1.6)")
     ap.add_argument("--slice", action="store_true",
@@ -138,7 +140,7 @@ def main():
     if args.shell:
         surf = Show(reader, view)
         surf.Representation = "Surface"
-        surf.Opacity = 0.10
+        surf.Opacity = args.shell_opacity
         surf.AmbientColor = [0.55, 0.62, 0.72]
         surf.DiffuseColor = [0.55, 0.62, 0.72]
         surf.Specular = 0.3
@@ -195,10 +197,14 @@ def main():
         # ParticleTracer integrate them ACROSS timesteps -- they get carried by the
         # flow, so the animation shows real fluid moving through. Heavier than
         # streamlines; run under srun on a GPU node.
-        seed_c = [cx, cy, cz]; seed_r = diag * 0.15
+        # Seed a BROAD cloud around the jet so particles enter across the inlet and
+        # get carried through the WHOLE pump, not just a tight knot at one point.
+        seed_c = [cx, cy, cz]
+        seed_r = diag * (args.seed_radius if args.seed_radius > 0 else 0.4)
         if args.seed_inlet:
             try:
                 seed_c = [float(x) for x in args.seed_inlet.split(",")]
+                seed_r = diag * (args.seed_radius if args.seed_radius > 0 else 0.12)
             except Exception:
                 pass
         else:
@@ -214,39 +220,53 @@ def main():
                         if v > bv:
                             bv, bi = v, i
                     seed_c = list(pts.GetPoint(bi))
-                    print("[render] seeding particles at peak-speed point %s (|u|=%.3g)" % (seed_c, bv))
+                    # cloud big enough to span the inlet jet, not a single point
+                    seed_r = diag * (args.seed_radius if args.seed_radius > 0 else 0.3)
+                    print("[render] seeding particles around jet at %s (|u|=%.3g), radius=%.3g"
+                          % (seed_c, bv, seed_r))
             except Exception as e:  # noqa: BLE001
                 print("[render] peak-seed failed (%s)" % e)
         try:
-            tracer = ParticleTracer(Input=mag, SeedSource="Point Cloud")
-            tracer.SelectInputVectors = ["POINTS", args.field]
-            tracer.SeedSource.Center = seed_c
-            tracer.SeedSource.Radius = seed_r
-            tracer.SeedSource.NumberOfPoints = args.n_streamlines
-            # Continuously inject particles so the inlet keeps "spraying" liquid,
-            # not just a one-shot puff (if the build supports it).
-            for attr, val in (("ForceReinjectionEveryNSteps", max(1, args.reinject)),):
+            # SeedSource is a PROXY OBJECT, not a string. Create a PointSource and
+            # assign it (ParaView 5.12+/6.x). This is the GUI's "Point Cloud" seed.
+            seed = PointSource()
+            seed.Center = seed_c
+            seed.Radius = seed_r
+            seed.NumberOfPoints = args.n_streamlines
+
+            tracer = ParticleTracer(Input=mag, SeedSource=seed)
+            # array used for integration (list form; bare-string fallback below)
+            try:
+                tracer.SelectInputVectors = ["POINTS", args.field]
+            except Exception:
+                tracer.SelectInputVectors = args.field
+            # re-inject so the inlet keeps "spraying" a continuous stream
+            for attr, val in (("ForceReinjectionEveryNSteps", max(1, args.reinject)),
+                              ("StaticSeeds", 1), ("ComputeVorticity", 0)):
                 try:
                     setattr(tracer, attr, val)
                 except Exception:
                     pass
-            # Render the particles as little SPHERES -- reads like droplets of
-            # liquid streaming through the pump (much more "real fluid" than tubes).
+
+            # Render advected particles as little SPHERES -> liquid droplets.
             blobs = Glyph(Input=tracer, GlyphType="Sphere")
             try:
-                blobs.GlyphMode = "All Points"
+                blobs.GlyphMode = "All Points"      # one sphere per particle
+            except Exception:
+                pass
+            try:
+                blobs.ScaleArray = ["POINTS", "No scale array"]  # uniform size
             except Exception:
                 pass
             try:
                 blobs.ScaleFactor = diag * args.particle_size
-                blobs.GlyphType.Radius = 0.5
             except Exception:
                 pass
             pathline_tracer = (tracer, blobs)
             flow_props.append((blobs, "speed"))
-            print("[render] pathline/particle mode (spheres carried by the flow)")
+            print("[render] pathline/particle mode (PointSource seed + sphere glyphs)")
         except Exception as e:  # noqa: BLE001
-            print("[render] ParticleTracer unavailable (%s); falling back to streamlines" % e)
+            print("[render] ParticleTracer setup failed (%s); falling back to streamlines" % e)
             args.streamlines = True
             args.pathlines = False
 
