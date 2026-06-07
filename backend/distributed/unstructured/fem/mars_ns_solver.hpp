@@ -7533,7 +7533,17 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
     const size_t numLocal  = s.domain.localElementCount();
     const int nodeBlocks   = (s.nodeCount + s.blockSize - 1) / s.blockSize;
     const int eBlocks      = numLocal > 0 ? int((numLocal + s.blockSize - 1) / s.blockSize) : 0;
-    const RealType invDt   = RealType(1) / dt;
+    // BDF2 fix: pressure RHS coefficient must match the corrector's dtEff
+    // (workflow wtb9updx2 diag 1+3). runImplicitDiffusionStep at NS:7424-7426
+    // already uses invDt = 3/(2*dt) under BDF2; runCorrectorStep uses
+    // dtEff = 2*dt/3. The pressure-RHS coef = rho * invDt was hard-coded to
+    // 1/dt (BDF1), so under BDF2 the CG inverts phi assuming BDF1 dt while the
+    // corrector subtracts with 2*dt/3 -> magnitude mismatch -> partial closure
+    // from step 2 onward (when BDF2 activates). Fix: invDt = 3/(2*dt) under
+    // BDF2 so the operator's effective dt matches the corrector's dtEff.
+    const bool bdf2ActivePres = (s.useBdf2 && s.bdfStep >= 1 && s.d_valuesVel_bdf2.size() > 0);
+    const RealType invDt   = bdf2ActivePres ? (RealType(3) / (RealType(2) * dt))
+                                            : (RealType(1) / dt);
 
     cstone::DeviceVector<RealType> b(s.numOwnedDofs);
     cstone::DeviceVector<RealType> xVec(s.numTotalDofs);
@@ -8451,16 +8461,14 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
             // plus master->slave broadcast post-normalize. Variance-checked on
             // cube8/cube64: baseline 0.85/1.31 -> with-fold 0.64/0.76 PROJ-P3.
             // MARS_CORR_FOLD_G=0 opts out (kept for ablation tests).
-            // MARS_TGV_H2 default ON: per-slot g (NO fold/broadcast on g) on
-            // the corrector gradient. Algebra (workflow wibaxuy3q): with
-            // g[S]_n ~ -g[M]_n at periodic-axis-normal (OP_GRADDUMP confirmed),
-            // per-slot corrector gives u^{n+1}_M ~ u^{n+1}_S = (u**_M+u**_S)/2,
-            // which when scattered with D_slave ~ -D_master gives D_folded ~ 0.
-            // Empirical: cube64 PROJ-P3 1.31 -> 0.43, |Du^{n+1}| drops 3x.
-            // Paired with u-broadcast before PROJ-P3 probe (search for tgvH2).
-            // MARS_TGV_H2=0 reverts to FOLD_G default for ablation.
+            // MARS_TGV_H2 default OFF: per-slot g (NO fold/broadcast on g) on
+            // the corrector gradient. Workflow wtb9updx2 diag 2 identified the
+            // H2 pre-probe u broadcast (NS:8743-8761) as causing the PROJ-P3
+            // = 1.0 "no-op" steps after a few steps once eddies break the
+            // periodic anti-symmetry. Default back to FOLD_G; H2 stays as
+            // env-toggle for ablation. MARS_TGV_H2=1 to re-enable.
             const char* h2env = std::getenv("MARS_TGV_H2");
-            const bool tgvH2 = !(h2env && std::string(h2env) == "0");
+            const bool tgvH2 = h2env && std::string(h2env) != "0";
             const char* corrFoldGEnv = std::getenv("MARS_CORR_FOLD_G");
             const bool  corrFoldG    = !tgvH2 && !(corrFoldGEnv && std::string(corrFoldGEnv) == "0");
             if (corrFoldG && s.periodicMap)
@@ -8742,7 +8750,7 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
     // only that branch keeps the per-slot gradient that H2 requires.
     {
         const char* h2env = std::getenv("MARS_TGV_H2");
-        const bool tgvH2 = !(h2env && std::string(h2env) == "0");
+        const bool tgvH2 = h2env && std::string(h2env) != "0";
         if (tgvH2 && routeReducedPeriodicCorr && s.periodicMap)
         {
             const int* dpart = s.periodicMap->d_periodicPartner.data();
