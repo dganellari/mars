@@ -8280,16 +8280,17 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
     // bare sequence; the periodic-sum + broadcast sequence below is a DIFFERENT
     // operator and would leave div(u^{n+1}) != 0 (it grew ~10x/step). Mirror the
     // exact gate the pressure solver uses (numRanks>1 && Periodic && CG).
-    // MARS_USE_REDUCED_CORR=1 enables the multi-rank reduced-CG corrector branch.
-    // Default OFF: take the else branch (same as single-rank), which does
-    // maybePeriodicSum + master->slave broadcast on gradPhi after normalize.
-    // WHEREMAX showed the multi-rank reduced branch (bare sequence, no
-    // fold/broadcast) leaks ~40% of divergence; the else branch is the
-    // empirically-verified correct corrector for periodic.
-    const char* envReducedCorr = std::getenv("MARS_USE_REDUCED_CORR");
-    const bool useReducedCorr  = envReducedCorr && std::string(envReducedCorr) != "0";
+    // Multi-rank periodic CG corrector: take the BARE reduced-CG branch which
+    // mirrors applyDDTPerNode(applyPeriodic=false, reducedPeriodicFold=true)
+    // exactly -- the operator the CG inverted. The else-branch does
+    // maybePeriodicSum + master->slave broadcast on gradPhi which produces a
+    // DIFFERENT gradient than the operator's bare g, yielding PROJ-P3 = 0.5.
+    // Bit-identical pipelines (operator and corrector) should close projection.
+    // MARS_USE_ELSE_CORR=1 opts back to the else-branch for A/B comparison.
+    const char* envElseCorr  = std::getenv("MARS_USE_ELSE_CORR");
+    const bool  forceElse    = envElseCorr && std::string(envElseCorr) != "0";
     const bool routeReducedPeriodicCorr =
-        useReducedCorr
+        !forceElse
         && s.numRanks > 1
         && s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Periodic
         && s.solverKind == SolverKind::CG;
