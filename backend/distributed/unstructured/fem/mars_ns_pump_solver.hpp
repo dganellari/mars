@@ -6367,6 +6367,11 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
             s.domain.exchangeNodeHalo(d_GyN);
             s.domain.exchangeNodeHalo(d_GzN);
 
+            // keepSmooth=false by default (compact -dpdx only): the full Nalu
+            // G-dpdx form double-counts grad p on the Chorin post-predictor u**
+            // and ramps |p| unbounded (validated on cube16). Set
+            // MARS_VMS_KEEP_SMOOTH=1 to A/B the full form.
+            bool keepSmooth = (std::getenv("MARS_VMS_KEEP_SMOOTH") != nullptr);
             computeDivergenceVMSTetKernel<KeyType, RealType><<<eBlocks, s.blockSize>>>(
                 c0, c1, c2, c3,
                 s.d_uStarStar.data(), s.d_vStarStar.data(), s.d_wStarStar.data(),
@@ -6374,7 +6379,7 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
                 d_GxN.data(), d_GyN.data(), d_GzN.data(),
                 d_x.data(), d_y.data(), d_z.data(),
                 s.d_areaVec_x.data(), s.d_areaVec_y.data(), s.d_areaVec_z.data(),
-                tauV,
+                tauV, keepSmooth,
                 d_divAccNode.data(), startElem, numLocal);
         }
         else if (useRC)

@@ -53,6 +53,7 @@ __global__ void computeDivergenceVMSTetKernel(
     const RealType* nodeX, const RealType* nodeY, const RealType* nodeZ,
     const RealType* areaVecX, const RealType* areaVecY, const RealType* areaVecZ,
     RealType tau,
+    bool keepSmooth,          // true=full Nalu G-dpdx (blows up on Chorin u**); false=compact -dpdx only (default)
     RealType* divAccNode,
     size_t startElem, size_t numLocal)
 {
@@ -115,11 +116,22 @@ __global__ void computeDivergenceVMSTetKernel(
         RealType Gy = RealType(0.5) * (gradPy[iL] + gradPy[iR]);
         RealType Gz = RealType(0.5) * (gradPz[iL] + gradPz[iR]);
 
-        // Nalu VMS stabilization flux: tau * (G(p) - dp/dx|_ip) . A.
-        // (No A.dx denominator -> skew-robust. Vanishes for smooth p.)
-        // SIGN: this is added to the flux; on validation confirm it DAMPS the
-        // checkerboard (div drops, no blow-up). If it amplifies, flip the sign.
-        RealType stab = tau * ((Gx - dpdx) * Ax + (Gy - dpdy) * Ay + (Gz - dpdz) * Az);
+        // Stabilization flux. The FULL Nalu term is tau*(G - dp/dx).A. But that
+        // KEEPS the smooth +tau*G.A half, and on a Chorin POST-PREDICTOR u**
+        // (which already subtracted -dt/rho*grad p^n) the smooth half DOUBLE-COUNTS
+        // grad p -> pressure ramps unbounded (validated empirically on cube16: |p|
+        // climbs 44->626+ over 200 steps, same failure the RC kernel documents).
+        //
+        // FIX (keepSmooth=false, default): drop the smooth half, keep only the
+        // compact element-ip-gradient term tau*(-dp/dx).A. This is the
+        // checkerboard-mode amplitude (the ip gradient sees the sign-alternating p
+        // strongly; subtracting it damps the mode) WITHOUT re-adding the smooth
+        // grad p the predictor already applied. Mirrors what Rhie-Chow did for Chorin.
+        RealType stab;
+        if (keepSmooth)
+            stab = tau * ((Gx - dpdx) * Ax + (Gy - dpdy) * Ay + (Gz - dpdz) * Az);
+        else
+            stab = tau * ((-dpdx) * Ax + (-dpdy) * Ay + (-dpdz) * Az);
         flow += stab;
 
         atomicAdd(&divAccNode[iL], +flow);
