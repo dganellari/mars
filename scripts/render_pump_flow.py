@@ -93,6 +93,11 @@ def main():
                          "(does not block the interior at all -- particles fully visible)")
     ap.add_argument("--zoom", type=float, default=1.6,
                     help="camera zoom: Dolly factor >1 moves IN so the pump fills the frame (default 1.6)")
+    ap.add_argument("--frame-stride", type=int, default=1,
+                    help="render every Nth timestep (e.g. 4 = 4x fewer frames, 4x faster; the video "
+                         "is still smooth). Use this if the render hits the job time limit.")
+    ap.add_argument("--max-frames", type=int, default=0,
+                    help="cap the number of frames rendered (0 = no cap); another way to fit the time budget")
     ap.add_argument("--slice", action="store_true",
                     help="show a cutting-plane cross-section colored by |velocity| (MRI-like; "
                          "integration-free so it never hangs, unlike streamlines)")
@@ -111,6 +116,20 @@ def main():
     reader = PVDReader(FileName=args.pvd)
     reader.UpdatePipeline()
     tvals = list(reader.TimestepValues) if reader.TimestepValues else [0.0]
+    _ntotal = len(tvals)
+    if args.frame_stride > 1:
+        # always keep the last frame (the developed state) even if stride skips it
+        last = tvals[-1]
+        tvals = tvals[::args.frame_stride]
+        if tvals[-1] != last:
+            tvals.append(last)
+    if args.max_frames > 0 and len(tvals) > args.max_frames:
+        # subsample evenly down to max_frames
+        step = len(tvals) / float(args.max_frames)
+        tvals = [tvals[int(i * step)] for i in range(args.max_frames)]
+    if len(tvals) != _ntotal:
+        print("[render] rendering %d of %d timesteps (stride=%d, max=%s)"
+              % (len(tvals), _ntotal, args.frame_stride, args.max_frames or "none"))
 
     view = GetActiveViewOrCreate("RenderView")
     view.ViewSize = [W, H]
