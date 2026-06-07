@@ -260,12 +260,11 @@ possible future improvement).
 > **Aside — the checkerboard mode (for the curious).** Putting velocity *and*
 > pressure at the same nodes (equal-order, "collocated") technically violates the
 > inf-sup / LBB stability condition, which admits a spurious oscillating "checkerboard"
-> pressure pattern. The `D M⁻¹ Dᵀ` projection suppresses it well in practice, but on
-> very large meshes a dedicated *pressure stabilization* may be needed. The textbook
-> cure (Rhie–Chow momentum interpolation) turns out to be geometrically unsafe on
-> skewed tetrahedra; the more robust route is a PSPG / Bochev–Dohrmann pressure
-> stabilization. This is an active area, not a solved one — worth knowing if you push
-> to very fine meshes.
+> pressure pattern. The `D M⁻¹ Dᵀ` projection suppresses it well in practice, but it
+> leaves a small, bounded residual in the *nodal* divergence — which is why the
+> reported `div*L/U` settles at a few units rather than zero. Part 5 explains that
+> diagnostic, and what discretizations (PSPG/Bochev–Dohrmann stabilization, or
+> inf-sup-stable / staggered schemes) drive it lower.
 
 ### 3.5 Advection schemes (how fluid carries itself)
 
@@ -407,6 +406,74 @@ Step 3000  ft=3.48  u_rms=3.02e-1  u_max=6.68  uMax/U=13.4  d(u_rms)=9.8e-6  div
 A healthy 4-GPU developed run (Re=100, skew, do-nothing outlet, 3000 steps) reaches
 `ft≈3.5`, `uMax/U≈13` (strong jet), `d(u_rms)≈1e-5` (converged), `div*L/U≈2.7`, with
 `cg_p` converging to `~1e-9` every step. That's a steady, physical inlet→outlet jet.
+
+### Why `div*L/U` does not reach zero (even at 6000 steps)
+
+A natural question: the run is converged (`d(u_rms)→1e-5`) and the pressure solve hits
+machine precision (`pres_res≈1e-9`), so why does `div*L/U` sit around 2–3 instead of
+dropping to 0? Running longer does not help — it **plateaus**. This is expected, and
+understanding it is the heart of incompressible CFD on collocated grids.
+
+There are **two different divergences**, and they are not the same number:
+
+1. **The divergence the projection actually removes.** The corrector solves
+   `(D M⁻¹ Dᵀ) φ = (ρ/dt) D u**` and subtracts `M⁻¹ Dᵀ φ`. By construction this makes
+   `D u^{n+1} = 0` *in the operator's own discrete space* — and indeed that residual is
+   driven to the CG tolerance (`pres_res≈1e-9`). The projection is doing its job
+   exactly.
+2. **The `div*L/U` that gets printed.** This is a *separate, nodal* recomputation of
+   the divergence. On an equal-order (P1–P1) collocated layout — velocity and pressure
+   at the *same* nodes — this nodal measure also "sees" a component of the field that
+   the projection operator structurally cannot: the **checkerboard pressure mode** that
+   the inf-sup (LBB) condition warns about. So it reads a few units even when the
+   projected divergence is essentially zero.
+
+So `div*L/U≈2.7` is **not** unconverged iteration — it is a *fixed consistency floor*
+of the discretization. The tell is that it plateaus: it was ~2.7 by `ft≈3` and stays
+~2.65 through `ft≈6`, rather than slowly climbing (which would mean instability) or
+slowly falling (which would mean it is still iterating). Treat the printed `div*L/U` as
+a **conservative upper bound** on the incompressibility error, not the error the
+projection controls.
+
+(Early in a run, before the flow develops, `div*L/U` is *large and transient* — e.g.
+~380 at `ft≈0.2` — simply because the inlet jet has only just entered an otherwise
+empty domain. That is a startup transient, not the steady value. Always judge
+incompressibility on a developed run.)
+
+### What works better than collocated P1–P1
+
+The residual floor above comes from the equal-order collocated choice. If you need
+`div` genuinely near zero on very fine meshes, the discretization itself has to change.
+The standard options, roughly in order of how much they change the code:
+
+- **Pressure stabilization on the same P1–P1 grid.** Add a consistent stabilization
+  term that legalizes equal-order velocity/pressure:
+  - **PSPG** (Pressure-Stabilizing/Petrov–Galerkin) or **Bochev–Dohrmann**
+    polynomial-pressure-projection stabilization. These are the FEM-canonical,
+    geometry-robust fixes and keep one DOF set per node. This is the most practical
+    route for a tet code.
+  - **Rhie–Chow momentum interpolation** — the finite-volume community's standard fix.
+    It works well on smooth hex meshes but its compact form is *geometrically unsafe on
+    skewed tetrahedra* (the interpolation weight `|A|²/(A·d)` blows up when the face
+    area vector is not aligned with the cell-to-cell edge), so it is not the right tool
+    here.
+- **An inf-sup-stable element pair (mixed FEM).** Put pressure on a *coarser* space
+  than velocity so the LBB condition is satisfied outright and no stabilization is
+  needed — e.g. **Taylor–Hood** (P2 velocity / P1 pressure) or **MINI** (P1+bubble
+  velocity / P1 pressure). This removes the checkerboard at the source, at the cost of
+  more velocity DOFs and a different assembly (and, for Taylor–Hood, higher-order
+  elements).
+- **Staggered / structure-preserving discretizations.** Put velocity on faces and
+  pressure in cells (the classic **MAC** staggered grid, or modern **mimetic / finite
+  element exterior calculus** schemes). These satisfy a *discrete* Helmholtz
+  decomposition exactly, so the projected field is divergence-free in the same norm you
+  measure — `div` really does go to round-off. They are the most accurate route and the
+  biggest departure from a collocated nodal code.
+
+In short: collocated P1–P1 + a consistent `D M⁻¹ Dᵀ` projection is the simplest,
+most GPU-friendly choice and gives a stable, physical solution — but it carries a
+bounded checkerboard floor. Driving `div` to zero means either *stabilizing* P1–P1
+(PSPG/Bochev–Dohrmann) or moving to an *inf-sup-stable* or *staggered* discretization.
 
 ---
 
