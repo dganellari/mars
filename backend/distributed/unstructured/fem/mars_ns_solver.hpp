@@ -8451,14 +8451,16 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
             // plus master->slave broadcast post-normalize. Variance-checked on
             // cube8/cube64: baseline 0.85/1.31 -> with-fold 0.64/0.76 PROJ-P3.
             // MARS_CORR_FOLD_G=0 opts out (kept for ablation tests).
-            // MARS_TGV_H2=1: per-slot g (NO fold, NO broadcast) on the corrector
-            // gradient. Algebra: with g[S]_n = -g[M]_n (OP_GRADDUMP confirms),
-            // per-slot corrector gives u^{n+1}_M = u^{n+1}_S = (u**_M+u**_S)/2,
-            // which when scattered with D_slave = -D_master gives D_folded = 0
-            // exactly. PROJ-P3 -> 0 by construction. Pairs with restoring the
-            // u-broadcast BEFORE the PROJ-P3 probe (TGV_H2 flag below).
+            // MARS_TGV_H2 default ON: per-slot g (NO fold/broadcast on g) on
+            // the corrector gradient. Algebra (workflow wibaxuy3q): with
+            // g[S]_n ~ -g[M]_n at periodic-axis-normal (OP_GRADDUMP confirmed),
+            // per-slot corrector gives u^{n+1}_M ~ u^{n+1}_S = (u**_M+u**_S)/2,
+            // which when scattered with D_slave ~ -D_master gives D_folded ~ 0.
+            // Empirical: cube64 PROJ-P3 1.31 -> 0.43, |Du^{n+1}| drops 3x.
+            // Paired with u-broadcast before PROJ-P3 probe (search for tgvH2).
+            // MARS_TGV_H2=0 reverts to FOLD_G default for ablation.
             const char* h2env = std::getenv("MARS_TGV_H2");
-            const bool tgvH2 = h2env && std::string(h2env) != "0";
+            const bool tgvH2 = !(h2env && std::string(h2env) == "0");
             const char* corrFoldGEnv = std::getenv("MARS_CORR_FOLD_G");
             const bool  corrFoldG    = !tgvH2 && !(corrFoldGEnv && std::string(corrFoldGEnv) == "0");
             if (corrFoldG && s.periodicMap)
@@ -8740,7 +8742,7 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
     // only that branch keeps the per-slot gradient that H2 requires.
     {
         const char* h2env = std::getenv("MARS_TGV_H2");
-        const bool tgvH2 = h2env && std::string(h2env) != "0";
+        const bool tgvH2 = !(h2env && std::string(h2env) == "0");
         if (tgvH2 && routeReducedPeriodicCorr && s.periodicMap)
         {
             const int* dpart = s.periodicMap->d_periodicPartner.data();
