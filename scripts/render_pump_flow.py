@@ -101,6 +101,10 @@ def main():
                          "is still smooth). Use this if the render hits the job time limit.")
     ap.add_argument("--max-frames", type=int, default=0,
                     help="cap the number of frames rendered (0 = no cap); another way to fit the time budget")
+    ap.add_argument("--volume", action="store_true",
+                    help="color the whole pump SURFACE/volume by |velocity| (the 'colored tetrahedra' "
+                         "look). Integration-free, fast, robust. Use this for the second video "
+                         "(--pathlines for the first); run as a separate job.")
     ap.add_argument("--slice", action="store_true",
                     help="show a cutting-plane cross-section colored by |velocity| (MRI-like; "
                          "integration-free so it never hangs, unlike streamlines)")
@@ -490,7 +494,16 @@ def main():
         tubes.Capping = 1
         tubes.UpdatePipeline(tvals[-1])
         flow_props.append((tubes, "speed"))
-    if args.slice and not args.streamlines and not args.pathlines:
+    if args.volume and not args.streamlines and not args.pathlines:
+        # VOLUME: the whole pump SURFACE colored by |velocity| -- the "colored
+        # tetrahedra" look. Integration-free (fast, robust). Shows the velocity
+        # field over the geometry, evolving with time. This is the second video
+        # type (run a separate job with --volume; --pathlines for the first).
+        vsurf = ExtractSurface(Input=mag)
+        vsurf.UpdatePipeline(tvals[-1])
+        flow_props.append((vsurf, "speed"))
+
+    if args.slice and not args.streamlines and not args.pathlines and not args.volume:
         # SLICE: a cutting plane through the pump colored by |velocity| -- an
         # MRI-like cross-section of the flow. Integration-free, so it never hangs;
         # shows the velocity field on the cut and evolves with time.
@@ -508,7 +521,7 @@ def main():
         sl.UpdatePipeline(tvals[-1])
         flow_props.append((sl, "speed"))
 
-    if not args.slice and not args.streamlines and not args.pathlines:
+    if not args.slice and not args.streamlines and not args.pathlines and not args.volume:
         # (1) fast-jet isovolume: keep cells where speed exceeds a fraction of the
         # peak. This is the moving jet; it must re-evaluate per timestep so it
         # grows with the flow.
