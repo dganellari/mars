@@ -64,8 +64,8 @@ def main():
     ap.add_argument("--mark-io", action="store_true",
                     help="auto-detect inlet (most inward boundary flow) + outlet (most outward) and mark "
                          "them with a green/red sphere + a legend, so the intended flow path is clear")
-    ap.add_argument("--marker-size", type=float, default=0.08,
-                    help="inlet/outlet marker sphere size as a fraction of the bbox diagonal (default 0.08)")
+    ap.add_argument("--marker-size", type=float, default=0.025,
+                    help="inlet/outlet marker sphere size as a fraction of the bbox diagonal (default 0.025)")
     ap.add_argument("--orbit-deg", type=float, default=0.0,
                     help="total azimuth sweep over the run (default 0 = fixed camera; set e.g. 30 for a gentle sway)")
     ap.add_argument("--fps", type=int, default=30)
@@ -94,8 +94,8 @@ def main():
     ap.add_argument("--wireframe", action="store_true",
                     help="draw the pump body as a wireframe cage instead of a translucent surface "
                          "(does not block the interior at all -- particles fully visible)")
-    ap.add_argument("--zoom", type=float, default=1.6,
-                    help="camera zoom: Dolly factor >1 moves IN so the pump fills the frame (default 1.6)")
+    ap.add_argument("--zoom", type=float, default=2.0,
+                    help="camera zoom: Dolly factor >1 moves IN so the pump fills the frame (default 2.0)")
     ap.add_argument("--frame-stride", type=int, default=1,
                     help="render every Nth timestep (e.g. 4 = 4x fewer frames, 4x faster; the video "
                          "is still smooth). Use this if the render hits the job time limit.")
@@ -219,10 +219,11 @@ def main():
         lo, hi = smin, (smax if smax > smin else smin + 1.0)
         def _mix(a, b, t):
             return a + (b - a) * t
-        # light baby blue -> sky blue -> deep navy blue
-        stops = [(0.0, 0.78, 0.90, 0.98),   # baby blue (slow)
-                 (0.5, 0.25, 0.55, 0.85),   # mid blue
-                 (1.0, 0.03, 0.13, 0.42)]   # deep blue (fast)
+        # baby-blue DOMINANT: most of the range stays light/baby blue; only the
+        # very fastest fluid deepens to a medium sky blue (never dark navy).
+        stops = [(0.0, 0.86, 0.94, 1.00),   # very light baby blue (slow)
+                 (0.7, 0.70, 0.86, 0.98),   # baby blue (most of the field)
+                 (1.0, 0.40, 0.68, 0.92)]   # medium sky blue (fastest)
         rgb_points = []
         for frac, r, g, b in stops:
             rgb_points += [_mix(lo, hi, frac), r, g, b]
@@ -324,20 +325,10 @@ def main():
                     bdisp = Show(ball, view)
                     bdisp.DiffuseColor = col; bdisp.AmbientColor = col
                     bdisp.Specular = 0.5
-                    # floating 3D text label right at the opening (so you see
-                    # INLET/OUTLET ON the geometry, not just a corner legend)
-                    try:
-                        t3 = a3DText(Text=" " + label)
-                        td = Show(t3, view)
-                        td.DiffuseColor = col; td.AmbientColor = col
-                        # scale + place the text next to the marker sphere
-                        td.Scale = [diag * args.marker_size * 1.5] * 3
-                        td.Position = [pos[0] + diag*args.marker_size,
-                                       pos[1] + diag*args.marker_size, pos[2]]
-                        td.Orientation = [0, 0, 0]
-                    except Exception:
-                        pass
-                # also a fixed corner legend as backup
+                    # NO floating 3D text (it rendered as huge letters and the
+                    # auto-detected point can land on a spurious mesh corner).
+                    # The small corner legend below carries the color key.
+                # small fixed corner legend (the color key)
                 try:
                     legend = Text()
                     legend.Text = "gold sphere = INLET    magenta sphere = OUTLET"
@@ -627,7 +618,12 @@ def main():
         print("[render] time annotation skipped: %s" % e)
 
     # ---- camera ----
-    ResetCamera(view)
+    # Reset to the PUMP DATA bounds only (not the markers/legend), so stray
+    # markers don't make ResetCamera zoom out and shrink the pump.
+    try:
+        ResetCamera(view, bounds[0], bounds[1], bounds[2], bounds[3], bounds[4], bounds[5])
+    except Exception:
+        ResetCamera(view)
     cam = GetActiveCamera()
     cam.Elevation(16); cam.Azimuth(25)
     view.CameraFocalPoint = [cx, cy, cz]
