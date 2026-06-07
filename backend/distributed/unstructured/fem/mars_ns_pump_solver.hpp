@@ -6321,27 +6321,57 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
         {
             // Nalu-Wind VMS pressure stabilization: tau*(G(p) - dp/dx_ip).A, no A.dx.
             //
-            // PREREQUISITE (NOT yet guaranteed correct -- VALIDATE FIRST):
-            //   d_gradPx/y/z must hold the PROJECTED NODAL gradient of the CURRENT
-            //   pressure s.d_p, halo-complete, with the SAME sign convention as
-            //   the element ip gradient below (dp/dx, i.e. +grad p). The predictor
-            //   fills d_gradPx/y/z with grad p^n and the codebase notes it can be
-            //   -grad p. So reusing it here may be WRONG (stale pressure and/or
-            //   flipped sign). Before trusting this path, compute a fresh
-            //   projected nodal grad of s.d_p (computeGradientPerNodeKernel +
-            //   normalizeGradientPerNodeKernel + halo) into dedicated buffers and
-            //   pass those. The cube validation must confirm div DROPS (not grows)
-            //   -- if it grows, the sign is flipped.
+            // G(p) = PROJECTED NODAL gradient of the CURRENT pressure s.d_p,
+            // computed FRESH here (not the predictor's d_gradPx/y/z, which holds
+            // -grad p^n via the div^T path). We use computeGradientPerNodeKernel
+            // (the SCS-face Green-Gauss form) which integrates to +V*grad p, then
+            // normalize by lumped mass -> +grad p, halo-complete. This is exactly
+            // Nalu's G_i(p). dp/dx_ip (the element ip gradient) is +grad p too, so
+            // the residual (G - dp/dx) is sign-consistent.
             RealType tauV = s.rhieChowTau;
             if (tauV <= 0) tauV = dt / rho;
             const auto& d_x = s.domain.getNodeX();
             const auto& d_y = s.domain.getNodeY();
             const auto& d_z = s.domain.getNodeZ();
+
+            // --- fresh projected nodal gradient of p (+grad p), halo-complete ---
+            cstone::DeviceVector<RealType> d_Gx(s.nodeCount, RealType(0));
+            cstone::DeviceVector<RealType> d_Gy(s.nodeCount, RealType(0));
+            cstone::DeviceVector<RealType> d_Gz(s.nodeCount, RealType(0));
+            cstone::DeviceVector<RealType> d_GxN(s.nodeCount, RealType(0));
+            cstone::DeviceVector<RealType> d_GyN(s.nodeCount, RealType(0));
+            cstone::DeviceVector<RealType> d_GzN(s.nodeCount, RealType(0));
+            computeGradientPerNodeKernel<KeyType, RealType, ElementTag><<<eBlocks, s.blockSize>>>(
+                c0, c1, c2, c3, c4, c5, c6, c7,
+                s.d_p.data(),
+                s.d_areaVec_x.data(), s.d_areaVec_y.data(), s.d_areaVec_z.data(),
+                d_Gx.data(), d_Gy.data(), d_Gz.data(),
+                startElem, numLocal);
+            cudaDeviceSynchronize();
+            s.domain.reverseExchangeNodeHaloAdd(d_Gx);
+            s.domain.reverseExchangeNodeHaloAdd(d_Gy);
+            s.domain.reverseExchangeNodeHaloAdd(d_Gz);
+            maybePeriodicSum<KeyType, RealType, ElementTag>(s, d_Gx);
+            maybePeriodicSum<KeyType, RealType, ElementTag>(s, d_Gy);
+            maybePeriodicSum<KeyType, RealType, ElementTag>(s, d_Gz);
+            normalizeGradientPerNodeKernel<RealType><<<nodeBlocks, s.blockSize>>>(
+                d_Gx.data(), d_Gy.data(), d_Gz.data(),
+                s.d_massNode.data(),
+                s.d_node_to_dof.data(), d_nodeOwnership.data(),
+                d_GxN.data(), d_GyN.data(), d_GzN.data(),
+                s.nodeCount);
+            cudaDeviceSynchronize();
+            // halo-complete the normalized nodal gradient so ghost endpoints in
+            // the VMS kernel's 0.5*(G_L+G_R) read valid values.
+            s.domain.exchangeNodeHalo(d_GxN);
+            s.domain.exchangeNodeHalo(d_GyN);
+            s.domain.exchangeNodeHalo(d_GzN);
+
             computeDivergenceVMSTetKernel<KeyType, RealType><<<eBlocks, s.blockSize>>>(
                 c0, c1, c2, c3,
                 s.d_uStarStar.data(), s.d_vStarStar.data(), s.d_wStarStar.data(),
                 s.d_p.data(),
-                s.d_gradPx.data(), s.d_gradPy.data(), s.d_gradPz.data(),
+                d_GxN.data(), d_GyN.data(), d_GzN.data(),
                 d_x.data(), d_y.data(), d_z.data(),
                 s.d_areaVec_x.data(), s.d_areaVec_y.data(), s.d_areaVec_z.data(),
                 tauV,
