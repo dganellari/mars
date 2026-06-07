@@ -193,36 +193,33 @@ def main():
     if args.mark_io:
         try:
             surf = ExtractSurface(Input=mag)
-            # surface-normal filter name varies across builds
-            norm = None
-            for fn in (lambda: GenerateSurfaceNormals(Input=surf),
-                       lambda: SurfaceNormals(Input=surf) if "SurfaceNormals" in dir() else None):
-                try:
-                    norm = fn()
-                    if norm is not None:
-                        break
-                except Exception:
-                    continue
-            if norm is None:
-                norm = surf  # last resort; Normals may already exist
-            # velocity . normal: outward>0 (outlet), inward<0 (inlet).
-            # PV 6.x wants dot(v1,v2); older builds use explicit components.
+            norm = GenerateSurfaceNormals(Input=surf)
+            try:
+                norm.ComputePointNormals = 1
+            except Exception:
+                pass
+            # materialize the normals BEFORE the Calculator parses the expression
+            norm.UpdatePipeline(tvals[-1])
+            # auto-discover the point arrays present (normals name varies by build)
+            pdn = norm.PointData
+            pnames = [pdn.GetArray(i).GetName() for i in range(pdn.GetNumberOfArrays())]
+            ncand = [n for n in pnames if n.lower() in ("normals", "surface normals")] \
+                or [n for n in pnames if "normal" in n.lower()]
+            nname = ncand[0] if ncand else "Normals"
+            print("[render] surface point arrays: %s -> normals: %s" % (pnames, nname))
+            if args.field not in pnames:
+                raise RuntimeError("'%s' not a point array on the surface (%s)" % (args.field, pnames))
+            # velocity . normal: outward>0 (outlet), inward<0 (inlet)
             dotc = Calculator(Input=norm)
+            try:
+                dotc.AttributeType = "Point Data"
+            except Exception:
+                pass
             dotc.ResultArrayName = "vdotn"
-            _ok = False
-            for fexpr in ("dot(%s, Normals)" % args.field,
-                          "%s_X*Normals_X+%s_Y*Normals_Y+%s_Z*Normals_Z" % (
-                              args.field, args.field, args.field)):
-                try:
-                    dotc.Function = fexpr
-                    dotc.UpdatePipeline(tvals[-1])
-                    if dotc.PointData.GetArray("vdotn") is not None:
-                        _ok = True
-                        break
-                except Exception:
-                    continue
-            if not _ok:
-                raise RuntimeError("could not compute velocity.normal for inlet/outlet detection")
+            dotc.Function = "dot(%s, %s)" % (args.field, nname)
+            dotc.UpdatePipeline(tvals[-1])
+            if dotc.PointData.GetArray("vdotn") is None:
+                raise RuntimeError("vdotn not computed")
             from paraview import servermanager as _sm
             sd = _sm.Fetch(dotc)
             spts = sd.GetPoints()

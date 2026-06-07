@@ -33,3 +33,12 @@ test_lazy_refactoring.sh
 # Vendored cstone (lives separately, will become submodule)
 cornerstone-octree/
 patches/
+
+# Internal / NDA notes -- never publish (mkdocs serves anything under docs/, so these live OUTSIDE it)
+internal-notes/
+TGV_HANDOFF.md
+TGV_NEXT_SESSION_HANDOFF.md
+TGV_BD_VALIDATION.md
+plan.md
+.attic/
+scratch/

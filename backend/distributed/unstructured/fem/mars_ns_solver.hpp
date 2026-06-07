@@ -1858,7 +1858,24 @@ __global__ void applyCorrectorPerNodeKernel(RealType* q,
     if (i >= numNodes) return;
     if (ownership[i] != 1) return;
     int dof = nodeToDof[i];
-    if (dof < 0 || dof >= numOwnedDofs) return;
+    if (dof < 0) return;
+
+    // Cross-rank periodic slave under owner-migration: nodeToDof[slave] points
+    // to master's GHOST dof (>= numOwnedDofs). The slave node IS owned but the
+    // dof is on another rank. Without this branch, q[slave] never receives the
+    // corrector update -> s.d_u[slave] stays at u^n, projection identity leaks
+    // at every cross-rank periodic seam node, and PROJ-P3 stays ~0.5 on
+    // multi-rank (single-rank has no cross-rank slaves so this branch is dead).
+    // BDF flag lookup needs dof < numOwnedDofs; cross-rank slaves are never
+    // Dirichlet under owner-migration (master DOF carries the BDF flag), so
+    // skip BDF check. gradPhiq[i] here is the broadcast master gradient (the
+    // else-branch corrector broadcasts gradPhi master->slave before this
+    // kernel runs), so the subtraction is the correct one.
+    if (dof >= numOwnedDofs)
+    {
+        q[i] = qStarStar[i] - dt * invRho * gradPhiq[i];
+        return;
+    }
 
     if (isBdryDof[dof])
     {
@@ -8557,7 +8574,9 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
     // made PROJ-P3 read ~1.0. The broadcast IS still needed for the next-step
     // predictor's per-node flux scatter to see u_slave == u_master, so we run
     // it AFTER the probe, before updatePressureKernel / the next predictor.
-    if (g_projProbe && routeReducedPeriodicCorr)
+    if (g_projProbe
+        && s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Periodic
+        && s.solverKind == SolverKind::CG)
     {
         // P2/P3: does the projection actually reduce divergence? Measure ||D u**||
         // (in) and ||D u^{n+1}|| of the RAW corrected velocity (out, before any
