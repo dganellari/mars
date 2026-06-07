@@ -66,8 +66,8 @@ def main():
                          "them with a green/red sphere + a legend, so the intended flow path is clear")
     ap.add_argument("--marker-size", type=float, default=0.03,
                     help="inlet/outlet marker sphere size as a fraction of the bbox diagonal (default 0.03)")
-    ap.add_argument("--orbit-deg", type=float, default=30.0,
-                    help="total azimuth sweep over the run (gentle sway; 0 = fixed camera)")
+    ap.add_argument("--orbit-deg", type=float, default=0.0,
+                    help="total azimuth sweep over the run (default 0 = fixed camera; set e.g. 30 for a gentle sway)")
     ap.add_argument("--fps", type=int, default=30)
     ap.add_argument("--hold-frames", type=int, default=20,
                     help="extra orbit-only frames at the end on the final (developed) state")
