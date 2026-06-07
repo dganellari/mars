@@ -52,10 +52,13 @@ def main():
                     help="PARTICLE TRACKS: release particles at the inlet and let the flow CARRY them "
                          "over time, rendered as little spheres -- looks like real liquid streaming "
                          "through. Needs the time series. Slow on big meshes; let it run.")
-    ap.add_argument("--particle-size", type=float, default=0.006,
-                    help="particle sphere size as a fraction of the bbox diagonal (default 0.006)")
-    ap.add_argument("--reinject", type=int, default=5,
-                    help="re-inject particles at the inlet every N steps (keeps the inlet 'spraying')")
+    ap.add_argument("--particle-size", type=float, default=0.004,
+                    help="particle sphere size as a fraction of the bbox diagonal (smaller=more liquid-like)")
+    ap.add_argument("--reinject", type=int, default=2,
+                    help="re-inject particles every N steps (smaller=denser continuous stream)")
+    ap.add_argument("--seed-whole", action="store_true",
+                    help="seed particles across the WHOLE domain (not just the jet) so both sides fill; "
+                         "use if particles only appear on one side")
     ap.add_argument("--orbit-deg", type=float, default=30.0,
                     help="total azimuth sweep over the run (gentle sway; 0 = fixed camera)")
     ap.add_argument("--fps", type=int, default=30)
@@ -201,7 +204,13 @@ def main():
         # get carried through the WHOLE pump, not just a tight knot at one point.
         seed_c = [cx, cy, cz]
         seed_r = diag * (args.seed_radius if args.seed_radius > 0 else 0.4)
-        if args.seed_inlet:
+        if args.seed_whole:
+            # cover the whole domain so particles enter everywhere -> both sides
+            # fill (the bbox center + half-diagonal radius; no mesh reading).
+            seed_c = [cx, cy, cz]
+            seed_r = diag * 0.5
+            print("[render] seeding particles across the WHOLE domain")
+        elif args.seed_inlet:
             try:
                 seed_c = [float(x) for x in args.seed_inlet.split(",")]
                 seed_r = diag * (args.seed_radius if args.seed_radius > 0 else 0.12)
