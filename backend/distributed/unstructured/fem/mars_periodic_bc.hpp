@@ -305,6 +305,16 @@ __global__ void periodicPairSumKernel(const int*     d_partner,
 {
     size_t i = size_t(blockIdx.x) * blockDim.x + threadIdx.x;
     if (i >= numNodes) return;
+    // Gate on BOTH slave-owned AND master-owned. The slave-owned gate is the
+    // multi-rank fix: without it, a rank that owns the master ALSO folds the
+    // slave's GHOST value (delivered via cstone periodic-image halo). The
+    // slave-owner rank simultaneously cross-rank-sends the same slave value
+    // to the master-owner via stage-b -> the master gets the contribution
+    // TWICE. Result on cube16/4-rank: defect=+561, eq{2,4,8}={225,0,0}
+    // (2/3 of face masters + ALL edges/corners over-fold). Gating on
+    // own[i]==1 makes the local fold same-rank-only and exactly the same
+    // logical pass as on single-rank, where every node is owned.
+    if (d_ownership[i] != 1) return;
     int master = d_partner[i];
     if (master < 0) return;
     if (d_ownership[master] != 1) return;
@@ -323,16 +333,21 @@ __global__ void periodicBroadcastKernel(const int* d_partner, size_t numNodes,
     d_field[i] = d_field[master];
 }
 
-// Exact TRANSPOSE of periodicBroadcastKernel: for every slave (partner>=0),
-// field[partner] += field[slave]; field[slave] = 0. NO ownership gate -- the
-// partner may be a master GHOST (cross-rank), and we WANT the contribution to
-// land on that ghost slot so a subsequent reverseExchangeNodeHaloAdd carries it
-// to the master's owner. This is the restriction half-leg whose adjoint is the
-// master->slave broadcast: (broadcast)^T = this fold. Used by the reduced-DOF
-// P^T A P operator (applyDDTReduced) to keep A symmetric across the periodic
-// seam. atomicAdd because several slaves can map to one master at a corner.
+// Exact TRANSPOSE of periodicBroadcastKernel: for every slave node,
+// field[partner] += field[slave]; field[slave] = 0. partner may be a master
+// GHOST (cross-rank), and the contribution lands in that ghost slot so a
+// subsequent reverseExchangeNodeHaloAdd carries it to the master's owner.
+// Used by the reduced-DOF P^T A P operator (applyDDTReduced) and by the
+// RHS / corrector div-probe paths -- all run BEFORE reverseExchangeNodeHaloAdd
+// so the field here is per-rank owned-element scatter, not halo-merged yet.
+// No ownership gate: the master-owner rank's ghost-slave slot is empty
+// (zero from per-element scatter, since the master-owner does not own the
+// periodic-image element); the slave-owner rank's owned-slave slot folds
+// onto the master-ghost slot, then reverseExchange carries it to the
+// master's owner -- the correct cross-rank routing for the operator's P^T.
 template<typename RealType>
-__global__ void periodicFoldToMasterKernel(const int* d_partner, size_t numNodes,
+__global__ void periodicFoldToMasterKernel(const int* d_partner,
+                                           size_t numNodes,
                                            RealType* d_field)
 {
     size_t i = size_t(blockIdx.x) * blockDim.x + threadIdx.x;

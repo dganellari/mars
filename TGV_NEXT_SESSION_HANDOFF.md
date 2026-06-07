@@ -3,6 +3,62 @@
 This is a focused handoff for whoever continues the **multi-rank periodic TGV** work. The main
 TGV_HANDOFF.md has the full blow-by-blow; this is the actionable state + the one thing left to verify.
 
+## CHECKPOINT 2026-06-06b — over-fold gone; residual seam-flux leak isolated (HEAD = e1a27f6)
+
+Foldcount probe is **bit-correct on 4-rank** (defect=0, max_master=8, buckets match single-rank
+exactly: eq{1,2,4,8}={3375,675,45,1}). The double-fold in `periodicPairSumKernel` (master-owner
+rank folding ghost slaves while slave-owner rank was already shipping cross-rank) is fixed by
+**888045b** (added `if (d_ownership[i] != 1) return;` slave-owned gate to the kernel; correct
+because `maybePeriodicSum` runs AFTER `reverseExchangeNodeHaloAdd`, so the field is halo-merged
+at that point and ghost-fold-on-master-owner double-counts). Race-free single-pass on the
+flattened partner table (commit 1696617) is a prerequisite for the gate to be meaningful.
+
+Tried the same gate on `periodicFoldToMasterKernel` (commits 84a3f1d + 63b71cd). It BROKE the
+operator: DDT CG diverges immediately (`|r|/|r0|` grows 0.475 → 1.1e+4 → 6.6e+11). Reverted in
+**e1a27f6**. Those 3 sites (NS:5283 operator P^T, NS:7357 RHS divergence, NS:8244 corrector
+div-probe) run BEFORE `reverseExchangeNodeHaloAdd`; at that pre-halo moment the master-owner
+rank's ghost-slave slot is empty (no periodic-image element on the master-owner side) so the
+ungated kernel is correct.
+
+110-step run at `e1a27f6` (cube16/4-rank, --pressure-solve=DDT --skew=1 --adapt-every=0):
+- step 0:  KE=0.125, div_max=0
+- step 1:  KE=0.1249, div_max=6e-3, cg_p=111
+- step 10: KE=0.1237, div_max=4e-2, cg_p=115
+- step 20: KE=0.1225, div_max=0.1,  cg_p=121
+- step 26: |p|max suddenly jumps 0.65 → 3.5 → 25 (seam-leak pumps pressure)
+- step ~30: div_max=0.78, |gP|max~24
+- step ~38: |u**|max=1.001 (exceeds V0 — unphysical); pressure explodes via seam
+- truncated mid-step 38; full run truncated by terminal scrollback.
+
+`[advN-sum]` rank-invariant throughout (~1e-8) — the monotone single-rank drift the foldcount
+fix was designed to kill IS gone. The new leak is in `[div-global] abs_sum` which grows steadily
+(step 1=1.04, step 10=2.36, step 30=9.16, step 38=~17). `[div-split] ratio` actually drops 14 → 2.3,
+so the leak is becoming more uniformly distributed as it grows, not strictly seam-localized.
+
+The leak is the same one flagged by **commits 3b2a042 and 9252b91** ("--skew=0 discriminator
+result -- upwind ALSO blows up ~step 50, rules out skew energy term; residual is a
+scheme-independent seam-flux"). Suspect-D from the earlier handoff trail: area-vector orientation
+or periodic-image-face double-count/sign at the cross-rank seam. The advN-sum diagnostic CANNOT
+detect a sign-flipped pair of seam faces (they cancel in the global sum), so the next attack
+needs a per-face seam probe rather than another fold gate.
+
+NEXT-SESSION TASK: instrument area-vector consistency at the cross-rank seam. For one known
+cross-rank seam face shared between rank A (owns the element) and rank D (has it as periodic-
+image halo), dump `d_areaVec_{x,y,z}[face_offset]` from both ranks and check whether they
+are equal-and-opposite (outward from each element). A sign flip there is exactly the
+scheme-independent seam-flux residual that survived the fold fix.
+
+## KEEP-COMMITS for this session (all on `cstone`):
+- 1696617 — single-pass on flattened partner (race-free) — replaces broken 3-hop telescoping (3eb6dee)
+- 888045b — periodicPairSumKernel slave-owned gate — kills the ghost-fold double-count post-halo
+- e1a27f6 — revert of bad gate on periodicFoldToMasterKernel — preserves operator SPD
+
+To return to this checkpoint: `git checkout e1a27f6`. Build + 4-rank cube16 110-step DDT/skew
+should reproduce the trace above (foldcount bit-correct, CG converges, blow-up at step ~30-40
+via seam-flux residual).
+
+---
+
 ## TL;DR — where it stands (2026-06-06)
 
 Multi-rank periodic TGV (4-rank cube16) went from **instant blowup → believed FIXED**, pending one
