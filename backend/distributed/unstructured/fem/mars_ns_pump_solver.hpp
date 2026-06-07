@@ -594,6 +594,11 @@ __device__ __forceinline__ void scsLR(int ip, int& L, int& R)
     else { L = d_tetLRSCV[ip * 2]; R = d_tetLRSCV[ip * 2 + 1]; }
 }
 
+// Opt-in Nalu-Wind-style VMS pressure stabilization (separate from Rhie-Chow).
+// Included here, AFTER scsLR + the `using namespace mars/mars::fem` above, so the
+// kernel sees scsLR<>, Tet4CVFEM, ElemTraits. Off by default (s.useVMSStab).
+#include "backend/distributed/unstructured/fem/mars_vms_pressure_stab.hpp"
+
 // Host-side connectivity pointer gather. Returns NodesPerElem device pointers
 // from the connectivity tuple so launch sites can dispatch on element type
 // without spelling std::get<7> for tet (which has only 4 columns).
@@ -2315,6 +2320,11 @@ struct NSStepper
     // question but don't fit a face-flux discretization.
     bool useRhieChow      = false;
     RealType rhieChowTau  = -1;   // <=0 => auto-pick = dt/rho
+
+    // Nalu-Wind-style VMS pressure stabilization (NOT Rhie-Chow). Opt-in,
+    // tet-only for now. Uses the residual (projected-nodal-grad - element-ip-grad),
+    // no A.dx denominator -> skew-robust. tau reuses rhieChowTau (<=0 => dt/rho).
+    bool useVMSStab       = false;
 
     // Ownership map every kernel uses. Always the domain's cached map -- we no
     // longer demote periodic slaves (see setupNSStepper). Kept as a single
@@ -6305,7 +6315,39 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
         // (Nalu-Wind, OpenFOAM). Element-generic via scsLR<ElementTag> +
         // ElemTraits<ElementTag>::ScsPerElem. tau auto = dt/rho.
         bool useRC = s.useRhieChow;
-        if (useRC)
+        // VMS path is opt-in AND tet-only (the kernel uses Tet4CVFEM::jacobian_and_dNdx).
+        bool useVMS = s.useVMSStab && std::is_same_v<ElementTag, TetTag>;
+        if (useVMS)
+        {
+            // Nalu-Wind VMS pressure stabilization: tau*(G(p) - dp/dx_ip).A, no A.dx.
+            //
+            // PREREQUISITE (NOT yet guaranteed correct -- VALIDATE FIRST):
+            //   d_gradPx/y/z must hold the PROJECTED NODAL gradient of the CURRENT
+            //   pressure s.d_p, halo-complete, with the SAME sign convention as
+            //   the element ip gradient below (dp/dx, i.e. +grad p). The predictor
+            //   fills d_gradPx/y/z with grad p^n and the codebase notes it can be
+            //   -grad p. So reusing it here may be WRONG (stale pressure and/or
+            //   flipped sign). Before trusting this path, compute a fresh
+            //   projected nodal grad of s.d_p (computeGradientPerNodeKernel +
+            //   normalizeGradientPerNodeKernel + halo) into dedicated buffers and
+            //   pass those. The cube validation must confirm div DROPS (not grows)
+            //   -- if it grows, the sign is flipped.
+            RealType tauV = s.rhieChowTau;
+            if (tauV <= 0) tauV = dt / rho;
+            const auto& d_x = s.domain.getNodeX();
+            const auto& d_y = s.domain.getNodeY();
+            const auto& d_z = s.domain.getNodeZ();
+            computeDivergenceVMSTetKernel<KeyType, RealType><<<eBlocks, s.blockSize>>>(
+                c0, c1, c2, c3,
+                s.d_uStarStar.data(), s.d_vStarStar.data(), s.d_wStarStar.data(),
+                s.d_p.data(),
+                s.d_gradPx.data(), s.d_gradPy.data(), s.d_gradPz.data(),
+                d_x.data(), d_y.data(), d_z.data(),
+                s.d_areaVec_x.data(), s.d_areaVec_y.data(), s.d_areaVec_z.data(),
+                tauV,
+                d_divAccNode.data(), startElem, numLocal);
+        }
+        else if (useRC)
         {
             RealType tauRC = s.rhieChowTau;
             if (tauRC <= 0) tauRC = dt / rho;

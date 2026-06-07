@@ -71,6 +71,7 @@ int main(int argc, char** argv)
     bool        useBdf2     = true;    // --bdf1 forces BDF1/Chorin (1st-order time, more stable for explicit advection)
     bool        useRhieChow = false;   // compact RC is geometrically unsafe on tets (blows up at every tau); --rhie-chow to force on
     RealType    rhieTau    = -1;       // RC strength; <=0 -> auto dt/rho. --rhie-tau= to sweep
+    bool        useVMSStab = false;    // Nalu-Wind VMS pressure stab (NOT Rhie-Chow); --vms-stab. EXPERIMENTAL, validate.
     std::string inletSS;   // inlet side-set name (required for --bc=pump; pass --inlet-ss=)
     std::string outletSS;  // outlet side-set name (required for --bc=pump; pass --outlet-ss=)
     RealType    inletU   = 0.5;        // inlet speed (m/s, or non-dim)
@@ -103,6 +104,7 @@ int main(int argc, char** argv)
         else if (a == "--no-rhie")                   useRhieChow = false; // plain Galerkin divergence (checkerboard-prone)
         else if (a == "--rhie-chow")                 useRhieChow = true;
         else if (a.rfind("--rhie-tau=", 0) == 0)     rhieTau   = std::stod(a.substr(11));
+        else if (a == "--vms-stab")                  useVMSStab = true;  // Nalu VMS pressure stab (tet-only, experimental)
         else if (a.rfind("--inlet-ss=", 0) == 0)     inletSS   = a.substr(11);
         else if (a.rfind("--outlet-ss=", 0) == 0)    outletSS  = a.substr(12);
         else if (a.rfind("--inlet-velocity=", 0) == 0) inletU  = std::stod(a.substr(17));
@@ -175,6 +177,7 @@ int main(int argc, char** argv)
                   << "Rhie-Chow   = " << (useRhieChow ? "ON" : "OFF")
                   << (useRhieChow && rhieTau > 0 ? "  (tau=" : "  (tau=auto dt/rho")
                   << (useRhieChow && rhieTau > 0 ? std::to_string(rhieTau) + ")" : ")") << "\n"
+                  << "VMS-stab    = " << (useVMSStab ? "ON (Nalu, tet-only, EXPERIMENTAL)" : "OFF") << "\n"
                   << "MPI ranks   = " << numRanks << "\n"
                   << "========================================\n\n";
     }
@@ -237,6 +240,7 @@ int main(int argc, char** argv)
     // leaves div*L/U stuck. tau auto = dt/rho. --no-rhie for an A/B comparison.
     s.useBdf2 = useBdf2;
     s.useRhieChow = useRhieChow;
+    s.useVMSStab  = useVMSStab;   // Nalu VMS pressure stabilization (tet-only)
     s.rhieChowTau = rhieTau;   // <=0 -> kernel falls back to dt/rho
     // Cavity = lid-driven cavity (geometric BC, no side-sets) -- a controlled
     // tet-NS validation case with a known flow pattern. Pump = per-side-set
