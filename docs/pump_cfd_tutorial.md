@@ -195,7 +195,7 @@ advance momentum and (b) find the pressure that keeps `∇·u = 0`. MARS uses a
 then *project* the result back onto the divergence-free state. The per-step recipe:
 
 1. **Predictor** — compute a provisional velocity `u*` from the momentum equation
-   using the advection term and the *old* pressure. `u*` is generally **not**
+   using the advection term and the *old* pressure. `u*` is **not**
    divergence-free (it doesn't yet know the new pressure).
 2. **Implicit diffusion** — the viscous term is "stiff" (it would force a
    microscopic `dt` if done explicitly), so solve it implicitly: three linear

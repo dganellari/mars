@@ -90,8 +90,6 @@ count, once to fill — which is the standard two-pass CSR idiom.
 
 ### Two patterns: 7 NNZ/row (graph) vs 27 NNZ/row (full)
 
-This is a notable MARS feature worth understanding:
-
 - **Graph sparsity (`buildGraphSparsity`)** records only **edge-adjacent**
   couplings — the sub-control-surface (SCS) edges of the control-volume dual (12 per
   hex, 6 per tet). An interior hex node ends up coupling to itself + its 6 axis
@@ -99,7 +97,7 @@ This is a notable MARS feature worth understanding:
 - **Full sparsity (`buildFullSparsity`)** records **every** corner-pair within each
   element (8×8 = 64 per hex, 4×4 = 16 per tet) ≈ **27 nonzeros per row** for hexes.
 
-Why two? **Graph + diagonal lumping is the path to extreme scale** — ~4× fewer
+Why two? **Graph + diagonal lumping is what scales** — ~4× fewer
 nonzeros means ~4× less memory and bandwidth, which is what makes billion-element
 runs feasible on a GPU cluster. **Full** is for consumers that need the complete
 element-local coupling (e.g. a symmetric Poisson stiffness solved with CG).
@@ -115,7 +113,7 @@ until CUB is validated bit-for-bit.
 ## 3. The matrix: device CSR
 
 The assembled matrix is **compressed sparse row (CSR)** in device memory. MARS has
-two CSR representations, used at different layers — keep them distinct:
+two CSR representations, used at different layers:
 
 - **`CSRMatrix`** (`mars_cvfem_hex_kernel.hpp`) — a lightweight device struct of raw
   pointers (`rowPtr, colInd, values, diagPtr, numRows, nnz, numOwnedRows`) passed *by

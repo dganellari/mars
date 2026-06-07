@@ -89,7 +89,7 @@ Every kernel below is a different point on these trade-offs:
   **block-level deduplication cache in dynamic shared memory**, loads each unique
   node's fields and CSR row metadata into shared memory **once**, then serves every
   thread's reads from shared memory (~5 cycles) instead of L2 (~30 cycles). It needs a
-  large shared-memory carveout (>48 KB). Powerful, but the most fragile production-track
+  large shared-memory carveout (>48 KB), and it is the most fragile production-track
   kernel: it relies on spatial (Morton) ordering keeping the unique-node count per
   block under a fixed cap.
 
@@ -164,8 +164,8 @@ diagonal:
   Poisson-type systems solved with CG that need every coupling.
 - **Graph + lumped (7 NNZ/row)** — ~4× fewer nonzeros → ~4× smaller matrix in memory
   and ~4× less bandwidth in every solver mat-vec. At the billion-element scale, where
-  the matrix and the SpMV dominate cost, this is the headline path. The price is a
-  *lumped* (more diagonally-dominant, less accurate) operator.
+  the matrix and the SpMV dominate cost, this is the path that matters. The price is
+  a *lumped* (more diagonally-dominant, less accurate) operator.
 
 So "graph vs full" is an **accuracy/memory** choice made at the sparsity-and-assemble
 level; the kernel variants above are **how fast** you assemble whichever you chose.
@@ -185,9 +185,9 @@ level; the kernel variants above are **how fast** you assemble whichever you cho
 | Smallest matrix / extreme scale | the **graph-lumped** assembly path |
 | Drive the tensor cores (experimental) | `WmmaTensor` / `WgmmaTensor` |
 
-When in doubt, start from the default (`Tensor` / `FullPerip`) and the graph-lumped
-sparsity, then profile — the right kernel depends on your GPU's atomic throughput,
-your mesh's spatial locality, and whether you are occupancy- or bandwidth-bound.
+Start from the default (`Tensor` / `FullPerip`) and the graph-lumped sparsity, then
+profile — the right kernel depends on your GPU's atomic throughput, your mesh's
+spatial locality, and whether you are occupancy- or bandwidth-bound.
 
 ---
 

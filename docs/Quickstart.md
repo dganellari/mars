@@ -142,7 +142,7 @@ mesh (cube16)  →  partition (SFC)  →  node→DOF map  →  CSR sparsity  →
 ```
 
 Everything after "mesh" ran on the GPU. The same pipeline scales from this 4096-element
-cube to billions of elements across a GPU cluster — only the mesh and the rank count
+cube to billions of elements across a GPU cluster; only the mesh and the rank count
 change.
 
 ---
