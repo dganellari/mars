@@ -30,6 +30,8 @@ nav:
       - ElementDomain Overview: ElementDomain-Overview.md
       - Mesh Reading and Partitioning: Mesh-Reading-and-Partitioning.md
       - SFC Mapping: SFC-Mapping.md
+  - FEM:
+      - FEM Assembly: FEM-Assembly.md
   - Advanced Features:
       - Adjacency Structures: Adjacency-Structures.md
       - Halo Management: Halo-Management.md
