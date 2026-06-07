@@ -59,6 +59,11 @@ def main():
     ap.add_argument("--seed-whole", action="store_true",
                     help="seed particles across the WHOLE domain (not just the jet) so both sides fill; "
                          "use if particles only appear on one side")
+    ap.add_argument("--mark-io", action="store_true",
+                    help="auto-detect inlet (most inward boundary flow) + outlet (most outward) and mark "
+                         "them with a green/red sphere + a legend, so the intended flow path is clear")
+    ap.add_argument("--marker-size", type=float, default=0.03,
+                    help="inlet/outlet marker sphere size as a fraction of the bbox diagonal (default 0.03)")
     ap.add_argument("--orbit-deg", type=float, default=30.0,
                     help="total azimuth sweep over the run (gentle sway; 0 = fixed camera)")
     ap.add_argument("--fps", type=int, default=30)
@@ -180,6 +185,78 @@ def main():
         lut.NanColor = [0.2, 0.2, 0.2]
     except Exception:
         pass
+
+    # ---- auto-detect inlet & outlet from the boundary flow (NDA-safe: all done
+    # inside ParaView, coords never leave the render) and mark them ----
+    # Inlet  = boundary point with the most INWARD flow (velocity . inward normal).
+    # Outlet = boundary point with the most OUTWARD flow.
+    if args.mark_io:
+        try:
+            surf = ExtractSurface(Input=mag)
+            # surface-normal filter name varies across builds
+            norm = None
+            for fn in (lambda: GenerateSurfaceNormals(Input=surf),
+                       lambda: SurfaceNormals(Input=surf) if "SurfaceNormals" in dir() else None):
+                try:
+                    norm = fn()
+                    if norm is not None:
+                        break
+                except Exception:
+                    continue
+            if norm is None:
+                norm = surf  # last resort; Normals may already exist
+            # velocity . normal: outward>0 (outlet), inward<0 (inlet)
+            dotc = Calculator(Input=norm)
+            dotc.ResultArrayName = "vdotn"
+            dotc.Function = "%s.Normals" % args.field  # vector dot, build-robust
+            try:
+                dotc.UpdatePipeline(tvals[-1])
+            except Exception:
+                # fall back to explicit component form if dot syntax unsupported
+                dotc.Function = "%s_X*Normals_X+%s_Y*Normals_Y+%s_Z*Normals_Z" % (
+                    args.field, args.field, args.field)
+                dotc.UpdatePipeline(tvals[-1])
+            from paraview import servermanager as _sm
+            sd = _sm.Fetch(dotc)
+            spts = sd.GetPoints()
+            vn = sd.GetPointData().GetArray("vdotn")
+            if spts and vn:
+                nn = vn.GetNumberOfTuples(); st = max(1, nn // 300000)
+                out_i, out_v, in_i, in_v = -1, -1e30, -1, 1e30
+                for i in range(0, nn, st):
+                    v = vn.GetValue(i)
+                    if v > out_v:
+                        out_v, out_i = v, i
+                    if v < in_v:
+                        in_v, in_i = v, i
+                io_marks = []
+                if in_i >= 0:
+                    io_marks.append(("INLET", list(spts.GetPoint(in_i)), [0.2, 1.0, 0.3]))
+                if out_i >= 0:
+                    io_marks.append(("OUTLET", list(spts.GetPoint(out_i)), [1.0, 0.3, 0.2]))
+                for label, pos, col in io_marks:
+                    ball = Sphere()
+                    ball.Center = pos
+                    ball.Radius = diag * args.marker_size
+                    ball.ThetaResolution = 24; ball.PhiResolution = 24
+                    bdisp = Show(ball, view)
+                    bdisp.DiffuseColor = col; bdisp.AmbientColor = col
+                    bdisp.Specular = 0.5
+                # fixed corner legend (2D overlay) instead of 3D labels at coords
+                try:
+                    legend = Text()
+                    legend.Text = "green = INLET    red = OUTLET"
+                    ld = Show(legend, view)
+                    ld.Color = [1, 1, 1]; ld.FontSize = 15
+                    try:
+                        ld.WindowLocation = "Upper Right Corner"
+                    except Exception:
+                        pass
+                except Exception:
+                    pass
+                print("[render] marked inlet (green sphere) + outlet (red sphere) from boundary flow")
+        except Exception as e:  # noqa: BLE001
+            print("[render] inlet/outlet marking skipped (%s)" % e)
 
     # ---- flow visualization ----
     # The pump is a small jet into a big mostly-stagnant chamber: a plain clip is
