@@ -86,6 +86,9 @@ def main():
     ap.add_argument("--color-frac", type=float, default=1.0,
                     help="color range = [0, color_frac*max]. 1.0 uses the full speed range so you see the "
                          "blue->red gradient across the whole flow; lower saturates the fast jet to red sooner")
+    ap.add_argument("--log-color", action="store_true",
+                    help="LOG color scale -- reveals the slow nearly-stagnant tank flow AND the fast "
+                         "passage jet at once (linear squashes the slow tank into one flat color)")
     ap.add_argument("--shell", action="store_true",
                     help="add the full translucent geometry surface (prettier but HEAVY on big meshes; "
                          "default is just a cheap always-visible bounding outline)")
@@ -254,6 +257,20 @@ def main():
         lut.NanColor = [0.2, 0.2, 0.2]
     except Exception:
         pass
+
+    # LOG color scale: the velocity range spans the fast passage jet down to the
+    # nearly-stagnant tank bulk. A linear map squashes the slow tank flow into the
+    # bottom sliver (looks flat). Log expands the low end so the tank recirculation
+    # becomes visible AND the fast passage doesn't dominate the whole scale.
+    if args.log_color:
+        try:
+            lo_pos = max(smin, smax * 1e-3)   # log can't take 0; floor at max/1000
+            lut.MapControlPointsToLogSpace()
+            lut.UseLogScale = 1
+            lut.RescaleTransferFunction(lo_pos, smax)
+            print("[render] log color scale (reveals slow tank flow + fast passage)")
+        except Exception as e:  # noqa: BLE001
+            print("[render] log color scale failed (%s)" % e)
 
     # ---- auto-detect inlet & outlet from the boundary flow (NDA-safe: all done
     # inside ParaView, coords never leave the render) and mark them ----
