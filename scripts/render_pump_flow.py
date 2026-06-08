@@ -81,6 +81,9 @@ def main():
                     help="seed streamlines at 'x,y,z' (the inlet); default = auto peak-speed point")
     ap.add_argument("--seed-radius", type=float, default=0.0,
                     help="streamline seed-cloud radius as a fraction of bbox diagonal (default auto)")
+    ap.add_argument("--seed-line", action="store_true",
+                    help="seed streamlines along a LINE spanning the longest axis (both tanks + the "
+                         "passage between them) so lines thread THROUGH the pump, not swirl in one tank")
     ap.add_argument("--jet-frac", type=float, default=0.08,
                     help="threshold isovolume keeps speed > jet_frac*max (the visible jet); lower=more fluid shown")
     ap.add_argument("--color-frac", type=float, default=1.0,
@@ -513,9 +516,33 @@ def main():
         except Exception:
             pass
         stream.MaximumStreamlineLength = diag * 5.0
-        stream.SeedType.Center = seed_c
-        stream.SeedType.Radius = seed_r
-        stream.SeedType.NumberOfPoints = args.n_streamlines
+        if args.seed_line:
+            # Seed along a LINE spanning the domain's LONGEST axis (the through-flow
+            # direction), so seeds are distributed across BOTH tanks and the passage
+            # between them -- streamlines then thread the passage instead of swirling
+            # in one tank from a single corner seed.
+            try:
+                ext = [bounds[1]-bounds[0], bounds[3]-bounds[2], bounds[5]-bounds[4]]
+                axis = ext.index(max(ext))
+                p1 = [cx, cy, cz]; p2 = [cx, cy, cz]
+                lo_a = bounds[2*axis] + 0.05*ext[axis]
+                hi_a = bounds[2*axis+1] - 0.05*ext[axis]
+                p1[axis] = lo_a; p2[axis] = hi_a
+                stream.SeedType = "High Resolution Line Source"
+                stream.SeedType.Point1 = p1
+                stream.SeedType.Point2 = p2
+                stream.SeedType.Resolution = args.n_streamlines
+                print("[render] seeding streamlines along the long axis (spans both tanks + passage)")
+            except Exception as e:  # noqa: BLE001
+                print("[render] line seed failed (%s), using point cloud" % e)
+                stream.SeedType = "Point Cloud"
+                stream.SeedType.Center = seed_c
+                stream.SeedType.Radius = seed_r
+                stream.SeedType.NumberOfPoints = args.n_streamlines
+        else:
+            stream.SeedType.Center = seed_c
+            stream.SeedType.Radius = seed_r
+            stream.SeedType.NumberOfPoints = args.n_streamlines
         stream.UpdatePipeline(tvals[-1])
         tubes = Tube(Input=stream)
         tubes.Radius = diag * 0.0018
