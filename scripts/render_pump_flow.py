@@ -177,6 +177,14 @@ def main():
         except Exception as e:  # noqa: BLE001
             print("[render] outline skipped: %s" % e)
 
+    # --volume is SELF-CONTAINED: it fills the frame with the opaque, velocity-
+    # colored pump volume, so a faint translucent shell over it would just fog it
+    # out (the original report: "could not see anything; not opaque at all").
+    # Force the shell off whenever --volume is requested.
+    if args.volume and args.shell:
+        print("[render] --volume is self-contained; ignoring --shell (it would fog the volume)")
+        args.shell = False
+
     if args.shell:
         surf = Show(reader, view)
         if args.wireframe:
@@ -495,13 +503,48 @@ def main():
         tubes.UpdatePipeline(tvals[-1])
         flow_props.append((tubes, "speed"))
     if args.volume and not args.streamlines and not args.pathlines:
-        # VOLUME: the whole pump SURFACE colored by |velocity| -- the "colored
-        # tetrahedra" look. Integration-free (fast, robust). Shows the velocity
-        # field over the geometry, evolving with time. This is the second video
-        # type (run a separate job with --volume; --pathlines for the first).
-        vsurf = ExtractSurface(Input=mag)
-        vsurf.UpdatePipeline(tvals[-1])
-        flow_props.append((vsurf, "speed"))
+        # VOLUME: the pump colored by |velocity| -- the "colored tetrahedra" look.
+        # Integration-free (fast, robust), evolves with time. This is the second
+        # video type (separate job; --pathlines for the first).
+        #
+        # We CLIP the volume in half instead of taking only ExtractSurface. The
+        # outer skin of the pump is the no-slip casing wall where |u|~0, so the
+        # outer surface alone colors near-uniform (the faint slow end of the LUT)
+        # and -- with the camera outside -- reads as "empty / not opaque". A clip
+        # cuts the body open so you see the fast INTERIOR flow, opaque and
+        # clearly colored. Clipping a tet volume keeps it as a 3D unstructured
+        # grid, so the cut faces show real interior cells (the tetrahedra look).
+        vol = None
+        try:
+            clip = Clip(Input=mag)
+            try:
+                clip.ClipType = "Plane"
+                clip.ClipType.Origin = [cx, cy, cz]
+                ext = [bounds[1]-bounds[0], bounds[3]-bounds[2], bounds[5]-bounds[4]]
+                # cut perpendicular to the LONGEST extent: opens the biggest face,
+                # exposing the most interior flow.
+                axis = ext.index(max(ext))
+                nrm = [0, 0, 0]; nrm[axis] = 1
+                clip.ClipType.Normal = nrm
+            except Exception:
+                pass
+            # keep the solid half (Crinkle off -> a clean planar cut face, not a
+            # jagged cell-boundary cut); guard because the attr name varies.
+            for attr, val in (("Invert", 1), ("Crinkleclip", 0)):
+                try:
+                    setattr(clip, attr, val)
+                except Exception:
+                    pass
+            clip.UpdatePipeline(tvals[-1])
+            vol = clip
+            print("[render] --volume: clipped pump volume (interior flow exposed)")
+        except Exception as e:  # noqa: BLE001
+            # fall back to the outer surface if Clip is unavailable on this build
+            print("[render] --volume clip failed (%s); using outer surface" % e)
+            vol = ExtractSurface(Input=mag)
+            vol.UpdatePipeline(tvals[-1])
+        # opacity 1.0 -> fully opaque (the loop below also forces this for --volume)
+        flow_props.append((vol, "speed"))
 
     if args.slice and not args.streamlines and not args.pathlines and not args.volume:
         # SLICE: a cutting plane through the pump colored by |velocity| -- an
@@ -585,9 +628,25 @@ def main():
         except Exception:
             pass
         d.Specular = 0.3
+        # --volume must be CLEARLY VISIBLE and OPAQUE: force full opacity so it
+        # never inherits a faint setting, and make the LUT drive the color (a
+        # leftover solid DiffuseColor would override ColorBy and hide the field).
+        if args.volume:
+            try:
+                d.Opacity = 1.0
+            except Exception:
+                pass
+            try:
+                # rebind the LUT to be safe, then re-assert the color array
+                d.LookupTable = lut
+            except Exception:
+                pass
         sdisp = d
     if sdisp is not None:
-        sdisp.SetScalarBarVisibility(view, True)
+        try:
+            sdisp.SetScalarBarVisibility(view, True)
+        except Exception:
+            pass
 
     bar = GetScalarBar(lut, view)
     bar.Title = "|velocity|"
