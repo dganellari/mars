@@ -152,8 +152,11 @@ def main():
     except Exception:
         pass
     view.OrientationAxesVisibility = 0
-    # depth + soft shadows for a 3D feel (ParaView 5.9+; guarded)
-    for attr, val in (("UseAmbientOcclusion", 1), ("EnableRayTracing", 0)):
+    # depth + soft shadows for a 3D feel (ParaView 5.9+; guarded). AO OFF for
+    # --volume: it darkens the cut interior and makes the solid fluid read as
+    # translucent/sparse. Keep AO for particles/streamlines where it adds depth.
+    _ao = 0 if ("--volume" in sys.argv) else 1
+    for attr, val in (("UseAmbientOcclusion", _ao), ("EnableRayTracing", 0)):
         try:
             setattr(view, attr, val)
         except Exception:
@@ -658,6 +661,14 @@ def main():
                 d.LookupTable = lut
             except Exception:
                 pass
+            # make the cut volume read as SOLID: flat-ish lighting (less specular,
+            # more ambient), no translucent-looking AO shading on the fluid.
+            for attr, val in (("Ambient", 0.35), ("Diffuse", 0.85), ("Specular", 0.0),
+                              ("Interpolation", "Flat")):
+                try:
+                    setattr(d, attr, val)
+                except Exception:
+                    pass
         sdisp = d
     if sdisp is not None:
         try:
