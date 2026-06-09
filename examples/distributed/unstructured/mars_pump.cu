@@ -189,6 +189,9 @@ int main(int argc, char** argv)
     amrConfig.maxLevels  = 0;
     amrConfig.blockSize  = blockSize;
     amrConfig.bucketSize = bucketSize;
+    // Keep the Exodus side sets on-device so the pump BC node lists come from the
+    // domain (defaults false -> sideSetNodes() would be empty without this).
+    amrConfig.storeSideSets = true;
 
     AmrManager<TetTag, KeyType, RealType> amr(amrConfig);
     amr.initialize(meshFile, rank, numRanks);
@@ -263,22 +266,29 @@ int main(int argc, char** argv)
     // -------- Resolve side-sets to local node lists (pump semantics) --------
     if (!cavityMode)
     {
+        // The face-normal/area path below still needs the reader's per-triangle
+        // coords (the domain side-set API stores node lists only, no faces yet),
+        // so keep the reader read alive for that path and the global-found
+        // diagnostics. The node LISTS (wall/inlet/outlet buckets) now come from
+        // the domain's on-device side sets instead of an in-driver resolve.
         ExodusSideSets ss = readExodusSideSetsTet4(meshFile, rank);
 
-        // Resolve a side-set node to its RUNTIME local id by its COORDINATE
-        // (the Exodus id is a dead index after ingest). Shared domain helper:
-        // coord -> Hilbert key (same cstone::sfc3D + box the domain used) ->
-        // LowerBound in the SFC map. Same resolver the projection driver uses.
-        auto resolveCoords = [&] (const std::vector<std::array<double, 3>>& coords) {
-            return amr.domain().resolveSideSetNodesToLocal(coords);
+        // Copy a domain side-set node list (device) to a host std::vector<int>.
+        auto toHost = [](const cstone::DeviceVector<int>& d) {
+            std::vector<int> h(d.size());
+            if (!h.empty())
+                thrust::copy(thrust::device_pointer_cast(d.data()),
+                             thrust::device_pointer_cast(d.data() + d.size()), h.begin());
+            return h;
         };
 
-        // Inlet + outlet by name; every other side-set is a no-slip wall.
+        // Inlet + outlet by name; every other side-set is a no-slip wall. Node
+        // lists are pre-resolved on-device by the domain (opt-in storeSideSets).
         std::vector<int> wallNodes;
-        for (const auto& [name, gids] : ss.nodesByName)
+        for (const auto& name : amr.domain().sideSetNames())
         {
             if (name == inletSS || name == outletSS) continue;
-            auto r = resolveCoords(ss.nodeCoordsByName[name]);
+            auto r = toHost(amr.domain().sideSetNodes(name));
             wallNodes.insert(wallNodes.end(), r.begin(), r.end());
         }
         std::sort(wallNodes.begin(), wallNodes.end());
@@ -291,23 +301,21 @@ int main(int argc, char** argv)
         auto dumpAvailable = [&] () {
             if (rank != 0) return;
             std::cerr << "  side-sets present in mesh (name shown in [brackets], with length):\n";
-            for (const auto& [name, gids] : ss.nodesByName)
+            for (const auto& name : amr.domain().sideSetNames())
                 std::cerr << "    [" << name << "]  len=" << name.size()
-                          << "  nodes=" << gids.size() << "\n";
+                          << "  nodes=" << amr.domain().sideSetNodeKeys(name).size() << "\n";
         };
 
         std::vector<int> inletNodes, outletNodes;
         {
-            auto it = ss.nodesByName.find(inletSS);
-            if (it != ss.nodesByName.end()) inletNodes = resolveCoords(ss.nodeCoordsByName[inletSS]);
+            if (amr.domain().hasSideSet(inletSS)) inletNodes = toHost(amr.domain().sideSetNodes(inletSS));
             else if (rank == 0)
             {
                 std::cerr << "WARNING: inlet side-set [" << inletSS << "] (len="
                           << inletSS.size() << ") not found in mesh\n";
                 dumpAvailable();
             }
-            it = ss.nodesByName.find(outletSS);
-            if (it != ss.nodesByName.end()) outletNodes = resolveCoords(ss.nodeCoordsByName[outletSS]);
+            if (amr.domain().hasSideSet(outletSS)) outletNodes = toHost(amr.domain().sideSetNodes(outletSS));
             else if (rank == 0)
             {
                 std::cerr << "WARNING: outlet side-set [" << outletSS << "] (len="
