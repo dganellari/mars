@@ -1665,6 +1665,35 @@ __global__ void computeDivergencePerNodeKernel(const KeyType* c0, const KeyType*
 }
 
 // =============================================================================
+// Inlet boundary-flux source (GUARDED, opt-in). The interior SCS divergence
+// scatter integrates only the INTERIOR sub-control-surfaces of each element; the
+// EXTERIOR inlet-face portion of a boundary node's control volume has no interior
+// SCS face, so the mass actually crossing the inlet opening is never registered.
+// This adds it: per inlet node, += (uTarget . areaVecOutward), where areaVec is
+// the node's outward inlet area-vector. A prescribed inflow makes uTarget oppose
+// the outward normal, so the term is NEGATIVE -- net inflow shows up as negative
+// divergence, which is exactly the sign the projection needs to pull mass in.
+// Only inlet nodes carry a nonzero areaVec; every other node adds 0.
+// =============================================================================
+
+template<typename RealType>
+__global__ void addInletFluxSourceKernel(const RealType* uTgt,
+                                         const RealType* vTgt,
+                                         const RealType* wTgt,
+                                         const RealType* areaVecX,
+                                         const RealType* areaVecY,
+                                         const RealType* areaVecZ,
+                                         RealType* divAccNode,
+                                         size_t numNodes)
+{
+    size_t i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= numNodes) return;
+    RealType ax = areaVecX[i], ay = areaVecY[i], az = areaVecZ[i];
+    // Off-inlet nodes have a zero area-vector -> no-op.
+    divAccNode[i] += uTgt[i] * ax + vTgt[i] * ay + wTgt[i] * az;
+}
+
+// =============================================================================
 // Rhie-Chow corrected divergence kernel for periodic Q1-Q1 CVFEM. Same as
 // computeDivergencePerNodeKernel but adds the Rhie-Chow pressure-velocity
 // coupling correction at each SCS face:
@@ -2298,6 +2327,22 @@ struct NSStepper
     RealType outletU = -1;
     RealType outletDirX = 1, outletDirY = 0, outletDirZ = 0;
     bool outletDoNothing = true;  // do-nothing outlet (free velocity + p=0 face); false = mass-conserving velocity outlet
+
+    // GUARDED inlet boundary-flux source (off by default). The interior SCS
+    // divergence scatter never integrates the EXTERIOR inlet-face flux (that part
+    // of a boundary node's control volume has no interior sub-control-surface), so
+    // a velocity-inlet + free-pressure outlet under-counts the mass actually
+    // entering. When enabled, runPressureSolveStep adds the prescribed inflow
+    // (uTarget . n)*A per inlet node into the divergence accumulator before the
+    // RHS build. d_inletAreaVec{X,Y,Z} are the per-node OUTWARD inlet area-vectors
+    // (un-normalized, nodeCount-sized, zero off the inlet); the source is the dot
+    // of the prescribed inlet velocity with this vector. Filled by the driver.
+    bool addInletFluxSource = false;
+    cstone::DeviceVector<RealType> d_inletAreaVecX, d_inletAreaVecY, d_inletAreaVecZ;
+    // Per-node OUTWARD outlet area-vectors (un-normalized, nodeCount-sized, zero
+    // off the outlet). Used only by the through-flow diagnostic to measure
+    // Q_out = sum_owned( u . outletAreaVec ). Filled by the driver.
+    cstone::DeviceVector<RealType> d_outletAreaVecX, d_outletAreaVecY, d_outletAreaVecZ;
 
     // Constant streamwise (and orthogonal) momentum body force, added in the
     // predictor as +dt*f/rho (BDF1) and +(2dt/3)*f/rho (BDF2). Defaults to 0
@@ -6529,6 +6574,23 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
     s.domain.reverseExchangeNodeHaloAdd(d_divAccNode);
     maybePeriodicSum<KeyType, RealType, ElementTag>(s, d_divAccNode);
 
+    // GUARDED inlet boundary-flux source. Add the prescribed inlet-face inflow
+    // that the interior SCS scatter cannot see. Applied AFTER the reverse-halo
+    // fold so each OWNED inlet node receives its complete source exactly once (the
+    // per-node area-vectors were already owner-summed + halo-published in the
+    // driver). Off by default -> the do-nothing path stays byte-identical.
+    if (s.addInletFluxSource
+        && s.d_inletAreaVecX.size() == s.nodeCount
+        && s.d_inletAreaVecY.size() == s.nodeCount
+        && s.d_inletAreaVecZ.size() == s.nodeCount)
+    {
+        addInletFluxSourceKernel<RealType><<<nodeBlocks, s.blockSize>>>(
+            s.d_uTarget.data(), s.d_vTarget.data(), s.d_wTarget.data(),
+            s.d_inletAreaVecX.data(), s.d_inletAreaVecY.data(), s.d_inletAreaVecZ.data(),
+            d_divAccNode.data(), s.nodeCount);
+        cudaDeviceSynchronize();
+    }
+
     // Source-of-NaN trace: count non-finite divAccNode over ALL owned nodes and
     // over the owned-BOUNDARY subset separately. The interior diagnostic below
     // (maxOwnedInteriorAbs) excludes boundary DOFs, so a boundary NaN is
@@ -7237,6 +7299,43 @@ inline RealType keOwned(NSStepper<KeyType, RealType, ElementTag>& s,
             RealType uu = u[i], vv = v[i], ww = w[i];
             return RealType(0.5) * mass[dof] * (uu * uu + vv * vv + ww * ww);
         }, RealType(0), thrust::plus<RealType>());
+    RealType global = 0;
+    MPI_Datatype mpi_r = std::is_same<RealType, double>::value ? MPI_DOUBLE : MPI_FLOAT;
+    MPI_Allreduce(&local, &global, 1, mpi_r, MPI_SUM, MPI_COMM_WORLD);
+    return global;
+}
+
+// Net flux of a velocity field through a side-set: sum over OWNED nodes of
+// (u . areaVecOutward), with areaVec the per-node outward area-vector (zero off
+// the set). Partition-independent (owned-only) and globally reduced. Used by the
+// pump through-flow diagnostic to measure Q_out against the known Q_in. A
+// positive value means net OUTFLOW through the set.
+template<typename KeyType, typename RealType, typename ElementTag = HexTag>
+inline RealType fluxThroughOwned(NSStepper<KeyType, RealType, ElementTag>& s,
+                                 const cstone::DeviceVector<RealType>& du,
+                                 const cstone::DeviceVector<RealType>& dv,
+                                 const cstone::DeviceVector<RealType>& dw,
+                                 const cstone::DeviceVector<RealType>& aX,
+                                 const cstone::DeviceVector<RealType>& aY,
+                                 const cstone::DeviceVector<RealType>& aZ)
+{
+    const auto& d_own = s.domain.getNodeOwnershipMap();
+    size_t n = s.nodeCount;
+    RealType local = RealType(0);
+    if (aX.size() == n && aY.size() == n && aZ.size() == n)
+    {
+        local = thrust::transform_reduce(thrust::device,
+            thrust::counting_iterator<size_t>(0),
+            thrust::counting_iterator<size_t>(n),
+            [own = d_own.data(), n2d = s.d_node_to_dof.data(), nOwn = s.numOwnedDofs,
+             u = du.data(), v = dv.data(), w = dw.data(),
+             ax = aX.data(), ay = aY.data(), az = aZ.data()] __device__ (size_t i) -> RealType {
+                if (own[i] != 1) return RealType(0);
+                int dof = n2d[i];
+                if (dof < 0 || dof >= nOwn) return RealType(0);
+                return u[i]*ax[i] + v[i]*ay[i] + w[i]*az[i];
+            }, RealType(0), thrust::plus<RealType>());
+    }
     RealType global = 0;
     MPI_Datatype mpi_r = std::is_same<RealType, double>::value ? MPI_DOUBLE : MPI_FLOAT;
     MPI_Allreduce(&local, &global, 1, mpi_r, MPI_SUM, MPI_COMM_WORLD);

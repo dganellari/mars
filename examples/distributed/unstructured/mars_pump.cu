@@ -64,15 +64,15 @@ int main(int argc, char** argv)
     std::string meshFile;
     std::string vtuPrefix;
     std::string bcMode   = "pump";    // "pump" (Exodus side-sets) or "cavity" (tet NS validation)
-    // Default mass-conserving: a velocity-inlet + free pressure-outlet leaves an
-    // UNPROJECTABLE net flux -- the divergence operator only sees interior faces,
-    // so sum(div)==0 and the pressure solve is never told mass entered -> no
-    // through-flow (flow dies at the inlet, pressure parks in the body). The
-    // mass-conserving outlet removes exactly Q (velocity outflow) + a single p=0
-    // pin, balancing the flux so the projection builds the inlet->outlet gradient
-    // that drives flow THROUGH the passage. --outlet=do-nothing selects the free
-    // pressure outlet (only correct once a boundary-flux source term is added).
-    std::string outletMode = "mass-conserving";
+    // Default do-nothing: pin p=0 over the WHOLE outlet face and leave the outlet
+    // velocity FREE (natural-Neumann). This is the channel-proven pairing -- a
+    // fixed-pressure outlet against a velocity-inlet forces the interior pressure
+    // to ramp inlet->outlet, building the cross-passage head that drives flow
+    // THROUGH the passage. Pinning BOTH ends as velocity-Dirichlet + a single p=0
+    // pin (mass-conserving) leaves a flat-pressure tank-recirculation solution ->
+    // dead passage. --outlet=mass-conserving restores the single-pin velocity
+    // outflow (kept selectable for A/B against the legacy pump state).
+    std::string outletMode = "do-nothing";
     // Advection scheme: "skew" (KE-conserving, default), "upwind" (1st-order),
     // or "barth-jespersen" (2nd-order limited, matches mesh developers' legacy).
     std::string advScheme  = "skew";
@@ -96,6 +96,14 @@ int main(int argc, char** argv)
     // uniform (Uinf,0,0) IC seeds spurious +x flow in both tanks; --pump-uniform-ic
     // restores it for comparison.
     bool pumpUniformIC = false;
+    // GUARDED, off by default. Integrate the prescribed inlet velocity over the
+    // inlet boundary faces and add the net inflow as a source into the pressure-
+    // Poisson divergence at inlet nodes. The interior SCS scatter already gives a
+    // LOCAL inlet source, but the EXTERIOR boundary-face flux through the opening
+    // is in no element's interior sub-control-surface, so it is never integrated.
+    // This adds exactly that missing term. Default false keeps the do-nothing
+    // path byte-identical until we A/B it.
+    bool addInletFluxSource = false;
     RealType    inletU   = 0.5;        // inlet speed (m/s)
     RealType    rho      = 1000.0;     // water (kg/m^3)
     RealType    nu       = 1.0e-6;     // water kinematic viscosity (m^2/s) = mu/rho
@@ -116,8 +124,9 @@ int main(int argc, char** argv)
         if      (a.rfind("--mesh=", 0) == 0)         meshFile  = a.substr(7);
         else if (a.rfind("--vtu-output=", 0) == 0)   vtuPrefix = a.substr(13);
         else if (a == "--bc=cavity")                 bcMode    = "cavity";  // tet NS validation: lid-driven cavity, no side-sets
-        else if (a == "--outlet=do-nothing")         outletMode = "do-nothing";    // free velocity + p=0 face (unprojectable w/o a flux source)
-        else if (a == "--outlet=mass-conserving")    outletMode = "mass-conserving"; // DEFAULT: velocity outflow + single pin (drives through-flow)
+        else if (a == "--outlet=do-nothing")         outletMode = "do-nothing";    // DEFAULT: whole-face p=0 + free outlet velocity (through-flow driver)
+        else if (a == "--outlet=mass-conserving")    outletMode = "mass-conserving"; // velocity outflow + single p=0 pin (legacy pump state)
+        else if (a == "--inlet-flux-source")         addInletFluxSource = true;      // add prescribed inlet flux as a divergence source (GUARDED, off by default)
         else if (a == "--upwind")                    advScheme  = "upwind";  // 1st-order upwind
         else if (a == "--skew")                      advScheme  = "skew";    // skew-symmetric (default)
         else if (a == "--bj")                        advScheme  = "barth-jespersen"; // 2nd-order limited
@@ -154,6 +163,11 @@ int main(int argc, char** argv)
                     "  --inlet-ss=NAME      inlet side-set name (required for pump BC)\n"
                     "  --inlet-flip-normal  flip inlet normal sign (use if vectors come out OUTWARD)\n"
                     "  --outlet-ss=NAME     outlet side-set name (required for pump BC)\n"
+                    "  --outlet=MODE        do-nothing (DEFAULT: whole-face p=0 + FREE outlet velocity,\n"
+                    "                       the through-flow driver) | mass-conserving (velocity outflow\n"
+                    "                       + single p=0 pin, legacy pump state)\n"
+                    "  --inlet-flux-source  add the prescribed inlet boundary flux as a pressure-Poisson\n"
+                    "                       divergence source at inlet nodes (GUARDED, off by default)\n"
                     "  --inlet-velocity=V   inlet speed along x (default 0.5)\n"
                     "  --no-inlet-pernode-normal  use one global inlet normal (default: per-node)\n"
                     "  --advection=NAME     skew (default) | upwind | barth-jespersen (--bj)\n"
@@ -197,7 +211,11 @@ int main(int argc, char** argv)
             std::cout << "BC          = lid-driven cavity (lid u = " << inletU << ")\n";
         else
             std::cout << "Inlet  SS   = " << inletSS  << "  (u = " << inletU << ")\n"
-                      << "Outlet SS   = " << outletSS << "  (p = 0)\n"
+                      << "Outlet SS   = " << outletSS
+                      << (outletMode == "mass-conserving"
+                            ? "  (velocity outflow + single p=0 pin)"
+                            : "  (whole-face p=0, FREE outlet velocity -- through-flow driver)") << "\n"
+                      << "Inlet flux  = " << (addInletFluxSource ? "boundary-flux source ON" : "OFF (interior SCS only)") << "\n"
                       << "Walls       = all other side-sets (no-slip)\n";
         std::cout << "rho         = " << rho << "   nu = " << nu << "\n"
                   << "dt          = " << dt << "   steps = " << numSteps << "\n"
@@ -291,6 +309,12 @@ int main(int argc, char** argv)
     // mass-conserving (velocity-Dirichlet outflow + single pin). The latter
     // over-constrains velocity and was seen to blow up after several flow-throughs.
     s.outletDoNothing = (outletMode != "mass-conserving");
+    s.addInletFluxSource = addInletFluxSource;
+
+    // Prescribed inlet volume flux Q_in = inletU * areaIn, captured at function
+    // scope so the per-step through-flow diagnostic can compare it to the measured
+    // outlet flux. <0 means "not a pump case / no inlet area".
+    double qIn = -1.0;
 
     // -------- Resolve side-sets to local node lists (pump semantics) --------
     if (!cavityMode)
@@ -492,9 +516,69 @@ int main(int argc, char** argv)
             return std::sqrt(out[0]*out[0] + out[1]*out[1] + out[2]*out[2]);
         };
 
+        // Per-node OUTWARD area-vector for a side-set, nodeCount-sized, zero off
+        // the set. Same once-per-face owned scatter + reverse-halo-add + forward-
+        // halo publish as the inlet-normal path, so a node whose incident faces
+        // span ranks still gets the complete owner sum. The magnitude at a node is
+        // its share of the opening area; the direction is outward (Exodus winding).
+        // Reused by the inlet per-node normals, the inlet flux source, and the
+        // through-flow diagnostic so the geometry is computed one consistent way.
+        auto perNodeAreaVec = [&](const std::string& nm,
+                                  std::vector<RealType>& outX,
+                                  std::vector<RealType>& outY,
+                                  std::vector<RealType>& outZ)
+        {
+            const size_t nNodes = amr.domain().getNodeCount();
+            outX.assign(nNodes, RealType(0));
+            outY.assign(nNodes, RealType(0));
+            outZ.assign(nNodes, RealType(0));
+            auto tit = ss.triangleCoordsByName.find(nm);
+            if (tit != ss.triangleCoordsByName.end())
+            {
+                std::vector<int> triLocal =
+                    amr.domain().resolveSideSetNodesToLocalKeepMisses(tit->second);
+                for (size_t f = 0; f + 2 < tit->second.size(); f += 3)
+                {
+                    int la = triLocal[f];
+                    if (la < 0 || hostOwnFA[la] != 1) continue;   // count once: owner of first node
+                    const auto& A = tit->second[f];
+                    const auto& B = tit->second[f + 1];
+                    const auto& C = tit->second[f + 2];
+                    double e1x = B[0]-A[0], e1y = B[1]-A[1], e1z = B[2]-A[2];
+                    double e2x = C[0]-A[0], e2y = C[1]-A[1], e2z = C[2]-A[2];
+                    double ax = 0.5*(e1y*e2z - e1z*e2y);
+                    double ay = 0.5*(e1z*e2x - e1x*e2z);
+                    double az = 0.5*(e1x*e2y - e1y*e2x);
+                    // Spread the triangle area-vector equally over its 3 vertices.
+                    for (int j = 0; j < 3; ++j)
+                    {
+                        int li = triLocal[f + j];
+                        if (li < 0 || (size_t)li >= nNodes) continue;
+                        outX[li] += RealType(ax / 3.0);
+                        outY[li] += RealType(ay / 3.0);
+                        outZ[li] += RealType(az / 3.0);
+                    }
+                }
+            }
+            cstone::DeviceVector<RealType> dX(nNodes), dY(nNodes), dZ(nNodes);
+            cudaMemcpy(dX.data(), outX.data(), nNodes*sizeof(RealType), cudaMemcpyHostToDevice);
+            cudaMemcpy(dY.data(), outY.data(), nNodes*sizeof(RealType), cudaMemcpyHostToDevice);
+            cudaMemcpy(dZ.data(), outZ.data(), nNodes*sizeof(RealType), cudaMemcpyHostToDevice);
+            amr.domain().reverseExchangeNodeHaloAdd(dX);
+            amr.domain().reverseExchangeNodeHaloAdd(dY);
+            amr.domain().reverseExchangeNodeHaloAdd(dZ);
+            amr.domain().exchangeNodeHalo(dX);
+            amr.domain().exchangeNodeHalo(dY);
+            amr.domain().exchangeNodeHalo(dZ);
+            cudaMemcpy(outX.data(), dX.data(), nNodes*sizeof(RealType), cudaMemcpyDeviceToHost);
+            cudaMemcpy(outY.data(), dY.data(), nNodes*sizeof(RealType), cudaMemcpyDeviceToHost);
+            cudaMemcpy(outZ.data(), dZ.data(), nNodes*sizeof(RealType), cudaMemcpyDeviceToHost);
+        };
+
         double aIn[3], aOut[3];
         double areaIn  = faceAreaVec(inletSS,  aIn);
         double areaOut = faceAreaVec(outletSS, aOut);
+        qIn = double(inletU) * areaIn;   // prescribed inflow for the through-flow diagnostic
 
         // Inlet velocity along the INWARD normal (-outward), magnitude Uinf.
         // sgn flips the whole convention if the mesh's face winding makes the
@@ -507,75 +591,23 @@ int main(int argc, char** argv)
             s.inletDirZ = RealType(sgn * aIn[2] / areaIn);
         }
 
+        // -------- Per-node inlet OUTWARD area-vectors --------
+        // One halo-complete per-node inlet area-vector field feeds two things: the
+        // per-node inward normals (direction = -areaVec/|areaVec|) and the guarded
+        // inlet flux source (flux = uTarget . areaVec). Computing it once keeps the
+        // two consistent.
+        std::vector<RealType> h_inAx, h_inAy, h_inAz;
+        if (areaIn > 1e-30) perNodeAreaVec(inletSS, h_inAx, h_inAy, h_inAz);
+
         // -------- Per-node inlet inward normals --------
-        // The single global inletDir makes every inlet vector parallel, which on
-        // a curved inlet looks non-normal. Instead give each inlet node its OWN
-        // normal: the area-weighted sum of the inlet faces touching it. The
-        // accumulation is keyed by runtime local node id (same id space as
-        // s.inletNodes, which sideSetNodes() returns) and folded across ranks
-        // with the standard node-halo primitives, so a node whose incident faces
-        // span ranks still gets the full sum before normalizing.
+        // The single global inletDir makes every inlet vector parallel, which on a
+        // curved inlet looks non-normal. Give each inlet node its OWN normal from
+        // the area-vector above (sign flips to INWARD, matching -aIn/areaIn).
+        // Degenerate sums fall back to the global inlet direction so no node is
+        // left unset.
         if (inletPernodeNormal && areaIn > 1e-30)
         {
             const size_t nNodes = amr.domain().getNodeCount();
-            std::vector<RealType> h_nx(nNodes, RealType(0)),
-                                  h_ny(nNodes, RealType(0)),
-                                  h_nz(nNodes, RealType(0));
-            auto tit = ss.triangleCoordsByName.find(inletSS);
-            if (tit != ss.triangleCoordsByName.end())
-            {
-                // Resolve every triangle vertex to its local id (KeepMisses keeps
-                // 1:1 alignment with the coord array). Scatter each face exactly
-                // ONCE globally -- on the rank that OWNS its first node -- the
-                // same once-per-face gate faceAreaVec uses. reverseExchangeNodeHaloAdd
-                // then routes any contribution that landed on a ghost endpoint to
-                // that node's true owner; the forward exchange publishes the
-                // complete owner sum back to all ghosts. This mirrors the lumped-
-                // mass scatter pattern (owned-only scatter + reverse-add + forward).
-                std::vector<int> triLocal =
-                    amr.domain().resolveSideSetNodesToLocalKeepMisses(tit->second);
-                for (size_t f = 0; f + 2 < tit->second.size(); f += 3)
-                {
-                    int la = triLocal[f];
-                    if (la < 0 || hostOwnFA[la] != 1) continue;  // count once: owner of first node
-                    const auto& A = tit->second[f];
-                    const auto& B = tit->second[f + 1];
-                    const auto& C = tit->second[f + 2];
-                    double e1x = B[0]-A[0], e1y = B[1]-A[1], e1z = B[2]-A[2];
-                    double e2x = C[0]-A[0], e2y = C[1]-A[1], e2z = C[2]-A[2];
-                    double ax = 0.5*(e1y*e2z - e1z*e2y);
-                    double ay = 0.5*(e1z*e2x - e1x*e2z);
-                    double az = 0.5*(e1x*e2y - e1y*e2x);
-                    for (int j = 0; j < 3; ++j)
-                    {
-                        int li = triLocal[f + j];
-                        if (li < 0 || (size_t)li >= nNodes) continue;
-                        h_nx[li] += RealType(ax);
-                        h_ny[li] += RealType(ay);
-                        h_nz[li] += RealType(az);
-                    }
-                }
-            }
-
-            // Fold cross-rank partials onto owners, then publish complete sums
-            // back to ghosts (mirrors every other nodal-accumulate path here).
-            cstone::DeviceVector<RealType> d_nx(nNodes), d_ny(nNodes), d_nz(nNodes);
-            cudaMemcpy(d_nx.data(), h_nx.data(), nNodes*sizeof(RealType), cudaMemcpyHostToDevice);
-            cudaMemcpy(d_ny.data(), h_ny.data(), nNodes*sizeof(RealType), cudaMemcpyHostToDevice);
-            cudaMemcpy(d_nz.data(), h_nz.data(), nNodes*sizeof(RealType), cudaMemcpyHostToDevice);
-            amr.domain().reverseExchangeNodeHaloAdd(d_nx);
-            amr.domain().reverseExchangeNodeHaloAdd(d_ny);
-            amr.domain().reverseExchangeNodeHaloAdd(d_nz);
-            amr.domain().exchangeNodeHalo(d_nx);
-            amr.domain().exchangeNodeHalo(d_ny);
-            amr.domain().exchangeNodeHalo(d_nz);
-            cudaMemcpy(h_nx.data(), d_nx.data(), nNodes*sizeof(RealType), cudaMemcpyDeviceToHost);
-            cudaMemcpy(h_ny.data(), d_ny.data(), nNodes*sizeof(RealType), cudaMemcpyDeviceToHost);
-            cudaMemcpy(h_nz.data(), d_nz.data(), nNodes*sizeof(RealType), cudaMemcpyDeviceToHost);
-
-            // Per inlet node: normalize then flip to INWARD (negate), matching the
-            // -aIn/areaIn convention of the global normal. Degenerate sums fall
-            // back to the global inlet direction so no node is left unset.
             s.inletDirXPerNode.resize(s.inletNodes.size());
             s.inletDirYPerNode.resize(s.inletNodes.size());
             s.inletDirZPerNode.resize(s.inletNodes.size());
@@ -585,7 +617,7 @@ int main(int argc, char** argv)
                 double nx = 0, ny = 0, nz = 0;
                 if (li >= 0 && (size_t)li < nNodes)
                 {
-                    nx = h_nx[li]; ny = h_ny[li]; nz = h_nz[li];
+                    nx = h_inAx[li]; ny = h_inAy[li]; nz = h_inAz[li];
                 }
                 double len = std::sqrt(nx*nx + ny*ny + nz*nz);
                 if (len > 1e-30)
@@ -605,7 +637,35 @@ int main(int argc, char** argv)
                 std::cout << "    inlet:  per-node inward normals ON ("
                           << s.inletNodes.size() << " local nodes; --no-inlet-pernode-normal to disable)\n";
         }
-        // Mass-conserving outlet: a velocity-inlet + pressure-only outlet leaves
+
+        // Plumb the per-node inlet area-vectors to the solver for the guarded
+        // inlet flux source. Stored ONLY when the source is enabled, so the
+        // default path allocates nothing new.
+        if (addInletFluxSource && areaIn > 1e-30)
+        {
+            const size_t nNodes = amr.domain().getNodeCount();
+            s.d_inletAreaVecX.resize(nNodes);
+            s.d_inletAreaVecY.resize(nNodes);
+            s.d_inletAreaVecZ.resize(nNodes);
+            cudaMemcpy(s.d_inletAreaVecX.data(), h_inAx.data(), nNodes*sizeof(RealType), cudaMemcpyHostToDevice);
+            cudaMemcpy(s.d_inletAreaVecY.data(), h_inAy.data(), nNodes*sizeof(RealType), cudaMemcpyHostToDevice);
+            cudaMemcpy(s.d_inletAreaVecZ.data(), h_inAz.data(), nNodes*sizeof(RealType), cudaMemcpyHostToDevice);
+        }
+
+        // Per-node OUTWARD outlet area-vectors for the through-flow diagnostic
+        // (Q_out = sum_owned u.areaVec). Always available for the pump print.
+        if (areaOut > 1e-30)
+        {
+            const size_t nNodes = amr.domain().getNodeCount();
+            std::vector<RealType> h_outAx, h_outAy, h_outAz;
+            perNodeAreaVec(outletSS, h_outAx, h_outAy, h_outAz);
+            s.d_outletAreaVecX.resize(nNodes);
+            s.d_outletAreaVecY.resize(nNodes);
+            s.d_outletAreaVecZ.resize(nNodes);
+            cudaMemcpy(s.d_outletAreaVecX.data(), h_outAx.data(), nNodes*sizeof(RealType), cudaMemcpyHostToDevice);
+            cudaMemcpy(s.d_outletAreaVecY.data(), h_outAy.data(), nNodes*sizeof(RealType), cudaMemcpyHostToDevice);
+            cudaMemcpy(s.d_outletAreaVecZ.data(), h_outAz.data(), nNodes*sizeof(RealType), cudaMemcpyHostToDevice);
+        }
         // Outlet BC depends on the mode:
         //  - do-nothing (default): leave outletU<=0 so the solver masks the WHOLE
         //    outlet face as p=0 Dirichlet with FREE velocity. The inlet injects
@@ -861,6 +921,15 @@ int main(int argc, char** argv)
             RealType vmx = maxOwnedInteriorAbs<KeyType, RealType, TetTag>(s, s.d_v);
             RealType wmx = maxOwnedInteriorAbs<KeyType, RealType, TetTag>(s, s.d_w);
             double uMax = std::sqrt(double(umx)*double(umx) + double(vmx)*double(vmx) + double(wmx)*double(wmx));
+            // Through-flow: measured outlet flux Q_out = sum_owned(u . outletAreaVec)
+            // vs the prescribed inflow Q_in. Ratio -> 1 means mass crosses the whole
+            // domain (passage is live). fluxThroughOwned is collective -> all ranks.
+            double qOut = 0.0;
+            bool haveFlux = !cavityMode && qIn > 0.0 && s.d_outletAreaVecX.size() == s.nodeCount;
+            if (haveFlux)
+                qOut = double(fluxThroughOwned<KeyType, RealType, TetTag>(
+                    s, s.d_u, s.d_v, s.d_w,
+                    s.d_outletAreaVecX, s.d_outletAreaVecY, s.d_outletAreaVecZ));
             double divND = (inletU > 0 && Lscale > 0)
                            ? double(s.lastDivMax) * Lscale / inletU : double(s.lastDivMax);
             // RC-flux divergence (the operator RC actually zeros); only meaningful
@@ -886,6 +955,12 @@ int main(int argc, char** argv)
                           << "  pres_res=" << std::scientific << std::setprecision(3) << s.lastPressResid
                           << "  cg_uvw=" << s.lastUIters
                           << "\n" << std::defaultfloat;
+                if (haveFlux)
+                    std::cout << "  [through-flow] Q_in=" << std::scientific << std::setprecision(3) << qIn
+                              << "  Q_out=" << qOut
+                              << "  ratio=" << std::fixed << std::setprecision(3)
+                              << (std::abs(qIn) > 0 ? qOut / qIn : 0.0)
+                              << "\n" << std::defaultfloat;
             }
         }
         if (!vtuPrefix.empty() && (step % vtuEvery == 0 || step == numSteps))
