@@ -2277,6 +2277,11 @@ struct NSStepper
     // the prescribed Uinf is applied normal to the opening, not along a global
     // axis. Inlet velocity = Uinf * (inletDirX, inletDirY, inletDirZ).
     RealType inletDirX = 1, inletDirY = 0, inletDirZ = 0;
+    // Optional PER-NODE inlet inward normals, aligned 1:1 with inletNodes. When
+    // non-empty the pump BC drives each inlet node along ITS OWN local surface
+    // normal (Uinf * dir[k]) instead of the single global inletDir above -- the
+    // velocity stays normal to a curved inlet. Empty -> fall back to inletDir.
+    std::vector<RealType> inletDirXPerNode, inletDirYPerNode, inletDirZPerNode;
     // Mass-conserving outlet (pump). When outletU > 0, the Pump outlet nodes are
     // tagged as a velocity-Dirichlet OUTFLOW with velocity outletU along the
     // OUTWARD normal (outletDir), sized so the outlet flux removes the inlet
@@ -3423,10 +3428,50 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
                     hostIsBdry[dof] = 1;
                 }
             };
+            // Per-node inlet variant: same scatter as tag() but each node gets
+            // its own (u,v,w). Used when the driver supplied per-node normals.
+            auto tagPerNode = [&] (const std::vector<int>& nodes,
+                                   const std::vector<RealType>& u,
+                                   const std::vector<RealType>& v,
+                                   const std::vector<RealType>& w) {
+                for (size_t k = 0; k < nodes.size(); ++k)
+                {
+                    int li = nodes[k];
+                    if (li < 0 || (size_t)li >= s.nodeCount) continue;
+                    hostUTgt[li] = u[k];
+                    hostVTgt[li] = v[k];
+                    hostWTgt[li] = w[k];
+                    if (hostOwn[li] != 1) continue;
+                    int dof = hostNodeToDof[li];
+                    if (dof < 0 || dof >= s.numOwnedDofs) continue;
+                    hostIsBdry[dof] = 1;
+                }
+            };
+
             tag(s.wallNodes,    RealType(0),     RealType(0), RealType(0));
-            tag(s.inletNodes,   RealType(s.Uinf * s.inletDirX),
-                                RealType(s.Uinf * s.inletDirY),
-                                RealType(s.Uinf * s.inletDirZ));
+            const bool inletPerNode =
+                s.inletDirXPerNode.size() == s.inletNodes.size() &&
+                s.inletDirYPerNode.size() == s.inletNodes.size() &&
+                s.inletDirZPerNode.size() == s.inletNodes.size() &&
+                !s.inletNodes.empty();
+            if (inletPerNode)
+            {
+                std::vector<RealType> ui(s.inletNodes.size()), vi(s.inletNodes.size()),
+                                      wi(s.inletNodes.size());
+                for (size_t k = 0; k < s.inletNodes.size(); ++k)
+                {
+                    ui[k] = RealType(s.Uinf * s.inletDirXPerNode[k]);
+                    vi[k] = RealType(s.Uinf * s.inletDirYPerNode[k]);
+                    wi[k] = RealType(s.Uinf * s.inletDirZPerNode[k]);
+                }
+                tagPerNode(s.inletNodes, ui, vi, wi);
+            }
+            else
+            {
+                tag(s.inletNodes,   RealType(s.Uinf * s.inletDirX),
+                                    RealType(s.Uinf * s.inletDirY),
+                                    RealType(s.Uinf * s.inletDirZ));
+            }
             tag(s.extraNodes,   RealType(s.Uinf), RealType(0), RealType(0));
             // Mass-conserving outlet: velocity-Dirichlet outflow along the
             // outward normal, sized to remove the inlet flux. Only when the
