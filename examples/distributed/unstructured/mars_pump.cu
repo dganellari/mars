@@ -64,15 +64,14 @@ int main(int argc, char** argv)
     std::string meshFile;
     std::string vtuPrefix;
     std::string bcMode   = "pump";    // "pump" (Exodus side-sets) or "cavity" (tet NS validation)
-    // Default do-nothing: pin p=0 over the WHOLE outlet face and leave the outlet
-    // velocity FREE (natural-Neumann). This is the channel-proven pairing -- a
-    // fixed-pressure outlet against a velocity-inlet forces the interior pressure
-    // to ramp inlet->outlet, building the cross-passage head that drives flow
-    // THROUGH the passage. Pinning BOTH ends as velocity-Dirichlet + a single p=0
-    // pin (mass-conserving) leaves a flat-pressure tank-recirculation solution ->
-    // dead passage. --outlet=mass-conserving restores the single-pin velocity
-    // outflow (kept selectable for A/B against the legacy pump state).
-    std::string outletMode = "do-nothing";
+    // Default mass-conserving: velocity-Dirichlet outflow U_out = U_in*A_in/A_out
+    // along the outward normal + a single p=0 pin. This FORCES Q_out=Q_in by
+    // construction and is the validated through-flow-capable config (legacy pump
+    // state). The do-nothing alternative (p=0 over the WHOLE outlet face + free
+    // outlet velocity) does NOT self-drive a small interior outlet: it was verified
+    // to leave the passage dead (through-flow ratio=0). --outlet=do-nothing kept
+    // selectable for diagnostics only.
+    std::string outletMode = "mass-conserving";
     // Advection scheme: "skew" (KE-conserving, default), "upwind" (1st-order),
     // or "barth-jespersen" (2nd-order limited, matches mesh developers' legacy).
     std::string advScheme  = "skew";
@@ -96,14 +95,6 @@ int main(int argc, char** argv)
     // uniform (Uinf,0,0) IC seeds spurious +x flow in both tanks; --pump-uniform-ic
     // restores it for comparison.
     bool pumpUniformIC = false;
-    // GUARDED, off by default. Integrate the prescribed inlet velocity over the
-    // inlet boundary faces and add the net inflow as a source into the pressure-
-    // Poisson divergence at inlet nodes. The interior SCS scatter already gives a
-    // LOCAL inlet source, but the EXTERIOR boundary-face flux through the opening
-    // is in no element's interior sub-control-surface, so it is never integrated.
-    // This adds exactly that missing term. Default false keeps the do-nothing
-    // path byte-identical until we A/B it.
-    bool addInletFluxSource = false;
     RealType    inletU   = 0.5;        // inlet speed (m/s)
     RealType    rho      = 1000.0;     // water (kg/m^3)
     RealType    nu       = 1.0e-6;     // water kinematic viscosity (m^2/s) = mu/rho
@@ -124,9 +115,8 @@ int main(int argc, char** argv)
         if      (a.rfind("--mesh=", 0) == 0)         meshFile  = a.substr(7);
         else if (a.rfind("--vtu-output=", 0) == 0)   vtuPrefix = a.substr(13);
         else if (a == "--bc=cavity")                 bcMode    = "cavity";  // tet NS validation: lid-driven cavity, no side-sets
-        else if (a == "--outlet=do-nothing")         outletMode = "do-nothing";    // DEFAULT: whole-face p=0 + free outlet velocity (through-flow driver)
-        else if (a == "--outlet=mass-conserving")    outletMode = "mass-conserving"; // velocity outflow + single p=0 pin (legacy pump state)
-        else if (a == "--inlet-flux-source")         addInletFluxSource = true;      // add prescribed inlet flux as a divergence source (GUARDED, off by default)
+        else if (a == "--outlet=do-nothing")         outletMode = "do-nothing";    // whole-face p=0 + free outlet velocity (diagnostic; does NOT drive through-flow)
+        else if (a == "--outlet=mass-conserving")    outletMode = "mass-conserving"; // DEFAULT: velocity outflow + single p=0 pin, forces Q_out=Q_in (legacy pump state)
         else if (a == "--upwind")                    advScheme  = "upwind";  // 1st-order upwind
         else if (a == "--skew")                      advScheme  = "skew";    // skew-symmetric (default)
         else if (a == "--bj")                        advScheme  = "barth-jespersen"; // 2nd-order limited
@@ -163,11 +153,9 @@ int main(int argc, char** argv)
                     "  --inlet-ss=NAME      inlet side-set name (required for pump BC)\n"
                     "  --inlet-flip-normal  flip inlet normal sign (use if vectors come out OUTWARD)\n"
                     "  --outlet-ss=NAME     outlet side-set name (required for pump BC)\n"
-                    "  --outlet=MODE        do-nothing (DEFAULT: whole-face p=0 + FREE outlet velocity,\n"
-                    "                       the through-flow driver) | mass-conserving (velocity outflow\n"
-                    "                       + single p=0 pin, legacy pump state)\n"
-                    "  --inlet-flux-source  add the prescribed inlet boundary flux as a pressure-Poisson\n"
-                    "                       divergence source at inlet nodes (GUARDED, off by default)\n"
+                    "  --outlet=MODE        mass-conserving (DEFAULT: velocity outflow + single p=0\n"
+                    "                       pin, forces Q_out=Q_in) | do-nothing (whole-face p=0 + FREE\n"
+                    "                       outlet velocity, diagnostic only -- does NOT drive through-flow)\n"
                     "  --inlet-velocity=V   inlet speed along x (default 0.5)\n"
                     "  --no-inlet-pernode-normal  use one global inlet normal (default: per-node)\n"
                     "  --advection=NAME     skew (default) | upwind | barth-jespersen (--bj)\n"
@@ -213,9 +201,8 @@ int main(int argc, char** argv)
             std::cout << "Inlet  SS   = " << inletSS  << "  (u = " << inletU << ")\n"
                       << "Outlet SS   = " << outletSS
                       << (outletMode == "mass-conserving"
-                            ? "  (velocity outflow + single p=0 pin)"
-                            : "  (whole-face p=0, FREE outlet velocity -- through-flow driver)") << "\n"
-                      << "Inlet flux  = " << (addInletFluxSource ? "boundary-flux source ON" : "OFF (interior SCS only)") << "\n"
+                            ? "  (velocity outflow + single p=0 pin, forces Q_out=Q_in)"
+                            : "  (whole-face p=0, FREE outlet velocity -- diagnostic, no through-flow)") << "\n"
                       << "Walls       = all other side-sets (no-slip)\n";
         std::cout << "rho         = " << rho << "   nu = " << nu << "\n"
                   << "dt          = " << dt << "   steps = " << numSteps << "\n"
@@ -305,11 +292,10 @@ int main(int argc, char** argv)
         ? NSStepper<KeyType, RealType, TetTag>::BCKind::Cavity
         : NSStepper<KeyType, RealType, TetTag>::BCKind::Pump;
     s.lidU = RealType(inletU);   // cavity lid speed reuses the inlet-velocity flag
-    // Outlet treatment: do-nothing (free velocity + p=0 face, default, stable) or
-    // mass-conserving (velocity-Dirichlet outflow + single pin). The latter
-    // over-constrains velocity and was seen to blow up after several flow-throughs.
+    // Outlet treatment: mass-conserving (velocity-Dirichlet outflow + single pin,
+    // default, forces Q_out=Q_in) or do-nothing (free velocity + whole-face p=0,
+    // diagnostic only -- does not self-drive the passage).
     s.outletDoNothing = (outletMode != "mass-conserving");
-    s.addInletFluxSource = addInletFluxSource;
 
     // Prescribed inlet volume flux Q_in = inletU * areaIn, captured at function
     // scope so the per-step through-flow diagnostic can compare it to the measured
@@ -592,10 +578,8 @@ int main(int argc, char** argv)
         }
 
         // -------- Per-node inlet OUTWARD area-vectors --------
-        // One halo-complete per-node inlet area-vector field feeds two things: the
-        // per-node inward normals (direction = -areaVec/|areaVec|) and the guarded
-        // inlet flux source (flux = uTarget . areaVec). Computing it once keeps the
-        // two consistent.
+        // Halo-complete per-node inlet area-vector field; feeds the per-node inward
+        // normals below (direction = -areaVec/|areaVec|).
         std::vector<RealType> h_inAx, h_inAy, h_inAz;
         if (areaIn > 1e-30) perNodeAreaVec(inletSS, h_inAx, h_inAy, h_inAz);
 
@@ -636,20 +620,6 @@ int main(int argc, char** argv)
             if (rank == 0)
                 std::cout << "    inlet:  per-node inward normals ON ("
                           << s.inletNodes.size() << " local nodes; --no-inlet-pernode-normal to disable)\n";
-        }
-
-        // Plumb the per-node inlet area-vectors to the solver for the guarded
-        // inlet flux source. Stored ONLY when the source is enabled, so the
-        // default path allocates nothing new.
-        if (addInletFluxSource && areaIn > 1e-30)
-        {
-            const size_t nNodes = amr.domain().getNodeCount();
-            s.d_inletAreaVecX.resize(nNodes);
-            s.d_inletAreaVecY.resize(nNodes);
-            s.d_inletAreaVecZ.resize(nNodes);
-            cudaMemcpy(s.d_inletAreaVecX.data(), h_inAx.data(), nNodes*sizeof(RealType), cudaMemcpyHostToDevice);
-            cudaMemcpy(s.d_inletAreaVecY.data(), h_inAy.data(), nNodes*sizeof(RealType), cudaMemcpyHostToDevice);
-            cudaMemcpy(s.d_inletAreaVecZ.data(), h_inAz.data(), nNodes*sizeof(RealType), cudaMemcpyHostToDevice);
         }
 
         // Per-node OUTWARD outlet area-vectors for the through-flow diagnostic
