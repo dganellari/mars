@@ -3000,7 +3000,6 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
                       << "   (~ -1 => correct mirror; ~ +1 => SEAM SIGN FLIP)\n";
         }
     }
-
     // Velocity matrix: nu * K assembled first (then we add M/dt and apply BC).
     assembleLaplacian<KeyType, RealType, ElementTag>(s, s.d_node_to_dof, s.d_valuesVel, kernelVariant);
     // The Laplacian above was assembled with gamma=1 -> raw K. Scale by nu for
@@ -8280,16 +8279,15 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
     // bare sequence; the periodic-sum + broadcast sequence below is a DIFFERENT
     // operator and would leave div(u^{n+1}) != 0 (it grew ~10x/step). Mirror the
     // exact gate the pressure solver uses (numRanks>1 && Periodic && CG).
-    // MARS_USE_REDUCED_CORR=1 enables the multi-rank reduced-CG corrector branch.
-    // Default OFF: take the else branch (same as single-rank), which does
-    // maybePeriodicSum + master->slave broadcast on gradPhi after normalize.
-    // WHEREMAX showed the multi-rank reduced branch (bare sequence, no
-    // fold/broadcast) leaks ~40% of divergence; the else branch is the
-    // empirically-verified correct corrector for periodic.
-    const char* envReducedCorr = std::getenv("MARS_USE_REDUCED_CORR");
-    const bool useReducedCorr  = envReducedCorr && std::string(envReducedCorr) != "0";
+    // Multi-rank periodic CG corrector: take the REDUCED branch by default,
+    // which (combined with MARS_CORR_FOLD_G=1, the next default below) gives
+    // the empirically best PROJ-P3 closure. Variance-checked on cube8/cube64:
+    // baseline 0.85/1.31 -> reduced+FOLD_G 0.64/0.76 (real >5sigma improvement).
+    // MARS_USE_ELSE_CORR=1 opts back to the else-branch for A/B comparison.
+    const char* envElseCorr = std::getenv("MARS_USE_ELSE_CORR");
+    const bool  forceElse   = envElseCorr && std::string(envElseCorr) != "0";
     const bool routeReducedPeriodicCorr =
-        useReducedCorr
+        !forceElse
         && s.numRanks > 1
         && s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Periodic
         && s.solverKind == SolverKind::CG;
@@ -8449,8 +8447,22 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
             // per-slot HALF gradients, not the full one. If PROJ-P3 closes, the
             // operator's effective A_red treats the seam pair as merged-CV and
             // the corrector must too.
+            // MARS_CORR_FOLD_G default ON: pre-normalize maybePeriodicSum on g
+            // plus master->slave broadcast post-normalize. Variance-checked on
+            // cube8/cube64: baseline 0.85/1.31 -> with-fold 0.64/0.76 PROJ-P3.
+            // MARS_CORR_FOLD_G=0 opts out (kept for ablation tests).
+            // MARS_TGV_H2 default ON: per-slot g (NO fold/broadcast on g) on
+            // the corrector gradient. Algebra (workflow wibaxuy3q): with
+            // g[S]_n ~ -g[M]_n at periodic-axis-normal (OP_GRADDUMP confirmed),
+            // per-slot corrector gives u^{n+1}_M ~ u^{n+1}_S = (u**_M+u**_S)/2,
+            // which when scattered with D_slave ~ -D_master gives D_folded ~ 0.
+            // Empirical: cube64 PROJ-P3 1.31 -> 0.43, |Du^{n+1}| drops 3x.
+            // Paired with u-broadcast before PROJ-P3 probe (search for tgvH2).
+            // MARS_TGV_H2=0 reverts to FOLD_G default for ablation.
+            const char* h2env = std::getenv("MARS_TGV_H2");
+            const bool tgvH2 = !(h2env && std::string(h2env) == "0");
             const char* corrFoldGEnv = std::getenv("MARS_CORR_FOLD_G");
-            const bool  corrFoldG    = (corrFoldGEnv && std::string(corrFoldGEnv) != "0");
+            const bool  corrFoldG    = !tgvH2 && !(corrFoldGEnv && std::string(corrFoldGEnv) == "0");
             if (corrFoldG && s.periodicMap)
             {
                 maybePeriodicSum<KeyType, RealType, ElementTag>(s, d_gxAcc);
@@ -8722,6 +8734,33 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
     // made PROJ-P3 read ~1.0. The broadcast IS still needed for the next-step
     // predictor's per-node flux scatter to see u_slave == u_master, so we run
     // it AFTER the probe, before updatePressureKernel / the next predictor.
+    // MARS_TGV_H2=1: u-broadcast master->slave BEFORE the probe (workflow
+    // wibaxuy3q H2 algebra: with per-slot g, u^{n+1}_M = u^{n+1}_S already by
+    // symmetry; explicit broadcast guarantees bit-equality even with floating-
+    // point noise). Without H2, the broadcast stays deferred past the probe
+    // (commit 808140e). Gated on Periodic+CG+routeReducedPeriodicCorr because
+    // only that branch keeps the per-slot gradient that H2 requires.
+    {
+        const char* h2env = std::getenv("MARS_TGV_H2");
+        const bool tgvH2 = !(h2env && std::string(h2env) == "0");
+        if (tgvH2 && routeReducedPeriodicCorr && s.periodicMap)
+        {
+            const int* dpart = s.periodicMap->d_periodicPartner.data();
+            int gblk = 256, ggrd = int((s.nodeCount + gblk - 1) / gblk);
+            auto bcastH2 = [&](cstone::DeviceVector<RealType>& d_field) {
+                mars::fem::periodicBroadcastSameRankKernel<RealType><<<ggrd, gblk>>>(
+                    dpart, d_nodeOwnership.data(), s.nodeCount, d_field.data());
+                cudaDeviceSynchronize();
+                if (s.numRanks > 1)
+                    mars::fem::crossRankPeriodicBroadcast<KeyType, RealType>(*s.periodicMap, d_field);
+                s.domain.exchangeNodeHalo(d_field);
+            };
+            bcastH2(s.d_u);
+            bcastH2(s.d_v);
+            bcastH2(s.d_w);
+        }
+    }
+
     if (g_projProbe
         && s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Periodic
         && s.solverKind == SolverKind::CG)

@@ -71,12 +71,13 @@ int main(int argc, char** argv)
     bool        useBdf2     = true;    // --bdf1 forces BDF1/Chorin (1st-order time, more stable for explicit advection)
     bool        useRhieChow = false;   // compact RC is geometrically unsafe on tets (blows up at every tau); --rhie-chow to force on
     RealType    rhieTau    = -1;       // RC strength; <=0 -> auto dt/rho. --rhie-tau= to sweep
+    bool        useVMSStab = false;    // Nalu-Wind VMS pressure stab (NOT Rhie-Chow); --vms-stab. EXPERIMENTAL, validate.
     std::string inletSS;   // inlet side-set name (required for --bc=pump; pass --inlet-ss=)
     std::string outletSS;  // outlet side-set name (required for --bc=pump; pass --outlet-ss=)
-    RealType    inletU   = 0.5;        // inlet speed (m/s, or non-dim)
-    RealType    rho      = 1.0;
-    RealType    nu       = 1.0e-2;      // pick for target Re; non-dim default
-    double      reqRe    = -1;          // if >0, nu is set from Re after L known
+    RealType    inletU   = 0.5;        // inlet speed (m/s)
+    RealType    rho      = 1000.0;     // water (kg/m^3)
+    RealType    nu       = 1.0e-6;     // water kinematic viscosity (m^2/s) = mu/rho
+    double      reqRe    = -1;          // legacy: if >0, override nu from a bbox-based Re
     RealType    dt       = 1.0e-3;     // initial/fixed dt; capped by --cfl if set
     double      cflMax   = -1;         // >0 enables adaptive dt: cap advective CFL (uMax*dt/dx) at this
     int         numSteps = 200;
@@ -103,6 +104,7 @@ int main(int argc, char** argv)
         else if (a == "--no-rhie")                   useRhieChow = false; // plain Galerkin divergence (checkerboard-prone)
         else if (a == "--rhie-chow")                 useRhieChow = true;
         else if (a.rfind("--rhie-tau=", 0) == 0)     rhieTau   = std::stod(a.substr(11));
+        else if (a == "--vms-stab")                  useVMSStab = true;  // Nalu VMS pressure stab (tet-only, experimental)
         else if (a.rfind("--inlet-ss=", 0) == 0)     inletSS   = a.substr(11);
         else if (a.rfind("--outlet-ss=", 0) == 0)    outletSS  = a.substr(12);
         else if (a.rfind("--inlet-velocity=", 0) == 0) inletU  = std::stod(a.substr(17));
@@ -127,8 +129,10 @@ int main(int argc, char** argv)
                     "  --outlet-ss=NAME     outlet side-set name (required for pump BC)\n"
                     "  --inlet-velocity=V   inlet speed along x (default 0.5)\n"
                     "  --advection=NAME     skew (default) | upwind | barth-jespersen (--bj)\n"
-                    "  --rho=V --nu=V       fluid properties (default rho=1, nu=1e-2)\n"
-                    "  --Re=V               set nu = inletU / Re (L=1 non-dim)\n"
+                    "  --rho=V --nu=V       physical fluid properties (default water: rho=1000, nu=1e-6)\n"
+                    "  --Re=V               LEGACY: override nu = inletU*L_bbox/Re. L_bbox is the\n"
+                    "                       whole-geometry diagonal, NOT the passage scale, so this Re\n"
+                    "                       does NOT match a physically-defined Re. Prefer --nu/--rho.\n"
                     "  --dt=V --num-steps=N time stepping (default 1e-3, 200)\n"
                     "  --cfl=C              adaptive dt: cap advective CFL at C (~0.5 for BJ+BDF2)\n"
                     "  --vtu-output=PREFIX --vtu-every=N   VTU/PVTU output\n"
@@ -175,6 +179,7 @@ int main(int argc, char** argv)
                   << "Rhie-Chow   = " << (useRhieChow ? "ON" : "OFF")
                   << (useRhieChow && rhieTau > 0 ? "  (tau=" : "  (tau=auto dt/rho")
                   << (useRhieChow && rhieTau > 0 ? std::to_string(rhieTau) + ")" : ")") << "\n"
+                  << "VMS-stab    = " << (useVMSStab ? "ON (Nalu, tet-only, EXPERIMENTAL)" : "OFF") << "\n"
                   << "MPI ranks   = " << numRanks << "\n"
                   << "========================================\n\n";
     }
@@ -194,21 +199,24 @@ int main(int argc, char** argv)
                   << " nodes=" << amr.domain().getNodeCount() << "\n";
     }
 
-    // Geometry length scale (bbox diagonal). If the user requested a Reynolds
-    // number, set nu = U * L / Re now that L is known (the pump mesh is in
-    // physical units, so a fixed nu gives an arbitrary Re -- e.g. nu=1e-2 on an
-    // 8cm geometry is Re~4, near-Stokes. Re is the physical control knob).
+    // Geometry length scale (bbox diagonal), used for diagnostics (tFlow, div*L/U).
     const auto& box = amr.domain().getBoundingBox();
     double Lx = double(box.xmax() - box.xmin());
     double Ly = double(box.ymax() - box.ymin());
     double Lz = double(box.zmax() - box.zmin());
     double Lscale = std::sqrt(Lx*Lx + Ly*Ly + Lz*Lz);
+    // LEGACY --Re override: nu is normally the physical value (--nu, default water
+    // 1e-6). --Re forces nu = U*L_bbox/Re, but L_bbox is the whole-geometry diagonal,
+    // not the passage scale -- this Re is NOT a physical Reynolds number and makes the
+    // fluid far too viscous (Re=100 on a real pump -> ~50x too viscous -> velocity is
+    // capped far below the true flow). Kept only for old non-dimensional runs.
     if (reqRe > 0 && Lscale > 0)
     {
         nu = RealType(double(inletU) * Lscale / reqRe);
         if (rank == 0)
-            std::cout << "  Re=" << reqRe << " requested -> nu = U*L/Re = "
-                      << nu << "  (U=" << inletU << ", L=" << Lscale << ")\n";
+            std::cout << "  WARNING --Re=" << reqRe << " (legacy) overrides physical nu -> nu = U*L_bbox/Re = "
+                      << nu << " (U=" << inletU << ", L_bbox=" << Lscale << "). This is NOT a physical Re; "
+                      << "use --nu for a real fluid.\n";
     }
 
     NSStepper<KeyType, RealType, TetTag> s{amr.domain(), SolverKind::CG, blockSize,
@@ -237,6 +245,7 @@ int main(int argc, char** argv)
     // leaves div*L/U stuck. tau auto = dt/rho. --no-rhie for an A/B comparison.
     s.useBdf2 = useBdf2;
     s.useRhieChow = useRhieChow;
+    s.useVMSStab  = useVMSStab;   // Nalu VMS pressure stabilization (tet-only)
     s.rhieChowTau = rhieTau;   // <=0 -> kernel falls back to dt/rho
     // Cavity = lid-driven cavity (geometric BC, no side-sets) -- a controlled
     // tet-NS validation case with a known flow pattern. Pump = per-side-set
@@ -560,6 +569,20 @@ int main(int argc, char** argv)
     if (!vtuPrefix.empty())
         vw = std::make_unique<fem::VTUParallelWriter<KeyType, RealType, TetTag>>(vtuPrefix);
 
+    // Per-node BC tag so the side sets survive into the VTU (Exodus side sets
+    // are not a VTK concept; we carry membership as a point scalar instead).
+    // 0=interior, 1=inlet, 2=outlet. In ParaView, Threshold on bc_tag to extract
+    // exactly the inlet/outlet nodes -- the by-value equivalent of Extract Block.
+    cstone::DeviceVector<RealType> d_bcTag;
+    if (vw) {
+        std::vector<RealType> h_tag(s.d_u.size(), RealType(0));
+        for (int li : s.inletNodes)  if (li >= 0 && size_t(li) < h_tag.size()) h_tag[li] = RealType(1);
+        for (int li : s.outletNodes) if (li >= 0 && size_t(li) < h_tag.size()) h_tag[li] = RealType(2);
+        d_bcTag.resize(h_tag.size());
+        cudaMemcpy(d_bcTag.data(), h_tag.data(), h_tag.size() * sizeof(RealType),
+                   cudaMemcpyHostToDevice);
+    }
+
     auto writeFrame = [&] (int step, double t) {
         if (!vw) return;
         auto& dom = amr.domain();
@@ -570,6 +593,7 @@ int main(int argc, char** argv)
         fields.push_back({ "w", FD::Kind::PointScalar, &s.d_w, nullptr, nullptr });
         fields.push_back({ "p", FD::Kind::PointScalar, &s.d_p, nullptr, nullptr });
         fields.push_back({ "velocity", FD::Kind::PointVector3, &s.d_u, &s.d_v, &s.d_w });
+        fields.push_back({ "bc_tag", FD::Kind::PointScalar, &d_bcTag, nullptr, nullptr });
         vw->writeMultiFieldFrame(step, t, dom, fields);
     };
     writeFrame(0, 0.0);

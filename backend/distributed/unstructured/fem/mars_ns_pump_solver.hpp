@@ -594,6 +594,11 @@ __device__ __forceinline__ void scsLR(int ip, int& L, int& R)
     else { L = d_tetLRSCV[ip * 2]; R = d_tetLRSCV[ip * 2 + 1]; }
 }
 
+// Opt-in Nalu-Wind-style VMS pressure stabilization (separate from Rhie-Chow).
+// Included here, AFTER scsLR + the `using namespace mars/mars::fem` above, so the
+// kernel sees scsLR<>, Tet4CVFEM, ElemTraits. Off by default (s.useVMSStab).
+#include "backend/distributed/unstructured/fem/mars_vms_pressure_stab.hpp"
+
 // Host-side connectivity pointer gather. Returns NodesPerElem device pointers
 // from the connectivity tuple so launch sites can dispatch on element type
 // without spelling std::get<7> for tet (which has only 4 columns).
@@ -698,6 +703,25 @@ __global__ void addLumpedMassDiagonalKernel(const RealType* mass,
 {
     int dof = blockIdx.x * blockDim.x + threadIdx.x;
     if (dof >= numOwnedDofs) return;
+    int dp = diagPtr[dof];
+    if (dp >= 0) values[dp] += mass[dof] * invDt;
+}
+
+// Same as above but SKIP Dirichlet DOFs. Their diagonal was overwritten to 1 by
+// the BC enforcement (row=0, diag=1), so it no longer holds mass*coef -- patching
+// it would corrupt the identity row. Used to re-scale the diffusion mass diagonal
+// when adaptive-CFL dt changes (interior rows only).
+template<typename RealType>
+__global__ void addLumpedMassDiagonalInteriorKernel(const RealType* mass,
+                                                     const int* diagPtr,
+                                                     const uint8_t* isBdryDof,
+                                                     RealType invDt,
+                                                     RealType* values,
+                                                     int numOwnedDofs)
+{
+    int dof = blockIdx.x * blockDim.x + threadIdx.x;
+    if (dof >= numOwnedDofs) return;
+    if (isBdryDof[dof]) return;
     int dp = diagPtr[dof];
     if (dp >= 0) values[dp] += mass[dof] * invDt;
 }
@@ -2202,6 +2226,13 @@ struct NSStepper
     cstone::DeviceVector<RealType> d_valuesVel_bdf2;
     Matrix Avel_bdf2;
 
+    // dt the velocity-diffusion mass diagonals (M/dt and 3M/(2dt)) were baked
+    // with. With adaptive CFL dt changes per step but the matrix is assembled
+    // once at setup -> the diagonal must be patched when dt changes, else the
+    // diffusion solve multiplies velocity by dt_matrix/dt_current instead of
+    // damping it (a runaway). runImplicitDiffusionStep re-adds the delta.
+    RealType matrixDt = RealType(0);
+
     // Per-step diagnostics
     int lastPressureIters = 0;
     RealType lastPressR0    = 0;  // initial absolute residual |r0| of the pressure CG this step
@@ -2315,6 +2346,11 @@ struct NSStepper
     // question but don't fit a face-flux discretization.
     bool useRhieChow      = false;
     RealType rhieChowTau  = -1;   // <=0 => auto-pick = dt/rho
+
+    // Nalu-Wind-style VMS pressure stabilization (NOT Rhie-Chow). Opt-in,
+    // tet-only for now. Uses the residual (projected-nodal-grad - element-ip-grad),
+    // no A.dx denominator -> skew-robust. tau reuses rhieChowTau (<=0 => dt/rho).
+    bool useVMSStab       = false;
 
     // Ownership map every kernel uses. Always the domain's cached map -- we no
     // longer demote periodic slaves (see setupNSStepper). Kept as a single
@@ -3293,6 +3329,9 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
         cudaDeviceSynchronize();
         pt.lap("BDF2 velocity matrix (3M/(2dt) + nu K)");
     }
+    // Remember the dt the diffusion mass diagonals were baked with, so an
+    // adaptive-CFL dt change can patch them (see matrixDt + the diffusion step).
+    s.matrixDt = dt;
 
     // Global bounding box for BC marking. Reduce locally then MPI_Allreduce.
     auto xb = thrust::device_pointer_cast(d_x.data());
@@ -6154,6 +6193,34 @@ void runImplicitDiffusionStep(NSStepper<KeyType, RealType, ElementTag>& s, RealT
 {
     const auto& d_nodeOwnership = s.ownershipMap();
     const int nodeBlocks  = (s.nodeCount + s.blockSize - 1) / s.blockSize;
+
+    // dt-consistency: the diffusion matrices baked M/dt_matrix (BDF1) and
+    // 3M/(2 dt_matrix) (BDF2) at setup. With adaptive CFL dt changes per step;
+    // if the matrix keeps the stale dt, the solve gives u** ~ (dt_matrix/dt)*u*
+    // -> at tiny nu (negligible K) this MULTIPLIES velocity every shrinking-dt
+    // step and the run blows up. Patch the mass diagonal by the delta so the
+    // matrix coefficient matches the current dt (the RHS already uses it).
+    // Skip Dirichlet rows: BC enforcement set their diagonal to 1 (not mass/dt),
+    // so the delta-patch must touch interior rows only. Needs d_isBdryDof sized
+    // to the owned DOFs; if absent (shouldn't happen for Pump) skip the patch.
+    if (dt != s.matrixDt && s.matrixDt > RealType(0)
+        && s.d_isBdryDof.size() == static_cast<size_t>(s.numOwnedDofs)) {
+        const int dofBlocks = (s.numOwnedDofs + s.blockSize - 1) / s.blockSize;
+        const RealType dInv1 = RealType(1) / dt - RealType(1) / s.matrixDt;       // BDF1: M/dt
+        addLumpedMassDiagonalInteriorKernel<RealType><<<dofBlocks, s.blockSize>>>(
+            s.d_mass.data(), s.d_diagPtr.data(), s.d_isBdryDof.data(), dInv1,
+            s.d_valuesVel.data(), s.numOwnedDofs);
+        if (s.useBdf2 && s.d_valuesVel_bdf2.size() > 0) {
+            const RealType dInv2 = RealType(3) / (RealType(2) * dt)
+                                 - RealType(3) / (RealType(2) * s.matrixDt);      // BDF2: 3M/(2dt)
+            addLumpedMassDiagonalInteriorKernel<RealType><<<dofBlocks, s.blockSize>>>(
+                s.d_mass.data(), s.d_diagPtr.data(), s.d_isBdryDof.data(), dInv2,
+                s.d_valuesVel_bdf2.data(), s.numOwnedDofs);
+        }
+        cudaDeviceSynchronize();
+        s.matrixDt = dt;
+    }
+
     // BDF1 (step 0): mass coefficient = 1/dt, matrix = Avel.
     // BDF2 (step >= 1): mass coefficient = 3/(2*dt), matrix = Avel_bdf2.
     const bool bdf2Active = (s.useBdf2 && s.bdfStep >= 1 && s.d_valuesVel_bdf2.size() > 0);
@@ -6291,7 +6358,15 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
     const size_t numLocal  = s.domain.localElementCount();
     const int nodeBlocks   = (s.nodeCount + s.blockSize - 1) / s.blockSize;
     const int eBlocks      = numLocal > 0 ? int((numLocal + s.blockSize - 1) / s.blockSize) : 0;
-    const RealType invDt   = RealType(1) / dt;
+    // Pressure-RHS coefficient MUST be the reciprocal of the corrector's effective
+    // dt for the projection to fully zero divergence: the corrector removes
+    // (dtEff/rho)*D^T phi and A=D M^-1 D^T, so div(u^{n+1}) = div(u**)*(1 - dtEff*invDt).
+    // Under BDF2 the corrector uses dtEff=2dt/3 (see below), so invDt MUST be 3/(2dt),
+    // not 1/dt -- otherwise (1 - (2dt/3)/dt)=1/3 of the divergence survives EVERY
+    // BDF2 step (masked at high viscosity, fatal at low nu). Mirror the corrector flag.
+    const bool bdf2ActivePress = (s.useBdf2 && s.bdfStep >= 1 && s.d_valuesVel_bdf2.size() > 0);
+    const RealType invDt   = bdf2ActivePress ? (RealType(3) / (RealType(2) * dt))
+                                             : (RealType(1) / dt);
 
     cstone::DeviceVector<RealType> b(s.numOwnedDofs);
     cstone::DeviceVector<RealType> xVec(s.numTotalDofs);
@@ -6305,7 +6380,74 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
         // (Nalu-Wind, OpenFOAM). Element-generic via scsLR<ElementTag> +
         // ElemTraits<ElementTag>::ScsPerElem. tau auto = dt/rho.
         bool useRC = s.useRhieChow;
-        if (useRC)
+        // VMS path is opt-in AND tet-only (the kernel uses Tet4CVFEM::jacobian_and_dNdx).
+        bool useVMS = s.useVMSStab && std::is_same_v<ElementTag, TetTag>;
+        if (useVMS)
+        {
+            // Nalu-Wind VMS pressure stabilization: tau*(G(p) - dp/dx_ip).A, no A.dx.
+            //
+            // G(p) = PROJECTED NODAL gradient of the CURRENT pressure s.d_p,
+            // computed FRESH here (not the predictor's d_gradPx/y/z, which holds
+            // -grad p^n via the div^T path). We use computeGradientPerNodeKernel
+            // (the SCS-face Green-Gauss form) which integrates to +V*grad p, then
+            // normalize by lumped mass -> +grad p, halo-complete. This is exactly
+            // Nalu's G_i(p). dp/dx_ip (the element ip gradient) is +grad p too, so
+            // the residual (G - dp/dx) is sign-consistent.
+            RealType tauV = s.rhieChowTau;
+            if (tauV <= 0) tauV = dt / rho;
+            const auto& d_x = s.domain.getNodeX();
+            const auto& d_y = s.domain.getNodeY();
+            const auto& d_z = s.domain.getNodeZ();
+
+            // --- fresh projected nodal gradient of p (+grad p), halo-complete ---
+            cstone::DeviceVector<RealType> d_Gx(s.nodeCount, RealType(0));
+            cstone::DeviceVector<RealType> d_Gy(s.nodeCount, RealType(0));
+            cstone::DeviceVector<RealType> d_Gz(s.nodeCount, RealType(0));
+            cstone::DeviceVector<RealType> d_GxN(s.nodeCount, RealType(0));
+            cstone::DeviceVector<RealType> d_GyN(s.nodeCount, RealType(0));
+            cstone::DeviceVector<RealType> d_GzN(s.nodeCount, RealType(0));
+            computeGradientPerNodeKernel<KeyType, RealType, ElementTag><<<eBlocks, s.blockSize>>>(
+                c0, c1, c2, c3, c4, c5, c6, c7,
+                s.d_p.data(),
+                s.d_areaVec_x.data(), s.d_areaVec_y.data(), s.d_areaVec_z.data(),
+                d_Gx.data(), d_Gy.data(), d_Gz.data(),
+                startElem, numLocal);
+            cudaDeviceSynchronize();
+            s.domain.reverseExchangeNodeHaloAdd(d_Gx);
+            s.domain.reverseExchangeNodeHaloAdd(d_Gy);
+            s.domain.reverseExchangeNodeHaloAdd(d_Gz);
+            maybePeriodicSum<KeyType, RealType, ElementTag>(s, d_Gx);
+            maybePeriodicSum<KeyType, RealType, ElementTag>(s, d_Gy);
+            maybePeriodicSum<KeyType, RealType, ElementTag>(s, d_Gz);
+            normalizeGradientPerNodeKernel<RealType><<<nodeBlocks, s.blockSize>>>(
+                d_Gx.data(), d_Gy.data(), d_Gz.data(),
+                s.d_massNode.data(),
+                s.d_node_to_dof.data(), d_nodeOwnership.data(),
+                d_GxN.data(), d_GyN.data(), d_GzN.data(),
+                s.nodeCount);
+            cudaDeviceSynchronize();
+            // halo-complete the normalized nodal gradient so ghost endpoints in
+            // the VMS kernel's 0.5*(G_L+G_R) read valid values.
+            s.domain.exchangeNodeHalo(d_GxN);
+            s.domain.exchangeNodeHalo(d_GyN);
+            s.domain.exchangeNodeHalo(d_GzN);
+
+            // keepSmooth=false by default (compact -dpdx only): the full Nalu
+            // G-dpdx form double-counts grad p on the Chorin post-predictor u**
+            // and ramps |p| unbounded (validated on cube16). Set
+            // MARS_VMS_KEEP_SMOOTH=1 to A/B the full form.
+            bool keepSmooth = (std::getenv("MARS_VMS_KEEP_SMOOTH") != nullptr);
+            computeDivergenceVMSTetKernel<KeyType, RealType><<<eBlocks, s.blockSize>>>(
+                c0, c1, c2, c3,
+                s.d_uStarStar.data(), s.d_vStarStar.data(), s.d_wStarStar.data(),
+                s.d_p.data(),
+                d_GxN.data(), d_GyN.data(), d_GzN.data(),
+                d_x.data(), d_y.data(), d_z.data(),
+                s.d_areaVec_x.data(), s.d_areaVec_y.data(), s.d_areaVec_z.data(),
+                tauV, keepSmooth,
+                d_divAccNode.data(), startElem, numLocal);
+        }
+        else if (useRC)
         {
             RealType tauRC = s.rhieChowTau;
             if (tauRC <= 0) tauRC = dt / rho;

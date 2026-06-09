@@ -64,14 +64,16 @@ def main():
     ap.add_argument("--mark-io", action="store_true",
                     help="auto-detect inlet (most inward boundary flow) + outlet (most outward) and mark "
                          "them with a green/red sphere + a legend, so the intended flow path is clear")
-    ap.add_argument("--marker-size", type=float, default=0.03,
-                    help="inlet/outlet marker sphere size as a fraction of the bbox diagonal (default 0.03)")
+    ap.add_argument("--marker-size", type=float, default=0.025,
+                    help="inlet/outlet marker sphere size as a fraction of the bbox diagonal (default 0.025)")
     ap.add_argument("--orbit-deg", type=float, default=0.0,
                     help="total azimuth sweep over the run (default 0 = fixed camera; set e.g. 30 for a gentle sway)")
     ap.add_argument("--fps", type=int, default=30)
     ap.add_argument("--hold-frames", type=int, default=20,
                     help="extra orbit-only frames at the end on the final (developed) state")
-    ap.add_argument("--preset", default="Viridis (matplotlib)", help="color preset")
+    ap.add_argument("--preset", default="",
+                    help="color preset name; default is a custom light-blue->deep-blue water ramp "
+                         "(no red). Pass a name to override, e.g. 'Cool to Warm', 'Viridis (matplotlib)'")
     ap.add_argument("--streamlines", action="store_true",
                     help="use StreamTracer tubes (the real flow-path video; run under srun on a GPU "
                          "compute node so it doesn't crash; default is the fast jet-threshold)")
@@ -79,10 +81,17 @@ def main():
                     help="seed streamlines at 'x,y,z' (the inlet); default = auto peak-speed point")
     ap.add_argument("--seed-radius", type=float, default=0.0,
                     help="streamline seed-cloud radius as a fraction of bbox diagonal (default auto)")
+    ap.add_argument("--seed-line", action="store_true",
+                    help="seed streamlines along a LINE spanning the longest axis (both tanks + the "
+                         "passage between them) so lines thread THROUGH the pump, not swirl in one tank")
     ap.add_argument("--jet-frac", type=float, default=0.08,
                     help="threshold isovolume keeps speed > jet_frac*max (the visible jet); lower=more fluid shown")
-    ap.add_argument("--color-frac", type=float, default=0.6,
-                    help="color range clamped to [0, color_frac*max] so the jet stands out (not washed flat)")
+    ap.add_argument("--color-frac", type=float, default=1.0,
+                    help="color range = [0, color_frac*max]. 1.0 uses the full speed range so you see the "
+                         "blue->red gradient across the whole flow; lower saturates the fast jet to red sooner")
+    ap.add_argument("--log-color", action="store_true",
+                    help="LOG color scale -- reveals the slow nearly-stagnant tank flow AND the fast "
+                         "passage jet at once (linear squashes the slow tank into one flat color)")
     ap.add_argument("--shell", action="store_true",
                     help="add the full translucent geometry surface (prettier but HEAVY on big meshes; "
                          "default is just a cheap always-visible bounding outline)")
@@ -91,13 +100,17 @@ def main():
     ap.add_argument("--wireframe", action="store_true",
                     help="draw the pump body as a wireframe cage instead of a translucent surface "
                          "(does not block the interior at all -- particles fully visible)")
-    ap.add_argument("--zoom", type=float, default=1.6,
-                    help="camera zoom: Dolly factor >1 moves IN so the pump fills the frame (default 1.6)")
+    ap.add_argument("--zoom", type=float, default=2.0,
+                    help="camera zoom: Dolly factor >1 moves IN so the pump fills the frame (default 2.0)")
     ap.add_argument("--frame-stride", type=int, default=1,
                     help="render every Nth timestep (e.g. 4 = 4x fewer frames, 4x faster; the video "
                          "is still smooth). Use this if the render hits the job time limit.")
     ap.add_argument("--max-frames", type=int, default=0,
                     help="cap the number of frames rendered (0 = no cap); another way to fit the time budget")
+    ap.add_argument("--volume", action="store_true",
+                    help="color the whole pump SURFACE/volume by |velocity| (the 'colored tetrahedra' "
+                         "look). Integration-free, fast, robust. Use this for the second video "
+                         "(--pathlines for the first); run as a separate job.")
     ap.add_argument("--slice", action="store_true",
                     help="show a cutting-plane cross-section colored by |velocity| (MRI-like; "
                          "integration-free so it never hangs, unlike streamlines)")
@@ -142,8 +155,11 @@ def main():
     except Exception:
         pass
     view.OrientationAxesVisibility = 0
-    # depth + soft shadows for a 3D feel (ParaView 5.9+; guarded)
-    for attr, val in (("UseAmbientOcclusion", 1), ("EnableRayTracing", 0)):
+    # depth + soft shadows for a 3D feel (ParaView 5.9+; guarded). AO OFF for
+    # --volume: it darkens the cut interior and makes the solid fluid read as
+    # translucent/sparse. Keep AO for particles/streamlines where it adds depth.
+    _ao = 0 if ("--volume" in sys.argv) else 1
+    for attr, val in (("UseAmbientOcclusion", _ao), ("EnableRayTracing", 0)):
         try:
             setattr(view, attr, val)
         except Exception:
@@ -169,6 +185,14 @@ def main():
                 pass
         except Exception as e:  # noqa: BLE001
             print("[render] outline skipped: %s" % e)
+
+    # --volume is SELF-CONTAINED: it fills the frame with the opaque, velocity-
+    # colored pump volume, so a faint translucent shell over it would just fog it
+    # out (the original report: "could not see anything; not opaque at all").
+    # Force the shell off whenever --volume is requested.
+    if args.volume and args.shell:
+        print("[render] --volume is self-contained; ignoring --shell (it would fog the volume)")
+        args.shell = False
 
     if args.shell:
         surf = Show(reader, view)
@@ -200,23 +224,59 @@ def main():
     srng = mag.PointData.GetArray("speed").GetRange() if mag.PointData.GetArray("speed") else (0.0, 1.0)
     smin, smax = srng[0], (srng[1] if srng[1] > srng[0] else srng[0] + 1.0)
     lut = GetColorTransferFunction("speed")
-    # Preset names vary across ParaView builds; try the requested one then a list
-    # of common synonyms, and just keep the default if none apply.
-    _preset_candidates = [args.preset, "Viridis (matplotlib)", "viridis", "Viridis",
-                          "Cool to Warm (Extended)", "Cool to Warm", "Turbo",
-                          "Inferno (matplotlib)", "Plasma (matplotlib)", "Rainbow Uniform"]
-    for _p in _preset_candidates:
+    if args.preset:
+        # explicit preset requested
+        for _p in (args.preset, "Cool to Warm", "Viridis (matplotlib)", "viridis"):
+            try:
+                lut.ApplyPreset(_p, True)
+                print("[render] color preset: %s" % _p)
+                break
+            except Exception:
+                continue
+        lut.RescaleTransferFunction(smin, smax)
+    else:
+        # custom WATER ramp: light/baby blue (slow) -> deep blue (fast). No red.
+        # RGBPoints = [value, r, g, b, ...] across [smin, smax].
+        lo, hi = smin, (smax if smax > smin else smin + 1.0)
+        def _mix(a, b, t):
+            return a + (b - a) * t
+        # baby-blue DOMINANT: most of the range stays light/baby blue; only the
+        # very fastest fluid deepens to a medium sky blue (never dark navy).
+        stops = [(0.0, 0.86, 0.94, 1.00),   # very light baby blue (slow)
+                 (0.7, 0.70, 0.86, 0.98),   # baby blue (most of the field)
+                 (1.0, 0.40, 0.68, 0.92)]   # medium sky blue (fastest)
+        rgb_points = []
+        for frac, r, g, b in stops:
+            rgb_points += [_mix(lo, hi, frac), r, g, b]
         try:
-            lut.ApplyPreset(_p, True)
-            print("[render] color preset: %s" % _p)
-            break
-        except Exception:
-            continue
-    lut.RescaleTransferFunction(smin, smax)
+            lut.RGBPoints = rgb_points
+            lut.ColorSpace = "RGB"
+            print("[render] custom water-blue colormap (light->deep blue, no red)")
+        except Exception as e:  # noqa: BLE001
+            print("[render] custom colormap failed (%s), falling back to Cool to Warm" % e)
+            try:
+                lut.ApplyPreset("Cool to Warm", True)
+            except Exception:
+                pass
+            lut.RescaleTransferFunction(lo, hi)
     try:
         lut.NanColor = [0.2, 0.2, 0.2]
     except Exception:
         pass
+
+    # LOG color scale: the velocity range spans the fast passage jet down to the
+    # nearly-stagnant tank bulk. A linear map squashes the slow tank flow into the
+    # bottom sliver (looks flat). Log expands the low end so the tank recirculation
+    # becomes visible AND the fast passage doesn't dominate the whole scale.
+    if args.log_color:
+        try:
+            lo_pos = max(smin, smax * 1e-3)   # log can't take 0; floor at max/1000
+            lut.MapControlPointsToLogSpace()
+            lut.UseLogScale = 1
+            lut.RescaleTransferFunction(lo_pos, smax)
+            print("[render] log color scale (reveals slow tank flow + fast passage)")
+        except Exception as e:  # noqa: BLE001
+            print("[render] log color scale failed (%s)" % e)
 
     # ---- auto-detect inlet & outlet from the boundary flow (NDA-safe: all done
     # inside ParaView, coords never leave the render) and mark them ----
@@ -225,7 +285,26 @@ def main():
     if args.mark_io:
         try:
             surf = ExtractSurface(Input=mag)
-            norm = GenerateSurfaceNormals(Input=surf)
+            # the surface-normals filter has different names across PV builds
+            # (PV 6.1 does NOT have GenerateSurfaceNormals); try the known ones.
+            import paraview.simple as _ps
+            norm = None
+            for fname in ("GenerateSurfaceNormals", "SurfaceNormals",
+                          "PolyDataNormals", "Normals", "ComputeNormals"):
+                ctor = getattr(_ps, fname, None)
+                if ctor is None:
+                    continue
+                try:
+                    norm = ctor(Input=surf)
+                    print("[render] surface normals via %s" % fname)
+                    break
+                except Exception:
+                    norm = None
+            if norm is None:
+                # last resort: the surface may already carry Normals, or we
+                # compute v.n with a fabricated outward direction (skip normals).
+                norm = surf
+                print("[render] no surface-normals filter found; using surface as-is")
             try:
                 norm.ComputePointNormals = 1
             except Exception:
@@ -266,10 +345,13 @@ def main():
                     if v < in_v:
                         in_v, in_i = v, i
                 io_marks = []
+                # colors chosen to stand out against blue water + each other, no plain red
                 if in_i >= 0:
-                    io_marks.append(("INLET", list(spts.GetPoint(in_i)), [0.2, 1.0, 0.3]))
+                    io_marks.append(("INLET", list(spts.GetPoint(in_i)), [1.0, 0.85, 0.1]))   # gold
                 if out_i >= 0:
-                    io_marks.append(("OUTLET", list(spts.GetPoint(out_i)), [1.0, 0.3, 0.2]))
+                    io_marks.append(("OUTLET", list(spts.GetPoint(out_i)), [1.0, 0.2, 0.8]))   # magenta
+                print("[render] inlet found=%s (gold marker), outlet found=%s (magenta marker)"
+                      % (in_i >= 0, out_i >= 0))
                 for label, pos, col in io_marks:
                     ball = Sphere()
                     ball.Center = pos
@@ -278,19 +360,22 @@ def main():
                     bdisp = Show(ball, view)
                     bdisp.DiffuseColor = col; bdisp.AmbientColor = col
                     bdisp.Specular = 0.5
-                # fixed corner legend (2D overlay) instead of 3D labels at coords
+                    # NO floating 3D text (it rendered as huge letters and the
+                    # auto-detected point can land on a spurious mesh corner).
+                    # The small corner legend below carries the color key.
+                # small fixed corner legend (the color key)
                 try:
                     legend = Text()
-                    legend.Text = "green = INLET    red = OUTLET"
+                    legend.Text = "gold sphere = INLET    magenta sphere = OUTLET"
                     ld = Show(legend, view)
-                    ld.Color = [1, 1, 1]; ld.FontSize = 15
+                    ld.Color = [1, 1, 1]; ld.FontSize = 16
                     try:
                         ld.WindowLocation = "Upper Right Corner"
                     except Exception:
                         pass
                 except Exception:
                     pass
-                print("[render] marked inlet (green sphere) + outlet (red sphere) from boundary flow")
+                print("[render] marked inlet (green sphere) + outlet (red sphere) + 3D labels")
         except Exception as e:  # noqa: BLE001
             print("[render] inlet/outlet marking skipped (%s)" % e)
 
@@ -431,16 +516,84 @@ def main():
         except Exception:
             pass
         stream.MaximumStreamlineLength = diag * 5.0
-        stream.SeedType.Center = seed_c
-        stream.SeedType.Radius = seed_r
-        stream.SeedType.NumberOfPoints = args.n_streamlines
+        if args.seed_line:
+            # Seed along a LINE spanning the domain's LONGEST axis (the through-flow
+            # direction), so seeds are distributed across BOTH tanks and the passage
+            # between them -- streamlines then thread the passage instead of swirling
+            # in one tank from a single corner seed.
+            try:
+                ext = [bounds[1]-bounds[0], bounds[3]-bounds[2], bounds[5]-bounds[4]]
+                axis = ext.index(max(ext))
+                p1 = [cx, cy, cz]; p2 = [cx, cy, cz]
+                lo_a = bounds[2*axis] + 0.05*ext[axis]
+                hi_a = bounds[2*axis+1] - 0.05*ext[axis]
+                p1[axis] = lo_a; p2[axis] = hi_a
+                stream.SeedType = "High Resolution Line Source"
+                stream.SeedType.Point1 = p1
+                stream.SeedType.Point2 = p2
+                stream.SeedType.Resolution = args.n_streamlines
+                print("[render] seeding streamlines along the long axis (spans both tanks + passage)")
+            except Exception as e:  # noqa: BLE001
+                print("[render] line seed failed (%s), using point cloud" % e)
+                stream.SeedType = "Point Cloud"
+                stream.SeedType.Center = seed_c
+                stream.SeedType.Radius = seed_r
+                stream.SeedType.NumberOfPoints = args.n_streamlines
+        else:
+            stream.SeedType.Center = seed_c
+            stream.SeedType.Radius = seed_r
+            stream.SeedType.NumberOfPoints = args.n_streamlines
         stream.UpdatePipeline(tvals[-1])
         tubes = Tube(Input=stream)
         tubes.Radius = diag * 0.0018
         tubes.Capping = 1
         tubes.UpdatePipeline(tvals[-1])
         flow_props.append((tubes, "speed"))
-    if args.slice and not args.streamlines and not args.pathlines:
+    if args.volume and not args.streamlines and not args.pathlines:
+        # VOLUME: the pump colored by |velocity| -- the "colored tetrahedra" look.
+        # Integration-free (fast, robust), evolves with time. This is the second
+        # video type (separate job; --pathlines for the first).
+        #
+        # We CLIP the volume in half instead of taking only ExtractSurface. The
+        # outer skin of the pump is the no-slip casing wall where |u|~0, so the
+        # outer surface alone colors near-uniform (the faint slow end of the LUT)
+        # and -- with the camera outside -- reads as "empty / not opaque". A clip
+        # cuts the body open so you see the fast INTERIOR flow, opaque and
+        # clearly colored. Clipping a tet volume keeps it as a 3D unstructured
+        # grid, so the cut faces show real interior cells (the tetrahedra look).
+        vol = None
+        try:
+            clip = Clip(Input=mag)
+            try:
+                clip.ClipType = "Plane"
+                clip.ClipType.Origin = [cx, cy, cz]
+                ext = [bounds[1]-bounds[0], bounds[3]-bounds[2], bounds[5]-bounds[4]]
+                # cut perpendicular to the LONGEST extent: opens the biggest face,
+                # exposing the most interior flow.
+                axis = ext.index(max(ext))
+                nrm = [0, 0, 0]; nrm[axis] = 1
+                clip.ClipType.Normal = nrm
+            except Exception:
+                pass
+            # keep the solid half (Crinkle off -> a clean planar cut face, not a
+            # jagged cell-boundary cut); guard because the attr name varies.
+            for attr, val in (("Invert", 1), ("Crinkleclip", 0)):
+                try:
+                    setattr(clip, attr, val)
+                except Exception:
+                    pass
+            clip.UpdatePipeline(tvals[-1])
+            vol = clip
+            print("[render] --volume: clipped pump volume (interior flow exposed)")
+        except Exception as e:  # noqa: BLE001
+            # fall back to the outer surface if Clip is unavailable on this build
+            print("[render] --volume clip failed (%s); using outer surface" % e)
+            vol = ExtractSurface(Input=mag)
+            vol.UpdatePipeline(tvals[-1])
+        # opacity 1.0 -> fully opaque (the loop below also forces this for --volume)
+        flow_props.append((vol, "speed"))
+
+    if args.slice and not args.streamlines and not args.pathlines and not args.volume:
         # SLICE: a cutting plane through the pump colored by |velocity| -- an
         # MRI-like cross-section of the flow. Integration-free, so it never hangs;
         # shows the velocity field on the cut and evolves with time.
@@ -458,7 +611,7 @@ def main():
         sl.UpdatePipeline(tvals[-1])
         flow_props.append((sl, "speed"))
 
-    if not args.slice and not args.streamlines and not args.pathlines:
+    if not args.slice and not args.streamlines and not args.pathlines and not args.volume:
         # (1) fast-jet isovolume: keep cells where speed exceeds a fraction of the
         # peak. This is the moving jet; it must re-evaluate per timestep so it
         # grows with the flow.
@@ -522,9 +675,33 @@ def main():
         except Exception:
             pass
         d.Specular = 0.3
+        # --volume must be CLEARLY VISIBLE and OPAQUE: force full opacity so it
+        # never inherits a faint setting, and make the LUT drive the color (a
+        # leftover solid DiffuseColor would override ColorBy and hide the field).
+        if args.volume:
+            try:
+                d.Opacity = 1.0
+            except Exception:
+                pass
+            try:
+                # rebind the LUT to be safe, then re-assert the color array
+                d.LookupTable = lut
+            except Exception:
+                pass
+            # make the cut volume read as SOLID: flat-ish lighting (less specular,
+            # more ambient), no translucent-looking AO shading on the fluid.
+            for attr, val in (("Ambient", 0.35), ("Diffuse", 0.85), ("Specular", 0.0),
+                              ("Interpolation", "Flat")):
+                try:
+                    setattr(d, attr, val)
+                except Exception:
+                    pass
         sdisp = d
     if sdisp is not None:
-        sdisp.SetScalarBarVisibility(view, True)
+        try:
+            sdisp.SetScalarBarVisibility(view, True)
+        except Exception:
+            pass
 
     bar = GetScalarBar(lut, view)
     bar.Title = "|velocity|"
@@ -568,7 +745,12 @@ def main():
         print("[render] time annotation skipped: %s" % e)
 
     # ---- camera ----
-    ResetCamera(view)
+    # Reset to the PUMP DATA bounds only (not the markers/legend), so stray
+    # markers don't make ResetCamera zoom out and shrink the pump.
+    try:
+        ResetCamera(view, bounds[0], bounds[1], bounds[2], bounds[3], bounds[4], bounds[5])
+    except Exception:
+        ResetCamera(view)
     cam = GetActiveCamera()
     cam.Elevation(16); cam.Azimuth(25)
     view.CameraFocalPoint = [cx, cy, cz]
