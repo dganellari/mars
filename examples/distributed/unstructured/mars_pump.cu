@@ -591,6 +591,35 @@ int main(int argc, char** argv)
                    cudaMemcpyHostToDevice);
     }
 
+    // side_set_id carries EVERY named Exodus side set (1,2,3,... in sideSetNames
+    // order), not just inlet/outlet, so ParaView can Threshold on side_set_id==N
+    // to extract any set -- the by-value equivalent of Exodus Extract Block.
+    // Sourced from the domain's stored sets (commit 9a83b0d).
+    cstone::DeviceVector<RealType> d_ssId;
+    std::vector<std::string> ssIdNames;  // index i -> side_set_id (i+1); printed once below
+    if (vw) {
+        std::vector<RealType> h_id(s.d_u.size(), RealType(0));
+        const auto names = amr.domain().sideSetNames();
+        for (size_t k = 0; k < names.size(); ++k) {
+            const auto& d_loc = amr.domain().sideSetNodes(names[k]);
+            std::vector<int> h_loc(d_loc.size());
+            if (!h_loc.empty())
+                thrust::copy(thrust::device_pointer_cast(d_loc.data()),
+                             thrust::device_pointer_cast(d_loc.data() + d_loc.size()),
+                             h_loc.begin());
+            for (int li : h_loc) if (li >= 0 && size_t(li) < h_id.size()) h_id[li] = RealType(k + 1);
+            ssIdNames.push_back(names[k]);
+        }
+        d_ssId.resize(h_id.size());
+        cudaMemcpy(d_ssId.data(), h_id.data(), h_id.size() * sizeof(RealType),
+                   cudaMemcpyHostToDevice);
+        if (rank == 0 && !ssIdNames.empty()) {
+            std::cout << "  side_set_id legend (Threshold on side_set_id==N):\n";
+            for (size_t k = 0; k < ssIdNames.size(); ++k)
+                std::cout << "    " << (k + 1) << " = [" << ssIdNames[k] << "]\n";
+        }
+    }
+
     auto writeFrame = [&] (int step, double t) {
         if (!vw) return;
         auto& dom = amr.domain();
@@ -602,6 +631,7 @@ int main(int argc, char** argv)
         fields.push_back({ "p", FD::Kind::PointScalar, &s.d_p, nullptr, nullptr });
         fields.push_back({ "velocity", FD::Kind::PointVector3, &s.d_u, &s.d_v, &s.d_w });
         fields.push_back({ "bc_tag", FD::Kind::PointScalar, &d_bcTag, nullptr, nullptr });
+        fields.push_back({ "side_set_id", FD::Kind::PointScalar, &d_ssId, nullptr, nullptr });
         vw->writeMultiFieldFrame(step, t, dom, fields);
     };
     writeFrame(0, 0.0);
