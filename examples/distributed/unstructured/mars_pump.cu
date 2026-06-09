@@ -80,6 +80,10 @@ int main(int argc, char** argv)
     // surface, matching the reference solver. --no-inlet-pernode-normal falls
     // back to the old single global normal.
     bool inletPernodeNormal = true;
+    // Flip the inlet normal sign. The Exodus face winding determines whether the
+    // computed area-normal is inward or outward; the default negates to inward.
+    // If the vectors come out OUTWARD on your mesh, pass --inlet-flip-normal.
+    bool inletFlipNormal = false;
     RealType    inletU   = 0.5;        // inlet speed (m/s)
     RealType    rho      = 1000.0;     // water (kg/m^3)
     RealType    nu       = 1.0e-6;     // water kinematic viscosity (m^2/s) = mu/rho
@@ -115,6 +119,7 @@ int main(int argc, char** argv)
         else if (a.rfind("--outlet-ss=", 0) == 0)    outletSS  = a.substr(12);
         else if (a == "--inlet-pernode-normal")      inletPernodeNormal = true;
         else if (a == "--no-inlet-pernode-normal")   inletPernodeNormal = false; // global averaged normal (legacy)
+        else if (a == "--inlet-flip-normal")         inletFlipNormal = true;     // flip if vectors come out outward
         else if (a.rfind("--inlet-velocity=", 0) == 0) inletU  = std::stod(a.substr(17));
         else if (a.rfind("--rho=", 0) == 0)          rho       = std::stod(a.substr(6));
         else if (a.rfind("--nu=", 0) == 0)         { nu = std::stod(a.substr(5)); reqRe = -1; }
@@ -134,6 +139,7 @@ int main(int argc, char** argv)
                     "Pump fluid-only NS driver (tet mesh, Exodus side-sets)\n"
                     "Usage: mars_pump --mesh=FILE.exo [options]\n"
                     "  --inlet-ss=NAME      inlet side-set name (required for pump BC)\n"
+                    "  --inlet-flip-normal  flip inlet normal sign (use if vectors come out OUTWARD)\n"
                     "  --outlet-ss=NAME     outlet side-set name (required for pump BC)\n"
                     "  --inlet-velocity=V   inlet speed along x (default 0.5)\n"
                     "  --no-inlet-pernode-normal  use one global inlet normal (default: per-node)\n"
@@ -477,11 +483,14 @@ int main(int argc, char** argv)
         double areaOut = faceAreaVec(outletSS, aOut);
 
         // Inlet velocity along the INWARD normal (-outward), magnitude Uinf.
+        // sgn flips the whole convention if the mesh's face winding makes the
+        // default come out outward (--inlet-flip-normal).
+        const double sgn = inletFlipNormal ? +1.0 : -1.0;
         if (areaIn > 1e-30)
         {
-            s.inletDirX = RealType(-aIn[0] / areaIn);
-            s.inletDirY = RealType(-aIn[1] / areaIn);
-            s.inletDirZ = RealType(-aIn[2] / areaIn);
+            s.inletDirX = RealType(sgn * aIn[0] / areaIn);
+            s.inletDirY = RealType(sgn * aIn[1] / areaIn);
+            s.inletDirZ = RealType(sgn * aIn[2] / areaIn);
         }
 
         // -------- Per-node inlet inward normals --------
@@ -567,9 +576,9 @@ int main(int argc, char** argv)
                 double len = std::sqrt(nx*nx + ny*ny + nz*nz);
                 if (len > 1e-30)
                 {
-                    s.inletDirXPerNode[k] = RealType(-nx / len);
-                    s.inletDirYPerNode[k] = RealType(-ny / len);
-                    s.inletDirZPerNode[k] = RealType(-nz / len);
+                    s.inletDirXPerNode[k] = RealType(sgn * nx / len);
+                    s.inletDirYPerNode[k] = RealType(sgn * ny / len);
+                    s.inletDirZPerNode[k] = RealType(sgn * nz / len);
                 }
                 else
                 {
