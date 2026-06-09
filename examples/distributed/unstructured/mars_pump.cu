@@ -598,13 +598,16 @@ int main(int argc, char** argv)
                           << s.inletNodes.size() << " local nodes; --no-inlet-pernode-normal to disable)\n";
         }
         // Mass-conserving outlet: a velocity-inlet + pressure-only outlet leaves
-        // an unprojectable net flux (the inlet injects U*A_in with no balanced
-        // sink). Make the outlet a Dirichlet OUTFLOW that removes exactly the
-        // inlet volume flux: U_out = (U_in * A_in) / A_out, along the OUTWARD
-        // normal. Then div(u**) is in range of the projection and flow can
-        // establish a clean inlet->outlet path. The outlet keeps p=0 for the
-        // pressure null-space (set in the stepper).
-        if (areaOut > 1e-30)
+        // Outlet BC depends on the mode:
+        //  - do-nothing (default): leave outletU<=0 so the solver masks the WHOLE
+        //    outlet face as p=0 Dirichlet with FREE velocity. The inlet injects
+        //    flux against a fixed-pressure outlet, so the interior pressure MUST
+        //    ramp outlet->suction -- a real cross-passage gradient that drives
+        //    flow THROUGH the passage. (Both-ends velocity-Dirichlet instead
+        //    admits a flat-pressure tank-recirculation solution -> no through-flow.)
+        //  - mass-conserving: velocity-Dirichlet outflow U_out=(U_in*A_in)/A_out
+        //    along the outward normal + a single p=0 pin.
+        if (!s.outletDoNothing && areaOut > 1e-30)
         {
             double Uout = (double(inletU) * areaIn) / areaOut;
             s.outletU    = RealType(Uout);
