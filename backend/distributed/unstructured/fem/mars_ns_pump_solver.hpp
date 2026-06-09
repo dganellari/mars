@@ -6358,7 +6358,15 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
     const size_t numLocal  = s.domain.localElementCount();
     const int nodeBlocks   = (s.nodeCount + s.blockSize - 1) / s.blockSize;
     const int eBlocks      = numLocal > 0 ? int((numLocal + s.blockSize - 1) / s.blockSize) : 0;
-    const RealType invDt   = RealType(1) / dt;
+    // Pressure-RHS coefficient MUST be the reciprocal of the corrector's effective
+    // dt for the projection to fully zero divergence: the corrector removes
+    // (dtEff/rho)*D^T phi and A=D M^-1 D^T, so div(u^{n+1}) = div(u**)*(1 - dtEff*invDt).
+    // Under BDF2 the corrector uses dtEff=2dt/3 (see below), so invDt MUST be 3/(2dt),
+    // not 1/dt -- otherwise (1 - (2dt/3)/dt)=1/3 of the divergence survives EVERY
+    // BDF2 step (masked at high viscosity, fatal at low nu). Mirror the corrector flag.
+    const bool bdf2ActivePress = (s.useBdf2 && s.bdfStep >= 1 && s.d_valuesVel_bdf2.size() > 0);
+    const RealType invDt   = bdf2ActivePress ? (RealType(3) / (RealType(2) * dt))
+                                             : (RealType(1) / dt);
 
     cstone::DeviceVector<RealType> b(s.numOwnedDofs);
     cstone::DeviceVector<RealType> xVec(s.numTotalDofs);
