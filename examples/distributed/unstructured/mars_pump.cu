@@ -74,10 +74,10 @@ int main(int argc, char** argv)
     bool        useVMSStab = false;    // Nalu-Wind VMS pressure stab (NOT Rhie-Chow); --vms-stab. EXPERIMENTAL, validate.
     std::string inletSS;   // inlet side-set name (required for --bc=pump; pass --inlet-ss=)
     std::string outletSS;  // outlet side-set name (required for --bc=pump; pass --outlet-ss=)
-    RealType    inletU   = 0.5;        // inlet speed (m/s, or non-dim)
-    RealType    rho      = 1.0;
-    RealType    nu       = 1.0e-2;      // pick for target Re; non-dim default
-    double      reqRe    = -1;          // if >0, nu is set from Re after L known
+    RealType    inletU   = 0.5;        // inlet speed (m/s)
+    RealType    rho      = 1000.0;     // water (kg/m^3)
+    RealType    nu       = 1.0e-6;     // water kinematic viscosity (m^2/s) = mu/rho
+    double      reqRe    = -1;          // legacy: if >0, override nu from a bbox-based Re
     RealType    dt       = 1.0e-3;     // initial/fixed dt; capped by --cfl if set
     double      cflMax   = -1;         // >0 enables adaptive dt: cap advective CFL (uMax*dt/dx) at this
     int         numSteps = 200;
@@ -129,8 +129,10 @@ int main(int argc, char** argv)
                     "  --outlet-ss=NAME     outlet side-set name (required for pump BC)\n"
                     "  --inlet-velocity=V   inlet speed along x (default 0.5)\n"
                     "  --advection=NAME     skew (default) | upwind | barth-jespersen (--bj)\n"
-                    "  --rho=V --nu=V       fluid properties (default rho=1, nu=1e-2)\n"
-                    "  --Re=V               set nu = inletU / Re (L=1 non-dim)\n"
+                    "  --rho=V --nu=V       physical fluid properties (default water: rho=1000, nu=1e-6)\n"
+                    "  --Re=V               LEGACY: override nu = inletU*L_bbox/Re. L_bbox is the\n"
+                    "                       whole-geometry diagonal, NOT the passage scale, so this Re\n"
+                    "                       does NOT match a physically-defined Re. Prefer --nu/--rho.\n"
                     "  --dt=V --num-steps=N time stepping (default 1e-3, 200)\n"
                     "  --cfl=C              adaptive dt: cap advective CFL at C (~0.5 for BJ+BDF2)\n"
                     "  --vtu-output=PREFIX --vtu-every=N   VTU/PVTU output\n"
@@ -197,21 +199,24 @@ int main(int argc, char** argv)
                   << " nodes=" << amr.domain().getNodeCount() << "\n";
     }
 
-    // Geometry length scale (bbox diagonal). If the user requested a Reynolds
-    // number, set nu = U * L / Re now that L is known (the pump mesh is in
-    // physical units, so a fixed nu gives an arbitrary Re -- e.g. nu=1e-2 on an
-    // 8cm geometry is Re~4, near-Stokes. Re is the physical control knob).
+    // Geometry length scale (bbox diagonal), used for diagnostics (tFlow, div*L/U).
     const auto& box = amr.domain().getBoundingBox();
     double Lx = double(box.xmax() - box.xmin());
     double Ly = double(box.ymax() - box.ymin());
     double Lz = double(box.zmax() - box.zmin());
     double Lscale = std::sqrt(Lx*Lx + Ly*Ly + Lz*Lz);
+    // LEGACY --Re override: nu is normally the physical value (--nu, default water
+    // 1e-6). --Re forces nu = U*L_bbox/Re, but L_bbox is the whole-geometry diagonal,
+    // not the passage scale -- this Re is NOT a physical Reynolds number and makes the
+    // fluid far too viscous (Re=100 on a real pump -> ~50x too viscous -> velocity is
+    // capped far below the true flow). Kept only for old non-dimensional runs.
     if (reqRe > 0 && Lscale > 0)
     {
         nu = RealType(double(inletU) * Lscale / reqRe);
         if (rank == 0)
-            std::cout << "  Re=" << reqRe << " requested -> nu = U*L/Re = "
-                      << nu << "  (U=" << inletU << ", L=" << Lscale << ")\n";
+            std::cout << "  WARNING --Re=" << reqRe << " (legacy) overrides physical nu -> nu = U*L_bbox/Re = "
+                      << nu << " (U=" << inletU << ", L_bbox=" << Lscale << "). This is NOT a physical Re; "
+                      << "use --nu for a real fluid.\n";
     }
 
     NSStepper<KeyType, RealType, TetTag> s{amr.domain(), SolverKind::CG, blockSize,
