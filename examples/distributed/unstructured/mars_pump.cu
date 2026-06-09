@@ -569,6 +569,20 @@ int main(int argc, char** argv)
     if (!vtuPrefix.empty())
         vw = std::make_unique<fem::VTUParallelWriter<KeyType, RealType, TetTag>>(vtuPrefix);
 
+    // Per-node BC tag so the side sets survive into the VTU (Exodus side sets
+    // are not a VTK concept; we carry membership as a point scalar instead).
+    // 0=interior, 1=inlet, 2=outlet. In ParaView, Threshold on bc_tag to extract
+    // exactly the inlet/outlet nodes -- the by-value equivalent of Extract Block.
+    cstone::DeviceVector<RealType> d_bcTag;
+    if (vw) {
+        std::vector<RealType> h_tag(s.d_u.size(), RealType(0));
+        for (int li : s.inletNodes)  if (li >= 0 && size_t(li) < h_tag.size()) h_tag[li] = RealType(1);
+        for (int li : s.outletNodes) if (li >= 0 && size_t(li) < h_tag.size()) h_tag[li] = RealType(2);
+        d_bcTag.resize(h_tag.size());
+        cudaMemcpy(d_bcTag.data(), h_tag.data(), h_tag.size() * sizeof(RealType),
+                   cudaMemcpyHostToDevice);
+    }
+
     auto writeFrame = [&] (int step, double t) {
         if (!vw) return;
         auto& dom = amr.domain();
@@ -579,6 +593,7 @@ int main(int argc, char** argv)
         fields.push_back({ "w", FD::Kind::PointScalar, &s.d_w, nullptr, nullptr });
         fields.push_back({ "p", FD::Kind::PointScalar, &s.d_p, nullptr, nullptr });
         fields.push_back({ "velocity", FD::Kind::PointVector3, &s.d_u, &s.d_v, &s.d_w });
+        fields.push_back({ "bc_tag", FD::Kind::PointScalar, &d_bcTag, nullptr, nullptr });
         vw->writeMultiFieldFrame(step, t, dom, fields);
     };
     writeFrame(0, 0.0);
