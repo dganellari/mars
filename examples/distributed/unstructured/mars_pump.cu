@@ -84,6 +84,10 @@ int main(int argc, char** argv)
     // computed area-normal is inward or outward; the default negates to inward.
     // If the vectors come out OUTWARD on your mesh, pass --inlet-flip-normal.
     bool inletFlipNormal = false;
+    // Pump default: start from REST and let the inlet drive the flow. The legacy
+    // uniform (Uinf,0,0) IC seeds spurious +x flow in both tanks; --pump-uniform-ic
+    // restores it for comparison.
+    bool pumpUniformIC = false;
     RealType    inletU   = 0.5;        // inlet speed (m/s)
     RealType    rho      = 1000.0;     // water (kg/m^3)
     RealType    nu       = 1.0e-6;     // water kinematic viscosity (m^2/s) = mu/rho
@@ -120,6 +124,7 @@ int main(int argc, char** argv)
         else if (a == "--inlet-pernode-normal")      inletPernodeNormal = true;
         else if (a == "--no-inlet-pernode-normal")   inletPernodeNormal = false; // global averaged normal (legacy)
         else if (a == "--inlet-flip-normal")         inletFlipNormal = true;     // flip if vectors come out outward
+        else if (a == "--pump-uniform-ic")           pumpUniformIC = true;       // legacy free-stream IC (default: start from rest)
         else if (a.rfind("--inlet-velocity=", 0) == 0) inletU  = std::stod(a.substr(17));
         else if (a.rfind("--rho=", 0) == 0)          rho       = std::stod(a.substr(6));
         else if (a.rfind("--nu=", 0) == 0)         { nu = std::stod(a.substr(5)); reqRe = -1; }
@@ -240,6 +245,7 @@ int main(int argc, char** argv)
     NSStepper<KeyType, RealType, TetTag> s{amr.domain(), SolverKind::CG, blockSize,
                                            maxIter, RealType(tolerance), rank, numRanks};
     s.Uinf          = RealType(inletU);
+    s.pumpZeroIC    = !pumpUniformIC;   // default: start from rest
     s.icPerturbMag  = RealType(icPerturb);
     // DDT (matrix-free D M^-1 D^T): the corrector applies the literal D^T, so the
     // projection cancels divergence algebraically -> div(u^{n+1}) at roundoff. The

@@ -2272,6 +2272,12 @@ struct NSStepper
     enum class BCKind { Cavity, Channel, Pump, Periodic };
     BCKind bcKind = BCKind::Cavity;
     RealType Uinf = 1;   // channel/pump inflow speed; reuses lidU value via CLI
+    // Pump interior IC. Default: start from REST (0,0,0) and let the inlet drive
+    // the flow along the geometry. The old uniform (Uinf,0,0) everywhere seeds a
+    // spurious +x flow in BOTH tanks regardless of the real inlet orientation,
+    // which fights the true inlet->passage->outlet pattern. Set false to restore
+    // the legacy free-stream IC (--pump-uniform-ic).
+    bool pumpZeroIC = true;
     // Inlet velocity direction (unit vector). Default +x for legacy channel/pump.
     // The pump driver sets this to the INWARD normal of the inlet side-set so
     // the prescribed Uinf is applied normal to the opening, not along a global
@@ -4777,11 +4783,12 @@ void applyInitialCondition(NSStepper<KeyType, RealType, ElementTag>& s)
 {
     const auto& d_nodeOwnership = s.ownershipMap();
     int nBlocks = (s.nodeCount + s.blockSize - 1) / s.blockSize;
-    // Interior IC: cavity/channel default to (0,0,0). Pump starts at free-stream
-    // (Uinf, 0, 0) so step 1's predictor doesn't see a velocity discontinuity
-    // at the inlet/extra Dirichlet boundaries.
+    // Interior IC: cavity/channel start from rest (0,0,0). Pump default is ALSO
+    // rest (pumpZeroIC) so the flow develops only from the inlet BC along the
+    // real geometry; the legacy uniform (Uinf,0,0) seeds spurious +x flow in both
+    // tanks (wrong for an arbitrary inlet orientation). --pump-uniform-ic restores it.
     RealType iu = 0, iv = 0, iw = 0;
-    if (s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Pump)
+    if (s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Pump && !s.pumpZeroIC)
     {
         iu = s.Uinf;
     }
