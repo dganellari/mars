@@ -208,6 +208,9 @@ public:
         int blockSize            = 256;
         int irregularityIters    = 3;
         MarkingStrategy strategy = MarkingStrategy::OctreeNative;
+        // Opt-in: keep the Exodus side sets on-device in the Domain so FEM/FSI/viz
+        // can query local boundary node lists without re-reading the mesh file.
+        bool storeSideSets       = false;
     };
 
     AmrManager(const Config& config = Config{}) : config_(config), currentLevel_(0)
@@ -272,7 +275,8 @@ public:
                                             config_.bucketSize,
                                             /*bucketSizeFocus*/ 8,
                                             periodicAxesMask,
-                                            periodicBoxLo, periodicBoxHi);
+                                            periodicBoxLo, periodicBoxHi,
+                                            config_.storeSideSets);
         initTimings_.domainSyncTimeMs = lap();
 
         (void)domain_->getNodeOwnershipMap();   // builds HaloData + NodeHaloTopology

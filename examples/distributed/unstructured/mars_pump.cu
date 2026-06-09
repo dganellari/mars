@@ -74,6 +74,20 @@ int main(int argc, char** argv)
     bool        useVMSStab = false;    // Nalu-Wind VMS pressure stab (NOT Rhie-Chow); --vms-stab. EXPERIMENTAL, validate.
     std::string inletSS;   // inlet side-set name (required for --bc=pump; pass --inlet-ss=)
     std::string outletSS;  // outlet side-set name (required for --bc=pump; pass --outlet-ss=)
+    // Inlet velocity follows each node's OWN local surface normal (area-weighted
+    // from the faces touching it) instead of one global averaged direction. On a
+    // curved inlet the per-node form keeps the prescribed velocity normal to the
+    // surface, matching the reference solver. --no-inlet-pernode-normal falls
+    // back to the old single global normal.
+    bool inletPernodeNormal = true;
+    // Flip the inlet normal sign. The Exodus face winding determines whether the
+    // computed area-normal is inward or outward; the default negates to inward.
+    // If the vectors come out OUTWARD on your mesh, pass --inlet-flip-normal.
+    bool inletFlipNormal = false;
+    // Pump default: start from REST and let the inlet drive the flow. The legacy
+    // uniform (Uinf,0,0) IC seeds spurious +x flow in both tanks; --pump-uniform-ic
+    // restores it for comparison.
+    bool pumpUniformIC = false;
     RealType    inletU   = 0.5;        // inlet speed (m/s)
     RealType    rho      = 1000.0;     // water (kg/m^3)
     RealType    nu       = 1.0e-6;     // water kinematic viscosity (m^2/s) = mu/rho
@@ -107,6 +121,10 @@ int main(int argc, char** argv)
         else if (a == "--vms-stab")                  useVMSStab = true;  // Nalu VMS pressure stab (tet-only, experimental)
         else if (a.rfind("--inlet-ss=", 0) == 0)     inletSS   = a.substr(11);
         else if (a.rfind("--outlet-ss=", 0) == 0)    outletSS  = a.substr(12);
+        else if (a == "--inlet-pernode-normal")      inletPernodeNormal = true;
+        else if (a == "--no-inlet-pernode-normal")   inletPernodeNormal = false; // global averaged normal (legacy)
+        else if (a == "--inlet-flip-normal")         inletFlipNormal = true;     // flip if vectors come out outward
+        else if (a == "--pump-uniform-ic")           pumpUniformIC = true;       // legacy free-stream IC (default: start from rest)
         else if (a.rfind("--inlet-velocity=", 0) == 0) inletU  = std::stod(a.substr(17));
         else if (a.rfind("--rho=", 0) == 0)          rho       = std::stod(a.substr(6));
         else if (a.rfind("--nu=", 0) == 0)         { nu = std::stod(a.substr(5)); reqRe = -1; }
@@ -126,8 +144,10 @@ int main(int argc, char** argv)
                     "Pump fluid-only NS driver (tet mesh, Exodus side-sets)\n"
                     "Usage: mars_pump --mesh=FILE.exo [options]\n"
                     "  --inlet-ss=NAME      inlet side-set name (required for pump BC)\n"
+                    "  --inlet-flip-normal  flip inlet normal sign (use if vectors come out OUTWARD)\n"
                     "  --outlet-ss=NAME     outlet side-set name (required for pump BC)\n"
                     "  --inlet-velocity=V   inlet speed along x (default 0.5)\n"
+                    "  --no-inlet-pernode-normal  use one global inlet normal (default: per-node)\n"
                     "  --advection=NAME     skew (default) | upwind | barth-jespersen (--bj)\n"
                     "  --rho=V --nu=V       physical fluid properties (default water: rho=1000, nu=1e-6)\n"
                     "  --Re=V               LEGACY: override nu = inletU*L_bbox/Re. L_bbox is the\n"
@@ -189,6 +209,9 @@ int main(int argc, char** argv)
     amrConfig.maxLevels  = 0;
     amrConfig.blockSize  = blockSize;
     amrConfig.bucketSize = bucketSize;
+    // Keep the Exodus side sets on-device so the pump BC node lists come from the
+    // domain (defaults false -> sideSetNodes() would be empty without this).
+    amrConfig.storeSideSets = true;
 
     AmrManager<TetTag, KeyType, RealType> amr(amrConfig);
     amr.initialize(meshFile, rank, numRanks);
@@ -222,6 +245,7 @@ int main(int argc, char** argv)
     NSStepper<KeyType, RealType, TetTag> s{amr.domain(), SolverKind::CG, blockSize,
                                            maxIter, RealType(tolerance), rank, numRanks};
     s.Uinf          = RealType(inletU);
+    s.pumpZeroIC    = !pumpUniformIC;   // default: start from rest
     s.icPerturbMag  = RealType(icPerturb);
     // DDT (matrix-free D M^-1 D^T): the corrector applies the literal D^T, so the
     // projection cancels divergence algebraically -> div(u^{n+1}) at roundoff. The
@@ -263,22 +287,29 @@ int main(int argc, char** argv)
     // -------- Resolve side-sets to local node lists (pump semantics) --------
     if (!cavityMode)
     {
+        // The face-normal/area path below still needs the reader's per-triangle
+        // coords (the domain side-set API stores node lists only, no faces yet),
+        // so keep the reader read alive for that path and the global-found
+        // diagnostics. The node LISTS (wall/inlet/outlet buckets) now come from
+        // the domain's on-device side sets instead of an in-driver resolve.
         ExodusSideSets ss = readExodusSideSetsTet4(meshFile, rank);
 
-        // Resolve a side-set node to its RUNTIME local id by its COORDINATE
-        // (the Exodus id is a dead index after ingest). Shared domain helper:
-        // coord -> Hilbert key (same cstone::sfc3D + box the domain used) ->
-        // LowerBound in the SFC map. Same resolver the projection driver uses.
-        auto resolveCoords = [&] (const std::vector<std::array<double, 3>>& coords) {
-            return amr.domain().resolveSideSetNodesToLocal(coords);
+        // Copy a domain side-set node list (device) to a host std::vector<int>.
+        auto toHost = [](const cstone::DeviceVector<int>& d) {
+            std::vector<int> h(d.size());
+            if (!h.empty())
+                thrust::copy(thrust::device_pointer_cast(d.data()),
+                             thrust::device_pointer_cast(d.data() + d.size()), h.begin());
+            return h;
         };
 
-        // Inlet + outlet by name; every other side-set is a no-slip wall.
+        // Inlet + outlet by name; every other side-set is a no-slip wall. Node
+        // lists are pre-resolved on-device by the domain (opt-in storeSideSets).
         std::vector<int> wallNodes;
-        for (const auto& [name, gids] : ss.nodesByName)
+        for (const auto& name : amr.domain().sideSetNames())
         {
             if (name == inletSS || name == outletSS) continue;
-            auto r = resolveCoords(ss.nodeCoordsByName[name]);
+            auto r = toHost(amr.domain().sideSetNodes(name));
             wallNodes.insert(wallNodes.end(), r.begin(), r.end());
         }
         std::sort(wallNodes.begin(), wallNodes.end());
@@ -291,23 +322,21 @@ int main(int argc, char** argv)
         auto dumpAvailable = [&] () {
             if (rank != 0) return;
             std::cerr << "  side-sets present in mesh (name shown in [brackets], with length):\n";
-            for (const auto& [name, gids] : ss.nodesByName)
+            for (const auto& name : amr.domain().sideSetNames())
                 std::cerr << "    [" << name << "]  len=" << name.size()
-                          << "  nodes=" << gids.size() << "\n";
+                          << "  nodes=" << amr.domain().sideSetNodeKeys(name).size() << "\n";
         };
 
         std::vector<int> inletNodes, outletNodes;
         {
-            auto it = ss.nodesByName.find(inletSS);
-            if (it != ss.nodesByName.end()) inletNodes = resolveCoords(ss.nodeCoordsByName[inletSS]);
+            if (amr.domain().hasSideSet(inletSS)) inletNodes = toHost(amr.domain().sideSetNodes(inletSS));
             else if (rank == 0)
             {
                 std::cerr << "WARNING: inlet side-set [" << inletSS << "] (len="
                           << inletSS.size() << ") not found in mesh\n";
                 dumpAvailable();
             }
-            it = ss.nodesByName.find(outletSS);
-            if (it != ss.nodesByName.end()) outletNodes = resolveCoords(ss.nodeCoordsByName[outletSS]);
+            if (amr.domain().hasSideSet(outletSS)) outletNodes = toHost(amr.domain().sideSetNodes(outletSS));
             else if (rank == 0)
             {
                 std::cerr << "WARNING: outlet side-set [" << outletSS << "] (len="
@@ -460,11 +489,113 @@ int main(int argc, char** argv)
         double areaOut = faceAreaVec(outletSS, aOut);
 
         // Inlet velocity along the INWARD normal (-outward), magnitude Uinf.
+        // sgn flips the whole convention if the mesh's face winding makes the
+        // default come out outward (--inlet-flip-normal).
+        const double sgn = inletFlipNormal ? +1.0 : -1.0;
         if (areaIn > 1e-30)
         {
-            s.inletDirX = RealType(-aIn[0] / areaIn);
-            s.inletDirY = RealType(-aIn[1] / areaIn);
-            s.inletDirZ = RealType(-aIn[2] / areaIn);
+            s.inletDirX = RealType(sgn * aIn[0] / areaIn);
+            s.inletDirY = RealType(sgn * aIn[1] / areaIn);
+            s.inletDirZ = RealType(sgn * aIn[2] / areaIn);
+        }
+
+        // -------- Per-node inlet inward normals --------
+        // The single global inletDir makes every inlet vector parallel, which on
+        // a curved inlet looks non-normal. Instead give each inlet node its OWN
+        // normal: the area-weighted sum of the inlet faces touching it. The
+        // accumulation is keyed by runtime local node id (same id space as
+        // s.inletNodes, which sideSetNodes() returns) and folded across ranks
+        // with the standard node-halo primitives, so a node whose incident faces
+        // span ranks still gets the full sum before normalizing.
+        if (inletPernodeNormal && areaIn > 1e-30)
+        {
+            const size_t nNodes = amr.domain().getNodeCount();
+            std::vector<RealType> h_nx(nNodes, RealType(0)),
+                                  h_ny(nNodes, RealType(0)),
+                                  h_nz(nNodes, RealType(0));
+            auto tit = ss.triangleCoordsByName.find(inletSS);
+            if (tit != ss.triangleCoordsByName.end())
+            {
+                // Resolve every triangle vertex to its local id (KeepMisses keeps
+                // 1:1 alignment with the coord array). Scatter each face exactly
+                // ONCE globally -- on the rank that OWNS its first node -- the
+                // same once-per-face gate faceAreaVec uses. reverseExchangeNodeHaloAdd
+                // then routes any contribution that landed on a ghost endpoint to
+                // that node's true owner; the forward exchange publishes the
+                // complete owner sum back to all ghosts. This mirrors the lumped-
+                // mass scatter pattern (owned-only scatter + reverse-add + forward).
+                std::vector<int> triLocal =
+                    amr.domain().resolveSideSetNodesToLocalKeepMisses(tit->second);
+                for (size_t f = 0; f + 2 < tit->second.size(); f += 3)
+                {
+                    int la = triLocal[f];
+                    if (la < 0 || hostOwnFA[la] != 1) continue;  // count once: owner of first node
+                    const auto& A = tit->second[f];
+                    const auto& B = tit->second[f + 1];
+                    const auto& C = tit->second[f + 2];
+                    double e1x = B[0]-A[0], e1y = B[1]-A[1], e1z = B[2]-A[2];
+                    double e2x = C[0]-A[0], e2y = C[1]-A[1], e2z = C[2]-A[2];
+                    double ax = 0.5*(e1y*e2z - e1z*e2y);
+                    double ay = 0.5*(e1z*e2x - e1x*e2z);
+                    double az = 0.5*(e1x*e2y - e1y*e2x);
+                    for (int j = 0; j < 3; ++j)
+                    {
+                        int li = triLocal[f + j];
+                        if (li < 0 || (size_t)li >= nNodes) continue;
+                        h_nx[li] += RealType(ax);
+                        h_ny[li] += RealType(ay);
+                        h_nz[li] += RealType(az);
+                    }
+                }
+            }
+
+            // Fold cross-rank partials onto owners, then publish complete sums
+            // back to ghosts (mirrors every other nodal-accumulate path here).
+            cstone::DeviceVector<RealType> d_nx(nNodes), d_ny(nNodes), d_nz(nNodes);
+            cudaMemcpy(d_nx.data(), h_nx.data(), nNodes*sizeof(RealType), cudaMemcpyHostToDevice);
+            cudaMemcpy(d_ny.data(), h_ny.data(), nNodes*sizeof(RealType), cudaMemcpyHostToDevice);
+            cudaMemcpy(d_nz.data(), h_nz.data(), nNodes*sizeof(RealType), cudaMemcpyHostToDevice);
+            amr.domain().reverseExchangeNodeHaloAdd(d_nx);
+            amr.domain().reverseExchangeNodeHaloAdd(d_ny);
+            amr.domain().reverseExchangeNodeHaloAdd(d_nz);
+            amr.domain().exchangeNodeHalo(d_nx);
+            amr.domain().exchangeNodeHalo(d_ny);
+            amr.domain().exchangeNodeHalo(d_nz);
+            cudaMemcpy(h_nx.data(), d_nx.data(), nNodes*sizeof(RealType), cudaMemcpyDeviceToHost);
+            cudaMemcpy(h_ny.data(), d_ny.data(), nNodes*sizeof(RealType), cudaMemcpyDeviceToHost);
+            cudaMemcpy(h_nz.data(), d_nz.data(), nNodes*sizeof(RealType), cudaMemcpyDeviceToHost);
+
+            // Per inlet node: normalize then flip to INWARD (negate), matching the
+            // -aIn/areaIn convention of the global normal. Degenerate sums fall
+            // back to the global inlet direction so no node is left unset.
+            s.inletDirXPerNode.resize(s.inletNodes.size());
+            s.inletDirYPerNode.resize(s.inletNodes.size());
+            s.inletDirZPerNode.resize(s.inletNodes.size());
+            for (size_t k = 0; k < s.inletNodes.size(); ++k)
+            {
+                int li = s.inletNodes[k];
+                double nx = 0, ny = 0, nz = 0;
+                if (li >= 0 && (size_t)li < nNodes)
+                {
+                    nx = h_nx[li]; ny = h_ny[li]; nz = h_nz[li];
+                }
+                double len = std::sqrt(nx*nx + ny*ny + nz*nz);
+                if (len > 1e-30)
+                {
+                    s.inletDirXPerNode[k] = RealType(sgn * nx / len);
+                    s.inletDirYPerNode[k] = RealType(sgn * ny / len);
+                    s.inletDirZPerNode[k] = RealType(sgn * nz / len);
+                }
+                else
+                {
+                    s.inletDirXPerNode[k] = s.inletDirX;
+                    s.inletDirYPerNode[k] = s.inletDirY;
+                    s.inletDirZPerNode[k] = s.inletDirZ;
+                }
+            }
+            if (rank == 0)
+                std::cout << "    inlet:  per-node inward normals ON ("
+                          << s.inletNodes.size() << " local nodes; --no-inlet-pernode-normal to disable)\n";
         }
         // Mass-conserving outlet: a velocity-inlet + pressure-only outlet leaves
         // an unprojectable net flux (the inlet injects U*A_in with no balanced
@@ -583,6 +714,35 @@ int main(int argc, char** argv)
                    cudaMemcpyHostToDevice);
     }
 
+    // side_set_id carries EVERY named Exodus side set (1,2,3,... in sideSetNames
+    // order), not just inlet/outlet, so ParaView can Threshold on side_set_id==N
+    // to extract any set -- the by-value equivalent of Exodus Extract Block.
+    // Sourced from the domain's stored sets (commit 9a83b0d).
+    cstone::DeviceVector<RealType> d_ssId;
+    std::vector<std::string> ssIdNames;  // index i -> side_set_id (i+1); printed once below
+    if (vw) {
+        std::vector<RealType> h_id(s.d_u.size(), RealType(0));
+        const auto names = amr.domain().sideSetNames();
+        for (size_t k = 0; k < names.size(); ++k) {
+            const auto& d_loc = amr.domain().sideSetNodes(names[k]);
+            std::vector<int> h_loc(d_loc.size());
+            if (!h_loc.empty())
+                thrust::copy(thrust::device_pointer_cast(d_loc.data()),
+                             thrust::device_pointer_cast(d_loc.data() + d_loc.size()),
+                             h_loc.begin());
+            for (int li : h_loc) if (li >= 0 && size_t(li) < h_id.size()) h_id[li] = RealType(k + 1);
+            ssIdNames.push_back(names[k]);
+        }
+        d_ssId.resize(h_id.size());
+        cudaMemcpy(d_ssId.data(), h_id.data(), h_id.size() * sizeof(RealType),
+                   cudaMemcpyHostToDevice);
+        if (rank == 0 && !ssIdNames.empty()) {
+            std::cout << "  side_set_id legend (Threshold on side_set_id==N):\n";
+            for (size_t k = 0; k < ssIdNames.size(); ++k)
+                std::cout << "    " << (k + 1) << " = [" << ssIdNames[k] << "]\n";
+        }
+    }
+
     auto writeFrame = [&] (int step, double t) {
         if (!vw) return;
         auto& dom = amr.domain();
@@ -594,6 +754,7 @@ int main(int argc, char** argv)
         fields.push_back({ "p", FD::Kind::PointScalar, &s.d_p, nullptr, nullptr });
         fields.push_back({ "velocity", FD::Kind::PointVector3, &s.d_u, &s.d_v, &s.d_w });
         fields.push_back({ "bc_tag", FD::Kind::PointScalar, &d_bcTag, nullptr, nullptr });
+        fields.push_back({ "side_set_id", FD::Kind::PointScalar, &d_ssId, nullptr, nullptr });
         vw->writeMultiFieldFrame(step, t, dom, fields);
     };
     writeFrame(0, 0.0);

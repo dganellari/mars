@@ -39,7 +39,10 @@ using std::get;
 #include <filesystem>
 #include <iomanip>
 #include <iostream>
+#include <map>
 #include <memory>
+#include <stdexcept>
+#include <string>
 #include <vector>
 
 // Mars includes
@@ -542,7 +545,8 @@ public:
                   int bucketSize = 64, unsigned bucketSizeFocus = 8,
                   int periodicAxesMask = 0,
                   RealType periodicBoxLo = RealType(0),
-                  RealType periodicBoxHi = RealType(0));
+                  RealType periodicBoxHi = RealType(0),
+                  bool storeSideSets = false);
 
     // Constructor from mesh data (for MFEM or other formats) - automatically computes bounding box
     ElementDomain(const HostCoordsTuple& h_coords, const HostConnectivityTuple& h_conn,
@@ -1297,6 +1301,52 @@ public:
     //! Returns true if boundary information is available.
     bool hasBoundaryInfo() const { return std::get<0>(d_boundary_).size() > 0; }
 
+    // ---- Optional side-set storage (lazy, opt-in via the file ctor) ----
+    // Each named side set is kept as two device vectors: d_keys (SFC keys, the
+    // AMR-stable partition-independent identity) and d_local (the runtime local
+    // node ids the hot path uses). Both hold only the nodes this rank actually
+    // resolves (hits); misses are dropped. A name present in the mesh but with
+    // zero local hits on this rank still has an entry, with empty vectors, so
+    // the getters always return a valid reference.
+
+    //! True when side-set storage is enabled and at least one set resolved here.
+    bool hasSideSets() const
+    {
+        ensureSideSets();
+        return storeSideSets_ && !sideSets_.empty();
+    }
+
+    //! Names of all side sets read from the mesh (those present on any rank).
+    std::vector<std::string> sideSetNames() const
+    {
+        ensureSideSets();
+        std::vector<std::string> names;
+        names.reserve(sideSets_.size());
+        for (const auto& kv : sideSets_) names.push_back(kv.first);
+        return names;
+    }
+
+    //! True if the named side set exists (it may still hold 0 local nodes here).
+    bool hasSideSet(const std::string& name) const
+    {
+        ensureSideSets();
+        return sideSets_.find(name) != sideSets_.end();
+    }
+
+    //! Local node ids for a side set. Throws std::out_of_range on unknown name.
+    const DeviceVector<int>& sideSetNodes(const std::string& name) const
+    {
+        ensureSideSets();
+        return sideSets_.at(name).d_local;
+    }
+
+    //! SFC keys for a side set. Throws std::out_of_range on unknown name.
+    const DeviceVector<KeyType>& sideSetNodeKeys(const std::string& name) const
+    {
+        ensureSideSets();
+        return sideSets_.at(name).d_keys;
+    }
+
 private:
     int rank_;
     int numRanks_;
@@ -1306,6 +1356,24 @@ private:
 
     // Flag to store original coordinates instead of SFC-decoded coords
     bool storeOriginalCoords_ = false;
+
+    // Opt-in: keep the Exodus side sets as device-resident members so consumers
+    // (FEM/FSI/viz) get the local boundary node lists without re-reading the
+    // file. meshFile_ is retained only by the file ctor for the on-demand read;
+    // it is empty for the device/host ctors, which disables the feature there.
+    bool storeSideSets_ = false;
+    std::string meshFile_;
+
+    // Per named side set we keep both the SFC keys (the partition-independent,
+    // AMR-stable identity / source of truth) and the derived runtime local node
+    // ids (the hot-path index). Coords are dropped after resolve.
+    struct SideSetEntry
+    {
+        DeviceVector<KeyType> d_keys;
+        DeviceVector<int>     d_local;
+    };
+    mutable std::map<std::string, SideSetEntry> sideSets_;
+    mutable bool sideSetsBuilt_ = false;
 
     // Core mesh data (always allocated)
     // element unique identifiers (SFC codes)
@@ -1363,6 +1431,7 @@ private:
     void ensureHalo() const;
     void ensureNodeHaloTopo() const;
     void ensureCoordinateCache() const;
+    void ensureSideSets() const;
 
 
     void syncImpl(DeviceVector<KeyType>& d_nodeSfcCodes,
@@ -1758,11 +1827,14 @@ ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(cons
                                                                             unsigned bucketSizeFocus,
                                                                             int periodicAxesMask,
                                                                             RealType periodicBoxLo,
-                                                                            RealType periodicBoxHi)
+                                                                            RealType periodicBoxHi,
+                                                                            bool storeSideSets)
     : rank_(rank)
     , numRanks_(numRanks)
     , box_(0, 1)
     , storeOriginalCoords_(storeOriginalCoords)
+    , storeSideSets_(storeSideSets)
+    , meshFile_(meshFile)
 {
     if (rank == 0) {
         std::cout << "ElementDomain: Using bucketSize=" << bucketSize
@@ -2753,6 +2825,68 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ensureSfcMap(
 }
 
 template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
+void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ensureSideSets() const
+{
+    // Only the file ctor sets meshFile_; the device/host ctors leave it empty,
+    // which is how the feature stays off for those paths.
+    if (sideSetsBuilt_ || !storeSideSets_ || meshFile_.empty()) return;
+    ensureSfcMap();
+
+    // Read the Exodus side sets (host-side, transient). Tag-dispatch the reader.
+    ExodusSideSets ss;
+    if constexpr (std::is_same_v<ElementTag, HexTag>)
+        ss = readExodusSideSetsHex8(meshFile_, rank_);
+    else
+        ss = readExodusSideSetsTet4(meshFile_, rank_);
+
+    // The SFC map is the same sorted host array resolveSideSetNodesToLocalKeepMisses
+    // searches; copy it once here so the key for a hit can be read back for free.
+    std::vector<KeyType> hostSfc(d_localToGlobalSfcMap_.size());
+    thrust::copy(thrust::device_pointer_cast(d_localToGlobalSfcMap_.data()),
+                 thrust::device_pointer_cast(d_localToGlobalSfcMap_.data()
+                                             + d_localToGlobalSfcMap_.size()),
+                 hostSfc.begin());
+
+    for (auto& kv : ss.nodeCoordsByName)
+    {
+        const auto& name   = kv.first;
+        const auto& coords = kv.second;
+
+        // KeepMisses keeps 1:1 alignment with coords, so local[i] < 0 means
+        // this rank does not hold that node -- drop it.
+        std::vector<int> localWithMiss = resolveSideSetNodesToLocalKeepMisses(coords);
+
+        std::vector<int>     h_local;
+        std::vector<KeyType> h_keys;
+        h_local.reserve(localWithMiss.size());
+        h_keys.reserve(localWithMiss.size());
+        for (size_t i = 0; i < localWithMiss.size(); ++i)
+        {
+            int loc = localWithMiss[i];
+            if (loc < 0) continue;
+            h_local.push_back(loc);
+            // The key of a resolved node equals d_localToGlobalSfcMap_[loc].
+            h_keys.push_back(hostSfc[loc]);
+        }
+
+        // Always create the entry, even with 0 hits, so the getters return a
+        // valid (empty) reference for a known name this rank holds none of.
+        SideSetEntry entry;
+        entry.d_keys.resize(h_keys.size());
+        entry.d_local.resize(h_local.size());
+        if (!h_keys.empty())
+            thrust::copy(h_keys.begin(), h_keys.end(),
+                         thrust::device_pointer_cast(entry.d_keys.data()));
+        if (!h_local.empty())
+            thrust::copy(h_local.begin(), h_local.end(),
+                         thrust::device_pointer_cast(entry.d_local.data()));
+        sideSets_[name] = std::move(entry);
+    }
+
+    sideSetsBuilt_ = true;
+}
+
+template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
 void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ensureAdjacency() const
 {
     if (!adjacency_)
@@ -3183,6 +3317,14 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::resyncFromDev
     nodeHaloTopo_.reset();
     coordCache_.reset();
     originalCoords_.reset();
+
+    // Side-set SFC keys are AMR-stable, but the derived LOCAL ids go stale after
+    // re-partition. Simplest correct reset: drop the cache and rebuild lazily on
+    // next access. The rebuild re-reads the file, which is acceptable for now.
+    // TODO: re-resolve LOCAL ids on the GPU directly from the stored d_keys via
+    // lower_bound into the new d_localToGlobalSfcMap_, so AMR avoids the re-read.
+    sideSets_.clear();
+    sideSetsBuilt_ = false;
 
     // Clear per-instance device vectors that depend on element/node counts.
     // The actual storage will be re-allocated by sync() / lazy init.
