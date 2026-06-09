@@ -64,7 +64,15 @@ int main(int argc, char** argv)
     std::string meshFile;
     std::string vtuPrefix;
     std::string bcMode   = "pump";    // "pump" (Exodus side-sets) or "cavity" (tet NS validation)
-    std::string outletMode = "do-nothing";  // "do-nothing" (free vel + p=0 face) or "mass-conserving" (vel outflow + pin)
+    // Default mass-conserving: a velocity-inlet + free pressure-outlet leaves an
+    // UNPROJECTABLE net flux -- the divergence operator only sees interior faces,
+    // so sum(div)==0 and the pressure solve is never told mass entered -> no
+    // through-flow (flow dies at the inlet, pressure parks in the body). The
+    // mass-conserving outlet removes exactly Q (velocity outflow) + a single p=0
+    // pin, balancing the flux so the projection builds the inlet->outlet gradient
+    // that drives flow THROUGH the passage. --outlet=do-nothing selects the free
+    // pressure outlet (only correct once a boundary-flux source term is added).
+    std::string outletMode = "mass-conserving";
     // Advection scheme: "skew" (KE-conserving, default), "upwind" (1st-order),
     // or "barth-jespersen" (2nd-order limited, matches mesh developers' legacy).
     std::string advScheme  = "skew";
@@ -108,8 +116,8 @@ int main(int argc, char** argv)
         if      (a.rfind("--mesh=", 0) == 0)         meshFile  = a.substr(7);
         else if (a.rfind("--vtu-output=", 0) == 0)   vtuPrefix = a.substr(13);
         else if (a == "--bc=cavity")                 bcMode    = "cavity";  // tet NS validation: lid-driven cavity, no side-sets
-        else if (a == "--outlet=do-nothing")         outletMode = "do-nothing";    // free velocity + p=0 face (default)
-        else if (a == "--outlet=mass-conserving")    outletMode = "mass-conserving"; // velocity-Dirichlet outflow + single pin
+        else if (a == "--outlet=do-nothing")         outletMode = "do-nothing";    // free velocity + p=0 face (unprojectable w/o a flux source)
+        else if (a == "--outlet=mass-conserving")    outletMode = "mass-conserving"; // DEFAULT: velocity outflow + single pin (drives through-flow)
         else if (a == "--upwind")                    advScheme  = "upwind";  // 1st-order upwind
         else if (a == "--skew")                      advScheme  = "skew";    // skew-symmetric (default)
         else if (a == "--bj")                        advScheme  = "barth-jespersen"; // 2nd-order limited
