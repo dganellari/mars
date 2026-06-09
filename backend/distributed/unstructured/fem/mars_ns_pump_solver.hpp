@@ -707,6 +707,25 @@ __global__ void addLumpedMassDiagonalKernel(const RealType* mass,
     if (dp >= 0) values[dp] += mass[dof] * invDt;
 }
 
+// Same as above but SKIP Dirichlet DOFs. Their diagonal was overwritten to 1 by
+// the BC enforcement (row=0, diag=1), so it no longer holds mass*coef -- patching
+// it would corrupt the identity row. Used to re-scale the diffusion mass diagonal
+// when adaptive-CFL dt changes (interior rows only).
+template<typename RealType>
+__global__ void addLumpedMassDiagonalInteriorKernel(const RealType* mass,
+                                                     const int* diagPtr,
+                                                     const uint8_t* isBdryDof,
+                                                     RealType invDt,
+                                                     RealType* values,
+                                                     int numOwnedDofs)
+{
+    int dof = blockIdx.x * blockDim.x + threadIdx.x;
+    if (dof >= numOwnedDofs) return;
+    if (isBdryDof[dof]) return;
+    int dp = diagPtr[dof];
+    if (dp >= 0) values[dp] += mass[dof] * invDt;
+}
+
 // O(1)-per-row diagonal extraction using the precomputed d_diagPtr indirection.
 // Cached at setup once (after BC enforcement + optional MARS_DDT_DIAG_SHIFT)
 // and reused as the Jacobi preconditioner in solvePressureDDT every CG iter.
@@ -2207,6 +2226,13 @@ struct NSStepper
     cstone::DeviceVector<RealType> d_valuesVel_bdf2;
     Matrix Avel_bdf2;
 
+    // dt the velocity-diffusion mass diagonals (M/dt and 3M/(2dt)) were baked
+    // with. With adaptive CFL dt changes per step but the matrix is assembled
+    // once at setup -> the diagonal must be patched when dt changes, else the
+    // diffusion solve multiplies velocity by dt_matrix/dt_current instead of
+    // damping it (a runaway). runImplicitDiffusionStep re-adds the delta.
+    RealType matrixDt = RealType(0);
+
     // Per-step diagnostics
     int lastPressureIters = 0;
     RealType lastPressR0    = 0;  // initial absolute residual |r0| of the pressure CG this step
@@ -3303,6 +3329,9 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
         cudaDeviceSynchronize();
         pt.lap("BDF2 velocity matrix (3M/(2dt) + nu K)");
     }
+    // Remember the dt the diffusion mass diagonals were baked with, so an
+    // adaptive-CFL dt change can patch them (see matrixDt + the diffusion step).
+    s.matrixDt = dt;
 
     // Global bounding box for BC marking. Reduce locally then MPI_Allreduce.
     auto xb = thrust::device_pointer_cast(d_x.data());
@@ -6164,6 +6193,34 @@ void runImplicitDiffusionStep(NSStepper<KeyType, RealType, ElementTag>& s, RealT
 {
     const auto& d_nodeOwnership = s.ownershipMap();
     const int nodeBlocks  = (s.nodeCount + s.blockSize - 1) / s.blockSize;
+
+    // dt-consistency: the diffusion matrices baked M/dt_matrix (BDF1) and
+    // 3M/(2 dt_matrix) (BDF2) at setup. With adaptive CFL dt changes per step;
+    // if the matrix keeps the stale dt, the solve gives u** ~ (dt_matrix/dt)*u*
+    // -> at tiny nu (negligible K) this MULTIPLIES velocity every shrinking-dt
+    // step and the run blows up. Patch the mass diagonal by the delta so the
+    // matrix coefficient matches the current dt (the RHS already uses it).
+    // Skip Dirichlet rows: BC enforcement set their diagonal to 1 (not mass/dt),
+    // so the delta-patch must touch interior rows only. Needs d_isBdryDof sized
+    // to the owned DOFs; if absent (shouldn't happen for Pump) skip the patch.
+    if (dt != s.matrixDt && s.matrixDt > RealType(0)
+        && s.d_isBdryDof.size() == static_cast<size_t>(s.numOwnedDofs)) {
+        const int dofBlocks = (s.numOwnedDofs + s.blockSize - 1) / s.blockSize;
+        const RealType dInv1 = RealType(1) / dt - RealType(1) / s.matrixDt;       // BDF1: M/dt
+        addLumpedMassDiagonalInteriorKernel<RealType><<<dofBlocks, s.blockSize>>>(
+            s.d_mass.data(), s.d_diagPtr.data(), s.d_isBdryDof.data(), dInv1,
+            s.d_valuesVel.data(), s.numOwnedDofs);
+        if (s.useBdf2 && s.d_valuesVel_bdf2.size() > 0) {
+            const RealType dInv2 = RealType(3) / (RealType(2) * dt)
+                                 - RealType(3) / (RealType(2) * s.matrixDt);      // BDF2: 3M/(2dt)
+            addLumpedMassDiagonalInteriorKernel<RealType><<<dofBlocks, s.blockSize>>>(
+                s.d_mass.data(), s.d_diagPtr.data(), s.d_isBdryDof.data(), dInv2,
+                s.d_valuesVel_bdf2.data(), s.numOwnedDofs);
+        }
+        cudaDeviceSynchronize();
+        s.matrixDt = dt;
+    }
+
     // BDF1 (step 0): mass coefficient = 1/dt, matrix = Avel.
     // BDF2 (step >= 1): mass coefficient = 3/(2*dt), matrix = Avel_bdf2.
     const bool bdf2Active = (s.useBdf2 && s.bdfStep >= 1 && s.d_valuesVel_bdf2.size() > 0);
