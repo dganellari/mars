@@ -113,6 +113,12 @@ int main(int argc, char** argv)
     // lift ON (a correctness fix); --no-dirichlet-lift disables for comparison.
     bool        openingFluxSource = false;
     bool        dirichletLift     = true;
+    // FIX B -- pressure-drop drive. >0 activates FIX B: prescribe p=pumpDp on the
+    // inlet face, p=0 on the outlet face, velocities FREE at both, so the flux
+    // EMERGES from the interior pressure gradient (SCS-captured -> visible). Two
+    // pressure-Dirichlet faces -> nonsingular A -> startup-safe. <=0 (default)
+    // keeps the legacy mass-conserving velocity outlet byte-identical.
+    double      pumpDp = 0.0;
 
     for (int i = 1; i < argc; ++i)
     {
@@ -138,6 +144,7 @@ int main(int argc, char** argv)
         else if (a == "--inlet-flip-normal")         inletFlipNormal = true;     // flip if vectors come out outward
         else if (a == "--pump-uniform-ic")           pumpUniformIC = true;       // legacy free-stream IC (default: start from rest)
         else if (a.rfind("--inlet-velocity=", 0) == 0) inletU  = std::stod(a.substr(17));
+        else if (a.rfind("--pump-dp=", 0) == 0)        pumpDp  = std::stod(a.substr(10));   // FIX B: pressure-drop drive (inlet p=pumpDp, outlet p=0, free velocities)
         else if (a.rfind("--rho=", 0) == 0)          rho       = std::stod(a.substr(6));
         else if (a.rfind("--nu=", 0) == 0)         { nu = std::stod(a.substr(5)); reqRe = -1; }
         else if (a.rfind("--Re=", 0) == 0)           reqRe = std::stod(a.substr(5)); // nu set after L is known
@@ -166,6 +173,10 @@ int main(int argc, char** argv)
                     "                       pin, forces Q_out=Q_in) | do-nothing (whole-face p=0 + FREE\n"
                     "                       outlet velocity, diagnostic only -- does NOT drive through-flow)\n"
                     "  --inlet-velocity=V   inlet speed along x (default 0.5)\n"
+                    "  --pump-dp=V          FIX B pressure-drop drive: prescribe p=V on the inlet\n"
+                    "                       face, p=0 on the outlet face, velocities FREE at both.\n"
+                    "                       Flux emerges from the interior pressure gradient.\n"
+                    "                       V<=0 (default) keeps the mass-conserving velocity outlet.\n"
                     "  --no-inlet-pernode-normal  use one global inlet normal (default: per-node)\n"
                     "  --advection=NAME     skew (default) | upwind | barth-jespersen (--bj)\n"
                     "  --rho=V --nu=V       physical fluid properties (default water: rho=1000, nu=1e-6)\n"
@@ -210,6 +221,12 @@ int main(int argc, char** argv)
                   << "Mesh        = " << meshFile << "\n";
         if (bcMode == "cavity")
             std::cout << "BC          = lid-driven cavity (lid u = " << inletU << ")\n";
+        else if (pumpDp > 0.0)
+            std::cout << "Drive       = FIX B pressure drop  dP = " << pumpDp << "\n"
+                      << "Inlet  SS   = " << inletSS  << "  (pressure-Dirichlet p=" << pumpDp
+                      << ", FREE velocity)\n"
+                      << "Outlet SS   = " << outletSS << "  (pressure-Dirichlet p=0, FREE velocity)\n"
+                      << "Walls       = all other side-sets (no-slip)\n";
         else
             std::cout << "Inlet  SS   = " << inletSS  << "  (u = " << inletU << ")\n"
                       << "Outlet SS   = " << outletSS
@@ -298,7 +315,18 @@ int main(int argc, char** argv)
     s.useVMSStab  = useVMSStab;   // Nalu VMS pressure stabilization (tet-only)
     s.useOpeningFluxSource = openingFluxSource;   // FIX 1 (off by default)
     s.useDirichletLift     = dirichletLift;       // FIX 2 (on by default)
+    s.pumpDp               = RealType(pumpDp);    // FIX B: pressure-drop drive (>0 active)
     s.rhieChowTau = rhieTau;   // <=0 -> kernel falls back to dt/rho
+    // FIX B and FIX 1 are mutually exclusive drives: the pressure drop already
+    // creates the through-flow, and adding the opening-flux source on top double-
+    // counts the inlet flux (the FIX-1 blowup). Warn and disable FIX 1 if both set.
+    if (pumpDp > 0.0 && openingFluxSource)
+    {
+        if (rank == 0)
+            std::cerr << "WARNING: --pump-dp>0 (FIX B) and --opening-flux-source (FIX 1) "
+                         "are incompatible; disabling the opening-flux source.\n";
+        s.useOpeningFluxSource = false;
+    }
     // Cavity = lid-driven cavity (geometric BC, no side-sets) -- a controlled
     // tet-NS validation case with a known flow pattern. Pump = per-side-set
     // BC machinery (Dirichlet velocity lists + outlet pressure mask).
@@ -675,7 +703,9 @@ int main(int argc, char** argv)
         //    admits a flat-pressure tank-recirculation solution -> no through-flow.)
         //  - mass-conserving: velocity-Dirichlet outflow U_out=(U_in*A_in)/A_out
         //    along the outward normal + a single p=0 pin.
-        if (!s.outletDoNothing && areaOut > 1e-30)
+        // FIX B (pumpDp>0): the outlet velocity is FREE (driven by the p=0 Dirichlet),
+        // so keep outletU<=0 -> no velocity tag on the outlet.
+        if (s.pumpDp <= RealType(0) && !s.outletDoNothing && areaOut > 1e-30)
         {
             double Uout = (double(inletU) * areaIn) / areaOut;
             s.outletU    = RealType(Uout);

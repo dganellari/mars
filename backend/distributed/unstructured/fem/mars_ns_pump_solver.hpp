@@ -2370,6 +2370,18 @@ struct NSStepper
     RealType outletDirX = 1, outletDirY = 0, outletDirZ = 0;
     bool outletDoNothing = true;  // do-nothing outlet (free velocity + p=0 face); false = mass-conserving velocity outlet
 
+    // FIX B -- pressure-drop drive. The CVFEM divergence operator integrates only
+    // interior SCS faces, so a velocity prescribed on the inlet opening is invisible
+    // to the pressure solve (the exterior opening face is in no scsLR pair) and the
+    // corrector freezes velocity-Dirichlet nodes -> no through-flow. Instead, drive
+    // the pump with a pressure DROP: p=pumpDp on the inlet face, p=0 on the outlet
+    // face, velocities FREE at both. The flux then EMERGES from the interior pressure
+    // gradient, which IS SCS-captured -> visible -> through-flow. Two pressure-Dirichlet
+    // faces remove the null space (nonsingular A, no pin needed), so startup is safe.
+    // pumpDp<=0 disables FIX B entirely: the pump behaves exactly as the legacy
+    // mass-conserving (or do-nothing) velocity outlet. Driver sets it from --pump-dp=.
+    RealType pumpDp = 0;
+
     // Per-node OUTWARD outlet area-vectors (un-normalized, nodeCount-sized, zero
     // off the outlet). Used only by the through-flow diagnostic to measure
     // Q_out = sum_owned( u . outletAreaVec ). Filled by the driver.
@@ -3564,35 +3576,44 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
             };
 
             tag(s.wallNodes,    RealType(0),     RealType(0), RealType(0));
-            const bool inletPerNode =
-                s.inletDirXPerNode.size() == s.inletNodes.size() &&
-                s.inletDirYPerNode.size() == s.inletNodes.size() &&
-                s.inletDirZPerNode.size() == s.inletNodes.size() &&
-                !s.inletNodes.empty();
-            if (inletPerNode)
+            // FIX B (pumpDp>0): the inlet is driven by a PRESSURE Dirichlet (set in
+            // the pressure-BC block), NOT a velocity Dirichlet. Do NOT tag the inlet
+            // here -- it must stay out of d_isBdryDof/uTarget so the corrector is
+            // free to drive its velocity from the interior pressure gradient.
+            if (s.pumpDp <= RealType(0))
             {
-                std::vector<RealType> ui(s.inletNodes.size()), vi(s.inletNodes.size()),
-                                      wi(s.inletNodes.size());
-                for (size_t k = 0; k < s.inletNodes.size(); ++k)
+                const bool inletPerNode =
+                    s.inletDirXPerNode.size() == s.inletNodes.size() &&
+                    s.inletDirYPerNode.size() == s.inletNodes.size() &&
+                    s.inletDirZPerNode.size() == s.inletNodes.size() &&
+                    !s.inletNodes.empty();
+                if (inletPerNode)
                 {
-                    ui[k] = RealType(s.Uinf * s.inletDirXPerNode[k]);
-                    vi[k] = RealType(s.Uinf * s.inletDirYPerNode[k]);
-                    wi[k] = RealType(s.Uinf * s.inletDirZPerNode[k]);
+                    std::vector<RealType> ui(s.inletNodes.size()), vi(s.inletNodes.size()),
+                                          wi(s.inletNodes.size());
+                    for (size_t k = 0; k < s.inletNodes.size(); ++k)
+                    {
+                        ui[k] = RealType(s.Uinf * s.inletDirXPerNode[k]);
+                        vi[k] = RealType(s.Uinf * s.inletDirYPerNode[k]);
+                        wi[k] = RealType(s.Uinf * s.inletDirZPerNode[k]);
+                    }
+                    tagPerNode(s.inletNodes, ui, vi, wi);
                 }
-                tagPerNode(s.inletNodes, ui, vi, wi);
-            }
-            else
-            {
-                tag(s.inletNodes,   RealType(s.Uinf * s.inletDirX),
-                                    RealType(s.Uinf * s.inletDirY),
-                                    RealType(s.Uinf * s.inletDirZ));
+                else
+                {
+                    tag(s.inletNodes,   RealType(s.Uinf * s.inletDirX),
+                                        RealType(s.Uinf * s.inletDirY),
+                                        RealType(s.Uinf * s.inletDirZ));
+                }
             }
             tag(s.extraNodes,   RealType(s.Uinf), RealType(0), RealType(0));
             // Mass-conserving outlet: velocity-Dirichlet outflow along the
             // outward normal, sized to remove the inlet flux. Only when the
             // driver set outletU > 0; otherwise the outlet stays natural-Neumann
             // (legacy) and only gets the p=0 pressure Dirichlet below.
-            if (s.outletU > RealType(0))
+            // FIX B (pumpDp>0): outlet velocity stays FREE (driven by the p=0
+            // Dirichlet + interior gradient), so never velocity-tag it.
+            if (s.pumpDp <= RealType(0) && s.outletU > RealType(0))
                 tag(s.outletNodes, RealType(s.outletU * s.outletDirX),
                                        RealType(s.outletU * s.outletDirY),
                                        RealType(s.outletU * s.outletDirZ));
@@ -4211,7 +4232,11 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
         // mask a single outlet DOF (the first owned one, on the lowest rank that
         // has one). When outletU<=0 (legacy pressure-outlet), mask the whole
         // outlet face as before (natural-Neumann velocity there).
+        // FIX B: with a pressure drop the outlet is a pressure-Dirichlet face (p=0)
+        // and the inlet a second one (p=pumpDp), so force the whole-face path -- two
+        // Dirichlet faces make A nonsingular, no single pin is needed.
         bool singlePin = (s.outletU > RealType(0));
+        if (s.pumpDp > RealType(0)) singlePin = false;
         int  pinRankLocal = singlePin ? s.numRanks : -1;  // for the global argmin
         size_t ownedOutletCount = 0;
         int firstOutletDof = -1;
@@ -4223,6 +4248,20 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
             if (dof < 0 || dof >= s.numOwnedDofs) continue;
             if (firstOutletDof < 0) firstOutletDof = dof;
             if (!singlePin) { hostMask[dof] = 1; ++ownedOutletCount; }
+        }
+        // FIX B: also mask the WHOLE inlet face as pressure-Dirichlet (p=pumpDp).
+        // enforceBcMatrixKernel makes both faces identity rows -> nonsingular A.
+        size_t ownedInletCount = 0;
+        if (s.pumpDp > RealType(0))
+        {
+            for (int li : s.inletNodes)
+            {
+                if (li < 0 || (size_t)li >= s.nodeCount) continue;
+                if (hostOwn[li] != 1) continue;
+                int dof = hostNodeToDof[li];
+                if (dof < 0 || dof >= s.numOwnedDofs) continue;
+                hostMask[dof] = 1; ++ownedInletCount;
+            }
         }
         if (singlePin)
         {
@@ -4249,10 +4288,18 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
         s.pressurePinDof  = -1;
         s.pressurePinRank = -1;
         if (s.rank == 0)
-            std::cout << "  pressure BC: " << (singlePin
-                         ? "single p=0 pin (mass-conserving velocity outlet)"
-                         : "Dirichlet p=0 on whole outlet side-set")
-                      << " (" << ownedOutletCount << " masked DOFs on rank 0)\n";
+        {
+            if (s.pumpDp > RealType(0))
+                std::cout << "  pressure BC (FIX B): Dirichlet p=" << s.pumpDp
+                          << " on whole inlet side-set, p=0 on whole outlet side-set"
+                          << " (" << ownedInletCount << " inlet + " << ownedOutletCount
+                          << " outlet masked DOFs on rank 0; two Dirichlet faces -> A nonsingular, no pin)\n";
+            else
+                std::cout << "  pressure BC: " << (singlePin
+                             ? "single p=0 pin (mass-conserving velocity outlet)"
+                             : "Dirichlet p=0 on whole outlet side-set")
+                          << " (" << ownedOutletCount << " masked DOFs on rank 0)\n";
+        }
     }
     else  // Cavity
     {
@@ -4828,6 +4875,36 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
         s.bdfStep = 0;
     }
     pt.lap("field allocation");
+
+    // FIX B: seed the STANDING pressure head into p^n. p carries p=pumpDp on the
+    // inlet face and p=0 on the outlet face; grad(p^n) then enters every predictor
+    // and drives the through-flow. The per-step phi increment is pinned 0 at both
+    // faces (enforcePressureBcRhsKernel on d_isPressureBdryDof, which now holds both
+    // faces), so p^{n+1}=p^n+phi keeps this head fixed. d_p is indexed by LOCAL NODE,
+    // so set owned inlet/outlet local nodes directly; the halo exchange propagates
+    // the head to ghosts. Owned-only avoids a cross-rank double-write. The pump
+    // driver never calls applyInitialCondition, so seed here at the end of setup.
+    if (s.pumpDp > RealType(0))
+    {
+        std::vector<RealType> hostP(s.nodeCount, RealType(0));
+        std::vector<uint8_t> hostOwnP(s.nodeCount, 0);
+        thrust::copy(thrust::device_pointer_cast(d_nodeOwnership.data()),
+                     thrust::device_pointer_cast(d_nodeOwnership.data() + s.nodeCount),
+                     hostOwnP.begin());
+        for (int li : s.inletNodes)
+            if (li >= 0 && (size_t)li < s.nodeCount && hostOwnP[li] == 1)
+                hostP[li] = s.pumpDp;
+        for (int li : s.outletNodes)
+            if (li >= 0 && (size_t)li < s.nodeCount && hostOwnP[li] == 1)
+                hostP[li] = RealType(0);
+        thrust::copy(hostP.begin(), hostP.end(),
+                     thrust::device_pointer_cast(s.d_p.data()));
+        cudaDeviceSynchronize();
+        s.domain.exchangeNodeHalo(s.d_p);
+        if (s.rank == 0)
+            std::cout << "  FIX B: seeded standing head p=" << s.pumpDp
+                      << " on inlet, p=0 on outlet (grad(p^n) drives the predictor)\n";
+    }
 
     pt.report(s.rank, "setup");
 }
