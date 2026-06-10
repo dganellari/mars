@@ -7177,7 +7177,13 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
                 d_nodeOwnership.data(), coef, d_bNode.data(), s.nodeCount);
             cudaDeviceSynchronize();
             // Periodic: D M^{-1} D^T is pure-Neumann with a constant null space.
-            if (s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Periodic)
+            // Opening-flux pump: the single p=0 pin is a WEAK control of the DDT
+            // constant null space; a boundary flux source excites that mode and the
+            // Jacobi-PCG loses pAp>0 (residual grows -> garbage phi=1e7, the blowup).
+            // Project the null-space component out of the RHS so the solve stays
+            // well-behaved -- the same cure the periodic path uses.
+            if (s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Periodic
+                || s.useOpeningFluxSource)
             {
                 mars::fem::removeMean<RealType>(s.domain, d_bNode, MPI_COMM_WORLD);
             }
@@ -7185,10 +7191,10 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
         }
     }
 
-    // Periodic: pure-Neumann pressure has a constant-mode null space. Subtract
-    // global mean so phi is uniquely defined (and the constant doesn't drift
-    // step over step).
-    if (s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Periodic)
+    // Periodic / opening-flux pump: subtract the global mean so phi is uniquely
+    // defined and the constant mode doesn't drift step over step.
+    if (s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Periodic
+        || s.useOpeningFluxSource)
     {
         mars::fem::removeMean<RealType>(s.domain, s.d_phi, MPI_COMM_WORLD);
     }
