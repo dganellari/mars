@@ -8160,6 +8160,46 @@ void runNsStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, RealTyp
                   << " cg_p=" << s.lastPressureIters << "\n";
     }
 
+    // [checker] Per-element mean-free pressure RMS = the checkerboard mode (the
+    // exact quantity an inf-sup stabilizer penalizes). Smooth p -> 0; a growing
+    // ratio of mean-free to total |p| is the checkerboard signature. Lets us SEE
+    // a stabilizer kill the mode in a few steps instead of waiting for a blowup.
+    // Tet-only, env-gated (MARS_CHECKER), rank 0.
+    if (std::getenv("MARS_CHECKER") && s.rank == 0
+        && std::is_same<ElementTag, TetTag>::value)
+    {
+        const auto& d_conn = s.domain.getElementToNodeConnectivity();
+        auto cp = connPtrs<ElementTag, KeyType>(d_conn);
+        const KeyType* c0 = cp[0]; const KeyType* c1 = cp[1];
+        const KeyType* c2 = cp[2]; const KeyType* c3 = cp[3];
+        const size_t startElem = s.domain.startIndex();
+        const size_t numLocal  = s.domain.localElementCount();
+        const RealType* pPtr   = s.d_p.data();
+        const uint8_t* ownPtr  = s.domain.getNodeOwnershipMap().data();
+        // sum over owned elements (owner = first node) of sum_i (p_i-meanP)^2,
+        // and the total sum p_i^2, to report the mean-free fraction.
+        auto pr = thrust::transform_reduce(thrust::device,
+            thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(numLocal),
+            [c0,c1,c2,c3,startElem,pPtr,ownPtr] __device__ (size_t k) -> thrust::pair<double,double> {
+                size_t e = startElem + k;
+                KeyType n0=c0[e],n1=c1[e],n2=c2[e],n3=c3[e];
+                if (ownPtr[n0] != 1) return thrust::make_pair(0.0,0.0);  // count each elem once
+                double p0=pPtr[n0],p1=pPtr[n1],p2=pPtr[n2],p3=pPtr[n3];
+                double m=(p0+p1+p2+p3)*0.25;
+                double mf=(p0-m)*(p0-m)+(p1-m)*(p1-m)+(p2-m)*(p2-m)+(p3-m)*(p3-m);
+                double tot=p0*p0+p1*p1+p2*p2+p3*p3;
+                return thrust::make_pair(mf,tot);
+            },
+            thrust::make_pair(0.0,0.0),
+            [] __device__ (thrust::pair<double,double> a, thrust::pair<double,double> b) {
+                return thrust::make_pair(a.first+b.first, a.second+b.second); });
+        double mfRms = std::sqrt(pr.first);
+        double frac  = (pr.second > 0) ? std::sqrt(pr.first / pr.second) : 0.0;
+        std::cout << "    [checker] mean-free p RMS=" << std::scientific << mfRms
+                  << " frac=" << frac << std::defaultfloat
+                  << " (grows -> checkerboard; stabilizer should shrink frac)\n";
+    }
+
     // BDF2 velocity-history shuffle: snapshot u^n into u_{n-1} BEFORE the
     // corrector overwrites s.d_u with u^{n+1}. The advection-history copy
     // (advN -> advNm1) happens after the corrector since the advection slots
