@@ -489,6 +489,46 @@ __global__ void enforceBcColMatrixKernelByNode(const uint8_t* isPressureBdryNode
     }
 }
 
+// FIX 2: compute the Dirichlet lift for the velocity RHS, reading the INTACT
+// matrix (call this BEFORE the col-zero so the K[row,col] entries are still
+// present). For each non-Dirichlet owned row:
+//   lift[row] = sum_col K[row,col] * qTarget[colNode]   over boundary cols
+// The per-step velocity RHS then subtracts lift[row], which is the standard
+// Dirichlet lift-off that preserves the boundary target's momentum on interior
+// neighbors after those columns are zeroed. qTarget is per-NODE (nodeCount-sized);
+// colNode = dofToNode[c]. Pure accumulator -- does NOT modify values -- so it can
+// run once per component (u,v,w) over the same intact matrix before a single
+// plain col-zero pass. Wall targets are 0 (no lift); only the inlet target lifts.
+template<typename RealType>
+__global__ void computeBcColLiftKernelByNode(const uint8_t* isPressureBdryNode,
+                                            const int* dofToNode,
+                                            int numTotalDofs,
+                                            const int* rowPtr,
+                                            const int* colInd,
+                                            const RealType* values,
+                                            const RealType* qTarget,
+                                            RealType* liftOut,
+                                            int numOwnedRows)
+{
+    int row = blockIdx.x * blockDim.x + threadIdx.x;
+    if (row >= numOwnedRows) return;
+    liftOut[row] = RealType(0);
+    int rowNode = dofToNode[row];
+    if (rowNode >= 0 && isPressureBdryNode[rowNode]) return;
+    int rs = rowPtr[row];
+    int re = rowPtr[row + 1];
+    RealType lift = RealType(0);
+    for (int j = rs; j < re; ++j)
+    {
+        int c = colInd[j];
+        if (c < 0 || c >= numTotalDofs) continue;
+        int cnode = dofToNode[c];
+        if (cnode >= 0 && isPressureBdryNode[cnode])
+            lift += values[j] * qTarget[cnode];
+    }
+    liftOut[row] = lift;
+}
+
 // Build the inverse map: dofToNode[d] = local node that has nodeToDof[node] = d.
 // One thread per node. Multiple nodes can never share a DOF (in non-periodic
 // modes), so this is a simple scatter.
@@ -1978,6 +2018,37 @@ __global__ void buildPressureRhsKernel(const RealType* divAccNode,
     rhs[dof] = -coef * divAccNode[i];
 }
 
+// FIX 1: add the opening (inlet/outlet) boundary surface flux to divAccNode.
+// The interior SCS scatter integrates only the INTERIOR median-dual faces, so the
+// exterior opening face of a boundary node's dual cell is missing from divAccNode.
+// Here we add the missing Gauss boundary term: divAccNode[i] += u[i] . areaVec[i],
+// where areaVec is the per-node OUTWARD opening area-vector (zero off the set, its
+// magnitude = the node's share of the opening area). u . areaVec_outward is the
+// outward volumetric flux through that share -- negative for the inward inlet jet
+// (a source into the dual cell), positive for the outlet (a sink) -- which is the
+// SAME sign convention as the interior scatter (positive divAccNode = net outflow)
+// and the SAME raw volumetric-flux units (NOT pre-multiplied by rho/dt; the RHS
+// coef does that). Adding it is not a double-count: no scsLR pair covers the
+// exterior face. One thread per node; only owned nodes contribute (off-set nodes
+// have a zero area-vector so they add nothing even if visited).
+template<typename RealType>
+__global__ void addOpeningFluxSourceKernel(const RealType* u,
+                                           const RealType* v,
+                                           const RealType* w,
+                                           const RealType* aVecX,
+                                           const RealType* aVecY,
+                                           const RealType* aVecZ,
+                                           const uint8_t* ownership,
+                                           RealType* divAccNode,
+                                           size_t numNodes)
+{
+    size_t i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= numNodes) return;
+    if (ownership[i] != 1) return;
+    RealType flux = u[i] * aVecX[i] + v[i] * aVecY[i] + w[i] * aVecZ[i];
+    divAccNode[i] += flux;
+}
+
 // DOF-indexed solver output -> per-node array. Reused for all velocity solves
 // and the pressure solve.
 template<typename RealType>
@@ -2298,6 +2369,44 @@ struct NSStepper
     RealType outletU = -1;
     RealType outletDirX = 1, outletDirY = 0, outletDirZ = 0;
     bool outletDoNothing = true;  // do-nothing outlet (free velocity + p=0 face); false = mass-conserving velocity outlet
+
+    // Per-node OUTWARD outlet area-vectors (un-normalized, nodeCount-sized, zero
+    // off the outlet). Used only by the through-flow diagnostic to measure
+    // Q_out = sum_owned( u . outletAreaVec ). Filled by the driver.
+    cstone::DeviceVector<RealType> d_outletAreaVecX, d_outletAreaVecY, d_outletAreaVecZ;
+
+    // Per-node OUTWARD inlet area-vectors (un-normalized, nodeCount-sized, zero
+    // off the inlet). Filled by the driver when useOpeningFluxSource is on. The
+    // magnitude at a node is its share of the opening area; direction is outward.
+    cstone::DeviceVector<RealType> d_inletAreaVecX, d_inletAreaVecY, d_inletAreaVecZ;
+
+    // FIX 1 -- opening-flux source. The CVFEM divergence operator integrates
+    // ONLY interior median-dual SCS faces (each scsLR pair links two NODES of the
+    // SAME element, so sum_nodes(divAccNode)==0 identically). The exterior opening
+    // face of a boundary node's dual cell -- the part lying ON the inlet/outlet
+    // surface -- is in NO scsLR pair, so the prescribed opening flux never enters
+    // divAccNode and the pressure solve is never told mass crosses the boundary.
+    // We add the missing boundary surface integral sum( u . areaVec_opening ) to
+    // divAccNode in the SAME raw volumetric-flux units as the interior scatter
+    // (NOT pre-multiplied by rho/dt -- the RHS coef does that). areaVec is OUTWARD,
+    // so u.areaVec is NEGATIVE at the inlet (inward jet, a source) and POSITIVE at
+    // the outlet (a sink) -- the same convention as the interior scatter, where
+    // positive divAccNode means net outflow. Inlet + outlet net to ~0 (mass in =
+    // mass out), so the single-pin Neumann pressure system stays solvable. Off by
+    // default; --opening-flux-source turns it on for the pump through-flow case so
+    // it can be A/B-ed safely.
+    bool useOpeningFluxSource = false;
+
+    // FIX 2 -- Dirichlet lift on the velocity diffusion. The symmetric col-zero
+    // (enforceBcColMatrixKernelByNode) drops K[interior_row, boundary_col] with no
+    // RHS compensation, so the inlet's prescribed velocity contributes ZERO viscous
+    // momentum to its interior neighbors and the jet dies at the inlet. The lift
+    // restores it: lift[row] = sum_col K[row,col]*qTarget[col] over boundary cols,
+    // captured ONCE at setup (qTarget is steady for the pump) BEFORE the col-zero,
+    // then subtracted from the velocity RHS every step. Walls (qTarget=0) add
+    // nothing; only the nonzero inlet target lifts. Per-component (u,v,w).
+    bool useDirichletLift = true;
+    cstone::DeviceVector<RealType> d_velLiftU, d_velLiftV, d_velLiftW;  // owned-DOF sized
 
     // Constant streamwise (and orthogonal) momentum body force, added in the
     // predictor as +dt*f/rho (BDF1) and +(2dt/3)*f/rho (BDF2). Defaults to 0
@@ -3770,16 +3879,41 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
             // enough that the existing asymmetric row-clear converges fine
             // (same rationale as DDT-cavity at lines ~3500-3508).
             //
-            // NOTE: no Dirichlet "lift" yet. For zero qTarget (wall no-slip)
-            // it isn't needed. For non-zero qTarget (inlet/extra u=Uinf)
-            // this introduces an O(off-diag * Uinf) perturbation localized to
-            // the 1-cell ring around those faces. Acceptable for the "BC
-            // actually runs" milestone; promote to a proper lift kernel as
-            // a follow-up after validating convergence.
+            // FIX 2 (Dirichlet lift): the col-zero below drops K[row, boundary_col]
+            // with no RHS compensation, so the inlet's prescribed velocity adds zero
+            // viscous momentum to interior neighbors and the jet dies at the inlet.
+            // BEFORE zeroing (matrix still intact) capture the per-component lift
+            // lift[row] = sum_col K[row,col]*qTarget[col]; the per-step velocity RHS
+            // subtracts it. qTarget is steady for the pump so this is a one-time
+            // setup cost. The off-diagonal K entries are identical for Avel and
+            // Avel_bdf2 (only the mass diagonal differs, never touched here), so one
+            // lift serves both. Gated by useDirichletLift for A/B.
             if ((s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Channel
                  || s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Pump)
                 && s.d_isBdryNode.size() == static_cast<size_t>(s.nodeCount))
             {
+                // Pump-only: the lift is the pump through-flow fix. Channel keeps
+                // its prior (no-lift) behavior so its regression is untouched.
+                if (s.useDirichletLift
+                    && s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Pump)
+                {
+                    s.d_velLiftU.resize(s.numOwnedDofs);
+                    s.d_velLiftV.resize(s.numOwnedDofs);
+                    s.d_velLiftW.resize(s.numOwnedDofs);
+                    computeBcColLiftKernelByNode<RealType><<<dofBlocks, s.blockSize>>>(
+                        s.d_isBdryNode.data(), s.d_dofToNode.data(), s.numTotalDofs,
+                        s.d_rowPtr.data(), s.d_colInd.data(), s.d_valuesVel.data(),
+                        s.d_uTarget.data(), s.d_velLiftU.data(), s.numOwnedDofs);
+                    computeBcColLiftKernelByNode<RealType><<<dofBlocks, s.blockSize>>>(
+                        s.d_isBdryNode.data(), s.d_dofToNode.data(), s.numTotalDofs,
+                        s.d_rowPtr.data(), s.d_colInd.data(), s.d_valuesVel.data(),
+                        s.d_vTarget.data(), s.d_velLiftV.data(), s.numOwnedDofs);
+                    computeBcColLiftKernelByNode<RealType><<<dofBlocks, s.blockSize>>>(
+                        s.d_isBdryNode.data(), s.d_dofToNode.data(), s.numTotalDofs,
+                        s.d_rowPtr.data(), s.d_colInd.data(), s.d_valuesVel.data(),
+                        s.d_wTarget.data(), s.d_velLiftW.data(), s.numOwnedDofs);
+                    cudaDeviceSynchronize();
+                }
                 enforceBcColMatrixKernelByNode<RealType><<<dofBlocks, s.blockSize>>>(
                     s.d_isBdryNode.data(),
                     s.d_node_to_dof.data(), s.d_dofToNode.data(), s.numTotalDofs,
@@ -6284,7 +6418,8 @@ void runImplicitDiffusionStep(NSStepper<KeyType, RealType, ElementTag>& s, RealT
 
     auto runImplicit = [&] (cstone::DeviceVector<RealType>& qStar,
                              cstone::DeviceVector<RealType>& qStarStar,
-                             cstone::DeviceVector<RealType>& qTarget) -> int
+                             cstone::DeviceVector<RealType>& qTarget,
+                             const cstone::DeviceVector<RealType>& qLift) -> int
     {
         // RHS = (mass coef) * mass * qStar; coef = 1/dt for BDF1, 3/(2dt) for BDF2.
         thrust::fill(thrust::device_pointer_cast(b.data()),
@@ -6294,6 +6429,18 @@ void runImplicitDiffusionStep(NSStepper<KeyType, RealType, ElementTag>& s, RealT
             qStar.data(), s.d_node_to_dof.data(), d_nodeOwnership.data(),
             s.d_mass.data(), invDt, b.data(), s.nodeCount, s.numOwnedDofs);
         cudaDeviceSynchronize();
+
+        // FIX 2: subtract the Dirichlet lift on interior rows (b -= K[row,bdry]*qTarget),
+        // captured once at setup. Dirichlet rows carry lift=0 and are overwritten by
+        // enforceBcRhsFromTargetKernel below, so order is safe.
+        if (s.useDirichletLift && qLift.size() == static_cast<size_t>(s.numOwnedDofs))
+        {
+            auto bp = thrust::device_pointer_cast(b.data());
+            thrust::transform(thrust::device, bp, bp + s.numOwnedDofs,
+                              thrust::device_pointer_cast(qLift.data()), bp,
+                              thrust::minus<RealType>());
+            cudaDeviceSynchronize();
+        }
 
         enforceBcRhsFromTargetKernel<RealType><<<nodeBlocks, s.blockSize>>>(
             s.d_isBdryDof.data(), qTarget.data(),
@@ -6346,9 +6493,9 @@ void runImplicitDiffusionStep(NSStepper<KeyType, RealType, ElementTag>& s, RealT
             bdf2Active ? s.Avel_bdf2 : s.Avel);
     };
 
-    s.lastUIters = runImplicit(s.d_uStar, s.d_uStarStar, s.d_uTarget);
-    s.lastVIters = runImplicit(s.d_vStar, s.d_vStarStar, s.d_vTarget);
-    s.lastWIters = runImplicit(s.d_wStar, s.d_wStarStar, s.d_wTarget);
+    s.lastUIters = runImplicit(s.d_uStar, s.d_uStarStar, s.d_uTarget, s.d_velLiftU);
+    s.lastVIters = runImplicit(s.d_vStar, s.d_vStarStar, s.d_vTarget, s.d_velLiftV);
+    s.lastWIters = runImplicit(s.d_wStar, s.d_wStarStar, s.d_wTarget, s.d_velLiftW);
 
     // Sync ghosts of q** for the divergence scatter (face donors read q** at
     // ghost corners on rank boundaries).
@@ -6528,6 +6675,29 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
     }
     s.domain.reverseExchangeNodeHaloAdd(d_divAccNode);
     maybePeriodicSum<KeyType, RealType, ElementTag>(s, d_divAccNode);
+
+    // FIX 1: add the inlet+outlet opening surface flux that the interior SCS
+    // scatter cannot reach. divAccNode is now owner-complete; the per-node opening
+    // area-vectors are owner-complete too (driver does reverse-halo-add then publish,
+    // counted once per owned node), so restricting the add to owned nodes is exact
+    // and rank-safe. Uses the SAME post-diffusion velocity the divergence scatter
+    // used (d_uStarStar): inlet nodes carry the prescribed inflow, outlet nodes the
+    // post-diffusion outflow, so inlet flux + outlet flux net to ~0 and the single-pin
+    // Neumann pressure system stays solvable. Off unless --opening-flux-source.
+    if (s.useOpeningFluxSource
+        && s.d_inletAreaVecX.size() == s.nodeCount
+        && s.d_outletAreaVecX.size() == s.nodeCount)
+    {
+        addOpeningFluxSourceKernel<RealType><<<nodeBlocks, s.blockSize>>>(
+            s.d_uStarStar.data(), s.d_vStarStar.data(), s.d_wStarStar.data(),
+            s.d_inletAreaVecX.data(), s.d_inletAreaVecY.data(), s.d_inletAreaVecZ.data(),
+            d_nodeOwnership.data(), d_divAccNode.data(), s.nodeCount);
+        addOpeningFluxSourceKernel<RealType><<<nodeBlocks, s.blockSize>>>(
+            s.d_uStarStar.data(), s.d_vStarStar.data(), s.d_wStarStar.data(),
+            s.d_outletAreaVecX.data(), s.d_outletAreaVecY.data(), s.d_outletAreaVecZ.data(),
+            d_nodeOwnership.data(), d_divAccNode.data(), s.nodeCount);
+        cudaDeviceSynchronize();
+    }
 
     // Source-of-NaN trace: count non-finite divAccNode over ALL owned nodes and
     // over the owned-BOUNDARY subset separately. The interior diagnostic below
@@ -7241,6 +7411,146 @@ inline RealType keOwned(NSStepper<KeyType, RealType, ElementTag>& s,
     MPI_Datatype mpi_r = std::is_same<RealType, double>::value ? MPI_DOUBLE : MPI_FLOAT;
     MPI_Allreduce(&local, &global, 1, mpi_r, MPI_SUM, MPI_COMM_WORLD);
     return global;
+}
+
+// Net flux of a velocity field through a side-set: sum over OWNED nodes of
+// (u . areaVecOutward), with areaVec the per-node outward area-vector (zero off
+// the set). Partition-independent (owned-only) and globally reduced. Used by the
+// pump through-flow diagnostic to measure Q_out against the known Q_in. A
+// positive value means net OUTFLOW through the set.
+template<typename KeyType, typename RealType, typename ElementTag = HexTag>
+inline RealType fluxThroughOwned(NSStepper<KeyType, RealType, ElementTag>& s,
+                                 const cstone::DeviceVector<RealType>& du,
+                                 const cstone::DeviceVector<RealType>& dv,
+                                 const cstone::DeviceVector<RealType>& dw,
+                                 const cstone::DeviceVector<RealType>& aX,
+                                 const cstone::DeviceVector<RealType>& aY,
+                                 const cstone::DeviceVector<RealType>& aZ)
+{
+    const auto& d_own = s.domain.getNodeOwnershipMap();
+    size_t n = s.nodeCount;
+    RealType local = RealType(0);
+    if (aX.size() == n && aY.size() == n && aZ.size() == n)
+    {
+        local = thrust::transform_reduce(thrust::device,
+            thrust::counting_iterator<size_t>(0),
+            thrust::counting_iterator<size_t>(n),
+            [own = d_own.data(), n2d = s.d_node_to_dof.data(), nOwn = s.numOwnedDofs,
+             u = du.data(), v = dv.data(), w = dw.data(),
+             ax = aX.data(), ay = aY.data(), az = aZ.data()] __device__ (size_t i) -> RealType {
+                if (own[i] != 1) return RealType(0);
+                int dof = n2d[i];
+                if (dof < 0 || dof >= nOwn) return RealType(0);
+                return u[i]*ax[i] + v[i]*ay[i] + w[i]*az[i];
+            }, RealType(0), thrust::plus<RealType>());
+    }
+    RealType global = 0;
+    MPI_Datatype mpi_r = std::is_same<RealType, double>::value ? MPI_DOUBLE : MPI_FLOAT;
+    MPI_Allreduce(&local, &global, 1, mpi_r, MPI_SUM, MPI_COMM_WORLD);
+    return global;
+}
+
+// FIX 3: interior cut-plane flux probe. For every INTERIOR median-dual SCS face
+// whose two endpoints straddle the plane axis==cut, add the SOLVED face flux
+// u_f . scsAreaVec (u_f = 0.5*(u_L+u_R), the exact interpolation the divergence
+// scatter uses) to a per-block accumulator. This reads the SOLVED interior field,
+// so unlike the outlet Q_out it CANNOT be faked by the BC relock at the openings:
+// if flow truly threads the passage the probe is nonzero and ~equal at every cut;
+// if it dies near the inlet, the mid/outlet cuts read ~0. Owned elements only;
+// the host wrapper MPI_Allreduces. Straddle test on the L/R node coords means each
+// crossing dual face is counted once with a consistent orientation (areaVec points
+// L->R by construction), so the signed sum is the net flux across the plane.
+template<typename KeyType, typename RealType, typename ElementTag>
+__global__ void interiorCutFluxKernel(const KeyType* c0, const KeyType* c1,
+                                      const KeyType* c2, const KeyType* c3,
+                                      const KeyType* c4, const KeyType* c5,
+                                      const KeyType* c6, const KeyType* c7,
+                                      const RealType* vx, const RealType* vy, const RealType* vz,
+                                      const RealType* nodeAxis,   // node coord along the cut axis
+                                      const RealType* areaVecX,
+                                      const RealType* areaVecY,
+                                      const RealType* areaVecZ,
+                                      RealType cut,
+                                      double* partial,            // one slot per block
+                                      size_t startElem, size_t numLocal)
+{
+    size_t k = blockIdx.x * blockDim.x + threadIdx.x;
+    double mine = 0.0;
+    if (k < numLocal)
+    {
+        size_t e = startElem + k;
+        constexpr int NPE  = ElemTraits<ElementTag>::NodesPerElem;
+        constexpr int NSCS = ElemTraits<ElementTag>::ScsPerElem;
+        const KeyType* cc[8] = {c0, c1, c2, c3, c4, c5, c6, c7};
+        KeyType n[NPE];
+        for (int i = 0; i < NPE; ++i) n[i] = cc[i][e];
+        for (int ip = 0; ip < NSCS; ++ip)
+        {
+            int nodeL, nodeR; scsLR<ElementTag>(ip, nodeL, nodeR);
+            KeyType iL = n[nodeL];
+            KeyType iR = n[nodeR];
+            RealType aL = nodeAxis[iL];
+            RealType aR = nodeAxis[iR];
+            // dual face crosses the plane iff its endpoints are on opposite sides
+            bool straddle = (aL <= cut && aR > cut) || (aR <= cut && aL > cut);
+            if (!straddle) continue;
+            RealType vfx = RealType(0.5) * (vx[iL] + vx[iR]);
+            RealType vfy = RealType(0.5) * (vy[iL] + vy[iR]);
+            RealType vfz = RealType(0.5) * (vz[iL] + vz[iR]);
+            size_t off = e * NSCS + ip;
+            mine += double(vfx * areaVecX[off] + vfy * areaVecY[off] + vfz * areaVecZ[off]);
+        }
+    }
+    // block reduce into shared then one atomic per block
+    __shared__ double sdata[256];
+    int t = threadIdx.x;
+    sdata[t] = mine;
+    __syncthreads();
+    for (int s2 = blockDim.x / 2; s2 > 0; s2 >>= 1) {
+        if (t < s2) sdata[t] += sdata[t + s2];
+        __syncthreads();
+    }
+    if (t == 0) partial[blockIdx.x] = sdata[0];
+}
+
+// Host wrapper: signed interior flux across the plane (cut along the given axis,
+// 0=x,1=y,2=z). Owned elements only; globally reduced. Reads s.d_u/v/w.
+template<typename KeyType, typename RealType, typename ElementTag = HexTag>
+inline RealType interiorCutFlux(NSStepper<KeyType, RealType, ElementTag>& s,
+                                int axis, RealType cut)
+{
+    const auto& d_conn = s.domain.getElementToNodeConnectivity();
+    auto cp = connPtrs<ElementTag, KeyType>(d_conn);
+    const KeyType* c0 = cp[0]; const KeyType* c1 = cp[1];
+    const KeyType* c2 = cp[2]; const KeyType* c3 = cp[3];
+    const KeyType* c4 = nullptr; const KeyType* c5 = nullptr;
+    const KeyType* c6 = nullptr; const KeyType* c7 = nullptr;
+    if constexpr (std::is_same_v<ElementTag, HexTag>) { c4 = cp[4]; c5 = cp[5]; c6 = cp[6]; c7 = cp[7]; }
+    size_t startElem = s.domain.startIndex();
+    size_t numLocal  = s.domain.localElementCount();
+    int blk = 256;
+    int eBlocks = numLocal > 0 ? int((numLocal + blk - 1) / blk) : 0;
+
+    const RealType* nodeAxis = (axis == 0) ? s.domain.getNodeX().data()
+                             : (axis == 1) ? s.domain.getNodeY().data()
+                                           : s.domain.getNodeZ().data();
+    double local = 0.0;
+    if (eBlocks > 0)
+    {
+        cstone::DeviceVector<double> d_partial(eBlocks, 0.0);
+        interiorCutFluxKernel<KeyType, RealType, ElementTag><<<eBlocks, blk>>>(
+            c0, c1, c2, c3, c4, c5, c6, c7,
+            s.d_u.data(), s.d_v.data(), s.d_w.data(),
+            nodeAxis,
+            s.d_areaVec_x.data(), s.d_areaVec_y.data(), s.d_areaVec_z.data(),
+            cut, d_partial.data(), startElem, numLocal);
+        cudaDeviceSynchronize();
+        auto pp = thrust::device_pointer_cast(d_partial.data());
+        local = thrust::reduce(thrust::device, pp, pp + eBlocks, 0.0, thrust::plus<double>());
+    }
+    double global = 0.0;
+    MPI_Allreduce(&local, &global, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+    return RealType(global);
 }
 
 // Sum of an owned-node device vector (e.g. divergence accumulator). Used to
