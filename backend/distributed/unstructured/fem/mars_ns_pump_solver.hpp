@@ -6834,6 +6834,30 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
         && s.d_inletAreaVecX.size() == s.nodeCount
         && s.d_outletAreaVecX.size() == s.nodeCount)
     {
+        // MARS_OFS_DBG: print the source magnitude + divAccNode max before/after +
+        // the global net source, so we SEE if it is a giant localized spike or
+        // imbalanced. Gated on env, free in production.
+        const bool ofsDbg = (std::getenv("MARS_OFS_DBG") != nullptr) && (s.rank == 0);
+        auto maxAbsOwned = [&] (const RealType* p) -> RealType {
+            const auto& d_own = s.domain.getNodeOwnershipMap();
+            return thrust::transform_reduce(thrust::device,
+                thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(s.nodeCount),
+                [own = d_own.data(), p] __device__ (size_t i) -> RealType {
+                    return (own[i] == 1) ? fabs(p[i]) : RealType(0); },
+                RealType(0), thrust::maximum<RealType>());
+        };
+        auto sumOwned = [&] (const RealType* p) -> RealType {
+            const auto& d_own = s.domain.getNodeOwnershipMap();
+            RealType loc = thrust::transform_reduce(thrust::device,
+                thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(s.nodeCount),
+                [own = d_own.data(), p] __device__ (size_t i) -> RealType {
+                    return (own[i] == 1) ? p[i] : RealType(0); },
+                RealType(0), thrust::plus<RealType>());
+            RealType g = 0; MPI_Allreduce(&loc, &g, 1, std::is_same<RealType,double>::value?MPI_DOUBLE:MPI_FLOAT, MPI_SUM, MPI_COMM_WORLD);
+            return g;
+        };
+        RealType divMaxBefore = ofsDbg ? maxAbsOwned(d_divAccNode.data()) : RealType(0);
+        RealType sumBefore    = ofsDbg ? sumOwned(d_divAccNode.data())    : RealType(0);
         addOpeningFluxSourceKernel<RealType><<<nodeBlocks, s.blockSize>>>(
             RealType(s.Uinf * s.inletDirX), RealType(s.Uinf * s.inletDirY), RealType(s.Uinf * s.inletDirZ),
             s.d_inletAreaVecX.data(), s.d_inletAreaVecY.data(), s.d_inletAreaVecZ.data(),
@@ -6843,6 +6867,17 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
             s.d_outletAreaVecX.data(), s.d_outletAreaVecY.data(), s.d_outletAreaVecZ.data(),
             d_nodeOwnership.data(), d_divAccNode.data(), s.nodeCount);
         cudaDeviceSynchronize();
+        if (ofsDbg) {
+            RealType divMaxAfter = maxAbsOwned(d_divAccNode.data());
+            RealType sumAfter    = sumOwned(d_divAccNode.data());
+            std::cout << "  [ofs-dbg] divAccNode |max| before=" << std::scientific << divMaxBefore
+                      << " after=" << divMaxAfter
+                      << "  | sum(divAcc) before=" << sumBefore << " after=" << sumAfter
+                      << " (net source=" << (sumAfter - sumBefore) << ")"
+                      << "  Uinf=" << s.Uinf << " outletU=" << s.outletU
+                      << " inletDir=(" << s.inletDirX << "," << s.inletDirY << "," << s.inletDirZ << ")"
+                      << " coef=rho/dt" << std::defaultfloat << "\n";
+        }
     }
 
     // Source-of-NaN trace: count non-finite divAccNode over ALL owned nodes and
