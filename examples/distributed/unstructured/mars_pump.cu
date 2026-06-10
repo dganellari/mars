@@ -955,7 +955,11 @@ int main(int argc, char** argv)
             double dtCfl = (um > 0) ? cflMax * dxMean / um : dtInit;
             double dtNew = std::min(dtCfl, dtInit);
             dtNew = std::min(dtNew, 1.05 * dt);     // grow <=5%/step (BDF2)
-            dtNew = std::max(dtNew, 0.95 * dt);     // shrink <=5%/step (BDF2)
+            // SHRINK can be fast: a CFL violation must be caught THIS step or the
+            // explicit advection runs away (the 5%/step shrink cap was too slow --
+            // u spiked past the limiter and blew up). Allow up to 2x shrink/step.
+            // (Growth stays gentle so BDF2's constant-dt assumption holds in steady.)
+            dtNew = std::max(dtNew, 0.50 * dt);     // shrink <=2x/step (catch CFL fast)
             dtNew = std::max(dtNew, 1e-6 * dtInit); // floor: never collapse dt to ~0
             dt = dtNew;
         }
