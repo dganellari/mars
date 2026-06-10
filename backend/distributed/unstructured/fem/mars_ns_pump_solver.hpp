@@ -6858,6 +6858,23 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
         };
         RealType divMaxBefore = ofsDbg ? maxAbsOwned(d_divAccNode.data()) : RealType(0);
         RealType sumBefore    = ofsDbg ? sumOwned(d_divAccNode.data())    : RealType(0);
+        // raw owned sums of (vel.areaVec) per opening -- the ACTUAL discrete flux each
+        // side injects, to see if inlet or outlet is the one not firing.
+        auto fluxSum = [&] (RealType vx, RealType vy, RealType vz,
+                            const RealType* ax, const RealType* ay, const RealType* az) -> RealType {
+            const auto& d_own = s.domain.getNodeOwnershipMap();
+            RealType loc = thrust::transform_reduce(thrust::device,
+                thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(s.nodeCount),
+                [own = d_own.data(), ax, ay, az, vx, vy, vz] __device__ (size_t i) -> RealType {
+                    return (own[i] == 1) ? (vx*ax[i] + vy*ay[i] + vz*az[i]) : RealType(0); },
+                RealType(0), thrust::plus<RealType>());
+            RealType g = 0; MPI_Allreduce(&loc, &g, 1, std::is_same<RealType,double>::value?MPI_DOUBLE:MPI_FLOAT, MPI_SUM, MPI_COMM_WORLD);
+            return g;
+        };
+        RealType Qin_raw  = ofsDbg ? fluxSum(s.Uinf*s.inletDirX, s.Uinf*s.inletDirY, s.Uinf*s.inletDirZ,
+                                             s.d_inletAreaVecX.data(), s.d_inletAreaVecY.data(), s.d_inletAreaVecZ.data()) : RealType(0);
+        RealType Qout_raw = ofsDbg ? fluxSum(s.outletU*s.outletDirX, s.outletU*s.outletDirY, s.outletU*s.outletDirZ,
+                                             s.d_outletAreaVecX.data(), s.d_outletAreaVecY.data(), s.d_outletAreaVecZ.data()) : RealType(0);
         addOpeningFluxSourceKernel<RealType><<<nodeBlocks, s.blockSize>>>(
             RealType(s.Uinf * s.inletDirX), RealType(s.Uinf * s.inletDirY), RealType(s.Uinf * s.inletDirZ),
             s.d_inletAreaVecX.data(), s.d_inletAreaVecY.data(), s.d_inletAreaVecZ.data(),
@@ -6868,6 +6885,10 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
             d_nodeOwnership.data(), d_divAccNode.data(), s.nodeCount);
         cudaDeviceSynchronize();
         if (ofsDbg) {
+            std::cout << "  [ofs-dbg2] Qin_raw=" << std::scientific << Qin_raw
+                      << " Qout_raw=" << Qout_raw << " (should be -Q and +Q)"
+                      << " outletDir=(" << s.outletDirX << "," << s.outletDirY << "," << s.outletDirZ << ")"
+                      << std::defaultfloat << "\n";
             RealType divMaxAfter = maxAbsOwned(d_divAccNode.data());
             RealType sumAfter    = sumOwned(d_divAccNode.data());
             std::cout << "  [ofs-dbg] divAccNode |max| before=" << std::scientific << divMaxBefore
