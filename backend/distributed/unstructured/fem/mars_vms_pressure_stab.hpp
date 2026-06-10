@@ -182,13 +182,18 @@ __global__ void applyPSPGLaplacianTetKernel(
         gy += dNdx[kk][1] * pk;
         gz += dNdx[kk][2] * pk;
     }
+    // SIGN: the DDT operator A = D M^-1 D^T is SPD-POSITIVE (~ +(-lap), a Gram form).
+    // The divergence D scatters +(v.A) to iL. Reusing that same +(g.A) scatter gives
+    // +tau*div(grad phi) = +tau*lap(phi) = -tau*(-lap)phi, which SUBTRACTS definiteness
+    // (wrong). We need +tau*(-lap)phi = -tau*lap(phi) to ADD positive energy, so scatter
+    // the NEGATED flux: -s to iL, +s to iR.
     #pragma unroll
     for (int ip = 0; ip < NSCS; ++ip) {
         int nL, nR; scsLR<TetTag>(ip, nL, nR);
         KeyType iL = n[nL], iR = n[nR];
         size_t off = e * NSCS + ip;
         RealType s = tau * (gx * areaVecX[off] + gy * areaVecY[off] + gz * areaVecZ[off]);
-        atomicAdd(&outAcc[iL], +s);
-        atomicAdd(&outAcc[iR], -s);
+        atomicAdd(&outAcc[iL], -s);
+        atomicAdd(&outAcc[iR], +s);
     }
 }
