@@ -102,6 +102,7 @@ int main(int argc, char** argv)
     RealType    dt       = 1.0e-3;     // initial/fixed dt; capped by --cfl if set
     double      cflMax   = -1;         // >0 enables adaptive dt: cap advective CFL (uMax*dt/dx) at this
     int         numSteps = 200;
+    int         sourceRampSteps = 0;   // >0: ramp inlet drive 0->full over N steps (gentle startup)
     int         vtuEvery = 20;
     int         maxIter  = 2000;
     RealType    tolerance = 1e-8;
@@ -154,6 +155,7 @@ int main(int argc, char** argv)
         else if (a.rfind("--dt=", 0) == 0)           dt        = std::stod(a.substr(5));
         else if (a.rfind("--cfl=", 0) == 0)          cflMax    = std::stod(a.substr(6)); // adaptive dt: cap advective CFL
         else if (a.rfind("--num-steps=", 0) == 0)    numSteps  = std::stoi(a.substr(12));
+        else if (a.rfind("--source-ramp-steps=", 0) == 0) sourceRampSteps = std::stoi(a.substr(20));
         else if (a.rfind("--vtu-every=", 0) == 0)    vtuEvery  = std::stoi(a.substr(12));
         else if (a.rfind("--max-iter=", 0) == 0)     maxIter   = std::stoi(a.substr(11));
         else if (a.rfind("--tol=", 0) == 0)          tolerance = std::stod(a.substr(6));
@@ -187,6 +189,7 @@ int main(int argc, char** argv)
                     "                       whole-geometry diagonal, NOT the passage scale, so this Re\n"
                     "                       does NOT match a physically-defined Re. Prefer --nu/--rho.\n"
                     "  --dt=V --num-steps=N time stepping (default 1e-3, 200)\n"
+                    "  --source-ramp-steps=N ramp inlet drive 0->full over N steps (gentle startup; default 0=off)\n"
                     "  --cfl=C              adaptive dt: cap advective CFL at C (~0.5 for BJ+BDF2)\n"
                     "  --vtu-output=PREFIX --vtu-every=N   VTU/PVTU output\n"
                     "  --ic-perturb=F       interior IC perturbation (break symmetry)\n"
@@ -292,6 +295,7 @@ int main(int argc, char** argv)
     NSStepper<KeyType, RealType, TetTag> s{amr.domain(), SolverKind::CG, blockSize,
                                            maxIter, RealType(tolerance), rank, numRanks};
     s.Uinf          = RealType(inletU);
+    s.uinfBase      = RealType(inletU);   // unramped full-strength inlet speed (ramp target)
     s.pumpZeroIC    = !pumpUniformIC;   // default: start from rest
     s.icPerturbMag  = RealType(icPerturb);
     // DDT (matrix-free D M^-1 D^T): the corrector applies the literal D^T, so the
@@ -954,6 +958,18 @@ int main(int argc, char** argv)
             dtNew = std::max(dtNew, 0.95 * dt);     // shrink <=5%/step (BDF2)
             dtNew = std::max(dtNew, 1e-6 * dtInit); // floor: never collapse dt to ~0
             dt = dtNew;
+        }
+        // Gentle startup: ramp the inlet drive 0->full over sourceRampSteps. The flow
+        // is real but starting it from rest at full strength dumps the whole pressure
+        // head onto a near-singular interior node -> phi spike -> advection blowup.
+        // Ramping keeps the head (and phi/grad(phi)) small while it builds. Scales BOTH
+        // the inlet Dirichlet velocity AND the opening-flux source (which reads s.Uinf
+        // live), so the discrete flux balance (oScale) is preserved at every ramp level.
+        if (sourceRampSteps > 0)
+        {
+            RealType ramp = RealType(std::min(1.0, double(step) / double(sourceRampSteps)));
+            s.Uinf = s.uinfBase * ramp;
+            rescaleInletVelocityTarget<KeyType, RealType, TetTag>(s, ramp);
         }
         runNsStep<KeyType, RealType, TetTag>(s, RealType(dt), RealType(nu), RealType(rho));
         simTime += dt;

@@ -2217,6 +2217,9 @@ struct NSStepper
     // Per-node velocity targets for the cavity BC. Boundary nodes hold the
     // prescribed value (u=1 on top, 0 elsewhere); interior nodes hold 0 (unused).
     cstone::DeviceVector<RealType> d_uTarget, d_vTarget, d_wTarget;
+    // Unramped snapshot of the inlet velocity target (built at full uinfBase), used by
+    // rescaleInletVelocityTarget so the per-step ramp scales from the base, not cumulatively.
+    cstone::DeviceVector<RealType> d_uTargetBase, d_vTargetBase, d_wTargetBase;
 
     // Geometry: SCS area vectors per (element, face). Same source used by the
     // implicit assembler, the advection scatter, the gradient, the divergence.
@@ -2379,6 +2382,7 @@ struct NSStepper
     enum class BCKind { Cavity, Channel, Pump, Periodic };
     BCKind bcKind = BCKind::Cavity;
     RealType Uinf = 1;   // channel/pump inflow speed; reuses lidU value via CLI
+    RealType uinfBase = 1;   // unramped full-strength inflow speed (for --source-ramp-steps)
     // Pump interior IC. Default: start from REST (0,0,0) and let the inlet drive
     // the flow along the geometry. The old uniform (Uinf,0,0) everywhere seeds a
     // spurious +x flow in BOTH tanks regardless of the real inlet orientation,
@@ -3718,6 +3722,10 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
     s.domain.exchangeNodeHalo(s.d_uTarget);
     s.domain.exchangeNodeHalo(s.d_vTarget);
     s.domain.exchangeNodeHalo(s.d_wTarget);
+    // Snapshot the full-strength target so --source-ramp-steps can scale from the base.
+    s.d_uTargetBase = s.d_uTarget;
+    s.d_vTargetBase = s.d_vTarget;
+    s.d_wTargetBase = s.d_wTarget;
     pt.lap("BC mark + target velocity");
 
     // d_dofToNode is needed for column-zero enforcement below. The pressure
@@ -6101,6 +6109,27 @@ RealType rmsOwnedInterior1(NSStepper<KeyType, RealType, ElementTag>& s,
     MPI_Allreduce(&locSumSq, &gSum, 1, mpiType,       MPI_SUM, MPI_COMM_WORLD);
     MPI_Allreduce(&locCnt,   &gCnt, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
     return (gCnt > 0) ? std::sqrt(gSum / RealType(gCnt)) : RealType(0);
+}
+
+// Set the inlet velocity Dirichlet target to ramp * base (the full-strength snapshot).
+// Walls have base target 0 so they stay 0; only inlet/extra nodes scale. Used by
+// --source-ramp-steps for a gentle startup. Scales from the base every step (not
+// cumulative) so it cannot drift.
+template<typename KeyType, typename RealType, typename ElementTag = HexTag>
+void rescaleInletVelocityTarget(NSStepper<KeyType, RealType, ElementTag>& s, RealType ramp)
+{
+    if (s.d_uTargetBase.size() != s.nodeCount) return;
+    auto scale = [ramp] (const cstone::DeviceVector<RealType>& base,
+                         cstone::DeviceVector<RealType>& tgt) {
+        thrust::transform(thrust::device,
+            thrust::device_pointer_cast(base.data()),
+            thrust::device_pointer_cast(base.data()) + base.size(),
+            thrust::device_pointer_cast(tgt.data()),
+            [ramp] __device__ (RealType b) { return b * ramp; });
+    };
+    scale(s.d_uTargetBase, s.d_uTarget);
+    scale(s.d_vTargetBase, s.d_vTarget);
+    scale(s.d_wTargetBase, s.d_wTarget);
 }
 
 template<typename KeyType, typename RealType, typename ElementTag = HexTag>
