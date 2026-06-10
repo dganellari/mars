@@ -2530,6 +2530,14 @@ struct NSStepper
     // no A.dx denominator -> skew-robust. tau reuses rhieChowTau (<=0 => dt/rho).
     bool useVMSStab       = false;
 
+    // IMPLICIT PSPG pressure stabilization (the CORRECT equal-order checkerboard fix):
+    // adds tau*L*phi inside applyDDTPerNode so CG solves (A+tau*L)phi=b. tau is a
+    // LENGTH^2 (~h^2/24), set at setup into pspgTauAuto; pspgTau>0 overrides. Damps
+    // checkerboard at ALL tau>0 (SPD, no CFL bound), unlike the explicit VMS source.
+    bool usePSPG          = false;
+    RealType pspgTau      = -1;   // <=0 => auto (pspgTauAuto)
+    RealType pspgTauAuto  = 0;    // beta*h^2, filled at setup
+
     // Ownership map every kernel uses. Always the domain's cached map -- we no
     // longer demote periodic slaves (see setupNSStepper). Kept as a single
     // accessor so all kernels bind through one place.
@@ -3566,6 +3574,22 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
     MPI_Allreduce(&lzmin, &s.zmin, 1, mpiType, MPI_MIN, MPI_COMM_WORLD);
     MPI_Allreduce(&lzmax, &s.zmax, 1, mpiType, MPI_MAX, MPI_COMM_WORLD);
     s.bboxEps = RealType(1e-10) * std::max({s.xmax - s.xmin, s.ymax - s.ymin, s.zmax - s.zmin});
+
+    // PSPG auto-tau: tau = beta*h^2 (a LENGTH^2), beta=1/24, h = mean cell size =
+    // cbrt(bbox_volume/elementCount). Same h the (dead) BD auto-tau uses. tau is the
+    // implicit-PSPG strength added as tau*L to the DDT operator. Start weak (1/24);
+    // --pspg-tau overrides. Global mean h keeps tau*L a weak, bounded perturbation
+    // of A even on tiny boundary-layer cells (avoids per-cell over-stabilization).
+    {
+        RealType bx = std::max(RealType(1e-30), s.xmax - s.xmin);
+        RealType by = std::max(RealType(1e-30), s.ymax - s.ymin);
+        RealType bz = std::max(RealType(1e-30), s.zmax - s.zmin);
+        RealType h  = std::cbrt((bx * by * bz) / RealType(std::max<size_t>(1, s.elementCount)));
+        s.pspgTauAuto = h * h / RealType(24);
+        if (s.rank == 0 && s.usePSPG)
+            std::cout << "  [pspg] auto tau = " << std::scientific << s.pspgTauAuto
+                      << " (= h^2/24, h=" << h << ")" << std::defaultfloat << "\n";
+    }
     pt.lap("global bbox");
 
     // BC mask + cavity target velocity.
@@ -5583,6 +5607,29 @@ void applyDDTPerNode(NSStepper<KeyType, RealType, ElementTag>& s,
         // One-shot print so we see the gate is active.
         static bool printed = false;
         if (!printed) { std::cerr << "[ddt] periodic-sum DISABLED on Ap" << std::endl; printed = true; }
+    }
+
+    // IMPLICIT PSPG stabilization (tet, opt-in): out += tau*L*phi so CG solves
+    // (A + tau*L) phi = b. This is the CORRECT equal-order checkerboard fix and is
+    // applied to the UNKNOWN phi (SPD, damps at all tau>0), NOT a div-breaking floor
+    // and NOT the explicit VMS source on p^n. Placed AFTER the main operator sum +
+    // halo and BEFORE the identity-row block so pinned/masked rows stay identity.
+    if constexpr (std::is_same_v<ElementTag, TetTag>)
+    if (s.usePSPG && eBlocks > 0)
+    {
+        RealType tauL = (s.pspgTau > RealType(0)) ? s.pspgTau : s.pspgTauAuto;
+        if (tauL > RealType(0))
+        {
+            applyPSPGLaplacianTetKernel<KeyType, RealType><<<eBlocks, s.blockSize>>>(
+                c0, c1, c2, c3, phi.data(),
+                s.domain.getNodeX().data(), s.domain.getNodeY().data(), s.domain.getNodeZ().data(),
+                s.d_areaVec_x.data(), s.d_areaVec_y.data(), s.d_areaVec_z.data(),
+                tauL, outAcc.data(), startElem, numLocal);
+            cudaDeviceSynchronize();
+            s.domain.reverseExchangeNodeHaloAdd(outAcc);
+            if (std::getenv("MARS_DDT_NO_PERIODIC_SUM") == nullptr)
+                maybePeriodicSum<KeyType, RealType, ElementTag>(s, outAcc);
+        }
     }
 
     // NOTE: BD is intentionally NOT applied to the matrix-free DDT operator.

@@ -138,3 +138,57 @@ __global__ void computeDivergenceVMSTetKernel(
         atomicAdd(&divAccNode[iR], -flow);
     }
 }
+
+// IMPLICIT PSPG pressure stabilization: apply tau*L*phi (L = discrete -div(grad))
+// INSIDE the matrix-free DDT operator so CG solves (A + tau*L) phi = b. Unlike the
+// EXPLICIT VMS divergence-source above (which lagged on the standing p^n and was an
+// unconditional high-frequency amplifier -> blew up at every tau), this acts on the
+// UNKNOWN phi -> a single SPD operator, damps the checkerboard mode at ALL tau>0
+// (no CFL bound to violate). L = sum_e V_e G^T G is symmetric PSD, shares A's
+// constant null mode (removed by the existing pin). The corrector stays bare
+// M^-1 D^T, so the post-corrector divergence relaxes to ~tau*lap(phi) = O(h^2),
+// a CONSISTENT residual that vanishes under refinement and self-extinguishes as
+// phi->0 -- the textbook equal-order PSPG, NOT the inconsistent BD/floor defect.
+// tau is a LENGTH^2 (~h^2/24), NOT the Rhie-Chow time-scale dt/rho.
+template<typename KeyType, typename RealType>
+__global__ void applyPSPGLaplacianTetKernel(
+    const KeyType* c0, const KeyType* c1, const KeyType* c2, const KeyType* c3,
+    const RealType* phi,
+    const RealType* nodeX, const RealType* nodeY, const RealType* nodeZ,
+    const RealType* areaVecX, const RealType* areaVecY, const RealType* areaVecZ,
+    RealType tau, RealType* outAcc, size_t startElem, size_t numLocal)
+{
+    size_t k = blockIdx.x * blockDim.x + threadIdx.x;
+    if (k >= numLocal) return;
+    size_t e = startElem + k;
+    constexpr int NPE  = ElemTraits<TetTag>::NodesPerElem;   // 4
+    constexpr int NSCS = ElemTraits<TetTag>::ScsPerElem;     // 6
+    const KeyType* cc[4] = {c0, c1, c2, c3};
+    KeyType n[NPE];
+    for (int i = 0; i < NPE; ++i) n[i] = cc[i][e];
+    RealType coords[4][3];
+    for (int i = 0; i < NPE; ++i) {
+        coords[i][0] = nodeX[n[i]];
+        coords[i][1] = nodeY[n[i]];
+        coords[i][2] = nodeZ[n[i]];
+    }
+    RealType det, dNdx[4][3];
+    Tet4CVFEM::jacobian_and_dNdx<RealType>(coords, det, dNdx);
+    // constant element gradient of phi (linear tet)
+    RealType gx = 0, gy = 0, gz = 0;
+    for (int kk = 0; kk < NPE; ++kk) {
+        RealType pk = phi[n[kk]];
+        gx += dNdx[kk][0] * pk;
+        gy += dNdx[kk][1] * pk;
+        gz += dNdx[kk][2] * pk;
+    }
+    #pragma unroll
+    for (int ip = 0; ip < NSCS; ++ip) {
+        int nL, nR; scsLR<TetTag>(ip, nL, nR);
+        KeyType iL = n[nL], iR = n[nR];
+        size_t off = e * NSCS + ip;
+        RealType s = tau * (gx * areaVecX[off] + gy * areaVecY[off] + gz * areaVecZ[off]);
+        atomicAdd(&outAcc[iL], +s);
+        atomicAdd(&outAcc[iR], -s);
+    }
+}
