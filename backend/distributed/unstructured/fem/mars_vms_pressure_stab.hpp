@@ -197,3 +197,41 @@ __global__ void applyPSPGLaplacianTetKernel(
         atomicAdd(&outAcc[iR], +s);
     }
 }
+
+// Diagonal of the PSPG operator L above, per node, for the Jacobi preconditioner.
+// The matrix-free solve runs (A + tau*L); without L's diagonal the preconditioner
+// matches only A, so it degrades as tau grows and CG stalls. Derivation: set
+// phi=e_i and feed it through applyPSPGLaplacianTetKernel -- the contribution it
+// scatters back to node i is exactly tau*Vol_e*|dNdx_e[i]|^2 (verified: the
+// L matrix equals the linear-tet stiffness tau*Vol*(dNdx_i . dNdx_j), so its
+// diagonal is tau*Vol*|dNdx_i|^2, strictly positive). Accumulate that per node
+// into the SAME d_diagAccNode the DDT-diagonal kernel fills, BEFORE the
+// reverse-halo + periodic sum + gather, so cross-rank/periodic incidence folds
+// in exactly as the operator's does.
+template<typename KeyType, typename RealType>
+__global__ void computeTetPSPGDiagonalKernel(
+    const KeyType* c0, const KeyType* c1, const KeyType* c2, const KeyType* c3,
+    const RealType* nodeX, const RealType* nodeY, const RealType* nodeZ,
+    RealType tau, RealType* diagAccNode, size_t startElem, size_t numLocal)
+{
+    size_t k = blockIdx.x * blockDim.x + threadIdx.x;
+    if (k >= numLocal) return;
+    size_t e = startElem + k;
+    constexpr int NPE = ElemTraits<TetTag>::NodesPerElem;   // 4
+    const KeyType* cc[4] = {c0, c1, c2, c3};
+    KeyType n[NPE];
+    for (int i = 0; i < NPE; ++i) n[i] = cc[i][e];
+    RealType coords[4][3];
+    for (int i = 0; i < NPE; ++i) {
+        coords[i][0] = nodeX[n[i]];
+        coords[i][1] = nodeY[n[i]];
+        coords[i][2] = nodeZ[n[i]];
+    }
+    RealType det, dNdx[4][3];
+    Tet4CVFEM::jacobian_and_dNdx<RealType>(coords, det, dNdx);
+    RealType vol = fabs(det) / RealType(6);
+    for (int i = 0; i < NPE; ++i) {
+        RealType g2 = dNdx[i][0]*dNdx[i][0] + dNdx[i][1]*dNdx[i][1] + dNdx[i][2]*dNdx[i][2];
+        atomicAdd(&diagAccNode[n[i]], tau * vol * g2);
+    }
+}

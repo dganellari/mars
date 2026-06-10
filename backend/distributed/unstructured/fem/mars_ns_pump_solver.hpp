@@ -4700,6 +4700,25 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
                 s.d_areaVec_x.data(), s.d_areaVec_y.data(), s.d_areaVec_z.data(),
                 s.d_massNode.data(), d_diagAccNode.data(), startElem, numLocal);
             cudaDeviceSynchronize();
+            // PSPG diagonal: the matrix-free solve runs (A + tau*L) when usePSPG,
+            // so the Jacobi diagonal must include tau*L's diagonal or the
+            // preconditioner no longer matches the operator and CG stalls (the
+            // mismatch grows with tau). Add tau*Vol*|dNdx_i|^2 per node into the
+            // SAME accumulator, BEFORE the reverse-halo/periodic fold below, so it
+            // sums across rank/periodic incidence exactly as the operator does.
+            if constexpr (std::is_same_v<ElementTag, TetTag>)
+            if (s.usePSPG)
+            {
+                RealType tauL = (s.pspgTau > RealType(0)) ? s.pspgTau : s.pspgTauAuto;
+                if (tauL > RealType(0))
+                {
+                    computeTetPSPGDiagonalKernel<KeyType, RealType><<<eBlocks, s.blockSize>>>(
+                        c0, c1, c2, c3,
+                        s.domain.getNodeX().data(), s.domain.getNodeY().data(), s.domain.getNodeZ().data(),
+                        tauL, d_diagAccNode.data(), startElem, numLocal);
+                    cudaDeviceSynchronize();
+                }
+            }
         }
         // Sum cross-rank / periodic incident-face contributions exactly as the
         // operator does for its accumulators.
