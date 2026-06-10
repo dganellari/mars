@@ -4773,6 +4773,41 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
             std::cout.flags(oldFlags);
         }
 
+        // SLIVER PIN: a near-degenerate tet gives a DDT diagonal ~9 OOM below the
+        // bulk (1e-12 vs 6e-3), which the Jacobi-PCG cannot solve (cg_p=-2). The
+        // identity-safe fix is to PIN those rows to p=0 via the existing pressure
+        // mask (the operator forces out[i]=phi[i], the RHS forces b[i]=0) -- one
+        // removed equation, div-safe, exactly like the outflow/pin DOFs. Mask any
+        // owned DOF with diag < MARS_SLIVER_PIN_FRAC * globalMax (default 1e-6).
+        // This makes the pressure system solvable so the real physics (and PSPG)
+        // become readable. Off (frac<=0) restores the old behaviour.
+        if (s.d_isPressureBdryDof.size() == static_cast<size_t>(s.numOwnedDofs))
+        {
+            RealType pinFrac = RealType(1e-6);
+            const char* evS = std::getenv("MARS_SLIVER_PIN_FRAC");
+            if (evS) { double v = std::atof(evS); if (v >= 0) pinFrac = RealType(v); }
+            RealType pinThresh = pinFrac * globalMax;
+            if (pinThresh > RealType(0))
+            {
+                const RealType* diagP = s.d_diagDDT.data();
+                uint8_t* maskP = s.d_isPressureBdryDof.data();
+                int nOwn = s.numOwnedDofs;
+                long long pinned = thrust::transform_reduce(thrust::device,
+                    thrust::counting_iterator<int>(0), thrust::counting_iterator<int>(nOwn),
+                    [diagP, maskP, pinThresh] __device__ (int dof) -> long long {
+                        if (diagP[dof] < pinThresh) { maskP[dof] = 1; return 1LL; }
+                        return 0LL;
+                    }, 0LL, thrust::plus<long long>());
+                long long gPinned = pinned;
+                if (s.numRanks > 1)
+                    MPI_Allreduce(&pinned, &gPinned, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+                if (s.rank == 0)
+                    std::cout << "  [sliver-pin] pinned " << gPinned
+                              << " degenerate DOF(s) with diag < " << std::scientific << pinThresh
+                              << " (= " << pinFrac << " * max_diag)" << std::defaultfloat << "\n";
+            }
+        }
+
         // NOTE: the sliver-cell regularization is now done UPSTREAM as a MASS floor
         // (see [mass-floor] where d_massNode is built). That is identity-safe because
         // operator AND corrector share M^-1. An operator-diagonal floor here would
