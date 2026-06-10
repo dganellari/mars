@@ -114,7 +114,7 @@ int main(int argc, char** argv)
     // earlier solved-field version. Pairs with the mass-conserving outlet + pumpDp=0.
     // --no-opening-flux-source disables it for A/B. Dirichlet lift ON (a correctness
     // fix); --no-dirichlet-lift disables for comparison.
-    bool        openingFluxSource = true;
+    bool        openingFluxSource = false;
     bool        dirichletLift     = true;
     // FIX B -- pressure-drop drive. >0 activates FIX B: prescribe p=pumpDp on the
     // inlet face, p=0 on the outlet face, velocities FREE at both, so the flux
