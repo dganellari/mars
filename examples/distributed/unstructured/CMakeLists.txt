@@ -157,6 +157,16 @@ target_include_directories(mars_amr_ns_projection PRIVATE
 )
 install(TARGETS mars_amr_ns_projection RUNTIME DESTINATION bin/examples)
 
+# Poiseuille flow validation driver: uniform inflow, free pressure outlet,
+# parabolic-profile RMS check against the analytic solution. Uses the channel
+# fork mars_ns_channel_solver.hpp (balanced opening-flux source).
+add_executable(mars_poiseuille_flow mars_poiseuille_flow.cu)
+target_link_libraries(mars_poiseuille_flow PRIVATE mars)
+target_include_directories(mars_poiseuille_flow PRIVATE
+    ${CMAKE_SOURCE_DIR}/backend/distributed/unstructured/amr
+)
+install(TARGETS mars_poiseuille_flow RUNTIME DESTINATION bin/examples)
+
 # Taylor-Green vortex driver. Periodic-cube NS solver + AMR. Currently a
 # skeleton that loads a mesh, builds the periodic node-pair map, applies the
 # TGV initial condition, and writes the IC as VTU. The full projection time
