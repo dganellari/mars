@@ -79,6 +79,8 @@ int main(int argc, char** argv)
     bool        useRhieChow = false;   // compact RC is geometrically unsafe on tets (blows up at every tau); --rhie-chow to force on
     RealType    rhieTau    = -1;       // RC strength; <=0 -> auto dt/rho. --rhie-tau= to sweep
     bool        useVMSStab = false;    // Nalu-Wind VMS pressure stab (NOT Rhie-Chow); --vms-stab. EXPERIMENTAL, validate.
+    bool        usePSPG    = false;    // implicit PSPG pressure stab (tau*L in the DDT operator); --pspg. The correct equal-order checkerboard fix.
+    double      pspgTau    = -1;       // <=0 => auto h^2/24; --pspg-tau=V overrides
     std::string inletSS;   // inlet side-set name (required for --bc=pump; pass --inlet-ss=)
     std::string outletSS;  // outlet side-set name (required for --bc=pump; pass --outlet-ss=)
     // Inlet velocity follows each node's OWN local surface normal (area-weighted
@@ -141,6 +143,8 @@ int main(int argc, char** argv)
         else if (a == "--rhie-chow")                 useRhieChow = true;
         else if (a.rfind("--rhie-tau=", 0) == 0)     rhieTau   = std::stod(a.substr(11));
         else if (a == "--vms-stab")                  useVMSStab = true;  // Nalu VMS pressure stab (tet-only, experimental)
+        else if (a == "--pspg")                      usePSPG    = true;  // implicit PSPG (tau*L in DDT operator) -- the correct checkerboard fix
+        else if (a.rfind("--pspg-tau=", 0) == 0)     pspgTau    = std::stod(a.substr(11));
         else if (a.rfind("--inlet-ss=", 0) == 0)     inletSS   = a.substr(11);
         else if (a.rfind("--outlet-ss=", 0) == 0)    outletSS  = a.substr(12);
         else if (a == "--inlet-pernode-normal")      inletPernodeNormal = true;
@@ -184,6 +188,7 @@ int main(int argc, char** argv)
                     "                       V<=0 (default) keeps the mass-conserving velocity outlet.\n"
                     "  --no-inlet-pernode-normal  use one global inlet normal (default: per-node)\n"
                     "  --advection=NAME     skew (default) | upwind | barth-jespersen (--bj)\n"
+                    "  --pspg [--pspg-tau=V] implicit PSPG pressure stabilization (tau*L in DDT operator; the equal-order checkerboard fix; tau auto h^2/24)\n"
                     "  --rho=V --nu=V       physical fluid properties (default water: rho=1000, nu=1e-6)\n"
                     "  --Re=V               LEGACY: override nu = inletU*L_bbox/Re. L_bbox is the\n"
                     "                       whole-geometry diagonal, NOT the passage scale, so this Re\n"
@@ -250,6 +255,8 @@ int main(int argc, char** argv)
                   << (useRhieChow && rhieTau > 0 ? "  (tau=" : "  (tau=auto dt/rho")
                   << (useRhieChow && rhieTau > 0 ? std::to_string(rhieTau) + ")" : ")") << "\n"
                   << "VMS-stab    = " << (useVMSStab ? "ON (Nalu, tet-only, EXPERIMENTAL)" : "OFF") << "\n"
+                  << "PSPG        = " << (usePSPG ? "ON (implicit tau*L in DDT operator)" : "OFF")
+                  << (usePSPG && pspgTau > 0 ? "  (tau=" + std::to_string(pspgTau) + ")" : (usePSPG ? "  (tau=auto h^2/24)" : "")) << "\n"
                   << "MPI ranks   = " << numRanks << "\n"
                   << "========================================\n\n";
     }
@@ -321,6 +328,8 @@ int main(int argc, char** argv)
     s.useBdf2 = useBdf2;
     s.useRhieChow = useRhieChow;
     s.useVMSStab  = useVMSStab;   // Nalu VMS pressure stabilization (tet-only)
+    s.usePSPG     = usePSPG;       // implicit PSPG (tau*L in DDT operator)
+    s.pspgTau     = RealType(pspgTau);
     // Correct through-flow config: mass-conserving outlet + opening-flux-source ON
     // + pumpDp=0 (FIX B off). The prescribed inlet/outlet opening flux balances
     // exactly (sum=0 at step0), so the single-pin Neumann pressure solve is
@@ -955,7 +964,11 @@ int main(int argc, char** argv)
             double dtCfl = (um > 0) ? cflMax * dxMean / um : dtInit;
             double dtNew = std::min(dtCfl, dtInit);
             dtNew = std::min(dtNew, 1.05 * dt);     // grow <=5%/step (BDF2)
-            dtNew = std::max(dtNew, 0.95 * dt);     // shrink <=5%/step (BDF2)
+            // SHRINK can be fast: a CFL violation must be caught THIS step or the
+            // explicit advection runs away (the 5%/step shrink cap was too slow --
+            // u spiked past the limiter and blew up). Allow up to 2x shrink/step.
+            // (Growth stays gentle so BDF2's constant-dt assumption holds in steady.)
+            dtNew = std::max(dtNew, 0.50 * dt);     // shrink <=2x/step (catch CFL fast)
             dtNew = std::max(dtNew, 1e-6 * dtInit); // floor: never collapse dt to ~0
             dt = dtNew;
         }
