@@ -429,6 +429,28 @@ __global__ void enforcePressureBcRhsKernel(const uint8_t* isPressureBdryDof,
     if (isPressureBdryDof[dof]) rhs[dof] = RealType(0);
 }
 
+// FIX B (pump --pump-dp>0): instead of pinning the phi increment to 0 at the
+// inlet/outlet faces (rhs=0, which freezes p^{n+1}=p^n and never lets the
+// interior relax into the inlet->outlet gradient), clamp the SOLVED pressure to
+// the target. The masked row is an identity row (out=phi), so setting
+// rhs=target-p^n makes the solve return phi=target-p^n -> p^{n+1}=p^n+phi=target
+// EXACTLY. This is a steady clamp to a constant, NOT an additive ramp, so the
+// head stays bounded at dP/0 while the interior relaxes around it.
+template<typename RealType>
+__global__ void enforcePressureBcRhsLiftKernel(const uint8_t* isPressureBdryDof,
+                                               const RealType* targetDof,
+                                               const RealType* p,
+                                               const int* dofToNode,
+                                               RealType* rhs, int numDofs)
+{
+    int dof = blockIdx.x * blockDim.x + threadIdx.x;
+    if (dof >= numDofs) return;
+    if (!isPressureBdryDof[dof]) return;
+    int node = dofToNode[dof];
+    RealType pn = (node >= 0) ? p[node] : RealType(0);
+    rhs[dof] = targetDof[dof] - pn;
+}
+
 // Build a per-NODE pressure-Dirichlet mask from the existing per-DOF mask +
 // optional single-pin DOF. Each owned node maps its dof through the existing
 // boundary flag; ghost nodes get 0 (filled by halo exchange later).
@@ -2157,6 +2179,11 @@ struct NSStepper
     int pressurePinDof = -1;   // owned-DOF id on the owning rank; -1 elsewhere (or in channel mode)
     int pressurePinRank = 0;   // global rank that owns the pin
     cstone::DeviceVector<uint8_t> d_isPressureBdryDof;   // size numOwnedDofs; only used in channel mode
+    // FIX B (pump --pump-dp>0): per-OWNED-DOF target pressure at the masked
+    // faces (pumpDp on inlet, 0 on outlet, 0 elsewhere). The lift enforce reads
+    // it as rhs=target-p^n so the solved pressure clamps to the head. Empty for
+    // pumpDp<=0 (cavity/channel/TGV never touch this).
+    cstone::DeviceVector<RealType> d_pPhiTargetDof;
     // Per-NODE pressure-Dirichlet mask (size nodeCount, halo-exchanged so
     // ghost slots see the owner's flag). Includes the single corner pin
     // (cavity) AND every outflow-face DOF (channel/pump). Used by symmetric
@@ -4218,6 +4245,9 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
                      uint8_t(0));
         // Host-side scatter from the outlet local-node list. Owned DOFs only.
         std::vector<uint8_t> hostMask(s.numOwnedDofs, 0);
+        // FIX B: per-owned-DOF target pressure for the lift enforce (filled only
+        // in the pumpDp>0 branch). pumpDp on inlet, 0 on outlet, 0 elsewhere.
+        std::vector<RealType> hostTarget(s.numOwnedDofs, RealType(0));
         std::vector<int> hostNodeToDof(s.nodeCount, -1);
         std::vector<uint8_t> hostOwn(s.nodeCount, 0);
         thrust::copy(thrust::device_pointer_cast(s.d_node_to_dof.data()),
@@ -4248,6 +4278,8 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
             if (dof < 0 || dof >= s.numOwnedDofs) continue;
             if (firstOutletDof < 0) firstOutletDof = dof;
             if (!singlePin) { hostMask[dof] = 1; ++ownedOutletCount; }
+            // FIX B: outlet target p=0 (explicit for clarity; zero-init already).
+            if (s.pumpDp > RealType(0)) hostTarget[dof] = RealType(0);
         }
         // FIX B: also mask the WHOLE inlet face as pressure-Dirichlet (p=pumpDp).
         // enforceBcMatrixKernel makes both faces identity rows -> nonsingular A.
@@ -4261,6 +4293,8 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
                 int dof = hostNodeToDof[li];
                 if (dof < 0 || dof >= s.numOwnedDofs) continue;
                 hostMask[dof] = 1; ++ownedInletCount;
+                // FIX B: inlet target p=pumpDp (the standing head the lift clamps to).
+                hostTarget[dof] = s.pumpDp;
             }
         }
         if (singlePin)
@@ -4278,6 +4312,15 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
         }
         thrust::copy(hostMask.begin(), hostMask.end(),
                      thrust::device_pointer_cast(s.d_isPressureBdryDof.data()));
+        // FIX B: stash the per-owned-DOF target so the per-step lift enforce can
+        // clamp p^{n+1} to dP/0 at the masked faces. Only the pump pressure-drop
+        // path needs it; cavity/channel/TGV leave d_pPhiTargetDof empty.
+        if (s.pumpDp > RealType(0))
+        {
+            s.d_pPhiTargetDof.resize(s.numOwnedDofs);
+            cudaMemcpy(s.d_pPhiTargetDof.data(), hostTarget.data(),
+                       s.numOwnedDofs * sizeof(RealType), cudaMemcpyHostToDevice);
+        }
 
         int dofBlocks = (s.numOwnedDofs + s.blockSize - 1) / s.blockSize;
         enforceBcMatrixKernel<RealType><<<dofBlocks, s.blockSize>>>(
@@ -4878,12 +4921,14 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
 
     // FIX B: seed the STANDING pressure head into p^n. p carries p=pumpDp on the
     // inlet face and p=0 on the outlet face; grad(p^n) then enters every predictor
-    // and drives the through-flow. The per-step phi increment is pinned 0 at both
-    // faces (enforcePressureBcRhsKernel on d_isPressureBdryDof, which now holds both
-    // faces), so p^{n+1}=p^n+phi keeps this head fixed. d_p is indexed by LOCAL NODE,
-    // so set owned inlet/outlet local nodes directly; the halo exchange propagates
-    // the head to ghosts. Owned-only avoids a cross-rank double-write. The pump
-    // driver never calls applyInitialCondition, so seed here at the end of setup.
+    // and drives the through-flow from step 0. The per-step pressure solve CLAMPS
+    // p^{n+1} back to the same head at both faces via the lift enforce (rhs=
+    // target-p^n on d_isPressureBdryDof, which holds both faces), so the head is
+    // held fixed while the interior relaxes into the inlet->outlet gradient.
+    // d_p is indexed by LOCAL NODE, so set owned inlet/outlet local nodes
+    // directly; the halo exchange propagates the head to ghosts. Owned-only
+    // avoids a cross-rank double-write. The pump driver never calls
+    // applyInitialCondition, so seed here at the end of setup.
     if (s.pumpDp > RealType(0))
     {
         std::vector<RealType> hostP(s.nodeCount, RealType(0));
@@ -5739,16 +5784,27 @@ int solvePressureDDT(NSStepper<KeyType, RealType, ElementTag>& s,
         const int* dofPtr       = s.d_node_to_dof.data();
         const uint8_t* ownPtr   = d_nodeOwnership.data();
         RealType* bPtr          = b_node.data();
+        // FIX B (pump --pump-dp>0): this is the PRODUCTION pump path. The masked
+        // row is an identity row (out=phi in applyDDTPerNode below), so the
+        // rhs=0 default would freeze phi=0 -> p^{n+1}=p^n, killing the
+        // inlet->outlet gradient. Lift instead: b[i]=target-p^n -> phi=target-p^n
+        // -> p^{n+1}=target EXACTLY (steady clamp, not an additive ramp).
+        const bool lift         = (s.pumpDp > RealType(0)
+                                   && s.d_pPhiTargetDof.size() == (size_t)numOwnedDofs);
+        const RealType* tgtPtr  = lift ? s.d_pPhiTargetDof.data() : nullptr;
+        const RealType* pPtr    = lift ? s.d_p.data() : nullptr;
         thrust::for_each(thrust::device,
             thrust::counting_iterator<size_t>(0),
             thrust::counting_iterator<size_t>(s.nodeCount),
-            [pinDof, maskPtr, dofPtr, ownPtr, bPtr, numOwnedDofs] __device__ (size_t i) {
+            [pinDof, maskPtr, dofPtr, ownPtr, bPtr, numOwnedDofs,
+             lift, tgtPtr, pPtr] __device__ (size_t i) {
                 if (ownPtr[i] != 1) return;
                 int dof = dofPtr[i];
                 if (dof < 0 || dof >= numOwnedDofs) return;
                 bool flagged = (pinDof >= 0 && dof == pinDof) ||
                                (maskPtr != nullptr && maskPtr[dof] != 0);
-                if (flagged) bPtr[i] = RealType(0);
+                if (!flagged) return;
+                bPtr[i] = lift ? (tgtPtr[dof] - pPtr[i]) : RealType(0);
             });
         cudaDeviceSynchronize();
     }
@@ -6850,8 +6906,15 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
         if (s.d_isPressureBdryDof.size() > 0)
         {
             int dofBlocks = (s.numOwnedDofs + s.blockSize - 1) / s.blockSize;
-            enforcePressureBcRhsKernel<RealType><<<dofBlocks, s.blockSize>>>(
-                s.d_isPressureBdryDof.data(), b.data(), s.numOwnedDofs);
+            // FIX B clamps p^{n+1} to the head (rhs=target-p^n); the rhs=0 path
+            // would instead freeze p, killing the inlet->outlet gradient.
+            if (s.pumpDp > RealType(0))
+                enforcePressureBcRhsLiftKernel<RealType><<<dofBlocks, s.blockSize>>>(
+                    s.d_isPressureBdryDof.data(), s.d_pPhiTargetDof.data(), s.d_p.data(),
+                    s.d_dofToNode.data(), b.data(), s.numOwnedDofs);
+            else
+                enforcePressureBcRhsKernel<RealType><<<dofBlocks, s.blockSize>>>(
+                    s.d_isPressureBdryDof.data(), b.data(), s.numOwnedDofs);
             cudaDeviceSynchronize();
         }
         // Periodic: project the RHS onto range(K) by subtracting its global
@@ -6920,8 +6983,15 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
             if (s.d_isPressureBdryDof.size() > 0)
             {
                 int dofBlocks = (s.numOwnedDofs + s.blockSize - 1) / s.blockSize;
-                enforcePressureBcRhsKernel<RealType><<<dofBlocks, s.blockSize>>>(
-                    s.d_isPressureBdryDof.data(), b.data(), s.numOwnedDofs);
+                // FIX B lift (assembled-CG diagnostic path): clamp p^{n+1} to the
+                // head so the assembled-CG A/B matches the matrix-free pump.
+                if (s.pumpDp > RealType(0))
+                    enforcePressureBcRhsLiftKernel<RealType><<<dofBlocks, s.blockSize>>>(
+                        s.d_isPressureBdryDof.data(), s.d_pPhiTargetDof.data(), s.d_p.data(),
+                        s.d_dofToNode.data(), b.data(), s.numOwnedDofs);
+                else
+                    enforcePressureBcRhsKernel<RealType><<<dofBlocks, s.blockSize>>>(
+                        s.d_isPressureBdryDof.data(), b.data(), s.numOwnedDofs);
                 cudaDeviceSynchronize();
             }
             // RHS finiteness check. A non-finite entry here (e.g. a boundary
