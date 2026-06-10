@@ -2053,10 +2053,20 @@ __global__ void buildPressureRhsKernel(const RealType* divAccNode,
 // coef does that). Adding it is not a double-count: no scsLR pair covers the
 // exterior face. One thread per node; only owned nodes contribute (off-set nodes
 // have a zero area-vector so they add nothing even if visited).
+//
+// The velocity here is the PRESCRIBED opening velocity (a single global constant
+// (Upx,Upy,Upz)), NOT the solved field. The inlet uses Uinf*globalInletDir and the
+// outlet uses outletU*globalOutletDir; because the per-node area-vectors sum to the
+// global aIn/aOut and the directions are the SAME global vectors, the inlet term
+// sums to -Q_in and the outlet term to +Q_out=+Q_in (mass-conserving outlet), so
+// the two cancel EXACTLY (bit-level) at every step including step0. That keeps the
+// single-pin Neumann pressure system compatible -- no one-sided step0 imbalance,
+// hence no FIX-1 blowup. (Using the solved u** left the outlet ~0 at step0, so only
+// the inlet source was added -> sum != 0 -> incompatible -> phi=1e36.)
 template<typename RealType>
-__global__ void addOpeningFluxSourceKernel(const RealType* u,
-                                           const RealType* v,
-                                           const RealType* w,
+__global__ void addOpeningFluxSourceKernel(RealType Upx,
+                                           RealType Upy,
+                                           RealType Upz,
                                            const RealType* aVecX,
                                            const RealType* aVecY,
                                            const RealType* aVecZ,
@@ -2067,8 +2077,7 @@ __global__ void addOpeningFluxSourceKernel(const RealType* u,
     size_t i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= numNodes) return;
     if (ownership[i] != 1) return;
-    RealType flux = u[i] * aVecX[i] + v[i] * aVecY[i] + w[i] * aVecZ[i];
-    divAccNode[i] += flux;
+    divAccNode[i] += Upx * aVecX[i] + Upy * aVecY[i] + Upz * aVecZ[i];
 }
 
 // DOF-indexed solver output -> per-node array. Reused for all velocity solves
@@ -6813,20 +6822,24 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
     // scatter cannot reach. divAccNode is now owner-complete; the per-node opening
     // area-vectors are owner-complete too (driver does reverse-halo-add then publish,
     // counted once per owned node), so restricting the add to owned nodes is exact
-    // and rank-safe. Uses the SAME post-diffusion velocity the divergence scatter
-    // used (d_uStarStar): inlet nodes carry the prescribed inflow, outlet nodes the
-    // post-diffusion outflow, so inlet flux + outlet flux net to ~0 and the single-pin
-    // Neumann pressure system stays solvable. Off unless --opening-flux-source.
+    // and rank-safe. Uses the PRESCRIBED opening velocity (single global direction),
+    // NOT the solved u**: inlet = Uinf*globalInletDir, outlet = outletU*globalOutletDir.
+    // The per-node area-vectors sum to the global aIn/aOut, so the inlet term sums to
+    // -Q_in and the outlet term to +Q_out=+Q_in (mass-conserving), cancelling EXACTLY
+    // at step0 -- the single-pin Neumann pressure system stays compatible (no FIX-1
+    // one-sided blowup). REQUIRES the mass-conserving outlet (outletU>0); a do-nothing
+    // outlet leaves outletU<=0 -> outlet term ~0 -> imbalance. Off unless
+    // --opening-flux-source.
     if (s.useOpeningFluxSource
         && s.d_inletAreaVecX.size() == s.nodeCount
         && s.d_outletAreaVecX.size() == s.nodeCount)
     {
         addOpeningFluxSourceKernel<RealType><<<nodeBlocks, s.blockSize>>>(
-            s.d_uStarStar.data(), s.d_vStarStar.data(), s.d_wStarStar.data(),
+            RealType(s.Uinf * s.inletDirX), RealType(s.Uinf * s.inletDirY), RealType(s.Uinf * s.inletDirZ),
             s.d_inletAreaVecX.data(), s.d_inletAreaVecY.data(), s.d_inletAreaVecZ.data(),
             d_nodeOwnership.data(), d_divAccNode.data(), s.nodeCount);
         addOpeningFluxSourceKernel<RealType><<<nodeBlocks, s.blockSize>>>(
-            s.d_uStarStar.data(), s.d_vStarStar.data(), s.d_wStarStar.data(),
+            RealType(s.outletU * s.outletDirX), RealType(s.outletU * s.outletDirY), RealType(s.outletU * s.outletDirZ),
             s.d_outletAreaVecX.data(), s.d_outletAreaVecY.data(), s.d_outletAreaVecZ.data(),
             d_nodeOwnership.data(), d_divAccNode.data(), s.nodeCount);
         cudaDeviceSynchronize();

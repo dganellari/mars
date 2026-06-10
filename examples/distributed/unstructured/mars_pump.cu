@@ -108,10 +108,13 @@ int main(int argc, char** argv)
     int         blockSize  = 256;
     int         bucketSize = 64;
     RealType    icPerturb  = 0.0;
-    // FIX 1/2 through-flow toggles. Opening-flux source OFF by default so it can
-    // be A/B-ed safely (a prior naive surface-source attempt blew up). Dirichlet
-    // lift ON (a correctness fix); --no-dirichlet-lift disables for comparison.
-    bool        openingFluxSource = false;
+    // FIX 1/2 through-flow toggles. Opening-flux source ON by default: it is now the
+    // CORRECT through-flow fix -- it uses the PRESCRIBED (balanced) inlet/outlet
+    // opening flux, which cancels EXACTLY at step0, so it cannot blow up like the
+    // earlier solved-field version. Pairs with the mass-conserving outlet + pumpDp=0.
+    // --no-opening-flux-source disables it for A/B. Dirichlet lift ON (a correctness
+    // fix); --no-dirichlet-lift disables for comparison.
+    bool        openingFluxSource = true;
     bool        dirichletLift     = true;
     // FIX B -- pressure-drop drive. >0 activates FIX B: prescribe p=pumpDp on the
     // inlet face, p=0 on the outlet face, velocities FREE at both, so the flux
@@ -187,8 +190,9 @@ int main(int argc, char** argv)
                     "  --cfl=C              adaptive dt: cap advective CFL at C (~0.5 for BJ+BDF2)\n"
                     "  --vtu-output=PREFIX --vtu-every=N   VTU/PVTU output\n"
                     "  --ic-perturb=F       interior IC perturbation (break symmetry)\n"
-                    "  --opening-flux-source  add inlet+outlet boundary surface flux to the\n"
-                    "                       pressure RHS (FIX 1, off by default; A/B with --no-...)\n"
+                    "  --opening-flux-source  add prescribed inlet+outlet opening flux to the\n"
+                    "                       pressure RHS (FIX 1, ON by default; correct through-flow\n"
+                    "                       fix, needs mass-conserving outlet; --no-... for A/B)\n"
                     "  --no-dirichlet-lift  disable the velocity-diffusion Dirichlet lift (FIX 2,\n"
                     "                       on by default)\n";
             }
@@ -313,7 +317,12 @@ int main(int argc, char** argv)
     s.useBdf2 = useBdf2;
     s.useRhieChow = useRhieChow;
     s.useVMSStab  = useVMSStab;   // Nalu VMS pressure stabilization (tet-only)
-    s.useOpeningFluxSource = openingFluxSource;   // FIX 1 (off by default)
+    // Correct through-flow config: mass-conserving outlet + opening-flux-source ON
+    // + pumpDp=0 (FIX B off). The prescribed inlet/outlet opening flux balances
+    // exactly (sum=0 at step0), so the single-pin Neumann pressure solve is
+    // compatible and through-flow develops. The source REQUIRES the mass-conserving
+    // outlet (so outletU>0 and the outlet term is nonzero); see the guard below.
+    s.useOpeningFluxSource = openingFluxSource;   // FIX 1 (on by default; correct fix)
     s.useDirichletLift     = dirichletLift;       // FIX 2 (on by default)
     s.pumpDp               = RealType(pumpDp);    // FIX B: pressure-drop drive (>0 active)
     s.rhieChowTau = rhieTau;   // <=0 -> kernel falls back to dt/rho
@@ -339,6 +348,20 @@ int main(int argc, char** argv)
     // default, forces Q_out=Q_in) or do-nothing (free velocity + whole-face p=0,
     // diagnostic only -- does not self-drive the passage).
     s.outletDoNothing = (outletMode != "mass-conserving");
+
+    // The opening-flux source REQUIRES the mass-conserving outlet: only then is
+    // outletU>0, so the prescribed outlet term (+Q_out) balances the inlet term
+    // (-Q_in). A do-nothing outlet leaves outletU<=0 -> outlet term ~0 -> one-sided
+    // imbalance -> the single-pin Neumann pressure solve goes incompatible -> blowup.
+    // Disable the source (with a warning) rather than blow up.
+    if (s.useOpeningFluxSource && s.outletDoNothing)
+    {
+        if (rank == 0)
+            std::cerr << "WARNING: --opening-flux-source needs the mass-conserving outlet "
+                         "(outletU>0 to balance the inlet flux); --outlet=do-nothing leaves it "
+                         "unbalanced. Disabling the opening-flux source.\n";
+        s.useOpeningFluxSource = false;
+    }
 
     // Prescribed inlet volume flux Q_in = inletU * areaIn, captured at function
     // scope so the per-step through-flow diagnostic can compare it to the measured
@@ -627,9 +650,10 @@ int main(int argc, char** argv)
         if (areaIn > 1e-30) perNodeAreaVec(inletSS, h_inAx, h_inAy, h_inAz);
 
         // FIX 1: push the per-node OUTWARD inlet area-vectors to the device so the
-        // opening-flux source can add ( u . areaVec ) at each inlet node. Same owner-
-        // complete field used for the inward normals above; outlet area-vecs are
-        // uploaded separately below. Only needed when the source is enabled.
+        // opening-flux source can add ( Uprescribed . areaVec ) at each inlet node.
+        // Same owner-complete field used for the inward normals above; outlet area-vecs
+        // are uploaded separately below. Gated on openingFluxSource (ON by default), so
+        // this fires by default; --no-opening-flux-source skips it.
         if (openingFluxSource && areaIn > 1e-30)
         {
             const size_t nNodes = amr.domain().getNodeCount();
