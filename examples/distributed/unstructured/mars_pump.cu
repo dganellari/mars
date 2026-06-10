@@ -108,6 +108,11 @@ int main(int argc, char** argv)
     int         blockSize  = 256;
     int         bucketSize = 64;
     RealType    icPerturb  = 0.0;
+    // FIX 1/2 through-flow toggles. Opening-flux source OFF by default so it can
+    // be A/B-ed safely (a prior naive surface-source attempt blew up). Dirichlet
+    // lift ON (a correctness fix); --no-dirichlet-lift disables for comparison.
+    bool        openingFluxSource = false;
+    bool        dirichletLift     = true;
 
     for (int i = 1; i < argc; ++i)
     {
@@ -143,6 +148,10 @@ int main(int argc, char** argv)
         else if (a.rfind("--max-iter=", 0) == 0)     maxIter   = std::stoi(a.substr(11));
         else if (a.rfind("--tol=", 0) == 0)          tolerance = std::stod(a.substr(6));
         else if (a.rfind("--ic-perturb=", 0) == 0)   icPerturb = std::stod(a.substr(13));
+        else if (a == "--opening-flux-source")        openingFluxSource = true;   // FIX 1: add inlet+outlet boundary surface flux to the pressure RHS
+        else if (a == "--no-opening-flux-source")     openingFluxSource = false;
+        else if (a == "--dirichlet-lift")             dirichletLift = true;       // FIX 2: lift inlet momentum into interior diffusion (default ON)
+        else if (a == "--no-dirichlet-lift")          dirichletLift = false;
         else if (a == "--help" || a == "-h")
         {
             if (rank == 0)
@@ -166,7 +175,11 @@ int main(int argc, char** argv)
                     "  --dt=V --num-steps=N time stepping (default 1e-3, 200)\n"
                     "  --cfl=C              adaptive dt: cap advective CFL at C (~0.5 for BJ+BDF2)\n"
                     "  --vtu-output=PREFIX --vtu-every=N   VTU/PVTU output\n"
-                    "  --ic-perturb=F       interior IC perturbation (break symmetry)\n";
+                    "  --ic-perturb=F       interior IC perturbation (break symmetry)\n"
+                    "  --opening-flux-source  add inlet+outlet boundary surface flux to the\n"
+                    "                       pressure RHS (FIX 1, off by default; A/B with --no-...)\n"
+                    "  --no-dirichlet-lift  disable the velocity-diffusion Dirichlet lift (FIX 2,\n"
+                    "                       on by default)\n";
             }
             MPI_Finalize();
             return 0;
@@ -283,6 +296,8 @@ int main(int argc, char** argv)
     s.useBdf2 = useBdf2;
     s.useRhieChow = useRhieChow;
     s.useVMSStab  = useVMSStab;   // Nalu VMS pressure stabilization (tet-only)
+    s.useOpeningFluxSource = openingFluxSource;   // FIX 1 (off by default)
+    s.useDirichletLift     = dirichletLift;       // FIX 2 (on by default)
     s.rhieChowTau = rhieTau;   // <=0 -> kernel falls back to dt/rho
     // Cavity = lid-driven cavity (geometric BC, no side-sets) -- a controlled
     // tet-NS validation case with a known flow pattern. Pump = per-side-set
@@ -582,6 +597,21 @@ int main(int argc, char** argv)
         // normals below (direction = -areaVec/|areaVec|).
         std::vector<RealType> h_inAx, h_inAy, h_inAz;
         if (areaIn > 1e-30) perNodeAreaVec(inletSS, h_inAx, h_inAy, h_inAz);
+
+        // FIX 1: push the per-node OUTWARD inlet area-vectors to the device so the
+        // opening-flux source can add ( u . areaVec ) at each inlet node. Same owner-
+        // complete field used for the inward normals above; outlet area-vecs are
+        // uploaded separately below. Only needed when the source is enabled.
+        if (openingFluxSource && areaIn > 1e-30)
+        {
+            const size_t nNodes = amr.domain().getNodeCount();
+            s.d_inletAreaVecX.resize(nNodes);
+            s.d_inletAreaVecY.resize(nNodes);
+            s.d_inletAreaVecZ.resize(nNodes);
+            cudaMemcpy(s.d_inletAreaVecX.data(), h_inAx.data(), nNodes*sizeof(RealType), cudaMemcpyHostToDevice);
+            cudaMemcpy(s.d_inletAreaVecY.data(), h_inAy.data(), nNodes*sizeof(RealType), cudaMemcpyHostToDevice);
+            cudaMemcpy(s.d_inletAreaVecZ.data(), h_inAz.data(), nNodes*sizeof(RealType), cudaMemcpyHostToDevice);
+        }
 
         // -------- Per-node inlet inward normals --------
         // The single global inletDir makes every inlet vector parallel, which on a
@@ -891,15 +921,36 @@ int main(int argc, char** argv)
             RealType vmx = maxOwnedInteriorAbs<KeyType, RealType, TetTag>(s, s.d_v);
             RealType wmx = maxOwnedInteriorAbs<KeyType, RealType, TetTag>(s, s.d_w);
             double uMax = std::sqrt(double(umx)*double(umx) + double(vmx)*double(vmx) + double(wmx)*double(wmx));
-            // Through-flow: measured outlet flux Q_out = sum_owned(u . outletAreaVec)
-            // vs the prescribed inflow Q_in. Ratio -> 1 means mass crosses the whole
-            // domain (passage is live). fluxThroughOwned is collective -> all ranks.
+            // [bc-sanity] Q_out = sum_owned(u . outletAreaVec) vs prescribed Q_in.
+            // NOT a through-flow proof: the corrector relocks the outlet nodes to
+            // the prescribed outletU, so for the mass-conserving outlet Q_out=Q_in
+            // by construction. Kept only as a BC sanity check. fluxThroughOwned is
+            // collective -> call on all ranks.
             double qOut = 0.0;
             bool haveFlux = !cavityMode && qIn > 0.0 && s.d_outletAreaVecX.size() == s.nodeCount;
             if (haveFlux)
                 qOut = double(fluxThroughOwned<KeyType, RealType, TetTag>(
                     s, s.d_u, s.d_v, s.d_w,
                     s.d_outletAreaVecX, s.d_outletAreaVecY, s.d_outletAreaVecZ));
+            // FIX 3: interior cut-plane flux probe. Reads the SOLVED interior field,
+            // so it cannot be fooled by the BC relock at the openings. Probe at
+            // 0.25/0.5/0.75 of the longest bbox axis: all three ~equal and nonzero =
+            // real through-flow; inlet-end nonzero with mid/outlet ~0 = flow dies.
+            // interiorCutFlux is collective -> compute on every rank.
+            double qc25 = 0.0, qc50 = 0.0, qc75 = 0.0;
+            int cutAxis = 0;
+            if (!cavityMode)
+            {
+                double spanX = double(s.xmax) - double(s.xmin);
+                double spanY = double(s.ymax) - double(s.ymin);
+                double spanZ = double(s.zmax) - double(s.zmin);
+                cutAxis = (spanX >= spanY && spanX >= spanZ) ? 0 : (spanY >= spanZ ? 1 : 2);
+                double lo  = (cutAxis == 0) ? double(s.xmin) : (cutAxis == 1 ? double(s.ymin) : double(s.zmin));
+                double span = (cutAxis == 0) ? spanX : (cutAxis == 1 ? spanY : spanZ);
+                qc25 = double(interiorCutFlux<KeyType, RealType, TetTag>(s, cutAxis, RealType(lo + 0.25*span)));
+                qc50 = double(interiorCutFlux<KeyType, RealType, TetTag>(s, cutAxis, RealType(lo + 0.50*span)));
+                qc75 = double(interiorCutFlux<KeyType, RealType, TetTag>(s, cutAxis, RealType(lo + 0.75*span)));
+            }
             double divND = (inletU > 0 && Lscale > 0)
                            ? double(s.lastDivMax) * Lscale / inletU : double(s.lastDivMax);
             // RC-flux divergence (the operator RC actually zeros); only meaningful
@@ -926,11 +977,22 @@ int main(int argc, char** argv)
                           << "  cg_uvw=" << s.lastUIters
                           << "\n" << std::defaultfloat;
                 if (haveFlux)
-                    std::cout << "  [through-flow] Q_in=" << std::scientific << std::setprecision(3) << qIn
+                    std::cout << "  [bc-sanity] Q_in=" << std::scientific << std::setprecision(3) << qIn
                               << "  Q_out=" << qOut
                               << "  ratio=" << std::fixed << std::setprecision(3)
                               << (std::abs(qIn) > 0 ? qOut / qIn : 0.0)
+                              << "  (prescribed-BC check, NOT through-flow)"
                               << "\n" << std::defaultfloat;
+                if (!cavityMode)
+                {
+                    const char axc[3] = {'x', 'y', 'z'};
+                    std::cout << "  [interior-flux] axis=" << axc[cutAxis]
+                              << "  cut@25%=" << std::scientific << std::setprecision(3) << qc25
+                              << "  cut@50%=" << qc50
+                              << "  cut@75%=" << qc75
+                              << "  (solved interior; ~equal+nonzero = real through-flow)"
+                              << "\n" << std::defaultfloat;
+                }
             }
         }
         if (!vtuPrefix.empty() && (step % vtuEvery == 0 || step == numSteps))
