@@ -7187,7 +7187,46 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
             {
                 mars::fem::removeMean<RealType>(s.domain, d_bNode, MPI_COMM_WORLD);
             }
+            // MARS_OFS_DBG: is the RHS b huge at the OPENING nodes (tiny DDT diagonal
+            // there) or uniform? print b|max overall vs b|max on inlet/outlet nodes.
+            if (s.useOpeningFluxSource && std::getenv("MARS_OFS_DBG") && s.rank == 0) {
+                const auto& d_own = s.domain.getNodeOwnershipMap();
+                auto bMaxWhere = [&] (bool wantOpening) -> RealType {
+                    const RealType* aIn = s.d_inletAreaVecX.data();
+                    const RealType* aOut = s.d_outletAreaVecX.data();
+                    return thrust::transform_reduce(thrust::device,
+                        thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(s.nodeCount),
+                        [own = d_own.data(), b = d_bNode.data(), n2d = s.d_node_to_dof.data(),
+                         aIn, aOut, wantOpening] __device__ (size_t i) -> RealType {
+                            if (own[i] != 1 || n2d[i] < 0) return RealType(0);
+                            bool opening = (aIn[i]*aIn[i] > RealType(0)) || (aOut[i]*aOut[i] > RealType(0));
+                            return (opening == wantOpening) ? fabs(b[i]) : RealType(0);
+                        }, RealType(0), thrust::maximum<RealType>());
+                };
+                std::cout << "  [ofs-dbg3] b|max opening=" << std::scientific << bMaxWhere(true)
+                          << " interior=" << bMaxWhere(false)
+                          << " (diagDDT range printed above)"
+                          << std::defaultfloat << "\n";
+            }
             s.lastPressureIters = solvePressureDDT<KeyType, RealType, ElementTag>(s, d_bNode, s.d_phi);
+            // MARS_OFS_DBG: WHERE is phi huge -- opening nodes (local, tiny diagonal)
+            // or everywhere (global drift)? this distinguishes the last 2 hypotheses.
+            if (s.useOpeningFluxSource && std::getenv("MARS_OFS_DBG") && s.rank == 0) {
+                const auto& d_own = s.domain.getNodeOwnershipMap();
+                auto phiMaxWhere = [&] (bool wantOpening) -> RealType {
+                    const RealType* aIn = s.d_inletAreaVecX.data();
+                    const RealType* aOut = s.d_outletAreaVecX.data();
+                    return thrust::transform_reduce(thrust::device,
+                        thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(s.nodeCount),
+                        [own = d_own.data(), ph = s.d_phi.data(), aIn, aOut, wantOpening] __device__ (size_t i) -> RealType {
+                            if (own[i] != 1) return RealType(0);
+                            bool opening = (aIn[i]*aIn[i] > RealType(0)) || (aOut[i]*aOut[i] > RealType(0));
+                            return (opening == wantOpening) ? fabs(ph[i]) : RealType(0);
+                        }, RealType(0), thrust::maximum<RealType>());
+                };
+                std::cout << "  [ofs-dbg4] phi|max opening=" << std::scientific << phiMaxWhere(true)
+                          << " interior=" << phiMaxWhere(false) << std::defaultfloat << "\n";
+            }
         }
     }
 
