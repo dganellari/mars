@@ -6871,23 +6871,30 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
             RealType g = 0; MPI_Allreduce(&loc, &g, 1, std::is_same<RealType,double>::value?MPI_DOUBLE:MPI_FLOAT, MPI_SUM, MPI_COMM_WORLD);
             return g;
         };
-        RealType Qin_raw  = ofsDbg ? fluxSum(s.Uinf*s.inletDirX, s.Uinf*s.inletDirY, s.Uinf*s.inletDirZ,
-                                             s.d_inletAreaVecX.data(), s.d_inletAreaVecY.data(), s.d_inletAreaVecZ.data()) : RealType(0);
-        RealType Qout_raw = ofsDbg ? fluxSum(s.outletU*s.outletDirX, s.outletU*s.outletDirY, s.outletU*s.outletDirZ,
-                                             s.d_outletAreaVecX.data(), s.d_outletAreaVecY.data(), s.d_outletAreaVecZ.data()) : RealType(0);
+        // adjustPhi: the DISCRETE inlet and outlet fluxes differ (~1.5% here: the
+        // per-node area-vectors sum to a slightly different value than the analytic
+        // areaIn/areaOut the driver used to set outletU). That residual, x coef=rho/dt,
+        // makes the single-pin Neumann RHS incompatible -> blowup. Measure both
+        // discrete fluxes and RESCALE the outlet so it EXACTLY cancels the inlet.
+        const RealType Qin_raw  = fluxSum(s.Uinf*s.inletDirX, s.Uinf*s.inletDirY, s.Uinf*s.inletDirZ,
+                                          s.d_inletAreaVecX.data(), s.d_inletAreaVecY.data(), s.d_inletAreaVecZ.data());
+        const RealType Qout_raw = fluxSum(s.outletU*s.outletDirX, s.outletU*s.outletDirY, s.outletU*s.outletDirZ,
+                                          s.d_outletAreaVecX.data(), s.d_outletAreaVecY.data(), s.d_outletAreaVecZ.data());
+        const RealType oScale = (std::fabs(Qout_raw) > RealType(0)) ? (-Qin_raw / Qout_raw) : RealType(0);
         addOpeningFluxSourceKernel<RealType><<<nodeBlocks, s.blockSize>>>(
             RealType(s.Uinf * s.inletDirX), RealType(s.Uinf * s.inletDirY), RealType(s.Uinf * s.inletDirZ),
             s.d_inletAreaVecX.data(), s.d_inletAreaVecY.data(), s.d_inletAreaVecZ.data(),
             d_nodeOwnership.data(), d_divAccNode.data(), s.nodeCount);
         addOpeningFluxSourceKernel<RealType><<<nodeBlocks, s.blockSize>>>(
-            RealType(s.outletU * s.outletDirX), RealType(s.outletU * s.outletDirY), RealType(s.outletU * s.outletDirZ),
+            RealType(oScale * s.outletU * s.outletDirX), RealType(oScale * s.outletU * s.outletDirY), RealType(oScale * s.outletU * s.outletDirZ),
             s.d_outletAreaVecX.data(), s.d_outletAreaVecY.data(), s.d_outletAreaVecZ.data(),
             d_nodeOwnership.data(), d_divAccNode.data(), s.nodeCount);
         cudaDeviceSynchronize();
         if (ofsDbg) {
             std::cout << "  [ofs-dbg2] Qin_raw=" << std::scientific << Qin_raw
-                      << " Qout_raw=" << Qout_raw << " (should be -Q and +Q)"
-                      << " outletDir=(" << s.outletDirX << "," << s.outletDirY << "," << s.outletDirZ << ")"
+                      << " Qout_raw=" << Qout_raw << " oScale=" << oScale
+                      << " rescaled-outlet=" << (oScale*Qout_raw)
+                      << " net=" << (Qin_raw + oScale*Qout_raw) << " (should be ~0)"
                       << std::defaultfloat << "\n";
             RealType divMaxAfter = maxAbsOwned(d_divAccNode.data());
             RealType sumAfter    = sumOwned(d_divAccNode.data());
