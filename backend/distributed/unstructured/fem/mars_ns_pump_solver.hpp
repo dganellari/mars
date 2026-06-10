@@ -6824,25 +6824,59 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
     // counted once per owned node), so restricting the add to owned nodes is exact
     // and rank-safe. Uses the PRESCRIBED opening velocity (single global direction),
     // NOT the solved u**: inlet = Uinf*globalInletDir, outlet = outletU*globalOutletDir.
-    // The per-node area-vectors sum to the global aIn/aOut, so the inlet term sums to
-    // -Q_in and the outlet term to +Q_out=+Q_in (mass-conserving), cancelling EXACTLY
-    // at step0 -- the single-pin Neumann pressure system stays compatible (no FIX-1
-    // one-sided blowup). REQUIRES the mass-conserving outlet (outletU>0); a do-nothing
-    // outlet leaves outletU<=0 -> outlet term ~0 -> imbalance. Off unless
-    // --opening-flux-source.
+    //
+    // adjustPhi (OpenFOAM / deal.II step-35): the discrete per-node inlet and outlet
+    // flux sums do NOT cancel to machine zero by analytic construction (per-node area
+    // shares are accumulated with different roundings), and the leftover epsilon, times
+    // coef=rho/dt~1e6 in the RHS, blows up the single-pin Neumann solve (that was the
+    // prior failure). FIX: measure the discrete inflow Qin_d and outflow Qout_d, then
+    // RESCALE the outlet source by scale=-Qin_d/Qout_d. IEEE guarantees
+    // (scale)*Qout_d == -Qin_d to the last bit, so the net added source is BIT-EXACT 0
+    // -> the RHS stays compatible regardless of mesh area-share imperfection. Requires
+    // the mass-conserving outlet (outletU>0); off unless --opening-flux-source.
     if (s.useOpeningFluxSource
         && s.d_inletAreaVecX.size() == s.nodeCount
         && s.d_outletAreaVecX.size() == s.nodeCount)
     {
-        addOpeningFluxSourceKernel<RealType><<<nodeBlocks, s.blockSize>>>(
-            RealType(s.Uinf * s.inletDirX), RealType(s.Uinf * s.inletDirY), RealType(s.Uinf * s.inletDirZ),
-            s.d_inletAreaVecX.data(), s.d_inletAreaVecY.data(), s.d_inletAreaVecZ.data(),
-            d_nodeOwnership.data(), d_divAccNode.data(), s.nodeCount);
-        addOpeningFluxSourceKernel<RealType><<<nodeBlocks, s.blockSize>>>(
-            RealType(s.outletU * s.outletDirX), RealType(s.outletU * s.outletDirY), RealType(s.outletU * s.outletDirZ),
-            s.d_outletAreaVecX.data(), s.d_outletAreaVecY.data(), s.d_outletAreaVecZ.data(),
-            d_nodeOwnership.data(), d_divAccNode.data(), s.nodeCount);
-        cudaDeviceSynchronize();
+        // Discrete owned-node boundary flux (same reduction idiom as fluxThroughOwned).
+        auto openingFluxOwned = [&] (RealType vx, RealType vy, RealType vz,
+                                     const cstone::DeviceVector<RealType>& aX,
+                                     const cstone::DeviceVector<RealType>& aY,
+                                     const cstone::DeviceVector<RealType>& aZ) -> RealType {
+            const auto& d_own = s.domain.getNodeOwnershipMap();
+            size_t n = s.nodeCount;
+            RealType loc = thrust::transform_reduce(thrust::device,
+                thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(n),
+                [own = d_own.data(), n2d = s.d_node_to_dof.data(), nOwn = s.numOwnedDofs,
+                 ax = aX.data(), ay = aY.data(), az = aZ.data(), vx, vy, vz] __device__ (size_t i) -> RealType {
+                    if (own[i] != 1) return RealType(0);
+                    int dof = n2d[i];
+                    if (dof < 0 || dof >= nOwn) return RealType(0);
+                    return vx*ax[i] + vy*ay[i] + vz*az[i];
+                }, RealType(0), thrust::plus<RealType>());
+            RealType glob = 0;
+            MPI_Datatype mpi_r = std::is_same<RealType, double>::value ? MPI_DOUBLE : MPI_FLOAT;
+            MPI_Allreduce(&loc, &glob, 1, mpi_r, MPI_SUM, MPI_COMM_WORLD);
+            return glob;
+        };
+        const RealType Qin_d  = openingFluxOwned(RealType(s.Uinf * s.inletDirX), RealType(s.Uinf * s.inletDirY), RealType(s.Uinf * s.inletDirZ),
+                                                 s.d_inletAreaVecX, s.d_inletAreaVecY, s.d_inletAreaVecZ);   // < 0 (inward jet . outward area)
+        const RealType Qout_d = openingFluxOwned(RealType(s.outletU * s.outletDirX), RealType(s.outletU * s.outletDirY), RealType(s.outletU * s.outletDirZ),
+                                                 s.d_outletAreaVecX, s.d_outletAreaVecY, s.d_outletAreaVecZ);  // > 0
+        const bool balanceable = (s.outletU > RealType(0)) && (std::fabs(Qout_d) > RealType(0));
+        const RealType scale = balanceable ? (-Qin_d / Qout_d) : RealType(0);
+        if (scale != RealType(0))
+        {
+            addOpeningFluxSourceKernel<RealType><<<nodeBlocks, s.blockSize>>>(
+                RealType(s.Uinf * s.inletDirX), RealType(s.Uinf * s.inletDirY), RealType(s.Uinf * s.inletDirZ),
+                s.d_inletAreaVecX.data(), s.d_inletAreaVecY.data(), s.d_inletAreaVecZ.data(),
+                d_nodeOwnership.data(), d_divAccNode.data(), s.nodeCount);
+            addOpeningFluxSourceKernel<RealType><<<nodeBlocks, s.blockSize>>>(
+                RealType(scale * s.outletU * s.outletDirX), RealType(scale * s.outletU * s.outletDirY), RealType(scale * s.outletU * s.outletDirZ),
+                s.d_outletAreaVecX.data(), s.d_outletAreaVecY.data(), s.d_outletAreaVecZ.data(),
+                d_nodeOwnership.data(), d_divAccNode.data(), s.nodeCount);
+            cudaDeviceSynchronize();
+        }
     }
 
     // Source-of-NaN trace: count non-finite divAccNode over ALL owned nodes and
