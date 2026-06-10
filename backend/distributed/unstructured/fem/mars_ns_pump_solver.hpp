@@ -429,6 +429,28 @@ __global__ void enforcePressureBcRhsKernel(const uint8_t* isPressureBdryDof,
     if (isPressureBdryDof[dof]) rhs[dof] = RealType(0);
 }
 
+// FIX B (pump --pump-dp>0): instead of pinning the phi increment to 0 at the
+// inlet/outlet faces (rhs=0, which freezes p^{n+1}=p^n and never lets the
+// interior relax into the inlet->outlet gradient), clamp the SOLVED pressure to
+// the target. The masked row is an identity row (out=phi), so setting
+// rhs=target-p^n makes the solve return phi=target-p^n -> p^{n+1}=p^n+phi=target
+// EXACTLY. This is a steady clamp to a constant, NOT an additive ramp, so the
+// head stays bounded at dP/0 while the interior relaxes around it.
+template<typename RealType>
+__global__ void enforcePressureBcRhsLiftKernel(const uint8_t* isPressureBdryDof,
+                                               const RealType* targetDof,
+                                               const RealType* p,
+                                               const int* dofToNode,
+                                               RealType* rhs, int numDofs)
+{
+    int dof = blockIdx.x * blockDim.x + threadIdx.x;
+    if (dof >= numDofs) return;
+    if (!isPressureBdryDof[dof]) return;
+    int node = dofToNode[dof];
+    RealType pn = (node >= 0) ? p[node] : RealType(0);
+    rhs[dof] = targetDof[dof] - pn;
+}
+
 // Build a per-NODE pressure-Dirichlet mask from the existing per-DOF mask +
 // optional single-pin DOF. Each owned node maps its dof through the existing
 // boundary flag; ghost nodes get 0 (filled by halo exchange later).
@@ -2031,10 +2053,20 @@ __global__ void buildPressureRhsKernel(const RealType* divAccNode,
 // coef does that). Adding it is not a double-count: no scsLR pair covers the
 // exterior face. One thread per node; only owned nodes contribute (off-set nodes
 // have a zero area-vector so they add nothing even if visited).
+//
+// The velocity here is the PRESCRIBED opening velocity (a single global constant
+// (Upx,Upy,Upz)), NOT the solved field. The inlet uses Uinf*globalInletDir and the
+// outlet uses outletU*globalOutletDir; because the per-node area-vectors sum to the
+// global aIn/aOut and the directions are the SAME global vectors, the inlet term
+// sums to -Q_in and the outlet term to +Q_out=+Q_in (mass-conserving outlet), so
+// the two cancel EXACTLY (bit-level) at every step including step0. That keeps the
+// single-pin Neumann pressure system compatible -- no one-sided step0 imbalance,
+// hence no FIX-1 blowup. (Using the solved u** left the outlet ~0 at step0, so only
+// the inlet source was added -> sum != 0 -> incompatible -> phi=1e36.)
 template<typename RealType>
-__global__ void addOpeningFluxSourceKernel(const RealType* u,
-                                           const RealType* v,
-                                           const RealType* w,
+__global__ void addOpeningFluxSourceKernel(RealType Upx,
+                                           RealType Upy,
+                                           RealType Upz,
                                            const RealType* aVecX,
                                            const RealType* aVecY,
                                            const RealType* aVecZ,
@@ -2045,8 +2077,7 @@ __global__ void addOpeningFluxSourceKernel(const RealType* u,
     size_t i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= numNodes) return;
     if (ownership[i] != 1) return;
-    RealType flux = u[i] * aVecX[i] + v[i] * aVecY[i] + w[i] * aVecZ[i];
-    divAccNode[i] += flux;
+    divAccNode[i] += Upx * aVecX[i] + Upy * aVecY[i] + Upz * aVecZ[i];
 }
 
 // DOF-indexed solver output -> per-node array. Reused for all velocity solves
@@ -2157,6 +2188,11 @@ struct NSStepper
     int pressurePinDof = -1;   // owned-DOF id on the owning rank; -1 elsewhere (or in channel mode)
     int pressurePinRank = 0;   // global rank that owns the pin
     cstone::DeviceVector<uint8_t> d_isPressureBdryDof;   // size numOwnedDofs; only used in channel mode
+    // FIX B (pump --pump-dp>0): per-OWNED-DOF target pressure at the masked
+    // faces (pumpDp on inlet, 0 on outlet, 0 elsewhere). The lift enforce reads
+    // it as rhs=target-p^n so the solved pressure clamps to the head. Empty for
+    // pumpDp<=0 (cavity/channel/TGV never touch this).
+    cstone::DeviceVector<RealType> d_pPhiTargetDof;
     // Per-NODE pressure-Dirichlet mask (size nodeCount, halo-exchanged so
     // ghost slots see the owner's flag). Includes the single corner pin
     // (cavity) AND every outflow-face DOF (channel/pump). Used by symmetric
@@ -2181,6 +2217,9 @@ struct NSStepper
     // Per-node velocity targets for the cavity BC. Boundary nodes hold the
     // prescribed value (u=1 on top, 0 elsewhere); interior nodes hold 0 (unused).
     cstone::DeviceVector<RealType> d_uTarget, d_vTarget, d_wTarget;
+    // Unramped snapshot of the inlet velocity target (built at full uinfBase), used by
+    // rescaleInletVelocityTarget so the per-step ramp scales from the base, not cumulatively.
+    cstone::DeviceVector<RealType> d_uTargetBase, d_vTargetBase, d_wTargetBase;
 
     // Geometry: SCS area vectors per (element, face). Same source used by the
     // implicit assembler, the advection scatter, the gradient, the divergence.
@@ -2343,6 +2382,7 @@ struct NSStepper
     enum class BCKind { Cavity, Channel, Pump, Periodic };
     BCKind bcKind = BCKind::Cavity;
     RealType Uinf = 1;   // channel/pump inflow speed; reuses lidU value via CLI
+    RealType uinfBase = 1;   // unramped full-strength inflow speed (for --source-ramp-steps)
     // Pump interior IC. Default: start from REST (0,0,0) and let the inlet drive
     // the flow along the geometry. The old uniform (Uinf,0,0) everywhere seeds a
     // spurious +x flow in BOTH tanks regardless of the real inlet orientation,
@@ -2369,6 +2409,18 @@ struct NSStepper
     RealType outletU = -1;
     RealType outletDirX = 1, outletDirY = 0, outletDirZ = 0;
     bool outletDoNothing = true;  // do-nothing outlet (free velocity + p=0 face); false = mass-conserving velocity outlet
+
+    // FIX B -- pressure-drop drive. The CVFEM divergence operator integrates only
+    // interior SCS faces, so a velocity prescribed on the inlet opening is invisible
+    // to the pressure solve (the exterior opening face is in no scsLR pair) and the
+    // corrector freezes velocity-Dirichlet nodes -> no through-flow. Instead, drive
+    // the pump with a pressure DROP: p=pumpDp on the inlet face, p=0 on the outlet
+    // face, velocities FREE at both. The flux then EMERGES from the interior pressure
+    // gradient, which IS SCS-captured -> visible -> through-flow. Two pressure-Dirichlet
+    // faces remove the null space (nonsingular A, no pin needed), so startup is safe.
+    // pumpDp<=0 disables FIX B entirely: the pump behaves exactly as the legacy
+    // mass-conserving (or do-nothing) velocity outlet. Driver sets it from --pump-dp=.
+    RealType pumpDp = 0;
 
     // Per-node OUTWARD outlet area-vectors (un-normalized, nodeCount-sized, zero
     // off the outlet). Used only by the through-flow diagnostic to measure
@@ -3564,35 +3616,44 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
             };
 
             tag(s.wallNodes,    RealType(0),     RealType(0), RealType(0));
-            const bool inletPerNode =
-                s.inletDirXPerNode.size() == s.inletNodes.size() &&
-                s.inletDirYPerNode.size() == s.inletNodes.size() &&
-                s.inletDirZPerNode.size() == s.inletNodes.size() &&
-                !s.inletNodes.empty();
-            if (inletPerNode)
+            // FIX B (pumpDp>0): the inlet is driven by a PRESSURE Dirichlet (set in
+            // the pressure-BC block), NOT a velocity Dirichlet. Do NOT tag the inlet
+            // here -- it must stay out of d_isBdryDof/uTarget so the corrector is
+            // free to drive its velocity from the interior pressure gradient.
+            if (s.pumpDp <= RealType(0))
             {
-                std::vector<RealType> ui(s.inletNodes.size()), vi(s.inletNodes.size()),
-                                      wi(s.inletNodes.size());
-                for (size_t k = 0; k < s.inletNodes.size(); ++k)
+                const bool inletPerNode =
+                    s.inletDirXPerNode.size() == s.inletNodes.size() &&
+                    s.inletDirYPerNode.size() == s.inletNodes.size() &&
+                    s.inletDirZPerNode.size() == s.inletNodes.size() &&
+                    !s.inletNodes.empty();
+                if (inletPerNode)
                 {
-                    ui[k] = RealType(s.Uinf * s.inletDirXPerNode[k]);
-                    vi[k] = RealType(s.Uinf * s.inletDirYPerNode[k]);
-                    wi[k] = RealType(s.Uinf * s.inletDirZPerNode[k]);
+                    std::vector<RealType> ui(s.inletNodes.size()), vi(s.inletNodes.size()),
+                                          wi(s.inletNodes.size());
+                    for (size_t k = 0; k < s.inletNodes.size(); ++k)
+                    {
+                        ui[k] = RealType(s.Uinf * s.inletDirXPerNode[k]);
+                        vi[k] = RealType(s.Uinf * s.inletDirYPerNode[k]);
+                        wi[k] = RealType(s.Uinf * s.inletDirZPerNode[k]);
+                    }
+                    tagPerNode(s.inletNodes, ui, vi, wi);
                 }
-                tagPerNode(s.inletNodes, ui, vi, wi);
-            }
-            else
-            {
-                tag(s.inletNodes,   RealType(s.Uinf * s.inletDirX),
-                                    RealType(s.Uinf * s.inletDirY),
-                                    RealType(s.Uinf * s.inletDirZ));
+                else
+                {
+                    tag(s.inletNodes,   RealType(s.Uinf * s.inletDirX),
+                                        RealType(s.Uinf * s.inletDirY),
+                                        RealType(s.Uinf * s.inletDirZ));
+                }
             }
             tag(s.extraNodes,   RealType(s.Uinf), RealType(0), RealType(0));
             // Mass-conserving outlet: velocity-Dirichlet outflow along the
             // outward normal, sized to remove the inlet flux. Only when the
             // driver set outletU > 0; otherwise the outlet stays natural-Neumann
             // (legacy) and only gets the p=0 pressure Dirichlet below.
-            if (s.outletU > RealType(0))
+            // FIX B (pumpDp>0): outlet velocity stays FREE (driven by the p=0
+            // Dirichlet + interior gradient), so never velocity-tag it.
+            if (s.pumpDp <= RealType(0) && s.outletU > RealType(0))
                 tag(s.outletNodes, RealType(s.outletU * s.outletDirX),
                                        RealType(s.outletU * s.outletDirY),
                                        RealType(s.outletU * s.outletDirZ));
@@ -3661,6 +3722,10 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
     s.domain.exchangeNodeHalo(s.d_uTarget);
     s.domain.exchangeNodeHalo(s.d_vTarget);
     s.domain.exchangeNodeHalo(s.d_wTarget);
+    // Snapshot the full-strength target so --source-ramp-steps can scale from the base.
+    s.d_uTargetBase = s.d_uTarget;
+    s.d_vTargetBase = s.d_vTarget;
+    s.d_wTargetBase = s.d_wTarget;
     pt.lap("BC mark + target velocity");
 
     // d_dofToNode is needed for column-zero enforcement below. The pressure
@@ -4197,6 +4262,9 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
                      uint8_t(0));
         // Host-side scatter from the outlet local-node list. Owned DOFs only.
         std::vector<uint8_t> hostMask(s.numOwnedDofs, 0);
+        // FIX B: per-owned-DOF target pressure for the lift enforce (filled only
+        // in the pumpDp>0 branch). pumpDp on inlet, 0 on outlet, 0 elsewhere.
+        std::vector<RealType> hostTarget(s.numOwnedDofs, RealType(0));
         std::vector<int> hostNodeToDof(s.nodeCount, -1);
         std::vector<uint8_t> hostOwn(s.nodeCount, 0);
         thrust::copy(thrust::device_pointer_cast(s.d_node_to_dof.data()),
@@ -4211,7 +4279,11 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
         // mask a single outlet DOF (the first owned one, on the lowest rank that
         // has one). When outletU<=0 (legacy pressure-outlet), mask the whole
         // outlet face as before (natural-Neumann velocity there).
+        // FIX B: with a pressure drop the outlet is a pressure-Dirichlet face (p=0)
+        // and the inlet a second one (p=pumpDp), so force the whole-face path -- two
+        // Dirichlet faces make A nonsingular, no single pin is needed.
         bool singlePin = (s.outletU > RealType(0));
+        if (s.pumpDp > RealType(0)) singlePin = false;
         int  pinRankLocal = singlePin ? s.numRanks : -1;  // for the global argmin
         size_t ownedOutletCount = 0;
         int firstOutletDof = -1;
@@ -4223,6 +4295,24 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
             if (dof < 0 || dof >= s.numOwnedDofs) continue;
             if (firstOutletDof < 0) firstOutletDof = dof;
             if (!singlePin) { hostMask[dof] = 1; ++ownedOutletCount; }
+            // FIX B: outlet target p=0 (explicit for clarity; zero-init already).
+            if (s.pumpDp > RealType(0)) hostTarget[dof] = RealType(0);
+        }
+        // FIX B: also mask the WHOLE inlet face as pressure-Dirichlet (p=pumpDp).
+        // enforceBcMatrixKernel makes both faces identity rows -> nonsingular A.
+        size_t ownedInletCount = 0;
+        if (s.pumpDp > RealType(0))
+        {
+            for (int li : s.inletNodes)
+            {
+                if (li < 0 || (size_t)li >= s.nodeCount) continue;
+                if (hostOwn[li] != 1) continue;
+                int dof = hostNodeToDof[li];
+                if (dof < 0 || dof >= s.numOwnedDofs) continue;
+                hostMask[dof] = 1; ++ownedInletCount;
+                // FIX B: inlet target p=pumpDp (the standing head the lift clamps to).
+                hostTarget[dof] = s.pumpDp;
+            }
         }
         if (singlePin)
         {
@@ -4239,6 +4329,15 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
         }
         thrust::copy(hostMask.begin(), hostMask.end(),
                      thrust::device_pointer_cast(s.d_isPressureBdryDof.data()));
+        // FIX B: stash the per-owned-DOF target so the per-step lift enforce can
+        // clamp p^{n+1} to dP/0 at the masked faces. Only the pump pressure-drop
+        // path needs it; cavity/channel/TGV leave d_pPhiTargetDof empty.
+        if (s.pumpDp > RealType(0))
+        {
+            s.d_pPhiTargetDof.resize(s.numOwnedDofs);
+            cudaMemcpy(s.d_pPhiTargetDof.data(), hostTarget.data(),
+                       s.numOwnedDofs * sizeof(RealType), cudaMemcpyHostToDevice);
+        }
 
         int dofBlocks = (s.numOwnedDofs + s.blockSize - 1) / s.blockSize;
         enforceBcMatrixKernel<RealType><<<dofBlocks, s.blockSize>>>(
@@ -4249,10 +4348,18 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
         s.pressurePinDof  = -1;
         s.pressurePinRank = -1;
         if (s.rank == 0)
-            std::cout << "  pressure BC: " << (singlePin
-                         ? "single p=0 pin (mass-conserving velocity outlet)"
-                         : "Dirichlet p=0 on whole outlet side-set")
-                      << " (" << ownedOutletCount << " masked DOFs on rank 0)\n";
+        {
+            if (s.pumpDp > RealType(0))
+                std::cout << "  pressure BC (FIX B): Dirichlet p=" << s.pumpDp
+                          << " on whole inlet side-set, p=0 on whole outlet side-set"
+                          << " (" << ownedInletCount << " inlet + " << ownedOutletCount
+                          << " outlet masked DOFs on rank 0; two Dirichlet faces -> A nonsingular, no pin)\n";
+            else
+                std::cout << "  pressure BC: " << (singlePin
+                             ? "single p=0 pin (mass-conserving velocity outlet)"
+                             : "Dirichlet p=0 on whole outlet side-set")
+                          << " (" << ownedOutletCount << " masked DOFs on rank 0)\n";
+        }
     }
     else  // Cavity
     {
@@ -4828,6 +4935,38 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
         s.bdfStep = 0;
     }
     pt.lap("field allocation");
+
+    // FIX B: seed the STANDING pressure head into p^n. p carries p=pumpDp on the
+    // inlet face and p=0 on the outlet face; grad(p^n) then enters every predictor
+    // and drives the through-flow from step 0. The per-step pressure solve CLAMPS
+    // p^{n+1} back to the same head at both faces via the lift enforce (rhs=
+    // target-p^n on d_isPressureBdryDof, which holds both faces), so the head is
+    // held fixed while the interior relaxes into the inlet->outlet gradient.
+    // d_p is indexed by LOCAL NODE, so set owned inlet/outlet local nodes
+    // directly; the halo exchange propagates the head to ghosts. Owned-only
+    // avoids a cross-rank double-write. The pump driver never calls
+    // applyInitialCondition, so seed here at the end of setup.
+    if (s.pumpDp > RealType(0))
+    {
+        std::vector<RealType> hostP(s.nodeCount, RealType(0));
+        std::vector<uint8_t> hostOwnP(s.nodeCount, 0);
+        thrust::copy(thrust::device_pointer_cast(d_nodeOwnership.data()),
+                     thrust::device_pointer_cast(d_nodeOwnership.data() + s.nodeCount),
+                     hostOwnP.begin());
+        for (int li : s.inletNodes)
+            if (li >= 0 && (size_t)li < s.nodeCount && hostOwnP[li] == 1)
+                hostP[li] = s.pumpDp;
+        for (int li : s.outletNodes)
+            if (li >= 0 && (size_t)li < s.nodeCount && hostOwnP[li] == 1)
+                hostP[li] = RealType(0);
+        thrust::copy(hostP.begin(), hostP.end(),
+                     thrust::device_pointer_cast(s.d_p.data()));
+        cudaDeviceSynchronize();
+        s.domain.exchangeNodeHalo(s.d_p);
+        if (s.rank == 0)
+            std::cout << "  FIX B: seeded standing head p=" << s.pumpDp
+                      << " on inlet, p=0 on outlet (grad(p^n) drives the predictor)\n";
+    }
 
     pt.report(s.rank, "setup");
 }
@@ -5662,16 +5801,27 @@ int solvePressureDDT(NSStepper<KeyType, RealType, ElementTag>& s,
         const int* dofPtr       = s.d_node_to_dof.data();
         const uint8_t* ownPtr   = d_nodeOwnership.data();
         RealType* bPtr          = b_node.data();
+        // FIX B (pump --pump-dp>0): this is the PRODUCTION pump path. The masked
+        // row is an identity row (out=phi in applyDDTPerNode below), so the
+        // rhs=0 default would freeze phi=0 -> p^{n+1}=p^n, killing the
+        // inlet->outlet gradient. Lift instead: b[i]=target-p^n -> phi=target-p^n
+        // -> p^{n+1}=target EXACTLY (steady clamp, not an additive ramp).
+        const bool lift         = (s.pumpDp > RealType(0)
+                                   && s.d_pPhiTargetDof.size() == (size_t)numOwnedDofs);
+        const RealType* tgtPtr  = lift ? s.d_pPhiTargetDof.data() : nullptr;
+        const RealType* pPtr    = lift ? s.d_p.data() : nullptr;
         thrust::for_each(thrust::device,
             thrust::counting_iterator<size_t>(0),
             thrust::counting_iterator<size_t>(s.nodeCount),
-            [pinDof, maskPtr, dofPtr, ownPtr, bPtr, numOwnedDofs] __device__ (size_t i) {
+            [pinDof, maskPtr, dofPtr, ownPtr, bPtr, numOwnedDofs,
+             lift, tgtPtr, pPtr] __device__ (size_t i) {
                 if (ownPtr[i] != 1) return;
                 int dof = dofPtr[i];
                 if (dof < 0 || dof >= numOwnedDofs) return;
                 bool flagged = (pinDof >= 0 && dof == pinDof) ||
                                (maskPtr != nullptr && maskPtr[dof] != 0);
-                if (flagged) bPtr[i] = RealType(0);
+                if (!flagged) return;
+                bPtr[i] = lift ? (tgtPtr[dof] - pPtr[i]) : RealType(0);
             });
         cudaDeviceSynchronize();
     }
@@ -5959,6 +6109,27 @@ RealType rmsOwnedInterior1(NSStepper<KeyType, RealType, ElementTag>& s,
     MPI_Allreduce(&locSumSq, &gSum, 1, mpiType,       MPI_SUM, MPI_COMM_WORLD);
     MPI_Allreduce(&locCnt,   &gCnt, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
     return (gCnt > 0) ? std::sqrt(gSum / RealType(gCnt)) : RealType(0);
+}
+
+// Set the inlet velocity Dirichlet target to ramp * base (the full-strength snapshot).
+// Walls have base target 0 so they stay 0; only inlet/extra nodes scale. Used by
+// --source-ramp-steps for a gentle startup. Scales from the base every step (not
+// cumulative) so it cannot drift.
+template<typename KeyType, typename RealType, typename ElementTag = HexTag>
+void rescaleInletVelocityTarget(NSStepper<KeyType, RealType, ElementTag>& s, RealType ramp)
+{
+    if (s.d_uTargetBase.size() != s.nodeCount) return;
+    auto scale = [ramp] (const cstone::DeviceVector<RealType>& base,
+                         cstone::DeviceVector<RealType>& tgt) {
+        thrust::transform(thrust::device,
+            thrust::device_pointer_cast(base.data()),
+            thrust::device_pointer_cast(base.data()) + base.size(),
+            thrust::device_pointer_cast(tgt.data()),
+            [ramp] __device__ (RealType b) { return b * ramp; });
+    };
+    scale(s.d_uTargetBase, s.d_uTarget);
+    scale(s.d_vTargetBase, s.d_vTarget);
+    scale(s.d_wTargetBase, s.d_wTarget);
 }
 
 template<typename KeyType, typename RealType, typename ElementTag = HexTag>
@@ -6680,23 +6851,90 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
     // scatter cannot reach. divAccNode is now owner-complete; the per-node opening
     // area-vectors are owner-complete too (driver does reverse-halo-add then publish,
     // counted once per owned node), so restricting the add to owned nodes is exact
-    // and rank-safe. Uses the SAME post-diffusion velocity the divergence scatter
-    // used (d_uStarStar): inlet nodes carry the prescribed inflow, outlet nodes the
-    // post-diffusion outflow, so inlet flux + outlet flux net to ~0 and the single-pin
-    // Neumann pressure system stays solvable. Off unless --opening-flux-source.
+    // and rank-safe. Uses the PRESCRIBED opening velocity (single global direction),
+    // NOT the solved u**: inlet = Uinf*globalInletDir, outlet = outletU*globalOutletDir.
+    // The per-node area-vectors sum to the global aIn/aOut, so the inlet term sums to
+    // -Q_in and the outlet term to +Q_out=+Q_in (mass-conserving), cancelling EXACTLY
+    // at step0 -- the single-pin Neumann pressure system stays compatible (no FIX-1
+    // one-sided blowup). REQUIRES the mass-conserving outlet (outletU>0); a do-nothing
+    // outlet leaves outletU<=0 -> outlet term ~0 -> imbalance. Off unless
+    // --opening-flux-source.
     if (s.useOpeningFluxSource
         && s.d_inletAreaVecX.size() == s.nodeCount
         && s.d_outletAreaVecX.size() == s.nodeCount)
     {
+        // MARS_OFS_DBG: print the source magnitude + divAccNode max before/after +
+        // the global net source, so we SEE if it is a giant localized spike or
+        // imbalanced. Gated on env, free in production.
+        const bool ofsDbg = (std::getenv("MARS_OFS_DBG") != nullptr) && (s.rank == 0);
+        auto maxAbsOwned = [&] (const RealType* p) -> RealType {
+            const auto& d_own = s.domain.getNodeOwnershipMap();
+            return thrust::transform_reduce(thrust::device,
+                thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(s.nodeCount),
+                [own = d_own.data(), p] __device__ (size_t i) -> RealType {
+                    return (own[i] == 1) ? fabs(p[i]) : RealType(0); },
+                RealType(0), thrust::maximum<RealType>());
+        };
+        auto sumOwned = [&] (const RealType* p) -> RealType {
+            const auto& d_own = s.domain.getNodeOwnershipMap();
+            RealType loc = thrust::transform_reduce(thrust::device,
+                thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(s.nodeCount),
+                [own = d_own.data(), p] __device__ (size_t i) -> RealType {
+                    return (own[i] == 1) ? p[i] : RealType(0); },
+                RealType(0), thrust::plus<RealType>());
+            RealType g = 0; MPI_Allreduce(&loc, &g, 1, std::is_same<RealType,double>::value?MPI_DOUBLE:MPI_FLOAT, MPI_SUM, MPI_COMM_WORLD);
+            return g;
+        };
+        RealType divMaxBefore = ofsDbg ? maxAbsOwned(d_divAccNode.data()) : RealType(0);
+        RealType sumBefore    = ofsDbg ? sumOwned(d_divAccNode.data())    : RealType(0);
+        // raw owned sums of (vel.areaVec) per opening -- the ACTUAL discrete flux each
+        // side injects, to see if inlet or outlet is the one not firing.
+        auto fluxSum = [&] (RealType vx, RealType vy, RealType vz,
+                            const RealType* ax, const RealType* ay, const RealType* az) -> RealType {
+            const auto& d_own = s.domain.getNodeOwnershipMap();
+            RealType loc = thrust::transform_reduce(thrust::device,
+                thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(s.nodeCount),
+                [own = d_own.data(), ax, ay, az, vx, vy, vz] __device__ (size_t i) -> RealType {
+                    return (own[i] == 1) ? (vx*ax[i] + vy*ay[i] + vz*az[i]) : RealType(0); },
+                RealType(0), thrust::plus<RealType>());
+            RealType g = 0; MPI_Allreduce(&loc, &g, 1, std::is_same<RealType,double>::value?MPI_DOUBLE:MPI_FLOAT, MPI_SUM, MPI_COMM_WORLD);
+            return g;
+        };
+        // adjustPhi: the DISCRETE inlet and outlet fluxes differ (~1.5% here: the
+        // per-node area-vectors sum to a slightly different value than the analytic
+        // areaIn/areaOut the driver used to set outletU). That residual, x coef=rho/dt,
+        // makes the single-pin Neumann RHS incompatible -> blowup. Measure both
+        // discrete fluxes and RESCALE the outlet so it EXACTLY cancels the inlet.
+        const RealType Qin_raw  = fluxSum(s.Uinf*s.inletDirX, s.Uinf*s.inletDirY, s.Uinf*s.inletDirZ,
+                                          s.d_inletAreaVecX.data(), s.d_inletAreaVecY.data(), s.d_inletAreaVecZ.data());
+        const RealType Qout_raw = fluxSum(s.outletU*s.outletDirX, s.outletU*s.outletDirY, s.outletU*s.outletDirZ,
+                                          s.d_outletAreaVecX.data(), s.d_outletAreaVecY.data(), s.d_outletAreaVecZ.data());
+        const RealType oScale = (std::fabs(Qout_raw) > RealType(0)) ? (-Qin_raw / Qout_raw) : RealType(0);
         addOpeningFluxSourceKernel<RealType><<<nodeBlocks, s.blockSize>>>(
-            s.d_uStarStar.data(), s.d_vStarStar.data(), s.d_wStarStar.data(),
+            RealType(s.Uinf * s.inletDirX), RealType(s.Uinf * s.inletDirY), RealType(s.Uinf * s.inletDirZ),
             s.d_inletAreaVecX.data(), s.d_inletAreaVecY.data(), s.d_inletAreaVecZ.data(),
             d_nodeOwnership.data(), d_divAccNode.data(), s.nodeCount);
         addOpeningFluxSourceKernel<RealType><<<nodeBlocks, s.blockSize>>>(
-            s.d_uStarStar.data(), s.d_vStarStar.data(), s.d_wStarStar.data(),
+            RealType(oScale * s.outletU * s.outletDirX), RealType(oScale * s.outletU * s.outletDirY), RealType(oScale * s.outletU * s.outletDirZ),
             s.d_outletAreaVecX.data(), s.d_outletAreaVecY.data(), s.d_outletAreaVecZ.data(),
             d_nodeOwnership.data(), d_divAccNode.data(), s.nodeCount);
         cudaDeviceSynchronize();
+        if (ofsDbg) {
+            std::cout << "  [ofs-dbg2] Qin_raw=" << std::scientific << Qin_raw
+                      << " Qout_raw=" << Qout_raw << " oScale=" << oScale
+                      << " rescaled-outlet=" << (oScale*Qout_raw)
+                      << " net=" << (Qin_raw + oScale*Qout_raw) << " (should be ~0)"
+                      << std::defaultfloat << "\n";
+            RealType divMaxAfter = maxAbsOwned(d_divAccNode.data());
+            RealType sumAfter    = sumOwned(d_divAccNode.data());
+            std::cout << "  [ofs-dbg] divAccNode |max| before=" << std::scientific << divMaxBefore
+                      << " after=" << divMaxAfter
+                      << "  | sum(divAcc) before=" << sumBefore << " after=" << sumAfter
+                      << " (net source=" << (sumAfter - sumBefore) << ")"
+                      << "  Uinf=" << s.Uinf << " outletU=" << s.outletU
+                      << " inletDir=(" << s.inletDirX << "," << s.inletDirY << "," << s.inletDirZ << ")"
+                      << " coef=rho/dt" << std::defaultfloat << "\n";
+        }
     }
 
     // Source-of-NaN trace: count non-finite divAccNode over ALL owned nodes and
@@ -6773,8 +7011,15 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
         if (s.d_isPressureBdryDof.size() > 0)
         {
             int dofBlocks = (s.numOwnedDofs + s.blockSize - 1) / s.blockSize;
-            enforcePressureBcRhsKernel<RealType><<<dofBlocks, s.blockSize>>>(
-                s.d_isPressureBdryDof.data(), b.data(), s.numOwnedDofs);
+            // FIX B clamps p^{n+1} to the head (rhs=target-p^n); the rhs=0 path
+            // would instead freeze p, killing the inlet->outlet gradient.
+            if (s.pumpDp > RealType(0))
+                enforcePressureBcRhsLiftKernel<RealType><<<dofBlocks, s.blockSize>>>(
+                    s.d_isPressureBdryDof.data(), s.d_pPhiTargetDof.data(), s.d_p.data(),
+                    s.d_dofToNode.data(), b.data(), s.numOwnedDofs);
+            else
+                enforcePressureBcRhsKernel<RealType><<<dofBlocks, s.blockSize>>>(
+                    s.d_isPressureBdryDof.data(), b.data(), s.numOwnedDofs);
             cudaDeviceSynchronize();
         }
         // Periodic: project the RHS onto range(K) by subtracting its global
@@ -6843,8 +7088,15 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
             if (s.d_isPressureBdryDof.size() > 0)
             {
                 int dofBlocks = (s.numOwnedDofs + s.blockSize - 1) / s.blockSize;
-                enforcePressureBcRhsKernel<RealType><<<dofBlocks, s.blockSize>>>(
-                    s.d_isPressureBdryDof.data(), b.data(), s.numOwnedDofs);
+                // FIX B lift (assembled-CG diagnostic path): clamp p^{n+1} to the
+                // head so the assembled-CG A/B matches the matrix-free pump.
+                if (s.pumpDp > RealType(0))
+                    enforcePressureBcRhsLiftKernel<RealType><<<dofBlocks, s.blockSize>>>(
+                        s.d_isPressureBdryDof.data(), s.d_pPhiTargetDof.data(), s.d_p.data(),
+                        s.d_dofToNode.data(), b.data(), s.numOwnedDofs);
+                else
+                    enforcePressureBcRhsKernel<RealType><<<dofBlocks, s.blockSize>>>(
+                        s.d_isPressureBdryDof.data(), b.data(), s.numOwnedDofs);
                 cudaDeviceSynchronize();
             }
             // RHS finiteness check. A non-finite entry here (e.g. a boundary
@@ -6954,18 +7206,63 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
                 d_nodeOwnership.data(), coef, d_bNode.data(), s.nodeCount);
             cudaDeviceSynchronize();
             // Periodic: D M^{-1} D^T is pure-Neumann with a constant null space.
-            if (s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Periodic)
+            // Opening-flux pump: the single p=0 pin is a WEAK control of the DDT
+            // constant null space; a boundary flux source excites that mode and the
+            // Jacobi-PCG loses pAp>0 (residual grows -> garbage phi=1e7, the blowup).
+            // Project the null-space component out of the RHS so the solve stays
+            // well-behaved -- the same cure the periodic path uses.
+            if (s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Periodic
+                || s.useOpeningFluxSource)
             {
                 mars::fem::removeMean<RealType>(s.domain, d_bNode, MPI_COMM_WORLD);
             }
+            // MARS_OFS_DBG: is the RHS b huge at the OPENING nodes (tiny DDT diagonal
+            // there) or uniform? print b|max overall vs b|max on inlet/outlet nodes.
+            if (s.useOpeningFluxSource && std::getenv("MARS_OFS_DBG") && s.rank == 0) {
+                const auto& d_own = s.domain.getNodeOwnershipMap();
+                auto bMaxWhere = [&] (bool wantOpening) -> RealType {
+                    const RealType* aIn = s.d_inletAreaVecX.data();
+                    const RealType* aOut = s.d_outletAreaVecX.data();
+                    return thrust::transform_reduce(thrust::device,
+                        thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(s.nodeCount),
+                        [own = d_own.data(), b = d_bNode.data(), n2d = s.d_node_to_dof.data(),
+                         aIn, aOut, wantOpening] __device__ (size_t i) -> RealType {
+                            if (own[i] != 1 || n2d[i] < 0) return RealType(0);
+                            bool opening = (aIn[i]*aIn[i] > RealType(0)) || (aOut[i]*aOut[i] > RealType(0));
+                            return (opening == wantOpening) ? fabs(b[i]) : RealType(0);
+                        }, RealType(0), thrust::maximum<RealType>());
+                };
+                std::cout << "  [ofs-dbg3] b|max opening=" << std::scientific << bMaxWhere(true)
+                          << " interior=" << bMaxWhere(false)
+                          << " (diagDDT range printed above)"
+                          << std::defaultfloat << "\n";
+            }
             s.lastPressureIters = solvePressureDDT<KeyType, RealType, ElementTag>(s, d_bNode, s.d_phi);
+            // MARS_OFS_DBG: WHERE is phi huge -- opening nodes (local, tiny diagonal)
+            // or everywhere (global drift)? this distinguishes the last 2 hypotheses.
+            if (s.useOpeningFluxSource && std::getenv("MARS_OFS_DBG") && s.rank == 0) {
+                const auto& d_own = s.domain.getNodeOwnershipMap();
+                auto phiMaxWhere = [&] (bool wantOpening) -> RealType {
+                    const RealType* aIn = s.d_inletAreaVecX.data();
+                    const RealType* aOut = s.d_outletAreaVecX.data();
+                    return thrust::transform_reduce(thrust::device,
+                        thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(s.nodeCount),
+                        [own = d_own.data(), ph = s.d_phi.data(), aIn, aOut, wantOpening] __device__ (size_t i) -> RealType {
+                            if (own[i] != 1) return RealType(0);
+                            bool opening = (aIn[i]*aIn[i] > RealType(0)) || (aOut[i]*aOut[i] > RealType(0));
+                            return (opening == wantOpening) ? fabs(ph[i]) : RealType(0);
+                        }, RealType(0), thrust::maximum<RealType>());
+                };
+                std::cout << "  [ofs-dbg4] phi|max opening=" << std::scientific << phiMaxWhere(true)
+                          << " interior=" << phiMaxWhere(false) << std::defaultfloat << "\n";
+            }
         }
     }
 
-    // Periodic: pure-Neumann pressure has a constant-mode null space. Subtract
-    // global mean so phi is uniquely defined (and the constant doesn't drift
-    // step over step).
-    if (s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Periodic)
+    // Periodic / opening-flux pump: subtract the global mean so phi is uniquely
+    // defined and the constant mode doesn't drift step over step.
+    if (s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Periodic
+        || s.useOpeningFluxSource)
     {
         mars::fem::removeMean<RealType>(s.domain, s.d_phi, MPI_COMM_WORLD);
     }

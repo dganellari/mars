@@ -102,17 +102,27 @@ int main(int argc, char** argv)
     RealType    dt       = 1.0e-3;     // initial/fixed dt; capped by --cfl if set
     double      cflMax   = -1;         // >0 enables adaptive dt: cap advective CFL (uMax*dt/dx) at this
     int         numSteps = 200;
+    int         sourceRampSteps = 0;   // >0: ramp inlet drive 0->full over N steps (gentle startup)
     int         vtuEvery = 20;
     int         maxIter  = 2000;
     RealType    tolerance = 1e-8;
     int         blockSize  = 256;
     int         bucketSize = 64;
     RealType    icPerturb  = 0.0;
-    // FIX 1/2 through-flow toggles. Opening-flux source OFF by default so it can
-    // be A/B-ed safely (a prior naive surface-source attempt blew up). Dirichlet
-    // lift ON (a correctness fix); --no-dirichlet-lift disables for comparison.
+    // FIX 1/2 through-flow toggles. Opening-flux source ON by default: it is now the
+    // CORRECT through-flow fix -- it uses the PRESCRIBED (balanced) inlet/outlet
+    // opening flux, which cancels EXACTLY at step0, so it cannot blow up like the
+    // earlier solved-field version. Pairs with the mass-conserving outlet + pumpDp=0.
+    // --no-opening-flux-source disables it for A/B. Dirichlet lift ON (a correctness
+    // fix); --no-dirichlet-lift disables for comparison.
     bool        openingFluxSource = false;
     bool        dirichletLift     = true;
+    // FIX B -- pressure-drop drive. >0 activates FIX B: prescribe p=pumpDp on the
+    // inlet face, p=0 on the outlet face, velocities FREE at both, so the flux
+    // EMERGES from the interior pressure gradient (SCS-captured -> visible). Two
+    // pressure-Dirichlet faces -> nonsingular A -> startup-safe. <=0 (default)
+    // keeps the legacy mass-conserving velocity outlet byte-identical.
+    double      pumpDp = 0.0;
 
     for (int i = 1; i < argc; ++i)
     {
@@ -138,12 +148,14 @@ int main(int argc, char** argv)
         else if (a == "--inlet-flip-normal")         inletFlipNormal = true;     // flip if vectors come out outward
         else if (a == "--pump-uniform-ic")           pumpUniformIC = true;       // legacy free-stream IC (default: start from rest)
         else if (a.rfind("--inlet-velocity=", 0) == 0) inletU  = std::stod(a.substr(17));
+        else if (a.rfind("--pump-dp=", 0) == 0)        pumpDp  = std::stod(a.substr(10));   // FIX B: pressure-drop drive (inlet p=pumpDp, outlet p=0, free velocities)
         else if (a.rfind("--rho=", 0) == 0)          rho       = std::stod(a.substr(6));
         else if (a.rfind("--nu=", 0) == 0)         { nu = std::stod(a.substr(5)); reqRe = -1; }
         else if (a.rfind("--Re=", 0) == 0)           reqRe = std::stod(a.substr(5)); // nu set after L is known
         else if (a.rfind("--dt=", 0) == 0)           dt        = std::stod(a.substr(5));
         else if (a.rfind("--cfl=", 0) == 0)          cflMax    = std::stod(a.substr(6)); // adaptive dt: cap advective CFL
         else if (a.rfind("--num-steps=", 0) == 0)    numSteps  = std::stoi(a.substr(12));
+        else if (a.rfind("--source-ramp-steps=", 0) == 0) sourceRampSteps = std::stoi(a.substr(20));
         else if (a.rfind("--vtu-every=", 0) == 0)    vtuEvery  = std::stoi(a.substr(12));
         else if (a.rfind("--max-iter=", 0) == 0)     maxIter   = std::stoi(a.substr(11));
         else if (a.rfind("--tol=", 0) == 0)          tolerance = std::stod(a.substr(6));
@@ -166,6 +178,10 @@ int main(int argc, char** argv)
                     "                       pin, forces Q_out=Q_in) | do-nothing (whole-face p=0 + FREE\n"
                     "                       outlet velocity, diagnostic only -- does NOT drive through-flow)\n"
                     "  --inlet-velocity=V   inlet speed along x (default 0.5)\n"
+                    "  --pump-dp=V          FIX B pressure-drop drive: prescribe p=V on the inlet\n"
+                    "                       face, p=0 on the outlet face, velocities FREE at both.\n"
+                    "                       Flux emerges from the interior pressure gradient.\n"
+                    "                       V<=0 (default) keeps the mass-conserving velocity outlet.\n"
                     "  --no-inlet-pernode-normal  use one global inlet normal (default: per-node)\n"
                     "  --advection=NAME     skew (default) | upwind | barth-jespersen (--bj)\n"
                     "  --rho=V --nu=V       physical fluid properties (default water: rho=1000, nu=1e-6)\n"
@@ -173,11 +189,13 @@ int main(int argc, char** argv)
                     "                       whole-geometry diagonal, NOT the passage scale, so this Re\n"
                     "                       does NOT match a physically-defined Re. Prefer --nu/--rho.\n"
                     "  --dt=V --num-steps=N time stepping (default 1e-3, 200)\n"
+                    "  --source-ramp-steps=N ramp inlet drive 0->full over N steps (gentle startup; default 0=off)\n"
                     "  --cfl=C              adaptive dt: cap advective CFL at C (~0.5 for BJ+BDF2)\n"
                     "  --vtu-output=PREFIX --vtu-every=N   VTU/PVTU output\n"
                     "  --ic-perturb=F       interior IC perturbation (break symmetry)\n"
-                    "  --opening-flux-source  add inlet+outlet boundary surface flux to the\n"
-                    "                       pressure RHS (FIX 1, off by default; A/B with --no-...)\n"
+                    "  --opening-flux-source  add prescribed inlet+outlet opening flux to the\n"
+                    "                       pressure RHS (FIX 1, ON by default; correct through-flow\n"
+                    "                       fix, needs mass-conserving outlet; --no-... for A/B)\n"
                     "  --no-dirichlet-lift  disable the velocity-diffusion Dirichlet lift (FIX 2,\n"
                     "                       on by default)\n";
             }
@@ -210,6 +228,12 @@ int main(int argc, char** argv)
                   << "Mesh        = " << meshFile << "\n";
         if (bcMode == "cavity")
             std::cout << "BC          = lid-driven cavity (lid u = " << inletU << ")\n";
+        else if (pumpDp > 0.0)
+            std::cout << "Drive       = FIX B pressure drop  dP = " << pumpDp << "\n"
+                      << "Inlet  SS   = " << inletSS  << "  (pressure-Dirichlet p=" << pumpDp
+                      << ", FREE velocity)\n"
+                      << "Outlet SS   = " << outletSS << "  (pressure-Dirichlet p=0, FREE velocity)\n"
+                      << "Walls       = all other side-sets (no-slip)\n";
         else
             std::cout << "Inlet  SS   = " << inletSS  << "  (u = " << inletU << ")\n"
                       << "Outlet SS   = " << outletSS
@@ -271,6 +295,7 @@ int main(int argc, char** argv)
     NSStepper<KeyType, RealType, TetTag> s{amr.domain(), SolverKind::CG, blockSize,
                                            maxIter, RealType(tolerance), rank, numRanks};
     s.Uinf          = RealType(inletU);
+    s.uinfBase      = RealType(inletU);   // unramped full-strength inlet speed (ramp target)
     s.pumpZeroIC    = !pumpUniformIC;   // default: start from rest
     s.icPerturbMag  = RealType(icPerturb);
     // DDT (matrix-free D M^-1 D^T): the corrector applies the literal D^T, so the
@@ -296,9 +321,25 @@ int main(int argc, char** argv)
     s.useBdf2 = useBdf2;
     s.useRhieChow = useRhieChow;
     s.useVMSStab  = useVMSStab;   // Nalu VMS pressure stabilization (tet-only)
-    s.useOpeningFluxSource = openingFluxSource;   // FIX 1 (off by default)
+    // Correct through-flow config: mass-conserving outlet + opening-flux-source ON
+    // + pumpDp=0 (FIX B off). The prescribed inlet/outlet opening flux balances
+    // exactly (sum=0 at step0), so the single-pin Neumann pressure solve is
+    // compatible and through-flow develops. The source REQUIRES the mass-conserving
+    // outlet (so outletU>0 and the outlet term is nonzero); see the guard below.
+    s.useOpeningFluxSource = openingFluxSource;   // FIX 1 (on by default; correct fix)
     s.useDirichletLift     = dirichletLift;       // FIX 2 (on by default)
+    s.pumpDp               = RealType(pumpDp);    // FIX B: pressure-drop drive (>0 active)
     s.rhieChowTau = rhieTau;   // <=0 -> kernel falls back to dt/rho
+    // FIX B and FIX 1 are mutually exclusive drives: the pressure drop already
+    // creates the through-flow, and adding the opening-flux source on top double-
+    // counts the inlet flux (the FIX-1 blowup). Warn and disable FIX 1 if both set.
+    if (pumpDp > 0.0 && openingFluxSource)
+    {
+        if (rank == 0)
+            std::cerr << "WARNING: --pump-dp>0 (FIX B) and --opening-flux-source (FIX 1) "
+                         "are incompatible; disabling the opening-flux source.\n";
+        s.useOpeningFluxSource = false;
+    }
     // Cavity = lid-driven cavity (geometric BC, no side-sets) -- a controlled
     // tet-NS validation case with a known flow pattern. Pump = per-side-set
     // BC machinery (Dirichlet velocity lists + outlet pressure mask).
@@ -311,6 +352,20 @@ int main(int argc, char** argv)
     // default, forces Q_out=Q_in) or do-nothing (free velocity + whole-face p=0,
     // diagnostic only -- does not self-drive the passage).
     s.outletDoNothing = (outletMode != "mass-conserving");
+
+    // The opening-flux source REQUIRES the mass-conserving outlet: only then is
+    // outletU>0, so the prescribed outlet term (+Q_out) balances the inlet term
+    // (-Q_in). A do-nothing outlet leaves outletU<=0 -> outlet term ~0 -> one-sided
+    // imbalance -> the single-pin Neumann pressure solve goes incompatible -> blowup.
+    // Disable the source (with a warning) rather than blow up.
+    if (s.useOpeningFluxSource && s.outletDoNothing)
+    {
+        if (rank == 0)
+            std::cerr << "WARNING: --opening-flux-source needs the mass-conserving outlet "
+                         "(outletU>0 to balance the inlet flux); --outlet=do-nothing leaves it "
+                         "unbalanced. Disabling the opening-flux source.\n";
+        s.useOpeningFluxSource = false;
+    }
 
     // Prescribed inlet volume flux Q_in = inletU * areaIn, captured at function
     // scope so the per-step through-flow diagnostic can compare it to the measured
@@ -599,9 +654,10 @@ int main(int argc, char** argv)
         if (areaIn > 1e-30) perNodeAreaVec(inletSS, h_inAx, h_inAy, h_inAz);
 
         // FIX 1: push the per-node OUTWARD inlet area-vectors to the device so the
-        // opening-flux source can add ( u . areaVec ) at each inlet node. Same owner-
-        // complete field used for the inward normals above; outlet area-vecs are
-        // uploaded separately below. Only needed when the source is enabled.
+        // opening-flux source can add ( Uprescribed . areaVec ) at each inlet node.
+        // Same owner-complete field used for the inward normals above; outlet area-vecs
+        // are uploaded separately below. Gated on openingFluxSource (ON by default), so
+        // this fires by default; --no-opening-flux-source skips it.
         if (openingFluxSource && areaIn > 1e-30)
         {
             const size_t nNodes = amr.domain().getNodeCount();
@@ -675,7 +731,9 @@ int main(int argc, char** argv)
         //    admits a flat-pressure tank-recirculation solution -> no through-flow.)
         //  - mass-conserving: velocity-Dirichlet outflow U_out=(U_in*A_in)/A_out
         //    along the outward normal + a single p=0 pin.
-        if (!s.outletDoNothing && areaOut > 1e-30)
+        // FIX B (pumpDp>0): the outlet velocity is FREE (driven by the p=0 Dirichlet),
+        // so keep outletU<=0 -> no velocity tag on the outlet.
+        if (s.pumpDp <= RealType(0) && !s.outletDoNothing && areaOut > 1e-30)
         {
             double Uout = (double(inletU) * areaIn) / areaOut;
             s.outletU    = RealType(Uout);
@@ -900,6 +958,18 @@ int main(int argc, char** argv)
             dtNew = std::max(dtNew, 0.95 * dt);     // shrink <=5%/step (BDF2)
             dtNew = std::max(dtNew, 1e-6 * dtInit); // floor: never collapse dt to ~0
             dt = dtNew;
+        }
+        // Gentle startup: ramp the inlet drive 0->full over sourceRampSteps. The flow
+        // is real but starting it from rest at full strength dumps the whole pressure
+        // head onto a near-singular interior node -> phi spike -> advection blowup.
+        // Ramping keeps the head (and phi/grad(phi)) small while it builds. Scales BOTH
+        // the inlet Dirichlet velocity AND the opening-flux source (which reads s.Uinf
+        // live), so the discrete flux balance (oScale) is preserved at every ramp level.
+        if (sourceRampSteps > 0)
+        {
+            RealType ramp = RealType(std::min(1.0, double(step) / double(sourceRampSteps)));
+            s.Uinf = s.uinfBase * ramp;
+            rescaleInletVelocityTarget<KeyType, RealType, TetTag>(s, ramp);
         }
         runNsStep<KeyType, RealType, TetTag>(s, RealType(dt), RealType(nu), RealType(rho));
         simTime += dt;
