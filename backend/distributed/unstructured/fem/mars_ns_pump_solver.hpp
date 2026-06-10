@@ -2257,7 +2257,6 @@ struct NSStepper
     // degenerate rows to epsFloor (0 on the healthy bulk -> byte-identical there).
     // Added inside applyDDTPerNode as out[i] += shift_i*phi[i] (a positive diagonal
     // add -> keeps the operator SPD). Distinct from the Jacobi clip (preconditioner only).
-    cstone::DeviceVector<RealType> d_shiftDDTNode;   // size nodeCount; 0 where diag>=epsFloor
     // Floor for the clipped Jacobi preconditioner: z = r / max(diag, eps).
     // Default is 1e-3 * max(diag), computed at the setup-time cache build.
     // Env MARS_DDT_JACOBI_CLIP_FRAC overrides the 1e-3 fraction.
@@ -3152,6 +3151,42 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
         }
         s.domain.reverseExchangeNodeHaloAdd(s.d_massNode);
         maybePeriodicSum<KeyType, RealType, ElementTag>(s, s.d_massNode);
+        // Identity-safe sliver fix: floor the lumped mass M_i up to a small
+        // fraction of the max so a degenerate sliver cell (tiny V_i -> huge 1/V_i)
+        // cannot blow up grad(p)/the DDT diagonal. Because A = D M^-1 D^T and the
+        // CORRECTOR also applies M^-1 from this SAME d_massNode, flooring the mass
+        // changes operator AND corrector by the same M^-1 -> div(u^{n+1})=0 is
+        // PRESERVED (unlike an operator-diagonal floor, which only the operator
+        // sees -> leaves an un-projected divergence residual -> smooth blowup).
+        // Done on the halo-exchanged mass BEFORE the DDT diagonal cache + corrector
+        // read it. Env MARS_MASS_FLOOR_FRAC (default 1e-3*max; 0 disables).
+        {
+            RealType locMax = thrust::reduce(thrust::device,
+                thrust::device_pointer_cast(s.d_massNode.data()),
+                thrust::device_pointer_cast(s.d_massNode.data() + s.nodeCount),
+                RealType(0), thrust::maximum<RealType>());
+            RealType gMax = locMax;
+            if (s.numRanks > 1) {
+                MPI_Datatype mr = std::is_same<RealType,double>::value ? MPI_DOUBLE : MPI_FLOAT;
+                MPI_Allreduce(&locMax, &gMax, 1, mr, MPI_MAX, MPI_COMM_WORLD);
+            }
+            RealType mfrac = RealType(1e-3);
+            const char* evM = std::getenv("MARS_MASS_FLOOR_FRAC");
+            if (evM) { double v = std::atof(evM); if (v >= 0) mfrac = RealType(v); }
+            RealType mFloor = mfrac * gMax;
+            if (mFloor > RealType(0)) {
+                thrust::transform(thrust::device,
+                    thrust::device_pointer_cast(s.d_massNode.data()),
+                    thrust::device_pointer_cast(s.d_massNode.data() + s.nodeCount),
+                    thrust::device_pointer_cast(s.d_massNode.data()),
+                    [mFloor] __device__ (RealType m) { return m < mFloor ? mFloor : m; });
+                if (s.rank == 0)
+                    std::cout << "  [mass-floor] M_i floored to " << std::scientific << mFloor
+                              << " (= " << mfrac << " * max_mass; identity-safe sliver fix)"
+                              << std::defaultfloat << "\n";
+            }
+        }
+
         // Forward halo: ghost slots get owner-rank V values so DDT assembler
         // can read s.d_massNode[ghostNode] and get the correct V.
         s.domain.exchangeNodeHalo(s.d_massNode);
@@ -4695,59 +4730,10 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
             std::cout.flags(oldFlags);
         }
 
-        // OPERATOR floor (distinct from the Jacobi-clip preconditioner above): a
-        // sliver cell gives a tiny TRUE operator diagonal -> phi spikes there -> the
-        // projection blows up. Raise ONLY those degenerate rows to epsFloor in the
-        // matrix-free operator via a per-node shift; 0 on the healthy bulk so it is
-        // byte-identical there. Env MARS_DDT_OP_FLOOR_FRAC=F sets epsFloor=F*max_diag.
-        RealType opFrac = RealType(0.05);
-        const char* evF = std::getenv("MARS_DDT_OP_FLOOR_FRAC");
-        if (evF) { double v = std::atof(evF); if (v >= 0) opFrac = RealType(v); }
-        RealType epsFloor = opFrac * globalMax;
-        s.d_shiftDDTNode.resize(s.nodeCount);
-        thrust::fill(thrust::device,
-                     thrust::device_pointer_cast(s.d_shiftDDTNode.data()),
-                     thrust::device_pointer_cast(s.d_shiftDDTNode.data() + s.nodeCount),
-                     RealType(0));
-        if (epsFloor > RealType(0))
-        {
-            const RealType* diagP = s.d_diagDDT.data();
-            const int* n2dP       = s.d_node_to_dof.data();
-            const uint8_t* ownP   = d_nodeOwnership.data();
-            const uint8_t* maskP  = (s.d_isPressureBdryDof.size() > 0)
-                                    ? s.d_isPressureBdryDof.data() : nullptr;
-            int pinD = s.pressurePinDof;
-            int nOwn = s.numOwnedDofs;
-            RealType* shiftP = s.d_shiftDDTNode.data();
-            thrust::for_each(thrust::device,
-                thrust::counting_iterator<size_t>(0),
-                thrust::counting_iterator<size_t>(s.nodeCount),
-                [diagP, n2dP, ownP, maskP, pinD, nOwn, epsFloor, shiftP] __device__ (size_t i) {
-                    if (ownP[i] != 1) return;
-                    int dof = n2dP[i];
-                    if (dof < 0 || dof >= nOwn) return;
-                    // Pinned/masked rows are forced to identity (out=phi) later; no shift.
-                    if (dof == pinD) return;
-                    if (maskP != nullptr && maskP[dof] != 0) return;
-                    RealType d = diagP[dof];
-                    if (d < epsFloor) shiftP[i] = epsFloor - d;
-                });
-            // Keep the Jacobi preconditioner consistent with the floored operator.
-            RealType* diagW = s.d_diagDDT.data();
-            thrust::transform(thrust::device,
-                thrust::device_pointer_cast(diagW),
-                thrust::device_pointer_cast(diagW + s.numOwnedDofs),
-                thrust::device_pointer_cast(diagW),
-                [epsFloor] __device__ (RealType d) { return d < epsFloor ? epsFloor : d; });
-            if (s.rank == 0)
-            {
-                auto oldFlags = std::cout.flags();
-                std::cout << std::scientific << std::setprecision(4)
-                          << "  [DDT-op-floor] epsFloor = " << epsFloor
-                          << " (= " << opFrac << " * max_diag; raises sliver-cell operator rows)\n";
-                std::cout.flags(oldFlags);
-            }
-        }
+        // NOTE: the sliver-cell regularization is now done UPSTREAM as a MASS floor
+        // (see [mass-floor] where d_massNode is built). That is identity-safe because
+        // operator AND corrector share M^-1. An operator-diagonal floor here would
+        // break div(u^{n+1})=0 (only the operator sees it) -> smooth blowup; removed.
     }
     pt.lap("DDT diagonal cache (for Jacobi PCG)");
 
@@ -5673,26 +5659,8 @@ void applyDDTPerNode(NSStepper<KeyType, RealType, ElementTag>& s,
         }
     }
 
-    // Operator-diagonal floor: out[i] += shift_i * phi[i] on the degenerate (sliver)
-    // rows so their effective diagonal is epsFloor, not the tiny native value. 0 on
-    // the healthy bulk (built in setup) so the operator is byte-identical there. Must
-    // run BEFORE the identity-row enforcement so pinned/masked rows stay diag=1.
-    if (s.d_shiftDDTNode.size() == s.nodeCount)
-    {
-        const RealType* shiftP = s.d_shiftDDTNode.data();
-        const RealType* phPtr  = phi.data();
-        RealType* outPtr       = outAcc.data();
-        const uint8_t* ownPtr2 = d_nodeOwnership.data();
-        thrust::for_each(thrust::device,
-            thrust::counting_iterator<size_t>(0),
-            thrust::counting_iterator<size_t>(s.nodeCount),
-            [shiftP, phPtr, outPtr, ownPtr2] __device__ (size_t i) {
-                if (ownPtr2[i] != 1) return;
-                RealType sh = shiftP[i];
-                if (sh != RealType(0)) outPtr[i] += sh * phPtr[i];
-            });
-        cudaDeviceSynchronize();
-    }
+    // (The sliver regularization is an identity-safe MASS floor upstream, not an
+    // operator-diagonal add here -- the latter breaks div(u^{n+1})=0. See [mass-floor].)
 
     // Identity-row enforcement on pinned pressure DOFs (cavity: single corner;
     // channel: outflow-face mask). out[i] = phi[i] makes the row act as identity.
