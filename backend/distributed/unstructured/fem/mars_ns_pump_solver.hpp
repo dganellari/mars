@@ -1660,7 +1660,6 @@ __global__ void assembleDDTPerNodeKernel(const KeyType* c0, const KeyType* c1,
 // per-element-per-SCS at offset e*6+gFace. The per-node M^-1 (V[i]) in the
 // middle is why this is node-driven, not per-element: cross-element face pairs
 // that share node i must both contribute to A[*, *] through 1/V[i].
-template<typename KeyType, typename RealType>
 // Assemble the PSPG stabilization tau*L into the SAME DDT CSR. L is the linear-
 // tet stiffness L[i][j] = Vol*(dNdx_i . dNdx_j); we add tau*L[i][j] to A[dof_i,dof_j].
 // Element-driven (one thread per element, 4x4 local stencil) -- mirrors the BD
