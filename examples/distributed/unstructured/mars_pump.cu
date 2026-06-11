@@ -81,6 +81,7 @@ int main(int argc, char** argv)
     bool        useVMSStab = false;    // Nalu-Wind VMS pressure stab (NOT Rhie-Chow); --vms-stab. EXPERIMENTAL, validate.
     bool        usePSPG    = false;    // implicit PSPG pressure stab (tau*L in the DDT operator); --pspg. The correct equal-order checkerboard fix.
     double      pspgTau    = -1;       // <=0 => auto h^2/24; --pspg-tau=V overrides
+    bool        useHypre   = false;    // --solver=hypre: assembled DDT + Hypre FlexGMRES+BoomerAMG (else matrix-free Jacobi-CG)
     std::string inletSS;   // inlet side-set name (required for --bc=pump; pass --inlet-ss=)
     std::string outletSS;  // outlet side-set name (required for --bc=pump; pass --outlet-ss=)
     // Inlet velocity follows each node's OWN local surface normal (area-weighted
@@ -145,6 +146,8 @@ int main(int argc, char** argv)
         else if (a == "--vms-stab")                  useVMSStab = true;  // Nalu VMS pressure stab (tet-only, experimental)
         else if (a == "--pspg")                      usePSPG    = true;  // implicit PSPG (tau*L in DDT operator) -- the correct checkerboard fix
         else if (a.rfind("--pspg-tau=", 0) == 0)     pspgTau    = std::stod(a.substr(11));
+        else if (a == "--solver=hypre")              useHypre   = true;  // assembled DDT + Hypre FlexGMRES+BoomerAMG (else matrix-free Jacobi-CG)
+        else if (a == "--solver=cg")                 useHypre   = false;
         else if (a.rfind("--inlet-ss=", 0) == 0)     inletSS   = a.substr(11);
         else if (a.rfind("--outlet-ss=", 0) == 0)    outletSS  = a.substr(12);
         else if (a == "--inlet-pernode-normal")      inletPernodeNormal = true;
@@ -257,6 +260,7 @@ int main(int argc, char** argv)
                   << "VMS-stab    = " << (useVMSStab ? "ON (Nalu, tet-only, EXPERIMENTAL)" : "OFF") << "\n"
                   << "PSPG        = " << (usePSPG ? "ON (implicit tau*L in DDT operator)" : "OFF")
                   << (usePSPG && pspgTau > 0 ? "  (tau=" + std::to_string(pspgTau) + ")" : (usePSPG ? "  (tau=auto h^2/24)" : "")) << "\n"
+                  << "pressure    = " << (useHypre ? "assembled DDT + Hypre FlexGMRES+BoomerAMG (--solver=hypre)" : "matrix-free DDT + Jacobi-CG") << "\n"
                   << "MPI ranks   = " << numRanks << "\n"
                   << "========================================\n\n";
     }
@@ -299,7 +303,9 @@ int main(int argc, char** argv)
                       << "use --nu for a real fluid.\n";
     }
 
-    NSStepper<KeyType, RealType, TetTag> s{amr.domain(), SolverKind::CG, blockSize,
+    NSStepper<KeyType, RealType, TetTag> s{amr.domain(),
+                                           useHypre ? SolverKind::Hypre : SolverKind::CG,
+                                           blockSize,
                                            maxIter, RealType(tolerance), rank, numRanks};
     s.Uinf          = RealType(inletU);
     s.uinfBase      = RealType(inletU);   // unramped full-strength inlet speed (ramp target)
