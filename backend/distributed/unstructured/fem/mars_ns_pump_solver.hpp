@@ -4797,6 +4797,19 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
                 s.pressurePinDof, s.d_rowPtr.data(), s.d_colInd.data(),
                 s.d_diagPtr.data(), s.d_valuesPre.data());
             cudaDeviceSynchronize();
+            // CRITICAL for the assembled DDT (Hypre) path: the pin must ALSO be
+            // enforced into the assembled DDT matrix d_valuesDDT, else s.AddT
+            // stays SINGULAR (SPSD, constant null mode unanchored) and BoomerAMG/
+            // FlexGMRES return the null-space solution = 0 -> phi=0 ("converged in
+            // 2 iters", x=0). The K-path matrix d_valuesPre was pinned above; the
+            // DDT matrix needs the same one-row identity.
+            if (s.nnzDDT > 0)
+            {
+                enforcePinRowKeepDiagKernel<RealType><<<1, 1>>>(
+                    s.pressurePinDof, s.d_rowPtrDDT.data(), s.d_colIndDDT.data(),
+                    s.d_diagPtrDDT.data(), s.d_valuesDDT.data());
+                cudaDeviceSynchronize();
+            }
         }
         if (s.rank == 0)
         {
