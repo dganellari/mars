@@ -33,6 +33,16 @@ public:
           solver_(nullptr), precond_(nullptr), A_hypre_(nullptr),
           b_hypre_(nullptr), x_hypre_(nullptr), verbose_(true), precondType_(precondType),
           kDim_(kDim) {
+        // FlexGMRES vs plain GMRES. FlexGMRES allows a VARYING (non-fixed)
+        // preconditioner -- the right choice when the preconditioner is itself
+        // an iterative solve (BoomerAMG V-cycles are not a fixed linear op once
+        // you use >1 sweep / aggressive coarsening), which can break plain
+        // GMRES's assumption of a constant M. Default ON for BoomerAMG (where it
+        // matters), OFF for diagonal Jacobi (fixed -> plain GMRES is fine).
+        // Env MARS_HYPRE_FLEXGMRES=1/0 forces it on/off.
+        useFlexGmres_ = (precondType == BOOMERAMG);
+        const char* fev = std::getenv("MARS_HYPRE_FLEXGMRES");
+        if (fev) useFlexGmres_ = (std::string(fev) != "0");
     }
 
     ~HypreGMRESSolver() {
@@ -263,6 +273,19 @@ public:
             HYPRE_BoomerAMGSetMaxCoarseSize(precond_, 128); // upper bound on coarsest direct solve
             HYPRE_BoomerAMGSetTol(precond_, 0.0);           // GMRES controls outer tol
             HYPRE_BoomerAMGSetMaxIter(precond_, 1);         // 1 V-cycle per GMRES iter
+            // Note: an earlier attempt called HYPRE_BoomerAMGSetInterpVectors
+            // with the constant-of-ones to declare the near-null mode of the
+            // pressure-Poisson. That call is REJECTED with HYPRE_ERROR_GENERIC
+            // by hypre/parcsr_ls/par_amg_setup.c:506 unless paired with
+            // SetNodal(1) + SetInterpVecVariant(2) + SetInterpVecQMax(...) +
+            // SetSmoothInterpVectors(0) (cf. MFEM hypre.cpp:5152-5160).
+            // Since the assembled DDT operator also fails BoomerAMG for a
+            // separate reason -- its boundary rows hold POSITIVE off-diagonals
+            // (non-M-matrix), which BoomerAMG's classical strength-of-
+            // connection drops -- we instead route DDT pressure through the
+            // matrix-free CG path (with Jacobi preconditioning) entirely, and
+            // keep this wrapper for the K-path / velocity solves where the
+            // matrix IS an M-matrix and AMG works as designed.
             // MARS_HYPRE_VERBOSE=1 also enables BoomerAMG setup-phase prints
             // (level structure, complexity, row sums per level).
             {
@@ -276,17 +299,21 @@ public:
             precond_ = (HYPRE_Solver) parcsr_A_;
         }
 
-        if (verbose_ && rank == 0) std::cout << "Creating GMRES solver..." << std::endl;
-        HYPRE_ParCSRGMRESCreate(comm_, &solver_);
+        const char* krylovName = useFlexGmres_ ? "FlexGMRES" : "GMRES";
+        if (verbose_ && rank == 0) std::cout << "Creating " << krylovName << " solver..." << std::endl;
+        if (useFlexGmres_) HYPRE_ParCSRFlexGMRESCreate(comm_, &solver_);
+        else               HYPRE_ParCSRGMRESCreate(comm_, &solver_);
         if (!solver_) {
-            std::cerr << "Failed to create Hypre GMRES solver" << std::endl;
+            std::cerr << "Failed to create Hypre " << krylovName << " solver" << std::endl;
             return false;
         }
+        // FlexGMRES and GMRES share the HYPRE_GMRES* setter/getter symbols
+        // (FlexGMRES is a GMRES variant in Hypre); only Create/Setup/Solve/
+        // Destroy and SetPrecond differ. So the Set* calls below are common.
         HYPRE_GMRESSetMaxIter(solver_, maxIter_);
         HYPRE_GMRESSetTol(solver_, tolerance_);
         HYPRE_GMRESSetKDim(solver_, kDim_);  // restart length
-        // GMRES print level: 0 silent, 2 per-iter residuals. Env var
-        // MARS_HYPRE_VERBOSE=1 turns it on without rebuild.
+        // print level: 0 silent, 2 per-iter residuals. Env MARS_HYPRE_VERBOSE=1.
         {
             const char* ev = std::getenv("MARS_HYPRE_VERBOSE");
             int gmresPrint = (verbose_ || (ev && std::string(ev) != "0")) ? 2 : 0;
@@ -295,21 +322,35 @@ public:
 
         if (precondType_ == BOOMERAMG && precond_) {
             if (verbose_ && rank == 0) std::cout << "Setting BoomerAMG preconditioner..." << std::endl;
-            HYPRE_GMRESSetPrecond(solver_,
-                               (HYPRE_Int (*)(HYPRE_Solver, HYPRE_Matrix, HYPRE_Vector, HYPRE_Vector))HYPRE_BoomerAMGSolve,
-                               (HYPRE_Int (*)(HYPRE_Solver, HYPRE_Matrix, HYPRE_Vector, HYPRE_Vector))HYPRE_BoomerAMGSetup,
-                               precond_);
+            if (useFlexGmres_)
+                HYPRE_FlexGMRESSetPrecond(solver_,
+                                   (HYPRE_Int (*)(HYPRE_Solver, HYPRE_Matrix, HYPRE_Vector, HYPRE_Vector))HYPRE_BoomerAMGSolve,
+                                   (HYPRE_Int (*)(HYPRE_Solver, HYPRE_Matrix, HYPRE_Vector, HYPRE_Vector))HYPRE_BoomerAMGSetup,
+                                   precond_);
+            else
+                HYPRE_GMRESSetPrecond(solver_,
+                                   (HYPRE_Int (*)(HYPRE_Solver, HYPRE_Matrix, HYPRE_Vector, HYPRE_Vector))HYPRE_BoomerAMGSolve,
+                                   (HYPRE_Int (*)(HYPRE_Solver, HYPRE_Matrix, HYPRE_Vector, HYPRE_Vector))HYPRE_BoomerAMGSetup,
+                                   precond_);
         } else if (precondType_ == JACOBI) {
             if (verbose_ && rank == 0) std::cout << "Setting Jacobi (diagonal) preconditioner..." << std::endl;
-            HYPRE_GMRESSetPrecond(solver_,
-                               (HYPRE_Int (*)(HYPRE_Solver, HYPRE_Matrix, HYPRE_Vector, HYPRE_Vector))HYPRE_ParCSRDiagScale,
-                               (HYPRE_Int (*)(HYPRE_Solver, HYPRE_Matrix, HYPRE_Vector, HYPRE_Vector))HYPRE_ParCSRDiagScaleSetup,
-                               (HYPRE_Solver) parcsr_A_);
+            if (useFlexGmres_)
+                HYPRE_FlexGMRESSetPrecond(solver_,
+                                   (HYPRE_Int (*)(HYPRE_Solver, HYPRE_Matrix, HYPRE_Vector, HYPRE_Vector))HYPRE_ParCSRDiagScale,
+                                   (HYPRE_Int (*)(HYPRE_Solver, HYPRE_Matrix, HYPRE_Vector, HYPRE_Vector))HYPRE_ParCSRDiagScaleSetup,
+                                   (HYPRE_Solver) parcsr_A_);
+            else
+                HYPRE_GMRESSetPrecond(solver_,
+                                   (HYPRE_Int (*)(HYPRE_Solver, HYPRE_Matrix, HYPRE_Vector, HYPRE_Vector))HYPRE_ParCSRDiagScale,
+                                   (HYPRE_Int (*)(HYPRE_Solver, HYPRE_Matrix, HYPRE_Vector, HYPRE_Vector))HYPRE_ParCSRDiagScaleSetup,
+                                   (HYPRE_Solver) parcsr_A_);
         }
 
-        if (verbose_ && rank == 0) std::cout << "Setting up GMRES solver..." << std::endl;
+        if (verbose_ && rank == 0) std::cout << "Setting up " << krylovName << " solver..." << std::endl;
         MPI_Barrier(comm_);
-        HYPRE_Int setup_err = HYPRE_ParCSRGMRESSetup(solver_, parcsr_A_, par_b_, par_x_);
+        HYPRE_Int setup_err = useFlexGmres_
+            ? HYPRE_ParCSRFlexGMRESSetup(solver_, parcsr_A_, par_b_, par_x_)
+            : HYPRE_ParCSRGMRESSetup(solver_, parcsr_A_, par_b_, par_x_);
         if (setup_err != 0 && rank == 0) {
             std::cerr << "[HypreGMRES] Setup returned error " << setup_err
                       << " (HYPRE_GetError=" << HYPRE_GetError() << ")\n";
@@ -321,7 +362,9 @@ public:
         if (verbose_ && rank == 0) std::cout << "GMRES setup complete, starting solve..." << std::endl;
 
         MPI_Barrier(comm_);
-        HYPRE_Int solve_err = HYPRE_ParCSRGMRESSolve(solver_, parcsr_A_, par_b_, par_x_);
+        HYPRE_Int solve_err = useFlexGmres_
+            ? HYPRE_ParCSRFlexGMRESSolve(solver_, parcsr_A_, par_b_, par_x_)
+            : HYPRE_ParCSRGMRESSolve(solver_, parcsr_A_, par_b_, par_x_);
         if (solve_err != 0 && rank == 0) {
             std::cerr << "[HypreGMRES] Solve returned error " << solve_err
                       << " (HYPRE_GetError=" << HYPRE_GetError() << ")\n";
@@ -558,7 +601,8 @@ public:
 
     void destroy() {
         if (solver_) {
-            HYPRE_ParCSRGMRESDestroy(solver_);
+            if (useFlexGmres_) HYPRE_ParCSRFlexGMRESDestroy(solver_);
+            else               HYPRE_ParCSRGMRESDestroy(solver_);
             solver_ = nullptr;
         }
         if (precond_ && precondType_ == BOOMERAMG) {
@@ -609,6 +653,7 @@ private:
 
     // GMRES(k) restart length.
     int kDim_;
+    bool useFlexGmres_ = false;  // FlexGMRES (varying precond) vs plain GMRES
 };
 
 } // namespace fem

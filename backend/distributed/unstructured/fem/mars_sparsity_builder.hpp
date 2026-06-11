@@ -138,6 +138,27 @@ public:
         int* d_colInd,
         int* d_diagPtr = nullptr,
         cudaStream_t stream = 0);
+
+    // Tet4 variant of buildDDTSparsity. Same node-driven two-hop pattern, but
+    // tet has 4 corners and 6 SCS edges (d_tetLRSCV), so the per-corner
+    // incidence table and the per-node neighbour budget differ. Tet meshes have
+    // much higher vertex valence than hex, so the neighbour cap is larger.
+    // Takes only 4 connectivity columns (tet has no conn4..conn7).
+    static int buildDDTSparsityTet(
+        const KeyType* d_conn0,
+        const KeyType* d_conn1,
+        const KeyType* d_conn2,
+        const KeyType* d_conn3,
+        size_t numElements,
+        size_t numNodes,
+        const KeyType* d_nodeToElemOffsets,
+        const KeyType* d_nodeToElemList,
+        const int* d_nodeToDof,
+        int numDofs,
+        int* d_rowPtr,
+        int* d_colInd,
+        int* d_diagPtr = nullptr,
+        cudaStream_t stream = 0);
 };
 
 // GPU kernel implementation (free function)
@@ -920,6 +941,218 @@ int CvfemSparsityBuilder<KeyType>::buildDDTSparsity(
     d_edgeCol.resize(nnz);
 
     // Build rowPtr via per-row counts + exclusive scan.
+    thrust::device_vector<int> d_rowCounts(numDofs, 0);
+    thrust::for_each(
+        thrust::device, d_edgeRow.begin(), d_edgeRow.end(),
+        [counts = thrust::raw_pointer_cast(d_rowCounts.data())] __device__(int row) {
+            atomicAdd(&counts[row], 1);
+        });
+
+    thrust::device_vector<int> d_rowPtrTemp(numDofs + 1);
+    thrust::exclusive_scan(thrust::device, d_rowCounts.begin(), d_rowCounts.end(), d_rowPtrTemp.begin());
+    int lastCount = 0, lastPtr = 0;
+    cudaMemcpy(&lastCount, thrust::raw_pointer_cast(d_rowCounts.data() + numDofs - 1),
+               sizeof(int), cudaMemcpyDeviceToHost);
+    cudaMemcpy(&lastPtr, thrust::raw_pointer_cast(d_rowPtrTemp.data() + numDofs - 1),
+               sizeof(int), cudaMemcpyDeviceToHost);
+    int finalVal = lastPtr + lastCount;
+    cudaMemcpy(thrust::raw_pointer_cast(d_rowPtrTemp.data() + numDofs), &finalVal,
+               sizeof(int), cudaMemcpyHostToDevice);
+
+    cudaMemcpy(d_rowPtr, thrust::raw_pointer_cast(d_rowPtrTemp.data()),
+               (numDofs + 1) * sizeof(int), cudaMemcpyDeviceToDevice);
+
+    if (d_colInd != nullptr)
+    {
+        cudaMemcpy(d_colInd, thrust::raw_pointer_cast(d_edgeCol.data()),
+                   nnz * sizeof(int), cudaMemcpyDeviceToDevice);
+    }
+
+    if (d_diagPtr != nullptr && d_colInd != nullptr)
+    {
+        thrust::for_each(
+            thrust::device, thrust::make_counting_iterator(0), thrust::make_counting_iterator(numDofs),
+            [rowPtr = d_rowPtr, colInd = d_colInd, diagPtr = d_diagPtr] __device__(int row)
+            {
+                int start = rowPtr[row];
+                int end   = rowPtr[row + 1];
+                int lo = start, hi = end;
+                while (lo < hi)
+                {
+                    int mid = lo + (hi - lo) / 2;
+                    if (colInd[mid] < row) lo = mid + 1;
+                    else hi = mid;
+                }
+                diagPtr[row] = lo;
+            });
+    }
+
+    return nnz;
+}
+
+// Tet4 DDT sparsity edge-list kernel. Same node-driven two-hop emission as
+// buildDDTEdgeListKernel, but tet has 4 corners and 6 SCS edges, so the
+// per-corner incidence is nodeFacesTet[4][3] (derived from d_tetLRSCV):
+//   face: 0(0,1) 1(1,2) 2(0,2) 3(0,3) 4(1,3) 5(2,3)
+//   node0 -> faces {0,2,3}, node1 -> {0,1,4}, node2 -> {1,2,5}, node3 -> {3,4,5}
+// This MUST stay in lock-step with the assembleDDTPerNodeKernelTet enumeration
+// in the pump solver, or the assembler will write columns the pattern lacks.
+template<typename KeyType>
+__global__ void buildDDTEdgeListKernelTet(
+    const KeyType* __restrict__ conn0,
+    const KeyType* __restrict__ conn1,
+    const KeyType* __restrict__ conn2,
+    const KeyType* __restrict__ conn3,
+    const KeyType* __restrict__ nodeToElemOffsets,
+    const KeyType* __restrict__ nodeToElemList,
+    const int* __restrict__ nodeToDof,
+    size_t numNodes,
+    int maxEdgesPerNode,
+    int* edgeListRow,
+    int* edgeListCol)
+{
+    size_t i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= numNodes) return;
+
+    int dofI = nodeToDof[i];
+    size_t base = i * size_t(maxEdgesPerNode);
+
+    for (int s = 0; s < maxEdgesPerNode; ++s)
+    {
+        edgeListRow[base + s] = -1;
+        edgeListCol[base + s] = -1;
+    }
+
+    if (dofI < 0) return; // orphan/ghost-only node with no owned DOF
+
+    // Local copy of the Tet4 SCS L/R pairs (same as d_tetLRSCV in
+    // mars_element_traits.hpp); kept local so this header does not depend on
+    // that constant, matching buildSparsityEdgeListKernelTet below.
+    const int lr_pairs[12] = {0,1, 1,2, 0,2, 0,3, 1,3, 2,3};
+    constexpr int nodeFaces[4][3] = { {0,2,3}, {0,1,4}, {1,2,5}, {3,4,5} };
+
+    // Distinct neighbour DOFs (the node's 1-ring), NOT the raw incident-face
+    // count. A high-valence tet interior node has a 1-ring of ~20-30 nodes; 48
+    // is a safe cap. Kept small because the caller allocates (cap+1)^2 edge
+    // slots PER NODE -- a large cap blows VRAM on big meshes. MUST equal
+    // kMaxOthers in buildDDTSparsityTet so the (cap+1)^2 slot budget matches.
+    constexpr int MAX_OTHERS = 48;
+    int otherDofs[MAX_OTHERS];
+    int otherCount = 0;
+
+    KeyType eStart = nodeToElemOffsets[i];
+    KeyType eEnd   = nodeToElemOffsets[i + 1];
+    for (KeyType ep = eStart; ep < eEnd; ++ep)
+    {
+        KeyType e = nodeToElemList[ep];
+        KeyType en[4] = {conn0[e], conn1[e], conn2[e], conn3[e]};
+        int iLocal = -1;
+        for (int k = 0; k < 4; ++k) if (en[k] == (KeyType)i) iLocal = k;
+        if (iLocal < 0) continue;
+
+        for (int gi = 0; gi < 3; ++gi)
+        {
+            if (otherCount >= MAX_OTHERS) break;
+            int gFace = nodeFaces[iLocal][gi];
+            int gL_local = lr_pairs[gFace * 2];
+            int gR_local = lr_pairs[gFace * 2 + 1];
+            int otherLocal = (iLocal == gL_local) ? gR_local : gL_local;
+            KeyType otherNode = en[otherLocal];
+            int otherDof = nodeToDof[otherNode];
+            if (otherDof < 0) continue;
+            bool seen = false;
+            for (int s = 0; s < otherCount; ++s)
+                if (otherDofs[s] == otherDof) { seen = true; break; }
+            if (seen) continue;
+            otherDofs[otherCount++] = otherDof;
+        }
+    }
+
+    int slot = 0;
+    auto emit = [&](int r, int c) {
+        if (slot < maxEdgesPerNode)
+        {
+            edgeListRow[base + slot] = r;
+            edgeListCol[base + slot] = c;
+            ++slot;
+        }
+    };
+
+    emit(dofI, dofI);
+    for (int s = 0; s < otherCount; ++s)
+    {
+        emit(dofI, otherDofs[s]);
+        emit(otherDofs[s], dofI);
+    }
+    for (int s = 0; s < otherCount; ++s)
+        for (int t = 0; t < otherCount; ++t)
+            emit(otherDofs[s], otherDofs[t]);
+}
+
+template<typename KeyType>
+int CvfemSparsityBuilder<KeyType>::buildDDTSparsityTet(
+    const KeyType* d_conn0,
+    const KeyType* d_conn1,
+    const KeyType* d_conn2,
+    const KeyType* d_conn3,
+    size_t numElements,
+    size_t numNodes,
+    const KeyType* d_nodeToElemOffsets,
+    const KeyType* d_nodeToElemList,
+    const int* d_nodeToDof,
+    int numDofs,
+    int* d_rowPtr,
+    int* d_colInd,
+    int* d_diagPtr,
+    cudaStream_t stream)
+{
+    (void)numElements; // not needed -- node->element CSR encodes it
+    // Distinct-neighbour cap for the 1-ring (~20-30 for a high-valence tet
+    // interior node). (cap+1)^2 edge slots per node; 48 keeps VRAM bounded
+    // (49^2=2401 slots/node) while leaving generous headroom. MUST equal
+    // MAX_OTHERS in buildDDTEdgeListKernelTet (the kernel writes (cap+1)^2 pairs).
+    constexpr int kMaxOthers       = 48;
+    constexpr int kMaxEdgesPerNode = (kMaxOthers + 1) * (kMaxOthers + 1);
+    size_t numEdges = numNodes * size_t(kMaxEdgesPerNode);
+
+    thrust::device_vector<int> d_edgeRow(numEdges);
+    thrust::device_vector<int> d_edgeCol(numEdges);
+
+    int blockSize = 256;
+    int numBlocks = (numNodes + blockSize - 1) / blockSize;
+    buildDDTEdgeListKernelTet<<<numBlocks, blockSize, 0, stream>>>(
+        d_conn0, d_conn1, d_conn2, d_conn3,
+        d_nodeToElemOffsets, d_nodeToElemList,
+        d_nodeToDof, numNodes, kMaxEdgesPerNode,
+        thrust::raw_pointer_cast(d_edgeRow.data()),
+        thrust::raw_pointer_cast(d_edgeCol.data()));
+
+    auto new_end = thrust::remove_if(
+        thrust::device,
+        thrust::make_zip_iterator(thrust::make_tuple(d_edgeRow.begin(), d_edgeCol.begin())),
+        thrust::make_zip_iterator(thrust::make_tuple(d_edgeRow.end(), d_edgeCol.end())),
+        [] __device__(const thrust::tuple<int, int>& t) { return thrust::get<0>(t) < 0; });
+
+    size_t validEntries = thrust::distance(
+        thrust::make_zip_iterator(thrust::make_tuple(d_edgeRow.begin(), d_edgeCol.begin())), new_end);
+    d_edgeRow.resize(validEntries);
+    d_edgeCol.resize(validEntries);
+
+    thrust::sort(
+        thrust::device,
+        thrust::make_zip_iterator(thrust::make_tuple(d_edgeRow.begin(), d_edgeCol.begin())),
+        thrust::make_zip_iterator(thrust::make_tuple(d_edgeRow.end(), d_edgeCol.end())));
+
+    auto unique_end = thrust::unique(
+        thrust::device,
+        thrust::make_zip_iterator(thrust::make_tuple(d_edgeRow.begin(), d_edgeCol.begin())),
+        thrust::make_zip_iterator(thrust::make_tuple(d_edgeRow.end(), d_edgeCol.end())));
+
+    int nnz = thrust::distance(
+        thrust::make_zip_iterator(thrust::make_tuple(d_edgeRow.begin(), d_edgeCol.begin())), unique_end);
+    d_edgeRow.resize(nnz);
+    d_edgeCol.resize(nnz);
+
     thrust::device_vector<int> d_rowCounts(numDofs, 0);
     thrust::for_each(
         thrust::device, d_edgeRow.begin(), d_edgeRow.end(),
