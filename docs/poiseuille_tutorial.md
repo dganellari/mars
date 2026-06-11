@@ -224,6 +224,9 @@ Useful flags:
 | `--no-seed-interior`      | start from rest instead of seeded plug flow (slower development) |
 | `--profile-x=X`           | move the validation plane (default 90% down the channel) |
 | `--cross-axis=y\|z`       | which axis the parabola varies over (default y) |
+| `--check`                 | regression mode: exit 1 unless RMS and flux ratios pass (Part 6) |
+| `--rms-tol=VAL`           | RMS pass threshold for `--check` (default 6e-3, the reference tol) |
+| `--flux-tol=VAL`          | flux-ratio tolerance for `--check` (default 0.10 = ±10%) |
 
 ---
 
@@ -277,15 +280,94 @@ the BC back at you — a lesson from the pump debugging). Ratios near 1.0 at
 
 | Quantity | Expected |
 |----------|----------|
-| `|u|` plateau | 0.846 (analytic 0.849) |
-| RMS vs parabola | 5.8e-3 raw, 3.9e-3 normalized (tol 6e-3) |
+| `|u|` plateau | 0.847 (analytic 0.849) |
+| RMS vs parabola | 5.4e-3 raw, 3.6e-3 normalized (tol 6e-3) |
 | flux ratios 25/50/75% | 0.99 – 1.01 |
-| `div_max` at t=12 | ~1.6, still falling |
-| wall time, 1200 steps, 1 GH200 | ~20 min |
+| velocity-fit G | 0.121 (exact 0.12, ~101%) |
+| `div_max` at convergence | ~1.5–1.8 (frozen boundary-bookkeeping residual, not interior error) |
+| wall time, 1500 steps, 1 GH200 | ~25 min |
 
 ---
 
-## Part 6 — Troubleshooting
+## Part 6 — Regression test, profile plot, and animation
+
+**Regression test.** With `--check` the driver grades itself at the end and
+sets the exit code:
+
+```
+VALIDATION PASS: RMS=5.781e-03 < 6e-3, flux ratios 0.992/0.992/1.006 within 1 +/- 0.1
+```
+
+The case is registered with ctest as `marsPoiseuilleValidation` (labels
+`validation;gpu;long`, 40-minute timeout) whenever the mesh sits at the repo
+root. Run it with `ctest -L validation`. This is the canary for any change to
+the projection, the boundary conditions, or the opening-flux source: if one
+of them regresses, the parabola degrades and the test fails loudly.
+
+**Profile plot.** At the end of every run the driver writes
+`<prefix>_profile.csv` — solved u(y) sampled at ONE fixed x station (the node
+plane nearest the probe x; the RMS uses a small slab, but a figure must show a
+single station). Turn it into the same figure the reference report shows:
+
+```bash
+python3 scripts/plot_poiseuille_profile.py poiseuille_profile.csv
+```
+
+(plain matplotlib, no VTK). The exact curve is drawn from the closed-form
+Wikipedia formula — `u(y) = G/(2μ)·y(h−y)` with `G = 8μU_max/h²` stated in the
+legend — not fitted to the data, and the script warns if the driver's analytic
+column ever disagrees with it.
+
+**The exact solution, four ways.** The Wikipedia "Plane Poiseuille flow"
+section defines the solution by four related quantities; the run checks all of
+them independently:
+
+| Wikipedia quantity | Checked by |
+|---|---|
+| `u(y) = G/(2μ)·y(h−y)` | profile RMS at fixed x + the figure above |
+| `Q = Gh³/(12μ)` | interior-flux probe (Q ≈ Q_in at 25/50/75%) |
+| `G = −dp/dx` | **velocity-fit G**: quadratic fit of the core profile, `G = −μ·u″` (validated: 100.8% of exact at convergence) |
+| `U_max = Gh²/(8μ)` | identical to the `U_max = 1.5·U_mean` target (same parabola, anchored by the inlet velocity instead of G) |
+
+The G line in the run log reads:
+
+```
+G from velocity (core parabola fit, 48 nodes): 1.2096e-01   exact 1.2000e-01   (100.8% of exact)
+```
+
+A match here means the velocity profile, the flow rate, *and* the momentum
+balance (which sets G) independently agree with the exact solution — stronger
+than the profile RMS alone. Note the fit tracks the actual state: on a
+half-developed run it honestly reports ~96%, reaching ~100% only at
+convergence.
+
+**Why G is measured from the velocity, not the solved pressure (a known
+artifact).** Incremental Chorin updates `p += phi` every step and nothing ever
+removes what accumulates, so the violent startup transient leaves a giant
+frozen smooth ramp in `p` (~1e5 × the physical pressure; the driver prints the
+raw `dp/dx` under an ARTIFACT label for tracking). Worse, the mismatch between
+the predictor's SCS gradient and the corrector's `D^T` gradient leaks this
+giant field into the weakly-anchored `v`/`w` components — `umag` in the VTU
+output reaches O(100) garbage while `u` underneath is the clean validated
+parabola. Consequences: **visualize the `u` field, never `umag` or `p`** (the
+render script defaults to `u` for this reason), and trust only velocity-derived
+diagnostics. The clean structural fix is a boundary-complete divergence /
+stabilized formulation — active work on the pump side.
+
+**Animation.** `--vtu-output=PREFIX` writes a `PREFIX_umag.pvd` timeline;
+render the channel developing — uniform plug at the inlet bending into the
+red-core/blue-wall parabola — with:
+
+```bash
+pvbatch scripts/render_poiseuille.py --pvd PREFIX     # -> PREFIX_movie.mp4
+```
+
+Use `--vtu-every=10` on the run for a smooth 121-frame movie (default 50
+gives 25 frames).
+
+---
+
+## Part 7 — Troubleshooting
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
@@ -294,10 +376,12 @@ the BC back at you — a lesson from the pump debugging). Ratios near 1.0 at
 | `cg_iter_p=FAIL` at iteration 1 (`pAp<=0`) | Jacobi diagonal clip too small for extreme cell-size ratios | `MARS_DDT_JACOBI_CLIP_FRAC=1e-2` (env var, no rebuild) |
 | blows up within a few steps after flow develops | unbalanced opening source (should not happen with `oScale`), or — on harder meshes — the equal-order checkerboard instability | this clean hex mesh does not checkerboard through t=12; for meshes that do, pressure stabilization (PSPG/VMS) is required — active work on the pump side |
 | run dies near step 1250 with no validation block | srun wall-time limit | `--time=00:30:00` |
+| `umag`/`p` look like garbage in ParaView while the run PASSes | known incremental-pressure artifact leaking into v/w (Part 6) | render the `u` field (script default); trust velocity diagnostics only |
+| rerun reproduces identical numbers to many digits after a code change | stale binary — build dir not rebuilt | rebuild `mars_poiseuille_flow`; bit-identical output after an intended change is the tell |
 
 ---
 
-## Part 7 — Where to go next
+## Part 8 — Where to go next
 
 - `docs/pump_cfd_tutorial.md` — the full from-scratch CFD background: CVFEM,
   the discrete operators, the projection algebra, stabilization.
