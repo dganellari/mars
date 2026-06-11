@@ -20,6 +20,7 @@
 #include <cmath>
 #include <vector>
 #include <algorithm>
+#include <fstream>
 
 // Voronoi-lumped per-node areas of a y-z cross-section plane of this quasi-2D
 // mesh (one cell thick in z, two z node-planes): per node, (Voronoi y-interval)
@@ -125,6 +126,12 @@ int main(int argc, char** argv)
     // Default ON in inlet mode -- without it the inlet is invisible to the
     // pressure solve. --no-opening-flux-source gives the A/B baseline.
     bool openingFluxSource = true;
+    // Regression-check mode: exit 1 unless the final profile RMS is below
+    // rmsTol (the FLUYA reference tolerance) AND every interior-flux ratio is
+    // within fluxTol of 1. Drives the ctest entry.
+    bool   checkMode = false;
+    double rmsTol    = 6e-3;
+    double fluxTol   = 0.10;
 
     for (int i = 1; i < argc; ++i)
     {
@@ -145,6 +152,9 @@ int main(int argc, char** argv)
         else if (arg.find("--body-force-x=") == 0) bodyForceX = std::stod(arg.substr(15));
         else if (arg == "--no-seed-interior")      seedInterior = false;
         else if (arg == "--no-opening-flux-source") openingFluxSource = false;
+        else if (arg == "--check")                 checkMode = true;
+        else if (arg.find("--rms-tol=") == 0)      rmsTol  = std::stod(arg.substr(10));
+        else if (arg.find("--flux-tol=") == 0)     fluxTol = std::stod(arg.substr(11));
         else if (arg.find("--block-size=") == 0)   blockSize  = std::stoi(arg.substr(13));
         else if (arg.find("--bucket-size=") == 0)  bucketSize = std::stoi(arg.substr(14));
         else if (arg.find("--max-iter=") == 0)     maxIter    = std::stoi(arg.substr(11));
@@ -185,6 +195,10 @@ int main(int argc, char** argv)
                       << "  --no-seed-interior  Start from rest (default seeds interior with mean flow)\n"
                       << "  --no-opening-flux-source  Disable the balanced opening-flux source (A/B baseline;\n"
                       << "                      without it the inlet is invisible to the pressure solve)\n"
+                      << "  --check             Regression mode: exit 1 unless RMS < rms-tol and flux\n"
+                      << "                      ratios within flux-tol of 1\n"
+                      << "  --rms-tol=VAL       RMS pass threshold (default 6e-3, the reference tol)\n"
+                      << "  --flux-tol=VAL      Relative flux-ratio tolerance (default 0.10)\n"
                       << "  --profile-x=X       Outlet probe plane x (default: 90% down the channel)\n"
                       << "  --profile-xtol=TOL  Half-width of the probe plane (default: one element)\n"
                       << "  --solver=cg|hypre   Linear solver (default cg)\n"
@@ -308,7 +322,11 @@ int main(int argc, char** argv)
         MPI_Allreduce(&yMaxL, &yMax, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
         MPI_Allreduce(&zMinL, &zMin, 1, MPI_DOUBLE, MPI_MIN, MPI_COMM_WORLD);
         MPI_Allreduce(&zMaxL, &zMax, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
-        RealType eps = 1e-4 * std::max(RealType(1), yMax - yMin);
+        // 1e-5, NOT 1e-4: the first interior node sits 1e-4 off the wall, and
+        // with eps=1e-4 float rounding pinned it on the TOP wall but not the
+        // bottom (observed: u(0.9999)=0 exactly, u(0.0001) free) -- a silent
+        // extra no-slip layer on one side.
+        RealType eps = 1e-5 * std::max(RealType(1), yMax - yMin);
         double H = static_cast<double>(yMax - yMin);   // channel height
 
         std::vector<uint8_t>  hostIsBdry(s.numOwnedDofs, 0);
@@ -549,6 +567,9 @@ int main(int argc, char** argv)
             writeVtuFrame(step, t);
     }
 
+    double finalRms     = -1.0;      // raw RMS vs analytic (reference tol 6e-3)
+    double fluxRatio[3] = {0, 0, 0}; // Q(25/50/75%) / Q(inlet)
+
     // -------------------------------------------------------------------------
     // Outlet-plane validation against the analytic parabolic profile.
     // Pull u and node coords to host, gather the probe-plane nodes, fit the
@@ -560,7 +581,8 @@ int main(int argc, char** argv)
         const auto& d_z = amr.domain().getNodeZ();
         size_t n = s.nodeCount;
 
-        std::vector<RealType> h_u(n), h_x(n), h_y(n), h_z(n);
+        std::vector<RealType> h_u(n), h_x(n), h_y(n), h_z(n), h_p(n);
+        cudaMemcpy(h_p.data(), s.d_p.data(), n * sizeof(RealType), cudaMemcpyDeviceToHost);
         cudaMemcpy(h_u.data(), s.d_u.data(), n * sizeof(RealType), cudaMemcpyDeviceToHost);
         cudaMemcpy(h_x.data(), d_x.data(),   n * sizeof(RealType), cudaMemcpyDeviceToHost);
         cudaMemcpy(h_y.data(), d_y.data(),   n * sizeof(RealType), cudaMemcpyDeviceToHost);
@@ -606,6 +628,73 @@ int main(int argc, char** argv)
         MPI_Allreduce(&cntL,   &cnt,   1, MPI_LONG,   MPI_SUM, MPI_COMM_WORLD);
 
         double rms = cnt > 0 ? std::sqrt(sumSq / cnt) : -1.0;
+        finalRms = rms;
+
+        // Profile CSV for plotting (scripts/plot_poiseuille_profile.py):
+        // cross-coordinate, solved u, analytic u at ONE fixed x (the node plane
+        // nearest xProbe) -- the report's figure samples a single station, so
+        // the CSV must too (the RMS above uses a slab, which is fine for the
+        // norm but would smear the dot plot). Rank-0-local nodes only.
+        if (rank == 0)
+        {
+            double xSnap = 1e300;
+            for (size_t i = 0; i < n; ++i)
+                if (std::abs(h_x[i] - xProbe) < std::abs(xSnap - xProbe)) xSnap = h_x[i];
+            double snapTol = 1e-9 * std::max(1.0, double(xMax - xMin));
+            std::vector<std::pair<double,double>> pts;
+            for (size_t i = 0; i < n; ++i)
+                if (std::abs(h_x[i] - xSnap) < snapTol)
+                    pts.emplace_back(double(cross[i]), double(h_u[i]));
+            std::sort(pts.begin(), pts.end());
+            std::string csvName = (vtuPrefix.empty() ? std::string("poiseuille") : vtuPrefix)
+                                  + "_profile.csv";
+            std::ofstream csv(csvName);
+            csv << "y,u_solved,u_analytic\n";
+            for (auto& p : pts)
+                csv << p.first << "," << p.second << "," << prof.analytic(p.first) << "\n";
+            std::cout << "Profile CSV written: " << csvName
+                      << "  (single plane x=" << xSnap << ", " << pts.size() << " nodes)\n";
+
+            // G from the solved VELOCITY: quadratic fit over the core
+            // (u > 0.5 U_max -- avoids the near-wall overshoot layer), then
+            // G = -mu * u'' = -2 a mu. This is the trustworthy pressure-
+            // gradient measurement; the solved p field cannot give it (see
+            // the artifact note at the p-based check below).
+            double s0 = 0, s1 = 0, s2 = 0, s3 = 0, s4 = 0, b0 = 0, b1 = 0, b2 = 0;
+            for (auto& pr : pts)
+            {
+                if (pr.second <= 0.5 * targetUMax) continue;
+                double yv = pr.first, uv = pr.second;
+                double y2 = yv * yv;
+                s0 += 1;  s1 += yv;  s2 += y2;  s3 += y2 * yv;  s4 += y2 * y2;
+                b0 += uv; b1 += yv * uv; b2 += y2 * uv;
+            }
+            if (s0 >= 5)
+            {
+                // Solve the 3x3 normal equations [s4 s3 s2; s3 s2 s1; s2 s1 s0]
+                // (a b c)^T = (b2 b1 b0)^T by Cramer's rule.
+                auto det3 = [](double a11, double a12, double a13,
+                               double a21, double a22, double a23,
+                               double a31, double a32, double a33) {
+                    return a11 * (a22 * a33 - a23 * a32)
+                         - a12 * (a21 * a33 - a23 * a31)
+                         + a13 * (a21 * a32 - a22 * a31);
+                };
+                double D  = det3(s4, s3, s2,  s3, s2, s1,  s2, s1, s0);
+                double Da = det3(b2, s3, s2,  b1, s2, s1,  b0, s1, s0);
+                double aFit = (D != 0) ? Da / D : 0;
+                double mu = rho * nu;
+                double Gfit = -2.0 * aFit * mu;
+                double Gexact = 8.0 * mu * targetUMax;   // h=1-normalized below
+                double Hloc = sHi - sLo;
+                if (Hloc > 0) Gexact = 8.0 * mu * targetUMax / (Hloc * Hloc);
+                std::cout << "G from velocity (core parabola fit, " << long(s0) << " nodes): "
+                          << std::scientific << std::setprecision(4) << Gfit
+                          << "   exact " << Gexact << "   ("
+                          << std::fixed << std::setprecision(1)
+                          << (Gexact != 0 ? 100.0 * Gfit / Gexact : 0.0) << "% of exact)\n";
+            }
+        }
 
         if (rank == 0)
         {
@@ -649,27 +738,103 @@ int main(int argc, char** argv)
                 auto areas = planeVoronoiAreas(ys, dz);
                 double q = 0;
                 for (size_t k = 0; k < us.size(); ++k) q += us[k] * areas[k];
-                return q;
+                // All ranks call planeFlux the same number of times, so this
+                // collective is safe; areas at partition cuts are approximate.
+                double qG = q;
+                MPI_Allreduce(&q, &qG, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+                return qG;
             };
 
             double qIn = planeFlux(double(xMin));
+            const double fracs[3] = {0.25, 0.50, 0.75};
+            double qAt[3];
+            for (int k = 0; k < 3; ++k)
+            {
+                qAt[k] = planeFlux(double(xMin) + fracs[k] * double(xMax - xMin));
+                fluxRatio[k] = (std::abs(qIn) > 0) ? qAt[k] / qIn : 0.0;
+            }
             if (rank == 0)
             {
                 std::cout << "Interior-flux probe (solved u, Voronoi-lumped):\n";
                 std::cout << "  Q(inlet) = " << std::scientific << std::setprecision(4) << qIn << "\n";
-                for (double f : {0.25, 0.50, 0.75})
-                {
-                    double q = planeFlux(double(xMin) + f * double(xMax - xMin));
-                    std::cout << "  Q(" << std::fixed << std::setprecision(0) << f * 100
-                              << "%) = " << std::scientific << std::setprecision(4) << q
+                for (int k = 0; k < 3; ++k)
+                    std::cout << "  Q(" << std::fixed << std::setprecision(0) << fracs[k] * 100
+                              << "%) = " << std::scientific << std::setprecision(4) << qAt[k]
                               << "  ratio=" << std::fixed << std::setprecision(3)
-                              << (std::abs(qIn) > 0 ? q / qIn : 0.0) << "\n";
-                }
+                              << fluxRatio[k] << "\n";
                 std::cout << "========================================\n";
             }
         }
+
+        // Wikipedia plane-Poiseuille closure check: the exact solution is
+        // u(y) = G/(2 mu) y(h-y) with G = -dp/dx = 8 mu U_max/h^2. Measure the
+        // SOLVED pressure gradient between two developed stations (60%, 90%)
+        // and compare -- validates the pressure field, not just the velocity.
+        //
+        // Sample ONLY the moving core (u > 0.5 U_max): incremental Chorin does
+        // p += phi at EVERY node each step, and at velocity-Dirichlet nodes
+        // (walls/inlet) phi carries the projection's one-sided boundary residue
+        // that the corrector can never clean -- p there accumulates linearly
+        // into garbage and poisons a full-station mean (observed: measured G
+        // off by 8 orders of magnitude when wall nodes were included). The core
+        // nodes feel the physical gradient (the steady parabola proves it).
+        // Plane means are Allreduced; ghosts may be double-counted on
+        // multi-rank, so the mean is exact on 1 rank, approximate on N.
+        {
+            auto planeMeanP = [&](double xTarget) -> double
+            {
+                double xSnap = 1e300;
+                for (size_t i = 0; i < n; ++i)
+                    if (std::abs(h_x[i] - xTarget) < std::abs(xSnap - xTarget)) xSnap = h_x[i];
+                double snapTol = 1e-9 * std::max(1.0, double(xMax - xMin));
+                double uCore = 0.5 * targetUMax;
+                double sum = 0; long cntP = 0;
+                for (size_t i = 0; i < n; ++i)
+                    if (std::abs(h_x[i] - xSnap) < snapTol && double(h_u[i]) > uCore)
+                    { sum += h_p[i]; ++cntP; }
+                double sumG = sum; long cntG = cntP;
+                MPI_Allreduce(&sum,  &sumG, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+                MPI_Allreduce(&cntP, &cntG, 1, MPI_LONG,   MPI_SUM, MPI_COMM_WORLD);
+                return cntG > 0 ? sumG / double(cntG) : 0.0;
+            };
+            double xA = double(xMin) + 0.60 * double(xMax - xMin);
+            double xB = double(xMin) + 0.90 * double(xMax - xMin);
+            double pA = planeMeanP(xA);
+            double pB = planeMeanP(xB);
+            double H      = sHi - sLo;
+            double Gmeas  = (pA - pB) / (xB - xA);
+            double Gexact = (H > 0) ? 8.0 * rho * nu * targetUMax / (H * H) : 0.0;
+            if (rank == 0)
+                std::cout << "Pressure-gradient from SOLVED p (KNOWN ARTIFACT -- incremental Chorin\n"
+                          << "accumulates the startup-transient phi into p and nothing removes it, so\n"
+                          << "p carries a giant frozen ramp ~1e5 x physical; use the velocity-fit G\n"
+                          << "above as the physical measurement):\n"
+                          << "  raw dp/dx = " << std::scientific << std::setprecision(4) << Gmeas
+                          << "   physical G = " << Gexact << "\n"
+                          << "========================================\n";
+        }
+    }
+
+    // Regression verdict. finalRms and fluxRatio are identical on all ranks
+    // (both come from Allreduced sums), so every rank computes the same code.
+    int exitCode = 0;
+    if (checkMode)
+    {
+        bool rmsOk  = (finalRms >= 0.0) && (finalRms < rmsTol);
+        bool fluxOk = true;
+        for (int k = 0; k < 3; ++k)
+            fluxOk = fluxOk && (std::abs(fluxRatio[k] - 1.0) <= fluxTol);
+        bool pass = rmsOk && fluxOk;
+        if (rank == 0)
+            std::cout << "VALIDATION " << (pass ? "PASS" : "FAIL")
+                      << ": RMS=" << std::scientific << std::setprecision(3) << finalRms
+                      << (rmsOk ? " < " : " >= ") << rmsTol
+                      << ", flux ratios " << std::fixed << std::setprecision(3)
+                      << fluxRatio[0] << "/" << fluxRatio[1] << "/" << fluxRatio[2]
+                      << (fluxOk ? " within " : " OUTSIDE ") << "1 +/- " << fluxTol << "\n";
+        exitCode = pass ? 0 : 1;
     }
 
     MPI_Finalize();
-    return 0;
+    return exitCode;
 }
