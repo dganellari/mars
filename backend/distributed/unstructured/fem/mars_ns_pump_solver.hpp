@@ -5163,9 +5163,9 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
     }
     wrapIntoSparseMatrix<RealType>(s.Apre, s.numOwnedDofs, s.numTotalDofs, s.nnz,
                                    s.d_rowPtr.data(), s.d_colInd.data(), s.d_valuesPre.data());
-    // AddT only exists when the DDT operator was assembled (hex). For tet,
-    // nnzDDT==0 and the d_*DDT buffers are null/empty -- wrapping them does a
-    // cudaMemcpy on a null pointer (cudaErrorInvalidValue -> poisoned context).
+    // AddT exists when the DDT operator was assembled (hex OR tet now). If the
+    // assembly was skipped (nnzDDT==0) the d_*DDT buffers are null/empty --
+    // wrapping them would cudaMemcpy a null pointer (poisoned context), so guard.
     if (s.nnzDDT > 0)
         wrapIntoSparseMatrix<RealType>(s.AddT, s.numOwnedDofs, s.numTotalDofs, s.nnzDDT,
                                        s.d_rowPtrDDT.data(), s.d_colIndDDT.data(), s.d_valuesDDT.data());
@@ -7554,24 +7554,26 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
     }
     else  // DDT: (D M^{-1} D^T) phi = -(rho/dt) D u**
     {
-        // DDT pressure ALWAYS uses the matrix-free path (the else branch
-        // below). The assembled DDT operator s.AddT holds POSITIVE off-
-        // diagonals at boundary rows (D M^-1 D^T is not an M-matrix),
-        // which BoomerAMG's classical strength-of-connection rejects --
-        // every Hypre Setup attempt on s.AddT returned HYPRE_ERROR_GENERIC
-        // (cg_iter_p=FAIL every step on cube16 cavity). The matrix-free
-        // CG path with Jacobi preconditioning (see solvePressureDDT) is
-        // the working production route. The Hypre wrappers still serve
-        // velocity solves and the K-path pressure solve, both of which
-        // are well-conditioned M-matrices where AMG works as designed.
+        // DDT pressure: matrix-free Jacobi-CG is the DEFAULT (the else branch
+        // below) -- unchanged, kept so we can return to it. The ASSEMBLED path
+        // (s.AddT, built at setup) is opt-in via --solver=hypre: it solves the
+        // SAME operator with Hypre FlexGMRES + BoomerAMG (or Jacobi). This was
+        // previously dead because the bare Gram-form D M^-1 D^T has positive
+        // boundary off-diagonals that BoomerAMG rejects -- now we assemble the
+        // PSPG tau*L into the CSR too, which regularizes the operator toward
+        // diagonal dominance so AMG (and even diagonal Jacobi under GMRES) can
+        // precondition it. GMRES/FlexGMRES (not PCG) is mandatory: the operator
+        // is SPSD with a constant null mode that PCG rejects (error 1).
         //
-        // The diagnostic env MARS_DDT_USE_ASSEMBLED_CG=1 still runs the
-        // assembled-CG path so we can verify the assembled matrix equals
-        // the matrix-free apply bit-for-bit (useful when changing the
-        // DDT assembler). It only fires when --solver=cg.
+        // Two activations:
+        //  - --solver=hypre  -> assembled FlexGMRES+AMG (the production target).
+        //  - MARS_DDT_USE_ASSEMBLED_CG=1 with --solver=cg -> assembled CG, the
+        //    bit-identity check vs the matrix-free apply (validates the assembler).
         const char* useAsmEv = std::getenv("MARS_DDT_USE_ASSEMBLED_CG");
-        bool useAssembledCG = (useAsmEv && std::string(useAsmEv) != "0")
-                              && (s.solverKind == SolverKind::CG);
+        bool assembledDiagCG = (useAsmEv && std::string(useAsmEv) != "0")
+                               && (s.solverKind == SolverKind::CG);
+        bool useAssembledCG = (s.solverKind == SolverKind::Hypre && s.nnzDDT > 0)
+                              || assembledDiagCG;
         if (useAssembledCG)
         {
             // DDT + (Hypre or assembled-CG): use the assembled DDT matrix
