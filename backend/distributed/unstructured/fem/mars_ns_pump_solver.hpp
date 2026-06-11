@@ -1661,6 +1661,60 @@ __global__ void assembleDDTPerNodeKernel(const KeyType* c0, const KeyType* c1,
 // middle is why this is node-driven, not per-element: cross-element face pairs
 // that share node i must both contribute to A[*, *] through 1/V[i].
 template<typename KeyType, typename RealType>
+// Assemble the PSPG stabilization tau*L into the SAME DDT CSR. L is the linear-
+// tet stiffness L[i][j] = Vol*(dNdx_i . dNdx_j); we add tau*L[i][j] to A[dof_i,dof_j].
+// Element-driven (one thread per element, 4x4 local stencil) -- mirrors the BD
+// assemble. Its support is a SUBSET of the DDT two-hop sparsity, so every (i,j)
+// entry already exists in the pattern (atomicAddSparseEntry no-ops if missing,
+// which would only happen for a node beyond the sparsity neighbour cap). This is
+// the SAME tau*L the matrix-free applyPSPGLaplacianTetKernel adds, so the
+// assembled operator A+tau*L matches the matrix-free A+tau*L. tau is a LENGTH^2
+// (~h^2/24). Beyond consistency, tau*L is a true SPD Laplacian that regularizes
+// the bare Gram-form DDT toward diagonal dominance -> makes Jacobi/AMG tractable.
+template<typename KeyType, typename RealType>
+__global__ void assemblePSPGStiffnessTetKernel(
+    const KeyType* c0, const KeyType* c1, const KeyType* c2, const KeyType* c3,
+    const RealType* nodeX, const RealType* nodeY, const RealType* nodeZ,
+    const int* nodeToDof, const uint8_t* ownership,
+    const int* rowPtr, const int* colInd, int numOwnedDofs,
+    RealType tau, RealType* values, size_t numElem)
+{
+    size_t e = blockIdx.x * blockDim.x + threadIdx.x;
+    if (e >= numElem) return;
+    constexpr int NPE = ElemTraits<TetTag>::NodesPerElem;   // 4
+    const KeyType* cc[4] = {c0, c1, c2, c3};
+    KeyType n[NPE];
+    for (int i = 0; i < NPE; ++i) n[i] = cc[i][e];
+    RealType coords[4][3];
+    for (int i = 0; i < NPE; ++i) {
+        coords[i][0] = nodeX[n[i]];
+        coords[i][1] = nodeY[n[i]];
+        coords[i][2] = nodeZ[n[i]];
+    }
+    RealType det, dNdx[4][3];
+    Tet4CVFEM::jacobian_and_dNdx<RealType>(coords, det, dNdx);
+    // element volume = det/6 (Tet4CVFEM convention); guard degenerate tets.
+    RealType vol = det / RealType(6);
+    if (!(vol > RealType(0))) return;
+    RealType coef = tau * vol;
+    // scatter the 4x4 stiffness; only OWNED rows (dof_i valid) get written.
+    for (int i = 0; i < NPE; ++i) {
+        int dofI = nodeToDof[n[i]];
+        if (ownership[n[i]] != 1) continue;
+        if (dofI < 0 || dofI >= numOwnedDofs) continue;
+        int rs = rowPtr[dofI], re = rowPtr[dofI + 1];
+        for (int j = 0; j < NPE; ++j) {
+            int dofJ = nodeToDof[n[j]];
+            if (dofJ < 0) continue;
+            RealType kij = coef * (dNdx[i][0]*dNdx[j][0]
+                                 + dNdx[i][1]*dNdx[j][1]
+                                 + dNdx[i][2]*dNdx[j][2]);
+            fem::atomicAddSparseEntry(values, colInd, rs, re, dofJ, kij);
+        }
+    }
+}
+
+template<typename KeyType, typename RealType>
 __global__ void assembleDDTPerNodeKernelTet(const KeyType* c0, const KeyType* c1,
                                             const KeyType* c2, const KeyType* c3,
                                             const RealType* areaVecX,
@@ -3640,6 +3694,31 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
         }
     }
     pt.lap("assembly D M^-1 D^T (tet, node-driven)");
+
+    // Assemble PSPG tau*L into the SAME CSR (when usePSPG). Keeps the
+    // stabilization on the assembled/Hypre path (the matrix-free PSPG inside
+    // applyDDTPerNode is bypassed when we solve the assembled operator), AND
+    // regularizes the spectrum toward diagonal dominance so Jacobi/BoomerAMG
+    // can precondition the otherwise 9-OOM-spread Gram-form operator.
+    if (s.usePSPG && s.elementCount > 0)
+    {
+        RealType tauL = (s.pspgTau > RealType(0)) ? s.pspgTau : s.pspgTauAuto;
+        if (tauL > RealType(0))
+        {
+            int eB = int((s.elementCount + s.blockSize - 1) / s.blockSize);
+            assemblePSPGStiffnessTetKernel<KeyType, RealType><<<eB, s.blockSize>>>(
+                std::get<0>(d_conn).data(), std::get<1>(d_conn).data(),
+                std::get<2>(d_conn).data(), std::get<3>(d_conn).data(),
+                s.domain.getNodeX().data(), s.domain.getNodeY().data(), s.domain.getNodeZ().data(),
+                s.d_node_to_dof.data(), d_nodeOwnership.data(),
+                s.d_rowPtrDDT.data(), s.d_colIndDDT.data(), s.numOwnedDofs,
+                tauL, s.d_valuesDDT.data(), s.elementCount);
+            cudaDeviceSynchronize();
+            if (s.rank == 0)
+                std::cout << "  [DDT] assembled PSPG tau*L into CSR (tau=" << std::scientific
+                          << tauL << ")" << std::defaultfloat << "\n";
+        }
+    }
 
     // Same optional diagonal shift A := A + eps*I (MARS_DDT_DIAG_SHIFT) as hex.
     {
