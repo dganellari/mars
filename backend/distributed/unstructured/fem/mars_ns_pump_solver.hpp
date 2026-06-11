@@ -5798,6 +5798,20 @@ int solveOneComponent(NSStepper<KeyType, RealType, ElementTag>& s,
     }
     cudaDeviceSynchronize();
 
+    // One-shot diagnostic: did the solve converge, and is xVec nonzero?
+    // Pins down whether phi=0 is (a) converged=false -> no scatter, or
+    // (b) scatter happens but xVec~0. Env-gated, rank 0.
+    if (std::getenv("MARS_SOLVE_TRACE") && s.rank == 0 && s.numOwnedDofs > 0)
+    {
+        auto xp = thrust::device_pointer_cast(xVec.data());
+        RealType xMax = thrust::transform_reduce(thrust::device, xp, xp + s.numOwnedDofs,
+            [] __device__ (RealType v) -> RealType { return fabs(v); },
+            RealType(0), thrust::maximum<RealType>());
+        std::cout << "  [solve-trace] converged=" << (converged ? 1 : 0)
+                  << " iters=" << iters << " |xVec|max=" << std::scientific << xMax
+                  << std::defaultfloat << "\n";
+    }
+
     // Only scatter a CONVERGED solution into qOut. A failed Hypre solve
     // (error 1 on the near-singular DDT operator) can leave xVec holding
     // partial garbage; scattering it would poison qOut (= phi) and the
