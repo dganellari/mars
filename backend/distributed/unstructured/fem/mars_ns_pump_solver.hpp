@@ -5617,12 +5617,18 @@ int solveOneComponent(NSStepper<KeyType, RealType, ElementTag>& s,
                       cstone::DeviceVector<RealType>& xVec,
                       cstone::DeviceVector<RealType>& qOut,
                       typename NSStepper<KeyType, RealType, ElementTag>::Matrix& A,
-                      KrylovHint krylov = KrylovHint::PCG)
+                      KrylovHint krylov = KrylovHint::PCG,
+                      bool forceCG = false)
 {
     bool converged = false;
     int iters = 0;
 
-    if (s.solverKind == SolverKind::CG)
+    // forceCG keeps a solve on the in-house matrix-free CG even when
+    // solverKind==Hypre. Used for the VELOCITY matrix (M/dt + nu*K), which is
+    // mass-dominated / near-diagonal -- BoomerAMG is the wrong tool there (it
+    // exits in ~1 iter returning x~0 -> u**=0 -> dead run). Hypre is reserved
+    // for the ill-conditioned DDT PRESSURE operator, which is what needs AMG.
+    if (s.solverKind == SolverKind::CG || forceCG)
     {
         ConjugateGradientSolver<RealType, int, cstone::GpuTag> solver(s.maxIter, s.tolerance);
         solver.setVerbose(false);
@@ -7171,9 +7177,12 @@ void runImplicitDiffusionStep(NSStepper<KeyType, RealType, ElementTag>& s, RealT
             cudaDeviceSynchronize();
         }
 
+        // Velocity matrix is mass-dominated -> force the in-house CG even under
+        // --solver=hypre (Hypre/AMG is reserved for the DDT pressure operator).
         return solveOneComponent<KeyType, RealType, ElementTag>(
             s, b, xVec, qStarStar,
-            bdf2Active ? s.Avel_bdf2 : s.Avel);
+            bdf2Active ? s.Avel_bdf2 : s.Avel,
+            KrylovHint::PCG, /*forceCG=*/true);
     };
 
     s.lastUIters = runImplicit(s.d_uStar, s.d_uStarStar, s.d_uTarget, s.d_velLiftU);
