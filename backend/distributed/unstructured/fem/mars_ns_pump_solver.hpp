@@ -5115,7 +5115,15 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
         // owned DOF with diag < MARS_SLIVER_PIN_FRAC * globalMax (default 1e-6).
         // This makes the pressure system solvable so the real physics (and PSPG)
         // become readable. Off (frac<=0) restores the old behaviour.
-        if (s.d_isPressureBdryDof.size() == static_cast<size_t>(s.numOwnedDofs))
+        //
+        // ONLY for the matrix-free Jacobi-CG path. The Hypre/assembled path uses
+        // BoomerAMG, which handles the conditioning WITHOUT pinning -- and worse,
+        // this pin reads the matrix-free d_diagDDT (whose tiny entries get floored
+        // to 1 -> globalMax=1 -> 1e-6 threshold pins ~all sliver-ish rows, ~220k
+        // DOFs), which would zero most of the RHS via enforcePressureBcRhsKernel
+        // and give phi=0 (no flow). So skip the pin entirely when solving with Hypre.
+        if (s.solverKind != SolverKind::Hypre
+            && s.d_isPressureBdryDof.size() == static_cast<size_t>(s.numOwnedDofs))
         {
             RealType pinFrac = RealType(1e-6);
             const char* evS = std::getenv("MARS_SLIVER_PIN_FRAC");
