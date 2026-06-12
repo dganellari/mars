@@ -2071,13 +2071,6 @@ struct NSStepper
     cstone::DeviceVector<int>     d_node_to_dof;
     cstone::DeviceVector<RealType> d_mass;       // per OWNED DOF
     cstone::DeviceVector<RealType> d_massNode;   // per NODE (owned + ghosts halo-exchanged); read by DDT assembler
-    // Per-slot (half-CV) per-node mass: the cross-rank-completed geometric mass
-    // BEFORE the periodic fold/mirror, so each periodic-pair slot keeps its own
-    // m_M / m_S (not m_merged). Used to normalize PER-SLOT gradient/divergence
-    // numerators (MARS_PRED_PERSLOT_*): per-slot numerator / per-slot mass =
-    // full physical gradient. The merged d_massNode would halve it (the
-    // residual factor-of-2 that kept the periodic feedback gain just above 1).
-    cstone::DeviceVector<RealType> d_massNodePerSlot;
     cstone::DeviceVector<uint8_t>  d_isBdryDof;
     // Pressure BC: in cavity mode, use a single corner pin (pressurePinDof).
     // In channel mode, use a Dirichlet mask (d_isPressureBdryDof) over the
@@ -3184,18 +3177,6 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
             cudaDeviceSynchronize();
         }
         s.domain.reverseExchangeNodeHaloAdd(s.d_massNode);
-        // Capture the PER-SLOT (half-CV) mass NOW -- after the cross-rank ghost
-        // contributions are summed in (reverseExchange) but BEFORE the periodic
-        // fold/mirror below collapses it to m_merged. Each periodic-pair slot
-        // keeps its own geometric mass m_M / m_S. Forward-halo so ghost slots
-        // (cross-rank master/slave) carry the owner's per-slot value too. Used
-        // by the per-slot grad/div normalizers (MARS_PRED_PERSLOT_*).
-        s.d_massNodePerSlot.resize(s.nodeCount);
-        thrust::copy(thrust::device,
-                     thrust::device_pointer_cast(s.d_massNode.data()),
-                     thrust::device_pointer_cast(s.d_massNode.data() + s.nodeCount),
-                     thrust::device_pointer_cast(s.d_massNodePerSlot.data()));
-        s.domain.exchangeNodeHalo(s.d_massNodePerSlot);
         maybePeriodicSum<KeyType, RealType, ElementTag>(s, s.d_massNode);
         // Forward halo: ghost slots get owner-rank V values so DDT assembler
         // can read s.d_massNode[ghostNode] and get the correct V.
@@ -5473,21 +5454,7 @@ void applyDDTPerNode(NSStepper<KeyType, RealType, ElementTag>& s,
     // per GRADDUMP empirics), producing FACTOR=1.65 and PROJ-P3=0.508. Enabling
     // this mirrors the RHS path; algebra predicts PROJ-P3 -> 0. SYMPROBE may
     // break (workflow's risk).
-    // MARS_SEAM_MERGED=1 forces the whole seam pipeline onto ONE convention:
-    // every seam quantity is folded to the master and broadcast back to the
-    // slave so both node slots of a periodic pair are bit-identical at every
-    // stage (operator g, corrector gradPhi, predictor grad(p)+advN). Then the
-    // periodic pair behaves as a single DOF replicated on two slots and the
-    // per-slot-vs-folded distinction vanishes: u^{n+1}[M]=u^{n+1}[S] falls out
-    // of the per-slot corrector itself (the H2 u-broadcast becomes a no-op
-    // instead of discarding the slave's projected value), and the operator CG
-    // inverts is the same merged operator the corrector applies. That closes
-    // the discrete divergence/KE balance to loop gain ~0 (vs the ~1+ left by
-    // the per-slot fixes, whose merged-mass denominator never matched their
-    // half-CV numerators). Here it turns the operator's internal g-broadcast on.
-    static const bool seamMerged = (std::getenv("MARS_SEAM_MERGED") != nullptr);
-    static const bool opGbcastReduced =
-        seamMerged || (std::getenv("MARS_OP_GBCAST_REDUCED") != nullptr);
+    static const bool opGbcastReduced = (std::getenv("MARS_OP_GBCAST_REDUCED") != nullptr);
     if ((applyPeriodic || (reducedPeriodicFold && opGbcastReduced))
         && s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Periodic && s.periodicMap)
     {
@@ -7189,14 +7156,9 @@ void runPredictorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
         // projection-side fixes never moved it). Matching the operators makes
         // B = A so the accumulated seam bias telescopes out in one step.
         // Gated to multi-rank periodic CG; pump (BCKind::Pump) never enters.
-        // MARS_SEAM_MERGED forces the merged convention: keep the fold on
-        // grad(p) (per-slot OFF) so the predictor's pressure gradient is the
-        // folded full merged-CV value, matching the merged operator/corrector.
-        const bool seamMerged = (std::getenv("MARS_SEAM_MERGED") != nullptr);
         const char* predPerSlotEnv = std::getenv("MARS_PRED_PERSLOT_GRADP");
         const bool predPerSlot =
-            !seamMerged
-            && (predPerSlotEnv && std::string(predPerSlotEnv) == "1")
+            (predPerSlotEnv && std::string(predPerSlotEnv) == "1")
             && s.numRanks > 1
             && s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Periodic
             && s.solverKind == SolverKind::CG;
@@ -7206,17 +7168,9 @@ void runPredictorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
             maybePeriodicSum<KeyType, RealType, ElementTag>(s, d_gyAcc);
             maybePeriodicSum<KeyType, RealType, ElementTag>(s, d_gzAcc);
         }
-        // PER-SLOT numerator REQUIRES PER-SLOT mass (workflow w7bapvkdt). When
-        // grad(p) is per-slot, divide by the per-slot half-CV mass so
-        // (per-slot numerator)/(per-slot mass) = full physical gradient. Using
-        // the merged mass would halve it (the residual factor-of-2 keeping the
-        // periodic feedback gain just above 1).
-        const RealType* gradPMass =
-            (predPerSlot && s.d_massNodePerSlot.size() == s.nodeCount)
-            ? s.d_massNodePerSlot.data() : s.d_massNode.data();
         normalizeGradientPerNodeKernel<RealType><<<nodeBlocks, s.blockSize>>>(
             d_gxAcc.data(), d_gyAcc.data(), d_gzAcc.data(),
-            gradPMass,
+            s.d_massNode.data(),
             s.d_node_to_dof.data(), d_nodeOwnership.data(),
             s.d_gradPx.data(), s.d_gradPy.data(), s.d_gradPz.data(),
             s.nodeCount);
@@ -7410,14 +7364,9 @@ void runPredictorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
         // that the skew advection amplifies (the secondary loop; --skew=0 bounds
         // it, --skew=1 doesn't). Making advN per-slot too makes the whole
         // predictor RHS seam-consistent. Gated to multi-rank periodic CG.
-        // MARS_SEAM_MERGED forces the merged convention: keep the fold on advN
-        // (per-slot OFF) so the predictor's advection is the folded full
-        // merged-CV flux, matching grad(p), the operator, and the corrector.
-        const bool seamMergedAdv = (std::getenv("MARS_SEAM_MERGED") != nullptr);
         const char* predPerSlotAdvEnv = std::getenv("MARS_PRED_PERSLOT_ADV");
         const bool predPerSlotAdv =
-            !seamMergedAdv
-            && (predPerSlotAdvEnv && std::string(predPerSlotAdvEnv) == "1")
+            (predPerSlotAdvEnv && std::string(predPerSlotAdvEnv) == "1")
             && s.numRanks > 1
             && s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Periodic
             && s.solverKind == SolverKind::CG;
@@ -8563,17 +8512,10 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
             // Empirical: cube64 PROJ-P3 1.31 -> 0.43, |Du^{n+1}| drops 3x.
             // Paired with u-broadcast before PROJ-P3 probe (search for tgvH2).
             // MARS_TGV_H2=0 reverts to FOLD_G default for ablation.
-            // MARS_SEAM_MERGED forces the merged convention: corrector gradPhi
-            // is folded+broadcast (corrFoldG=true) so gradPhi[M]=gradPhi[S]=
-            // (G_M+G_S)/m_merged, matching the operator's merged g (OP g-bcast
-            // forced on under the same gate). H2 (per-slot g) is the opposite
-            // convention, so it must be off here.
-            const bool seamMergedCorr = (std::getenv("MARS_SEAM_MERGED") != nullptr);
             const char* h2env = std::getenv("MARS_TGV_H2");
-            const bool tgvH2 = !seamMergedCorr && !(h2env && std::string(h2env) == "0");
+            const bool tgvH2 = !(h2env && std::string(h2env) == "0");
             const char* corrFoldGEnv = std::getenv("MARS_CORR_FOLD_G");
-            const bool  corrFoldG    = seamMergedCorr
-                                       || (!tgvH2 && !(corrFoldGEnv && std::string(corrFoldGEnv) == "0"));
+            const bool  corrFoldG    = !tgvH2 && !(corrFoldGEnv && std::string(corrFoldGEnv) == "0");
             if (corrFoldG && s.periodicMap)
             {
                 maybePeriodicSum<KeyType, RealType, ElementTag>(s, d_gxAcc);
@@ -8852,14 +8794,8 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
     // (commit 808140e). Gated on Periodic+CG+routeReducedPeriodicCorr because
     // only that branch keeps the per-slot gradient that H2 requires.
     {
-        // Under MARS_SEAM_MERGED the corrector already produced gradPhi[M]=
-        // gradPhi[S] (fold+broadcast), so u^{n+1}[M]=u^{n+1}[S] falls out of
-        // the per-slot update and this H2 broadcast is unnecessary (it would
-        // be a no-op). H2 is the per-slot convention, mutually exclusive with
-        // merged, so disable it here.
-        const bool seamMerged = (std::getenv("MARS_SEAM_MERGED") != nullptr);
         const char* h2env = std::getenv("MARS_TGV_H2");
-        const bool tgvH2 = !seamMerged && !(h2env && std::string(h2env) == "0");
+        const bool tgvH2 = !(h2env && std::string(h2env) == "0");
         if (tgvH2 && routeReducedPeriodicCorr && s.periodicMap)
         {
             const int* dpart = s.periodicMap->d_periodicPartner.data();
