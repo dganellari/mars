@@ -307,7 +307,7 @@ public:
             double amgStrong   = getEnvDouble("MARS_AMG_STRONG",    0.25);
             int   amgPMax      = getEnvInt   ("MARS_AMG_PMAX",      4);
             int   amgAgg       = getEnvInt   ("MARS_AMG_AGG",       0);
-            int   amgSweeps    = getEnvInt   ("MARS_AMG_SWEEPS",    1);
+            int   amgSweeps    = getEnvInt   ("MARS_AMG_SWEEPS",    2);  // l1-Jacobi(18) is weaker than SSOR; 2 sweeps restore smoothing
             if (verbose_ && rank == 0) {
                 std::cout << "  [BoomerAMG] coarsen=" << amgCoarsen
                           << " interp=" << amgInterp << " relax=" << amgRelax
