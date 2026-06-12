@@ -1892,14 +1892,21 @@ __global__ void updatePressureKernel(RealType* p,
                                      const RealType* phi,
                                      const int* nodeToDof,
                                      const uint8_t* ownership,
-                                     size_t numNodes)
+                                     size_t numNodes,
+                                     bool nonIncremental = false)
 {
     size_t i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= numNodes) return;
     if (ownership[i] != 1) return;
     int dof = nodeToDof[i];
     if (dof < 0) return;
-    p[i] += phi[i];
+    // nonIncremental (MARS_TGV_NONINCREMENTAL=1, Fable fallback #3): p = phi
+    // instead of p += phi. Severs the pressure-accumulation edge entirely so
+    // the accumulated p never re-enters the predictor's grad(p) -> feedback
+    // loop gain is exactly 0. Cost: one formal order of pressure splitting
+    // accuracy (O(dt) vs O(dt^2)), acceptable for freely-decaying periodic TGV.
+    if (nonIncremental) p[i] = phi[i];
+    else                p[i] += phi[i];
 }
 
 // =============================================================================
@@ -9015,10 +9022,18 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
 
     // Pressure update + ghost sync (next step's predictor needs ghost p^{n+1}).
     // Standard incremental Chorin: p^{n+1} = p^n + phi.
+    // MARS_TGV_NONINCREMENTAL=1 (Fable fallback #3): p = phi (non-incremental)
+    // on the multi-rank periodic CG route, severing the accumulation feedback.
+    static const char* nonIncEnv = std::getenv("MARS_TGV_NONINCREMENTAL");
+    const bool nonIncremental =
+        (nonIncEnv && std::string(nonIncEnv) == "1")
+        && s.numRanks > 1
+        && s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Periodic
+        && s.solverKind == SolverKind::CG;
     updatePressureKernel<RealType><<<nodeBlocks, s.blockSize>>>(
         s.d_p.data(), s.d_phi.data(),
         s.d_node_to_dof.data(), d_nodeOwnership.data(),
-        s.nodeCount);
+        s.nodeCount, nonIncremental);
     cudaDeviceSynchronize();
 
     // Periodic: re-anchor pressure gauge after each cumulative incremental
