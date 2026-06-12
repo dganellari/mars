@@ -7916,10 +7916,14 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
             // MARS_HYPRE_USE_DDT=1 falls back to the DDT operator for comparison.
             bool useDDTop = (std::getenv("MARS_HYPRE_USE_DDT") != nullptr);
             auto& pressureMat = useDDTop ? s.AddT : s.Apre;
-            // K is SPD -> PCG works; DDT is indefinite -> GMRES. (Override: KRYLOV.)
-            KrylovHint pk = useDDTop ? KrylovHint::GMRES : KrylovHint::PCG;
+            // GMRES for BOTH operators. K (Apre) is SPD in principle, but PCG
+            // breaks down (pAp<0, HYPRE error 256, ~3 iters) because BoomerAMG-as-
+            // preconditioner is non-symmetric on GPU (GS-family relax) and the
+            // pin row's diag=1 spike disturbs coarsening -> the effective
+            // preconditioned operator isn't SPD for CG. GMRES tolerates that and
+            // was the proven-converging path. (MARS_HYPRE_KRYLOV=pcg to force CG.)
             s.lastPressureIters = solveOneComponent<KeyType, RealType, ElementTag>(
-                s, b, xVec, s.d_phi, pressureMat, pk);
+                s, b, xVec, s.d_phi, pressureMat, KrylovHint::GMRES);
             // DIAGNOSTIC: sample WHOLE vectors via D2H, compute max-abs on
             // host. Lets us see whether the solution actually propagated.
             // Active only when env MARS_DDT_DIAG_AFTER_HYPRE is set.
