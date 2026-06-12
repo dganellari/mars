@@ -7779,7 +7779,16 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
         }
         // Fresh warm-start: phi is per-step correction, not cumulative.
         cudaMemset(xVec.data(), 0, s.numTotalDofs * sizeof(RealType));
-        s.lastPressureIters = solveOneComponent<KeyType, RealType, ElementTag>(s, b, xVec, s.d_phi, s.Apre);
+        // Use GMRES for the Hypre K solve. The default hint is PCG, but Hypre PCG
+        // false-converges in ~2 iters here (BoomerAMG-as-preconditioner is non-
+        // symmetric on GPU + the pin spike), returning a garbage phi (cg_p=2,
+        // |phi| exploding) that the corrector then amplifies. GMRES tolerates it
+        // and is the proven-converging path (cg_p=33-60). Only matters when
+        // solverKind==Hypre; the in-house CG path ignores the hint.
+        KrylovHint kHintK = (s.solverKind == SolverKind::Hypre)
+                              ? KrylovHint::GMRES : KrylovHint::PCG;
+        s.lastPressureIters = solveOneComponent<KeyType, RealType, ElementTag>(
+            s, b, xVec, s.d_phi, s.Apre, kHintK);
     }
     else  // DDT: (D M^{-1} D^T) phi = -(rho/dt) D u**
     {
