@@ -2297,6 +2297,7 @@ struct NSStepper
     // field: the solved u** is ~0 at the outlet at step 0 -> one-sided source
     // -> blowup. Default OFF.
     bool useOpeningFluxSource = false;
+    bool firstStepDebug = true;   // set false after step 1 so MARS_OFS_DEBUG prints once
     RealType openInletVel[3]  = {0, 0, 0};
     RealType openOutletVel[3] = {0, 0, 0};
     cstone::DeviceVector<RealType> d_openInAreaX, d_openInAreaY, d_openInAreaZ;
@@ -4541,7 +4542,19 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
     // off the actual operator diagonal on periodic runs. Acceptable: Jacobi
     // is a preconditioner, not the exact inverse; a small mismatch only slows
     // convergence, not correctness.
-    if (s.numOwnedDofs > 0 && s.nnzDDT > 0)
+    // Hex on >1 rank: the assembled-matrix diagonal extraction (below) MISSES
+    // the cross-rank incident-face contributions at the streamwise seam (the
+    // assembled s.d_valuesDDT diagonal is owned-only, never reverse-halo folded),
+    // so the Jacobi preconditioner mismatches the matrix-free matvec there and
+    // CG bounces. Build the diagonal MATRIX-FREE instead (the element-generic
+    // computeTetDDTDiagonalKernel + reverseExchangeNodeHaloAdd), which matches
+    // applyDDTPerNode exactly across the seam. Single-rank hex keeps the
+    // assembled extraction (no seam -> correct, and byte-identical to the
+    // validated result). The block after this one (the tet matrix-free builder)
+    // is element-generic, so we just steer hex-multirank into it.
+    const bool hexMultirankDiag =
+        std::is_same_v<ElementTag, HexTag> && s.numRanks > 1 && s.numOwnedDofs > 0;
+    if (s.numOwnedDofs > 0 && s.nnzDDT > 0 && !hexMultirankDiag)
     {
         s.d_diagDDT.resize(s.numOwnedDofs);
         int dofBlocks = (s.numOwnedDofs + s.blockSize - 1) / s.blockSize;
@@ -4569,12 +4582,14 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
         }
     }
     else if (s.numOwnedDofs > 0 && s.pressureSolve == PressureSolveKind::DDT
-             && std::is_same_v<ElementTag, TetTag>)
+             && (std::is_same_v<ElementTag, TetTag> || hexMultirankDiag))
     {
-        // Tet has no assembled DDT matrix (nnzDDT==0), so build the Jacobi
-        // diagonal matrix-free from the SCS area vectors + node lumped mass,
-        // matching the matrix-free applyDDTPerNode operator. Without this the
-        // tet DDT CG runs unpreconditioned and stalls at the iter cap.
+        // Tet (no assembled DDT matrix) OR hex on >1 rank (assembled diagonal
+        // misses the cross-rank seam fold): build the Jacobi diagonal matrix-
+        // free from the SCS area vectors + node lumped mass with a reverse-halo
+        // fold, matching the matrix-free applyDDTPerNode operator EXACTLY across
+        // the seam. Without this the DDT CG either stalls (tet, unpreconditioned)
+        // or bounces (hex multirank, seam diagonal mismatch).
         //
         // HARD DEPENDENCY: this build reads s.d_areaVec_{x,y,z} (filled by
         // precomputeTetAreaVectorsGpu) and s.d_massNode (filled by the lumped-
@@ -4601,13 +4616,21 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
         auto cp = connPtrs<ElementTag, KeyType>(d_conn);
         const KeyType* c0 = cp[0]; const KeyType* c1 = cp[1];
         const KeyType* c2 = cp[2]; const KeyType* c3 = cp[3];
+        // Hex needs all 8 corners; the kernel reads cc[0..NPE) so passing null
+        // for c4..c7 on hex segfaults. connPtrs gives valid c4..c7 for hex and
+        // nullptr for tet (which only reads c0..c3). This block now serves both
+        // tet and hex-multirank, so pull all 8.
+        const KeyType* c4 = nullptr; const KeyType* c5 = nullptr;
+        const KeyType* c6 = nullptr; const KeyType* c7 = nullptr;
+        if constexpr (std::is_same_v<ElementTag, HexTag>)
+        { c4 = cp[4]; c5 = cp[5]; c6 = cp[6]; c7 = cp[7]; }
         const size_t startElem = s.domain.startIndex();
         const size_t numLocal  = s.domain.localElementCount();
         const int eBlocks = numLocal > 0 ? int((numLocal + s.blockSize - 1) / s.blockSize) : 0;
         if (eBlocks > 0)
         {
             computeTetDDTDiagonalKernel<KeyType, RealType, ElementTag><<<eBlocks, s.blockSize>>>(
-                c0, c1, c2, c3, nullptr, nullptr, nullptr, nullptr,
+                c0, c1, c2, c3, c4, c5, c6, c7,
                 s.d_areaVec_x.data(), s.d_areaVec_y.data(), s.d_areaVec_z.data(),
                 s.d_massNode.data(), d_diagAccNode.data(), startElem, numLocal);
             cudaDeviceSynchronize();
@@ -5366,6 +5389,39 @@ void applyDDTPerNode(NSStepper<KeyType, RealType, ElementTag>& s,
         s.domain.exchangeNodeHalo(phi);
     }
 
+    // SYMMETRIC COLUMN-ZERO (non-periodic Dirichlet/pump path). The row-pin at
+    // the end sets out[Dirichlet]=phi[Dirichlet]; for A=D M^-1 D^T to be SPD we
+    // must ALSO stop a Dirichlet DOF's value from flowing through D^T into
+    // interior rows -- the column half of the Dirichlet treatment that the
+    // ASSEMBLED matrix gets (enforceBcColMatrixKernelByNode) but the matrix-free
+    // operator was missing. The fix: zero phi at flagged nodes on the operator
+    // INPUT (before step a's D^T), using the HALO-EXCHANGED per-node mask so it
+    // fires on owners AND ghost copies (essential across the streamwise rank
+    // seam, where the single-rank one-DOF asymmetry CG tolerated becomes a
+    // seam-localized mode that CG amplifies -> residual GROWS -> FAIL). Save the
+    // flagged phi first; restore after step c so the row-pin still reads the
+    // original value. Gated to the non-periodic path (periodic uses the reduced
+    // self-adjoint solver and must stay byte-identical).
+    const bool doColZero =
+        applyPeriodic
+        && s.bcKind != NSStepper<KeyType, RealType, ElementTag>::BCKind::Periodic
+        && s.d_isPressureBdryNode.size() == s.nodeCount;
+    cstone::DeviceVector<RealType> phiSaved;
+    if (doColZero)
+    {
+        phiSaved.resize(s.nodeCount);
+        thrust::copy(thrust::device_pointer_cast(phi.data()),
+                     thrust::device_pointer_cast(phi.data() + s.nodeCount),
+                     thrust::device_pointer_cast(phiSaved.data()));
+        const uint8_t* pbn = s.d_isPressureBdryNode.data();
+        RealType* phPtr = phi.data();
+        thrust::for_each(thrust::device,
+            thrust::counting_iterator<size_t>(0),
+            thrust::counting_iterator<size_t>(s.nodeCount),
+            [pbn, phPtr] __device__ (size_t i) { if (pbn[i]) phPtr[i] = RealType(0); });
+        cudaDeviceSynchronize();
+    }
+
     // Step a: g = D^T phi (un-normalized per-node 3-vector accumulator).
     zeroVec(gxAcc); zeroVec(gyAcc); zeroVec(gzAcc);
     if (eBlocks > 0)
@@ -5645,6 +5701,16 @@ void applyDDTPerNode(NSStepper<KeyType, RealType, ElementTag>& s,
     // applyPeriodic=false (reduced path): TGV is pure-Neumann periodic with no
     // pin/mask, so this is a no-op there anyway; gating it keeps the reduced
     // operator strictly bare (element op + cstone halo) and self-adjoint.
+    // Restore the phi entries we zeroed on input (column-zero) so the row-pin
+    // below sets out[Dirichlet] = original phi[Dirichlet], not 0.
+    if (doColZero)
+    {
+        thrust::copy(thrust::device_pointer_cast(phiSaved.data()),
+                     thrust::device_pointer_cast(phiSaved.data() + s.nodeCount),
+                     thrust::device_pointer_cast(phi.data()));
+        cudaDeviceSynchronize();
+    }
+
     const int pinDof          = s.pressurePinDof;
     const uint8_t* maskPtr    = (s.d_isPressureBdryDof.size() > 0)
                                 ? s.d_isPressureBdryDof.data() : nullptr;
@@ -6279,9 +6345,11 @@ int solvePressureDDT(NSStepper<KeyType, RealType, ElementTag>& s,
     if constexpr (std::is_same_v<ElementTag, HexTag>)
     {
         static bool symProbeDoneV2 = false;
-        if (!symProbeDoneV2 && std::getenv("MARS_DDT_SYMPROBE") != nullptr
-            && s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Periodic
-            && s.periodicMap != nullptr)
+        // Gate widened (was Periodic-only): the bilinear <u,Av> vs <v,Au> test
+        // is BC-agnostic, so it also exposes the Pump/Dirichlet seam asymmetry
+        // (matrix-free row-pin without column-zero). Fires for any bcKind when
+        // MARS_DDT_SYMPROBE is set.
+        if (!symProbeDoneV2 && std::getenv("MARS_DDT_SYMPROBE") != nullptr)
         {
             symProbeDoneV2 = true;
 
@@ -6654,10 +6722,25 @@ int solvePressureDDT(NSStepper<KeyType, RealType, ElementTag>& s,
             if (v > 0) liveEvery = v;
         }
     }
+    // Whether applyDDTPerNode refreshes its input's ghosts internally. The
+    // periodic branch (P + exchangeNodeHalo) only fires for bcKind==Periodic;
+    // for the Dirichlet/pump path the operator reads phi[iL]/phi[iR] at ghost
+    // slots in step a's D^T WITHOUT exchanging first. Single rank has no ghosts
+    // so it was invisible; on >1 rank the matvec reads STALE ghost p at the rank
+    // seam -> Ap wrong there -> CG residual GROWS (not a symmetry/precond issue:
+    // the column-zero made A symmetric, rel~1e-15, yet the residual still climbed
+    // until p's ghosts were synced here). Exchange p before the matvec when the
+    // operator won't.
+    const bool opSyncsInput =
+        (s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Periodic
+         && s.periodicMap != nullptr);
     for (int it = 0; it < s.maxIter; ++it)
     {
+        if (!opSyncsInput && s.numRanks > 1)
+            s.domain.exchangeNodeHalo(p);
         // applyDDTPerNode applies P (periodic master->slave) and the ghost halo
-        // to its input internally, so we pass p straight in -- no iterate mutation.
+        // to its input internally for periodic; for Dirichlet/pump we synced p
+        // just above.
         applyDDTPerNode<KeyType, RealType, ElementTag>(s, p, Ap, gx, gy, gz);
 
         RealType pAp = ownedDot<RealType>(p, Ap, s.d_node_to_dof,
@@ -7544,24 +7627,34 @@ __global__ void addOpeningFluxSourceKernel(
 // area-vector field: sum_owned(v . aVec) + Allreduce. Same idiom as
 // fluxThroughOwned in the pump fork.
 template<typename KeyType, typename RealType, typename ElementTag = HexTag>
-RealType openingFluxSum(NSStepper<KeyType, RealType, ElementTag>& s,
-                        RealType vx, RealType vy, RealType vz,
-                        const cstone::DeviceVector<RealType>& ax,
-                        const cstone::DeviceVector<RealType>& ay,
-                        const cstone::DeviceVector<RealType>& az)
+RealType openingFluxSumLocal(NSStepper<KeyType, RealType, ElementTag>& s,
+                             RealType vx, RealType vy, RealType vz,
+                             const cstone::DeviceVector<RealType>& ax,
+                             const cstone::DeviceVector<RealType>& ay,
+                             const cstone::DeviceVector<RealType>& az)
 {
     if (ax.size() != s.nodeCount) return RealType(0);
     const uint8_t* ownPtr = s.domain.getNodeOwnershipMap().data();
     const RealType* axp = ax.data();
     const RealType* ayp = ay.data();
     const RealType* azp = az.data();
-    RealType local = thrust::transform_reduce(thrust::device,
+    return thrust::transform_reduce(thrust::device,
         thrust::counting_iterator<size_t>(0),
         thrust::counting_iterator<size_t>(s.nodeCount),
         [ownPtr, axp, ayp, azp, vx, vy, vz] __device__ (size_t i) -> RealType {
             if (ownPtr[i] != 1) return RealType(0);
             return vx * axp[i] + vy * ayp[i] + vz * azp[i];
         }, RealType(0), thrust::plus<RealType>());
+}
+
+template<typename KeyType, typename RealType, typename ElementTag = HexTag>
+RealType openingFluxSum(NSStepper<KeyType, RealType, ElementTag>& s,
+                        RealType vx, RealType vy, RealType vz,
+                        const cstone::DeviceVector<RealType>& ax,
+                        const cstone::DeviceVector<RealType>& ay,
+                        const cstone::DeviceVector<RealType>& az)
+{
+    RealType local = openingFluxSumLocal<KeyType, RealType, ElementTag>(s, vx, vy, vz, ax, ay, az);
     RealType global = 0;
     auto mt = std::is_same_v<RealType, double> ? MPI_DOUBLE : MPI_FLOAT;
     MPI_Allreduce(&local, &global, 1, mt, MPI_SUM, MPI_COMM_WORLD);
@@ -7702,6 +7795,50 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
             s.d_openOutAreaX.data(), s.d_openOutAreaY.data(), s.d_openOutAreaZ.data(),
             d_nodeOwnership.data(), d_divAccNode.data(), s.nodeCount);
         cudaDeviceSynchronize();
+
+        // Per-rank flux debug (gated). Qin/Qout are GLOBAL (Allreduced in
+        // openingFluxSum); the per-rank owned-flux exposes whether one rank
+        // owns only one opening plane (-> local source one-sided before the
+        // net is taken globally). Net = Qin + oScale*Qout must be ~0 globally.
+        if (std::getenv("MARS_OFS_DEBUG") && s.firstStepDebug)
+        {
+            RealType QinLoc = openingFluxSumLocal<KeyType, RealType, ElementTag>(s,
+                s.openInletVel[0], s.openInletVel[1], s.openInletVel[2],
+                s.d_openInAreaX, s.d_openInAreaY, s.d_openInAreaZ);
+            RealType QoutLoc = openingFluxSumLocal<KeyType, RealType, ElementTag>(s,
+                s.openOutletVel[0], s.openOutletVel[1], s.openOutletVel[2],
+                s.d_openOutAreaX, s.d_openOutAreaY, s.d_openOutAreaZ);
+            // Global sum of the FULL divAccNode (owned only) after the source.
+            // For a consistent RHS this must be ~0 (the discrete compatibility
+            // condition for the single-pin / outflow-Dirichlet Poisson).
+            const uint8_t* ownD = d_nodeOwnership.data();
+            const RealType* dAcc = d_divAccNode.data();
+            RealType divSumLoc = thrust::transform_reduce(thrust::device,
+                thrust::counting_iterator<size_t>(0),
+                thrust::counting_iterator<size_t>(s.nodeCount),
+                [ownD, dAcc] __device__ (size_t i) -> RealType {
+                    return ownD[i] == 1 ? dAcc[i] : RealType(0);
+                }, RealType(0), thrust::plus<RealType>());
+            RealType divSumGlob = 0;
+            auto mt = std::is_same_v<RealType, double> ? MPI_DOUBLE : MPI_FLOAT;
+            MPI_Allreduce(&divSumLoc, &divSumGlob, 1, mt, MPI_SUM, MPI_COMM_WORLD);
+            for (int r = 0; r < s.numRanks; ++r)
+            {
+                MPI_Barrier(MPI_COMM_WORLD);
+                if (r == s.rank)
+                    std::cout << "  [ofs r" << s.rank << "] Qin_glob=" << Qin_raw
+                              << " Qout_glob=" << Qout_raw << " oScale=" << oScale
+                              << " | local owned: Qin=" << QinLoc << " Qout=" << QoutLoc
+                              << " net_added_local=" << (QinLoc + oScale * QoutLoc)
+                              << " | divAccSum_local=" << divSumLoc << "\n"
+                              << std::flush;
+            }
+            MPI_Barrier(MPI_COMM_WORLD);
+            if (s.rank == 0)
+                std::cout << "  [ofs] GLOBAL divAccNode owned-sum after source = "
+                          << divSumGlob << "  (must be ~0 for a consistent RHS)\n" << std::flush;
+            s.firstStepDebug = false;
+        }
     }
 
     // Source-of-NaN trace: count non-finite divAccNode over ALL owned nodes and
@@ -7827,6 +7964,12 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
         const char* useAsmEv = std::getenv("MARS_DDT_USE_ASSEMBLED_CG");
         bool useAssembledCG = (useAsmEv && std::string(useAsmEv) != "0")
                               && (s.solverKind == SolverKind::CG);
+        // NOTE: do NOT auto-route multi-rank Dirichlet/pump through the assembled
+        // path -- solveOneComponent is a HYPRE-ONLY wrapper (no in-house CG), and
+        // Hypre-AMG rejects the assembled DDT (non-M-matrix, positive boundary
+        // off-diagonals -> HYPRE_ERROR_GENERIC). The cross-rank fix lives in the
+        // matrix-free solvePressureDDT instead (column-zero + per-iter ghost
+        // exchange + the Jacobi-diagonal seam fold below).
 
         // Stage 1 -- multi-rank periodic routes DDT through the ASSEMBLED,
         // DOF-indexed solveOneComponent(s.AddT) instead of the matrix-free

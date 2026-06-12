@@ -251,219 +251,176 @@ int main(int argc, char** argv)
                                    RealType(tolerance), rank, numRanks};
     s.lidU   = RealType(Uinf);
     s.Uinf   = RealType(Uinf);
-    s.bcKind = NSStepper<KeyType, RealType>::BCKind::Channel;
     s.useLegacyGradient = true;
     s.pressureSolve     = pressureSolve;
 
-    setupNSStepper<KeyType, RealType>(s, RealType(nu), RealType(dt), kernelVariant);
-
-    // Body-force drive (textbook plane Poiseuille). The channel height H is the
-    // y-extent; centerline U_max = G*H^2/(8*rho*nu), so to hit a target U_max
-    // (default Uinf) set G = 8*rho*nu*U_max/H^2. Computed after we know the
-    // y-bbox below; stash the target here.
     const bool useBodyForce = (driveMode == "bodyforce");
-    double targetUMax = Uinf;     // body-force mode aims for this centerline speed
-    //
-    // The shared Channel marker treats ALL six bbox faces' tangential ones as
-    // walls -- including z=zmin/zmax. This mesh is ONE element thick in z (two
-    // node-planes, bbox z extent ~0.066), so EVERY node lies on a z-face and
-    // gets pinned no-slip -> the whole velocity field is Dirichlet -> flow is
-    // frozen and div(u)=0 every step (confirmed: bc-count=all 30000 DOFs).
-    //
-    // Plane Poiseuille is inherently 2D: z is the extrusion (slip/symmetry)
-    // direction, NOT a wall. So we rebuild the velocity BC here, marking:
-    //   - inflow  x=xmin : u=(Uinf,0,0) Dirichlet
-    //   - outflow x=xmax : u=(u_out,0,0) Dirichlet, mass-conserving (see below)
-    //   - y-walls y=ymin,ymax : no-slip (0,0,0)
-    // and leaving z-faces + interior FREE. The w-component is left unconstrained
-    // (free-slip z); for a 1-cell-thick mesh w stays ~0 by symmetry anyway.
-    //
-    // MASS-CONSERVING OUTLET (the load-bearing fix): a velocity-inlet with a
-    // natural (Neumann) outlet leaves the net discrete boundary flux nonzero --
-    // the inlet injects Uinf*A_in that the divergence operator (interior SCS
-    // faces only, no boundary-face term) cannot route to any sink, so the
-    // pressure RHS b = -(rho/dt) div(u**) has a component OUTSIDE range(A).
-    // CG then stalls (residual floors at the out-of-range size) and div_max
-    // scales ~1/dt (the fixed geometric source amplified by rho/dt). Prescribing
-    // u_out = Uinf * (N_in/N_out) on the outflow makes the net boundary flux
-    // zero by construction, so the RHS is consistent and the projection
-    // converges. Keep the p=0 pressure Dirichlet on x=xmax (removes the
-    // constant mode). NOTE: a flat u_out over-constrains the exit, so the
-    // parabola must develop UPSTREAM -- the profile probe stays at 90% down
-    // the channel (its default), never at the outlet plane.
+    double targetUMax = Uinf;   // inlet: 1.5*Uinf below; bodyforce: from G
+
+    // Node coordinates + global bbox, needed BEFORE setup: inlet mode feeds the
+    // BCs through the solver's Pump node-list path so every derived BC object
+    // (halo-synced per-node mask, matrix row/col elimination, pressure pin) is
+    // built inside setupNSStepper from the REAL masks. The first multirank
+    // attempt rebuilt d_isBdryDof after setup: the derived state kept the
+    // original thin-z all-Dirichlet marking, owner and ghost ranks disagreed,
+    // and the run blew up at step 1 (single rank has no ghosts -> worked).
+    const size_t nNodes = amr.domain().getNodeCount();
+    std::vector<RealType> hx(nNodes), hy(nNodes), hz(nNodes);
     {
         const auto& d_x = amr.domain().getNodeX();
         const auto& d_y = amr.domain().getNodeY();
         const auto& d_z = amr.domain().getNodeZ();
+        cudaMemcpy(hx.data(), d_x.data(), nNodes * sizeof(RealType), cudaMemcpyDeviceToHost);
+        cudaMemcpy(hy.data(), d_y.data(), nNodes * sizeof(RealType), cudaMemcpyDeviceToHost);
+        cudaMemcpy(hz.data(), d_z.data(), nNodes * sizeof(RealType), cudaMemcpyDeviceToHost);
+    }
+    RealType xMinL = *std::min_element(hx.begin(), hx.end());
+    RealType xMaxL = *std::max_element(hx.begin(), hx.end());
+    RealType yMinL = *std::min_element(hy.begin(), hy.end());
+    RealType yMaxL = *std::max_element(hy.begin(), hy.end());
+    RealType zMinL = *std::min_element(hz.begin(), hz.end());
+    RealType zMaxL = *std::max_element(hz.begin(), hz.end());
+    RealType xMin = xMinL, xMax = xMaxL, yMin = yMinL, yMax = yMaxL;
+    RealType zMin = zMinL, zMax = zMaxL;
+    MPI_Allreduce(&xMinL, &xMin, 1, MPI_DOUBLE, MPI_MIN, MPI_COMM_WORLD);
+    MPI_Allreduce(&xMaxL, &xMax, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+    MPI_Allreduce(&yMinL, &yMin, 1, MPI_DOUBLE, MPI_MIN, MPI_COMM_WORLD);
+    MPI_Allreduce(&yMaxL, &yMax, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+    MPI_Allreduce(&zMinL, &zMin, 1, MPI_DOUBLE, MPI_MIN, MPI_COMM_WORLD);
+    MPI_Allreduce(&zMaxL, &zMax, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+    // 1e-5, NOT 1e-4: the first interior node sits 1e-4 off the wall; eps=1e-4
+    // float-rounded the TOP first interior node into the wall set.
+    RealType eps = 1e-5 * std::max(RealType(1), yMax - yMin);
+    double H = static_cast<double>(yMax - yMin);   // channel height
+
+    if (useBodyForce)
+    {
+        // Study mode (single-rank only): shared Channel marking at setup, then
+        // a post-setup wall-only rebuild below -- known NOT multirank-safe.
+        s.bcKind = NSStepper<KeyType, RealType>::BCKind::Channel;
+    }
+    else
+    {
+        // INLET mode (FLUYA reference): walls=no-slip, inlet u=Uinf along +x,
+        // outlet velocity stays natural-Neumann (outletU<0 default) and the
+        // whole outlet plane gets the p=0 pressure Dirichlet inside setup --
+        // exactly the reference outlet. z faces + interior free. Corner policy:
+        // inlet wins (corner nodes go in inletNodes only).
+        s.bcKind = NSStepper<KeyType, RealType>::BCKind::Pump;
+        s.inletDirX = 1; s.inletDirY = 0; s.inletDirZ = 0;
+        for (size_t i = 0; i < nNodes; ++i)
+        {
+            bool onInflow  = std::abs(hx[i] - xMin) < eps;
+            bool onYWall   = std::abs(hy[i] - yMin) < eps || std::abs(hy[i] - yMax) < eps;
+            bool onOutflow = std::abs(hx[i] - xMax) < eps;
+            if (onInflow)     s.inletNodes.push_back(int(i));
+            else if (onYWall) s.wallNodes.push_back(int(i));
+            if (onOutflow)    s.outletNodes.push_back(int(i));
+        }
+        targetUMax = 1.5 * Uinf;
+        if (rank == 0)
+            std::cout << "Drive: INLET (FLUYA-ref via pump BC path): walls=no-slip, "
+                      << "inlet u=" << Uinf << ", outlet natural + p=0, z free\n";
+    }
+
+    setupNSStepper<KeyType, RealType>(s, RealType(nu), RealType(dt), kernelVariant);
+
+    if (useBodyForce)
+    {
         const auto& d_ownership = s.ownershipMap();
         size_t n = s.nodeCount;
-
-        std::vector<RealType> hx(n), hy(n), hz(n);
-        std::vector<int>      h_n2d(n);
-        std::vector<uint8_t>  h_own(n);
-        cudaMemcpy(hx.data(),    d_x.data(),              n * sizeof(RealType), cudaMemcpyDeviceToHost);
-        cudaMemcpy(hy.data(),    d_y.data(),              n * sizeof(RealType), cudaMemcpyDeviceToHost);
-        cudaMemcpy(hz.data(),    d_z.data(),              n * sizeof(RealType), cudaMemcpyDeviceToHost);
-        cudaMemcpy(h_n2d.data(), s.d_node_to_dof.data(), n * sizeof(int),      cudaMemcpyDeviceToHost);
-        cudaMemcpy(h_own.data(), d_ownership.data(),     n * sizeof(uint8_t),  cudaMemcpyDeviceToHost);
-
-        // Global bbox for face detection (single-rank: local == global).
-        RealType xMinL = *std::min_element(hx.begin(), hx.end());
-        RealType xMaxL = *std::max_element(hx.begin(), hx.end());
-        RealType yMinL = *std::min_element(hy.begin(), hy.end());
-        RealType yMaxL = *std::max_element(hy.begin(), hy.end());
-        RealType zMinL = *std::min_element(hz.begin(), hz.end());
-        RealType zMaxL = *std::max_element(hz.begin(), hz.end());
-        RealType xMin = xMinL, xMax = xMaxL, yMin = yMinL, yMax = yMaxL;
-        RealType zMin = zMinL, zMax = zMaxL;
-        MPI_Allreduce(&xMinL, &xMin, 1, MPI_DOUBLE, MPI_MIN, MPI_COMM_WORLD);
-        MPI_Allreduce(&xMaxL, &xMax, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
-        MPI_Allreduce(&yMinL, &yMin, 1, MPI_DOUBLE, MPI_MIN, MPI_COMM_WORLD);
-        MPI_Allreduce(&yMaxL, &yMax, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
-        MPI_Allreduce(&zMinL, &zMin, 1, MPI_DOUBLE, MPI_MIN, MPI_COMM_WORLD);
-        MPI_Allreduce(&zMaxL, &zMax, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
-        // 1e-5, NOT 1e-4: the first interior node sits 1e-4 off the wall, and
-        // with eps=1e-4 float rounding pinned it on the TOP wall but not the
-        // bottom (observed: u(0.9999)=0 exactly, u(0.0001) free) -- a silent
-        // extra no-slip layer on one side.
-        RealType eps = 1e-5 * std::max(RealType(1), yMax - yMin);
-        double H = static_cast<double>(yMax - yMin);   // channel height
+        std::vector<int>     h_n2d(n);
+        std::vector<uint8_t> h_own(n);
+        cudaMemcpy(h_n2d.data(), s.d_node_to_dof.data(), n * sizeof(int),     cudaMemcpyDeviceToHost);
+        cudaMemcpy(h_own.data(), d_ownership.data(),     n * sizeof(uint8_t), cudaMemcpyDeviceToHost);
 
         std::vector<uint8_t>  hostIsBdry(s.numOwnedDofs, 0);
         std::vector<RealType> hostU(n, 0), hostV(n, 0), hostW(n, 0);
-
-        if (useBodyForce)
+        long nWall = 0;
+        for (size_t i = 0; i < n; ++i)
         {
-            // BODY-FORCE mode: ONLY the y-walls are no-slip Dirichlet. The
-            // x-planes (inflow/outflow) are left FREE -- the flow is driven by
-            // the streamwise body force G, not by a prescribed inlet, so there
-            // is no net-boundary-flux trap. The outflow p=0 pressure Dirichlet
-            // (set by setup) anchors the constant pressure mode.
-            long nWall = 0;
-            for (size_t i = 0; i < n; ++i)
-            {
-                bool onYWall = std::abs(hy[i] - yMin) < eps || std::abs(hy[i] - yMax) < eps;
-                if (!onYWall) continue;                 // x-planes + z-faces + interior free
-                hostU[i] = 0; hostV[i] = 0; hostW[i] = 0;
-                if (h_own[i] != 1) continue;
-                int dof = h_n2d[i];
-                if (dof < 0 || dof >= s.numOwnedDofs) continue;
-                hostIsBdry[dof] = 1;
-                ++nWall;
-            }
-            // G = 8 rho nu U_max / H^2 to hit the target centerline speed.
-            double G = (bodyForceX >= 0)
-                ? bodyForceX
-                : 8.0 * rho * nu * targetUMax / (H * H);
-            s.bodyForceX = RealType(G);
-            // Record the achieved analytic U_max for the validation print.
-            targetUMax = G * H * H / (8.0 * rho * nu);
-
-            long nWallG = nWall;
-            MPI_Allreduce(&nWall, &nWallG, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
-            if (rank == 0)
-                std::cout << "Drive: BODY FORCE G=" << G << " (x), H=" << H
-                          << " -> analytic U_max=G*H^2/(8 rho nu)=" << targetUMax << "\n"
-                          << "Quasi-2D channel BC: y-walls=" << nWallG
-                          << " nodes (no-slip), x-planes + z-faces FREE\n";
+            bool onYWall = std::abs(hy[i] - yMin) < eps || std::abs(hy[i] - yMax) < eps;
+            if (!onYWall) continue;                 // x-planes + z-faces + interior free
+            hostU[i] = 0; hostV[i] = 0; hostW[i] = 0;
+            if (h_own[i] != 1) continue;
+            int dof = h_n2d[i];
+            if (dof < 0 || dof >= s.numOwnedDofs) continue;
+            hostIsBdry[dof] = 1;
+            ++nWall;
         }
-        else
-        {
-            // INLET mode -- matches the FLUYA reference (report.html input.yml)
-            // that produces the validated parabola: inlet=velocity-Dirichlet
-            // u=(Uinf,0,0), outlet=static-pressure p=0 with velocity FREE,
-            // wall=no-slip, front_back(z)=symmetry/free. The OUTLET VELOCITY IS
-            // NOT PINNED -- it develops freely, and the outflow p=0 Dirichlet
-            // (applied by the shared channel pressure marker, setup) both anchors
-            // the pressure null space and lets mass balance through the pressure
-            // field. This is the reference config; the parabola develops upstream
-            // of the free outlet, so the profile probe stays at 90% down.
-            long nInflow = 0, nWall = 0;
-            for (size_t i = 0; i < n; ++i)
-            {
-                bool onInflow = std::abs(hx[i] - xMin) < eps;
-                bool onYWall  = std::abs(hy[i] - yMin) < eps || std::abs(hy[i] - yMax) < eps;
-                // Outlet (x=xMax) is deliberately NOT tagged -> free velocity.
-                if (!onInflow && !onYWall) continue;     // outlet + z-faces + interior free
-                RealType uT = onInflow ? RealType(Uinf) : RealType(0);  // inlet wins corners
-                hostU[i] = uT; hostV[i] = 0; hostW[i] = 0;
-                if (h_own[i] != 1) continue;
-                int dof = h_n2d[i];
-                if (dof < 0 || dof >= s.numOwnedDofs) continue;
-                hostIsBdry[dof] = 1;
-                if (onInflow) ++nInflow; else ++nWall;
-            }
-            targetUMax = 1.5 * Uinf;   // developed parabola: U_max = 1.5 * mean = 1.5 Uinf
-
-            long nInflowG = nInflow, nWallG = nWall;
-            MPI_Allreduce(&nInflow, &nInflowG, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
-            MPI_Allreduce(&nWall,   &nWallG,   1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
-            if (rank == 0)
-                std::cout << "Drive: INLET (FLUYA-ref) inflow=" << nInflowG << " (u=" << Uinf << "), "
-                          << "outlet=pressure p=0 (velocity FREE), "
-                          << "y-walls=" << nWallG << " (no-slip), z=symmetry/free\n";
-
-            // Balanced opening-flux source wiring: per-node OUTWARD area
-            // vectors for the two opening planes (inlet outward = -x, outlet
-            // outward = +x), Voronoi-lumped from the plane node coordinates.
-            // The prescribed outlet speed is sized for the area ratio; the
-            // solver's per-step oScale then makes the net source exactly zero.
-            if (openingFluxSource)
-            {
-                std::vector<size_t> inIds, outIds;
-                std::vector<double> inYs, outYs;
-                for (size_t i = 0; i < n; ++i)
-                {
-                    if (std::abs(hx[i] - xMin) < eps)
-                    { inIds.push_back(i); inYs.push_back(double(hy[i])); }
-                    else if (std::abs(hx[i] - xMax) < eps)
-                    { outIds.push_back(i); outYs.push_back(double(hy[i])); }
-                }
-                double dz = double(zMax - zMin);
-                auto inAreas  = planeVoronoiAreas(inYs, dz);
-                auto outAreas = planeVoronoiAreas(outYs, dz);
-
-                std::vector<RealType> aInX(n, 0), aZero(n, 0), aOutX(n, 0);
-                double Ain = 0, Aout = 0;
-                for (size_t k = 0; k < inIds.size(); ++k)
-                { aInX[inIds[k]] = RealType(-inAreas[k]); Ain += inAreas[k]; }
-                for (size_t k = 0; k < outIds.size(); ++k)
-                { aOutX[outIds[k]] = RealType(+outAreas[k]); Aout += outAreas[k]; }
-
-                auto upload = [&](cstone::DeviceVector<RealType>& d,
-                                  const std::vector<RealType>& h)
-                {
-                    d.resize(n);
-                    thrust::copy(h.begin(), h.end(), thrust::device_pointer_cast(d.data()));
-                };
-                upload(s.d_openInAreaX, aInX);   upload(s.d_openInAreaY, aZero);
-                upload(s.d_openInAreaZ, aZero);
-                upload(s.d_openOutAreaX, aOutX); upload(s.d_openOutAreaY, aZero);
-                upload(s.d_openOutAreaZ, aZero);
-
-                RealType outletU = (Aout > 0) ? RealType(Uinf * Ain / Aout) : RealType(Uinf);
-                s.openInletVel[0]  = RealType(Uinf);
-                s.openOutletVel[0] = outletU;
-                s.useOpeningFluxSource = true;
-
-                if (rank == 0)
-                {
-                    if (numRanks > 1)
-                        std::cout << "WARNING: opening-flux Voronoi lumping assumes the full plane "
-                                     "is rank-local; multi-rank areas may be wrong at partition cuts\n";
-                    std::cout << "Opening-flux source: Ain=" << Ain << " Aout=" << Aout
-                              << " Qin=" << Uinf * Ain << " outletU=" << outletU
-                              << " (net zeroed per step via oScale)\n";
-                }
-            }
-        }
-
+        double G = (bodyForceX >= 0) ? bodyForceX : 8.0 * rho * nu * targetUMax / (H * H);
+        s.bodyForceX = RealType(G);
+        targetUMax = G * H * H / (8.0 * rho * nu);
+        long nWallG = nWall;
+        MPI_Allreduce(&nWall, &nWallG, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
+        if (rank == 0)
+            std::cout << "Drive: BODY FORCE G=" << G << " (x), H=" << H
+                      << " -> analytic U_max=" << targetUMax << "; y-walls=" << nWallG << "\n";
         thrust::copy(hostIsBdry.begin(), hostIsBdry.end(),
                      thrust::device_pointer_cast(s.d_isBdryDof.data()));
         thrust::copy(hostU.begin(), hostU.end(), thrust::device_pointer_cast(s.d_uTarget.data()));
         thrust::copy(hostV.begin(), hostV.end(), thrust::device_pointer_cast(s.d_vTarget.data()));
         thrust::copy(hostW.begin(), hostW.end(), thrust::device_pointer_cast(s.d_wTarget.data()));
         cudaDeviceSynchronize();
+    }
+    else if (openingFluxSource)
+    {
+        // Balanced opening-flux source: per-node OUTWARD area vectors,
+        // Voronoi-lumped from the plane node coordinates; outlet rescaled per
+        // step (oScale) so the net source is machine-zero. Ain/Aout are global
+        // owned-only sums (a rank can own just one plane; ghosts double-count).
+        const auto& d_ownership = s.ownershipMap();
+        size_t n = s.nodeCount;
+        std::vector<uint8_t> h_own(n);
+        cudaMemcpy(h_own.data(), d_ownership.data(), n * sizeof(uint8_t), cudaMemcpyDeviceToHost);
+
+        std::vector<size_t> inIds, outIds;
+        std::vector<double> inYs, outYs;
+        for (size_t i = 0; i < n; ++i)
+        {
+            if (std::abs(hx[i] - xMin) < eps)
+            { inIds.push_back(i); inYs.push_back(double(hy[i])); }
+            else if (std::abs(hx[i] - xMax) < eps)
+            { outIds.push_back(i); outYs.push_back(double(hy[i])); }
+        }
+        double dz = double(zMax - zMin);
+        auto inAreas  = planeVoronoiAreas(inYs, dz);
+        auto outAreas = planeVoronoiAreas(outYs, dz);
+
+        std::vector<RealType> aInX(n, 0), aZero(n, 0), aOutX(n, 0);
+        double AinL = 0, AoutL = 0;
+        for (size_t k = 0; k < inIds.size(); ++k)
+        {
+            aInX[inIds[k]] = RealType(-inAreas[k]);
+            if (h_own[inIds[k]] == 1) AinL += inAreas[k];
+        }
+        for (size_t k = 0; k < outIds.size(); ++k)
+        {
+            aOutX[outIds[k]] = RealType(+outAreas[k]);
+            if (h_own[outIds[k]] == 1) AoutL += outAreas[k];
+        }
+        double Ain = AinL, Aout = AoutL;
+        MPI_Allreduce(&AinL,  &Ain,  1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+        MPI_Allreduce(&AoutL, &Aout, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+
+        auto upload = [&](cstone::DeviceVector<RealType>& d, const std::vector<RealType>& hv)
+        {
+            d.resize(n);
+            thrust::copy(hv.begin(), hv.end(), thrust::device_pointer_cast(d.data()));
+        };
+        upload(s.d_openInAreaX, aInX);   upload(s.d_openInAreaY, aZero);
+        upload(s.d_openInAreaZ, aZero);
+        upload(s.d_openOutAreaX, aOutX); upload(s.d_openOutAreaY, aZero);
+        upload(s.d_openOutAreaZ, aZero);
+
+        RealType srcOutletU = (Aout > 0) ? RealType(Uinf * Ain / Aout) : RealType(Uinf);
+        s.openInletVel[0]  = RealType(Uinf);
+        s.openOutletVel[0] = srcOutletU;
+        s.useOpeningFluxSource = true;
+        if (rank == 0)
+            std::cout << "Opening-flux source: Ain=" << Ain << " Aout=" << Aout
+                      << " Qin=" << Uinf * Ain << " outletU=" << srcOutletU
+                      << " (net zeroed per step via oScale)\n";
     }
 
     applyInitialCondition<KeyType, RealType>(s);
@@ -473,8 +430,10 @@ int main(int argc, char** argv)
     // Body-force mode seeds the MEAN velocity (2/3 U_max); inlet mode seeds Uinf.
     // With the BC rebuilt above, interior nodes are genuinely non-boundary, so
     // this takes effect.
-    RealType uSeed = useBodyForce ? RealType(2.0 / 3.0 * targetUMax) : RealType(Uinf);
-    if (seedInterior)
+    // Pump-path IC already seeds interior u=Uinf in inlet mode; the explicit
+    // seed is only for the body-force study path.
+    RealType uSeed = RealType(2.0 / 3.0 * targetUMax);
+    if (seedInterior && useBodyForce)
     {
         const auto& d_ownership = s.ownershipMap();
         size_t n = s.nodeCount;
