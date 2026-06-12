@@ -33,14 +33,15 @@ public:
           solver_(nullptr), precond_(nullptr), A_hypre_(nullptr),
           b_hypre_(nullptr), x_hypre_(nullptr), verbose_(true), precondType_(precondType),
           kDim_(kDim) {
-        // FlexGMRES vs plain GMRES. FlexGMRES allows a VARYING (non-fixed)
-        // preconditioner -- the right choice when the preconditioner is itself
-        // an iterative solve (BoomerAMG V-cycles are not a fixed linear op once
-        // you use >1 sweep / aggressive coarsening), which can break plain
-        // GMRES's assumption of a constant M. Default ON for BoomerAMG (where it
-        // matters), OFF for diagonal Jacobi (fixed -> plain GMRES is fine).
-        // Env MARS_HYPRE_FLEXGMRES=1/0 forces it on/off.
-        useFlexGmres_ = (precondType == BOOMERAMG);
+        // Plain GMRES vs FlexGMRES. A 1-V-cycle BoomerAMG preconditioner IS a
+        // fixed linear operator, so plain GMRES (HYPRE_GMRESSetPrecond) is valid
+        // AND is the most battle-tested GPU path. FlexGMRES (varying precond) was
+        // tried as the default but its precond-apply appeared to NO-OP on our GPU
+        // Hypre build (AMG returned x=0 with a denormal ~1e-315 residual), while
+        // plain GMRES+AMG is the standard. Default OFF (plain GMRES). FlexGMRES
+        // only matters if the precond varies (>1 AMG sweep w/ inner tol); enable
+        // with MARS_HYPRE_FLEXGMRES=1.
+        useFlexGmres_ = false;
         const char* fev = std::getenv("MARS_HYPRE_FLEXGMRES");
         if (fev) useFlexGmres_ = (std::string(fev) != "0");
     }
