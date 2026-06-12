@@ -5891,8 +5891,12 @@ int solveOneComponent(NSStepper<KeyType, RealType, ElementTag>& s,
             // strict (final_res<tol) gate threw away a nonzero, useful xVec when
             // the solve stalled short of 1e-8 (Jacobi got to ~7e-3 -> rejected ->
             // phi=0 -> dead). Accept when the relative residual is below a usable
-            // threshold (MARS_HYPRE_ACCEPT_RES, default 1e-2) AND xVec is finite.
-            RealType acceptRes = RealType(1e-2);
+            // threshold (MARS_HYPRE_ACCEPT_RES) AND xVec is finite. Default 1e-6:
+            // a properly-converged AMG solve reaches this easily; the old loose
+            // 1e-2 admitted under-resolved huge-amplitude phi (res~2e-4) that blew
+            // up the corrector. If a solve can't reach 1e-6 we WANT it rejected
+            // (phi stays at the warm-started prior) rather than scattering garbage.
+            RealType acceptRes = RealType(1e-6);
             if (const char* ev = std::getenv("MARS_HYPRE_ACCEPT_RES"))
             { double v = std::atof(ev); if (v > 0) acceptRes = RealType(v); }
             // Best-effort acceptance must NOT swallow the null-mode false

@@ -507,6 +507,21 @@ public:
                           << " -- this is the null-mode false convergence; "
                           << "reporting NOT converged.\n";
             }
+            // UPPER-BOUND reject: a |x| that is HUGE relative to |b| is an
+            // under-resolved near-null-space solution (the observed 1e7..1e9 phi
+            // from a stalled solve on a poorly-conditioned operator). Its small
+            // residual can slip a loose acceptance gate, but its gradient blows up
+            // the corrector. Reject it. Default ceiling 1e6 (an O(1)-conditioned
+            // pressure solve has |phi| ~ |b|/diag, not 1e6x|b|); MARS_HYPRE_MAXX_RATIO.
+            double maxXRatio = getEnvDouble("MARS_HYPRE_MAXX_RATIO", 1e6);
+            if (gBmax > 0.0 && gXmax > maxXRatio * gBmax) {
+                nullSolutionReturned_ = true;
+                if (rank == 0)
+                    std::cout << "[HypreGMRES] WARNING: |x|inf=" << gXmax
+                              << " >> |b|inf=" << gBmax << " (ratio>" << maxXRatio
+                              << ") -- under-resolved/null-contaminated solution; "
+                              << "reporting NOT converged.\n";
+            }
         }
 
         if (verbose_) {
