@@ -82,6 +82,7 @@ int main(int argc, char** argv)
     bool        usePSPG    = false;    // implicit PSPG pressure stab (tau*L in the DDT operator); --pspg. The correct equal-order checkerboard fix.
     double      pspgTau    = -1;       // <=0 => auto h^2/24; --pspg-tau=V overrides
     bool        useHypre   = false;    // --solver=hypre: assembled DDT + Hypre FlexGMRES+BoomerAMG (else matrix-free Jacobi-CG)
+    bool        pressureK  = false;    // --pressure-k: solve the well-conditioned Galerkin K + conjugate SCS-gradient corrector (the reference collocated setup; pair with --vms-stab + --solver=hypre). Default DDT.
     std::string inletSS;   // inlet side-set name (required for --bc=pump; pass --inlet-ss=)
     std::string outletSS;  // outlet side-set name (required for --bc=pump; pass --outlet-ss=)
     // Inlet velocity follows each node's OWN local surface normal (area-weighted
@@ -144,6 +145,7 @@ int main(int argc, char** argv)
         else if (a == "--rhie-chow")                 useRhieChow = true;
         else if (a.rfind("--rhie-tau=", 0) == 0)     rhieTau   = std::stod(a.substr(11));
         else if (a == "--vms-stab")                  useVMSStab = true;  // Nalu VMS pressure stab (tet-only, experimental)
+        else if (a == "--pressure-k")                pressureK  = true;  // Galerkin K + conjugate SCS-gradient corrector (reference setup; pair with --vms-stab)
         else if (a == "--pspg")                      usePSPG    = true;  // implicit PSPG (tau*L in DDT operator) -- the correct checkerboard fix
         else if (a.rfind("--pspg-tau=", 0) == 0)     pspgTau    = std::stod(a.substr(11));
         else if (a == "--solver=hypre")              useHypre   = true;  // assembled DDT + Hypre FlexGMRES+BoomerAMG (else matrix-free Jacobi-CG)
@@ -260,7 +262,8 @@ int main(int argc, char** argv)
                   << "VMS-stab    = " << (useVMSStab ? "ON (Nalu, tet-only, EXPERIMENTAL)" : "OFF") << "\n"
                   << "PSPG        = " << (usePSPG ? "ON (implicit tau*L in DDT operator)" : "OFF")
                   << (usePSPG && pspgTau > 0 ? "  (tau=" + std::to_string(pspgTau) + ")" : (usePSPG ? "  (tau=auto h^2/24)" : "")) << "\n"
-                  << "pressure    = " << (useHypre ? "assembled DDT + Hypre FlexGMRES+BoomerAMG (--solver=hypre)" : "matrix-free DDT + Jacobi-CG") << "\n"
+                  << "pressure    = " << (pressureK ? "Galerkin K + conjugate SCS-gradient corrector" : "DDT (D M^-1 D^T) + D^T corrector")
+                  << (useHypre ? " | Hypre GMRES+BoomerAMG (--solver=hypre)" : " | matrix-free Jacobi-CG") << "\n"
                   << "MPI ranks   = " << numRanks << "\n"
                   << "========================================\n\n";
     }
@@ -311,13 +314,30 @@ int main(int argc, char** argv)
     s.uinfBase      = RealType(inletU);   // unramped full-strength inlet speed (ramp target)
     s.pumpZeroIC    = !pumpUniformIC;   // default: start from rest
     s.icPerturbMag  = RealType(icPerturb);
-    // DDT (matrix-free D M^-1 D^T): the corrector applies the literal D^T, so the
-    // projection cancels divergence algebraically -> div(u^{n+1}) at roundoff. The
-    // K-path solves phi against the Galerkin stiffness but corrects with the SCS
-    // gradient; on unstructured tets those operators are nearly orthogonal, so the
-    // K-path projection FAILS (div_max blows up). DDT forces useDivT=true.
-    s.pressureSolve = PressureSolveKind::DDT;
-    s.useLegacyGradient = false;
+    // Pressure operator + corrector. DEFAULT = DDT (matrix-free D M^-1 D^T): the
+    // corrector applies the literal D^T, so the projection cancels divergence
+    // algebraically -> div(u^{n+1}) at roundoff. Good on clean/structured meshes,
+    // but the assembled DDT is ILL-CONDITIONED on this mesh (its diagonal is a
+    // cancelling area-vector sum -> near-zero eigenvalues -> 1e6 phi for AMG).
+    //
+    // --pressure-k = the REFERENCE collocated setup: solve the well-conditioned
+    // Galerkin stiffness K (AMG-able, physical phi) AND correct with the CONJUGATE
+    // SCS Green-Gauss gradient (useLegacyGradient=true -> useDivT=false), the
+    // pairing that makes the K projection consistent (the old "nearly orthogonal"
+    // failure was K-solve corrected with D^T, the WRONG gradient). Pair with
+    // --vms-stab (divergence-side checkerboard stabilization, keeps K clean) and
+    // --solver=hypre. This is the trifecta: well-conditioned + stabilized +
+    // projection-consistent.
+    if (pressureK)
+    {
+        s.pressureSolve     = PressureSolveKind::K;
+        s.useLegacyGradient = true;   // corrector = SCS Green-Gauss grad, conjugate to K
+    }
+    else
+    {
+        s.pressureSolve     = PressureSolveKind::DDT;
+        s.useLegacyGradient = false;
+    }
     // Through-flow has no wall dissipation to absorb advective noise (unlike the
     // closed cavity), so 1st-order upwind + BDF2 blows up after a few flow-
     // throughs. Skew-symmetric advection discretely conserves KE (no exponential
