@@ -142,6 +142,23 @@ public:
 
     void setVerbose(bool verbose) { verbose_ = verbose; }
 
+    // Env-override helpers for the BoomerAMG knobs. Return the default when the
+    // var is unset or unparseable, so a typo never silently disables AMG tuning.
+    static int getEnvInt(const char* name, int defVal) {
+        const char* v = std::getenv(name);
+        if (!v || !*v) return defVal;
+        char* end = nullptr;
+        long parsed = std::strtol(v, &end, 10);
+        return (end && end != v) ? static_cast<int>(parsed) : defVal;
+    }
+    static double getEnvDouble(const char* name, double defVal) {
+        const char* v = std::getenv(name);
+        if (!v || !*v) return defVal;
+        char* end = nullptr;
+        double parsed = std::strtod(v, &end);
+        return (end && end != v) ? parsed : defVal;
+    }
+
     // Iteration count and final relative residual from the most recent solve.
     // Hypre fills these via HYPRE_GMRESGetNumIterations / GetFinalRelativeResidualNorm
     // at end of solve. Driver code reads these for per-step diagnostics so a
@@ -150,6 +167,8 @@ public:
     // print output.
     int    getLastIterations()    const { return lastNumIters_; }
     double getLastFinalResidual() const { return lastFinalRes_; }
+    double getLastSolutionMax()   const { return lastSolutionMax_; }
+    bool   lastReturnedNullSolution() const { return nullSolutionReturned_; }
 
     // The helpers below are conceptually private — they take internal Hypre
     // state and aren't meant to be called from outside — but nvcc rejects
@@ -246,28 +265,61 @@ public:
             const char* ev = std::getenv("MARS_HYPRE_VERBOSE");
             int hyprePrintLevel = (ev && std::string(ev) != "0") ? 3 : 0;
             HYPRE_BoomerAMGSetPrintLevel(precond_, hyprePrintLevel);
-            // GPU-required + tuned-for-Galerkin-Laplacian parameters. Defaults
-            // are tuned for diffusion on CPU and produce a "9x wrong answer at
-            // first solve" failure mode on a D M^-1 D^T projection operator
-            // (CG accepts what AMG can't precondition cleanly).
+            // GPU-required + tuned-for-3D-pressure-Poisson parameters. The
+            // assembled DDT operator (D M^-1 D^T + tau*PSPG, single-pin anchored)
+            // is a near-singular SPD Laplacian-like matrix. Prior defaults
+            // (RelaxType=18 l1-Jacobi, StrongThr=0.5, AggNumLevels=1) are WEAK
+            // for this operator: l1-Jacobi smoothing barely damps the
+            // low-frequency error, the 0.5 threshold drops too many couplings in
+            // 3D so coarsening loses the operator's connectivity, and aggressive
+            // coarsening on an irregular tet stencil produces a coarse operator
+            // whose near-constant null mode dominates the V-cycle output. Under
+            // FlexGMRES that makes the FIRST preconditioned direction collapse
+            // onto the (near-)null space: the relative residual ||r||/||b|| drops
+            // below tol in ~2 iters while the actual solution x stays ~0 (the
+            // false x=0 "convergence"). Hybrid symmetric Gauss-Seidel (RelaxType
+            // 6/8) is the standard strong smoother for pressure Poisson and
+            // damps the low modes the V-cycle must remove; StrongThr=0.25 is the
+            // 3D-Poisson value; AggNumLevels=0 keeps the full operator
+            // connectivity so the coarse grid still represents the constant mode
+            // correctly. All env-overridable so they can be swept without a
+            // rebuild.
             //   CoarsenType=8  = PMIS (mandatory on GPU; cheaper than CLJP)
             //   InterpType=6   = ext+i (long-range, works with PMIS)
-            //   RelaxType=18   = l1-Jacobi (SYMMETRIC -- required for PCG;
-            //                   default GS becomes non-symmetric on GPU)
+            //   RelaxType=8    = l1-scaled hybrid SSOR (strong + GPU-safe +
+            //                   symmetric). FlexGMRES does NOT need a symmetric
+            //                   preconditioner, so this strong smoother is the
+            //                   right default here, vs the weak l1-Jacobi (18)
+            //                   the PCG wrapper must use. Override via MARS_AMG_RELAX
             //   RelaxOrder=0   = lexicographic (mandatory on GPU)
             //   KeepTranspose=1= avoid SpMTV on GPU
-            //   StrongThr=0.5  = default 0.25 too loose for 3D Laplacians
+            //   StrongThr=0.25 = 3D-Poisson value (0.5 is for anisotropic)
             //   PMaxElmts=4    = truncate P (GPU memory + perf)
-            //   AggNumLevels=1 = aggressive coarsening on level 0 only
-            HYPRE_BoomerAMGSetCoarsenType(precond_, 8);
-            HYPRE_BoomerAMGSetInterpType(precond_, 6);
-            HYPRE_BoomerAMGSetRelaxType(precond_, 18);
-            HYPRE_BoomerAMGSetRelaxOrder(precond_, 0);
+            //   AggNumLevels=0 = no aggressive coarsening (keeps tet connectivity)
+            int   amgCoarsen   = getEnvInt   ("MARS_AMG_COARSEN",   8);
+            int   amgInterp    = getEnvInt   ("MARS_AMG_INTERP",    6);
+            int   amgRelax     = getEnvInt   ("MARS_AMG_RELAX",     8);
+            int   amgRelaxOrder= getEnvInt   ("MARS_AMG_RELAXORDER",0);
+            double amgStrong   = getEnvDouble("MARS_AMG_STRONG",    0.25);
+            int   amgPMax      = getEnvInt   ("MARS_AMG_PMAX",      4);
+            int   amgAgg       = getEnvInt   ("MARS_AMG_AGG",       0);
+            int   amgSweeps    = getEnvInt   ("MARS_AMG_SWEEPS",    1);
+            if (verbose_ && rank == 0) {
+                std::cout << "  [BoomerAMG] coarsen=" << amgCoarsen
+                          << " interp=" << amgInterp << " relax=" << amgRelax
+                          << " strong=" << amgStrong << " pmax=" << amgPMax
+                          << " agg=" << amgAgg << " sweeps=" << amgSweeps
+                          << std::endl;
+            }
+            HYPRE_BoomerAMGSetCoarsenType(precond_, amgCoarsen);
+            HYPRE_BoomerAMGSetInterpType(precond_, amgInterp);
+            HYPRE_BoomerAMGSetRelaxType(precond_, amgRelax);
+            HYPRE_BoomerAMGSetRelaxOrder(precond_, amgRelaxOrder);
             HYPRE_BoomerAMGSetKeepTranspose(precond_, 1);
-            HYPRE_BoomerAMGSetStrongThreshold(precond_, 0.5);
-            HYPRE_BoomerAMGSetPMaxElmts(precond_, 4);
-            HYPRE_BoomerAMGSetAggNumLevels(precond_, 1);
-            HYPRE_BoomerAMGSetNumSweeps(precond_, 1);
+            HYPRE_BoomerAMGSetStrongThreshold(precond_, amgStrong);
+            HYPRE_BoomerAMGSetPMaxElmts(precond_, amgPMax);
+            HYPRE_BoomerAMGSetAggNumLevels(precond_, amgAgg);
+            HYPRE_BoomerAMGSetNumSweeps(precond_, amgSweeps);
             HYPRE_BoomerAMGSetMaxLevels(precond_, 25);
             HYPRE_BoomerAMGSetMinCoarseSize(precond_, 32);  // avoid too-small coarse grid on small problems
             HYPRE_BoomerAMGSetMaxCoarseSize(precond_, 128); // upper bound on coarsest direct solve
@@ -313,6 +365,26 @@ public:
         HYPRE_GMRESSetMaxIter(solver_, maxIter_);
         HYPRE_GMRESSetTol(solver_, tolerance_);
         HYPRE_GMRESSetKDim(solver_, kDim_);  // restart length
+        // Floor on iterations. For the near-singular DDT pressure operator (one
+        // constant null mode, single pin), BoomerAMG's first V-cycle can map the
+        // initial residual almost entirely into the null space, dropping the
+        // RELATIVE residual ||r||/||b|| below tol in ~2 iters while the actual
+        // solution x is still ~0 (the false x=0 "convergence"). A small minimum
+        // iteration count forces GMRES to keep building the Krylov space past
+        // that first deceptive cycle so a real x emerges. Env-overridable.
+        {
+            int minIt = getEnvInt("MARS_HYPRE_MINITER", 3);
+            if (minIt > 0) HYPRE_GMRESSetMinIter(solver_, minIt);
+        }
+        // Absolute residual floor. A pure relative test can be satisfied by a
+        // tiny ||b|| whose mass sits in the null mode; pairing it with an
+        // absolute tol means convergence requires the TRUE residual to be small,
+        // not just relatively small versus a near-null RHS. Default 0 (disabled)
+        // keeps legacy behavior; set MARS_HYPRE_ABSTOL>0 to engage.
+        {
+            double absTol = getEnvDouble("MARS_HYPRE_ABSTOL", 0.0);
+            if (absTol > 0.0) HYPRE_GMRESSetAbsoluteTol(solver_, absTol);
+        }
         // print level: 0 silent, 2 per-iter residuals. Env MARS_HYPRE_VERBOSE=1.
         {
             const char* ev = std::getenv("MARS_HYPRE_VERBOSE");
@@ -396,12 +468,54 @@ public:
         lastNumIters_ = num_iterations;
         lastFinalRes_ = final_res_norm;
 
+        // False-convergence guard against the near-singular DDT operator. When
+        // BoomerAMG collapses the first cycle onto the constant null mode,
+        // FlexGMRES can report converged=true with a tiny relative residual while
+        // the returned x is essentially zero. Detect that here: compute ||x||inf
+        // and ||b||inf (global), and if Hypre claims convergence but x is ~0 while
+        // b is not, the "solution" is the null vector -- report NON-converged so
+        // the caller does not scatter a zero phi as if it were a real projection.
+        {
+            double localXmax = (m > 0)
+                ? thrust::transform_reduce(
+                      thrust::device_pointer_cast(x.data()),
+                      thrust::device_pointer_cast(x.data() + m),
+                      [] __device__ (RealType v) -> double { return fabs((double)v); },
+                      0.0, thrust::maximum<double>())
+                : 0.0;
+            double localBmax = (m > 0)
+                ? thrust::transform_reduce(
+                      thrust::device_pointer_cast(b.data()),
+                      thrust::device_pointer_cast(b.data() + m),
+                      [] __device__ (RealType v) -> double { return fabs((double)v); },
+                      0.0, thrust::maximum<double>())
+                : 0.0;
+            double gXmax = 0.0, gBmax = 0.0;
+            MPI_Allreduce(&localXmax, &gXmax, 1, MPI_DOUBLE, MPI_MAX, comm_);
+            MPI_Allreduce(&localBmax, &gBmax, 1, MPI_DOUBLE, MPI_MAX, comm_);
+            lastSolutionMax_ = gXmax;
+            // x is "null" if it is many orders below b. The default 1e-12 only
+            // fires on an essentially-exact x=0 (the observed failure mode), so
+            // it never rejects a physically meaningful phi. Raise the ratio via
+            // MARS_HYPRE_NULLX_RATIO if a borderline near-null x appears.
+            double nullRatio = getEnvDouble("MARS_HYPRE_NULLX_RATIO", 1e-12);
+            nullSolutionReturned_ = (gBmax > 0.0 && gXmax < nullRatio * gBmax);
+            if (nullSolutionReturned_ && rank == 0) {
+                std::cout << "[HypreGMRES] WARNING: solver reported converged (iters="
+                          << num_iterations << ", rel_res=" << final_res_norm
+                          << ") but |x|inf=" << gXmax << " << |b|inf=" << gBmax
+                          << " -- this is the null-mode false convergence; "
+                          << "reporting NOT converged.\n";
+            }
+        }
+
         if (verbose_) {
             std::cout << "Hypre GMRES converged in " << num_iterations
                       << " iterations, final residual: " << final_res_norm << std::endl;
         }
 
-        return (final_res_norm < tolerance_);
+        // Real convergence requires BOTH the residual test AND a non-null x.
+        return (final_res_norm < tolerance_) && !nullSolutionReturned_;
     }
 
     // Build A_hypre_ entirely on the device:
@@ -633,6 +747,8 @@ private:
     // Per-solve diagnostics (filled by solveImpl after Hypre returns).
     int    lastNumIters_ = 0;
     double lastFinalRes_ = 0.0;
+    double lastSolutionMax_ = 0.0;        // ||x||inf of the returned solution
+    bool   nullSolutionReturned_ = false; // converged-but-x~0 (null-mode) flag
 
     HYPRE_Solver solver_;
     HYPRE_Solver precond_;
