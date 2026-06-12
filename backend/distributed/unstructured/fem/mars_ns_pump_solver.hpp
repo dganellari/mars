@@ -351,6 +351,37 @@ __global__ void enforcePinRowKeepDiagKernel(int pinDof,
     if (!(values[dp] > RealType(0))) values[dp] = RealType(1);
 }
 
+// Pin every OWNED row of an assembled CSR whose diagonal is below `thresh` to an
+// identity row (off-diagonals zeroed, diagonal set to `diagVal`). The degenerate
+// passage/sliver cells give the assembled DDT operator near-zero diagonals ->
+// near-zero eigenvalues -> A^-1 amplifies by ~1e6 -> a CONVERGED solve returns a
+// physically-huge phi (|phi| ~ 1e6*|b|) that blows up the corrector. Pinning
+// those rows to identity removes the near-zero eigenvalues so phi is physical.
+// Returns nothing; count is done separately. diagVal should match the bulk
+// diagonal scale so the pinned rows don't themselves become an AMG spike.
+template<typename RealType>
+__global__ void pinTinyDiagonalRowsKernel(const int* rowPtr, const int* colInd,
+                                          const int* diagPtr, RealType* values,
+                                          uint8_t* isPressureBdryDof,
+                                          RealType thresh, RealType diagVal,
+                                          int numOwnedDofs, int* pinnedCount)
+{
+    int r = blockIdx.x * blockDim.x + threadIdx.x;
+    if (r >= numOwnedDofs) return;
+    int dp = diagPtr[r];
+    if (dp < 0) return;
+    RealType d = values[dp];
+    // Already a BC/pin row, or healthy diagonal -> leave it.
+    if (isPressureBdryDof && isPressureBdryDof[r]) return;
+    if (d >= thresh) return;
+    // Degenerate row: make it identity AND mark it in the pressure mask so the
+    // per-step RHS enforce zeros b there (a pinned identity row needs b=0).
+    for (int j = rowPtr[r]; j < rowPtr[r + 1]; ++j)
+        values[j] = (j == dp) ? diagVal : RealType(0);
+    if (isPressureBdryDof) isPressureBdryDof[r] = 1;
+    atomicAdd(pinnedCount, 1);
+}
+
 // Read the diagonal value of one row into a single-element device buffer.
 // Used to capture the pump pin's NATIVE diagonal before BC enforcement
 // overwrites it, so it can be restored afterwards (keeps AMG-friendly scaling).
@@ -4859,6 +4890,47 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
                 cudaDeviceSynchronize();
             }
         }
+
+        // SLIVER PIN for the ASSEMBLED operator (Hypre path): the degenerate
+        // passage/sliver cells give the assembled DDT near-zero diagonals ->
+        // near-zero eigenvalues -> a CONVERGED GMRES+AMG solve returns a
+        // physically-huge phi (|phi| ~ 1e6*|b|, observed) that blows up the
+        // corrector. Pin every owned row with diag < frac*max_diag to identity
+        // (removes the near-zero eigenvalues) and mark it so the RHS is zeroed
+        // there. frac default 1e-4 (MARS_DDT_ASM_PIN_FRAC); 0 disables.
+        if (s.solverKind == SolverKind::Hypre && s.nnzDDT > 0 && s.numOwnedDofs > 0)
+        {
+            RealType asmPinFrac = RealType(1e-4);
+            if (const char* ev = std::getenv("MARS_DDT_ASM_PIN_FRAC"))
+            { double v = std::atof(ev); if (v >= 0) asmPinFrac = RealType(v); }
+            // max diagonal of the assembled operator (the bulk scale).
+            const int* dpAll = s.d_diagPtrDDT.data();
+            const RealType* vAll = s.d_valuesDDT.data();
+            RealType maxDiag = thrust::transform_reduce(thrust::device,
+                thrust::counting_iterator<int>(0),
+                thrust::counting_iterator<int>(s.numOwnedDofs),
+                [dpAll, vAll] __device__ (int r) -> RealType {
+                    int dp = dpAll[r]; return (dp >= 0) ? vAll[dp] : RealType(0);
+                }, RealType(0), thrust::maximum<RealType>());
+            RealType thresh = asmPinFrac * maxDiag;
+            if (thresh > RealType(0))
+            {
+                cstone::DeviceVector<int> d_pinned(1, 0);
+                int dofBlocks = (s.numOwnedDofs + s.blockSize - 1) / s.blockSize;
+                pinTinyDiagonalRowsKernel<RealType><<<dofBlocks, s.blockSize>>>(
+                    s.d_rowPtrDDT.data(), s.d_colIndDDT.data(), s.d_diagPtrDDT.data(),
+                    s.d_valuesDDT.data(), s.d_isPressureBdryDof.data(),
+                    thresh, maxDiag, s.numOwnedDofs, d_pinned.data());
+                cudaDeviceSynchronize();
+                int pinned = 0;
+                cudaMemcpy(&pinned, d_pinned.data(), sizeof(int), cudaMemcpyDeviceToHost);
+                if (s.rank == 0)
+                    std::cout << "  [asm-sliver-pin] pinned " << pinned
+                              << " tiny-diag rows (diag < " << std::scientific << thresh
+                              << " = " << asmPinFrac << " * max_diag " << maxDiag
+                              << ")" << std::defaultfloat << "\n";
+            }
+        }
         if (s.rank == 0)
         {
             std::cout << "  pressure pin: rank=" << s.pressurePinRank
@@ -7831,17 +7903,27 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
                 cudaDeviceSynchronize();
             }
             cudaMemset(xVec.data(), 0, s.numTotalDofs * sizeof(RealType));
-            // PSPG ON -> A = D M^-1 D^T + tau*L is SPD (symmetric pin removes the
-            // null mode) -> Hypre PCG+AMG, which EMPIRICALLY converges on our GPU
-            // (16 iters, flow develops) where GMRES+AMG no-ops to x=0 (a separate
-            // GMRES-wrapper GPU bug to fix). CG+AMG is also the textbook pressure-
-            // Poisson solver. The PCG wrapper now carries the same null + upper-x
-            // guards as GMRES, so a huge/near-null phi is rejected, not scattered.
-            // PSPG OFF -> SPSD -> PCG rejects (error 1) -> GMRES.
-            // (MARS_HYPRE_KRYLOV=pcg|gmres overrides for debugging.)
-            KrylovHint pressureKrylov = s.usePSPG ? KrylovHint::PCG : KrylovHint::GMRES;
+            // OPERATOR: use the GALERKIN LAPLACIAN K (s.Apre) by default, NOT the
+            // Gram form D M^-1 D^T (s.AddT). Verified root cause of the 1e6-phi
+            // blowup: the DDT diagonal is 0.25*|sum_g sigma_g A_g|^2 / V -- a square
+            // of a CANCELLING signed sum of area-vectors, so it goes near-zero on
+            // GOOD cells (not slivers; a real sliver gives a HUGE diagonal here),
+            // creating near-zero eigenvalues -> A^-1 amplifies ~1e6. The Galerkin
+            // K_ij = integral grad(N_i).grad(N_j) has diagonal ~h (sum of squares,
+            // no cancellation) -> well-conditioned, AMG-friendly, no near-zero
+            // eigenvalue. This is what the reference assembles; switching to it is
+            // the structural fix. K is SPD so PCG is also valid here.
+            // MARS_HYPRE_USE_DDT=1 falls back to the DDT operator for comparison.
+            bool useDDTop = (std::getenv("MARS_HYPRE_USE_DDT") != nullptr);
+            auto& pressureMat = useDDTop ? s.AddT : s.Apre;
+            // GMRES for BOTH operators. K (Apre) is SPD in principle, but PCG
+            // breaks down (pAp<0, HYPRE error 256, ~3 iters) because BoomerAMG-as-
+            // preconditioner is non-symmetric on GPU (GS-family relax) and the
+            // pin row's diag=1 spike disturbs coarsening -> the effective
+            // preconditioned operator isn't SPD for CG. GMRES tolerates that and
+            // was the proven-converging path. (MARS_HYPRE_KRYLOV=pcg to force CG.)
             s.lastPressureIters = solveOneComponent<KeyType, RealType, ElementTag>(
-                s, b, xVec, s.d_phi, s.AddT, pressureKrylov);
+                s, b, xVec, s.d_phi, pressureMat, KrylovHint::GMRES);
             // DIAGNOSTIC: sample WHOLE vectors via D2H, compute max-abs on
             // host. Lets us see whether the solution actually propagated.
             // Active only when env MARS_DDT_DIAG_AFTER_HYPRE is set.

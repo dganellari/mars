@@ -1,6 +1,48 @@
-# TGV Multi-Rank Periodic — Handoff (2026-06-07)
+# TGV Multi-Rank Periodic — Handoff (2026-06-07, BREAKTHROUGH UPDATE)
 
-**Read this before touching code.** Three sessions, ~50 fix attempts, ~25 reverted. The bug is NOT closed but is precisely characterized.
+**Read this before touching code.** The primary feedback loop is FOUND and FIXED. The bug is reframed from "projection won't close" to "two feedback loops amplify the seam residual"; one is fixed, one is precisely localized.
+
+## BREAKTHROUGH (this session)
+
+The reframe that cracked it: stop chasing PROJ-P3 → 0 (the channel never closes it either — see docs/poiseuille_tutorial.md Part 6). The real failure is the **growing div_max feedback loop**, not the nonzero projection residual. Two loops:
+
+**PRIMARY LOOP — FIXED.** The predictor's `grad(p)` used the FOLDED periodic seam reduction (`maybePeriodicSum` at NS:7129-7131) while the corrector/operator under H2 use PER-SLOT (no fold). The mismatch `(G_fold − G_perslot)·p` is LINEAR in accumulated p → dt-independent geometric feedback gain ≈ 1.17 (which is why ~50 projection-side fixes never moved it — the loop is in the predictor↔corrector operator mismatch, not the projection). Fix: `MARS_PRED_PERSLOT_GRADP=1` makes the predictor `grad(p)` per-slot too, matching the corrector. Gain drops 1.17 → ~1.05. (Fable diagnosed this; Opus missed it for two days.)
+
+**SECONDARY LOOP — localized, not yet fixed.** After the primary fix, a weaker loop (gain ~1.05) remains: the skew-symmetric advection's `mdot` at the cross-rank periodic face. Skew (Verstappen) advection conserves discrete KE only when `mdot` telescopes across shared faces; at the periodic seam the master-side and slave-image elements compute `mdot` from slightly-inconsistent `u`, so it does NOT cancel and injects KE each step. PROOF: `--skew=0` (upwind) stays BOUNDED (KE oscillates 200-960, CG healthy through step 200) while `--skew=1` goes to Inf by step 160 — upwind's numerical diffusion damps the injection. CONSTRAINT: the fix is NOT a velocity broadcast — `MARS_TGV_USTART_BCAST=1` (force u[slave]:=u[master] at step start to make mdot consistent) made it WORSE (step 140 vs 160) because broadcasting u re-injects divergence the projection didn't account for. The fix must reconcile `mdot` across the periodic face WITHOUT changing stored `u`.
+
+**Empirical progress:** baseline blew at step ~40 (KE → 1e158). With `MARS_PRED_PERSLOT_GRADP=1 MARS_ROTATIONAL_P=1`: KE decays correctly through step 100, div_max bounded to ~16 at step 100, survives to step ~160. **4× longer survival, clean physics 2.5× longer.** Not stable yet, but a qualitative change.
+
+## Best-known config (env flags, all default OFF, all pump-safe)
+
+```
+MARS_PRED_PERSLOT_GRADP=1   # PRIMARY FIX: predictor grad(p) per-slot at seam (de7e366)
+MARS_ROTATIONAL_P=1         # damps residual pressure accumulation (Timmermans)
+```
+
+Tested combinations on cube16 4-rank (step where KE turns up / blows):
+| Config | Blow-up step |
+|--------|-------------|
+| baseline | ~40 |
+| PRED_PERSLOT only | ~110 |
+| PRED_PERSLOT + ROTATIONAL | **~160 (best)** |
+| PRED_PERSLOT + NONINCREMENTAL | ~110 (non-inc made it worse — loop is NOT pressure-accumulation) |
+| PRED_PERSLOT + ROTATIONAL + H2=0 | ~150 (H2 broadcast helps slightly) |
+| PRED_PERSLOT + ROTATIONAL + USTART_BCAST | ~140 (worse — velocity broadcast re-injects div) |
+| `--skew=0` upwind + PRED_PERSLOT + ROTATIONAL | BOUNDED to step 200 (numerical diffusion damps secondary loop) |
+
+## NEXT SESSION: the secondary-loop fix
+
+The secondary loop is in the skew advection `mdot` at the periodic seam. Read the skew kernel (NS:914-936): per face, `mdot` is computed once and used at both L and R, so per-face KE-conservation is fine WITHIN an element. The leak is that the periodic-image element (slave-owner rank) and the master-side element compute DIFFERENT `mdot` for the SAME physical periodic face (from inconsistent `u`), breaking the cross-element telescoping.
+
+Candidate fixes (untested):
+1. **Reconcile mdot across the periodic face** — after the per-element mdot is computed but before the flux scatter, average/fold the mdot at the periodic seam so master and slave-image faces use the SAME value. This is the mdot-level analog of the grad(p) per-slot fix. Does NOT touch u (avoids the USTART re-injection problem).
+2. **Use the Verstappen rotational advection form explicitly** — `N_skew = N_div − ½ q (div u)` computed so the `div u` term uses the seam-folded divergence. The pump solver mentions this form (NS:961-984).
+3. **Blend upwind dissipation at seam nodes only** — keep skew interior, add first-order upwind within one element of the periodic seam. Pragmatic; `--skew=0` proves it would bound the loop.
+
+The agents (Fable + Opus workflows) hit the session token limit at 4:20pm Zurich; relaunch the secondary-loop diagnosis workflow then if option 1's mdot-reconcile needs the algebra verified.
+
+---
+## ORIGINAL HANDOFF (pre-breakthrough, kept for reference)
 
 ## Current state (HEAD = `25734c7`)
 

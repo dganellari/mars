@@ -7078,14 +7078,27 @@ void runPredictorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
     // gate at the velocity-broadcast block below.
     if (s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Periodic && s.periodicMap)
     {
-        const bool routeReducedPeriodicCorr =
+        bool routeReducedPeriodicCorr =
             s.numRanks > 1
             && s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Periodic
             && s.solverKind == SolverKind::CG;
+        // MARS_TGV_USTART_BCAST=1: force the start-of-step u/v/w master->slave
+        // broadcast even on the reduced path. Rationale (this session): the
+        // skew advection's mdot at the periodic face reads u at seam ghosts; an
+        // inconsistent slave u makes mdot across the periodic face NOT cancel,
+        // breaking the Verstappen discrete-KE-conservation property and
+        // injecting energy each step (the residual secondary loop after the
+        // primary grad(p) mismatch is fixed by MARS_PRED_PERSLOT_GRADP). With
+        // the predictor now per-slot-consistent, broadcasting u here makes mdot
+        // seam-consistent without re-injecting the divergence the old comment
+        // feared. --skew=0 (upwind) bounds the loop via numerical diffusion,
+        // confirming the loop is advective.
+        const char* uStartEnv = std::getenv("MARS_TGV_USTART_BCAST");
+        const bool forceUStartBcast = (uStartEnv && std::string(uStartEnv) == "1");
         int blk = 256, grd = int((s.nodeCount + blk - 1) / blk);
         const int* d_partner = s.periodicMap->d_periodicPartner.data();
         size_t nN            = s.nodeCount;
-        if (!routeReducedPeriodicCorr)
+        if (!routeReducedPeriodicCorr || forceUStartBcast)
         {
             mars::fem::periodicBroadcastKernel<<<grd, blk>>>(d_partner, nN, s.d_u.data());
             mars::fem::periodicBroadcastKernel<<<grd, blk>>>(d_partner, nN, s.d_v.data());
@@ -7093,7 +7106,7 @@ void runPredictorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
         }
         mars::fem::periodicBroadcastKernel<<<grd, blk>>>(d_partner, nN, s.d_p.data());
         cudaDeviceSynchronize();
-        if (!routeReducedPeriodicCorr)
+        if (!routeReducedPeriodicCorr || forceUStartBcast)
         {
             s.domain.exchangeNodeHalo(s.d_u);
             s.domain.exchangeNodeHalo(s.d_v);
@@ -7343,12 +7356,26 @@ void runPredictorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
             cudaDeviceSynchronize();
         }
         s.domain.reverseExchangeNodeHaloAdd(advN);
-        maybePeriodicSum<KeyType, RealType, ElementTag>(s, advN);
-        // advN[master] is now the full-control-volume advective flux (both half-CVs
-        // summed via the reverse-halo + periodic fold). Under owner-migration the
-        // predictor reads advN ONLY at owned master DOFs (dof<numOwnedDofs); the
-        // cross-rank slave is a ghost it skips, so no master->slave advN broadcast
-        // is needed -- that block was emulation-era scaffolding writing unread slots.
+        // MARS_PRED_PERSLOT_ADV=1: SKIP the maybePeriodicSum fold on advN so the
+        // predictor's advection uses the SAME per-slot seam reduction as its
+        // grad(p) (when MARS_PRED_PERSLOT_GRADP is on). With grad(p) per-slot
+        // (primary-loop fix) but advN still folded, the predictor mixes a folded
+        // advection with a per-slot gradient -> a residual seam inconsistency
+        // that the skew advection amplifies (the secondary loop; --skew=0 bounds
+        // it, --skew=1 doesn't). Making advN per-slot too makes the whole
+        // predictor RHS seam-consistent. Gated to multi-rank periodic CG.
+        const char* predPerSlotAdvEnv = std::getenv("MARS_PRED_PERSLOT_ADV");
+        const bool predPerSlotAdv =
+            (predPerSlotAdvEnv && std::string(predPerSlotAdvEnv) == "1")
+            && s.numRanks > 1
+            && s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Periodic
+            && s.solverKind == SolverKind::CG;
+        if (!predPerSlotAdv)
+            maybePeriodicSum<KeyType, RealType, ElementTag>(s, advN);
+        // advN[master] is the full-control-volume advective flux (both half-CVs
+        // summed via the reverse-halo + periodic fold), unless per-slot mode.
+        // Under owner-migration the predictor reads advN ONLY at owned master
+        // DOFs (dof<numOwnedDofs); the cross-rank slave is a ghost it skips.
 
         // DIAGNOSTIC: owned-sum of the (folded) advection term. This is a
         // rank-count-INVARIANT physical quantity if the advection scatter +
