@@ -351,6 +351,37 @@ __global__ void enforcePinRowKeepDiagKernel(int pinDof,
     if (!(values[dp] > RealType(0))) values[dp] = RealType(1);
 }
 
+// Pin every OWNED row of an assembled CSR whose diagonal is below `thresh` to an
+// identity row (off-diagonals zeroed, diagonal set to `diagVal`). The degenerate
+// passage/sliver cells give the assembled DDT operator near-zero diagonals ->
+// near-zero eigenvalues -> A^-1 amplifies by ~1e6 -> a CONVERGED solve returns a
+// physically-huge phi (|phi| ~ 1e6*|b|) that blows up the corrector. Pinning
+// those rows to identity removes the near-zero eigenvalues so phi is physical.
+// Returns nothing; count is done separately. diagVal should match the bulk
+// diagonal scale so the pinned rows don't themselves become an AMG spike.
+template<typename RealType>
+__global__ void pinTinyDiagonalRowsKernel(const int* rowPtr, const int* colInd,
+                                          const int* diagPtr, RealType* values,
+                                          uint8_t* isPressureBdryDof,
+                                          RealType thresh, RealType diagVal,
+                                          int numOwnedDofs, int* pinnedCount)
+{
+    int r = blockIdx.x * blockDim.x + threadIdx.x;
+    if (r >= numOwnedDofs) return;
+    int dp = diagPtr[r];
+    if (dp < 0) return;
+    RealType d = values[dp];
+    // Already a BC/pin row, or healthy diagonal -> leave it.
+    if (isPressureBdryDof && isPressureBdryDof[r]) return;
+    if (d >= thresh) return;
+    // Degenerate row: make it identity AND mark it in the pressure mask so the
+    // per-step RHS enforce zeros b there (a pinned identity row needs b=0).
+    for (int j = rowPtr[r]; j < rowPtr[r + 1]; ++j)
+        values[j] = (j == dp) ? diagVal : RealType(0);
+    if (isPressureBdryDof) isPressureBdryDof[r] = 1;
+    atomicAdd(pinnedCount, 1);
+}
+
 // Read the diagonal value of one row into a single-element device buffer.
 // Used to capture the pump pin's NATIVE diagonal before BC enforcement
 // overwrites it, so it can be restored afterwards (keeps AMG-friendly scaling).
@@ -4857,6 +4888,47 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
                     s.pressurePinDof, s.d_rowPtrDDT.data(), s.d_colIndDDT.data(),
                     s.d_diagPtrDDT.data(), s.d_valuesDDT.data());
                 cudaDeviceSynchronize();
+            }
+        }
+
+        // SLIVER PIN for the ASSEMBLED operator (Hypre path): the degenerate
+        // passage/sliver cells give the assembled DDT near-zero diagonals ->
+        // near-zero eigenvalues -> a CONVERGED GMRES+AMG solve returns a
+        // physically-huge phi (|phi| ~ 1e6*|b|, observed) that blows up the
+        // corrector. Pin every owned row with diag < frac*max_diag to identity
+        // (removes the near-zero eigenvalues) and mark it so the RHS is zeroed
+        // there. frac default 1e-4 (MARS_DDT_ASM_PIN_FRAC); 0 disables.
+        if (s.solverKind == SolverKind::Hypre && s.nnzDDT > 0 && s.numOwnedDofs > 0)
+        {
+            RealType asmPinFrac = RealType(1e-4);
+            if (const char* ev = std::getenv("MARS_DDT_ASM_PIN_FRAC"))
+            { double v = std::atof(ev); if (v >= 0) asmPinFrac = RealType(v); }
+            // max diagonal of the assembled operator (the bulk scale).
+            const int* dpAll = s.d_diagPtrDDT.data();
+            const RealType* vAll = s.d_valuesDDT.data();
+            RealType maxDiag = thrust::transform_reduce(thrust::device,
+                thrust::counting_iterator<int>(0),
+                thrust::counting_iterator<int>(s.numOwnedDofs),
+                [dpAll, vAll] __device__ (int r) -> RealType {
+                    int dp = dpAll[r]; return (dp >= 0) ? vAll[dp] : RealType(0);
+                }, RealType(0), thrust::maximum<RealType>());
+            RealType thresh = asmPinFrac * maxDiag;
+            if (thresh > RealType(0))
+            {
+                cstone::DeviceVector<int> d_pinned(1, 0);
+                int dofBlocks = (s.numOwnedDofs + s.blockSize - 1) / s.blockSize;
+                pinTinyDiagonalRowsKernel<RealType><<<dofBlocks, s.blockSize>>>(
+                    s.d_rowPtrDDT.data(), s.d_colIndDDT.data(), s.d_diagPtrDDT.data(),
+                    s.d_valuesDDT.data(), s.d_isPressureBdryDof.data(),
+                    thresh, maxDiag, s.numOwnedDofs, d_pinned.data());
+                cudaDeviceSynchronize();
+                int pinned = 0;
+                cudaMemcpy(&pinned, d_pinned.data(), sizeof(int), cudaMemcpyDeviceToHost);
+                if (s.rank == 0)
+                    std::cout << "  [asm-sliver-pin] pinned " << pinned
+                              << " tiny-diag rows (diag < " << std::scientific << thresh
+                              << " = " << asmPinFrac << " * max_diag " << maxDiag
+                              << ")" << std::defaultfloat << "\n";
             }
         }
         if (s.rank == 0)
