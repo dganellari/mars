@@ -98,22 +98,116 @@ Two of these are easy to get wrong:
 
 ---
 
-## Part 2 — How the solver works (the short version)
+## Part 2 — Equations, exact solution, discretization, solvers (for starters)
 
-Each time step of the Chorin projection method does:
+### 2.1 The equations
 
-1. **Predict**: move the velocity by advection + old pressure gradient
-   (explicit, BDF2/EXT2).
-2. **Diffuse**: implicit viscous solve, one CG solve per velocity component.
-3. **Project**: compute how much the predicted field violates `div u = 0`,
-   solve a pressure Poisson equation, and correct the velocity so mass is
-   conserved.
-4. **Correct**: update velocity and pressure; re-impose boundary values.
+Incompressible flow obeys the Navier–Stokes equations:
 
-The pressure projection is the heart of incompressible CFD: pressure is
-whatever it must be to keep the velocity divergence-free. The full derivation
-is in `docs/pump_cfd_tutorial.md`. Here the only step that needs detail is
-the projection — because it is where this example's big lesson lives.
+```
+∂u/∂t + (u·∇)u = −(1/ρ)∇p + ν∇²u      (momentum)
+∇·u = 0                                (mass: fluid neither piles up nor vanishes)
+```
+
+In words, a fluid parcel accelerates because neighboring fluid carries it
+along (*advection*, the `(u·∇)u` term), because pressure differences push it
+(`∇p`), and because viscous friction drags it (`ν∇²u`). The second equation
+is the hard one: there is no equation "for" pressure — pressure is whatever
+it must be so that the velocity stays divergence-free. Every incompressible
+solver is, at heart, a strategy for finding that pressure.
+
+### 2.2 Why the exact solution is a parabola (3-line derivation)
+
+Far from the inlet the flow is *steady* (`∂u/∂t = 0`) and *fully developed*
+(`u = (u(y), 0, 0)`, nothing changes with x). Then advection vanishes
+(`u·∂u/∂x = 0`) and the x-momentum equation collapses to a balance between
+the pressure push and the wall drag:
+
+```
+0 = −dp/dx + μ d²u/dy²
+```
+
+The left term cannot depend on y, the right cannot depend on x, so both equal
+a constant: `dp/dx = −G`. Integrate twice and apply no-slip (`u = 0` at both
+walls):
+
+```
+u(y) = G/(2μ) · y(h−y)        — the parabola
+```
+
+Everything else follows by integration: flow rate `Q = Gh³/(12μ)`, mean
+velocity `U_mean = Gh²/(12μ)`, centerline `U_max = Gh²/(8μ) = 1.5·U_mean`.
+This is why the case validates so sharply — every number is pinned by the
+input parameters alone.
+
+### 2.3 The discretization (CVFEM in one breath)
+
+The channel is tiled into hexahedral **elements** with **nodes** at the
+corners; velocity *and* pressure live at the nodes (equal-order,
+vertex-centered — one set of points for everything). Around every node sits
+a small **control volume**, and the physics is enforced in integral form:
+whatever flows into a control volume must flow out. The "FEM" in CVFEM is
+how the fluxes through the control-volume faces are evaluated: with finite-
+element shape functions interpolated inside each hex, on the sub-control
+surfaces (SCS) that the element contributes.
+
+From this one idea come the discrete operators the solver uses:
+
+| Operator | Discrete meaning |
+|---|---|
+| divergence `D` | net flux `Σ u·A` out of a node's control volume (the mass check) |
+| gradient `G` | how p varies across the control-volume faces (the pressure push) |
+| Laplacian `K` | viscous exchange between neighboring control volumes (the drag) |
+
+Two consequences matter for this example. First, the SCS faces are
+*interior* faces — boundary opening faces need the explicit source of
+Part 3, or inflow is invisible. Second, equal-order velocity/pressure is
+not naturally stable (the LBB issue): it works here on a clean mesh, but
+harder cases (the pump) need pressure stabilization.
+
+### 2.4 Marching in time: the projection method
+
+Each time step splits the physics into manageable pieces (Chorin
+projection, BDF2 time accuracy):
+
+1. **Predict**: move velocity by advection + the old pressure gradient
+   (explicit — cheap, but ignores incompressibility).
+2. **Diffuse**: apply viscosity implicitly — one linear solve per velocity
+   component (implicit so large time steps stay stable).
+3. **Project**: the predicted field violates `∇·u = 0`; solve a Poisson
+   equation for a pressure correction `phi` whose gradient removes exactly
+   that violation.
+4. **Correct**: subtract the gradient, update `p += phi`, re-impose boundary
+   values.
+
+The projection (step 3) is the heart and the cost: it is a global problem —
+a flux imbalance at the inlet must be felt instantly at the outlet — which
+is why its linear system is the hard one.
+
+### 2.5 The linear solvers
+
+Each implicit step is a sparse linear system `A x = b` with one row per
+node. At 30k nodes (or 10⁹ on Alps) you never factor A — you iterate:
+
+- **CG (conjugate gradient)** only needs matrix-vector products, which are
+  perfectly GPU-shaped. Each iteration improves the answer; you stop when
+  the residual `|Ax−b|/|b|` drops below `--tol`.
+- A **preconditioner** is a cheap approximate inverse applied each iteration
+  to speed convergence. Here: **Jacobi** (divide by the diagonal) — the
+  simplest possible one.
+- The three **velocity** solves are easy (mass-dominated matrices, a dozen
+  iterations). The **pressure Poisson** solve is hard: its conditioning
+  worsens with mesh size and cell-aspect-ratio, and on this thin-z channel
+  Jacobi-PCG needs ~3600 iterations per step. That is the entire runtime.
+  Stronger preconditioners (multigrid/AMG) exist, but reject this particular
+  matrix-free operator — a known open item, shared with the wing/pump work.
+- The pressure solve here is **matrix-free**: the operator `D M⁻¹ Dᵀ` is
+  applied as three scatters per CG iteration instead of being assembled —
+  cheaper in memory, and exactly consistent with the divergence/gradient
+  used elsewhere in the step.
+
+Deeper material (the full CVFEM derivation, stabilization, accuracy orders)
+lives in `docs/pump_cfd_tutorial.md`.
 
 ---
 
@@ -231,6 +325,14 @@ Useful flags:
 ---
 
 ## Part 5 — Reading the output
+
+With `--vtu-output=PREFIX` the run writes three ParaView timelines:
+
+| Files | Field | Use |
+|---|---|---|
+| `PREFIX_u.pvd` + steps | u — streamwise velocity component | **the one to visualize** (clean, validated) |
+| `PREFIX_umag.pvd` | umag — velocity *magnitude* √(u²+v²+w²) | avoid: contaminated by the v/w artifact (Part 6) |
+| `PREFIX_p.pvd` | p — pressure | avoid: carries the accumulated startup ramp (Part 6) |
 
 Per-step line:
 

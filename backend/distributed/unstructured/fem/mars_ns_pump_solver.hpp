@@ -351,6 +351,32 @@ __global__ void enforcePinRowKeepDiagKernel(int pinDof,
     if (!(values[dp] > RealType(0))) values[dp] = RealType(1);
 }
 
+// Read the diagonal value of one row into a single-element device buffer.
+// Used to capture the pump pin's NATIVE diagonal before BC enforcement
+// overwrites it, so it can be restored afterwards (keeps AMG-friendly scaling).
+template<typename RealType>
+__global__ void readRowDiagonalKernel(int row, const int* diagPtr,
+                                      const RealType* values, RealType* out)
+{
+    if (blockIdx.x * blockDim.x + threadIdx.x != 0) return;
+    if (row < 0) { *out = RealType(0); return; }
+    int dp = diagPtr[row];
+    *out = (dp >= 0) ? values[dp] : RealType(0);
+}
+
+// Write a given value into the diagonal of one row (off-diagonals untouched).
+// Restores the pump pin's native diagonal after the whole-face BC kernel forced
+// it to 1.0, removing the conditioning spike that breaks BoomerAMG coarsening.
+template<typename RealType>
+__global__ void setRowDiagonalKernel(int row, const int* diagPtr,
+                                     RealType* values, RealType val)
+{
+    if (blockIdx.x * blockDim.x + threadIdx.x != 0) return;
+    if (row < 0) return;
+    int dp = diagPtr[row];
+    if (dp >= 0) values[dp] = val;
+}
+
 // Zero RHS at the pin (called every step before the pressure solve).
 template<typename RealType>
 __global__ void enforcePinRhsKernel(int pinDof, RealType* rhs)
@@ -2371,6 +2397,10 @@ struct NSStepper
     // entire outflow face. Exactly one mechanism is active per run.
     int pressurePinDof = -1;   // owned-DOF id on the owning rank; -1 elsewhere (or in channel mode)
     int pressurePinRank = 0;   // global rank that owns the pin
+    // Native (pre-BC) assembled-DDT diagonal at the pump single-pin row. Captured
+    // before BC enforcement so the AMG-friendly diagonal can be restored after the
+    // whole-face kernel forces the pin diagonal to 1.0. 0 => not captured / not used.
+    RealType pinNativeDiagDDT = RealType(0);
     cstone::DeviceVector<uint8_t> d_isPressureBdryDof;   // size numOwnedDofs; only used in channel mode
     // FIX B (pump --pump-dp>0): per-OWNED-DOF target pressure at the masked
     // faces (pumpDp on inlet, 0 on outlet, 0 elsewhere). The lift enforce reads
@@ -4744,6 +4774,24 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
 
         s.pressurePinDof  = -1;
         s.pressurePinRank = -1;
+        // For the pump single-pin (mass-conserving velocity outlet, no pumpDp),
+        // record WHICH owned DOF is the pin and its rank. The mask path above
+        // already flagged it, but the assembled-DDT BC enforcement below routes
+        // it through enforceBcMatrixKernel, which forces the pin diagonal to 1.0.
+        // The DDT operator's native diagonals are ~0.04-0.14, so a diag=1 pin row
+        // is 10-25x its neighbors -- exactly the conditioning spike that makes
+        // BoomerAMG's PMIS coarsening collapse the V-cycle onto the constant null
+        // mode (FlexGMRES then "converges" at x=0 in 2 iters). Tracking the pin
+        // DOF here lets the DDT block below restore its native diagonal so AMG
+        // sees a uniformly-scaled SPD row, matching the cavity fix.
+        if (singlePin && !(s.pumpDp > RealType(0)))
+        {
+            int haveOutlet = (firstOutletDof >= 0) ? s.rank : s.numRanks;
+            int pinRank = s.numRanks;
+            MPI_Allreduce(&haveOutlet, &pinRank, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
+            s.pressurePinRank = pinRank;
+            s.pressurePinDof  = (s.rank == pinRank) ? firstOutletDof : -1;
+        }
         if (s.rank == 0)
         {
             if (s.pumpDp > RealType(0))
@@ -4890,18 +4938,56 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
             || s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Pump))
     {
         int dofBlocks = (s.numOwnedDofs + s.blockSize - 1) / s.blockSize;
-        // Row enforcement: zero each Dirichlet row, set diagonal to 1.
+        // Pump single-pin: capture the pin's NATIVE assembled diagonal BEFORE the
+        // whole-face BC kernel overwrites it to 1.0. We restore it after the
+        // column kernel so AMG sees a uniformly-scaled SPD pin row (no spike).
+        if (s.pressurePinDof >= 0)
+        {
+            cstone::DeviceVector<RealType> d_pinDiag(1, RealType(0));
+            readRowDiagonalKernel<RealType><<<1, 1>>>(
+                s.pressurePinDof, s.d_diagPtrDDT.data(),
+                s.d_valuesDDT.data(), d_pinDiag.data());
+            cudaDeviceSynchronize();
+            cudaMemcpy(&s.pinNativeDiagDDT, d_pinDiag.data(),
+                       sizeof(RealType), cudaMemcpyDeviceToHost);
+        }
+        // Row enforcement on the WHOLE-FACE Dirichlet DOFs: zero each row, set
+        // diagonal to 1. The pump single-pin DOF (pressurePinDof>=0) must NOT go
+        // through this -- enforceBcMatrixKernel forces its diagonal to 1.0 while
+        // the DDT operator's native diagonals are ~0.04-0.14, and that single
+        // 10-25x diagonal spike is what makes BoomerAMG's PMIS coarsening collapse
+        // the V-cycle onto the constant null mode (FlexGMRES then "converges" at
+        // x=0 in 2 iters). For the pin we instead use enforcePinRowKeepDiagKernel
+        // below, which zeros the off-diagonals but KEEPS the native diagonal so
+        // AMG sees a uniformly-scaled SPD row -- the same cure the cavity pin uses.
+        // Whole-face Dirichlet (channel, pumpDp>0) is fine with diag=1: many
+        // boundary rows carry the boundary mass, so a per-row spike is negligible.
         enforceBcMatrixKernel<RealType><<<dofBlocks, s.blockSize>>>(
             s.d_isPressureBdryDof.data(), s.d_rowPtrDDT.data(), s.d_colIndDDT.data(),
             s.d_diagPtrDDT.data(), s.d_valuesDDT.data(), s.numOwnedDofs);
         // Symmetric column enforcement using per-NODE mask -- works on EVERY
-        // rank (including ghost-copies of Dirichlet nodes).
+        // rank (including ghost-copies of Dirichlet nodes). This zeros A[r,pin]
+        // in every neighbor row, which is exactly the symmetric pin AMG wants.
         enforceBcColMatrixKernelByNode<RealType><<<dofBlocks, s.blockSize>>>(
             s.d_isPressureBdryNode.data(),
             s.d_node_to_dof.data(), s.d_dofToNode.data(), s.numTotalDofs,
             s.d_rowPtrDDT.data(), s.d_colIndDDT.data(),
             s.d_valuesDDT.data(), s.numOwnedDofs);
         cudaDeviceSynchronize();
+        // PUMP SINGLE-PIN ONLY: the row kernel already zeroed the pin's
+        // off-diagonals and set its diagonal to 1.0; the column kernel zeroed
+        // A[r,pin] in every neighbor (symmetric pin). The only thing left wrong
+        // is the diag=1 spike, so write the native diagonal value back. The
+        // native value was clobbered by enforceBcMatrixKernel, which is why we
+        // captured s.pinNativeDiagDDT BEFORE the block. Guarded on >0 so a
+        // missing/non-positive native diagonal leaves the safe diag=1 in place.
+        if (s.pressurePinDof >= 0 && s.pinNativeDiagDDT > RealType(0))
+        {
+            setRowDiagonalKernel<RealType><<<1, 1>>>(
+                s.pressurePinDof, s.d_diagPtrDDT.data(),
+                s.d_valuesDDT.data(), s.pinNativeDiagDDT);
+            cudaDeviceSynchronize();
+        }
     }
     else if (s.nnzDDT > 0
              && s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Cavity
@@ -4993,11 +5079,15 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
         // amplification at the pin DOF every iter -- biasing the global
         // search direction and producing the |gphi|~5x divergence injection
         // observed earlier in this session before the loop-bound fix landed.
-        // Channel/pump already get diag=1 from enforceBcMatrixKernel so they
-        // need no override. Predicted Jacobi-PCG pump iter count: ~400-700
-        // to 1e-8 (vs un-precond stall at 1e-3 after 20k).
-        if (s.pressurePinDof >= 0
-            && s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Cavity)
+        // Whole-FACE Dirichlet (channel, pumpDp>0) gets diag=1 from
+        // enforceBcMatrixKernel so it needs no override. The pump SINGLE-PIN now
+        // keeps its native diagonal in s.d_valuesDDT (the AMG-spike fix above), so
+        // it ALSO needs the diag=1 override here -- the matrix-free applyDDTPerNode
+        // treats the pin as an identity row (effective diag=1), and an un-overridden
+        // ~0.04 would amplify r[pin] by ~25x in the Jacobi step. Both the cavity
+        // pin and the pump single-pin are flagged by pressurePinDof>=0.
+        // Predicted Jacobi-PCG pump iter count: ~400-700 to 1e-8.
+        if (s.pressurePinDof >= 0)
         {
             RealType one = RealType(1);
             cudaMemcpy(s.d_diagDDT.data() + s.pressurePinDof, &one,
@@ -5801,17 +5891,28 @@ int solveOneComponent(NSStepper<KeyType, RealType, ElementTag>& s,
             // strict (final_res<tol) gate threw away a nonzero, useful xVec when
             // the solve stalled short of 1e-8 (Jacobi got to ~7e-3 -> rejected ->
             // phi=0 -> dead). Accept when the relative residual is below a usable
-            // threshold (MARS_HYPRE_ACCEPT_RES, default 1e-2) AND xVec is finite.
-            RealType acceptRes = RealType(1e-2);
+            // threshold (MARS_HYPRE_ACCEPT_RES) AND xVec is finite. Default 1e-6:
+            // a properly-converged AMG solve reaches this easily; the old loose
+            // 1e-2 admitted under-resolved huge-amplitude phi (res~2e-4) that blew
+            // up the corrector. If a solve can't reach 1e-6 we WANT it rejected
+            // (phi stays at the warm-started prior) rather than scattering garbage.
+            RealType acceptRes = RealType(1e-6);
             if (const char* ev = std::getenv("MARS_HYPRE_ACCEPT_RES"))
             { double v = std::atof(ev); if (v > 0) acceptRes = RealType(v); }
-            bool usable = (hypreSolver.getLastFinalResidual() < acceptRes);
+            // Best-effort acceptance must NOT swallow the null-mode false
+            // convergence: a tiny relative residual on an x~0 solution still
+            // passes the residual test, but that x is the null vector, not a
+            // projection. Require both a usable residual AND a non-null x.
+            bool nullSol = hypreSolver.lastReturnedNullSolution();
+            bool usable  = (hypreSolver.getLastFinalResidual() < acceptRes) && !nullSol;
             converged = converged || usable;
             iters = converged ? hypreSolver.getLastIterations() : -2;
-            if (s.rank == 0 && hypreSolver.getLastFinalResidual() > s.tolerance * 10)
+            if (s.rank == 0 && (hypreSolver.getLastFinalResidual() > s.tolerance * 10 || nullSol))
             {
                 std::cout << "  [hypre-gmres] iters=" << hypreSolver.getLastIterations()
                           << " final_res=" << hypreSolver.getLastFinalResidual()
+                          << " |x|max=" << hypreSolver.getLastSolutionMax()
+                          << " nullSol=" << (nullSol ? 1 : 0)
                           << " accepted=" << (converged ? 1 : 0)
                           << " (tol=" << s.tolerance << ")\n";
             }
@@ -7730,11 +7831,17 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
                 cudaDeviceSynchronize();
             }
             cudaMemset(xVec.data(), 0, s.numTotalDofs * sizeof(RealType));
-            // DDT operator (D M^-1 D^T) is SPSD with constant null space; Hypre
-            // PCG rejects it (error 1). GMRES tolerates it. Hint passes through
-            // to solveOneComponent which selects HypreGMRESSolver wrapper.
+            // PSPG ON -> A = D M^-1 D^T + tau*L is SPD (symmetric pin removes the
+            // null mode) -> Hypre PCG+AMG, which EMPIRICALLY converges on our GPU
+            // (16 iters, flow develops) where GMRES+AMG no-ops to x=0 (a separate
+            // GMRES-wrapper GPU bug to fix). CG+AMG is also the textbook pressure-
+            // Poisson solver. The PCG wrapper now carries the same null + upper-x
+            // guards as GMRES, so a huge/near-null phi is rejected, not scattered.
+            // PSPG OFF -> SPSD -> PCG rejects (error 1) -> GMRES.
+            // (MARS_HYPRE_KRYLOV=pcg|gmres overrides for debugging.)
+            KrylovHint pressureKrylov = s.usePSPG ? KrylovHint::PCG : KrylovHint::GMRES;
             s.lastPressureIters = solveOneComponent<KeyType, RealType, ElementTag>(
-                s, b, xVec, s.d_phi, s.AddT, KrylovHint::GMRES);
+                s, b, xVec, s.d_phi, s.AddT, pressureKrylov);
             // DIAGNOSTIC: sample WHOLE vectors via D2H, compute max-abs on
             // host. Lets us see whether the solution actually propagated.
             // Active only when env MARS_DDT_DIAG_AFTER_HYPRE is set.

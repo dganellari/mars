@@ -1892,14 +1892,21 @@ __global__ void updatePressureKernel(RealType* p,
                                      const RealType* phi,
                                      const int* nodeToDof,
                                      const uint8_t* ownership,
-                                     size_t numNodes)
+                                     size_t numNodes,
+                                     bool nonIncremental = false)
 {
     size_t i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= numNodes) return;
     if (ownership[i] != 1) return;
     int dof = nodeToDof[i];
     if (dof < 0) return;
-    p[i] += phi[i];
+    // nonIncremental (MARS_TGV_NONINCREMENTAL=1, Fable fallback #3): p = phi
+    // instead of p += phi. Severs the pressure-accumulation edge entirely so
+    // the accumulated p never re-enters the predictor's grad(p) -> feedback
+    // loop gain is exactly 0. Cost: one formal order of pressure splitting
+    // accuracy (O(dt) vs O(dt^2)), acceptable for freely-decaying periodic TGV.
+    if (nonIncremental) p[i] = phi[i];
+    else                p[i] += phi[i];
 }
 
 // =============================================================================
@@ -7126,9 +7133,28 @@ void runPredictorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
         s.domain.reverseExchangeNodeHaloAdd(d_gxAcc);
         s.domain.reverseExchangeNodeHaloAdd(d_gyAcc);
         s.domain.reverseExchangeNodeHaloAdd(d_gzAcc);
-        maybePeriodicSum<KeyType, RealType, ElementTag>(s, d_gxAcc);
-        maybePeriodicSum<KeyType, RealType, ElementTag>(s, d_gyAcc);
-        maybePeriodicSum<KeyType, RealType, ElementTag>(s, d_gzAcc);
+        // MARS_PRED_PERSLOT_GRADP=1 (Fable diagnosis, workflow wdxg6s3ce):
+        // SKIP the maybePeriodicSum fold on the predictor's grad(p) so it uses
+        // the SAME per-slot seam reduction the corrector/operator use under H2
+        // (NS:8462-8471, fold off). Without this, predictor grad(p) is the FOLDED
+        // full merged-CV gradient while corrector subtracts the per-slot HALF ->
+        // the mismatch (G_fold - G_perslot)*p is LINEAR in accumulated p, giving
+        // the dt-independent geometric feedback gain ~1.17 (explains why all
+        // projection-side fixes never moved it). Matching the operators makes
+        // B = A so the accumulated seam bias telescopes out in one step.
+        // Gated to multi-rank periodic CG; pump (BCKind::Pump) never enters.
+        const char* predPerSlotEnv = std::getenv("MARS_PRED_PERSLOT_GRADP");
+        const bool predPerSlot =
+            (predPerSlotEnv && std::string(predPerSlotEnv) == "1")
+            && s.numRanks > 1
+            && s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Periodic
+            && s.solverKind == SolverKind::CG;
+        if (!predPerSlot)
+        {
+            maybePeriodicSum<KeyType, RealType, ElementTag>(s, d_gxAcc);
+            maybePeriodicSum<KeyType, RealType, ElementTag>(s, d_gyAcc);
+            maybePeriodicSum<KeyType, RealType, ElementTag>(s, d_gzAcc);
+        }
         normalizeGradientPerNodeKernel<RealType><<<nodeBlocks, s.blockSize>>>(
             d_gxAcc.data(), d_gyAcc.data(), d_gzAcc.data(),
             s.d_massNode.data(),
@@ -8996,10 +9022,18 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
 
     // Pressure update + ghost sync (next step's predictor needs ghost p^{n+1}).
     // Standard incremental Chorin: p^{n+1} = p^n + phi.
+    // MARS_TGV_NONINCREMENTAL=1 (Fable fallback #3): p = phi (non-incremental)
+    // on the multi-rank periodic CG route, severing the accumulation feedback.
+    static const char* nonIncEnv = std::getenv("MARS_TGV_NONINCREMENTAL");
+    const bool nonIncremental =
+        (nonIncEnv && std::string(nonIncEnv) == "1")
+        && s.numRanks > 1
+        && s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Periodic
+        && s.solverKind == SolverKind::CG;
     updatePressureKernel<RealType><<<nodeBlocks, s.blockSize>>>(
         s.d_p.data(), s.d_phi.data(),
         s.d_node_to_dof.data(), d_nodeOwnership.data(),
-        s.nodeCount);
+        s.nodeCount, nonIncremental);
     cudaDeviceSynchronize();
 
     // Periodic: re-anchor pressure gauge after each cumulative incremental

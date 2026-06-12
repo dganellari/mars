@@ -116,8 +116,8 @@ int main(int argc, char** argv)
     // CORRECT through-flow fix -- it uses the PRESCRIBED (balanced) inlet/outlet
     // opening flux, which cancels EXACTLY at step0, so it cannot blow up like the
     // earlier solved-field version. Pairs with the mass-conserving outlet + pumpDp=0.
-    // --no-opening-flux-source disables it for A/B. Dirichlet lift ON (a correctness
-    // fix); --no-dirichlet-lift disables for comparison.
+    // Opening-flux source is OFF by default; enable with --opening-flux-source.
+    // Dirichlet lift ON (a correctness fix); --no-dirichlet-lift disables for comparison.
     bool        openingFluxSource = false;
     bool        dirichletLift     = true;
     // FIX B -- pressure-drop drive. >0 activates FIX B: prescribe p=pumpDp on the
@@ -341,7 +341,7 @@ int main(int argc, char** argv)
     // exactly (sum=0 at step0), so the single-pin Neumann pressure solve is
     // compatible and through-flow develops. The source REQUIRES the mass-conserving
     // outlet (so outletU>0 and the outlet term is nonzero); see the guard below.
-    s.useOpeningFluxSource = openingFluxSource;   // FIX 1 (on by default; correct fix)
+    s.useOpeningFluxSource = openingFluxSource;   // FIX 1 (OFF by default; --opening-flux-source enables)
     s.useDirichletLift     = dirichletLift;       // FIX 2 (on by default)
     s.pumpDp               = RealType(pumpDp);    // FIX B: pressure-drop drive (>0 active)
     s.rhieChowTau = rhieTau;   // <=0 -> kernel falls back to dt/rho
@@ -672,7 +672,7 @@ int main(int argc, char** argv)
         // opening-flux source can add ( Uprescribed . areaVec ) at each inlet node.
         // Same owner-complete field used for the inward normals above; outlet area-vecs
         // are uploaded separately below. Gated on openingFluxSource (ON by default), so
-        // this fires by default; --no-opening-flux-source skips it.
+        // fires only when --opening-flux-source is passed (OFF by default).
         if (openingFluxSource && areaIn > 1e-30)
         {
             const size_t nNodes = amr.domain().getNodeCount();

@@ -259,6 +259,17 @@ public:
     // print output.
     int    getLastIterations()    const { return lastNumIters_; }
     double getLastFinalResidual() const { return lastFinalRes_; }
+    double getLastSolutionMax()   const { return lastSolutionMax_; }
+    bool   lastReturnedNullSolution() const { return nullSolutionReturned_; }
+
+    // Env-override helper (local copy; the GMRES header has its own).
+    static double getEnvDouble(const char* name, double defVal) {
+        const char* v = std::getenv(name);
+        if (!v || !*v) return defVal;
+        char* end = nullptr;
+        double parsed = std::strtod(v, &end);
+        return (end && end != v) ? parsed : defVal;
+    }
 
     // The helpers below are conceptually private — they take internal Hypre
     // state and aren't meant to be called from outside — but nvcc rejects
@@ -483,7 +494,44 @@ public:
                       << " iterations, final residual: " << final_res_norm << std::endl;
         }
 
-        return (final_res_norm < tolerance_);
+        // Same guards as the GMRES wrapper: a converged-but-null x (AMG no-op)
+        // or a converged-but-HUGE x (under-resolved near-singular solution) must
+        // both be reported NOT converged so the caller never scatters a bad phi.
+        {
+            double localXmax = (m > 0)
+                ? thrust::transform_reduce(
+                      thrust::device_pointer_cast(x.data()),
+                      thrust::device_pointer_cast(x.data() + m),
+                      [] __device__ (RealType v) -> double { return fabs((double)v); },
+                      0.0, thrust::maximum<double>())
+                : 0.0;
+            double localBmax = (m > 0)
+                ? thrust::transform_reduce(
+                      thrust::device_pointer_cast(b.data()),
+                      thrust::device_pointer_cast(b.data() + m),
+                      [] __device__ (RealType v) -> double { return fabs((double)v); },
+                      0.0, thrust::maximum<double>())
+                : 0.0;
+            double gXmax = 0.0, gBmax = 0.0;
+            MPI_Allreduce(&localXmax, &gXmax, 1, MPI_DOUBLE, MPI_MAX, comm_);
+            MPI_Allreduce(&localBmax, &gBmax, 1, MPI_DOUBLE, MPI_MAX, comm_);
+            lastSolutionMax_ = gXmax;
+            double nullRatio = getEnvDouble("MARS_HYPRE_NULLX_RATIO", 1e-12);
+            nullSolutionReturned_ = (gBmax > 0.0 && gXmax < nullRatio * gBmax);
+            if (nullSolutionReturned_ && rank == 0)
+                std::cout << "[HyprePCG] WARNING: converged but |x|inf=" << gXmax
+                          << " << |b|inf=" << gBmax << " (null-mode); NOT converged.\n";
+            double maxXRatio = getEnvDouble("MARS_HYPRE_MAXX_RATIO", 1e6);
+            if (gBmax > 0.0 && gXmax > maxXRatio * gBmax) {
+                nullSolutionReturned_ = true;
+                if (rank == 0)
+                    std::cout << "[HyprePCG] WARNING: |x|inf=" << gXmax << " >> |b|inf="
+                              << gBmax << " (ratio>" << maxXRatio
+                              << "); under-resolved/null-contaminated; NOT converged.\n";
+            }
+        }
+
+        return (final_res_norm < tolerance_) && !nullSolutionReturned_;
     }
 
     // Build A_hypre_ entirely on the device:
@@ -714,6 +762,8 @@ private:
     // Per-solve diagnostics (filled by solveImpl after Hypre returns).
     int    lastNumIters_ = 0;
     double lastFinalRes_ = 0.0;
+    double lastSolutionMax_ = 0.0;
+    bool   nullSolutionReturned_ = false;
 
     HYPRE_Solver solver_;
     HYPRE_Solver precond_;
