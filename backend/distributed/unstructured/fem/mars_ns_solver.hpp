@@ -7126,9 +7126,28 @@ void runPredictorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
         s.domain.reverseExchangeNodeHaloAdd(d_gxAcc);
         s.domain.reverseExchangeNodeHaloAdd(d_gyAcc);
         s.domain.reverseExchangeNodeHaloAdd(d_gzAcc);
-        maybePeriodicSum<KeyType, RealType, ElementTag>(s, d_gxAcc);
-        maybePeriodicSum<KeyType, RealType, ElementTag>(s, d_gyAcc);
-        maybePeriodicSum<KeyType, RealType, ElementTag>(s, d_gzAcc);
+        // MARS_PRED_PERSLOT_GRADP=1 (Fable diagnosis, workflow wdxg6s3ce):
+        // SKIP the maybePeriodicSum fold on the predictor's grad(p) so it uses
+        // the SAME per-slot seam reduction the corrector/operator use under H2
+        // (NS:8462-8471, fold off). Without this, predictor grad(p) is the FOLDED
+        // full merged-CV gradient while corrector subtracts the per-slot HALF ->
+        // the mismatch (G_fold - G_perslot)*p is LINEAR in accumulated p, giving
+        // the dt-independent geometric feedback gain ~1.17 (explains why all
+        // projection-side fixes never moved it). Matching the operators makes
+        // B = A so the accumulated seam bias telescopes out in one step.
+        // Gated to multi-rank periodic CG; pump (BCKind::Pump) never enters.
+        const char* predPerSlotEnv = std::getenv("MARS_PRED_PERSLOT_GRADP");
+        const bool predPerSlot =
+            (predPerSlotEnv && std::string(predPerSlotEnv) == "1")
+            && s.numRanks > 1
+            && s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Periodic
+            && s.solverKind == SolverKind::CG;
+        if (!predPerSlot)
+        {
+            maybePeriodicSum<KeyType, RealType, ElementTag>(s, d_gxAcc);
+            maybePeriodicSum<KeyType, RealType, ElementTag>(s, d_gyAcc);
+            maybePeriodicSum<KeyType, RealType, ElementTag>(s, d_gzAcc);
+        }
         normalizeGradientPerNodeKernel<RealType><<<nodeBlocks, s.blockSize>>>(
             d_gxAcc.data(), d_gyAcc.data(), d_gzAcc.data(),
             s.d_massNode.data(),
