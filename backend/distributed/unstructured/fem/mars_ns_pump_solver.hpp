@@ -7903,15 +7903,23 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
                 cudaDeviceSynchronize();
             }
             cudaMemset(xVec.data(), 0, s.numTotalDofs * sizeof(RealType));
-            // GMRES + BoomerAMG is the pressure solver (matching the reference:
-            // (Flex)GMRES with AMG as preconditioner). GMRES tolerates the
-            // assembled DDT+tau*L operator's near-indefiniteness (tiny passage-
-            // cell diagonals) where PCG breaks down (pAp<0, HYPRE error 256).
-            // Both wrappers now carry the null + upper-bound-x guards so a
-            // near-null / under-resolved phi is rejected, not scattered.
-            // (MARS_HYPRE_KRYLOV=pcg overrides to the PCG path for comparison.)
+            // OPERATOR: use the GALERKIN LAPLACIAN K (s.Apre) by default, NOT the
+            // Gram form D M^-1 D^T (s.AddT). Verified root cause of the 1e6-phi
+            // blowup: the DDT diagonal is 0.25*|sum_g sigma_g A_g|^2 / V -- a square
+            // of a CANCELLING signed sum of area-vectors, so it goes near-zero on
+            // GOOD cells (not slivers; a real sliver gives a HUGE diagonal here),
+            // creating near-zero eigenvalues -> A^-1 amplifies ~1e6. The Galerkin
+            // K_ij = integral grad(N_i).grad(N_j) has diagonal ~h (sum of squares,
+            // no cancellation) -> well-conditioned, AMG-friendly, no near-zero
+            // eigenvalue. This is what the reference assembles; switching to it is
+            // the structural fix. K is SPD so PCG is also valid here.
+            // MARS_HYPRE_USE_DDT=1 falls back to the DDT operator for comparison.
+            bool useDDTop = (std::getenv("MARS_HYPRE_USE_DDT") != nullptr);
+            auto& pressureMat = useDDTop ? s.AddT : s.Apre;
+            // K is SPD -> PCG works; DDT is indefinite -> GMRES. (Override: KRYLOV.)
+            KrylovHint pk = useDDTop ? KrylovHint::GMRES : KrylovHint::PCG;
             s.lastPressureIters = solveOneComponent<KeyType, RealType, ElementTag>(
-                s, b, xVec, s.d_phi, s.AddT, KrylovHint::GMRES);
+                s, b, xVec, s.d_phi, pressureMat, pk);
             // DIAGNOSTIC: sample WHOLE vectors via D2H, compute max-abs on
             // host. Lets us see whether the solution actually propagated.
             // Active only when env MARS_DDT_DIAG_AFTER_HYPRE is set.
