@@ -7831,15 +7831,17 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
                 cudaDeviceSynchronize();
             }
             cudaMemset(xVec.data(), 0, s.numTotalDofs * sizeof(RealType));
-            // Use FlexGMRES for the pressure solve: it carries the null-mode +
-            // upper-bound-x guards (the PCG wrapper does NOT), which are what keep
-            // a near-singular / under-resolved huge phi from being scattered and
-            // blowing up the corrector. PCG+AMG is in principle the textbook SPD
-            // pressure solver, but routing --pspg to PCG LOST those guards and a
-            // converged-but-huge phi (1e123) blew the run up. Keep GMRES until the
-            // guards are ported to the PCG wrapper. (MARS_HYPRE_KRYLOV overrides.)
+            // PSPG ON -> A = D M^-1 D^T + tau*L is SPD (symmetric pin removes the
+            // null mode) -> Hypre PCG+AMG, which EMPIRICALLY converges on our GPU
+            // (16 iters, flow develops) where GMRES+AMG no-ops to x=0 (a separate
+            // GMRES-wrapper GPU bug to fix). CG+AMG is also the textbook pressure-
+            // Poisson solver. The PCG wrapper now carries the same null + upper-x
+            // guards as GMRES, so a huge/near-null phi is rejected, not scattered.
+            // PSPG OFF -> SPSD -> PCG rejects (error 1) -> GMRES.
+            // (MARS_HYPRE_KRYLOV=pcg|gmres overrides for debugging.)
+            KrylovHint pressureKrylov = s.usePSPG ? KrylovHint::PCG : KrylovHint::GMRES;
             s.lastPressureIters = solveOneComponent<KeyType, RealType, ElementTag>(
-                s, b, xVec, s.d_phi, s.AddT, KrylovHint::GMRES);
+                s, b, xVec, s.d_phi, s.AddT, pressureKrylov);
             // DIAGNOSTIC: sample WHOLE vectors via D2H, compute max-abs on
             // host. Lets us see whether the solution actually propagated.
             // Active only when env MARS_DDT_DIAG_AFTER_HYPRE is set.
