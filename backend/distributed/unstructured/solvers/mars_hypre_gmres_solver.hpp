@@ -286,11 +286,15 @@ public:
             // rebuild.
             //   CoarsenType=8  = PMIS (mandatory on GPU; cheaper than CLJP)
             //   InterpType=6   = ext+i (long-range, works with PMIS)
-            //   RelaxType=8    = l1-scaled hybrid SSOR (strong + GPU-safe +
-            //                   symmetric). FlexGMRES does NOT need a symmetric
-            //                   preconditioner, so this strong smoother is the
-            //                   right default here, vs the weak l1-Jacobi (18)
-            //                   the PCG wrapper must use. Override via MARS_AMG_RELAX
+            //   RelaxType=18   = l1-Jacobi. MANDATORY on GPU: the GS-family
+            //                   smoothers (hybrid GS=3/6, l1-hybrid-SSOR=8)
+            //                   become non-symmetric / NO-OP on GPU (the cuda
+            //                   Hypre build does not implement them as a real
+            //                   sweep), so AMG returns x=0 with a garbage ~1e-315
+            //                   residual on the first cycle. The working PCG
+            //                   wrapper uses 18 for exactly this reason (not just
+            //                   PCG symmetry). Earlier 8 here was the cause of the
+            //                   pump's AMG x=0. Override via MARS_AMG_RELAX.
             //   RelaxOrder=0   = lexicographic (mandatory on GPU)
             //   KeepTranspose=1= avoid SpMTV on GPU
             //   StrongThr=0.25 = 3D-Poisson value (0.5 is for anisotropic)
@@ -298,7 +302,7 @@ public:
             //   AggNumLevels=0 = no aggressive coarsening (keeps tet connectivity)
             int   amgCoarsen   = getEnvInt   ("MARS_AMG_COARSEN",   8);
             int   amgInterp    = getEnvInt   ("MARS_AMG_INTERP",    6);
-            int   amgRelax     = getEnvInt   ("MARS_AMG_RELAX",     8);
+            int   amgRelax     = getEnvInt   ("MARS_AMG_RELAX",    18);
             int   amgRelaxOrder= getEnvInt   ("MARS_AMG_RELAXORDER",0);
             double amgStrong   = getEnvDouble("MARS_AMG_STRONG",    0.25);
             int   amgPMax      = getEnvInt   ("MARS_AMG_PMAX",      4);
