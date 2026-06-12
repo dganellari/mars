@@ -82,6 +82,7 @@ int main(int argc, char** argv)
     bool        usePSPG    = false;    // implicit PSPG pressure stab (tau*L in the DDT operator); --pspg. The correct equal-order checkerboard fix.
     double      pspgTau    = -1;       // <=0 => auto h^2/24; --pspg-tau=V overrides
     bool        useHypre   = false;    // --solver=hypre: assembled DDT + Hypre FlexGMRES+BoomerAMG (else matrix-free Jacobi-CG)
+    bool        pressureK  = false;    // --pressure-k: well-conditioned Galerkin K + FEM-consistent weak div/grad projection (pair with --solver=hypre). Default DDT.
     std::string inletSS;   // inlet side-set name (required for --bc=pump; pass --inlet-ss=)
     std::string outletSS;  // outlet side-set name (required for --bc=pump; pass --outlet-ss=)
     // Inlet velocity follows each node's OWN local surface normal (area-weighted
@@ -144,6 +145,7 @@ int main(int argc, char** argv)
         else if (a == "--rhie-chow")                 useRhieChow = true;
         else if (a.rfind("--rhie-tau=", 0) == 0)     rhieTau   = std::stod(a.substr(11));
         else if (a == "--vms-stab")                  useVMSStab = true;  // Nalu VMS pressure stab (tet-only, experimental)
+        else if (a == "--pressure-k")                pressureK  = true;  // Galerkin K + FEM-consistent weak div/grad projection
         else if (a == "--pspg")                      usePSPG    = true;  // implicit PSPG (tau*L in DDT operator) -- the correct checkerboard fix
         else if (a.rfind("--pspg-tau=", 0) == 0)     pspgTau    = std::stod(a.substr(11));
         else if (a == "--solver=hypre")              useHypre   = true;  // assembled DDT + Hypre FlexGMRES+BoomerAMG (else matrix-free Jacobi-CG)
@@ -260,7 +262,8 @@ int main(int argc, char** argv)
                   << "VMS-stab    = " << (useVMSStab ? "ON (Nalu, tet-only, EXPERIMENTAL)" : "OFF") << "\n"
                   << "PSPG        = " << (usePSPG ? "ON (implicit tau*L in DDT operator)" : "OFF")
                   << (usePSPG && pspgTau > 0 ? "  (tau=" + std::to_string(pspgTau) + ")" : (usePSPG ? "  (tau=auto h^2/24)" : "")) << "\n"
-                  << "pressure    = " << (useHypre ? "assembled DDT + Hypre FlexGMRES+BoomerAMG (--solver=hypre)" : "matrix-free DDT + Jacobi-CG") << "\n"
+                  << "pressure    = " << (pressureK ? "Galerkin K + FEM-consistent weak div/grad projection" : "DDT (D M^-1 D^T) + D^T corrector")
+                  << (useHypre ? " | Hypre GMRES+BoomerAMG (--solver=hypre)" : " | matrix-free Jacobi-CG") << "\n"
                   << "MPI ranks   = " << numRanks << "\n"
                   << "========================================\n\n";
     }
@@ -311,13 +314,31 @@ int main(int argc, char** argv)
     s.uinfBase      = RealType(inletU);   // unramped full-strength inlet speed (ramp target)
     s.pumpZeroIC    = !pumpUniformIC;   // default: start from rest
     s.icPerturbMag  = RealType(icPerturb);
-    // DDT (matrix-free D M^-1 D^T): the corrector applies the literal D^T, so the
-    // projection cancels divergence algebraically -> div(u^{n+1}) at roundoff. The
-    // K-path solves phi against the Galerkin stiffness but corrects with the SCS
-    // gradient; on unstructured tets those operators are nearly orthogonal, so the
-    // K-path projection FAILS (div_max blows up). DDT forces useDivT=true.
-    s.pressureSolve = PressureSolveKind::DDT;
-    s.useLegacyGradient = false;
+    // Pressure operator + corrector. DEFAULT = DDT (matrix-free D M^-1 D^T): the
+    // corrector applies the literal D^T, so the projection cancels divergence
+    // algebraically -> div(u^{n+1}) at roundoff. Good on clean/structured meshes,
+    // but the assembled DDT is ILL-CONDITIONED on this mesh (its diagonal is a
+    // cancelling area-vector sum -> near-zero eigenvalues -> 1e6 phi for AMG).
+    //
+    // --pressure-k = Galerkin K + the FEM-consistent weak-form projection pair:
+    // weak divergence b_i = -integral(grad N_i . u**) feeds the RHS and the
+    // corrector uses its adjoint M^-1 [sum_e (V/4) grad phi]. D_fem M^-1 D_fem^T
+    // is spectrally equivalent to K (sum of squares, no cancellation), so the
+    // per-step projection is a contraction on ALL modes. The previous pairing
+    // (K + SCS Green-Gauss corrector) is FALSIFIED: the SCS pair's area-vector
+    // cancellation modes are invisible to K and grew 44x/step. Pair with
+    // --solver=hypre (the proven K solve, cg_p=30-60).
+    if (pressureK)
+    {
+        s.pressureSolve     = PressureSolveKind::K;
+        s.useLegacyGradient = false;
+        s.useFemProjection  = true;   // weak div + adjoint grad, the K-consistent pair
+    }
+    else
+    {
+        s.pressureSolve     = PressureSolveKind::DDT;
+        s.useLegacyGradient = false;
+    }
     // Through-flow has no wall dissipation to absorb advective noise (unlike the
     // closed cavity), so 1st-order upwind + BDF2 blows up after a few flow-
     // throughs. Skew-symmetric advection discretely conserves KE (no exponential
@@ -761,6 +782,113 @@ int main(int argc, char** argv)
                       << s.inletDirX << "," << s.inletDirY << "," << s.inletDirZ << ")  Q=" << (double(inletU)*areaIn) << "\n"
                       << "    outlet: area=" << areaOut << "  U_out=" << s.outletU
                       << "  outflow dir=(" << s.outletDirX << "," << s.outletDirY << "," << s.outletDirZ << ")\n";
+
+        // -------- Consistent P1 opening-flux weights (FEM projection) --------
+        // The weak-form divergence (--pressure-k) needs the boundary integral
+        // oint(N_i u.n dA) at the openings. The lumped per-node u_i.areaVec_i
+        // above matches it in TOTAL but not node-by-node: the true integral hands
+        // every face corner (A/12)(u_j+u_k).n from the face's OTHER nodes
+        // regardless of its own u_i. Under the FEM projection that fixed
+        // node-level mismatch is a spurious mass source each step -> geometric
+        // hot-spot blowup. Build the exact P1 weights instead:
+        //   w_i += (1/12)(2u_i + u_j + u_k) . A_f   per opening triangle f=(i,j,k)
+        // (from integral(N_i N_j dA) = (A/12)(1+delta_ij); A_f OUTWARD by the
+        // Exodus winding, the same orientation perNodeAreaVec uses). u_* is the
+        // velocity the BC ACTUALLY imposes per node at FULL strength: corners in
+        // the inlet node list carry uinfBase * (per-node inward normal when
+        // enabled, else global inletDir) -- inlet/outlet win over walls here (the
+        // set_difference above), so rim nodes are opening-tagged in this driver;
+        // a corner NOT in the opening's list keeps u=0 yet still receives weight
+        // from the face's other corners. Outlet corners carry outletU*outletDir
+        // (the same prescription the lumped source uses; the solver's oScale sets
+        // the magnitude). Same once-per-face owner gate + reverse-halo fold +
+        // publish as perNodeAreaVec, so the weights are owner-complete across
+        // ranks. Per step the solver scales the inlet weights by the live ramp
+        // (s.Uinf/s.uinfBase) and rescales the outlet to cancel the inlet exactly.
+        if (s.useOpeningFluxSource && s.useFemProjection
+            && areaIn > 1e-30 && areaOut > 1e-30)
+        {
+            const size_t nNodes = amr.domain().getNodeCount();
+            // Imposed full-strength velocity per local node, zero off the opening.
+            std::vector<double> uImpX(nNodes, 0.0), uImpY(nNodes, 0.0), uImpZ(nNodes, 0.0);
+            auto consistentFluxWeights = [&](const std::string& nm,
+                                             cstone::DeviceVector<RealType>& d_w)
+            {
+                std::vector<RealType> w(nNodes, RealType(0));
+                auto tit = ss.triangleCoordsByName.find(nm);
+                if (tit != ss.triangleCoordsByName.end())
+                {
+                    std::vector<int> triLocal =
+                        amr.domain().resolveSideSetNodesToLocalKeepMisses(tit->second);
+                    for (size_t f = 0; f + 2 < tit->second.size(); f += 3)
+                    {
+                        int la = triLocal[f];
+                        if (la < 0 || hostOwnFA[la] != 1) continue;   // count once: owner of first node
+                        const auto& A = tit->second[f];
+                        const auto& B = tit->second[f + 1];
+                        const auto& C = tit->second[f + 2];
+                        double e1x = B[0]-A[0], e1y = B[1]-A[1], e1z = B[2]-A[2];
+                        double e2x = C[0]-A[0], e2y = C[1]-A[1], e2z = C[2]-A[2];
+                        double ax = 0.5*(e1y*e2z - e1z*e2y);
+                        double ay = 0.5*(e1z*e2x - e1x*e2z);
+                        double az = 0.5*(e1x*e2y - e1y*e2x);
+                        // Outward flux of each corner's imposed velocity through A_f.
+                        // A corner not resolved on this rank reads u=0 (same drop as
+                        // perNodeAreaVec; the solver's oScale absorbs the residual).
+                        double uA[3];
+                        for (int j = 0; j < 3; ++j)
+                        {
+                            int lj = triLocal[f + j];
+                            uA[j] = (lj >= 0 && (size_t)lj < nNodes)
+                                  ? (uImpX[lj]*ax + uImpY[lj]*ay + uImpZ[lj]*az) : 0.0;
+                        }
+                        double tot = uA[0] + uA[1] + uA[2];
+                        for (int j = 0; j < 3; ++j)
+                        {
+                            int lj = triLocal[f + j];
+                            if (lj < 0 || (size_t)lj >= nNodes) continue;
+                            // (1/12)(2u_j + u_k + u_l).A_f == (uA[j] + tot)/12
+                            w[lj] += RealType((uA[j] + tot) / 12.0);
+                        }
+                    }
+                }
+                d_w.resize(nNodes);
+                cudaMemcpy(d_w.data(), w.data(), nNodes*sizeof(RealType), cudaMemcpyHostToDevice);
+                amr.domain().reverseExchangeNodeHaloAdd(d_w);
+                amr.domain().exchangeNodeHalo(d_w);
+            };
+
+            // Inlet: same per-node direction data the velocity BC tag uses.
+            const bool perNodeDir = !s.inletNodes.empty()
+                && s.inletDirXPerNode.size() == s.inletNodes.size()
+                && s.inletDirYPerNode.size() == s.inletNodes.size()
+                && s.inletDirZPerNode.size() == s.inletNodes.size();
+            for (size_t k = 0; k < s.inletNodes.size(); ++k)
+            {
+                int li = s.inletNodes[k];
+                if (li < 0 || (size_t)li >= nNodes) continue;
+                uImpX[li] = double(s.uinfBase) * double(perNodeDir ? s.inletDirXPerNode[k] : s.inletDirX);
+                uImpY[li] = double(s.uinfBase) * double(perNodeDir ? s.inletDirYPerNode[k] : s.inletDirY);
+                uImpZ[li] = double(s.uinfBase) * double(perNodeDir ? s.inletDirZPerNode[k] : s.inletDirZ);
+            }
+            consistentFluxWeights(inletSS, s.d_femFluxWin);
+
+            std::fill(uImpX.begin(), uImpX.end(), 0.0);
+            std::fill(uImpY.begin(), uImpY.end(), 0.0);
+            std::fill(uImpZ.begin(), uImpZ.end(), 0.0);
+            for (int li : s.outletNodes)
+            {
+                if (li < 0 || (size_t)li >= nNodes) continue;
+                uImpX[li] = double(s.outletU) * double(s.outletDirX);
+                uImpY[li] = double(s.outletU) * double(s.outletDirY);
+                uImpZ[li] = double(s.outletU) * double(s.outletDirZ);
+            }
+            consistentFluxWeights(outletSS, s.d_femFluxWout);
+
+            if (rank == 0)
+                std::cout << "    opening-flux: CONSISTENT P1 face quadrature "
+                             "(FEM projection; replaces the lumped area-vector source)\n";
+        }
 
         // MARS_BC_OWN_DEBUG=1: per-rank confirm of the resolve-vs-own relation
         // for the inlet/outlet side-sets. For each side-set, on THIS rank:

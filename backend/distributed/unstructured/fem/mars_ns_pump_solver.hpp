@@ -718,6 +718,11 @@ __device__ __forceinline__ void scsLR(int ip, int& L, int& R)
 // kernel sees scsLR<>, Tet4CVFEM, ElemTraits. Off by default (s.useVMSStab).
 #include "backend/distributed/unstructured/fem/mars_vms_pressure_stab.hpp"
 
+// Opt-in FEM-consistent weak-form projection pair (divergence + adjoint
+// gradient) for the K-path pressure solve. Same inclusion contract as the VMS
+// header above. Off by default (s.useFemProjection).
+#include "backend/distributed/unstructured/fem/mars_fem_projection.hpp"
+
 // Host-side connectivity pointer gather. Returns NodesPerElem device pointers
 // from the connectivity tuple so launch sites can dispatch on element type
 // without spelling std::get<7> for tet (which has only 4 columns).
@@ -2321,6 +2326,26 @@ __global__ void addOpeningFluxSourceKernel(RealType Upx,
     divAccNode[i] += Upx * aVecX[i] + Upy * aVecY[i] + Upz * aVecZ[i];
 }
 
+// Consistent-quadrature opening flux for the FEM-projection path. wIn/wOut hold
+// the exact P1 boundary integral oint(N_i u.n dA) per node at FULL strength
+// (built once by the driver from the opening triangles). scaleIn = live inlet
+// ramp (s.Uinf/s.uinfBase); scaleOut = the outlet rescale that makes the net
+// source exactly zero (same role as oScale in the lumped path).
+template<typename RealType>
+__global__ void addConsistentOpeningFluxKernel(RealType scaleIn,
+                                               RealType scaleOut,
+                                               const RealType* wIn,
+                                               const RealType* wOut,
+                                               const uint8_t* ownership,
+                                               RealType* divAccNode,
+                                               size_t numNodes)
+{
+    size_t i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= numNodes) return;
+    if (ownership[i] != 1) return;
+    divAccNode[i] += scaleIn * wIn[i] + scaleOut * wOut[i];
+}
+
 // DOF-indexed solver output -> per-node array. Reused for all velocity solves
 // and the pressure solve.
 template<typename RealType>
@@ -2683,6 +2708,19 @@ struct NSStepper
     // magnitude at a node is its share of the opening area; direction is outward.
     cstone::DeviceVector<RealType> d_inletAreaVecX, d_inletAreaVecY, d_inletAreaVecZ;
 
+    // Consistent P1 opening-flux weights (FEM-projection path only). Per node,
+    // w_i = sum over opening triangles f=(i,j,k) of (1/12)(2u_i+u_j+u_k).A_f,
+    // with A_f the OUTWARD face area-normal and u the FULL-STRENGTH velocity the
+    // BC actually imposes at each corner. This is the exact weak-form boundary
+    // integral oint(N_i u.n dA) for linear u -- node-by-node, unlike the lumped
+    // u_i.areaVec_i above, which agrees only in TOTAL. Under the weak-form
+    // divergence the node-level lumped/consistent mismatch is a fixed spurious
+    // mass source each step -> geometric hot-spot blowup. Built once by the
+    // driver (owner-complete via reverse-halo fold); used INSTEAD of the lumped
+    // kernel when useFemProjection is on. Inlet weights are rescaled per step by
+    // the live ramp (Uinf/uinfBase); outlet weights by oScale.
+    cstone::DeviceVector<RealType> d_femFluxWin, d_femFluxWout;
+
     // FIX 1 -- opening-flux source. The CVFEM divergence operator integrates
     // ONLY interior median-dual SCS faces (each scsLR pair links two NODES of the
     // SAME element, so sum_nodes(divAccNode)==0 identically). The exterior opening
@@ -2697,7 +2735,8 @@ struct NSStepper
     // positive divAccNode means net outflow. Inlet + outlet net to ~0 (mass in =
     // mass out), so the single-pin Neumann pressure system stays solvable. Off by
     // default; --opening-flux-source turns it on for the pump through-flow case so
-    // it can be A/B-ed safely.
+    // it can be A/B-ed safely. With useFemProjection the source switches from the
+    // lumped u_i.areaVec_i to the consistent P1 weights (d_femFluxWin/Wout above).
     bool useOpeningFluxSource = false;
 
     // FIX 2 -- Dirichlet lift on the velocity diffusion. The symmetric col-zero
@@ -2782,6 +2821,14 @@ struct NSStepper
     bool usePSPG          = false;
     RealType pspgTau      = -1;   // <=0 => auto (pspgTauAuto)
     RealType pspgTauAuto  = 0;    // beta*h^2, filled at setup
+
+    // FEM-consistent weak-form projection pair (tet-only, pairs with the K
+    // pressure solve): weak divergence -integral(grad N_i . u) feeds the RHS,
+    // corrector/predictor use the adjoint volume-weighted element gradient.
+    // Replaces the SCS pair, whose area-vector cancellation leaves near-zero
+    // modes that grow ~1.2x/step under the K projection (the pump blowup).
+    // Kernels in mars_fem_projection.hpp.
+    bool useFemProjection = false;
 
     // Ownership map every kernel uses. Always the domain's cached map -- we no
     // longer demote periodic slaves (see setupNSStepper). Kept as a single
@@ -6974,9 +7021,22 @@ void runPredictorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
         cstone::DeviceVector<RealType> d_gxAcc(s.nodeCount, RealType(0));
         cstone::DeviceVector<RealType> d_gyAcc(s.nodeCount, RealType(0));
         cstone::DeviceVector<RealType> d_gzAcc(s.nodeCount, RealType(0));
+        // FEM-consistent grad(p^n) when the weak-form projection is on, so the
+        // predictor body force uses the SAME gradient operator as the corrector
+        // (a mixed pair would re-open the splitting gap the projection closes).
+        const bool useFemGradP = s.useFemProjection && std::is_same_v<ElementTag, TetTag>;
         if (eBlocks > 0)
         {
-            if (s.useLegacyGradient)
+            if (useFemGradP)
+            {
+                computeFemGradientTetKernel<KeyType, RealType><<<eBlocks, s.blockSize>>>(
+                    c0, c1, c2, c3,
+                    s.d_p.data(),
+                    s.domain.getNodeX().data(), s.domain.getNodeY().data(), s.domain.getNodeZ().data(),
+                    d_gxAcc.data(), d_gyAcc.data(), d_gzAcc.data(),
+                    startElem, numLocal);
+            }
+            else if (s.useLegacyGradient)
             {
                 computeGradientPerNodeKernel<KeyType, RealType, ElementTag><<<eBlocks, s.blockSize>>>(
                     c0, c1, c2, c3, c4, c5, c6, c7,
@@ -7015,8 +7075,9 @@ void runPredictorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
         // corrector applies the same flip at line 4135. Without this flip the
         // pressure gradient is added with the wrong sign in the predictor,
         // which drives the divergence to grow by ~10x per step regardless of
-        // pressure stabilization or time integrator.
-        if (!s.useLegacyGradient)
+        // pressure stabilization or time integrator. The FEM gradient is
+        // already +grad p, so it skips the flip.
+        if (!s.useLegacyGradient && !useFemGradP)
         {
             negateThreeOwnedKernel<RealType><<<nodeBlocks, s.blockSize>>>(
                 s.d_gradPx.data(), s.d_gradPy.data(), s.d_gradPz.data(),
@@ -7486,7 +7547,27 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
         bool useRC = s.useRhieChow;
         // VMS path is opt-in AND tet-only (the kernel uses Tet4CVFEM::jacobian_and_dNdx).
         bool useVMS = s.useVMSStab && std::is_same_v<ElementTag, TetTag>;
-        if (useVMS)
+        // FEM-consistent weak divergence (tet-only, --pressure-k). Takes
+        // precedence over the VMS/RC SCS variants: the projection contracts
+        // only when divergence and corrector gradient are the SAME weak-form
+        // pair; mixing a stabilized SCS divergence with the FEM corrector
+        // would reintroduce the inconsistency this path removes.
+        bool useFemDiv = s.useFemProjection && std::is_same_v<ElementTag, TetTag>;
+        if (useFemDiv)
+        {
+            // Volume term b_i = -integral(grad N_i . u**) only. The opening
+            // surface integral is added below by the opening-flux source
+            // (--opening-flux-source), which on this path uses the CONSISTENT
+            // P1 face-quadrature weights (d_femFluxWin/Wout) instead of the
+            // lumped area-vectors; walls contribute 0 (u=0). Reverse-halo +
+            // periodic folding after this block is identical to the SCS path.
+            computeFemDivergenceTetKernel<KeyType, RealType><<<eBlocks, s.blockSize>>>(
+                c0, c1, c2, c3,
+                s.d_uStarStar.data(), s.d_vStarStar.data(), s.d_wStarStar.data(),
+                s.domain.getNodeX().data(), s.domain.getNodeY().data(), s.domain.getNodeZ().data(),
+                d_divAccNode.data(), startElem, numLocal);
+        }
+        else if (useVMS)
         {
             // Nalu-Wind VMS pressure stabilization: tau*(G(p) - dp/dx_ip).A, no A.dx.
             //
@@ -7639,22 +7720,54 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
         // areaIn/areaOut the driver used to set outletU). That residual, x coef=rho/dt,
         // makes the single-pin Neumann RHS incompatible -> blowup. Measure both
         // discrete fluxes and RESCALE the outlet so it EXACTLY cancels the inlet.
-        const RealType Qin_raw  = fluxSum(s.Uinf*s.inletDirX, s.Uinf*s.inletDirY, s.Uinf*s.inletDirZ,
-                                          s.d_inletAreaVecX.data(), s.d_inletAreaVecY.data(), s.d_inletAreaVecZ.data());
-        const RealType Qout_raw = fluxSum(s.outletU*s.outletDirX, s.outletU*s.outletDirY, s.outletU*s.outletDirZ,
-                                          s.d_outletAreaVecX.data(), s.d_outletAreaVecY.data(), s.d_outletAreaVecZ.data());
-        const RealType oScale = (std::fabs(Qout_raw) > RealType(0)) ? (-Qin_raw / Qout_raw) : RealType(0);
-        addOpeningFluxSourceKernel<RealType><<<nodeBlocks, s.blockSize>>>(
-            RealType(s.Uinf * s.inletDirX), RealType(s.Uinf * s.inletDirY), RealType(s.Uinf * s.inletDirZ),
-            s.d_inletAreaVecX.data(), s.d_inletAreaVecY.data(), s.d_inletAreaVecZ.data(),
-            d_nodeOwnership.data(), d_divAccNode.data(), s.nodeCount);
-        addOpeningFluxSourceKernel<RealType><<<nodeBlocks, s.blockSize>>>(
-            RealType(oScale * s.outletU * s.outletDirX), RealType(oScale * s.outletU * s.outletDirY), RealType(oScale * s.outletU * s.outletDirZ),
-            s.d_outletAreaVecX.data(), s.d_outletAreaVecY.data(), s.d_outletAreaVecZ.data(),
-            d_nodeOwnership.data(), d_divAccNode.data(), s.nodeCount);
+        //
+        // FEM-projection branch: the weak-form divergence needs the CONSISTENT
+        // boundary integral oint(N_i u.n dA) per node, not the lumped u_i.areaVec_i.
+        // The two agree in TOTAL but differ node-by-node (worst at the opening rim,
+        // where the face spreads (A/12)(u_j+u_k).n onto each corner instead of
+        // u_i.areaVec_i) -- under the FEM projection that fixed node-level mismatch
+        // is a spurious mass source each step -> the geometric hot-spot blowup.
+        // The driver pre-built the exact P1 weights at FULL strength; scale the
+        // inlet by the live ramp (Uinf/uinfBase -- the lumped path gets the same
+        // ramp by reading the live s.Uinf) and rescale the outlet by the same
+        // oScale recipe so the net source is zero to machine precision.
+        const bool femConsistent = s.useFemProjection
+            && std::is_same_v<ElementTag, TetTag>
+            && s.d_femFluxWin.size() == s.nodeCount
+            && s.d_femFluxWout.size() == s.nodeCount;
+        RealType Qin_raw, Qout_raw, oScale;
+        if (femConsistent)
+        {
+            const RealType ramp = (s.uinfBase > RealType(0)) ? (s.Uinf / s.uinfBase)
+                                                             : RealType(1);
+            Qin_raw  = ramp * sumOwned(s.d_femFluxWin.data());
+            Qout_raw = sumOwned(s.d_femFluxWout.data());
+            oScale   = (std::fabs(Qout_raw) > RealType(0)) ? (-Qin_raw / Qout_raw) : RealType(0);
+            addConsistentOpeningFluxKernel<RealType><<<nodeBlocks, s.blockSize>>>(
+                ramp, oScale,
+                s.d_femFluxWin.data(), s.d_femFluxWout.data(),
+                d_nodeOwnership.data(), d_divAccNode.data(), s.nodeCount);
+        }
+        else
+        {
+            Qin_raw  = fluxSum(s.Uinf*s.inletDirX, s.Uinf*s.inletDirY, s.Uinf*s.inletDirZ,
+                               s.d_inletAreaVecX.data(), s.d_inletAreaVecY.data(), s.d_inletAreaVecZ.data());
+            Qout_raw = fluxSum(s.outletU*s.outletDirX, s.outletU*s.outletDirY, s.outletU*s.outletDirZ,
+                               s.d_outletAreaVecX.data(), s.d_outletAreaVecY.data(), s.d_outletAreaVecZ.data());
+            oScale   = (std::fabs(Qout_raw) > RealType(0)) ? (-Qin_raw / Qout_raw) : RealType(0);
+            addOpeningFluxSourceKernel<RealType><<<nodeBlocks, s.blockSize>>>(
+                RealType(s.Uinf * s.inletDirX), RealType(s.Uinf * s.inletDirY), RealType(s.Uinf * s.inletDirZ),
+                s.d_inletAreaVecX.data(), s.d_inletAreaVecY.data(), s.d_inletAreaVecZ.data(),
+                d_nodeOwnership.data(), d_divAccNode.data(), s.nodeCount);
+            addOpeningFluxSourceKernel<RealType><<<nodeBlocks, s.blockSize>>>(
+                RealType(oScale * s.outletU * s.outletDirX), RealType(oScale * s.outletU * s.outletDirY), RealType(oScale * s.outletU * s.outletDirZ),
+                s.d_outletAreaVecX.data(), s.d_outletAreaVecY.data(), s.d_outletAreaVecZ.data(),
+                d_nodeOwnership.data(), d_divAccNode.data(), s.nodeCount);
+        }
         cudaDeviceSynchronize();
         if (ofsDbg) {
-            std::cout << "  [ofs-dbg2] Qin_raw=" << std::scientific << Qin_raw
+            std::cout << "  [ofs-dbg2] " << (femConsistent ? "[consistent-P1] " : "[lumped] ")
+                      << "Qin_raw=" << std::scientific << Qin_raw
                       << " Qout_raw=" << Qout_raw << " oScale=" << oScale
                       << " rescaled-outlet=" << (oScale*Qout_raw)
                       << " net=" << (Qin_raw + oScale*Qout_raw) << " (should be ~0)"
@@ -7779,7 +7892,16 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
         }
         // Fresh warm-start: phi is per-step correction, not cumulative.
         cudaMemset(xVec.data(), 0, s.numTotalDofs * sizeof(RealType));
-        s.lastPressureIters = solveOneComponent<KeyType, RealType, ElementTag>(s, b, xVec, s.d_phi, s.Apre);
+        // Use GMRES for the Hypre K solve. The default hint is PCG, but Hypre PCG
+        // false-converges in ~2 iters here (BoomerAMG-as-preconditioner is non-
+        // symmetric on GPU + the pin spike), returning a garbage phi (cg_p=2,
+        // |phi| exploding) that the corrector then amplifies. GMRES tolerates it
+        // and is the proven-converging path (cg_p=33-60). Only matters when
+        // solverKind==Hypre; the in-house CG path ignores the hint.
+        KrylovHint kHintK = (s.solverKind == SolverKind::Hypre)
+                              ? KrylovHint::GMRES : KrylovHint::PCG;
+        s.lastPressureIters = solveOneComponent<KeyType, RealType, ElementTag>(
+            s, b, xVec, s.d_phi, s.Apre, kHintK);
     }
     else  // DDT: (D M^{-1} D^T) phi = -(rho/dt) D u**
     {
@@ -8136,9 +8258,24 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
         // projection identity D u^{n+1} = 0 algebraically exact. K mode keeps
         // the legacy SCS gradient unless --experimental-divT overrides.
         const bool useDivT = (s.pressureSolve == PressureSolveKind::DDT) || !s.useLegacyGradient;
+        // FEM-consistent corrector gradient (tet-only, --pressure-k): the
+        // adjoint of the weak divergence runPressureSolveStep fed to K. Must
+        // override both SCS variants -- the pair contracts only together.
+        const bool useFemGrad = s.useFemProjection && std::is_same_v<ElementTag, TetTag>;
         if (eBlocks > 0)
         {
-            if (!useDivT)
+            if (useFemGrad)
+            {
+                // phi ghosts are current (exchangeNodeHalo at the end of
+                // runPressureSolveStep), so ghost-node reads are valid.
+                computeFemGradientTetKernel<KeyType, RealType><<<eBlocks, s.blockSize>>>(
+                    c0, c1, c2, c3,
+                    s.d_phi.data(),
+                    s.domain.getNodeX().data(), s.domain.getNodeY().data(), s.domain.getNodeZ().data(),
+                    d_gxAcc.data(), d_gyAcc.data(), d_gzAcc.data(),
+                    startElem, numLocal);
+            }
+            else if (!useDivT)
             {
                 computeGradientPerNodeKernel<KeyType, RealType, ElementTag><<<eBlocks, s.blockSize>>>(
                     c0, c1, c2, c3, c4, c5, c6, c7,
@@ -8174,8 +8311,9 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
         // applyDivTransposePerNodeKernel integrates to -V*grad (validator-
         // confirmed by mars_amr_ddt.cu --test=sign), so M^{-1} D^T phi = -grad.
         // The corrector kernel expects gradPhiq = +grad. Flip sign in place.
-        // The SCS-gradient path produces +grad already, so no flip needed there.
-        if (useDivT)
+        // The SCS-gradient and FEM-gradient paths produce +grad already, so no
+        // flip there (the FEM accumulator is +(V/4)*grad per element).
+        if (useDivT && !useFemGrad)
         {
             negateThreeOwnedKernel<RealType><<<nodeBlocks, s.blockSize>>>(
                 s.d_gradPhix.data(), s.d_gradPhiy.data(), s.d_gradPhiz.data(),
