@@ -82,7 +82,7 @@ int main(int argc, char** argv)
     bool        usePSPG    = false;    // implicit PSPG pressure stab (tau*L in the DDT operator); --pspg. The correct equal-order checkerboard fix.
     double      pspgTau    = -1;       // <=0 => auto h^2/24; --pspg-tau=V overrides
     bool        useHypre   = false;    // --solver=hypre: assembled DDT + Hypre FlexGMRES+BoomerAMG (else matrix-free Jacobi-CG)
-    bool        pressureK  = false;    // --pressure-k: solve the well-conditioned Galerkin K + conjugate SCS-gradient corrector (the reference collocated setup; pair with --vms-stab + --solver=hypre). Default DDT.
+    bool        pressureK  = false;    // --pressure-k: well-conditioned Galerkin K + FEM-consistent weak div/grad projection (pair with --solver=hypre). Default DDT.
     std::string inletSS;   // inlet side-set name (required for --bc=pump; pass --inlet-ss=)
     std::string outletSS;  // outlet side-set name (required for --bc=pump; pass --outlet-ss=)
     // Inlet velocity follows each node's OWN local surface normal (area-weighted
@@ -145,7 +145,7 @@ int main(int argc, char** argv)
         else if (a == "--rhie-chow")                 useRhieChow = true;
         else if (a.rfind("--rhie-tau=", 0) == 0)     rhieTau   = std::stod(a.substr(11));
         else if (a == "--vms-stab")                  useVMSStab = true;  // Nalu VMS pressure stab (tet-only, experimental)
-        else if (a == "--pressure-k")                pressureK  = true;  // Galerkin K + conjugate SCS-gradient corrector (reference setup; pair with --vms-stab)
+        else if (a == "--pressure-k")                pressureK  = true;  // Galerkin K + FEM-consistent weak div/grad projection
         else if (a == "--pspg")                      usePSPG    = true;  // implicit PSPG (tau*L in DDT operator) -- the correct checkerboard fix
         else if (a.rfind("--pspg-tau=", 0) == 0)     pspgTau    = std::stod(a.substr(11));
         else if (a == "--solver=hypre")              useHypre   = true;  // assembled DDT + Hypre FlexGMRES+BoomerAMG (else matrix-free Jacobi-CG)
@@ -262,7 +262,7 @@ int main(int argc, char** argv)
                   << "VMS-stab    = " << (useVMSStab ? "ON (Nalu, tet-only, EXPERIMENTAL)" : "OFF") << "\n"
                   << "PSPG        = " << (usePSPG ? "ON (implicit tau*L in DDT operator)" : "OFF")
                   << (usePSPG && pspgTau > 0 ? "  (tau=" + std::to_string(pspgTau) + ")" : (usePSPG ? "  (tau=auto h^2/24)" : "")) << "\n"
-                  << "pressure    = " << (pressureK ? "Galerkin K + conjugate SCS-gradient corrector" : "DDT (D M^-1 D^T) + D^T corrector")
+                  << "pressure    = " << (pressureK ? "Galerkin K + FEM-consistent weak div/grad projection" : "DDT (D M^-1 D^T) + D^T corrector")
                   << (useHypre ? " | Hypre GMRES+BoomerAMG (--solver=hypre)" : " | matrix-free Jacobi-CG") << "\n"
                   << "MPI ranks   = " << numRanks << "\n"
                   << "========================================\n\n";
@@ -320,18 +320,19 @@ int main(int argc, char** argv)
     // but the assembled DDT is ILL-CONDITIONED on this mesh (its diagonal is a
     // cancelling area-vector sum -> near-zero eigenvalues -> 1e6 phi for AMG).
     //
-    // --pressure-k = the REFERENCE collocated setup: solve the well-conditioned
-    // Galerkin stiffness K (AMG-able, physical phi) AND correct with the CONJUGATE
-    // SCS Green-Gauss gradient (useLegacyGradient=true -> useDivT=false), the
-    // pairing that makes the K projection consistent (the old "nearly orthogonal"
-    // failure was K-solve corrected with D^T, the WRONG gradient). Pair with
-    // --vms-stab (divergence-side checkerboard stabilization, keeps K clean) and
-    // --solver=hypre. This is the trifecta: well-conditioned + stabilized +
-    // projection-consistent.
+    // --pressure-k = Galerkin K + the FEM-consistent weak-form projection pair:
+    // weak divergence b_i = -integral(grad N_i . u**) feeds the RHS and the
+    // corrector uses its adjoint M^-1 [sum_e (V/4) grad phi]. D_fem M^-1 D_fem^T
+    // is spectrally equivalent to K (sum of squares, no cancellation), so the
+    // per-step projection is a contraction on ALL modes. The previous pairing
+    // (K + SCS Green-Gauss corrector) is FALSIFIED: the SCS pair's area-vector
+    // cancellation modes are invisible to K and grew 44x/step. Pair with
+    // --solver=hypre (the proven K solve, cg_p=30-60).
     if (pressureK)
     {
         s.pressureSolve     = PressureSolveKind::K;
-        s.useLegacyGradient = true;   // corrector = SCS Green-Gauss grad, conjugate to K
+        s.useLegacyGradient = false;
+        s.useFemProjection  = true;   // weak div + adjoint grad, the K-consistent pair
     }
     else
     {

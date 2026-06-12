@@ -718,6 +718,11 @@ __device__ __forceinline__ void scsLR(int ip, int& L, int& R)
 // kernel sees scsLR<>, Tet4CVFEM, ElemTraits. Off by default (s.useVMSStab).
 #include "backend/distributed/unstructured/fem/mars_vms_pressure_stab.hpp"
 
+// Opt-in FEM-consistent weak-form projection pair (divergence + adjoint
+// gradient) for the K-path pressure solve. Same inclusion contract as the VMS
+// header above. Off by default (s.useFemProjection).
+#include "backend/distributed/unstructured/fem/mars_fem_projection.hpp"
+
 // Host-side connectivity pointer gather. Returns NodesPerElem device pointers
 // from the connectivity tuple so launch sites can dispatch on element type
 // without spelling std::get<7> for tet (which has only 4 columns).
@@ -2782,6 +2787,14 @@ struct NSStepper
     bool usePSPG          = false;
     RealType pspgTau      = -1;   // <=0 => auto (pspgTauAuto)
     RealType pspgTauAuto  = 0;    // beta*h^2, filled at setup
+
+    // FEM-consistent weak-form projection pair (tet-only, pairs with the K
+    // pressure solve): weak divergence -integral(grad N_i . u) feeds the RHS,
+    // corrector/predictor use the adjoint volume-weighted element gradient.
+    // Replaces the SCS pair, whose area-vector cancellation leaves near-zero
+    // modes that grow ~1.2x/step under the K projection (the pump blowup).
+    // Kernels in mars_fem_projection.hpp.
+    bool useFemProjection = false;
 
     // Ownership map every kernel uses. Always the domain's cached map -- we no
     // longer demote periodic slaves (see setupNSStepper). Kept as a single
@@ -6974,9 +6987,22 @@ void runPredictorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
         cstone::DeviceVector<RealType> d_gxAcc(s.nodeCount, RealType(0));
         cstone::DeviceVector<RealType> d_gyAcc(s.nodeCount, RealType(0));
         cstone::DeviceVector<RealType> d_gzAcc(s.nodeCount, RealType(0));
+        // FEM-consistent grad(p^n) when the weak-form projection is on, so the
+        // predictor body force uses the SAME gradient operator as the corrector
+        // (a mixed pair would re-open the splitting gap the projection closes).
+        const bool useFemGradP = s.useFemProjection && std::is_same_v<ElementTag, TetTag>;
         if (eBlocks > 0)
         {
-            if (s.useLegacyGradient)
+            if (useFemGradP)
+            {
+                computeFemGradientTetKernel<KeyType, RealType><<<eBlocks, s.blockSize>>>(
+                    c0, c1, c2, c3,
+                    s.d_p.data(),
+                    s.domain.getNodeX().data(), s.domain.getNodeY().data(), s.domain.getNodeZ().data(),
+                    d_gxAcc.data(), d_gyAcc.data(), d_gzAcc.data(),
+                    startElem, numLocal);
+            }
+            else if (s.useLegacyGradient)
             {
                 computeGradientPerNodeKernel<KeyType, RealType, ElementTag><<<eBlocks, s.blockSize>>>(
                     c0, c1, c2, c3, c4, c5, c6, c7,
@@ -7015,8 +7041,9 @@ void runPredictorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
         // corrector applies the same flip at line 4135. Without this flip the
         // pressure gradient is added with the wrong sign in the predictor,
         // which drives the divergence to grow by ~10x per step regardless of
-        // pressure stabilization or time integrator.
-        if (!s.useLegacyGradient)
+        // pressure stabilization or time integrator. The FEM gradient is
+        // already +grad p, so it skips the flip.
+        if (!s.useLegacyGradient && !useFemGradP)
         {
             negateThreeOwnedKernel<RealType><<<nodeBlocks, s.blockSize>>>(
                 s.d_gradPx.data(), s.d_gradPy.data(), s.d_gradPz.data(),
@@ -7486,7 +7513,26 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
         bool useRC = s.useRhieChow;
         // VMS path is opt-in AND tet-only (the kernel uses Tet4CVFEM::jacobian_and_dNdx).
         bool useVMS = s.useVMSStab && std::is_same_v<ElementTag, TetTag>;
-        if (useVMS)
+        // FEM-consistent weak divergence (tet-only, --pressure-k). Takes
+        // precedence over the VMS/RC SCS variants: the projection contracts
+        // only when divergence and corrector gradient are the SAME weak-form
+        // pair; mixing a stabilized SCS divergence with the FEM corrector
+        // would reintroduce the inconsistency this path removes.
+        bool useFemDiv = s.useFemProjection && std::is_same_v<ElementTag, TetTag>;
+        if (useFemDiv)
+        {
+            // Volume term b_i = -integral(grad N_i . u**) only. The opening
+            // surface integral is added below by the existing opening-flux
+            // source (--opening-flux-source); walls contribute 0 (u=0).
+            // Reverse-halo + periodic folding after this block is identical
+            // to the SCS path.
+            computeFemDivergenceTetKernel<KeyType, RealType><<<eBlocks, s.blockSize>>>(
+                c0, c1, c2, c3,
+                s.d_uStarStar.data(), s.d_vStarStar.data(), s.d_wStarStar.data(),
+                s.domain.getNodeX().data(), s.domain.getNodeY().data(), s.domain.getNodeZ().data(),
+                d_divAccNode.data(), startElem, numLocal);
+        }
+        else if (useVMS)
         {
             // Nalu-Wind VMS pressure stabilization: tau*(G(p) - dp/dx_ip).A, no A.dx.
             //
@@ -8145,9 +8191,24 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
         // projection identity D u^{n+1} = 0 algebraically exact. K mode keeps
         // the legacy SCS gradient unless --experimental-divT overrides.
         const bool useDivT = (s.pressureSolve == PressureSolveKind::DDT) || !s.useLegacyGradient;
+        // FEM-consistent corrector gradient (tet-only, --pressure-k): the
+        // adjoint of the weak divergence runPressureSolveStep fed to K. Must
+        // override both SCS variants -- the pair contracts only together.
+        const bool useFemGrad = s.useFemProjection && std::is_same_v<ElementTag, TetTag>;
         if (eBlocks > 0)
         {
-            if (!useDivT)
+            if (useFemGrad)
+            {
+                // phi ghosts are current (exchangeNodeHalo at the end of
+                // runPressureSolveStep), so ghost-node reads are valid.
+                computeFemGradientTetKernel<KeyType, RealType><<<eBlocks, s.blockSize>>>(
+                    c0, c1, c2, c3,
+                    s.d_phi.data(),
+                    s.domain.getNodeX().data(), s.domain.getNodeY().data(), s.domain.getNodeZ().data(),
+                    d_gxAcc.data(), d_gyAcc.data(), d_gzAcc.data(),
+                    startElem, numLocal);
+            }
+            else if (!useDivT)
             {
                 computeGradientPerNodeKernel<KeyType, RealType, ElementTag><<<eBlocks, s.blockSize>>>(
                     c0, c1, c2, c3, c4, c5, c6, c7,
@@ -8183,8 +8244,9 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
         // applyDivTransposePerNodeKernel integrates to -V*grad (validator-
         // confirmed by mars_amr_ddt.cu --test=sign), so M^{-1} D^T phi = -grad.
         // The corrector kernel expects gradPhiq = +grad. Flip sign in place.
-        // The SCS-gradient path produces +grad already, so no flip needed there.
-        if (useDivT)
+        // The SCS-gradient and FEM-gradient paths produce +grad already, so no
+        // flip there (the FEM accumulator is +(V/4)*grad per element).
+        if (useDivT && !useFemGrad)
         {
             negateThreeOwnedKernel<RealType><<<nodeBlocks, s.blockSize>>>(
                 s.d_gradPhix.data(), s.d_gradPhiy.data(), s.d_gradPhiz.data(),
