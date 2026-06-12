@@ -7356,12 +7356,26 @@ void runPredictorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
             cudaDeviceSynchronize();
         }
         s.domain.reverseExchangeNodeHaloAdd(advN);
-        maybePeriodicSum<KeyType, RealType, ElementTag>(s, advN);
-        // advN[master] is now the full-control-volume advective flux (both half-CVs
-        // summed via the reverse-halo + periodic fold). Under owner-migration the
-        // predictor reads advN ONLY at owned master DOFs (dof<numOwnedDofs); the
-        // cross-rank slave is a ghost it skips, so no master->slave advN broadcast
-        // is needed -- that block was emulation-era scaffolding writing unread slots.
+        // MARS_PRED_PERSLOT_ADV=1: SKIP the maybePeriodicSum fold on advN so the
+        // predictor's advection uses the SAME per-slot seam reduction as its
+        // grad(p) (when MARS_PRED_PERSLOT_GRADP is on). With grad(p) per-slot
+        // (primary-loop fix) but advN still folded, the predictor mixes a folded
+        // advection with a per-slot gradient -> a residual seam inconsistency
+        // that the skew advection amplifies (the secondary loop; --skew=0 bounds
+        // it, --skew=1 doesn't). Making advN per-slot too makes the whole
+        // predictor RHS seam-consistent. Gated to multi-rank periodic CG.
+        const char* predPerSlotAdvEnv = std::getenv("MARS_PRED_PERSLOT_ADV");
+        const bool predPerSlotAdv =
+            (predPerSlotAdvEnv && std::string(predPerSlotAdvEnv) == "1")
+            && s.numRanks > 1
+            && s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Periodic
+            && s.solverKind == SolverKind::CG;
+        if (!predPerSlotAdv)
+            maybePeriodicSum<KeyType, RealType, ElementTag>(s, advN);
+        // advN[master] is the full-control-volume advective flux (both half-CVs
+        // summed via the reverse-halo + periodic fold), unless per-slot mode.
+        // Under owner-migration the predictor reads advN ONLY at owned master
+        // DOFs (dof<numOwnedDofs); the cross-rank slave is a ghost it skips.
 
         // DIAGNOSTIC: owned-sum of the (folded) advection term. This is a
         // rank-count-INVARIANT physical quantity if the advection scatter +
