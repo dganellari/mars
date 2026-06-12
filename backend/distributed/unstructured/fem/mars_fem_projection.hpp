@@ -18,11 +18,15 @@
 //   b_i = integral(N_i div u) = -integral(grad N_i . u) + surface(N_i u.n)
 // Interior part per element e (u linear, integral_e u = (V/4) sum_j u_j):
 //   b_i += -(V/4) * (dNdx_i . (u_0+u_1+u_2+u_3)),  V = det/6.
-// The surface term at the inlet/outlet openings is the EXISTING opening-flux
-// source (addOpeningFluxSourceKernel, --opening-flux-source); walls give 0
-// (u=0). Same positive-outflow divAccNode convention as the SCS scatter, so
-// buildPressureRhs (rhs = -coef*divAcc) and everything downstream are
-// untouched.
+// The surface term at the inlet/outlet openings is the opening-flux source
+// (--opening-flux-source). On THIS path it must be the CONSISTENT P1 face
+// quadrature oint(N_i u.n dA) = sum_f (A_f/12)(2u_i+u_j+u_k).n_f -- the lumped
+// per-node u_i.areaVec_i agrees in total but not node-by-node, and that fixed
+// mismatch is a spurious mass source that blows up geometrically. The solver
+// switches to the consistent weights (s.d_femFluxWin/Wout, built by the pump
+// driver) when useFemProjection is on. Walls give 0 (u=0). Same positive-
+// outflow divAccNode convention as the SCS scatter, so buildPressureRhs
+// (rhs = -coef*divAcc) and everything downstream are untouched.
 //
 // Adjoint gradient (corrector): gradPhi_j = [sum_e (V/4)(grad phi)_e] / M_j,
 // with M_j the existing lumped mass d_massNode (exactly sum_e V/4, the tet

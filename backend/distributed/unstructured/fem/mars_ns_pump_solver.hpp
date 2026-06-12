@@ -2326,6 +2326,26 @@ __global__ void addOpeningFluxSourceKernel(RealType Upx,
     divAccNode[i] += Upx * aVecX[i] + Upy * aVecY[i] + Upz * aVecZ[i];
 }
 
+// Consistent-quadrature opening flux for the FEM-projection path. wIn/wOut hold
+// the exact P1 boundary integral oint(N_i u.n dA) per node at FULL strength
+// (built once by the driver from the opening triangles). scaleIn = live inlet
+// ramp (s.Uinf/s.uinfBase); scaleOut = the outlet rescale that makes the net
+// source exactly zero (same role as oScale in the lumped path).
+template<typename RealType>
+__global__ void addConsistentOpeningFluxKernel(RealType scaleIn,
+                                               RealType scaleOut,
+                                               const RealType* wIn,
+                                               const RealType* wOut,
+                                               const uint8_t* ownership,
+                                               RealType* divAccNode,
+                                               size_t numNodes)
+{
+    size_t i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= numNodes) return;
+    if (ownership[i] != 1) return;
+    divAccNode[i] += scaleIn * wIn[i] + scaleOut * wOut[i];
+}
+
 // DOF-indexed solver output -> per-node array. Reused for all velocity solves
 // and the pressure solve.
 template<typename RealType>
@@ -2688,6 +2708,19 @@ struct NSStepper
     // magnitude at a node is its share of the opening area; direction is outward.
     cstone::DeviceVector<RealType> d_inletAreaVecX, d_inletAreaVecY, d_inletAreaVecZ;
 
+    // Consistent P1 opening-flux weights (FEM-projection path only). Per node,
+    // w_i = sum over opening triangles f=(i,j,k) of (1/12)(2u_i+u_j+u_k).A_f,
+    // with A_f the OUTWARD face area-normal and u the FULL-STRENGTH velocity the
+    // BC actually imposes at each corner. This is the exact weak-form boundary
+    // integral oint(N_i u.n dA) for linear u -- node-by-node, unlike the lumped
+    // u_i.areaVec_i above, which agrees only in TOTAL. Under the weak-form
+    // divergence the node-level lumped/consistent mismatch is a fixed spurious
+    // mass source each step -> geometric hot-spot blowup. Built once by the
+    // driver (owner-complete via reverse-halo fold); used INSTEAD of the lumped
+    // kernel when useFemProjection is on. Inlet weights are rescaled per step by
+    // the live ramp (Uinf/uinfBase); outlet weights by oScale.
+    cstone::DeviceVector<RealType> d_femFluxWin, d_femFluxWout;
+
     // FIX 1 -- opening-flux source. The CVFEM divergence operator integrates
     // ONLY interior median-dual SCS faces (each scsLR pair links two NODES of the
     // SAME element, so sum_nodes(divAccNode)==0 identically). The exterior opening
@@ -2702,7 +2735,8 @@ struct NSStepper
     // positive divAccNode means net outflow. Inlet + outlet net to ~0 (mass in =
     // mass out), so the single-pin Neumann pressure system stays solvable. Off by
     // default; --opening-flux-source turns it on for the pump through-flow case so
-    // it can be A/B-ed safely.
+    // it can be A/B-ed safely. With useFemProjection the source switches from the
+    // lumped u_i.areaVec_i to the consistent P1 weights (d_femFluxWin/Wout above).
     bool useOpeningFluxSource = false;
 
     // FIX 2 -- Dirichlet lift on the velocity diffusion. The symmetric col-zero
@@ -7522,10 +7556,11 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
         if (useFemDiv)
         {
             // Volume term b_i = -integral(grad N_i . u**) only. The opening
-            // surface integral is added below by the existing opening-flux
-            // source (--opening-flux-source); walls contribute 0 (u=0).
-            // Reverse-halo + periodic folding after this block is identical
-            // to the SCS path.
+            // surface integral is added below by the opening-flux source
+            // (--opening-flux-source), which on this path uses the CONSISTENT
+            // P1 face-quadrature weights (d_femFluxWin/Wout) instead of the
+            // lumped area-vectors; walls contribute 0 (u=0). Reverse-halo +
+            // periodic folding after this block is identical to the SCS path.
             computeFemDivergenceTetKernel<KeyType, RealType><<<eBlocks, s.blockSize>>>(
                 c0, c1, c2, c3,
                 s.d_uStarStar.data(), s.d_vStarStar.data(), s.d_wStarStar.data(),
@@ -7685,22 +7720,54 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
         // areaIn/areaOut the driver used to set outletU). That residual, x coef=rho/dt,
         // makes the single-pin Neumann RHS incompatible -> blowup. Measure both
         // discrete fluxes and RESCALE the outlet so it EXACTLY cancels the inlet.
-        const RealType Qin_raw  = fluxSum(s.Uinf*s.inletDirX, s.Uinf*s.inletDirY, s.Uinf*s.inletDirZ,
-                                          s.d_inletAreaVecX.data(), s.d_inletAreaVecY.data(), s.d_inletAreaVecZ.data());
-        const RealType Qout_raw = fluxSum(s.outletU*s.outletDirX, s.outletU*s.outletDirY, s.outletU*s.outletDirZ,
-                                          s.d_outletAreaVecX.data(), s.d_outletAreaVecY.data(), s.d_outletAreaVecZ.data());
-        const RealType oScale = (std::fabs(Qout_raw) > RealType(0)) ? (-Qin_raw / Qout_raw) : RealType(0);
-        addOpeningFluxSourceKernel<RealType><<<nodeBlocks, s.blockSize>>>(
-            RealType(s.Uinf * s.inletDirX), RealType(s.Uinf * s.inletDirY), RealType(s.Uinf * s.inletDirZ),
-            s.d_inletAreaVecX.data(), s.d_inletAreaVecY.data(), s.d_inletAreaVecZ.data(),
-            d_nodeOwnership.data(), d_divAccNode.data(), s.nodeCount);
-        addOpeningFluxSourceKernel<RealType><<<nodeBlocks, s.blockSize>>>(
-            RealType(oScale * s.outletU * s.outletDirX), RealType(oScale * s.outletU * s.outletDirY), RealType(oScale * s.outletU * s.outletDirZ),
-            s.d_outletAreaVecX.data(), s.d_outletAreaVecY.data(), s.d_outletAreaVecZ.data(),
-            d_nodeOwnership.data(), d_divAccNode.data(), s.nodeCount);
+        //
+        // FEM-projection branch: the weak-form divergence needs the CONSISTENT
+        // boundary integral oint(N_i u.n dA) per node, not the lumped u_i.areaVec_i.
+        // The two agree in TOTAL but differ node-by-node (worst at the opening rim,
+        // where the face spreads (A/12)(u_j+u_k).n onto each corner instead of
+        // u_i.areaVec_i) -- under the FEM projection that fixed node-level mismatch
+        // is a spurious mass source each step -> the geometric hot-spot blowup.
+        // The driver pre-built the exact P1 weights at FULL strength; scale the
+        // inlet by the live ramp (Uinf/uinfBase -- the lumped path gets the same
+        // ramp by reading the live s.Uinf) and rescale the outlet by the same
+        // oScale recipe so the net source is zero to machine precision.
+        const bool femConsistent = s.useFemProjection
+            && std::is_same_v<ElementTag, TetTag>
+            && s.d_femFluxWin.size() == s.nodeCount
+            && s.d_femFluxWout.size() == s.nodeCount;
+        RealType Qin_raw, Qout_raw, oScale;
+        if (femConsistent)
+        {
+            const RealType ramp = (s.uinfBase > RealType(0)) ? (s.Uinf / s.uinfBase)
+                                                             : RealType(1);
+            Qin_raw  = ramp * sumOwned(s.d_femFluxWin.data());
+            Qout_raw = sumOwned(s.d_femFluxWout.data());
+            oScale   = (std::fabs(Qout_raw) > RealType(0)) ? (-Qin_raw / Qout_raw) : RealType(0);
+            addConsistentOpeningFluxKernel<RealType><<<nodeBlocks, s.blockSize>>>(
+                ramp, oScale,
+                s.d_femFluxWin.data(), s.d_femFluxWout.data(),
+                d_nodeOwnership.data(), d_divAccNode.data(), s.nodeCount);
+        }
+        else
+        {
+            Qin_raw  = fluxSum(s.Uinf*s.inletDirX, s.Uinf*s.inletDirY, s.Uinf*s.inletDirZ,
+                               s.d_inletAreaVecX.data(), s.d_inletAreaVecY.data(), s.d_inletAreaVecZ.data());
+            Qout_raw = fluxSum(s.outletU*s.outletDirX, s.outletU*s.outletDirY, s.outletU*s.outletDirZ,
+                               s.d_outletAreaVecX.data(), s.d_outletAreaVecY.data(), s.d_outletAreaVecZ.data());
+            oScale   = (std::fabs(Qout_raw) > RealType(0)) ? (-Qin_raw / Qout_raw) : RealType(0);
+            addOpeningFluxSourceKernel<RealType><<<nodeBlocks, s.blockSize>>>(
+                RealType(s.Uinf * s.inletDirX), RealType(s.Uinf * s.inletDirY), RealType(s.Uinf * s.inletDirZ),
+                s.d_inletAreaVecX.data(), s.d_inletAreaVecY.data(), s.d_inletAreaVecZ.data(),
+                d_nodeOwnership.data(), d_divAccNode.data(), s.nodeCount);
+            addOpeningFluxSourceKernel<RealType><<<nodeBlocks, s.blockSize>>>(
+                RealType(oScale * s.outletU * s.outletDirX), RealType(oScale * s.outletU * s.outletDirY), RealType(oScale * s.outletU * s.outletDirZ),
+                s.d_outletAreaVecX.data(), s.d_outletAreaVecY.data(), s.d_outletAreaVecZ.data(),
+                d_nodeOwnership.data(), d_divAccNode.data(), s.nodeCount);
+        }
         cudaDeviceSynchronize();
         if (ofsDbg) {
-            std::cout << "  [ofs-dbg2] Qin_raw=" << std::scientific << Qin_raw
+            std::cout << "  [ofs-dbg2] " << (femConsistent ? "[consistent-P1] " : "[lumped] ")
+                      << "Qin_raw=" << std::scientific << Qin_raw
                       << " Qout_raw=" << Qout_raw << " oScale=" << oScale
                       << " rescaled-outlet=" << (oScale*Qout_raw)
                       << " net=" << (Qin_raw + oScale*Qout_raw) << " (should be ~0)"
