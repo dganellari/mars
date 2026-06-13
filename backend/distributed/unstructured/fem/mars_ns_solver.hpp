@@ -7372,6 +7372,56 @@ void runPredictorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
             && s.solverKind == SolverKind::CG;
         if (!predPerSlotAdv)
             maybePeriodicSum<KeyType, RealType, ElementTag>(s, advN);
+        // MARS_TGV_EMAC=1: energy-stable advection correction for the
+        // non-solenoidal periodic seam. The skew kernel leaves a per-face energy
+        // residual mdot*(qR^2-qL^2) (hand-derived); globally this is
+        // q_i^2 * div_i per node, which only vanishes when div u = 0. At the
+        // periodic seam the reduced projection leaves a residual per-slot
+        // divergence, so skew injects ~q*div*q KE each step (the advective
+        // secondary loop: --skew=0 bounds it, --skew=1 blows). EMAC-style fix:
+        // add + q_i * divFlux_i to advN[i], where divFlux_i = the UN-normalized
+        // discrete divergence of the advecting velocity at node i (same scatter
+        // the projection uses). This cancels the q*div coupling so the advection
+        // is energy-conserving even for non-solenoidal u (Charnyi et al. 2017).
+        // Does NOT touch u (result 7 forbids broadcast) or mass (result 8
+        // forbids mass change). Gated multi-rank periodic CG; pump never enters.
+        const char* emacEnv = std::getenv("MARS_TGV_EMAC");
+        const bool tgvEmac =
+            (emacEnv && std::string(emacEnv) == "1")
+            && s.numRanks > 1
+            && s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Periodic
+            && s.solverKind == SolverKind::CG;
+        if (tgvEmac && eBlocks > 0)
+        {
+            // UN-normalized div of the advecting velocity (u^n), same scatter +
+            // fold the projection RHS uses, so it matches the operator's view.
+            cstone::DeviceVector<RealType> d_divAdv(s.nodeCount, RealType(0));
+            computeDivergencePerNodeKernel<KeyType, RealType, ElementTag><<<eBlocks, s.blockSize>>>(
+                c0, c1, c2, c3, c4, c5, c6, c7,
+                s.d_u.data(), s.d_v.data(), s.d_w.data(),
+                s.d_areaVec_x.data(), s.d_areaVec_y.data(), s.d_areaVec_z.data(),
+                d_divAdv.data(), startElem, numLocal);
+            cudaDeviceSynchronize();
+            s.domain.reverseExchangeNodeHaloAdd(d_divAdv);
+            if (!predPerSlotAdv)
+                maybePeriodicSum<KeyType, RealType, ElementTag>(s, d_divAdv);
+            // advN[i] += q_i * divFlux_i  (qN is the convected component this
+            // call: u, v, or w). Sign from the energy identity: the residual is
+            // +q_i*div_i in the kernel's convention, so SUBTRACT it. Apply at
+            // owned nodes; ghosts unread by the predictor.
+            const RealType* qNp  = qN.data();
+            const RealType* divP = d_divAdv.data();
+            const uint8_t*  ownP = s.ownershipMap().data();
+            RealType*       aP   = advN.data();
+            thrust::for_each(thrust::device,
+                thrust::counting_iterator<size_t>(0),
+                thrust::counting_iterator<size_t>(s.nodeCount),
+                [qNp, divP, ownP, aP] __device__ (size_t i) {
+                    if (ownP[i] != 1) return;
+                    aP[i] -= qNp[i] * divP[i];
+                });
+            cudaDeviceSynchronize();
+        }
         // advN[master] is the full-control-volume advective flux (both half-CVs
         // summed via the reverse-halo + periodic fold), unless per-slot mode.
         // Under owner-migration the predictor reads advN ONLY at owned master
