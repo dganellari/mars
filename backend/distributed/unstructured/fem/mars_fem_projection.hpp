@@ -137,3 +137,133 @@ __global__ void computeFemGradientTetKernel(
         atomicAdd(&gzAcc[n[j]], quarterV * gz);
     }
 }
+
+// Node-driven assembly of the EXACT conjugate operator A_fem = D_fem M^-1 D_fem^T,
+// the assembled form of the weak div/grad projection pair above. The K-path
+// (--pressure-k) corrector applies M^-1 D_fem^T phi (computeFemGradientTetKernel
+// + normalize-by-massNode); for the projection D_fem u^{n+1} = 0 to hold exactly
+// the SOLVED operator must be D_fem M^-1 D_fem^T, NOT the Galerkin stiffness K
+// (K != D_fem M^-1 D_fem^T -- they differ by a per-node valence factor on
+// non-uniform meshes), so solving K leaves a residual divergence the corrector
+// cannot remove. This kernel assembles A_fem.
+//
+// D_fem entry (element e, node a): a_a^e = -(V_e/4) * dNdx_a^e (a 3-vector,
+//   independent of the velocity node it multiplies -- (D_fem u)_a = a_a^e . sum_j u_j).
+// A_fem = D_fem M^-1 D_fem^T, M = lumped mass diag (massNode = sum_e V_e/4):
+//   A_fem[a,b] = sum_i (1/M_i) * S_a^(i) . S_b^(i),
+//   S_p^(i) = sum_{e containing both i and p} a_p^e.
+// So at intermediate node i (the M^-1 node), gather the 1-ring of i, accumulate
+// per-partner S_p, then scatter the OUTER PRODUCT (1/M_i) S_a.S_b over all pairs
+// (a,b) in {i} U 1-ring(i). This is a pure sum of squares -> SPD, Laplacian-like,
+// no SCS area-vector cancellation (the verified DDT artifact); the diagonal
+// stays healthy (~ K/valence scale, NOT 1e-12).
+//
+// Sparsity REUSE: A_fem couples (a,b) iff both lie in some node i's 1-ring, the
+// same two-hop-through-shared-node pattern buildDDTSparsityTet emits (every other
+// tet corner is an SCS-edge neighbour of i), so the DDT tet sparsity is a correct
+// superset -- atomicAddSparseEntry finds every column this kernel writes.
+//
+// Halo fold: one thread per node i over ALL nodes (owned + ghost incident
+// elements via the node->element CSR). Writes gate on ownership[*]==1 + valid
+// owned DOF, exactly like assembleDDTPerNodeKernelTet, so ghost rows are dropped
+// and only owned rows are assembled (no separate reverse-halo needed -- the CSR
+// is owned-row only and every owning rank visits its own intermediate nodes).
+template<typename KeyType, typename RealType>
+__global__ void assembleFemGramPerNodeKernelTet(
+    const KeyType* c0, const KeyType* c1, const KeyType* c2, const KeyType* c3,
+    const RealType* nodeX, const RealType* nodeY, const RealType* nodeZ,
+    const KeyType* nodeToElemOffsets,
+    const KeyType* nodeToElemList,
+    const int* nodeToDof,
+    const uint8_t* ownership,
+    const RealType* lumpedMassNode,
+    const int* rowPtr,
+    const int* colInd,
+    int numOwnedDofs,
+    RealType* values,
+    size_t numNodes)
+{
+    size_t i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= numNodes) return;
+    if (ownership[i] != 1) return;
+    int dofI = nodeToDof[i];
+    if (dofI < 0 || dofI >= numOwnedDofs) return;
+
+    RealType mi = lumpedMassNode[i];
+    if (!(mi > RealType(0))) return;
+    RealType invMi = RealType(1) / mi;
+
+    constexpr int NPE = ElemTraits<TetTag>::NodesPerElem;   // 4
+    // Partner buffer: i itself (slot 0) + its distinct 1-ring neighbour DOFs.
+    // 48 distinct neighbours matches kMaxOthers in buildDDTSparsityTet, so the
+    // (cap+1) partners here can never reference a column the sparsity lacks.
+    constexpr int MAX_PARTNERS = 49;   // 1 (self) + 48
+    int      pDof[MAX_PARTNERS];
+    RealType pSx[MAX_PARTNERS], pSy[MAX_PARTNERS], pSz[MAX_PARTNERS];
+    int pCount = 1;
+    pDof[0] = dofI;
+    pSx[0] = pSy[0] = pSz[0] = RealType(0);
+
+    KeyType eStart = nodeToElemOffsets[i];
+    KeyType eEnd   = nodeToElemOffsets[i + 1];
+    for (KeyType ep = eStart; ep < eEnd; ++ep)
+    {
+        KeyType e = nodeToElemList[ep];
+        KeyType en[NPE] = {c0[e], c1[e], c2[e], c3[e]};
+        int iLocal = -1;
+        #pragma unroll
+        for (int k = 0; k < NPE; ++k) if (en[k] == (KeyType)i) iLocal = k;
+        if (iLocal < 0) continue;
+
+        RealType coords[NPE][3];
+        #pragma unroll
+        for (int k = 0; k < NPE; ++k) {
+            coords[k][0] = nodeX[en[k]];
+            coords[k][1] = nodeY[en[k]];
+            coords[k][2] = nodeZ[en[k]];
+        }
+        RealType det, dNdx[NPE][3];
+        Tet4CVFEM::jacobian_and_dNdx<RealType>(coords, det, dNdx);
+        RealType V = det / RealType(6);
+        if (!(V > RealType(0))) continue;
+        RealType nqV = -V * RealType(0.25);   // -(V/4)
+
+        // Accumulate S_p += a_p^e = -(V/4) dNdx_p for every node p of this element.
+        #pragma unroll
+        for (int k = 0; k < NPE; ++k)
+        {
+            int dofK = nodeToDof[en[k]];
+            if (dofK < 0) continue;
+            RealType ax = nqV * dNdx[k][0];
+            RealType ay = nqV * dNdx[k][1];
+            RealType az = nqV * dNdx[k][2];
+            int slot = -1;
+            for (int s = 0; s < pCount; ++s) if (pDof[s] == dofK) { slot = s; break; }
+            if (slot < 0)
+            {
+                if (pCount >= MAX_PARTNERS) continue;  // overflow guard (see DDT note)
+                slot = pCount++;
+                pDof[slot] = dofK;
+                pSx[slot] = pSy[slot] = pSz[slot] = RealType(0);
+            }
+            pSx[slot] += ax;
+            pSy[slot] += ay;
+            pSz[slot] += az;
+        }
+    }
+
+    // Scatter the outer product (1/M_i) S_a . S_b over all partner pairs (a,b).
+    // Row a is written only if a is an owned DOF (rowPtr indexes owned rows).
+    for (int a = 0; a < pCount; ++a)
+    {
+        int dofA = pDof[a];
+        if (dofA < 0 || dofA >= numOwnedDofs) continue;   // ghost partner = not an owned row
+        int rs = rowPtr[dofA], re = rowPtr[dofA + 1];
+        RealType sax = pSx[a], say = pSy[a], saz = pSz[a];
+        for (int b = 0; b < pCount; ++b)
+        {
+            RealType dot = sax * pSx[b] + say * pSy[b] + saz * pSz[b];
+            fem::atomicAddSparseEntry(values, colInd, rs, re, pDof[b], invMi * dot);
+        }
+    }
+}

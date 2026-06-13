@@ -2517,6 +2517,18 @@ struct NSStepper
     cstone::DeviceVector<int> d_diagPtrDDT;
     int nnzDDT = 0;
     cstone::DeviceVector<RealType> d_valuesDDT;
+    // Assembled EXACT conjugate operator A_fem = D_fem M^-1 D_fem^T for the
+    // --pressure-k FEM projection. Replaces the Galerkin K (Apre) on that path:
+    // the corrector applies M^-1 D_fem^T, so D_fem u^{n+1}=0 requires the solved
+    // operator to be D_fem M^-1 D_fem^T exactly (K is not equal to it). Reuses the
+    // DDT two-hop tet sparsity (a correct superset of the FEM Gram pattern); only
+    // built when useFemProjection. Pinned identically to Apre/AddT.
+    cstone::DeviceVector<int> d_rowPtrFemGram;
+    cstone::DeviceVector<int> d_colIndFemGram;
+    cstone::DeviceVector<int> d_diagPtrFemGram;
+    int nnzFemGram = 0;
+    cstone::DeviceVector<RealType> d_valuesFemGram;
+    RealType pinNativeDiagFemGram = RealType(0);
     // Cached diagonal of the BC-modified DDT operator (size numOwnedDofs),
     // used as the Jacobi preconditioner by solvePressureDDT. Extracted once
     // at setup after BC enforcement + optional shift.
@@ -2537,6 +2549,7 @@ struct NSStepper
     Matrix Avel;
     Matrix Apre;
     Matrix AddT;
+    Matrix AFemGram;
 
     // Per-node solution fields. Sized nodeCount; ghost slots refreshed by
     // exchangeNodeHalo after each update.
@@ -3860,6 +3873,91 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
                           << std::defaultfloat;
         }
     }
+
+    // Assemble the EXACT conjugate operator A_fem = D_fem M^-1 D_fem^T for the
+    // --pressure-k FEM projection (gated on useFemProjection). The FEM Gram
+    // couples (a,b) iff both lie in some node i's 1-ring -- the SAME two-hop
+    // pattern as the DDT sparsity (every other tet corner is an SCS-edge
+    // neighbour of i), so we reuse buildDDTSparsityTet here; only the per-element
+    // stencil differs (-(V/4)dNdx_i, 4 per element, vs the 6 SCS area-vectors).
+    if (s.useFemProjection)
+    {
+        s.d_rowPtrFemGram.resize(s.numTotalDofs + 1);
+        s.d_diagPtrFemGram.resize(s.numTotalDofs);
+        s.nnzFemGram = CvfemSparsityBuilder<KeyType>::buildDDTSparsityTet(
+            std::get<0>(d_conn).data(), std::get<1>(d_conn).data(),
+            std::get<2>(d_conn).data(), std::get<3>(d_conn).data(),
+            s.elementCount, s.nodeCount,
+            d_n2eOff_sparsity.data(), d_n2eList_sparsity.data(),
+            s.d_node_to_dof.data(), s.numTotalDofs,
+            s.d_rowPtrFemGram.data(), nullptr, nullptr, 0);
+        s.d_colIndFemGram.resize(s.nnzFemGram);
+        CvfemSparsityBuilder<KeyType>::buildDDTSparsityTet(
+            std::get<0>(d_conn).data(), std::get<1>(d_conn).data(),
+            std::get<2>(d_conn).data(), std::get<3>(d_conn).data(),
+            s.elementCount, s.nodeCount,
+            d_n2eOff_sparsity.data(), d_n2eList_sparsity.data(),
+            s.d_node_to_dof.data(), s.numTotalDofs,
+            s.d_rowPtrFemGram.data(), s.d_colIndFemGram.data(),
+            s.d_diagPtrFemGram.data(), 0);
+        s.d_valuesFemGram.resize(s.nnzFemGram);
+        thrust::fill(thrust::device_pointer_cast(s.d_valuesFemGram.data()),
+                     thrust::device_pointer_cast(s.d_valuesFemGram.data() + s.nnzFemGram),
+                     RealType(0));
+        if (s.nodeCount > 0)
+        {
+            int nBlocks = int((s.nodeCount + s.blockSize - 1) / s.blockSize);
+            assembleFemGramPerNodeKernelTet<KeyType, RealType><<<nBlocks, s.blockSize>>>(
+                std::get<0>(d_conn).data(), std::get<1>(d_conn).data(),
+                std::get<2>(d_conn).data(), std::get<3>(d_conn).data(),
+                s.domain.getNodeX().data(), s.domain.getNodeY().data(), s.domain.getNodeZ().data(),
+                d_n2eOff_sparsity.data(), d_n2eList_sparsity.data(),
+                s.d_node_to_dof.data(), d_nodeOwnership.data(),
+                s.d_massNode.data(),
+                s.d_rowPtrFemGram.data(), s.d_colIndFemGram.data(), s.numOwnedDofs,
+                s.d_valuesFemGram.data(), s.nodeCount);
+            cudaDeviceSynchronize();
+        }
+        // Health check (rank 0): A_fem is an SPD Laplacian-like Gram form, so its
+        // diagonal must be POSITIVE and healthy (~ K/valence ~ h/valence scale),
+        // NOT near-zero like the SCS DDT (no area-vector cancellation here). A
+        // near-zero or negative diagonal would signal a sparsity/stencil mismatch.
+        if (s.rank == 0)
+        {
+            std::vector<int> hRowPtr(s.numOwnedDofs + 1);
+            cudaMemcpy(hRowPtr.data(), s.d_rowPtrFemGram.data(),
+                       (s.numOwnedDofs + 1) * sizeof(int), cudaMemcpyDeviceToHost);
+            std::vector<int> hColInd(hRowPtr[s.numOwnedDofs]);
+            std::vector<RealType> hVals(hRowPtr[s.numOwnedDofs]);
+            cudaMemcpy(hColInd.data(), s.d_colIndFemGram.data(),
+                       hRowPtr[s.numOwnedDofs] * sizeof(int), cudaMemcpyDeviceToHost);
+            cudaMemcpy(hVals.data(), s.d_valuesFemGram.data(),
+                       hRowPtr[s.numOwnedDofs] * sizeof(RealType), cudaMemcpyDeviceToHost);
+            int emptyRows = 0, missingDiag = 0, zeroDiag = 0, negDiag = 0;
+            RealType minDiag = 1e30, maxDiag = -1e30;
+            for (int r = 0; r < s.numOwnedDofs; ++r)
+            {
+                int rs = hRowPtr[r], re = hRowPtr[r + 1];
+                if (re == rs) { emptyRows++; continue; }
+                int diagIdx = -1;
+                for (int k = rs; k < re; ++k) if (hColInd[k] == r) { diagIdx = k; break; }
+                if (diagIdx < 0) { missingDiag++; continue; }
+                RealType d = hVals[diagIdx];
+                if (d == RealType(0)) zeroDiag++;
+                else if (d < RealType(0)) negDiag++;
+                if (d < minDiag) minDiag = d;
+                if (d > maxDiag) maxDiag = d;
+            }
+            std::cout << "  [FemGram-health] nnz=" << s.nnzFemGram
+                      << " emptyRows=" << emptyRows
+                      << " missingDiag=" << missingDiag
+                      << " zeroDiag=" << zeroDiag
+                      << " negDiag=" << negDiag
+                      << " diag range=[" << minDiag << ", " << maxDiag << "]"
+                      << " (expect all-positive, ~K/valence scale)\n";
+        }
+        pt.lap("assembly A_fem = D_fem M^-1 D_fem^T (tet, node-driven)");
+    }
     } // end else if constexpr tet (DDT operator block)
 
     // Add M/dt to the velocity matrix diagonal -> (M/dt + nu K).
@@ -5133,6 +5231,51 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
             s.pressurePinDof, s.d_rowPtrDDT.data(), s.d_colIndDDT.data(),
             s.d_diagPtrDDT.data(), s.d_valuesDDT.data());
     }
+
+    // Same pin/Dirichlet enforcement on the assembled FemGram (A_fem) so the
+    // pure-Neumann pump operator is nonsingular -- identical treatment to AddT
+    // above (A_fem and AddT are both SPD Gram forms with the constant null mode).
+    // Reuses the per-NODE Dirichlet mask + dof->node map already built for AddT.
+    if (s.nnzFemGram > 0
+        && (s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Channel
+            || s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Pump))
+    {
+        int dofBlocks = (s.numOwnedDofs + s.blockSize - 1) / s.blockSize;
+        if (s.pressurePinDof >= 0)
+        {
+            cstone::DeviceVector<RealType> d_pinDiag(1, RealType(0));
+            readRowDiagonalKernel<RealType><<<1, 1>>>(
+                s.pressurePinDof, s.d_diagPtrFemGram.data(),
+                s.d_valuesFemGram.data(), d_pinDiag.data());
+            cudaDeviceSynchronize();
+            cudaMemcpy(&s.pinNativeDiagFemGram, d_pinDiag.data(),
+                       sizeof(RealType), cudaMemcpyDeviceToHost);
+        }
+        enforceBcMatrixKernel<RealType><<<dofBlocks, s.blockSize>>>(
+            s.d_isPressureBdryDof.data(), s.d_rowPtrFemGram.data(), s.d_colIndFemGram.data(),
+            s.d_diagPtrFemGram.data(), s.d_valuesFemGram.data(), s.numOwnedDofs);
+        enforceBcColMatrixKernelByNode<RealType><<<dofBlocks, s.blockSize>>>(
+            s.d_isPressureBdryNode.data(),
+            s.d_node_to_dof.data(), s.d_dofToNode.data(), s.numTotalDofs,
+            s.d_rowPtrFemGram.data(), s.d_colIndFemGram.data(),
+            s.d_valuesFemGram.data(), s.numOwnedDofs);
+        cudaDeviceSynchronize();
+        if (s.pressurePinDof >= 0 && s.pinNativeDiagFemGram > RealType(0))
+        {
+            setRowDiagonalKernel<RealType><<<1, 1>>>(
+                s.pressurePinDof, s.d_diagPtrFemGram.data(),
+                s.d_valuesFemGram.data(), s.pinNativeDiagFemGram);
+            cudaDeviceSynchronize();
+        }
+    }
+    else if (s.nnzFemGram > 0
+             && s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Cavity
+             && s.pressurePinDof >= 0)
+    {
+        enforcePinRowKeepDiagKernel<RealType><<<1, 1>>>(
+            s.pressurePinDof, s.d_rowPtrFemGram.data(), s.d_colIndFemGram.data(),
+            s.d_diagPtrFemGram.data(), s.d_valuesFemGram.data());
+    }
     // Cavity DDT: column-clear stays disabled. A symmetric col-clear changed
     // neighboring rows' row-sum from ~0 to ~|A[r,pin]|, breaking AMG's
     // strength-of-connection metric (earlier attempt -> Hypre setup error 1).
@@ -5409,6 +5552,13 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
     if (s.nnzDDT > 0)
         wrapIntoSparseMatrix<RealType>(s.AddT, s.numOwnedDofs, s.numTotalDofs, s.nnzDDT,
                                        s.d_rowPtrDDT.data(), s.d_colIndDDT.data(), s.d_valuesDDT.data());
+    // A_fem (D_fem M^-1 D_fem^T) for the --pressure-k FEM projection: solved
+    // INSTEAD of Apre (K) when useFemProjection, so the K-path corrector
+    // (M^-1 D_fem^T) becomes the exact adjoint and div(u^{n+1})=0 holds.
+    if (s.nnzFemGram > 0)
+        wrapIntoSparseMatrix<RealType>(s.AFemGram, s.numOwnedDofs, s.numTotalDofs, s.nnzFemGram,
+                                       s.d_rowPtrFemGram.data(), s.d_colIndFemGram.data(),
+                                       s.d_valuesFemGram.data());
     pt.lap("SparseMatrix wrap (vel+pre+ddt)");
 
     // Optional diagnostic: env MARS_DDT_PROBE_DIFF=1 enables a one-shot
@@ -7923,8 +8073,18 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
         // solverKind==Hypre; the in-house CG path ignores the hint.
         KrylovHint kHintK = (s.solverKind == SolverKind::Hypre)
                               ? KrylovHint::GMRES : KrylovHint::PCG;
+        // FEM projection: solve the EXACT conjugate A_fem = D_fem M^-1 D_fem^T
+        // instead of the Galerkin K (Apre). The K-path corrector applies
+        // M^-1 D_fem^T, so D_fem u^{n+1} = D_fem u** - A_fem A_fem^-1 D_fem u** = 0
+        // is exact ONLY when the solved operator is A_fem (K is not equal to it,
+        // which left a residual divergence the corrector couldn't remove). RHS
+        // (b = -(rho/dt) D_fem u** + opening-flux source) is UNCHANGED. Tet-only.
+        const bool useFemGramSolve = s.useFemProjection
+                                     && std::is_same_v<ElementTag, TetTag>
+                                     && s.nnzFemGram > 0;
+        auto& pressureMat = useFemGramSolve ? s.AFemGram : s.Apre;
         s.lastPressureIters = solveOneComponent<KeyType, RealType, ElementTag>(
-            s, b, xVec, s.d_phi, s.Apre, kHintK);
+            s, b, xVec, s.d_phi, pressureMat, kHintK);
     }
     else  // DDT: (D M^{-1} D^T) phi = -(rho/dt) D u**
     {
