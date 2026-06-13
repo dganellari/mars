@@ -194,76 +194,106 @@ __global__ void assembleFemGramPerNodeKernelTet(
     RealType invMi = RealType(1) / mi;
 
     constexpr int NPE = ElemTraits<TetTag>::NodesPerElem;   // 4
-    // Partner buffer: i itself (slot 0) + its distinct 1-ring neighbour DOFs.
-    // 48 distinct neighbours matches kMaxOthers in buildDDTSparsityTet, so the
-    // (cap+1) partners here can never reference a column the sparsity lacks.
-    constexpr int MAX_PARTNERS = 49;   // 1 (self) + 48
-    int      pDof[MAX_PARTNERS];
-    RealType pSx[MAX_PARTNERS], pSy[MAX_PARTNERS], pSz[MAX_PARTNERS];
-    int pCount = 1;
-    pDof[0] = dofI;
-    pSx[0] = pSy[0] = pSz[0] = RealType(0);
 
+    // SCATTER-DIRECT, NO PARTNER BUFFER. A_fem[a,b] = (1/M_i) S_a.S_b with
+    // S_p = sum_{e at i, p in e} a_p^e and a_p^e = -(V_e/4) dNdx_p^e. Expanding
+    // the outer product of the two element-sums:
+    //   (1/M_i) S_a.S_b = (1/M_i) sum_e sum_f (a_a^e . a_b^f),
+    // a double sum over the elements e,f incident to i (a a corner of e, b a
+    // corner of f). atomicAdd accumulates these element-pair contributions into
+    // the SAME CSR entry (dofA,dofB), so the result is bit-for-bit the assembled
+    // (1/M_i) S_a.S_b -- identical to the old buffered version, but WITHOUT a
+    // fixed-size partner array. The CSR sparsity (built by buildDDTSparsityTet)
+    // is the authoritative column set; atomicAddSparseEntry drops anything not
+    // in it. So this kernel has NO per-node neighbour cap and CANNOT silently
+    // overflow regardless of valence -- the only cap left is the sparsity one,
+    // which is now counted+reported. Cost is O(m^2) element pairs per node (m =
+    // incident elements), heavier than the buffered O(valence^2), but this runs
+    // ONCE at setup, not per timestep, so it is amortized to nothing.
     KeyType eStart = nodeToElemOffsets[i];
     KeyType eEnd   = nodeToElemOffsets[i + 1];
     for (KeyType ep = eStart; ep < eEnd; ++ep)
     {
         KeyType e = nodeToElemList[ep];
         KeyType en[NPE] = {c0[e], c1[e], c2[e], c3[e]};
-        int iLocal = -1;
+        bool eHasI = false;
         #pragma unroll
-        for (int k = 0; k < NPE; ++k) if (en[k] == (KeyType)i) iLocal = k;
-        if (iLocal < 0) continue;
+        for (int k = 0; k < NPE; ++k) if (en[k] == (KeyType)i) eHasI = true;
+        if (!eHasI) continue;
 
-        RealType coords[NPE][3];
+        RealType coordsE[NPE][3];
         #pragma unroll
         for (int k = 0; k < NPE; ++k) {
-            coords[k][0] = nodeX[en[k]];
-            coords[k][1] = nodeY[en[k]];
-            coords[k][2] = nodeZ[en[k]];
+            coordsE[k][0] = nodeX[en[k]];
+            coordsE[k][1] = nodeY[en[k]];
+            coordsE[k][2] = nodeZ[en[k]];
         }
-        RealType det, dNdx[NPE][3];
-        Tet4CVFEM::jacobian_and_dNdx<RealType>(coords, det, dNdx);
-        RealType V = det / RealType(6);
-        if (!(V > RealType(0))) continue;
-        RealType nqV = -V * RealType(0.25);   // -(V/4)
+        RealType detE, dNdxE[NPE][3];
+        Tet4CVFEM::jacobian_and_dNdx<RealType>(coordsE, detE, dNdxE);
+        RealType VE = detE / RealType(6);
+        if (!(VE > RealType(0))) continue;
+        RealType nqVE = -VE * RealType(0.25);   // -(V_e/4)
 
-        // Accumulate S_p += a_p^e = -(V/4) dNdx_p for every node p of this element.
-        #pragma unroll
-        for (int k = 0; k < NPE; ++k)
+        // Inner loop over the second element f (also incident to i). a comes
+        // from e (using dNdxE), b comes from f (using dNdxF). When f==e the two
+        // geometries coincide -> reuse dNdxE, no recompute.
+        for (KeyType fp = eStart; fp < eEnd; ++fp)
         {
-            int dofK = nodeToDof[en[k]];
-            if (dofK < 0) continue;
-            RealType ax = nqV * dNdx[k][0];
-            RealType ay = nqV * dNdx[k][1];
-            RealType az = nqV * dNdx[k][2];
-            int slot = -1;
-            for (int s = 0; s < pCount; ++s) if (pDof[s] == dofK) { slot = s; break; }
-            if (slot < 0)
+            KeyType f = nodeToElemList[fp];
+            KeyType fn[NPE] = {c0[f], c1[f], c2[f], c3[f]};
+            bool fHasI = false;
+            #pragma unroll
+            for (int k = 0; k < NPE; ++k) if (fn[k] == (KeyType)i) fHasI = true;
+            if (!fHasI) continue;
+
+            RealType nqVF;
+            const RealType (*dNdxF)[3];
+            RealType dNdxFbuf[NPE][3];
+            if (f == e)
             {
-                if (pCount >= MAX_PARTNERS) continue;  // overflow guard (see DDT note)
-                slot = pCount++;
-                pDof[slot] = dofK;
-                pSx[slot] = pSy[slot] = pSz[slot] = RealType(0);
+                nqVF  = nqVE;
+                dNdxF = dNdxE;
             }
-            pSx[slot] += ax;
-            pSy[slot] += ay;
-            pSz[slot] += az;
-        }
-    }
+            else
+            {
+                RealType coordsF[NPE][3];
+                #pragma unroll
+                for (int k = 0; k < NPE; ++k) {
+                    coordsF[k][0] = nodeX[fn[k]];
+                    coordsF[k][1] = nodeY[fn[k]];
+                    coordsF[k][2] = nodeZ[fn[k]];
+                }
+                RealType detF;
+                Tet4CVFEM::jacobian_and_dNdx<RealType>(coordsF, detF, dNdxFbuf);
+                RealType VF = detF / RealType(6);
+                if (!(VF > RealType(0))) continue;
+                nqVF  = -VF * RealType(0.25);   // -(V_f/4)
+                dNdxF = dNdxFbuf;
+            }
 
-    // Scatter the outer product (1/M_i) S_a . S_b over all partner pairs (a,b).
-    // Row a is written only if a is an owned DOF (rowPtr indexes owned rows).
-    for (int a = 0; a < pCount; ++a)
-    {
-        int dofA = pDof[a];
-        if (dofA < 0 || dofA >= numOwnedDofs) continue;   // ghost partner = not an owned row
-        int rs = rowPtr[dofA], re = rowPtr[dofA + 1];
-        RealType sax = pSx[a], say = pSy[a], saz = pSz[a];
-        for (int b = 0; b < pCount; ++b)
-        {
-            RealType dot = sax * pSx[b] + say * pSy[b] + saz * pSz[b];
-            fem::atomicAddSparseEntry(values, colInd, rs, re, pDof[b], invMi * dot);
+            // For each corner a of e (row) and corner b of f (col), scatter
+            // (1/M_i) (a_a^e . a_b^f) into A_fem[dofA,dofB]. a_p = nqV * dNdx_p.
+            #pragma unroll
+            for (int ka = 0; ka < NPE; ++ka)
+            {
+                int dofA = nodeToDof[en[ka]];
+                if (dofA < 0 || dofA >= numOwnedDofs) continue;  // owned rows only
+                int rs = rowPtr[dofA], re = rowPtr[dofA + 1];
+                RealType ax = nqVE * dNdxE[ka][0];
+                RealType ay = nqVE * dNdxE[ka][1];
+                RealType az = nqVE * dNdxE[ka][2];
+                #pragma unroll
+                for (int kb = 0; kb < NPE; ++kb)
+                {
+                    int dofB = nodeToDof[fn[kb]];
+                    if (dofB < 0) continue;
+                    RealType bx = nqVF * dNdxF[kb][0];
+                    RealType by = nqVF * dNdxF[kb][1];
+                    RealType bz = nqVF * dNdxF[kb][2];
+                    RealType dot = ax * bx + ay * by + az * bz;
+                    fem::atomicAddSparseEntry(values, colInd, rs, re, dofB, invMi * dot);
+                }
+            }
         }
     }
 }
