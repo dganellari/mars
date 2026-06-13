@@ -62,6 +62,26 @@ After the feedback-loop fixes (which took baseline step-40 blowup → step-190),
 
 **DO NOT** spend more effort on advection schemes, mdot reconciliation, or corrector gradient corrections — all proven to only delay, not cure. The wall is the projection.
 
+## MOST PROMISING UNTESTED FIX (start here next session)
+
+The decisive contrast: **single-rank periodic TGV is CLEAN (PROJ-P3 1e-14); multi-rank blows.** The ONLY difference in the corrector gradient handling:
+
+- **Single-rank** takes the ELSE branch: `maybePeriodicSum` FOLDS gradPhi onto the master, then `periodicBroadcastKernel` BROADCASTS master→slave, so `gradPhi[M] = gradPhi[S] = g_full` (the full merged-CV gradient at BOTH slots). NS:8708-8718 region (else branch).
+- **Multi-rank reduced path** (routeReducedPeriodicCorr, H2): uses PER-SLOT gradPhi (g_M at master, g_S at slave, no fold, no broadcast). NS:8462-8531.
+
+HYPOTHESIS (derivation d3, captured before the agents were rate-limited): single-rank is clean BECAUSE it folds+broadcasts gradPhi — both slots get the SAME full gradient, so `D_M(u^{n+1}) = D_S(u^{n+1}) = 0` per slot (each CV sees the merged correction). The multi-rank per-slot gradPhi leaves the equal-and-opposite per-slot residual `r_M = -r_S` (sum zero = folded div zero, but each nonzero = the continuous source).
+
+**THE FIX TO TEST: fold+broadcast the CORRECTOR gradPhi on the multi-rank path too** (gradPhi[M]=gradPhi[S]=g_full), matching the single-rank else-branch.
+
+**Why this is NOT a falsified path:**
+- Result 7 (FAILED) broadcast **u** — the velocity RESULT. That re-injects divergence because it overwrites the projected per-slot velocity.
+- This broadcasts **gradPhi** — the CORRECTION. Different object. Single-rank proves it's correct.
+- Earlier corrector-fold tests (bc26138, 8547eea) were BEFORE the primary loop fix (MARS_PRED_PERSLOT_GRADP). They were never cleanly tested with the primary loop fixed. With the predictor grad(p) now per-slot AND the corrector gradPhi folded+broadcast, the predictor and corrector may finally be on a consistent footing that closes per-slot div.
+
+CAUTION: this looks contradictory with MARS_PRED_PERSLOT_GRADP (which made the predictor PER-SLOT). The resolution to check: maybe BOTH predictor grad(p) AND corrector gradPhi should be FOLDED (the single-rank convention) — i.e., MARS_PRED_PERSLOT_GRADP was the right DIRECTION (consistency) but the wrong TARGET (it should have folded the corrector to match a folded predictor, not per-slot'd the predictor to match a per-slot corrector). Test both: (a) corrector folds+broadcasts gradPhi WITH per-slot predictor, (b) everything folded (revert PRED_PERSLOT, fold corrector). Single-rank uses everything-folded and is clean — so (b) is the strong candidate, but it requires the OPERATOR A_red to also be folded-consistent (applyPeriodic=true), which historically broke SYMPROBE. Resolve the operator/corrector consistency carefully.
+
+Relaunch the workflow (wobiup2v7) when the server rate-limit clears — derivations d1 (DOF over-collapse: one pressure DOF for two divergence constraints) and d2 (per-slot residual r_M=-r_S algebra) were the other strong leads.
+
 ## Working partial state (env flags, all opt-in, all pump-safe, default OFF)
 
 ```
