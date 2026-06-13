@@ -25,6 +25,22 @@ Option 2 is the minimal change but requires plumbing a `div(u^n)` field into the
 
 CAUTION: this session's solo factor-level guesses (BDF2 scaling, per-slot mass) were BOTH empirically WRONG despite confident algebra. Verify any factor against the hand-computed energy identity `mdot·(qR²−qL²)` AND test on the 300-step run before believing it. The Fable derivation workflow (wfh4k6o37) was set up to do this rigorously but hit the session token limit (resets 9:20pm Zurich) — relaunch it.
 
+## NODE-EMAC NEGATIVE RESULT (2026-06-14)
+
+Tried `MARS_TGV_EMAC` = add `c·q_i·div_i` to advN per node (node-assembled divergence), coefficients c ∈ {−1, +1, −2, 0.5}. NONE helped — all blow ~150-160, same as without. CONCLUSION: the skew KE injection is genuinely PER-FACE (`mdot·(qR²−qL²)`) and cannot be cancelled by a post-hoc node-assembled correction. The fix must be at the per-face level.
+
+## THE REAL FIX PATH (next session — use the rigorous derivation workflow, do NOT hand-guess)
+
+The skew kernel IS energy-conserving per element (the `½(2qL+qR)` weighting encodes the `−½q·div` term correctly). The leak is purely cross-element at the periodic seam: **the two elements sharing a periodic face compute DIFFERENT `mdot`** (from slightly inconsistent master/slave velocity), so the shared-face flux is not equal-and-opposite and KE doesn't telescope.
+
+Two candidate fixes (both need careful per-face kernel work — verify with the energy identity `mdot·(qR²−qL²)` AND the 300-step run, do NOT trust algebra alone — this session's solo guesses were wrong 4×):
+
+1. **Reconcile mdot at periodic-seam SCS faces** — identify SCS faces whose L/R nodes are a periodic pair (or cross the seam), and fold/average their `mdot` so the two elements sharing the physical periodic face use the SAME equal-and-opposite `mdot`. This is the original "reconcile mdot across the periodic face" idea (NOT the velocity broadcast, which result 7 falsified). Does not touch u or mass.
+
+2. **Per-face EMAC flux** — replace the skew flux at seam faces with the EMAC per-face form (Charnyi et al. 2017), which is energy/momentum/angular-momentum conserving per-face without requiring telescoping mdot.
+
+The rigorous derivation workflow (wfh4k6o37) was built to derive the exact per-face form from the kernel + verify against all 10 empirical results. It hit the Fable session token limit; relaunch it (4 independent derivations → reconcile → must predict all 10 → ship). DO NOT hand-wire the per-face form — the discrete coefficient is where every solo guess this session went wrong.
+
 ## ORIGINAL BREAKTHROUGH (this session)
 
 ## BREAKTHROUGH (this session)
