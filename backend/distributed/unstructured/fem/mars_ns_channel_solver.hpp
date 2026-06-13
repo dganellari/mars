@@ -3871,13 +3871,15 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
         pt.lap("velocity per-node BC mask + halo");
     }
 
-    // No cross-rank velocity row-sum exchange needed. The DOF-collapse Pass 1
-    // above redirects ALL slave nodeToDof entries to their master's DOF,
-    // including cross-rank pairs where the master is a ghost on this rank. After
-    // this, the slave's "row" doesn't exist as a separate owned DOF -- the
-    // assembler scatters straight into the master's row via the ghost DOF
-    // (cstone's periodic-image halo delivers the rank-A slave-side elements onto
-    // rank D, where the master is owned). Same flow as single-rank periodic.
+    // NOTE (multirank): the assembled velocity stiffness has incomplete owned
+    // rows at a rank-partition seam -- cstone's element halo does not always
+    // include the opposite-rank elements touching an owned seam node, so the
+    // wall no-slip does not propagate across the seam and the velocity field
+    // does not develop on >1 rank. The fix is to widen the element halo in the
+    // domain layer (every element touching an owned node must be local), NOT a
+    // fork-local row-fold (the off-rank stiffness is in elements this rank does
+    // not possess -- nothing to fold). Tracked as the multirank element-coverage
+    // work; single-rank is unaffected.
 
     // Enforce velocity Dirichlet on the velocity matrix (row=0, diag=1).
     // - Cavity/channel/pump: zero rows + diag=1 for d_isBdryDof slots.
