@@ -83,6 +83,7 @@ int main(int argc, char** argv)
     double      pspgTau    = -1;       // <=0 => auto h^2/24; --pspg-tau=V overrides
     bool        useHypre   = false;    // --solver=hypre: assembled DDT + Hypre FlexGMRES+BoomerAMG (else matrix-free Jacobi-CG)
     bool        pressureK  = false;    // --pressure-k: well-conditioned Galerkin K + FEM-consistent weak div/grad projection (pair with --solver=hypre). Default DDT.
+    int         nCorrectors = 1;       // --correctors=N: PISO inner pressure corrections per step (FEM-projection path only; 1 = single correction, byte-identical)
     std::string inletSS;   // inlet side-set name (required for --bc=pump; pass --inlet-ss=)
     std::string outletSS;  // outlet side-set name (required for --bc=pump; pass --outlet-ss=)
     // Inlet velocity follows each node's OWN local surface normal (area-weighted
@@ -146,6 +147,7 @@ int main(int argc, char** argv)
         else if (a.rfind("--rhie-tau=", 0) == 0)     rhieTau   = std::stod(a.substr(11));
         else if (a == "--vms-stab")                  useVMSStab = true;  // Nalu VMS pressure stab (tet-only, experimental)
         else if (a == "--pressure-k")                pressureK  = true;  // Galerkin K + FEM-consistent weak div/grad projection
+        else if (a.rfind("--correctors=", 0) == 0)   nCorrectors = std::stoi(a.substr(13)); // PISO inner pressure corrections (FEM path)
         else if (a == "--pspg")                      usePSPG    = true;  // implicit PSPG (tau*L in DDT operator) -- the correct checkerboard fix
         else if (a.rfind("--pspg-tau=", 0) == 0)     pspgTau    = std::stod(a.substr(11));
         else if (a == "--solver=hypre")              useHypre   = true;  // assembled DDT + Hypre FlexGMRES+BoomerAMG (else matrix-free Jacobi-CG)
@@ -194,6 +196,8 @@ int main(int argc, char** argv)
                     "  --no-inlet-pernode-normal  use one global inlet normal (default: per-node)\n"
                     "  --advection=NAME     skew (default) | upwind | barth-jespersen (--bj)\n"
                     "  --pspg [--pspg-tau=V] implicit PSPG pressure stabilization (tau*L in DDT operator; the equal-order checkerboard fix; tau auto h^2/24)\n"
+                    "  --correctors=N       PISO inner pressure corrections per step (FEM-projection\n"
+                    "                       path, pair with --pressure-k; default 1 = single correction)\n"
                     "  --rho=V --nu=V       physical fluid properties (default water: rho=1000, nu=1e-6)\n"
                     "  --Re=V               LEGACY: override nu = inletU*L_bbox/Re. L_bbox is the\n"
                     "                       whole-geometry diagonal, NOT the passage scale, so this Re\n"
@@ -264,6 +268,9 @@ int main(int argc, char** argv)
                   << (usePSPG && pspgTau > 0 ? "  (tau=" + std::to_string(pspgTau) + ")" : (usePSPG ? "  (tau=auto h^2/24)" : "")) << "\n"
                   << "pressure    = " << (pressureK ? "Galerkin K + FEM-consistent weak div/grad projection" : "DDT (D M^-1 D^T) + D^T corrector")
                   << (useHypre ? " | Hypre GMRES+BoomerAMG (--solver=hypre)" : " | matrix-free Jacobi-CG") << "\n"
+                  << (nCorrectors > 1
+                        ? "correctors  = " + std::to_string(nCorrectors) + " (PISO inner pressure corrections)\n"
+                        : std::string(""))
                   << "MPI ranks   = " << numRanks << "\n"
                   << "========================================\n\n";
     }
@@ -338,6 +345,22 @@ int main(int argc, char** argv)
     {
         s.pressureSolve     = PressureSolveKind::DDT;
         s.useLegacyGradient = false;
+    }
+    // PISO inner pressure corrections. The solver loop is gated on
+    // useFemProjection, so without --pressure-k the value is inert -- warn so
+    // the flag is not silently ignored. The pumpDp>0 lift (rhs = target - p^n)
+    // would re-add the full head every inner pass (p^n updates only after the
+    // loop), so that combination is rejected too.
+    s.nCorrectors = std::max(1, nCorrectors);
+    if (rank == 0 && nCorrectors > 1 && !pressureK)
+        std::cerr << "WARNING: --correctors=" << nCorrectors
+                  << " applies only to the FEM-projection path (--pressure-k); ignored.\n";
+    if (nCorrectors > 1 && pressureK && pumpDp > 0.0)
+    {
+        if (rank == 0)
+            std::cerr << "WARNING: --correctors>1 with --pump-dp>0 would re-apply the "
+                         "pressure-drop lift every inner pass; forcing --correctors=1.\n";
+        s.nCorrectors = 1;
     }
     // Through-flow has no wall dissipation to absorb advective noise (unlike the
     // closed cavity), so 1st-order upwind + BDF2 blows up after a few flow-

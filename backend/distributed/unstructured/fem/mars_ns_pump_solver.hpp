@@ -2620,6 +2620,8 @@ struct NSStepper
     RealType matrixDt = RealType(0);
 
     // Per-step diagnostics
+    // With PISO inner corrections (nCorrectors>1) this is the LAST inner
+    // pass's count, not the sum -- each pass's solve overwrites it.
     int lastPressureIters = 0;
     RealType lastPressR0    = 0;  // initial absolute residual |r0| of the pressure CG this step
     RealType lastPressResid = 0;  // final relative residual |r|/|r0| at the pressure CG's exit
@@ -2829,6 +2831,15 @@ struct NSStepper
     // modes that grow ~1.2x/step under the K projection (the pump blowup).
     // Kernels in mars_fem_projection.hpp.
     bool useFemProjection = false;
+
+    // PISO-style inner pressure corrections (--correctors=N, FEM-projection
+    // path only). One K-solve removes only ~0.5-0.6 of the weak divergence
+    // (spectral gap between K and D_fem M^-1 D_fem^T); the leftover
+    // re-presents on top of the ramp increment and compounds ~1.2-1.3x/step.
+    // Iterating div->solve->correct N times inside the step shrinks the
+    // per-step residual ~0.5^N. 1 (default) = single correction, byte-
+    // identical to the pre-PISO path.
+    int nCorrectors = 1;
 
     // Ownership map every kernel uses. Always the domain's cached map -- we no
     // longer demote periodic slaves (see setupNSStepper). Kept as a single
@@ -7500,8 +7511,18 @@ void runImplicitDiffusionStep(NSStepper<KeyType, RealType, ElementTag>& s, RealT
 // s.d_vStarStar, s.d_wStarStar) and ghosts in sync. Useful for reproducing
 // the DDT bug without the surrounding momentum solve.
 // -------------------------------------------------------------------------
+// uIter/vIter/wIter: velocity iterate for the FEM weak divergence. nullptr
+// (default) reads u** -- the normal single-correction call. The PISO inner
+// loop in runCorrectorStep (--correctors=N) passes the just-corrected u so
+// passes 2..N rebuild the residual divergence of the CURRENT iterate. Only
+// the FEM-projection branch consults these; the SCS/VMS/RC builds always read
+// u** (the PISO loop is gated on useFemProjection, so they never get an
+// override).
 template<typename KeyType, typename RealType, typename ElementTag = HexTag>
-void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, RealType rho)
+void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, RealType rho,
+                          const RealType* uIter = nullptr,
+                          const RealType* vIter = nullptr,
+                          const RealType* wIter = nullptr)
 {
     const auto& d_nodeOwnership = s.ownershipMap();
     const auto& d_conn          = s.domain.getElementToNodeConnectivity();
@@ -7563,7 +7584,9 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
             // periodic folding after this block is identical to the SCS path.
             computeFemDivergenceTetKernel<KeyType, RealType><<<eBlocks, s.blockSize>>>(
                 c0, c1, c2, c3,
-                s.d_uStarStar.data(), s.d_vStarStar.data(), s.d_wStarStar.data(),
+                uIter ? uIter : s.d_uStarStar.data(),
+                vIter ? vIter : s.d_vStarStar.data(),
+                wIter ? wIter : s.d_wStarStar.data(),
                 s.domain.getNodeX().data(), s.domain.getNodeY().data(), s.domain.getNodeZ().data(),
                 d_divAccNode.data(), startElem, numLocal);
         }
@@ -8250,6 +8273,10 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
     const bool bdf2ActiveCorr = (s.useBdf2 && s.bdfStep >= 1 && s.d_valuesVel_bdf2.size() > 0);
     const RealType dtEff      = bdf2ActiveCorr ? (RealType(2) * dt / RealType(3)) : dt;
 
+    // grad(s.d_phi) -> s.d_gradPhix/y/z. A lambda (was a plain scope) so the
+    // PISO inner loop below can re-run it once per extra corrector pass; the
+    // single immediate call keeps nCorrectors==1 kernel-for-kernel identical.
+    auto computeGradPhi = [&] ()
     {
         cstone::DeviceVector<RealType> d_gxAcc(s.nodeCount, RealType(0));
         cstone::DeviceVector<RealType> d_gyAcc(s.nodeCount, RealType(0));
@@ -8322,7 +8349,8 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
         }
         s.lastGradPhiRms = rmsOwnedInterior3<KeyType, RealType, ElementTag>(
             s, s.d_gradPhix, s.d_gradPhiy, s.d_gradPhiz);
-    }
+    };
+    computeGradPhi();
 
     auto runCorrector = [&] (cstone::DeviceVector<RealType>& qOut,
                               cstone::DeviceVector<RealType>& qStarStar,
@@ -8339,6 +8367,172 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
     runCorrector(s.d_u, s.d_uStarStar, s.d_gradPhix, s.d_uTarget);
     runCorrector(s.d_v, s.d_vStarStar, s.d_gradPhiy, s.d_vTarget);
     runCorrector(s.d_w, s.d_wStarStar, s.d_gradPhiz, s.d_wTarget);
+
+    // ---- PISO inner pressure corrections (--correctors=N, FEM path only) ----
+    // One K-solve contracts the weak divergence only ~0.5-0.6x; iterating
+    // div -> solve -> correct on the CURRENT iterate shrinks the per-step
+    // residual ~0.5x per pass (2-3 passes -> ~10-25% of one pass's leftover),
+    // turning the ~1.2-1.3x/step compound into a contraction. nCorrectors==1
+    // (default) skips this block entirely -- byte-identical single correction.
+    // NOTE: assumes the rhs=0 pin / pressure-Dirichlet BC of the --pressure-k
+    // workflow. The pumpDp>0 lift (rhs = target - p^n) would re-add the full
+    // head every pass since p^n only updates after the loop -- the driver
+    // warns on that combination.
+    const bool femPiso = s.useFemProjection && std::is_same_v<ElementTag, TetTag>
+                         && s.nCorrectors > 1;
+    if (femPiso)
+    {
+        // FEM-divergence residual print: interior weak divergence of the
+        // corrected iterate PLUS the prescribed opening-flux source -- the
+        // exact source the next solve would see. The [ns-dbg CORR] div_max is
+        // the SCS divergence, misleading for the FEM path; this is the honest
+        // inner-contraction signal (expect |div| to shrink ~0.5x per pass).
+        // Gated like the ns-dbg prints (first-steps window) or
+        // MARS_SOLVE_TRACE; collectives on all ranks, print on rank 0.
+        const bool femDbg = (g_nsDebugStepsLeft > 0)
+                            || (std::getenv("MARS_SOLVE_TRACE") != nullptr);
+        auto sumOwnedPiso = [&] (const RealType* p) -> RealType {
+            RealType loc = thrust::transform_reduce(thrust::device,
+                thrust::counting_iterator<size_t>(0),
+                thrust::counting_iterator<size_t>(s.nodeCount),
+                [own = d_nodeOwnership.data(), p] __device__ (size_t i) -> RealType {
+                    return (own[i] == 1) ? p[i] : RealType(0); },
+                RealType(0), thrust::plus<RealType>());
+            RealType g = 0;
+            MPI_Datatype mt = std::is_same<RealType, double>::value ? MPI_DOUBLE : MPI_FLOAT;
+            MPI_Allreduce(&loc, &g, 1, mt, MPI_SUM, MPI_COMM_WORLD);
+            return g;
+        };
+        auto femDivPrint = [&] (int k)
+        {
+            cstone::DeviceVector<RealType> d_divChk(s.nodeCount, RealType(0));
+            if (eBlocks > 0)
+            {
+                computeFemDivergenceTetKernel<KeyType, RealType><<<eBlocks, s.blockSize>>>(
+                    c0, c1, c2, c3,
+                    s.d_u.data(), s.d_v.data(), s.d_w.data(),
+                    s.domain.getNodeX().data(), s.domain.getNodeY().data(), s.domain.getNodeZ().data(),
+                    d_divChk.data(), startElem, numLocal);
+                cudaDeviceSynchronize();
+            }
+            s.domain.reverseExchangeNodeHaloAdd(d_divChk);
+            maybePeriodicSum<KeyType, RealType, ElementTag>(s, d_divChk);
+            if (s.useOpeningFluxSource
+                && s.d_femFluxWin.size() == s.nodeCount
+                && s.d_femFluxWout.size() == s.nodeCount)
+            {
+                // same ramp/oScale recipe as the solve; the source is fixed
+                // within the step, only the interior part changes.
+                const RealType ramp = (s.uinfBase > RealType(0)) ? (s.Uinf / s.uinfBase)
+                                                                 : RealType(1);
+                RealType Qin    = ramp * sumOwnedPiso(s.d_femFluxWin.data());
+                RealType Qout   = sumOwnedPiso(s.d_femFluxWout.data());
+                RealType oScale = (std::fabs(Qout) > RealType(0)) ? (-Qin / Qout) : RealType(0);
+                addConsistentOpeningFluxKernel<RealType><<<nodeBlocks, s.blockSize>>>(
+                    ramp, oScale,
+                    s.d_femFluxWin.data(), s.d_femFluxWout.data(),
+                    d_nodeOwnership.data(), d_divChk.data(), s.nodeCount);
+                cudaDeviceSynchronize();
+            }
+            // Normalize to physical div (1/s). Reduce over ALL owned DOF rows,
+            // boundary included: the opening source lives on boundary rows and
+            // its progressive cancellation by the developing inflow IS the
+            // contraction being watched.
+            cstone::DeviceVector<RealType> d_divChkN(s.nodeCount, RealType(0));
+            normalizeDivergencePerNodeKernel<RealType><<<nodeBlocks, s.blockSize>>>(
+                d_divChk.data(), s.d_massNode.data(),
+                s.d_node_to_dof.data(), d_nodeOwnership.data(),
+                d_divChkN.data(), s.nodeCount);
+            cudaDeviceSynchronize();
+            const uint8_t* ownP = d_nodeOwnership.data();
+            const int* dofP     = s.d_node_to_dof.data();
+            const RealType* dP  = d_divChkN.data();
+            RealType locMax = thrust::transform_reduce(thrust::device,
+                thrust::counting_iterator<size_t>(0),
+                thrust::counting_iterator<size_t>(s.nodeCount),
+                [ownP, dofP, dP] __device__ (size_t i) -> RealType {
+                    return (ownP[i] == 1 && dofP[i] >= 0) ? fabs(dP[i]) : RealType(0); },
+                RealType(0), thrust::maximum<RealType>());
+            RealType locSq = thrust::transform_reduce(thrust::device,
+                thrust::counting_iterator<size_t>(0),
+                thrust::counting_iterator<size_t>(s.nodeCount),
+                [ownP, dofP, dP] __device__ (size_t i) -> RealType {
+                    if (ownP[i] != 1 || dofP[i] < 0) return RealType(0);
+                    RealType q = dP[i]; return q * q; },
+                RealType(0), thrust::plus<RealType>());
+            long long locCnt = thrust::transform_reduce(thrust::device,
+                thrust::counting_iterator<size_t>(0),
+                thrust::counting_iterator<size_t>(s.nodeCount),
+                [ownP, dofP] __device__ (size_t i) -> long long {
+                    return (ownP[i] == 1 && dofP[i] >= 0) ? 1LL : 0LL; },
+                0LL, thrust::plus<long long>());
+            MPI_Datatype mt = std::is_same<RealType, double>::value ? MPI_DOUBLE : MPI_FLOAT;
+            RealType gMax = 0, gSq = 0;
+            long long gCnt = 0;
+            MPI_Allreduce(&locMax, &gMax, 1, mt, MPI_MAX, MPI_COMM_WORLD);
+            MPI_Allreduce(&locSq,  &gSq,  1, mt, MPI_SUM, MPI_COMM_WORLD);
+            MPI_Allreduce(&locCnt, &gCnt, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+            if (s.rank == 0)
+                std::cout << "    [fem-div k=" << k << " |div|max=" << std::scientific
+                          << std::setprecision(3) << gMax
+                          << " rms=" << (gCnt > 0 ? std::sqrt(gSq / RealType(gCnt)) : RealType(0))
+                          << std::defaultfloat << "]\n";
+        };
+        auto exchangeUVW = [&] ()
+        {
+            s.domain.exchangeNodeHalo(s.d_u);
+            s.domain.exchangeNodeHalo(s.d_v);
+            s.domain.exchangeNodeHalo(s.d_w);
+        };
+        // phi_1 is already applied to u above; accumulate it and iterate. Each
+        // phi_k leaves the solve mean-removed + halo-exchanged, so slotwise
+        // accumulation over owned AND ghost entries stays halo-consistent --
+        // the total needs no extra exchange.
+        cstone::DeviceVector<RealType> d_phiTotal(s.nodeCount);
+        thrust::copy(thrust::device,
+                     thrust::device_pointer_cast(s.d_phi.data()),
+                     thrust::device_pointer_cast(s.d_phi.data() + s.nodeCount),
+                     thrust::device_pointer_cast(d_phiTotal.data()));
+        for (int k = 2; k <= s.nCorrectors; ++k)
+        {
+            // ghosts of the just-corrected iterate: the weak-divergence scatter
+            // reads neighbor nodes of owned elements (mirrors u** being
+            // halo-complete when the single-pass build runs).
+            exchangeUVW();
+            if (femDbg) femDivPrint(k - 1);
+            // Same Hypre K path, same pin/BC RHS handling, fresh xVec=0 warm
+            // start (allocated + memset inside). The opening-flux source is
+            // added EVERY pass: the prescribed boundary flux is a property of
+            // the BC, constant within the step -- what contracts is the
+            // interior+source SUM. s.lastPressureIters is overwritten per
+            // pass, so cg_p reports the LAST inner pass's count.
+            runPressureSolveStep<KeyType, RealType, ElementTag>(
+                s, dt, rho, s.d_u.data(), s.d_v.data(), s.d_w.data());
+            computeGradPhi();
+            // In place: q <- q - (dtEff/rho) grad(phi_k). The corrector kernel
+            // reads/writes only slot i, so aliasing qOut==qStarStar is safe.
+            runCorrector(s.d_u, s.d_u, s.d_gradPhix, s.d_uTarget);
+            runCorrector(s.d_v, s.d_v, s.d_gradPhiy, s.d_vTarget);
+            runCorrector(s.d_w, s.d_w, s.d_gradPhiz, s.d_wTarget);
+            thrust::transform(thrust::device,
+                              thrust::device_pointer_cast(d_phiTotal.data()),
+                              thrust::device_pointer_cast(d_phiTotal.data() + s.nodeCount),
+                              thrust::device_pointer_cast(s.d_phi.data()),
+                              thrust::device_pointer_cast(d_phiTotal.data()),
+                              thrust::plus<RealType>());
+            if (femDbg && k == s.nCorrectors)
+            {
+                exchangeUVW();   // diagnostic-only ghost refresh for the final residual
+                femDivPrint(k);
+            }
+        }
+        // Publish the SUM so the p += phi update below and next step's
+        // grad(p^n) predictor see the full increment.
+        thrust::copy(thrust::device,
+                     thrust::device_pointer_cast(d_phiTotal.data()),
+                     thrust::device_pointer_cast(d_phiTotal.data() + s.nodeCount),
+                     thrust::device_pointer_cast(s.d_phi.data()));
+    }
 
     // Pressure update + ghost sync (next step's predictor needs ghost p^{n+1}).
     // Standard incremental Chorin: p^{n+1} = p^n + phi.
