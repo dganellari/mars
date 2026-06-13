@@ -884,7 +884,14 @@ __global__ void explicitAdvectionFluxScatterPerNodeKernel(const KeyType* c0, con
                                                           const RealType* gradQz,
                                                           const RealType* nodeX,
                                                           const RealType* nodeY,
-                                                          const RealType* nodeZ)
+                                                          const RealType* nodeZ,
+                                                          // Seam-localized upwind blend (skew path only). seamNode[i]!=0
+                                                          // marks a periodic-collapse node (slave OR master, mask!=0,
+                                                          // ghost slots filled by halo). On faces with >=1 seam endpoint
+                                                          // we add a*0.5*|mdot|*(qL-qR) of artificial diffusion on top of
+                                                          // the skew flux. nullptr -> no blend (interior skew untouched).
+                                                          const uint8_t* seamNode = nullptr,
+                                                          RealType seamUpwindA = RealType(0))
 {
     size_t k = blockIdx.x * blockDim.x + threadIdx.x;
     if (k >= numLocal) return;
@@ -933,6 +940,25 @@ __global__ void explicitAdvectionFluxScatterPerNodeKernel(const KeyType* c0, con
             RealType qR = q[iR];
             atomicAdd(&dqdtNode[iL], -RealType(0.5) * mdot * (RealType(2) * qL + qR));
             atomicAdd(&dqdtNode[iR], +RealType(0.5) * mdot * (qL + RealType(2) * qR));
+            // Seam-localized upwind blend. The skew flux conserves discrete KE
+            // only when mdot telescopes (div u = 0 per node); the periodic
+            // reduced-DOF projection leaves a nonzero per-slot seam divergence
+            // BY DESIGN, so on seam faces the skew flux injects
+            // q_i^2*(div u)_i KE with no wall to dissipate it. No conservative
+            // per-face flux can fix this (a conservative flux telescopes, which
+            // is exactly what fails here). The cure is dissipation, applied ONLY
+            // on seam faces so interior KE conservation (single-rank 1e-14) is
+            // untouched. The skew flux part is 0.5*mdot*(qL+qR); replacing it by
+            // the upwind flux mdot*q_up adds exactly +0.5*|mdot|*(qL-qR) to the
+            // L-scatter (derived: holds for both mdot signs). Its per-face KE
+            // production is -0.5*a*|mdot|*(qL-qR)^2 <= 0. a=1 = pure upwind on
+            // the seam face (result 9: globally bounded); a<1 = minimal blend.
+            if (seamNode && (seamNode[iL] || seamNode[iR]))
+            {
+                RealType diss = seamUpwindA * RealType(0.5) * fabs(mdot) * (qL - qR);
+                atomicAdd(&dqdtNode[iL], -diss);
+                atomicAdd(&dqdtNode[iR], +diss);
+            }
         }
         else if (advMode == 1)
         {
@@ -7341,6 +7367,57 @@ void runPredictorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
         thrust::fill(thrust::device_pointer_cast(advN.data()),
                      thrust::device_pointer_cast(advN.data() + s.nodeCount),
                      RealType(0));
+        // MARS_TGV_SEAM_UPWIND=1: blend upwind dissipation into the skew flux ON
+        // SEAM FACES ONLY (faces with >=1 periodic-collapse endpoint). The skew
+        // form conserves KE only when mdot telescopes; the reduced periodic
+        // projection leaves a nonzero per-slot seam divergence by design, so the
+        // skew flux injects energy on the seam with no wall to dissipate it
+        // (--skew=1 blows; --skew=0 global upwind bounds it via |mdot| diffusion,
+        // result 9). This adds exactly that |mdot| diffusion but localized to the
+        // seam, so interior KE conservation (single-rank PROJ-P3 1e-14) is
+        // untouched. NOT a node/mass correction (results 8,10 forbid those) and
+        // does NOT touch u (result 7 forbids broadcast) -- it is per-FACE inside
+        // the flux scatter. Gated multi-rank periodic CG; pump never enters.
+        const char*    seamUpEnv = std::getenv("MARS_TGV_SEAM_UPWIND");
+        const bool     seamUpwind =
+            (seamUpEnv && std::string(seamUpEnv) == "1")
+            && s.advScheme == AdvScheme::Skew
+            && s.numRanks > 1
+            && s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Periodic
+            && s.solverKind == SolverKind::CG
+            && s.periodicMap;
+        const char*    seamAEnv = std::getenv("MARS_TGV_SEAM_UPWIND_A");
+        const RealType seamA    = seamAEnv ? RealType(std::stod(seamAEnv)) : RealType(1.0);
+        cstone::DeviceVector<uint8_t> d_seamNode;
+        const uint8_t* seamNodePtr = nullptr;
+        if (seamUpwind)
+        {
+            // seamNode[i] = (periodicMask[i] != 0): slave OR master. Ghost slots
+            // must carry it too so a seam face shared with another rank is
+            // recognized from either side. Publish via the RealType-proxy halo
+            // idiom (same pattern as the pressure-bdry mask exchange above).
+            d_seamNode.resize(s.nodeCount);
+            const uint8_t* maskP = s.periodicMap->d_periodicMask.data();
+            thrust::transform(thrust::device,
+                              thrust::device_pointer_cast(maskP),
+                              thrust::device_pointer_cast(maskP + s.nodeCount),
+                              thrust::device_pointer_cast(d_seamNode.data()),
+                              [] __device__ (uint8_t m) -> uint8_t { return m ? uint8_t(1) : uint8_t(0); });
+            cstone::DeviceVector<RealType> d_seamProxy(s.nodeCount, RealType(0));
+            thrust::transform(thrust::device,
+                              thrust::device_pointer_cast(d_seamNode.data()),
+                              thrust::device_pointer_cast(d_seamNode.data() + s.nodeCount),
+                              thrust::device_pointer_cast(d_seamProxy.data()),
+                              [] __device__ (uint8_t v) -> RealType { return v ? RealType(1) : RealType(0); });
+            s.domain.exchangeNodeHalo(d_seamProxy);
+            thrust::transform(thrust::device,
+                              thrust::device_pointer_cast(d_seamProxy.data()),
+                              thrust::device_pointer_cast(d_seamProxy.data() + s.nodeCount),
+                              thrust::device_pointer_cast(d_seamNode.data()),
+                              [] __device__ (RealType v) -> uint8_t { return (v > RealType(0.5)) ? uint8_t(1) : uint8_t(0); });
+            cudaDeviceSynchronize();
+            seamNodePtr = d_seamNode.data();
+        }
         if (eBlocks > 0)
         {
             explicitAdvectionFluxScatterPerNodeKernel<KeyType, RealType, ElementTag><<<eBlocks, s.blockSize>>>(
@@ -7352,7 +7429,8 @@ void runPredictorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
                 advMode,
                 s.d_bjPhi.data(),
                 gradQx.data(), gradQy.data(), gradQz.data(),
-                d_bjNodeX.data(), d_bjNodeY.data(), d_bjNodeZ.data());
+                d_bjNodeX.data(), d_bjNodeY.data(), d_bjNodeZ.data(),
+                seamNodePtr, seamUpwind ? seamA : RealType(0));
             cudaDeviceSynchronize();
         }
         s.domain.reverseExchangeNodeHaloAdd(advN);
