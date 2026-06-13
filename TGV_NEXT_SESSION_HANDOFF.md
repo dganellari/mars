@@ -41,6 +41,39 @@ Two candidate fixes (both need careful per-face kernel work — verify with the 
 
 The rigorous derivation workflow (wfh4k6o37) was built to derive the exact per-face form from the kernel + verify against all 10 empirical results. It hit the Fable session token limit; relaunch it (4 independent derivations → reconcile → must predict all 10 → ship). DO NOT hand-wire the per-face form — the discrete coefficient is where every solo guess this session went wrong.
 
+## CORE WALL IDENTIFIED (2026-06-14) — the real blocker, proven
+
+After the feedback-loop fixes (which took baseline step-40 blowup → step-190), the remaining instability is NOT a feedback loop and NOT the advection scheme. It is the projection itself.
+
+**Proof by experiment:**
+- Skew advection (`--skew=1`) + all fixes: blows step ~160-200.
+- Upwind advection (`--skew=0`) + all fixes: KE decays monotone to step 160, **div_max FLAT ~10 for steps 80-160** (bounded!), then blows step ~200-250.
+- Seam-localized upwind dissipation (MARS_TGV_SEAM_UPWIND): NO help (blows 170) — the injection is NOT seam-local.
+- Global upwind delays but does NOT cure → there is a CONTINUOUS divergence source that dissipation eventually cannot absorb.
+
+**The source (structural, by design):** the reduced-DOF periodic projection zeros only the FOLDED divergence at the master DOF (periodicFoldToMasterKernel + the P^T restriction), leaving a non-zero PER-SLOT divergence at each seam slot. Result 7 proved you cannot broadcast u to force per-slot consistency (re-injects divergence). Result 10 proved you cannot node-correct it. So the velocity is never truly `div u = 0` at the seam — only `div_folded = 0`. That per-slot residual is a continuous forcing term that no advection scheme (skew or upwind) can be stable against indefinitely; dissipation only delays the blow-up.
+
+**This is the open structural item the Poiseuille tutorial already names** (docs/poiseuille_tutorial.md line 457): "the clean structural fix is a boundary-complete divergence / stabilized formulation." The periodic seam hits the SAME wall the wing/pump pressure work hit. It is NOT an advection bug, NOT a corrector bug, NOT a feedback bug — it is that the reduced periodic projection is divergence-incomplete at the per-slot level.
+
+**The actual fix (next session, structural — NOT another correction term):** make the periodic projection zero the PER-SLOT divergence, not just the folded divergence. Options:
+1. Stabilized (PSPG/Bochev-Dohrmann) pressure formulation that controls the per-slot divergence directly.
+2. A genuinely div-free reduced projection: the P^T A P operator must enforce div=0 at BOTH seam slots, not just the merged master DOF. This likely means the prolongation P and restriction P^T need to preserve the per-slot divergence constraint, which the current fold/per-slot split does not.
+3. Accept the wing/pump's eventual stabilized-formulation fix and apply it here once it lands — they are the same problem.
+
+**DO NOT** spend more effort on advection schemes, mdot reconciliation, or corrector gradient corrections — all proven to only delay, not cure. The wall is the projection.
+
+## Working partial state (env flags, all opt-in, all pump-safe, default OFF)
+
+```
+MARS_PRED_PERSLOT_GRADP=1   # primary feedback loop fix (predictor grad(p) per-slot)
+MARS_PRED_PERSLOT_ADV=1     # predictor advN per-slot (matches grad(p))
+MARS_ROTATIONAL_P=1         # rotational pressure correction (damps accumulation)
+--skew=0                    # upwind: cleanest decay, div_max flat ~10 for 80 steps
+```
+This combination: KE decays correctly through step ~160, div_max bounded ~10 for 80 steps, blows ~200-250. Best partial result. 5-6x longer survival than baseline (step 40). NOT stable — the projection wall above is why.
+
+FALSIFIED this session (do not retry): non-incremental p=phi, velocity broadcast (USTART), per-slot half-mass, node-level EMAC (4 coefficients), seam-localized upwind. All documented above.
+
 ## ORIGINAL BREAKTHROUGH (this session)
 
 ## BREAKTHROUGH (this session)
