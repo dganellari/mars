@@ -871,6 +871,96 @@ __global__ void extractDiagByDiagPtrKernel(const int* diagPtr,
     diag[dof] = d;
 }
 
+// Symmetric-Jacobi scaling of the assembled FEM-Gram pressure operator A_fem.
+// Three small kernels: (1) build the per-OWNED-DOF inverse-sqrt diagonal
+// invSqrt_r = 1/sqrt(diag_r); (2) scatter it onto a per-NODE array so columns
+// (which can reference GHOST DOFs after halo exchange) can read the owner's
+// value via dofToNode; (3) scale the CSR values in place A_hat[r,c] =
+// invSqrt_r * A_fem[r,c] * invSqrt_c. b_hat / x un-scaling reuse (1) directly.
+
+// invSqrt_r = (diag_r > 0) ? 1/sqrt(diag_r) : 1. Guard non-positive diag (must
+// not happen post-pin, but keep the scaling identity-safe if it does).
+template<typename RealType>
+__global__ void buildInvSqrtDiagKernel(const int* diagPtr,
+                                       const RealType* values,
+                                       RealType* invSqrtDiag,
+                                       int numOwnedDofs)
+{
+    int dof = blockIdx.x * blockDim.x + threadIdx.x;
+    if (dof >= numOwnedDofs) return;
+    int dp = diagPtr[dof];
+    RealType d = (dp >= 0) ? values[dp] : RealType(0);
+    invSqrtDiag[dof] = (d > RealType(0)) ? RealType(1) / sqrt(d) : RealType(1);
+}
+
+// Scatter the per-OWNED-DOF invSqrt onto a per-NODE array (ghost slots get 1,
+// later overwritten by the owner's value via exchangeNodeHalo). This is the
+// node-indexed companion the column scaling needs: a column DOF c can be a
+// GHOST (>= numOwnedDofs) whose owner lives on another rank, and only the
+// node-indexed array carries the owner's invSqrt to this rank.
+template<typename RealType>
+__global__ void scatterInvSqrtToNodeKernel(const RealType* invSqrtDiag,
+                                           const int* nodeToDof,
+                                           const uint8_t* ownership,
+                                           RealType* invSqrtNode,
+                                           size_t numNodes,
+                                           int numOwnedDofs)
+{
+    size_t i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= numNodes) return;
+    invSqrtNode[i] = RealType(1);
+    if (ownership[i] != 1) return;
+    int dof = nodeToDof[i];
+    if (dof < 0 || dof >= numOwnedDofs) return;
+    invSqrtNode[i] = invSqrtDiag[dof];
+}
+
+// In-place symmetric scaling A_hat[r,c] = invSqrt_r * A_fem[r,c] * invSqrt_c
+// over OWNED rows. Row r's factor comes from the per-DOF array; column c's
+// factor comes from the per-NODE array (indexed via dofToNode[c]) so cross-rank
+// GHOST columns read the owner's invSqrt (filled by exchangeNodeHalo). On a
+// single rank every column DOF is owned, so dofToNode[c] resolves to an owned
+// node carrying the exact invSqrt -- the halo path degenerates to the per-DOF
+// array and the result is identical. After this pass the diagonal is exactly 1
+// (invSqrt_r * diag_r * invSqrt_r = 1).
+template<typename RealType>
+__global__ void scaleFemGramSymmetricKernel(const RealType* invSqrtDiag,
+                                            const RealType* invSqrtNode,
+                                            const int* dofToNode,
+                                            int numTotalDofs,
+                                            const int* rowPtr,
+                                            const int* colInd,
+                                            RealType* values,
+                                            int numOwnedRows)
+{
+    int row = blockIdx.x * blockDim.x + threadIdx.x;
+    if (row >= numOwnedRows) return;
+    RealType sr = invSqrtDiag[row];
+    int rs = rowPtr[row];
+    int re = rowPtr[row + 1];
+    for (int j = rs; j < re; ++j)
+    {
+        int c = colInd[j];
+        if (c < 0 || c >= numTotalDofs) continue;
+        int cnode = dofToNode[c];
+        RealType sc = (cnode >= 0) ? invSqrtNode[cnode] : RealType(1);
+        values[j] = sr * values[j] * sc;
+    }
+}
+
+// Scale a per-OWNED-DOF vector elementwise by invSqrt: b_hat[r] = invSqrt_r*b[r]
+// (RHS scaling) and x[r] = invSqrt_r*y[r] (solution un-scaling) share this one
+// kernel -- the same D^-1/2 factor maps b->b_hat and y->x.
+template<typename RealType>
+__global__ void applyInvSqrtScaleKernel(const RealType* invSqrtDiag,
+                                        RealType* vec,
+                                        int numOwnedDofs)
+{
+    int dof = blockIdx.x * blockDim.x + threadIdx.x;
+    if (dof >= numOwnedDofs) return;
+    vec[dof] = invSqrtDiag[dof] * vec[dof];
+}
+
 // Matrix-free Jacobi diagonal for the tet D M^-1 D^T pressure operator.
 // The assembled DDT matrix (and extractDiagByDiagPtrKernel above) is hex-only,
 // so tet has no diagonal to precondition with -> CG stalls. This builds the
@@ -2529,6 +2619,17 @@ struct NSStepper
     int nnzFemGram = 0;
     cstone::DeviceVector<RealType> d_valuesFemGram;
     RealType pinNativeDiagFemGram = RealType(0);
+    // Symmetric-Jacobi scaling of A_fem so BoomerAMG can solve it on the big,
+    // non-uniform pump mesh. A_fem = D_gal M_lumped^-1 D_gal^T inherits a
+    // near-zero eigenvalue from the lumped-mass diagonal spread (variable cell
+    // volumes), so the raw operator is near-singular (minDiag/sum|offdiag|~0.02)
+    // and Hypre returns a non-physical |x|~1e6. We solve the scaled system
+    // A_hat = D^-1/2 A_fem D^-1/2 (unit diagonal) and recover x = D^-1/2 y.
+    // d_femGramInvSqrtDiag holds D^-1/2 per OWNED DOF (size numOwnedDofs), built
+    // once at setup after the pin block (before wrapIntoSparseMatrix). The same
+    // values scale the RHS (b_hat=D^-1/2 b) and un-scale the solution every
+    // pressure solve. Empty when MARS_FEMGRAM_NOSCALE=1 (A/B fallback to raw A_fem).
+    cstone::DeviceVector<RealType> d_femGramInvSqrtDiag;
     // Cached diagonal of the BC-modified DDT operator (size numOwnedDofs),
     // used as the Jacobi preconditioner by solvePressureDDT. Extracted once
     // at setup after BC enforcement + optional shift.
@@ -5303,6 +5404,112 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
             s.pressurePinDof, s.d_rowPtrFemGram.data(), s.d_colIndFemGram.data(),
             s.d_diagPtrFemGram.data(), s.d_valuesFemGram.data());
     }
+
+    // SYMMETRIC (Jacobi) DIAGONAL SCALING of the assembled, fully-pinned A_fem.
+    // A_fem = D_gal M_lumped^-1 D_gal^T inherits a near-zero eigenvalue from the
+    // lumped-mass diagonal spread on the big/non-uniform mesh (variable cell
+    // volumes -> variable mass -> variable operator diagonal), so the raw operator
+    // is near-singular (minDiag/sum|offdiag|~0.02) and BoomerAMG returns a
+    // non-physical |x|~1e6 that blows up the corrector. We solve the equivalent
+    // scaled system A_hat y = b_hat with A_hat = D^-1/2 A_fem D^-1/2 (unit
+    // diagonal -> condition number set by the stencil, not the mass-scale spread)
+    // and recover the TRUE x = D^-1/2 y. The solution is mathematically identical
+    // (A_fem x = D^1/2 A_hat D^1/2 D^-1/2 y = D^1/2 b_hat = b); A_hat is just
+    // AMG-conditionable. Build D^-1/2 (per owned DOF) ONCE here, scale the CSR in
+    // place, then the per-step solve scales b and un-scales the solution.
+    // MARS_FEMGRAM_NOSCALE=1 disables it (solve raw A_fem) for A/B.
+    if (s.nnzFemGram > 0 && s.numOwnedDofs > 0
+        && std::getenv("MARS_FEMGRAM_NOSCALE") == nullptr)
+    {
+        int dofBlocks = (s.numOwnedDofs + s.blockSize - 1) / s.blockSize;
+        s.d_femGramInvSqrtDiag.resize(s.numOwnedDofs);
+        buildInvSqrtDiagKernel<RealType><<<dofBlocks, s.blockSize>>>(
+            s.d_diagPtrFemGram.data(), s.d_valuesFemGram.data(),
+            s.d_femGramInvSqrtDiag.data(), s.numOwnedDofs);
+        cudaDeviceSynchronize();
+
+        // Per-NODE invSqrt so a CSR column referencing a GHOST DOF reads its
+        // OWNER's factor. On 1 rank all columns are owned so this degenerates to
+        // the per-DOF array; on >1 rank exchangeNodeHalo publishes owner values
+        // to ghost slots, exactly like the per-node Dirichlet mask used for the
+        // symmetric column-zero (enforceBcColMatrixKernelByNode).
+        cstone::DeviceVector<RealType> d_invSqrtNode(s.nodeCount, RealType(1));
+        int nodeBlocks = (s.nodeCount + s.blockSize - 1) / s.blockSize;
+        scatterInvSqrtToNodeKernel<RealType><<<nodeBlocks, s.blockSize>>>(
+            s.d_femGramInvSqrtDiag.data(), s.d_node_to_dof.data(),
+            d_nodeOwnership.data(), d_invSqrtNode.data(),
+            s.nodeCount, s.numOwnedDofs);
+        cudaDeviceSynchronize();
+        if (s.numRanks > 1)
+            s.domain.exchangeNodeHalo(d_invSqrtNode);
+
+        // dofToNode must exist (built upstream for the column-zero). Guard so a
+        // refactor that moves this ahead of the build doesn't silently mis-scale.
+        if (s.d_dofToNode.size() != static_cast<size_t>(s.numTotalDofs))
+        {
+            if (s.rank == 0)
+                std::cout << "[FemGram-scale] WARNING: d_dofToNode unsized; column "
+                             "invSqrt would default to 1 (incorrect on multi-rank). "
+                             "Skipping scaling.\n";
+            s.d_femGramInvSqrtDiag.resize(0);
+        }
+        else
+        {
+            scaleFemGramSymmetricKernel<RealType><<<dofBlocks, s.blockSize>>>(
+                s.d_femGramInvSqrtDiag.data(), d_invSqrtNode.data(),
+                s.d_dofToNode.data(), s.numTotalDofs,
+                s.d_rowPtrFemGram.data(), s.d_colIndFemGram.data(),
+                s.d_valuesFemGram.data(), s.numOwnedDofs);
+            cudaDeviceSynchronize();
+
+            // Post-scale health: diag must be ~1 everywhere and minDiag/sum|offdiag|
+            // ~1 on BOTH meshes (was 0.02 on the big mesh). Mirrors the assembly
+            // [FemGram-health] check but on the SCALED CSR.
+            if (s.rank == 0)
+            {
+                std::vector<int> hRowPtr(s.numOwnedDofs + 1);
+                cudaMemcpy(hRowPtr.data(), s.d_rowPtrFemGram.data(),
+                           (s.numOwnedDofs + 1) * sizeof(int), cudaMemcpyDeviceToHost);
+                std::vector<int> hColInd(hRowPtr[s.numOwnedDofs]);
+                std::vector<RealType> hVals(hRowPtr[s.numOwnedDofs]);
+                cudaMemcpy(hColInd.data(), s.d_colIndFemGram.data(),
+                           hRowPtr[s.numOwnedDofs] * sizeof(int), cudaMemcpyDeviceToHost);
+                cudaMemcpy(hVals.data(), s.d_valuesFemGram.data(),
+                           hRowPtr[s.numOwnedDofs] * sizeof(RealType), cudaMemcpyDeviceToHost);
+                RealType minDiag = 1e30, maxDiag = -1e30, minDomRatio = 1e30;
+                for (int r = 0; r < s.numOwnedDofs; ++r)
+                {
+                    int rs = hRowPtr[r], re = hRowPtr[r + 1];
+                    if (re == rs) continue;
+                    int diagIdx = -1; RealType offAbs = 0;
+                    for (int k = rs; k < re; ++k)
+                    {
+                        if (hColInd[k] == r) diagIdx = k;
+                        else                 offAbs += std::fabs(hVals[k]);
+                    }
+                    if (diagIdx < 0) continue;
+                    RealType d = hVals[diagIdx];
+                    if (d < minDiag) minDiag = d;
+                    if (d > maxDiag) maxDiag = d;
+                    if (d > RealType(0) && offAbs > RealType(0))
+                    {
+                        RealType ratio = d / offAbs;
+                        if (ratio < minDomRatio) minDomRatio = ratio;
+                    }
+                }
+                std::cout << "  [FemGram-health] AFTER symmetric-Jacobi scaling:"
+                          << " diag range=[" << minDiag << ", " << maxDiag << "] (~1 each)"
+                          << " minDiag/sum|offdiag|=" << minDomRatio
+                          << " (~1 healthy; was ~0.02 on the big mesh)\n";
+            }
+        }
+        pt.lap("FemGram symmetric-Jacobi scaling");
+    }
+    else if (s.nnzFemGram > 0 && s.rank == 0)
+    {
+        std::cout << "  [FemGram-scale] DISABLED (MARS_FEMGRAM_NOSCALE) -- solving raw A_fem\n";
+    }
+
     // Cavity DDT: column-clear stays disabled. A symmetric col-clear changed
     // neighboring rows' row-sum from ~0 to ~|A[r,pin]|, breaking AMG's
     // strength-of-connection metric (earlier attempt -> Hypre setup error 1).
@@ -6028,7 +6235,8 @@ int solveOneComponent(NSStepper<KeyType, RealType, ElementTag>& s,
                       cstone::DeviceVector<RealType>& qOut,
                       typename NSStepper<KeyType, RealType, ElementTag>::Matrix& A,
                       KrylovHint krylov = KrylovHint::PCG,
-                      bool forceCG = false)
+                      bool forceCG = false,
+                      const RealType* unscaleInvSqrt = nullptr)
 {
     bool converged = false;
     int iters = 0;
@@ -6231,6 +6439,21 @@ int solveOneComponent(NSStepper<KeyType, RealType, ElementTag>& s,
 #endif
     }
     cudaDeviceSynchronize();
+
+    // FEM-Gram symmetric-Jacobi un-scaling: the solved system was A_hat y = b_hat
+    // with A_hat = D^-1/2 A_fem D^-1/2, so xVec currently holds y. Recover the
+    // TRUE solution x = D^-1/2 y BEFORE the trace/scatter so s.d_phi gets the
+    // physical phi and any downstream guard sees the true magnitude. Owned DOFs
+    // only (the per-DOF invSqrt is owned-indexed; ghost slots of xVec are stale
+    // and overwritten by the scatter+halo anyway). nullptr (every other caller)
+    // -> no-op, byte-identical.
+    if (unscaleInvSqrt != nullptr && s.numOwnedDofs > 0)
+    {
+        int ub = (s.numOwnedDofs + s.blockSize - 1) / s.blockSize;
+        applyInvSqrtScaleKernel<RealType><<<ub, s.blockSize>>>(
+            unscaleInvSqrt, xVec.data(), s.numOwnedDofs);
+        cudaDeviceSynchronize();
+    }
 
     // One-shot diagnostic: did the solve converge, and is xVec nonzero?
     // Pins down whether phi=0 is (a) converged=false -> no scatter, or
@@ -8110,8 +8333,24 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
                                      && std::is_same_v<ElementTag, TetTag>
                                      && s.nnzFemGram > 0;
         auto& pressureMat = useFemGramSolve ? s.AFemGram : s.Apre;
+        // Symmetric-Jacobi scaling: s.AFemGram is the SCALED operator A_hat
+        // (built at setup). Solve A_hat y = b_hat by scaling b -> b_hat = D^-1/2 b
+        // here; solveOneComponent un-scales the result x = D^-1/2 y in place
+        // (passed invSqrt below). The pin RHS is 0, which scales to 0, so the
+        // pin stays consistent. Skipped when MARS_FEMGRAM_NOSCALE left the
+        // invSqrt array empty (raw A_fem path).
+        const RealType* femGramInvSqrt =
+            (useFemGramSolve && s.d_femGramInvSqrtDiag.size() == size_t(s.numOwnedDofs))
+            ? s.d_femGramInvSqrtDiag.data() : nullptr;
+        if (femGramInvSqrt != nullptr && s.numOwnedDofs > 0)
+        {
+            int sb = (s.numOwnedDofs + s.blockSize - 1) / s.blockSize;
+            applyInvSqrtScaleKernel<RealType><<<sb, s.blockSize>>>(
+                femGramInvSqrt, b.data(), s.numOwnedDofs);
+            cudaDeviceSynchronize();
+        }
         s.lastPressureIters = solveOneComponent<KeyType, RealType, ElementTag>(
-            s, b, xVec, s.d_phi, pressureMat, kHintK);
+            s, b, xVec, s.d_phi, pressureMat, kHintK, /*forceCG=*/false, femGramInvSqrt);
     }
     else  // DDT: (D M^{-1} D^T) phi = -(rho/dt) D u**
     {
