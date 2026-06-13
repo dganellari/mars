@@ -327,19 +327,22 @@ int main(int argc, char** argv)
     // but the assembled DDT is ILL-CONDITIONED on this mesh (its diagonal is a
     // cancelling area-vector sum -> near-zero eigenvalues -> 1e6 phi for AMG).
     //
-    // --pressure-k = Galerkin K + the FEM-consistent weak-form projection pair:
-    // weak divergence b_i = -integral(grad N_i . u**) feeds the RHS and the
-    // corrector uses its adjoint M^-1 [sum_e (V/4) grad phi]. D_fem M^-1 D_fem^T
-    // is spectrally equivalent to K (sum of squares, no cancellation), so the
-    // per-step projection is a contraction on ALL modes. The previous pairing
-    // (K + SCS Green-Gauss corrector) is FALSIFIED: the SCS pair's area-vector
-    // cancellation modes are invisible to K and grew 44x/step. Pair with
-    // --solver=hypre (the proven K solve, cg_p=30-60).
+    // --pressure-k = the REFERENCE collocated method: solve the well-conditioned
+    // Galerkin K (AMG-able, physical phi) and correct with the SCS Green-Gauss
+    // gradient (useLegacyGradient=true -> useDivT=false). PROVEN this session:
+    // an EXACT projection is impossible with a well-conditioned operator -- the
+    // conjugate D M^-1 D^T Gram form (SCS or FEM) ALWAYS has near-zero interior
+    // diagonals because sum_e grad N_a = 0 on a closed 1-ring (divergence
+    // theorem). So the reference does NOT drive div(u)=0; it solves K + relies on
+    // PRESSURE STABILIZATION (--vms-stab: a residual term on the divergence RHS,
+    // keeps K clean) to damp the checkerboard and bound the residual divergence.
+    // Pair with --vms-stab + --solver=hypre. (FEM-Gram exact-projection was a
+    // dead end: near-zero diagonal, |x|=2.3e6, guard-rejected.)
     if (pressureK)
     {
         s.pressureSolve     = PressureSolveKind::K;
-        s.useLegacyGradient = false;
-        s.useFemProjection  = true;   // weak div + adjoint grad, the K-consistent pair
+        s.useLegacyGradient = true;    // SCS Green-Gauss corrector, K's consistent gradient
+        s.useFemProjection  = false;   // exact-projection Gram operator is structurally ill-conditioned -- off
     }
     else
     {
