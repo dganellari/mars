@@ -7413,12 +7413,20 @@ void runPredictorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
             const RealType* divP = d_divAdv.data();
             const uint8_t*  ownP = s.ownershipMap().data();
             RealType*       aP   = advN.data();
+            // Sign/coefficient from MARS_TGV_EMAC_C (default -1.0 = subtract
+            // q*div). The energy residual is per-FACE mdot*(qR^2-qL^2); the
+            // node-assembled q*div is the leading cancellation. Tune the
+            // coefficient (-1, +1, -0.5, -2) empirically against the 300-step
+            // run since the exact discrete coefficient depends on the SCS
+            // face/node weighting.
+            const char* emacCEnv = std::getenv("MARS_TGV_EMAC_C");
+            const RealType emacC = emacCEnv ? RealType(std::stod(emacCEnv)) : RealType(-1.0);
             thrust::for_each(thrust::device,
                 thrust::counting_iterator<size_t>(0),
                 thrust::counting_iterator<size_t>(s.nodeCount),
-                [qNp, divP, ownP, aP] __device__ (size_t i) {
+                [qNp, divP, ownP, aP, emacC] __device__ (size_t i) {
                     if (ownP[i] != 1) return;
-                    aP[i] -= qNp[i] * divP[i];
+                    aP[i] += emacC * qNp[i] * divP[i];
                 });
             cudaDeviceSynchronize();
         }
