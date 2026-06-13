@@ -3981,7 +3981,18 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
     // pattern as the DDT sparsity (every other tet corner is an SCS-edge
     // neighbour of i), so we reuse buildDDTSparsityTet here; only the per-element
     // stencil differs (-(V/4)dNdx_i, 4 per element, vs the 6 SCS area-vectors).
-    if (s.useFemProjection)
+    //
+    // The exact-Gram operator A_fem = D_fem M^-1 D_fem^T is the conjugate of the
+    // FEM corrector gradient, so solving it gives machine-exact div=0 -- BUT it
+    // is a dense non-M-matrix Gram product that BoomerAMG cannot coarsen on a
+    // non-uniform mesh (grid complexity ~1.05, erratic V-cycle). The DEFAULT
+    // --pressure-k path solves the AMG-friendly Galerkin K (s.Apre) and corrects
+    // with the SAME FEM weak gradient (gated on useFemProjection alone, below):
+    // K is spectrally equivalent to A_fem, so the corrector contracts divergence
+    // to a small bounded residual that PSPG/PISO absorb -- the standard collocated
+    // method. Assemble A_fem ONLY when explicitly opted in (MARS_FEMGRAM_SOLVE);
+    // otherwise nnzFemGram stays 0 -> pressureMat=K, no Jacobi scaling.
+    if (s.useFemProjection && std::getenv("MARS_FEMGRAM_SOLVE") != nullptr)
     {
         s.d_rowPtrFemGram.resize(s.numTotalDofs + 1);
         s.d_diagPtrFemGram.resize(s.numTotalDofs);
@@ -8315,23 +8326,27 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
         }
         // Fresh warm-start: phi is per-step correction, not cumulative.
         cudaMemset(xVec.data(), 0, s.numTotalDofs * sizeof(RealType));
-        // Use GMRES for the Hypre K solve. The default hint is PCG, but Hypre PCG
-        // false-converges in ~2 iters here (BoomerAMG-as-preconditioner is non-
-        // symmetric on GPU + the pin spike), returning a garbage phi (cg_p=2,
-        // |phi| exploding) that the corrector then amplifies. GMRES tolerates it
-        // and is the proven-converging path (cg_p=33-60). Only matters when
-        // solverKind==Hypre; the in-house CG path ignores the hint.
-        KrylovHint kHintK = (s.solverKind == SolverKind::Hypre)
-                              ? KrylovHint::GMRES : KrylovHint::PCG;
-        // FEM projection: solve the EXACT conjugate A_fem = D_fem M^-1 D_fem^T
-        // instead of the Galerkin K (Apre). The K-path corrector applies
-        // M^-1 D_fem^T, so D_fem u^{n+1} = D_fem u** - A_fem A_fem^-1 D_fem u** = 0
-        // is exact ONLY when the solved operator is A_fem (K is not equal to it,
-        // which left a residual divergence the corrector couldn't remove). RHS
-        // (b = -(rho/dt) D_fem u** + opening-flux source) is UNCHANGED. Tet-only.
+        // FEM projection: by default solve the AMG-friendly Galerkin K (Apre) and
+        // correct with the FEM weak gradient (the K-path corrector, gated on
+        // useFemProjection alone). K is an M-matrix Laplacian BoomerAMG coarsens
+        // well and is spectrally equivalent to A_fem, so K-solve + FEM-gradient
+        // contracts divergence to a small bounded residual (PSPG/PISO absorb it).
+        // Solve the EXACT conjugate A_fem = D_fem M^-1 D_fem^T (machine-exact
+        // div=0) ONLY when explicitly opted in (MARS_FEMGRAM_SOLVE built it, so
+        // nnzFemGram>0); that operator is AMG-hostile and only converges on the
+        // small mesh. RHS (b = -(rho/dt) D_fem u** + opening-flux source) is the
+        // same for both. Tet-only.
         const bool useFemGramSolve = s.useFemProjection
                                      && std::is_same_v<ElementTag, TetTag>
                                      && s.nnzFemGram > 0;
+        // K is SPD + M-matrix -> Hypre PCG+BoomerAMG is the right solver (fast,
+        // monotone). The Gram operator A_fem needs GMRES (it is non-symmetric to
+        // AMG and PCG breaks down, pAp<0). Only the hint matters when
+        // solverKind==Hypre; the in-house CG path ignores it.
+        KrylovHint kHintK =
+            (s.solverKind == SolverKind::Hypre)
+              ? (useFemGramSolve ? KrylovHint::GMRES : KrylovHint::PCG)
+              : KrylovHint::PCG;
         auto& pressureMat = useFemGramSolve ? s.AFemGram : s.Apre;
         // Symmetric-Jacobi scaling: s.AFemGram is the SCALED operator A_hat
         // (built at setup). Solve A_hat y = b_hat by scaling b -> b_hat = D^-1/2 b
