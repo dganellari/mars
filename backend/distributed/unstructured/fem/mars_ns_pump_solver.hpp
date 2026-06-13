@@ -3918,10 +3918,18 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
                 s.d_valuesFemGram.data(), s.nodeCount);
             cudaDeviceSynchronize();
         }
-        // Health check (rank 0): A_fem is an SPD Laplacian-like Gram form, so its
-        // diagonal must be POSITIVE and healthy (~ K/valence ~ h/valence scale),
-        // NOT near-zero like the SCS DDT (no area-vector cancellation here). A
-        // near-zero or negative diagonal would signal a sparsity/stencil mismatch.
+        // Health check (rank 0): A_fem = D_gal M^-1 D_gal^T is an SPD Laplacian-
+        // like Gram form. Its ABSOLUTE diagonal is O(h) (the Gram form scales as
+        // h^{d-2}=h^1 in 3D: g_a=V dNdx~h^2, g_a^2/M~h^4/h^3=h), SAME scale as
+        // the Galerkin K (V dNdx.dNdx~h). So on a fine mesh a diag of ~1e-2 is
+        // CORRECT, not near-zero -- the verified-zero SCS-DDT artifact is a
+        // RELATIVE collapse (diag << offdiag), which this check separates out.
+        // The real health signals are SCALE-FREE:
+        //   (1) diag > 0 everywhere (SPD), no empty/missing-diag rows;
+        //   (2) row-sum ~ 0 (constant null mode -> pure-Neumann Laplacian);
+        //   (3) diag-dominance ratio rho = diag / sum|offdiag| ~ 1 for interior
+        //       rows (the closed-1-ring self-term cancels, neighbours don't, so
+        //       diag = -sum offdiag exactly; a COLLAPSED diag gives rho << 1).
         if (s.rank == 0)
         {
             std::vector<int> hRowPtr(s.numOwnedDofs + 1);
@@ -3935,26 +3943,45 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
                        hRowPtr[s.numOwnedDofs] * sizeof(RealType), cudaMemcpyDeviceToHost);
             int emptyRows = 0, missingDiag = 0, zeroDiag = 0, negDiag = 0;
             RealType minDiag = 1e30, maxDiag = -1e30;
+            // Scale-free worst case: the SMALLEST diag/sum|offdiag| over interior
+            // rows. A collapsed (SCS-DDT-style) diagonal would push this toward 0
+            // even while the absolute diag looks the same; a healthy Laplacian
+            // keeps it ~1. maxRowSumRel = worst |row sum| / diag (null-mode check).
+            RealType minDomRatio = 1e30, maxRowSumRel = 0;
             for (int r = 0; r < s.numOwnedDofs; ++r)
             {
                 int rs = hRowPtr[r], re = hRowPtr[r + 1];
                 if (re == rs) { emptyRows++; continue; }
                 int diagIdx = -1;
-                for (int k = rs; k < re; ++k) if (hColInd[k] == r) { diagIdx = k; break; }
+                RealType offAbs = 0, rowSum = 0;
+                for (int k = rs; k < re; ++k)
+                {
+                    if (hColInd[k] == r) { diagIdx = k; }
+                    else                 { offAbs += std::fabs(hVals[k]); }
+                    rowSum += hVals[k];
+                }
                 if (diagIdx < 0) { missingDiag++; continue; }
                 RealType d = hVals[diagIdx];
                 if (d == RealType(0)) zeroDiag++;
                 else if (d < RealType(0)) negDiag++;
                 if (d < minDiag) minDiag = d;
                 if (d > maxDiag) maxDiag = d;
+                if (d > RealType(0) && offAbs > RealType(0))
+                {
+                    RealType ratio = d / offAbs;          // ~1 for an interior Laplacian row
+                    if (ratio < minDomRatio) minDomRatio = ratio;
+                    RealType rsr = std::fabs(rowSum) / d;  // ~0 for the constant null mode
+                    if (rsr > maxRowSumRel) maxRowSumRel = rsr;
+                }
             }
             std::cout << "  [FemGram-health] nnz=" << s.nnzFemGram
                       << " emptyRows=" << emptyRows
                       << " missingDiag=" << missingDiag
                       << " zeroDiag=" << zeroDiag
                       << " negDiag=" << negDiag
-                      << " diag range=[" << minDiag << ", " << maxDiag << "]"
-                      << " (expect all-positive, ~K/valence scale)\n";
+                      << " diag range=[" << minDiag << ", " << maxDiag << "] (O(h), == K scale)"
+                      << " minDiag/sum|offdiag|=" << minDomRatio << " (~1 healthy, <<1 collapsed)"
+                      << " max|rowsum|/diag=" << maxRowSumRel << " (~0 = constant null mode)\n";
         }
         pt.lap("assembly A_fem = D_fem M^-1 D_fem^T (tet, node-driven)");
     }
