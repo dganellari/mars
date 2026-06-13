@@ -327,22 +327,24 @@ int main(int argc, char** argv)
     // but the assembled DDT is ILL-CONDITIONED on this mesh (its diagonal is a
     // cancelling area-vector sum -> near-zero eigenvalues -> 1e6 phi for AMG).
     //
-    // --pressure-k = the REFERENCE collocated method: solve the well-conditioned
-    // Galerkin K (AMG-able, physical phi) and correct with the SCS Green-Gauss
-    // gradient (useLegacyGradient=true -> useDivT=false). PROVEN this session:
-    // an EXACT projection is impossible with a well-conditioned operator -- the
-    // conjugate D M^-1 D^T Gram form (SCS or FEM) ALWAYS has near-zero interior
-    // diagonals because sum_e grad N_a = 0 on a closed 1-ring (divergence
-    // theorem). So the reference does NOT drive div(u)=0; it solves K + relies on
-    // PRESSURE STABILIZATION (--vms-stab: a residual term on the divergence RHS,
-    // keeps K clean) to damp the checkerboard and bound the residual divergence.
-    // Pair with --vms-stab + --solver=hypre. (FEM-Gram exact-projection was a
-    // dead end: near-zero diagonal, |x|=2.3e6, guard-rejected.)
+    // --pressure-k = the CONSISTENT FEM projection (Route A). The divergence
+    // measure, the solved operator, and the corrector gradient are all the SAME
+    // weak-Galerkin family -- the ONLY way the projection actually removes
+    // divergence (mixing families amplifies it ~100x; K+SCS measured 25.9->2637).
+    //   - divergence: weak Galerkin  b_i = -integral(grad N_i . u**)   (computeFemDivergenceTetKernel)
+    //   - operator:   A_fem = D_gal M_lumped^-1 D_gal^T (assembled, s.AFemGram), solved by Hypre GMRES+AMG
+    //   - corrector:  M_lumped^-1 D_gal^T phi (lumped FEM gradient)
+    // A_fem is SPD, Laplacian-like, HEALTHY diagonal ~O(h) (it is the Schur/Gram
+    // form of the WEAK divergence, built from -(V/4)dNdx -- NOT the SCS area-vector
+    // sum that cancels). VERIFIED by host replica: assembly == brute-force
+    // D M^-1 D^T (diff 0), one correction drops weak div 1e-1 -> 3e-17. The earlier
+    // "FEM-Gram is a dead end" / "[0.00] diagonal" was a MISREAD: 0.02 is the
+    // correct O(h) scale on a fine mesh, not near-zero. Pair with --solver=hypre.
     if (pressureK)
     {
-        s.pressureSolve     = PressureSolveKind::K;
-        s.useLegacyGradient = true;    // SCS Green-Gauss corrector, K's consistent gradient
-        s.useFemProjection  = false;   // exact-projection Gram operator is structurally ill-conditioned -- off
+        s.pressureSolve     = PressureSolveKind::K;   // the K-branch routes to A_fem when useFemProjection
+        s.useLegacyGradient = false;                  // -> FEM corrector gradient (not SCS) via the FEM branch
+        s.useFemProjection  = true;                   // Route A: weak div + A_fem + lumped FEM gradient
     }
     else
     {
