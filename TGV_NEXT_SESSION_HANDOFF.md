@@ -1,6 +1,31 @@
-# TGV Multi-Rank Periodic — Handoff (2026-06-07, BREAKTHROUGH UPDATE)
+# TGV Multi-Rank Periodic — Handoff (2026-06-12, SECONDARY LOOP MECHANISM CONFIRMED)
 
-**Read this before touching code.** The primary feedback loop is FOUND and FIXED. The bug is reframed from "projection won't close" to "two feedback loops amplify the seam residual"; one is fixed, one is precisely localized.
+**Read this before touching code.** The primary feedback loop is FIXED. The secondary loop's mechanism is now CONFIRMED BY HAND-COMPUTATION (not guessed): it is the skew advection injecting KE at the non-solenoidal periodic seam. The fix is structural (EMAC advection or full div-u correction) and is specified below.
+
+## SECONDARY LOOP — mechanism confirmed (2026-06-12)
+
+The skew (Verstappen) advection kernel (NS:914-935) computes, per SCS face, the energy contribution `q_L·dqdt_L + q_R·dqdt_R = mdot·(qR² − qL²)` (verified by direct expansion of the `-0.5·mdot·(2qL+qR)` / `+0.5·mdot·(qL+2qR)` split). The GLOBAL energy sum `Σ_i q_i (dq/dt)_i = 0` only holds when these telescope across shared faces — which requires `mdot` equal-and-opposite on the two sides of every face = **discrete `div u = 0`**. The kernel comment at NS:928 claims "= 0 for ANY u even when div u != 0" — **that claim is FALSE** (it assumes N_div and N_con are exact transposes, which fails at the seam).
+
+At the cross-rank periodic seam, the reduced projection zeros only the FOLDED divergence at the master DOF, not the per-slot divergence at each slot. So the seam velocity is non-solenoidal, and skew injects `~mdot·q²` of KE per step → the advective secondary loop.
+
+**This is consistent with ALL empirical results**, especially:
+- Result 9: `--skew=0` (upwind) BOUNDS the loop (its numerical diffusion dominates the KE injection); `--skew=1` blows. CONFIRMED advective.
+- Result 7: forcing seam velocity consistency by broadcast (MARS_TGV_USTART_BCAST) re-injects divergence and made it WORSE — because the seam velocity LEGITIMATELY differs (the per-slot projected solution); you cannot force `div u = 0` at the seam by broadcast.
+- Result 5: making advN per-slot helped (reduced the predictor inconsistency feeding the seam divergence) but didn't fix it (the skew injection remains).
+
+## THE FIX (specified, not yet implemented — needs careful kernel work)
+
+The skew form is energy-stable ONLY for solenoidal u. The seam velocity is non-solenoidal by construction. Two options:
+
+1. **EMAC advection** (Charnyi-Heister-Olshanskii-Rebholz 2017): replaces the convective term with `2 D(u)·u + (div u)·u` (D = symmetric velocity gradient), which conserves energy, momentum, AND angular momentum WITHOUT requiring `div u = 0`. This is the literature-correct fix for non-solenoidal discrete velocity. Larger kernel change.
+
+2. **Full div-u correction** (smaller): the skew form is `N_div − ½ q (div u)`. The `−½` assumes the transpose symmetry that fails at the seam. Compute the ACTUAL per-node discrete `div(u^n)` (currently only `div(u**)` = d_divUStar exists, computed AFTER the predictor at NS:7699 — you need `div(u^n)` BEFORE the advection scatter) and apply the FULL `N_div − q·(div u)` correction so the `mdot·q²` injection is exactly cancelled at every node including the seam.
+
+Option 2 is the minimal change but requires plumbing a `div(u^n)` field into the advection kernel (computed at the top of runPredictorStep, before explicitAdvectionFluxScatterPerNodeKernel). Verify the sign/factor with the energy identity above: the correction must make `Σ q·dqdt = 0` hold even when `div u ≠ 0`.
+
+CAUTION: this session's solo factor-level guesses (BDF2 scaling, per-slot mass) were BOTH empirically WRONG despite confident algebra. Verify any factor against the hand-computed energy identity `mdot·(qR²−qL²)` AND test on the 300-step run before believing it. The Fable derivation workflow (wfh4k6o37) was set up to do this rigorously but hit the session token limit (resets 9:20pm Zurich) — relaunch it.
+
+## ORIGINAL BREAKTHROUGH (this session)
 
 ## BREAKTHROUGH (this session)
 
