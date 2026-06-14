@@ -393,6 +393,10 @@ int main(int argc, char** argv)
     s.useOpeningFluxSource = openingFluxSource;   // FIX 1 (OFF by default; --opening-flux-source enables)
     s.useDirichletLift     = dirichletLift;       // FIX 2 (on by default)
     s.pumpDp               = RealType(pumpDp);    // FIX B: pressure-drop drive (>0 active)
+    // Seed the head at the ramp-start strength (1/rampSteps) so step-0 grad(p^n)
+    // is small; the per-step ramp builds it to full. No ramp -> seed full head.
+    s.pumpDpSeedScale      = (sourceRampSteps > 0)
+                             ? RealType(1.0 / double(sourceRampSteps)) : RealType(1);
     s.rhieChowTau = rhieTau;   // <=0 -> kernel falls back to dt/rho
     // FIX B and FIX 1 are mutually exclusive drives: the pressure drop already
     // creates the through-flow, and adding the opening-flux source on top double-
