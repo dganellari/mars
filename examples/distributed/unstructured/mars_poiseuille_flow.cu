@@ -126,6 +126,7 @@ int main(int argc, char** argv)
     // Default ON in inlet mode -- without it the inlet is invisible to the
     // pressure solve. --no-opening-flux-source gives the A/B baseline.
     bool openingFluxSource = true;
+    bool forceBdf1 = false;   // --bdf1: 1st-order time stepping (disable BDF2)
     // Regression-check mode: exit 1 unless the final profile RMS is below
     // rmsTol (the FLUYA reference tolerance) AND every interior-flux ratio is
     // within fluxTol of 1. Drives the ctest entry.
@@ -152,6 +153,7 @@ int main(int argc, char** argv)
         else if (arg.find("--body-force-x=") == 0) bodyForceX = std::stod(arg.substr(15));
         else if (arg == "--no-seed-interior")      seedInterior = false;
         else if (arg == "--no-opening-flux-source") openingFluxSource = false;
+        else if (arg == "--bdf1")                  forceBdf1 = true;
         else if (arg == "--check")                 checkMode = true;
         else if (arg.find("--rms-tol=") == 0)      rmsTol  = std::stod(arg.substr(10));
         else if (arg.find("--flux-tol=") == 0)     fluxTol = std::stod(arg.substr(11));
@@ -253,6 +255,7 @@ int main(int argc, char** argv)
     s.Uinf   = RealType(Uinf);
     s.useLegacyGradient = true;
     s.pressureSolve     = pressureSolve;
+    if (forceBdf1) s.useBdf2 = false;   // 1st-order time stepping
 
     const bool useBodyForce = (driveMode == "bodyforce");
     double targetUMax = Uinf;   // inlet: 1.5*Uinf below; bodyforce: from G

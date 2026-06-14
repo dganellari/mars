@@ -871,6 +871,96 @@ __global__ void extractDiagByDiagPtrKernel(const int* diagPtr,
     diag[dof] = d;
 }
 
+// Symmetric-Jacobi scaling of the assembled FEM-Gram pressure operator A_fem.
+// Three small kernels: (1) build the per-OWNED-DOF inverse-sqrt diagonal
+// invSqrt_r = 1/sqrt(diag_r); (2) scatter it onto a per-NODE array so columns
+// (which can reference GHOST DOFs after halo exchange) can read the owner's
+// value via dofToNode; (3) scale the CSR values in place A_hat[r,c] =
+// invSqrt_r * A_fem[r,c] * invSqrt_c. b_hat / x un-scaling reuse (1) directly.
+
+// invSqrt_r = (diag_r > 0) ? 1/sqrt(diag_r) : 1. Guard non-positive diag (must
+// not happen post-pin, but keep the scaling identity-safe if it does).
+template<typename RealType>
+__global__ void buildInvSqrtDiagKernel(const int* diagPtr,
+                                       const RealType* values,
+                                       RealType* invSqrtDiag,
+                                       int numOwnedDofs)
+{
+    int dof = blockIdx.x * blockDim.x + threadIdx.x;
+    if (dof >= numOwnedDofs) return;
+    int dp = diagPtr[dof];
+    RealType d = (dp >= 0) ? values[dp] : RealType(0);
+    invSqrtDiag[dof] = (d > RealType(0)) ? RealType(1) / sqrt(d) : RealType(1);
+}
+
+// Scatter the per-OWNED-DOF invSqrt onto a per-NODE array (ghost slots get 1,
+// later overwritten by the owner's value via exchangeNodeHalo). This is the
+// node-indexed companion the column scaling needs: a column DOF c can be a
+// GHOST (>= numOwnedDofs) whose owner lives on another rank, and only the
+// node-indexed array carries the owner's invSqrt to this rank.
+template<typename RealType>
+__global__ void scatterInvSqrtToNodeKernel(const RealType* invSqrtDiag,
+                                           const int* nodeToDof,
+                                           const uint8_t* ownership,
+                                           RealType* invSqrtNode,
+                                           size_t numNodes,
+                                           int numOwnedDofs)
+{
+    size_t i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= numNodes) return;
+    invSqrtNode[i] = RealType(1);
+    if (ownership[i] != 1) return;
+    int dof = nodeToDof[i];
+    if (dof < 0 || dof >= numOwnedDofs) return;
+    invSqrtNode[i] = invSqrtDiag[dof];
+}
+
+// In-place symmetric scaling A_hat[r,c] = invSqrt_r * A_fem[r,c] * invSqrt_c
+// over OWNED rows. Row r's factor comes from the per-DOF array; column c's
+// factor comes from the per-NODE array (indexed via dofToNode[c]) so cross-rank
+// GHOST columns read the owner's invSqrt (filled by exchangeNodeHalo). On a
+// single rank every column DOF is owned, so dofToNode[c] resolves to an owned
+// node carrying the exact invSqrt -- the halo path degenerates to the per-DOF
+// array and the result is identical. After this pass the diagonal is exactly 1
+// (invSqrt_r * diag_r * invSqrt_r = 1).
+template<typename RealType>
+__global__ void scaleFemGramSymmetricKernel(const RealType* invSqrtDiag,
+                                            const RealType* invSqrtNode,
+                                            const int* dofToNode,
+                                            int numTotalDofs,
+                                            const int* rowPtr,
+                                            const int* colInd,
+                                            RealType* values,
+                                            int numOwnedRows)
+{
+    int row = blockIdx.x * blockDim.x + threadIdx.x;
+    if (row >= numOwnedRows) return;
+    RealType sr = invSqrtDiag[row];
+    int rs = rowPtr[row];
+    int re = rowPtr[row + 1];
+    for (int j = rs; j < re; ++j)
+    {
+        int c = colInd[j];
+        if (c < 0 || c >= numTotalDofs) continue;
+        int cnode = dofToNode[c];
+        RealType sc = (cnode >= 0) ? invSqrtNode[cnode] : RealType(1);
+        values[j] = sr * values[j] * sc;
+    }
+}
+
+// Scale a per-OWNED-DOF vector elementwise by invSqrt: b_hat[r] = invSqrt_r*b[r]
+// (RHS scaling) and x[r] = invSqrt_r*y[r] (solution un-scaling) share this one
+// kernel -- the same D^-1/2 factor maps b->b_hat and y->x.
+template<typename RealType>
+__global__ void applyInvSqrtScaleKernel(const RealType* invSqrtDiag,
+                                        RealType* vec,
+                                        int numOwnedDofs)
+{
+    int dof = blockIdx.x * blockDim.x + threadIdx.x;
+    if (dof >= numOwnedDofs) return;
+    vec[dof] = invSqrtDiag[dof] * vec[dof];
+}
+
 // Matrix-free Jacobi diagonal for the tet D M^-1 D^T pressure operator.
 // The assembled DDT matrix (and extractDiagByDiagPtrKernel above) is hex-only,
 // so tet has no diagonal to precondition with -> CG stalls. This builds the
@@ -2506,6 +2596,7 @@ struct NSStepper
     cstone::DeviceVector<int> d_diagPtr;
     cstone::DeviceVector<RealType> d_valuesVel;
     cstone::DeviceVector<RealType> d_valuesPre;
+    cstone::DeviceVector<RealType> d_valuesPreScaled;  // K scaled by A_fem's D^-1/2 (precond only)
     // Assembled D M^-1 D^T uses its OWN reduced (7-NNZ) sparsity that exactly
     // matches the SCS-face graph the assembler writes to. Sharing K's 27-NNZ
     // sparsity left ~20 explicit-zero entries per row that confused Hypre
@@ -2517,6 +2608,29 @@ struct NSStepper
     cstone::DeviceVector<int> d_diagPtrDDT;
     int nnzDDT = 0;
     cstone::DeviceVector<RealType> d_valuesDDT;
+    // Assembled EXACT conjugate operator A_fem = D_fem M^-1 D_fem^T for the
+    // --pressure-k FEM projection. Replaces the Galerkin K (Apre) on that path:
+    // the corrector applies M^-1 D_fem^T, so D_fem u^{n+1}=0 requires the solved
+    // operator to be D_fem M^-1 D_fem^T exactly (K is not equal to it). Reuses the
+    // DDT two-hop tet sparsity (a correct superset of the FEM Gram pattern); only
+    // built when useFemProjection. Pinned identically to Apre/AddT.
+    cstone::DeviceVector<int> d_rowPtrFemGram;
+    cstone::DeviceVector<int> d_colIndFemGram;
+    cstone::DeviceVector<int> d_diagPtrFemGram;
+    int nnzFemGram = 0;
+    cstone::DeviceVector<RealType> d_valuesFemGram;
+    RealType pinNativeDiagFemGram = RealType(0);
+    // Symmetric-Jacobi scaling of A_fem so BoomerAMG can solve it on the big,
+    // non-uniform pump mesh. A_fem = D_gal M_lumped^-1 D_gal^T inherits a
+    // near-zero eigenvalue from the lumped-mass diagonal spread (variable cell
+    // volumes), so the raw operator is near-singular (minDiag/sum|offdiag|~0.02)
+    // and Hypre returns a non-physical |x|~1e6. We solve the scaled system
+    // A_hat = D^-1/2 A_fem D^-1/2 (unit diagonal) and recover x = D^-1/2 y.
+    // d_femGramInvSqrtDiag holds D^-1/2 per OWNED DOF (size numOwnedDofs), built
+    // once at setup after the pin block (before wrapIntoSparseMatrix). The same
+    // values scale the RHS (b_hat=D^-1/2 b) and un-scale the solution every
+    // pressure solve. Empty when MARS_FEMGRAM_NOSCALE=1 (A/B fallback to raw A_fem).
+    cstone::DeviceVector<RealType> d_femGramInvSqrtDiag;
     // Cached diagonal of the BC-modified DDT operator (size numOwnedDofs),
     // used as the Jacobi preconditioner by solvePressureDDT. Extracted once
     // at setup after BC enforcement + optional shift.
@@ -2537,6 +2651,13 @@ struct NSStepper
     Matrix Avel;
     Matrix Apre;
     Matrix AddT;
+    Matrix AFemGram;
+    // Symmetric-Jacobi-scaled copy of K (Apre), scaled by the SAME D^-1/2 that
+    // scales A_fem. Used ONLY as the AMG preconditioner for the scaled-A_fem
+    // Gram solve: scaling A_fem fixes its near-singular lumped-mass eigenvalue,
+    // and K must be scaled by the identical factors to stay a consistent
+    // preconditioner. Shares Apre's sparsity (d_rowPtr/d_colInd).
+    Matrix ApreScaled;
 
     // Per-node solution fields. Sized nodeCount; ghost slots refreshed by
     // exchangeNodeHalo after each update.
@@ -2620,6 +2741,8 @@ struct NSStepper
     RealType matrixDt = RealType(0);
 
     // Per-step diagnostics
+    // With PISO inner corrections (nCorrectors>1) this is the LAST inner
+    // pass's count, not the sum -- each pass's solve overwrites it.
     int lastPressureIters = 0;
     RealType lastPressR0    = 0;  // initial absolute residual |r0| of the pressure CG this step
     RealType lastPressResid = 0;  // final relative residual |r|/|r0| at the pressure CG's exit
@@ -2829,6 +2952,15 @@ struct NSStepper
     // modes that grow ~1.2x/step under the K projection (the pump blowup).
     // Kernels in mars_fem_projection.hpp.
     bool useFemProjection = false;
+
+    // PISO-style inner pressure corrections (--correctors=N, FEM-projection
+    // path only). One K-solve removes only ~0.5-0.6 of the weak divergence
+    // (spectral gap between K and D_fem M^-1 D_fem^T); the leftover
+    // re-presents on top of the ramp increment and compounds ~1.2-1.3x/step.
+    // Iterating div->solve->correct N times inside the step shrinks the
+    // per-step residual ~0.5^N. 1 (default) = single correction, byte-
+    // identical to the pre-PISO path.
+    int nCorrectors = 1;
 
     // Ownership map every kernel uses. Always the domain's cached map -- we no
     // longer demote periodic slaves (see setupNSStepper). Kept as a single
@@ -3849,6 +3981,129 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
                           << std::defaultfloat;
         }
     }
+
+    // Assemble the EXACT conjugate operator A_fem = D_fem M^-1 D_fem^T for the
+    // --pressure-k FEM projection (gated on useFemProjection). The FEM Gram
+    // couples (a,b) iff both lie in some node i's 1-ring -- the SAME two-hop
+    // pattern as the DDT sparsity (every other tet corner is an SCS-edge
+    // neighbour of i), so we reuse buildDDTSparsityTet here; only the per-element
+    // stencil differs (-(V/4)dNdx_i, 4 per element, vs the 6 SCS area-vectors).
+    //
+    // The exact-Gram operator A_fem = D_fem M^-1 D_fem^T is the conjugate of the
+    // FEM corrector gradient, so solving it gives machine-exact div=0 -- BUT it
+    // is a dense non-M-matrix Gram product that BoomerAMG cannot coarsen on a
+    // non-uniform mesh (grid complexity ~1.05, erratic V-cycle). The DEFAULT
+    // --pressure-k path solves the AMG-friendly Galerkin K (s.Apre) and corrects
+    // with the SAME FEM weak gradient (gated on useFemProjection alone, below):
+    // K is spectrally equivalent to A_fem, so the corrector contracts divergence
+    // to a small bounded residual that PSPG/PISO absorb -- the standard collocated
+    // method. Assemble A_fem ONLY when explicitly opted in (MARS_FEMGRAM_SOLVE);
+    // otherwise nnzFemGram stays 0 -> pressureMat=K, no Jacobi scaling.
+    if (s.useFemProjection && std::getenv("MARS_FEMGRAM_SOLVE") != nullptr)
+    {
+        s.d_rowPtrFemGram.resize(s.numTotalDofs + 1);
+        s.d_diagPtrFemGram.resize(s.numTotalDofs);
+        s.nnzFemGram = CvfemSparsityBuilder<KeyType>::buildDDTSparsityTet(
+            std::get<0>(d_conn).data(), std::get<1>(d_conn).data(),
+            std::get<2>(d_conn).data(), std::get<3>(d_conn).data(),
+            s.elementCount, s.nodeCount,
+            d_n2eOff_sparsity.data(), d_n2eList_sparsity.data(),
+            s.d_node_to_dof.data(), s.numTotalDofs,
+            s.d_rowPtrFemGram.data(), nullptr, nullptr, 0);
+        s.d_colIndFemGram.resize(s.nnzFemGram);
+        CvfemSparsityBuilder<KeyType>::buildDDTSparsityTet(
+            std::get<0>(d_conn).data(), std::get<1>(d_conn).data(),
+            std::get<2>(d_conn).data(), std::get<3>(d_conn).data(),
+            s.elementCount, s.nodeCount,
+            d_n2eOff_sparsity.data(), d_n2eList_sparsity.data(),
+            s.d_node_to_dof.data(), s.numTotalDofs,
+            s.d_rowPtrFemGram.data(), s.d_colIndFemGram.data(),
+            s.d_diagPtrFemGram.data(), 0);
+        s.d_valuesFemGram.resize(s.nnzFemGram);
+        thrust::fill(thrust::device_pointer_cast(s.d_valuesFemGram.data()),
+                     thrust::device_pointer_cast(s.d_valuesFemGram.data() + s.nnzFemGram),
+                     RealType(0));
+        if (s.nodeCount > 0)
+        {
+            int nBlocks = int((s.nodeCount + s.blockSize - 1) / s.blockSize);
+            assembleFemGramPerNodeKernelTet<KeyType, RealType><<<nBlocks, s.blockSize>>>(
+                std::get<0>(d_conn).data(), std::get<1>(d_conn).data(),
+                std::get<2>(d_conn).data(), std::get<3>(d_conn).data(),
+                s.domain.getNodeX().data(), s.domain.getNodeY().data(), s.domain.getNodeZ().data(),
+                d_n2eOff_sparsity.data(), d_n2eList_sparsity.data(),
+                s.d_node_to_dof.data(), d_nodeOwnership.data(),
+                s.d_massNode.data(),
+                s.d_rowPtrFemGram.data(), s.d_colIndFemGram.data(), s.numOwnedDofs,
+                s.d_valuesFemGram.data(), s.nodeCount);
+            cudaDeviceSynchronize();
+        }
+        // Health check (rank 0): A_fem = D_gal M^-1 D_gal^T is an SPD Laplacian-
+        // like Gram form. Its ABSOLUTE diagonal is O(h) (the Gram form scales as
+        // h^{d-2}=h^1 in 3D: g_a=V dNdx~h^2, g_a^2/M~h^4/h^3=h), SAME scale as
+        // the Galerkin K (V dNdx.dNdx~h). So on a fine mesh a diag of ~1e-2 is
+        // CORRECT, not near-zero -- the verified-zero SCS-DDT artifact is a
+        // RELATIVE collapse (diag << offdiag), which this check separates out.
+        // The real health signals are SCALE-FREE:
+        //   (1) diag > 0 everywhere (SPD), no empty/missing-diag rows;
+        //   (2) row-sum ~ 0 (constant null mode -> pure-Neumann Laplacian);
+        //   (3) diag-dominance ratio rho = diag / sum|offdiag| ~ 1 for interior
+        //       rows (the closed-1-ring self-term cancels, neighbours don't, so
+        //       diag = -sum offdiag exactly; a COLLAPSED diag gives rho << 1).
+        if (s.rank == 0)
+        {
+            std::vector<int> hRowPtr(s.numOwnedDofs + 1);
+            cudaMemcpy(hRowPtr.data(), s.d_rowPtrFemGram.data(),
+                       (s.numOwnedDofs + 1) * sizeof(int), cudaMemcpyDeviceToHost);
+            std::vector<int> hColInd(hRowPtr[s.numOwnedDofs]);
+            std::vector<RealType> hVals(hRowPtr[s.numOwnedDofs]);
+            cudaMemcpy(hColInd.data(), s.d_colIndFemGram.data(),
+                       hRowPtr[s.numOwnedDofs] * sizeof(int), cudaMemcpyDeviceToHost);
+            cudaMemcpy(hVals.data(), s.d_valuesFemGram.data(),
+                       hRowPtr[s.numOwnedDofs] * sizeof(RealType), cudaMemcpyDeviceToHost);
+            int emptyRows = 0, missingDiag = 0, zeroDiag = 0, negDiag = 0;
+            RealType minDiag = 1e30, maxDiag = -1e30;
+            // Scale-free worst case: the SMALLEST diag/sum|offdiag| over interior
+            // rows. A collapsed (SCS-DDT-style) diagonal would push this toward 0
+            // even while the absolute diag looks the same; a healthy Laplacian
+            // keeps it ~1. maxRowSumRel = worst |row sum| / diag (null-mode check).
+            RealType minDomRatio = 1e30, maxRowSumRel = 0;
+            for (int r = 0; r < s.numOwnedDofs; ++r)
+            {
+                int rs = hRowPtr[r], re = hRowPtr[r + 1];
+                if (re == rs) { emptyRows++; continue; }
+                int diagIdx = -1;
+                RealType offAbs = 0, rowSum = 0;
+                for (int k = rs; k < re; ++k)
+                {
+                    if (hColInd[k] == r) { diagIdx = k; }
+                    else                 { offAbs += std::fabs(hVals[k]); }
+                    rowSum += hVals[k];
+                }
+                if (diagIdx < 0) { missingDiag++; continue; }
+                RealType d = hVals[diagIdx];
+                if (d == RealType(0)) zeroDiag++;
+                else if (d < RealType(0)) negDiag++;
+                if (d < minDiag) minDiag = d;
+                if (d > maxDiag) maxDiag = d;
+                if (d > RealType(0) && offAbs > RealType(0))
+                {
+                    RealType ratio = d / offAbs;          // ~1 for an interior Laplacian row
+                    if (ratio < minDomRatio) minDomRatio = ratio;
+                    RealType rsr = std::fabs(rowSum) / d;  // ~0 for the constant null mode
+                    if (rsr > maxRowSumRel) maxRowSumRel = rsr;
+                }
+            }
+            std::cout << "  [FemGram-health] nnz=" << s.nnzFemGram
+                      << " emptyRows=" << emptyRows
+                      << " missingDiag=" << missingDiag
+                      << " zeroDiag=" << zeroDiag
+                      << " negDiag=" << negDiag
+                      << " diag range=[" << minDiag << ", " << maxDiag << "] (O(h), == K scale)"
+                      << " minDiag/sum|offdiag|=" << minDomRatio << " (~1 healthy, <<1 collapsed)"
+                      << " max|rowsum|/diag=" << maxRowSumRel << " (~0 = constant null mode)\n";
+        }
+        pt.lap("assembly A_fem = D_fem M^-1 D_fem^T (tet, node-driven)");
+    }
     } // end else if constexpr tet (DDT operator block)
 
     // Add M/dt to the velocity matrix diagonal -> (M/dt + nu K).
@@ -4030,6 +4285,39 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
                       << " (= h^2/24, h=" << h << ")" << std::defaultfloat << "\n";
     }
     pt.lap("global bbox");
+
+    // STABILIZED-K (the production equal-order method): add PSPG tau*L to K so
+    // the K-path solves (K + tau*L). The exact-projection Gram operator A_fem is
+    // AMG-unsolvable on the big mesh (dense non-M-matrix Gram product AMG can't
+    // coarsen), and bare K does not project (no stabilization -> residual
+    // divergence accumulates -> blowup). (K + tau*L) is an AMG-friendly Laplacian
+    // (K and L are both SPD Laplacians) AND tau*L damps the equal-order
+    // checkerboard / bounds the residual divergence that the FEM-gradient
+    // corrector + PISO then drive down. tau = beta*h^2 (pspgTauAuto, computed
+    // just above). Same kernel the DDT path uses, here pointed at K's CSR
+    // (d_rowPtr/d_colInd -> d_valuesPre). Tet-only; gated on usePSPG so no flag
+    // leaves K bare (legacy). Done here (after tau, before the pin) so the pin
+    // and the Apre wrap see the stabilized operator.
+    if (s.usePSPG && std::is_same_v<ElementTag, TetTag> && s.elementCount > 0)
+    {
+        RealType tauL = (s.pspgTau > RealType(0)) ? s.pspgTau : s.pspgTauAuto;
+        if (tauL > RealType(0))
+        {
+            int eB = int((s.elementCount + s.blockSize - 1) / s.blockSize);
+            assemblePSPGStiffnessTetKernel<KeyType, RealType><<<eB, s.blockSize>>>(
+                std::get<0>(d_conn).data(), std::get<1>(d_conn).data(),
+                std::get<2>(d_conn).data(), std::get<3>(d_conn).data(),
+                s.domain.getNodeX().data(), s.domain.getNodeY().data(), s.domain.getNodeZ().data(),
+                s.d_node_to_dof.data(), d_nodeOwnership.data(),
+                s.d_rowPtr.data(), s.d_colInd.data(), s.numOwnedDofs,
+                tauL, s.d_valuesPre.data(), s.elementCount);
+            cudaDeviceSynchronize();
+            if (s.rank == 0)
+                std::cout << "  [pressure-K] assembled PSPG tau*L into K (tau="
+                          << std::scientific << tauL << std::defaultfloat
+                          << ") -> solving (K + tau*L)\n";
+        }
+    }
 
     // BC mask + cavity target velocity.
     s.d_isBdryDof.resize(s.numOwnedDofs);
@@ -5122,6 +5410,192 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
             s.pressurePinDof, s.d_rowPtrDDT.data(), s.d_colIndDDT.data(),
             s.d_diagPtrDDT.data(), s.d_valuesDDT.data());
     }
+
+    // Same pin/Dirichlet enforcement on the assembled FemGram (A_fem) so the
+    // pure-Neumann pump operator is nonsingular -- identical treatment to AddT
+    // above (A_fem and AddT are both SPD Gram forms with the constant null mode).
+    // Reuses the per-NODE Dirichlet mask + dof->node map already built for AddT.
+    if (s.nnzFemGram > 0
+        && (s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Channel
+            || s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Pump))
+    {
+        int dofBlocks = (s.numOwnedDofs + s.blockSize - 1) / s.blockSize;
+        if (s.pressurePinDof >= 0)
+        {
+            cstone::DeviceVector<RealType> d_pinDiag(1, RealType(0));
+            readRowDiagonalKernel<RealType><<<1, 1>>>(
+                s.pressurePinDof, s.d_diagPtrFemGram.data(),
+                s.d_valuesFemGram.data(), d_pinDiag.data());
+            cudaDeviceSynchronize();
+            cudaMemcpy(&s.pinNativeDiagFemGram, d_pinDiag.data(),
+                       sizeof(RealType), cudaMemcpyDeviceToHost);
+        }
+        enforceBcMatrixKernel<RealType><<<dofBlocks, s.blockSize>>>(
+            s.d_isPressureBdryDof.data(), s.d_rowPtrFemGram.data(), s.d_colIndFemGram.data(),
+            s.d_diagPtrFemGram.data(), s.d_valuesFemGram.data(), s.numOwnedDofs);
+        enforceBcColMatrixKernelByNode<RealType><<<dofBlocks, s.blockSize>>>(
+            s.d_isPressureBdryNode.data(),
+            s.d_node_to_dof.data(), s.d_dofToNode.data(), s.numTotalDofs,
+            s.d_rowPtrFemGram.data(), s.d_colIndFemGram.data(),
+            s.d_valuesFemGram.data(), s.numOwnedDofs);
+        cudaDeviceSynchronize();
+        if (s.pressurePinDof >= 0 && s.pinNativeDiagFemGram > RealType(0))
+        {
+            setRowDiagonalKernel<RealType><<<1, 1>>>(
+                s.pressurePinDof, s.d_diagPtrFemGram.data(),
+                s.d_valuesFemGram.data(), s.pinNativeDiagFemGram);
+            cudaDeviceSynchronize();
+        }
+    }
+    else if (s.nnzFemGram > 0
+             && s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Cavity
+             && s.pressurePinDof >= 0)
+    {
+        enforcePinRowKeepDiagKernel<RealType><<<1, 1>>>(
+            s.pressurePinDof, s.d_rowPtrFemGram.data(), s.d_colIndFemGram.data(),
+            s.d_diagPtrFemGram.data(), s.d_valuesFemGram.data());
+    }
+
+    // SYMMETRIC (Jacobi) DIAGONAL SCALING of the assembled, fully-pinned A_fem.
+    // A_fem = D_gal M_lumped^-1 D_gal^T inherits a near-zero eigenvalue from the
+    // lumped-mass diagonal spread on the big/non-uniform mesh (variable cell
+    // volumes -> variable mass -> variable operator diagonal), so the raw operator
+    // is near-singular (minDiag/sum|offdiag|~0.02) and BoomerAMG returns a
+    // non-physical |x|~1e6 that blows up the corrector. We solve the equivalent
+    // scaled system A_hat y = b_hat with A_hat = D^-1/2 A_fem D^-1/2 (unit
+    // diagonal -> condition number set by the stencil, not the mass-scale spread)
+    // and recover the TRUE x = D^-1/2 y. The solution is mathematically identical
+    // (A_fem x = D^1/2 A_hat D^1/2 D^-1/2 y = D^1/2 b_hat = b); A_hat is just
+    // AMG-conditionable. Build D^-1/2 (per owned DOF) ONCE here, scale the CSR in
+    // place, then the per-step solve scales b and un-scales the solution.
+    // MARS_FEMGRAM_NOSCALE=1 disables it (solve raw A_fem) for A/B.
+    //
+    // Scaling is REQUIRED for the K-precond path too: raw A_fem is near-singular
+    // (the lumped-mass eigenvalue, minDiag/sum|offdiag|~0.02) and GMRES stalls on
+    // it even with a good preconditioner (|x|~1e6, never converges). So we keep
+    // scaling A_fem AND scale K by the SAME D^-1/2 (built into ApreScaled below)
+    // so the preconditioner stays consistent with the scaled operator.
+    const bool kPrecondOn =
+        (std::getenv("MARS_FEMGRAM_KPRECOND") == nullptr)
+        || (std::string(std::getenv("MARS_FEMGRAM_KPRECOND")) != "0");
+    if (s.nnzFemGram > 0 && s.numOwnedDofs > 0
+        && std::getenv("MARS_FEMGRAM_NOSCALE") == nullptr)
+    {
+        int dofBlocks = (s.numOwnedDofs + s.blockSize - 1) / s.blockSize;
+        s.d_femGramInvSqrtDiag.resize(s.numOwnedDofs);
+        buildInvSqrtDiagKernel<RealType><<<dofBlocks, s.blockSize>>>(
+            s.d_diagPtrFemGram.data(), s.d_valuesFemGram.data(),
+            s.d_femGramInvSqrtDiag.data(), s.numOwnedDofs);
+        cudaDeviceSynchronize();
+
+        // Per-NODE invSqrt so a CSR column referencing a GHOST DOF reads its
+        // OWNER's factor. On 1 rank all columns are owned so this degenerates to
+        // the per-DOF array; on >1 rank exchangeNodeHalo publishes owner values
+        // to ghost slots, exactly like the per-node Dirichlet mask used for the
+        // symmetric column-zero (enforceBcColMatrixKernelByNode).
+        cstone::DeviceVector<RealType> d_invSqrtNode(s.nodeCount, RealType(1));
+        int nodeBlocks = (s.nodeCount + s.blockSize - 1) / s.blockSize;
+        scatterInvSqrtToNodeKernel<RealType><<<nodeBlocks, s.blockSize>>>(
+            s.d_femGramInvSqrtDiag.data(), s.d_node_to_dof.data(),
+            d_nodeOwnership.data(), d_invSqrtNode.data(),
+            s.nodeCount, s.numOwnedDofs);
+        cudaDeviceSynchronize();
+        if (s.numRanks > 1)
+            s.domain.exchangeNodeHalo(d_invSqrtNode);
+
+        // dofToNode must exist (built upstream for the column-zero). Guard so a
+        // refactor that moves this ahead of the build doesn't silently mis-scale.
+        if (s.d_dofToNode.size() != static_cast<size_t>(s.numTotalDofs))
+        {
+            if (s.rank == 0)
+                std::cout << "[FemGram-scale] WARNING: d_dofToNode unsized; column "
+                             "invSqrt would default to 1 (incorrect on multi-rank). "
+                             "Skipping scaling.\n";
+            s.d_femGramInvSqrtDiag.resize(0);
+        }
+        else
+        {
+            scaleFemGramSymmetricKernel<RealType><<<dofBlocks, s.blockSize>>>(
+                s.d_femGramInvSqrtDiag.data(), d_invSqrtNode.data(),
+                s.d_dofToNode.data(), s.numTotalDofs,
+                s.d_rowPtrFemGram.data(), s.d_colIndFemGram.data(),
+                s.d_valuesFemGram.data(), s.numOwnedDofs);
+            cudaDeviceSynchronize();
+
+            // Post-scale health: diag must be ~1 everywhere and minDiag/sum|offdiag|
+            // ~1 on BOTH meshes (was 0.02 on the big mesh). Mirrors the assembly
+            // [FemGram-health] check but on the SCALED CSR.
+            if (s.rank == 0)
+            {
+                std::vector<int> hRowPtr(s.numOwnedDofs + 1);
+                cudaMemcpy(hRowPtr.data(), s.d_rowPtrFemGram.data(),
+                           (s.numOwnedDofs + 1) * sizeof(int), cudaMemcpyDeviceToHost);
+                std::vector<int> hColInd(hRowPtr[s.numOwnedDofs]);
+                std::vector<RealType> hVals(hRowPtr[s.numOwnedDofs]);
+                cudaMemcpy(hColInd.data(), s.d_colIndFemGram.data(),
+                           hRowPtr[s.numOwnedDofs] * sizeof(int), cudaMemcpyDeviceToHost);
+                cudaMemcpy(hVals.data(), s.d_valuesFemGram.data(),
+                           hRowPtr[s.numOwnedDofs] * sizeof(RealType), cudaMemcpyDeviceToHost);
+                RealType minDiag = 1e30, maxDiag = -1e30, minDomRatio = 1e30;
+                for (int r = 0; r < s.numOwnedDofs; ++r)
+                {
+                    int rs = hRowPtr[r], re = hRowPtr[r + 1];
+                    if (re == rs) continue;
+                    int diagIdx = -1; RealType offAbs = 0;
+                    for (int k = rs; k < re; ++k)
+                    {
+                        if (hColInd[k] == r) diagIdx = k;
+                        else                 offAbs += std::fabs(hVals[k]);
+                    }
+                    if (diagIdx < 0) continue;
+                    RealType d = hVals[diagIdx];
+                    if (d < minDiag) minDiag = d;
+                    if (d > maxDiag) maxDiag = d;
+                    if (d > RealType(0) && offAbs > RealType(0))
+                    {
+                        RealType ratio = d / offAbs;
+                        if (ratio < minDomRatio) minDomRatio = ratio;
+                    }
+                }
+                std::cout << "  [FemGram-health] AFTER symmetric-Jacobi scaling:"
+                          << " diag range=[" << minDiag << ", " << maxDiag << "] (~1 each)"
+                          << " minDiag/sum|offdiag|=" << minDomRatio
+                          << " (~1 healthy; was ~0.02 on the big mesh)\n";
+            }
+
+            // Build the scaled K preconditioner: copy K's values (d_valuesPre)
+            // and scale by the SAME A_fem-derived D^-1/2 (invSqrtDiag rows,
+            // invSqrtNode cols). K shares Apre's sparsity (d_rowPtr/d_colInd) and
+            // the same DOF numbering as A_fem, so the identical factors apply.
+            // This makes ApreScaled = D^-1/2 K D^-1/2 a consistent preconditioner
+            // for the scaled operator A_hat = D^-1/2 A_fem D^-1/2.
+            if (kPrecondOn && s.nnz > 0)
+            {
+                s.d_valuesPreScaled.resize(s.nnz);
+                thrust::copy(thrust::device_pointer_cast(s.d_valuesPre.data()),
+                             thrust::device_pointer_cast(s.d_valuesPre.data() + s.nnz),
+                             thrust::device_pointer_cast(s.d_valuesPreScaled.data()));
+                scaleFemGramSymmetricKernel<RealType><<<dofBlocks, s.blockSize>>>(
+                    s.d_femGramInvSqrtDiag.data(), d_invSqrtNode.data(),
+                    s.d_dofToNode.data(), s.numTotalDofs,
+                    s.d_rowPtr.data(), s.d_colInd.data(),
+                    s.d_valuesPreScaled.data(), s.numOwnedDofs);
+                cudaDeviceSynchronize();
+                wrapIntoSparseMatrix<RealType>(
+                    s.ApreScaled, s.numOwnedDofs, s.numTotalDofs, s.nnz,
+                    s.d_rowPtr.data(), s.d_colInd.data(), s.d_valuesPreScaled.data());
+                if (s.rank == 0)
+                    std::cout << "  [FemGram-Kprecond] built D^-1/2 K D^-1/2 "
+                                 "preconditioner (scaled K, " << s.nnz << " nnz)\n";
+            }
+        }
+        pt.lap("FemGram symmetric-Jacobi scaling");
+    }
+    else if (s.nnzFemGram > 0 && s.rank == 0)
+    {
+        std::cout << "  [FemGram-scale] DISABLED (MARS_FEMGRAM_NOSCALE) -- solving raw A_fem\n";
+    }
+
     // Cavity DDT: column-clear stays disabled. A symmetric col-clear changed
     // neighboring rows' row-sum from ~0 to ~|A[r,pin]|, breaking AMG's
     // strength-of-connection metric (earlier attempt -> Hypre setup error 1).
@@ -5398,6 +5872,13 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
     if (s.nnzDDT > 0)
         wrapIntoSparseMatrix<RealType>(s.AddT, s.numOwnedDofs, s.numTotalDofs, s.nnzDDT,
                                        s.d_rowPtrDDT.data(), s.d_colIndDDT.data(), s.d_valuesDDT.data());
+    // A_fem (D_fem M^-1 D_fem^T) for the --pressure-k FEM projection: solved
+    // INSTEAD of Apre (K) when useFemProjection, so the K-path corrector
+    // (M^-1 D_fem^T) becomes the exact adjoint and div(u^{n+1})=0 holds.
+    if (s.nnzFemGram > 0)
+        wrapIntoSparseMatrix<RealType>(s.AFemGram, s.numOwnedDofs, s.numTotalDofs, s.nnzFemGram,
+                                       s.d_rowPtrFemGram.data(), s.d_colIndFemGram.data(),
+                                       s.d_valuesFemGram.data());
     pt.lap("SparseMatrix wrap (vel+pre+ddt)");
 
     // Optional diagnostic: env MARS_DDT_PROBE_DIFF=1 enables a one-shot
@@ -5840,7 +6321,9 @@ int solveOneComponent(NSStepper<KeyType, RealType, ElementTag>& s,
                       cstone::DeviceVector<RealType>& qOut,
                       typename NSStepper<KeyType, RealType, ElementTag>::Matrix& A,
                       KrylovHint krylov = KrylovHint::PCG,
-                      bool forceCG = false)
+                      bool forceCG = false,
+                      const RealType* unscaleInvSqrt = nullptr,
+                      typename NSStepper<KeyType, RealType, ElementTag>::Matrix* precondMat = nullptr)
 {
     bool converged = false;
     int iters = 0;
@@ -5999,6 +6482,11 @@ int solveOneComponent(NSStepper<KeyType, RealType, ElementTag>& s,
             }
             HSol hypreSolver(MPI_COMM_WORLD, s.maxIter, s.tolerance, precond);
             hypreSolver.setVerbose(false);
+            // Schur-complement preconditioning: when solving the Gram operator
+            // A_fem (AMG-hostile), build the AMG V-cycle on the spectrally-
+            // equivalent Galerkin K (precondMat) instead. K shares A_fem's
+            // partition. nullptr -> classic AMG-on-A.
+            if (precondMat != nullptr) hypreSolver.setPrecondMatrix(precondMat);
             converged = hypreSolver.solve(
                 A, b_rhs, xVec,
                 static_cast<int>(s.globalRowStart), static_cast<int>(s.globalRowEnd),
@@ -6043,6 +6531,21 @@ int solveOneComponent(NSStepper<KeyType, RealType, ElementTag>& s,
 #endif
     }
     cudaDeviceSynchronize();
+
+    // FEM-Gram symmetric-Jacobi un-scaling: the solved system was A_hat y = b_hat
+    // with A_hat = D^-1/2 A_fem D^-1/2, so xVec currently holds y. Recover the
+    // TRUE solution x = D^-1/2 y BEFORE the trace/scatter so s.d_phi gets the
+    // physical phi and any downstream guard sees the true magnitude. Owned DOFs
+    // only (the per-DOF invSqrt is owned-indexed; ghost slots of xVec are stale
+    // and overwritten by the scatter+halo anyway). nullptr (every other caller)
+    // -> no-op, byte-identical.
+    if (unscaleInvSqrt != nullptr && s.numOwnedDofs > 0)
+    {
+        int ub = (s.numOwnedDofs + s.blockSize - 1) / s.blockSize;
+        applyInvSqrtScaleKernel<RealType><<<ub, s.blockSize>>>(
+            unscaleInvSqrt, xVec.data(), s.numOwnedDofs);
+        cudaDeviceSynchronize();
+    }
 
     // One-shot diagnostic: did the solve converge, and is xVec nonzero?
     // Pins down whether phi=0 is (a) converged=false -> no scatter, or
@@ -7500,8 +8003,18 @@ void runImplicitDiffusionStep(NSStepper<KeyType, RealType, ElementTag>& s, RealT
 // s.d_vStarStar, s.d_wStarStar) and ghosts in sync. Useful for reproducing
 // the DDT bug without the surrounding momentum solve.
 // -------------------------------------------------------------------------
+// uIter/vIter/wIter: velocity iterate for the FEM weak divergence. nullptr
+// (default) reads u** -- the normal single-correction call. The PISO inner
+// loop in runCorrectorStep (--correctors=N) passes the just-corrected u so
+// passes 2..N rebuild the residual divergence of the CURRENT iterate. Only
+// the FEM-projection branch consults these; the SCS/VMS/RC builds always read
+// u** (the PISO loop is gated on useFemProjection, so they never get an
+// override).
 template<typename KeyType, typename RealType, typename ElementTag = HexTag>
-void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, RealType rho)
+void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, RealType rho,
+                          const RealType* uIter = nullptr,
+                          const RealType* vIter = nullptr,
+                          const RealType* wIter = nullptr)
 {
     const auto& d_nodeOwnership = s.ownershipMap();
     const auto& d_conn          = s.domain.getElementToNodeConnectivity();
@@ -7563,7 +8076,9 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
             // periodic folding after this block is identical to the SCS path.
             computeFemDivergenceTetKernel<KeyType, RealType><<<eBlocks, s.blockSize>>>(
                 c0, c1, c2, c3,
-                s.d_uStarStar.data(), s.d_vStarStar.data(), s.d_wStarStar.data(),
+                uIter ? uIter : s.d_uStarStar.data(),
+                vIter ? vIter : s.d_vStarStar.data(),
+                wIter ? wIter : s.d_wStarStar.data(),
                 s.domain.getNodeX().data(), s.domain.getNodeY().data(), s.domain.getNodeZ().data(),
                 d_divAccNode.data(), startElem, numLocal);
         }
@@ -7892,16 +8407,69 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
         }
         // Fresh warm-start: phi is per-step correction, not cumulative.
         cudaMemset(xVec.data(), 0, s.numTotalDofs * sizeof(RealType));
-        // Use GMRES for the Hypre K solve. The default hint is PCG, but Hypre PCG
-        // false-converges in ~2 iters here (BoomerAMG-as-preconditioner is non-
-        // symmetric on GPU + the pin spike), returning a garbage phi (cg_p=2,
-        // |phi| exploding) that the corrector then amplifies. GMRES tolerates it
-        // and is the proven-converging path (cg_p=33-60). Only matters when
-        // solverKind==Hypre; the in-house CG path ignores the hint.
-        KrylovHint kHintK = (s.solverKind == SolverKind::Hypre)
-                              ? KrylovHint::GMRES : KrylovHint::PCG;
+        // FEM projection: by default solve the AMG-friendly Galerkin K (Apre) and
+        // correct with the FEM weak gradient (the K-path corrector, gated on
+        // useFemProjection alone). K is an M-matrix Laplacian BoomerAMG coarsens
+        // well and is spectrally equivalent to A_fem, so K-solve + FEM-gradient
+        // contracts divergence to a small bounded residual (PSPG/PISO absorb it).
+        // Solve the EXACT conjugate A_fem = D_fem M^-1 D_fem^T (machine-exact
+        // div=0) ONLY when explicitly opted in (MARS_FEMGRAM_SOLVE built it, so
+        // nnzFemGram>0); that operator is AMG-hostile and only converges on the
+        // small mesh. RHS (b = -(rho/dt) D_fem u** + opening-flux source) is the
+        // same for both. Tet-only.
+        const bool useFemGramSolve = s.useFemProjection
+                                     && std::is_same_v<ElementTag, TetTag>
+                                     && s.nnzFemGram > 0;
+        // K is SPD + M-matrix -> Hypre PCG+BoomerAMG is the right solver (fast,
+        // GMRES for BOTH Hypre pressure paths. Hypre PCG+BoomerAMG false-
+        // converges on the pinned pure-Neumann pressure operator (Gram OR
+        // K+tau*L): the AMG V-cycle maps the first residual into the near-
+        // constant null mode, so ||r||/||b|| drops below tol in ~2-3 iters
+        // (cg_p=3) while phi is large-but-wrong and does NOT project -> div
+        // never contracts. GMRES has the MinIter=3 floor that forces it past
+        // that deceptive first cycle (cg_p jumps to tens) AND the null/best-
+        // effort guard the PCG branch lacks. The pinned-Neumann operator gives
+        // PCG no real advantage here anyway. Only the hint matters when
+        // solverKind==Hypre; the in-house CG path ignores it.
+        KrylovHint kHintK =
+            (s.solverKind == SolverKind::Hypre)
+              ? KrylovHint::GMRES
+              : KrylovHint::PCG;
+        auto& pressureMat = useFemGramSolve ? s.AFemGram : s.Apre;
+        // Schur-complement preconditioning: solve the SCALED Gram operator A_hat
+        // = D^-1/2 A_fem D^-1/2 but build the AMG V-cycle on the IDENTICALLY-
+        // scaled Galerkin K (s.ApreScaled = D^-1/2 K D^-1/2, an M-matrix AMG
+        // coarsens well). A_fem itself is AMG-hostile -- solving K-direct does
+        // NOT project (proven: GMRES converges yet div blows up), and AMG-on-
+        // A_fem stalls; raw A_fem is near-singular and GMRES stalls regardless.
+        // Scaling fixes the eigenvalue; scaled-K keeps the preconditioner
+        // consistent with the scaled operator. Opt out with
+        // MARS_FEMGRAM_KPRECOND=0 (-> AMG-on-A_fem itself).
+        bool useKPrecond = useFemGramSolve && s.ApreScaled.nnz() > 0;
+        if (const char* ev = std::getenv("MARS_FEMGRAM_KPRECOND"))
+            useKPrecond = useKPrecond && (std::string(ev) != "0");
+        typename NSStepper<KeyType, RealType, ElementTag>::Matrix* precondMat =
+            useKPrecond ? &s.ApreScaled : nullptr;
+        // Symmetric-Jacobi scaling: s.AFemGram is the SCALED operator A_hat
+        // (built at setup). Solve A_hat y = b_hat by scaling b -> b_hat = D^-1/2 b
+        // here; solveOneComponent un-scales the result x = D^-1/2 y in place
+        // (passed invSqrt below). The pin RHS is 0, which scales to 0, so the
+        // pin stays consistent. Skipped when MARS_FEMGRAM_NOSCALE left the
+        // invSqrt array empty (raw A_fem path).
+        const RealType* femGramInvSqrt =
+            (useFemGramSolve
+             && s.d_femGramInvSqrtDiag.size() == size_t(s.numOwnedDofs))
+            ? s.d_femGramInvSqrtDiag.data() : nullptr;
+        if (femGramInvSqrt != nullptr && s.numOwnedDofs > 0)
+        {
+            int sb = (s.numOwnedDofs + s.blockSize - 1) / s.blockSize;
+            applyInvSqrtScaleKernel<RealType><<<sb, s.blockSize>>>(
+                femGramInvSqrt, b.data(), s.numOwnedDofs);
+            cudaDeviceSynchronize();
+        }
         s.lastPressureIters = solveOneComponent<KeyType, RealType, ElementTag>(
-            s, b, xVec, s.d_phi, s.Apre, kHintK);
+            s, b, xVec, s.d_phi, pressureMat, kHintK, /*forceCG=*/false,
+            femGramInvSqrt, precondMat);
     }
     else  // DDT: (D M^{-1} D^T) phi = -(rho/dt) D u**
     {
@@ -8250,6 +8818,10 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
     const bool bdf2ActiveCorr = (s.useBdf2 && s.bdfStep >= 1 && s.d_valuesVel_bdf2.size() > 0);
     const RealType dtEff      = bdf2ActiveCorr ? (RealType(2) * dt / RealType(3)) : dt;
 
+    // grad(s.d_phi) -> s.d_gradPhix/y/z. A lambda (was a plain scope) so the
+    // PISO inner loop below can re-run it once per extra corrector pass; the
+    // single immediate call keeps nCorrectors==1 kernel-for-kernel identical.
+    auto computeGradPhi = [&] ()
     {
         cstone::DeviceVector<RealType> d_gxAcc(s.nodeCount, RealType(0));
         cstone::DeviceVector<RealType> d_gyAcc(s.nodeCount, RealType(0));
@@ -8322,7 +8894,8 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
         }
         s.lastGradPhiRms = rmsOwnedInterior3<KeyType, RealType, ElementTag>(
             s, s.d_gradPhix, s.d_gradPhiy, s.d_gradPhiz);
-    }
+    };
+    computeGradPhi();
 
     auto runCorrector = [&] (cstone::DeviceVector<RealType>& qOut,
                               cstone::DeviceVector<RealType>& qStarStar,
@@ -8339,6 +8912,172 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
     runCorrector(s.d_u, s.d_uStarStar, s.d_gradPhix, s.d_uTarget);
     runCorrector(s.d_v, s.d_vStarStar, s.d_gradPhiy, s.d_vTarget);
     runCorrector(s.d_w, s.d_wStarStar, s.d_gradPhiz, s.d_wTarget);
+
+    // ---- PISO inner pressure corrections (--correctors=N, FEM path only) ----
+    // One K-solve contracts the weak divergence only ~0.5-0.6x; iterating
+    // div -> solve -> correct on the CURRENT iterate shrinks the per-step
+    // residual ~0.5x per pass (2-3 passes -> ~10-25% of one pass's leftover),
+    // turning the ~1.2-1.3x/step compound into a contraction. nCorrectors==1
+    // (default) skips this block entirely -- byte-identical single correction.
+    // NOTE: assumes the rhs=0 pin / pressure-Dirichlet BC of the --pressure-k
+    // workflow. The pumpDp>0 lift (rhs = target - p^n) would re-add the full
+    // head every pass since p^n only updates after the loop -- the driver
+    // warns on that combination.
+    const bool femPiso = s.useFemProjection && std::is_same_v<ElementTag, TetTag>
+                         && s.nCorrectors > 1;
+    if (femPiso)
+    {
+        // FEM-divergence residual print: interior weak divergence of the
+        // corrected iterate PLUS the prescribed opening-flux source -- the
+        // exact source the next solve would see. The [ns-dbg CORR] div_max is
+        // the SCS divergence, misleading for the FEM path; this is the honest
+        // inner-contraction signal (expect |div| to shrink ~0.5x per pass).
+        // Gated like the ns-dbg prints (first-steps window) or
+        // MARS_SOLVE_TRACE; collectives on all ranks, print on rank 0.
+        const bool femDbg = (g_nsDebugStepsLeft > 0)
+                            || (std::getenv("MARS_SOLVE_TRACE") != nullptr);
+        auto sumOwnedPiso = [&] (const RealType* p) -> RealType {
+            RealType loc = thrust::transform_reduce(thrust::device,
+                thrust::counting_iterator<size_t>(0),
+                thrust::counting_iterator<size_t>(s.nodeCount),
+                [own = d_nodeOwnership.data(), p] __device__ (size_t i) -> RealType {
+                    return (own[i] == 1) ? p[i] : RealType(0); },
+                RealType(0), thrust::plus<RealType>());
+            RealType g = 0;
+            MPI_Datatype mt = std::is_same<RealType, double>::value ? MPI_DOUBLE : MPI_FLOAT;
+            MPI_Allreduce(&loc, &g, 1, mt, MPI_SUM, MPI_COMM_WORLD);
+            return g;
+        };
+        auto femDivPrint = [&] (int k)
+        {
+            cstone::DeviceVector<RealType> d_divChk(s.nodeCount, RealType(0));
+            if (eBlocks > 0)
+            {
+                computeFemDivergenceTetKernel<KeyType, RealType><<<eBlocks, s.blockSize>>>(
+                    c0, c1, c2, c3,
+                    s.d_u.data(), s.d_v.data(), s.d_w.data(),
+                    s.domain.getNodeX().data(), s.domain.getNodeY().data(), s.domain.getNodeZ().data(),
+                    d_divChk.data(), startElem, numLocal);
+                cudaDeviceSynchronize();
+            }
+            s.domain.reverseExchangeNodeHaloAdd(d_divChk);
+            maybePeriodicSum<KeyType, RealType, ElementTag>(s, d_divChk);
+            if (s.useOpeningFluxSource
+                && s.d_femFluxWin.size() == s.nodeCount
+                && s.d_femFluxWout.size() == s.nodeCount)
+            {
+                // same ramp/oScale recipe as the solve; the source is fixed
+                // within the step, only the interior part changes.
+                const RealType ramp = (s.uinfBase > RealType(0)) ? (s.Uinf / s.uinfBase)
+                                                                 : RealType(1);
+                RealType Qin    = ramp * sumOwnedPiso(s.d_femFluxWin.data());
+                RealType Qout   = sumOwnedPiso(s.d_femFluxWout.data());
+                RealType oScale = (std::fabs(Qout) > RealType(0)) ? (-Qin / Qout) : RealType(0);
+                addConsistentOpeningFluxKernel<RealType><<<nodeBlocks, s.blockSize>>>(
+                    ramp, oScale,
+                    s.d_femFluxWin.data(), s.d_femFluxWout.data(),
+                    d_nodeOwnership.data(), d_divChk.data(), s.nodeCount);
+                cudaDeviceSynchronize();
+            }
+            // Normalize to physical div (1/s). Reduce over ALL owned DOF rows,
+            // boundary included: the opening source lives on boundary rows and
+            // its progressive cancellation by the developing inflow IS the
+            // contraction being watched.
+            cstone::DeviceVector<RealType> d_divChkN(s.nodeCount, RealType(0));
+            normalizeDivergencePerNodeKernel<RealType><<<nodeBlocks, s.blockSize>>>(
+                d_divChk.data(), s.d_massNode.data(),
+                s.d_node_to_dof.data(), d_nodeOwnership.data(),
+                d_divChkN.data(), s.nodeCount);
+            cudaDeviceSynchronize();
+            const uint8_t* ownP = d_nodeOwnership.data();
+            const int* dofP     = s.d_node_to_dof.data();
+            const RealType* dP  = d_divChkN.data();
+            RealType locMax = thrust::transform_reduce(thrust::device,
+                thrust::counting_iterator<size_t>(0),
+                thrust::counting_iterator<size_t>(s.nodeCount),
+                [ownP, dofP, dP] __device__ (size_t i) -> RealType {
+                    return (ownP[i] == 1 && dofP[i] >= 0) ? fabs(dP[i]) : RealType(0); },
+                RealType(0), thrust::maximum<RealType>());
+            RealType locSq = thrust::transform_reduce(thrust::device,
+                thrust::counting_iterator<size_t>(0),
+                thrust::counting_iterator<size_t>(s.nodeCount),
+                [ownP, dofP, dP] __device__ (size_t i) -> RealType {
+                    if (ownP[i] != 1 || dofP[i] < 0) return RealType(0);
+                    RealType q = dP[i]; return q * q; },
+                RealType(0), thrust::plus<RealType>());
+            long long locCnt = thrust::transform_reduce(thrust::device,
+                thrust::counting_iterator<size_t>(0),
+                thrust::counting_iterator<size_t>(s.nodeCount),
+                [ownP, dofP] __device__ (size_t i) -> long long {
+                    return (ownP[i] == 1 && dofP[i] >= 0) ? 1LL : 0LL; },
+                0LL, thrust::plus<long long>());
+            MPI_Datatype mt = std::is_same<RealType, double>::value ? MPI_DOUBLE : MPI_FLOAT;
+            RealType gMax = 0, gSq = 0;
+            long long gCnt = 0;
+            MPI_Allreduce(&locMax, &gMax, 1, mt, MPI_MAX, MPI_COMM_WORLD);
+            MPI_Allreduce(&locSq,  &gSq,  1, mt, MPI_SUM, MPI_COMM_WORLD);
+            MPI_Allreduce(&locCnt, &gCnt, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+            if (s.rank == 0)
+                std::cout << "    [fem-div k=" << k << " |div|max=" << std::scientific
+                          << std::setprecision(3) << gMax
+                          << " rms=" << (gCnt > 0 ? std::sqrt(gSq / RealType(gCnt)) : RealType(0))
+                          << std::defaultfloat << "]\n";
+        };
+        auto exchangeUVW = [&] ()
+        {
+            s.domain.exchangeNodeHalo(s.d_u);
+            s.domain.exchangeNodeHalo(s.d_v);
+            s.domain.exchangeNodeHalo(s.d_w);
+        };
+        // phi_1 is already applied to u above; accumulate it and iterate. Each
+        // phi_k leaves the solve mean-removed + halo-exchanged, so slotwise
+        // accumulation over owned AND ghost entries stays halo-consistent --
+        // the total needs no extra exchange.
+        cstone::DeviceVector<RealType> d_phiTotal(s.nodeCount);
+        thrust::copy(thrust::device,
+                     thrust::device_pointer_cast(s.d_phi.data()),
+                     thrust::device_pointer_cast(s.d_phi.data() + s.nodeCount),
+                     thrust::device_pointer_cast(d_phiTotal.data()));
+        for (int k = 2; k <= s.nCorrectors; ++k)
+        {
+            // ghosts of the just-corrected iterate: the weak-divergence scatter
+            // reads neighbor nodes of owned elements (mirrors u** being
+            // halo-complete when the single-pass build runs).
+            exchangeUVW();
+            if (femDbg) femDivPrint(k - 1);
+            // Same Hypre K path, same pin/BC RHS handling, fresh xVec=0 warm
+            // start (allocated + memset inside). The opening-flux source is
+            // added EVERY pass: the prescribed boundary flux is a property of
+            // the BC, constant within the step -- what contracts is the
+            // interior+source SUM. s.lastPressureIters is overwritten per
+            // pass, so cg_p reports the LAST inner pass's count.
+            runPressureSolveStep<KeyType, RealType, ElementTag>(
+                s, dt, rho, s.d_u.data(), s.d_v.data(), s.d_w.data());
+            computeGradPhi();
+            // In place: q <- q - (dtEff/rho) grad(phi_k). The corrector kernel
+            // reads/writes only slot i, so aliasing qOut==qStarStar is safe.
+            runCorrector(s.d_u, s.d_u, s.d_gradPhix, s.d_uTarget);
+            runCorrector(s.d_v, s.d_v, s.d_gradPhiy, s.d_vTarget);
+            runCorrector(s.d_w, s.d_w, s.d_gradPhiz, s.d_wTarget);
+            thrust::transform(thrust::device,
+                              thrust::device_pointer_cast(d_phiTotal.data()),
+                              thrust::device_pointer_cast(d_phiTotal.data() + s.nodeCount),
+                              thrust::device_pointer_cast(s.d_phi.data()),
+                              thrust::device_pointer_cast(d_phiTotal.data()),
+                              thrust::plus<RealType>());
+            if (femDbg && k == s.nCorrectors)
+            {
+                exchangeUVW();   // diagnostic-only ghost refresh for the final residual
+                femDivPrint(k);
+            }
+        }
+        // Publish the SUM so the p += phi update below and next step's
+        // grad(p^n) predictor see the full increment.
+        thrust::copy(thrust::device,
+                     thrust::device_pointer_cast(d_phiTotal.data()),
+                     thrust::device_pointer_cast(d_phiTotal.data() + s.nodeCount),
+                     thrust::device_pointer_cast(s.d_phi.data()));
+    }
 
     // Pressure update + ghost sync (next step's predictor needs ghost p^{n+1}).
     // Standard incremental Chorin: p^{n+1} = p^n + phi.

@@ -1,6 +1,100 @@
-# TGV Multi-Rank Periodic — Handoff (2026-06-07, BREAKTHROUGH UPDATE)
+# TGV Multi-Rank Periodic — Handoff (2026-06-12, SECONDARY LOOP MECHANISM CONFIRMED)
 
-**Read this before touching code.** The primary feedback loop is FOUND and FIXED. The bug is reframed from "projection won't close" to "two feedback loops amplify the seam residual"; one is fixed, one is precisely localized.
+**Read this before touching code.** The primary feedback loop is FIXED. The secondary loop's mechanism is now CONFIRMED BY HAND-COMPUTATION (not guessed): it is the skew advection injecting KE at the non-solenoidal periodic seam. The fix is structural (EMAC advection or full div-u correction) and is specified below.
+
+## SECONDARY LOOP — mechanism confirmed (2026-06-12)
+
+The skew (Verstappen) advection kernel (NS:914-935) computes, per SCS face, the energy contribution `q_L·dqdt_L + q_R·dqdt_R = mdot·(qR² − qL²)` (verified by direct expansion of the `-0.5·mdot·(2qL+qR)` / `+0.5·mdot·(qL+2qR)` split). The GLOBAL energy sum `Σ_i q_i (dq/dt)_i = 0` only holds when these telescope across shared faces — which requires `mdot` equal-and-opposite on the two sides of every face = **discrete `div u = 0`**. The kernel comment at NS:928 claims "= 0 for ANY u even when div u != 0" — **that claim is FALSE** (it assumes N_div and N_con are exact transposes, which fails at the seam).
+
+At the cross-rank periodic seam, the reduced projection zeros only the FOLDED divergence at the master DOF, not the per-slot divergence at each slot. So the seam velocity is non-solenoidal, and skew injects `~mdot·q²` of KE per step → the advective secondary loop.
+
+**This is consistent with ALL empirical results**, especially:
+- Result 9: `--skew=0` (upwind) BOUNDS the loop (its numerical diffusion dominates the KE injection); `--skew=1` blows. CONFIRMED advective.
+- Result 7: forcing seam velocity consistency by broadcast (MARS_TGV_USTART_BCAST) re-injects divergence and made it WORSE — because the seam velocity LEGITIMATELY differs (the per-slot projected solution); you cannot force `div u = 0` at the seam by broadcast.
+- Result 5: making advN per-slot helped (reduced the predictor inconsistency feeding the seam divergence) but didn't fix it (the skew injection remains).
+
+## THE FIX (specified, not yet implemented — needs careful kernel work)
+
+The skew form is energy-stable ONLY for solenoidal u. The seam velocity is non-solenoidal by construction. Two options:
+
+1. **EMAC advection** (Charnyi-Heister-Olshanskii-Rebholz 2017): replaces the convective term with `2 D(u)·u + (div u)·u` (D = symmetric velocity gradient), which conserves energy, momentum, AND angular momentum WITHOUT requiring `div u = 0`. This is the literature-correct fix for non-solenoidal discrete velocity. Larger kernel change.
+
+2. **Full div-u correction** (smaller): the skew form is `N_div − ½ q (div u)`. The `−½` assumes the transpose symmetry that fails at the seam. Compute the ACTUAL per-node discrete `div(u^n)` (currently only `div(u**)` = d_divUStar exists, computed AFTER the predictor at NS:7699 — you need `div(u^n)` BEFORE the advection scatter) and apply the FULL `N_div − q·(div u)` correction so the `mdot·q²` injection is exactly cancelled at every node including the seam.
+
+Option 2 is the minimal change but requires plumbing a `div(u^n)` field into the advection kernel (computed at the top of runPredictorStep, before explicitAdvectionFluxScatterPerNodeKernel). Verify the sign/factor with the energy identity above: the correction must make `Σ q·dqdt = 0` hold even when `div u ≠ 0`.
+
+CAUTION: this session's solo factor-level guesses (BDF2 scaling, per-slot mass) were BOTH empirically WRONG despite confident algebra. Verify any factor against the hand-computed energy identity `mdot·(qR²−qL²)` AND test on the 300-step run before believing it. The Fable derivation workflow (wfh4k6o37) was set up to do this rigorously but hit the session token limit (resets 9:20pm Zurich) — relaunch it.
+
+## NODE-EMAC NEGATIVE RESULT (2026-06-14)
+
+Tried `MARS_TGV_EMAC` = add `c·q_i·div_i` to advN per node (node-assembled divergence), coefficients c ∈ {−1, +1, −2, 0.5}. NONE helped — all blow ~150-160, same as without. CONCLUSION: the skew KE injection is genuinely PER-FACE (`mdot·(qR²−qL²)`) and cannot be cancelled by a post-hoc node-assembled correction. The fix must be at the per-face level.
+
+## THE REAL FIX PATH (next session — use the rigorous derivation workflow, do NOT hand-guess)
+
+The skew kernel IS energy-conserving per element (the `½(2qL+qR)` weighting encodes the `−½q·div` term correctly). The leak is purely cross-element at the periodic seam: **the two elements sharing a periodic face compute DIFFERENT `mdot`** (from slightly inconsistent master/slave velocity), so the shared-face flux is not equal-and-opposite and KE doesn't telescope.
+
+Two candidate fixes (both need careful per-face kernel work — verify with the energy identity `mdot·(qR²−qL²)` AND the 300-step run, do NOT trust algebra alone — this session's solo guesses were wrong 4×):
+
+1. **Reconcile mdot at periodic-seam SCS faces** — identify SCS faces whose L/R nodes are a periodic pair (or cross the seam), and fold/average their `mdot` so the two elements sharing the physical periodic face use the SAME equal-and-opposite `mdot`. This is the original "reconcile mdot across the periodic face" idea (NOT the velocity broadcast, which result 7 falsified). Does not touch u or mass.
+
+2. **Per-face EMAC flux** — replace the skew flux at seam faces with the EMAC per-face form (Charnyi et al. 2017), which is energy/momentum/angular-momentum conserving per-face without requiring telescoping mdot.
+
+The rigorous derivation workflow (wfh4k6o37) was built to derive the exact per-face form from the kernel + verify against all 10 empirical results. It hit the Fable session token limit; relaunch it (4 independent derivations → reconcile → must predict all 10 → ship). DO NOT hand-wire the per-face form — the discrete coefficient is where every solo guess this session went wrong.
+
+## CORE WALL IDENTIFIED (2026-06-14) — the real blocker, proven
+
+After the feedback-loop fixes (which took baseline step-40 blowup → step-190), the remaining instability is NOT a feedback loop and NOT the advection scheme. It is the projection itself.
+
+**Proof by experiment:**
+- Skew advection (`--skew=1`) + all fixes: blows step ~160-200.
+- Upwind advection (`--skew=0`) + all fixes: KE decays monotone to step 160, **div_max FLAT ~10 for steps 80-160** (bounded!), then blows step ~200-250.
+- Seam-localized upwind dissipation (MARS_TGV_SEAM_UPWIND): NO help (blows 170) — the injection is NOT seam-local.
+- Global upwind delays but does NOT cure → there is a CONTINUOUS divergence source that dissipation eventually cannot absorb.
+
+**The source (structural, by design):** the reduced-DOF periodic projection zeros only the FOLDED divergence at the master DOF (periodicFoldToMasterKernel + the P^T restriction), leaving a non-zero PER-SLOT divergence at each seam slot. Result 7 proved you cannot broadcast u to force per-slot consistency (re-injects divergence). Result 10 proved you cannot node-correct it. So the velocity is never truly `div u = 0` at the seam — only `div_folded = 0`. That per-slot residual is a continuous forcing term that no advection scheme (skew or upwind) can be stable against indefinitely; dissipation only delays the blow-up.
+
+**This is the open structural item the Poiseuille tutorial already names** (docs/poiseuille_tutorial.md line 457): "the clean structural fix is a boundary-complete divergence / stabilized formulation." The periodic seam hits the SAME wall the wing/pump pressure work hit. It is NOT an advection bug, NOT a corrector bug, NOT a feedback bug — it is that the reduced periodic projection is divergence-incomplete at the per-slot level.
+
+**The actual fix (next session, structural — NOT another correction term):** make the periodic projection zero the PER-SLOT divergence, not just the folded divergence. Options:
+1. Stabilized (PSPG/Bochev-Dohrmann) pressure formulation that controls the per-slot divergence directly.
+2. A genuinely div-free reduced projection: the P^T A P operator must enforce div=0 at BOTH seam slots, not just the merged master DOF. This likely means the prolongation P and restriction P^T need to preserve the per-slot divergence constraint, which the current fold/per-slot split does not.
+3. Accept the wing/pump's eventual stabilized-formulation fix and apply it here once it lands — they are the same problem.
+
+**DO NOT** spend more effort on advection schemes, mdot reconciliation, or corrector gradient corrections — all proven to only delay, not cure. The wall is the projection.
+
+## MOST PROMISING UNTESTED FIX (start here next session)
+
+The decisive contrast: **single-rank periodic TGV is CLEAN (PROJ-P3 1e-14); multi-rank blows.** The ONLY difference in the corrector gradient handling:
+
+- **Single-rank** takes the ELSE branch: `maybePeriodicSum` FOLDS gradPhi onto the master, then `periodicBroadcastKernel` BROADCASTS master→slave, so `gradPhi[M] = gradPhi[S] = g_full` (the full merged-CV gradient at BOTH slots). NS:8708-8718 region (else branch).
+- **Multi-rank reduced path** (routeReducedPeriodicCorr, H2): uses PER-SLOT gradPhi (g_M at master, g_S at slave, no fold, no broadcast). NS:8462-8531.
+
+HYPOTHESIS (derivation d3, captured before the agents were rate-limited): single-rank is clean BECAUSE it folds+broadcasts gradPhi — both slots get the SAME full gradient, so `D_M(u^{n+1}) = D_S(u^{n+1}) = 0` per slot (each CV sees the merged correction). The multi-rank per-slot gradPhi leaves the equal-and-opposite per-slot residual `r_M = -r_S` (sum zero = folded div zero, but each nonzero = the continuous source).
+
+**THE FIX TO TEST: fold+broadcast the CORRECTOR gradPhi on the multi-rank path too** (gradPhi[M]=gradPhi[S]=g_full), matching the single-rank else-branch.
+
+**Why this is NOT a falsified path:**
+- Result 7 (FAILED) broadcast **u** — the velocity RESULT. That re-injects divergence because it overwrites the projected per-slot velocity.
+- This broadcasts **gradPhi** — the CORRECTION. Different object. Single-rank proves it's correct.
+- Earlier corrector-fold tests (bc26138, 8547eea) were BEFORE the primary loop fix (MARS_PRED_PERSLOT_GRADP). They were never cleanly tested with the primary loop fixed. With the predictor grad(p) now per-slot AND the corrector gradPhi folded+broadcast, the predictor and corrector may finally be on a consistent footing that closes per-slot div.
+
+CAUTION: this looks contradictory with MARS_PRED_PERSLOT_GRADP (which made the predictor PER-SLOT). The resolution to check: maybe BOTH predictor grad(p) AND corrector gradPhi should be FOLDED (the single-rank convention) — i.e., MARS_PRED_PERSLOT_GRADP was the right DIRECTION (consistency) but the wrong TARGET (it should have folded the corrector to match a folded predictor, not per-slot'd the predictor to match a per-slot corrector). Test both: (a) corrector folds+broadcasts gradPhi WITH per-slot predictor, (b) everything folded (revert PRED_PERSLOT, fold corrector). Single-rank uses everything-folded and is clean — so (b) is the strong candidate, but it requires the OPERATOR A_red to also be folded-consistent (applyPeriodic=true), which historically broke SYMPROBE. Resolve the operator/corrector consistency carefully.
+
+Relaunch the workflow (wobiup2v7) when the server rate-limit clears — derivations d1 (DOF over-collapse: one pressure DOF for two divergence constraints) and d2 (per-slot residual r_M=-r_S algebra) were the other strong leads.
+
+## Working partial state (env flags, all opt-in, all pump-safe, default OFF)
+
+```
+MARS_PRED_PERSLOT_GRADP=1   # primary feedback loop fix (predictor grad(p) per-slot)
+MARS_PRED_PERSLOT_ADV=1     # predictor advN per-slot (matches grad(p))
+MARS_ROTATIONAL_P=1         # rotational pressure correction (damps accumulation)
+--skew=0                    # upwind: cleanest decay, div_max flat ~10 for 80 steps
+```
+This combination: KE decays correctly through step ~160, div_max bounded ~10 for 80 steps, blows ~200-250. Best partial result. 5-6x longer survival than baseline (step 40). NOT stable — the projection wall above is why.
+
+FALSIFIED this session (do not retry): non-incremental p=phi, velocity broadcast (USTART), per-slot half-mass, node-level EMAC (4 coefficients), seam-localized upwind. All documented above.
+
+## ORIGINAL BREAKTHROUGH (this session)
 
 ## BREAKTHROUGH (this session)
 

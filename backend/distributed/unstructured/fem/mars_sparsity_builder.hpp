@@ -9,10 +9,26 @@
 #include <cub/cub.cuh>
 #include <cstdlib>
 #include <string>
+#include <iostream>
 #include "mars_cvfem_utils.hpp"
 
 namespace mars {
 namespace fem {
+
+// Distinct-neighbour (1-ring) cap for the tet DDT / FemGram sparsity. REAL
+// unstructured tet interior nodes reach valence 40-70+, so the old cap of 48
+// silently dropped columns -> a near-singular A_fem = D M^-1 D^T. 96 covers
+// realistic tet valence with margin. The edge-list kernel and its host caller
+// MUST use the SAME value (the kernel allocates a register array of this size
+// and the caller allocates (cap+1)^2 candidate edge slots per node before the
+// sort+unique), so it lives here as one macro shared by both. NOTE the slot
+// budget grows as cap^2 -- 96 -> 97^2=9409 slots/node of TEMPORARY setup VRAM
+// (freed after the build); do not raise without weighing that. Overflow past
+// this cap is now COUNTED and reported (not silently dropped) by
+// buildDDTSparsityTet, so a too-small cap can never again be silent.
+#ifndef MARS_DDT_TET_MAX_OTHERS
+#define MARS_DDT_TET_MAX_OTHERS 96
+#endif
 
 // Forward declare the kernel (defined below as free function)
 template<typename KeyType>
@@ -1009,7 +1025,9 @@ __global__ void buildDDTEdgeListKernelTet(
     size_t numNodes,
     int maxEdgesPerNode,
     int* edgeListRow,
-    int* edgeListCol)
+    int* edgeListCol,
+    int* overflowCount,   // [0]=#nodes that hit the neighbour cap, [1]=max valence seen
+    int maxOthers)
 {
     size_t i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= numNodes) return;
@@ -1031,14 +1049,16 @@ __global__ void buildDDTEdgeListKernelTet(
     const int lr_pairs[12] = {0,1, 1,2, 0,2, 0,3, 1,3, 2,3};
     constexpr int nodeFaces[4][3] = { {0,2,3}, {0,1,4}, {1,2,5}, {3,4,5} };
 
-    // Distinct neighbour DOFs (the node's 1-ring), NOT the raw incident-face
-    // count. A high-valence tet interior node has a 1-ring of ~20-30 nodes; 48
-    // is a safe cap. Kept small because the caller allocates (cap+1)^2 edge
-    // slots PER NODE -- a large cap blows VRAM on big meshes. MUST equal
-    // kMaxOthers in buildDDTSparsityTet so the (cap+1)^2 slot budget matches.
-    constexpr int MAX_OTHERS = 48;
+    // Distinct neighbour DOFs (the node's 1-ring). REAL unstructured tet
+    // interior nodes reach valence 40-70+ (tets are high-valence); the old
+    // cap of 48 SILENTLY dropped neighbours past 48 -> the A_fem sparsity lost
+    // columns -> near-singular operator. The cap below MUST equal kMaxOthers in
+    // buildDDTSparsityTet so the (cap+1)^2 slot budget matches. Overflow is now
+    // counted (not silent) and reported by the caller.
+    constexpr int MAX_OTHERS = MARS_DDT_TET_MAX_OTHERS;
     int otherDofs[MAX_OTHERS];
     int otherCount = 0;
+    bool hitCap = false;
 
     KeyType eStart = nodeToElemOffsets[i];
     KeyType eEnd   = nodeToElemOffsets[i + 1];
@@ -1052,7 +1072,6 @@ __global__ void buildDDTEdgeListKernelTet(
 
         for (int gi = 0; gi < 3; ++gi)
         {
-            if (otherCount >= MAX_OTHERS) break;
             int gFace = nodeFaces[iLocal][gi];
             int gL_local = lr_pairs[gFace * 2];
             int gR_local = lr_pairs[gFace * 2 + 1];
@@ -1064,9 +1083,16 @@ __global__ void buildDDTEdgeListKernelTet(
             for (int s = 0; s < otherCount; ++s)
                 if (otherDofs[s] == otherDof) { seen = true; break; }
             if (seen) continue;
+            if (otherCount >= maxOthers) { hitCap = true; continue; } // count, do not silently break
             otherDofs[otherCount++] = otherDof;
         }
     }
+
+    // Report overflow so a too-small cap can never again silently produce an
+    // incomplete (near-singular) A_fem. otherCount is the realized 1-ring valence
+    // (clamped at the cap); track its max across nodes for the cap-raise hint.
+    if (hitCap) atomicAdd(&overflowCount[0], 1);
+    atomicMax(&overflowCount[1], otherCount);
 
     int slot = 0;
     auto emit = [&](int r, int c) {
@@ -1107,16 +1133,21 @@ int CvfemSparsityBuilder<KeyType>::buildDDTSparsityTet(
     cudaStream_t stream)
 {
     (void)numElements; // not needed -- node->element CSR encodes it
-    // Distinct-neighbour cap for the 1-ring (~20-30 for a high-valence tet
-    // interior node). (cap+1)^2 edge slots per node; 48 keeps VRAM bounded
-    // (49^2=2401 slots/node) while leaving generous headroom. MUST equal
-    // MAX_OTHERS in buildDDTEdgeListKernelTet (the kernel writes (cap+1)^2 pairs).
-    constexpr int kMaxOthers       = 48;
+    // Distinct-neighbour cap for the 1-ring. MUST equal MAX_OTHERS in
+    // buildDDTEdgeListKernelTet (the kernel writes the dense (cap+1)^2 candidate
+    // pairs, deduped by the sort+unique below). Shared via the macro so the two
+    // can never drift. Real tet valence can hit 40-70+; see the macro comment.
+    constexpr int kMaxOthers       = MARS_DDT_TET_MAX_OTHERS;
     constexpr int kMaxEdgesPerNode = (kMaxOthers + 1) * (kMaxOthers + 1);
     size_t numEdges = numNodes * size_t(kMaxEdgesPerNode);
 
     thrust::device_vector<int> d_edgeRow(numEdges);
     thrust::device_vector<int> d_edgeCol(numEdges);
+
+    // Overflow counter: [0]=#nodes whose realized 1-ring hit the cap (columns
+    // dropped -> incomplete A_fem rows), [1]=max realized valence seen. Reported
+    // on rank 0 so a too-small cap is never silent again.
+    thrust::device_vector<int> d_overflow(2, 0);
 
     int blockSize = 256;
     int numBlocks = (numNodes + blockSize - 1) / blockSize;
@@ -1125,7 +1156,37 @@ int CvfemSparsityBuilder<KeyType>::buildDDTSparsityTet(
         d_nodeToElemOffsets, d_nodeToElemList,
         d_nodeToDof, numNodes, kMaxEdgesPerNode,
         thrust::raw_pointer_cast(d_edgeRow.data()),
-        thrust::raw_pointer_cast(d_edgeCol.data()));
+        thrust::raw_pointer_cast(d_edgeCol.data()),
+        thrust::raw_pointer_cast(d_overflow.data()),
+        kMaxOthers);
+
+    // Read + report overflow. Only the colInd pass (d_colInd != nullptr) prints,
+    // so the two-call rowPtr-then-colInd setup logs once. The rank guard uses
+    // MPI if available; fall back to printing unconditionally otherwise.
+    if (d_colInd != nullptr)
+    {
+        int h_overflow[2] = {0, 0};
+        cudaMemcpy(h_overflow, thrust::raw_pointer_cast(d_overflow.data()),
+                   2 * sizeof(int), cudaMemcpyDeviceToHost);
+        int rank = 0;
+#ifdef MARS_ENABLE_MPI
+        int mpiInit = 0;
+        MPI_Initialized(&mpiInit);
+        if (mpiInit) MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+#endif
+        if (rank == 0)
+        {
+            if (h_overflow[0] > 0)
+                std::cout << "  [FemGram-assembly] " << h_overflow[0]
+                          << " nodes exceeded the " << kMaxOthers
+                          << "-neighbour cap (max valence seen=" << h_overflow[1]
+                          << ") -- A_fem rows incomplete, raise MARS_DDT_TET_MAX_OTHERS\n";
+            else
+                std::cout << "  [FemGram-assembly] 0 nodes exceeded the "
+                          << kMaxOthers << "-neighbour cap (max valence seen="
+                          << h_overflow[1] << ") -- A_fem sparsity complete\n";
+        }
+    }
 
     auto new_end = thrust::remove_if(
         thrust::device,
