@@ -143,6 +143,19 @@ public:
 
     void setVerbose(bool verbose) { verbose_ = verbose; }
 
+    // No-op preconditioner-setup shim. When AMG was already set up on a SEPARATE
+    // matrix K (precondMatrix_ path), we register this as the precond "setup" so
+    // HYPRE_GMRESSetup does NOT rebuild the AMG hierarchy on the solved matrix A.
+    // The real solve still calls HYPRE_BoomerAMGSolve with the K-built hierarchy.
+    static HYPRE_Int noopPrecondSetup(HYPRE_Solver, HYPRE_Matrix,
+                                      HYPRE_Vector, HYPRE_Vector) { return 0; }
+
+    // Set a SEPARATE matrix K to build the BoomerAMG preconditioner on, instead
+    // of the solved matrix A. K must share A's partition (same row/col global
+    // range and same local->global DOF map). Pass nullptr to revert to the
+    // classic single-matrix path. See precondMatrix_ for the rationale.
+    void setPrecondMatrix(const Matrix* K) { precondMatrix_ = K; }
+
     // Env-override helpers for the BoomerAMG knobs. Return the default when the
     // var is unset or unparseable, so a typo never silently disables AMG tuning.
     static int getEnvInt(const char* name, int defVal) {
@@ -351,6 +364,32 @@ public:
                     HYPRE_BoomerAMGSetPrintLevel(precond_, 3);
                 }
             }
+            // Schur-complement preconditioning: build the V-cycle on the separate
+            // K (AMG-friendly Galerkin stiffness) instead of the solved A (the
+            // AMG-hostile Gram operator A_fem). We run BoomerAMGSetup HERE on
+            // parcsr_K_, then register AMG with a no-op setup shim below so
+            // HYPRE_GMRESSetup does NOT rebuild the hierarchy on parcsr_A_. K
+            // shares A_fem's partition exactly, so the same d_localToGlobalDof_
+            // and global range apply.
+            if (precondMatrix_ != nullptr) {
+                buildParCsr(*precondMatrix_, globalColStart, globalColEnd,
+                            K_hypre_, parcsr_K_);
+                if (!parcsr_K_) {
+                    std::cerr << "[HypreGMRES] precond matrix K build failed; "
+                                 "falling back to AMG-on-A\n";
+                } else {
+                    if (verbose_ && rank == 0)
+                        std::cout << "  [BoomerAMG] building hierarchy on separate "
+                                     "K preconditioner matrix\n";
+                    HYPRE_Int kSetupErr = HYPRE_BoomerAMGSetup(
+                        precond_, parcsr_K_, par_b_, par_x_);
+                    if (kSetupErr != 0 && rank == 0) {
+                        std::cerr << "[HypreGMRES] BoomerAMGSetup on K returned "
+                                  << kSetupErr << "\n";
+                        HYPRE_ClearAllErrors();
+                    }
+                }
+            }
         } else if (precondType_ == JACOBI) {
             if (verbose_ && rank == 0) std::cout << "Using Jacobi preconditioner" << std::endl;
             precond_ = (HYPRE_Solver) parcsr_A_;
@@ -399,15 +438,21 @@ public:
 
         if (precondType_ == BOOMERAMG && precond_) {
             if (verbose_ && rank == 0) std::cout << "Setting BoomerAMG preconditioner..." << std::endl;
+            // When AMG was pre-built on the separate K (parcsr_K_), register a
+            // no-op setup so GMRESSetup does not rebuild the hierarchy on A.
+            const bool kPrecondReady = (precondMatrix_ != nullptr && parcsr_K_ != nullptr);
+            auto amgSetupFn = kPrecondReady
+                ? (HYPRE_Int (*)(HYPRE_Solver, HYPRE_Matrix, HYPRE_Vector, HYPRE_Vector))noopPrecondSetup
+                : (HYPRE_Int (*)(HYPRE_Solver, HYPRE_Matrix, HYPRE_Vector, HYPRE_Vector))HYPRE_BoomerAMGSetup;
             if (useFlexGmres_)
                 HYPRE_FlexGMRESSetPrecond(solver_,
                                    (HYPRE_Int (*)(HYPRE_Solver, HYPRE_Matrix, HYPRE_Vector, HYPRE_Vector))HYPRE_BoomerAMGSolve,
-                                   (HYPRE_Int (*)(HYPRE_Solver, HYPRE_Matrix, HYPRE_Vector, HYPRE_Vector))HYPRE_BoomerAMGSetup,
+                                   amgSetupFn,
                                    precond_);
             else
                 HYPRE_GMRESSetPrecond(solver_,
                                    (HYPRE_Int (*)(HYPRE_Solver, HYPRE_Matrix, HYPRE_Vector, HYPRE_Vector))HYPRE_BoomerAMGSolve,
-                                   (HYPRE_Int (*)(HYPRE_Solver, HYPRE_Matrix, HYPRE_Vector, HYPRE_Vector))HYPRE_BoomerAMGSetup,
+                                   amgSetupFn,
                                    precond_);
         } else if (precondType_ == JACOBI) {
             if (verbose_ && rank == 0) std::cout << "Setting Jacobi (diagonal) preconditioner..." << std::endl;
@@ -545,6 +590,17 @@ public:
     //   4) one HYPRE_IJMatrixSetValues call with all device pointers
     void setupHypreMatrix(const Matrix& A,
                           IndexType globalColStart, IndexType globalColEnd) {
+        // Default target: the solved operator's handles.
+        buildParCsr(A, globalColStart, globalColEnd, A_hypre_, parcsr_A_);
+    }
+
+    // Build a ParCSR from a device CSR into the GIVEN handles, using the same
+    // partition (globalDofStart_/End_, d_localToGlobalDof_) as the solved matrix.
+    // Used both for the solved operator A and, on the K-preconditioner path, for
+    // the separate precond matrix K (which shares A_fem's partition exactly).
+    void buildParCsr(const Matrix& A,
+                     IndexType globalColStart, IndexType globalColEnd,
+                     HYPRE_IJMatrix& ij_out, HYPRE_ParCSRMatrix& parcsr_out) {
         int rank;
         MPI_Comm_rank(comm_, &rank);
         HYPRE_Int m       = static_cast<HYPRE_Int>(A.numRows());
@@ -556,9 +612,9 @@ public:
         (void)globalColStart;
         (void)globalColEnd;
 
-        HYPRE_IJMatrixCreate(comm_, ilower, iupper, ilower, iupper, &A_hypre_);
-        HYPRE_IJMatrixSetObjectType(A_hypre_, HYPRE_PARCSR);
-        HYPRE_IJMatrixInitialize(A_hypre_);
+        HYPRE_IJMatrixCreate(comm_, ilower, iupper, ilower, iupper, &ij_out);
+        HYPRE_IJMatrixSetObjectType(ij_out, HYPRE_PARCSR);
+        HYPRE_IJMatrixInitialize(ij_out);
 
         // Quick NaN/Inf scan on raw values (single allreduce-style reduction).
         bool hasNaN = thrust::any_of(thrust::device_pointer_cast(A.valuesPtr()),
@@ -676,17 +732,17 @@ public:
 
         // One device-pointer SetValues call: HYPRE_MEMORY_DEVICE has been set globally,
         // so Hypre reads ncols/rows/cols/values directly from device memory.
-        HYPRE_IJMatrixSetValues(A_hypre_, m,
+        HYPRE_IJMatrixSetValues(ij_out, m,
                                 thrust::raw_pointer_cast(d_perRowCount.data()),
                                 thrust::raw_pointer_cast(d_rows.data()),
                                 thrust::raw_pointer_cast(d_colsGlobalCompact.data()),
                                 thrust::raw_pointer_cast(d_valsCompact.data()));
 
-        HYPRE_IJMatrixAssemble(A_hypre_);
+        HYPRE_IJMatrixAssemble(ij_out);
         if (verbose_) std::cout << "Rank " << rank << ": Matrix assembled, getting ParCSR object..." << std::endl;
-        HYPRE_IJMatrixGetObject(A_hypre_, (void**)&parcsr_A_);
+        HYPRE_IJMatrixGetObject(ij_out, (void**)&parcsr_out);
 
-        if (!parcsr_A_) {
+        if (!parcsr_out) {
             std::cerr << "Rank " << rank << ": Failed to get Hypre ParCSR matrix object" << std::endl;
             return;
         }
@@ -747,6 +803,11 @@ public:
             HYPRE_IJMatrixDestroy(A_hypre_);
             A_hypre_ = nullptr;
         }
+        if (K_hypre_) {
+            HYPRE_IJMatrixDestroy(K_hypre_);
+            K_hypre_ = nullptr;
+            parcsr_K_ = nullptr;
+        }
         if (b_hypre_) {
             HYPRE_IJVectorDestroy(b_hypre_);
             b_hypre_ = nullptr;
@@ -775,6 +836,16 @@ private:
 
     HYPRE_IJMatrix A_hypre_;
     HYPRE_ParCSRMatrix parcsr_A_;
+
+    // Optional SEPARATE preconditioner matrix K (the AMG-friendly Galerkin
+    // stiffness). When set, BoomerAMG is built on parcsr_K_ while GMRES still
+    // solves parcsr_A_ (the Gram operator A_fem). This is the Schur-complement
+    // preconditioning fix: A_fem projects exactly but is AMG-hostile, K is
+    // spectrally equivalent and AMG coarsens it well. Both share A_fem's
+    // partition. nullptr -> classic single-matrix path (AMG on A itself).
+    const Matrix*      precondMatrix_ = nullptr;
+    HYPRE_IJMatrix     K_hypre_  = nullptr;
+    HYPRE_ParCSRMatrix parcsr_K_ = nullptr;
 
     HYPRE_IJVector b_hypre_;
     HYPRE_IJVector x_hypre_;

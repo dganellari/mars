@@ -5429,8 +5429,18 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
     // AMG-conditionable. Build D^-1/2 (per owned DOF) ONCE here, scale the CSR in
     // place, then the per-step solve scales b and un-scales the solution.
     // MARS_FEMGRAM_NOSCALE=1 disables it (solve raw A_fem) for A/B.
+    //
+    // The K-preconditioner path (default when the Gram operator is built) needs
+    // the RAW A_fem so the raw-K AMG is a consistent preconditioner -- scaling
+    // A_fem in place would mismatch it. So skip scaling unless K-precond was
+    // explicitly turned off (MARS_FEMGRAM_KPRECOND=0). The per-step solve makes
+    // the same choice, so the stored operator and the solve agree.
+    const bool kPrecondOn =
+        (std::getenv("MARS_FEMGRAM_KPRECOND") == nullptr)
+        || (std::string(std::getenv("MARS_FEMGRAM_KPRECOND")) != "0");
     if (s.nnzFemGram > 0 && s.numOwnedDofs > 0
-        && std::getenv("MARS_FEMGRAM_NOSCALE") == nullptr)
+        && std::getenv("MARS_FEMGRAM_NOSCALE") == nullptr
+        && !kPrecondOn)
     {
         int dofBlocks = (s.numOwnedDofs + s.blockSize - 1) / s.blockSize;
         s.d_femGramInvSqrtDiag.resize(s.numOwnedDofs);
@@ -6247,7 +6257,8 @@ int solveOneComponent(NSStepper<KeyType, RealType, ElementTag>& s,
                       typename NSStepper<KeyType, RealType, ElementTag>::Matrix& A,
                       KrylovHint krylov = KrylovHint::PCG,
                       bool forceCG = false,
-                      const RealType* unscaleInvSqrt = nullptr)
+                      const RealType* unscaleInvSqrt = nullptr,
+                      typename NSStepper<KeyType, RealType, ElementTag>::Matrix* precondMat = nullptr)
 {
     bool converged = false;
     int iters = 0;
@@ -6406,6 +6417,11 @@ int solveOneComponent(NSStepper<KeyType, RealType, ElementTag>& s,
             }
             HSol hypreSolver(MPI_COMM_WORLD, s.maxIter, s.tolerance, precond);
             hypreSolver.setVerbose(false);
+            // Schur-complement preconditioning: when solving the Gram operator
+            // A_fem (AMG-hostile), build the AMG V-cycle on the spectrally-
+            // equivalent Galerkin K (precondMat) instead. K shares A_fem's
+            // partition. nullptr -> classic AMG-on-A.
+            if (precondMat != nullptr) hypreSolver.setPrecondMatrix(precondMat);
             converged = hypreSolver.solve(
                 A, b_rhs, xVec,
                 static_cast<int>(s.globalRowStart), static_cast<int>(s.globalRowEnd),
@@ -8348,14 +8364,32 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
               ? (useFemGramSolve ? KrylovHint::GMRES : KrylovHint::PCG)
               : KrylovHint::PCG;
         auto& pressureMat = useFemGramSolve ? s.AFemGram : s.Apre;
+        // Schur-complement preconditioning: solve the Gram operator A_fem but
+        // build the AMG V-cycle on the spectrally-equivalent Galerkin K (s.Apre,
+        // an M-matrix AMG coarsens well). A_fem itself is AMG-hostile -- solving
+        // it K-direct does NOT project (proven: GMRES converges yet div blows up),
+        // and AMG-on-A_fem stalls. This keeps the CORRECT operator (A_fem
+        // projects exactly) with a WORKING preconditioner. Requires the RAW
+        // (unscaled) A_fem so K (also unscaled) is a consistent preconditioner --
+        // mixing scaled A_fem with raw-K AMG gives a wrong V-cycle. So this path
+        // forces MARS_FEMGRAM_NOSCALE semantics: no symmetric-Jacobi scaling.
+        // Opt in with MARS_FEMGRAM_KPRECOND (default ON when solving the Gram
+        // operator; set =0 to fall back to AMG-on-A_fem).
+        bool useKPrecond = useFemGramSolve;
+        if (const char* ev = std::getenv("MARS_FEMGRAM_KPRECOND"))
+            useKPrecond = useFemGramSolve && (std::string(ev) != "0");
+        typename NSStepper<KeyType, RealType, ElementTag>::Matrix* precondMat =
+            useKPrecond ? &s.Apre : nullptr;
         // Symmetric-Jacobi scaling: s.AFemGram is the SCALED operator A_hat
         // (built at setup). Solve A_hat y = b_hat by scaling b -> b_hat = D^-1/2 b
         // here; solveOneComponent un-scales the result x = D^-1/2 y in place
         // (passed invSqrt below). The pin RHS is 0, which scales to 0, so the
         // pin stays consistent. Skipped when MARS_FEMGRAM_NOSCALE left the
-        // invSqrt array empty (raw A_fem path).
+        // invSqrt array empty (raw A_fem path) OR when K-preconditioning (which
+        // needs the raw operator to match the raw-K AMG).
         const RealType* femGramInvSqrt =
-            (useFemGramSolve && s.d_femGramInvSqrtDiag.size() == size_t(s.numOwnedDofs))
+            (useFemGramSolve && !useKPrecond
+             && s.d_femGramInvSqrtDiag.size() == size_t(s.numOwnedDofs))
             ? s.d_femGramInvSqrtDiag.data() : nullptr;
         if (femGramInvSqrt != nullptr && s.numOwnedDofs > 0)
         {
@@ -8365,7 +8399,8 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
             cudaDeviceSynchronize();
         }
         s.lastPressureIters = solveOneComponent<KeyType, RealType, ElementTag>(
-            s, b, xVec, s.d_phi, pressureMat, kHintK, /*forceCG=*/false, femGramInvSqrt);
+            s, b, xVec, s.d_phi, pressureMat, kHintK, /*forceCG=*/false,
+            femGramInvSqrt, precondMat);
     }
     else  // DDT: (D M^{-1} D^T) phi = -(rho/dt) D u**
     {
