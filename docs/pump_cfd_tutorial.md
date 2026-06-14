@@ -101,9 +101,13 @@ Re = U·L/ν
 ```
 
 `Re` measures inertia vs. viscosity — *the* knob that sets the flow regime (smooth
-and laminar at low `Re`, swirling and turbulent at high `Re`). Rather than guess a
-viscosity `ν`, you specify `--Re=` and MARS back-computes `ν = U·L/Re`. (More
-dimensionless diagnostics in Part 5.)
+and laminar at low `Re`, swirling and turbulent at high `Re`). (More dimensionless
+diagnostics in Part 5.)
+
+> **Important:** specify the *physical* fluid properties directly with `--nu`/`--rho`
+> (water: `ρ=1000`, `ν=10⁻⁶`). The legacy `--Re=` flag back-computes `ν = U·L/Re`
+> using the **bounding-box** diagonal as `L` — which is *not* the passage scale, so on
+> a real internal flow it sets a wildly wrong viscosity. See Part 5b.
 
 ---
 
@@ -483,6 +487,74 @@ In short: collocated P1–P1 + a consistent `D M⁻¹ Dᵀ` projection is the si
 most GPU-friendly choice and gives a stable, physical solution — but it carries a
 bounded checkerboard floor. Driving `div` to zero means either *stabilizing* P1–P1
 (PSPG/Bochev–Dohrmann) or moving to an *inf-sup-stable* or *staggered* discretization.
+
+---
+
+## Part 5b — What MARS actually solves now (the production pressure path)
+
+The discussion above is the *theory*. Here is the path that is implemented and
+validated, selected with `--pressure-k --pspg`:
+
+- **The pressure operator is the stabilized Galerkin Laplacian `K + τ·L`**, not the
+  raw `D M⁻¹ Dᵀ` Gram form. The exact Gram operator is the *consistent* conjugate of
+  the divergence, but it is a dense, non-M-matrix product that algebraic multigrid
+  (BoomerAMG) **cannot coarsen** on a non-uniform pump mesh (grid complexity ~1.05 —
+  no real multigrid). The Galerkin stiffness `K` *is* an M-matrix Laplacian that AMG
+  coarsens beautifully (grid complexity ~1.25); `τ·L` is the **PSPG** stabilization
+  (`τ = h²/24`), which both legalizes the equal-order pair and keeps `K+τ·L`
+  well-conditioned. The corrector still uses the consistent FEM weak gradient, so the
+  projection contracts divergence to the bounded floor described above.
+- **Solve it with GMRES, not PCG** (`--solver=hypre` selects Hypre; the K-path forces
+  GMRES). On the pinned pure-Neumann pressure operator, Hypre PCG+BoomerAMG
+  *false-converges* in ~3 iterations (the AMG V-cycle maps the first residual into the
+  near-constant null mode, so the relative residual drops below tolerance while the
+  solution is wrong). GMRES has a minimum-iteration floor that forces it past that
+  deceptive first cycle and a null-solution guard, so it returns a real pressure.
+- **Physical fluid properties matter.** Use `--nu`/`--rho` (water: `ρ=1000`,
+  `ν=10⁻⁶`). The legacy `--Re` flag overrides `ν` using the *bounding-box* diagonal as
+  the length scale, which is not the passage scale — on a real pump it inflates `ν` by
+  ~10³, turning water into molasses and making the passage look "dead." A correct
+  Reynolds number uses the passage length, not the whole geometry.
+
+This path runs a **stable, converging, mass-conserving through-flow** at moderate head,
+single- and multi-rank (the 1-rank and 4-rank results are byte-identical — the
+distributed solve is rank-invariant).
+
+## Part 5c — Driving the flow: the opening boundary conditions
+
+How you *drive* the pump is itself a CFD subtlety, and the openings are where most of
+the difficulty lives.
+
+- **Velocity-inlet (`--inlet-velocity`)** prescribes the inlet speed. The catch on a
+  CVFEM code: a velocity prescribed on the *exterior* opening face is **invisible to
+  the interior pressure solve** (that face is in no interior sub-control-volume face),
+  so it cannot, by itself, drive flow *through* the passage — the inlet velocity is
+  frozen and the interior never sees a passage-spanning pressure gradient.
+- **Pressure-drive (`--pump-dp`, "FIX B")** is the physical way to run a pump: impose
+  `p = Δp` on the inlet face and `p = 0` on the outlet face, leave the velocity **free**
+  at both. The flux then *emerges* from the interior pressure gradient, which the SCS
+  operator does see → real through-flow. Two pressure-Dirichlet faces also remove the
+  pressure null space (no separate pin needed). **Ramp the head** (`--source-ramp-steps`)
+  so the predictor is not shocked by a full head from rest.
+
+A pressure-driven opening with a *free* velocity is, however, a classic
+**positive-feedback trap** (well known in OpenFOAM): a fixed-value pressure has no
+`−½ρ|u|²` dynamic-head term, so more head → more velocity → nothing opposes it → at high
+head it diverges. MARS ports the three standard OpenFOAM stabilizers (all gated off by
+default; pass the flags to enable):
+
+- `--open-normal-proj` — project the open-face velocity onto the face normal (zero
+  tangential), removing the ill-posed free tangential mode (`pressureInletOutletVelocity`).
+- `--total-pressure` — overlay `p = p₀ − ½ρu_n²` on the inlet target: as inflow
+  accelerates the boundary pressure drops, *weakening* the drive → negative feedback, the
+  flow settles (`totalPressure`).
+- `--flux-pressure-bc` — add the consistent opening flux `∮(N_i u·n)` to the continuity
+  right-hand side as the boundary mass-balance term the fixed-pressure face omits
+  (`fixedFluxPressure`).
+
+These extend the stable operating range substantially. The fully robust high-head BC
+(a true flux-consistent *Neumann* pressure row, replacing the fixed-pressure face) is
+the remaining step for the full water-Reynolds / high-Mach passage regime.
 
 ---
 
