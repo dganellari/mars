@@ -123,6 +123,7 @@ int main(int argc, char** argv)
     bool        openingFluxSource = false;
     bool        openNormalProj    = false;   // FIX-B #3: project open-face velocity to normal-only
     bool        totalPressure     = false;   // FIX-B #2: dynamic-head inlet target (totalPressure)
+    bool        fluxPressureBc    = false;   // FIX-B #1: opening-flux RHS coexists with the head (boundary mass balance)
     bool        dirichletLift     = true;
     // FIX B -- pressure-drop drive. >0 activates FIX B: prescribe p=pumpDp on the
     // inlet face, p=0 on the outlet face, velocities FREE at both, so the flux
@@ -175,6 +176,7 @@ int main(int argc, char** argv)
         else if (a.rfind("--ic-perturb=", 0) == 0)   icPerturb = std::stod(a.substr(13));
         else if (a == "--open-normal-proj")           openNormalProj = true;      // FIX-B #3: zero tangential open-face velocity (pressureInletOutletVelocity)
         else if (a == "--total-pressure")             totalPressure = true;       // FIX-B #2: dynamic-head inlet target (totalPressure negative feedback)
+        else if (a == "--flux-pressure-bc")           fluxPressureBc = true;      // FIX-B #1: opening-flux RHS + head coexist (boundary mass balance; fixedFluxPressure)
         else if (a == "--opening-flux-source")        openingFluxSource = true;   // FIX 1: add inlet+outlet boundary surface flux to the pressure RHS
         else if (a == "--no-opening-flux-source")     openingFluxSource = false;
         else if (a == "--dirichlet-lift")             dirichletLift = true;       // FIX 2: lift inlet momentum into interior diffusion (default ON)
@@ -404,14 +406,25 @@ int main(int argc, char** argv)
     s.pumpDpSeedScale      = (sourceRampSteps > 0)
                              ? RealType(1.0 / double(sourceRampSteps)) : RealType(1);
     s.rhieChowTau = rhieTau;   // <=0 -> kernel falls back to dt/rho
-    // FIX B and FIX 1 are mutually exclusive drives: the pressure drop already
-    // creates the through-flow, and adding the opening-flux source on top double-
-    // counts the inlet flux (the FIX-1 blowup). Warn and disable FIX 1 if both set.
-    if (pumpDp > 0.0 && openingFluxSource)
+    // FIX-B #1 (--flux-pressure-bc): the opening-flux RHS is the boundary mass-
+    // balance term the Dirichlet face omits (fixedFluxPressure). With BOTH faces
+    // Dirichlet (pumpDp>0) the pressure is fully anchored, so the flux source is
+    // NOT a second drive that double-counts -- it carries the FLUX continuity
+    // needs, orthogonal to the head (which enters via the Dirichlet target). Force
+    // the source ON and use the RAW (un-rescaled) flux (see useFluxPressureBc in
+    // the solver). Without this flag the two remain mutually exclusive (the FIX-1
+    // double-count blowup for the velocity-inlet/lumped path).
+    s.useFluxPressureBc = (pumpDp > 0.0) && fluxPressureBc;   // FIX-B #1
+    if (pumpDp > 0.0 && fluxPressureBc)
+    {
+        s.useOpeningFluxSource = true;   // the head needs the boundary mass balance
+    }
+    else if (pumpDp > 0.0 && openingFluxSource)
     {
         if (rank == 0)
             std::cerr << "WARNING: --pump-dp>0 (FIX B) and --opening-flux-source (FIX 1) "
-                         "are incompatible; disabling the opening-flux source.\n";
+                         "are incompatible without --flux-pressure-bc; disabling the "
+                         "opening-flux source.\n";
         s.useOpeningFluxSource = false;
     }
     // Cavity = lid-driven cavity (geometric BC, no side-sets) -- a controlled

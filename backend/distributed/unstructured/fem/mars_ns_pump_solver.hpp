@@ -2941,6 +2941,12 @@ struct NSStepper
     // negative feedback so the flow settles instead of running away at high head.
     // pumpDp>0 + --total-pressure only.
     bool useTotalPressureHead = false;
+    // FIX-B #1: route the RAW (un-rescaled) consistent opening flux onto the
+    // divergence RHS as the boundary mass-balance term the Dirichlet face omits
+    // (fixedFluxPressure). The femConsistent net-zero oScale is SKIPPED here --
+    // with two Dirichlet faces the through-flow is free, so forcing net-zero would
+    // re-impose the mass constraint the head sets. pumpDp>0 + --flux-pressure-bc.
+    bool useFluxPressureBc = false;
 
     // Per-node OUTWARD outlet area-vectors (un-normalized, nodeCount-sized, zero
     // off the outlet). Used only by the through-flow diagnostic to measure
@@ -8446,7 +8452,14 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
                                                              : RealType(1);
             Qin_raw  = ramp * sumOwned(s.d_femFluxWin.data());
             Qout_raw = sumOwned(s.d_femFluxWout.data());
-            oScale   = (std::fabs(Qout_raw) > RealType(0)) ? (-Qin_raw / Qout_raw) : RealType(0);
+            // FIX-B #1: with two Dirichlet faces (pumpDp>0) the through-flow is
+            // FREE -- use the RAW per-face flux (oScale=1) as the boundary mass
+            // balance, NOT the net-zero rescale (which would re-impose the mass
+            // constraint the head sets). Net-zero stays for the mass-conserving
+            // prescribed-outlet path.
+            oScale   = s.useFluxPressureBc
+                       ? RealType(1)
+                       : ((std::fabs(Qout_raw) > RealType(0)) ? (-Qin_raw / Qout_raw) : RealType(0));
             addConsistentOpeningFluxKernel<RealType><<<nodeBlocks, s.blockSize>>>(
                 ramp, oScale,
                 s.d_femFluxWin.data(), s.d_femFluxWout.data(),
