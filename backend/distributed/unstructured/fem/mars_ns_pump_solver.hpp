@@ -8421,12 +8421,19 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
                                      && std::is_same_v<ElementTag, TetTag>
                                      && s.nnzFemGram > 0;
         // K is SPD + M-matrix -> Hypre PCG+BoomerAMG is the right solver (fast,
-        // monotone). The Gram operator A_fem needs GMRES (it is non-symmetric to
-        // AMG and PCG breaks down, pAp<0). Only the hint matters when
+        // GMRES for BOTH Hypre pressure paths. Hypre PCG+BoomerAMG false-
+        // converges on the pinned pure-Neumann pressure operator (Gram OR
+        // K+tau*L): the AMG V-cycle maps the first residual into the near-
+        // constant null mode, so ||r||/||b|| drops below tol in ~2-3 iters
+        // (cg_p=3) while phi is large-but-wrong and does NOT project -> div
+        // never contracts. GMRES has the MinIter=3 floor that forces it past
+        // that deceptive first cycle (cg_p jumps to tens) AND the null/best-
+        // effort guard the PCG branch lacks. The pinned-Neumann operator gives
+        // PCG no real advantage here anyway. Only the hint matters when
         // solverKind==Hypre; the in-house CG path ignores it.
         KrylovHint kHintK =
             (s.solverKind == SolverKind::Hypre)
-              ? (useFemGramSolve ? KrylovHint::GMRES : KrylovHint::PCG)
+              ? KrylovHint::GMRES
               : KrylovHint::PCG;
         auto& pressureMat = useFemGramSolve ? s.AFemGram : s.Apre;
         // Schur-complement preconditioning: solve the SCALED Gram operator A_hat
