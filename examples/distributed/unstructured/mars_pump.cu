@@ -1110,7 +1110,11 @@ int main(int argc, char** argv)
     // Enable the per-step solver diagnostics for the first steps -- lets us
     // compare |gP|max (pressure-gradient magnitude) and div between 1 and N
     // ranks. Enabled for ALL rank counts so single vs multi is comparable.
+    // MARS_NS_DEBUG_STEPS overrides the window (e.g. to watch a late-step
+    // transition like the ramp-completion blowup).
     g_nsDebugStepsLeft = 40;
+    if (const char* ev = std::getenv("MARS_NS_DEBUG_STEPS"))
+    { int v = std::atoi(ev); if (v > 0) g_nsDebugStepsLeft = v; }
 
     auto wallStart = std::chrono::high_resolution_clock::now();
     for (int step = 1; step <= numSteps; ++step)
