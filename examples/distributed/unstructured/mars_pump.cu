@@ -444,8 +444,12 @@ int main(int argc, char** argv)
     // outletU>0, so the prescribed outlet term (+Q_out) balances the inlet term
     // (-Q_in). A do-nothing outlet leaves outletU<=0 -> outlet term ~0 -> one-sided
     // imbalance -> the single-pin Neumann pressure solve goes incompatible -> blowup.
-    // Disable the source (with a warning) rather than blow up.
-    if (s.useOpeningFluxSource && s.outletDoNothing)
+    // Disable the source (with a warning) rather than blow up -- EXCEPT for the
+    // FIX-B #1 flux-pressure path, which deliberately uses the RAW flux (oScale=1)
+    // on a do-nothing outlet: the balance comes from the FREE through-flow the
+    // pressure head drives, not a prescribed outlet velocity. The old guard was
+    // for the lumped/net-zero path that needs outletU>0 to cancel the inlet flux.
+    if (s.useOpeningFluxSource && s.outletDoNothing && !s.useFluxPressureBc)
     {
         if (rank == 0)
             std::cerr << "WARNING: --opening-flux-source needs the mass-conserving outlet "
