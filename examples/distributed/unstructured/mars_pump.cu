@@ -1127,6 +1127,14 @@ int main(int argc, char** argv)
             RealType uy = maxOwnedInteriorAbs<KeyType, RealType, TetTag>(s, s.d_v);
             RealType uz = maxOwnedInteriorAbs<KeyType, RealType, TetTag>(s, s.d_w);
             double um = std::sqrt(double(ux)*double(ux) + double(uy)*double(uy) + double(uz)*double(uz));
+            // Pressure-driven pump (FIX B): the predictor injects a velocity kick
+            // dt*invRho*grad(p) that the advective um never sees (it enters u
+            // AFTER the predictor), so as --pump-dp ramps the head up, that kick
+            // outgrows the dt cap and detonates (stable at dP=1e3, blows at 1e5).
+            // Fold the pressure-velocity scale invRho*|grad p|*dt into um so dt
+            // shrinks with the head. Gated on pumpDp>0 -> non-pump runs identical.
+            if (s.pumpDp > RealType(0))
+                um += double(1.0 / rho) * double(s.lastGradPRms) * dt;
             double dtCfl = (um > 0) ? cflMax * dxMean / um : dtInit;
             double dtNew = std::min(dtCfl, dtInit);
             dtNew = std::min(dtNew, 1.05 * dt);     // grow <=5%/step (BDF2)
