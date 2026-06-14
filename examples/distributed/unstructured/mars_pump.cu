@@ -121,6 +121,7 @@ int main(int argc, char** argv)
     // Opening-flux source is OFF by default; enable with --opening-flux-source.
     // Dirichlet lift ON (a correctness fix); --no-dirichlet-lift disables for comparison.
     bool        openingFluxSource = false;
+    bool        openNormalProj    = false;   // FIX-B #3: project open-face velocity to normal-only
     bool        dirichletLift     = true;
     // FIX B -- pressure-drop drive. >0 activates FIX B: prescribe p=pumpDp on the
     // inlet face, p=0 on the outlet face, velocities FREE at both, so the flux
@@ -171,6 +172,7 @@ int main(int argc, char** argv)
         else if (a.rfind("--max-iter=", 0) == 0)     maxIter   = std::stoi(a.substr(11));
         else if (a.rfind("--tol=", 0) == 0)          tolerance = std::stod(a.substr(6));
         else if (a.rfind("--ic-perturb=", 0) == 0)   icPerturb = std::stod(a.substr(13));
+        else if (a == "--open-normal-proj")           openNormalProj = true;      // FIX-B #3: zero tangential open-face velocity (pressureInletOutletVelocity)
         else if (a == "--opening-flux-source")        openingFluxSource = true;   // FIX 1: add inlet+outlet boundary surface flux to the pressure RHS
         else if (a == "--no-opening-flux-source")     openingFluxSource = false;
         else if (a == "--dirichlet-lift")             dirichletLift = true;       // FIX 2: lift inlet momentum into interior diffusion (default ON)
@@ -393,6 +395,7 @@ int main(int argc, char** argv)
     s.useOpeningFluxSource = openingFluxSource;   // FIX 1 (OFF by default; --opening-flux-source enables)
     s.useDirichletLift     = dirichletLift;       // FIX 2 (on by default)
     s.pumpDp               = RealType(pumpDp);    // FIX B: pressure-drop drive (>0 active)
+    s.useOpenFaceNormalProj = (pumpDp > 0.0) && openNormalProj;  // FIX-B #3
     // Seed the head at the ramp-start strength (1/rampSteps) so step-0 grad(p^n)
     // is small; the per-step ramp builds it to full. No ramp -> seed full head.
     s.pumpDpSeedScale      = (sourceRampSteps > 0)
@@ -724,9 +727,10 @@ int main(int argc, char** argv)
         // FIX 1: push the per-node OUTWARD inlet area-vectors to the device so the
         // opening-flux source can add ( Uprescribed . areaVec ) at each inlet node.
         // Same owner-complete field used for the inward normals above; outlet area-vecs
-        // are uploaded separately below. Gated on openingFluxSource (ON by default), so
-        // fires only when --opening-flux-source is passed (OFF by default).
-        if (openingFluxSource && areaIn > 1e-30)
+        // are uploaded separately below. Uploaded whenever the inlet has area -- the
+        // open-face normal projection (FIX-B #3) needs these independent of the
+        // opening-flux source, and they're harmless (read only by opted-in paths).
+        if (areaIn > 1e-30)
         {
             const size_t nNodes = amr.domain().getNodeCount();
             s.d_inletAreaVecX.resize(nNodes);

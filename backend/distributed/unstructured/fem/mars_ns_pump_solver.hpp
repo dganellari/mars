@@ -2344,6 +2344,35 @@ __global__ void applyCorrectorPerNodeKernel(RealType* q,
     q[i] = qStarStar[i] - dt * invRho * gPhi;
 }
 
+// FIX-B #3 (pressureInletOutletVelocity): the open-face velocity must NOT keep a
+// free tangential DOF -- that floating mode feeds the dP>=1e4 runaway. After the
+// per-component predictor/corrector has written q at the open nodes, project the
+// node velocity onto its OUTWARD face normal: q <- (q.n_hat) n_hat, tangential->0.
+// n_hat = areaVec/|areaVec| (inlet+outlet are disjoint node sets, so summing the
+// two area-vec arrays gives one branchless normal -- the other is zero there).
+// Runs over ALL nodes incl. ghosts: the normal is owner-complete and the op is
+// node-local + idempotent, so ghosts get the same projected value the owner does.
+template<typename RealType>
+__global__ void projectOpenFaceNormalKernel(RealType* u, RealType* v, RealType* w,
+                                            const RealType* inAx, const RealType* inAy, const RealType* inAz,
+                                            const RealType* outAx, const RealType* outAy, const RealType* outAz,
+                                            const uint8_t* isOpenFaceNode,
+                                            size_t numNodes)
+{
+    size_t i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= numNodes) return;
+    if (!isOpenFaceNode[i]) return;
+    RealType ax = inAx[i] + outAx[i];
+    RealType ay = inAy[i] + outAy[i];
+    RealType az = inAz[i] + outAz[i];
+    RealType len2 = ax*ax + ay*ay + az*az;
+    if (len2 <= RealType(0)) return;            // degenerate: leave free (fallback)
+    RealType inv = rsqrt(len2);
+    RealType nx = ax*inv, ny = ay*inv, nz = az*inv;
+    RealType un = u[i]*nx + v[i]*ny + w[i]*nz;
+    u[i] = un * nx;  v[i] = un * ny;  w[i] = un * nz;
+}
+
 // Pressure update: p^{n+1} = p^n + phi on owned nodes (Chorin incremental).
 // Ghosts are refreshed by an explicit halo exchange afterward.
 template<typename RealType>
@@ -2873,6 +2902,10 @@ struct NSStepper
     // Ramp-start fraction for the seeded head (driver sets = 1/sourceRampSteps
     // when ramping, else 1). Avoids a full-head grad(p^n) kick on step 0.
     RealType pumpDpSeedScale = 1;
+    // FIX-B #3: project open-face velocity onto its face normal (zero tangential)
+    // each step -- removes the free tangential DOF that feeds the dP>=1e4 runaway
+    // (pressureInletOutletVelocity). pumpDp>0 + --open-normal-proj only.
+    bool useOpenFaceNormalProj = false;
 
     // Per-node OUTWARD outlet area-vectors (un-normalized, nodeCount-sized, zero
     // off the outlet). Used only by the through-flow diagnostic to measure
@@ -7915,6 +7948,23 @@ void runPredictorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
     runPredictor(s.d_w, s.d_w_nm1, s.d_wStar, s.d_advW_n, s.d_advW_nm1, s.d_gradPz, s.d_wTarget, s.bodyForceZ,
                  s.d_gradWx, s.d_gradWy, s.d_gradWz);
 
+    // FIX-B #3: project q* onto the open-face normal (zero tangential) BEFORE the
+    // q* ghost publish, so the implicit-diffusion RHS and the pressure solve see a
+    // normal-only open-face velocity. Gated on pumpDp>0 + both area-vec fields
+    // owner-complete; no flag -> byte-identical.
+    if (s.useOpenFaceNormalProj
+        && s.d_isOpenFaceNode.size()  == s.nodeCount
+        && s.d_inletAreaVecX.size()   == s.nodeCount
+        && s.d_outletAreaVecX.size()  == s.nodeCount)
+    {
+        projectOpenFaceNormalKernel<RealType><<<nodeBlocks, s.blockSize>>>(
+            s.d_uStar.data(), s.d_vStar.data(), s.d_wStar.data(),
+            s.d_inletAreaVecX.data(), s.d_inletAreaVecY.data(), s.d_inletAreaVecZ.data(),
+            s.d_outletAreaVecX.data(), s.d_outletAreaVecY.data(), s.d_outletAreaVecZ.data(),
+            s.d_isOpenFaceNode.data(), s.nodeCount);
+        cudaDeviceSynchronize();
+    }
+
     // Sync ghosts of q* so the implicit RHS / CG warm-start read correct ghosts.
     s.domain.exchangeNodeHalo(s.d_uStar);
     s.domain.exchangeNodeHalo(s.d_vStar);
@@ -9228,6 +9278,22 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
                              if (dof < 0) return;
                              pPtr[i] -= nu * divPtr[i];
                          });
+        cudaDeviceSynchronize();
+    }
+
+    // FIX-B #3: re-project the FINAL velocity onto the open-face normal -- the
+    // corrector's grad(phi) re-adds a tangential component at the open node.
+    // Before the final exchange so ghosts publish the projected value.
+    if (s.useOpenFaceNormalProj
+        && s.d_isOpenFaceNode.size()  == s.nodeCount
+        && s.d_inletAreaVecX.size()   == s.nodeCount
+        && s.d_outletAreaVecX.size()  == s.nodeCount)
+    {
+        projectOpenFaceNormalKernel<RealType><<<nodeBlocks, s.blockSize>>>(
+            s.d_u.data(), s.d_v.data(), s.d_w.data(),
+            s.d_inletAreaVecX.data(), s.d_inletAreaVecY.data(), s.d_inletAreaVecZ.data(),
+            s.d_outletAreaVecX.data(), s.d_outletAreaVecY.data(), s.d_outletAreaVecZ.data(),
+            s.d_isOpenFaceNode.data(), s.nodeCount);
         cudaDeviceSynchronize();
     }
 
