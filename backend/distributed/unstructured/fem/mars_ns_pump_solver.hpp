@@ -2553,6 +2553,11 @@ struct NSStepper
     // it as rhs=target-p^n so the solved pressure clamps to the head. Empty for
     // pumpDp<=0 (cavity/channel/TGV never touch this).
     cstone::DeviceVector<RealType> d_pPhiTargetDof;
+    // Full-strength (unramped) copy of d_pPhiTargetDof. rescalePumpDpTarget
+    // writes d_pPhiTargetDof = ramp * base each step so --source-ramp-steps can
+    // bring the pressure head 0->full gently (an impulsive full head from rest
+    // shocks the explicit advection -> blowup). Empty when no ramp / no pumpDp.
+    cstone::DeviceVector<RealType> d_pPhiTargetDofBase;
     // Per-NODE pressure-Dirichlet mask (size nodeCount, halo-exchanged so
     // ghost slots see the owner's flag). Includes the single corner pin
     // (cavity) AND every outflow-face DOF (channel/pump). Used by symmetric
@@ -5130,6 +5135,9 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
             s.d_pPhiTargetDof.resize(s.numOwnedDofs);
             cudaMemcpy(s.d_pPhiTargetDof.data(), hostTarget.data(),
                        s.numOwnedDofs * sizeof(RealType), cudaMemcpyHostToDevice);
+            // Keep the full-strength target so the per-step ramp scales from the
+            // base, not cumulatively (mirrors the inlet-velocity uinfBase ramp).
+            s.d_pPhiTargetDofBase = s.d_pPhiTargetDof;
         }
 
         int dofBlocks = (s.numOwnedDofs + s.blockSize - 1) / s.blockSize;
@@ -7411,6 +7419,23 @@ void rescaleInletVelocityTarget(NSStepper<KeyType, RealType, ElementTag>& s, Rea
     scale(s.d_uTargetBase, s.d_uTarget);
     scale(s.d_vTargetBase, s.d_vTarget);
     scale(s.d_wTargetBase, s.d_wTarget);
+}
+
+// FIX-B pressure-head ramp: d_pPhiTargetDof = ramp * base. The base is pumpDp at
+// the inlet face, 0 at the outlet -> scaling the whole array ramps the inlet head
+// 0->pumpDp while the outlet stays 0. Mirrors rescaleInletVelocityTarget so a
+// pressure-driven pump starts gently (an impulsive full head from rest shocks the
+// explicit advection -> blowup, the dP=1e4 detonation we saw).
+template<typename KeyType, typename RealType, typename ElementTag = HexTag>
+void rescalePumpDpTarget(NSStepper<KeyType, RealType, ElementTag>& s, RealType ramp)
+{
+    if (s.d_pPhiTargetDofBase.size() != s.d_pPhiTargetDof.size()
+        || s.d_pPhiTargetDofBase.size() == 0) return;
+    thrust::transform(thrust::device,
+        thrust::device_pointer_cast(s.d_pPhiTargetDofBase.data()),
+        thrust::device_pointer_cast(s.d_pPhiTargetDofBase.data()) + s.d_pPhiTargetDofBase.size(),
+        thrust::device_pointer_cast(s.d_pPhiTargetDof.data()),
+        [ramp] __device__ (RealType b) { return b * ramp; });
 }
 
 template<typename KeyType, typename RealType, typename ElementTag = HexTag>

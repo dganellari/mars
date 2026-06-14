@@ -1145,6 +1145,10 @@ int main(int argc, char** argv)
             RealType ramp = RealType(std::min(1.0, double(step) / double(sourceRampSteps)));
             s.Uinf = s.uinfBase * ramp;
             rescaleInletVelocityTarget<KeyType, RealType, TetTag>(s, ramp);
+            // FIX B: ramp the pressure head 0->pumpDp too, so a pressure-driven
+            // pump (--pump-dp) starts gently instead of shocking the advection.
+            if (s.pumpDp > RealType(0))
+                rescalePumpDpTarget<KeyType, RealType, TetTag>(s, ramp);
         }
         runNsStep<KeyType, RealType, TetTag>(s, RealType(dt), RealType(nu), RealType(rho));
         simTime += dt;
