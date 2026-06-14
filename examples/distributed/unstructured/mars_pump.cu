@@ -122,6 +122,7 @@ int main(int argc, char** argv)
     // Dirichlet lift ON (a correctness fix); --no-dirichlet-lift disables for comparison.
     bool        openingFluxSource = false;
     bool        openNormalProj    = false;   // FIX-B #3: project open-face velocity to normal-only
+    bool        totalPressure     = false;   // FIX-B #2: dynamic-head inlet target (totalPressure)
     bool        dirichletLift     = true;
     // FIX B -- pressure-drop drive. >0 activates FIX B: prescribe p=pumpDp on the
     // inlet face, p=0 on the outlet face, velocities FREE at both, so the flux
@@ -173,6 +174,7 @@ int main(int argc, char** argv)
         else if (a.rfind("--tol=", 0) == 0)          tolerance = std::stod(a.substr(6));
         else if (a.rfind("--ic-perturb=", 0) == 0)   icPerturb = std::stod(a.substr(13));
         else if (a == "--open-normal-proj")           openNormalProj = true;      // FIX-B #3: zero tangential open-face velocity (pressureInletOutletVelocity)
+        else if (a == "--total-pressure")             totalPressure = true;       // FIX-B #2: dynamic-head inlet target (totalPressure negative feedback)
         else if (a == "--opening-flux-source")        openingFluxSource = true;   // FIX 1: add inlet+outlet boundary surface flux to the pressure RHS
         else if (a == "--no-opening-flux-source")     openingFluxSource = false;
         else if (a == "--dirichlet-lift")             dirichletLift = true;       // FIX 2: lift inlet momentum into interior diffusion (default ON)
@@ -396,6 +398,7 @@ int main(int argc, char** argv)
     s.useDirichletLift     = dirichletLift;       // FIX 2 (on by default)
     s.pumpDp               = RealType(pumpDp);    // FIX B: pressure-drop drive (>0 active)
     s.useOpenFaceNormalProj = (pumpDp > 0.0) && openNormalProj;  // FIX-B #3
+    s.useTotalPressureHead  = (pumpDp > 0.0) && totalPressure;   // FIX-B #2
     // Seed the head at the ramp-start strength (1/rampSteps) so step-0 grad(p^n)
     // is small; the per-step ramp builds it to full. No ramp -> seed full head.
     s.pumpDpSeedScale      = (sourceRampSteps > 0)
@@ -1169,6 +1172,26 @@ int main(int argc, char** argv)
             // pump (--pump-dp) starts gently instead of shocking the advection.
             if (s.pumpDp > RealType(0))
                 rescalePumpDpTarget<KeyType, RealType, TetTag>(s, ramp);
+        }
+        // FIX-B #2 (totalPressure): overlay the dynamic head on the (possibly
+        // ramped) inlet target using the CURRENT inflow speed -> negative feedback
+        // so the flow settles instead of running away. Runs EVERY step (the ramp
+        // block above only fires when sourceRampSteps>0). Reads the just-ramped p0
+        // in d_pPhiTargetDof (or the seeded full head when no ramp); overlays
+        // in-place. At u_n=0 reduces to the static clamp -> byte-identical baseline.
+        if (s.pumpDp > RealType(0) && s.useTotalPressureHead
+            && s.d_inletAreaVecX.size() == s.nodeCount
+            && s.d_isPressureBdryDof.size() == size_t(s.numOwnedDofs)
+            && s.d_pPhiTargetDof.size()  == size_t(s.numOwnedDofs))
+        {
+            int dofBlocks = (s.numOwnedDofs + s.blockSize - 1) / s.blockSize;
+            applyTotalPressureHeadKernel<RealType><<<dofBlocks, s.blockSize>>>(
+                s.d_isPressureBdryDof.data(), s.d_pPhiTargetDof.data(),
+                s.d_dofToNode.data(),
+                s.d_u.data(), s.d_v.data(), s.d_w.data(),
+                s.d_inletAreaVecX.data(), s.d_inletAreaVecY.data(), s.d_inletAreaVecZ.data(),
+                RealType(rho), s.d_pPhiTargetDof.data(), s.numOwnedDofs);
+            cudaDeviceSynchronize();
         }
         runNsStep<KeyType, RealType, TetTag>(s, RealType(dt), RealType(nu), RealType(rho));
         simTime += dt;

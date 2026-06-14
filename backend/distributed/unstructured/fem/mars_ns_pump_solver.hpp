@@ -508,6 +508,37 @@ __global__ void enforcePressureBcRhsLiftKernel(const uint8_t* isPressureBdryDof,
     rhs[dof] = targetDof[dof] - pn;
 }
 
+// FIX-B #2 (totalPressure / negative-feedback dynamic head). Overlay on the ramped
+// inlet target: p_target = p0 - 0.5*rho*u_in^2 on INFLOW only, u_in = -(u.n_hat)>=0
+// (n OUTWARD via inlet areaVec -> inflow => u.n<0). As inflow accelerates the target
+// DROPS, weakening the drive -> the flow SETTLES instead of running away. baseDof
+// already holds ramp*pumpDp (inlet) / 0 (outlet); outlet nodes have zero inlet
+// areaVec -> pass through to p0 unchanged. dofToNode maps the owned BC DOF to its
+// node for u + areaVec. In-place safe (baseDof == targetDof, one elem per thread).
+template<typename RealType>
+__global__ void applyTotalPressureHeadKernel(const uint8_t* isPressureBdryDof,
+                                             const RealType* baseDof,
+                                             const int* dofToNode,
+                                             const RealType* u, const RealType* v, const RealType* w,
+                                             const RealType* aInX, const RealType* aInY, const RealType* aInZ,
+                                             RealType rho,
+                                             RealType* targetDof, int numDofs)
+{
+    int dof = blockIdx.x * blockDim.x + threadIdx.x;
+    if (dof >= numDofs) return;
+    if (!isPressureBdryDof[dof]) return;
+    int node = dofToNode[dof];
+    RealType p0 = baseDof[dof];
+    if (node < 0) { targetDof[dof] = p0; return; }
+    RealType ax = aInX[node], ay = aInY[node], az = aInZ[node];
+    RealType a2 = ax*ax + ay*ay + az*az;
+    if (a2 <= RealType(0)) { targetDof[dof] = p0; return; }   // outlet/non-inlet
+    RealType inv = rsqrt(a2);
+    RealType un  = (u[node]*ax + v[node]*ay + w[node]*az) * inv;
+    RealType uIn = (un < RealType(0)) ? -un : RealType(0);
+    targetDof[dof] = p0 - RealType(0.5) * rho * uIn * uIn;
+}
+
 // Build a per-NODE pressure-Dirichlet mask from the existing per-DOF mask +
 // optional single-pin DOF. Each owned node maps its dof through the existing
 // boundary flag; ghost nodes get 0 (filled by halo exchange later).
@@ -2906,6 +2937,10 @@ struct NSStepper
     // each step -- removes the free tangential DOF that feeds the dP>=1e4 runaway
     // (pressureInletOutletVelocity). pumpDp>0 + --open-normal-proj only.
     bool useOpenFaceNormalProj = false;
+    // FIX-B #2: dynamic-head inlet target p=p0-0.5*rho*u_in^2 (totalPressure) --
+    // negative feedback so the flow settles instead of running away at high head.
+    // pumpDp>0 + --total-pressure only.
+    bool useTotalPressureHead = false;
 
     // Per-node OUTWARD outlet area-vectors (un-normalized, nodeCount-sized, zero
     // off the outlet). Used only by the through-flow diagnostic to measure
