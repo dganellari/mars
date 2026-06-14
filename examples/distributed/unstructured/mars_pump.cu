@@ -121,6 +121,9 @@ int main(int argc, char** argv)
     // Opening-flux source is OFF by default; enable with --opening-flux-source.
     // Dirichlet lift ON (a correctness fix); --no-dirichlet-lift disables for comparison.
     bool        openingFluxSource = false;
+    bool        openNormalProj    = false;   // FIX-B #3: project open-face velocity to normal-only
+    bool        totalPressure     = false;   // FIX-B #2: dynamic-head inlet target (totalPressure)
+    bool        fluxPressureBc    = false;   // FIX-B #1: opening-flux RHS coexists with the head (boundary mass balance)
     bool        dirichletLift     = true;
     // FIX B -- pressure-drop drive. >0 activates FIX B: prescribe p=pumpDp on the
     // inlet face, p=0 on the outlet face, velocities FREE at both, so the flux
@@ -171,6 +174,9 @@ int main(int argc, char** argv)
         else if (a.rfind("--max-iter=", 0) == 0)     maxIter   = std::stoi(a.substr(11));
         else if (a.rfind("--tol=", 0) == 0)          tolerance = std::stod(a.substr(6));
         else if (a.rfind("--ic-perturb=", 0) == 0)   icPerturb = std::stod(a.substr(13));
+        else if (a == "--open-normal-proj")           openNormalProj = true;      // FIX-B #3: zero tangential open-face velocity (pressureInletOutletVelocity)
+        else if (a == "--total-pressure")             totalPressure = true;       // FIX-B #2: dynamic-head inlet target (totalPressure negative feedback)
+        else if (a == "--flux-pressure-bc")           fluxPressureBc = true;      // FIX-B #1: opening-flux RHS + head coexist (boundary mass balance; fixedFluxPressure)
         else if (a == "--opening-flux-source")        openingFluxSource = true;   // FIX 1: add inlet+outlet boundary surface flux to the pressure RHS
         else if (a == "--no-opening-flux-source")     openingFluxSource = false;
         else if (a == "--dirichlet-lift")             dirichletLift = true;       // FIX 2: lift inlet momentum into interior diffusion (default ON)
@@ -393,19 +399,32 @@ int main(int argc, char** argv)
     s.useOpeningFluxSource = openingFluxSource;   // FIX 1 (OFF by default; --opening-flux-source enables)
     s.useDirichletLift     = dirichletLift;       // FIX 2 (on by default)
     s.pumpDp               = RealType(pumpDp);    // FIX B: pressure-drop drive (>0 active)
+    s.useOpenFaceNormalProj = (pumpDp > 0.0) && openNormalProj;  // FIX-B #3
+    s.useTotalPressureHead  = (pumpDp > 0.0) && totalPressure;   // FIX-B #2
     // Seed the head at the ramp-start strength (1/rampSteps) so step-0 grad(p^n)
     // is small; the per-step ramp builds it to full. No ramp -> seed full head.
     s.pumpDpSeedScale      = (sourceRampSteps > 0)
                              ? RealType(1.0 / double(sourceRampSteps)) : RealType(1);
     s.rhieChowTau = rhieTau;   // <=0 -> kernel falls back to dt/rho
-    // FIX B and FIX 1 are mutually exclusive drives: the pressure drop already
-    // creates the through-flow, and adding the opening-flux source on top double-
-    // counts the inlet flux (the FIX-1 blowup). Warn and disable FIX 1 if both set.
-    if (pumpDp > 0.0 && openingFluxSource)
+    // FIX-B #1 (--flux-pressure-bc): the opening-flux RHS is the boundary mass-
+    // balance term the Dirichlet face omits (fixedFluxPressure). With BOTH faces
+    // Dirichlet (pumpDp>0) the pressure is fully anchored, so the flux source is
+    // NOT a second drive that double-counts -- it carries the FLUX continuity
+    // needs, orthogonal to the head (which enters via the Dirichlet target). Force
+    // the source ON and use the RAW (un-rescaled) flux (see useFluxPressureBc in
+    // the solver). Without this flag the two remain mutually exclusive (the FIX-1
+    // double-count blowup for the velocity-inlet/lumped path).
+    s.useFluxPressureBc = (pumpDp > 0.0) && fluxPressureBc;   // FIX-B #1
+    if (pumpDp > 0.0 && fluxPressureBc)
+    {
+        s.useOpeningFluxSource = true;   // the head needs the boundary mass balance
+    }
+    else if (pumpDp > 0.0 && openingFluxSource)
     {
         if (rank == 0)
             std::cerr << "WARNING: --pump-dp>0 (FIX B) and --opening-flux-source (FIX 1) "
-                         "are incompatible; disabling the opening-flux source.\n";
+                         "are incompatible without --flux-pressure-bc; disabling the "
+                         "opening-flux source.\n";
         s.useOpeningFluxSource = false;
     }
     // Cavity = lid-driven cavity (geometric BC, no side-sets) -- a controlled
@@ -425,8 +444,12 @@ int main(int argc, char** argv)
     // outletU>0, so the prescribed outlet term (+Q_out) balances the inlet term
     // (-Q_in). A do-nothing outlet leaves outletU<=0 -> outlet term ~0 -> one-sided
     // imbalance -> the single-pin Neumann pressure solve goes incompatible -> blowup.
-    // Disable the source (with a warning) rather than blow up.
-    if (s.useOpeningFluxSource && s.outletDoNothing)
+    // Disable the source (with a warning) rather than blow up -- EXCEPT for the
+    // FIX-B #1 flux-pressure path, which deliberately uses the RAW flux (oScale=1)
+    // on a do-nothing outlet: the balance comes from the FREE through-flow the
+    // pressure head drives, not a prescribed outlet velocity. The old guard was
+    // for the lumped/net-zero path that needs outletU>0 to cancel the inlet flux.
+    if (s.useOpeningFluxSource && s.outletDoNothing && !s.useFluxPressureBc)
     {
         if (rank == 0)
             std::cerr << "WARNING: --opening-flux-source needs the mass-conserving outlet "
@@ -724,9 +747,10 @@ int main(int argc, char** argv)
         // FIX 1: push the per-node OUTWARD inlet area-vectors to the device so the
         // opening-flux source can add ( Uprescribed . areaVec ) at each inlet node.
         // Same owner-complete field used for the inward normals above; outlet area-vecs
-        // are uploaded separately below. Gated on openingFluxSource (ON by default), so
-        // fires only when --opening-flux-source is passed (OFF by default).
-        if (openingFluxSource && areaIn > 1e-30)
+        // are uploaded separately below. Uploaded whenever the inlet has area -- the
+        // open-face normal projection (FIX-B #3) needs these independent of the
+        // opening-flux source, and they're harmless (read only by opted-in paths).
+        if (areaIn > 1e-30)
         {
             const size_t nNodes = amr.domain().getNodeCount();
             s.d_inletAreaVecX.resize(nNodes);
@@ -1165,6 +1189,26 @@ int main(int argc, char** argv)
             // pump (--pump-dp) starts gently instead of shocking the advection.
             if (s.pumpDp > RealType(0))
                 rescalePumpDpTarget<KeyType, RealType, TetTag>(s, ramp);
+        }
+        // FIX-B #2 (totalPressure): overlay the dynamic head on the (possibly
+        // ramped) inlet target using the CURRENT inflow speed -> negative feedback
+        // so the flow settles instead of running away. Runs EVERY step (the ramp
+        // block above only fires when sourceRampSteps>0). Reads the just-ramped p0
+        // in d_pPhiTargetDof (or the seeded full head when no ramp); overlays
+        // in-place. At u_n=0 reduces to the static clamp -> byte-identical baseline.
+        if (s.pumpDp > RealType(0) && s.useTotalPressureHead
+            && s.d_inletAreaVecX.size() == s.nodeCount
+            && s.d_isPressureBdryDof.size() == size_t(s.numOwnedDofs)
+            && s.d_pPhiTargetDof.size()  == size_t(s.numOwnedDofs))
+        {
+            int dofBlocks = (s.numOwnedDofs + s.blockSize - 1) / s.blockSize;
+            applyTotalPressureHeadKernel<RealType><<<dofBlocks, s.blockSize>>>(
+                s.d_isPressureBdryDof.data(), s.d_pPhiTargetDof.data(),
+                s.d_dofToNode.data(),
+                s.d_u.data(), s.d_v.data(), s.d_w.data(),
+                s.d_inletAreaVecX.data(), s.d_inletAreaVecY.data(), s.d_inletAreaVecZ.data(),
+                RealType(rho), s.d_pPhiTargetDof.data(), s.numOwnedDofs);
+            cudaDeviceSynchronize();
         }
         runNsStep<KeyType, RealType, TetTag>(s, RealType(dt), RealType(nu), RealType(rho));
         simTime += dt;

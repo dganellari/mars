@@ -508,6 +508,37 @@ __global__ void enforcePressureBcRhsLiftKernel(const uint8_t* isPressureBdryDof,
     rhs[dof] = targetDof[dof] - pn;
 }
 
+// FIX-B #2 (totalPressure / negative-feedback dynamic head). Overlay on the ramped
+// inlet target: p_target = p0 - 0.5*rho*u_in^2 on INFLOW only, u_in = -(u.n_hat)>=0
+// (n OUTWARD via inlet areaVec -> inflow => u.n<0). As inflow accelerates the target
+// DROPS, weakening the drive -> the flow SETTLES instead of running away. baseDof
+// already holds ramp*pumpDp (inlet) / 0 (outlet); outlet nodes have zero inlet
+// areaVec -> pass through to p0 unchanged. dofToNode maps the owned BC DOF to its
+// node for u + areaVec. In-place safe (baseDof == targetDof, one elem per thread).
+template<typename RealType>
+__global__ void applyTotalPressureHeadKernel(const uint8_t* isPressureBdryDof,
+                                             const RealType* baseDof,
+                                             const int* dofToNode,
+                                             const RealType* u, const RealType* v, const RealType* w,
+                                             const RealType* aInX, const RealType* aInY, const RealType* aInZ,
+                                             RealType rho,
+                                             RealType* targetDof, int numDofs)
+{
+    int dof = blockIdx.x * blockDim.x + threadIdx.x;
+    if (dof >= numDofs) return;
+    if (!isPressureBdryDof[dof]) return;
+    int node = dofToNode[dof];
+    RealType p0 = baseDof[dof];
+    if (node < 0) { targetDof[dof] = p0; return; }
+    RealType ax = aInX[node], ay = aInY[node], az = aInZ[node];
+    RealType a2 = ax*ax + ay*ay + az*az;
+    if (a2 <= RealType(0)) { targetDof[dof] = p0; return; }   // outlet/non-inlet
+    RealType inv = rsqrt(a2);
+    RealType un  = (u[node]*ax + v[node]*ay + w[node]*az) * inv;
+    RealType uIn = (un < RealType(0)) ? -un : RealType(0);
+    targetDof[dof] = p0 - RealType(0.5) * rho * uIn * uIn;
+}
+
 // Build a per-NODE pressure-Dirichlet mask from the existing per-DOF mask +
 // optional single-pin DOF. Each owned node maps its dof through the existing
 // boundary flag; ghost nodes get 0 (filled by halo exchange later).
@@ -2223,6 +2254,7 @@ __global__ void applyPredictorPerNodeKernel(RealType* qStar,
                                             const RealType* /*lumpedMassNode*/,  // unused; kept for ABI
                                             const RealType* qTarget,
                                             const uint8_t* isBdryDof,
+                                            const uint8_t* isOpenFaceNode,  // FIX-B: null unless pumpDp>0
                                             const int* nodeToDof,
                                             const uint8_t* ownership,
                                             RealType dt,
@@ -2242,10 +2274,21 @@ __global__ void applyPredictorPerNodeKernel(RealType* qStar,
         qStar[i] = qTarget[i];
         return;
     }
+    // FIX-B open-face momentum closure: at a pressure-driven opening the node is
+    // intentionally OUT of d_isBdryDof so its velocity stays free. But its
+    // gradPnq = M^-1 D^T p is a one-cell jump (p clamped to the head, interior
+    // ~0) -> ~head/h, a numerical artifact of the Dirichlet clamp, not the
+    // physical interior pressure gradient. Feeding it into the momentum update
+    // injects a dt*invRho*(head/h) velocity kick that detonates once the head
+    // crosses ~1e4. Drop the pressure-gradient term HERE only; the node is still
+    // driven by advection + the interior gradient one cell in (which IS the
+    // physical pump drive), so through-flow is preserved. The head enters
+    // physically through the pressure Poisson Dirichlet, not this kick.
+    RealType gP = (isOpenFaceNode && isOpenFaceNode[i]) ? RealType(0) : gradPnq[i];
     RealType V = lumpedMass[dof];
     // BDF1: u* = u^n + dt*(-adv/V - invRho*grad p + invRho*f) (interior only)
     qStar[i] = qN[i] + dt * dqdtNode[i] / V
-                    - dt * invRho * gradPnq[i]
+                    - dt * invRho * gP
                     + dt * invRho * bodyForce;
 }
 
@@ -2265,6 +2308,7 @@ __global__ void applyPredictorBdf2PerNodeKernel(RealType* qStar,
                                                 const RealType* lumpedMass,
                                                 const RealType* qTarget,
                                                 const uint8_t* isBdryDof,
+                                                const uint8_t* isOpenFaceNode,  // FIX-B: null unless pumpDp>0
                                                 const int* nodeToDof,
                                                 const uint8_t* ownership,
                                                 RealType dt,
@@ -2283,13 +2327,17 @@ __global__ void applyPredictorBdf2PerNodeKernel(RealType* qStar,
         qStar[i] = qTarget[i];
         return;
     }
+    // FIX-B open-face momentum closure (see applyPredictorPerNodeKernel): drop
+    // the spurious head/h gradient kick at the open face; interior gradient
+    // (the real drive) is untouched.
+    RealType gP      = (isOpenFaceNode && isOpenFaceNode[i]) ? RealType(0) : gradPnq[i];
     RealType V       = lumpedMass[dof];
     RealType adv_ext = RealType(2) * dqdtNode_n[i] - dqdtNode_nm1[i];
     RealType coef    = RealType(2) * dt / RealType(3);
     // BDF2 + EXT2 with body-force source: KIO stencil + coef*invRho*f.
     qStar[i] = (RealType(4) / RealType(3)) * qN[i]
              - (RealType(1) / RealType(3)) * qNm1[i]
-             + coef * (adv_ext / V - invRho * gradPnq[i] + invRho * bodyForce);
+             + coef * (adv_ext / V - invRho * gP + invRho * bodyForce);
 }
 
 // Corrector: q^{n+1} = q** - (dt/rho) (grad phi)_q on interior; snap to
@@ -2301,6 +2349,7 @@ __global__ void applyCorrectorPerNodeKernel(RealType* q,
                                             const RealType* gradPhiq,
                                             const RealType* qTarget,
                                             const uint8_t* isBdryDof,
+                                            const uint8_t* isOpenFaceNode,  // FIX-B: null unless pumpDp>0
                                             const int* nodeToDof,
                                             const uint8_t* ownership,
                                             RealType dt,
@@ -2319,7 +2368,40 @@ __global__ void applyCorrectorPerNodeKernel(RealType* q,
         q[i] = qTarget[i];
         return;
     }
-    q[i] = qStarStar[i] - dt * invRho * gradPhiq[i];
+    // FIX-B open-face momentum closure (see applyPredictorPerNodeKernel): grad(phi)
+    // at the clamped open face carries the same one-cell-jump artifact as grad(p);
+    // drop it here too so the secondary corrector kick can't re-open the loop.
+    RealType gPhi = (isOpenFaceNode && isOpenFaceNode[i]) ? RealType(0) : gradPhiq[i];
+    q[i] = qStarStar[i] - dt * invRho * gPhi;
+}
+
+// FIX-B #3 (pressureInletOutletVelocity): the open-face velocity must NOT keep a
+// free tangential DOF -- that floating mode feeds the dP>=1e4 runaway. After the
+// per-component predictor/corrector has written q at the open nodes, project the
+// node velocity onto its OUTWARD face normal: q <- (q.n_hat) n_hat, tangential->0.
+// n_hat = areaVec/|areaVec| (inlet+outlet are disjoint node sets, so summing the
+// two area-vec arrays gives one branchless normal -- the other is zero there).
+// Runs over ALL nodes incl. ghosts: the normal is owner-complete and the op is
+// node-local + idempotent, so ghosts get the same projected value the owner does.
+template<typename RealType>
+__global__ void projectOpenFaceNormalKernel(RealType* u, RealType* v, RealType* w,
+                                            const RealType* inAx, const RealType* inAy, const RealType* inAz,
+                                            const RealType* outAx, const RealType* outAy, const RealType* outAz,
+                                            const uint8_t* isOpenFaceNode,
+                                            size_t numNodes)
+{
+    size_t i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= numNodes) return;
+    if (!isOpenFaceNode[i]) return;
+    RealType ax = inAx[i] + outAx[i];
+    RealType ay = inAy[i] + outAy[i];
+    RealType az = inAz[i] + outAz[i];
+    RealType len2 = ax*ax + ay*ay + az*az;
+    if (len2 <= RealType(0)) return;            // degenerate: leave free (fallback)
+    RealType inv = rsqrt(len2);
+    RealType nx = ax*inv, ny = ay*inv, nz = az*inv;
+    RealType un = u[i]*nx + v[i]*ny + w[i]*nz;
+    u[i] = un * nx;  v[i] = un * ny;  w[i] = un * nz;
 }
 
 // Pressure update: p^{n+1} = p^n + phi on owned nodes (Chorin incremental).
@@ -2851,6 +2933,20 @@ struct NSStepper
     // Ramp-start fraction for the seeded head (driver sets = 1/sourceRampSteps
     // when ramping, else 1). Avoids a full-head grad(p^n) kick on step 0.
     RealType pumpDpSeedScale = 1;
+    // FIX-B #3: project open-face velocity onto its face normal (zero tangential)
+    // each step -- removes the free tangential DOF that feeds the dP>=1e4 runaway
+    // (pressureInletOutletVelocity). pumpDp>0 + --open-normal-proj only.
+    bool useOpenFaceNormalProj = false;
+    // FIX-B #2: dynamic-head inlet target p=p0-0.5*rho*u_in^2 (totalPressure) --
+    // negative feedback so the flow settles instead of running away at high head.
+    // pumpDp>0 + --total-pressure only.
+    bool useTotalPressureHead = false;
+    // FIX-B #1: route the RAW (un-rescaled) consistent opening flux onto the
+    // divergence RHS as the boundary mass-balance term the Dirichlet face omits
+    // (fixedFluxPressure). The femConsistent net-zero oScale is SKIPPED here --
+    // with two Dirichlet faces the through-flow is free, so forcing net-zero would
+    // re-impose the mass constraint the head sets. pumpDp>0 + --flux-pressure-bc.
+    bool useFluxPressureBc = false;
 
     // Per-node OUTWARD outlet area-vectors (un-normalized, nodeCount-sized, zero
     // off the outlet). Used only by the through-flow diagnostic to measure
@@ -7864,7 +7960,10 @@ void runPredictorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
                 qStar.data(), qN.data(), qNm1.data(),
                 advN.data(), advNm1.data(),
                 gradPnq.data(), s.d_mass.data(), qTarget.data(),
-                s.d_isBdryDof.data(), s.d_node_to_dof.data(),
+                s.d_isBdryDof.data(),
+                s.d_isOpenFaceNode.size() == s.nodeCount
+                    ? s.d_isOpenFaceNode.data() : nullptr,
+                s.d_node_to_dof.data(),
                 d_nodeOwnership.data(),
                 dt, invRho, bodyForce, s.nodeCount, s.numOwnedDofs);
         }
@@ -7873,7 +7972,10 @@ void runPredictorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
             applyPredictorPerNodeKernel<RealType><<<nodeBlocks, s.blockSize>>>(
                 qStar.data(), qN.data(), advN.data(),
                 gradPnq.data(), s.d_mass.data(), s.d_massNode.data(), qTarget.data(),
-                s.d_isBdryDof.data(), s.d_node_to_dof.data(),
+                s.d_isBdryDof.data(),
+                s.d_isOpenFaceNode.size() == s.nodeCount
+                    ? s.d_isOpenFaceNode.data() : nullptr,
+                s.d_node_to_dof.data(),
                 d_nodeOwnership.data(),
                 dt, invRho, bodyForce, s.nodeCount, s.numOwnedDofs);
         }
@@ -7886,6 +7988,23 @@ void runPredictorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
                  s.d_gradVx, s.d_gradVy, s.d_gradVz);
     runPredictor(s.d_w, s.d_w_nm1, s.d_wStar, s.d_advW_n, s.d_advW_nm1, s.d_gradPz, s.d_wTarget, s.bodyForceZ,
                  s.d_gradWx, s.d_gradWy, s.d_gradWz);
+
+    // FIX-B #3: project q* onto the open-face normal (zero tangential) BEFORE the
+    // q* ghost publish, so the implicit-diffusion RHS and the pressure solve see a
+    // normal-only open-face velocity. Gated on pumpDp>0 + both area-vec fields
+    // owner-complete; no flag -> byte-identical.
+    if (s.useOpenFaceNormalProj
+        && s.d_isOpenFaceNode.size()  == s.nodeCount
+        && s.d_inletAreaVecX.size()   == s.nodeCount
+        && s.d_outletAreaVecX.size()  == s.nodeCount)
+    {
+        projectOpenFaceNormalKernel<RealType><<<nodeBlocks, s.blockSize>>>(
+            s.d_uStar.data(), s.d_vStar.data(), s.d_wStar.data(),
+            s.d_inletAreaVecX.data(), s.d_inletAreaVecY.data(), s.d_inletAreaVecZ.data(),
+            s.d_outletAreaVecX.data(), s.d_outletAreaVecY.data(), s.d_outletAreaVecZ.data(),
+            s.d_isOpenFaceNode.data(), s.nodeCount);
+        cudaDeviceSynchronize();
+    }
 
     // Sync ghosts of q* so the implicit RHS / CG warm-start read correct ghosts.
     s.domain.exchangeNodeHalo(s.d_uStar);
@@ -8333,7 +8452,14 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
                                                              : RealType(1);
             Qin_raw  = ramp * sumOwned(s.d_femFluxWin.data());
             Qout_raw = sumOwned(s.d_femFluxWout.data());
-            oScale   = (std::fabs(Qout_raw) > RealType(0)) ? (-Qin_raw / Qout_raw) : RealType(0);
+            // FIX-B #1: with two Dirichlet faces (pumpDp>0) the through-flow is
+            // FREE -- use the RAW per-face flux (oScale=1) as the boundary mass
+            // balance, NOT the net-zero rescale (which would re-impose the mass
+            // constraint the head sets). Net-zero stays for the mass-conserving
+            // prescribed-outlet path.
+            oScale   = s.useFluxPressureBc
+                       ? RealType(1)
+                       : ((std::fabs(Qout_raw) > RealType(0)) ? (-Qin_raw / Qout_raw) : RealType(0));
             addConsistentOpeningFluxKernel<RealType><<<nodeBlocks, s.blockSize>>>(
                 ramp, oScale,
                 s.d_femFluxWin.data(), s.d_femFluxWout.data(),
@@ -8980,7 +9106,10 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
     {
         applyCorrectorPerNodeKernel<RealType><<<nodeBlocks, s.blockSize>>>(
             qOut.data(), qStarStar.data(), gradPhiq.data(), qTarget.data(),
-            s.d_isBdryDof.data(), s.d_node_to_dof.data(),
+            s.d_isBdryDof.data(),
+            s.d_isOpenFaceNode.size() == s.nodeCount
+                ? s.d_isOpenFaceNode.data() : nullptr,
+            s.d_node_to_dof.data(),
             d_nodeOwnership.data(), dtEff, invRho, s.nodeCount, s.numOwnedDofs);
         cudaDeviceSynchronize();
     };
@@ -9197,6 +9326,22 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
                              if (dof < 0) return;
                              pPtr[i] -= nu * divPtr[i];
                          });
+        cudaDeviceSynchronize();
+    }
+
+    // FIX-B #3: re-project the FINAL velocity onto the open-face normal -- the
+    // corrector's grad(phi) re-adds a tangential component at the open node.
+    // Before the final exchange so ghosts publish the projected value.
+    if (s.useOpenFaceNormalProj
+        && s.d_isOpenFaceNode.size()  == s.nodeCount
+        && s.d_inletAreaVecX.size()   == s.nodeCount
+        && s.d_outletAreaVecX.size()  == s.nodeCount)
+    {
+        projectOpenFaceNormalKernel<RealType><<<nodeBlocks, s.blockSize>>>(
+            s.d_u.data(), s.d_v.data(), s.d_w.data(),
+            s.d_inletAreaVecX.data(), s.d_inletAreaVecY.data(), s.d_inletAreaVecZ.data(),
+            s.d_outletAreaVecX.data(), s.d_outletAreaVecY.data(), s.d_outletAreaVecZ.data(),
+            s.d_isOpenFaceNode.data(), s.nodeCount);
         cudaDeviceSynchronize();
     }
 

@@ -64,6 +64,10 @@ def main():
     ap.add_argument("--mark-io", action="store_true",
                     help="auto-detect inlet (most inward boundary flow) + outlet (most outward) and mark "
                          "them with a green/red sphere + a legend, so the intended flow path is clear")
+    ap.add_argument("--side-set-io", action="store_true",
+                    help="RELIABLE inlet/outlet markers from the side_set_id field (the real openings the "
+                         "solver used), instead of the --mark-io flow auto-detect which can mis-place both "
+                         "markers on one tank. Marks the CENTROID of each nonzero side_set_id group.")
     ap.add_argument("--marker-size", type=float, default=0.025,
                     help="inlet/outlet marker sphere size as a fraction of the bbox diagonal (default 0.025)")
     ap.add_argument("--orbit-deg", type=float, default=0.0,
@@ -378,6 +382,59 @@ def main():
                 print("[render] marked inlet (green sphere) + outlet (red sphere) + 3D labels")
         except Exception as e:  # noqa: BLE001
             print("[render] inlet/outlet marking skipped (%s)" % e)
+
+    # ---- RELIABLE inlet/outlet markers from side_set_id (the real openings) ----
+    if args.side_set_io:
+        try:
+            from paraview import servermanager as _sm
+            reader.UpdatePipeline(tvals[-1])
+            data = _sm.Fetch(reader)
+            pts = data.GetPoints()
+            ss = data.GetPointData().GetArray("side_set_id")
+            if pts and ss:
+                # group node coords by side_set_id; mark each nonzero group's centroid
+                from collections import defaultdict
+                acc = defaultdict(lambda: [0.0, 0.0, 0.0, 0])
+                n = ss.GetNumberOfTuples()
+                st = max(1, n // 400000)
+                for i in range(0, n, st):
+                    sid = int(round(ss.GetValue(i)))
+                    if sid == 0:
+                        continue
+                    p = pts.GetPoint(i)
+                    a = acc[sid]
+                    a[0] += p[0]; a[1] += p[1]; a[2] += p[2]; a[3] += 1
+                # palette: distinct, water-friendly (gold, magenta, cyan, lime...)
+                pal = [[1.0, 0.85, 0.1], [1.0, 0.2, 0.8], [0.2, 0.9, 0.9],
+                       [0.6, 1.0, 0.3], [1.0, 0.6, 0.2]]
+                keys = sorted(acc.keys())
+                print("[render] side_set_id groups found: %s" % keys)
+                legend_txt = []
+                for idx, sid in enumerate(keys):
+                    a = acc[sid]
+                    if a[3] == 0:
+                        continue
+                    c = [a[0]/a[3], a[1]/a[3], a[2]/a[3]]
+                    col = pal[idx % len(pal)]
+                    ball = Sphere()
+                    ball.Center = c
+                    ball.Radius = diag * args.marker_size
+                    ball.ThetaResolution = 24; ball.PhiResolution = 24
+                    bd = Show(ball, view)
+                    bd.DiffuseColor = col; bd.AmbientColor = col; bd.Specular = 0.5
+                    cname = {1: "RGB", }  # noop, keep col readable in legend
+                    legend_txt.append("side_set %d" % sid)
+                    print("[render]   side_set %d centroid=%s color=%s (n=%d)" % (sid, c, col, a[3]))
+                try:
+                    legend = Text()
+                    legend.Text = "spheres = side sets (openings): " + ", ".join(legend_txt)
+                    ld = Show(legend, view)
+                    ld.Color = [1, 1, 1]; ld.FontSize = 15
+                    ld.WindowLocation = "Upper Right Corner"
+                except Exception:
+                    pass
+        except Exception as e:  # noqa: BLE001
+            print("[render] side-set-io marking skipped (%s)" % e)
 
     # ---- flow visualization ----
     # The pump is a small jet into a big mostly-stagnant chamber: a plain clip is
