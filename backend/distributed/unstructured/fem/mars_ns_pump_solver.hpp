@@ -4286,6 +4286,39 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
     }
     pt.lap("global bbox");
 
+    // STABILIZED-K (the production equal-order method): add PSPG tau*L to K so
+    // the K-path solves (K + tau*L). The exact-projection Gram operator A_fem is
+    // AMG-unsolvable on the big mesh (dense non-M-matrix Gram product AMG can't
+    // coarsen), and bare K does not project (no stabilization -> residual
+    // divergence accumulates -> blowup). (K + tau*L) is an AMG-friendly Laplacian
+    // (K and L are both SPD Laplacians) AND tau*L damps the equal-order
+    // checkerboard / bounds the residual divergence that the FEM-gradient
+    // corrector + PISO then drive down. tau = beta*h^2 (pspgTauAuto, computed
+    // just above). Same kernel the DDT path uses, here pointed at K's CSR
+    // (d_rowPtr/d_colInd -> d_valuesPre). Tet-only; gated on usePSPG so no flag
+    // leaves K bare (legacy). Done here (after tau, before the pin) so the pin
+    // and the Apre wrap see the stabilized operator.
+    if (s.usePSPG && std::is_same_v<ElementTag, TetTag> && s.elementCount > 0)
+    {
+        RealType tauL = (s.pspgTau > RealType(0)) ? s.pspgTau : s.pspgTauAuto;
+        if (tauL > RealType(0))
+        {
+            int eB = int((s.elementCount + s.blockSize - 1) / s.blockSize);
+            assemblePSPGStiffnessTetKernel<KeyType, RealType><<<eB, s.blockSize>>>(
+                std::get<0>(d_conn).data(), std::get<1>(d_conn).data(),
+                std::get<2>(d_conn).data(), std::get<3>(d_conn).data(),
+                s.domain.getNodeX().data(), s.domain.getNodeY().data(), s.domain.getNodeZ().data(),
+                s.d_node_to_dof.data(), d_nodeOwnership.data(),
+                s.d_rowPtr.data(), s.d_colInd.data(), s.numOwnedDofs,
+                tauL, s.d_valuesPre.data(), s.elementCount);
+            cudaDeviceSynchronize();
+            if (s.rank == 0)
+                std::cout << "  [pressure-K] assembled PSPG tau*L into K (tau="
+                          << std::scientific << tauL << std::defaultfloat
+                          << ") -> solving (K + tau*L)\n";
+        }
+    }
+
     // BC mask + cavity target velocity.
     s.d_isBdryDof.resize(s.numOwnedDofs);
     thrust::fill(thrust::device_pointer_cast(s.d_isBdryDof.data()),
