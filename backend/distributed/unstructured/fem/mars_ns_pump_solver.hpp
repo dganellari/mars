@@ -2223,6 +2223,7 @@ __global__ void applyPredictorPerNodeKernel(RealType* qStar,
                                             const RealType* /*lumpedMassNode*/,  // unused; kept for ABI
                                             const RealType* qTarget,
                                             const uint8_t* isBdryDof,
+                                            const uint8_t* isOpenFaceNode,  // FIX-B: null unless pumpDp>0
                                             const int* nodeToDof,
                                             const uint8_t* ownership,
                                             RealType dt,
@@ -2242,10 +2243,21 @@ __global__ void applyPredictorPerNodeKernel(RealType* qStar,
         qStar[i] = qTarget[i];
         return;
     }
+    // FIX-B open-face momentum closure: at a pressure-driven opening the node is
+    // intentionally OUT of d_isBdryDof so its velocity stays free. But its
+    // gradPnq = M^-1 D^T p is a one-cell jump (p clamped to the head, interior
+    // ~0) -> ~head/h, a numerical artifact of the Dirichlet clamp, not the
+    // physical interior pressure gradient. Feeding it into the momentum update
+    // injects a dt*invRho*(head/h) velocity kick that detonates once the head
+    // crosses ~1e4. Drop the pressure-gradient term HERE only; the node is still
+    // driven by advection + the interior gradient one cell in (which IS the
+    // physical pump drive), so through-flow is preserved. The head enters
+    // physically through the pressure Poisson Dirichlet, not this kick.
+    RealType gP = (isOpenFaceNode && isOpenFaceNode[i]) ? RealType(0) : gradPnq[i];
     RealType V = lumpedMass[dof];
     // BDF1: u* = u^n + dt*(-adv/V - invRho*grad p + invRho*f) (interior only)
     qStar[i] = qN[i] + dt * dqdtNode[i] / V
-                    - dt * invRho * gradPnq[i]
+                    - dt * invRho * gP
                     + dt * invRho * bodyForce;
 }
 
@@ -2265,6 +2277,7 @@ __global__ void applyPredictorBdf2PerNodeKernel(RealType* qStar,
                                                 const RealType* lumpedMass,
                                                 const RealType* qTarget,
                                                 const uint8_t* isBdryDof,
+                                                const uint8_t* isOpenFaceNode,  // FIX-B: null unless pumpDp>0
                                                 const int* nodeToDof,
                                                 const uint8_t* ownership,
                                                 RealType dt,
@@ -2283,13 +2296,17 @@ __global__ void applyPredictorBdf2PerNodeKernel(RealType* qStar,
         qStar[i] = qTarget[i];
         return;
     }
+    // FIX-B open-face momentum closure (see applyPredictorPerNodeKernel): drop
+    // the spurious head/h gradient kick at the open face; interior gradient
+    // (the real drive) is untouched.
+    RealType gP      = (isOpenFaceNode && isOpenFaceNode[i]) ? RealType(0) : gradPnq[i];
     RealType V       = lumpedMass[dof];
     RealType adv_ext = RealType(2) * dqdtNode_n[i] - dqdtNode_nm1[i];
     RealType coef    = RealType(2) * dt / RealType(3);
     // BDF2 + EXT2 with body-force source: KIO stencil + coef*invRho*f.
     qStar[i] = (RealType(4) / RealType(3)) * qN[i]
              - (RealType(1) / RealType(3)) * qNm1[i]
-             + coef * (adv_ext / V - invRho * gradPnq[i] + invRho * bodyForce);
+             + coef * (adv_ext / V - invRho * gP + invRho * bodyForce);
 }
 
 // Corrector: q^{n+1} = q** - (dt/rho) (grad phi)_q on interior; snap to
@@ -2301,6 +2318,7 @@ __global__ void applyCorrectorPerNodeKernel(RealType* q,
                                             const RealType* gradPhiq,
                                             const RealType* qTarget,
                                             const uint8_t* isBdryDof,
+                                            const uint8_t* isOpenFaceNode,  // FIX-B: null unless pumpDp>0
                                             const int* nodeToDof,
                                             const uint8_t* ownership,
                                             RealType dt,
@@ -2319,7 +2337,11 @@ __global__ void applyCorrectorPerNodeKernel(RealType* q,
         q[i] = qTarget[i];
         return;
     }
-    q[i] = qStarStar[i] - dt * invRho * gradPhiq[i];
+    // FIX-B open-face momentum closure (see applyPredictorPerNodeKernel): grad(phi)
+    // at the clamped open face carries the same one-cell-jump artifact as grad(p);
+    // drop it here too so the secondary corrector kick can't re-open the loop.
+    RealType gPhi = (isOpenFaceNode && isOpenFaceNode[i]) ? RealType(0) : gradPhiq[i];
+    q[i] = qStarStar[i] - dt * invRho * gPhi;
 }
 
 // Pressure update: p^{n+1} = p^n + phi on owned nodes (Chorin incremental).
@@ -7864,7 +7886,10 @@ void runPredictorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
                 qStar.data(), qN.data(), qNm1.data(),
                 advN.data(), advNm1.data(),
                 gradPnq.data(), s.d_mass.data(), qTarget.data(),
-                s.d_isBdryDof.data(), s.d_node_to_dof.data(),
+                s.d_isBdryDof.data(),
+                s.d_isOpenFaceNode.size() == s.nodeCount
+                    ? s.d_isOpenFaceNode.data() : nullptr,
+                s.d_node_to_dof.data(),
                 d_nodeOwnership.data(),
                 dt, invRho, bodyForce, s.nodeCount, s.numOwnedDofs);
         }
@@ -7873,7 +7898,10 @@ void runPredictorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
             applyPredictorPerNodeKernel<RealType><<<nodeBlocks, s.blockSize>>>(
                 qStar.data(), qN.data(), advN.data(),
                 gradPnq.data(), s.d_mass.data(), s.d_massNode.data(), qTarget.data(),
-                s.d_isBdryDof.data(), s.d_node_to_dof.data(),
+                s.d_isBdryDof.data(),
+                s.d_isOpenFaceNode.size() == s.nodeCount
+                    ? s.d_isOpenFaceNode.data() : nullptr,
+                s.d_node_to_dof.data(),
                 d_nodeOwnership.data(),
                 dt, invRho, bodyForce, s.nodeCount, s.numOwnedDofs);
         }
@@ -8980,7 +9008,10 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
     {
         applyCorrectorPerNodeKernel<RealType><<<nodeBlocks, s.blockSize>>>(
             qOut.data(), qStarStar.data(), gradPhiq.data(), qTarget.data(),
-            s.d_isBdryDof.data(), s.d_node_to_dof.data(),
+            s.d_isBdryDof.data(),
+            s.d_isOpenFaceNode.size() == s.nodeCount
+                ? s.d_isOpenFaceNode.data() : nullptr,
+            s.d_node_to_dof.data(),
             d_nodeOwnership.data(), dtEff, invRho, s.nodeCount, s.numOwnedDofs);
         cudaDeviceSynchronize();
     };
