@@ -2,6 +2,7 @@
 
 #include <tuple>
 #include <utility>
+#include <cstdlib>
 
 namespace cstone
 {
@@ -723,6 +724,35 @@ public:
     const cstone::Box<RealType>& getBoundingBox() const { return box_; }
 
     int getPeriodicAxesMask() const { return periodicAxesMask_; }
+
+    // Widen cstone's halo search box so every element touching an owned node is
+    // delivered as a local halo element. cstone's default halo (factor 1.0) can
+    // miss the opposite-rank element touching a corner/edge-shared seam node, so
+    // a seam-owned node's assembled stiffness row is incomplete (PROVEN on the
+    // multirank Poiseuille channel: [Avel-diag] sum(nuK_diag) was rank-varying).
+    // Setting haloSearchExt_ > 1 inflates each leaf's search box so those
+    // elements arrive through sync() -- WITH their nodes/coords/SFC keys/DOF/
+    // sparsity all built by the existing pipeline (no post-sync append, which
+    // would dangle). Opt-in via MARS_HALO_FACTOR; default 1.0 = byte-identical
+    // to today. Gated to multi-rank, non-periodic (periodic has its own image
+    // halo; single rank has no seam). Persists on domain_ across AMR re-syncs.
+    // Larger factor over-includes (cube256 OOM risk) -> use the smallest factor
+    // that makes [Avel-diag] rank-invariant. Called right after each domain_
+    // construction so both sync paths and re-syncs see it.
+    void applyHaloFactor()
+    {
+        if (numRanks_ <= 1 || periodicAxesMask_ != 0 || !domain_) return;
+        const char* f = std::getenv("MARS_HALO_FACTOR");
+        if (!f) return;
+        float factor = std::strtof(f, nullptr);
+        if (factor > 1.0f)
+        {
+            domain_->setHaloFactor(factor);
+            if (rank_ == 0)
+                std::cout << "[halo] MARS_HALO_FACTOR=" << factor
+                          << " (widen element halo to close the seam-stiffness gap)\n";
+        }
+    }
 
     // Start and end indices for local work assignment
     std::size_t startIndex() const { return domain_->startIndex(); }
@@ -1905,6 +1935,7 @@ ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(cons
     testSfcPrecision<KeyType, RealType>(box_, rank_);
 
     domain_ = std::make_unique<DomainType>(rank, numRanks, bucketSize, bucketSizeFocus, theta, box_);
+    applyHaloFactor();
 
     // Transfer data to GPU before sync
     auto t3 = clk::now();
@@ -1968,6 +1999,7 @@ ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(cons
     testSfcPrecision<KeyType, RealType>(box_, rank_);
 
     domain_ = std::make_unique<DomainType>(rank, numRanks, bucketSize, bucketSizeFocus, theta, box_);
+    applyHaloFactor();
 
     // Transfer data to GPU before sync
     transferDataToGPU(h_coords, h_conn, d_coords_, d_conn_);
@@ -2021,6 +2053,7 @@ ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(cons
     testSfcPrecision<KeyType, RealType>(box_, rank_);
 
     domain_ = std::make_unique<DomainType>(rank, numRanks, bucketSize, bucketSizeFocus, theta, box_);
+    applyHaloFactor();
 
     // Transfer data to GPU before sync (including boundary data)
     transferDataToGPU(h_coords, h_conn, h_boundary, d_coords_, d_conn_, d_boundary_);
@@ -2113,6 +2146,7 @@ ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(Devi
     RealType theta = 0.5;
 
     domain_ = std::make_unique<DomainType>(rank, numRanks, bucketSize, bucketSizeFocus, theta, box_);
+    applyHaloFactor();
 
     // d_props_ is initialized in calculateCharacteristicSizes; no transferDataToGPU needed
     DeviceConnectivityTuple d_conn_local = std::move(d_conn);

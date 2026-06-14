@@ -393,6 +393,10 @@ int main(int argc, char** argv)
     s.useOpeningFluxSource = openingFluxSource;   // FIX 1 (OFF by default; --opening-flux-source enables)
     s.useDirichletLift     = dirichletLift;       // FIX 2 (on by default)
     s.pumpDp               = RealType(pumpDp);    // FIX B: pressure-drop drive (>0 active)
+    // Seed the head at the ramp-start strength (1/rampSteps) so step-0 grad(p^n)
+    // is small; the per-step ramp builds it to full. No ramp -> seed full head.
+    s.pumpDpSeedScale      = (sourceRampSteps > 0)
+                             ? RealType(1.0 / double(sourceRampSteps)) : RealType(1);
     s.rhieChowTau = rhieTau;   // <=0 -> kernel falls back to dt/rho
     // FIX B and FIX 1 are mutually exclusive drives: the pressure drop already
     // creates the through-flow, and adding the opening-flux source on top double-
@@ -1106,7 +1110,11 @@ int main(int argc, char** argv)
     // Enable the per-step solver diagnostics for the first steps -- lets us
     // compare |gP|max (pressure-gradient magnitude) and div between 1 and N
     // ranks. Enabled for ALL rank counts so single vs multi is comparable.
+    // MARS_NS_DEBUG_STEPS overrides the window (e.g. to watch a late-step
+    // transition like the ramp-completion blowup).
     g_nsDebugStepsLeft = 40;
+    if (const char* ev = std::getenv("MARS_NS_DEBUG_STEPS"))
+    { int v = std::atoi(ev); if (v > 0) g_nsDebugStepsLeft = v; }
 
     auto wallStart = std::chrono::high_resolution_clock::now();
     for (int step = 1; step <= numSteps; ++step)
@@ -1123,6 +1131,14 @@ int main(int argc, char** argv)
             RealType uy = maxOwnedInteriorAbs<KeyType, RealType, TetTag>(s, s.d_v);
             RealType uz = maxOwnedInteriorAbs<KeyType, RealType, TetTag>(s, s.d_w);
             double um = std::sqrt(double(ux)*double(ux) + double(uy)*double(uy) + double(uz)*double(uz));
+            // Pressure-driven pump (FIX B): the predictor injects a velocity kick
+            // dt*invRho*grad(p) that the advective um never sees (it enters u
+            // AFTER the predictor), so as --pump-dp ramps the head up, that kick
+            // outgrows the dt cap and detonates (stable at dP=1e3, blows at 1e5).
+            // Fold the pressure-velocity scale invRho*|grad p|*dt into um so dt
+            // shrinks with the head. Gated on pumpDp>0 -> non-pump runs identical.
+            if (s.pumpDp > RealType(0))
+                um += double(1.0 / rho) * double(s.lastGradPRms) * dt;
             double dtCfl = (um > 0) ? cflMax * dxMean / um : dtInit;
             double dtNew = std::min(dtCfl, dtInit);
             dtNew = std::min(dtNew, 1.05 * dt);     // grow <=5%/step (BDF2)
@@ -1145,6 +1161,10 @@ int main(int argc, char** argv)
             RealType ramp = RealType(std::min(1.0, double(step) / double(sourceRampSteps)));
             s.Uinf = s.uinfBase * ramp;
             rescaleInletVelocityTarget<KeyType, RealType, TetTag>(s, ramp);
+            // FIX B: ramp the pressure head 0->pumpDp too, so a pressure-driven
+            // pump (--pump-dp) starts gently instead of shocking the advection.
+            if (s.pumpDp > RealType(0))
+                rescalePumpDpTarget<KeyType, RealType, TetTag>(s, ramp);
         }
         runNsStep<KeyType, RealType, TetTag>(s, RealType(dt), RealType(nu), RealType(rho));
         simTime += dt;

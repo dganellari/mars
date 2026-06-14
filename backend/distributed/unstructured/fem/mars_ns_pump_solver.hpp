@@ -1137,7 +1137,16 @@ __global__ void explicitAdvectionFluxScatterPerNodeKernel(const KeyType* c0, con
                                                           const RealType* gradQz,
                                                           const RealType* nodeX,
                                                           const RealType* nodeY,
-                                                          const RealType* nodeZ)
+                                                          const RealType* nodeZ,
+                                                          // FIX-B open faces (inlet/outlet pressure-Dirichlet, FREE
+                                                          // velocity) have NO momentum boundary closure -- the SCS
+                                                          // advection only sees interior faces, so a free open-face
+                                                          // velocity feeds back through its own upwind flux (q->q^2)
+                                                          // and detonates. openFace[node]=1 marks those nodes; the
+                                                          // upwind value taken FROM an open-face node is clamped to
+                                                          // the exterior reference 0 (OpenFOAM inletOutlet / Dong
+                                                          // outflow). nullptr -> no clamp, byte-identical.
+                                                          const uint8_t* openFace = nullptr)
 {
     size_t k = blockIdx.x * blockDim.x + threadIdx.x;
     if (k >= numLocal) return;
@@ -1190,7 +1199,12 @@ __global__ void explicitAdvectionFluxScatterPerNodeKernel(const KeyType* c0, con
         else if (advMode == 1)
         {
             // 1st-order upwind (standard CVFEM, used by cavity/channel).
-            RealType q_face = (mdot > RealType(0)) ? q[iL] : q[iR];
+            KeyType up      = (mdot > RealType(0)) ? iL : iR;
+            RealType q_face = q[up];
+            // Open-face momentum closure: if the upwind value is drawn from a
+            // free (un-anchored) open-face node, use the exterior reference 0
+            // instead of its runaway value -- kills the q->q^2 feedback.
+            if (openFace != nullptr && openFace[up]) q_face = RealType(0);
             RealType flux   = mdot * q_face;
             atomicAdd(&dqdtNode[iL], -flux);
             atomicAdd(&dqdtNode[iR], +flux);
@@ -1212,6 +1226,9 @@ __global__ void explicitAdvectionFluxScatterPerNodeKernel(const KeyType* c0, con
             RealType rz = mz - nodeZ[up];
             RealType recon = gradQx[up] * rx + gradQy[up] * ry + gradQz[up] * rz;
             RealType q_face = q[up] + phiQ[up] * recon;
+            // Open-face momentum closure (see upwind branch): clamp the upwind
+            // open-face node's contribution to the exterior reference 0.
+            if (openFace != nullptr && openFace[up]) q_face = RealType(0);
             RealType flux   = mdot * q_face;
             atomicAdd(&dqdtNode[iL], -flux);
             atomicAdd(&dqdtNode[iR], +flux);
@@ -2553,6 +2570,17 @@ struct NSStepper
     // it as rhs=target-p^n so the solved pressure clamps to the head. Empty for
     // pumpDp<=0 (cavity/channel/TGV never touch this).
     cstone::DeviceVector<RealType> d_pPhiTargetDof;
+    // Full-strength (unramped) copy of d_pPhiTargetDof. rescalePumpDpTarget
+    // writes d_pPhiTargetDof = ramp * base each step so --source-ramp-steps can
+    // bring the pressure head 0->full gently (an impulsive full head from rest
+    // shocks the explicit advection -> blowup). Empty when no ramp / no pumpDp.
+    cstone::DeviceVector<RealType> d_pPhiTargetDofBase;
+    // FIX-B open-face node mask (size nodeCount): 1 at inlet/outlet nodes whose
+    // velocity is FREE (pumpDp>0 pressure-driven openings). The advection kernel
+    // clamps the upwind value drawn from these nodes to 0 (exterior reference),
+    // supplying the momentum boundary closure the interior-only SCS scatter
+    // lacks. Empty unless pumpDp>0 -> no clamp, byte-identical.
+    cstone::DeviceVector<uint8_t> d_isOpenFaceNode;
     // Per-NODE pressure-Dirichlet mask (size nodeCount, halo-exchanged so
     // ghost slots see the owner's flag). Includes the single corner pin
     // (cavity) AND every outflow-face DOF (channel/pump). Used by symmetric
@@ -2820,6 +2848,9 @@ struct NSStepper
     // pumpDp<=0 disables FIX B entirely: the pump behaves exactly as the legacy
     // mass-conserving (or do-nothing) velocity outlet. Driver sets it from --pump-dp=.
     RealType pumpDp = 0;
+    // Ramp-start fraction for the seeded head (driver sets = 1/sourceRampSteps
+    // when ramping, else 1). Avoids a full-head grad(p^n) kick on step 0.
+    RealType pumpDpSeedScale = 1;
 
     // Per-node OUTWARD outlet area-vectors (un-normalized, nodeCount-sized, zero
     // off the outlet). Used only by the through-flow diagnostic to measure
@@ -5122,6 +5153,22 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
         }
         thrust::copy(hostMask.begin(), hostMask.end(),
                      thrust::device_pointer_cast(s.d_isPressureBdryDof.data()));
+
+        // FIX-B open-face node mask: mark EVERY inlet/outlet node (owned AND
+        // ghost, by NODE index -- the advection kernel reads q[up] for any node
+        // a local element touches). Only when pumpDp>0 (the openings have FREE
+        // velocity then); otherwise left empty -> no advection clamp.
+        if (s.pumpDp > RealType(0))
+        {
+            std::vector<uint8_t> hostOpen(s.nodeCount, 0);
+            for (int li : s.inletNodes)
+                if (li >= 0 && (size_t)li < s.nodeCount) hostOpen[li] = 1;
+            for (int li : s.outletNodes)
+                if (li >= 0 && (size_t)li < s.nodeCount) hostOpen[li] = 1;
+            s.d_isOpenFaceNode.resize(s.nodeCount);
+            thrust::copy(hostOpen.begin(), hostOpen.end(),
+                         thrust::device_pointer_cast(s.d_isOpenFaceNode.data()));
+        }
         // FIX B: stash the per-owned-DOF target so the per-step lift enforce can
         // clamp p^{n+1} to dP/0 at the masked faces. Only the pump pressure-drop
         // path needs it; cavity/channel/TGV leave d_pPhiTargetDof empty.
@@ -5130,6 +5177,9 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
             s.d_pPhiTargetDof.resize(s.numOwnedDofs);
             cudaMemcpy(s.d_pPhiTargetDof.data(), hostTarget.data(),
                        s.numOwnedDofs * sizeof(RealType), cudaMemcpyHostToDevice);
+            // Keep the full-strength target so the per-step ramp scales from the
+            // base, not cumulatively (mirrors the inlet-velocity uinfBase ramp).
+            s.d_pPhiTargetDofBase = s.d_pPhiTargetDof;
         }
 
         int dofBlocks = (s.numOwnedDofs + s.blockSize - 1) / s.blockSize;
@@ -6142,9 +6192,15 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
         thrust::copy(thrust::device_pointer_cast(d_nodeOwnership.data()),
                      thrust::device_pointer_cast(d_nodeOwnership.data() + s.nodeCount),
                      hostOwnP.begin());
+        // Seed the head at the RAMP-START strength, not the full head: a full-head
+        // grad(p^n) on the very first predictor is a singular velocity kick at the
+        // open face that ignites the advection. pumpDpSeedScale = first-step ramp
+        // (1/rampSteps when --source-ramp-steps is set, else 1). The per-step
+        // ramp + lift then build the head up gently.
+        const RealType seedHead = s.pumpDp * s.pumpDpSeedScale;
         for (int li : s.inletNodes)
             if (li >= 0 && (size_t)li < s.nodeCount && hostOwnP[li] == 1)
-                hostP[li] = s.pumpDp;
+                hostP[li] = seedHead;
         for (int li : s.outletNodes)
             if (li >= 0 && (size_t)li < s.nodeCount && hostOwnP[li] == 1)
                 hostP[li] = RealType(0);
@@ -6153,8 +6209,9 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
         cudaDeviceSynchronize();
         s.domain.exchangeNodeHalo(s.d_p);
         if (s.rank == 0)
-            std::cout << "  FIX B: seeded standing head p=" << s.pumpDp
-                      << " on inlet, p=0 on outlet (grad(p^n) drives the predictor)\n";
+            std::cout << "  FIX B: seeded head p=" << seedHead
+                      << " on inlet (ramp-start = " << s.pumpDpSeedScale << "*"
+                      << s.pumpDp << "), p=0 on outlet\n";
     }
 
     pt.report(s.rank, "setup");
@@ -7413,6 +7470,23 @@ void rescaleInletVelocityTarget(NSStepper<KeyType, RealType, ElementTag>& s, Rea
     scale(s.d_wTargetBase, s.d_wTarget);
 }
 
+// FIX-B pressure-head ramp: d_pPhiTargetDof = ramp * base. The base is pumpDp at
+// the inlet face, 0 at the outlet -> scaling the whole array ramps the inlet head
+// 0->pumpDp while the outlet stays 0. Mirrors rescaleInletVelocityTarget so a
+// pressure-driven pump starts gently (an impulsive full head from rest shocks the
+// explicit advection -> blowup, the dP=1e4 detonation we saw).
+template<typename KeyType, typename RealType, typename ElementTag = HexTag>
+void rescalePumpDpTarget(NSStepper<KeyType, RealType, ElementTag>& s, RealType ramp)
+{
+    if (s.d_pPhiTargetDofBase.size() != s.d_pPhiTargetDof.size()
+        || s.d_pPhiTargetDofBase.size() == 0) return;
+    thrust::transform(thrust::device,
+        thrust::device_pointer_cast(s.d_pPhiTargetDofBase.data()),
+        thrust::device_pointer_cast(s.d_pPhiTargetDofBase.data()) + s.d_pPhiTargetDofBase.size(),
+        thrust::device_pointer_cast(s.d_pPhiTargetDof.data()),
+        [ramp] __device__ (RealType b) { return b * ramp; });
+}
+
 template<typename KeyType, typename RealType, typename ElementTag = HexTag>
 RealType maxOwnedInteriorAbs(NSStepper<KeyType, RealType, ElementTag>& s,
                              const cstone::DeviceVector<RealType>& d_q)
@@ -7750,7 +7824,9 @@ void runPredictorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
                 advMode,
                 s.d_bjPhi.data(),
                 gradQx.data(), gradQy.data(), gradQz.data(),
-                d_bjNodeX.data(), d_bjNodeY.data(), d_bjNodeZ.data());
+                d_bjNodeX.data(), d_bjNodeY.data(), d_bjNodeZ.data(),
+                s.d_isOpenFaceNode.size() == s.nodeCount
+                    ? s.d_isOpenFaceNode.data() : nullptr);
             cudaDeviceSynchronize();
         }
         s.domain.reverseExchangeNodeHaloAdd(advN);

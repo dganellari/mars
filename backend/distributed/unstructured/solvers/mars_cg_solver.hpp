@@ -115,14 +115,16 @@ public:
             if (ev) { double v = std::atof(ev); if (v >= 0) clipFrac = RealType(v); }
         }
         RealType clipFloor = clipFrac * globalMax;
+        // A Jacobi preconditioner must be SPD: z = D^{-1} r requires D > 0, else
+        // rho = r^T z can go NEGATIVE and CG loses conjugacy -> stalls (observed
+        // on the 4-rank velocity solve: seam DOFs get a NEGATIVE assembled
+        // diagonal -> rho<0 in the [cg-trace] -> exit=MAXITER). The preconditioner
+        // need not match the matrix sign; force every diagonal POSITIVE (use
+        // |diag|, floored). Single-rank diagonals are all positive so this is a
+        // no-op there; it only repairs the bad-sign seam entries on >1 rank.
         for (size_t i = 0; i < h_diag.size(); ++i) {
-            if (std::abs(h_diag[i]) < 1e-14) {
-                h_diag[i] = 1.0;  // Avoid division by zero
-            } else if (h_diag[i] > 0 && h_diag[i] < clipFloor) {
-                h_diag[i] = clipFloor;  // Clip tiny positive diagonals
-            } else if (h_diag[i] < 0 && h_diag[i] > -clipFloor) {
-                h_diag[i] = -clipFloor;
-            }
+            RealType ad = std::abs(h_diag[i]);
+            h_diag[i] = (ad < clipFloor) ? (clipFloor > 0 ? clipFloor : RealType(1)) : ad;
         }
 
         thrust::copy(h_diag.begin(), h_diag.end(),
@@ -299,6 +301,15 @@ public:
             if (verbose_)
             {
                 std::cout << "Iteration : " << iter + 1 << ",   ||r||_B = " << z_norm << ",   ||r||_2 = " << r_norm << std::endl;
+            }
+            // MARS_CG_TRACE: force per-N-iter |r|/|b| even when not verbose, rank 0,
+            // first solve only. Shows slow-descent vs stall for the velocity CG.
+            else if (std::getenv("MARS_CG_TRACE") != nullptr && ((iter+1) % 100 == 0))
+            {
+                int rk = 0, ini = 0; MPI_Initialized(&ini); if (ini) MPI_Comm_rank(MPI_COMM_WORLD, &rk);
+                if (rk == 0)
+                    std::cout << "  [cg-trace] iter " << (iter+1) << "  |r|/|b|="
+                              << (r_norm / b_norm) << "\n";
             }
 
             // Check convergence
