@@ -3559,6 +3559,7 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
                       << "rank-varying => the bug)\n";
     }
 
+
     // Probe: dump master row stats on each rank that owns masters. Gated by
     // MARS_PERIODIC_AVEL_DBG=1. Distinguishes:
     //   (a) diag == expected single-rank value + sumAbsOff > 0 -> seam coupling
@@ -3917,7 +3918,8 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
             // a follow-up after validating convergence.
             if ((s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Channel
                  || s.bcKind == NSStepper<KeyType, RealType, ElementTag>::BCKind::Pump)
-                && s.d_isBdryNode.size() == static_cast<size_t>(s.nodeCount))
+                && s.d_isBdryNode.size() == static_cast<size_t>(s.nodeCount)
+                && std::getenv("MARS_NO_VEL_COLZERO") == nullptr)
             {
                 enforceBcColMatrixKernelByNode<RealType><<<dofBlocks, s.blockSize>>>(
                     s.d_isBdryNode.data(),
@@ -8986,7 +8988,14 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
     {
         const char* h2env = std::getenv("MARS_TGV_H2");
         const bool tgvH2 = !(h2env && std::string(h2env) == "0");
-        if (tgvH2 && routeReducedPeriodicCorr && s.periodicMap)
+        // MARS_TGV_VMERGE owns the seam-velocity reconciliation at the deferred
+        // block below (mass-mean, not overwrite). If H2 also broadcast u[S]:=u[M]
+        // here (before the probe), VMERGE would later average u[M] with itself
+        // and the probe would read the overwrite field, not the per-slot field.
+        // So skip the H2 pre-probe broadcast whenever VMERGE is active.
+        const char* vmEnvH2 = std::getenv("MARS_TGV_VMERGE");
+        const bool  vmergeH2 = (vmEnvH2 && std::string(vmEnvH2) != "0");
+        if (tgvH2 && !vmergeH2 && routeReducedPeriodicCorr && s.periodicMap)
         {
             const int* dpart = s.periodicMap->d_periodicPartner.data();
             int gblk = 256, ggrd = int((s.nodeCount + gblk - 1) / gblk);
@@ -9056,6 +9065,66 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
         s.domain.exchangeNodeHalo(s.d_w);
         RealType dIn  = opDiv(s.d_uStarStar, s.d_vStarStar, s.d_wStarStar);
         RealType dOut = opDiv(s.d_u,         s.d_v,         s.d_w);
+
+        // MARS_TGV_IDENTITY: end-the-guessing probe. At the first owned cross-rank
+        // periodic slave S (partner = master ghost M), print the four numbers that
+        // disambiguate the PROJ-P3~1.0 wall WITHOUT algebra:
+        //  (1) u**[M]-u**[S]  : is the PREDICTOR velocity already discontinuous at
+        //      the periodic point? (reduced path skips the u** broadcast.) If big,
+        //      the merged divergence carries a u** seam-jump the projection cannot
+        //      remove -> fix is "make u** single-valued before the RHS divergence".
+        //  (2) u^{n+1}[M]-u^{n+1}[S] : did the corrector make the jump better/worse?
+        //  (3) per-slot D_M(u^{n+1}) and D_S(u^{n+1}) (un-folded, from divNorm which
+        //      currently holds the folded one -- recompute noFold per slot here).
+        //  Same-binary: gated, default OFF, zero cost otherwise.
+        if (std::getenv("MARS_TGV_IDENTITY") != nullptr && s.periodicMap)
+        {
+            // recompute per-slot (NO fold) divergence of u^{n+1} into divNorm
+            thrust::fill(thrust::device_pointer_cast(divAcc.data()),
+                         thrust::device_pointer_cast(divAcc.data() + s.nodeCount), RealType(0));
+            if (eBlocks > 0) {
+                computeDivergencePerNodeKernel<KeyType, RealType, ElementTag><<<eBlocks, s.blockSize>>>(
+                    c0, c1, c2, c3, c4, c5, c6, c7, s.d_u.data(), s.d_v.data(), s.d_w.data(),
+                    s.d_areaVec_x.data(), s.d_areaVec_y.data(), s.d_areaVec_z.data(),
+                    divAcc.data(), startElem, numLocal);
+                cudaDeviceSynchronize();
+            }
+            s.domain.reverseExchangeNodeHaloAdd(divAcc);   // NO periodic fold
+            thrust::fill(thrust::device_pointer_cast(divNorm.data()),
+                         thrust::device_pointer_cast(divNorm.data() + s.nodeCount), RealType(0));
+            normalizeDivergencePerNodeKernel<RealType><<<nodeBlocks, s.blockSize>>>(
+                divAcc.data(), s.d_massNode.data(), s.d_node_to_dof.data(),
+                d_nodeOwnership.data(), divNorm.data(), s.nodeCount);
+            cudaDeviceSynchronize();
+
+            const int* partnerP = s.periodicMap->d_periodicPartner.data();
+            const uint8_t* ownP = d_nodeOwnership.data();
+            const size_t N = s.nodeCount;
+            long long localFirst = thrust::transform_reduce(thrust::device,
+                thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(N),
+                [partnerP, ownP, N] __device__ (size_t i) -> long long {
+                    if (ownP[i] != 1) return (long long)N;
+                    int m = partnerP[i];
+                    if (m < 0 || ownP[m] == 1) return (long long)N;
+                    return (long long)i;
+                }, (long long)N, thrust::minimum<long long>());
+            if (localFirst < (long long)N) {
+                size_t i = (size_t)localFirst; int h_m;
+                cudaMemcpy(&h_m, partnerP + i, sizeof(int), cudaMemcpyDeviceToHost);
+                RealType uM[3], uS[3], usM[3], usS[3], dM, dS;
+                auto g1 = [&](cstone::DeviceVector<RealType>& f, size_t idx){ RealType v; cudaMemcpy(&v, f.data()+idx, sizeof(RealType), cudaMemcpyDeviceToHost); return v; };
+                uS[0]=g1(s.d_u,i);  uS[1]=g1(s.d_v,i);  uS[2]=g1(s.d_w,i);
+                uM[0]=g1(s.d_u,h_m);uM[1]=g1(s.d_v,h_m);uM[2]=g1(s.d_w,h_m);
+                usS[0]=g1(s.d_uStarStar,i);  usS[1]=g1(s.d_vStarStar,i);  usS[2]=g1(s.d_wStarStar,i);
+                usM[0]=g1(s.d_uStarStar,h_m);usM[1]=g1(s.d_vStarStar,h_m);usM[2]=g1(s.d_wStarStar,h_m);
+                dS=g1(divNorm,i); dM=g1(divNorm,h_m);
+                std::cout << "  [TGV-IDENTITY r" << s.rank << "] i=" << i << " m=" << h_m
+                          << "  u**[M]-u**[S]=(" << (usM[0]-usS[0]) << "," << (usM[1]-usS[1]) << "," << (usM[2]-usS[2]) << ")"
+                          << "  u^{n+1}[M]-u^{n+1}[S]=(" << (uM[0]-uS[0]) << "," << (uM[1]-uS[1]) << "," << (uM[2]-uS[2]) << ")"
+                          << "  D_M(u^{n+1})=" << dM << " D_S=" << dS << " (noFold per-slot)"
+                          << std::endl;
+            }
+        }
 
         // MARS_WHEREMAX_PROBE: where does |Du^{n+1}|_max live? divNorm now
         // holds D(u^{n+1}) per-node, post-fold, post-mass-normalize. Print the
@@ -9223,6 +9292,25 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
     {
         const int* dpart = s.periodicMap->d_periodicPartner.data();
         int gblk = 256, ggrd = int((s.nodeCount + gblk - 1) / gblk);
+        // MARS_TGV_VMERGE: instead of the master->slave OVERWRITE (u[S]:=u[M],
+        // which clobbers the slave's projected value and re-injects
+        // (dt/rho)(g[M]-g[S]) of divergence into the merged constraint CG just
+        // zeroed -- see runPredictorStep:7165-7177), set BOTH slots to the
+        // mass-weighted MEAN of the per-slot projected velocity. m_M=m_S=m_merged
+        // (mass mirror), so this is the plain average 0.5*(u[M]+u[S]). The mean
+        // is the L2-closest single-valued field to the per-slot projected
+        // solution and preserves the seam momentum, so it re-injects the LEAST
+        // divergence of any single value -- the minimal test of whether reducing
+        // (not eliminating) the re-injection buys stability. Recipe (reuses the
+        // existing same-rank+cross-rank fold/broadcast primitives):
+        //   1) maybePeriodicSum folds u[S] onto u[M] (slave zeroed): master=sum.
+        //   2) fold a ones-vector the same way: master=group count (=2 per pair).
+        //   3) periodicDivideAtMastersKernel: master=sum/count=mean.
+        //   4) broadcast master->slave + halo: both slots=mean.
+        // Default OFF -> the proven overwrite path below is byte-identical.
+        const char* vmEnv = std::getenv("MARS_TGV_VMERGE");
+        const bool  vmerge = (vmEnv && std::string(vmEnv) != "0");
+
         auto broadcastMasterToSlave = [&](cstone::DeviceVector<RealType>& d_field)
         {
             mars::fem::periodicBroadcastSameRankKernel<RealType><<<ggrd, gblk>>>(
@@ -9232,9 +9320,32 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
                 mars::fem::crossRankPeriodicBroadcast<KeyType, RealType>(*s.periodicMap, d_field);
             s.domain.exchangeNodeHalo(d_field);
         };
-        broadcastMasterToSlave(s.d_u);
-        broadcastMasterToSlave(s.d_v);
-        broadcastMasterToSlave(s.d_w);
+
+        if (vmerge)
+        {
+            // Folded group count: ones folded the SAME way as the velocity, so
+            // the master holds the exact group size for the divide. Cheap to
+            // rebuild per step (one fold); no persistent member needed.
+            cstone::DeviceVector<RealType> d_cnt(s.nodeCount, RealType(1));
+            maybePeriodicSum<KeyType, RealType, ElementTag>(s, d_cnt);
+            auto mergeMasterMean = [&](cstone::DeviceVector<RealType>& d_field)
+            {
+                maybePeriodicSum<KeyType, RealType, ElementTag>(s, d_field);
+                mars::fem::periodicDivideAtMastersKernel<RealType><<<ggrd, gblk>>>(
+                    dpart, d_cnt.data(), s.nodeCount, d_field.data());
+                cudaDeviceSynchronize();
+                broadcastMasterToSlave(d_field);
+            };
+            mergeMasterMean(s.d_u);
+            mergeMasterMean(s.d_v);
+            mergeMasterMean(s.d_w);
+        }
+        else
+        {
+            broadcastMasterToSlave(s.d_u);
+            broadcastMasterToSlave(s.d_v);
+            broadcastMasterToSlave(s.d_w);
+        }
     }
 
     // Pressure update + ghost sync (next step's predictor needs ghost p^{n+1}).
@@ -9725,7 +9836,17 @@ template<typename KeyType, typename RealType, typename ElementTag = HexTag>
 void runNsStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, RealType nu, RealType rho)
 {
     s.nuCached = nu;
+    // Wire the substep trace ([ns-dbg ENTRY/PRED/DIFF/POIS/CORR]) to an env:
+    // MARS_NS_DEBUG_STEPS=N traces the first N steps. Was dead (never set >0).
+    static bool nsDbgInit = false;
+    if (!nsDbgInit)
+    {
+        nsDbgInit = true;
+        const char* e = std::getenv("MARS_NS_DEBUG_STEPS");
+        if (e) g_nsDebugStepsLeft = std::atoi(e);
+    }
     bool dbg = (g_nsDebugStepsLeft > 0);
+
 
     // ENTRY: state of u^n, p^n before the step.
     // IMPORTANT: keOwned / divMaxAndRmsOwned / computeWeightedL2Norm all do an
@@ -9793,6 +9914,16 @@ void runNsStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, RealTyp
         thrust::copy(thrust::device, s.d_u.begin(), s.d_u.end(), s.d_u_nm1.begin());
         thrust::copy(thrust::device, s.d_v.begin(), s.d_v.end(), s.d_v_nm1.begin());
         thrust::copy(thrust::device, s.d_w.begin(), s.d_w.end(), s.d_w_nm1.begin());
+        // Multirank: the BDF2 predictor/EXT2 reads the history at the seam next
+        // step; sync ghosts so they are consistent on first use (no-op on 1
+        // rank). Without this the first BDF2 step injects a one-time seam kick
+        // (observed: max|du|=0.333 at step 2, then a frozen wrong state).
+        if (s.numRanks > 1)
+        {
+            s.domain.exchangeNodeHalo(s.d_u_nm1);
+            s.domain.exchangeNodeHalo(s.d_v_nm1);
+            s.domain.exchangeNodeHalo(s.d_w_nm1);
+        }
     }
 
     runCorrectorStep<KeyType, RealType, ElementTag>(s, dt, rho);
@@ -9820,6 +9951,14 @@ void runNsStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, RealTyp
         thrust::copy(thrust::device, s.d_advU_n.begin(), s.d_advU_n.end(), s.d_advU_nm1.begin());
         thrust::copy(thrust::device, s.d_advV_n.begin(), s.d_advV_n.end(), s.d_advV_nm1.begin());
         thrust::copy(thrust::device, s.d_advW_n.begin(), s.d_advW_n.end(), s.d_advW_nm1.begin());
+        // Multirank: sync advection-history ghosts so EXT2 (2*advN - advNm1)
+        // reads consistent seam values on the first BDF2 step (no-op on 1 rank).
+        if (s.numRanks > 1)
+        {
+            s.domain.exchangeNodeHalo(s.d_advU_nm1);
+            s.domain.exchangeNodeHalo(s.d_advV_nm1);
+            s.domain.exchangeNodeHalo(s.d_advW_nm1);
+        }
         if (s.bdfStep < 1) s.bdfStep = 1;
     }
 
