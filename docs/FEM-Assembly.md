@@ -133,9 +133,9 @@ two CSR representations, used at different layers:
 
 Assembly is an **element loop**: one GPU thread (or team) per element computes that
 element's local matrix and **scatters** its entries into the global CSR with
-`atomicAdd`. Because the control-volume operators telescope (each SCS flux is added
-to two nodes with opposite sign), this scatter is locally conservative by
-construction.
+`atomicAdd`. Because the control-volume operators satisfy summation by parts (each SCS flux is
+added to two nodes with opposite sign, so interior contributions cancel in pairs),
+this scatter is locally conservative by construction.
 
 MARS provides GPU assemblers per element type:
 

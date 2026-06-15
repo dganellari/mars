@@ -216,9 +216,9 @@ Deeper material on the CVFEM operators lives in
 
 The discrete divergence in MARS is assembled from **interior** sub-control-
 surface faces only: every internal face between two nodes contributes
-`+flux` to one node and `-flux` to the other, and the sum telescopes — except
-at the domain boundary, where the *opening faces* (inlet, outlet) are never
-integrated.
+`+flux` to one node and `-flux` to the other, so by **summation by parts** the
+interior contributions cancel in pairs and only the boundary survives — except
+the *opening faces* (inlet, outlet) at the domain boundary are never integrated.
 
 The consequence is invisible until you run an inlet-driven flow: the
 prescribed inlet velocity **never enters the divergence bookkeeping**, so the
