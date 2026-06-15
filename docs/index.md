@@ -21,6 +21,12 @@ MARS provides comprehensive support for unstructured mesh processing, including:
 - **Multi-Rank Support**: MPI-based distributed computing
 - **AMR**: GPU-native multi-rank adaptive mesh refinement with solution transfer
 
+> **Multi-rank status.** Non-periodic distributed assembly and AMR are rank-invariant
+> and validated; periodic (Taylor–Green) and some inlet-driven channel multi-rank paths
+> have known limitations under active work — single-rank is the validated reference for
+> those. See [Multi-Rank Support](Multi-Rank-Support.md) and the tutorials for the
+> precise current state.
+
 ## Key Components
 
 ### Core Infrastructure
