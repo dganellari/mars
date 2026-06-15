@@ -94,10 +94,29 @@ Useful options (`--help` lists them all):
 | Option | Meaning |
 |--------|---------|
 | `--mesh=DIR` | the mesh directory (required) |
-| `--kernel=VARIANT` | assembly kernel: `tensor`, `shmem`, `optimized`, `team`, `original` (see [CVFEM Kernels](CVFEM-Kernels.md)) |
+| `--kernel=VARIANT` | assembly kernel (see [CVFEM Kernels](CVFEM-Kernels.md) and the list below) |
 | `--iterations=N` | repeat the assembly N times (for timing) |
 | `--block-size=N` | CUDA block size (default 256) |
+| `--bucket-size=N` | cornerstone octree bucket size (default 64; try 32 or 16 for 16+ ranks) |
+| `--bucket-size-focus=N` | focus-tree bucket size (default 8; lower = finer halo, more memory) |
 | `--quiet` | suppress the per-phase prints |
+
+`mars_cvfem_graph` accepts these `--kernel` variants:
+
+| Variant | Notes |
+|---------|-------|
+| `original` | default; straightforward per-element kernel |
+| `optimized` | optimized element kernel |
+| `shmem` | shared-memory variant |
+| `team` | team/block-per-element variant |
+| `tensor` | tensor-product kernel (primary optimized version) |
+| `tensor_colored` | tensor kernel with graph coloring (experimental) |
+| `tensor_aos` | tensor kernel, AoS layout (experimental) |
+| `tensor_perip` | tensor kernel, per-element-in-parallel (experimental) |
+| `tensor_perip_lb2` | `tensor_perip` with load-balance variant (experimental) |
+| `smem_cache` | shared-memory caching variant (experimental) |
+| `wmma_tensor` | WMMA tensor-core variant (experimental) |
+| `wgmma_tensor` | WGMMA tensor-core variant (experimental) |
 
 ---
 
@@ -152,7 +171,7 @@ change.
 - **Understand the pipeline you just ran:** [FEM Assembly](FEM-Assembly.md).
 - **Tune the assembly kernel:** [CVFEM Kernels (GPU)](CVFEM-Kernels.md).
 - **A full CFD application built on this:** the
-  [Pump Flow tutorial](pump_cfd_tutorial.md) (incompressible Navier–Stokes).
+  [Poiseuille channel-flow tutorial](poiseuille_tutorial.md) (incompressible Navier–Stokes).
 - **How the mesh is read and split:**
   [Mesh Reading and Partitioning](Mesh-Reading-and-Partitioning.md),
   [SFC Mapping](SFC-Mapping.md), [Multi-Rank Support](Multi-Rank-Support.md).

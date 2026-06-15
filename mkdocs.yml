@@ -25,7 +25,7 @@ nav:
   - Home: index.md
   - Quickstart: Quickstart.md
   - Tutorials:
-      - Pump Flow (CFD intro): pump_cfd_tutorial.md
+      - Poiseuille Channel Flow (CFD intro): poiseuille_tutorial.md
       - Taylor-Green Vortex (periodic): periodic_tgv_tutorial.md
   - Core Components:
       - ElementDomain Overview: ElementDomain-Overview.md

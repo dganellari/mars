@@ -6,39 +6,47 @@
 
 **[Read the Full Documentation](https://mesh-adaptive-refinement-for-supercomputing-mars.readthedocs.io/en/latest/)**
 
-MARS is an open-source mesh management library designed to handle N-dimensional elements (N <= 4). 
-MARS is developed in C++ and makes use of template meta-programming to have compile time dimensions of elements and vectors, thus allowing for both compile time performance optimizations and concise and reusable code.
+MARS is an open-source, GPU-native mesh management library for N-dimensional elements
+(N <= 4). It is developed in C++20 and makes heavy use of template meta-programming so
+element dimensions, floating-point precision, and SFC key types are compile-time
+parameters — giving both compile-time performance optimizations and concise, reusable
+code.
 
 The main features of MARS consist of:
 
-1. Parallel mesh generation
+1. GPU-native unstructured meshes — the mesh is built and stored entirely on the device
+   (CUDA / HIP), with no host round-trips after load. Built on the cornerstone-octree
+   library.
 
-2. Adaptive mesh refinement using bisection algorithms
+2. Space-filling-curve (SFC) domain decomposition — elements are identified by their
+   lowest SFC corner key and load-balanced across ranks via cornerstone.
 
-3. Conforming mesh data-structure
+3. GPU-native finite-element and CVFEM assembly — element → DOF map → CSR sparsity →
+   assembled matrix, all on the device, with multiple optimized assembly kernels
+   (tensor-product, shared-memory, tensor-core variants).
 
-4. Mesh quality estimators to study the output of different mesh-refinement strategies
+4. Distributed multi-rank execution via MPI, including a per-node halo for solver
+   communication (CUDA-aware MPI) on top of the cornerstone element halo.
 
-5. Performance portable algorithms and data-structures targetting different accelerators
+5. GPU-native adaptive mesh refinement (mark → refine → rebuild → solution transfer),
+   with multi-rank support.
 
-6. Performance portable space filling curves algorithms for efficient mesh management.
+6. Lazy composition — adjacency, halo, and coordinate caches are built on first access
+   to minimize VRAM and startup time.
 
-7. Unstructured mesh support through cornerstone library, enabling octree-based adaptive mesh refinement for complex geometries.
-
-MARS targets multi-core CPUs and GPUs using the C++ Kokkos programming model. The mesh is entirely constructed and stored on the device (GPUs). This enables libraries using MARS to perform further operations directly on the device, avoiding going through the host. 
-
-Currently, MARS supports as its performance portable, parallel, adaptive refinement based algorithm the LEPP (Longest edge propagation path) from Rivara. Mesh generation is fully supported in parallel.
-
-Performance portable forest of octrees and space filling curves algorithms for adaptive mesh refinement are being planned.
+MARS targets multi-core CPUs and GPUs (NVIDIA via CUDA, AMD via HIP); a Kokkos backend
+covers the older structured-mesh path. Because the mesh stays on the device, libraries
+built on MARS can run further operations directly on the GPU without going through the
+host.
 
 ## Downloading MARS and its dependencies ##
 
 Clone the repository and its submodules. MARS relies on googletest and google/benchmark.
 
-`git clone --recurse-submodules https://bitbucket.org/zulianp/mars.git`
+`git clone --recurse-submodules https://github.com/dganellari/mars.git`
 or for older git versions
 
-`git clone https://bitbucket.org/zulianp/mars.git && cd mars && git submodule update --init --recursive`
+`git clone https://github.com/dganellari/mars.git && cd mars && git submodule update --init --recursive`
 
 Compiling M.A.R.S for serial usage:
 
@@ -86,13 +94,16 @@ MARS supports GPU-native unstructured meshes through integration with the Corner
 ```cpp
 #include "domain.hpp"
 
-// Create GPU-native unstructured domain
-ElementDomain<TetTag, float, unsigned> domain("mesh_dir", rank, numRanks);
+// Create GPU-native unstructured domain (read + partition + cstone sync).
+// Template params: <ElementTag, RealType, KeyType, AcceleratorTag>.
+ElementDomain<HexTag, double, uint64_t, cstone::GpuTag> domain("mesh_dir", rank, numRanks);
 
-// Components built lazily on first access
-auto offsets = domain.getNodeToElementOffsets();  // Builds adjacency
-auto coords = domain.getNodeCoordinates();        // Caches coordinates
-auto sizes = domain.getCharacteristicSizes();     // Computes sizes
+// Components built lazily on first access (all device-side):
+const auto& offsets = domain.getNodeToElementOffsets();   // builds adjacency (CSR)
+domain.cacheNodeCoordinates();                            // caches decoded coords
+const auto& d_x = domain.getNodeX();                      // SoA node coordinates
+const auto& d_conn = domain.getElementToNodeConnectivity(); // local node IDs per element
+const auto& d_owner = domain.getNodeOwnershipMap();       // 0=ghost, 1=owned, 2=shared
 ```
 
 ### Build Configuration
@@ -122,7 +133,7 @@ For comprehensive guides and API references, see:
 **Getting started & tutorials**
 
 - **[Quickstart](https://mesh-adaptive-refinement-for-supercomputing-mars.readthedocs.io/en/latest/Quickstart/)** - Clone, build, generate a mesh, run your first GPU assembly
-- **[Pump Flow — a From-Scratch CFD Tutorial](https://mesh-adaptive-refinement-for-supercomputing-mars.readthedocs.io/en/latest/pump_cfd_tutorial/)** - Incompressible Navier–Stokes, from the mesh to reading the output
+- **[Poiseuille Channel Flow — a From-Scratch CFD Tutorial](https://mesh-adaptive-refinement-for-supercomputing-mars.readthedocs.io/en/latest/poiseuille_tutorial/)** - Incompressible Navier–Stokes, from the mesh to reading the output
 - **[Taylor–Green Vortex (periodic)](https://mesh-adaptive-refinement-for-supercomputing-mars.readthedocs.io/en/latest/periodic_tgv_tutorial/)** - Canonical periodic validation case
 
 **FEM**
@@ -172,7 +183,7 @@ If you use the MARS Serial backend please use the following bibliographic entry
 @misc{mars_serial,
     author = {Zulian, Patrick and Ganellari, Daniel and Rovi, Gabriele and Ramelli, Dylan},
     title = {{MARS} - {M}esh {A}daptive {R}efinement for {S}upercomputing. {G}it repository},
-    url = {https://bitbucket.org/zulianp/mars},
+    url = {https://github.com/dganellari/mars},
     year = {2018}
 }
 ```
@@ -186,7 +197,7 @@ If you use the MARS Distributed backends (Kokkos, AMR and Unstructured) please u
 @misc{mars_distributed,
     author = {Ganellari, Daniel and Zulian, Patrick and Rovi, Gabriele and Ramelli, Dylan},
     title = {{MARS} - {M}esh {A}daptive {R}efinement for {S}upercomputing. {G}it repository},
-    url = {https://bitbucket.org/zulianp/mars},
+    url = {https://github.com/dganellari/mars},
     year = {2018}
 }
 ```

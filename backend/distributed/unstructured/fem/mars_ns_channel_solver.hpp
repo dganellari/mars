@@ -56,6 +56,7 @@
 #include <thrust/device_vector.h>
 #include <thrust/host_vector.h>
 #include <thrust/reduce.h>
+#include <thrust/inner_product.h>
 #include <thrust/transform.h>
 #include <thrust/extrema.h>
 #include <thrust/fill.h>
@@ -2142,6 +2143,15 @@ struct NSStepper
     // Default is 1e-3 * max(diag), computed at the setup-time cache build.
     // Env MARS_DDT_JACOBI_CLIP_FRAC overrides the 1e-3 fraction.
     RealType diagDDTEpsClip = RealType(0);
+    // Diagonal shift applied INSIDE the matrix-free applyDDTPerNode (A := A+eps*I
+    // on owned, non-Dirichlet DOFs). On >1 rank the only pressure regularization
+    // is the outlet p=0 plane, which lives on a single downstream rank; the
+    // upstream subdomains carry a near-constant pressure mode that Jacobi cannot
+    // precondition -> DDT CG stalls (RHS-independent growing residual). A tiny
+    // shift gives the SPSD operator a smallest eigenvalue >= eps > 0, removing
+    // the mode. Set from env MARS_DDT_DIAG_SHIFT at setup. Default 0 (off, so
+    // single-rank stays byte-identical to the validated result).
+    RealType ddtDiagShift = RealType(0);
 
     // Owned-row SparseMatrix wrappers consumed by CG/Hypre.
     using Matrix = SparseMatrix<int, RealType, cstone::GpuTag>;
@@ -3500,6 +3510,15 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
     }
     } // end if constexpr hex (DDT operator block)
 
+    // Store the diagonal shift for the MATRIX-FREE operator (the DDT CG solves
+    // applyDDTPerNode, not the assembled CSR above, so the assembled shift is a
+    // no-op for that path). Read the SAME env once here; applyDDTPerNode adds
+    // eps*phi on owned non-Dirichlet DOFs. Off (0) by default.
+    {
+        const char* shiftEnv = std::getenv("MARS_DDT_DIAG_SHIFT");
+        s.ddtDiagShift = (shiftEnv) ? RealType(std::atof(shiftEnv)) : RealType(0);
+    }
+
     // Add M/dt to the velocity matrix diagonal -> (M/dt + nu K).
     {
         int dofBlocks = (s.numOwnedDofs + s.blockSize - 1) / s.blockSize;
@@ -3557,6 +3576,36 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
                       << std::setprecision(8) << gKsum << "  max=" << gKmax << std::defaultfloat
                       << "  (BOTH rank-count-INVARIANT if owned+halo assembly is consistent; "
                       << "rank-varying => the bug)\n";
+
+        // V1 probe (decides the seam fix): sum ALL owned-row CSR entries. Owned
+        // rows are the first numOwnedDofs rows, CONTIGUOUS in CSR, so the entry
+        // range is [rowPtr[0], rowPtr[numOwnedDofs]) -- a plain slice reduce, no
+        // per-row walk (the row-walk crashed). If this global sum is rank-
+        // INVARIANT (4-rank == 1-rank), every coupling A_ij is present in SOME
+        // rank's owned row -> the seam CSR-row fold (Path A) can symmetrize it.
+        // If 4-rank < 1-rank, couplings are absent everywhere -> need element
+        // halo (Path A insufficient). For (M/dt+nuK) BEFORE M/dt-add it's raw
+        // nu*K whose owned-row sum is rank-invariant iff assembly is complete.
+        {
+            int hRowPtrEnd = 0, hRowPtr0 = 0;
+            cudaMemcpy(&hRowPtr0, s.d_rowPtr.data(), sizeof(int), cudaMemcpyDeviceToHost);
+            cudaMemcpy(&hRowPtrEnd, s.d_rowPtr.data() + s.numOwnedDofs, sizeof(int), cudaMemcpyDeviceToHost);
+            const RealType* vptr = s.d_valuesVel.data();
+            // sum of |entries|: a complete Laplacian row sums to ~0 (cancellation),
+            // so a SIGNED sum can't reveal missing off-diagonals. ABS sum can't
+            // cancel -> rank-invariant iff every coupling is present.
+            double locAll = thrust::transform_reduce(thrust::device,
+                thrust::device_pointer_cast(vptr + hRowPtr0),
+                thrust::device_pointer_cast(vptr + hRowPtrEnd),
+                [] __device__ (RealType v) -> double { return fabs(double(v)); },
+                0.0, thrust::plus<double>());
+            double gAll = 0;
+            MPI_Allreduce(&locAll, &gAll, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+            if (s.rank == 0)
+                std::cout << "  [Avel-allsum] sum(|ALL owned-row nu*K entries|)=" << std::scientific
+                          << std::setprecision(8) << gAll << std::defaultfloat
+                          << "  (rank-INVARIANT => couplings present, fold works; 4R<1R => elements absent)\n";
+        }
     }
 
 
@@ -3947,6 +3996,93 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
         cudaDeviceSynchronize();
     }
     pt.lap("velocity matrix BC");
+
+    // MARS_VEL_SYMPROBE: direct bilinear symmetry test of the assembled Avel.
+    // For two owned test vectors u != v, <u, A v> must equal <v, A u> iff A=A^T.
+    // The velocity CG breaks down (pAp<0 -> MAXITER -> u**=0) on >1 rank; pAp<0
+    // is impossible for SPD, so A is non-symmetric at the seam. This measures it
+    // directly: rel ~ 1e-13 => symmetric; rel ~ O(1) => asymmetric (the Dirichlet
+    // col-zero drops K[i,bc] for the nonzero inlet target with no RHS lift).
+    // A magnitude-sum (the old [Avel-allsum]) CANNOT detect this -- only the
+    // bilinear form can. One-shot, rank-0 print, zero cost when env unset.
+    if (std::getenv("MARS_VEL_SYMPROBE") != nullptr && s.numOwnedDofs > 0)
+    {
+        // Wrap Avel for the matvec (owned rows, total cols), like the solver does.
+        wrapIntoSparseMatrix<RealType>(s.Avel, s.numOwnedDofs, s.numTotalDofs, s.nnz,
+                                       s.d_rowPtr.data(), s.d_colInd.data(), s.d_valuesVel.data());
+        ConjugateGradientSolver<RealType, int, cstone::GpuTag> probe(1, RealType(1));
+        probe.setVerbose(false);
+        probe.setOwnedSize(s.numOwnedDofs);
+        const uint8_t* bdofPtr = (s.d_isBdryDof.size() == size_t(s.numOwnedDofs))
+                                 ? s.d_isBdryDof.data() : nullptr;
+        // Two deterministic, distinct owned test vectors (skip Dirichlet dofs so
+        // the identity rows don't trivially dominate). u=sin-ish, v=cos-ish via
+        // index so they are not parallel.
+        cstone::DeviceVector<RealType> u(s.numTotalDofs), v(s.numTotalDofs);
+        thrust::fill(thrust::device_pointer_cast(u.data()),
+                     thrust::device_pointer_cast(u.data() + s.numTotalDofs), RealType(0));
+        thrust::fill(thrust::device_pointer_cast(v.data()),
+                     thrust::device_pointer_cast(v.data() + s.numTotalDofs), RealType(0));
+        {
+            RealType* uP = u.data(); RealType* vP = v.data();
+            thrust::for_each(thrust::device,
+                thrust::counting_iterator<int>(0),
+                thrust::counting_iterator<int>(s.numOwnedDofs),
+                [uP, vP, bdofPtr] __device__ (int d) {
+                    if (bdofPtr && bdofPtr[d]) return;     // skip Dirichlet rows
+                    uP[d] = RealType(1) + RealType((d * 1103515245 + 12345) & 1023) / RealType(1024);
+                    vP[d] = RealType(1) + RealType((d * 1234567891 + 7) & 1023) / RealType(1024);
+                });
+            cudaDeviceSynchronize();
+        }
+        s.domain.exchangeNodeHalo(u, s.d_node_to_dof.data());
+        s.domain.exchangeNodeHalo(v, s.d_node_to_dof.data());
+        cstone::DeviceVector<RealType> Au(s.numOwnedDofs), Av(s.numOwnedDofs);
+        probe.spmv(s.Avel, u, Au);
+        probe.spmv(s.Avel, v, Av);
+        auto ownedDotLocal = [&](const RealType* a, const RealType* b) -> double {
+            return double(thrust::inner_product(
+                thrust::device_pointer_cast(a),
+                thrust::device_pointer_cast(a + s.numOwnedDofs),
+                thrust::device_pointer_cast(b), RealType(0)));
+        };
+        double uAv_l = ownedDotLocal(u.data(), Av.data());
+        double vAu_l = ownedDotLocal(v.data(), Au.data());
+        double uAv = uAv_l, vAu = vAu_l;
+        int inited = 0; MPI_Initialized(&inited);
+        if (inited)
+        {
+            MPI_Allreduce(&uAv_l, &uAv, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+            MPI_Allreduce(&vAu_l, &vAu, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+        }
+        if (s.rank == 0)
+        {
+            double denom = std::max(std::abs(uAv), std::abs(vAu));
+            double rel = (denom > 0) ? std::abs(uAv - vAu) / denom : 0.0;
+            std::cout << "  [vel-symprobe] <u,Av>=" << std::scientific << std::setprecision(8)
+                      << uAv << "  <v,Au>=" << vAu << "  rel=" << rel
+                      << "  (~1e-13 => Avel symmetric; O(1) => asymmetric seam)\n"
+                      << std::defaultfloat;
+        }
+        // Single consistent-p pAp probe: pAp = (u, A u) on the SAME ghost-exchanged
+        // u used above. For an SPD operator this is STRICTLY POSITIVE. If it is
+        // negative, the distributed Avel is symmetric (rel above ~0) but INDEFINITE
+        // -- i.e. the in-loop CG pAp<0 is the OPERATOR (seam-incompleteness), not the
+        // recurrence. If positive while the CG loop's pAp goes negative, the bug is
+        // the CG recurrence (a vector used with stale ghosts), not the matrix.
+        // Decoupled from the CG loop; one-shot, rank-0 print, zero cost when unset.
+        {
+            double uAu_l = ownedDotLocal(u.data(), Au.data());
+            double uAu = uAu_l;
+            int ini2 = 0; MPI_Initialized(&ini2);
+            if (ini2) MPI_Allreduce(&uAu_l, &uAu, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+            if (s.rank == 0)
+                std::cout << "  [vel-pap-probe] pAp=(u,Au)=" << std::scientific << std::setprecision(8)
+                          << uAu << "  (>0 => SPD operator, CG recurrence is the bug; "
+                          << "<0 => indefinite operator / seam-incomplete)\n"
+                          << std::defaultfloat;
+        }
+    }
 
     // Probe 2: confirm enforceBcMatrixKernel actually zeroed the slave row
     // and set diag=1 on Avel. Read back one cross-rank slave row's diagonal
@@ -5698,6 +5834,36 @@ void applyDDTPerNode(NSStepper<KeyType, RealType, ElementTag>& s,
         {
             maybePeriodicSum<KeyType, RealType, ElementTag>(s, outAcc);
         }
+    }
+
+    // Matrix-free diagonal shift A := A + eps*I on owned, non-Dirichlet DOFs.
+    // Removes the global near-constant pressure null mode that survives on >1
+    // rank (the only regularization, the outlet p=0 plane, lives on one rank).
+    // Added BEFORE the row-pin restore/enforcement so pinned DOFs (which the
+    // pin below overwrites to phi[i] anyway) are skipped here too. Off (eps=0)
+    // by default -> single-rank byte-identical. Uses the column-zeroed phi
+    // (interior DOFs unaffected by col-zero) so eps multiplies the true phi[i].
+    if (s.ddtDiagShift > RealType(0))
+    {
+        const RealType eps        = s.ddtDiagShift;
+        const int  numOwnedDofs   = s.numOwnedDofs;
+        const int* dofPtr         = s.d_node_to_dof.data();
+        const uint8_t* ownPtr     = d_nodeOwnership.data();
+        const uint8_t* pbn        = (s.d_isPressureBdryNode.size() == s.nodeCount)
+                                    ? s.d_isPressureBdryNode.data() : nullptr;
+        const RealType* phPtr     = phi.data();
+        RealType* outPtr          = outAcc.data();
+        thrust::for_each(thrust::device,
+            thrust::counting_iterator<size_t>(0),
+            thrust::counting_iterator<size_t>(s.nodeCount),
+            [eps, dofPtr, ownPtr, pbn, phPtr, outPtr, numOwnedDofs] __device__ (size_t i) {
+                if (ownPtr[i] != 1) return;
+                int dof = dofPtr[i];
+                if (dof < 0 || dof >= numOwnedDofs) return;
+                if (pbn && pbn[i]) return;  // Dirichlet/pin rows stay identity
+                outPtr[i] += eps * phPtr[i];
+            });
+        cudaDeviceSynchronize();
     }
 
     // Identity-row enforcement on pinned pressure DOFs (cavity: single corner;

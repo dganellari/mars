@@ -21,6 +21,12 @@ MARS provides comprehensive support for unstructured mesh processing, including:
 - **Multi-Rank Support**: MPI-based distributed computing
 - **AMR**: GPU-native multi-rank adaptive mesh refinement with solution transfer
 
+> **Multi-rank status.** Non-periodic distributed assembly and AMR are rank-invariant
+> and validated; periodic (Taylor–Green) and some inlet-driven channel multi-rank paths
+> have known limitations under active work — single-rank is the validated reference for
+> those. See [Multi-Rank Support](Multi-Rank-Support.md) and the tutorials for the
+> precise current state.
+
 ## Key Components
 
 ### Core Infrastructure
@@ -49,7 +55,7 @@ MARS provides comprehensive support for unstructured mesh processing, including:
 End-to-end walkthroughs of MARS' incompressible Navier–Stokes solvers on
 unstructured meshes:
 
-- **[Pump Flow — a From-Scratch CFD Tutorial](pump_cfd_tutorial.md)** — start here if
+- **[Poiseuille — a From-Scratch CFD Tutorial](poiseuille_tutorial.md)** — start here if
   you are new to CFD. What an internal pump-flow simulation computes, from the mesh
   through the numerical method (CVFEM, the matrix-free `D M⁻¹ Dᵀ` projection, BDF2,
   advection schemes), boundary conditions, running, reading the output, and making

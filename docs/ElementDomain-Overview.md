@@ -15,13 +15,17 @@ The `ElementDomain` class is the central component of MARS's unstructured mesh s
 ## Template Parameters
 
 ```cpp
-template<typename ElemTag, typename Real, typename Index>
+template<typename ElementTag     = TetTag,
+         typename RealType       = float,
+         typename KeyType        = unsigned,
+         typename AcceleratorTag = cstone::GpuTag>
 class ElementDomain;
 ```
 
-- **ElemTag**: Element type tag (e.g., `TetTag` for tetrahedrons)
-- **Real**: Floating-point type for coordinates (e.g., `float`, `double`)
-- **Index**: Integer type for indices (e.g., `unsigned`, `size_t`)
+- **ElementTag**: Element type tag (e.g., `TetTag` for tetrahedra, `HexTag` for hexahedra)
+- **RealType**: Floating-point type for coordinates (e.g., `float`, `double`)
+- **KeyType**: Unsigned integer type for SFC keys (e.g., `unsigned`, `uint64_t`)
+- **AcceleratorTag**: Backend tag (`cstone::GpuTag` for CUDA/HIP, `cstone::CpuTag` for host)
 
 ## Key Features
 
@@ -43,23 +47,24 @@ class ElementDomain;
 ## Usage Example
 
 ```cpp
-// Create domain for tetrahedral mesh
-ElementDomain<TetTag, float, unsigned> domain("mesh_directory", rank, numRanks);
+// Create domain for tetrahedral mesh (read + partition + cstone sync on construction)
+ElementDomain<TetTag, double, uint64_t, cstone::GpuTag> domain("mesh_directory", rank, numRanks);
 
-// Access elements
-auto elements = domain.get_elements();
-std::cout << "Number of elements: " << elements.size() << std::endl;
+// Mesh sizes this rank sees (owned + halo)
+std::cout << "Elements: " << domain.getElementCount() << std::endl;
+std::cout << "Nodes:    " << domain.getNodeCount()    << std::endl;
 
-// Access coordinates
-auto coords = domain.get_coordinates();
-std::cout << "Number of vertices: " << coords.size() / 3 << std::endl;
+// Cache decoded node coordinates (SoA, device-side), then access them
+domain.cacheNodeCoordinates();
+const auto& d_x = domain.getNodeX();   // DeviceVector<RealType>
+const auto& d_y = domain.getNodeY();
+const auto& d_z = domain.getNodeZ();
 
-// Get element at index
-auto elem = domain.get_element(0);
-std::cout << "Element nodes: ";
-for (auto node : elem.nodes) {
-    std::cout << node << " ";
-}
+// Element-to-node connectivity (local node IDs per element), built lazily
+const auto& d_conn = domain.getElementToNodeConnectivity();
+
+// Per-element corner SFC keys, e.g. for element 0 (host accessor):
+auto keys = domain.getConnectivity(0);  // tuple of NodesPerElement SFC keys
 ```
 
 ## Lazy Composition

@@ -151,7 +151,7 @@ MARS provides GPU assemblers per element type:
 
 The Navier–Stokes solvers build on these same control-volume operators (the discrete
 divergence `D`, gradient `Dᵀ`, and lumped mass `M`) — see the
-[Pump Flow tutorial](pump_cfd_tutorial.md) for how they compose into a projection
+[Poiseuille channel-flow tutorial](poiseuille_tutorial.md) for how they compose into a projection
 method.
 
 A typical re-assembly loop (e.g. per timestep) is: `matrix.zero()` → call the
@@ -237,5 +237,5 @@ cluster.
   is built on.
 - [Multi-Rank Support](Multi-Rank-Support.md) — the distributed/MPI side, including
   ghost exchange.
-- [Pump Flow tutorial](pump_cfd_tutorial.md) — a worked CFD application built on this
+- [Poiseuille channel-flow tutorial](poiseuille_tutorial.md) — a worked CFD application built on this
   assembly layer (the CVFEM Navier–Stokes solver).
