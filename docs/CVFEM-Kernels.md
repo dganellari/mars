@@ -196,4 +196,4 @@ spatial locality, and whether you are occupancy- or bandwidth-bound.
 - [FEM Assembly](FEM-Assembly.md) — the pipeline these kernels sit inside
   (DOF map → sparsity → assemble → handoff).
 - [GPU Acceleration](GPU-Acceleration.md) — the broader device-execution model.
-- [Pump Flow tutorial](pump_cfd_tutorial.md) — the CVFEM operators in a full solver.
+- [Poiseuille channel-flow tutorial](poiseuille_tutorial.md) — the CVFEM operators in a full solver.

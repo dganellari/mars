@@ -122,7 +122,7 @@ For comprehensive guides and API references, see:
 **Getting started & tutorials**
 
 - **[Quickstart](https://mesh-adaptive-refinement-for-supercomputing-mars.readthedocs.io/en/latest/Quickstart/)** - Clone, build, generate a mesh, run your first GPU assembly
-- **[Pump Flow — a From-Scratch CFD Tutorial](https://mesh-adaptive-refinement-for-supercomputing-mars.readthedocs.io/en/latest/pump_cfd_tutorial/)** - Incompressible Navier–Stokes, from the mesh to reading the output
+- **[Poiseuille Channel Flow — a From-Scratch CFD Tutorial](https://mesh-adaptive-refinement-for-supercomputing-mars.readthedocs.io/en/latest/poiseuille_tutorial/)** - Incompressible Navier–Stokes, from the mesh to reading the output
 - **[Taylor–Green Vortex (periodic)](https://mesh-adaptive-refinement-for-supercomputing-mars.readthedocs.io/en/latest/periodic_tgv_tutorial/)** - Canonical periodic validation case
 
 **FEM**

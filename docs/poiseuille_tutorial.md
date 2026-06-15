@@ -4,9 +4,8 @@ This tutorial explains the `mars_poiseuille_flow` example: what Poiseuille flow
 is, why it is the standard first validation case for any incompressible CFD
 code, how to build and run it, how to read every line of its output, and the
 one numerical lesson it teaches that generalizes to every inlet-driven flow in
-MARS (including the pump). It assumes no prior CFD knowledge at the start; the
-deeper companion is `docs/pump_cfd_tutorial.md`, which builds the full
-numerical machinery from scratch.
+MARS (including the pump). It assumes no prior CFD knowledge at the start and
+builds the numerical machinery as it goes.
 
 ---
 
@@ -206,8 +205,8 @@ node. At 30k nodes (or 10⁹ on Alps) you never factor A — you iterate:
   cheaper in memory, and exactly consistent with the divergence/gradient
   used elsewhere in the step.
 
-Deeper material (the full CVFEM derivation, stabilization, accuracy orders)
-lives in `docs/pump_cfd_tutorial.md`.
+Deeper material on the CVFEM operators lives in
+[CVFEM-Kernels.md](CVFEM-Kernels.md) and [FEM-Assembly.md](FEM-Assembly.md).
 
 ---
 
@@ -485,8 +484,8 @@ gives 25 frames).
 
 ## Part 8 — Where to go next
 
-- `docs/pump_cfd_tutorial.md` — the full from-scratch CFD background: CVFEM,
-  the discrete operators, the projection algebra, stabilization.
+- [CVFEM-Kernels.md](CVFEM-Kernels.md) and [FEM-Assembly.md](FEM-Assembly.md) —
+  the discrete CVFEM operators and how they assemble into the projection method.
 - `examples/distributed/unstructured/mars_poiseuille_flow.cu` — the driver:
   BC rebuild, area lumping, validation, flux probe. Deliberately small.
 - `backend/distributed/unstructured/fem/mars_ns_channel_solver.hpp` — the

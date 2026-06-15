@@ -152,7 +152,7 @@ change.
 - **Understand the pipeline you just ran:** [FEM Assembly](FEM-Assembly.md).
 - **Tune the assembly kernel:** [CVFEM Kernels (GPU)](CVFEM-Kernels.md).
 - **A full CFD application built on this:** the
-  [Pump Flow tutorial](pump_cfd_tutorial.md) (incompressible Navier–Stokes).
+  [Poiseuille channel-flow tutorial](poiseuille_tutorial.md) (incompressible Navier–Stokes).
 - **How the mesh is read and split:**
   [Mesh Reading and Partitioning](Mesh-Reading-and-Partitioning.md),
   [SFC Mapping](SFC-Mapping.md), [Multi-Rank Support](Multi-Rank-Support.md).

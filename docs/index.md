@@ -49,7 +49,7 @@ MARS provides comprehensive support for unstructured mesh processing, including:
 End-to-end walkthroughs of MARS' incompressible Navier–Stokes solvers on
 unstructured meshes:
 
-- **[Pump Flow — a From-Scratch CFD Tutorial](pump_cfd_tutorial.md)** — start here if
+- **[Poiseuille — a From-Scratch CFD Tutorial](poiseuille_tutorial.md)** — start here if
   you are new to CFD. What an internal pump-flow simulation computes, from the mesh
   through the numerical method (CVFEM, the matrix-free `D M⁻¹ Dᵀ` projection, BDF2,
   advection schemes), boundary conditions, running, reading the output, and making
