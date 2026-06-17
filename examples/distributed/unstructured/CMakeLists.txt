@@ -41,6 +41,36 @@ else()
 endif()
 install(TARGETS mars_cvfem_graph RUNTIME DESTINATION bin/examples)
 
+# Matrix-free high-order Laplacian, Stage 0 element-local parity test
+add_executable(mars_ho_laplacian_test mars_ho_laplacian_test.cu)
+target_link_libraries(mars_ho_laplacian_test PRIVATE mars)
+install(TARGETS mars_ho_laplacian_test RUNTIME DESTINATION bin/examples)
+
+# Matrix-free high-order Laplacian, Stage 1 single-rank CG (lattice DOF map)
+add_executable(mars_ho_cg_test mars_ho_cg_test.cu)
+target_link_libraries(mars_ho_cg_test PRIVATE mars)
+install(TARGETS mars_ho_cg_test RUNTIME DESTINATION bin/examples)
+
+# Matrix-free high-order Laplacian, Stage 1b topological DOF handler validation
+add_executable(mars_ho_dof_test mars_ho_dof_test.cu)
+target_link_libraries(mars_ho_dof_test PRIVATE mars)
+install(TARGETS mars_ho_dof_test RUNTIME DESTINATION bin/examples)
+
+# Matrix-free high-order Laplacian, FP64 tensor-core (DMMA) parity vs scalar
+add_executable(mars_ho_dmma_test mars_ho_dmma_test.cu)
+target_link_libraries(mars_ho_dmma_test PRIVATE mars)
+install(TARGETS mars_ho_dmma_test RUNTIME DESTINATION bin/examples)
+
+# Matrix-free high-order Laplacian, Stage 2 orientation-aware DOF handler (relabeled cube)
+add_executable(mars_ho_orient_test mars_ho_orient_test.cu)
+target_link_libraries(mars_ho_orient_test PRIVATE mars)
+install(TARGETS mars_ho_orient_test RUNTIME DESTINATION bin/examples)
+
+# Matrix-free high-order Laplacian, Stage 1c HO DOF handler on a real ElementDomain mesh
+add_executable(mars_ho_domain_test mars_ho_domain_test.cu)
+target_link_libraries(mars_ho_domain_test PRIVATE mars)
+install(TARGETS mars_ho_domain_test RUNTIME DESTINATION bin/examples)
+
 # CVFEM tet driver: graph-based assembly for linear tetrahedra
 add_executable(mars_cvfem_graph_tet mars_cvfem_graph_tet.cu)
 if(TARGET CUDA::nvToolsExt)
@@ -193,4 +223,14 @@ target_link_libraries(mars_tgv PRIVATE mars)
 target_include_directories(mars_tgv PRIVATE
     ${CMAKE_SOURCE_DIR}/backend/distributed/unstructured/amr
 )
+
+# Coupled collocated solver -- Phase 0 model operator (plan in
+# internal-notes/plan_coupled_collocated_solver.md). Increment 1 is the G=-D^T
+# geometry gate; coupled assembly + direct-solve oracle land in later increments.
+add_executable(mars_coupled_model_operator mars_coupled_model_operator.cu)
+target_link_libraries(mars_coupled_model_operator PRIVATE mars)
+target_include_directories(mars_coupled_model_operator PRIVATE
+    ${CMAKE_SOURCE_DIR}/backend/distributed/unstructured/amr
+)
+install(TARGETS mars_coupled_model_operator RUNTIME DESTINATION bin/examples)
 install(TARGETS mars_tgv RUNTIME DESTINATION bin/examples)
