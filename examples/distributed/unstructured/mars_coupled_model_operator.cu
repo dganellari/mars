@@ -163,6 +163,7 @@ int main(int argc, char** argv)
     bool doAssemble = false;     // --assemble: also run the coupled Stokes block assembly + gates
     bool doAdvect   = false;     // --advect: add frozen-velocity convection into a^uu (implies --assemble)
     bool doSolve    = false;     // --solve: BC elimination + cusolverSp QR direct reference solve (implies --assemble)
+    bool doHypre    = false;     // --hypre: Phase-1 1a -- Hypre point-block BoomerAMG GMRES iters vs cusolver ref (implies --assemble)
     double beta     = 45.0;      // --beta: skew-cavity angle (deg), used only for the --solve BC geometry
     int    Re       = 100;       // --Re: Reynolds number for the lid-driven solve (3b)
     int    picard   = 30;        // --picard: max Picard outer iterations
@@ -175,6 +176,7 @@ int main(int argc, char** argv)
         else if (a == "--assemble")                 doAssemble = true;
         else if (a == "--advect")                 { doAssemble = true; doAdvect = true; }
         else if (a == "--solve")                  { doAssemble = true; doSolve  = true; }
+        else if (a == "--hypre")                  { doAssemble = true; doHypre  = true; }
         else if (a.rfind("--beta=", 0) == 0)        beta       = std::stod(a.substr(7));
         else if (a.rfind("--Re=", 0) == 0)          Re         = std::stoi(a.substr(5));
         else if (a.rfind("--picard=", 0) == 0)      picard     = std::stoi(a.substr(9));
@@ -422,6 +424,88 @@ int main(int argc, char** argv)
             assemblePass = (e1 < atol) && (e2 < atol) && (e3 < atol) && (e4 < atol);
         }
         std::cout << "[phase0][assemble] -> " << (assemblePass ? "ALL PASS" : "FAIL") << "\n";
+
+        // ---- Phase 1, 1a: Hypre point-block BoomerAMG GMRES (iters vs mesh) vs cusolver reference ----
+        if (doHypre)
+        {
+            const RealType nuS  = RealType(1) / static_cast<RealType>(Re);
+            const RealType hpar = RealType(1) / std::sqrt(static_cast<RealType>(nNodes) * RealType(0.5));
+            const RealType tauS = hpar * hpar / (RealType(4) * nuS);
+            // re-assemble Stokes (advection off; matches the host pyamg study)
+            thrust::fill(d_vals.begin(), d_vals.end(), RealType(0));
+            assembleCoupledStokesKernel<KeyType, RealType><<<eBlocks, blockSize>>>(
+                c0, c1, c2, c3, nx, ny, nz,
+                thrust::raw_pointer_cast(d_rowOff.data()), thrust::raw_pointer_cast(d_colInd.data()),
+                thrust::raw_pointer_cast(d_vals.data()), nuS, tauS, nullptr, nullptr, nullptr,
+                startEl, numLocal);
+            cudaDeviceSynchronize();
+            // BC tags + eliminate (lid u=1 / walls / w=0 / pressure pin)
+            const double bb = beta * M_PI / 180.0;
+            const RealType sinb = std::sin(bb), cotb = std::cos(bb) / std::sin(bb), eps = 1e-6;
+            std::vector<uint8_t> bcF(ND, 0); std::vector<RealType> bcV(ND, RealType(0));
+            for (size_t i = 0; i < nNodes; ++i) {
+                RealType y0 = hy[i] / sinb, x0 = hx[i] - hy[i] * cotb;
+                bcF[4 * i + 2] = 1;
+                if (y0 > 1.0 - eps) { bcF[4 * i + 0] = 1; bcV[4 * i + 0] = RealType(1); bcF[4 * i + 1] = 1; }
+                else if (x0 < eps || x0 > 1.0 - eps || y0 < eps) { bcF[4 * i + 0] = 1; bcF[4 * i + 1] = 1; }
+            }
+            bcF[3] = 1;
+            thrust::device_vector<uint8_t> d_bcF(bcF.begin(), bcF.end());
+            thrust::device_vector<RealType> d_bcV(bcV.begin(), bcV.end());
+            thrust::device_vector<RealType> d_rhs(ND, RealType(0));
+            const int dblk = (ND + blockSize - 1) / blockSize;
+            applyBCKernel<RealType><<<dblk, blockSize>>>(
+                thrust::raw_pointer_cast(d_bcF.data()), thrust::raw_pointer_cast(d_bcV.data()),
+                thrust::raw_pointer_cast(d_rowOff.data()), thrust::raw_pointer_cast(d_colInd.data()),
+                thrust::raw_pointer_cast(d_vals.data()), thrust::raw_pointer_cast(d_rhs.data()), ND);
+            cudaDeviceSynchronize();
+            // cusolver reference solution
+            thrust::device_vector<RealType> d_xref(ND, RealType(0));
+            { cusolverSpHandle_t cs = nullptr; cusolverSpCreate(&cs);
+              cusparseMatDescr_t de = nullptr; cusparseCreateMatDescr(&de);
+              cusparseSetMatType(de, CUSPARSE_MATRIX_TYPE_GENERAL);
+              cusparseSetMatIndexBase(de, CUSPARSE_INDEX_BASE_ZERO); int sg = -2;
+              cusolverSpDcsrlsvqr(cs, ND, nnz, de,
+                  thrust::raw_pointer_cast(d_vals.data()), thrust::raw_pointer_cast(d_rowOff.data()),
+                  thrust::raw_pointer_cast(d_colInd.data()), thrust::raw_pointer_cast(d_rhs.data()),
+                  1e-12, 1, thrust::raw_pointer_cast(d_xref.data()), &sg);
+              cudaDeviceSynchronize(); cusparseDestroyMatDescr(de); cusolverSpDestroy(cs); }
+            // Hypre point-block BoomerAMG + GMRES (wrap CSR into a SparseMatrix)
+            SparseMatrix<int, RealType, cstone::GpuTag> Am; Am.allocate(ND, ND, nnz);
+            thrust::copy(d_rowOff.begin(), d_rowOff.end(), thrust::device_pointer_cast(Am.rowOffsetsPtr()));
+            thrust::copy(d_colInd.begin(), d_colInd.end(), thrust::device_pointer_cast(Am.colIndicesPtr()));
+            thrust::copy(d_vals.begin(),   d_vals.end(),   thrust::device_pointer_cast(Am.valuesPtr()));
+            cstone::DeviceVector<RealType> bH, xH; bH.resize(ND); xH.resize(ND);
+            thrust::copy(d_rhs.begin(), d_rhs.end(), thrust::device_pointer_cast(bH.data()));
+            HypreGMRESSolver<RealType, int, cstone::GpuTag> hg(
+                MPI_COMM_WORLD, 1000, 1e-8,
+                HypreGMRESSolver<RealType, int, cstone::GpuTag>::BOOMERAMG, 50);
+            hg.setVerbose(false);
+            hg.setPointBlock(4);
+            hg.solve(Am, bH, xH, 0, ND, 0, ND, std::vector<int>{});
+            const int iters = hg.getLastIterations();
+            // compare to cusolver reference (guards the false-x=0 convergence mode)
+            thrust::device_vector<RealType> d_xh(ND), d_df(ND);
+            thrust::copy(thrust::device_pointer_cast(xH.data()),
+                         thrust::device_pointer_cast(xH.data() + ND), d_xh.begin());
+            thrust::transform(d_xh.begin(), d_xh.end(), d_xref.begin(), d_df.begin(),
+                [] __device__ (RealType a, RealType c) { return fabs(a - c); });
+            RealType dmax = thrust::reduce(d_df.begin(), d_df.end(), RealType(0), thrust::maximum<RealType>());
+            thrust::transform(d_xref.begin(), d_xref.end(), d_df.begin(),
+                [] __device__ (RealType c) { return fabs(c); });
+            RealType rmax = thrust::reduce(d_df.begin(), d_df.end(), RealType(0), thrust::maximum<RealType>());
+            RealType rel = dmax / (rmax > 0 ? rmax : RealType(1));
+            // rel guards the false-x=0 collapse (rel~1 = AMG returned ~0). A real
+            // GMRES solve to a 1e-8 RESIDUAL tol on a kappa-growing saddle operator
+            // legitimately differs from the direct solve by ~kappa*1e-8, so allow a
+            // generous band; it is NOT a precision check.
+            bool hyOk = (iters > 0) && (rel < 5e-2);
+            std::cout << std::scientific << std::setprecision(3);
+            std::cout << "[phase0][hypre] Re=" << Re << " point-block BoomerAMG GMRES iters=" << iters
+                      << " nnz=" << nnz << " |x_hypre-x_qr|rel=" << rel
+                      << "  -> " << (hyOk ? "PASS (converged + matches reference)" : "CHECK") << "\n";
+            assemblePass = assemblePass && hyOk;
+        }
 
         // ---- 3b: Picard loop + cusolverSp QR direct reference solve + benchmark match ----
         if (doSolve)

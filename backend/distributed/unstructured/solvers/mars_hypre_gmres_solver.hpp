@@ -180,6 +180,12 @@ public:
     // above tol) is visible in the step log instead of buried in Hypre's own
     // print output.
     int    getLastIterations()    const { return lastNumIters_; }
+
+    // Opt-in systems / point-block AMG: with N>1 and node-major interleaved DOFs
+    // (dof = N*node + comp), BoomerAMG auto-generates dof_func[i] = i % N, so a
+    // single SetNumFunctions(N) call enables point-block coarsening. Default N=1
+    // (scalar) -> no behavior change for existing callers.
+    void   setPointBlock(int n)         { pointBlock_ = (n > 1) ? n : 1; }
     double getLastFinalResidual() const { return lastFinalRes_; }
     double getLastSolutionMax()   const { return lastSolutionMax_; }
     bool   lastReturnedNullSolution() const { return nullSolutionReturned_; }
@@ -338,6 +344,13 @@ public:
             HYPRE_BoomerAMGSetPMaxElmts(precond_, amgPMax);
             HYPRE_BoomerAMGSetAggNumLevels(precond_, amgAgg);
             HYPRE_BoomerAMGSetNumSweeps(precond_, amgSweeps);
+            // Systems / point-block AMG: coarsen the N-DOF nodal block together
+            // (Hypre auto-builds dof_func = i % N for node-major interleaved DOFs).
+            if (pointBlock_ > 1) {
+                HYPRE_BoomerAMGSetNumFunctions(precond_, pointBlock_);
+                if (verbose_ && rank == 0)
+                    std::cout << "  [BoomerAMG] point-block NumFunctions=" << pointBlock_ << std::endl;
+            }
             HYPRE_BoomerAMGSetMaxLevels(precond_, 25);
             HYPRE_BoomerAMGSetMinCoarseSize(precond_, 32);  // avoid too-small coarse grid on small problems
             HYPRE_BoomerAMGSetMaxCoarseSize(precond_, 128); // upper bound on coarsest direct solve
@@ -861,6 +874,7 @@ private:
     // GMRES(k) restart length.
     int kDim_;
     bool useFlexGmres_ = false;  // FlexGMRES (varying precond) vs plain GMRES
+    int  pointBlock_   = 1;      // >1: systems/point-block BoomerAMG via SetNumFunctions
 };
 
 } // namespace fem
