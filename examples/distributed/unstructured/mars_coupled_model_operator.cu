@@ -26,6 +26,7 @@ using namespace mars::amr;
 // and resolve Tet4CVFEM / ElemTraits unqualified (header is not standalone).
 #include "backend/distributed/unstructured/fem/mars_fem_projection.hpp"
 #include "backend/distributed/unstructured/solvers/mars_acm_coarsen.hpp"  // ACM Stage 3 coarse-op + transfers
+#include "backend/distributed/unstructured/solvers/mars_acm_vcycle.hpp"   // ACM Stage 4a V-cycle
 
 #include <thrust/device_vector.h>
 #include <thrust/inner_product.h>
@@ -166,6 +167,7 @@ int main(int argc, char** argv)
     bool doSolve    = false;     // --solve: BC elimination + cusolverSp QR direct reference solve (implies --assemble)
     bool doHypre    = false;     // --hypre: Phase-1 1a -- Hypre point-block BoomerAMG GMRES iters vs cusolver ref (implies --assemble)
     bool doAcm3     = false;      // --acm-stage3: GPU coarse-operator + transfers vs host P^T A P (implies --assemble)
+    bool doAcm4     = false;      // --acm-stage4: GPU multilevel V-cycle vs host V-cycle replica (implies --assemble)
     double beta     = 45.0;      // --beta: skew-cavity angle (deg), used only for the --solve BC geometry
     int    Re       = 100;       // --Re: Reynolds number for the lid-driven solve (3b)
     int    picard   = 30;        // --picard: max Picard outer iterations
@@ -180,6 +182,7 @@ int main(int argc, char** argv)
         else if (a == "--solve")                  { doAssemble = true; doSolve  = true; }
         else if (a == "--hypre")                  { doAssemble = true; doHypre  = true; }
         else if (a == "--acm-stage3")             { doAssemble = true; doAcm3   = true; }
+        else if (a == "--acm-stage4")             { doAssemble = true; doAcm4   = true; }
         else if (a.rfind("--beta=", 0) == 0)        beta       = std::stod(a.substr(7));
         else if (a.rfind("--Re=", 0) == 0)          Re         = std::stoi(a.substr(5));
         else if (a.rfind("--picard=", 0) == 0)      picard     = std::stoi(a.substr(9));
@@ -509,6 +512,49 @@ int main(int argc, char** argv)
             std::cout << "[phase0][acm3] GPU restrict == host        : " << dRes    << "  " << pf2(dRes    < ctol) << "\n";
             std::cout << "[phase0][acm3] -> "
                       << ((dRecipe < ctol && dGal < ctol && dInj < ctol && dRes < ctol) ? "ALL PASS" : "FAIL") << "\n";
+        }
+
+        // ---- ACM Stage 4a: GPU multilevel V-cycle vs host V-cycle replica (one cycle, exact match) ----
+        if (doAcm4)
+        {
+            std::vector<AcmLevel<RealType>> levels;
+            acmBuildHierarchy<RealType>(d_rowOff, d_colInd, d_vals, (int)nNodes,
+                                        /*kmax=*/4, /*maxCoarseND=*/64, levels);
+
+            std::vector<RealType> hb(ND);
+            for (int i = 0; i < ND; ++i) hb[i] = std::sin(RealType(0.3) * i + RealType(0.5));   // deterministic test RHS
+
+            // GPU: one V-cycle on (b, x=0)
+            // coarsest = 10 Jacobi sweeps (the paper's value). NOTE: Jacobi is non-contractive on the
+            // indefinite coarse operator (it mildly amplifies) -- a Stage-4a stopgap; Algorithm A's
+            // direct coarsest solve (Stage 6) is the proper treatment, and GMRES (Stage 4b) makes the
+            // cycle effective regardless.
+            thrust::copy(hb.begin(), hb.end(), levels[0].bvec.begin());
+            thrust::fill(levels[0].xvec.begin(), levels[0].xvec.end(), RealType(0));
+            acmVcycleGpu<RealType>(levels, 0, /*pre=*/2, /*post=*/1, /*coarse=*/10, RealType(0.7));
+            cudaDeviceSynchronize();
+            std::vector<RealType> gx(ND);
+            thrust::copy(levels[0].xvec.begin(), levels[0].xvec.end(), gx.begin());
+
+            // host replica: same hierarchy + same arithmetic, one V-cycle on (b, x=0)
+            std::vector<AcmLevelHost<RealType>> hLevels;
+            acmHierarchyToHost<RealType>(levels, hLevels);
+            std::vector<RealType> hx(ND, RealType(0));
+            acmHostVcycle<RealType>(hLevels, 0, hx, hb, 2, 1, 10, RealType(0.7));
+
+            // GPU SpMV/Jacobi contract to FMA, the host does not -> compare RELATIVE to ||x|| (a logic
+            // bug gives O(1), not ~1e-9; this gate validates kernel correctness, not FP-bit-equality).
+            RealType dCycle = 0, mhx = 0;
+            for (int i = 0; i < ND; ++i) { dCycle = std::max(dCycle, std::abs(gx[i] - hx[i])); mhx = std::max(mhx, std::abs(hx[i])); }
+            const RealType dRel = dCycle / std::max(RealType(1e-30), mhx);
+
+            std::cout << "[phase0][acm4] V-cycle levels=" << levels.size() << "  sizes(ND):";
+            for (auto& L : levels) std::cout << " " << L.ND;
+            std::cout << "\n";
+            const RealType ctol = 1e-7;
+            std::cout << "[phase0][acm4] GPU V-cycle == host replica : abs=" << dCycle << " rel=" << dRel
+                      << "  " << (dRel < ctol ? "PASS" : "FAIL") << "\n";
+            std::cout << "[phase0][acm4] -> " << (dRel < ctol ? "ALL PASS" : "FAIL") << "\n";
         }
 
         // ---- Phase 1, 1a: Hypre point-block BoomerAMG GMRES (iters vs mesh) vs cusolver reference ----
