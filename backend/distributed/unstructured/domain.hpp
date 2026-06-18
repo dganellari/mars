@@ -1928,8 +1928,9 @@ ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(cons
     auto t2 = clk::now();
     bboxTimeMs = std::chrono::duration<float, std::milli>(t2 - t1).count();
 
-    std::cout << "Rank " << rank_ << ": Created bounding box: [" << box_.xmin() << "," << box_.xmax() << "] ["
-              << box_.ymin() << "," << box_.ymax() << "] [" << box_.zmin() << "," << box_.zmax() << "]" << std::endl;
+    if (!std::getenv("MARS_QUIET_MESH"))
+        std::cout << "Rank " << rank_ << ": Created bounding box: [" << box_.xmin() << "," << box_.xmax() << "] ["
+                  << box_.ymin() << "," << box_.ymax() << "] [" << box_.zmin() << "," << box_.zmax() << "]" << std::endl;
 
     // Test SFC precision for this domain (debug only)
     testSfcPrecision<KeyType, RealType>(box_, rank_);
@@ -1960,8 +1961,9 @@ ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(cons
     auto t6 = clk::now();
     syncTimeMs = std::chrono::duration<float, std::milli>(t6 - t5).count();
 
-    std::cout << "Rank " << rank_ << " initialized " << ElementTag::Name << " domain with " << nodeCount_
-              << " nodes and " << elementCount_ << " elements." << std::endl;
+    if (!std::getenv("MARS_QUIET_MESH"))
+        std::cout << "Rank " << rank_ << " initialized " << ElementTag::Name << " domain with " << nodeCount_
+                  << " nodes and " << elementCount_ << " elements." << std::endl;
 }
 
 // Constructor from mesh data (for MFEM or other formats) - automatically computes bounding box
@@ -2015,8 +2017,9 @@ ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(cons
     sync(d_conn_, d_coords_);
     logGpuMemAroundSync(rank_, "post-sync");
 
-    std::cout << "Rank " << rank_ << " initialized " << ElementTag::Name << " domain with " << nodeCount_
-              << " nodes and " << elementCount_ << " elements." << std::endl;
+    if (!std::getenv("MARS_QUIET_MESH"))
+        std::cout << "Rank " << rank_ << " initialized " << ElementTag::Name << " domain with " << nodeCount_
+                  << " nodes and " << elementCount_ << " elements." << std::endl;
 }
 
 // Constructor from mesh data with boundary info - automatically computes bounding box
@@ -2069,8 +2072,9 @@ ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(cons
     sync(d_conn_, d_coords_);
     logGpuMemAroundSync(rank_, "post-sync");
 
-    std::cout << "Rank " << rank_ << " initialized " << ElementTag::Name << " domain with " << nodeCount_
-              << " nodes and " << elementCount_ << " elements." << std::endl;
+    if (!std::getenv("MARS_QUIET_MESH"))
+        std::cout << "Rank " << rank_ << " initialized " << ElementTag::Name << " domain with " << nodeCount_
+                  << " nodes and " << elementCount_ << " elements." << std::endl;
 }
 
 // Device-data constructor: no host round-trip
@@ -2169,7 +2173,8 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::readMeshDataS
 {
     int rank = rank_;
     int numRanks = numRanks_;
-    std::cout << "Reading mesh data from " << meshFile << " on rank " << rank << std::endl;
+    if (!std::getenv("MARS_QUIET_MESH"))
+        std::cout << "Reading mesh data from " << meshFile << " on rank " << rank << std::endl;
     try
     {
         // Helper to handle coordinate conversion based on type
@@ -2529,8 +2534,9 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::sync(const De
             thrust::raw_pointer_cast(d_elemH.data()), elementCount_);
         cudaCheckError();
 
-        std::cout << "Rank " << rank_ << " syncing " << ElementTag::Name << " domain with " << elementCount_
-                  << " elements." << std::endl;
+        if (!std::getenv("MARS_QUIET_MESH"))
+            std::cout << "Rank " << rank_ << " syncing " << ElementTag::Name << " domain with " << elementCount_
+                      << " elements." << std::endl;
 
         // Check if we need to sync with original coordinates (compile-time check for hex8)
         if constexpr (std::is_same_v<ElementTag, HexTag>) {
@@ -3182,7 +3188,8 @@ CoordinateCache<ElementTag, RealType, KeyType, AcceleratorTag>::CoordinateCache(
             thrust::raw_pointer_cast(d_node_z_.data()), nodeCount, domain.getBoundingBox());
         cudaCheckError();
 
-        std::cout << "Rank " << domain.rank() << " cached " << nodeCount << " node coordinates." << std::endl;
+        if (!std::getenv("MARS_QUIET_MESH"))
+            std::cout << "Rank " << domain.rank() << " cached " << nodeCount << " node coordinates." << std::endl;
     }
 }
 

@@ -18,8 +18,13 @@
 #include "backend/distributed/unstructured/solvers/mars_acm_coarsen.hpp"
 #include <thrust/device_vector.h>
 #include <thrust/fill.h>
+#include <cusolverSp.h>
+#include <cusparse.h>
 #include <vector>
 #include <set>
+#include <unordered_map>
+#include <algorithm>
+#include <type_traits>
 #include <cmath>
 
 namespace mars {
@@ -75,22 +80,66 @@ struct AcmLevel {
     thrust::device_vector<RealType> bvec, xvec, rtmp, xtmp;    // per-level cycle work vectors
 };
 
-// host-once greedy aggregation on the block graph of a coupled (4*node+comp) CSR
-inline void acmHostAggregate(const std::vector<int>& rowOff, const std::vector<int>& colInd,
-                             int nNodes, int kmax, std::vector<int>& agg, int& nCoarse)
+// host-once DIRECTIONAL aggregation (Mavriplis-style, paper Eqs 19-20) on the block graph of a coupled
+// (4*node+comp) CSR. Strength S_IJ = ||A_IJ block||_F symmetrized -- the paper's algebraic "mutual
+// coefficients" route: on a stretched mesh the strong couplings run across the thin cell direction, so
+// aggregates elongate along the anisotropy. Two-sided strong test with factor beta (paper uses 0.5),
+// strongest-first greedy seed-growth, then a cleanup pass that ABSORBS leftover nodes into the strongest
+// neighboring aggregate (this is what keeps the coarsening ratio healthy -- avoids the singleton spray
+// that made the isotropic greedy stall at ~1.3x on unstructured meshes). beta=0 -> isotropic.
+template<typename RealType>
+inline void acmDirectionalAggregate(const std::vector<int>& rowOff, const std::vector<int>& colInd,
+                                    const std::vector<RealType>& vals, int nNodes, int kmax,
+                                    RealType beta, std::vector<int>& agg, int& nCoarse)
 {
     const int ND = 4 * nNodes;
-    std::vector<std::set<int>> nb(nNodes);
+    // block-Frobenius^2 per ordered block-pair (I,J), I!=J
+    std::unordered_map<long long, RealType> sq;
+    sq.reserve(static_cast<size_t>(colInd.size()));
     for (int r = 0; r < ND; ++r) {
-        int I = r >> 2;
-        for (int k = rowOff[r]; k < rowOff[r + 1]; ++k) nb[I].insert(colInd[k] >> 2);
+        long long I = r >> 2;
+        for (int k = rowOff[r]; k < rowOff[r + 1]; ++k) {
+            long long J = colInd[k] >> 2;
+            if (I != J) sq[I * static_cast<long long>(nNodes) + J] += vals[k] * vals[k];
+        }
     }
+    // symmetric strength S_IJ = sqrt(sq_IJ + sq_JI), each undirected edge emitted once into both lists
+    std::vector<std::vector<std::pair<int, RealType>>> nb(nNodes);
+    for (const auto& kv : sq) {
+        int I = static_cast<int>(kv.first / nNodes), J = static_cast<int>(kv.first % nNodes);
+        if (I < J) {
+            auto it = sq.find(J * static_cast<long long>(nNodes) + I);
+            RealType s = std::sqrt(kv.second + (it != sq.end() ? it->second : RealType(0)));
+            nb[I].push_back({J, s}); nb[J].push_back({I, s});
+        }
+    }
+    std::vector<RealType> wmax(nNodes, 0);
+    for (int i = 0; i < nNodes; ++i) {
+        for (auto& e : nb[i]) wmax[i] = std::max(wmax[i], e.second);
+        std::sort(nb[i].begin(), nb[i].end(), [](auto& a, auto& b) { return a.second > b.second; });  // strongest first
+    }
+    auto strong = [&](int i, int j, RealType s) { return s > beta * wmax[i] && s > beta * wmax[j]; };
+
     agg.assign(nNodes, -1); nCoarse = 0;
+    // Pass 1: seed only where a strong unaggregated neighbor exists (no singleton-seeding), fuse strongest-first
+    for (int seed = 0; seed < nNodes; ++seed) {
+        if (agg[seed] != -1) continue;
+        bool canSeed = false;
+        for (auto& e : nb[seed]) if (agg[e.first] == -1 && strong(seed, e.first, e.second)) { canSeed = true; break; }
+        if (!canSeed) continue;
+        agg[seed] = nCoarse; int cnt = 1;
+        for (auto& e : nb[seed]) {
+            if (cnt >= kmax) break;
+            if (agg[e.first] == -1 && strong(seed, e.first, e.second)) { agg[e.first] = nCoarse; ++cnt; }
+        }
+        ++nCoarse;
+    }
+    // Pass 2: absorb every leftover node into its strongest neighboring aggregate (true isolates -> own)
     for (int i = 0; i < nNodes; ++i) {
         if (agg[i] != -1) continue;
-        agg[i] = nCoarse; int cnt = 1;
-        for (int j : nb[i]) { if (cnt >= kmax) break; if (j != i && agg[j] == -1) { agg[j] = nCoarse; ++cnt; } }
-        ++nCoarse;
+        int best = -1;
+        for (auto& e : nb[i]) if (agg[e.first] != -1) { best = agg[e.first]; break; }   // nb sorted by strength
+        agg[i] = (best >= 0) ? best : nCoarse++;
     }
 }
 
@@ -98,7 +147,8 @@ template<typename RealType>
 void acmBuildHierarchy(const thrust::device_vector<int>& rowOff0,
                        const thrust::device_vector<int>& colInd0,
                        const thrust::device_vector<RealType>& vals0, int nNodes0,
-                       int kmax, int maxCoarseND, std::vector<AcmLevel<RealType>>& levels)
+                       int kmax, int maxCoarseND, std::vector<AcmLevel<RealType>>& levels,
+                       RealType beta = RealType(0.5))
 {
     levels.clear();
     {
@@ -117,10 +167,12 @@ void acmBuildHierarchy(const thrust::device_vector<int>& rowOff0,
         if (levels[idx].ND <= maxCoarseND) break;
 
         std::vector<int> hro(levels[idx].rowOff.size()), hci(levels[idx].colInd.size());
+        std::vector<RealType> hva(levels[idx].vals.size());
         thrust::copy(levels[idx].rowOff.begin(), levels[idx].rowOff.end(), hro.begin());
         thrust::copy(levels[idx].colInd.begin(), levels[idx].colInd.end(), hci.begin());
+        thrust::copy(levels[idx].vals.begin(), levels[idx].vals.end(), hva.begin());
         std::vector<int> agg; int nCoarse;
-        acmHostAggregate(hro, hci, levels[idx].nNodes, kmax, agg, nCoarse);
+        acmDirectionalAggregate<RealType>(hro, hci, hva, levels[idx].nNodes, kmax, beta, agg, nCoarse);
         if (nCoarse >= levels[idx].nNodes) break;            // no coarsening progress
 
         levels[idx].agg.assign(agg.begin(), agg.end());
@@ -144,14 +196,40 @@ inline void acmSmoothGpu(AcmLevel<RealType>& L, int sweeps, RealType omega)
     }
 }
 
+// coarsest direct solve (Algorithm A): A_c x = b via cusolverSp QR. Replaces the non-contractive Jacobi
+// sweeps that poison a deep hierarchy. The coarse op is indefinite -> QR (not LU). cs==nullptr keeps the
+// Jacobi-sweep coarsest (so the Stage-4a host-vs-GPU V-cycle match still holds bit-for-bit).
+template<typename RealType>
+inline void acmCoarseSolve(AcmLevel<RealType>& L, int coarse, RealType omega,
+                           cusolverSpHandle_t cs, cusparseMatDescr_t descr)
+{
+    if (!(cs && descr)) { acmSmoothGpu(L, coarse, omega); return; }
+    int singularity = -1;                                  // <0 = full rank; >=0 = first deficient pivot
+    const int nnzc = static_cast<int>(L.vals.size());
+    if constexpr (std::is_same_v<RealType, double>)
+        cusolverSpDcsrlsvqr(cs, L.ND, nnzc, descr, acmRaw(L.vals), acmRaw(L.rowOff), acmRaw(L.colInd),
+                            acmRaw(L.bvec), 1e-12, 1, acmRaw(L.xvec), &singularity);   // reorder=1 (match ref, stabilize)
+    else
+        cusolverSpScsrlsvqr(cs, L.ND, nnzc, descr, acmRaw(L.vals), acmRaw(L.rowOff), acmRaw(L.colInd),
+                            acmRaw(L.bvec), 1e-6f, 1, acmRaw(L.xvec), &singularity);
+    cudaDeviceSynchronize();
+    // a rank-deficient coarse saddle block (near-null pressure mode) makes the QR least-squares solve
+    // unreliable -> don't inject garbage into the cycle; reset and fall back to smoothing.
+    if (singularity >= 0) {
+        thrust::fill(L.xvec.begin(), L.xvec.end(), RealType(0));
+        acmSmoothGpu(L, coarse, omega);
+    }
+}
+
 // one V-cycle on levels[Lidx], operating on its bvec (in) / xvec (in-out)
 template<typename RealType>
 void acmVcycleGpu(std::vector<AcmLevel<RealType>>& levels, int Lidx,
-                  int pre, int post, int coarse, RealType omega)
+                  int pre, int post, int coarse, RealType omega,
+                  cusolverSpHandle_t cs = nullptr, cusparseMatDescr_t descr = nullptr)
 {
     AcmLevel<RealType>& L = levels[Lidx];
     const int blk = 256, grd = (L.ND + blk - 1) / blk;
-    if (Lidx == (int)levels.size() - 1) { acmSmoothGpu(L, coarse, omega); return; }
+    if (Lidx == (int)levels.size() - 1) { acmCoarseSolve(L, coarse, omega, cs, descr); return; }
 
     acmSmoothGpu(L, pre, omega);
     acmSpmvKernel<RealType><<<grd, blk>>>(acmRaw(L.rowOff), acmRaw(L.colInd), acmRaw(L.vals),
@@ -164,7 +242,7 @@ void acmVcycleGpu(std::vector<AcmLevel<RealType>>& levels, int Lidx,
     const int gN = (L.nNodes + blk - 1) / blk;
     acmRestrictAddKernel<RealType><<<gN, blk>>>(acmRaw(L.rtmp), acmRaw(C.bvec), acmRaw(L.agg), L.nNodes);
 
-    acmVcycleGpu(levels, Lidx + 1, pre, post, coarse, omega);
+    acmVcycleGpu(levels, Lidx + 1, pre, post, coarse, omega, cs, descr);
 
     acmInjectKernel<RealType><<<gN, blk>>>(acmRaw(C.xvec), acmRaw(L.xtmp), acmRaw(L.agg), L.nNodes);
     acmAddKernel<RealType><<<grd, blk>>>(acmRaw(L.xvec), acmRaw(L.xtmp), L.ND);
