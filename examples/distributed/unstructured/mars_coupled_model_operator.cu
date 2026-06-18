@@ -25,6 +25,7 @@ using namespace mars::amr;
 // Must follow the usings: the projection kernels live in the global namespace
 // and resolve Tet4CVFEM / ElemTraits unqualified (header is not standalone).
 #include "backend/distributed/unstructured/fem/mars_fem_projection.hpp"
+#include "backend/distributed/unstructured/solvers/mars_acm_coarsen.hpp"  // ACM Stage 3 coarse-op + transfers
 
 #include <thrust/device_vector.h>
 #include <thrust/inner_product.h>
@@ -164,6 +165,7 @@ int main(int argc, char** argv)
     bool doAdvect   = false;     // --advect: add frozen-velocity convection into a^uu (implies --assemble)
     bool doSolve    = false;     // --solve: BC elimination + cusolverSp QR direct reference solve (implies --assemble)
     bool doHypre    = false;     // --hypre: Phase-1 1a -- Hypre point-block BoomerAMG GMRES iters vs cusolver ref (implies --assemble)
+    bool doAcm3     = false;      // --acm-stage3: GPU coarse-operator + transfers vs host P^T A P (implies --assemble)
     double beta     = 45.0;      // --beta: skew-cavity angle (deg), used only for the --solve BC geometry
     int    Re       = 100;       // --Re: Reynolds number for the lid-driven solve (3b)
     int    picard   = 30;        // --picard: max Picard outer iterations
@@ -177,6 +179,7 @@ int main(int argc, char** argv)
         else if (a == "--advect")                 { doAssemble = true; doAdvect = true; }
         else if (a == "--solve")                  { doAssemble = true; doSolve  = true; }
         else if (a == "--hypre")                  { doAssemble = true; doHypre  = true; }
+        else if (a == "--acm-stage3")             { doAssemble = true; doAcm3   = true; }
         else if (a.rfind("--beta=", 0) == 0)        beta       = std::stod(a.substr(7));
         else if (a.rfind("--Re=", 0) == 0)          Re         = std::stoi(a.substr(5));
         else if (a.rfind("--picard=", 0) == 0)      picard     = std::stoi(a.substr(9));
@@ -424,6 +427,89 @@ int main(int argc, char** argv)
             assemblePass = (e1 < atol) && (e2 < atol) && (e3 < atol) && (e4 < atol);
         }
         std::cout << "[phase0][assemble] -> " << (assemblePass ? "ALL PASS" : "FAIL") << "\n";
+
+        // ---- ACM Stage 3: GPU coarse-operator (sum-of-fine == P^T A P) + grid transfers ----
+        if (doAcm3)
+        {
+            // host-once aggregation (node-granular, greedy over the 1-ring). The map is an INPUT to
+            // Stage 3 -- any valid map validates the GPU coarse-operator recipe; the GPU directional
+            // aggregation is Stage 5.
+            const int KMAX = 4;
+            std::vector<int> agg(nNodes, -1);
+            int nCoarse = 0;
+            for (size_t i = 0; i < nNodes; ++i) {
+                if (agg[i] != -1) continue;
+                agg[i] = nCoarse; int cnt = 1;
+                for (int j : ring[i]) {
+                    if (cnt >= KMAX) break;
+                    if (j != (int)i && agg[j] == -1) { agg[j] = nCoarse; ++cnt; }
+                }
+                ++nCoarse;
+            }
+            const int NDc = 4 * nCoarse;
+
+            thrust::device_vector<int> d_agg(agg.begin(), agg.end());
+            thrust::device_vector<int> d_crowOff, d_ccolInd;
+            thrust::device_vector<RealType> d_cvals;
+            buildCoarseOperator<RealType>(d_rowOff, d_colInd, d_vals, d_agg,
+                                          (int)nNodes, nCoarse, d_crowOff, d_ccolInd, d_cvals);
+
+            // host reference: the same map applied to the fine CSR by an independent accumulation
+            auto cdof = [&](int r) { return 4 * agg[r >> 2] + (r & 3); };
+            std::map<std::pair<int, int>, RealType> Aref;
+            for (int r = 0; r < ND; ++r)
+                for (int k = h_rowOff[r]; k < h_rowOff[r + 1]; ++k)
+                    Aref[{cdof(r), cdof(h_colInd[k])}] += hv[k];
+
+            const int ccnnz = (int)d_cvals.size();
+            std::vector<int> hcrow(NDc + 1), hccol(ccnnz);
+            std::vector<RealType> hcval(ccnnz);
+            thrust::copy(d_crowOff.begin(), d_crowOff.end(), hcrow.begin());
+            thrust::copy(d_ccolInd.begin(), d_ccolInd.end(), hccol.begin());
+            thrust::copy(d_cvals.begin(),   d_cvals.end(),   hcval.begin());
+            std::map<std::pair<int, int>, RealType> Agpu;
+            for (int r = 0; r < NDc; ++r)
+                for (int k = hcrow[r]; k < hcrow[r + 1]; ++k) Agpu[{r, hccol[k]}] = hcval[k];
+            RealType dRecipe = 0;
+            for (auto& kv : Aref) { auto it = Agpu.find(kv.first); dRecipe = std::max(dRecipe, std::abs(kv.second - (it == Agpu.end() ? RealType(0) : it->second))); }
+            for (auto& kv : Agpu) { auto it = Aref.find(kv.first); dRecipe = std::max(dRecipe, std::abs(kv.second - (it == Aref.end() ? RealType(0) : it->second))); }
+
+            // Galerkin consistency: P^T (A (P x)) == A_coarse x for a random coarse x (host)
+            std::vector<RealType> xc(NDc), xf(ND, 0), yf(ND, 0), yc(NDc, 0), zc(NDc, 0), rc(NDc, 0);
+            for (int i = 0; i < NDc; ++i) xc[i] = std::sin(RealType(0.7) * i + RealType(1));
+            for (size_t i = 0; i < nNodes; ++i) for (int c = 0; c < 4; ++c) xf[4 * i + c] = xc[4 * agg[i] + c];   // P xc
+            for (size_t i = 0; i < nNodes; ++i) for (int c = 0; c < 4; ++c) rc[4 * agg[i] + c] += xf[4 * i + c];  // P^T xf (restrict-kernel ref)
+            for (int r = 0; r < ND; ++r) { RealType s = 0; for (int k = h_rowOff[r]; k < h_rowOff[r + 1]; ++k) s += hv[k] * xf[h_colInd[k]]; yf[r] = s; }  // A xf
+            for (size_t i = 0; i < nNodes; ++i) for (int c = 0; c < 4; ++c) yc[4 * agg[i] + c] += yf[4 * i + c];  // P^T A xf
+            for (auto& kv : Aref) zc[kv.first.first] += kv.second * xc[kv.first.second];                          // A_coarse xc
+            RealType dGal = 0; for (int i = 0; i < NDc; ++i) dGal = std::max(dGal, std::abs(yc[i] - zc[i]));
+
+            // GPU transfer kernels vs host (injection prolongation + sum restriction)
+            thrust::device_vector<RealType> d_xc(xc.begin(), xc.end()), d_xf(ND, RealType(0)), d_yc(NDc, RealType(0));
+            int nb = ((int)nNodes + blockSize - 1) / blockSize;
+            acmInjectKernel<RealType><<<nb, blockSize>>>(thrust::raw_pointer_cast(d_xc.data()),
+                thrust::raw_pointer_cast(d_xf.data()), thrust::raw_pointer_cast(d_agg.data()), (int)nNodes);
+            acmRestrictAddKernel<RealType><<<nb, blockSize>>>(thrust::raw_pointer_cast(d_xf.data()),
+                thrust::raw_pointer_cast(d_yc.data()), thrust::raw_pointer_cast(d_agg.data()), (int)nNodes);
+            cudaDeviceSynchronize();
+            std::vector<RealType> gxf(ND), gyc(NDc);
+            thrust::copy(d_xf.begin(), d_xf.end(), gxf.begin());
+            thrust::copy(d_yc.begin(), d_yc.end(), gyc.begin());
+            RealType dInj = 0, dRes = 0;
+            for (int i = 0; i < ND;  ++i) dInj = std::max(dInj, std::abs(gxf[i] - xf[i]));
+            for (int i = 0; i < NDc; ++i) dRes = std::max(dRes, std::abs(gyc[i] - rc[i]));
+
+            const RealType ctol = 1e-10;
+            auto pf2 = [&](bool ok) { return ok ? "PASS" : "FAIL"; };
+            std::cout << "[phase0][acm3] fine DOFs=" << ND << " -> coarse DOFs=" << NDc
+                      << " (aggregates=" << nCoarse << ", coarse nnz=" << ccnnz << ")\n";
+            std::cout << "[phase0][acm3] GPU coarse == host P^T A P : " << dRecipe << "  " << pf2(dRecipe < ctol) << "\n";
+            std::cout << "[phase0][acm3] Galerkin P^T A P x == Ac x : " << dGal    << "  " << pf2(dGal    < ctol) << "\n";
+            std::cout << "[phase0][acm3] GPU inject == host          : " << dInj    << "  " << pf2(dInj    < ctol) << "\n";
+            std::cout << "[phase0][acm3] GPU restrict == host        : " << dRes    << "  " << pf2(dRes    < ctol) << "\n";
+            std::cout << "[phase0][acm3] -> "
+                      << ((dRecipe < ctol && dGal < ctol && dInj < ctol && dRes < ctol) ? "ALL PASS" : "FAIL") << "\n";
+        }
 
         // ---- Phase 1, 1a: Hypre point-block BoomerAMG GMRES (iters vs mesh) vs cusolver reference ----
         if (doHypre)
