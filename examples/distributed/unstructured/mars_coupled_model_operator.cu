@@ -27,6 +27,8 @@ using namespace mars::amr;
 #include "backend/distributed/unstructured/fem/mars_fem_projection.hpp"
 #include "backend/distributed/unstructured/solvers/mars_acm_coarsen.hpp"  // ACM Stage 3 coarse-op + transfers
 #include "backend/distributed/unstructured/solvers/mars_acm_vcycle.hpp"   // ACM Stage 4a V-cycle
+#include "backend/distributed/unstructured/solvers/mars_gpu_acm_preconditioner.hpp"  // ACM Stage 4b precond
+#include "backend/distributed/unstructured/solvers/mars_gmres_solver.hpp"            // native (Flex)GMRES
 
 #include <thrust/device_vector.h>
 #include <thrust/inner_product.h>
@@ -168,6 +170,7 @@ int main(int argc, char** argv)
     bool doHypre    = false;     // --hypre: Phase-1 1a -- Hypre point-block BoomerAMG GMRES iters vs cusolver ref (implies --assemble)
     bool doAcm3     = false;      // --acm-stage3: GPU coarse-operator + transfers vs host P^T A P (implies --assemble)
     bool doAcm4     = false;      // --acm-stage4: GPU multilevel V-cycle vs host V-cycle replica (implies --assemble)
+    bool doAcm4b    = false;      // --acm-stage4b: ACM-preconditioned FlexGMRES iters vs 1a baseline + cusolver ref
     double beta     = 45.0;      // --beta: skew-cavity angle (deg), used only for the --solve BC geometry
     int    Re       = 100;       // --Re: Reynolds number for the lid-driven solve (3b)
     int    picard   = 30;        // --picard: max Picard outer iterations
@@ -183,6 +186,7 @@ int main(int argc, char** argv)
         else if (a == "--hypre")                  { doAssemble = true; doHypre  = true; }
         else if (a == "--acm-stage3")             { doAssemble = true; doAcm3   = true; }
         else if (a == "--acm-stage4")             { doAssemble = true; doAcm4   = true; }
+        else if (a == "--acm-stage4b")            { doAssemble = true; doAcm4b  = true; }
         else if (a.rfind("--beta=", 0) == 0)        beta       = std::stod(a.substr(7));
         else if (a.rfind("--Re=", 0) == 0)          Re         = std::stoi(a.substr(5));
         else if (a.rfind("--picard=", 0) == 0)      picard     = std::stoi(a.substr(9));
@@ -557,8 +561,9 @@ int main(int argc, char** argv)
             std::cout << "[phase0][acm4] -> " << (dRel < ctol ? "ALL PASS" : "FAIL") << "\n";
         }
 
-        // ---- Phase 1, 1a: Hypre point-block BoomerAMG GMRES (iters vs mesh) vs cusolver reference ----
-        if (doHypre)
+        // ---- Phase 1 1a (Hypre point-block) + ACM Stage 4b (FlexGMRES): shared BC-eliminated
+        //      Stokes operator + cusolverSp QR reference, then each solver's own benchmark ----
+        if (doHypre || doAcm4b)
         {
             const RealType nuS  = RealType(1) / static_cast<RealType>(Re);
             const RealType hpar = RealType(1) / std::sqrt(static_cast<RealType>(nNodes) * RealType(0.5));
@@ -602,11 +607,15 @@ int main(int argc, char** argv)
                   thrust::raw_pointer_cast(d_colInd.data()), thrust::raw_pointer_cast(d_rhs.data()),
                   1e-12, 1, thrust::raw_pointer_cast(d_xref.data()), &sg);
               cudaDeviceSynchronize(); cusparseDestroyMatDescr(de); cusolverSpDestroy(cs); }
-            // Hypre point-block BoomerAMG + GMRES (wrap CSR into a SparseMatrix)
+            // wrap the BC-eliminated CSR into a SparseMatrix (shared by the Hypre + ACM solves)
             SparseMatrix<int, RealType, cstone::GpuTag> Am; Am.allocate(ND, ND, nnz);
             thrust::copy(d_rowOff.begin(), d_rowOff.end(), thrust::device_pointer_cast(Am.rowOffsetsPtr()));
             thrust::copy(d_colInd.begin(), d_colInd.end(), thrust::device_pointer_cast(Am.colIndicesPtr()));
             thrust::copy(d_vals.begin(),   d_vals.end(),   thrust::device_pointer_cast(Am.valuesPtr()));
+
+            if (doHypre)
+            {
+            // Hypre point-block BoomerAMG + GMRES
             cstone::DeviceVector<RealType> bH, xH; bH.resize(ND); xH.resize(ND);
             thrust::copy(d_rhs.begin(), d_rhs.end(), thrust::device_pointer_cast(bH.data()));
             HypreGMRESSolver<RealType, int, cstone::GpuTag> hg(
@@ -637,6 +646,75 @@ int main(int argc, char** argv)
                       << " nnz=" << nnz << " |x_hypre-x_qr|rel=" << rel
                       << "  -> " << (hyOk ? "PASS (converged + matches reference)" : "CHECK") << "\n";
             assemblePass = assemblePass && hyOk;
+            }  // if (doHypre)
+
+            // ---- ACM Stage 4b: ACM-preconditioned native FlexGMRES vs the 1a baseline + cusolver ref ----
+            if (doAcm4b)
+            {
+                using Vec = cstone::DeviceVector<RealType>;
+                Vec bvec; bvec.resize(ND);
+                thrust::copy(d_rhs.begin(), d_rhs.end(), thrust::device_pointer_cast(bvec.data()));
+
+                // max|x_xref| for the relative-error denominator
+                thrust::device_vector<RealType> d_absref(ND);
+                thrust::transform(d_xref.begin(), d_xref.end(), d_absref.begin(),
+                    [] __device__ (RealType c) { return fabs(c); });
+                const RealType rmax = thrust::reduce(d_absref.begin(), d_absref.end(), RealType(0), thrust::maximum<RealType>());
+                auto relErr = [&](Vec& xv) -> RealType {
+                    thrust::device_vector<RealType> xt(ND);
+                    thrust::copy(thrust::device_pointer_cast(xv.data()),
+                                 thrust::device_pointer_cast(xv.data() + ND), xt.begin());
+                    thrust::transform(xt.begin(), xt.end(), d_xref.begin(), xt.begin(),
+                        [] __device__ (RealType a, RealType c) { return fabs(a - c); });
+                    RealType dmax = thrust::reduce(xt.begin(), xt.end(), RealType(0), thrust::maximum<RealType>());
+                    return dmax / (rmax > 0 ? rmax : RealType(1));
+                };
+
+                std::cout << std::scientific << std::setprecision(3);
+
+                // GATE 1 (Z-basis correctness): with an IDENTITY preconditioner, flexible GMRES must
+                // reduce EXACTLY to plain GMRES (Z_j=V_j, x=x0+Z y = x0+V y) -- a convergence-independent
+                // algebraic identity. A Z-basis reconstruction bug breaks this even if neither converges.
+                // (Jacobi is too weak to converge on this indefinite saddle operator, so it cannot be the
+                // oracle; identity can.)
+                Vec xp; xp.resize(ND);
+                GMRESSolver<RealType, int, cstone::GpuTag> gp(2000, 1e-8, 30);
+                gp.setVerbose(false); gp.solve(Am, bvec, xp, false);            // plain (unpreconditioned)
+                const int itP = gp.getLastIterations();
+                IdentityPreconditioner<RealType, int, cstone::GpuTag> id;
+                Vec xi; xi.resize(ND);
+                GMRESSolver<RealType, int, cstone::GpuTag> gi(2000, 1e-8, 30);
+                gi.setVerbose(false); gi.setPreconditioner(&id); gi.setFlexible(true);
+                gi.solve(Am, bvec, xi, true);                                   // flexible, M = I
+                const int itI = gi.getLastIterations();
+                thrust::device_vector<RealType> xpv(ND), xiv(ND);
+                thrust::copy(thrust::device_pointer_cast(xp.data()), thrust::device_pointer_cast(xp.data() + ND), xpv.begin());
+                thrust::copy(thrust::device_pointer_cast(xi.data()), thrust::device_pointer_cast(xi.data() + ND), xiv.begin());
+                thrust::transform(xpv.begin(), xpv.end(), xiv.begin(), xiv.begin(),
+                    [] __device__ (RealType a, RealType b) { return fabs(a - b); });
+                const RealType ddiff = thrust::reduce(xiv.begin(), xiv.end(), RealType(0), thrust::maximum<RealType>());
+                thrust::transform(xpv.begin(), xpv.end(), xpv.begin(), [] __device__ (RealType a) { return fabs(a); });
+                const RealType dpmax = thrust::reduce(xpv.begin(), xpv.end(), RealType(0), thrust::maximum<RealType>());
+                const RealType relZ = ddiff / (dpmax > 0 ? dpmax : RealType(1));
+                const bool gate1 = (itP == itI) && (relZ < 1e-10);
+                std::cout << "[phase0][acm4b][gate1] FGMRES(I)==plain GMRES (Z-basis): iters " << itP << "/" << itI
+                          << " rel=" << relZ << "  -> " << (gate1 ? "PASS" : "FAIL") << "\n";
+
+                // GATE 2 (ACM quality): ACM-preconditioned FlexGMRES converges to the reference.
+                GpuAcmPreconditioner<RealType, int, cstone::GpuTag> acm;
+                Vec xa; xa.resize(ND);
+                GMRESSolver<RealType, int, cstone::GpuTag> ga(2000, 1e-8, 30);
+                ga.setVerbose(false); ga.setPreconditioner(&acm); ga.setFlexible(true);
+                ga.solve(Am, bvec, xa, true);
+                const int itA = ga.getLastIterations();
+                const RealType relA = relErr(xa);
+                const bool gate2 = (itA > 0) && (itA < 1980) && (relA < 5e-2);   // converged (< maxIter) + correct
+                std::cout << "[phase0][acm4b] Re=" << Re << " ACM-FlexGMRES iters=" << itA
+                          << " (Hypre 1a baseline n16/32/64 = 13/19/39) levels=" << acm.numLevels()
+                          << " |x_acm-x_qr|rel=" << relA
+                          << "  -> " << (gate1 && gate2 ? "PASS" : "CHECK") << "\n";
+                assemblePass = assemblePass && gate1 && gate2;
+            }
         }
 
         // ---- 3b: Picard loop + cusolverSp QR direct reference solve + benchmark match ----

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../fem/mars_sparse_matrix.hpp"
+#include "mars_cg_solver_with_preconditioner.hpp"   // Preconditioner base (pluggable + flexible GMRES)
 #include <cusparse.h>
 #include <cublas_v2.h>
 #include <iostream>
@@ -19,6 +20,7 @@ class GMRESSolver
 public:
     using Matrix = SparseMatrix<IndexType, RealType, AcceleratorTag>;
     using Vector = typename mars::VectorSelector<RealType, AcceleratorTag>::type;
+    using Precond = Preconditioner<RealType, IndexType, AcceleratorTag>;
 
     GMRESSolver(int maxIter = 1000, RealType tolerance = 1e-6, int restart = 30)
         : maxIter_(maxIter)
@@ -38,6 +40,10 @@ public:
 
     bool solve(const Matrix& A, const Vector& b, Vector& x, bool usePreconditioner = false)
     {
+        // flexible GMRES path (Z-basis) for a pluggable / non-stationary preconditioner; the
+        // stationary path below is left untouched so existing callers are unaffected.
+        if (flexible_ && precond_) return solveFlexible(A, b, x);
+
         size_t n = A.numRows();
         int m = restart_;
 
@@ -65,6 +71,7 @@ public:
             if (verbose_) {
                 std::cout << "GMRES: RHS is zero\n";
             }
+            lastIters_ = 0;
             return true;
         }
 
@@ -117,6 +124,7 @@ public:
                     std::cout << "GMRES converged in " << totalIter
                              << " iterations, residual = " << beta / b_norm << std::endl;
                 }
+                lastIters_ = totalIter;
                 return true;
             }
 
@@ -220,10 +228,12 @@ public:
                     std::cout << "GMRES converged in " << totalIter
                              << " iterations, residual = " << std::abs(s[m]) / b_norm << std::endl;
                 }
+                lastIters_ = totalIter;
                 return true;
             }
         }
 
+        lastIters_ = totalIter;
         if (verbose_) {
             std::cout << "GMRES did not converge in " << maxIter_ << " iterations\n";
         }
@@ -234,6 +244,9 @@ public:
     void setMaxIterations(int maxIter) { maxIter_ = maxIter; }
     void setTolerance(RealType tol) { tolerance_ = tol; }
     void setRestart(int restart) { restart_ = restart; }
+    void setPreconditioner(Precond* M) { precond_ = M; }   // opt-in pluggable preconditioner
+    void setFlexible(bool f) { flexible_ = f; }            // FGMRES (Z-basis) -- needs a preconditioner set
+    int getLastIterations() const { return lastIters_; }
 
 private:
     int maxIter_;
@@ -242,6 +255,93 @@ private:
     bool verbose_;
     cublasHandle_t cublasHandle_;
     cusparseHandle_t cusparseHandle_;
+    Precond* precond_ = nullptr;   // not owned; nullptr -> stationary path (inline Jacobi / none)
+    bool flexible_ = false;
+    int lastIters_ = 0;
+
+    // Flexible GMRES: store the preconditioned basis Z_j = M^-1 V_j, build the Krylov space on
+    // A*Z_j, and reconstruct x = x0 + Z*y. This captures a varying/non-stationary preconditioner
+    // (the ACM V-cycle) per-column, where stationary GMRES (fixed-M assumption) stagnates.
+    bool solveFlexible(const Matrix& A, const Vector& b, Vector& x)
+    {
+        size_t n = A.numRows();
+        int m = restart_;
+        if (x.size() != n) x.resize(n);
+        thrust::fill(thrust::device_pointer_cast(x.data()),
+                    thrust::device_pointer_cast(x.data() + x.size()), RealType(0));
+
+        precond_->setup(A);   // build / refresh M once
+
+        RealType b_norm = std::sqrt(dot(b, b));
+        if (b_norm < 1e-14) { lastIters_ = 0; if (verbose_) std::cout << "FGMRES: RHS is zero\n"; return true; }
+
+        std::vector<Vector> V(m + 1), Z(m);
+        for (int i = 0; i <= m; ++i) V[i].resize(n);
+        for (int i = 0; i < m; ++i)  Z[i].resize(n);
+        std::vector<std::vector<RealType>> H(m + 1, std::vector<RealType>(m, 0.0));
+        std::vector<RealType> s(m + 1), cs(m), sn(m);
+        Vector r(n), w(n);
+        int totalIter = 0;
+
+        for (int outer = 0; outer < maxIter_ / m; ++outer)
+        {
+            spmv(A, x, r);                                          // r = A x
+            thrust::transform(thrust::device_pointer_cast(b.data()),
+                             thrust::device_pointer_cast(b.data() + b.size()),
+                             thrust::device_pointer_cast(r.data()),
+                             thrust::device_pointer_cast(r.data()),
+                             thrust::minus<RealType>());            // r = b - A x  (NOT preconditioned: flexible convention)
+            RealType beta = std::sqrt(dot(r, r));
+            if (beta / b_norm < tolerance_) {
+                lastIters_ = totalIter;
+                if (verbose_) std::cout << "FGMRES converged in " << totalIter << " iters, res=" << beta / b_norm << "\n";
+                return true;
+            }
+            thrust::copy(thrust::device_pointer_cast(r.data()),
+                        thrust::device_pointer_cast(r.data() + r.size()),
+                        thrust::device_pointer_cast(V[0].data()));
+            scale(1.0 / beta, V[0]);
+            s[0] = beta; for (int i = 1; i <= m; ++i) s[i] = 0.0;
+
+            int j;
+            for (j = 0; j < m; ++j, ++totalIter)
+            {
+                precond_->apply(V[j], Z[j]);                       // Z[j] = M^-1 V[j]
+                spmv(A, Z[j], w);                                  // w = A Z[j]
+                for (int i = 0; i <= j; ++i) { H[i][j] = dot(w, V[i]); axpy(-H[i][j], V[i], w, w); }
+                H[j + 1][j] = std::sqrt(dot(w, w));
+                if (std::abs(H[j + 1][j]) < 1e-14) { m = j + 1; break; }
+                thrust::copy(thrust::device_pointer_cast(w.data()),
+                            thrust::device_pointer_cast(w.data() + w.size()),
+                            thrust::device_pointer_cast(V[j + 1].data()));
+                scale(1.0 / H[j + 1][j], V[j + 1]);
+                for (int i = 0; i < j; ++i) {
+                    RealType t = cs[i] * H[i][j] + sn[i] * H[i + 1][j];
+                    H[i + 1][j] = -sn[i] * H[i][j] + cs[i] * H[i + 1][j];
+                    H[i][j] = t;
+                }
+                RealType hn = std::sqrt(H[j][j] * H[j][j] + H[j + 1][j] * H[j + 1][j]);
+                cs[j] = H[j][j] / hn; sn[j] = H[j + 1][j] / hn;
+                H[j][j] = cs[j] * H[j][j] + sn[j] * H[j + 1][j]; H[j + 1][j] = 0.0;
+                s[j + 1] = -sn[j] * s[j]; s[j] = cs[j] * s[j];
+                if (std::abs(s[j + 1]) / b_norm < tolerance_) { m = j + 1; break; }
+            }
+
+            std::vector<RealType> y(m);
+            for (int i = m - 1; i >= 0; --i) { y[i] = s[i]; for (int k = i + 1; k < m; ++k) y[i] -= H[i][k] * y[k]; y[i] /= H[i][i]; }
+            for (int i = 0; i < m; ++i) axpy(y[i], Z[i], x, x);    // x += Z*y  (flexible: accumulate the PRECONDITIONED basis)
+
+            if (std::abs(s[m]) / b_norm < tolerance_) {
+                lastIters_ = totalIter;
+                if (verbose_) std::cout << "FGMRES converged in " << totalIter << " iters\n";
+                return true;
+            }
+            m = restart_;   // restore restart depth for the next cycle (a break may have shrunk it)
+        }
+        lastIters_ = totalIter;
+        if (verbose_) std::cout << "FGMRES did not converge in " << maxIter_ << " iters\n";
+        return false;
+    }
 
     void spmv(const Matrix& A, const Vector& x, Vector& y)
     {

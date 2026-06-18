@@ -64,6 +64,23 @@ private:
     Vector diag_;
 };
 
+// Identity preconditioner (z = r). Makes flexible GMRES reduce EXACTLY to plain GMRES, so it serves
+// as a convergence-independent unit test of the FGMRES Z-basis reconstruction.
+template<typename RealType, typename IndexType, typename AcceleratorTag>
+class IdentityPreconditioner : public Preconditioner<RealType, IndexType, AcceleratorTag> {
+public:
+    using Matrix = SparseMatrix<IndexType, RealType, AcceleratorTag>;
+    using Vector = typename mars::VectorSelector<RealType, AcceleratorTag>::type;
+
+    void setup(const Matrix&) override {}
+    void apply(const Vector& r, Vector& z) override {
+        if (z.size() != r.size()) z.resize(r.size());
+        thrust::copy(thrust::device_pointer_cast(r.data()),
+                     thrust::device_pointer_cast(r.data() + r.size()),
+                     thrust::device_pointer_cast(z.data()));
+    }
+};
+
 // Conjugate Gradient solver with pluggable preconditioners
 template<typename RealType, typename IndexType, typename AcceleratorTag>
 class PreconditionedConjugateGradientSolver
