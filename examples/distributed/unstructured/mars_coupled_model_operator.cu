@@ -1107,14 +1107,22 @@ int main(int argc, char** argv)
             int it = 0, singularity = -2; RealType du = 0;
             cusolverStatus_t st = CUSOLVER_STATUS_SUCCESS;
             for (it = 0; it < picard; ++it) {
-                // re-assemble with the frozen (previous-iterate) velocity, proper nu/tau
+                // re-assemble with the frozen (previous-iterate) velocity. doRhieChow -> collocated RC
+                // operator (no tau); else PSPG. The cavity benchmark (vs Erturk-Dursun) validates RC accuracy.
                 thrust::fill(d_vals.begin(), d_vals.end(), RealType(0));
-                assembleCoupledStokesKernel<KeyType, RealType><<<eBlocks, blockSize>>>(
-                    c0, c1, c2, c3, nx, ny, nz,
-                    thrust::raw_pointer_cast(d_rowOff.data()), thrust::raw_pointer_cast(d_colInd.data()),
-                    thrust::raw_pointer_cast(d_vals.data()), nuS, tauS,
-                    thrust::raw_pointer_cast(d_avx.data()), thrust::raw_pointer_cast(d_avy.data()),
-                    thrust::raw_pointer_cast(d_avz.data()), startEl, numLocal);
+                if (doRhieChow)
+                    assembleRhieChowGpu<KeyType, RealType>(c0, c1, c2, c3, nx, ny, nz,
+                        thrust::raw_pointer_cast(d_rowOff.data()), thrust::raw_pointer_cast(d_colInd.data()),
+                        thrust::raw_pointer_cast(d_vals.data()), nuS,
+                        thrust::raw_pointer_cast(d_avx.data()), thrust::raw_pointer_cast(d_avy.data()),
+                        thrust::raw_pointer_cast(d_avz.data()), startEl, numLocal, (int)nNodes, blockSize);
+                else
+                    assembleCoupledStokesKernel<KeyType, RealType><<<eBlocks, blockSize>>>(
+                        c0, c1, c2, c3, nx, ny, nz,
+                        thrust::raw_pointer_cast(d_rowOff.data()), thrust::raw_pointer_cast(d_colInd.data()),
+                        thrust::raw_pointer_cast(d_vals.data()), nuS, tauS,
+                        thrust::raw_pointer_cast(d_avx.data()), thrust::raw_pointer_cast(d_avy.data()),
+                        thrust::raw_pointer_cast(d_avz.data()), startEl, numLocal);
                 cudaDeviceSynchronize();
                 thrust::fill(d_rhs.begin(), d_rhs.end(), RealType(0));
                 applyBCKernel<RealType><<<dblk, blockSize>>>(
