@@ -15,6 +15,7 @@
 #include <thrust/copy.h>
 #include <thrust/fill.h>
 #include <vector>
+#include <cstdlib>
 
 namespace mars
 {
@@ -28,9 +29,29 @@ public:
     using Matrix = SparseMatrix<IndexType, RealType, AcceleratorTag>;
     using Vector = typename mars::VectorSelector<RealType, AcceleratorTag>::type;
 
-    GpuAcmPreconditioner(int kmax = 4, int maxCoarseND = 64,
+    // maxCoarseND=256: directional aggregation coarsens fast, so a moderate coarsest is reached in few
+    // levels and is solved directly by QR. beta defaults to 0.5 (the paper's directional factor); env
+    // MARS_ACM_BETA overrides it (set 0 for isotropic, to A/B against directional in one binary).
+    GpuAcmPreconditioner(int kmax = 4, int maxCoarseND = 256,
                          int pre = 2, int post = 1, int coarse = 10, RealType omega = RealType(0.7))
-        : kmax_(kmax), maxCoarseND_(maxCoarseND), pre_(pre), post_(post), coarse_(coarse), omega_(omega) {}
+        : kmax_(kmax), maxCoarseND_(maxCoarseND), pre_(pre), post_(post), coarse_(coarse),
+          omega_(omega), beta_(RealType(0.5))
+    {
+        if (const char* e = std::getenv("MARS_ACM_BETA")) beta_ = static_cast<RealType>(std::atof(e));
+        cusolverSpCreate(&cs_);
+        cusparseCreateMatDescr(&descr_);
+        cusparseSetMatType(descr_, CUSPARSE_MATRIX_TYPE_GENERAL);
+        cusparseSetMatIndexBase(descr_, CUSPARSE_INDEX_BASE_ZERO);
+    }
+
+    ~GpuAcmPreconditioner()
+    {
+        if (descr_) cusparseDestroyMatDescr(descr_);
+        if (cs_) cusolverSpDestroy(cs_);
+    }
+
+    GpuAcmPreconditioner(const GpuAcmPreconditioner&) = delete;             // owns a cusolver handle
+    GpuAcmPreconditioner& operator=(const GpuAcmPreconditioner&) = delete;
 
     // build the multilevel hierarchy once from the finest coupled CSR (interleaved 4*node+comp)
     void setup(const Matrix& A) override
@@ -46,28 +67,31 @@ public:
         thrust::copy(thrust::device_pointer_cast(A.valuesPtr()),
                      thrust::device_pointer_cast(A.valuesPtr() + nz), va.begin());
         // acmBuildHierarchy wants int CSR; IndexType is int in this driver's instantiation.
-        mars::acmBuildHierarchy<RealType>(ro, ci, va, ND / 4, kmax_, maxCoarseND_, levels_);
+        mars::acmBuildHierarchy<RealType>(ro, ci, va, ND / 4, kmax_, maxCoarseND_, levels_, beta_);
         nd_ = ND;
     }
 
-    // z = M^-1 r  (one V-cycle, fresh zero initial guess)
+    // z = M^-1 r  (one V-cycle, fresh zero initial guess; direct QR at the coarsest)
     void apply(const Vector& r, Vector& z) override
     {
         if (static_cast<int>(z.size()) != nd_) z.resize(nd_);
         thrust::copy(thrust::device_pointer_cast(r.data()),
                      thrust::device_pointer_cast(r.data() + nd_), levels_[0].bvec.begin());
         thrust::fill(levels_[0].xvec.begin(), levels_[0].xvec.end(), RealType(0));
-        mars::acmVcycleGpu<RealType>(levels_, 0, pre_, post_, coarse_, omega_);
+        mars::acmVcycleGpu<RealType>(levels_, 0, pre_, post_, coarse_, omega_, /*useBlock=*/true, cs_, descr_);
         thrust::copy(levels_[0].xvec.begin(), levels_[0].xvec.end(),
                      thrust::device_pointer_cast(z.data()));
     }
 
     int numLevels() const { return static_cast<int>(levels_.size()); }
+    RealType beta() const { return beta_; }
 
 private:
     int kmax_, maxCoarseND_, pre_, post_, coarse_, nd_ = 0;
-    RealType omega_;
+    RealType omega_, beta_;
     std::vector<mars::AcmLevel<RealType>> levels_;
+    cusolverSpHandle_t cs_ = nullptr;
+    cusparseMatDescr_t descr_ = nullptr;
 };
 
 }  // namespace fem

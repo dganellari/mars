@@ -8,6 +8,7 @@
 #include <tuple>
 #include <algorithm>
 #include <cstring>
+#include <cstdlib>
 #include <map>
 #include <array>
 #include <unordered_set>
@@ -104,7 +105,8 @@ inline auto readExodusMeshWithElementPartitioning(const std::string& meshFile, i
     }
 
     if (rank == 0) {
-        std::cout << "Exodus mesh: " << total_nodes << " nodes, " << total_elements << " elements" << std::endl;
+        if (!std::getenv("MARS_QUIET_MESH"))
+            std::cout << "Exodus mesh: " << total_nodes << " nodes, " << total_elements << " elements" << std::endl;
     }
 
     // Read all coordinates (we need global coordinates for proper partitioning)
@@ -226,7 +228,8 @@ inline auto readExodusMeshWithElementPartitioning(const std::string& meshFile, i
     std::vector<uint8_t> boundaryNodes(nodeCount, 0);
 
     if (rank == 0) {
-        std::cout << "Rank 0: " << elementCount << " elements, " << nodeCount << " nodes (from Exodus)" << std::endl;
+        if (!std::getenv("MARS_QUIET_MESH"))
+            std::cout << "Rank 0: " << elementCount << " elements, " << nodeCount << " nodes (from Exodus)" << std::endl;
     }
 
     return std::make_tuple(nodeCount, elementCount,
