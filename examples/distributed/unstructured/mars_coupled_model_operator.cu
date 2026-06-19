@@ -383,6 +383,9 @@ int main(int argc, char** argv)
     double beta     = 45.0;      // --beta: skew-cavity angle (deg), used only for the --solve BC geometry
     int    Re       = 100;       // --Re: Reynolds number for the lid-driven solve (3b)
     int    picard   = 30;        // --picard: max Picard outer iterations
+    std::string inletSS, outletSS;  // --inlet-ss / --outlet-ss: Exodus side-set NAMES (pump real inlet/outlet)
+    double inletSpeed = 0.5;     // --inlet-speed: velocity-flux inlet magnitude (m/s), along the inward normal
+    bool   inletFlip  = false;   // --inlet-flip-normal: reverse the inlet normal if the Exodus winding is outward
     for (int i = 1; i < argc; ++i)
     {
         std::string a = argv[i];
@@ -399,6 +402,10 @@ int main(int argc, char** argv)
         else if (a == "--acm-pump")               { doAssemble = true; doAcmPump = true; }
         else if (a == "--rhie-chow")              { doAssemble = true; doRhieChow = true; }
         else if (a == "--channel")                { doAssemble = true; doSolve = true; doChannel = true; }
+        else if (a.rfind("--inlet-ss=", 0) == 0)  { inletSS = a.substr(11); doAssemble = doRhieChow = true; }
+        else if (a.rfind("--outlet-ss=", 0) == 0)   outletSS   = a.substr(12);
+        else if (a.rfind("--inlet-speed=", 0) == 0) inletSpeed = std::stod(a.substr(14));
+        else if (a == "--inlet-flip-normal")        inletFlip  = true;
         else if (a.rfind("--beta=", 0) == 0)        beta       = std::stod(a.substr(7));
         else if (a.rfind("--Re=", 0) == 0)          Re         = std::stoi(a.substr(5));
         else if (a.rfind("--picard=", 0) == 0)      picard     = std::stoi(a.substr(9));
@@ -429,6 +436,7 @@ int main(int argc, char** argv)
     cfg.maxLevels  = 0;          // frozen mesh
     cfg.blockSize  = blockSize;
     cfg.bucketSize = bucketSize;
+    if (!inletSS.empty()) cfg.storeSideSets = true;   // pump inlet/outlet BC needs the Exodus side sets
     AmrManager<TetTag, KeyType, RealType> amr(cfg);
     amr.initialize(meshFile, rank, numRanks);
     auto& domain = amr.domain();
@@ -528,6 +536,62 @@ int main(int argc, char** argv)
               << "  <v,Gphi> = " << dGrad
               << "  rel|sum| = " << relErr
               << "  -> " << (pass ? "PASS" : "FAIL") << "\n";
+
+    // Side-set velocity-flux inlet + no-slip walls BC builder (outlet velocity left FREE; caller pins
+    // pressure). Shared by --solve (cusolver) and --acm-pump (ACM). Fills velocity comps of bcF/bcV; also
+    // returns the per-node boundary S_bnd + inlet/outlet node sets for the through-flow diagnostics.
+    // Inlet normal = global average inlet S_bnd (exact for a planar opening). Returns false if a SS missing.
+    const bool inletSet = !inletSS.empty();       // pump side-set BC active (shared by --acm-pump and --solve)
+    std::vector<RealType> hsbx, hsby, hsbz;       // per-node boundary area vectors (also used in validation)
+    std::set<int> inN, outN;                      // inlet / outlet node sets
+    auto buildSideSetVelBC = [&](std::vector<uint8_t>& bcF, std::vector<RealType>& bcV) -> bool {
+        if (!domain.hasSideSet(inletSS) || (!outletSS.empty() && !domain.hasSideSet(outletSS))) {
+            std::cerr << "[phase0][pump] side-set not found (inlet='" << inletSS << "' outlet='" << outletSS
+                      << "'); available:";
+            for (auto& nm : domain.sideSetNames()) std::cerr << " " << nm;
+            std::cerr << "\n"; return false;
+        }
+        thrust::device_vector<RealType> dsbx(nNodes), dsby(nNodes), dsbz(nNodes);
+        mars::fem::computeBoundaryAreaVectorsGpu<KeyType, RealType>(c0, c1, c2, c3, startEl, numLocal,
+            nx, ny, nz, (int)nNodes, thrust::raw_pointer_cast(dsbx.data()),
+            thrust::raw_pointer_cast(dsby.data()), thrust::raw_pointer_cast(dsbz.data()));
+        cudaDeviceSynchronize();
+        hsbx.resize(nNodes); hsby.resize(nNodes); hsbz.resize(nNodes);
+        thrust::copy(dsbx.begin(), dsbx.end(), hsbx.begin());
+        thrust::copy(dsby.begin(), dsby.end(), hsby.begin());
+        thrust::copy(dsbz.begin(), dsbz.end(), hsbz.begin());
+        auto ssToHost = [&](const std::string& nm) {
+            const auto& dv = domain.sideSetNodes(nm);
+            std::vector<int> h(dv.size());
+            thrust::copy(thrust::device_pointer_cast(dv.data()),
+                         thrust::device_pointer_cast(dv.data() + dv.size()), h.begin());
+            return h;
+        };
+        std::vector<int> hin = ssToHost(inletSS);
+        inN.insert(hin.begin(), hin.end());
+        if (!outletSS.empty()) { auto ho = ssToHost(outletSS); outN.insert(ho.begin(), ho.end()); }
+        RealType sx = 0, sy = 0, sz = 0;                              // net outward inlet area vector
+        for (int i : hin) { sx += hsbx[i]; sy += hsby[i]; sz += hsbz[i]; }
+        RealType len = std::sqrt(sx * sx + sy * sy + sz * sz);
+        RealType sgn = (inletFlip ? RealType(1) : RealType(-1)) / (len > 0 ? len : RealType(1));  // inward
+        RealType nhx = sgn * sx, nhy = sgn * sy, nhz = sgn * sz;
+        for (size_t i = 0; i < nNodes; ++i) {
+            bool isB = (hsbx[i] * hsbx[i] + hsby[i] * hsby[i] + hsbz[i] * hsbz[i]) > RealType(1e-30);
+            if (!isB) continue;                                       // interior node: free
+            if (inN.count((int)i)) {                                  // velocity-flux inlet
+                bcF[4 * i + 0] = bcF[4 * i + 1] = bcF[4 * i + 2] = 1;
+                bcV[4 * i + 0] = inletSpeed * nhx; bcV[4 * i + 1] = inletSpeed * nhy; bcV[4 * i + 2] = inletSpeed * nhz;
+            } else if (outN.count((int)i)) {
+                /* open outlet: velocity free, caller pins pressure */
+            } else {                                                  // no-slip wall
+                bcF[4 * i + 0] = bcF[4 * i + 1] = bcF[4 * i + 2] = 1;
+            }
+        }
+        if (rank == 0)
+            std::cout << "[phase0][pump] inlet nodes=" << inN.size() << " outlet nodes=" << outN.size()
+                      << " inward-normal=(" << nhx << "," << nhy << "," << nhz << ") speed=" << inletSpeed << "\n";
+        return true;
+    };
 
     // ---- Increment 2a: assemble the coupled Stokes block + matrix-consistency gates ----
     bool assemblePass = true;
@@ -1014,12 +1078,17 @@ int main(int argc, char** argv)
             size_t nBnd = 0; for (size_t i = 0; i < nNodes; ++i) nBnd += isBnd[i];
 
             std::vector<uint8_t> bcF(ND, 0);
+            std::vector<RealType> bcV(ND, RealType(0));
             std::vector<RealType> hrhs(ND, RealType(0));
-            for (size_t i = 0; i < nNodes; ++i) {
-                if (isBnd[i]) { bcF[4 * i + 0] = bcF[4 * i + 1] = bcF[4 * i + 2] = 1; }
-                hrhs[4 * i + 0] = std::sin(RealType(3) * hx[i] + RealType(1));      // smooth body force
-                hrhs[4 * i + 1] = std::sin(RealType(3) * hy[i] + RealType(2));
-                hrhs[4 * i + 2] = std::sin(RealType(3) * hz[i] + RealType(0.5));
+            if (inletSet) {            // pump real flow: side-set velocity-flux inlet + no-slip walls, NO body force
+                if (!buildSideSetVelBC(bcF, bcV)) { MPI_Finalize(); return 6; }
+            } else {                   // closed-box diagnostic: all-surface no-slip + smooth body force drive
+                for (size_t i = 0; i < nNodes; ++i) {
+                    if (isBnd[i]) { bcF[4 * i + 0] = bcF[4 * i + 1] = bcF[4 * i + 2] = 1; }
+                    hrhs[4 * i + 0] = std::sin(RealType(3) * hx[i] + RealType(1));      // smooth body force
+                    hrhs[4 * i + 1] = std::sin(RealType(3) * hy[i] + RealType(2));
+                    hrhs[4 * i + 2] = std::sin(RealType(3) * hz[i] + RealType(0.5));
+                }
             }
             // pin ONE pressure per connected component of the fluid node-graph. A multiply-connected
             // domain (separate passages/chambers) has one constant-pressure null mode per component, so a
@@ -1031,6 +1100,12 @@ int main(int argc, char** argv)
                 for (int j : ring[i]) { int a = findRoot((int)i), b = findRoot(j); if (a != b) cc[a] = b; }
             std::vector<char> rootPinned(nNodes, 0);
             int nComp = 0;
+            // For the open-flow pump, pin pressure at the OUTLET first: it is the natural reference for the
+            // do-nothing outlet, and an arbitrary interior pin acts as a spurious mass SINK under a
+            // velocity-flux inlet (inflow drains at the pin instead of the outlet). Then fall back to one pin
+            // per OTHER component (e.g. a walled-off chamber) to kill its constant-pressure null mode.
+            if (inletSet)
+                for (int o : outN) { int r = findRoot(o); if (!rootPinned[r]) { rootPinned[r] = 1; bcF[4 * o + 3] = 1; ++nComp; } }
             for (size_t i = 0; i < nNodes; ++i) {
                 int r = findRoot((int)i);
                 if (!rootPinned[r]) { rootPinned[r] = 1; bcF[4 * i + 3] = 1; ++nComp; }
@@ -1038,7 +1113,7 @@ int main(int argc, char** argv)
             std::cout << "[phase0][acm-pump] fluid-graph components=" << nComp << " (one pressure pin per component)\n";
 
             thrust::device_vector<uint8_t>  d_bcF(bcF.begin(), bcF.end());
-            thrust::device_vector<RealType> d_bcV(ND, RealType(0));
+            thrust::device_vector<RealType> d_bcV(bcV.begin(), bcV.end());   // inlet flux values (0 for closed-box)
             thrust::device_vector<RealType> d_rhs(hrhs.begin(), hrhs.end());
             const int dblk = (ND + blockSize - 1) / blockSize;
             applyBCKernel<RealType><<<dblk, blockSize>>>(
@@ -1083,29 +1158,49 @@ int main(int argc, char** argv)
             ga.solve(Am, b, xa, true);
             const int itA = ga.getLastIterations(); const RealType rA = resid(xa);
 
-            Vec bh, xh; bh.resize(ND); xh.resize(ND);
-            thrust::copy(d_rhs.begin(), d_rhs.end(), thrust::device_pointer_cast(bh.data()));
-            HypreGMRESSolver<RealType, int, cstone::GpuTag> hg(
-                MPI_COMM_WORLD, 2000, 1e-8, HypreGMRESSolver<RealType, int, cstone::GpuTag>::BOOMERAMG, 50);
-            hg.setVerbose(false); hg.setPointBlock(4);
-            hg.solve(Am, bh, xh, 0, ND, 0, ND, std::vector<int>{});
-            const int itH = hg.getLastIterations(); const RealType rH = resid(xh);
-
-            thrust::device_vector<RealType> d_xa(ND), d_xh(ND);
-            thrust::copy(thrust::device_pointer_cast(xa.data()), thrust::device_pointer_cast(xa.data() + ND), d_xa.begin());
-            thrust::copy(thrust::device_pointer_cast(xh.data()), thrust::device_pointer_cast(xh.data() + ND), d_xh.begin());
-            thrust::transform(d_xa.begin(), d_xa.end(), d_xh.begin(), d_diff.begin(),
-                [] __device__ (RealType a, RealType c) { return fabs(a - c); });
-            const RealType dmax = thrust::reduce(d_diff.begin(), d_diff.end(), RealType(0), thrust::maximum<RealType>());
-            thrust::transform(d_xa.begin(), d_xa.end(), d_diff.begin(), [] __device__ (RealType a) { return fabs(a); });
-            const RealType amax = thrust::reduce(d_diff.begin(), d_diff.end(), RealType(0), thrust::maximum<RealType>());
-            const RealType agree = dmax / (amax > 0 ? amax : RealType(1));
-
             std::cout << "[phase0][acm-pump] ACM-FlexGMRES  iters=" << itA << " levels=" << acm.numLevels()
                       << " beta=" << acm.beta() << " (MARS_ACM_BETA, 0=isotropic) res=" << rA << "\n";
-            std::cout << "[phase0][acm-pump] BoomerAMG-GMRES iters=" << itH << " res=" << rH << "\n";
-            std::cout << "[phase0][acm-pump] solvers agree |x_acm-x_amg|rel=" << agree
-                      << "  -> " << ((rA < 1e-6 && rH < 1e-6 && agree < 1e-2) ? "PASS" : "CHECK") << "\n";
+            if (inletSet) {
+                // pump through-flow validation: mass conservation (net boundary flux ~0 by divergence theorem),
+                // inflow sign, pressure/velocity sanity. No BoomerAMG comparison (it fails on the RC operator).
+                std::vector<RealType> xs(ND);
+                thrust::copy(thrust::device_pointer_cast(xa.data()), thrust::device_pointer_cast(xa.data() + ND), xs.begin());
+                RealType Qin = 0, Qout = 0, Qtot = 0, pInSum = 0, umax = 0;
+                for (size_t i = 0; i < nNodes; ++i) {
+                    RealType f = xs[4*i]*hsbx[i] + xs[4*i+1]*hsby[i] + xs[4*i+2]*hsbz[i]; Qtot += f;
+                    RealType um = std::sqrt(xs[4*i]*xs[4*i] + xs[4*i+1]*xs[4*i+1] + xs[4*i+2]*xs[4*i+2]); umax = std::max(umax, um);
+                }
+                for (int i : inN)  { Qin  += xs[4*i]*hsbx[i] + xs[4*i+1]*hsby[i] + xs[4*i+2]*hsbz[i]; pInSum += xs[4*i+3]; }
+                for (int i : outN)   Qout += xs[4*i]*hsbx[i] + xs[4*i+1]*hsby[i] + xs[4*i+2]*hsbz[i];
+                RealType pInMean = inN.empty() ? RealType(0) : pInSum / (RealType)inN.size();
+                RealType massErr = std::abs(Qtot) / (std::abs(Qin) > RealType(1e-30) ? std::abs(Qin) : RealType(1));
+                bool inflowOk = (Qin < RealType(0));
+                bool ok = (rA < 1e-6) && std::isfinite(umax) && std::isfinite(Qtot) && inflowOk && (massErr < RealType(0.05));
+                std::cout << "[phase0][acm-pump][pump] Qin=" << Qin << " Qout=" << Qout << " net=" << Qtot
+                          << " massErr=" << massErr << "  inflow=" << (inflowOk ? "OK" : "REVERSED(use --inlet-flip-normal)")
+                          << "  p_in_mean=" << pInMean << " (outlet pinned)  |u|max=" << umax
+                          << "  -> " << (ok ? "PASS (through-flow, mass conserved, ACM converged)" : "CHECK") << "\n";
+            } else {
+                Vec bh, xh; bh.resize(ND); xh.resize(ND);
+                thrust::copy(d_rhs.begin(), d_rhs.end(), thrust::device_pointer_cast(bh.data()));
+                HypreGMRESSolver<RealType, int, cstone::GpuTag> hg(
+                    MPI_COMM_WORLD, 2000, 1e-8, HypreGMRESSolver<RealType, int, cstone::GpuTag>::BOOMERAMG, 50);
+                hg.setVerbose(false); hg.setPointBlock(4);
+                hg.solve(Am, bh, xh, 0, ND, 0, ND, std::vector<int>{});
+                const int itH = hg.getLastIterations(); const RealType rH = resid(xh);
+                thrust::device_vector<RealType> d_xa(ND), d_xh(ND);
+                thrust::copy(thrust::device_pointer_cast(xa.data()), thrust::device_pointer_cast(xa.data() + ND), d_xa.begin());
+                thrust::copy(thrust::device_pointer_cast(xh.data()), thrust::device_pointer_cast(xh.data() + ND), d_xh.begin());
+                thrust::transform(d_xa.begin(), d_xa.end(), d_xh.begin(), d_diff.begin(),
+                    [] __device__ (RealType a, RealType c) { return fabs(a - c); });
+                const RealType dmax = thrust::reduce(d_diff.begin(), d_diff.end(), RealType(0), thrust::maximum<RealType>());
+                thrust::transform(d_xa.begin(), d_xa.end(), d_diff.begin(), [] __device__ (RealType a) { return fabs(a); });
+                const RealType amax = thrust::reduce(d_diff.begin(), d_diff.end(), RealType(0), thrust::maximum<RealType>());
+                const RealType agree = dmax / (amax > 0 ? amax : RealType(1));
+                std::cout << "[phase0][acm-pump] BoomerAMG-GMRES iters=" << itH << " res=" << rH << "\n";
+                std::cout << "[phase0][acm-pump] solvers agree |x_acm-x_amg|rel=" << agree
+                          << "  -> " << ((rA < 1e-6 && rH < 1e-6 && agree < 1e-2) ? "PASS" : "CHECK") << "\n";
+            }
         }
 
         // ---- 3b: Picard loop + cusolverSp QR direct reference solve + benchmark match ----
@@ -1131,13 +1226,16 @@ int main(int argc, char** argv)
             const RealType hpar = RealType(1) / std::sqrt(static_cast<RealType>(nNodes) * RealType(0.5));
             const RealType tauS = hpar * hpar / (RealType(4) * nuS);
 
-            // BC tags (one-time host setup). doChannel -> velocity-flux inlet (parabolic) + no-slip walls
-            // + open outlet (free velocity, one pressure pin); else lid-driven cavity.
+            // BC tags (one-time host setup). inletSet -> pump side-set velocity-flux inlet + open outlet;
+            // doChannel -> plane-channel parabolic inlet; else lid-driven cavity.
             std::vector<uint8_t> bcF(ND, 0);
             std::vector<RealType> bcV(ND, RealType(0));
             const RealType chUmean = RealType(1);
             RealType chXmin = 0, chXmax = 0, chYmin = 0, chYmax = 0, chLy = 1;
-            if (doChannel) {
+            if (inletSet) {                                  // pump side-set velocity-flux inlet (cusolver path)
+                if (!buildSideSetVelBC(bcF, bcV)) { MPI_Finalize(); return 6; }
+                if (!outN.empty()) bcF[4 * (*outN.begin()) + 3] = 1;   // one outlet pressure pin (fix the level)
+            } else if (doChannel) {
                 chXmin = *std::min_element(hx.begin(), hx.end()); chXmax = *std::max_element(hx.begin(), hx.end());
                 chYmin = *std::min_element(hy.begin(), hy.end()); chYmax = *std::max_element(hy.begin(), hy.end());
                 chLy = chYmax - chYmin;
@@ -1226,12 +1324,36 @@ int main(int argc, char** argv)
                 if (du < 1e-8) { ++it; break; }
             }
 
-            // post-process: doChannel -> Poiseuille (parabolic profile + linear p-drop); else Erturk-Dursun
+            // post-process: inletSet -> pump through-flow (mass conservation); doChannel -> Poiseuille; else Erturk-Dursun
             bool solveOk = false;
             std::cout << std::scientific << std::setprecision(3);
             std::cout << "[phase0][solve] Re=" << Re << " picard=" << it << " d(u)=" << du
                       << " nu=" << nuS << " status=" << static_cast<int>(st) << " sing=" << singularity << "\n";
-            if (doChannel) {
+            if (inletSet) {
+                // no analytical answer: check mass conservation (net boundary flux ~0 by divergence theorem),
+                // inflow sign, and pressure/velocity sanity. Q = sum u.S_bnd over the boundary nodes.
+                std::vector<RealType> xs(ND);
+                thrust::copy(d_x.begin(), d_x.end(), xs.begin());
+                RealType Qin = 0, Qout = 0, Qtot = 0, pInSum = 0, umax = 0;
+                for (size_t i = 0; i < nNodes; ++i) {
+                    RealType f = xs[4 * i + 0] * hsbx[i] + xs[4 * i + 1] * hsby[i] + xs[4 * i + 2] * hsbz[i];
+                    Qtot += f;
+                    RealType um = std::sqrt(xs[4*i]*xs[4*i] + xs[4*i+1]*xs[4*i+1] + xs[4*i+2]*xs[4*i+2]);
+                    umax = std::max(umax, um);
+                }
+                for (int i : inN)  { Qin  += xs[4*i]*hsbx[i] + xs[4*i+1]*hsby[i] + xs[4*i+2]*hsbz[i]; pInSum += xs[4*i+3]; }
+                for (int i : outN)   Qout += xs[4*i]*hsbx[i] + xs[4*i+1]*hsby[i] + xs[4*i+2]*hsbz[i];
+                RealType pInMean = inN.empty() ? RealType(0) : pInSum / (RealType)inN.size();
+                RealType massErr = std::abs(Qtot) / (std::abs(Qin) > RealType(1e-30) ? std::abs(Qin) : RealType(1));
+                bool inflowOk = (Qin < RealType(0));     // u inward, S_bnd outward => u.S_bnd < 0 for inflow
+                bool finite = std::isfinite(umax) && std::isfinite(pInMean) && std::isfinite(Qtot);
+                solveOk = (st == CUSOLVER_STATUS_SUCCESS) && (singularity < 0) && finite && inflowOk
+                          && (massErr < RealType(0.05));
+                std::cout << "[phase0][solve][pump] Qin=" << Qin << " Qout=" << Qout << " net=" << Qtot
+                          << " massErr=" << massErr << "  inflow=" << (inflowOk ? "OK" : "REVERSED(use --inlet-flip-normal)")
+                          << "  p_in_mean=" << pInMean << " (outlet=0)  |u|max=" << umax
+                          << "  -> " << (solveOk ? "PASS (through-flow, mass conserved)" : "CHECK") << "\n";
+            } else if (doChannel) {
                 std::vector<RealType> xs(ND);
                 thrust::copy(d_x.begin(), d_x.end(), xs.begin());
                 const RealType ex = (chXmax - chXmin) * RealType(1e-6);
