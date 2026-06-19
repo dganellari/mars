@@ -18,9 +18,9 @@ import math
 import numpy as np
 
 try:
-    import meshio
+    import meshio                                  # only needed for .vtu output
 except ImportError:
-    raise SystemExit("meshio required: pip3 install meshio")
+    meshio = None
 try:
     import netCDF4
 except ImportError:
@@ -111,6 +111,21 @@ def gen_bfs(n, h=1.0, ratio=1.94, Li=5.0, Lo=20.0, dz=None):
     return np.asarray(hexes, dtype=np.float64)
 
 
+def gen_channel(Lx, Ly, nx, ny, dz):
+    """Plane channel [0,Lx]x[0,Ly], thin in z: inlet x=0, outlet x=Lx, no-slip walls y=0,Ly.
+    ny resolves the cross-flow parabola (Poiseuille). One z-layer (2D flow in a thin slab)."""
+    xs = np.linspace(0.0, Lx, nx + 1)
+    ys = np.linspace(0.0, Ly, ny + 1)
+    hexes = []
+    for j in range(ny):
+        for i in range(nx):
+            corners = []
+            for (di, dj, dk) in _HEX:
+                corners.append([xs[i + di], ys[j + dj], dk * dz])
+            hexes.append(corners)
+    return np.asarray(hexes, dtype=np.float64)
+
+
 def write_exodus(points, tets, out):
     """Write the minimal Exodus that MARS's reader consumes: separate coordx/y/z
     and a 1-based connect1 block (mars_read_exodus_mesh.hpp reads coordx/coordy/
@@ -161,10 +176,18 @@ def main():
     bf = sub.add_parser("bfs")
     bf.add_argument("--n", type=int, default=40)
     bf.add_argument("--out", required=True)
+    ch = sub.add_parser("channel")
+    ch.add_argument("--Lx", type=float, default=4.0)
+    ch.add_argument("--Ly", type=float, default=1.0)
+    ch.add_argument("--nx", type=int, default=48)
+    ch.add_argument("--ny", type=int, default=16)
+    ch.add_argument("--out", required=True)
     a = ap.parse_args()
 
     if a.cmd == "skew":
         hexes = gen_skew(a.beta, a.n)
+    elif a.cmd == "channel":
+        hexes = gen_channel(a.Lx, a.Ly, a.nx, a.ny, a.Ly / a.ny)
     else:
         hexes = gen_bfs(a.n)
     points, tets, nbad = hexes_to_tet_mesh(hexes)
