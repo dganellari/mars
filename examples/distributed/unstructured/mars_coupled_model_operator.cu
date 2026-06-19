@@ -1080,6 +1080,12 @@ int main(int argc, char** argv)
             std::vector<uint8_t> bcF(ND, 0);
             std::vector<RealType> bcV(ND, RealType(0));
             std::vector<RealType> hrhs(ND, RealType(0));
+            // Make the path explicit -- a silently-empty --inlet-ss= (e.g. an unset env var) would otherwise
+            // fall back to the closed-box body-force diagnostic without warning.
+            if (rank == 0)
+                std::cout << "[phase0][acm-pump] mode="
+                          << (inletSet ? "side-set through-flow (velocity-flux inlet + open outlet)"
+                                       : "closed-box body-force diagnostic (no --inlet-ss)") << "\n";
             if (inletSet) {            // pump real flow: side-set velocity-flux inlet + no-slip walls, NO body force
                 if (!buildSideSetVelBC(bcF, bcV)) { MPI_Finalize(); return 6; }
             } else {                   // closed-box diagnostic: all-surface no-slip + smooth body force drive
