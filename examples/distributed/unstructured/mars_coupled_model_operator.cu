@@ -1173,20 +1173,32 @@ int main(int argc, char** argv)
                 std::vector<RealType> xs(ND);
                 thrust::copy(thrust::device_pointer_cast(xa.data()), thrust::device_pointer_cast(xa.data() + ND), xs.begin());
                 RealType Qin = 0, Qout = 0, Qtot = 0, pInSum = 0, umax = 0;
+                int argU = -1; size_t hot = 0;
+                const RealType uhot = RealType(10) * inletSpeed;          // "hot" = >10x the inlet speed
                 for (size_t i = 0; i < nNodes; ++i) {
                     RealType f = xs[4*i]*hsbx[i] + xs[4*i+1]*hsby[i] + xs[4*i+2]*hsbz[i]; Qtot += f;
-                    RealType um = std::sqrt(xs[4*i]*xs[4*i] + xs[4*i+1]*xs[4*i+1] + xs[4*i+2]*xs[4*i+2]); umax = std::max(umax, um);
+                    RealType um = std::sqrt(xs[4*i]*xs[4*i] + xs[4*i+1]*xs[4*i+1] + xs[4*i+2]*xs[4*i+2]);
+                    if (um > umax) { umax = um; argU = (int)i; }
+                    if (um > uhot) ++hot;
                 }
                 for (int i : inN)  { Qin  += xs[4*i]*hsbx[i] + xs[4*i+1]*hsby[i] + xs[4*i+2]*hsbz[i]; pInSum += xs[4*i+3]; }
                 for (int i : outN)   Qout += xs[4*i]*hsbx[i] + xs[4*i+1]*hsby[i] + xs[4*i+2]*hsbz[i];
                 RealType pInMean = inN.empty() ? RealType(0) : pInSum / (RealType)inN.size();
                 RealType massErr = std::abs(Qtot) / (std::abs(Qin) > RealType(1e-30) ? std::abs(Qin) : RealType(1));
                 bool inflowOk = (Qin < RealType(0));
-                bool ok = (rA < 1e-6) && std::isfinite(umax) && std::isfinite(Qtot) && inflowOk && (massErr < RealType(0.05));
+                bool velOk = umax < RealType(50) * inletSpeed;           // >>50x inlet => spurious local spike
+                bool argB = argU >= 0 && (hsbx[argU]*hsbx[argU] + hsby[argU]*hsby[argU] + hsbz[argU]*hsbz[argU] > RealType(1e-30));
+                bool ok = (rA < 1e-6) && std::isfinite(umax) && std::isfinite(Qtot) && inflowOk
+                          && (massErr < RealType(0.05)) && velOk;
                 std::cout << "[phase0][acm-pump][pump] Qin=" << Qin << " Qout=" << Qout << " net=" << Qtot
                           << " massErr=" << massErr << "  inflow=" << (inflowOk ? "OK" : "REVERSED(use --inlet-flip-normal)")
                           << "  p_in_mean=" << pInMean << " (outlet pinned)  |u|max=" << umax
-                          << "  -> " << (ok ? "PASS (through-flow, mass conserved, ACM converged)" : "CHECK") << "\n";
+                          << " hot(>10x)=" << hot << "/" << nNodes << (argU >= 0 ? (argB ? " @bndry" : " @interior") : "")
+                          << "  -> " << (ok ? "PASS (through-flow, mass conserved, ACM converged)"
+                                            : (velOk ? "CHECK" : "CHECK (spurious |u| spike -- likely degenerate tet/scaling)")) << "\n";
+                if (argU >= 0 && std::getenv("MARS_VERBOSE_MESH"))
+                    std::cout << "[phase0][acm-pump][pump] |u|max @ (" << hx[argU] << "," << hy[argU] << "," << hz[argU] << ") "
+                              << (inN.count(argU) ? "INLET" : outN.count(argU) ? "OUTLET" : argB ? "WALL" : "INTERIOR") << "\n";
             } else {
                 Vec bh, xh; bh.resize(ND); xh.resize(ND);
                 thrust::copy(d_rhs.begin(), d_rhs.end(), thrust::device_pointer_cast(bh.data()));
