@@ -78,7 +78,7 @@ public:
         thrust::copy(thrust::device_pointer_cast(r.data()),
                      thrust::device_pointer_cast(r.data() + nd_), levels_[0].bvec.begin());
         thrust::fill(levels_[0].xvec.begin(), levels_[0].xvec.end(), RealType(0));
-        mars::acmVcycleGpu<RealType>(levels_, 0, pre_, post_, coarse_, omega_, cs_, descr_);
+        mars::acmVcycleGpu<RealType>(levels_, 0, pre_, post_, coarse_, omega_, /*useBlock=*/true, cs_, descr_);
         thrust::copy(levels_[0].xvec.begin(), levels_[0].xvec.end(),
                      thrust::device_pointer_cast(z.data()));
     }
