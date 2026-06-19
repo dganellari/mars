@@ -263,6 +263,41 @@ __global__ void assembleRhieChowDivGradKernel(
     }
 }
 
+// Assemble the full collocated Rhie-Chow coupled operator into a pre-zeroed CSR (caller fills d_vals=0):
+// a^uu(nu*K) + FV a^pu/a^up=-(a^pu)^T + RC a^pp d_f-Laplacian (d_f from the momentum diagonal, no tau).
+template<typename KeyType, typename RealType>
+void assembleRhieChowGpu(const KeyType* c0, const KeyType* c1, const KeyType* c2, const KeyType* c3,
+                         const RealType* nx, const RealType* ny, const RealType* nz,
+                         const int* d_rowOff, const int* d_colInd, RealType* d_vals, RealType nu,
+                         const RealType* avxp, const RealType* avyp, const RealType* avzp,
+                         size_t startElem, size_t numLocal, int nNodes, int blockSize)
+{
+    const int eBlocks = (int)((numLocal + blockSize - 1) / blockSize);
+    thrust::device_vector<RealType> avX(6 * numLocal), avY(6 * numLocal), avZ(6 * numLocal);
+    precomputeTetAreaVectorsGpu<KeyType, RealType>(c0, c1, c2, c3, numLocal, nx, ny, nz,
+        thrust::raw_pointer_cast(avX.data()), thrust::raw_pointer_cast(avY.data()), thrust::raw_pointer_cast(avZ.data()));
+    cudaDeviceSynchronize();
+    assembleMomentumKernel<KeyType, RealType><<<eBlocks, blockSize>>>(
+        c0, c1, c2, c3, nx, ny, nz, d_rowOff, d_colInd, d_vals, nu, avxp, avyp, avzp, startElem, numLocal);
+    cudaDeviceSynchronize();
+    thrust::device_vector<RealType> Vp(nNodes, RealType(0)), invApV(nNodes, RealType(0));
+    computeNodeVolumeKernel<KeyType, RealType><<<eBlocks, blockSize>>>(
+        c0, c1, c2, c3, nx, ny, nz, thrust::raw_pointer_cast(Vp.data()), startElem, numLocal);
+    cudaDeviceSynchronize();
+    const int nblkN = (nNodes + blockSize - 1) / blockSize;
+    computeInvApVKernel<RealType><<<nblkN, blockSize>>>(d_rowOff, d_colInd, d_vals,
+        thrust::raw_pointer_cast(Vp.data()), thrust::raw_pointer_cast(invApV.data()), nNodes);
+    cudaDeviceSynchronize();
+    assembleRhieChowDivGradKernel<KeyType, RealType><<<eBlocks, blockSize>>>(
+        c0, c1, c2, c3, thrust::raw_pointer_cast(avX.data()), thrust::raw_pointer_cast(avY.data()),
+        thrust::raw_pointer_cast(avZ.data()), d_rowOff, d_colInd, d_vals, startElem, numLocal);
+    assembleRhieChowAppKernel<KeyType, RealType><<<eBlocks, blockSize>>>(
+        c0, c1, c2, c3, nx, ny, nz, thrust::raw_pointer_cast(avX.data()), thrust::raw_pointer_cast(avY.data()),
+        thrust::raw_pointer_cast(avZ.data()), thrust::raw_pointer_cast(invApV.data()),
+        d_rowOff, d_colInd, d_vals, startElem, numLocal);
+    cudaDeviceSynchronize();
+}
+
 // ---- Increment 3a: Dirichlet BC elimination + direct reference solve ----
 // Identity-row BC: for a Dirichlet dof, zero its CSR row, set its diagonal to 1,
 // rhs = prescribed value. Correct for a DIRECT solve (the interior rows still see
@@ -523,38 +558,10 @@ int main(int argc, char** argv)
         }
 
         if (doRhieChow) {
-            // collocated Rhie-Chow coupled operator: a^uu(nu*K) + FV a^pu/a^up + RC a^pp(d_f-Laplacian).
-            // a^pp coupling is harvested from the momentum diagonal (no tau). Host-validated in
-            // scripts/rhie_chow_replica.py (G1 a^pu=-(a^up)^T, G2 a^pp M-matrix).
-            thrust::device_vector<RealType> d_avX(6*numLocal), d_avY(6*numLocal), d_avZ(6*numLocal);
-            precomputeTetAreaVectorsGpu<KeyType, RealType>(c0, c1, c2, c3, numLocal, nx, ny, nz,
-                thrust::raw_pointer_cast(d_avX.data()), thrust::raw_pointer_cast(d_avY.data()),
-                thrust::raw_pointer_cast(d_avZ.data()));
-            cudaDeviceSynchronize();
-            assembleMomentumKernel<KeyType, RealType><<<eBlocks, blockSize>>>(
-                c0, c1, c2, c3, nx, ny, nz, thrust::raw_pointer_cast(d_rowOff.data()),
-                thrust::raw_pointer_cast(d_colInd.data()), thrust::raw_pointer_cast(d_vals.data()),
-                nu, avxp, avyp, avzp, startEl, numLocal);
-            cudaDeviceSynchronize();
-            thrust::device_vector<RealType> d_Vp(nNodes, RealType(0)), d_invApV(nNodes, RealType(0));
-            computeNodeVolumeKernel<KeyType, RealType><<<eBlocks, blockSize>>>(
-                c0, c1, c2, c3, nx, ny, nz, thrust::raw_pointer_cast(d_Vp.data()), startEl, numLocal);
-            cudaDeviceSynchronize();
-            const int nblkN = ((int)nNodes + blockSize - 1) / blockSize;
-            computeInvApVKernel<RealType><<<nblkN, blockSize>>>(
+            assembleRhieChowGpu<KeyType, RealType>(c0, c1, c2, c3, nx, ny, nz,
                 thrust::raw_pointer_cast(d_rowOff.data()), thrust::raw_pointer_cast(d_colInd.data()),
-                thrust::raw_pointer_cast(d_vals.data()), thrust::raw_pointer_cast(d_Vp.data()),
-                thrust::raw_pointer_cast(d_invApV.data()), (int)nNodes);
-            cudaDeviceSynchronize();
-            assembleRhieChowDivGradKernel<KeyType, RealType><<<eBlocks, blockSize>>>(
-                c0, c1, c2, c3, thrust::raw_pointer_cast(d_avX.data()), thrust::raw_pointer_cast(d_avY.data()),
-                thrust::raw_pointer_cast(d_avZ.data()), thrust::raw_pointer_cast(d_rowOff.data()),
-                thrust::raw_pointer_cast(d_colInd.data()), thrust::raw_pointer_cast(d_vals.data()), startEl, numLocal);
-            assembleRhieChowAppKernel<KeyType, RealType><<<eBlocks, blockSize>>>(
-                c0, c1, c2, c3, nx, ny, nz, thrust::raw_pointer_cast(d_avX.data()),
-                thrust::raw_pointer_cast(d_avY.data()), thrust::raw_pointer_cast(d_avZ.data()),
-                thrust::raw_pointer_cast(d_invApV.data()), thrust::raw_pointer_cast(d_rowOff.data()),
-                thrust::raw_pointer_cast(d_colInd.data()), thrust::raw_pointer_cast(d_vals.data()), startEl, numLocal);
+                thrust::raw_pointer_cast(d_vals.data()), nu, avxp, avyp, avzp,
+                startEl, numLocal, (int)nNodes, blockSize);
         } else {
             assembleCoupledStokesKernel<KeyType, RealType><<<eBlocks, blockSize>>>(
                 c0, c1, c2, c3, nx, ny, nz,
@@ -922,11 +929,17 @@ int main(int argc, char** argv)
             const RealType hpar = RealType(1) / std::sqrt(static_cast<RealType>(nNodes) * RealType(0.5));
             const RealType tauS = hpar * hpar / (RealType(4) * nuS);
             thrust::fill(d_vals.begin(), d_vals.end(), RealType(0));
-            assembleCoupledStokesKernel<KeyType, RealType><<<eBlocks, blockSize>>>(
-                c0, c1, c2, c3, nx, ny, nz,
-                thrust::raw_pointer_cast(d_rowOff.data()), thrust::raw_pointer_cast(d_colInd.data()),
-                thrust::raw_pointer_cast(d_vals.data()), nuS, tauS, nullptr, nullptr, nullptr,
-                startEl, numLocal);
+            if (doRhieChow)   // collocated Rhie-Chow operator (no tau, intrinsic checkerboard suppression)
+                assembleRhieChowGpu<KeyType, RealType>(c0, c1, c2, c3, nx, ny, nz,
+                    thrust::raw_pointer_cast(d_rowOff.data()), thrust::raw_pointer_cast(d_colInd.data()),
+                    thrust::raw_pointer_cast(d_vals.data()), nuS, nullptr, nullptr, nullptr,
+                    startEl, numLocal, (int)nNodes, blockSize);
+            else
+                assembleCoupledStokesKernel<KeyType, RealType><<<eBlocks, blockSize>>>(
+                    c0, c1, c2, c3, nx, ny, nz,
+                    thrust::raw_pointer_cast(d_rowOff.data()), thrust::raw_pointer_cast(d_colInd.data()),
+                    thrust::raw_pointer_cast(d_vals.data()), nuS, tauS, nullptr, nullptr, nullptr,
+                    startEl, numLocal);
             cudaDeviceSynchronize();
 
             // boundary nodes: a tet face shared by exactly one element is a surface face (host sort+count)
