@@ -6,6 +6,14 @@
 
 namespace mars
 {
+
+// Element type tags are defined in domain.hpp. This header is parsed before
+// domain.hpp in some include orders (it only needs the tag NAMES as template
+// arguments, not the full definitions), so forward-declare them here to stay
+// order-independent. The real definitions in domain.hpp are compatible.
+struct TetTag;
+struct HexTag;
+
 namespace fem
 {
 
