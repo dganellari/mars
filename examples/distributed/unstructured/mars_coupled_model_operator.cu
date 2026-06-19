@@ -445,7 +445,7 @@ int main(int argc, char** argv)
     const size_t startEl  = domain.startIndex();
     const size_t numLocal = domain.localElementCount();
     if (rank == 0)
-        if (!std::getenv("MARS_QUIET_MESH"))
+        if (std::getenv("MARS_VERBOSE_MESH"))
             std::cout << "[phase0] mesh: elements=" << domain.getElementCount()
                       << " nodes=" << nNodes << " localElems=" << numLocal << "\n";
 
@@ -587,7 +587,7 @@ int main(int argc, char** argv)
                 bcF[4 * i + 0] = bcF[4 * i + 1] = bcF[4 * i + 2] = 1;
             }
         }
-        if (rank == 0)
+        if (rank == 0 && std::getenv("MARS_VERBOSE_MESH"))   // node counts + inlet normal identify the geometry
             std::cout << "[phase0][pump] inlet nodes=" << inN.size() << " outlet nodes=" << outN.size()
                       << " inward-normal=(" << nhx << "," << nhy << "," << nhz << ") speed=" << inletSpeed << "\n";
         return true;
@@ -722,7 +722,7 @@ int main(int argc, char** argv)
         const RealType atol = 1e-12;
         auto pf = [&](bool ok) { return ok ? "PASS" : "FAIL"; };
         std::cout << std::scientific << std::setprecision(3);
-        if (std::getenv("MARS_QUIET_MESH"))
+        if (!std::getenv("MARS_VERBOSE_MESH"))
             std::cout << "[phase0][assemble]" << (doAdvect ? "  (advection ON)" : "  (Stokes)") << "\n";
         else
             std::cout << "[phase0][assemble] DOFs=" << ND << " nnz=" << nnz
@@ -1110,7 +1110,8 @@ int main(int argc, char** argv)
                 int r = findRoot((int)i);
                 if (!rootPinned[r]) { rootPinned[r] = 1; bcF[4 * i + 3] = 1; ++nComp; }
             }
-            std::cout << "[phase0][acm-pump] fluid-graph components=" << nComp << " (one pressure pin per component)\n";
+            if (std::getenv("MARS_VERBOSE_MESH"))   // component count is a mesh-topology fact -> opt-in
+                std::cout << "[phase0][acm-pump] fluid-graph components=" << nComp << " (one pressure pin per component)\n";
 
             thrust::device_vector<uint8_t>  d_bcF(bcF.begin(), bcF.end());
             thrust::device_vector<RealType> d_bcV(bcV.begin(), bcV.end());   // inlet flux values (0 for closed-box)
@@ -1147,7 +1148,7 @@ int main(int argc, char** argv)
             };
 
             std::cout << std::scientific << std::setprecision(3);
-            if (!std::getenv("MARS_QUIET_MESH"))
+            if (std::getenv("MARS_VERBOSE_MESH"))
                 std::cout << "[phase0][acm-pump] DOFs=" << ND << " nnz=" << nnz
                           << " surface nodes=" << nBnd << "/" << nNodes << " nu=" << nuS << " tau=" << tauS << "\n";
 

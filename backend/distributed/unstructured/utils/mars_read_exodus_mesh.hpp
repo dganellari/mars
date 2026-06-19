@@ -105,7 +105,7 @@ inline auto readExodusMeshWithElementPartitioning(const std::string& meshFile, i
     }
 
     if (rank == 0) {
-        if (!std::getenv("MARS_QUIET_MESH"))
+        if (std::getenv("MARS_VERBOSE_MESH"))
             std::cout << "Exodus mesh: " << total_nodes << " nodes, " << total_elements << " elements" << std::endl;
     }
 
@@ -228,7 +228,7 @@ inline auto readExodusMeshWithElementPartitioning(const std::string& meshFile, i
     std::vector<uint8_t> boundaryNodes(nodeCount, 0);
 
     if (rank == 0) {
-        if (!std::getenv("MARS_QUIET_MESH"))
+        if (std::getenv("MARS_VERBOSE_MESH"))
             std::cout << "Rank 0: " << elementCount << " elements, " << nodeCount << " nodes (from Exodus)" << std::endl;
     }
 
@@ -441,7 +441,7 @@ inline ExodusSideSets readExodusSideSetsHex8(const std::string& meshFile, int ra
         std::vector<std::array<double, 3>> nodeCoords;
         nodeCoords.reserve(nodeVec.size());
         for (uint64_t g0 : nodeVec) nodeCoords.push_back({ all_x[g0], all_y[g0], all_z[g0] });
-        if (rank == 0)
+        if (rank == 0 && std::getenv("MARS_VERBOSE_MESH"))   // side-set names/counts identify the mesh -> opt-in
         {
             std::cout << "Exodus side-set [" << ssName << "] id=" << ssId
                       << ": " << num_faces << " faces, " << nodeVec.size() << " unique nodes\n";
@@ -625,7 +625,7 @@ inline ExodusSideSets readExodusSideSetsTet4(const std::string& meshFile, int ra
         std::vector<std::array<double, 3>> triCoords;
         triCoords.reserve(tris.size());
         for (uint64_t g0 : tris) triCoords.push_back(coordOf(g0));
-        if (rank == 0)
+        if (rank == 0 && std::getenv("MARS_VERBOSE_MESH"))   // side-set names/counts identify the mesh -> opt-in
         {
             std::cout << "Exodus side-set [" << ssName << "] id=" << ssId
                       << ": " << num_faces << " faces, " << nodeVec.size() << " unique nodes\n";
