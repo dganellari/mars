@@ -1928,7 +1928,7 @@ ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(cons
     auto t2 = clk::now();
     bboxTimeMs = std::chrono::duration<float, std::milli>(t2 - t1).count();
 
-    if (!std::getenv("MARS_QUIET_MESH"))
+    if (std::getenv("MARS_VERBOSE_MESH"))
         std::cout << "Rank " << rank_ << ": Created bounding box: [" << box_.xmin() << "," << box_.xmax() << "] ["
                   << box_.ymin() << "," << box_.ymax() << "] [" << box_.zmin() << "," << box_.zmax() << "]" << std::endl;
 
@@ -1961,7 +1961,7 @@ ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(cons
     auto t6 = clk::now();
     syncTimeMs = std::chrono::duration<float, std::milli>(t6 - t5).count();
 
-    if (!std::getenv("MARS_QUIET_MESH"))
+    if (std::getenv("MARS_VERBOSE_MESH"))
         std::cout << "Rank " << rank_ << " initialized " << ElementTag::Name << " domain with " << nodeCount_
                   << " nodes and " << elementCount_ << " elements." << std::endl;
 }
@@ -2017,7 +2017,7 @@ ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(cons
     sync(d_conn_, d_coords_);
     logGpuMemAroundSync(rank_, "post-sync");
 
-    if (!std::getenv("MARS_QUIET_MESH"))
+    if (std::getenv("MARS_VERBOSE_MESH"))
         std::cout << "Rank " << rank_ << " initialized " << ElementTag::Name << " domain with " << nodeCount_
                   << " nodes and " << elementCount_ << " elements." << std::endl;
 }
@@ -2072,7 +2072,7 @@ ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(cons
     sync(d_conn_, d_coords_);
     logGpuMemAroundSync(rank_, "post-sync");
 
-    if (!std::getenv("MARS_QUIET_MESH"))
+    if (std::getenv("MARS_VERBOSE_MESH"))
         std::cout << "Rank " << rank_ << " initialized " << ElementTag::Name << " domain with " << nodeCount_
                   << " nodes and " << elementCount_ << " elements." << std::endl;
 }
@@ -2173,7 +2173,7 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::readMeshDataS
 {
     int rank = rank_;
     int numRanks = numRanks_;
-    if (!std::getenv("MARS_QUIET_MESH"))
+    if (std::getenv("MARS_VERBOSE_MESH"))
         std::cout << "Reading mesh data from " << meshFile << " on rank " << rank << std::endl;
     try
     {
@@ -2534,7 +2534,7 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::sync(const De
             thrust::raw_pointer_cast(d_elemH.data()), elementCount_);
         cudaCheckError();
 
-        if (!std::getenv("MARS_QUIET_MESH"))
+        if (std::getenv("MARS_VERBOSE_MESH"))
             std::cout << "Rank " << rank_ << " syncing " << ElementTag::Name << " domain with " << elementCount_
                       << " elements." << std::endl;
 
@@ -3188,7 +3188,7 @@ CoordinateCache<ElementTag, RealType, KeyType, AcceleratorTag>::CoordinateCache(
             thrust::raw_pointer_cast(d_node_z_.data()), nodeCount, domain.getBoundingBox());
         cudaCheckError();
 
-        if (!std::getenv("MARS_QUIET_MESH"))
+        if (std::getenv("MARS_VERBOSE_MESH"))
             std::cout << "Rank " << domain.rank() << " cached " << nodeCount << " node coordinates." << std::endl;
     }
 }

@@ -5,6 +5,9 @@
 #include <thrust/scan.h>
 #include <thrust/sort.h>
 #include <thrust/unique.h>
+#include <thrust/remove.h>
+#include <thrust/binary_search.h>
+#include <thrust/distance.h>
 #include <thrust/execution_policy.h>
 #include <cub/cub.cuh>
 #include <cstdlib>

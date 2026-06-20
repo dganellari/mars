@@ -668,10 +668,15 @@ cvfem_hex_assembly_kernel_wgmma(
 
     __syncthreads();
 
-#if defined(__CUDA_ARCH_FEAT_SM90_ALL)
+// DISABLED: wgmma.mma_async has no FP64 variant in the PTX ISA. The
+// m64n8k4.f64 instruction below is not real and ptxas rejects it, so this path
+// only ever broke sm_90a builds (it was never compiled before, since 90 builds
+// skip it). FP64 tensor cores are warp-level mma.sync (m8n8k4) only -- the WMMA
+// fallback below is the correct path on every arch. Kept behind `0 &&` rather
+// than deleted to preserve the structure/history of this experiment.
+#if 0 && defined(__CUDA_ARCH_FEAT_SM90_ALL)
     // =========================================================================
     // WGMMA path (SM90a / Hopper): async wgmma.mma_async m64n8k4 FP64
-    // Rebuild with -DCMAKE_CUDA_ARCHITECTURES=90a to enable this path.
     // =========================================================================
 
     // Phase 4 — Fill WGMMA A tiles and S tiles cooperatively (all 128 threads)

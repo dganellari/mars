@@ -31,6 +31,26 @@ add_executable(mars_cvfem_full mars_cvfem_full.cu)
 target_link_libraries(mars_cvfem_full PRIVATE mars)
 install(TARGETS mars_cvfem_full RUNTIME DESTINATION bin/examples)
 
+# CVFEM matrix-free vs matrix-based (assembled CSR + cuSPARSE SpMV) comparison
+add_executable(mars_cvfem_matfree_compare mars_cvfem_matfree_compare.cu)
+target_link_libraries(mars_cvfem_matfree_compare PRIVATE mars CUDA::cusparse)
+install(TARGETS mars_cvfem_matfree_compare RUNTIME DESTINATION bin/examples)
+
+# HO matrix-free CVFEM (Knaus Alg 2) vs assembled CSR + cuSPARSE SpMV (p=1 order comparison)
+add_executable(mars_cvfem_ho_compare mars_cvfem_ho_compare.cu)
+target_link_libraries(mars_cvfem_ho_compare PRIVATE mars CUDA::cusparse)
+install(TARGETS mars_cvfem_ho_compare RUNTIME DESTINATION bin/examples)
+
+# CVFEM weak-scaling with procedural per-rank cube generation (no mesh file) -> trillions
+add_executable(mars_cvfem_scale mars_cvfem_scale.cu)
+target_link_libraries(mars_cvfem_scale PRIVATE mars)
+install(TARGETS mars_cvfem_scale RUNTIME DESTINATION bin/examples)
+
+# HO matrix-free CVFEM distributed weak-scaling apply (multi-rank halo matvec, p=1)
+add_executable(mars_cvfem_ho_weakscale mars_cvfem_ho_weakscale.cu)
+target_link_libraries(mars_cvfem_ho_weakscale PRIVATE mars)
+install(TARGETS mars_cvfem_ho_weakscale RUNTIME DESTINATION bin/examples)
+
 # CVFEM example - graph-based assembly matching STK (7 NNZ/row, optimized sparsity)
 add_executable(mars_cvfem_graph mars_cvfem_graph.cu)
 if(TARGET CUDA::nvToolsExt)
@@ -46,6 +66,11 @@ add_executable(mars_ho_laplacian_test mars_ho_laplacian_test.cu)
 target_link_libraries(mars_ho_laplacian_test PRIVATE mars)
 install(TARGETS mars_ho_laplacian_test RUNTIME DESTINATION bin/examples)
 
+# Optimized HO-CVFEM matrix-free diffusion apply: GPU bit-exact + patch + perf gate
+add_executable(mars_cvfem_ho_matfree_test mars_cvfem_ho_matfree_test.cu)
+target_link_libraries(mars_cvfem_ho_matfree_test PRIVATE mars)
+install(TARGETS mars_cvfem_ho_matfree_test RUNTIME DESTINATION bin/examples)
+
 # Matrix-free high-order Laplacian, Stage 1 single-rank CG (lattice DOF map)
 add_executable(mars_ho_cg_test mars_ho_cg_test.cu)
 target_link_libraries(mars_ho_cg_test PRIVATE mars)
@@ -60,6 +85,11 @@ install(TARGETS mars_ho_dof_test RUNTIME DESTINATION bin/examples)
 add_executable(mars_ho_dmma_test mars_ho_dmma_test.cu)
 target_link_libraries(mars_ho_dmma_test PRIVATE mars)
 install(TARGETS mars_ho_dmma_test RUNTIME DESTINATION bin/examples)
+
+# Matrix-free high-order Laplacian, FP64 tensor-core (DMMA) throughput benchmark
+add_executable(mars_ho_dmma_bench mars_ho_dmma_bench.cu)
+target_link_libraries(mars_ho_dmma_bench PRIVATE mars)
+install(TARGETS mars_ho_dmma_bench RUNTIME DESTINATION bin/examples)
 
 # Matrix-free high-order Laplacian, Stage 2 orientation-aware DOF handler (relabeled cube)
 add_executable(mars_ho_orient_test mars_ho_orient_test.cu)
