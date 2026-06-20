@@ -369,6 +369,7 @@ __global__ void extractCompKernel(const RealType* x, RealType* out, int stride, 
 int main(int argc, char** argv)
 {
     MPI_Init(&argc, &argv);
+    std::cout << std::unitbuf;          // flush per write: live [phase0] trace under srun's block-buffered pipe
     int rank = 0, numRanks = 1;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &numRanks);
