@@ -26,6 +26,8 @@
 #include <algorithm>
 #include <type_traits>
 #include <cmath>
+#include <cstdlib>
+#include <cstring>
 
 namespace mars {
 
@@ -125,6 +127,53 @@ __global__ void acmBlockJacobiKernel(const int* rowOff, const int* colInd, const
     }
 }
 
+// ---- block-ILU(0) smoother (darwish2008a's smoother) ----
+// 4x4 block matmul C = A*B (row-major). Jacobi is weak on convection-dominated operators (smoothing
+// factor -> 1 as Pe grows, host-validated in scripts/acm_ilu_smoother_study.py); ILU(0) sweeps error
+// along the characteristics so it stays a strong smoother at high Pe. The triangular solves are made
+// parallel by LEVEL-SCHEDULING on the node block-graph (a level = rows whose lower-deps are all earlier).
+template<typename T>
+__host__ __device__ inline void acmBlkMatmul4(const T* A, const T* B, T* C)
+{
+    for (int a = 0; a < 4; ++a)
+        for (int c = 0; c < 4; ++c) { T s = 0; for (int b = 0; b < 4; ++b) s += A[4*a+b]*B[4*b+c]; C[4*a+c] = s; }
+}
+
+// forward block L-solve for one level: y_i = r_i - sum_{k<i stored} L_ik * y_k   (unit lower-block-diag)
+template<typename RealType>
+__global__ void acmIluLsolveKernel(const int* brow, const int* bcol, const int* bdiagPtr, const RealType* bilu,
+                                   const int* nodesByLevel, int lstart, int lend, const RealType* r, RealType* y)
+{
+    int t = lstart + blockIdx.x * blockDim.x + threadIdx.x; if (t >= lend) return;
+    int i = nodesByLevel[t];
+    RealType yi[4]; for (int a = 0; a < 4; ++a) yi[a] = r[4*i+a];
+    for (int kk = brow[i]; kk < bdiagPtr[i]; ++kk) {              // strictly-lower block-cols k<i
+        int k = bcol[kk]; const RealType* L = bilu + 16*kk;
+        for (int a = 0; a < 4; ++a) for (int b = 0; b < 4; ++b) yi[a] -= L[4*a+b] * y[4*k+b];
+    }
+    for (int a = 0; a < 4; ++a) y[4*i+a] = yi[a];
+}
+
+// back block U-solve for one level: dx_i = inv(U_ii) * (y_i - sum_{j>i stored} U_ij * dx_j)
+template<typename RealType>
+__global__ void acmIluUsolveKernel(const int* brow, const int* bcol, const int* bdiagPtr, const RealType* bilu,
+                                   const int* nodesByLevel, int lstart, int lend, const RealType* y, RealType* dx)
+{
+    int t = lstart + blockIdx.x * blockDim.x + threadIdx.x; if (t >= lend) return;
+    int i = nodesByLevel[t];
+    RealType ti[4]; for (int a = 0; a < 4; ++a) ti[a] = y[4*i+a];
+    for (int jj = bdiagPtr[i] + 1; jj < brow[i+1]; ++jj) {        // strictly-upper block-cols j>i
+        int j = bcol[jj]; const RealType* U = bilu + 16*jj;
+        for (int a = 0; a < 4; ++a) for (int b = 0; b < 4; ++b) ti[a] -= U[4*a+b] * dx[4*j+b];
+    }
+    const RealType* Di = bilu + 16*bdiagPtr[i];                   // stored inv(U_ii)
+    for (int a = 0; a < 4; ++a) { RealType s = 0; for (int b = 0; b < 4; ++b) s += Di[4*a+b]*ti[b]; dx[4*i+a] = s; }
+}
+
+template<typename RealType>
+__global__ void acmAxpyKernel(RealType* x, const RealType* y, RealType a, int ND)
+{ int r = blockIdx.x * blockDim.x + threadIdx.x; if (r < ND) x[r] += a * y[r]; }
+
 template<typename RealType>
 __global__ void acmSubKernel(const RealType* a, const RealType* b, RealType* y, int ND)
 { int r = blockIdx.x * blockDim.x + threadIdx.x; if (r < ND) y[r] = a[r] - b[r]; }
@@ -139,7 +188,13 @@ struct AcmLevel {
     thrust::device_vector<int> rowOff, colInd;
     thrust::device_vector<RealType> vals, dinv, binv;          // dinv: point-Jacobi; binv: 4x4 block-Jacobi
     thrust::device_vector<int> agg;                            // nNodes -> parent (empty on coarsest)
-    thrust::device_vector<RealType> bvec, xvec, rtmp, xtmp;    // per-level cycle work vectors
+    thrust::device_vector<RealType> bvec, xvec, rtmp, xtmp, ytmp;  // cycle work vectors (ytmp = ILU L-solve scratch)
+    // block-ILU(0) smoother (built only when MARS_ACM_SMOOTHER=ilu): node block-CSR + factored 4x4 blocks
+    // (L below diag, inv(U_ii) on diag, U above) + level schedule on the lower block-graph.
+    thrust::device_vector<int> brow, bcol, bdiagPtr, nodesByLevel;
+    thrust::device_vector<RealType> bilu;
+    std::vector<int> h_levStart;                               // host: per-level slices into nodesByLevel (launch sizing)
+    int nLev = 0;
 };
 
 // host-once DIRECTIONAL aggregation (Mavriplis-style, paper Eqs 19-20) on the block graph of a coupled
@@ -205,6 +260,114 @@ inline void acmDirectionalAggregate(const std::vector<int>& rowOff, const std::v
     }
 }
 
+// ILU smoother selected by env (A/B in one binary, no signature threading): MARS_ACM_SMOOTHER=ilu.
+inline bool acmUseIlu()
+{
+    static int v = -1;
+    if (v < 0) { const char* e = std::getenv("MARS_ACM_SMOOTHER"); v = (e && std::strcmp(e, "ilu") == 0) ? 1 : 0; }
+    return v == 1;
+}
+
+// Build the block-ILU(0) factorization + level schedule for one level (host, once per hierarchy level;
+// reuses the host CSR already copied for aggregation). Sparsity is fixed across Picard iters, so the
+// factor cost amortizes. Block unit = 4x4 nodal [u,v,w,p] block (pivots on the whole block via
+// acmInvert4x4 -- scalar ILU would pivot on the bare indefinite a_pp).
+template<typename RealType>
+inline void acmBuildLevelIlu(AcmLevel<RealType>& L, const std::vector<int>& rowOff,
+                             const std::vector<int>& colInd, const std::vector<RealType>& vals)
+{
+    const int nN = L.nNodes;
+    // 1. node block-CSR: UNION of all 4 comp-rows' block-cols + guaranteed diagonal, then STRUCTURALLY
+    // SYMMETRIZED (add every transpose edge). Symmetry makes ONE lower-graph level schedule valid for
+    // both the L and U solves -- robust even if a convective/upwind stencil makes A structurally
+    // nonsymmetric (the schedule reuse would otherwise read stale upper unknowns in the back solve).
+    // On the current ring-symmetric operator the symmetrization is a no-op (zero extra blocks).
+    std::vector<std::set<int>> cset(nN);
+    for (int I = 0; I < nN; ++I) {
+        cset[I].insert(I);                                       // diagonal block always present
+        for (int a = 0; a < 4; ++a) { int r = 4 * I + a; for (int k = rowOff[r]; k < rowOff[r + 1]; ++k) cset[I].insert(colInd[k] >> 2); }
+    }
+    for (int I = 0; I < nN; ++I) { std::vector<int> row(cset[I].begin(), cset[I].end()); for (int J : row) cset[J].insert(I); }
+    std::vector<int> brow(nN + 1, 0), bcol, bdiagPtr(nN, -1);
+    for (int I = 0; I < nN; ++I) brow[I + 1] = brow[I] + (int)cset[I].size();
+    bcol.resize(brow[nN]);
+    for (int I = 0; I < nN; ++I) { int p = brow[I]; for (int J : cset[I]) { bcol[p] = J; if (J == I) bdiagPtr[I] = p; ++p; } }
+    auto slot = [&](int i, int j) -> int {
+        int lo = brow[i], hi = brow[i + 1];
+        while (lo < hi) { int m = (lo + hi) / 2; if (bcol[m] < j) lo = m + 1; else if (bcol[m] > j) hi = m; else return m; }
+        return -1;
+    };
+    // 2. extract the 4x4 blocks into bilu (16/block, brow/bcol order)
+    std::vector<RealType> bilu(16 * brow[nN], RealType(0));
+    for (int I = 0; I < nN; ++I)
+        for (int a = 0; a < 4; ++a) {
+            int r = 4 * I + a;
+            for (int k = rowOff[r]; k < rowOff[r + 1]; ++k) {
+                int J = colInd[k] >> 2, b = colInd[k] & 3, s = slot(I, J);
+                if (s >= 0) bilu[16 * s + 4 * a + b] = vals[k];
+            }
+        }
+    // 3. block-IKJ ILU(0) in place: L_ik = A_ik*inv(U_kk) below, inv(U_ii) on the diagonal, U above (no fill)
+    RealType Lik[16], tmp[16], Aii[16];
+    for (int i = 0; i < nN; ++i) {
+        for (int kk = brow[i]; kk < bdiagPtr[i]; ++kk) {                  // k < i
+            int k = bcol[kk];
+            acmBlkMatmul4(&bilu[16 * kk], &bilu[16 * bdiagPtr[k]], Lik);  // L_ik = A_ik * inv(U_kk)
+            for (int t = 0; t < 16; ++t) bilu[16 * kk + t] = Lik[t];
+            for (int jj = bdiagPtr[k] + 1; jj < brow[k + 1]; ++jj) {      // upper cols j>k of row k
+                int j = bcol[jj], sij = slot(i, j);
+                if (sij >= 0) { acmBlkMatmul4(Lik, &bilu[16 * jj], tmp); for (int t = 0; t < 16; ++t) bilu[16 * sij + t] -= tmp[t]; }
+            }
+        }
+        acmInvert4x4(&bilu[16 * bdiagPtr[i]], Aii);                       // store inv(U_ii)
+        for (int t = 0; t < 16; ++t) bilu[16 * bdiagPtr[i] + t] = Aii[t];
+    }
+    // 4. level schedule on the lower block-graph: level[i] = 1 + max_{k<i stored} level[k]
+    std::vector<int> level(nN, 0); int maxLev = 0;
+    for (int i = 0; i < nN; ++i) {
+        int lv = 0;
+        for (int kk = brow[i]; kk < bdiagPtr[i]; ++kk) lv = std::max(lv, level[bcol[kk]] + 1);
+        level[i] = lv; maxLev = std::max(maxLev, lv);
+    }
+    int nLev = maxLev + 1;
+    std::vector<int> levStart(nLev + 1, 0);
+    for (int i = 0; i < nN; ++i) levStart[level[i] + 1]++;
+    for (int l = 0; l < nLev; ++l) levStart[l + 1] += levStart[l];
+    std::vector<int> nodesByLevel(nN), pos(levStart.begin(), levStart.end());
+    for (int i = 0; i < nN; ++i) nodesByLevel[pos[level[i]]++] = i;
+    // 5. upload
+    L.brow.assign(brow.begin(), brow.end());
+    L.bcol.assign(bcol.begin(), bcol.end());
+    L.bdiagPtr.assign(bdiagPtr.begin(), bdiagPtr.end());
+    L.bilu.assign(bilu.begin(), bilu.end());
+    L.nodesByLevel.assign(nodesByLevel.begin(), nodesByLevel.end());
+    L.h_levStart = levStart; L.nLev = nLev;
+    L.ytmp.assign(L.ND, RealType(0));
+}
+
+// one or more block-ILU(0) sweeps: x += omega * (LU)^-1 (b - A x), triangular solves level-scheduled.
+template<typename RealType>
+inline void acmIluSmoothGpu(AcmLevel<RealType>& L, int sweeps, RealType omega)
+{
+    const int blk = 256, grd = (L.ND + blk - 1) / blk;
+    for (int s = 0; s < sweeps; ++s) {
+        acmSpmvKernel<RealType><<<grd, blk>>>(acmRaw(L.rowOff), acmRaw(L.colInd), acmRaw(L.vals),
+                                              acmRaw(L.xvec), acmRaw(L.rtmp), L.ND);
+        acmSubKernel<RealType><<<grd, blk>>>(acmRaw(L.bvec), acmRaw(L.rtmp), acmRaw(L.rtmp), L.ND);   // rtmp = b - A x
+        for (int lv = 0; lv < L.nLev; ++lv) {                            // forward L-solve -> ytmp (ascending)
+            int ls = L.h_levStart[lv], le = L.h_levStart[lv + 1], g = (le - ls + blk - 1) / blk;
+            if (g > 0) acmIluLsolveKernel<RealType><<<g, blk>>>(acmRaw(L.brow), acmRaw(L.bcol), acmRaw(L.bdiagPtr),
+                acmRaw(L.bilu), acmRaw(L.nodesByLevel), ls, le, acmRaw(L.rtmp), acmRaw(L.ytmp));
+        }
+        for (int lv = L.nLev - 1; lv >= 0; --lv) {                       // back U-solve -> xtmp = dx (descending)
+            int ls = L.h_levStart[lv], le = L.h_levStart[lv + 1], g = (le - ls + blk - 1) / blk;
+            if (g > 0) acmIluUsolveKernel<RealType><<<g, blk>>>(acmRaw(L.brow), acmRaw(L.bcol), acmRaw(L.bdiagPtr),
+                acmRaw(L.bilu), acmRaw(L.nodesByLevel), ls, le, acmRaw(L.ytmp), acmRaw(L.xtmp));
+        }
+        acmAxpyKernel<RealType><<<grd, blk>>>(acmRaw(L.xvec), acmRaw(L.xtmp), omega, L.ND);            // x += omega*dx
+    }
+}
+
 template<typename RealType>
 void acmBuildHierarchy(const thrust::device_vector<int>& rowOff0,
                        const thrust::device_vector<int>& colInd0,
@@ -239,7 +402,8 @@ void acmBuildHierarchy(const thrust::device_vector<int>& rowOff0,
         thrust::copy(levels[idx].vals.begin(), levels[idx].vals.end(), hva.begin());
         std::vector<int> agg; int nCoarse;
         acmDirectionalAggregate<RealType>(hro, hci, hva, levels[idx].nNodes, kmax, beta, agg, nCoarse);
-        if (nCoarse >= levels[idx].nNodes) break;            // no coarsening progress
+        if (nCoarse >= levels[idx].nNodes) break;            // no coarsening progress -> coarsest (no ILU, nLev=0)
+        if (acmUseIlu()) acmBuildLevelIlu<RealType>(levels[idx], hro, hci, hva);   // smoothed level only -> build ILU
 
         levels[idx].agg.assign(agg.begin(), agg.end());
         levels[idx].nCoarse = nCoarse;
@@ -256,6 +420,7 @@ void acmBuildHierarchy(const thrust::device_vector<int>& rowOff0,
 template<typename RealType>
 inline void acmSmoothGpu(AcmLevel<RealType>& L, int sweeps, RealType omega, bool useBlock)
 {
+    if (acmUseIlu() && L.nLev > 0) { acmIluSmoothGpu(L, sweeps, omega); return; }   // block-ILU(0) (coarsest nLev=0 -> Jacobi)
     const int blk = 256, grd = (L.ND + blk - 1) / blk, gN = (L.nNodes + blk - 1) / blk;
     for (int s = 0; s < sweeps; ++s) {
         if (useBlock)
