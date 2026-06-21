@@ -42,6 +42,7 @@ using namespace mars::amr;
 #include <thrust/copy.h>
 #include <cusolverSp.h>
 #include <cusparse.h>
+#include <chrono>
 #include <mpi.h>
 #include <iostream>
 #include <iomanip>
@@ -1205,8 +1206,14 @@ int main(int argc, char** argv)
                 bnorm = std::sqrt(thrust::inner_product(
                     thrust::device_pointer_cast(b.data()), thrust::device_pointer_cast(b.data() + ND),
                     thrust::device_pointer_cast(b.data()), RealType(0)));
-                acm.setReuse(acmRebuild > 1 && (pit % acmRebuild != 0));   // rebuild hierarchy every K iters, reuse between
+                bool reuseThis = (acmRebuild > 1 && (pit % acmRebuild != 0));   // rebuild hierarchy every K iters, reuse between
+                acm.setReuse(reuseThis);
+                cudaDeviceSynchronize();                    // flush prior async work so the timer measures only the solve
+                auto tSolve0 = std::chrono::high_resolution_clock::now();
                 ga.solve(Am, b, xa, true);                  // (re-)setup the ACM hierarchy unless frozen this iter
+                cudaDeviceSynchronize();
+                double solveMs = std::chrono::duration<double, std::milli>(
+                    std::chrono::high_resolution_clock::now() - tSolve0).count();   // setup(if rebuilt)+FlexGMRES
                 itA = ga.getLastIterations(); rA = resid(xa);
                 // extract the SOLVED velocity into temps, then Picard under-relax: u <- w*u_new + (1-w)*u_old.
                 // d(u) is the RELAXED change; convergence is relative to the velocity scale (|u|max).
@@ -1224,7 +1231,8 @@ int main(int argc, char** argv)
                 thrust::transform(d_sy.begin(), d_sy.end(), d_avy.begin(), d_avy.begin(), blend);
                 thrust::transform(d_sz.begin(), d_sz.end(), d_avz.begin(), d_avz.begin(), blend);
                 std::cout << "[phase0][acm-pump][picard " << pit << "] ACM iters=" << itA << " res=" << rA
-                          << " d(u)=" << du << " d(u)/|u|=" << du / (uscale + RealType(1e-30)) << "\n";
+                          << " d(u)=" << du << " d(u)/|u|=" << du / (uscale + RealType(1e-30))
+                          << " time=" << solveMs << "ms" << (reuseThis ? " (reuse)" : " (rebuild)") << "\n";
                 if (du < RealType(1e-5) * (uscale + RealType(1e-30))) { ++pit; break; }   // relative steady-state
             }
 
