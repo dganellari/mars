@@ -200,7 +200,7 @@ __global__ void acmDiluUsolveKernel(const int* brow, const int* bcol, const int*
 {
     int t = cstart + blockIdx.x * blockDim.x + threadIdx.x; if (t >= cend) return;
     int i = nodesByColor[t], ci = color[i];
-    RealType ti[4]; for (int a = 0; a < 4; ++a) ti[a] = z[4*i+a];  // z = w from the forward sweep (= D_i y_i)
+    RealType ti[4]; for (int a = 0; a < 4; ++a) ti[a] = z[4*i+a];  // z = w STORED by the forward sweep (NOT recomputed as D_i*y_i; equal by construction since y_i=inv(D_i)w_i)
     for (int jj = brow[i]; jj < brow[i+1]; ++jj) {               // strictly-upper-COLOR off-diags (full row scan)
         int j = bcol[jj]; if (j == i || color[j] <= ci) continue;
         const RealType* Aij = bblk + 16*jj;
