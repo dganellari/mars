@@ -56,6 +56,8 @@ public:
     // build the multilevel hierarchy once from the finest coupled CSR (interleaved 4*node+comp)
     void setup(const Matrix& A) override
     {
+        if (reuse_ && !levels_.empty()) return;   // frozen preconditioner: reuse the hierarchy (the ILU
+                                                  // factorization is host-heavy -> rebuild every K Picard iters, not every one)
         const int ND = static_cast<int>(A.numRows());
         const int nz = static_cast<int>(A.nnz());
         thrust::device_vector<IndexType> ro(ND + 1), ci(nz);
@@ -85,10 +87,12 @@ public:
 
     int numLevels() const { return static_cast<int>(levels_.size()); }
     RealType beta() const { return beta_; }
+    void setReuse(bool b) { reuse_ = b; }   // true -> skip the next setup() rebuild, reuse the current hierarchy
 
 private:
     int kmax_, maxCoarseND_, pre_, post_, coarse_, nd_ = 0;
     RealType omega_, beta_;
+    bool reuse_ = false;
     std::vector<mars::AcmLevel<RealType>> levels_;
     cusolverSpHandle_t cs_ = nullptr;
     cusparseMatDescr_t descr_ = nullptr;

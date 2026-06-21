@@ -405,6 +405,7 @@ int main(int argc, char** argv)
     bool   inletFlip  = false;   // --inlet-flip-normal: reverse the inlet normal if the Exodus winding is outward
     double nuVal      = -1.0;    // --nu: dimensional kinematic viscosity (overrides 1/Re when >=0)
     double relax      = 1.0;     // --relax: Picard under-relaxation omega (u <- w*u_new + (1-w)*u_old); <1 for high Re
+    int    acmRebuild = 1;       // --acm-rebuild: rebuild the ACM hierarchy every K Picard iters (reuse between; K>1 for host-heavy ILU)
     for (int i = 1; i < argc; ++i)
     {
         std::string a = argv[i];
@@ -422,6 +423,7 @@ int main(int argc, char** argv)
         else if (a == "--rhie-chow")              { doAssemble = true; doRhieChow = true; }
         else if (a == "--supg")                     doSupg     = true;
         else if (a.rfind("--relax=", 0) == 0)        relax      = std::stod(a.substr(8));
+        else if (a.rfind("--acm-rebuild=", 0) == 0)  acmRebuild = std::stoi(a.substr(14));
         else if (a == "--channel")                { doAssemble = true; doSolve = true; doChannel = true; }
         else if (a.rfind("--inlet-ss=", 0) == 0)  { inletSS = a.substr(11); doAssemble = doRhieChow = true; }
         else if (a.rfind("--outlet-ss=", 0) == 0)   outletSS   = a.substr(12);
@@ -1203,7 +1205,8 @@ int main(int argc, char** argv)
                 bnorm = std::sqrt(thrust::inner_product(
                     thrust::device_pointer_cast(b.data()), thrust::device_pointer_cast(b.data() + ND),
                     thrust::device_pointer_cast(b.data()), RealType(0)));
-                ga.solve(Am, b, xa, true);                  // re-setup the ACM hierarchy on the new operator
+                acm.setReuse(acmRebuild > 1 && (pit % acmRebuild != 0));   // rebuild hierarchy every K iters, reuse between
+                ga.solve(Am, b, xa, true);                  // (re-)setup the ACM hierarchy unless frozen this iter
                 itA = ga.getLastIterations(); rA = resid(xa);
                 // extract the SOLVED velocity into temps, then Picard under-relax: u <- w*u_new + (1-w)*u_old.
                 // d(u) is the RELAXED change; convergence is relative to the velocity scale (|u|max).
