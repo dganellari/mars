@@ -27,6 +27,7 @@
 #include <type_traits>
 #include <cmath>
 #include <cstdlib>
+#include <cstdio>
 #include <cstring>
 
 namespace mars {
@@ -330,6 +331,10 @@ inline void acmBuildLevelIlu(AcmLevel<RealType>& L, const std::vector<int>& rowO
         level[i] = lv; maxLev = std::max(maxLev, lv);
     }
     int nLev = maxLev + 1;
+    // diagnostic: nLev = the serial depth of the level-scheduled triangular solve (2*nLev kernel launches
+    // per sweep). Large nLev (SFC ordering) -> launch-bound, the case for multicolor reordering. Prints
+    // per build, so it also shows whether the hierarchy is being reused across Picard iters.
+    std::fprintf(stderr, "[acm-ilu] build nN=%d nLev=%d (avg level width %.1f)\n", nN, nLev, double(nN) / nLev);
     std::vector<int> levStart(nLev + 1, 0);
     for (int i = 0; i < nN; ++i) levStart[level[i] + 1]++;
     for (int l = 0; l < nLev; ++l) levStart[l + 1] += levStart[l];
