@@ -1230,9 +1230,11 @@ int main(int argc, char** argv)
                 thrust::transform(d_sx.begin(), d_sx.end(), d_avx.begin(), d_avx.begin(), blend);
                 thrust::transform(d_sy.begin(), d_sy.end(), d_avy.begin(), d_avy.begin(), blend);
                 thrust::transform(d_sz.begin(), d_sz.end(), d_avz.begin(), d_avz.begin(), blend);
+                double setupMs = acm.getLastSetupMs();      // hierarchy build (0 if reused); solve = total - setup
                 std::cout << "[phase0][acm-pump][picard " << pit << "] ACM iters=" << itA << " res=" << rA
                           << " d(u)=" << du << " d(u)/|u|=" << du / (uscale + RealType(1e-30))
-                          << " time=" << solveMs << "ms" << (reuseThis ? " (reuse)" : " (rebuild)") << "\n";
+                          << " setup=" << setupMs << "ms solve=" << (solveMs - setupMs) << "ms"
+                          << (reuseThis ? " (reuse)" : " (rebuild)") << "\n";
                 if (du < RealType(1e-5) * (uscale + RealType(1e-30))) { ++pit; break; }   // relative steady-state
             }
 
