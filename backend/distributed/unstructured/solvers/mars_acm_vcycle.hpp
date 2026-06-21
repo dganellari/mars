@@ -171,6 +171,45 @@ __global__ void acmIluUsolveKernel(const int* brow, const int* bcol, const int* 
     for (int a = 0; a < 4; ++a) { RealType s = 0; for (int b = 0; b < 4; ++b) s += Di[4*a+b]*ti[b]; dx[4*i+a] = s; }
 }
 
+// ---- multicolor block-DILU solve kernels ----
+// Split lower/upper by COLOR (not bdiagPtr/index): color order != index order, so a neighbor k<i can have
+// color[k]>color[i] and belong to U. So we iterate the FULL row and branch on color[]. Off-diagonals are
+// raw A (bblk); inv(D_i) is NODE-indexed (dinvD). One color per launch -> all nodes in it are independent.
+template<typename RealType>
+__global__ void acmDiluLsolveKernel(const int* brow, const int* bcol, const int* color,
+        const RealType* bblk, const RealType* dinvD, const int* nodesByColor,
+        int cstart, int cend, const RealType* r, RealType* y, RealType* w)
+{
+    int t = cstart + blockIdx.x * blockDim.x + threadIdx.x; if (t >= cend) return;
+    int i = nodesByColor[t], ci = color[i];
+    RealType wi[4]; for (int a = 0; a < 4; ++a) wi[a] = r[4*i+a];
+    for (int kk = brow[i]; kk < brow[i+1]; ++kk) {               // strictly-lower-COLOR off-diags (full row scan)
+        int k = bcol[kk]; if (k == i || color[k] >= ci) continue;
+        const RealType* Aik = bblk + 16*kk;
+        for (int a = 0; a < 4; ++a) for (int b = 0; b < 4; ++b) wi[a] -= Aik[4*a+b] * y[4*k+b];
+    }
+    for (int a = 0; a < 4; ++a) w[4*i+a] = wi[a];                // w = pre-diagonal residual = z for the back solve
+    const RealType* iD = dinvD + 16*i;
+    for (int a = 0; a < 4; ++a) { RealType s = 0; for (int b = 0; b < 4; ++b) s += iD[4*a+b]*wi[b]; y[4*i+a] = s; }
+}
+
+template<typename RealType>
+__global__ void acmDiluUsolveKernel(const int* brow, const int* bcol, const int* color,
+        const RealType* bblk, const RealType* dinvD, const int* nodesByColor,
+        int cstart, int cend, const RealType* z, RealType* x)
+{
+    int t = cstart + blockIdx.x * blockDim.x + threadIdx.x; if (t >= cend) return;
+    int i = nodesByColor[t], ci = color[i];
+    RealType ti[4]; for (int a = 0; a < 4; ++a) ti[a] = z[4*i+a];  // z = w from the forward sweep (= D_i y_i)
+    for (int jj = brow[i]; jj < brow[i+1]; ++jj) {               // strictly-upper-COLOR off-diags (full row scan)
+        int j = bcol[jj]; if (j == i || color[j] <= ci) continue;
+        const RealType* Aij = bblk + 16*jj;
+        for (int a = 0; a < 4; ++a) for (int b = 0; b < 4; ++b) ti[a] -= Aij[4*a+b] * x[4*j+b];
+    }
+    const RealType* iD = dinvD + 16*i;
+    for (int a = 0; a < 4; ++a) { RealType s = 0; for (int b = 0; b < 4; ++b) s += iD[4*a+b]*ti[b]; x[4*i+a] = s; }
+}
+
 template<typename RealType>
 __global__ void acmAxpyKernel(RealType* x, const RealType* y, RealType a, int ND)
 { int r = blockIdx.x * blockDim.x + threadIdx.x; if (r < ND) x[r] += a * y[r]; }
@@ -196,6 +235,13 @@ struct AcmLevel {
     thrust::device_vector<RealType> bilu;
     std::vector<int> h_levStart;                               // host: per-level slices into nodesByLevel (launch sizing)
     int nLev = 0;
+    // multicolor block-DILU smoother (built only when MARS_ACM_SMOOTHER=dilu): off-diagonals = raw A blocks
+    // (bblk), diagonal = factored inv(D_i) (dilu_dinv, NODE-indexed); multicolor schedule (numColors << nLev
+    // -> ~few launches/sweep vs ILU's thousands). Reuses brow/bcol/bdiagPtr.
+    thrust::device_vector<int> color, nodesByColor;            // color: node->color id; nodesByColor: nodes grouped by color
+    thrust::device_vector<RealType> bblk, dilu_dinv, ztmp;     // bblk: raw A 4x4 blocks; dilu_dinv: inv(D_i); ztmp: forward pre-diag residual
+    std::vector<int> h_colStart;                               // host: per-color slices into nodesByColor
+    int numColors = 0;
 };
 
 // host-once DIRECTIONAL aggregation (Mavriplis-style, paper Eqs 19-20) on the block graph of a coupled
@@ -266,6 +312,16 @@ inline bool acmUseIlu()
 {
     static int v = -1;
     if (v < 0) { const char* e = std::getenv("MARS_ACM_SMOOTHER"); v = (e && std::strcmp(e, "ilu") == 0) ? 1 : 0; }
+    return v == 1;
+}
+
+// multicolor block-DILU smoother (= AMGX's MULTICOLOR_DILU): MARS_ACM_SMOOTHER=dilu. Multicolor-parallel
+// (numColors launches/sweep) where ILU's level schedule is launch-bound (nLev ~ thousands on SFC order).
+// Host study (acm_ilu_smoother_study.py): multicolor ILU == DILU, ~3x weaker than natural-order but beats Jacobi.
+inline bool acmUseDilu()
+{
+    static int v = -1;
+    if (v < 0) { const char* e = std::getenv("MARS_ACM_SMOOTHER"); v = (e && std::strcmp(e, "dilu") == 0) ? 1 : 0; }
     return v == 1;
 }
 
@@ -350,6 +406,84 @@ inline void acmBuildLevelIlu(AcmLevel<RealType>& L, const std::vector<int>& rowO
     L.ytmp.assign(L.ND, RealType(0));
 }
 
+// Build the multicolor block-DILU smoother for one level (host, once per hierarchy level). Same node
+// block-CSR as the ILU path (structurally symmetrized, union of comp-rows), but instead of the IKJ
+// factorization + level schedule: keep A's raw 4x4 off-diagonal blocks (bblk), factor ONLY the block
+// diagonal in COLOR order (D_i = A_ii - sum_{color(k)<color(i)} A_ik inv(D_k) A_ki), and schedule by a
+// greedy coloring so the triangular solves run color-by-color in parallel (numColors << nLev launches).
+template<typename RealType>
+inline void acmBuildLevelDilu(AcmLevel<RealType>& L, const std::vector<int>& rowOff,
+                              const std::vector<int>& colInd, const std::vector<RealType>& vals)
+{
+    const int nN = L.nNodes;
+    // 1-2. identical to acmBuildLevelIlu: symmetrized node block-CSR + extract raw A blocks into bblk
+    std::vector<std::set<int>> cset(nN);
+    for (int I = 0; I < nN; ++I) {
+        cset[I].insert(I);
+        for (int a = 0; a < 4; ++a) { int r = 4 * I + a; for (int k = rowOff[r]; k < rowOff[r + 1]; ++k) cset[I].insert(colInd[k] >> 2); }
+    }
+    for (int I = 0; I < nN; ++I) { std::vector<int> row(cset[I].begin(), cset[I].end()); for (int J : row) cset[J].insert(I); }
+    std::vector<int> brow(nN + 1, 0), bcol, bdiagPtr(nN, -1);
+    for (int I = 0; I < nN; ++I) brow[I + 1] = brow[I] + (int)cset[I].size();
+    bcol.resize(brow[nN]);
+    for (int I = 0; I < nN; ++I) { int p = brow[I]; for (int J : cset[I]) { bcol[p] = J; if (J == I) bdiagPtr[I] = p; ++p; } }
+    auto slot = [&](int i, int j) -> int {
+        int lo = brow[i], hi = brow[i + 1];
+        while (lo < hi) { int m = (lo + hi) / 2; if (bcol[m] < j) lo = m + 1; else if (bcol[m] > j) hi = m; else return m; }
+        return -1;
+    };
+    std::vector<RealType> bblk(16 * brow[nN], RealType(0));
+    for (int I = 0; I < nN; ++I)
+        for (int a = 0; a < 4; ++a) {
+            int r = 4 * I + a;
+            for (int k = rowOff[r]; k < rowOff[r + 1]; ++k) {
+                int J = colInd[k] >> 2, b = colInd[k] & 3, s = slot(I, J);
+                if (s >= 0) bblk[16 * s + 4 * a + b] = vals[k];
+            }
+        }
+    // 3a. greedy first-fit coloring on the symmetrized block graph (forbidden-stamp, O(nnz))
+    std::vector<int> color(nN, -1), forbidden(nN, -1);
+    int numColors = 0;
+    for (int i = 0; i < nN; ++i) {
+        for (int kk = brow[i]; kk < brow[i + 1]; ++kk) { int j = bcol[kk]; if (j != i && color[j] >= 0) forbidden[color[j]] = i; }
+        int c = 0; while (c < numColors && forbidden[c] == i) ++c;
+        if (c == numColors) ++numColors;
+        color[i] = c;
+    }
+    // counting-sort nodes by color -> nodesByColor + colStart (the per-color launch slices)
+    std::vector<int> colStart(numColors + 1, 0);
+    for (int i = 0; i < nN; ++i) colStart[color[i] + 1]++;
+    for (int c = 0; c < numColors; ++c) colStart[c + 1] += colStart[c];
+    std::vector<int> nodesByColor(nN), pos(colStart.begin(), colStart.end());
+    for (int i = 0; i < nN; ++i) nodesByColor[pos[color[i]]++] = i;
+    // 3b. block-DILU diagonal factorization in COLOR order (every lower-color inv(D_k) ready first)
+    std::vector<RealType> dinv(16 * nN);
+    for (int t = 0; t < nN; ++t) {
+        int i = nodesByColor[t];
+        RealType Di[16]; for (int q = 0; q < 16; ++q) Di[q] = bblk[16 * bdiagPtr[i] + q];   // A_ii
+        for (int kk = brow[i]; kk < brow[i + 1]; ++kk) {
+            int k = bcol[kk]; if (k == i || color[k] >= color[i]) continue;                  // strictly lower-color
+            int kkT = slot(k, i); if (kkT < 0) continue;                                     // need A_ki (sym -> present)
+            RealType T1[16], T2[16];
+            acmBlkMatmul4(&bblk[16 * kk], &dinv[16 * k], T1);                                // A_ik inv(D_k)
+            acmBlkMatmul4(T1, &bblk[16 * kkT], T2);                                          // (A_ik inv(D_k)) A_ki
+            for (int q = 0; q < 16; ++q) Di[q] -= T2[q];
+        }
+        acmInvert4x4(Di, &dinv[16 * i]);                                                     // store inv(D_i)
+    }
+    std::fprintf(stderr, "[acm-dilu] build nN=%d numColors=%d (avg color width %.1f)\n", nN, numColors, double(nN) / numColors);
+    // 4. upload
+    L.brow.assign(brow.begin(), brow.end());
+    L.bcol.assign(bcol.begin(), bcol.end());
+    L.bdiagPtr.assign(bdiagPtr.begin(), bdiagPtr.end());
+    L.bblk.assign(bblk.begin(), bblk.end());
+    L.color.assign(color.begin(), color.end());
+    L.nodesByColor.assign(nodesByColor.begin(), nodesByColor.end());
+    L.dilu_dinv.assign(dinv.begin(), dinv.end());
+    L.h_colStart = colStart; L.numColors = numColors;
+    L.ytmp.assign(L.ND, RealType(0)); L.ztmp.assign(L.ND, RealType(0));
+}
+
 // one or more block-ILU(0) sweeps: x += omega * (LU)^-1 (b - A x), triangular solves level-scheduled.
 template<typename RealType>
 inline void acmIluSmoothGpu(AcmLevel<RealType>& L, int sweeps, RealType omega)
@@ -368,6 +502,32 @@ inline void acmIluSmoothGpu(AcmLevel<RealType>& L, int sweeps, RealType omega)
             int ls = L.h_levStart[lv], le = L.h_levStart[lv + 1], g = (le - ls + blk - 1) / blk;
             if (g > 0) acmIluUsolveKernel<RealType><<<g, blk>>>(acmRaw(L.brow), acmRaw(L.bcol), acmRaw(L.bdiagPtr),
                 acmRaw(L.bilu), acmRaw(L.nodesByLevel), ls, le, acmRaw(L.ytmp), acmRaw(L.xtmp));
+        }
+        acmAxpyKernel<RealType><<<grd, blk>>>(acmRaw(L.xvec), acmRaw(L.xtmp), omega, L.ND);            // x += omega*dx
+    }
+}
+
+// one or more multicolor block-DILU sweeps: x += omega * (LU)^-1 (b - A x), triangular solves color-parallel.
+// M = (D+L) D^-1 (D+U). Forward (D+L)y=r: w_i = r_i - sum_{lower-color} A_ik y_k, then y_i = inv(D_i) w_i.
+// Since z_i = D_i y_i = w_i, the back solve (D+U)x=z reads w (ztmp) directly -- exact ONLY because the
+// forward step multiplies by EXACTLY inv(D_i) (a future forward-diagonal damping would break the z:=w shortcut).
+template<typename RealType>
+inline void acmDiluSmoothGpu(AcmLevel<RealType>& L, int sweeps, RealType omega)
+{
+    const int blk = 256, grd = (L.ND + blk - 1) / blk;
+    for (int s = 0; s < sweeps; ++s) {
+        acmSpmvKernel<RealType><<<grd, blk>>>(acmRaw(L.rowOff), acmRaw(L.colInd), acmRaw(L.vals),
+                                              acmRaw(L.xvec), acmRaw(L.rtmp), L.ND);
+        acmSubKernel<RealType><<<grd, blk>>>(acmRaw(L.bvec), acmRaw(L.rtmp), acmRaw(L.rtmp), L.ND);   // rtmp = b - A x
+        for (int c = 0; c < L.numColors; ++c) {                            // forward L-solve -> ytmp (y), pre-diag w -> ztmp
+            int cs = L.h_colStart[c], ce = L.h_colStart[c + 1], g = (ce - cs + blk - 1) / blk;
+            if (g > 0) acmDiluLsolveKernel<RealType><<<g, blk>>>(acmRaw(L.brow), acmRaw(L.bcol), acmRaw(L.color),
+                acmRaw(L.bblk), acmRaw(L.dilu_dinv), acmRaw(L.nodesByColor), cs, ce, acmRaw(L.rtmp), acmRaw(L.ytmp), acmRaw(L.ztmp));
+        }
+        for (int c = L.numColors - 1; c >= 0; --c) {                       // back U-solve -> xtmp (dx), RHS = ztmp (w)
+            int cs = L.h_colStart[c], ce = L.h_colStart[c + 1], g = (ce - cs + blk - 1) / blk;
+            if (g > 0) acmDiluUsolveKernel<RealType><<<g, blk>>>(acmRaw(L.brow), acmRaw(L.bcol), acmRaw(L.color),
+                acmRaw(L.bblk), acmRaw(L.dilu_dinv), acmRaw(L.nodesByColor), cs, ce, acmRaw(L.ztmp), acmRaw(L.xtmp));
         }
         acmAxpyKernel<RealType><<<grd, blk>>>(acmRaw(L.xvec), acmRaw(L.xtmp), omega, L.ND);            // x += omega*dx
     }
@@ -408,7 +568,8 @@ void acmBuildHierarchy(const thrust::device_vector<int>& rowOff0,
         std::vector<int> agg; int nCoarse;
         acmDirectionalAggregate<RealType>(hro, hci, hva, levels[idx].nNodes, kmax, beta, agg, nCoarse);
         if (nCoarse >= levels[idx].nNodes) break;            // no coarsening progress -> coarsest (no ILU, nLev=0)
-        if (acmUseIlu()) acmBuildLevelIlu<RealType>(levels[idx], hro, hci, hva);   // smoothed level only -> build ILU
+        if (acmUseIlu()) acmBuildLevelIlu<RealType>(levels[idx], hro, hci, hva);        // smoothed level only -> build ILU
+        else if (acmUseDilu()) acmBuildLevelDilu<RealType>(levels[idx], hro, hci, hva); // or multicolor block-DILU
 
         levels[idx].agg.assign(agg.begin(), agg.end());
         levels[idx].nCoarse = nCoarse;
@@ -425,7 +586,8 @@ void acmBuildHierarchy(const thrust::device_vector<int>& rowOff0,
 template<typename RealType>
 inline void acmSmoothGpu(AcmLevel<RealType>& L, int sweeps, RealType omega, bool useBlock)
 {
-    if (acmUseIlu() && L.nLev > 0) { acmIluSmoothGpu(L, sweeps, omega); return; }   // block-ILU(0) (coarsest nLev=0 -> Jacobi)
+    if (acmUseIlu() && L.nLev > 0) { acmIluSmoothGpu(L, sweeps, omega); return; }        // block-ILU(0) (coarsest nLev=0 -> Jacobi)
+    if (acmUseDilu() && L.numColors > 0) { acmDiluSmoothGpu(L, sweeps, omega); return; } // multicolor block-DILU (coarsest -> Jacobi)
     const int blk = 256, grd = (L.ND + blk - 1) / blk, gN = (L.nNodes + blk - 1) / blk;
     for (int s = 0; s < sweeps; ++s) {
         if (useBlock)
