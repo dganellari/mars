@@ -19,6 +19,12 @@
 #include <thrust/device_vector.h>
 #include <thrust/fill.h>
 #include <thrust/system/cuda/execution_policy.h>   // thrust::cuda::par.on(stream) for stream-ordered fills
+#include <thrust/sequence.h>
+#include <thrust/sort.h>
+#include <thrust/count.h>
+#include <thrust/extrema.h>
+#include <thrust/binary_search.h>
+#include <thrust/iterator/counting_iterator.h>
 #include <cusolverSp.h>
 #include <cusparse.h>
 #include <vector>
@@ -263,6 +269,117 @@ struct AcmLevel {
     int numColors = 0;
 };
 
+// ---- GPU-native block-CSR build (§1a; replaces the host std::set, mirrors buildCoarseOperator emit/sort/split) ----
+// Per scalar row r=4I+a, emit the off-diag block edge (I,J) AND its transpose (J,I) for each nz (symmetrize),
+// plus the diagonal (I,I) once per node (comp-row 0). Packed key=(long long)I*nN+J; sort+unique -> the
+// symmetrized node block-CSR with bcol ascending within each row for free. Value-independent (mesh sparsity).
+__global__ void acmBlockKeyCountKernel(const int* rowOff, int NDf, int* cnt)
+{
+    int r = blockIdx.x * blockDim.x + threadIdx.x; if (r >= NDf) return;
+    cnt[r] = 2 * (rowOff[r + 1] - rowOff[r]) + ((r & 3) == 0 ? 1 : 0);   // 2 keys/nz (edge+transpose) + diag once/node
+}
+__global__ void acmBlockKeyScatterKernel(const int* rowOff, const int* colInd, const int* off,
+                                         int NDf, long long nN, long long* key)
+{
+    int r = blockIdx.x * blockDim.x + threadIdx.x; if (r >= NDf) return;
+    long long I = r >> 2, base = off[r]; int p = 0;
+    for (int k = rowOff[r]; k < rowOff[r + 1]; ++k) {
+        long long J = colInd[k] >> 2;
+        key[base + p++] = I * nN + J;                          // edge (I,J)
+        key[base + p++] = J * nN + I;                          // transpose (J,I) -> structurally symmetric
+    }
+    if ((r & 3) == 0) key[base + p++] = I * nN + I;            // diagonal (I,I), once per node
+}
+__global__ void acmBlockDiagPtrKernel(const int* brow_id, const int* bcol, int nnzB, int* bdiagPtr)
+{
+    int i = blockIdx.x * blockDim.x + threadIdx.x; if (i >= nnzB) return;
+    if (bcol[i] == brow_id[i]) bdiagPtr[brow_id[i]] = i;       // the (I,I) slot
+}
+
+// build brow/bcol/bdiagPtr (device) for the nN-node symmetrized block graph from the level's device scalar CSR.
+template<typename RealType>
+inline void acmBuildBlockCsrGpu(int nN, const thrust::device_vector<int>& rowOff,
+                                const thrust::device_vector<int>& colInd,
+                                thrust::device_vector<int>& brow, thrust::device_vector<int>& bcol,
+                                thrust::device_vector<int>& bdiagPtr)
+{
+    const int NDf = 4 * nN, blk = 256;
+    thrust::device_vector<int> off(NDf + 1, 0);
+    acmBlockKeyCountKernel<<<(NDf + blk - 1) / blk, blk>>>(acmRaw(rowOff), NDf, acmRaw(off));
+    thrust::exclusive_scan(off.begin(), off.end(), off.begin());
+    const int nKeys = off[NDf];                                // control scalar (1 int D2H)
+    thrust::device_vector<long long> key(nKeys);
+    acmBlockKeyScatterKernel<<<(NDf + blk - 1) / blk, blk>>>(acmRaw(rowOff), acmRaw(colInd), acmRaw(off),
+                                                             NDf, static_cast<long long>(nN), acmRaw(key));
+    thrust::sort(key.begin(), key.end());
+    const int nnzB = static_cast<int>(thrust::unique(key.begin(), key.end()) - key.begin());
+    key.resize(nnzB);
+    thrust::device_vector<int> brow_id(nnzB);
+    bcol.resize(nnzB);
+    acmSplitKeyKernel<RealType><<<(nnzB + blk - 1) / blk, blk>>>(acmRaw(key), static_cast<long long>(nN),
+                                                                 nnzB, acmRaw(brow_id), acmRaw(bcol));  // key -> (key/nN, key%nN)
+    brow.resize(nN + 1);
+    thrust::lower_bound(brow_id.begin(), brow_id.end(),
+                        thrust::counting_iterator<int>(0), thrust::counting_iterator<int>(nN + 1), brow.begin());
+    bdiagPtr.assign(nN, -1);
+    acmBlockDiagPtrKernel<<<(nnzB + blk - 1) / blk, blk>>>(acmRaw(brow_id), acmRaw(bcol), nnzB, acmRaw(bdiagPtr));
+}
+
+// ---- GPU Jones-Plassmann coloring (§1b; replaces the host greedy first-fit) on the NODE block graph ----
+// NOT cuSPARSE csrcolor (that colors the scalar 4nN matrix -> splits a node's 4 comps across colors,
+// breaking block-DILU). Deterministic priority rho[i]=hash(i); each round the local-rho-max uncolored
+// nodes (an independent set) take the smallest color free of their colored neighbors. Race-free: the
+// max-nodes are mutually non-adjacent, and a node only reads previous-round colors + neighbor rho.
+__global__ void acmHashKernel(unsigned int* rho, int nN)
+{
+    int i = blockIdx.x * blockDim.x + threadIdx.x; if (i >= nN) return;
+    unsigned int x = static_cast<unsigned int>(i);
+    x = (x ^ 61u) ^ (x >> 16); x *= 9u; x = x ^ (x >> 4); x *= 0x27d4eb2du; x = x ^ (x >> 15);
+    rho[i] = x;
+}
+__global__ void acmJPColorKernel(const int* brow, const int* bcol, int* color, const unsigned int* rho, int nN)
+{
+    int i = blockIdx.x * blockDim.x + threadIdx.x; if (i >= nN || color[i] >= 0) return;
+    unsigned long long used = 0; bool isMax = true;
+    for (int kk = brow[i]; kk < brow[i + 1]; ++kk) {
+        int j = bcol[kk]; if (j == i) continue;
+        int cj = color[j];
+        if (cj >= 0) { if (cj < 64) used |= (1ULL << cj); }                 // colored neighbor -> forbid its color
+        else if (rho[j] > rho[i] || (rho[j] == rho[i] && j > i)) isMax = false;   // higher-priority uncolored neighbor
+    }
+    if (!isMax) return;                                                     // not the local max this round
+    int c = 0; while (c < 63 && (used & (1ULL << c))) ++c;
+    color[i] = c;
+}
+
+// build color/nodesByColor/h_colStart/numColors (device) for the nN-node block graph. The factor/solve
+// kernels need only: every node colored + adjacent nodes differ + ascending-color launches -> a valid JP
+// coloring is convergence-preserving (the multicolor DILU just uses a different but valid color order).
+template<typename RealType>
+inline void acmColorBlockGraphGpu(int nN, const thrust::device_vector<int>& brow, const thrust::device_vector<int>& bcol,
+                                  thrust::device_vector<int>& color, thrust::device_vector<int>& nodesByColor,
+                                  std::vector<int>& h_colStart, int& numColors)
+{
+    const int blk = 256, g = (nN + blk - 1) / blk;
+    color.assign(nN, -1);
+    thrust::device_vector<unsigned int> rho(nN);
+    acmHashKernel<<<g, blk>>>(acmRaw(rho), nN);
+    for (int round = 0; round < 128; ++round) {                            // capped; JP converges in ~O(log nN) rounds
+        acmJPColorKernel<<<g, blk>>>(acmRaw(brow), acmRaw(bcol), acmRaw(color), acmRaw(rho), nN);
+        if (thrust::count(color.begin(), color.end(), -1) == 0) break;     // 1 int D2H/round (control)
+    }
+    numColors = static_cast<int>(*thrust::max_element(color.begin(), color.end())) + 1;
+    nodesByColor.resize(nN);
+    thrust::sequence(nodesByColor.begin(), nodesByColor.end());
+    thrust::device_vector<int> ckey(color);                                // sort_by_key reorders the key -> use a copy
+    thrust::sort_by_key(ckey.begin(), ckey.end(), nodesByColor.begin());   // group node ids by color
+    thrust::device_vector<int> dColStart(numColors + 1);
+    thrust::lower_bound(ckey.begin(), ckey.end(),
+                        thrust::counting_iterator<int>(0), thrust::counting_iterator<int>(numColors + 1), dColStart.begin());
+    h_colStart.resize(numColors + 1);
+    thrust::copy(dColStart.begin(), dColStart.end(), h_colStart.begin());  // numColors+1 ints D2H (launch sizing)
+}
+
 // host-once DIRECTIONAL aggregation (Mavriplis-style, paper Eqs 19-20) on the block graph of a coupled
 // (4*node+comp) CSR. Strength S_IJ = ||A_IJ block||_F symmetrized -- the paper's algebraic "mutual
 // coefficients" route: on a stretched mesh the strong couplings run across the thin cell direction, so
@@ -470,61 +587,29 @@ __global__ void acmDiluFactorColorKernel(const int* brow, const int* bcol, const
     acmInvert4x4(Di, &dinvD[16 * i]);                                                   // inv(D_i)
 }
 
-// Build the multicolor block-DILU smoother for one level. STRUCTURE (symmetrized node block-CSR + greedy
-// coloring) is built host-side (value-independent given the sparsity); the VALUES (bblk extract + the
-// color-order block-diagonal factor D_i = A_ii - sum_{color(k)<color(i)} A_ik inv(D_k) A_ki) run on the
-// GPU above -- the host value loops were the dominant part of the 2.7s/Picard setup.
+// Build the multicolor block-DILU smoother for one level, FULLY GPU-NATIVE (no host work): §1a builds the
+// symmetrized node block-CSR on device, §1b colors it (Jones-Plassmann) on device, then the VALUES (bblk
+// extract + color-order block-diagonal factor D_i = A_ii - sum_{color(k)<color(i)} A_ik inv(D_k) A_ki) run on
+// the GPU. Reads only the level's DEVICE CSR (L.rowOff/colInd/vals); the host std::set + greedy coloring are gone.
 template<typename RealType>
-inline void acmBuildLevelDilu(AcmLevel<RealType>& L, const std::vector<int>& rowOff,
-                              const std::vector<int>& colInd, const std::vector<RealType>& vals)
+inline void acmBuildLevelDilu(AcmLevel<RealType>& L)
 {
     const int nN = L.nNodes;
-    // STRUCTURE (host, value-independent given the sparsity): symmetrized node block-CSR (union of the 4
-    // comp-rows + guaranteed diagonal + every transpose edge), then a greedy first-fit coloring.
-    std::vector<std::set<int>> cset(nN);
-    for (int I = 0; I < nN; ++I) {
-        cset[I].insert(I);
-        for (int a = 0; a < 4; ++a) { int r = 4 * I + a; for (int k = rowOff[r]; k < rowOff[r + 1]; ++k) cset[I].insert(colInd[k] >> 2); }
-    }
-    for (int I = 0; I < nN; ++I) { std::vector<int> row(cset[I].begin(), cset[I].end()); for (int J : row) cset[J].insert(I); }
-    std::vector<int> brow(nN + 1, 0), bcol, bdiagPtr(nN, -1);
-    for (int I = 0; I < nN; ++I) brow[I + 1] = brow[I] + (int)cset[I].size();
-    bcol.resize(brow[nN]);
-    for (int I = 0; I < nN; ++I) { int p = brow[I]; for (int J : cset[I]) { bcol[p] = J; if (J == I) bdiagPtr[I] = p; ++p; } }
-    std::vector<int> color(nN, -1), forbidden(nN, -1);
-    int numColors = 0;
-    for (int i = 0; i < nN; ++i) {
-        for (int kk = brow[i]; kk < brow[i + 1]; ++kk) { int j = bcol[kk]; if (j != i && color[j] >= 0) forbidden[color[j]] = i; }
-        int c = 0; while (c < numColors && forbidden[c] == i) ++c;
-        if (c == numColors) ++numColors;
-        color[i] = c;
-    }
-    std::vector<int> colStart(numColors + 1, 0);
-    for (int i = 0; i < nN; ++i) colStart[color[i] + 1]++;
-    for (int c = 0; c < numColors; ++c) colStart[c + 1] += colStart[c];
-    std::vector<int> nodesByColor(nN), pos(colStart.begin(), colStart.end());
-    for (int i = 0; i < nN; ++i) nodesByColor[pos[color[i]]++] = i;
-    std::fprintf(stderr, "[acm-dilu] build nN=%d numColors=%d (avg color width %.1f)\n", nN, numColors, double(nN) / numColors);
-    // upload the structure
-    L.brow.assign(brow.begin(), brow.end());
-    L.bcol.assign(bcol.begin(), bcol.end());
-    L.bdiagPtr.assign(bdiagPtr.begin(), bdiagPtr.end());
-    L.color.assign(color.begin(), color.end());
-    L.nodesByColor.assign(nodesByColor.begin(), nodesByColor.end());
-    L.h_colStart = colStart; L.numColors = numColors;
+    acmBuildBlockCsrGpu<RealType>(nN, L.rowOff, L.colInd, L.brow, L.bcol, L.bdiagPtr);          // §1a
+    acmColorBlockGraphGpu<RealType>(nN, L.brow, L.bcol, L.color, L.nodesByColor, L.h_colStart, L.numColors);  // §1b
+    std::fprintf(stderr, "[acm-dilu] build nN=%d numColors=%d (GPU-native block-CSR + JP coloring)\n", nN, L.numColors);
     L.ytmp.assign(L.ND, RealType(0)); L.ztmp.assign(L.ND, RealType(0));
-    // VALUES on the GPU (the host loops were the 2.7s/Picard bottleneck): extract raw A blocks into bblk
-    // from the level's device CSR, then color-parallel block-diagonal factor. The ascending-color factor
-    // launches MUST stay on the default stream -- the cross-color inv(D_k)-before-use dependency (and
-    // extract-before-factor) is enforced purely by default-stream serialization; an async stream without
-    // explicit deps would let a color read unwritten lower-color inv(D_k) and silently corrupt it. bblk pre-zeroed.
-    L.bblk.assign(16 * brow[nN], RealType(0));
+    // VALUES on the GPU: extract raw A blocks into bblk, then color-parallel block-diagonal factor. The
+    // ascending-color factor launches MUST stay on the default stream -- the cross-color inv(D_k)-before-use
+    // dependency (and extract-before-factor) is enforced purely by default-stream serialization. bblk pre-zeroed.
+    const int bnnz = static_cast<int>(L.bcol.size());
+    L.bblk.assign(16 * bnnz, RealType(0));
     L.dilu_dinv.resize(16 * nN);
     const int blk = 256, gAll = (nN + blk - 1) / blk;
     acmDiluExtractKernel<RealType><<<gAll, blk>>>(acmRaw(L.rowOff), acmRaw(L.colInd), acmRaw(L.vals),
                                                   acmRaw(L.brow), acmRaw(L.bcol), acmRaw(L.bblk), nN);
-    for (int c = 0; c < numColors; ++c) {
-        int cs = colStart[c], ce = colStart[c + 1], g = (ce - cs + blk - 1) / blk;
+    for (int c = 0; c < L.numColors; ++c) {
+        int cs = L.h_colStart[c], ce = L.h_colStart[c + 1], g = (ce - cs + blk - 1) / blk;
         if (g > 0) acmDiluFactorColorKernel<RealType><<<g, blk>>>(acmRaw(L.brow), acmRaw(L.bcol), acmRaw(L.bdiagPtr),
             acmRaw(L.color), acmRaw(L.nodesByColor), acmRaw(L.bblk), acmRaw(L.dilu_dinv), cs, ce);
     }
@@ -614,7 +699,7 @@ void acmBuildHierarchy(const thrust::device_vector<int>& rowOff0,
         acmDirectionalAggregate<RealType>(hro, hci, hva, levels[idx].nNodes, kmax, beta, agg, nCoarse);
         if (nCoarse >= levels[idx].nNodes) break;            // no coarsening progress -> coarsest (no ILU, nLev=0)
         if (acmUseIlu()) acmBuildLevelIlu<RealType>(levels[idx], hro, hci, hva);        // smoothed level only -> build ILU
-        else if (acmUseDilu()) acmBuildLevelDilu<RealType>(levels[idx], hro, hci, hva); // or multicolor block-DILU
+        else if (acmUseDilu()) acmBuildLevelDilu<RealType>(levels[idx]); // or multicolor block-DILU (GPU-native structure)
 
         levels[idx].agg.assign(agg.begin(), agg.end());
         levels[idx].nCoarse = nCoarse;
