@@ -24,8 +24,12 @@ GPU-native high-order matrix-free CVFEM (Knaus Alg 2) on Alps GH200, cstone bran
   rate, so going distributed costs the operator nothing); full matvec 78% (blocking halo).
   **Comm self-resolves**: at 8 GPU, 4M→11M DOF/GPU cuts comm 22→15%, full-matvec 78→87%.
   90.5M DOF at p=4 on 8 GPUs, clean.
-- **Why it matters**: high-order is the trillion-DOF path that *fits* Alps — at p=4 the operator
-  carries ~1–2B DOF/GPU → ~500–1000 GPUs for 10¹² (vs ~9,300 for the p=1 element trillion).
+- **Per-GPU ceiling (measured, single GH200, p=4)**: apply dead-flat at ~6 GDOF/s from 135M to
+  **647M DOF/GPU clean** (cube216); 721M OOMs (per-point metric `d_G` ~7.2 KB/elem is the wall).
+- **Why it matters**: high-order is the trillion-DOF path that *fits* Alps. At the measured 647M
+  DOF/GPU, **10¹² DOF = ~1,550 GPUs (~390 nodes)** — under half the allocation, using the general
+  per-point metric (works for curved/pump meshes). The affine-cube metric (512× less `d_G`) would
+  push to ~1–2B DOF/GPU → ~500–1000 GPUs. (vs ~9,300 GPUs for the p=1 element trillion.)
 - Tests: `mars_ho_dist_dof_test.cu` (numbering+halo), `mars_ho_dist_apply_test.cu` (operator +
   device-halo timing). Figure: `docs/figures/fig_ho_scaling.png`.
 
