@@ -231,6 +231,16 @@ template<typename RealType>
 __global__ void acmAddKernel(RealType* x, const RealType* y, int ND)
 { int r = blockIdx.x * blockDim.x + threadIdx.x; if (r < ND) x[r] += y[r]; }
 
+// scatter a sparse CSR (row-major) into a dense COLUMN-MAJOR n x n matrix (pre-zeroed) for cuSOLVER-Dn
+// getrf/getrs. Used to factor the small coarsest operator ONCE per Picard (vs the per-V-cycle cusolverSp QR).
+template<typename RealType>
+__global__ void acmDenseFromCsrKernel(const int* rowOff, const int* colInd, const RealType* vals,
+                                      RealType* dense, int n)
+{
+    int r = blockIdx.x * blockDim.x + threadIdx.x; if (r >= n) return;
+    for (int k = rowOff[r]; k < rowOff[r + 1]; ++k) dense[(size_t)colInd[k] * n + r] = vals[k];   // col-major [col*n+row]
+}
+
 template<typename RealType>
 struct AcmLevel {
     int nNodes = 0, ND = 0, nCoarse = 0;
