@@ -42,6 +42,8 @@ public:
           omega_(omega), beta_(RealType(0.5))
     {
         if (const char* e = std::getenv("MARS_ACM_BETA")) beta_ = static_cast<RealType>(std::atof(e));
+        if (const char* e = std::getenv("MARS_ACM_PRE"))  pre_  = std::atoi(e);   // V-cycle pre-smooth sweeps (default 2)
+        if (const char* e = std::getenv("MARS_ACM_POST")) post_ = std::atoi(e);   // post-smooth (default 1); fewer sweeps = cheaper smoother (66% of solve) vs more Krylov iters
         cusolverSpCreate(&cs_);
         cusparseCreateMatDescr(&descr_);
         cusparseSetMatType(descr_, CUSPARSE_MATRIX_TYPE_GENERAL);
