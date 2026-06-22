@@ -275,9 +275,16 @@ private:
         RealType b_norm = std::sqrt(dot(b, b));
         if (b_norm < 1e-14) { lastIters_ = 0; if (verbose_) std::cout << "FGMRES: RHS is zero\n"; return true; }
 
-        std::vector<Vector> V(m + 1), Z(m);
-        for (int i = 0; i <= m; ++i) V[i].resize(n);
+        // V = orthonormal Krylov basis stored CONTIGUOUSLY (n x (m+1), column-major) so the Arnoldi
+        // orthogonalization is batched cublas gemv (CGS2) -- O(1) syncs/iter, not the j+1 host-synced
+        // dots of MGS (nsys: ~57% of the solve). Z (preconditioned basis) stays per-column (only the
+        // O(m) reconstruction axpy touches it, not the inner loop).
+        Vector Vmat; Vmat.resize(n * static_cast<size_t>(m + 1));
+        std::vector<Vector> Z(m);
         for (int i = 0; i < m; ++i)  Z[i].resize(n);
+        Vector hco(m + 1), gco(m + 1), vj(n);                  // CGS2 coeffs (device) + current-column scratch for apply()
+        std::vector<RealType> hh(m + 1);                       // host copy of one column's coefficients
+        auto col = [&](int i) { return thrust::raw_pointer_cast(Vmat.data()) + static_cast<size_t>(i) * n; };
         std::vector<std::vector<RealType>> H(m + 1, std::vector<RealType>(m, 0.0));
         std::vector<RealType> s(m + 1), cs(m), sn(m);
         Vector r(n), w(n);
@@ -297,24 +304,35 @@ private:
                 if (verbose_) std::cout << "FGMRES converged in " << totalIter << " iters, res=" << beta / b_norm << "\n";
                 return true;
             }
-            thrust::copy(thrust::device_pointer_cast(r.data()),
-                        thrust::device_pointer_cast(r.data() + r.size()),
-                        thrust::device_pointer_cast(V[0].data()));
-            scale(1.0 / beta, V[0]);
+            cudaMemcpyAsync(col(0), thrust::raw_pointer_cast(r.data()),
+                            n * sizeof(RealType), cudaMemcpyDeviceToDevice, 0);     // V[:,0] = r
+            colScale(static_cast<int>(n), RealType(1) / beta, col(0));              // V[:,0] /= beta
             s[0] = beta; for (int i = 1; i <= m; ++i) s[i] = 0.0;
 
             int j;
             for (j = 0; j < m; ++j, ++totalIter)
             {
-                precond_->apply(V[j], Z[j]);                       // Z[j] = M^-1 V[j]
+                cudaMemcpyAsync(thrust::raw_pointer_cast(vj.data()), col(j),
+                                n * sizeof(RealType), cudaMemcpyDeviceToDevice, 0); // col(j) -> Vector for apply()
+                precond_->apply(vj, Z[j]);                         // Z[j] = M^-1 V[j]
                 spmv(A, Z[j], w);                                  // w = A Z[j]
-                for (int i = 0; i <= j; ++i) { H[i][j] = dot(w, V[i]); axpy(-H[i][j], V[i], w, w); }
+                // batched CGS2 vs V[0..j]: 4 gemv (async) + 1 D2H of the coefficients, not j+1 synced dots
+                const int k = j + 1;
+                RealType* Vp = col(0);
+                RealType* wp = thrust::raw_pointer_cast(w.data());
+                RealType* hp = thrust::raw_pointer_cast(hco.data());
+                RealType* gp = thrust::raw_pointer_cast(gco.data());
+                gemvT  (static_cast<int>(n), k, Vp, wp, hp);       // h  = V^T w
+                gemvNsub(static_cast<int>(n), k, Vp, hp, wp);      // w -= V h
+                gemvT  (static_cast<int>(n), k, Vp, wp, gp);       // g  = V^T w   (reorthogonalize for stability)
+                gemvNsub(static_cast<int>(n), k, Vp, gp, wp);      // w -= V g
+                axpyDev(k, RealType(1), gp, hp);                   // h += g  (total projection coefficients)
+                cudaMemcpy(hh.data(), hp, k * sizeof(RealType), cudaMemcpyDeviceToHost);   // ONE D2H per iter
+                for (int i = 0; i < k; ++i) H[i][j] = hh[i];
                 H[j + 1][j] = std::sqrt(dot(w, w));
                 if (std::abs(H[j + 1][j]) < 1e-14) { m = j + 1; break; }
-                thrust::copy(thrust::device_pointer_cast(w.data()),
-                            thrust::device_pointer_cast(w.data() + w.size()),
-                            thrust::device_pointer_cast(V[j + 1].data()));
-                scale(1.0 / H[j + 1][j], V[j + 1]);
+                cudaMemcpyAsync(col(j + 1), wp, n * sizeof(RealType), cudaMemcpyDeviceToDevice, 0);  // V[:,j+1] = w
+                colScale(static_cast<int>(n), RealType(1) / H[j + 1][j], col(j + 1));                // V[:,j+1] /= H[j+1][j]
                 for (int i = 0; i < j; ++i) {
                     RealType t = cs[i] * H[i][j] + sn[i] * H[i + 1][j];
                     H[i + 1][j] = -sn[i] * H[i][j] + cs[i] * H[i + 1][j];
@@ -424,6 +442,35 @@ private:
         } else {
             cublasSscal(cublasHandle_, x.size(), &alpha, thrust::raw_pointer_cast(x.data()), 1);
         }
+    }
+
+    // batched classical Gram-Schmidt (CGS2) primitives over the contiguous Krylov basis V (n x k, col-major).
+    // One gemv replaces k host-synced dots, so the FGMRES Arnoldi is O(1) syncs/iter, not O(k) (nsys: the MGS
+    // host-synced dots were ~57% of the solve). gemv output is on-device -> the gemv calls themselves DON'T sync
+    // (host-pointer alpha/beta only); only the single D2H of the coefficient column + the norm dot sync.
+    // ORDERING: all cublas here runs on the NULL (default) stream, so the per-iter gemv -> coefficient-D2H ->
+    // norm-dot chain is correctly serialized. A future cublasSetStream would break that ordering -> add syncs.
+    void gemvT(int n, int k, const RealType* V, const RealType* w, RealType* h)   // h = V^T w
+    {
+        const RealType one = 1, zero = 0;
+        if constexpr (std::is_same_v<RealType, double>) cublasDgemv(cublasHandle_, CUBLAS_OP_T, n, k, &one, V, n, w, 1, &zero, h, 1);
+        else                                            cublasSgemv(cublasHandle_, CUBLAS_OP_T, n, k, &one, V, n, w, 1, &zero, h, 1);
+    }
+    void gemvNsub(int n, int k, const RealType* V, const RealType* h, RealType* w) // w -= V h
+    {
+        const RealType neg = -1, one = 1;
+        if constexpr (std::is_same_v<RealType, double>) cublasDgemv(cublasHandle_, CUBLAS_OP_N, n, k, &neg, V, n, h, 1, &one, w, 1);
+        else                                            cublasSgemv(cublasHandle_, CUBLAS_OP_N, n, k, &neg, V, n, h, 1, &one, w, 1);
+    }
+    void axpyDev(int k, RealType a, const RealType* x, RealType* y)                // y += a*x (device, length k)
+    {
+        if constexpr (std::is_same_v<RealType, double>) cublasDaxpy(cublasHandle_, k, &a, x, 1, y, 1);
+        else                                            cublasSaxpy(cublasHandle_, k, &a, x, 1, y, 1);
+    }
+    void colScale(int n, RealType a, RealType* x)                                 // x *= a (one basis column)
+    {
+        if constexpr (std::is_same_v<RealType, double>) cublasDscal(cublasHandle_, n, &a, x, 1);
+        else                                            cublasSscal(cublasHandle_, n, &a, x, 1);
     }
 };
 
