@@ -891,6 +891,10 @@ int main(int argc, char** argv)
         // ---- ACM Stage 4a: GPU multilevel V-cycle vs host V-cycle replica (one cycle, exact match) ----
         if (doAcm4)
         {
+            // DILU is the global default now, but acmHostVcycle (the host replica below) is point-Jacobi.
+            // Force the GPU side to point-Jacobi so this exact-match gate stays valid (diagnostic-only path;
+            // set before the first acmUseDilu() call, which is the acmBuildHierarchy on the next line).
+            setenv("MARS_ACM_SMOOTHER", "jacobi", /*overwrite=*/1);
             std::vector<AcmLevel<RealType>> levels;
             acmBuildHierarchy<RealType>(d_rowOff, d_colInd, d_vals, (int)nNodes,
                                         /*kmax=*/4, /*maxCoarseND=*/64, levels);

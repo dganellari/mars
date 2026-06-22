@@ -36,6 +36,7 @@ public:
     {
         cublasDestroy(cublasHandle_);
         cusparseDestroy(cusparseHandle_);
+        if (spmvBuffer_) cudaFree(spmvBuffer_);
     }
 
     bool solve(const Matrix& A, const Vector& b, Vector& x, bool usePreconditioner = false)
@@ -255,6 +256,8 @@ private:
     bool verbose_;
     cublasHandle_t cublasHandle_;
     cusparseHandle_t cusparseHandle_;
+    void* spmvBuffer_ = nullptr;        // persistent cusparse SpMV workspace, grown on demand -> no per-iter cudaMalloc/Free
+    size_t spmvBufferBytes_ = 0;
     Precond* precond_ = nullptr;   // not owned; nullptr -> stationary path (inline Jacobi / none)
     bool flexible_ = false;
     int lastIters_ = 0;
@@ -379,11 +382,12 @@ private:
             size_t bufferSize = 0;
             cusparseSpMV_bufferSize(cusparseHandle_, CUSPARSE_OPERATION_NON_TRANSPOSE, &alpha, matA, vecX, &beta, vecY,
                                     CUDA_R_64F, CUSPARSE_SPMV_ALG_DEFAULT, &bufferSize);
-            void* buffer = nullptr;
-            cudaMalloc(&buffer, bufferSize);
+            if (bufferSize > spmvBufferBytes_) {   // grow once (matrix size is constant -> alloc on the first SpMV, then reused)
+                if (spmvBuffer_) cudaFree(spmvBuffer_);
+                cudaMalloc(&spmvBuffer_, bufferSize); spmvBufferBytes_ = bufferSize;
+            }
             cusparseSpMV(cusparseHandle_, CUSPARSE_OPERATION_NON_TRANSPOSE, &alpha, matA, vecX, &beta, vecY, CUDA_R_64F,
-                         CUSPARSE_SPMV_ALG_DEFAULT, buffer);
-            cudaFree(buffer);
+                         CUSPARSE_SPMV_ALG_DEFAULT, spmvBuffer_);
         } else {
             cusparseCreateCsr(&matA, A.numRows(), A.numCols(), A.nnz(), (void*)A.rowOffsetsPtr(),
                               (void*)A.colIndicesPtr(), (void*)A.valuesPtr(), CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I,
@@ -394,11 +398,12 @@ private:
             size_t bufferSize = 0;
             cusparseSpMV_bufferSize(cusparseHandle_, CUSPARSE_OPERATION_NON_TRANSPOSE, &alpha, matA, vecX, &beta, vecY,
                                     CUDA_R_32F, CUSPARSE_SPMV_ALG_DEFAULT, &bufferSize);
-            void* buffer = nullptr;
-            cudaMalloc(&buffer, bufferSize);
+            if (bufferSize > spmvBufferBytes_) {
+                if (spmvBuffer_) cudaFree(spmvBuffer_);
+                cudaMalloc(&spmvBuffer_, bufferSize); spmvBufferBytes_ = bufferSize;
+            }
             cusparseSpMV(cusparseHandle_, CUSPARSE_OPERATION_NON_TRANSPOSE, &alpha, matA, vecX, &beta, vecY, CUDA_R_32F,
-                         CUSPARSE_SPMV_ALG_DEFAULT, buffer);
-            cudaFree(buffer);
+                         CUSPARSE_SPMV_ALG_DEFAULT, spmvBuffer_);
         }
 
         cusparseDestroySpMat(matA);

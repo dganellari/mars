@@ -637,7 +637,11 @@ inline bool acmUseIlu()
 inline bool acmUseDilu()
 {
     static int v = -1;
-    if (v < 0) { const char* e = std::getenv("MARS_ACM_SMOOTHER"); v = (e && std::strcmp(e, "dilu") == 0) ? 1 : 0; }
+    // DILU is the DEFAULT smoother (the paper's GS/ILU analog; ~8% of GPU per cuda_gpu_kern_sum). Only an
+    // explicit MARS_ACM_SMOOTHER=ilu (or =jacobi/anything else) opts out -- block-Jacobi must NEVER be the
+    // silent default again. With this, an unset env -> DILU, and the [acm-dilu] build log always confirms it.
+    if (v < 0) { const char* e = std::getenv("MARS_ACM_SMOOTHER");
+                 v = (!e || std::strcmp(e, "dilu") == 0) ? 1 : 0; }
     return v == 1;
 }
 
