@@ -23,6 +23,7 @@
 #include <thrust/sort.h>
 #include <thrust/scan.h>
 #include <thrust/unique.h>
+#include <thrust/reduce.h>
 #include <thrust/count.h>
 #include <thrust/extrema.h>
 #include <thrust/binary_search.h>
@@ -463,6 +464,61 @@ __global__ void acmSingletonKernel(int* agg, int* nCoarse, int nN)
     if (agg[i] < 0) agg[i] = atomicAdd(nCoarse, 1);                                       // true isolate -> own aggregate
 }
 
+// number of aggregation matching passes (A/B in one binary): MARS_ACM_AGG_PASSES=1 (pairs, ratio ~2-3) or
+// 2 (default; pairs->quads via a 2nd match on the aggregate graph, ratio ~4 -- host-like size-4 directional
+// aggregates that fix the early-Picard iter spike from the looser pass-1 coarsening).
+inline int acmAggPasses()
+{
+    static int v = -1;
+    if (v < 0) { const char* e = std::getenv("MARS_ACM_AGG_PASSES"); v = e ? std::atoi(e) : 2; if (v < 1) v = 1; if (v > 2) v = 2; }
+    return v;
+}
+
+// emit aggregate-graph edges for the 2nd pass: per node block-edge (I,J) with agg[I]!=agg[J] -> key
+// (long long)agg[I]*nC1+agg[J], value S[e]; same-aggregate edges -> key=-1 (sort to front, dropped).
+template<typename RealType>
+__global__ void acmAggEdgeEmitKernel(const int* brow, const int* bcol, const RealType* S, const int* agg, int nC1,
+                                     long long* keys, RealType* eval, int nN)
+{
+    int I = blockIdx.x * blockDim.x + threadIdx.x; if (I >= nN) return;
+    int A = agg[I];
+    for (int e = brow[I]; e < brow[I + 1]; ++e) {
+        int B = agg[bcol[e]];
+        if (A != B) { keys[e] = static_cast<long long>(A) * nC1 + B; eval[e] = S[e]; }
+        else { keys[e] = -1; eval[e] = 0; }
+    }
+}
+__global__ void acmRelabelKernel(int* agg, const int* map, int nN)
+{
+    int i = blockIdx.x * blockDim.x + threadIdx.x; if (i >= nN) return; agg[i] = map[agg[i]];
+}
+
+// build the aggregate strength graph (arow/acol/aS) from the pass-1 agg[] + node strengths S -- the coarse
+// graph the 2nd match runs on. Mirrors §1a emit/sort/reduce/split, values = summed inter-aggregate strength.
+template<typename RealType>
+inline void acmBuildAggGraphGpu(int nN, int nC1, const thrust::device_vector<int>& brow, const thrust::device_vector<int>& bcol,
+                                const thrust::device_vector<RealType>& S, const thrust::device_vector<int>& agg,
+                                thrust::device_vector<int>& arow, thrust::device_vector<int>& acol, thrust::device_vector<RealType>& aS)
+{
+    const int nnzB = static_cast<int>(bcol.size()), blk = 256, gN = (nN + blk - 1) / blk;
+    thrust::device_vector<long long> keys(nnzB);
+    thrust::device_vector<RealType> eval(nnzB);
+    acmAggEdgeEmitKernel<RealType><<<gN, blk>>>(acmRaw(brow), acmRaw(bcol), acmRaw(S), acmRaw(agg), nC1, acmRaw(keys), acmRaw(eval), nN);
+    thrust::sort_by_key(keys.begin(), keys.end(), eval.begin());                          // same-agg (-1) -> front
+    int start = static_cast<int>(thrust::lower_bound(keys.begin(), keys.end(), 0LL) - keys.begin());
+    thrust::device_vector<long long> ukey(nnzB - start);
+    thrust::device_vector<RealType> uval(nnzB - start);
+    auto endp = thrust::reduce_by_key(keys.begin() + start, keys.end(), eval.begin() + start, ukey.begin(), uval.begin());
+    const int nAggEdges = static_cast<int>(endp.first - ukey.begin());
+    acol.resize(nAggEdges); aS.resize(nAggEdges);
+    thrust::device_vector<int> arow_id(nAggEdges);
+    acmSplitKeyKernel<RealType><<<(nAggEdges + blk - 1) / blk, blk>>>(acmRaw(ukey), static_cast<long long>(nC1), nAggEdges, acmRaw(arow_id), acmRaw(acol));
+    thrust::copy(uval.begin(), uval.begin() + nAggEdges, aS.begin());
+    arow.resize(nC1 + 1);
+    thrust::lower_bound(arow_id.begin(), arow_id.end(),
+                        thrust::counting_iterator<int>(0), thrust::counting_iterator<int>(nC1 + 1), arow.begin());
+}
+
 template<typename RealType>
 inline void acmAggregateGpu(int nN, const thrust::device_vector<int>& rowOff,
                             const thrust::device_vector<int>& colInd, const thrust::device_vector<RealType>& vals,
@@ -484,7 +540,24 @@ inline void acmAggregateGpu(int nN, const thrust::device_vector<int>& rowOff,
     acmAbsorbTargetKernel<RealType><<<gN, blk>>>(acmRaw(brow), acmRaw(bcol), acmRaw(S), acmRaw(agg), acmRaw(tgt), nN);
     acmAbsorbApplyKernel<<<gN, blk>>>(acmRaw(tgt), acmRaw(agg), nN);
     acmSingletonKernel<<<gN, blk>>>(acmRaw(agg), acmRaw(dnc), nN);
-    nCoarse = dnc[0];                                                                     // 1 int D2H (loop control)
+    nCoarse = dnc[0];                                                                     // pass-1 aggregates (1 int D2H)
+    if (acmAggPasses() < 2 || nCoarse < 4) return;                                        // pass-1 only / already very coarse
+
+    // ---- 2nd matching pass: match the pass-1 aggregates pairwise (pairs->quads, ratio ~4, host-like) ----
+    const int nC1 = nCoarse, gC = (nC1 + blk - 1) / blk;
+    thrust::device_vector<int> arow, acol; thrust::device_vector<RealType> aS;
+    acmBuildAggGraphGpu<RealType>(nN, nC1, brow, bcol, S, agg, arow, acol, aS);
+    thrust::device_vector<RealType> wmaxA(nC1);
+    acmWmaxKernel<RealType><<<gC, blk>>>(acmRaw(arow), acmRaw(acol), acmRaw(aS), acmRaw(wmaxA), nC1);
+    thrust::device_vector<int> merge(nC1, -1), candA(nC1);
+    thrust::fill(dnc.begin(), dnc.end(), 0);
+    for (int round = 0; round < 12; ++round) {                                           // match aggregates -> quads
+        acmCandKernel<RealType><<<gC, blk>>>(acmRaw(arow), acmRaw(acol), acmRaw(aS), acmRaw(wmaxA), acmRaw(merge), beta, acmRaw(candA), nC1);
+        acmMatchKernel<<<gC, blk>>>(acmRaw(candA), acmRaw(merge), acmRaw(dnc), nC1);
+    }
+    acmSingletonKernel<<<gC, blk>>>(acmRaw(merge), acmRaw(dnc), nC1);                     // unmatched aggregate keeps its own id
+    acmRelabelKernel<<<gN, blk>>>(acmRaw(agg), acmRaw(merge), nN);                        // agg[node] = merge[agg[node]] -> contiguous
+    nCoarse = dnc[0];
 }
 
 // host-once DIRECTIONAL aggregation (Mavriplis-style, paper Eqs 19-20) on the block graph of a coupled
