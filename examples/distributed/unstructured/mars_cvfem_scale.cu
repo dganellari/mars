@@ -39,11 +39,12 @@ int main(int argc, char** argv)
     using Assembler = CvfemHexAssembler<KeyType, RealType>;
     using Domain    = ElementDomain<ElemTag, RealType, KeyType, cstone::GpuTag>;
 
-    size_t ncells = 256; int iters = 20; int blockSize = 256;
+    size_t ncells = 256; int iters = 20; int blockSize = 256; bool buildOnly = false;
     for (int i = 1; i < argc; ++i) { std::string a = argv[i];
         if (a.rfind("--ncells=",0)==0) ncells = std::stoull(a.substr(9));
         else if (a.rfind("--iters=",0)==0) iters = std::stoi(a.substr(8));
-        else if (a.rfind("--blockSize=",0)==0) blockSize = std::stoi(a.substr(12)); }
+        else if (a.rfind("--blockSize=",0)==0) blockSize = std::stoi(a.substr(12));
+        else if (a=="--build-only") buildOnly = true; }
 
     if (rank == 0) printf("Procedural cube: %zu^3 = %zu elements, %d ranks\n",
                           ncells, ncells*ncells*ncells, numRanks);
@@ -57,10 +58,39 @@ int main(int argc, char** argv)
         std::move(lconn[0]), std::move(lconn[1]), std::move(lconn[2]), std::move(lconn[3]),
         std::move(lconn[4]), std::move(lconn[5]), std::move(lconn[6]), std::move(lconn[7])};
 
+    double tBuild0 = MPI_Wtime();
     Domain domain(h_coords, h_conn, rank, numRanks, 64, false, 8u);
     const auto& d_nodeOwnership = domain.getNodeOwnershipMap();
     size_t nodeCount = domain.getNodeCount();
     size_t elementCount = domain.getElementCount();
+    if (numRanks > 1) domain.getNodeHaloTopology();   // force halo-topo build (part of DD)
+    double buildSec = MPI_Wtime() - tBuild0;
+
+    // --build-only: report the domain decomposition (SFC partition + node
+    // ownership + halo topology) and STOP before the CSR. The build is
+    // sync-dominated (~0.55 GiB/M-elem), so it scales far past the assembly /
+    // operator per-GPU ceiling -- this is the trillion-scale DD path.
+    if (buildOnly) {
+        unsigned long long locE = elementCount, gE = 0, minE = 0, maxE = 0, gN = 0, locN = nodeCount;
+        MPI_Reduce(&locE, &gE,   1, MPI_UNSIGNED_LONG_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
+        MPI_Reduce(&locE, &minE, 1, MPI_UNSIGNED_LONG_LONG, MPI_MIN, 0, MPI_COMM_WORLD);
+        MPI_Reduce(&locE, &maxE, 1, MPI_UNSIGNED_LONG_LONG, MPI_MAX, 0, MPI_COMM_WORLD);
+        MPI_Reduce(&locN, &gN,   1, MPI_UNSIGNED_LONG_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
+        double maxBuild = 0; MPI_Reduce(&buildSec, &maxBuild, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
+        size_t freeB = 0, totB = 0; cudaMemGetInfo(&freeB, &totB);
+        long long locFree = (long long)(freeB >> 20), minFree = 0;
+        MPI_Reduce(&locFree, &minFree, 1, MPI_LONG_LONG, MPI_MIN, 0, MPI_COMM_WORLD);
+        if (rank == 0) {
+            printf("\n== DD-ONLY domain decomposition (no assembly) ==\n");
+            printf("ranks=%d | global elems=%llu  global nodes=%llu | ~%.1fM elems/rank\n",
+                   numRanks, gE, gN, double(gE)/double(numRanks)/1e6);
+            printf("per-rank owned elems: min=%llu max=%llu\n", minE, maxE);
+            printf("domain build (SFC partition + ownership + halo): %.3f s (slowest rank)\n", maxBuild);
+            printf("min GPU free across ranks after build: %lld MiB\n", minFree);
+        }
+        MPI_Finalize();
+        return 0;
+    }
 
     cstone::DeviceVector<int> d_nodeToDof(nodeCount);
     int numDofs = buildDofMappingGpu<KeyType>(d_nodeOwnership.data(), d_nodeToDof.data(), nodeCount);

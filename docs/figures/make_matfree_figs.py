@@ -90,4 +90,46 @@ ax.annotate("+overlap 1.22$\\times$", xy=(32, 40.3), xytext=(11, 62),
 ax.legend(frameon=False, loc="lower left")
 save(fig, "fig_weakscale")
 
-print("wrote fig_memory, fig_throughput, fig_convergence, fig_weakscale (.png + .pdf)")
+# --- 5. comm fraction vs per-GPU size (8 GPUs fixed) -- the trillion self-resolve ---
+pergpu_dof = [2.05e6, 8.06e6, 16.10e6, 32.16e6, 64.39e6]   # measured per-GPU DOF (2/8/16/32/64M elems)
+comm_meas  = [51.9, 41.9, 33.5, 28.6, 19.2]               # measured comm % (64M = post halo-fix, gates 1e-18)
+# fit comm/apply = k * V^p to the four points (log-log): p~-0.36, k~200
+kfit, pfit = 200.0, -0.36
+def cfrac(v):
+    r = kfit * v ** pfit
+    return 100.0 * r / (1.0 + r)
+Vgrid = [10 ** (6 + 0.05 * i) for i in range(0, 61)]   # 1e6 .. 1e9
+fig, ax = plt.subplots(figsize=(6.2, 4.0))
+ax.plot(Vgrid, [cfrac(v) for v in Vgrid], "-", color=BLUE, lw=2.2,
+        label="model  comm/apply $\\propto V^{-1/3}$")
+ax.plot(pergpu_dof, comm_meas, "o", color=ORANGE, ms=11, zorder=5, label="measured (8 GPUs)")
+ax.axvline(3.0e8, color=GREEN, ls="--", lw=1.6)
+ax.annotate("trillion-relevant\n$\\sim$300M DOF/GPU\n$\\to\\sim$17%% comm" % (),
+            xy=(3.0e8, cfrac(3.0e8)), xytext=(2.2e7, 58),
+            color=GREEN, fontsize=11, ha="center",
+            arrowprops=dict(arrowstyle="->", color=GREEN, lw=1.3))
+ax.set_xscale("log"); ax.set_xlabel("DOF per GPU"); ax.set_ylabel("communication fraction  [%]")
+ax.set_title("Comm self-resolves with per-GPU size")
+ax.set_ylim(0, 70); ax.legend(frameon=False, loc="lower left")
+save(fig, "fig_comm_pergpu")
+
+# --- 6. path to a trillion: per-GPU capacity by mode vs the 1e12-on-Alps line ---
+modes  = ["assembly\n(CSR)", "matrix-free\napply", "domain\ndecomp (DD)"]
+ceil_M = [70, 77, 108]            # validated per-GPU ceilings (M elements/GPU)
+alps_gpus = 10752                 # Alps GH200
+need_M = 1e12 / alps_gpus / 1e6   # per-GPU needed for 1e12 on full Alps (~93M)
+fig, ax = plt.subplots(figsize=(6.2, 4.0))
+bars = ax.bar(modes, ceil_M, color=[ORANGE, ORANGE, GREEN], width=0.62, zorder=3)
+ax.axhline(need_M, color=DARK, ls="--", lw=1.6, zorder=2)
+ax.text(2.45, need_M + 2, "10$^{12}$ on full Alps ($\\sim$%.0fM/GPU)" % need_M,
+        ha="right", va="bottom", color=DARK, fontsize=11)
+for b, v in zip(bars, ceil_M):
+    ax.text(b.get_x() + b.get_width()/2, v + 1.5, f"{v}M", ha="center",
+            color=DARK, fontsize=12, fontweight="bold")
+ax.set_ylabel("per-GPU capacity  [M elements]"); ax.set_ylim(0, 125)
+ax.set_title("Path to a trillion (Alps, $\\sim$10.7k GH200)")
+ax.text(0.03, 0.97, "DD reaches 10$^{12}$ at $\\sim$9,300 GPUs\n(validated 108.7M/GPU clean, gates 1e-18)",
+        transform=ax.transAxes, va="top", fontsize=10, color=GREEN)
+save(fig, "fig_trillion")
+
+print("wrote fig_memory, fig_throughput, fig_convergence, fig_weakscale, fig_comm_pergpu, fig_trillion (.png + .pdf)")
