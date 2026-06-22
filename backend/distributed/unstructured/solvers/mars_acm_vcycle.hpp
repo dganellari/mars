@@ -18,6 +18,7 @@
 #include "backend/distributed/unstructured/solvers/mars_acm_coarsen.hpp"
 #include <thrust/device_vector.h>
 #include <thrust/fill.h>
+#include <thrust/system/cuda/execution_policy.h>   // thrust::cuda::par.on(stream) for stream-ordered fills
 #include <cusolverSp.h>
 #include <cusparse.h>
 #include <vector>
@@ -493,24 +494,25 @@ inline void acmBuildLevelDilu(AcmLevel<RealType>& L, const std::vector<int>& row
 }
 
 // one or more block-ILU(0) sweeps: x += omega * (LU)^-1 (b - A x), triangular solves level-scheduled.
+// All launches on stream `s` (default 0) so the cycle can be captured into a CUDA graph (Step 1).
 template<typename RealType>
-inline void acmIluSmoothGpu(AcmLevel<RealType>& L, int sweeps, RealType omega)
+inline void acmIluSmoothGpu(AcmLevel<RealType>& L, int sweeps, RealType omega, cudaStream_t s = 0)
 {
     const int blk = 256, grd = (L.ND + blk - 1) / blk;
-    for (int s = 0; s < sweeps; ++s) {
-        acmResidualKernel<RealType><<<grd, blk>>>(acmRaw(L.rowOff), acmRaw(L.colInd), acmRaw(L.vals),
+    for (int sw = 0; sw < sweeps; ++sw) {
+        acmResidualKernel<RealType><<<grd, blk, 0, s>>>(acmRaw(L.rowOff), acmRaw(L.colInd), acmRaw(L.vals),
                                                   acmRaw(L.xvec), acmRaw(L.bvec), acmRaw(L.rtmp), L.ND);   // rtmp = b - A x (fused)
         for (int lv = 0; lv < L.nLev; ++lv) {                            // forward L-solve -> ytmp (ascending)
             int ls = L.h_levStart[lv], le = L.h_levStart[lv + 1], g = (le - ls + blk - 1) / blk;
-            if (g > 0) acmIluLsolveKernel<RealType><<<g, blk>>>(acmRaw(L.brow), acmRaw(L.bcol), acmRaw(L.bdiagPtr),
+            if (g > 0) acmIluLsolveKernel<RealType><<<g, blk, 0, s>>>(acmRaw(L.brow), acmRaw(L.bcol), acmRaw(L.bdiagPtr),
                 acmRaw(L.bilu), acmRaw(L.nodesByLevel), ls, le, acmRaw(L.rtmp), acmRaw(L.ytmp));
         }
         for (int lv = L.nLev - 1; lv >= 0; --lv) {                       // back U-solve -> xtmp = dx (descending)
             int ls = L.h_levStart[lv], le = L.h_levStart[lv + 1], g = (le - ls + blk - 1) / blk;
-            if (g > 0) acmIluUsolveKernel<RealType><<<g, blk>>>(acmRaw(L.brow), acmRaw(L.bcol), acmRaw(L.bdiagPtr),
+            if (g > 0) acmIluUsolveKernel<RealType><<<g, blk, 0, s>>>(acmRaw(L.brow), acmRaw(L.bcol), acmRaw(L.bdiagPtr),
                 acmRaw(L.bilu), acmRaw(L.nodesByLevel), ls, le, acmRaw(L.ytmp), acmRaw(L.xtmp));
         }
-        acmAxpyKernel<RealType><<<grd, blk>>>(acmRaw(L.xvec), acmRaw(L.xtmp), omega, L.ND);            // x += omega*dx
+        acmAxpyKernel<RealType><<<grd, blk, 0, s>>>(acmRaw(L.xvec), acmRaw(L.xtmp), omega, L.ND);            // x += omega*dx
     }
 }
 
@@ -519,23 +521,23 @@ inline void acmIluSmoothGpu(AcmLevel<RealType>& L, int sweeps, RealType omega)
 // Since z_i = D_i y_i = w_i, the back solve (D+U)x=z reads w (ztmp) directly -- exact ONLY because the
 // forward step multiplies by EXACTLY inv(D_i) (a future forward-diagonal damping would break the z:=w shortcut).
 template<typename RealType>
-inline void acmDiluSmoothGpu(AcmLevel<RealType>& L, int sweeps, RealType omega)
+inline void acmDiluSmoothGpu(AcmLevel<RealType>& L, int sweeps, RealType omega, cudaStream_t s = 0)
 {
     const int blk = 256, grd = (L.ND + blk - 1) / blk;
-    for (int s = 0; s < sweeps; ++s) {
-        acmResidualKernel<RealType><<<grd, blk>>>(acmRaw(L.rowOff), acmRaw(L.colInd), acmRaw(L.vals),
+    for (int sw = 0; sw < sweeps; ++sw) {
+        acmResidualKernel<RealType><<<grd, blk, 0, s>>>(acmRaw(L.rowOff), acmRaw(L.colInd), acmRaw(L.vals),
                                                   acmRaw(L.xvec), acmRaw(L.bvec), acmRaw(L.rtmp), L.ND);   // rtmp = b - A x (fused)
         for (int c = 0; c < L.numColors; ++c) {                            // forward L-solve -> ytmp (y), pre-diag w -> ztmp
             int cs = L.h_colStart[c], ce = L.h_colStart[c + 1], g = (ce - cs + blk - 1) / blk;
-            if (g > 0) acmDiluLsolveKernel<RealType><<<g, blk>>>(acmRaw(L.brow), acmRaw(L.bcol), acmRaw(L.color),
+            if (g > 0) acmDiluLsolveKernel<RealType><<<g, blk, 0, s>>>(acmRaw(L.brow), acmRaw(L.bcol), acmRaw(L.color),
                 acmRaw(L.bblk), acmRaw(L.dilu_dinv), acmRaw(L.nodesByColor), cs, ce, acmRaw(L.rtmp), acmRaw(L.ytmp), acmRaw(L.ztmp));
         }
         for (int c = L.numColors - 1; c >= 0; --c) {                       // back U-solve -> xtmp (dx), RHS = ztmp (w)
             int cs = L.h_colStart[c], ce = L.h_colStart[c + 1], g = (ce - cs + blk - 1) / blk;
-            if (g > 0) acmDiluUsolveKernel<RealType><<<g, blk>>>(acmRaw(L.brow), acmRaw(L.bcol), acmRaw(L.color),
+            if (g > 0) acmDiluUsolveKernel<RealType><<<g, blk, 0, s>>>(acmRaw(L.brow), acmRaw(L.bcol), acmRaw(L.color),
                 acmRaw(L.bblk), acmRaw(L.dilu_dinv), acmRaw(L.nodesByColor), cs, ce, acmRaw(L.ztmp), acmRaw(L.xtmp));
         }
-        acmAxpyKernel<RealType><<<grd, blk>>>(acmRaw(L.xvec), acmRaw(L.xtmp), omega, L.ND);            // x += omega*dx
+        acmAxpyKernel<RealType><<<grd, blk, 0, s>>>(acmRaw(L.xvec), acmRaw(L.xtmp), omega, L.ND);            // x += omega*dx
     }
 }
 
@@ -590,19 +592,19 @@ void acmBuildHierarchy(const thrust::device_vector<int>& rowOff0,
 // useBlock=true -> coupled per-node 4x4 block-Jacobi (captures the local [u,v,w,p] coupling);
 // false -> segregated point-Jacobi (kept for the Stage-4a host-match gate).
 template<typename RealType>
-inline void acmSmoothGpu(AcmLevel<RealType>& L, int sweeps, RealType omega, bool useBlock)
+inline void acmSmoothGpu(AcmLevel<RealType>& L, int sweeps, RealType omega, bool useBlock, cudaStream_t s = 0)
 {
-    if (acmUseIlu() && L.nLev > 0) { acmIluSmoothGpu(L, sweeps, omega); return; }        // block-ILU(0) (coarsest nLev=0 -> Jacobi)
-    if (acmUseDilu() && L.numColors > 0) { acmDiluSmoothGpu(L, sweeps, omega); return; } // multicolor block-DILU (coarsest -> Jacobi)
+    if (acmUseIlu() && L.nLev > 0) { acmIluSmoothGpu(L, sweeps, omega, s); return; }        // block-ILU(0) (coarsest nLev=0 -> Jacobi)
+    if (acmUseDilu() && L.numColors > 0) { acmDiluSmoothGpu(L, sweeps, omega, s); return; } // multicolor block-DILU (coarsest -> Jacobi)
     const int blk = 256, grd = (L.ND + blk - 1) / blk, gN = (L.nNodes + blk - 1) / blk;
-    for (int s = 0; s < sweeps; ++s) {
+    for (int sw = 0; sw < sweeps; ++sw) {
         if (useBlock)
-            acmBlockJacobiKernel<RealType><<<gN, blk>>>(acmRaw(L.rowOff), acmRaw(L.colInd), acmRaw(L.vals),
+            acmBlockJacobiKernel<RealType><<<gN, blk, 0, s>>>(acmRaw(L.rowOff), acmRaw(L.colInd), acmRaw(L.vals),
                 acmRaw(L.binv), acmRaw(L.bvec), acmRaw(L.xvec), acmRaw(L.xtmp), omega, L.nNodes);
         else
-            acmJacobiKernel<RealType><<<grd, blk>>>(acmRaw(L.rowOff), acmRaw(L.colInd), acmRaw(L.vals),
+            acmJacobiKernel<RealType><<<grd, blk, 0, s>>>(acmRaw(L.rowOff), acmRaw(L.colInd), acmRaw(L.vals),
                 acmRaw(L.dinv), acmRaw(L.bvec), acmRaw(L.xvec), acmRaw(L.xtmp), omega, L.ND);
-        L.xvec.swap(L.xtmp);                                 // O(1) pointer swap; xvec holds the new iterate
+        L.xvec.swap(L.xtmp);                                 // O(1) host pointer swap -- NOT in the captured DILU path (returns above)
     }
 }
 
@@ -611,9 +613,10 @@ inline void acmSmoothGpu(AcmLevel<RealType>& L, int sweeps, RealType omega, bool
 // Jacobi-sweep coarsest (so the Stage-4a host-vs-GPU V-cycle match still holds bit-for-bit).
 template<typename RealType>
 inline void acmCoarseSolve(AcmLevel<RealType>& L, int coarse, RealType omega, bool useBlock,
-                           cusolverSpHandle_t cs, cusparseMatDescr_t descr)
+                           cusolverSpHandle_t cs, cusparseMatDescr_t descr, cudaStream_t s = 0)
 {
-    if (!(cs && descr)) { acmSmoothGpu(L, coarse, omega, useBlock); return; }
+    if (!(cs && descr)) { acmSmoothGpu(L, coarse, omega, useBlock, s); return; }
+    cusolverSpSetStream(cs, s);                            // QR on the cycle stream -> orders with the captured graphs
     int singularity = -1;                                  // <0 = full rank; >=0 = first deficient pivot
     const int nnzc = static_cast<int>(L.vals.size());
     if constexpr (std::is_same_v<RealType, double>)
@@ -622,40 +625,49 @@ inline void acmCoarseSolve(AcmLevel<RealType>& L, int coarse, RealType omega, bo
     else
         cusolverSpScsrlsvqr(cs, L.ND, nnzc, descr, acmRaw(L.vals), acmRaw(L.rowOff), acmRaw(L.colInd),
                             acmRaw(L.bvec), 1e-6f, 1, acmRaw(L.xvec), &singularity);
-    cudaDeviceSynchronize();
+    cudaStreamSynchronize(s);                              // QR is non-capturable + needs the singularity readback
     // a rank-deficient coarse saddle block (near-null pressure mode) makes the QR least-squares solve
     // unreliable -> don't inject garbage into the cycle; reset and fall back to smoothing.
     if (singularity >= 0) {
-        thrust::fill(L.xvec.begin(), L.xvec.end(), RealType(0));
-        acmSmoothGpu(L, coarse, omega, useBlock);
+        thrust::fill(thrust::cuda::par.on(s), L.xvec.begin(), L.xvec.end(), RealType(0));
+        acmSmoothGpu(L, coarse, omega, useBlock, s);
     }
 }
 
-// one V-cycle on levels[Lidx], operating on its bvec (in) / xvec (in-out). useBlock -> coupled block-Jacobi.
+// one V-cycle on levels[Lidx..coarsest], operating on levels[Lidx].bvec (in) / xvec (in-out).
+// ITERATIVE form (explicit down -> coarse -> up) -- equivalent to the old recursion (same ops, same order),
+// but the down- and up-halves are now separable so each can be captured into a CUDA graph around the
+// non-capturable cusolver QR coarse solve (Step 1). All launches on stream s. useBlock -> block-Jacobi.
 template<typename RealType>
 void acmVcycleGpu(std::vector<AcmLevel<RealType>>& levels, int Lidx,
                   int pre, int post, int coarse, RealType omega, bool useBlock = false,
-                  cusolverSpHandle_t cs = nullptr, cusparseMatDescr_t descr = nullptr)
+                  cusolverSpHandle_t cs = nullptr, cusparseMatDescr_t descr = nullptr, cudaStream_t s = 0)
 {
-    AcmLevel<RealType>& L = levels[Lidx];
-    const int blk = 256, grd = (L.ND + blk - 1) / blk;
-    if (Lidx == (int)levels.size() - 1) { acmCoarseSolve(L, coarse, omega, useBlock, cs, descr); return; }
-
-    acmSmoothGpu(L, pre, omega, useBlock);
-    acmResidualKernel<RealType><<<grd, blk>>>(acmRaw(L.rowOff), acmRaw(L.colInd), acmRaw(L.vals),
-                                              acmRaw(L.xvec), acmRaw(L.bvec), acmRaw(L.rtmp), L.ND);   // rtmp = b - A x (fused)
-
-    AcmLevel<RealType>& C = levels[Lidx + 1];
-    thrust::fill(C.bvec.begin(), C.bvec.end(), RealType(0));
-    thrust::fill(C.xvec.begin(), C.xvec.end(), RealType(0));
-    const int gN = (L.nNodes + blk - 1) / blk;
-    acmRestrictAddKernel<RealType><<<gN, blk>>>(acmRaw(L.rtmp), acmRaw(C.bvec), acmRaw(L.agg), L.nNodes);
-
-    acmVcycleGpu(levels, Lidx + 1, pre, post, coarse, omega, useBlock, cs, descr);
-
-    acmInjectKernel<RealType><<<gN, blk>>>(acmRaw(C.xvec), acmRaw(L.xtmp), acmRaw(L.agg), L.nNodes);
-    acmAddKernel<RealType><<<grd, blk>>>(acmRaw(L.xvec), acmRaw(L.xtmp), L.ND);
-    acmSmoothGpu(L, post, omega, useBlock);
+    const int blk = 256;
+    const int nL = (int)levels.size();
+    // DOWN: pre-smooth + residual + restrict, level Lidx down to just above the coarsest
+    for (int l = Lidx; l < nL - 1; ++l) {
+        AcmLevel<RealType>& L = levels[l];
+        AcmLevel<RealType>& C = levels[l + 1];
+        const int grd = (L.ND + blk - 1) / blk, gN = (L.nNodes + blk - 1) / blk;
+        acmSmoothGpu(L, pre, omega, useBlock, s);
+        acmResidualKernel<RealType><<<grd, blk, 0, s>>>(acmRaw(L.rowOff), acmRaw(L.colInd), acmRaw(L.vals),
+                                                  acmRaw(L.xvec), acmRaw(L.bvec), acmRaw(L.rtmp), L.ND);   // rtmp = b - A x (fused)
+        thrust::fill(thrust::cuda::par.on(s), C.bvec.begin(), C.bvec.end(), RealType(0));
+        thrust::fill(thrust::cuda::par.on(s), C.xvec.begin(), C.xvec.end(), RealType(0));
+        acmRestrictAddKernel<RealType><<<gN, blk, 0, s>>>(acmRaw(L.rtmp), acmRaw(C.bvec), acmRaw(L.agg), L.nNodes);
+    }
+    // COARSE: direct QR (eager -- non-capturable, sits between the two captured graphs)
+    acmCoarseSolve(levels[nL - 1], coarse, omega, useBlock, cs, descr, s);
+    // UP: inject + add + post-smooth, just above the coarsest back up to level Lidx
+    for (int l = nL - 2; l >= Lidx; --l) {
+        AcmLevel<RealType>& L = levels[l];
+        AcmLevel<RealType>& C = levels[l + 1];
+        const int grd = (L.ND + blk - 1) / blk, gN = (L.nNodes + blk - 1) / blk;
+        acmInjectKernel<RealType><<<gN, blk, 0, s>>>(acmRaw(C.xvec), acmRaw(L.xtmp), acmRaw(L.agg), L.nNodes);
+        acmAddKernel<RealType><<<grd, blk, 0, s>>>(acmRaw(L.xvec), acmRaw(L.xtmp), L.ND);
+        acmSmoothGpu(L, post, omega, useBlock, s);
+    }
 }
 
 // ---- host replica (validation oracle): same hierarchy, same arithmetic, on the CPU ----
