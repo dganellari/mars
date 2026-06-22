@@ -1965,41 +1965,10 @@ void NodeHaloTopology<ElementTag, RealType, KeyType, AcceleratorTag>::buildFromC
         }
     };
 
-    // ===== SEND side =====
-    // Emit owned nodes to every claimant peer (excluding self). Bound output
-    // stride at numPeers (max possible claimants per node). At cube
-    // partitions worst case is 7 (8-way corner with 8 ranks: 7 peer claimants).
-    std::vector<std::vector<int>> sendIdsPerPeer;
-    {
-        int outStride = std::max(1, std::min(numPeers, 32));
-        thrust::device_vector<int> d_outPeer(size_t(nodeCount) * outStride, -1);
-        thrust::device_vector<int> d_outNode(size_t(nodeCount) * outStride, -1);
-        const int blockSize = 256;
-        int blocks = (int(nodeCount) + blockSize - 1) / blockSize;
-        emitSendNodesKernel<KeyType><<<blocks, blockSize>>>(
-            d_sfcMap,
-            d_authPtr,
-            thrust::raw_pointer_cast(d_recvClaimRanks.data()),
-            thrust::raw_pointer_cast(d_uniqueOffsets.data()),
-            thrust::raw_pointer_cast(d_uniqueKeys.data()),
-            numUnique,
-            rank,
-            outStride,
-            thrust::raw_pointer_cast(d_outPeer.data()),
-            thrust::raw_pointer_cast(d_outNode.data()),
-            int(nodeCount));
-        cudaDeviceSynchronize();
-        cudaError_t err = cudaGetLastError();
-        if (err != cudaSuccess)
-        {
-            std::cerr << "[Rank " << rank << "] emitSendNodesKernel failed: "
-                      << cudaGetErrorString(err) << std::endl;
-            MPI_Abort(MPI_COMM_WORLD, 1);
-        }
-        compactSortBin(d_outPeer, d_outNode, sendIdsPerPeer);
-    }
-
-    // ===== RECV side =====
+    // ===== RECV side (built FIRST -- it is the source of truth) =====
+    // For each node whose authoritative owner != me, emit (owner, node): I will
+    // RECV that node's value from its owner. compactSortBin sorts per peer by
+    // local node id, so reqKeys below are in my stable recv-slot order.
     std::vector<std::vector<int>> recvIdsPerPeer;
     {
         thrust::device_vector<int> d_outPeer(size_t(nodeCount), -1);
@@ -2020,6 +1989,111 @@ void NodeHaloTopology<ElementTag, RealType, KeyType, AcceleratorTag>::buildFromC
             MPI_Abort(MPI_COMM_WORLD, 1);
         }
         compactSortBin(d_outPeer, d_outNode, recvIdsPerPeer);
+    }
+
+    // ===== SEND side: RECEIVER-DRIVEN symmetrization (Option A) =====
+    // The per-rank ownership vote (resolveOwnership/emitSendNodes) is NOT globally
+    // consistent at some SFC-partition seams: a node can be OVER-claimed -- this
+    // rank emits it to a peer that does NOT request it -> reverse-exchange
+    // MPI_ERR_TRUNCATE (the 64M-DOF/GPU crash). Instead of trusting this rank's
+    // emit, build the send list from what peers ACTUALLY request: send the global
+    // SFC keys of my recv (ghost) nodes to their owners; my send list to a peer =
+    // exactly the keys that peer asked for -> A.send[B] == B.recv[A] by
+    // construction. Slot order is preserved (I build send in the peer's request
+    // order = its recv order), so forward/reverse buffers still align. Build-time
+    // only (one key exchange over the same symmetric `peers`), no per-matvec cost.
+    //
+    // BIG TODO(ownership): the real fix is a globally-consistent owner assignment
+    // (cstone SFC key -> rank) so this exchange AND emitSendNodesKernel become
+    // unnecessary, fixing over-claim and orphan modes at once. Deferred --
+    // ownership changes are delicate (commit 625e324 was reverted). See memory
+    // project_halo_ownership_fix.
+    std::vector<std::vector<int>> sendIdsPerPeer(peers.size());
+    {
+        std::vector<KeyType> h_sfc(nodeCount);
+        if (nodeCount > 0)
+            cudaMemcpy(h_sfc.data(), d_sfcMap, nodeCount * sizeof(KeyType),
+                       cudaMemcpyDeviceToHost);
+
+        const int np = int(peers.size());
+
+        // My request to each peer = global keys of my ghost (recv) nodes from it.
+        std::vector<std::vector<KeyType>> reqKeys(np);
+        for (int i = 0; i < np; ++i)
+        {
+            reqKeys[i].reserve(recvIdsPerPeer[i].size());
+            for (int n : recvIdsPerPeer[i]) reqKeys[i].push_back(h_sfc[size_t(n)]);
+        }
+
+        // Exchange request counts (symmetric peers => no deadlock).
+        std::vector<int> reqSendCnt(np), reqRecvCnt(np, 0);
+        for (int i = 0; i < np; ++i) reqSendCnt[i] = int(reqKeys[i].size());
+        {
+            std::vector<MPI_Request> reqs; reqs.reserve(2 * np);
+            constexpr int tagReqCnt = 0x4d57;  // "MW"
+            for (int i = 0; i < np; ++i)
+            {
+                MPI_Request r;
+                MPI_Irecv(&reqRecvCnt[i], 1, MPI_INT, peers[i], tagReqCnt, MPI_COMM_WORLD, &r);
+                reqs.push_back(r);
+            }
+            for (int i = 0; i < np; ++i)
+            {
+                MPI_Request r;
+                MPI_Isend(&reqSendCnt[i], 1, MPI_INT, peers[i], tagReqCnt, MPI_COMM_WORLD, &r);
+                reqs.push_back(r);
+            }
+            if (!reqs.empty()) MPI_Waitall(int(reqs.size()), reqs.data(), MPI_STATUSES_IGNORE);
+        }
+
+        // Exchange request keys. Keys received from peer i = the nodes peer i wants
+        // me to send (its ghosts that I own), in peer i's recv-slot order.
+        std::vector<std::vector<KeyType>> recvReqKeys(np);
+        {
+            auto mpiKeyT = (sizeof(KeyType) == 8) ? MPI_UINT64_T : MPI_UNSIGNED;
+            std::vector<MPI_Request> reqs; reqs.reserve(2 * np);
+            constexpr int tagReqKey = 0x4d58;  // "MX"
+            for (int i = 0; i < np; ++i)
+            {
+                recvReqKeys[i].resize(reqRecvCnt[i]);
+                if (reqRecvCnt[i] > 0)
+                {
+                    MPI_Request r;
+                    MPI_Irecv(recvReqKeys[i].data(), reqRecvCnt[i], mpiKeyT, peers[i],
+                              tagReqKey, MPI_COMM_WORLD, &r);
+                    reqs.push_back(r);
+                }
+            }
+            for (int i = 0; i < np; ++i)
+            {
+                if (reqSendCnt[i] > 0)
+                {
+                    MPI_Request r;
+                    MPI_Isend(reqKeys[i].data(), reqSendCnt[i], mpiKeyT, peers[i],
+                              tagReqKey, MPI_COMM_WORLD, &r);
+                    reqs.push_back(r);
+                }
+            }
+            if (!reqs.empty()) MPI_Waitall(int(reqs.size()), reqs.data(), MPI_STATUSES_IGNORE);
+        }
+
+        // global key -> local node id (keys are unique per node on this rank).
+        std::unordered_map<KeyType, int> keyToLocal;
+        keyToLocal.reserve(nodeCount * 2);
+        for (size_t n = 0; n < nodeCount; ++n) keyToLocal.emplace(h_sfc[n], int(n));
+
+        // My send list to peer i = its requested keys mapped to my local node ids,
+        // IN THE RECEIVED ORDER (matches peer i's recv slot order).
+        for (int i = 0; i < np; ++i)
+        {
+            sendIdsPerPeer[i].reserve(recvReqKeys[i].size());
+            for (KeyType k : recvReqKeys[i])
+            {
+                auto it = keyToLocal.find(k);
+                // A peer can only request a node it ghosts from me -> I must hold it.
+                if (it != keyToLocal.end()) sendIdsPerPeer[i].push_back(it->second);
+            }
+        }
     }
 
     // ----- Compact into peer-list / CSR structure -----

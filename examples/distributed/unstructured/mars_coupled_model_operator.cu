@@ -42,6 +42,7 @@ using namespace mars::amr;
 #include <thrust/copy.h>
 #include <cusolverSp.h>
 #include <cusparse.h>
+#include <chrono>
 #include <mpi.h>
 #include <iostream>
 #include <iomanip>
@@ -201,7 +202,7 @@ template<typename KeyType, typename RealType>
 __global__ void assembleMomentumKernel(
     const KeyType* c0, const KeyType* c1, const KeyType* c2, const KeyType* c3,
     const RealType* nodeX, const RealType* nodeY, const RealType* nodeZ,
-    const int* rowOff, const int* colInd, RealType* vals, RealType nu,
+    const int* rowOff, const int* colInd, RealType* vals, RealType nu, RealType supg,
     const RealType* avx, const RealType* avy, const RealType* avz, size_t startElem, size_t numLocal)
 {
     size_t kk = blockIdx.x * blockDim.x + threadIdx.x; if (kk >= numLocal) return;
@@ -213,15 +214,30 @@ __global__ void assembleMomentumKernel(
     Tet4CVFEM::jacobian_and_dNdx<RealType>(coords, det, dNdx);
     RealType V = det / RealType(6); if (!(V > RealType(0))) return;
     RealType qV = V * RealType(0.25);
-    RealType ax = 0, ay = 0, az = 0;
-    if (avx) { for (int i=0;i<4;++i){ ax+=avx[n[i]]; ay+=avy[n[i]]; az+=avz[n[i]]; } ax*=RealType(0.25); ay*=RealType(0.25); az*=RealType(0.25); }
+    // element-mean advecting velocity a; bdot[i] = a . gradN_i (reused by Cab, the SUPG terms, and tau)
+    RealType ax = 0, ay = 0, az = 0, bdot[4] = {0, 0, 0, 0}, tau = 0;
+    if (avx) {
+        for (int i=0;i<4;++i){ ax+=avx[n[i]]; ay+=avy[n[i]]; az+=avz[n[i]]; } ax*=RealType(0.25); ay*=RealType(0.25); az*=RealType(0.25);
+        RealType Sb = 0, a2 = ax*ax + ay*ay + az*az;
+        for (int i=0;i<4;++i){ bdot[i] = ax*dNdx[i][0] + ay*dNdx[i][1] + az*dNdx[i][2]; Sb += fabs(bdot[i]); }
+        // SUPG tau (Tezduyar/Codina streamline form): h_s=2|a|/Sb -> tau = 1/sqrt(Sb^2 + (nu*Sb^2/|a|^2)^2).
+        // No 1/h_s blowup (h_s substituted out); tau=0 at no-flow so SUPG vanishes where Galerkin is stable.
+        const RealType eps = RealType(1e-12);
+        if (supg > RealType(0) && a2 > eps*eps && Sb > eps) {
+            RealType diff = nu * Sb * Sb / a2;
+            tau = supg / sqrt(Sb*Sb + diff*diff);
+        }
+    }
     for (int a = 0; a < 4; ++a)
         for (int b = 0; b < 4; ++b) {
             RealType Kab = V * (dNdx[a][0]*dNdx[b][0] + dNdx[a][1]*dNdx[b][1] + dNdx[a][2]*dNdx[b][2]);
-            RealType Cab = avx ? qV * (ax*dNdx[b][0] + ay*dNdx[b][1] + az*dNdx[b][2]) : RealType(0);
+            RealType Cab = qV * bdot[b];                     // consistent-Galerkin convection (0 if no advection)
+            RealType Suu = tau * V * bdot[a] * bdot[b];      // SUPG streamline diffusion (a^uu), symmetric PSD
             for (int d = 0; d < 3; ++d) {
                 int rad = 4*n[a]+d, rs = rowOff[rad], re = rowOff[rad+1];
-                csrAdd<RealType>(vals, colInd, rs, re, 4*n[b]+d, nu*Kab + Cab);   // a^uu only
+                csrAdd<RealType>(vals, colInd, rs, re, 4*n[b]+d, nu*Kab + Cab + Suu);     // a^uu (+SUPG diffusion)
+                if (tau > RealType(0))                       // SUPG a^up cross-term tau*(a.gradN_a)*dp/dx_d
+                    csrAdd<RealType>(vals, colInd, rs, re, 4*n[b]+3, tau * V * bdot[a] * dNdx[b][d]);
             }
         }
 }
@@ -286,7 +302,7 @@ __global__ void scatterBoundaryFluxKernel(const RealType* sBndX, const RealType*
 template<typename KeyType, typename RealType>
 void assembleRhieChowGpu(const KeyType* c0, const KeyType* c1, const KeyType* c2, const KeyType* c3,
                          const RealType* nx, const RealType* ny, const RealType* nz,
-                         const int* d_rowOff, const int* d_colInd, RealType* d_vals, RealType nu,
+                         const int* d_rowOff, const int* d_colInd, RealType* d_vals, RealType nu, RealType supg,
                          const RealType* avxp, const RealType* avyp, const RealType* avzp,
                          size_t startElem, size_t numLocal, int nNodes, int blockSize)
 {
@@ -296,7 +312,7 @@ void assembleRhieChowGpu(const KeyType* c0, const KeyType* c1, const KeyType* c2
         thrust::raw_pointer_cast(avX.data()), thrust::raw_pointer_cast(avY.data()), thrust::raw_pointer_cast(avZ.data()));
     cudaDeviceSynchronize();
     assembleMomentumKernel<KeyType, RealType><<<eBlocks, blockSize>>>(
-        c0, c1, c2, c3, nx, ny, nz, d_rowOff, d_colInd, d_vals, nu, avxp, avyp, avzp, startElem, numLocal);
+        c0, c1, c2, c3, nx, ny, nz, d_rowOff, d_colInd, d_vals, nu, supg, avxp, avyp, avzp, startElem, numLocal);
     cudaDeviceSynchronize();
     thrust::device_vector<RealType> Vp(nNodes, RealType(0)), invApV(nNodes, RealType(0));
     computeNodeVolumeKernel<KeyType, RealType><<<eBlocks, blockSize>>>(
@@ -354,6 +370,7 @@ __global__ void extractCompKernel(const RealType* x, RealType* out, int stride, 
 int main(int argc, char** argv)
 {
     MPI_Init(&argc, &argv);
+    std::cout << std::unitbuf;          // flush per write: live [phase0] trace under srun's block-buffered pipe
     int rank = 0, numRanks = 1;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &numRanks);
@@ -379,6 +396,7 @@ int main(int argc, char** argv)
     bool doAcm4b    = false;      // --acm-stage4b: ACM-preconditioned FlexGMRES iters vs 1a baseline + cusolver ref
     bool doAcmPump  = false;      // --acm-pump: mesh-agnostic ACM-FlexGMRES vs BoomerAMG on ANY tet mesh (residual-based)
     bool doRhieChow = false;      // --rhie-chow: assemble the collocated Rhie-Chow coupled operator (vs PSPG); implies --assemble
+    bool doSupg     = false;      // --supg: SUPG streamline-upwind stabilization on the momentum convection (needed at high Re)
     bool doChannel  = false;      // --channel: plane-channel inlet/outlet/wall BC + Poiseuille validation (implies --solve)
     double beta     = 45.0;      // --beta: skew-cavity angle (deg), used only for the --solve BC geometry
     int    Re       = 100;       // --Re: Reynolds number for the lid-driven solve (3b)
@@ -386,6 +404,9 @@ int main(int argc, char** argv)
     std::string inletSS, outletSS;  // --inlet-ss / --outlet-ss: Exodus side-set NAMES (pump real inlet/outlet)
     double inletSpeed = 0.5;     // --inlet-speed: velocity-flux inlet magnitude (m/s), along the inward normal
     bool   inletFlip  = false;   // --inlet-flip-normal: reverse the inlet normal if the Exodus winding is outward
+    double nuVal      = -1.0;    // --nu: dimensional kinematic viscosity (overrides 1/Re when >=0)
+    double relax      = 1.0;     // --relax: Picard under-relaxation omega (u <- w*u_new + (1-w)*u_old); <1 for high Re
+    int    acmRebuild = 1;       // --acm-rebuild: rebuild the ACM hierarchy every K Picard iters (reuse between; K>1 for host-heavy ILU)
     for (int i = 1; i < argc; ++i)
     {
         std::string a = argv[i];
@@ -401,11 +422,15 @@ int main(int argc, char** argv)
         else if (a == "--acm-stage4b")            { doAssemble = true; doAcm4b  = true; }
         else if (a == "--acm-pump")               { doAssemble = true; doAcmPump = true; }
         else if (a == "--rhie-chow")              { doAssemble = true; doRhieChow = true; }
+        else if (a == "--supg")                     doSupg     = true;
+        else if (a.rfind("--relax=", 0) == 0)        relax      = std::stod(a.substr(8));
+        else if (a.rfind("--acm-rebuild=", 0) == 0)  acmRebuild = std::stoi(a.substr(14));
         else if (a == "--channel")                { doAssemble = true; doSolve = true; doChannel = true; }
         else if (a.rfind("--inlet-ss=", 0) == 0)  { inletSS = a.substr(11); doAssemble = doRhieChow = true; }
         else if (a.rfind("--outlet-ss=", 0) == 0)   outletSS   = a.substr(12);
         else if (a.rfind("--inlet-speed=", 0) == 0) inletSpeed = std::stod(a.substr(14));
         else if (a == "--inlet-flip-normal")        inletFlip  = true;
+        else if (a.rfind("--nu=", 0) == 0)          nuVal      = std::stod(a.substr(5));
         else if (a.rfind("--beta=", 0) == 0)        beta       = std::stod(a.substr(7));
         else if (a.rfind("--Re=", 0) == 0)          Re         = std::stoi(a.substr(5));
         else if (a.rfind("--picard=", 0) == 0)      picard     = std::stoi(a.substr(9));
@@ -660,7 +685,7 @@ int main(int argc, char** argv)
         if (doRhieChow) {
             assembleRhieChowGpu<KeyType, RealType>(c0, c1, c2, c3, nx, ny, nz,
                 thrust::raw_pointer_cast(d_rowOff.data()), thrust::raw_pointer_cast(d_colInd.data()),
-                thrust::raw_pointer_cast(d_vals.data()), nu, avxp, avyp, avzp,
+                thrust::raw_pointer_cast(d_vals.data()), nu, doSupg ? RealType(1) : RealType(0), avxp, avyp, avzp,
                 startEl, numLocal, (int)nNodes, blockSize);
         } else {
             assembleCoupledStokesKernel<KeyType, RealType><<<eBlocks, blockSize>>>(
@@ -732,8 +757,12 @@ int main(int argc, char** argv)
         else
             std::cout << "[phase0][assemble] DOFs=" << ND << " nnz=" << nnz
                       << (doAdvect ? "  (advection ON)" : "  (Stokes)") << "\n";
-        std::cout << "[phase0][assemble] a_pu==-a_up^T : " << e1 << "  " << pf(e1 < atol)
-                  << (doRhieChow ? "  (interior)" : "") << "\n";
+        // SUPG adds a consistent a^up cross-term (momentum rows, pressure cols) with no a^pu counterpart,
+        // so it legitimately breaks the transpose identity -- expected, like the open-boundary flux. e2/e3
+        // (continuity-row quantities) and a^pp are untouched by SUPG.
+        bool e1ok = (e1 < atol) || doSupg;
+        std::cout << "[phase0][assemble] a_pu==-a_up^T : " << e1 << "  " << pf(e1ok)
+                  << (doSupg ? "  (SUPG cross-term expected)" : doRhieChow ? "  (interior)" : "") << "\n";
         if (doRhieChow)
             std::cout << "[phase0][assemble] bndry-flux brk: " << e1b
                       << "  (EXPECTED >0 = open-boundary IBP integral, continuity rows only)\n";
@@ -742,10 +771,10 @@ int main(int argc, char** argv)
         if (doAdvect) {
             std::cout << "[phase0][assemble] a_uu nonsymm  : " << e4 << "  " << pf(e4 > atol) << "\n";
             std::cout << "[phase0][assemble] a_uu conserves: " << e5 << "  " << pf(e5 < atol) << "\n";
-            assemblePass = (e1 < atol) && (e2 < atol) && (e3 < atol) && (e4 > atol) && (e5 < atol);
+            assemblePass = e1ok && (e2 < atol) && (e3 < atol) && (e4 > atol) && (e5 < atol);
         } else {
             std::cout << "[phase0][assemble] a_uu symmetric: " << e4 << "  " << pf(e4 < atol) << "\n";
-            assemblePass = (e1 < atol) && (e2 < atol) && (e3 < atol) && (e4 < atol);
+            assemblePass = e1ok && (e2 < atol) && (e3 < atol) && (e4 < atol);
         }
         if (doRhieChow) {   // G2: a^pp is a Rhie-Chow d_f-Laplacian M-matrix (diag>0, off<=0)
             RealType mdiagMin = RealType(1e30), moffMax = RealType(-1e30);
@@ -1047,22 +1076,10 @@ int main(int argc, char** argv)
         //      surface, pressure pinned, smooth body force drives the flow. ----
         if (doAcmPump)
         {
-            const RealType nuS  = RealType(1) / static_cast<RealType>(Re);
+            const RealType nuS  = (nuVal >= 0) ? static_cast<RealType>(nuVal) : RealType(1) / static_cast<RealType>(Re);
             const RealType hpar = RealType(1) / std::sqrt(static_cast<RealType>(nNodes) * RealType(0.5));
             const RealType tauS = hpar * hpar / (RealType(4) * nuS);
-            thrust::fill(d_vals.begin(), d_vals.end(), RealType(0));
-            if (doRhieChow)   // collocated Rhie-Chow operator (no tau, intrinsic checkerboard suppression)
-                assembleRhieChowGpu<KeyType, RealType>(c0, c1, c2, c3, nx, ny, nz,
-                    thrust::raw_pointer_cast(d_rowOff.data()), thrust::raw_pointer_cast(d_colInd.data()),
-                    thrust::raw_pointer_cast(d_vals.data()), nuS, nullptr, nullptr, nullptr,
-                    startEl, numLocal, (int)nNodes, blockSize);
-            else
-                assembleCoupledStokesKernel<KeyType, RealType><<<eBlocks, blockSize>>>(
-                    c0, c1, c2, c3, nx, ny, nz,
-                    thrust::raw_pointer_cast(d_rowOff.data()), thrust::raw_pointer_cast(d_colInd.data()),
-                    thrust::raw_pointer_cast(d_vals.data()), nuS, tauS, nullptr, nullptr, nullptr,
-                    startEl, numLocal);
-            cudaDeviceSynchronize();
+            // operator is assembled INSIDE the Picard loop below with the frozen advecting velocity (convection)
 
             // boundary nodes: a tet face shared by exactly one element is a surface face (host sort+count)
             std::vector<std::array<int, 3>> faces; faces.reserve(4 * numLocal);
@@ -1126,28 +1143,17 @@ int main(int argc, char** argv)
 
             thrust::device_vector<uint8_t>  d_bcF(bcF.begin(), bcF.end());
             thrust::device_vector<RealType> d_bcV(bcV.begin(), bcV.end());   // inlet flux values (0 for closed-box)
-            thrust::device_vector<RealType> d_rhs(hrhs.begin(), hrhs.end());
             const int dblk = (ND + blockSize - 1) / blockSize;
-            applyBCKernel<RealType><<<dblk, blockSize>>>(
-                thrust::raw_pointer_cast(d_bcF.data()), thrust::raw_pointer_cast(d_bcV.data()),
-                thrust::raw_pointer_cast(d_rowOff.data()), thrust::raw_pointer_cast(d_colInd.data()),
-                thrust::raw_pointer_cast(d_vals.data()), thrust::raw_pointer_cast(d_rhs.data()), ND);
-            cudaDeviceSynchronize();
+            const int nblkN = ((int)nNodes + blockSize - 1) / blockSize;
 
             SparseMatrix<int, RealType, cstone::GpuTag> Am; Am.allocate(ND, ND, nnz);
             thrust::copy(d_rowOff.begin(), d_rowOff.end(), thrust::device_pointer_cast(Am.rowOffsetsPtr()));
             thrust::copy(d_colInd.begin(), d_colInd.end(), thrust::device_pointer_cast(Am.colIndicesPtr()));
-            thrust::copy(d_vals.begin(),   d_vals.end(),   thrust::device_pointer_cast(Am.valuesPtr()));
             using Vec = cstone::DeviceVector<RealType>;
-            Vec b; b.resize(ND);
-            thrust::copy(d_rhs.begin(), d_rhs.end(), thrust::device_pointer_cast(b.data()));
-            const RealType bnorm = std::sqrt(thrust::inner_product(
-                thrust::device_pointer_cast(b.data()), thrust::device_pointer_cast(b.data() + ND),
-                thrust::device_pointer_cast(b.data()), RealType(0)));
-
-            // ||b - A x|| / ||b|| using the BC-eliminated CSR (acmSpmvKernel); no direct reference needed
-            thrust::device_vector<RealType> d_Ax(ND), d_diff(ND);
-            auto resid = [&](Vec& xv) -> RealType {
+            Vec b; b.resize(ND); Vec xa; xa.resize(ND);
+            thrust::device_vector<RealType> d_rhs(ND), d_Ax(ND), d_diff(ND);
+            RealType bnorm = RealType(1);
+            auto resid = [&](Vec& xv) -> RealType {     // ||b - A x|| / ||b|| on the BC-eliminated CSR
                 acmSpmvKernel<RealType><<<dblk, blockSize>>>(
                     thrust::raw_pointer_cast(d_rowOff.data()), thrust::raw_pointer_cast(d_colInd.data()),
                     thrust::raw_pointer_cast(d_vals.data()), xv.data(), thrust::raw_pointer_cast(d_Ax.data()), ND);
@@ -1161,17 +1167,79 @@ int main(int argc, char** argv)
             std::cout << std::scientific << std::setprecision(3);
             if (std::getenv("MARS_VERBOSE_MESH"))
                 std::cout << "[phase0][acm-pump] DOFs=" << ND << " nnz=" << nnz
-                          << " surface nodes=" << nBnd << "/" << nNodes << " nu=" << nuS << " tau=" << tauS << "\n";
+                          << " surface nodes=" << nBnd << "/" << nNodes << " nu=" << nuS << "\n";
 
+            // Picard outer loop: freeze the velocity (d_av*), re-assemble the CONVECTIVE momentum, re-solve with
+            // the ACM. d_av*=0 on iter 0 (pure Stokes); the previous solution then advects the next. BC and
+            // sparsity are fixed across iters; only d_vals (the operator) + b are rebuilt each iter.
             GpuAcmPreconditioner<RealType, int, cstone::GpuTag> acm;
-            Vec xa; xa.resize(ND);
             GMRESSolver<RealType, int, cstone::GpuTag> ga(2000, 1e-8, 30);
             ga.setVerbose(false); ga.setPreconditioner(&acm); ga.setFlexible(true);
-            ga.solve(Am, b, xa, true);
-            const int itA = ga.getLastIterations(); const RealType rA = resid(xa);
+            thrust::device_vector<RealType> d_avx(nNodes, RealType(0)), d_avy(nNodes, RealType(0)),
+                                            d_avz(nNodes, RealType(0)), d_sx(nNodes), d_sy(nNodes), d_sz(nNodes), d_tmp(nNodes);
+            const RealType wrelax = static_cast<RealType>(relax);   // Picard under-relaxation omega (--relax)
+            int itA = 0, pit = 0; RealType rA = 0, du = 0;
+            for (pit = 0; pit < picard; ++pit) {
+                thrust::fill(d_vals.begin(), d_vals.end(), RealType(0));
+                if (doRhieChow)
+                    assembleRhieChowGpu<KeyType, RealType>(c0, c1, c2, c3, nx, ny, nz,
+                        thrust::raw_pointer_cast(d_rowOff.data()), thrust::raw_pointer_cast(d_colInd.data()),
+                        thrust::raw_pointer_cast(d_vals.data()), nuS, doSupg ? RealType(1) : RealType(0),
+                        thrust::raw_pointer_cast(d_avx.data()), thrust::raw_pointer_cast(d_avy.data()),
+                        thrust::raw_pointer_cast(d_avz.data()), startEl, numLocal, (int)nNodes, blockSize);
+                else
+                    assembleCoupledStokesKernel<KeyType, RealType><<<eBlocks, blockSize>>>(
+                        c0, c1, c2, c3, nx, ny, nz,
+                        thrust::raw_pointer_cast(d_rowOff.data()), thrust::raw_pointer_cast(d_colInd.data()),
+                        thrust::raw_pointer_cast(d_vals.data()), nuS, tauS,
+                        thrust::raw_pointer_cast(d_avx.data()), thrust::raw_pointer_cast(d_avy.data()),
+                        thrust::raw_pointer_cast(d_avz.data()), startEl, numLocal);
+                cudaDeviceSynchronize();
+                thrust::copy(hrhs.begin(), hrhs.end(), d_rhs.begin());
+                applyBCKernel<RealType><<<dblk, blockSize>>>(
+                    thrust::raw_pointer_cast(d_bcF.data()), thrust::raw_pointer_cast(d_bcV.data()),
+                    thrust::raw_pointer_cast(d_rowOff.data()), thrust::raw_pointer_cast(d_colInd.data()),
+                    thrust::raw_pointer_cast(d_vals.data()), thrust::raw_pointer_cast(d_rhs.data()), ND);
+                cudaDeviceSynchronize();
+                thrust::copy(d_vals.begin(), d_vals.end(), thrust::device_pointer_cast(Am.valuesPtr()));
+                thrust::copy(d_rhs.begin(), d_rhs.end(), thrust::device_pointer_cast(b.data()));
+                bnorm = std::sqrt(thrust::inner_product(
+                    thrust::device_pointer_cast(b.data()), thrust::device_pointer_cast(b.data() + ND),
+                    thrust::device_pointer_cast(b.data()), RealType(0)));
+                bool reuseThis = (acmRebuild > 1 && (pit % acmRebuild != 0));   // rebuild hierarchy every K iters, reuse between
+                acm.setReuse(reuseThis);
+                cudaDeviceSynchronize();                    // flush prior async work so the timer measures only the solve
+                auto tSolve0 = std::chrono::high_resolution_clock::now();
+                ga.solve(Am, b, xa, true);                  // (re-)setup the ACM hierarchy unless frozen this iter
+                cudaDeviceSynchronize();
+                double solveMs = std::chrono::duration<double, std::milli>(
+                    std::chrono::high_resolution_clock::now() - tSolve0).count();   // setup(if rebuilt)+FlexGMRES
+                itA = ga.getLastIterations(); rA = resid(xa);
+                // extract the SOLVED velocity into temps, then Picard under-relax: u <- w*u_new + (1-w)*u_old.
+                // d(u) is the RELAXED change; convergence is relative to the velocity scale (|u|max).
+                extractCompKernel<RealType><<<nblkN, blockSize>>>(xa.data(), thrust::raw_pointer_cast(d_sx.data()), 4, 0, (int)nNodes);
+                extractCompKernel<RealType><<<nblkN, blockSize>>>(xa.data(), thrust::raw_pointer_cast(d_sy.data()), 4, 1, (int)nNodes);
+                extractCompKernel<RealType><<<nblkN, blockSize>>>(xa.data(), thrust::raw_pointer_cast(d_sz.data()), 4, 2, (int)nNodes);
+                cudaDeviceSynchronize();
+                thrust::transform(d_sx.begin(), d_sx.end(), d_avx.begin(), d_tmp.begin(),
+                    [] __device__ (RealType s, RealType o) { return fabs(s - o); });
+                du = wrelax * thrust::reduce(d_tmp.begin(), d_tmp.end(), RealType(0), thrust::maximum<RealType>());
+                thrust::transform(d_sx.begin(), d_sx.end(), d_tmp.begin(), [] __device__ (RealType v) { return fabs(v); });
+                RealType uscale = thrust::reduce(d_tmp.begin(), d_tmp.end(), RealType(0), thrust::maximum<RealType>());
+                auto blend = [wrelax] __device__ (RealType s, RealType o) { return wrelax * s + (RealType(1) - wrelax) * o; };
+                thrust::transform(d_sx.begin(), d_sx.end(), d_avx.begin(), d_avx.begin(), blend);
+                thrust::transform(d_sy.begin(), d_sy.end(), d_avy.begin(), d_avy.begin(), blend);
+                thrust::transform(d_sz.begin(), d_sz.end(), d_avz.begin(), d_avz.begin(), blend);
+                double setupMs = acm.getLastSetupMs();      // hierarchy build (0 if reused); solve = total - setup
+                std::cout << "[phase0][acm-pump][picard " << pit << "] ACM iters=" << itA << " res=" << rA
+                          << " d(u)=" << du << " d(u)/|u|=" << du / (uscale + RealType(1e-30))
+                          << " setup=" << setupMs << "ms solve=" << (solveMs - setupMs) << "ms"
+                          << (reuseThis ? " (reuse)" : " (rebuild)") << "\n";
+                if (du < RealType(1e-5) * (uscale + RealType(1e-30))) { ++pit; break; }   // relative steady-state
+            }
 
-            std::cout << "[phase0][acm-pump] ACM-FlexGMRES  iters=" << itA << " levels=" << acm.numLevels()
-                      << " beta=" << acm.beta() << " (MARS_ACM_BETA, 0=isotropic) res=" << rA << "\n";
+            std::cout << "[phase0][acm-pump] picard=" << pit << " ACM-FlexGMRES iters=" << itA
+                      << " levels=" << acm.numLevels() << " beta=" << acm.beta() << " res=" << rA << "\n";
             if (inletSet) {
                 // pump through-flow validation: mass conservation (net boundary flux ~0 by divergence theorem),
                 // inflow sign, pressure/velocity sanity. No BoomerAMG comparison (it fails on the RC operator).
@@ -1303,7 +1371,7 @@ int main(int argc, char** argv)
                 if (doRhieChow)
                     assembleRhieChowGpu<KeyType, RealType>(c0, c1, c2, c3, nx, ny, nz,
                         thrust::raw_pointer_cast(d_rowOff.data()), thrust::raw_pointer_cast(d_colInd.data()),
-                        thrust::raw_pointer_cast(d_vals.data()), nuS,
+                        thrust::raw_pointer_cast(d_vals.data()), nuS, doSupg ? RealType(1) : RealType(0),
                         thrust::raw_pointer_cast(d_avx.data()), thrust::raw_pointer_cast(d_avy.data()),
                         thrust::raw_pointer_cast(d_avz.data()), startEl, numLocal, (int)nNodes, blockSize);
                 else

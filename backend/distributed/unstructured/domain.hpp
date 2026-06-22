@@ -3,6 +3,7 @@
 #include <tuple>
 #include <utility>
 #include <cstdlib>
+#include <cstdio>
 
 namespace cstone
 {
@@ -859,6 +860,40 @@ public:
         domain_->exchangeHalos(arrays, sendBuffer, receiveBuffer);
     }
 
+    // Debug-gated diagnostic Waitall. Default (MARS_HALO_DEBUG unset): the plain
+    // fatal Waitall, behavior unchanged. With MARS_HALO_DEBUG=1: set the comm to
+    // MPI_ERRORS_RETURN and, on failure, print the EXACT per-request error so the
+    // opaque "PMPI_Waitall: See the MPI_ERROR field" abort becomes actionable --
+    //   err="Message truncated"  -> topology send/recv count mismatch (NodeHaloTopology bug)
+    //   err=CXI/GPU/registration -> GPUDirect transport / rendezvous (size or resource)
+    // tag distinguishes the exchange (0x4d52 fwd, 0x4d53 rev); got_count = elements
+    // actually arriving (for truncation it exceeds the posted recv).
+    static void waitallDiag(std::vector<MPI_Request>& reqs, MPI_Datatype mpiType)
+    {
+        if (reqs.empty()) return;
+        static const bool dbg = std::getenv("MARS_HALO_DEBUG") != nullptr;
+        if (!dbg) { MPI_Waitall((int)reqs.size(), reqs.data(), MPI_STATUSES_IGNORE); return; }
+        static const bool once = []{
+            MPI_Comm_set_errhandler(MPI_COMM_WORLD, MPI_ERRORS_RETURN); return true; }();
+        (void)once;
+        std::vector<MPI_Status> st(reqs.size());
+        int werr = MPI_Waitall((int)reqs.size(), reqs.data(), st.data());
+        if (werr == MPI_SUCCESS) return;
+        int rank = 0; MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+        for (size_t i = 0; i < reqs.size(); ++i)
+        {
+            if (st[i].MPI_ERROR == MPI_SUCCESS) continue;
+            char es[MPI_MAX_ERROR_STRING]; int len = 0;
+            MPI_Error_string(st[i].MPI_ERROR, es, &len);
+            int got = -1; MPI_Get_count(&st[i], mpiType, &got);
+            std::fprintf(stderr,
+                "[halo-dbg] rank %d req %zu src=%d tag=0x%x err=\"%s\" got_count=%d\n",
+                rank, i, st[i].MPI_SOURCE, st[i].MPI_TAG, es, got);
+        }
+        std::fflush(stderr);
+        MPI_Abort(MPI_COMM_WORLD, 17);
+    }
+
     // Per-NODE halo exchange built on top of cstone's per-ELEMENT halo.
     //
     // Inputs:
@@ -952,7 +987,7 @@ public:
                 reqs.push_back(r);
             }
         }
-        if (!reqs.empty()) MPI_Waitall(int(reqs.size()), reqs.data(), MPI_STATUSES_IGNORE);
+        waitallDiag(reqs, mpiType);
         ++topo.epoch_;
 
         // Scatter recvBuf into nodeArray[nodeToDof[recvNodeIds]].
@@ -1061,7 +1096,7 @@ public:
                 reqs.push_back(r);
             }
         }
-        if (!reqs.empty()) MPI_Waitall(int(reqs.size()), reqs.data(), MPI_STATUSES_IGNORE);
+        waitallDiag(reqs, mpiType);
         ++topo.epoch_;
 
         // Atomic-add received contributions into owner-side slots. atomicAdd is
@@ -1159,7 +1194,7 @@ public:
                 reqs.push_back(r);
             }
         }
-        if (!reqs.empty()) MPI_Waitall(int(reqs.size()), reqs.data(), MPI_STATUSES_IGNORE);
+        waitallDiag(reqs, mpiType);
         ++topo.epoch_;
 
         // Combine received contributions into owner slots with min/max via a
