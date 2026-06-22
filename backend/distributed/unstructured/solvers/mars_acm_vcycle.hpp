@@ -634,18 +634,13 @@ inline void acmCoarseSolve(AcmLevel<RealType>& L, int coarse, RealType omega, bo
     }
 }
 
-// one V-cycle on levels[Lidx..coarsest], operating on levels[Lidx].bvec (in) / xvec (in-out).
-// ITERATIVE form (explicit down -> coarse -> up) -- equivalent to the old recursion (same ops, same order),
-// but the down- and up-halves are now separable so each can be captured into a CUDA graph around the
-// non-capturable cusolver QR coarse solve (Step 1). All launches on stream s. useBlock -> block-Jacobi.
+// V-cycle DOWN half: pre-smooth + residual + restrict, level Lidx down to just above the coarsest.
+// Pure capturable kernel sequence (no host sync, DILU smoother has no buffer swap) -> CUDA-graph safe.
 template<typename RealType>
-void acmVcycleGpu(std::vector<AcmLevel<RealType>>& levels, int Lidx,
-                  int pre, int post, int coarse, RealType omega, bool useBlock = false,
-                  cusolverSpHandle_t cs = nullptr, cusparseMatDescr_t descr = nullptr, cudaStream_t s = 0)
+void acmVcycleDownGpu(std::vector<AcmLevel<RealType>>& levels, int Lidx, int pre, RealType omega,
+                      bool useBlock, cudaStream_t s)
 {
-    const int blk = 256;
-    const int nL = (int)levels.size();
-    // DOWN: pre-smooth + residual + restrict, level Lidx down to just above the coarsest
+    const int blk = 256, nL = (int)levels.size();
     for (int l = Lidx; l < nL - 1; ++l) {
         AcmLevel<RealType>& L = levels[l];
         AcmLevel<RealType>& C = levels[l + 1];
@@ -653,13 +648,18 @@ void acmVcycleGpu(std::vector<AcmLevel<RealType>>& levels, int Lidx,
         acmSmoothGpu(L, pre, omega, useBlock, s);
         acmResidualKernel<RealType><<<grd, blk, 0, s>>>(acmRaw(L.rowOff), acmRaw(L.colInd), acmRaw(L.vals),
                                                   acmRaw(L.xvec), acmRaw(L.bvec), acmRaw(L.rtmp), L.ND);   // rtmp = b - A x (fused)
-        thrust::fill(thrust::cuda::par.on(s), C.bvec.begin(), C.bvec.end(), RealType(0));
-        thrust::fill(thrust::cuda::par.on(s), C.xvec.begin(), C.xvec.end(), RealType(0));
+        cudaMemsetAsync(acmRaw(C.bvec), 0, sizeof(RealType) * C.ND, s);   // capture-safe zero (all-zero bytes == 0.0)
+        cudaMemsetAsync(acmRaw(C.xvec), 0, sizeof(RealType) * C.ND, s);
         acmRestrictAddKernel<RealType><<<gN, blk, 0, s>>>(acmRaw(L.rtmp), acmRaw(C.bvec), acmRaw(L.agg), L.nNodes);
     }
-    // COARSE: direct QR (eager -- non-capturable, sits between the two captured graphs)
-    acmCoarseSolve(levels[nL - 1], coarse, omega, useBlock, cs, descr, s);
-    // UP: inject + add + post-smooth, just above the coarsest back up to level Lidx
+}
+
+// V-cycle UP half: inject + add + post-smooth, just above the coarsest back up to level Lidx. Capturable.
+template<typename RealType>
+void acmVcycleUpGpu(std::vector<AcmLevel<RealType>>& levels, int Lidx, int post, RealType omega,
+                    bool useBlock, cudaStream_t s)
+{
+    const int blk = 256, nL = (int)levels.size();
     for (int l = nL - 2; l >= Lidx; --l) {
         AcmLevel<RealType>& L = levels[l];
         AcmLevel<RealType>& C = levels[l + 1];
@@ -668,6 +668,19 @@ void acmVcycleGpu(std::vector<AcmLevel<RealType>>& levels, int Lidx,
         acmAddKernel<RealType><<<grd, blk, 0, s>>>(acmRaw(L.xvec), acmRaw(L.xtmp), L.ND);
         acmSmoothGpu(L, post, omega, useBlock, s);
     }
+}
+
+// one V-cycle: down -> coarse QR -> up (equivalent to the old recursion, same ops/order). The down/up
+// halves are separate so the preconditioner can CUDA-graph-capture each around the non-capturable QR.
+template<typename RealType>
+void acmVcycleGpu(std::vector<AcmLevel<RealType>>& levels, int Lidx,
+                  int pre, int post, int coarse, RealType omega, bool useBlock = false,
+                  cusolverSpHandle_t cs = nullptr, cusparseMatDescr_t descr = nullptr, cudaStream_t s = 0)
+{
+    const int nL = (int)levels.size();
+    acmVcycleDownGpu(levels, Lidx, pre, omega, useBlock, s);
+    acmCoarseSolve(levels[nL - 1], coarse, omega, useBlock, cs, descr, s);   // eager (non-capturable)
+    acmVcycleUpGpu(levels, Lidx, post, omega, useBlock, s);
 }
 
 // ---- host replica (validation oracle): same hierarchy, same arithmetic, on the CPU ----

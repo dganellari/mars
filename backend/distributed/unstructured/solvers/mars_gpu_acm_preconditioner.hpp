@@ -16,6 +16,7 @@
 #include <thrust/fill.h>
 #include <vector>
 #include <cstdlib>
+#include <cstdio>
 #include <chrono>
 
 namespace mars
@@ -43,10 +44,13 @@ public:
         cusparseCreateMatDescr(&descr_);
         cusparseSetMatType(descr_, CUSPARSE_MATRIX_TYPE_GENERAL);
         cusparseSetMatIndexBase(descr_, CUSPARSE_INDEX_BASE_ZERO);
+        cudaStreamCreate(&capStream_);              // dedicated capturable stream for the graphed V-cycle
     }
 
     ~GpuAcmPreconditioner()
     {
+        destroyGraphs();
+        if (capStream_) cudaStreamDestroy(capStream_);
         if (descr_) cusparseDestroyMatDescr(descr_);
         if (cs_) cusolverSpDestroy(cs_);
     }
@@ -76,12 +80,29 @@ public:
         cudaDeviceSynchronize();
         lastSetupMs_ = std::chrono::duration<double, std::milli>(
             std::chrono::high_resolution_clock::now() - tSetup0).count();   // hierarchy build (host-heavy for ILU/DILU factor)
+        captureGraphs();   // (re)capture the V-cycle into CUDA graphs on the new hierarchy (DILU only; eager fallback)
     }
 
     // z = M^-1 r  (one V-cycle, fresh zero initial guess; direct QR at the coarsest)
     void apply(const Vector& r, Vector& z) override
     {
         if (static_cast<int>(z.size()) != nd_) z.resize(nd_);
+        if (haveGraph_) {
+            // captured-graph replay: down-graph -> eager QR coarse -> up-graph, all on capStream_.
+            cudaStreamSynchronize(0);                                   // r was produced on the default stream
+            cudaMemcpyAsync(thrust::raw_pointer_cast(levels_[0].bvec.data()), r.data(),
+                            sizeof(RealType) * nd_, cudaMemcpyDeviceToDevice, capStream_);
+            cudaMemsetAsync(thrust::raw_pointer_cast(levels_[0].xvec.data()), 0,
+                            sizeof(RealType) * nd_, capStream_);        // fresh zero initial guess
+            cudaGraphLaunch(gDownExec_, capStream_);
+            mars::acmCoarseSolve<RealType>(levels_.back(), coarse_, omega_, /*useBlock=*/true, cs_, descr_, capStream_);
+            cudaGraphLaunch(gUpExec_, capStream_);
+            cudaMemcpyAsync(z.data(), thrust::raw_pointer_cast(levels_[0].xvec.data()),
+                            sizeof(RealType) * nd_, cudaMemcpyDeviceToDevice, capStream_);
+            cudaStreamSynchronize(capStream_);                         // z ready before FlexGMRES consumes it
+            return;
+        }
+        // eager fallback (non-DILU smoother, or capture unavailable): the original path, on the default stream
         thrust::copy(thrust::device_pointer_cast(r.data()),
                      thrust::device_pointer_cast(r.data() + nd_), levels_[0].bvec.begin());
         thrust::fill(levels_[0].xvec.begin(), levels_[0].xvec.end(), RealType(0));
@@ -94,8 +115,53 @@ public:
     RealType beta() const { return beta_; }
     void setReuse(bool b) { reuse_ = b; }   // true -> skip the next setup() rebuild, reuse the current hierarchy
     double getLastSetupMs() const { return lastSetupMs_; }   // hierarchy-build wall-time of the last setup() (0 if reused)
+    bool usingGraph() const { return haveGraph_; }           // true if the V-cycle is replayed from a captured graph
 
 private:
+    void destroyGraphs()
+    {
+        if (gDownExec_) { cudaGraphExecDestroy(gDownExec_); gDownExec_ = nullptr; }
+        if (gUpExec_)   { cudaGraphExecDestroy(gUpExec_);   gUpExec_   = nullptr; }
+        haveGraph_ = false;
+    }
+
+    // Capture the down/up V-cycle halves into CUDA graphs (the cusolver QR coarse solve stays eager
+    // between them -- it is non-capturable). Only the DILU smoother is graph-safe (no host buffer swap).
+    // ANY capture failure leaves haveGraph_=false -> apply() uses the correct eager path. cudaGraphInstantiate
+    // address-binds the graph, so this must re-run on every hierarchy rebuild (called at the end of setup()).
+    void captureGraphs()
+    {
+        destroyGraphs();
+        if (!mars::acmUseDilu()) return;                     // Jacobi/ILU paths have a host swap -> not capturable
+        // warmup one eager cycle: lazy CUDA/cusolver module+handle init is itself uncapturable on first touch
+        mars::acmVcycleGpu<RealType>(levels_, 0, pre_, post_, coarse_, omega_, true, cs_, descr_, capStream_);
+        cudaStreamSynchronize(capStream_);
+        cudaGraph_t g = nullptr;
+        bool ok = false;
+        do {
+            if (cudaStreamBeginCapture(capStream_, cudaStreamCaptureModeThreadLocal) != cudaSuccess) break;
+            mars::acmVcycleDownGpu<RealType>(levels_, 0, pre_, omega_, true, capStream_);
+            if (cudaStreamEndCapture(capStream_, &g) != cudaSuccess) break;
+            if (cudaGraphInstantiateWithFlags(&gDownExec_, g, 0) != cudaSuccess) break;
+            cudaGraphDestroy(g); g = nullptr;
+            if (cudaStreamBeginCapture(capStream_, cudaStreamCaptureModeThreadLocal) != cudaSuccess) break;
+            mars::acmVcycleUpGpu<RealType>(levels_, 0, post_, omega_, true, capStream_);
+            if (cudaStreamEndCapture(capStream_, &g) != cudaSuccess) break;
+            if (cudaGraphInstantiateWithFlags(&gUpExec_, g, 0) != cudaSuccess) break;
+            cudaGraphDestroy(g); g = nullptr;
+            ok = true;
+        } while (false);
+        if (ok) {
+            haveGraph_ = true;
+            std::fprintf(stderr, "[acm-graph] V-cycle captured (down+up graphs); QR eager between\n");
+        } else {
+            if (g) cudaGraphDestroy(g);
+            destroyGraphs();
+            cudaGetLastError();   // clear the sticky capture error so a later driver cudaGetLastError() won't misattribute it
+            std::fprintf(stderr, "[acm-graph] V-cycle capture unavailable -> eager path (correct, slower)\n");
+        }
+    }
+
     int kmax_, maxCoarseND_, pre_, post_, coarse_, nd_ = 0;
     RealType omega_, beta_;
     bool reuse_ = false;
@@ -103,6 +169,9 @@ private:
     std::vector<mars::AcmLevel<RealType>> levels_;
     cusolverSpHandle_t cs_ = nullptr;
     cusparseMatDescr_t descr_ = nullptr;
+    cudaStream_t capStream_ = nullptr;
+    cudaGraphExec_t gDownExec_ = nullptr, gUpExec_ = nullptr;   // captured V-cycle halves (Step 1)
+    bool haveGraph_ = false;
 };
 
 }  // namespace fem
