@@ -132,4 +132,26 @@ ax.text(0.03, 0.97, "DD reaches 10$^{12}$ at $\\sim$9,300 GPUs\n(validated 108.7
         transform=ax.transAxes, va="top", fontsize=10, color=GREEN)
 save(fig, "fig_trillion")
 
-print("wrote fig_memory, fig_throughput, fig_convergence, fig_weakscale, fig_comm_pergpu, fig_trillion (.png + .pdf)")
+# --- 7. distributed HIGH-ORDER operator: weak scaling + comm self-resolve (p=4, GH200) ---
+ho_gpus      = [1, 8]
+ho_apply_eff = [100.0, 98.1]   # apply-only, ~4.2M DOF/GPU held (5965 -> 46811 MDOF/s)
+ho_full_eff  = [100.0, 78.4]   # full matvec, blocking halo (5790 -> 36319 MDOF/s)
+fig, ax = plt.subplots(figsize=(6.2, 4.0))
+ax.plot(ho_gpus, ho_apply_eff, "-o", color=BLUE,   lw=2.6, ms=10, label="operator apply (compute)")
+ax.plot(ho_gpus, ho_full_eff,  "-s", color=ORANGE, lw=2.6, ms=10, label="full matvec, blocking halo")
+ax.axhline(100, color="#999999", ls=":", lw=1.2)
+ax.set_xscale("log", base=2); ax.set_xticks(ho_gpus); ax.set_xticklabels(["1", "8"])
+ax.set_xlabel("GPUs   (p=4, ~4.2M DOF/GPU held;  device==host halo bit-exact 1e-18)")
+ax.set_ylabel("parallel efficiency  [%]")
+ax.set_title("High-order matrix-free: distributed weak scaling")
+ax.set_ylim(0, 112)
+ax.annotate("apply 98% @ 8 GPU\n(5.9 GDOF/s/GPU = single-GPU rate)", xy=(8, 98.1), xytext=(1.12, 58),
+            color=BLUE, fontsize=11, fontweight="bold")
+ax.text(1.08, 22,
+        "comm self-resolves with per-GPU size:\nat 8 GPU,  4M$\\to$11M DOF/GPU\n$\\Rightarrow$ comm 22$\\to$15%,  full-matvec 78$\\to$87%",
+        fontsize=10, color=DARK,
+        bbox=dict(boxstyle="round", fc="#F4F4F4", ec="#CCCCCC"))
+ax.legend(frameon=False, loc="lower left")
+save(fig, "fig_ho_scaling")
+
+print("wrote fig_memory, fig_throughput, fig_convergence, fig_weakscale, fig_comm_pergpu, fig_trillion, fig_ho_scaling (.png + .pdf)")

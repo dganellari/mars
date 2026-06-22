@@ -163,6 +163,105 @@ public:
             }
         }
     }
+
+    // Canonical cross-rank identity of a high-order DOF (for the multi-rank halo).
+    // kind: 0 corner, 1 edge, 2 face, 3 interior. g* = sorted global defining-corner
+    // ids (unused = -1); pos = index within the edge/face/interior block. Two ranks
+    // that share a DOF compute the SAME key, so the halo matches by it.
+    struct DofKey { int kind; long g0, g1, g2, g3; int pos; };
+
+    std::vector<int>    dofOwner;   // [numDof] owning rank (filled by buildDistributed)
+    std::vector<DofKey> dofKey;     // [numDof] canonical cross-rank key
+    std::vector<uint8_t> dofShared; // [numDof] 1 if edge/face DOF on a rank boundary
+                                    // (provisional owner = myRank; resolve via
+                                    //  resolveHoDofOwnership before building the halo)
+
+    // Multi-rank numbering. Calls build() for the LOCAL dense elemDof, then tags each
+    // DOF with owner + canonical key. Ownership:
+    //   corner   -> cornerOwner[lc]  (consistent cstone P1 node ownership; the working
+    //               p=1 case -- the owner always contains the node)
+    //   interior -> elemOwner[e]     (element-local, never shared)
+    //   edge/face-> PROVISIONAL myRank. The lowest-global-corner heuristic is WRONG
+    //               here: that corner's owner may have the corner but not the edge/face,
+    //               orphaning the DOF. resolveHoDofOwnership() (a peer key exchange)
+    //               sets the real owner = min rank among the ranks that actually hold
+    //               it. dofShared[d]=1 flags edge/face DOF whose defining corners are
+    //               all P1-shared -> candidates for that resolution.
+    //   elemCorners[e] : 8 LOCAL corner indices (hex order)  -- for numbering
+    //   cornerGid[lc]  : LOCAL corner index -> GLOBAL id      -- for identity + key
+    //   cornerOwner[lc]: LOCAL corner index -> owning rank    -- P1 node ownership
+    //   elemOwner[e]   : owning rank of element e
+    //   sharedCorner[lc]: 1 if LOCAL corner lc is on a rank boundary (P1 send U recv)
+    void buildDistributed(const std::vector<std::array<int,8>>& elemCorners,
+                          long numCornerNodes, int order,
+                          const std::vector<long>&    cornerGid,
+                          const std::vector<int>&     cornerOwner,
+                          const std::vector<int>&     elemOwner,
+                          int                          myRank,
+                          const std::vector<uint8_t>&  sharedCorner)
+    {
+        build(elemCorners, numCornerNodes, order);
+        dofOwner.assign(numDof, -1);
+        dofKey.assign(numDof, DofKey{-1,-1,-1,-1,-1,-1});
+        dofShared.assign(numDof, 0);
+
+        static const int FACES[6][4] = {
+            {0,1,2,3}, {4,5,6,7}, {0,1,5,4}, {3,2,6,7}, {1,2,6,5}, {0,3,7,4} };
+        const int pm1 = P - 1;
+
+        for (long e = 0; e < nElem; ++e)
+        {
+            const auto& c = elemCorners[e];
+            for (int i = 0; i < n; ++i)
+            for (int j = 0; j < n; ++j)
+            for (int k = 0; k < n; ++k)
+            {
+                int l   = i*n*n + j*n + k;
+                int dof = elemDof[e*N3 + l];
+                int onI = (i==0||i==P), onJ=(j==0||j==P), onK=(k==0||k==P);
+                int cnt = onI + onJ + onK;
+                DofKey key{-1,-1,-1,-1,-1,-1}; int owner = -1; int shared = 0;
+
+                if (cnt == 3) {                       // corner -- consistent P1 ownership
+                    int lc = c[hexCornerIndex(i==P, j==P, k==P)];
+                    owner  = cornerOwner[lc];
+                    key    = DofKey{0, cornerGid[lc], -1,-1,-1, 0};
+                } else if (cnt == 2) {                // edge -- provisional, resolve later
+                    int vary = onI ? (onJ?2:1) : 0;
+                    int t    = (vary==0)?i:(vary==1)?j:k;
+                    int bi=(vary==0)?0:(i==P), bj=(vary==1)?0:(j==P), bk=(vary==2)?0:(k==P);
+                    int cA = c[hexCornerIndex(bi,bj,bk)];
+                    bi=(vary==0)?1:(i==P); bj=(vary==1)?1:(j==P); bk=(vary==2)?1:(k==P);
+                    int cB = c[hexCornerIndex(bi,bj,bk)];
+                    long gA = cornerGid[cA], gB = cornerGid[cB];
+                    long klo = (gA<=gB)?gA:gB, khi = (gA<=gB)?gB:gA;
+                    int  pos = (gA<=gB) ? (t-1) : (pm1-t);   // canonical low->high
+                    owner  = myRank;
+                    shared = (sharedCorner[cA] && sharedCorner[cB]) ? 1 : 0;
+                    key    = DofKey{1, klo, khi, -1, -1, pos};
+                } else if (cnt == 1) {                // face -- provisional, resolve later
+                    int on = onI?0:onJ?1:2;
+                    int v1,v2; if(on==0){v1=j;v2=k;} else if(on==1){v1=i;v2=k;} else {v1=i;v2=j;}
+                    const int* fc = FACES[on==0?(i==P?4:5):on==1?(j==P?3:2):(k==P?1:0)];
+                    int  lcc[4] = { c[fc[0]], c[fc[1]], c[fc[2]], c[fc[3]] };
+                    long s[4]   = { cornerGid[lcc[0]], cornerGid[lcc[1]], cornerGid[lcc[2]], cornerGid[lcc[3]] };
+                    std::sort(s, s+4);
+                    int  pos = hex_face_canonical_pos(P, v1, v2, lcc[0], lcc[1], lcc[2], lcc[3]);
+                    owner  = myRank;
+                    shared = (sharedCorner[lcc[0]] && sharedCorner[lcc[1]] &&
+                              sharedCorner[lcc[2]] && sharedCorner[lcc[3]]) ? 1 : 0;
+                    key    = DofKey{2, s[0], s[1], s[2], s[3], pos};
+                } else {                              // interior (element-local, no halo)
+                    int pos = ((i-1)*pm1 + (j-1))*pm1 + (k-1);
+                    owner = elemOwner[e];
+                    key   = DofKey{3, (long)e, -1,-1,-1, pos};
+                }
+                dofOwner[dof]  = owner;
+                dofKey[dof]    = key;
+                dofShared[dof] = (uint8_t)shared;
+            }
+        }
+    }
 };
 
 } // namespace fem

@@ -81,6 +81,14 @@ add_executable(mars_ho_dof_test mars_ho_dof_test.cu)
 target_link_libraries(mars_ho_dof_test PRIVATE mars)
 install(TARGETS mars_ho_dof_test RUNTIME DESTINATION bin/examples)
 
+add_executable(mars_ho_dist_dof_test mars_ho_dist_dof_test.cu)
+target_link_libraries(mars_ho_dist_dof_test PRIVATE mars)
+install(TARGETS mars_ho_dist_dof_test RUNTIME DESTINATION bin/examples)
+
+add_executable(mars_ho_dist_apply_test mars_ho_dist_apply_test.cu)
+target_link_libraries(mars_ho_dist_apply_test PRIVATE mars)
+install(TARGETS mars_ho_dist_apply_test RUNTIME DESTINATION bin/examples)
+
 # Matrix-free high-order Laplacian, FP64 tensor-core (DMMA) parity vs scalar
 add_executable(mars_ho_dmma_test mars_ho_dmma_test.cu)
 target_link_libraries(mars_ho_dmma_test PRIVATE mars)
