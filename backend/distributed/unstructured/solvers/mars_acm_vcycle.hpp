@@ -250,29 +250,6 @@ __global__ void acmDenseFromCsrKernel(const int* rowOff, const int* colInd, cons
     for (int k = rowOff[r]; k < rowOff[r + 1]; ++k) dense[(size_t)colInd[k] * n + r] = vals[k];   // col-major [col*n+row]
 }
 
-// Solve A_c x = b on the coarsest level from the col-major LU + getrf pivots (factorCoarseLU). This is a
-// stream-CAPTURABLE replacement for cusolverDnDgetrs -- cusolver is not capturable, so it forced the V-cycle
-// to split into two graphs with the coarse solve eager between (the host-latency floor). With this the whole
-// down->coarse->up cycle is ONE graph -> one launch/iter. n = coarsest ND <= maxCoarseND (256) -> one block,
-// the two triangular solves serial on thread 0 (O(n^2), n~200 -> ~us, once/V-cycle). Matches getrs(OP_N):
-// apply P (getrf row swaps, in order, 1-based), L y = Pb (unit lower), U x = y. LU layout = acmDenseFromCsrKernel.
-template<typename RealType>
-__global__ void acmCoarseTrsmKernel(const RealType* __restrict__ LU, const int* __restrict__ ipiv,
-                                    RealType* __restrict__ x, int n)
-{
-    extern __shared__ double smem[];
-    RealType* xs = reinterpret_cast<RealType*>(smem);
-    for (int i = threadIdx.x; i < n; i += blockDim.x) xs[i] = x[i];
-    __syncthreads();
-    if (threadIdx.x == 0) {
-        for (int i = 0; i < n; ++i) { int p = ipiv[i] - 1; if (p != i) { RealType t = xs[i]; xs[i] = xs[p]; xs[p] = t; } }   // P b
-        for (int i = 0; i < n; ++i) { RealType s = xs[i]; for (int k = 0; k < i; ++k) s -= LU[(size_t)k * n + i] * xs[k]; xs[i] = s; }            // L y = Pb (unit lower)
-        for (int i = n - 1; i >= 0; --i) { RealType s = xs[i]; for (int k = i + 1; k < n; ++k) s -= LU[(size_t)k * n + i] * xs[k]; xs[i] = s / LU[(size_t)i * n + i]; }  // U x = y
-    }
-    __syncthreads();
-    for (int i = threadIdx.x; i < n; i += blockDim.x) x[i] = xs[i];
-}
-
 template<typename RealType>
 struct AcmLevel {
     int nNodes = 0, ND = 0, nCoarse = 0;
