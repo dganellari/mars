@@ -42,10 +42,6 @@ public:
           omega_(omega), beta_(RealType(0.5))
     {
         if (const char* e = std::getenv("MARS_ACM_BETA")) beta_ = static_cast<RealType>(std::atof(e));
-        cusolverSpCreate(&cs_);
-        cusparseCreateMatDescr(&descr_);
-        cusparseSetMatType(descr_, CUSPARSE_MATRIX_TYPE_GENERAL);
-        cusparseSetMatIndexBase(descr_, CUSPARSE_INDEX_BASE_ZERO);
         cudaStreamCreate(&capStream_);              // dedicated capturable stream for the graphed V-cycle
         cusolverDnCreate(&cd_);                     // dense LU: factor the coarsest ONCE/Picard, solve per V-cycle
     }
@@ -55,8 +51,6 @@ public:
         destroyGraphs();
         if (cd_) cusolverDnDestroy(cd_);
         if (capStream_) cudaStreamDestroy(capStream_);
-        if (descr_) cusparseDestroyMatDescr(descr_);
-        if (cs_) cusolverSpDestroy(cs_);
     }
 
     GpuAcmPreconditioner(const GpuAcmPreconditioner&) = delete;             // owns a cusolver handle
@@ -93,19 +87,17 @@ public:
     {
         if (static_cast<int>(z.size()) != nd_) z.resize(nd_);
         if (haveGraph_) {
-            // captured-graph replay: down-graph -> eager QR coarse -> up-graph, all on capStream_.
-            cudaStreamSynchronize(0);                                   // r was produced on the default stream
+            // single-graph replay on stream 0 -- the SAME stream FlexGMRES runs its BLAS/SpMV on, so r->bvec,
+            // the whole V-cycle, and xvec->z are all stream-ordered with the Krylov work. No cross-stream drain:
+            // the two cudaStreamSynchronize that were the ~24ms/iter host-latency floor are gone.
             cudaMemcpyAsync(thrust::raw_pointer_cast(levels_[0].bvec.data()), r.data(),
-                            sizeof(RealType) * nd_, cudaMemcpyDeviceToDevice, capStream_);
+                            sizeof(RealType) * nd_, cudaMemcpyDeviceToDevice, 0);
             cudaMemsetAsync(thrust::raw_pointer_cast(levels_[0].xvec.data()), 0,
-                            sizeof(RealType) * nd_, capStream_);        // fresh zero initial guess
-            cudaGraphLaunch(gDownExec_, capStream_);
-            solveCoarseLU(capStream_);                                  // factor-once dense LU (replaces per-V-cycle QR)
-            cudaGraphLaunch(gUpExec_, capStream_);
+                            sizeof(RealType) * nd_, 0);                 // fresh zero initial guess
+            cudaGraphLaunch(gExec_, 0);                                 // whole down->coarse->up cycle: ONE launch
             cudaMemcpyAsync(z.data(), thrust::raw_pointer_cast(levels_[0].xvec.data()),
-                            sizeof(RealType) * nd_, cudaMemcpyDeviceToDevice, capStream_);
-            cudaStreamSynchronize(capStream_);                         // z ready before FlexGMRES consumes it
-            return;
+                            sizeof(RealType) * nd_, cudaMemcpyDeviceToDevice, 0);
+            return;                                                     // no sync: z is produced + consumed on stream 0
         }
         // eager fallback (non-DILU smoother, or capture unavailable): explicit down -> dense-LU coarse -> up
         thrust::copy(thrust::device_pointer_cast(r.data()),
@@ -125,40 +117,39 @@ public:
 private:
     void destroyGraphs()
     {
-        if (gDownExec_) { cudaGraphExecDestroy(gDownExec_); gDownExec_ = nullptr; }
-        if (gUpExec_)   { cudaGraphExecDestroy(gUpExec_);   gUpExec_   = nullptr; }
+        if (gExec_) { cudaGraphExecDestroy(gExec_); gExec_ = nullptr; }
         haveGraph_ = false;
     }
 
-    // Capture the down/up V-cycle halves into CUDA graphs (the cusolver QR coarse solve stays eager
-    // between them -- it is non-capturable). Only the DILU smoother is graph-safe (no host buffer swap).
-    // ANY capture failure leaves haveGraph_=false -> apply() uses the correct eager path. cudaGraphInstantiate
-    // address-binds the graph, so this must re-run on every hierarchy rebuild (called at the end of setup()).
+    // Capture the WHOLE V-cycle (down -> capturable coarse trsm -> up) into ONE CUDA graph. The coarse solve is
+    // now acmCoarseTrsmKernel (not cusolver), so the cycle no longer splits around a non-capturable call -> a
+    // single graph -> one launch/iter (kills the per-level host-latency floor). Only the DILU smoother is
+    // graph-safe (no host buffer swap). ANY capture failure leaves haveGraph_=false -> apply() eager path.
+    // cudaGraphInstantiate address-binds the graph, so this re-runs on every hierarchy rebuild (end of setup()).
     void captureGraphs()
     {
         destroyGraphs();
         if (!mars::acmUseDilu()) return;                     // Jacobi/ILU paths have a host swap -> not capturable
-        // warmup one eager cycle: lazy CUDA/cusolver module+handle init is itself uncapturable on first touch
+        if (!coarseLUok_) {                                  // singular/oversized coarse -> Jacobi fallback does a
+            std::fprintf(stderr, "[acm-graph] coarse solve is Jacobi fallback -> eager path (host swap not capturable)\n");
+            return;                                          // host xvec/xtmp swap; capture would bake stale pointers
+        }
+        // warmup one eager cycle: lazy CUDA module/kernel init is itself uncapturable on first touch
         applyCycleEager(capStream_);
         cudaStreamSynchronize(capStream_);
         cudaGraph_t g = nullptr;
         bool ok = false;
         do {
             if (cudaStreamBeginCapture(capStream_, cudaStreamCaptureModeThreadLocal) != cudaSuccess) break;
-            mars::acmVcycleDownGpu<RealType>(levels_, 0, pre_, omega_, true, capStream_);
+            applyCycleEager(capStream_);                     // down + capturable coarse + up, ONE capture region
             if (cudaStreamEndCapture(capStream_, &g) != cudaSuccess) break;
-            if (cudaGraphInstantiateWithFlags(&gDownExec_, g, 0) != cudaSuccess) break;
-            cudaGraphDestroy(g); g = nullptr;
-            if (cudaStreamBeginCapture(capStream_, cudaStreamCaptureModeThreadLocal) != cudaSuccess) break;
-            mars::acmVcycleUpGpu<RealType>(levels_, 0, post_, omega_, true, capStream_);
-            if (cudaStreamEndCapture(capStream_, &g) != cudaSuccess) break;
-            if (cudaGraphInstantiateWithFlags(&gUpExec_, g, 0) != cudaSuccess) break;
+            if (cudaGraphInstantiateWithFlags(&gExec_, g, 0) != cudaSuccess) break;
             cudaGraphDestroy(g); g = nullptr;
             ok = true;
         } while (false);
         if (ok) {
             haveGraph_ = true;
-            std::fprintf(stderr, "[acm-graph] V-cycle captured (down+up graphs); dense-LU coarse eager between\n");
+            std::fprintf(stderr, "[acm-graph] full V-cycle captured (single graph, capturable coarse solve)\n");
         } else {
             if (g) cudaGraphDestroy(g);
             destroyGraphs();
@@ -174,6 +165,11 @@ private:
         coarseLUok_ = false;
         mars::AcmLevel<RealType>& C = levels_.back();
         coarseN_ = C.ND;
+        if (coarseN_ > maxCoarseND_) {   // no-progress aggregation break left an un-coarsened level -> too big for
+            std::fprintf(stderr, "[acm-coarse] coarsest n=%d > maxCoarseND=%d -> Jacobi fallback (no dense LU)\n",
+                         coarseN_, maxCoarseND_);   // the one-block trsm (shared mem) + dense LU; smooth instead
+            return;                                 // coarseLUok_ stays false -> solveCoarseLU smooths, capture skips
+        }
         coarseLU_.assign((size_t)coarseN_ * coarseN_, RealType(0));      // dense col-major, zeroed
         coarseIpiv_.resize(coarseN_);
         coarseInfo_.resize(1);
@@ -197,8 +193,8 @@ private:
                      coarseLUok_ ? "factored once (solve per V-cycle)" : "singular -> Jacobi fallback");
     }
 
-    // z = A_c^-1 b on the coarsest via the cached LU (getrs overwrites the RHS). Stream-ordered, no malloc,
-    // no re-factor. Singular -> reset + smooth (the old QR fallback). Stays eager between the captured graphs.
+    // z = A_c^-1 b on the coarsest via the cached LU. CAPTURABLE custom trsm (not cusolver getrs) -> the whole
+    // V-cycle can be one graph. Stream-ordered, no malloc, no re-factor. Singular -> reset + smooth (capturable too).
     void solveCoarseLU(cudaStream_t s)
     {
         mars::AcmLevel<RealType>& C = levels_.back();
@@ -209,13 +205,9 @@ private:
             return;
         }
         cudaMemcpyAsync(x, thrust::raw_pointer_cast(C.bvec.data()), sizeof(RealType) * coarseN_,
-                        cudaMemcpyDeviceToDevice, s);
-        cusolverDnSetStream(cd_, s);
-        RealType* A = thrust::raw_pointer_cast(coarseLU_.data());
-        int* ip = thrust::raw_pointer_cast(coarseIpiv_.data());
-        int* inf = thrust::raw_pointer_cast(coarseInfo_.data());
-        if constexpr (std::is_same_v<RealType, double>) cusolverDnDgetrs(cd_, CUBLAS_OP_N, coarseN_, 1, A, coarseN_, ip, x, coarseN_, inf);
-        else                                            cusolverDnSgetrs(cd_, CUBLAS_OP_N, coarseN_, 1, A, coarseN_, ip, x, coarseN_, inf);
+                        cudaMemcpyDeviceToDevice, s);                                     // x = b
+        mars::acmCoarseTrsmKernel<RealType><<<1, 256, sizeof(RealType) * coarseN_, s>>>(
+            thrust::raw_pointer_cast(coarseLU_.data()), thrust::raw_pointer_cast(coarseIpiv_.data()), x, coarseN_);  // x = A_c^-1 b
     }
 
     // one eager V-cycle on levels_[0].bvec/xvec on stream s: down -> dense-LU coarse -> up.
@@ -231,10 +223,8 @@ private:
     bool reuse_ = false;
     double lastSetupMs_ = 0;
     std::vector<mars::AcmLevel<RealType>> levels_;
-    cusolverSpHandle_t cs_ = nullptr;
-    cusparseMatDescr_t descr_ = nullptr;
-    cudaStream_t capStream_ = nullptr;
-    cudaGraphExec_t gDownExec_ = nullptr, gUpExec_ = nullptr;   // captured V-cycle halves (Step 1)
+    cudaStream_t capStream_ = nullptr;                         // capture stream (capture needs a non-default stream)
+    cudaGraphExec_t gExec_ = nullptr;                          // the WHOLE captured V-cycle (down->coarse->up), one graph
     bool haveGraph_ = false;
     cusolverDnHandle_t cd_ = nullptr;                          // dense LU for the coarsest (factor once/Picard)
     int coarseN_ = 0;
