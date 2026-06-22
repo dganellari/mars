@@ -415,17 +415,62 @@ inline void acmBuildLevelIlu(AcmLevel<RealType>& L, const std::vector<int>& rowO
     L.ytmp.assign(L.ND, RealType(0));
 }
 
-// Build the multicolor block-DILU smoother for one level (host, once per hierarchy level). Same node
-// block-CSR as the ILU path (structurally symmetrized, union of comp-rows), but instead of the IKJ
-// factorization + level schedule: keep A's raw 4x4 off-diagonal blocks (bblk), factor ONLY the block
-// diagonal in COLOR order (D_i = A_ii - sum_{color(k)<color(i)} A_ik inv(D_k) A_ki), and schedule by a
-// greedy coloring so the triangular solves run color-by-color in parallel (numColors << nLev launches).
+// device binary search for block (i,j) in the symmetrized block-CSR row i -> slot, or -1.
+__device__ __forceinline__ int acmBlockSlot(const int* brow, const int* bcol, int i, int j)
+{
+    int lo = brow[i], hi = brow[i + 1];
+    while (lo < hi) { int m = (lo + hi) >> 1; int c = bcol[m]; if (c < j) lo = m + 1; else if (c > j) hi = m; else return m; }
+    return -1;
+}
+
+// GPU value extract: scatter the level's scalar CSR values into the 4x4 block array bblk (one thread/node).
+// Replaces the host slot()-loop over all scalar nnz (the dominant chunk of the 2.7s setup). bblk pre-zeroed.
+template<typename RealType>
+__global__ void acmDiluExtractKernel(const int* rowOff, const int* colInd, const RealType* vals,
+                                     const int* brow, const int* bcol, RealType* bblk, int nN)
+{
+    int I = blockIdx.x * blockDim.x + threadIdx.x; if (I >= nN) return;
+    for (int a = 0; a < 4; ++a) {
+        int r = 4 * I + a;
+        for (int k = rowOff[r]; k < rowOff[r + 1]; ++k) {
+            int J = colInd[k] >> 2, b = colInd[k] & 3, s = acmBlockSlot(brow, bcol, I, J);
+            if (s >= 0) bblk[16 * s + 4 * a + b] = vals[k];
+        }
+    }
+}
+
+// GPU block-DILU diagonal factor for ONE color: D_i = A_ii - sum_{color(k)<color(i)} A_ik inv(D_k) A_ki,
+// store inv(D_i). Launched per color in ascending order on one stream -> every lower-color inv(D_k) is
+// already written (the exact dependency the host serial color loop relied on). bblk read-only (raw A).
+template<typename RealType>
+__global__ void acmDiluFactorColorKernel(const int* brow, const int* bcol, const int* bdiagPtr,
+        const int* color, const int* nodesByColor, const RealType* bblk, RealType* dinvD, int cstart, int cend)
+{
+    int t = cstart + blockIdx.x * blockDim.x + threadIdx.x; if (t >= cend) return;
+    int i = nodesByColor[t], ci = color[i];
+    RealType Di[16]; for (int q = 0; q < 16; ++q) Di[q] = bblk[16 * bdiagPtr[i] + q];   // A_ii
+    for (int kk = brow[i]; kk < brow[i + 1]; ++kk) {
+        int k = bcol[kk]; if (k == i || color[k] >= ci) continue;                       // strictly lower-color
+        int kT = acmBlockSlot(brow, bcol, k, i); if (kT < 0) continue;                  // A_ki (sym -> present)
+        RealType T1[16], T2[16];
+        acmBlkMatmul4(&bblk[16 * kk], &dinvD[16 * k], T1);                              // A_ik inv(D_k)
+        acmBlkMatmul4(T1, &bblk[16 * kT], T2);                                          // (A_ik inv(D_k)) A_ki
+        for (int q = 0; q < 16; ++q) Di[q] -= T2[q];
+    }
+    acmInvert4x4(Di, &dinvD[16 * i]);                                                   // inv(D_i)
+}
+
+// Build the multicolor block-DILU smoother for one level. STRUCTURE (symmetrized node block-CSR + greedy
+// coloring) is built host-side (value-independent given the sparsity); the VALUES (bblk extract + the
+// color-order block-diagonal factor D_i = A_ii - sum_{color(k)<color(i)} A_ik inv(D_k) A_ki) run on the
+// GPU above -- the host value loops were the dominant part of the 2.7s/Picard setup.
 template<typename RealType>
 inline void acmBuildLevelDilu(AcmLevel<RealType>& L, const std::vector<int>& rowOff,
                               const std::vector<int>& colInd, const std::vector<RealType>& vals)
 {
     const int nN = L.nNodes;
-    // 1-2. identical to acmBuildLevelIlu: symmetrized node block-CSR + extract raw A blocks into bblk
+    // STRUCTURE (host, value-independent given the sparsity): symmetrized node block-CSR (union of the 4
+    // comp-rows + guaranteed diagonal + every transpose edge), then a greedy first-fit coloring.
     std::vector<std::set<int>> cset(nN);
     for (int I = 0; I < nN; ++I) {
         cset[I].insert(I);
@@ -436,21 +481,6 @@ inline void acmBuildLevelDilu(AcmLevel<RealType>& L, const std::vector<int>& row
     for (int I = 0; I < nN; ++I) brow[I + 1] = brow[I] + (int)cset[I].size();
     bcol.resize(brow[nN]);
     for (int I = 0; I < nN; ++I) { int p = brow[I]; for (int J : cset[I]) { bcol[p] = J; if (J == I) bdiagPtr[I] = p; ++p; } }
-    auto slot = [&](int i, int j) -> int {
-        int lo = brow[i], hi = brow[i + 1];
-        while (lo < hi) { int m = (lo + hi) / 2; if (bcol[m] < j) lo = m + 1; else if (bcol[m] > j) hi = m; else return m; }
-        return -1;
-    };
-    std::vector<RealType> bblk(16 * brow[nN], RealType(0));
-    for (int I = 0; I < nN; ++I)
-        for (int a = 0; a < 4; ++a) {
-            int r = 4 * I + a;
-            for (int k = rowOff[r]; k < rowOff[r + 1]; ++k) {
-                int J = colInd[k] >> 2, b = colInd[k] & 3, s = slot(I, J);
-                if (s >= 0) bblk[16 * s + 4 * a + b] = vals[k];
-            }
-        }
-    // 3a. greedy first-fit coloring on the symmetrized block graph (forbidden-stamp, O(nnz))
     std::vector<int> color(nN, -1), forbidden(nN, -1);
     int numColors = 0;
     for (int i = 0; i < nN; ++i) {
@@ -459,38 +489,35 @@ inline void acmBuildLevelDilu(AcmLevel<RealType>& L, const std::vector<int>& row
         if (c == numColors) ++numColors;
         color[i] = c;
     }
-    // counting-sort nodes by color -> nodesByColor + colStart (the per-color launch slices)
     std::vector<int> colStart(numColors + 1, 0);
     for (int i = 0; i < nN; ++i) colStart[color[i] + 1]++;
     for (int c = 0; c < numColors; ++c) colStart[c + 1] += colStart[c];
     std::vector<int> nodesByColor(nN), pos(colStart.begin(), colStart.end());
     for (int i = 0; i < nN; ++i) nodesByColor[pos[color[i]]++] = i;
-    // 3b. block-DILU diagonal factorization in COLOR order (every lower-color inv(D_k) ready first)
-    std::vector<RealType> dinv(16 * nN);
-    for (int t = 0; t < nN; ++t) {
-        int i = nodesByColor[t];
-        RealType Di[16]; for (int q = 0; q < 16; ++q) Di[q] = bblk[16 * bdiagPtr[i] + q];   // A_ii
-        for (int kk = brow[i]; kk < brow[i + 1]; ++kk) {
-            int k = bcol[kk]; if (k == i || color[k] >= color[i]) continue;                  // strictly lower-color
-            int kkT = slot(k, i); if (kkT < 0) continue;                                     // need A_ki (sym -> present)
-            RealType T1[16], T2[16];
-            acmBlkMatmul4(&bblk[16 * kk], &dinv[16 * k], T1);                                // A_ik inv(D_k)
-            acmBlkMatmul4(T1, &bblk[16 * kkT], T2);                                          // (A_ik inv(D_k)) A_ki
-            for (int q = 0; q < 16; ++q) Di[q] -= T2[q];
-        }
-        acmInvert4x4(Di, &dinv[16 * i]);                                                     // store inv(D_i)
-    }
     std::fprintf(stderr, "[acm-dilu] build nN=%d numColors=%d (avg color width %.1f)\n", nN, numColors, double(nN) / numColors);
-    // 4. upload
+    // upload the structure
     L.brow.assign(brow.begin(), brow.end());
     L.bcol.assign(bcol.begin(), bcol.end());
     L.bdiagPtr.assign(bdiagPtr.begin(), bdiagPtr.end());
-    L.bblk.assign(bblk.begin(), bblk.end());
     L.color.assign(color.begin(), color.end());
     L.nodesByColor.assign(nodesByColor.begin(), nodesByColor.end());
-    L.dilu_dinv.assign(dinv.begin(), dinv.end());
     L.h_colStart = colStart; L.numColors = numColors;
     L.ytmp.assign(L.ND, RealType(0)); L.ztmp.assign(L.ND, RealType(0));
+    // VALUES on the GPU (the host loops were the 2.7s/Picard bottleneck): extract raw A blocks into bblk
+    // from the level's device CSR, then color-parallel block-diagonal factor. The ascending-color factor
+    // launches MUST stay on the default stream -- the cross-color inv(D_k)-before-use dependency (and
+    // extract-before-factor) is enforced purely by default-stream serialization; an async stream without
+    // explicit deps would let a color read unwritten lower-color inv(D_k) and silently corrupt it. bblk pre-zeroed.
+    L.bblk.assign(16 * brow[nN], RealType(0));
+    L.dilu_dinv.resize(16 * nN);
+    const int blk = 256, gAll = (nN + blk - 1) / blk;
+    acmDiluExtractKernel<RealType><<<gAll, blk>>>(acmRaw(L.rowOff), acmRaw(L.colInd), acmRaw(L.vals),
+                                                  acmRaw(L.brow), acmRaw(L.bcol), acmRaw(L.bblk), nN);
+    for (int c = 0; c < numColors; ++c) {
+        int cs = colStart[c], ce = colStart[c + 1], g = (ce - cs + blk - 1) / blk;
+        if (g > 0) acmDiluFactorColorKernel<RealType><<<g, blk>>>(acmRaw(L.brow), acmRaw(L.bcol), acmRaw(L.bdiagPtr),
+            acmRaw(L.color), acmRaw(L.nodesByColor), acmRaw(L.bblk), acmRaw(L.dilu_dinv), cs, ce);
+    }
 }
 
 // one or more block-ILU(0) sweeps: x += omega * (LU)^-1 (b - A x), triangular solves level-scheduled.
