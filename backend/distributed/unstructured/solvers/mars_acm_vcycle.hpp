@@ -21,6 +21,8 @@
 #include <thrust/system/cuda/execution_policy.h>   // thrust::cuda::par.on(stream) for stream-ordered fills
 #include <thrust/sequence.h>
 #include <thrust/sort.h>
+#include <thrust/scan.h>
+#include <thrust/unique.h>
 #include <thrust/count.h>
 #include <thrust/extrema.h>
 #include <thrust/binary_search.h>
@@ -269,6 +271,10 @@ struct AcmLevel {
     int numColors = 0;
 };
 
+// fwd-decl: §1c's acmSymStrengthKernel calls acmBlockSlot before its definition (further below). Non-template
+// non-dependent call -> two-phase lookup needs the declaration visible at the kernel's definition point.
+__device__ __forceinline__ int acmBlockSlot(const int* brow, const int* bcol, int i, int j);
+
 // ---- GPU-native block-CSR build (§1a; replaces the host std::set, mirrors buildCoarseOperator emit/sort/split) ----
 // Per scalar row r=4I+a, emit the off-diag block edge (I,J) AND its transpose (J,I) for each nz (symmetrize),
 // plus the diagonal (I,I) once per node (comp-row 0). Packed key=(long long)I*nN+J; sort+unique -> the
@@ -348,7 +354,7 @@ __global__ void acmJPColorKernel(const int* brow, const int* bcol, int* color, c
         else if (rho[j] > rho[i] || (rho[j] == rho[i] && j > i)) isMax = false;   // higher-priority uncolored neighbor
     }
     if (!isMax) return;                                                     // not the local max this round
-    int c = 0; while (c < 63 && (used & (1ULL << c))) ++c;
+    int c = 0; while (c < 64 && (used & (1ULL << c))) ++c;                   // smallest free color (block-graph degree << 64)
     color[i] = c;
 }
 
@@ -378,6 +384,107 @@ inline void acmColorBlockGraphGpu(int nN, const thrust::device_vector<int>& brow
                         thrust::counting_iterator<int>(0), thrust::counting_iterator<int>(numColors + 1), dColStart.begin());
     h_colStart.resize(numColors + 1);
     thrust::copy(dColStart.begin(), dColStart.end(), h_colStart.begin());  // numColors+1 ints D2H (launch sizing)
+}
+
+// ---- GPU parallel directional aggregation (§1c; replaces host acmDirectionalAggregate) ----
+// Strength S_IJ = ||A_IJ block||_F symmetrized (the host metric). Race-free heavy-edge matching: each free
+// node points to its strongest free STRONG neighbor; a mutually-pointing pair (i<j) seeds ONE aggregate via
+// atomicAdd (ids contiguous 0..nCoarse-1 by construction -- what buildCoarseOperator needs). A few rounds,
+// then leftovers absorb into the strongest adjacent aggregate (2-kernel, race-free); true isolates -> singletons.
+// Directional: matching the STRONGEST edge follows the anisotropy (Mavriplis). beta=0 -> isotropic.
+template<typename RealType>
+__global__ void acmBlockFrobKernel(const int* rowOff, const int* colInd, const RealType* vals,
+                                   const int* brow, const int* bcol, RealType* sq, int nN)
+{
+    int I = blockIdx.x * blockDim.x + threadIdx.x; if (I >= nN) return;
+    for (int e = brow[I]; e < brow[I + 1]; ++e) {
+        int J = bcol[e]; RealType s = 0;
+        for (int a = 0; a < 4; ++a) { int r = 4 * I + a; for (int k = rowOff[r]; k < rowOff[r + 1]; ++k) if ((colInd[k] >> 2) == J) s += vals[k] * vals[k]; }
+        sq[e] = s;                                            // ||A_IJ||_F^2
+    }
+}
+template<typename RealType>
+__global__ void acmSymStrengthKernel(const int* brow, const int* bcol, const RealType* sq, RealType* S, int nN)
+{
+    int I = blockIdx.x * blockDim.x + threadIdx.x; if (I >= nN) return;
+    for (int e = brow[I]; e < brow[I + 1]; ++e) {
+        int J = bcol[e];
+        if (J == I) { S[e] = 0; continue; }                  // diagonal carries no aggregation strength
+        int et = acmBlockSlot(brow, bcol, J, I);             // transpose edge (J,I); symmetric pattern -> exists
+        S[e] = sqrt(sq[e] + (et >= 0 ? sq[et] : RealType(0)));
+    }
+}
+template<typename RealType>
+__global__ void acmWmaxKernel(const int* brow, const int* bcol, const RealType* S, RealType* wmax, int nN)
+{
+    int I = blockIdx.x * blockDim.x + threadIdx.x; if (I >= nN) return;
+    RealType m = 0; for (int e = brow[I]; e < brow[I + 1]; ++e) if (bcol[e] != I) m = fmax(m, S[e]); wmax[I] = m;
+}
+template<typename RealType>
+__global__ void acmCandKernel(const int* brow, const int* bcol, const RealType* S, const RealType* wmax,
+                              const int* agg, RealType beta, int* cand, int nN)
+{
+    int i = blockIdx.x * blockDim.x + threadIdx.x; if (i >= nN || agg[i] >= 0) return;   // only free nodes
+    RealType best = -1; int bj = -1;
+    for (int e = brow[i]; e < brow[i + 1]; ++e) {
+        int j = bcol[e]; if (j == i || agg[j] >= 0) continue;                            // free neighbor only
+        RealType s = S[e];
+        if (s > beta * wmax[i] && s > beta * wmax[j] &&                                  // two-sided strong
+            (s > best || (s == best && j < bj))) { best = s; bj = j; }                   // strongest (tie: lower id)
+    }
+    cand[i] = bj;
+}
+__global__ void acmMatchKernel(const int* cand, int* agg, int* nCoarse, int nN)
+{
+    int i = blockIdx.x * blockDim.x + threadIdx.x; if (i >= nN || agg[i] >= 0) return;
+    int j = cand[i]; if (j < 0) return;
+    if (i < j && cand[j] == i) { int id = atomicAdd(nCoarse, 1); agg[i] = id; agg[j] = id; }  // only the lower seeds -> race-free
+}
+template<typename RealType>
+__global__ void acmAbsorbTargetKernel(const int* brow, const int* bcol, const RealType* S,
+                                      const int* agg, int* tgt, int nN)   // read-only snapshot of agg
+{
+    int i = blockIdx.x * blockDim.x + threadIdx.x; if (i >= nN || agg[i] >= 0) { if (i < nN) tgt[i] = agg[i]; return; }
+    RealType best = -1; int bagg = -1;
+    for (int e = brow[i]; e < brow[i + 1]; ++e) {
+        int j = bcol[e]; if (j == i) continue; int aj = agg[j];
+        if (aj >= 0 && S[e] > best) { best = S[e]; bagg = aj; }                           // strongest aggregated neighbor
+    }
+    tgt[i] = bagg;                                                                        // -1 if no aggregated neighbor
+}
+__global__ void acmAbsorbApplyKernel(const int* tgt, int* agg, int nN)
+{
+    int i = blockIdx.x * blockDim.x + threadIdx.x; if (i >= nN) return;
+    if (agg[i] < 0 && tgt[i] >= 0) agg[i] = tgt[i];
+}
+__global__ void acmSingletonKernel(int* agg, int* nCoarse, int nN)
+{
+    int i = blockIdx.x * blockDim.x + threadIdx.x; if (i >= nN) return;
+    if (agg[i] < 0) agg[i] = atomicAdd(nCoarse, 1);                                       // true isolate -> own aggregate
+}
+
+template<typename RealType>
+inline void acmAggregateGpu(int nN, const thrust::device_vector<int>& rowOff,
+                            const thrust::device_vector<int>& colInd, const thrust::device_vector<RealType>& vals,
+                            RealType beta, thrust::device_vector<int>& agg, int& nCoarse)
+{
+    thrust::device_vector<int> brow, bcol, bdiagPtr;
+    acmBuildBlockCsrGpu<RealType>(nN, rowOff, colInd, brow, bcol, bdiagPtr);              // node block graph (reuse §1a)
+    const int nnzB = static_cast<int>(bcol.size()), blk = 256, gN = (nN + blk - 1) / blk;
+    thrust::device_vector<RealType> sq(nnzB), S(nnzB), wmax(nN);
+    acmBlockFrobKernel<RealType><<<gN, blk>>>(acmRaw(rowOff), acmRaw(colInd), acmRaw(vals), acmRaw(brow), acmRaw(bcol), acmRaw(sq), nN);
+    acmSymStrengthKernel<RealType><<<gN, blk>>>(acmRaw(brow), acmRaw(bcol), acmRaw(sq), acmRaw(S), nN);
+    acmWmaxKernel<RealType><<<gN, blk>>>(acmRaw(brow), acmRaw(bcol), acmRaw(S), acmRaw(wmax), nN);
+    agg.assign(nN, -1);
+    thrust::device_vector<int> cand(nN), tgt(nN), dnc(1, 0);
+    for (int round = 0; round < 12; ++round) {                                           // heavy-edge matching rounds
+        acmCandKernel<RealType><<<gN, blk>>>(acmRaw(brow), acmRaw(bcol), acmRaw(S), acmRaw(wmax), acmRaw(agg), beta, acmRaw(cand), nN);
+        acmMatchKernel<<<gN, blk>>>(acmRaw(cand), acmRaw(agg), acmRaw(dnc), nN);
+    }
+    acmAbsorbTargetKernel<RealType><<<gN, blk>>>(acmRaw(brow), acmRaw(bcol), acmRaw(S), acmRaw(agg), acmRaw(tgt), nN);
+    acmAbsorbApplyKernel<<<gN, blk>>>(acmRaw(tgt), acmRaw(agg), nN);
+    acmSingletonKernel<<<gN, blk>>>(acmRaw(agg), acmRaw(dnc), nN);
+    nCoarse = dnc[0];                                                                     // 1 int D2H (loop control)
 }
 
 // host-once DIRECTIONAL aggregation (Mavriplis-style, paper Eqs 19-20) on the block graph of a coupled
@@ -690,18 +797,26 @@ void acmBuildHierarchy(const thrust::device_vector<int>& rowOff0,
         levels[idx].rtmp.assign(levels[idx].ND, 0); levels[idx].xtmp.assign(levels[idx].ND, 0);
         if (levels[idx].ND <= maxCoarseND) break;
 
-        std::vector<int> hro(levels[idx].rowOff.size()), hci(levels[idx].colInd.size());
-        std::vector<RealType> hva(levels[idx].vals.size());
-        thrust::copy(levels[idx].rowOff.begin(), levels[idx].rowOff.end(), hro.begin());
-        thrust::copy(levels[idx].colInd.begin(), levels[idx].colInd.end(), hci.begin());
-        thrust::copy(levels[idx].vals.begin(), levels[idx].vals.end(), hva.begin());
-        std::vector<int> agg; int nCoarse;
-        acmDirectionalAggregate<RealType>(hro, hci, hva, levels[idx].nNodes, kmax, beta, agg, nCoarse);
-        if (nCoarse >= levels[idx].nNodes) break;            // no coarsening progress -> coarsest (no ILU, nLev=0)
-        if (acmUseIlu()) acmBuildLevelIlu<RealType>(levels[idx], hro, hci, hva);        // smoothed level only -> build ILU
-        else if (acmUseDilu()) acmBuildLevelDilu<RealType>(levels[idx]); // or multicolor block-DILU (GPU-native structure)
-
-        levels[idx].agg.assign(agg.begin(), agg.end());
+        int nCoarse;
+        if (acmUseDilu()) {
+            // DILU path: fully GPU-native -- aggregate + structure from the DEVICE CSR, no host std::set, no D2H (§1c+§2)
+            acmAggregateGpu<RealType>(levels[idx].nNodes, levels[idx].rowOff, levels[idx].colInd, levels[idx].vals,
+                                      beta, levels[idx].agg, nCoarse);     // fills levels[idx].agg (device)
+            if (nCoarse >= levels[idx].nNodes) break;                       // no coarsening progress -> coarsest
+            acmBuildLevelDilu<RealType>(levels[idx]);
+        } else {
+            // ILU / Jacobi path: host aggregation + (ILU) host structure -- needs the level CSR on the host
+            std::vector<int> hro(levels[idx].rowOff.size()), hci(levels[idx].colInd.size());
+            std::vector<RealType> hva(levels[idx].vals.size());
+            thrust::copy(levels[idx].rowOff.begin(), levels[idx].rowOff.end(), hro.begin());
+            thrust::copy(levels[idx].colInd.begin(), levels[idx].colInd.end(), hci.begin());
+            thrust::copy(levels[idx].vals.begin(), levels[idx].vals.end(), hva.begin());
+            std::vector<int> agg;
+            acmDirectionalAggregate<RealType>(hro, hci, hva, levels[idx].nNodes, kmax, beta, agg, nCoarse);
+            if (nCoarse >= levels[idx].nNodes) break;
+            if (acmUseIlu()) acmBuildLevelIlu<RealType>(levels[idx], hro, hci, hva);
+            levels[idx].agg.assign(agg.begin(), agg.end());
+        }
         levels[idx].nCoarse = nCoarse;
         AcmLevel<RealType> C; C.nNodes = nCoarse; C.ND = 4 * nCoarse;
         buildCoarseOperator<RealType>(levels[idx].rowOff, levels[idx].colInd, levels[idx].vals,
