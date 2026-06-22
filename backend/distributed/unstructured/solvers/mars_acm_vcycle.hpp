@@ -214,9 +214,17 @@ template<typename RealType>
 __global__ void acmAxpyKernel(RealType* x, const RealType* y, RealType a, int ND)
 { int r = blockIdx.x * blockDim.x + threadIdx.x; if (r < ND) x[r] += a * y[r]; }
 
+// fused residual rtmp = b - A x in one pass (replaces a separate SpMV + subtract): one launch instead of
+// two, one global round-trip instead of two. Same arithmetic (sum then subtract) -> bit-identical.
 template<typename RealType>
-__global__ void acmSubKernel(const RealType* a, const RealType* b, RealType* y, int ND)
-{ int r = blockIdx.x * blockDim.x + threadIdx.x; if (r < ND) y[r] = a[r] - b[r]; }
+__global__ void acmResidualKernel(const int* rowOff, const int* colInd, const RealType* vals,
+                                  const RealType* x, const RealType* b, RealType* rtmp, int ND)
+{
+    int r = blockIdx.x * blockDim.x + threadIdx.x; if (r >= ND) return;
+    RealType s = 0;
+    for (int k = rowOff[r]; k < rowOff[r + 1]; ++k) s += vals[k] * x[colInd[k]];
+    rtmp[r] = b[r] - s;
+}
 
 template<typename RealType>
 __global__ void acmAddKernel(RealType* x, const RealType* y, int ND)
@@ -490,9 +498,8 @@ inline void acmIluSmoothGpu(AcmLevel<RealType>& L, int sweeps, RealType omega)
 {
     const int blk = 256, grd = (L.ND + blk - 1) / blk;
     for (int s = 0; s < sweeps; ++s) {
-        acmSpmvKernel<RealType><<<grd, blk>>>(acmRaw(L.rowOff), acmRaw(L.colInd), acmRaw(L.vals),
-                                              acmRaw(L.xvec), acmRaw(L.rtmp), L.ND);
-        acmSubKernel<RealType><<<grd, blk>>>(acmRaw(L.bvec), acmRaw(L.rtmp), acmRaw(L.rtmp), L.ND);   // rtmp = b - A x
+        acmResidualKernel<RealType><<<grd, blk>>>(acmRaw(L.rowOff), acmRaw(L.colInd), acmRaw(L.vals),
+                                                  acmRaw(L.xvec), acmRaw(L.bvec), acmRaw(L.rtmp), L.ND);   // rtmp = b - A x (fused)
         for (int lv = 0; lv < L.nLev; ++lv) {                            // forward L-solve -> ytmp (ascending)
             int ls = L.h_levStart[lv], le = L.h_levStart[lv + 1], g = (le - ls + blk - 1) / blk;
             if (g > 0) acmIluLsolveKernel<RealType><<<g, blk>>>(acmRaw(L.brow), acmRaw(L.bcol), acmRaw(L.bdiagPtr),
@@ -516,9 +523,8 @@ inline void acmDiluSmoothGpu(AcmLevel<RealType>& L, int sweeps, RealType omega)
 {
     const int blk = 256, grd = (L.ND + blk - 1) / blk;
     for (int s = 0; s < sweeps; ++s) {
-        acmSpmvKernel<RealType><<<grd, blk>>>(acmRaw(L.rowOff), acmRaw(L.colInd), acmRaw(L.vals),
-                                              acmRaw(L.xvec), acmRaw(L.rtmp), L.ND);
-        acmSubKernel<RealType><<<grd, blk>>>(acmRaw(L.bvec), acmRaw(L.rtmp), acmRaw(L.rtmp), L.ND);   // rtmp = b - A x
+        acmResidualKernel<RealType><<<grd, blk>>>(acmRaw(L.rowOff), acmRaw(L.colInd), acmRaw(L.vals),
+                                                  acmRaw(L.xvec), acmRaw(L.bvec), acmRaw(L.rtmp), L.ND);   // rtmp = b - A x (fused)
         for (int c = 0; c < L.numColors; ++c) {                            // forward L-solve -> ytmp (y), pre-diag w -> ztmp
             int cs = L.h_colStart[c], ce = L.h_colStart[c + 1], g = (ce - cs + blk - 1) / blk;
             if (g > 0) acmDiluLsolveKernel<RealType><<<g, blk>>>(acmRaw(L.brow), acmRaw(L.bcol), acmRaw(L.color),
@@ -636,9 +642,8 @@ void acmVcycleGpu(std::vector<AcmLevel<RealType>>& levels, int Lidx,
     if (Lidx == (int)levels.size() - 1) { acmCoarseSolve(L, coarse, omega, useBlock, cs, descr); return; }
 
     acmSmoothGpu(L, pre, omega, useBlock);
-    acmSpmvKernel<RealType><<<grd, blk>>>(acmRaw(L.rowOff), acmRaw(L.colInd), acmRaw(L.vals),
-                                          acmRaw(L.xvec), acmRaw(L.rtmp), L.ND);
-    acmSubKernel<RealType><<<grd, blk>>>(acmRaw(L.bvec), acmRaw(L.rtmp), acmRaw(L.rtmp), L.ND);
+    acmResidualKernel<RealType><<<grd, blk>>>(acmRaw(L.rowOff), acmRaw(L.colInd), acmRaw(L.vals),
+                                              acmRaw(L.xvec), acmRaw(L.bvec), acmRaw(L.rtmp), L.ND);   // rtmp = b - A x (fused)
 
     AcmLevel<RealType>& C = levels[Lidx + 1];
     thrust::fill(C.bvec.begin(), C.bvec.end(), RealType(0));
