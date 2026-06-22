@@ -175,6 +175,11 @@ public:
     std::vector<uint8_t> dofShared; // [numDof] 1 if edge/face DOF on a rank boundary
                                     // (provisional owner = myRank; resolve via
                                     //  resolveHoDofOwnership before building the halo)
+    std::vector<uint8_t> dofBoundary; // [numDof] 1 if ANY shared DOF (corner/edge/face on
+                                      // a rank boundary). Superset of dofShared (adds shared
+                                      // corners). Only these can be exchanged -> the halo
+                                      // keys/maps over dofBoundary, NOT all numDof (else a
+                                      // numDof-sized std::map OOMs the host at scale).
 
     // Multi-rank numbering. Calls build() for the LOCAL dense elemDof, then tags each
     // DOF with owner + canonical key. Ownership:
@@ -204,6 +209,7 @@ public:
         dofOwner.assign(numDof, -1);
         dofKey.assign(numDof, DofKey{-1,-1,-1,-1,-1,-1});
         dofShared.assign(numDof, 0);
+        dofBoundary.assign(numDof, 0);
 
         static const int FACES[6][4] = {
             {0,1,2,3}, {4,5,6,7}, {0,1,5,4}, {3,2,6,7}, {1,2,6,5}, {0,3,7,4} };
@@ -220,12 +226,13 @@ public:
                 int dof = elemDof[e*N3 + l];
                 int onI = (i==0||i==P), onJ=(j==0||j==P), onK=(k==0||k==P);
                 int cnt = onI + onJ + onK;
-                DofKey key{-1,-1,-1,-1,-1,-1}; int owner = -1; int shared = 0;
+                DofKey key{-1,-1,-1,-1,-1,-1}; int owner = -1; int shared = 0; int boundary = 0;
 
                 if (cnt == 3) {                       // corner -- consistent P1 ownership
                     int lc = c[hexCornerIndex(i==P, j==P, k==P)];
-                    owner  = cornerOwner[lc];
-                    key    = DofKey{0, cornerGid[lc], -1,-1,-1, 0};
+                    owner    = cornerOwner[lc];
+                    boundary = sharedCorner[lc];      // shared corner -> in the halo (but owner stays P1)
+                    key      = DofKey{0, cornerGid[lc], -1,-1,-1, 0};
                 } else if (cnt == 2) {                // edge -- provisional, resolve later
                     int vary = onI ? (onJ?2:1) : 0;
                     int t    = (vary==0)?i:(vary==1)?j:k;
@@ -256,9 +263,10 @@ public:
                     owner = elemOwner[e];
                     key   = DofKey{3, (long)e, -1,-1,-1, pos};
                 }
-                dofOwner[dof]  = owner;
-                dofKey[dof]    = key;
-                dofShared[dof] = (uint8_t)shared;
+                dofOwner[dof]    = owner;
+                dofKey[dof]      = key;
+                dofShared[dof]   = (uint8_t)shared;            // edge/face -> ownership resolution
+                dofBoundary[dof] = (uint8_t)(boundary | shared); // any shared DOF -> halo keys/maps
             }
         }
     }

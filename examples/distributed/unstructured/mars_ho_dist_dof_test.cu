@@ -130,7 +130,7 @@ int main(int argc, char** argv)
     resolveHoDofOwnership(dof.dofShared, dof.dofKey, dof.dofOwner, rank, peers);
 
     HoHalo<RealType> halo;
-    halo.build((int)dof.numDof, dof.dofOwner, dof.dofKey, rank, peers);
+    halo.build((int)dof.numDof, dof.dofOwner, dof.dofKey, dof.dofBoundary, rank, peers);
     if (rank == 0) printf("[dbg] HoHalo done  sendDof=%zu recvDof=%zu peers=%zu\n",
                           halo.sendDof_.size(), halo.recvDof_.size(), halo.peers_.size()); fflush(stdout);
 

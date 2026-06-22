@@ -115,7 +115,7 @@ static void runDistApply(const DistDof& D, int rank, int numRanks)
     dof.buildDistributed(D.elemCorners, (long)D.nodeCount, P, D.cornerGid, D.cornerOwner, D.elemOwner, rank, D.sharedCorner);
     resolveHoDofOwnership(dof.dofShared, dof.dofKey, dof.dofOwner, rank, D.peers);
     HoHalo<RealType> halo;
-    halo.build((int)dof.numDof, dof.dofOwner, dof.dofKey, rank, D.peers);
+    halo.build((int)dof.numDof, dof.dofOwner, dof.dofKey, dof.dofBoundary, rank, D.peers);
 
     const size_t nEl  = D.nOwnedElem;
     const long   nDof = dof.numDof;
@@ -134,13 +134,25 @@ static void runDistApply(const DistDof& D, int rank, int numRanks)
     ho_cvfem_upload_operators(P, op.Btil.data(), op.Dtil.data(),
                               op.D.data(), op.W.data(), op.xi.data(), op.zeta.data());
 
-    int* d_elemDof; double *d_corners, *d_G, *d_u, *d_y;
+    int* d_elemDof = nullptr; double *d_corners=nullptr, *d_G=nullptr, *d_u=nullptr, *d_y=nullptr;
     const size_t gLen = nEl * (size_t)(3 * P * n * n) * 3;
-    cudaMalloc(&d_elemDof, sizeof(int)    * nEl * N3);
-    cudaMalloc(&d_corners, sizeof(double) * nEl * 24);
-    cudaMalloc(&d_G,       sizeof(double) * gLen);
-    cudaMalloc(&d_u,       sizeof(double) * nDof);
-    cudaMalloc(&d_y,       sizeof(double) * nDof);
+    // Checked allocation: report OOM as the per-GPU ceiling, not a null-deref crash.
+    // (-n1 ceiling probe, or balanced runs where all ranks OOM together.)
+    cudaError_t me = cudaMalloc(&d_elemDof, sizeof(int)    * nEl * N3);
+    if (me==cudaSuccess) me = cudaMalloc(&d_corners, sizeof(double) * nEl * 24);
+    if (me==cudaSuccess) me = cudaMalloc(&d_G,       sizeof(double) * gLen);
+    if (me==cudaSuccess) me = cudaMalloc(&d_u,       sizeof(double) * nDof);
+    if (me==cudaSuccess) me = cudaMalloc(&d_y,       sizeof(double) * nDof);
+    if (me != cudaSuccess) {
+        double needGB = (sizeof(double)*gLen + sizeof(double)*2.0*nDof
+                         + sizeof(int)*(double)nEl*N3 + sizeof(double)*(double)nEl*24) / 1e9;
+        if (rank == 0)
+            printf("p=%d  nDof=%ld nEl=%zu  DEVICE OOM (needs ~%.1f GB, d_G=%.1f GB): %s  -- per-GPU ceiling exceeded\n",
+                   P, nDof, nEl, needGB, sizeof(double)*gLen/1e9, cudaGetErrorString(me));
+        cudaGetLastError();
+        cudaFree(d_elemDof); cudaFree(d_corners); cudaFree(d_G); cudaFree(d_u); cudaFree(d_y);
+        return;
+    }
     cudaMemcpy(d_elemDof, dof.elemDof.data(), sizeof(int) * nEl * N3, cudaMemcpyHostToDevice);
     cudaMemcpy(d_corners, h_corners.data(),   sizeof(double) * nEl * 24, cudaMemcpyHostToDevice);
     ho_cvfem_metric_perpoint_launch<double, P>(d_corners, d_G, nEl);

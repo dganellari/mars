@@ -105,23 +105,27 @@ public:
     { return { (long)k.kind, k.g0, k.g1, k.g2, k.g3, (long)k.pos }; }
 
     void build(int numDof,
-               const std::vector<int>&    dofOwner,
-               const std::vector<DofKey>& dofKey,
+               const std::vector<int>&     dofOwner,
+               const std::vector<DofKey>&  dofKey,
+               const std::vector<uint8_t>& dofBoundary,
                int myRank,
-               const std::vector<int>&    candidatePeers)
+               const std::vector<int>&     candidatePeers)
     {
         const int np = (int)candidatePeers.size();
         std::map<int,int> peerIdx;
         for (int i = 0; i < np; ++i) peerIdx[candidatePeers[i]] = i;
 
-        // My local DOF keyed for answering peers' requests.
+        // Only BOUNDARY DOF are ever exchanged, so key only those. Keying all numDof
+        // builds a numDof-sized std::map (~78 GB at 650M DOF) that OOMs the host at scale.
         std::map<std::array<long,6>, int> keyToLocal;
-        for (int d = 0; d < numDof; ++d) keyToLocal.emplace(packKey(dofKey[d]), d);
+        for (int d = 0; d < numDof; ++d) if (dofBoundary[d]) keyToLocal.emplace(packKey(dofKey[d]), d);
 
         // Ghost DOF (owner != me) grouped by owner -> my recv lists + the keys I request.
+        // Ghosts are always boundary, so the same gate keeps this O(surface), not O(numDof).
         std::vector<std::vector<int>>            recvLocal(np);
         std::vector<std::vector<std::array<long,6>>> reqKeys(np);
         for (int d = 0; d < numDof; ++d) {
+            if (!dofBoundary[d]) continue;
             int o = dofOwner[d];
             if (o == myRank || o < 0) continue;          // owned or interior
             auto it = peerIdx.find(o);
