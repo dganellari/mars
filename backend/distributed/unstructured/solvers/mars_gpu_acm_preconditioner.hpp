@@ -42,6 +42,8 @@ public:
           omega_(omega), beta_(RealType(0.5))
     {
         if (const char* e = std::getenv("MARS_ACM_BETA")) beta_ = static_cast<RealType>(std::atof(e));
+        if (const char* e = std::getenv("MARS_ACM_PRE"))  pre_  = std::atoi(e);   // V-cycle pre-smooth sweeps (default 2)
+        if (const char* e = std::getenv("MARS_ACM_POST")) post_ = std::atoi(e);   // post-smooth (default 1); fewer sweeps = cheaper smoother (66% of solve) vs more Krylov iters
         cusolverSpCreate(&cs_);
         cusparseCreateMatDescr(&descr_);
         cusparseSetMatType(descr_, CUSPARSE_MATRIX_TYPE_GENERAL);
@@ -93,19 +95,19 @@ public:
     {
         if (static_cast<int>(z.size()) != nd_) z.resize(nd_);
         if (haveGraph_) {
-            // captured-graph replay: down-graph -> eager QR coarse -> up-graph, all on capStream_.
-            cudaStreamSynchronize(0);                                   // r was produced on the default stream
+            // Replay the V-cycle on the NULL stream -- the SAME stream FlexGMRES runs its BLAS/SpMV on. r->bvec, the
+            // two captured halves, the eager getrs coarse, and xvec->z are then all stream-ordered with the Krylov
+            // work, so the two cudaStreamSynchronize that drained the device every iteration (the host-latency floor)
+            // are gone. The graphs were captured on capStream_ but launch on any stream (stream-agnostic at launch).
             cudaMemcpyAsync(thrust::raw_pointer_cast(levels_[0].bvec.data()), r.data(),
-                            sizeof(RealType) * nd_, cudaMemcpyDeviceToDevice, capStream_);
-            cudaMemsetAsync(thrust::raw_pointer_cast(levels_[0].xvec.data()), 0,
-                            sizeof(RealType) * nd_, capStream_);        // fresh zero initial guess
-            cudaGraphLaunch(gDownExec_, capStream_);
-            solveCoarseLU(capStream_);                                  // factor-once dense LU (replaces per-V-cycle QR)
-            cudaGraphLaunch(gUpExec_, capStream_);
+                            sizeof(RealType) * nd_, cudaMemcpyDeviceToDevice, 0);
+            cudaMemsetAsync(thrust::raw_pointer_cast(levels_[0].xvec.data()), 0, sizeof(RealType) * nd_, 0);
+            cudaGraphLaunch(gDownExec_, 0);
+            solveCoarseLU(0);                                          // cusolver getrs on stream 0 (eager, no cross-stream drain)
+            cudaGraphLaunch(gUpExec_, 0);
             cudaMemcpyAsync(z.data(), thrust::raw_pointer_cast(levels_[0].xvec.data()),
-                            sizeof(RealType) * nd_, cudaMemcpyDeviceToDevice, capStream_);
-            cudaStreamSynchronize(capStream_);                         // z ready before FlexGMRES consumes it
-            return;
+                            sizeof(RealType) * nd_, cudaMemcpyDeviceToDevice, 0);
+            return;                                                    // no sync: z is produced + consumed on stream 0
         }
         // eager fallback (non-DILU smoother, or capture unavailable): explicit down -> dense-LU coarse -> up
         thrust::copy(thrust::device_pointer_cast(r.data()),
