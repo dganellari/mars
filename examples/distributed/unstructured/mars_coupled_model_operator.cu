@@ -444,18 +444,9 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    // Increment 1 is a single-rank geometry check: the div/grad kernels scatter
-    // to ghosts too, so a correct multi-rank check needs reverseExchangeNodeHaloAdd
-    // before the dot products. That fold is a later increment; refuse >1 rank now
-    // rather than report a wrong (ghost-double-counted) residual.
-    if (numRanks > 1)
-    {
-        if (rank == 0)
-            std::cout << "[phase0] increment-1 adjointness gate is single-rank only "
-                         "(multi-rank halo-fold is a later increment). Run with 1 rank.\n";
-        MPI_Finalize();
-        return 1;
-    }
+    // The adjointness gate below is now multi-rank-correct (reverseExchangeNodeHaloAdd folds the ghost-scattered
+    // div/grad contributions to the owner, then owned-masked + Allreduce dots). The coupled SOLVE is still
+    // single-rank -- that guard moves to after the gate (Increment 2 = operator + Krylov halo).
 
     AmrManager<TetTag, KeyType, RealType>::Config cfg;
     cfg.maxLevels  = 0;          // frozen mesh
@@ -541,13 +532,26 @@ int main(int argc, char** argv)
         return 2;
     }
 
-    // <phi, D v> and <v, G phi>; the discrete integration-by-parts identity is
-    // <phi, D v> + <v, G phi> = 0.
-    const RealType dDiv = thrust::inner_product(phi.begin(), phi.end(), divAcc.begin(), RealType(0));
-    const RealType dGx  = thrust::inner_product(vx.begin(),  vx.end(),  gx.begin(),     RealType(0));
-    const RealType dGy  = thrust::inner_product(vy.begin(),  vy.end(),  gy.begin(),     RealType(0));
-    const RealType dGz  = thrust::inner_product(vz.begin(),  vz.end(),  gz.begin(),     RealType(0));
-    const RealType dGrad = dGx + dGy + dGz;
+    // <phi, D v> and <v, G phi>; the discrete integration-by-parts identity is <phi,Dv> + <v,Gphi> = 0.
+    // Multi-rank: the div/grad kernels scatter to ghost nodes, so fold those contributions back to the owner
+    // (reverseExchangeNodeHaloAdd) before any dot, and reduce ONLY over owned nodes -- getNodeCount includes
+    // ghosts, so ghost DOFs are duplicate unknowns and an unmasked reduction would double-count every seam node.
+    domain.reverseExchangeNodeHaloAdd(divAcc);
+    domain.reverseExchangeNodeHaloAdd(gx);
+    domain.reverseExchangeNodeHaloAdd(gy);
+    domain.reverseExchangeNodeHaloAdd(gz);
+    const uint8_t* ownPtr = domain.getNodeOwnershipMap().data();   // 1 = this rank owns the node
+    auto ownedDot = [&](const thrust::device_vector<RealType>& a, const thrust::device_vector<RealType>& b) -> RealType {
+        const RealType* ap = thrust::raw_pointer_cast(a.data());
+        const RealType* bp = thrust::raw_pointer_cast(b.data());
+        const RealType loc = thrust::transform_reduce(thrust::device,
+            thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(nNodes),
+            [ownPtr, ap, bp] __device__(size_t i) -> RealType { return ownPtr[i] == 1 ? ap[i] * bp[i] : RealType(0); },
+            RealType(0), thrust::plus<RealType>());
+        RealType g = 0; MPI_Allreduce(&loc, &g, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD); return g;   // RealType=double here
+    };
+    const RealType dDiv  = ownedDot(phi, divAcc);
+    const RealType dGrad = ownedDot(vx, gx) + ownedDot(vy, gy) + ownedDot(vz, gz);
 
     const RealType residual = dDiv + dGrad;
     const RealType scale    = std::max({std::abs(dDiv), std::abs(dGrad), RealType(1e-300)});
@@ -561,6 +565,18 @@ int main(int argc, char** argv)
               << "  <v,Gphi> = " << dGrad
               << "  rel|sum| = " << relErr
               << "  -> " << (pass ? "PASS" : "FAIL") << "\n";
+
+    // The coupled-operator assembly + Krylov solve are not yet multi-rank (reverse-fold of the assembled
+    // operator + halo-exchange in the matvec/dots = Increment 2). Refuse >1 rank here so the gate above can
+    // validate the halo-fold/owned-mask/allreduce machinery at N ranks, without reporting a wrong solve.
+    if (numRanks > 1)
+    {
+        if (rank == 0)
+            std::cout << "[phase0] adjointness gate is multi-rank-correct; the coupled solve is single-rank only "
+                         "(operator + Krylov halo = Increment 2). Gate validated above -- run the solve with 1 rank.\n";
+        MPI_Finalize();
+        return 0;
+    }
 
     // Side-set velocity-flux inlet + no-slip walls BC builder (outlet velocity left FREE; caller pins
     // pressure). Shared by --solve (cusolver) and --acm-pump (ACM). Fills velocity comps of bcF/bcV; also
