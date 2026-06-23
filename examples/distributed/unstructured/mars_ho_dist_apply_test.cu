@@ -8,11 +8,24 @@
 //   max|y| over OWNED DOF must be ~0  (the unconstrained HO Laplacian sums every
 //   row to zero; a wrong cross-rank assembly leaves O(1) residual at interfaces).
 // Run: srun -N1 -n4 ./mars_ho_dist_apply_test --ncells=16 --p=2
+//
+// OPTIONAL GPU NUMBERING (flag-gated; host path is the default and is UNCHANGED):
+//   MARS_HO_GPU_NUMBERING=1 ./mars_ho_dist_apply_test --ncells=16 --p=2
+//   ./mars_ho_dist_apply_test --gpu-numbering --ncells=16 --p=2
+// The GPU path (buildDistributedGpu) does the SAME numbering with thrust. The
+// local DOF ids may differ from host by a permutation, so correctness is checked
+// by permutation-INVARIANT quantities, not elemDof element-wise.
+//
+// SELF-CHECK (A/B host vs GPU on the same config; prints the invariants):
+//   ./mars_ho_dist_apply_test --self-check --ncells=16 --p=2
+// Asserts: numDof/nEdge/nFace equal, and the MULTISET of DofKeys equal (sort both,
+// compare). Then runs the A.1 apply gate with the GPU numbering -> end-to-end check.
 
 #include "mars.hpp"
 #include "backend/distributed/unstructured/domain.hpp"
 #include "backend/distributed/unstructured/utils/mars_generate_cube.hpp"
 #include "backend/distributed/unstructured/fem/mars_ho_dof_handler.hpp"
+#include "backend/distributed/unstructured/fem/mars_ho_dof_handler_gpu.hpp"
 #include "backend/distributed/unstructured/fem/mars_ho_halo.hpp"
 #include "backend/distributed/unstructured/fem/mars_cvfem_ho_basis.hpp"
 #include "backend/distributed/unstructured/fem/mars_cvfem_ho_apply.hpp"
@@ -20,8 +33,11 @@
 
 #include <cuda_runtime.h>
 #include <mpi.h>
+#include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 #include <cmath>
+#include <map>
 #include <string>
 #include <vector>
 #include <array>
@@ -106,16 +122,122 @@ static DistDof extractDistDof(Domain& domain, int rank, int numRanks)
     return D;
 }
 
+// Permutation-independent A/B comparison of the GPU vs host numbering. The local
+// DOF ids legitimately differ (host = std::map insertion order, GPU = sorted-key
+// order), so we compare the INVARIANTS that cross-rank correctness depends on:
+// numDof/nEdge/nFace (the unique counts) and the MULTISET of DofKeys. Returns true
+// if everything matches on this rank.
+static bool selfCheckNumbering(const HODofHandler& host, const HODofHandler& gpu, int rank)
+{
+    bool ok = true;
+    if (host.numDof != gpu.numDof || host.nEdge != gpu.nEdge || host.nFace != gpu.nFace) ok = false;
+    if (rank == 0)
+        printf("[self-check] numDof host=%ld gpu=%ld | nEdge host=%ld gpu=%ld | nFace host=%ld gpu=%ld  [%s]\n",
+               host.numDof, gpu.numDof, host.nEdge, gpu.nEdge, host.nFace, gpu.nFace,
+               (host.numDof==gpu.numDof && host.nEdge==gpu.nEdge && host.nFace==gpu.nFace) ? "MATCH" : "MISMATCH");
+
+    if (host.dofKey.size() != gpu.dofKey.size()) {
+        if (rank == 0) printf("[self-check] dofKey size differs host=%zu gpu=%zu\n",
+                              host.dofKey.size(), gpu.dofKey.size());
+        return false;
+    }
+
+    auto packed = [](const HODofHandler::DofKey& k) {
+        return std::array<long,6>{ (long)k.kind, k.g0, k.g1, k.g2, k.g3, (long)k.pos }; };
+    std::vector<std::array<long,6>> hk(host.dofKey.size()), gk(gpu.dofKey.size());
+    for (size_t i = 0; i < host.dofKey.size(); ++i) hk[i] = packed(host.dofKey[i]);
+    for (size_t i = 0; i < gpu.dofKey.size();  ++i) gk[i] = packed(gpu.dofKey[i]);
+    std::sort(hk.begin(), hk.end());
+    std::sort(gk.begin(), gk.end());
+
+    long mismatch = 0; long firstBad = -1;
+    for (size_t i = 0; i < hk.size(); ++i)
+        if (hk[i] != gk[i]) { ++mismatch; if (firstBad < 0) firstBad = (long)i; }
+    if (mismatch) ok = false;
+    if (rank == 0)
+        printf("[self-check] DofKey multiset: %ld / %zu mismatched (firstBad slot=%ld)  [%s]\n",
+               mismatch, hk.size(), firstBad, mismatch == 0 ? "MATCH" : "MISMATCH");
+
+    // dofShared / dofBoundary are per-DOF flags keyed on local ids -> not directly
+    // comparable. But their TOTALS are permutation-invariant -> compare counts.
+    long hShared=0,gShared=0,hBnd=0,gBnd=0;
+    for (auto v : host.dofShared)   hShared += v;
+    for (auto v : gpu.dofShared)    gShared += v;
+    for (auto v : host.dofBoundary) hBnd += v;
+    for (auto v : gpu.dofBoundary)  gBnd += v;
+    if (hShared != gShared || hBnd != gBnd) ok = false;
+    if (rank == 0)
+        printf("[self-check] shared count host=%ld gpu=%ld | boundary count host=%ld gpu=%ld  [%s]\n",
+               hShared, gShared, hBnd, gBnd, (hShared==gShared && hBnd==gBnd) ? "MATCH" : "MISMATCH");
+
+    // Owner histogram (rank -> #DOF owned) is permutation-invariant too.
+    {
+        std::map<int,long> ho, go;
+        for (int o : host.dofOwner) ho[o]++;
+        for (int o : gpu.dofOwner)  go[o]++;
+        bool ownMatch = (ho == go);
+        if (!ownMatch) ok = false;
+        if (rank == 0) printf("[self-check] owner histogram  [%s]\n", ownMatch ? "MATCH" : "MISMATCH");
+    }
+    return ok;
+}
+
+enum class Numbering { Host, Gpu, SelfCheck };
+
 template<int P>
-static void runDistApply(const DistDof& D, int rank, int numRanks)
+static void runDistApply(const DistDof& D, int rank, int numRanks, Numbering mode)
 {
     const int n = P + 1, N3 = n*n*n;
 
-    HODofHandler dof;
-    dof.buildDistributed(D.elemCorners, (long)D.nodeCount, P, D.cornerGid, D.cornerOwner, D.elemOwner, rank, D.sharedCorner);
+    HODofHandler dof;       // the handler actually used downstream (host or GPU built)
+    HODofHandler dofHost;   // only populated in SelfCheck, for the A/B compare
+
+    if (mode == Numbering::Host) {
+        if (rank == 0) { printf("[build] numbering = HOST (--host-numbering / MARS_HO_HOST_NUMBERING)\n"); fflush(stdout); }
+        double tb0 = MPI_Wtime();
+        dof.buildDistributed(D.elemCorners, (long)D.nodeCount, P, D.cornerGid, D.cornerOwner, D.elemOwner, rank, D.sharedCorner);
+        double tb1 = MPI_Wtime();
+        if (rank == 0) { printf("[build] buildDistributed (host) %.3fs (numDof=%ld)\n", tb1-tb0, dof.numDof); fflush(stdout); }
+    } else if (mode == Numbering::Gpu) {
+        if (rank == 0) { printf("[build] numbering = GPU (default)\n"); fflush(stdout); }
+        cudaDeviceSynchronize();
+        double tb0 = MPI_Wtime();
+        buildDistributedGpu(dof, D.elemCorners, (long)D.nodeCount, P, D.cornerGid, D.cornerOwner, D.elemOwner, rank, D.sharedCorner);
+        cudaDeviceSynchronize();
+        double tb1 = MPI_Wtime();
+        if (rank == 0) { printf("[build] buildDistributedGpu %.3fs (numDof=%ld)\n", tb1-tb0, dof.numDof); fflush(stdout); }
+    } else { // SelfCheck: build BOTH, time each, then compare invariants. Use GPU for downstream.
+        if (rank == 0) { printf("[build] numbering = SELF-CHECK (host vs GPU A/B)\n"); fflush(stdout); }
+        double th0 = MPI_Wtime();
+        dofHost.buildDistributed(D.elemCorners, (long)D.nodeCount, P, D.cornerGid, D.cornerOwner, D.elemOwner, rank, D.sharedCorner);
+        double th1 = MPI_Wtime();
+        cudaDeviceSynchronize();
+        double tg0 = MPI_Wtime();
+        buildDistributedGpu(dof, D.elemCorners, (long)D.nodeCount, P, D.cornerGid, D.cornerOwner, D.elemOwner, rank, D.sharedCorner);
+        cudaDeviceSynchronize();
+        double tg1 = MPI_Wtime();
+        double thMax=0, tgMax=0, dh=th1-th0, dg=tg1-tg0;
+        MPI_Allreduce(&dh, &thMax, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+        MPI_Allreduce(&dg, &tgMax, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+        if (rank == 0)
+            printf("[self-check] build time: host %.3fs  gpu %.3fs  speedup %.2fx\n",
+                   thMax, tgMax, tgMax > 0 ? thMax/tgMax : 0.0);
+        bool ok = selfCheckNumbering(dofHost, dof, rank);
+        int allOk = ok ? 1 : 0, gAllOk = 1;
+        MPI_Allreduce(&allOk, &gAllOk, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
+        if (rank == 0)
+            printf("[self-check] numbering invariants (all ranks): %s -- now running A.1 gate with GPU numbering\n",
+                   gAllOk ? "PASS" : "FAIL");
+    }
+
+    double tb1 = MPI_Wtime();
     resolveHoDofOwnership(dof.dofShared, dof.dofKey, dof.dofOwner, rank, D.peers);
+    double tb2 = MPI_Wtime();
+    if (rank == 0) { printf("[build] resolveOwnership %.3fs\n", tb2-tb1); fflush(stdout); }
     HoHalo<RealType> halo;
     halo.build((int)dof.numDof, dof.dofOwner, dof.dofKey, dof.dofBoundary, rank, D.peers);
+    double tb3 = MPI_Wtime();
+    if (rank == 0) { printf("[build] HoHalo %.3fs\n", tb3-tb2); fflush(stdout); }
 
     const size_t nEl  = D.nOwnedElem;
     const long   nDof = dof.numDof;
@@ -157,6 +279,7 @@ static void runDistApply(const DistDof& D, int rank, int numRanks)
     cudaMemcpy(d_corners, h_corners.data(),   sizeof(double) * nEl * 24, cudaMemcpyHostToDevice);
     ho_cvfem_metric_perpoint_launch<double, P>(d_corners, d_G, nEl);
     cudaDeviceSynchronize();
+    if (rank == 0) { printf("[gate] metric ready, entering host A.1\n"); fflush(stdout); }
 
     // A*1 distributed: u=1 on OWNED, forward fills ghosts, apply, reverseAdd.
     std::vector<double> u(nDof, 0.0);
@@ -169,6 +292,7 @@ static void runDistApply(const DistDof& D, int rank, int numRanks)
     std::vector<double> y(nDof);
     cudaMemcpy(y.data(), d_y, sizeof(double) * nDof, cudaMemcpyDeviceToHost);
     halo.reverseAdd(y);
+    if (rank == 0) { printf("[gate] host apply+halo done, entering Allreduce (waits on slowest rank)\n"); fflush(stdout); }
 
     double locMax = 0; long locOwned = 0;
     for (long d = 0; d < nDof; ++d)
@@ -177,9 +301,11 @@ static void runDistApply(const DistDof& D, int rank, int numRanks)
     MPI_Allreduce(&locMax,   &gMax,   1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
     MPI_Allreduce(&locOwned, &gOwned, 1, MPI_LONG,   MPI_SUM, MPI_COMM_WORLD);
 
+    const char* tag = (mode==Numbering::Host) ? "host-numbering"
+                    : (mode==Numbering::Gpu)  ? "gpu-numbering" : "gpu-numbering(self-check)";
     if (rank == 0)
-        printf("p=%d  owned DOF=%ld  max|A.1| over owned (host halo) = %.3e   [%s]%s\n",
-               P, gOwned, gMax, gMax < 1e-8 ? "PASS" : "FAIL",
+        printf("p=%d  owned DOF=%ld  max|A.1| over owned (host halo, %s) = %.3e   [%s]%s\n",
+               P, gOwned, tag, gMax, gMax < 1e-8 ? "PASS" : "FAIL",
                err != cudaSuccess ? "  (CUDA error!)" : "");
 
     // ---- device-halo matvec: same A.1, but forward/reverseAdd on the GPU (scaling path) ----
@@ -239,9 +365,25 @@ int main(int argc, char** argv)
     int devCount = 0; cudaGetDeviceCount(&devCount); if (devCount > 0) cudaSetDevice(rank % devCount);
 
     size_t ncells = 16; int P = 2;
+    bool cliGpu = false, cliHost = false, cliSelfCheck = false;
     for (int i = 1; i < argc; ++i) { std::string a = argv[i];
         if (a.rfind("--ncells=",0)==0) ncells = std::stoull(a.substr(9));
-        else if (a.rfind("--p=",0)==0) P = std::stoi(a.substr(4)); }
+        else if (a.rfind("--p=",0)==0) P = std::stoi(a.substr(4));
+        else if (a == "--gpu-numbering")  cliGpu = true;   // accepted; GPU is the default now
+        else if (a == "--host-numbering") cliHost = true;
+        else if (a == "--self-check")     cliSelfCheck = true; }
+
+    // Default = GPU numbering (radix-uint64 dedup): bit-identical to host (A.1 matches),
+    // ~10x faster build, lower host-memory peak, and the SAME per-GPU ceiling -- the
+    // ceiling is the apply's d_G, and the numbering's device scratch is freed before d_G
+    // is allocated. Opt OUT to host (the self-check oracle / CPU-only debugging) with
+    // --host-numbering or MARS_HO_HOST_NUMBERING. --self-check runs both and A/Bs them.
+    const char* envHost = std::getenv("MARS_HO_HOST_NUMBERING");
+    bool wantHost = cliHost || (envHost && std::atoi(envHost) != 0);
+    (void)cliGpu;
+    Numbering mode = cliSelfCheck ? Numbering::SelfCheck
+                   : wantHost      ? Numbering::Host
+                                   : Numbering::Gpu;
 
     auto [gn, ge, gx, gy, gz, lconn] =
         generateCubeElementPartition<RealType, KeyType>(ncells, rank, numRanks);
@@ -250,18 +392,38 @@ int main(int argc, char** argv)
     typename Domain::HostConnectivityTuple h_conn{
         std::move(lconn[0]), std::move(lconn[1]), std::move(lconn[2]), std::move(lconn[3]),
         std::move(lconn[4]), std::move(lconn[5]), std::move(lconn[6]), std::move(lconn[7])};
-    Domain domain(h_coords, h_conn, rank, numRanks, 64, false, 8u);
+    // Global decomposition bucketSize. cstone's global octree is replicated on
+    // every rank and its per-leaf count Allreduce (MPI_UNSIGNED) must stay under
+    // 2 GiB, or Cray MPICH's chunked recursive-doubling collective overflows its
+    // 32-bit byte count and truncates. Leaves ~ 3 * ncells^3 / bucket (octree
+    // over-refine ~3x), each leaf 4 bytes -> raise the bucket for huge meshes so
+    // leaves*4 stays well under 2^31. bucketSizeFocus stays 8 (local resolution
+    // unchanged); only the decomposition tree coarsens. Override via env.
+    int gbucket = 64;
+    if (const char* e = std::getenv("MARS_GLOBAL_BUCKETSIZE")) {
+        gbucket = std::atoi(e);
+    } else {
+        const double need = 3.0 * (double)ncells * (double)ncells * (double)ncells / 4.0e8;
+        while (gbucket < need && gbucket < 8192) gbucket *= 2;
+    }
+    if (rank == 0) { printf("[build] global bucketSize=%d (msg-safe replicated tree)\n", gbucket); fflush(stdout); }
+    Domain domain(h_coords, h_conn, rank, numRanks, gbucket, false, 8u);
 
+    double te0 = MPI_Wtime();
     DistDof D = extractDistDof(domain, rank, numRanks);
+    double te1 = MPI_Wtime();
+    if (rank == 0) { printf("[build] extractDistDof %.1fs (nodeCount=%zu nOwnedElem=%zu)\n",
+                            te1 - te0, D.nodeCount, D.nOwnedElem); fflush(stdout); }
 
     if (rank == 0)
-        printf("\n== HO distributed matrix-free apply gate (A.1 = HO-Laplacian.const = 0) ==  ncells=%zu ranks=%d\n",
-               (size_t)ncells, numRanks);
+        printf("\n== HO distributed matrix-free apply gate (A.1 = HO-Laplacian.const = 0) ==  ncells=%zu ranks=%d  mode=%s\n",
+               (size_t)ncells, numRanks,
+               mode==Numbering::Host ? "host" : mode==Numbering::Gpu ? "gpu" : "self-check");
     switch (P) {
-        case 1: runDistApply<1>(D, rank, numRanks); break;
-        case 2: runDistApply<2>(D, rank, numRanks); break;
-        case 3: runDistApply<3>(D, rank, numRanks); break;
-        case 4: runDistApply<4>(D, rank, numRanks); break;
+        case 1: runDistApply<1>(D, rank, numRanks, mode); break;
+        case 2: runDistApply<2>(D, rank, numRanks, mode); break;
+        case 3: runDistApply<3>(D, rank, numRanks, mode); break;
+        case 4: runDistApply<4>(D, rank, numRanks, mode); break;
         default: if (rank == 0) printf("unsupported p=%d (build adds 1..4)\n", P);
     }
     MPI_Finalize();
