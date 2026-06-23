@@ -193,13 +193,13 @@ static void runDistApply(const DistDof& D, int rank, int numRanks, Numbering mod
     HODofHandler dofHost;   // only populated in SelfCheck, for the A/B compare
 
     if (mode == Numbering::Host) {
-        if (rank == 0) { printf("[build] numbering = HOST (default)\n"); fflush(stdout); }
+        if (rank == 0) { printf("[build] numbering = HOST (--host-numbering / MARS_HO_HOST_NUMBERING)\n"); fflush(stdout); }
         double tb0 = MPI_Wtime();
         dof.buildDistributed(D.elemCorners, (long)D.nodeCount, P, D.cornerGid, D.cornerOwner, D.elemOwner, rank, D.sharedCorner);
         double tb1 = MPI_Wtime();
         if (rank == 0) { printf("[build] buildDistributed (host) %.3fs (numDof=%ld)\n", tb1-tb0, dof.numDof); fflush(stdout); }
     } else if (mode == Numbering::Gpu) {
-        if (rank == 0) { printf("[build] numbering = GPU (MARS_HO_GPU_NUMBERING / --gpu-numbering)\n"); fflush(stdout); }
+        if (rank == 0) { printf("[build] numbering = GPU (default)\n"); fflush(stdout); }
         cudaDeviceSynchronize();
         double tb0 = MPI_Wtime();
         buildDistributedGpu(dof, D.elemCorners, (long)D.nodeCount, P, D.cornerGid, D.cornerOwner, D.elemOwner, rank, D.sharedCorner);
@@ -365,20 +365,25 @@ int main(int argc, char** argv)
     int devCount = 0; cudaGetDeviceCount(&devCount); if (devCount > 0) cudaSetDevice(rank % devCount);
 
     size_t ncells = 16; int P = 2;
-    bool cliGpu = false, cliSelfCheck = false;
+    bool cliGpu = false, cliHost = false, cliSelfCheck = false;
     for (int i = 1; i < argc; ++i) { std::string a = argv[i];
         if (a.rfind("--ncells=",0)==0) ncells = std::stoull(a.substr(9));
         else if (a.rfind("--p=",0)==0) P = std::stoi(a.substr(4));
-        else if (a == "--gpu-numbering") cliGpu = true;
-        else if (a == "--self-check")    cliSelfCheck = true; }
+        else if (a == "--gpu-numbering")  cliGpu = true;   // accepted; GPU is the default now
+        else if (a == "--host-numbering") cliHost = true;
+        else if (a == "--self-check")     cliSelfCheck = true; }
 
-    // Default = host numbering (UNCHANGED). Opt into GPU via env or CLI; --self-check
-    // runs both and A/Bs the invariants. The env var matches MARS' other flags.
-    const char* envGpu = std::getenv("MARS_HO_GPU_NUMBERING");
-    bool useGpu = cliGpu || (envGpu && std::atoi(envGpu) != 0);
+    // Default = GPU numbering (radix-uint64 dedup): bit-identical to host (A.1 matches),
+    // ~10x faster build, lower host-memory peak, and the SAME per-GPU ceiling -- the
+    // ceiling is the apply's d_G, and the numbering's device scratch is freed before d_G
+    // is allocated. Opt OUT to host (the self-check oracle / CPU-only debugging) with
+    // --host-numbering or MARS_HO_HOST_NUMBERING. --self-check runs both and A/Bs them.
+    const char* envHost = std::getenv("MARS_HO_HOST_NUMBERING");
+    bool wantHost = cliHost || (envHost && std::atoi(envHost) != 0);
+    (void)cliGpu;
     Numbering mode = cliSelfCheck ? Numbering::SelfCheck
-                   : useGpu       ? Numbering::Gpu
-                                  : Numbering::Host;
+                   : wantHost      ? Numbering::Host
+                                   : Numbering::Gpu;
 
     auto [gn, ge, gx, gy, gz, lconn] =
         generateCubeElementPartition<RealType, KeyType>(ncells, rank, numRanks);
@@ -387,7 +392,22 @@ int main(int argc, char** argv)
     typename Domain::HostConnectivityTuple h_conn{
         std::move(lconn[0]), std::move(lconn[1]), std::move(lconn[2]), std::move(lconn[3]),
         std::move(lconn[4]), std::move(lconn[5]), std::move(lconn[6]), std::move(lconn[7])};
-    Domain domain(h_coords, h_conn, rank, numRanks, 64, false, 8u);
+    // Global decomposition bucketSize. cstone's global octree is replicated on
+    // every rank and its per-leaf count Allreduce (MPI_UNSIGNED) must stay under
+    // 2 GiB, or Cray MPICH's chunked recursive-doubling collective overflows its
+    // 32-bit byte count and truncates. Leaves ~ 3 * ncells^3 / bucket (octree
+    // over-refine ~3x), each leaf 4 bytes -> raise the bucket for huge meshes so
+    // leaves*4 stays well under 2^31. bucketSizeFocus stays 8 (local resolution
+    // unchanged); only the decomposition tree coarsens. Override via env.
+    int gbucket = 64;
+    if (const char* e = std::getenv("MARS_GLOBAL_BUCKETSIZE")) {
+        gbucket = std::atoi(e);
+    } else {
+        const double need = 3.0 * (double)ncells * (double)ncells * (double)ncells / 4.0e8;
+        while (gbucket < need && gbucket < 8192) gbucket *= 2;
+    }
+    if (rank == 0) { printf("[build] global bucketSize=%d (msg-safe replicated tree)\n", gbucket); fflush(stdout); }
+    Domain domain(h_coords, h_conn, rank, numRanks, gbucket, false, 8u);
 
     double te0 = MPI_Wtime();
     DistDof D = extractDistDof(domain, rank, numRanks);

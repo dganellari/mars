@@ -75,6 +75,20 @@ Notice: read the *last column* of each row — at ~2197 DOF, `p=1` error is `2.0
 is `3.5e-5`. Same number of unknowns, ~570× lower error. High order buys accuracy you cannot
 get from just adding more low-order elements.
 
+<img src="figures/fig_convergence.png" width="460" alt="L2 error vs DOF for p=1..4">
+
+*L2 error vs DOF, one line per order. The slopes steepen with `p` (≈ `p+1` order). At ~2197
+DOF the dotted line shows `p=1` and `p=4` differ by ~570× in error for the same unknown count.*
+
+One thing to be clear about: "equal DOF count" means *different meshes on the same unit cube*. A
+`p=1` hex contributes ~1 unknown, a `p=4` hex contributes ~64 (`(p+1)^3` nodes). So matching the
+unknown count puts `p=1` on a fine mesh and `p=4` on a coarse one — at the ~2197-DOF point that is
+a `12^3 = 1728`-element mesh (`p=1`) versus a `3^3 = 27`-element mesh (`p=4`). The fair question is
+"for a fixed number of unknowns, which order resolves the solution better," and high order wins
+because the error decays like ~`h^(p+1)`. One caveat: this `h^(p+1)` rate assumes a *smooth*
+solution and accurate geometry — on a real mesh with corner singularities, boundary layers,
+turbulence, or curved walls approximated by straight-sided hexes, the gain is far smaller than 570×.
+
 ### What "matrix-free" means, and why it is the whole point at high order
 
 The obvious way to do `y = A·x` is to *build and store* the matrix `A` first (in CSR/sparse
@@ -101,6 +115,12 @@ geometry over more DOF. (2) At `p=1` matrix-free is actually slightly *worse* (4
 that's the 0.8× crossover), but by `p=7` it is **336× leaner**. High order is exactly where
 matrix-free pays off.
 
+<img src="figures/fig_memory.png" width="460" alt="Operator memory footprint vs p">
+
+*Bytes/DOF vs `p` (log scale). Assembled storage climbs 324 → 40500 as coupling explodes;
+matrix-free falls 421 → 121. The lines cross just above `p=1`, and by `p=7` matrix-free is
+336× leaner.*
+
 There is a second, less obvious win. Done naively, recomputing `A·x` for a `p=4` element
 would be a dense `125×125` multiply. **Sum-factorization** restructures it into a sequence of
 small 1D operations along each axis, collapsing the cost so that throughput stays flat across
@@ -126,6 +146,11 @@ Notice: throughput at `p=7` (4530 MDOF/s) is essentially the same as at `p=1` (4
 the 570×-better accuracy of high order *for free* in throughput terms. (One honest caveat:
 the kernel is memory- and occupancy-bound, so FP64 tensor cores do **not** help here — that's
 a measured negative result, not a missed opportunity. Chapter 2 owns this.)
+
+<img src="figures/fig_throughput.png" width="460" alt="Apply throughput vs p on H100">
+
+*Apply throughput per order on a single H100. Every bar sits in the ~4–8 GDOF/s band;
+`p=7` (4.5 GDOF/s) matches `p=1` (4.8 GDOF/s), so high order costs nothing in throughput.*
 
 ### Where the geometry actually lives
 
@@ -230,7 +255,7 @@ What to notice:
 - `Btil` interpolates from GLL nodes to the flux points; `Dtil` takes the derivative there;
   `D` differentiates GLL-to-GLL; `W` integrates a flux over a subcontrol interval.
 
-This follows Knaus' high-order CVFEM formulation (SAND2022-3366J). At `p=1` it collapses to
+This follows Knaus' high-order CVFEM formulation ([Knaus 2022](#references), SAND2022-3366J). At `p=1` it collapses to
 ordinary linear CVFEM: `zeta={-1,1}`, `xi={0}`, `Btil=[1/2,1/2]`, `Dtil=[-1/2,1/2]`.
 
 ### 2.3 Sum-factorization: why O(p⁴) beats O(p⁶)
@@ -252,8 +277,8 @@ penalty. That is *the* reason to go high-order matrix-free.
 
 **Code jump — the host reference apply (the ground truth).**
 `backend/distributed/unstructured/fem/mars_cvfem_ho_apply.hpp`, `applyHoCvfemElement`. This is
-Knaus Alg 2: loop over each direction `dir` and each SCS face `l`, and do the three 1D
-contractions:
+Knaus Alg 2 ([Knaus 2022](#references)): loop over each direction `dir` and each SCS face `l`, and
+do the three 1D contractions:
 ```cpp
 for (int dir = 0; dir < 3; ++dir)
     for (int l=0;l<p;++l) {
@@ -310,6 +335,24 @@ What to notice:
 - The flip side, and the reason for our per-GPU memory ceiling: `G` is `3·p·(p+1)²` vec3s per
   element of HBM (~7.2 KB/elem at `p=4`). That array is what caps us at ~647M DOF/GPU at
   `p=4`.
+
+**This pattern has a name: partial assembly.** Store the geometric metric per quadrature point,
+then apply the operator via sum-factorization at solve time — never assemble a global sparse
+matrix and never recompute geometry on the hot path. It is exactly the method MFEM uses (store
+only the per-point data `D`, evaluate the basis/gather operators on the fly under the tensor-
+product structure — [MFEM partial assembly](#references)), and the method the 2025 Gordon Bell
+winner used for its 3D wave forward operator. The lineage is direct: our `d_G` is byte-for-byte
+Knaus's per-element metric `G` (`N_el × 3p(p+1)² × 3`), and Knaus's high-order CVFEM scheme
+([Knaus 2022](#references), SAND2022-3366J) is itself partial
+assembly — it stores `vol`, `m_dot`, `A`, `G` per element, `O(p³)` total, and calls it a
+"memory-efficient scheme." So this is **the same method as MFEM and Knaus, only a different
+discretization**: CVFEM subcontrol-volume fluxes instead of variational Galerkin. (Worth being
+precise: "matrix-free" in all three means *no assembled global matrix* — both Knaus and MARS
+keep the metric **persistently in DRAM**. Knaus's "registers" is only the in-kernel working
+slice of one element for `p≤4`, not a separate storage tier. The truly recompute-everything
+matrix-free variant stores nothing and pays the FLOPs back on every apply; in MFEM's own
+benchmarks that variant *lost* on wall-clock to partial assembly. MARS's contribution over Knaus
+is carrying this identical PA operator to *distributed*, all-order (`p≤7`), trillion-DOF scale.)
 
 ### 2.5 The GPU kernel: gather / apply / scatter, one thread per face slot
 
@@ -440,7 +483,17 @@ keeping enough blocks resident. Tensor cores accelerate the part that was alread
 doing nothing for the part that is actually limiting — and they add register/shared pressure
 that *hurts* occupancy. The sibling DMMA Galerkin kernel measured 90 KB smem/block, capping it
 to 2 blocks/SM (~12.5% occupancy); that is the wall, and matrix-multiply throughput is not
-what you hit it with.
+what you hit it with. `ncu` confirms the diagnosis directly: ~15–19% compute utilization against
+71–82% L1/shared throughput, and the DMMA path gave only ~1.06×. The apply itself already runs
+at ~60% of peak HBM — it is bandwidth-efficient, just not compute-bound.
+
+One honest caveat so this is not mistaken for a hardware verdict: it is a **formulation** choice,
+not a limit of the tensor cores. MFEM *does* profit from FP64 DMMA — by **batching many elements
+into one large dense GEMM**, which is compute-bound at `p≥4`. MARS runs **one warp per element**,
+so each contraction is a tiny GEMM that the tensor cores cannot saturate. The lever that would
+turn DMMA on is the batched-GEMM layout (plus the affine-metric path of Ch. 5/6), not the
+hardware. We chose warp-per-element for its occupancy and locality; the consequence is that
+tensor cores stay idle.
 
 This is worth stating plainly because it is easy to oversell. The win in this operator is
 **sum-factorization plus an occupancy-first kernel layout** (constant-memory operators, one
@@ -964,9 +1017,23 @@ full matvec sits at **78%** at the *small* per-GPU size (~4.2M DOF). That ~20-po
 halo, and it **self-resolves as per-GPU size grows** (4M→11M DOF/GPU pushes full-matvec
 78%→87%). We see why next.
 
+<img src="figures/fig_ho_scaling.png" width="460" alt="HO matrix-free distributed weak scaling p=4">
+
+*p=4, ~4.2M DOF/GPU held fixed (device==host halo bit-exact at 1e-18). Operator apply holds
+98% from 1→8 GPU; the full matvec sits at 78% (blocking halo). Growing per-GPU size to
+4→11M DOF closes that gap: comm 22→15%, full matvec 78→87%.*
+
 At the largest run we did — **40 billion DOF on 64 GPUs at p=4** — apply held ~6 GDOF/s/GPU, the
 *same* rate as a single GPU (≈100% apply weak-scaling), and the full matvec was ~90% efficient.
 So adding 64× the GPUs cost ~10% on the operation that matters.
+
+The same picture holds on the larger 1/8/32-GPU GH200 ladder (2M elements/GPU held, 2M → 64M):
+
+<img src="figures/fig_weakscale.png" width="460" alt="Weak scaling on GH200 across 1/8/32 GPUs">
+
+*Apply weak-scales at 95% to 64M DOF / 32 GPU. The full matvec degrades faster (50% blocking,
+56% with comm overlap) — overlap buys ~1.22× at this small per-GPU size, where comm is still
+a large fraction.*
 
 ### 5.2 Why communication self-resolves
 
@@ -992,6 +1059,12 @@ kfit, pfit = 200.0, -0.36   # fit comm/apply = k * V^p ; p ~ -1/3
 Notice: the fitted exponent is **−0.36**, essentially the V^(−1/3) the geometry predicts. Comm
 goes 52% → 19% purely by making each GPU's job bigger. The fit extrapolates to the
 trillion-relevant point: at ~300M DOF/GPU, comm is ~17%.
+
+<img src="figures/fig_comm_pergpu.png" width="460" alt="Comm fraction vs DOF per GPU with V^-1/3 model">
+
+*Measured comm fraction on 8 GPUs (52% → 19% as per-GPU DOF grows 2M → 64M) against the
+V^(−1/3) surface-to-volume model. The dashed line marks the trillion-relevant ~300M DOF/GPU,
+where comm drops to ~17%.*
 
 **Code jump** — `examples/distributed/unstructured/mars_ho_dist_apply_test.cu`, `runDistApply`:
 ```cpp
@@ -1063,11 +1136,48 @@ Notice the ceiling climbs from 70M (stored CSR) to 647M (high-order matrix-free)
 gain, and the direct reason high order is the right tool for the trillion frontier. We are well
 above the 93M/GPU that a full-Alps trillion would require.
 
+<img src="figures/fig_trillion.png" width="460" alt="Per-GPU capacity by mode, path to a trillion">
+
+*Validated per-GPU ceilings: assembled CSR 70M, p=1 matrix-free 77M, domain decomposition
+108M, and p=4 HO matrix-free 647M DOF/GPU. The dashed line is the ~93M/GPU a 10¹² problem
+needs on full Alps — HO matrix-free clears it ~7×, putting a trillion DOF in ~1,550 GPUs.*
+
 (For context, MFEM won Gordon Bell 2025 at 55.5 trillion DOF on 43,520 GPUs — ~1.27B DOF/GPU.
 Our operator sits in the ~1B DOF/GPU class. The trillion run itself is **in progress, not done**;
 Chapter 6 is honest about why.)
 
-### 5.4 The straggler: when setup, not solve, kills the run
+The lever to raise the ceiling further is in *what* `d_G` stores. Today we store the **general
+per-point metric** — a full `detJ·J⁻¹J⁻ᵀ` at every flux point — because the Jacobian varies
+inside the element. If the element geometry is **affine** (a parallelepiped: cube, sheared box,
+uniformly stretched), the Jacobian is constant, so the metric is the *same* at every point and
+collapses to ~9 doubles per element instead of `3·p·(p+1)²` vec3s — roughly **100× leaner at
+p=4**. We do not exploit this. The 647M figure is therefore the *general-geometry* number, with
+headroom left on the table for any structured or affine subregion. The affine-metric path is the
+same lever that would also unlock batched-GEMM tensor cores (§2.7): both want the metric to be
+one small constant per element, not a per-point array.
+
+### 5.4 What about unstructured meshes and tets?
+
+Two questions come up immediately: does the 647M DOF/GPU number assume a cube, and does any of
+this work for tetrahedra?
+
+**Distorted hexes: yes, for free.** The metric is built from the 8 corner coordinates via a
+**trilinear Jacobian per element** (`mars_cvfem_ho_apply.hpp`), so it handles *any* warped,
+sheared, or stretched hex — the cross-term coefficients `g[0]`/`g[1]` from §2.4 are exactly the
+non-orthogonality. We do **not** assume or exploit cube geometry anywhere on the storage path.
+So the scaling numbers in this chapter are the **fully-unstructured-hex** numbers: 647M DOF/GPU
+transfers to a real warped hex mesh at zero extra cost (and is conservative — the affine lever
+above would only help structured regions). The cube in the test driver is a convenience for
+generating elements, not a shortcut the kernel relies on.
+
+**Tets: no — they need a different kernel.** The entire speed argument rests on the **tensor-
+product** structure: GLL nodes on a `(p+1)³` lattice are what let sum-factorization split a 3D
+contraction into three 1D sweeps (§2.3). A tetrahedron has no such product structure, so this
+kernel does not apply to tets at all. High-order tets need a separate scheme (collapsed-
+coordinate / Bernstein bases), which is its own MARS track. This is not a MARS-specific
+limitation — the same hex/tensor-product constraint binds MFEM's high-order partial assembly.
+
+### 5.5 The straggler: when setup, not solve, kills the run
 
 There is a subtler scaling wall that has nothing to do with the GPU. The DOF numbering —
 assigning a global identity to every corner, edge, face, and interior node — originally ran **on
@@ -1094,7 +1204,7 @@ The fix is to recognize what the `std::map` dedup *is*: a sort + unique + binary
 That is a textbook thrust pipeline. So we wrote a GPU-native numbering that does the identical
 job on the device.
 
-### 5.5 GPU-native numbering: sort, unique, scatter
+### 5.6 GPU-native numbering: sort, unique, scatter
 
 The core move is to turn each element's 12 edges and 6 faces into a packed, sorted key, then let
 thrust find the unique entities:
@@ -1150,7 +1260,7 @@ are pure functions of *global* ids, so a plain store is race-safe (every writer 
 boundary/shared *flags* are an OR across writers, so only those use `atomicOr`. This is the kind
 of "what is actually shared between threads?" analysis that lets GPU code drop locks safely.
 
-### 5.6 Trust but verify: the A/B self-check
+### 5.7 Trust but verify: the A/B self-check
 
 A faster numbering is worthless if it is a *different* numbering. There is one subtlety: the host
 assigns local edge/face ids in `std::map` *insertion* order, while the GPU assigns them in
@@ -1188,7 +1298,7 @@ Notice: a new, faster path lands *alongside* the proven one, flag-gated
 (`MARS_HO_GPU_NUMBERING=1` or `--gpu-numbering`), and ships with its own A/B harness. That is how
 you remove a bottleneck at scale without betting the run on unverified code.
 
-### 5.7 Takeaways
+### 5.8 Takeaways
 
 - **Weak-scale, and feed the GPU.** Apply weak-scales at ~98–100% to 40B DOF/64 GPUs; full
   matvec ~90%. The gap is the halo.
@@ -1200,8 +1310,10 @@ you remove a bottleneck at scale without betting the run on unverified code.
 - **Setup can be the straggler.** Host `std::map` numbering cost ~79s/rank and stalled a 256-rank
   launch. The GPU rewrite (sort + unique + scatter) is bit-equivalent (zero DofKey mismatches,
   A·1 passes), flag-gated, and leaves the host default untouched.
-- **Trillion is in progress, not done.** A >4.3B-element run still crashes in the cstone domain
-  build; the cause is being pinned and is *not* a trivial count overflow.
+- **Trillion is in progress, not done.** The >4.3B-element domain-build crash turned out to be a
+  2 GiB Allreduce message in cstone's global tree (not a count-value overflow); the fix is a
+  coarser global `bucketSize` (`MARS_GLOBAL_BUCKETSIZE`), free for the apply. The remaining gap to
+  a demonstrated trillion is the distributed *solve*, not the operator (Chapter 6).
 
 ---
 
@@ -1320,13 +1432,38 @@ sledgehammer.
 The discipline here generalizes far past cstone. When a number near a power-of-two coincides with
 a crash, the lazy move is to widen the type. The expert move is to **read the library's design
 first**: is this quantity an *index* (must not saturate) or a *signal* (designed to saturate)? In
-cstone it is a signal. The 2³² coincidence is a red herring; with `CUDA_LAUNCH_BLOCKING=1` we are
-pinning the *actual* failing kernel/allocation in the domain build (the true cause is something
-else — likely an allocation or an index that *is* genuinely 32-bit on our side of the boundary,
-e.g. a per-rank element index — not the cstone counts). That investigation is in progress and we
-do not yet claim it solved.
+cstone it is a signal. The 2³² coincidence is a red herring; the count *values* are fine. The
+real cause is one level up, and §6.5 has it.
 
-### 6.5 Where MARS sits: the Gordon Bell yardstick
+### 6.5 The real blocker, and the one-line fix: a 2 GiB Allreduce message
+
+Pinning the actual failure with `CUDA_LAUNCH_BLOCKING=1` put it on the **global-tree count
+Allreduce** — the same `sumCapped` collective from §6.4, but the problem is the *message size*,
+not the count values. The replicated global octree at a cube-2500 run has ~805M leaf nodes, each
+a `uint32` count. That is `805M × 4 = 3.22 GB` in one `MPI_Allreduce` — past `2³¹` bytes. Cray
+MPICH's chunked recursive-doubling implementation carries the per-chunk byte count in a 32-bit
+field, so it truncates by one uint32 and corrupts the reduction. Note the distinction from §6.4:
+each individual count is a fine uint32; it is the **number of nodes times 4 bytes** that overflows
+a 32-bit *byte* counter inside MPICH. This is a **scale threshold on the global element count**
+(it sets the global tree size), not a rank-count limit and not a `LocalIndex`/uint32-count
+overflow on our side.
+
+**Code jump** — `examples/distributed/unstructured/mars_ho_dist_apply_test.cu`, global bucketSize:
+```cpp
+// global bucketSize auto-scales with ncells^3 so the global tree stays under
+// the ~2 GiB Allreduce limit; MARS_GLOBAL_BUCKETSIZE overrides.
+```
+The fix needs no cstone patch and no apply-side change: **make the global tree coarser** by
+raising cstone's global `bucketSize`. A bigger bucket means fewer leaf nodes, so the count
+message shrinks. We auto-scale it with `ncells³` (cube-2500 → bucketSize 128, message ~1.5 GB,
+safely under 2 GiB), with `MARS_GLOBAL_BUCKETSIZE` as an env override. Crucially this is
+**free for the operator**: the apply is entirely local, so a coarser *global* partition tree
+does not touch matvec throughput at all — it only changes how the elements are bucketed for the
+domain decomposition. The lesson for distributed scale: a collective that worked at a billion can
+silently die at a few billion purely on **message bytes**, and the cheapest fix is often to make
+the *replicated* structure coarser, not to widen a type.
+
+### 6.6 Where MARS sits: the Gordon Bell yardstick
 
 For calibration: MFEM won **Gordon Bell 2025** with **55.5 trillion DOF on 43,520 MI300A GPUs**
 (~1.27B DOF/GPU); on Alps GH200 the comparable figure is ~9.3T DOF on ~9,200 GPUs. Our HO
@@ -1334,9 +1471,20 @@ matrix-free operator, at a measured **647M DOF/GPU** clean (p=4, the per-point m
 ~7.2 KB/elem is the wall), sits squarely in the **~1B DOF/GPU class** — the same league as the
 GB-winning code's per-GPU density. The affine-cube metric (512× less `d_G`) would push us to
 ~1–2B DOF/GPU. We are operator-competitive per GPU; the gap to a *demonstrated* trillion is the
-domain-build robustness above and the solve below — not operator throughput.
+solve below — not operator throughput, and no longer the domain build (§6.5).
 
-### 6.6 What is NOT done: the distributed solve
+A second calibration is on *method*, and it lands on the same choice MARS made. The **2025
+Gordon Bell winner** (a Cascadia-tsunami digital twin, arXiv:2504.16344) discretizes its 3D
+acoustic-gravity forward operator with **partial assembly** — verbatim, PA "stores an
+asymptotically optimal amount of data: O(1) per degree of freedom," and the authors explicitly
+chose it over the fully matrix-free option MFEM also supports ("matrix-free assembly where no
+data is stored and all computations are done on the fly"), "for faster time-to-solution." That is
+exactly the trade MARS makes in §2.4: store the metric once, apply via sum-factorization, never
+recompute geometry on the hot path. So the operator class behind the last two Gordon Bell-scale
+results — MFEM-PA and this one — is the same class as the MARS HO operator; the differentiators
+are our CVFEM discretization and the distributed all-order reach, not the assembly strategy.
+
+### 6.7 What is NOT done: the distributed solve
 
 This is the honest boundary of the work. We have a distributed **matvec**. We do not yet have a
 distributed **solve**.
@@ -1359,7 +1507,8 @@ halo-correct. What exists today versus what remains:
      (LOR) AMG** preconditioner: build a p=1 element on the *same* GLL nodes, assemble that sparse
      operator (cheap and AMG-friendly), and use AMG on it to precondition the high-order
      matrix-free solve. None of this is built yet.
-  3. **Robust domain build past 4.3B elements** — §6.4, in progress.
+  3. **Robust domain build past 4.3B elements** — the 2 GiB Allreduce blocker is fixed with the
+     auto-scaling global `bucketSize` (§6.5); larger-scale validation runs are the remaining work.
 
 The intellectually honest framing for the talk: MARS has a **trillion-class operator** —
 bit-exact, sum-factorized, weak-scaling, in the ~1B DOF/GPU density band of the Gordon Bell
@@ -1433,3 +1582,42 @@ OOM. Instead of a segfault you get
 > Note (Alps run convention): on multi-GPU nodes each rank binds one device
 > (`cudaSetDevice(rank % devCount)`), and `srun` needs `--export=ALL` for the environment flags to
 > reach the ranks.
+
+---
+
+## References
+
+The MARS HO operator is the tensor-product / sum-factorized partial-assembly method, with a CVFEM
+discretization. The references below are the sources the tutorial cites directly.
+
+- **[Knaus 2022]** R. Knaus, "A fast matrix-free approach to the high-order control volume finite
+  element method with application to low-Mach flow," *Computers & Fluids*, vol. 239, art. 105408,
+  2022. DOI: [10.1016/j.compfluid.2022.105408](https://doi.org/10.1016/j.compfluid.2022.105408).
+  Sandia report SAND2022-3366J (OSTI: <https://www.osti.gov/biblio/1870437>). The high-order CVFEM
+  matrix-free method this operator is based on: the tensor-product (sum-factorized) element
+  residual evaluation and the stored per-element metric `G`.
+
+- **[MFEM partial assembly]** the partial-assembly / sum-factorization approach for tensor-product
+  high-order elements:
+  - MFEM performance & partial assembly page: <https://mfem.org/performance/>.
+  - J. Andrej, N. Atallah, J.-P. Bäcker, J. Camier, D. Copeland, V. Dobrev, Y. Dudouit, T. Duswald,
+    B. Keith, D. Kim, T. Kolev, B. Lazarov, K. Mittal, W. Pazner, S. Petrides, S. Shiraiwa,
+    M. Stowell, V. Tomov, "High-performance finite elements with MFEM," arXiv:2402.15940, 2024.
+    <https://arxiv.org/abs/2402.15940>.
+  - R. Anderson et al., "MFEM: A Modular Finite Element Methods Library," *Computers & Mathematics
+    with Applications*, vol. 81, pp. 42–74, 2021. DOI:
+    [10.1016/j.camwa.2020.06.009](https://doi.org/10.1016/j.camwa.2020.06.009).
+  - (background) J. Brown et al., "libCEED: Fast algebra for high-order element-based
+    discretizations," *Journal of Open Source Software*, vol. 6, no. 63, art. 2945, 2021. DOI:
+    [10.21105/joss.02945](https://doi.org/10.21105/joss.02945).
+
+- **[GB 2025]** S. Henneking, S. Venkat, V. Dobrev, J. Camier, T. Kolev, M. Fernando,
+  A.-A. Gabriel, O. Ghattas, "Real-time Bayesian inference at extreme scale: A digital twin for
+  tsunami early warning applied to the Cascadia subduction zone," arXiv:2504.16344, 2025
+  (2025 ACM Gordon Bell Prize). <https://arxiv.org/abs/2504.16344>. The MFEM-PA forward operator
+  cited for the per-GPU-density and method comparison in Chapters 1 and 6.
+
+- **[FP64 tensor cores]** J. Tu, I. Karlin, J. Camier, V. Dobrev, T. Kolev, S. Henneking,
+  O. Ghattas, "Accelerating High-Order Finite Element Simulations at Extreme Scale with FP64 Tensor
+  Cores," arXiv:2603.09038, 2026. <https://arxiv.org/abs/2603.09038>. Context for the FP64 DMMA
+  discussion in §2.7.
