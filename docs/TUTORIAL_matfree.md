@@ -50,6 +50,19 @@ vector, and the bulk of the compute is doing `y = A·x` over and over inside a l
 So the whole game reduces to one question: **how do we apply `A` to a vector, fast, for an
 `A` so big it spans thousands of GPUs?**
 
+A fair question to ask up front: MARS's own FSI application — the pump — runs at `p=1`, so why
+build high-order CVFEM at all? Be honest about it. The pump is complex geometry: walls, corners,
+boundary layers, where the formal ~`h^(p+1)` accuracy gain is capped and `p=1` is the pragmatic
+choice. High order is not for the pump. It is for the other end of the spectrum — smooth,
+resolution-limited, high-Reynolds LES over large domains — where resolving the turbulent field
+with far fewer unknowns (low numerical dispersion and dissipation) is exactly what lets a
+trillion-DOF run fit on the machine. That regime is why Sandia's Nalu-Wind lineage
+([Knaus 2022](#references)) invested in high-order CVFEM in the first place: production CFD needs
+the locally conservative control-volume form, not Galerkin, and wind-energy LES needs accuracy
+per unknown. So this operator is the scaling capability for the problems where high order pays,
+delivered in the conservative discretization those problems require — which is why the lineage
+built it and why a trillion-DOF demonstration matters even when today's pump is `p=1`.
+
 ### What "high order" (`p`) means
 
 Inside each element, the polynomial has a degree `p`. At `p=1` the field is linear
@@ -1025,15 +1038,19 @@ halo, and it **self-resolves as per-GPU size grows** (4M→11M DOF/GPU pushes fu
 
 At the largest run we did — **40 billion DOF on 64 GPUs at p=4** — apply held ~6 GDOF/s/GPU, the
 *same* rate as a single GPU (≈100% apply weak-scaling), and the full matvec was ~90% efficient.
-So adding 64× the GPUs cost ~10% on the operation that matters.
+So adding 64× the GPUs cost ~10% on the operation that matters. In aggregate that is **~0.38
+TDOF/s sustained** across the run, with one full matvec landing at **~0.1 s** regardless of scale
+(per-GPU work is fixed). The driver prints the exact figure for whatever run you do — a
+`measured: ... ms/matvec ... | sustained ... TDOF/s` line straight off the slowest rank's
+wall-clock.
 
 The same picture holds on the larger 1/8/32-GPU GH200 ladder (2M elements/GPU held, 2M → 64M):
 
 <img src="figures/fig_weakscale.png" width="460" alt="Weak scaling on GH200 across 1/8/32 GPUs">
 
-*Apply weak-scales at 95% to 64M DOF / 32 GPU. The full matvec degrades faster (50% blocking,
-56% with comm overlap) — overlap buys ~1.22× at this small per-GPU size, where comm is still
-a large fraction.*
+*Apply weak-scales at 95% to 64M DOF / 32 GPU. The full matvec degrades faster (33% blocking,
+40% with comm overlap at 32 GPU) — overlap buys ~1.22× at this small per-GPU size, where comm is
+still a large fraction.*
 
 ### 5.2 Why communication self-resolves
 
@@ -1182,7 +1199,9 @@ limitation — the same hex/tensor-product constraint binds MFEM's high-order pa
 There is a subtler scaling wall that has nothing to do with the GPU. The DOF numbering —
 assigning a global identity to every corner, edge, face, and interior node — originally ran **on
 the host**, using `std::map` to deduplicate shared edges and faces. At ~10M elements/rank that is
-~180M edge+face entries to insert, and it cost **~79 seconds per rank**.
+~180M edge+face entries to insert, and it cost **~79 seconds per rank**. The GPU-native rewrite
+below does the same job in **~8 s** at 625M DOF/rank (8 GPU) versus ~80 s on the host — a hard
+**~10× setup-time win** that removes the straggler entirely.
 
 In an MPI job, the slowest rank is the job. One unlucky rank with a heavier partition becomes a
 *straggler* and stalls a 256-rank launch in a barrier before the solve even starts. The test
@@ -1283,20 +1302,21 @@ per-id), and the owner histogram. All are quantities that survive a relabeling o
 
 The result: **zero DofKey mismatches** at p=2/3/4, and the end-to-end A·1 = 0 apply gate passes
 with the GPU numbering — proving it is not just structurally equal but *operationally*
-identical. Critically, the GPU path is **opt-in**; the validated host numbering stays the
-default:
+identical. Having earned that trust, the GPU path is now the **default**; the validated host
+numbering stays as an opt-in safety fallback:
 
 **Code jump** — `examples/distributed/unstructured/mars_ho_dist_apply_test.cu`, `main`:
 ```cpp
-const char* envGpu = std::getenv("MARS_HO_GPU_NUMBERING");
-bool useGpu = cliGpu || (envGpu && std::atoi(envGpu) != 0);
+const char* envHost = std::getenv("MARS_HO_HOST_NUMBERING");
+bool wantHost = cliHost || (envHost && std::atoi(envHost) != 0);
 Numbering mode = cliSelfCheck ? Numbering::SelfCheck
-               : useGpu       ? Numbering::Gpu
-                              : Numbering::Host;   // default unchanged
+               : wantHost     ? Numbering::Host
+                              : Numbering::Gpu;   // GPU is the default
 ```
-Notice: a new, faster path lands *alongside* the proven one, flag-gated
-(`MARS_HO_GPU_NUMBERING=1` or `--gpu-numbering`), and ships with its own A/B harness. That is how
-you remove a bottleneck at scale without betting the run on unverified code.
+Notice the direction: the faster path is now what runs by default, and the proven host path is
+the fallback you reach for with `--host-numbering` (or `MARS_HO_HOST_NUMBERING=1`). The A/B
+self-check is what made that flip safe — you only promote a path to default after a harness has
+shown it bit-equivalent to the one you trust.
 
 ### 5.8 Takeaways
 
@@ -1308,8 +1328,9 @@ you remove a bottleneck at scale without betting the run on unverified code.
   ~647M DOF/GPU ceiling, measured by a checked-malloc OOM probe. High order raises this ceiling
   ~9× over stored CSR, putting a trillion DOF within ~1,550 GPUs.
 - **Setup can be the straggler.** Host `std::map` numbering cost ~79s/rank and stalled a 256-rank
-  launch. The GPU rewrite (sort + unique + scatter) is bit-equivalent (zero DofKey mismatches,
-  A·1 passes), flag-gated, and leaves the host default untouched.
+  launch. The GPU rewrite (sort + unique + scatter) does the same job in ~8 s vs ~80 s at 625M
+  DOF/rank (**~10×**), is bit-equivalent (zero DofKey mismatches, A·1 passes), and — once the A/B
+  harness proved it — is now the **default**, with the host path kept as an opt-in fallback.
 - **Trillion is in progress, not done.** The >4.3B-element domain-build crash turned out to be a
   2 GiB Allreduce message in cstone's global tree (not a count-value overflow); the fix is a
   coarser global `bucketSize` (`MARS_GLOBAL_BUCKETSIZE`), free for the apply. The remaining gap to
@@ -1547,19 +1568,19 @@ The distributed apply test (`mars_ho_dist_apply_test`) is the live driver behind
 this tutorial. Build it with the FEM examples (see `CLAUDE.md`), then run on Alps with `srun`.
 The binary path is relative from the build directory.
 
-**1. The headline gate — A·1 = 0 across ranks (host numbering, the default):**
+**1. The headline gate — A·1 = 0 across ranks (GPU numbering, the default):**
 ```bash
 srun -N1 -n4 ./examples/distributed/unstructured/mars_ho_dist_apply_test --ncells=16 --p=2
 ```
-Expect a `[build] buildDistributed (host) ...` line and a `max|A.1| over owned ... PASS` line at
+Expect a `[build] numbering = GPU (default)` line and a `max|A.1| over owned ... PASS` line at
 ~1e-17. Try `--p=3` and `--p=4` to reproduce the `1.7e-18 / 2.5e-17 / 2.8e-17` ladder.
 
-**2. The GPU-native numbering path (opt-in, leaves host default untouched):**
+**2. The host numbering path (opt-in safety fallback):**
 ```bash
 # via environment flag
-MARS_HO_GPU_NUMBERING=1 srun -N1 -n4 ./examples/distributed/unstructured/mars_ho_dist_apply_test --ncells=16 --p=2
+MARS_HO_HOST_NUMBERING=1 srun -N1 -n4 ./examples/distributed/unstructured/mars_ho_dist_apply_test --ncells=16 --p=2
 # or via CLI flag
-srun -N1 -n4 ./examples/distributed/unstructured/mars_ho_dist_apply_test --gpu-numbering --ncells=16 --p=2
+srun -N1 -n4 ./examples/distributed/unstructured/mars_ho_dist_apply_test --host-numbering --ncells=16 --p=2
 ```
 
 **3. The A/B self-check — host vs GPU numbering bit-equivalence:**
