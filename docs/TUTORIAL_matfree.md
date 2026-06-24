@@ -1234,6 +1234,14 @@ transfers to a real warped hex mesh at zero extra cost (and is conservative — 
 above would only help structured regions). The cube in the test driver is a convenience for
 generating elements, not a shortcut the kernel relies on.
 
+**Validated, not just argued.** The driver's `--irregular` flag jitters interior nodes
+(deterministic per integer grid index, so a shared node moves *identically* on every rank — no
+mesh tearing) into a genuinely distorted partition with **~30–40% more cross-rank sharing** than
+the clean cube. On 8 GPUs at p=4 (625M DOF/rank), the GPU DOF ownership comes back **bit-identical
+to the all-peer reference** (`MARS_HO_VERIFY_OWNERSHIP`) on **both** the regular and the irregular
+partition, and the distributed matvec gate passes **A·1 = 1.0e-18**. So "distorted hexes work" is
+a measured result on a deliberately irregular partition, not just a property of the Jacobian.
+
 **Tets: no — they need a different kernel.** The entire speed argument rests on the **tensor-
 product** structure: GLL nodes on a `(p+1)³` lattice are what let sum-factorization split a 3D
 contraction into three 1D sweeps (§2.3). A tetrahedron has no such product structure, so this
