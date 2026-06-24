@@ -1333,8 +1333,10 @@ shown it bit-equivalent to the one you trust.
   harness proved it — is now the **default**, with the host path kept as an opt-in fallback.
 - **Trillion is in progress, not done.** The >4.3B-element domain-build crash turned out to be a
   2 GiB Allreduce message in cstone's global tree (not a count-value overflow); the fix is a
-  coarser global `bucketSize` (`MARS_GLOBAL_BUCKETSIZE`), free for the apply. The remaining gap to
-  a demonstrated trillion is the distributed *solve*, not the operator (Chapter 6).
+  coarser global `bucketSize` (`MARS_GLOBAL_BUCKETSIZE`), free for the apply, and is now
+  **setup-validated at 640B elements / 1024 GPUs** (full decomposition + DOF numbering + halo, no
+  Allreduce failure — a setup milestone, not a 640B matvec). The remaining gap to a demonstrated
+  trillion is the distributed *solve* plus the trillion apply itself, not the operator (Chapter 6).
 
 ---
 
@@ -1484,6 +1486,15 @@ domain decomposition. The lesson for distributed scale: a collective that worked
 silently die at a few billion purely on **message bytes**, and the cheapest fix is often to make
 the *replicated* structure coarser, not to widen a type.
 
+**Validated at 640B-element scale (setup only).** The overnight run carried the fix well past the
+4.3B wall: the full distributed **setup** — domain decomposition + GPU-native DOF numbering
+(numDof = 628,857,939 per rank) + ownership + halo — completed on **640 billion DOF / 1024 GH200**
+with **no Allreduce failure** (global bucketSize = 256, `extractDistDof` 4.2 s,
+`buildDistributedGpu` 7.858 s). This is a **setup/build milestone, not a matvec**: the run then
+timed out in the host-side `A·1` cross-check before the apply (since fixed by a host-gate skip).
+It proves the blocker is gone at scale; it is *not* a 640B matvec result. The full trillion apply
+is queued for the next overnight.
+
 ### 6.6 Where MARS sits: the Gordon Bell yardstick
 
 For calibration: MFEM won **Gordon Bell 2025** with **55.5 trillion DOF on 43,520 MI300A GPUs**
@@ -1529,13 +1540,17 @@ halo-correct. What exists today versus what remains:
      operator (cheap and AMG-friendly), and use AMG on it to precondition the high-order
      matrix-free solve. None of this is built yet.
   3. **Robust domain build past 4.3B elements** — the 2 GiB Allreduce blocker is fixed with the
-     auto-scaling global `bucketSize` (§6.5); larger-scale validation runs are the remaining work.
+     auto-scaling global `bucketSize` (§6.5) and **validated at 640B-element scale** (the full
+     setup ran on 1024 GH200, §6.5). What remains is the trillion-scale *apply* itself, queued for
+     the next overnight; the build is no longer the gate.
 
 The intellectually honest framing for the talk: MARS has a **trillion-class operator** —
 bit-exact, sum-factorized, weak-scaling, in the ~1B DOF/GPU density band of the Gordon Bell
 winner. The trillion-DOF *solve* is the next milestone, and its critical path is FlexGMRES +
-LOR-AMG over the operator we already trust, plus hardening the cstone domain build at the
-4-billion-element frontier. **We claim the operator. We do not yet claim the trillion.**
+LOR-AMG over the operator we already trust. The cstone domain build is no longer on that path: it
+is fixed and **setup-validated at 640B elements / 1024 GPUs** (§6.5), with the trillion *apply*
+queued. **We claim the operator and the setup scaling. We do not yet claim a trillion-DOF — or a
+640B — matvec.**
 
 ---
 
