@@ -3,6 +3,13 @@
 // SAME mesh and the SAME p=1 DOF space. It reports (1) PARITY, (2) THROUGHPUT of
 // both, (3) MEMORY footprint, and (4) an analytic cross-p crossover table.
 //
+// Two assembled CSRs are built on the shared DOF map: the FULL (~27-nnz, all 8x8
+// intra-element couplings) which MATCHES the matrix-free apply (parity holds), and
+// the GRAPH (7-nnz, edge-based / STK-matching -- the production scheme the
+// collaborators run, like Nalu's EBVC) which is a REDUCED operator. The graph CSR
+// gets a THROUGHPUT + MEMORY comparison only -- it is a different (fewer-coupling)
+// matrix, so NO parity is claimed for it; parity stays on the FULL CSR.
+//
 // At p=1 BOTH paths are "CVFEM diffusion at order 1", but from DIFFERENT
 // formulations: the assembled CvfemHexAssembler uses MARS's SCS area-vector flux
 // discretization, while the HO matrix-free uses the sum-factorized tensor-product
@@ -176,6 +183,37 @@ int main(int argc, char** argv)
         d_nodeToDof.data(), d_nodeOwnership.data(), d_matrix, d_rhs.data(), cfg);
     cudaDeviceSynchronize();
 
+    // ====================== ASSEMBLED GRAPH PATH (7-nnz, production edge-based) ======================
+    // The scheme the collaborators actually run: edge-based / STK-matching (Nalu
+    // EBVC), 7 nnz/row instead of the full element-graph 27. SAME mesh, SAME p=1
+    // node DOF map, SAME area-vector geometry and diffusion fields as the full
+    // path above -- only the sparsity (buildGraphSparsity) and the assembler entry
+    // (assembleGraphLump, the exact pair mars_cvfem_graph.cu uses) differ. This is
+    // a REDUCED operator: fewer couplings than the full 8x8, so it is NOT the same
+    // matrix as the matrix-free full-coupling apply -- throughput/memory only, no
+    // parity claim (parity stays on the full CSR below).
+    cstone::DeviceVector<int> d_gRowPtr(numTotalDofs + 1), d_gDiagPtr(numTotalDofs), d_gColInd;
+    int gnnz = CvfemSparsityBuilder<KeyType>::buildGraphSparsity(
+        C(0),C(1),C(2),C(3),C(4),C(5),C(6),C(7), elementCount, d_nodeToDof.data(), numTotalDofs,
+        d_gRowPtr.data(), nullptr, nullptr);
+    d_gColInd.resize(gnnz);
+    CvfemSparsityBuilder<KeyType>::buildGraphSparsity(
+        C(0),C(1),C(2),C(3),C(4),C(5),C(6),C(7), elementCount, d_nodeToDof.data(), numTotalDofs,
+        d_gRowPtr.data(), d_gColInd.data(), d_gDiagPtr.data());
+    cudaDeviceSynchronize();
+
+    cstone::DeviceVector<RealType> d_gValues(gnnz, 0.0), d_gRhs(numTotalDofs, 0.0);
+    MatrixType* d_gMatrix; CK(cudaMalloc(&d_gMatrix, sizeof(MatrixType)));
+    MatrixType h_gMatrix{d_gRowPtr.data(), d_gColInd.data(), d_gValues.data(), d_gDiagPtr.data(),
+                         numTotalDofs, gnnz, numDofs};
+    CK(cudaMemcpy(d_gMatrix, &h_gMatrix, sizeof(MatrixType), cudaMemcpyHostToDevice));
+
+    Assembler::assembleGraphLump(C(0),C(1),C(2),C(3),C(4),C(5),C(6),C(7), elementCount,
+        d_x.data(), d_y.data(), d_z.data(), d_gamma.data(), d_phi.data(), d_beta.data(),
+        d_gx.data(), d_gy.data(), d_gz.data(), d_mdot.data(), d_avx.data(), d_avy.data(), d_avz.data(),
+        d_nodeToDof.data(), d_nodeOwnership.data(), d_gMatrix, d_gRhs.data(), cfg);
+    cudaDeviceSynchronize();
+
     // ====================== MATRIX-FREE HO PATH (p=1) ======================
     // Reference operators -> constant memory (once).
     HoCvfemOperators op = buildHoCvfemOperators(1);
@@ -217,6 +255,7 @@ int main(int argc, char** argv)
     std::mt19937 rng(7); std::uniform_real_distribution<RealType> uni(-1, 1);
     for (auto& v : h_u) v = uni(rng);
     cstone::DeviceVector<RealType> d_u(numTotalDofs), d_ymb(numTotalDofs), d_ymf(numTotalDofs);
+    cstone::DeviceVector<RealType> d_ymg(numTotalDofs);   // graph (7-nnz) SpMV output
     CK(cudaMemcpy(d_u.data(), h_u.data(), numTotalDofs*sizeof(RealType), cudaMemcpyHostToDevice));
 
     // assembled SpMV (cuSPARSE)
@@ -236,6 +275,23 @@ int main(int argc, char** argv)
                      CUDA_R_64F, CUSPARSE_SPMV_ALG_DEFAULT, buf);
     };
 
+    // assembled GRAPH (7-nnz) SpMV (cuSPARSE) -- identical setup to the full SpMV
+    // (same handle, same alpha/beta, same input vX=d_u, same algorithm), only the
+    // CSR (graph rowPtr/colInd/values, gnnz) differs, so the two SpMVs are timed on
+    // an equal footing. Separate output vector vYg avoids clobbering vY.
+    cusparseSpMatDescr_t matG; cusparseDnVecDescr_t vYg;
+    cusparseCreateCsr(&matG, numTotalDofs, numTotalDofs, gnnz, d_gRowPtr.data(), d_gColInd.data(),
+                      d_gValues.data(), CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I, CUSPARSE_INDEX_BASE_ZERO, CUDA_R_64F);
+    cusparseCreateDnVec(&vYg, numTotalDofs, d_ymg.data(), CUDA_R_64F);
+    size_t bufSizeG = 0;
+    cusparseSpMV_bufferSize(h, CUSPARSE_OPERATION_NON_TRANSPOSE, &alpha, matG, vX, &beta, vYg,
+                            CUDA_R_64F, CUSPARSE_SPMV_ALG_DEFAULT, &bufSizeG);
+    void* bufG = nullptr; CK(cudaMalloc(&bufG, bufSizeG));
+    auto gspmv = [&]() {
+        cusparseSpMV(h, CUSPARSE_OPERATION_NON_TRANSPOSE, &alpha, matG, vX, &beta, vYg,
+                     CUDA_R_64F, CUSPARSE_SPMV_ALG_DEFAULT, bufG);
+    };
+
     // HO matrix-free apply (d_y pre-zeroed; scatter is additive via atomicAdd).
     auto matfree = [&]() {
         cudaMemset(d_ymf.data(), 0, numTotalDofs*sizeof(RealType));
@@ -243,8 +299,10 @@ int main(int argc, char** argv)
                                            d_G.data(), elementCount);
     };
 
-    // Warmup + bring both results to host.
-    spmv(); matfree(); CK(cudaGetLastError()); cudaDeviceSynchronize();
+    // Warmup + bring both results to host. Graph SpMV is warmed up alongside so
+    // its timed loop starts from the same warm state (parity uses only the full
+    // SpMV vs matfree, so the graph result is not pulled to host).
+    spmv(); gspmv(); matfree(); CK(cudaGetLastError()); cudaDeviceSynchronize();
     std::vector<RealType> ymb(numTotalDofs), ymf(numTotalDofs);
     CK(cudaMemcpy(ymb.data(), d_ymb.data(), numTotalDofs*sizeof(RealType), cudaMemcpyDeviceToHost));
     CK(cudaMemcpy(ymf.data(), d_ymf.data(), numTotalDofs*sizeof(RealType), cudaMemcpyDeviceToHost));
@@ -288,6 +346,7 @@ int main(int argc, char** argv)
     auto timeIt = [&](auto fn) { cudaEventRecord(t0); for (int i=0;i<iters;++i) fn();
         cudaEventRecord(t1); cudaEventSynchronize(t1); float ms=0; cudaEventElapsedTime(&ms,t0,t1); return ms/iters; };
     float msMB = timeIt(spmv);
+    float msMG = timeIt(gspmv);   // graph (7-nnz) SpMV: same timeIt, same iters as full SpMV
     float msMF = timeIt(matfree);
     CK(cudaGetLastError());
 
@@ -299,15 +358,18 @@ int main(int argc, char** argv)
         // one-time metric precompute and are freeable afterward). Both amortized
         // over numDofs. Index-only auxiliaries (d_diagPtr) are excluded from both.
         double matBytes = (double)nnz * (8.0 + 4.0) + (double)(numTotalDofs + 1) * 4.0;
+        double grfBytes = (double)gnnz * (8.0 + 4.0) + (double)(numTotalDofs + 1) * 4.0; // graph CSR (7-nnz)
         double mfBytes  = (double)elementCount * (kHoG * 8.0 + 8 * 4.0);
-        double matMiB = matBytes / (1<<20), mfMiB = mfBytes / (1<<20);
+        double matMiB = matBytes / (1<<20), grfMiB = grfBytes / (1<<20), mfMiB = mfBytes / (1<<20);
 
-        double mbDofPerS = (double)numDofs / (msMB * 1e-3);   // SpMV throughput
+        double mbDofPerS = (double)numDofs / (msMB * 1e-3);   // full SpMV throughput
+        double mgDofPerS = (double)numDofs / (msMG * 1e-3);   // graph (7-nnz) SpMV throughput
         double mfDofPerS = (double)numDofs / (msMF * 1e-3);   // matrix-free throughput
 
         printf("HO CVFEM matrix-free (Knaus Alg 2, p=1) vs assembled CSR + cuSPARSE SpMV\n");
-        printf("nodes=%zu elems=%zu numDofs=%d nnz=%d nnz/row=%.1f\n",
-               nodeCount, elementCount, numDofs, nnz, (double)nnz/numDofs);
+        printf("nodes=%zu elems=%zu numDofs=%d\n", nodeCount, elementCount, numDofs);
+        printf("  full  CSR nnz=%d nnz/row=%.1f   graph CSR nnz=%d nnz/row=%.1f\n",
+               nnz, (double)nnz/numDofs, gnnz, (double)gnnz/numDofs);
         printf("\n-- PARITY (matfree vs SpMV, owned rows) --\n");
         printf("  max|matfree-SpMV|/max|SpMV| = %.3e\n", parity);
         printf("  mean ratio matfree/SpMV     = %.6f   (rows used: %d)\n", ratioMean, ratioN);
@@ -321,16 +383,24 @@ int main(int argc, char** argv)
             printf("  => DIFFERENT operators (per-row structural difference).\n");
 
         printf("\n-- THROUGHPUT --\n");
-        printf("  assembled SpMV : %.4f ms/matvec | %.1f MDOF/s\n", msMB, mbDofPerS / 1e6);
-        printf("  matrix-free HO : %.4f ms/matvec | %.1f MDOF/s\n", msMF, mfDofPerS / 1e6);
-        printf("  speedup (SpMV time / matfree time) = %.2fx (%s)\n",
+        printf("  assembled FULL  (27-nnz) SpMV : %.4f ms/matvec | %.1f MDOF/s\n", msMB, mbDofPerS / 1e6);
+        printf("  assembled GRAPH (7-nnz)  SpMV : %.4f ms/matvec | %.1f MDOF/s\n", msMG, mgDofPerS / 1e6);
+        printf("  matrix-free HO                : %.4f ms/matvec | %.1f MDOF/s\n", msMF, mfDofPerS / 1e6);
+        printf("  speedup vs FULL  (27-nnz)            = %.2fx (%s)\n",
                msMB / msMF, msMF < msMB ? "matrix-free faster" : "SpMV faster");
+        printf("  speedup vs GRAPH (7-nnz, PRODUCTION) = %.2fx (%s)  <- the honest p=1 baseline\n",
+               msMG / msMF, msMF < msMG ? "matrix-free faster" : "SpMV faster");
         printf("  note: matrix-free time includes the per-matvec d_y memset its additive\n");
-        printf("        scatter requires; SpMV uses beta=0 overwrite (no memset).\n");
+        printf("        scatter requires; both SpMVs use beta=0 overwrite (no memset).\n");
+        printf("  note: GRAPH is the PRODUCTION edge-based scheme (Nalu EBVC / STK-matching,\n");
+        printf("        fewer couplings than FULL) -- this is a SCHEME-vs-SCHEME throughput/\n");
+        printf("        memory comparison, NOT the same matrix as matrix-free (no parity here;\n");
+        printf("        parity is the FULL CSR above).\n");
 
         printf("\n-- MEMORY (operator storage) --\n");
-        printf("  assembled CSR : %8.1f MiB | %6.1f bytes/DOF\n", matMiB, matBytes / numDofs);
-        printf("  matrix-free   : %8.1f MiB | %6.1f bytes/elem amortized over %d DOFs (metric+elemDof, no matrix)\n",
+        printf("  assembled FULL  CSR (27-nnz): %8.1f MiB | %6.1f bytes/DOF\n", matMiB, matBytes / numDofs);
+        printf("  assembled GRAPH CSR (7-nnz) : %8.1f MiB | %6.1f bytes/DOF\n", grfMiB, grfBytes / numDofs);
+        printf("  matrix-free                 : %8.1f MiB | %6.1f bytes/elem amortized over %d DOFs (metric+elemDof, no matrix)\n",
                mfMiB, mfBytes / numDofs, numDofs);
 
         // ====================== cross-p crossover (analytic) ======================
@@ -394,8 +464,11 @@ int main(int argc, char** argv)
         }
     }
 
-    cusparseDestroySpMat(matA); cusparseDestroyDnVec(vX); cusparseDestroyDnVec(vY); cusparseDestroy(h);
-    cudaFree(buf); cudaFree(d_matrix); cudaEventDestroy(t0); cudaEventDestroy(t1);
+    cusparseDestroySpMat(matA); cusparseDestroySpMat(matG);
+    cusparseDestroyDnVec(vX); cusparseDestroyDnVec(vY); cusparseDestroyDnVec(vYg);
+    cusparseDestroy(h);
+    cudaFree(buf); cudaFree(bufG); cudaFree(d_matrix); cudaFree(d_gMatrix);
+    cudaEventDestroy(t0); cudaEventDestroy(t1);
     delete domainPtr;
     MPI_Finalize();
     return 0;
