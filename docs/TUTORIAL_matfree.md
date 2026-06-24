@@ -268,6 +268,24 @@ What to notice:
 - `Btil` interpolates from GLL nodes to the flux points; `Dtil` takes the derivative there;
   `D` differentiates GLL-to-GLL; `W` integrates a flux over a subcontrol interval.
 
+Precise definitions (`L_j` = the Lagrange basis through the GLL nodes `ζ`):
+
+| operator | size | what it does | formula |
+|---|---|---|---|
+| `zeta` (ζ) | p+1 | GLL solution nodes = the DOF | — |
+| `xi` (ξ) | p | Gauss points = the SCS flux faces | — |
+| `Btil` (B̃) | p×(p+1) | interpolate node values → flux points | `B̃[i][j] = L_j(ξ_i)` |
+| `Dtil` (D̃) | p×(p+1) | derivative at the flux points | `D̃[i][j] = L_j′(ξ_i)` |
+| `D` | (p+1)² | derivative at the nodes themselves | `D[i][j] = L_j′(ζ_i)` |
+| `W` | (p+1)² | histopolation: integrate flux back to nodes (Knaus Eq 5–6) | `W = (edge-function matrix)⁻¹` |
+| `Deltatil` (Δ̃) | (p+1)×p | ±1 subcontrol-face incidence (Knaus Eq 7) | `Δ̃[i][i] = −1, Δ̃[i][i−1] = +1` |
+
+The `til` (tilde) marks the operators evaluated **at the Gauss flux points** `ξ` (B̃, D̃, Δ̃), versus
+`D`/`W` which act at the GLL nodes. All of them are built **once** on the host by
+`buildHoCvfemOperators(P)` from `p` alone — pure 1D quadrature/interpolation math, **no element
+geometry enters**. They are *not* an element stiffness matrix `K_e`; the matrix-free apply never
+forms `K_e`.
+
 This follows Knaus' high-order CVFEM formulation ([Knaus 2022](#references), SAND2022-3366J). At `p=1` it collapses to
 ordinary linear CVFEM: `zeta={-1,1}`, `xi={0}`, `Btil=[1/2,1/2]`, `Dtil=[-1/2,1/2]`.
 
@@ -383,6 +401,35 @@ arithmetic cheap. The constraint is **shared-memory bandwidth and occupancy**. T
    exchange data, through small shared face buffers.
 3. **Pack `E` elements per block** at low order, so a `p=1` element (only 4 face slots) does
    not starve an SM.
+
+> **Why "identical for every element" — and why that still holds for distorted, unstructured hexes.**
+> This is the crux. Every hex — a perfect cube, a sheared cell, or a fully irregular one — is the
+> image of the **one reference hex** `[−1,1]³` under an isoparametric map `x = Φ_e(ξ)`. The reference
+> operators depend **only on `p`**, never on the element's shape, so they are the same bytes for
+> every element → one copy in `__constant__`. The element's *geometry* lives entirely in the
+> Jacobian `J` of that map, folded into the **per-element metric** `d_G = detJ · J⁻¹J⁻ᵀ` at the quad
+> points (§2.4). So:
+>
+> - **reference operators (B̃, D̃, D, W, Δ̃)** — depend only on `p` → identical for every element → built once, stored once in `__constant__`.
+> - **`d_G`** — depends on each element's corner coordinates → different per element → the only per-element data.
+>
+> An apply is: gather DOF → apply B̃/D̃ (shared operators, sum-factorized) → multiply by *this*
+> element's `d_G` → apply D̃ᵀ → scatter. A distorted/unstructured hex mesh changes every `d_G` and
+> changes the operators by **zero** — that is why "same operators for every element" is true on a
+> genuine unstructured mesh, not just a cube. The only requirement is that elements are **hexes**
+> (so the tensor-product structure holds), not that they are cubes.
+>
+> **This is the libCEED/CEED decomposition that MFEM's partial assembly also uses:** `A = Pᵀ Gᵀ Bᵀ D B G P`.
+>
+> | CEED operator | MARS equivalent |
+> |---|---|
+> | **P** — subdomain (global→rank-local) restriction | the distributed DOF ownership + halo exchange |
+> | **G** — element restriction (rank-local→per-element gather) | the `elemDof` gather in the apply kernel |
+> | **B** — basis evaluator (DOFs→quad points) | **B̃ (`Btil`) + D̃ (`Dtil`)** (value + gradient); `W` on the integration side |
+> | **D** — operator at quad points | **`d_G`** (the metric `detJ·J⁻¹J⁻ᵀ`) |
+>
+> ⚠️ Name clash: CEED's **`D`** (quadrature-point operator) is MARS's **`d_G`**, *not* MARS's `D`
+> (the GLL-node derivative `L_j′(ζ_i)`). Same letter, different object.
 
 **Code jump — the gather (and what `dof < 0` means).**
 `mars_cvfem_ho_matfree.hpp`, `ho_cvfem_apply_kernel`:
