@@ -268,6 +268,24 @@ What to notice:
 - `Btil` interpolates from GLL nodes to the flux points; `Dtil` takes the derivative there;
   `D` differentiates GLL-to-GLL; `W` integrates a flux over a subcontrol interval.
 
+Precise definitions (`L_j` = the Lagrange basis through the GLL nodes `ζ`):
+
+| operator | size | what it does | formula |
+|---|---|---|---|
+| `zeta` (ζ) | p+1 | GLL solution nodes = the DOF | — |
+| `xi` (ξ) | p | Gauss points = the SCS flux faces | — |
+| `Btil` (B̃) | p×(p+1) | interpolate node values → flux points | `B̃[i][j] = L_j(ξ_i)` |
+| `Dtil` (D̃) | p×(p+1) | derivative at the flux points | `D̃[i][j] = L_j′(ξ_i)` |
+| `D` | (p+1)² | derivative at the nodes themselves | `D[i][j] = L_j′(ζ_i)` |
+| `W` | (p+1)² | histopolation: integrate flux back to nodes (Knaus Eq 5–6) | `W = (edge-function matrix)⁻¹` |
+| `Deltatil` (Δ̃) | (p+1)×p | ±1 subcontrol-face incidence (Knaus Eq 7) | `Δ̃[i][i] = −1, Δ̃[i][i−1] = +1` |
+
+The `til` (tilde) marks the operators evaluated **at the Gauss flux points** `ξ` (B̃, D̃, Δ̃), versus
+`D`/`W` which act at the GLL nodes. All of them are built **once** on the host by
+`buildHoCvfemOperators(P)` from `p` alone — pure 1D quadrature/interpolation math, **no element
+geometry enters**. They are *not* an element stiffness matrix `K_e`; the matrix-free apply never
+forms `K_e`.
+
 This follows Knaus' high-order CVFEM formulation ([Knaus 2022](#references), SAND2022-3366J). At `p=1` it collapses to
 ordinary linear CVFEM: `zeta={-1,1}`, `xi={0}`, `Btil=[1/2,1/2]`, `Dtil=[-1/2,1/2]`.
 
@@ -383,6 +401,35 @@ arithmetic cheap. The constraint is **shared-memory bandwidth and occupancy**. T
    exchange data, through small shared face buffers.
 3. **Pack `E` elements per block** at low order, so a `p=1` element (only 4 face slots) does
    not starve an SM.
+
+> **Why "identical for every element" — and why that still holds for distorted, unstructured hexes.**
+> This is the crux. Every hex — a perfect cube, a sheared cell, or a fully irregular one — is the
+> image of the **one reference hex** `[−1,1]³` under an isoparametric map `x = Φ_e(ξ)`. The reference
+> operators depend **only on `p`**, never on the element's shape, so they are the same bytes for
+> every element → one copy in `__constant__`. The element's *geometry* lives entirely in the
+> Jacobian `J` of that map, folded into the **per-element metric** `d_G = detJ · J⁻¹J⁻ᵀ` at the quad
+> points (§2.4). So:
+>
+> - **reference operators (B̃, D̃, D, W, Δ̃)** — depend only on `p` → identical for every element → built once, stored once in `__constant__`.
+> - **`d_G`** — depends on each element's corner coordinates → different per element → the only per-element data.
+>
+> An apply is: gather DOF → apply B̃/D̃ (shared operators, sum-factorized) → multiply by *this*
+> element's `d_G` → apply D̃ᵀ → scatter. A distorted/unstructured hex mesh changes every `d_G` and
+> changes the operators by **zero** — that is why "same operators for every element" is true on a
+> genuine unstructured mesh, not just a cube. The only requirement is that elements are **hexes**
+> (so the tensor-product structure holds), not that they are cubes.
+>
+> **This is the libCEED/CEED decomposition that MFEM's partial assembly also uses:** `A = Pᵀ Gᵀ Bᵀ D B G P`.
+>
+> | CEED operator | MARS equivalent |
+> |---|---|
+> | **P** — subdomain (global→rank-local) restriction | the distributed DOF ownership + halo exchange |
+> | **G** — element restriction (rank-local→per-element gather) | the `elemDof` gather in the apply kernel |
+> | **B** — basis evaluator (DOFs→quad points) | **B̃ (`Btil`) + D̃ (`Dtil`)** (value + gradient); `W` on the integration side |
+> | **D** — operator at quad points | **`d_G`** (the metric `detJ·J⁻¹J⁻ᵀ`) |
+>
+> ⚠️ Name clash: CEED's **`D`** (quadrature-point operator) is MARS's **`d_G`**, *not* MARS's `D`
+> (the GLL-node derivative `L_j′(ζ_i)`). Same letter, different object.
 
 **Code jump — the gather (and what `dof < 0` means).**
 `mars_cvfem_ho_matfree.hpp`, `ho_cvfem_apply_kernel`:
@@ -1187,6 +1234,14 @@ transfers to a real warped hex mesh at zero extra cost (and is conservative — 
 above would only help structured regions). The cube in the test driver is a convenience for
 generating elements, not a shortcut the kernel relies on.
 
+**Validated, not just argued.** The driver's `--irregular` flag jitters interior nodes
+(deterministic per integer grid index, so a shared node moves *identically* on every rank — no
+mesh tearing) into a genuinely distorted partition with **~30–40% more cross-rank sharing** than
+the clean cube. On 8 GPUs at p=4 (625M DOF/rank), the GPU DOF ownership comes back **bit-identical
+to the all-peer reference** (`MARS_HO_VERIFY_OWNERSHIP`) on **both** the regular and the irregular
+partition, and the distributed matvec gate passes **A·1 = 1.0e-18**. So "distorted hexes work" is
+a measured result on a deliberately irregular partition, not just a property of the Jacobian.
+
 **Tets: no — they need a different kernel.** The entire speed argument rests on the **tensor-
 product** structure: GLL nodes on a `(p+1)³` lattice are what let sum-factorization split a 3D
 contraction into three 1D sweeps (§2.3). A tetrahedron has no such product structure, so this
@@ -1333,8 +1388,10 @@ shown it bit-equivalent to the one you trust.
   harness proved it — is now the **default**, with the host path kept as an opt-in fallback.
 - **Trillion is in progress, not done.** The >4.3B-element domain-build crash turned out to be a
   2 GiB Allreduce message in cstone's global tree (not a count-value overflow); the fix is a
-  coarser global `bucketSize` (`MARS_GLOBAL_BUCKETSIZE`), free for the apply. The remaining gap to
-  a demonstrated trillion is the distributed *solve*, not the operator (Chapter 6).
+  coarser global `bucketSize` (`MARS_GLOBAL_BUCKETSIZE`), free for the apply, and is now
+  **setup-validated at 640B elements / 1024 GPUs** (full decomposition + DOF numbering + halo, no
+  Allreduce failure — a setup milestone, not a 640B matvec). The remaining gap to a demonstrated
+  trillion is the distributed *solve* plus the trillion apply itself, not the operator (Chapter 6).
 
 ---
 
@@ -1484,6 +1541,15 @@ domain decomposition. The lesson for distributed scale: a collective that worked
 silently die at a few billion purely on **message bytes**, and the cheapest fix is often to make
 the *replicated* structure coarser, not to widen a type.
 
+**Validated at 640B-element scale (setup only).** The overnight run carried the fix well past the
+4.3B wall: the full distributed **setup** — domain decomposition + GPU-native DOF numbering
+(numDof = 628,857,939 per rank) + ownership + halo — completed on **640 billion DOF / 1024 GH200**
+with **no Allreduce failure** (global bucketSize = 256, `extractDistDof` 4.2 s,
+`buildDistributedGpu` 7.858 s). This is a **setup/build milestone, not a matvec**: the run then
+timed out in the host-side `A·1` cross-check before the apply (since fixed by a host-gate skip).
+It proves the blocker is gone at scale; it is *not* a 640B matvec result. The full trillion apply
+is queued for the next overnight.
+
 ### 6.6 Where MARS sits: the Gordon Bell yardstick
 
 For calibration: MFEM won **Gordon Bell 2025** with **55.5 trillion DOF on 43,520 MI300A GPUs**
@@ -1529,13 +1595,17 @@ halo-correct. What exists today versus what remains:
      operator (cheap and AMG-friendly), and use AMG on it to precondition the high-order
      matrix-free solve. None of this is built yet.
   3. **Robust domain build past 4.3B elements** — the 2 GiB Allreduce blocker is fixed with the
-     auto-scaling global `bucketSize` (§6.5); larger-scale validation runs are the remaining work.
+     auto-scaling global `bucketSize` (§6.5) and **validated at 640B-element scale** (the full
+     setup ran on 1024 GH200, §6.5). What remains is the trillion-scale *apply* itself, queued for
+     the next overnight; the build is no longer the gate.
 
 The intellectually honest framing for the talk: MARS has a **trillion-class operator** —
 bit-exact, sum-factorized, weak-scaling, in the ~1B DOF/GPU density band of the Gordon Bell
 winner. The trillion-DOF *solve* is the next milestone, and its critical path is FlexGMRES +
-LOR-AMG over the operator we already trust, plus hardening the cstone domain build at the
-4-billion-element frontier. **We claim the operator. We do not yet claim the trillion.**
+LOR-AMG over the operator we already trust. The cstone domain build is no longer on that path: it
+is fixed and **setup-validated at 640B elements / 1024 GPUs** (§6.5), with the trillion *apply*
+queued. **We claim the operator and the setup scaling. We do not yet claim a trillion-DOF — or a
+640B — matvec.**
 
 ---
 
