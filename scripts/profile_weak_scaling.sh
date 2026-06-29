@@ -11,8 +11,8 @@
 
 module load nvhpc cuda nsight-systems
 
-BUILD_DIR=/capstor/scratch/cscs/gandanie/git/mars/build
-MESH_DIR=/capstor/scratch/cscs/gandanie/git/meshes
+BUILD_DIR=$SCRATCH/git/mars/build
+MESH_DIR=$SCRATCH/git/meshes
 AFFINITY=~/affinity/bind_numa.sh
 OUTPUT_DIR=$BUILD_DIR/profile_results
 

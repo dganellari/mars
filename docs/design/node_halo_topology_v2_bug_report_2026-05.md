@@ -112,7 +112,7 @@ peer p2p. O(boundary), no Allgatherv. Keeps the scaling win.
 MARS_NODEHALO_VALIDATE=1 srun --account=csstaff --nodes=1 \
   --ntasks-per-node=4 --time=00:10:00 ~/affinity/bind_numa.sh \
   daint-gpu/examples/distributed/unstructured/mars_cvfem_graph \
-  --mesh=/capstor/scratch/cscs/gandanie/git/mars/cube16.mesh \
+  --mesh=$SCRATCH/git/mars/cube16.mesh \
   --kernel=tensor --iterations=1
 ```
 

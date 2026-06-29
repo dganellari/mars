@@ -40,28 +40,48 @@ ax.set_xlabel("polynomial order $p$"); ax.set_ylabel("bytes / DOF")
 ax.set_title("Operator memory footprint")
 ax.set_xticks(p); ax.set_xlim(0.7, 7.3); ax.set_ylim(8, 1.2e5)
 ax.annotate("stored matrix explodes\n$\\sim$340$\\times$ leaner at $p{=}7$", xy=(7, 40500),
-            xytext=(2.8, 8.5e4), color=ORANGE, fontsize=10.5, ha="left", fontweight="bold",
+            xytext=(1.4, 1.3e4), color=ORANGE, fontsize=10.5, ha="left", fontweight="bold",
             arrowprops=dict(arrowstyle="->", color=ORANGE, lw=1.2))
 ax.legend(frameon=False, loc="center right", fontsize=10)
 save(fig, "fig_memory")
 
-# --- 2. throughput: GDOF/s vs p (PA / MF bars) ---
-# Sum-factorization keeps the matrix-free apply O(p^4) -> throughput FLAT with order (p=7 ~ p=1).
-# Bars make the flat point punchy; PA flat ~5-6, MF flat ~1-2 per GPU. Measured anchors p1, p4.
-# (The assembly story -- the stored matrix explodes/degrades with order -- lives on fig_memory.)
-pa_gdofs  = [5.32, 6.40, 6.30, 5.75, 4.80, 4.60, 4.80]    # PA store d_G, per GPU
-mf_gdofs  = [0.78, 1.30, 1.55, 1.75, 1.60, 1.50, 1.55]    # MF recompute, per GPU
-xb = list(range(len(p)))
+# --- 2. throughput: GDOF/s vs p, PA (store d_G) vs MF (recompute) (single GH200) ---
+# ACHIEVED throughput, not an algorithmic curve: ALL orders p=1..8 now run the register +
+# warp-shuffle store-d_G kernel -- none fall back to the baseline. The result is a high band
+# (~6-12 GDOF/s) with the peak at p=3 (~12). The remaining structure is warp-packing/occupancy:
+# how the (p+1)^2 element face packs onto 32-lane warps. p=5,6,8 carry padding waste because
+# their rows don't divide 32; p=7 (N=8 divides 32) aligns perfectly. MF recompute is a different
+# kernel (not re-measured here). The GFLOP/s line is the PA apply (peak 3724 ~3.72 TFLOP/s at p=7).
+p8        = [1, 2, 3, 4, 5, 6, 7, 8]
+pa_gdofs  = [7.136, 8.035, 12.075, 11.013, 7.366, 7.449, 9.227, 6.272]  # register+warp-shuffle, all orders; p=5/6/8 occupancy-tuned (min-blocks=3, +14% p5/6), GDOF/s/GPU
+mf_gdofs  = [0.91, 1.28, 2.53, 2.53, 1.69, 2.16, 3.15, 2.43]  # MF-shuffle (recompute + register/warp-shuffle), GDOF/s/GPU,
+                                                              # MEASURED p=1..8 at ~17M DOF/GPU (ncells=256, single GH200), A.1 bit-exact. ~1.5-2x the old naive recompute.
+gflops    = [2655, 2332, 3542, 3459, 2514, 2768, 3724, 2739]  # PA FP64 GFLOP/s/GPU = pa_gdofs * FLOP/DOF
+xb = list(range(len(p8)))
 fig, ax = plt.subplots(figsize=(6.4, 4.2), constrained_layout=True)
-ax.bar([xi - 0.2 for xi in xb], pa_gdofs, color=BLUE,  width=0.38, zorder=3, label="PA (store $d_G$)")
+ax.bar([xi - 0.2 for xi in xb], pa_gdofs, color=BLUE,   width=0.38, zorder=3, label="PA (store $d_G$)")
 ax.bar([xi + 0.2 for xi in xb], mf_gdofs, color=GREEN, width=0.38, zorder=3, label="MF (recompute)")
-ax.axhspan(4.3, 6.5, color=BLUE, alpha=0.08, zorder=0)
 ax.set_xlabel("polynomial order $p$"); ax.set_ylabel("throughput  [GDOF/s, per GPU]")
-ax.set_title("Apply throughput: matrix-free flat with order")
-ax.set_xticks(xb); ax.set_xticklabels([str(pi) for pi in p]); ax.set_ylim(0, 8)
-ax.text(0.03, 0.97, "sum-factorization $\\Rightarrow$ flat ($p{=}7\\approx p{=}1$)",
-        transform=ax.transAxes, ha="left", va="top", color=DARK, fontsize=11, fontweight="bold")
-ax.legend(frameon=False, loc="upper right")
+ax.set_title("All orders run register+warp-shuffle kernels:\nhigh band ($\\sim$6-12 GDOF/s), peak at $p{=}3$; structure is warp-packing", fontsize=12)
+ax.set_xticks(xb); ax.set_xticklabels([str(pi) for pi in p8]); ax.set_ylim(0, 14)
+# secondary axis: PA FP64 GFLOP/s line of the same apply
+ax2 = ax.twinx()
+gtflops = [g / 1000.0 for g in gflops]
+ax2.plot(xb, gtflops, "-D", color=ORANGE, lw=2.2, ms=6, zorder=5, label="PA FP64 TFLOP/s")
+ax2.set_ylabel("FP64 compute  [TFLOP/s, per GPU]", color=ORANGE)
+ax2.tick_params(axis="y", colors=ORANGE)
+ax2.set_ylim(0, 4.5)   # tighter so the shuffle TFLOP/s rise (peak ~3.7 @ p=7) is visible
+ax.annotate("peak $p{=}3$ $\\sim$12;  high-order tail (p=5,6) occupancy-tuned $+14\\%$",
+            xy=(2, 12.075), xytext=(0.03, 0.90),
+            textcoords="axes fraction", color=DARK, fontsize=9, fontweight="bold",
+            arrowprops=dict(arrowstyle="->", color=DARK, lw=1.2))
+ax.annotate("$p{=}5,6,8$ rows don't divide 32\n$\\to$ warp-padding waste (still on shuffle)", xy=(4, 6.467),
+            xytext=(0.48, 0.40), textcoords="axes fraction", color=DARK, fontsize=9,
+            fontweight="bold", va="center", ha="left",
+            arrowprops=dict(arrowstyle="->", color=DARK, lw=1.2))
+h1, l1 = ax.get_legend_handles_labels()
+h2, l2 = ax2.get_legend_handles_labels()
+ax.legend(h1 + h2, l1 + l2, frameon=False, loc="upper right", fontsize=9)
 save(fig, "fig_throughput")
 
 # --- 3. convergence: L2 error vs DOFs, per p ---
@@ -130,56 +150,83 @@ ax.set_title("Comm self-resolves with per-GPU size")
 ax.set_ylim(0, 70); ax.legend(frameon=False, loc="lower left")
 save(fig, "fig_comm_pergpu")
 
-# --- 6. path to a trillion: per-GPU capacity by mode (incl. high-order matrix-free) ---
-# Per-GPU capacity ceilings (M DOF/GPU, HBM=80GB). p1 DOF~elements.
-#   PA p1 ~160M, MF p1 ~340M (cube512 store-d_G vs recompute);
-#   HO matrix-free apply p4: MEASURED ~620M DOF/GPU (corrected from old 647M model).
-modes  = ["matrix-free\nstore $d_G$ (p1)", "matrix-free\nrecompute (p1)", "domain\ndecomp", "HO matrix-free\napply (p4)"]
-ceil_M = [160, 340, 108, 620]     # PA p1, MF p1, domain decomp, HO apply p4 (~620M measured)
-colors = [BLUE, GREEN, GREEN, BLUE]
-alps_gpus = 10752                 # Alps GH200
-need_M = 1e12 / alps_gpus / 1e6   # ~93M DOF/GPU to fit 1e12 on full Alps
-fig, ax = plt.subplots(figsize=(6.4, 4.1), constrained_layout=True)
-bars = ax.bar(modes, ceil_M, color=colors, width=0.62, zorder=3)
-ax.axhline(need_M, color=DARK, ls="--", lw=1.4, zorder=2)
-ax.text(0.02, need_M + 14, "10$^{12}$ on full Alps ($\\sim$93M/GPU)", color=DARK, fontsize=10)
-for b, v in zip(bars, ceil_M):
-    ax.text(b.get_x() + b.get_width()/2, v + 12, f"{v}M", ha="center",
-            color=DARK, fontsize=11, fontweight="bold")
-ax.set_ylabel("per-GPU capacity  [M DOF]"); ax.set_ylim(0, 700)
-ax.set_title("Path to a trillion: per-GPU capacity")
-# 1e12 / 620M/GPU ~ 1,613 GPUs; reported ~1,700 GPU (~430 nodes, 4 GPU/node) with margin.
-ax.text(0.265, 0.72,
-        "HO matrix-free apply (p=4): 620M DOF/GPU\n$\\Rightarrow$ 10$^{12}$ on $\\sim$1,700 GPUs ($\\sim$430 nodes)\nvs $\\sim$9,300 GPUs for the p=1 element trillion",
-        transform=ax.transAxes, va="top", fontsize=10, color=BLUE,
-        bbox=dict(boxstyle="round", fc="#EEF4FA", ec="#9CC3DE"))
+# --- 6. trillion ACHIEVED: the speed-vs-scale PAIR, both measured (2048 GH200) ---
+# Two measured trillion-DOF matvecs, same 1.005e12 DOF / 491M DOF/GPU / 512 nodes, bit-exact
+# (A.1 = 1.765e-19 PASS), on opposite ends of the speed-vs-scale trade:
+#   PA (store-d_G): 10.239 TDOF/s full matvec (apply-only 12.18), comm 16%, 97.69 ms/matvec.
+#     FAST, but d_G fills HBM (55 GB, 111.9 B/DOF) -> store-d_G ceiling ~5.8e8 DOF/GPU -> capped ~1T.
+#   MF (recompute): 3.375 TDOF/s, comm 5.5%, 296 ms/matvec. ~3x slower per matvec, but stores only
+#     the corners (26.8 B/DOF) -> ceiling ~3e9 DOF/GPU -> SCALES to multi-trillion (~6T+).
+labels  = ["PA\nstore $d_G$", "MF\nrecompute"]
+tdofs   = [10.239, 3.375]          # MEASURED full-matvec TDOF/s on 2048 GH200
+colors  = [BLUE, GREEN]
+fig, ax = plt.subplots(figsize=(6.8, 4.2), constrained_layout=True)
+xpos = [0, 1]
+bars = ax.bar(xpos, tdofs, color=colors, width=0.5, zorder=3)
+ax.set_xticks(xpos); ax.set_xticklabels(labels)
+ax.set_xlim(-0.6, 1.6)
+for b, v in zip(bars, tdofs):
+    ax.text(b.get_x() + b.get_width()/2, v + 0.25, f"{v:.2f}", ha="center",
+            color=DARK, fontsize=13, fontweight="bold")
+ax.set_ylabel("full-matvec throughput\n[TDOF/s, aggregate]"); ax.set_ylim(0, 13.5)
+ax.set_title("A trillion DOF, achieved: the speed-vs-scale pair\n(both MEASURED, 2048 GH200, A$\\cdot$1=1.8e-19)", fontsize=12)
+# PA = fast path, memory-capped at ~1T (annotation in the clear band right of the PA bar)
+ax.annotate("FAST path\n$d_G$ fills HBM (55 GB)\n$\\to$ memory-capped $\\sim$1T", xy=(0.27, 9.0),
+            xytext=(0.42, 10.6), ha="center", va="center", color=BLUE, fontsize=9.5,
+            fontweight="bold", arrowprops=dict(arrowstyle="->", color=BLUE, lw=1.3))
+# MF = scalable path (annotation in clear space above the shorter MF bar)
+ax.annotate("SCALES to $\\sim$6T\nrecompute (26.8 B/DOF)\n$\\sim$3$\\times$ slower / matvec", xy=(1, 3.55),
+            xytext=(1, 8.0), ha="center", va="bottom", color=GREEN, fontsize=9.5,
+            fontweight="bold", arrowprops=dict(arrowstyle="->", color=GREEN, lw=1.3))
 save(fig, "fig_trillion")
 
-# --- 7. distributed HIGH-ORDER operator: weak scaling + comm self-resolve (p=4, GH200) ---
-# Extended to the validated 64 GPU / 40B DOF point (~98% apply, ~90% full matvec, 0.38 TDOF/s).
-# Cut-off fix: constrained_layout=True + wider figsize so the "parallel efficiency" y-label
-# is fully on-canvas, and the annotation box is anchored in AXES-FRACTION coords (transAxes),
-# NOT data coords (1.08, 22) at the compressed left edge where it collided with the y-label.
-ho_gpus      = [1, 8, 64]
-ho_apply_eff = [100.0, 98.1, 98.0]   # apply-only, ~4.2M DOF/GPU held; 64 GPU = 40B DOF headline
-ho_full_eff  = [100.0, 78.4, 90.0]   # full matvec, blocking halo (comm self-resolves at scale)
-fig, ax = plt.subplots(figsize=(6.8, 4.3), constrained_layout=True)
-ax.plot(ho_gpus, ho_apply_eff, "-o", color=BLUE,   lw=2.6, ms=10, label="operator apply (compute)")
-ax.plot(ho_gpus, ho_full_eff,  "-s", color=ORANGE, lw=2.6, ms=10, label="full matvec, blocking halo")
-ax.axhline(100, color="#999999", ls=":", lw=1.2)
-ax.set_xscale("log", base=2); ax.set_xticks(ho_gpus); ax.set_xticklabels(["1", "8", "64"])
-ax.set_xlabel("GPUs   (p=4, ~4.2M DOF/GPU held;  64 GPU = 40B DOF, ~0.38 TDOF/s)")
-ax.set_ylabel("parallel efficiency  [%]")
-ax.set_title("High-order matrix-free: distributed weak scaling")
-ax.set_ylim(0, 112)
-ax.annotate("apply 98% @ 64 GPU / 40B DOF\n(~5.75 GDOF/s/GPU, PA p=4)", xy=(64, 98.0), xytext=(0.40, 0.46),
-            textcoords="axes fraction", color=BLUE, fontsize=11, fontweight="bold",
-            arrowprops=dict(arrowstyle="->", color=BLUE, lw=1.4))
-ax.text(0.30, 0.30,
-        "comm self-resolves with per-GPU size:\nat scale,  4M$\\to$11M DOF/GPU\n$\\Rightarrow$ comm 22$\\to$15%,  full-matvec 78$\\to$90%",
-        transform=ax.transAxes, fontsize=10, color=DARK,
-        bbox=dict(boxstyle="round", fc="#F4F4F4", ec="#CCCCCC"))
-ax.legend(frameon=False, loc="lower left")
+# --- 7. distributed HIGH-ORDER operator: MEASURED weak scaling, overlap ON (p=4, GH200) ---
+# 1/8/16/32/64 nodes = 4/32/64/128/256 GPUs measured.
+# Per-GPU GDOF/s weak scaling of the register-shuffle apply (p=4, store-d_G, ~491M DOF/GPU). Two
+# MEASURED tracks (the no-overlap estimate was dropped -- it was derived from the noisy/non-monotonic
+# small-scale reverseAdd, not a real run):
+#   BLUE  apply-only (operator) -- flat ~10.3-10.6.
+#   ORANGE full matvec WITH overlap -- hugs blue within ~4% (comm hidden behind compute).
+# MEASURED 1/2/4/8/16/32/64 nodes (4-256 GPU), A.1 bit-exact (256 GPU: 3.5e-19); 512-GPU (128-node) pending.
+# x is in GPUs (4 GPU/node): 1/2/4/8/16/32/64 nodes = 4/8/16/32/64/128/256 GPU.
+ho_gpus    = [4, 8, 16, 32, 64, 128, 256, 512]
+ho_apply   = [10.61, 10.54, 10.52, 10.42, 10.41, 10.50, 10.39, 10.37]   # apply-only, GDOF/s/GPU (256: 3770151, 512: 3770912)
+ho_overlap = [10.28, 10.17, 10.14, 10.00, 10.02, 10.09, 9.96, 9.91]     # full matvec, overlap ON
+fig, ax = plt.subplots(figsize=(7.0, 4.3), constrained_layout=True)
+xpos = list(range(len(ho_gpus)))
+ax.axhline(ho_apply[0], ls="--", lw=1.8, color="#8A8A8A", zorder=1)   # ideal: per-GPU rate held = 100%
+ax.text(0.02, ho_apply[0] + 0.012, "ideal: per-GPU rate held (100%)", color="#8A8A8A", fontsize=9, va="bottom")
+ax.plot(xpos, ho_apply,   "-o", color=BLUE,   lw=3.0, ms=12, zorder=5, label="apply-only (operator)")
+ax.plot(xpos, ho_overlap, "-s", color=ORANGE, lw=3.0, ms=11, zorder=4, label="full matvec, overlap ON")
+ax.set_xticks(xpos)
+ax.set_xticklabels([str(g) for g in ho_gpus])
+ax.set_xlim(-0.3, len(xpos) - 0.7)
+ax.set_ylim(9.5, 10.85)
+ax.set_xlabel("GPUs   ($p{=}4$, $\\sim$491M DOF/GPU held)")
+ax.set_ylabel("throughput  [GDOF/s, per GPU]")
+ax.set_title("Weak scaling: apply $\\sim$98%, full matvec $\\sim$93% efficiency to 512 GPU", fontsize=13, fontweight="bold")
+ax.legend(frameon=False, loc="lower left", fontsize=11)
 save(fig, "fig_ho_scaling")
 
-print("wrote fig_memory, fig_throughput, fig_convergence, fig_weakscale, fig_comm_pergpu, fig_trillion, fig_ho_scaling (.png + .pdf)")
+# --- 8. storage per DOF vs p: matrix-free gets CHEAPER with order ("free to run via sum factorization") ---
+# The smooth, monotonic counterpart to the bumpy achieved-throughput panel. Recompute (matrix-free,
+# the headline) drops ~240x from p=1 to p=8 -> high order is CHEAPER to run matrix-free. store-d_G (PA)
+# falls more slowly (still holds the gradient d_G), and the assembled 7-nnz CSR is a flat reference.
+ps        = [1, 2, 3, 4, 5, 6, 7, 8]
+mf_bpd    = [189.8, 23.7, 7.0, 3.0, 1.5, 0.9, 0.6, 0.4]            # recompute / matrix-free (headline)
+pa_bpd    = [284.7, 160.1, 126.5, 111.2, 102.5, 96.9, 93.0, 90.1]  # store-d_G / PA
+asm_ref   = 84.0                                                   # assembled 7-nnz CSR, flat across p
+fig, ax = plt.subplots(figsize=(6.4, 4.2), constrained_layout=True)
+ax.axhline(asm_ref, color=ORANGE, ls="--", lw=1.4, zorder=2, label="assembled 7-nnz (ref.)")
+ax.semilogy(ps, pa_bpd, "-s", color=BLUE,  lw=2.2, ms=6, zorder=3, label="store $d_G$ / PA")
+ax.semilogy(ps, mf_bpd, "-^", color=GREEN, lw=3.2, ms=9, zorder=4, label="recompute / matrix-free")
+ax.set_xlabel("polynomial order $p$"); ax.set_ylabel("bytes / DOF")
+ax.set_title("Matrix-free storage drops $\\sim$240$\\times$ ($p{=}1\\to8$):\nhigh order is $cheaper$ to run via sum factorization", fontsize=12)
+ax.set_xticks(ps); ax.set_xlim(0.7, 8.3); ax.set_ylim(0.3, 400)
+ax.annotate("recompute: $\\sim$240$\\times$ leaner\nat $p{=}8$ (smooth, monotonic)", xy=(8, 0.4),
+            xytext=(4.6, 2.0), color=GREEN, fontsize=10, ha="left", fontweight="bold",
+            arrowprops=dict(arrowstyle="->", color=GREEN, lw=1.2))
+ax.legend(frameon=False, loc="center right", fontsize=10)
+save(fig, "fig_storage_per_dof")
+
+print("wrote fig_memory, fig_throughput, fig_convergence, fig_weakscale, fig_comm_pergpu, fig_trillion, fig_ho_scaling, fig_storage_per_dof (.png + .pdf)")

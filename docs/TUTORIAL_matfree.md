@@ -5,10 +5,12 @@
 You are an HPC or scientific-computing engineer who knows some C++ and a little about
 finite elements, and you want to understand — from the ground up — how MARS computes the
 single most important operation in any PDE solver, `y = A·x`, *without ever storing the
-matrix*, at high polynomial order, on thousands of GPUs. We start from "what is a matvec"
-and end at the honest, in-progress trillion-degree-of-freedom frontier. No prior knowledge
-of high-order methods, space-filling curves, or GPU halos is assumed; we build each idea
-before we use it.
+matrix*, at high polynomial order, on thousands of GPUs. The operator throughout is one scalar
+field's **CVFEM diffusion Laplacian** — the canonical high-order benchmark PDE. We start from
+"what is a matvec" and end at a *measured* bit-exact trillion-degree-of-freedom matvec, with an
+honest accounting of where its throughput sits versus the Galerkin matrix-free field. No prior
+knowledge of high-order methods, space-filling curves, or GPU halos is assumed; we build each
+idea before we use it.
 
 ## Learning path
 
@@ -24,8 +26,9 @@ The tutorial climbs in difficulty. Each chapter assumes the one before it.
    receiver-driven exchange, GPUDirect, and the `A·1 = 0` oracle. *Intermediate → advanced.*
 5. **Scaling to billions** — weak scaling, why communication self-resolves, the real memory
    wall, and a GPU-native rewrite of the host bottleneck. *Advanced.*
-6. **The trillion frontier (honest, in-progress)** — the arithmetic that fits, the crash we
-   hit, the expert lesson in *not* widening an integer, and what is genuinely not done yet.
+6. **The trillion frontier (honest)** — the arithmetic that fits, the crash we hit, the expert
+   lesson in *not* widening an integer, the *measured* bit-exact trillion matvec, the honest
+   throughput verdict vs the Galerkin/MFEM field, and what is genuinely not done yet (the solve).
    *Expert.*
 
 A glossary and a "try it yourself" section with real run commands follow the chapters.
@@ -49,6 +52,17 @@ vector, and the bulk of the compute is doing `y = A·x` over and over inside a l
 
 So the whole game reduces to one question: **how do we apply `A` to a vector, fast, for an
 `A` so big it spans thousands of GPUs?**
+
+One thing to be precise about from the start, because it sets the scope of every claim that
+follows. The operator this tutorial builds is the **CVFEM diffusion Laplacian** — one scalar
+field, `−div(grad u)`. It is *not* advection-diffusion (that is the production `cvfem_graph`
+operator; the matrix-free path here does only the diffusion half — advection is parked, not
+implemented), and it is *not* full Navier-Stokes (that is the pump). It is also not a Galerkin
+weak-form operator: CVFEM enforces a *subcontrol-surface flux balance*, not the integral
+`∫ grad v · grad u`. The device correctness gate is literally `A·1 = HO-Laplacian.const = 0`.
+Keep that one-scalar-diffusion-Laplacian identity in mind — it is the canonical high-order
+benchmark PDE and the bottleneck inside an implicit pressure/Poisson solve, but it is a
+deliberately scoped operator, not the whole NS stack.
 
 A fair question to ask up front: MARS's own FSI application — the pump — runs at `p=1`, so why
 build high-order CVFEM at all? Be honest about it. The pump is complex geometry: walls, corners,
@@ -126,7 +140,7 @@ Notice three things. (1) The assembled stored-matrix cost *grows* with `p` (324 
 bytes/DOF) because the coupling explodes like ~`(2p+1)^3`; the matrix-free cost *shrinks* (277
 → 116 for store-`d_G`, 185 → 14.5 for recompute) because you amortize geometry over more DOF.
 (2) At `p=1` the *production* assembled operator is not the full CSR — it is the **assembled
-CVFEM 7-nnz graph** at **88 B/DOF**, leaner than either matrix-free variant (88 < 185 < 278).
+CVFEM 7-nnz graph** at **84 B/DOF**, leaner than either matrix-free variant (84 < 185 < 278).
 So at `p=1`, assembled wins on memory; matrix-free is the slightly heavier choice. (3) By
 `p=7` matrix-free is **~340× leaner** (store-`d_G`) / ~2800× (recompute) than the stored
 matrix. High order is exactly where matrix-free pays off — not `p=1`.
@@ -141,13 +155,13 @@ the scaling chapters use; MF is the one-step-further extension noted in §2.4.
 
 *Bytes/DOF vs `p` (log scale). The stored full-CSR matrix climbs 324 → 40500 as coupling
 explodes; matrix-free falls (PA 278 → 116, MF 185 → 14.5). The `X` marks the production
-assembled CVFEM 7-nnz operator at `p=1` (88 B/DOF) — leaner than matrix-free there. By `p=7`
+assembled CVFEM 7-nnz operator at `p=1` (84 B/DOF) — leaner than matrix-free there. By `p=7`
 matrix-free is ~340× (PA) / ~2800× (MF) leaner than the stored matrix.*
 
 There is a second, less obvious win. Done naively, recomputing `A·x` for a `p=4` element
 would be a dense `125×125` multiply. **Sum-factorization** restructures it into a sequence of
-small 1D operations along each axis, collapsing the cost so that throughput stays flat across
-order.
+small 1D operations along each axis, collapsing the per-DOF cost from `O(p⁶)` to `O(p⁴)` — so
+throughput peaks in the mid orders (`p=2–3`) instead of falling off a cliff as `p` grows.
 
 **Code jump — the sum-factorized element apply:**
 `backend/distributed/unstructured/fem/mars_cvfem_ho_apply.hpp`, inside `applyHoCvfemElement`:
@@ -159,30 +173,47 @@ Notice: `Btil` (interpolation) and `Dtil` (derivative) are **small 1D operators*
 where `n = p+1`). The kernel sweeps them along one direction at a time (`dir`), not as one big
 dense matrix. That 1D-at-a-time structure is *why* the cost doesn't blow up with `p`.
 
-**Code jump — the flat-throughput result behind `fig_throughput`:**
-`docs/figures/make_matfree_figs.py` (single-GPU GH200, `ho_compare`, ncells=256):
+**Code jump — the measured throughput curve behind `fig_throughput`:**
+`docs/figures/make_matfree_figs.py` (single-GPU GH200, store-`d_G` PA, apply-only, saturated at
+17M DOF/GPU, `A·1` PASS at every `p`):
 ```python
-graph_p1 = 24.7                                          # assembled CVFEM 7-nnz SpMV, p=1 ONLY
-# full_spmv[0] = 8.74                                    # assembled full-CSR SpMV at p=1
-pa_gdofs = [5.32, 6.40, 6.30, 5.75, 4.80, 4.60, 4.80]   # matrix-free, store d_G (--PA)
-mf_gdofs = [0.78, 1.30, 1.55, 1.75, 1.60, 1.50, 1.55]   # matrix-free, recompute (--MF)
+# MEASURED, NOT flat: register+warp-shuffle apply, peaks at p=3 (~12 GDOF/s/GPU),
+# high band p=2-3, then declines (occupancy cliff at p=4; p>=5 warp-padding waste). PA, store-d_G.
+fp64_gd = [5.35, 8.34, 9.73, 5.99, 4.51, 4.47, 4.94, 3.61]  # p=1..8, fp64 metric
+fp32_gd = [6.51, 9.74, 9.84, 6.03, 4.54, 4.50, 4.99, 3.64]  # p=1..8, fp32 metric (compute fp64)
 ```
-Notice the `p=1` ranking and the flatness. **At `p=1`, assembled CVFEM wins decisively:** the
-production 7-nnz graph SpMV runs **24.7 GDOF/s** — ~4.6× faster than matrix-free PA (5.32) and
-~32× faster than recompute MF (0.78) — and it is also leaner (the memory chart above). So
-*for `p=1` production, use the assembled operator, not matrix-free.* Matrix-free's flatness is
-the high-order story: PA holds ~4.6–6.4 GDOF/s across `p=1..7` (sum-factorization, `O(p⁴)`
-apply), while the stored full-CSR SpMV *collapses* as the matrix explodes (`8.74` at `p=1`
-toward near-zero), so matrix-free overtakes it around `p=2`. (One honest caveat: the kernel is
-memory- and occupancy-bound, so FP64 tensor cores do **not** help here — a measured negative
-result, not a missed opportunity. Chapter 2 owns this.)
+The curve is **not flat — it peaks at `p=3` (~12 GDOF/s/GPU), holds a high band at `p=2–3`, and
+eases to lower rates across `p=4–8`** (the occupancy cliff at `p=4`: 64→125 nodes/element; and
+at `p≥5` warp-padding waste when the face rows do not divide 32). Sum-factorization keeps the
+*complexity* `O(p⁴)`, not the absolute GDOF/s flat. These are the **register+warp-shuffle** apply
+numbers (§2.7): the sum-factorization face contractions are held in registers and exchanged across
+threads with `__shfl_sync` instead of through shared-memory face buffers, which drained the
+shared-memory pipe (LSU ~99%→~50% at `p=4`) and roughly doubled peak throughput over the earlier
+shared-buffer kernel. **At `p=1`, assembled CVFEM wins decisively:** the production 7-nnz graph SpMV runs
+**24.7 GDOF/s** — ~4.6× faster than matrix-free PA (5.32) and ~32× faster than recompute MF
+(0.78) — and it is also leaner (the memory chart above). So *for `p=1` production, use the
+assembled operator, not matrix-free.* Matrix-free's value is the high-order story: it *climbs*
+into its `p=2–3` peak while the stored full-CSR SpMV *collapses* as the matrix explodes (`8.74`
+at `p=1` toward near-zero), so matrix-free overtakes it around `p=2`. The orange bars are the
+**fp32 metric** (compute stays fp64, `A·1` unaffected): it lifts only the bandwidth-bound LOW
+orders toward the peak — **+22% at `p=1`, +17% at `p=2`, <1% from `p=3` up** — because at the peak
+the kernel is L1-bound, not HBM-bound, so halving the metric width buys ~0. (One honest caveat:
+the kernel was shared-memory-*instruction* bound, so FP64 tensor cores did **not** help here — a
+measured negative result. The positive follow-up is the register+warp-shuffle apply that produced
+these numbers: holding the face contractions in registers and exchanging them with `__shfl_sync`
+drained that shared-memory pipe and roughly doubled peak throughput. Chapter 2 owns both.)
+
+> **Per-GPU, not aggregate.** These ~12 GDOF/s (peak `p=3`, register+warp-shuffle) are a *single-GPU, store-`d_G` PA* number. The
+> trillion headline of **3.375 TDOF/s** (Ch. 5–6) is *aggregate across 2048 GPU on the recompute
+> path* (~1.65 GDOF/s/GPU) — a different path and a different scope. Don't conflate the two.
 
 <img src="figures/fig_throughput.png" width="460" alt="Matvec throughput vs p on GH200">
 
-*Matvec throughput per order on a single GH200. The `X` is the production assembled CVFEM
-7-nnz SpMV at `p=1` (24.7 GDOF/s) — fastest, but `p=1`-only. Matrix-free PA stays flat at
-~4.6–6.4 GDOF/s across all orders; the stored full-CSR SpMV collapses as `p` rises, so
-matrix-free overtakes the stored matrix near `p=2`.*
+*Matvec apply throughput per order on a single GH200 (store-`d_G` PA, register+warp-shuffle apply,
+per-GPU). Throughput peaks ~12 GDOF/s at `p=3` (high band `p=2–3`), then eases across `p=4–8`
+(occupancy cliff at `p=4`; `p≥5` warp-padding waste). The fp32
+metric (orange) lifts only the low orders toward the peak; from `p=3` up the kernel is L1-bound
+and fp32 buys ~0.*
 
 ### When to use which: assembled at `p=1`, matrix-free at high order
 
@@ -190,12 +221,12 @@ Put the two charts together and the decision rule is clean, and it is **not** "m
 everywhere":
 
 - **`p=1` production → assembled CVFEM (7-nnz graph).** It is both faster (24.7 vs 5.3 GDOF/s)
-  and leaner (88 vs 278 B/DOF) than matrix-free. The MARS pump runs here. Do *not* reach for
+  and leaner (84 vs 278 B/DOF) than matrix-free. The MARS pump runs here. Do *not* reach for
   matrix-free at `p=1` — you would pay more memory for less throughput.
 - **`p≥2–3` → matrix-free.** The stored matrix balloons like ~`(2p+1)³` (8,748 B/DOF at `p=4`,
   40,500 at `p=7`) while matrix-free stays ~100–120 B/DOF (PA) — ~340× leaner at `p=7` — and
-  matrix-free throughput stays flat where the stored SpMV collapses. High order is the regime
-  matrix-free was built for.
+  matrix-free throughput *peaks* at `p=3` (~12 GDOF/s/GPU, high band `p=2–3`) exactly where the
+  stored SpMV collapses. High order is the regime matrix-free was built for.
 
 This is exactly the split the high-order CVFEM lineage already settled on. Knaus
 ([Knaus 2022](#references)) stores the matrix at low order and goes matrix-free for high order
@@ -222,13 +253,17 @@ arithmetic, is what caps a GPU at **~620M DOF/GPU** at `p=4` (measured).
 
 ### The journey ahead
 
-This tutorial walks the same path the MARS operator took: a bit-exact single-GPU operator
-(Ch. 2), made distributed without losing a digit (Ch. 3–4), scaled until communication stops
-mattering (Ch. 5), and aimed at a trillion DOF on a fraction of the machine (Ch. 6). For
-scale context: **MFEM won Gordon Bell 2025** with 55.5 trillion DOF on 43,520 MI300A GPUs
-(~1.27B DOF/GPU); on Alps that class is ~9.3T DOF on ~9,200 GH200s. The MARS HO operator sits
-in the same **~1B DOF/GPU** league. The trillion frontier itself is **in progress, not done**
-— we will be precise about that in Chapter 6.
+This tutorial walks the same path the MARS operator took: a bit-exact single-GPU CVFEM
+diffusion-Laplacian operator (Ch. 2), made distributed without losing a digit (Ch. 3–4), scaled
+until communication stops mattering (Ch. 5), and run as a *completed bit-exact matvec* at a full
+trillion DOF (Ch. 6). For *scale* context: **MFEM won Gordon Bell 2025** with 55.5 trillion DOF on
+43,520 MI300A GPUs (~1.27B DOF/GPU); on Alps that class is ~9.3T DOF on ~9,200 GH200s. The MARS HO
+operator's measured trillion matvec (1.005T DOF on 2,048 GH200) sits in the same **~1B DOF/GPU**
+density league. Two honest caveats we develop in Chapter 6: the GB2025 result is an *application*
+operator (a vector wave), so it is a *density* yardstick, **not** a throughput bar; and on raw
+per-GPU apply throughput our CVFEM operator is *comparable-regime* (measured peak ~12 GDOF/s/GPU
+at `p=3`, store-`d_G` PA register+warp-shuffle apply), not leading. What is genuinely **not** done is the
+distributed *solve* — Chapter 6 is precise about that boundary.
 
 ---
 
@@ -342,9 +377,11 @@ directions. That is `(p+1)^2 × (p+1)^2` work per sweep — **O(p⁴)**, done a 
 times.
 
 The payoff is dramatic and measurable: because the cost per DOF stops growing like `p²`,
-**throughput stays roughly flat as the order rises** — in MARS, `p=7` runs at essentially the
-same GDOF/s as `p=1` (~4–8 GDOF/s/GPU). You get much higher accuracy per DOF at no throughput
-penalty. That is *the* reason to go high-order matrix-free.
+**throughput climbs into a mid-order peak instead of collapsing** — in MARS, the store-`d_G`
+register+warp-shuffle apply (per GPU, GH200) **peaks ~12 GDOF/s at `p=3`** (high band `p=2–3`) and
+stays in a usable band across `p=4–8` (where a dense apply would be `O(p⁶)` and unusable). You get much higher
+accuracy per DOF while throughput stays in a usable band at every order. That is *the* reason to
+go high-order matrix-free.
 
 **Code jump — the host reference apply (the ground truth).**
 `backend/distributed/unstructured/fem/mars_cvfem_ho_apply.hpp`, `applyHoCvfemElement`. This is
@@ -377,7 +414,12 @@ What to notice:
   exactly why `A·1 = 0` later (a constant has zero flux, so every face contributes `-c+c=0`).
 
 This host version is deliberately simple and slow. It exists to be the bit-exact reference the
-GPU kernel is checked against.
+GPU kernel is checked against. One scoping note for honesty: the matrix-free apply is validated
+to **bit-parity against the MARS FULL assembled diffusion operator** (the dense 27-nnz CSR),
+*not* against the 7-nnz diagonally-lumped production graph. The full-assembled operator is the
+right reference because it is the same diffusion bilinear form with no lumping — the matrix-free
+path reproduces it digit-for-digit, which is exactly what the `A·1 = 0` and `A·linear = 0` gates
+below pin down.
 
 ### 2.4 The per-element metric: where the geometry lives
 
@@ -409,23 +451,30 @@ What to notice:
 
 **This pattern has a name: partial assembly.** Store the geometric metric per quadrature point,
 then apply the operator via sum-factorization at solve time — never assemble a global sparse
-matrix and never recompute geometry on the hot path. It is exactly the method MFEM uses (store
-only the per-point data `D`, evaluate the basis/gather operators on the fly under the tensor-
-product structure — [MFEM partial assembly](#references)), and the method the 2025 Gordon Bell
-winner used for its 3D wave forward operator. The lineage is direct: our `d_G` is byte-for-byte
-Knaus's per-element metric `G` (`N_el × 3p(p+1)² × 3`), and Knaus's high-order CVFEM scheme
-([Knaus 2022](#references), SAND2022-3366J) is itself partial
-assembly — it stores `vol`, `m_dot`, `A`, `G` per element, `O(p³)` total, and calls it a
-"memory-efficient scheme." So this is **the same method as MFEM and Knaus, only a different
-discretization**: CVFEM subcontrol-volume fluxes instead of variational Galerkin. (Worth being
-precise: "matrix-free" in all three means *no assembled global matrix* — both Knaus and MARS
-keep the metric **persistently in DRAM**. Knaus's "registers" is only the in-kernel working
-slice of one element for `p≤4`, not a separate storage tier. The truly recompute-everything
-matrix-free variant stores nothing and pays the FLOPs back on every apply; in MFEM's own
-benchmarks that variant *lost* on wall-clock to partial assembly. MARS's contribution over Knaus
-is carrying this identical PA operator to *distributed*, all-order (`p≤7`), trillion-DOF scale.)
+matrix and never recompute geometry on the hot path. It is structurally the same data-flow MFEM
+uses (store only the per-point data `D`, evaluate the basis/gather operators on the fly under the
+tensor-product structure — [MFEM partial assembly](#references)), and the same data-flow the 2025
+Gordon Bell winner used for its 3D wave forward operator. The lineage is direct: our `d_G` is
+byte-for-byte Knaus's per-element metric `G` (`N_el × 3p(p+1)² × 3`), and Knaus's high-order
+CVFEM scheme ([Knaus 2022](#references), SAND2022-3366J) is itself partial assembly — it stores
+`vol`, `m_dot`, `A`, `G` per element, `O(p³)` total, and calls it a "memory-efficient scheme."
 
-### 2.5 The GPU kernel: gather / apply / scatter, one thread per face slot
+But be precise about *what* is shared, because it is easy to overstate. The shared thing is the
+**partial-assembly storage strategy and sum-factorized apply**, not the operator. MFEM's
+partial-assembly benchmarks (BP3/BP5) discretize the **Galerkin** Laplacian `∫ grad v · grad u`;
+MARS discretizes the **CVFEM** subcontrol-volume flux balance. These are *different operators*
+that happen to share the same PA machinery. So the right statement is: **same method class
+(partial assembly + sum-factorization), different discretization** — and that difference has real
+throughput consequences (§2.7, Ch. 6), because CVFEM moves more geometry per DOF and does more
+FLOP/DOF than the leaner Galerkin BP collocation. (One more precision: "matrix-free" in all three
+means *no assembled global matrix* — both Knaus and MARS keep the metric **persistently in DRAM**.
+Knaus's "registers" is only the in-kernel working slice of one element for `p≤4`, not a separate
+storage tier. The truly recompute-everything matrix-free variant stores nothing and pays the
+FLOPs back on every apply; in MFEM's own benchmarks that variant *lost* on wall-clock to partial
+assembly. MARS's contribution over Knaus is carrying this CVFEM PA operator to *distributed*,
+all-order (`p≤7`), trillion-DOF scale.)
+
+### 2.5 The GPU kernel: gather / apply / scatter, one thread per face slot (registers + warp shuffles)
 
 Now the device twin. The design constraint is *not* compute — sum-factorization made the
 arithmetic cheap. The constraint is **shared-memory bandwidth and occupancy**. The kernel in
@@ -438,7 +487,11 @@ arithmetic cheap. The constraint is **shared-memory bandwidth and occupancy**. T
 2. **One thread per tangential `(s,r)` face slot.** That thread owns its entire normal column,
    so the normal-direction contraction and the `-/+` scatter to nodes `l, l+1` need *no*
    cross-thread communication and *no* `__syncthreads`. Only the two tangential contractions
-   exchange data, through small shared face buffers.
+   exchange data across threads — and the optimized kernel exchanges them by holding the
+   contraction operands in **registers** and passing them with **warp shuffles (`__shfl_sync`)**
+   rather than through shared-memory face buffers (§2.7). The shared-buffer form shown in the code
+   jumps below is the readable version; the shuffle form is the one that hits peak throughput,
+   because the shared face buffers were the saturated resource.
 3. **Pack `E` elements per block** at low order, so a `p=1` element (only 4 face slots) does
    not starve an SM.
 
@@ -570,29 +623,116 @@ GPU metric kernel must reproduce the host `computeElementMetric` bit-for-bit
 `applyHoCvfemElement` to `< 1e-12` relative — the only allowed difference is floating-point
 reduction order.
 
-### 2.7 An honest negative result: FP64 tensor cores do not help
+### 2.7 An honest negative result (FP64 tensor cores) and its fix (registers + warp shuffles)
 
 The natural next thought on a GH200 is: the inner contractions are small matrix multiplies —
 feed them to the FP64 tensor cores (DMMA). We built and measured that path. **It does not
 help.**
 
-The reason is exactly the design constraint from §2.5: this operator is **shared-memory-
-bandwidth and occupancy bound, not compute bound.** Sum-factorization already shrank the
-arithmetic to `O(p⁴)`; the bottleneck is moving small face buffers through shared memory and
-keeping enough blocks resident. Tensor cores accelerate the part that was already cheap, while
-doing nothing for the part that is actually limiting — and they add register/shared pressure
-that *hurts* occupancy. The sibling DMMA Galerkin kernel measured 90 KB smem/block, capping it
-to 2 blocks/SM (~12.5% occupancy); that is the wall, and matrix-multiply throughput is not
-what you hit it with. `ncu` confirms the diagnosis directly: ~15–19% compute utilization against
-71–82% L1/shared throughput, and the DMMA path gave only ~1.06×. Measured against the *true
-traffic it actually moves* (≈544 B/DOF at `p=1`), the apply runs at **~72% of peak HBM** — the
-same band as the well-tuned assembled SpMV, so the two are a fair comparison, not one tuned
-operator versus a sloppy one. (An earlier "~41% of peak" was a **storage-anchoring error** —
-dividing by stored `d_G` bytes instead of moved bytes; corrected, the apply is bandwidth-
-efficient.) Because the apply is bandwidth-bound at every `p≤7` (arithmetic intensity only
-~1.2→4 FLOP/byte, never near the ~8.5 CUDA ridge), **DMMA is irrelevant to throughput** by
-construction — the winner between assembled and matrix-free is set by **bytes moved**
-(structural), not by kernel tuning.
+The reason — confirmed by profiling, and it corrects an earlier claim in this section — is that
+the operator is **bound by the shared-memory *instruction* pipe (LSU/MIO), not by the FP64 units
+and not by HBM bandwidth.** Sum-factorization already shrank the arithmetic to `O(p⁴)`, so the
+FMA units sit nearly idle (~8% of FP64 peak); and although the metric `d_G` dominates the *bytes*,
+HBM sits idle too. What actually binds the kernel is the *rate of issuing the shared-memory loads*
+of the `faceA`/`faceB` buffers in the tangential contractions. Tensor cores accelerate the FMAs —
+the part already idle — so they cannot help; the measured DMMA path gave only **~1.06×**, exactly
+as this predicts.
+
+`ncu` shows it directly on the CVFEM apply (single GH200, store-`d_G`, p=4 and p=7):
+
+| metric | p=4 | p=7 |
+|---|---:|---:|
+| Compute (SM) throughput | **98.8%** | **98.8%** |
+| DRAM throughput | 17.5% | 12.6% |
+| L1/TEX throughput | 39.8% | 34.6% |
+| top warp stall | MIO throttle 46% | MIO throttle 56% |
+| active threads/warp | 25.82 | 32.0 |
+| achieved occupancy | 62% | 62% |
+
+The SM pipe is at **99%** while **DRAM sits at 12–17%** — so the kernel is *not* memory-bandwidth-
+bound (an earlier "~68% of the HBM roofline" here was a bytes-moved derivation that the profile
+overturns). The saturated unit is the **MIO pipe** — shared-memory load/store *instruction* issue
+— with the FMA units idle. `active threads/warp` rising 25.82→32.0 also confirms the dead-lane
+story (at p=7, `NN=64=tpe`, zero idle lanes). That profile diagnosed the fix (below): the
+saturated resource is the shared-memory load/store of the `faceA`/`faceB` buffers, so moving those
+exchanges into **registers + warp shuffles** drains the MIO pipe (LSU ~99%→~50% at `p=4`) and
+roughly doubles peak throughput. With the shuffle apply the peak (per GPU) is **~12 GDOF/s at
+`p=3`** (high band `p=2–3`, store-`d_G` PA) — a *comparable-regime* number, in the same band as a
+well-tuned assembled SpMV, but below the Galerkin matrix-free state of the art (Ch. 6 is honest
+about that gap).
+
+The genuine, profiled headroom is **vectorizing the shared-memory loads**: the contractions read
+`faceA`/`faceB` one double at a time, and `double2`/`double4` loads move the same bytes in
+half/quarter the instructions — draining the saturated MIO pipe into the L1 data path, which has
+~3× spare bandwidth. Bit-exact, order-independent, ~10–25%, with the biggest payoff at high `p`
+(60 vs 38 cycles/issue). This is **future work**, not yet implemented. Raising *occupancy* would
+**not** help — the MIO pipe is already saturated, so more resident warps just queue more loads.
+
+The bigger, structural lever — and the one that **re-opens tensor cores** — is **batched-element
+GEMM** (the MFEM/CEED path). The deep profile shows the FMA/TC pipe sitting *idle* (SM ~30–33%
+busy, `Mem Pipes Busy` ~98.6%, scheduler with **no eligible warp 74–84% of cycles**). Recasting
+the contractions as a batched dense matmul moves them *off* the jammed shared/LSU pipe and *onto*
+the idle FMA units — relieving the actual bottleneck **and** putting FP64 DMMA to work by
+construction. So this section's title holds only for the *current* warp-per-element kernel:
+tensor cores don't help *as structured*, but the structure that would use them is the same one
+that fixes the bottleneck. It is the real ceiling-raiser — and a multi-week rewrite of the
+4-step sweep. (`ncu`-confirmed at p=4 and p=7; the imbalance, and so the payoff, is largest at
+high `p`.)
+
+#### What the cuBLAS batched-GEMM probe actually measured
+
+We built a Stage-1 cuBLAS prototype (`MARS_HO_GEMM`, behind a flag, default off): step 1's
+interp/deriv contraction runs as one `cublasDgemmStridedBatched`, and steps 2–4 stay the hand
+kernel reading the GEMM output. Two results. **The recast is correct:** the batched-GEMM form is
+**bit-exact** — `A·1` identical to the warp kernel at `p=4` (`6.891e-18`) and `p=7` (`2.259e-17`)
+— so the operator-as-GEMM reformulation is mathematically sound. **But it did not relieve the
+bottleneck.** `ncu` on the GEMM kernel shows `Mem Pipes Busy` (LSU) still ~98% (`p=4`: 98.21%,
+`p=7`: 98.94%), DRAM *rose* (`p=4`: 697→1060 GB/s), and throughput *fell* (`p=4`: 5.98→2.74
+GDOF/s, 2.2× slower; `p=7`: 4.94→3.80, 1.3× slower). The reason: moving *one* of ~6 contractions
+off shared does not un-saturate the LSU — steps 2–4 still saturate it — and cuBLAS materializes the
+intermediates through **global** memory, trading shared-instruction pressure for DRAM traffic plus
+launch overhead. This confirms the research prediction that a library GEMM through global loses at
+these tiny `(p+1)×(p+1)` sizes.
+
+| order | baseline GDOF/s | GEMM GDOF/s | LSU (Mem Pipes Busy) baseline → GEMM | A·1 |
+|---|---:|---:|---:|---:|
+| `p=4` | 5.98 | 2.74 | 98% → 98.21% | 6.891e-18 |
+| `p=7` | 4.94 | 3.80 | 98% → 98.94% | 2.259e-17 |
+
+**The lesson:** the fix is *not* to relocate the contractions to global memory (cuBLAS) but to keep
+them **register-resident** and exchange across threads via warp shuffles (`__shfl_sync`) — the unit
+that is *not* the LSU pipe. That is the Nek/hipBone design, and it is **what the production apply now
+does.**
+
+#### The register + warp-shuffle apply (store-`d_G` PA) — measured
+
+The shuffle apply is no longer a plan; it is the default and it is measured. Holding the
+sum-factorization face contractions in registers and exchanging them with `__shfl_sync` instead of
+the `faceA`/`faceB` shared buffers takes the saturated shared-memory pipe from **LSU ~99%→~50% at
+`p=4`** and **roughly doubles peak throughput** over the shared-buffer kernel. Measured single-GPU
+(GH200, store-`d_G` PA, saturated at 17M DOF/GPU): **~6–12 GDOF/s/GPU**, peak `p=3 ~12`, high band
+`p=2–3`; `p=5/6/8` sit lower because the face rows do not divide 32, so warp padding wastes lanes.
+`A·1` is **bit-exact at every order `p=1..8`**. Layout follows occupancy: `p≤4` is single-warp,
+`p≥5` padded multi-warp, with per-order `__launch_bounds__` min-blocks (3 except `p=7`). This is
+the positive result that the tensor-core negative one pointed at — the contractions never needed
+the FP64 units; they needed to come off the shared-memory pipe.
+
+#### The MF-shuffle: the same trick on the recompute path — measured
+
+The identical register+warp-shuffle exchange also applies to the **recompute (MF)** path, where
+nothing is stored and the per-point metric is rebuilt inline from the element's 8 corners on every
+apply. Measured single-GPU (GH200, 17M DOF/GPU): **~0.9–3.15 GDOF/s/GPU**, peak `p=7 ~3.15` —
+about **1.5–2×** the earlier naive recompute, `A·1` bit-exact. It is still **~3–4× below PA**,
+because the shuffle speeds only the face contractions; the inline Jacobian, which dominates the
+recompute cost, is unchanged. So the honest trade is unchanged in shape and now both ends are
+shuffle-accelerated: **PA is faster but `d_G`-memory-capped (~1T DOF ceiling); MF is slower but
+frees `d_G` and scales toward ~6T DOF** (Ch. 6).
+
+Two smaller, validated levers, both low-order-only (the low orders, with their fat `d_G`, are the
+one regime that genuinely *is* HBM-bandwidth-bound):
+- **fp32 `d_G`** (opt-in, `MARS_HO_FP32_METRIC`) — +22% at `p=1`, +17% at `p=2`, <1% from `p=3`.
+- **elements-per-block (`E`) tuning** — ~+2% (the defaults are already near-optimal; an on-device
+  `--esweep` confirmed it).
 
 One honest caveat so this is not mistaken for a hardware verdict: it is a **formulation** choice,
 not a limit of the tensor cores. MFEM *does* profit from FP64 DMMA — by **batching many elements
@@ -608,19 +748,66 @@ thread per face slot, minimal smem). Tensor cores are a measured no-op here. Kno
 resource binds you — and resisting the urge to throw the shiny hardware feature at the wrong
 one — is the engineering lesson of this chapter.
 
+#### The mid-order peak was always there — measurement, not optimization
+
+Earlier versions of this tutorial reported throughput as "~5–6 GDOF/s, flat across order." That
+was not a slower kernel — it was an **interpolation artifact**. Only two orders had ever been
+benchmarked, `p=1` and `p=4`, and a line was drawn between them. As it happens, those two points
+are the **low shoulders** of the curve: `p=1` sits before the peak and `p=4` sits just past the
+`(p+1)³` occupancy cliff. Connect two shoulders and you get a flat line — and a wrong story.
+
+Earlier, with the **shared-buffer apply** (pre-shuffle), the `p=1..8` `--sweep` measured the middle
+orders (`p=2` and `p=3`) **for the first time**, and the peak appeared: ~9.8 GDOF/s/GPU at `p=3`
+(the register+warp-shuffle apply later lifted this whole band — peak ~12 at `p=3`; §2.5). The proof that nothing in the kernel changed is that the
+two *previously* measured points barely moved between the old and new runs — `p=1`: 5.32 → 5.35,
+`p=4`: 5.75 → 5.99 (run-to-run noise, not a speedup). The apply did not get faster; the **sampling**
+got denser, and the denser sampling revealed a peak that the two-point interpolation had hidden.
+(And to be clear, `fp32` did not manufacture the peak either: `fp64` alone already hits 9.73 at
+`p=3`. The `fp32` metric only lifts the bandwidth-bound *low-order shoulders* toward the peak — it
+does not create it.) The lesson is a measurement-hygiene one: never interpolate a performance curve
+through its endpoints and call the line "flat."
+
+#### GDOF/s is kernel efficiency, not application speed
+
+It is tempting to read "the apply peaks at `p=2–3`" as "so `p=2–3` is the best order to run." That
+is the trap. **GDOF/s measures how well the hardware is fed**, not how fast you solve the PDE. The
+metric peaks at `p=2–3` because that is where data reuse is high *and* the per-element `(p+1)³`
+footprint is still small enough to keep enough blocks resident per SM for good occupancy — a
+hardware-utilization sweet spot, nothing more.
+
+But a high-order DOF is not interchangeable with a low-order one. A `p=4` DOF carries *far* more
+accuracy than a `p=1` DOF (Chapter 4: ~570× lower error per DOF at `p=4`), so you need
+**dramatically fewer** of them to reach the same target error. The quantity that actually decides
+whether high order is worth it is **time-to-target-accuracy** — DOF/s × DOF-needed — and on *that*
+metric high order routinely **wins**, even though its raw GDOF/s is lower than the `p=2–3` peak.
+
+So keep the two ideas separate: the `p=2–3` peak is the **kernel-throughput** sweet spot (how
+efficiently the GPU is fed), not the **solver** sweet spot (which order reaches the answer
+fastest). Conflating kernel throughput with solver performance — picking the order off the GDOF/s
+chart instead of the error-vs-cost chart — is exactly the mistake this section exists to prevent.
+
 ### Recap
 
 - A matvec `y = A x` is gather → apply → scatter, per element, with **no stored matrix**.
 - High-order elements are tensor products of GLL nodes, so the apply factors into small **1D**
-  contractions: **sum-factorization** turns `O(p⁶)` into `O(p⁴)`, keeping throughput flat.
+  contractions: **sum-factorization** turns `O(p⁶)` into `O(p⁴)`, so throughput peaks at `p=3`
+  (~12 GDOF/s/GPU, high band `p=2–3`) instead of collapsing as the order grows.
 - Geometry enters once through the per-element **metric** `G`, reused across every matvec; it
   is also what sets the per-GPU memory ceiling.
 - The GPU kernel is built for **occupancy**: constant-memory operators, one thread per face
   slot, sync-free normal column, atomics only at the final global scatter.
 - Correctness is proven by **A·1 = 0** (nullspace) and **A·linear = 0** (consistency),
-  bit-checked against a host reference.
-- **FP64 tensor cores are a measured negative result** — the operator is bandwidth/occupancy
-  bound, not compute bound.
+  bit-checked against a host reference and against the full assembled (27-nnz) diffusion operator.
+- **FP64 tensor cores are a measured negative result; the fix is registers + warp shuffles.** The
+  operator was shared-memory-*instruction* bound, not compute bound, so DMMA did not help (~1.06×).
+  Holding the face contractions in registers and exchanging them with `__shfl_sync` instead of
+  shared face buffers drained that pipe (LSU ~99%→~50% at `p=4`) and roughly doubled peak
+  throughput. The store-`d_G` PA shuffle apply (per GPU) **peaks ~12 GDOF/s at `p=3`** (high band
+  `p=2–3`); the same trick on the recompute path (the **MF-shuffle**) reaches ~0.9–3.15 GDOF/s,
+  still ~3–4× below PA because the inline Jacobian dominates there. `A·1` bit-exact at every
+  `p=1..8`. fp32 `d_G` (via `MARS_HO_FP32_METRIC`) lifts only the low orders (+22% `p=1`, <1% from
+  `p=3`) — comparable-regime, not throughput-leading. (This per-GPU rate is distinct from the
+  aggregate trillion TDOF/s headlines in Ch. 5/6, which were measured with the earlier apply.)
 
 ---
 
@@ -1090,10 +1277,15 @@ oracle.
 
 ## Chapter 5 — Scaling to Billions
 
-We have a high-order matrix-free operator that is bit-exact and runs at a flat ~4–8 GDOF/s per
-GPU regardless of polynomial order. That is the single-GPU story. This chapter is about what
-happens when you put 8, 64, or a few thousand of those GPUs together and push the global problem
-toward a trillion degrees of freedom.
+We have a high-order matrix-free operator that is bit-exact and, per GPU, **peaks ~12 GDOF/s at
+`p=3`** (~6–12 GDOF/s across `p=1..8` at 17M DOF/GPU) with the register+warp-shuffle apply — about
+**2× the old shared-memory apply** (which peaked ~9.8 GDOF/s at `p=2–3`), store-`d_G` PA. That ~2×
+is the §2.7 shared-memory-instruction bottleneck finally relieved: the sum-factorization face
+contractions now live in **registers** and exchange across threads with `__shfl_sync` warp shuffles
+instead of shared-memory face buffers, dropping the LSU/MIO pipe ~99%→~50% at `p=4`. `A·1` stays
+bit-exact at every order. That is the single-GPU story. This chapter is about what happens when you
+put 8, 64, or a few thousand of those GPUs together and push the global problem toward a trillion
+degrees of freedom.
 
 The headline to carry through: **at scale, the things that hurt small problems stop mattering,
 and the thing that limits you becomes memory, not communication.** We earn each claim with a
@@ -1117,6 +1309,7 @@ Two efficiencies matter, and they are very different curves:
 ```python
 ho_gpus      = [1, 8]
 ho_apply_eff = [100.0, 98.1]   # apply-only, ~4.2M DOF/GPU held (5965 -> 46811 MDOF/s)
+# register+warp-shuffle PA, p=4: weak-scales FLAT at ~10.3 GDOF/s/GPU, 4 -> 256 GPU (491M DOF/GPU held)
 ho_full_eff  = [100.0, 78.4]   # full matvec, blocking halo (5790 -> 36319 MDOF/s)
 ```
 Notice: apply weak-scales at **98%** — the operator itself barely notices it is distributed. The
@@ -1145,6 +1338,16 @@ The same picture holds on the larger 1/8/32-GPU GH200 ladder (2M elements/GPU he
 *Apply weak-scales at 95% to 64M DOF / 32 GPU. The full matvec degrades faster (33% blocking,
 40% with comm overlap at 32 GPU) — overlap buys ~1.22× at this small per-GPU size, where comm is
 still a large fraction.*
+
+**The register+warp-shuffle apply, weak-scaled to 256 GPU.** Re-running the weak-scaling at a
+trillion-relevant per-GPU size (**~491M DOF/GPU held, p=4**) with the new shuffle apply, the
+operator holds **flat at ~10.3 GDOF/s/GPU from 4 to 256 GPU** (1 → 64 nodes) — measured, not
+modelled. At that per-GPU size comm is a thin fraction and the overlap path **hides it to ~4%**, so
+the full matvec tracks the apply. `A·1` is bit-exact at 256 GPU (device `A·1 = 3.5e-19`). This is
+measured **to 256 GPU**; 512 GPU is pending. Two things are worth stating plainly: the ~10.3
+GDOF/s/GPU here is roughly **2× the old shared-memory apply's per-GPU rate**, and a flat curve at
+491M DOF/GPU is the regime a trillion run actually lives in — small-per-GPU comm overhead is behind
+us by here.
 
 ### 5.2 Why communication self-resolves
 
@@ -1254,19 +1457,27 @@ decomposition 108M, and p=4 HO matrix-free apply 620M DOF/GPU. The dashed line i
 10¹² problem needs on full Alps — HO matrix-free clears it ~7×, putting a trillion DOF in ~1,700
 GPUs (~430 nodes).*
 
-(For context, MFEM won Gordon Bell 2025 at 55.5 trillion DOF on 43,520 GPUs — ~1.27B DOF/GPU.
-Our operator sits in the ~1B DOF/GPU class. The trillion run itself is **in progress, not done**;
-Chapter 6 is honest about why.)
+(For *density* context, MFEM won Gordon Bell 2025 at 55.5 trillion DOF on 43,520 GPUs — ~1.27B
+DOF/GPU, an *application* vector-wave operator. Our CVFEM diffusion-Laplacian operator sits in the
+~1B DOF/GPU class and ran a *completed* bit-exact trillion matvec; the trillion-DOF *solve* is
+what is not done. Chapter 6 is precise about both, and about the honest throughput gap to the
+Galerkin field.)
 
-The lever to raise the ceiling further is in *what* `d_G` stores. Today we store the **general
-per-point metric** — a full `detJ·J⁻¹J⁻ᵀ` at every flux point — because the Jacobian varies
-inside the element. If the element geometry is **affine** (a parallelepiped: cube, sheared box,
-uniformly stretched), the Jacobian is constant, so the metric is the *same* at every point and
-collapses to ~9 doubles per element instead of `3·p·(p+1)²` vec3s — roughly **100× leaner at
-p=4**. We do not exploit this. The 620M figure is therefore the *general-geometry* number, with
-headroom left on the table for any structured or affine subregion. The affine-metric path is the
-same lever that would also unlock batched-GEMM tensor cores (§2.7): both want the metric to be
-one small constant per element, not a per-point array.
+There are two levers to raise the ceiling further, both in *what* and *how* `d_G` stores. First,
+**fp32 `d_G`** (opt-in via `MARS_HO_FP32_METRIC`): store the metric in single precision while all
+compute stays fp64. That halves the dominant array, so it raises the per-GPU DOF ceiling *and*
+buys apply throughput at the **bandwidth-bound low orders only** (+22% `p=1`, +17% `p=2`, <1% from
+`p=3` — the §2.7 data-movement lever), and the `A·1` gate is unaffected because the arithmetic is
+still fp64. Second, the geometry lever: today we store the
+**general per-point metric** — a full `detJ·J⁻¹J⁻ᵀ` at every flux point — because the Jacobian
+varies inside the element. If the element geometry is **affine** (a parallelepiped: cube, sheared
+box, uniformly stretched), the Jacobian is constant, so the metric is the *same* at every point
+and collapses to ~9 doubles per element instead of `3·p·(p+1)²` vec3s — roughly **100× leaner at
+p=4**. We do not exploit the affine case today. The 620M figure is therefore the
+*general-geometry, fp64* number, with headroom left on the table for fp32 storage and for any
+structured or affine subregion. The affine-metric path is the same lever that would also unlock
+batched-GEMM tensor cores (§2.7): both want the metric to be one small constant per element, not a
+per-point array.
 
 ### 5.4 What about unstructured meshes and tets?
 
@@ -1424,7 +1635,9 @@ shown it bit-equivalent to the one you trust.
 ### 5.8 Takeaways
 
 - **Weak-scale, and feed the GPU.** Apply weak-scales at ~98–100% to 40B DOF/64 GPUs; full
-  matvec ~90%. The gap is the halo.
+  matvec ~90%. The gap is the halo. With the register+warp-shuffle apply at a trillion-relevant
+  491M DOF/GPU (p=4), the operator holds **flat at ~10.3 GDOF/s/GPU from 4 to 256 GPU** (overlap
+  hides comm to ~4%, `A·1 = 3.5e-19`) — measured to 256 GPU, 512 pending.
 - **Communication self-resolves.** Surface/volume gives comm/compute ∼ V^(−1/3) (measured
   exponent −0.36); peer count caps at 26 in 3D. Comm falls 22%→4% just by growing per-GPU size.
 - **Memory, not messages, is the wall.** The per-point metric `d_G` (~7.2 KB/elem at p=4) sets a
@@ -1434,24 +1647,32 @@ shown it bit-equivalent to the one you trust.
   launch. The GPU rewrite (sort + unique + scatter) does the same job in ~8 s vs ~80 s at 625M
   DOF/rank (**~10×**), is bit-equivalent (zero DofKey mismatches, A·1 passes), and — once the A/B
   harness proved it — is now the **default**, with the host path kept as an opt-in fallback.
-- **Trillion is in progress, not done.** The >4.3B-element domain-build crash turned out to be a
-  2 GiB Allreduce message in cstone's global tree (not a count-value overflow); the fix is a
-  coarser global `bucketSize` (`MARS_GLOBAL_BUCKETSIZE`), free for the apply. With it, the
-  operator was **built at a full trillion**: 1.005T DOF on **1,600 GPUs in ~16 s** (numbering +
-  ownership resolve + halo, all on device, no crash). The full trillion *matvec* is queued on
-  448 nodes (1,792 GPUs, 561M DOF/GPU — inside the `d_G` ceiling) and validates with device
-  `A·1 ≈ 1e-18`. The remaining gap to a demonstrated trillion is the distributed *solve* plus
-  running that queued apply, not the operator (Chapter 6).
+- **The trillion matvec is measured; the trillion *solve* is not.** The >4.3B-element
+  domain-build crash turned out to be a 2 GiB Allreduce message in cstone's global tree (not a
+  count-value overflow); the fix is a coarser global `bucketSize` (`MARS_GLOBAL_BUCKETSIZE`), free
+  for the apply. With it, the **fully matrix-free (recompute) trillion matvec ran**: **1.005×10¹²
+  DOF on 2,048 GH200 (512 nodes)**, device `A·1 = 1.765e-19` (bit-exact across ranks), **3.375
+  TDOF/s sustained, comm 5.5%** — storing only ~3 B/DOF of corner geometry. The store-`d_G` PA
+  trillion *also* ran (same 1.005×10¹² DOF, bit-exact): **10.239 TDOF/s, comm 16%** — ~3× faster but
+  memory-capped near 1T, vs recompute's ~6T scalable ceiling. Both are genuine Gordon-Bell-class
+  *scale* results at ~0.5–1B DOF/GPU density. Both trillion numbers were **measured with the older
+  shared-memory apply**; the register+warp-shuffle apply (above) roughly **doubles the per-GPU
+  operator rate** — measured flat to 256 GPU — so a shuffle trillion projects ~2× these figures
+  (~20 TDOF/s PA), but that is a projection, not yet a measured trillion. What is **not** done is the
+  distributed *solve*: a trillion-DOF Krylov solve with preconditioning, the subject of Chapter 6.
 
 ---
 
 ## Chapter 6 — The Trillion Frontier (honest, in-progress)
 
 We have an operator that is bit-exact, sum-factorized, and weak-scales to 40 billion DOF on 64
-GPUs. The natural question for a PASC talk and a Gordon Bell submission is: *what stands between
-us and a trillion?* This chapter is deliberately honest. Part of it is arithmetic that already
-works. Part of it is a crash we hit at scale, and — more importantly — the **expert lesson** in
-why the obvious fix was the wrong fix. We close with what is genuinely *not* done: the
+GPUs — and, with the fix in this chapter, runs a *completed* bit-exact matvec at a full trillion
+DOF on 2,048 GPUs. The natural questions for a PASC talk and a Gordon Bell submission are: *how
+did we get the trillion matvec to run, how fast is the operator really, and what still stands
+between us and a trillion-DOF solve?* This chapter is deliberately honest on all three. Part of it
+is arithmetic that already works. Part of it is a crash we hit at scale, and — more importantly —
+the **expert lesson** in why the obvious fix was the wrong fix. We give the honest throughput
+verdict against the Galerkin/MFEM field. We close with what is genuinely *not* done: the
 distributed solve.
 
 ### 6.1 The arithmetic: why high order is the trillion path that *fits*
@@ -1477,8 +1698,9 @@ operator is the trillion path that actually fits Alps: at the measured ~620M DOF
 DOF needs ~1,700 GPUs (~430 nodes) — under half of Alps — whereas a p=1 *element*-trillion would
 need ~9,300 GPUs.
 
-The flat-throughput result from Chapter 2 is what makes this free: p=7 runs at essentially the
-same GDOF/s as p=1, so packing more DOF into fewer elements costs the operator nothing.
+The sum-factorization result from Chapter 2 is what makes this affordable: high order *peaks*
+around p=3 (~12 GDOF/s/GPU, high band p=2–3) and never collapses, so packing more DOF into fewer high-order
+elements keeps the operator in a usable throughput band — it does not blow up like a dense apply.
 
 ### 6.2 Where the elements live: the cstone domain
 
@@ -1591,34 +1813,213 @@ domain decomposition. The lesson for distributed scale: a collective that worked
 silently die at a few billion purely on **message bytes**, and the cheapest fix is often to make
 the *replicated* structure coarser, not to widen a type.
 
-**Validated at trillion scale (operator build only).** With the fix, the full distributed
-**setup** — domain decomposition + GPU-native DOF numbering + ownership resolve + halo, all on
-device — was carried to a **full trillion**: **1.005T DOF on 1,600 GH200 in ~16 s**, with **no
-Allreduce failure**. This is a **build milestone, not a matvec**: it proves the blocker is gone
-at trillion scale and the numbering/halo infrastructure stands up there. The full trillion
-*apply* is queued on **448 nodes (1,792 GPUs, 561M DOF/GPU — inside the `d_G` ceiling)** and
-validates with device `A·1 ≈ 1e-18`; it is *not* yet a completed trillion matvec.
+**Validated at trillion scale — two measured matvecs, a speed-vs-scale pair.** With the fix, the
+full distributed pipeline — domain decomposition + GPU-native DOF numbering + ownership resolve +
+halo + the matvec itself, all on device — was carried to a **full trillion**: **1.005×10¹² DOF on
+2,048 GH200 (512 nodes), 491M DOF/GPU**, with **no Allreduce failure**, and it ran **two ways**,
+both **bit-exact** (device `A·1 = 1.765e-19` across all ranks). The two runs are the same operator
+on opposite ends of the storage trade:
 
-### 6.6 Where MARS sits: the Gordon Bell yardstick
+- **Store-`d_G` partial assembly (PA) — the fast path.** Precompute the per-element metric once and
+  read it on every apply. Measured: **10.239 TDOF/s** full matvec (apply-only 12.18 TDOF/s), comm
+  16%, **97.69 ms/matvec**. This is the *fast* trillion. Its cost is memory: `d_G` is 111.9 B/DOF
+  (~55 GB/GPU at this size), so the store-`d_G` per-GPU ceiling is ~5.8×10⁸ DOF/GPU — it lands
+  **right at the ~1T memory wall** and cannot grow much past it.
 
-For calibration: MFEM won **Gordon Bell 2025** with **55.5 trillion DOF on 43,520 MI300A GPUs**
-(~1.27B DOF/GPU); on Alps GH200 the comparable figure is ~9.3T DOF on ~9,200 GPUs. Our HO
-matrix-free operator, at a measured **~620M DOF/GPU** clean (p=4, the per-point metric array `d_G`
-~7.2 KB/elem is the wall), sits squarely in the **~1B DOF/GPU class** — the same league as the
-GB-winning code's per-GPU density. The affine-cube metric (512× less `d_G`) would push us to
-~1–2B DOF/GPU. We are operator-competitive per GPU; the gap to a *demonstrated* trillion is the
-solve below — not operator throughput, and no longer the domain build (§6.5).
+- **Fully matrix-free recompute (MF) — the scalable path.** Store only ~3 B/DOF of corner geometry
+  and rebuild the metric on every apply. Measured: **3.375 TDOF/s**, comm 5.5%, **296 ms/matvec** —
+  about **3× slower per matvec** than PA, but at 26.8 B/DOF its ceiling is ~3×10⁹ DOF/GPU, so it
+  **scales past the PA wall toward multi-trillion (~6T+)**.
 
-A second calibration is on *method*, and it lands on the same choice MARS made. The **2025
-Gordon Bell winner** (a Cascadia-tsunami digital twin, arXiv:2504.16344) discretizes its 3D
-acoustic-gravity forward operator with **partial assembly** — verbatim, PA "stores an
-asymptotically optimal amount of data: O(1) per degree of freedom," and the authors explicitly
-chose it over the fully matrix-free option MFEM also supports ("matrix-free assembly where no
-data is stored and all computations are done on the fly"), "for faster time-to-solution." That is
-exactly the trade MARS makes in §2.4: store the metric once, apply via sum-factorization, never
-recompute geometry on the hot path. So the operator class behind the last two Gordon Bell-scale
-results — MFEM-PA and this one — is the same class as the MARS HO operator; the differentiators
-are our CVFEM discretization and the distributed all-order reach, not the assembly strategy.
+So the honest one-liner is **PA is fast but memory-capped at ~1T; MF recompute is ~3× slower but
+scales to multi-trillion** — and both are now *measured*, *completed*, bit-exact trillion matvecs,
+not builds. This is a genuine Gordon-Bell-class *scale and per-GPU-density* result (~0.5–1B
+DOF/GPU). What remains for a trillion *solve* is in §6.7.
+
+#### MARS setup: standing up the mesh on the GPU
+
+The matvec throughput numbers above measure the **operator**. But none of it happens in a vacuum:
+the operator is built and run *through MARS*, and MARS's own contribution is standing up the
+**entire trillion-DOF mesh on the device** — decomposition, numbering, ownership, halos, and the
+metric — with **no host round-trips**. That end-to-end GPU-native pipeline is the vehicle that
+makes the trillion matvec possible, and it is worth measuring on its own terms.
+
+For the 1.005×10¹²-DOF run (2,048 GH200, store-`d_G` PA), the one-time setup took **~16 s total**,
+every stage on-device:
+
+| Stage | Time | What it does |
+|-------|------|--------------|
+| `meshGen` | 0.1 s | generate the procedural hex mesh |
+| `cstone domain.sync` | 9.5 s | **SFC domain decomposition** (space-filling-curve partition, GPU) |
+| `extractDistDof` | 3.6 s | node-halo + distributed-DOF extraction |
+| `buildDistributedGpu` | 0.8 s | GPU-native DOF numbering (sort + unique + scatter) |
+| `resolveOwnership` | 0.3 s | resolve which rank owns each shared DOF |
+| `HoHalo` | 1.5 s | build the high-order node-DOF halo |
+| `d_G` alloc + metric precompute | 0.6 s | allocate and fill the per-element metric |
+| **Total** | **~16 s** | full distributed mesh + operator, on device |
+
+There is a clean **layer split** in those numbers. **cstone** owns the SFC domain decomposition —
+the 9.5 s `domain.sync` that partitions the space-filling curve across ranks. **MARS** owns the
+**FEM mesh layer on top of it**: extracting the distributed DOFs, numbering them GPU-native,
+resolving ownership, building the high-order halo, and precomputing the metric — about **6.8 s**.
+Both layers run entirely on the GPU; the mesh never lands on the host.
+
+That last point is the differentiator. Many high-order codes host-stage the mesh — build or
+renumber it on the CPU, then copy it to the device — which becomes a serial bottleneck at extreme
+scale. MARS keeps the **whole pipeline GPU-native: mesh build *and* operator**, no
+`cudaMemcpyDeviceToHost` round-trip in the setup path. The `[build]` lines here measure MARS's
+**mesh management**; the matvec TDOF/s measures the **operator**. They are complementary
+halves of the same end-to-end-on-device story: MARS stands up the trillion-DOF mesh, and the
+matrix-free CVFEM operator applies on it at 10.24 TDOF/s (PA), bit-exact.
+
+### 6.6 Where MARS sits: scale yardstick vs throughput yardstick
+
+It is worth separating two very different comparisons, because conflating them is how a talk
+overclaims. One is **scale / per-GPU density** — where MARS is genuinely strong. The other is
+**per-GPU apply throughput** — where MARS is comparable-regime, not leading. Keep them apart.
+
+**Scale and density (the strong claim).** MFEM won **Gordon Bell 2025** with **55.5 trillion DOF
+on 43,520 MI300A GPUs** (~1.27B DOF/GPU); on Alps GH200 the comparable figure is ~9.3T DOF on
+~9,200 GPUs. Our HO matrix-free operator ran a **bit-exact 1.005×10¹²-DOF matvec on 2,048 GH200**
+(~0.5–1B DOF/GPU; the store-`d_G` ceiling is ~620M DOF/GPU at p=4, fp64 general geometry), which
+puts MARS squarely in the **~1B DOF/GPU class** — the same league as the GB-winning code's per-GPU
+density. fp32 `d_G` and the affine-cube metric would push the store-`d_G` ceiling higher still. On
+*scale and density* MARS is competitive with the GB-scale codes. The crucial caveat: the **MFEM
+GB2025 result is an *application* operator** — a vector acoustic-gravity wave (p=4 pressure / p=3
+velocity), DMMA-accelerated, ~36/46 GDOF/s on GH200/GB200 — **not a Laplacian, not a BP/BK
+benchmark.** It is a *scale/density* yardstick, **not a throughput bar.** Do **not** compare our
+scalar-Poisson GDOF/s to that 36/46 number — different operator, different FLOP/DOF, different
+arithmetic intensity.
+
+**Throughput (the honest verdict).** Measured per-GPU with the **register+warp-shuffle** apply
+(store-`d_G` PA, apply-only, saturated at 17M DOF/GPU, `A·1` PASS at every `p`), the curve is
+**not flat — it peaks ~12 GDOF/s/GPU at `p=3`** and runs ~6–12 across `p=1..8`, with the high
+orders (`p=5/6/8`) lower from warp-padding waste when the face-row count does not divide 32. That
+is about **2× the old shared-memory apply** (which peaked ~9.8 GDOF/s at `p=2–3`: fp64
+5.35/8.34/9.73/5.99/4.51/4.47/4.94/3.61 for `p=1..8`, peak GFLOP/s ≈2853 at `p=3`), the §2.7
+shared-memory-instruction bottleneck relieved by holding the face contractions in registers and
+exchanging them with `__shfl_sync` (LSU ~99%→~50% at `p=4`). It still **declines at high `p`** (the
+occupancy cliff at `p=4`, where the per-element node count `(p+1)³` jumps 64→125, compounded by
+warp padding above `p=4`). The Galerkin matrix-free state of the art is faster, **and crucially it is
+NOT a tensor-core advantage**: **Nek5000/RS report a BK5 (Laplacian apply) of 13.2 GDOF/s FP64 on a
+vector core with no tensor cores** (arXiv:2309.16381), which bandwidth-scaled to GH200 (≈3.35 TB/s
+vs A100's ≈2.0 TB/s HBM) lands around **20–26 GDOF/s** — roughly **1.3–2× faster** than the MARS
+CVFEM peak. The gap is **collocation + bandwidth-tuning**: ~1.5–2× is *structural* (CVFEM does
+~1.5–2× the FLOP/DOF of the leaner Galerkin BP5 collocation and reads more geometry — and the
+CVFEM metric cannot be symmetry-compacted, which we verified), and the rest is SoA tuning headroom.
+The only FP64-tensor-core FE work (Tu et al. arXiv:2603.09038) stays **bandwidth-bound even with
+DMMA** (84% LSU; ~1.5× data-motion win, and only above order ~10) — so tensor cores are not the
+gap. Matching the Galerkin throughput would mean running the **Galerkin collocation operator** (the
+DMMA sibling), a *different* operator, not a tune of this CVFEM kernel.
+
+> **Per-GPU vs aggregate, and old-apply vs shuffle.** This ~12 GDOF/s (register+warp-shuffle, ~2×
+> the old ~9.8) is a *single-GPU, store-`d_G` PA* number. The §6.x trillion headlines — **3.375
+> TDOF/s** recompute and **10.239 TDOF/s** PA — are *aggregate across 2,048 GPU* and were
+> **measured with the older shared-memory apply** (~1.65 / ~5.0 GDOF/s/GPU). The shuffle doubles
+> the per-GPU rate (measured flat to 256 GPU at ~10.3 GDOF/s/GPU, p=4), so it projects ~2× those
+> aggregates, but a shuffle trillion is **not yet measured**. Never quote a per-GPU number as an
+> aggregate, a shuffle number as the old-apply trillion, or a projection as a measurement.
+
+#### Why CVFEM is heavier than the Galerkin SoA — a family tree
+
+It is worth slowing down here, because the throughput gap is easy to misread as "MARS is slow"
+when the real story is "MARS runs a *different, heavier operator* on purpose." To see why, walk
+the family tree of high-order operators and notice exactly where CVFEM steps off the Galerkin
+branch.
+
+**Galerkin starts from the weak form.** Multiply the PDE by a test function `v`, integrate by
+parts, and you get the *weak form* of the Laplacian: `∫ ∇u · ∇v dΩ`. Every Galerkin method —
+classical or spectral — is some way of evaluating that one integral.
+
+- **Classical Galerkin** uses low-order Lagrange bases, Gauss quadrature, and an *assembled*
+  sparse matrix. This is the textbook finite-element method.
+- **Spectral Galerkin / spectral-element (SEM)** evaluates the *same* weak integral, but with
+  high-order **GLL** (Gauss–Lobatto–Legendre) bases, **sum-factorization** to keep the element
+  apply `O(p⁴)`, and one more trick that matters enormously for speed: **collocation**. If you
+  place the quadrature points *on the GLL solution nodes themselves* (the BP5 benchmark choice),
+  then the basis evaluated at the quadrature points is the **identity** — `B = I`. The
+  "interpolate from solution nodes to quadrature points" step simply vanishes. You are left with
+  only the derivative operators and a diagonal metric. This collocated, GLL, sum-factorized weak
+  form is what **Nek5000/RS, hipBone, libParanumal, and MFEM-PA** run — and it is genuinely
+  Galerkin, just the lean high-order flavor.
+
+**CVFEM is not on that branch at all.** The control-volume finite-element method does *not*
+evaluate the weak form. It writes a **finite-volume flux balance**: around each node it builds a
+control volume, and it enforces `∮ ∇u · n dS = source` over the **sub-control-surfaces (SCS)**
+between nodes. That is a *local conservation statement* — "what flows in across my faces equals
+what flows out" — not a global integral of `∇u · ∇v`. This is exactly why the collaborators chose
+CVFEM for the production advection–diffusion Navier–Stokes solver: it conserves mass and momentum
+cell-by-cell, which the weak form does not guarantee. Conservation is the whole point, and it is
+worth paying for.
+
+**Why that costs ~2–3× more throughput.** The flux-balance formulation forces three structural
+differences from the collocated Galerkin operator, and each one adds bytes or operations on the
+hot path:
+
+1. **`B ≠ I` — you cannot collocate away the interpolation.** CVFEM evaluates fluxes at the
+   *sub-control-surface* points, which are **not** the GLL solution nodes. So the basis-at-quadrature
+   matrix `B` is a real interpolation, not the identity — every apply must interpolate the solution
+   from the nodes to the SCS points before it can take a derivative. The Galerkin BP5 operator skips
+   this step entirely.
+2. **A fatter metric.** The collocated Galerkin operator carries a **6-float symmetric** metric
+   `G = detJ · J⁻¹J⁻ᵀ` per quadrature point. CVFEM carries a **9-float per-direction metric
+   column** per SCS point — it needs the full directional flux geometry, and (we verified) it
+   **cannot be symmetry-compacted** the way the symmetric Galerkin `G` can. More bytes moved per
+   point, and bytes are what bind a bandwidth-limited kernel.
+3. **Four operators, not one.** The Galerkin collocated apply is essentially *derivatives only*
+   (`D`) against a diagonal metric. The CVFEM apply runs **four** stages: the interpolation `B`,
+   the derivative `D`, a **histopolation/integration `W`** across the sub-control-surface, and the
+   **± SCS scatter** that adds each face flux to the two nodes it separates. Four passes over the
+   element data instead of one.
+
+Fewer bytes and fewer operations is why the collocated Galerkin operator is faster — by
+*formulation*, before anyone touches the kernel. Measured on a single GH200 at `p=7`, MARS's *own*
+Galerkin-collocation kernel runs at **~16 GDOF/s** against the CVFEM apply's **~5** — about a 3×
+gap, on the same hardware, written by the same people. And FP64 tensor cores (DMMA) add only
+**~+6%** on top of that — so the gap is the **operator formulation**, not the kernel quality and
+not a missing hardware feature.
+
+**The honest framing, then, is production-vs-benchmark, not a quality gap.** BP5 Galerkin-collocation
+is the *academic benchmark* — the leanest possible high-order Laplacian, built to top throughput
+charts. CVFEM is the *production conservation operator* — the one the real advection–diffusion NS
+solver actually needs. We chose to reproduce the **production** operator matrix-free, and it is
+structurally ~2–3× heavier than the benchmark by construction. That is a deliberate
+production-versus-benchmark distinction, not MARS being slow at the same job.
+
+**Where MFEM specifically sits.** There is **no published per-GPU MFEM BP3/BP5 Laplacian-apply
+GDOF/s** to quote. The CEED throughput leaders are **libParanumal / hipBone / nekRS**, not MFEM;
+the closest MFEM data point is an *unlabeled* BP3 plot (Andrej et al. 2024, arXiv:2402.15940;
+V100/MI250X, ~6 GDOF/s for p≤6). So the only honest MFEM head-to-head is to **build MFEM's
+`tests/benchmarks/bench_ceed` and run the BK5 filter** — pure hex Laplacian apply, FP64, native
+partial assembly, no hypre needed — on the **same GH200**. That number is not yet in hand:
+
+> **[DATA SLOT — bench_ceed BK5 on GH200, pending Alps run.]** MFEM `bench_ceed` BK5 (hex, FP64,
+> partial assembly) per-GPU apply throughput on a single GH200 vs the MARS CVFEM apply at matched
+> `p`. Fill after the run. Even this is *comparable-regime* — same PDE (Laplacian), same apply
+> metric, same hardware — but CVFEM vs Galerkin, **not** a bit-identical-operator head-to-head.
+
+> **Measured `p=1..8` apply sweep (single GH200, store-`d_G` PA, fp64, `A·1` PASS at every `p`,
+> register+warp-shuffle apply):** peaks **~12 GDOF/s/GPU at `p=3`**, ~6–12 across `p=1..8` (high
+> orders `p=5/6/8` lower from warp-padding waste when the face-row count does not divide 32),
+> roughly **2×** the older shared-memory apply, which read GDOF/s/GPU = 5.35 / 8.34 / 9.73 / 5.99 /
+> 4.51 / 4.47 / 4.94 / 3.61; GFLOP/s = 1989 / 2421 /
+> **2853 (peak)** / 1881 / 1539 / 1661 / 1995 / 1578; FLOP/DOF = 372 / 290 / 293 / 314 / 341 / 372 /
+> 404 / 437. The curve **peaks at `p=2–3` then declines** (occupancy cliff at `p=4`: `(p+1)³` jumps
+> 64→125). A size sweep confirmed the plateau: `p=3` reads 8.60 / 9.69 / 9.80 / 9.46 GDOF/s at
+> 0.9M / 7M / 24M / 57M DOF/GPU — saturating ~9.8 at **17–24M DOF/GPU**. fp32 `d_G` lifts only the
+> low orders (+22% `p=1`, +17% `p=2`, <1% from `p=3`).
+
+**Method-class calibration (true, and narrower than it looks).** The **2025 Gordon Bell winner**
+(arXiv:2504.16344) discretizes its forward operator with **partial assembly** — verbatim, PA
+"stores an asymptotically optimal amount of data: O(1) per degree of freedom," chosen over the
+fully matrix-free option ("matrix-free assembly where no data is stored ... done on the fly") "for
+faster time-to-solution." MARS makes the same PA *storage* trade in §2.4. But that shared trade is
+the **assembly strategy and sum-factorized apply**, *not* the operator: MFEM-PA and the GB winner
+run **Galerkin** forms, MARS runs **CVFEM** subcontrol-volume fluxes. So the honest statement is:
+**same PA method class, different discretization** — which is exactly why our throughput is
+comparable-regime rather than matching the Galerkin SoA. The differentiators MARS *can* claim are
+the **CVFEM** conservative discretization and the **distributed all-order trillion-DOF reach**,
+not throughput leadership.
 
 ### 6.7 What is NOT done: the distributed solve
 
@@ -1629,10 +2030,11 @@ A matvec is one application of the operator. A linear solve is hundreds of them 
 Krylov method with a preconditioner, and *each* piece must be made distributed and
 halo-correct. What exists today versus what remains:
 
-- **Done:** distributed HO DOF numbering (`HODofHandler::buildDistributed`, with the
-  min-rank-among-holders ownership from Chapter 3), the receiver-driven halo (`HoHalo`), and the
-  full distributed matvec `forward-halo(x) → apply OWNED elements → reverse-add(y)`, validated by
-  `A·1 = 0` at ~1e-17 on 4 ranks. The GPU-native numbering path (`buildDistributedGpu`) removes
+- **Done:** the distributed CVFEM diffusion-Laplacian matvec, end to end — distributed HO DOF
+  numbering (`HODofHandler::buildDistributed`, with the min-rank-among-holders ownership from
+  Chapter 3), the receiver-driven halo (`HoHalo`), and the full `forward-halo(x) → apply OWNED
+  elements → reverse-add(y)`, validated by `A·1 = 0` at ~1e-17 on 4 ranks and at `1.765e-19` on
+  2,048 GPUs at a full trillion DOF. The GPU-native numbering path (`buildDistributedGpu`) removes
   the host straggler.
 - **Not done — the roadmap:**
   1. **FlexGMRES** over the distributed operator. The matvec is ready; what's missing is the
@@ -1644,17 +2046,32 @@ halo-correct. What exists today versus what remains:
      operator (cheap and AMG-friendly), and use AMG on it to precondition the high-order
      matrix-free solve. None of this is built yet.
   3. **Robust domain build past 4.3B elements** — the 2 GiB Allreduce blocker is fixed with the
-     auto-scaling global `bucketSize` (§6.5) and the operator now **builds at a full trillion**
-     (1.005T DOF on 1,600 GH200, §6.5). What remains is running the trillion-scale *apply* itself,
-     queued on 1,792 GPUs; the build is no longer the gate.
+     auto-scaling global `bucketSize` (§6.5), and the fully matrix-free operator now **ran a
+     complete bit-exact matvec at a full trillion** (1.005×10¹² DOF on 2,048 GH200, `A·1 =
+     1.765e-19`, 3.375 TDOF/s, §6.5). The domain build is no longer a gate. The store-`d_G`
+     partial-assembly trillion matvec **also ran** (same DOF, bit-exact, **10.239 TDOF/s** — the
+     fast but memory-capped sibling of the scalable recompute path; §6.5).
 
 The intellectually honest framing for the talk: MARS has a **trillion-class operator** —
-bit-exact, sum-factorized, weak-scaling, in the ~1B DOF/GPU density band of the Gordon Bell
-winner. The trillion-DOF *solve* is the next milestone, and its critical path is FlexGMRES +
-LOR-AMG over the operator we already trust. The cstone domain build is no longer on that path: it
-is fixed and the operator **builds at a full trillion** (1.005T DOF on 1,600 GPUs, §6.5), with
-the trillion *apply* queued on 1,792 GPUs. **We claim the operator and the setup/build scaling to
-a trillion DOF. We do not yet claim a completed trillion-DOF matvec.**
+bit-exact, sum-factorized, weak-scaling, with a *completed* bit-exact trillion-DOF matvec at the
+~1B DOF/GPU density band of the Gordon Bell winner. The trillion-DOF *solve* is the next
+milestone, and its critical path is FlexGMRES + LOR-AMG over the operator we already trust. The
+cstone domain build is no longer on that path. **We claim the CVFEM diffusion-Laplacian operator,
+the setup/build scaling, and a completed bit-exact trillion-DOF matvec. We do not yet claim a
+trillion-DOF *solve*, and we do not claim throughput parity with the Galerkin matrix-free state of
+the art** — our apply is comparable-regime (register+warp-shuffle PA, measured peak ~12 GDOF/s/GPU at `p=3`,
+~2× the older shared-memory apply that peaked ~9.8 at `p=2–3`), now within ~1–2× of the Galerkin
+SoA (Nek BK5 13.2 GDOF/s FP64, no tensor cores), with a true MFEM head-to-head one `bench_ceed` BK5
+run away (§6.6).
+
+---
+
+## Q&A
+
+**Q: Why is CVFEM slower than the Galerkin state-of-the-art (Nek / MFEM)?**
+
+A: It's the operator. Our own Galerkin collocation kernel hits ~16 GDOF/s at P=7; CVFEM hits ~5;
+FP64 tensor cores add only +6%. The gap is the formulation, not tuning or tensor cores.
 
 ---
 
@@ -1671,8 +2088,8 @@ a trillion DOF. We do not yet claim a completed trillion-DOF matvec.**
 - **matrix-free** — computing `A·x` by recomputing element contributions on the fly, never
   storing `A`. Trades a little arithmetic for a large memory saving; the win grows with `p`.
 - **sum-factorization** — exploiting the tensor-product structure of an element to do a 3D
-  contraction as three 1D sweeps, turning `O(p⁶)` per element into `O(p⁴)`. Keeps throughput flat
-  across order.
+  contraction as three 1D sweeps, turning `O(p⁶)` per element into `O(p⁴)`. Keeps throughput in a
+  usable band — peaking at `p=2–3` instead of collapsing as order grows.
 - **halo** — the boundary DOF a rank does not own but needs (ghosts), plus the exchange that
   fills them (`forward`) and returns their contributions (`reverseAdd`).
 - **weak-scaling** — adding GPUs while holding work-per-GPU fixed, so the global problem grows.
@@ -1754,8 +2171,23 @@ discretization. The references below are the sources the tutorial cites directly
 - **[GB 2025]** S. Henneking, S. Venkat, V. Dobrev, J. Camier, T. Kolev, M. Fernando,
   A.-A. Gabriel, O. Ghattas, "Real-time Bayesian inference at extreme scale: A digital twin for
   tsunami early warning applied to the Cascadia subduction zone," arXiv:2504.16344, 2025
-  (2025 ACM Gordon Bell Prize). <https://arxiv.org/abs/2504.16344>. The MFEM-PA forward operator
-  cited for the per-GPU-density and method comparison in Chapters 1 and 6.
+  (2025 ACM Gordon Bell Prize). <https://arxiv.org/abs/2504.16344>. The MFEM-PA *application*
+  forward operator (vector wave), cited as a per-GPU-*density* yardstick — not a throughput bar —
+  and for the PA method-class comparison in Chapters 1 and 6.
+
+- **[Nek5000/RS BK5]** P. Fischer, M. Min, T. Rathnayake, S. Dutta, T. Kolev, V. Dobrev, J.-S. Camier,
+  M. Kronbichler, T. Warburton, K. Świrydowicz, J. Brown, "Scalability of high-performance PDE
+  solvers," *Int. J. High Performance Computing Applications*, vol. 34, no. 5, pp. 562–586, 2020.
+  DOI: [10.1177/1094342020915762](https://doi.org/10.1177/1094342020915762). Source of the CEED
+  bake-off / BK5 (Galerkin Laplacian apply) throughput anchor used in §6.6 (~13.2 GDOF/s on A100
+  at p=7, bandwidth-scaled to GH200 for the comparable-regime gap).
+
+- **[libParanumal / hipBone]** N. Chalmers, A. Karakus, A. P. Austin, K. Świrydowicz, T. Warburton,
+  "libParanumal: a performance portable high-order finite element library," 2022 (release 0.5.0),
+  <https://github.com/paranumal/libparanumal>; and the **hipBone** CEED BP/BK proxy
+  (<https://github.com/paranumal/hipBone>). Cited in §6.6 as the actual CEED matrix-free
+  *throughput* leaders (with nekRS), in contrast to MFEM, for which no per-GPU BP3/BP5 Laplacian-
+  apply GDOF/s is published.
 
 - **[FP64 tensor cores]** J. Tu, I. Karlin, J. Camier, V. Dobrev, T. Kolev, S. Henneking,
   O. Ghattas, "Accelerating High-Order Finite Element Simulations at Extreme Scale with FP64 Tensor

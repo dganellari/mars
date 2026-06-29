@@ -3,9 +3,10 @@
 #SBATCH --job-name=ho160B
 #SBATCH --nodes=64
 #SBATCH --ntasks-per-node=4
-#SBATCH --time=00:30:00
-#SBATCH --chdir=/capstor/scratch/cscs/gandanie/git/mars/daint-gpu
+#SBATCH --time=01:00:00
+#SBATCH --chdir=$SCRATCH/git/mars/daint-gpu
 #SBATCH --output=ho160B_%j.out
+#SBATCH --uenv-passthrough=use
 #
 # HO matrix-free apply, p=4, 256 ranks (64 nodes x 4 GPU), ~625M DOF/GPU.
 # Global: cube1357 -> 5429^3 = ~160 BILLION DOF.

@@ -39,14 +39,22 @@ covers the older structured-mesh path. Because the mesh stays on the device, lib
 built on MARS can run further operations directly on the GPU without going through the
 host.
 
+## Releases & status ##
+
+Current release: **v0.1.0** — see [CHANGELOG.md](CHANGELOG.md). For the honest
+stable / experimental / unsupported breakdown (what to rely on and what is still under
+development), read [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md). The major version is
+`0`, so the public API may change between minor releases.
+
 ## Downloading MARS and its dependencies ##
 
-Clone the repository and its submodules. MARS relies on googletest and google/benchmark.
+Clone the repository. MARS has no git submodules — its dependencies
+(cornerstone-octree, googletest, google/benchmark) are fetched automatically by
+CMake at configure time, so a plain clone is all you need:
 
-`git clone --recurse-submodules https://github.com/dganellari/mars.git`
-or for older git versions
+`git clone https://github.com/dganellari/mars.git`
 
-`git clone https://github.com/dganellari/mars.git && cd mars && git submodule update --init --recursive`
+A network connection is required at configure time for the dependency fetch.
 
 Compiling M.A.R.S for serial usage:
 
