@@ -52,6 +52,7 @@
 #include <cuda_runtime.h>
 #include <cassert>
 #include <cstddef>
+#include <cstdint>
 #include <type_traits>
 
 namespace mars {
@@ -134,53 +135,25 @@ __constant__ int c_hexCornerRef[8][3] =
     {{-1,-1,-1},{1,-1,-1},{1,1,-1},{-1,1,-1},{-1,-1,1},{1,-1,1},{1,1,1},{-1,1,1}};
 
 // --------------------------------------------------------------------------
-// Metric-precompute kernel (PerPoint). This is a PRECOMPUTE-ONCE buffer: d_G is
-// built once and reused across every CG apply (the apply never touches geometry),
-// so its register footprint / per-point corner reloads are amortized and not on
-// the apply critical path. One thread per (e, dir, l, s, r) point.
-// Ports computeElementMetric VERBATIM: metric = detJ * J^{-1} J^{-T}, with
-// G[((dir*p+l)*n+s)*n+r] = (g[0]=tang2(r-axis), g[1]=tang1(s-axis), g[2]=normal).
-// Output d_G is [numElements * 3*p*n*n] contiguous vec3 -- the EXACT host layout
-// the apply reads. d_corners is [numElements][8][3] (8 corners x xyz per element).
-// --------------------------------------------------------------------------
-template<typename RealType, int P>
-__global__ void ho_cvfem_metric_perpoint_kernel(const RealType* __restrict__ d_corners,
-                                                RealType* __restrict__ d_G,
-                                                size_t numElements)
+// Per-point metric, factored out so BOTH the store-d_G precompute kernel and the
+// recompute apply kernel compute it from the SAME source. This is the bit-identity
+// contract: the recompute apply is bit-identical to store-d_G *by construction*
+// because it calls this exact routine with the same 8 corners and the same (dir,l,
+// s,r) -> (xi,zeta) reference point, so every FP operation and its order matches
+// ho_cvfem_metric_perpoint_kernel / the host computeElementMetric.
+// Output g[3]: g[2]=normal(dir), g[1]=tang1(s-axis), g[0]=tang2(r-axis) -- the EXACT
+// layout the apply's step-2 read expects (g[2]*deriv + g[0]*dt2 + g[1]*dt1).
+template<int P>
+__device__ __forceinline__ void ho_cvfem_metric_point(const double corners[8][3],
+                                                       int dir, int l, int s, int r,
+                                                       double g[3])
 {
-    constexpr int N  = P + 1;
-    constexpr int NN = N * N;
-    constexpr int pointsPerElem = 3 * P * NN;   // (dir,l,s,r) over 3*p*n*n
-
-    const size_t gid = (size_t)blockIdx.x * blockDim.x + threadIdx.x;
-    if (gid >= numElements * (size_t)pointsPerElem) return;
-
-    const size_t e   = gid / pointsPerElem;
-    int rem          = (int)(gid % pointsPerElem);
-    const int dir    = rem / (P * NN);  rem %= (P * NN);
-    const int l      = rem / NN;        rem %= NN;
-    const int s      = rem / N;
-    const int r      = rem % N;
-
-    // Load 8 corners for this element (xyz contiguous per corner).
-    double corners[8][3];
-    const RealType* cp = d_corners + e * 24;
-    #pragma unroll
-    for (int c = 0; c < 8; ++c) {
-        corners[c][0] = cp[c * 3 + 0];
-        corners[c][1] = cp[c * 3 + 1];
-        corners[c][2] = cp[c * 3 + 2];
-    }
-
-    // tangential axes per direction (host t1axis/t2axis).
     const int t1axis[3] = {1, 0, 0}, t2axis[3] = {2, 2, 1};
     double rf[3];
     rf[dir]          = c_xi[l];
     rf[t1axis[dir]]  = c_zeta[s];
     rf[t2axis[dir]]  = c_zeta[r];
 
-    // Trilinear Jacobian J[a][b] = dx_a/dr_b -- VERBATIM port of the host
-    // trilinearJacobian (inlined; the metric is computed once per point).
     double J[3][3];
     #pragma unroll
     for (int a = 0; a < 3; ++a)
@@ -207,7 +180,11 @@ __global__ void ho_cvfem_metric_perpoint_kernel(const RealType* __restrict__ d_c
     Ji[1][0]=(J[1][2]*J[2][0]-J[1][0]*J[2][2])/det; Ji[1][1]=(J[0][0]*J[2][2]-J[0][2]*J[2][0])/det; Ji[1][2]=(J[0][2]*J[1][0]-J[0][0]*J[1][2])/det;
     Ji[2][0]=(J[1][0]*J[2][1]-J[1][1]*J[2][0])/det; Ji[2][1]=(J[0][1]*J[2][0]-J[0][0]*J[2][1])/det; Ji[2][2]=(J[0][0]*J[1][1]-J[0][1]*J[1][0])/det;
 
-    // Gvec = detJ * (J^{-1} J^{-T})[:,dir]
+    // Gvec = detJ * (J^{-1} J^{-T})[:,dir]. KEEP the 9-division form: it is a VERBATIM port of the
+    // host computeElementMetric, so the device metric is bit-identical to the host FP-op-for-FP-op --
+    // the contract the A.1 host<->device gate relies on. Do NOT "optimize" to a single 1/det
+    // (g = (1/det)*C*C^T): algebraically equal but it changes the rounding and breaks that bit-
+    // identity. If these divisions ever matter for perf, change the HOST in lockstep and re-validate.
     double gvec[3];
     #pragma unroll
     for (int a = 0; a < 3; ++a) {
@@ -216,11 +193,66 @@ __global__ void ho_cvfem_metric_perpoint_kernel(const RealType* __restrict__ d_c
         for (int k = 0; k < 3; ++k) v += Ji[a][k] * Ji[dir][k];
         gvec[a] = det * v;
     }
-
-    RealType* g = d_G + (e * (size_t)pointsPerElem + (size_t)(((dir * P + l) * N + s) * N + r)) * 3;
     g[0] = gvec[t2axis[dir]];   // tang2 (r-axis)
     g[1] = gvec[t1axis[dir]];   // tang1 (s-axis)
     g[2] = gvec[dir];           // normal
+}
+
+// --------------------------------------------------------------------------
+// Metric-precompute kernel (PerPoint). This is a PRECOMPUTE-ONCE buffer: d_G is
+// built once and reused across every CG apply (the apply never touches geometry),
+// so its register footprint / per-point corner reloads are amortized and not on
+// the apply critical path. One thread per (e, dir, l, s, r) point.
+// Ports computeElementMetric VERBATIM: metric = detJ * J^{-1} J^{-T}, with
+// G[((dir*p+l)*n+s)*n+r] = (g[0]=tang2(r-axis), g[1]=tang1(s-axis), g[2]=normal).
+// Output d_G is [numElements * 3*p*n*n] contiguous vec3 -- the EXACT host layout
+// the apply reads. d_corners is [numElements][8][3] (8 corners x xyz per element).
+// --------------------------------------------------------------------------
+// GStore is the STORED metric precision in d_G (default double = bit-identical).
+// When GStore=float the precompute writes the metric as float, halving d_G's DRAM
+// footprint -- d_G is ~75% of the apply's memory stream, so this is the dominant
+// throughput lever on the memory-bound apply. Geometry math stays in double; only
+// the final store is narrowed.
+template<typename RealType, int P, typename GStore = double>
+__global__ void ho_cvfem_metric_perpoint_kernel(const RealType* __restrict__ d_corners,
+                                                GStore* __restrict__ d_G,
+                                                size_t numElements)
+{
+    static_assert(std::is_same<GStore, double>::value || std::is_same<GStore, float>::value,
+        "stored metric precision GStore must be float or double");
+    constexpr int N  = P + 1;
+    constexpr int NN = N * N;
+    constexpr int pointsPerElem = 3 * P * NN;   // (dir,l,s,r) over 3*p*n*n
+
+    const size_t gid = (size_t)blockIdx.x * blockDim.x + threadIdx.x;
+    if (gid >= numElements * (size_t)pointsPerElem) return;
+
+    const size_t e   = gid / pointsPerElem;
+    int rem          = (int)(gid % pointsPerElem);
+    const int dir    = rem / (P * NN);  rem %= (P * NN);
+    const int l      = rem / NN;        rem %= NN;
+    const int s      = rem / N;
+    const int r      = rem % N;
+
+    // Load 8 corners for this element (xyz contiguous per corner).
+    double corners[8][3];
+    const RealType* cp = d_corners + e * 24;
+    #pragma unroll
+    for (int c = 0; c < 8; ++c) {
+        corners[c][0] = cp[c * 3 + 0];
+        corners[c][1] = cp[c * 3 + 1];
+        corners[c][2] = cp[c * 3 + 2];
+    }
+
+    // The whole point of factoring ho_cvfem_metric_point out: the recompute apply
+    // calls this SAME routine, so store-d_G and recompute agree bit-for-bit.
+    double g[3];
+    ho_cvfem_metric_point<P>(corners, dir, l, s, r, g);
+
+    GStore* go = d_G + (e * (size_t)pointsPerElem + (size_t)(((dir * P + l) * N + s) * N + r)) * 3;
+    go[0] = GStore(g[0]);   // tang2 (r-axis)
+    go[1] = GStore(g[1]);   // tang1 (s-axis)
+    go[2] = GStore(g[2]);   // normal
 }
 
 // --------------------------------------------------------------------------
@@ -268,12 +300,19 @@ __global__ void ho_cvfem_metric_perpoint_kernel(const RealType* __restrict__ d_c
 // __syncthreads). When null the index IS the element id (slot_e), bit-identical
 // to the original full-range path. Used by the distributed overlap matvec to
 // apply interior elements before the halo wait and boundary elements after.
-template<typename RealType, int P, int BlockSize, int ElemsPerBlock, int GMode>
+// GStore is the STORED metric precision in d_G (default double = bit-identical to
+// the validated path). When float, the metric is READ as float and PROMOTED to
+// double before the FMAs, so all sum-factorization arithmetic stays fp64; only the
+// d_G DRAM stream is halved. The host-vs-device parity gate holds to ~1e-12 for
+// GStore=double; at float the stored metric differs ~1e-7 so that gate must be
+// loosened (~1e-6) or skipped by the driver -- the A.1 (A*const=0) gate is
+// fp32-SAFE by construction (the metric multiplies grad(const)=0) and still holds.
+template<typename RealType, int P, int BlockSize, int ElemsPerBlock, int GMode, typename GStore = double>
 __global__ void __launch_bounds__(BlockSize)
 ho_cvfem_apply_kernel(const RealType* __restrict__ d_u,
                       RealType* __restrict__ d_y,
                       const int* __restrict__ d_elemDof,
-                      const RealType* __restrict__ d_G,
+                      const GStore* __restrict__ d_G,
                       size_t numElements,
                       const int* __restrict__ d_elemList = nullptr,
                       size_t count = 0)
@@ -284,6 +323,8 @@ ho_cvfem_apply_kernel(const RealType* __restrict__ d_u,
     // unvalidated -- block it until a float-tolerance gate exists.
     static_assert(std::is_same<RealType, double>::value,
         "HO-CVFEM matrix-free apply is validated for RealType=double only");
+    static_assert(std::is_same<GStore, double>::value || std::is_same<GStore, float>::value,
+        "stored metric precision GStore must be float or double");
     constexpr int N   = P + 1;
     constexpr int NN  = N * N;
     constexpr int N3  = NN * N;
@@ -352,7 +393,7 @@ ho_cvfem_apply_kernel(const RealType* __restrict__ d_u,
     // 3*P*NN (line below). The within-element per-point *3 is added at the read in
     // step 2. Affine stores 3 doubles/element. Invalid elems point at element 0's
     // metric -- harmless, output is discarded.
-    const RealType* Gbase = d_G + (valid ? e : 0) * (size_t)(GMode == HO_CVFEM_PERPOINT ? 3 * P * NN * 3 : 3);
+    const GStore* Gbase = d_G + (valid ? e : 0) * (size_t)(GMode == HO_CVFEM_PERPOINT ? 3 * P * NN * 3 : 3);
 
     // Keep dir and l ROLLED. Full-unrolling them replicates the whole 4-step
     // contraction body 3*P times (21 copies at p=7), exploding registers and
@@ -403,8 +444,11 @@ ho_cvfem_apply_kernel(const RealType* __restrict__ d_u,
                         for (int q = 0; q < N; ++q) dt2 += c_D[r * N + q] * faceA[s * NP + q]; // r-axis (t2)
                         #pragma unroll
                         for (int q = 0; q < N; ++q) dt1 += c_D[s * N + q] * faceA[q * NP + r]; // s-axis (t1)
-                        const RealType* g = Gbase + (size_t)(((dir * P + l) * N + s) * N + r) * 3;
-                        faceB[s * NP + r] = g[2] * deriv_cache[it] + g[0] * dt2 + g[1] * dt1;
+                        const GStore* g = Gbase + (size_t)(((dir * P + l) * N + s) * N + r) * 3;
+                        // Promote the stored metric to double BEFORE the FMAs so the
+                        // flux assembly is fp64 even when d_G is float (GStore=float).
+                        const RealType g0 = RealType(g[0]), g1 = RealType(g[1]), g2 = RealType(g[2]);
+                        faceB[s * NP + r] = g2 * deriv_cache[it] + g0 * dt2 + g1 * dt1;
                     } else {
                         // Affine: element-constant diagonal metric. For an
                         // orthogonal/axis-aligned hex the cross terms vanish and
@@ -413,7 +457,7 @@ ho_cvfem_apply_kernel(const RealType* __restrict__ d_u,
                         // (W already carries the face quadrature, so NO extra
                         // weight is folded here; folding one would over-count).
                         const int s = slot / N, r = slot % N;
-                        faceB[s * NP + r] = Gbase[dir] * deriv_cache[it];
+                        faceB[s * NP + r] = RealType(Gbase[dir]) * deriv_cache[it];
                     }
                 }
                 __syncthreads();                 // flux visible for W-integration
@@ -455,6 +499,168 @@ ho_cvfem_apply_kernel(const RealType* __restrict__ d_u,
 }
 
 // --------------------------------------------------------------------------
+// RECOMPUTE apply kernel (the low-order / p=1 complement to ho_cvfem_apply_kernel).
+// Same sum-factorized 4-step sweep, but it stores NO d_G: where the store-d_G kernel
+// reads g = Gbase[(((dir*P+l)*N+s)*N+r)*3], this kernel COMPUTES that same vec3 inline via
+// ho_cvfem_metric_point from the element's 8 corner coords. Because it calls the very
+// routine the precompute kernel uses, the metric is BIT-IDENTICAL to store-d_G; only
+// the flux read source differs (recomputed vs DRAM), so the result is bit-identical
+// by construction. PerPoint only (recompute IS per-point; no Affine fast path).
+//
+// The 24 corner coords are gathered ONCE per element into shared memory (corn slab),
+// shared by every (s,r) thread of that element -- so each element reloads corners
+// from DRAM once per matvec, not once per quad point. The per-point Jacobian is then
+// formed in registers from that shared corner copy.
+//
+// COST NOTE (order-dependent crossover): recompute does a 3x3 trilinear Jacobian +
+// inverse at every SCS quad point. The apply visits 3*P*(P+1)^2 points/element, so
+// the recompute work grows ~3*P*(P+1)^2 Jacobians/element. At p=1 that is 12 points
+// and the metric is cheap relative to the gather/scatter + smem traffic, so we trade
+// a tiny FLOP bump for deleting the entire d_G array. At high p the per-point Jacobian
+// cost dominates and store-d_G (read a cached vec3) wins -- the crossover is order-
+// dependent, to be measured on Alps, not asserted here.
+//
+// Smem layout: [u_sh | y_sh | face | corn], corn = E*24 doubles (8 corners*xyz per
+// element). The extra E*24 doubles is small vs u_sh+y_sh (E*2*N3): at p=1, N3=8 ->
+// 16 vs 24 (corners dominate only at p=1, still tiny in absolute bytes); at p>=2 it
+// is negligible. d_corners is [numElements*24], the SAME buffer the metric kernel reads.
+// --------------------------------------------------------------------------
+template<typename RealType, int P, int BlockSize, int ElemsPerBlock>
+__global__ void __launch_bounds__(BlockSize)
+ho_cvfem_apply_recompute_kernel(const RealType* __restrict__ d_u,
+                                RealType* __restrict__ d_y,
+                                const int* __restrict__ d_elemDof,
+                                const RealType* __restrict__ d_corners,
+                                size_t numElements,
+                                const int* __restrict__ d_elemList = nullptr,
+                                size_t count = 0)
+{
+    static_assert(std::is_same<RealType, double>::value,
+        "HO-CVFEM matrix-free apply is validated for RealType=double only");
+    constexpr int N   = P + 1;
+    constexpr int NN  = N * N;
+    constexpr int N3  = NN * N;
+    constexpr int E   = ElemsPerBlock;
+    constexpr int threadsPerElem = BlockSize / E;
+    constexpr int NP  = N;            // no face-buffer padding (see store-d_G note)
+    constexpr int NNP = N * NP;
+
+    // [u_sh | y_sh | face | corn]. corn keeps the 8 corner coords per element so the
+    // metric is recomputed from smem, not reloaded from DRAM per quad point.
+    extern __shared__ char ho_smem_raw[];
+    RealType* u_sh  = reinterpret_cast<RealType*>(ho_smem_raw);
+    RealType* y_sh  = u_sh + (size_t)E * N3;
+    RealType* face  = y_sh + (size_t)E * N3;
+    RealType* corn  = face + (size_t)E * 2 * NNP;   // E * 24 doubles
+
+    const int t          = threadIdx.x;
+    const int localElem  = t / threadsPerElem;
+    const int laneInElem = t % threadsPerElem;
+    const size_t slot_e  = (size_t)blockIdx.x * E + localElem;
+    const size_t e       = (d_elemList != nullptr)
+                             ? (slot_e < count ? (size_t)d_elemList[slot_e] : numElements)
+                             : slot_e;
+
+    RealType* my_u   = u_sh + localElem * N3;
+    RealType* my_y   = y_sh + localElem * N3;
+    RealType* faceA  = face + localElem * 2 * NNP;
+    RealType* faceB  = faceA + NNP;
+    RealType* my_cn  = corn + localElem * 24;
+    const bool valid = (e < numElements);
+    const int* edof  = valid ? (d_elemDof + e * N3) : nullptr;
+
+    // Gather u, zero y, AND load the 8 corner coords into smem (invalid elems load 0
+    // so the inline Jacobian stays finite -- output discarded). The corner gather is
+    // 24 doubles/element, grid-strided over the element's threads.
+    for (int l = laneInElem; l < N3; l += threadsPerElem) {
+        my_u[l] = (valid && edof[l] >= 0) ? d_u[edof[l]] : RealType(0);
+        my_y[l] = RealType(0);
+    }
+    for (int c = laneInElem; c < 24; c += threadsPerElem)
+        my_cn[c] = valid ? d_corners[e * 24 + c] : RealType(0);
+    __syncthreads();
+
+    // Stage the smem corners into a per-thread register copy [8][3]. ho_cvfem_metric_point
+    // takes corners[8][3]; reading them from registers (vs re-reading smem inside the
+    // per-point loop) keeps the metric math identical to the precompute kernel, which
+    // also holds corners in registers -- bit-identity preserved.
+    double corners[8][3];
+    #pragma unroll
+    for (int c = 0; c < 8; ++c) {
+        corners[c][0] = my_cn[c * 3 + 0];
+        corners[c][1] = my_cn[c * 3 + 1];
+        corners[c][2] = my_cn[c * 3 + 2];
+    }
+
+    for (int dir = 0; dir < 3; ++dir)
+    {
+            for (int l = 0; l < P; ++l)
+            {
+                constexpr int kDerivIters = (NN + threadsPerElem - 1) / threadsPerElem;
+                RealType deriv_cache[kDerivIters];
+                int it = 0;
+                for (int slot = laneInElem; slot < NN; slot += threadsPerElem, ++it) {
+                    const int s = slot / N, r = slot % N;
+                    RealType bi = 0, di = 0;
+                    #pragma unroll
+                    for (int q = 0; q < N; ++q) {
+                        RealType uq = my_u[ho_idx<N, NN>(dir, q, s, r)];
+                        bi += c_Btil[l * N + q] * uq;
+                        di += c_Dtil[l * N + q] * uq;
+                    }
+                    faceA[s * NP + r] = bi;
+                    deriv_cache[it]   = di;
+                }
+                __syncthreads();
+
+                // step 2: SAME flux as store-d_G, but g is RECOMPUTED inline from the
+                // element corners via ho_cvfem_metric_point (the precompute routine).
+                it = 0;
+                for (int slot = laneInElem; slot < NN; slot += threadsPerElem, ++it) {
+                    const int s = slot / N, r = slot % N;
+                    RealType dt2 = 0, dt1 = 0;
+                    #pragma unroll
+                    for (int q = 0; q < N; ++q) dt2 += c_D[r * N + q] * faceA[s * NP + q]; // r-axis (t2)
+                    #pragma unroll
+                    for (int q = 0; q < N; ++q) dt1 += c_D[s * N + q] * faceA[q * NP + r]; // s-axis (t1)
+                    double g[3];
+                    ho_cvfem_metric_point<P>(corners, dir, l, s, r, g);
+                    faceB[s * NP + r] = g[2] * deriv_cache[it] + g[0] * dt2 + g[1] * dt1;
+                }
+                __syncthreads();
+
+                // step 3: W-integration along r-axis (t2). tmp -> faceA (reuse).
+                for (int slot = laneInElem; slot < NN; slot += threadsPerElem) {
+                    const int s = slot / N, r = slot % N;
+                    RealType v = 0;
+                    #pragma unroll
+                    for (int q = 0; q < N; ++q) v += c_W[r * N + q] * faceB[s * NP + q];
+                    faceA[s * NP + r] = v;
+                }
+                __syncthreads();
+
+                // step 4: W-integration along s-axis (t1) + distribute -/+ to nodes l, l+1.
+                for (int slot = laneInElem; slot < NN; slot += threadsPerElem) {
+                    const int s = slot / N, r = slot % N;
+                    RealType intf = 0;
+                    #pragma unroll
+                    for (int q = 0; q < N; ++q) intf += c_W[s * N + q] * faceA[q * NP + r];
+                    my_y[ho_idx<N, NN>(dir, l,     s, r)] -= intf;
+                    my_y[ho_idx<N, NN>(dir, l + 1, s, r)] += intf;
+                }
+                __syncthreads();
+            }
+        }
+
+    if (e < numElements) {
+        for (int l = laneInElem; l < N3; l += threadsPerElem) {
+            int dof = edof[l];
+            if (dof >= 0) atomicAdd(&d_y[dof], my_y[l]);
+        }
+    }
+}
+
+// --------------------------------------------------------------------------
 // Default ElemsPerBlock / BlockSize per P (occupancy plan). The binding rule:
 // threadsPerElem = Block/E should be the SMALLEST warp multiple >= NN, so no
 // warp is more than partially idle and no whole warp does zero work. Decoupling
@@ -482,18 +688,119 @@ template<> struct HoCvfemLaunchDefault<6> { static constexpr int Block = 128; st
 template<> struct HoCvfemLaunchDefault<7> { static constexpr int Block = 128; static constexpr int Elems = 2;  };   // tpe=64 (NN=64)
 template<> struct HoCvfemLaunchDefault<8> { static constexpr int Block = 96;  static constexpr int Elems = 1;  };   // tpe=96 (NN=81)
 
+// Device gather of the 8 corner coords per owned element straight from the domain's
+// device connectivity + device coords into the [numElements*8*3] d_corners buffer the
+// metric kernel reads. Replaces the host h_corners pack (D2H coords + host loop + H2D):
+// every input is already device-resident, so this stays on-GPU. Corner slot c follows
+// the connectivity column order (same as D.elemCorners[e][c]), which is exactly the
+// order c_hexCornerRef expects. conn[c] is indexed over the FULL element range, so the
+// owned slice starts at startElem.
+template<typename RealType, typename KeyType>
+__global__ void ho_gather_corner_coords_kernel(
+    const KeyType* __restrict__ c0, const KeyType* __restrict__ c1,
+    const KeyType* __restrict__ c2, const KeyType* __restrict__ c3,
+    const KeyType* __restrict__ c4, const KeyType* __restrict__ c5,
+    const KeyType* __restrict__ c6, const KeyType* __restrict__ c7,
+    const RealType* __restrict__ nodeX, const RealType* __restrict__ nodeY,
+    const RealType* __restrict__ nodeZ,
+    RealType* __restrict__ d_corners, size_t startElem, size_t numElements)
+{
+    const size_t e = (size_t)blockIdx.x * blockDim.x + threadIdx.x;
+    if (e >= numElements) return;
+    const size_t ge = startElem + e;
+    const KeyType lc[8] = { c0[ge], c1[ge], c2[ge], c3[ge],
+                            c4[ge], c5[ge], c6[ge], c7[ge] };
+    RealType* out = d_corners + e * 24;
+    #pragma unroll
+    for (int c = 0; c < 8; ++c) {
+        const size_t nd = (size_t)lc[c];
+        out[c * 3 + 0] = nodeX[nd];
+        out[c * 3 + 1] = nodeY[nd];
+        out[c * 3 + 2] = nodeZ[nd];
+    }
+}
+
+template<typename RealType, typename KeyType, int BlockSize = 256>
+inline cudaError_t ho_gather_corner_coords_launch(
+    const KeyType* c0, const KeyType* c1, const KeyType* c2, const KeyType* c3,
+    const KeyType* c4, const KeyType* c5, const KeyType* c6, const KeyType* c7,
+    const RealType* nodeX, const RealType* nodeY, const RealType* nodeZ,
+    RealType* d_corners, size_t startElem, size_t numElements, cudaStream_t stream = 0)
+{
+    const size_t grid = (numElements + BlockSize - 1) / BlockSize;
+    if (grid == 0) return cudaSuccess;
+    ho_gather_corner_coords_kernel<RealType, KeyType>
+        <<<(unsigned)grid, BlockSize, 0, stream>>>(
+            c0, c1, c2, c3, c4, c5, c6, c7, nodeX, nodeY, nodeZ,
+            d_corners, startElem, numElements);
+    return cudaGetLastError();
+}
+
+// --------------------------------------------------------------------------
+// INTERIOR/BOUNDARY element classification for the distributed OVERLAP matvec.
+//
+// An element is BOUNDARY iff ANY of its N3 gathered DOFs is a GHOST DOF (a DOF
+// this rank does NOT own, whose value is filled by the forward halo exchange).
+// Those elements MUST be applied AFTER the forward halo wait, because their input
+// depends on the ghost values. Every other element is INTERIOR: all its inputs are
+// owned DOFs, already valid before the exchange, so it can be applied DURING the
+// halo flight.
+//
+// EXACT GHOST TEST: the halo's recvDof_ list is precisely the set of local DOF ids
+// whose values forwardDevice OVERWRITES with the owner's value (the scatter target).
+// So d_ghostFlag[d] = 1 iff d is in recvDof_ is the exact "is d a ghost" predicate.
+// A DOF id < 0 in elemDof is a constrained/absent node (contributes 0, never a ghost)
+// and is skipped -- it does not force an element to boundary. CONSERVATIVE BY
+// CONSTRUCTION: if a DOF is a ghost, its element is classified boundary; an element is
+// interior only when EVERY one of its DOFs is non-ghost.
+// --------------------------------------------------------------------------
+
+// d_ghostFlag[d] = 1 for every local DOF d in the recvDof_ list (a ghost). The flag
+// array is zeroed by the caller; recv DOF are unique so no atomics are needed.
+__global__ void ho_mark_ghost_dofs_kernel(const int* __restrict__ d_recvDof,
+                                          int nRecv,
+                                          uint8_t* __restrict__ d_ghostFlag)
+{
+    int i = (int)(blockIdx.x * blockDim.x + threadIdx.x);
+    if (i >= nRecv) return;
+    int d = d_recvDof[i];
+    if (d >= 0) d_ghostFlag[d] = 1;
+}
+
+// d_isBoundary[e] = 1 iff element e touches any ghost DOF (per the flag above), over
+// the element's N3 entries in d_elemDof (l = i*nn + j*n + k). One thread per element.
+template<int P>
+__global__ void ho_classify_boundary_elems_kernel(const int* __restrict__ d_elemDof,
+                                                  const uint8_t* __restrict__ d_ghostFlag,
+                                                  size_t numElements,
+                                                  uint8_t* __restrict__ d_isBoundary)
+{
+    constexpr int N3 = (P + 1) * (P + 1) * (P + 1);
+    const size_t e = (size_t)blockIdx.x * blockDim.x + threadIdx.x;
+    if (e >= numElements) return;
+    const int* edof = d_elemDof + e * N3;
+    uint8_t bnd = 0;
+    #pragma unroll 4
+    for (int l = 0; l < N3; ++l) {
+        int d = edof[l];
+        if (d >= 0 && d_ghostFlag[d]) { bnd = 1; break; }
+    }
+    d_isBoundary[e] = bnd;
+}
+
 // Metric-precompute launcher (PerPoint). d_corners is [numElements*8*3], d_G is
 // [numElements * 3*P*(P+1)^2 * 3]. Operators (xi/zeta) MUST be uploaded first.
-template<typename RealType, int P, int BlockSize = 256>
+// GStore (default double) selects the stored metric precision; float halves d_G.
+template<typename RealType, int P, typename GStore = double, int BlockSize = 256>
 inline cudaError_t ho_cvfem_metric_perpoint_launch(const RealType* d_corners,
-                                                   RealType* d_G,
+                                                   GStore* d_G,
                                                    size_t numElements,
                                                    cudaStream_t stream = 0)
 {
     constexpr int N = P + 1;
     const size_t total = numElements * (size_t)(3 * P * N * N);
     const size_t grid  = (total + BlockSize - 1) / BlockSize;
-    ho_cvfem_metric_perpoint_kernel<RealType, P>
+    ho_cvfem_metric_perpoint_kernel<RealType, P, GStore>
         <<<(unsigned)grid, BlockSize, 0, stream>>>(d_corners, d_G, numElements);
     return cudaGetLastError();
 }
@@ -506,11 +813,11 @@ inline cudaError_t ho_cvfem_metric_perpoint_launch(const RealType* d_corners,
 // the `count` elements it names (grid = ceil(count/E)); numElements stays the DOF
 // validity sentinel. When null the full [0,numElements) range runs, bit-identical
 // to before (same grid, same kernel index expression).
-template<typename RealType, int P, int BlockSize, int ElemsPerBlock, int GMode>
+template<typename RealType, int P, int BlockSize, int ElemsPerBlock, int GMode, typename GStore = double>
 inline cudaError_t ho_cvfem_apply_launch_impl(const RealType* d_u,
                                               RealType* d_y,
                                               const int* d_elemDof,
-                                              const RealType* d_G,
+                                              const GStore* d_G,
                                               size_t numElements,
                                               cudaStream_t stream,
                                               const int* d_elemList = nullptr,
@@ -534,7 +841,7 @@ inline cudaError_t ho_cvfem_apply_launch_impl(const RealType* d_u,
     constexpr int smemBytes =
         (int)(((size_t)ElemsPerBlock * 2 * N3 + (size_t)ElemsPerBlock * 2 * NNP) * sizeof(RealType));
 
-    auto kernel = ho_cvfem_apply_kernel<RealType, P, BlockSize, ElemsPerBlock, GMode>;
+    auto kernel = ho_cvfem_apply_kernel<RealType, P, BlockSize, ElemsPerBlock, GMode, GStore>;
     // Opt into >48KB dynamic smem; harmless when smemBytes <= 48KB. Idempotent.
     cudaError_t attrErr = cudaFuncSetAttribute(
         kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, smemBytes);
@@ -549,20 +856,125 @@ inline cudaError_t ho_cvfem_apply_launch_impl(const RealType* d_u,
 }
 
 // PerPoint (general/curved hexes). d_G = [numElements * 3*P*(P+1)^2] vec3.
+// GStore (default double) selects the d_G storage precision; pass float (and a
+// float d_G allocated/filled by the float metric launcher) to halve the metric
+// DRAM stream on the memory-bound apply.
 template<typename RealType, int P,
+         typename GStore = double,
          int BlockSize = HoCvfemLaunchDefault<P>::Block,
          int ElemsPerBlock = HoCvfemLaunchDefault<P>::Elems>
 inline cudaError_t ho_cvfem_apply_launch(const RealType* d_u,
                                          RealType* d_y,
                                          const int* d_elemDof,
-                                         const RealType* d_G,
+                                         const GStore* d_G,
                                          size_t numElements,
                                          cudaStream_t stream = 0,
                                          const int* d_elemList = nullptr,
                                          size_t count = 0)
 {
-    return ho_cvfem_apply_launch_impl<RealType, P, BlockSize, ElemsPerBlock, HO_CVFEM_PERPOINT>(
+    return ho_cvfem_apply_launch_impl<RealType, P, BlockSize, ElemsPerBlock, HO_CVFEM_PERPOINT, GStore>(
         d_u, d_y, d_elemDof, d_G, numElements, stream, d_elemList, count);
+}
+
+// --------------------------------------------------------------------------
+// RUNTIME elements-per-block (E) override for the store-d_G PerPoint apply.
+//
+// WHY: ncu found the apply L1/occupancy-bound at p>=3 (the fp32-metric DRAM win
+// vanished there -- it is NOT HBM-bound), so the remaining lever is occupancy =
+// elements-per-block. E is a compile-time template param (it sizes the smem
+// carveout and the block), so to let the user sweep E from one job we instantiate
+// the apply for a BOUNDED candidate set {2,4,8,16,32} and runtime-switch. Only
+// these five E (plus the per-P default below) are compiled, so the binary growth
+// is 5 extra apply instantiations per P actually swept -- not the full cross
+// product. Compile cost note: each candidate is one more ho_cvfem_apply_kernel
+// template body; sweeping all p=1..8 x 5 E is ~40 extra instantiations of the
+// already-built apply kernel, which adds on the order of a minute or two of nvcc
+// time over the default build (no new kernel SOURCE, just more <P,E> bodies).
+//
+// threadsPerElem is held at the per-P value the validated defaults use (the same
+// thread->slot mapping the A.1 gate passes), and Block = E*tpe. So ONLY E (and
+// hence smem + grid) changes vs the default; the reduction order, smem layout,
+// and per-thread work are untouched -> A.1 stays bit-stable across E.
+// --------------------------------------------------------------------------
+
+// Per-P threads-per-element (smallest warp multiple >= NN, or the NN-packed value
+// for small NN) -- mirrors the HoCvfemLaunchDefault Block/Elems tpe column exactly.
+template<int P> struct HoCvfemTpe;
+template<> struct HoCvfemTpe<1> { static constexpr int value = 4;  };
+template<> struct HoCvfemTpe<2> { static constexpr int value = 9;  };
+template<> struct HoCvfemTpe<3> { static constexpr int value = 16; };
+template<> struct HoCvfemTpe<4> { static constexpr int value = 32; };
+template<> struct HoCvfemTpe<5> { static constexpr int value = 64; };
+template<> struct HoCvfemTpe<6> { static constexpr int value = 64; };
+template<> struct HoCvfemTpe<7> { static constexpr int value = 64; };
+template<> struct HoCvfemTpe<8> { static constexpr int value = 96; };
+
+// Dynamic smem bytes the store-d_G apply needs for a given (P,E). MUST match
+// ho_cvfem_apply_launch_impl's smemBytes: [u_sh|y_sh|face] = E*2*(N3+NN) doubles.
+template<int P>
+inline constexpr size_t ho_cvfem_smem_bytes(int eblock)
+{
+    constexpr int N = P + 1, NN = N * N, N3 = NN * N;
+    return (size_t)eblock * 2 * (N3 + NN) * sizeof(double);
+}
+
+// (P,E) is launchable iff the block fits the HW thread cap AND the smem fits the
+// Hopper dynamic-smem carveout. Block = E*tpe; smem from ho_cvfem_smem_bytes. The
+// caller passes the device's real max (cudaDevAttrMaxSharedMemoryPerBlockOptin,
+// ~228KB on H100/GH200) so the guard tracks the actual GPU, not a hardcoded number.
+template<int P>
+inline bool ho_cvfem_eblock_feasible(int eblock, size_t smemCapBytes,
+                                     int maxThreadsPerBlock = 1024)
+{
+    const long block = (long)eblock * HoCvfemTpe<P>::value;
+    if (block <= 0 || block > maxThreadsPerBlock) return false;
+    return ho_cvfem_smem_bytes<P>(eblock) <= smemCapBytes;
+}
+
+// Runtime-E dispatch: launch the store-d_G PerPoint apply with ElemsPerBlock=eblock,
+// chosen from the bounded candidate set {2,4,8,16,32}. eblock<=0 (or any value not
+// in the set) falls back to the per-P default -> the env-UNSET path is bit-identical
+// to ho_cvfem_apply_launch. Returns cudaErrorInvalidConfiguration WITHOUT launching
+// if the requested (P,eblock) is infeasible (over-smem / over-block); the caller is
+// expected to pre-filter with ho_cvfem_eblock_feasible and report skips.
+template<typename RealType, int P, typename GStore = double>
+inline cudaError_t ho_cvfem_apply_launch_E(const RealType* d_u,
+                                           RealType* d_y,
+                                           const int* d_elemDof,
+                                           const GStore* d_G,
+                                           size_t numElements,
+                                           int eblock,
+                                           size_t smemCapBytes,
+                                           cudaStream_t stream = 0,
+                                           const int* d_elemList = nullptr,
+                                           size_t count = 0)
+{
+    constexpr int tpe = HoCvfemTpe<P>::value;
+    // Default fallback: not in the candidate set -> exactly the validated default launch.
+    if (eblock != 2 && eblock != 4 && eblock != 8 && eblock != 16 && eblock != 32)
+        return ho_cvfem_apply_launch<RealType, P, GStore>(
+            d_u, d_y, d_elemDof, d_G, numElements, stream, d_elemList, count);
+    if (!ho_cvfem_eblock_feasible<P>(eblock, smemCapBytes))
+        return cudaErrorInvalidConfiguration;   // never launch an over-smem/over-block config
+    // INSTANTIATE only the E whose Block=E*tpe fits the 1024 thread cap. __launch_bounds__
+    // (Block) is a COMPILE-TIME error for Block>1024, so guarding the launch alone is not
+    // enough -- the over-1024 <P,E> body must not be instantiated at all. if constexpr drops
+    // it from the compile. The runtime feasibility guard above already rejects those E, so a
+    // dropped case can never be reached anyway; this just keeps nvcc happy AND trims the
+    // binary (no dead high-p large-E kernels are emitted).
+    switch (eblock) {
+        case 2:  if constexpr (2 *tpe <= 1024) return ho_cvfem_apply_launch_impl<RealType, P, 2 *tpe, 2,  HO_CVFEM_PERPOINT, GStore>(
+                         d_u, d_y, d_elemDof, d_G, numElements, stream, d_elemList, count); break;
+        case 4:  if constexpr (4 *tpe <= 1024) return ho_cvfem_apply_launch_impl<RealType, P, 4 *tpe, 4,  HO_CVFEM_PERPOINT, GStore>(
+                         d_u, d_y, d_elemDof, d_G, numElements, stream, d_elemList, count); break;
+        case 8:  if constexpr (8 *tpe <= 1024) return ho_cvfem_apply_launch_impl<RealType, P, 8 *tpe, 8,  HO_CVFEM_PERPOINT, GStore>(
+                         d_u, d_y, d_elemDof, d_G, numElements, stream, d_elemList, count); break;
+        case 16: if constexpr (16*tpe <= 1024) return ho_cvfem_apply_launch_impl<RealType, P, 16*tpe, 16, HO_CVFEM_PERPOINT, GStore>(
+                         d_u, d_y, d_elemDof, d_G, numElements, stream, d_elemList, count); break;
+        case 32: if constexpr (32*tpe <= 1024) return ho_cvfem_apply_launch_impl<RealType, P, 32*tpe, 32, HO_CVFEM_PERPOINT, GStore>(
+                         d_u, d_y, d_elemDof, d_G, numElements, stream, d_elemList, count); break;
+    }
+    return cudaErrorInvalidConfiguration;
 }
 
 // Affine (axis-aligned/orthogonal hexes). d_Ghat = [numElements * 3] per-element
@@ -588,6 +1000,51 @@ inline cudaError_t ho_cvfem_apply_launch_affine(const RealType* d_u,
 {
     return ho_cvfem_apply_launch_impl<RealType, P, BlockSize, ElemsPerBlock, HO_CVFEM_AFFINE>(
         d_u, d_y, d_elemDof, d_Ghat, numElements, stream);
+}
+
+// RECOMPUTE apply launcher (no d_G). Drop-in replacement for ho_cvfem_apply_launch
+// but feeds d_corners ([numElements*24]) instead of d_G and runs the inline-metric
+// kernel. Same grid/block/E plan, same dynamic-smem carveout, same d_elemList subset
+// contract. d_y MUST be pre-zeroed; operators uploaded once via
+// ho_cvfem_upload_operators (the recompute reads c_xi/c_zeta for the metric, on top of
+// c_Btil/c_Dtil/c_D/c_W -- so xi/zeta MUST be uploaded too, unlike the store-d_G apply
+// which never touches geometry).
+template<typename RealType, int P,
+         int BlockSize = HoCvfemLaunchDefault<P>::Block,
+         int ElemsPerBlock = HoCvfemLaunchDefault<P>::Elems>
+inline cudaError_t ho_cvfem_apply_recompute_launch(const RealType* d_u,
+                                                   RealType* d_y,
+                                                   const int* d_elemDof,
+                                                   const RealType* d_corners,
+                                                   size_t numElements,
+                                                   cudaStream_t stream = 0,
+                                                   const int* d_elemList = nullptr,
+                                                   size_t count = 0)
+{
+    static_assert(BlockSize % ElemsPerBlock == 0,
+        "BlockSize must be an integer multiple of ElemsPerBlock (threadsPerElem = BlockSize/E)");
+    assert(d_elemList == nullptr || count <= numElements);
+    constexpr int N   = P + 1;
+    constexpr int NN  = N * N;
+    constexpr int N3  = NN * N;
+    constexpr int NNP = N * N;
+    // Smem = [u_sh | y_sh | face | corn]; corn adds E*24 doubles over the store-d_G
+    // layout (the only smem difference between the two kernels).
+    constexpr int smemBytes =
+        (int)(((size_t)ElemsPerBlock * 2 * N3 + (size_t)ElemsPerBlock * 2 * NNP
+               + (size_t)ElemsPerBlock * 24) * sizeof(RealType));
+
+    auto kernel = ho_cvfem_apply_recompute_kernel<RealType, P, BlockSize, ElemsPerBlock>;
+    cudaError_t attrErr = cudaFuncSetAttribute(
+        kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, smemBytes);
+    if (attrErr != cudaSuccess) return attrErr;
+
+    const size_t launchElems = (d_elemList != nullptr) ? count : numElements;
+    const size_t grid = (launchElems + ElemsPerBlock - 1) / ElemsPerBlock;
+    if (grid == 0) return cudaSuccess;
+    kernel<<<(unsigned)grid, BlockSize, smemBytes, stream>>>(
+        d_u, d_y, d_elemDof, d_corners, numElements, d_elemList, count);
+    return cudaGetLastError();
 }
 
 } // namespace fem
