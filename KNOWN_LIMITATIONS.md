@@ -23,6 +23,23 @@ whether MARS fits your use case. The major version is `0`: APIs may change.
   periodic cases.
 - **Multi-rank Poiseuille channel.** Under investigation; single-rank works.
 
+## Module status
+The unstructured GPU backend (`backend/distributed/unstructured/`) is the active,
+supported path. Other modules are present but build-OFF by default and not actively
+developed for v0.1:
+- `backend/serial/` — reference CPU backend, legacy (kept for debugging).
+- Kokkos structured-mesh / SFC path — stable but not actively developed; prefer the unstructured backend.
+- `backend/adios2/` — optional ADIOS2 I/O, off by default.
+- `backend/vtk/`, `moonolith_adapter/` — optional/experimental extensions, off by default.
+
+## Assembly kernel variants
+`fem/` ships several CVFEM assembly kernels. The canonical paths are the **hex tensor**
+kernel (`mars_cvfem_hex_kernel_tensor.hpp`) and the **graph** kernels (hex/tet). The other
+hex variants (`_wmma`, `_perip`, `_aos`, `_colored`, `_shmem`, `_optimized`) are
+hardware-targeted optimizations of the same math; `_core_example` is a reference/teaching
+kernel, not for production. High-order matrix-free kernels are experimental (see above).
+Unless you are benchmarking a specific GPU path, use the tensor or graph kernel.
+
 ## Build / platform notes
 - Primary supported build: CUDA (`-DMARS_ENABLE_CUDA=ON -DMARS_ENABLE_UNSTRUCTURED=ON`)
   on NVIDIA GPUs, architectures `70;80;90` by default (override with
