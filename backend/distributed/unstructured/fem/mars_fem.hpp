@@ -10,6 +10,10 @@
 #include "mars_boundary_conditions.hpp"
 #include "mars_dof_elimination.hpp"
 #include "mars_unstructured_dof_handler.hpp"
+// CVFEM assembly pipeline: sparsity -> assemble -> utils
+#include "mars_sparsity_builder.hpp"
+#include "mars_cvfem_assembler.hpp"
+#include "mars_cvfem_utils.hpp"
 #include "../solvers/mars_cg_solver_with_preconditioner.hpp"
 #include "../solvers/mars_bicgstab_solver.hpp"
 #include "../solvers/mars_gmres_solver.hpp"

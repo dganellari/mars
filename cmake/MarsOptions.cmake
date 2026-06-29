@@ -28,6 +28,5 @@ option(MARS_ENABLE_EXAMPLES "Enable examples" OFF)
 option(MARS_ENABLE_FEM_EXAMPLES "Enable FEM examples (unstructured)" OFF)
 option(MARS_ENABLE_CXXOPTS "Enable cxxopts" ON)
 
-# New options for unstructured and octree modules
+# Unstructured (cornerstone-octree) module
 option(MARS_ENABLE_UNSTRUCTURED "Enable unstructured module" ON)
-option(MARS_ENABLE_OCTREE "Enable octree module" ON)

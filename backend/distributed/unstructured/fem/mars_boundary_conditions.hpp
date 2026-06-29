@@ -224,66 +224,6 @@ __global__ void eliminateBCStep2Kernel(const IndexType* boundaryDofs,
     }
 }
 
-// Old unused kernel - keeping for reference
-// Simple kernel to apply Dirichlet BCs - SYMMETRIC penalty method
-template<typename RealType, typename IndexType>
-__global__ void applySymmetricDirichletKernel_OLD(const IndexType* boundaryDofs,
-                                               IndexType numBoundaryDofs,
-                                               RealType bcValue,
-                                               const IndexType* rowOffsets,
-                                               const IndexType* colIndices,
-                                               RealType* values,
-                                               RealType* rhs,
-                                               IndexType numRows)
-{
-    IndexType row = blockIdx.x * blockDim.x + threadIdx.x;
-    if (row >= numRows) return;
-
-    IndexType rowStart = rowOffsets[row];
-    IndexType rowEnd   = rowOffsets[row + 1];
-
-    // Check if this row is a boundary DOF (binary search on sorted array)
-    IndexType left = 0, right = numBoundaryDofs - 1;
-    bool isBoundaryRow = false;
-    while (left <= right)
-    {
-        IndexType mid = (left + right) / 2;
-        if (boundaryDofs[mid] == row)
-        {
-            isBoundaryRow = true;
-            break;
-        }
-        else if (boundaryDofs[mid] < row)
-            left = mid + 1;
-        else
-            right = mid - 1;
-    }
-
-    if (isBoundaryRow)
-    {
-        // Penalty method: Set diagonal to large value, RHS to large*bcValue
-        // This maintains symmetry and positive definiteness
-        // Use penalty = max_diagonal * 1e7 for good conditioning
-        RealType penalty = 1e7; // Moderate penalty value
-        
-        for (IndexType i = rowStart; i < rowEnd; ++i)
-        {
-            IndexType col = colIndices[i];
-            if (col == row)
-            {
-                values[i] += penalty; // Add penalty to existing diagonal
-            }
-            // Don't zero off-diagonals - keep original stiffness
-        }
-        rhs[row] += penalty * bcValue;
-    }
-    else
-    {
-        // Interior rows: no modification needed with penalty method
-        // The penalty on boundary DOFs naturally enforces the BC
-    }
-}
-
 // Boundary condition handler class
 template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
 class BoundaryConditionHandler
