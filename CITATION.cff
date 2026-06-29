@@ -1,0 +1,21 @@
+cff-version: 1.2.0
+message: "If you use MARS, please cite it as below."
+title: "MARS — Mesh Adaptive Refinement for Supercomputing"
+abstract: >-
+  MARS is an open-source, GPU-native mesh management and finite-element assembly
+  library for N-dimensional elements (N <= 4), written in C++20 for CUDA/HIP and MPI.
+type: software
+authors:
+  - family-names: Ganellari
+    given-names: Daniel
+  - family-names: Zulian
+    given-names: Patrick
+  - family-names: Rovi
+    given-names: Gabriele
+  - family-names: Ramelli
+    given-names: Dylan
+repository-code: "https://github.com/dganellari/mars"
+url: "https://github.com/dganellari/mars"
+license: BSD-3-Clause
+version: 0.1.0
+date-released: "2026-06-29"

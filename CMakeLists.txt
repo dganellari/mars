@@ -10,7 +10,7 @@ endif()
 
 project(
   mars
-  VERSION 0.2.0
+  VERSION 0.1.0
   LANGUAGES "CXX" "C"
   HOMEPAGE_URL "https://github.com/dganellari/mars"
   DESCRIPTION
@@ -31,6 +31,11 @@ if(MARS_ENABLE_CUDA)
         enable_language(CUDA)
         find_package(CUDAToolkit REQUIRED)
         set(CMAKE_CUDA_STANDARD 20)
+        # Default GPU targets if the user did not pass -DCMAKE_CUDA_ARCHITECTURES
+        # (HIP sets its own default below; CUDA had none, so nvcc fell back to an SDK default).
+        if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
+            set(CMAKE_CUDA_ARCHITECTURES "70;80;90" CACHE STRING "Target NVIDIA GPU architectures (Volta/Ampere/Hopper)")
+        endif()
         # 1. Add global-scope settings to ensure CUDA includes are visible everywhere
         include_directories(SYSTEM BEFORE ${CUDAToolkit_INCLUDE_DIRS})
         # 2. Add via compiler flags to ensure they're used in command-line compilation
@@ -530,6 +535,16 @@ if(TARGET cxxopts)
     )
 endif()
 
+# Install the main mars library into the export set so downstream
+# find_package(Mars) gets the Mars::mars target (without this the export is empty).
+install(TARGETS mars
+    EXPORT MarsTargets
+    RUNTIME DESTINATION bin
+    LIBRARY DESTINATION lib
+    ARCHIVE DESTINATION lib
+    INCLUDES DESTINATION include
+)
+
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/base/mars_config.hpp.in
                ${CMAKE_BINARY_DIR}/mars_config.hpp)
 install(FILES ${MARS_HEADERS} DESTINATION include)
@@ -550,7 +565,7 @@ configure_package_config_file(
 # generate the version file for the config file
 write_basic_package_version_file(
   "${CMAKE_CURRENT_BINARY_DIR}/MarsConfigVersion.cmake"
-  VERSION "${MARS_VERSION}"
+  VERSION "${mars_VERSION}"
   COMPATIBILITY AnyNewerVersion)
 
 # install the configuration file

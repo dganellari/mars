@@ -9,13 +9,13 @@ from spack.package import *
 class Mars(CMakePackage, CudaPackage,  ROCmPackage):
     """Mesh Adaptive Refinement for Supercomputing."""
 
-    homepage = "https://bitbucket.org/zulianp/mars"
-    git = "https://dganellari@bitbucket.org/zulianp/mars.git"
-    #  url = "https://dganellari@bitbucket.org/zulianp/mars.git"
+    homepage = "https://github.com/dganellari/mars"
+    git = "https://github.com/dganellari/mars.git"
 
     maintainers = ["danielganellari"]
 
     version("develop", branch="development")
+    version("0.1.0", tag="v0.1.0")
 
     variant("kokkos", default=True)
     variant("openmp", default=True)

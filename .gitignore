@@ -39,7 +39,26 @@ internal-notes/
 TGV_HANDOFF.md
 TGV_NEXT_SESSION_HANDOFF.md
 TGV_BD_VALIDATION.md
+HANDOFF_*.md
 plan.md
 .attic/
 scratch/
+
+# OS / editor / build cruft -- never commit
+.DS_Store
+todo.txt
+
+# Visualization & simulation output -- never commit (may embed mesh geometry)
+*.vtu
+*.pvtu
+*.pvd
+*.mp4
+
+# Document/presentation build artifacts
+*.aux
+*.log
+*.nav
+*.snm
+*.toc
+*.pptx
 

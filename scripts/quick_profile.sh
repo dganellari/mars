@@ -4,8 +4,8 @@
 
 set -e
 
-BUILD_DIR=${BUILD_DIR:-/capstor/scratch/cscs/gandanie/git/mars/build}
-MESH_DIR=${MESH_DIR:-/capstor/scratch/cscs/gandanie/git/meshes}
+BUILD_DIR=${BUILD_DIR:-$SCRATCH/git/mars/build}
+MESH_DIR=${MESH_DIR:-$SCRATCH/git/meshes}
 AFFINITY=${AFFINITY:-~/affinity/bind_numa.sh}
 
 echo "============================================"

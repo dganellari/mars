@@ -18,8 +18,8 @@ set -euo pipefail
 # ─── Config ────────────────────────────────────────────────────────────────
 ACCOUNT=${ACCOUNT:-csstaff}
 GPUS_PER_NODE=4
-BUILD_DIR=${BUILD_DIR:-/capstor/scratch/cscs/gandanie/git/mars/build}
-MESH_DIR=${MESH_DIR:-/capstor/scratch/cscs/gandanie/git/meshes}
+BUILD_DIR=${BUILD_DIR:-$SCRATCH/git/mars/build}
+MESH_DIR=${MESH_DIR:-$SCRATCH/git/meshes}
 AFFINITY=${AFFINITY:-~/affinity/bind_numa.sh}
 LOG_DIR=${LOG_DIR:-$(pwd)/v2_gate_logs}
 ITERS=${ITERS:-50}
@@ -218,7 +218,7 @@ check-prior)
     # Look for prior 10^9 runs you mentioned. Adjust paths as needed.
     echo "Searching standard scratch locations for prior 1B-element logs..."
     for root in \
-        /capstor/scratch/cscs/gandanie \
+        $SCRATCH \
         /capstor/scratch/cscs/$USER \
         /scratch/$USER \
         $HOME/git/mars \
