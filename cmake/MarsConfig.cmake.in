@@ -32,4 +32,21 @@ endif()
 ########## end of old style variables ####################################################################################
 
 
+# Mars bundles the vendored cornerstone-octree (its headers, and for GPU builds the
+# cstone_gpu library) into its own install prefix. Recreate cornerstone's targets so
+# the Mars::mars / Mars::mars_unstructured references in MarsTargets resolve without a
+# separate cornerstone install. Guarded by NOT TARGET so an in-tree build (where the
+# real targets already exist) is left untouched.
+if (NOT TARGET cornerstone::cornerstone)
+    add_library(cornerstone::cornerstone INTERFACE IMPORTED)
+    set_target_properties(cornerstone::cornerstone PROPERTIES
+        INTERFACE_INCLUDE_DIRECTORIES "${PACKAGE_PREFIX_DIR}/include")
+endif()
+
+if (@MARS_ENABLE_CUDA@ AND NOT TARGET cstone_gpu)
+    add_library(cstone_gpu STATIC IMPORTED)
+    set_target_properties(cstone_gpu PROPERTIES
+        IMPORTED_LOCATION "${PACKAGE_PREFIX_DIR}/lib/libcstone_gpu.a")
+endif()
+
 include("${CMAKE_CURRENT_LIST_DIR}/MarsTargets.cmake")

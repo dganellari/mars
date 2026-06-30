@@ -509,9 +509,10 @@ if(TARGET cstone_gpu)
                     RENAME "${GPU_LIB_NAME}")
         endif()
     else()
-        # For locally built targets, add to export set
-        list(APPEND MARS_TARGETS cstone_gpu)
-        set_property(TARGET cstone_gpu PROPERTY EXPORT_NAME Mars::cstone_gpu)
+        # Locally built (FetchContent): install the library file so a downstream
+        # find_package(Mars) consumer can link the cstone_gpu imported target that
+        # MarsConfig.cmake recreates.
+        install(FILES "$<TARGET_FILE:cstone_gpu>" DESTINATION lib)
     endif()
 else()
     # Fallback for when target doesn't exist but we have a path
@@ -542,6 +543,23 @@ configure_file(${CMAKE_CURRENT_SOURCE_DIR}/base/mars_config.hpp.in
                ${CMAKE_BINARY_DIR}/mars_config.hpp)
 install(FILES ${MARS_HEADERS} DESTINATION include)
 install(FILES ${CMAKE_BINARY_DIR}/mars_config.hpp DESTINATION include)
+
+# Export the unstructured backend (mars links it PUBLICLY, so consumers need it).
+if(TARGET mars_unstructured)
+    install(TARGETS mars_unstructured
+        EXPORT MarsTargets
+        RUNTIME DESTINATION bin
+        LIBRARY DESTINATION lib
+        ARCHIVE DESTINATION lib
+        INCLUDES DESTINATION include)
+endif()
+
+# Bundle the vendored cornerstone headers so downstream find_package(Mars) consumers
+# can compile against Mars's public headers (ElementDomain exposes cstone types).
+if(CORNERSTONE_INCLUDE_DIRS AND IS_DIRECTORY "${CORNERSTONE_INCLUDE_DIRS}")
+    install(DIRECTORY "${CORNERSTONE_INCLUDE_DIRS}/" DESTINATION include
+            FILES_MATCHING PATTERN "*.h" PATTERN "*.hpp" PATTERN "*.cuh" PATTERN "*.inc")
+endif()
 
 install(
     EXPORT MarsTargets
