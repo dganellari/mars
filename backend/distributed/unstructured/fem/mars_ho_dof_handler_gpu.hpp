@@ -43,12 +43,14 @@
 
 #include <cstdint>
 #include <vector>
+#include <utility>
 
 #include <thrust/device_vector.h>
 #include <thrust/sort.h>
 #include <thrust/unique.h>
 #include <thrust/binary_search.h>
 #include <thrust/copy.h>
+#include <thrust/transform.h>
 #include <thrust/execution_policy.h>
 #include <thrust/iterator/counting_iterator.h>
 #include <thrust/iterator/zip_iterator.h>
@@ -146,6 +148,25 @@ __host__ __device__ inline HoEntityKey faceKey(int a, int b, int c, int d) {
 
 } // namespace ho_gpu_detail
 
+// Per-DOF device columns kept resident for the ALL-GPU resolveHoDofOwnershipGpu (the
+// resolve's exact inputs/output). Normally buildDistributedGpu frees these at scope exit;
+// when the caller passes a non-null HoOwnershipDeviceData* it MOVES them out instead so the
+// device-resident resolve can run with no host round-trip. d_dofOwner is mutated in place
+// by the resolve; copy it back to dof.dofOwner afterwards.
+struct HoOwnershipDeviceData {
+    long numDof = 0;
+    thrust::device_vector<long> dofKind, dofG0, dofG1, dofG2, dofG3;
+    thrust::device_vector<int>  dofPos, dofShared, dofOwner;
+    // dofBoundary kept too so the device halo build (HoHalo::buildDevice) keys only the
+    // boundary DOF straight from device -- same columns, no re-upload. uint8 lane.
+    thrust::device_vector<uint8_t> dofBoundary;
+    // elemDof [nElem*N3] kept DEVICE-resident so the apply consumes it directly -- no
+    // host download here + no H2D re-upload there. The apply needs a d_elemDof of exactly
+    // this size regardless, so keeping it is not extra peak HBM. The caller MOVES it out
+    // before freeing the rest of this struct (the key columns are huge; elemDof is not).
+    thrust::device_vector<int>  elemDof;
+};
+
 // GPU build of the distributed HO numbering. Same inputs as buildDistributed;
 // writes the SAME host members (elemDof, dofOwner, dofKey, dofShared, dofBoundary,
 // numDof, nEdge, nFace, ...) by pulling the device results back, so the downstream
@@ -153,14 +174,27 @@ __host__ __device__ inline HoEntityKey faceKey(int a, int b, int c, int d) {
 //
 // Kept as a free function taking the handler by reference (not a member) to avoid
 // touching the host class -- per the constraint "add alongside, don't change".
-inline void buildDistributedGpu(HODofHandler&                         dof,
-                                const std::vector<std::array<int,8>>& elemCorners,
-                                long numCornerNodes, int order,
-                                const std::vector<long>&     cornerGid,
-                                const std::vector<int>&      cornerOwner,
-                                const std::vector<int>&      elemOwner,
-                                int                          myRank,
-                                const std::vector<uint8_t>&  sharedCorner)
+//
+// If keepOwn != null, the per-DOF device columns the resolve needs are MOVED into it
+// (kept resident) for the all-GPU resolveHoDofOwnershipGpu; otherwise they free here.
+//
+// CORE: all numbering inputs are ALREADY device-resident here (the SoA int corner
+// buffer d_corners_ptr[c*nElem+e], and per-corner gid/owner/shared/elemOwner pointers).
+// The two public wrappers below feed it either from host std::vectors (host-input path,
+// for fallback/self-check) or straight from the domain's device columns (device-input
+// path, zero H2D). Keeping ONE numbering body guarantees both paths number bit-for-bit
+// identically -> the A.1 oracle is shared.
+inline void buildDistributedGpuCore(HODofHandler&  dof,
+                                    const int*     d_corners_ptr,   // SoA [c*nElem+e], LOCAL ids
+                                    long           nElem,
+                                    long           numCornerNodes,
+                                    int            order,
+                                    const long*    d_gid_ptr,       // per LOCAL corner id
+                                    const int*     d_cowner_ptr,
+                                    const uint8_t* d_scorner_ptr,
+                                    const int*     d_eowner_ptr,    // per OWNED element
+                                    int            myRank,
+                                    HoOwnershipDeviceData* keepOwn)
 {
     using namespace ho_gpu_detail;
 
@@ -168,30 +202,10 @@ inline void buildDistributedGpu(HODofHandler&                         dof,
     const int n   = P + 1;
     const int N3  = n * n * n;
     const int pm1 = P - 1;
-    const long nElem   = (long)elemCorners.size();
     const long nCorner = numCornerNodes;
 
     dof.P = P; dof.n = n; dof.N3 = N3;
     dof.nElem = nElem; dof.nCorner = nCorner;
-
-    // ---- upload element corner connectivity (8 LOCAL corner ids / elem) ----
-    // SoA layout d_corners[c*nElem + e] keeps coalesced per-corner reads.
-    std::vector<int> h_corners((size_t)nElem * 8);
-    for (long e = 0; e < nElem; ++e)
-        for (int c = 0; c < 8; ++c)
-            h_corners[(size_t)c * nElem + e] = elemCorners[e][c];
-    thrust::device_vector<int> d_corners(h_corners.begin(), h_corners.end());
-    const int* d_corners_ptr = thrust::raw_pointer_cast(d_corners.data());
-
-    // Per-corner global ids / owner / shared, indexed by LOCAL corner id.
-    thrust::device_vector<long>    d_cornerGid(cornerGid.begin(), cornerGid.end());
-    thrust::device_vector<int>     d_cornerOwner(cornerOwner.begin(), cornerOwner.end());
-    thrust::device_vector<uint8_t> d_sharedCorner(sharedCorner.begin(), sharedCorner.end());
-    thrust::device_vector<int>     d_elemOwner(elemOwner.begin(), elemOwner.end());
-    const long*    d_gid_ptr     = thrust::raw_pointer_cast(d_cornerGid.data());
-    const int*     d_cowner_ptr  = thrust::raw_pointer_cast(d_cornerOwner.data());
-    const uint8_t* d_scorner_ptr = thrust::raw_pointer_cast(d_sharedCorner.data());
-    const int*     d_eowner_ptr  = thrust::raw_pointer_cast(d_elemOwner.data());
 
     // STAGES 1+2 use RADIX-friendly uint64 sorts, NOT a custom 16-byte struct sort.
     // The original thrust::sort over HoEntityKey took cub's MERGE_SORT path and hit
@@ -415,35 +429,158 @@ inline void buildDistributedGpu(HODofHandler&                         dof,
         });
 
     // ---- pull device results into the host members ----
-    dof.elemDof.resize((size_t)nElem * N3);
-    thrust::copy(d_elemDof.begin(), d_elemDof.end(), dof.elemDof.begin());
+    // elemDof: download to the host member ONLY when no device handoff is requested
+    // (host fallback / self-check upload it via H2D). With keepOwn the apply reads the
+    // device copy directly -> skip the download (and the later H2D) entirely.
+    if (!keepOwn) {
+        dof.elemDof.resize((size_t)nElem * N3);
+        thrust::copy(d_elemDof.begin(), d_elemDof.end(), dof.elemDof.begin());
+    }
 
     dof.dofOwner.resize(numDof);
     thrust::copy(d_dofOwner.begin(), d_dofOwner.end(), dof.dofOwner.begin());
 
-    std::vector<long> h_kind(numDof), h_g0(numDof), h_g1(numDof), h_g2(numDof), h_g3(numDof);
-    std::vector<int>  h_pos(numDof), h_shared(numDof), h_boundary(numDof);
-    thrust::copy(d_dofKind.begin(),     d_dofKind.end(),     h_kind.begin());
-    thrust::copy(d_dofG0.begin(),       d_dofG0.end(),       h_g0.begin());
-    thrust::copy(d_dofG1.begin(),       d_dofG1.end(),       h_g1.begin());
-    thrust::copy(d_dofG2.begin(),       d_dofG2.end(),       h_g2.begin());
-    thrust::copy(d_dofG3.begin(),       d_dofG3.end(),       h_g3.begin());
-    thrust::copy(d_dofPos.begin(),      d_dofPos.end(),      h_pos.begin());
-    thrust::copy(d_dofShared.begin(),   d_dofShared.end(),   h_shared.begin());
-    thrust::copy(d_dofBoundary.begin(), d_dofBoundary.end(), h_boundary.begin());
+    // dofKey/dofShared/dofBoundary host members feed ONLY the host resolve + host halo build.
+    // The device path (keepOwn) runs the resolve + buildDevice off the device columns moved
+    // into keepOwn below, so skip this per-DOF D2H + host rebuild entirely -- it was dead work
+    // (8 per-DOF copies + a numDof host loop) on the full-GPU path.
+    if (!keepOwn) {
+        std::vector<long> h_kind(numDof), h_g0(numDof), h_g1(numDof), h_g2(numDof), h_g3(numDof);
+        std::vector<int>  h_pos(numDof), h_shared(numDof), h_boundary(numDof);
+        thrust::copy(d_dofKind.begin(),     d_dofKind.end(),     h_kind.begin());
+        thrust::copy(d_dofG0.begin(),       d_dofG0.end(),       h_g0.begin());
+        thrust::copy(d_dofG1.begin(),       d_dofG1.end(),       h_g1.begin());
+        thrust::copy(d_dofG2.begin(),       d_dofG2.end(),       h_g2.begin());
+        thrust::copy(d_dofG3.begin(),       d_dofG3.end(),       h_g3.begin());
+        thrust::copy(d_dofPos.begin(),      d_dofPos.end(),      h_pos.begin());
+        thrust::copy(d_dofShared.begin(),   d_dofShared.end(),   h_shared.begin());
+        thrust::copy(d_dofBoundary.begin(), d_dofBoundary.end(), h_boundary.begin());
 
-    dof.dofKey.resize(numDof);
-    dof.dofShared.resize(numDof);
-    dof.dofBoundary.resize(numDof);
-    for (long d = 0; d < numDof; ++d) {
-        dof.dofKey[d] = HODofHandler::DofKey{ (int)h_kind[d], h_g0[d], h_g1[d],
-                                              h_g2[d], h_g3[d], h_pos[d] };
-        dof.dofShared[d]   = (uint8_t)(h_shared[d]   ? 1 : 0);
-        dof.dofBoundary[d] = (uint8_t)(h_boundary[d] ? 1 : 0);
+        dof.dofKey.resize(numDof);
+        dof.dofShared.resize(numDof);
+        dof.dofBoundary.resize(numDof);
+        for (long d = 0; d < numDof; ++d) {
+            dof.dofKey[d] = HODofHandler::DofKey{ (int)h_kind[d], h_g0[d], h_g1[d],
+                                                  h_g2[d], h_g3[d], h_pos[d] };
+            dof.dofShared[d]   = (uint8_t)(h_shared[d]   ? 1 : 0);
+            dof.dofBoundary[d] = (uint8_t)(h_boundary[d] ? 1 : 0);
+        }
+    }
+
+    // Hand the resolve's device columns to the caller (move, no copy) so the all-GPU
+    // resolve runs without re-uploading them. They stay alive in keepOwn; everything else
+    // below frees as usual. d_dofShared/d_dofOwner are int lanes -- the resolve's inputs.
+    if (keepOwn) {
+        keepOwn->numDof    = numDof;
+        keepOwn->elemDof   = std::move(d_elemDof);   // device-resident for the apply (no H2D)
+        keepOwn->dofKind   = std::move(d_dofKind);
+        keepOwn->dofG0     = std::move(d_dofG0);
+        keepOwn->dofG1     = std::move(d_dofG1);
+        keepOwn->dofG2     = std::move(d_dofG2);
+        keepOwn->dofG3     = std::move(d_dofG3);
+        keepOwn->dofPos    = std::move(d_dofPos);
+        keepOwn->dofShared = std::move(d_dofShared);
+        keepOwn->dofOwner  = std::move(d_dofOwner);
+        // d_dofBoundary is an int atomicOr lane; the halo build wants a uint8 mask -> shrink
+        // it here (one transform, ~numDof bytes) so HoHalo::buildDevice keys boundary DOF
+        // from device with no host round-trip.
+        keepOwn->dofBoundary.resize(numDof);
+        thrust::transform(d_dofBoundary.begin(), d_dofBoundary.end(), keepOwn->dofBoundary.begin(),
+                          [] __device__ (int v) { return (uint8_t)(v ? 1 : 0); });
     }
     // All device transients (d_uEdge/d_uFace/d_elemDof/d_dof*) destruct here as the
     // thrust::device_vectors leave scope -> HBM freed before the caller's apply
-    // allocates d_G.
+    // allocates d_G. (Those moved into keepOwn outlive this scope by design.)
+}
+
+// HOST-INPUT wrapper: same signature/behaviour as before. Uploads the host corner/gid/
+// owner/shared/elemOwner vectors, packs the SoA int corner buffer, then runs the core.
+// Kept for MARS_HO_HOST + the self-check and any host-vector caller. UNCHANGED numbering.
+inline void buildDistributedGpu(HODofHandler&                         dof,
+                                const std::vector<std::array<int,8>>& elemCorners,
+                                long numCornerNodes, int order,
+                                const std::vector<long>&     cornerGid,
+                                const std::vector<int>&      cornerOwner,
+                                const std::vector<int>&      elemOwner,
+                                int                          myRank,
+                                const std::vector<uint8_t>&  sharedCorner,
+                                HoOwnershipDeviceData*       keepOwn = nullptr)
+{
+    const long nElem = (long)elemCorners.size();
+    // SoA layout d_corners[c*nElem + e] keeps coalesced per-corner reads (same as before).
+    std::vector<int> h_corners((size_t)nElem * 8);
+    for (long e = 0; e < nElem; ++e)
+        for (int c = 0; c < 8; ++c)
+            h_corners[(size_t)c * nElem + e] = elemCorners[e][c];
+    thrust::device_vector<int>     d_corners(h_corners.begin(), h_corners.end());
+    thrust::device_vector<long>    d_cornerGid(cornerGid.begin(), cornerGid.end());
+    thrust::device_vector<int>     d_cornerOwner(cornerOwner.begin(), cornerOwner.end());
+    thrust::device_vector<uint8_t> d_sharedCorner(sharedCorner.begin(), sharedCorner.end());
+    thrust::device_vector<int>     d_elemOwner(elemOwner.begin(), elemOwner.end());
+    buildDistributedGpuCore(dof, thrust::raw_pointer_cast(d_corners.data()), nElem,
+                            numCornerNodes, order,
+                            thrust::raw_pointer_cast(d_cornerGid.data()),
+                            thrust::raw_pointer_cast(d_cornerOwner.data()),
+                            thrust::raw_pointer_cast(d_sharedCorner.data()),
+                            thrust::raw_pointer_cast(d_elemOwner.data()),
+                            myRank, keepOwn);
+}
+
+// Pack the SoA int corner buffer [c*nElem+e] from the domain's 8 KeyType connectivity
+// columns (full element range) over the OWNED slice [startE, startE+nElem). LOCAL node
+// ids fit in 32 bits, so the KeyType->int narrowing is exact. This replaces the host
+// h_corners pack + its H2D on the device-input path.
+template<typename KeyType>
+__global__ void ho_pack_corner_soa_kernel(
+    const KeyType* __restrict__ c0, const KeyType* __restrict__ c1,
+    const KeyType* __restrict__ c2, const KeyType* __restrict__ c3,
+    const KeyType* __restrict__ c4, const KeyType* __restrict__ c5,
+    const KeyType* __restrict__ c6, const KeyType* __restrict__ c7,
+    int* __restrict__ d_corners, long startElem, long nElem)
+{
+    const long e = (long)blockIdx.x * blockDim.x + threadIdx.x;
+    if (e >= nElem) return;
+    const long ge = startElem + e;
+    d_corners[0L * nElem + e] = (int)c0[ge];
+    d_corners[1L * nElem + e] = (int)c1[ge];
+    d_corners[2L * nElem + e] = (int)c2[ge];
+    d_corners[3L * nElem + e] = (int)c3[ge];
+    d_corners[4L * nElem + e] = (int)c4[ge];
+    d_corners[5L * nElem + e] = (int)c5[ge];
+    d_corners[6L * nElem + e] = (int)c6[ge];
+    d_corners[7L * nElem + e] = (int)c7[ge];
+}
+
+// DEVICE-INPUT wrapper: every numbering input is already device-resident (the domain's
+// connectivity columns + the per-corner gid/owner/shared columns built by device kernels
+// in extractDistDof). Packs the SoA int corner buffer ON DEVICE from the connectivity,
+// then runs the SAME core -> identical numbering, zero H2D. conn columns are over the
+// FULL element range; the owned slice starts at startElem.
+template<typename KeyType>
+inline void buildDistributedGpuDevice(HODofHandler&  dof,
+                                      const KeyType* d_conn[8],
+                                      long           startElem,
+                                      long           nElem,
+                                      long           numCornerNodes,
+                                      int            order,
+                                      const long*    d_cornerGid,    // per LOCAL corner id
+                                      const int*     d_cornerOwner,
+                                      const uint8_t* d_sharedCorner,
+                                      const int*     d_elemOwner,    // per OWNED element
+                                      int            myRank,
+                                      HoOwnershipDeviceData* keepOwn = nullptr)
+{
+    thrust::device_vector<int> d_corners((size_t)nElem * 8);
+    const int block = 256;
+    const long grid = (nElem + block - 1) / block;
+    if (grid > 0)
+        ho_pack_corner_soa_kernel<KeyType><<<(unsigned)grid, block>>>(
+            d_conn[0], d_conn[1], d_conn[2], d_conn[3],
+            d_conn[4], d_conn[5], d_conn[6], d_conn[7],
+            thrust::raw_pointer_cast(d_corners.data()), startElem, nElem);
+    buildDistributedGpuCore(dof, thrust::raw_pointer_cast(d_corners.data()), nElem,
+                            numCornerNodes, order, d_cornerGid, d_cornerOwner,
+                            d_sharedCorner, d_elemOwner, myRank, keepOwn);
 }
 
 } // namespace fem
