@@ -25,6 +25,13 @@ if (@MARS_ENABLE_MPI@)
     find_dependency(MPI COMPONENTS CXX)
 endif()
 
+# mars_unstructured links netcdf (Exodus mesh reading) as the imported target
+# PkgConfig::NETCDF; recreate it the same way the build did so the consumer resolves it.
+if (@MARS_ENABLE_UNSTRUCTURED@ AND NOT TARGET PkgConfig::NETCDF)
+    find_dependency(PkgConfig)
+    pkg_check_modules(NETCDF QUIET IMPORTED_TARGET netcdf)
+endif()
+
 @PACKAGE_INIT@
 
 ########## old style variables. Preferably you should use target_link_libraries(my_target Mars::mars) ################
