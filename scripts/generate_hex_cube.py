@@ -167,14 +167,22 @@ def _write_connectivity_chunked(nx, ny, nz, output_dir, dtype, ext):
 
 if __name__ == "__main__":
     p = argparse.ArgumentParser(description="Generate hex cube mesh in MARS binary format")
-    p.add_argument("--nx", type=int, default=100)
-    p.add_argument("--ny", type=int, default=100)
-    p.add_argument("--nz", type=int, default=100)
+    p.add_argument("-n", type=int, default=None,
+                   help="Cells per side for all axes (shorthand for --nx --ny --nz)")
+    p.add_argument("--nx", type=int, default=None, help="Cells in x (overrides -n)")
+    p.add_argument("--ny", type=int, default=None, help="Cells in y (overrides -n)")
+    p.add_argument("--nz", type=int, default=None, help="Cells in z (overrides -n)")
     p.add_argument("--output", type=str, default="hex_cube_mesh")
     p.add_argument("--int32", action="store_true", help="Use int32 instead of int64")
     p.add_argument("--chunked", action="store_true",
                    help="Stream connectivity in z-slabs (lower peak memory)")
     args = p.parse_args()
 
-    generate_hex_cube(args.nx, args.ny, args.nz, args.output,
+    # -n sets the default for every axis; --nx/--ny/--nz override per axis.
+    base = args.n if args.n is not None else 100
+    nx = args.nx if args.nx is not None else base
+    ny = args.ny if args.ny is not None else base
+    nz = args.nz if args.nz is not None else base
+
+    generate_hex_cube(nx, ny, nz, args.output,
                       use_int64=not args.int32, chunked=args.chunked)

@@ -8,8 +8,8 @@
 set -euo pipefail
 
 BINARY=${BUILD_DIR:-$(pwd)}/examples/distributed/unstructured/mars_cvfem_graph
-MESH=/users/fabianw/work/asm_test_mesh/block_32M.exo
-AFFINITY=~/affinity/bind_numa.sh
+MESH=${MESH:?set MESH to a 32M-element Exodus mesh}
+AFFINITY=${AFFINITY:-~/affinity/bind_numa.sh}
 ACCOUNT=csstaff
 GPUS_PER_NODE=4  # GH200 nodes on santis
 ITERATIONS=100
