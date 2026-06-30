@@ -11,8 +11,21 @@ if (@MARS_ENABLE_ADIOS2@)
     find_dependency(ADIOS2 HINTS @ADIOS2_DIR@)
 endif()
 
-if (@MARS_ENABLE_CXXOPTS@)
+if (@MARS_ENABLE_CXXOPTS@ AND NOT "@cxxopts_DIR@" STREQUAL "")
+    # cxxopts is FetchContent-bundled into MarsTargets in the default build, so it
+    # needs no find_dependency there. Only look for an external cxxopts when one
+    # was actually used (cxxopts_DIR set at configure time).
     find_dependency(cxxopts HINTS @cxxopts_DIR@)
+endif()
+
+# mars links these imported targets PUBLICLY, so a downstream find_package(Mars)
+# must recreate them before MarsTargets.cmake (below) references them.
+if (@MARS_ENABLE_CUDA@)
+    find_dependency(CUDAToolkit)
+endif()
+
+if (@MARS_ENABLE_MPI@)
+    find_dependency(MPI COMPONENTS CXX)
 endif()
 
 @PACKAGE_INIT@
