@@ -8112,7 +8112,13 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
         }
         // Fresh warm-start: phi is per-step correction, not cumulative.
         cudaMemset(xVec.data(), 0, s.numTotalDofs * sizeof(RealType));
-        s.lastPressureIters = solveOneComponent<KeyType, RealType, ElementTag>(s, b, xVec, s.d_phi, s.Apre);
+        // Hypre PCG FALSE-CONVERGES on this pinned K operator (returns in ~0
+        // iters, phi~0 -> no correction -> the flow collapses and freezes). Use
+        // GMRES under Hypre, matching the pump's K path (same fix). PCG stays the
+        // default for the in-house (s.solverKind==CG) route, where K is SPD.
+        KrylovHint pk = (s.solverKind == SolverKind::Hypre) ? KrylovHint::GMRES
+                                                            : KrylovHint::PCG;
+        s.lastPressureIters = solveOneComponent<KeyType, RealType, ElementTag>(s, b, xVec, s.d_phi, s.Apre, pk);
     }
     else  // DDT: (D M^{-1} D^T) phi = -(rho/dt) D u**
     {

@@ -50,6 +50,49 @@ struct Tet4CVFEM {
         eta = coords[scs_id][1];
         zeta = coords[scs_id][2];
     }
+
+    // Jacobian determinant + physical-space shape derivatives for a linear tet.
+    // J columns are the edge vectors from node 0 (dx/dxi); dNdx is constant over
+    // the element. det is signed (= 6*signed volume); callers take fabs for volume.
+    template<typename RealType>
+    __device__ __host__ static void
+    jacobian_and_dNdx(const RealType coords[4][3], RealType& det, RealType dNdx[4][3]) {
+        RealType J[3][3];
+        for (int i = 0; i < 3; ++i) {
+            J[i][0] = coords[1][i] - coords[0][i];
+            J[i][1] = coords[2][i] - coords[0][i];
+            J[i][2] = coords[3][i] - coords[0][i];
+        }
+        det = J[0][0]*(J[1][1]*J[2][2] - J[1][2]*J[2][1])
+            - J[0][1]*(J[1][0]*J[2][2] - J[1][2]*J[2][0])
+            + J[0][2]*(J[1][0]*J[2][1] - J[1][1]*J[2][0]);
+        const RealType inv = RealType(1) / det;
+        // J^-1 via adjugate/det.
+        RealType Ji[3][3];
+        Ji[0][0] =  (J[1][1]*J[2][2] - J[1][2]*J[2][1]) * inv;
+        Ji[0][1] = -(J[0][1]*J[2][2] - J[0][2]*J[2][1]) * inv;
+        Ji[0][2] =  (J[0][1]*J[1][2] - J[0][2]*J[1][1]) * inv;
+        Ji[1][0] = -(J[1][0]*J[2][2] - J[1][2]*J[2][0]) * inv;
+        Ji[1][1] =  (J[0][0]*J[2][2] - J[0][2]*J[2][0]) * inv;
+        Ji[1][2] = -(J[0][0]*J[1][2] - J[0][2]*J[1][0]) * inv;
+        Ji[2][0] =  (J[1][0]*J[2][1] - J[1][1]*J[2][0]) * inv;
+        Ji[2][1] = -(J[0][0]*J[2][1] - J[0][1]*J[2][0]) * inv;
+        Ji[2][2] =  (J[0][0]*J[1][1] - J[0][1]*J[1][0]) * inv;
+        // dN/dxi (constant linear tet): node0=(-1,-1,-1), nodes 1-3 = identity.
+        const RealType dNref[4][3] = {
+            {RealType(-1), RealType(-1), RealType(-1)},
+            {RealType(1),  RealType(0),  RealType(0)},
+            {RealType(0),  RealType(1),  RealType(0)},
+            {RealType(0),  RealType(0),  RealType(1)}
+        };
+        // dN/dx_i = sum_j (dN/dxi_j) * (J^-1)[j][i]
+        for (int n = 0; n < 4; ++n)
+            for (int i = 0; i < 3; ++i) {
+                RealType s = RealType(0);
+                for (int j = 0; j < 3; ++j) s += dNref[n][j] * Ji[j][i];
+                dNdx[n][i] = s;
+            }
+    }
 };
 
 // CUDA kernel for CVFEM assembly

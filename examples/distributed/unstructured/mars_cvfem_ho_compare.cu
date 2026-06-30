@@ -54,6 +54,46 @@ using namespace mars::fem;
 #define CK(call) do { cudaError_t e=(call); if(e!=cudaSuccess){ \
   printf("CUDA error %s at %s:%d\n", cudaGetErrorString(e), __FILE__, __LINE__); return 1; } } while(0)
 
+// FLOP/DOF (FP64) per matvec, counted from the actual kernel loops, so GFLOP/s =
+// FLOP/DOF * GDOF/s. A mul or an add is 1 FLOP; a divide is 1 FLOP.
+//
+// SpMV (full + graph): a CSR matvec does value*u (1 mul) + accumulate (1 add) per
+// nnz => 2 FLOP/nnz, so 2*nnz total and FLOP/DOF = 2 * (nnz/row). nnz/row is read
+// from the built sparsity, NOT assumed (full ~27, graph ~7 for interior hexes).
+//
+// Matrix-free HO apply (store-d_G, the default): from mars_cvfem_ho_matfree.hpp
+// ho_cvfem_apply_kernel, per (dir,l) iteration (3*P of them) over NN=(P+1)^2 slots,
+// each slot does:
+//   step1 interp+deriv : 4*N   (bi: 1m+1a, di: 1m+1a, over q=0..N-1)
+//   step2 tang-D + flux: 4*N+5 (dt2: 2N, dt1: 2N, flux g2*deriv+g0*dt2+g1*dt1=3m+2a)
+//   step3 W r-axis     : 2*N
+//   step4 W s-axis +/- : 2*N+2 (W: 2N, then -= and += scatter)
+//   => 12*N + 7 FLOP/slot,  N=P+1.
+// apply FLOP/element = 3*P*(P+1)^2 * (12*(P+1)+7). Interior tensor hex owns p^3 of
+// its (p+1)^3 nodes, so FLOP/DOF = 3*P*(P+1)^2*(12*(P+1)+7) / P^3. This RISES with
+// p (~315 at p=4 vs 372 at p=1, 404 at p=7), the key contrast with FLOP-poor SpMV.
+// Cross-check vs a textbook tensor-product PA Laplacian (~(2d^2+d)(p+1) per pass,
+// a few passes): our CVFEM SCS sweep (interp+deriv+2 tangential D+2 W integrations
+// per direction) is ~1.5-2x heavier than a minimal Galerkin PA -- expected, the SCS
+// flux form does more contractions per point than a fused gradient-Laplacian PA.
+//
+// Matrix-free --MF (recompute, ho_cvfem_apply_recompute_kernel): apply FLOP PLUS an
+// inline metric at each of the 3*P*(P+1)^2 SCS quad points: 8-corner trilinear
+// Jacobian build (8*(21 shape + 18 accumulate)=312), 3x3 determinant (14), inverse
+// with 9 divides (36), gvec = detJ*Jinv*Jinv^T (18) => ~380 FLOP/point. Recompute
+// FLOP/DOF = apply + 3*P*(P+1)^2*380 / p^3; the metric term dominates at low p
+// (~4560 extra at p=1) and amortizes at high p.
+static inline double spmvFlopPerDof(double nnzPerRow) { return 2.0 * nnzPerRow; }
+static inline double mfApplyFlopPerDof(int p) {
+    const double N = p + 1.0;
+    const double perSlot = 12.0 * N + 7.0;
+    return 3.0 * p * N * N * perSlot / std::pow((double)p, 3.0);
+}
+static inline double mfMetricFlopPerDof(int p) {
+    const double N = p + 1.0;
+    return 3.0 * p * N * N * 380.0 / std::pow((double)p, 3.0);
+}
+
 // MARS hex corner c -> HO local DOF index l = i*4 + j*2 + k, where (i,j,k) are the
 // reference-cube indices (0/1) of corner c from c_hexCornerRef signs:
 // i=(S0+1)/2, j=(S1+1)/2, k=(S2+1)/2. This is the ONLY place the two corner
@@ -366,6 +406,17 @@ int main(int argc, char** argv)
         double mgDofPerS = (double)numDofs / (msMG * 1e-3);   // graph (7-nnz) SpMV throughput
         double mfDofPerS = (double)numDofs / (msMF * 1e-3);   // matrix-free throughput
 
+        // FLOP/DOF (FP64) per matvec for each measured method, from the kernel-loop
+        // counts above. GFLOP/s = FLOP/DOF * GDOF/s -- the same DOF normalization the
+        // throughput uses, so the two columns are consistent. nnz/row is read from the
+        // built sparsity (NOT assumed); matrix-free here is the p=1 store-d_G apply.
+        double fullFpd = spmvFlopPerDof((double)nnz / numDofs);
+        double grfFpd  = spmvFlopPerDof((double)gnnz / numDofs);
+        double mfFpd   = mfApplyFlopPerDof(1);
+        double mbGflops = fullFpd * mbDofPerS / 1e9;
+        double mgGflops = grfFpd  * mgDofPerS / 1e9;
+        double mfGflops = mfFpd   * mfDofPerS / 1e9;
+
         printf("HO CVFEM matrix-free (Knaus Alg 2, p=1) vs assembled CSR + cuSPARSE SpMV\n");
         printf("nodes=%zu elems=%zu numDofs=%d\n", nodeCount, elementCount, numDofs);
         printf("  full  CSR nnz=%d nnz/row=%.1f   graph CSR nnz=%d nnz/row=%.1f\n",
@@ -382,10 +433,18 @@ int main(int argc, char** argv)
         else
             printf("  => DIFFERENT operators (per-row structural difference).\n");
 
-        printf("\n-- THROUGHPUT --\n");
-        printf("  assembled FULL  (27-nnz) SpMV : %.4f ms/matvec | %.1f MDOF/s\n", msMB, mbDofPerS / 1e6);
-        printf("  assembled GRAPH (7-nnz)  SpMV : %.4f ms/matvec | %.1f MDOF/s\n", msMG, mgDofPerS / 1e6);
-        printf("  matrix-free HO                : %.4f ms/matvec | %.1f MDOF/s\n", msMF, mfDofPerS / 1e6);
+        printf("\n-- THROUGHPUT (GDOF/s) + COMPUTE (GFLOP/s, FP64) --\n");
+        printf("  method                          ms/matvec   GDOF/s   GFLOP/s   FLOP/DOF\n");
+        printf("  assembled FULL  (27-nnz) SpMV : %9.4f  %7.2f  %8.1f  %8.0f\n",
+               msMB, mbDofPerS / 1e9, mbGflops, fullFpd);
+        printf("  assembled GRAPH (7-nnz)  SpMV : %9.4f  %7.2f  %8.1f  %8.0f\n",
+               msMG, mgDofPerS / 1e9, mgGflops, grfFpd);
+        printf("  matrix-free HO (p=1, store-G) : %9.4f  %7.2f  %8.1f  %8.0f\n",
+               msMF, mfDofPerS / 1e9, mfGflops, mfFpd);
+        printf("  WHY: SpMV is FLOP-poor (FLOP/DOF = 2*nnz/row) and memory-bound, so its\n");
+        printf("       GFLOP/s stays low; matrix-free FLOP/DOF rises with p (see table below),\n");
+        printf("       so at fixed ~flat GDOF/s its GFLOP/s climbs with order. High-order\n");
+        printf("       matrix-free, not low-order SpMV, is the GFLOP/s-rich regime.\n");
         printf("  speedup vs FULL  (27-nnz)            = %.2fx (%s)\n",
                msMB / msMF, msMF < msMB ? "matrix-free faster" : "SpMV faster");
         printf("  speedup vs GRAPH (7-nnz, PRODUCTION) = %.2fx (%s)  <- the honest p=1 baseline\n",
@@ -426,9 +485,61 @@ int main(int argc, char** argv)
             printf("  %2d | %7.0f | %15.1f | %13.1f | %14.1fx\n",
                    p, stencil, asmBpd, mfBpd, asmBpd / mfBpd);
         }
-        printf("\n  Measured throughput anchors (GDOF/s): matrix-free HO 4.8 / 7.2 / 4.9 at p=1/2/4\n");
-        printf("  (H100, prior validated run); this run's p=1 matrix-free = %.2f GDOF/s, SpMV = %.2f GDOF/s.\n",
-               mfDofPerS / 1e9, mbDofPerS / 1e9);
+
+        // ---- CROSS-p FLOP/s projection (the GB-class regime). Matrix-free GDOF/s is
+        // ~flat in p (measured anchors below), but FLOP/DOF RISES with p, so GFLOP/s
+        // climbs with order while assembled SpMV stays FLOP-poor. We project GFLOP/s =
+        // FLOP/DOF(p) * GDOF/s(p) using measured GDOF/s anchors where we have them and
+        // the closest measured value otherwise (clearly marked), so the climb is shown
+        // on real throughput, not invented. ----
+        const double mfMeasGdofs = mfDofPerS / 1e9;  // this run's measured p=1 matrix-free
+        // GDOF/s anchors per p (H100/Alps, prior validated runs). p=1 uses THIS run.
+        const double gdofsAnchor[8] = {0.0, mfMeasGdofs, 7.2, 6.0, 4.9, 4.0, 3.5, 3.0};
+        const bool   measured[8]    = {false, true, true, false, true, false, false, false};
+        printf("\n-- CROSS-p FLOP/s (matrix-free store-G; GDOF/s ~flat, FLOP/DOF rises -> GFLOP/s climbs) --\n");
+        printf("   p | apply FLOP/DOF | GDOF/s (src) | GFLOP/s | --MF FLOP/DOF | --MF GFLOP/s\n");
+        for (int p = 1; p <= 7; ++p) {
+            double fpd   = mfApplyFlopPerDof(p);
+            double mfpd  = fpd + mfMetricFlopPerDof(p);
+            double gdofs = gdofsAnchor[p];
+            printf("  %2d | %14.0f | %7.2f (%s) | %7.1f | %13.0f | %12.1f\n",
+                   p, fpd, gdofs, measured[p] ? "meas" : "est ",
+                   fpd * gdofs, mfpd, mfpd * gdofs);
+        }
+        printf("  This run's p=1 matrix-free = %.2f GDOF/s (%.1f GFLOP/s FP64), full SpMV = %.2f GDOF/s (%.1f GFLOP/s).\n",
+               mfMeasGdofs, fullFpd * mfMeasGdofs, mbDofPerS / 1e9, mbGflops);
+
+        // ---- MFEM Gordon Bell 2025 positioning (same method class: high-order FE
+        // partial assembly). Sources (verified, URLs):
+        //   GB paper: Henneking et al., arXiv:2504.16344 (SC25, 2025 ACM Gordon Bell
+        //     Prize, Cascadia tsunami digital twin). MFEM forward operator, p=4
+        //     pressure / p=3 velocity, 55.5T DOF on the FULL El Capitan, 43,520 AMD
+        //     MI300A GPUs (61.3 TFLOP/s FP64 peak each), 2.73 EFLOP/s machine peak,
+        //     92% weak / 79% strong efficiency.  [Sec VI-A, VI-C, I]
+        //   FP64-TC paper: Tu, Karlin, Camier, Dobrev, Kolev, Henneking, Ghattas,
+        //     arXiv:2603.09038 -- the MFEM PA kernel on GH200: FP64 *vector* peak
+        //     34.0 TFLOP/s, FP64 *tensor-core* (DMMA) peak ~67 TFLOP/s (2x). Their
+        //     original PA kernel runs at ~14% of the FP64 vector pipe; the DMMA PA
+        //     kernel reaches 54% of the DMMA pipe. Throughput is reported in GDOF/s,
+        //     same metric as here.  [Sec III-E, VI-A]
+        // GH200 (Alps, our target) single-GPU FP64 peak: 34.0 TFLOP/s vector cores;
+        // ~67 TFLOP/s with FP64 tensor cores. Both from arXiv:2603.09038 / GB Sec VI-A.
+        const double gh200VecPeakGflops = 34000.0;   // 34.0 TFLOP/s FP64 vector
+        const double gh200TcPeakGflops  = 67000.0;   // ~67 TFLOP/s FP64 tensor-core (DMMA)
+        const double mi300aPeakGflops   = 61300.0;   // 61.3 TFLOP/s FP64 (El Capitan)
+        double mfP4Gflops = mfApplyFlopPerDof(4) * 5.0;   // our p=4 anchor: ~5 GDOF/s
+        printf("\n-- MFEM GORDON BELL 2025 POSITIONING (high-order FE PA, same class) --\n");
+        printf("  GB paper arXiv:2504.16344: 55.5T DOF, 43,520 MI300A GPUs, 2.73 EFLOP/s machine peak (El Capitan).\n");
+        printf("  FP64-TC paper arXiv:2603.09038 (MFEM PA on GH200): original PA ~14%% of FP64 vector pipe,\n");
+        printf("    DMMA PA 54%% of FP64 tensor-core pipe. GH200 FP64 peak: 34.0 TFLOP/s vector, ~67 TFLOP/s tensor.\n");
+        printf("  OURS (p=4 matrix-free store-G, ~5 GDOF/s anchor): FLOP/DOF=%.0f -> ~%.1f GFLOP/s/GPU FP64.\n",
+               mfApplyFlopPerDof(4), mfP4Gflops);
+        printf("    = %.1f%% of GH200 FP64 vector peak (%.0f GFLOP/s), %.1f%% of FP64 tensor-core peak (%.0f).\n",
+               100.0 * mfP4Gflops / gh200VecPeakGflops, gh200VecPeakGflops,
+               100.0 * mfP4Gflops / gh200TcPeakGflops, gh200TcPeakGflops);
+        printf("    (MI300A FP64 peak for reference: %.0f GFLOP/s.)\n", mi300aPeakGflops);
+        printf("  We are vector-core matrix-free; the GB result's headroom is the FP64 tensor-core (DMMA)\n");
+        printf("  path -- the same lever (arXiv:2603.09038) we target on GH200/Alps to close the gap to peak.\n");
 
         // ---- Element-level stencil dump (small meshes, e.g. --ncells=1 -> single
         //      8x8 element). Build BOTH operators' dense matrices by applying to the

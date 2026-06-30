@@ -205,11 +205,19 @@ int main(int argc, char** argv)
 
     std::string mesh; size_t ncells = 0; int iters = 50; std::string dumpFile;
     bool overlap = false;   // --overlap: hide the forward halo behind the interior apply
+    // --irregular: opt-in genuinely-unstructured procedural mesh (warp+deform) so the
+    // scaling test is not flattered by the perfect cube's free SFC locality. The deform
+    // is DOMAIN-scale (amplitude + wavelength fixed in domain units), so the halo bump
+    // is INDEPENDENT of --ncells -> it still holds at trillion scale (a perturbation
+    // tied to local h would be cosmetic there). Default OFF -> byte-identical perfect
+    // cube, existing runs unchanged.
+    CubeIrregularity irr{};
     for (int i = 1; i < argc; ++i) { std::string a = argv[i];
         if (a.rfind("--mesh=", 0) == 0) mesh = a.substr(7);
         else if (a.rfind("--ncells=", 0) == 0) ncells = std::stoull(a.substr(9));
         else if (a.rfind("--iters=", 0) == 0) iters = std::stoi(a.substr(8));
         else if (a == "--overlap") overlap = true;
+        else if (a == "--irregular") { irr.warp = true; irr.deform = true; }
         else if (a.rfind("--dump-parity=", 0) == 0) dumpFile = a.substr(14); }
     if (mesh.empty() && ncells == 0) {
         if (rank == 0) printf("need --mesh=<dir/.exo> OR --ncells=<N> [--iters=N] [--dump-parity=<file>]\n");
@@ -222,7 +230,7 @@ int main(int argc, char** argv)
         domainPtr = new Domain(mesh, rank, numRanks, true, 64, 8u);
     } else {
         auto [genNodes, genElems, gx, gy, gz, lconn] =
-            generateCubeElementPartition<RealType, KeyType>(ncells, rank, numRanks);
+            generateCubeElementPartition<RealType, KeyType>(ncells, rank, numRanks, irr);
         (void)genNodes; (void)genElems;
         typename Domain::HostCoordsTuple h_coords{std::move(gx), std::move(gy), std::move(gz)};
         typename Domain::HostConnectivityTuple h_conn{

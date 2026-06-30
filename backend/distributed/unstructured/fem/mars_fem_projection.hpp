@@ -42,6 +42,22 @@
 // unqualified Tet4CVFEM / ElemTraits brought in by those usings. Do not
 // include it standalone.
 
+// One-shot diagnostic for the V<=0 guards below. Those guards SILENTLY skip any
+// tet with non-positive Jacobian determinant (inverted / bad node ordering).
+// Current meshes have none, but on a future refined/re-oriented mesh that silent
+// drop would give quietly wrong results. We count drops in a file-local device
+// counter and printf ONCE (on the first drop) so it surfaces as a warning instead
+// of vanishing. Zero cost on clean meshes: only runs inside the never-taken V<=0
+// branch. static -> internal linkage, one counter per translation unit.
+static __device__ unsigned long long g_invertedTetDropCount = 0;
+static __device__ void noteNonPositiveTetVol()
+{
+    if (atomicAdd(&g_invertedTetDropCount, 1ull) == 0)
+        printf("[mars] WARNING: FEM projection skipped a tet with non-positive "
+               "Jacobian det (inverted or bad node ordering) -- silently dropped; "
+               "current meshes expected clean. Check mesh node ordering.\n");
+}
+
 // Weak-form divergence volume term: one thread per element, atomicAdd scatter
 // to all 4 nodes (ghosts included; the caller's reverseExchangeNodeHaloAdd
 // folds ghost contributions to owners, exactly like the SCS divergence path).
@@ -73,7 +89,7 @@ __global__ void computeFemDivergenceTetKernel(
     RealType V = det / RealType(6);
     // Degenerate or inverted tet: dNdx ~ 1/det would poison the accumulator
     // with inf/NaN; skip rather than scatter garbage.
-    if (!(V > RealType(0))) return;
+    if (!(V > RealType(0))) { noteNonPositiveTetVol(); return; }
 
     // integral_e u = (V/4) * (u_0+u_1+u_2+u_3), exact for linear u.
     RealType usx = 0, usy = 0, usz = 0;
@@ -119,7 +135,7 @@ __global__ void computeFemGradientTetKernel(
     RealType det, dNdx[4][3];
     Tet4CVFEM::jacobian_and_dNdx<RealType>(coords, det, dNdx);
     RealType V = det / RealType(6);
-    if (!(V > RealType(0))) return;
+    if (!(V > RealType(0))) { noteNonPositiveTetVol(); return; }
 
     // constant element gradient of phi (linear tet)
     RealType gx = 0, gy = 0, gz = 0;
@@ -231,7 +247,7 @@ __global__ void assembleFemGramPerNodeKernelTet(
         RealType detE, dNdxE[NPE][3];
         Tet4CVFEM::jacobian_and_dNdx<RealType>(coordsE, detE, dNdxE);
         RealType VE = detE / RealType(6);
-        if (!(VE > RealType(0))) continue;
+        if (!(VE > RealType(0))) { noteNonPositiveTetVol(); continue; }
         RealType nqVE = -VE * RealType(0.25);   // -(V_e/4)
 
         // Inner loop over the second element f (also incident to i). a comes
@@ -266,7 +282,7 @@ __global__ void assembleFemGramPerNodeKernelTet(
                 RealType detF;
                 Tet4CVFEM::jacobian_and_dNdx<RealType>(coordsF, detF, dNdxFbuf);
                 RealType VF = detF / RealType(6);
-                if (!(VF > RealType(0))) continue;
+                if (!(VF > RealType(0))) { noteNonPositiveTetVol(); continue; }
                 nqVF  = -VF * RealType(0.25);   // -(V_f/4)
                 dNdxF = dNdxFbuf;
             }
