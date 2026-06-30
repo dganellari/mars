@@ -13,7 +13,7 @@ module load nvhpc cuda nsight-systems
 
 BUILD_DIR=$SCRATCH/git/mars/build
 MESH_DIR=$SCRATCH/git/meshes
-AFFINITY=~/affinity/bind_numa.sh
+AFFINITY=${AFFINITY:-~/affinity/bind_numa.sh}
 OUTPUT_DIR=$BUILD_DIR/profile_results
 
 mkdir -p $OUTPUT_DIR

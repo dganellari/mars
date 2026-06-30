@@ -88,7 +88,7 @@ int main(int argc, char** argv) {
     if (rank == 0) {
         std::cout << "Command-line parameters:\n"
                   << "  Mesh: "                << meshFile         << "\n"
-                  << "  Kernel: "              << Assembler::variantName() << "\n"
+                  << "  Kernel: "              << Assembler::variantName(Assembler::Variant::GraphLump) << "\n"
                   << "  Block size: "          << blockSize        << "\n"
                   << "  Bucket size: "         << bucketSize       << "\n"
                   << "  Bucket size (focus): " << bucketSizeFocus  << "\n"
@@ -307,7 +307,7 @@ int main(int argc, char** argv) {
 
     if (rank == 0) {
         std::cout << std::scientific << std::setprecision(6);
-        std::cout << "Assembler: MARS CVFEM Tet (Graph+Lump " << Assembler::variantName() << ")....: "
+        std::cout << "Assembler: MARS CVFEM Tet (Graph+Lump " << Assembler::variantName(Assembler::Variant::GraphLump) << ")....: "
                   << perf.avgAssemblyTimeMs() << " milliseconds @ "
                   << perf.bandwidthGBs() << " GB/s (average of " << numIterations
                   << " samples) [matrix norm: " << matrix_norm

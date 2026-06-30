@@ -4,7 +4,6 @@
 #SBATCH --nodes=400
 #SBATCH --ntasks-per-node=4
 #SBATCH --time=03:00:00
-#SBATCH --chdir=$SCRATCH/git/mars/daint-gpu
 #SBATCH --output=ho1e12_%j.out
 #SBATCH --uenv-passthrough=use
 #
@@ -24,6 +23,8 @@ export MARS_HO_HALO_TIMING=1        # per-stage GPU halo-build breakdown (cheap)
 # GPU DOF numbering, GPU P2P ownership resolve, AND GPU halo build are ALL the default now (no env).
 # MARS_HO_HOST=1 would force the host resolve+halo -- we are NOT setting it, so the full GPU path runs.
 
+# SLURM does not expand vars in #SBATCH directives, so cd to the build dir here.
+cd "${BUILD_DIR:-$SCRATCH/git/mars/daint-gpu}"
 echo "=== 1600 ranks / 400 nodes, ~1.0 TRILLION DOF (cube2500) ==="
 srun --nodes=400 --ntasks-per-node=4 --export=ALL \
   ./examples/distributed/unstructured/mars_ho_dist_apply_test --ncells=2500 --p=4

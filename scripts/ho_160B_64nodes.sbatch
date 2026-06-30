@@ -4,7 +4,6 @@
 #SBATCH --nodes=64
 #SBATCH --ntasks-per-node=4
 #SBATCH --time=01:00:00
-#SBATCH --chdir=$SCRATCH/git/mars/daint-gpu
 #SBATCH --output=ho160B_%j.out
 #SBATCH --uenv-passthrough=use
 #
@@ -13,4 +12,6 @@
 # Expect: device A.1 PASS (~1e-19), apply ~6 GDOF/s/GPU, comm ~9% (peers maxed at 26).
 
 export MARS_NODEHALO_V2=1
+# SLURM does not expand vars in #SBATCH directives, so cd to the build dir here.
+cd "${BUILD_DIR:-$SCRATCH/git/mars/daint-gpu}"
 srun --export=ALL ./examples/distributed/unstructured/mars_ho_dist_apply_test --ncells=1357 --p=4
