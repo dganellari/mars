@@ -524,16 +524,9 @@ else()
     endif()
 endif()
 
-# Export the cxxopts target if it was fetched
-if(TARGET cxxopts)
-    install(TARGETS cxxopts
-        EXPORT MarsTargets
-        RUNTIME DESTINATION bin
-        LIBRARY DESTINATION lib
-        ARCHIVE DESTINATION lib
-        INCLUDES DESTINATION include
-    )
-endif()
+# cxxopts is internal CLI tooling for the example drivers, not part of the Mars API.
+# It is NOT exported into the Mars package: examples build it in-tree, and downstream
+# consumers neither need nor receive it.
 
 # Install the main mars library into the export set so downstream
 # find_package(Mars) gets the Mars::mars target (without this the export is empty).
