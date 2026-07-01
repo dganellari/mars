@@ -14,8 +14,11 @@ if(MARS_ENABLE_CXXOPTS)
         message(STATUS "Found cxxopts")
     endif()
 
-    # Add cxxopts to the list of dependencies
-    list(APPEND MARS_DEP_LIBRARIES cxxopts::cxxopts)
+    # cxxopts is header-only CLI tooling used only by in-tree example drivers, not by the
+    # mars library or its public API. Link it BUILD-only so examples get it transitively,
+    # while it never leaks into the installed Mars::mars interface (cxxopts ships no
+    # library, so a leaked reference becomes a broken -lcxxopts for consumers).
+    list(APPEND MARS_DEP_LIBRARIES $<BUILD_INTERFACE:cxxopts::cxxopts>)
     list(APPEND MARS_DEP_INCLUDES ${cxxopts_INCLUDE_DIRS})
 
     set(MARS_ENABLE_CXXOPTS ON)

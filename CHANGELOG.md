@@ -5,7 +5,7 @@ All notable changes to MARS are documented here. The format follows
 [Semantic Versioning](https://semver.org/). While the major version is `0`, the
 public API may change between minor releases.
 
-## [0.1.0] — 2026-06-29
+## [0.1.0] — 2026-07-01
 
 First tagged public release. MARS is a GPU-native mesh management and finite-element
 assembly library for N-dimensional elements (N ≤ 4), built in C++20 on CUDA / HIP and
