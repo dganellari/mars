@@ -6,13 +6,16 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 add_library(mars_unstructured STATIC)
 
 # Set include directories
+# Build-tree paths must be $<BUILD_INTERFACE:> so mars_unstructured is export-safe;
+# installed consumers get headers from $<INSTALL_INTERFACE:include>.
 target_include_directories(mars_unstructured PUBLIC
-    ${CMAKE_SOURCE_DIR}
-    ${CMAKE_SOURCE_DIR}/base
-    ${CMAKE_SOURCE_DIR}/core
-    ${CMAKE_SOURCE_DIR}/backend/distributed
-    ${CMAKE_BINARY_DIR}
-    ${CMAKE_CURRENT_SOURCE_DIR}
+    $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}>
+    $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/base>
+    $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/core>
+    $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/backend/distributed>
+    $<BUILD_INTERFACE:${CMAKE_BINARY_DIR}>
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
+    $<INSTALL_INTERFACE:include>
 )
 
 # Add all distributed backend subdirectories for header dependencies
@@ -27,10 +30,11 @@ target_include_directories(mars_unstructured PRIVATE
     ${CMAKE_SOURCE_DIR}/backend/distributed/unstructured/utils
 )
 
-# System includes (won't propagate warnings)
+# System includes (won't propagate warnings). Build-only: installed consumers get
+# cornerstone headers from the recreated cornerstone::cornerstone target (MarsConfig).
 target_include_directories(mars_unstructured SYSTEM PUBLIC
-    ${CMAKE_BINARY_DIR}/cornerstone_includes
-    ${CORNERSTONE_INCLUDE_DIRS}
+    $<BUILD_INTERFACE:${CMAKE_BINARY_DIR}/cornerstone_includes>
+    $<BUILD_INTERFACE:${CORNERSTONE_INCLUDE_DIRS}>
 )
 
 # Add the implementation files to the target
