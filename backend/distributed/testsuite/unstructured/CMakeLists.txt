@@ -95,16 +95,14 @@ function(addMarsGpuMpiTest source exename testname)
     )
 
     if(TARGET cstone_gpu)
-        get_target_property(GPU_LIB cstone_gpu IMPORTED_LOCATION)
-        if(GPU_LIB)
-            message(STATUS "Force-linking GPU library: ${GPU_LIB}")
-            if(UNIX AND NOT APPLE)
-                # Linux syntax
-                target_link_options(${exename} PRIVATE "LINKER:--whole-archive,${GPU_LIB},--no-whole-archive")
-            elseif(APPLE)
-                # macOS syntax
-                target_link_options(${exename} PRIVATE "LINKER:-force_load,${GPU_LIB}")
-            endif()
+        # Whole-archive so cstone_gpu's device symbols aren't dropped. Use the
+        # $<TARGET_FILE:> genex (evaluated at generate time): reading IMPORTED_LOCATION
+        # is empty for a built target, and for an imported one could be an unevaluated
+        # genex that leaks verbatim into the make device-link rule.
+        if(UNIX AND NOT APPLE)
+            target_link_options(${exename} PRIVATE "LINKER:--whole-archive,$<TARGET_FILE:cstone_gpu>,--no-whole-archive")
+        elseif(APPLE)
+            target_link_options(${exename} PRIVATE "LINKER:-force_load,$<TARGET_FILE:cstone_gpu>")
         endif()
     endif()
 

@@ -19,11 +19,6 @@ project(
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-enable_testing()
-if(MARS_ENABLE_TESTS)
-    include(cmake/Tests.cmake)
-endif()
-
 
 if(MARS_ENABLE_CUDA)
     check_language(CUDA)
@@ -115,6 +110,16 @@ include(CMakeDependentOption)
 # Cmake imports.
 include(cmake/MarsDefaults.cmake)
 include(cmake/MarsOptions.cmake)
+
+# Tests.cmake defines mars_add_test; include it AFTER MarsOptions sets the
+# MARS_ENABLE_TESTS default. Otherwise a clean configure reads an empty value,
+# skips the include, and the testsuite subdirs call an undefined mars_add_test
+# (works on a dirty rebuild only because the cache masks the ordering).
+enable_testing()
+if(MARS_ENABLE_TESTS)
+    include(cmake/Tests.cmake)
+endif()
+
 include(cmake/MarsCMakeFunctions.cmake)
 include(cmake/MarsDependencies.cmake)
 include(cmake/MarsClangFormat.cmake)
@@ -202,7 +207,12 @@ if(MARS_ENABLE_UNSTRUCTURED)
         if(MARS_ENABLE_CUDA OR MARS_ENABLE_HIP)
             if(TARGET cstone_gpu)
                 message(STATUS "cstone_gpu target will be built from source")
-                set(CORNERSTONE_GPU_LIBRARY "$<TARGET_FILE:cstone_gpu>" CACHE PATH "Path to cstone_gpu library" FORCE)
+                # Do NOT cache $<TARGET_FILE:cstone_gpu> as a path. A generator
+                # expression is not a real path: it leaks verbatim into
+                # IMPORTED_LOCATION and the CUDA device-link rule, which make cannot
+                # parse ("target pattern contains no '%'"). cstone_gpu is a real
+                # target here, so link it directly (target_link_libraries) and use
+                # the $<TARGET_FILE:cstone_gpu> genex only in genex-aware contexts.
             else()
                 message(WARNING "cstone_gpu target not found in Cornerstone build")
             endif()
