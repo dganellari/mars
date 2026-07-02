@@ -139,7 +139,9 @@ private:
     void captureGraphs()
     {
         destroyGraphs();
-        if (!mars::acmUseDilu()) return;                     // Jacobi/ILU paths have a host swap -> not capturable
+        if (!mars::acmUseDilu()) return;                     // ILU has host-side level loops (not capturable); the
+                                                             // Stage-4a jacobi gate wants the eager path. The BJ sweep
+                                                             // itself is capturable now (ping-pong) -> hybrid captures.
         // warmup one eager cycle: lazy CUDA/cusolver module+handle init is itself uncapturable on first touch
         applyCycleEager(capStream_);
         cudaStreamSynchronize(capStream_);

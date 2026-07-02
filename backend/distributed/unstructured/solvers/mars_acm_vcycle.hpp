@@ -645,6 +645,19 @@ inline bool acmUseDilu()
     return v == 1;
 }
 
+// hybrid smoother depth: MARS_ACM_DILU_LEVELS = how many FINEST levels get the multicolor block-DILU
+// smoother; deeper levels fall back to block-Jacobi. WHY: a DILU sweep is ~2*numColors launches, and on
+// the coarse tail (levels smoothing a few hundred nodes) those are pure launch overhead -- the measured
+// A/B says DILU's smoothing quality earns its cost on the FINE levels (2.9x fewer Krylov iters than BJ)
+// while the coarse-tail kernel storm is most of the ~18ms/iter V-cycle wall. Default = all levels
+// (today's behavior); the hybrid is opt-in until the iters-vs-wall A/B on the cluster decides.
+inline int acmDiluLevels()
+{
+    static int v = -1;
+    if (v < 0) { const char* e = std::getenv("MARS_ACM_DILU_LEVELS"); v = e ? std::atoi(e) : 1000000; if (v < 0) v = 0; }
+    return v;
+}
+
 // Build the block-ILU(0) factorization + level schedule for one level (host, once per hierarchy level;
 // reuses the host CSR already copied for aggregation). Sparsity is fixed across Picard iters, so the
 // factor cost amortizes. Block unit = 4x4 nodal [u,v,w,p] block (pivots on the whole block via
@@ -880,7 +893,8 @@ void acmBuildHierarchy(const thrust::device_vector<int>& rowOff0,
             acmAggregateGpu<RealType>(levels[idx].nNodes, levels[idx].rowOff, levels[idx].colInd, levels[idx].vals,
                                       beta, levels[idx].agg, nCoarse);     // fills levels[idx].agg (device)
             if (nCoarse >= levels[idx].nNodes) break;                       // no coarsening progress -> coarsest
-            acmBuildLevelDilu<RealType>(levels[idx]);
+            if (idx < acmDiluLevels())                                      // hybrid: DILU on the finest K levels only;
+                acmBuildLevelDilu<RealType>(levels[idx]);                   // deeper keep numColors=0 -> block-Jacobi sweep
         } else {
             // ILU / Jacobi path: host aggregation + (ILU) host structure -- needs the level CSR on the host
             std::vector<int> hro(levels[idx].rowOff.size()), hci(levels[idx].colInd.size());
@@ -910,16 +924,24 @@ inline void acmSmoothGpu(AcmLevel<RealType>& L, int sweeps, RealType omega, bool
 {
     if (acmUseIlu() && L.nLev > 0) { acmIluSmoothGpu(L, sweeps, omega, s); return; }        // block-ILU(0) (coarsest nLev=0 -> Jacobi)
     if (acmUseDilu() && L.numColors > 0) { acmDiluSmoothGpu(L, sweeps, omega, s); return; } // multicolor block-DILU (coarsest -> Jacobi)
+    // Ping-pong on raw pointers instead of a host xvec/xtmp swap so this sweep is CUDA-graph CAPTURABLE
+    // (the swap is a host op that bakes stale pointers into a capture). Every sweep writes its FULL output
+    // buffer, so alternating in/out is exact; an odd sweep count ends in xtmp -> one D2D copy brings the
+    // result home to xvec. Numerically identical to the old swap loop.
     const int blk = 256, grd = (L.ND + blk - 1) / blk, gN = (L.nNodes + blk - 1) / blk;
+    RealType* x0 = acmRaw(L.xvec);
+    RealType* x1 = acmRaw(L.xtmp);
     for (int sw = 0; sw < sweeps; ++sw) {
+        RealType* xin  = (sw & 1) ? x1 : x0;
+        RealType* xout = (sw & 1) ? x0 : x1;
         if (useBlock)
             acmBlockJacobiKernel<RealType><<<gN, blk, 0, s>>>(acmRaw(L.rowOff), acmRaw(L.colInd), acmRaw(L.vals),
-                acmRaw(L.binv), acmRaw(L.bvec), acmRaw(L.xvec), acmRaw(L.xtmp), omega, L.nNodes);
+                acmRaw(L.binv), acmRaw(L.bvec), xin, xout, omega, L.nNodes);
         else
             acmJacobiKernel<RealType><<<grd, blk, 0, s>>>(acmRaw(L.rowOff), acmRaw(L.colInd), acmRaw(L.vals),
-                acmRaw(L.dinv), acmRaw(L.bvec), acmRaw(L.xvec), acmRaw(L.xtmp), omega, L.ND);
-        L.xvec.swap(L.xtmp);                                 // O(1) host pointer swap -- NOT in the captured DILU path (returns above)
+                acmRaw(L.dinv), acmRaw(L.bvec), xin, xout, omega, L.ND);
     }
+    if (sweeps > 0 && (sweeps & 1)) cudaMemcpyAsync(x0, x1, sizeof(RealType) * L.ND, cudaMemcpyDeviceToDevice, s);
 }
 
 // coarsest direct solve (Algorithm A): A_c x = b via cusolverSp QR. Replaces the non-contractive Jacobi
