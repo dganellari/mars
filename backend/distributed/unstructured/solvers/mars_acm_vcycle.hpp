@@ -647,14 +647,14 @@ inline bool acmUseDilu()
 
 // hybrid smoother depth: MARS_ACM_DILU_LEVELS = how many FINEST levels get the multicolor block-DILU
 // smoother; deeper levels fall back to block-Jacobi. WHY: a DILU sweep is ~2*numColors launches, and on
-// the coarse tail (levels smoothing a few hundred nodes) those are pure launch overhead -- the measured
-// A/B says DILU's smoothing quality earns its cost on the FINE levels (2.9x fewer Krylov iters than BJ)
-// while the coarse-tail kernel storm is most of the ~18ms/iter V-cycle wall. Default = all levels
-// (today's behavior); the hybrid is opt-in until the iters-vs-wall A/B on the cluster decides.
+// the coarse tail (levels smoothing a few hundred nodes) those are pure launch overhead. Default 2 = the
+// measured optimum on the pump at Re=1000 (solve 31.9s all-DILU / 29.3s K=3 / 27.1s K=2 / 29.0s K=1 --
+// a clean U: below 2 the iteration count blows up as the 66k-node level loses DILU, above 2 the coarse
+// kernel storm returns). 2 also keeps DILU on the bulk of the DOFs = the robust side as Re grows.
 inline int acmDiluLevels()
 {
     static int v = -1;
-    if (v < 0) { const char* e = std::getenv("MARS_ACM_DILU_LEVELS"); v = e ? std::atoi(e) : 1000000; if (v < 0) v = 0; }
+    if (v < 0) { const char* e = std::getenv("MARS_ACM_DILU_LEVELS"); v = e ? std::atoi(e) : 2; if (v < 0) v = 0; }
     return v;
 }
 
