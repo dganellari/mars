@@ -330,9 +330,10 @@ private:
                 gemvT  (static_cast<int>(n), k, Vp, wp, gp);       // g  = V^T w   (reorthogonalize for stability)
                 gemvNsub(static_cast<int>(n), k, Vp, gp, wp);      // w -= V g
                 axpyDev(k, RealType(1), gp, hp);                   // h += g  (total projection coefficients)
-                cudaMemcpy(hh.data(), hp, k * sizeof(RealType), cudaMemcpyDeviceToHost);   // ONE D2H per iter
+                dotDev(static_cast<int>(n), wp, wp, hp + k);       // hco[k] = <w,w> on device (no host sync)
+                cudaMemcpy(hh.data(), hp, (k + 1) * sizeof(RealType), cudaMemcpyDeviceToHost);  // THE one host fence per iter
                 for (int i = 0; i < k; ++i) H[i][j] = hh[i];
-                H[j + 1][j] = std::sqrt(dot(w, w));
+                H[j + 1][j] = std::sqrt(hh[k]);                    // same Ddot on the same w -- only the landing spot moved
                 if (std::abs(H[j + 1][j]) < 1e-14) { m = j + 1; break; }
                 cudaMemcpyAsync(col(j + 1), wp, n * sizeof(RealType), cudaMemcpyDeviceToDevice, 0);  // V[:,j+1] = w
                 colScale(static_cast<int>(n), RealType(1) / H[j + 1][j], col(j + 1));                // V[:,j+1] /= H[j+1][j]
@@ -452,9 +453,10 @@ private:
     // batched classical Gram-Schmidt (CGS2) primitives over the contiguous Krylov basis V (n x k, col-major).
     // One gemv replaces k host-synced dots, so the FGMRES Arnoldi is O(1) syncs/iter, not O(k) (nsys: the MGS
     // host-synced dots were ~57% of the solve). gemv output is on-device -> the gemv calls themselves DON'T sync
-    // (host-pointer alpha/beta only); only the single D2H of the coefficient column + the norm dot sync.
-    // ORDERING: all cublas here runs on the NULL (default) stream, so the per-iter gemv -> coefficient-D2H ->
-    // norm-dot chain is correctly serialized. A future cublasSetStream would break that ordering -> add syncs.
+    // (host-pointer alpha/beta only); the norm dot lands on-device too (dotDev), so the ONLY host fence per
+    // iter is the single (k+1)-double coefficient+norm D2H.
+    // ORDERING: all cublas here runs on the NULL (default) stream, so the per-iter gemv -> norm-dot(device) ->
+    // coefficient-D2H chain is correctly serialized. A future cublasSetStream would break that ordering -> add syncs.
     void gemvT(int n, int k, const RealType* V, const RealType* w, RealType* h)   // h = V^T w
     {
         const RealType one = 1, zero = 0;
@@ -476,6 +478,15 @@ private:
     {
         if constexpr (std::is_same_v<RealType, double>) cublasDscal(cublasHandle_, n, &a, x, 1);
         else                                            cublasSscal(cublasHandle_, n, &a, x, 1);
+    }
+    // dot with a DEVICE result pointer: enqueues without draining the stream (a host-pointer Ddot blocks until
+    // the device is idle). Lets the norm ride the same single coefficient D2H -> one host fence per Arnoldi iter.
+    void dotDev(int n, const RealType* x, const RealType* y, RealType* d_result)
+    {
+        cublasSetPointerMode(cublasHandle_, CUBLAS_POINTER_MODE_DEVICE);
+        if constexpr (std::is_same_v<RealType, double>) cublasDdot(cublasHandle_, n, x, 1, y, 1, d_result);
+        else                                            cublasSdot(cublasHandle_, n, x, 1, y, 1, d_result);
+        cublasSetPointerMode(cublasHandle_, CUBLAS_POINTER_MODE_HOST);   // rest of the class passes host scalars
     }
 };
 
