@@ -1321,6 +1321,51 @@ int main(int argc, char** argv)
                 thrust::copy(d_rhs.begin(), d_rhs.end(), thrust::device_pointer_cast(b.data()));
                 thrust::copy(d_rhs.begin(), d_rhs.end(), d_diff.begin());   // reuse scratch for the owned-masked norm
                 bnorm = std::sqrt(ownedSq(d_diff));
+                // MARS_OP_PROBE=1 (picard 0): partition-independent operator check. x built from COORDINATES
+                // (same physical node -> same value on any rank), halo-refreshed, y=Ax, ghost rows zeroed,
+                // owned+Allreduce norms per block. 1-rank vs N-rank numbers must match to FP -> separates
+                // "operator assembled wrong at N ranks" from "parallel Krylov broken". Prints norms only.
+                if (pit == 0 && std::getenv("MARS_OP_PROBE")) {
+                    thrust::device_vector<RealType> xt(ND), yt(ND);
+                    const RealType* xg = nx; const RealType* yg = ny; const RealType* zg = nz;
+                    RealType* xtp = thrust::raw_pointer_cast(xt.data());
+                    thrust::for_each(thrust::device, thrust::counting_iterator<size_t>(0),
+                        thrust::counting_iterator<size_t>(nNodes),
+                        [xtp, xg, yg, zg] __device__ (size_t i) {
+                            RealType s = sin(RealType(3) * xg[i] + RealType(1)) + cos(RealType(2) * yg[i]) + sin(RealType(5) * zg[i]);
+                            xtp[4*i+0] = s; xtp[4*i+1] = RealType(0.5) * s; xtp[4*i+2] = -s; xtp[4*i+3] = RealType(2) * s;
+                        });
+                    acmSpmvKernel<RealType><<<dblk, blockSize>>>(
+                        thrust::raw_pointer_cast(d_rowOff.data()), thrust::raw_pointer_cast(d_colInd.data()),
+                        thrust::raw_pointer_cast(d_vals.data()), xtp, thrust::raw_pointer_cast(yt.data()), ND);
+                    cudaDeviceSynchronize();
+                    const RealType* ytp = thrust::raw_pointer_cast(yt.data());
+                    const uint8_t* own = ownNodePtr;
+                    auto blkNorm = [&](int comp) -> RealType {   // comp 0..2 momentum, 3 continuity, -1 all
+                        RealType loc = thrust::transform_reduce(thrust::device, thrust::counting_iterator<size_t>(0),
+                            thrust::counting_iterator<size_t>((size_t)ND),
+                            [ytp, own, comp] __device__ (size_t d) -> RealType {
+                                if (own && !own[d >> 2]) return RealType(0);
+                                if (comp >= 0 && (int)(d & 3) != comp) return RealType(0);
+                                return ytp[d] * ytp[d]; },
+                            RealType(0), thrust::plus<RealType>());
+                        if (numRanks > 1) MPI_Allreduce(MPI_IN_PLACE, &loc, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+                        return std::sqrt(loc);
+                    };
+                    RealType xn = 0;   // owned norm of x itself (sanity: partition-independent by construction)
+                    { const RealType* xq = xtp; const uint8_t* ow = ownNodePtr;
+                      xn = thrust::transform_reduce(thrust::device, thrust::counting_iterator<size_t>(0),
+                          thrust::counting_iterator<size_t>((size_t)ND),
+                          [xq, ow] __device__ (size_t d) -> RealType { return (ow && !ow[d >> 2]) ? RealType(0) : xq[d] * xq[d]; },
+                          RealType(0), thrust::plus<RealType>());
+                      if (numRanks > 1) MPI_Allreduce(MPI_IN_PLACE, &xn, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+                      xn = std::sqrt(xn); }
+                    if (rank == 0)
+                        std::cout << std::scientific << std::setprecision(12)
+                                  << "[op-probe] |x|=" << xn << " |Ax|=" << blkNorm(-1)
+                                  << " |Ax|_u=" << blkNorm(0) << " |Ax|_v=" << blkNorm(1)
+                                  << " |Ax|_w=" << blkNorm(2) << " |Ax|_p=" << blkNorm(3) << "\n";
+                }
                 bool reuseThis = (acmRebuild > 1 && (pit % acmRebuild != 0));   // rebuild hierarchy every K iters, reuse between
                 acm.setReuse(reuseThis);
                 cudaDeviceSynchronize();                    // flush prior async work so the timer measures only the solve
