@@ -261,6 +261,41 @@ public:
     void setHaloExchangeCallback(std::function<void(Vector&)> cb) { haloCb_ = std::move(cb); }  // owner -> ghost refresh
     void setOwnedDofMask(const uint8_t* d_mask) { ownedDof_ = d_mask; }   // device, len ND: 1 = this rank owns the DOF
     void setParallel(bool p) { mpiPar_ = p; }
+
+    // PUBLIC (not by choice): nvcc forbids extended __device__ lambdas inside private member functions.
+    // zero the ghost entries of a vector (multi-rank Krylov invariant: ghost DOFs stay 0 so every local
+    // reduction is an owned-only partial). No-op when no mask is set (single rank).
+    void zeroGhosts(Vector& v)
+    {
+        if (!ownedDof_) return;
+        RealType* p = v.data();
+        const uint8_t* own = ownedDof_;
+        thrust::for_each(thrust::device, thrust::counting_iterator<size_t>(0),
+                         thrust::counting_iterator<size_t>(v.size()),
+                         [p, own] __device__ (size_t i) { if (own[i] == 0) p[i] = RealType(0); });
+    }
+    // globally-correct dot for vectors that may carry NONZERO ghosts (b, the initial residual): owned-masked
+    // local partial + Allreduce. Krylov-internal vectors keep ghosts zeroed, so they use dot()+Allreduce instead.
+    RealType globalDot(const Vector& x, const Vector& y)
+    {
+        RealType loc;
+        if (ownedDof_) {
+            const RealType* xp = x.data(); const RealType* yp = y.data();
+            const uint8_t* own = ownedDof_;
+            loc = thrust::transform_reduce(thrust::device, thrust::counting_iterator<size_t>(0),
+                thrust::counting_iterator<size_t>(x.size()),
+                [xp, yp, own] __device__ (size_t i) -> RealType { return own[i] ? xp[i] * yp[i] : RealType(0); },
+                RealType(0), thrust::plus<RealType>());
+        } else {
+            loc = dot(x, y);
+        }
+        if (mpiPar_) {
+            RealType g = 0;
+            MPI_Allreduce(&loc, &g, 1, std::is_same_v<RealType, double> ? MPI_DOUBLE : MPI_FLOAT, MPI_SUM, MPI_COMM_WORLD);
+            return g;
+        }
+        return loc;
+    }
     void setFlexible(bool f) { flexible_ = f; }            // FGMRES (Z-basis) -- needs a preconditioner set
     int getLastIterations() const { return lastIters_; }
 
@@ -531,39 +566,6 @@ private:
         if constexpr (std::is_same_v<RealType, double>) cublasDdot(cublasHandle_, n, x, 1, y, 1, d_result);
         else                                            cublasSdot(cublasHandle_, n, x, 1, y, 1, d_result);
         cublasSetPointerMode(cublasHandle_, CUBLAS_POINTER_MODE_HOST);   // rest of the class passes host scalars
-    }
-    // zero the ghost entries of a vector (multi-rank Krylov invariant: ghost DOFs stay 0 so every local
-    // reduction is an owned-only partial). No-op when no mask is set (single rank).
-    void zeroGhosts(Vector& v)
-    {
-        if (!ownedDof_) return;
-        RealType* p = v.data();
-        const uint8_t* own = ownedDof_;
-        thrust::for_each(thrust::device, thrust::counting_iterator<size_t>(0),
-                         thrust::counting_iterator<size_t>(v.size()),
-                         [p, own] __device__ (size_t i) { if (own[i] == 0) p[i] = RealType(0); });
-    }
-    // globally-correct dot for vectors that may carry NONZERO ghosts (b, the initial residual): owned-masked
-    // local partial + Allreduce. Krylov-internal vectors keep ghosts zeroed, so they use dot()+Allreduce instead.
-    RealType globalDot(const Vector& x, const Vector& y)
-    {
-        RealType loc;
-        if (ownedDof_) {
-            const RealType* xp = x.data(); const RealType* yp = y.data();
-            const uint8_t* own = ownedDof_;
-            loc = thrust::transform_reduce(thrust::device, thrust::counting_iterator<size_t>(0),
-                thrust::counting_iterator<size_t>(x.size()),
-                [xp, yp, own] __device__ (size_t i) -> RealType { return own[i] ? xp[i] * yp[i] : RealType(0); },
-                RealType(0), thrust::plus<RealType>());
-        } else {
-            loc = dot(x, y);
-        }
-        if (mpiPar_) {
-            RealType g = 0;
-            MPI_Allreduce(&loc, &g, 1, std::is_same_v<RealType, double> ? MPI_DOUBLE : MPI_FLOAT, MPI_SUM, MPI_COMM_WORLD);
-            return g;
-        }
-        return loc;
     }
 };
 
