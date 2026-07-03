@@ -730,10 +730,13 @@ int main(int argc, char** argv)
         }
 
         if (doRhieChow) {
+            // full range (0,totalEl) like the Picard calls: the assemble kernels index the per-element area
+            // arrays by the ABSOLUTE element id (e = startElem + kk, avX[e*6]) while the arrays are sized and
+            // filled [0, count) -- any startElem > 0 (rank > 0) reads past the end. startElem=0 aligns them.
             assembleRhieChowGpu<KeyType, RealType>(c0, c1, c2, c3, nx, ny, nz,
                 thrust::raw_pointer_cast(d_rowOff.data()), thrust::raw_pointer_cast(d_colInd.data()),
                 thrust::raw_pointer_cast(d_vals.data()), nu, doSupg ? RealType(1) : RealType(0), avxp, avyp, avzp,
-                startEl, numLocal, (int)nNodes, blockSize);
+                0, totalEl, (int)nNodes, blockSize);
         } else {
             assembleCoupledStokesKernel<KeyType, RealType><<<eBlocks, blockSize>>>(
                 c0, c1, c2, c3, nx, ny, nz,
