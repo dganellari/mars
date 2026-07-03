@@ -1,0 +1,10 @@
+# High-order CVFEM diffusion (Laplacian) operator.
+# The flux is the pointwise weak-form action at a subcontrol-surface
+# quadrature slot; the compiler synthesizes gather -> contract -> integrate
+# -> scatter around it (Knaus Alg 2). Metric components:
+#   g2 = normal, g1 = tangential (s-axis), g0 = tangential (r-axis).
+operator laplacian {
+    element = hex
+    form    = diffusion
+    flux    = g2*deriv + g0*dt2 + g1*dt1
+}

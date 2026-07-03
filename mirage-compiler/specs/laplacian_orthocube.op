@@ -1,0 +1,9 @@
+# Laplacian specialized to an orthogonal / axis-aligned hex: the metric cross
+# terms vanish, so the flux keeps only the normal component. The compiler then
+# prunes BOTH tangential D-contractions and the interp buffer -- demonstrating
+# the codegen leverage from one authored line (compare vs laplacian.op).
+operator laplacian_orthocube {
+    element = hex
+    form    = diffusion
+    flux    = g2*deriv
+}

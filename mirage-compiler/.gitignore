@@ -1,0 +1,4 @@
+# scratch codegen output + compiled validation driver
+generated/
+__pycache__/
+*.pyc
