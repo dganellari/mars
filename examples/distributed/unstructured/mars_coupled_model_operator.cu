@@ -480,10 +480,6 @@ int main(int argc, char** argv)
     const size_t nNodes   = domain.getNodeCount();
     const size_t startEl  = domain.startIndex();
     const size_t numLocal = domain.localElementCount();
-    // Multi-rank: assemble over ALL elements present (local + halo) so every OWNED row gets its full 1-ring
-    // contributions -- the cstone-native alternative to reverse-folding the CSR. Ghost rows come out partial
-    // and are forced to identity after BC (they are the neighbor's equations, never read through owned dots).
-    const size_t totalEl  = domain.getElementCount();
     std::vector<uint8_t> hOwn(nNodes, 1);
     if (numRanks > 1)
         thrust::copy(thrust::device_pointer_cast(domain.getNodeOwnershipMap().data()),
@@ -494,6 +490,12 @@ int main(int argc, char** argv)
                       << " nodes=" << nNodes << " localElems=" << numLocal << "\n";
 
     const auto& conn = domain.getElementToNodeConnectivity();
+    // Multi-rank: assemble over ALL elements present (local + halo) so every OWNED row gets its full 1-ring
+    // contributions -- the cstone-native alternative to reverse-folding the CSR. Ghost rows come out partial
+    // and are forced to identity after BC (they are the neighbor's equations, never read through owned dots).
+    // totalEl comes from the ARRAY ITSELF (local+halo length) -- getElementCount() is ambiguous on >1 rank
+    // (the file-read path stores the pre-sync read count -> out-of-bounds reads on rank>0).
+    const size_t totalEl = std::get<0>(conn).size();
     const KeyType* c0 = std::get<0>(conn).data();
     const KeyType* c1 = std::get<1>(conn).data();
     const KeyType* c2 = std::get<2>(conn).data();
