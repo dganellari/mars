@@ -1360,11 +1360,13 @@ int main(int argc, char** argv)
                           RealType(0), thrust::plus<RealType>());
                       if (numRanks > 1) MPI_Allreduce(MPI_IN_PLACE, &xn, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
                       xn = std::sqrt(xn); }
+                    // blkNorm contains a COLLECTIVE -> every rank must call it; only the print is rank-gated
+                    const RealType nAll = blkNorm(-1), nU = blkNorm(0), nV = blkNorm(1), nW = blkNorm(2), nP = blkNorm(3);
                     if (rank == 0)
                         std::cout << std::scientific << std::setprecision(12)
-                                  << "[op-probe] |x|=" << xn << " |Ax|=" << blkNorm(-1)
-                                  << " |Ax|_u=" << blkNorm(0) << " |Ax|_v=" << blkNorm(1)
-                                  << " |Ax|_w=" << blkNorm(2) << " |Ax|_p=" << blkNorm(3) << "\n";
+                                  << "[op-probe] |x|=" << xn << " |Ax|=" << nAll
+                                  << " |Ax|_u=" << nU << " |Ax|_v=" << nV
+                                  << " |Ax|_w=" << nW << " |Ax|_p=" << nP << "\n" << std::flush;
                 }
                 bool reuseThis = (acmRebuild > 1 && (pit % acmRebuild != 0));   // rebuild hierarchy every K iters, reuse between
                 acm.setReuse(reuseThis);
