@@ -4,9 +4,15 @@
 #include "mars_cg_solver_with_preconditioner.hpp"   // Preconditioner base (pluggable + flexible GMRES)
 #include <cusparse.h>
 #include <cublas_v2.h>
+#include <mpi.h>
+#include <functional>
 #include <iostream>
 #include <cmath>
 #include <vector>
+#include <thrust/for_each.h>
+#include <thrust/transform_reduce.h>
+#include <thrust/execution_policy.h>
+#include <thrust/iterator/counting_iterator.h>
 
 namespace mars
 {
@@ -246,6 +252,15 @@ public:
     void setTolerance(RealType tol) { tolerance_ = tol; }
     void setRestart(int restart) { restart_ = restart; }
     void setPreconditioner(Precond* M) { precond_ = M; }   // opt-in pluggable preconditioner
+
+    // ---- multi-rank hooks (flexible path only). The parallel discipline: Krylov vectors keep their GHOST
+    // entries at ZERO (ghost DOFs are duplicate unknowns -- the CSR is sized over owned+ghost nodes), so every
+    // local dot/gemv is an owned-only partial and one MPI_Allreduce completes it. Vectors fed INTO the matvec/
+    // preconditioner get their ghosts refreshed from the owners first (the halo callback). Single-rank: all
+    // three unset -> bit-identical to the serial path.
+    void setHaloExchangeCallback(std::function<void(Vector&)> cb) { haloCb_ = std::move(cb); }  // owner -> ghost refresh
+    void setOwnedDofMask(const uint8_t* d_mask) { ownedDof_ = d_mask; }   // device, len ND: 1 = this rank owns the DOF
+    void setParallel(bool p) { mpiPar_ = p; }
     void setFlexible(bool f) { flexible_ = f; }            // FGMRES (Z-basis) -- needs a preconditioner set
     int getLastIterations() const { return lastIters_; }
 
@@ -258,6 +273,9 @@ private:
     cusparseHandle_t cusparseHandle_;
     void* spmvBuffer_ = nullptr;        // persistent cusparse SpMV workspace, grown on demand -> no per-iter cudaMalloc/Free
     size_t spmvBufferBytes_ = 0;
+    std::function<void(Vector&)> haloCb_;      // multi-rank: refresh ghost DOFs from owners (empty on 1 rank)
+    const uint8_t* ownedDof_ = nullptr;        // multi-rank: per-DOF ownership mask (device)
+    bool mpiPar_ = false;
     Precond* precond_ = nullptr;   // not owned; nullptr -> stationary path (inline Jacobi / none)
     bool flexible_ = false;
     int lastIters_ = 0;
@@ -275,7 +293,7 @@ private:
 
         precond_->setup(A);   // build / refresh M once
 
-        RealType b_norm = std::sqrt(dot(b, b));
+        RealType b_norm = std::sqrt(globalDot(b, b));   // owned-masked + Allreduce on multi-rank; == dot(b,b) on 1 rank
         if (b_norm < 1e-14) { lastIters_ = 0; if (verbose_) std::cout << "FGMRES: RHS is zero\n"; return true; }
 
         // V = orthonormal Krylov basis stored CONTIGUOUSLY (n x (m+1), column-major) so the Arnoldi
@@ -286,7 +304,7 @@ private:
         std::vector<Vector> Z(m);
         for (int i = 0; i < m; ++i)  Z[i].resize(n);
         Vector hco(m + 1), gco(m + 1), vj(n);                  // CGS2 coeffs (device) + current-column scratch for apply()
-        std::vector<RealType> hh(m + 1);                       // host copy of one column's coefficients
+        std::vector<RealType> hh(m + 1), gg(m + 1);            // host coefficient buffers (gg: parallel-CGS2 2nd pass)
         auto col = [&](int i) { return thrust::raw_pointer_cast(Vmat.data()) + static_cast<size_t>(i) * n; };
         std::vector<std::vector<RealType>> H(m + 1, std::vector<RealType>(m, 0.0));
         std::vector<RealType> s(m + 1), cs(m), sn(m);
@@ -295,13 +313,15 @@ private:
 
         for (int outer = 0; outer < maxIter_ / m; ++outer)
         {
+            if (haloCb_) haloCb_(x);                                // owned-row matvec reads ghost COLUMNS -> refresh from owners
             spmv(A, x, r);                                          // r = A x
             thrust::transform(thrust::device_pointer_cast(b.data()),
                              thrust::device_pointer_cast(b.data() + b.size()),
                              thrust::device_pointer_cast(r.data()),
                              thrust::device_pointer_cast(r.data()),
                              thrust::minus<RealType>());            // r = b - A x  (NOT preconditioned: flexible convention)
-            RealType beta = std::sqrt(dot(r, r));
+            zeroGhosts(r);                                          // ghost rows of the local CSR are not this rank's equations
+            RealType beta = std::sqrt(globalDot(r, r));
             if (beta / b_norm < tolerance_) {
                 lastIters_ = totalIter;
                 if (verbose_) std::cout << "FGMRES converged in " << totalIter << " iters, res=" << beta / b_norm << "\n";
@@ -317,21 +337,45 @@ private:
             {
                 cudaMemcpyAsync(thrust::raw_pointer_cast(vj.data()), col(j),
                                 n * sizeof(RealType), cudaMemcpyDeviceToDevice, 0); // col(j) -> Vector for apply()
-                precond_->apply(vj, Z[j]);                         // Z[j] = M^-1 V[j]
+                if (haloCb_) haloCb_(vj);                          // give the rank-local V-cycle owner values on its ghosts
+                precond_->apply(vj, Z[j]);                         // Z[j] = M^-1 V[j]  (rank-local preconditioner = Schwarz)
+                if (haloCb_) haloCb_(Z[j]);                        // matvec input: ghost columns must carry owner values
                 spmv(A, Z[j], w);                                  // w = A Z[j]
+                zeroGhosts(w);                                     // keep the Krylov ghost-zero invariant
                 // batched CGS2 vs V[0..j]: 4 gemv (async) + 1 D2H of the coefficients, not j+1 synced dots
                 const int k = j + 1;
                 RealType* Vp = col(0);
                 RealType* wp = thrust::raw_pointer_cast(w.data());
                 RealType* hp = thrust::raw_pointer_cast(hco.data());
                 RealType* gp = thrust::raw_pointer_cast(gco.data());
-                gemvT  (static_cast<int>(n), k, Vp, wp, hp);       // h  = V^T w
-                gemvNsub(static_cast<int>(n), k, Vp, hp, wp);      // w -= V h
-                gemvT  (static_cast<int>(n), k, Vp, wp, gp);       // g  = V^T w   (reorthogonalize for stability)
-                gemvNsub(static_cast<int>(n), k, Vp, gp, wp);      // w -= V g
-                axpyDev(k, RealType(1), gp, hp);                   // h += g  (total projection coefficients)
-                dotDev(static_cast<int>(n), wp, wp, hp + k);       // hco[k] = <w,w> on device (no host sync)
-                cudaMemcpy(hh.data(), hp, (k + 1) * sizeof(RealType), cudaMemcpyDeviceToHost);  // THE one host fence per iter
+                if (!mpiPar_) {
+                    gemvT  (static_cast<int>(n), k, Vp, wp, hp);       // h  = V^T w
+                    gemvNsub(static_cast<int>(n), k, Vp, hp, wp);      // w -= V h
+                    gemvT  (static_cast<int>(n), k, Vp, wp, gp);       // g  = V^T w   (reorthogonalize for stability)
+                    gemvNsub(static_cast<int>(n), k, Vp, gp, wp);      // w -= V g
+                    axpyDev(k, RealType(1), gp, hp);                   // h += g  (total projection coefficients)
+                    dotDev(static_cast<int>(n), wp, wp, hp + k);       // hco[k] = <w,w> on device (no host sync)
+                    cudaMemcpy(hh.data(), hp, (k + 1) * sizeof(RealType), cudaMemcpyDeviceToHost);  // THE one host fence per iter
+                } else {
+                    // parallel CGS2: the projection coefficient must be GLOBAL before w -= V h, so each of the
+                    // two passes is gemvT -> D2H -> Allreduce -> H2D -> gemvNsub. V and w keep ghosts at zero,
+                    // so the local gemvT partials are owned-only. 3 tiny Allreduces/iter (k, k, 1 doubles).
+                    const MPI_Datatype mt = std::is_same_v<RealType, double> ? MPI_DOUBLE : MPI_FLOAT;
+                    gemvT(static_cast<int>(n), k, Vp, wp, hp);
+                    cudaMemcpy(hh.data(), hp, k * sizeof(RealType), cudaMemcpyDeviceToHost);
+                    MPI_Allreduce(MPI_IN_PLACE, hh.data(), k, mt, MPI_SUM, MPI_COMM_WORLD);
+                    cudaMemcpy(hp, hh.data(), k * sizeof(RealType), cudaMemcpyHostToDevice);
+                    gemvNsub(static_cast<int>(n), k, Vp, hp, wp);      // w -= V h_global
+                    gemvT(static_cast<int>(n), k, Vp, wp, gp);
+                    cudaMemcpy(gg.data(), gp, k * sizeof(RealType), cudaMemcpyDeviceToHost);
+                    MPI_Allreduce(MPI_IN_PLACE, gg.data(), k, mt, MPI_SUM, MPI_COMM_WORLD);
+                    cudaMemcpy(gp, gg.data(), k * sizeof(RealType), cudaMemcpyHostToDevice);
+                    gemvNsub(static_cast<int>(n), k, Vp, gp, wp);      // w -= V g_global
+                    axpyDev(k, RealType(1), gp, hp);                   // h += g (both global on device)
+                    dotDev(static_cast<int>(n), wp, wp, hp + k);
+                    cudaMemcpy(hh.data(), hp, (k + 1) * sizeof(RealType), cudaMemcpyDeviceToHost);
+                    MPI_Allreduce(MPI_IN_PLACE, hh.data() + k, 1, mt, MPI_SUM, MPI_COMM_WORLD);   // norm partial only
+                }
                 for (int i = 0; i < k; ++i) H[i][j] = hh[i];
                 H[j + 1][j] = std::sqrt(hh[k]);                    // same Ddot on the same w -- only the landing spot moved
                 if (std::abs(H[j + 1][j]) < 1e-14) { m = j + 1; break; }
@@ -487,6 +531,39 @@ private:
         if constexpr (std::is_same_v<RealType, double>) cublasDdot(cublasHandle_, n, x, 1, y, 1, d_result);
         else                                            cublasSdot(cublasHandle_, n, x, 1, y, 1, d_result);
         cublasSetPointerMode(cublasHandle_, CUBLAS_POINTER_MODE_HOST);   // rest of the class passes host scalars
+    }
+    // zero the ghost entries of a vector (multi-rank Krylov invariant: ghost DOFs stay 0 so every local
+    // reduction is an owned-only partial). No-op when no mask is set (single rank).
+    void zeroGhosts(Vector& v)
+    {
+        if (!ownedDof_) return;
+        RealType* p = v.data();
+        const uint8_t* own = ownedDof_;
+        thrust::for_each(thrust::device, thrust::counting_iterator<size_t>(0),
+                         thrust::counting_iterator<size_t>(v.size()),
+                         [p, own] __device__ (size_t i) { if (own[i] == 0) p[i] = RealType(0); });
+    }
+    // globally-correct dot for vectors that may carry NONZERO ghosts (b, the initial residual): owned-masked
+    // local partial + Allreduce. Krylov-internal vectors keep ghosts zeroed, so they use dot()+Allreduce instead.
+    RealType globalDot(const Vector& x, const Vector& y)
+    {
+        RealType loc;
+        if (ownedDof_) {
+            const RealType* xp = x.data(); const RealType* yp = y.data();
+            const uint8_t* own = ownedDof_;
+            loc = thrust::transform_reduce(thrust::device, thrust::counting_iterator<size_t>(0),
+                thrust::counting_iterator<size_t>(x.size()),
+                [xp, yp, own] __device__ (size_t i) -> RealType { return own[i] ? xp[i] * yp[i] : RealType(0); },
+                RealType(0), thrust::plus<RealType>());
+        } else {
+            loc = dot(x, y);
+        }
+        if (mpiPar_) {
+            RealType g = 0;
+            MPI_Allreduce(&loc, &g, 1, std::is_same_v<RealType, double> ? MPI_DOUBLE : MPI_FLOAT, MPI_SUM, MPI_COMM_WORLD);
+            return g;
+        }
+        return loc;
     }
 };
 

@@ -34,6 +34,8 @@ using namespace mars::amr;
 
 #include <thrust/device_vector.h>
 #include <thrust/inner_product.h>
+#include <climits>      // INT_MAX (multi-rank outlet-pin election)
+#include <functional>   // std::function (halo callbacks)
 #include <thrust/extrema.h>
 #include <thrust/transform.h>
 #include <thrust/reduce.h>
@@ -296,6 +298,19 @@ __global__ void scatterBoundaryFluxKernel(const RealType* sBndX, const RealType*
         csrAdd<RealType>(vals, colInd, cps, cpe, 4 * P + d, s[d]);
 }
 
+// Multi-rank: force GHOST DOF rows to identity (zero row, diag 1, rhs 0). Ghost rows are the NEIGHBOR's
+// equations -- partially assembled here at best. Identity keeps the rank-local preconditioner sane and the
+// local matvec harmless there (owned reductions never read ghost rows; matvec inputs get owner values via halo).
+template<typename RealType>
+__global__ void ghostIdentityKernel(const uint8_t* ownNode, const int* rowOff, const int* colInd,
+                                    RealType* vals, RealType* rhs, int ND)
+{
+    int r = blockIdx.x * blockDim.x + threadIdx.x; if (r >= ND) return;
+    if (ownNode[r >> 2]) return;                          // owned DOF: untouched
+    for (int k = rowOff[r]; k < rowOff[r + 1]; ++k) vals[k] = (colInd[k] == r) ? RealType(1) : RealType(0);
+    rhs[r] = RealType(0);
+}
+
 // Assemble the full collocated Rhie-Chow coupled operator into a pre-zeroed CSR (caller fills d_vals=0):
 // a^uu(nu*K) + FV a^pu/a^up=-(a^pu)^T + RC a^pp d_f-Laplacian (d_f from the momentum diagonal, no tau)
 // + the open-boundary continuity closure rho*S_bnd.u (zero on closed domains, carries inlet/outlet flux).
@@ -304,7 +319,8 @@ void assembleRhieChowGpu(const KeyType* c0, const KeyType* c1, const KeyType* c2
                          const RealType* nx, const RealType* ny, const RealType* nz,
                          const int* d_rowOff, const int* d_colInd, RealType* d_vals, RealType nu, RealType supg,
                          const RealType* avxp, const RealType* avyp, const RealType* avzp,
-                         size_t startElem, size_t numLocal, int nNodes, int blockSize)
+                         size_t startElem, size_t numLocal, int nNodes, int blockSize,
+                         const std::function<void(thrust::device_vector<RealType>&)>& haloNode = {})
 {
     const int eBlocks = (int)((numLocal + blockSize - 1) / blockSize);
     thrust::device_vector<RealType> avX(6 * numLocal), avY(6 * numLocal), avZ(6 * numLocal);
@@ -322,6 +338,10 @@ void assembleRhieChowGpu(const KeyType* c0, const KeyType* c1, const KeyType* c2
     computeInvApVKernel<RealType><<<nblkN, blockSize>>>(d_rowOff, d_colInd, d_vals,
         thrust::raw_pointer_cast(Vp.data()), thrust::raw_pointer_cast(invApV.data()), nNodes);
     cudaDeviceSynchronize();
+    // Multi-rank: a GHOST node's momentum diagonal / volume are incomplete here (its full 1-ring may extend
+    // past this rank's halo), and the a^pp face coefficient reads invApV at BOTH face endpoints -- one may be
+    // a ghost. Owner values are complete (full-range assembly), so publish owner -> ghost before a^pp.
+    if (haloNode) haloNode(invApV);
     assembleRhieChowDivGradKernel<KeyType, RealType><<<eBlocks, blockSize>>>(
         c0, c1, c2, c3, thrust::raw_pointer_cast(avX.data()), thrust::raw_pointer_cast(avY.data()),
         thrust::raw_pointer_cast(avZ.data()), d_rowOff, d_colInd, d_vals, startElem, numLocal);
@@ -460,6 +480,14 @@ int main(int argc, char** argv)
     const size_t nNodes   = domain.getNodeCount();
     const size_t startEl  = domain.startIndex();
     const size_t numLocal = domain.localElementCount();
+    // Multi-rank: assemble over ALL elements present (local + halo) so every OWNED row gets its full 1-ring
+    // contributions -- the cstone-native alternative to reverse-folding the CSR. Ghost rows come out partial
+    // and are forced to identity after BC (they are the neighbor's equations, never read through owned dots).
+    const size_t totalEl  = domain.getElementCount();
+    std::vector<uint8_t> hOwn(nNodes, 1);
+    if (numRanks > 1)
+        thrust::copy(thrust::device_pointer_cast(domain.getNodeOwnershipMap().data()),
+                     thrust::device_pointer_cast(domain.getNodeOwnershipMap().data() + nNodes), hOwn.begin());
     if (rank == 0)
         if (std::getenv("MARS_VERBOSE_MESH"))
             std::cout << "[phase0] mesh: elements=" << domain.getElementCount()
@@ -561,22 +589,15 @@ int main(int argc, char** argv)
     const bool pass = relErr < tol;
 
     std::cout << std::scientific << std::setprecision(6);
-    std::cout << "[phase0][G=-D^T gate] <phi,Dv> = " << dDiv
-              << "  <v,Gphi> = " << dGrad
-              << "  rel|sum| = " << relErr
-              << "  -> " << (pass ? "PASS" : "FAIL") << "\n";
+    if (rank == 0)
+        std::cout << "[phase0][G=-D^T gate] <phi,Dv> = " << dDiv
+                  << "  <v,Gphi> = " << dGrad
+                  << "  rel|sum| = " << relErr
+                  << "  -> " << (pass ? "PASS" : "FAIL") << "\n";
 
-    // The coupled-operator assembly + Krylov solve are not yet multi-rank (reverse-fold of the assembled
-    // operator + halo-exchange in the matvec/dots = Increment 2). Refuse >1 rank here so the gate above can
-    // validate the halo-fold/owned-mask/allreduce machinery at N ranks, without reporting a wrong solve.
-    if (numRanks > 1)
-    {
-        if (rank == 0)
-            std::cout << "[phase0] adjointness gate is multi-rank-correct; the coupled solve is single-rank only "
-                         "(operator + Krylov halo = Increment 2). Gate validated above -- run the solve with 1 rank.\n";
-        MPI_Finalize();
-        return 0;
-    }
+    // Stage 1: the coupled solve is multi-rank -- full-range assembly (owned rows complete), ghost-identity
+    // rows, halo-exchanged matvec inputs, ghost-zeroed Krylov vectors, owned-masked + Allreduce reductions.
+    // The rank-local ACM V-cycle acts as an additive-Schwarz preconditioner (Stage 2 = halo-aware smoothing).
 
     // Side-set velocity-flux inlet + no-slip walls BC builder (outlet velocity left FREE; caller pins
     // pressure). Shared by --solve (cusolver) and --acm-pump (ACM). Fills velocity comps of bcF/bcV; also
@@ -593,7 +614,9 @@ int main(int argc, char** argv)
             std::cerr << "\n"; return false;
         }
         thrust::device_vector<RealType> dsbx(nNodes), dsby(nNodes), dsbz(nNodes);
-        mars::fem::computeBoundaryAreaVectorsGpu<KeyType, RealType>(c0, c1, c2, c3, startEl, numLocal,
+        // FULL element range: with local-only elements a rank-seam face occurs once and would be flagged
+        // boundary -> phantom no-slip walls along every partition seam. Halo elements pair those faces up.
+        mars::fem::computeBoundaryAreaVectorsGpu<KeyType, RealType>(c0, c1, c2, c3, 0, totalEl,
             nx, ny, nz, (int)nNodes, thrust::raw_pointer_cast(dsbx.data()),
             thrust::raw_pointer_cast(dsby.data()), thrust::raw_pointer_cast(dsbz.data()));
         cudaDeviceSynchronize();
@@ -612,7 +635,12 @@ int main(int argc, char** argv)
         inN.insert(hin.begin(), hin.end());
         if (!outletSS.empty()) { auto ho = ssToHost(outletSS); outN.insert(ho.begin(), ho.end()); }
         RealType sx = 0, sy = 0, sz = 0;                              // net outward inlet area vector
-        for (int i : hin) { sx += hsbx[i]; sy += hsby[i]; sz += hsbz[i]; }
+        for (int i : inN) { if (hOwn[i]) { sx += hsbx[i]; sy += hsby[i]; sz += hsbz[i]; } }   // owned-only: no seam double-count
+        if (numRanks > 1) {
+            RealType g[3] = {sx, sy, sz};
+            MPI_Allreduce(MPI_IN_PLACE, g, 3, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);   // the inlet normal is GLOBAL
+            sx = g[0]; sy = g[1]; sz = g[2];
+        }
         RealType len = std::sqrt(sx * sx + sy * sy + sz * sz);
         RealType sgn = (inletFlip ? RealType(1) : RealType(-1)) / (len > 0 ? len : RealType(1));  // inward
         RealType nhx = sgn * sx, nhy = sgn * sy, nhz = sgn * sz;
@@ -646,16 +674,17 @@ int main(int argc, char** argv)
         const RealType nu = 1e-3, tau = 1.0 / 24.0;   // values irrelevant to the gates
         const int ND = 4 * static_cast<int>(nNodes);
 
-        // connectivity to host (single rank: numLocal == elementCount, startEl == 0)
-        std::vector<KeyType> h0(numLocal), h1(numLocal), h2(numLocal), h3(numLocal);
-        thrust::copy(thrust::device_pointer_cast(c0), thrust::device_pointer_cast(c0 + numLocal), h0.begin());
-        thrust::copy(thrust::device_pointer_cast(c1), thrust::device_pointer_cast(c1 + numLocal), h1.begin());
-        thrust::copy(thrust::device_pointer_cast(c2), thrust::device_pointer_cast(c2 + numLocal), h2.begin());
-        thrust::copy(thrust::device_pointer_cast(c3), thrust::device_pointer_cast(c3 + numLocal), h3.begin());
+        // connectivity to host over ALL elements (local + halo): the sparsity must cover the halo-element
+        // contributions so owned seam rows have their cross-rank columns (1 rank: totalEl == numLocal).
+        std::vector<KeyType> h0(totalEl), h1(totalEl), h2(totalEl), h3(totalEl);
+        thrust::copy(thrust::device_pointer_cast(c0), thrust::device_pointer_cast(c0 + totalEl), h0.begin());
+        thrust::copy(thrust::device_pointer_cast(c1), thrust::device_pointer_cast(c1 + totalEl), h1.begin());
+        thrust::copy(thrust::device_pointer_cast(c2), thrust::device_pointer_cast(c2 + totalEl), h2.begin());
+        thrust::copy(thrust::device_pointer_cast(c3), thrust::device_pointer_cast(c3 + totalEl), h3.begin());
 
         // node 1-ring adjacency (nodes sharing a tet), then interleaved 4N block sparsity
         std::vector<std::set<int>> ring(nNodes);
-        for (size_t e = 0; e < numLocal; ++e) {
+        for (size_t e = 0; e < totalEl; ++e) {
             int nn[4] = {(int)h0[e], (int)h1[e], (int)h2[e], (int)h3[e]};
             for (int a = 0; a < 4; ++a)
                 for (int b = 0; b < 4; ++b) ring[nn[a]].insert(nn[b]);
@@ -718,9 +747,12 @@ int main(int argc, char** argv)
             return 4;
         }
 
-        // copy CSR back; gates are host-side (Phase-0 model operator, small mesh)
+        // copy CSR back; gates are host-side (Phase-0 model operator, small mesh). hv stays OUTSIDE the guard:
+        // the later opt-in diagnostic blocks (coarsen/acm-stage gates) read it too. The consistency gates are
+        // single-rank only: they reduce over the LOCAL matrix (incl. partial ghost rows) -- meaningless on a partition.
         std::vector<RealType> hv(nnz);
         thrust::copy(d_vals.begin(), d_vals.end(), hv.begin());
+        if (numRanks == 1) {
         std::map<std::pair<int, int>, RealType> A;
         for (int r = 0; r < ND; ++r)
             for (int k = h_rowOff[r]; k < h_rowOff[r + 1]; ++k) A[{r, h_colInd[k]}] = hv[k];
@@ -804,6 +836,7 @@ int main(int argc, char** argv)
             assemblePass = assemblePass && mok;
         }
         std::cout << "[phase0][assemble] -> " << (assemblePass ? "ALL PASS" : "FAIL") << "\n";
+        }   // numRanks == 1 (host consistency gates)
 
         // ---- ACM Stage 3: GPU coarse-operator (sum-of-fine == P^T A P) + grid transfers ----
         if (doAcm3)
@@ -1152,11 +1185,26 @@ int main(int argc, char** argv)
             // do-nothing outlet, and an arbitrary interior pin acts as a spurious mass SINK under a
             // velocity-flux inlet (inflow drains at the pin instead of the outlet). Then fall back to one pin
             // per OTHER component (e.g. a walled-off chamber) to kill its constant-pressure null mode.
-            if (inletSet)
-                for (int o : outN) { int r = findRoot(o); if (!rootPinned[r]) { rootPinned[r] = 1; bcF[4 * o + 3] = 1; ++nComp; } }
-            for (size_t i = 0; i < nNodes; ++i) {
-                int r = findRoot((int)i);
-                if (!rootPinned[r]) { rootPinned[r] = 1; bcF[4 * i + 3] = 1; ++nComp; }
+            if (numRanks > 1) {
+                // Multi-rank: ONE global outlet pin. The rank-local union-find sees only a partition slice, so
+                // its per-"component" fallback would scatter spurious pins (mass sinks) over a globally-connected
+                // domain. The pump fluid graph is one global component -> pin one OWNED outlet node on the
+                // lowest rank that owns any. (Walled-off sub-chambers would need a global component analysis.)
+                int cand = INT_MAX;
+                if (inletSet) for (int o : outN) if (hOwn[o]) { cand = rank; break; }
+                int winner = INT_MAX;
+                MPI_Allreduce(&cand, &winner, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
+                if (winner == INT_MAX && rank == 0)
+                    std::cerr << "[phase0][acm-pump] WARNING: no rank owns an outlet node -> pressure unpinned\n";
+                if (rank == winner)
+                    for (int o : outN) if (hOwn[o]) { bcF[4 * o + 3] = 1; ++nComp; break; }
+            } else {
+                if (inletSet)
+                    for (int o : outN) { int r = findRoot(o); if (!rootPinned[r]) { rootPinned[r] = 1; bcF[4 * o + 3] = 1; ++nComp; } }
+                for (size_t i = 0; i < nNodes; ++i) {
+                    int r = findRoot((int)i);
+                    if (!rootPinned[r]) { rootPinned[r] = 1; bcF[4 * i + 3] = 1; ++nComp; }
+                }
             }
             if (std::getenv("MARS_VERBOSE_MESH"))   // component count is a mesh-topology fact -> opt-in
                 std::cout << "[phase0][acm-pump] fluid-graph components=" << nComp << " (one pressure pin per component)\n";
@@ -1173,14 +1221,27 @@ int main(int argc, char** argv)
             Vec b; b.resize(ND); Vec xa; xa.resize(ND);
             thrust::device_vector<RealType> d_rhs(ND), d_Ax(ND), d_diff(ND);
             RealType bnorm = RealType(1);
-            auto resid = [&](Vec& xv) -> RealType {     // ||b - A x|| / ||b|| on the BC-eliminated CSR
+            const uint8_t* ownNodePtr = (numRanks > 1) ? domain.getNodeOwnershipMap().data() : nullptr;
+            auto ownedSq = [&](const thrust::device_vector<RealType>& v) -> RealType {   // sum v[d]^2 over OWNED DOFs, global
+                const RealType* vp = thrust::raw_pointer_cast(v.data());
+                const uint8_t* own = ownNodePtr;
+                RealType loc = own
+                    ? thrust::transform_reduce(thrust::device, thrust::counting_iterator<size_t>(0),
+                          thrust::counting_iterator<size_t>((size_t)ND),
+                          [vp, own] __device__ (size_t d) -> RealType { return own[d >> 2] ? vp[d] * vp[d] : RealType(0); },
+                          RealType(0), thrust::plus<RealType>())
+                    : thrust::inner_product(v.begin(), v.end(), v.begin(), RealType(0));
+                if (numRanks > 1) MPI_Allreduce(MPI_IN_PLACE, &loc, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+                return loc;
+            };
+            auto resid = [&](Vec& xv) -> RealType {     // ||b - A x|| / ||b|| on the BC-eliminated CSR (owned DOFs, global)
                 acmSpmvKernel<RealType><<<dblk, blockSize>>>(
                     thrust::raw_pointer_cast(d_rowOff.data()), thrust::raw_pointer_cast(d_colInd.data()),
                     thrust::raw_pointer_cast(d_vals.data()), xv.data(), thrust::raw_pointer_cast(d_Ax.data()), ND);
                 cudaDeviceSynchronize();
                 thrust::transform(thrust::device_pointer_cast(b.data()), thrust::device_pointer_cast(b.data() + ND),
                     d_Ax.begin(), d_diff.begin(), thrust::minus<RealType>());
-                RealType rn = std::sqrt(thrust::inner_product(d_diff.begin(), d_diff.end(), d_diff.begin(), RealType(0)));
+                RealType rn = std::sqrt(ownedSq(d_diff));
                 return rn / (bnorm > 0 ? bnorm : RealType(1));
             };
 
@@ -1195,6 +1256,30 @@ int main(int argc, char** argv)
             GpuAcmPreconditioner<RealType, int, cstone::GpuTag> acm;
             GMRESSolver<RealType, int, cstone::GpuTag> ga(2000, 1e-8, 30);
             ga.setVerbose(false); ga.setPreconditioner(&acm); ga.setFlexible(true);
+            // Stage 1 multi-rank wiring: a per-component nodeToDof map (node n -> DOF 4n+c) turns the existing
+            // per-node scalar halo into the interleaved 4-DOF exchange (4 passes); the per-DOF ownership mask
+            // drives the solver's ghost-zero/owned-dot discipline. Single rank: none of this is installed.
+            thrust::device_vector<int> d_n2d[4];
+            thrust::device_vector<uint8_t> d_ownDof;
+            std::function<void(cstone::DeviceVector<RealType>&)> haloX;   // also reused after the solve for xa
+            if (numRanks > 1) {
+                std::vector<int> h_n2d(nNodes);
+                for (int c = 0; c < 4; ++c) {
+                    for (size_t i = 0; i < nNodes; ++i) h_n2d[i] = 4 * (int)i + c;
+                    d_n2d[c].assign(h_n2d.begin(), h_n2d.end());
+                }
+                std::vector<uint8_t> h_ownDof(ND);
+                for (size_t i = 0; i < nNodes; ++i)
+                    for (int c = 0; c < 4; ++c) h_ownDof[4 * i + c] = hOwn[i];
+                d_ownDof.assign(h_ownDof.begin(), h_ownDof.end());
+                haloX = [&](cstone::DeviceVector<RealType>& v) {
+                    for (int c = 0; c < 4; ++c)
+                        domain.exchangeNodeHalo(v, thrust::raw_pointer_cast(d_n2d[c].data()));
+                };
+                ga.setHaloExchangeCallback(haloX);
+                ga.setOwnedDofMask(thrust::raw_pointer_cast(d_ownDof.data()));
+                ga.setParallel(true);
+            }
             thrust::device_vector<RealType> d_avx(nNodes, RealType(0)), d_avy(nNodes, RealType(0)),
                                             d_avz(nNodes, RealType(0)), d_sx(nNodes), d_sy(nNodes), d_sz(nNodes), d_tmp(nNodes);
             const RealType wrelax = static_cast<RealType>(relax);   // Picard under-relaxation omega (--relax)
@@ -1206,7 +1291,9 @@ int main(int argc, char** argv)
                         thrust::raw_pointer_cast(d_rowOff.data()), thrust::raw_pointer_cast(d_colInd.data()),
                         thrust::raw_pointer_cast(d_vals.data()), nuS, doSupg ? RealType(1) : RealType(0),
                         thrust::raw_pointer_cast(d_avx.data()), thrust::raw_pointer_cast(d_avy.data()),
-                        thrust::raw_pointer_cast(d_avz.data()), startEl, numLocal, (int)nNodes, blockSize);
+                        thrust::raw_pointer_cast(d_avz.data()), 0, totalEl, (int)nNodes, blockSize,   // ALL elements: owned rows complete
+                        (numRanks > 1) ? std::function<void(thrust::device_vector<RealType>&)>(
+                            [&](thrust::device_vector<RealType>& nv) { domain.exchangeNodeHalo(nv); }) : std::function<void(thrust::device_vector<RealType>&)>{});
                 else
                     assembleCoupledStokesKernel<KeyType, RealType><<<eBlocks, blockSize>>>(
                         c0, c1, c2, c3, nx, ny, nz,
@@ -1221,11 +1308,14 @@ int main(int argc, char** argv)
                     thrust::raw_pointer_cast(d_rowOff.data()), thrust::raw_pointer_cast(d_colInd.data()),
                     thrust::raw_pointer_cast(d_vals.data()), thrust::raw_pointer_cast(d_rhs.data()), ND);
                 cudaDeviceSynchronize();
+                if (numRanks > 1)                                   // ghost rows -> identity (see ghostIdentityKernel)
+                    ghostIdentityKernel<RealType><<<dblk, blockSize>>>(ownNodePtr,
+                        thrust::raw_pointer_cast(d_rowOff.data()), thrust::raw_pointer_cast(d_colInd.data()),
+                        thrust::raw_pointer_cast(d_vals.data()), thrust::raw_pointer_cast(d_rhs.data()), ND);
                 thrust::copy(d_vals.begin(), d_vals.end(), thrust::device_pointer_cast(Am.valuesPtr()));
                 thrust::copy(d_rhs.begin(), d_rhs.end(), thrust::device_pointer_cast(b.data()));
-                bnorm = std::sqrt(thrust::inner_product(
-                    thrust::device_pointer_cast(b.data()), thrust::device_pointer_cast(b.data() + ND),
-                    thrust::device_pointer_cast(b.data()), RealType(0)));
+                thrust::copy(d_rhs.begin(), d_rhs.end(), d_diff.begin());   // reuse scratch for the owned-masked norm
+                bnorm = std::sqrt(ownedSq(d_diff));
                 bool reuseThis = (acmRebuild > 1 && (pit % acmRebuild != 0));   // rebuild hierarchy every K iters, reuse between
                 acm.setReuse(reuseThis);
                 cudaDeviceSynchronize();                    // flush prior async work so the timer measures only the solve
@@ -1234,6 +1324,7 @@ int main(int argc, char** argv)
                 cudaDeviceSynchronize();
                 double solveMs = std::chrono::duration<double, std::milli>(
                     std::chrono::high_resolution_clock::now() - tSolve0).count();   // setup(if rebuilt)+FlexGMRES
+                if (numRanks > 1) haloX(xa);                 // ghosts <- owners: resid's owned rows + extract/blend read them
                 itA = ga.getLastIterations(); rA = resid(xa);
                 // extract the SOLVED velocity into temps, then Picard under-relax: u <- w*u_new + (1-w)*u_old.
                 // d(u) is the RELAXED change; convergence is relative to the velocity scale (|u|max).
@@ -1246,20 +1337,27 @@ int main(int argc, char** argv)
                 du = wrelax * thrust::reduce(d_tmp.begin(), d_tmp.end(), RealType(0), thrust::maximum<RealType>());
                 thrust::transform(d_sx.begin(), d_sx.end(), d_tmp.begin(), [] __device__ (RealType v) { return fabs(v); });
                 RealType uscale = thrust::reduce(d_tmp.begin(), d_tmp.end(), RealType(0), thrust::maximum<RealType>());
+                if (numRanks > 1) {                          // global maxima: every rank must take the SAME Picard branch
+                    RealType g2[2] = {du, uscale};
+                    MPI_Allreduce(MPI_IN_PLACE, g2, 2, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+                    du = g2[0]; uscale = g2[1];
+                }
                 auto blend = [wrelax] __device__ (RealType s, RealType o) { return wrelax * s + (RealType(1) - wrelax) * o; };
                 thrust::transform(d_sx.begin(), d_sx.end(), d_avx.begin(), d_avx.begin(), blend);
                 thrust::transform(d_sy.begin(), d_sy.end(), d_avy.begin(), d_avy.begin(), blend);
                 thrust::transform(d_sz.begin(), d_sz.end(), d_avz.begin(), d_avz.begin(), blend);
                 double setupMs = acm.getLastSetupMs();      // hierarchy build (0 if reused); solve = total - setup
-                std::cout << "[phase0][acm-pump][picard " << pit << "] ACM iters=" << itA << " res=" << rA
-                          << " d(u)=" << du << " d(u)/|u|=" << du / (uscale + RealType(1e-30))
-                          << " setup=" << setupMs << "ms solve=" << (solveMs - setupMs) << "ms"
-                          << (reuseThis ? " (reuse)" : " (rebuild)") << "\n";
+                if (rank == 0)
+                    std::cout << "[phase0][acm-pump][picard " << pit << "] ACM iters=" << itA << " res=" << rA
+                              << " d(u)=" << du << " d(u)/|u|=" << du / (uscale + RealType(1e-30))
+                              << " setup=" << setupMs << "ms solve=" << (solveMs - setupMs) << "ms"
+                              << (reuseThis ? " (reuse)" : " (rebuild)") << "\n";
                 if (du < RealType(1e-5) * (uscale + RealType(1e-30))) { ++pit; break; }   // relative steady-state
             }
 
-            std::cout << "[phase0][acm-pump] picard=" << pit << " ACM-FlexGMRES iters=" << itA
-                      << " levels=" << acm.numLevels() << " beta=" << acm.beta() << " res=" << rA << "\n";
+            if (rank == 0)
+                std::cout << "[phase0][acm-pump] picard=" << pit << " ACM-FlexGMRES iters=" << itA
+                          << " levels=" << acm.numLevels() << " beta=" << acm.beta() << " res=" << rA << "\n";
             if (inletSet) {
                 // pump through-flow validation: mass conservation (net boundary flux ~0 by divergence theorem),
                 // inflow sign, pressure/velocity sanity. No BoomerAMG comparison (it fails on the RC operator).
@@ -1268,18 +1366,27 @@ int main(int argc, char** argv)
                 // hundreds of m/s at its narrowest path (collaborators ~430 m/s), so |u|max is NOT a fault.
                 std::vector<RealType> xs(ND);
                 thrust::copy(thrust::device_pointer_cast(xa.data()), thrust::device_pointer_cast(xa.data() + ND), xs.begin());
-                RealType Qin = 0, Qout = 0, Qtot = 0, pInSum = 0, umax = 0;
+                RealType Qin = 0, Qout = 0, Qtot = 0, pInSum = 0, umax = 0, nInOwned = 0;
                 for (size_t i = 0; i < nNodes; ++i) {
+                    if (!hOwn[i]) continue;                       // owned-only: seam nodes counted once globally
                     RealType f = xs[4*i]*hsbx[i] + xs[4*i+1]*hsby[i] + xs[4*i+2]*hsbz[i]; Qtot += f;
                     RealType um = std::sqrt(xs[4*i]*xs[4*i] + xs[4*i+1]*xs[4*i+1] + xs[4*i+2]*xs[4*i+2]);
                     umax = std::max(umax, um);
                 }
-                for (int i : inN)  { Qin  += xs[4*i]*hsbx[i] + xs[4*i+1]*hsby[i] + xs[4*i+2]*hsbz[i]; pInSum += xs[4*i+3]; }
-                for (int i : outN)   Qout += xs[4*i]*hsbx[i] + xs[4*i+1]*hsby[i] + xs[4*i+2]*hsbz[i];
-                RealType pInMean = inN.empty() ? RealType(0) : pInSum / (RealType)inN.size();
+                for (int i : inN)  if (hOwn[i]) { Qin += xs[4*i]*hsbx[i] + xs[4*i+1]*hsby[i] + xs[4*i+2]*hsbz[i];
+                                                  pInSum += xs[4*i+3]; nInOwned += 1; }
+                for (int i : outN) if (hOwn[i])   Qout += xs[4*i]*hsbx[i] + xs[4*i+1]*hsby[i] + xs[4*i+2]*hsbz[i];
+                if (numRanks > 1) {
+                    RealType gs[5] = {Qin, Qout, Qtot, pInSum, nInOwned};
+                    MPI_Allreduce(MPI_IN_PLACE, gs, 5, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+                    Qin = gs[0]; Qout = gs[1]; Qtot = gs[2]; pInSum = gs[3]; nInOwned = gs[4];
+                    MPI_Allreduce(MPI_IN_PLACE, &umax, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+                }
+                RealType pInMean = (nInOwned > 0) ? pInSum / nInOwned : RealType(0);
                 RealType massErr = std::abs(Qtot) / (std::abs(Qin) > RealType(1e-30) ? std::abs(Qin) : RealType(1));
                 bool inflowOk = (Qin < RealType(0));
                 bool ok = (rA < 1e-6) && std::isfinite(umax) && std::isfinite(Qtot) && inflowOk && (massErr < RealType(0.05));
+                if (rank == 0)
                 std::cout << "[phase0][acm-pump][pump] Qin=" << Qin << " Qout=" << Qout << " net=" << Qtot
                           << " massErr=" << massErr << "  inflow=" << (inflowOk ? "OK" : "REVERSED(use --inlet-flip-normal)")
                           << "  p_in_mean=" << pInMean << " (outlet pinned)  |u|max=" << umax << " (info, vs ref)"
@@ -1393,7 +1500,9 @@ int main(int argc, char** argv)
                         thrust::raw_pointer_cast(d_rowOff.data()), thrust::raw_pointer_cast(d_colInd.data()),
                         thrust::raw_pointer_cast(d_vals.data()), nuS, doSupg ? RealType(1) : RealType(0),
                         thrust::raw_pointer_cast(d_avx.data()), thrust::raw_pointer_cast(d_avy.data()),
-                        thrust::raw_pointer_cast(d_avz.data()), startEl, numLocal, (int)nNodes, blockSize);
+                        thrust::raw_pointer_cast(d_avz.data()), 0, totalEl, (int)nNodes, blockSize,   // ALL elements: owned rows complete
+                        (numRanks > 1) ? std::function<void(thrust::device_vector<RealType>&)>(
+                            [&](thrust::device_vector<RealType>& nv) { domain.exchangeNodeHalo(nv); }) : std::function<void(thrust::device_vector<RealType>&)>{});
                 else
                     assembleCoupledStokesKernel<KeyType, RealType><<<eBlocks, blockSize>>>(
                         c0, c1, c2, c3, nx, ny, nz,
