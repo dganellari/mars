@@ -278,7 +278,76 @@ func.func @main() {{
     return ok
 
 
+
+
+
+def gate5():
+    """THE FULL OPERATOR: laplacian.op -> emit_full (whole Knaus Alg-2: all 3
+    directions, per-face metric flux, W integrations, +/- plane scatter) ->
+    CPU-executed == a direct NumPy port of applyHoCvfemElement."""
+    compiler = os.path.abspath(os.path.join(ROOT, "..", "marsir-compiler"))
+    sys.path.insert(0, compiler)
+    from marsir import parse_spec_file, synthesize
+    from marsir.backends import mlir_ir
+
+    p = 3
+    n, P = p + 1, p
+    ea = synthesize(parse_spec_file(os.path.join(compiler, "specs", "laplacian.op")))
+    apply_func = mlir_ir.emit_full(ea, p=p)
+
+    rng = np.random.RandomState(21)
+    u = rng.uniform(-1, 1, (n, n, n))
+    Btil = rng.uniform(-1, 1, (P, n))
+    Dtil = rng.uniform(-1, 1, (P, n))
+    Dm = rng.uniform(-1, 1, (n, n))
+    W = rng.uniform(-1, 1, (n, n))
+    G = rng.uniform(-1, 1, (3, P, n, n, 3))
+
+    # NumPy port of the Knaus Alg-2 host reference (applyHoCvfemElement).
+    y = np.zeros((n, n, n))
+    for d in range(3):
+        U = np.moveaxis(u, d, 0)
+        Y = np.moveaxis(y, d, 0)           # view: += updates y
+        for l in range(P):
+            interp = np.einsum("q,qsr->sr", Btil[l], U)
+            deriv = np.einsum("q,qsr->sr", Dtil[l], U)
+            dt2 = np.einsum("rq,sq->sr", Dm, interp)
+            dt1 = np.einsum("sq,qr->sr", Dm, interp)
+            g = G[d, l]
+            flux = g[..., 2] * deriv + g[..., 0] * dt2 + g[..., 1] * dt1
+            tmp = np.einsum("rq,sq->sr", W, flux)
+            intf = np.einsum("sq,qr->sr", W, tmp)
+            Y[l] -= intf
+            Y[l + 1] += intf
+    expected = y
+
+    t3 = f"tensor<{n}x{n}x{n}xf64>"
+    t2 = f"tensor<{n}x{n}xf64>"
+    tPn = f"tensor<{P}x{n}xf64>"
+    tG = f"tensor<3x{P}x{n}x{n}x3xf64>"
+    payload = f"""{apply_func}
+func.func private @printMemrefF64(tensor<*xf64>)
+func.func @main() {{
+{cst("u", u)}
+{cst("Bt", Btil)}
+{cst("Dt", Dtil)}
+{cst("W", W)}
+{cst("Dm", Dm)}
+{cst("G", G)}
+    %y = call @laplacian_apply(%u, %Bt, %Dt, %W, %Dm, %G)
+         : ({t3}, {tPn}, {tPn}, {t2}, {t2}, {tG}) -> {t3}
+{diff_block("y", expected, n)}
+    return
+}}
+"""
+    got = run_pipeline(payload)
+    scaled = np.max(np.abs(got))
+    ok = len(got) == n ** 3 and scaled < 1.0
+    print(f"gate 5 (FULL operator == Knaus oracle)   : max|err| = {scaled:.3e}e-12  {'PASS' if ok else 'FAIL'}")
+    return ok
+
+
 if __name__ == "__main__":
-    ok = gate1() & gate2() & gate3() & gate4()
+    ok = gate1() & gate2() & gate3() & gate4() & gate5()
     print("ALL PASS (mir lowering executes correctly)" if ok else "FAILED")
     sys.exit(0 if ok else 1)
