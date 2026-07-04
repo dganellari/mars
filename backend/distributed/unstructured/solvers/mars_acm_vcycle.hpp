@@ -24,6 +24,8 @@
 #include <thrust/scan.h>
 #include <thrust/unique.h>
 #include <thrust/reduce.h>
+#include <functional>
+#include "mars_acm_dist.hpp"   // distributed ACM: per-level halo, global agg ids, replicated coarsest
 #include <thrust/count.h>
 #include <thrust/extrema.h>
 #include <thrust/binary_search.h>
@@ -253,6 +255,13 @@ __global__ void acmDenseFromCsrKernel(const int* rowOff, const int* colInd, cons
 template<typename RealType>
 struct AcmLevel {
     int nNodes = 0, ND = 0, nCoarse = 0;
+    // ---- distributed (numRanks>1) ----
+    int nOwned = -1;                                            // owned nodes at this level (-1 = all, serial)
+    AcmLevelHalo halo;                                          // ghost <- owner exchange for THIS level's vectors
+    std::function<void(thrust::device_vector<RealType>&, int)> exch;   // (vec, ncomp); level 0 wraps the domain halo
+    thrust::device_vector<uint8_t> ownMask;                     // per-node 1=owned (empty on serial)
+    long long aggOffset = 0;                                    // my first GLOBAL aggregate id (Exscan)
+    std::vector<long long> ghostAggGid;                         // sorted global ids of my ghost-ring aggregates
     thrust::device_vector<int> rowOff, colInd;
     thrust::device_vector<RealType> vals, dinv, binv;          // dinv: point-Jacobi; binv: 4x4 block-Jacobi
     thrust::device_vector<int> agg;                            // nNodes -> parent (empty on coarsest)
@@ -423,12 +432,14 @@ __global__ void acmWmaxKernel(const int* brow, const int* bcol, const RealType* 
 }
 template<typename RealType>
 __global__ void acmCandKernel(const int* brow, const int* bcol, const RealType* S, const RealType* wmax,
-                              const int* agg, RealType beta, int* cand, int nN)
+                              const int* agg, RealType beta, int* cand, int nN, const uint8_t* own)
 {
     int i = blockIdx.x * blockDim.x + threadIdx.x; if (i >= nN || agg[i] >= 0) return;   // only free nodes
+    if (own && !own[i]) { cand[i] = -1; return; }              // ghosts never seed (they take the owner's aggregate)
     RealType best = -1; int bj = -1;
     for (int e = brow[i]; e < brow[i + 1]; ++e) {
         int j = bcol[e]; if (j == i || agg[j] >= 0) continue;                            // free neighbor only
+        if (own && !own[j]) continue;                                                    // ...and never match a ghost
         RealType s = S[e];
         if (s > beta * wmax[i] && s > beta * wmax[j] &&                                  // two-sided strong
             (s > best || (s == best && j < bj))) { best = s; bj = j; }                   // strongest (tie: lower id)
@@ -443,9 +454,10 @@ __global__ void acmMatchKernel(const int* cand, int* agg, int* nCoarse, int nN)
 }
 template<typename RealType>
 __global__ void acmAbsorbTargetKernel(const int* brow, const int* bcol, const RealType* S,
-                                      const int* agg, int* tgt, int nN)   // read-only snapshot of agg
+                                      const int* agg, int* tgt, int nN, const uint8_t* own)   // read-only snapshot of agg
 {
     int i = blockIdx.x * blockDim.x + threadIdx.x; if (i >= nN || agg[i] >= 0) { if (i < nN) tgt[i] = agg[i]; return; }
+    if (own && !own[i]) { tgt[i] = -1; return; }               // ghosts stay unaggregated locally
     RealType best = -1; int bagg = -1;
     for (int e = brow[i]; e < brow[i + 1]; ++e) {
         int j = bcol[e]; if (j == i) continue; int aj = agg[j];
@@ -458,9 +470,10 @@ __global__ void acmAbsorbApplyKernel(const int* tgt, int* agg, int nN)
     int i = blockIdx.x * blockDim.x + threadIdx.x; if (i >= nN) return;
     if (agg[i] < 0 && tgt[i] >= 0) agg[i] = tgt[i];
 }
-__global__ void acmSingletonKernel(int* agg, int* nCoarse, int nN)
+__global__ void acmSingletonKernel(int* agg, int* nCoarse, int nN, const uint8_t* own)
 {
     int i = blockIdx.x * blockDim.x + threadIdx.x; if (i >= nN) return;
+    if (own && !own[i]) return;                                                           // ghosts get theirs via exchange
     if (agg[i] < 0) agg[i] = atomicAdd(nCoarse, 1);                                       // true isolate -> own aggregate
 }
 
@@ -484,13 +497,14 @@ __global__ void acmAggEdgeEmitKernel(const int* brow, const int* bcol, const Rea
     int A = agg[I];
     for (int e = brow[I]; e < brow[I + 1]; ++e) {
         int B = agg[bcol[e]];
-        if (A != B) { keys[e] = static_cast<long long>(A) * nC1 + B; eval[e] = S[e]; }
-        else { keys[e] = -1; eval[e] = 0; }
+        if (A >= 0 && B >= 0 && A != B) { keys[e] = static_cast<long long>(A) * nC1 + B; eval[e] = S[e]; }
+        else { keys[e] = -1; eval[e] = 0; }                    // same-agg AND ghost (-1) edges dropped
     }
 }
 __global__ void acmRelabelKernel(int* agg, const int* map, int nN)
 {
-    int i = blockIdx.x * blockDim.x + threadIdx.x; if (i >= nN) return; agg[i] = map[agg[i]];
+    int i = blockIdx.x * blockDim.x + threadIdx.x; if (i >= nN) return;
+    if (agg[i] >= 0) agg[i] = map[agg[i]];                     // ghosts (-1, dist) keep their sentinel
 }
 
 // build the aggregate strength graph (arow/acol/aS) from the pass-1 agg[] + node strengths S -- the coarse
@@ -522,7 +536,8 @@ inline void acmBuildAggGraphGpu(int nN, int nC1, const thrust::device_vector<int
 template<typename RealType>
 inline void acmAggregateGpu(int nN, const thrust::device_vector<int>& rowOff,
                             const thrust::device_vector<int>& colInd, const thrust::device_vector<RealType>& vals,
-                            RealType beta, thrust::device_vector<int>& agg, int& nCoarse)
+                            RealType beta, thrust::device_vector<int>& agg, int& nCoarse,
+                            const uint8_t* own = nullptr)      // dist: 1=owned; ghosts excluded (stay -1)
 {
     thrust::device_vector<int> brow, bcol, bdiagPtr;
     acmBuildBlockCsrGpu<RealType>(nN, rowOff, colInd, brow, bcol, bdiagPtr);              // node block graph (reuse §1a)
@@ -534,12 +549,12 @@ inline void acmAggregateGpu(int nN, const thrust::device_vector<int>& rowOff,
     agg.assign(nN, -1);
     thrust::device_vector<int> cand(nN), tgt(nN), dnc(1, 0);
     for (int round = 0; round < 12; ++round) {                                           // heavy-edge matching rounds
-        acmCandKernel<RealType><<<gN, blk>>>(acmRaw(brow), acmRaw(bcol), acmRaw(S), acmRaw(wmax), acmRaw(agg), beta, acmRaw(cand), nN);
+        acmCandKernel<RealType><<<gN, blk>>>(acmRaw(brow), acmRaw(bcol), acmRaw(S), acmRaw(wmax), acmRaw(agg), beta, acmRaw(cand), nN, own);
         acmMatchKernel<<<gN, blk>>>(acmRaw(cand), acmRaw(agg), acmRaw(dnc), nN);
     }
-    acmAbsorbTargetKernel<RealType><<<gN, blk>>>(acmRaw(brow), acmRaw(bcol), acmRaw(S), acmRaw(agg), acmRaw(tgt), nN);
+    acmAbsorbTargetKernel<RealType><<<gN, blk>>>(acmRaw(brow), acmRaw(bcol), acmRaw(S), acmRaw(agg), acmRaw(tgt), nN, own);
     acmAbsorbApplyKernel<<<gN, blk>>>(acmRaw(tgt), acmRaw(agg), nN);
-    acmSingletonKernel<<<gN, blk>>>(acmRaw(agg), acmRaw(dnc), nN);
+    acmSingletonKernel<<<gN, blk>>>(acmRaw(agg), acmRaw(dnc), nN, own);
     nCoarse = dnc[0];                                                                     // pass-1 aggregates (1 int D2H)
     if (acmAggPasses() < 2 || nCoarse < 4) return;                                        // pass-1 only / already very coarse
 
@@ -552,10 +567,10 @@ inline void acmAggregateGpu(int nN, const thrust::device_vector<int>& rowOff,
     thrust::device_vector<int> merge(nC1, -1), candA(nC1);
     thrust::fill(dnc.begin(), dnc.end(), 0);
     for (int round = 0; round < 12; ++round) {                                           // match aggregates -> quads
-        acmCandKernel<RealType><<<gC, blk>>>(acmRaw(arow), acmRaw(acol), acmRaw(aS), acmRaw(wmaxA), acmRaw(merge), beta, acmRaw(candA), nC1);
+        acmCandKernel<RealType><<<gC, blk>>>(acmRaw(arow), acmRaw(acol), acmRaw(aS), acmRaw(wmaxA), acmRaw(merge), beta, acmRaw(candA), nC1, nullptr);
         acmMatchKernel<<<gC, blk>>>(acmRaw(candA), acmRaw(merge), acmRaw(dnc), nC1);
     }
-    acmSingletonKernel<<<gC, blk>>>(acmRaw(merge), acmRaw(dnc), nC1);                     // unmatched aggregate keeps its own id
+    acmSingletonKernel<<<gC, blk>>>(acmRaw(merge), acmRaw(dnc), nC1, nullptr);            // unmatched aggregate keeps its own id
     acmRelabelKernel<<<gN, blk>>>(acmRaw(agg), acmRaw(merge), nN);                        // agg[node] = merge[agg[node]] -> contiguous
     nCoarse = dnc[0];
 }
@@ -982,6 +997,7 @@ void acmVcycleDownGpu(std::vector<AcmLevel<RealType>>& levels, int Lidx, int pre
         AcmLevel<RealType>& C = levels[l + 1];
         const int grd = (L.ND + blk - 1) / blk, gN = (L.nNodes + blk - 1) / blk;
         acmSmoothGpu(L, pre, omega, useBlock, s);
+        if (L.exch) L.exch(L.xvec, 4);   // dist: ghosts <- owners before the residual reads ghost columns
         acmResidualKernel<RealType><<<grd, blk, 0, s>>>(acmRaw(L.rowOff), acmRaw(L.colInd), acmRaw(L.vals),
                                                   acmRaw(L.xvec), acmRaw(L.bvec), acmRaw(L.rtmp), L.ND);   // rtmp = b - A x (fused)
         cudaMemsetAsync(acmRaw(C.bvec), 0, sizeof(RealType) * C.ND, s);   // capture-safe zero (all-zero bytes == 0.0)
@@ -1000,9 +1016,11 @@ void acmVcycleUpGpu(std::vector<AcmLevel<RealType>>& levels, int Lidx, int post,
         AcmLevel<RealType>& L = levels[l];
         AcmLevel<RealType>& C = levels[l + 1];
         const int grd = (L.ND + blk - 1) / blk, gN = (L.nNodes + blk - 1) / blk;
+        if (C.exch) C.exch(C.xvec, 4);   // dist: ghost coarse corrections <- owners before prolongation reads them
         acmInjectKernel<RealType><<<gN, blk, 0, s>>>(acmRaw(C.xvec), acmRaw(L.xtmp), acmRaw(L.agg), L.nNodes);
         acmAddKernel<RealType><<<grd, blk, 0, s>>>(acmRaw(L.xvec), acmRaw(L.xtmp), L.ND);
         acmSmoothGpu(L, post, omega, useBlock, s);
+        if (L.exch) L.exch(L.xvec, 4);   // dist: refresh after post-smooth (next-finer prolong / caller reads)
     }
 }
 
@@ -1017,6 +1035,171 @@ void acmVcycleGpu(std::vector<AcmLevel<RealType>>& levels, int Lidx,
     acmVcycleDownGpu(levels, Lidx, pre, omega, useBlock, s);
     acmCoarseSolve(levels[nL - 1], coarse, omega, useBlock, cs, descr, s);   // eager (non-capturable)
     acmVcycleUpGpu(levels, Lidx, post, omega, useBlock, s);
+}
+
+// ---- distributed hierarchy build (numRanks > 1) ----
+// Seam-consistent coarsening: aggregate OWNED nodes only; ghosts take the OWNER's aggregate via a halo
+// exchange of GLOBAL aggregate ids (Exscan offsets). The unique ghost aggregate ids become the coarse
+// level's ghost ring (identity rows), with its own halo -- so every level has the level-0 shape and the
+// build recurses. Stops when the GLOBAL owned DOF count fits the replicated coarsest (or no progress).
+
+// zero a ghost coarse row and put 1 on its diagonal (the ghost ring holds the NEIGHBOR's equations)
+template<typename RealType>
+__global__ void acmGhostRowIdentityKernel(const int* rowOff, const int* colInd, RealType* vals,
+                                          int firstGhostDof, int ND)
+{
+    int r = firstGhostDof + blockIdx.x * blockDim.x + threadIdx.x; if (r >= ND) return;
+    for (int k = rowOff[r]; k < rowOff[r + 1]; ++k) vals[k] = (colInd[k] == r) ? RealType(1) : RealType(0);
+}
+
+template<typename RealType>
+void acmBuildHierarchyDist(const thrust::device_vector<int>& rowOff0,
+                           const thrust::device_vector<int>& colInd0,
+                           const thrust::device_vector<RealType>& vals0,
+                           int nNodes0, int nOwned0, const uint8_t* d_ownNode0,
+                           const std::function<void(thrust::device_vector<RealType>&, int)>& exch0,
+                           int rank, int numRanks,
+                           int maxCoarseNDGlobal, std::vector<AcmLevel<RealType>>& levels,
+                           AcmGlobalCoarse& G, RealType beta = RealType(0.5))
+{
+    // NOTE: level-0 owned nodes are SCATTERED (the domain's ownership map); coarse-level owned aggregates
+    // are contiguous [0, nOwned) by construction. The replicated-coarsest extraction assumes the contiguous
+    // layout, so dist runs need at least one coarsening step (any real mesh does).
+    levels.clear();
+    levels.reserve(64);   // the per-level exch lambdas capture &level.halo -- reallocation would dangle them
+    {
+        AcmLevel<RealType> L;
+        L.nNodes = nNodes0; L.ND = 4 * nNodes0; L.nOwned = nOwned0;
+        L.rowOff = rowOff0; L.colInd = colInd0; L.vals = vals0;
+        L.exch = exch0;
+        L.ownMask.assign(thrust::device_pointer_cast(d_ownNode0),
+                         thrust::device_pointer_cast(d_ownNode0 + nNodes0));
+        levels.push_back(std::move(L));
+    }
+    const int blk = 256;
+    for (int idx = 0; ; ++idx) {
+        AcmLevel<RealType>& L = levels[idx];
+        const int grd = (L.ND + blk - 1) / blk;
+        L.dinv.resize(L.ND);
+        acmDinvKernel<RealType><<<grd, blk>>>(acmRaw(L.rowOff), acmRaw(L.colInd), acmRaw(L.vals), acmRaw(L.dinv), L.ND);
+        L.binv.resize(16 * L.nNodes);
+        { const int gN = (L.nNodes + blk - 1) / blk;
+          acmBlockInvKernel<RealType><<<gN, blk>>>(acmRaw(L.rowOff), acmRaw(L.colInd), acmRaw(L.vals), acmRaw(L.binv), L.nNodes); }
+        L.bvec.assign(L.ND, 0); L.xvec.assign(L.ND, 0);
+        L.rtmp.assign(L.ND, 0); L.xtmp.assign(L.ND, 0);
+
+        // stop on the GLOBAL owned size (all ranks agree: Allreduce)
+        long long ownedDof = 4LL * L.nOwned, globalDof = 0;
+        MPI_Allreduce(&ownedDof, &globalDof, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+        if (globalDof <= (long long)maxCoarseNDGlobal) break;
+
+        // owned-only aggregation (ghosts stay -1)
+        int nCoarseLoc = 0;
+        acmAggregateGpu<RealType>(L.nNodes, L.rowOff, L.colInd, L.vals, beta, L.agg, nCoarseLoc,
+                                  thrust::raw_pointer_cast(L.ownMask.data()));
+        int progress = (nCoarseLoc < L.nOwned) ? 1 : 0, gProgress = 0;
+        MPI_Allreduce(&progress, &gProgress, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
+        if (!gProgress) break;                          // any stalled rank stops everyone at this level
+
+        // global aggregate ids: Exscan offset + Allgather'd ranges
+        long long nCoarseLL = nCoarseLoc, offset = 0;
+        MPI_Exscan(&nCoarseLL, &offset, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+        if (rank == 0) offset = 0;
+        std::vector<long long> cnts(numRanks);
+        MPI_Allgather(&nCoarseLL, 1, MPI_LONG_LONG, cnts.data(), 1, MPI_LONG_LONG, MPI_COMM_WORLD);
+        std::vector<long long> aggOffsets(numRanks + 1, 0);
+        for (int r = 0; r < numRanks; ++r) aggOffsets[r + 1] = aggOffsets[r] + cnts[r];
+        L.aggOffset = offset;
+
+        // exchange global agg ids (as RealType; exact for ids < 2^53): ghosts learn the owner's aggregate
+        std::vector<int> h_agg(L.nNodes);
+        thrust::copy(L.agg.begin(), L.agg.end(), h_agg.begin());
+        std::vector<uint8_t> h_own(L.nNodes);
+        thrust::copy(L.ownMask.begin(), L.ownMask.end(), h_own.begin());
+        thrust::device_vector<RealType> gAgg(L.nNodes);
+        { std::vector<RealType> h_g(L.nNodes, RealType(-1));
+          for (int i = 0; i < L.nNodes; ++i) if (h_own[i]) h_g[i] = RealType(offset + h_agg[i]);
+          thrust::copy(h_g.begin(), h_g.end(), gAgg.begin()); }
+        L.exch(gAgg, 1);
+        std::vector<RealType> h_gAgg(L.nNodes);
+        thrust::copy(gAgg.begin(), gAgg.end(), h_gAgg.begin());
+
+        // ghost aggregate ring + the coarse level's halo
+        std::vector<long long> ghostGids;
+        for (int i = 0; i < L.nNodes; ++i) if (!h_own[i]) ghostGids.push_back((long long)h_gAgg[i]);
+        std::vector<long long> ghostAggGid;
+        AcmLevelHalo coarseHalo;
+        acmBuildCoarseHalo(ghostGids, aggOffsets, rank, numRanks, ghostAggGid, coarseHalo, nCoarseLoc);
+        const int nGhostAgg = (int)ghostAggGid.size();
+
+        // ghost fine nodes -> local ghost-aggregate index (nCoarseLoc + position)
+        for (int i = 0; i < L.nNodes; ++i)
+            if (!h_own[i]) {
+                long long gid = (long long)h_gAgg[i];
+                int pos = (int)(std::lower_bound(ghostAggGid.begin(), ghostAggGid.end(), gid) - ghostAggGid.begin());
+                h_agg[i] = nCoarseLoc + pos;
+            }
+        thrust::copy(h_agg.begin(), h_agg.end(), L.agg.begin());
+        L.nCoarse = nCoarseLoc + nGhostAgg;
+
+        if (acmUseDilu() && idx < acmDiluLevels()) acmBuildLevelDilu<RealType>(L);   // hybrid smoother, rank-local
+
+        // Galerkin over the full local coarse space (owned + ghost ring), then identity-fy the ghost rows
+        AcmLevel<RealType> C;
+        C.nNodes = L.nCoarse; C.ND = 4 * L.nCoarse; C.nOwned = nCoarseLoc;
+        C.halo = std::move(coarseHalo);
+        C.ghostAggGid = std::move(ghostAggGid);
+        buildCoarseOperator<RealType>(L.rowOff, L.colInd, L.vals, L.agg, L.nNodes, L.nCoarse,
+                                      C.rowOff, C.colInd, C.vals);
+        { const int firstGhostDof = 4 * nCoarseLoc, nGD = C.ND - firstGhostDof;
+          if (nGD > 0)
+              acmGhostRowIdentityKernel<RealType><<<(nGD + blk - 1) / blk, blk>>>(
+                  acmRaw(C.rowOff), acmRaw(C.colInd), acmRaw(C.vals), firstGhostDof, C.ND); }
+        { std::vector<uint8_t> om(C.nNodes, 0);
+          for (int i = 0; i < C.nOwned; ++i) om[i] = 1;
+          C.ownMask.assign(om.begin(), om.end()); }
+        levels.push_back(std::move(C));
+        AcmLevel<RealType>& Cn = levels.back();
+        AcmLevelHalo* Hp = &Cn.halo;
+        Cn.exch = [Hp](thrust::device_vector<RealType>& v, int ncomp) {
+            acmHaloExchange<RealType>(*Hp, thrust::raw_pointer_cast(v.data()), ncomp);
+        };
+    }
+
+    // replicated global coarsest from the FINAL level: owned rows, GLOBAL DOF ids
+    if (levels.size() < 2) {   // level-0 ownership is scattered -> the contiguous-owned extraction below breaks
+        std::fprintf(stderr, "[acm-dist] global mesh coarser than the coarsest threshold at >1 rank -- unsupported\n");
+        MPI_Abort(MPI_COMM_WORLD, 8);
+    }
+    AcmLevel<RealType>& F = levels.back();
+    long long ownedDof = 4LL * F.nOwned;
+    std::vector<long long> dofCnt(numRanks);
+    MPI_Allgather(&ownedDof, 1, MPI_LONG_LONG, dofCnt.data(), 1, MPI_LONG_LONG, MPI_COMM_WORLD);
+    G.dofCounts.resize(numRanks); G.dofDispls.resize(numRanks);
+    long long tot = 0;
+    for (int r = 0; r < numRanks; ++r) { G.dofCounts[r] = (int)dofCnt[r]; G.dofDispls[r] = (int)tot; tot += dofCnt[r]; }
+    G.nGlobalDof = (int)tot;
+    long long aggBase = 0;                                        // my first global aggregate at the FINAL level
+    { long long nOwnLL = F.nOwned;
+      MPI_Exscan(&nOwnLL, &aggBase, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+      if (rank == 0) aggBase = 0; }
+    G.myDofBegin = 4 * aggBase; G.myDofCount = 4 * F.nOwned;
+    // host triplets of my OWNED rows (small at the coarsest)
+    std::vector<int> h_ro(F.rowOff.size()), h_ci(F.colInd.size());
+    std::vector<RealType> h_va(F.vals.size());
+    thrust::copy(F.rowOff.begin(), F.rowOff.end(), h_ro.begin());
+    thrust::copy(F.colInd.begin(), F.colInd.end(), h_ci.begin());
+    thrust::copy(F.vals.begin(),   F.vals.end(),   h_va.begin());
+    auto gDofOf = [&](int localDof) -> long long {
+        int a = localDof >> 2, c = localDof & 3;
+        return (a < F.nOwned) ? 4 * (aggBase + a) + c : 4 * F.ghostAggGid[a - F.nOwned] + c;
+    };
+    std::vector<long long> gRow, gCol; std::vector<double> gVal;
+    for (int r = 0; r < 4 * F.nOwned; ++r)
+        for (int k = h_ro[r]; k < h_ro[r + 1]; ++k) {
+            gRow.push_back(gDofOf(r)); gCol.push_back(gDofOf(h_ci[k])); gVal.push_back((double)h_va[k]);
+        }
+    acmGatherGlobalCoarse(gRow, gCol, gVal, G, numRanks);
 }
 
 // ---- host replica (validation oracle): same hierarchy, same arithmetic, on the CPU ----

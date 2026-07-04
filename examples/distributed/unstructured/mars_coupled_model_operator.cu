@@ -1214,6 +1214,26 @@ int main(int argc, char** argv)
             if (std::getenv("MARS_VERBOSE_MESH"))   // component count is a mesh-topology fact -> opt-in
                 std::cout << "[phase0][acm-pump] fluid-graph components=" << nComp << " (one pressure pin per component)\n";
 
+            // Multi-rank: ghosts must carry their OWNER's BC flags/values -- applyBC condenses Dirichlet
+            // COLUMNS into owned rows, and a ghost wall/inlet node missed locally (its boundary faces can sit
+            // beyond the halo) leaves that column alive -> the operator differs across ranks (measured 2.9e-5
+            // momentum drift in the op-probe). Forward-exchange per component: ghost slots take owner values.
+            if (numRanks > 1) {
+                thrust::device_vector<RealType> tmp(nNodes);
+                std::vector<RealType> h_t(nNodes);
+                for (int c = 0; c < 4; ++c) {
+                    for (size_t i = 0; i < nNodes; ++i) h_t[i] = (RealType)bcF[4 * i + c];
+                    thrust::copy(h_t.begin(), h_t.end(), tmp.begin());
+                    domain.exchangeNodeHalo(tmp);
+                    thrust::copy(tmp.begin(), tmp.end(), h_t.begin());
+                    for (size_t i = 0; i < nNodes; ++i) if (!hOwn[i]) bcF[4 * i + c] = h_t[i] > RealType(0.5) ? 1 : 0;
+                    for (size_t i = 0; i < nNodes; ++i) h_t[i] = bcV[4 * i + c];
+                    thrust::copy(h_t.begin(), h_t.end(), tmp.begin());
+                    domain.exchangeNodeHalo(tmp);
+                    thrust::copy(tmp.begin(), tmp.end(), h_t.begin());
+                    for (size_t i = 0; i < nNodes; ++i) if (!hOwn[i]) bcV[4 * i + c] = h_t[i];
+                }
+            }
             thrust::device_vector<uint8_t>  d_bcF(bcF.begin(), bcF.end());
             thrust::device_vector<RealType> d_bcV(bcV.begin(), bcV.end());   // inlet flux values (0 for closed-box)
             const int dblk = (ND + blockSize - 1) / blockSize;
@@ -1284,6 +1304,16 @@ int main(int argc, char** argv)
                 ga.setHaloExchangeCallback(haloX);
                 ga.setOwnedDofMask(thrust::raw_pointer_cast(d_ownDof.data()));
                 ga.setParallel(true);
+                // distributed ACM: seam-consistent aggregation + replicated global coarsest. The level-0
+                // exchange wraps the domain node halo (ncomp==1: node scalar; ncomp==4: interleaved DOFs).
+                int nOwnedNodes = 0;
+                for (size_t i = 0; i < nNodes; ++i) nOwnedNodes += hOwn[i] ? 1 : 0;
+                acm.setDistributed(rank, numRanks, nOwnedNodes, ownNodePtr,
+                    [&](thrust::device_vector<RealType>& v, int ncomp) {
+                        if (ncomp == 1) { domain.exchangeNodeHalo(v); return; }
+                        for (int c = 0; c < 4; ++c)
+                            domain.exchangeNodeHalo(v, thrust::raw_pointer_cast(d_n2d[c].data()));
+                    });
             }
             thrust::device_vector<RealType> d_avx(nNodes, RealType(0)), d_avy(nNodes, RealType(0)),
                                             d_avz(nNodes, RealType(0)), d_sx(nNodes), d_sy(nNodes), d_sz(nNodes), d_tmp(nNodes);
