@@ -145,42 +145,25 @@ def emit(ea, p=7):
     return "\n".join(lines) + "\n"
 
 
-def emit_full(ea, p=7):
-    """The FULL Knaus Alg-2 apply as mir IR: per direction, ALL SCS faces at
-    once via one rectangular contraction (Btil/Dtil are Pxn: the contracted
-    axis changes size n->P), then per face l: tangential contractions, the
-    authored flux with the per-(dir,l) metric slices, two W integrations, and
-    the +/- scatter onto the two face-bounding planes of y. The (dir, l) loops
-    are emitted UNROLLED -- generating that text is the front-end's job.
+def _apply_body(L, ea, p, ctr, v, uval, gval, indent="  ", y_init=None):
+    """Emit the per-element Knaus Alg-2 apply into L; returns the final y SSA
+    name. uval/gval name the element field / metric tensors (so the same body
+    serves the single-element func and the batched per-element loop).
 
-    G layout matches the host metric: tensor<3xPxnxnx3xf64>, g[dir,l,s,r,c]
-    with c = (0:tang2/r, 1:tang1/s, 2:normal)."""
+    Structure: per direction ONE rectangular contraction (Btil/Dtil are Pxn:
+    the contracted axis changes size n->P = ALL faces at once), then per face:
+    tangential contractions, the authored flux with per-(dir,l) metric slices,
+    two W integrations, +/- scatter onto the two face-bounding y planes.
+    G layout matches the host metric: tensor<3xPxnxnx3xf64>."""
     o = ea.op
     n, P = p + 1, p
+    I = indent
     t3 = "tensor<%dx%dx%dxf64>" % (n, n, n)
     t2 = "tensor<%dx%dxf64>" % (n, n)
     tPn = "tensor<%dx%dxf64>" % (P, n)
     tG = "tensor<3x%dx%dx%dx3xf64>" % (P, n, n)
-
     inputs = sorted(ea.free_vars)
     metric_used = [g for g in ("g0", "g1", "g2") if g in ea.free_vars]
-
-    args = ["%%u: %s" % t3, "%%Btil: %s" % tPn, "%%Dtil: %s" % tPn,
-            "%%W: %s" % t2]
-    if ea.needs_tangential:
-        args.append("%%D: %s" % t2)
-    if metric_used:
-        args.append("%%G: %s" % tG)
-
-    banner = AUTOGEN_BANNER.format(backend="mlir-full", name=o.name,
-                                   flux=o.flux_src)
-    L = [banner.rstrip("\n"),
-         "// RUN: mir-opt %s | mir-opt",
-         "func.func @%s_apply(%s) -> %s {" % (o.name, ", ".join(args), t3),
-         "  %%y0 = arith.constant dense<0.0> : %s" % t3]
-
-    ctr = [0]           # SSA temp counter for flux bodies
-    v = [0]             # value counter for tensors
 
     def fresh(tag):
         v[0] += 1
@@ -192,52 +175,61 @@ def emit_full(ea, p=7):
         return "tensor<%dx%dx%dxf64>" % tuple(dims)
 
     def face_slice(src, src_ty, d, l):
-        """extract the l-th face (rank-reducing) along axis d."""
         off = ["0", "0", "0"]; off[d] = str(l)
         sz = [str(n)] * 3; sz[d] = "1"
         r = fresh("f")
-        L.append("  %s = tensor.extract_slice %s[%s] [%s] [1, 1, 1] : %s to %s"
-                 % (r, src, ", ".join(off), ", ".join(sz), src_ty, t2))
+        L.append("%s%s = tensor.extract_slice %s[%s] [%s] [1, 1, 1] : %s to %s"
+                 % (I, r, src, ", ".join(off), ", ".join(sz), src_ty, t2))
         return r
 
     def g_slice(d, l, c):
         r = fresh("g")
-        L.append("  %s = tensor.extract_slice %%G[%d, %d, 0, 0, %d] "
+        L.append("%s%s = tensor.extract_slice %s[%d, %d, 0, 0, %d] "
                  "[1, 1, %d, %d, 1] [1, 1, 1, 1, 1] : %s to %s"
-                 % (r, d, l, c, n, n, tG, t2))
+                 % (I, r, gval, d, l, c, n, n, tG, t2))
         return r
 
     def contract2(src, mat, axis):
         r = fresh("c")
-        L.append("  %s = mir.contract %s, %s {axis = %d : i64} : "
-                 "(%s, %s) -> %s" % (r, src, mat, axis, t2, t2, t2))
+        L.append("%s%s = mir.contract %s, %s {axis = %d : i64} : "
+                 "(%s, %s) -> %s" % (I, r, src, mat, axis, t2, t2, t2))
         return r
 
     def flux2(tensors, body_fn, names):
-        """rank-2 mir.flux over `tensors`; body built by body_fn(valnames)."""
         r = fresh("x")
         tys = ", ".join(t2 for _ in tensors)
         blk = ", ".join("%%a%d: f64" % i for i in range(len(tensors)))
-        L.append("  %s = mir.flux ins(%s) : (%s) -> %s {"
-                 % (r, ", ".join(tensors), tys, t2))
-        L.append("  ^bb0(%s):" % blk)
+        L.append("%s%s = mir.flux ins(%s) : (%s) -> %s {"
+                 % (I, r, ", ".join(tensors), tys, t2))
+        L.append("%s^bb0(%s):" % (I, blk))
         valnames = dict(zip(names, ["%%a%d" % i for i in range(len(tensors))]))
         body_fn(valnames)
-        L.append("  }")
+        L.append("%s}" % I)
         return r
 
-    y = "%y0"
+    # y starts as a zero-filled buffer (empty+fill, NOT a dense constant: a
+    # constant would bufferize to a memref.global, which cannot live inside a
+    # gpu.module; fill bufferizes to a local alloc).
+    ze = fresh("ze")
+    L.append("%s%s = arith.constant 0.0 : f64" % (I, ze))
+    if y_init is None:
+        y_init = fresh("ye")
+        L.append("%s%s = tensor.empty() : %s" % (I, y_init, t3))
+    y = fresh("y")
+    L.append("%s%s = linalg.fill ins(%s : f64) outs(%s : %s) -> %s"
+             % (I, y, ze, y_init, t3, t3))
+
     for d in range(3):
         fa_ty = all_faces_type(d)
         interp_all = deriv_all = None
         if ea.needs_tangential:
             interp_all = fresh("ia")
-            L.append("  %s = mir.contract %%u, %%Btil {axis = %d : i64} : "
-                     "(%s, %s) -> %s" % (interp_all, d, t3, tPn, fa_ty))
+            L.append("%s%s = mir.contract %s, %%Btil {axis = %d : i64} : "
+                     "(%s, %s) -> %s" % (I, interp_all, uval, d, t3, tPn, fa_ty))
         if ea.needs_deriv:
             deriv_all = fresh("da")
-            L.append("  %s = mir.contract %%u, %%Dtil {axis = %d : i64} : "
-                     "(%s, %s) -> %s" % (deriv_all, d, t3, tPn, fa_ty))
+            L.append("%s%s = mir.contract %s, %%Dtil {axis = %d : i64} : "
+                     "(%s, %s) -> %s" % (I, deriv_all, uval, d, t3, tPn, fa_ty))
         for l in range(P):
             tensors, names = [], []
             if ea.needs_deriv:
@@ -252,7 +244,6 @@ def emit_full(ea, p=7):
             for g in metric_used:
                 tensors.append(g_slice(d, l, int(g[1])))
                 names.append(g)
-            # reorder to the sorted flux-input order
             order = [names.index(x) for x in inputs]
             tensors = [tensors[i] for i in order]
 
@@ -264,13 +255,12 @@ def emit_full(ea, p=7):
             tmp = contract2(fl, "%W", 1)
             intf = contract2(tmp, "%W", 0)
 
-            # y[plane l] -= intf ; y[plane l+1] += intf
             for plane, opname in ((l, "arith.subf"), (l + 1, "arith.addf")):
                 off = ["0", "0", "0"]; off[d] = str(plane)
                 sz = [str(n)] * 3; sz[d] = "1"
-                cur = fresh("p")
-                L.append("  %s = tensor.extract_slice %s[%s] [%s] [1, 1, 1] : "
-                         "%s to %s" % (cur, y, ", ".join(off), ", ".join(sz),
+                cur = fresh("pl")
+                L.append("%s%s = tensor.extract_slice %s[%s] [%s] [1, 1, 1] : "
+                         "%s to %s" % (I, cur, y, ", ".join(off), ", ".join(sz),
                                        t3, t2))
                 def upd_body(valnames, _op=opname):
                     r = "%%t%d" % ctr[0]; ctr[0] += 1
@@ -278,12 +268,119 @@ def emit_full(ea, p=7):
                     L.append("    mir.yield %s : f64" % r)
                 upd = flux2([cur, intf], upd_body, ["cur", "intf"])
                 ynew = fresh("y")
-                L.append("  %s = tensor.insert_slice %s into %s[%s] [%s] "
+                L.append("%s%s = tensor.insert_slice %s into %s[%s] [%s] "
                          "[1, 1, 1] : %s into %s"
-                         % (ynew, upd, y, ", ".join(off), ", ".join(sz),
+                         % (I, ynew, upd, y, ", ".join(off), ", ".join(sz),
                             t2, t3))
                 y = ynew
+    return y
 
+
+def emit_full(ea, p=7):
+    """Single-element full Knaus apply (tensor-semantic func)."""
+    o = ea.op
+    n, P = p + 1, p
+    t3 = "tensor<%dx%dx%dxf64>" % (n, n, n)
+    t2 = "tensor<%dx%dxf64>" % (n, n)
+    tPn = "tensor<%dx%dxf64>" % (P, n)
+    tG = "tensor<3x%dx%dx%dx3xf64>" % (P, n, n)
+    metric_used = [g for g in ("g0", "g1", "g2") if g in ea.free_vars]
+
+    args = ["%%u: %s" % t3, "%%Btil: %s" % tPn, "%%Dtil: %s" % tPn,
+            "%%W: %s" % t2]
+    if ea.needs_tangential:
+        args.append("%%D: %s" % t2)
+    if metric_used:
+        args.append("%%G: %s" % tG)
+
+    banner = AUTOGEN_BANNER.format(backend="mlir-full", name=o.name,
+                                   flux=o.flux_src)
+    L = [banner.rstrip("\n"),
+         "// RUN: mir-opt %s | mir-opt",
+         "func.func @%s_apply(%s) -> %s {" % (o.name, ", ".join(args), t3)]
+    ctr, v = [0], [0]
+    y = _apply_body(L, ea, p, ctr, v, "%u", "%G")
     L.append("  return %s : %s" % (y, t3))
     L.append("}")
+    return "\n".join(L) + "\n"
+
+
+def emit_full_batched(ea, p=7, tpb=128):
+    """The FUSED batched form: one memref-level scf.parallel (blocks x threads)
+    over elements -- thread t of block b applies the WHOLE operator to element
+    e = b*tpb + t. mir stays tensor-semantic inside via the bufferization
+    boundary ops: bufferization.to_tensor(restrict) on the element subviews in,
+    materialize_in_destination out. Lowers to ONE gpu kernel (thread-per-
+    element), unlike the naive path's one-launch-per-linalg-op."""
+    o = ea.op
+    n, P = p + 1, p
+    n2, n3 = n * n, n * n * n
+    t3 = "tensor<%dx%dx%dxf64>" % (n, n, n)
+    t2 = "tensor<%dx%dxf64>" % (n, n)
+    tPn = "tensor<%dx%dxf64>" % (P, n)
+    tG = "tensor<3x%dx%dx%dx3xf64>" % (P, n, n)
+    metric_used = [g for g in ("g0", "g1", "g2") if g in ea.free_vars]
+
+    mU = "memref<?x%dx%dx%dxf64>" % (n, n, n)
+    mUe = "memref<%dx%dx%dxf64, strided<[%d, %d, 1], offset: ?>>" % (n, n, n, n2, n)
+    gdims = (P, n, n)
+    gstr = (P * n * n * 3, n * n * 3, n * 3, 3)
+    mG = "memref<?x3x%dx%dx%dx3xf64>" % gdims
+    mGe = ("memref<3x%dx%dx%dx3xf64, strided<[%d, %d, %d, %d, 1], offset: ?>>"
+           % (gdims + gstr))
+    m2 = "memref<%dx%dxf64>" % (n, n)
+    mPn = "memref<%dx%dxf64>" % (P, n)
+
+    args = ["%%U: %s" % mU, "%%Y: %s" % mU, "%%Btilm: %s" % mPn,
+            "%%Dtilm: %s" % mPn, "%%Wm: %s" % m2]
+    if ea.needs_tangential:
+        args.append("%%Dm: %s" % m2)
+    if metric_used:
+        args.append("%%Gm: %s" % mG)
+
+    banner = AUTOGEN_BANNER.format(backend="mlir-full-batched", name=o.name,
+                                   flux=o.flux_src)
+    dm = "(d0) -> (d0)"
+    L = [banner.rstrip("\n"),
+         "func.func @%s_apply_batched(%s) {" % (o.name, ", ".join(args)),
+         "  %c0 = arith.constant 0 : index",
+         "  %c1 = arith.constant 1 : index",
+         "  %%ctpb = arith.constant %d : index" % tpb,
+         "  %%E = memref.dim %%U, %%c0 : %s" % mU,
+         "  %B = arith.divui %E, %ctpb : index",
+         "  scf.parallel (%b) = (%c0) to (%B) step (%c1) {",
+         "    %be = arith.muli %b, %ctpb : index",
+         "    scf.parallel (%t) = (%c0) to (%ctpb) step (%c1) {",
+         "      %e = arith.addi %be, %t : index",
+         "      %%us = memref.subview %%U[%%e, 0, 0, 0] [1, %d, %d, %d] "
+         "[1, 1, 1, 1] : %s to %s" % (n, n, n, mU, mUe),
+         "      %%u = bufferization.to_tensor %%us restrict : %s" % mUe,
+         "      %%Btil = bufferization.to_tensor %%Btilm restrict : %s" % mPn,
+         "      %%Dtil = bufferization.to_tensor %%Dtilm restrict : %s" % mPn,
+         "      %%W = bufferization.to_tensor %%Wm restrict : %s" % m2]
+    if ea.needs_tangential:
+        L.append("      %%D = bufferization.to_tensor %%Dm restrict : %s" % m2)
+    if metric_used:
+        L.append("      %%gs = memref.subview %%Gm[%%e, 0, 0, 0, 0, 0] "
+                 "[1, 3, %d, %d, %d, 3] [1, 1, 1, 1, 1, 1] : %s to %s"
+                 % (P, n, n, mG, mGe))
+        L.append("      %%G = bufferization.to_tensor %%gs restrict : %s" % mGe)
+
+    L += ["      %%ys = memref.subview %%Y[%%e, 0, 0, 0] [1, %d, %d, %d] "
+          "[1, 1, 1, 1] : %s to %s" % (n, n, n, mU, mUe),
+          "      %%yseed = bufferization.to_tensor %%ys restrict writable : %s"
+          % mUe]
+    ctr, v = [0], [0]
+    y = _apply_body(L, ea, p, ctr, v, "%u", "%G", indent="      ",
+                    y_init="%yseed")
+    L += ["      bufferization.materialize_in_destination %s in writable %%ys "
+          ": (%s, %s) -> ()" % (y, t3, mUe),
+          "      scf.reduce",
+          "    } {mapping = [#gpu.loop_dim_map<processor = thread_x, "
+          "map = %s, bound = %s>]}" % (dm, dm),
+          "    scf.reduce",
+          "  } {mapping = [#gpu.loop_dim_map<processor = block_x, "
+          "map = %s, bound = %s>]}" % (dm, dm),
+          "  return",
+          "}"]
     return "\n".join(L) + "\n"

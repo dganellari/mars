@@ -17,7 +17,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("spec", help="path to the .op operator spec")
-    ap.add_argument("--backend", choices=["ir", "cuda", "host", "host-jvp", "mlir", "mlir-full"],
+    ap.add_argument("--backend", choices=["ir", "cuda", "host", "host-jvp", "mlir", "mlir-full", "mlir-full-batched"],
                     default="ir",
                     help="ir = text dump (default); cuda/host = primal source; "
                          "host-jvp = Jacobian-action host source (symbolic diff); "
@@ -38,6 +38,8 @@ def main(argv=None):
         text = mlir_ir.emit(ea)
     elif args.backend == "mlir-full":
         text = mlir_ir.emit_full(ea)
+    elif args.backend == "mlir-full-batched":
+        text = mlir_ir.emit_full_batched(ea)
     else:
         text = host_cpp.emit(ea)
 

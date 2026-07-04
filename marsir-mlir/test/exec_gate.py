@@ -55,7 +55,7 @@ def run_pipeline(payload):
         sys.exit(f"mir-opt failed:\n{p1.stderr}")
     p2 = subprocess.run(
         [MLIROPT, "-", "--convert-linalg-to-loops", "--convert-scf-to-cf",
-         "--expand-strided-metadata", "--finalize-memref-to-llvm",
+         "--expand-strided-metadata", "--lower-affine", "--finalize-memref-to-llvm",
          "--convert-arith-to-llvm", "--convert-math-to-llvm",
          "--convert-func-to-llvm", "--convert-cf-to-llvm",
          "--reconcile-unrealized-casts"],
@@ -347,7 +347,101 @@ func.func @main() {{
     return ok
 
 
+
+
+def gate6():
+    """FUSED BATCHED operator: emit_full_batched (one scf.parallel over
+    elements, mir inside via bufferization boundary ops) executed on CPU for
+    E=4 elements == per-element NumPy oracle. Validates the exact form that
+    lowers to the single GPU kernel."""
+    compiler = os.path.abspath(os.path.join(ROOT, "..", "marsir-compiler"))
+    sys.path.insert(0, compiler)
+    from marsir import parse_spec_file, synthesize
+    from marsir.backends import mlir_ir
+
+    p, E = 3, 4
+    n, P = p + 1, p
+    ea = synthesize(parse_spec_file(os.path.join(compiler, "specs", "laplacian.op")))
+    fn = mlir_ir.emit_full_batched(ea, p=p, tpb=2)   # 2 blocks x 2 threads
+
+    rng = np.random.RandomState(33)
+    U = rng.uniform(-1, 1, (E, n, n, n))
+    Btil = rng.uniform(-1, 1, (P, n))
+    Dtil = rng.uniform(-1, 1, (P, n))
+    Dm = rng.uniform(-1, 1, (n, n))
+    W = rng.uniform(-1, 1, (n, n))
+    G = rng.uniform(-1, 1, (E, 3, P, n, n, 3))
+
+    def oracle(u, g):
+        y = np.zeros((n, n, n))
+        for d in range(3):
+            Uv, Yv = np.moveaxis(u, d, 0), np.moveaxis(y, d, 0)
+            for l in range(P):
+                interp = np.einsum("q,qsr->sr", Btil[l], Uv)
+                deriv = np.einsum("q,qsr->sr", Dtil[l], Uv)
+                dt2 = np.einsum("rq,sq->sr", Dm, interp)
+                dt1 = np.einsum("sq,qr->sr", Dm, interp)
+                gg = g[d, l]
+                flux = gg[..., 2] * deriv + gg[..., 0] * dt2 + gg[..., 1] * dt1
+                tmp = np.einsum("rq,sq->sr", W, flux)
+                intf = np.einsum("sq,qr->sr", W, tmp)
+                Yv[l] -= intf
+                Yv[l + 1] += intf
+        return y
+    expected = np.stack([oracle(U[e], G[e]) for e in range(E)])
+
+    tU = f"tensor<{E}x{n}x{n}x{n}xf64>"
+    mUs = f"memref<{E}x{n}x{n}x{n}xf64>"
+    mUd = f"memref<?x{n}x{n}x{n}xf64>"
+    tGt = f"tensor<{E}x3x{P}x{n}x{n}x3xf64>"
+    mGs = f"memref<{E}x3x{P}x{n}x{n}x3xf64>"
+    mGd = f"memref<?x3x{P}x{n}x{n}x3xf64>"
+    t2m, tPnm = f"memref<{n}x{n}xf64>", f"memref<{P}x{n}xf64>"
+
+    def buf(name, arr, tty, mty):
+        return (f"{cst(name + 'c', arr)}\n"
+                f"    %{name}m = memref.alloc() : {mty}\n"
+                f"    bufferization.materialize_in_destination %{name}c in "
+                f"writable %{name}m : (tensor<{'x'.join(str(d) for d in arr.shape)}xf64>, {mty}) -> ()")
+
+    payload = f"""{fn}
+func.func private @printMemrefF64(tensor<*xf64>)
+func.func @main() {{
+{buf("U", U, tU, mUs)}
+{buf("Y", np.zeros_like(U), tU, mUs)}
+{buf("Bt", Btil, "", tPnm)}
+{buf("Dt", Dtil, "", tPnm)}
+{buf("W", W, "", t2m)}
+{buf("Dm", Dm, "", t2m)}
+{buf("G", G, tGt, mGs)}
+    %Ud = memref.cast %Um : {mUs} to {mUd}
+    %Yd = memref.cast %Ym : {mUs} to {mUd}
+    %Gd = memref.cast %Gm : {mGs} to {mGd}
+    call @laplacian_apply_batched(%Ud, %Yd, %Btm, %Dtm, %Wm, %Dmm, %Gd)
+        : ({mUd}, {mUd}, {tPnm}, {tPnm}, {t2m}, {t2m}, {mGd}) -> ()
+    %Yt = bufferization.to_tensor %Ym restrict : {mUs}
+{cst("exp4", expected)}
+    %scale = arith.constant 1.0e12 : f64
+    %diff = mir.flux ins(%Yt, %exp4) : ({tU}, {tU}) -> {tU} {{
+    ^bb0(%a: f64, %b: f64):
+      %d = arith.subf %a, %b : f64
+      %ad = math.absf %d : f64
+      %sd = arith.mulf %ad, %scale : f64
+      mir.yield %sd : f64
+    }}
+    %pr = tensor.cast %diff : {tU} to tensor<*xf64>
+    call @printMemrefF64(%pr) : (tensor<*xf64>) -> ()
+    return
+}}
+"""
+    got = run_pipeline(payload)
+    scaled = np.max(np.abs(got))
+    ok = len(got) == E * n ** 3 and scaled < 1.0
+    print(f"gate 6 (FUSED batched operator, E=4)     : max|err| = {scaled:.3e}e-12  {'PASS' if ok else 'FAIL'}")
+    return ok
+
+
 if __name__ == "__main__":
-    ok = gate1() & gate2() & gate3() & gate4() & gate5()
+    ok = gate1() & gate2() & gate3() & gate4() & gate5() & gate6()
     print("ALL PASS (mir lowering executes correctly)" if ok else "FAILED")
     sys.exit(0 if ok else 1)

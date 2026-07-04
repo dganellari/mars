@@ -3,6 +3,7 @@ add_mlir_dialect_library(MLIRMir
   MirOps.cpp
   LowerMirToLinalg.cpp
   HoistTransferPairs.cpp
+  LowerCopies.cpp
 
   ADDITIONAL_HEADER_DIRS
   ${PROJECT_SOURCE_DIR}/include/mir
@@ -21,5 +22,6 @@ add_mlir_dialect_library(MLIRMir
   MLIRArithDialect
   MLIRSCFDialect
   MLIRVectorDialect
+  MLIRMemRefDialect
   MLIRFuncDialect
   )

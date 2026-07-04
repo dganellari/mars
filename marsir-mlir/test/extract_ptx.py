@@ -14,4 +14,5 @@ out = sys.argv[1] if len(sys.argv) > 1 else "generated/sumfac_sm90.ptx"
 open(out, "w").write(ptx)
 n = ptx.count("mma.sync.aligned.m8n8k4")
 print("wrote %s (%d chars, %d x mma.sync.aligned.m8n8k4 f64)" % (out, len(ptx), n))
-assert n > 0, "no DMMA instructions in PTX!"
+min_mma = int(sys.argv[2]) if len(sys.argv) > 2 else 1
+assert n >= min_mma, "expected >= %d DMMA instructions in PTX" % min_mma

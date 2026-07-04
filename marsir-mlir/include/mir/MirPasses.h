@@ -7,6 +7,8 @@ namespace mir {
 void registerMirPasses();
 // Registers --mir-hoist-transfer-pairs (accumulator registerization).
 void registerHoistTransferPairsPass();
+// Registers --mir-lower-copies (memref.copy -> scf.for loops, GPU-legal).
+void registerLowerCopiesPass();
 }  // namespace mir
 
 #endif  // MIR_MIRPASSES_H
