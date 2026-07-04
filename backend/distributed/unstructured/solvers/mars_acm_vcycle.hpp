@@ -70,9 +70,11 @@ __global__ void acmDinvKernel(const int* rowOff, const int* colInd, const RealTy
 template<typename RealType>
 __global__ void acmJacobiKernel(const int* rowOff, const int* colInd, const RealType* vals,
                                 const RealType* dinv, const RealType* b,
-                                const RealType* xin, RealType* xout, RealType omega, int ND)
+                                const RealType* xin, RealType* xout, RealType omega, int ND,
+                                const uint8_t* own = nullptr)
 {
     int r = blockIdx.x * blockDim.x + threadIdx.x; if (r >= ND) return;
+    if (own && !own[r >> 2]) { xout[r] = xin[r]; return; }   // dist: ghosts frozen at the last exchanged value
     RealType s = 0;
     for (int k = rowOff[r]; k < rowOff[r + 1]; ++k) s += vals[k] * xin[colInd[k]];
     xout[r] = xin[r] + omega * dinv[r] * (b[r] - s);
@@ -123,9 +125,14 @@ __global__ void acmBlockInvKernel(const int* rowOff, const int* colInd, const Re
 template<typename RealType>
 __global__ void acmBlockJacobiKernel(const int* rowOff, const int* colInd, const RealType* vals,
                                      const RealType* binv, const RealType* b,
-                                     const RealType* xin, RealType* xout, RealType omega, int nNodes)
+                                     const RealType* xin, RealType* xout, RealType omega, int nNodes,
+                                     const uint8_t* own = nullptr)
 {
     int node = blockIdx.x * blockDim.x + threadIdx.x; if (node >= nNodes) return;
+    if (own && !own[node]) {                                 // dist: ghosts frozen at the last exchanged value
+        for (int a = 0; a < 4; ++a) xout[4 * node + a] = xin[4 * node + a];
+        return;
+    }
     RealType res[4];
     for (int a = 0; a < 4; ++a) {
         int r = 4 * node + a; RealType s = 0;
@@ -223,8 +230,13 @@ __global__ void acmDiluUsolveKernel(const int* brow, const int* bcol, const int*
 }
 
 template<typename RealType>
-__global__ void acmAxpyKernel(RealType* x, const RealType* y, RealType a, int ND)
-{ int r = blockIdx.x * blockDim.x + threadIdx.x; if (r < ND) x[r] += a * y[r]; }
+__global__ void acmAxpyKernel(RealType* x, const RealType* y, RealType a, int ND,
+                              const uint8_t* own = nullptr)   // dist: ghost DOFs frozen (owner value via exchange)
+{
+    int r = blockIdx.x * blockDim.x + threadIdx.x; if (r >= ND) return;
+    if (own && !own[r >> 2]) return;
+    x[r] += a * y[r];
+}
 
 // fused residual rtmp = b - A x in one pass (replaces a separate SpMV + subtract): one launch instead of
 // two, one global round-trip instead of two. Same arithmetic (sum then subtract) -> bit-identical.
@@ -846,7 +858,8 @@ inline void acmIluSmoothGpu(AcmLevel<RealType>& L, int sweeps, RealType omega, c
             if (g > 0) acmIluUsolveKernel<RealType><<<g, blk, 0, s>>>(acmRaw(L.brow), acmRaw(L.bcol), acmRaw(L.bdiagPtr),
                 acmRaw(L.bilu), acmRaw(L.nodesByLevel), ls, le, acmRaw(L.ytmp), acmRaw(L.xtmp));
         }
-        acmAxpyKernel<RealType><<<grd, blk, 0, s>>>(acmRaw(L.xvec), acmRaw(L.xtmp), omega, L.ND);            // x += omega*dx
+        acmAxpyKernel<RealType><<<grd, blk, 0, s>>>(acmRaw(L.xvec), acmRaw(L.xtmp), omega, L.ND,
+            L.ownMask.empty() ? nullptr : acmRaw(L.ownMask));                                                // x += omega*dx (owned only, dist)
     }
 }
 
@@ -871,7 +884,8 @@ inline void acmDiluSmoothGpu(AcmLevel<RealType>& L, int sweeps, RealType omega, 
             if (g > 0) acmDiluUsolveKernel<RealType><<<g, blk, 0, s>>>(acmRaw(L.brow), acmRaw(L.bcol), acmRaw(L.color),
                 acmRaw(L.bblk), acmRaw(L.dilu_dinv), acmRaw(L.nodesByColor), cs, ce, acmRaw(L.ztmp), acmRaw(L.xtmp));
         }
-        acmAxpyKernel<RealType><<<grd, blk, 0, s>>>(acmRaw(L.xvec), acmRaw(L.xtmp), omega, L.ND);            // x += omega*dx
+        acmAxpyKernel<RealType><<<grd, blk, 0, s>>>(acmRaw(L.xvec), acmRaw(L.xtmp), omega, L.ND,
+            L.ownMask.empty() ? nullptr : acmRaw(L.ownMask));                                                // x += omega*dx (owned only, dist)
     }
 }
 
@@ -946,15 +960,16 @@ inline void acmSmoothGpu(AcmLevel<RealType>& L, int sweeps, RealType omega, bool
     const int blk = 256, grd = (L.ND + blk - 1) / blk, gN = (L.nNodes + blk - 1) / blk;
     RealType* x0 = acmRaw(L.xvec);
     RealType* x1 = acmRaw(L.xtmp);
+    const uint8_t* own = L.ownMask.empty() ? nullptr : acmRaw(L.ownMask);   // dist: freeze ghost slots
     for (int sw = 0; sw < sweeps; ++sw) {
         RealType* xin  = (sw & 1) ? x1 : x0;
         RealType* xout = (sw & 1) ? x0 : x1;
         if (useBlock)
             acmBlockJacobiKernel<RealType><<<gN, blk, 0, s>>>(acmRaw(L.rowOff), acmRaw(L.colInd), acmRaw(L.vals),
-                acmRaw(L.binv), acmRaw(L.bvec), xin, xout, omega, L.nNodes);
+                acmRaw(L.binv), acmRaw(L.bvec), xin, xout, omega, L.nNodes, own);
         else
             acmJacobiKernel<RealType><<<grd, blk, 0, s>>>(acmRaw(L.rowOff), acmRaw(L.colInd), acmRaw(L.vals),
-                acmRaw(L.dinv), acmRaw(L.bvec), xin, xout, omega, L.ND);
+                acmRaw(L.dinv), acmRaw(L.bvec), xin, xout, omega, L.ND, own);
     }
     if (sweeps > 0 && (sweeps & 1)) cudaMemcpyAsync(x0, x1, sizeof(RealType) * L.ND, cudaMemcpyDeviceToDevice, s);
 }
@@ -1003,6 +1018,9 @@ void acmVcycleDownGpu(std::vector<AcmLevel<RealType>>& levels, int Lidx, int pre
         cudaMemsetAsync(acmRaw(C.bvec), 0, sizeof(RealType) * C.ND, s);   // capture-safe zero (all-zero bytes == 0.0)
         cudaMemsetAsync(acmRaw(C.xvec), 0, sizeof(RealType) * C.ND, s);
         acmRestrictAddKernel<RealType><<<gN, blk, 0, s>>>(acmRaw(L.rtmp), acmRaw(C.bvec), acmRaw(L.agg), L.nNodes);
+        if (C.exch) C.exch(C.bvec, 4);   // dist: ring b <- the OWNER's true restricted residual (locally it is
+                                         // junk -- the restriction of ghost-row pseudo-residuals, compounding
+                                         // per level; the smoothers would leak it into owned rows at the seam)
     }
 }
 

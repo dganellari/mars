@@ -254,6 +254,12 @@ private:
     {
         mars::AcmLevel<RealType>& C = levels_.back();
         RealType* x = thrust::raw_pointer_cast(C.xvec.data());
+        static const bool noCoarse = std::getenv("MARS_ACM_DIST_NOCOARSE") != nullptr;   // debug: pure-Schwarz A/B
+        if (noCoarse) {
+            cudaMemsetAsync(x, 0, sizeof(RealType) * C.ND, s);
+            mars::acmSmoothGpu(C, coarse_, omega_, /*useBlock=*/true, s);
+            return;
+        }
         if (!coarseLUok_) {
             cudaMemsetAsync(x, 0, sizeof(RealType) * C.ND, s);
             mars::acmSmoothGpu(C, coarse_, omega_, /*useBlock=*/true, s);
@@ -281,6 +287,27 @@ private:
             for (int k = 0; k < C.nNodes - C.nOwned; ++k)
                 for (int c = 0; c < 4; ++c) h_g[4 * k + c] = h_rhsAll_[4 * C.ghostAggGid[k] + c];
             cudaMemcpy(x + 4 * C.nOwned, h_g.data(), sizeof(RealType) * h_g.size(), cudaMemcpyHostToDevice);
+        }
+        // MARS_ACM_DIST_PROBE=1: does the replicated solution actually solve the LEVEL operator?
+        // ||b - A_level x|| / ||b|| over OWNED coarse rows, global. ~1e-12 -> the gathered dense matches the
+        // level CSR and the bug is downstream (inject); large -> assembly/ordering bug in the gather.
+        static const bool probe = std::getenv("MARS_ACM_DIST_PROBE") != nullptr;
+        if (probe) {
+            const int blk = 256, grd = (C.ND + blk - 1) / blk;
+            mars::acmResidualKernel<RealType><<<grd, blk>>>(mars::acmRaw(C.rowOff), mars::acmRaw(C.colInd),
+                mars::acmRaw(C.vals), x, thrust::raw_pointer_cast(C.bvec.data()),
+                thrust::raw_pointer_cast(C.rtmp.data()), C.ND);
+            cudaDeviceSynchronize();
+            std::vector<RealType> h_r(C.ND), h_b(C.ND);
+            thrust::copy(C.rtmp.begin(), C.rtmp.end(), h_r.begin());
+            thrust::copy(C.bvec.begin(), C.bvec.end(), h_b.begin());
+            double rr = 0, bb = 0;
+            for (int d = 0; d < 4 * C.nOwned; ++d) { rr += (double)h_r[d] * h_r[d]; bb += (double)h_b[d] * h_b[d]; }
+            double g[2] = {rr, bb};
+            MPI_Allreduce(MPI_IN_PLACE, g, 2, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+            if (rank_ == 0)
+                std::fprintf(stderr, "[dist-probe] coarse |b-Ax|/|b| = %.3e (n=%d)\n",
+                             std::sqrt(g[0] / (g[1] > 0 ? g[1] : 1.0)), coarseN_);
         }
     }
 
