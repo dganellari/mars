@@ -1,15 +1,17 @@
-# marsir-mlir — the `mir` MLIR dialect (Stage 2)
+# marsir-mlir — the `mir` MLIR dialect (MARSIR Stage 2)
 
 The **real MLIR** path for MARSIR: an out-of-tree MLIR dialect that lowers
 high-level FEM operators down to the GPU / tensor-core level, i.e.
 
 ```
-mir  →  linalg  →  gpu / nvgpu(tensor-core MMA)  →  nvvm  →  PTX
+mir  →  linalg  →  gpu / nvgpu (tensor-core MMA)  →  nvvm  →  PTX
 ```
 
 This is distinct from `marsir-compiler/` (the Python source-to-source emitter).
 That one emits CUDA/HIP *text*; this one is a genuine compiler dialect with
-lowering passes. Requires LLVM/MLIR (here: Homebrew `llvm` = MLIR 19).
+lowering passes. Requires LLVM/MLIR (here: Homebrew `llvm` = MLIR 19.1.7).
+The full walkthrough, with the why behind every mechanism, is
+`internal-notes/marsir_full_tutorial.md`.
 
 ## Build
 
@@ -21,73 +23,83 @@ cmake -G Ninja -B build \
 ninja -C build mir-opt
 ```
 
-## What exists
+## The dialect (`include/mir/MirOps.td`)
 
-- **Dialect** `mir` (`include/mir/MirOps.td`) with the op
-  `mir.contract %input, %op_matrix {axis} : (tensor, tensor) -> tensor` — the 1D
-  reference-operator contraction that is the atom of tensor-product
-  sum-factorization (Btil/Dtil/D/W applied along one axis).
-- **Tool** `mir-opt` — like `mlir-opt`, with the `mir` dialect + its passes.
-- **Lowering** `--convert-mir-to-linalg` (`lib/LowerMirToLinalg.cpp`) — rewrites
-  `mir.contract` to a `linalg.generic` reduction. `linalg` is MLIR's on-ramp to
-  GPU + tensor cores.
+- `mir.contract %u, %M {axis}` — the 1D sum-factorization contraction atom
+  (Btil/Dtil/D/W along one axis).
+- `mir.flux ins(...) { region }` + `mir.yield` — the authored pointwise flux
+  (the D of B^T·D·B), region-carrying.
+- `mir.simplex_contract` — the ragged collapsed-tet sweep
+  (`r <= D - p - q` bounds, 4-D per-(p,q) factor table).
+- `!mir.block<shape, p, deformed, batch>` type + `mir.bind` / `mir.unbind`
+  with an `unbind(bind(x)) -> x` folder.
 
-## Try it
+## Passes (all in `mir-opt`)
 
-```bash
-OPT=./build/tools/mir-opt/mir-opt
+| pass | file | what it does |
+|---|---|---|
+| `--convert-mir-to-linalg` | `lib/LowerMirToLinalg.cpp` | contract -> `linalg.matmul` (axis-0 unfold) or `linalg.generic` reduction; flux -> all-parallel generic; simplex -> `scf.for` + iter_args |
+| `--mir-hoist-transfer-pairs` | `lib/HoistTransferPairs.cpp` | loop-invariant transfer_read/write pair -> loop-carried iter_arg (the v4 accumulator registerization; upstream hoisting declines on aliasing); `assume-zero-init` option |
+| `--mir-lower-copies` | `lib/LowerCopies.cpp` | `memref.copy` -> plain `scf.for` loops (strided copies otherwise lower to a memrefCopy host-runtime call, illegal in GPU kernels) |
+| `--mir-warp-wrap` | `lib/WarpWrap.cpp` | wraps innermost `scf.parallel` bodies in `vector.warp_execute_on_lane_0` (lane = `gpu.lane_id`) + hoists uniform code out so boundary writes can distribute |
+| `--mir-warp-distribute` | `lib/WarpDistribute.cpp` | lane-distributes warp regions via upstream VectorDistribution patterns (shipped in MLIR 19 but unexposed) + `WarpOpContractToMma`: bridges m8n8k4 f64 `vector.contract` to `nvgpu.mma.sync` on per-lane DMMA fragments |
 
-# round-trip the dialect
-$OPT test/contract.mlir
+## Pipelines / PTX scripts
 
-# the bridge: mir.contract -> linalg.generic
-$OPT test/contract.mlir --convert-mir-to-linalg
+All emit **real sm_90 PTX via LLVM's NVPTX backend** — no CUDA toolkit
+anywhere; a Mac laptop produces deployable PTX. `test/extract_ptx.py` pulls
+the PTX out of the `gpu.binary` attribute and asserts DMMA instructions are
+present.
 
-# end-to-end to the GPU/CUDA level
-$OPT test/contract.mlir --convert-mir-to-linalg \
-  --one-shot-bufferize=bufferize-function-boundaries=true \
-  --convert-linalg-to-parallel-loops --gpu-map-parallel-loops \
-  --convert-parallel-loops-to-gpu --gpu-kernel-outlining
-# -> gpu.launch_func / gpu.module / gpu.thread_id ...
-```
+| script | what it builds |
+|---|---|
+| `run_dmma_pipeline.sh` | `mir.contract` -> `nvvm.mma.sync` end to end (`-q` counts the mmas) |
+| `make_ptx.sh` | v1 sweep kernels -> `generated/sumfac_sm90.ptx` + `sumfac_batched_sm90.ptx` |
+| `make_ptx_v4.sh` | the production sweep schedule: tile+vectorize -> `--mir-hoist-transfer-pairs` -> convert-vector-to-gpu *before* outlining -> `sumfac_batched_v4_sm90.ptx` |
+| `make_ptx_v5.sh` | v5 experiment (zero-init + 8 warps/block; measured no-gain) |
+| `make_ptx_full.sh [p]` | the fused full-operator kernel (whole Knaus apply, one kernel instead of 111 launches) -> `full_apply_p{p}_sm90.ptx` |
+| `make_ptx_warp.sh` | the warp->tensor-core bridge gate -> `warp_mma_sm90.ptx` |
 
-## Tensor cores (FP64 DMMA) — working
+## Gates
 
-`./run_dmma_pipeline.sh -q` runs the whole thing: `mir.contract` →
-`--convert-mir-to-linalg` (emits the *unfolded matmul* form:
-`tensor.collapse_shape` + `linalg.matmul`) → bufferize (identity layouts —
-required, or the nvgpu patterns silently decline on dynamic strides) →
-`test/dmma_schedule.mlir` (transform-dialect schedule: tile n×8, k×4 = the
-m8n8k4 DMMA tile, then vectorize) → `convert-vector-to-gpu{use-nvgpu}` (per-lane
-warp fragments + `nvgpu.mma.sync`) → `convert-nvgpu-to-nvvm` →
-**`nvvm.mma.sync`**, the FP64 tensor-core instruction MARS hand-writes in
-`mars_ho_laplacian_dmma.hpp`. Note: the *contractions* hit tensor cores;
-`mir.flux` is elementwise and stays on the FMA pipes — that split is correct.
+**CPU execution** (`python3 test/exec_gate.py`, needs numpy): lowers mir
+through the same `--convert-mir-to-linalg` the GPU path uses, executes with
+`mlir-cpu-runner`, compares against NumPy *in-IR* (a second `mir.flux`
+computes `|y−exp|·1e12`, immune to print precision). Six gates, all PASS:
+contract==einsum, PA chain with the real CVFEM flux, `.op -> mir -> executed`,
+ragged simplex (bit-exact), the **full HO operator vs a NumPy Knaus oracle**
+(9.4e-16), and the **fused batched operator** at E=4 (1.8e-15).
 
-## Numerical execution gates — passing
+**GPU** (`tools/`, driver-API-only harnesses: dlopen `libcuda.so.1`, `_v2`
+symbols, build with `g++ -O2 <file>.cpp -ldl` on bare compute nodes):
 
-`python3 test/exec_gate.py` lowers mir through the **CPU pipeline** (same
-`--convert-mir-to-linalg`, incl. the matmul unfolding the DMMA path uses),
-executes with `mlir-cpu-runner`, and checks against NumPy **in-IR** (a second
-`mir.flux` computes `|y−expected|·10¹²`, immune to print precision):
+- `run_ptx_gate.cpp` — single-warp sweep: **bit-exact on GH200**.
+- `run_ptx_batched.cpp` — batched sweep + throughput
+  (`<ptx> <E> [kernel] [warps/block]`; v4 kernel is `sweep_kernel`).
+- `run_ptx_full.cpp` — fused full operator vs a built-in CPU Knaus oracle
+  (`<ptx> <E> <p> [tpb]`).
+- `run_warp_mma.cpp` — the warp->mma bridge: checks the per-lane fragment
+  indexing against hardware (GH200 run pending).
 
-- gate 1: `mir.contract` == einsum — machine precision
-- gate 2: PA chain with the **real CVFEM flux** (`g2·deriv + g0·dt2 + g1·dt1`,
-  3 directional contractions) — machine precision
-- gate 3: **`specs/laplacian.op` → Python front-end (`--backend mlir`) → mir
-  dialect → executed** == NumPy — machine precision. One `.op` feeds Stage 1
-  (CUDA source) and Stage 2 (this dialect).
+## Measured (GH200)
 
-## PTX artifact
+Sweep tuning at E = 1M, all bit-exact — schedule changes only, zero dialect
+changes: v1 23.9 ms (~539 GB/s, 13% of HBM peak) -> v3 elems/block packing
+17.8 ms (~723 GB/s) -> **v4 accumulator hoist 4.404 ms (~2926 GB/s, ~73% of
+peak)**. v5 showed no further gain (latency-bound; the toy sweep is tuned
+out).
 
-`./make_ptx.sh` serializes **real sm_90 PTX** via LLVM's NVPTX backend (no CUDA
-toolkit needed) → `generated/sumfac_sm90.ptx`: 16× `mma.sync.aligned.m8n8k4.
-row.col.f64.f64.f64.f64` with accumulator chaining — the FP64 DMMA instruction
-MARS hand-writes, now compiler-generated.
+Fused full operator (scalar thread-per-element baseline): p=3 E=1M 34.8 ms
+(~135 GB/s); p=7 E=131k 77.7 ms (~68 GB/s, spills). The ~30-40x gap to the
+sweep ceiling is the quantified motivation for the warp/tensor-core work.
 
 ## Remaining (honest)
 
-- Run the PTX on an actual GPU (Alps) + measure performance — unmeasured.
-- Ragged (tet, `p+q+r≤D`) contraction variant of `mir.contract`.
-- FEM types: `!mir.block` as a real MLIR type.
-- Building mir-opt on Alps needs an MLIR 19 install there (spack/uenv llvm+mlir).
+- GH200-run the warp->mma PTX gate (`run_warp_mma`); lowering to
+  `nvvm.mma.sync {row,col,m8n8k4}` is verified, hardware is not.
+- Integrate `--mir-warp-wrap` + `--mir-warp-distribute` into the full-operator
+  payload; measure against the 2926 GB/s ceiling; smem-staging fallback for
+  non-mma contract shapes.
+- edof gather/scatter, then the head-to-head vs `mars_ho_dmma_bench`.
+- Remaining simplex sweeps (q/p + transposes) and a ragged scheduling story.
+- An MLIR 19 install on Alps for native iteration (PTX-only works today).

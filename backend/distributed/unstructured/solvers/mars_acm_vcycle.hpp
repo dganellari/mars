@@ -672,6 +672,16 @@ inline bool acmUseDilu()
     return v == 1;
 }
 
+// MARS_ACM_SWEEP_EXCH=1: halo-exchange the iterate after EVERY smoother sweep (dist). Default off --
+// measured: per-sweep exchange alone did NOT fix the convective stall (the rich global coarsest did),
+// and each exchange is a blocking MPI round-trip; per-block (after the sweep set) is the default cadence.
+inline bool acmSweepExch()
+{
+    static int v = -1;
+    if (v < 0) { const char* e = std::getenv("MARS_ACM_SWEEP_EXCH"); v = (e && *e == '1') ? 1 : 0; }
+    return v == 1;
+}
+
 // hybrid smoother depth: MARS_ACM_DILU_LEVELS = how many FINEST levels get the multicolor block-DILU
 // smoother; deeper levels fall back to block-Jacobi. WHY: a DILU sweep is ~2*numColors launches, and on
 // the coarse tail (levels smoothing a few hundred nodes) those are pure launch overhead. Default 2 = the
@@ -886,6 +896,7 @@ inline void acmDiluSmoothGpu(AcmLevel<RealType>& L, int sweeps, RealType omega, 
         }
         acmAxpyKernel<RealType><<<grd, blk, 0, s>>>(acmRaw(L.xvec), acmRaw(L.xtmp), omega, L.ND,
             L.ownMask.empty() ? nullptr : acmRaw(L.ownMask));                                                // x += omega*dx (owned only, dist)
+        if (L.exch && acmSweepExch()) L.exch(L.xvec, 4);   // opt-in per-sweep seam propagation (see acmSweepExch)
     }
 }
 
@@ -961,6 +972,20 @@ inline void acmSmoothGpu(AcmLevel<RealType>& L, int sweeps, RealType omega, bool
     RealType* x0 = acmRaw(L.xvec);
     RealType* x1 = acmRaw(L.xtmp);
     const uint8_t* own = L.ownMask.empty() ? nullptr : acmRaw(L.ownMask);   // dist: freeze ghost slots
+    if (L.exch && acmSweepExch()) {
+        // opt-in: iterate stays in xvec every sweep so the per-sweep seam exchange hits the live buffer
+        for (int sw = 0; sw < sweeps; ++sw) {
+            if (useBlock)
+                acmBlockJacobiKernel<RealType><<<gN, blk, 0, s>>>(acmRaw(L.rowOff), acmRaw(L.colInd), acmRaw(L.vals),
+                    acmRaw(L.binv), acmRaw(L.bvec), x0, x1, omega, L.nNodes, own);
+            else
+                acmJacobiKernel<RealType><<<grd, blk, 0, s>>>(acmRaw(L.rowOff), acmRaw(L.colInd), acmRaw(L.vals),
+                    acmRaw(L.dinv), acmRaw(L.bvec), x0, x1, omega, L.ND, own);
+            cudaMemcpyAsync(x0, x1, sizeof(RealType) * L.ND, cudaMemcpyDeviceToDevice, s);
+            L.exch(L.xvec, 4);
+        }
+        return;
+    }
     for (int sw = 0; sw < sweeps; ++sw) {
         RealType* xin  = (sw & 1) ? x1 : x0;
         RealType* xout = (sw & 1) ? x0 : x1;
@@ -1034,11 +1059,13 @@ void acmVcycleUpGpu(std::vector<AcmLevel<RealType>>& levels, int Lidx, int post,
         AcmLevel<RealType>& L = levels[l];
         AcmLevel<RealType>& C = levels[l + 1];
         const int grd = (L.ND + blk - 1) / blk, gN = (L.nNodes + blk - 1) / blk;
-        if (C.exch) C.exch(C.xvec, 4);   // dist: ghost coarse corrections <- owners before prolongation reads them
+        // dist: C's ghosts are already fresh here -- mid levels from their own post-smooth exchange
+        // (processed earlier in this up leg), the coarsest from the replicated solve's ring fill.
         acmInjectKernel<RealType><<<gN, blk, 0, s>>>(acmRaw(C.xvec), acmRaw(L.xtmp), acmRaw(L.agg), L.nNodes);
         acmAddKernel<RealType><<<grd, blk, 0, s>>>(acmRaw(L.xvec), acmRaw(L.xtmp), L.ND);
         acmSmoothGpu(L, post, omega, useBlock, s);
-        if (L.exch) L.exch(L.xvec, 4);   // dist: refresh after post-smooth (next-finer prolong / caller reads)
+        if (L.exch && l > Lidx) L.exch(L.xvec, 4);   // dist: the next-finer inject reads these ghosts; the
+                                                     // finest is refreshed by the Krylov caller before use
     }
 }
 
@@ -1106,10 +1133,42 @@ void acmBuildHierarchyDist(const thrust::device_vector<int>& rowOff0,
         L.bvec.assign(L.ND, 0); L.xvec.assign(L.ND, 0);
         L.rtmp.assign(L.ND, 0); L.xtmp.assign(L.ND, 0);
 
-        // stop on the GLOBAL owned size (all ranks agree: Allreduce)
+        // stop on the GLOBAL owned size (all ranks agree: Allreduce). The dist default is a RICH replicated
+        // coarsest (2048): the serial 256 cannot represent convective coupling across the seam (measured:
+        // n~200 -> picard-1 caps at 2 ranks; n~700 -> converges at +15% of serial). Dense LU at this size is
+        // ~ms once per Picard. MARS_ACM_GLOBAL_COARSE_ND overrides for A/B.
+        static const int envND = [] { const char* e = std::getenv("MARS_ACM_GLOBAL_COARSE_ND");
+                                      return e ? std::atoi(e) : 0; }();
+        const long long stopND = envND > 0 ? envND : std::max(maxCoarseNDGlobal, 2048);
         long long ownedDof = 4LL * L.nOwned, globalDof = 0;
         MPI_Allreduce(&ownedDof, &globalDof, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
-        if (globalDof <= (long long)maxCoarseNDGlobal) break;
+        if (globalDof <= stopND) break;
+
+        // Level 0 only: the DOMAIN halo may not cover every ghost slot (corner-only neighbors -- a node
+        // shared by 3+ ranks whose owner's topology does not list this rank; appears at 8+ ranks). An
+        // uncovered ghost can never receive its owner's aggregate id, so PROMOTE it to a local singleton:
+        // its row is identity (ghost-identity kernel), the coarse row stays identity, and the only cost is
+        // a dead coarse coupling at a handful of corner nodes. Probe: exchange own-flags; covered ghosts
+        // receive the owner's 1, uncovered keep -1.
+        if (idx == 0) {
+            std::vector<uint8_t> h_own(L.nNodes);
+            thrust::copy(L.ownMask.begin(), L.ownMask.end(), h_own.begin());
+            thrust::device_vector<RealType> cov(L.nNodes);
+            { std::vector<RealType> h_c(L.nNodes);
+              for (int i = 0; i < L.nNodes; ++i) h_c[i] = h_own[i] ? RealType(1) : RealType(-1);
+              thrust::copy(h_c.begin(), h_c.end(), cov.begin()); }
+            L.exch(cov, 1);
+            std::vector<RealType> h_cov(L.nNodes);
+            thrust::copy(cov.begin(), cov.end(), h_cov.begin());
+            int promoted = 0;
+            for (int i = 0; i < L.nNodes; ++i)
+                if (!h_own[i] && h_cov[i] < RealType(0)) { h_own[i] = 1; ++promoted; }
+            if (promoted > 0) {
+                thrust::copy(h_own.begin(), h_own.end(), L.ownMask.begin());
+                L.nOwned += promoted;
+                if (rank == 0) std::fprintf(stderr, "[acm-dist] promoted uncovered ghost slots to local singletons\n");
+            }
+        }
 
         // owned-only aggregation (ghosts stay -1)
         int nCoarseLoc = 0;

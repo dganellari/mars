@@ -1009,6 +1009,82 @@ public:
         return;
     }
 
+    // Block variant of exchangeNodeHalo for ncomp-INTERLEAVED node vectors (dof = node*ncomp + c):
+    // one MPI round-trip carries all components (the per-component nodeToDof form costs ncomp
+    // round-trips -- measured on the coupled 4-DOF solver, where the Krylov loop exchanges twice
+    // per iteration). Additive: separate staging buffers, the topo's scalar buffers are untouched.
+    template<class VectorType>
+    void exchangeNodeHaloBlock(VectorType& dofArray, int ncomp) const
+    {
+        if (numRanks_ == 1) return;
+        using T = typename VectorType::value_type;
+        static_assert(std::is_same_v<T, RealType>,
+                      "exchangeNodeHaloBlock: vector element type must match domain RealType");
+        ensureNodeHaloTopo();
+        const auto& topo = *nodeHaloTopo_;
+        size_t sendTotal = topo.sendOffsets_.empty() ? 0 : size_t(topo.sendOffsets_.back());
+        size_t recvTotal = topo.recvOffsets_.empty() ? 0 : size_t(topo.recvOffsets_.back());
+        if (blockSendBuf_.size() < sendTotal * ncomp) blockSendBuf_.resize(sendTotal * ncomp);
+        if (blockRecvBuf_.size() < recvTotal * ncomp) blockRecvBuf_.resize(recvTotal * ncomp);
+
+        T*         arr  = thrust::raw_pointer_cast(dofArray.data());
+        const int* snds = thrust::raw_pointer_cast(topo.sendNodeIds_.data());
+        T*         sbuf = thrust::raw_pointer_cast(blockSendBuf_.data());
+        if (sendTotal > 0)
+        {
+            thrust::for_each(thrust::device,
+                             thrust::counting_iterator<size_t>(0),
+                             thrust::counting_iterator<size_t>(sendTotal),
+                             [arr, snds, sbuf, ncomp] __device__ (size_t i) {
+                                 int n = snds[i];
+                                 for (int c = 0; c < ncomp; ++c) sbuf[i * ncomp + c] = arr[(size_t)n * ncomp + c];
+                             });
+            cudaDeviceSynchronize();
+        }
+        T*   rbuf    = thrust::raw_pointer_cast(blockRecvBuf_.data());
+        auto mpiType = std::is_same_v<T, double> ? MPI_DOUBLE : MPI_FLOAT;
+        constexpr int nodeHaloTagBase = 0x4d52;
+        const int tag = nodeHaloTagBase + topo.epoch_;
+        std::vector<MPI_Request> reqs;
+        reqs.reserve(2 * topo.peers_.size());
+        for (size_t p = 0; p < topo.peers_.size(); ++p)
+        {
+            int rcnt = topo.recvOffsets_[p + 1] - topo.recvOffsets_[p];
+            if (rcnt > 0)
+            {
+                MPI_Request r;
+                MPI_Irecv(rbuf + (size_t)topo.recvOffsets_[p] * ncomp, rcnt * ncomp, mpiType,
+                          topo.peers_[p], tag, MPI_COMM_WORLD, &r);
+                reqs.push_back(r);
+            }
+        }
+        for (size_t p = 0; p < topo.peers_.size(); ++p)
+        {
+            int scnt = topo.sendOffsets_[p + 1] - topo.sendOffsets_[p];
+            if (scnt > 0)
+            {
+                MPI_Request r;
+                MPI_Isend(sbuf + (size_t)topo.sendOffsets_[p] * ncomp, scnt * ncomp, mpiType,
+                          topo.peers_[p], tag, MPI_COMM_WORLD, &r);
+                reqs.push_back(r);
+            }
+        }
+        if (!reqs.empty()) MPI_Waitall((int)reqs.size(), reqs.data(), MPI_STATUSES_IGNORE);
+        ++topo.epoch_;
+        const int* rnds = thrust::raw_pointer_cast(topo.recvNodeIds_.data());
+        if (recvTotal > 0)
+        {
+            thrust::for_each(thrust::device,
+                             thrust::counting_iterator<size_t>(0),
+                             thrust::counting_iterator<size_t>(recvTotal),
+                             [arr, rnds, rbuf, ncomp] __device__ (size_t i) {
+                                 int n = rnds[i];
+                                 for (int c = 0; c < ncomp; ++c) arr[(size_t)n * ncomp + c] = rbuf[i * ncomp + c];
+                             });
+            cudaDeviceSynchronize();
+        }
+    }
+
     // Reverse of exchangeNodeHalo: ghost-side contributions are SUMMED into the
     // owner-side slots on the owning rank. Used by conservative scatter kernels
     // (CVFEM face-flux divergence, mass-conserving advection RHS) where the
@@ -1482,6 +1558,8 @@ private:
     mutable std::unique_ptr<AdjacencyData<ElementTag, RealType, KeyType, AcceleratorTag>> adjacency_;
     mutable std::unique_ptr<HaloData<ElementTag, RealType, KeyType, AcceleratorTag>> halo_;
     mutable std::unique_ptr<NodeHaloTopology<ElementTag, RealType, KeyType, AcceleratorTag>> nodeHaloTopo_;
+    // staging for exchangeNodeHaloBlock (ncomp-interleaved vectors); grown on demand, topo buffers untouched
+    mutable DeviceVector<RealType> blockSendBuf_, blockRecvBuf_;
     mutable std::unique_ptr<CoordinateCache<ElementTag, RealType, KeyType, AcceleratorTag>> coordCache_;
     mutable std::unique_ptr<OriginalCoordinates<ElementTag, RealType, KeyType, AcceleratorTag>> originalCoords_;
 

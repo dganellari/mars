@@ -4,6 +4,8 @@ add_mlir_dialect_library(MLIRMir
   LowerMirToLinalg.cpp
   HoistTransferPairs.cpp
   LowerCopies.cpp
+  WarpDistribute.cpp
+  WarpWrap.cpp
 
   ADDITIONAL_HEADER_DIRS
   ${PROJECT_SOURCE_DIR}/include/mir
@@ -23,5 +25,7 @@ add_mlir_dialect_library(MLIRMir
   MLIRSCFDialect
   MLIRVectorDialect
   MLIRMemRefDialect
+  MLIRGPUDialect
+  MLIRNVGPUDialect
   MLIRFuncDialect
   )

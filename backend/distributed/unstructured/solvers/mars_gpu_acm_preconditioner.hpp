@@ -303,11 +303,16 @@ private:
             thrust::copy(C.bvec.begin(), C.bvec.end(), h_b.begin());
             double rr = 0, bb = 0;
             for (int d = 0; d < 4 * C.nOwned; ++d) { rr += (double)h_r[d] * h_r[d]; bb += (double)h_b[d] * h_b[d]; }
-            double g[2] = {rr, bb};
-            MPI_Allreduce(MPI_IN_PLACE, g, 2, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+            std::vector<RealType> h_x(C.ND);
+            thrust::copy(C.xvec.begin(), C.xvec.end(), h_x.begin());
+            double xx = 0;
+            for (int d = 0; d < 4 * C.nOwned; ++d) xx += (double)h_x[d] * h_x[d];
+            double g[3] = {rr, bb, xx};
+            MPI_Allreduce(MPI_IN_PLACE, g, 3, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
             if (rank_ == 0)
-                std::fprintf(stderr, "[dist-probe] coarse |b-Ax|/|b| = %.3e (n=%d)\n",
-                             std::sqrt(g[0] / (g[1] > 0 ? g[1] : 1.0)), coarseN_);
+                std::fprintf(stderr, "[dist-probe] coarse |b-Ax|/|b| = %.3e  |x|/|b| = %.3e (n=%d)\n",
+                             std::sqrt(g[0] / (g[1] > 0 ? g[1] : 1.0)),
+                             std::sqrt(g[2] / (g[1] > 0 ? g[1] : 1.0)), coarseN_);
         }
     }
 

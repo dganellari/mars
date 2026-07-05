@@ -1281,25 +1281,18 @@ int main(int argc, char** argv)
             GpuAcmPreconditioner<RealType, int, cstone::GpuTag> acm;
             GMRESSolver<RealType, int, cstone::GpuTag> ga(2000, 1e-8, 30);
             ga.setVerbose(false); ga.setPreconditioner(&acm); ga.setFlexible(true);
-            // Stage 1 multi-rank wiring: a per-component nodeToDof map (node n -> DOF 4n+c) turns the existing
-            // per-node scalar halo into the interleaved 4-DOF exchange (4 passes); the per-DOF ownership mask
-            // drives the solver's ghost-zero/owned-dot discipline. Single rank: none of this is installed.
-            thrust::device_vector<int> d_n2d[4];
+            // Stage 1 multi-rank wiring: the interleaved 4-DOF halo exchange (one round-trip, block variant);
+            // the per-DOF ownership mask drives the solver's ghost-zero/owned-dot discipline. Single rank:
+            // none of this is installed.
             thrust::device_vector<uint8_t> d_ownDof;
             std::function<void(cstone::DeviceVector<RealType>&)> haloX;   // also reused after the solve for xa
             if (numRanks > 1) {
-                std::vector<int> h_n2d(nNodes);
-                for (int c = 0; c < 4; ++c) {
-                    for (size_t i = 0; i < nNodes; ++i) h_n2d[i] = 4 * (int)i + c;
-                    d_n2d[c].assign(h_n2d.begin(), h_n2d.end());
-                }
                 std::vector<uint8_t> h_ownDof(ND);
                 for (size_t i = 0; i < nNodes; ++i)
                     for (int c = 0; c < 4; ++c) h_ownDof[4 * i + c] = hOwn[i];
                 d_ownDof.assign(h_ownDof.begin(), h_ownDof.end());
                 haloX = [&](cstone::DeviceVector<RealType>& v) {
-                    for (int c = 0; c < 4; ++c)
-                        domain.exchangeNodeHalo(v, thrust::raw_pointer_cast(d_n2d[c].data()));
+                    domain.exchangeNodeHaloBlock(v, 4);   // one round-trip for all 4 interleaved components
                 };
                 ga.setHaloExchangeCallback(haloX);
                 ga.setOwnedDofMask(thrust::raw_pointer_cast(d_ownDof.data()));
@@ -1311,8 +1304,7 @@ int main(int argc, char** argv)
                 acm.setDistributed(rank, numRanks, nOwnedNodes, ownNodePtr,
                     [&](thrust::device_vector<RealType>& v, int ncomp) {
                         if (ncomp == 1) { domain.exchangeNodeHalo(v); return; }
-                        for (int c = 0; c < 4; ++c)
-                            domain.exchangeNodeHalo(v, thrust::raw_pointer_cast(d_n2d[c].data()));
+                        domain.exchangeNodeHaloBlock(v, ncomp);   // one round-trip for the interleaved block
                     });
             }
             thrust::device_vector<RealType> d_avx(nNodes, RealType(0)), d_avy(nNodes, RealType(0)),
@@ -1355,7 +1347,7 @@ int main(int argc, char** argv)
                 // (same physical node -> same value on any rank), halo-refreshed, y=Ax, ghost rows zeroed,
                 // owned+Allreduce norms per block. 1-rank vs N-rank numbers must match to FP -> separates
                 // "operator assembled wrong at N ranks" from "parallel Krylov broken". Prints norms only.
-                if (pit == 0 && std::getenv("MARS_OP_PROBE")) {
+                if (std::getenv("MARS_OP_PROBE")) {   // every picard: the convective operator changes per iter
                     thrust::device_vector<RealType> xt(ND), yt(ND);
                     const RealType* xg = nx; const RealType* yg = ny; const RealType* zg = nz;
                     RealType* xtp = thrust::raw_pointer_cast(xt.data());
@@ -1371,11 +1363,13 @@ int main(int argc, char** argv)
                     cudaDeviceSynchronize();
                     const RealType* ytp = thrust::raw_pointer_cast(yt.data());
                     const uint8_t* own = ownNodePtr;
-                    auto blkNorm = [&](int comp) -> RealType {   // comp 0..2 momentum, 3 continuity, -1 all
+                    const uint8_t* bcp = thrust::raw_pointer_cast(d_bcF.data());   // FREE rows only: the O(1) BC
+                    auto blkNorm = [&](int comp) -> RealType {   // identity rows drown the tiny physical entries
                         RealType loc = thrust::transform_reduce(thrust::device, thrust::counting_iterator<size_t>(0),
                             thrust::counting_iterator<size_t>((size_t)ND),
-                            [ytp, own, comp] __device__ (size_t d) -> RealType {
+                            [ytp, own, bcp, comp] __device__ (size_t d) -> RealType {
                                 if (own && !own[d >> 2]) return RealType(0);
+                                if (bcp[d]) return RealType(0);
                                 if (comp >= 0 && (int)(d & 3) != comp) return RealType(0);
                                 return ytp[d] * ytp[d]; },
                             RealType(0), thrust::plus<RealType>());
@@ -1392,11 +1386,14 @@ int main(int argc, char** argv)
                       xn = std::sqrt(xn); }
                     // blkNorm contains a COLLECTIVE -> every rank must call it; only the print is rank-gated
                     const RealType nAll = blkNorm(-1), nU = blkNorm(0), nV = blkNorm(1), nW = blkNorm(2), nP = blkNorm(3);
+                    RealType avmax = thrust::transform_reduce(d_avx.begin(), d_avx.end(),
+                        [] __device__ (RealType v) -> RealType { return fabs(v); }, RealType(0), thrust::maximum<RealType>());
                     if (rank == 0)
                         std::cout << std::scientific << std::setprecision(12)
                                   << "[op-probe] |x|=" << xn << " |Ax|=" << nAll
                                   << " |Ax|_u=" << nU << " |Ax|_v=" << nV
-                                  << " |Ax|_w=" << nW << " |Ax|_p=" << nP << "\n" << std::flush;
+                                  << " |Ax|_w=" << nW << " |Ax|_p=" << nP
+                                  << " max|av|=" << avmax << "\n" << std::flush;
                 }
                 bool reuseThis = (acmRebuild > 1 && (pit % acmRebuild != 0));   // rebuild hierarchy every K iters, reuse between
                 acm.setReuse(reuseThis);
