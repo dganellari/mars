@@ -672,6 +672,16 @@ inline bool acmUseDilu()
     return v == 1;
 }
 
+// MARS_ACM_SWEEP_EXCH=1: halo-exchange the iterate after EVERY smoother sweep (dist). Default off --
+// measured: per-sweep exchange alone did NOT fix the convective stall (the rich global coarsest did),
+// and each exchange is a blocking MPI round-trip; per-block (after the sweep set) is the default cadence.
+inline bool acmSweepExch()
+{
+    static int v = -1;
+    if (v < 0) { const char* e = std::getenv("MARS_ACM_SWEEP_EXCH"); v = (e && *e == '1') ? 1 : 0; }
+    return v == 1;
+}
+
 // hybrid smoother depth: MARS_ACM_DILU_LEVELS = how many FINEST levels get the multicolor block-DILU
 // smoother; deeper levels fall back to block-Jacobi. WHY: a DILU sweep is ~2*numColors launches, and on
 // the coarse tail (levels smoothing a few hundred nodes) those are pure launch overhead. Default 2 = the
@@ -886,9 +896,7 @@ inline void acmDiluSmoothGpu(AcmLevel<RealType>& L, int sweeps, RealType omega, 
         }
         acmAxpyKernel<RealType><<<grd, blk, 0, s>>>(acmRaw(L.xvec), acmRaw(L.xtmp), omega, L.ND,
             L.ownMask.empty() ? nullptr : acmRaw(L.ownMask));                                                // x += omega*dx (owned only, dist)
-        if (L.exch) L.exch(L.xvec, 4);   // dist: per-SWEEP seam propagation -- convection couples along
-                                         // streamlines and a per-block exchange lets the seam error grow
-                                         // through the sweeps (the convective 2-rank stall)
+        if (L.exch && acmSweepExch()) L.exch(L.xvec, 4);   // opt-in per-sweep seam propagation (see acmSweepExch)
     }
 }
 
@@ -964,9 +972,8 @@ inline void acmSmoothGpu(AcmLevel<RealType>& L, int sweeps, RealType omega, bool
     RealType* x0 = acmRaw(L.xvec);
     RealType* x1 = acmRaw(L.xtmp);
     const uint8_t* own = L.ownMask.empty() ? nullptr : acmRaw(L.ownMask);   // dist: freeze ghost slots
-    if (L.exch) {
-        // dist: iterate stays in xvec every sweep so the per-sweep seam exchange hits the live buffer
-        // (convection needs per-sweep propagation across the seam, not per-block)
+    if (L.exch && acmSweepExch()) {
+        // opt-in: iterate stays in xvec every sweep so the per-sweep seam exchange hits the live buffer
         for (int sw = 0; sw < sweeps; ++sw) {
             if (useBlock)
                 acmBlockJacobiKernel<RealType><<<gN, blk, 0, s>>>(acmRaw(L.rowOff), acmRaw(L.colInd), acmRaw(L.vals),
