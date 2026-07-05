@@ -1144,6 +1144,32 @@ void acmBuildHierarchyDist(const thrust::device_vector<int>& rowOff0,
         MPI_Allreduce(&ownedDof, &globalDof, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
         if (globalDof <= stopND) break;
 
+        // Level 0 only: the DOMAIN halo may not cover every ghost slot (corner-only neighbors -- a node
+        // shared by 3+ ranks whose owner's topology does not list this rank; appears at 8+ ranks). An
+        // uncovered ghost can never receive its owner's aggregate id, so PROMOTE it to a local singleton:
+        // its row is identity (ghost-identity kernel), the coarse row stays identity, and the only cost is
+        // a dead coarse coupling at a handful of corner nodes. Probe: exchange own-flags; covered ghosts
+        // receive the owner's 1, uncovered keep -1.
+        if (idx == 0) {
+            std::vector<uint8_t> h_own(L.nNodes);
+            thrust::copy(L.ownMask.begin(), L.ownMask.end(), h_own.begin());
+            thrust::device_vector<RealType> cov(L.nNodes);
+            { std::vector<RealType> h_c(L.nNodes);
+              for (int i = 0; i < L.nNodes; ++i) h_c[i] = h_own[i] ? RealType(1) : RealType(-1);
+              thrust::copy(h_c.begin(), h_c.end(), cov.begin()); }
+            L.exch(cov, 1);
+            std::vector<RealType> h_cov(L.nNodes);
+            thrust::copy(cov.begin(), cov.end(), h_cov.begin());
+            int promoted = 0;
+            for (int i = 0; i < L.nNodes; ++i)
+                if (!h_own[i] && h_cov[i] < RealType(0)) { h_own[i] = 1; ++promoted; }
+            if (promoted > 0) {
+                thrust::copy(h_own.begin(), h_own.end(), L.ownMask.begin());
+                L.nOwned += promoted;
+                if (rank == 0) std::fprintf(stderr, "[acm-dist] promoted uncovered ghost slots to local singletons\n");
+            }
+        }
+
         // owned-only aggregation (ghosts stay -1)
         int nCoarseLoc = 0;
         acmAggregateGpu<RealType>(L.nNodes, L.rowOff, L.colInd, L.vals, beta, L.agg, nCoarseLoc,
