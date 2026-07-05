@@ -886,6 +886,9 @@ inline void acmDiluSmoothGpu(AcmLevel<RealType>& L, int sweeps, RealType omega, 
         }
         acmAxpyKernel<RealType><<<grd, blk, 0, s>>>(acmRaw(L.xvec), acmRaw(L.xtmp), omega, L.ND,
             L.ownMask.empty() ? nullptr : acmRaw(L.ownMask));                                                // x += omega*dx (owned only, dist)
+        if (L.exch) L.exch(L.xvec, 4);   // dist: per-SWEEP seam propagation -- convection couples along
+                                         // streamlines and a per-block exchange lets the seam error grow
+                                         // through the sweeps (the convective 2-rank stall)
     }
 }
 
@@ -961,6 +964,21 @@ inline void acmSmoothGpu(AcmLevel<RealType>& L, int sweeps, RealType omega, bool
     RealType* x0 = acmRaw(L.xvec);
     RealType* x1 = acmRaw(L.xtmp);
     const uint8_t* own = L.ownMask.empty() ? nullptr : acmRaw(L.ownMask);   // dist: freeze ghost slots
+    if (L.exch) {
+        // dist: iterate stays in xvec every sweep so the per-sweep seam exchange hits the live buffer
+        // (convection needs per-sweep propagation across the seam, not per-block)
+        for (int sw = 0; sw < sweeps; ++sw) {
+            if (useBlock)
+                acmBlockJacobiKernel<RealType><<<gN, blk, 0, s>>>(acmRaw(L.rowOff), acmRaw(L.colInd), acmRaw(L.vals),
+                    acmRaw(L.binv), acmRaw(L.bvec), x0, x1, omega, L.nNodes, own);
+            else
+                acmJacobiKernel<RealType><<<grd, blk, 0, s>>>(acmRaw(L.rowOff), acmRaw(L.colInd), acmRaw(L.vals),
+                    acmRaw(L.dinv), acmRaw(L.bvec), x0, x1, omega, L.ND, own);
+            cudaMemcpyAsync(x0, x1, sizeof(RealType) * L.ND, cudaMemcpyDeviceToDevice, s);
+            L.exch(L.xvec, 4);
+        }
+        return;
+    }
     for (int sw = 0; sw < sweeps; ++sw) {
         RealType* xin  = (sw & 1) ? x1 : x0;
         RealType* xout = (sw & 1) ? x0 : x1;
@@ -1106,10 +1124,15 @@ void acmBuildHierarchyDist(const thrust::device_vector<int>& rowOff0,
         L.bvec.assign(L.ND, 0); L.xvec.assign(L.ND, 0);
         L.rtmp.assign(L.ND, 0); L.xtmp.assign(L.ND, 0);
 
-        // stop on the GLOBAL owned size (all ranks agree: Allreduce)
+        // stop on the GLOBAL owned size (all ranks agree: Allreduce). MARS_ACM_GLOBAL_COARSE_ND overrides:
+        // a RICHER replicated coarsest (e.g. 2048-4096) captures convective seam coupling the default 256
+        // cannot -- dense LU at n=4096 is ~20ms once per Picard, getrs per V-cycle trivial.
+        static const int envND = [] { const char* e = std::getenv("MARS_ACM_GLOBAL_COARSE_ND");
+                                      return e ? std::atoi(e) : 0; }();
+        const long long stopND = envND > 0 ? envND : maxCoarseNDGlobal;
         long long ownedDof = 4LL * L.nOwned, globalDof = 0;
         MPI_Allreduce(&ownedDof, &globalDof, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
-        if (globalDof <= (long long)maxCoarseNDGlobal) break;
+        if (globalDof <= stopND) break;
 
         // owned-only aggregation (ghosts stay -1)
         int nCoarseLoc = 0;

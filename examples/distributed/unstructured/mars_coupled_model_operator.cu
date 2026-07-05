@@ -1355,7 +1355,7 @@ int main(int argc, char** argv)
                 // (same physical node -> same value on any rank), halo-refreshed, y=Ax, ghost rows zeroed,
                 // owned+Allreduce norms per block. 1-rank vs N-rank numbers must match to FP -> separates
                 // "operator assembled wrong at N ranks" from "parallel Krylov broken". Prints norms only.
-                if (pit == 0 && std::getenv("MARS_OP_PROBE")) {
+                if (std::getenv("MARS_OP_PROBE")) {   // every picard: the convective operator changes per iter
                     thrust::device_vector<RealType> xt(ND), yt(ND);
                     const RealType* xg = nx; const RealType* yg = ny; const RealType* zg = nz;
                     RealType* xtp = thrust::raw_pointer_cast(xt.data());
@@ -1371,11 +1371,13 @@ int main(int argc, char** argv)
                     cudaDeviceSynchronize();
                     const RealType* ytp = thrust::raw_pointer_cast(yt.data());
                     const uint8_t* own = ownNodePtr;
-                    auto blkNorm = [&](int comp) -> RealType {   // comp 0..2 momentum, 3 continuity, -1 all
+                    const uint8_t* bcp = thrust::raw_pointer_cast(d_bcF.data());   // FREE rows only: the O(1) BC
+                    auto blkNorm = [&](int comp) -> RealType {   // identity rows drown the tiny physical entries
                         RealType loc = thrust::transform_reduce(thrust::device, thrust::counting_iterator<size_t>(0),
                             thrust::counting_iterator<size_t>((size_t)ND),
-                            [ytp, own, comp] __device__ (size_t d) -> RealType {
+                            [ytp, own, bcp, comp] __device__ (size_t d) -> RealType {
                                 if (own && !own[d >> 2]) return RealType(0);
+                                if (bcp[d]) return RealType(0);
                                 if (comp >= 0 && (int)(d & 3) != comp) return RealType(0);
                                 return ytp[d] * ytp[d]; },
                             RealType(0), thrust::plus<RealType>());
@@ -1392,11 +1394,14 @@ int main(int argc, char** argv)
                       xn = std::sqrt(xn); }
                     // blkNorm contains a COLLECTIVE -> every rank must call it; only the print is rank-gated
                     const RealType nAll = blkNorm(-1), nU = blkNorm(0), nV = blkNorm(1), nW = blkNorm(2), nP = blkNorm(3);
+                    RealType avmax = thrust::transform_reduce(d_avx.begin(), d_avx.end(),
+                        [] __device__ (RealType v) -> RealType { return fabs(v); }, RealType(0), thrust::maximum<RealType>());
                     if (rank == 0)
                         std::cout << std::scientific << std::setprecision(12)
                                   << "[op-probe] |x|=" << xn << " |Ax|=" << nAll
                                   << " |Ax|_u=" << nU << " |Ax|_v=" << nV
-                                  << " |Ax|_w=" << nW << " |Ax|_p=" << nP << "\n" << std::flush;
+                                  << " |Ax|_w=" << nW << " |Ax|_p=" << nP
+                                  << " max|av|=" << avmax << "\n" << std::flush;
                 }
                 bool reuseThis = (acmRebuild > 1 && (pit % acmRebuild != 0));   // rebuild hierarchy every K iters, reuse between
                 acm.setReuse(reuseThis);
