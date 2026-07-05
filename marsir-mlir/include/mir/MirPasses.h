@@ -9,6 +9,8 @@ void registerMirPasses();
 void registerHoistTransferPairsPass();
 // Registers --mir-lower-copies (memref.copy -> scf.for loops, GPU-legal).
 void registerLowerCopiesPass();
+// Registers --mir-warp-distribute (lane distribution of warp regions).
+void registerWarpDistributePass();
 }  // namespace mir
 
 #endif  // MIR_MIRPASSES_H
