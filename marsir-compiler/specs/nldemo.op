@@ -1,0 +1,9 @@
+# Nonlinear DEMO operator -- exists only to exercise symbolic differentiation on
+# a genuinely nonlinear flux (quadratic in deriv and dt1). NOT a physical
+# operator; it is the unit test that proves d flux / d x + the JVP emission are
+# correct, checked numerically by finite differences (tests/validate_jvp.py).
+operator nldemo {
+    element = hex
+    form    = diffusion
+    flux    = g2*deriv*deriv + g1*dt1*dt1 + g0*dt2
+}
