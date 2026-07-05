@@ -5,6 +5,7 @@ add_mlir_dialect_library(MLIRMir
   HoistTransferPairs.cpp
   LowerCopies.cpp
   WarpDistribute.cpp
+  WarpWrap.cpp
 
   ADDITIONAL_HEADER_DIRS
   ${PROJECT_SOURCE_DIR}/include/mir

@@ -11,6 +11,8 @@ void registerHoistTransferPairsPass();
 void registerLowerCopiesPass();
 // Registers --mir-warp-distribute (lane distribution of warp regions).
 void registerWarpDistributePass();
+// Registers --mir-warp-wrap (wrap per-element bodies in warp regions).
+void registerWarpWrapPass();
 }  // namespace mir
 
 #endif  // MIR_MIRPASSES_H
