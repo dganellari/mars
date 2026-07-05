@@ -23,3 +23,5 @@ emit test/warp_mma_kernel.mlir generated/warp_mma_sm90.ptx
 emit test/warp_mmt_kernel.mlir generated/warp_mmt_sm90.ptx
 # one full direction of the HO operator (D + flux + W, both arms, staged): 6 mma
 emit test/warp_one_dir.mlir    generated/warp_one_dir_sm90.ptx
+# +/- plane scatter, 2 faces, loop-carried overlap (census's hardest blocker): 2 mma
+emit test/warp_scatter_kernel.mlir generated/warp_scatter_sm90.ptx
