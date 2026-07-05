@@ -85,29 +85,75 @@ struct WarpOpContractToMma
                                 PatternRewriter &rewriter) const override {
     auto yield = cast<vector::YieldOp>(
         warp.getWarpRegion().front().getTerminator());
+    MLIRContext *ctx = warp.getContext();
+
+    // Canonical m8n8k4 iteration space: m=d0, n=d1, k=d2 (k reduced). The
+    // sum-factorization emits contracts on different tensor axes, so the same
+    // mma must be recovered from two operand layouts:
+    //   standard : A=(m,k), B=(k,n)  -- the plain matmul (contract axis 0)
+    //   transp-B : A=(m,k), B=(n,k)  -- B stored transposed (contract axis 1;
+    //              e.g. in @ W^T, where vectorization gives rhs=(m,k) lhs=(n,k))
+    // A and C are identical in both (default gcd distribution already yields
+    // the hardware A[L/4,L%4] and C[L/4,2(L%4)] fragments); only B's storage
+    // and hence its per-lane fragment index differ.
+    auto d0 = getAffineDimExpr(0, ctx), d1 = getAffineDimExpr(1, ctx),
+         d2 = getAffineDimExpr(2, ctx);
+    auto mk = AffineMap::get(3, 0, {d0, d2}, ctx);  // A (m,k)
+    auto kn = AffineMap::get(3, 0, {d2, d1}, ctx);  // B standard (k,n)
+    auto nk = AffineMap::get(3, 0, {d1, d2}, ctx);  // B transposed (n,k)
+    auto mn = AffineMap::get(3, 0, {d0, d1}, ctx);  // out (m,n)
+
     vector::ContractionOp con;
     unsigned resIdx = 0;
+    Value aVal, bVal, accVal;
+    bool bTransposed = false;
     for (auto [i, v] : llvm::enumerate(yield.getOperands())) {
-      if (auto c = v.getDefiningOp<vector::ContractionOp>()) {
-        auto at = dyn_cast<VectorType>(c.getLhs().getType());
-        auto bt = dyn_cast<VectorType>(c.getRhs().getType());
-        auto ct = dyn_cast<VectorType>(c.getResultType());
-        if (at && bt && ct && at.getElementType().isF64() &&
-            at.getShape() == ArrayRef<int64_t>({8, 4}) &&
-            bt.getShape() == ArrayRef<int64_t>({4, 8}) &&
-            ct.getShape() == ArrayRef<int64_t>({8, 8})) {
-          con = c;
-          resIdx = i;
-          break;
-        }
+      auto c = v.getDefiningOp<vector::ContractionOp>();
+      if (!c)
+        continue;
+      auto maps = c.getIndexingMapsArray();
+      if (maps.size() != 3 || maps[2] != mn)
+        continue;
+      auto iters = c.getIteratorTypesArray();
+      if (iters.size() != 3 || iters[0] != vector::IteratorType::parallel ||
+          iters[1] != vector::IteratorType::parallel ||
+          iters[2] != vector::IteratorType::reduction)
+        continue;
+      // Assign A/B by matching maps; the two inputs may be in either order.
+      Value lhs = c.getLhs(), rhs = c.getRhs();
+      Value a, b;
+      bool bt;
+      if (maps[0] == mk && (maps[1] == kn || maps[1] == nk)) {
+        a = lhs; b = rhs; bt = (maps[1] == nk);
+      } else if (maps[1] == mk && (maps[0] == kn || maps[0] == nk)) {
+        a = rhs; b = lhs; bt = (maps[0] == nk);
+      } else {
+        continue;
       }
+      auto at = dyn_cast<VectorType>(a.getType());
+      auto bTy = dyn_cast<VectorType>(b.getType());
+      auto ct = dyn_cast<VectorType>(c.getResultType());
+      // Transposed B is stored [n,k]=8x4; standard B is [k,n]=4x8. Compare
+      // inline -- an ArrayRef bound to a ?:-temporary initializer_list would
+      // dangle past the full expression.
+      bool bShapeOk = bt ? (bTy && bTy.getShape() == ArrayRef<int64_t>({8, 4}))
+                         : (bTy && bTy.getShape() == ArrayRef<int64_t>({4, 8}));
+      if (!at || !bTy || !ct || !at.getElementType().isF64() ||
+          at.getShape() != ArrayRef<int64_t>({8, 4}) || !bShapeOk ||
+          ct.getShape() != ArrayRef<int64_t>({8, 8}))
+        continue;
+      con = c;
+      resIdx = i;
+      aVal = a; bVal = b; accVal = c.getAcc();
+      bTransposed = bt;
+      break;
     }
     if (!con)
       return failure();
 
     // B must be a plain read of data defined outside the region so the
     // fragment read can be re-created outside with lane indexing.
-    auto bread = con.getRhs().getDefiningOp<vector::TransferReadOp>();
+    auto bread = bVal.getDefiningOp<vector::TransferReadOp>();
     if (!bread || !bread.getPermutationMap().isMinorIdentity())
       return failure();
     Region &wregion = warp.getWarpRegion();
@@ -119,7 +165,6 @@ struct WarpOpContractToMma
       return failure();
 
     Location loc = warp.getLoc();
-    MLIRContext *ctx = warp.getContext();
     auto f64 = Float64Type::get(ctx);
     auto fragA = VectorType::get({1, 1}, f64);
     auto fragB = VectorType::get({1, 1}, f64);
@@ -139,21 +184,24 @@ struct WarpOpContractToMma
     // Rewire the yield: slot resIdx now yields the ACC operand; append A.
     auto newYield = cast<vector::YieldOp>(
         newWarp.getWarpRegion().front().getTerminator());
-    newYield->setOperand(resIdx, con.getAcc());
+    newYield->setOperand(resIdx, accVal);
     SmallVector<Value> yops(newYield.getOperands());
-    yops.push_back(con.getLhs());
+    yops.push_back(aVal);
     rewriter.modifyOpInPlace(newYield, [&] {
       newYield->setOperands(yops);
     });
     rewriter.eraseOp(con);
 
-    // Outside: B fragment read at [base0 + lane%4, base1 + lane/4] -- the
-    // hardware DMMA layout (mma.sync m8n8k4 row.col, B col-major).
+    // Outside: B fragment read. Hardware wants B_logical[L%4, L/4] (m8n8k4
+    // row.col, B col-major). Standard B stored [k,n] -> index [L%4, L/4];
+    // transposed B stored [n,k] -> B_logical[L%4,L/4] = Bstore[L/4, L%4].
     rewriter.setInsertionPointAfter(newWarp);
     Value lane = newWarp.getLaneid();
     Value c4v = rewriter.create<arith::ConstantIndexOp>(loc, 4);
-    Value brow = rewriter.create<arith::RemUIOp>(loc, lane, c4v);
-    Value bcol = rewriter.create<arith::DivUIOp>(loc, lane, c4v);
+    Value rem = rewriter.create<arith::RemUIOp>(loc, lane, c4v);
+    Value div = rewriter.create<arith::DivUIOp>(loc, lane, c4v);
+    Value brow = bTransposed ? div : rem;
+    Value bcol = bTransposed ? rem : div;
     Value bi0 =
         rewriter.create<arith::AddIOp>(loc, bread.getIndices()[0], brow);
     Value bi1 =
