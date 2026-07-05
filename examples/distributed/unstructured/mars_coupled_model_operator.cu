@@ -1281,25 +1281,18 @@ int main(int argc, char** argv)
             GpuAcmPreconditioner<RealType, int, cstone::GpuTag> acm;
             GMRESSolver<RealType, int, cstone::GpuTag> ga(2000, 1e-8, 30);
             ga.setVerbose(false); ga.setPreconditioner(&acm); ga.setFlexible(true);
-            // Stage 1 multi-rank wiring: a per-component nodeToDof map (node n -> DOF 4n+c) turns the existing
-            // per-node scalar halo into the interleaved 4-DOF exchange (4 passes); the per-DOF ownership mask
-            // drives the solver's ghost-zero/owned-dot discipline. Single rank: none of this is installed.
-            thrust::device_vector<int> d_n2d[4];
+            // Stage 1 multi-rank wiring: the interleaved 4-DOF halo exchange (one round-trip, block variant);
+            // the per-DOF ownership mask drives the solver's ghost-zero/owned-dot discipline. Single rank:
+            // none of this is installed.
             thrust::device_vector<uint8_t> d_ownDof;
             std::function<void(cstone::DeviceVector<RealType>&)> haloX;   // also reused after the solve for xa
             if (numRanks > 1) {
-                std::vector<int> h_n2d(nNodes);
-                for (int c = 0; c < 4; ++c) {
-                    for (size_t i = 0; i < nNodes; ++i) h_n2d[i] = 4 * (int)i + c;
-                    d_n2d[c].assign(h_n2d.begin(), h_n2d.end());
-                }
                 std::vector<uint8_t> h_ownDof(ND);
                 for (size_t i = 0; i < nNodes; ++i)
                     for (int c = 0; c < 4; ++c) h_ownDof[4 * i + c] = hOwn[i];
                 d_ownDof.assign(h_ownDof.begin(), h_ownDof.end());
                 haloX = [&](cstone::DeviceVector<RealType>& v) {
-                    for (int c = 0; c < 4; ++c)
-                        domain.exchangeNodeHalo(v, thrust::raw_pointer_cast(d_n2d[c].data()));
+                    domain.exchangeNodeHaloBlock(v, 4);   // one round-trip for all 4 interleaved components
                 };
                 ga.setHaloExchangeCallback(haloX);
                 ga.setOwnedDofMask(thrust::raw_pointer_cast(d_ownDof.data()));
@@ -1311,8 +1304,7 @@ int main(int argc, char** argv)
                 acm.setDistributed(rank, numRanks, nOwnedNodes, ownNodePtr,
                     [&](thrust::device_vector<RealType>& v, int ncomp) {
                         if (ncomp == 1) { domain.exchangeNodeHalo(v); return; }
-                        for (int c = 0; c < 4; ++c)
-                            domain.exchangeNodeHalo(v, thrust::raw_pointer_cast(d_n2d[c].data()));
+                        domain.exchangeNodeHaloBlock(v, ncomp);   // one round-trip for the interleaved block
                     });
             }
             thrust::device_vector<RealType> d_avx(nNodes, RealType(0)), d_avy(nNodes, RealType(0)),
