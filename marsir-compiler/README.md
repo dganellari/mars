@@ -1,11 +1,12 @@
-# marsir — MARS FEM operator IR / codegen
+# marsir-compiler — MARSIR Stage 1 (operator spec → source)
 
 A build-time compiler that turns a **weak-form operator spec** into specialized
 GPU (and host) kernels for the MARS high-order matrix-free CVFEM path. You author
-the *pointwise* flux once; `marsir` synthesizes the gather → contract → integrate →
-scatter Knaus Algorithm-2 sweep around it and emits CUDA (and, later, HIP)
-source. This is the libCEED split — you write the QFunction (our `flux`), the
-compiler owns the E/B/D structure.
+the *pointwise* flux once; MARSIR synthesizes the gather → contract → integrate →
+scatter Knaus Algorithm-2 sweep around it and emits CUDA/HIP source. This is the
+libCEED split — you write the QFunction (our `flux`), the compiler owns the E/B/D
+structure. (Naming: the project is MARSIR — formerly mirage, formerly mir; the
+Stage-2 MLIR dialect in `marsir-mlir/` is still named `mir`.)
 
 **Separate by design.** `marsir` is its own tool with zero MARS build coupling: it
 emits source that MARS compiles. MARS's build closure never pulls in the
@@ -17,19 +18,28 @@ under `backend/distributed/unstructured/marsir/generated/`.
 ```
 specs/*.op  --frontend-->  Operator  --synthesize-->  ElementApply (IR)
                                                           |
-                              +---------------------------+---------------------------+
-                              v                           v                           v
-                        backends.ir (dump)        backends.cuda (.cuh)        backends.host_cpp (.hpp)
+        +----------------+----------------+---------------+----------------+
+        v                v                v               v                v
+   ir (dump)      cuda (.cuh)      host_cpp (.hpp)   tet_galerkin      mlir_ir (mir IR,
+                                                     (collapsed tet)   the Stage-2 bridge)
 ```
 
-- `marsir/expr.py` — arithmetic expression AST + parser + C renderer (the whole "language").
+- `marsir/expr.py` — arithmetic expression AST + parser + C renderer +
+  `diff()`/`simplify()` (the whole "language").
 - `marsir/frontend.py` — parse a `.op` spec into an `Operator`.
 - `marsir/ir.py` — synthesize the `ElementApply` schedule; record which tangential
   derivatives / metric components the authored flux actually uses (so unused work
   is pruned).
 - `marsir/backends/cuda.py` — emit the device apply, structurally a twin of
-  `mars::fem::ho_cvfem_apply_kernel` (PerPoint, FP64) with the flux inlined.
+  `mars::fem::ho_cvfem_apply_kernel` (PerPoint, FP64) with the flux inlined,
+  plus the JVP kernel and the HIP macro veneer (one header, nvcc + hipcc).
 - `marsir/backends/host_cpp.py` — emit a host-C++ twin for local numeric validation.
+- `marsir/backends/tet_galerkin.py` — the collapsed-coordinate (Duffy/PKD) tet
+  Galerkin apply (see `TET_SUMFAC_HANDOFF.md`).
+- `marsir/backends/mlir_ir.py` — emit the operator as textual `mir` dialect IR
+  for `marsir-mlir/`: `emit` (the PA chain, `--backend mlir`), `emit_full` (the
+  whole Knaus apply, `--backend mlir-full`), `emit_full_batched` (the fused
+  single-kernel form, `--backend mlir-full-batched`). One `.op` feeds both stages.
 
 ## Usage
 
@@ -43,6 +53,11 @@ python3 marsir-emit.py specs/laplacian.op --backend cuda \
 
 # Host twin (used by the local validation)
 python3 marsir-emit.py specs/laplacian.op --backend host -o generated/laplacian_apply_host.hpp
+
+# mir dialect IR (Stage 2; pipe into marsir-mlir/build/tools/mir-opt/mir-opt)
+python3 marsir-emit.py specs/laplacian.op --backend mlir               # PA chain
+python3 marsir-emit.py specs/laplacian.op --backend mlir-full          # full Knaus apply
+python3 marsir-emit.py specs/laplacian.op --backend mlir-full-batched  # fused kernel form
 ```
 
 ## Operator spec
@@ -105,14 +120,22 @@ The committed generated header is consumed by the parity example
 `examples/distributed/unstructured/mars_marsir_ho_apply.cu`, built with
 `-DMARS_ENABLE_MARSIR=ON` (requires UNSTRUCTURED + CUDA). It runs the generated
 kernel and the hand kernel on the same mesh / elemDof / metric `d_G` and diffs
-them on device — the go/no-go that the emitted CUDA compiles and runs
-bit-identically to the validated kernel.
+them on device. **Validated on Alps GH200** (single rank, 16.7M elements):
+generated primal == hand kernel at `gen_vs_hand_rel = 3.357e-16`; the JVP gate
+`mars_marsir_jvp_test` gives `J_vs_FD_rel = 1.633e-10` vs central finite
+differences on the nonlinear demo. Host sweeps p=1..8 are bit-identical
+(`parity_rel = 0`).
 
-## Roadmap
+## Status / roadmap
 
-- **Stage 1–2 (done):** operator spec → IR → CUDA/host source; local host parity;
-  symbolic form differentiation → generated Jacobian-action (JVP) operator.
-- **Next:** CUDA parity gate on Alps; order/metric sweep (p=1..8, PerPoint/Affine);
-  HIP backend emit + gfx942 compile smoke; perf non-regression vs the hand kernel.
-- **Stage 2 backend (deferred):** an MLIR/LLVM lowering path (EmitC first, then
-  nvvm/rocdl) added behind the same front-end + IR — no changes to `.op` specs.
+- **Done:** `.op` → IR → CUDA/HIP/host source; host parity bit-identical p=1..8;
+  symbolic JVP (linear J==A ~2e-16, nonlinear vs FD ~1e-10); GH200 CUDA parity;
+  collapsed-tet Galerkin backend (== dense oracle p=2..5); the mlir backends
+  feeding Stage 2 (all six Stage-2 execution gates pass on their output).
+- **Next:** a CUDA/HIP tet kernel from the tet backend; a proper `element = tet`
+  spec with authored flux + tet symbolic diff; persist the tet reference basis
+  library (`validate_tet.py` still needs `MARSIR_TET_ORACLE`); wire the generated
+  JVP as the Newton matvec; the launch-parameter autotuner.
+- **Stage 2 (real, alive):** the `mir` MLIR dialect in `marsir-mlir/` — lowering
+  passes, FP64 DMMA tensor-core schedule, warp distribution. See
+  `marsir-mlir/README.md` and `internal-notes/marsir_full_tutorial.md`.
