@@ -1124,12 +1124,13 @@ void acmBuildHierarchyDist(const thrust::device_vector<int>& rowOff0,
         L.bvec.assign(L.ND, 0); L.xvec.assign(L.ND, 0);
         L.rtmp.assign(L.ND, 0); L.xtmp.assign(L.ND, 0);
 
-        // stop on the GLOBAL owned size (all ranks agree: Allreduce). MARS_ACM_GLOBAL_COARSE_ND overrides:
-        // a RICHER replicated coarsest (e.g. 2048-4096) captures convective seam coupling the default 256
-        // cannot -- dense LU at n=4096 is ~20ms once per Picard, getrs per V-cycle trivial.
+        // stop on the GLOBAL owned size (all ranks agree: Allreduce). The dist default is a RICH replicated
+        // coarsest (2048): the serial 256 cannot represent convective coupling across the seam (measured:
+        // n~200 -> picard-1 caps at 2 ranks; n~700 -> converges at +15% of serial). Dense LU at this size is
+        // ~ms once per Picard. MARS_ACM_GLOBAL_COARSE_ND overrides for A/B.
         static const int envND = [] { const char* e = std::getenv("MARS_ACM_GLOBAL_COARSE_ND");
                                       return e ? std::atoi(e) : 0; }();
-        const long long stopND = envND > 0 ? envND : maxCoarseNDGlobal;
+        const long long stopND = envND > 0 ? envND : std::max(maxCoarseNDGlobal, 2048);
         long long ownedDof = 4LL * L.nOwned, globalDof = 0;
         MPI_Allreduce(&ownedDof, &globalDof, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
         if (globalDof <= stopND) break;
