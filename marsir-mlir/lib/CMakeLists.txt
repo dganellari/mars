@@ -26,5 +26,6 @@ add_mlir_dialect_library(MLIRMir
   MLIRVectorDialect
   MLIRMemRefDialect
   MLIRGPUDialect
+  MLIRNVGPUDialect
   MLIRFuncDialect
   )
