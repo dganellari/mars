@@ -427,6 +427,8 @@ int main(int argc, char** argv)
     double nuVal      = -1.0;    // --nu: dimensional kinematic viscosity (overrides 1/Re when >=0)
     double relax      = 1.0;     // --relax: Picard under-relaxation omega (u <- w*u_new + (1-w)*u_old); <1 for high Re
     int    acmRebuild = 1;       // --acm-rebuild: rebuild the ACM hierarchy every K Picard iters (reuse between; K>1 for host-heavy ILU)
+    int    amrLevels  = 0;       // --amr-levels: adapt+resolve the pump this many times (0 = frozen mesh, unchanged path)
+    double refineFrac = 0.3;     // --refine-fraction: Doerfler top-fraction of elements to refine per adapt
     for (int i = 1; i < argc; ++i)
     {
         std::string a = argv[i];
@@ -445,6 +447,8 @@ int main(int argc, char** argv)
         else if (a == "--supg")                     doSupg     = true;
         else if (a.rfind("--relax=", 0) == 0)        relax      = std::stod(a.substr(8));
         else if (a.rfind("--acm-rebuild=", 0) == 0)  acmRebuild = std::stoi(a.substr(14));
+        else if (a.rfind("--amr-levels=", 0) == 0)   amrLevels  = std::stoi(a.substr(13));
+        else if (a.rfind("--refine-fraction=", 0) == 0) refineFrac = std::stod(a.substr(18));
         else if (a == "--channel")                { doAssemble = true; doSolve = true; doChannel = true; }
         else if (a.rfind("--inlet-ss=", 0) == 0)  { inletSS = a.substr(11); doAssemble = doRhieChow = true; }
         else if (a.rfind("--outlet-ss=", 0) == 0)   outletSS   = a.substr(12);
@@ -469,10 +473,11 @@ int main(int argc, char** argv)
     // single-rank -- that guard moves to after the gate (Increment 2 = operator + Krylov halo).
 
     AmrManager<TetTag, KeyType, RealType>::Config cfg;
-    cfg.maxLevels  = 0;          // frozen mesh
+    cfg.maxLevels      = amrLevels;      // 0 = frozen mesh (unchanged); >0 = adapt+resolve (--acm-pump-amr loop)
+    cfg.refineFraction = static_cast<RealType>(refineFrac);
     cfg.blockSize  = blockSize;
     cfg.bucketSize = bucketSize;
-    if (!inletSS.empty()) cfg.storeSideSets = true;   // pump inlet/outlet BC needs the Exodus side sets
+    if (!inletSS.empty()) cfg.storeSideSets = true;   // pump inlet/outlet BC needs the Exodus side sets (survives adapt)
     AmrManager<TetTag, KeyType, RealType> amr(cfg);
     amr.initialize(meshFile, rank, numRanks);
     auto& domain = amr.domain();
