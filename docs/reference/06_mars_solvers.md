@@ -563,4 +563,7 @@ Environment knobs (defaults in parentheses):
 | driver `--acm-rebuild=N` | rebuild the hierarchy every N Picard steps (DILU wants 1) |
 
 Validated (industrial coupled case, Re=1000, 10 Picard steps): physics identical to serial at
-2 and 4 ranks; total Krylov iterations +14% (2 ranks) / +~40% (4 ranks).
+2/4/8 ranks (2 nodes); total Krylov iterations +14% (2r) / +40% (4r) / +100% (8r). Per-iter cost is
+flat across the network (9.2 ms at 8r/2 nodes vs 9.3 ms at 2r on NVLink); the growth is additive-
+Schwarz weak scaling, not communication. `MARS_ACM_SWEEP_EXCH=1` trades iters for per-iter cost (net
+wash); enlarging the replicated coarsest does not help (coarse size is not the weak-scaling lever).
