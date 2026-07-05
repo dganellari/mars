@@ -132,6 +132,37 @@ Multi-rank AMR follows mark → refine → rebuild → transfer, rebuilding the 
 ghost DOFs during solution transfer. See [AMR Module](AMR-Module.md) for the pipeline
 and its known limitations.
 
+## Multi-rank iterative solves (the coupled ACM-FlexGMRES discipline)
+
+The coupled collocated solver (`mars_coupled_model_operator.cu` + the ACM/FlexGMRES stack) runs
+multi-rank with these rules — they generalize to any assembled-CSR solve on this domain layout:
+
+- **Assemble over ALL elements** (local + halo, range `(0, connectivity-array-size)`): every OWNED
+  row then receives its complete 1-ring, with no CSR reverse-fold. Ghost rows are the neighbor's
+  equations — force them to identity after BC application. Two landmines: element counts must come
+  from the connectivity array size (the count accessor holds a pre-sync value on rank > 0), and
+  per-element scratch arrays (e.g. SCS area vectors) are filled `[0, count)` while some kernels
+  index by absolute element id — keep `startElem = 0`.
+- **Ghost DOFs are duplicate unknowns** (`getNodeCount()` includes ghosts). Every reduction must be
+  owned-masked (`getNodeOwnershipMap`, globally unique post-tiebreaker) + `MPI_Allreduce`; an
+  unmasked Allreduce double-counts every seam node.
+- **Krylov ghost-zero discipline**: zero the ghost slots of every matvec output; halo-refresh
+  vectors fed INTO the matvec/preconditioner (per-component `nodeToDof` maps over
+  `exchangeNodeHalo`); then local dots are owned partials by construction. Orthogonalization
+  coefficients must be allreduced BEFORE the subtraction (parallel CGS2).
+- **Boundary handling**: boundary-face detection over the full element range (local-only makes rank
+  seams look like walls); BC flags/values halo-exchanged so ghost columns condense consistently;
+  ONE global pressure pin (elected across ranks).
+- **The preconditioner must be globally coupled**: rank-local hierarchies propagate information one
+  halo layer per iteration and stall. The distributed ACM builds one seam-consistent hierarchy
+  (owned-only aggregation + exchanged global aggregate ids + per-level halos) with a REPLICATED
+  rich global coarsest — see `docs/reference/06_mars_solvers.md` §11 and `mars_acm_dist.hpp`.
+- **Verification order that works**: (1) a partition-independent operator gate first
+  (`MARS_OP_PROBE`: coordinate-built test vector, BC-masked block norms — unmasked, O(1) identity
+  rows drown the physical entries); (2) N-rank == 1-rank physics as the acceptance test.
+
+Validated at 1/2/4 ranks: identical physics, Krylov iteration overhead +14% (2) / +~40% (4).
+
 ## See Also
 
 - [ElementDomain Overview](ElementDomain-Overview.md)
@@ -140,3 +171,4 @@ and its known limitations.
 - [FEM Assembly](FEM-Assembly.md)
 - [SFC Mapping](SFC-Mapping.md)
 - [AMR Module](AMR-Module.md)
+- [Solvers Reference §11 (ACM)](reference/06_mars_solvers.md)

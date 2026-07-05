@@ -517,3 +517,50 @@ fem/
 utils/
   mars_boundary_conditions.hpp             L57–225 row replacement + elimination
 ```
+
+## 11. ACM — Agglomeration Additive-Correction Multigrid + FlexGMRES (coupled solver)
+
+The preconditioner for the coupled collocated Rhie-Chow operator (interleaved `4*node+comp` CSR,
+comp 3 = pressure). Files:
+
+| File | Role |
+|---|---|
+| `mars_acm_vcycle.hpp` | levels, smoothers (multicolor block-DILU / block-Jacobi hybrid), V-cycle, GPU-native setup (block-CSR + JP coloring + parallel directional aggregation), distributed hierarchy build |
+| `mars_acm_coarsen.hpp` | Galerkin coarse operator (emit/sort/reduce `P^T A P`), injection transfers |
+| `mars_acm_dist.hpp` | distributed support: per-level halo (`AcmLevelHalo`), coarse-halo construction (Alltoallv request lists), replicated global coarsest gather |
+| `mars_gpu_acm_preconditioner.hpp` | `GpuAcmPreconditioner` (pluggable `Preconditioner`), CUDA-graph V-cycle capture (serial), factor-once dense-LU coarsest, distributed setup + replicated coarse solve |
+| `mars_gmres_solver.hpp` | `solveFlexible` (FGMRES, Z-basis): batched CGS2, one host fence/iter (serial), ghost-zero Krylov discipline + parallel CGS2 (multi-rank) |
+
+Design points:
+- **Directional (Mavriplis) aggregation** on the node block graph, strength `S_IJ = ||A_IJ||_F`
+  symmetrized, two-sided `beta` test; GPU-native (race-free heavy-edge matching + absorb +
+  optional second pass). Convergence-changing knobs are env-gated for one-binary A/Bs.
+- **Hybrid smoother**: multicolor block-DILU (the paper's GS/ILU analog) on the finest K levels,
+  coupled 4x4 block-Jacobi on the coarse tail (the tail's per-color launches are pure overhead).
+- **Coarsest**: dense LU factored once per Picard (getrf), solved per V-cycle (getrs).
+  Multi-rank: REPLICATED global coarsest — rich enough to carry convective seam coupling
+  (a small coarsest converges Stokes but caps convective steps).
+- **Multi-rank hierarchy**: aggregate owned nodes only; ghosts inherit the owner's aggregate via a
+  halo exchange of global (Exscan-offset) aggregate ids; every coarse level gets a ghost ring
+  (identity rows) + its own halo, so the build recurses with one shape. Smoothers freeze ghost
+  slots; the coarse RHS ring is exchanged after restriction. Serial is bit-identical (all
+  distributed paths are gated).
+- The ACM is non-stationary on the indefinite saddle operator → it MUST be driven by **flexible**
+  GMRES (the Z-basis), not stationary GMRES.
+
+Environment knobs (defaults in parentheses):
+
+| Env | Meaning |
+|---|---|
+| `MARS_ACM_SMOOTHER` | `dilu` (default even when unset) / `ilu` / anything else = block-Jacobi |
+| `MARS_ACM_DILU_LEVELS` (2) | DILU on the finest K levels; block-Jacobi below (measured optimum 2) |
+| `MARS_ACM_PRE` / `MARS_ACM_POST` (2/1) | V-cycle smoother sweeps (pre=1 measured 2× slower: iters triple) |
+| `MARS_ACM_AGG_PASSES` (2) | aggregation matching passes (1 = pairs, 2 = pairs→quads) |
+| `MARS_ACM_BETA` (0.5) | directional strength threshold (0 = isotropic) |
+| `MARS_ACM_GLOBAL_COARSE_ND` (2048 dist) | global coarsest size; small values cap convective steps at N ranks |
+| `MARS_ACM_DIST_NOCOARSE` / `MARS_ACM_DIST_PROBE` | debug: pure-Schwarz A/B / coarsest residual+amplification print |
+| `MARS_OP_PROBE` | partition-independent operator gate (BC-masked free-row block norms of `A·x`) |
+| driver `--acm-rebuild=N` | rebuild the hierarchy every N Picard steps (DILU wants 1) |
+
+Validated (industrial coupled case, Re=1000, 10 Picard steps): physics identical to serial at
+2 and 4 ranks; total Krylov iterations +14% (2 ranks) / +~40% (4 ranks).
