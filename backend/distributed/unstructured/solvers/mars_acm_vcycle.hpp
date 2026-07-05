@@ -1059,11 +1059,13 @@ void acmVcycleUpGpu(std::vector<AcmLevel<RealType>>& levels, int Lidx, int post,
         AcmLevel<RealType>& L = levels[l];
         AcmLevel<RealType>& C = levels[l + 1];
         const int grd = (L.ND + blk - 1) / blk, gN = (L.nNodes + blk - 1) / blk;
-        if (C.exch) C.exch(C.xvec, 4);   // dist: ghost coarse corrections <- owners before prolongation reads them
+        // dist: C's ghosts are already fresh here -- mid levels from their own post-smooth exchange
+        // (processed earlier in this up leg), the coarsest from the replicated solve's ring fill.
         acmInjectKernel<RealType><<<gN, blk, 0, s>>>(acmRaw(C.xvec), acmRaw(L.xtmp), acmRaw(L.agg), L.nNodes);
         acmAddKernel<RealType><<<grd, blk, 0, s>>>(acmRaw(L.xvec), acmRaw(L.xtmp), L.ND);
         acmSmoothGpu(L, post, omega, useBlock, s);
-        if (L.exch) L.exch(L.xvec, 4);   // dist: refresh after post-smooth (next-finer prolong / caller reads)
+        if (L.exch && l > Lidx) L.exch(L.xvec, 4);   // dist: the next-finer inject reads these ghosts; the
+                                                     // finest is refreshed by the Krylov caller before use
     }
 }
 
