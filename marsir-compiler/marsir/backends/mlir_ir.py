@@ -147,14 +147,11 @@ def emit(ea, p=7):
 
 def _apply_body(L, ea, p, ctr, v, uval, gval, indent="  ", y_init=None):
     """Emit the per-element Knaus Alg-2 apply into L; returns the final y SSA
-    name. uval/gval name the element field / metric tensors (so the same body
-    serves the single-element func and the batched per-element loop).
-
-    Structure: per direction ONE rectangular contraction (Btil/Dtil are Pxn:
-    the contracted axis changes size n->P = ALL faces at once), then per face:
-    tangential contractions, the authored flux with per-(dir,l) metric slices,
-    two W integrations, +/- scatter onto the two face-bounding y planes.
-    G layout matches the host metric: tensor<3xPxnxnx3xf64>."""
+    name. The face loop l is a REAL scf.for with iter_args(y) (not unrolled):
+    temporaries then exist once per dir and bufferize to a few reusable
+    buffers instead of ~70 live allocas (the p=7 97KB/thread local-spill
+    pathology of the unrolled form). dir stays unrolled: contraction `axis`
+    is an attribute and cannot be dynamic."""
     o = ea.op
     n, P = p + 1, p
     I = indent
@@ -174,42 +171,39 @@ def _apply_body(L, ea, p, ctr, v, uval, gval, indent="  ", y_init=None):
         dims[d] = P
         return "tensor<%dx%dx%dxf64>" % tuple(dims)
 
-    def face_slice(src, src_ty, d, l):
-        off = ["0", "0", "0"]; off[d] = str(l)
+    def face_slice(J, src, src_ty, d, lvar):
+        off = ["0", "0", "0"]; off[d] = lvar
         sz = [str(n)] * 3; sz[d] = "1"
         r = fresh("f")
         L.append("%s%s = tensor.extract_slice %s[%s] [%s] [1, 1, 1] : %s to %s"
-                 % (I, r, src, ", ".join(off), ", ".join(sz), src_ty, t2))
+                 % (J, r, src, ", ".join(off), ", ".join(sz), src_ty, t2))
         return r
 
-    def g_slice(d, l, c):
+    def g_slice(J, d, lvar, c):
         r = fresh("g")
-        L.append("%s%s = tensor.extract_slice %s[%d, %d, 0, 0, %d] "
+        L.append("%s%s = tensor.extract_slice %s[%d, %s, 0, 0, %d] "
                  "[1, 1, %d, %d, 1] [1, 1, 1, 1, 1] : %s to %s"
-                 % (I, r, gval, d, l, c, n, n, tG, t2))
+                 % (J, r, gval, d, lvar, c, n, n, tG, t2))
         return r
 
-    def contract2(src, mat, axis):
+    def contract2(J, src, mat, axis):
         r = fresh("c")
         L.append("%s%s = mir.contract %s, %s {axis = %d : i64} : "
-                 "(%s, %s) -> %s" % (I, r, src, mat, axis, t2, t2, t2))
+                 "(%s, %s) -> %s" % (J, r, src, mat, axis, t2, t2, t2))
         return r
 
-    def flux2(tensors, body_fn, names):
+    def flux2(J, tensors, body_fn, names):
         r = fresh("x")
         tys = ", ".join(t2 for _ in tensors)
         blk = ", ".join("%%a%d: f64" % i for i in range(len(tensors)))
         L.append("%s%s = mir.flux ins(%s) : (%s) -> %s {"
-                 % (I, r, ", ".join(tensors), tys, t2))
-        L.append("%s^bb0(%s):" % (I, blk))
+                 % (J, r, ", ".join(tensors), tys, t2))
+        L.append("%s^bb0(%s):" % (J, blk))
         valnames = dict(zip(names, ["%%a%d" % i for i in range(len(tensors))]))
         body_fn(valnames)
-        L.append("%s}" % I)
+        L.append("%s}" % J)
         return r
 
-    # y starts as a zero-filled buffer (empty+fill, NOT a dense constant: a
-    # constant would bufferize to a memref.global, which cannot live inside a
-    # gpu.module; fill bufferizes to a local alloc).
     ze = fresh("ze")
     L.append("%s%s = arith.constant 0.0 : f64" % (I, ze))
     if y_init is None:
@@ -218,6 +212,12 @@ def _apply_body(L, ea, p, ctr, v, uval, gval, indent="  ", y_init=None):
     y = fresh("y")
     L.append("%s%s = linalg.fill ins(%s : f64) outs(%s : %s) -> %s"
              % (I, y, ze, y_init, t3, t3))
+    c0 = fresh("i")
+    L.append("%s%s = arith.constant 0 : index" % (I, c0))
+    c1 = fresh("i")
+    L.append("%s%s = arith.constant 1 : index" % (I, c1))
+    cP = fresh("i")
+    L.append("%s%s = arith.constant %d : index" % (I, cP, P))
 
     for d in range(3):
         fa_ty = all_faces_type(d)
@@ -230,49 +230,62 @@ def _apply_body(L, ea, p, ctr, v, uval, gval, indent="  ", y_init=None):
             deriv_all = fresh("da")
             L.append("%s%s = mir.contract %s, %%Dtil {axis = %d : i64} : "
                      "(%s, %s) -> %s" % (I, deriv_all, uval, d, t3, tPn, fa_ty))
-        for l in range(P):
-            tensors, names = [], []
-            if ea.needs_deriv:
-                tensors.append(face_slice(deriv_all, fa_ty, d, l))
-                names.append("deriv")
-            if ea.needs_tangential:
-                iface = face_slice(interp_all, fa_ty, d, l)
-                if ea.needs_dt1:
-                    tensors.append(contract2(iface, "%D", 0)); names.append("dt1")
-                if ea.needs_dt2:
-                    tensors.append(contract2(iface, "%D", 1)); names.append("dt2")
-            for g in metric_used:
-                tensors.append(g_slice(d, l, int(g[1])))
-                names.append(g)
-            order = [names.index(x) for x in inputs]
-            tensors = [tensors[i] for i in order]
 
-            def flux_body(valnames):
-                res = to_mlir_ssa(o.flux, valnames, L, ctr)
-                L.append("    mir.yield %s : f64" % res)
-            fl = flux2(tensors, flux_body, inputs)
+        lv = fresh("l")
+        yloop = fresh("y")
+        yiter = fresh("ya")
+        L.append("%s%s = scf.for %s = %s to %s step %s iter_args(%s = %s) -> (%s) {"
+                 % (I, yloop, lv, c0, cP, c1, yiter, y, t3))
+        J = I + "  "
 
-            tmp = contract2(fl, "%W", 1)
-            intf = contract2(tmp, "%W", 0)
+        tensors, names = [], []
+        if ea.needs_deriv:
+            tensors.append(face_slice(J, deriv_all, fa_ty, d, lv))
+            names.append("deriv")
+        if ea.needs_tangential:
+            iface = face_slice(J, interp_all, fa_ty, d, lv)
+            if ea.needs_dt1:
+                tensors.append(contract2(J, iface, "%D", 0)); names.append("dt1")
+            if ea.needs_dt2:
+                tensors.append(contract2(J, iface, "%D", 1)); names.append("dt2")
+        for g in metric_used:
+            tensors.append(g_slice(J, d, lv, int(g[1])))
+            names.append(g)
+        order = [names.index(x) for x in inputs]
+        tensors = [tensors[i] for i in order]
 
-            for plane, opname in ((l, "arith.subf"), (l + 1, "arith.addf")):
-                off = ["0", "0", "0"]; off[d] = str(plane)
-                sz = [str(n)] * 3; sz[d] = "1"
-                cur = fresh("pl")
-                L.append("%s%s = tensor.extract_slice %s[%s] [%s] [1, 1, 1] : "
-                         "%s to %s" % (I, cur, y, ", ".join(off), ", ".join(sz),
-                                       t3, t2))
-                def upd_body(valnames, _op=opname):
-                    r = "%%t%d" % ctr[0]; ctr[0] += 1
-                    L.append("    %s = %s %%a0, %%a1 : f64" % (r, _op))
-                    L.append("    mir.yield %s : f64" % r)
-                upd = flux2([cur, intf], upd_body, ["cur", "intf"])
-                ynew = fresh("y")
-                L.append("%s%s = tensor.insert_slice %s into %s[%s] [%s] "
-                         "[1, 1, 1] : %s into %s"
-                         % (I, ynew, upd, y, ", ".join(off), ", ".join(sz),
-                            t2, t3))
-                y = ynew
+        def flux_body(valnames):
+            res = to_mlir_ssa(o.flux, valnames, L, ctr)
+            L.append("    mir.yield %s : f64" % res)
+        fl = flux2(J, tensors, flux_body, inputs)
+
+        tmp = contract2(J, fl, "%W", 1)
+        intf = contract2(J, tmp, "%W", 0)
+
+        lp1 = fresh("l")
+        L.append("%s%s = arith.addi %s, %s : index" % (J, lp1, lv, c1))
+        ycur = yiter
+        for plane, opname in ((lv, "arith.subf"), (lp1, "arith.addf")):
+            off = ["0", "0", "0"]; off[d] = plane
+            sz = [str(n)] * 3; sz[d] = "1"
+            cur = fresh("pl")
+            L.append("%s%s = tensor.extract_slice %s[%s] [%s] [1, 1, 1] : "
+                     "%s to %s" % (J, cur, ycur, ", ".join(off), ", ".join(sz),
+                                   t3, t2))
+            def upd_body(valnames, _op=opname):
+                r = "%%t%d" % ctr[0]; ctr[0] += 1
+                L.append("    %s = %s %%a0, %%a1 : f64" % (r, _op))
+                L.append("    mir.yield %s : f64" % r)
+            upd = flux2(J, [cur, intf], upd_body, ["cur", "intf"])
+            ynew = fresh("y")
+            L.append("%s%s = tensor.insert_slice %s into %s[%s] [%s] "
+                     "[1, 1, 1] : %s into %s"
+                     % (J, ynew, upd, ycur, ", ".join(off), ", ".join(sz),
+                        t2, t3))
+            ycur = ynew
+        L.append("%sscf.yield %s : %s" % (J, ycur, t3))
+        L.append("%s}" % I)
+        y = yloop
     return y
 
 
