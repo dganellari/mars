@@ -35,3 +35,6 @@ emit test/warp_emit_selftest.mlir generated/warp_emit_selftest_sm90.ptx
 # EMITTER-GENERATED B-sweep: Btil(8x8) @ U(8x64) column-tiled: 16 mma
 python3 ../marsir-compiler/marsir/backends/mlir_warp.py matmul > test/warp_bsweep.mlir
 emit test/warp_bsweep.mlir generated/warp_bsweep_sm90.ptx
+# EMITTER-GENERATED single face: 4 contracts + 3-term flux, staged in .shared: 8 mma
+python3 ../marsir-compiler/marsir/backends/mlir_warp.py face > test/warp_face.mlir
+emit test/warp_face.mlir generated/warp_face_sm90.ptx

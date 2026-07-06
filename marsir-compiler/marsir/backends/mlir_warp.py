@@ -19,6 +19,14 @@
 #   axis 0 standard:   out[m,n] = sum_k M[m,k] * X[k,n]   (M @ X)
 #   axis 1 transposed: out[m,n] = sum_k X[m,k] * M[n,k]   (X @ M^T)
 # For the emitter M is the small operator matrix (Dm/W), X the data.
+#
+# Operator matrices (Knaus Alg-2 sum-factorization symbols -- same names as the
+# hand CUDA kernel, mlir_ir.py, exec_gate, and buildHoCvfemOperators, so the
+# vocabulary matches across all of MARS and the paper):
+#   Btil  (B-tilde)  trial-basis interpolation at the quadrature points
+#   Dtil  (D-tilde)  basis derivative at the quadrature points
+#   D  /  Dm         1D differentiation matrix (tangential derivative)
+#   W                quadrature / integration weight matrix
 
 WS = "#gpu.address_space<workgroup>"
 
@@ -169,6 +177,76 @@ def emit_matmul(L, ctr, indent, a_mem, a_ty, b_mem, b_ty, out_mem, out_ty,
         L.append("%s}" % I)
 
 
+def emit_flux3(L, ctr, indent, n, deriv_mem, deriv_ty, g2_mem, g2_ty,
+               dt2g_mem, dt2g_ty, dt1g_mem, dt1g_ty, out_mem, out_ty):
+    """flux = g2*deriv + dt2g + dt1g, where dt2g = g0*dt2 and dt1g = g1*dt1 were
+    already scaled in their producing contracts. All operands are scratch/input
+    READS (no contract result), so several elementwise ops in one region are
+    safe (a contract result feeding 2 elementwise ops is what crashes upstream).
+    """
+    v = "vector<%dx%dxf64>" % (n, n)
+    I, J = indent, indent + "  "
+    L.append("%svector.warp_execute_on_lane_0(%%lane)[32] {" % I)
+    d = ctr.fresh("d")
+    L.append("%s%s = vector.transfer_read %s[%%c0, %%c0], %%z "
+             "{in_bounds=[true,true]} : %s, %s" % (J, d, deriv_mem, deriv_ty, v))
+    g2 = ctr.fresh("g2")
+    L.append("%s%s = vector.transfer_read %s[%%c0, %%c0], %%z "
+             "{in_bounds=[true,true]} : %s, %s" % (J, g2, g2_mem, g2_ty, v))
+    t = ctr.fresh("t")
+    L.append("%s%s = arith.mulf %s, %s : %s" % (J, t, d, g2, v))
+    a = ctr.fresh("a")
+    L.append("%s%s = vector.transfer_read %s[%%c0, %%c0], %%z "
+             "{in_bounds=[true,true]} : %s, %s" % (J, a, dt2g_mem, dt2g_ty, v))
+    t2 = ctr.fresh("t2")
+    L.append("%s%s = arith.addf %s, %s : %s" % (J, t2, t, a, v))
+    b = ctr.fresh("b")
+    L.append("%s%s = vector.transfer_read %s[%%c0, %%c0], %%z "
+             "{in_bounds=[true,true]} : %s, %s" % (J, b, dt1g_mem, dt1g_ty, v))
+    fl = ctr.fresh("fl")
+    L.append("%s%s = arith.addf %s, %s : %s" % (J, fl, t2, b, v))
+    L.append("%svector.transfer_write %s, %s[%%c0, %%c0] "
+             "{in_bounds=[true,true]} : %s, %s" % (J, fl, out_mem, v, out_ty))
+    L.append("%s}" % I)
+
+
+def emit_face(L, ctr, indent, n, mems, scratch):
+    """One face of the Knaus apply: the four contracts + the 3-term flux, all
+    staged through shared memory, writing intf to mems['intf']. Matches the
+    oracle:
+       dt2  = interp @ Dm^T   (transposed) ; scaled by g0 -> dt2g
+       dt1  = Dm @ interp     (standard)   ; scaled by g1 -> dt1g
+       flux = g2*deriv + dt2g + dt1g
+       tmp  = flux @ W^T      (transposed)
+       intf = W @ tmp         (standard)
+    `mems`   : dict of input/output nxn memrefs {interp,deriv,Dm,W,g0,g1,g2,intf}
+    `scratch`: dict of workgroup nxn scratch memrefs {dt1g,dt2g,flux,tmp} + their
+               type strings under key+'_ty' (workgroup addr space)."""
+    mr = _mr(n)
+    def ty(k):
+        return scratch.get(k + "_ty", mr)
+    # dt1 = Dm @ interp (standard), fused *g1 -> dt1g
+    emit_contract(L, ctr, indent, mems["Dm"], mr, mems["interp"], mr,
+                  scratch["dt1g"], ty("dt1g"), n, transposed=False,
+                  scale_mem=mems["g1"], scale_ty=mr)
+    # dt2 = interp @ Dm^T (transposed), fused *g0 -> dt2g
+    emit_contract(L, ctr, indent, mems["interp"], mr, mems["Dm"], mr,
+                  scratch["dt2g"], ty("dt2g"), n, transposed=True,
+                  scale_mem=mems["g0"], scale_ty=mr)
+    L.append("%sgpu.barrier" % indent)
+    emit_flux3(L, ctr, indent, n, mems["deriv"], mr, mems["g2"], mr,
+               scratch["dt2g"], ty("dt2g"), scratch["dt1g"], ty("dt1g"),
+               scratch["flux"], ty("flux"))
+    L.append("%sgpu.barrier" % indent)
+    # tmp = flux @ W^T (transposed)
+    emit_contract(L, ctr, indent, scratch["flux"], ty("flux"), mems["W"], mr,
+                  scratch["tmp"], ty("tmp"), n, transposed=True)
+    L.append("%sgpu.barrier" % indent)
+    # intf = W @ tmp (standard)
+    emit_contract(L, ctr, indent, mems["W"], mr, scratch["tmp"], ty("tmp"),
+                  mems["intf"], mr, n, transposed=False)
+
+
 def module_maps():
     """The three affine maps + the transposed-B map, emitted once at top."""
     return ('#a = affine_map<(m, n, k) -> (m, k)>\n'
@@ -199,6 +277,30 @@ if __name__ == "__main__":
         L += index_consts("    ", 64)   # covers koffs {0,4} + coloffs {0,8..56}
         emit_matmul(L, ctr, "    ", "%Bt", m8, "%U", m64, "%Interp", m64,
                     m=8, k=8, ncols=64, transposed=False)
+        L += ["    gpu.return", "  }", "}"]
+    elif which == "face":
+        # One face of the Knaus apply: interp,deriv,Dm,W,g0,g1,g2 in -> intf out.
+        # dt1g/dt2g/flux/tmp are workgroup scratch.
+        wsty = _mr(n, WS)
+        args = ", ".join("%%%s: %s" % (a, mrg)
+                         for a in ["interp", "deriv", "Dm", "W",
+                                   "g0", "g1", "g2", "intf"])
+        wg = ", ".join("%%%s: %s" % (s, wsty)
+                       for s in ["dt1g", "dt2g", "flux", "tmp"])
+        L = [module_maps(),
+             "gpu.module @mir_kernels [#nvvm.target<chip = \"sm_90\", O = 3>] {",
+             "  gpu.func @face(%s) workgroup(%s) kernel {" % (args, wg),
+             "    %c0 = arith.constant 0 : index",
+             "    %c4 = arith.constant 4 : index",
+             "    %z = arith.constant 0.0 : f64",
+             "    %lane = gpu.thread_id x"]
+        mems = {k: "%" + k for k in
+                ["interp", "deriv", "Dm", "W", "g0", "g1", "g2", "intf"]}
+        scratch = {}
+        for s in ["dt1g", "dt2g", "flux", "tmp"]:
+            scratch[s] = "%" + s
+            scratch[s + "_ty"] = wsty
+        emit_face(L, ctr, "    ", n, mems, scratch)
         L += ["    gpu.return", "  }", "}"]
     else:
         L = [module_maps(),
