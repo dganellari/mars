@@ -59,3 +59,10 @@ build/tools/mir-opt/mir-opt test/warp_chain_reg.mlir --lower-affine \
   | mlir-opt --gpu-lower-to-nvvm-pipeline="cubin-chip=sm_90 cubin-format=isa" \
   | python3 test/extract_ptx.py generated/warp_chain_reg_sm90.ptx
 grep -c "mma.sync.aligned.m8n8k4" generated/warp_chain_reg_sm90.ptx
+
+# REGISTER-RESIDENT face chain (direct per-lane mma+shuffle, NO smem): 8 mma + 16 shfl
+python3 ../marsir-compiler/marsir/backends/mlir_warp_reg.py > test/warp_face_reg.mlir
+build/tools/mir-opt/mir-opt test/warp_face_reg.mlir --lower-affine \
+  | mlir-opt --gpu-lower-to-nvvm-pipeline="cubin-chip=sm_90 cubin-format=isa" \
+  | python3 test/extract_ptx.py generated/warp_face_reg_sm90.ptx
+grep -c "mma.sync.aligned.m8n8k4" generated/warp_face_reg_sm90.ptx
