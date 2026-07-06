@@ -308,6 +308,18 @@ def subview_elem(L, ctr, indent, src, e, n, space=None):
     return r, dst_ty
 
 
+def subview_elem_2d(L, ctr, indent, src, e, n, space=None):
+    """Per-element rank-3 -> rank-2 subview src[e,:,:] of a batched Exnxn buffer
+    (the per-element metric planes). Dynamic offset."""
+    r = ctr.fresh("el")
+    strd = "strided<[%d, 1], offset: ?>" % n
+    src_ty = "memref<?x%dx%dxf64%s>" % (n, n, _plane(space))
+    dst_ty = "memref<%dx%dxf64, %s%s>" % (n, n, strd, _plane(space))
+    L.append("%s%s = memref.subview %s[%s, 0, 0] [1, %d, %d] [1, 1, 1] : %s to %s"
+             % (indent, r, src, e, n, n, src_ty, dst_ty))
+    return r, dst_ty
+
+
 def emit_scatter(L, ctr, indent, n, intf_mem, intf_ty, y3, l, axis,
                  y3_ty=None, dyn=False):
     """y[l] -= intf ; y[l+1] += intf, both re-reading intf from scratch (the
@@ -390,7 +402,7 @@ def emit_bsweep(L, ctr, indent, n, u_mem, u_ty, op_mem, out_mem, out_ty,
 
 def emit_direction_u(L, ctr, indent, n, P, mems, scratch, g_keys,
                      scatter_axis, pax, transposed, dyn=False, u_ty=None,
-                     g_ty=None, y_ty=None):
+                     g_ty=None, y_ty=None, metric_per_face=True):
     """Direction with the transpose INTERNALIZED: B-sweeps read u planes via
     emit_bsweep (single u input, no host-presented u_flat). For a batched kernel
     u/metric/y are per-element subviews with dynamic offsets -- pass dyn=True and
@@ -409,12 +421,20 @@ def emit_direction_u(L, ctr, indent, n, P, mems, scratch, g_keys,
         # interp/deriv planes come from workgroup scratch (static, not dyn).
         ifc, ifc_ty = subview_plane(L, ctr, indent, ip3, n, l, 0, WS)
         dfc, dfc_ty = subview_plane(L, ctr, indent, dv3, n, l, 0, WS)
-        g0, g0_ty = subview_plane(L, ctr, indent, mems[g0k], n, l, 0,
-                                  src_ty=g_ty, dyn=dyn)
-        g1, g1_ty = subview_plane(L, ctr, indent, mems[g1k], n, l, 0,
-                                  src_ty=g_ty, dyn=dyn)
-        g2, g2_ty = subview_plane(L, ctr, indent, mems[g2k], n, l, 0,
-                                  src_ty=g_ty, dyn=dyn)
+        if metric_per_face:
+            g0, g0_ty = subview_plane(L, ctr, indent, mems[g0k], n, l, 0,
+                                      src_ty=g_ty, dyn=dyn)
+            g1, g1_ty = subview_plane(L, ctr, indent, mems[g1k], n, l, 0,
+                                      src_ty=g_ty, dyn=dyn)
+            g2, g2_ty = subview_plane(L, ctr, indent, mems[g2k], n, l, 0,
+                                      src_ty=g_ty, dyn=dyn)
+        else:
+            # per-element metric (nxn), shared across the P faces -> read once
+            # per direction; ~8x less metric traffic (the affine/cheap-metric
+            # path that lifts arithmetic intensity above the FP64 ridge).
+            g0, g0_ty = mems[g0k], (g_ty or _mr(n))
+            g1, g1_ty = mems[g1k], (g_ty or _mr(n))
+            g2, g2_ty = mems[g2k], (g_ty or _mr(n))
         fmems = {"interp": ifc, "deriv": dfc, "Dm": mems["Dm"], "W": mems["W"],
                  "g0": g0, "g1": g1, "g2": g2, "intf": scratch["intf"]}
         ftys = {"interp": ifc_ty, "deriv": dfc_ty, "g0": g0_ty, "g1": g1_ty,
@@ -639,6 +659,58 @@ def build_full_batched(n, P):
     return "\n".join(L) + "\n"
 
 
+def build_full_batched_affine(n, P):
+    """Batched operator with a CHEAP per-element metric: g{d}{c} are Exnxn (one
+    nxn per element, shared across the P faces) instead of Ex8xnxn per-face.
+    Cuts metric traffic ~8x -> arithmetic intensity above the FP64 ridge
+    (compute-bound regime). Same warp-per-element structure otherwise; this is
+    the Track-A speedup AND the regime where tensor cores could matter."""
+    ctr = Ctr()
+    mrg = _mr(n)
+    wg64 = "memref<8x%dxf64, %s>" % (n * n, WS)
+    wsty = _mr(n, WS)
+    batched = "memref<?x8x%dx%dxf64>" % (n, n)
+    metric = "memref<?x%dx%dxf64>" % (n, n)          # Exnxn per-element metric
+    gnames = ["g%d%dall" % (d, c) for d in range(3) for c in range(3)]
+    inargs = [("U", batched), ("Btil", mrg), ("Dtil", mrg), ("Dm", mrg),
+              ("W", mrg)]
+    inargs += [(g, metric) for g in gnames]
+    inargs += [("Y", batched)]
+    argstr = ", ".join("%%%s: %s" % (a, t) for a, t in inargs)
+    scratch_names = ["interp_all", "deriv_all", "dt1g", "dt2g", "flux",
+                     "tmp", "intf"]
+    wg = ", ".join("%%%s: %s" % (s, wg64 if s in ("interp_all", "deriv_all")
+                                 else wsty) for s in scratch_names)
+    L = [module_maps(),
+         "gpu.module @mir_kernels [#nvvm.target<chip = \"sm_90\", O = 3>] {",
+         "  gpu.func @full_batched_affine(%s) workgroup(%s) kernel {"
+         % (argstr, wg),
+         "    %z = arith.constant 0.0 : f64",
+         "    %lane = gpu.thread_id x",
+         "    %e = gpu.block_id x"]
+    L += index_consts("    ", n * n)
+    ue, elem_ty = subview_elem(L, ctr, "    ", "%U", "%e", n)
+    ye, _ = subview_elem(L, ctr, "    ", "%Y", "%e", n)
+    mems = {"u": ue, "Btil": "%Btil", "Dtil": "%Dtil", "Dm": "%Dm", "W": "%W",
+            "y3": ye}
+    g_ty = None
+    for g in gnames:
+        ge, g_ty = subview_elem_2d(L, ctr, "    ", "%" + g, "%e", n)
+        mems[g] = ge
+    scratch = {}
+    for s in scratch_names:
+        scratch[s] = "%" + s
+        scratch[s + "_ty"] = wg64 if s in ("interp_all", "deriv_all") else wsty
+    dirs = [(1, False, 0), (0, False, 1), (0, True, 2)]
+    for d, (pax, transp, sax) in enumerate(dirs):
+        gk = ("g%d0all" % d, "g%d1all" % d, "g%d2all" % d)
+        emit_direction_u(L, ctr, "    ", n, P, mems, scratch, gk, sax, pax,
+                         transp, dyn=True, u_ty=elem_ty, g_ty=g_ty,
+                         y_ty=elem_ty, metric_per_face=False)
+    L += ["    gpu.return", "  }", "}"]
+    return "\n".join(L) + "\n"
+
+
 def module_maps():
     """The three affine maps + the transposed-B map, emitted once at top."""
     return ('#a = affine_map<(m, n, k) -> (m, k)>\n'
@@ -667,6 +739,9 @@ if __name__ == "__main__":
         sys.exit(0)
     if which == "batched":
         sys.stdout.write(build_full_batched(n, 7))
+        sys.exit(0)
+    if which == "batched_affine":
+        sys.stdout.write(build_full_batched_affine(n, 7))
         sys.exit(0)
     if which == "matmul":
         # B-sweep shape: interp = Btil(8x8) @ U(8x64) -> 8x64, column-tiled.

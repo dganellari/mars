@@ -50,3 +50,6 @@ emit test/warp_fulls.mlir generated/warp_fulls_sm90.ptx
 # EMITTER-GENERATED BATCHED operator (warp-per-element, grid=E): throughput target, 264 mma
 python3 ../marsir-compiler/marsir/backends/mlir_warp.py batched > test/warp_batched.mlir
 emit test/warp_batched.mlir generated/warp_batched_sm90.ptx
+# EMITTER-GENERATED BATCHED, CHEAP per-element metric (compute-bound regime): 264 mma
+python3 ../marsir-compiler/marsir/backends/mlir_warp.py batched_affine > test/warp_batched_affine.mlir
+emit test/warp_batched_affine.mlir generated/warp_batched_affine_sm90.ptx
