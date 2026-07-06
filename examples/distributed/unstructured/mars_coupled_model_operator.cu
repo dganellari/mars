@@ -1007,6 +1007,11 @@ int main(int argc, char** argv)
     AmrManager<TetTag, KeyType, RealType>::Config cfg;
     cfg.maxLevels      = amrLevels;      // 0 = frozen mesh (unchanged); >0 = adapt+resolve (--acm-pump-amr loop)
     cfg.refineFraction = static_cast<RealType>(refineFrac);
+    // OctreeNative marking IGNORES refineFraction (it refines by octree error MAGNITUDE -> on the pump's
+    // broadly-high |u| gradient that refines ~everything = uniform). Doerfler honors the top-fraction +
+    // enforces 2:1 -> a genuinely SPARSE adaptive mesh (the case that actually creates refined/coarse
+    // interfaces). So: fraction<1 => Doerfler; fraction>=1 (uniform) => OctreeNative.
+    cfg.strategy   = (refineFrac < 1.0) ? MarkingStrategy::Doerfler : MarkingStrategy::OctreeNative;
     cfg.blockSize  = blockSize;
     cfg.bucketSize = bucketSize;
     if (!inletSS.empty()) cfg.storeSideSets = true;   // pump inlet/outlet BC needs the Exodus side sets (survives adapt)
