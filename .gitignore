@@ -70,3 +70,5 @@ examples/distributed/unstructured/render_pump_4panel.py
 __pycache__/
 *.pyc
 
+docs/pasc_matrixfree.pdf
+docs/pasc_matrixfree.tex
