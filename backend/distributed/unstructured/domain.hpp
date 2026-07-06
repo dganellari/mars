@@ -1488,6 +1488,35 @@ public:
         return sideSets_.at(name).d_keys;
     }
 
+    //! Re-inject a side set from its SFC keys onto the CURRENT domain. AMR carry-through: adaptMesh
+    //! rebuilds a fresh DEVICE-constructed domain (no Exodus file, so ensureSideSets can't rebuild the
+    //! sets); the SFC key is the AMR-stable node identity, so resolve each key against this domain's SFC
+    //! map -> local id (keep hits; a key not owned here is dropped, exactly like the coord resolver).
+    //! Marks storage built so ensureSideSets() (which reads meshFile_) does not clobber the injected set.
+    void setSideSetFromKeys(const std::string& name, const std::vector<KeyType>& keys)
+    {
+        ensureSfcMap();
+        std::vector<KeyType> hostSfc(d_localToGlobalSfcMap_.size());
+        thrust::copy(thrust::device_pointer_cast(d_localToGlobalSfcMap_.data()),
+                     thrust::device_pointer_cast(d_localToGlobalSfcMap_.data() + d_localToGlobalSfcMap_.size()),
+                     hostSfc.begin());
+        std::vector<KeyType> hitKeys; std::vector<int> hitLocal;
+        hitKeys.reserve(keys.size()); hitLocal.reserve(keys.size());
+        for (KeyType key : keys) {
+            auto it = std::lower_bound(hostSfc.begin(), hostSfc.end(), key);   // SFC map is sorted; local id == position
+            if (it != hostSfc.end() && *it == key) { hitKeys.push_back(key); hitLocal.push_back(int(it - hostSfc.begin())); }
+        }
+        SideSetEntry e;
+        e.d_keys.resize(hitKeys.size()); e.d_local.resize(hitLocal.size());
+        if (!hitKeys.empty()) {
+            thrust::copy(hitKeys.begin(), hitKeys.end(), thrust::device_pointer_cast(e.d_keys.data()));
+            thrust::copy(hitLocal.begin(), hitLocal.end(), thrust::device_pointer_cast(e.d_local.data()));
+        }
+        sideSets_[name] = std::move(e);
+        storeSideSets_ = true;
+        sideSetsBuilt_ = true;   // injected -> ensureSideSets() must not re-read Exodus and overwrite this
+    }
+
 private:
     int rank_;
     int numRanks_;
