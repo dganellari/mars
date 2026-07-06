@@ -11,9 +11,13 @@ export PATH="/opt/homebrew/opt/llvm/bin:$PATH"
 mkdir -p generated
 
 emit() {
+  # distribute -> gpu-lower-to-nvvm-pipeline DIRECTLY. The pipeline does the
+  # nvgpu/vector + memory-space lowering itself; a manual gpu.module(convert-
+  # nvgpu-to-nvvm,convert-vector-to-llvm) pre-stage ERRORS on workgroup (shared)
+  # memory ("space conversion failed"). Clean path handles both global and
+  # workgroup-memory kernels.
   build/tools/mir-opt/mir-opt "$1" \
       --mir-warp-distribute --canonicalize --cse --lower-affine \
-  | mlir-opt --pass-pipeline="builtin.module(gpu.module(convert-nvgpu-to-nvvm,convert-vector-to-llvm))" \
   | mlir-opt --gpu-lower-to-nvvm-pipeline="cubin-chip=sm_90 cubin-format=isa" \
   | python3 test/extract_ptx.py "$2"
   grep -c "mma.sync.aligned.m8n8k4" "$2"
@@ -25,3 +29,6 @@ emit test/warp_mmt_kernel.mlir generated/warp_mmt_sm90.ptx
 emit test/warp_one_dir.mlir    generated/warp_one_dir_sm90.ptx
 # +/- plane scatter, 2 faces, loop-carried overlap (census's hardest blocker): 2 mma
 emit test/warp_scatter_kernel.mlir generated/warp_scatter_sm90.ptx
+# EMITTER-GENERATED (mlir_warp.py): std + transposed contract staged in .shared: 4 mma
+python3 ../marsir-compiler/marsir/backends/mlir_warp.py > test/warp_emit_selftest.mlir
+emit test/warp_emit_selftest.mlir generated/warp_emit_selftest_sm90.ptx
