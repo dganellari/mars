@@ -317,6 +317,84 @@ def emit_scatter(L, ctr, indent, n, intf_mem, intf_ty, y3, y_ty_of, l, axis):
     L.append("%s}" % I)
 
 
+def emit_bsweep(L, ctr, indent, n, u_mem, u_ty, op_mem, out_mem, out_ty,
+                pax, transposed):
+    """B-sweep out = op @ (u viewed for this direction), reading u PLANES
+    directly -- no transpose buffer. Col-tile ct = interp_all[:, ct*8:ct*8+8]
+    comes from plane ct of u along axis `pax`; the direction's moveaxis is
+    absorbed into (pax, arm):
+       dir0: pax=1 (u[:,ct,:]), standard    out[l,r]=sum_q op[l,q]*u[q,ct,r]
+       dir1: pax=0 (u[ct,:,:]), standard    out[l,r]=sum_q op[l,q]*u[ct,q,r]
+       dir2: pax=0 (u[ct,:,:]), transposed  out[l,r]=sum_q op[l,q]*u[ct,r,q]
+    op is Btil or Dtil (nxn). u is 8xnxn. out is 8xn^2 (col-tiles of 8)."""
+    mr = _mr(n)
+    va = "vector<8x4xf64>"
+    vb_std = "vector<4x8xf64>"
+    vb_t = "vector<8x4xf64>"
+    v8 = "vector<8x8xf64>"
+    slabs = n // 4
+    for ct in range(n):
+        plane, pty = subview_plane(L, ctr, indent, u_mem, n, ct, pax)
+        L.append("%svector.warp_execute_on_lane_0(%%lane)[32] {" % indent)
+        J = indent + "  "
+        acc = ctr.fresh("acc")
+        L.append("%s%s = arith.constant dense<0.0> : %s" % (J, acc, v8))
+        for s in range(slabs):
+            koff = 4 * s
+            a = ctr.fresh("a")
+            L.append("%s%s = vector.transfer_read %s[%%c0, %%c%d], %%z "
+                     "{in_bounds=[true,true]} : %s, %s" % (J, a, op_mem, koff, mr, va))
+            b = ctr.fresh("b")
+            if transposed:
+                L.append("%s%s = vector.transfer_read %s[%%c0, %%c%d], %%z "
+                         "{in_bounds=[true,true]} : %s, %s" % (J, b, plane, koff, pty, vb_t))
+                bmap, bty = "#bt", vb_t
+            else:
+                L.append("%s%s = vector.transfer_read %s[%%c%d, %%c0], %%z "
+                         "{in_bounds=[true,true]} : %s, %s" % (J, b, plane, koff, pty, vb_std))
+                bmap, bty = "#b", vb_std
+            r = ctr.fresh("r")
+            L.append("%s%s = vector.contract {indexing_maps=[#a,%s,#c], "
+                     "iterator_types=[\"parallel\",\"parallel\",\"reduction\"], "
+                     "kind=#vector.kind<add>} %s, %s, %s : %s, %s into %s"
+                     % (J, r, bmap, a, b, acc, va, bty, v8))
+            acc = r
+        L.append("%svector.transfer_write %s, %s[%%c0, %%c%d] "
+                 "{in_bounds=[true,true]} : %s, %s"
+                 % (J, acc, out_mem, 8 * ct, v8, out_ty))
+        L.append("%s}" % indent)
+
+
+def emit_direction_u(L, ctr, indent, n, P, mems, scratch, g_keys,
+                     scatter_axis, pax, transposed):
+    """Direction with the transpose INTERNALIZED: B-sweeps read u planes via
+    emit_bsweep (single u input, no host-presented u_flat). Otherwise identical
+    to emit_direction (faces + scatter)."""
+    emit_bsweep(L, ctr, indent, n, mems["u"], None, mems["Btil"],
+                scratch["interp_all"], scratch["interp_all_ty"], pax, transposed)
+    emit_bsweep(L, ctr, indent, n, mems["u"], None, mems["Dtil"],
+                scratch["deriv_all"], scratch["deriv_all_ty"], pax, transposed)
+    L.append("%sgpu.barrier" % indent)
+    ip3, _ = reinterpret_2d_to_3d(L, ctr, indent, scratch["interp_all"], n, WS)
+    dv3, _ = reinterpret_2d_to_3d(L, ctr, indent, scratch["deriv_all"], n, WS)
+    g0k, g1k, g2k = g_keys
+    for l in range(P):
+        ifc, ifc_ty = subview_plane(L, ctr, indent, ip3, n, l, 0, WS)
+        dfc, dfc_ty = subview_plane(L, ctr, indent, dv3, n, l, 0, WS)
+        g0, g0_ty = subview_plane(L, ctr, indent, mems[g0k], n, l, 0)
+        g1, g1_ty = subview_plane(L, ctr, indent, mems[g1k], n, l, 0)
+        g2, g2_ty = subview_plane(L, ctr, indent, mems[g2k], n, l, 0)
+        fmems = {"interp": ifc, "deriv": dfc, "Dm": mems["Dm"], "W": mems["W"],
+                 "g0": g0, "g1": g1, "g2": g2, "intf": scratch["intf"]}
+        ftys = {"interp": ifc_ty, "deriv": dfc_ty, "g0": g0_ty, "g1": g1_ty,
+                "g2": g2_ty, "intf": scratch["intf_ty"]}
+        emit_face(L, ctr, indent, n, fmems, scratch, tys=ftys)
+        L.append("%sgpu.barrier" % indent)
+        emit_scatter(L, ctr, indent, n, scratch["intf"], scratch["intf_ty"],
+                     mems["y3"], None, l, scatter_axis)
+        L.append("%sgpu.barrier" % indent)
+
+
 def emit_direction(L, ctr, indent, n, P, mems, scratch, u2_key, g_keys,
                    scatter_axis):
     """One direction of the Knaus apply. B-sweep interp/deriv = Btil/Dtil @
@@ -441,6 +519,46 @@ def build_full_kernel(n, P):
     return "\n".join(L) + "\n"
 
 
+def build_full_single(n, P):
+    """Full 3-direction operator with the transpose INTERNALIZED: a single u
+    (8xnxn) input; each direction reads u planes via emit_bsweep (pax/arm absorb
+    the moveaxis) and scatters into y along its axis. This is the real
+    single-input operator -- the head-to-head measurement target."""
+    ctr = Ctr()
+    mrg = _mr(n)
+    wg64 = "memref<8x%dxf64, %s>" % (n * n, WS)
+    wsty = _mr(n, WS)
+    gall = "memref<8x%dx%dxf64>" % (n, n)
+    u3 = "memref<8x%dx%dxf64>" % (n, n)
+    gnames = ["g%d%dall" % (d, c) for d in range(3) for c in range(3)]
+    inargs = [("u", u3), ("Btil", mrg), ("Dtil", mrg), ("Dm", mrg), ("W", mrg)]
+    inargs += [(g, gall) for g in gnames]
+    inargs += [("y3", gall)]
+    argstr = ", ".join("%%%s: %s" % (a, t) for a, t in inargs)
+    scratch_names = ["interp_all", "deriv_all", "dt1g", "dt2g", "flux",
+                     "tmp", "intf"]
+    wg = ", ".join("%%%s: %s" % (s, wg64 if s in ("interp_all", "deriv_all")
+                                 else wsty) for s in scratch_names)
+    L = [module_maps(),
+         "gpu.module @mir_kernels [#nvvm.target<chip = \"sm_90\", O = 3>] {",
+         "  gpu.func @full(%s) workgroup(%s) kernel {" % (argstr, wg),
+         "    %z = arith.constant 0.0 : f64",
+         "    %lane = gpu.thread_id x"]
+    L += index_consts("    ", n * n)
+    mems = {k: "%" + k for k, _ in inargs}
+    scratch = {}
+    for s in scratch_names:
+        scratch[s] = "%" + s
+        scratch[s + "_ty"] = wg64 if s in ("interp_all", "deriv_all") else wsty
+    # (pax, transposed, scatter_axis) per direction
+    dirs = [(1, False, 0), (0, False, 1), (0, True, 2)]
+    for d, (pax, transp, sax) in enumerate(dirs):
+        gk = ("g%d0all" % d, "g%d1all" % d, "g%d2all" % d)
+        emit_direction_u(L, ctr, "    ", n, P, mems, scratch, gk, sax, pax, transp)
+    L += ["    gpu.return", "  }", "}"]
+    return "\n".join(L) + "\n"
+
+
 def module_maps():
     """The three affine maps + the transposed-B map, emitted once at top."""
     return ('#a = affine_map<(m, n, k) -> (m, k)>\n'
@@ -463,6 +581,9 @@ if __name__ == "__main__":
         sys.exit(0)
     if which == "full":
         sys.stdout.write(build_full_kernel(n, 7))
+        sys.exit(0)
+    if which == "fulls":
+        sys.stdout.write(build_full_single(n, 7))
         sys.exit(0)
     if which == "matmul":
         # B-sweep shape: interp = Btil(8x8) @ U(8x64) -> 8x64, column-tiled.

@@ -44,3 +44,6 @@ emit test/warp_dir0.mlir generated/warp_dir0_sm90.ptx
 # EMITTER-GENERATED FULL 3-direction operator (host-presented transposes): 264 mma
 python3 ../marsir-compiler/marsir/backends/mlir_warp.py full > test/warp_full.mlir
 emit test/warp_full.mlir generated/warp_full_sm90.ptx
+# EMITTER-GENERATED FULL operator, transpose INTERNALIZED (single u input): 264 mma
+python3 ../marsir-compiler/marsir/backends/mlir_warp.py fulls > test/warp_fulls.mlir
+emit test/warp_fulls.mlir generated/warp_fulls_sm90.ptx
