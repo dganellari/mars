@@ -210,7 +210,7 @@ def emit_flux3(L, ctr, indent, n, deriv_mem, deriv_ty, g2_mem, g2_ty,
     L.append("%s}" % I)
 
 
-def emit_face(L, ctr, indent, n, mems, scratch):
+def emit_face(L, ctr, indent, n, mems, scratch, tys=None):
     """One face of the Knaus apply: the four contracts + the 3-term flux, all
     staged through shared memory, writing intf to mems['intf']. Matches the
     oracle:
@@ -219,32 +219,177 @@ def emit_face(L, ctr, indent, n, mems, scratch):
        flux = g2*deriv + dt2g + dt1g
        tmp  = flux @ W^T      (transposed)
        intf = W @ tmp         (standard)
-    `mems`   : dict of input/output nxn memrefs {interp,deriv,Dm,W,g0,g1,g2,intf}
-    `scratch`: dict of workgroup nxn scratch memrefs {dt1g,dt2g,flux,tmp} + their
-               type strings under key+'_ty' (workgroup addr space)."""
+    `mems`   : dict of input/output nxn memref SSA names
+               {interp,deriv,Dm,W,g0,g1,g2,intf}
+    `tys`    : dict of the ACTUAL memref TYPE strings for each mems key (plane
+               subviews carry a strided + workgroup layout, not plain nxn); any
+               key absent defaults to a plain nxn memref.
+    `scratch`: dict of workgroup nxn scratch memref SSA names {dt1g,dt2g,flux,
+               tmp} + their type strings under key+'_ty'."""
     mr = _mr(n)
-    def ty(k):
+    tys = tys or {}
+    def mt(k):
+        return tys.get(k, mr)
+    def st(k):
         return scratch.get(k + "_ty", mr)
     # dt1 = Dm @ interp (standard), fused *g1 -> dt1g
-    emit_contract(L, ctr, indent, mems["Dm"], mr, mems["interp"], mr,
-                  scratch["dt1g"], ty("dt1g"), n, transposed=False,
-                  scale_mem=mems["g1"], scale_ty=mr)
+    emit_contract(L, ctr, indent, mems["Dm"], mt("Dm"), mems["interp"],
+                  mt("interp"), scratch["dt1g"], st("dt1g"), n, transposed=False,
+                  scale_mem=mems["g1"], scale_ty=mt("g1"))
     # dt2 = interp @ Dm^T (transposed), fused *g0 -> dt2g
-    emit_contract(L, ctr, indent, mems["interp"], mr, mems["Dm"], mr,
-                  scratch["dt2g"], ty("dt2g"), n, transposed=True,
-                  scale_mem=mems["g0"], scale_ty=mr)
+    emit_contract(L, ctr, indent, mems["interp"], mt("interp"), mems["Dm"],
+                  mt("Dm"), scratch["dt2g"], st("dt2g"), n, transposed=True,
+                  scale_mem=mems["g0"], scale_ty=mt("g0"))
     L.append("%sgpu.barrier" % indent)
-    emit_flux3(L, ctr, indent, n, mems["deriv"], mr, mems["g2"], mr,
-               scratch["dt2g"], ty("dt2g"), scratch["dt1g"], ty("dt1g"),
-               scratch["flux"], ty("flux"))
+    emit_flux3(L, ctr, indent, n, mems["deriv"], mt("deriv"), mems["g2"],
+               mt("g2"), scratch["dt2g"], st("dt2g"), scratch["dt1g"],
+               st("dt1g"), scratch["flux"], st("flux"))
     L.append("%sgpu.barrier" % indent)
     # tmp = flux @ W^T (transposed)
-    emit_contract(L, ctr, indent, scratch["flux"], ty("flux"), mems["W"], mr,
-                  scratch["tmp"], ty("tmp"), n, transposed=True)
+    emit_contract(L, ctr, indent, scratch["flux"], st("flux"), mems["W"],
+                  mt("W"), scratch["tmp"], st("tmp"), n, transposed=True)
     L.append("%sgpu.barrier" % indent)
     # intf = W @ tmp (standard)
-    emit_contract(L, ctr, indent, mems["W"], mr, scratch["tmp"], ty("tmp"),
-                  mems["intf"], mr, n, transposed=False)
+    emit_contract(L, ctr, indent, mems["W"], mt("W"), scratch["tmp"], st("tmp"),
+                  mems["intf"], mt("intf"), n, transposed=False)
+
+
+def _plane(space):
+    return (", " + space) if space else ""
+
+
+def reinterpret_2d_to_3d(L, ctr, indent, src, n, space=None):
+    """View a (P-padded 8) x n^2 buffer as (8, n, n): row l of the matmul output
+    is face l flattened (s*n+r), so the 3-D view's [l, s, r] is contiguous with
+    the 2-D [l, s*n+r]. Returns the new 3-D SSA name + its type."""
+    dst = ctr.fresh("v3")
+    ty = "memref<8x%dx%dxf64%s>" % (n, n, _plane(space))
+    L.append("%s%s = memref.reinterpret_cast %s to offset: [0], "
+             "sizes: [8, %d, %d], strides: [%d, %d, 1] : memref<8x%dxf64%s> to %s"
+             % (indent, dst, src, n, n, n * n, n, n * n, _plane(space), ty))
+    return dst, ty
+
+
+def subview_plane(L, ctr, indent, src, n, l, axis, space=None):
+    """Rank-reduced n x n plane l of an 8xnxn buffer along `axis` (0/1/2). The
+    +/- plane scatter slices y on a different axis per direction; the B-sweep
+    face slice is always axis 0."""
+    off = [0, 0, 0]; off[axis] = l
+    sz = [8, n, n]; sz[axis] = 1
+    strides = [n * n, n, 1]
+    boff = l * strides[axis]
+    keep = [strides[i] for i in range(3) if i != axis]
+    r = ctr.fresh("sv")
+    lay = "strided<[%d, %d], offset: %d>" % (keep[0], keep[1], boff)
+    dst_ty = "memref<%dx%dxf64, %s%s>" % (n, n, lay, _plane(space))
+    L.append("%s%s = memref.subview %s[%d, %d, %d] [%d, %d, %d] [1, 1, 1] : "
+             "memref<8x%dx%dxf64%s> to %s"
+             % (indent, r, src, off[0], off[1], off[2], sz[0], sz[1], sz[2],
+                n, n, _plane(space), dst_ty))
+    return r, dst_ty
+
+
+def emit_scatter(L, ctr, indent, n, intf_mem, intf_ty, y3, y_ty_of, l, axis):
+    """y[l] -= intf ; y[l+1] += intf, both re-reading intf from scratch (the
+    contract-result-double-use crash rule). y3 is the 8xnxn output; y_ty_of(l)
+    slices plane l along `axis` (0 for dir0)."""
+    v = "vector<%dx%dxf64>" % (n, n)
+    ym, yty = subview_plane(L, ctr, indent, y3, n, l, axis)
+    yp, ypty = subview_plane(L, ctr, indent, y3, n, l + 1, axis)
+    I, J = indent, indent + "  "
+    L.append("%svector.warp_execute_on_lane_0(%%lane)[32] {" % I)
+    fa = ctr.fresh("fa")
+    L.append("%s%s = vector.transfer_read %s[%%c0, %%c0], %%z "
+             "{in_bounds=[true,true]} : %s, %s" % (J, fa, intf_mem, intf_ty, v))
+    r0 = ctr.fresh("r"); L.append("%s%s = vector.transfer_read %s[%%c0, %%c0], "
+             "%%z {in_bounds=[true,true]} : %s, %s" % (J, r0, ym, yty, v))
+    m0 = ctr.fresh("m"); L.append("%s%s = arith.subf %s, %s : %s" % (J, m0, r0, fa, v))
+    L.append("%svector.transfer_write %s, %s[%%c0, %%c0] {in_bounds=[true,true]} "
+             ": %s, %s" % (J, m0, ym, v, yty))
+    fb = ctr.fresh("fa")
+    L.append("%s%s = vector.transfer_read %s[%%c0, %%c0], %%z "
+             "{in_bounds=[true,true]} : %s, %s" % (J, fb, intf_mem, intf_ty, v))
+    r1 = ctr.fresh("r"); L.append("%s%s = vector.transfer_read %s[%%c0, %%c0], "
+             "%%z {in_bounds=[true,true]} : %s, %s" % (J, r1, yp, ypty, v))
+    p1 = ctr.fresh("p"); L.append("%s%s = arith.addf %s, %s : %s" % (J, p1, r1, fb, v))
+    L.append("%svector.transfer_write %s, %s[%%c0, %%c0] {in_bounds=[true,true]} "
+             ": %s, %s" % (J, p1, yp, v, ypty))
+    L.append("%s}" % I)
+
+
+def emit_direction0(L, ctr, indent, n, P, mems, scratch):
+    """Direction 0 of the Knaus apply (no input transpose): B-sweep interp/deriv
+    = Btil/Dtil @ u_flat, then per face l apply emit_face and scatter intf into
+    y[l]/y[l+1]. mems: {u2 (8xn^2), Btil, Dtil, Dm, W, g0all,g1all,g2all (8xnxn),
+    y3 (8xnxn out)}. scratch: workgroup {interp_all,deriv_all (8xn^2), dt1g,dt2g,
+    flux,tmp,intf (nxn)} + '_ty'."""
+    WSs = WS
+    m64 = "memref<8x%dxf64>" % (n * n)
+    wg64 = "memref<8x%dxf64, %s>" % (n * n, WS)
+    # B-sweeps: interp_all = Btil @ u_flat ; deriv_all = Dtil @ u_flat
+    emit_matmul(L, ctr, indent, mems["Btil"], _mr(n), mems["u2"], m64,
+                scratch["interp_all"], wg64, m=8, k=n, ncols=n * n,
+                transposed=False)
+    emit_matmul(L, ctr, indent, mems["Dtil"], _mr(n), mems["u2"], m64,
+                scratch["deriv_all"], wg64, m=8, k=n, ncols=n * n,
+                transposed=False)
+    L.append("%sgpu.barrier" % indent)
+    ip3, ip3ty = reinterpret_2d_to_3d(L, ctr, indent, scratch["interp_all"], n, WS)
+    dv3, dv3ty = reinterpret_2d_to_3d(L, ctr, indent, scratch["deriv_all"], n, WS)
+    for l in range(P):
+        ifc, ifc_ty = subview_plane(L, ctr, indent, ip3, n, l, 0, WS)
+        dfc, dfc_ty = subview_plane(L, ctr, indent, dv3, n, l, 0, WS)
+        g0, g0_ty = subview_plane(L, ctr, indent, mems["g0all"], n, l, 0)
+        g1, g1_ty = subview_plane(L, ctr, indent, mems["g1all"], n, l, 0)
+        g2, g2_ty = subview_plane(L, ctr, indent, mems["g2all"], n, l, 0)
+        fmems = {"interp": ifc, "deriv": dfc, "Dm": mems["Dm"], "W": mems["W"],
+                 "g0": g0, "g1": g1, "g2": g2, "intf": scratch["intf"]}
+        # plane subviews carry a strided (+workgroup) layout; pass the actual
+        # types so emit_face's transfer_reads match the memref they read.
+        ftys = {"interp": ifc_ty, "deriv": dfc_ty, "g0": g0_ty, "g1": g1_ty,
+                "g2": g2_ty, "intf": scratch["intf_ty"]}
+        emit_face(L, ctr, indent, n, fmems, scratch, tys=ftys)
+        L.append("%sgpu.barrier" % indent)
+        emit_scatter(L, ctr, indent, n, scratch["intf"], scratch["intf_ty"],
+                     mems["y3"], None, l, 0)
+        L.append("%sgpu.barrier" % indent)
+
+
+def build_dir0_kernel(n, P):
+    """Full single-direction (dir 0, no input transpose) operator kernel string:
+    B-sweep interp/deriv = Btil/Dtil @ u_flat, then the P faces (emit_face +
+    scatter into y). Inputs u2 (8xn^2), Btil/Dtil/Dm/W (nxn), g0all/g1all/g2all
+    (8xnxn per-face metric components), out y3 (8xnxn). interp_all/deriv_all +
+    per-face buffers are workgroup (shared) scratch."""
+    ctr = Ctr()
+    mrg = _mr(n)
+    m64 = "memref<8x%dxf64>" % (n * n)
+    wg64 = "memref<8x%dxf64, %s>" % (n * n, WS)
+    wsty = _mr(n, WS)
+    gall = "memref<8x%dx%dxf64>" % (n, n)
+    inargs = [("u2", m64), ("Btil", mrg), ("Dtil", mrg), ("Dm", mrg),
+              ("W", mrg), ("g0all", gall), ("g1all", gall), ("g2all", gall),
+              ("y3", gall)]
+    argstr = ", ".join("%%%s: %s" % (a, t) for a, t in inargs)
+    scratch_names = ["interp_all", "deriv_all", "dt1g", "dt2g", "flux",
+                     "tmp", "intf"]
+    wg = ", ".join("%%%s: %s" % (s, wg64 if s in ("interp_all", "deriv_all")
+                                 else wsty) for s in scratch_names)
+    L = [module_maps(),
+         "gpu.module @mir_kernels [#nvvm.target<chip = \"sm_90\", O = 3>] {",
+         "  gpu.func @dir0(%s) workgroup(%s) kernel {" % (argstr, wg),
+         "    %z = arith.constant 0.0 : f64",
+         "    %lane = gpu.thread_id x"]
+    L += index_consts("    ", n * n)
+    mems = {k: "%" + k for k in
+            ["u2", "Btil", "Dtil", "Dm", "W", "g0all", "g1all", "g2all", "y3"]}
+    scratch = {}
+    for s in scratch_names:
+        scratch[s] = "%" + s
+        scratch[s + "_ty"] = wg64 if s in ("interp_all", "deriv_all") else wsty
+    emit_direction0(L, ctr, "    ", n, P, mems, scratch)
+    L += ["    gpu.return", "  }", "}"]
+    return "\n".join(L) + "\n"
 
 
 def module_maps():
@@ -264,6 +409,9 @@ if __name__ == "__main__":
     n = 8
     mrg = _mr(n)
     ctr = Ctr()
+    if which == "dir0":
+        sys.stdout.write(build_dir0_kernel(n, 7))
+        sys.exit(0)
     if which == "matmul":
         # B-sweep shape: interp = Btil(8x8) @ U(8x64) -> 8x64, column-tiled.
         m8 = "memref<8x8xf64>"

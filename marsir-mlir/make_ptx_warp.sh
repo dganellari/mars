@@ -38,3 +38,6 @@ emit test/warp_bsweep.mlir generated/warp_bsweep_sm90.ptx
 # EMITTER-GENERATED single face: 4 contracts + 3-term flux, staged in .shared: 8 mma
 python3 ../marsir-compiler/marsir/backends/mlir_warp.py face > test/warp_face.mlir
 emit test/warp_face.mlir generated/warp_face_sm90.ptx
+# EMITTER-GENERATED full single direction (dir0): B-sweep + 7 faces + scatter: 88 mma
+python3 ../marsir-compiler/marsir/backends/mlir_warp.py dir0 > test/warp_dir0.mlir
+emit test/warp_dir0.mlir generated/warp_dir0_sm90.ptx
