@@ -42,6 +42,10 @@ using namespace mars::amr;
 #include <thrust/functional.h>
 #include <thrust/fill.h>
 #include <thrust/copy.h>
+#include <thrust/scatter.h>
+#include <thrust/sequence.h>
+#include <thrust/iterator/constant_iterator.h>
+#include "backend/distributed/unstructured/amr/mars_amr_error_indicator.hpp"   // TetErrorIndicator (AMR refine driver)
 #include <cusolverSp.h>
 #include <cusparse.h>
 #include <chrono>
@@ -377,6 +381,15 @@ __global__ void applyBCKernel(const uint8_t* bcFlag, const RealType* bcVal,
     for (int k = rowOff[r]; k < rowOff[r + 1]; ++k)
         vals[k] = (colInd[k] == r) ? RealType(1) : RealType(0);
     rhs[r] = bcVal[r];
+}
+
+// per-node velocity magnitude from the interleaved [u,v,w,p] state -- the AMR error-indicator field
+template<typename RealType>
+__global__ void velMagKernel(const RealType* xa, RealType* umag, int nNodes)
+{
+    int i = blockIdx.x * blockDim.x + threadIdx.x; if (i >= nNodes) return;
+    RealType u = xa[4 * i], v = xa[4 * i + 1], w = xa[4 * i + 2];
+    umag[i] = sqrt(u * u + v * v + w * w);
 }
 
 template<typename RealType>
@@ -1661,8 +1674,72 @@ int main(int argc, char** argv)
                                                 nuVal, relax, inletSpeed, doRhieChow, doSupg, inletFlip,
                                                 inletSet, inletSS, outletSS};
             cstone::DeviceVector<RealType> xaP;
-            int rc = runCoupledPumpSolve<KeyType, RealType>(domain, C, xaP);
-            if (rc == 6) { MPI_Finalize(); return 6; }
+            // AMR loop (section-5 skeleton): solve on the current mesh -> |u| error indicator -> adapt
+            // (refine + transfer) -> re-fetch -> re-solve. amrLevels=0 -> one pass, no adapt = frozen mesh.
+            // Side-set CARRY-THROUGH: adaptMesh rebuilds a bare device-domain (side sets gone), so the
+            // inlet/outlet membership rides the transfer as a mask field -- a new midpoint node comes out
+            // ~1.0 iff BOTH parents were members (linear interp) -> threshold -> re-inject via SFC keys.
+            for (int level = 0; level <= amrLevels; ++level) {
+                int rc = runCoupledPumpSolve<KeyType, RealType>(amr.domain(), C, xaP);   // solve on the CURRENT mesh
+                if (rc == 6) { MPI_Finalize(); return 6; }
+                if (level >= amrLevels) break;                                            // last level: solve only
+
+                auto& dom = amr.domain();
+                const size_t nN = dom.getNodeCount();
+                const size_t nE = dom.getElementCount();
+                const int nblk = ((int)nN + blockSize - 1) / blockSize;
+
+                cstone::DeviceVector<RealType> umag; umag.resize(nN);                     // |u| for the indicator
+                velMagKernel<RealType><<<nblk, blockSize>>>(xaP.data(), umag.data(), (int)nN);
+                cudaDeviceSynchronize();
+
+                cstone::DeviceVector<RealType> inMask, outMask; inMask.resize(nN); outMask.resize(nN);
+                thrust::fill(thrust::device_pointer_cast(inMask.data()),  thrust::device_pointer_cast(inMask.data() + nN),  RealType(0));
+                thrust::fill(thrust::device_pointer_cast(outMask.data()), thrust::device_pointer_cast(outMask.data() + nN), RealType(0));
+                if (inletSet) {
+                    const auto& din = dom.sideSetNodes(inletSS);
+                    thrust::scatter(thrust::make_constant_iterator(RealType(1)), thrust::make_constant_iterator(RealType(1)) + din.size(),
+                                    thrust::device_pointer_cast(din.data()), thrust::device_pointer_cast(inMask.data()));
+                    if (!outletSS.empty()) {
+                        const auto& dout = dom.sideSetNodes(outletSS);
+                        thrust::scatter(thrust::make_constant_iterator(RealType(1)), thrust::make_constant_iterator(RealType(1)) + dout.size(),
+                                        thrust::device_pointer_cast(dout.data()), thrust::device_pointer_cast(outMask.data()));
+                    }
+                }
+
+                cstone::DeviceVector<int> n2d; n2d.resize(nN);                            // umag is per-node -> identity map
+                thrust::sequence(thrust::device_pointer_cast(n2d.data()), thrust::device_pointer_cast(n2d.data() + nN));
+                const auto& cc = dom.getElementToNodeConnectivity();
+                auto d_err = TetErrorIndicator<KeyType, RealType>::computeError(
+                    std::get<0>(cc).data(), std::get<1>(cc).data(), std::get<2>(cc).data(), std::get<3>(cc).data(),
+                    umag.data(), dom.getNodeX().data(), dom.getNodeY().data(), dom.getNodeZ().data(),
+                    n2d.data(), nE, blockSize);
+
+                cstone::DeviceVector<RealType> inMask1, outMask1;                         // transfer the masks
+                std::vector<const RealType*> oldF = {inMask.data(), outMask.data()};
+                std::vector<cstone::DeviceVector<RealType>*> newF = {&inMask1, &outMask1};
+                auto stats = amr.adaptMeshMultiField(d_err.data(), oldF, newF);
+                if (rank == 0) amr.printStats(stats, rank);
+
+                // re-inject side sets on the NEW domain: threshold transferred masks -> member SFC keys
+                auto& nd = amr.domain();
+                const size_t nN2 = nd.getNodeCount();
+                std::vector<RealType> hin(nN2), hout(nN2);
+                thrust::copy(thrust::device_pointer_cast(inMask1.data()),  thrust::device_pointer_cast(inMask1.data() + nN2),  hin.begin());
+                thrust::copy(thrust::device_pointer_cast(outMask1.data()), thrust::device_pointer_cast(outMask1.data() + nN2), hout.begin());
+                const auto& sfc = nd.getLocalToGlobalSfcMap();
+                std::vector<KeyType> hkey(nN2);
+                thrust::copy(thrust::device_pointer_cast(sfc.data()), thrust::device_pointer_cast(sfc.data() + nN2), hkey.begin());
+                if (inletSet) {
+                    std::vector<KeyType> inK, outK;
+                    for (size_t i = 0; i < nN2; ++i) {
+                        if (hin[i]  > RealType(0.99)) inK.push_back(hkey[i]);
+                        if (hout[i] > RealType(0.99)) outK.push_back(hkey[i]);
+                    }
+                    nd.setSideSetFromKeys(inletSS, inK);
+                    if (!outletSS.empty()) nd.setSideSetFromKeys(outletSS, outK);
+                }
+            }
         }
 
         // ---- 3b: Picard loop + cusolverSp QR direct reference solve + benchmark match ----
