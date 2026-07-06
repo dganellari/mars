@@ -66,3 +66,10 @@ build/tools/mir-opt/mir-opt test/warp_face_reg.mlir --lower-affine \
   | mlir-opt --gpu-lower-to-nvvm-pipeline="cubin-chip=sm_90 cubin-format=isa" \
   | python3 test/extract_ptx.py generated/warp_face_reg_sm90.ptx
 grep -c "mma.sync.aligned.m8n8k4" generated/warp_face_reg_sm90.ptx
+
+# HYBRID batched (B-sweep smem + REGISTER-RESIDENT face chain/scatter): 264 mma + 336 shfl
+python3 ../marsir-compiler/marsir/backends/mlir_warp.py hybrid > test/warp_hybrid.mlir
+build/tools/mir-opt/mir-opt test/warp_hybrid.mlir --mir-warp-distribute --canonicalize --cse --lower-affine \
+  | mlir-opt --gpu-lower-to-nvvm-pipeline="cubin-chip=sm_90 cubin-format=isa" \
+  | python3 test/extract_ptx.py generated/warp_hybrid_sm90.ptx
+grep -c "mma.sync.aligned.m8n8k4" generated/warp_hybrid_sm90.ptx

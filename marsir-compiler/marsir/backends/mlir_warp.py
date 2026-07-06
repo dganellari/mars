@@ -30,6 +30,12 @@
 
 WS = "#gpu.address_space<workgroup>"
 
+# Register-resident face chain + scatter (direct per-lane mma+shuffle, no smem).
+try:
+    from marsir.backends.mlir_warp_reg import emit_face_reg, emit_scatter_reg
+except ImportError:  # run as a plain script (sys.path[0] = this dir)
+    from mlir_warp_reg import emit_face_reg, emit_scatter_reg
+
 
 def _mr(n, space=None):
     return "memref<%dx%dxf64%s>" % (n, n, ", " + space if space else "")
@@ -721,6 +727,80 @@ def build_full_batched(n, P):
     return "\n".join(L) + "\n"
 
 
+def build_hybrid_batched(n, P):
+    """HYBRID batched operator: B-sweep still stages interp_all/deriv_all in
+    shared memory (warp-region emit_bsweep + --mir-warp-distribute), but the
+    per-face chain + scatter are REGISTER-RESIDENT (emit_face_reg /
+    emit_scatter_reg, direct per-lane mma+shuffle). flux/tmp/intf never touch
+    smem; only interp_all/deriv_all (8KB) remain. Cheap per-element metric.
+    One warp per element (grid=E). Measures the L1 drop from register-residence
+    before the harder register-resident B-sweep."""
+    ctr = Ctr()
+    mrg = _mr(n)
+    wg64 = "memref<8x%dxf64, %s>" % (n * n, WS)
+    batched = "memref<?x8x%dx%dxf64>" % (n, n)
+    metric = "memref<?x%dx%dxf64>" % (n, n)
+    gnames = ["g%d%dall" % (d, c) for d in range(3) for c in range(3)]
+    inargs = [("U", batched), ("Btil", mrg), ("Dtil", mrg), ("Dm", mrg),
+              ("W", mrg)] + [(g, metric) for g in gnames] + [("Y", batched)]
+    argstr = ", ".join("%%%s: %s" % (a, t) for a, t in inargs)
+    # only the B-sweep outputs stay in shared memory now
+    wg = "%%interp_all: %s, %%deriv_all: %s" % (wg64, wg64)
+    L = [module_maps(),
+         "gpu.module @mir_kernels [#nvvm.target<chip = \"sm_90\", O = 3>] {",
+         "  gpu.func @full_hybrid(%s) workgroup(%s) kernel {" % (argstr, wg),
+         # combined prelude: index consts + per-lane fragment indices + i32 shuffle consts
+         "    %z = arith.constant 0.0 : f64",
+         "    %zc1 = arith.constant dense<0.0> : vector<1x1xf64>",
+         "    %zc2 = arith.constant dense<0.0> : vector<1x2xf64>",
+         "    %lane = gpu.thread_id x",
+         "    %e = gpu.block_id x",
+         "    %c2 = arith.constant 2 : index"]
+    L += index_consts("    ", n * n)   # %c0,%c4,...,%c60 (index); B-sweep + %i/%k use %c4
+    L += ["    %i = arith.divui %lane, %c4 : index",
+          "    %k = arith.remui %lane, %c4 : index",
+          "    %k4 = arith.addi %k, %c4 : index",
+          "    %tc = arith.muli %k, %c2 : index",
+          "    %li = arith.index_cast %lane : index to i32"]
+    for v in [1, 2, 3, 4, 16, 28, 32]:
+        L.append("    %%j%d = arith.constant %d : i32" % (v, v))
+    ue, elem_ty = subview_elem(L, ctr, "    ", "%U", "%e", n)
+    ye, _ = subview_elem(L, ctr, "    ", "%Y", "%e", n)
+    scratch = {"interp_all": "%interp_all", "interp_all_ty": wg64,
+               "deriv_all": "%deriv_all", "deriv_all_ty": wg64}
+    gmems = {}
+    for g in gnames:
+        ge, g_ty = subview_elem_2d(L, ctr, "    ", "%" + g, "%e", n)
+        gmems[g] = ge
+    dirs = [(1, False, 0), (0, False, 1), (0, True, 2)]
+    for d, (pax, transp, sax) in enumerate(dirs):
+        # B-sweeps (warp-region -> smem), reuse emit_bsweep + emit_matmul path
+        emit_bsweep(L, ctr, "    ", n, ue, elem_ty, "%Btil",
+                    scratch["interp_all"], wg64, pax, transp, dyn=True)
+        emit_bsweep(L, ctr, "    ", n, ue, elem_ty, "%Dtil",
+                    scratch["deriv_all"], wg64, pax, transp, dyn=True)
+        L.append("    gpu.barrier")
+        ip3, ip3ty = reinterpret_2d_to_3d(L, ctr, "    ", scratch["interp_all"], n, WS)
+        dv3, dv3ty = reinterpret_2d_to_3d(L, ctr, "    ", scratch["deriv_all"], n, WS)
+        gk = ("g%d0all" % d, "g%d1all" % d, "g%d2all" % d)
+        for l in range(P):
+            ifc, ifc_ty = subview_plane(L, ctr, "    ", ip3, n, l, 0, WS)
+            dfc, dfc_ty = subview_plane(L, ctr, "    ", dv3, n, l, 0, WS)
+            fmems = {"interp": ifc, "interp_ty": ifc_ty, "deriv": dfc,
+                     "deriv_ty": dfc_ty, "Dm": "%Dm", "W": "%W",
+                     "g0": gmems[gk[0]], "g0_ty": g_ty, "g1": gmems[gk[1]],
+                     "g1_ty": g_ty, "g2": gmems[gk[2]], "g2_ty": g_ty}
+            intf = emit_face_reg(L, ctr, "    ", n, fmems, write=False)
+            ym, yty = subview_plane(L, ctr, "    ", ye, n, l, sax,
+                                    src_ty=elem_ty, dyn=True)
+            yp, ypty = subview_plane(L, ctr, "    ", ye, n, l + 1, sax,
+                                     src_ty=elem_ty, dyn=True)
+            emit_scatter_reg(L, ctr, "    ", n, intf, ym, yty, yp, ypty)
+        L.append("    gpu.barrier")   # cross-lane y visibility between directions
+    L += ["    gpu.return", "  }", "}"]
+    return "\n".join(L) + "\n"
+
+
 def build_full_batched_affine(n, P):
     """Batched operator with a CHEAP per-element metric: g{d}{c} are Exnxn (one
     nxn per element, shared across the P faces) instead of Ex8xnxn per-face.
@@ -803,6 +883,9 @@ if __name__ == "__main__":
         sys.exit(0)
     if which == "batched_affine":
         sys.stdout.write(build_full_batched_affine(n, 7))
+        sys.exit(0)
+    if which == "hybrid":
+        sys.stdout.write(build_hybrid_batched(n, 7))
         sys.exit(0)
     if which == "matmul":
         # B-sweep shape: interp = Btil(8x8) @ U(8x64) -> 8x64, column-tiled.
