@@ -194,26 +194,29 @@
     \end{column}
     \begin{column}{0.52\textwidth}
       \begin{figure}
+      % Two SEPARATE plots stacked (groupplot rendered as overlapping strips
+      % here; separate tikzpictures + \vspace is the reliable layout).
       \begin{tikzpicture}
-        \begin{groupplot}[group style={group size=1 by 2,
-              vertical sep=0.55cm}, marsplot, height=0.34\linewidth,
-              xmin=0.5,xmax=7.5, xtick={1,2,3,4,5,6,7}]
-          % top: throughput vs p (the "flat" story)
-          \nextgroupplot[title={Matrix-free throughput},
-              ylabel={MDOF/s}, ymin=0, ymax=9000]
-            \addplot[marsline,color=marsblue] coordinates {
-              (1,4794)(2,7984)(3,7895)(4,5309)(5,4258)(6,4157)(7,4530)};
-          % bottom: memory vs p (the "drops" story, log axis)
-          \nextgroupplot[title={Memory footprint},
-              xlabel={polynomial order $p$}, ylabel={bytes / DOF},
-              ymode=log, ymin=80, ymax=60000, legend pos=north west]
-            \addplot[marsline,color=marsorange] coordinates {
-              (1,324)(2,1500)(3,4116)(4,8748)(5,15972)(6,26364)(7,40500)};
-            \addlegendentry{assembled}
-            \addplot[marsline,color=marsblue] coordinates {
-              (1,421)(2,221)(3,169)(4,147)(5,134)(6,126)(7,121)};
-            \addlegendentry{matrix-free}
-        \end{groupplot}
+        \begin{axis}[marsplot, height=0.30\linewidth,
+            title={Matrix-free throughput}, ylabel={MDOF/s},
+            xmin=0.5,xmax=7.5, xtick={1,2,3,4,5,6,7}, ymin=0, ymax=9000]
+          \addplot[marsline,color=marsblue] coordinates {
+            (1,4794)(2,7984)(3,7895)(4,5309)(5,4258)(6,4157)(7,4530)};
+        \end{axis}
+      \end{tikzpicture}
+      \vspace{0.4em}
+      \begin{tikzpicture}
+        \begin{axis}[marsplot, height=0.30\linewidth, ymode=log,
+            title={Memory footprint}, xlabel={polynomial order $p$},
+            ylabel={bytes / DOF}, xmin=0.5,xmax=7.5, xtick={1,2,3,4,5,6,7},
+            ymin=80, ymax=60000, legend pos=north west]
+          \addplot[marsline,color=marsorange] coordinates {
+            (1,324)(2,1500)(3,4116)(4,8748)(5,15972)(6,26364)(7,40500)};
+          \addlegendentry{assembled}
+          \addplot[marsline,color=marsblue] coordinates {
+            (1,421)(2,221)(3,169)(4,147)(5,134)(6,126)(7,121)};
+          \addlegendentry{matrix-free}
+        \end{axis}
       \end{tikzpicture}
       \end{figure}
     \end{column}
@@ -299,12 +302,10 @@
       \begin{itemize}
         \item Weak scaling on block hex meshes block\_2M $\to$ block\_64M
               on GH200 \textcolor{marsorange}{\textbf{(runs in progress)}}
-        \item Procedural per-rank mesh generation -- no mesh file, validated
-              identical to the block meshes
+        \item Procedural per-rank mesh gen -- no mesh file
         \item Path to $10^{9}$--$10^{12}$ DOF
-              ($\sim$3000 GH200 at the current per-GPU footprint)
+              ($\sim$1550 GH200 at the 647M-DOF/GPU $p{=}4$ ceiling)
       \end{itemize}
-      \vspace{0.3em}
       \subhead{Differentiator}
       \begin{itemize}
         \item Native \textbf{unstructured AMR} on the cstone octree --
@@ -335,27 +336,35 @@
             xlabel={number of GPUs}, ylabel={global DOFs},
             xmin=1,xmax=4000, ymin=1e6,ymax=2e12,
             log basis x=10]
-          % ~3.3e8 DOF/GPU at the current footprint -> 1e12 at ~3000 GPUs
+          % 647M DOF/GPU (p=4 ceiling) -> 1e12 at ~1545 GPUs
           \addplot[marsline,color=marsblue,mark=none] coordinates {
-            (1,3.3e8)(10,3.3e9)(100,3.3e10)(1000,3.3e11)(3000,1e12)};
+            (1,6.47e8)(10,6.47e9)(100,6.47e10)(1000,6.47e11)(1545,1e12)};
           \addplot[only marks,mark=*,mark size=1.5pt,color=marsorange]
-            coordinates {(3000,1e12)};
+            coordinates {(1545,1e12)};
           \node[font=\scriptsize,color=marsorange,anchor=south east]
-            at (axis cs:3000,1e12) {$10^{12}$};
+            at (axis cs:1545,1e12) {$10^{12}$};
         \end{loglogaxis}
       \end{tikzpicture}
       \end{figure}
     \end{column}
   \end{columns}
+  {\scriptsize\textcolor{marsgrey}{\textbf{Next:} the solve (FlexGMRES + LOR-AMG)
+   $\;\cdot\;$ conforming-unstructured $10^{9}$ DOF via uniform refinement of an unstructured base}}
   \logostrip
   \note{Close on scale and what sets MARS apart. The efficiency plot is a
     DELIBERATE PLACEHOLDER -- say "weak-scaling runs are in progress" and that
     the curve will be dropped in from block_2M..block_64M on GH200. The
-    projection line is the trillion-DOF narrative: at the current per-GPU
-    footprint, ~3000 GH200 reach 1e12 DOF, enabled by procedural per-rank mesh
+    projection line is the trillion-DOF narrative: at the measured 647M-DOF/GPU
+    p=4 ceiling, ~1550 GH200 reach 1e12 DOF (projected, NOT a measured run --
+    say "projected ~1,550 GPUs"), enabled by procedural per-rank mesh
     gen (no mesh file, validated identical to the block meshes). Final
     differentiator: native unstructured AMR on the cstone octree, vs the
-    structured-AMR overset approach in Nalu-Wind / Kynema-UGF.}
+    structured-AMR overset approach in Nalu-Wind / Kynema-UGF. Close on the
+    "Next" beat as ROADMAP, not results: the solve (FlexGMRES + LOR-AMG on top
+    of the validated operator) and a genuinely-unstructured demonstration
+    (uniform refinement of an unstructured base -> conforming 1e9-DOF mesh with
+    irregular valence/partitioning, vs today's block-hex topology). Say "next",
+    not "done".}
 \end{frame}
 
 \end{document}
