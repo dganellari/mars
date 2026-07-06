@@ -317,42 +317,49 @@ def emit_scatter(L, ctr, indent, n, intf_mem, intf_ty, y3, y_ty_of, l, axis):
     L.append("%s}" % I)
 
 
-def emit_direction0(L, ctr, indent, n, P, mems, scratch):
-    """Direction 0 of the Knaus apply (no input transpose): B-sweep interp/deriv
-    = Btil/Dtil @ u_flat, then per face l apply emit_face and scatter intf into
-    y[l]/y[l+1]. mems: {u2 (8xn^2), Btil, Dtil, Dm, W, g0all,g1all,g2all (8xnxn),
-    y3 (8xnxn out)}. scratch: workgroup {interp_all,deriv_all (8xn^2), dt1g,dt2g,
-    flux,tmp,intf (nxn)} + '_ty'."""
-    WSs = WS
+def emit_direction(L, ctr, indent, n, P, mems, scratch, u2_key, g_keys,
+                   scatter_axis):
+    """One direction of the Knaus apply. B-sweep interp/deriv = Btil/Dtil @
+    u_flat (mems[u2_key], already in this direction's layout), then per face l
+    apply emit_face and scatter intf into y along `scatter_axis` (0/1/2 for the
+    three directions -- moveaxis(y,d,0)). The face slice of the B-sweep output is
+    ALWAYS axis 0 (the face dimension). g_keys = (g0,g1,g2) mems keys for this
+    direction's per-face metric. interp_all/deriv_all + per-face buffers are
+    reused across directions (barriers order them)."""
     m64 = "memref<8x%dxf64>" % (n * n)
     wg64 = "memref<8x%dxf64, %s>" % (n * n, WS)
-    # B-sweeps: interp_all = Btil @ u_flat ; deriv_all = Dtil @ u_flat
-    emit_matmul(L, ctr, indent, mems["Btil"], _mr(n), mems["u2"], m64,
+    emit_matmul(L, ctr, indent, mems["Btil"], _mr(n), mems[u2_key], m64,
                 scratch["interp_all"], wg64, m=8, k=n, ncols=n * n,
                 transposed=False)
-    emit_matmul(L, ctr, indent, mems["Dtil"], _mr(n), mems["u2"], m64,
+    emit_matmul(L, ctr, indent, mems["Dtil"], _mr(n), mems[u2_key], m64,
                 scratch["deriv_all"], wg64, m=8, k=n, ncols=n * n,
                 transposed=False)
     L.append("%sgpu.barrier" % indent)
-    ip3, ip3ty = reinterpret_2d_to_3d(L, ctr, indent, scratch["interp_all"], n, WS)
-    dv3, dv3ty = reinterpret_2d_to_3d(L, ctr, indent, scratch["deriv_all"], n, WS)
+    ip3, _ = reinterpret_2d_to_3d(L, ctr, indent, scratch["interp_all"], n, WS)
+    dv3, _ = reinterpret_2d_to_3d(L, ctr, indent, scratch["deriv_all"], n, WS)
+    g0k, g1k, g2k = g_keys
     for l in range(P):
         ifc, ifc_ty = subview_plane(L, ctr, indent, ip3, n, l, 0, WS)
         dfc, dfc_ty = subview_plane(L, ctr, indent, dv3, n, l, 0, WS)
-        g0, g0_ty = subview_plane(L, ctr, indent, mems["g0all"], n, l, 0)
-        g1, g1_ty = subview_plane(L, ctr, indent, mems["g1all"], n, l, 0)
-        g2, g2_ty = subview_plane(L, ctr, indent, mems["g2all"], n, l, 0)
+        g0, g0_ty = subview_plane(L, ctr, indent, mems[g0k], n, l, 0)
+        g1, g1_ty = subview_plane(L, ctr, indent, mems[g1k], n, l, 0)
+        g2, g2_ty = subview_plane(L, ctr, indent, mems[g2k], n, l, 0)
         fmems = {"interp": ifc, "deriv": dfc, "Dm": mems["Dm"], "W": mems["W"],
                  "g0": g0, "g1": g1, "g2": g2, "intf": scratch["intf"]}
-        # plane subviews carry a strided (+workgroup) layout; pass the actual
-        # types so emit_face's transfer_reads match the memref they read.
         ftys = {"interp": ifc_ty, "deriv": dfc_ty, "g0": g0_ty, "g1": g1_ty,
                 "g2": g2_ty, "intf": scratch["intf_ty"]}
         emit_face(L, ctr, indent, n, fmems, scratch, tys=ftys)
         L.append("%sgpu.barrier" % indent)
         emit_scatter(L, ctr, indent, n, scratch["intf"], scratch["intf_ty"],
-                     mems["y3"], None, l, 0)
+                     mems["y3"], None, l, scatter_axis)
         L.append("%sgpu.barrier" % indent)
+
+
+def emit_direction0(L, ctr, indent, n, P, mems, scratch):
+    """Direction 0 (no input transpose, scatter axis 0). Thin wrapper kept for
+    the single-direction gate."""
+    emit_direction(L, ctr, indent, n, P, mems, scratch, "u2",
+                   ("g0all", "g1all", "g2all"), scatter_axis=0)
 
 
 def build_dir0_kernel(n, P):
@@ -392,6 +399,48 @@ def build_dir0_kernel(n, P):
     return "\n".join(L) + "\n"
 
 
+def build_full_kernel(n, P):
+    """Full 3-direction operator (correctness form): the input is presented in
+    the three moveaxis layouts u0/u1/u2 (each 8xn^2) so the transpose is out of
+    the kernel for now; each direction runs emit_direction and scatters into the
+    SAME y along its own axis (0/1/2), accumulating. Per-direction metric is 9
+    arrays g{d}{c}all (8xnxn). Internalizing the transpose is the next step."""
+    ctr = Ctr()
+    mrg = _mr(n)
+    m64 = "memref<8x%dxf64>" % (n * n)
+    wg64 = "memref<8x%dxf64, %s>" % (n * n, WS)
+    wsty = _mr(n, WS)
+    gall = "memref<8x%dx%dxf64>" % (n, n)
+    uflat = ["u0", "u1", "u2"]
+    gnames = ["g%d%dall" % (d, c) for d in range(3) for c in range(3)]
+    inargs = [(u, m64) for u in uflat]
+    inargs += [("Btil", mrg), ("Dtil", mrg), ("Dm", mrg), ("W", mrg)]
+    inargs += [(g, gall) for g in gnames]
+    inargs += [("y3", gall)]
+    argstr = ", ".join("%%%s: %s" % (a, t) for a, t in inargs)
+    scratch_names = ["interp_all", "deriv_all", "dt1g", "dt2g", "flux",
+                     "tmp", "intf"]
+    wg = ", ".join("%%%s: %s" % (s, wg64 if s in ("interp_all", "deriv_all")
+                                 else wsty) for s in scratch_names)
+    L = [module_maps(),
+         "gpu.module @mir_kernels [#nvvm.target<chip = \"sm_90\", O = 3>] {",
+         "  gpu.func @full(%s) workgroup(%s) kernel {" % (argstr, wg),
+         "    %z = arith.constant 0.0 : f64",
+         "    %lane = gpu.thread_id x"]
+    L += index_consts("    ", n * n)
+    mems = {k: "%" + k for k, _ in inargs}
+    scratch = {}
+    for s in scratch_names:
+        scratch[s] = "%" + s
+        scratch[s + "_ty"] = wg64 if s in ("interp_all", "deriv_all") else wsty
+    for d in range(3):
+        gk = ("g%d0all" % d, "g%d1all" % d, "g%d2all" % d)
+        emit_direction(L, ctr, "    ", n, P, mems, scratch, uflat[d], gk,
+                       scatter_axis=d)
+    L += ["    gpu.return", "  }", "}"]
+    return "\n".join(L) + "\n"
+
+
 def module_maps():
     """The three affine maps + the transposed-B map, emitted once at top."""
     return ('#a = affine_map<(m, n, k) -> (m, k)>\n'
@@ -411,6 +460,9 @@ if __name__ == "__main__":
     ctr = Ctr()
     if which == "dir0":
         sys.stdout.write(build_dir0_kernel(n, 7))
+        sys.exit(0)
+    if which == "full":
+        sys.stdout.write(build_full_kernel(n, 7))
         sys.exit(0)
     if which == "matmul":
         # B-sweep shape: interp = Btil(8x8) @ U(8x64) -> 8x64, column-tiled.
