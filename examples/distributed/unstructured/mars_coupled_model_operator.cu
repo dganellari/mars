@@ -42,6 +42,10 @@ using namespace mars::amr;
 #include <thrust/functional.h>
 #include <thrust/fill.h>
 #include <thrust/copy.h>
+#include <thrust/scatter.h>
+#include <thrust/sequence.h>
+#include <thrust/iterator/constant_iterator.h>
+#include "backend/distributed/unstructured/amr/mars_amr_error_indicator.hpp"   // TetErrorIndicator (AMR refine driver)
 #include <cusolverSp.h>
 #include <cusparse.h>
 #include <chrono>
@@ -379,12 +383,540 @@ __global__ void applyBCKernel(const uint8_t* bcFlag, const RealType* bcVal,
     rhs[r] = bcVal[r];
 }
 
+// per-node velocity magnitude from the interleaved [u,v,w,p] state -- the AMR error-indicator field
+template<typename RealType>
+__global__ void velMagKernel(const RealType* xa, RealType* umag, int nNodes)
+{
+    int i = blockIdx.x * blockDim.x + threadIdx.x; if (i >= nNodes) return;
+    RealType u = xa[4 * i], v = xa[4 * i + 1], w = xa[4 * i + 2];
+    umag[i] = sqrt(u * u + v * v + w * w);
+}
+
 template<typename RealType>
 __global__ void extractCompKernel(const RealType* x, RealType* out, int stride, int comp, int N)
 {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= N) return;
     out[i] = x[stride * i + comp];
+}
+
+// Config for the extracted --acm-pump coupled solve. KeyType is carried for
+// template symmetry with the domain type (the struct itself only stores scalars).
+template<typename KeyType, typename RealType>
+struct CoupledPumpCfg {
+    int rank, numRanks, blockSize, picard, acmRebuild, Re;
+    double nuVal, relax, inletSpeed;
+    bool doRhieChow, doSupg, inletFlip, inletSet;
+    std::string inletSS, outletSS;
+};
+
+// The whole --acm-pump coupled collocated solve, rebuilt entirely from `domain`
+// so it can be driven once per AMR level on a fresh mesh. Returns the converged
+// interleaved [u,v,w,p] state (dof = 4*node + comp) in xa_out (resized to 4*nNodes).
+// rc 0 = ok, rc 6 = requested side set missing (caller does MPI_Finalize()).
+template<typename KeyType, typename RealType>
+int runCoupledPumpSolve(mars::ElementDomain<mars::TetTag, RealType, KeyType, cstone::GpuTag>& domain,
+                        const CoupledPumpCfg<KeyType, RealType>& C,
+                        cstone::DeviceVector<RealType>& xa_out)
+{
+    const int rank = C.rank, numRanks = C.numRanks, blockSize = C.blockSize;
+
+    // (a) connectivity + coords + counts straight from the domain (no outer-scope reliance)
+    const size_t nNodes   = domain.getNodeCount();
+    const size_t startEl  = domain.startIndex();
+    const size_t numLocal = domain.localElementCount();
+    const auto& conn = domain.getElementToNodeConnectivity();
+    // totalEl from the ARRAY length (local+halo): assemble over ALL elements so every OWNED row gets its
+    // full 1-ring; getElementCount() is ambiguous on >1 rank (stored pre-sync read count -> OOB on rank>0).
+    const size_t totalEl = std::get<0>(conn).size();
+    const KeyType* c0 = std::get<0>(conn).data();
+    const KeyType* c1 = std::get<1>(conn).data();
+    const KeyType* c2 = std::get<2>(conn).data();
+    const KeyType* c3 = std::get<3>(conn).data();
+    const RealType* nx = domain.getNodeX().data();
+    const RealType* ny = domain.getNodeY().data();
+    const RealType* nz = domain.getNodeZ().data();
+    const int ND = 4 * static_cast<int>(nNodes);
+    const int eBlocks = static_cast<int>((numLocal + blockSize - 1) / blockSize);
+
+    std::vector<uint8_t> hOwn(nNodes, 1);
+    if (numRanks > 1)
+        thrust::copy(thrust::device_pointer_cast(domain.getNodeOwnershipMap().data()),
+                     thrust::device_pointer_cast(domain.getNodeOwnershipMap().data() + nNodes), hOwn.begin());
+
+    // host connectivity over ALL elements (local + halo): the sparsity must cover the halo-element columns
+    std::vector<KeyType> h0(totalEl), h1(totalEl), h2(totalEl), h3(totalEl);
+    thrust::copy(thrust::device_pointer_cast(c0), thrust::device_pointer_cast(c0 + totalEl), h0.begin());
+    thrust::copy(thrust::device_pointer_cast(c1), thrust::device_pointer_cast(c1 + totalEl), h1.begin());
+    thrust::copy(thrust::device_pointer_cast(c2), thrust::device_pointer_cast(c2 + totalEl), h2.begin());
+    thrust::copy(thrust::device_pointer_cast(c3), thrust::device_pointer_cast(c3 + totalEl), h3.begin());
+
+    std::vector<RealType> hx(nNodes), hy(nNodes), hz(nNodes);
+    thrust::copy(thrust::device_pointer_cast(nx), thrust::device_pointer_cast(nx + nNodes), hx.begin());
+    thrust::copy(thrust::device_pointer_cast(ny), thrust::device_pointer_cast(ny + nNodes), hy.begin());
+    thrust::copy(thrust::device_pointer_cast(nz), thrust::device_pointer_cast(nz + nNodes), hz.begin());
+
+    // (b) node 1-ring adjacency (nodes sharing a tet), then interleaved 4N block sparsity
+    std::vector<std::set<int>> ring(nNodes);
+    for (size_t e = 0; e < totalEl; ++e) {
+        int nn[4] = {(int)h0[e], (int)h1[e], (int)h2[e], (int)h3[e]};
+        for (int a = 0; a < 4; ++a)
+            for (int b = 0; b < 4; ++b) ring[nn[a]].insert(nn[b]);
+    }
+    std::vector<int> h_rowOff(ND + 1, 0);
+    for (size_t i = 0; i < nNodes; ++i) {
+        int deg = 4 * static_cast<int>(ring[i].size());
+        for (int a = 0; a < 4; ++a) h_rowOff[4 * i + a + 1] = deg;
+    }
+    for (int r = 0; r < ND; ++r) h_rowOff[r + 1] += h_rowOff[r];
+    const int nnz = h_rowOff[ND];
+    std::vector<int> h_colInd(nnz);
+    for (size_t i = 0; i < nNodes; ++i) {
+        std::vector<int> rs(ring[i].begin(), ring[i].end());   // sorted (std::set)
+        for (int a = 0; a < 4; ++a) {
+            int p = h_rowOff[4 * i + a];
+            for (int j : rs)
+                for (int b = 0; b < 4; ++b) h_colInd[p++] = 4 * j + b;
+        }
+    }
+    thrust::device_vector<int>      d_rowOff(h_rowOff.begin(), h_rowOff.end());
+    thrust::device_vector<int>      d_colInd(h_colInd.begin(), h_colInd.end());
+    thrust::device_vector<RealType> d_vals(nnz, RealType(0));
+
+    const bool inletSet = C.inletSet;
+    const std::string& inletSS  = C.inletSS;
+    const std::string& outletSS = C.outletSS;
+
+    // Side-set velocity-flux inlet + no-slip walls BC builder (outlet velocity left FREE; caller pins
+    // pressure). Fills velocity comps of bcF/bcV; also returns the per-node boundary S_bnd + inlet/outlet
+    // node sets for the through-flow diagnostics. Inlet normal = global average inlet S_bnd (planar-exact).
+    // Returns false if a side set is missing.
+    std::vector<RealType> hsbx, hsby, hsbz;       // per-node boundary area vectors (also used in validation)
+    std::set<int> inN, outN;                      // inlet / outlet node sets
+    auto buildSideSetVelBC = [&](std::vector<uint8_t>& bcF, std::vector<RealType>& bcV) -> bool {
+        if (!domain.hasSideSet(inletSS) || (!outletSS.empty() && !domain.hasSideSet(outletSS))) {
+            std::cerr << "[phase0][pump] side-set not found (inlet='" << inletSS << "' outlet='" << outletSS
+                      << "'); available:";
+            for (auto& nm : domain.sideSetNames()) std::cerr << " " << nm;
+            std::cerr << "\n"; return false;
+        }
+        thrust::device_vector<RealType> dsbx(nNodes), dsby(nNodes), dsbz(nNodes);
+        // FULL element range: with local-only elements a rank-seam face occurs once and would be flagged
+        // boundary -> phantom no-slip walls along every partition seam. Halo elements pair those faces up.
+        mars::fem::computeBoundaryAreaVectorsGpu<KeyType, RealType>(c0, c1, c2, c3, 0, totalEl,
+            nx, ny, nz, (int)nNodes, thrust::raw_pointer_cast(dsbx.data()),
+            thrust::raw_pointer_cast(dsby.data()), thrust::raw_pointer_cast(dsbz.data()));
+        cudaDeviceSynchronize();
+        hsbx.resize(nNodes); hsby.resize(nNodes); hsbz.resize(nNodes);
+        thrust::copy(dsbx.begin(), dsbx.end(), hsbx.begin());
+        thrust::copy(dsby.begin(), dsby.end(), hsby.begin());
+        thrust::copy(dsbz.begin(), dsbz.end(), hsbz.begin());
+        auto ssToHost = [&](const std::string& nm) {
+            const auto& dv = domain.sideSetNodes(nm);
+            std::vector<int> h(dv.size());
+            thrust::copy(thrust::device_pointer_cast(dv.data()),
+                         thrust::device_pointer_cast(dv.data() + dv.size()), h.begin());
+            return h;
+        };
+        std::vector<int> hin = ssToHost(inletSS);
+        inN.insert(hin.begin(), hin.end());
+        if (!outletSS.empty()) { auto ho = ssToHost(outletSS); outN.insert(ho.begin(), ho.end()); }
+        RealType sx = 0, sy = 0, sz = 0;                              // net outward inlet area vector
+        for (int i : inN) { if (hOwn[i]) { sx += hsbx[i]; sy += hsby[i]; sz += hsbz[i]; } }   // owned-only: no seam double-count
+        if (numRanks > 1) {
+            RealType g[3] = {sx, sy, sz};
+            MPI_Allreduce(MPI_IN_PLACE, g, 3, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);   // the inlet normal is GLOBAL
+            sx = g[0]; sy = g[1]; sz = g[2];
+        }
+        RealType len = std::sqrt(sx * sx + sy * sy + sz * sz);
+        RealType sgn = (C.inletFlip ? RealType(1) : RealType(-1)) / (len > 0 ? len : RealType(1));  // inward
+        RealType nhx = sgn * sx, nhy = sgn * sy, nhz = sgn * sz;
+        // Side-set membership is authoritative for inlet/outlet -- apply the velocity BC to EVERY
+        // inlet/outlet node, NOT only those S_bnd flagged as boundary. S_bnd is a geometric
+        // reconstruction (boundary-face dedup + 1/3 scatter) that is legitimately zero for a side-set
+        // node whose opening faces are tagged but topologically internal (shared by 2 tets) -- gating
+        // the BC on S_bnd>0 left those nodes free -> a leaky inlet/outlet. The inlet normal is the
+        // GLOBAL average inlet S_bnd (planar), so it is well-defined even where a node's own S_bnd==0.
+        for (int i : inN) {                                           // velocity-flux inlet (all members)
+            bcF[4 * i + 0] = bcF[4 * i + 1] = bcF[4 * i + 2] = 1;
+            bcV[4 * i + 0] = C.inletSpeed * nhx; bcV[4 * i + 1] = C.inletSpeed * nhy; bcV[4 * i + 2] = C.inletSpeed * nhz;
+        }
+        // open outlet: velocity free, caller pins pressure (members already excluded from walls below)
+        for (size_t i = 0; i < nNodes; ++i) {
+            if (inN.count((int)i) || outN.count((int)i)) continue;    // inlet set above; outlet stays free
+            bool isB = (hsbx[i] * hsbx[i] + hsby[i] * hsby[i] + hsbz[i] * hsbz[i]) > RealType(1e-30);
+            if (!isB) continue;                                       // interior node: free
+            bcF[4 * i + 0] = bcF[4 * i + 1] = bcF[4 * i + 2] = 1;     // no-slip wall
+        }
+        if (rank == 0 && std::getenv("MARS_VERBOSE_MESH"))   // node counts + inlet normal identify the geometry
+            std::cout << "[phase0][pump] inlet nodes=" << inN.size() << " outlet nodes=" << outN.size()
+                      << " inward-normal=(" << nhx << "," << nhy << "," << nhz << ") speed=" << C.inletSpeed << "\n";
+        return true;
+    };
+
+    const RealType nuS  = (C.nuVal >= 0) ? static_cast<RealType>(C.nuVal) : RealType(1) / static_cast<RealType>(C.Re);
+    const RealType hpar = RealType(1) / std::sqrt(static_cast<RealType>(nNodes) * RealType(0.5));
+    const RealType tauS = hpar * hpar / (RealType(4) * nuS);
+    // operator is assembled INSIDE the Picard loop below with the frozen advecting velocity (convection)
+
+    // boundary nodes: a tet face shared by exactly one element is a surface face (host sort+count)
+    std::vector<std::array<int, 3>> faces; faces.reserve(4 * numLocal);
+    auto pushFace = [&](int a, int b, int c) {
+        int t[3] = {a, b, c}; std::sort(t, t + 3); faces.push_back({t[0], t[1], t[2]});
+    };
+    for (size_t e = 0; e < numLocal; ++e) {
+        int n0 = (int)h0[e], n1 = (int)h1[e], n2 = (int)h2[e], n3 = (int)h3[e];
+        pushFace(n0, n1, n2); pushFace(n0, n1, n3); pushFace(n0, n2, n3); pushFace(n1, n2, n3);
+    }
+    std::sort(faces.begin(), faces.end());
+    std::vector<uint8_t> isBnd(nNodes, 0);
+    for (size_t i = 0; i < faces.size(); ) {
+        size_t j = i + 1; while (j < faces.size() && faces[j] == faces[i]) ++j;
+        if (j - i == 1) for (int v : faces[i]) isBnd[v] = 1;   // single-occurrence face -> surface
+        i = j;
+    }
+    size_t nBnd = 0; for (size_t i = 0; i < nNodes; ++i) nBnd += isBnd[i];
+
+    std::vector<uint8_t> bcF(ND, 0);
+    std::vector<RealType> bcV(ND, RealType(0));
+    std::vector<RealType> hrhs(ND, RealType(0));
+    // Make the path explicit -- a silently-empty --inlet-ss= (e.g. an unset env var) would otherwise
+    // fall back to the closed-box body-force diagnostic without warning.
+    if (rank == 0)
+        std::cout << "[phase0][acm-pump] mode="
+                  << (inletSet ? "side-set through-flow (velocity-flux inlet + open outlet)"
+                               : "closed-box body-force diagnostic (no --inlet-ss)") << "\n";
+    if (inletSet) {            // pump real flow: side-set velocity-flux inlet + no-slip walls, NO body force
+        if (!buildSideSetVelBC(bcF, bcV)) { return 6; }
+    } else {                   // closed-box diagnostic: all-surface no-slip + smooth body force drive
+        for (size_t i = 0; i < nNodes; ++i) {
+            if (isBnd[i]) { bcF[4 * i + 0] = bcF[4 * i + 1] = bcF[4 * i + 2] = 1; }
+            hrhs[4 * i + 0] = std::sin(RealType(3) * hx[i] + RealType(1));      // smooth body force
+            hrhs[4 * i + 1] = std::sin(RealType(3) * hy[i] + RealType(2));
+            hrhs[4 * i + 2] = std::sin(RealType(3) * hz[i] + RealType(0.5));
+        }
+    }
+    // pin ONE pressure per connected component of the fluid node-graph. A multiply-connected
+    // domain (separate passages/chambers) has one constant-pressure null mode per component, so a
+    // single global pin leaves the rest near-null -> near-singular. Union-find over the 1-ring.
+    std::vector<int> cc(nNodes);
+    for (size_t i = 0; i < nNodes; ++i) cc[i] = static_cast<int>(i);
+    auto findRoot = [&](int x) { while (cc[x] != x) { cc[x] = cc[cc[x]]; x = cc[x]; } return x; };
+    for (size_t i = 0; i < nNodes; ++i)
+        for (int j : ring[i]) { int a = findRoot((int)i), b = findRoot(j); if (a != b) cc[a] = b; }
+    std::vector<char> rootPinned(nNodes, 0);
+    int nComp = 0;
+    // For the open-flow pump, pin pressure at the OUTLET first: it is the natural reference for the
+    // do-nothing outlet, and an arbitrary interior pin acts as a spurious mass SINK under a
+    // velocity-flux inlet (inflow drains at the pin instead of the outlet). Then fall back to one pin
+    // per OTHER component (e.g. a walled-off chamber) to kill its constant-pressure null mode.
+    if (numRanks > 1) {
+        // Multi-rank: ONE global outlet pin. The rank-local union-find sees only a partition slice, so
+        // its per-"component" fallback would scatter spurious pins (mass sinks) over a globally-connected
+        // domain. The pump fluid graph is one global component -> pin one OWNED outlet node on the
+        // lowest rank that owns any. (Walled-off sub-chambers would need a global component analysis.)
+        int cand = INT_MAX;
+        if (inletSet) for (int o : outN) if (hOwn[o]) { cand = rank; break; }
+        int winner = INT_MAX;
+        MPI_Allreduce(&cand, &winner, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
+        if (winner == INT_MAX && rank == 0)
+            std::cerr << "[phase0][acm-pump] WARNING: no rank owns an outlet node -> pressure unpinned\n";
+        if (rank == winner)
+            for (int o : outN) if (hOwn[o]) { bcF[4 * o + 3] = 1; ++nComp; break; }
+    } else {
+        if (inletSet)
+            for (int o : outN) { int r = findRoot(o); if (!rootPinned[r]) { rootPinned[r] = 1; bcF[4 * o + 3] = 1; ++nComp; } }
+        for (size_t i = 0; i < nNodes; ++i) {
+            int r = findRoot((int)i);
+            if (!rootPinned[r]) { rootPinned[r] = 1; bcF[4 * i + 3] = 1; ++nComp; }
+        }
+    }
+    if (std::getenv("MARS_VERBOSE_MESH"))   // component count is a mesh-topology fact -> opt-in
+        std::cout << "[phase0][acm-pump] fluid-graph components=" << nComp << " (one pressure pin per component)\n";
+
+    // Multi-rank: ghosts must carry their OWNER's BC flags/values -- applyBC condenses Dirichlet
+    // COLUMNS into owned rows, and a ghost wall/inlet node missed locally (its boundary faces can sit
+    // beyond the halo) leaves that column alive -> the operator differs across ranks (measured 2.9e-5
+    // momentum drift in the op-probe). Forward-exchange per component: ghost slots take owner values.
+    if (numRanks > 1) {
+        thrust::device_vector<RealType> tmp(nNodes);
+        std::vector<RealType> h_t(nNodes);
+        for (int c = 0; c < 4; ++c) {
+            for (size_t i = 0; i < nNodes; ++i) h_t[i] = (RealType)bcF[4 * i + c];
+            thrust::copy(h_t.begin(), h_t.end(), tmp.begin());
+            domain.exchangeNodeHalo(tmp);
+            thrust::copy(tmp.begin(), tmp.end(), h_t.begin());
+            for (size_t i = 0; i < nNodes; ++i) if (!hOwn[i]) bcF[4 * i + c] = h_t[i] > RealType(0.5) ? 1 : 0;
+            for (size_t i = 0; i < nNodes; ++i) h_t[i] = bcV[4 * i + c];
+            thrust::copy(h_t.begin(), h_t.end(), tmp.begin());
+            domain.exchangeNodeHalo(tmp);
+            thrust::copy(tmp.begin(), tmp.end(), h_t.begin());
+            for (size_t i = 0; i < nNodes; ++i) if (!hOwn[i]) bcV[4 * i + c] = h_t[i];
+        }
+    }
+    thrust::device_vector<uint8_t>  d_bcF(bcF.begin(), bcF.end());
+    thrust::device_vector<RealType> d_bcV(bcV.begin(), bcV.end());   // inlet flux values (0 for closed-box)
+    const int dblk = (ND + blockSize - 1) / blockSize;
+    const int nblkN = ((int)nNodes + blockSize - 1) / blockSize;
+
+    SparseMatrix<int, RealType, cstone::GpuTag> Am; Am.allocate(ND, ND, nnz);
+    thrust::copy(d_rowOff.begin(), d_rowOff.end(), thrust::device_pointer_cast(Am.rowOffsetsPtr()));
+    thrust::copy(d_colInd.begin(), d_colInd.end(), thrust::device_pointer_cast(Am.colIndicesPtr()));
+    using Vec = cstone::DeviceVector<RealType>;
+    Vec b; b.resize(ND); Vec xa; xa.resize(ND);
+    thrust::device_vector<RealType> d_rhs(ND), d_Ax(ND), d_diff(ND);
+    RealType bnorm = RealType(1);
+    const uint8_t* ownNodePtr = (numRanks > 1) ? domain.getNodeOwnershipMap().data() : nullptr;
+    auto ownedSq = [&](const thrust::device_vector<RealType>& v) -> RealType {   // sum v[d]^2 over OWNED DOFs, global
+        const RealType* vp = thrust::raw_pointer_cast(v.data());
+        const uint8_t* own = ownNodePtr;
+        RealType loc = own
+            ? thrust::transform_reduce(thrust::device, thrust::counting_iterator<size_t>(0),
+                  thrust::counting_iterator<size_t>((size_t)ND),
+                  [vp, own] __device__ (size_t d) -> RealType { return own[d >> 2] ? vp[d] * vp[d] : RealType(0); },
+                  RealType(0), thrust::plus<RealType>())
+            : thrust::inner_product(v.begin(), v.end(), v.begin(), RealType(0));
+        if (numRanks > 1) MPI_Allreduce(MPI_IN_PLACE, &loc, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+        return loc;
+    };
+    auto resid = [&](Vec& xv) -> RealType {     // ||b - A x|| / ||b|| on the BC-eliminated CSR (owned DOFs, global)
+        acmSpmvKernel<RealType><<<dblk, blockSize>>>(
+            thrust::raw_pointer_cast(d_rowOff.data()), thrust::raw_pointer_cast(d_colInd.data()),
+            thrust::raw_pointer_cast(d_vals.data()), xv.data(), thrust::raw_pointer_cast(d_Ax.data()), ND);
+        cudaDeviceSynchronize();
+        thrust::transform(thrust::device_pointer_cast(b.data()), thrust::device_pointer_cast(b.data() + ND),
+            d_Ax.begin(), d_diff.begin(), thrust::minus<RealType>());
+        RealType rn = std::sqrt(ownedSq(d_diff));
+        return rn / (bnorm > 0 ? bnorm : RealType(1));
+    };
+
+    std::cout << std::scientific << std::setprecision(3);
+    if (std::getenv("MARS_VERBOSE_MESH"))
+        std::cout << "[phase0][acm-pump] DOFs=" << ND << " nnz=" << nnz
+                  << " surface nodes=" << nBnd << "/" << nNodes << " nu=" << nuS << "\n";
+
+    // Picard outer loop: freeze the velocity (d_av*), re-assemble the CONVECTIVE momentum, re-solve with
+    // the ACM. d_av*=0 on iter 0 (pure Stokes); the previous solution then advects the next. BC and
+    // sparsity are fixed across iters; only d_vals (the operator) + b are rebuilt each iter.
+    GpuAcmPreconditioner<RealType, int, cstone::GpuTag> acm;
+    GMRESSolver<RealType, int, cstone::GpuTag> ga(2000, 1e-8, 30);
+    ga.setVerbose(false); ga.setPreconditioner(&acm); ga.setFlexible(true);
+    // Stage 1 multi-rank wiring: the interleaved 4-DOF halo exchange (one round-trip, block variant);
+    // the per-DOF ownership mask drives the solver's ghost-zero/owned-dot discipline. Single rank:
+    // none of this is installed.
+    thrust::device_vector<uint8_t> d_ownDof;
+    std::function<void(cstone::DeviceVector<RealType>&)> haloX;   // also reused after the solve for xa
+    if (numRanks > 1) {
+        std::vector<uint8_t> h_ownDof(ND);
+        for (size_t i = 0; i < nNodes; ++i)
+            for (int c = 0; c < 4; ++c) h_ownDof[4 * i + c] = hOwn[i];
+        d_ownDof.assign(h_ownDof.begin(), h_ownDof.end());
+        haloX = [&](cstone::DeviceVector<RealType>& v) {
+            domain.exchangeNodeHaloBlock(v, 4);   // one round-trip for all 4 interleaved components
+        };
+        ga.setHaloExchangeCallback(haloX);
+        ga.setOwnedDofMask(thrust::raw_pointer_cast(d_ownDof.data()));
+        ga.setParallel(true);
+        // distributed ACM: seam-consistent aggregation + replicated global coarsest. The level-0
+        // exchange wraps the domain node halo (ncomp==1: node scalar; ncomp==4: interleaved DOFs).
+        int nOwnedNodes = 0;
+        for (size_t i = 0; i < nNodes; ++i) nOwnedNodes += hOwn[i] ? 1 : 0;
+        acm.setDistributed(rank, numRanks, nOwnedNodes, ownNodePtr,
+            [&](thrust::device_vector<RealType>& v, int ncomp) {
+                if (ncomp == 1) { domain.exchangeNodeHalo(v); return; }
+                domain.exchangeNodeHaloBlock(v, ncomp);   // one round-trip for the interleaved block
+            });
+    }
+    thrust::device_vector<RealType> d_avx(nNodes, RealType(0)), d_avy(nNodes, RealType(0)),
+                                    d_avz(nNodes, RealType(0)), d_sx(nNodes), d_sy(nNodes), d_sz(nNodes), d_tmp(nNodes);
+    const RealType wrelax = static_cast<RealType>(C.relax);   // Picard under-relaxation omega (--relax)
+    int itA = 0, pit = 0; RealType rA = 0, du = 0;
+    for (pit = 0; pit < C.picard; ++pit) {
+        thrust::fill(d_vals.begin(), d_vals.end(), RealType(0));
+        if (C.doRhieChow)
+            assembleRhieChowGpu<KeyType, RealType>(c0, c1, c2, c3, nx, ny, nz,
+                thrust::raw_pointer_cast(d_rowOff.data()), thrust::raw_pointer_cast(d_colInd.data()),
+                thrust::raw_pointer_cast(d_vals.data()), nuS, C.doSupg ? RealType(1) : RealType(0),
+                thrust::raw_pointer_cast(d_avx.data()), thrust::raw_pointer_cast(d_avy.data()),
+                thrust::raw_pointer_cast(d_avz.data()), 0, totalEl, (int)nNodes, blockSize,   // ALL elements: owned rows complete
+                (numRanks > 1) ? std::function<void(thrust::device_vector<RealType>&)>(
+                    [&](thrust::device_vector<RealType>& nv) { domain.exchangeNodeHalo(nv); }) : std::function<void(thrust::device_vector<RealType>&)>{});
+        else
+            assembleCoupledStokesKernel<KeyType, RealType><<<eBlocks, blockSize>>>(
+                c0, c1, c2, c3, nx, ny, nz,
+                thrust::raw_pointer_cast(d_rowOff.data()), thrust::raw_pointer_cast(d_colInd.data()),
+                thrust::raw_pointer_cast(d_vals.data()), nuS, tauS,
+                thrust::raw_pointer_cast(d_avx.data()), thrust::raw_pointer_cast(d_avy.data()),
+                thrust::raw_pointer_cast(d_avz.data()), startEl, numLocal);
+        cudaDeviceSynchronize();
+        thrust::copy(hrhs.begin(), hrhs.end(), d_rhs.begin());
+        applyBCKernel<RealType><<<dblk, blockSize>>>(
+            thrust::raw_pointer_cast(d_bcF.data()), thrust::raw_pointer_cast(d_bcV.data()),
+            thrust::raw_pointer_cast(d_rowOff.data()), thrust::raw_pointer_cast(d_colInd.data()),
+            thrust::raw_pointer_cast(d_vals.data()), thrust::raw_pointer_cast(d_rhs.data()), ND);
+        cudaDeviceSynchronize();
+        if (numRanks > 1)                                   // ghost rows -> identity (see ghostIdentityKernel)
+            ghostIdentityKernel<RealType><<<dblk, blockSize>>>(ownNodePtr,
+                thrust::raw_pointer_cast(d_rowOff.data()), thrust::raw_pointer_cast(d_colInd.data()),
+                thrust::raw_pointer_cast(d_vals.data()), thrust::raw_pointer_cast(d_rhs.data()), ND);
+        thrust::copy(d_vals.begin(), d_vals.end(), thrust::device_pointer_cast(Am.valuesPtr()));
+        thrust::copy(d_rhs.begin(), d_rhs.end(), thrust::device_pointer_cast(b.data()));
+        thrust::copy(d_rhs.begin(), d_rhs.end(), d_diff.begin());   // reuse scratch for the owned-masked norm
+        bnorm = std::sqrt(ownedSq(d_diff));
+        // MARS_OP_PROBE=1 (picard 0): partition-independent operator check. x built from COORDINATES
+        // (same physical node -> same value on any rank), halo-refreshed, y=Ax, ghost rows zeroed,
+        // owned+Allreduce norms per block. 1-rank vs N-rank numbers must match to FP -> separates
+        // "operator assembled wrong at N ranks" from "parallel Krylov broken". Prints norms only.
+        if (std::getenv("MARS_OP_PROBE")) {   // every picard: the convective operator changes per iter
+            thrust::device_vector<RealType> xt(ND), yt(ND);
+            const RealType* xg = nx; const RealType* yg = ny; const RealType* zg = nz;
+            RealType* xtp = thrust::raw_pointer_cast(xt.data());
+            thrust::for_each(thrust::device, thrust::counting_iterator<size_t>(0),
+                thrust::counting_iterator<size_t>(nNodes),
+                [xtp, xg, yg, zg] __device__ (size_t i) {
+                    RealType s = sin(RealType(3) * xg[i] + RealType(1)) + cos(RealType(2) * yg[i]) + sin(RealType(5) * zg[i]);
+                    xtp[4*i+0] = s; xtp[4*i+1] = RealType(0.5) * s; xtp[4*i+2] = -s; xtp[4*i+3] = RealType(2) * s;
+                });
+            acmSpmvKernel<RealType><<<dblk, blockSize>>>(
+                thrust::raw_pointer_cast(d_rowOff.data()), thrust::raw_pointer_cast(d_colInd.data()),
+                thrust::raw_pointer_cast(d_vals.data()), xtp, thrust::raw_pointer_cast(yt.data()), ND);
+            cudaDeviceSynchronize();
+            const RealType* ytp = thrust::raw_pointer_cast(yt.data());
+            const uint8_t* own = ownNodePtr;
+            const uint8_t* bcp = thrust::raw_pointer_cast(d_bcF.data());   // FREE rows only: the O(1) BC
+            auto blkNorm = [&](int comp) -> RealType {   // identity rows drown the tiny physical entries
+                RealType loc = thrust::transform_reduce(thrust::device, thrust::counting_iterator<size_t>(0),
+                    thrust::counting_iterator<size_t>((size_t)ND),
+                    [ytp, own, bcp, comp] __device__ (size_t d) -> RealType {
+                        if (own && !own[d >> 2]) return RealType(0);
+                        if (bcp[d]) return RealType(0);
+                        if (comp >= 0 && (int)(d & 3) != comp) return RealType(0);
+                        return ytp[d] * ytp[d]; },
+                    RealType(0), thrust::plus<RealType>());
+                if (numRanks > 1) MPI_Allreduce(MPI_IN_PLACE, &loc, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+                return std::sqrt(loc);
+            };
+            RealType xn = 0;   // owned norm of x itself (sanity: partition-independent by construction)
+            { const RealType* xq = xtp; const uint8_t* ow = ownNodePtr;
+              xn = thrust::transform_reduce(thrust::device, thrust::counting_iterator<size_t>(0),
+                  thrust::counting_iterator<size_t>((size_t)ND),
+                  [xq, ow] __device__ (size_t d) -> RealType { return (ow && !ow[d >> 2]) ? RealType(0) : xq[d] * xq[d]; },
+                  RealType(0), thrust::plus<RealType>());
+              if (numRanks > 1) MPI_Allreduce(MPI_IN_PLACE, &xn, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+              xn = std::sqrt(xn); }
+            // blkNorm contains a COLLECTIVE -> every rank must call it; only the print is rank-gated
+            const RealType nAll = blkNorm(-1), nU = blkNorm(0), nV = blkNorm(1), nW = blkNorm(2), nP = blkNorm(3);
+            RealType avmax = thrust::transform_reduce(d_avx.begin(), d_avx.end(),
+                [] __device__ (RealType v) -> RealType { return fabs(v); }, RealType(0), thrust::maximum<RealType>());
+            if (rank == 0)
+                std::cout << std::scientific << std::setprecision(12)
+                          << "[op-probe] |x|=" << xn << " |Ax|=" << nAll
+                          << " |Ax|_u=" << nU << " |Ax|_v=" << nV
+                          << " |Ax|_w=" << nW << " |Ax|_p=" << nP
+                          << " max|av|=" << avmax << "\n" << std::flush;
+        }
+        bool reuseThis = (C.acmRebuild > 1 && (pit % C.acmRebuild != 0));   // rebuild hierarchy every K iters, reuse between
+        acm.setReuse(reuseThis);
+        cudaDeviceSynchronize();                    // flush prior async work so the timer measures only the solve
+        auto tSolve0 = std::chrono::high_resolution_clock::now();
+        ga.solve(Am, b, xa, true);                  // (re-)setup the ACM hierarchy unless frozen this iter
+        cudaDeviceSynchronize();
+        double solveMs = std::chrono::duration<double, std::milli>(
+            std::chrono::high_resolution_clock::now() - tSolve0).count();   // setup(if rebuilt)+FlexGMRES
+        if (numRanks > 1) haloX(xa);                 // ghosts <- owners: resid's owned rows + extract/blend read them
+        itA = ga.getLastIterations(); rA = resid(xa);
+        // extract the SOLVED velocity into temps, then Picard under-relax: u <- w*u_new + (1-w)*u_old.
+        // d(u) is the RELAXED change; convergence is relative to the velocity scale (|u|max).
+        extractCompKernel<RealType><<<nblkN, blockSize>>>(xa.data(), thrust::raw_pointer_cast(d_sx.data()), 4, 0, (int)nNodes);
+        extractCompKernel<RealType><<<nblkN, blockSize>>>(xa.data(), thrust::raw_pointer_cast(d_sy.data()), 4, 1, (int)nNodes);
+        extractCompKernel<RealType><<<nblkN, blockSize>>>(xa.data(), thrust::raw_pointer_cast(d_sz.data()), 4, 2, (int)nNodes);
+        cudaDeviceSynchronize();
+        thrust::transform(d_sx.begin(), d_sx.end(), d_avx.begin(), d_tmp.begin(),
+            [] __device__ (RealType s, RealType o) { return fabs(s - o); });
+        du = wrelax * thrust::reduce(d_tmp.begin(), d_tmp.end(), RealType(0), thrust::maximum<RealType>());
+        thrust::transform(d_sx.begin(), d_sx.end(), d_tmp.begin(), [] __device__ (RealType v) { return fabs(v); });
+        RealType uscale = thrust::reduce(d_tmp.begin(), d_tmp.end(), RealType(0), thrust::maximum<RealType>());
+        if (numRanks > 1) {                          // global maxima: every rank must take the SAME Picard branch
+            RealType g2[2] = {du, uscale};
+            MPI_Allreduce(MPI_IN_PLACE, g2, 2, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+            du = g2[0]; uscale = g2[1];
+        }
+        auto blend = [wrelax] __device__ (RealType s, RealType o) { return wrelax * s + (RealType(1) - wrelax) * o; };
+        thrust::transform(d_sx.begin(), d_sx.end(), d_avx.begin(), d_avx.begin(), blend);
+        thrust::transform(d_sy.begin(), d_sy.end(), d_avy.begin(), d_avy.begin(), blend);
+        thrust::transform(d_sz.begin(), d_sz.end(), d_avz.begin(), d_avz.begin(), blend);
+        double setupMs = acm.getLastSetupMs();      // hierarchy build (0 if reused); solve = total - setup
+        if (rank == 0)
+            std::cout << "[phase0][acm-pump][picard " << pit << "] ACM iters=" << itA << " res=" << rA
+                      << " d(u)=" << du << " d(u)/|u|=" << du / (uscale + RealType(1e-30))
+                      << " setup=" << setupMs << "ms solve=" << (solveMs - setupMs) << "ms"
+                      << (reuseThis ? " (reuse)" : " (rebuild)") << "\n";
+        if (du < RealType(1e-5) * (uscale + RealType(1e-30))) { ++pit; break; }   // relative steady-state
+    }
+
+    if (rank == 0)
+        std::cout << "[phase0][acm-pump] picard=" << pit << " ACM-FlexGMRES iters=" << itA
+                  << " levels=" << acm.numLevels() << " beta=" << acm.beta() << " res=" << rA << "\n";
+    if (inletSet) {
+        // pump through-flow validation: mass conservation (net boundary flux ~0 by divergence theorem),
+        // inflow sign, pressure/velocity sanity. No BoomerAMG comparison (it fails on the RC operator).
+        // PASS = physical validity: ACM converged + inflow sign + mass conserved (net boundary flux
+        // ~0 by divergence theorem). |u|max is reported as INFO -- this pump genuinely reaches
+        // hundreds of m/s at its narrowest path (collaborators ~430 m/s), so |u|max is NOT a fault.
+        std::vector<RealType> xs(ND);
+        thrust::copy(thrust::device_pointer_cast(xa.data()), thrust::device_pointer_cast(xa.data() + ND), xs.begin());
+        RealType Qin = 0, Qout = 0, Qtot = 0, pInSum = 0, umax = 0, nInOwned = 0;
+        for (size_t i = 0; i < nNodes; ++i) {
+            if (!hOwn[i]) continue;                       // owned-only: seam nodes counted once globally
+            RealType f = xs[4*i]*hsbx[i] + xs[4*i+1]*hsby[i] + xs[4*i+2]*hsbz[i]; Qtot += f;
+            RealType um = std::sqrt(xs[4*i]*xs[4*i] + xs[4*i+1]*xs[4*i+1] + xs[4*i+2]*xs[4*i+2]);
+            umax = std::max(umax, um);
+        }
+        for (int i : inN)  if (hOwn[i]) { Qin += xs[4*i]*hsbx[i] + xs[4*i+1]*hsby[i] + xs[4*i+2]*hsbz[i];
+                                          pInSum += xs[4*i+3]; nInOwned += 1; }
+        for (int i : outN) if (hOwn[i])   Qout += xs[4*i]*hsbx[i] + xs[4*i+1]*hsby[i] + xs[4*i+2]*hsbz[i];
+        if (numRanks > 1) {
+            RealType gs[5] = {Qin, Qout, Qtot, pInSum, nInOwned};
+            MPI_Allreduce(MPI_IN_PLACE, gs, 5, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+            Qin = gs[0]; Qout = gs[1]; Qtot = gs[2]; pInSum = gs[3]; nInOwned = gs[4];
+            MPI_Allreduce(MPI_IN_PLACE, &umax, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+        }
+        RealType pInMean = (nInOwned > 0) ? pInSum / nInOwned : RealType(0);
+        RealType massErr = std::abs(Qtot) / (std::abs(Qin) > RealType(1e-30) ? std::abs(Qin) : RealType(1));
+        bool inflowOk = (Qin < RealType(0));
+        bool ok = (rA < 1e-6) && std::isfinite(umax) && std::isfinite(Qtot) && inflowOk && (massErr < RealType(0.05));
+        if (rank == 0)
+        std::cout << "[phase0][acm-pump][pump] Qin=" << Qin << " Qout=" << Qout << " net=" << Qtot
+                  << " massErr=" << massErr << "  inflow=" << (inflowOk ? "OK" : "REVERSED(use --inlet-flip-normal)")
+                  << "  p_in_mean=" << pInMean << " (outlet pinned)  |u|max=" << umax << " (info, vs ref)"
+                  << "  -> " << (ok ? "PASS (through-flow, mass conserved, ACM converged)" : "CHECK") << "\n";
+    } else {
+        Vec bh, xh; bh.resize(ND); xh.resize(ND);
+        thrust::copy(d_rhs.begin(), d_rhs.end(), thrust::device_pointer_cast(bh.data()));
+        HypreGMRESSolver<RealType, int, cstone::GpuTag> hg(
+            MPI_COMM_WORLD, 2000, 1e-8, HypreGMRESSolver<RealType, int, cstone::GpuTag>::BOOMERAMG, 50);
+        hg.setVerbose(false); hg.setPointBlock(4);
+        hg.solve(Am, bh, xh, 0, ND, 0, ND, std::vector<int>{});
+        const int itH = hg.getLastIterations(); const RealType rH = resid(xh);
+        thrust::device_vector<RealType> d_xa(ND), d_xh(ND);
+        thrust::copy(thrust::device_pointer_cast(xa.data()), thrust::device_pointer_cast(xa.data() + ND), d_xa.begin());
+        thrust::copy(thrust::device_pointer_cast(xh.data()), thrust::device_pointer_cast(xh.data() + ND), d_xh.begin());
+        thrust::transform(d_xa.begin(), d_xa.end(), d_xh.begin(), d_diff.begin(),
+            [] __device__ (RealType a, RealType c) { return fabs(a - c); });
+        const RealType dmax = thrust::reduce(d_diff.begin(), d_diff.end(), RealType(0), thrust::maximum<RealType>());
+        thrust::transform(d_xa.begin(), d_xa.end(), d_diff.begin(), [] __device__ (RealType a) { return fabs(a); });
+        const RealType amax = thrust::reduce(d_diff.begin(), d_diff.end(), RealType(0), thrust::maximum<RealType>());
+        const RealType agree = dmax / (amax > 0 ? amax : RealType(1));
+        std::cout << "[phase0][acm-pump] BoomerAMG-GMRES iters=" << itH << " res=" << rH << "\n";
+        std::cout << "[phase0][acm-pump] solvers agree |x_acm-x_amg|rel=" << agree
+                  << "  -> " << ((rA < 1e-6 && rH < 1e-6 && agree < 1e-2) ? "PASS" : "CHECK") << "\n";
+    }
+
+    xa_out.resize(ND);
+    thrust::copy(thrust::device_pointer_cast(xa.data()),
+                 thrust::device_pointer_cast(xa.data() + ND),
+                 thrust::device_pointer_cast(xa_out.data()));
+    return 0;
 }
 
 int main(int argc, char** argv)
@@ -475,6 +1007,11 @@ int main(int argc, char** argv)
     AmrManager<TetTag, KeyType, RealType>::Config cfg;
     cfg.maxLevels      = amrLevels;      // 0 = frozen mesh (unchanged); >0 = adapt+resolve (--acm-pump-amr loop)
     cfg.refineFraction = static_cast<RealType>(refineFrac);
+    // OctreeNative marking IGNORES refineFraction (it refines by octree error MAGNITUDE -> on the pump's
+    // broadly-high |u| gradient that refines ~everything = uniform). Doerfler honors the top-fraction +
+    // enforces 2:1 -> a genuinely SPARSE adaptive mesh (the case that actually creates refined/coarse
+    // interfaces). So: fraction<1 => Doerfler; fraction>=1 (uniform) => OctreeNative.
+    cfg.strategy   = (refineFrac < 1.0) ? MarkingStrategy::Doerfler : MarkingStrategy::OctreeNative;
     cfg.blockSize  = blockSize;
     cfg.bucketSize = bucketSize;
     if (!inletSS.empty()) cfg.storeSideSets = true;   // pump inlet/outlet BC needs the Exodus side sets (survives adapt)
@@ -1137,364 +1674,76 @@ int main(int argc, char** argv)
         // ---- ACM on a real mesh: mesh-agnostic ACM-FlexGMRES vs Hypre BoomerAMG (residual-based,
         //      no direct reference -> scales to large meshes). Closed-domain Stokes: u=v=w=0 on the
         //      surface, pressure pinned, smooth body force drives the flow. ----
-        if (doAcmPump)
-        {
-            const RealType nuS  = (nuVal >= 0) ? static_cast<RealType>(nuVal) : RealType(1) / static_cast<RealType>(Re);
-            const RealType hpar = RealType(1) / std::sqrt(static_cast<RealType>(nNodes) * RealType(0.5));
-            const RealType tauS = hpar * hpar / (RealType(4) * nuS);
-            // operator is assembled INSIDE the Picard loop below with the frozen advecting velocity (convection)
+        if (doAcmPump) {
+            CoupledPumpCfg<KeyType, RealType> C{rank, numRanks, blockSize, picard, acmRebuild, Re,
+                                                nuVal, relax, inletSpeed, doRhieChow, doSupg, inletFlip,
+                                                inletSet, inletSS, outletSS};
+            cstone::DeviceVector<RealType> xaP;
+            // AMR loop (section-5 skeleton): solve on the current mesh -> |u| error indicator -> adapt
+            // (refine + transfer) -> re-fetch -> re-solve. amrLevels=0 -> one pass, no adapt = frozen mesh.
+            // Side-set CARRY-THROUGH: adaptMesh rebuilds a bare device-domain (side sets gone), so the
+            // inlet/outlet membership rides the transfer as a mask field -- a new midpoint node comes out
+            // ~1.0 iff BOTH parents were members (linear interp) -> threshold -> re-inject via SFC keys.
+            for (int level = 0; level <= amrLevels; ++level) {
+                int rc = runCoupledPumpSolve<KeyType, RealType>(amr.domain(), C, xaP);   // solve on the CURRENT mesh
+                if (rc == 6) { MPI_Finalize(); return 6; }
+                if (level >= amrLevels) break;                                            // last level: solve only
 
-            // boundary nodes: a tet face shared by exactly one element is a surface face (host sort+count)
-            std::vector<std::array<int, 3>> faces; faces.reserve(4 * numLocal);
-            auto pushFace = [&](int a, int b, int c) {
-                int t[3] = {a, b, c}; std::sort(t, t + 3); faces.push_back({t[0], t[1], t[2]});
-            };
-            for (size_t e = 0; e < numLocal; ++e) {
-                int n0 = (int)h0[e], n1 = (int)h1[e], n2 = (int)h2[e], n3 = (int)h3[e];
-                pushFace(n0, n1, n2); pushFace(n0, n1, n3); pushFace(n0, n2, n3); pushFace(n1, n2, n3);
-            }
-            std::sort(faces.begin(), faces.end());
-            std::vector<uint8_t> isBnd(nNodes, 0);
-            for (size_t i = 0; i < faces.size(); ) {
-                size_t j = i + 1; while (j < faces.size() && faces[j] == faces[i]) ++j;
-                if (j - i == 1) for (int v : faces[i]) isBnd[v] = 1;   // single-occurrence face -> surface
-                i = j;
-            }
-            size_t nBnd = 0; for (size_t i = 0; i < nNodes; ++i) nBnd += isBnd[i];
+                auto& dom = amr.domain();
+                const size_t nN = dom.getNodeCount();
+                const size_t nE = dom.getElementCount();
+                const int nblk = ((int)nN + blockSize - 1) / blockSize;
 
-            std::vector<uint8_t> bcF(ND, 0);
-            std::vector<RealType> bcV(ND, RealType(0));
-            std::vector<RealType> hrhs(ND, RealType(0));
-            // Make the path explicit -- a silently-empty --inlet-ss= (e.g. an unset env var) would otherwise
-            // fall back to the closed-box body-force diagnostic without warning.
-            if (rank == 0)
-                std::cout << "[phase0][acm-pump] mode="
-                          << (inletSet ? "side-set through-flow (velocity-flux inlet + open outlet)"
-                                       : "closed-box body-force diagnostic (no --inlet-ss)") << "\n";
-            if (inletSet) {            // pump real flow: side-set velocity-flux inlet + no-slip walls, NO body force
-                if (!buildSideSetVelBC(bcF, bcV)) { MPI_Finalize(); return 6; }
-            } else {                   // closed-box diagnostic: all-surface no-slip + smooth body force drive
-                for (size_t i = 0; i < nNodes; ++i) {
-                    if (isBnd[i]) { bcF[4 * i + 0] = bcF[4 * i + 1] = bcF[4 * i + 2] = 1; }
-                    hrhs[4 * i + 0] = std::sin(RealType(3) * hx[i] + RealType(1));      // smooth body force
-                    hrhs[4 * i + 1] = std::sin(RealType(3) * hy[i] + RealType(2));
-                    hrhs[4 * i + 2] = std::sin(RealType(3) * hz[i] + RealType(0.5));
-                }
-            }
-            // pin ONE pressure per connected component of the fluid node-graph. A multiply-connected
-            // domain (separate passages/chambers) has one constant-pressure null mode per component, so a
-            // single global pin leaves the rest near-null -> near-singular. Union-find over the 1-ring.
-            std::vector<int> cc(nNodes);
-            for (size_t i = 0; i < nNodes; ++i) cc[i] = static_cast<int>(i);
-            auto findRoot = [&](int x) { while (cc[x] != x) { cc[x] = cc[cc[x]]; x = cc[x]; } return x; };
-            for (size_t i = 0; i < nNodes; ++i)
-                for (int j : ring[i]) { int a = findRoot((int)i), b = findRoot(j); if (a != b) cc[a] = b; }
-            std::vector<char> rootPinned(nNodes, 0);
-            int nComp = 0;
-            // For the open-flow pump, pin pressure at the OUTLET first: it is the natural reference for the
-            // do-nothing outlet, and an arbitrary interior pin acts as a spurious mass SINK under a
-            // velocity-flux inlet (inflow drains at the pin instead of the outlet). Then fall back to one pin
-            // per OTHER component (e.g. a walled-off chamber) to kill its constant-pressure null mode.
-            if (numRanks > 1) {
-                // Multi-rank: ONE global outlet pin. The rank-local union-find sees only a partition slice, so
-                // its per-"component" fallback would scatter spurious pins (mass sinks) over a globally-connected
-                // domain. The pump fluid graph is one global component -> pin one OWNED outlet node on the
-                // lowest rank that owns any. (Walled-off sub-chambers would need a global component analysis.)
-                int cand = INT_MAX;
-                if (inletSet) for (int o : outN) if (hOwn[o]) { cand = rank; break; }
-                int winner = INT_MAX;
-                MPI_Allreduce(&cand, &winner, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
-                if (winner == INT_MAX && rank == 0)
-                    std::cerr << "[phase0][acm-pump] WARNING: no rank owns an outlet node -> pressure unpinned\n";
-                if (rank == winner)
-                    for (int o : outN) if (hOwn[o]) { bcF[4 * o + 3] = 1; ++nComp; break; }
-            } else {
-                if (inletSet)
-                    for (int o : outN) { int r = findRoot(o); if (!rootPinned[r]) { rootPinned[r] = 1; bcF[4 * o + 3] = 1; ++nComp; } }
-                for (size_t i = 0; i < nNodes; ++i) {
-                    int r = findRoot((int)i);
-                    if (!rootPinned[r]) { rootPinned[r] = 1; bcF[4 * i + 3] = 1; ++nComp; }
-                }
-            }
-            if (std::getenv("MARS_VERBOSE_MESH"))   // component count is a mesh-topology fact -> opt-in
-                std::cout << "[phase0][acm-pump] fluid-graph components=" << nComp << " (one pressure pin per component)\n";
-
-            // Multi-rank: ghosts must carry their OWNER's BC flags/values -- applyBC condenses Dirichlet
-            // COLUMNS into owned rows, and a ghost wall/inlet node missed locally (its boundary faces can sit
-            // beyond the halo) leaves that column alive -> the operator differs across ranks (measured 2.9e-5
-            // momentum drift in the op-probe). Forward-exchange per component: ghost slots take owner values.
-            if (numRanks > 1) {
-                thrust::device_vector<RealType> tmp(nNodes);
-                std::vector<RealType> h_t(nNodes);
-                for (int c = 0; c < 4; ++c) {
-                    for (size_t i = 0; i < nNodes; ++i) h_t[i] = (RealType)bcF[4 * i + c];
-                    thrust::copy(h_t.begin(), h_t.end(), tmp.begin());
-                    domain.exchangeNodeHalo(tmp);
-                    thrust::copy(tmp.begin(), tmp.end(), h_t.begin());
-                    for (size_t i = 0; i < nNodes; ++i) if (!hOwn[i]) bcF[4 * i + c] = h_t[i] > RealType(0.5) ? 1 : 0;
-                    for (size_t i = 0; i < nNodes; ++i) h_t[i] = bcV[4 * i + c];
-                    thrust::copy(h_t.begin(), h_t.end(), tmp.begin());
-                    domain.exchangeNodeHalo(tmp);
-                    thrust::copy(tmp.begin(), tmp.end(), h_t.begin());
-                    for (size_t i = 0; i < nNodes; ++i) if (!hOwn[i]) bcV[4 * i + c] = h_t[i];
-                }
-            }
-            thrust::device_vector<uint8_t>  d_bcF(bcF.begin(), bcF.end());
-            thrust::device_vector<RealType> d_bcV(bcV.begin(), bcV.end());   // inlet flux values (0 for closed-box)
-            const int dblk = (ND + blockSize - 1) / blockSize;
-            const int nblkN = ((int)nNodes + blockSize - 1) / blockSize;
-
-            SparseMatrix<int, RealType, cstone::GpuTag> Am; Am.allocate(ND, ND, nnz);
-            thrust::copy(d_rowOff.begin(), d_rowOff.end(), thrust::device_pointer_cast(Am.rowOffsetsPtr()));
-            thrust::copy(d_colInd.begin(), d_colInd.end(), thrust::device_pointer_cast(Am.colIndicesPtr()));
-            using Vec = cstone::DeviceVector<RealType>;
-            Vec b; b.resize(ND); Vec xa; xa.resize(ND);
-            thrust::device_vector<RealType> d_rhs(ND), d_Ax(ND), d_diff(ND);
-            RealType bnorm = RealType(1);
-            const uint8_t* ownNodePtr = (numRanks > 1) ? domain.getNodeOwnershipMap().data() : nullptr;
-            auto ownedSq = [&](const thrust::device_vector<RealType>& v) -> RealType {   // sum v[d]^2 over OWNED DOFs, global
-                const RealType* vp = thrust::raw_pointer_cast(v.data());
-                const uint8_t* own = ownNodePtr;
-                RealType loc = own
-                    ? thrust::transform_reduce(thrust::device, thrust::counting_iterator<size_t>(0),
-                          thrust::counting_iterator<size_t>((size_t)ND),
-                          [vp, own] __device__ (size_t d) -> RealType { return own[d >> 2] ? vp[d] * vp[d] : RealType(0); },
-                          RealType(0), thrust::plus<RealType>())
-                    : thrust::inner_product(v.begin(), v.end(), v.begin(), RealType(0));
-                if (numRanks > 1) MPI_Allreduce(MPI_IN_PLACE, &loc, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-                return loc;
-            };
-            auto resid = [&](Vec& xv) -> RealType {     // ||b - A x|| / ||b|| on the BC-eliminated CSR (owned DOFs, global)
-                acmSpmvKernel<RealType><<<dblk, blockSize>>>(
-                    thrust::raw_pointer_cast(d_rowOff.data()), thrust::raw_pointer_cast(d_colInd.data()),
-                    thrust::raw_pointer_cast(d_vals.data()), xv.data(), thrust::raw_pointer_cast(d_Ax.data()), ND);
+                cstone::DeviceVector<RealType> umag; umag.resize(nN);                     // |u| for the indicator
+                velMagKernel<RealType><<<nblk, blockSize>>>(xaP.data(), umag.data(), (int)nN);
                 cudaDeviceSynchronize();
-                thrust::transform(thrust::device_pointer_cast(b.data()), thrust::device_pointer_cast(b.data() + ND),
-                    d_Ax.begin(), d_diff.begin(), thrust::minus<RealType>());
-                RealType rn = std::sqrt(ownedSq(d_diff));
-                return rn / (bnorm > 0 ? bnorm : RealType(1));
-            };
 
-            std::cout << std::scientific << std::setprecision(3);
-            if (std::getenv("MARS_VERBOSE_MESH"))
-                std::cout << "[phase0][acm-pump] DOFs=" << ND << " nnz=" << nnz
-                          << " surface nodes=" << nBnd << "/" << nNodes << " nu=" << nuS << "\n";
+                cstone::DeviceVector<RealType> inMask, outMask; inMask.resize(nN); outMask.resize(nN);
+                thrust::fill(thrust::device_pointer_cast(inMask.data()),  thrust::device_pointer_cast(inMask.data() + nN),  RealType(0));
+                thrust::fill(thrust::device_pointer_cast(outMask.data()), thrust::device_pointer_cast(outMask.data() + nN), RealType(0));
+                if (inletSet) {
+                    const auto& din = dom.sideSetNodes(inletSS);
+                    thrust::scatter(thrust::make_constant_iterator(RealType(1)), thrust::make_constant_iterator(RealType(1)) + din.size(),
+                                    thrust::device_pointer_cast(din.data()), thrust::device_pointer_cast(inMask.data()));
+                    if (!outletSS.empty()) {
+                        const auto& dout = dom.sideSetNodes(outletSS);
+                        thrust::scatter(thrust::make_constant_iterator(RealType(1)), thrust::make_constant_iterator(RealType(1)) + dout.size(),
+                                        thrust::device_pointer_cast(dout.data()), thrust::device_pointer_cast(outMask.data()));
+                    }
+                }
 
-            // Picard outer loop: freeze the velocity (d_av*), re-assemble the CONVECTIVE momentum, re-solve with
-            // the ACM. d_av*=0 on iter 0 (pure Stokes); the previous solution then advects the next. BC and
-            // sparsity are fixed across iters; only d_vals (the operator) + b are rebuilt each iter.
-            GpuAcmPreconditioner<RealType, int, cstone::GpuTag> acm;
-            GMRESSolver<RealType, int, cstone::GpuTag> ga(2000, 1e-8, 30);
-            ga.setVerbose(false); ga.setPreconditioner(&acm); ga.setFlexible(true);
-            // Stage 1 multi-rank wiring: the interleaved 4-DOF halo exchange (one round-trip, block variant);
-            // the per-DOF ownership mask drives the solver's ghost-zero/owned-dot discipline. Single rank:
-            // none of this is installed.
-            thrust::device_vector<uint8_t> d_ownDof;
-            std::function<void(cstone::DeviceVector<RealType>&)> haloX;   // also reused after the solve for xa
-            if (numRanks > 1) {
-                std::vector<uint8_t> h_ownDof(ND);
-                for (size_t i = 0; i < nNodes; ++i)
-                    for (int c = 0; c < 4; ++c) h_ownDof[4 * i + c] = hOwn[i];
-                d_ownDof.assign(h_ownDof.begin(), h_ownDof.end());
-                haloX = [&](cstone::DeviceVector<RealType>& v) {
-                    domain.exchangeNodeHaloBlock(v, 4);   // one round-trip for all 4 interleaved components
-                };
-                ga.setHaloExchangeCallback(haloX);
-                ga.setOwnedDofMask(thrust::raw_pointer_cast(d_ownDof.data()));
-                ga.setParallel(true);
-                // distributed ACM: seam-consistent aggregation + replicated global coarsest. The level-0
-                // exchange wraps the domain node halo (ncomp==1: node scalar; ncomp==4: interleaved DOFs).
-                int nOwnedNodes = 0;
-                for (size_t i = 0; i < nNodes; ++i) nOwnedNodes += hOwn[i] ? 1 : 0;
-                acm.setDistributed(rank, numRanks, nOwnedNodes, ownNodePtr,
-                    [&](thrust::device_vector<RealType>& v, int ncomp) {
-                        if (ncomp == 1) { domain.exchangeNodeHalo(v); return; }
-                        domain.exchangeNodeHaloBlock(v, ncomp);   // one round-trip for the interleaved block
-                    });
-            }
-            thrust::device_vector<RealType> d_avx(nNodes, RealType(0)), d_avy(nNodes, RealType(0)),
-                                            d_avz(nNodes, RealType(0)), d_sx(nNodes), d_sy(nNodes), d_sz(nNodes), d_tmp(nNodes);
-            const RealType wrelax = static_cast<RealType>(relax);   // Picard under-relaxation omega (--relax)
-            int itA = 0, pit = 0; RealType rA = 0, du = 0;
-            for (pit = 0; pit < picard; ++pit) {
-                thrust::fill(d_vals.begin(), d_vals.end(), RealType(0));
-                if (doRhieChow)
-                    assembleRhieChowGpu<KeyType, RealType>(c0, c1, c2, c3, nx, ny, nz,
-                        thrust::raw_pointer_cast(d_rowOff.data()), thrust::raw_pointer_cast(d_colInd.data()),
-                        thrust::raw_pointer_cast(d_vals.data()), nuS, doSupg ? RealType(1) : RealType(0),
-                        thrust::raw_pointer_cast(d_avx.data()), thrust::raw_pointer_cast(d_avy.data()),
-                        thrust::raw_pointer_cast(d_avz.data()), 0, totalEl, (int)nNodes, blockSize,   // ALL elements: owned rows complete
-                        (numRanks > 1) ? std::function<void(thrust::device_vector<RealType>&)>(
-                            [&](thrust::device_vector<RealType>& nv) { domain.exchangeNodeHalo(nv); }) : std::function<void(thrust::device_vector<RealType>&)>{});
-                else
-                    assembleCoupledStokesKernel<KeyType, RealType><<<eBlocks, blockSize>>>(
-                        c0, c1, c2, c3, nx, ny, nz,
-                        thrust::raw_pointer_cast(d_rowOff.data()), thrust::raw_pointer_cast(d_colInd.data()),
-                        thrust::raw_pointer_cast(d_vals.data()), nuS, tauS,
-                        thrust::raw_pointer_cast(d_avx.data()), thrust::raw_pointer_cast(d_avy.data()),
-                        thrust::raw_pointer_cast(d_avz.data()), startEl, numLocal);
-                cudaDeviceSynchronize();
-                thrust::copy(hrhs.begin(), hrhs.end(), d_rhs.begin());
-                applyBCKernel<RealType><<<dblk, blockSize>>>(
-                    thrust::raw_pointer_cast(d_bcF.data()), thrust::raw_pointer_cast(d_bcV.data()),
-                    thrust::raw_pointer_cast(d_rowOff.data()), thrust::raw_pointer_cast(d_colInd.data()),
-                    thrust::raw_pointer_cast(d_vals.data()), thrust::raw_pointer_cast(d_rhs.data()), ND);
-                cudaDeviceSynchronize();
-                if (numRanks > 1)                                   // ghost rows -> identity (see ghostIdentityKernel)
-                    ghostIdentityKernel<RealType><<<dblk, blockSize>>>(ownNodePtr,
-                        thrust::raw_pointer_cast(d_rowOff.data()), thrust::raw_pointer_cast(d_colInd.data()),
-                        thrust::raw_pointer_cast(d_vals.data()), thrust::raw_pointer_cast(d_rhs.data()), ND);
-                thrust::copy(d_vals.begin(), d_vals.end(), thrust::device_pointer_cast(Am.valuesPtr()));
-                thrust::copy(d_rhs.begin(), d_rhs.end(), thrust::device_pointer_cast(b.data()));
-                thrust::copy(d_rhs.begin(), d_rhs.end(), d_diff.begin());   // reuse scratch for the owned-masked norm
-                bnorm = std::sqrt(ownedSq(d_diff));
-                // MARS_OP_PROBE=1 (picard 0): partition-independent operator check. x built from COORDINATES
-                // (same physical node -> same value on any rank), halo-refreshed, y=Ax, ghost rows zeroed,
-                // owned+Allreduce norms per block. 1-rank vs N-rank numbers must match to FP -> separates
-                // "operator assembled wrong at N ranks" from "parallel Krylov broken". Prints norms only.
-                if (std::getenv("MARS_OP_PROBE")) {   // every picard: the convective operator changes per iter
-                    thrust::device_vector<RealType> xt(ND), yt(ND);
-                    const RealType* xg = nx; const RealType* yg = ny; const RealType* zg = nz;
-                    RealType* xtp = thrust::raw_pointer_cast(xt.data());
-                    thrust::for_each(thrust::device, thrust::counting_iterator<size_t>(0),
-                        thrust::counting_iterator<size_t>(nNodes),
-                        [xtp, xg, yg, zg] __device__ (size_t i) {
-                            RealType s = sin(RealType(3) * xg[i] + RealType(1)) + cos(RealType(2) * yg[i]) + sin(RealType(5) * zg[i]);
-                            xtp[4*i+0] = s; xtp[4*i+1] = RealType(0.5) * s; xtp[4*i+2] = -s; xtp[4*i+3] = RealType(2) * s;
-                        });
-                    acmSpmvKernel<RealType><<<dblk, blockSize>>>(
-                        thrust::raw_pointer_cast(d_rowOff.data()), thrust::raw_pointer_cast(d_colInd.data()),
-                        thrust::raw_pointer_cast(d_vals.data()), xtp, thrust::raw_pointer_cast(yt.data()), ND);
-                    cudaDeviceSynchronize();
-                    const RealType* ytp = thrust::raw_pointer_cast(yt.data());
-                    const uint8_t* own = ownNodePtr;
-                    const uint8_t* bcp = thrust::raw_pointer_cast(d_bcF.data());   // FREE rows only: the O(1) BC
-                    auto blkNorm = [&](int comp) -> RealType {   // identity rows drown the tiny physical entries
-                        RealType loc = thrust::transform_reduce(thrust::device, thrust::counting_iterator<size_t>(0),
-                            thrust::counting_iterator<size_t>((size_t)ND),
-                            [ytp, own, bcp, comp] __device__ (size_t d) -> RealType {
-                                if (own && !own[d >> 2]) return RealType(0);
-                                if (bcp[d]) return RealType(0);
-                                if (comp >= 0 && (int)(d & 3) != comp) return RealType(0);
-                                return ytp[d] * ytp[d]; },
-                            RealType(0), thrust::plus<RealType>());
-                        if (numRanks > 1) MPI_Allreduce(MPI_IN_PLACE, &loc, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-                        return std::sqrt(loc);
-                    };
-                    RealType xn = 0;   // owned norm of x itself (sanity: partition-independent by construction)
-                    { const RealType* xq = xtp; const uint8_t* ow = ownNodePtr;
-                      xn = thrust::transform_reduce(thrust::device, thrust::counting_iterator<size_t>(0),
-                          thrust::counting_iterator<size_t>((size_t)ND),
-                          [xq, ow] __device__ (size_t d) -> RealType { return (ow && !ow[d >> 2]) ? RealType(0) : xq[d] * xq[d]; },
-                          RealType(0), thrust::plus<RealType>());
-                      if (numRanks > 1) MPI_Allreduce(MPI_IN_PLACE, &xn, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-                      xn = std::sqrt(xn); }
-                    // blkNorm contains a COLLECTIVE -> every rank must call it; only the print is rank-gated
-                    const RealType nAll = blkNorm(-1), nU = blkNorm(0), nV = blkNorm(1), nW = blkNorm(2), nP = blkNorm(3);
-                    RealType avmax = thrust::transform_reduce(d_avx.begin(), d_avx.end(),
-                        [] __device__ (RealType v) -> RealType { return fabs(v); }, RealType(0), thrust::maximum<RealType>());
-                    if (rank == 0)
-                        std::cout << std::scientific << std::setprecision(12)
-                                  << "[op-probe] |x|=" << xn << " |Ax|=" << nAll
-                                  << " |Ax|_u=" << nU << " |Ax|_v=" << nV
-                                  << " |Ax|_w=" << nW << " |Ax|_p=" << nP
-                                  << " max|av|=" << avmax << "\n" << std::flush;
-                }
-                bool reuseThis = (acmRebuild > 1 && (pit % acmRebuild != 0));   // rebuild hierarchy every K iters, reuse between
-                acm.setReuse(reuseThis);
-                cudaDeviceSynchronize();                    // flush prior async work so the timer measures only the solve
-                auto tSolve0 = std::chrono::high_resolution_clock::now();
-                ga.solve(Am, b, xa, true);                  // (re-)setup the ACM hierarchy unless frozen this iter
-                cudaDeviceSynchronize();
-                double solveMs = std::chrono::duration<double, std::milli>(
-                    std::chrono::high_resolution_clock::now() - tSolve0).count();   // setup(if rebuilt)+FlexGMRES
-                if (numRanks > 1) haloX(xa);                 // ghosts <- owners: resid's owned rows + extract/blend read them
-                itA = ga.getLastIterations(); rA = resid(xa);
-                // extract the SOLVED velocity into temps, then Picard under-relax: u <- w*u_new + (1-w)*u_old.
-                // d(u) is the RELAXED change; convergence is relative to the velocity scale (|u|max).
-                extractCompKernel<RealType><<<nblkN, blockSize>>>(xa.data(), thrust::raw_pointer_cast(d_sx.data()), 4, 0, (int)nNodes);
-                extractCompKernel<RealType><<<nblkN, blockSize>>>(xa.data(), thrust::raw_pointer_cast(d_sy.data()), 4, 1, (int)nNodes);
-                extractCompKernel<RealType><<<nblkN, blockSize>>>(xa.data(), thrust::raw_pointer_cast(d_sz.data()), 4, 2, (int)nNodes);
-                cudaDeviceSynchronize();
-                thrust::transform(d_sx.begin(), d_sx.end(), d_avx.begin(), d_tmp.begin(),
-                    [] __device__ (RealType s, RealType o) { return fabs(s - o); });
-                du = wrelax * thrust::reduce(d_tmp.begin(), d_tmp.end(), RealType(0), thrust::maximum<RealType>());
-                thrust::transform(d_sx.begin(), d_sx.end(), d_tmp.begin(), [] __device__ (RealType v) { return fabs(v); });
-                RealType uscale = thrust::reduce(d_tmp.begin(), d_tmp.end(), RealType(0), thrust::maximum<RealType>());
-                if (numRanks > 1) {                          // global maxima: every rank must take the SAME Picard branch
-                    RealType g2[2] = {du, uscale};
-                    MPI_Allreduce(MPI_IN_PLACE, g2, 2, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
-                    du = g2[0]; uscale = g2[1];
-                }
-                auto blend = [wrelax] __device__ (RealType s, RealType o) { return wrelax * s + (RealType(1) - wrelax) * o; };
-                thrust::transform(d_sx.begin(), d_sx.end(), d_avx.begin(), d_avx.begin(), blend);
-                thrust::transform(d_sy.begin(), d_sy.end(), d_avy.begin(), d_avy.begin(), blend);
-                thrust::transform(d_sz.begin(), d_sz.end(), d_avz.begin(), d_avz.begin(), blend);
-                double setupMs = acm.getLastSetupMs();      // hierarchy build (0 if reused); solve = total - setup
-                if (rank == 0)
-                    std::cout << "[phase0][acm-pump][picard " << pit << "] ACM iters=" << itA << " res=" << rA
-                              << " d(u)=" << du << " d(u)/|u|=" << du / (uscale + RealType(1e-30))
-                              << " setup=" << setupMs << "ms solve=" << (solveMs - setupMs) << "ms"
-                              << (reuseThis ? " (reuse)" : " (rebuild)") << "\n";
-                if (du < RealType(1e-5) * (uscale + RealType(1e-30))) { ++pit; break; }   // relative steady-state
-            }
+                cstone::DeviceVector<int> n2d; n2d.resize(nN);                            // umag is per-node -> identity map
+                thrust::sequence(thrust::device_pointer_cast(n2d.data()), thrust::device_pointer_cast(n2d.data() + nN));
+                const auto& cc = dom.getElementToNodeConnectivity();
+                auto d_err = TetErrorIndicator<KeyType, RealType>::computeError(
+                    std::get<0>(cc).data(), std::get<1>(cc).data(), std::get<2>(cc).data(), std::get<3>(cc).data(),
+                    umag.data(), dom.getNodeX().data(), dom.getNodeY().data(), dom.getNodeZ().data(),
+                    n2d.data(), nE, blockSize);
 
-            if (rank == 0)
-                std::cout << "[phase0][acm-pump] picard=" << pit << " ACM-FlexGMRES iters=" << itA
-                          << " levels=" << acm.numLevels() << " beta=" << acm.beta() << " res=" << rA << "\n";
-            if (inletSet) {
-                // pump through-flow validation: mass conservation (net boundary flux ~0 by divergence theorem),
-                // inflow sign, pressure/velocity sanity. No BoomerAMG comparison (it fails on the RC operator).
-                // PASS = physical validity: ACM converged + inflow sign + mass conserved (net boundary flux
-                // ~0 by divergence theorem). |u|max is reported as INFO -- this pump genuinely reaches
-                // hundreds of m/s at its narrowest path (collaborators ~430 m/s), so |u|max is NOT a fault.
-                std::vector<RealType> xs(ND);
-                thrust::copy(thrust::device_pointer_cast(xa.data()), thrust::device_pointer_cast(xa.data() + ND), xs.begin());
-                RealType Qin = 0, Qout = 0, Qtot = 0, pInSum = 0, umax = 0, nInOwned = 0;
-                for (size_t i = 0; i < nNodes; ++i) {
-                    if (!hOwn[i]) continue;                       // owned-only: seam nodes counted once globally
-                    RealType f = xs[4*i]*hsbx[i] + xs[4*i+1]*hsby[i] + xs[4*i+2]*hsbz[i]; Qtot += f;
-                    RealType um = std::sqrt(xs[4*i]*xs[4*i] + xs[4*i+1]*xs[4*i+1] + xs[4*i+2]*xs[4*i+2]);
-                    umax = std::max(umax, um);
+                cstone::DeviceVector<RealType> inMask1, outMask1;                         // transfer the masks
+                std::vector<const RealType*> oldF = {inMask.data(), outMask.data()};
+                std::vector<cstone::DeviceVector<RealType>*> newF = {&inMask1, &outMask1};
+                auto stats = amr.adaptMeshMultiField(d_err.data(), oldF, newF);
+                if (rank == 0) amr.printStats(stats, rank);
+
+                // re-inject side sets on the NEW domain: threshold transferred masks -> member SFC keys
+                auto& nd = amr.domain();
+                const size_t nN2 = nd.getNodeCount();
+                std::vector<RealType> hin(nN2), hout(nN2);
+                thrust::copy(thrust::device_pointer_cast(inMask1.data()),  thrust::device_pointer_cast(inMask1.data() + nN2),  hin.begin());
+                thrust::copy(thrust::device_pointer_cast(outMask1.data()), thrust::device_pointer_cast(outMask1.data() + nN2), hout.begin());
+                const auto& sfc = nd.getLocalToGlobalSfcMap();
+                std::vector<KeyType> hkey(nN2);
+                thrust::copy(thrust::device_pointer_cast(sfc.data()), thrust::device_pointer_cast(sfc.data() + nN2), hkey.begin());
+                if (inletSet) {
+                    std::vector<KeyType> inK, outK;
+                    for (size_t i = 0; i < nN2; ++i) {
+                        if (hin[i]  > RealType(0.99)) inK.push_back(hkey[i]);
+                        if (hout[i] > RealType(0.99)) outK.push_back(hkey[i]);
+                    }
+                    nd.setSideSetFromKeys(inletSS, inK);
+                    if (!outletSS.empty()) nd.setSideSetFromKeys(outletSS, outK);
                 }
-                for (int i : inN)  if (hOwn[i]) { Qin += xs[4*i]*hsbx[i] + xs[4*i+1]*hsby[i] + xs[4*i+2]*hsbz[i];
-                                                  pInSum += xs[4*i+3]; nInOwned += 1; }
-                for (int i : outN) if (hOwn[i])   Qout += xs[4*i]*hsbx[i] + xs[4*i+1]*hsby[i] + xs[4*i+2]*hsbz[i];
-                if (numRanks > 1) {
-                    RealType gs[5] = {Qin, Qout, Qtot, pInSum, nInOwned};
-                    MPI_Allreduce(MPI_IN_PLACE, gs, 5, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-                    Qin = gs[0]; Qout = gs[1]; Qtot = gs[2]; pInSum = gs[3]; nInOwned = gs[4];
-                    MPI_Allreduce(MPI_IN_PLACE, &umax, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
-                }
-                RealType pInMean = (nInOwned > 0) ? pInSum / nInOwned : RealType(0);
-                RealType massErr = std::abs(Qtot) / (std::abs(Qin) > RealType(1e-30) ? std::abs(Qin) : RealType(1));
-                bool inflowOk = (Qin < RealType(0));
-                bool ok = (rA < 1e-6) && std::isfinite(umax) && std::isfinite(Qtot) && inflowOk && (massErr < RealType(0.05));
-                if (rank == 0)
-                std::cout << "[phase0][acm-pump][pump] Qin=" << Qin << " Qout=" << Qout << " net=" << Qtot
-                          << " massErr=" << massErr << "  inflow=" << (inflowOk ? "OK" : "REVERSED(use --inlet-flip-normal)")
-                          << "  p_in_mean=" << pInMean << " (outlet pinned)  |u|max=" << umax << " (info, vs ref)"
-                          << "  -> " << (ok ? "PASS (through-flow, mass conserved, ACM converged)" : "CHECK") << "\n";
-            } else {
-                Vec bh, xh; bh.resize(ND); xh.resize(ND);
-                thrust::copy(d_rhs.begin(), d_rhs.end(), thrust::device_pointer_cast(bh.data()));
-                HypreGMRESSolver<RealType, int, cstone::GpuTag> hg(
-                    MPI_COMM_WORLD, 2000, 1e-8, HypreGMRESSolver<RealType, int, cstone::GpuTag>::BOOMERAMG, 50);
-                hg.setVerbose(false); hg.setPointBlock(4);
-                hg.solve(Am, bh, xh, 0, ND, 0, ND, std::vector<int>{});
-                const int itH = hg.getLastIterations(); const RealType rH = resid(xh);
-                thrust::device_vector<RealType> d_xa(ND), d_xh(ND);
-                thrust::copy(thrust::device_pointer_cast(xa.data()), thrust::device_pointer_cast(xa.data() + ND), d_xa.begin());
-                thrust::copy(thrust::device_pointer_cast(xh.data()), thrust::device_pointer_cast(xh.data() + ND), d_xh.begin());
-                thrust::transform(d_xa.begin(), d_xa.end(), d_xh.begin(), d_diff.begin(),
-                    [] __device__ (RealType a, RealType c) { return fabs(a - c); });
-                const RealType dmax = thrust::reduce(d_diff.begin(), d_diff.end(), RealType(0), thrust::maximum<RealType>());
-                thrust::transform(d_xa.begin(), d_xa.end(), d_diff.begin(), [] __device__ (RealType a) { return fabs(a); });
-                const RealType amax = thrust::reduce(d_diff.begin(), d_diff.end(), RealType(0), thrust::maximum<RealType>());
-                const RealType agree = dmax / (amax > 0 ? amax : RealType(1));
-                std::cout << "[phase0][acm-pump] BoomerAMG-GMRES iters=" << itH << " res=" << rH << "\n";
-                std::cout << "[phase0][acm-pump] solvers agree |x_acm-x_amg|rel=" << agree
-                          << "  -> " << ((rA < 1e-6 && rH < 1e-6 && agree < 1e-2) ? "PASS" : "CHECK") << "\n";
             }
         }
 
