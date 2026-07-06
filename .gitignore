@@ -53,6 +53,8 @@ todo.txt
 *.pvtu
 *.pvd
 *.mp4
+pump_frames_fast/
+examples/distributed/unstructured/render_pump_4panel.py
 
 # Document/presentation build artifacts
 *.aux
@@ -61,4 +63,10 @@ todo.txt
 *.snm
 *.toc
 *.pptx
+*.pptx.bak
+*.out
+
+# Python bytecode
+__pycache__/
+*.pyc
 

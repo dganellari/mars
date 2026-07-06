@@ -53,3 +53,9 @@ emit test/warp_batched.mlir generated/warp_batched_sm90.ptx
 # EMITTER-GENERATED BATCHED, CHEAP per-element metric (compute-bound regime): 264 mma
 python3 ../marsir-compiler/marsir/backends/mlir_warp.py batched_affine > test/warp_batched_affine.mlir
 emit test/warp_batched_affine.mlir generated/warp_batched_affine_sm90.ptx
+
+# REGISTER-RESIDENT mma chain (probe-1 proven): 2 mma + shuffle relayout, NO smem/barrier
+build/tools/mir-opt/mir-opt test/warp_chain_reg.mlir --lower-affine \
+  | mlir-opt --gpu-lower-to-nvvm-pipeline="cubin-chip=sm_90 cubin-format=isa" \
+  | python3 test/extract_ptx.py generated/warp_chain_reg_sm90.ptx
+grep -c "mma.sync.aligned.m8n8k4" generated/warp_chain_reg_sm90.ptx
