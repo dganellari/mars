@@ -270,32 +270,54 @@ def reinterpret_2d_to_3d(L, ctr, indent, src, n, space=None):
     return dst, ty
 
 
-def subview_plane(L, ctr, indent, src, n, l, axis, space=None):
+def subview_plane(L, ctr, indent, src, n, l, axis, space=None, src_ty=None,
+                  dyn=False):
     """Rank-reduced n x n plane l of an 8xnxn buffer along `axis` (0/1/2). The
     +/- plane scatter slices y on a different axis per direction; the B-sweep
-    face slice is always axis 0."""
+    face slice is always axis 0. When the source is a per-element subview of a
+    batched buffer its OFFSET is dynamic (pass dyn=True + src_ty); the plane's
+    offset is then also dynamic. Strides are unchanged either way."""
     off = [0, 0, 0]; off[axis] = l
     sz = [8, n, n]; sz[axis] = 1
     strides = [n * n, n, 1]
-    boff = l * strides[axis]
     keep = [strides[i] for i in range(3) if i != axis]
     r = ctr.fresh("sv")
-    lay = "strided<[%d, %d], offset: %d>" % (keep[0], keep[1], boff)
+    boff = "?" if dyn else str(l * strides[axis])
+    lay = "strided<[%d, %d], offset: %s>" % (keep[0], keep[1], boff)
     dst_ty = "memref<%dx%dxf64, %s%s>" % (n, n, lay, _plane(space))
+    if src_ty is None:
+        src_ty = "memref<8x%dx%dxf64%s>" % (n, n, _plane(space))
     L.append("%s%s = memref.subview %s[%d, %d, %d] [%d, %d, %d] [1, 1, 1] : "
-             "memref<8x%dx%dxf64%s> to %s"
+             "%s to %s"
              % (indent, r, src, off[0], off[1], off[2], sz[0], sz[1], sz[2],
-                n, n, _plane(space), dst_ty))
+                src_ty, dst_ty))
     return r, dst_ty
 
 
-def emit_scatter(L, ctr, indent, n, intf_mem, intf_ty, y3, y_ty_of, l, axis):
+def subview_elem(L, ctr, indent, src, e, n, space=None):
+    """Per-element rank-4 -> rank-3 subview src[e,:,:,:] of a batched Ex8xnxn
+    buffer; the offset is dynamic (e is a runtime block id)."""
+    r = ctr.fresh("el")
+    # rank-reduced 8xnxn result -> 3 strides (the leading E dim is dropped)
+    strd = "strided<[%d, %d, 1], offset: ?>" % (n * n, n)
+    src_ty = "memref<?x8x%dx%dxf64%s>" % (n, n, _plane(space))
+    dst_ty = "memref<8x%dx%dxf64, %s%s>" % (n, n, strd, _plane(space))
+    L.append("%s%s = memref.subview %s[%s, 0, 0, 0] [1, 8, %d, %d] "
+             "[1, 1, 1, 1] : %s to %s"
+             % (indent, r, src, e, n, n, src_ty, dst_ty))
+    return r, dst_ty
+
+
+def emit_scatter(L, ctr, indent, n, intf_mem, intf_ty, y3, l, axis,
+                 y3_ty=None, dyn=False):
     """y[l] -= intf ; y[l+1] += intf, both re-reading intf from scratch (the
-    contract-result-double-use crash rule). y3 is the 8xnxn output; y_ty_of(l)
-    slices plane l along `axis` (0 for dir0)."""
+    contract-result-double-use crash rule). y3 is the 8xnxn output; the plane l
+    is sliced along `axis` (0/1/2 per direction). For a batched per-element y3,
+    pass its strided type + dyn=True."""
     v = "vector<%dx%dxf64>" % (n, n)
-    ym, yty = subview_plane(L, ctr, indent, y3, n, l, axis)
-    yp, ypty = subview_plane(L, ctr, indent, y3, n, l + 1, axis)
+    ym, yty = subview_plane(L, ctr, indent, y3, n, l, axis, src_ty=y3_ty, dyn=dyn)
+    yp, ypty = subview_plane(L, ctr, indent, y3, n, l + 1, axis, src_ty=y3_ty,
+                             dyn=dyn)
     I, J = indent, indent + "  "
     L.append("%svector.warp_execute_on_lane_0(%%lane)[32] {" % I)
     fa = ctr.fresh("fa")
@@ -318,7 +340,7 @@ def emit_scatter(L, ctr, indent, n, intf_mem, intf_ty, y3, y_ty_of, l, axis):
 
 
 def emit_bsweep(L, ctr, indent, n, u_mem, u_ty, op_mem, out_mem, out_ty,
-                pax, transposed):
+                pax, transposed, dyn=False):
     """B-sweep out = op @ (u viewed for this direction), reading u PLANES
     directly -- no transpose buffer. Col-tile ct = interp_all[:, ct*8:ct*8+8]
     comes from plane ct of u along axis `pax`; the direction's moveaxis is
@@ -334,7 +356,8 @@ def emit_bsweep(L, ctr, indent, n, u_mem, u_ty, op_mem, out_mem, out_ty,
     v8 = "vector<8x8xf64>"
     slabs = n // 4
     for ct in range(n):
-        plane, pty = subview_plane(L, ctr, indent, u_mem, n, ct, pax)
+        plane, pty = subview_plane(L, ctr, indent, u_mem, n, ct, pax,
+                                   src_ty=u_ty, dyn=dyn)
         L.append("%svector.warp_execute_on_lane_0(%%lane)[32] {" % indent)
         J = indent + "  "
         acc = ctr.fresh("acc")
@@ -366,24 +389,32 @@ def emit_bsweep(L, ctr, indent, n, u_mem, u_ty, op_mem, out_mem, out_ty,
 
 
 def emit_direction_u(L, ctr, indent, n, P, mems, scratch, g_keys,
-                     scatter_axis, pax, transposed):
+                     scatter_axis, pax, transposed, dyn=False, u_ty=None,
+                     g_ty=None, y_ty=None):
     """Direction with the transpose INTERNALIZED: B-sweeps read u planes via
-    emit_bsweep (single u input, no host-presented u_flat). Otherwise identical
-    to emit_direction (faces + scatter)."""
-    emit_bsweep(L, ctr, indent, n, mems["u"], None, mems["Btil"],
-                scratch["interp_all"], scratch["interp_all_ty"], pax, transposed)
-    emit_bsweep(L, ctr, indent, n, mems["u"], None, mems["Dtil"],
-                scratch["deriv_all"], scratch["deriv_all_ty"], pax, transposed)
+    emit_bsweep (single u input, no host-presented u_flat). For a batched kernel
+    u/metric/y are per-element subviews with dynamic offsets -- pass dyn=True and
+    their strided types (u_ty, g_ty, y_ty)."""
+    emit_bsweep(L, ctr, indent, n, mems["u"], u_ty, mems["Btil"],
+                scratch["interp_all"], scratch["interp_all_ty"], pax, transposed,
+                dyn=dyn)
+    emit_bsweep(L, ctr, indent, n, mems["u"], u_ty, mems["Dtil"],
+                scratch["deriv_all"], scratch["deriv_all_ty"], pax, transposed,
+                dyn=dyn)
     L.append("%sgpu.barrier" % indent)
     ip3, _ = reinterpret_2d_to_3d(L, ctr, indent, scratch["interp_all"], n, WS)
     dv3, _ = reinterpret_2d_to_3d(L, ctr, indent, scratch["deriv_all"], n, WS)
     g0k, g1k, g2k = g_keys
     for l in range(P):
+        # interp/deriv planes come from workgroup scratch (static, not dyn).
         ifc, ifc_ty = subview_plane(L, ctr, indent, ip3, n, l, 0, WS)
         dfc, dfc_ty = subview_plane(L, ctr, indent, dv3, n, l, 0, WS)
-        g0, g0_ty = subview_plane(L, ctr, indent, mems[g0k], n, l, 0)
-        g1, g1_ty = subview_plane(L, ctr, indent, mems[g1k], n, l, 0)
-        g2, g2_ty = subview_plane(L, ctr, indent, mems[g2k], n, l, 0)
+        g0, g0_ty = subview_plane(L, ctr, indent, mems[g0k], n, l, 0,
+                                  src_ty=g_ty, dyn=dyn)
+        g1, g1_ty = subview_plane(L, ctr, indent, mems[g1k], n, l, 0,
+                                  src_ty=g_ty, dyn=dyn)
+        g2, g2_ty = subview_plane(L, ctr, indent, mems[g2k], n, l, 0,
+                                  src_ty=g_ty, dyn=dyn)
         fmems = {"interp": ifc, "deriv": dfc, "Dm": mems["Dm"], "W": mems["W"],
                  "g0": g0, "g1": g1, "g2": g2, "intf": scratch["intf"]}
         ftys = {"interp": ifc_ty, "deriv": dfc_ty, "g0": g0_ty, "g1": g1_ty,
@@ -391,7 +422,7 @@ def emit_direction_u(L, ctr, indent, n, P, mems, scratch, g_keys,
         emit_face(L, ctr, indent, n, fmems, scratch, tys=ftys)
         L.append("%sgpu.barrier" % indent)
         emit_scatter(L, ctr, indent, n, scratch["intf"], scratch["intf_ty"],
-                     mems["y3"], None, l, scatter_axis)
+                     mems["y3"], l, scatter_axis, y3_ty=y_ty, dyn=dyn)
         L.append("%sgpu.barrier" % indent)
 
 
@@ -429,7 +460,7 @@ def emit_direction(L, ctr, indent, n, P, mems, scratch, u2_key, g_keys,
         emit_face(L, ctr, indent, n, fmems, scratch, tys=ftys)
         L.append("%sgpu.barrier" % indent)
         emit_scatter(L, ctr, indent, n, scratch["intf"], scratch["intf_ty"],
-                     mems["y3"], None, l, scatter_axis)
+                     mems["y3"], l, scatter_axis)
         L.append("%sgpu.barrier" % indent)
 
 
@@ -559,6 +590,55 @@ def build_full_single(n, P):
     return "\n".join(L) + "\n"
 
 
+def build_full_batched(n, P):
+    """Batched operator: one WARP per element over E elements (grid = E blocks,
+    block = 32). e = gpu.block_id x selects the element; U/metric/Y are batched
+    (Ex8xnxn) and per-element subviews (dynamic offset) feed the same body. The
+    operator matrices Btil/Dtil/Dm/W are shared. This is the throughput-
+    measurement kernel (launch grid=(E,1,1), block=(32,1,1))."""
+    ctr = Ctr()
+    mrg = _mr(n)
+    wg64 = "memref<8x%dxf64, %s>" % (n * n, WS)
+    wsty = _mr(n, WS)
+    batched = "memref<?x8x%dx%dxf64>" % (n, n)
+    gnames = ["g%d%dall" % (d, c) for d in range(3) for c in range(3)]
+    inargs = [("U", batched), ("Btil", mrg), ("Dtil", mrg), ("Dm", mrg),
+              ("W", mrg)]
+    inargs += [(g, batched) for g in gnames]
+    inargs += [("Y", batched)]
+    argstr = ", ".join("%%%s: %s" % (a, t) for a, t in inargs)
+    scratch_names = ["interp_all", "deriv_all", "dt1g", "dt2g", "flux",
+                     "tmp", "intf"]
+    wg = ", ".join("%%%s: %s" % (s, wg64 if s in ("interp_all", "deriv_all")
+                                 else wsty) for s in scratch_names)
+    L = [module_maps(),
+         "gpu.module @mir_kernels [#nvvm.target<chip = \"sm_90\", O = 3>] {",
+         "  gpu.func @full_batched(%s) workgroup(%s) kernel {" % (argstr, wg),
+         "    %z = arith.constant 0.0 : f64",
+         "    %lane = gpu.thread_id x",
+         "    %e = gpu.block_id x"]
+    L += index_consts("    ", n * n)
+    ue, elem_ty = subview_elem(L, ctr, "    ", "%U", "%e", n)
+    ye, _ = subview_elem(L, ctr, "    ", "%Y", "%e", n)
+    mems = {"u": ue, "Btil": "%Btil", "Dtil": "%Dtil", "Dm": "%Dm", "W": "%W",
+            "y3": ye}
+    for g in gnames:
+        ge, _ = subview_elem(L, ctr, "    ", "%" + g, "%e", n)
+        mems[g] = ge
+    scratch = {}
+    for s in scratch_names:
+        scratch[s] = "%" + s
+        scratch[s + "_ty"] = wg64 if s in ("interp_all", "deriv_all") else wsty
+    dirs = [(1, False, 0), (0, False, 1), (0, True, 2)]
+    for d, (pax, transp, sax) in enumerate(dirs):
+        gk = ("g%d0all" % d, "g%d1all" % d, "g%d2all" % d)
+        emit_direction_u(L, ctr, "    ", n, P, mems, scratch, gk, sax, pax,
+                         transp, dyn=True, u_ty=elem_ty, g_ty=elem_ty,
+                         y_ty=elem_ty)
+    L += ["    gpu.return", "  }", "}"]
+    return "\n".join(L) + "\n"
+
+
 def module_maps():
     """The three affine maps + the transposed-B map, emitted once at top."""
     return ('#a = affine_map<(m, n, k) -> (m, k)>\n'
@@ -584,6 +664,9 @@ if __name__ == "__main__":
         sys.exit(0)
     if which == "fulls":
         sys.stdout.write(build_full_single(n, 7))
+        sys.exit(0)
+    if which == "batched":
+        sys.stdout.write(build_full_batched(n, 7))
         sys.exit(0)
     if which == "matmul":
         # B-sweep shape: interp = Btil(8x8) @ U(8x64) -> 8x64, column-tiled.

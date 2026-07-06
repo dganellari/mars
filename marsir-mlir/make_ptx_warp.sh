@@ -47,3 +47,6 @@ emit test/warp_full.mlir generated/warp_full_sm90.ptx
 # EMITTER-GENERATED FULL operator, transpose INTERNALIZED (single u input): 264 mma
 python3 ../marsir-compiler/marsir/backends/mlir_warp.py fulls > test/warp_fulls.mlir
 emit test/warp_fulls.mlir generated/warp_fulls_sm90.ptx
+# EMITTER-GENERATED BATCHED operator (warp-per-element, grid=E): throughput target, 264 mma
+python3 ../marsir-compiler/marsir/backends/mlir_warp.py batched > test/warp_batched.mlir
+emit test/warp_batched.mlir generated/warp_batched_sm90.ptx
