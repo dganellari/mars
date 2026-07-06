@@ -66,6 +66,26 @@ add_executable(mars_ho_laplacian_test mars_ho_laplacian_test.cu)
 target_link_libraries(mars_ho_laplacian_test PRIVATE mars)
 install(TARGETS mars_ho_laplacian_test RUNTIME DESTINATION bin/examples)
 
+# High-order TET Laplacian (collapsed sum-factorization), Stage 0 GPU parity test
+add_executable(mars_ho_laplacian_tet_test mars_ho_laplacian_tet_test.cu)
+target_link_libraries(mars_ho_laplacian_tet_test PRIVATE mars)
+install(TARGETS mars_ho_laplacian_tet_test RUNTIME DESTINATION bin/examples)
+
+# High-order TET Laplacian distributed gate: C0 assembly, multi-rank GPU apply
+add_executable(mars_ho_dist_apply_tet_test mars_ho_dist_apply_tet_test.cu)
+target_link_libraries(mars_ho_dist_apply_tet_test PRIVATE mars)
+install(TARGETS mars_ho_dist_apply_tet_test RUNTIME DESTINATION bin/examples)
+
+# High-order TET CVFEM (box-partition collapsed sum-fac, quadrature-exact) GPU + distributed gate
+add_executable(mars_cvfem_ho_tet_test mars_cvfem_ho_tet_test.cu)
+target_link_libraries(mars_cvfem_ho_tet_test PRIVATE mars)
+install(TARGETS mars_cvfem_ho_tet_test RUNTIME DESTINATION bin/examples)
+
+# High-order TET single-GPU perf sweep (throughput + B/DOF, hex-talk counterpart numbers)
+add_executable(mars_ho_tet_perf mars_ho_tet_perf.cu)
+target_link_libraries(mars_ho_tet_perf PRIVATE mars CUDA::cublas)
+install(TARGETS mars_ho_tet_perf RUNTIME DESTINATION bin/examples)
+
 # Optimized HO-CVFEM matrix-free diffusion apply: GPU bit-exact + patch + perf gate
 add_executable(mars_cvfem_ho_matfree_test mars_cvfem_ho_matfree_test.cu)
 target_link_libraries(mars_cvfem_ho_matfree_test PRIVATE mars)
@@ -272,3 +292,18 @@ target_include_directories(mars_coupled_model_operator PRIVATE
 )
 install(TARGETS mars_coupled_model_operator RUNTIME DESTINATION bin/examples)
 install(TARGETS mars_tgv RUNTIME DESTINATION bin/examples)
+
+# MARSIR parity gate: the generated Laplacian apply (from marsir-compiler/) vs the
+# hand-written HO matrix-free kernel, same mesh/elemDof/metric. Opt-in via
+# -DMARS_ENABLE_MARSIR=ON; the generated header is committed under
+# backend/distributed/unstructured/marsir/generated/.
+if(MARS_ENABLE_MARSIR)
+    add_executable(mars_marsir_ho_apply mars_marsir_ho_apply.cu)
+    target_link_libraries(mars_marsir_ho_apply PRIVATE mars)
+    install(TARGETS mars_marsir_ho_apply RUNTIME DESTINATION bin/examples)
+
+    # JVP gate: generated Jacobian-action kernel vs finite difference (nonlinear).
+    add_executable(mars_marsir_jvp_test mars_marsir_jvp_test.cu)
+    target_link_libraries(mars_marsir_jvp_test PRIVATE mars)
+    install(TARGETS mars_marsir_jvp_test RUNTIME DESTINATION bin/examples)
+endif()
