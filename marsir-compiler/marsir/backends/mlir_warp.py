@@ -210,6 +210,81 @@ def emit_flux3(L, ctr, indent, n, deriv_mem, deriv_ty, g2_mem, g2_ty,
     L.append("%s}" % I)
 
 
+def _chained_contract_body(L, ctr, J, n, a_mem, a_ty, b_mem, b_ty, transposed):
+    """Emit the n/4 chained k-slab vector.contracts INSIDE an already-open warp
+    region and return the accumulator SSA (a register vector<8x8>, not written
+    to smem). Same math as emit_contract's inner loop -- factored so several
+    contracts can share one region and stay register-resident."""
+    va, vb_std, vb_t = "vector<8x4xf64>", "vector<4x8xf64>", "vector<8x4xf64>"
+    v8 = "vector<%dx%dxf64>" % (n, n)
+    acc = ctr.fresh("acc")
+    L.append("%s%s = arith.constant dense<0.0> : %s" % (J, acc, v8))
+    for s in range(n // 4):
+        koff = 4 * s
+        a = ctr.fresh("a")
+        L.append("%s%s = vector.transfer_read %s[%%c0, %%c%d], %%z "
+                 "{in_bounds=[true,true]} : %s, %s" % (J, a, a_mem, koff, a_ty, va))
+        b = ctr.fresh("b")
+        if transposed:
+            L.append("%s%s = vector.transfer_read %s[%%c0, %%c%d], %%z "
+                     "{in_bounds=[true,true]} : %s, %s" % (J, b, b_mem, koff, b_ty, vb_t))
+            bmap, bty = "#bt", vb_t
+        else:
+            L.append("%s%s = vector.transfer_read %s[%%c%d, %%c0], %%z "
+                     "{in_bounds=[true,true]} : %s, %s" % (J, b, b_mem, koff, b_ty, vb_std))
+            bmap, bty = "#b", vb_std
+        r = ctr.fresh("r")
+        L.append("%s%s = vector.contract {indexing_maps=[#a,%s,#c], "
+                 "iterator_types=[\"parallel\",\"parallel\",\"reduction\"], "
+                 "kind=#vector.kind<add>} %s, %s, %s : %s, %s into %s"
+                 % (J, r, bmap, a, b, acc, va, bty, v8))
+        acc = r
+    return acc
+
+
+def emit_fused_dt_flux(L, ctr, indent, n, interp_mem, interp_ty, Dm_mem, Dm_ty,
+                       deriv_mem, deriv_ty, g0_mem, g1_mem, g2_mem, g_ty,
+                       flux_mem, flux_ty):
+    """WIN2+: dt1, dt2 and the 3-term flux fused into ONE warp region so the
+    dt1g/dt2g intermediates stay REGISTER-resident (never touch smem). Each
+    contract result feeds exactly one mulf (legal); the flux is a relayout-free
+    C-fragment junction. Drops 2 of 7 smem buffers + 1 barrier per face.
+       dt1 = Dm @ interp (std) *g1 ; dt2 = interp @ Dm^T (transp) *g0
+       flux = g2*deriv + dt2g + dt1g   -> flux_mem"""
+    v8 = "vector<%dx%dxf64>" % (n, n)
+    I, J = indent, indent + "  "
+    L.append("%svector.warp_execute_on_lane_0(%%lane)[32] {" % I)
+    acc1 = _chained_contract_body(L, ctr, J, n, Dm_mem, Dm_ty, interp_mem,
+                                  interp_ty, transposed=False)
+    g1v = ctr.fresh("g")
+    L.append("%s%s = vector.transfer_read %s[%%c0, %%c0], %%z "
+             "{in_bounds=[true,true]} : %s, %s" % (J, g1v, g1_mem, g_ty, v8))
+    dt1g = ctr.fresh("dt")
+    L.append("%s%s = arith.mulf %s, %s : %s" % (J, dt1g, acc1, g1v, v8))
+    acc2 = _chained_contract_body(L, ctr, J, n, interp_mem, interp_ty, Dm_mem,
+                                  Dm_ty, transposed=True)
+    g0v = ctr.fresh("g")
+    L.append("%s%s = vector.transfer_read %s[%%c0, %%c0], %%z "
+             "{in_bounds=[true,true]} : %s, %s" % (J, g0v, g0_mem, g_ty, v8))
+    dt2g = ctr.fresh("dt")
+    L.append("%s%s = arith.mulf %s, %s : %s" % (J, dt2g, acc2, g0v, v8))
+    dv = ctr.fresh("dv")
+    L.append("%s%s = vector.transfer_read %s[%%c0, %%c0], %%z "
+             "{in_bounds=[true,true]} : %s, %s" % (J, dv, deriv_mem, deriv_ty, v8))
+    g2v = ctr.fresh("g")
+    L.append("%s%s = vector.transfer_read %s[%%c0, %%c0], %%z "
+             "{in_bounds=[true,true]} : %s, %s" % (J, g2v, g2_mem, g_ty, v8))
+    t = ctr.fresh("t")
+    L.append("%s%s = arith.mulf %s, %s : %s" % (J, t, dv, g2v, v8))
+    t2 = ctr.fresh("t2")
+    L.append("%s%s = arith.addf %s, %s : %s" % (J, t2, t, dt2g, v8))
+    fl = ctr.fresh("fl")
+    L.append("%s%s = arith.addf %s, %s : %s" % (J, fl, t2, dt1g, v8))
+    L.append("%svector.transfer_write %s, %s[%%c0, %%c0] "
+             "{in_bounds=[true,true]} : %s, %s" % (J, fl, flux_mem, v8, flux_ty))
+    L.append("%s}" % I)
+
+
 def emit_face(L, ctr, indent, n, mems, scratch, tys=None):
     """One face of the Knaus apply: the four contracts + the 3-term flux, all
     staged through shared memory, writing intf to mems['intf']. Matches the
@@ -232,18 +307,11 @@ def emit_face(L, ctr, indent, n, mems, scratch, tys=None):
         return tys.get(k, mr)
     def st(k):
         return scratch.get(k + "_ty", mr)
-    # dt1 = Dm @ interp (standard), fused *g1 -> dt1g
-    emit_contract(L, ctr, indent, mems["Dm"], mt("Dm"), mems["interp"],
-                  mt("interp"), scratch["dt1g"], st("dt1g"), n, transposed=False,
-                  scale_mem=mems["g1"], scale_ty=mt("g1"))
-    # dt2 = interp @ Dm^T (transposed), fused *g0 -> dt2g
-    emit_contract(L, ctr, indent, mems["interp"], mt("interp"), mems["Dm"],
-                  mt("Dm"), scratch["dt2g"], st("dt2g"), n, transposed=True,
-                  scale_mem=mems["g0"], scale_ty=mt("g0"))
-    L.append("%sgpu.barrier" % indent)
-    emit_flux3(L, ctr, indent, n, mems["deriv"], mt("deriv"), mems["g2"],
-               mt("g2"), scratch["dt2g"], st("dt2g"), scratch["dt1g"],
-               st("dt1g"), scratch["flux"], st("flux"))
+    # WIN2+: dt1 + dt2 + flux fused into one region (dt1g/dt2g register-resident)
+    emit_fused_dt_flux(L, ctr, indent, n, mems["interp"], mt("interp"),
+                       mems["Dm"], mt("Dm"), mems["deriv"], mt("deriv"),
+                       mems["g0"], mems["g1"], mems["g2"], mt("g0"),
+                       scratch["flux"], st("flux"))
     L.append("%sgpu.barrier" % indent)
     # tmp = flux @ W^T (transposed)
     emit_contract(L, ctr, indent, scratch["flux"], st("flux"), mems["W"],
@@ -322,10 +390,11 @@ def subview_elem_2d(L, ctr, indent, src, e, n, space=None):
 
 def emit_scatter(L, ctr, indent, n, intf_mem, intf_ty, y3, l, axis,
                  y3_ty=None, dyn=False):
-    """y[l] -= intf ; y[l+1] += intf, both re-reading intf from scratch (the
-    contract-result-double-use crash rule). y3 is the 8xnxn output; the plane l
-    is sliced along `axis` (0/1/2 per direction). For a batched per-element y3,
-    pass its strided type + dyn=True."""
+    """y[l] -= intf ; y[l+1] += intf. intf is read from scratch ONCE and reused
+    for both planes -- the contract-result-double-use crash is specific to a
+    CONTRACT result feeding two elementwise ops; a transfer_read result feeds
+    both subf and addf fine (WIN1: one fewer smem load per face). y3 plane l is
+    sliced along `axis` (0/1/2 per direction); batched y3 -> pass type + dyn."""
     v = "vector<%dx%dxf64>" % (n, n)
     ym, yty = subview_plane(L, ctr, indent, y3, n, l, axis, src_ty=y3_ty, dyn=dyn)
     yp, ypty = subview_plane(L, ctr, indent, y3, n, l + 1, axis, src_ty=y3_ty,
@@ -340,12 +409,9 @@ def emit_scatter(L, ctr, indent, n, intf_mem, intf_ty, y3, l, axis,
     m0 = ctr.fresh("m"); L.append("%s%s = arith.subf %s, %s : %s" % (J, m0, r0, fa, v))
     L.append("%svector.transfer_write %s, %s[%%c0, %%c0] {in_bounds=[true,true]} "
              ": %s, %s" % (J, m0, ym, v, yty))
-    fb = ctr.fresh("fa")
-    L.append("%s%s = vector.transfer_read %s[%%c0, %%c0], %%z "
-             "{in_bounds=[true,true]} : %s, %s" % (J, fb, intf_mem, intf_ty, v))
     r1 = ctr.fresh("r"); L.append("%s%s = vector.transfer_read %s[%%c0, %%c0], "
              "%%z {in_bounds=[true,true]} : %s, %s" % (J, r1, yp, ypty, v))
-    p1 = ctr.fresh("p"); L.append("%s%s = arith.addf %s, %s : %s" % (J, p1, r1, fb, v))
+    p1 = ctr.fresh("p"); L.append("%s%s = arith.addf %s, %s : %s" % (J, p1, r1, fa, v))
     L.append("%svector.transfer_write %s, %s[%%c0, %%c0] {in_bounds=[true,true]} "
              ": %s, %s" % (J, p1, yp, v, ypty))
     L.append("%s}" % I)
@@ -507,8 +573,7 @@ def build_dir0_kernel(n, P):
               ("W", mrg), ("g0all", gall), ("g1all", gall), ("g2all", gall),
               ("y3", gall)]
     argstr = ", ".join("%%%s: %s" % (a, t) for a, t in inargs)
-    scratch_names = ["interp_all", "deriv_all", "dt1g", "dt2g", "flux",
-                     "tmp", "intf"]
+    scratch_names = ["interp_all", "deriv_all", "flux", "tmp", "intf"]
     wg = ", ".join("%%%s: %s" % (s, wg64 if s in ("interp_all", "deriv_all")
                                  else wsty) for s in scratch_names)
     L = [module_maps(),
@@ -547,8 +612,7 @@ def build_full_kernel(n, P):
     inargs += [(g, gall) for g in gnames]
     inargs += [("y3", gall)]
     argstr = ", ".join("%%%s: %s" % (a, t) for a, t in inargs)
-    scratch_names = ["interp_all", "deriv_all", "dt1g", "dt2g", "flux",
-                     "tmp", "intf"]
+    scratch_names = ["interp_all", "deriv_all", "flux", "tmp", "intf"]
     wg = ", ".join("%%%s: %s" % (s, wg64 if s in ("interp_all", "deriv_all")
                                  else wsty) for s in scratch_names)
     L = [module_maps(),
@@ -586,8 +650,7 @@ def build_full_single(n, P):
     inargs += [(g, gall) for g in gnames]
     inargs += [("y3", gall)]
     argstr = ", ".join("%%%s: %s" % (a, t) for a, t in inargs)
-    scratch_names = ["interp_all", "deriv_all", "dt1g", "dt2g", "flux",
-                     "tmp", "intf"]
+    scratch_names = ["interp_all", "deriv_all", "flux", "tmp", "intf"]
     wg = ", ".join("%%%s: %s" % (s, wg64 if s in ("interp_all", "deriv_all")
                                  else wsty) for s in scratch_names)
     L = [module_maps(),
@@ -627,8 +690,7 @@ def build_full_batched(n, P):
     inargs += [(g, batched) for g in gnames]
     inargs += [("Y", batched)]
     argstr = ", ".join("%%%s: %s" % (a, t) for a, t in inargs)
-    scratch_names = ["interp_all", "deriv_all", "dt1g", "dt2g", "flux",
-                     "tmp", "intf"]
+    scratch_names = ["interp_all", "deriv_all", "flux", "tmp", "intf"]
     wg = ", ".join("%%%s: %s" % (s, wg64 if s in ("interp_all", "deriv_all")
                                  else wsty) for s in scratch_names)
     L = [module_maps(),
@@ -677,8 +739,7 @@ def build_full_batched_affine(n, P):
     inargs += [(g, metric) for g in gnames]
     inargs += [("Y", batched)]
     argstr = ", ".join("%%%s: %s" % (a, t) for a, t in inargs)
-    scratch_names = ["interp_all", "deriv_all", "dt1g", "dt2g", "flux",
-                     "tmp", "intf"]
+    scratch_names = ["interp_all", "deriv_all", "flux", "tmp", "intf"]
     wg = ", ".join("%%%s: %s" % (s, wg64 if s in ("interp_all", "deriv_all")
                                  else wsty) for s in scratch_names)
     L = [module_maps(),
@@ -765,7 +826,7 @@ if __name__ == "__main__":
                          for a in ["interp", "deriv", "Dm", "W",
                                    "g0", "g1", "g2", "intf"])
         wg = ", ".join("%%%s: %s" % (s, wsty)
-                       for s in ["dt1g", "dt2g", "flux", "tmp"])
+                       for s in ["flux", "tmp"])
         L = [module_maps(),
              "gpu.module @mir_kernels [#nvvm.target<chip = \"sm_90\", O = 3>] {",
              "  gpu.func @face(%s) workgroup(%s) kernel {" % (args, wg),
@@ -776,7 +837,7 @@ if __name__ == "__main__":
         mems = {k: "%" + k for k in
                 ["interp", "deriv", "Dm", "W", "g0", "g1", "g2", "intf"]}
         scratch = {}
-        for s in ["dt1g", "dt2g", "flux", "tmp"]:
+        for s in ["flux", "tmp"]:
             scratch[s] = "%" + s
             scratch[s + "_ty"] = wsty
         emit_face(L, ctr, "    ", n, mems, scratch)

@@ -3,7 +3,7 @@
 #bt = affine_map<(m, n, k) -> (n, k)>
 #c = affine_map<(m, n, k) -> (m, n)>
 gpu.module @mir_kernels [#nvvm.target<chip = "sm_90", O = 3>] {
-  gpu.func @full(%u0: memref<8x64xf64>, %u1: memref<8x64xf64>, %u2: memref<8x64xf64>, %Btil: memref<8x8xf64>, %Dtil: memref<8x8xf64>, %Dm: memref<8x8xf64>, %W: memref<8x8xf64>, %g00all: memref<8x8x8xf64>, %g01all: memref<8x8x8xf64>, %g02all: memref<8x8x8xf64>, %g10all: memref<8x8x8xf64>, %g11all: memref<8x8x8xf64>, %g12all: memref<8x8x8xf64>, %g20all: memref<8x8x8xf64>, %g21all: memref<8x8x8xf64>, %g22all: memref<8x8x8xf64>, %y3: memref<8x8x8xf64>) workgroup(%interp_all: memref<8x64xf64, #gpu.address_space<workgroup>>, %deriv_all: memref<8x64xf64, #gpu.address_space<workgroup>>, %dt1g: memref<8x8xf64, #gpu.address_space<workgroup>>, %dt2g: memref<8x8xf64, #gpu.address_space<workgroup>>, %flux: memref<8x8xf64, #gpu.address_space<workgroup>>, %tmp: memref<8x8xf64, #gpu.address_space<workgroup>>, %intf: memref<8x8xf64, #gpu.address_space<workgroup>>) kernel {
+  gpu.func @full(%u0: memref<8x64xf64>, %u1: memref<8x64xf64>, %u2: memref<8x64xf64>, %Btil: memref<8x8xf64>, %Dtil: memref<8x8xf64>, %Dm: memref<8x8xf64>, %W: memref<8x8xf64>, %g00all: memref<8x8x8xf64>, %g01all: memref<8x8x8xf64>, %g02all: memref<8x8x8xf64>, %g10all: memref<8x8x8xf64>, %g11all: memref<8x8x8xf64>, %g12all: memref<8x8x8xf64>, %g20all: memref<8x8x8xf64>, %g21all: memref<8x8x8xf64>, %g22all: memref<8x8x8xf64>, %y3: memref<8x8x8xf64>) workgroup(%interp_all: memref<8x64xf64, #gpu.address_space<workgroup>>, %deriv_all: memref<8x64xf64, #gpu.address_space<workgroup>>, %flux: memref<8x8xf64, #gpu.address_space<workgroup>>, %tmp: memref<8x8xf64, #gpu.address_space<workgroup>>, %intf: memref<8x8xf64, #gpu.address_space<workgroup>>) kernel {
     %z = arith.constant 0.0 : f64
     %lane = gpu.thread_id x
     %c0 = arith.constant 0 : index
@@ -199,10 +199,7 @@ gpu.module @mir_kernels [#nvvm.target<chip = "sm_90", O = 3>] {
       %b125 = vector.transfer_read %sv115[%c4, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 0>, #gpu.address_space<workgroup>>, vector<4x8xf64>
       %r126 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a124, %b125, %r123 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
       %g127 = vector.transfer_read %sv118[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 0>>, vector<8x8xf64>
-      %sc128 = arith.mulf %r126, %g127 : vector<8x8xf64>
-      vector.transfer_write %sc128, %dt1g[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
-    }
-    vector.warp_execute_on_lane_0(%lane)[32] {
+      %dt128 = arith.mulf %r126, %g127 : vector<8x8xf64>
       %acc129 = arith.constant dense<0.0> : vector<8x8xf64>
       %a130 = vector.transfer_read %sv115[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 0>, #gpu.address_space<workgroup>>, vector<8x4xf64>
       %b131 = vector.transfer_read %Dm[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
@@ -211,1900 +208,1693 @@ gpu.module @mir_kernels [#nvvm.target<chip = "sm_90", O = 3>] {
       %b134 = vector.transfer_read %Dm[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
       %r135 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a133, %b134, %r132 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
       %g136 = vector.transfer_read %sv117[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 0>>, vector<8x8xf64>
-      %sc137 = arith.mulf %r135, %g136 : vector<8x8xf64>
-      vector.transfer_write %sc137, %dt2g[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
+      %dt137 = arith.mulf %r135, %g136 : vector<8x8xf64>
+      %dv138 = vector.transfer_read %sv116[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 0>, #gpu.address_space<workgroup>>, vector<8x8xf64>
+      %g139 = vector.transfer_read %sv119[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 0>>, vector<8x8xf64>
+      %t140 = arith.mulf %dv138, %g139 : vector<8x8xf64>
+      %t2141 = arith.addf %t140, %dt137 : vector<8x8xf64>
+      %fl142 = arith.addf %t2141, %dt128 : vector<8x8xf64>
+      vector.transfer_write %fl142, %flux[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
     }
     gpu.barrier
     vector.warp_execute_on_lane_0(%lane)[32] {
-      %d138 = vector.transfer_read %sv116[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 0>, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %g2139 = vector.transfer_read %sv119[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 0>>, vector<8x8xf64>
-      %t140 = arith.mulf %d138, %g2139 : vector<8x8xf64>
-      %a141 = vector.transfer_read %dt2g[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %t2142 = arith.addf %t140, %a141 : vector<8x8xf64>
-      %b143 = vector.transfer_read %dt1g[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %fl144 = arith.addf %t2142, %b143 : vector<8x8xf64>
-      vector.transfer_write %fl144, %flux[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
+      %acc143 = arith.constant dense<0.0> : vector<8x8xf64>
+      %a144 = vector.transfer_read %flux[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x4xf64>
+      %b145 = vector.transfer_read %W[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %r146 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a144, %b145, %acc143 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
+      %a147 = vector.transfer_read %flux[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x4xf64>
+      %b148 = vector.transfer_read %W[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %r149 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a147, %b148, %r146 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
+      vector.transfer_write %r149, %tmp[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
     }
     gpu.barrier
     vector.warp_execute_on_lane_0(%lane)[32] {
-      %acc145 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a146 = vector.transfer_read %flux[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x4xf64>
-      %b147 = vector.transfer_read %W[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %r148 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a146, %b147, %acc145 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
-      %a149 = vector.transfer_read %flux[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x4xf64>
-      %b150 = vector.transfer_read %W[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %r151 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a149, %b150, %r148 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
-      vector.transfer_write %r151, %tmp[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
+      %acc150 = arith.constant dense<0.0> : vector<8x8xf64>
+      %a151 = vector.transfer_read %W[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b152 = vector.transfer_read %tmp[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<4x8xf64>
+      %r153 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a151, %b152, %acc150 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
+      %a154 = vector.transfer_read %W[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b155 = vector.transfer_read %tmp[%c4, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<4x8xf64>
+      %r156 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a154, %b155, %r153 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
+      vector.transfer_write %r156, %intf[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
+    }
+    gpu.barrier
+    %sv157 = memref.subview %y3[0, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 0>>
+    %sv158 = memref.subview %y3[1, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 64>>
+    vector.warp_execute_on_lane_0(%lane)[32] {
+      %fa159 = vector.transfer_read %intf[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
+      %r160 = vector.transfer_read %sv157[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 0>>, vector<8x8xf64>
+      %m161 = arith.subf %r160, %fa159 : vector<8x8xf64>
+      vector.transfer_write %m161, %sv157[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, strided<[8, 1], offset: 0>>
+      %r162 = vector.transfer_read %sv158[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 64>>, vector<8x8xf64>
+      %p163 = arith.addf %r162, %fa159 : vector<8x8xf64>
+      vector.transfer_write %p163, %sv158[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, strided<[8, 1], offset: 64>>
+    }
+    gpu.barrier
+    %sv164 = memref.subview %v3113[1, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64, #gpu.address_space<workgroup>> to memref<8x8xf64, strided<[8, 1], offset: 64>, #gpu.address_space<workgroup>>
+    %sv165 = memref.subview %v3114[1, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64, #gpu.address_space<workgroup>> to memref<8x8xf64, strided<[8, 1], offset: 64>, #gpu.address_space<workgroup>>
+    %sv166 = memref.subview %g00all[1, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 64>>
+    %sv167 = memref.subview %g01all[1, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 64>>
+    %sv168 = memref.subview %g02all[1, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 64>>
+    vector.warp_execute_on_lane_0(%lane)[32] {
+      %acc169 = arith.constant dense<0.0> : vector<8x8xf64>
+      %a170 = vector.transfer_read %Dm[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b171 = vector.transfer_read %sv164[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 64>, #gpu.address_space<workgroup>>, vector<4x8xf64>
+      %r172 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a170, %b171, %acc169 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
+      %a173 = vector.transfer_read %Dm[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b174 = vector.transfer_read %sv164[%c4, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 64>, #gpu.address_space<workgroup>>, vector<4x8xf64>
+      %r175 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a173, %b174, %r172 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
+      %g176 = vector.transfer_read %sv167[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 64>>, vector<8x8xf64>
+      %dt177 = arith.mulf %r175, %g176 : vector<8x8xf64>
+      %acc178 = arith.constant dense<0.0> : vector<8x8xf64>
+      %a179 = vector.transfer_read %sv164[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 64>, #gpu.address_space<workgroup>>, vector<8x4xf64>
+      %b180 = vector.transfer_read %Dm[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %r181 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a179, %b180, %acc178 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
+      %a182 = vector.transfer_read %sv164[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 64>, #gpu.address_space<workgroup>>, vector<8x4xf64>
+      %b183 = vector.transfer_read %Dm[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %r184 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a182, %b183, %r181 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
+      %g185 = vector.transfer_read %sv166[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 64>>, vector<8x8xf64>
+      %dt186 = arith.mulf %r184, %g185 : vector<8x8xf64>
+      %dv187 = vector.transfer_read %sv165[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 64>, #gpu.address_space<workgroup>>, vector<8x8xf64>
+      %g188 = vector.transfer_read %sv168[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 64>>, vector<8x8xf64>
+      %t189 = arith.mulf %dv187, %g188 : vector<8x8xf64>
+      %t2190 = arith.addf %t189, %dt186 : vector<8x8xf64>
+      %fl191 = arith.addf %t2190, %dt177 : vector<8x8xf64>
+      vector.transfer_write %fl191, %flux[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
     }
     gpu.barrier
     vector.warp_execute_on_lane_0(%lane)[32] {
-      %acc152 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a153 = vector.transfer_read %W[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b154 = vector.transfer_read %tmp[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<4x8xf64>
-      %r155 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a153, %b154, %acc152 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      %a156 = vector.transfer_read %W[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b157 = vector.transfer_read %tmp[%c4, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<4x8xf64>
-      %r158 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a156, %b157, %r155 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      vector.transfer_write %r158, %intf[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
-    }
-    gpu.barrier
-    %sv159 = memref.subview %y3[0, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 0>>
-    %sv160 = memref.subview %y3[1, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 64>>
-    vector.warp_execute_on_lane_0(%lane)[32] {
-      %fa161 = vector.transfer_read %intf[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %r162 = vector.transfer_read %sv159[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 0>>, vector<8x8xf64>
-      %m163 = arith.subf %r162, %fa161 : vector<8x8xf64>
-      vector.transfer_write %m163, %sv159[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, strided<[8, 1], offset: 0>>
-      %fa164 = vector.transfer_read %intf[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %r165 = vector.transfer_read %sv160[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 64>>, vector<8x8xf64>
-      %p166 = arith.addf %r165, %fa164 : vector<8x8xf64>
-      vector.transfer_write %p166, %sv160[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, strided<[8, 1], offset: 64>>
-    }
-    gpu.barrier
-    %sv167 = memref.subview %v3113[1, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64, #gpu.address_space<workgroup>> to memref<8x8xf64, strided<[8, 1], offset: 64>, #gpu.address_space<workgroup>>
-    %sv168 = memref.subview %v3114[1, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64, #gpu.address_space<workgroup>> to memref<8x8xf64, strided<[8, 1], offset: 64>, #gpu.address_space<workgroup>>
-    %sv169 = memref.subview %g00all[1, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 64>>
-    %sv170 = memref.subview %g01all[1, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 64>>
-    %sv171 = memref.subview %g02all[1, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 64>>
-    vector.warp_execute_on_lane_0(%lane)[32] {
-      %acc172 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a173 = vector.transfer_read %Dm[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b174 = vector.transfer_read %sv167[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 64>, #gpu.address_space<workgroup>>, vector<4x8xf64>
-      %r175 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a173, %b174, %acc172 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      %a176 = vector.transfer_read %Dm[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b177 = vector.transfer_read %sv167[%c4, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 64>, #gpu.address_space<workgroup>>, vector<4x8xf64>
-      %r178 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a176, %b177, %r175 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      %g179 = vector.transfer_read %sv170[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 64>>, vector<8x8xf64>
-      %sc180 = arith.mulf %r178, %g179 : vector<8x8xf64>
-      vector.transfer_write %sc180, %dt1g[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
-    }
-    vector.warp_execute_on_lane_0(%lane)[32] {
-      %acc181 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a182 = vector.transfer_read %sv167[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 64>, #gpu.address_space<workgroup>>, vector<8x4xf64>
-      %b183 = vector.transfer_read %Dm[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %r184 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a182, %b183, %acc181 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
-      %a185 = vector.transfer_read %sv167[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 64>, #gpu.address_space<workgroup>>, vector<8x4xf64>
-      %b186 = vector.transfer_read %Dm[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %r187 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a185, %b186, %r184 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
-      %g188 = vector.transfer_read %sv169[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 64>>, vector<8x8xf64>
-      %sc189 = arith.mulf %r187, %g188 : vector<8x8xf64>
-      vector.transfer_write %sc189, %dt2g[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
+      %acc192 = arith.constant dense<0.0> : vector<8x8xf64>
+      %a193 = vector.transfer_read %flux[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x4xf64>
+      %b194 = vector.transfer_read %W[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %r195 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a193, %b194, %acc192 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
+      %a196 = vector.transfer_read %flux[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x4xf64>
+      %b197 = vector.transfer_read %W[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %r198 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a196, %b197, %r195 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
+      vector.transfer_write %r198, %tmp[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
     }
     gpu.barrier
     vector.warp_execute_on_lane_0(%lane)[32] {
-      %d190 = vector.transfer_read %sv168[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 64>, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %g2191 = vector.transfer_read %sv171[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 64>>, vector<8x8xf64>
-      %t192 = arith.mulf %d190, %g2191 : vector<8x8xf64>
-      %a193 = vector.transfer_read %dt2g[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %t2194 = arith.addf %t192, %a193 : vector<8x8xf64>
-      %b195 = vector.transfer_read %dt1g[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %fl196 = arith.addf %t2194, %b195 : vector<8x8xf64>
-      vector.transfer_write %fl196, %flux[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
+      %acc199 = arith.constant dense<0.0> : vector<8x8xf64>
+      %a200 = vector.transfer_read %W[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b201 = vector.transfer_read %tmp[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<4x8xf64>
+      %r202 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a200, %b201, %acc199 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
+      %a203 = vector.transfer_read %W[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b204 = vector.transfer_read %tmp[%c4, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<4x8xf64>
+      %r205 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a203, %b204, %r202 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
+      vector.transfer_write %r205, %intf[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
+    }
+    gpu.barrier
+    %sv206 = memref.subview %y3[1, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 64>>
+    %sv207 = memref.subview %y3[2, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 128>>
+    vector.warp_execute_on_lane_0(%lane)[32] {
+      %fa208 = vector.transfer_read %intf[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
+      %r209 = vector.transfer_read %sv206[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 64>>, vector<8x8xf64>
+      %m210 = arith.subf %r209, %fa208 : vector<8x8xf64>
+      vector.transfer_write %m210, %sv206[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, strided<[8, 1], offset: 64>>
+      %r211 = vector.transfer_read %sv207[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 128>>, vector<8x8xf64>
+      %p212 = arith.addf %r211, %fa208 : vector<8x8xf64>
+      vector.transfer_write %p212, %sv207[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, strided<[8, 1], offset: 128>>
+    }
+    gpu.barrier
+    %sv213 = memref.subview %v3113[2, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64, #gpu.address_space<workgroup>> to memref<8x8xf64, strided<[8, 1], offset: 128>, #gpu.address_space<workgroup>>
+    %sv214 = memref.subview %v3114[2, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64, #gpu.address_space<workgroup>> to memref<8x8xf64, strided<[8, 1], offset: 128>, #gpu.address_space<workgroup>>
+    %sv215 = memref.subview %g00all[2, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 128>>
+    %sv216 = memref.subview %g01all[2, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 128>>
+    %sv217 = memref.subview %g02all[2, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 128>>
+    vector.warp_execute_on_lane_0(%lane)[32] {
+      %acc218 = arith.constant dense<0.0> : vector<8x8xf64>
+      %a219 = vector.transfer_read %Dm[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b220 = vector.transfer_read %sv213[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 128>, #gpu.address_space<workgroup>>, vector<4x8xf64>
+      %r221 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a219, %b220, %acc218 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
+      %a222 = vector.transfer_read %Dm[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b223 = vector.transfer_read %sv213[%c4, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 128>, #gpu.address_space<workgroup>>, vector<4x8xf64>
+      %r224 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a222, %b223, %r221 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
+      %g225 = vector.transfer_read %sv216[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 128>>, vector<8x8xf64>
+      %dt226 = arith.mulf %r224, %g225 : vector<8x8xf64>
+      %acc227 = arith.constant dense<0.0> : vector<8x8xf64>
+      %a228 = vector.transfer_read %sv213[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 128>, #gpu.address_space<workgroup>>, vector<8x4xf64>
+      %b229 = vector.transfer_read %Dm[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %r230 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a228, %b229, %acc227 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
+      %a231 = vector.transfer_read %sv213[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 128>, #gpu.address_space<workgroup>>, vector<8x4xf64>
+      %b232 = vector.transfer_read %Dm[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %r233 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a231, %b232, %r230 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
+      %g234 = vector.transfer_read %sv215[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 128>>, vector<8x8xf64>
+      %dt235 = arith.mulf %r233, %g234 : vector<8x8xf64>
+      %dv236 = vector.transfer_read %sv214[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 128>, #gpu.address_space<workgroup>>, vector<8x8xf64>
+      %g237 = vector.transfer_read %sv217[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 128>>, vector<8x8xf64>
+      %t238 = arith.mulf %dv236, %g237 : vector<8x8xf64>
+      %t2239 = arith.addf %t238, %dt235 : vector<8x8xf64>
+      %fl240 = arith.addf %t2239, %dt226 : vector<8x8xf64>
+      vector.transfer_write %fl240, %flux[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
     }
     gpu.barrier
     vector.warp_execute_on_lane_0(%lane)[32] {
-      %acc197 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a198 = vector.transfer_read %flux[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x4xf64>
-      %b199 = vector.transfer_read %W[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %r200 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a198, %b199, %acc197 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
-      %a201 = vector.transfer_read %flux[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x4xf64>
-      %b202 = vector.transfer_read %W[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %r203 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a201, %b202, %r200 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
-      vector.transfer_write %r203, %tmp[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
+      %acc241 = arith.constant dense<0.0> : vector<8x8xf64>
+      %a242 = vector.transfer_read %flux[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x4xf64>
+      %b243 = vector.transfer_read %W[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %r244 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a242, %b243, %acc241 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
+      %a245 = vector.transfer_read %flux[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x4xf64>
+      %b246 = vector.transfer_read %W[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %r247 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a245, %b246, %r244 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
+      vector.transfer_write %r247, %tmp[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
     }
     gpu.barrier
     vector.warp_execute_on_lane_0(%lane)[32] {
-      %acc204 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a205 = vector.transfer_read %W[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b206 = vector.transfer_read %tmp[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<4x8xf64>
-      %r207 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a205, %b206, %acc204 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      %a208 = vector.transfer_read %W[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b209 = vector.transfer_read %tmp[%c4, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<4x8xf64>
-      %r210 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a208, %b209, %r207 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      vector.transfer_write %r210, %intf[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
+      %acc248 = arith.constant dense<0.0> : vector<8x8xf64>
+      %a249 = vector.transfer_read %W[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b250 = vector.transfer_read %tmp[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<4x8xf64>
+      %r251 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a249, %b250, %acc248 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
+      %a252 = vector.transfer_read %W[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b253 = vector.transfer_read %tmp[%c4, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<4x8xf64>
+      %r254 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a252, %b253, %r251 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
+      vector.transfer_write %r254, %intf[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
     }
     gpu.barrier
-    %sv211 = memref.subview %y3[1, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 64>>
-    %sv212 = memref.subview %y3[2, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 128>>
+    %sv255 = memref.subview %y3[2, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 128>>
+    %sv256 = memref.subview %y3[3, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 192>>
     vector.warp_execute_on_lane_0(%lane)[32] {
-      %fa213 = vector.transfer_read %intf[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %r214 = vector.transfer_read %sv211[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 64>>, vector<8x8xf64>
-      %m215 = arith.subf %r214, %fa213 : vector<8x8xf64>
-      vector.transfer_write %m215, %sv211[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, strided<[8, 1], offset: 64>>
-      %fa216 = vector.transfer_read %intf[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %r217 = vector.transfer_read %sv212[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 128>>, vector<8x8xf64>
-      %p218 = arith.addf %r217, %fa216 : vector<8x8xf64>
-      vector.transfer_write %p218, %sv212[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, strided<[8, 1], offset: 128>>
+      %fa257 = vector.transfer_read %intf[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
+      %r258 = vector.transfer_read %sv255[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 128>>, vector<8x8xf64>
+      %m259 = arith.subf %r258, %fa257 : vector<8x8xf64>
+      vector.transfer_write %m259, %sv255[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, strided<[8, 1], offset: 128>>
+      %r260 = vector.transfer_read %sv256[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 192>>, vector<8x8xf64>
+      %p261 = arith.addf %r260, %fa257 : vector<8x8xf64>
+      vector.transfer_write %p261, %sv256[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, strided<[8, 1], offset: 192>>
     }
     gpu.barrier
-    %sv219 = memref.subview %v3113[2, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64, #gpu.address_space<workgroup>> to memref<8x8xf64, strided<[8, 1], offset: 128>, #gpu.address_space<workgroup>>
-    %sv220 = memref.subview %v3114[2, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64, #gpu.address_space<workgroup>> to memref<8x8xf64, strided<[8, 1], offset: 128>, #gpu.address_space<workgroup>>
-    %sv221 = memref.subview %g00all[2, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 128>>
-    %sv222 = memref.subview %g01all[2, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 128>>
-    %sv223 = memref.subview %g02all[2, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 128>>
+    %sv262 = memref.subview %v3113[3, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64, #gpu.address_space<workgroup>> to memref<8x8xf64, strided<[8, 1], offset: 192>, #gpu.address_space<workgroup>>
+    %sv263 = memref.subview %v3114[3, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64, #gpu.address_space<workgroup>> to memref<8x8xf64, strided<[8, 1], offset: 192>, #gpu.address_space<workgroup>>
+    %sv264 = memref.subview %g00all[3, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 192>>
+    %sv265 = memref.subview %g01all[3, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 192>>
+    %sv266 = memref.subview %g02all[3, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 192>>
     vector.warp_execute_on_lane_0(%lane)[32] {
-      %acc224 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a225 = vector.transfer_read %Dm[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b226 = vector.transfer_read %sv219[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 128>, #gpu.address_space<workgroup>>, vector<4x8xf64>
-      %r227 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a225, %b226, %acc224 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      %a228 = vector.transfer_read %Dm[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b229 = vector.transfer_read %sv219[%c4, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 128>, #gpu.address_space<workgroup>>, vector<4x8xf64>
-      %r230 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a228, %b229, %r227 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      %g231 = vector.transfer_read %sv222[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 128>>, vector<8x8xf64>
-      %sc232 = arith.mulf %r230, %g231 : vector<8x8xf64>
-      vector.transfer_write %sc232, %dt1g[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
-    }
-    vector.warp_execute_on_lane_0(%lane)[32] {
-      %acc233 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a234 = vector.transfer_read %sv219[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 128>, #gpu.address_space<workgroup>>, vector<8x4xf64>
-      %b235 = vector.transfer_read %Dm[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %r236 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a234, %b235, %acc233 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
-      %a237 = vector.transfer_read %sv219[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 128>, #gpu.address_space<workgroup>>, vector<8x4xf64>
-      %b238 = vector.transfer_read %Dm[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %r239 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a237, %b238, %r236 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
-      %g240 = vector.transfer_read %sv221[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 128>>, vector<8x8xf64>
-      %sc241 = arith.mulf %r239, %g240 : vector<8x8xf64>
-      vector.transfer_write %sc241, %dt2g[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
-    }
-    gpu.barrier
-    vector.warp_execute_on_lane_0(%lane)[32] {
-      %d242 = vector.transfer_read %sv220[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 128>, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %g2243 = vector.transfer_read %sv223[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 128>>, vector<8x8xf64>
-      %t244 = arith.mulf %d242, %g2243 : vector<8x8xf64>
-      %a245 = vector.transfer_read %dt2g[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %t2246 = arith.addf %t244, %a245 : vector<8x8xf64>
-      %b247 = vector.transfer_read %dt1g[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %fl248 = arith.addf %t2246, %b247 : vector<8x8xf64>
-      vector.transfer_write %fl248, %flux[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
-    }
-    gpu.barrier
-    vector.warp_execute_on_lane_0(%lane)[32] {
-      %acc249 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a250 = vector.transfer_read %flux[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x4xf64>
-      %b251 = vector.transfer_read %W[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %r252 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a250, %b251, %acc249 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
-      %a253 = vector.transfer_read %flux[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x4xf64>
-      %b254 = vector.transfer_read %W[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %r255 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a253, %b254, %r252 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
-      vector.transfer_write %r255, %tmp[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
-    }
-    gpu.barrier
-    vector.warp_execute_on_lane_0(%lane)[32] {
-      %acc256 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a257 = vector.transfer_read %W[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b258 = vector.transfer_read %tmp[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<4x8xf64>
-      %r259 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a257, %b258, %acc256 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      %a260 = vector.transfer_read %W[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b261 = vector.transfer_read %tmp[%c4, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<4x8xf64>
-      %r262 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a260, %b261, %r259 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      vector.transfer_write %r262, %intf[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
-    }
-    gpu.barrier
-    %sv263 = memref.subview %y3[2, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 128>>
-    %sv264 = memref.subview %y3[3, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 192>>
-    vector.warp_execute_on_lane_0(%lane)[32] {
-      %fa265 = vector.transfer_read %intf[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %r266 = vector.transfer_read %sv263[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 128>>, vector<8x8xf64>
-      %m267 = arith.subf %r266, %fa265 : vector<8x8xf64>
-      vector.transfer_write %m267, %sv263[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, strided<[8, 1], offset: 128>>
-      %fa268 = vector.transfer_read %intf[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %r269 = vector.transfer_read %sv264[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 192>>, vector<8x8xf64>
-      %p270 = arith.addf %r269, %fa268 : vector<8x8xf64>
-      vector.transfer_write %p270, %sv264[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, strided<[8, 1], offset: 192>>
-    }
-    gpu.barrier
-    %sv271 = memref.subview %v3113[3, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64, #gpu.address_space<workgroup>> to memref<8x8xf64, strided<[8, 1], offset: 192>, #gpu.address_space<workgroup>>
-    %sv272 = memref.subview %v3114[3, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64, #gpu.address_space<workgroup>> to memref<8x8xf64, strided<[8, 1], offset: 192>, #gpu.address_space<workgroup>>
-    %sv273 = memref.subview %g00all[3, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 192>>
-    %sv274 = memref.subview %g01all[3, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 192>>
-    %sv275 = memref.subview %g02all[3, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 192>>
-    vector.warp_execute_on_lane_0(%lane)[32] {
+      %acc267 = arith.constant dense<0.0> : vector<8x8xf64>
+      %a268 = vector.transfer_read %Dm[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b269 = vector.transfer_read %sv262[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 192>, #gpu.address_space<workgroup>>, vector<4x8xf64>
+      %r270 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a268, %b269, %acc267 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
+      %a271 = vector.transfer_read %Dm[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b272 = vector.transfer_read %sv262[%c4, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 192>, #gpu.address_space<workgroup>>, vector<4x8xf64>
+      %r273 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a271, %b272, %r270 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
+      %g274 = vector.transfer_read %sv265[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 192>>, vector<8x8xf64>
+      %dt275 = arith.mulf %r273, %g274 : vector<8x8xf64>
       %acc276 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a277 = vector.transfer_read %Dm[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b278 = vector.transfer_read %sv271[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 192>, #gpu.address_space<workgroup>>, vector<4x8xf64>
-      %r279 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a277, %b278, %acc276 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      %a280 = vector.transfer_read %Dm[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b281 = vector.transfer_read %sv271[%c4, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 192>, #gpu.address_space<workgroup>>, vector<4x8xf64>
-      %r282 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a280, %b281, %r279 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      %g283 = vector.transfer_read %sv274[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 192>>, vector<8x8xf64>
-      %sc284 = arith.mulf %r282, %g283 : vector<8x8xf64>
-      vector.transfer_write %sc284, %dt1g[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
-    }
-    vector.warp_execute_on_lane_0(%lane)[32] {
-      %acc285 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a286 = vector.transfer_read %sv271[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 192>, #gpu.address_space<workgroup>>, vector<8x4xf64>
-      %b287 = vector.transfer_read %Dm[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %r288 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a286, %b287, %acc285 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
-      %a289 = vector.transfer_read %sv271[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 192>, #gpu.address_space<workgroup>>, vector<8x4xf64>
-      %b290 = vector.transfer_read %Dm[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %r291 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a289, %b290, %r288 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
-      %g292 = vector.transfer_read %sv273[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 192>>, vector<8x8xf64>
-      %sc293 = arith.mulf %r291, %g292 : vector<8x8xf64>
-      vector.transfer_write %sc293, %dt2g[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
+      %a277 = vector.transfer_read %sv262[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 192>, #gpu.address_space<workgroup>>, vector<8x4xf64>
+      %b278 = vector.transfer_read %Dm[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %r279 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a277, %b278, %acc276 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
+      %a280 = vector.transfer_read %sv262[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 192>, #gpu.address_space<workgroup>>, vector<8x4xf64>
+      %b281 = vector.transfer_read %Dm[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %r282 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a280, %b281, %r279 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
+      %g283 = vector.transfer_read %sv264[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 192>>, vector<8x8xf64>
+      %dt284 = arith.mulf %r282, %g283 : vector<8x8xf64>
+      %dv285 = vector.transfer_read %sv263[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 192>, #gpu.address_space<workgroup>>, vector<8x8xf64>
+      %g286 = vector.transfer_read %sv266[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 192>>, vector<8x8xf64>
+      %t287 = arith.mulf %dv285, %g286 : vector<8x8xf64>
+      %t2288 = arith.addf %t287, %dt284 : vector<8x8xf64>
+      %fl289 = arith.addf %t2288, %dt275 : vector<8x8xf64>
+      vector.transfer_write %fl289, %flux[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
     }
     gpu.barrier
     vector.warp_execute_on_lane_0(%lane)[32] {
-      %d294 = vector.transfer_read %sv272[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 192>, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %g2295 = vector.transfer_read %sv275[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 192>>, vector<8x8xf64>
-      %t296 = arith.mulf %d294, %g2295 : vector<8x8xf64>
-      %a297 = vector.transfer_read %dt2g[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %t2298 = arith.addf %t296, %a297 : vector<8x8xf64>
-      %b299 = vector.transfer_read %dt1g[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %fl300 = arith.addf %t2298, %b299 : vector<8x8xf64>
-      vector.transfer_write %fl300, %flux[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
+      %acc290 = arith.constant dense<0.0> : vector<8x8xf64>
+      %a291 = vector.transfer_read %flux[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x4xf64>
+      %b292 = vector.transfer_read %W[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %r293 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a291, %b292, %acc290 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
+      %a294 = vector.transfer_read %flux[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x4xf64>
+      %b295 = vector.transfer_read %W[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %r296 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a294, %b295, %r293 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
+      vector.transfer_write %r296, %tmp[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
     }
     gpu.barrier
     vector.warp_execute_on_lane_0(%lane)[32] {
-      %acc301 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a302 = vector.transfer_read %flux[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x4xf64>
-      %b303 = vector.transfer_read %W[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %r304 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a302, %b303, %acc301 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
-      %a305 = vector.transfer_read %flux[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x4xf64>
-      %b306 = vector.transfer_read %W[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %r307 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a305, %b306, %r304 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
-      vector.transfer_write %r307, %tmp[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
+      %acc297 = arith.constant dense<0.0> : vector<8x8xf64>
+      %a298 = vector.transfer_read %W[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b299 = vector.transfer_read %tmp[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<4x8xf64>
+      %r300 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a298, %b299, %acc297 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
+      %a301 = vector.transfer_read %W[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b302 = vector.transfer_read %tmp[%c4, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<4x8xf64>
+      %r303 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a301, %b302, %r300 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
+      vector.transfer_write %r303, %intf[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
+    }
+    gpu.barrier
+    %sv304 = memref.subview %y3[3, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 192>>
+    %sv305 = memref.subview %y3[4, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 256>>
+    vector.warp_execute_on_lane_0(%lane)[32] {
+      %fa306 = vector.transfer_read %intf[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
+      %r307 = vector.transfer_read %sv304[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 192>>, vector<8x8xf64>
+      %m308 = arith.subf %r307, %fa306 : vector<8x8xf64>
+      vector.transfer_write %m308, %sv304[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, strided<[8, 1], offset: 192>>
+      %r309 = vector.transfer_read %sv305[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 256>>, vector<8x8xf64>
+      %p310 = arith.addf %r309, %fa306 : vector<8x8xf64>
+      vector.transfer_write %p310, %sv305[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, strided<[8, 1], offset: 256>>
+    }
+    gpu.barrier
+    %sv311 = memref.subview %v3113[4, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64, #gpu.address_space<workgroup>> to memref<8x8xf64, strided<[8, 1], offset: 256>, #gpu.address_space<workgroup>>
+    %sv312 = memref.subview %v3114[4, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64, #gpu.address_space<workgroup>> to memref<8x8xf64, strided<[8, 1], offset: 256>, #gpu.address_space<workgroup>>
+    %sv313 = memref.subview %g00all[4, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 256>>
+    %sv314 = memref.subview %g01all[4, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 256>>
+    %sv315 = memref.subview %g02all[4, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 256>>
+    vector.warp_execute_on_lane_0(%lane)[32] {
+      %acc316 = arith.constant dense<0.0> : vector<8x8xf64>
+      %a317 = vector.transfer_read %Dm[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b318 = vector.transfer_read %sv311[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 256>, #gpu.address_space<workgroup>>, vector<4x8xf64>
+      %r319 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a317, %b318, %acc316 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
+      %a320 = vector.transfer_read %Dm[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b321 = vector.transfer_read %sv311[%c4, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 256>, #gpu.address_space<workgroup>>, vector<4x8xf64>
+      %r322 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a320, %b321, %r319 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
+      %g323 = vector.transfer_read %sv314[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 256>>, vector<8x8xf64>
+      %dt324 = arith.mulf %r322, %g323 : vector<8x8xf64>
+      %acc325 = arith.constant dense<0.0> : vector<8x8xf64>
+      %a326 = vector.transfer_read %sv311[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 256>, #gpu.address_space<workgroup>>, vector<8x4xf64>
+      %b327 = vector.transfer_read %Dm[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %r328 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a326, %b327, %acc325 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
+      %a329 = vector.transfer_read %sv311[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 256>, #gpu.address_space<workgroup>>, vector<8x4xf64>
+      %b330 = vector.transfer_read %Dm[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %r331 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a329, %b330, %r328 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
+      %g332 = vector.transfer_read %sv313[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 256>>, vector<8x8xf64>
+      %dt333 = arith.mulf %r331, %g332 : vector<8x8xf64>
+      %dv334 = vector.transfer_read %sv312[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 256>, #gpu.address_space<workgroup>>, vector<8x8xf64>
+      %g335 = vector.transfer_read %sv315[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 256>>, vector<8x8xf64>
+      %t336 = arith.mulf %dv334, %g335 : vector<8x8xf64>
+      %t2337 = arith.addf %t336, %dt333 : vector<8x8xf64>
+      %fl338 = arith.addf %t2337, %dt324 : vector<8x8xf64>
+      vector.transfer_write %fl338, %flux[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
     }
     gpu.barrier
     vector.warp_execute_on_lane_0(%lane)[32] {
-      %acc308 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a309 = vector.transfer_read %W[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b310 = vector.transfer_read %tmp[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<4x8xf64>
-      %r311 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a309, %b310, %acc308 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      %a312 = vector.transfer_read %W[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b313 = vector.transfer_read %tmp[%c4, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<4x8xf64>
-      %r314 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a312, %b313, %r311 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      vector.transfer_write %r314, %intf[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
-    }
-    gpu.barrier
-    %sv315 = memref.subview %y3[3, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 192>>
-    %sv316 = memref.subview %y3[4, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 256>>
-    vector.warp_execute_on_lane_0(%lane)[32] {
-      %fa317 = vector.transfer_read %intf[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %r318 = vector.transfer_read %sv315[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 192>>, vector<8x8xf64>
-      %m319 = arith.subf %r318, %fa317 : vector<8x8xf64>
-      vector.transfer_write %m319, %sv315[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, strided<[8, 1], offset: 192>>
-      %fa320 = vector.transfer_read %intf[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %r321 = vector.transfer_read %sv316[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 256>>, vector<8x8xf64>
-      %p322 = arith.addf %r321, %fa320 : vector<8x8xf64>
-      vector.transfer_write %p322, %sv316[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, strided<[8, 1], offset: 256>>
-    }
-    gpu.barrier
-    %sv323 = memref.subview %v3113[4, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64, #gpu.address_space<workgroup>> to memref<8x8xf64, strided<[8, 1], offset: 256>, #gpu.address_space<workgroup>>
-    %sv324 = memref.subview %v3114[4, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64, #gpu.address_space<workgroup>> to memref<8x8xf64, strided<[8, 1], offset: 256>, #gpu.address_space<workgroup>>
-    %sv325 = memref.subview %g00all[4, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 256>>
-    %sv326 = memref.subview %g01all[4, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 256>>
-    %sv327 = memref.subview %g02all[4, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 256>>
-    vector.warp_execute_on_lane_0(%lane)[32] {
-      %acc328 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a329 = vector.transfer_read %Dm[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b330 = vector.transfer_read %sv323[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 256>, #gpu.address_space<workgroup>>, vector<4x8xf64>
-      %r331 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a329, %b330, %acc328 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      %a332 = vector.transfer_read %Dm[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b333 = vector.transfer_read %sv323[%c4, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 256>, #gpu.address_space<workgroup>>, vector<4x8xf64>
-      %r334 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a332, %b333, %r331 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      %g335 = vector.transfer_read %sv326[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 256>>, vector<8x8xf64>
-      %sc336 = arith.mulf %r334, %g335 : vector<8x8xf64>
-      vector.transfer_write %sc336, %dt1g[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
-    }
-    vector.warp_execute_on_lane_0(%lane)[32] {
-      %acc337 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a338 = vector.transfer_read %sv323[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 256>, #gpu.address_space<workgroup>>, vector<8x4xf64>
-      %b339 = vector.transfer_read %Dm[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %r340 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a338, %b339, %acc337 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
-      %a341 = vector.transfer_read %sv323[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 256>, #gpu.address_space<workgroup>>, vector<8x4xf64>
-      %b342 = vector.transfer_read %Dm[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %r343 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a341, %b342, %r340 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
-      %g344 = vector.transfer_read %sv325[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 256>>, vector<8x8xf64>
-      %sc345 = arith.mulf %r343, %g344 : vector<8x8xf64>
-      vector.transfer_write %sc345, %dt2g[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
+      %acc339 = arith.constant dense<0.0> : vector<8x8xf64>
+      %a340 = vector.transfer_read %flux[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x4xf64>
+      %b341 = vector.transfer_read %W[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %r342 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a340, %b341, %acc339 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
+      %a343 = vector.transfer_read %flux[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x4xf64>
+      %b344 = vector.transfer_read %W[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %r345 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a343, %b344, %r342 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
+      vector.transfer_write %r345, %tmp[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
     }
     gpu.barrier
     vector.warp_execute_on_lane_0(%lane)[32] {
-      %d346 = vector.transfer_read %sv324[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 256>, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %g2347 = vector.transfer_read %sv327[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 256>>, vector<8x8xf64>
-      %t348 = arith.mulf %d346, %g2347 : vector<8x8xf64>
-      %a349 = vector.transfer_read %dt2g[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %t2350 = arith.addf %t348, %a349 : vector<8x8xf64>
-      %b351 = vector.transfer_read %dt1g[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %fl352 = arith.addf %t2350, %b351 : vector<8x8xf64>
-      vector.transfer_write %fl352, %flux[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
+      %acc346 = arith.constant dense<0.0> : vector<8x8xf64>
+      %a347 = vector.transfer_read %W[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b348 = vector.transfer_read %tmp[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<4x8xf64>
+      %r349 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a347, %b348, %acc346 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
+      %a350 = vector.transfer_read %W[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b351 = vector.transfer_read %tmp[%c4, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<4x8xf64>
+      %r352 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a350, %b351, %r349 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
+      vector.transfer_write %r352, %intf[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
+    }
+    gpu.barrier
+    %sv353 = memref.subview %y3[4, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 256>>
+    %sv354 = memref.subview %y3[5, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 320>>
+    vector.warp_execute_on_lane_0(%lane)[32] {
+      %fa355 = vector.transfer_read %intf[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
+      %r356 = vector.transfer_read %sv353[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 256>>, vector<8x8xf64>
+      %m357 = arith.subf %r356, %fa355 : vector<8x8xf64>
+      vector.transfer_write %m357, %sv353[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, strided<[8, 1], offset: 256>>
+      %r358 = vector.transfer_read %sv354[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 320>>, vector<8x8xf64>
+      %p359 = arith.addf %r358, %fa355 : vector<8x8xf64>
+      vector.transfer_write %p359, %sv354[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, strided<[8, 1], offset: 320>>
+    }
+    gpu.barrier
+    %sv360 = memref.subview %v3113[5, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64, #gpu.address_space<workgroup>> to memref<8x8xf64, strided<[8, 1], offset: 320>, #gpu.address_space<workgroup>>
+    %sv361 = memref.subview %v3114[5, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64, #gpu.address_space<workgroup>> to memref<8x8xf64, strided<[8, 1], offset: 320>, #gpu.address_space<workgroup>>
+    %sv362 = memref.subview %g00all[5, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 320>>
+    %sv363 = memref.subview %g01all[5, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 320>>
+    %sv364 = memref.subview %g02all[5, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 320>>
+    vector.warp_execute_on_lane_0(%lane)[32] {
+      %acc365 = arith.constant dense<0.0> : vector<8x8xf64>
+      %a366 = vector.transfer_read %Dm[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b367 = vector.transfer_read %sv360[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 320>, #gpu.address_space<workgroup>>, vector<4x8xf64>
+      %r368 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a366, %b367, %acc365 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
+      %a369 = vector.transfer_read %Dm[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b370 = vector.transfer_read %sv360[%c4, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 320>, #gpu.address_space<workgroup>>, vector<4x8xf64>
+      %r371 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a369, %b370, %r368 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
+      %g372 = vector.transfer_read %sv363[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 320>>, vector<8x8xf64>
+      %dt373 = arith.mulf %r371, %g372 : vector<8x8xf64>
+      %acc374 = arith.constant dense<0.0> : vector<8x8xf64>
+      %a375 = vector.transfer_read %sv360[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 320>, #gpu.address_space<workgroup>>, vector<8x4xf64>
+      %b376 = vector.transfer_read %Dm[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %r377 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a375, %b376, %acc374 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
+      %a378 = vector.transfer_read %sv360[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 320>, #gpu.address_space<workgroup>>, vector<8x4xf64>
+      %b379 = vector.transfer_read %Dm[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %r380 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a378, %b379, %r377 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
+      %g381 = vector.transfer_read %sv362[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 320>>, vector<8x8xf64>
+      %dt382 = arith.mulf %r380, %g381 : vector<8x8xf64>
+      %dv383 = vector.transfer_read %sv361[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 320>, #gpu.address_space<workgroup>>, vector<8x8xf64>
+      %g384 = vector.transfer_read %sv364[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 320>>, vector<8x8xf64>
+      %t385 = arith.mulf %dv383, %g384 : vector<8x8xf64>
+      %t2386 = arith.addf %t385, %dt382 : vector<8x8xf64>
+      %fl387 = arith.addf %t2386, %dt373 : vector<8x8xf64>
+      vector.transfer_write %fl387, %flux[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
     }
     gpu.barrier
     vector.warp_execute_on_lane_0(%lane)[32] {
-      %acc353 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a354 = vector.transfer_read %flux[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x4xf64>
-      %b355 = vector.transfer_read %W[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %r356 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a354, %b355, %acc353 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
-      %a357 = vector.transfer_read %flux[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x4xf64>
-      %b358 = vector.transfer_read %W[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %r359 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a357, %b358, %r356 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
-      vector.transfer_write %r359, %tmp[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
+      %acc388 = arith.constant dense<0.0> : vector<8x8xf64>
+      %a389 = vector.transfer_read %flux[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x4xf64>
+      %b390 = vector.transfer_read %W[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %r391 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a389, %b390, %acc388 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
+      %a392 = vector.transfer_read %flux[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x4xf64>
+      %b393 = vector.transfer_read %W[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %r394 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a392, %b393, %r391 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
+      vector.transfer_write %r394, %tmp[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
     }
     gpu.barrier
     vector.warp_execute_on_lane_0(%lane)[32] {
-      %acc360 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a361 = vector.transfer_read %W[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b362 = vector.transfer_read %tmp[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<4x8xf64>
-      %r363 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a361, %b362, %acc360 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      %a364 = vector.transfer_read %W[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b365 = vector.transfer_read %tmp[%c4, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<4x8xf64>
-      %r366 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a364, %b365, %r363 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      vector.transfer_write %r366, %intf[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
+      %acc395 = arith.constant dense<0.0> : vector<8x8xf64>
+      %a396 = vector.transfer_read %W[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b397 = vector.transfer_read %tmp[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<4x8xf64>
+      %r398 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a396, %b397, %acc395 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
+      %a399 = vector.transfer_read %W[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b400 = vector.transfer_read %tmp[%c4, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<4x8xf64>
+      %r401 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a399, %b400, %r398 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
+      vector.transfer_write %r401, %intf[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
     }
     gpu.barrier
-    %sv367 = memref.subview %y3[4, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 256>>
-    %sv368 = memref.subview %y3[5, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 320>>
+    %sv402 = memref.subview %y3[5, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 320>>
+    %sv403 = memref.subview %y3[6, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 384>>
     vector.warp_execute_on_lane_0(%lane)[32] {
-      %fa369 = vector.transfer_read %intf[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %r370 = vector.transfer_read %sv367[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 256>>, vector<8x8xf64>
-      %m371 = arith.subf %r370, %fa369 : vector<8x8xf64>
-      vector.transfer_write %m371, %sv367[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, strided<[8, 1], offset: 256>>
-      %fa372 = vector.transfer_read %intf[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %r373 = vector.transfer_read %sv368[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 320>>, vector<8x8xf64>
-      %p374 = arith.addf %r373, %fa372 : vector<8x8xf64>
-      vector.transfer_write %p374, %sv368[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, strided<[8, 1], offset: 320>>
+      %fa404 = vector.transfer_read %intf[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
+      %r405 = vector.transfer_read %sv402[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 320>>, vector<8x8xf64>
+      %m406 = arith.subf %r405, %fa404 : vector<8x8xf64>
+      vector.transfer_write %m406, %sv402[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, strided<[8, 1], offset: 320>>
+      %r407 = vector.transfer_read %sv403[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 384>>, vector<8x8xf64>
+      %p408 = arith.addf %r407, %fa404 : vector<8x8xf64>
+      vector.transfer_write %p408, %sv403[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, strided<[8, 1], offset: 384>>
     }
     gpu.barrier
-    %sv375 = memref.subview %v3113[5, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64, #gpu.address_space<workgroup>> to memref<8x8xf64, strided<[8, 1], offset: 320>, #gpu.address_space<workgroup>>
-    %sv376 = memref.subview %v3114[5, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64, #gpu.address_space<workgroup>> to memref<8x8xf64, strided<[8, 1], offset: 320>, #gpu.address_space<workgroup>>
-    %sv377 = memref.subview %g00all[5, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 320>>
-    %sv378 = memref.subview %g01all[5, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 320>>
-    %sv379 = memref.subview %g02all[5, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 320>>
+    %sv409 = memref.subview %v3113[6, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64, #gpu.address_space<workgroup>> to memref<8x8xf64, strided<[8, 1], offset: 384>, #gpu.address_space<workgroup>>
+    %sv410 = memref.subview %v3114[6, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64, #gpu.address_space<workgroup>> to memref<8x8xf64, strided<[8, 1], offset: 384>, #gpu.address_space<workgroup>>
+    %sv411 = memref.subview %g00all[6, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 384>>
+    %sv412 = memref.subview %g01all[6, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 384>>
+    %sv413 = memref.subview %g02all[6, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 384>>
     vector.warp_execute_on_lane_0(%lane)[32] {
-      %acc380 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a381 = vector.transfer_read %Dm[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b382 = vector.transfer_read %sv375[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 320>, #gpu.address_space<workgroup>>, vector<4x8xf64>
-      %r383 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a381, %b382, %acc380 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      %a384 = vector.transfer_read %Dm[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b385 = vector.transfer_read %sv375[%c4, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 320>, #gpu.address_space<workgroup>>, vector<4x8xf64>
-      %r386 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a384, %b385, %r383 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      %g387 = vector.transfer_read %sv378[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 320>>, vector<8x8xf64>
-      %sc388 = arith.mulf %r386, %g387 : vector<8x8xf64>
-      vector.transfer_write %sc388, %dt1g[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
-    }
-    vector.warp_execute_on_lane_0(%lane)[32] {
-      %acc389 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a390 = vector.transfer_read %sv375[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 320>, #gpu.address_space<workgroup>>, vector<8x4xf64>
-      %b391 = vector.transfer_read %Dm[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %r392 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a390, %b391, %acc389 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
-      %a393 = vector.transfer_read %sv375[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 320>, #gpu.address_space<workgroup>>, vector<8x4xf64>
-      %b394 = vector.transfer_read %Dm[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %r395 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a393, %b394, %r392 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
-      %g396 = vector.transfer_read %sv377[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 320>>, vector<8x8xf64>
-      %sc397 = arith.mulf %r395, %g396 : vector<8x8xf64>
-      vector.transfer_write %sc397, %dt2g[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
-    }
-    gpu.barrier
-    vector.warp_execute_on_lane_0(%lane)[32] {
-      %d398 = vector.transfer_read %sv376[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 320>, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %g2399 = vector.transfer_read %sv379[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 320>>, vector<8x8xf64>
-      %t400 = arith.mulf %d398, %g2399 : vector<8x8xf64>
-      %a401 = vector.transfer_read %dt2g[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %t2402 = arith.addf %t400, %a401 : vector<8x8xf64>
-      %b403 = vector.transfer_read %dt1g[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %fl404 = arith.addf %t2402, %b403 : vector<8x8xf64>
-      vector.transfer_write %fl404, %flux[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
+      %acc414 = arith.constant dense<0.0> : vector<8x8xf64>
+      %a415 = vector.transfer_read %Dm[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b416 = vector.transfer_read %sv409[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 384>, #gpu.address_space<workgroup>>, vector<4x8xf64>
+      %r417 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a415, %b416, %acc414 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
+      %a418 = vector.transfer_read %Dm[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b419 = vector.transfer_read %sv409[%c4, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 384>, #gpu.address_space<workgroup>>, vector<4x8xf64>
+      %r420 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a418, %b419, %r417 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
+      %g421 = vector.transfer_read %sv412[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 384>>, vector<8x8xf64>
+      %dt422 = arith.mulf %r420, %g421 : vector<8x8xf64>
+      %acc423 = arith.constant dense<0.0> : vector<8x8xf64>
+      %a424 = vector.transfer_read %sv409[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 384>, #gpu.address_space<workgroup>>, vector<8x4xf64>
+      %b425 = vector.transfer_read %Dm[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %r426 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a424, %b425, %acc423 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
+      %a427 = vector.transfer_read %sv409[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 384>, #gpu.address_space<workgroup>>, vector<8x4xf64>
+      %b428 = vector.transfer_read %Dm[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %r429 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a427, %b428, %r426 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
+      %g430 = vector.transfer_read %sv411[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 384>>, vector<8x8xf64>
+      %dt431 = arith.mulf %r429, %g430 : vector<8x8xf64>
+      %dv432 = vector.transfer_read %sv410[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 384>, #gpu.address_space<workgroup>>, vector<8x8xf64>
+      %g433 = vector.transfer_read %sv413[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 384>>, vector<8x8xf64>
+      %t434 = arith.mulf %dv432, %g433 : vector<8x8xf64>
+      %t2435 = arith.addf %t434, %dt431 : vector<8x8xf64>
+      %fl436 = arith.addf %t2435, %dt422 : vector<8x8xf64>
+      vector.transfer_write %fl436, %flux[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
     }
     gpu.barrier
     vector.warp_execute_on_lane_0(%lane)[32] {
-      %acc405 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a406 = vector.transfer_read %flux[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x4xf64>
-      %b407 = vector.transfer_read %W[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %r408 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a406, %b407, %acc405 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
-      %a409 = vector.transfer_read %flux[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x4xf64>
-      %b410 = vector.transfer_read %W[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %r411 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a409, %b410, %r408 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
-      vector.transfer_write %r411, %tmp[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
+      %acc437 = arith.constant dense<0.0> : vector<8x8xf64>
+      %a438 = vector.transfer_read %flux[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x4xf64>
+      %b439 = vector.transfer_read %W[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %r440 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a438, %b439, %acc437 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
+      %a441 = vector.transfer_read %flux[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x4xf64>
+      %b442 = vector.transfer_read %W[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %r443 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a441, %b442, %r440 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
+      vector.transfer_write %r443, %tmp[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
     }
     gpu.barrier
     vector.warp_execute_on_lane_0(%lane)[32] {
-      %acc412 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a413 = vector.transfer_read %W[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b414 = vector.transfer_read %tmp[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<4x8xf64>
-      %r415 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a413, %b414, %acc412 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      %a416 = vector.transfer_read %W[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b417 = vector.transfer_read %tmp[%c4, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<4x8xf64>
-      %r418 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a416, %b417, %r415 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      vector.transfer_write %r418, %intf[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
+      %acc444 = arith.constant dense<0.0> : vector<8x8xf64>
+      %a445 = vector.transfer_read %W[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b446 = vector.transfer_read %tmp[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<4x8xf64>
+      %r447 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a445, %b446, %acc444 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
+      %a448 = vector.transfer_read %W[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b449 = vector.transfer_read %tmp[%c4, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<4x8xf64>
+      %r450 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a448, %b449, %r447 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
+      vector.transfer_write %r450, %intf[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
     }
     gpu.barrier
-    %sv419 = memref.subview %y3[5, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 320>>
-    %sv420 = memref.subview %y3[6, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 384>>
+    %sv451 = memref.subview %y3[6, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 384>>
+    %sv452 = memref.subview %y3[7, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 448>>
     vector.warp_execute_on_lane_0(%lane)[32] {
-      %fa421 = vector.transfer_read %intf[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %r422 = vector.transfer_read %sv419[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 320>>, vector<8x8xf64>
-      %m423 = arith.subf %r422, %fa421 : vector<8x8xf64>
-      vector.transfer_write %m423, %sv419[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, strided<[8, 1], offset: 320>>
-      %fa424 = vector.transfer_read %intf[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %r425 = vector.transfer_read %sv420[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 384>>, vector<8x8xf64>
-      %p426 = arith.addf %r425, %fa424 : vector<8x8xf64>
-      vector.transfer_write %p426, %sv420[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, strided<[8, 1], offset: 384>>
-    }
-    gpu.barrier
-    %sv427 = memref.subview %v3113[6, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64, #gpu.address_space<workgroup>> to memref<8x8xf64, strided<[8, 1], offset: 384>, #gpu.address_space<workgroup>>
-    %sv428 = memref.subview %v3114[6, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64, #gpu.address_space<workgroup>> to memref<8x8xf64, strided<[8, 1], offset: 384>, #gpu.address_space<workgroup>>
-    %sv429 = memref.subview %g00all[6, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 384>>
-    %sv430 = memref.subview %g01all[6, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 384>>
-    %sv431 = memref.subview %g02all[6, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 384>>
-    vector.warp_execute_on_lane_0(%lane)[32] {
-      %acc432 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a433 = vector.transfer_read %Dm[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b434 = vector.transfer_read %sv427[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 384>, #gpu.address_space<workgroup>>, vector<4x8xf64>
-      %r435 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a433, %b434, %acc432 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      %a436 = vector.transfer_read %Dm[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b437 = vector.transfer_read %sv427[%c4, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 384>, #gpu.address_space<workgroup>>, vector<4x8xf64>
-      %r438 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a436, %b437, %r435 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      %g439 = vector.transfer_read %sv430[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 384>>, vector<8x8xf64>
-      %sc440 = arith.mulf %r438, %g439 : vector<8x8xf64>
-      vector.transfer_write %sc440, %dt1g[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
-    }
-    vector.warp_execute_on_lane_0(%lane)[32] {
-      %acc441 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a442 = vector.transfer_read %sv427[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 384>, #gpu.address_space<workgroup>>, vector<8x4xf64>
-      %b443 = vector.transfer_read %Dm[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %r444 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a442, %b443, %acc441 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
-      %a445 = vector.transfer_read %sv427[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 384>, #gpu.address_space<workgroup>>, vector<8x4xf64>
-      %b446 = vector.transfer_read %Dm[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %r447 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a445, %b446, %r444 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
-      %g448 = vector.transfer_read %sv429[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 384>>, vector<8x8xf64>
-      %sc449 = arith.mulf %r447, %g448 : vector<8x8xf64>
-      vector.transfer_write %sc449, %dt2g[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
+      %fa453 = vector.transfer_read %intf[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
+      %r454 = vector.transfer_read %sv451[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 384>>, vector<8x8xf64>
+      %m455 = arith.subf %r454, %fa453 : vector<8x8xf64>
+      vector.transfer_write %m455, %sv451[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, strided<[8, 1], offset: 384>>
+      %r456 = vector.transfer_read %sv452[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 448>>, vector<8x8xf64>
+      %p457 = arith.addf %r456, %fa453 : vector<8x8xf64>
+      vector.transfer_write %p457, %sv452[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, strided<[8, 1], offset: 448>>
     }
     gpu.barrier
     vector.warp_execute_on_lane_0(%lane)[32] {
-      %d450 = vector.transfer_read %sv428[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 384>, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %g2451 = vector.transfer_read %sv431[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 384>>, vector<8x8xf64>
-      %t452 = arith.mulf %d450, %g2451 : vector<8x8xf64>
-      %a453 = vector.transfer_read %dt2g[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %t2454 = arith.addf %t452, %a453 : vector<8x8xf64>
-      %b455 = vector.transfer_read %dt1g[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %fl456 = arith.addf %t2454, %b455 : vector<8x8xf64>
-      vector.transfer_write %fl456, %flux[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
+      %acc458 = arith.constant dense<0.0> : vector<8x8xf64>
+      %a459 = vector.transfer_read %Btil[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b460 = vector.transfer_read %u1[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
+      %r461 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a459, %b460, %acc458 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
+      %a462 = vector.transfer_read %Btil[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b463 = vector.transfer_read %u1[%c4, %c0], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
+      %r464 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a462, %b463, %r461 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
+      vector.transfer_write %r464, %interp_all[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x64xf64, #gpu.address_space<workgroup>>
     }
-    gpu.barrier
     vector.warp_execute_on_lane_0(%lane)[32] {
-      %acc457 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a458 = vector.transfer_read %flux[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x4xf64>
-      %b459 = vector.transfer_read %W[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %r460 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a458, %b459, %acc457 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
-      %a461 = vector.transfer_read %flux[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x4xf64>
-      %b462 = vector.transfer_read %W[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %r463 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a461, %b462, %r460 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
-      vector.transfer_write %r463, %tmp[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
+      %acc465 = arith.constant dense<0.0> : vector<8x8xf64>
+      %a466 = vector.transfer_read %Btil[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b467 = vector.transfer_read %u1[%c0, %c8], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
+      %r468 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a466, %b467, %acc465 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
+      %a469 = vector.transfer_read %Btil[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b470 = vector.transfer_read %u1[%c4, %c8], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
+      %r471 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a469, %b470, %r468 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
+      vector.transfer_write %r471, %interp_all[%c0, %c8] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x64xf64, #gpu.address_space<workgroup>>
     }
-    gpu.barrier
     vector.warp_execute_on_lane_0(%lane)[32] {
-      %acc464 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a465 = vector.transfer_read %W[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b466 = vector.transfer_read %tmp[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<4x8xf64>
-      %r467 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a465, %b466, %acc464 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      %a468 = vector.transfer_read %W[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b469 = vector.transfer_read %tmp[%c4, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<4x8xf64>
-      %r470 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a468, %b469, %r467 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      vector.transfer_write %r470, %intf[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
+      %acc472 = arith.constant dense<0.0> : vector<8x8xf64>
+      %a473 = vector.transfer_read %Btil[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b474 = vector.transfer_read %u1[%c0, %c16], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
+      %r475 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a473, %b474, %acc472 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
+      %a476 = vector.transfer_read %Btil[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b477 = vector.transfer_read %u1[%c4, %c16], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
+      %r478 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a476, %b477, %r475 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
+      vector.transfer_write %r478, %interp_all[%c0, %c16] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x64xf64, #gpu.address_space<workgroup>>
     }
-    gpu.barrier
-    %sv471 = memref.subview %y3[6, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 384>>
-    %sv472 = memref.subview %y3[7, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 448>>
-    vector.warp_execute_on_lane_0(%lane)[32] {
-      %fa473 = vector.transfer_read %intf[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %r474 = vector.transfer_read %sv471[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 384>>, vector<8x8xf64>
-      %m475 = arith.subf %r474, %fa473 : vector<8x8xf64>
-      vector.transfer_write %m475, %sv471[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, strided<[8, 1], offset: 384>>
-      %fa476 = vector.transfer_read %intf[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %r477 = vector.transfer_read %sv472[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 448>>, vector<8x8xf64>
-      %p478 = arith.addf %r477, %fa476 : vector<8x8xf64>
-      vector.transfer_write %p478, %sv472[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, strided<[8, 1], offset: 448>>
-    }
-    gpu.barrier
     vector.warp_execute_on_lane_0(%lane)[32] {
       %acc479 = arith.constant dense<0.0> : vector<8x8xf64>
       %a480 = vector.transfer_read %Btil[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b481 = vector.transfer_read %u1[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
+      %b481 = vector.transfer_read %u1[%c0, %c24], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
       %r482 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a480, %b481, %acc479 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
       %a483 = vector.transfer_read %Btil[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b484 = vector.transfer_read %u1[%c4, %c0], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
+      %b484 = vector.transfer_read %u1[%c4, %c24], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
       %r485 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a483, %b484, %r482 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      vector.transfer_write %r485, %interp_all[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x64xf64, #gpu.address_space<workgroup>>
+      vector.transfer_write %r485, %interp_all[%c0, %c24] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x64xf64, #gpu.address_space<workgroup>>
     }
     vector.warp_execute_on_lane_0(%lane)[32] {
       %acc486 = arith.constant dense<0.0> : vector<8x8xf64>
       %a487 = vector.transfer_read %Btil[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b488 = vector.transfer_read %u1[%c0, %c8], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
+      %b488 = vector.transfer_read %u1[%c0, %c32], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
       %r489 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a487, %b488, %acc486 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
       %a490 = vector.transfer_read %Btil[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b491 = vector.transfer_read %u1[%c4, %c8], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
+      %b491 = vector.transfer_read %u1[%c4, %c32], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
       %r492 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a490, %b491, %r489 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      vector.transfer_write %r492, %interp_all[%c0, %c8] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x64xf64, #gpu.address_space<workgroup>>
+      vector.transfer_write %r492, %interp_all[%c0, %c32] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x64xf64, #gpu.address_space<workgroup>>
     }
     vector.warp_execute_on_lane_0(%lane)[32] {
       %acc493 = arith.constant dense<0.0> : vector<8x8xf64>
       %a494 = vector.transfer_read %Btil[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b495 = vector.transfer_read %u1[%c0, %c16], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
+      %b495 = vector.transfer_read %u1[%c0, %c40], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
       %r496 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a494, %b495, %acc493 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
       %a497 = vector.transfer_read %Btil[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b498 = vector.transfer_read %u1[%c4, %c16], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
+      %b498 = vector.transfer_read %u1[%c4, %c40], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
       %r499 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a497, %b498, %r496 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      vector.transfer_write %r499, %interp_all[%c0, %c16] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x64xf64, #gpu.address_space<workgroup>>
+      vector.transfer_write %r499, %interp_all[%c0, %c40] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x64xf64, #gpu.address_space<workgroup>>
     }
     vector.warp_execute_on_lane_0(%lane)[32] {
       %acc500 = arith.constant dense<0.0> : vector<8x8xf64>
       %a501 = vector.transfer_read %Btil[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b502 = vector.transfer_read %u1[%c0, %c24], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
+      %b502 = vector.transfer_read %u1[%c0, %c48], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
       %r503 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a501, %b502, %acc500 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
       %a504 = vector.transfer_read %Btil[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b505 = vector.transfer_read %u1[%c4, %c24], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
+      %b505 = vector.transfer_read %u1[%c4, %c48], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
       %r506 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a504, %b505, %r503 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      vector.transfer_write %r506, %interp_all[%c0, %c24] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x64xf64, #gpu.address_space<workgroup>>
+      vector.transfer_write %r506, %interp_all[%c0, %c48] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x64xf64, #gpu.address_space<workgroup>>
     }
     vector.warp_execute_on_lane_0(%lane)[32] {
       %acc507 = arith.constant dense<0.0> : vector<8x8xf64>
       %a508 = vector.transfer_read %Btil[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b509 = vector.transfer_read %u1[%c0, %c32], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
+      %b509 = vector.transfer_read %u1[%c0, %c56], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
       %r510 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a508, %b509, %acc507 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
       %a511 = vector.transfer_read %Btil[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b512 = vector.transfer_read %u1[%c4, %c32], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
+      %b512 = vector.transfer_read %u1[%c4, %c56], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
       %r513 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a511, %b512, %r510 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      vector.transfer_write %r513, %interp_all[%c0, %c32] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x64xf64, #gpu.address_space<workgroup>>
+      vector.transfer_write %r513, %interp_all[%c0, %c56] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x64xf64, #gpu.address_space<workgroup>>
     }
     vector.warp_execute_on_lane_0(%lane)[32] {
       %acc514 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a515 = vector.transfer_read %Btil[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b516 = vector.transfer_read %u1[%c0, %c40], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
+      %a515 = vector.transfer_read %Dtil[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b516 = vector.transfer_read %u1[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
       %r517 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a515, %b516, %acc514 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      %a518 = vector.transfer_read %Btil[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b519 = vector.transfer_read %u1[%c4, %c40], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
+      %a518 = vector.transfer_read %Dtil[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b519 = vector.transfer_read %u1[%c4, %c0], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
       %r520 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a518, %b519, %r517 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      vector.transfer_write %r520, %interp_all[%c0, %c40] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x64xf64, #gpu.address_space<workgroup>>
+      vector.transfer_write %r520, %deriv_all[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x64xf64, #gpu.address_space<workgroup>>
     }
     vector.warp_execute_on_lane_0(%lane)[32] {
       %acc521 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a522 = vector.transfer_read %Btil[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b523 = vector.transfer_read %u1[%c0, %c48], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
+      %a522 = vector.transfer_read %Dtil[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b523 = vector.transfer_read %u1[%c0, %c8], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
       %r524 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a522, %b523, %acc521 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      %a525 = vector.transfer_read %Btil[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b526 = vector.transfer_read %u1[%c4, %c48], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
+      %a525 = vector.transfer_read %Dtil[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b526 = vector.transfer_read %u1[%c4, %c8], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
       %r527 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a525, %b526, %r524 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      vector.transfer_write %r527, %interp_all[%c0, %c48] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x64xf64, #gpu.address_space<workgroup>>
+      vector.transfer_write %r527, %deriv_all[%c0, %c8] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x64xf64, #gpu.address_space<workgroup>>
     }
     vector.warp_execute_on_lane_0(%lane)[32] {
       %acc528 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a529 = vector.transfer_read %Btil[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b530 = vector.transfer_read %u1[%c0, %c56], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
+      %a529 = vector.transfer_read %Dtil[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b530 = vector.transfer_read %u1[%c0, %c16], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
       %r531 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a529, %b530, %acc528 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      %a532 = vector.transfer_read %Btil[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b533 = vector.transfer_read %u1[%c4, %c56], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
+      %a532 = vector.transfer_read %Dtil[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b533 = vector.transfer_read %u1[%c4, %c16], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
       %r534 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a532, %b533, %r531 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      vector.transfer_write %r534, %interp_all[%c0, %c56] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x64xf64, #gpu.address_space<workgroup>>
+      vector.transfer_write %r534, %deriv_all[%c0, %c16] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x64xf64, #gpu.address_space<workgroup>>
     }
     vector.warp_execute_on_lane_0(%lane)[32] {
       %acc535 = arith.constant dense<0.0> : vector<8x8xf64>
       %a536 = vector.transfer_read %Dtil[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b537 = vector.transfer_read %u1[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
+      %b537 = vector.transfer_read %u1[%c0, %c24], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
       %r538 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a536, %b537, %acc535 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
       %a539 = vector.transfer_read %Dtil[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b540 = vector.transfer_read %u1[%c4, %c0], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
+      %b540 = vector.transfer_read %u1[%c4, %c24], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
       %r541 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a539, %b540, %r538 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      vector.transfer_write %r541, %deriv_all[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x64xf64, #gpu.address_space<workgroup>>
+      vector.transfer_write %r541, %deriv_all[%c0, %c24] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x64xf64, #gpu.address_space<workgroup>>
     }
     vector.warp_execute_on_lane_0(%lane)[32] {
       %acc542 = arith.constant dense<0.0> : vector<8x8xf64>
       %a543 = vector.transfer_read %Dtil[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b544 = vector.transfer_read %u1[%c0, %c8], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
+      %b544 = vector.transfer_read %u1[%c0, %c32], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
       %r545 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a543, %b544, %acc542 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
       %a546 = vector.transfer_read %Dtil[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b547 = vector.transfer_read %u1[%c4, %c8], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
+      %b547 = vector.transfer_read %u1[%c4, %c32], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
       %r548 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a546, %b547, %r545 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      vector.transfer_write %r548, %deriv_all[%c0, %c8] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x64xf64, #gpu.address_space<workgroup>>
+      vector.transfer_write %r548, %deriv_all[%c0, %c32] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x64xf64, #gpu.address_space<workgroup>>
     }
     vector.warp_execute_on_lane_0(%lane)[32] {
       %acc549 = arith.constant dense<0.0> : vector<8x8xf64>
       %a550 = vector.transfer_read %Dtil[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b551 = vector.transfer_read %u1[%c0, %c16], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
+      %b551 = vector.transfer_read %u1[%c0, %c40], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
       %r552 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a550, %b551, %acc549 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
       %a553 = vector.transfer_read %Dtil[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b554 = vector.transfer_read %u1[%c4, %c16], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
+      %b554 = vector.transfer_read %u1[%c4, %c40], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
       %r555 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a553, %b554, %r552 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      vector.transfer_write %r555, %deriv_all[%c0, %c16] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x64xf64, #gpu.address_space<workgroup>>
+      vector.transfer_write %r555, %deriv_all[%c0, %c40] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x64xf64, #gpu.address_space<workgroup>>
     }
     vector.warp_execute_on_lane_0(%lane)[32] {
       %acc556 = arith.constant dense<0.0> : vector<8x8xf64>
       %a557 = vector.transfer_read %Dtil[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b558 = vector.transfer_read %u1[%c0, %c24], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
+      %b558 = vector.transfer_read %u1[%c0, %c48], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
       %r559 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a557, %b558, %acc556 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
       %a560 = vector.transfer_read %Dtil[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b561 = vector.transfer_read %u1[%c4, %c24], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
+      %b561 = vector.transfer_read %u1[%c4, %c48], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
       %r562 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a560, %b561, %r559 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      vector.transfer_write %r562, %deriv_all[%c0, %c24] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x64xf64, #gpu.address_space<workgroup>>
+      vector.transfer_write %r562, %deriv_all[%c0, %c48] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x64xf64, #gpu.address_space<workgroup>>
     }
     vector.warp_execute_on_lane_0(%lane)[32] {
       %acc563 = arith.constant dense<0.0> : vector<8x8xf64>
       %a564 = vector.transfer_read %Dtil[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b565 = vector.transfer_read %u1[%c0, %c32], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
+      %b565 = vector.transfer_read %u1[%c0, %c56], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
       %r566 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a564, %b565, %acc563 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
       %a567 = vector.transfer_read %Dtil[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b568 = vector.transfer_read %u1[%c4, %c32], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
+      %b568 = vector.transfer_read %u1[%c4, %c56], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
       %r569 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a567, %b568, %r566 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      vector.transfer_write %r569, %deriv_all[%c0, %c32] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x64xf64, #gpu.address_space<workgroup>>
+      vector.transfer_write %r569, %deriv_all[%c0, %c56] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x64xf64, #gpu.address_space<workgroup>>
     }
-    vector.warp_execute_on_lane_0(%lane)[32] {
-      %acc570 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a571 = vector.transfer_read %Dtil[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b572 = vector.transfer_read %u1[%c0, %c40], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
-      %r573 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a571, %b572, %acc570 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      %a574 = vector.transfer_read %Dtil[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b575 = vector.transfer_read %u1[%c4, %c40], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
-      %r576 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a574, %b575, %r573 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      vector.transfer_write %r576, %deriv_all[%c0, %c40] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x64xf64, #gpu.address_space<workgroup>>
-    }
+    gpu.barrier
+    %v3570 = memref.reinterpret_cast %interp_all to offset: [0], sizes: [8, 8, 8], strides: [64, 8, 1] : memref<8x64xf64, #gpu.address_space<workgroup>> to memref<8x8x8xf64, #gpu.address_space<workgroup>>
+    %v3571 = memref.reinterpret_cast %deriv_all to offset: [0], sizes: [8, 8, 8], strides: [64, 8, 1] : memref<8x64xf64, #gpu.address_space<workgroup>> to memref<8x8x8xf64, #gpu.address_space<workgroup>>
+    %sv572 = memref.subview %v3570[0, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64, #gpu.address_space<workgroup>> to memref<8x8xf64, strided<[8, 1], offset: 0>, #gpu.address_space<workgroup>>
+    %sv573 = memref.subview %v3571[0, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64, #gpu.address_space<workgroup>> to memref<8x8xf64, strided<[8, 1], offset: 0>, #gpu.address_space<workgroup>>
+    %sv574 = memref.subview %g10all[0, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 0>>
+    %sv575 = memref.subview %g11all[0, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 0>>
+    %sv576 = memref.subview %g12all[0, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 0>>
     vector.warp_execute_on_lane_0(%lane)[32] {
       %acc577 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a578 = vector.transfer_read %Dtil[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b579 = vector.transfer_read %u1[%c0, %c48], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
+      %a578 = vector.transfer_read %Dm[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b579 = vector.transfer_read %sv572[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 0>, #gpu.address_space<workgroup>>, vector<4x8xf64>
       %r580 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a578, %b579, %acc577 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      %a581 = vector.transfer_read %Dtil[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b582 = vector.transfer_read %u1[%c4, %c48], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
+      %a581 = vector.transfer_read %Dm[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b582 = vector.transfer_read %sv572[%c4, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 0>, #gpu.address_space<workgroup>>, vector<4x8xf64>
       %r583 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a581, %b582, %r580 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      vector.transfer_write %r583, %deriv_all[%c0, %c48] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x64xf64, #gpu.address_space<workgroup>>
-    }
-    vector.warp_execute_on_lane_0(%lane)[32] {
-      %acc584 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a585 = vector.transfer_read %Dtil[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b586 = vector.transfer_read %u1[%c0, %c56], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
-      %r587 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a585, %b586, %acc584 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      %a588 = vector.transfer_read %Dtil[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b589 = vector.transfer_read %u1[%c4, %c56], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
-      %r590 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a588, %b589, %r587 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      vector.transfer_write %r590, %deriv_all[%c0, %c56] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x64xf64, #gpu.address_space<workgroup>>
+      %g584 = vector.transfer_read %sv575[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 0>>, vector<8x8xf64>
+      %dt585 = arith.mulf %r583, %g584 : vector<8x8xf64>
+      %acc586 = arith.constant dense<0.0> : vector<8x8xf64>
+      %a587 = vector.transfer_read %sv572[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 0>, #gpu.address_space<workgroup>>, vector<8x4xf64>
+      %b588 = vector.transfer_read %Dm[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %r589 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a587, %b588, %acc586 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
+      %a590 = vector.transfer_read %sv572[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 0>, #gpu.address_space<workgroup>>, vector<8x4xf64>
+      %b591 = vector.transfer_read %Dm[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %r592 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a590, %b591, %r589 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
+      %g593 = vector.transfer_read %sv574[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 0>>, vector<8x8xf64>
+      %dt594 = arith.mulf %r592, %g593 : vector<8x8xf64>
+      %dv595 = vector.transfer_read %sv573[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 0>, #gpu.address_space<workgroup>>, vector<8x8xf64>
+      %g596 = vector.transfer_read %sv576[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 0>>, vector<8x8xf64>
+      %t597 = arith.mulf %dv595, %g596 : vector<8x8xf64>
+      %t2598 = arith.addf %t597, %dt594 : vector<8x8xf64>
+      %fl599 = arith.addf %t2598, %dt585 : vector<8x8xf64>
+      vector.transfer_write %fl599, %flux[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
     }
     gpu.barrier
-    %v3591 = memref.reinterpret_cast %interp_all to offset: [0], sizes: [8, 8, 8], strides: [64, 8, 1] : memref<8x64xf64, #gpu.address_space<workgroup>> to memref<8x8x8xf64, #gpu.address_space<workgroup>>
-    %v3592 = memref.reinterpret_cast %deriv_all to offset: [0], sizes: [8, 8, 8], strides: [64, 8, 1] : memref<8x64xf64, #gpu.address_space<workgroup>> to memref<8x8x8xf64, #gpu.address_space<workgroup>>
-    %sv593 = memref.subview %v3591[0, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64, #gpu.address_space<workgroup>> to memref<8x8xf64, strided<[8, 1], offset: 0>, #gpu.address_space<workgroup>>
-    %sv594 = memref.subview %v3592[0, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64, #gpu.address_space<workgroup>> to memref<8x8xf64, strided<[8, 1], offset: 0>, #gpu.address_space<workgroup>>
-    %sv595 = memref.subview %g10all[0, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 0>>
-    %sv596 = memref.subview %g11all[0, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 0>>
-    %sv597 = memref.subview %g12all[0, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 0>>
     vector.warp_execute_on_lane_0(%lane)[32] {
-      %acc598 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a599 = vector.transfer_read %Dm[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b600 = vector.transfer_read %sv593[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 0>, #gpu.address_space<workgroup>>, vector<4x8xf64>
-      %r601 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a599, %b600, %acc598 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      %a602 = vector.transfer_read %Dm[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b603 = vector.transfer_read %sv593[%c4, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 0>, #gpu.address_space<workgroup>>, vector<4x8xf64>
-      %r604 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a602, %b603, %r601 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      %g605 = vector.transfer_read %sv596[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 0>>, vector<8x8xf64>
-      %sc606 = arith.mulf %r604, %g605 : vector<8x8xf64>
-      vector.transfer_write %sc606, %dt1g[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
+      %acc600 = arith.constant dense<0.0> : vector<8x8xf64>
+      %a601 = vector.transfer_read %flux[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x4xf64>
+      %b602 = vector.transfer_read %W[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %r603 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a601, %b602, %acc600 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
+      %a604 = vector.transfer_read %flux[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x4xf64>
+      %b605 = vector.transfer_read %W[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %r606 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a604, %b605, %r603 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
+      vector.transfer_write %r606, %tmp[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
     }
+    gpu.barrier
     vector.warp_execute_on_lane_0(%lane)[32] {
       %acc607 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a608 = vector.transfer_read %sv593[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 0>, #gpu.address_space<workgroup>>, vector<8x4xf64>
-      %b609 = vector.transfer_read %Dm[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %r610 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a608, %b609, %acc607 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
-      %a611 = vector.transfer_read %sv593[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 0>, #gpu.address_space<workgroup>>, vector<8x4xf64>
-      %b612 = vector.transfer_read %Dm[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %r613 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a611, %b612, %r610 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
-      %g614 = vector.transfer_read %sv595[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 0>>, vector<8x8xf64>
-      %sc615 = arith.mulf %r613, %g614 : vector<8x8xf64>
-      vector.transfer_write %sc615, %dt2g[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
+      %a608 = vector.transfer_read %W[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b609 = vector.transfer_read %tmp[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<4x8xf64>
+      %r610 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a608, %b609, %acc607 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
+      %a611 = vector.transfer_read %W[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b612 = vector.transfer_read %tmp[%c4, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<4x8xf64>
+      %r613 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a611, %b612, %r610 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
+      vector.transfer_write %r613, %intf[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
+    }
+    gpu.barrier
+    %sv614 = memref.subview %y3[0, 0, 0] [8, 1, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[64, 1], offset: 0>>
+    %sv615 = memref.subview %y3[0, 1, 0] [8, 1, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[64, 1], offset: 8>>
+    vector.warp_execute_on_lane_0(%lane)[32] {
+      %fa616 = vector.transfer_read %intf[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
+      %r617 = vector.transfer_read %sv614[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[64, 1], offset: 0>>, vector<8x8xf64>
+      %m618 = arith.subf %r617, %fa616 : vector<8x8xf64>
+      vector.transfer_write %m618, %sv614[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, strided<[64, 1], offset: 0>>
+      %r619 = vector.transfer_read %sv615[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[64, 1], offset: 8>>, vector<8x8xf64>
+      %p620 = arith.addf %r619, %fa616 : vector<8x8xf64>
+      vector.transfer_write %p620, %sv615[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, strided<[64, 1], offset: 8>>
+    }
+    gpu.barrier
+    %sv621 = memref.subview %v3570[1, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64, #gpu.address_space<workgroup>> to memref<8x8xf64, strided<[8, 1], offset: 64>, #gpu.address_space<workgroup>>
+    %sv622 = memref.subview %v3571[1, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64, #gpu.address_space<workgroup>> to memref<8x8xf64, strided<[8, 1], offset: 64>, #gpu.address_space<workgroup>>
+    %sv623 = memref.subview %g10all[1, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 64>>
+    %sv624 = memref.subview %g11all[1, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 64>>
+    %sv625 = memref.subview %g12all[1, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 64>>
+    vector.warp_execute_on_lane_0(%lane)[32] {
+      %acc626 = arith.constant dense<0.0> : vector<8x8xf64>
+      %a627 = vector.transfer_read %Dm[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b628 = vector.transfer_read %sv621[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 64>, #gpu.address_space<workgroup>>, vector<4x8xf64>
+      %r629 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a627, %b628, %acc626 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
+      %a630 = vector.transfer_read %Dm[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b631 = vector.transfer_read %sv621[%c4, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 64>, #gpu.address_space<workgroup>>, vector<4x8xf64>
+      %r632 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a630, %b631, %r629 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
+      %g633 = vector.transfer_read %sv624[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 64>>, vector<8x8xf64>
+      %dt634 = arith.mulf %r632, %g633 : vector<8x8xf64>
+      %acc635 = arith.constant dense<0.0> : vector<8x8xf64>
+      %a636 = vector.transfer_read %sv621[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 64>, #gpu.address_space<workgroup>>, vector<8x4xf64>
+      %b637 = vector.transfer_read %Dm[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %r638 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a636, %b637, %acc635 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
+      %a639 = vector.transfer_read %sv621[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 64>, #gpu.address_space<workgroup>>, vector<8x4xf64>
+      %b640 = vector.transfer_read %Dm[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %r641 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a639, %b640, %r638 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
+      %g642 = vector.transfer_read %sv623[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 64>>, vector<8x8xf64>
+      %dt643 = arith.mulf %r641, %g642 : vector<8x8xf64>
+      %dv644 = vector.transfer_read %sv622[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 64>, #gpu.address_space<workgroup>>, vector<8x8xf64>
+      %g645 = vector.transfer_read %sv625[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 64>>, vector<8x8xf64>
+      %t646 = arith.mulf %dv644, %g645 : vector<8x8xf64>
+      %t2647 = arith.addf %t646, %dt643 : vector<8x8xf64>
+      %fl648 = arith.addf %t2647, %dt634 : vector<8x8xf64>
+      vector.transfer_write %fl648, %flux[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
     }
     gpu.barrier
     vector.warp_execute_on_lane_0(%lane)[32] {
-      %d616 = vector.transfer_read %sv594[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 0>, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %g2617 = vector.transfer_read %sv597[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 0>>, vector<8x8xf64>
-      %t618 = arith.mulf %d616, %g2617 : vector<8x8xf64>
-      %a619 = vector.transfer_read %dt2g[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %t2620 = arith.addf %t618, %a619 : vector<8x8xf64>
-      %b621 = vector.transfer_read %dt1g[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %fl622 = arith.addf %t2620, %b621 : vector<8x8xf64>
-      vector.transfer_write %fl622, %flux[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
+      %acc649 = arith.constant dense<0.0> : vector<8x8xf64>
+      %a650 = vector.transfer_read %flux[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x4xf64>
+      %b651 = vector.transfer_read %W[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %r652 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a650, %b651, %acc649 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
+      %a653 = vector.transfer_read %flux[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x4xf64>
+      %b654 = vector.transfer_read %W[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %r655 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a653, %b654, %r652 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
+      vector.transfer_write %r655, %tmp[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
     }
     gpu.barrier
     vector.warp_execute_on_lane_0(%lane)[32] {
-      %acc623 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a624 = vector.transfer_read %flux[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x4xf64>
-      %b625 = vector.transfer_read %W[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %r626 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a624, %b625, %acc623 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
-      %a627 = vector.transfer_read %flux[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x4xf64>
-      %b628 = vector.transfer_read %W[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %r629 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a627, %b628, %r626 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
-      vector.transfer_write %r629, %tmp[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
+      %acc656 = arith.constant dense<0.0> : vector<8x8xf64>
+      %a657 = vector.transfer_read %W[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b658 = vector.transfer_read %tmp[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<4x8xf64>
+      %r659 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a657, %b658, %acc656 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
+      %a660 = vector.transfer_read %W[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b661 = vector.transfer_read %tmp[%c4, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<4x8xf64>
+      %r662 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a660, %b661, %r659 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
+      vector.transfer_write %r662, %intf[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
     }
     gpu.barrier
+    %sv663 = memref.subview %y3[0, 1, 0] [8, 1, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[64, 1], offset: 8>>
+    %sv664 = memref.subview %y3[0, 2, 0] [8, 1, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[64, 1], offset: 16>>
     vector.warp_execute_on_lane_0(%lane)[32] {
-      %acc630 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a631 = vector.transfer_read %W[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b632 = vector.transfer_read %tmp[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<4x8xf64>
-      %r633 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a631, %b632, %acc630 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      %a634 = vector.transfer_read %W[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b635 = vector.transfer_read %tmp[%c4, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<4x8xf64>
-      %r636 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a634, %b635, %r633 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      vector.transfer_write %r636, %intf[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
+      %fa665 = vector.transfer_read %intf[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
+      %r666 = vector.transfer_read %sv663[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[64, 1], offset: 8>>, vector<8x8xf64>
+      %m667 = arith.subf %r666, %fa665 : vector<8x8xf64>
+      vector.transfer_write %m667, %sv663[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, strided<[64, 1], offset: 8>>
+      %r668 = vector.transfer_read %sv664[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[64, 1], offset: 16>>, vector<8x8xf64>
+      %p669 = arith.addf %r668, %fa665 : vector<8x8xf64>
+      vector.transfer_write %p669, %sv664[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, strided<[64, 1], offset: 16>>
     }
     gpu.barrier
-    %sv637 = memref.subview %y3[0, 0, 0] [8, 1, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[64, 1], offset: 0>>
-    %sv638 = memref.subview %y3[0, 1, 0] [8, 1, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[64, 1], offset: 8>>
-    vector.warp_execute_on_lane_0(%lane)[32] {
-      %fa639 = vector.transfer_read %intf[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %r640 = vector.transfer_read %sv637[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[64, 1], offset: 0>>, vector<8x8xf64>
-      %m641 = arith.subf %r640, %fa639 : vector<8x8xf64>
-      vector.transfer_write %m641, %sv637[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, strided<[64, 1], offset: 0>>
-      %fa642 = vector.transfer_read %intf[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %r643 = vector.transfer_read %sv638[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[64, 1], offset: 8>>, vector<8x8xf64>
-      %p644 = arith.addf %r643, %fa642 : vector<8x8xf64>
-      vector.transfer_write %p644, %sv638[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, strided<[64, 1], offset: 8>>
-    }
-    gpu.barrier
-    %sv645 = memref.subview %v3591[1, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64, #gpu.address_space<workgroup>> to memref<8x8xf64, strided<[8, 1], offset: 64>, #gpu.address_space<workgroup>>
-    %sv646 = memref.subview %v3592[1, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64, #gpu.address_space<workgroup>> to memref<8x8xf64, strided<[8, 1], offset: 64>, #gpu.address_space<workgroup>>
-    %sv647 = memref.subview %g10all[1, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 64>>
-    %sv648 = memref.subview %g11all[1, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 64>>
-    %sv649 = memref.subview %g12all[1, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 64>>
-    vector.warp_execute_on_lane_0(%lane)[32] {
-      %acc650 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a651 = vector.transfer_read %Dm[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b652 = vector.transfer_read %sv645[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 64>, #gpu.address_space<workgroup>>, vector<4x8xf64>
-      %r653 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a651, %b652, %acc650 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      %a654 = vector.transfer_read %Dm[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b655 = vector.transfer_read %sv645[%c4, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 64>, #gpu.address_space<workgroup>>, vector<4x8xf64>
-      %r656 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a654, %b655, %r653 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      %g657 = vector.transfer_read %sv648[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 64>>, vector<8x8xf64>
-      %sc658 = arith.mulf %r656, %g657 : vector<8x8xf64>
-      vector.transfer_write %sc658, %dt1g[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
-    }
-    vector.warp_execute_on_lane_0(%lane)[32] {
-      %acc659 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a660 = vector.transfer_read %sv645[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 64>, #gpu.address_space<workgroup>>, vector<8x4xf64>
-      %b661 = vector.transfer_read %Dm[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %r662 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a660, %b661, %acc659 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
-      %a663 = vector.transfer_read %sv645[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 64>, #gpu.address_space<workgroup>>, vector<8x4xf64>
-      %b664 = vector.transfer_read %Dm[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %r665 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a663, %b664, %r662 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
-      %g666 = vector.transfer_read %sv647[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 64>>, vector<8x8xf64>
-      %sc667 = arith.mulf %r665, %g666 : vector<8x8xf64>
-      vector.transfer_write %sc667, %dt2g[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
-    }
-    gpu.barrier
-    vector.warp_execute_on_lane_0(%lane)[32] {
-      %d668 = vector.transfer_read %sv646[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 64>, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %g2669 = vector.transfer_read %sv649[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 64>>, vector<8x8xf64>
-      %t670 = arith.mulf %d668, %g2669 : vector<8x8xf64>
-      %a671 = vector.transfer_read %dt2g[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %t2672 = arith.addf %t670, %a671 : vector<8x8xf64>
-      %b673 = vector.transfer_read %dt1g[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %fl674 = arith.addf %t2672, %b673 : vector<8x8xf64>
-      vector.transfer_write %fl674, %flux[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
-    }
-    gpu.barrier
+    %sv670 = memref.subview %v3570[2, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64, #gpu.address_space<workgroup>> to memref<8x8xf64, strided<[8, 1], offset: 128>, #gpu.address_space<workgroup>>
+    %sv671 = memref.subview %v3571[2, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64, #gpu.address_space<workgroup>> to memref<8x8xf64, strided<[8, 1], offset: 128>, #gpu.address_space<workgroup>>
+    %sv672 = memref.subview %g10all[2, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 128>>
+    %sv673 = memref.subview %g11all[2, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 128>>
+    %sv674 = memref.subview %g12all[2, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 128>>
     vector.warp_execute_on_lane_0(%lane)[32] {
       %acc675 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a676 = vector.transfer_read %flux[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x4xf64>
-      %b677 = vector.transfer_read %W[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %r678 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a676, %b677, %acc675 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
-      %a679 = vector.transfer_read %flux[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x4xf64>
-      %b680 = vector.transfer_read %W[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %r681 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a679, %b680, %r678 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
-      vector.transfer_write %r681, %tmp[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
+      %a676 = vector.transfer_read %Dm[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b677 = vector.transfer_read %sv670[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 128>, #gpu.address_space<workgroup>>, vector<4x8xf64>
+      %r678 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a676, %b677, %acc675 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
+      %a679 = vector.transfer_read %Dm[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b680 = vector.transfer_read %sv670[%c4, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 128>, #gpu.address_space<workgroup>>, vector<4x8xf64>
+      %r681 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a679, %b680, %r678 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
+      %g682 = vector.transfer_read %sv673[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 128>>, vector<8x8xf64>
+      %dt683 = arith.mulf %r681, %g682 : vector<8x8xf64>
+      %acc684 = arith.constant dense<0.0> : vector<8x8xf64>
+      %a685 = vector.transfer_read %sv670[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 128>, #gpu.address_space<workgroup>>, vector<8x4xf64>
+      %b686 = vector.transfer_read %Dm[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %r687 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a685, %b686, %acc684 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
+      %a688 = vector.transfer_read %sv670[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 128>, #gpu.address_space<workgroup>>, vector<8x4xf64>
+      %b689 = vector.transfer_read %Dm[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %r690 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a688, %b689, %r687 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
+      %g691 = vector.transfer_read %sv672[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 128>>, vector<8x8xf64>
+      %dt692 = arith.mulf %r690, %g691 : vector<8x8xf64>
+      %dv693 = vector.transfer_read %sv671[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 128>, #gpu.address_space<workgroup>>, vector<8x8xf64>
+      %g694 = vector.transfer_read %sv674[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 128>>, vector<8x8xf64>
+      %t695 = arith.mulf %dv693, %g694 : vector<8x8xf64>
+      %t2696 = arith.addf %t695, %dt692 : vector<8x8xf64>
+      %fl697 = arith.addf %t2696, %dt683 : vector<8x8xf64>
+      vector.transfer_write %fl697, %flux[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
     }
     gpu.barrier
     vector.warp_execute_on_lane_0(%lane)[32] {
-      %acc682 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a683 = vector.transfer_read %W[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b684 = vector.transfer_read %tmp[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<4x8xf64>
-      %r685 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a683, %b684, %acc682 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      %a686 = vector.transfer_read %W[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b687 = vector.transfer_read %tmp[%c4, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<4x8xf64>
-      %r688 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a686, %b687, %r685 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      vector.transfer_write %r688, %intf[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
-    }
-    gpu.barrier
-    %sv689 = memref.subview %y3[0, 1, 0] [8, 1, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[64, 1], offset: 8>>
-    %sv690 = memref.subview %y3[0, 2, 0] [8, 1, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[64, 1], offset: 16>>
-    vector.warp_execute_on_lane_0(%lane)[32] {
-      %fa691 = vector.transfer_read %intf[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %r692 = vector.transfer_read %sv689[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[64, 1], offset: 8>>, vector<8x8xf64>
-      %m693 = arith.subf %r692, %fa691 : vector<8x8xf64>
-      vector.transfer_write %m693, %sv689[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, strided<[64, 1], offset: 8>>
-      %fa694 = vector.transfer_read %intf[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %r695 = vector.transfer_read %sv690[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[64, 1], offset: 16>>, vector<8x8xf64>
-      %p696 = arith.addf %r695, %fa694 : vector<8x8xf64>
-      vector.transfer_write %p696, %sv690[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, strided<[64, 1], offset: 16>>
-    }
-    gpu.barrier
-    %sv697 = memref.subview %v3591[2, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64, #gpu.address_space<workgroup>> to memref<8x8xf64, strided<[8, 1], offset: 128>, #gpu.address_space<workgroup>>
-    %sv698 = memref.subview %v3592[2, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64, #gpu.address_space<workgroup>> to memref<8x8xf64, strided<[8, 1], offset: 128>, #gpu.address_space<workgroup>>
-    %sv699 = memref.subview %g10all[2, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 128>>
-    %sv700 = memref.subview %g11all[2, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 128>>
-    %sv701 = memref.subview %g12all[2, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 128>>
-    vector.warp_execute_on_lane_0(%lane)[32] {
-      %acc702 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a703 = vector.transfer_read %Dm[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b704 = vector.transfer_read %sv697[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 128>, #gpu.address_space<workgroup>>, vector<4x8xf64>
-      %r705 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a703, %b704, %acc702 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      %a706 = vector.transfer_read %Dm[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b707 = vector.transfer_read %sv697[%c4, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 128>, #gpu.address_space<workgroup>>, vector<4x8xf64>
-      %r708 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a706, %b707, %r705 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      %g709 = vector.transfer_read %sv700[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 128>>, vector<8x8xf64>
-      %sc710 = arith.mulf %r708, %g709 : vector<8x8xf64>
-      vector.transfer_write %sc710, %dt1g[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
-    }
-    vector.warp_execute_on_lane_0(%lane)[32] {
-      %acc711 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a712 = vector.transfer_read %sv697[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 128>, #gpu.address_space<workgroup>>, vector<8x4xf64>
-      %b713 = vector.transfer_read %Dm[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %r714 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a712, %b713, %acc711 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
-      %a715 = vector.transfer_read %sv697[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 128>, #gpu.address_space<workgroup>>, vector<8x4xf64>
-      %b716 = vector.transfer_read %Dm[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %r717 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a715, %b716, %r714 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
-      %g718 = vector.transfer_read %sv699[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 128>>, vector<8x8xf64>
-      %sc719 = arith.mulf %r717, %g718 : vector<8x8xf64>
-      vector.transfer_write %sc719, %dt2g[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
+      %acc698 = arith.constant dense<0.0> : vector<8x8xf64>
+      %a699 = vector.transfer_read %flux[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x4xf64>
+      %b700 = vector.transfer_read %W[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %r701 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a699, %b700, %acc698 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
+      %a702 = vector.transfer_read %flux[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x4xf64>
+      %b703 = vector.transfer_read %W[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %r704 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a702, %b703, %r701 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
+      vector.transfer_write %r704, %tmp[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
     }
     gpu.barrier
     vector.warp_execute_on_lane_0(%lane)[32] {
-      %d720 = vector.transfer_read %sv698[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 128>, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %g2721 = vector.transfer_read %sv701[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 128>>, vector<8x8xf64>
-      %t722 = arith.mulf %d720, %g2721 : vector<8x8xf64>
-      %a723 = vector.transfer_read %dt2g[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %t2724 = arith.addf %t722, %a723 : vector<8x8xf64>
-      %b725 = vector.transfer_read %dt1g[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %fl726 = arith.addf %t2724, %b725 : vector<8x8xf64>
-      vector.transfer_write %fl726, %flux[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
+      %acc705 = arith.constant dense<0.0> : vector<8x8xf64>
+      %a706 = vector.transfer_read %W[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b707 = vector.transfer_read %tmp[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<4x8xf64>
+      %r708 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a706, %b707, %acc705 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
+      %a709 = vector.transfer_read %W[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b710 = vector.transfer_read %tmp[%c4, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<4x8xf64>
+      %r711 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a709, %b710, %r708 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
+      vector.transfer_write %r711, %intf[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
+    }
+    gpu.barrier
+    %sv712 = memref.subview %y3[0, 2, 0] [8, 1, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[64, 1], offset: 16>>
+    %sv713 = memref.subview %y3[0, 3, 0] [8, 1, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[64, 1], offset: 24>>
+    vector.warp_execute_on_lane_0(%lane)[32] {
+      %fa714 = vector.transfer_read %intf[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
+      %r715 = vector.transfer_read %sv712[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[64, 1], offset: 16>>, vector<8x8xf64>
+      %m716 = arith.subf %r715, %fa714 : vector<8x8xf64>
+      vector.transfer_write %m716, %sv712[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, strided<[64, 1], offset: 16>>
+      %r717 = vector.transfer_read %sv713[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[64, 1], offset: 24>>, vector<8x8xf64>
+      %p718 = arith.addf %r717, %fa714 : vector<8x8xf64>
+      vector.transfer_write %p718, %sv713[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, strided<[64, 1], offset: 24>>
+    }
+    gpu.barrier
+    %sv719 = memref.subview %v3570[3, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64, #gpu.address_space<workgroup>> to memref<8x8xf64, strided<[8, 1], offset: 192>, #gpu.address_space<workgroup>>
+    %sv720 = memref.subview %v3571[3, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64, #gpu.address_space<workgroup>> to memref<8x8xf64, strided<[8, 1], offset: 192>, #gpu.address_space<workgroup>>
+    %sv721 = memref.subview %g10all[3, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 192>>
+    %sv722 = memref.subview %g11all[3, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 192>>
+    %sv723 = memref.subview %g12all[3, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 192>>
+    vector.warp_execute_on_lane_0(%lane)[32] {
+      %acc724 = arith.constant dense<0.0> : vector<8x8xf64>
+      %a725 = vector.transfer_read %Dm[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b726 = vector.transfer_read %sv719[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 192>, #gpu.address_space<workgroup>>, vector<4x8xf64>
+      %r727 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a725, %b726, %acc724 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
+      %a728 = vector.transfer_read %Dm[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b729 = vector.transfer_read %sv719[%c4, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 192>, #gpu.address_space<workgroup>>, vector<4x8xf64>
+      %r730 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a728, %b729, %r727 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
+      %g731 = vector.transfer_read %sv722[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 192>>, vector<8x8xf64>
+      %dt732 = arith.mulf %r730, %g731 : vector<8x8xf64>
+      %acc733 = arith.constant dense<0.0> : vector<8x8xf64>
+      %a734 = vector.transfer_read %sv719[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 192>, #gpu.address_space<workgroup>>, vector<8x4xf64>
+      %b735 = vector.transfer_read %Dm[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %r736 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a734, %b735, %acc733 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
+      %a737 = vector.transfer_read %sv719[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 192>, #gpu.address_space<workgroup>>, vector<8x4xf64>
+      %b738 = vector.transfer_read %Dm[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %r739 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a737, %b738, %r736 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
+      %g740 = vector.transfer_read %sv721[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 192>>, vector<8x8xf64>
+      %dt741 = arith.mulf %r739, %g740 : vector<8x8xf64>
+      %dv742 = vector.transfer_read %sv720[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 192>, #gpu.address_space<workgroup>>, vector<8x8xf64>
+      %g743 = vector.transfer_read %sv723[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 192>>, vector<8x8xf64>
+      %t744 = arith.mulf %dv742, %g743 : vector<8x8xf64>
+      %t2745 = arith.addf %t744, %dt741 : vector<8x8xf64>
+      %fl746 = arith.addf %t2745, %dt732 : vector<8x8xf64>
+      vector.transfer_write %fl746, %flux[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
     }
     gpu.barrier
     vector.warp_execute_on_lane_0(%lane)[32] {
-      %acc727 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a728 = vector.transfer_read %flux[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x4xf64>
-      %b729 = vector.transfer_read %W[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %r730 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a728, %b729, %acc727 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
-      %a731 = vector.transfer_read %flux[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x4xf64>
-      %b732 = vector.transfer_read %W[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %r733 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a731, %b732, %r730 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
-      vector.transfer_write %r733, %tmp[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
+      %acc747 = arith.constant dense<0.0> : vector<8x8xf64>
+      %a748 = vector.transfer_read %flux[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x4xf64>
+      %b749 = vector.transfer_read %W[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %r750 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a748, %b749, %acc747 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
+      %a751 = vector.transfer_read %flux[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x4xf64>
+      %b752 = vector.transfer_read %W[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %r753 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a751, %b752, %r750 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
+      vector.transfer_write %r753, %tmp[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
     }
     gpu.barrier
-    vector.warp_execute_on_lane_0(%lane)[32] {
-      %acc734 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a735 = vector.transfer_read %W[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b736 = vector.transfer_read %tmp[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<4x8xf64>
-      %r737 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a735, %b736, %acc734 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      %a738 = vector.transfer_read %W[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b739 = vector.transfer_read %tmp[%c4, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<4x8xf64>
-      %r740 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a738, %b739, %r737 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      vector.transfer_write %r740, %intf[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
-    }
-    gpu.barrier
-    %sv741 = memref.subview %y3[0, 2, 0] [8, 1, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[64, 1], offset: 16>>
-    %sv742 = memref.subview %y3[0, 3, 0] [8, 1, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[64, 1], offset: 24>>
-    vector.warp_execute_on_lane_0(%lane)[32] {
-      %fa743 = vector.transfer_read %intf[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %r744 = vector.transfer_read %sv741[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[64, 1], offset: 16>>, vector<8x8xf64>
-      %m745 = arith.subf %r744, %fa743 : vector<8x8xf64>
-      vector.transfer_write %m745, %sv741[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, strided<[64, 1], offset: 16>>
-      %fa746 = vector.transfer_read %intf[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %r747 = vector.transfer_read %sv742[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[64, 1], offset: 24>>, vector<8x8xf64>
-      %p748 = arith.addf %r747, %fa746 : vector<8x8xf64>
-      vector.transfer_write %p748, %sv742[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, strided<[64, 1], offset: 24>>
-    }
-    gpu.barrier
-    %sv749 = memref.subview %v3591[3, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64, #gpu.address_space<workgroup>> to memref<8x8xf64, strided<[8, 1], offset: 192>, #gpu.address_space<workgroup>>
-    %sv750 = memref.subview %v3592[3, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64, #gpu.address_space<workgroup>> to memref<8x8xf64, strided<[8, 1], offset: 192>, #gpu.address_space<workgroup>>
-    %sv751 = memref.subview %g10all[3, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 192>>
-    %sv752 = memref.subview %g11all[3, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 192>>
-    %sv753 = memref.subview %g12all[3, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 192>>
     vector.warp_execute_on_lane_0(%lane)[32] {
       %acc754 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a755 = vector.transfer_read %Dm[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b756 = vector.transfer_read %sv749[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 192>, #gpu.address_space<workgroup>>, vector<4x8xf64>
+      %a755 = vector.transfer_read %W[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b756 = vector.transfer_read %tmp[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<4x8xf64>
       %r757 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a755, %b756, %acc754 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      %a758 = vector.transfer_read %Dm[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b759 = vector.transfer_read %sv749[%c4, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 192>, #gpu.address_space<workgroup>>, vector<4x8xf64>
+      %a758 = vector.transfer_read %W[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b759 = vector.transfer_read %tmp[%c4, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<4x8xf64>
       %r760 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a758, %b759, %r757 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      %g761 = vector.transfer_read %sv752[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 192>>, vector<8x8xf64>
-      %sc762 = arith.mulf %r760, %g761 : vector<8x8xf64>
-      vector.transfer_write %sc762, %dt1g[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
+      vector.transfer_write %r760, %intf[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
     }
+    gpu.barrier
+    %sv761 = memref.subview %y3[0, 3, 0] [8, 1, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[64, 1], offset: 24>>
+    %sv762 = memref.subview %y3[0, 4, 0] [8, 1, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[64, 1], offset: 32>>
     vector.warp_execute_on_lane_0(%lane)[32] {
-      %acc763 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a764 = vector.transfer_read %sv749[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 192>, #gpu.address_space<workgroup>>, vector<8x4xf64>
-      %b765 = vector.transfer_read %Dm[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %r766 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a764, %b765, %acc763 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
-      %a767 = vector.transfer_read %sv749[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 192>, #gpu.address_space<workgroup>>, vector<8x4xf64>
-      %b768 = vector.transfer_read %Dm[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %r769 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a767, %b768, %r766 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
-      %g770 = vector.transfer_read %sv751[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 192>>, vector<8x8xf64>
-      %sc771 = arith.mulf %r769, %g770 : vector<8x8xf64>
-      vector.transfer_write %sc771, %dt2g[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
+      %fa763 = vector.transfer_read %intf[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
+      %r764 = vector.transfer_read %sv761[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[64, 1], offset: 24>>, vector<8x8xf64>
+      %m765 = arith.subf %r764, %fa763 : vector<8x8xf64>
+      vector.transfer_write %m765, %sv761[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, strided<[64, 1], offset: 24>>
+      %r766 = vector.transfer_read %sv762[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[64, 1], offset: 32>>, vector<8x8xf64>
+      %p767 = arith.addf %r766, %fa763 : vector<8x8xf64>
+      vector.transfer_write %p767, %sv762[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, strided<[64, 1], offset: 32>>
+    }
+    gpu.barrier
+    %sv768 = memref.subview %v3570[4, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64, #gpu.address_space<workgroup>> to memref<8x8xf64, strided<[8, 1], offset: 256>, #gpu.address_space<workgroup>>
+    %sv769 = memref.subview %v3571[4, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64, #gpu.address_space<workgroup>> to memref<8x8xf64, strided<[8, 1], offset: 256>, #gpu.address_space<workgroup>>
+    %sv770 = memref.subview %g10all[4, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 256>>
+    %sv771 = memref.subview %g11all[4, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 256>>
+    %sv772 = memref.subview %g12all[4, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 256>>
+    vector.warp_execute_on_lane_0(%lane)[32] {
+      %acc773 = arith.constant dense<0.0> : vector<8x8xf64>
+      %a774 = vector.transfer_read %Dm[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b775 = vector.transfer_read %sv768[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 256>, #gpu.address_space<workgroup>>, vector<4x8xf64>
+      %r776 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a774, %b775, %acc773 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
+      %a777 = vector.transfer_read %Dm[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b778 = vector.transfer_read %sv768[%c4, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 256>, #gpu.address_space<workgroup>>, vector<4x8xf64>
+      %r779 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a777, %b778, %r776 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
+      %g780 = vector.transfer_read %sv771[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 256>>, vector<8x8xf64>
+      %dt781 = arith.mulf %r779, %g780 : vector<8x8xf64>
+      %acc782 = arith.constant dense<0.0> : vector<8x8xf64>
+      %a783 = vector.transfer_read %sv768[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 256>, #gpu.address_space<workgroup>>, vector<8x4xf64>
+      %b784 = vector.transfer_read %Dm[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %r785 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a783, %b784, %acc782 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
+      %a786 = vector.transfer_read %sv768[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 256>, #gpu.address_space<workgroup>>, vector<8x4xf64>
+      %b787 = vector.transfer_read %Dm[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %r788 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a786, %b787, %r785 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
+      %g789 = vector.transfer_read %sv770[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 256>>, vector<8x8xf64>
+      %dt790 = arith.mulf %r788, %g789 : vector<8x8xf64>
+      %dv791 = vector.transfer_read %sv769[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 256>, #gpu.address_space<workgroup>>, vector<8x8xf64>
+      %g792 = vector.transfer_read %sv772[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 256>>, vector<8x8xf64>
+      %t793 = arith.mulf %dv791, %g792 : vector<8x8xf64>
+      %t2794 = arith.addf %t793, %dt790 : vector<8x8xf64>
+      %fl795 = arith.addf %t2794, %dt781 : vector<8x8xf64>
+      vector.transfer_write %fl795, %flux[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
     }
     gpu.barrier
     vector.warp_execute_on_lane_0(%lane)[32] {
-      %d772 = vector.transfer_read %sv750[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 192>, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %g2773 = vector.transfer_read %sv753[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 192>>, vector<8x8xf64>
-      %t774 = arith.mulf %d772, %g2773 : vector<8x8xf64>
-      %a775 = vector.transfer_read %dt2g[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %t2776 = arith.addf %t774, %a775 : vector<8x8xf64>
-      %b777 = vector.transfer_read %dt1g[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %fl778 = arith.addf %t2776, %b777 : vector<8x8xf64>
-      vector.transfer_write %fl778, %flux[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
+      %acc796 = arith.constant dense<0.0> : vector<8x8xf64>
+      %a797 = vector.transfer_read %flux[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x4xf64>
+      %b798 = vector.transfer_read %W[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %r799 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a797, %b798, %acc796 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
+      %a800 = vector.transfer_read %flux[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x4xf64>
+      %b801 = vector.transfer_read %W[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %r802 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a800, %b801, %r799 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
+      vector.transfer_write %r802, %tmp[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
     }
     gpu.barrier
     vector.warp_execute_on_lane_0(%lane)[32] {
-      %acc779 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a780 = vector.transfer_read %flux[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x4xf64>
-      %b781 = vector.transfer_read %W[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %r782 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a780, %b781, %acc779 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
-      %a783 = vector.transfer_read %flux[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x4xf64>
-      %b784 = vector.transfer_read %W[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %r785 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a783, %b784, %r782 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
-      vector.transfer_write %r785, %tmp[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
+      %acc803 = arith.constant dense<0.0> : vector<8x8xf64>
+      %a804 = vector.transfer_read %W[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b805 = vector.transfer_read %tmp[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<4x8xf64>
+      %r806 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a804, %b805, %acc803 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
+      %a807 = vector.transfer_read %W[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b808 = vector.transfer_read %tmp[%c4, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<4x8xf64>
+      %r809 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a807, %b808, %r806 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
+      vector.transfer_write %r809, %intf[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
     }
     gpu.barrier
+    %sv810 = memref.subview %y3[0, 4, 0] [8, 1, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[64, 1], offset: 32>>
+    %sv811 = memref.subview %y3[0, 5, 0] [8, 1, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[64, 1], offset: 40>>
     vector.warp_execute_on_lane_0(%lane)[32] {
-      %acc786 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a787 = vector.transfer_read %W[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b788 = vector.transfer_read %tmp[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<4x8xf64>
-      %r789 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a787, %b788, %acc786 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      %a790 = vector.transfer_read %W[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b791 = vector.transfer_read %tmp[%c4, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<4x8xf64>
-      %r792 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a790, %b791, %r789 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      vector.transfer_write %r792, %intf[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
+      %fa812 = vector.transfer_read %intf[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
+      %r813 = vector.transfer_read %sv810[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[64, 1], offset: 32>>, vector<8x8xf64>
+      %m814 = arith.subf %r813, %fa812 : vector<8x8xf64>
+      vector.transfer_write %m814, %sv810[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, strided<[64, 1], offset: 32>>
+      %r815 = vector.transfer_read %sv811[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[64, 1], offset: 40>>, vector<8x8xf64>
+      %p816 = arith.addf %r815, %fa812 : vector<8x8xf64>
+      vector.transfer_write %p816, %sv811[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, strided<[64, 1], offset: 40>>
     }
     gpu.barrier
-    %sv793 = memref.subview %y3[0, 3, 0] [8, 1, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[64, 1], offset: 24>>
-    %sv794 = memref.subview %y3[0, 4, 0] [8, 1, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[64, 1], offset: 32>>
+    %sv817 = memref.subview %v3570[5, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64, #gpu.address_space<workgroup>> to memref<8x8xf64, strided<[8, 1], offset: 320>, #gpu.address_space<workgroup>>
+    %sv818 = memref.subview %v3571[5, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64, #gpu.address_space<workgroup>> to memref<8x8xf64, strided<[8, 1], offset: 320>, #gpu.address_space<workgroup>>
+    %sv819 = memref.subview %g10all[5, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 320>>
+    %sv820 = memref.subview %g11all[5, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 320>>
+    %sv821 = memref.subview %g12all[5, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 320>>
     vector.warp_execute_on_lane_0(%lane)[32] {
-      %fa795 = vector.transfer_read %intf[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %r796 = vector.transfer_read %sv793[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[64, 1], offset: 24>>, vector<8x8xf64>
-      %m797 = arith.subf %r796, %fa795 : vector<8x8xf64>
-      vector.transfer_write %m797, %sv793[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, strided<[64, 1], offset: 24>>
-      %fa798 = vector.transfer_read %intf[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %r799 = vector.transfer_read %sv794[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[64, 1], offset: 32>>, vector<8x8xf64>
-      %p800 = arith.addf %r799, %fa798 : vector<8x8xf64>
-      vector.transfer_write %p800, %sv794[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, strided<[64, 1], offset: 32>>
-    }
-    gpu.barrier
-    %sv801 = memref.subview %v3591[4, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64, #gpu.address_space<workgroup>> to memref<8x8xf64, strided<[8, 1], offset: 256>, #gpu.address_space<workgroup>>
-    %sv802 = memref.subview %v3592[4, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64, #gpu.address_space<workgroup>> to memref<8x8xf64, strided<[8, 1], offset: 256>, #gpu.address_space<workgroup>>
-    %sv803 = memref.subview %g10all[4, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 256>>
-    %sv804 = memref.subview %g11all[4, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 256>>
-    %sv805 = memref.subview %g12all[4, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 256>>
-    vector.warp_execute_on_lane_0(%lane)[32] {
-      %acc806 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a807 = vector.transfer_read %Dm[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b808 = vector.transfer_read %sv801[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 256>, #gpu.address_space<workgroup>>, vector<4x8xf64>
-      %r809 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a807, %b808, %acc806 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      %a810 = vector.transfer_read %Dm[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b811 = vector.transfer_read %sv801[%c4, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 256>, #gpu.address_space<workgroup>>, vector<4x8xf64>
-      %r812 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a810, %b811, %r809 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      %g813 = vector.transfer_read %sv804[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 256>>, vector<8x8xf64>
-      %sc814 = arith.mulf %r812, %g813 : vector<8x8xf64>
-      vector.transfer_write %sc814, %dt1g[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
-    }
-    vector.warp_execute_on_lane_0(%lane)[32] {
-      %acc815 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a816 = vector.transfer_read %sv801[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 256>, #gpu.address_space<workgroup>>, vector<8x4xf64>
-      %b817 = vector.transfer_read %Dm[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %r818 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a816, %b817, %acc815 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
-      %a819 = vector.transfer_read %sv801[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 256>, #gpu.address_space<workgroup>>, vector<8x4xf64>
-      %b820 = vector.transfer_read %Dm[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %r821 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a819, %b820, %r818 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
-      %g822 = vector.transfer_read %sv803[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 256>>, vector<8x8xf64>
-      %sc823 = arith.mulf %r821, %g822 : vector<8x8xf64>
-      vector.transfer_write %sc823, %dt2g[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
-    }
-    gpu.barrier
-    vector.warp_execute_on_lane_0(%lane)[32] {
-      %d824 = vector.transfer_read %sv802[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 256>, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %g2825 = vector.transfer_read %sv805[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 256>>, vector<8x8xf64>
-      %t826 = arith.mulf %d824, %g2825 : vector<8x8xf64>
-      %a827 = vector.transfer_read %dt2g[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %t2828 = arith.addf %t826, %a827 : vector<8x8xf64>
-      %b829 = vector.transfer_read %dt1g[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %fl830 = arith.addf %t2828, %b829 : vector<8x8xf64>
-      vector.transfer_write %fl830, %flux[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
-    }
-    gpu.barrier
-    vector.warp_execute_on_lane_0(%lane)[32] {
+      %acc822 = arith.constant dense<0.0> : vector<8x8xf64>
+      %a823 = vector.transfer_read %Dm[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b824 = vector.transfer_read %sv817[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 320>, #gpu.address_space<workgroup>>, vector<4x8xf64>
+      %r825 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a823, %b824, %acc822 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
+      %a826 = vector.transfer_read %Dm[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b827 = vector.transfer_read %sv817[%c4, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 320>, #gpu.address_space<workgroup>>, vector<4x8xf64>
+      %r828 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a826, %b827, %r825 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
+      %g829 = vector.transfer_read %sv820[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 320>>, vector<8x8xf64>
+      %dt830 = arith.mulf %r828, %g829 : vector<8x8xf64>
       %acc831 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a832 = vector.transfer_read %flux[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x4xf64>
-      %b833 = vector.transfer_read %W[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %a832 = vector.transfer_read %sv817[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 320>, #gpu.address_space<workgroup>>, vector<8x4xf64>
+      %b833 = vector.transfer_read %Dm[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
       %r834 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a832, %b833, %acc831 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
-      %a835 = vector.transfer_read %flux[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x4xf64>
-      %b836 = vector.transfer_read %W[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %a835 = vector.transfer_read %sv817[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 320>, #gpu.address_space<workgroup>>, vector<8x4xf64>
+      %b836 = vector.transfer_read %Dm[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
       %r837 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a835, %b836, %r834 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
-      vector.transfer_write %r837, %tmp[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
+      %g838 = vector.transfer_read %sv819[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 320>>, vector<8x8xf64>
+      %dt839 = arith.mulf %r837, %g838 : vector<8x8xf64>
+      %dv840 = vector.transfer_read %sv818[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 320>, #gpu.address_space<workgroup>>, vector<8x8xf64>
+      %g841 = vector.transfer_read %sv821[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 320>>, vector<8x8xf64>
+      %t842 = arith.mulf %dv840, %g841 : vector<8x8xf64>
+      %t2843 = arith.addf %t842, %dt839 : vector<8x8xf64>
+      %fl844 = arith.addf %t2843, %dt830 : vector<8x8xf64>
+      vector.transfer_write %fl844, %flux[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
     }
     gpu.barrier
     vector.warp_execute_on_lane_0(%lane)[32] {
-      %acc838 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a839 = vector.transfer_read %W[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b840 = vector.transfer_read %tmp[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<4x8xf64>
-      %r841 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a839, %b840, %acc838 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      %a842 = vector.transfer_read %W[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b843 = vector.transfer_read %tmp[%c4, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<4x8xf64>
-      %r844 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a842, %b843, %r841 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      vector.transfer_write %r844, %intf[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
-    }
-    gpu.barrier
-    %sv845 = memref.subview %y3[0, 4, 0] [8, 1, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[64, 1], offset: 32>>
-    %sv846 = memref.subview %y3[0, 5, 0] [8, 1, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[64, 1], offset: 40>>
-    vector.warp_execute_on_lane_0(%lane)[32] {
-      %fa847 = vector.transfer_read %intf[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %r848 = vector.transfer_read %sv845[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[64, 1], offset: 32>>, vector<8x8xf64>
-      %m849 = arith.subf %r848, %fa847 : vector<8x8xf64>
-      vector.transfer_write %m849, %sv845[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, strided<[64, 1], offset: 32>>
-      %fa850 = vector.transfer_read %intf[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %r851 = vector.transfer_read %sv846[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[64, 1], offset: 40>>, vector<8x8xf64>
-      %p852 = arith.addf %r851, %fa850 : vector<8x8xf64>
-      vector.transfer_write %p852, %sv846[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, strided<[64, 1], offset: 40>>
-    }
-    gpu.barrier
-    %sv853 = memref.subview %v3591[5, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64, #gpu.address_space<workgroup>> to memref<8x8xf64, strided<[8, 1], offset: 320>, #gpu.address_space<workgroup>>
-    %sv854 = memref.subview %v3592[5, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64, #gpu.address_space<workgroup>> to memref<8x8xf64, strided<[8, 1], offset: 320>, #gpu.address_space<workgroup>>
-    %sv855 = memref.subview %g10all[5, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 320>>
-    %sv856 = memref.subview %g11all[5, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 320>>
-    %sv857 = memref.subview %g12all[5, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 320>>
-    vector.warp_execute_on_lane_0(%lane)[32] {
-      %acc858 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a859 = vector.transfer_read %Dm[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b860 = vector.transfer_read %sv853[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 320>, #gpu.address_space<workgroup>>, vector<4x8xf64>
-      %r861 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a859, %b860, %acc858 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      %a862 = vector.transfer_read %Dm[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b863 = vector.transfer_read %sv853[%c4, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 320>, #gpu.address_space<workgroup>>, vector<4x8xf64>
-      %r864 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a862, %b863, %r861 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      %g865 = vector.transfer_read %sv856[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 320>>, vector<8x8xf64>
-      %sc866 = arith.mulf %r864, %g865 : vector<8x8xf64>
-      vector.transfer_write %sc866, %dt1g[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
-    }
-    vector.warp_execute_on_lane_0(%lane)[32] {
-      %acc867 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a868 = vector.transfer_read %sv853[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 320>, #gpu.address_space<workgroup>>, vector<8x4xf64>
-      %b869 = vector.transfer_read %Dm[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %r870 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a868, %b869, %acc867 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
-      %a871 = vector.transfer_read %sv853[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 320>, #gpu.address_space<workgroup>>, vector<8x4xf64>
-      %b872 = vector.transfer_read %Dm[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %r873 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a871, %b872, %r870 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
-      %g874 = vector.transfer_read %sv855[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 320>>, vector<8x8xf64>
-      %sc875 = arith.mulf %r873, %g874 : vector<8x8xf64>
-      vector.transfer_write %sc875, %dt2g[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
+      %acc845 = arith.constant dense<0.0> : vector<8x8xf64>
+      %a846 = vector.transfer_read %flux[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x4xf64>
+      %b847 = vector.transfer_read %W[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %r848 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a846, %b847, %acc845 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
+      %a849 = vector.transfer_read %flux[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x4xf64>
+      %b850 = vector.transfer_read %W[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %r851 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a849, %b850, %r848 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
+      vector.transfer_write %r851, %tmp[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
     }
     gpu.barrier
     vector.warp_execute_on_lane_0(%lane)[32] {
-      %d876 = vector.transfer_read %sv854[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 320>, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %g2877 = vector.transfer_read %sv857[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 320>>, vector<8x8xf64>
-      %t878 = arith.mulf %d876, %g2877 : vector<8x8xf64>
-      %a879 = vector.transfer_read %dt2g[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %t2880 = arith.addf %t878, %a879 : vector<8x8xf64>
-      %b881 = vector.transfer_read %dt1g[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %fl882 = arith.addf %t2880, %b881 : vector<8x8xf64>
-      vector.transfer_write %fl882, %flux[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
+      %acc852 = arith.constant dense<0.0> : vector<8x8xf64>
+      %a853 = vector.transfer_read %W[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b854 = vector.transfer_read %tmp[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<4x8xf64>
+      %r855 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a853, %b854, %acc852 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
+      %a856 = vector.transfer_read %W[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b857 = vector.transfer_read %tmp[%c4, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<4x8xf64>
+      %r858 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a856, %b857, %r855 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
+      vector.transfer_write %r858, %intf[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
+    }
+    gpu.barrier
+    %sv859 = memref.subview %y3[0, 5, 0] [8, 1, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[64, 1], offset: 40>>
+    %sv860 = memref.subview %y3[0, 6, 0] [8, 1, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[64, 1], offset: 48>>
+    vector.warp_execute_on_lane_0(%lane)[32] {
+      %fa861 = vector.transfer_read %intf[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
+      %r862 = vector.transfer_read %sv859[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[64, 1], offset: 40>>, vector<8x8xf64>
+      %m863 = arith.subf %r862, %fa861 : vector<8x8xf64>
+      vector.transfer_write %m863, %sv859[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, strided<[64, 1], offset: 40>>
+      %r864 = vector.transfer_read %sv860[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[64, 1], offset: 48>>, vector<8x8xf64>
+      %p865 = arith.addf %r864, %fa861 : vector<8x8xf64>
+      vector.transfer_write %p865, %sv860[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, strided<[64, 1], offset: 48>>
+    }
+    gpu.barrier
+    %sv866 = memref.subview %v3570[6, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64, #gpu.address_space<workgroup>> to memref<8x8xf64, strided<[8, 1], offset: 384>, #gpu.address_space<workgroup>>
+    %sv867 = memref.subview %v3571[6, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64, #gpu.address_space<workgroup>> to memref<8x8xf64, strided<[8, 1], offset: 384>, #gpu.address_space<workgroup>>
+    %sv868 = memref.subview %g10all[6, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 384>>
+    %sv869 = memref.subview %g11all[6, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 384>>
+    %sv870 = memref.subview %g12all[6, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 384>>
+    vector.warp_execute_on_lane_0(%lane)[32] {
+      %acc871 = arith.constant dense<0.0> : vector<8x8xf64>
+      %a872 = vector.transfer_read %Dm[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b873 = vector.transfer_read %sv866[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 384>, #gpu.address_space<workgroup>>, vector<4x8xf64>
+      %r874 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a872, %b873, %acc871 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
+      %a875 = vector.transfer_read %Dm[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b876 = vector.transfer_read %sv866[%c4, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 384>, #gpu.address_space<workgroup>>, vector<4x8xf64>
+      %r877 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a875, %b876, %r874 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
+      %g878 = vector.transfer_read %sv869[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 384>>, vector<8x8xf64>
+      %dt879 = arith.mulf %r877, %g878 : vector<8x8xf64>
+      %acc880 = arith.constant dense<0.0> : vector<8x8xf64>
+      %a881 = vector.transfer_read %sv866[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 384>, #gpu.address_space<workgroup>>, vector<8x4xf64>
+      %b882 = vector.transfer_read %Dm[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %r883 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a881, %b882, %acc880 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
+      %a884 = vector.transfer_read %sv866[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 384>, #gpu.address_space<workgroup>>, vector<8x4xf64>
+      %b885 = vector.transfer_read %Dm[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %r886 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a884, %b885, %r883 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
+      %g887 = vector.transfer_read %sv868[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 384>>, vector<8x8xf64>
+      %dt888 = arith.mulf %r886, %g887 : vector<8x8xf64>
+      %dv889 = vector.transfer_read %sv867[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 384>, #gpu.address_space<workgroup>>, vector<8x8xf64>
+      %g890 = vector.transfer_read %sv870[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 384>>, vector<8x8xf64>
+      %t891 = arith.mulf %dv889, %g890 : vector<8x8xf64>
+      %t2892 = arith.addf %t891, %dt888 : vector<8x8xf64>
+      %fl893 = arith.addf %t2892, %dt879 : vector<8x8xf64>
+      vector.transfer_write %fl893, %flux[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
     }
     gpu.barrier
     vector.warp_execute_on_lane_0(%lane)[32] {
-      %acc883 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a884 = vector.transfer_read %flux[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x4xf64>
-      %b885 = vector.transfer_read %W[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %r886 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a884, %b885, %acc883 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
-      %a887 = vector.transfer_read %flux[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x4xf64>
-      %b888 = vector.transfer_read %W[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %r889 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a887, %b888, %r886 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
-      vector.transfer_write %r889, %tmp[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
+      %acc894 = arith.constant dense<0.0> : vector<8x8xf64>
+      %a895 = vector.transfer_read %flux[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x4xf64>
+      %b896 = vector.transfer_read %W[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %r897 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a895, %b896, %acc894 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
+      %a898 = vector.transfer_read %flux[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x4xf64>
+      %b899 = vector.transfer_read %W[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %r900 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a898, %b899, %r897 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
+      vector.transfer_write %r900, %tmp[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
     }
     gpu.barrier
     vector.warp_execute_on_lane_0(%lane)[32] {
-      %acc890 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a891 = vector.transfer_read %W[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b892 = vector.transfer_read %tmp[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<4x8xf64>
-      %r893 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a891, %b892, %acc890 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      %a894 = vector.transfer_read %W[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b895 = vector.transfer_read %tmp[%c4, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<4x8xf64>
-      %r896 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a894, %b895, %r893 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      vector.transfer_write %r896, %intf[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
+      %acc901 = arith.constant dense<0.0> : vector<8x8xf64>
+      %a902 = vector.transfer_read %W[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b903 = vector.transfer_read %tmp[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<4x8xf64>
+      %r904 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a902, %b903, %acc901 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
+      %a905 = vector.transfer_read %W[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b906 = vector.transfer_read %tmp[%c4, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<4x8xf64>
+      %r907 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a905, %b906, %r904 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
+      vector.transfer_write %r907, %intf[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
     }
     gpu.barrier
-    %sv897 = memref.subview %y3[0, 5, 0] [8, 1, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[64, 1], offset: 40>>
-    %sv898 = memref.subview %y3[0, 6, 0] [8, 1, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[64, 1], offset: 48>>
+    %sv908 = memref.subview %y3[0, 6, 0] [8, 1, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[64, 1], offset: 48>>
+    %sv909 = memref.subview %y3[0, 7, 0] [8, 1, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[64, 1], offset: 56>>
     vector.warp_execute_on_lane_0(%lane)[32] {
-      %fa899 = vector.transfer_read %intf[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %r900 = vector.transfer_read %sv897[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[64, 1], offset: 40>>, vector<8x8xf64>
-      %m901 = arith.subf %r900, %fa899 : vector<8x8xf64>
-      vector.transfer_write %m901, %sv897[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, strided<[64, 1], offset: 40>>
-      %fa902 = vector.transfer_read %intf[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %r903 = vector.transfer_read %sv898[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[64, 1], offset: 48>>, vector<8x8xf64>
-      %p904 = arith.addf %r903, %fa902 : vector<8x8xf64>
-      vector.transfer_write %p904, %sv898[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, strided<[64, 1], offset: 48>>
-    }
-    gpu.barrier
-    %sv905 = memref.subview %v3591[6, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64, #gpu.address_space<workgroup>> to memref<8x8xf64, strided<[8, 1], offset: 384>, #gpu.address_space<workgroup>>
-    %sv906 = memref.subview %v3592[6, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64, #gpu.address_space<workgroup>> to memref<8x8xf64, strided<[8, 1], offset: 384>, #gpu.address_space<workgroup>>
-    %sv907 = memref.subview %g10all[6, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 384>>
-    %sv908 = memref.subview %g11all[6, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 384>>
-    %sv909 = memref.subview %g12all[6, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 384>>
-    vector.warp_execute_on_lane_0(%lane)[32] {
-      %acc910 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a911 = vector.transfer_read %Dm[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b912 = vector.transfer_read %sv905[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 384>, #gpu.address_space<workgroup>>, vector<4x8xf64>
-      %r913 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a911, %b912, %acc910 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      %a914 = vector.transfer_read %Dm[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b915 = vector.transfer_read %sv905[%c4, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 384>, #gpu.address_space<workgroup>>, vector<4x8xf64>
-      %r916 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a914, %b915, %r913 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      %g917 = vector.transfer_read %sv908[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 384>>, vector<8x8xf64>
-      %sc918 = arith.mulf %r916, %g917 : vector<8x8xf64>
-      vector.transfer_write %sc918, %dt1g[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
-    }
-    vector.warp_execute_on_lane_0(%lane)[32] {
-      %acc919 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a920 = vector.transfer_read %sv905[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 384>, #gpu.address_space<workgroup>>, vector<8x4xf64>
-      %b921 = vector.transfer_read %Dm[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %r922 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a920, %b921, %acc919 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
-      %a923 = vector.transfer_read %sv905[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 384>, #gpu.address_space<workgroup>>, vector<8x4xf64>
-      %b924 = vector.transfer_read %Dm[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %r925 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a923, %b924, %r922 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
-      %g926 = vector.transfer_read %sv907[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 384>>, vector<8x8xf64>
-      %sc927 = arith.mulf %r925, %g926 : vector<8x8xf64>
-      vector.transfer_write %sc927, %dt2g[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
+      %fa910 = vector.transfer_read %intf[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
+      %r911 = vector.transfer_read %sv908[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[64, 1], offset: 48>>, vector<8x8xf64>
+      %m912 = arith.subf %r911, %fa910 : vector<8x8xf64>
+      vector.transfer_write %m912, %sv908[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, strided<[64, 1], offset: 48>>
+      %r913 = vector.transfer_read %sv909[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[64, 1], offset: 56>>, vector<8x8xf64>
+      %p914 = arith.addf %r913, %fa910 : vector<8x8xf64>
+      vector.transfer_write %p914, %sv909[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, strided<[64, 1], offset: 56>>
     }
     gpu.barrier
     vector.warp_execute_on_lane_0(%lane)[32] {
-      %d928 = vector.transfer_read %sv906[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 384>, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %g2929 = vector.transfer_read %sv909[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 384>>, vector<8x8xf64>
-      %t930 = arith.mulf %d928, %g2929 : vector<8x8xf64>
-      %a931 = vector.transfer_read %dt2g[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %t2932 = arith.addf %t930, %a931 : vector<8x8xf64>
-      %b933 = vector.transfer_read %dt1g[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %fl934 = arith.addf %t2932, %b933 : vector<8x8xf64>
-      vector.transfer_write %fl934, %flux[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
+      %acc915 = arith.constant dense<0.0> : vector<8x8xf64>
+      %a916 = vector.transfer_read %Btil[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b917 = vector.transfer_read %u2[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
+      %r918 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a916, %b917, %acc915 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
+      %a919 = vector.transfer_read %Btil[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b920 = vector.transfer_read %u2[%c4, %c0], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
+      %r921 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a919, %b920, %r918 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
+      vector.transfer_write %r921, %interp_all[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x64xf64, #gpu.address_space<workgroup>>
     }
-    gpu.barrier
     vector.warp_execute_on_lane_0(%lane)[32] {
-      %acc935 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a936 = vector.transfer_read %flux[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x4xf64>
-      %b937 = vector.transfer_read %W[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %r938 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a936, %b937, %acc935 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
-      %a939 = vector.transfer_read %flux[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x4xf64>
-      %b940 = vector.transfer_read %W[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %r941 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a939, %b940, %r938 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
-      vector.transfer_write %r941, %tmp[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
+      %acc922 = arith.constant dense<0.0> : vector<8x8xf64>
+      %a923 = vector.transfer_read %Btil[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b924 = vector.transfer_read %u2[%c0, %c8], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
+      %r925 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a923, %b924, %acc922 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
+      %a926 = vector.transfer_read %Btil[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b927 = vector.transfer_read %u2[%c4, %c8], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
+      %r928 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a926, %b927, %r925 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
+      vector.transfer_write %r928, %interp_all[%c0, %c8] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x64xf64, #gpu.address_space<workgroup>>
     }
-    gpu.barrier
     vector.warp_execute_on_lane_0(%lane)[32] {
-      %acc942 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a943 = vector.transfer_read %W[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b944 = vector.transfer_read %tmp[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<4x8xf64>
-      %r945 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a943, %b944, %acc942 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      %a946 = vector.transfer_read %W[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b947 = vector.transfer_read %tmp[%c4, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<4x8xf64>
-      %r948 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a946, %b947, %r945 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      vector.transfer_write %r948, %intf[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
+      %acc929 = arith.constant dense<0.0> : vector<8x8xf64>
+      %a930 = vector.transfer_read %Btil[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b931 = vector.transfer_read %u2[%c0, %c16], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
+      %r932 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a930, %b931, %acc929 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
+      %a933 = vector.transfer_read %Btil[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b934 = vector.transfer_read %u2[%c4, %c16], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
+      %r935 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a933, %b934, %r932 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
+      vector.transfer_write %r935, %interp_all[%c0, %c16] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x64xf64, #gpu.address_space<workgroup>>
     }
-    gpu.barrier
-    %sv949 = memref.subview %y3[0, 6, 0] [8, 1, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[64, 1], offset: 48>>
-    %sv950 = memref.subview %y3[0, 7, 0] [8, 1, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[64, 1], offset: 56>>
     vector.warp_execute_on_lane_0(%lane)[32] {
-      %fa951 = vector.transfer_read %intf[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %r952 = vector.transfer_read %sv949[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[64, 1], offset: 48>>, vector<8x8xf64>
-      %m953 = arith.subf %r952, %fa951 : vector<8x8xf64>
-      vector.transfer_write %m953, %sv949[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, strided<[64, 1], offset: 48>>
-      %fa954 = vector.transfer_read %intf[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %r955 = vector.transfer_read %sv950[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[64, 1], offset: 56>>, vector<8x8xf64>
-      %p956 = arith.addf %r955, %fa954 : vector<8x8xf64>
-      vector.transfer_write %p956, %sv950[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, strided<[64, 1], offset: 56>>
+      %acc936 = arith.constant dense<0.0> : vector<8x8xf64>
+      %a937 = vector.transfer_read %Btil[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b938 = vector.transfer_read %u2[%c0, %c24], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
+      %r939 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a937, %b938, %acc936 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
+      %a940 = vector.transfer_read %Btil[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b941 = vector.transfer_read %u2[%c4, %c24], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
+      %r942 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a940, %b941, %r939 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
+      vector.transfer_write %r942, %interp_all[%c0, %c24] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x64xf64, #gpu.address_space<workgroup>>
     }
-    gpu.barrier
+    vector.warp_execute_on_lane_0(%lane)[32] {
+      %acc943 = arith.constant dense<0.0> : vector<8x8xf64>
+      %a944 = vector.transfer_read %Btil[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b945 = vector.transfer_read %u2[%c0, %c32], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
+      %r946 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a944, %b945, %acc943 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
+      %a947 = vector.transfer_read %Btil[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b948 = vector.transfer_read %u2[%c4, %c32], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
+      %r949 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a947, %b948, %r946 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
+      vector.transfer_write %r949, %interp_all[%c0, %c32] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x64xf64, #gpu.address_space<workgroup>>
+    }
+    vector.warp_execute_on_lane_0(%lane)[32] {
+      %acc950 = arith.constant dense<0.0> : vector<8x8xf64>
+      %a951 = vector.transfer_read %Btil[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b952 = vector.transfer_read %u2[%c0, %c40], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
+      %r953 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a951, %b952, %acc950 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
+      %a954 = vector.transfer_read %Btil[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b955 = vector.transfer_read %u2[%c4, %c40], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
+      %r956 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a954, %b955, %r953 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
+      vector.transfer_write %r956, %interp_all[%c0, %c40] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x64xf64, #gpu.address_space<workgroup>>
+    }
     vector.warp_execute_on_lane_0(%lane)[32] {
       %acc957 = arith.constant dense<0.0> : vector<8x8xf64>
       %a958 = vector.transfer_read %Btil[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b959 = vector.transfer_read %u2[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
+      %b959 = vector.transfer_read %u2[%c0, %c48], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
       %r960 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a958, %b959, %acc957 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
       %a961 = vector.transfer_read %Btil[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b962 = vector.transfer_read %u2[%c4, %c0], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
+      %b962 = vector.transfer_read %u2[%c4, %c48], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
       %r963 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a961, %b962, %r960 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      vector.transfer_write %r963, %interp_all[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x64xf64, #gpu.address_space<workgroup>>
+      vector.transfer_write %r963, %interp_all[%c0, %c48] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x64xf64, #gpu.address_space<workgroup>>
     }
     vector.warp_execute_on_lane_0(%lane)[32] {
       %acc964 = arith.constant dense<0.0> : vector<8x8xf64>
       %a965 = vector.transfer_read %Btil[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b966 = vector.transfer_read %u2[%c0, %c8], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
+      %b966 = vector.transfer_read %u2[%c0, %c56], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
       %r967 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a965, %b966, %acc964 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
       %a968 = vector.transfer_read %Btil[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b969 = vector.transfer_read %u2[%c4, %c8], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
+      %b969 = vector.transfer_read %u2[%c4, %c56], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
       %r970 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a968, %b969, %r967 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      vector.transfer_write %r970, %interp_all[%c0, %c8] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x64xf64, #gpu.address_space<workgroup>>
+      vector.transfer_write %r970, %interp_all[%c0, %c56] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x64xf64, #gpu.address_space<workgroup>>
     }
     vector.warp_execute_on_lane_0(%lane)[32] {
       %acc971 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a972 = vector.transfer_read %Btil[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b973 = vector.transfer_read %u2[%c0, %c16], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
+      %a972 = vector.transfer_read %Dtil[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b973 = vector.transfer_read %u2[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
       %r974 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a972, %b973, %acc971 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      %a975 = vector.transfer_read %Btil[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b976 = vector.transfer_read %u2[%c4, %c16], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
+      %a975 = vector.transfer_read %Dtil[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b976 = vector.transfer_read %u2[%c4, %c0], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
       %r977 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a975, %b976, %r974 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      vector.transfer_write %r977, %interp_all[%c0, %c16] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x64xf64, #gpu.address_space<workgroup>>
+      vector.transfer_write %r977, %deriv_all[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x64xf64, #gpu.address_space<workgroup>>
     }
     vector.warp_execute_on_lane_0(%lane)[32] {
       %acc978 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a979 = vector.transfer_read %Btil[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b980 = vector.transfer_read %u2[%c0, %c24], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
+      %a979 = vector.transfer_read %Dtil[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b980 = vector.transfer_read %u2[%c0, %c8], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
       %r981 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a979, %b980, %acc978 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      %a982 = vector.transfer_read %Btil[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b983 = vector.transfer_read %u2[%c4, %c24], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
+      %a982 = vector.transfer_read %Dtil[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b983 = vector.transfer_read %u2[%c4, %c8], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
       %r984 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a982, %b983, %r981 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      vector.transfer_write %r984, %interp_all[%c0, %c24] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x64xf64, #gpu.address_space<workgroup>>
+      vector.transfer_write %r984, %deriv_all[%c0, %c8] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x64xf64, #gpu.address_space<workgroup>>
     }
     vector.warp_execute_on_lane_0(%lane)[32] {
       %acc985 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a986 = vector.transfer_read %Btil[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b987 = vector.transfer_read %u2[%c0, %c32], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
+      %a986 = vector.transfer_read %Dtil[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b987 = vector.transfer_read %u2[%c0, %c16], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
       %r988 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a986, %b987, %acc985 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      %a989 = vector.transfer_read %Btil[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b990 = vector.transfer_read %u2[%c4, %c32], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
+      %a989 = vector.transfer_read %Dtil[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b990 = vector.transfer_read %u2[%c4, %c16], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
       %r991 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a989, %b990, %r988 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      vector.transfer_write %r991, %interp_all[%c0, %c32] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x64xf64, #gpu.address_space<workgroup>>
+      vector.transfer_write %r991, %deriv_all[%c0, %c16] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x64xf64, #gpu.address_space<workgroup>>
     }
     vector.warp_execute_on_lane_0(%lane)[32] {
       %acc992 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a993 = vector.transfer_read %Btil[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b994 = vector.transfer_read %u2[%c0, %c40], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
+      %a993 = vector.transfer_read %Dtil[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b994 = vector.transfer_read %u2[%c0, %c24], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
       %r995 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a993, %b994, %acc992 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      %a996 = vector.transfer_read %Btil[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b997 = vector.transfer_read %u2[%c4, %c40], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
+      %a996 = vector.transfer_read %Dtil[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b997 = vector.transfer_read %u2[%c4, %c24], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
       %r998 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a996, %b997, %r995 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      vector.transfer_write %r998, %interp_all[%c0, %c40] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x64xf64, #gpu.address_space<workgroup>>
+      vector.transfer_write %r998, %deriv_all[%c0, %c24] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x64xf64, #gpu.address_space<workgroup>>
     }
     vector.warp_execute_on_lane_0(%lane)[32] {
       %acc999 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a1000 = vector.transfer_read %Btil[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b1001 = vector.transfer_read %u2[%c0, %c48], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
+      %a1000 = vector.transfer_read %Dtil[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b1001 = vector.transfer_read %u2[%c0, %c32], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
       %r1002 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1000, %b1001, %acc999 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      %a1003 = vector.transfer_read %Btil[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b1004 = vector.transfer_read %u2[%c4, %c48], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
+      %a1003 = vector.transfer_read %Dtil[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b1004 = vector.transfer_read %u2[%c4, %c32], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
       %r1005 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1003, %b1004, %r1002 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      vector.transfer_write %r1005, %interp_all[%c0, %c48] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x64xf64, #gpu.address_space<workgroup>>
+      vector.transfer_write %r1005, %deriv_all[%c0, %c32] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x64xf64, #gpu.address_space<workgroup>>
     }
     vector.warp_execute_on_lane_0(%lane)[32] {
       %acc1006 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a1007 = vector.transfer_read %Btil[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b1008 = vector.transfer_read %u2[%c0, %c56], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
+      %a1007 = vector.transfer_read %Dtil[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b1008 = vector.transfer_read %u2[%c0, %c40], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
       %r1009 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1007, %b1008, %acc1006 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      %a1010 = vector.transfer_read %Btil[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b1011 = vector.transfer_read %u2[%c4, %c56], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
+      %a1010 = vector.transfer_read %Dtil[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b1011 = vector.transfer_read %u2[%c4, %c40], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
       %r1012 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1010, %b1011, %r1009 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      vector.transfer_write %r1012, %interp_all[%c0, %c56] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x64xf64, #gpu.address_space<workgroup>>
+      vector.transfer_write %r1012, %deriv_all[%c0, %c40] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x64xf64, #gpu.address_space<workgroup>>
     }
     vector.warp_execute_on_lane_0(%lane)[32] {
       %acc1013 = arith.constant dense<0.0> : vector<8x8xf64>
       %a1014 = vector.transfer_read %Dtil[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b1015 = vector.transfer_read %u2[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
+      %b1015 = vector.transfer_read %u2[%c0, %c48], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
       %r1016 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1014, %b1015, %acc1013 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
       %a1017 = vector.transfer_read %Dtil[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b1018 = vector.transfer_read %u2[%c4, %c0], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
+      %b1018 = vector.transfer_read %u2[%c4, %c48], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
       %r1019 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1017, %b1018, %r1016 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      vector.transfer_write %r1019, %deriv_all[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x64xf64, #gpu.address_space<workgroup>>
+      vector.transfer_write %r1019, %deriv_all[%c0, %c48] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x64xf64, #gpu.address_space<workgroup>>
     }
     vector.warp_execute_on_lane_0(%lane)[32] {
       %acc1020 = arith.constant dense<0.0> : vector<8x8xf64>
       %a1021 = vector.transfer_read %Dtil[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b1022 = vector.transfer_read %u2[%c0, %c8], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
+      %b1022 = vector.transfer_read %u2[%c0, %c56], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
       %r1023 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1021, %b1022, %acc1020 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
       %a1024 = vector.transfer_read %Dtil[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b1025 = vector.transfer_read %u2[%c4, %c8], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
+      %b1025 = vector.transfer_read %u2[%c4, %c56], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
       %r1026 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1024, %b1025, %r1023 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      vector.transfer_write %r1026, %deriv_all[%c0, %c8] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x64xf64, #gpu.address_space<workgroup>>
+      vector.transfer_write %r1026, %deriv_all[%c0, %c56] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x64xf64, #gpu.address_space<workgroup>>
     }
-    vector.warp_execute_on_lane_0(%lane)[32] {
-      %acc1027 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a1028 = vector.transfer_read %Dtil[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b1029 = vector.transfer_read %u2[%c0, %c16], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
-      %r1030 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1028, %b1029, %acc1027 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      %a1031 = vector.transfer_read %Dtil[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b1032 = vector.transfer_read %u2[%c4, %c16], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
-      %r1033 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1031, %b1032, %r1030 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      vector.transfer_write %r1033, %deriv_all[%c0, %c16] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x64xf64, #gpu.address_space<workgroup>>
-    }
+    gpu.barrier
+    %v31027 = memref.reinterpret_cast %interp_all to offset: [0], sizes: [8, 8, 8], strides: [64, 8, 1] : memref<8x64xf64, #gpu.address_space<workgroup>> to memref<8x8x8xf64, #gpu.address_space<workgroup>>
+    %v31028 = memref.reinterpret_cast %deriv_all to offset: [0], sizes: [8, 8, 8], strides: [64, 8, 1] : memref<8x64xf64, #gpu.address_space<workgroup>> to memref<8x8x8xf64, #gpu.address_space<workgroup>>
+    %sv1029 = memref.subview %v31027[0, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64, #gpu.address_space<workgroup>> to memref<8x8xf64, strided<[8, 1], offset: 0>, #gpu.address_space<workgroup>>
+    %sv1030 = memref.subview %v31028[0, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64, #gpu.address_space<workgroup>> to memref<8x8xf64, strided<[8, 1], offset: 0>, #gpu.address_space<workgroup>>
+    %sv1031 = memref.subview %g20all[0, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 0>>
+    %sv1032 = memref.subview %g21all[0, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 0>>
+    %sv1033 = memref.subview %g22all[0, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 0>>
     vector.warp_execute_on_lane_0(%lane)[32] {
       %acc1034 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a1035 = vector.transfer_read %Dtil[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b1036 = vector.transfer_read %u2[%c0, %c24], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
+      %a1035 = vector.transfer_read %Dm[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b1036 = vector.transfer_read %sv1029[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 0>, #gpu.address_space<workgroup>>, vector<4x8xf64>
       %r1037 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1035, %b1036, %acc1034 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      %a1038 = vector.transfer_read %Dtil[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b1039 = vector.transfer_read %u2[%c4, %c24], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
+      %a1038 = vector.transfer_read %Dm[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b1039 = vector.transfer_read %sv1029[%c4, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 0>, #gpu.address_space<workgroup>>, vector<4x8xf64>
       %r1040 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1038, %b1039, %r1037 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      vector.transfer_write %r1040, %deriv_all[%c0, %c24] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x64xf64, #gpu.address_space<workgroup>>
-    }
-    vector.warp_execute_on_lane_0(%lane)[32] {
-      %acc1041 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a1042 = vector.transfer_read %Dtil[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b1043 = vector.transfer_read %u2[%c0, %c32], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
-      %r1044 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1042, %b1043, %acc1041 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      %a1045 = vector.transfer_read %Dtil[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b1046 = vector.transfer_read %u2[%c4, %c32], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
-      %r1047 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1045, %b1046, %r1044 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      vector.transfer_write %r1047, %deriv_all[%c0, %c32] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x64xf64, #gpu.address_space<workgroup>>
-    }
-    vector.warp_execute_on_lane_0(%lane)[32] {
-      %acc1048 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a1049 = vector.transfer_read %Dtil[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b1050 = vector.transfer_read %u2[%c0, %c40], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
-      %r1051 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1049, %b1050, %acc1048 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      %a1052 = vector.transfer_read %Dtil[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b1053 = vector.transfer_read %u2[%c4, %c40], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
-      %r1054 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1052, %b1053, %r1051 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      vector.transfer_write %r1054, %deriv_all[%c0, %c40] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x64xf64, #gpu.address_space<workgroup>>
-    }
-    vector.warp_execute_on_lane_0(%lane)[32] {
-      %acc1055 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a1056 = vector.transfer_read %Dtil[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b1057 = vector.transfer_read %u2[%c0, %c48], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
-      %r1058 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1056, %b1057, %acc1055 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      %a1059 = vector.transfer_read %Dtil[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b1060 = vector.transfer_read %u2[%c4, %c48], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
-      %r1061 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1059, %b1060, %r1058 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      vector.transfer_write %r1061, %deriv_all[%c0, %c48] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x64xf64, #gpu.address_space<workgroup>>
-    }
-    vector.warp_execute_on_lane_0(%lane)[32] {
-      %acc1062 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a1063 = vector.transfer_read %Dtil[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b1064 = vector.transfer_read %u2[%c0, %c56], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
-      %r1065 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1063, %b1064, %acc1062 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      %a1066 = vector.transfer_read %Dtil[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b1067 = vector.transfer_read %u2[%c4, %c56], %z {in_bounds=[true,true]} : memref<8x64xf64>, vector<4x8xf64>
-      %r1068 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1066, %b1067, %r1065 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      vector.transfer_write %r1068, %deriv_all[%c0, %c56] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x64xf64, #gpu.address_space<workgroup>>
-    }
-    gpu.barrier
-    %v31069 = memref.reinterpret_cast %interp_all to offset: [0], sizes: [8, 8, 8], strides: [64, 8, 1] : memref<8x64xf64, #gpu.address_space<workgroup>> to memref<8x8x8xf64, #gpu.address_space<workgroup>>
-    %v31070 = memref.reinterpret_cast %deriv_all to offset: [0], sizes: [8, 8, 8], strides: [64, 8, 1] : memref<8x64xf64, #gpu.address_space<workgroup>> to memref<8x8x8xf64, #gpu.address_space<workgroup>>
-    %sv1071 = memref.subview %v31069[0, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64, #gpu.address_space<workgroup>> to memref<8x8xf64, strided<[8, 1], offset: 0>, #gpu.address_space<workgroup>>
-    %sv1072 = memref.subview %v31070[0, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64, #gpu.address_space<workgroup>> to memref<8x8xf64, strided<[8, 1], offset: 0>, #gpu.address_space<workgroup>>
-    %sv1073 = memref.subview %g20all[0, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 0>>
-    %sv1074 = memref.subview %g21all[0, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 0>>
-    %sv1075 = memref.subview %g22all[0, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 0>>
-    vector.warp_execute_on_lane_0(%lane)[32] {
-      %acc1076 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a1077 = vector.transfer_read %Dm[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b1078 = vector.transfer_read %sv1071[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 0>, #gpu.address_space<workgroup>>, vector<4x8xf64>
-      %r1079 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1077, %b1078, %acc1076 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      %a1080 = vector.transfer_read %Dm[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b1081 = vector.transfer_read %sv1071[%c4, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 0>, #gpu.address_space<workgroup>>, vector<4x8xf64>
-      %r1082 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1080, %b1081, %r1079 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      %g1083 = vector.transfer_read %sv1074[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 0>>, vector<8x8xf64>
-      %sc1084 = arith.mulf %r1082, %g1083 : vector<8x8xf64>
-      vector.transfer_write %sc1084, %dt1g[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
-    }
-    vector.warp_execute_on_lane_0(%lane)[32] {
-      %acc1085 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a1086 = vector.transfer_read %sv1071[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 0>, #gpu.address_space<workgroup>>, vector<8x4xf64>
-      %b1087 = vector.transfer_read %Dm[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %r1088 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1086, %b1087, %acc1085 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
-      %a1089 = vector.transfer_read %sv1071[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 0>, #gpu.address_space<workgroup>>, vector<8x4xf64>
-      %b1090 = vector.transfer_read %Dm[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %r1091 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1089, %b1090, %r1088 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
-      %g1092 = vector.transfer_read %sv1073[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 0>>, vector<8x8xf64>
-      %sc1093 = arith.mulf %r1091, %g1092 : vector<8x8xf64>
-      vector.transfer_write %sc1093, %dt2g[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
+      %g1041 = vector.transfer_read %sv1032[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 0>>, vector<8x8xf64>
+      %dt1042 = arith.mulf %r1040, %g1041 : vector<8x8xf64>
+      %acc1043 = arith.constant dense<0.0> : vector<8x8xf64>
+      %a1044 = vector.transfer_read %sv1029[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 0>, #gpu.address_space<workgroup>>, vector<8x4xf64>
+      %b1045 = vector.transfer_read %Dm[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %r1046 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1044, %b1045, %acc1043 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
+      %a1047 = vector.transfer_read %sv1029[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 0>, #gpu.address_space<workgroup>>, vector<8x4xf64>
+      %b1048 = vector.transfer_read %Dm[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %r1049 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1047, %b1048, %r1046 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
+      %g1050 = vector.transfer_read %sv1031[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 0>>, vector<8x8xf64>
+      %dt1051 = arith.mulf %r1049, %g1050 : vector<8x8xf64>
+      %dv1052 = vector.transfer_read %sv1030[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 0>, #gpu.address_space<workgroup>>, vector<8x8xf64>
+      %g1053 = vector.transfer_read %sv1033[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 0>>, vector<8x8xf64>
+      %t1054 = arith.mulf %dv1052, %g1053 : vector<8x8xf64>
+      %t21055 = arith.addf %t1054, %dt1051 : vector<8x8xf64>
+      %fl1056 = arith.addf %t21055, %dt1042 : vector<8x8xf64>
+      vector.transfer_write %fl1056, %flux[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
     }
     gpu.barrier
     vector.warp_execute_on_lane_0(%lane)[32] {
-      %d1094 = vector.transfer_read %sv1072[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 0>, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %g21095 = vector.transfer_read %sv1075[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 0>>, vector<8x8xf64>
-      %t1096 = arith.mulf %d1094, %g21095 : vector<8x8xf64>
-      %a1097 = vector.transfer_read %dt2g[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %t21098 = arith.addf %t1096, %a1097 : vector<8x8xf64>
-      %b1099 = vector.transfer_read %dt1g[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %fl1100 = arith.addf %t21098, %b1099 : vector<8x8xf64>
-      vector.transfer_write %fl1100, %flux[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
+      %acc1057 = arith.constant dense<0.0> : vector<8x8xf64>
+      %a1058 = vector.transfer_read %flux[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x4xf64>
+      %b1059 = vector.transfer_read %W[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %r1060 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1058, %b1059, %acc1057 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
+      %a1061 = vector.transfer_read %flux[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x4xf64>
+      %b1062 = vector.transfer_read %W[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %r1063 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1061, %b1062, %r1060 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
+      vector.transfer_write %r1063, %tmp[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
     }
     gpu.barrier
     vector.warp_execute_on_lane_0(%lane)[32] {
-      %acc1101 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a1102 = vector.transfer_read %flux[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x4xf64>
-      %b1103 = vector.transfer_read %W[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %r1104 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1102, %b1103, %acc1101 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
-      %a1105 = vector.transfer_read %flux[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x4xf64>
-      %b1106 = vector.transfer_read %W[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %r1107 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1105, %b1106, %r1104 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
-      vector.transfer_write %r1107, %tmp[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
+      %acc1064 = arith.constant dense<0.0> : vector<8x8xf64>
+      %a1065 = vector.transfer_read %W[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b1066 = vector.transfer_read %tmp[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<4x8xf64>
+      %r1067 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1065, %b1066, %acc1064 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
+      %a1068 = vector.transfer_read %W[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b1069 = vector.transfer_read %tmp[%c4, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<4x8xf64>
+      %r1070 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1068, %b1069, %r1067 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
+      vector.transfer_write %r1070, %intf[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
+    }
+    gpu.barrier
+    %sv1071 = memref.subview %y3[0, 0, 0] [8, 8, 1] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[64, 8], offset: 0>>
+    %sv1072 = memref.subview %y3[0, 0, 1] [8, 8, 1] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[64, 8], offset: 1>>
+    vector.warp_execute_on_lane_0(%lane)[32] {
+      %fa1073 = vector.transfer_read %intf[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
+      %r1074 = vector.transfer_read %sv1071[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[64, 8], offset: 0>>, vector<8x8xf64>
+      %m1075 = arith.subf %r1074, %fa1073 : vector<8x8xf64>
+      vector.transfer_write %m1075, %sv1071[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, strided<[64, 8], offset: 0>>
+      %r1076 = vector.transfer_read %sv1072[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[64, 8], offset: 1>>, vector<8x8xf64>
+      %p1077 = arith.addf %r1076, %fa1073 : vector<8x8xf64>
+      vector.transfer_write %p1077, %sv1072[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, strided<[64, 8], offset: 1>>
+    }
+    gpu.barrier
+    %sv1078 = memref.subview %v31027[1, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64, #gpu.address_space<workgroup>> to memref<8x8xf64, strided<[8, 1], offset: 64>, #gpu.address_space<workgroup>>
+    %sv1079 = memref.subview %v31028[1, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64, #gpu.address_space<workgroup>> to memref<8x8xf64, strided<[8, 1], offset: 64>, #gpu.address_space<workgroup>>
+    %sv1080 = memref.subview %g20all[1, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 64>>
+    %sv1081 = memref.subview %g21all[1, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 64>>
+    %sv1082 = memref.subview %g22all[1, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 64>>
+    vector.warp_execute_on_lane_0(%lane)[32] {
+      %acc1083 = arith.constant dense<0.0> : vector<8x8xf64>
+      %a1084 = vector.transfer_read %Dm[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b1085 = vector.transfer_read %sv1078[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 64>, #gpu.address_space<workgroup>>, vector<4x8xf64>
+      %r1086 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1084, %b1085, %acc1083 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
+      %a1087 = vector.transfer_read %Dm[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b1088 = vector.transfer_read %sv1078[%c4, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 64>, #gpu.address_space<workgroup>>, vector<4x8xf64>
+      %r1089 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1087, %b1088, %r1086 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
+      %g1090 = vector.transfer_read %sv1081[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 64>>, vector<8x8xf64>
+      %dt1091 = arith.mulf %r1089, %g1090 : vector<8x8xf64>
+      %acc1092 = arith.constant dense<0.0> : vector<8x8xf64>
+      %a1093 = vector.transfer_read %sv1078[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 64>, #gpu.address_space<workgroup>>, vector<8x4xf64>
+      %b1094 = vector.transfer_read %Dm[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %r1095 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1093, %b1094, %acc1092 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
+      %a1096 = vector.transfer_read %sv1078[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 64>, #gpu.address_space<workgroup>>, vector<8x4xf64>
+      %b1097 = vector.transfer_read %Dm[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %r1098 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1096, %b1097, %r1095 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
+      %g1099 = vector.transfer_read %sv1080[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 64>>, vector<8x8xf64>
+      %dt1100 = arith.mulf %r1098, %g1099 : vector<8x8xf64>
+      %dv1101 = vector.transfer_read %sv1079[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 64>, #gpu.address_space<workgroup>>, vector<8x8xf64>
+      %g1102 = vector.transfer_read %sv1082[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 64>>, vector<8x8xf64>
+      %t1103 = arith.mulf %dv1101, %g1102 : vector<8x8xf64>
+      %t21104 = arith.addf %t1103, %dt1100 : vector<8x8xf64>
+      %fl1105 = arith.addf %t21104, %dt1091 : vector<8x8xf64>
+      vector.transfer_write %fl1105, %flux[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
     }
     gpu.barrier
     vector.warp_execute_on_lane_0(%lane)[32] {
-      %acc1108 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a1109 = vector.transfer_read %W[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b1110 = vector.transfer_read %tmp[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<4x8xf64>
-      %r1111 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1109, %b1110, %acc1108 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      %a1112 = vector.transfer_read %W[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b1113 = vector.transfer_read %tmp[%c4, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<4x8xf64>
-      %r1114 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1112, %b1113, %r1111 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      vector.transfer_write %r1114, %intf[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
-    }
-    gpu.barrier
-    %sv1115 = memref.subview %y3[0, 0, 0] [8, 8, 1] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[64, 8], offset: 0>>
-    %sv1116 = memref.subview %y3[0, 0, 1] [8, 8, 1] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[64, 8], offset: 1>>
-    vector.warp_execute_on_lane_0(%lane)[32] {
-      %fa1117 = vector.transfer_read %intf[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %r1118 = vector.transfer_read %sv1115[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[64, 8], offset: 0>>, vector<8x8xf64>
-      %m1119 = arith.subf %r1118, %fa1117 : vector<8x8xf64>
-      vector.transfer_write %m1119, %sv1115[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, strided<[64, 8], offset: 0>>
-      %fa1120 = vector.transfer_read %intf[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %r1121 = vector.transfer_read %sv1116[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[64, 8], offset: 1>>, vector<8x8xf64>
-      %p1122 = arith.addf %r1121, %fa1120 : vector<8x8xf64>
-      vector.transfer_write %p1122, %sv1116[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, strided<[64, 8], offset: 1>>
-    }
-    gpu.barrier
-    %sv1123 = memref.subview %v31069[1, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64, #gpu.address_space<workgroup>> to memref<8x8xf64, strided<[8, 1], offset: 64>, #gpu.address_space<workgroup>>
-    %sv1124 = memref.subview %v31070[1, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64, #gpu.address_space<workgroup>> to memref<8x8xf64, strided<[8, 1], offset: 64>, #gpu.address_space<workgroup>>
-    %sv1125 = memref.subview %g20all[1, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 64>>
-    %sv1126 = memref.subview %g21all[1, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 64>>
-    %sv1127 = memref.subview %g22all[1, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 64>>
-    vector.warp_execute_on_lane_0(%lane)[32] {
-      %acc1128 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a1129 = vector.transfer_read %Dm[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b1130 = vector.transfer_read %sv1123[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 64>, #gpu.address_space<workgroup>>, vector<4x8xf64>
-      %r1131 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1129, %b1130, %acc1128 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      %a1132 = vector.transfer_read %Dm[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b1133 = vector.transfer_read %sv1123[%c4, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 64>, #gpu.address_space<workgroup>>, vector<4x8xf64>
-      %r1134 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1132, %b1133, %r1131 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      %g1135 = vector.transfer_read %sv1126[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 64>>, vector<8x8xf64>
-      %sc1136 = arith.mulf %r1134, %g1135 : vector<8x8xf64>
-      vector.transfer_write %sc1136, %dt1g[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
-    }
-    vector.warp_execute_on_lane_0(%lane)[32] {
-      %acc1137 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a1138 = vector.transfer_read %sv1123[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 64>, #gpu.address_space<workgroup>>, vector<8x4xf64>
-      %b1139 = vector.transfer_read %Dm[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %r1140 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1138, %b1139, %acc1137 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
-      %a1141 = vector.transfer_read %sv1123[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 64>, #gpu.address_space<workgroup>>, vector<8x4xf64>
-      %b1142 = vector.transfer_read %Dm[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %r1143 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1141, %b1142, %r1140 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
-      %g1144 = vector.transfer_read %sv1125[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 64>>, vector<8x8xf64>
-      %sc1145 = arith.mulf %r1143, %g1144 : vector<8x8xf64>
-      vector.transfer_write %sc1145, %dt2g[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
+      %acc1106 = arith.constant dense<0.0> : vector<8x8xf64>
+      %a1107 = vector.transfer_read %flux[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x4xf64>
+      %b1108 = vector.transfer_read %W[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %r1109 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1107, %b1108, %acc1106 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
+      %a1110 = vector.transfer_read %flux[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x4xf64>
+      %b1111 = vector.transfer_read %W[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %r1112 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1110, %b1111, %r1109 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
+      vector.transfer_write %r1112, %tmp[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
     }
     gpu.barrier
     vector.warp_execute_on_lane_0(%lane)[32] {
-      %d1146 = vector.transfer_read %sv1124[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 64>, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %g21147 = vector.transfer_read %sv1127[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 64>>, vector<8x8xf64>
-      %t1148 = arith.mulf %d1146, %g21147 : vector<8x8xf64>
-      %a1149 = vector.transfer_read %dt2g[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %t21150 = arith.addf %t1148, %a1149 : vector<8x8xf64>
-      %b1151 = vector.transfer_read %dt1g[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %fl1152 = arith.addf %t21150, %b1151 : vector<8x8xf64>
-      vector.transfer_write %fl1152, %flux[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
+      %acc1113 = arith.constant dense<0.0> : vector<8x8xf64>
+      %a1114 = vector.transfer_read %W[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b1115 = vector.transfer_read %tmp[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<4x8xf64>
+      %r1116 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1114, %b1115, %acc1113 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
+      %a1117 = vector.transfer_read %W[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b1118 = vector.transfer_read %tmp[%c4, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<4x8xf64>
+      %r1119 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1117, %b1118, %r1116 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
+      vector.transfer_write %r1119, %intf[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
+    }
+    gpu.barrier
+    %sv1120 = memref.subview %y3[0, 0, 1] [8, 8, 1] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[64, 8], offset: 1>>
+    %sv1121 = memref.subview %y3[0, 0, 2] [8, 8, 1] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[64, 8], offset: 2>>
+    vector.warp_execute_on_lane_0(%lane)[32] {
+      %fa1122 = vector.transfer_read %intf[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
+      %r1123 = vector.transfer_read %sv1120[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[64, 8], offset: 1>>, vector<8x8xf64>
+      %m1124 = arith.subf %r1123, %fa1122 : vector<8x8xf64>
+      vector.transfer_write %m1124, %sv1120[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, strided<[64, 8], offset: 1>>
+      %r1125 = vector.transfer_read %sv1121[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[64, 8], offset: 2>>, vector<8x8xf64>
+      %p1126 = arith.addf %r1125, %fa1122 : vector<8x8xf64>
+      vector.transfer_write %p1126, %sv1121[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, strided<[64, 8], offset: 2>>
+    }
+    gpu.barrier
+    %sv1127 = memref.subview %v31027[2, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64, #gpu.address_space<workgroup>> to memref<8x8xf64, strided<[8, 1], offset: 128>, #gpu.address_space<workgroup>>
+    %sv1128 = memref.subview %v31028[2, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64, #gpu.address_space<workgroup>> to memref<8x8xf64, strided<[8, 1], offset: 128>, #gpu.address_space<workgroup>>
+    %sv1129 = memref.subview %g20all[2, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 128>>
+    %sv1130 = memref.subview %g21all[2, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 128>>
+    %sv1131 = memref.subview %g22all[2, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 128>>
+    vector.warp_execute_on_lane_0(%lane)[32] {
+      %acc1132 = arith.constant dense<0.0> : vector<8x8xf64>
+      %a1133 = vector.transfer_read %Dm[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b1134 = vector.transfer_read %sv1127[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 128>, #gpu.address_space<workgroup>>, vector<4x8xf64>
+      %r1135 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1133, %b1134, %acc1132 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
+      %a1136 = vector.transfer_read %Dm[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b1137 = vector.transfer_read %sv1127[%c4, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 128>, #gpu.address_space<workgroup>>, vector<4x8xf64>
+      %r1138 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1136, %b1137, %r1135 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
+      %g1139 = vector.transfer_read %sv1130[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 128>>, vector<8x8xf64>
+      %dt1140 = arith.mulf %r1138, %g1139 : vector<8x8xf64>
+      %acc1141 = arith.constant dense<0.0> : vector<8x8xf64>
+      %a1142 = vector.transfer_read %sv1127[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 128>, #gpu.address_space<workgroup>>, vector<8x4xf64>
+      %b1143 = vector.transfer_read %Dm[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %r1144 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1142, %b1143, %acc1141 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
+      %a1145 = vector.transfer_read %sv1127[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 128>, #gpu.address_space<workgroup>>, vector<8x4xf64>
+      %b1146 = vector.transfer_read %Dm[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %r1147 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1145, %b1146, %r1144 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
+      %g1148 = vector.transfer_read %sv1129[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 128>>, vector<8x8xf64>
+      %dt1149 = arith.mulf %r1147, %g1148 : vector<8x8xf64>
+      %dv1150 = vector.transfer_read %sv1128[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 128>, #gpu.address_space<workgroup>>, vector<8x8xf64>
+      %g1151 = vector.transfer_read %sv1131[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 128>>, vector<8x8xf64>
+      %t1152 = arith.mulf %dv1150, %g1151 : vector<8x8xf64>
+      %t21153 = arith.addf %t1152, %dt1149 : vector<8x8xf64>
+      %fl1154 = arith.addf %t21153, %dt1140 : vector<8x8xf64>
+      vector.transfer_write %fl1154, %flux[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
     }
     gpu.barrier
     vector.warp_execute_on_lane_0(%lane)[32] {
-      %acc1153 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a1154 = vector.transfer_read %flux[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x4xf64>
-      %b1155 = vector.transfer_read %W[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %r1156 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1154, %b1155, %acc1153 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
-      %a1157 = vector.transfer_read %flux[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x4xf64>
-      %b1158 = vector.transfer_read %W[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %r1159 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1157, %b1158, %r1156 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
-      vector.transfer_write %r1159, %tmp[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
+      %acc1155 = arith.constant dense<0.0> : vector<8x8xf64>
+      %a1156 = vector.transfer_read %flux[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x4xf64>
+      %b1157 = vector.transfer_read %W[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %r1158 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1156, %b1157, %acc1155 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
+      %a1159 = vector.transfer_read %flux[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x4xf64>
+      %b1160 = vector.transfer_read %W[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %r1161 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1159, %b1160, %r1158 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
+      vector.transfer_write %r1161, %tmp[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
     }
     gpu.barrier
     vector.warp_execute_on_lane_0(%lane)[32] {
-      %acc1160 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a1161 = vector.transfer_read %W[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b1162 = vector.transfer_read %tmp[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<4x8xf64>
-      %r1163 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1161, %b1162, %acc1160 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      %a1164 = vector.transfer_read %W[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b1165 = vector.transfer_read %tmp[%c4, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<4x8xf64>
-      %r1166 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1164, %b1165, %r1163 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      vector.transfer_write %r1166, %intf[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
+      %acc1162 = arith.constant dense<0.0> : vector<8x8xf64>
+      %a1163 = vector.transfer_read %W[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b1164 = vector.transfer_read %tmp[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<4x8xf64>
+      %r1165 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1163, %b1164, %acc1162 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
+      %a1166 = vector.transfer_read %W[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b1167 = vector.transfer_read %tmp[%c4, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<4x8xf64>
+      %r1168 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1166, %b1167, %r1165 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
+      vector.transfer_write %r1168, %intf[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
     }
     gpu.barrier
-    %sv1167 = memref.subview %y3[0, 0, 1] [8, 8, 1] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[64, 8], offset: 1>>
-    %sv1168 = memref.subview %y3[0, 0, 2] [8, 8, 1] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[64, 8], offset: 2>>
+    %sv1169 = memref.subview %y3[0, 0, 2] [8, 8, 1] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[64, 8], offset: 2>>
+    %sv1170 = memref.subview %y3[0, 0, 3] [8, 8, 1] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[64, 8], offset: 3>>
     vector.warp_execute_on_lane_0(%lane)[32] {
-      %fa1169 = vector.transfer_read %intf[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %r1170 = vector.transfer_read %sv1167[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[64, 8], offset: 1>>, vector<8x8xf64>
-      %m1171 = arith.subf %r1170, %fa1169 : vector<8x8xf64>
-      vector.transfer_write %m1171, %sv1167[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, strided<[64, 8], offset: 1>>
-      %fa1172 = vector.transfer_read %intf[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %r1173 = vector.transfer_read %sv1168[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[64, 8], offset: 2>>, vector<8x8xf64>
-      %p1174 = arith.addf %r1173, %fa1172 : vector<8x8xf64>
-      vector.transfer_write %p1174, %sv1168[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, strided<[64, 8], offset: 2>>
+      %fa1171 = vector.transfer_read %intf[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
+      %r1172 = vector.transfer_read %sv1169[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[64, 8], offset: 2>>, vector<8x8xf64>
+      %m1173 = arith.subf %r1172, %fa1171 : vector<8x8xf64>
+      vector.transfer_write %m1173, %sv1169[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, strided<[64, 8], offset: 2>>
+      %r1174 = vector.transfer_read %sv1170[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[64, 8], offset: 3>>, vector<8x8xf64>
+      %p1175 = arith.addf %r1174, %fa1171 : vector<8x8xf64>
+      vector.transfer_write %p1175, %sv1170[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, strided<[64, 8], offset: 3>>
     }
     gpu.barrier
-    %sv1175 = memref.subview %v31069[2, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64, #gpu.address_space<workgroup>> to memref<8x8xf64, strided<[8, 1], offset: 128>, #gpu.address_space<workgroup>>
-    %sv1176 = memref.subview %v31070[2, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64, #gpu.address_space<workgroup>> to memref<8x8xf64, strided<[8, 1], offset: 128>, #gpu.address_space<workgroup>>
-    %sv1177 = memref.subview %g20all[2, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 128>>
-    %sv1178 = memref.subview %g21all[2, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 128>>
-    %sv1179 = memref.subview %g22all[2, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 128>>
+    %sv1176 = memref.subview %v31027[3, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64, #gpu.address_space<workgroup>> to memref<8x8xf64, strided<[8, 1], offset: 192>, #gpu.address_space<workgroup>>
+    %sv1177 = memref.subview %v31028[3, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64, #gpu.address_space<workgroup>> to memref<8x8xf64, strided<[8, 1], offset: 192>, #gpu.address_space<workgroup>>
+    %sv1178 = memref.subview %g20all[3, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 192>>
+    %sv1179 = memref.subview %g21all[3, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 192>>
+    %sv1180 = memref.subview %g22all[3, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 192>>
     vector.warp_execute_on_lane_0(%lane)[32] {
-      %acc1180 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a1181 = vector.transfer_read %Dm[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b1182 = vector.transfer_read %sv1175[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 128>, #gpu.address_space<workgroup>>, vector<4x8xf64>
-      %r1183 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1181, %b1182, %acc1180 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      %a1184 = vector.transfer_read %Dm[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b1185 = vector.transfer_read %sv1175[%c4, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 128>, #gpu.address_space<workgroup>>, vector<4x8xf64>
-      %r1186 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1184, %b1185, %r1183 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      %g1187 = vector.transfer_read %sv1178[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 128>>, vector<8x8xf64>
-      %sc1188 = arith.mulf %r1186, %g1187 : vector<8x8xf64>
-      vector.transfer_write %sc1188, %dt1g[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
-    }
-    vector.warp_execute_on_lane_0(%lane)[32] {
-      %acc1189 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a1190 = vector.transfer_read %sv1175[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 128>, #gpu.address_space<workgroup>>, vector<8x4xf64>
-      %b1191 = vector.transfer_read %Dm[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %r1192 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1190, %b1191, %acc1189 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
-      %a1193 = vector.transfer_read %sv1175[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 128>, #gpu.address_space<workgroup>>, vector<8x4xf64>
-      %b1194 = vector.transfer_read %Dm[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %r1195 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1193, %b1194, %r1192 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
-      %g1196 = vector.transfer_read %sv1177[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 128>>, vector<8x8xf64>
-      %sc1197 = arith.mulf %r1195, %g1196 : vector<8x8xf64>
-      vector.transfer_write %sc1197, %dt2g[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
-    }
-    gpu.barrier
-    vector.warp_execute_on_lane_0(%lane)[32] {
-      %d1198 = vector.transfer_read %sv1176[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 128>, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %g21199 = vector.transfer_read %sv1179[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 128>>, vector<8x8xf64>
-      %t1200 = arith.mulf %d1198, %g21199 : vector<8x8xf64>
-      %a1201 = vector.transfer_read %dt2g[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %t21202 = arith.addf %t1200, %a1201 : vector<8x8xf64>
-      %b1203 = vector.transfer_read %dt1g[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %fl1204 = arith.addf %t21202, %b1203 : vector<8x8xf64>
-      vector.transfer_write %fl1204, %flux[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
+      %acc1181 = arith.constant dense<0.0> : vector<8x8xf64>
+      %a1182 = vector.transfer_read %Dm[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b1183 = vector.transfer_read %sv1176[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 192>, #gpu.address_space<workgroup>>, vector<4x8xf64>
+      %r1184 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1182, %b1183, %acc1181 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
+      %a1185 = vector.transfer_read %Dm[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b1186 = vector.transfer_read %sv1176[%c4, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 192>, #gpu.address_space<workgroup>>, vector<4x8xf64>
+      %r1187 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1185, %b1186, %r1184 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
+      %g1188 = vector.transfer_read %sv1179[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 192>>, vector<8x8xf64>
+      %dt1189 = arith.mulf %r1187, %g1188 : vector<8x8xf64>
+      %acc1190 = arith.constant dense<0.0> : vector<8x8xf64>
+      %a1191 = vector.transfer_read %sv1176[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 192>, #gpu.address_space<workgroup>>, vector<8x4xf64>
+      %b1192 = vector.transfer_read %Dm[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %r1193 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1191, %b1192, %acc1190 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
+      %a1194 = vector.transfer_read %sv1176[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 192>, #gpu.address_space<workgroup>>, vector<8x4xf64>
+      %b1195 = vector.transfer_read %Dm[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %r1196 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1194, %b1195, %r1193 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
+      %g1197 = vector.transfer_read %sv1178[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 192>>, vector<8x8xf64>
+      %dt1198 = arith.mulf %r1196, %g1197 : vector<8x8xf64>
+      %dv1199 = vector.transfer_read %sv1177[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 192>, #gpu.address_space<workgroup>>, vector<8x8xf64>
+      %g1200 = vector.transfer_read %sv1180[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 192>>, vector<8x8xf64>
+      %t1201 = arith.mulf %dv1199, %g1200 : vector<8x8xf64>
+      %t21202 = arith.addf %t1201, %dt1198 : vector<8x8xf64>
+      %fl1203 = arith.addf %t21202, %dt1189 : vector<8x8xf64>
+      vector.transfer_write %fl1203, %flux[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
     }
     gpu.barrier
     vector.warp_execute_on_lane_0(%lane)[32] {
-      %acc1205 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a1206 = vector.transfer_read %flux[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x4xf64>
-      %b1207 = vector.transfer_read %W[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %r1208 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1206, %b1207, %acc1205 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
-      %a1209 = vector.transfer_read %flux[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x4xf64>
-      %b1210 = vector.transfer_read %W[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %r1211 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1209, %b1210, %r1208 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
-      vector.transfer_write %r1211, %tmp[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
+      %acc1204 = arith.constant dense<0.0> : vector<8x8xf64>
+      %a1205 = vector.transfer_read %flux[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x4xf64>
+      %b1206 = vector.transfer_read %W[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %r1207 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1205, %b1206, %acc1204 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
+      %a1208 = vector.transfer_read %flux[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x4xf64>
+      %b1209 = vector.transfer_read %W[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %r1210 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1208, %b1209, %r1207 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
+      vector.transfer_write %r1210, %tmp[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
     }
     gpu.barrier
     vector.warp_execute_on_lane_0(%lane)[32] {
-      %acc1212 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a1213 = vector.transfer_read %W[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b1214 = vector.transfer_read %tmp[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<4x8xf64>
-      %r1215 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1213, %b1214, %acc1212 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      %a1216 = vector.transfer_read %W[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b1217 = vector.transfer_read %tmp[%c4, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<4x8xf64>
-      %r1218 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1216, %b1217, %r1215 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      vector.transfer_write %r1218, %intf[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
+      %acc1211 = arith.constant dense<0.0> : vector<8x8xf64>
+      %a1212 = vector.transfer_read %W[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b1213 = vector.transfer_read %tmp[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<4x8xf64>
+      %r1214 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1212, %b1213, %acc1211 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
+      %a1215 = vector.transfer_read %W[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b1216 = vector.transfer_read %tmp[%c4, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<4x8xf64>
+      %r1217 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1215, %b1216, %r1214 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
+      vector.transfer_write %r1217, %intf[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
     }
     gpu.barrier
-    %sv1219 = memref.subview %y3[0, 0, 2] [8, 8, 1] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[64, 8], offset: 2>>
-    %sv1220 = memref.subview %y3[0, 0, 3] [8, 8, 1] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[64, 8], offset: 3>>
+    %sv1218 = memref.subview %y3[0, 0, 3] [8, 8, 1] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[64, 8], offset: 3>>
+    %sv1219 = memref.subview %y3[0, 0, 4] [8, 8, 1] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[64, 8], offset: 4>>
     vector.warp_execute_on_lane_0(%lane)[32] {
-      %fa1221 = vector.transfer_read %intf[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %r1222 = vector.transfer_read %sv1219[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[64, 8], offset: 2>>, vector<8x8xf64>
-      %m1223 = arith.subf %r1222, %fa1221 : vector<8x8xf64>
-      vector.transfer_write %m1223, %sv1219[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, strided<[64, 8], offset: 2>>
-      %fa1224 = vector.transfer_read %intf[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %r1225 = vector.transfer_read %sv1220[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[64, 8], offset: 3>>, vector<8x8xf64>
-      %p1226 = arith.addf %r1225, %fa1224 : vector<8x8xf64>
-      vector.transfer_write %p1226, %sv1220[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, strided<[64, 8], offset: 3>>
+      %fa1220 = vector.transfer_read %intf[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
+      %r1221 = vector.transfer_read %sv1218[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[64, 8], offset: 3>>, vector<8x8xf64>
+      %m1222 = arith.subf %r1221, %fa1220 : vector<8x8xf64>
+      vector.transfer_write %m1222, %sv1218[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, strided<[64, 8], offset: 3>>
+      %r1223 = vector.transfer_read %sv1219[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[64, 8], offset: 4>>, vector<8x8xf64>
+      %p1224 = arith.addf %r1223, %fa1220 : vector<8x8xf64>
+      vector.transfer_write %p1224, %sv1219[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, strided<[64, 8], offset: 4>>
     }
     gpu.barrier
-    %sv1227 = memref.subview %v31069[3, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64, #gpu.address_space<workgroup>> to memref<8x8xf64, strided<[8, 1], offset: 192>, #gpu.address_space<workgroup>>
-    %sv1228 = memref.subview %v31070[3, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64, #gpu.address_space<workgroup>> to memref<8x8xf64, strided<[8, 1], offset: 192>, #gpu.address_space<workgroup>>
-    %sv1229 = memref.subview %g20all[3, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 192>>
-    %sv1230 = memref.subview %g21all[3, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 192>>
-    %sv1231 = memref.subview %g22all[3, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 192>>
+    %sv1225 = memref.subview %v31027[4, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64, #gpu.address_space<workgroup>> to memref<8x8xf64, strided<[8, 1], offset: 256>, #gpu.address_space<workgroup>>
+    %sv1226 = memref.subview %v31028[4, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64, #gpu.address_space<workgroup>> to memref<8x8xf64, strided<[8, 1], offset: 256>, #gpu.address_space<workgroup>>
+    %sv1227 = memref.subview %g20all[4, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 256>>
+    %sv1228 = memref.subview %g21all[4, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 256>>
+    %sv1229 = memref.subview %g22all[4, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 256>>
     vector.warp_execute_on_lane_0(%lane)[32] {
-      %acc1232 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a1233 = vector.transfer_read %Dm[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b1234 = vector.transfer_read %sv1227[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 192>, #gpu.address_space<workgroup>>, vector<4x8xf64>
-      %r1235 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1233, %b1234, %acc1232 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      %a1236 = vector.transfer_read %Dm[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b1237 = vector.transfer_read %sv1227[%c4, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 192>, #gpu.address_space<workgroup>>, vector<4x8xf64>
-      %r1238 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1236, %b1237, %r1235 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      %g1239 = vector.transfer_read %sv1230[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 192>>, vector<8x8xf64>
-      %sc1240 = arith.mulf %r1238, %g1239 : vector<8x8xf64>
-      vector.transfer_write %sc1240, %dt1g[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
-    }
-    vector.warp_execute_on_lane_0(%lane)[32] {
-      %acc1241 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a1242 = vector.transfer_read %sv1227[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 192>, #gpu.address_space<workgroup>>, vector<8x4xf64>
-      %b1243 = vector.transfer_read %Dm[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %r1244 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1242, %b1243, %acc1241 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
-      %a1245 = vector.transfer_read %sv1227[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 192>, #gpu.address_space<workgroup>>, vector<8x4xf64>
-      %b1246 = vector.transfer_read %Dm[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %r1247 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1245, %b1246, %r1244 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
-      %g1248 = vector.transfer_read %sv1229[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 192>>, vector<8x8xf64>
-      %sc1249 = arith.mulf %r1247, %g1248 : vector<8x8xf64>
-      vector.transfer_write %sc1249, %dt2g[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
-    }
-    gpu.barrier
-    vector.warp_execute_on_lane_0(%lane)[32] {
-      %d1250 = vector.transfer_read %sv1228[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 192>, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %g21251 = vector.transfer_read %sv1231[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 192>>, vector<8x8xf64>
-      %t1252 = arith.mulf %d1250, %g21251 : vector<8x8xf64>
-      %a1253 = vector.transfer_read %dt2g[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %t21254 = arith.addf %t1252, %a1253 : vector<8x8xf64>
-      %b1255 = vector.transfer_read %dt1g[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %fl1256 = arith.addf %t21254, %b1255 : vector<8x8xf64>
-      vector.transfer_write %fl1256, %flux[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
+      %acc1230 = arith.constant dense<0.0> : vector<8x8xf64>
+      %a1231 = vector.transfer_read %Dm[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b1232 = vector.transfer_read %sv1225[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 256>, #gpu.address_space<workgroup>>, vector<4x8xf64>
+      %r1233 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1231, %b1232, %acc1230 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
+      %a1234 = vector.transfer_read %Dm[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b1235 = vector.transfer_read %sv1225[%c4, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 256>, #gpu.address_space<workgroup>>, vector<4x8xf64>
+      %r1236 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1234, %b1235, %r1233 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
+      %g1237 = vector.transfer_read %sv1228[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 256>>, vector<8x8xf64>
+      %dt1238 = arith.mulf %r1236, %g1237 : vector<8x8xf64>
+      %acc1239 = arith.constant dense<0.0> : vector<8x8xf64>
+      %a1240 = vector.transfer_read %sv1225[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 256>, #gpu.address_space<workgroup>>, vector<8x4xf64>
+      %b1241 = vector.transfer_read %Dm[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %r1242 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1240, %b1241, %acc1239 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
+      %a1243 = vector.transfer_read %sv1225[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 256>, #gpu.address_space<workgroup>>, vector<8x4xf64>
+      %b1244 = vector.transfer_read %Dm[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %r1245 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1243, %b1244, %r1242 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
+      %g1246 = vector.transfer_read %sv1227[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 256>>, vector<8x8xf64>
+      %dt1247 = arith.mulf %r1245, %g1246 : vector<8x8xf64>
+      %dv1248 = vector.transfer_read %sv1226[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 256>, #gpu.address_space<workgroup>>, vector<8x8xf64>
+      %g1249 = vector.transfer_read %sv1229[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 256>>, vector<8x8xf64>
+      %t1250 = arith.mulf %dv1248, %g1249 : vector<8x8xf64>
+      %t21251 = arith.addf %t1250, %dt1247 : vector<8x8xf64>
+      %fl1252 = arith.addf %t21251, %dt1238 : vector<8x8xf64>
+      vector.transfer_write %fl1252, %flux[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
     }
     gpu.barrier
     vector.warp_execute_on_lane_0(%lane)[32] {
-      %acc1257 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a1258 = vector.transfer_read %flux[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x4xf64>
-      %b1259 = vector.transfer_read %W[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %r1260 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1258, %b1259, %acc1257 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
-      %a1261 = vector.transfer_read %flux[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x4xf64>
-      %b1262 = vector.transfer_read %W[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %r1263 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1261, %b1262, %r1260 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
-      vector.transfer_write %r1263, %tmp[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
+      %acc1253 = arith.constant dense<0.0> : vector<8x8xf64>
+      %a1254 = vector.transfer_read %flux[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x4xf64>
+      %b1255 = vector.transfer_read %W[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %r1256 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1254, %b1255, %acc1253 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
+      %a1257 = vector.transfer_read %flux[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x4xf64>
+      %b1258 = vector.transfer_read %W[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %r1259 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1257, %b1258, %r1256 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
+      vector.transfer_write %r1259, %tmp[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
     }
     gpu.barrier
     vector.warp_execute_on_lane_0(%lane)[32] {
-      %acc1264 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a1265 = vector.transfer_read %W[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b1266 = vector.transfer_read %tmp[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<4x8xf64>
-      %r1267 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1265, %b1266, %acc1264 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      %a1268 = vector.transfer_read %W[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b1269 = vector.transfer_read %tmp[%c4, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<4x8xf64>
-      %r1270 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1268, %b1269, %r1267 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      vector.transfer_write %r1270, %intf[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
+      %acc1260 = arith.constant dense<0.0> : vector<8x8xf64>
+      %a1261 = vector.transfer_read %W[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b1262 = vector.transfer_read %tmp[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<4x8xf64>
+      %r1263 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1261, %b1262, %acc1260 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
+      %a1264 = vector.transfer_read %W[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b1265 = vector.transfer_read %tmp[%c4, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<4x8xf64>
+      %r1266 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1264, %b1265, %r1263 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
+      vector.transfer_write %r1266, %intf[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
     }
     gpu.barrier
-    %sv1271 = memref.subview %y3[0, 0, 3] [8, 8, 1] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[64, 8], offset: 3>>
-    %sv1272 = memref.subview %y3[0, 0, 4] [8, 8, 1] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[64, 8], offset: 4>>
+    %sv1267 = memref.subview %y3[0, 0, 4] [8, 8, 1] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[64, 8], offset: 4>>
+    %sv1268 = memref.subview %y3[0, 0, 5] [8, 8, 1] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[64, 8], offset: 5>>
     vector.warp_execute_on_lane_0(%lane)[32] {
-      %fa1273 = vector.transfer_read %intf[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %r1274 = vector.transfer_read %sv1271[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[64, 8], offset: 3>>, vector<8x8xf64>
-      %m1275 = arith.subf %r1274, %fa1273 : vector<8x8xf64>
-      vector.transfer_write %m1275, %sv1271[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, strided<[64, 8], offset: 3>>
-      %fa1276 = vector.transfer_read %intf[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %r1277 = vector.transfer_read %sv1272[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[64, 8], offset: 4>>, vector<8x8xf64>
-      %p1278 = arith.addf %r1277, %fa1276 : vector<8x8xf64>
-      vector.transfer_write %p1278, %sv1272[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, strided<[64, 8], offset: 4>>
+      %fa1269 = vector.transfer_read %intf[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
+      %r1270 = vector.transfer_read %sv1267[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[64, 8], offset: 4>>, vector<8x8xf64>
+      %m1271 = arith.subf %r1270, %fa1269 : vector<8x8xf64>
+      vector.transfer_write %m1271, %sv1267[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, strided<[64, 8], offset: 4>>
+      %r1272 = vector.transfer_read %sv1268[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[64, 8], offset: 5>>, vector<8x8xf64>
+      %p1273 = arith.addf %r1272, %fa1269 : vector<8x8xf64>
+      vector.transfer_write %p1273, %sv1268[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, strided<[64, 8], offset: 5>>
     }
     gpu.barrier
-    %sv1279 = memref.subview %v31069[4, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64, #gpu.address_space<workgroup>> to memref<8x8xf64, strided<[8, 1], offset: 256>, #gpu.address_space<workgroup>>
-    %sv1280 = memref.subview %v31070[4, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64, #gpu.address_space<workgroup>> to memref<8x8xf64, strided<[8, 1], offset: 256>, #gpu.address_space<workgroup>>
-    %sv1281 = memref.subview %g20all[4, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 256>>
-    %sv1282 = memref.subview %g21all[4, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 256>>
-    %sv1283 = memref.subview %g22all[4, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 256>>
+    %sv1274 = memref.subview %v31027[5, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64, #gpu.address_space<workgroup>> to memref<8x8xf64, strided<[8, 1], offset: 320>, #gpu.address_space<workgroup>>
+    %sv1275 = memref.subview %v31028[5, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64, #gpu.address_space<workgroup>> to memref<8x8xf64, strided<[8, 1], offset: 320>, #gpu.address_space<workgroup>>
+    %sv1276 = memref.subview %g20all[5, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 320>>
+    %sv1277 = memref.subview %g21all[5, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 320>>
+    %sv1278 = memref.subview %g22all[5, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 320>>
     vector.warp_execute_on_lane_0(%lane)[32] {
-      %acc1284 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a1285 = vector.transfer_read %Dm[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b1286 = vector.transfer_read %sv1279[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 256>, #gpu.address_space<workgroup>>, vector<4x8xf64>
-      %r1287 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1285, %b1286, %acc1284 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      %a1288 = vector.transfer_read %Dm[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b1289 = vector.transfer_read %sv1279[%c4, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 256>, #gpu.address_space<workgroup>>, vector<4x8xf64>
-      %r1290 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1288, %b1289, %r1287 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      %g1291 = vector.transfer_read %sv1282[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 256>>, vector<8x8xf64>
-      %sc1292 = arith.mulf %r1290, %g1291 : vector<8x8xf64>
-      vector.transfer_write %sc1292, %dt1g[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
-    }
-    vector.warp_execute_on_lane_0(%lane)[32] {
-      %acc1293 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a1294 = vector.transfer_read %sv1279[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 256>, #gpu.address_space<workgroup>>, vector<8x4xf64>
-      %b1295 = vector.transfer_read %Dm[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %r1296 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1294, %b1295, %acc1293 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
-      %a1297 = vector.transfer_read %sv1279[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 256>, #gpu.address_space<workgroup>>, vector<8x4xf64>
-      %b1298 = vector.transfer_read %Dm[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %r1299 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1297, %b1298, %r1296 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
-      %g1300 = vector.transfer_read %sv1281[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 256>>, vector<8x8xf64>
-      %sc1301 = arith.mulf %r1299, %g1300 : vector<8x8xf64>
-      vector.transfer_write %sc1301, %dt2g[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
+      %acc1279 = arith.constant dense<0.0> : vector<8x8xf64>
+      %a1280 = vector.transfer_read %Dm[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b1281 = vector.transfer_read %sv1274[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 320>, #gpu.address_space<workgroup>>, vector<4x8xf64>
+      %r1282 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1280, %b1281, %acc1279 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
+      %a1283 = vector.transfer_read %Dm[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b1284 = vector.transfer_read %sv1274[%c4, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 320>, #gpu.address_space<workgroup>>, vector<4x8xf64>
+      %r1285 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1283, %b1284, %r1282 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
+      %g1286 = vector.transfer_read %sv1277[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 320>>, vector<8x8xf64>
+      %dt1287 = arith.mulf %r1285, %g1286 : vector<8x8xf64>
+      %acc1288 = arith.constant dense<0.0> : vector<8x8xf64>
+      %a1289 = vector.transfer_read %sv1274[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 320>, #gpu.address_space<workgroup>>, vector<8x4xf64>
+      %b1290 = vector.transfer_read %Dm[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %r1291 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1289, %b1290, %acc1288 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
+      %a1292 = vector.transfer_read %sv1274[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 320>, #gpu.address_space<workgroup>>, vector<8x4xf64>
+      %b1293 = vector.transfer_read %Dm[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %r1294 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1292, %b1293, %r1291 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
+      %g1295 = vector.transfer_read %sv1276[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 320>>, vector<8x8xf64>
+      %dt1296 = arith.mulf %r1294, %g1295 : vector<8x8xf64>
+      %dv1297 = vector.transfer_read %sv1275[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 320>, #gpu.address_space<workgroup>>, vector<8x8xf64>
+      %g1298 = vector.transfer_read %sv1278[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 320>>, vector<8x8xf64>
+      %t1299 = arith.mulf %dv1297, %g1298 : vector<8x8xf64>
+      %t21300 = arith.addf %t1299, %dt1296 : vector<8x8xf64>
+      %fl1301 = arith.addf %t21300, %dt1287 : vector<8x8xf64>
+      vector.transfer_write %fl1301, %flux[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
     }
     gpu.barrier
     vector.warp_execute_on_lane_0(%lane)[32] {
-      %d1302 = vector.transfer_read %sv1280[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 256>, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %g21303 = vector.transfer_read %sv1283[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 256>>, vector<8x8xf64>
-      %t1304 = arith.mulf %d1302, %g21303 : vector<8x8xf64>
-      %a1305 = vector.transfer_read %dt2g[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %t21306 = arith.addf %t1304, %a1305 : vector<8x8xf64>
-      %b1307 = vector.transfer_read %dt1g[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %fl1308 = arith.addf %t21306, %b1307 : vector<8x8xf64>
-      vector.transfer_write %fl1308, %flux[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
+      %acc1302 = arith.constant dense<0.0> : vector<8x8xf64>
+      %a1303 = vector.transfer_read %flux[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x4xf64>
+      %b1304 = vector.transfer_read %W[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %r1305 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1303, %b1304, %acc1302 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
+      %a1306 = vector.transfer_read %flux[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x4xf64>
+      %b1307 = vector.transfer_read %W[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %r1308 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1306, %b1307, %r1305 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
+      vector.transfer_write %r1308, %tmp[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
     }
     gpu.barrier
     vector.warp_execute_on_lane_0(%lane)[32] {
       %acc1309 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a1310 = vector.transfer_read %flux[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x4xf64>
-      %b1311 = vector.transfer_read %W[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %r1312 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1310, %b1311, %acc1309 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
-      %a1313 = vector.transfer_read %flux[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x4xf64>
-      %b1314 = vector.transfer_read %W[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %r1315 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1313, %b1314, %r1312 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
-      vector.transfer_write %r1315, %tmp[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
+      %a1310 = vector.transfer_read %W[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b1311 = vector.transfer_read %tmp[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<4x8xf64>
+      %r1312 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1310, %b1311, %acc1309 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
+      %a1313 = vector.transfer_read %W[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b1314 = vector.transfer_read %tmp[%c4, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<4x8xf64>
+      %r1315 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1313, %b1314, %r1312 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
+      vector.transfer_write %r1315, %intf[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
+    }
+    gpu.barrier
+    %sv1316 = memref.subview %y3[0, 0, 5] [8, 8, 1] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[64, 8], offset: 5>>
+    %sv1317 = memref.subview %y3[0, 0, 6] [8, 8, 1] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[64, 8], offset: 6>>
+    vector.warp_execute_on_lane_0(%lane)[32] {
+      %fa1318 = vector.transfer_read %intf[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
+      %r1319 = vector.transfer_read %sv1316[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[64, 8], offset: 5>>, vector<8x8xf64>
+      %m1320 = arith.subf %r1319, %fa1318 : vector<8x8xf64>
+      vector.transfer_write %m1320, %sv1316[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, strided<[64, 8], offset: 5>>
+      %r1321 = vector.transfer_read %sv1317[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[64, 8], offset: 6>>, vector<8x8xf64>
+      %p1322 = arith.addf %r1321, %fa1318 : vector<8x8xf64>
+      vector.transfer_write %p1322, %sv1317[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, strided<[64, 8], offset: 6>>
+    }
+    gpu.barrier
+    %sv1323 = memref.subview %v31027[6, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64, #gpu.address_space<workgroup>> to memref<8x8xf64, strided<[8, 1], offset: 384>, #gpu.address_space<workgroup>>
+    %sv1324 = memref.subview %v31028[6, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64, #gpu.address_space<workgroup>> to memref<8x8xf64, strided<[8, 1], offset: 384>, #gpu.address_space<workgroup>>
+    %sv1325 = memref.subview %g20all[6, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 384>>
+    %sv1326 = memref.subview %g21all[6, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 384>>
+    %sv1327 = memref.subview %g22all[6, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 384>>
+    vector.warp_execute_on_lane_0(%lane)[32] {
+      %acc1328 = arith.constant dense<0.0> : vector<8x8xf64>
+      %a1329 = vector.transfer_read %Dm[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b1330 = vector.transfer_read %sv1323[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 384>, #gpu.address_space<workgroup>>, vector<4x8xf64>
+      %r1331 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1329, %b1330, %acc1328 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
+      %a1332 = vector.transfer_read %Dm[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b1333 = vector.transfer_read %sv1323[%c4, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 384>, #gpu.address_space<workgroup>>, vector<4x8xf64>
+      %r1334 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1332, %b1333, %r1331 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
+      %g1335 = vector.transfer_read %sv1326[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 384>>, vector<8x8xf64>
+      %dt1336 = arith.mulf %r1334, %g1335 : vector<8x8xf64>
+      %acc1337 = arith.constant dense<0.0> : vector<8x8xf64>
+      %a1338 = vector.transfer_read %sv1323[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 384>, #gpu.address_space<workgroup>>, vector<8x4xf64>
+      %b1339 = vector.transfer_read %Dm[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %r1340 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1338, %b1339, %acc1337 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
+      %a1341 = vector.transfer_read %sv1323[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 384>, #gpu.address_space<workgroup>>, vector<8x4xf64>
+      %b1342 = vector.transfer_read %Dm[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %r1343 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1341, %b1342, %r1340 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
+      %g1344 = vector.transfer_read %sv1325[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 384>>, vector<8x8xf64>
+      %dt1345 = arith.mulf %r1343, %g1344 : vector<8x8xf64>
+      %dv1346 = vector.transfer_read %sv1324[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 384>, #gpu.address_space<workgroup>>, vector<8x8xf64>
+      %g1347 = vector.transfer_read %sv1327[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 384>>, vector<8x8xf64>
+      %t1348 = arith.mulf %dv1346, %g1347 : vector<8x8xf64>
+      %t21349 = arith.addf %t1348, %dt1345 : vector<8x8xf64>
+      %fl1350 = arith.addf %t21349, %dt1336 : vector<8x8xf64>
+      vector.transfer_write %fl1350, %flux[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
     }
     gpu.barrier
     vector.warp_execute_on_lane_0(%lane)[32] {
-      %acc1316 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a1317 = vector.transfer_read %W[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b1318 = vector.transfer_read %tmp[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<4x8xf64>
-      %r1319 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1317, %b1318, %acc1316 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      %a1320 = vector.transfer_read %W[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b1321 = vector.transfer_read %tmp[%c4, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<4x8xf64>
-      %r1322 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1320, %b1321, %r1319 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      vector.transfer_write %r1322, %intf[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
-    }
-    gpu.barrier
-    %sv1323 = memref.subview %y3[0, 0, 4] [8, 8, 1] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[64, 8], offset: 4>>
-    %sv1324 = memref.subview %y3[0, 0, 5] [8, 8, 1] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[64, 8], offset: 5>>
-    vector.warp_execute_on_lane_0(%lane)[32] {
-      %fa1325 = vector.transfer_read %intf[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %r1326 = vector.transfer_read %sv1323[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[64, 8], offset: 4>>, vector<8x8xf64>
-      %m1327 = arith.subf %r1326, %fa1325 : vector<8x8xf64>
-      vector.transfer_write %m1327, %sv1323[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, strided<[64, 8], offset: 4>>
-      %fa1328 = vector.transfer_read %intf[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %r1329 = vector.transfer_read %sv1324[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[64, 8], offset: 5>>, vector<8x8xf64>
-      %p1330 = arith.addf %r1329, %fa1328 : vector<8x8xf64>
-      vector.transfer_write %p1330, %sv1324[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, strided<[64, 8], offset: 5>>
-    }
-    gpu.barrier
-    %sv1331 = memref.subview %v31069[5, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64, #gpu.address_space<workgroup>> to memref<8x8xf64, strided<[8, 1], offset: 320>, #gpu.address_space<workgroup>>
-    %sv1332 = memref.subview %v31070[5, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64, #gpu.address_space<workgroup>> to memref<8x8xf64, strided<[8, 1], offset: 320>, #gpu.address_space<workgroup>>
-    %sv1333 = memref.subview %g20all[5, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 320>>
-    %sv1334 = memref.subview %g21all[5, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 320>>
-    %sv1335 = memref.subview %g22all[5, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 320>>
-    vector.warp_execute_on_lane_0(%lane)[32] {
-      %acc1336 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a1337 = vector.transfer_read %Dm[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b1338 = vector.transfer_read %sv1331[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 320>, #gpu.address_space<workgroup>>, vector<4x8xf64>
-      %r1339 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1337, %b1338, %acc1336 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      %a1340 = vector.transfer_read %Dm[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b1341 = vector.transfer_read %sv1331[%c4, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 320>, #gpu.address_space<workgroup>>, vector<4x8xf64>
-      %r1342 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1340, %b1341, %r1339 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      %g1343 = vector.transfer_read %sv1334[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 320>>, vector<8x8xf64>
-      %sc1344 = arith.mulf %r1342, %g1343 : vector<8x8xf64>
-      vector.transfer_write %sc1344, %dt1g[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
-    }
-    vector.warp_execute_on_lane_0(%lane)[32] {
-      %acc1345 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a1346 = vector.transfer_read %sv1331[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 320>, #gpu.address_space<workgroup>>, vector<8x4xf64>
-      %b1347 = vector.transfer_read %Dm[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %r1348 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1346, %b1347, %acc1345 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
-      %a1349 = vector.transfer_read %sv1331[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 320>, #gpu.address_space<workgroup>>, vector<8x4xf64>
-      %b1350 = vector.transfer_read %Dm[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %r1351 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1349, %b1350, %r1348 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
-      %g1352 = vector.transfer_read %sv1333[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 320>>, vector<8x8xf64>
-      %sc1353 = arith.mulf %r1351, %g1352 : vector<8x8xf64>
-      vector.transfer_write %sc1353, %dt2g[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
+      %acc1351 = arith.constant dense<0.0> : vector<8x8xf64>
+      %a1352 = vector.transfer_read %flux[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x4xf64>
+      %b1353 = vector.transfer_read %W[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %r1354 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1352, %b1353, %acc1351 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
+      %a1355 = vector.transfer_read %flux[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x4xf64>
+      %b1356 = vector.transfer_read %W[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %r1357 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1355, %b1356, %r1354 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
+      vector.transfer_write %r1357, %tmp[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
     }
     gpu.barrier
     vector.warp_execute_on_lane_0(%lane)[32] {
-      %d1354 = vector.transfer_read %sv1332[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 320>, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %g21355 = vector.transfer_read %sv1335[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 320>>, vector<8x8xf64>
-      %t1356 = arith.mulf %d1354, %g21355 : vector<8x8xf64>
-      %a1357 = vector.transfer_read %dt2g[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %t21358 = arith.addf %t1356, %a1357 : vector<8x8xf64>
-      %b1359 = vector.transfer_read %dt1g[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %fl1360 = arith.addf %t21358, %b1359 : vector<8x8xf64>
-      vector.transfer_write %fl1360, %flux[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
+      %acc1358 = arith.constant dense<0.0> : vector<8x8xf64>
+      %a1359 = vector.transfer_read %W[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b1360 = vector.transfer_read %tmp[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<4x8xf64>
+      %r1361 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1359, %b1360, %acc1358 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
+      %a1362 = vector.transfer_read %W[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
+      %b1363 = vector.transfer_read %tmp[%c4, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<4x8xf64>
+      %r1364 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1362, %b1363, %r1361 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
+      vector.transfer_write %r1364, %intf[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
     }
     gpu.barrier
+    %sv1365 = memref.subview %y3[0, 0, 6] [8, 8, 1] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[64, 8], offset: 6>>
+    %sv1366 = memref.subview %y3[0, 0, 7] [8, 8, 1] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[64, 8], offset: 7>>
     vector.warp_execute_on_lane_0(%lane)[32] {
-      %acc1361 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a1362 = vector.transfer_read %flux[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x4xf64>
-      %b1363 = vector.transfer_read %W[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %r1364 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1362, %b1363, %acc1361 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
-      %a1365 = vector.transfer_read %flux[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x4xf64>
-      %b1366 = vector.transfer_read %W[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %r1367 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1365, %b1366, %r1364 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
-      vector.transfer_write %r1367, %tmp[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
-    }
-    gpu.barrier
-    vector.warp_execute_on_lane_0(%lane)[32] {
-      %acc1368 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a1369 = vector.transfer_read %W[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b1370 = vector.transfer_read %tmp[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<4x8xf64>
-      %r1371 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1369, %b1370, %acc1368 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      %a1372 = vector.transfer_read %W[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b1373 = vector.transfer_read %tmp[%c4, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<4x8xf64>
-      %r1374 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1372, %b1373, %r1371 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      vector.transfer_write %r1374, %intf[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
-    }
-    gpu.barrier
-    %sv1375 = memref.subview %y3[0, 0, 5] [8, 8, 1] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[64, 8], offset: 5>>
-    %sv1376 = memref.subview %y3[0, 0, 6] [8, 8, 1] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[64, 8], offset: 6>>
-    vector.warp_execute_on_lane_0(%lane)[32] {
-      %fa1377 = vector.transfer_read %intf[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %r1378 = vector.transfer_read %sv1375[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[64, 8], offset: 5>>, vector<8x8xf64>
-      %m1379 = arith.subf %r1378, %fa1377 : vector<8x8xf64>
-      vector.transfer_write %m1379, %sv1375[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, strided<[64, 8], offset: 5>>
-      %fa1380 = vector.transfer_read %intf[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %r1381 = vector.transfer_read %sv1376[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[64, 8], offset: 6>>, vector<8x8xf64>
-      %p1382 = arith.addf %r1381, %fa1380 : vector<8x8xf64>
-      vector.transfer_write %p1382, %sv1376[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, strided<[64, 8], offset: 6>>
-    }
-    gpu.barrier
-    %sv1383 = memref.subview %v31069[6, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64, #gpu.address_space<workgroup>> to memref<8x8xf64, strided<[8, 1], offset: 384>, #gpu.address_space<workgroup>>
-    %sv1384 = memref.subview %v31070[6, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64, #gpu.address_space<workgroup>> to memref<8x8xf64, strided<[8, 1], offset: 384>, #gpu.address_space<workgroup>>
-    %sv1385 = memref.subview %g20all[6, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 384>>
-    %sv1386 = memref.subview %g21all[6, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 384>>
-    %sv1387 = memref.subview %g22all[6, 0, 0] [1, 8, 8] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[8, 1], offset: 384>>
-    vector.warp_execute_on_lane_0(%lane)[32] {
-      %acc1388 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a1389 = vector.transfer_read %Dm[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b1390 = vector.transfer_read %sv1383[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 384>, #gpu.address_space<workgroup>>, vector<4x8xf64>
-      %r1391 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1389, %b1390, %acc1388 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      %a1392 = vector.transfer_read %Dm[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b1393 = vector.transfer_read %sv1383[%c4, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 384>, #gpu.address_space<workgroup>>, vector<4x8xf64>
-      %r1394 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1392, %b1393, %r1391 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      %g1395 = vector.transfer_read %sv1386[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 384>>, vector<8x8xf64>
-      %sc1396 = arith.mulf %r1394, %g1395 : vector<8x8xf64>
-      vector.transfer_write %sc1396, %dt1g[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
-    }
-    vector.warp_execute_on_lane_0(%lane)[32] {
-      %acc1397 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a1398 = vector.transfer_read %sv1383[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 384>, #gpu.address_space<workgroup>>, vector<8x4xf64>
-      %b1399 = vector.transfer_read %Dm[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %r1400 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1398, %b1399, %acc1397 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
-      %a1401 = vector.transfer_read %sv1383[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 384>, #gpu.address_space<workgroup>>, vector<8x4xf64>
-      %b1402 = vector.transfer_read %Dm[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %r1403 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1401, %b1402, %r1400 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
-      %g1404 = vector.transfer_read %sv1385[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 384>>, vector<8x8xf64>
-      %sc1405 = arith.mulf %r1403, %g1404 : vector<8x8xf64>
-      vector.transfer_write %sc1405, %dt2g[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
-    }
-    gpu.barrier
-    vector.warp_execute_on_lane_0(%lane)[32] {
-      %d1406 = vector.transfer_read %sv1384[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 384>, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %g21407 = vector.transfer_read %sv1387[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[8, 1], offset: 384>>, vector<8x8xf64>
-      %t1408 = arith.mulf %d1406, %g21407 : vector<8x8xf64>
-      %a1409 = vector.transfer_read %dt2g[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %t21410 = arith.addf %t1408, %a1409 : vector<8x8xf64>
-      %b1411 = vector.transfer_read %dt1g[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %fl1412 = arith.addf %t21410, %b1411 : vector<8x8xf64>
-      vector.transfer_write %fl1412, %flux[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
-    }
-    gpu.barrier
-    vector.warp_execute_on_lane_0(%lane)[32] {
-      %acc1413 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a1414 = vector.transfer_read %flux[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x4xf64>
-      %b1415 = vector.transfer_read %W[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %r1416 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1414, %b1415, %acc1413 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
-      %a1417 = vector.transfer_read %flux[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x4xf64>
-      %b1418 = vector.transfer_read %W[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %r1419 = vector.contract {indexing_maps=[#a,#bt,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1417, %b1418, %r1416 : vector<8x4xf64>, vector<8x4xf64> into vector<8x8xf64>
-      vector.transfer_write %r1419, %tmp[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
-    }
-    gpu.barrier
-    vector.warp_execute_on_lane_0(%lane)[32] {
-      %acc1420 = arith.constant dense<0.0> : vector<8x8xf64>
-      %a1421 = vector.transfer_read %W[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b1422 = vector.transfer_read %tmp[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<4x8xf64>
-      %r1423 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1421, %b1422, %acc1420 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      %a1424 = vector.transfer_read %W[%c0, %c4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<8x4xf64>
-      %b1425 = vector.transfer_read %tmp[%c4, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<4x8xf64>
-      %r1426 = vector.contract {indexing_maps=[#a,#b,#c], iterator_types=["parallel","parallel","reduction"], kind=#vector.kind<add>} %a1424, %b1425, %r1423 : vector<8x4xf64>, vector<4x8xf64> into vector<8x8xf64>
-      vector.transfer_write %r1426, %intf[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, #gpu.address_space<workgroup>>
-    }
-    gpu.barrier
-    %sv1427 = memref.subview %y3[0, 0, 6] [8, 8, 1] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[64, 8], offset: 6>>
-    %sv1428 = memref.subview %y3[0, 0, 7] [8, 8, 1] [1, 1, 1] : memref<8x8x8xf64> to memref<8x8xf64, strided<[64, 8], offset: 7>>
-    vector.warp_execute_on_lane_0(%lane)[32] {
-      %fa1429 = vector.transfer_read %intf[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %r1430 = vector.transfer_read %sv1427[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[64, 8], offset: 6>>, vector<8x8xf64>
-      %m1431 = arith.subf %r1430, %fa1429 : vector<8x8xf64>
-      vector.transfer_write %m1431, %sv1427[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, strided<[64, 8], offset: 6>>
-      %fa1432 = vector.transfer_read %intf[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
-      %r1433 = vector.transfer_read %sv1428[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[64, 8], offset: 7>>, vector<8x8xf64>
-      %p1434 = arith.addf %r1433, %fa1432 : vector<8x8xf64>
-      vector.transfer_write %p1434, %sv1428[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, strided<[64, 8], offset: 7>>
+      %fa1367 = vector.transfer_read %intf[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, #gpu.address_space<workgroup>>, vector<8x8xf64>
+      %r1368 = vector.transfer_read %sv1365[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[64, 8], offset: 6>>, vector<8x8xf64>
+      %m1369 = arith.subf %r1368, %fa1367 : vector<8x8xf64>
+      vector.transfer_write %m1369, %sv1365[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, strided<[64, 8], offset: 6>>
+      %r1370 = vector.transfer_read %sv1366[%c0, %c0], %z {in_bounds=[true,true]} : memref<8x8xf64, strided<[64, 8], offset: 7>>, vector<8x8xf64>
+      %p1371 = arith.addf %r1370, %fa1367 : vector<8x8xf64>
+      vector.transfer_write %p1371, %sv1366[%c0, %c0] {in_bounds=[true,true]} : vector<8x8xf64>, memref<8x8xf64, strided<[64, 8], offset: 7>>
     }
     gpu.barrier
     gpu.return
