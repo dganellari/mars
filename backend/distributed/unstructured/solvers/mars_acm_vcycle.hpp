@@ -925,7 +925,12 @@ void acmBuildHierarchy(const thrust::device_vector<int>& rowOff0,
               acmRaw(levels[idx].vals), acmRaw(levels[idx].binv), levels[idx].nNodes); }
         levels[idx].bvec.assign(levels[idx].ND, 0); levels[idx].xvec.assign(levels[idx].ND, 0);
         levels[idx].rtmp.assign(levels[idx].ND, 0); levels[idx].xtmp.assign(levels[idx].ND, 0);
-        if (levels[idx].ND <= maxCoarseND) break;
+        // MARS_ACM_COARSE_ND overrides the serial coarsest size (dist has MARS_ACM_GLOBAL_COARSE_ND). A
+        // 256-DOF coarsest is far too weak for a big (e.g. AMR-refined 2.4M-node) convective mesh -> the
+        // Krylov caps; a richer coarsest (e.g. 4096) restores the coarse correction. Dense LU stays ~ms.
+        static const int envCoarse = [] { const char* e = std::getenv("MARS_ACM_COARSE_ND"); return e ? std::atoi(e) : 0; }();
+        const int stopND = envCoarse > 0 ? envCoarse : maxCoarseND;
+        if (levels[idx].ND <= stopND) break;
 
         int nCoarse;
         if (acmUseDilu()) {
