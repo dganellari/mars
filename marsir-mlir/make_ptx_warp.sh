@@ -32,3 +32,6 @@ emit test/warp_scatter_kernel.mlir generated/warp_scatter_sm90.ptx
 # EMITTER-GENERATED (mlir_warp.py): std + transposed contract staged in .shared: 4 mma
 python3 ../marsir-compiler/marsir/backends/mlir_warp.py > test/warp_emit_selftest.mlir
 emit test/warp_emit_selftest.mlir generated/warp_emit_selftest_sm90.ptx
+# EMITTER-GENERATED B-sweep: Btil(8x8) @ U(8x64) column-tiled: 16 mma
+python3 ../marsir-compiler/marsir/backends/mlir_warp.py matmul > test/warp_bsweep.mlir
+emit test/warp_bsweep.mlir generated/warp_bsweep_sm90.ptx
