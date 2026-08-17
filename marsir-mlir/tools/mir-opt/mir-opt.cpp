@@ -19,6 +19,7 @@ int main(int argc, char **argv) {
   mir::registerLowerCopiesPass();
   mir::registerWarpDistributePass();
   mir::registerWarpWrapPass();
+  mir::registerChainContractsPass();
 
   return mlir::asMainReturnCode(mlir::MlirOptMain(
       argc, argv, "mir optimizer driver (Stage 2 MLIR dialect)\n", registry));

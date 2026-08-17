@@ -6,6 +6,7 @@ add_mlir_dialect_library(MLIRMir
   LowerCopies.cpp
   WarpDistribute.cpp
   WarpWrap.cpp
+  RegisterResidentChain.cpp
 
   ADDITIONAL_HEADER_DIRS
   ${PROJECT_SOURCE_DIR}/include/mir
