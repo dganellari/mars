@@ -1024,9 +1024,9 @@ int main(int argc, char** argv)
                                               CvfemKernelVariant::Tensor);
 
     // -------- VTU output --------
-    std::unique_ptr<fem::VTUParallelWriter<KeyType, RealType>> vw;
+    std::unique_ptr<fem::VTUParallelWriter<KeyType, RealType, TetTag>> vw;
     if (!vtuPrefix.empty())
-        vw = std::make_unique<fem::VTUParallelWriter<KeyType, RealType>>(vtuPrefix);
+        vw = std::make_unique<fem::VTUParallelWriter<KeyType, RealType, TetTag>>(vtuPrefix);
 
     // Per-node BC tag so the side sets survive into the VTU (Exodus side sets
     // are not a VTK concept; we carry membership as a point scalar instead).
@@ -1074,7 +1074,7 @@ int main(int argc, char** argv)
     auto writeFrame = [&] (int step, double t) {
         if (!vw) return;
         auto& dom = amr.domain();
-        using FD = typename fem::VTUParallelWriter<KeyType, RealType>::FieldDesc;
+        using FD = typename fem::VTUParallelWriter<KeyType, RealType, TetTag>::FieldDesc;
         std::vector<FD> fields;
         fields.push_back({ "u", FD::Kind::PointScalar, &s.d_u, nullptr, nullptr });
         fields.push_back({ "v", FD::Kind::PointScalar, &s.d_v, nullptr, nullptr });
