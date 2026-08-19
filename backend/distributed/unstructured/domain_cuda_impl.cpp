@@ -120,6 +120,98 @@ void syncDomainImpl(cstone::Domain<KeyType, RealType, cstone::GpuTag>* domain,
     elementCount = domain->nParticlesWithHalos();
 }
 
+// Block-aware variant: co-moves ONE extra per-element property (the element block id, widened to
+// KeyType) through cstone's sync + halo exchange, so the block rides the element SFC sort and cross-
+// rank redistribution exactly like the connectivity keys. Only used for multi-block meshes (non-
+// conformal / FSI). syncDomainImpl above is left untouched for the single-block path. One more scratch
+// buffer than syncDomainImpl (s12) to keep mars' "#KeyType scratch = #properties, last = sfcOrder"
+// convention with the extra property.
+template<typename KeyType, typename RealType, typename SfcConnTuple>
+void syncDomainImplBlock(cstone::Domain<KeyType, RealType, cstone::GpuTag>* domain,
+                         cstone::DeviceVector<KeyType>& elemSfcCodes,
+                         cstone::DeviceVector<RealType>& elemX,
+                         cstone::DeviceVector<RealType>& elemY,
+                         cstone::DeviceVector<RealType>& elemZ,
+                         cstone::DeviceVector<RealType>& elemH,
+                         size_t& elementCount,
+                         SfcConnTuple& d_conn_keys_,
+                         cstone::DeviceVector<KeyType>& elemBlockKeys)
+{
+    int numRanks;
+    MPI_Comm_size(MPI_COMM_WORLD, &numRanks);
+    if (elementCount < numRanks)
+    {
+        throw std::runtime_error("Mesh has fewer elements (" + std::to_string(elementCount) +
+                               ") than MPI ranks (" + std::to_string(numRanks) +
+                               "). Each rank must get at least one element for domain decomposition.");
+    }
+
+    cstone::DeviceVector<RealType> s1(elementCount);
+    cstone::DeviceVector<RealType> s2(elementCount);
+    cstone::DeviceVector<RealType> s3(elementCount);
+    cstone::DeviceVector<KeyType> s4(elementCount);
+    cstone::DeviceVector<KeyType> s5(elementCount);
+    cstone::DeviceVector<KeyType> s6(elementCount);
+    cstone::DeviceVector<KeyType> s7(elementCount);
+    cstone::DeviceVector<KeyType> s8(elementCount);
+    cstone::DeviceVector<KeyType> s9(elementCount);
+    cstone::DeviceVector<KeyType> s10(elementCount);
+    cstone::DeviceVector<KeyType> s11(elementCount);
+    cstone::DeviceVector<KeyType> s12(elementCount);
+
+    constexpr size_t tupleSize = std::tuple_size<SfcConnTuple>::value;
+
+    if constexpr (tupleSize == 4) {
+        // 4 conn keys + 1 block = 5 co-moved properties (tet/quad).
+        auto properties_refs = std::tie(std::get<0>(d_conn_keys_), std::get<1>(d_conn_keys_),
+                                      std::get<2>(d_conn_keys_), std::get<3>(d_conn_keys_), elemBlockKeys);
+        try {
+            domain->sync(elemSfcCodes, elemX, elemY, elemZ, elemH,
+                       properties_refs,
+                       std::tie(s1, s2, s3, s4, s5, s6, s7, s8));
+            domain->exchangeHalos(properties_refs, s4, s5);
+        } catch (const std::exception& e) {
+            std::string errorMsg = e.what();
+            if (errorMsg.find("invalid device ordinal") != std::string::npos)
+            {
+                throw std::runtime_error("Domain decomposition failed. This may be due to insufficient elements (" +
+                                       std::to_string(elementCount) + ") for " + std::to_string(numRanks) +
+                                       " ranks. Possibly causing a size-0 CUDA kernel launch \n" +
+                                       "Original error: " + e.what());
+            } else {
+                throw;
+            }
+        }
+    } else if constexpr (tupleSize == 8) {
+        // 8 conn keys + 1 block = 9 co-moved properties (hex).
+        auto properties_refs = std::tie(std::get<0>(d_conn_keys_), std::get<1>(d_conn_keys_),
+                                      std::get<2>(d_conn_keys_), std::get<3>(d_conn_keys_),
+                                      std::get<4>(d_conn_keys_), std::get<5>(d_conn_keys_),
+                                      std::get<6>(d_conn_keys_), std::get<7>(d_conn_keys_), elemBlockKeys);
+        try {
+            domain->sync(elemSfcCodes, elemX, elemY, elemZ, elemH,
+                       properties_refs,
+                       std::tie(s1, s2, s3, s4, s5, s6, s7, s8, s9, s10, s11, s12));
+            domain->exchangeHalos(properties_refs, s4, s5);
+        } catch (const std::exception& e) {
+            std::string errorMsg = e.what();
+            if (errorMsg.find("invalid device ordinal") != std::string::npos)
+            {
+                throw std::runtime_error("Domain decomposition failed. This may be due to insufficient elements (" +
+                                       std::to_string(elementCount) + ") for " + std::to_string(numRanks) +
+                                       " ranks. Possibly causing a size-0 CUDA kernel launch \n" +
+                                       "Original error: " + e.what());
+            } else {
+                throw;
+            }
+        }
+    } else {
+        throw std::runtime_error("Unsupported tuple size: " + std::to_string(tupleSize));
+    }
+
+    elementCount = domain->nParticlesWithHalos();
+}
+
 // Implementation of syncDomainImplWithOrigCoords for syncing with original coordinates
 template<typename KeyType, typename RealType, typename SfcConnTuple, typename OrigCoordsTuple>
 void syncDomainImplWithOrigCoords(cstone::Domain<KeyType, RealType, cstone::GpuTag>* domain,
@@ -420,6 +512,57 @@ template void syncDomainImpl<uint64_t,
                cstone::DeviceVector<uint64_t>,
                cstone::DeviceVector<uint64_t>,
                cstone::DeviceVector<uint64_t>>& d_conn_keys_);
+
+// Explicit template instantiations for syncDomainImplBlock (block-aware sync; multi-block meshes only).
+// Same KeyType/RealType/tuple set as syncDomainImpl, plus the extra co-moved block array.
+namespace detail_block_inst
+{
+using Conn8u = std::tuple<cstone::DeviceVector<unsigned int>, cstone::DeviceVector<unsigned int>,
+                          cstone::DeviceVector<unsigned int>, cstone::DeviceVector<unsigned int>,
+                          cstone::DeviceVector<unsigned int>, cstone::DeviceVector<unsigned int>,
+                          cstone::DeviceVector<unsigned int>, cstone::DeviceVector<unsigned int>>;
+using Conn4u = std::tuple<cstone::DeviceVector<unsigned int>, cstone::DeviceVector<unsigned int>,
+                          cstone::DeviceVector<unsigned int>, cstone::DeviceVector<unsigned int>>;
+using Conn8l = std::tuple<cstone::DeviceVector<uint64_t>, cstone::DeviceVector<uint64_t>,
+                          cstone::DeviceVector<uint64_t>, cstone::DeviceVector<uint64_t>,
+                          cstone::DeviceVector<uint64_t>, cstone::DeviceVector<uint64_t>,
+                          cstone::DeviceVector<uint64_t>, cstone::DeviceVector<uint64_t>>;
+using Conn4l = std::tuple<cstone::DeviceVector<uint64_t>, cstone::DeviceVector<uint64_t>,
+                          cstone::DeviceVector<uint64_t>, cstone::DeviceVector<uint64_t>>;
+}
+
+template void syncDomainImplBlock<unsigned int, float, detail_block_inst::Conn8u>(
+    cstone::Domain<unsigned int, float, cstone::GpuTag>*, cstone::DeviceVector<unsigned int>&,
+    cstone::DeviceVector<float>&, cstone::DeviceVector<float>&, cstone::DeviceVector<float>&,
+    cstone::DeviceVector<float>&, size_t&, detail_block_inst::Conn8u&, cstone::DeviceVector<unsigned int>&);
+template void syncDomainImplBlock<unsigned int, double, detail_block_inst::Conn8u>(
+    cstone::Domain<unsigned int, double, cstone::GpuTag>*, cstone::DeviceVector<unsigned int>&,
+    cstone::DeviceVector<double>&, cstone::DeviceVector<double>&, cstone::DeviceVector<double>&,
+    cstone::DeviceVector<double>&, size_t&, detail_block_inst::Conn8u&, cstone::DeviceVector<unsigned int>&);
+template void syncDomainImplBlock<uint64_t, float, detail_block_inst::Conn8l>(
+    cstone::Domain<uint64_t, float, cstone::GpuTag>*, cstone::DeviceVector<uint64_t>&,
+    cstone::DeviceVector<float>&, cstone::DeviceVector<float>&, cstone::DeviceVector<float>&,
+    cstone::DeviceVector<float>&, size_t&, detail_block_inst::Conn8l&, cstone::DeviceVector<uint64_t>&);
+template void syncDomainImplBlock<uint64_t, double, detail_block_inst::Conn8l>(
+    cstone::Domain<uint64_t, double, cstone::GpuTag>*, cstone::DeviceVector<uint64_t>&,
+    cstone::DeviceVector<double>&, cstone::DeviceVector<double>&, cstone::DeviceVector<double>&,
+    cstone::DeviceVector<double>&, size_t&, detail_block_inst::Conn8l&, cstone::DeviceVector<uint64_t>&);
+template void syncDomainImplBlock<unsigned int, float, detail_block_inst::Conn4u>(
+    cstone::Domain<unsigned int, float, cstone::GpuTag>*, cstone::DeviceVector<unsigned int>&,
+    cstone::DeviceVector<float>&, cstone::DeviceVector<float>&, cstone::DeviceVector<float>&,
+    cstone::DeviceVector<float>&, size_t&, detail_block_inst::Conn4u&, cstone::DeviceVector<unsigned int>&);
+template void syncDomainImplBlock<unsigned int, double, detail_block_inst::Conn4u>(
+    cstone::Domain<unsigned int, double, cstone::GpuTag>*, cstone::DeviceVector<unsigned int>&,
+    cstone::DeviceVector<double>&, cstone::DeviceVector<double>&, cstone::DeviceVector<double>&,
+    cstone::DeviceVector<double>&, size_t&, detail_block_inst::Conn4u&, cstone::DeviceVector<unsigned int>&);
+template void syncDomainImplBlock<uint64_t, float, detail_block_inst::Conn4l>(
+    cstone::Domain<uint64_t, float, cstone::GpuTag>*, cstone::DeviceVector<uint64_t>&,
+    cstone::DeviceVector<float>&, cstone::DeviceVector<float>&, cstone::DeviceVector<float>&,
+    cstone::DeviceVector<float>&, size_t&, detail_block_inst::Conn4l&, cstone::DeviceVector<uint64_t>&);
+template void syncDomainImplBlock<uint64_t, double, detail_block_inst::Conn4l>(
+    cstone::Domain<uint64_t, double, cstone::GpuTag>*, cstone::DeviceVector<uint64_t>&,
+    cstone::DeviceVector<double>&, cstone::DeviceVector<double>&, cstone::DeviceVector<double>&,
+    cstone::DeviceVector<double>&, size_t&, detail_block_inst::Conn4l&, cstone::DeviceVector<uint64_t>&);
 
 // Explicit template instantiations for syncDomainImplWithOrigCoords
 // For hex8 elements with original coordinates (8 SFC keys + 24 coordinate arrays)
