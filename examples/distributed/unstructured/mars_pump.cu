@@ -1246,19 +1246,45 @@ int main(int argc, char** argv)
             // 0.25/0.5/0.75 of the longest bbox axis: all three ~equal and nonzero =
             // real through-flow; inlet-end nonzero with mid/outlet ~0 = flow dies.
             // interiorCutFlux is collective -> compute on every rank.
+            // The auto axis is the LONGEST bbox dimension, which need not separate the
+            // inlet from the outlet -- if both openings sit on the same side of every
+            // cut plane the net flux is ~0 no matter how much flow the passage carries.
+            // MARS_CUT_AXIS=x|y|z forces one axis; =all probes all three (9 numbers) so
+            // the separating plane cannot be missed. Unset = the original auto behaviour.
             double qc25 = 0.0, qc50 = 0.0, qc75 = 0.0;
             int cutAxis = 0;
+            double qcAll[3][3] = {{0,0,0},{0,0,0},{0,0,0}};
+            bool cutAllAxes = false;
             if (!cavityMode)
             {
-                double spanX = double(s.xmax) - double(s.xmin);
-                double spanY = double(s.ymax) - double(s.ymin);
-                double spanZ = double(s.zmax) - double(s.zmin);
-                cutAxis = (spanX >= spanY && spanX >= spanZ) ? 0 : (spanY >= spanZ ? 1 : 2);
-                double lo  = (cutAxis == 0) ? double(s.xmin) : (cutAxis == 1 ? double(s.ymin) : double(s.zmin));
-                double span = (cutAxis == 0) ? spanX : (cutAxis == 1 ? spanY : spanZ);
-                qc25 = double(interiorCutFlux<KeyType, RealType, TetTag>(s, cutAxis, RealType(lo + 0.25*span)));
-                qc50 = double(interiorCutFlux<KeyType, RealType, TetTag>(s, cutAxis, RealType(lo + 0.50*span)));
-                qc75 = double(interiorCutFlux<KeyType, RealType, TetTag>(s, cutAxis, RealType(lo + 0.75*span)));
+                const double spans[3] = {double(s.xmax) - double(s.xmin),
+                                         double(s.ymax) - double(s.ymin),
+                                         double(s.zmax) - double(s.zmin)};
+                const double los[3]   = {double(s.xmin), double(s.ymin), double(s.zmin)};
+                cutAxis = (spans[0] >= spans[1] && spans[0] >= spans[2]) ? 0
+                                                                        : (spans[1] >= spans[2] ? 1 : 2);
+                if (const char* ev = std::getenv("MARS_CUT_AXIS"))
+                {
+                    if      (ev[0] == 'x' || ev[0] == '0') cutAxis = 0;
+                    else if (ev[0] == 'y' || ev[0] == '1') cutAxis = 1;
+                    else if (ev[0] == 'z' || ev[0] == '2') cutAxis = 2;
+                    else if (ev[0] == 'a')                 cutAllAxes = true;
+                }
+                if (cutAllAxes)
+                {
+                    for (int ax = 0; ax < 3; ++ax)
+                        for (int q = 0; q < 3; ++q)
+                            qcAll[ax][q] = double(interiorCutFlux<KeyType, RealType, TetTag>(
+                                s, ax, RealType(los[ax] + 0.25 * double(q + 1) * spans[ax])));
+                    qc25 = qcAll[cutAxis][0]; qc50 = qcAll[cutAxis][1]; qc75 = qcAll[cutAxis][2];
+                }
+                else
+                {
+                    const double lo = los[cutAxis], span = spans[cutAxis];
+                    qc25 = double(interiorCutFlux<KeyType, RealType, TetTag>(s, cutAxis, RealType(lo + 0.25*span)));
+                    qc50 = double(interiorCutFlux<KeyType, RealType, TetTag>(s, cutAxis, RealType(lo + 0.50*span)));
+                    qc75 = double(interiorCutFlux<KeyType, RealType, TetTag>(s, cutAxis, RealType(lo + 0.75*span)));
+                }
             }
             double divND = (inletU > 0 && Lscale > 0)
                            ? double(s.lastDivMax) * Lscale / inletU : double(s.lastDivMax);
@@ -1295,6 +1321,18 @@ int main(int argc, char** argv)
                 if (!cavityMode)
                 {
                     const char axc[3] = {'x', 'y', 'z'};
+                    if (cutAllAxes)
+                    {
+                        std::cout << std::scientific << std::setprecision(3);
+                        for (int ax = 0; ax < 3; ++ax)
+                            std::cout << "  [interior-flux] axis=" << axc[ax]
+                                      << "  cut@25%=" << qcAll[ax][0]
+                                      << "  cut@50%=" << qcAll[ax][1]
+                                      << "  cut@75%=" << qcAll[ax][2] << "\n";
+                        std::cout << "  (the axis whose 3 cuts are ~equal, same-signed and nonzero"
+                                     " is the one separating inlet from outlet)\n" << std::defaultfloat;
+                    }
+                    else
                     std::cout << "  [interior-flux] axis=" << axc[cutAxis]
                               << "  cut@25%=" << std::scientific << std::setprecision(3) << qc25
                               << "  cut@50%=" << qc50
