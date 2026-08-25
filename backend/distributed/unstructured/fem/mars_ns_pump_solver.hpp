@@ -6736,7 +6736,13 @@ int solveOneComponent(NSStepper<KeyType, RealType, ElementTag>& s,
         else  // KrylovHint::GMRES
         {
             using HSol = mars::fem::HypreGMRESSolver<RealType, int, cstone::GpuTag>;
-            auto precond = HSol::BOOMERAMG;
+            // forceGmres == the --implicit-advection VELOCITY solve. That matrix is
+            // mass-dominated, so Jacobi is near-exact on it while BoomerAMG returns
+            // x~0 (see the forceCG note above). Pin Jacobi locally instead of via
+            // MARS_HYPRE_PRECOND: that env var is read by every Hypre solve, so using
+            // it here would also strip AMG off the PRESSURE solve, which needs it
+            // (measured: cg_p 24 -> 2000 at the iteration cap).
+            auto precond = forceGmres ? HSol::JACOBI : HSol::BOOMERAMG;
             {
                 const char* p = std::getenv("MARS_HYPRE_PRECOND");
                 if (p && std::string(p) == "jacobi") precond = HSol::JACOBI;
