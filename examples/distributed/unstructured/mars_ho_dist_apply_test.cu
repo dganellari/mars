@@ -9,12 +9,13 @@
 //   row to zero; a wrong cross-rank assembly leaves O(1) residual at interfaces).
 // Run: srun -N1 -n4 ./mars_ho_dist_apply_test --ncells=16 --p=2
 //
-// OPTIONAL GPU NUMBERING (flag-gated; host path is the default and is UNCHANGED):
-//   MARS_HO_GPU_NUMBERING=1 ./mars_ho_dist_apply_test --ncells=16 --p=2
-//   ./mars_ho_dist_apply_test --gpu-numbering --ncells=16 --p=2
-// The GPU path (buildDistributedGpu) does the SAME numbering with thrust. The
-// local DOF ids may differ from host by a permutation, so correctness is checked
-// by permutation-INVARIANT quantities, not elemDof element-wise.
+// NUMBERING: GPU (buildDistributedGpu) IS THE DEFAULT. Host is the opt-out:
+//   ./mars_ho_dist_apply_test --host-numbering --ncells=16 --p=2
+//   MARS_HO_HOST_NUMBERING=1 ./mars_ho_dist_apply_test --ncells=16 --p=2
+// (--gpu-numbering is still accepted, but it is now a no-op.)
+// The GPU path does the SAME numbering with thrust. The local DOF ids may differ
+// from host by a permutation, so correctness is checked by permutation-INVARIANT
+// quantities, not elemDof element-wise.
 //
 // SELF-CHECK (A/B host vs GPU on the same config; prints the invariants):
 //   ./mars_ho_dist_apply_test --self-check --ncells=16 --p=2

@@ -42,6 +42,20 @@ void syncDomainImpl(cstone::Domain<KeyType, RealType, cstone::GpuTag>* domain,
                     size_t& elementCount,
                     SfcConnTuple& d_conn_keys_);
 
+// Block-aware sync variant: co-moves one extra per-element property (element block id, widened to
+// KeyType) through cstone sync + halo exchange, so the block rides the element SFC sort + cross-rank
+// redistribution. Multi-block meshes only; single-block meshes use syncDomainImpl above unchanged.
+template<typename KeyType, typename RealType, typename SfcConnTuple>
+void syncDomainImplBlock(cstone::Domain<KeyType, RealType, cstone::GpuTag>* domain,
+                         cstone::DeviceVector<KeyType>& elemSfcCodes,
+                         cstone::DeviceVector<RealType>& elemX,
+                         cstone::DeviceVector<RealType>& elemY,
+                         cstone::DeviceVector<RealType>& elemZ,
+                         cstone::DeviceVector<RealType>& elemH,
+                         size_t& elementCount,
+                         SfcConnTuple& d_conn_keys_,
+                         cstone::DeviceVector<KeyType>& elemBlockKeys);
+
 // Overload for syncing with original coordinates (24 additional properties for hex8)
 template<typename KeyType, typename RealType, typename SfcConnTuple, typename OrigCoordsTuple>
 void syncDomainImplWithOrigCoords(cstone::Domain<KeyType, RealType, cstone::GpuTag>* domain,

@@ -74,8 +74,15 @@ class NonConformalInterface {
 public:
     using Domain = ElementDomain<ElementTag, RealType, KeyType, cstone::GpuTag>;
 
-    NonConformalInterface(Domain& domain, std::string masterSideSet, std::string slaveSideSet)
-        : domain_(domain), master_(std::move(masterSideSet)), slave_(std::move(slaveSideSet)) {}
+    // masterBlock / slaveBlock are the element-block ids of the two interface sides (fluid vs solid,
+    // or the two sides of a non-conformal cut). They disambiguate the coincident interface nodes,
+    // which share an SFC key but differ in block. Default -1 = single-block (the two sides are already
+    // distinct, e.g. matching-mesh discontinuous DOFs); the caller/driver supplies the ids because a
+    // side set carries no block of its own (side sets store node keys only).
+    NonConformalInterface(Domain& domain, std::string masterSideSet, std::string slaveSideSet,
+                          int masterBlock = -1, int slaveBlock = -1)
+        : domain_(domain), master_(std::move(masterSideSet)), slave_(std::move(slaveSideSet)),
+          masterBlock_(masterBlock), slaveBlock_(slaveBlock) {}
 
     // P0: matching mesh -> pair each master interface node to the SLAVE node at the same SFC key (coincident
     // coordinates). Reuses the domain's side-set key storage (sideSetNodeKeys) + the SFC map, exactly like
@@ -97,6 +104,7 @@ public:
 private:
     Domain&      domain_;
     std::string  master_, slave_;
+    int          masterBlock_ = -1, slaveBlock_ = -1;  // element-block ids of the two interface sides
     DgInfoSoA<RealType> dg_;
 };
 

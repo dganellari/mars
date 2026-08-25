@@ -11,13 +11,13 @@ gpu.module @mir_kernels [#nvvm.target<chip = "sm_90", O = 3>] {
     %k4 = arith.addi %k, %c4i : index
     %tc = arith.muli %k, %c2i : index
     %li = arith.index_cast %lane : index to i32
-    %c1 = arith.constant 1 : i32
-    %c2 = arith.constant 2 : i32
-    %c3 = arith.constant 3 : i32
-    %c4 = arith.constant 4 : i32
-    %c16 = arith.constant 16 : i32
-    %c28 = arith.constant 28 : i32
-    %c32 = arith.constant 32 : i32
+    %j1 = arith.constant 1 : i32
+    %j2 = arith.constant 2 : i32
+    %j3 = arith.constant 3 : i32
+    %j4 = arith.constant 4 : i32
+    %j16 = arith.constant 16 : i32
+    %j28 = arith.constant 28 : i32
+    %j32 = arith.constant 32 : i32
     %f1 = vector.transfer_read %Dm[%i, %k], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<1x1xf64>
     %f2 = vector.transfer_read %interp[%k, %i], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<1x1xf64>
     %m3 = nvgpu.mma.sync(%f1, %f2, %zc2) {mmaShape=[8,8,4]} : (vector<1x1xf64>, vector<1x1xf64>, vector<1x2xf64>) -> vector<1x2xf64>
@@ -41,29 +41,29 @@ gpu.module @mir_kernels [#nvvm.target<chip = "sm_90", O = 3>] {
     %fl21 = arith.addf %x20, %x19 : vector<1x2xf64>
     %lo22 = vector.extract %fl21[0, 0] : f64 from vector<1x2xf64>
     %hi23 = vector.extract %fl21[0, 1] : f64 from vector<1x2xf64>
-    %t25 = arith.andi %li, %c28 : i32
-    %t26 = arith.andi %li, %c3 : i32
-    %t27 = arith.shrui %t26, %c1 : i32
+    %t25 = arith.andi %li, %j28 : i32
+    %t26 = arith.andi %li, %j3 : i32
+    %t27 = arith.shrui %t26, %j1 : i32
     %t28 = arith.ori %t25, %t27 : i32
-    %s29, %unused29 = gpu.shuffle idx %lo22, %t28, %c32 : f64
-    %s31, %unused31 = gpu.shuffle idx %hi23, %t28, %c32 : f64
-    %t33 = arith.andi %li, %c1 : i32
-    %t34 = arith.cmpi eq, %t33, %c1 : i32
+    %s29, %unused29 = gpu.shuffle idx %lo22, %t28, %j32 : f64
+    %s31, %unused31 = gpu.shuffle idx %hi23, %t28, %j32 : f64
+    %t33 = arith.andi %li, %j1 : i32
+    %t34 = arith.cmpi eq, %t33, %j1 : i32
     %sv35 = arith.select %t34, %s31, %s29 : f64
     %a36 = vector.insert %sv35, %zc1 [0, 0] : f64 into vector<1x1xf64>
     %f37 = vector.transfer_read %W[%i, %k], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<1x1xf64>
     %m38 = nvgpu.mma.sync(%a36, %f37, %zc2) {mmaShape=[8,8,4]} : (vector<1x1xf64>, vector<1x1xf64>, vector<1x2xf64>) -> vector<1x2xf64>
     %lo39 = vector.extract %fl21[0, 0] : f64 from vector<1x2xf64>
     %hi40 = vector.extract %fl21[0, 1] : f64 from vector<1x2xf64>
-    %t42 = arith.andi %li, %c28 : i32
-    %t43 = arith.andi %li, %c3 : i32
-    %t44 = arith.shrui %t43, %c1 : i32
+    %t42 = arith.andi %li, %j28 : i32
+    %t43 = arith.andi %li, %j3 : i32
+    %t44 = arith.shrui %t43, %j1 : i32
     %t45 = arith.ori %t42, %t44 : i32
-    %t46 = arith.ori %t45, %c2 : i32
-    %s47, %unused47 = gpu.shuffle idx %lo39, %t46, %c32 : f64
-    %s49, %unused49 = gpu.shuffle idx %hi40, %t46, %c32 : f64
-    %t51 = arith.andi %li, %c1 : i32
-    %t52 = arith.cmpi eq, %t51, %c1 : i32
+    %t46 = arith.ori %t45, %j2 : i32
+    %s47, %unused47 = gpu.shuffle idx %lo39, %t46, %j32 : f64
+    %s49, %unused49 = gpu.shuffle idx %hi40, %t46, %j32 : f64
+    %t51 = arith.andi %li, %j1 : i32
+    %t52 = arith.cmpi eq, %t51, %j1 : i32
     %sv53 = arith.select %t52, %s49, %s47 : f64
     %a54 = vector.insert %sv53, %zc1 [0, 0] : f64 into vector<1x1xf64>
     %f55 = vector.transfer_read %W[%i, %k4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<1x1xf64>
@@ -71,31 +71,31 @@ gpu.module @mir_kernels [#nvvm.target<chip = "sm_90", O = 3>] {
     %f57 = vector.transfer_read %W[%i, %k], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<1x1xf64>
     %lo58 = vector.extract %m56[0, 0] : f64 from vector<1x2xf64>
     %hi59 = vector.extract %m56[0, 1] : f64 from vector<1x2xf64>
-    %t60 = arith.andi %li, %c3 : i32
-    %t61 = arith.muli %t60, %c4 : i32
-    %t62 = arith.shrui %li, %c3 : i32
+    %t60 = arith.andi %li, %j3 : i32
+    %t61 = arith.muli %t60, %j4 : i32
+    %t62 = arith.shrui %li, %j3 : i32
     %t63 = arith.addi %t61, %t62 : i32
-    %s64, %unused64 = gpu.shuffle idx %lo58, %t63, %c32 : f64
-    %s66, %unused66 = gpu.shuffle idx %hi59, %t63, %c32 : f64
-    %t68 = arith.shrui %li, %c2 : i32
-    %t69 = arith.andi %t68, %c1 : i32
-    %t70 = arith.cmpi eq, %t69, %c1 : i32
+    %s64, %unused64 = gpu.shuffle idx %lo58, %t63, %j32 : f64
+    %s66, %unused66 = gpu.shuffle idx %hi59, %t63, %j32 : f64
+    %t68 = arith.shrui %li, %j2 : i32
+    %t69 = arith.andi %t68, %j1 : i32
+    %t70 = arith.cmpi eq, %t69, %j1 : i32
     %sv71 = arith.select %t70, %s66, %s64 : f64
     %b72 = vector.insert %sv71, %zc1 [0, 0] : f64 into vector<1x1xf64>
     %m73 = nvgpu.mma.sync(%f57, %b72, %zc2) {mmaShape=[8,8,4]} : (vector<1x1xf64>, vector<1x1xf64>, vector<1x2xf64>) -> vector<1x2xf64>
     %f74 = vector.transfer_read %W[%i, %k4], %z {in_bounds=[true,true]} : memref<8x8xf64>, vector<1x1xf64>
     %lo75 = vector.extract %m56[0, 0] : f64 from vector<1x2xf64>
     %hi76 = vector.extract %m56[0, 1] : f64 from vector<1x2xf64>
-    %t77 = arith.andi %li, %c3 : i32
-    %t78 = arith.muli %t77, %c4 : i32
-    %t79 = arith.shrui %li, %c3 : i32
+    %t77 = arith.andi %li, %j3 : i32
+    %t78 = arith.muli %t77, %j4 : i32
+    %t79 = arith.shrui %li, %j3 : i32
     %t80 = arith.addi %t78, %t79 : i32
-    %t81 = arith.addi %t80, %c16 : i32
-    %s82, %unused82 = gpu.shuffle idx %lo75, %t81, %c32 : f64
-    %s84, %unused84 = gpu.shuffle idx %hi76, %t81, %c32 : f64
-    %t86 = arith.shrui %li, %c2 : i32
-    %t87 = arith.andi %t86, %c1 : i32
-    %t88 = arith.cmpi eq, %t87, %c1 : i32
+    %t81 = arith.addi %t80, %j16 : i32
+    %s82, %unused82 = gpu.shuffle idx %lo75, %t81, %j32 : f64
+    %s84, %unused84 = gpu.shuffle idx %hi76, %t81, %j32 : f64
+    %t86 = arith.shrui %li, %j2 : i32
+    %t87 = arith.andi %t86, %j1 : i32
+    %t88 = arith.cmpi eq, %t87, %j1 : i32
     %sv89 = arith.select %t88, %s84, %s82 : f64
     %b90 = vector.insert %sv89, %zc1 [0, 0] : f64 into vector<1x1xf64>
     %m91 = nvgpu.mma.sync(%f74, %b90, %m73) {mmaShape=[8,8,4]} : (vector<1x1xf64>, vector<1x1xf64>, vector<1x2xf64>) -> vector<1x2xf64>

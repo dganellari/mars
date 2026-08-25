@@ -129,8 +129,24 @@ cmake .. \
   -DMARS_ENABLE_CUDA=ON \
   -DMARS_ENABLE_TESTS=ON \
   -DMARS_ENABLE_UNSTRUCTURED=ON \
+  -DMARS_ENABLE_FEM_EXAMPLES=ON \
   -DCMAKE_CUDA_ARCHITECTURES=90
+make -j
 ```
+
+`CMAKE_CUDA_ARCHITECTURES` is device-specific: 90 for GH200/H100, 80 for A100.
+
+The block above already enables `MARS_ENABLE_FEM_EXAMPLES`, needed for the
+CVFEM / FEM example drivers (Poisson, CVFEM assembly, the high-order
+matrix-free gates). Other optional add-ons:
+
+- `-DMARS_ENABLE_HYPRE=ON` — BoomerAMG preconditioner. Needed by the
+  AMG-preconditioned solvers and the AMR / Navier-Stokes drivers; **not**
+  needed for the matrix-free operator gates.
+- `-DMARS_ENABLE_ADIOS2=ON`, `-DMARS_ENABLE_VTK=ON` — extra I/O backends.
+
+See `cmake/MarsOptions.cmake` and `cmake/MarsDependencies.cmake` for the full
+option list.
 
 ### Documentation
 

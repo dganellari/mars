@@ -293,6 +293,16 @@ target_include_directories(mars_coupled_model_operator PRIVATE
 install(TARGETS mars_coupled_model_operator RUNTIME DESTINATION bin/examples)
 install(TARGETS mars_tgv RUNTIME DESTINATION bin/examples)
 
+# Pump driver: transient projection (BDF2 + Chorin) NS on a tet pump mesh, with
+# the pressure-drive opening BCs. Uses the pump fork mars_ns_pump_solver.hpp.
+# Validated config in the run notes: --solver=hypre --pressure-k --pspg.
+add_executable(mars_pump mars_pump.cu)
+target_link_libraries(mars_pump PRIVATE mars)
+target_include_directories(mars_pump PRIVATE
+    ${CMAKE_SOURCE_DIR}/backend/distributed/unstructured/amr
+)
+install(TARGETS mars_pump RUNTIME DESTINATION bin/examples)
+
 # MARSIR parity gate: the generated Laplacian apply (from marsir-compiler/) vs the
 # hand-written HO matrix-free kernel, same mesh/elemDof/metric. Opt-in via
 # -DMARS_ENABLE_MARSIR=ON; the generated header is committed under

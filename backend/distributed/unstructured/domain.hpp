@@ -4,6 +4,7 @@
 #include <utility>
 #include <cstdlib>
 #include <cstdio>
+#include <cstdint>
 
 namespace cstone
 {
@@ -33,6 +34,8 @@ using std::get;
 #include <thrust/scan.h>
 #include <thrust/fill.h>
 #include <thrust/iterator/constant_iterator.h>
+#include <thrust/iterator/zip_iterator.h>
+#include <thrust/tuple.h>
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -245,6 +248,18 @@ flattenConnectivityKernel(ConnPtrs<KeyType, NodesPerElement> conn, KeyType* flat
 template<typename KeyType>
 __global__ void mapSfcToLocalIdKernel(
     const KeyType* sfc_conn, KeyType* local_conn, const KeyType* sorted_sfc, size_t num_elements, size_t num_nodes);
+
+// Multi-block node-identity kernels (defined later in domain.cu). Forward-declared here because
+// mapSfcBlockToLocalIdKernel takes only raw pointers -- no mars-namespace argument -> ADL cannot find
+// it at the call site in createElementToNodeLocalIdMap.
+template<typename KeyType, size_t NodesPerElement>
+__global__ void flattenConnKeyBlockKernel(ConnPtrs<KeyType, NodesPerElement> conn, const int* elemBlock,
+                                          KeyType* flat_keys, int* flat_blocks, size_t numElements);
+
+template<typename KeyType>
+__global__ void mapSfcBlockToLocalIdKernel(const KeyType* sfc_conn, const int* elem_block,
+                                           KeyType* local_conn, const KeyType* sorted_sfc,
+                                           const int* sorted_block, size_t num_elements, size_t num_nodes);
 
 __global__ void initNodeOwnershipKernel(uint8_t* nodeOwnership, size_t nodeCount);
 
@@ -1335,6 +1350,19 @@ public:
         return d_localToGlobalSfcMap_;
     }
 
+    // Block-aware node identity accessors. numBlocks() == 1 (default) is the single-block fast path;
+    // > 1 keeps coincident nodes on different element blocks separate (non-conformal / FSI). See
+    // internal-notes/NODE_IDENTITY_FOUNDATION.md.
+    //
+    // OPT-IN via MARS_BLOCK_NODE_IDENTITY (see blockNodeIdentityEnabled): a mesh can carry several
+    // element blocks that are perfectly CONFORMAL -- pure material tagging -- and splitting their
+    // shared nodes would silently duplicate DOFs along every internal block boundary. Only a run that
+    // really wants the blocks separated (non-conformal cut, FSI fluid/solid) asks for it, so
+    // numBlocks() stays 1 for every existing run regardless of how many blocks the file has.
+    int numBlocks() const { return numBlocks_; }
+    const DeviceVector<int>& elementBlocks() const { return d_elemBlock_; }
+    const DeviceVector<int>& getLocalToGlobalBlock() const { return d_localToGlobalBlock_; }
+
     // WARNING: this is the EXODUS-READER node order (the pre-SFC-sort numbering
     // from mesh read), NOT the runtime node index. Runtime arrays (coords,
     // ownership, node_to_dof, solver fields) are indexed by the SFC-sorted local
@@ -1354,8 +1382,12 @@ public:
     // Same as above but keeps alignment with `coords`: a coord not local to
     // this rank yields -1 (instead of being dropped). Use when you need the
     // result index to line up 1:1 with the input (e.g. per-face lookups).
+    // block >= 0 (with a multi-block domain) resolves to the node on THAT element block: two
+    // coincident interface nodes share a key, so the sorted map holds them as a consecutive
+    // (key, block) run; we lower_bound to the run start then scan for the requested block. block < 0
+    // (default) is the original key-only behavior -- byte-identical for single-block domains.
     std::vector<int>
-    resolveSideSetNodesToLocalKeepMisses(const std::vector<std::array<double, 3>>& coords) const
+    resolveSideSetNodesToLocalKeepMisses(const std::vector<std::array<double, 3>>& coords, int block = -1) const
     {
         ensureSfcMap();
         std::vector<KeyType> hostSfc(d_localToGlobalSfcMap_.size());
@@ -1363,6 +1395,18 @@ public:
                      thrust::device_pointer_cast(d_localToGlobalSfcMap_.data()
                                                  + d_localToGlobalSfcMap_.size()),
                      hostSfc.begin());
+
+        const bool blockAware = (block >= 0) && (numBlocks_ > 1);
+        std::vector<int> hostBlk;
+        if (blockAware)
+        {
+            hostBlk.resize(d_localToGlobalBlock_.size());
+            thrust::copy(thrust::device_pointer_cast(d_localToGlobalBlock_.data()),
+                         thrust::device_pointer_cast(d_localToGlobalBlock_.data()
+                                                     + d_localToGlobalBlock_.size()),
+                         hostBlk.begin());
+        }
+
         using HKey = cstone::HilbertKey<KeyType>;
         std::vector<int> local(coords.size(), -1);
         for (size_t i = 0; i < coords.size(); ++i)
@@ -1371,16 +1415,28 @@ public:
             KeyType key = cstone::sfc3D<HKey>(RealType(c[0]), RealType(c[1]),
                                               RealType(c[2]), box_).value();
             auto it = std::lower_bound(hostSfc.begin(), hostSfc.end(), key);
-            if (it != hostSfc.end() && *it == key)
-                local[i] = int(it - hostSfc.begin());
+            if (it == hostSfc.end() || *it != key)
+                continue;
+            int pos = int(it - hostSfc.begin());
+            if (blockAware)
+            {
+                while (pos < int(hostSfc.size()) && hostSfc[pos] == key)
+                {
+                    if (hostBlk[pos] == block) break;
+                    ++pos;
+                }
+                if (pos >= int(hostSfc.size()) || hostSfc[pos] != key)
+                    continue;  // key present, but not on the requested block on this rank
+            }
+            local[i] = pos;
         }
         return local;
     }
 
     std::vector<int>
-    resolveSideSetNodesToLocal(const std::vector<std::array<double, 3>>& coords) const
+    resolveSideSetNodesToLocal(const std::vector<std::array<double, 3>>& coords, int block = -1) const
     {
-        std::vector<int> withMisses = resolveSideSetNodesToLocalKeepMisses(coords);
+        std::vector<int> withMisses = resolveSideSetNodesToLocalKeepMisses(coords, block);
         std::vector<int> local;
         local.reserve(withMisses.size());
         for (int id : withMisses) if (id >= 0) local.push_back(id);
@@ -1493,18 +1549,40 @@ public:
     //! sets); the SFC key is the AMR-stable node identity, so resolve each key against this domain's SFC
     //! map -> local id (keep hits; a key not owned here is dropped, exactly like the coord resolver).
     //! Marks storage built so ensureSideSets() (which reads meshFile_) does not clobber the injected set.
-    void setSideSetFromKeys(const std::string& name, const std::vector<KeyType>& keys)
+    // block >= 0 (multi-block domain): resolve each key to the node on THAT block by scanning the
+    // consecutive (key, block) run in the sorted map (mirrors resolveSideSetNodesToLocalKeepMisses).
+    // block < 0 (default) is the original key-only behavior -- byte-identical for single-block domains.
+    void setSideSetFromKeys(const std::string& name, const std::vector<KeyType>& keys, int block = -1)
     {
         ensureSfcMap();
         std::vector<KeyType> hostSfc(d_localToGlobalSfcMap_.size());
         thrust::copy(thrust::device_pointer_cast(d_localToGlobalSfcMap_.data()),
                      thrust::device_pointer_cast(d_localToGlobalSfcMap_.data() + d_localToGlobalSfcMap_.size()),
                      hostSfc.begin());
+
+        const bool blockAware = (block >= 0) && (numBlocks_ > 1);
+        std::vector<int> hostBlk;
+        if (blockAware) {
+            hostBlk.resize(d_localToGlobalBlock_.size());
+            thrust::copy(thrust::device_pointer_cast(d_localToGlobalBlock_.data()),
+                         thrust::device_pointer_cast(d_localToGlobalBlock_.data() + d_localToGlobalBlock_.size()),
+                         hostBlk.begin());
+        }
+
         std::vector<KeyType> hitKeys; std::vector<int> hitLocal;
         hitKeys.reserve(keys.size()); hitLocal.reserve(keys.size());
         for (KeyType key : keys) {
             auto it = std::lower_bound(hostSfc.begin(), hostSfc.end(), key);   // SFC map is sorted; local id == position
-            if (it != hostSfc.end() && *it == key) { hitKeys.push_back(key); hitLocal.push_back(int(it - hostSfc.begin())); }
+            if (it == hostSfc.end() || *it != key) continue;
+            int pos = int(it - hostSfc.begin());
+            if (blockAware) {
+                while (pos < int(hostSfc.size()) && hostSfc[pos] == key) {
+                    if (hostBlk[pos] == block) break;
+                    ++pos;
+                }
+                if (pos >= int(hostSfc.size()) || hostSfc[pos] != key) continue;  // not on the requested block here
+            }
+            hitKeys.push_back(key); hitLocal.push_back(pos);
         }
         SideSetEntry e;
         e.d_keys.resize(hitKeys.size()); e.d_local.resize(hitLocal.size());
@@ -1571,6 +1649,26 @@ private:
 
     // Maps a dense local node ID [0...N-1] to its global node index
     DeviceVector<KeyType> d_localToGlobalNodeMap_;
+
+    // Block-aware node identity (non-conformal / FSI foundation). numBlocks_ == 1 is the
+    // single-block fast path: identity = SFC key, pure radix dedup, no block arrays retained
+    // (byte-identical to the pre-existing behavior). numBlocks_ > 1 makes identity = (key, block)
+    // so two coincident nodes on different element blocks (e.g. fluid vs solid at an interface)
+    // stay separate. d_elemBlock_ is per-element (rides the SFC sort in sync); d_localToGlobalBlock_
+    // is per-node, parallel to d_localToGlobalSfcMap_. Both empty when single-block.
+    // See internal-notes/NODE_IDENTITY_FOUNDATION.md.
+    int numBlocks_ = 1;
+    DeviceVector<int> d_elemBlock_;
+    DeviceVector<int> d_localToGlobalBlock_;
+
+    // Opt-in gate for the above. Read once; must give the same answer on every rank, because
+    // numBlocks_ > 1 selects the block-aware collective sync (one extra co-moved property) -- ranks
+    // disagreeing here would mismatch the MPI exchange.
+    static bool blockNodeIdentityEnabled()
+    {
+        static const bool on = std::getenv("MARS_BLOCK_NODE_IDENTITY") != nullptr;
+        return on;
+    }
 
     // Friend declarations to allow helper structs access to private members
     friend struct AdjacencyData<ElementTag, RealType, KeyType, AcceleratorTag>;
@@ -2532,6 +2630,43 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::readMeshDataS
             constexpr bool dependent_false = sizeof(ElementTag) != sizeof(ElementTag);
             static_assert(dependent_false, "Unsupported element type in readMeshDataSoA");
         }
+
+        // Element-block-at-load for block-aware node identity (non-conformal / FSI). Read the
+        // per-element block id. This runs before sync(), so numBlocks_ is set in time for the post-sync
+        // createLocalToGlobalSfcMap branch, and d_elemBlock_ (pre-sync order, aligned with the
+        // connectivity columns) is co-moved in sync().
+        // Only Tet/Hex have an Exodus main-reader path; Tri/Quad go MFEM/binary. isExodusFile is a
+        // loose substring match (".e"), so gate the Exodus block-read by element type to match the
+        // main reader exactly and never route a Tri/Quad mesh into the netCDF reader.
+        constexpr bool exodusCapable = std::is_same_v<ElementTag, TetTag> || std::is_same_v<ElementTag, HexTag>;
+        if (blockNodeIdentityEnabled())
+        {
+            if (isExodusFile && exodusCapable)
+            {
+                auto [elemBlock, nBlocks] = mars::readExodusElementBlocks(meshFile, rank, numRanks);
+                numBlocks_ = static_cast<int>(nBlocks);
+                if (numBlocks_ > 1)
+                {
+                    d_elemBlock_.resize(elemBlock.size());
+                    thrust::copy(elemBlock.begin(), elemBlock.end(),
+                                 thrust::device_pointer_cast(d_elemBlock_.data()));
+                }
+            }
+            else if (!isMFEMFile && !isExodusFile)  // binary directory mesh
+            {
+                auto [elemBlock, nBlocks] = mars::readBinaryElementBlocks(meshFile, rank, numRanks);
+                numBlocks_ = static_cast<int>(nBlocks);
+                if (numBlocks_ > 1)
+                {
+                    d_elemBlock_.resize(elemBlock.size());
+                    thrust::copy(elemBlock.begin(), elemBlock.end(),
+                                 thrust::device_pointer_cast(d_elemBlock_.data()));
+                }
+            }
+            // MFEM (single block) or a non-Exodus-capable tag on an ".e" path -> numBlocks_ stays 1.
+            if (rank == 0 && numBlocks_ > 1 && std::getenv("MARS_VERBOSE_MESH"))
+                std::cout << "Block-aware node identity: " << numBlocks_ << " element blocks" << std::endl;
+        }
     }
     catch (const std::exception& e)
     {
@@ -2680,6 +2815,32 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::sync(const De
             std::cout << "Rank " << rank_ << " syncing " << ElementTag::Name << " domain with " << elementCount_
                       << " elements." << std::endl;
 
+        // Block-aware element sync. For multi-block meshes (non-conformal / FSI) co-move the per-
+        // element block id (widened int -> KeyType) through cstone's SFC sort + cross-rank
+        // redistribution + halo exchange, then narrow it back to the post-sync layout. Single-block
+        // meshes take the unchanged syncDomainImpl. Used by the standard hex and tet/tri/quad paths.
+        auto syncElem = [&]()
+        {
+            if (numBlocks_ > 1)
+            {
+                DeviceVector<KeyType> d_elemBlockKeys(elementCount_);
+                thrust::copy(thrust::device_pointer_cast(d_elemBlock_.data()),
+                             thrust::device_pointer_cast(d_elemBlock_.data() + elementCount_),
+                             thrust::device_pointer_cast(d_elemBlockKeys.data()));
+                syncDomainImplBlock(domain_.get(), d_elemSfcCodes_, d_elemX, d_elemY, d_elemZ, d_elemH,
+                                    elementCount_, d_conn_keys_, d_elemBlockKeys);
+                d_elemBlock_.resize(elementCount_);  // elementCount_ is now post-sync (incl. halos)
+                thrust::copy(thrust::device_pointer_cast(d_elemBlockKeys.data()),
+                             thrust::device_pointer_cast(d_elemBlockKeys.data() + elementCount_),
+                             thrust::device_pointer_cast(d_elemBlock_.data()));
+            }
+            else
+            {
+                syncDomainImpl(domain_.get(), d_elemSfcCodes_, d_elemX, d_elemY, d_elemZ, d_elemH,
+                               elementCount_, d_conn_keys_);
+            }
+        };
+
         // Check if we need to sync with original coordinates (compile-time check for hex8)
         if constexpr (std::is_same_v<ElementTag, HexTag>) {
             if (storeOriginalCoords_) {
@@ -2733,7 +2894,14 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::sync(const De
                 d_elemOrigX7, d_elemOrigY7, d_elemOrigZ7
             );
 
-            // Sync with original coordinates
+            // Sync with original coordinates. Multi-block co-move is not wired through this 24-
+            // property path yet (tet FSI meshes use the standard path; hex interface meshes can run
+            // with storeOriginalCoords_ off). Guard so a multi-block hex+origcoords mesh fails loudly
+            // rather than silently dropping the block.
+            if (numBlocks_ > 1)
+                throw std::runtime_error("Multi-block (non-conformal/FSI) meshes with stored original "
+                                         "coordinates are not supported yet; disable storeOriginalCoords "
+                                         "or use a tet mesh.");
             syncDomainImplWithOrigCoords(domain_.get(), d_elemSfcCodes_, d_elemX, d_elemY, d_elemZ, d_elemH,
                                         elementCount_, d_conn_keys_, d_orig_coords);
 
@@ -2771,12 +2939,12 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::sync(const De
                 elementCount_);
             cudaCheckError();
             } else {
-                // Standard sync with SFC-decoded coordinates
-                syncDomainImpl(domain_.get(), d_elemSfcCodes_, d_elemX, d_elemY, d_elemZ, d_elemH, elementCount_, d_conn_keys_);
+                // Standard sync with SFC-decoded coordinates (block-aware for multi-block meshes)
+                syncElem();
             }
         } else {
-            // For non-hex elements, always use standard sync
-            syncDomainImpl(domain_.get(), d_elemSfcCodes_, d_elemX, d_elemY, d_elemZ, d_elemH, elementCount_, d_conn_keys_);
+            // For non-hex elements, always use standard sync (block-aware for multi-block meshes)
+            syncElem();
         }
     }
 }
@@ -3151,13 +3319,29 @@ void AdjacencyData<ElementTag, RealType, KeyType, AcceleratorTag>::createElement
         int blockSize = 256;
         int numBlocks = (elementCount + blockSize - 1) / blockSize;
 
-        // Map SFC keys to local IDs for each connectivity array
+        // Map SFC keys to local IDs for each connectivity array. Multi-block meshes resolve on
+        // (key, block) so coincident nodes on different element blocks map to distinct local ids.
+        const bool multiBlock = domain.numBlocks_ > 1;
         auto mapKernel = [&](auto I)
         {
-            mapSfcToLocalIdKernel<<<numBlocks, blockSize>>>(
-                thrust::raw_pointer_cast(std::get<I>(domain.d_conn_keys_).data()),
-                thrust::raw_pointer_cast(std::get<I>(d_conn_local_ids_).data()),
-                thrust::raw_pointer_cast(domain.d_localToGlobalSfcMap_.data()), elementCount, domain.getNodeCount());
+            if (multiBlock)
+            {
+                mapSfcBlockToLocalIdKernel<<<numBlocks, blockSize>>>(
+                    thrust::raw_pointer_cast(std::get<I>(domain.d_conn_keys_).data()),
+                    thrust::raw_pointer_cast(domain.d_elemBlock_.data()),
+                    thrust::raw_pointer_cast(std::get<I>(d_conn_local_ids_).data()),
+                    thrust::raw_pointer_cast(domain.d_localToGlobalSfcMap_.data()),
+                    thrust::raw_pointer_cast(domain.d_localToGlobalBlock_.data()),
+                    elementCount, domain.getNodeCount());
+            }
+            else
+            {
+                mapSfcToLocalIdKernel<<<numBlocks, blockSize>>>(
+                    thrust::raw_pointer_cast(std::get<I>(domain.d_conn_keys_).data()),
+                    thrust::raw_pointer_cast(std::get<I>(d_conn_local_ids_).data()),
+                    thrust::raw_pointer_cast(domain.d_localToGlobalSfcMap_.data()), elementCount,
+                    domain.getNodeCount());
+            }
             cudaCheckError();
         };
 
@@ -3357,6 +3541,27 @@ auto makeConnPtrs(const Tuple& tuple, std::index_sequence<Is...>)
     return result;
 }
 
+// Lexicographic (key, block) order for the multi-block node-identity dedup. Two independent
+// template params because thrust compares a materialized value tuple against a tuple-of-references
+// proxy -- the two operands are DIFFERENT types, so a single-T operator() fails to deduce.
+struct SfcBlockLess
+{
+    template<typename Ta, typename Tb>
+    __host__ __device__ bool operator()(const Ta& a, const Tb& b) const
+    {
+        if (thrust::get<0>(a) != thrust::get<0>(b)) return thrust::get<0>(a) < thrust::get<0>(b);
+        return thrust::get<1>(a) < thrust::get<1>(b);
+    }
+};
+struct SfcBlockEqual
+{
+    template<typename Ta, typename Tb>
+    __host__ __device__ bool operator()(const Ta& a, const Tb& b) const
+    {
+        return thrust::get<0>(a) == thrust::get<0>(b) && thrust::get<1>(a) == thrust::get<1>(b);
+    }
+};
+
 template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
 void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::createLocalToGlobalSfcMap()
 {
@@ -3370,32 +3575,56 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::createLocalTo
             return;
         }
 
-        DeviceVector<KeyType> allNodeKeys(numConnectivityEntries);
-
         auto conn_ptrs = makeConnPtrs<KeyType>(d_conn_keys_, std::make_index_sequence<NodesPerElement>{});
-        // 2. Launch the optimized kernel to flatten the tuple-of-vectors
         int blockSize = 256;
         int numBlocks = (elementCount_ + blockSize - 1) / blockSize;
-        flattenConnectivityKernel<<<numBlocks, blockSize>>>(conn_ptrs, thrust::raw_pointer_cast(allNodeKeys.data()),
-                                                            elementCount_);
-        cudaCheckError();
 
-        // 3. Sort the keys using Thrust's highly optimized parallel sort
-        auto start = thrust::device_ptr<KeyType>(thrust::raw_pointer_cast(allNodeKeys.data()));
-        auto end   = start + allNodeKeys.size();
-        thrust::sort(thrust::device, start, end);
+        if (numBlocks_ <= 1)
+        {
+            // Single-block fast path: node identity = SFC key. Pure radix sort + unique
+            // (byte-identical to the original behavior; no block arrays retained).
+            DeviceVector<KeyType> allNodeKeys(numConnectivityEntries);
+            flattenConnectivityKernel<<<numBlocks, blockSize>>>(
+                conn_ptrs, thrust::raw_pointer_cast(allNodeKeys.data()), elementCount_);
+            cudaCheckError();
 
-        // 4. Find the unique keys - moves duplicates to the end
-        auto newEnd = thrust::unique(thrust::device, start, end);
+            auto start = thrust::device_ptr<KeyType>(thrust::raw_pointer_cast(allNodeKeys.data()));
+            auto end   = start + allNodeKeys.size();
+            thrust::sort(thrust::device, start, end);
+            auto newEnd = thrust::unique(thrust::device, start, end);
+            allNodeKeys.resize(newEnd - start);
 
-        // 5. Resize to discard duplicates
-        allNodeKeys.resize(newEnd - start);
+            d_localToGlobalSfcMap_ = std::move(allNodeKeys);
+            d_localToGlobalBlock_.resize(0);
+            nodeCount_ = d_localToGlobalSfcMap_.size();
+        }
+        else
+        {
+            // Multi-block: node identity = (key, block). Flatten (key, block) per connectivity
+            // entry and sort + unique on the PAIR, so two coincident nodes on different element
+            // blocks stay separate. This comparison sort runs ONLY for multi-block meshes; the
+            // single-block hot path above keeps radix.
+            DeviceVector<KeyType> allKeys(numConnectivityEntries);
+            DeviceVector<int>     allBlocks(numConnectivityEntries);
+            flattenConnKeyBlockKernel<<<numBlocks, blockSize>>>(
+                conn_ptrs, thrust::raw_pointer_cast(d_elemBlock_.data()),
+                thrust::raw_pointer_cast(allKeys.data()), thrust::raw_pointer_cast(allBlocks.data()),
+                elementCount_);
+            cudaCheckError();
 
-        // 6. Move the result to the member variable
-        d_localToGlobalSfcMap_ = std::move(allNodeKeys);
+            auto kb = thrust::make_zip_iterator(thrust::make_tuple(
+                thrust::device_ptr<KeyType>(thrust::raw_pointer_cast(allKeys.data())),
+                thrust::device_ptr<int>(thrust::raw_pointer_cast(allBlocks.data()))));
+            thrust::sort(thrust::device, kb, kb + numConnectivityEntries, SfcBlockLess{});
+            auto kbEnd = thrust::unique(thrust::device, kb, kb + numConnectivityEntries, SfcBlockEqual{});
+            size_t uniqueCount = static_cast<size_t>(kbEnd - kb);
 
-        // 7. Update the final node count
-        nodeCount_ = d_localToGlobalSfcMap_.size();
+            allKeys.resize(uniqueCount);
+            allBlocks.resize(uniqueCount);
+            d_localToGlobalSfcMap_ = std::move(allKeys);
+            d_localToGlobalBlock_  = std::move(allBlocks);
+            nodeCount_ = uniqueCount;
+        }
     }
 }
 

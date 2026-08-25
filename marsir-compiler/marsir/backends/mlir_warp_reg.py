@@ -72,20 +72,20 @@ def _relayout_c2a(L, ctr, J, cfrag, slab):
     L.append("%s%s = vector.extract %s[0, 1] : f64 from %s" % (J, hi, cfrag, FRAG2))
     base = ctr.fresh("sb")
     # src = (li & 28) | (2*slab) | ((li & 3) >> 1)
-    m28 = ctr.fresh("t"); L.append("%s%s = arith.andi %%li, %%c28 : i32" % (J, m28))
-    m3 = ctr.fresh("t"); L.append("%s%s = arith.andi %%li, %%c3 : i32" % (J, m3))
-    sh = ctr.fresh("t"); L.append("%s%s = arith.shrui %s, %%c1 : i32" % (J, sh, m3))
+    m28 = ctr.fresh("t"); L.append("%s%s = arith.andi %%li, %%j28 : i32" % (J, m28))
+    m3 = ctr.fresh("t"); L.append("%s%s = arith.andi %%li, %%j3 : i32" % (J, m3))
+    sh = ctr.fresh("t"); L.append("%s%s = arith.shrui %s, %%j1 : i32" % (J, sh, m3))
     o1 = ctr.fresh("t"); L.append("%s%s = arith.ori %s, %s : i32" % (J, o1, m28, sh))
     if slab:
-        src = ctr.fresh("t"); L.append("%s%s = arith.ori %s, %%c2 : i32" % (J, src, o1))
+        src = ctr.fresh("t"); L.append("%s%s = arith.ori %s, %%j2 : i32" % (J, src, o1))
     else:
         src = o1
-    s0 = ctr.fresh("s"); L.append("%s%s, %%unused%d = gpu.shuffle idx %s, %s, %%c32 : f64"
+    s0 = ctr.fresh("s"); L.append("%s%s, %%unused%d = gpu.shuffle idx %s, %s, %%j32 : f64"
                                   % (J, s0, ctr.i, lo, src)); ctr.i += 1
-    s1 = ctr.fresh("s"); L.append("%s%s, %%unused%d = gpu.shuffle idx %s, %s, %%c32 : f64"
+    s1 = ctr.fresh("s"); L.append("%s%s, %%unused%d = gpu.shuffle idx %s, %s, %%j32 : f64"
                                   % (J, s1, ctr.i, hi, src)); ctr.i += 1
-    par = ctr.fresh("t"); L.append("%s%s = arith.andi %%li, %%c1 : i32" % (J, par))
-    odd = ctr.fresh("t"); L.append("%s%s = arith.cmpi eq, %s, %%c1 : i32" % (J, odd, par))
+    par = ctr.fresh("t"); L.append("%s%s = arith.andi %%li, %%j1 : i32" % (J, par))
+    odd = ctr.fresh("t"); L.append("%s%s = arith.cmpi eq, %s, %%j1 : i32" % (J, odd, par))
     sel = ctr.fresh("sv"); L.append("%s%s = arith.select %s, %s, %s : f64" % (J, sel, odd, s1, s0))
     a = ctr.fresh("a"); L.append("%s%s = vector.insert %s, %%zc1 [0, 0] : f64 into %s"
                                  % (J, a, sel, FRAG1))
@@ -98,35 +98,37 @@ def _relayout_c2b(L, ctr, J, cfrag, slab):
     lo = ctr.fresh("lo"); hi = ctr.fresh("hi")
     L.append("%s%s = vector.extract %s[0, 0] : f64 from %s" % (J, lo, cfrag, FRAG2))
     L.append("%s%s = vector.extract %s[0, 1] : f64 from %s" % (J, hi, cfrag, FRAG2))
-    m3 = ctr.fresh("t"); L.append("%s%s = arith.andi %%li, %%c3 : i32" % (J, m3))
-    q4 = ctr.fresh("t"); L.append("%s%s = arith.muli %s, %%c4 : i32" % (J, q4, m3))
-    hi3 = ctr.fresh("t"); L.append("%s%s = arith.shrui %%li, %%c3 : i32" % (J, hi3))
+    m3 = ctr.fresh("t"); L.append("%s%s = arith.andi %%li, %%j3 : i32" % (J, m3))
+    q4 = ctr.fresh("t"); L.append("%s%s = arith.muli %s, %%j4 : i32" % (J, q4, m3))
+    hi3 = ctr.fresh("t"); L.append("%s%s = arith.shrui %%li, %%j3 : i32" % (J, hi3))
     o1 = ctr.fresh("t"); L.append("%s%s = arith.addi %s, %s : i32" % (J, o1, q4, hi3))
     if slab:
-        src = ctr.fresh("t"); L.append("%s%s = arith.addi %s, %%c16 : i32" % (J, src, o1))
+        src = ctr.fresh("t"); L.append("%s%s = arith.addi %s, %%j16 : i32" % (J, src, o1))
     else:
         src = o1
-    s0 = ctr.fresh("s"); L.append("%s%s, %%unused%d = gpu.shuffle idx %s, %s, %%c32 : f64"
+    s0 = ctr.fresh("s"); L.append("%s%s, %%unused%d = gpu.shuffle idx %s, %s, %%j32 : f64"
                                   % (J, s0, ctr.i, lo, src)); ctr.i += 1
-    s1 = ctr.fresh("s"); L.append("%s%s, %%unused%d = gpu.shuffle idx %s, %s, %%c32 : f64"
+    s1 = ctr.fresh("s"); L.append("%s%s, %%unused%d = gpu.shuffle idx %s, %s, %%j32 : f64"
                                   % (J, s1, ctr.i, hi, src)); ctr.i += 1
     # element = (L>>2) & 1
-    sh2 = ctr.fresh("t"); L.append("%s%s = arith.shrui %%li, %%c2 : i32" % (J, sh2))
-    par = ctr.fresh("t"); L.append("%s%s = arith.andi %s, %%c1 : i32" % (J, par, sh2))
-    odd = ctr.fresh("t"); L.append("%s%s = arith.cmpi eq, %s, %%c1 : i32" % (J, odd, par))
+    sh2 = ctr.fresh("t"); L.append("%s%s = arith.shrui %%li, %%j2 : i32" % (J, sh2))
+    par = ctr.fresh("t"); L.append("%s%s = arith.andi %s, %%j1 : i32" % (J, par, sh2))
+    odd = ctr.fresh("t"); L.append("%s%s = arith.cmpi eq, %s, %%j1 : i32" % (J, odd, par))
     sel = ctr.fresh("sv"); L.append("%s%s = arith.select %s, %s, %s : f64" % (J, sel, odd, s1, s0))
     b = ctr.fresh("b"); L.append("%s%s = vector.insert %s, %%zc1 [0, 0] : f64 into %s"
                                  % (J, b, sel, FRAG1))
     return b
 
 
-def emit_face_reg(L, ctr, J, n, mems):
-    """Register-resident face chain -> writes intf (C-frag) to mems['intf'].
+def emit_face_reg(L, ctr, J, n, mems, write=True):
+    """Register-resident face chain. If write, stores intf (C-frag) to
+    mems['intf']; ALWAYS returns the intf C-frag SSA so a register-resident
+    scatter can consume it without a memory round-trip.
        dt2 = interp @ Dm^T (transp) ; dt1 = Dm @ interp (std) ; no relayout
        flux = g2*deriv + g0*dt2 + g1*dt1  (per-lane C-frag)
        tmp  = flux @ W^T (transp)  -- flux C->A relayout
        intf = W @ tmp  (std)       -- tmp  C->B relayout
-    mems: {interp,deriv,Dm,W,g0,g1,g2,intf} nxn memref SSA names (+ '_ty')."""
+    mems: {interp,deriv,Dm,W,g0,g1,g2[,intf]} nxn memref SSA names (+ '_ty')."""
     def ty(kk):
         return mems.get(kk + "_ty", MR8)
     Im, Dm, Wm = mems["interp"], mems["Dm"], mems["W"]
@@ -156,8 +158,33 @@ def emit_face_reg(L, ctr, J, n, mems):
     intf = _contract2(L, ctr, J, n,
         lambda s: _read1(L, ctr, J, Wm, ty("W"), "%i", "%k" if s == 0 else "%k4"),
         lambda s: _relayout_c2b(L, ctr, J, tmp, s))
+    if write:
+        L.append("%svector.transfer_write %s, %s[%%i, %%tc] {in_bounds=[true,true]}"
+                 " : %s, %s" % (J, intf, mems["intf"], FRAG2, ty("intf")))
+    return intf
+
+
+def emit_scatter_reg(L, ctr, J, n, intf, ym, yty, yp, ypty):
+    """Register-resident +/- plane scatter: y[l] -= intf ; y[l+1] += intf, per
+    lane on C-frags (no smem, no warp region). ym/yp are the plane l / l+1
+    memref subviews (their types yty/ypty). Each lane owns disjoint (i,2k) cells
+    across all planes, so no cross-lane hazard within a direction; sequential
+    program order covers the l/l+1 loop-carried dep. A barrier is only needed
+    BETWEEN directions (different lane->cell mapping), handled by the caller."""
+    r0 = ctr.fresh("y")
+    L.append("%s%s = vector.transfer_read %s[%%i, %%tc], %%z {in_bounds=[true,true]}"
+             " : %s, %s" % (J, r0, ym, yty, FRAG2))
+    m0 = ctr.fresh("y")
+    L.append("%s%s = arith.subf %s, %s : %s" % (J, m0, r0, intf, FRAG2))
     L.append("%svector.transfer_write %s, %s[%%i, %%tc] {in_bounds=[true,true]} : "
-             "%s, %s" % (J, intf, mems["intf"], FRAG2, ty("intf")))
+             "%s, %s" % (J, m0, ym, FRAG2, yty))
+    r1 = ctr.fresh("y")
+    L.append("%s%s = vector.transfer_read %s[%%i, %%tc], %%z {in_bounds=[true,true]}"
+             " : %s, %s" % (J, r1, yp, ypty, FRAG2))
+    p1 = ctr.fresh("y")
+    L.append("%s%s = arith.addf %s, %s : %s" % (J, p1, r1, intf, FRAG2))
+    L.append("%svector.transfer_write %s, %s[%%i, %%tc] {in_bounds=[true,true]} : "
+             "%s, %s" % (J, p1, yp, FRAG2, ypty))
 
 
 
@@ -180,13 +207,13 @@ if __name__ == "__main__":
          "    %k4 = arith.addi %k, %c4i : index",
          "    %tc = arith.muli %k, %c2i : index",
          "    %li = arith.index_cast %lane : index to i32",
-         "    %c1 = arith.constant 1 : i32",
-         "    %c2 = arith.constant 2 : i32",
-         "    %c3 = arith.constant 3 : i32",
-         "    %c4 = arith.constant 4 : i32",
-         "    %c16 = arith.constant 16 : i32",
-         "    %c28 = arith.constant 28 : i32",
-         "    %c32 = arith.constant 32 : i32"]
+         "    %j1 = arith.constant 1 : i32",
+         "    %j2 = arith.constant 2 : i32",
+         "    %j3 = arith.constant 3 : i32",
+         "    %j4 = arith.constant 4 : i32",
+         "    %j16 = arith.constant 16 : i32",
+         "    %j28 = arith.constant 28 : i32",
+         "    %j32 = arith.constant 32 : i32"]
     mems = {kk: "%" + kk for kk in
             ["interp", "deriv", "Dm", "W", "g0", "g1", "g2", "intf"]}
     emit_face_reg(L, ctr, "    ", n, mems)

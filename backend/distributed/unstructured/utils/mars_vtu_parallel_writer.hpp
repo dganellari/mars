@@ -12,7 +12,9 @@
 #include <thrust/copy.h>
 #include <thrust/device_vector.h>
 #include <cuda_runtime.h>
+#include <tuple>
 #include "backend/distributed/unstructured/domain.hpp"
+#include "backend/distributed/unstructured/fem/mars_element_traits.hpp"
 
 namespace mars
 {
@@ -24,7 +26,7 @@ namespace fem
 // VTUParallelWriter<KeyType, RealType>::FieldKind.
 enum class VtuFieldKind { PointScalar, PointVector3, CellScalar };
 
-// Parallel VTU writer for hex8 unstructured meshes. Emits:
+// Parallel VTU writer for unstructured meshes (hex8 or tet4). Emits:
 //   - <prefix>_<step>_r<rank>.vtu (one per rank, owned elements + their nodes)
 //   - <prefix>_<step>.pvtu        (master, rank 0 only)
 //   - <prefix>.pvd                (time-collection, rank 0 only, appended)
@@ -34,12 +36,35 @@ enum class VtuFieldKind { PointScalar, PointVector3, CellScalar };
 // ParaView's pvtu reader merges them; duplicate ghost nodes are stitched by
 // position. We don't try to dedupe across ranks - simpler and ParaView handles it.
 //
-// Hex8 only for now. VTK cell type 12.
-template<typename KeyType, typename RealType>
+// Element type comes from ElementTag: hex8 -> VTK cell 12, tet4 -> VTK cell 10.
+// Defaults to HexTag so existing hex callers spell VTUParallelWriter<K,R>.
+template<typename KeyType, typename RealType, typename ElementTag = HexTag>
 class VTUParallelWriter
 {
 public:
-    using DomainT = ElementDomain<HexTag, RealType, KeyType, cstone::GpuTag>;
+    using DomainT = ElementDomain<ElementTag, RealType, KeyType, cstone::GpuTag>;
+
+    static constexpr int NPE         = ElemTraits<ElementTag>::NodesPerElem;
+    static constexpr int VtkCellType = (NPE == 4) ? 10 : 12;   // VTK_TETRA : VTK_HEXAHEDRON
+
+private:
+    // One body for the tet 4-tuple and the hex 8-tuple: expand the connectivity
+    // tuple with an index sequence instead of unrolling std::get<0..7> by hand.
+    template<typename ConnT, std::size_t... Is>
+    static void copyConnImpl(std::vector<KeyType>* hc, const ConnT& d_conn, size_t n,
+                             std::index_sequence<Is...>)
+    {
+        ((cudaMemcpy(hc[Is].data(), thrust::raw_pointer_cast(std::get<Is>(d_conn).data()),
+                     n * sizeof(KeyType), cudaMemcpyDeviceToHost)), ...);
+    }
+
+    template<typename ConnT>
+    static void copyConnToHost(std::vector<KeyType>* hc, const ConnT& d_conn, size_t n)
+    {
+        copyConnImpl(hc, d_conn, n, std::make_index_sequence<NPE>{});
+    }
+
+public:
 
     explicit VTUParallelWriter(const std::string& prefix) : prefix_(prefix) {}
 
@@ -154,27 +179,20 @@ private:
         std::vector<RealType> hu(nodeCount);
         cudaMemcpy(hu.data(), thrust::raw_pointer_cast(solution.data()), nodeCount * sizeof(RealType), cudaMemcpyDeviceToHost);
 
-        // Connectivity (8 per hex, full element range; we slice owned range)
+        // Connectivity (NPE per element, full range; we slice the owned range)
         const auto& d_conn = domain.getElementToNodeConnectivity();
         size_t fullElemCount = std::get<0>(d_conn).size();
-        std::vector<KeyType> hc[8];
-        for (int k = 0; k < 8; ++k) hc[k].resize(fullElemCount);
-        cudaMemcpy(hc[0].data(), thrust::raw_pointer_cast(std::get<0>(d_conn).data()), fullElemCount * sizeof(KeyType), cudaMemcpyDeviceToHost);
-        cudaMemcpy(hc[1].data(), thrust::raw_pointer_cast(std::get<1>(d_conn).data()), fullElemCount * sizeof(KeyType), cudaMemcpyDeviceToHost);
-        cudaMemcpy(hc[2].data(), thrust::raw_pointer_cast(std::get<2>(d_conn).data()), fullElemCount * sizeof(KeyType), cudaMemcpyDeviceToHost);
-        cudaMemcpy(hc[3].data(), thrust::raw_pointer_cast(std::get<3>(d_conn).data()), fullElemCount * sizeof(KeyType), cudaMemcpyDeviceToHost);
-        cudaMemcpy(hc[4].data(), thrust::raw_pointer_cast(std::get<4>(d_conn).data()), fullElemCount * sizeof(KeyType), cudaMemcpyDeviceToHost);
-        cudaMemcpy(hc[5].data(), thrust::raw_pointer_cast(std::get<5>(d_conn).data()), fullElemCount * sizeof(KeyType), cudaMemcpyDeviceToHost);
-        cudaMemcpy(hc[6].data(), thrust::raw_pointer_cast(std::get<6>(d_conn).data()), fullElemCount * sizeof(KeyType), cudaMemcpyDeviceToHost);
-        cudaMemcpy(hc[7].data(), thrust::raw_pointer_cast(std::get<7>(d_conn).data()), fullElemCount * sizeof(KeyType), cudaMemcpyDeviceToHost);
+        std::vector<KeyType> hc[NPE];
+        for (int k = 0; k < NPE; ++k) hc[k].resize(fullElemCount);
+        copyConnToHost(hc, d_conn, fullElemCount);
 
         // Mark which local node IDs are referenced by owned elements; compact-renumber.
         std::vector<int> remap(nodeCount, -1);
         std::vector<int> compact;
-        compact.reserve(numOwnedElem * 8);  // upper bound; many duplicates
+        compact.reserve(numOwnedElem * NPE);  // upper bound; many duplicates
         for (size_t e = elemStart; e < elemEnd; ++e)
         {
-            for (int k = 0; k < 8; ++k)
+            for (int k = 0; k < NPE; ++k)
             {
                 int nid = static_cast<int>(hc[k][e]);
                 if (remap[nid] < 0)
@@ -212,7 +230,7 @@ private:
         f << "<DataArray type=\"Int32\" Name=\"connectivity\" format=\"ascii\">\n";
         for (size_t e = elemStart; e < elemEnd; ++e)
         {
-            for (int k = 0; k < 8; ++k)
+            for (int k = 0; k < NPE; ++k)
             {
                 f << remap[static_cast<int>(hc[k][e])] << " ";
             }
@@ -221,11 +239,11 @@ private:
         f << "</DataArray>\n";
 
         f << "<DataArray type=\"Int32\" Name=\"offsets\" format=\"ascii\">\n";
-        for (size_t i = 1; i <= numOwnedElem; ++i) f << (8 * i) << "\n";
+        for (size_t i = 1; i <= numOwnedElem; ++i) f << (NPE * i) << "\n";
         f << "</DataArray>\n";
 
         f << "<DataArray type=\"UInt8\" Name=\"types\" format=\"ascii\">\n";
-        for (size_t i = 0; i < numOwnedElem; ++i) f << "12\n";  // VTK_HEXAHEDRON
+        for (size_t i = 0; i < numOwnedElem; ++i) f << VtkCellType << "\n";
         f << "</DataArray>\n";
         f << "</Cells>\n";
 
@@ -303,22 +321,15 @@ private:
 
         const auto& d_conn = domain.getElementToNodeConnectivity();
         size_t fullElemCount = std::get<0>(d_conn).size();
-        std::vector<KeyType> hc[8];
-        for (int k = 0; k < 8; ++k) hc[k].resize(fullElemCount);
-        cudaMemcpy(hc[0].data(), thrust::raw_pointer_cast(std::get<0>(d_conn).data()), fullElemCount * sizeof(KeyType), cudaMemcpyDeviceToHost);
-        cudaMemcpy(hc[1].data(), thrust::raw_pointer_cast(std::get<1>(d_conn).data()), fullElemCount * sizeof(KeyType), cudaMemcpyDeviceToHost);
-        cudaMemcpy(hc[2].data(), thrust::raw_pointer_cast(std::get<2>(d_conn).data()), fullElemCount * sizeof(KeyType), cudaMemcpyDeviceToHost);
-        cudaMemcpy(hc[3].data(), thrust::raw_pointer_cast(std::get<3>(d_conn).data()), fullElemCount * sizeof(KeyType), cudaMemcpyDeviceToHost);
-        cudaMemcpy(hc[4].data(), thrust::raw_pointer_cast(std::get<4>(d_conn).data()), fullElemCount * sizeof(KeyType), cudaMemcpyDeviceToHost);
-        cudaMemcpy(hc[5].data(), thrust::raw_pointer_cast(std::get<5>(d_conn).data()), fullElemCount * sizeof(KeyType), cudaMemcpyDeviceToHost);
-        cudaMemcpy(hc[6].data(), thrust::raw_pointer_cast(std::get<6>(d_conn).data()), fullElemCount * sizeof(KeyType), cudaMemcpyDeviceToHost);
-        cudaMemcpy(hc[7].data(), thrust::raw_pointer_cast(std::get<7>(d_conn).data()), fullElemCount * sizeof(KeyType), cudaMemcpyDeviceToHost);
+        std::vector<KeyType> hc[NPE];
+        for (int k = 0; k < NPE; ++k) hc[k].resize(fullElemCount);
+        copyConnToHost(hc, d_conn, fullElemCount);
 
         std::vector<int> remap(nodeCount, -1);
         std::vector<int> compact;
-        compact.reserve(numOwnedElem * 8);
+        compact.reserve(numOwnedElem * NPE);
         for (size_t e = elemStart; e < elemEnd; ++e)
-            for (int k = 0; k < 8; ++k) {
+            for (int k = 0; k < NPE; ++k) {
                 int nid = static_cast<int>(hc[k][e]);
                 if (remap[nid] < 0) { remap[nid] = static_cast<int>(compact.size()); compact.push_back(nid); }
             }
@@ -346,15 +357,15 @@ private:
         f << "<Cells>\n";
         f << "<DataArray type=\"Int32\" Name=\"connectivity\" format=\"ascii\">\n";
         for (size_t e = elemStart; e < elemEnd; ++e) {
-            for (int k = 0; k < 8; ++k) f << remap[static_cast<int>(hc[k][e])] << " ";
+            for (int k = 0; k < NPE; ++k) f << remap[static_cast<int>(hc[k][e])] << " ";
             f << "\n";
         }
         f << "</DataArray>\n";
         f << "<DataArray type=\"Int32\" Name=\"offsets\" format=\"ascii\">\n";
-        for (size_t i = 1; i <= numOwnedElem; ++i) f << (8 * i) << "\n";
+        for (size_t i = 1; i <= numOwnedElem; ++i) f << (NPE * i) << "\n";
         f << "</DataArray>\n";
         f << "<DataArray type=\"UInt8\" Name=\"types\" format=\"ascii\">\n";
-        for (size_t i = 0; i < numOwnedElem; ++i) f << "12\n";
+        for (size_t i = 0; i < numOwnedElem; ++i) f << VtkCellType << "\n";
         f << "</DataArray>\n";
         f << "</Cells>\n";
 

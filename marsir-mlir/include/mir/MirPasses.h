@@ -13,6 +13,8 @@ void registerLowerCopiesPass();
 void registerWarpDistributePass();
 // Registers --mir-warp-wrap (wrap per-element bodies in warp regions).
 void registerWarpWrapPass();
+// Registers --mir-chain-contracts (register-resident mma+shuffle chaining).
+void registerChainContractsPass();
 }  // namespace mir
 
 #endif  // MIR_MIRPASSES_H

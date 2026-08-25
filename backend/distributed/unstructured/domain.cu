@@ -844,11 +844,61 @@ __global__ void mapSfcToLocalIdKernel(const KeyType* sfc_conn,
     
     // Binary search using CUB for optimal performance
     KeyType local_id = cub::LowerBound(sorted_sfc, static_cast<int>(num_nodes), sfc_key);
-    
+
     // Verify the key was found (debug check)
     assert(local_id < num_nodes && sorted_sfc[local_id] == sfc_key);
-    
+
     local_conn[elemIdx] = local_id;
+}
+
+// Multi-block flatten: emit (key, block) per connectivity entry. block is the owning element's
+// block id, so a node reference's identity is (its key, its element's block). Coincident nodes on
+// different blocks get different identities and stay separate through the sort/unique.
+template<typename KeyType, size_t NodesPerElement>
+__global__ void flattenConnKeyBlockKernel(ConnPtrs<KeyType, NodesPerElement> conn,
+                                          const int* elemBlock,
+                                          KeyType* flat_keys,
+                                          int* flat_blocks,
+                                          size_t numElements)
+{
+    size_t elementIdx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (elementIdx >= numElements) return;
+
+    int blk = elemBlock[elementIdx];
+    size_t baseIdx = elementIdx * NodesPerElement;
+    #pragma unroll
+    for (int i = 0; i < NodesPerElement; ++i) {
+        flat_keys[baseIdx + i]   = conn.ptrs[i][elementIdx];
+        flat_blocks[baseIdx + i] = blk;
+    }
+}
+
+// Multi-block local-id resolution: the sorted node list is ordered by (key, block), so a key may
+// repeat consecutively (once per block). LowerBound lands on the start of the equal-key run; scan
+// that short run (length <= number of blocks touching the key) for the entry with the matching
+// block. That entry's position is the local id.
+template<typename KeyType>
+__global__ void mapSfcBlockToLocalIdKernel(const KeyType* sfc_conn,
+                                           const int* elem_block,
+                                           KeyType* local_conn,
+                                           const KeyType* sorted_sfc,
+                                           const int* sorted_block,
+                                           size_t num_elements,
+                                           size_t num_nodes)
+{
+    size_t elemIdx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (elemIdx >= num_elements) return;
+
+    KeyType sfc_key = sfc_conn[elemIdx];
+    int blk = elem_block[elemIdx];
+
+    int j = cub::LowerBound(sorted_sfc, static_cast<int>(num_nodes), sfc_key);
+    while (j < static_cast<int>(num_nodes) && sorted_sfc[j] == sfc_key) {
+        if (sorted_block[j] == blk) { local_conn[elemIdx] = static_cast<KeyType>(j); return; }
+        ++j;
+    }
+    assert(false && "mapSfcBlockToLocalIdKernel: (key, block) not found");
+    local_conn[elemIdx] = 0;
 }
 
 template<typename KeyType, typename RealType>
@@ -2624,6 +2674,26 @@ template __global__ void mapSfcToLocalIdKernel<unsigned int>(
 
 template __global__ void mapSfcToLocalIdKernel<uint64_t>(
     const uint64_t*, uint64_t*, const uint64_t*, size_t, size_t);
+
+// Multi-block node-identity kernels: same KeyType/NodesPerElement set as the single-block kernels
+// above (launched from the same header member functions, so they must be instantiated in this TU).
+template __global__ void flattenConnKeyBlockKernel<unsigned int, 3>(
+    ConnPtrs<unsigned int, 3>, const int*, unsigned int*, int*, size_t);
+template __global__ void flattenConnKeyBlockKernel<unsigned int, 4>(
+    ConnPtrs<unsigned int, 4>, const int*, unsigned int*, int*, size_t);
+template __global__ void flattenConnKeyBlockKernel<unsigned int, 8>(
+    ConnPtrs<unsigned int, 8>, const int*, unsigned int*, int*, size_t);
+template __global__ void flattenConnKeyBlockKernel<uint64_t, 3>(
+    ConnPtrs<uint64_t, 3>, const int*, uint64_t*, int*, size_t);
+template __global__ void flattenConnKeyBlockKernel<uint64_t, 4>(
+    ConnPtrs<uint64_t, 4>, const int*, uint64_t*, int*, size_t);
+template __global__ void flattenConnKeyBlockKernel<uint64_t, 8>(
+    ConnPtrs<uint64_t, 8>, const int*, uint64_t*, int*, size_t);
+
+template __global__ void mapSfcBlockToLocalIdKernel<unsigned int>(
+    const unsigned int*, const int*, unsigned int*, const unsigned int*, const int*, size_t, size_t);
+template __global__ void mapSfcBlockToLocalIdKernel<uint64_t>(
+    const uint64_t*, const int*, uint64_t*, const uint64_t*, const int*, size_t, size_t);
 
 // Explicit instantiations for decodeSfcToPhysical
 template __device__ __host__ std::tuple<float, float, float> decodeSfcToPhysical<unsigned, float>(unsigned, const cstone::Box<float>&);

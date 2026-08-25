@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <numeric>
 #include <cstdint>
+#include <utility>
 #include <mpi.h>
 #include "mars.hpp"
 
@@ -313,6 +314,45 @@ inline auto readMeshWithElementPartitioning(const std::string& meshDir, int rank
 
     return std::make_tuple(nodeCount, elementCount, std::move(x_data), std::move(y_data), std::move(z_data),
                            std::move(localConnectivity), neededNodes);
+}
+
+// Companion to readMeshWithElementPartitioning: read ONLY the optional per-element block id column
+// (element-block-at-load, for block-aware node identity). Uses the SAME header + per-rank element
+// slice as the main reader, so elemBlock[e] lines up with connectivity column [e]. A directory mesh
+// WITHOUT a block.uint16 file (every single-block mesh we run today) returns all-zero + numBlocks==1
+// -> the caller keeps the single-block fast path, byte-identical. Kept separate so the main reader's
+// return tuple (and its unpack sites) stay unchanged.
+inline std::pair<std::vector<int>, size_t>
+readBinaryElementBlocks(const std::string& meshDir, int rank, int numRanks)
+{
+    MeshFileHeader header = broadcastHeader(meshDir, rank);
+    size_t total_elements = header.totalElements;
+
+    size_t elemPerRank  = total_elements / static_cast<size_t>(numRanks);
+    size_t elemStartIdx = static_cast<size_t>(rank) * elemPerRank;
+    size_t elemEndIdx   = (rank == numRanks - 1) ? total_elements : elemStartIdx + elemPerRank;
+    size_t elementCount = elemEndIdx - elemStartIdx;
+
+    std::vector<int> elemBlock(elementCount, 0);
+    size_t numBlocks = 1;
+
+    // Compact uint16 on disk (block ids are small); widened to int in memory to match the device type.
+    std::ifstream blk_file(meshDir + "/block.uint16", std::ios::binary);
+    if (blk_file)
+    {
+        std::vector<uint16_t> tmp(elementCount);
+        blk_file.seekg(static_cast<std::streamoff>(elemStartIdx * sizeof(uint16_t)));
+        blk_file.read(reinterpret_cast<char*>(tmp.data()),
+                      static_cast<std::streamsize>(elementCount * sizeof(uint16_t)));
+        elemBlock.assign(tmp.begin(), tmp.end());
+        // A per-rank slice can't know the global block count; reduce the max block id across ranks.
+        int localMax = elemBlock.empty() ? 0 : *std::max_element(elemBlock.begin(), elemBlock.end());
+        int globalMax = localMax;
+        MPI_Allreduce(&localMax, &globalMax, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+        numBlocks = static_cast<size_t>(globalMax) + 1;
+    }
+
+    return { std::move(elemBlock), numBlocks };
 }
 
 /**

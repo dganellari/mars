@@ -12,6 +12,8 @@
 #include <map>
 #include <array>
 #include <unordered_set>
+#include <utility>
+#include <cstdint>
 #include "mars.hpp"
 
 #ifdef MARS_HAVE_NETCDF
@@ -235,6 +237,62 @@ inline auto readExodusMeshWithElementPartitioning(const std::string& meshFile, i
     return std::make_tuple(nodeCount, elementCount,
                            std::move(x_coords), std::move(y_coords), std::move(z_coords),
                            std::move(connectivity), std::move(localToGlobal), std::move(boundaryNodes));
+}
+
+// Lightweight companion to readExodusMeshWithElementPartitioning: read ONLY the per-element block id
+// (element-block-at-load, for block-aware node identity). It reproduces the SAME per-rank element
+// partition as the main reader (mars_read_exodus_mesh.hpp:162-166) and walks blocks in the same order
+// the main reader flattens them, so elemBlock[e] lines up with connectivity column [e]. Kept separate
+// so the main reader's return tuple (and its many unpack sites) stay unchanged. numBlocks == 1 means a
+// single element block -> the caller keeps the single-block fast path. Not templated on N/RealType/
+// KeyType: a block id is per-element and independent of the node count.
+inline std::pair<std::vector<int>, size_t>
+readExodusElementBlocks(const std::string& meshFile, int rank, int numRanks)
+{
+    int ncid;
+    NC_CHECK(nc_open(meshFile.c_str(), NC_NOWRITE, &ncid));
+
+    int num_el_blk_dim;
+    size_t num_el_blk = 0;
+    NC_CHECK(nc_inq_dimid(ncid, "num_el_blk", &num_el_blk_dim));
+    NC_CHECK(nc_inq_dimlen(ncid, num_el_blk_dim, &num_el_blk));
+
+    // Global per-element block id, blocks walked 1..num_el_blk accumulating (same order as the main
+    // reader's flatten loop) so global element indices align.
+    std::vector<int> all_block;
+    for (size_t blk = 1; blk <= num_el_blk; ++blk) {
+        char dim_name[64];
+        snprintf(dim_name, sizeof(dim_name), "num_el_in_blk%zu", blk);
+        int dim_id;
+        size_t num_el_in_blk = 0;
+        NC_CHECK(nc_inq_dimid(ncid, dim_name, &dim_id));
+        NC_CHECK(nc_inq_dimlen(ncid, dim_id, &num_el_in_blk));
+        all_block.insert(all_block.end(), num_el_in_blk, static_cast<int>(blk - 1));
+    }
+
+    // total_elements: prefer the num_elem dim (what the main reader uses when present), else the block
+    // sum. They agree for valid Exodus; pad defensively if num_elem is larger.
+    size_t total_elements = all_block.size();
+    int num_elem_dim;
+    if (nc_inq_dimid(ncid, "num_elem", &num_elem_dim) == NC_NOERR) {
+        size_t ne = 0;
+        NC_CHECK(nc_inq_dimlen(ncid, num_elem_dim, &ne));
+        total_elements = ne;
+    }
+    NC_CHECK(nc_close(ncid));
+    if (all_block.size() < total_elements) all_block.resize(total_elements, 0);
+
+    // Identical partition to the main reader so elemBlock[e] <-> connectivity column [e].
+    size_t elemPerRank  = total_elements / numRanks;
+    size_t elemStartIdx = static_cast<size_t>(rank) * elemPerRank;
+    size_t elemEndIdx   = (rank == numRanks - 1) ? total_elements : elemStartIdx + elemPerRank;
+    size_t elementCount = elemEndIdx - elemStartIdx;
+
+    std::vector<int> elemBlock(elementCount);
+    for (size_t e = 0; e < elementCount; ++e)
+        elemBlock[e] = all_block[elemStartIdx + e];
+
+    return { std::move(elemBlock), num_el_blk == 0 ? size_t(1) : num_el_blk };
 }
 
 // Read all named side-sets from an Exodus mesh and return a map from side-set
@@ -673,6 +731,14 @@ inline auto readExodusMeshWithElementPartitioning(const std::string& meshFile, i
     return std::make_tuple(size_t(0), size_t(0),
                            std::vector<RealType>(), std::vector<RealType>(), std::vector<RealType>(),
                            createNVectors(0), std::vector<KeyType>(), std::vector<uint8_t>());
+}
+
+// Stub: without netCDF a .exo is unreadable (the main reader above throws first), so return the
+// single-block default. Signature matches the real implementation.
+inline std::pair<std::vector<int>, size_t>
+readExodusElementBlocks(const std::string&, int, int)
+{
+    return { std::vector<int>(), size_t(1) };
 }
 
 struct ExodusSideSets
