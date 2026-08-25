@@ -1408,6 +1408,8 @@ public:
         }
 
         using HKey = cstone::HilbertKey<KeyType>;
+        static const bool ssDbg = std::getenv("MARS_SS_RESOLVE_DEBUG") != nullptr;
+        size_t ssMisses = 0;
         std::vector<int> local(coords.size(), -1);
         for (size_t i = 0; i < coords.size(); ++i)
         {
@@ -1416,7 +1418,27 @@ public:
                                               RealType(c[2]), box_).value();
             auto it = std::lower_bound(hostSfc.begin(), hostSfc.end(), key);
             if (it == hostSfc.end() || *it != key)
+            {
+                // MARS_SS_RESOLVE_DEBUG: a side-set coord that encodes to a key absent from the
+                // local map. The runtime node coords are DECODED from these keys, so the key is
+                // the identity -- a miss means re-encoding the file coord did not reproduce the
+                // key stored at mesh-read time. Print the bracketing map keys: a delta in the
+                // LOW bits means the coord fell in a neighbouring quantization cell (fix = a
+                // tolerance / nearest-node fallback); a large delta means something structural
+                // (different box, different coords, or the node is genuinely not here).
+                if (ssDbg && ssMisses < 10 && rank_ == 0)
+                {
+                    size_t pos = size_t(it - hostSfc.begin());
+                    KeyType lo = (pos > 0) ? hostSfc[pos - 1] : KeyType(0);
+                    KeyType hi = (it != hostSfc.end()) ? *it : KeyType(0);
+                    std::cout << "  [ss-miss] coord=(" << c[0] << ", " << c[1] << ", " << c[2]
+                              << ")  key=" << key
+                              << "  prev=" << lo << " (key-prev=" << (key - lo) << ")"
+                              << "  next=" << hi << " (next-key=" << (hi - key) << ")\n";
+                }
+                ++ssMisses;
                 continue;
+            }
             int pos = int(it - hostSfc.begin());
             if (blockAware)
             {
@@ -1430,6 +1452,9 @@ public:
             }
             local[i] = pos;
         }
+        if (ssDbg && rank_ == 0)
+            std::cout << "  [ss-miss] " << ssMisses << " of " << coords.size()
+                      << " side-set coords did not resolve to a local node key\n";
         return local;
     }
 
