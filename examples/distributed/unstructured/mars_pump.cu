@@ -125,6 +125,7 @@ int main(int argc, char** argv)
     // earlier solved-field version. Pairs with the mass-conserving outlet + pumpDp=0.
     // Opening-flux source is OFF by default; enable with --opening-flux-source.
     // Dirichlet lift ON (a correctness fix); --no-dirichlet-lift disables for comparison.
+    bool        fluxNeumann       = false;   // --flux-neumann: flux-consistent Neumann openings
     bool        openingFluxSource = false;
     bool        openNormalProj    = false;   // FIX-B #3: project open-face velocity to normal-only
     bool        totalPressure     = false;   // FIX-B #2: dynamic-head inlet target (totalPressure)
@@ -166,6 +167,7 @@ int main(int argc, char** argv)
         else if (a == "--inlet-pernode-normal")      inletPernodeNormal = true;
         else if (a == "--no-inlet-pernode-normal")   inletPernodeNormal = false; // global averaged normal (legacy)
         else if (a == "--inlet-flip-normal")         inletFlipNormal = true;     // flip if vectors come out outward
+        else if (a == "--flux-neumann")              fluxNeumann = true;   // openings keep assembled rows; flux via the pressure RHS
         else if (a == "--pump-uniform-ic")           pumpUniformIC = true;       // legacy free-stream IC (default: start from rest)
         else if (a.rfind("--inlet-velocity=", 0) == 0) inletU  = std::stod(a.substr(17));
         else if (a.rfind("--pump-dp=", 0) == 0)        pumpDp  = std::stod(a.substr(10));   // FIX B: pressure-drop drive (inlet p=pumpDp, outlet p=0, free velocities)
@@ -415,6 +417,21 @@ int main(int argc, char** argv)
     // compatible and through-flow develops. The source REQUIRES the mass-conserving
     // outlet (so outletU>0 and the outlet term is nonzero); see the guard below.
     s.useOpeningFluxSource = openingFluxSource;   // FIX 1 (OFF by default; --opening-flux-source enables)
+    // --flux-neumann needs S_target in the pressure RHS, which IS the opening-flux source
+    // (d_femFluxWin/Wout, the consistent P1 face weights built below). Force it on, and force
+    // the FEM projection path since those weights only replace the lumped source there.
+    // What flux-neumann changes on top is the other half: the openings keep their assembled
+    // pressure rows and their velocities stay free (see mars_ns_pump_solver.hpp, fluxNeumann).
+    s.fluxNeumann = fluxNeumann;
+    if (fluxNeumann)
+    {
+        s.useOpeningFluxSource = true;
+        s.useFemProjection     = true;
+        if (rank == 0 && pumpDp > 0.0)
+            std::cerr << "WARNING: --flux-neumann and --pump-dp are different drives "
+                         "(imposed flux vs imposed head); --pump-dp masks the openings "
+                         "Dirichlet and will override flux-neumann's unmasked rows.\n";
+    }
     s.useDirichletLift     = dirichletLift;       // FIX 2 (on by default)
     s.pumpDp               = RealType(pumpDp);    // FIX B: pressure-drop drive (>0 active)
     s.useOpenFaceNormalProj = (pumpDp > 0.0) && openNormalProj;  // FIX-B #3

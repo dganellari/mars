@@ -3004,6 +3004,19 @@ struct NSStepper
     // pumpDp<=0 disables FIX B entirely: the pump behaves exactly as the legacy
     // mass-conserving (or do-nothing) velocity outlet. Driver sets it from --pump-dp=.
     RealType pumpDp = 0;
+
+    // Flux-consistent Neumann openings (--flux-neumann). The openings keep their
+    // ASSEMBLED pressure rows instead of being masked Dirichlet, and the target flux
+    // enters the pressure RHS as S_i = sum_j (A_f/12)(1+delta_ij) Un_j -- which the
+    // driver already builds as d_femFluxWin/Wout. The opening VELOCITIES are then left
+    // free: locking them is what makes the flux source inconsistent (the projection is
+    // asked to satisfy a constraint at nodes the corrector may not touch), and is why
+    // --opening-flux-source alone blows up. Needs one INTERIOR null-space pin: a pin
+    // sitting on an opening corrupts that face's row. Derivation + 1-element and
+    // multi-element replicas (O(h) convergent): internal-notes/plan_flux_neumann_inlet.md
+    // sections 8-11, scripts/flux_neumann_replica{,_multi}.py.
+    bool fluxNeumann = false;
+    int  pressurePinInteriorDof = -1;   // chosen off the openings when fluxNeumann
     // Ramp-start fraction for the seeded head (driver sets = 1/sourceRampSteps
     // when ramping, else 1). Avoids a full-head grad(p^n) kick on step 0.
     RealType pumpDpSeedScale = 1;
@@ -4614,7 +4627,11 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
             // the pressure-BC block), NOT a velocity Dirichlet. Do NOT tag the inlet
             // here -- it must stay out of d_isBdryDof/uTarget so the corrector is
             // free to drive its velocity from the interior pressure gradient.
-            if (s.pumpDp <= RealType(0))
+            // fluxNeumann: same reasoning as FIX B, different mechanism. The inlet flux
+            // is imposed through the pressure RHS (S_target), so the inlet velocity must
+            // stay FREE -- locking it here is exactly the inconsistency that makes the
+            // opening-flux source blow up.
+            if (s.pumpDp <= RealType(0) && !s.fluxNeumann)
             {
                 const bool inletPerNode =
                     s.inletDirXPerNode.size() == s.inletNodes.size() &&
@@ -4647,7 +4664,9 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
             // (legacy) and only gets the p=0 pressure Dirichlet below.
             // FIX B (pumpDp>0): outlet velocity stays FREE (driven by the p=0
             // Dirichlet + interior gradient), so never velocity-tag it.
-            if (s.pumpDp <= RealType(0) && s.outletU > RealType(0))
+            // fluxNeumann: the outlet flux is imposed through the pressure RHS too, so
+            // its velocity also stays free.
+            if (s.pumpDp <= RealType(0) && !s.fluxNeumann && s.outletU > RealType(0))
                 tag(s.outletNodes, RealType(s.outletU * s.outletDirX),
                                        RealType(s.outletU * s.outletDirY),
                                        RealType(s.outletU * s.outletDirZ));
@@ -5278,6 +5297,11 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
         // Dirichlet faces make A nonsingular, no single pin is needed.
         bool singlePin = (s.outletU > RealType(0));
         if (s.pumpDp > RealType(0)) singlePin = false;
+        // fluxNeumann: NEITHER opening is masked. Both keep their assembled rows and the
+        // target flux enters the RHS (S_target = d_femFluxWin/Wout). That leaves the
+        // pressure pure-Neumann, so exactly one pin is needed -- and it must sit on an
+        // INTERIOR node: a pin on an opening corrupts that face's row (1-element replica).
+        if (s.fluxNeumann) singlePin = false;
         int  pinRankLocal = singlePin ? s.numRanks : -1;  // for the global argmin
         size_t ownedOutletCount = 0;
         int firstOutletDof = -1;
@@ -5288,7 +5312,7 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
             int dof = hostNodeToDof[li];
             if (dof < 0 || dof >= s.numOwnedDofs) continue;
             if (firstOutletDof < 0) firstOutletDof = dof;
-            if (!singlePin) { hostMask[dof] = 1; ++ownedOutletCount; }
+            if (!singlePin && !s.fluxNeumann) { hostMask[dof] = 1; ++ownedOutletCount; }
             // FIX B: outlet target p=0 (explicit for clarity; zero-init already).
             if (s.pumpDp > RealType(0)) hostTarget[dof] = RealType(0);
         }
@@ -5370,6 +5394,33 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
         // mode (FlexGMRES then "converges" at x=0 in 2 iters). Tracking the pin
         // DOF here lets the DDT block below restore its native diagonal so AMG
         // sees a uniformly-scaled SPD row, matching the cavity fix.
+        // fluxNeumann null-space pin. Pure-Neumann pressure -> phi is fixed only up to a
+        // constant, so pin exactly ONE dof, on an INTERIOR node (not on either opening --
+        // a pin there corrupts that face's flux row). Lowest rank that owns a candidate
+        // wins, so every rank agrees on the single global pin.
+        if (s.fluxNeumann)
+        {
+            std::vector<uint8_t> onOpening(s.nodeCount, 0);
+            for (int li : s.inletNodes)  if (li >= 0 && (size_t)li < s.nodeCount) onOpening[li] = 1;
+            for (int li : s.outletNodes) if (li >= 0 && (size_t)li < s.nodeCount) onOpening[li] = 1;
+            int cand = -1;
+            for (size_t li = 0; li < s.nodeCount && cand < 0; ++li)
+            {
+                if (onOpening[li] || hostOwn[li] != 1) continue;
+                int dof = hostNodeToDof[li];
+                if (dof >= 0 && dof < s.numOwnedDofs) cand = dof;
+            }
+            int haveCand = (cand >= 0) ? s.rank : s.numRanks;
+            int pinRank  = s.numRanks;
+            MPI_Allreduce(&haveCand, &pinRank, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
+            s.pressurePinRank = pinRank;
+            s.pressurePinDof  = (s.rank == pinRank) ? cand : -1;
+            s.pressurePinInteriorDof = s.pressurePinDof;
+            if (s.pressurePinDof >= 0) hostMask[s.pressurePinDof] = 1;   // one Dirichlet row
+            if (s.rank == 0 && pinRank >= s.numRanks)
+                std::cerr << "WARNING: --flux-neumann found no interior pin candidate; the "
+                             "pressure system is singular.\n";
+        }
         if (singlePin && !(s.pumpDp > RealType(0)))
         {
             int haveOutlet = (firstOutletDof >= 0) ? s.rank : s.numRanks;
@@ -5380,7 +5431,12 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
         }
         if (s.rank == 0)
         {
-            if (s.pumpDp > RealType(0))
+            if (s.fluxNeumann)
+                std::cout << "  pressure BC (flux-Neumann): openings UNMASKED (assembled rows kept),"
+                          << " target flux via S_target; one interior pin"
+                          << " (dof=" << s.pressurePinInteriorDof << " on rank "
+                          << s.pressurePinRank << ")\n";
+            else if (s.pumpDp > RealType(0))
                 std::cout << "  pressure BC (FIX B): Dirichlet p=" << s.pumpDp
                           << " on whole inlet side-set, p=0 on whole outlet side-set"
                           << " (" << ownedInletCount << " inlet + " << ownedOutletCount
