@@ -3,6 +3,10 @@
 One row per slide claim: which driver produces it, how to run it, what to read
 off the output. Build targets are yours to run; only launch lines are listed.
 
+Background reading: [Matrix-Free-Tutorial.md](Matrix-Free-Tutorial.md) (the full
+reference) and [Matrix-Free-Scaling.md](Matrix-Free-Scaling.md)
+(the scaling claims).
+
 ## Building
 
 The GPU drivers below are gated on three flags -- see
@@ -82,6 +86,12 @@ srun -A csstaff -t 00:10:00 -N1 -n1 \
 Reads: the per-order sweep table (GDOF/s, GFLOP/s, B/DOF). Also runs the four
 correctness gates (metric vs host, single-element bit-exact, A*1 = 0,
 A*linear = 0) plus a sheared-mesh gate.
+
+Add `--dof-self-check` (or `MARS_HO_DOF_SELF_CHECK=1`) to prepend the DOF
+numbering gate: host `HODofHandler::build()` vs the single-rank GPU
+`buildGpu()`, p=1..7. The DOF ids are a permutation of each other by design, so
+it compares numDof/nEdge/nFace, the DofKey multiset, and the elemDof
+identification classes. Off by default; the gates above are unaffected.
 
 Against the assembled operator (crossover at p=1, where assembled SpMV wins):
 
@@ -213,5 +223,3 @@ benchmark. Do not quote its numbers on a CVFEM slide.
 | [mars_cvfem_ho_basis.hpp](../backend/distributed/unstructured/fem/mars_cvfem_ho_basis.hpp) | builds Btil / Dtil / D / W |
 | [mars_cvfem_ho_matfree.hpp](../backend/distributed/unstructured/fem/mars_cvfem_ho_matfree.hpp) | GPU PA + MF kernels |
 | [mars_cvfem_ho_matfree_shfl.hpp](../backend/distributed/unstructured/fem/mars_cvfem_ho_matfree_shfl.hpp) | register + warp-shuffle kernel (published throughput) |
-
-Docs: [TUTORIAL_matfree.md](TUTORIAL_matfree.md) &middot; [MATFREE_SCALING_ACHIEVEMENT.md](MATFREE_SCALING_ACHIEVEMENT.md)
