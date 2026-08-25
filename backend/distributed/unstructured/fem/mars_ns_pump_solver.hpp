@@ -1932,6 +1932,7 @@ __global__ void assembleConvectionTetKernel(
     const RealType* un, const RealType* vn, const RealType* wn,
     const int* nodeToDof, const uint8_t* ownership, const uint8_t* isBdryDof,
     const int* rowPtr, const int* colInd, int numOwnedDofs,
+    RealType nu, RealType dt, int supgOn,
     RealType* vals, size_t numElem)
 {
     size_t e = blockIdx.x * blockDim.x + threadIdx.x;
@@ -1955,9 +1956,38 @@ __global__ void assembleConvectionTetKernel(
     for (int i = 0; i < 4; ++i) { ax += un[n[i]]; ay += vn[n[i]]; az += wn[n[i]]; }
     ax *= RealType(0.25); ay *= RealType(0.25); az *= RealType(0.25);
 
-    RealType cj[4];
+    RealType aDotG[4];
     for (int j = 0; j < 4; ++j)
-        cj[j] = qV * (ax * dNdx[j][0] + ay * dNdx[j][1] + az * dNdx[j][2]);
+        aDotG[j] = ax * dNdx[j][0] + ay * dNdx[j][1] + az * dNdx[j][2];
+
+    RealType cj[4];
+    for (int j = 0; j < 4; ++j) cj[j] = qV * aDotG[j];
+
+    // SUPG streamline term tau*(a.grad N_i)(a.grad N_j)*vol. Plain Galerkin
+    // convection has EXACTLY zero row sum (sum_j grad N_j == 0 on P1), so it
+    // contributes no diagonal at all. Once |C| overtakes the mass block --
+    // which happens above CFL ~ 1.5, the whole point of implicit advection --
+    // the matrix loses diagonal dominance and a Jacobi-preconditioned GMRES
+    // stagnates (measured: 2000 iters, residual 1.0 -> 0.43). This term is
+    // symmetric positive-definite, so it restores that dominance, and it is
+    // the FEM form of upwinding, so it also kills the high-Peclet wiggles.
+    RealType tau = 0;
+    if (supgOn) {
+        RealType amag = sqrt(ax * ax + ay * ay + az * az);
+        if (amag > RealType(1e-30)) {
+            // sum_i |a.grad N_i| is exactly 2|a|/h with h measured ALONG the
+            // streamline, so it already IS tau's advective term -- no separate
+            // element length needed.
+            RealType g = 0;
+            for (int i = 0; i < 4; ++i) g += fabs(aDotG[i]);
+            if (g > RealType(0)) {
+                RealType hs   = RealType(2) * amag / g;
+                RealType tTr  = RealType(2) / dt;              // transient limit
+                RealType tDif = RealType(4) * nu / (hs * hs);  // diffusive limit
+                tau = RealType(1) / sqrt(tTr * tTr + g * g + tDif * tDif);
+            }
+        }
+    }
 
     for (int i = 0; i < 4; ++i) {
         if (ownership[n[i]] != 1) continue;
@@ -1968,7 +1998,9 @@ __global__ void assembleConvectionTetKernel(
         for (int j = 0; j < 4; ++j) {
             int dofJ = nodeToDof[n[j]];
             if (dofJ < 0) continue;
-            fem::atomicAddSparseEntry(vals, colInd, rs, re, dofJ, cj[j]);
+            RealType v = cj[j];
+            if (tau > RealType(0)) v += tau * vol * aDotG[i] * aDotG[j];
+            fem::atomicAddSparseEntry(vals, colInd, rs, re, dofJ, v);
         }
     }
 }
@@ -2915,6 +2947,9 @@ struct NSStepper
     // predictor. The step is then limited by accuracy, not CFL. OFF -> every
     // line below is skipped and the run is byte-identical to the explicit path.
     bool implicitAdvection = false;
+    // SUPG streamline stabilization on C(u^n). --supg. OFF leaves the plain
+    // Galerkin convection operator byte-identical.
+    bool useSupg = false;
     // Pristine velocity-matrix values (mass coefficient + nu*K + BC rows),
     // snapshotted from Avel/Avel_bdf2 right after the SparseMatrix wrap. C(u^n)
     // changes every step, so the base has to be restored before each re-scatter
@@ -6792,9 +6827,12 @@ int solveOneComponent(NSStepper<KeyType, RealType, ElementTag>& s,
         else  // KrylovHint::GMRES
         {
             using HSol = mars::fem::HypreGMRESSolver<RealType, int, cstone::GpuTag>;
-            // forceGmres == the --implicit-advection VELOCITY solve. That matrix is
-            // mass-dominated, so Jacobi is near-exact on it while BoomerAMG returns
-            // x~0 (see the forceCG note above). Pin Jacobi locally instead of via
+            // forceGmres == the --implicit-advection VELOCITY solve. NOTE: the
+            // "mass-dominated, so Jacobi is near-exact" claim this used to make is
+            // WRONG once C(u^n) is in the matrix -- |C|/|M| ~ (2/3)*CFL, so above
+            // CFL ~ 1.5 convection dominates and Jacobi stagnates. --supg restores
+            // the diagonal that makes Jacobi viable again. BoomerAMG still returns
+            // x~0 here (see the forceCG note above). Pin Jacobi locally instead of via
             // MARS_HYPRE_PRECOND: that env var is read by every Hypre solve, so using
             // it here would also strip AMG off the PRESSURE solve, which needs it
             // (measured: cg_p 24 -> 2000 at the iteration cap).
@@ -8313,6 +8351,7 @@ void runImplicitDiffusionStep(NSStepper<KeyType, RealType, ElementTag>& s, RealT
                     s.d_u.data(), s.d_v.data(), s.d_w.data(),
                     s.d_node_to_dof.data(), d_nodeOwnership.data(), s.d_isBdryDof.data(),
                     s.d_rowPtr.data(), s.d_colInd.data(), s.numOwnedDofs,
+                    s.nuCached, dt, s.useSupg ? 1 : 0,
                     velVals, s.elementCount);
             }
             cudaDeviceSynchronize();

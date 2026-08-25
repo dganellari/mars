@@ -80,6 +80,7 @@ int main(int argc, char** argv)
     // no longer CFL-limited. Costs a non-symmetric velocity solve (GMRES).
     // OFF -> the explicit EXT2 path runs exactly as before.
     bool        implicitAdv = false;
+    bool        supg        = false;   // --supg: SUPG streamline stabilization on C(u^n)
     bool        useBdf2     = true;    // --bdf1 forces BDF1/Chorin (1st-order time, more stable for explicit advection)
     bool        useRhieChow = false;   // compact RC is geometrically unsafe on tets (blows up at every tau); --rhie-chow to force on
     RealType    rhieTau    = -1;       // RC strength; <=0 -> auto dt/rho. --rhie-tau= to sweep
@@ -152,6 +153,7 @@ int main(int argc, char** argv)
         else if (a == "--bdf1")                      useBdf2    = false; // diagnostic: BDF1/Chorin instead of BDF2/EXT2
         else if (a.rfind("--advection=", 0) == 0)    advScheme  = a.substr(12); // skew|upwind|barth-jespersen
         else if (a == "--implicit-advection")        implicitAdv = true; // C(u^n) in the velocity matrix; not CFL-limited (tet-only, needs Hypre)
+        else if (a == "--supg")                      supg = true;        // SUPG stabilization on the implicit convection operator
         else if (a == "--no-rhie")                   useRhieChow = false; // plain Galerkin divergence (checkerboard-prone)
         else if (a == "--rhie-chow")                 useRhieChow = true;
         else if (a.rfind("--rhie-tau=", 0) == 0)     rhieTau   = std::stod(a.substr(11));
@@ -218,6 +220,8 @@ int main(int argc, char** argv)
                     "                       does NOT match a physically-defined Re. Prefer --nu/--rho.\n"
                     "  --dt=V --num-steps=N time stepping (default 1e-3, 200)\n"
                     "  --source-ramp-steps=N ramp inlet drive 0->full over N steps (gentle startup; default 0=off)\n"
+                    "  --supg              SUPG streamline stabilization on the implicit convection operator\n"
+                    "                      (needs --implicit-advection; required above CFL~1.5 or the velocity GMRES stagnates)\n"
                     "  --cfl=C              adaptive dt: cap advective CFL at C (~0.5 for BJ+BDF2)\n"
                     "  --implicit-advection semi-implicit convection: freeze u^n, assemble C(u^n) into\n"
                     "                       the velocity matrix and drop the explicit EXT2 term. Removes\n"
@@ -403,6 +407,12 @@ int main(int argc, char** argv)
     // Must be set BEFORE setupNSStepper: it decides whether the setup snapshots
     // the pristine velocity matrix and builds the global DOF map Hypre needs.
     s.implicitAdvection = implicitAdv;
+    s.useSupg           = supg;
+    // SUPG only enters through C(u^n); without implicit advection there is no
+    // matrix to stabilize and the flag would be silently inert.
+    if (rank == 0 && supg && !implicitAdv)
+        std::cerr << "WARNING: --supg applies to the --implicit-advection convection "
+                     "operator; ignored without it.\n";
     // Compact Rhie-Chow on the divergence operator: couples odd/even pressure
     // nodes so the projection can see (and kill) the checkerboard mode that
     // leaves div*L/U stuck. tau auto = dt/rho. --no-rhie for an A/B comparison.
