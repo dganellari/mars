@@ -1913,6 +1913,66 @@ __global__ void assemblePSPGStiffnessTetKernel(
     }
 }
 
+// Linearized convection block C for --implicit-advection (tet-only).
+//   C_ij = int N_i (a . grad N_j) = (V/4) * (a . grad N_j)
+// with a = element-mean u^n. On a linear tet a.gradN_j is constant over the
+// element and int N_i = V/4, so the quadrature is exact -- this is the same
+// consistent-Galerkin form the coupled momentum block uses
+// (mars_coupled_model_operator.cu, assembleMomentumKernel).
+// C is NOT symmetric: rows carry the same value for every i, columns differ.
+// Dirichlet rows are SKIPPED: BC enforcement already made them identity rows,
+// and this kernel re-runs every step, so touching them would destroy the BC.
+// Dirichlet COLUMNS are kept -- the Dirichlet row is an identity row with
+// b = target, so the solve carries the exact boundary value into C_ij*u_j and
+// no separate lift term is needed for the convective part.
+template<typename KeyType, typename RealType>
+__global__ void assembleConvectionTetKernel(
+    const KeyType* c0, const KeyType* c1, const KeyType* c2, const KeyType* c3,
+    const RealType* nodeX, const RealType* nodeY, const RealType* nodeZ,
+    const RealType* un, const RealType* vn, const RealType* wn,
+    const int* nodeToDof, const uint8_t* ownership, const uint8_t* isBdryDof,
+    const int* rowPtr, const int* colInd, int numOwnedDofs,
+    RealType* vals, size_t numElem)
+{
+    size_t e = blockIdx.x * blockDim.x + threadIdx.x;
+    if (e >= numElem) return;
+    const KeyType* cc[4] = {c0, c1, c2, c3};
+    KeyType n[4];
+    for (int i = 0; i < 4; ++i) n[i] = cc[i][e];
+    RealType coords[4][3];
+    for (int i = 0; i < 4; ++i) {
+        coords[i][0] = nodeX[n[i]];
+        coords[i][1] = nodeY[n[i]];
+        coords[i][2] = nodeZ[n[i]];
+    }
+    RealType det, dNdx[4][3];
+    Tet4CVFEM::jacobian_and_dNdx<RealType>(coords, det, dNdx);
+    RealType vol = det / RealType(6);
+    if (!(vol > RealType(0))) return;
+    RealType qV = vol * RealType(0.25);
+
+    RealType ax = 0, ay = 0, az = 0;
+    for (int i = 0; i < 4; ++i) { ax += un[n[i]]; ay += vn[n[i]]; az += wn[n[i]]; }
+    ax *= RealType(0.25); ay *= RealType(0.25); az *= RealType(0.25);
+
+    RealType cj[4];
+    for (int j = 0; j < 4; ++j)
+        cj[j] = qV * (ax * dNdx[j][0] + ay * dNdx[j][1] + az * dNdx[j][2]);
+
+    for (int i = 0; i < 4; ++i) {
+        if (ownership[n[i]] != 1) continue;
+        int dofI = nodeToDof[n[i]];
+        if (dofI < 0 || dofI >= numOwnedDofs) continue;
+        if (isBdryDof[dofI]) continue;
+        int rs = rowPtr[dofI], re = rowPtr[dofI + 1];
+        for (int j = 0; j < 4; ++j) {
+            int dofJ = nodeToDof[n[j]];
+            if (dofJ < 0) continue;
+            fem::atomicAddSparseEntry(vals, colInd, rs, re, dofJ, cj[j]);
+        }
+    }
+}
+
 template<typename KeyType, typename RealType>
 __global__ void assembleDDTPerNodeKernelTet(const KeyType* c0, const KeyType* c1,
                                             const KeyType* c2, const KeyType* c3,
@@ -2849,6 +2909,20 @@ struct NSStepper
     // diffusion solve multiplies velocity by dt_matrix/dt_current instead of
     // damping it (a runaway). runImplicitDiffusionStep re-adds the delta.
     RealType matrixDt = RealType(0);
+
+    // --implicit-advection: freeze the convecting velocity at u^n, assemble
+    // C(u^n) into the velocity matrix and drop the explicit advection from the
+    // predictor. The step is then limited by accuracy, not CFL. OFF -> every
+    // line below is skipped and the run is byte-identical to the explicit path.
+    bool implicitAdvection = false;
+    // Pristine velocity-matrix values (mass coefficient + nu*K + BC rows),
+    // snapshotted from Avel/Avel_bdf2 right after the SparseMatrix wrap. C(u^n)
+    // changes every step, so the base has to be restored before each re-scatter
+    // or the convection would accumulate. Only allocated when the flag is on.
+    cstone::DeviceVector<RealType> d_velBase, d_velBaseBdf2;
+    // dt the snapshot above was baked with. Kept separate from matrixDt because
+    // the restore undoes any in-place dt patching done since.
+    RealType velBaseDt = RealType(0);
 
     // Per-step diagnostics
     // With PISO inner corrections (nCorrectors>1) this is the LAST inner
@@ -6010,6 +6084,28 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
         wrapIntoSparseMatrix<RealType>(s.Avel_bdf2, s.numOwnedDofs, s.numTotalDofs, s.nnz,
                                        s.d_rowPtr.data(), s.d_colInd.data(), s.d_valuesVel_bdf2.data());
     }
+    // Semi-implicit advection snapshots the WRAPPED values, not d_valuesVel:
+    // wrapIntoSparseMatrix copies into the matrix's own storage, so Avel is the
+    // buffer the solver actually reads and the only one worth restoring.
+    if (s.implicitAdvection)
+    {
+        s.d_velBase.resize(s.nnz);
+        thrust::copy(thrust::device,
+                     thrust::device_pointer_cast(s.Avel.valuesPtr()),
+                     thrust::device_pointer_cast(s.Avel.valuesPtr() + s.nnz),
+                     thrust::device_pointer_cast(s.d_velBase.data()));
+        if (s.useBdf2 && s.d_valuesVel_bdf2.size() > 0)
+        {
+            s.d_velBaseBdf2.resize(s.nnz);
+            thrust::copy(thrust::device,
+                         thrust::device_pointer_cast(s.Avel_bdf2.valuesPtr()),
+                         thrust::device_pointer_cast(s.Avel_bdf2.valuesPtr() + s.nnz),
+                         thrust::device_pointer_cast(s.d_velBaseBdf2.data()));
+        }
+        s.velBaseDt = dt;
+        cudaDeviceSynchronize();
+        pt.lap("implicit-advection velocity-matrix base snapshot");
+    }
     wrapIntoSparseMatrix<RealType>(s.Apre, s.numOwnedDofs, s.numTotalDofs, s.nnz,
                                    s.d_rowPtr.data(), s.d_colInd.data(), s.d_valuesPre.data());
     // AddT exists when the DDT operator was assembled (hex OR tet now). If the
@@ -6183,7 +6279,10 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
     }
 
 #ifdef MARS_ENABLE_HYPRE
-    if (s.solverKind == SolverKind::Hypre)
+    // --implicit-advection routes the velocity solve to Hypre GMRES regardless
+    // of --solver, so it needs the global numbering even when the pressure
+    // solve stays on the in-house CG.
+    if (s.solverKind == SolverKind::Hypre || s.implicitAdvection)
     {
         // Build contiguous global-DOF numbering (same recipe as
         // mars_amr_advdiff/mars_amr_pressure_poisson). Used by both matrix
@@ -6476,7 +6575,13 @@ int solveOneComponent(NSStepper<KeyType, RealType, ElementTag>& s,
                       KrylovHint krylov = KrylovHint::PCG,
                       bool forceCG = false,
                       const RealType* unscaleInvSqrt = nullptr,
-                      typename NSStepper<KeyType, RealType, ElementTag>::Matrix* precondMat = nullptr)
+                      typename NSStepper<KeyType, RealType, ElementTag>::Matrix* precondMat = nullptr,
+                      // Take the Hypre GMRES branch whatever --solver says. The only
+                      // caller is the --implicit-advection velocity solve, whose matrix
+                      // (3M/2dt + nu*K + C) is NON-SYMMETRIC -- CG is not valid on it,
+                      // and the in-house GMRES cannot take the rectangular owned-row /
+                      // ghost-column CSR these matrices use.
+                      bool forceGmres = false)
 {
     bool converged = false;
     int iters = 0;
@@ -6486,7 +6591,7 @@ int solveOneComponent(NSStepper<KeyType, RealType, ElementTag>& s,
     // mass-dominated / near-diagonal -- BoomerAMG is the wrong tool there (it
     // exits in ~1 iter returning x~0 -> u**=0 -> dead run). Hypre is reserved
     // for the ill-conditioned DDT PRESSURE operator, which is what needs AMG.
-    if (s.solverKind == SolverKind::CG || forceCG)
+    if ((s.solverKind == SolverKind::CG || forceCG) && !forceGmres)
     {
         ConjugateGradientSolver<RealType, int, cstone::GpuTag> solver(s.maxIter, s.tolerance);
         solver.setVerbose(false);
@@ -6592,7 +6697,10 @@ int solveOneComponent(NSStepper<KeyType, RealType, ElementTag>& s,
         // Env MARS_HYPRE_KRYLOV=pcg|gmres (DEBUG ONLY) overrides the caller's
         // hint. Production behavior: PCG default; DDT pressure call passes
         // GMRES explicitly.
-        KrylovHint krylovEff = krylov;
+        // forceGmres wins over the env knob: PCG on a non-symmetric matrix is
+        // wrong, not just slow, so it must not be reachable by mistake.
+        KrylovHint krylovEff = forceGmres ? KrylovHint::GMRES : krylov;
+        if (!forceGmres)
         {
             const char* kEnv = std::getenv("MARS_HYPRE_KRYLOV");
             if (kEnv)
@@ -6679,7 +6787,8 @@ int solveOneComponent(NSStepper<KeyType, RealType, ElementTag>& s,
         }
 #else
         if (s.rank == 0)
-            std::cerr << "ERROR: --solver=hypre requested but MARS built without MARS_ENABLE_HYPRE\n";
+            std::cerr << "ERROR: " << (forceGmres ? "--implicit-advection" : "--solver=hypre")
+                      << " needs Hypre but MARS was built without MARS_ENABLE_HYPRE\n";
         MPI_Abort(MPI_COMM_WORLD, 1);
 #endif
     }
@@ -7651,7 +7760,10 @@ void runPredictorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
     const RealType invRho  = RealType(1) / rho;
 
     using AdvScheme = typename NSStepper<KeyType, RealType, ElementTag>::AdvScheme;
-    const bool   bjMode  = (s.advScheme == AdvScheme::BarthJespersen);
+    // Semi-implicit advection replaces the whole explicit flux path, so the
+    // Barth-Jespersen limiter prep (min/max scatter + 4 halo folds per
+    // component) has nothing to feed and is skipped with it.
+    const bool   bjMode  = (s.advScheme == AdvScheme::BarthJespersen) && !s.implicitAdvection;
     // Runtime mode passed to the flux kernel: 0=skew, 1=upwind, 2=Barth-Jespersen.
     const int    advMode = (s.advScheme == AdvScheme::Skew)   ? 0
                          : (s.advScheme == AdvScheme::Upwind) ? 1
@@ -7909,7 +8021,13 @@ void runPredictorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
         thrust::fill(thrust::device_pointer_cast(advN.data()),
                      thrust::device_pointer_cast(advN.data() + s.nodeCount),
                      RealType(0));
-        if (eBlocks > 0)
+        // DOUBLE-COUNTING GUARD. With --implicit-advection the convection lives
+        // in the velocity matrix as C(u^n), so the predictor must contribute
+        // nothing: advN stays identically zero here, and the post-corrector
+        // rotation copies that zero into advNm1, so the EXT2 blend
+        // (2*advN - advNm1) is zero too. The predictor kernels below are left
+        // untouched -- they just add zero.
+        if (eBlocks > 0 && !s.implicitAdvection)
         {
             explicitAdvectionFluxScatterPerNodeKernel<KeyType, RealType, ElementTag><<<eBlocks, s.blockSize>>>(
                 c0, c1, c2, c3, c4, c5, c6, c7,
@@ -7925,8 +8043,11 @@ void runPredictorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
                     ? s.d_isOpenFaceNode.data() : nullptr);
             cudaDeviceSynchronize();
         }
-        s.domain.reverseExchangeNodeHaloAdd(advN);
-        maybePeriodicSum<KeyType, RealType, ElementTag>(s, advN);
+        if (!s.implicitAdvection)
+        {
+            s.domain.reverseExchangeNodeHaloAdd(advN);
+            maybePeriodicSum<KeyType, RealType, ElementTag>(s, advN);
+        }
 
         // DIAGNOSTIC: owned-sum of the (folded) advection term. This is a
         // rank-count-INVARIANT physical quantity if the advection scatter +
@@ -8074,6 +8195,72 @@ void runImplicitDiffusionStep(NSStepper<KeyType, RealType, ElementTag>& s, RealT
     const RealType invDt  = bdf2Active ? (RealType(3) / (RealType(2) * dt))
                                        : (RealType(1) / dt);
 
+    // Semi-implicit advection: rebuild the velocity operator as
+    //   (mass coef)*M + nu*K + C(u^n)
+    // before this step's three solves. The pristine base is restored first,
+    // because C changes every step and would otherwise pile up. u^n
+    // (d_u/d_v/d_w) is still ghost-complete from the predictor's exchange,
+    // which the element-mean advecting velocity needs. Only the matrix that is
+    // ACTIVE this step is rebuilt; the other one is rebuilt when it becomes
+    // active, and nothing else in the step reads either.
+    if constexpr (std::is_same_v<ElementTag, TetTag>)
+    {
+        if (s.implicitAdvection
+            && s.d_isBdryDof.size() == static_cast<size_t>(s.numOwnedDofs))
+        {
+            RealType* velVals = bdf2Active ? s.Avel_bdf2.valuesPtr() : s.Avel.valuesPtr();
+            const auto& base  = bdf2Active ? s.d_velBaseBdf2 : s.d_velBase;
+            if (base.size() != static_cast<size_t>(s.nnz))
+            {
+                if (s.rank == 0)
+                    std::cerr << "ERROR: --implicit-advection velocity-matrix base missing\n";
+                MPI_Abort(MPI_COMM_WORLD, 1);
+            }
+            thrust::copy(thrust::device,
+                         thrust::device_pointer_cast(base.data()),
+                         thrust::device_pointer_cast(base.data() + s.nnz),
+                         thrust::device_pointer_cast(velVals));
+
+            // Re-bake the mass coefficient for the CURRENT dt: the restore put
+            // back the coefficient for velBaseDt and adaptive CFL moves dt.
+            // Interior rows only -- Dirichlet rows carry diag=1, not mass/dt.
+            if (dt != s.velBaseDt && s.velBaseDt > RealType(0))
+            {
+                const RealType cNew = bdf2Active ? RealType(3) / (RealType(2) * dt)
+                                                 : RealType(1) / dt;
+                const RealType cOld = bdf2Active ? RealType(3) / (RealType(2) * s.velBaseDt)
+                                                 : RealType(1) / s.velBaseDt;
+                const int dofBlocks = (s.numOwnedDofs + s.blockSize - 1) / s.blockSize;
+                addLumpedMassDiagonalInteriorKernel<RealType><<<dofBlocks, s.blockSize>>>(
+                    s.d_mass.data(), s.d_diagPtr.data(), s.d_isBdryDof.data(),
+                    cNew - cOld, velVals, s.numOwnedDofs);
+            }
+
+            if (s.elementCount > 0)
+            {
+                // All local elements (owned + halo), owned rows only -- the same
+                // pattern the PSPG stiffness scatter uses. No reverse fold is
+                // needed: an owned row's full element ring is present locally.
+                const auto& d_conn = s.domain.getElementToNodeConnectivity();
+                auto cp = connPtrs<ElementTag, KeyType>(d_conn);
+                int eB = int((s.elementCount + s.blockSize - 1) / s.blockSize);
+                assembleConvectionTetKernel<KeyType, RealType><<<eB, s.blockSize>>>(
+                    cp[0], cp[1], cp[2], cp[3],
+                    s.domain.getNodeX().data(), s.domain.getNodeY().data(),
+                    s.domain.getNodeZ().data(),
+                    s.d_u.data(), s.d_v.data(), s.d_w.data(),
+                    s.d_node_to_dof.data(), d_nodeOwnership.data(), s.d_isBdryDof.data(),
+                    s.d_rowPtr.data(), s.d_colInd.data(), s.numOwnedDofs,
+                    velVals, s.elementCount);
+            }
+            cudaDeviceSynchronize();
+        }
+    }
+    else if (s.implicitAdvection && s.rank == 0 && s.bdfStep == 0)
+    {
+        std::cerr << "WARNING: --implicit-advection is tet-only; ignored\n";
+    }
+
     cstone::DeviceVector<RealType> b(s.numOwnedDofs);
     cstone::DeviceVector<RealType> xVec(s.numTotalDofs);
 
@@ -8151,10 +8338,18 @@ void runImplicitDiffusionStep(NSStepper<KeyType, RealType, ElementTag>& s, RealT
 
         // Velocity matrix is mass-dominated -> force the in-house CG even under
         // --solver=hypre (Hypre/AMG is reserved for the DDT pressure operator).
+        // EXCEPT with --implicit-advection: C(u^n) makes the matrix
+        // non-symmetric and CG is then invalid (not merely slow), so that path
+        // goes to Hypre GMRES. Preconditioner still comes from
+        // MARS_HYPRE_PRECOND; jacobi is the sane default for a mass-dominated
+        // operator, BoomerAMG is not.
+        const bool nonSym = s.implicitAdvection && std::is_same_v<ElementTag, TetTag>;
         return solveOneComponent<KeyType, RealType, ElementTag>(
             s, b, xVec, qStarStar,
             bdf2Active ? s.Avel_bdf2 : s.Avel,
-            KrylovHint::PCG, /*forceCG=*/true);
+            nonSym ? KrylovHint::GMRES : KrylovHint::PCG,
+            /*forceCG=*/!nonSym, /*unscaleInvSqrt=*/nullptr,
+            /*precondMat=*/nullptr, /*forceGmres=*/nonSym);
     };
 
     s.lastUIters = runImplicit(s.d_uStar, s.d_uStarStar, s.d_uTarget, s.d_velLiftU);

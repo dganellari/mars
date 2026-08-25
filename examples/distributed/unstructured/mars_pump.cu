@@ -75,6 +75,11 @@ int main(int argc, char** argv)
     // Advection scheme: "skew" (KE-conserving, default), "upwind" (1st-order),
     // or "barth-jespersen" (2nd-order limited, matches mesh developers' legacy).
     std::string advScheme  = "skew";
+    // --implicit-advection: linearize the convection about u^n and assemble it
+    // into the velocity matrix instead of extrapolating it explicitly, so dt is
+    // no longer CFL-limited. Costs a non-symmetric velocity solve (GMRES).
+    // OFF -> the explicit EXT2 path runs exactly as before.
+    bool        implicitAdv = false;
     bool        useBdf2     = true;    // --bdf1 forces BDF1/Chorin (1st-order time, more stable for explicit advection)
     bool        useRhieChow = false;   // compact RC is geometrically unsafe on tets (blows up at every tau); --rhie-chow to force on
     RealType    rhieTau    = -1;       // RC strength; <=0 -> auto dt/rho. --rhie-tau= to sweep
@@ -145,6 +150,7 @@ int main(int argc, char** argv)
         else if (a == "--bj")                        advScheme  = "barth-jespersen"; // 2nd-order limited
         else if (a == "--bdf1")                      useBdf2    = false; // diagnostic: BDF1/Chorin instead of BDF2/EXT2
         else if (a.rfind("--advection=", 0) == 0)    advScheme  = a.substr(12); // skew|upwind|barth-jespersen
+        else if (a == "--implicit-advection")        implicitAdv = true; // C(u^n) in the velocity matrix; not CFL-limited (tet-only, needs Hypre)
         else if (a == "--no-rhie")                   useRhieChow = false; // plain Galerkin divergence (checkerboard-prone)
         else if (a == "--rhie-chow")                 useRhieChow = true;
         else if (a.rfind("--rhie-tau=", 0) == 0)     rhieTau   = std::stod(a.substr(11));
@@ -211,6 +217,10 @@ int main(int argc, char** argv)
                     "  --dt=V --num-steps=N time stepping (default 1e-3, 200)\n"
                     "  --source-ramp-steps=N ramp inlet drive 0->full over N steps (gentle startup; default 0=off)\n"
                     "  --cfl=C              adaptive dt: cap advective CFL at C (~0.5 for BJ+BDF2)\n"
+                    "  --implicit-advection semi-implicit convection: freeze u^n, assemble C(u^n) into\n"
+                    "                       the velocity matrix and drop the explicit EXT2 term. Removes\n"
+                    "                       the CFL limit on dt. Tet-only; needs MARS_ENABLE_HYPRE (the\n"
+                    "                       matrix is non-symmetric -> velocity solve moves to GMRES).\n"
                     "  --vtu-output=PREFIX --vtu-every=N   VTU/PVTU output\n"
                     "  --ic-perturb=F       interior IC perturbation (break symmetry)\n"
                     "  --opening-flux-source  add prescribed inlet+outlet opening flux to the\n"
@@ -266,6 +276,11 @@ int main(int argc, char** argv)
                   << "advection   = " << (advScheme == "skew" ? "skew-symmetric"
                                           : advScheme == "upwind" ? "1st-order upwind"
                                           : "2nd-order Barth-Jespersen") << "\n"
+                  // Only printed when the flag is on, so the default banner is unchanged.
+                  << (implicitAdv
+                        ? "advection-t = SEMI-IMPLICIT C(u^n) in the velocity matrix; not CFL-limited"
+                          " (Hypre GMRES; the scheme above is UNUSED)\n"
+                        : "")
                   << "Rhie-Chow   = " << (useRhieChow ? "ON" : "OFF")
                   << (useRhieChow && rhieTau > 0 ? "  (tau=" : "  (tau=auto dt/rho")
                   << (useRhieChow && rhieTau > 0 ? std::to_string(rhieTau) + ")" : ")") << "\n"
@@ -383,6 +398,9 @@ int main(int argc, char** argv)
     s.advScheme = (advScheme == "upwind")          ? PumpAdv::Upwind
                 : (advScheme == "barth-jespersen") ? PumpAdv::BarthJespersen
                                                    : PumpAdv::Skew;
+    // Must be set BEFORE setupNSStepper: it decides whether the setup snapshots
+    // the pristine velocity matrix and builds the global DOF map Hypre needs.
+    s.implicitAdvection = implicitAdv;
     // Compact Rhie-Chow on the divergence operator: couples odd/even pressure
     // nodes so the projection can see (and kill) the checkerboard mode that
     // leaves div*L/U stuck. tau auto = dt/rho. --no-rhie for an A/B comparison.
