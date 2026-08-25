@@ -25,10 +25,24 @@ GPU-native high-order matrix-free CVFEM (Knaus Alg 2) on Alps GH200, cstone bran
 ## Roofline — fair comparison (bytes-moved, not storage)
 - Both kernels run at **~71–72% of HBM peak** (comparably tuned). The earlier "matrix-free
   41% of peak" was a **storage-anchoring error**; against the *true moved traffic*
-  (~544 B/DOF at p=1) the apply is ~72%.
+  (~544 B/DOF at p=1) the apply is ~72%. Note this is a *bytes-moved derivation*: for the
+  apply `ncu` later overturned it (DRAM 8–27%, nowhere near the HBM roofline — see below).
 - The winner is set by **bytes moved** — structural, tuning-independent. **DMMA (FP64 tensor
-  cores) is irrelevant to throughput**: the apply is bandwidth-bound at every p≤7 (arithmetic
-  intensity 1.2→4, never near the 8.5 FLOP/byte CUDA ridge).
+  cores) is irrelevant to throughput** — but *not* for the reason first written here. The old
+  claim ("the apply is bandwidth-bound at every p≤7") came from the same bytes-moved
+  derivation and the profile overturned it: the apply is bound by the **shared-memory
+  INSTRUCTION pipe (LSU/MIO)** — Memory/L1 75–86%, DRAM only 8–27%, Compute (SM) 14–21%,
+  issue slots 6–9%, occupancy ~25%. HBM *and* the FP64 units are both idle; what saturates is
+  the *rate of issuing* the shared-memory loads of the `faceA`/`faceB` buffers. Tensor cores
+  accelerate the FMAs — the part already idle — so they cannot help. (Intensity really is
+  ~1–4 FLOP/byte, far under the 8.5 FLOP/byte ridge: sum-factorization removes the arithmetic
+  on purpose, so there is nothing left for a compute accelerator to do.)
+- Measured 2026-07 via the MARSIR codegen track: even a **fully register-resident** tensor-core
+  form (`mma.sync` chained through `gpu.shuffle` fragment relayouts, zero shared memory, zero
+  barriers) does not wake the tensor cores — `gpu.shuffle` runs on the *same* L1/MIO pipe, so
+  register-residence only trades shared-memory loads/stores for shuffles on the identical wall.
+  On GH200 it was **~24% faster** (barriers removed) with the tensor cores still idle at
+  **~9.5% of FP64-TC peak**. Full account: `internal-notes/marsir_full_tutorial.md` Part II.
 - On paper matrix-free reads *less* than even the 7-nnz CVFEM at p=1 (geometry ~44 B/DOF
   cached < 88), so its roofline *ceiling* is higher — but reaching it is a research gamble
   (irregular gather/scatter vs a solved cuSPARSE SpMV). **The deck does not depend on a p=1 win.**
