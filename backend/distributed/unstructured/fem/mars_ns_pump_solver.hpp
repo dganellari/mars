@@ -7905,6 +7905,42 @@ RealType maxOwnedInteriorAbs(NSStepper<KeyType, RealType, ElementTag>& s,
     return gMax;
 }
 
+// True peak SPEED over owned interior nodes: sqrt(u^2+v^2+w^2) evaluated PER
+// NODE, then maxed. Not the same as combining three independent per-component
+// maxima -- those generally land on three DIFFERENT nodes, so their vector sum
+// is an upper bound that exists nowhere in the domain (measured ~30% high on the
+// pump). Same node filter as maxOwnedInteriorAbs so the two are comparable.
+template<typename KeyType, typename RealType, typename ElementTag = HexTag>
+RealType maxOwnedInteriorSpeed(NSStepper<KeyType, RealType, ElementTag>& s,
+                               const cstone::DeviceVector<RealType>& d_u,
+                               const cstone::DeviceVector<RealType>& d_v,
+                               const cstone::DeviceVector<RealType>& d_w)
+{
+    const auto& d_nodeOwnership = s.ownershipMap();
+    const uint8_t* ownPtr = d_nodeOwnership.data();
+    const int* dofPtr     = s.d_node_to_dof.data();
+    const uint8_t* bnd    = s.d_isBdryDof.data();
+    const uint8_t* pmask  = (s.d_isPressureBdryDof.size() > 0)
+                            ? s.d_isPressureBdryDof.data() : nullptr;
+    const RealType* up = d_u.data();
+    const RealType* vp = d_v.data();
+    const RealType* wp = d_w.data();
+    RealType locMax = thrust::transform_reduce(thrust::device,
+        thrust::counting_iterator<size_t>(0),
+        thrust::counting_iterator<size_t>(s.nodeCount),
+        [ownPtr, dofPtr, bnd, pmask, up, vp, wp] __device__ (size_t i) -> RealType {
+            if (ownPtr[i] != 1) return RealType(0);
+            int dof = dofPtr[i];
+            if (dof < 0 || bnd[dof])             return RealType(0);
+            if (pmask != nullptr && pmask[dof])  return RealType(0);
+            return sqrt(up[i]*up[i] + vp[i]*vp[i] + wp[i]*wp[i]);
+        }, RealType(0), thrust::maximum<RealType>());
+    auto mpiType = std::is_same_v<RealType, double> ? MPI_DOUBLE : MPI_FLOAT;
+    RealType gMax = 0;
+    MPI_Allreduce(&locMax, &gMax, 1, mpiType, MPI_MAX, MPI_COMM_WORLD);
+    return gMax;
+}
+
 // =============================================================================
 // runNsStep is composed of four sub-steps. They share NO state outside
 // NSStepper; each can be invoked in isolation for unit testing (e.g. drive

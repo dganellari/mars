@@ -1314,7 +1314,13 @@ int main(int argc, char** argv)
             RealType umx = maxOwnedInteriorAbs<KeyType, RealType, TetTag>(s, s.d_u);
             RealType vmx = maxOwnedInteriorAbs<KeyType, RealType, TetTag>(s, s.d_v);
             RealType wmx = maxOwnedInteriorAbs<KeyType, RealType, TetTag>(s, s.d_w);
-            double uMax = std::sqrt(double(umx)*double(umx) + double(vmx)*double(vmx) + double(wmx)*double(wmx));
+            // LEGACY metric, kept only so numbers stay comparable to earlier runs:
+            // three INDEPENDENT per-component maxima combined as if they were one
+            // vector. They generally sit on three different nodes, so this is an
+            // upper bound that exists nowhere (measured ~30% above the real peak).
+            double uMaxComposite = std::sqrt(double(umx)*double(umx) + double(vmx)*double(vmx) + double(wmx)*double(wmx));
+            // The real thing: speed evaluated per node, then maxed.
+            double uMax = double(maxOwnedInteriorSpeed<KeyType, RealType, TetTag>(s, s.d_u, s.d_v, s.d_w));
             // [bc-sanity] Q_out = sum_owned(u . outletAreaVec) vs prescribed Q_in.
             // NOT a through-flow proof: the corrector relocks the outlet nodes to
             // the prescribed outletU, so for the mass-conserving outlet Q_out=Q_in
@@ -1385,7 +1391,8 @@ int main(int argc, char** argv)
                 std::cout << "Step " << std::setw(5) << step
                           << "  ft=" << std::fixed << std::setprecision(2) << flowThroughs  // flow-throughs elapsed
                           << "  u_rms=" << std::scientific << std::setprecision(3) << uRms
-                          << "  u_max=" << std::fixed << std::setprecision(3) << uMax        // peak interior speed
+                          << "  u_max=" << std::fixed << std::setprecision(3) << uMax        // TRUE peak interior speed (per-node)
+                          << "  u_maxC=" << std::setprecision(3) << uMaxComposite                 // legacy per-component composite
                           << "  uMax/U=" << std::setprecision(2) << (inletU > 0 ? uMax/double(inletU) : uMax)
                           << "  d(u_rms)=" << std::scientific << std::setprecision(2) << dURms
                           << "  div*L/U=" << std::fixed << std::setprecision(2) << divND;
