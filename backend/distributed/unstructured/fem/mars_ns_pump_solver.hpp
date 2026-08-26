@@ -10391,12 +10391,45 @@ void reportSpeedProfile(NSStepper<KeyType, RealType, ElementTag>& s)
         for (int li : s.outletNodes) if (li >= 0 && (size_t)li < s.nodeCount) cls[li] = 2;
         for (int li : s.inletNodes)  if (li >= 0 && (size_t)li < s.nodeCount) cls[li] = 3;
     }
+    // Local cell size at the peak node vs the median, from the lumped mass
+    // (= dual-cell volume), as h ~ V^(1/3). h_peak/h_med << 1 means the peak sits
+    // in a REFINED region; ~1 or above means it sits where the mesh is coarse and
+    // the peak is probably not resolved. Scalars only -- no coordinates leave.
+    double hPeak = 0.0, hMed = 0.0;
+    if (s.d_mass.size() == s.nodeCount)
+    {
+        RealType mPeak = 0;
+        cudaMemcpy(&mPeak, s.d_mass.data() + maxNode, sizeof(RealType), cudaMemcpyDeviceToHost);
+        hPeak = (double(mPeak) > 0.0) ? std::cbrt(double(mPeak)) : 0.0;
+
+        thrust::device_vector<RealType> mv(s.nodeCount);
+        const RealType* mp = s.d_mass.data();
+        thrust::transform(thrust::device,
+            thrust::counting_iterator<size_t>(0),
+            thrust::counting_iterator<size_t>(s.nodeCount),
+            mv.begin(),
+            [own, mp] __device__ (size_t i) -> RealType {
+                return (own[i] == 1) ? mp[i] : RealType(-1);
+            });
+        thrust::sort(thrust::device, mv.begin(), mv.end());
+        size_t nb = size_t(thrust::count(thrust::device, mv.begin(), mv.end(), RealType(-1)));
+        size_t no = s.nodeCount - nb;
+        if (no > 0)
+        {
+            RealType mMed = mv[nb + no / 2];
+            hMed = (double(mMed) > 0.0) ? std::cbrt(double(mMed)) : 0.0;
+        }
+    }
+
     // only the rank actually holding the global max gets to name the node kind
     int kindCode = (maxNode < cls.size()) ? int(cls[maxNode]) : 0;
     int mine     = (double(uMaxLoc) >= glb[4] * (1.0 - 1e-12)) ? s.rank : s.numRanks;
     int owner    = s.numRanks;
     MPI_Allreduce(&mine, &owner, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
     MPI_Bcast(&kindCode, 1, MPI_INT, (owner < s.numRanks) ? owner : 0, MPI_COMM_WORLD);
+    // h_peak lives on the owning rank only; h_med is per-rank, take the max as a scale
+    MPI_Bcast(&hPeak, 1, MPI_DOUBLE, (owner < s.numRanks) ? owner : 0, MPI_COMM_WORLD);
+    { double t = hMed; MPI_Allreduce(&t, &hMed, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD); }
     const char* kindBuf = (kindCode == 1) ? "wall"
                         : (kindCode == 2) ? "outlet"
                         : (kindCode == 3) ? "inlet" : "interior";
@@ -10407,6 +10440,10 @@ void reportSpeedProfile(NSStepper<KeyType, RealType, ElementTag>& s)
                   << " max=" << glb[4]
                   << "  max/p999=" << std::fixed << std::setprecision(2) << (glb[3] > 0 ? glb[4]/glb[3] : 0.0)
                   << "  peak-node=" << kindBuf
+                  << std::scientific << std::setprecision(2)
+                  << "  h_peak=" << hPeak << " h_med=" << hMed
+                  << std::fixed << std::setprecision(2)
+                  << " (h_peak/h_med=" << (hMed > 0 ? hPeak/hMed : 0.0) << ")"
                   << std::defaultfloat << "\n";
 }
 
