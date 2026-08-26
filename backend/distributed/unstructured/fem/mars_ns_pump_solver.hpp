@@ -46,6 +46,8 @@
 #include <thrust/reduce.h>
 #include <thrust/transform.h>
 #include <thrust/extrema.h>
+#include <thrust/sort.h>
+#include <thrust/count.h>
 #include <thrust/fill.h>
 #include <thrust/system/cuda/execution_policy.h>
 
@@ -10272,6 +10274,82 @@ void computeVorticityMagnitudePerNode(NSStepper<KeyType, RealType, ElementTag>& 
 }
 
 template<typename KeyType, typename RealType, typename ElementTag = HexTag>
+// MARS_UMAX_PROFILE=1 -- speed percentiles + what KIND of node carries u_max.
+// u_max is a single node with zero noise rejection: a handful of bad cells own it
+// completely, while u_rms averages them away. If u_999 sits far below u_max the
+// peak is an artifact, not a flow feature. Percentiles are per-rank and reduced
+// with MAX, so they are an upper bound, not an exact global quantile -- enough to
+// tell a spike from a jet. Owned nodes only; no coordinates are ever printed.
+template<typename KeyType, typename RealType, typename ElementTag>
+void reportSpeedProfile(NSStepper<KeyType, RealType, ElementTag>& s)
+{
+    static const bool on = std::getenv("MARS_UMAX_PROFILE") != nullptr;
+    if (!on || s.nodeCount == 0) return;
+
+    const uint8_t* own = s.ownershipMap().data();
+    const RealType* up = s.d_u.data();
+    const RealType* vp = s.d_v.data();
+    const RealType* wp = s.d_w.data();
+
+    thrust::device_vector<RealType> sp(s.nodeCount);
+    thrust::transform(thrust::device,
+        thrust::counting_iterator<size_t>(0),
+        thrust::counting_iterator<size_t>(s.nodeCount),
+        sp.begin(),
+        [own, up, vp, wp] __device__ (size_t i) -> RealType {
+            if (own[i] != 1) return RealType(-1);
+            return sqrt(up[i]*up[i] + vp[i]*vp[i] + wp[i]*wp[i]);
+        });
+
+    // argmax BEFORE sorting -- we need the node id, not just the value.
+    auto maxIt      = thrust::max_element(thrust::device, sp.begin(), sp.end());
+    size_t maxNode  = size_t(maxIt - sp.begin());
+    RealType uMaxLoc = *maxIt;
+
+    thrust::sort(thrust::device, sp.begin(), sp.end());
+    // ghosts were tagged -1 and sort to the front
+    size_t nBad = size_t(thrust::count(thrust::device, sp.begin(), sp.end(), RealType(-1)));
+    size_t nOwn = s.nodeCount - nBad;
+    if (nOwn == 0) return;
+    auto pct = [&](double f) -> RealType {
+        size_t k = nBad + size_t(f * double(nOwn - 1));
+        return sp[k];
+    };
+    double p50 = double(pct(0.50)), p90 = double(pct(0.90));
+    double p99 = double(pct(0.99)), p999 = double(pct(0.999));
+    double umax = double(uMaxLoc);
+
+    double loc[5] = {p50, p90, p99, p999, umax}, glb[5] = {0,0,0,0,0};
+    MPI_Allreduce(loc, glb, 5, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+
+    // Which kind of node owns the peak? Built once from the BC lists.
+    static std::vector<uint8_t> cls;
+    if (cls.size() != s.nodeCount)
+    {
+        cls.assign(s.nodeCount, 0);   // 0 = interior
+        for (int li : s.wallNodes)   if (li >= 0 && (size_t)li < s.nodeCount) cls[li] = 1;
+        for (int li : s.outletNodes) if (li >= 0 && (size_t)li < s.nodeCount) cls[li] = 2;
+        for (int li : s.inletNodes)  if (li >= 0 && (size_t)li < s.nodeCount) cls[li] = 3;
+    }
+    // only the rank actually holding the global max gets to name the node kind
+    int kindCode = (maxNode < cls.size()) ? int(cls[maxNode]) : 0;
+    int mine     = (double(uMaxLoc) >= glb[4] * (1.0 - 1e-12)) ? s.rank : s.numRanks;
+    int owner    = s.numRanks;
+    MPI_Allreduce(&mine, &owner, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
+    MPI_Bcast(&kindCode, 1, MPI_INT, (owner < s.numRanks) ? owner : 0, MPI_COMM_WORLD);
+    const char* kindBuf = (kindCode == 1) ? "wall"
+                        : (kindCode == 2) ? "outlet"
+                        : (kindCode == 3) ? "inlet" : "interior";
+
+    if (s.rank == 0)
+        std::cout << "  [u-profile] p50=" << std::scientific << std::setprecision(3) << glb[0]
+                  << " p90=" << glb[1] << " p99=" << glb[2] << " p999=" << glb[3]
+                  << " max=" << glb[4]
+                  << "  max/p999=" << std::fixed << std::setprecision(2) << (glb[3] > 0 ? glb[4]/glb[3] : 0.0)
+                  << "  peak-node=" << kindBuf
+                  << std::defaultfloat << "\n";
+}
+
 void runNsStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, RealType nu, RealType rho)
 {
     s.nuCached = nu;

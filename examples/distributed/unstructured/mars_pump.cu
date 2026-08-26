@@ -413,6 +413,16 @@ int main(int argc, char** argv)
     s.implicitAdvection = implicitAdv;
     s.useSupg           = supg;
     s.useDivCorrect     = divCorrect;
+    // Banner: --bj was silently ignored under --implicit-advection for a whole
+    // session before anyone noticed. Every advection-path flag says out loud
+    // whether it is actually live.
+    if (rank == 0)
+        std::cout << "  advection: " << advScheme
+                  << (implicitAdv ? " [IGNORED - implicit-advection assembles C(u^n)]" : " [explicit]")
+                  << (implicitAdv && supg ? " +SUPG" : "")
+                  << "  div-correct: "
+                  << ((divCorrect && !implicitAdv && advScheme != "skew") ? "ON" : "off")
+                  << "\n";
     // The correction only applies to the EXPLICIT upwind/BJ scatter. Implicit
     // advection assembles int N_i (a.grad N_j), which is ALREADY the advective
     // form; skew already carries half the term. Warn rather than silently no-op.
@@ -1352,6 +1362,8 @@ int main(int argc, char** argv)
             double divRCnd = (inletU > 0 && Lscale > 0)
                            ? double(s.lastDivRC) * Lscale / inletU : double(s.lastDivRC);
             double flowThroughs = simTime / tFlow;     // accumulated time (dt may vary)
+            // collective (Allreduce inside) -- must be outside the rank-0 guard
+            reportSpeedProfile<KeyType, RealType, TetTag>(s);
             if (rank == 0)
             {
                 std::cout << "Step " << std::setw(5) << step
