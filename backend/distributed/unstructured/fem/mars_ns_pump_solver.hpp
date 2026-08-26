@@ -10273,7 +10273,6 @@ void computeVorticityMagnitudePerNode(NSStepper<KeyType, RealType, ElementTag>& 
     cudaDeviceSynchronize();
 }
 
-template<typename KeyType, typename RealType, typename ElementTag = HexTag>
 // MARS_UMAX_PROFILE=1 -- speed percentiles + what KIND of node carries u_max.
 // u_max is a single node with zero noise rejection: a handful of bad cells own it
 // completely, while u_rms averages them away. If u_999 sits far below u_max the
@@ -10350,6 +10349,7 @@ void reportSpeedProfile(NSStepper<KeyType, RealType, ElementTag>& s)
                   << std::defaultfloat << "\n";
 }
 
+template<typename KeyType, typename RealType, typename ElementTag = HexTag>
 void runNsStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, RealType nu, RealType rho)
 {
     s.nuCached = nu;
