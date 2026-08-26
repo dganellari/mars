@@ -46,6 +46,7 @@
 #include <thrust/reduce.h>
 #include <thrust/transform.h>
 #include <thrust/extrema.h>
+#include <thrust/functional.h>
 #include <thrust/sort.h>
 #include <thrust/count.h>
 #include <thrust/fill.h>
@@ -3020,6 +3021,16 @@ struct NSStepper
     // SUPG streamline stabilization on C(u^n). --supg. OFF leaves the plain
     // Galerkin convection operator byte-identical.
     bool useSupg = false;
+    // Picard / deferred-correction outer loop (--picard=N). The advection is
+    // re-evaluated at the current iterate each sweep, so at convergence the BJ
+    // flux is evaluated at u^(n+1) -- implicit BJ, without BJ ever entering a
+    // matrix. nPicard=1 is the plain single-pass path, byte-identical.
+    int      nPicard          = 1;
+    RealType picardTol        = RealType(1e-3);
+    bool     picardAdvAtIterate = false;   // set by the loop, not by the user
+    int      lastPicardSweeps = 0;
+    RealType lastPicardRes    = 0;
+    cstone::DeviceVector<RealType> d_picardPrevU, d_picardPrevV, d_picardPrevW;
     // Conservative -> advective correction on the EXPLICIT upwind/BJ advection.
     // --div-correct. Skew already carries half of it, so it is gated off there.
     bool useDivCorrect = false;
@@ -8048,6 +8059,19 @@ void runPredictorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
             s, s.d_gradPx, s.d_gradPy, s.d_gradPz);
     }
 
+    // Picard (--picard>1): the ADVECTION half of the predictor evaluates at the
+    // CURRENT ITERATE u**, not u^n -- gradients, limiter and flux all move. The
+    // BDF time term deliberately stays at u^n: that is the whole point of
+    // deferred correction, only the flux goes to the new level. Flag off ->
+    // these alias u^n and the path is byte-identical.
+    const bool picardIter = s.picardAdvAtIterate
+                            && s.d_uStarStar.size() == s.nodeCount
+                            && s.d_vStarStar.size() == s.nodeCount
+                            && s.d_wStarStar.size() == s.nodeCount;
+    auto& advFieldU = picardIter ? s.d_uStarStar : s.d_u;
+    auto& advFieldV = picardIter ? s.d_vStarStar : s.d_v;
+    auto& advFieldW = picardIter ? s.d_wStarStar : s.d_w;
+
     // Node coords for the Barth-Jespersen midpoint reconstruction. Always valid
     // (read by the BJ flux branch and the limiter); cheap to fetch.
     const auto& d_bjNodeX = s.domain.getNodeX();
@@ -8117,9 +8141,9 @@ void runPredictorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
             s.domain.exchangeNodeHalo(gz);
         };
 
-        computeNodeGradient(s.d_u, s.d_gradUx, s.d_gradUy, s.d_gradUz);
-        computeNodeGradient(s.d_v, s.d_gradVx, s.d_gradVy, s.d_gradVz);
-        computeNodeGradient(s.d_w, s.d_gradWx, s.d_gradWy, s.d_gradWz);
+        computeNodeGradient(advFieldU, s.d_gradUx, s.d_gradUy, s.d_gradUz);
+        computeNodeGradient(advFieldV, s.d_gradVx, s.d_gradVy, s.d_gradVz);
+        computeNodeGradient(advFieldW, s.d_gradWx, s.d_gradWy, s.d_gradWz);
     }
 
     // Per-component advection scatter + predictor apply. Each scatter writes
@@ -8136,7 +8160,8 @@ void runPredictorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
                               RealType bodyForce,
                               cstone::DeviceVector<RealType>& gradQx,
                               cstone::DeviceVector<RealType>& gradQy,
-                              cstone::DeviceVector<RealType>& gradQz)
+                              cstone::DeviceVector<RealType>& gradQz,
+                              cstone::DeviceVector<RealType>& qAdv)
     {
         // Barth-Jespersen per-component limiter: neighbor min/max over edge
         // neighbors (owned scatter + reverse MIN/MAX fold for the cross-rank
@@ -8145,7 +8170,7 @@ void runPredictorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
         if (bjMode)
         {
             bjSeedMinMaxKernel<RealType><<<nodeBlocks, s.blockSize>>>(
-                qN.data(), s.d_bjQmin.data(), s.d_bjQmax.data(), s.nodeCount);
+                qAdv.data(), s.d_bjQmin.data(), s.d_bjQmax.data(), s.nodeCount);
             cudaDeviceSynchronize();
             // Scatter over OWNED elements only. An owned boundary node's full
             // edge-neighbor ring is completed across ranks by the reverse
@@ -8158,7 +8183,7 @@ void runPredictorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
             {
                 bjNeighborMinMaxScatterKernel<KeyType, RealType, ElementTag><<<eBlocks, s.blockSize>>>(
                     c0, c1, c2, c3, c4, c5, c6, c7,
-                    qN.data(), s.d_bjQmin.data(), s.d_bjQmax.data(),
+                    qAdv.data(), s.d_bjQmin.data(), s.d_bjQmax.data(),
                     startElem, numLocal);
                 cudaDeviceSynchronize();
             }
@@ -8179,7 +8204,7 @@ void runPredictorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
             {
                 bjLimiterScatterKernel<KeyType, RealType, ElementTag><<<eBlocks, s.blockSize>>>(
                     c0, c1, c2, c3, c4, c5, c6, c7,
-                    qN.data(), s.d_bjQmin.data(), s.d_bjQmax.data(),
+                    qAdv.data(), s.d_bjQmin.data(), s.d_bjQmax.data(),
                     gradQx.data(), gradQy.data(), gradQz.data(),
                     d_bjNodeX.data(), d_bjNodeY.data(), d_bjNodeZ.data(),
                     s.d_bjPhi.data(), startElem, numLocal);
@@ -8206,8 +8231,8 @@ void runPredictorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
         {
             explicitAdvectionFluxScatterPerNodeKernel<KeyType, RealType, ElementTag><<<eBlocks, s.blockSize>>>(
                 c0, c1, c2, c3, c4, c5, c6, c7,
-                s.d_u.data(), s.d_v.data(), s.d_w.data(),
-                qN.data(),
+                advFieldU.data(), advFieldV.data(), advFieldW.data(),
+                qAdv.data(),
                 s.d_areaVec_x.data(), s.d_areaVec_y.data(), s.d_areaVec_z.data(),
                 advN.data(), startElem, numLocal,
                 advMode,
@@ -8228,7 +8253,7 @@ void runPredictorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
             && s.d_divU.size() == s.nodeCount)
         {
             addDivCorrectionKernel<RealType><<<nodeBlocks, s.blockSize>>>(
-                advN.data(), qN.data(), s.d_divU.data(),
+                advN.data(), qAdv.data(), s.d_divU.data(),
                 d_nodeOwnership.data(), s.nodeCount);
             cudaDeviceSynchronize();
         }
@@ -8302,7 +8327,7 @@ void runPredictorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
         {
             accumulateFaceFluxDivergenceKernel<KeyType, RealType, ElementTag><<<eBlocks, s.blockSize>>>(
                 c0, c1, c2, c3, c4, c5, c6, c7,
-                s.d_u.data(), s.d_v.data(), s.d_w.data(),
+                advFieldU.data(), advFieldV.data(), advFieldW.data(),
                 s.d_areaVec_x.data(), s.d_areaVec_y.data(), s.d_areaVec_z.data(),
                 s.d_divU.data(), startElem, numLocal);
             cudaDeviceSynchronize();
@@ -8313,11 +8338,11 @@ void runPredictorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
     }
 
     runPredictor(s.d_u, s.d_u_nm1, s.d_uStar, s.d_advU_n, s.d_advU_nm1, s.d_gradPx, s.d_uTarget, s.bodyForceX,
-                 s.d_gradUx, s.d_gradUy, s.d_gradUz);
+                 s.d_gradUx, s.d_gradUy, s.d_gradUz, advFieldU);
     runPredictor(s.d_v, s.d_v_nm1, s.d_vStar, s.d_advV_n, s.d_advV_nm1, s.d_gradPy, s.d_vTarget, s.bodyForceY,
-                 s.d_gradVx, s.d_gradVy, s.d_gradVz);
+                 s.d_gradVx, s.d_gradVy, s.d_gradVz, advFieldV);
     runPredictor(s.d_w, s.d_w_nm1, s.d_wStar, s.d_advW_n, s.d_advW_nm1, s.d_gradPz, s.d_wTarget, s.bodyForceZ,
-                 s.d_gradWx, s.d_gradWy, s.d_gradWz);
+                 s.d_gradWx, s.d_gradWy, s.d_gradWz, advFieldW);
 
     // FIX-B #3: project q* onto the open-face normal (zero tangential) BEFORE the
     // q* ghost publish, so the implicit-diffusion RHS and the pressure solve see a
@@ -10374,6 +10399,40 @@ void runNsStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, RealTyp
                       << " div(u_n)rms=" << div_n_rms << "\n";
     }
 
+    // ---- Picard / deferred-correction sweeps ----
+    // Sweep 0 evaluates the advection at u^n (the classic explicit pass). Every
+    // later sweep re-evaluates it at the latest u**, so the fixed point has the
+    // BJ flux evaluated at the NEW time level. Convergence is measured on how
+    // much u** moves between sweeps.
+    const int picardSweeps = (s.nPicard > 1) ? s.nPicard : 1;
+    s.lastPicardSweeps = 0;
+    s.lastPicardRes    = RealType(0);
+    for (int sweep = 0; sweep < picardSweeps; ++sweep)
+    {
+        s.picardAdvAtIterate = (sweep > 0);
+        if (picardSweeps > 1 && sweep > 0)
+        {
+            if (s.d_picardPrevU.size() != s.nodeCount)
+            {
+                s.d_picardPrevU.resize(s.nodeCount);
+                s.d_picardPrevV.resize(s.nodeCount);
+                s.d_picardPrevW.resize(s.nodeCount);
+            }
+            thrust::copy(thrust::device,
+                thrust::device_pointer_cast(s.d_uStarStar.data()),
+                thrust::device_pointer_cast(s.d_uStarStar.data() + s.nodeCount),
+                thrust::device_pointer_cast(s.d_picardPrevU.data()));
+            thrust::copy(thrust::device,
+                thrust::device_pointer_cast(s.d_vStarStar.data()),
+                thrust::device_pointer_cast(s.d_vStarStar.data() + s.nodeCount),
+                thrust::device_pointer_cast(s.d_picardPrevV.data()));
+            thrust::copy(thrust::device,
+                thrust::device_pointer_cast(s.d_wStarStar.data()),
+                thrust::device_pointer_cast(s.d_wStarStar.data() + s.nodeCount),
+                thrust::device_pointer_cast(s.d_picardPrevW.data()));
+            cudaDeviceSynchronize();
+        }
+
     runPredictorStep<KeyType, RealType, ElementTag>(s, dt, rho);
     if (dbg)
     {
@@ -10401,6 +10460,50 @@ void runNsStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, RealTyp
                       << " div(u**)rms=" << div_ss_rms
                       << " cg_uvw="      << s.lastUIters << "/" << s.lastVIters << "/" << s.lastWIters << "\n";
     }
+
+        s.lastPicardSweeps = sweep + 1;
+        if (picardSweeps > 1 && sweep > 0)
+        {
+            const uint8_t* own = s.ownershipMap().data();
+            const RealType* un = s.d_uStarStar.data();
+            const RealType* vn = s.d_vStarStar.data();
+            const RealType* wn = s.d_wStarStar.data();
+            const RealType* pu = s.d_picardPrevU.data();
+            const RealType* pv = s.d_picardPrevV.data();
+            const RealType* pw = s.d_picardPrevW.data();
+            double locD = thrust::transform_reduce(thrust::device,
+                thrust::counting_iterator<size_t>(0),
+                thrust::counting_iterator<size_t>(s.nodeCount),
+                [own, un, vn, wn, pu, pv, pw] __device__ (size_t i) -> double {
+                    if (own[i] != 1) return 0.0;
+                    double dx = double(un[i]) - double(pu[i]);
+                    double dy = double(vn[i]) - double(pv[i]);
+                    double dz = double(wn[i]) - double(pw[i]);
+                    return sqrt(dx*dx + dy*dy + dz*dz);
+                }, 0.0, thrust::maximum<double>());
+            double locN = thrust::transform_reduce(thrust::device,
+                thrust::counting_iterator<size_t>(0),
+                thrust::counting_iterator<size_t>(s.nodeCount),
+                [own, un, vn, wn] __device__ (size_t i) -> double {
+                    if (own[i] != 1) return 0.0;
+                    return sqrt(double(un[i])*double(un[i])
+                              + double(vn[i])*double(vn[i])
+                              + double(wn[i])*double(wn[i]));
+                }, 0.0, thrust::maximum<double>());
+            double gD = 0, gN = 0;
+            MPI_Allreduce(&locD, &gD, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+            MPI_Allreduce(&locN, &gN, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+            s.lastPicardRes = RealType((gN > 0.0) ? (gD / gN) : gD);
+            if (double(s.lastPicardRes) < double(s.picardTol)) break;
+        }
+    }
+    // leave the flag clean so the next timestep starts from u^n again
+    s.picardAdvAtIterate = false;
+    if (s.nPicard > 1 && s.rank == 0 && std::getenv("MARS_PICARD_TRACE"))
+        std::cout << "  [picard] sweeps=" << s.lastPicardSweeps
+                  << " res=" << std::scientific << std::setprecision(3)
+                  << double(s.lastPicardRes) << std::defaultfloat
+                  << " (tol=" << double(s.picardTol) << ")\n";
 
     runPressureSolveStep<KeyType, RealType, ElementTag>(s, dt, rho);
     if (dbg && s.rank == 0)

@@ -82,6 +82,8 @@ int main(int argc, char** argv)
     bool        implicitAdv = false;
     bool        supg        = false;   // --supg: SUPG streamline stabilization on C(u^n)
     bool        divCorrect  = false;   // --div-correct: conservative->advective advection correction
+    int         nPicard     = 1;       // --picard=N: deferred-correction outer sweeps per step
+    double      picardTol   = 1e-3;    // --picard-tol=X: relative u** change to stop sweeping
     bool        useBdf2     = true;    // --bdf1 forces BDF1/Chorin (1st-order time, more stable for explicit advection)
     bool        useRhieChow = false;   // compact RC is geometrically unsafe on tets (blows up at every tau); --rhie-chow to force on
     RealType    rhieTau    = -1;       // RC strength; <=0 -> auto dt/rho. --rhie-tau= to sweep
@@ -156,6 +158,8 @@ int main(int argc, char** argv)
         else if (a == "--implicit-advection")        implicitAdv = true; // C(u^n) in the velocity matrix; not CFL-limited (tet-only, needs Hypre)
         else if (a == "--supg")                      supg = true;        // SUPG stabilization on the implicit convection operator
         else if (a == "--div-correct")               divCorrect = true;  // subtract q*(div u) from the upwind/BJ advection (OpenAccel node term)
+        else if (a.rfind("--picard=", 0) == 0)       nPicard   = std::stoi(a.substr(9));   // deferred-correction outer sweeps
+        else if (a.rfind("--picard-tol=", 0) == 0)   picardTol = std::stod(a.substr(13));
         else if (a == "--no-rhie")                   useRhieChow = false; // plain Galerkin divergence (checkerboard-prone)
         else if (a == "--rhie-chow")                 useRhieChow = true;
         else if (a.rfind("--rhie-tau=", 0) == 0)     rhieTau   = std::stod(a.substr(11));
@@ -224,6 +228,8 @@ int main(int argc, char** argv)
                     "  --source-ramp-steps=N ramp inlet drive 0->full over N steps (gentle startup; default 0=off)\n"
                     "  --supg              SUPG streamline stabilization on the implicit convection operator\n"
                     "  --div-correct       conservative->advective correction on upwind/BJ advection\n"
+                    "  --picard=N          deferred-correction outer sweeps per step (default 1 = plain explicit)\n"
+                    "  --picard-tol=X      stop sweeping when |du**|/|u**| < X (default 1e-3)\n"
                     "                      (subtracts q*(div u); matters when div(u) is not small)\n"
                     "                      (needs --implicit-advection; required above CFL~1.5 or the velocity GMRES stagnates)\n"
                     "  --cfl=C              adaptive dt: cap advective CFL at C (~0.5 for BJ+BDF2)\n"
@@ -413,6 +419,14 @@ int main(int argc, char** argv)
     s.implicitAdvection = implicitAdv;
     s.useSupg           = supg;
     s.useDivCorrect     = divCorrect;
+    s.nPicard           = std::max(1, nPicard);
+    s.picardTol         = RealType(picardTol);
+    // Picard re-evaluates the EXPLICIT advection at the current iterate. With
+    // --implicit-advection the convection is already in the matrix and there is
+    // no deferred correction to iterate on, so the sweeps would be wasted work.
+    if (rank == 0 && nPicard > 1 && implicitAdv)
+        std::cerr << "WARNING: --picard sweeps the explicit advection; with "
+                     "--implicit-advection there is nothing to iterate. Ignored.\n";
     // Banner: --bj was silently ignored under --implicit-advection for a whole
     // session before anyone noticed. Every advection-path flag says out loud
     // whether it is actually live.
@@ -422,6 +436,8 @@ int main(int argc, char** argv)
                   << (implicitAdv && supg ? " +SUPG" : "")
                   << "  div-correct: "
                   << ((divCorrect && !implicitAdv && advScheme != "skew") ? "ON" : "off")
+                  << "  picard: "
+                  << ((nPicard > 1 && !implicitAdv) ? std::to_string(nPicard) : std::string("off"))
                   << "\n";
     // The correction only applies to the EXPLICIT upwind/BJ scatter. Implicit
     // advection assembles int N_i (a.grad N_j), which is ALREADY the advective
