@@ -81,6 +81,7 @@ int main(int argc, char** argv)
     // OFF -> the explicit EXT2 path runs exactly as before.
     bool        implicitAdv = false;
     bool        supg        = false;   // --supg: SUPG streamline stabilization on C(u^n)
+    bool        divCorrect  = false;   // --div-correct: conservative->advective advection correction
     bool        useBdf2     = true;    // --bdf1 forces BDF1/Chorin (1st-order time, more stable for explicit advection)
     bool        useRhieChow = false;   // compact RC is geometrically unsafe on tets (blows up at every tau); --rhie-chow to force on
     RealType    rhieTau    = -1;       // RC strength; <=0 -> auto dt/rho. --rhie-tau= to sweep
@@ -154,6 +155,7 @@ int main(int argc, char** argv)
         else if (a.rfind("--advection=", 0) == 0)    advScheme  = a.substr(12); // skew|upwind|barth-jespersen
         else if (a == "--implicit-advection")        implicitAdv = true; // C(u^n) in the velocity matrix; not CFL-limited (tet-only, needs Hypre)
         else if (a == "--supg")                      supg = true;        // SUPG stabilization on the implicit convection operator
+        else if (a == "--div-correct")               divCorrect = true;  // subtract q*(div u) from the upwind/BJ advection (OpenAccel node term)
         else if (a == "--no-rhie")                   useRhieChow = false; // plain Galerkin divergence (checkerboard-prone)
         else if (a == "--rhie-chow")                 useRhieChow = true;
         else if (a.rfind("--rhie-tau=", 0) == 0)     rhieTau   = std::stod(a.substr(11));
@@ -221,6 +223,8 @@ int main(int argc, char** argv)
                     "  --dt=V --num-steps=N time stepping (default 1e-3, 200)\n"
                     "  --source-ramp-steps=N ramp inlet drive 0->full over N steps (gentle startup; default 0=off)\n"
                     "  --supg              SUPG streamline stabilization on the implicit convection operator\n"
+                    "  --div-correct       conservative->advective correction on upwind/BJ advection\n"
+                    "                      (subtracts q*(div u); matters when div(u) is not small)\n"
                     "                      (needs --implicit-advection; required above CFL~1.5 or the velocity GMRES stagnates)\n"
                     "  --cfl=C              adaptive dt: cap advective CFL at C (~0.5 for BJ+BDF2)\n"
                     "  --implicit-advection semi-implicit convection: freeze u^n, assemble C(u^n) into\n"
@@ -408,6 +412,16 @@ int main(int argc, char** argv)
     // the pristine velocity matrix and builds the global DOF map Hypre needs.
     s.implicitAdvection = implicitAdv;
     s.useSupg           = supg;
+    s.useDivCorrect     = divCorrect;
+    // The correction only applies to the EXPLICIT upwind/BJ scatter. Implicit
+    // advection assembles int N_i (a.grad N_j), which is ALREADY the advective
+    // form; skew already carries half the term. Warn rather than silently no-op.
+    if (rank == 0 && divCorrect && implicitAdv)
+        std::cerr << "WARNING: --div-correct applies to the explicit upwind/BJ advection; "
+                     "--implicit-advection is already in advective form. Ignored.\n";
+    if (rank == 0 && divCorrect && !implicitAdv && advScheme == "skew")
+        std::cerr << "WARNING: --div-correct is skipped for --skew (the skew-symmetric form "
+                     "already carries -1/2 q(div u)). Use --bj or --upwind.\n";
     // SUPG only enters through C(u^n); without implicit advection there is no
     // matrix to stabilize and the flag would be silently inert.
     if (rank == 0 && supg && !implicitAdv)

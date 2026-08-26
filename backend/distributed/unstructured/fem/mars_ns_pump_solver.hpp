@@ -1320,6 +1320,74 @@ __global__ void computeGradientPerNodeKernel(const KeyType* c0, const KeyType* c
     }
 }
 
+// Face mass-flux divergence per node, over the SAME SCS faces and with the SAME
+// sign convention as explicitAdvectionFluxScatterPerNodeKernel (+mdot at L,
+// -mdot at R). Only used by the conservative->advective correction below.
+template<typename KeyType, typename RealType, typename ElementTag>
+__global__ void accumulateFaceFluxDivergenceKernel(const KeyType* c0, const KeyType* c1,
+                                                   const KeyType* c2, const KeyType* c3,
+                                                   const KeyType* c4, const KeyType* c5,
+                                                   const KeyType* c6, const KeyType* c7,
+                                                   const RealType* vx,
+                                                   const RealType* vy,
+                                                   const RealType* vz,
+                                                   const RealType* areaVecX,
+                                                   const RealType* areaVecY,
+                                                   const RealType* areaVecZ,
+                                                   RealType* divUNode,
+                                                   size_t startElem,
+                                                   size_t numLocal)
+{
+    size_t k = blockIdx.x * blockDim.x + threadIdx.x;
+    if (k >= numLocal) return;
+    size_t e = startElem + k;
+    constexpr int NPE  = ElemTraits<ElementTag>::NodesPerElem;
+    constexpr int NSCS = ElemTraits<ElementTag>::ScsPerElem;
+    const KeyType* cc[8] = {c0, c1, c2, c3, c4, c5, c6, c7};
+    KeyType n[NPE];
+    for (int i = 0; i < NPE; ++i) n[i] = cc[i][e];
+
+    #pragma unroll
+    for (int ip = 0; ip < NSCS; ++ip)
+    {
+        int nodeL, nodeR; scsLR<ElementTag>(ip, nodeL, nodeR);
+        KeyType iL = n[nodeL];
+        KeyType iR = n[nodeR];
+        RealType vfx = RealType(0.5) * (vx[iL] + vx[iR]);
+        RealType vfy = RealType(0.5) * (vy[iL] + vy[iR]);
+        RealType vfz = RealType(0.5) * (vz[iL] + vz[iR]);
+        size_t off = e * NSCS + ip;
+        RealType mdot = vfx * areaVecX[off] + vfy * areaVecY[off] + vfz * areaVecZ[off];
+        atomicAdd(&divUNode[iL], +mdot);
+        atomicAdd(&divUNode[iR], -mdot);
+    }
+}
+
+// Conservative -> advective (non-conservative) correction, the OpenAccel
+// navierStokesAssemblerNodeTerms.cpp:120-126 term. --upwind and --bj scatter
+// mdot*q_face, which is the DIVERGENCE form div(u q); when the mass flux is not
+// yet solenoidal that form manufactures momentum, and in a pump that shows up
+// directly as an inflated peak velocity. Subtracting q*(div u) converts it to
+// the advective form u.grad q, which does not.
+//
+// Sign is pinned by a property, not by algebra: for a CONSTANT q the advective
+// form must give exactly zero for ANY u. The scatter gives advN[i] = -q*sum(mdot)
+// there, and divU accumulates +sum(mdot) with the matching convention, so
+// advN += q*divU cancels it exactly. (--skew already carries a HALF of this term
+// by construction and must not be corrected again; the caller gates on advMode.)
+template<typename RealType>
+__global__ void addDivCorrectionKernel(RealType* advN,
+                                       const RealType* q,
+                                       const RealType* divU,
+                                       const uint8_t* ownership,
+                                       size_t numNodes)
+{
+    size_t i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= numNodes) return;
+    if (ownership[i] != 1) return;
+    advN[i] += q[i] * divU[i];
+}
+
 // =============================================================================
 // Barth-Jespersen limiter support kernels (used only when advScheme==
 // BarthJespersen). Defined here, ABOVE runPredictorStep, so the predictor can
@@ -2950,6 +3018,11 @@ struct NSStepper
     // SUPG streamline stabilization on C(u^n). --supg. OFF leaves the plain
     // Galerkin convection operator byte-identical.
     bool useSupg = false;
+    // Conservative -> advective correction on the EXPLICIT upwind/BJ advection.
+    // --div-correct. Skew already carries half of it, so it is gated off there.
+    bool useDivCorrect = false;
+    // Per-node face mass-flux divergence sum(mdot); scratch for --div-correct.
+    cstone::DeviceVector<RealType> d_divU;
     // Pristine velocity-matrix values (mass coefficient + nu*K + BC rows),
     // snapshotted from Avel/Avel_bdf2 right after the SparseMatrix wrap. C(u^n)
     // changes every step, so the base has to be restored before each re-scatter
@@ -8148,6 +8221,15 @@ void runPredictorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
             s.domain.reverseExchangeNodeHaloAdd(advN);
             maybePeriodicSum<KeyType, RealType, ElementTag>(s, advN);
         }
+        if (s.useDivCorrect && !s.implicitAdvection
+            && s.advScheme != AdvScheme::Skew
+            && s.d_divU.size() == s.nodeCount)
+        {
+            addDivCorrectionKernel<RealType><<<nodeBlocks, s.blockSize>>>(
+                advN.data(), qN.data(), s.d_divU.data(),
+                d_nodeOwnership.data(), s.nodeCount);
+            cudaDeviceSynchronize();
+        }
 
         // DIAGNOSTIC: owned-sum of the (folded) advection term. This is a
         // rank-count-INVARIANT physical quantity if the advection scatter +
@@ -8202,6 +8284,31 @@ void runPredictorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
         }
         cudaDeviceSynchronize();
     };
+
+    // --div-correct: sum(mdot) per node, computed ONCE (it depends only on the
+    // velocity field, not on the advected component) and reused by all three.
+    // Skew is excluded -- it already carries -1/2 q(div u) by construction.
+    const bool divCorrectOn = s.useDivCorrect && !s.implicitAdvection
+                              && s.advScheme != AdvScheme::Skew;
+    if (divCorrectOn)
+    {
+        if (s.d_divU.size() != s.nodeCount) s.d_divU.resize(s.nodeCount);
+        thrust::fill(thrust::device_pointer_cast(s.d_divU.data()),
+                     thrust::device_pointer_cast(s.d_divU.data() + s.nodeCount),
+                     RealType(0));
+        if (eBlocks > 0)
+        {
+            accumulateFaceFluxDivergenceKernel<KeyType, RealType, ElementTag><<<eBlocks, s.blockSize>>>(
+                c0, c1, c2, c3, c4, c5, c6, c7,
+                s.d_u.data(), s.d_v.data(), s.d_w.data(),
+                s.d_areaVec_x.data(), s.d_areaVec_y.data(), s.d_areaVec_z.data(),
+                s.d_divU.data(), startElem, numLocal);
+            cudaDeviceSynchronize();
+        }
+        // owner-complete, same fold the advection scatter uses
+        s.domain.reverseExchangeNodeHaloAdd(s.d_divU);
+        maybePeriodicSum<KeyType, RealType, ElementTag>(s, s.d_divU);
+    }
 
     runPredictor(s.d_u, s.d_u_nm1, s.d_uStar, s.d_advU_n, s.d_advU_nm1, s.d_gradPx, s.d_uTarget, s.bodyForceX,
                  s.d_gradUx, s.d_gradUy, s.d_gradUz);
