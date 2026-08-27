@@ -10396,14 +10396,15 @@ void reportSpeedProfile(NSStepper<KeyType, RealType, ElementTag>& s)
     // in a REFINED region; ~1 or above means it sits where the mesh is coarse and
     // the peak is probably not resolved. Scalars only -- no coordinates leave.
     double hPeak = 0.0, hMed = 0.0;
-    if (s.d_mass.size() == s.nodeCount)
+    // d_massNode is per NODE; d_mass is per owned DOF -- do not mix them here.
+    if (s.d_massNode.size() == s.nodeCount)
     {
         RealType mPeak = 0;
-        cudaMemcpy(&mPeak, s.d_mass.data() + maxNode, sizeof(RealType), cudaMemcpyDeviceToHost);
+        cudaMemcpy(&mPeak, s.d_massNode.data() + maxNode, sizeof(RealType), cudaMemcpyDeviceToHost);
         hPeak = (double(mPeak) > 0.0) ? std::cbrt(double(mPeak)) : 0.0;
 
         thrust::device_vector<RealType> mv(s.nodeCount);
-        const RealType* mp = s.d_mass.data();
+        const RealType* mp = s.d_massNode.data();
         thrust::transform(thrust::device,
             thrust::counting_iterator<size_t>(0),
             thrust::counting_iterator<size_t>(s.nodeCount),
