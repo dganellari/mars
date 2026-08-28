@@ -534,14 +534,21 @@ int main(int argc, char** argv)
     // on a do-nothing outlet: the balance comes from the FREE through-flow the
     // pressure head drives, not a prescribed outlet velocity. The old guard was
     // for the lumped/net-zero path that needs outletU>0 to cancel the inlet flux.
-    if (s.useOpeningFluxSource && s.outletDoNothing && !s.useFluxPressureBc)
-    {
-        if (rank == 0)
-            std::cerr << "WARNING: --opening-flux-source needs the mass-conserving outlet "
-                         "(outletU>0 to balance the inlet flux); --outlet=do-nothing leaves it "
-                         "unbalanced. Disabling the opening-flux source.\n";
-        s.useOpeningFluxSource = false;
-    }
+    // 2026-08-27: the old guard DISABLED the source here. That was right only for the
+    // net-zero lumped path, which needs outletU>0 so the outlet term cancels the inlet
+    // term. With --outlet=do-nothing the outlet is a PRESSURE face (whole-face p=0,
+    // velocity free), and then no balance is needed at all:
+    //   * the pressure system has a real Dirichlet anchor -> no null space, no pin, and
+    //     no sum(b)=0 compatibility condition, so oScale has nothing to enforce;
+    //   * the outlet pressure ROWS are overwritten by the BC, so whatever the RHS holds
+    //     there is discarded -- the (unknown, free) outlet flux never needs supplying.
+    // So keep the source ON and apply the INLET term only (oScale=0 in the solver).
+    // This is the OpenFOAM fixedFluxPressure / OpenAccel arrangement: inlet contributes
+    // p_rhs -= mDot, outlet is a Dirichlet face.
+    if (s.useOpeningFluxSource && s.outletDoNothing && !s.useFluxPressureBc && rank == 0)
+        std::cout << "  [opening-flux] pressure outlet (--outlet=do-nothing): applying the "
+                     "INLET flux only, oScale=0 (no net-zero balance needed -- the p=0 face "
+                     "anchors the system)\n";
 
     // Prescribed inlet volume flux Q_in = inletU * areaIn, captured at function
     // scope so the per-step through-flow diagnostic can compare it to the measured

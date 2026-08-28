@@ -8923,9 +8923,13 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
             // balance, NOT the net-zero rescale (which would re-impose the mass
             // constraint the head sets). Net-zero stays for the mass-conserving
             // prescribed-outlet path.
-            oScale   = s.useFluxPressureBc
-                       ? RealType(1)
-                       : ((std::fabs(Qout_raw) > RealType(0)) ? (-Qin_raw / Qout_raw) : RealType(0));
+            // Pressure outlet (--outlet=do-nothing): the outlet rows are Dirichlet p=0,
+            // so their RHS is discarded and the (free, unknown) outlet flux must NOT be
+            // supplied. There is also no sum(b)=0 condition to satisfy -- the Dirichlet
+            // face anchors the system -- so no net-zero rescale. Inlet term only.
+            oScale   = s.outletDoNothing      ? RealType(0)
+                     : s.useFluxPressureBc    ? RealType(1)
+                     : ((std::fabs(Qout_raw) > RealType(0)) ? (-Qin_raw / Qout_raw) : RealType(0));
             addConsistentOpeningFluxKernel<RealType><<<nodeBlocks, s.blockSize>>>(
                 ramp, oScale,
                 s.d_femFluxWin.data(), s.d_femFluxWout.data(),
@@ -8937,7 +8941,10 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
                                s.d_inletAreaVecX.data(), s.d_inletAreaVecY.data(), s.d_inletAreaVecZ.data());
             Qout_raw = fluxSum(s.outletU*s.outletDirX, s.outletU*s.outletDirY, s.outletU*s.outletDirZ,
                                s.d_outletAreaVecX.data(), s.d_outletAreaVecY.data(), s.d_outletAreaVecZ.data());
-            oScale   = (std::fabs(Qout_raw) > RealType(0)) ? (-Qin_raw / Qout_raw) : RealType(0);
+            // Same reasoning as the consistent branch above: a pressure outlet needs no
+            // outlet term and no net-zero rescale.
+            oScale   = s.outletDoNothing ? RealType(0)
+                     : ((std::fabs(Qout_raw) > RealType(0)) ? (-Qin_raw / Qout_raw) : RealType(0));
             addOpeningFluxSourceKernel<RealType><<<nodeBlocks, s.blockSize>>>(
                 RealType(s.Uinf * s.inletDirX), RealType(s.Uinf * s.inletDirY), RealType(s.Uinf * s.inletDirZ),
                 s.d_inletAreaVecX.data(), s.d_inletAreaVecY.data(), s.d_inletAreaVecZ.data(),
