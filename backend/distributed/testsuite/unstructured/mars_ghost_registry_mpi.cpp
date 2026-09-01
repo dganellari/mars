@@ -13,7 +13,10 @@
 #include <vector>
 
 #include "mars_env.hpp"
-#include "mars_ghost_registry.hpp"
+// Path-relative on purpose: mars_add_test() builds a SECOND executable from this same source that
+// does not inherit addMarsMpiTest()'s include directories, so a bare include resolves in one target
+// and not the other.
+#include "../../unstructured/fem/mars_ghost_registry.hpp"
 
 using mars::fem::GhostRegistry;
 
