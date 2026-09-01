@@ -169,6 +169,16 @@ addMarsMpiTest(
     marsReadMeshBinaryExternalMeshTest
 )
 
+# GhostRegistry is host+MPI only (no CUDA, no mesh file), so it runs as a plain MPI test.
+addMarsMpiTest(
+    ${CMAKE_CURRENT_SOURCE_DIR}/mars_ghost_registry_mpi.cpp
+    mars_ghost_registry_mpi_test
+    marsGhostRegistryMpiTest
+)
+# The shared helper does not carry the fem/ include path; add it just for this target.
+target_include_directories(mars_ghost_registry_mpi_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/backend/distributed/unstructured/fem)
+
 addMarsGpuMpiTest(
     ${CMAKE_CURRENT_SOURCE_DIR}/mars_domain_binary_mesh.cu
     mars_domain_binary_test
