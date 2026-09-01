@@ -295,6 +295,36 @@ readExodusElementBlocks(const std::string& meshFile, int rank, int numRanks)
     return { std::move(elemBlock), num_el_blk == 0 ? size_t(1) : num_el_blk };
 }
 
+// MARS_MESH_DIAG=1 -- SHAREABLE mesh diagnostics, for confidential meshes.
+//
+// MARS_VERBOSE_MESH prints side-set NAMES and exact face/node counts, which identify the mesh and
+// cannot be pasted into a bug report for an NDA geometry. This mode prints only:
+//   - topology facts (block count, nodes per element)
+//   - side sets by INDEX, never by name
+//   - booleans (did it resolve to anything at all)
+//   - a hash of the resolved node-id set
+// The hash is what makes it useful: identical hashes before and after a change prove the side-set
+// resolution is byte-identical, and a 64-bit digest of node IDS reveals nothing about the geometry.
+// No coordinates are ever touched here.
+inline bool meshDiagEnabled()
+{
+    static const bool on = std::getenv("MARS_MESH_DIAG") != nullptr;
+    return on;
+}
+
+// FNV-1a over the raw id bytes. Only needs to be stable within a build, not portable.
+inline uint64_t meshDiagHash(const std::vector<uint64_t>& ids)
+{
+    uint64_t h = 1469598103934665603ull;
+    for (uint64_t v : ids)
+        for (int b = 0; b < 8; ++b)
+        {
+            h ^= static_cast<uint64_t>((v >> (b * 8)) & 0xff);
+            h *= 1099511628211ull;
+        }
+    return h;
+}
+
 // Read the connectivity of ALL element blocks, flattened into one array in Exodus's global
 // element-id order (block 1's elements first, then block 2's, ...), which is the numbering the
 // side-set variables (elem_ss<n>) use -- so a 1-based elem_ss id indexes the result directly,
@@ -307,12 +337,18 @@ readExodusElementBlocks(const std::string& meshFile, int rank, int numRanks)
 // the rest of MARS anyway (ElementDomain is templated on ONE topology), so name the offending
 // block and throw rather than read past the end.
 inline std::pair<std::vector<int>, size_t>
-readAllBlockConnectivity(int ncid, size_t nodesPerElem, const char* caller)
+readAllBlockConnectivity(int ncid, size_t nodesPerElem, const char* caller, int rank = 0)
 {
     int num_el_blk_dim;
     size_t num_el_blk = 0;
     NC_CHECK(nc_inq_dimid(ncid, "num_el_blk", &num_el_blk_dim));
     NC_CHECK(nc_inq_dimlen(ncid, num_el_blk_dim, &num_el_blk));
+
+    const bool diag = meshDiagEnabled() && rank == 0;
+    if (diag)
+        std::cout << "[mesh-diag] " << caller << ": element_blocks=" << num_el_blk
+                  << " expected_nodes_per_elem=" << nodesPerElem
+                  << " multiblock_path=" << (num_el_blk > 1 ? "yes" : "no") << "\n";
 
     std::vector<int> allConn;
     size_t total_elements = 0;
@@ -346,6 +382,10 @@ readAllBlockConnectivity(int ncid, size_t nodesPerElem, const char* caller)
         allConn.resize(offset + num_el_in_blk * nodesPerElem);
         NC_CHECK(nc_get_var_int(ncid, conn_id, allConn.data() + offset));
         total_elements += num_el_in_blk;
+
+        // Block index + width only: no element counts (a size fingerprint), no names.
+        if (diag)
+            std::cout << "[mesh-diag]   block " << blk << ": nodes_per_elem=" << nod_per_el << "\n";
     }
     return { std::move(allConn), total_elements };
 }
@@ -416,6 +456,8 @@ inline ExodusSideSets readExodusSideSetsHex8(const std::string& meshFile, int ra
         if (rank == 0) std::cout << "Exodus: 0 named side-sets in mesh\n";
         return out;
     }
+    if (meshDiagEnabled() && rank == 0)
+        std::cout << "[mesh-diag] side_sets=" << num_side_sets << "\n";
 
     // Side-set names from ss_names(num_side_sets, len_name).
     int ss_names_id;
@@ -451,7 +493,7 @@ inline ExodusSideSets readExodusSideSetsHex8(const std::string& meshFile, int ra
     // Element-block connectivity, needed to expand (elem, side) -> 4 face nodes. All blocks are
     // flattened in Exodus's global element-id order, so a 1-based elem_ss id indexes allConn
     // directly whatever the block count -- see readAllBlockConnectivity.
-    auto [allConn, total_elements] = readAllBlockConnectivity(ncid, 8, "readExodusSideSetsHex8");
+    auto [allConn, total_elements] = readAllBlockConnectivity(ncid, 8, "readExodusSideSetsHex8", rank);
 
     // Global node coordinates (0-based global id), so each side-set node can be
     // resolved to its runtime SFC local id by coordinate (the Exodus id is not
@@ -541,6 +583,11 @@ inline ExodusSideSets readExodusSideSetsHex8(const std::string& meshFile, int ra
             std::cout << "Exodus side-set [" << ssName << "] id=" << ssId
                       << ": " << num_faces << " faces, " << nodeVec.size() << " unique nodes\n";
         }
+        // Shareable: index not name, booleans not counts, hash to prove byte-identical resolution.
+        if (meshDiagEnabled() && rank == 0)
+            std::cout << "[mesh-diag]   sideset[" << k << "]: faces>0=" << (num_faces > 0 ? "yes" : "no")
+                      << " nodes>0=" << (nodeVec.empty() ? "no" : "yes")
+                      << " nodes_hash=0x" << std::hex << meshDiagHash(nodeVec) << std::dec << "\n";
         out.nodesByName[ssName]      = std::move(nodeVec);
         out.nodeCoordsByName[ssName] = std::move(nodeCoords);
     }
@@ -581,6 +628,8 @@ inline ExodusSideSets readExodusSideSetsTet4(const std::string& meshFile, int ra
         if (rank == 0) std::cout << "Exodus: 0 named side-sets in mesh\n";
         return out;
     }
+    if (meshDiagEnabled() && rank == 0)
+        std::cout << "[mesh-diag] side_sets=" << num_side_sets << "\n";
 
     int ss_names_id;
     NC_CHECK(nc_inq_varid(ncid, "ss_names", &ss_names_id));
@@ -604,7 +653,7 @@ inline ExodusSideSets readExodusSideSetsTet4(const std::string& meshFile, int ra
     NC_CHECK(nc_get_var_longlong(ncid, ss_prop1_id, ssIds.data()));
 
     // Same multi-block flatten as the hex reader, 4 nodes/element.
-    auto [allConn, total_elements] = readAllBlockConnectivity(ncid, 4, "readExodusSideSetsTet4");
+    auto [allConn, total_elements] = readAllBlockConnectivity(ncid, 4, "readExodusSideSetsTet4", rank);
 
     // Global node coordinates, indexed by 0-based global node id (same as the
     // main mesh reader). Needed so each side-set node can be resolved to its
@@ -710,6 +759,11 @@ inline ExodusSideSets readExodusSideSetsTet4(const std::string& meshFile, int ra
             std::cout << "Exodus side-set [" << ssName << "] id=" << ssId
                       << ": " << num_faces << " faces, " << nodeVec.size() << " unique nodes\n";
         }
+        if (meshDiagEnabled() && rank == 0)
+            std::cout << "[mesh-diag]   sideset[" << k << "]: faces>0=" << (num_faces > 0 ? "yes" : "no")
+                      << " nodes>0=" << (nodeVec.empty() ? "no" : "yes")
+                      << " tris>0=" << (tris.empty() ? "no" : "yes")
+                      << " nodes_hash=0x" << std::hex << meshDiagHash(nodeVec) << std::dec << "\n";
         out.nodesByName[ssName]         = std::move(nodeVec);
         out.nodeCoordsByName[ssName]    = std::move(nodeCoords);
         out.trianglesByName[ssName]     = std::move(tris);
