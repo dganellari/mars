@@ -2698,6 +2698,52 @@ __global__ void addConsistentOpeningFluxKernel(RealType scaleIn,
     divAccNode[i] += scaleIn * wIn[i] + scaleOut * wOut[i];
 }
 
+// SCS/CVFEM counterpart of the FEM opening surface term. A boundary node's
+// median-dual control volume is CLIPPED by the domain boundary, and the exterior
+// face of that clip lies in NO scsLR pair, so the pairwise scatter can never close
+// it. What closes it is the lumped u_i . areaVec_i, with areaVec_i the node's
+// OUTWARD share of the opening area -- the boundary term belonging to the
+// control-volume test function, NOT the P1 face quadrature the Galerkin path uses.
+// Keeping each family's own boundary term is the point; mixing them is what
+// amplifies divergence.
+//
+// Same shape as addOpeningFluxSourceKernel, with the one difference that is the
+// whole reason this exists: the velocity is the SOLVED field, read per node,
+// instead of one prescribed global vector. That makes it right at a FREE outlet,
+// where no prescribed velocity exists at all, and on a curved inlet, where every
+// node has its own normal.
+//
+// Runs AFTER the reverse-halo fold and gates on ownership -- the opposite of the
+// FEM facet term, and deliberately. The per-node area-vectors are already
+// owner-complete AND published to ghosts (the driver reverse-halo-adds, then
+// exchanges), so scattering before the fold would add the complete value again at
+// every ghost copy and double-count. Owned-only after the fold visits each global
+// node exactly once. Off the openings the area-vectors are zero, so interior and
+// wall nodes add nothing; a node cannot be in both sets, and the sum is its total
+// outward share either way.
+template<typename RealType>
+__global__ void addScsOpeningBoundaryDivergenceKernel(const RealType* vx,
+                                                      const RealType* vy,
+                                                      const RealType* vz,
+                                                      const RealType* inAx,
+                                                      const RealType* inAy,
+                                                      const RealType* inAz,
+                                                      const RealType* outAx,
+                                                      const RealType* outAy,
+                                                      const RealType* outAz,
+                                                      const uint8_t* ownership,
+                                                      RealType* divAccNode,
+                                                      size_t numNodes)
+{
+    size_t i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= numNodes) return;
+    if (ownership[i] != 1) return;
+    const RealType ax = inAx[i] + outAx[i];
+    const RealType ay = inAy[i] + outAy[i];
+    const RealType az = inAz[i] + outAz[i];
+    divAccNode[i] += vx[i] * ax + vy[i] * ay + vz[i] * az;
+}
+
 // DOF-indexed solver output -> per-node array. Reused for all velocity solves
 // and the pressure solve.
 template<typename RealType>
@@ -3179,6 +3225,16 @@ struct NSStepper
     // the live ramp (Uinf/uinfBase); outlet weights by oScale.
     cstone::DeviceVector<RealType> d_femFluxWin, d_femFluxWout;
 
+    // Opening (inlet+outlet) boundary facets, for the SURFACE term of the weak
+    // divergence: oint N_i (u.n) dA. d_openingTriNode holds 3 local node ids per
+    // facet (-1 for a corner this rank could not resolve), d_openingTriArea* the
+    // facet's OUTWARD area-vector. Only the facets THIS rank owns (owner of the
+    // first corner) are stored, so the per-step scatter visits each facet once.
+    // Filled by the pump driver when useFemProjection is on; empty everywhere
+    // else, which disables the surface term.
+    cstone::DeviceVector<int>      d_openingTriNode;
+    cstone::DeviceVector<RealType> d_openingTriAreaX, d_openingTriAreaY, d_openingTriAreaZ;
+
     // FIX 1 -- opening-flux source. The CVFEM divergence operator integrates
     // ONLY interior median-dual SCS faces (each scsLR pair links two NODES of the
     // SAME element, so sum_nodes(divAccNode)==0 identically). The exterior opening
@@ -3191,10 +3247,18 @@ struct NSStepper
     // so u.areaVec is NEGATIVE at the inlet (inward jet, a source) and POSITIVE at
     // the outlet (a sink) -- the same convention as the interior scatter, where
     // positive divAccNode means net outflow. Inlet + outlet net to ~0 (mass in =
-    // mass out), so the single-pin Neumann pressure system stays solvable. Off by
-    // default; --opening-flux-source turns it on for the pump through-flow case so
-    // it can be A/B-ed safely. With useFemProjection the source switches from the
-    // lumped u_i.areaVec_i to the consistent P1 weights (d_femFluxWin/Wout above).
+    // mass out), so the single-pin Neumann pressure system stays solvable. With
+    // useFemProjection the source switches from the lumped u_i.areaVec_i to the
+    // consistent P1 weights (d_femFluxWin/Wout above).
+    //
+    // SUPERSEDED on the FEM-projection path: the weak divergence now carries the
+    // same integral inside the operator (d_openingTriNode above), computed from
+    // the LIVE velocity instead of a prescribed one. Setting this flag SELECTS the
+    // old external patch and switches the native term off, so the two can be run
+    // against each other and can never both fire. It is still the only option
+    // where the flux must be PRESCRIBED rather than measured: --flux-neumann and
+    // the mass-conserving outlet, whose net-zero oScale rescale keeps the
+    // single-pin Neumann RHS compatible.
     bool useOpeningFluxSource = false;
 
     // FIX 2 -- Dirichlet lift on the velocity diffusion. The symmetric col-zero
@@ -8653,6 +8717,112 @@ void runImplicitDiffusionStep(NSStepper<KeyType, RealType, ElementTag>& s, RealT
     }
 }
 
+// Is the weak divergence's opening SURFACE term active?
+//
+//   D_i(u) = -int grad(N_i).u dV  +  oint N_i (u.n) dA
+//
+// The volume term is computeFemDivergenceTetKernel; this predicate decides
+// whether the second half is added. Three conditions, each for a reason:
+//
+//  - FEM weak divergence only (useFemProjection + tet). The P1 face quadrature is
+//    the boundary term belonging to the test function N_i. The SCS/CVFEM
+//    divergence tests against the control-volume indicator instead, whose
+//    boundary term is the lumped u_i.areaVec_i -- a different formula. Mixing the
+//    two families is what amplifies divergence, so the SCS path is left alone.
+//  - --opening-flux-source not set. That flag selects the older external patch,
+//    which computes the same integral from the PRESCRIBED opening velocity. It
+//    stays available as the A/B against this term and for the cases that need a
+//    prescribed rather than a measured flux; the two never both fire.
+//  - the FEM Gram operator is not the one being solved (nnzFemGram == 0, i.e. no
+//    MARS_FEMGRAM_SOLVE). That path solves the exact conjugate A = D M^-1 D^T,
+//    assembled from the VOLUME term alone. Giving D boundary rows here without
+//    giving D^T the matching ones would break the pairing that makes it exact --
+//    and adding them to D^T would change the pressure BC implied at the opening
+//    (the homogeneous Neumann on phi comes from omitting the surface term). That
+//    path is opt-in and unused, so it keeps its old behaviour untouched.
+//
+// Every term comes from a CLI flag, so the answer is the SAME on every rank --
+// deliberately, so a collective can sit next to the call. Whether this rank has
+// any facets to scatter is a separate, per-rank question, handled inside
+// addFemOpeningSurfaceTerm.
+template<typename KeyType, typename RealType, typename ElementTag>
+bool femOpeningSurfaceActive(const NSStepper<KeyType, RealType, ElementTag>& s)
+{
+    return s.useFemProjection
+        && std::is_same_v<ElementTag, TetTag>
+        && !s.useOpeningFluxSource
+        && s.nnzFemGram == 0;
+}
+
+// Scatter oint N_i (u.n) dA over this rank's owned opening facets into divAccNode.
+// Call it on the same velocity the volume term used, and BEFORE the caller's
+// reverseExchangeNodeHaloAdd so ghost corners fold to their owners.
+template<typename KeyType, typename RealType, typename ElementTag>
+void addFemOpeningSurfaceTerm(NSStepper<KeyType, RealType, ElementTag>& s,
+                              const RealType* vx, const RealType* vy, const RealType* vz,
+                              cstone::DeviceVector<RealType>& divAccNode)
+{
+    const size_t numFacets = s.d_openingTriAreaX.size();
+    if (numFacets == 0) return;
+    const int fBlocks = int((numFacets + s.blockSize - 1) / s.blockSize);
+    addFemOpeningSurfaceDivergenceKernel<RealType><<<fBlocks, s.blockSize>>>(
+        s.d_openingTriNode.data(),
+        s.d_openingTriAreaX.data(), s.d_openingTriAreaY.data(), s.d_openingTriAreaZ.data(),
+        vx, vy, vz,
+        divAccNode.data(), numFacets);
+    cudaDeviceSynchronize();
+}
+
+// Is the SCS/CVFEM control-volume opening boundary term active?
+//
+// The CVFEM divergence closes a boundary node's clipped dual cell with
+// u_i . areaVec_i (addScsOpeningBoundaryDivergenceKernel). Conditions:
+//
+//  - SCS divergence family (NOT useFemProjection). The Galerkin path has its own
+//    boundary term, femOpeningSurfaceActive above; exactly one of the two fires.
+//  - --opening-flux-source not set. Same rule as on the FEM path: that flag
+//    selects the prescribed-velocity patch and this term steps aside, so the two
+//    are an A/B and can never both fire.
+//  - the solved pressure operator is not built from D. On the DDT branch the
+//    ASSEMBLED/Hypre route actually solves K (s.Apre) -- see
+//    "auto& pressureMat = useDDTop ? s.AddT : s.Apre" further down -- so only its
+//    RHS is affected, which is the same insulation the FEM path has. The
+//    matrix-free route and MARS_HYPRE_USE_DDT both apply the Gram form
+//    D M^-1 D^T, where a D carrying boundary rows and a D^T without them stop
+//    being adjoints; those keep their old behaviour untouched.
+//
+// nnzDDT is read per rank, but the useAssembledCG branch below already depends on
+// it the same way, so this is no weaker an assumption than the existing code.
+template<typename KeyType, typename RealType, typename ElementTag>
+bool scsOpeningBoundaryActive(const NSStepper<KeyType, RealType, ElementTag>& s)
+{
+    return !s.useFemProjection
+        && !s.useOpeningFluxSource
+        && s.pressureSolve == PressureSolveKind::DDT
+        && s.solverKind == SolverKind::Hypre
+        && s.nnzDDT > 0
+        && std::getenv("MARS_HYPRE_USE_DDT") == nullptr;
+}
+
+// Add u_i . areaVec_i at the opening nodes. Call AFTER reverseExchangeNodeHaloAdd
+// (see the kernel comment for why this one is owned-only-after, not scatter-before).
+template<typename KeyType, typename RealType, typename ElementTag>
+void addScsOpeningBoundaryTerm(NSStepper<KeyType, RealType, ElementTag>& s,
+                               const RealType* vx, const RealType* vy, const RealType* vz,
+                               const uint8_t* ownership,
+                               cstone::DeviceVector<RealType>& divAccNode)
+{
+    if (s.d_inletAreaVecX.size() != s.nodeCount || s.d_outletAreaVecX.size() != s.nodeCount)
+        return;
+    const int nodeBlocks = int((s.nodeCount + s.blockSize - 1) / s.blockSize);
+    addScsOpeningBoundaryDivergenceKernel<RealType><<<nodeBlocks, s.blockSize>>>(
+        vx, vy, vz,
+        s.d_inletAreaVecX.data(),  s.d_inletAreaVecY.data(),  s.d_inletAreaVecZ.data(),
+        s.d_outletAreaVecX.data(), s.d_outletAreaVecY.data(), s.d_outletAreaVecZ.data(),
+        ownership, divAccNode.data(), s.nodeCount);
+    cudaDeviceSynchronize();
+}
+
 // -------------------------------------------------------------------------
 // Step 3: PRESSURE POISSON. K phi = (rho/dt) div(u**). The un-normalized
 // divAccNode is exactly the integrated source f_i*V_i, so the lumped RHS is
@@ -8729,11 +8899,10 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
         bool useFemDiv = s.useFemProjection && std::is_same_v<ElementTag, TetTag>;
         if (useFemDiv)
         {
-            // Volume term b_i = -integral(grad N_i . u**) only. The opening
-            // surface integral is added below by the opening-flux source
-            // (--opening-flux-source), which on this path uses the CONSISTENT
-            // P1 face-quadrature weights (d_femFluxWin/Wout) instead of the
-            // lumped area-vectors; walls contribute 0 (u=0). Reverse-halo +
+            // Volume term b_i = -integral(grad N_i . u**). The matching opening
+            // surface integral oint N_i (u**.n) dA is scattered right after this
+            // block by addFemOpeningSurfaceTerm -- part of the operator, not a
+            // source added from outside. Walls contribute 0 (u=0). Reverse-halo +
             // periodic folding after this block is identical to the SCS path.
             computeFemDivergenceTetKernel<KeyType, RealType><<<eBlocks, s.blockSize>>>(
                 c0, c1, c2, c3,
@@ -8835,8 +9004,118 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
         }
         cudaDeviceSynchronize();
     }
+    // Second half of D: the opening surface integral, on the SAME velocity the
+    // volume term just used. Runs outside the eBlocks guard because a rank can own
+    // opening facets without owning elements. See femOpeningSurfaceActive above for
+    // why it is limited to the FEM path.
+    const bool openingSurface = femOpeningSurfaceActive<KeyType, RealType, ElementTag>(s);
+    if (openingSurface)
+    {
+        addFemOpeningSurfaceTerm<KeyType, RealType, ElementTag>(
+            s,
+            uIter ? uIter : s.d_uStarStar.data(),
+            vIter ? vIter : s.d_vStarStar.data(),
+            wIter ? wIter : s.d_wStarStar.data(),
+            d_divAccNode);
+    }
+    // MARS_OFS_DBG: the net OUTWARD flux through the openings as the operator sees
+    // it -- the direct counterpart of the [ofs-dbg2] Qin_raw/Qout_raw line the
+    // external source prints, so the two paths compare on one number. Per facet the
+    // three corner contributions sum to tot/3, and each facet lives on exactly one
+    // rank, so no ownership gate is needed. openingSurface is rank-uniform, so this
+    // collective is safe; a rank with no facets contributes 0.
+    if (openingSurface && std::getenv("MARS_OFS_DBG"))
+    {
+        const size_t numFacets = s.d_openingTriAreaX.size();
+        const int* triNode  = s.d_openingTriNode.data();
+        const RealType* aX  = s.d_openingTriAreaX.data();
+        const RealType* aY  = s.d_openingTriAreaY.data();
+        const RealType* aZ  = s.d_openingTriAreaZ.data();
+        const RealType* vxP = uIter ? uIter : s.d_uStarStar.data();
+        const RealType* vyP = vIter ? vIter : s.d_vStarStar.data();
+        const RealType* vzP = wIter ? wIter : s.d_wStarStar.data();
+        RealType loc = (numFacets == 0) ? RealType(0)
+            : thrust::transform_reduce(thrust::device,
+                thrust::counting_iterator<size_t>(0),
+                thrust::counting_iterator<size_t>(numFacets),
+                [triNode, aX, aY, aZ, vxP, vyP, vzP] __device__ (size_t f) -> RealType {
+                    RealType t = 0;
+                    for (int j = 0; j < 3; ++j)
+                    {
+                        int n = triNode[3 * f + j];
+                        if (n >= 0) t += vxP[n] * aX[f] + vyP[n] * aY[f] + vzP[n] * aZ[f];
+                    }
+                    return t / RealType(3);
+                },
+                RealType(0), thrust::plus<RealType>());
+        RealType net = 0;
+        MPI_Allreduce(&loc, &net, 1,
+                      std::is_same<RealType, double>::value ? MPI_DOUBLE : MPI_FLOAT,
+                      MPI_SUM, MPI_COMM_WORLD);
+        if (s.rank == 0)
+            std::cout << "  [ofs-dbg2] [native-surface] net outward opening flux = "
+                      << std::scientific << net << std::defaultfloat
+                      << "  (inlet-only when the outlet rows are Dirichlet)\n";
+    }
     s.domain.reverseExchangeNodeHaloAdd(d_divAccNode);
     maybePeriodicSum<KeyType, RealType, ElementTag>(s, d_divAccNode);
+
+    // Closing term for the CVFEM control volumes at the openings, on the SOLVED
+    // velocity. divAccNode and the per-node area-vectors are both owner-complete
+    // here, so an owned-only add is exact -- the same placement the prescribed
+    // source below uses, for the same reason.
+    //
+    // NOTE what this does and does not reach under --outlet=do-nothing: the outlet
+    // area-vector is nonzero only ON the outlet, every owned outlet DOF is
+    // pressure-Dirichlet there, and the Dirichlet RHS enforce overwrites those
+    // rows -- so the outlet half is discarded and cannot move phi. It is kept
+    // because it is the operator's term, not a patch: it becomes load-bearing the
+    // moment the outlet is not a full Dirichlet face (mass-conserving outlet,
+    // single pin, --flux-neumann). What DOES reach the solve here is the inlet
+    // half, and it differs from the prescribed source: u** carries the PER-NODE
+    // inlet normal, while the prescribed source uses one global direction.
+    const bool scsOpening = scsOpeningBoundaryActive<KeyType, RealType, ElementTag>(s);
+    if (scsOpening)
+    {
+        addScsOpeningBoundaryTerm<KeyType, RealType, ElementTag>(
+            s,
+            uIter ? uIter : s.d_uStarStar.data(),
+            vIter ? vIter : s.d_vStarStar.data(),
+            wIter ? wIter : s.d_wStarStar.data(),
+            d_nodeOwnership.data(), d_divAccNode);
+    }
+    // MARS_OFS_DBG: the DISCRETE opening fluxes this term injected, per side, so
+    // they can be read against the prescribed [ofs-dbg2] numbers and against the
+    // analytic Q_in = inletU*areaIn the [bc-sanity] ratio divides by.
+    if (scsOpening && std::getenv("MARS_OFS_DBG")
+        && s.d_inletAreaVecX.size() == s.nodeCount
+        && s.d_outletAreaVecX.size() == s.nodeCount)
+    {
+        auto sideFlux = [&] (const RealType* ax, const RealType* ay, const RealType* az) -> RealType {
+            const RealType* vxP = uIter ? uIter : s.d_uStarStar.data();
+            const RealType* vyP = vIter ? vIter : s.d_vStarStar.data();
+            const RealType* vzP = wIter ? wIter : s.d_wStarStar.data();
+            RealType loc = thrust::transform_reduce(thrust::device,
+                thrust::counting_iterator<size_t>(0),
+                thrust::counting_iterator<size_t>(s.nodeCount),
+                [own = d_nodeOwnership.data(), ax, ay, az, vxP, vyP, vzP] __device__ (size_t i) -> RealType {
+                    return (own[i] == 1) ? (vxP[i]*ax[i] + vyP[i]*ay[i] + vzP[i]*az[i]) : RealType(0); },
+                RealType(0), thrust::plus<RealType>());
+            RealType g = 0;
+            MPI_Allreduce(&loc, &g, 1,
+                          std::is_same<RealType, double>::value ? MPI_DOUBLE : MPI_FLOAT,
+                          MPI_SUM, MPI_COMM_WORLD);
+            return g;
+        };
+        RealType qInDisc  = sideFlux(s.d_inletAreaVecX.data(),  s.d_inletAreaVecY.data(),  s.d_inletAreaVecZ.data());
+        RealType qOutDisc = sideFlux(s.d_outletAreaVecX.data(), s.d_outletAreaVecY.data(), s.d_outletAreaVecZ.data());
+        if (s.rank == 0)
+            std::cout << "  [ofs-dbg2] [native-cv] discrete inlet flux=" << std::scientific << qInDisc
+                      << " outlet flux=" << qOutDisc
+                      << " net=" << (qInDisc + qOutDisc)
+                      << std::defaultfloat
+                      << "  (outlet half is discarded where its rows are Dirichlet)\n";
+    }
 
     // FIX 1: add the inlet+outlet opening surface flux that the interior SCS
     // scatter cannot reach. divAccNode is now owner-complete; the per-node opening
@@ -9605,9 +9884,10 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
                          && s.nCorrectors > 1;
     if (femPiso)
     {
-        // FEM-divergence residual print: interior weak divergence of the
-        // corrected iterate PLUS the prescribed opening-flux source -- the
-        // exact source the next solve would see. The [ns-dbg CORR] div_max is
+        // FEM-divergence residual print: the full weak divergence of the
+        // corrected iterate -- volume term plus opening surface term (or the
+        // prescribed source, when that is what is selected) -- i.e. the exact
+        // source the next solve would see. The [ns-dbg CORR] div_max is
         // the SCS divergence, misleading for the FEM path; this is the honest
         // inner-contraction signal (expect |div| to shrink ~0.5x per pass).
         // Gated like the ns-dbg prints (first-steps window) or
@@ -9638,6 +9918,11 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
                     d_divChk.data(), startElem, numLocal);
                 cudaDeviceSynchronize();
             }
+            // Same two halves as the real build, or the print would report a
+            // divergence the solve never sees.
+            if (femOpeningSurfaceActive<KeyType, RealType, ElementTag>(s))
+                addFemOpeningSurfaceTerm<KeyType, RealType, ElementTag>(
+                    s, s.d_u.data(), s.d_v.data(), s.d_w.data(), d_divChk);
             s.domain.reverseExchangeNodeHaloAdd(d_divChk);
             maybePeriodicSum<KeyType, RealType, ElementTag>(s, d_divChk);
             if (s.useOpeningFluxSource

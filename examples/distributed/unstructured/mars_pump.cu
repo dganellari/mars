@@ -247,9 +247,14 @@ int main(int argc, char** argv)
                     "                       matrix is non-symmetric -> velocity solve moves to GMRES).\n"
                     "  --vtu-output=PREFIX --vtu-every=N   VTU/PVTU output\n"
                     "  --ic-perturb=F       interior IC perturbation (break symmetry)\n"
-                    "  --opening-flux-source  add prescribed inlet+outlet opening flux to the\n"
-                    "                       pressure RHS (FIX 1, ON by default; correct through-flow\n"
-                    "                       fix, needs mass-conserving outlet; --no-... for A/B)\n"
+                    "  --opening-flux-source  use the EXTERNAL prescribed-velocity opening-flux\n"
+                    "                       source instead of the term the divergence now carries\n"
+                    "                       itself (CVFEM: u_i.areaVec_i, needs --solver=hypre;\n"
+                    "                       Galerkin --pressure-k: oint N_i u.n dA). Off = the\n"
+                    "                       operator does it, from the SOLVED velocity, so a free\n"
+                    "                       outlet works too. On = the old patch, native term off:\n"
+                    "                       the A/B for the two, and the way to PRESCRIBE the flux\n"
+                    "                       (mass-conserving outlet, --flux-neumann).\n"
                     "  --no-dirichlet-lift  disable the velocity-diffusion Dirichlet lift (FIX 2,\n"
                     "                       on by default)\n";
             }
@@ -557,6 +562,33 @@ int main(int argc, char** argv)
         std::cout << "  [opening-flux] pressure outlet (--outlet=do-nothing): applying the "
                      "INLET flux only, oScale=0 (no net-zero balance needed -- the p=0 face "
                      "anchors the system)\n";
+
+    // Both divergence families now carry their own opening term, each in its own
+    // form: the Galerkin path integrates oint N_i (u.n) dA over the opening facets,
+    // the CVFEM path closes the clipped control volume with u_i . areaVec_i. Which
+    // one is live follows the pressure path; the CVFEM one needs --solver=hypre,
+    // because the matrix-free route solves the Gram form D M^-1 D^T and a D with
+    // boundary rows would stop being the transpose of the D^T inside it.
+    const bool nativeOpeningTerm = !s.useOpeningFluxSource && (pressureK || useHypre);
+    if (rank == 0 && nativeOpeningTerm && !pressureK)
+        std::cout << "  [opening-cv] CVFEM control-volume opening term ON, inside the "
+                     "divergence, from the SOLVED velocity (--opening-flux-source selects the "
+                     "prescribed-velocity source instead)\n";
+
+    // The native term + a velocity-Dirichlet outlet is the one combination that
+    // loses something the external source provided. There the pressure system is
+    // pure Neumann with a single pin, and the discrete inlet and outlet fluxes do
+    // NOT cancel (~1%: the per-node area sums differ from the analytic areas that
+    // outletU was sized from). The external source rescales the outlet (oScale) to
+    // cancel the inlet exactly; the operator cannot, because it reports the flux
+    // that is actually there. A pressure outlet has no such condition -- its
+    // Dirichlet face anchors the system.
+    if (nativeOpeningTerm && !s.outletDoNothing && pumpDp <= 0.0 && rank == 0)
+        std::cerr << "WARNING: mass-conserving outlet without --opening-flux-source. The "
+                     "divergence now carries the opening flux itself, but it does not "
+                     "rescale the outlet to cancel the inlet, so the single-pin Neumann "
+                     "pressure RHS can be left ~1% incompatible. Use --opening-flux-source "
+                     "here, or --outlet=do-nothing.\n";
 
     // Prescribed inlet volume flux Q_in = inletU * areaIn, captured at function
     // scope so the per-step through-flow diagnostic can compare it to the measured
@@ -938,6 +970,80 @@ int main(int argc, char** argv)
                       << s.inletDirX << "," << s.inletDirY << "," << s.inletDirZ << ")  Q=" << (double(inletU)*areaIn) << "\n"
                       << "    outlet: area=" << areaOut << "  U_out=" << s.outletU
                       << "  outflow dir=(" << s.outletDirX << "," << s.outletDirY << "," << s.outletDirZ << ")\n";
+
+        // -------- Opening facets for the weak-divergence surface term --------
+        // The weak divergence is
+        //     D_i(u) = -int grad(N_i).u dV  +  oint N_i (u.n) dA
+        // and the second half lives on these triangles. Upload them once and the
+        // solver integrates them every step against the LIVE velocity, so the
+        // inflow reaches the pressure equation without anyone setting a flag --
+        // and a FREE (pressure) outlet works too, which the prescribed-velocity
+        // source below cannot do because there is no prescribed velocity to use.
+        // Same once-per-face owner gate and same OUTWARD winding as
+        // perNodeAreaVec, so the geometry matches the flux weights exactly.
+        if (s.useFemProjection)
+        {
+            const size_t nNodes = amr.domain().getNodeCount();
+            std::vector<int> triNode;
+            std::vector<RealType> triAx, triAy, triAz;
+            auto collectOpeningFacets = [&](const std::string& nm)
+            {
+                auto tit = ss.triangleCoordsByName.find(nm);
+                if (tit == ss.triangleCoordsByName.end()) return;
+                std::vector<int> triLocal =
+                    amr.domain().resolveSideSetNodesToLocalKeepMisses(tit->second);
+                for (size_t f = 0; f + 2 < tit->second.size(); f += 3)
+                {
+                    int la = triLocal[f];
+                    if (la < 0 || hostOwnFA[la] != 1) continue;   // count once: owner of first node
+                    const auto& A = tit->second[f];
+                    const auto& B = tit->second[f + 1];
+                    const auto& C = tit->second[f + 2];
+                    double e1x = B[0]-A[0], e1y = B[1]-A[1], e1z = B[2]-A[2];
+                    double e2x = C[0]-A[0], e2y = C[1]-A[1], e2z = C[2]-A[2];
+                    triAx.push_back(RealType(0.5*(e1y*e2z - e1z*e2y)));
+                    triAy.push_back(RealType(0.5*(e1z*e2x - e1x*e2z)));
+                    triAz.push_back(RealType(0.5*(e1x*e2y - e1y*e2x)));
+                    for (int j = 0; j < 3; ++j)
+                    {
+                        int lj = triLocal[f + j];
+                        triNode.push_back((lj >= 0 && (size_t)lj < nNodes) ? lj : -1);
+                    }
+                }
+            };
+            collectOpeningFacets(inletSS);
+            collectOpeningFacets(outletSS);
+
+            const size_t nFacets = triAx.size();
+            s.d_openingTriNode.resize(triNode.size());
+            s.d_openingTriAreaX.resize(nFacets);
+            s.d_openingTriAreaY.resize(nFacets);
+            s.d_openingTriAreaZ.resize(nFacets);
+            if (nFacets > 0)
+            {
+                cudaMemcpy(s.d_openingTriNode.data(), triNode.data(),
+                           triNode.size()*sizeof(int), cudaMemcpyHostToDevice);
+                cudaMemcpy(s.d_openingTriAreaX.data(), triAx.data(),
+                           nFacets*sizeof(RealType), cudaMemcpyHostToDevice);
+                cudaMemcpy(s.d_openingTriAreaY.data(), triAy.data(),
+                           nFacets*sizeof(RealType), cudaMemcpyHostToDevice);
+                cudaMemcpy(s.d_openingTriAreaZ.data(), triAz.data(),
+                           nFacets*sizeof(RealType), cudaMemcpyHostToDevice);
+            }
+            long long localFacets = (long long)nFacets, globalFacets = 0;
+            MPI_Allreduce(&localFacets, &globalFacets, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+            // Mirror the solver's femOpeningSurfaceActive so the line does not
+            // claim a term that will not fire.
+            const char* surfaceOff =
+                s.useOpeningFluxSource
+                    ? "  [INACTIVE: --opening-flux-source selects the external source instead]"
+                : std::getenv("MARS_FEMGRAM_SOLVE")
+                    ? "  [INACTIVE: MARS_FEMGRAM_SOLVE solves D M^-1 D^T, which has no boundary rows]"
+                    : "";
+            if (rank == 0)
+                std::cout << "    opening-surface: " << globalFacets
+                          << " facets inside the weak divergence" << surfaceOff << "\n";
+        }
 
         // -------- Consistent P1 opening-flux weights (FEM projection) --------
         // The weak-form divergence (--pressure-k) needs the boundary integral

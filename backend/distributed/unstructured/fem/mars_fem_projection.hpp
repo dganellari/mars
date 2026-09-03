@@ -18,13 +18,17 @@
 //   b_i = integral(N_i div u) = -integral(grad N_i . u) + surface(N_i u.n)
 // Interior part per element e (u linear, integral_e u = (V/4) sum_j u_j):
 //   b_i += -(V/4) * (dNdx_i . (u_0+u_1+u_2+u_3)),  V = det/6.
-// The surface term at the inlet/outlet openings is the opening-flux source
-// (--opening-flux-source). On THIS path it must be the CONSISTENT P1 face
-// quadrature oint(N_i u.n dA) = sum_f (A_f/12)(2u_i+u_j+u_k).n_f -- the lumped
-// per-node u_i.areaVec_i agrees in total but not node-by-node, and that fixed
-// mismatch is a spurious mass source that blows up geometrically. The solver
-// switches to the consistent weights (s.d_femFluxWin/Wout, built by the pump
-// driver) when useFemProjection is on. Walls give 0 (u=0). Same positive-
+// Surface part on the domain openings (addFemOpeningSurfaceDivergenceKernel
+// below), the CONSISTENT P1 face quadrature
+//   oint(N_i u.n dA) = sum_f (A_f/12)(2u_i+u_j+u_k).n_f,
+// evaluated on the LIVE velocity. It is part of the operator, not a source added
+// from outside, so it works at any opening -- including a free (pressure) outlet,
+// where a prescribed velocity does not exist and the old --opening-flux-source
+// patch had nothing to compute. Walls give 0 (u=0), interior nodes give 0
+// (N_i = 0 on the boundary), so only the opening facets need to be visited. Note
+// the lumped per-node u_i.areaVec_i agrees with this in TOTAL but not node-by-
+// node, and that fixed mismatch is a spurious mass source -- the lumped form
+// belongs to the SCS/control-volume test function, not to N_i. Same positive-
 // outflow divAccNode convention as the SCS scatter, so buildPressureRhs
 // (rhs = -coef*divAcc) and everything downstream are untouched.
 //
@@ -104,6 +108,42 @@ __global__ void computeFemDivergenceTetKernel(
         RealType gdotu = dNdx[i][0] * usx + dNdx[i][1] * usy + dNdx[i][2] * usz;
         atomicAdd(&divAccNode[n[i]], -quarterV * gdotu);
     }
+}
+
+// Surface term of the weak divergence over the opening facets:
+//   b_i += oint N_i (u.n) dA = sum_f (A_f/12)(2u_i + u_j + u_k).A_f
+// (from integral(N_i N_j dA) = (A/12)(1 + delta_ij) on a P1 triangle). One thread
+// per facet. triAreaX/Y/Z is the facet's OUTWARD area-vector, precomputed once
+// from the side-set winding -- the mesh does not move here, and precomputing keeps
+// this bit-comparable with the driver's flux weights. Runs BEFORE the caller's
+// reverseExchangeNodeHaloAdd, like the volume kernel, so a corner that is a ghost
+// on this rank folds back to its owner. Each facet is stored on exactly ONE rank
+// (the owner of its first corner), so nothing is counted twice. A corner that did
+// not resolve on this rank is marked -1 and reads u = 0 -- the same drop the
+// driver's area-vector path takes.
+template<typename RealType>
+__global__ void addFemOpeningSurfaceDivergenceKernel(
+    const int* triNode,
+    const RealType* triAreaX, const RealType* triAreaY, const RealType* triAreaZ,
+    const RealType* vx, const RealType* vy, const RealType* vz,
+    RealType* divAccNode,
+    size_t numFacets)
+{
+    size_t f = blockIdx.x * blockDim.x + threadIdx.x;
+    if (f >= numFacets) return;
+
+    const RealType ax = triAreaX[f], ay = triAreaY[f], az = triAreaZ[f];
+    const int n0 = triNode[3 * f], n1 = triNode[3 * f + 1], n2 = triNode[3 * f + 2];
+    const int n[3] = {n0, n1, n2};
+
+    RealType uA[3];
+    for (int j = 0; j < 3; ++j)
+        uA[j] = (n[j] >= 0) ? (vx[n[j]] * ax + vy[n[j]] * ay + vz[n[j]] * az)
+                            : RealType(0);
+    const RealType tot = uA[0] + uA[1] + uA[2];
+    for (int j = 0; j < 3; ++j)
+        if (n[j] >= 0)
+            atomicAdd(&divAccNode[n[j]], (uA[j] + tot) / RealType(12));
 }
 
 // Adjoint gradient accumulator: scatters (V/4)*(grad phi)_e to each of the 4
