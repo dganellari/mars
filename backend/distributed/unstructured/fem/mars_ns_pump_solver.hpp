@@ -9087,28 +9087,40 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
     // MARS_OFS_DBG: the DISCRETE opening fluxes this term injected, per side, so
     // they can be read against the prescribed [ofs-dbg2] numbers and against the
     // analytic Q_in = inletU*areaIn the [bc-sanity] ratio divides by.
-    if (scsOpening && std::getenv("MARS_OFS_DBG")
-        && s.d_inletAreaVecX.size() == s.nodeCount
-        && s.d_outletAreaVecX.size() == s.nodeCount)
+    // sideFlux does an MPI_Allreduce, so EVERY term deciding whether to enter here
+    // must be rank-uniform or a rank that skips deadlocks the rest. nnzDDT and the
+    // area-vector sizes are per-rank -- a rank owning no opening node has neither --
+    // so they are checked INSIDE sideFlux, which then contributes 0 instead of
+    // skipping the collective. Only CLI flags and env vars gate the block.
+    if (!s.useFemProjection && !s.useOpeningFluxSource
+        && s.pressureSolve == PressureSolveKind::DDT
+        && s.solverKind == SolverKind::Hypre
+        && std::getenv("MARS_HYPRE_USE_DDT") == nullptr
+        && std::getenv("MARS_OFS_DBG"))
     {
-        auto sideFlux = [&] (const RealType* ax, const RealType* ay, const RealType* az) -> RealType {
+        auto sideFlux = [&] (const RealType* ax, const RealType* ay, const RealType* az,
+                             bool haveSide) -> RealType {
             const RealType* vxP = uIter ? uIter : s.d_uStarStar.data();
             const RealType* vyP = vIter ? vIter : s.d_vStarStar.data();
             const RealType* vzP = wIter ? wIter : s.d_wStarStar.data();
-            RealType loc = thrust::transform_reduce(thrust::device,
-                thrust::counting_iterator<size_t>(0),
-                thrust::counting_iterator<size_t>(s.nodeCount),
-                [own = d_nodeOwnership.data(), ax, ay, az, vxP, vyP, vzP] __device__ (size_t i) -> RealType {
-                    return (own[i] == 1) ? (vxP[i]*ax[i] + vyP[i]*ay[i] + vzP[i]*az[i]) : RealType(0); },
-                RealType(0), thrust::plus<RealType>());
+            RealType loc = 0;
+            if (haveSide)
+                loc = thrust::transform_reduce(thrust::device,
+                    thrust::counting_iterator<size_t>(0),
+                    thrust::counting_iterator<size_t>(s.nodeCount),
+                    [own = d_nodeOwnership.data(), ax, ay, az, vxP, vyP, vzP] __device__ (size_t i) -> RealType {
+                        return (own[i] == 1) ? (vxP[i]*ax[i] + vyP[i]*ay[i] + vzP[i]*az[i]) : RealType(0); },
+                    RealType(0), thrust::plus<RealType>());
             RealType g = 0;
             MPI_Allreduce(&loc, &g, 1,
                           std::is_same<RealType, double>::value ? MPI_DOUBLE : MPI_FLOAT,
                           MPI_SUM, MPI_COMM_WORLD);
             return g;
         };
-        RealType qInDisc  = sideFlux(s.d_inletAreaVecX.data(),  s.d_inletAreaVecY.data(),  s.d_inletAreaVecZ.data());
-        RealType qOutDisc = sideFlux(s.d_outletAreaVecX.data(), s.d_outletAreaVecY.data(), s.d_outletAreaVecZ.data());
+        const bool haveIn  = (s.d_inletAreaVecX.size()  == s.nodeCount);
+        const bool haveOut = (s.d_outletAreaVecX.size() == s.nodeCount);
+        RealType qInDisc  = sideFlux(s.d_inletAreaVecX.data(),  s.d_inletAreaVecY.data(),  s.d_inletAreaVecZ.data(),  haveIn);
+        RealType qOutDisc = sideFlux(s.d_outletAreaVecX.data(), s.d_outletAreaVecY.data(), s.d_outletAreaVecZ.data(), haveOut);
         if (s.rank == 0)
             std::cout << "  [ofs-dbg2] [native-cv] discrete inlet flux=" << std::scientific << qInDisc
                       << " outlet flux=" << qOutDisc
@@ -9136,7 +9148,12 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
         // MARS_OFS_DBG: print the source magnitude + divAccNode max before/after +
         // the global net source, so we SEE if it is a giant localized spike or
         // imbalanced. Gated on env, free in production.
-        const bool ofsDbg = (std::getenv("MARS_OFS_DBG") != nullptr) && (s.rank == 0);
+        // sumOwned below does an MPI_Allreduce, so what gates CALLING it must be
+        // rank-uniform -- ofsDbgOn. Folding "rank == 0" into that flag made rank 0
+        // enter the collective alone and hang every other rank (seen 2026-09-03 on
+        // 4 ranks). ofsDbg gates only the PRINTING.
+        const bool ofsDbgOn = (std::getenv("MARS_OFS_DBG") != nullptr);
+        const bool ofsDbg   = ofsDbgOn && (s.rank == 0);
         auto maxAbsOwned = [&] (const RealType* p) -> RealType {
             const auto& d_own = s.domain.getNodeOwnershipMap();
             return thrust::transform_reduce(thrust::device,
@@ -9156,7 +9173,7 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
             return g;
         };
         RealType divMaxBefore = ofsDbg ? maxAbsOwned(d_divAccNode.data()) : RealType(0);
-        RealType sumBefore    = ofsDbg ? sumOwned(d_divAccNode.data())    : RealType(0);
+        RealType sumBefore    = ofsDbgOn ? sumOwned(d_divAccNode.data())  : RealType(0);
         // raw owned sums of (vel.areaVec) per opening -- the ACTUAL discrete flux each
         // side injects, to see if inlet or outlet is the one not firing.
         auto fluxSum = [&] (RealType vx, RealType vy, RealType vz,
@@ -9234,6 +9251,8 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
                 d_nodeOwnership.data(), d_divAccNode.data(), s.nodeCount);
         }
         cudaDeviceSynchronize();
+        // Collective: every rank must call it, only rank 0 prints the result.
+        RealType sumAfter = ofsDbgOn ? sumOwned(d_divAccNode.data()) : RealType(0);
         if (ofsDbg) {
             std::cout << "  [ofs-dbg2] " << (femConsistent ? "[consistent-P1] " : "[lumped] ")
                       << "Qin_raw=" << std::scientific << Qin_raw
@@ -9242,7 +9261,6 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
                       << " net=" << (Qin_raw + oScale*Qout_raw) << " (should be ~0)"
                       << std::defaultfloat << "\n";
             RealType divMaxAfter = maxAbsOwned(d_divAccNode.data());
-            RealType sumAfter    = sumOwned(d_divAccNode.data());
             std::cout << "  [ofs-dbg] divAccNode |max| before=" << std::scientific << divMaxBefore
                       << " after=" << divMaxAfter
                       << "  | sum(divAcc) before=" << sumBefore << " after=" << sumAfter
