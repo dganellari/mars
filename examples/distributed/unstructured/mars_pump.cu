@@ -116,6 +116,10 @@ int main(int argc, char** argv)
     RealType    dt       = 1.0e-3;     // initial/fixed dt; capped by --cfl if set
     double      cflMax   = -1;         // >0 enables adaptive dt: cap advective CFL (uMax*dt/dx) at this
     int         numSteps = 200;
+    // >0: stop early once |d(u_rms)|/u_rms stays under this for 3 straight reports.
+    // Without it a converged run just burns wall clock until SLURM kills it, and
+    // there is no restart, so the killed run loses its final frame.
+    double      steadyTol = 0.0;
     int         sourceRampSteps = 0;   // >0: ramp inlet drive 0->full over N steps (gentle startup)
     int         vtuEvery = 20;
     int         maxIter  = 2000;
@@ -185,6 +189,7 @@ int main(int argc, char** argv)
         else if (a.rfind("--dt=", 0) == 0)           dt        = std::stod(a.substr(5));
         else if (a.rfind("--cfl=", 0) == 0)          cflMax    = std::stod(a.substr(6)); // adaptive dt: cap advective CFL
         else if (a.rfind("--num-steps=", 0) == 0)    numSteps  = std::stoi(a.substr(12));
+        else if (a.rfind("--steady-tol=", 0) == 0)   steadyTol = std::stod(a.substr(13)); // early exit at steady state
         else if (a.rfind("--source-ramp-steps=", 0) == 0) sourceRampSteps = std::stoi(a.substr(20));
         else if (a.rfind("--vtu-every=", 0) == 0)    vtuEvery  = std::stoi(a.substr(12));
         else if (a.rfind("--max-iter=", 0) == 0)     maxIter   = std::stoi(a.substr(11));
@@ -225,6 +230,9 @@ int main(int argc, char** argv)
                     "                       whole-geometry diagonal, NOT the passage scale, so this Re\n"
                     "                       does NOT match a physically-defined Re. Prefer --nu/--rho.\n"
                     "  --dt=V --num-steps=N time stepping (default 1e-3, 200)\n"
+                    "  --steady-tol=X       stop early once |d(u_rms)|/u_rms < X for 3 straight\n"
+                    "                       reports (default 0 = off; ~1e-5 is a converged pump).\n"
+                    "                       There is no restart, so a wall-clock kill loses the run.\n"
                     "  --source-ramp-steps=N ramp inlet drive 0->full over N steps (gentle startup; default 0=off)\n"
                     "  --supg              SUPG streamline stabilization on the implicit convection operator\n"
                     "  --div-correct       conservative->advective correction on upwind/BJ advection\n"
@@ -1203,6 +1211,9 @@ int main(int argc, char** argv)
     // plus the steady-state residual d(u_rms) so convergence is visible.
     double tFlow = (inletU > 0 && Lscale > 0) ? (Lscale / double(inletU)) : 1.0;
     double prevURms = 0.0;
+    int    steadyHits = 0;      // consecutive reports under steadyTol
+    int    stepsRun   = numSteps;  // < numSteps if --steady-tol trips
+    bool   steadyDone = false;  // set in the report block, acted on at the loop tail
 
     // Adaptive-dt (--cfl) setup. Explicit BJ+EXT2 advection has a real CFL limit:
     // as the jet develops, uMax*dt/dx crosses the EXT2 stability bound and the
@@ -1314,6 +1325,15 @@ int main(int argc, char** argv)
             double uFrac = (inletU > 0) ? uRms / double(inletU) : uRms;       // u_rms as a fraction of inlet U
             double dURms = uRms - prevURms;                                   // steady-state residual
             prevURms = uRms;
+            // uRms comes from an MPI_Allreduce, so it is bit-identical on every rank:
+            // each rank reaches the same verdict and they all leave the loop together.
+            // Require 3 straight hits -- a single small step can just be a stall.
+            if (steadyTol > 0.0 && uRms > 0.0)
+            {
+                const double relResid = std::abs(dURms) / uRms;
+                steadyHits = (relResid < steadyTol) ? steadyHits + 1 : 0;
+                if (steadyHits >= 3) steadyDone = true;
+            }
             // Peak INTERIOR velocity (excludes the pinned inlet/outlet/wall DOFs):
             // does the inlet jet propagate into the domain? u_max/U ~ O(1) near
             // the jet means flow IS entering even if the volume-average u_rms is
@@ -1443,15 +1463,24 @@ int main(int argc, char** argv)
                 }
             }
         }
-        if (!vtuPrefix.empty() && (step % vtuEvery == 0 || step == numSteps))
+        if (!vtuPrefix.empty() && (step % vtuEvery == 0 || step == numSteps || steadyDone))
             writeFrame(step, simTime);
+        if (steadyDone)
+        {
+            if (rank == 0)
+                std::cout << "\n[steady] |d(u_rms)|/u_rms < " << steadyTol
+                          << " for 3 straight reports -- stopping at step " << step
+                          << " of " << numSteps << ".\n";
+            stepsRun = step;
+            break;
+        }
     }
     auto wallEnd = std::chrono::high_resolution_clock::now();
     double wallMs = std::chrono::duration<double, std::milli>(wallEnd - wallStart).count();
     if (rank == 0)
-        std::cout << "\nPump run complete: " << numSteps << " steps, "
+        std::cout << "\nPump run complete: " << stepsRun << " steps, "
                   << std::fixed << std::setprecision(1) << wallMs << " ms ("
-                  << wallMs / std::max(numSteps, 1) << " ms/step)\n";
+                  << wallMs / std::max(stepsRun, 1) << " ms/step)\n";
 
     MPI_Finalize();
     return 0;
