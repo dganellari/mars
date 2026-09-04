@@ -102,19 +102,6 @@ reproducible run to run. The collision pattern comes from the ghosting topology 
 build time**, so `sendIdx_` is inverted once into `entity -> contributing slots` and one thread
 sums each entity in a fixed order. Deterministic, and free per call.
 
----
-
-## Testing
-
-| Gate | What it covers |
-|---|---|
-| `mars_coarse_search_host_mpi.cpp` | Host reference: fixture topology plus a **randomized brute-force oracle**. The overlap set is *defined*, not chosen, so an O(N²) serial pass over the global boxes is ground truth. |
-| `mars_ghost_registry_host_mpi.cpp` | Host reference: send/recv symmetry, forward, reverseAdd, ownerRank, two-registry isolation, inconsistent-participation detection. |
-| `mars_search_ghost_mpi.cu` | **Device vs host on identical input**, element-for-element. Also the only translation unit that compiles the device halves at all — both headers are header-only and every other consumer is a `.cpp`. |
-
-Run the device gate at **4 ranks or more**: the `reverseAdd` collision it is really testing cannot
-occur on one rank.
-
 ## 4. Building a ghosting from a domain — `createNodeGhosting`
 
 `fem/mars_domain_ghosting.hpp`. The equivalent of `bulkData.create_ghosting(name)`:
@@ -138,6 +125,19 @@ marked on the OWNER as well as on every rank that ghosts it, or the two sides di
 
 Setup-time only — the registry's build is host-side, so this copies the halo lists and SFC keys
 down once. The per-step exchange stays on the device.
+
+---
+
+## Testing
+
+| Gate | What it covers |
+|---|---|
+| `mars_coarse_search_host_mpi.cpp` | Host reference: fixture topology plus a **randomized brute-force oracle**. The overlap set is *defined*, not chosen, so an O(N²) serial pass over the global boxes is ground truth. |
+| `mars_ghost_registry_host_mpi.cpp` | Host reference: send/recv symmetry, forward, reverseAdd, ownerRank, two-registry isolation, inconsistent-participation detection. |
+| `mars_search_ghost_mpi.cu` | **Device vs host on identical input**, element-for-element. Also the only translation unit that compiles the device halves at all — both headers are header-only and every other consumer is a `.cpp`. |
+
+Run the device gate at **4 ranks or more**: the `reverseAdd` collision it is really testing cannot
+occur on one rank.
 
 ## Not done yet
 
