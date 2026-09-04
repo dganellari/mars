@@ -10,6 +10,8 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
+#include <random>
 #include <vector>
 
 #include "mars_env.hpp"
@@ -234,6 +236,98 @@ TEST(GhostRegistry, InconsistentParticipationIsReported)
         EXPECT_GT(regC.unresolvedIncomingRequests(), 0u) << "owner did not report unresolvable keys";
     EXPECT_FALSE(regC.isConsistent()) << "collective verdict missed an inconsistent ghosting";
     MPI_Barrier(MPI_COMM_WORLD);
+}
+
+// Gate: a random sequence of update(add, remove) must leave the registry in EXACTLY the state
+// build() would produce for the same final ghost set. Anything less shows up later as misaligned
+// exchange slots rather than as an error, which is why this compares the bookkeeping AND the
+// actual forward/reverseAdd results.
+//
+// Topology: rank r owns keys [r*N, r*N+N) and may ghost the nearest few of each neighbour. The
+// OWNER always participates, so what varies per step is purely which ghosts each rank asks for.
+TEST(GhostRegistryHost, IncrementalMatchesRebuild)
+{
+    int rank = 0, np = 1;
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &np);
+
+    constexpr int kOwn = 40, kCand = 6;
+
+    for (int seed = 0; seed < 12; ++seed)
+    {
+        std::vector<long>    key;
+        std::vector<int>     owner;
+        std::vector<uint8_t> part;
+        std::vector<int>     ghostSlots, peers;
+        for (int i = 0; i < kOwn; ++i)
+        {
+            key.push_back(long(rank) * kOwn + i);
+            owner.push_back(rank);
+            part.push_back(1);
+        }
+        auto addCand = [&](int nb)
+        {
+            if (nb < 0 || nb >= np) return;
+            for (int g = 0; g < kCand; ++g)
+            {
+                key.push_back(long(nb) * kOwn + g);
+                owner.push_back(nb);
+                part.push_back(0);
+                ghostSlots.push_back(int(key.size()) - 1);
+            }
+        };
+        addCand(rank - 1);
+        addCand(rank + 1);
+        for (int r = 0; r < np; ++r) peers.push_back(r);
+
+        GhostRegistry<long> incr("incr");
+        incr.build(key.size(), owner, key, part, rank, peers, MPI_COMM_WORLD);
+
+        std::mt19937 gen(900 + seed);
+        std::uniform_int_distribution<int> coin(0, 1);
+        for (int step = 0; step < 6; ++step)
+        {
+            std::vector<GhostRegistry<long>::Delta> add;
+            std::vector<long> rem;
+            for (int lid : ghostSlots)
+            {
+                const bool want = coin(gen) == 1;
+                if (want && !part[lid]) { add.push_back({key[lid], lid, owner[lid]}); part[lid] = 1; }
+                else if (!want && part[lid]) { rem.push_back(key[lid]); part[lid] = 0; }
+            }
+            incr.update(add, rem);
+        }
+
+        GhostRegistry<long> fresh("fresh");
+        fresh.build(key.size(), owner, key, part, rank, peers, MPI_COMM_WORLD);
+
+        ASSERT_EQ(incr.peers().size(), fresh.peers().size()) << "seed " << seed;
+        for (size_t p = 0; p < incr.peers().size(); ++p)
+        {
+            EXPECT_EQ(incr.peers()[p], fresh.peers()[p]) << "seed " << seed;
+            ASSERT_EQ(incr.sendCount(int(p)), fresh.sendCount(int(p))) << "seed " << seed;
+            ASSERT_EQ(incr.recvCount(int(p)), fresh.recvCount(int(p))) << "seed " << seed;
+            auto a = incr.sendList(int(p)), b = fresh.sendList(int(p));
+            EXPECT_TRUE(std::equal(a.first, a.second, b.first)) << "send list, seed " << seed;
+            auto c = incr.recvList(int(p)), d = fresh.recvList(int(p));
+            EXPECT_TRUE(std::equal(c.first, c.second, d.first)) << "recv list, seed " << seed;
+        }
+
+        // The exchange itself, not just the bookkeeping.
+        std::vector<double> v1(key.size(), 0.0), v2(key.size(), 0.0);
+        for (size_t i = 0; i < key.size(); ++i)
+            if (owner[i] == rank) v1[i] = v2[i] = double(key[i]);
+        incr.forwardHost(v1);
+        fresh.forwardHost(v2);
+        EXPECT_EQ(v1, v2) << "forward, seed " << seed;
+
+        std::vector<double> w1(key.size(), 0.0), w2(key.size(), 0.0);
+        for (size_t i = 0; i < key.size(); ++i)
+            if (owner[i] != rank && part[i]) w1[i] = w2[i] = 1.0;
+        incr.reverseAddHost(w1);
+        fresh.reverseAddHost(w2);
+        EXPECT_EQ(w1, w2) << "reverseAdd, seed " << seed;
+    }
 }
 
 int main(int argc, char** argv)
