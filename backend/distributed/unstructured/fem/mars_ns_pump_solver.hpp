@@ -8923,8 +8923,14 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
             // normalize by lumped mass -> +grad p, halo-complete. This is exactly
             // Nalu's G_i(p). dp/dx_ip (the element ip gradient) is +grad p too, so
             // the residual (G - dp/dx) is sign-consistent.
+            // tau has to be the coefficient the CORRECTOR actually applies, or the swap does not
+            // cancel: the corrector uses dtEff = 2*dt/3 under BDF2 (see :9810), so a plain dt/rho
+            // here is 1.5x off whenever BDF2 is active. OpenAccel's fractional-step branch uses
+            // D = dt/(gamma1*rho) for the same reason (navierStokesAssembler.cpp:191).
+            const bool     bdf2Vms = (s.useBdf2 && s.bdfStep >= 1 && s.d_valuesVel_bdf2.size() > 0);
+            const RealType dtEffV  = bdf2Vms ? (RealType(2) * dt / RealType(3)) : dt;
             RealType tauV = s.rhieChowTau;
-            if (tauV <= 0) tauV = dt / rho;
+            if (tauV <= 0) tauV = dtEffV / rho;
             const auto& d_x = s.domain.getNodeX();
             const auto& d_y = s.domain.getNodeY();
             const auto& d_z = s.domain.getNodeZ();
@@ -8966,7 +8972,19 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
             // G-dpdx form double-counts grad p on the Chorin post-predictor u**
             // and ramps |p| unbounded (validated on cube16). Set
             // MARS_VMS_KEEP_SMOOTH=1 to A/B the full form.
-            bool keepSmooth = (std::getenv("MARS_VMS_KEEP_SMOOTH") != nullptr);
+            // FULL difference form by default (2026-09-04). Dropping the smooth half was
+            // justified by "SIMPLE/PISO's u* = HbyA does not yet contain grad p" -- but OpenAccel's
+            // predictor DOES carry it as a source (navierStokesAssemblerNodeTerms.cpp:128-130), and
+            // so does ours (see the BDF1 comment at :2452). Both are incremental, so the structures
+            // match and the term should never have been split.
+            //
+            // Rhie-Chow is a SWAP, not an addition: -D*(grad p - Gp) removes the interpolated nodal
+            // gradient the momentum equation injected into u and installs the compact element
+            // gradient in its place. The smooth parts cancel BY CONSTRUCTION, leaving a 4th-order
+            // term. Keeping only -dp/dx leaves an uncancelled explicit -tau*lap(p^n) on the Poisson
+            // RHS -- bigger p, bigger correction, bigger p, which is the doubling-every-step
+            // runaway measured on 2026-09-04.
+            bool keepSmooth = (std::getenv("MARS_VMS_COMPACT_ONLY") == nullptr);
             // MARS_VMS_DIAG_TAU: replace the global tau with OpenAccel's V/a_P,
             // read off the ASSEMBLED momentum diagonal so the coefficient adapts
             // per node instead of being one number for the whole mesh.
@@ -8990,7 +9008,12 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
                 c0, c1, c2, c3,
                 s.d_uStarStar.data(), s.d_vStarStar.data(), s.d_wStarStar.data(),
                 s.d_p.data(),
-                d_GxN.data(), d_GyN.data(), d_GzN.data(),
+                // G(p) must be the SAME operator the predictor used, not a second one. The
+                // predictor injects M^-1 D^T p (sign-flipped to +grad p, :8143-8156); a fresh
+                // Green-Gauss SCS gradient is a DIFFERENT discrete operator, so the residual
+                // (M^-1 D^T - G)p is an uncontrolled explicit pressure feedback. A cancellation
+                // that has to be exact cannot be attempted across two operators.
+                s.d_gradPx.data(), s.d_gradPy.data(), s.d_gradPz.data(),
                 d_x.data(), d_y.data(), d_z.data(),
                 s.d_areaVec_x.data(), s.d_areaVec_y.data(), s.d_areaVec_z.data(),
                 tauV, tauNodePtr, keepSmooth,
