@@ -46,6 +46,9 @@
 #include <thrust/reduce.h>
 #include <thrust/transform.h>
 #include <thrust/extrema.h>
+#include <thrust/functional.h>
+#include <thrust/sort.h>
+#include <thrust/count.h>
 #include <thrust/fill.h>
 #include <thrust/system/cuda/execution_policy.h>
 
@@ -1320,6 +1323,74 @@ __global__ void computeGradientPerNodeKernel(const KeyType* c0, const KeyType* c
     }
 }
 
+// Face mass-flux divergence per node, over the SAME SCS faces and with the SAME
+// sign convention as explicitAdvectionFluxScatterPerNodeKernel (+mdot at L,
+// -mdot at R). Only used by the conservative->advective correction below.
+template<typename KeyType, typename RealType, typename ElementTag>
+__global__ void accumulateFaceFluxDivergenceKernel(const KeyType* c0, const KeyType* c1,
+                                                   const KeyType* c2, const KeyType* c3,
+                                                   const KeyType* c4, const KeyType* c5,
+                                                   const KeyType* c6, const KeyType* c7,
+                                                   const RealType* vx,
+                                                   const RealType* vy,
+                                                   const RealType* vz,
+                                                   const RealType* areaVecX,
+                                                   const RealType* areaVecY,
+                                                   const RealType* areaVecZ,
+                                                   RealType* divUNode,
+                                                   size_t startElem,
+                                                   size_t numLocal)
+{
+    size_t k = blockIdx.x * blockDim.x + threadIdx.x;
+    if (k >= numLocal) return;
+    size_t e = startElem + k;
+    constexpr int NPE  = ElemTraits<ElementTag>::NodesPerElem;
+    constexpr int NSCS = ElemTraits<ElementTag>::ScsPerElem;
+    const KeyType* cc[8] = {c0, c1, c2, c3, c4, c5, c6, c7};
+    KeyType n[NPE];
+    for (int i = 0; i < NPE; ++i) n[i] = cc[i][e];
+
+    #pragma unroll
+    for (int ip = 0; ip < NSCS; ++ip)
+    {
+        int nodeL, nodeR; scsLR<ElementTag>(ip, nodeL, nodeR);
+        KeyType iL = n[nodeL];
+        KeyType iR = n[nodeR];
+        RealType vfx = RealType(0.5) * (vx[iL] + vx[iR]);
+        RealType vfy = RealType(0.5) * (vy[iL] + vy[iR]);
+        RealType vfz = RealType(0.5) * (vz[iL] + vz[iR]);
+        size_t off = e * NSCS + ip;
+        RealType mdot = vfx * areaVecX[off] + vfy * areaVecY[off] + vfz * areaVecZ[off];
+        atomicAdd(&divUNode[iL], +mdot);
+        atomicAdd(&divUNode[iR], -mdot);
+    }
+}
+
+// Conservative -> advective (non-conservative) correction, the OpenAccel
+// navierStokesAssemblerNodeTerms.cpp:120-126 term. --upwind and --bj scatter
+// mdot*q_face, which is the DIVERGENCE form div(u q); when the mass flux is not
+// yet solenoidal that form manufactures momentum, and in a pump that shows up
+// directly as an inflated peak velocity. Subtracting q*(div u) converts it to
+// the advective form u.grad q, which does not.
+//
+// Sign is pinned by a property, not by algebra: for a CONSTANT q the advective
+// form must give exactly zero for ANY u. The scatter gives advN[i] = -q*sum(mdot)
+// there, and divU accumulates +sum(mdot) with the matching convention, so
+// advN += q*divU cancels it exactly. (--skew already carries a HALF of this term
+// by construction and must not be corrected again; the caller gates on advMode.)
+template<typename RealType>
+__global__ void addDivCorrectionKernel(RealType* advN,
+                                       const RealType* q,
+                                       const RealType* divU,
+                                       const uint8_t* ownership,
+                                       size_t numNodes)
+{
+    size_t i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= numNodes) return;
+    if (ownership[i] != 1) return;
+    advN[i] += q[i] * divU[i];
+}
+
 // =============================================================================
 // Barth-Jespersen limiter support kernels (used only when advScheme==
 // BarthJespersen). Defined here, ABOVE runPredictorStep, so the predictor can
@@ -1932,6 +2003,7 @@ __global__ void assembleConvectionTetKernel(
     const RealType* un, const RealType* vn, const RealType* wn,
     const int* nodeToDof, const uint8_t* ownership, const uint8_t* isBdryDof,
     const int* rowPtr, const int* colInd, int numOwnedDofs,
+    RealType nu, RealType dt, int supgOn,
     RealType* vals, size_t numElem)
 {
     size_t e = blockIdx.x * blockDim.x + threadIdx.x;
@@ -1955,9 +2027,38 @@ __global__ void assembleConvectionTetKernel(
     for (int i = 0; i < 4; ++i) { ax += un[n[i]]; ay += vn[n[i]]; az += wn[n[i]]; }
     ax *= RealType(0.25); ay *= RealType(0.25); az *= RealType(0.25);
 
-    RealType cj[4];
+    RealType aDotG[4];
     for (int j = 0; j < 4; ++j)
-        cj[j] = qV * (ax * dNdx[j][0] + ay * dNdx[j][1] + az * dNdx[j][2]);
+        aDotG[j] = ax * dNdx[j][0] + ay * dNdx[j][1] + az * dNdx[j][2];
+
+    RealType cj[4];
+    for (int j = 0; j < 4; ++j) cj[j] = qV * aDotG[j];
+
+    // SUPG streamline term tau*(a.grad N_i)(a.grad N_j)*vol. Plain Galerkin
+    // convection has EXACTLY zero row sum (sum_j grad N_j == 0 on P1), so it
+    // contributes no diagonal at all. Once |C| overtakes the mass block --
+    // which happens above CFL ~ 1.5, the whole point of implicit advection --
+    // the matrix loses diagonal dominance and a Jacobi-preconditioned GMRES
+    // stagnates (measured: 2000 iters, residual 1.0 -> 0.43). This term is
+    // symmetric positive-definite, so it restores that dominance, and it is
+    // the FEM form of upwinding, so it also kills the high-Peclet wiggles.
+    RealType tau = 0;
+    if (supgOn) {
+        RealType amag = sqrt(ax * ax + ay * ay + az * az);
+        if (amag > RealType(1e-30)) {
+            // sum_i |a.grad N_i| is exactly 2|a|/h with h measured ALONG the
+            // streamline, so it already IS tau's advective term -- no separate
+            // element length needed.
+            RealType g = 0;
+            for (int i = 0; i < 4; ++i) g += fabs(aDotG[i]);
+            if (g > RealType(0)) {
+                RealType hs   = RealType(2) * amag / g;
+                RealType tTr  = RealType(2) / dt;              // transient limit
+                RealType tDif = RealType(4) * nu / (hs * hs);  // diffusive limit
+                tau = RealType(1) / sqrt(tTr * tTr + g * g + tDif * tDif);
+            }
+        }
+    }
 
     for (int i = 0; i < 4; ++i) {
         if (ownership[n[i]] != 1) continue;
@@ -1968,7 +2069,9 @@ __global__ void assembleConvectionTetKernel(
         for (int j = 0; j < 4; ++j) {
             int dofJ = nodeToDof[n[j]];
             if (dofJ < 0) continue;
-            fem::atomicAddSparseEntry(vals, colInd, rs, re, dofJ, cj[j]);
+            RealType v = cj[j];
+            if (tau > RealType(0)) v += tau * vol * aDotG[i] * aDotG[j];
+            fem::atomicAddSparseEntry(vals, colInd, rs, re, dofJ, v);
         }
     }
 }
@@ -2595,6 +2698,52 @@ __global__ void addConsistentOpeningFluxKernel(RealType scaleIn,
     divAccNode[i] += scaleIn * wIn[i] + scaleOut * wOut[i];
 }
 
+// SCS/CVFEM counterpart of the FEM opening surface term. A boundary node's
+// median-dual control volume is CLIPPED by the domain boundary, and the exterior
+// face of that clip lies in NO scsLR pair, so the pairwise scatter can never close
+// it. What closes it is the lumped u_i . areaVec_i, with areaVec_i the node's
+// OUTWARD share of the opening area -- the boundary term belonging to the
+// control-volume test function, NOT the P1 face quadrature the Galerkin path uses.
+// Keeping each family's own boundary term is the point; mixing them is what
+// amplifies divergence.
+//
+// Same shape as addOpeningFluxSourceKernel, with the one difference that is the
+// whole reason this exists: the velocity is the SOLVED field, read per node,
+// instead of one prescribed global vector. That makes it right at a FREE outlet,
+// where no prescribed velocity exists at all, and on a curved inlet, where every
+// node has its own normal.
+//
+// Runs AFTER the reverse-halo fold and gates on ownership -- the opposite of the
+// FEM facet term, and deliberately. The per-node area-vectors are already
+// owner-complete AND published to ghosts (the driver reverse-halo-adds, then
+// exchanges), so scattering before the fold would add the complete value again at
+// every ghost copy and double-count. Owned-only after the fold visits each global
+// node exactly once. Off the openings the area-vectors are zero, so interior and
+// wall nodes add nothing; a node cannot be in both sets, and the sum is its total
+// outward share either way.
+template<typename RealType>
+__global__ void addScsOpeningBoundaryDivergenceKernel(const RealType* vx,
+                                                      const RealType* vy,
+                                                      const RealType* vz,
+                                                      const RealType* inAx,
+                                                      const RealType* inAy,
+                                                      const RealType* inAz,
+                                                      const RealType* outAx,
+                                                      const RealType* outAy,
+                                                      const RealType* outAz,
+                                                      const uint8_t* ownership,
+                                                      RealType* divAccNode,
+                                                      size_t numNodes)
+{
+    size_t i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= numNodes) return;
+    if (ownership[i] != 1) return;
+    const RealType ax = inAx[i] + outAx[i];
+    const RealType ay = inAy[i] + outAy[i];
+    const RealType az = inAz[i] + outAz[i];
+    divAccNode[i] += vx[i] * ax + vy[i] * ay + vz[i] * az;
+}
+
 // DOF-indexed solver output -> per-node array. Reused for all velocity solves
 // and the pressure solve.
 template<typename RealType>
@@ -2915,6 +3064,24 @@ struct NSStepper
     // predictor. The step is then limited by accuracy, not CFL. OFF -> every
     // line below is skipped and the run is byte-identical to the explicit path.
     bool implicitAdvection = false;
+    // SUPG streamline stabilization on C(u^n). --supg. OFF leaves the plain
+    // Galerkin convection operator byte-identical.
+    bool useSupg = false;
+    // Picard / deferred-correction outer loop (--picard=N). The advection is
+    // re-evaluated at the current iterate each sweep, so at convergence the BJ
+    // flux is evaluated at u^(n+1) -- implicit BJ, without BJ ever entering a
+    // matrix. nPicard=1 is the plain single-pass path, byte-identical.
+    int      nPicard          = 1;
+    RealType picardTol        = RealType(1e-3);
+    bool     picardAdvAtIterate = false;   // set by the loop, not by the user
+    int      lastPicardSweeps = 0;
+    RealType lastPicardRes    = 0;
+    cstone::DeviceVector<RealType> d_picardPrevU, d_picardPrevV, d_picardPrevW;
+    // Conservative -> advective correction on the EXPLICIT upwind/BJ advection.
+    // --div-correct. Skew already carries half of it, so it is gated off there.
+    bool useDivCorrect = false;
+    // Per-node face mass-flux divergence sum(mdot); scratch for --div-correct.
+    cstone::DeviceVector<RealType> d_divU;
     // Pristine velocity-matrix values (mass coefficient + nu*K + BC rows),
     // snapshotted from Avel/Avel_bdf2 right after the SparseMatrix wrap. C(u^n)
     // changes every step, so the base has to be restored before each re-scatter
@@ -3004,6 +3171,19 @@ struct NSStepper
     // pumpDp<=0 disables FIX B entirely: the pump behaves exactly as the legacy
     // mass-conserving (or do-nothing) velocity outlet. Driver sets it from --pump-dp=.
     RealType pumpDp = 0;
+
+    // Flux-consistent Neumann openings (--flux-neumann). The openings keep their
+    // ASSEMBLED pressure rows instead of being masked Dirichlet, and the target flux
+    // enters the pressure RHS as S_i = sum_j (A_f/12)(1+delta_ij) Un_j -- which the
+    // driver already builds as d_femFluxWin/Wout. The opening VELOCITIES are then left
+    // free: locking them is what makes the flux source inconsistent (the projection is
+    // asked to satisfy a constraint at nodes the corrector may not touch), and is why
+    // --opening-flux-source alone blows up. Needs one INTERIOR null-space pin: a pin
+    // sitting on an opening corrupts that face's row. Derivation + 1-element and
+    // multi-element replicas (O(h) convergent): internal-notes/plan_flux_neumann_inlet.md
+    // sections 8-11, scripts/flux_neumann_replica{,_multi}.py.
+    bool fluxNeumann = false;
+    int  pressurePinInteriorDof = -1;   // chosen off the openings when fluxNeumann
     // Ramp-start fraction for the seeded head (driver sets = 1/sourceRampSteps
     // when ramping, else 1). Avoids a full-head grad(p^n) kick on step 0.
     RealType pumpDpSeedScale = 1;
@@ -3045,6 +3225,16 @@ struct NSStepper
     // the live ramp (Uinf/uinfBase); outlet weights by oScale.
     cstone::DeviceVector<RealType> d_femFluxWin, d_femFluxWout;
 
+    // Opening (inlet+outlet) boundary facets, for the SURFACE term of the weak
+    // divergence: oint N_i (u.n) dA. d_openingTriNode holds 3 local node ids per
+    // facet (-1 for a corner this rank could not resolve), d_openingTriArea* the
+    // facet's OUTWARD area-vector. Only the facets THIS rank owns (owner of the
+    // first corner) are stored, so the per-step scatter visits each facet once.
+    // Filled by the pump driver when useFemProjection is on; empty everywhere
+    // else, which disables the surface term.
+    cstone::DeviceVector<int>      d_openingTriNode;
+    cstone::DeviceVector<RealType> d_openingTriAreaX, d_openingTriAreaY, d_openingTriAreaZ;
+
     // FIX 1 -- opening-flux source. The CVFEM divergence operator integrates
     // ONLY interior median-dual SCS faces (each scsLR pair links two NODES of the
     // SAME element, so sum_nodes(divAccNode)==0 identically). The exterior opening
@@ -3057,10 +3247,18 @@ struct NSStepper
     // so u.areaVec is NEGATIVE at the inlet (inward jet, a source) and POSITIVE at
     // the outlet (a sink) -- the same convention as the interior scatter, where
     // positive divAccNode means net outflow. Inlet + outlet net to ~0 (mass in =
-    // mass out), so the single-pin Neumann pressure system stays solvable. Off by
-    // default; --opening-flux-source turns it on for the pump through-flow case so
-    // it can be A/B-ed safely. With useFemProjection the source switches from the
-    // lumped u_i.areaVec_i to the consistent P1 weights (d_femFluxWin/Wout above).
+    // mass out), so the single-pin Neumann pressure system stays solvable. With
+    // useFemProjection the source switches from the lumped u_i.areaVec_i to the
+    // consistent P1 weights (d_femFluxWin/Wout above).
+    //
+    // SUPERSEDED on the FEM-projection path: the weak divergence now carries the
+    // same integral inside the operator (d_openingTriNode above), computed from
+    // the LIVE velocity instead of a prescribed one. Setting this flag SELECTS the
+    // old external patch and switches the native term off, so the two can be run
+    // against each other and can never both fire. It is still the only option
+    // where the flux must be PRESCRIBED rather than measured: --flux-neumann and
+    // the mass-conserving outlet, whose net-zero oScale rescale keeps the
+    // single-pin Neumann RHS compatible.
     bool useOpeningFluxSource = false;
 
     // FIX 2 -- Dirichlet lift on the velocity diffusion. The symmetric col-zero
@@ -4614,7 +4812,11 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
             // the pressure-BC block), NOT a velocity Dirichlet. Do NOT tag the inlet
             // here -- it must stay out of d_isBdryDof/uTarget so the corrector is
             // free to drive its velocity from the interior pressure gradient.
-            if (s.pumpDp <= RealType(0))
+            // fluxNeumann: same reasoning as FIX B, different mechanism. The inlet flux
+            // is imposed through the pressure RHS (S_target), so the inlet velocity must
+            // stay FREE -- locking it here is exactly the inconsistency that makes the
+            // opening-flux source blow up.
+            if (s.pumpDp <= RealType(0) && !s.fluxNeumann)
             {
                 const bool inletPerNode =
                     s.inletDirXPerNode.size() == s.inletNodes.size() &&
@@ -4647,7 +4849,9 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
             // (legacy) and only gets the p=0 pressure Dirichlet below.
             // FIX B (pumpDp>0): outlet velocity stays FREE (driven by the p=0
             // Dirichlet + interior gradient), so never velocity-tag it.
-            if (s.pumpDp <= RealType(0) && s.outletU > RealType(0))
+            // fluxNeumann: the outlet flux is imposed through the pressure RHS too, so
+            // its velocity also stays free.
+            if (s.pumpDp <= RealType(0) && !s.fluxNeumann && s.outletU > RealType(0))
                 tag(s.outletNodes, RealType(s.outletU * s.outletDirX),
                                        RealType(s.outletU * s.outletDirY),
                                        RealType(s.outletU * s.outletDirZ));
@@ -5278,6 +5482,11 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
         // Dirichlet faces make A nonsingular, no single pin is needed.
         bool singlePin = (s.outletU > RealType(0));
         if (s.pumpDp > RealType(0)) singlePin = false;
+        // fluxNeumann: NEITHER opening is masked. Both keep their assembled rows and the
+        // target flux enters the RHS (S_target = d_femFluxWin/Wout). That leaves the
+        // pressure pure-Neumann, so exactly one pin is needed -- and it must sit on an
+        // INTERIOR node: a pin on an opening corrupts that face's row (1-element replica).
+        if (s.fluxNeumann) singlePin = false;
         int  pinRankLocal = singlePin ? s.numRanks : -1;  // for the global argmin
         size_t ownedOutletCount = 0;
         int firstOutletDof = -1;
@@ -5288,7 +5497,7 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
             int dof = hostNodeToDof[li];
             if (dof < 0 || dof >= s.numOwnedDofs) continue;
             if (firstOutletDof < 0) firstOutletDof = dof;
-            if (!singlePin) { hostMask[dof] = 1; ++ownedOutletCount; }
+            if (!singlePin && !s.fluxNeumann) { hostMask[dof] = 1; ++ownedOutletCount; }
             // FIX B: outlet target p=0 (explicit for clarity; zero-init already).
             if (s.pumpDp > RealType(0)) hostTarget[dof] = RealType(0);
         }
@@ -5370,6 +5579,33 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
         // mode (FlexGMRES then "converges" at x=0 in 2 iters). Tracking the pin
         // DOF here lets the DDT block below restore its native diagonal so AMG
         // sees a uniformly-scaled SPD row, matching the cavity fix.
+        // fluxNeumann null-space pin. Pure-Neumann pressure -> phi is fixed only up to a
+        // constant, so pin exactly ONE dof, on an INTERIOR node (not on either opening --
+        // a pin there corrupts that face's flux row). Lowest rank that owns a candidate
+        // wins, so every rank agrees on the single global pin.
+        if (s.fluxNeumann)
+        {
+            std::vector<uint8_t> onOpening(s.nodeCount, 0);
+            for (int li : s.inletNodes)  if (li >= 0 && (size_t)li < s.nodeCount) onOpening[li] = 1;
+            for (int li : s.outletNodes) if (li >= 0 && (size_t)li < s.nodeCount) onOpening[li] = 1;
+            int cand = -1;
+            for (size_t li = 0; li < s.nodeCount && cand < 0; ++li)
+            {
+                if (onOpening[li] || hostOwn[li] != 1) continue;
+                int dof = hostNodeToDof[li];
+                if (dof >= 0 && dof < s.numOwnedDofs) cand = dof;
+            }
+            int haveCand = (cand >= 0) ? s.rank : s.numRanks;
+            int pinRank  = s.numRanks;
+            MPI_Allreduce(&haveCand, &pinRank, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
+            s.pressurePinRank = pinRank;
+            s.pressurePinDof  = (s.rank == pinRank) ? cand : -1;
+            s.pressurePinInteriorDof = s.pressurePinDof;
+            if (s.pressurePinDof >= 0) hostMask[s.pressurePinDof] = 1;   // one Dirichlet row
+            if (s.rank == 0 && pinRank >= s.numRanks)
+                std::cerr << "WARNING: --flux-neumann found no interior pin candidate; the "
+                             "pressure system is singular.\n";
+        }
         if (singlePin && !(s.pumpDp > RealType(0)))
         {
             int haveOutlet = (firstOutletDof >= 0) ? s.rank : s.numRanks;
@@ -5380,7 +5616,12 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
         }
         if (s.rank == 0)
         {
-            if (s.pumpDp > RealType(0))
+            if (s.fluxNeumann)
+                std::cout << "  pressure BC (flux-Neumann): openings UNMASKED (assembled rows kept),"
+                          << " target flux via S_target; one interior pin"
+                          << " (dof=" << s.pressurePinInteriorDof << " on rank "
+                          << s.pressurePinRank << ")\n";
+            else if (s.pumpDp > RealType(0))
                 std::cout << "  pressure BC (FIX B): Dirichlet p=" << s.pumpDp
                           << " on whole inlet side-set, p=0 on whole outlet side-set"
                           << " (" << ownedInletCount << " inlet + " << ownedOutletCount
@@ -6736,9 +6977,12 @@ int solveOneComponent(NSStepper<KeyType, RealType, ElementTag>& s,
         else  // KrylovHint::GMRES
         {
             using HSol = mars::fem::HypreGMRESSolver<RealType, int, cstone::GpuTag>;
-            // forceGmres == the --implicit-advection VELOCITY solve. That matrix is
-            // mass-dominated, so Jacobi is near-exact on it while BoomerAMG returns
-            // x~0 (see the forceCG note above). Pin Jacobi locally instead of via
+            // forceGmres == the --implicit-advection VELOCITY solve. NOTE: the
+            // "mass-dominated, so Jacobi is near-exact" claim this used to make is
+            // WRONG once C(u^n) is in the matrix -- |C|/|M| ~ (2/3)*CFL, so above
+            // CFL ~ 1.5 convection dominates and Jacobi stagnates. --supg restores
+            // the diagonal that makes Jacobi viable again. BoomerAMG still returns
+            // x~0 here (see the forceCG note above). Pin Jacobi locally instead of via
             // MARS_HYPRE_PRECOND: that env var is read by every Hypre solve, so using
             // it here would also strip AMG off the PRESSURE solve, which needs it
             // (measured: cg_p 24 -> 2000 at the iteration cap).
@@ -7725,6 +7969,42 @@ RealType maxOwnedInteriorAbs(NSStepper<KeyType, RealType, ElementTag>& s,
     return gMax;
 }
 
+// True peak SPEED over owned interior nodes: sqrt(u^2+v^2+w^2) evaluated PER
+// NODE, then maxed. Not the same as combining three independent per-component
+// maxima -- those generally land on three DIFFERENT nodes, so their vector sum
+// is an upper bound that exists nowhere in the domain (measured ~30% high on the
+// pump). Same node filter as maxOwnedInteriorAbs so the two are comparable.
+template<typename KeyType, typename RealType, typename ElementTag = HexTag>
+RealType maxOwnedInteriorSpeed(NSStepper<KeyType, RealType, ElementTag>& s,
+                               const cstone::DeviceVector<RealType>& d_u,
+                               const cstone::DeviceVector<RealType>& d_v,
+                               const cstone::DeviceVector<RealType>& d_w)
+{
+    const auto& d_nodeOwnership = s.ownershipMap();
+    const uint8_t* ownPtr = d_nodeOwnership.data();
+    const int* dofPtr     = s.d_node_to_dof.data();
+    const uint8_t* bnd    = s.d_isBdryDof.data();
+    const uint8_t* pmask  = (s.d_isPressureBdryDof.size() > 0)
+                            ? s.d_isPressureBdryDof.data() : nullptr;
+    const RealType* up = d_u.data();
+    const RealType* vp = d_v.data();
+    const RealType* wp = d_w.data();
+    RealType locMax = thrust::transform_reduce(thrust::device,
+        thrust::counting_iterator<size_t>(0),
+        thrust::counting_iterator<size_t>(s.nodeCount),
+        [ownPtr, dofPtr, bnd, pmask, up, vp, wp] __device__ (size_t i) -> RealType {
+            if (ownPtr[i] != 1) return RealType(0);
+            int dof = dofPtr[i];
+            if (dof < 0 || bnd[dof])             return RealType(0);
+            if (pmask != nullptr && pmask[dof])  return RealType(0);
+            return sqrt(up[i]*up[i] + vp[i]*vp[i] + wp[i]*wp[i]);
+        }, RealType(0), thrust::maximum<RealType>());
+    auto mpiType = std::is_same_v<RealType, double> ? MPI_DOUBLE : MPI_FLOAT;
+    RealType gMax = 0;
+    MPI_Allreduce(&locMax, &gMax, 1, mpiType, MPI_MAX, MPI_COMM_WORLD);
+    return gMax;
+}
+
 // =============================================================================
 // runNsStep is composed of four sub-steps. They share NO state outside
 // NSStepper; each can be invoked in isolation for unit testing (e.g. drive
@@ -7879,6 +8159,19 @@ void runPredictorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
             s, s.d_gradPx, s.d_gradPy, s.d_gradPz);
     }
 
+    // Picard (--picard>1): the ADVECTION half of the predictor evaluates at the
+    // CURRENT ITERATE u**, not u^n -- gradients, limiter and flux all move. The
+    // BDF time term deliberately stays at u^n: that is the whole point of
+    // deferred correction, only the flux goes to the new level. Flag off ->
+    // these alias u^n and the path is byte-identical.
+    const bool picardIter = s.picardAdvAtIterate
+                            && s.d_uStarStar.size() == s.nodeCount
+                            && s.d_vStarStar.size() == s.nodeCount
+                            && s.d_wStarStar.size() == s.nodeCount;
+    auto& advFieldU = picardIter ? s.d_uStarStar : s.d_u;
+    auto& advFieldV = picardIter ? s.d_vStarStar : s.d_v;
+    auto& advFieldW = picardIter ? s.d_wStarStar : s.d_w;
+
     // Node coords for the Barth-Jespersen midpoint reconstruction. Always valid
     // (read by the BJ flux branch and the limiter); cheap to fetch.
     const auto& d_bjNodeX = s.domain.getNodeX();
@@ -7948,9 +8241,9 @@ void runPredictorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
             s.domain.exchangeNodeHalo(gz);
         };
 
-        computeNodeGradient(s.d_u, s.d_gradUx, s.d_gradUy, s.d_gradUz);
-        computeNodeGradient(s.d_v, s.d_gradVx, s.d_gradVy, s.d_gradVz);
-        computeNodeGradient(s.d_w, s.d_gradWx, s.d_gradWy, s.d_gradWz);
+        computeNodeGradient(advFieldU, s.d_gradUx, s.d_gradUy, s.d_gradUz);
+        computeNodeGradient(advFieldV, s.d_gradVx, s.d_gradVy, s.d_gradVz);
+        computeNodeGradient(advFieldW, s.d_gradWx, s.d_gradWy, s.d_gradWz);
     }
 
     // Per-component advection scatter + predictor apply. Each scatter writes
@@ -7967,7 +8260,8 @@ void runPredictorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
                               RealType bodyForce,
                               cstone::DeviceVector<RealType>& gradQx,
                               cstone::DeviceVector<RealType>& gradQy,
-                              cstone::DeviceVector<RealType>& gradQz)
+                              cstone::DeviceVector<RealType>& gradQz,
+                              cstone::DeviceVector<RealType>& qAdv)
     {
         // Barth-Jespersen per-component limiter: neighbor min/max over edge
         // neighbors (owned scatter + reverse MIN/MAX fold for the cross-rank
@@ -7976,7 +8270,7 @@ void runPredictorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
         if (bjMode)
         {
             bjSeedMinMaxKernel<RealType><<<nodeBlocks, s.blockSize>>>(
-                qN.data(), s.d_bjQmin.data(), s.d_bjQmax.data(), s.nodeCount);
+                qAdv.data(), s.d_bjQmin.data(), s.d_bjQmax.data(), s.nodeCount);
             cudaDeviceSynchronize();
             // Scatter over OWNED elements only. An owned boundary node's full
             // edge-neighbor ring is completed across ranks by the reverse
@@ -7989,7 +8283,7 @@ void runPredictorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
             {
                 bjNeighborMinMaxScatterKernel<KeyType, RealType, ElementTag><<<eBlocks, s.blockSize>>>(
                     c0, c1, c2, c3, c4, c5, c6, c7,
-                    qN.data(), s.d_bjQmin.data(), s.d_bjQmax.data(),
+                    qAdv.data(), s.d_bjQmin.data(), s.d_bjQmax.data(),
                     startElem, numLocal);
                 cudaDeviceSynchronize();
             }
@@ -8010,7 +8304,7 @@ void runPredictorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
             {
                 bjLimiterScatterKernel<KeyType, RealType, ElementTag><<<eBlocks, s.blockSize>>>(
                     c0, c1, c2, c3, c4, c5, c6, c7,
-                    qN.data(), s.d_bjQmin.data(), s.d_bjQmax.data(),
+                    qAdv.data(), s.d_bjQmin.data(), s.d_bjQmax.data(),
                     gradQx.data(), gradQy.data(), gradQz.data(),
                     d_bjNodeX.data(), d_bjNodeY.data(), d_bjNodeZ.data(),
                     s.d_bjPhi.data(), startElem, numLocal);
@@ -8037,8 +8331,8 @@ void runPredictorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
         {
             explicitAdvectionFluxScatterPerNodeKernel<KeyType, RealType, ElementTag><<<eBlocks, s.blockSize>>>(
                 c0, c1, c2, c3, c4, c5, c6, c7,
-                s.d_u.data(), s.d_v.data(), s.d_w.data(),
-                qN.data(),
+                advFieldU.data(), advFieldV.data(), advFieldW.data(),
+                qAdv.data(),
                 s.d_areaVec_x.data(), s.d_areaVec_y.data(), s.d_areaVec_z.data(),
                 advN.data(), startElem, numLocal,
                 advMode,
@@ -8053,6 +8347,15 @@ void runPredictorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
         {
             s.domain.reverseExchangeNodeHaloAdd(advN);
             maybePeriodicSum<KeyType, RealType, ElementTag>(s, advN);
+        }
+        if (s.useDivCorrect && !s.implicitAdvection
+            && s.advScheme != AdvScheme::Skew
+            && s.d_divU.size() == s.nodeCount)
+        {
+            addDivCorrectionKernel<RealType><<<nodeBlocks, s.blockSize>>>(
+                advN.data(), qAdv.data(), s.d_divU.data(),
+                d_nodeOwnership.data(), s.nodeCount);
+            cudaDeviceSynchronize();
         }
 
         // DIAGNOSTIC: owned-sum of the (folded) advection term. This is a
@@ -8109,12 +8412,37 @@ void runPredictorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
         cudaDeviceSynchronize();
     };
 
+    // --div-correct: sum(mdot) per node, computed ONCE (it depends only on the
+    // velocity field, not on the advected component) and reused by all three.
+    // Skew is excluded -- it already carries -1/2 q(div u) by construction.
+    const bool divCorrectOn = s.useDivCorrect && !s.implicitAdvection
+                              && s.advScheme != AdvScheme::Skew;
+    if (divCorrectOn)
+    {
+        if (s.d_divU.size() != s.nodeCount) s.d_divU.resize(s.nodeCount);
+        thrust::fill(thrust::device_pointer_cast(s.d_divU.data()),
+                     thrust::device_pointer_cast(s.d_divU.data() + s.nodeCount),
+                     RealType(0));
+        if (eBlocks > 0)
+        {
+            accumulateFaceFluxDivergenceKernel<KeyType, RealType, ElementTag><<<eBlocks, s.blockSize>>>(
+                c0, c1, c2, c3, c4, c5, c6, c7,
+                advFieldU.data(), advFieldV.data(), advFieldW.data(),
+                s.d_areaVec_x.data(), s.d_areaVec_y.data(), s.d_areaVec_z.data(),
+                s.d_divU.data(), startElem, numLocal);
+            cudaDeviceSynchronize();
+        }
+        // owner-complete, same fold the advection scatter uses
+        s.domain.reverseExchangeNodeHaloAdd(s.d_divU);
+        maybePeriodicSum<KeyType, RealType, ElementTag>(s, s.d_divU);
+    }
+
     runPredictor(s.d_u, s.d_u_nm1, s.d_uStar, s.d_advU_n, s.d_advU_nm1, s.d_gradPx, s.d_uTarget, s.bodyForceX,
-                 s.d_gradUx, s.d_gradUy, s.d_gradUz);
+                 s.d_gradUx, s.d_gradUy, s.d_gradUz, advFieldU);
     runPredictor(s.d_v, s.d_v_nm1, s.d_vStar, s.d_advV_n, s.d_advV_nm1, s.d_gradPy, s.d_vTarget, s.bodyForceY,
-                 s.d_gradVx, s.d_gradVy, s.d_gradVz);
+                 s.d_gradVx, s.d_gradVy, s.d_gradVz, advFieldV);
     runPredictor(s.d_w, s.d_w_nm1, s.d_wStar, s.d_advW_n, s.d_advW_nm1, s.d_gradPz, s.d_wTarget, s.bodyForceZ,
-                 s.d_gradWx, s.d_gradWy, s.d_gradWz);
+                 s.d_gradWx, s.d_gradWy, s.d_gradWz, advFieldW);
 
     // FIX-B #3: project q* onto the open-face normal (zero tangential) BEFORE the
     // q* ghost publish, so the implicit-diffusion RHS and the pressure solve see a
@@ -8257,6 +8585,7 @@ void runImplicitDiffusionStep(NSStepper<KeyType, RealType, ElementTag>& s, RealT
                     s.d_u.data(), s.d_v.data(), s.d_w.data(),
                     s.d_node_to_dof.data(), d_nodeOwnership.data(), s.d_isBdryDof.data(),
                     s.d_rowPtr.data(), s.d_colInd.data(), s.numOwnedDofs,
+                    s.nuCached, dt, s.useSupg ? 1 : 0,
                     velVals, s.elementCount);
             }
             cudaDeviceSynchronize();
@@ -8388,6 +8717,112 @@ void runImplicitDiffusionStep(NSStepper<KeyType, RealType, ElementTag>& s, RealT
     }
 }
 
+// Is the weak divergence's opening SURFACE term active?
+//
+//   D_i(u) = -int grad(N_i).u dV  +  oint N_i (u.n) dA
+//
+// The volume term is computeFemDivergenceTetKernel; this predicate decides
+// whether the second half is added. Three conditions, each for a reason:
+//
+//  - FEM weak divergence only (useFemProjection + tet). The P1 face quadrature is
+//    the boundary term belonging to the test function N_i. The SCS/CVFEM
+//    divergence tests against the control-volume indicator instead, whose
+//    boundary term is the lumped u_i.areaVec_i -- a different formula. Mixing the
+//    two families is what amplifies divergence, so the SCS path is left alone.
+//  - --opening-flux-source not set. That flag selects the older external patch,
+//    which computes the same integral from the PRESCRIBED opening velocity. It
+//    stays available as the A/B against this term and for the cases that need a
+//    prescribed rather than a measured flux; the two never both fire.
+//  - the FEM Gram operator is not the one being solved (nnzFemGram == 0, i.e. no
+//    MARS_FEMGRAM_SOLVE). That path solves the exact conjugate A = D M^-1 D^T,
+//    assembled from the VOLUME term alone. Giving D boundary rows here without
+//    giving D^T the matching ones would break the pairing that makes it exact --
+//    and adding them to D^T would change the pressure BC implied at the opening
+//    (the homogeneous Neumann on phi comes from omitting the surface term). That
+//    path is opt-in and unused, so it keeps its old behaviour untouched.
+//
+// Every term comes from a CLI flag, so the answer is the SAME on every rank --
+// deliberately, so a collective can sit next to the call. Whether this rank has
+// any facets to scatter is a separate, per-rank question, handled inside
+// addFemOpeningSurfaceTerm.
+template<typename KeyType, typename RealType, typename ElementTag>
+bool femOpeningSurfaceActive(const NSStepper<KeyType, RealType, ElementTag>& s)
+{
+    return s.useFemProjection
+        && std::is_same_v<ElementTag, TetTag>
+        && !s.useOpeningFluxSource
+        && s.nnzFemGram == 0;
+}
+
+// Scatter oint N_i (u.n) dA over this rank's owned opening facets into divAccNode.
+// Call it on the same velocity the volume term used, and BEFORE the caller's
+// reverseExchangeNodeHaloAdd so ghost corners fold to their owners.
+template<typename KeyType, typename RealType, typename ElementTag>
+void addFemOpeningSurfaceTerm(NSStepper<KeyType, RealType, ElementTag>& s,
+                              const RealType* vx, const RealType* vy, const RealType* vz,
+                              cstone::DeviceVector<RealType>& divAccNode)
+{
+    const size_t numFacets = s.d_openingTriAreaX.size();
+    if (numFacets == 0) return;
+    const int fBlocks = int((numFacets + s.blockSize - 1) / s.blockSize);
+    addFemOpeningSurfaceDivergenceKernel<RealType><<<fBlocks, s.blockSize>>>(
+        s.d_openingTriNode.data(),
+        s.d_openingTriAreaX.data(), s.d_openingTriAreaY.data(), s.d_openingTriAreaZ.data(),
+        vx, vy, vz,
+        divAccNode.data(), numFacets);
+    cudaDeviceSynchronize();
+}
+
+// Is the SCS/CVFEM control-volume opening boundary term active?
+//
+// The CVFEM divergence closes a boundary node's clipped dual cell with
+// u_i . areaVec_i (addScsOpeningBoundaryDivergenceKernel). Conditions:
+//
+//  - SCS divergence family (NOT useFemProjection). The Galerkin path has its own
+//    boundary term, femOpeningSurfaceActive above; exactly one of the two fires.
+//  - --opening-flux-source not set. Same rule as on the FEM path: that flag
+//    selects the prescribed-velocity patch and this term steps aside, so the two
+//    are an A/B and can never both fire.
+//  - the solved pressure operator is not built from D. On the DDT branch the
+//    ASSEMBLED/Hypre route actually solves K (s.Apre) -- see
+//    "auto& pressureMat = useDDTop ? s.AddT : s.Apre" further down -- so only its
+//    RHS is affected, which is the same insulation the FEM path has. The
+//    matrix-free route and MARS_HYPRE_USE_DDT both apply the Gram form
+//    D M^-1 D^T, where a D carrying boundary rows and a D^T without them stop
+//    being adjoints; those keep their old behaviour untouched.
+//
+// nnzDDT is read per rank, but the useAssembledCG branch below already depends on
+// it the same way, so this is no weaker an assumption than the existing code.
+template<typename KeyType, typename RealType, typename ElementTag>
+bool scsOpeningBoundaryActive(const NSStepper<KeyType, RealType, ElementTag>& s)
+{
+    return !s.useFemProjection
+        && !s.useOpeningFluxSource
+        && s.pressureSolve == PressureSolveKind::DDT
+        && s.solverKind == SolverKind::Hypre
+        && s.nnzDDT > 0
+        && std::getenv("MARS_HYPRE_USE_DDT") == nullptr;
+}
+
+// Add u_i . areaVec_i at the opening nodes. Call AFTER reverseExchangeNodeHaloAdd
+// (see the kernel comment for why this one is owned-only-after, not scatter-before).
+template<typename KeyType, typename RealType, typename ElementTag>
+void addScsOpeningBoundaryTerm(NSStepper<KeyType, RealType, ElementTag>& s,
+                               const RealType* vx, const RealType* vy, const RealType* vz,
+                               const uint8_t* ownership,
+                               cstone::DeviceVector<RealType>& divAccNode)
+{
+    if (s.d_inletAreaVecX.size() != s.nodeCount || s.d_outletAreaVecX.size() != s.nodeCount)
+        return;
+    const int nodeBlocks = int((s.nodeCount + s.blockSize - 1) / s.blockSize);
+    addScsOpeningBoundaryDivergenceKernel<RealType><<<nodeBlocks, s.blockSize>>>(
+        vx, vy, vz,
+        s.d_inletAreaVecX.data(),  s.d_inletAreaVecY.data(),  s.d_inletAreaVecZ.data(),
+        s.d_outletAreaVecX.data(), s.d_outletAreaVecY.data(), s.d_outletAreaVecZ.data(),
+        ownership, divAccNode.data(), s.nodeCount);
+    cudaDeviceSynchronize();
+}
+
 // -------------------------------------------------------------------------
 // Step 3: PRESSURE POISSON. K phi = (rho/dt) div(u**). The un-normalized
 // divAccNode is exactly the integrated source f_i*V_i, so the lumped RHS is
@@ -8464,11 +8899,10 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
         bool useFemDiv = s.useFemProjection && std::is_same_v<ElementTag, TetTag>;
         if (useFemDiv)
         {
-            // Volume term b_i = -integral(grad N_i . u**) only. The opening
-            // surface integral is added below by the opening-flux source
-            // (--opening-flux-source), which on this path uses the CONSISTENT
-            // P1 face-quadrature weights (d_femFluxWin/Wout) instead of the
-            // lumped area-vectors; walls contribute 0 (u=0). Reverse-halo +
+            // Volume term b_i = -integral(grad N_i . u**). The matching opening
+            // surface integral oint N_i (u**.n) dA is scattered right after this
+            // block by addFemOpeningSurfaceTerm -- part of the operator, not a
+            // source added from outside. Walls contribute 0 (u=0). Reverse-halo +
             // periodic folding after this block is identical to the SCS path.
             computeFemDivergenceTetKernel<KeyType, RealType><<<eBlocks, s.blockSize>>>(
                 c0, c1, c2, c3,
@@ -8533,6 +8967,25 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
             // and ramps |p| unbounded (validated on cube16). Set
             // MARS_VMS_KEEP_SMOOTH=1 to A/B the full form.
             bool keepSmooth = (std::getenv("MARS_VMS_KEEP_SMOOTH") != nullptr);
+            // MARS_VMS_DIAG_TAU: replace the global tau with OpenAccel's V/a_P,
+            // read off the ASSEMBLED momentum diagonal so the coefficient adapts
+            // per node instead of being one number for the whole mesh.
+            const RealType* tauNodePtr = nullptr;
+            cstone::DeviceVector<RealType> d_vmsTau;
+            if (std::getenv("MARS_VMS_DIAG_TAU"))
+            {
+                d_vmsTau.resize(s.nodeCount);
+                int nB = int((s.nodeCount + s.blockSize - 1) / s.blockSize);
+                buildVmsNodalTauKernel<RealType><<<nB, s.blockSize>>>(
+                    s.d_diagPtr.data(), s.d_valuesVel.data(),
+                    s.d_node_to_dof.data(), s.d_mass.data(),
+                    d_vmsTau.data(), s.nodeCount, s.numOwnedDofs);
+                cudaDeviceSynchronize();
+                // ghosts are 0 out of the kernel; the ip average reads both
+                // endpoints, so they must be halo-complete like the gradient.
+                s.domain.exchangeNodeHalo(d_vmsTau);
+                tauNodePtr = d_vmsTau.data();
+            }
             computeDivergenceVMSTetKernel<KeyType, RealType><<<eBlocks, s.blockSize>>>(
                 c0, c1, c2, c3,
                 s.d_uStarStar.data(), s.d_vStarStar.data(), s.d_wStarStar.data(),
@@ -8540,7 +8993,7 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
                 d_GxN.data(), d_GyN.data(), d_GzN.data(),
                 d_x.data(), d_y.data(), d_z.data(),
                 s.d_areaVec_x.data(), s.d_areaVec_y.data(), s.d_areaVec_z.data(),
-                tauV, keepSmooth,
+                tauV, tauNodePtr, keepSmooth,
                 d_divAccNode.data(), startElem, numLocal);
         }
         else if (useRC)
@@ -8570,8 +9023,130 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
         }
         cudaDeviceSynchronize();
     }
+    // Second half of D: the opening surface integral, on the SAME velocity the
+    // volume term just used. Runs outside the eBlocks guard because a rank can own
+    // opening facets without owning elements. See femOpeningSurfaceActive above for
+    // why it is limited to the FEM path.
+    const bool openingSurface = femOpeningSurfaceActive<KeyType, RealType, ElementTag>(s);
+    if (openingSurface)
+    {
+        addFemOpeningSurfaceTerm<KeyType, RealType, ElementTag>(
+            s,
+            uIter ? uIter : s.d_uStarStar.data(),
+            vIter ? vIter : s.d_vStarStar.data(),
+            wIter ? wIter : s.d_wStarStar.data(),
+            d_divAccNode);
+    }
+    // MARS_OFS_DBG: the net OUTWARD flux through the openings as the operator sees
+    // it -- the direct counterpart of the [ofs-dbg2] Qin_raw/Qout_raw line the
+    // external source prints, so the two paths compare on one number. Per facet the
+    // three corner contributions sum to tot/3, and each facet lives on exactly one
+    // rank, so no ownership gate is needed. openingSurface is rank-uniform, so this
+    // collective is safe; a rank with no facets contributes 0.
+    if (openingSurface && std::getenv("MARS_OFS_DBG"))
+    {
+        const size_t numFacets = s.d_openingTriAreaX.size();
+        const int* triNode  = s.d_openingTriNode.data();
+        const RealType* aX  = s.d_openingTriAreaX.data();
+        const RealType* aY  = s.d_openingTriAreaY.data();
+        const RealType* aZ  = s.d_openingTriAreaZ.data();
+        const RealType* vxP = uIter ? uIter : s.d_uStarStar.data();
+        const RealType* vyP = vIter ? vIter : s.d_vStarStar.data();
+        const RealType* vzP = wIter ? wIter : s.d_wStarStar.data();
+        RealType loc = (numFacets == 0) ? RealType(0)
+            : thrust::transform_reduce(thrust::device,
+                thrust::counting_iterator<size_t>(0),
+                thrust::counting_iterator<size_t>(numFacets),
+                [triNode, aX, aY, aZ, vxP, vyP, vzP] __device__ (size_t f) -> RealType {
+                    RealType t = 0;
+                    for (int j = 0; j < 3; ++j)
+                    {
+                        int n = triNode[3 * f + j];
+                        if (n >= 0) t += vxP[n] * aX[f] + vyP[n] * aY[f] + vzP[n] * aZ[f];
+                    }
+                    return t / RealType(3);
+                },
+                RealType(0), thrust::plus<RealType>());
+        RealType net = 0;
+        MPI_Allreduce(&loc, &net, 1,
+                      std::is_same<RealType, double>::value ? MPI_DOUBLE : MPI_FLOAT,
+                      MPI_SUM, MPI_COMM_WORLD);
+        if (s.rank == 0)
+            std::cout << "  [ofs-dbg2] [native-surface] net outward opening flux = "
+                      << std::scientific << net << std::defaultfloat
+                      << "  (inlet-only when the outlet rows are Dirichlet)\n";
+    }
     s.domain.reverseExchangeNodeHaloAdd(d_divAccNode);
     maybePeriodicSum<KeyType, RealType, ElementTag>(s, d_divAccNode);
+
+    // Closing term for the CVFEM control volumes at the openings, on the SOLVED
+    // velocity. divAccNode and the per-node area-vectors are both owner-complete
+    // here, so an owned-only add is exact -- the same placement the prescribed
+    // source below uses, for the same reason.
+    //
+    // NOTE what this does and does not reach under --outlet=do-nothing: the outlet
+    // area-vector is nonzero only ON the outlet, every owned outlet DOF is
+    // pressure-Dirichlet there, and the Dirichlet RHS enforce overwrites those
+    // rows -- so the outlet half is discarded and cannot move phi. It is kept
+    // because it is the operator's term, not a patch: it becomes load-bearing the
+    // moment the outlet is not a full Dirichlet face (mass-conserving outlet,
+    // single pin, --flux-neumann). What DOES reach the solve here is the inlet
+    // half, and it differs from the prescribed source: u** carries the PER-NODE
+    // inlet normal, while the prescribed source uses one global direction.
+    const bool scsOpening = scsOpeningBoundaryActive<KeyType, RealType, ElementTag>(s);
+    if (scsOpening)
+    {
+        addScsOpeningBoundaryTerm<KeyType, RealType, ElementTag>(
+            s,
+            uIter ? uIter : s.d_uStarStar.data(),
+            vIter ? vIter : s.d_vStarStar.data(),
+            wIter ? wIter : s.d_wStarStar.data(),
+            d_nodeOwnership.data(), d_divAccNode);
+    }
+    // MARS_OFS_DBG: the DISCRETE opening fluxes this term injected, per side, so
+    // they can be read against the prescribed [ofs-dbg2] numbers and against the
+    // analytic Q_in = inletU*areaIn the [bc-sanity] ratio divides by.
+    // sideFlux does an MPI_Allreduce, so EVERY term deciding whether to enter here
+    // must be rank-uniform or a rank that skips deadlocks the rest. nnzDDT and the
+    // area-vector sizes are per-rank -- a rank owning no opening node has neither --
+    // so they are checked INSIDE sideFlux, which then contributes 0 instead of
+    // skipping the collective. Only CLI flags and env vars gate the block.
+    if (!s.useFemProjection && !s.useOpeningFluxSource
+        && s.pressureSolve == PressureSolveKind::DDT
+        && s.solverKind == SolverKind::Hypre
+        && std::getenv("MARS_HYPRE_USE_DDT") == nullptr
+        && std::getenv("MARS_OFS_DBG"))
+    {
+        auto sideFlux = [&] (const RealType* ax, const RealType* ay, const RealType* az,
+                             bool haveSide) -> RealType {
+            const RealType* vxP = uIter ? uIter : s.d_uStarStar.data();
+            const RealType* vyP = vIter ? vIter : s.d_vStarStar.data();
+            const RealType* vzP = wIter ? wIter : s.d_wStarStar.data();
+            RealType loc = 0;
+            if (haveSide)
+                loc = thrust::transform_reduce(thrust::device,
+                    thrust::counting_iterator<size_t>(0),
+                    thrust::counting_iterator<size_t>(s.nodeCount),
+                    [own = d_nodeOwnership.data(), ax, ay, az, vxP, vyP, vzP] __device__ (size_t i) -> RealType {
+                        return (own[i] == 1) ? (vxP[i]*ax[i] + vyP[i]*ay[i] + vzP[i]*az[i]) : RealType(0); },
+                    RealType(0), thrust::plus<RealType>());
+            RealType g = 0;
+            MPI_Allreduce(&loc, &g, 1,
+                          std::is_same<RealType, double>::value ? MPI_DOUBLE : MPI_FLOAT,
+                          MPI_SUM, MPI_COMM_WORLD);
+            return g;
+        };
+        const bool haveIn  = (s.d_inletAreaVecX.size()  == s.nodeCount);
+        const bool haveOut = (s.d_outletAreaVecX.size() == s.nodeCount);
+        RealType qInDisc  = sideFlux(s.d_inletAreaVecX.data(),  s.d_inletAreaVecY.data(),  s.d_inletAreaVecZ.data(),  haveIn);
+        RealType qOutDisc = sideFlux(s.d_outletAreaVecX.data(), s.d_outletAreaVecY.data(), s.d_outletAreaVecZ.data(), haveOut);
+        if (s.rank == 0)
+            std::cout << "  [ofs-dbg2] [native-cv] discrete inlet flux=" << std::scientific << qInDisc
+                      << " outlet flux=" << qOutDisc
+                      << " net=" << (qInDisc + qOutDisc)
+                      << std::defaultfloat
+                      << "  (outlet half is discarded where its rows are Dirichlet)\n";
+    }
 
     // FIX 1: add the inlet+outlet opening surface flux that the interior SCS
     // scatter cannot reach. divAccNode is now owner-complete; the per-node opening
@@ -8592,7 +9167,12 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
         // MARS_OFS_DBG: print the source magnitude + divAccNode max before/after +
         // the global net source, so we SEE if it is a giant localized spike or
         // imbalanced. Gated on env, free in production.
-        const bool ofsDbg = (std::getenv("MARS_OFS_DBG") != nullptr) && (s.rank == 0);
+        // sumOwned below does an MPI_Allreduce, so what gates CALLING it must be
+        // rank-uniform -- ofsDbgOn. Folding "rank == 0" into that flag made rank 0
+        // enter the collective alone and hang every other rank (seen 2026-09-03 on
+        // 4 ranks). ofsDbg gates only the PRINTING.
+        const bool ofsDbgOn = (std::getenv("MARS_OFS_DBG") != nullptr);
+        const bool ofsDbg   = ofsDbgOn && (s.rank == 0);
         auto maxAbsOwned = [&] (const RealType* p) -> RealType {
             const auto& d_own = s.domain.getNodeOwnershipMap();
             return thrust::transform_reduce(thrust::device,
@@ -8612,7 +9192,7 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
             return g;
         };
         RealType divMaxBefore = ofsDbg ? maxAbsOwned(d_divAccNode.data()) : RealType(0);
-        RealType sumBefore    = ofsDbg ? sumOwned(d_divAccNode.data())    : RealType(0);
+        RealType sumBefore    = ofsDbgOn ? sumOwned(d_divAccNode.data())  : RealType(0);
         // raw owned sums of (vel.areaVec) per opening -- the ACTUAL discrete flux each
         // side injects, to see if inlet or outlet is the one not firing.
         auto fluxSum = [&] (RealType vx, RealType vy, RealType vz,
@@ -8658,9 +9238,13 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
             // balance, NOT the net-zero rescale (which would re-impose the mass
             // constraint the head sets). Net-zero stays for the mass-conserving
             // prescribed-outlet path.
-            oScale   = s.useFluxPressureBc
-                       ? RealType(1)
-                       : ((std::fabs(Qout_raw) > RealType(0)) ? (-Qin_raw / Qout_raw) : RealType(0));
+            // Pressure outlet (--outlet=do-nothing): the outlet rows are Dirichlet p=0,
+            // so their RHS is discarded and the (free, unknown) outlet flux must NOT be
+            // supplied. There is also no sum(b)=0 condition to satisfy -- the Dirichlet
+            // face anchors the system -- so no net-zero rescale. Inlet term only.
+            oScale   = s.outletDoNothing      ? RealType(0)
+                     : s.useFluxPressureBc    ? RealType(1)
+                     : ((std::fabs(Qout_raw) > RealType(0)) ? (-Qin_raw / Qout_raw) : RealType(0));
             addConsistentOpeningFluxKernel<RealType><<<nodeBlocks, s.blockSize>>>(
                 ramp, oScale,
                 s.d_femFluxWin.data(), s.d_femFluxWout.data(),
@@ -8672,7 +9256,10 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
                                s.d_inletAreaVecX.data(), s.d_inletAreaVecY.data(), s.d_inletAreaVecZ.data());
             Qout_raw = fluxSum(s.outletU*s.outletDirX, s.outletU*s.outletDirY, s.outletU*s.outletDirZ,
                                s.d_outletAreaVecX.data(), s.d_outletAreaVecY.data(), s.d_outletAreaVecZ.data());
-            oScale   = (std::fabs(Qout_raw) > RealType(0)) ? (-Qin_raw / Qout_raw) : RealType(0);
+            // Same reasoning as the consistent branch above: a pressure outlet needs no
+            // outlet term and no net-zero rescale.
+            oScale   = s.outletDoNothing ? RealType(0)
+                     : ((std::fabs(Qout_raw) > RealType(0)) ? (-Qin_raw / Qout_raw) : RealType(0));
             addOpeningFluxSourceKernel<RealType><<<nodeBlocks, s.blockSize>>>(
                 RealType(s.Uinf * s.inletDirX), RealType(s.Uinf * s.inletDirY), RealType(s.Uinf * s.inletDirZ),
                 s.d_inletAreaVecX.data(), s.d_inletAreaVecY.data(), s.d_inletAreaVecZ.data(),
@@ -8683,6 +9270,8 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
                 d_nodeOwnership.data(), d_divAccNode.data(), s.nodeCount);
         }
         cudaDeviceSynchronize();
+        // Collective: every rank must call it, only rank 0 prints the result.
+        RealType sumAfter = ofsDbgOn ? sumOwned(d_divAccNode.data()) : RealType(0);
         if (ofsDbg) {
             std::cout << "  [ofs-dbg2] " << (femConsistent ? "[consistent-P1] " : "[lumped] ")
                       << "Qin_raw=" << std::scientific << Qin_raw
@@ -8691,7 +9280,6 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
                       << " net=" << (Qin_raw + oScale*Qout_raw) << " (should be ~0)"
                       << std::defaultfloat << "\n";
             RealType divMaxAfter = maxAbsOwned(d_divAccNode.data());
-            RealType sumAfter    = sumOwned(d_divAccNode.data());
             std::cout << "  [ofs-dbg] divAccNode |max| before=" << std::scientific << divMaxBefore
                       << " after=" << divMaxAfter
                       << "  | sum(divAcc) before=" << sumBefore << " after=" << sumAfter
@@ -9333,9 +9921,10 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
                          && s.nCorrectors > 1;
     if (femPiso)
     {
-        // FEM-divergence residual print: interior weak divergence of the
-        // corrected iterate PLUS the prescribed opening-flux source -- the
-        // exact source the next solve would see. The [ns-dbg CORR] div_max is
+        // FEM-divergence residual print: the full weak divergence of the
+        // corrected iterate -- volume term plus opening surface term (or the
+        // prescribed source, when that is what is selected) -- i.e. the exact
+        // source the next solve would see. The [ns-dbg CORR] div_max is
         // the SCS divergence, misleading for the FEM path; this is the honest
         // inner-contraction signal (expect |div| to shrink ~0.5x per pass).
         // Gated like the ns-dbg prints (first-steps window) or
@@ -9366,6 +9955,11 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
                     d_divChk.data(), startElem, numLocal);
                 cudaDeviceSynchronize();
             }
+            // Same two halves as the real build, or the print would report a
+            // divergence the solve never sees.
+            if (femOpeningSurfaceActive<KeyType, RealType, ElementTag>(s))
+                addFemOpeningSurfaceTerm<KeyType, RealType, ElementTag>(
+                    s, s.d_u.data(), s.d_v.data(), s.d_w.data(), d_divChk);
             s.domain.reverseExchangeNodeHaloAdd(d_divChk);
             maybePeriodicSum<KeyType, RealType, ElementTag>(s, d_divChk);
             if (s.useOpeningFluxSource
@@ -10069,6 +10663,120 @@ void computeVorticityMagnitudePerNode(NSStepper<KeyType, RealType, ElementTag>& 
     cudaDeviceSynchronize();
 }
 
+// MARS_UMAX_PROFILE=1 -- speed percentiles + what KIND of node carries u_max.
+// u_max is a single node with zero noise rejection: a handful of bad cells own it
+// completely, while u_rms averages them away. If u_999 sits far below u_max the
+// peak is an artifact, not a flow feature. Percentiles are per-rank and reduced
+// with MAX, so they are an upper bound, not an exact global quantile -- enough to
+// tell a spike from a jet. Owned nodes only; no coordinates are ever printed.
+template<typename KeyType, typename RealType, typename ElementTag>
+void reportSpeedProfile(NSStepper<KeyType, RealType, ElementTag>& s)
+{
+    static const bool on = std::getenv("MARS_UMAX_PROFILE") != nullptr;
+    if (!on || s.nodeCount == 0) return;
+
+    const uint8_t* own = s.ownershipMap().data();
+    const RealType* up = s.d_u.data();
+    const RealType* vp = s.d_v.data();
+    const RealType* wp = s.d_w.data();
+
+    thrust::device_vector<RealType> sp(s.nodeCount);
+    thrust::transform(thrust::device,
+        thrust::counting_iterator<size_t>(0),
+        thrust::counting_iterator<size_t>(s.nodeCount),
+        sp.begin(),
+        [own, up, vp, wp] __device__ (size_t i) -> RealType {
+            if (own[i] != 1) return RealType(-1);
+            return sqrt(up[i]*up[i] + vp[i]*vp[i] + wp[i]*wp[i]);
+        });
+
+    // argmax BEFORE sorting -- we need the node id, not just the value.
+    auto maxIt      = thrust::max_element(thrust::device, sp.begin(), sp.end());
+    size_t maxNode  = size_t(maxIt - sp.begin());
+    RealType uMaxLoc = *maxIt;
+
+    thrust::sort(thrust::device, sp.begin(), sp.end());
+    // ghosts were tagged -1 and sort to the front
+    size_t nBad = size_t(thrust::count(thrust::device, sp.begin(), sp.end(), RealType(-1)));
+    size_t nOwn = s.nodeCount - nBad;
+    if (nOwn == 0) return;
+    auto pct = [&](double f) -> RealType {
+        size_t k = nBad + size_t(f * double(nOwn - 1));
+        return sp[k];
+    };
+    double p50 = double(pct(0.50)), p90 = double(pct(0.90));
+    double p99 = double(pct(0.99)), p999 = double(pct(0.999));
+    double umax = double(uMaxLoc);
+
+    double loc[5] = {p50, p90, p99, p999, umax}, glb[5] = {0,0,0,0,0};
+    MPI_Allreduce(loc, glb, 5, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+
+    // Which kind of node owns the peak? Built once from the BC lists.
+    static std::vector<uint8_t> cls;
+    if (cls.size() != s.nodeCount)
+    {
+        cls.assign(s.nodeCount, 0);   // 0 = interior
+        for (int li : s.wallNodes)   if (li >= 0 && (size_t)li < s.nodeCount) cls[li] = 1;
+        for (int li : s.outletNodes) if (li >= 0 && (size_t)li < s.nodeCount) cls[li] = 2;
+        for (int li : s.inletNodes)  if (li >= 0 && (size_t)li < s.nodeCount) cls[li] = 3;
+    }
+    // Local cell size at the peak node vs the median, from the lumped mass
+    // (= dual-cell volume), as h ~ V^(1/3). h_peak/h_med << 1 means the peak sits
+    // in a REFINED region; ~1 or above means it sits where the mesh is coarse and
+    // the peak is probably not resolved. Scalars only -- no coordinates leave.
+    double hPeak = 0.0, hMed = 0.0;
+    // d_massNode is per NODE; d_mass is per owned DOF -- do not mix them here.
+    if (s.d_massNode.size() == s.nodeCount)
+    {
+        RealType mPeak = 0;
+        cudaMemcpy(&mPeak, s.d_massNode.data() + maxNode, sizeof(RealType), cudaMemcpyDeviceToHost);
+        hPeak = (double(mPeak) > 0.0) ? std::cbrt(double(mPeak)) : 0.0;
+
+        thrust::device_vector<RealType> mv(s.nodeCount);
+        const RealType* mp = s.d_massNode.data();
+        thrust::transform(thrust::device,
+            thrust::counting_iterator<size_t>(0),
+            thrust::counting_iterator<size_t>(s.nodeCount),
+            mv.begin(),
+            [own, mp] __device__ (size_t i) -> RealType {
+                return (own[i] == 1) ? mp[i] : RealType(-1);
+            });
+        thrust::sort(thrust::device, mv.begin(), mv.end());
+        size_t nb = size_t(thrust::count(thrust::device, mv.begin(), mv.end(), RealType(-1)));
+        size_t no = s.nodeCount - nb;
+        if (no > 0)
+        {
+            RealType mMed = mv[nb + no / 2];
+            hMed = (double(mMed) > 0.0) ? std::cbrt(double(mMed)) : 0.0;
+        }
+    }
+
+    // only the rank actually holding the global max gets to name the node kind
+    int kindCode = (maxNode < cls.size()) ? int(cls[maxNode]) : 0;
+    int mine     = (double(uMaxLoc) >= glb[4] * (1.0 - 1e-12)) ? s.rank : s.numRanks;
+    int owner    = s.numRanks;
+    MPI_Allreduce(&mine, &owner, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
+    MPI_Bcast(&kindCode, 1, MPI_INT, (owner < s.numRanks) ? owner : 0, MPI_COMM_WORLD);
+    // h_peak lives on the owning rank only; h_med is per-rank, take the max as a scale
+    MPI_Bcast(&hPeak, 1, MPI_DOUBLE, (owner < s.numRanks) ? owner : 0, MPI_COMM_WORLD);
+    { double t = hMed; MPI_Allreduce(&t, &hMed, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD); }
+    const char* kindBuf = (kindCode == 1) ? "wall"
+                        : (kindCode == 2) ? "outlet"
+                        : (kindCode == 3) ? "inlet" : "interior";
+
+    if (s.rank == 0)
+        std::cout << "  [u-profile] p50=" << std::scientific << std::setprecision(3) << glb[0]
+                  << " p90=" << glb[1] << " p99=" << glb[2] << " p999=" << glb[3]
+                  << " max=" << glb[4]
+                  << "  max/p999=" << std::fixed << std::setprecision(2) << (glb[3] > 0 ? glb[4]/glb[3] : 0.0)
+                  << "  peak-node=" << kindBuf
+                  << std::scientific << std::setprecision(2)
+                  << "  h_peak=" << hPeak << " h_med=" << hMed
+                  << std::fixed << std::setprecision(2)
+                  << " (h_peak/h_med=" << (hMed > 0 ? hPeak/hMed : 0.0) << ")"
+                  << std::defaultfloat << "\n";
+}
+
 template<typename KeyType, typename RealType, typename ElementTag = HexTag>
 void runNsStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, RealType nu, RealType rho)
 {
@@ -10093,6 +10801,40 @@ void runNsStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, RealTyp
                       << " div(u_n)max=" << div_n_max
                       << " div(u_n)rms=" << div_n_rms << "\n";
     }
+
+    // ---- Picard / deferred-correction sweeps ----
+    // Sweep 0 evaluates the advection at u^n (the classic explicit pass). Every
+    // later sweep re-evaluates it at the latest u**, so the fixed point has the
+    // BJ flux evaluated at the NEW time level. Convergence is measured on how
+    // much u** moves between sweeps.
+    const int picardSweeps = (s.nPicard > 1) ? s.nPicard : 1;
+    s.lastPicardSweeps = 0;
+    s.lastPicardRes    = RealType(0);
+    for (int sweep = 0; sweep < picardSweeps; ++sweep)
+    {
+        s.picardAdvAtIterate = (sweep > 0);
+        if (picardSweeps > 1 && sweep > 0)
+        {
+            if (s.d_picardPrevU.size() != s.nodeCount)
+            {
+                s.d_picardPrevU.resize(s.nodeCount);
+                s.d_picardPrevV.resize(s.nodeCount);
+                s.d_picardPrevW.resize(s.nodeCount);
+            }
+            thrust::copy(thrust::device,
+                thrust::device_pointer_cast(s.d_uStarStar.data()),
+                thrust::device_pointer_cast(s.d_uStarStar.data() + s.nodeCount),
+                thrust::device_pointer_cast(s.d_picardPrevU.data()));
+            thrust::copy(thrust::device,
+                thrust::device_pointer_cast(s.d_vStarStar.data()),
+                thrust::device_pointer_cast(s.d_vStarStar.data() + s.nodeCount),
+                thrust::device_pointer_cast(s.d_picardPrevV.data()));
+            thrust::copy(thrust::device,
+                thrust::device_pointer_cast(s.d_wStarStar.data()),
+                thrust::device_pointer_cast(s.d_wStarStar.data() + s.nodeCount),
+                thrust::device_pointer_cast(s.d_picardPrevW.data()));
+            cudaDeviceSynchronize();
+        }
 
     runPredictorStep<KeyType, RealType, ElementTag>(s, dt, rho);
     if (dbg)
@@ -10121,6 +10863,50 @@ void runNsStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, RealTyp
                       << " div(u**)rms=" << div_ss_rms
                       << " cg_uvw="      << s.lastUIters << "/" << s.lastVIters << "/" << s.lastWIters << "\n";
     }
+
+        s.lastPicardSweeps = sweep + 1;
+        if (picardSweeps > 1 && sweep > 0)
+        {
+            const uint8_t* own = s.ownershipMap().data();
+            const RealType* un = s.d_uStarStar.data();
+            const RealType* vn = s.d_vStarStar.data();
+            const RealType* wn = s.d_wStarStar.data();
+            const RealType* pu = s.d_picardPrevU.data();
+            const RealType* pv = s.d_picardPrevV.data();
+            const RealType* pw = s.d_picardPrevW.data();
+            double locD = thrust::transform_reduce(thrust::device,
+                thrust::counting_iterator<size_t>(0),
+                thrust::counting_iterator<size_t>(s.nodeCount),
+                [own, un, vn, wn, pu, pv, pw] __device__ (size_t i) -> double {
+                    if (own[i] != 1) return 0.0;
+                    double dx = double(un[i]) - double(pu[i]);
+                    double dy = double(vn[i]) - double(pv[i]);
+                    double dz = double(wn[i]) - double(pw[i]);
+                    return sqrt(dx*dx + dy*dy + dz*dz);
+                }, 0.0, thrust::maximum<double>());
+            double locN = thrust::transform_reduce(thrust::device,
+                thrust::counting_iterator<size_t>(0),
+                thrust::counting_iterator<size_t>(s.nodeCount),
+                [own, un, vn, wn] __device__ (size_t i) -> double {
+                    if (own[i] != 1) return 0.0;
+                    return sqrt(double(un[i])*double(un[i])
+                              + double(vn[i])*double(vn[i])
+                              + double(wn[i])*double(wn[i]));
+                }, 0.0, thrust::maximum<double>());
+            double gD = 0, gN = 0;
+            MPI_Allreduce(&locD, &gD, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+            MPI_Allreduce(&locN, &gN, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+            s.lastPicardRes = RealType((gN > 0.0) ? (gD / gN) : gD);
+            if (double(s.lastPicardRes) < double(s.picardTol)) break;
+        }
+    }
+    // leave the flag clean so the next timestep starts from u^n again
+    s.picardAdvAtIterate = false;
+    if (s.nPicard > 1 && s.rank == 0 && std::getenv("MARS_PICARD_TRACE"))
+        std::cout << "  [picard] sweeps=" << s.lastPicardSweeps
+                  << " res=" << std::scientific << std::setprecision(3)
+                  << double(s.lastPicardRes) << std::defaultfloat
+                  << " (tol=" << double(s.picardTol) << ")\n";
 
     runPressureSolveStep<KeyType, RealType, ElementTag>(s, dt, rho);
     if (dbg && s.rank == 0)

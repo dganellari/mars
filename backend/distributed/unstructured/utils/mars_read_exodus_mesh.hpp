@@ -295,6 +295,101 @@ readExodusElementBlocks(const std::string& meshFile, int rank, int numRanks)
     return { std::move(elemBlock), num_el_blk == 0 ? size_t(1) : num_el_blk };
 }
 
+// MARS_MESH_DIAG=1 -- SHAREABLE mesh diagnostics, for confidential meshes.
+//
+// MARS_VERBOSE_MESH prints side-set NAMES and exact face/node counts, which identify the mesh and
+// cannot be pasted into a bug report for an NDA geometry. This mode prints only:
+//   - topology facts (block count, nodes per element)
+//   - side sets by INDEX, never by name
+//   - booleans (did it resolve to anything at all)
+//   - a hash of the resolved node-id set
+// The hash is what makes it useful: identical hashes before and after a change prove the side-set
+// resolution is byte-identical, and a 64-bit digest of node IDS reveals nothing about the geometry.
+// No coordinates are ever touched here.
+inline bool meshDiagEnabled()
+{
+    static const bool on = std::getenv("MARS_MESH_DIAG") != nullptr;
+    return on;
+}
+
+// FNV-1a over the raw id bytes. Only needs to be stable within a build, not portable.
+inline uint64_t meshDiagHash(const std::vector<uint64_t>& ids)
+{
+    uint64_t h = 1469598103934665603ull;
+    for (uint64_t v : ids)
+        for (int b = 0; b < 8; ++b)
+        {
+            h ^= static_cast<uint64_t>((v >> (b * 8)) & 0xff);
+            h *= 1099511628211ull;
+        }
+    return h;
+}
+
+// Read the connectivity of ALL element blocks, flattened into one array in Exodus's global
+// element-id order (block 1's elements first, then block 2's, ...), which is the numbering the
+// side-set variables (elem_ss<n>) use -- so a 1-based elem_ss id indexes the result directly,
+// regardless of block count. Mirrors the flatten loop in readExodusMeshWithElementPartitioning
+// above, so the two stay in the same element order.
+//
+// nodesPerElem is the caller's topology stride (8 hex / 4 tet). Every block MUST match it:
+// nc_get_var_int fills the whole connect<blk> variable, so a block of a different element type
+// would over- or under-run a buffer sized from this stride. A mixed-topology mesh is unusable by
+// the rest of MARS anyway (ElementDomain is templated on ONE topology), so name the offending
+// block and throw rather than read past the end.
+inline std::pair<std::vector<int>, size_t>
+readAllBlockConnectivity(int ncid, size_t nodesPerElem, const char* caller, int rank = 0)
+{
+    int num_el_blk_dim;
+    size_t num_el_blk = 0;
+    NC_CHECK(nc_inq_dimid(ncid, "num_el_blk", &num_el_blk_dim));
+    NC_CHECK(nc_inq_dimlen(ncid, num_el_blk_dim, &num_el_blk));
+
+    const bool diag = meshDiagEnabled() && rank == 0;
+    if (diag)
+        std::cout << "[mesh-diag] " << caller << ": element_blocks=" << num_el_blk
+                  << " expected_nodes_per_elem=" << nodesPerElem
+                  << " multiblock_path=" << (num_el_blk > 1 ? "yes" : "no") << "\n";
+
+    std::vector<int> allConn;
+    size_t total_elements = 0;
+    for (size_t blk = 1; blk <= num_el_blk; ++blk)
+    {
+        char name[64];
+        int dim_id;
+        size_t num_el_in_blk = 0, nod_per_el = 0;
+
+        snprintf(name, sizeof(name), "num_el_in_blk%zu", blk);
+        NC_CHECK(nc_inq_dimid(ncid, name, &dim_id));
+        NC_CHECK(nc_inq_dimlen(ncid, dim_id, &num_el_in_blk));
+
+        snprintf(name, sizeof(name), "num_nod_per_el%zu", blk);
+        NC_CHECK(nc_inq_dimid(ncid, name, &dim_id));
+        NC_CHECK(nc_inq_dimlen(ncid, dim_id, &nod_per_el));
+        if (nod_per_el != nodesPerElem)
+        {
+            nc_close(ncid);
+            throw std::runtime_error(std::string(caller) + ": element block " + std::to_string(blk)
+                                     + " has " + std::to_string(nod_per_el)
+                                     + " nodes/element, expected " + std::to_string(nodesPerElem)
+                                     + " (mixed-topology meshes are not supported)");
+        }
+
+        snprintf(name, sizeof(name), "connect%zu", blk);
+        int conn_id;
+        NC_CHECK(nc_inq_varid(ncid, name, &conn_id));
+
+        size_t offset = allConn.size();
+        allConn.resize(offset + num_el_in_blk * nodesPerElem);
+        NC_CHECK(nc_get_var_int(ncid, conn_id, allConn.data() + offset));
+        total_elements += num_el_in_blk;
+
+        // Block index + width only: no element counts (a size fingerprint), no names.
+        if (diag)
+            std::cout << "[mesh-diag]   block " << blk << ": nodes_per_elem=" << nod_per_el << "\n";
+    }
+    return { std::move(allConn), total_elements };
+}
+
 // Read all named side-sets from an Exodus mesh and return a map from side-set
 // name -> sorted unique list of GLOBAL (1-based-removed -> 0-based) node IDs
 // that belong to any face in that side-set.
@@ -361,6 +456,8 @@ inline ExodusSideSets readExodusSideSetsHex8(const std::string& meshFile, int ra
         if (rank == 0) std::cout << "Exodus: 0 named side-sets in mesh\n";
         return out;
     }
+    if (meshDiagEnabled() && rank == 0)
+        std::cout << "[mesh-diag] side_sets=" << num_side_sets << "\n";
 
     // Side-set names from ss_names(num_side_sets, len_name).
     int ss_names_id;
@@ -393,28 +490,10 @@ inline ExodusSideSets readExodusSideSetsHex8(const std::string& meshFile, int ra
     std::vector<long long> ssIds(num_side_sets);
     NC_CHECK(nc_get_var_longlong(ncid, ss_prop1_id, ssIds.data()));
 
-    // Element-block connectivity: needed to expand (elem, side) -> 4 face nodes.
-    // We use the same single-block path the main reader uses (num_el_blk==1
-    // here). For multi-block meshes we would need elem-id -> block lookup; the
-    // wing mesh is single-block so single-block is enough.
-    int num_el_blk_dim;
-    size_t num_el_blk = 0;
-    NC_CHECK(nc_inq_dimid(ncid, "num_el_blk", &num_el_blk_dim));
-    NC_CHECK(nc_inq_dimlen(ncid, num_el_blk_dim, &num_el_blk));
-    if (num_el_blk != 1)
-    {
-        nc_close(ncid);
-        throw std::runtime_error("readExodusSideSetsHex8: only single-element-block meshes supported (num_el_blk = "
-                                 + std::to_string(num_el_blk) + ")");
-    }
-    int conn_id;
-    NC_CHECK(nc_inq_varid(ncid, "connect1", &conn_id));
-    int num_el_blk1_dim;
-    size_t num_el_in_blk1 = 0;
-    NC_CHECK(nc_inq_dimid(ncid, "num_el_in_blk1", &num_el_blk1_dim));
-    NC_CHECK(nc_inq_dimlen(ncid, num_el_blk1_dim, &num_el_in_blk1));
-    std::vector<int> connBlock1(num_el_in_blk1 * 8);
-    NC_CHECK(nc_get_var_int(ncid, conn_id, connBlock1.data()));
+    // Element-block connectivity, needed to expand (elem, side) -> 4 face nodes. All blocks are
+    // flattened in Exodus's global element-id order, so a 1-based elem_ss id indexes allConn
+    // directly whatever the block count -- see readAllBlockConnectivity.
+    auto [allConn, total_elements] = readAllBlockConnectivity(ncid, 8, "readExodusSideSetsHex8", rank);
 
     // Global node coordinates (0-based global id), so each side-set node can be
     // resolved to its runtime SFC local id by coordinate (the Exodus id is not
@@ -478,12 +557,12 @@ inline ExodusSideSets readExodusSideSetsHex8(const std::string& meshFile, int ra
         nodeSet.reserve(num_faces * 4);
         for (size_t f = 0; f < num_faces; ++f)
         {
-            // 1-based element ID -> 0-based block index (single block here).
+            // 1-based global element ID -> 0-based index into the flattened multi-block connectivity.
             long long elem1 = elemList[f];
             int       side1 = static_cast<int>(sideList[f]);
-            if (elem1 < 1 || (uint64_t)elem1 > num_el_in_blk1 || side1 < 1 || side1 > 6) continue;
+            if (elem1 < 1 || (uint64_t)elem1 > total_elements || side1 < 1 || side1 > 6) continue;
             size_t elem0 = static_cast<size_t>(elem1 - 1);
-            const int* hex = &connBlock1[elem0 * 8];
+            const int* hex = &allConn[elem0 * 8];
             const int* faceLocal = hexFaceNodes[side1 - 1];
             for (int j = 0; j < 4; ++j)
             {
@@ -504,6 +583,11 @@ inline ExodusSideSets readExodusSideSetsHex8(const std::string& meshFile, int ra
             std::cout << "Exodus side-set [" << ssName << "] id=" << ssId
                       << ": " << num_faces << " faces, " << nodeVec.size() << " unique nodes\n";
         }
+        // Shareable: index not name, booleans not counts, hash to prove byte-identical resolution.
+        if (meshDiagEnabled() && rank == 0)
+            std::cout << "[mesh-diag]   sideset[" << k << "]: faces>0=" << (num_faces > 0 ? "yes" : "no")
+                      << " nodes>0=" << (nodeVec.empty() ? "no" : "yes")
+                      << " nodes_hash=0x" << std::hex << meshDiagHash(nodeVec) << std::dec << "\n";
         out.nodesByName[ssName]      = std::move(nodeVec);
         out.nodeCoordsByName[ssName] = std::move(nodeCoords);
     }
@@ -544,6 +628,8 @@ inline ExodusSideSets readExodusSideSetsTet4(const std::string& meshFile, int ra
         if (rank == 0) std::cout << "Exodus: 0 named side-sets in mesh\n";
         return out;
     }
+    if (meshDiagEnabled() && rank == 0)
+        std::cout << "[mesh-diag] side_sets=" << num_side_sets << "\n";
 
     int ss_names_id;
     NC_CHECK(nc_inq_varid(ncid, "ss_names", &ss_names_id));
@@ -566,24 +652,8 @@ inline ExodusSideSets readExodusSideSetsTet4(const std::string& meshFile, int ra
     std::vector<long long> ssIds(num_side_sets);
     NC_CHECK(nc_get_var_longlong(ncid, ss_prop1_id, ssIds.data()));
 
-    int num_el_blk_dim;
-    size_t num_el_blk = 0;
-    NC_CHECK(nc_inq_dimid(ncid, "num_el_blk", &num_el_blk_dim));
-    NC_CHECK(nc_inq_dimlen(ncid, num_el_blk_dim, &num_el_blk));
-    if (num_el_blk != 1)
-    {
-        nc_close(ncid);
-        throw std::runtime_error("readExodusSideSetsTet4: only single-element-block meshes supported (num_el_blk = "
-                                 + std::to_string(num_el_blk) + ")");
-    }
-    int conn_id;
-    NC_CHECK(nc_inq_varid(ncid, "connect1", &conn_id));
-    int num_el_blk1_dim;
-    size_t num_el_in_blk1 = 0;
-    NC_CHECK(nc_inq_dimid(ncid, "num_el_in_blk1", &num_el_blk1_dim));
-    NC_CHECK(nc_inq_dimlen(ncid, num_el_blk1_dim, &num_el_in_blk1));
-    std::vector<int> connBlock1(num_el_in_blk1 * 4);
-    NC_CHECK(nc_get_var_int(ncid, conn_id, connBlock1.data()));
+    // Same multi-block flatten as the hex reader, 4 nodes/element.
+    auto [allConn, total_elements] = readAllBlockConnectivity(ncid, 4, "readExodusSideSetsTet4", rank);
 
     // Global node coordinates, indexed by 0-based global node id (same as the
     // main mesh reader). Needed so each side-set node can be resolved to its
@@ -651,11 +721,12 @@ inline ExodusSideSets readExodusSideSetsTet4(const std::string& meshFile, int ra
         tris.reserve(num_faces * 3);
         for (size_t f = 0; f < num_faces; ++f)
         {
+            // 1-based global element ID -> 0-based index into the flattened multi-block connectivity.
             long long elem1 = elemList[f];
             int       side1 = static_cast<int>(sideList[f]);
-            if (elem1 < 1 || (uint64_t)elem1 > num_el_in_blk1 || side1 < 1 || side1 > 4) continue;
+            if (elem1 < 1 || (uint64_t)elem1 > total_elements || side1 < 1 || side1 > 4) continue;
             size_t elem0 = static_cast<size_t>(elem1 - 1);
-            const int* tet = &connBlock1[elem0 * 4];
+            const int* tet = &allConn[elem0 * 4];
             const int* faceLocal = tetFaceNodes[side1 - 1];
             bool faceOk = true;
             uint64_t triNodes[3];
@@ -688,6 +759,11 @@ inline ExodusSideSets readExodusSideSetsTet4(const std::string& meshFile, int ra
             std::cout << "Exodus side-set [" << ssName << "] id=" << ssId
                       << ": " << num_faces << " faces, " << nodeVec.size() << " unique nodes\n";
         }
+        if (meshDiagEnabled() && rank == 0)
+            std::cout << "[mesh-diag]   sideset[" << k << "]: faces>0=" << (num_faces > 0 ? "yes" : "no")
+                      << " nodes>0=" << (nodeVec.empty() ? "no" : "yes")
+                      << " tris>0=" << (tris.empty() ? "no" : "yes")
+                      << " nodes_hash=0x" << std::hex << meshDiagHash(nodeVec) << std::dec << "\n";
         out.nodesByName[ssName]         = std::move(nodeVec);
         out.nodeCoordsByName[ssName]    = std::move(nodeCoords);
         out.trianglesByName[ssName]     = std::move(tris);

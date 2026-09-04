@@ -80,6 +80,10 @@ int main(int argc, char** argv)
     // no longer CFL-limited. Costs a non-symmetric velocity solve (GMRES).
     // OFF -> the explicit EXT2 path runs exactly as before.
     bool        implicitAdv = false;
+    bool        supg        = false;   // --supg: SUPG streamline stabilization on C(u^n)
+    bool        divCorrect  = false;   // --div-correct: conservative->advective advection correction
+    int         nPicard     = 1;       // --picard=N: deferred-correction outer sweeps per step
+    double      picardTol   = 1e-3;    // --picard-tol=X: relative u** change to stop sweeping
     bool        useBdf2     = true;    // --bdf1 forces BDF1/Chorin (1st-order time, more stable for explicit advection)
     bool        useRhieChow = false;   // compact RC is geometrically unsafe on tets (blows up at every tau); --rhie-chow to force on
     RealType    rhieTau    = -1;       // RC strength; <=0 -> auto dt/rho. --rhie-tau= to sweep
@@ -112,6 +116,10 @@ int main(int argc, char** argv)
     RealType    dt       = 1.0e-3;     // initial/fixed dt; capped by --cfl if set
     double      cflMax   = -1;         // >0 enables adaptive dt: cap advective CFL (uMax*dt/dx) at this
     int         numSteps = 200;
+    // >0: stop early once |d(u_rms)|/u_rms stays under this for 3 straight reports.
+    // Without it a converged run just burns wall clock until SLURM kills it, and
+    // there is no restart, so the killed run loses its final frame.
+    double      steadyTol = 0.0;
     int         sourceRampSteps = 0;   // >0: ramp inlet drive 0->full over N steps (gentle startup)
     int         vtuEvery = 20;
     int         maxIter  = 2000;
@@ -125,6 +133,7 @@ int main(int argc, char** argv)
     // earlier solved-field version. Pairs with the mass-conserving outlet + pumpDp=0.
     // Opening-flux source is OFF by default; enable with --opening-flux-source.
     // Dirichlet lift ON (a correctness fix); --no-dirichlet-lift disables for comparison.
+    bool        fluxNeumann       = false;   // --flux-neumann: flux-consistent Neumann openings
     bool        openingFluxSource = false;
     bool        openNormalProj    = false;   // FIX-B #3: project open-face velocity to normal-only
     bool        totalPressure     = false;   // FIX-B #2: dynamic-head inlet target (totalPressure)
@@ -151,6 +160,10 @@ int main(int argc, char** argv)
         else if (a == "--bdf1")                      useBdf2    = false; // diagnostic: BDF1/Chorin instead of BDF2/EXT2
         else if (a.rfind("--advection=", 0) == 0)    advScheme  = a.substr(12); // skew|upwind|barth-jespersen
         else if (a == "--implicit-advection")        implicitAdv = true; // C(u^n) in the velocity matrix; not CFL-limited (tet-only, needs Hypre)
+        else if (a == "--supg")                      supg = true;        // SUPG stabilization on the implicit convection operator
+        else if (a == "--div-correct")               divCorrect = true;  // subtract q*(div u) from the upwind/BJ advection (OpenAccel node term)
+        else if (a.rfind("--picard=", 0) == 0)       nPicard   = std::stoi(a.substr(9));   // deferred-correction outer sweeps
+        else if (a.rfind("--picard-tol=", 0) == 0)   picardTol = std::stod(a.substr(13));
         else if (a == "--no-rhie")                   useRhieChow = false; // plain Galerkin divergence (checkerboard-prone)
         else if (a == "--rhie-chow")                 useRhieChow = true;
         else if (a.rfind("--rhie-tau=", 0) == 0)     rhieTau   = std::stod(a.substr(11));
@@ -166,6 +179,7 @@ int main(int argc, char** argv)
         else if (a == "--inlet-pernode-normal")      inletPernodeNormal = true;
         else if (a == "--no-inlet-pernode-normal")   inletPernodeNormal = false; // global averaged normal (legacy)
         else if (a == "--inlet-flip-normal")         inletFlipNormal = true;     // flip if vectors come out outward
+        else if (a == "--flux-neumann")              fluxNeumann = true;   // openings keep assembled rows; flux via the pressure RHS
         else if (a == "--pump-uniform-ic")           pumpUniformIC = true;       // legacy free-stream IC (default: start from rest)
         else if (a.rfind("--inlet-velocity=", 0) == 0) inletU  = std::stod(a.substr(17));
         else if (a.rfind("--pump-dp=", 0) == 0)        pumpDp  = std::stod(a.substr(10));   // FIX B: pressure-drop drive (inlet p=pumpDp, outlet p=0, free velocities)
@@ -175,6 +189,7 @@ int main(int argc, char** argv)
         else if (a.rfind("--dt=", 0) == 0)           dt        = std::stod(a.substr(5));
         else if (a.rfind("--cfl=", 0) == 0)          cflMax    = std::stod(a.substr(6)); // adaptive dt: cap advective CFL
         else if (a.rfind("--num-steps=", 0) == 0)    numSteps  = std::stoi(a.substr(12));
+        else if (a.rfind("--steady-tol=", 0) == 0)   steadyTol = std::stod(a.substr(13)); // early exit at steady state
         else if (a.rfind("--source-ramp-steps=", 0) == 0) sourceRampSteps = std::stoi(a.substr(20));
         else if (a.rfind("--vtu-every=", 0) == 0)    vtuEvery  = std::stoi(a.substr(12));
         else if (a.rfind("--max-iter=", 0) == 0)     maxIter   = std::stoi(a.substr(11));
@@ -215,7 +230,16 @@ int main(int argc, char** argv)
                     "                       whole-geometry diagonal, NOT the passage scale, so this Re\n"
                     "                       does NOT match a physically-defined Re. Prefer --nu/--rho.\n"
                     "  --dt=V --num-steps=N time stepping (default 1e-3, 200)\n"
+                    "  --steady-tol=X       stop early once |d(u_rms)|/u_rms < X for 3 straight\n"
+                    "                       reports (default 0 = off; ~1e-5 is a converged pump).\n"
+                    "                       There is no restart, so a wall-clock kill loses the run.\n"
                     "  --source-ramp-steps=N ramp inlet drive 0->full over N steps (gentle startup; default 0=off)\n"
+                    "  --supg              SUPG streamline stabilization on the implicit convection operator\n"
+                    "  --div-correct       conservative->advective correction on upwind/BJ advection\n"
+                    "  --picard=N          deferred-correction outer sweeps per step (default 1 = plain explicit)\n"
+                    "  --picard-tol=X      stop sweeping when |du**|/|u**| < X (default 1e-3)\n"
+                    "                      (subtracts q*(div u); matters when div(u) is not small)\n"
+                    "                      (needs --implicit-advection; required above CFL~1.5 or the velocity GMRES stagnates)\n"
                     "  --cfl=C              adaptive dt: cap advective CFL at C (~0.5 for BJ+BDF2)\n"
                     "  --implicit-advection semi-implicit convection: freeze u^n, assemble C(u^n) into\n"
                     "                       the velocity matrix and drop the explicit EXT2 term. Removes\n"
@@ -223,9 +247,14 @@ int main(int argc, char** argv)
                     "                       matrix is non-symmetric -> velocity solve moves to GMRES).\n"
                     "  --vtu-output=PREFIX --vtu-every=N   VTU/PVTU output\n"
                     "  --ic-perturb=F       interior IC perturbation (break symmetry)\n"
-                    "  --opening-flux-source  add prescribed inlet+outlet opening flux to the\n"
-                    "                       pressure RHS (FIX 1, ON by default; correct through-flow\n"
-                    "                       fix, needs mass-conserving outlet; --no-... for A/B)\n"
+                    "  --opening-flux-source  use the EXTERNAL prescribed-velocity opening-flux\n"
+                    "                       source instead of the term the divergence now carries\n"
+                    "                       itself (CVFEM: u_i.areaVec_i, needs --solver=hypre;\n"
+                    "                       Galerkin --pressure-k: oint N_i u.n dA). Off = the\n"
+                    "                       operator does it, from the SOLVED velocity, so a free\n"
+                    "                       outlet works too. On = the old patch, native term off:\n"
+                    "                       the A/B for the two, and the way to PRESCRIBE the flux\n"
+                    "                       (mass-conserving outlet, --flux-neumann).\n"
                     "  --no-dirichlet-lift  disable the velocity-diffusion Dirichlet lift (FIX 2,\n"
                     "                       on by default)\n";
             }
@@ -401,6 +430,42 @@ int main(int argc, char** argv)
     // Must be set BEFORE setupNSStepper: it decides whether the setup snapshots
     // the pristine velocity matrix and builds the global DOF map Hypre needs.
     s.implicitAdvection = implicitAdv;
+    s.useSupg           = supg;
+    s.useDivCorrect     = divCorrect;
+    s.nPicard           = std::max(1, nPicard);
+    s.picardTol         = RealType(picardTol);
+    // Picard re-evaluates the EXPLICIT advection at the current iterate. With
+    // --implicit-advection the convection is already in the matrix and there is
+    // no deferred correction to iterate on, so the sweeps would be wasted work.
+    if (rank == 0 && nPicard > 1 && implicitAdv)
+        std::cerr << "WARNING: --picard sweeps the explicit advection; with "
+                     "--implicit-advection there is nothing to iterate. Ignored.\n";
+    // Banner: --bj was silently ignored under --implicit-advection for a whole
+    // session before anyone noticed. Every advection-path flag says out loud
+    // whether it is actually live.
+    if (rank == 0)
+        std::cout << "  advection: " << advScheme
+                  << (implicitAdv ? " [IGNORED - implicit-advection assembles C(u^n)]" : " [explicit]")
+                  << (implicitAdv && supg ? " +SUPG" : "")
+                  << "  div-correct: "
+                  << ((divCorrect && !implicitAdv && advScheme != "skew") ? "ON" : "off")
+                  << "  picard: "
+                  << ((nPicard > 1 && !implicitAdv) ? std::to_string(nPicard) : std::string("off"))
+                  << "\n";
+    // The correction only applies to the EXPLICIT upwind/BJ scatter. Implicit
+    // advection assembles int N_i (a.grad N_j), which is ALREADY the advective
+    // form; skew already carries half the term. Warn rather than silently no-op.
+    if (rank == 0 && divCorrect && implicitAdv)
+        std::cerr << "WARNING: --div-correct applies to the explicit upwind/BJ advection; "
+                     "--implicit-advection is already in advective form. Ignored.\n";
+    if (rank == 0 && divCorrect && !implicitAdv && advScheme == "skew")
+        std::cerr << "WARNING: --div-correct is skipped for --skew (the skew-symmetric form "
+                     "already carries -1/2 q(div u)). Use --bj or --upwind.\n";
+    // SUPG only enters through C(u^n); without implicit advection there is no
+    // matrix to stabilize and the flag would be silently inert.
+    if (rank == 0 && supg && !implicitAdv)
+        std::cerr << "WARNING: --supg applies to the --implicit-advection convection "
+                     "operator; ignored without it.\n";
     // Compact Rhie-Chow on the divergence operator: couples odd/even pressure
     // nodes so the projection can see (and kill) the checkerboard mode that
     // leaves div*L/U stuck. tau auto = dt/rho. --no-rhie for an A/B comparison.
@@ -415,6 +480,21 @@ int main(int argc, char** argv)
     // compatible and through-flow develops. The source REQUIRES the mass-conserving
     // outlet (so outletU>0 and the outlet term is nonzero); see the guard below.
     s.useOpeningFluxSource = openingFluxSource;   // FIX 1 (OFF by default; --opening-flux-source enables)
+    // --flux-neumann needs S_target in the pressure RHS, which IS the opening-flux source
+    // (d_femFluxWin/Wout, the consistent P1 face weights built below). Force it on, and force
+    // the FEM projection path since those weights only replace the lumped source there.
+    // What flux-neumann changes on top is the other half: the openings keep their assembled
+    // pressure rows and their velocities stay free (see mars_ns_pump_solver.hpp, fluxNeumann).
+    s.fluxNeumann = fluxNeumann;
+    if (fluxNeumann)
+    {
+        s.useOpeningFluxSource = true;
+        s.useFemProjection     = true;
+        if (rank == 0 && pumpDp > 0.0)
+            std::cerr << "WARNING: --flux-neumann and --pump-dp are different drives "
+                         "(imposed flux vs imposed head); --pump-dp masks the openings "
+                         "Dirichlet and will override flux-neumann's unmasked rows.\n";
+    }
     s.useDirichletLift     = dirichletLift;       // FIX 2 (on by default)
     s.pumpDp               = RealType(pumpDp);    // FIX B: pressure-drop drive (>0 active)
     s.useOpenFaceNormalProj = (pumpDp > 0.0) && openNormalProj;  // FIX-B #3
@@ -467,14 +547,48 @@ int main(int argc, char** argv)
     // on a do-nothing outlet: the balance comes from the FREE through-flow the
     // pressure head drives, not a prescribed outlet velocity. The old guard was
     // for the lumped/net-zero path that needs outletU>0 to cancel the inlet flux.
-    if (s.useOpeningFluxSource && s.outletDoNothing && !s.useFluxPressureBc)
-    {
-        if (rank == 0)
-            std::cerr << "WARNING: --opening-flux-source needs the mass-conserving outlet "
-                         "(outletU>0 to balance the inlet flux); --outlet=do-nothing leaves it "
-                         "unbalanced. Disabling the opening-flux source.\n";
-        s.useOpeningFluxSource = false;
-    }
+    // 2026-08-27: the old guard DISABLED the source here. That was right only for the
+    // net-zero lumped path, which needs outletU>0 so the outlet term cancels the inlet
+    // term. With --outlet=do-nothing the outlet is a PRESSURE face (whole-face p=0,
+    // velocity free), and then no balance is needed at all:
+    //   * the pressure system has a real Dirichlet anchor -> no null space, no pin, and
+    //     no sum(b)=0 compatibility condition, so oScale has nothing to enforce;
+    //   * the outlet pressure ROWS are overwritten by the BC, so whatever the RHS holds
+    //     there is discarded -- the (unknown, free) outlet flux never needs supplying.
+    // So keep the source ON and apply the INLET term only (oScale=0 in the solver).
+    // This is the OpenFOAM fixedFluxPressure / OpenAccel arrangement: inlet contributes
+    // p_rhs -= mDot, outlet is a Dirichlet face.
+    if (s.useOpeningFluxSource && s.outletDoNothing && !s.useFluxPressureBc && rank == 0)
+        std::cout << "  [opening-flux] pressure outlet (--outlet=do-nothing): applying the "
+                     "INLET flux only, oScale=0 (no net-zero balance needed -- the p=0 face "
+                     "anchors the system)\n";
+
+    // Both divergence families now carry their own opening term, each in its own
+    // form: the Galerkin path integrates oint N_i (u.n) dA over the opening facets,
+    // the CVFEM path closes the clipped control volume with u_i . areaVec_i. Which
+    // one is live follows the pressure path; the CVFEM one needs --solver=hypre,
+    // because the matrix-free route solves the Gram form D M^-1 D^T and a D with
+    // boundary rows would stop being the transpose of the D^T inside it.
+    const bool nativeOpeningTerm = !s.useOpeningFluxSource && (pressureK || useHypre);
+    if (rank == 0 && nativeOpeningTerm && !pressureK)
+        std::cout << "  [opening-cv] CVFEM control-volume opening term ON, inside the "
+                     "divergence, from the SOLVED velocity (--opening-flux-source selects the "
+                     "prescribed-velocity source instead)\n";
+
+    // The native term + a velocity-Dirichlet outlet is the one combination that
+    // loses something the external source provided. There the pressure system is
+    // pure Neumann with a single pin, and the discrete inlet and outlet fluxes do
+    // NOT cancel (~1%: the per-node area sums differ from the analytic areas that
+    // outletU was sized from). The external source rescales the outlet (oScale) to
+    // cancel the inlet exactly; the operator cannot, because it reports the flux
+    // that is actually there. A pressure outlet has no such condition -- its
+    // Dirichlet face anchors the system.
+    if (nativeOpeningTerm && !s.outletDoNothing && pumpDp <= 0.0 && rank == 0)
+        std::cerr << "WARNING: mass-conserving outlet without --opening-flux-source. The "
+                     "divergence now carries the opening flux itself, but it does not "
+                     "rescale the outlet to cancel the inlet, so the single-pin Neumann "
+                     "pressure RHS can be left ~1% incompatible. Use --opening-flux-source "
+                     "here, or --outlet=do-nothing.\n";
 
     // Prescribed inlet volume flux Q_in = inletU * areaIn, captured at function
     // scope so the per-step through-flow diagnostic can compare it to the measured
@@ -857,6 +971,80 @@ int main(int argc, char** argv)
                       << "    outlet: area=" << areaOut << "  U_out=" << s.outletU
                       << "  outflow dir=(" << s.outletDirX << "," << s.outletDirY << "," << s.outletDirZ << ")\n";
 
+        // -------- Opening facets for the weak-divergence surface term --------
+        // The weak divergence is
+        //     D_i(u) = -int grad(N_i).u dV  +  oint N_i (u.n) dA
+        // and the second half lives on these triangles. Upload them once and the
+        // solver integrates them every step against the LIVE velocity, so the
+        // inflow reaches the pressure equation without anyone setting a flag --
+        // and a FREE (pressure) outlet works too, which the prescribed-velocity
+        // source below cannot do because there is no prescribed velocity to use.
+        // Same once-per-face owner gate and same OUTWARD winding as
+        // perNodeAreaVec, so the geometry matches the flux weights exactly.
+        if (s.useFemProjection)
+        {
+            const size_t nNodes = amr.domain().getNodeCount();
+            std::vector<int> triNode;
+            std::vector<RealType> triAx, triAy, triAz;
+            auto collectOpeningFacets = [&](const std::string& nm)
+            {
+                auto tit = ss.triangleCoordsByName.find(nm);
+                if (tit == ss.triangleCoordsByName.end()) return;
+                std::vector<int> triLocal =
+                    amr.domain().resolveSideSetNodesToLocalKeepMisses(tit->second);
+                for (size_t f = 0; f + 2 < tit->second.size(); f += 3)
+                {
+                    int la = triLocal[f];
+                    if (la < 0 || hostOwnFA[la] != 1) continue;   // count once: owner of first node
+                    const auto& A = tit->second[f];
+                    const auto& B = tit->second[f + 1];
+                    const auto& C = tit->second[f + 2];
+                    double e1x = B[0]-A[0], e1y = B[1]-A[1], e1z = B[2]-A[2];
+                    double e2x = C[0]-A[0], e2y = C[1]-A[1], e2z = C[2]-A[2];
+                    triAx.push_back(RealType(0.5*(e1y*e2z - e1z*e2y)));
+                    triAy.push_back(RealType(0.5*(e1z*e2x - e1x*e2z)));
+                    triAz.push_back(RealType(0.5*(e1x*e2y - e1y*e2x)));
+                    for (int j = 0; j < 3; ++j)
+                    {
+                        int lj = triLocal[f + j];
+                        triNode.push_back((lj >= 0 && (size_t)lj < nNodes) ? lj : -1);
+                    }
+                }
+            };
+            collectOpeningFacets(inletSS);
+            collectOpeningFacets(outletSS);
+
+            const size_t nFacets = triAx.size();
+            s.d_openingTriNode.resize(triNode.size());
+            s.d_openingTriAreaX.resize(nFacets);
+            s.d_openingTriAreaY.resize(nFacets);
+            s.d_openingTriAreaZ.resize(nFacets);
+            if (nFacets > 0)
+            {
+                cudaMemcpy(s.d_openingTriNode.data(), triNode.data(),
+                           triNode.size()*sizeof(int), cudaMemcpyHostToDevice);
+                cudaMemcpy(s.d_openingTriAreaX.data(), triAx.data(),
+                           nFacets*sizeof(RealType), cudaMemcpyHostToDevice);
+                cudaMemcpy(s.d_openingTriAreaY.data(), triAy.data(),
+                           nFacets*sizeof(RealType), cudaMemcpyHostToDevice);
+                cudaMemcpy(s.d_openingTriAreaZ.data(), triAz.data(),
+                           nFacets*sizeof(RealType), cudaMemcpyHostToDevice);
+            }
+            long long localFacets = (long long)nFacets, globalFacets = 0;
+            MPI_Allreduce(&localFacets, &globalFacets, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+            // Mirror the solver's femOpeningSurfaceActive so the line does not
+            // claim a term that will not fire.
+            const char* surfaceOff =
+                s.useOpeningFluxSource
+                    ? "  [INACTIVE: --opening-flux-source selects the external source instead]"
+                : std::getenv("MARS_FEMGRAM_SOLVE")
+                    ? "  [INACTIVE: MARS_FEMGRAM_SOLVE solves D M^-1 D^T, which has no boundary rows]"
+                    : "";
+            if (rank == 0)
+                std::cout << "    opening-surface: " << globalFacets
+                          << " facets inside the weak divergence" << surfaceOff << "\n";
+        }
+
         // -------- Consistent P1 opening-flux weights (FEM projection) --------
         // The weak-form divergence (--pressure-k) needs the boundary integral
         // oint(N_i u.n dA) at the openings. The lumped per-node u_i.areaVec_i
@@ -1129,6 +1317,9 @@ int main(int argc, char** argv)
     // plus the steady-state residual d(u_rms) so convergence is visible.
     double tFlow = (inletU > 0 && Lscale > 0) ? (Lscale / double(inletU)) : 1.0;
     double prevURms = 0.0;
+    int    steadyHits = 0;      // consecutive reports under steadyTol
+    int    stepsRun   = numSteps;  // < numSteps if --steady-tol trips
+    bool   steadyDone = false;  // set in the report block, acted on at the loop tail
 
     // Adaptive-dt (--cfl) setup. Explicit BJ+EXT2 advection has a real CFL limit:
     // as the jet develops, uMax*dt/dx crosses the EXT2 stability bound and the
@@ -1240,6 +1431,15 @@ int main(int argc, char** argv)
             double uFrac = (inletU > 0) ? uRms / double(inletU) : uRms;       // u_rms as a fraction of inlet U
             double dURms = uRms - prevURms;                                   // steady-state residual
             prevURms = uRms;
+            // uRms comes from an MPI_Allreduce, so it is bit-identical on every rank:
+            // each rank reaches the same verdict and they all leave the loop together.
+            // Require 3 straight hits -- a single small step can just be a stall.
+            if (steadyTol > 0.0 && uRms > 0.0)
+            {
+                const double relResid = std::abs(dURms) / uRms;
+                steadyHits = (relResid < steadyTol) ? steadyHits + 1 : 0;
+                if (steadyHits >= 3) steadyDone = true;
+            }
             // Peak INTERIOR velocity (excludes the pinned inlet/outlet/wall DOFs):
             // does the inlet jet propagate into the domain? u_max/U ~ O(1) near
             // the jet means flow IS entering even if the volume-average u_rms is
@@ -1247,7 +1447,13 @@ int main(int argc, char** argv)
             RealType umx = maxOwnedInteriorAbs<KeyType, RealType, TetTag>(s, s.d_u);
             RealType vmx = maxOwnedInteriorAbs<KeyType, RealType, TetTag>(s, s.d_v);
             RealType wmx = maxOwnedInteriorAbs<KeyType, RealType, TetTag>(s, s.d_w);
-            double uMax = std::sqrt(double(umx)*double(umx) + double(vmx)*double(vmx) + double(wmx)*double(wmx));
+            // LEGACY metric, kept only so numbers stay comparable to earlier runs:
+            // three INDEPENDENT per-component maxima combined as if they were one
+            // vector. They generally sit on three different nodes, so this is an
+            // upper bound that exists nowhere (measured ~30% above the real peak).
+            double uMaxComposite = std::sqrt(double(umx)*double(umx) + double(vmx)*double(vmx) + double(wmx)*double(wmx));
+            // The real thing: speed evaluated per node, then maxed.
+            double uMax = double(maxOwnedInteriorSpeed<KeyType, RealType, TetTag>(s, s.d_u, s.d_v, s.d_w));
             // [bc-sanity] Q_out = sum_owned(u . outletAreaVec) vs prescribed Q_in.
             // NOT a through-flow proof: the corrector relocks the outlet nodes to
             // the prescribed outletU, so for the mass-conserving outlet Q_out=Q_in
@@ -1311,12 +1517,15 @@ int main(int argc, char** argv)
             double divRCnd = (inletU > 0 && Lscale > 0)
                            ? double(s.lastDivRC) * Lscale / inletU : double(s.lastDivRC);
             double flowThroughs = simTime / tFlow;     // accumulated time (dt may vary)
+            // collective (Allreduce inside) -- must be outside the rank-0 guard
+            reportSpeedProfile<KeyType, RealType, TetTag>(s);
             if (rank == 0)
             {
                 std::cout << "Step " << std::setw(5) << step
                           << "  ft=" << std::fixed << std::setprecision(2) << flowThroughs  // flow-throughs elapsed
                           << "  u_rms=" << std::scientific << std::setprecision(3) << uRms
-                          << "  u_max=" << std::fixed << std::setprecision(3) << uMax        // peak interior speed
+                          << "  u_max=" << std::fixed << std::setprecision(3) << uMax        // TRUE peak interior speed (per-node)
+                          << "  u_maxC=" << std::setprecision(3) << uMaxComposite                 // legacy per-component composite
                           << "  uMax/U=" << std::setprecision(2) << (inletU > 0 ? uMax/double(inletU) : uMax)
                           << "  d(u_rms)=" << std::scientific << std::setprecision(2) << dURms
                           << "  div*L/U=" << std::fixed << std::setprecision(2) << divND;
@@ -1360,15 +1569,24 @@ int main(int argc, char** argv)
                 }
             }
         }
-        if (!vtuPrefix.empty() && (step % vtuEvery == 0 || step == numSteps))
+        if (!vtuPrefix.empty() && (step % vtuEvery == 0 || step == numSteps || steadyDone))
             writeFrame(step, simTime);
+        if (steadyDone)
+        {
+            if (rank == 0)
+                std::cout << "\n[steady] |d(u_rms)|/u_rms < " << steadyTol
+                          << " for 3 straight reports -- stopping at step " << step
+                          << " of " << numSteps << ".\n";
+            stepsRun = step;
+            break;
+        }
     }
     auto wallEnd = std::chrono::high_resolution_clock::now();
     double wallMs = std::chrono::duration<double, std::milli>(wallEnd - wallStart).count();
     if (rank == 0)
-        std::cout << "\nPump run complete: " << numSteps << " steps, "
+        std::cout << "\nPump run complete: " << stepsRun << " steps, "
                   << std::fixed << std::setprecision(1) << wallMs << " ms ("
-                  << wallMs / std::max(numSteps, 1) << " ms/step)\n";
+                  << wallMs / std::max(stepsRun, 1) << " ms/step)\n";
 
     MPI_Finalize();
     return 0;
