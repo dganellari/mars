@@ -28,7 +28,15 @@
 
 #include <mpi.h>
 
-#ifdef USE_CUDA
+// USE_CUDA says the PROJECT is built with CUDA; it is set for every translation unit, including
+// plain .cpp ones the host compiler handles -- and the MPI gate is exactly that. Guarding the
+// kernels on it hands __global__ and <<<>>> to g++. __CUDACC__/__HIPCC__ are what actually mean
+// "a device compiler is reading this".
+#if defined(__CUDACC__) || defined(__HIPCC__)
+#define MARS_CS_CUDA 1
+#endif
+
+#ifdef MARS_CS_CUDA
 #include <thrust/copy.h>
 #include <thrust/device_vector.h>
 #include <thrust/execution_policy.h>
@@ -306,9 +314,9 @@ void coarseSearchHost(const std::vector<Aabb<T>>& domainBoxes,
 }
 
 // ---------------------------------------------------------------------------
-// Device path -- the default.
+// Device path -- the default. Only visible to a device compiler; see the MARS_CS_CUDA note above.
 // ---------------------------------------------------------------------------
-#ifdef USE_CUDA
+#ifdef MARS_CS_CUDA
 
 namespace detail
 {
@@ -540,7 +548,7 @@ void coarseSearch(const Aabb<T>* d_domainBoxes, const uint64_t* d_domainIds, siz
     d_out.erase(thrust::unique(thrust::device, d_out.begin(), d_out.end()), d_out.end());
 }
 
-#endif  // USE_CUDA
+#endif  // MARS_CS_CUDA
 
 }  // namespace fem
 }  // namespace mars
