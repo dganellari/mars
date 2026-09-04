@@ -1434,12 +1434,20 @@ int main(int argc, char** argv)
             // uRms comes from an MPI_Allreduce, so it is bit-identical on every rank:
             // each rank reaches the same verdict and they all leave the loop together.
             // Require 3 straight hits -- a single small step can just be a stall.
-            if (steadyTol > 0.0 && uRms > 0.0)
+            // A DIVERGED run also stops changing: once u_rms saturates at ~1e82 the relative
+            // residual goes tiny and this would report "[steady]" on a dead solution (seen
+            // 2026-09-04, a VMS run that blew up was declared steady at step 80). So require the
+            // state to be finite AND the velocity solve to have actually converged -- s.lastUIters
+            // is negative when it gave up.
+            const bool healthy = std::isfinite(uRms) && std::isfinite(dURms) && s.lastUIters >= 0;
+            if (steadyTol > 0.0 && uRms > 0.0 && healthy)
             {
                 const double relResid = std::abs(dURms) / uRms;
                 steadyHits = (relResid < steadyTol) ? steadyHits + 1 : 0;
                 if (steadyHits >= 3) steadyDone = true;
             }
+            else if (!healthy)
+                steadyHits = 0;
             // Peak INTERIOR velocity (excludes the pinned inlet/outlet/wall DOFs):
             // does the inlet jet propagate into the domain? u_max/U ~ O(1) near
             // the jet means flow IS entering even if the volume-average u_rms is
