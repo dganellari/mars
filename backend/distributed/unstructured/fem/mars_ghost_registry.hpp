@@ -28,6 +28,14 @@
 #include <utility>
 #include <vector>
 
+// nvcc/hipcc define these; USE_CUDA does NOT distinguish them, it is set for every translation
+// unit in a CUDA build including plain .cpp ones (the MPI gate is exactly that). Guarding kernels
+// on USE_CUDA hands __global__ and <<<>>> to the host compiler -- that broke the build once.
+#if defined(__CUDACC__) || defined(__HIPCC__)
+#define MARS_GR_CUDA 1
+#include <thrust/device_vector.h>
+#endif
+
 namespace mars
 {
 namespace fem
@@ -37,6 +45,42 @@ namespace fem
 // identical on every rank that sees the entity (an SFC key, or a packed tuple like HoHalo's
 // std::array<long,6>). Local indices are NOT usable across ranks -- that is the whole point of
 // keying the request.
+#ifdef MARS_GR_CUDA
+namespace detail
+{
+
+// idx < 0 marks a slot the owner could not resolve; it contributes nothing in either direction,
+// matching the host loops.
+template<typename T>
+__global__ void ghostGatherKernel(const T* v, const int* idx, int n, T* out)
+{
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= n) return;
+    out[i] = (idx[i] >= 0) ? v[idx[i]] : T{};
+}
+
+template<typename T>
+__global__ void ghostScatterKernel(const T* in, const int* idx, int n, T* v)
+{
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= n) return;
+    if (idx[i] >= 0) v[idx[i]] = in[i];
+}
+
+// atomicAdd, not `+=`: sendIdx_ is indexed per (peer, entity), so an owned entity ghosted by
+// several peers appears several times and their contributions collide. The host loop gets away
+// with a plain += only because it is serial.
+template<typename T>
+__global__ void ghostScatterAddKernel(const T* in, const int* idx, int n, T* v)
+{
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= n) return;
+    if (idx[i] >= 0) atomicAdd(&v[idx[i]], in[i]);
+}
+
+}  // namespace detail
+#endif  // MARS_GR_CUDA
+
 template<typename KeyT>
 class GhostRegistry
 {
@@ -255,8 +299,12 @@ public:
 
     // FORWARD: owner -> ghost, ghost slots OVERWRITTEN with the owner's value (STK:
     // communicate_field_data / copy_owned_to_shared over this ghosting).
+    //
+    // The `Host` suffix is the exception, not the rule: MARS is device-by-default, so the
+    // unsuffixed forward()/reverseAdd() below are the GPU ones. These stay as the reference the
+    // MPI gates run against without a GPU.
     template<typename T>
-    void forward(std::vector<T>& v) const
+    void forwardHost(std::vector<T>& v) const
     {
         const int ns = totalSend(), nr = totalRecv();
         std::vector<T> sbuf(ns), rbuf(nr);
@@ -268,7 +316,7 @@ public:
     // REVERSE-ADD: ghost -> owner, ghost contributions SUMMED into the owner's slot (the assembly
     // direction).
     template<typename T>
-    void reverseAdd(std::vector<T>& v) const
+    void reverseAddHost(std::vector<T>& v) const
     {
         const int ns = totalRecv(), nr = totalSend();
         std::vector<T> sbuf(ns), rbuf(nr);
@@ -277,6 +325,43 @@ public:
         for (int i = 0; i < nr; ++i)
             if (sendIdx_[i] >= 0) v[sendIdx_[i]] += rbuf[i];
     }
+
+#ifdef MARS_GR_CUDA
+    // ---- device exchange (the default path) ---------------------------------------------------
+
+    // Same semantics as forwardHost/reverseAddHost, on a device pointer, with MPI moving device
+    // buffers directly. Index lists are uploaded once and reused -- the build is host-side setup,
+    // but nothing per-step crosses the bus.
+    template<typename T>
+    void forward(T* d_v) const
+    {
+        ensureIndicesOnDevice();
+        const int ns = totalSend(), nr = totalRecv();
+        thrust::device_vector<T> d_s(ns), d_r(nr);
+        launchGather(d_v, thrust::raw_pointer_cast(d_sendIdx_.data()), ns,
+                     thrust::raw_pointer_cast(d_s.data()));
+        exchangeValsDevice(thrust::raw_pointer_cast(d_s.data()),
+                           thrust::raw_pointer_cast(d_r.data()), sendOffsets_, recvOffsets_,
+                           kTagFwd);
+        launchScatter(thrust::raw_pointer_cast(d_r.data()),
+                      thrust::raw_pointer_cast(d_recvIdx_.data()), nr, d_v, /*add=*/false);
+    }
+
+    template<typename T>
+    void reverseAdd(T* d_v) const
+    {
+        ensureIndicesOnDevice();
+        const int ns = totalRecv(), nr = totalSend();
+        thrust::device_vector<T> d_s(ns), d_r(nr);
+        launchGather(d_v, thrust::raw_pointer_cast(d_recvIdx_.data()), ns,
+                     thrust::raw_pointer_cast(d_s.data()));
+        exchangeValsDevice(thrust::raw_pointer_cast(d_s.data()),
+                           thrust::raw_pointer_cast(d_r.data()), recvOffsets_, sendOffsets_,
+                           kTagRev);
+        launchScatter(thrust::raw_pointer_cast(d_r.data()),
+                      thrust::raw_pointer_cast(d_sendIdx_.data()), nr, d_v, /*add=*/true);
+    }
+#endif  // MARS_GR_CUDA
 
 private:
     // Tags are still distinct per message KIND, but collision across registries is prevented by the
@@ -312,6 +397,14 @@ private:
         globalUnresolved_   = o.globalUnresolved_;
         comm_        = o.comm_;
         o.comm_      = MPI_COMM_NULL;
+#ifdef MARS_GR_CUDA
+        // Carry the uploaded index lists across the move, or the moved-to registry would keep
+        // idxUploaded_ = false and silently re-upload -- correct, but a wasted transfer per move.
+        d_sendIdx_     = std::move(o.d_sendIdx_);
+        d_recvIdx_     = std::move(o.d_recvIdx_);
+        idxUploaded_   = o.idxUploaded_;
+        o.idxUploaded_ = false;
+#endif
     }
 
     void exchangeCounts(const std::vector<int>& peers, const std::vector<int>& send,
@@ -364,6 +457,67 @@ private:
     }
 
     std::string name_;
+#ifdef MARS_GR_CUDA
+    static constexpr int kBlock = 256;
+
+    void ensureIndicesOnDevice() const
+    {
+        if (idxUploaded_) return;
+        d_sendIdx_ = sendIdx_;
+        d_recvIdx_ = recvIdx_;
+        idxUploaded_ = true;
+    }
+
+    template<typename T>
+    static void launchGather(const T* v, const int* idx, int n, T* out)
+    {
+        if (n == 0) return;
+        detail::ghostGatherKernel<T><<<(n + kBlock - 1) / kBlock, kBlock>>>(v, idx, n, out);
+        cudaDeviceSynchronize();
+    }
+
+    template<typename T>
+    static void launchScatter(const T* in, const int* idx, int n, T* v, bool add)
+    {
+        if (n == 0) return;
+        const int nb = (n + kBlock - 1) / kBlock;
+        if (add) detail::ghostScatterAddKernel<T><<<nb, kBlock>>>(in, idx, n, v);
+        else     detail::ghostScatterKernel<T><<<nb, kBlock>>>(in, idx, n, v);
+        cudaDeviceSynchronize();
+    }
+
+    // Mirrors exchangeVals, but the buffers are device pointers handed straight to MPI.
+    template<typename T>
+    void exchangeValsDevice(const T* sbuf, T* rbuf, const std::vector<int>& sOff,
+                            const std::vector<int>& rOff, int tag) const
+    {
+        const int np = static_cast<int>(peers_.size());
+        std::vector<MPI_Request> rq;
+        rq.reserve(2 * np);
+        for (int i = 0; i < np; ++i)
+        {
+            const int n = rOff[i + 1] - rOff[i];
+            if (n <= 0) continue;
+            MPI_Request r;
+            MPI_Irecv(rbuf + rOff[i], n * int(sizeof(T)), MPI_BYTE, peers_[i], tag, comm_, &r);
+            rq.push_back(r);
+        }
+        for (int i = 0; i < np; ++i)
+        {
+            const int n = sOff[i + 1] - sOff[i];
+            if (n <= 0) continue;
+            MPI_Request r;
+            MPI_Isend(const_cast<T*>(sbuf) + sOff[i], n * int(sizeof(T)), MPI_BYTE, peers_[i], tag,
+                      comm_, &r);
+            rq.push_back(r);
+        }
+        if (!rq.empty()) MPI_Waitall(int(rq.size()), rq.data(), MPI_STATUSES_IGNORE);
+    }
+
+    mutable thrust::device_vector<int> d_sendIdx_, d_recvIdx_;
+    mutable bool idxUploaded_ = false;
+#endif  // MARS_GR_CUDA
+
     std::vector<int> peers_;
     std::vector<int> sendOffsets_{0}, recvOffsets_{0};   // CSR over peers_
     std::vector<int> sendIdx_, recvIdx_;                 // local entity ids

@@ -131,7 +131,7 @@ TEST(GhostRegistry, ForwardOwnerToGhost)
     for (size_t e = 0; e < L.size(); ++e)
         v[e] = (L.owner[e] == rank) ? valueOf(L.key[e]) : -12345.0;   // ghosts start as garbage
 
-    reg.forward(v);
+    reg.forwardHost(v);
 
     for (size_t e = 0; e < L.size(); ++e)
         if (L.owner[e] != rank)
@@ -149,7 +149,7 @@ TEST(GhostRegistry, ReverseAddGhostToOwner)
     reg.build(L.size(), L.owner, L.key, L.participates, rank, L.peers);
 
     std::vector<double> v(L.size(), 1.0);
-    reg.reverseAdd(v);
+    reg.reverseAddHost(v);
 
     for (int i = 0; i < kOwnedPerRank; ++i)
     {
@@ -200,10 +200,10 @@ TEST(GhostRegistry, TwoRegistriesDoNotCrossTalk)
     for (size_t e = 0; e < B.size(); ++e) b[e] = (B.owner[e] == rank) ? valueOf(B.key[e]) * 7.0 : -1.0;
 
     // Interleaved: sharing a message space would swap these payloads.
-    regA.forward(a);
-    regB.forward(b);
-    regA.reverseAdd(a);
-    regB.forward(b);
+    regA.forwardHost(a);
+    regB.forwardHost(b);
+    regA.reverseAddHost(a);
+    regB.forwardHost(b);
 
     for (size_t e = 0; e < B.size(); ++e)
         if (B.owner[e] != rank && B.participates[e])
