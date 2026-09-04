@@ -67,15 +67,25 @@ __global__ void ghostScatterKernel(const T* in, const int* idx, int n, T* v)
     if (idx[i] >= 0) v[idx[i]] = in[i];
 }
 
-// atomicAdd, not `+=`: sendIdx_ is indexed per (peer, entity), so an owned entity ghosted by
-// several peers appears several times and their contributions collide. The host loop gets away
-// with a plain += only because it is serial.
+// One thread per DESTINATION entity, summing the slots that target it -- no atomics.
+//
+// sendIdx_ is indexed per (peer, entity), so an owned entity ghosted by several peers is written
+// by several slots. The obvious answer is atomicAdd, and contention is low enough (1-3 peers per
+// entity) that it would not be slow. It is avoided for DETERMINISM: atomicAdd on doubles sums in
+// whatever order the hardware happens to finish in, so reverseAdd would not be bitwise
+// reproducible run to run -- and the device-vs-host gate compares with EXPECT_DOUBLE_EQ.
+//
+// The collision pattern comes from the ghosting topology, which is fixed at build time, so it is
+// inverted ONCE into (dstIdx, csrOff, csrSlot) and costs nothing per call.
 template<typename T>
-__global__ void ghostScatterAddKernel(const T* in, const int* idx, int n, T* v)
+__global__ void ghostGatherAddKernel(const T* in, const int* dstIdx, const int* csrOff,
+                                     const int* csrSlot, int nDst, T* v)
 {
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i >= n) return;
-    if (idx[i] >= 0) atomicAdd(&v[idx[i]], in[i]);
+    int e = blockIdx.x * blockDim.x + threadIdx.x;
+    if (e >= nDst) return;
+    T sum{};
+    for (int k = csrOff[e]; k < csrOff[e + 1]; ++k) sum += in[csrSlot[k]];
+    v[dstIdx[e]] += sum;
 }
 
 }  // namespace detail
@@ -344,7 +354,7 @@ public:
                            thrust::raw_pointer_cast(d_r.data()), sendOffsets_, recvOffsets_,
                            kTagFwd);
         launchScatter(thrust::raw_pointer_cast(d_r.data()),
-                      thrust::raw_pointer_cast(d_recvIdx_.data()), nr, d_v, /*add=*/false);
+                      thrust::raw_pointer_cast(d_recvIdx_.data()), nr, d_v);
     }
 
     template<typename T>
@@ -358,8 +368,7 @@ public:
         exchangeVals(thrust::raw_pointer_cast(d_s.data()),
                            thrust::raw_pointer_cast(d_r.data()), recvOffsets_, sendOffsets_,
                            kTagRev);
-        launchScatter(thrust::raw_pointer_cast(d_r.data()),
-                      thrust::raw_pointer_cast(d_sendIdx_.data()), nr, d_v, /*add=*/true);
+        launchGatherAdd(thrust::raw_pointer_cast(d_r.data()), d_v);
     }
 #endif  // MARS_GR_CUDA
 
@@ -402,6 +411,9 @@ private:
         // idxUploaded_ = false and silently re-upload -- correct, but a wasted transfer per move.
         d_sendIdx_     = std::move(o.d_sendIdx_);
         d_recvIdx_     = std::move(o.d_recvIdx_);
+        d_dstIdx_      = std::move(o.d_dstIdx_);
+        d_csrOff_      = std::move(o.d_csrOff_);
+        d_csrSlot_     = std::move(o.d_csrSlot_);
         idxUploaded_   = o.idxUploaded_;
         o.idxUploaded_ = false;
 #endif
@@ -465,6 +477,29 @@ private:
         if (idxUploaded_) return;
         d_sendIdx_ = sendIdx_;
         d_recvIdx_ = recvIdx_;
+
+        // Invert sendIdx_ once: for every distinct owned entity, the list of send slots that
+        // contribute to it. Sorted by entity, so the summation order is fixed and the result is
+        // reproducible. Slots holding -1 (the owner could not resolve them) are dropped here
+        // rather than tested in the kernel.
+        std::vector<std::pair<int, int>> pairs;   // (local entity id, slot)
+        pairs.reserve(sendIdx_.size());
+        for (size_t i = 0; i < sendIdx_.size(); ++i)
+            if (sendIdx_[i] >= 0) pairs.emplace_back(sendIdx_[i], int(i));
+        std::sort(pairs.begin(), pairs.end());
+
+        std::vector<int> dst, off{0}, slot;
+        slot.reserve(pairs.size());
+        for (size_t i = 0; i < pairs.size();)
+        {
+            const int e = pairs[i].first;
+            dst.push_back(e);
+            while (i < pairs.size() && pairs[i].first == e) { slot.push_back(pairs[i].second); ++i; }
+            off.push_back(int(slot.size()));
+        }
+        d_dstIdx_  = dst;
+        d_csrOff_  = off;
+        d_csrSlot_ = slot;
         idxUploaded_ = true;
     }
 
@@ -473,17 +508,28 @@ private:
     {
         if (n == 0) return;
         detail::ghostGatherKernel<T><<<(n + kBlock - 1) / kBlock, kBlock>>>(v, idx, n, out);
+        // REQUIRED, not leftover: MPI reads `out` next and is not stream-ordered against this
+        // kernel. The scatter/gather-add on the other side need no sync -- whatever touches the
+        // field afterwards is stream-ordered behind them.
         cudaDeviceSynchronize();
     }
 
     template<typename T>
-    static void launchScatter(const T* in, const int* idx, int n, T* v, bool add)
+    static void launchScatter(const T* in, const int* idx, int n, T* v)
     {
         if (n == 0) return;
-        const int nb = (n + kBlock - 1) / kBlock;
-        if (add) detail::ghostScatterAddKernel<T><<<nb, kBlock>>>(in, idx, n, v);
-        else     detail::ghostScatterKernel<T><<<nb, kBlock>>>(in, idx, n, v);
-        cudaDeviceSynchronize();
+        detail::ghostScatterKernel<T><<<(n + kBlock - 1) / kBlock, kBlock>>>(in, idx, n, v);
+    }
+
+    template<typename T>
+    void launchGatherAdd(const T* in, T* v) const
+    {
+        const int nDst = int(d_dstIdx_.size());
+        if (nDst == 0) return;
+        detail::ghostGatherAddKernel<T><<<(nDst + kBlock - 1) / kBlock, kBlock>>>(
+            in, thrust::raw_pointer_cast(d_dstIdx_.data()),
+            thrust::raw_pointer_cast(d_csrOff_.data()),
+            thrust::raw_pointer_cast(d_csrSlot_.data()), nDst, v);
     }
 
     // Mirrors exchangeVals, but the buffers are device pointers handed straight to MPI.
@@ -515,6 +561,8 @@ private:
     }
 
     mutable thrust::device_vector<int> d_sendIdx_, d_recvIdx_;
+    // Inverse of sendIdx_: entity -> contributing slots, so reverseAdd needs no atomics.
+    mutable thrust::device_vector<int> d_dstIdx_, d_csrOff_, d_csrSlot_;
     mutable bool idxUploaded_ = false;
 #endif  // MARS_GR_CUDA
 
