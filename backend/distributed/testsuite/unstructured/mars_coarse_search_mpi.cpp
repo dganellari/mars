@@ -13,6 +13,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <random>
 #include <vector>
 
 #include "mars_env.hpp"
@@ -21,6 +22,7 @@
 
 using mars::fem::Aabb;
 using mars::fem::coarseSearchHost;
+using mars::fem::IdentProc;
 using mars::fem::SearchPair;
 
 namespace
@@ -165,9 +167,88 @@ TEST(CoarseSearch, EmptyRankDoesNotHang)
     else SUCCEED();
 }
 
+// Gate 7: randomized brute-force oracle. The coarse-search result is DEFINED, not chosen -- it is
+// the set of (domain, range) pairs whose AABBs intersect -- so an O(N^2) serial pass over the
+// global boxes is the ground truth, and it is the same set stk::search::coarse_search returns
+// under the conventions listed at the bottom of this file. This catches routing bugs the hand-built
+// slab fixture cannot: boxes spanning three or more ranks, overlaps between NON-neighbouring ranks,
+// and ranks holding no domain or no range boxes at all.
+TEST(CoarseSearch, MatchesBruteForceOracle)
+{
+    int rank = 0, np = 1;
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &np);
+
+    constexpr int kSeeds        = 25;
+    constexpr int nDomainGlobal = 40;
+    constexpr int nRangeGlobal  = 60;
+
+    for (int seed = 0; seed < kSeeds; ++seed)
+    {
+        // Every rank draws from the SAME stream and keeps only what it owns, so the oracle can be
+        // rebuilt locally without communicating the global input.
+        std::mt19937 gen(1234 + seed);
+        std::uniform_real_distribution<double> pos(0.0, 10.0);
+        std::uniform_real_distribution<double> ext(0.05, 2.5);
+        std::uniform_int_distribution<int> owner(0, np - 1);
+
+        std::vector<Aabb<double>> gDom(nDomainGlobal), gRan(nRangeGlobal);
+        std::vector<int> gDomOwner(nDomainGlobal), gRanOwner(nRangeGlobal);
+        auto draw = [&](Aabb<double>& b)
+        {
+            for (int d = 0; d < 3; ++d)
+            {
+                double c = pos(gen), h = ext(gen);
+                b.lo[d] = c - h;
+                b.hi[d] = c + h;
+            }
+        };
+        for (int i = 0; i < nDomainGlobal; ++i) { draw(gDom[i]); gDomOwner[i] = owner(gen); }
+        for (int j = 0; j < nRangeGlobal; ++j) { draw(gRan[j]); gRanOwner[j] = owner(gen); }
+
+        std::vector<Aabb<double>> myDom, myRan;
+        std::vector<uint64_t> myDomId, myRanId;
+        for (int i = 0; i < nDomainGlobal; ++i)
+            if (gDomOwner[i] == rank) { myDom.push_back(gDom[i]); myDomId.push_back(i); }
+        for (int j = 0; j < nRangeGlobal; ++j)
+            if (gRanOwner[j] == rank) { myRan.push_back(gRan[j]); myRanId.push_back(1000 + j); }
+
+        std::vector<int> peers;
+        for (int r = 0; r < np; ++r) peers.push_back(r);
+
+        std::vector<SearchPair> got;
+        coarseSearchHost(myDom, myDomId, myRan, myRanId, peers, MPI_COMM_WORLD, got);
+
+        std::vector<SearchPair> want;
+        for (int i = 0; i < nDomainGlobal; ++i)
+        {
+            if (gDomOwner[i] != rank) continue;
+            for (int j = 0; j < nRangeGlobal; ++j)
+                if (gDom[i].overlaps(gRan[j]))
+                    want.push_back(SearchPair{IdentProc{uint64_t(i), rank},
+                                              IdentProc{uint64_t(1000 + j), gRanOwner[j]}});
+        }
+        std::sort(want.begin(), want.end());
+        want.erase(std::unique(want.begin(), want.end()), want.end());
+
+        ASSERT_EQ(got.size(), want.size()) << "seed " << seed;
+        EXPECT_TRUE(std::equal(got.begin(), got.end(), want.begin())) << "seed " << seed;
+    }
+}
+
 int main(int argc, char** argv)
 {
     ::testing::InitGoogleTest(&argc, argv);
     mars::Env env(argc, argv);
     return RUN_ALL_TESTS();
 }
+
+// STK conventions these gates assert, and where each comes from:
+//   1. A pair is returned to the rank owning the DOMAIN box -- STK does this in coarse_search via
+//      communicateRangeBoxInfo. Source: internal-notes/pump/NONCONFORMAL_INTERFACE_DESIGN.md S7.3.
+//   2. Boxes that merely TOUCH intersect (closed test). Matters on a conformal seam, where
+//      opposing faces share an edge exactly and an open test would drop real partners.
+//   3. Self-rank pairs are included.
+//   4. The result is sorted and deduplicated, so it never depends on message arrival order.
+// (1) is read from the design doc. (2)-(4) are our choices, written down so a later diff against a
+// real STK build has something concrete to check rather than a vague "should match".
