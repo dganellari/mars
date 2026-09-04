@@ -54,11 +54,9 @@
 #include <thrust/copy.h>
 #include <thrust/device_vector.h>
 #include <thrust/execution_policy.h>
-#include <thrust/iterator/counting_iterator.h>
 #include <thrust/scan.h>
 #include <thrust/sequence.h>
 #include <thrust/sort.h>
-#include <thrust/transform_reduce.h>
 #include <thrust/unique.h>
 #define MARS_CS_FN __host__ __device__
 #else
@@ -457,15 +455,10 @@ void coarseSearch(const Aabb<T>* d_domainBoxes, const uint64_t* d_domainIds, siz
 
     // My range envelope, reduced on device. One struct per peer is the only geometry that ever
     // touches the host.
-    Aabb<T> myEnv = thrust::transform_reduce(
-        thrust::device, thrust::counting_iterator<size_t>(0),
-        thrust::counting_iterator<size_t>(nRange),
-        [d_rangeBoxes] __device__(size_t i) { return d_rangeBoxes[i]; }, Aabb<T>::empty(),
-        [] __host__ __device__(const Aabb<T>& a, const Aabb<T>& b) {
-            Aabb<T> r = a;
-            r.extend(b);
-            return r;
-        });
+    Aabb<T> myEnv = (nRange == 0)
+                        ? Aabb<T>::empty()
+                        : thrust::reduce(thrust::device, d_rangeBoxes, d_rangeBoxes + nRange,
+                                         Aabb<T>::empty(), detail::AabbUnion<T>{});
     const std::vector<Aabb<T>> peerEnv = detail::exchangeEnvelopes(myEnv, peers, comm);
 
     // Route, on device, one peer at a time.
