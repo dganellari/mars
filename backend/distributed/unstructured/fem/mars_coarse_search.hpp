@@ -194,6 +194,36 @@ inline std::vector<Aabb<T>> exchangeEnvelopes(const Aabb<T>& mine, const std::ve
 
 // Counts, peer-to-peer. This is what replaces MPI_Alltoall: 2*|peers| tiny messages instead of an
 // O(P) collective every rank in the job has to enter.
+//
+// Split into post/wait so the caller can put real work in the shadow of the round trip. `sendCnt`
+// and `recvCnt` must stay alive until waitCounts returns -- the sends read from one and the
+// receives write into the other.
+inline void postCounts(const std::vector<int>& sendCnt, std::vector<int>& recvCnt,
+                       const std::vector<int>& peers, MPI_Comm comm, int tag,
+                       std::vector<MPI_Request>& rq)
+{
+    const int np = int(peers.size());
+    recvCnt.assign(np, 0);
+    rq.clear();
+    rq.reserve(2 * np);
+    for (int i = 0; i < np; ++i)
+    {
+        rq.emplace_back();
+        MPI_Irecv(&recvCnt[i], 1, MPI_INT, peers[i], tag, comm, &rq.back());
+    }
+    for (int i = 0; i < np; ++i)
+    {
+        rq.emplace_back();
+        MPI_Isend(const_cast<int*>(&sendCnt[i]), 1, MPI_INT, peers[i], tag, comm, &rq.back());
+    }
+}
+
+inline void waitCounts(std::vector<MPI_Request>& rq)
+{
+    if (!rq.empty()) MPI_Waitall(int(rq.size()), rq.data(), MPI_STATUSES_IGNORE);
+    rq.clear();
+}
+
 inline std::vector<int> exchangeCounts(const std::vector<int>& sendCnt,
                                        const std::vector<int>& peers, MPI_Comm comm, int tag)
 {
@@ -523,7 +553,22 @@ public:
         }
         else { d_sendAll_.clear(); h_bounds_.assign(np + 1, 0); }
 
-        h_recvCnt_ = detail::exchangeCounts(h_sendCnt_, peers, comm, 0x5E01);
+        // Post the count round trip and put the self-test in its shadow: my own boxes against my
+        // own range boxes needs no message from anyone, so it is free latency-hiding.
+        std::vector<MPI_Request> cntRq;
+        detail::postCounts(h_sendCnt_, h_recvCnt_, peers, comm, 0x5E01, cntRq);
+
+        d_selfQ_.resize(nDomain);
+        if (nDomain > 0)
+            launch(nDomain, [&](int nb, int blk) {
+                detail::selfQueriesKernel<T><<<nb, blk>>>(
+                    d_domainBoxes, d_domainIds, nDomain, myRank,
+                    thrust::raw_pointer_cast(d_selfQ_.data()));
+            });
+        pairInto(thrust::raw_pointer_cast(d_selfQ_.data()), nDomain, d_rangeBoxes, d_rangeIds,
+                 nRange, myRank, d_out, nullptr);
+
+        detail::waitCounts(cntRq);
         h_recvOff_.assign(np + 1, 0);
         for (int i = 0; i < np; ++i) h_recvOff_[i + 1] = h_recvOff_[i] + h_recvCnt_[i];
         const int totalRecv = h_recvOff_[np];
@@ -549,16 +594,6 @@ public:
                           h_sendCnt_[i] * int(sizeof(QueryBox<T>)), MPI_BYTE, peers[i], kQueryTag,
                           comm, &rq.back());
             }
-
-        d_selfQ_.resize(nDomain);
-        if (nDomain > 0)
-            launch(nDomain, [&](int nb, int blk) {
-                detail::selfQueriesKernel<T><<<nb, blk>>>(d_domainBoxes, d_domainIds, nDomain,
-                                                          myRank,
-                                                          thrust::raw_pointer_cast(d_selfQ_.data()));
-            });
-        pairInto(thrust::raw_pointer_cast(d_selfQ_.data()), nDomain, d_rangeBoxes, d_rangeIds,
-                 nRange, myRank, d_out, nullptr);
 
         if (!rq.empty()) MPI_Waitall(int(rq.size()), rq.data(), MPI_STATUSES_IGNORE);
 
