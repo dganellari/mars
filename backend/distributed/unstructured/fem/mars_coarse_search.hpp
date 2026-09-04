@@ -224,6 +224,14 @@ inline void waitCounts(std::vector<MPI_Request>& rq)
     rq.clear();
 }
 
+// MEASURED AND REJECTED: persistent requests (MPI_Send_init/Startall) for the count exchange.
+// The sizes are fixed at one int per peer, so it looked like the textbook case -- but benchmarked
+// against plain Isend/Irecv on 2..12 ranks it was consistently SLOWER, and worse as peers grew:
+// +1.0% at 4 peers, +3.3% at 8, +18.6% at 12 (median of 2000 iterations). Raw exchange cost alone
+// was ~2x. OpenMPI's Startall path for tiny messages costs more than it saves on matching.
+// Re-measure on Alps/cray-mpich before concluding anything about the network case; on shared
+// memory the answer is clear enough not to ship it.
+//
 inline std::vector<int> exchangeCounts(const std::vector<int>& sendCnt,
                                        const std::vector<int>& peers, MPI_Comm comm, int tag)
 {
