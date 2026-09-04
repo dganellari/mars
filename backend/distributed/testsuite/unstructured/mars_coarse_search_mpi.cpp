@@ -20,7 +20,7 @@
 #include "../../unstructured/fem/mars_coarse_search.hpp"
 
 using mars::fem::Aabb;
-using mars::fem::coarseSearch;
+using mars::fem::coarseSearchHost;
 using mars::fem::SearchPair;
 
 namespace
@@ -64,6 +64,9 @@ struct Fixture
     int rank = 0, nRanks = 1;
     std::vector<Aabb<double>> domain, range;
     std::vector<uint64_t> domainIds, rangeIds;
+    // A superset is legal by contract, and passing every rank also exercises the drop-out path
+    // for peers that turn out to have no traffic. Production supplies cstone's peer list.
+    std::vector<int> peers;
 };
 
 Fixture makeFixture()
@@ -80,6 +83,7 @@ Fixture makeFixture()
     // partner on only one side" case.
     f.domain.push_back(seamBox(f.rank));
     f.domainIds.push_back(seamId(f.rank));
+    for (int r = 0; r < f.nRanks; ++r) f.peers.push_back(r);
     return f;
 }
 
@@ -98,7 +102,7 @@ TEST(CoarseSearch, FindsPartnerOnOwnRank)
 {
     Fixture f = makeFixture();
     std::vector<SearchPair> out;
-    coarseSearch(f.domain, f.domainIds, f.range, f.rangeIds, MPI_COMM_WORLD, out);
+    coarseSearchHost(f.domain, f.domainIds, f.range, f.rangeIds, f.peers, MPI_COMM_WORLD, out);
     EXPECT_TRUE(hasPair(out, seamId(f.rank), f.rank, rangeId(f.rank, kBoxesPerRank - 1), f.rank));
 }
 
@@ -108,7 +112,7 @@ TEST(CoarseSearch, FindsPartnerOnNeighbourRank)
 {
     Fixture f = makeFixture();
     std::vector<SearchPair> out;
-    coarseSearch(f.domain, f.domainIds, f.range, f.rangeIds, MPI_COMM_WORLD, out);
+    coarseSearchHost(f.domain, f.domainIds, f.range, f.rangeIds, f.peers, MPI_COMM_WORLD, out);
     if (f.rank + 1 < f.nRanks)
         EXPECT_TRUE(hasPair(out, seamId(f.rank), f.rank, rangeId(f.rank + 1, 0), f.rank + 1));
     else
@@ -120,7 +124,7 @@ TEST(CoarseSearch, ResultIsOwnedByCaller)
 {
     Fixture f = makeFixture();
     std::vector<SearchPair> out;
-    coarseSearch(f.domain, f.domainIds, f.range, f.rangeIds, MPI_COMM_WORLD, out);
+    coarseSearchHost(f.domain, f.domainIds, f.range, f.rangeIds, f.peers, MPI_COMM_WORLD, out);
     for (const auto& p : out) EXPECT_EQ(p.domain.proc, f.rank);
 }
 
@@ -130,7 +134,7 @@ TEST(CoarseSearch, NoSpuriousPairs)
 {
     Fixture f = makeFixture();
     std::vector<SearchPair> out;
-    coarseSearch(f.domain, f.domainIds, f.range, f.rangeIds, MPI_COMM_WORLD, out);
+    coarseSearchHost(f.domain, f.domainIds, f.range, f.rangeIds, f.peers, MPI_COMM_WORLD, out);
     const size_t expected = (f.rank + 1 < f.nRanks) ? 2u : 1u;
     EXPECT_EQ(out.size(), expected);
 }
@@ -140,7 +144,7 @@ TEST(CoarseSearch, SortedAndUnique)
 {
     Fixture f = makeFixture();
     std::vector<SearchPair> out;
-    coarseSearch(f.domain, f.domainIds, f.range, f.rangeIds, MPI_COMM_WORLD, out);
+    coarseSearchHost(f.domain, f.domainIds, f.range, f.rangeIds, f.peers, MPI_COMM_WORLD, out);
     EXPECT_TRUE(std::is_sorted(out.begin(), out.end()));
     EXPECT_EQ(std::adjacent_find(out.begin(), out.end()), out.end());
 }
@@ -154,8 +158,9 @@ TEST(CoarseSearch, EmptyRankDoesNotHang)
     std::vector<uint64_t> emptyIds;
     std::vector<SearchPair> out;
     const bool mute = (f.nRanks > 1) && (f.rank == f.nRanks - 1);
-    coarseSearch(mute ? emptyBoxes : f.domain, mute ? emptyIds : f.domainIds,
-                 mute ? emptyBoxes : f.range, mute ? emptyIds : f.rangeIds, MPI_COMM_WORLD, out);
+    coarseSearchHost(mute ? emptyBoxes : f.domain, mute ? emptyIds : f.domainIds,
+                     mute ? emptyBoxes : f.range, mute ? emptyIds : f.rangeIds, f.peers,
+                     MPI_COMM_WORLD, out);
     if (mute) EXPECT_TRUE(out.empty());
     else SUCCEED();
 }

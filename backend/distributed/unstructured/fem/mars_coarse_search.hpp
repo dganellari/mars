@@ -3,24 +3,27 @@
 
 // Parallel AABB-overlap search -- the MARS equivalent of stk::search::coarse_search.
 //
-// This is the geometric pairing step that non-conformal interfaces and overset need: given
-// DOMAIN boxes (the queries, e.g. slave-side face AABBs) and RANGE boxes (the targets, e.g.
-// master-side face AABBs), both distributed, return every overlapping (domain, range) pair
-// with the owning rank of each side.
+// The geometric pairing step non-conformal interfaces and overset need: given DOMAIN boxes (the
+// queries, e.g. slave-side face AABBs) and RANGE boxes (the targets, e.g. master-side face AABBs),
+// both distributed, return every overlapping (domain, range) pair with the owning rank of each side.
 //
-// TWO implementations, same semantics and same result:
-//   coarseSearch        host + MPI. The oracle. It exists so the algorithm can be pinned down
-//                       with mpirun on a laptop -- no GPU, no mesh file -- and so the device
-//                       version has something to be compared against element-for-element.
-//   coarseSearchDevice  the production path (USE_CUDA). Boxes, routed queries and pairs all
-//                       stay in device memory; MPI moves device pointers directly. The only
-//                       host traffic is the per-rank envelope and the MPI message counts,
-//                       which have to be on the host because MPI counts are.
+//   coarseSearch      DEVICE. The default, because MARS is device-by-default. Boxes, routed
+//                     queries and pairs all stay in device memory; MPI moves device pointers.
+//                     The only host traffic is the peer envelopes and the message counts, which
+//                     have to be on the host because MPI counts are.
+//   coarseSearchHost  the reference. It exists so the communication plan can be pinned down with
+//                     mpirun on a laptop -- no GPU, no mesh file -- and so the device version has
+//                     something to be compared against element-for-element. Same sorted result.
 //
-// Why envelopes and not a distributed tree: at the coarse level STK is doing the same thing --
-// decide which ranks could possibly hold a partner, ship the query there, test locally. One
-// AABB per rank is O(P) metadata, and for interface/overset work the boxes live on a surface,
-// so the envelopes are small and the fan-out is a handful of ranks. A distributed octree buys
+// NO O(P) METADATA. Every exchange is point-to-point over `candidatePeers`, the same contract
+// GhostRegistry::build uses: a superset is fine, peers with no traffic cost two tiny messages and
+// drop out. An earlier draft used MPI_Allgather for the envelopes and MPI_Alltoall for the counts;
+// that is O(P) per rank in three places and does not survive the rank counts this is aimed at.
+// Peers come from cstone's own discovery (cstone/traversal/peers.hpp) or from the domain's existing
+// halo peer list -- the ranks that could hold a partner are the ranks you already talk to.
+//
+// Routing is one envelope per PEER, not a distributed tree. Interface and overset boxes live on a
+// SURFACE, so an envelope prunes most of the traffic and the fan-out stays small. A tree buys
 // nothing until the query set stops being a surface.
 
 #include <mpi.h>
@@ -31,6 +34,7 @@
 #include <thrust/execution_policy.h>
 #include <thrust/iterator/counting_iterator.h>
 #include <thrust/scan.h>
+#include <thrust/sequence.h>
 #include <thrust/sort.h>
 #include <thrust/transform_reduce.h>
 #include <thrust/unique.h>
@@ -70,13 +74,13 @@ struct Aabb
     {
         for (int d = 0; d < 3; ++d)
         {
-            lo[d] = std::min(lo[d], o.lo[d]);
-            hi[d] = std::max(hi[d], o.hi[d]);
+            lo[d] = o.lo[d] < lo[d] ? o.lo[d] : lo[d];
+            hi[d] = o.hi[d] > hi[d] ? o.hi[d] : hi[d];
         }
     }
 
-    // Closed test: boxes that only touch count as overlapping. Interface faces on a conformal
-    // seam meet exactly at their shared edge, and dropping those would lose real partners.
+    // Closed test: boxes that only touch count as overlapping. Interface faces on a conformal seam
+    // meet exactly at their shared edge, and dropping those would lose real partners.
     MARS_CS_FN bool overlaps(const Aabb& o) const
     {
         for (int d = 0; d < 3; ++d)
@@ -86,14 +90,15 @@ struct Aabb
 };
 
 // STK calls this IdentProc: which entity, and which rank owns it. The rank matters because the
-// partner usually lives somewhere else, and whoever consumes the pair has to know where to go
-// for the data -- that is the handoff to the ghosting.
+// partner usually lives somewhere else, and whoever consumes the pair has to know where to go for
+// the data -- that is the handoff to the ghosting.
 struct IdentProc
 {
     uint64_t id;
     int      proc;
 
     MARS_CS_FN bool operator==(const IdentProc& o) const { return id == o.id && proc == o.proc; }
+    MARS_CS_FN bool operator!=(const IdentProc& o) const { return !(*this == o); }
     MARS_CS_FN bool operator<(const IdentProc& o) const
     {
         return proc != o.proc ? proc < o.proc : id < o.id;
@@ -109,34 +114,14 @@ struct SearchPair
     {
         return domain != o.domain ? domain < o.domain : range < o.range;
     }
-    MARS_CS_FN bool operator==(const SearchPair& o) const { return domain == o.domain && range == o.range; }
+    MARS_CS_FN bool operator==(const SearchPair& o) const
+    {
+        return domain == o.domain && range == o.range;
+    }
 };
 
-MARS_CS_FN inline bool operator!=(const IdentProc& a, const IdentProc& b) { return !(a == b); }
-
-namespace detail
-{
-
-// One AABB per rank over that rank's range boxes. A rank holding none reports the empty box,
-// which overlaps nothing -- so it is skipped without needing a separate "has data" flag.
-template<typename T>
-inline std::vector<Aabb<T>> gatherRangeEnvelopes(const std::vector<Aabb<T>>& range, MPI_Comm comm)
-{
-    int nRanks = 0;
-    MPI_Comm_size(comm, &nRanks);
-
-    Aabb<T> local = Aabb<T>::empty();
-    for (const auto& b : range) local.extend(b);
-
-    std::vector<Aabb<T>> all(nRanks);
-    MPI_Allgather(&local, sizeof(Aabb<T>), MPI_BYTE, all.data(), sizeof(Aabb<T>), MPI_BYTE, comm);
-    return all;
-}
-
-}  // namespace detail
-
-// One query box travelling to a rank that might hold a partner: the box, plus enough identity
-// to send the answer home.
+// One query box travelling to a peer that might hold a partner: the box, plus enough identity to
+// send the answer home.
 template<typename T>
 struct QueryBox
 {
@@ -145,134 +130,195 @@ struct QueryBox
     int      proc;
 };
 
-// Every rank supplies its own domain and range boxes with matching id arrays. On return, `out`
-// holds the pairs whose DOMAIN box this rank owns, sorted and deduplicated -- so the result is
-// deterministic and independent of rank count, which is what makes it testable.
-//
-// Collective: every rank must call it, including ranks with nothing to contribute.
-template<typename T>
-void coarseSearch(const std::vector<Aabb<T>>& domainBoxes,
-                  const std::vector<uint64_t>& domainIds,
-                  const std::vector<Aabb<T>>& rangeBoxes,
-                  const std::vector<uint64_t>& rangeIds,
-                  MPI_Comm comm,
-                  std::vector<SearchPair>& out)
+namespace detail
 {
-    int myRank = 0, nRanks = 0;
+
+// Peer list with self removed and duplicates dropped. Self needs no MPI -- a rank's own range
+// boxes are already local, and posting a message to yourself just to test them is waste.
+inline std::vector<int> normalizePeers(const std::vector<int>& candidatePeers, int myRank)
+{
+    std::vector<int> p;
+    p.reserve(candidatePeers.size());
+    for (int r : candidatePeers)
+        if (r != myRank) p.push_back(r);
+    std::sort(p.begin(), p.end());
+    p.erase(std::unique(p.begin(), p.end()), p.end());
+    return p;
+}
+
+// Swap one AABB with every peer. Symmetric over the peer list -- all receives posted before any
+// send -- so it cannot deadlock however the peers are ordered.
+template<typename T>
+inline std::vector<Aabb<T>> exchangeEnvelopes(const Aabb<T>& mine, const std::vector<int>& peers,
+                                              MPI_Comm comm)
+{
+    const int np = int(peers.size());
+    std::vector<Aabb<T>> theirs(np);
+    std::vector<MPI_Request> rq;
+    rq.reserve(2 * np);
+    const int kTag = 0x5E00;
+    for (int i = 0; i < np; ++i)
+    {
+        rq.emplace_back();
+        MPI_Irecv(&theirs[i], sizeof(Aabb<T>), MPI_BYTE, peers[i], kTag, comm, &rq.back());
+    }
+    for (int i = 0; i < np; ++i)
+    {
+        rq.emplace_back();
+        MPI_Isend(const_cast<Aabb<T>*>(&mine), sizeof(Aabb<T>), MPI_BYTE, peers[i], kTag, comm,
+                  &rq.back());
+    }
+    if (!rq.empty()) MPI_Waitall(int(rq.size()), rq.data(), MPI_STATUSES_IGNORE);
+    return theirs;
+}
+
+// Counts, peer-to-peer. This is what replaces MPI_Alltoall: 2*|peers| tiny messages instead of an
+// O(P) collective every rank in the job has to enter.
+inline std::vector<int> exchangeCounts(const std::vector<int>& sendCnt,
+                                       const std::vector<int>& peers, MPI_Comm comm, int tag)
+{
+    const int np = int(peers.size());
+    std::vector<int> recvCnt(np, 0);
+    std::vector<MPI_Request> rq;
+    rq.reserve(2 * np);
+    for (int i = 0; i < np; ++i)
+    {
+        rq.emplace_back();
+        MPI_Irecv(&recvCnt[i], 1, MPI_INT, peers[i], tag, comm, &rq.back());
+    }
+    for (int i = 0; i < np; ++i)
+    {
+        rq.emplace_back();
+        MPI_Isend(const_cast<int*>(&sendCnt[i]), 1, MPI_INT, peers[i], tag, comm, &rq.back());
+    }
+    if (!rq.empty()) MPI_Waitall(int(rq.size()), rq.data(), MPI_STATUSES_IGNORE);
+    return recvCnt;
+}
+
+}  // namespace detail
+
+// ---------------------------------------------------------------------------
+// Host reference.
+// ---------------------------------------------------------------------------
+//
+// `candidatePeers` is a superset of the ranks that might hold a partner; a peer with no traffic
+// costs two tiny messages. On return `out` holds the pairs whose DOMAIN box this rank owns, sorted
+// and deduplicated, so the answer does not depend on message arrival order or on rank count.
+//
+// Collective over the peer graph: every rank must call it, including ranks contributing nothing.
+template<typename T>
+void coarseSearchHost(const std::vector<Aabb<T>>& domainBoxes,
+                      const std::vector<uint64_t>& domainIds,
+                      const std::vector<Aabb<T>>& rangeBoxes,
+                      const std::vector<uint64_t>& rangeIds,
+                      const std::vector<int>& candidatePeers,
+                      MPI_Comm comm,
+                      std::vector<SearchPair>& out)
+{
+    int myRank = 0;
     MPI_Comm_rank(comm, &myRank);
-    MPI_Comm_size(comm, &nRanks);
     out.clear();
 
-    const std::vector<Aabb<T>> envelopes = detail::gatherRangeEnvelopes(rangeBoxes, comm);
+    const std::vector<int> peers = detail::normalizePeers(candidatePeers, myRank);
+    const int np = int(peers.size());
 
-    // Which of my domain boxes goes to which rank. A box overlapping several envelopes is sent
-    // to each of them; the dedup at the end removes any pair found twice.
-    std::vector<std::vector<QueryBox<T>>> toSend(nRanks);
+    // Partners on my own rank need no messages at all.
     for (size_t i = 0; i < domainBoxes.size(); ++i)
-        for (int r = 0; r < nRanks; ++r)
-            if (domainBoxes[i].overlaps(envelopes[r]))
-                toSend[r].push_back(QueryBox<T>{domainBoxes[i], domainIds[i], myRank});
+        for (size_t j = 0; j < rangeBoxes.size(); ++j)
+            if (domainBoxes[i].overlaps(rangeBoxes[j]))
+                out.push_back(
+                    SearchPair{IdentProc{domainIds[i], myRank}, IdentProc{rangeIds[j], myRank}});
 
-    std::vector<int> sendCnt(nRanks, 0), recvCnt(nRanks, 0);
-    for (int r = 0; r < nRanks; ++r) sendCnt[r] = static_cast<int>(toSend[r].size());
-    MPI_Alltoall(sendCnt.data(), 1, MPI_INT, recvCnt.data(), 1, MPI_INT, comm);
+    Aabb<T> myEnv = Aabb<T>::empty();
+    for (const auto& b : rangeBoxes) myEnv.extend(b);
+    const std::vector<Aabb<T>> peerEnv = detail::exchangeEnvelopes(myEnv, peers, comm);
 
-    // Ship the queries. Non-blocking both ways; a rank with nothing to say still posts nothing
-    // and still reaches the Waitall, so no one is left hanging.
-    std::vector<std::vector<QueryBox<T>>> recvBuf(nRanks);
-    std::vector<MPI_Request> reqs;
-    reqs.reserve(2 * nRanks);
+    std::vector<std::vector<QueryBox<T>>> toSend(np);
+    std::vector<int> sendCnt(np, 0);
+    for (int i = 0; i < np; ++i)
+    {
+        for (size_t b = 0; b < domainBoxes.size(); ++b)
+            if (domainBoxes[b].overlaps(peerEnv[i]))
+                toSend[i].push_back(QueryBox<T>{domainBoxes[b], domainIds[b], myRank});
+        sendCnt[i] = int(toSend[i].size());
+    }
+    const std::vector<int> recvCnt = detail::exchangeCounts(sendCnt, peers, comm, 0x5E01);
+
+    std::vector<std::vector<QueryBox<T>>> recvBuf(np);
+    std::vector<MPI_Request> rq;
+    rq.reserve(2 * np);
     const int kQueryTag = 0x5EA1;
-    for (int r = 0; r < nRanks; ++r)
-    {
-        if (recvCnt[r] > 0)
+    for (int i = 0; i < np; ++i)
+        if (recvCnt[i] > 0)
         {
-            recvBuf[r].resize(recvCnt[r]);
-            reqs.emplace_back();
-            MPI_Irecv(recvBuf[r].data(), recvCnt[r] * int(sizeof(QueryBox<T>)), MPI_BYTE, r,
-                      kQueryTag, comm, &reqs.back());
+            recvBuf[i].resize(recvCnt[i]);
+            rq.emplace_back();
+            MPI_Irecv(recvBuf[i].data(), recvCnt[i] * int(sizeof(QueryBox<T>)), MPI_BYTE, peers[i],
+                      kQueryTag, comm, &rq.back());
         }
-    }
-    for (int r = 0; r < nRanks; ++r)
-    {
-        if (sendCnt[r] > 0)
+    for (int i = 0; i < np; ++i)
+        if (sendCnt[i] > 0)
         {
-            reqs.emplace_back();
-            MPI_Isend(toSend[r].data(), sendCnt[r] * int(sizeof(QueryBox<T>)), MPI_BYTE, r,
-                      kQueryTag, comm, &reqs.back());
+            rq.emplace_back();
+            MPI_Isend(toSend[i].data(), sendCnt[i] * int(sizeof(QueryBox<T>)), MPI_BYTE, peers[i],
+                      kQueryTag, comm, &rq.back());
         }
-    }
-    if (!reqs.empty()) MPI_Waitall(int(reqs.size()), reqs.data(), MPI_STATUSES_IGNORE);
+    if (!rq.empty()) MPI_Waitall(int(rq.size()), rq.data(), MPI_STATUSES_IGNORE);
 
-    // Local test: every query that landed here against every range box I own. This brute-force
-    // inner loop is the piece a device tree replaces later; the communication above does not
-    // change when it does.
-    std::vector<std::vector<SearchPair>> reply(nRanks);
-    for (int r = 0; r < nRanks; ++r)
-        for (const auto& q : recvBuf[r])
+    // Test what arrived against my range boxes; the pair belongs to the sender.
+    std::vector<std::vector<SearchPair>> reply(np);
+    std::vector<int> repSendCnt(np, 0);
+    for (int i = 0; i < np; ++i)
+    {
+        for (const auto& q : recvBuf[i])
             for (size_t j = 0; j < rangeBoxes.size(); ++j)
                 if (q.box.overlaps(rangeBoxes[j]))
-                    reply[q.proc].push_back(
+                    reply[i].push_back(
                         SearchPair{IdentProc{q.id, q.proc}, IdentProc{rangeIds[j], myRank}});
+        repSendCnt[i] = int(reply[i].size());
+    }
+    const std::vector<int> repRecvCnt = detail::exchangeCounts(repSendCnt, peers, comm, 0x5E02);
 
-    // Send each pair back to the rank that owns its domain box, so a caller only ever sees
-    // pairs it asked for.
-    std::vector<int> repSendCnt(nRanks, 0), repRecvCnt(nRanks, 0);
-    for (int r = 0; r < nRanks; ++r) repSendCnt[r] = static_cast<int>(reply[r].size());
-    MPI_Alltoall(repSendCnt.data(), 1, MPI_INT, repRecvCnt.data(), 1, MPI_INT, comm);
-
-    std::vector<std::vector<SearchPair>> repRecv(nRanks);
-    std::vector<MPI_Request> reqs2;
-    reqs2.reserve(2 * nRanks);
+    std::vector<std::vector<SearchPair>> repRecv(np);
+    std::vector<MPI_Request> rq2;
+    rq2.reserve(2 * np);
     const int kReplyTag = 0x5EA2;
-    for (int r = 0; r < nRanks; ++r)
-    {
-        if (repRecvCnt[r] > 0)
+    for (int i = 0; i < np; ++i)
+        if (repRecvCnt[i] > 0)
         {
-            repRecv[r].resize(repRecvCnt[r]);
-            reqs2.emplace_back();
-            MPI_Irecv(repRecv[r].data(), repRecvCnt[r] * int(sizeof(SearchPair)), MPI_BYTE, r,
-                      kReplyTag, comm, &reqs2.back());
+            repRecv[i].resize(repRecvCnt[i]);
+            rq2.emplace_back();
+            MPI_Irecv(repRecv[i].data(), repRecvCnt[i] * int(sizeof(SearchPair)), MPI_BYTE,
+                      peers[i], kReplyTag, comm, &rq2.back());
         }
-    }
-    for (int r = 0; r < nRanks; ++r)
-    {
-        if (repSendCnt[r] > 0)
+    for (int i = 0; i < np; ++i)
+        if (repSendCnt[i] > 0)
         {
-            reqs2.emplace_back();
-            MPI_Isend(reply[r].data(), repSendCnt[r] * int(sizeof(SearchPair)), MPI_BYTE, r,
-                      kReplyTag, comm, &reqs2.back());
+            rq2.emplace_back();
+            MPI_Isend(reply[i].data(), repSendCnt[i] * int(sizeof(SearchPair)), MPI_BYTE, peers[i],
+                      kReplyTag, comm, &rq2.back());
         }
-    }
-    if (!reqs2.empty()) MPI_Waitall(int(reqs2.size()), reqs2.data(), MPI_STATUSES_IGNORE);
+    if (!rq2.empty()) MPI_Waitall(int(rq2.size()), rq2.data(), MPI_STATUSES_IGNORE);
 
-    for (int r = 0; r < nRanks; ++r) out.insert(out.end(), repRecv[r].begin(), repRecv[r].end());
+    for (int i = 0; i < np; ++i) out.insert(out.end(), repRecv[i].begin(), repRecv[i].end());
     std::sort(out.begin(), out.end());
     out.erase(std::unique(out.begin(), out.end()), out.end());
 }
 
 // ---------------------------------------------------------------------------
-// Device path. Same semantics as coarseSearch above, same result -- that host
-// version is the oracle the GPU one is tested against, which is the only reason
-// it exists. Everything here stays in device memory: the boxes, the routed
-// queries, the pairs. MPI moves device pointers directly (GPUDirect), so a pair
-// never touches the host between the two ends.
+// Device path -- the default.
 // ---------------------------------------------------------------------------
 #ifdef USE_CUDA
 
 namespace detail
 {
 
-// Per-(box, rank) overlap flags against the gathered envelopes: flag[r*n + i] tells whether my
-// domain box i has to travel to rank r. One kernel for the whole P x n table, so the routing
-// decision never leaves the device.
 template<typename T>
-__global__ void flagQueryTargetsKernel(const Aabb<T>* boxes, size_t nBoxes,
-                                       const Aabb<T>* envelopes, int nRanks, uint8_t* flags)
+__global__ void flagOverlapKernel(const Aabb<T>* boxes, size_t nBoxes, Aabb<T> env, uint8_t* flags)
 {
     size_t i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= nBoxes) return;
-    for (int r = 0; r < nRanks; ++r) flags[size_t(r) * nBoxes + i] = boxes[i].overlaps(envelopes[r]);
+    flags[i] = boxes[i].overlaps(env);
 }
 
 template<typename T>
@@ -283,15 +329,15 @@ __global__ void gatherQueriesKernel(const Aabb<T>* boxes, const uint64_t* ids, s
     size_t i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= nBoxes || !flags[i]) return;
     QueryBox<T> q;
-    q.box  = boxes[i];
-    q.id   = ids[i];
-    q.proc = myRank;
+    q.box         = boxes[i];
+    q.id          = ids[i];
+    q.proc        = myRank;
     outQ[scan[i]] = q;
 }
 
-// Two-pass local test. Pass 1 counts so pass 2 can write without atomics into a compacted
-// array -- the pair order then depends only on the input order, not on scheduling, which is
-// what lets the device result be compared against the host one.
+// Two-pass local test. Counting first lets pass 2 write without atomics, so the pair order depends
+// only on the input order and not on scheduling -- which is what lets the device result be diffed
+// against the host one rather than merely compared as a set.
 template<typename T>
 __global__ void countPairsKernel(const QueryBox<T>* q, size_t nQ, const Aabb<T>* range,
                                  size_t nRange, int* counts)
@@ -321,163 +367,175 @@ __global__ void fillPairsKernel(const QueryBox<T>* q, size_t nQ, const Aabb<T>* 
         }
 }
 
+// One device pass: every query in `d_q` against every range box, compacted. Used for both the
+// local self-test and each peer's incoming queries.
+template<typename T>
+inline void pairQueriesOnDevice(const QueryBox<T>* d_q, size_t nQ, const Aabb<T>* d_range,
+                                const uint64_t* d_rangeIds, size_t nRange, int myRank,
+                                thrust::device_vector<SearchPair>& d_pairs)
+{
+    d_pairs.clear();
+    if (nQ == 0 || nRange == 0) return;
+    const int kBlock = 256;
+    const int nb     = int((nQ + kBlock - 1) / kBlock);
+    thrust::device_vector<int> d_cnt(nQ + 1, 0);
+    countPairsKernel<T>
+        <<<nb, kBlock>>>(d_q, nQ, d_range, nRange, thrust::raw_pointer_cast(d_cnt.data()));
+    cudaDeviceSynchronize();
+    thrust::exclusive_scan(thrust::device, d_cnt.begin(), d_cnt.end(), d_cnt.begin(), 0);
+    const int total = d_cnt[nQ];
+    if (total == 0) return;
+    d_pairs.resize(total);
+    fillPairsKernel<T><<<nb, kBlock>>>(d_q, nQ, d_range, d_rangeIds, nRange,
+                                       thrust::raw_pointer_cast(d_cnt.data()), myRank,
+                                       thrust::raw_pointer_cast(d_pairs.data()));
+    cudaDeviceSynchronize();
+}
+
 }  // namespace detail
 
 // Device coarse search. All inputs are device pointers; the result lands in a device vector and
-// stays there. Collective -- every rank calls it, including ranks contributing nothing.
+// stays there. Same contract as coarseSearchHost, same sorted result.
+//
+// Collective over the peer graph: every rank must call it, including ranks contributing nothing.
 template<typename T>
-void coarseSearchDevice(const Aabb<T>* d_domainBoxes, const uint64_t* d_domainIds, size_t nDomain,
-                        const Aabb<T>* d_rangeBoxes, const uint64_t* d_rangeIds, size_t nRange,
-                        MPI_Comm comm, thrust::device_vector<SearchPair>& d_out)
+void coarseSearch(const Aabb<T>* d_domainBoxes, const uint64_t* d_domainIds, size_t nDomain,
+                  const Aabb<T>* d_rangeBoxes, const uint64_t* d_rangeIds, size_t nRange,
+                  const std::vector<int>& candidatePeers, MPI_Comm comm,
+                  thrust::device_vector<SearchPair>& d_out)
 {
-    int myRank = 0, nRanks = 0;
+    int myRank = 0;
     MPI_Comm_rank(comm, &myRank);
-    MPI_Comm_size(comm, &nRanks);
     d_out.clear();
     const int kBlock = 256;
 
-    // Envelope of my range boxes, reduced on device. Only this one small struct per rank goes
-    // through the host, because MPI_Allgather of P structs is not worth a device path.
-    Aabb<T> localEnv = thrust::transform_reduce(
-        thrust::device, thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(nRange),
+    const std::vector<int> peers = detail::normalizePeers(candidatePeers, myRank);
+    const int np = int(peers.size());
+
+    // Self-test first: my own domain boxes become QueryBoxes pointing at me, no MPI involved.
+    thrust::device_vector<QueryBox<T>> d_selfQ(nDomain);
+    if (nDomain > 0)
+    {
+        thrust::device_vector<uint8_t> d_all(nDomain, 1);
+        thrust::device_vector<int> d_iota(nDomain);
+        thrust::sequence(thrust::device, d_iota.begin(), d_iota.end(), 0);
+        int nb = int((nDomain + kBlock - 1) / kBlock);
+        detail::gatherQueriesKernel<T><<<nb, kBlock>>>(
+            d_domainBoxes, d_domainIds, nDomain, thrust::raw_pointer_cast(d_all.data()),
+            thrust::raw_pointer_cast(d_iota.data()), myRank,
+            thrust::raw_pointer_cast(d_selfQ.data()));
+        cudaDeviceSynchronize();
+    }
+    detail::pairQueriesOnDevice<T>(thrust::raw_pointer_cast(d_selfQ.data()), nDomain, d_rangeBoxes,
+                                   d_rangeIds, nRange, myRank, d_out);
+
+    // My range envelope, reduced on device. One struct per peer is the only geometry that ever
+    // touches the host.
+    Aabb<T> myEnv = thrust::transform_reduce(
+        thrust::device, thrust::counting_iterator<size_t>(0),
+        thrust::counting_iterator<size_t>(nRange),
         [d_rangeBoxes] __device__(size_t i) { return d_rangeBoxes[i]; }, Aabb<T>::empty(),
         [] __host__ __device__(const Aabb<T>& a, const Aabb<T>& b) {
             Aabb<T> r = a;
-            for (int d = 0; d < 3; ++d)
-            {
-                r.lo[d] = a.lo[d] < b.lo[d] ? a.lo[d] : b.lo[d];
-                r.hi[d] = a.hi[d] > b.hi[d] ? a.hi[d] : b.hi[d];
-            }
+            r.extend(b);
             return r;
         });
+    const std::vector<Aabb<T>> peerEnv = detail::exchangeEnvelopes(myEnv, peers, comm);
 
-    std::vector<Aabb<T>> hEnv(nRanks);
-    MPI_Allgather(&localEnv, sizeof(Aabb<T>), MPI_BYTE, hEnv.data(), sizeof(Aabb<T>), MPI_BYTE, comm);
-    thrust::device_vector<Aabb<T>> d_env(hEnv.begin(), hEnv.end());
-
-    // Route: flag, scan, gather -- all on device, one send buffer per destination rank.
-    thrust::device_vector<uint8_t> d_flags(size_t(nRanks) * nDomain, 0);
-    if (nDomain > 0)
-    {
-        int nb = int((nDomain + kBlock - 1) / kBlock);
-        detail::flagQueryTargetsKernel<T><<<nb, kBlock>>>(
-            d_domainBoxes, nDomain, thrust::raw_pointer_cast(d_env.data()), nRanks,
-            thrust::raw_pointer_cast(d_flags.data()));
-        cudaDeviceSynchronize();
-    }
-
-    std::vector<thrust::device_vector<QueryBox<T>>> d_send(nRanks);
-    std::vector<int> sendCnt(nRanks, 0), recvCnt(nRanks, 0);
+    // Route, on device, one peer at a time.
+    std::vector<thrust::device_vector<QueryBox<T>>> d_send(np);
+    std::vector<int> sendCnt(np, 0);
+    thrust::device_vector<uint8_t> d_flags(nDomain);
     thrust::device_vector<int> d_scan(nDomain);
-    for (int r = 0; r < nRanks; ++r)
+    for (int i = 0; i < np; ++i)
     {
         if (nDomain == 0) continue;
-        const uint8_t* fr = thrust::raw_pointer_cast(d_flags.data()) + size_t(r) * nDomain;
-        thrust::exclusive_scan(thrust::device, fr, fr + nDomain, d_scan.begin(), 0);
-        int last = 0, lastFlag = 0;
-        cudaMemcpy(&last, thrust::raw_pointer_cast(d_scan.data()) + nDomain - 1, sizeof(int),
-                   cudaMemcpyDeviceToHost);
-        // The scan is exclusive, so the total needs the final flag added back. Two 4-byte reads
-        // per rank -- the only D2H in the routing, and unavoidable: MPI counts live on the host.
-        uint8_t lf = 0;
-        cudaMemcpy(&lf, fr + nDomain - 1, sizeof(uint8_t), cudaMemcpyDeviceToHost);
-        lastFlag   = lf;
-        sendCnt[r] = last + lastFlag;
-        if (sendCnt[r] == 0) continue;
-        d_send[r].resize(sendCnt[r]);
         int nb = int((nDomain + kBlock - 1) / kBlock);
-        detail::gatherQueriesKernel<T><<<nb, kBlock>>>(
-            d_domainBoxes, d_domainIds, nDomain, fr, thrust::raw_pointer_cast(d_scan.data()),
-            myRank, thrust::raw_pointer_cast(d_send[r].data()));
-    }
-    cudaDeviceSynchronize();
-    MPI_Alltoall(sendCnt.data(), 1, MPI_INT, recvCnt.data(), 1, MPI_INT, comm);
-
-    // Queries move device-to-device.
-    std::vector<thrust::device_vector<QueryBox<T>>> d_recv(nRanks);
-    std::vector<MPI_Request> reqs;
-    reqs.reserve(2 * nRanks);
-    const int kQueryTag = 0x5EA1;
-    for (int r = 0; r < nRanks; ++r)
-        if (recvCnt[r] > 0)
-        {
-            d_recv[r].resize(recvCnt[r]);
-            reqs.emplace_back();
-            MPI_Irecv(thrust::raw_pointer_cast(d_recv[r].data()),
-                      recvCnt[r] * int(sizeof(QueryBox<T>)), MPI_BYTE, r, kQueryTag, comm,
-                      &reqs.back());
-        }
-    for (int r = 0; r < nRanks; ++r)
-        if (sendCnt[r] > 0)
-        {
-            reqs.emplace_back();
-            MPI_Isend(thrust::raw_pointer_cast(d_send[r].data()),
-                      sendCnt[r] * int(sizeof(QueryBox<T>)), MPI_BYTE, r, kQueryTag, comm,
-                      &reqs.back());
-        }
-    if (!reqs.empty()) MPI_Waitall(int(reqs.size()), reqs.data(), MPI_STATUSES_IGNORE);
-
-    // Local test per source rank, then the pairs go home.
-    std::vector<thrust::device_vector<SearchPair>> d_reply(nRanks);
-    std::vector<int> repSendCnt(nRanks, 0), repRecvCnt(nRanks, 0);
-    for (int r = 0; r < nRanks; ++r)
-    {
-        const size_t nQ = d_recv[r].size();
-        if (nQ == 0 || nRange == 0) continue;
-        thrust::device_vector<int> d_cnt(nQ + 1, 0);
-        int nb = int((nQ + kBlock - 1) / kBlock);
-        detail::countPairsKernel<T><<<nb, kBlock>>>(thrust::raw_pointer_cast(d_recv[r].data()), nQ,
-                                                    d_rangeBoxes, nRange,
-                                                    thrust::raw_pointer_cast(d_cnt.data()));
+        detail::flagOverlapKernel<T><<<nb, kBlock>>>(d_domainBoxes, nDomain, peerEnv[i],
+                                                     thrust::raw_pointer_cast(d_flags.data()));
         cudaDeviceSynchronize();
-        thrust::exclusive_scan(thrust::device, d_cnt.begin(), d_cnt.end(), d_cnt.begin(), 0);
-        int total = d_cnt[nQ];
-        if (total == 0) continue;
-        d_reply[r].resize(total);
-        detail::fillPairsKernel<T><<<nb, kBlock>>>(thrust::raw_pointer_cast(d_recv[r].data()), nQ,
-                                                   d_rangeBoxes, d_rangeIds, nRange,
-                                                   thrust::raw_pointer_cast(d_cnt.data()), myRank,
-                                                   thrust::raw_pointer_cast(d_reply[r].data()));
-        repSendCnt[r] = total;
+        thrust::exclusive_scan(thrust::device, d_flags.begin(), d_flags.end(), d_scan.begin(), 0);
+        // Exclusive scan, so the total is the last offset plus the last flag. Two 4-byte reads per
+        // peer; unavoidable, because the MPI count has to be on the host.
+        int last     = d_scan[nDomain - 1];
+        int lastFlag = int(d_flags[nDomain - 1]);
+        sendCnt[i]   = last + lastFlag;
+        if (sendCnt[i] == 0) continue;
+        d_send[i].resize(sendCnt[i]);
+        detail::gatherQueriesKernel<T><<<nb, kBlock>>>(
+            d_domainBoxes, d_domainIds, nDomain, thrust::raw_pointer_cast(d_flags.data()),
+            thrust::raw_pointer_cast(d_scan.data()), myRank,
+            thrust::raw_pointer_cast(d_send[i].data()));
+        cudaDeviceSynchronize();
     }
-    cudaDeviceSynchronize();
-    MPI_Alltoall(repSendCnt.data(), 1, MPI_INT, repRecvCnt.data(), 1, MPI_INT, comm);
+    const std::vector<int> recvCnt = detail::exchangeCounts(sendCnt, peers, comm, 0x5E01);
 
-    std::vector<thrust::device_vector<SearchPair>> d_repRecv(nRanks);
-    std::vector<MPI_Request> reqs2;
-    reqs2.reserve(2 * nRanks);
-    const int kReplyTag = 0x5EA2;
-    for (int r = 0; r < nRanks; ++r)
-        if (repRecvCnt[r] > 0)
+    std::vector<thrust::device_vector<QueryBox<T>>> d_recv(np);
+    std::vector<MPI_Request> rq;
+    rq.reserve(2 * np);
+    const int kQueryTag = 0x5EA1;
+    for (int i = 0; i < np; ++i)
+        if (recvCnt[i] > 0)
         {
-            d_repRecv[r].resize(repRecvCnt[r]);
-            reqs2.emplace_back();
-            MPI_Irecv(thrust::raw_pointer_cast(d_repRecv[r].data()),
-                      repRecvCnt[r] * int(sizeof(SearchPair)), MPI_BYTE, r, kReplyTag, comm,
-                      &reqs2.back());
+            d_recv[i].resize(recvCnt[i]);
+            rq.emplace_back();
+            MPI_Irecv(thrust::raw_pointer_cast(d_recv[i].data()),
+                      recvCnt[i] * int(sizeof(QueryBox<T>)), MPI_BYTE, peers[i], kQueryTag, comm,
+                      &rq.back());
         }
-    for (int r = 0; r < nRanks; ++r)
-        if (repSendCnt[r] > 0)
+    for (int i = 0; i < np; ++i)
+        if (sendCnt[i] > 0)
         {
-            reqs2.emplace_back();
-            MPI_Isend(thrust::raw_pointer_cast(d_reply[r].data()),
-                      repSendCnt[r] * int(sizeof(SearchPair)), MPI_BYTE, r, kReplyTag, comm,
-                      &reqs2.back());
+            rq.emplace_back();
+            MPI_Isend(thrust::raw_pointer_cast(d_send[i].data()),
+                      sendCnt[i] * int(sizeof(QueryBox<T>)), MPI_BYTE, peers[i], kQueryTag, comm,
+                      &rq.back());
         }
-    if (!reqs2.empty()) MPI_Waitall(int(reqs2.size()), reqs2.data(), MPI_STATUSES_IGNORE);
+    if (!rq.empty()) MPI_Waitall(int(rq.size()), rq.data(), MPI_STATUSES_IGNORE);
 
-    size_t total = 0;
-    for (int r = 0; r < nRanks; ++r) total += d_repRecv[r].size();
-    d_out.resize(total);
-    size_t off = 0;
-    for (int r = 0; r < nRanks; ++r)
+    std::vector<thrust::device_vector<SearchPair>> d_reply(np);
+    std::vector<int> repSendCnt(np, 0);
+    for (int i = 0; i < np; ++i)
     {
-        if (d_repRecv[r].empty()) continue;
-        thrust::copy(d_repRecv[r].begin(), d_repRecv[r].end(), d_out.begin() + off);
-        off += d_repRecv[r].size();
+        detail::pairQueriesOnDevice<T>(thrust::raw_pointer_cast(d_recv[i].data()), d_recv[i].size(),
+                                       d_rangeBoxes, d_rangeIds, nRange, myRank, d_reply[i]);
+        repSendCnt[i] = int(d_reply[i].size());
     }
-    // Sorted + deduped on device, so the device result is comparable to the host one
-    // element-for-element rather than only as a set.
+    const std::vector<int> repRecvCnt = detail::exchangeCounts(repSendCnt, peers, comm, 0x5E02);
+
+    std::vector<thrust::device_vector<SearchPair>> d_repRecv(np);
+    std::vector<MPI_Request> rq2;
+    rq2.reserve(2 * np);
+    const int kReplyTag = 0x5EA2;
+    for (int i = 0; i < np; ++i)
+        if (repRecvCnt[i] > 0)
+        {
+            d_repRecv[i].resize(repRecvCnt[i]);
+            rq2.emplace_back();
+            MPI_Irecv(thrust::raw_pointer_cast(d_repRecv[i].data()),
+                      repRecvCnt[i] * int(sizeof(SearchPair)), MPI_BYTE, peers[i], kReplyTag, comm,
+                      &rq2.back());
+        }
+    for (int i = 0; i < np; ++i)
+        if (repSendCnt[i] > 0)
+        {
+            rq2.emplace_back();
+            MPI_Isend(thrust::raw_pointer_cast(d_reply[i].data()),
+                      repSendCnt[i] * int(sizeof(SearchPair)), MPI_BYTE, peers[i], kReplyTag, comm,
+                      &rq2.back());
+        }
+    if (!rq2.empty()) MPI_Waitall(int(rq2.size()), rq2.data(), MPI_STATUSES_IGNORE);
+
+    size_t off   = d_out.size();
+    size_t total = off;
+    for (int i = 0; i < np; ++i) total += d_repRecv[i].size();
+    d_out.resize(total);
+    for (int i = 0; i < np; ++i)
+    {
+        if (d_repRecv[i].empty()) continue;
+        thrust::copy(d_repRecv[i].begin(), d_repRecv[i].end(), d_out.begin() + off);
+        off += d_repRecv[i].size();
+    }
     thrust::sort(thrust::device, d_out.begin(), d_out.end());
     d_out.erase(thrust::unique(thrust::device, d_out.begin(), d_out.end()), d_out.end());
 }
