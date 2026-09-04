@@ -309,7 +309,7 @@ public:
         const int ns = totalSend(), nr = totalRecv();
         std::vector<T> sbuf(ns), rbuf(nr);
         for (int i = 0; i < ns; ++i) sbuf[i] = (sendIdx_[i] >= 0) ? v[sendIdx_[i]] : T{};
-        exchangeVals(sbuf, rbuf, sendOffsets_, recvOffsets_, kTagFwd);
+        exchangeValsHost(sbuf, rbuf, sendOffsets_, recvOffsets_, kTagFwd);
         for (int i = 0; i < nr; ++i) v[recvIdx_[i]] = rbuf[i];
     }
 
@@ -321,7 +321,7 @@ public:
         const int ns = totalRecv(), nr = totalSend();
         std::vector<T> sbuf(ns), rbuf(nr);
         for (int i = 0; i < ns; ++i) sbuf[i] = v[recvIdx_[i]];
-        exchangeVals(sbuf, rbuf, recvOffsets_, sendOffsets_, kTagRev);
+        exchangeValsHost(sbuf, rbuf, recvOffsets_, sendOffsets_, kTagRev);
         for (int i = 0; i < nr; ++i)
             if (sendIdx_[i] >= 0) v[sendIdx_[i]] += rbuf[i];
     }
@@ -335,12 +335,12 @@ public:
     template<typename T>
     void forward(T* d_v) const
     {
-        ensureIndicesOnDevice();
+        ensureIndicesUploaded();
         const int ns = totalSend(), nr = totalRecv();
         thrust::device_vector<T> d_s(ns), d_r(nr);
         launchGather(d_v, thrust::raw_pointer_cast(d_sendIdx_.data()), ns,
                      thrust::raw_pointer_cast(d_s.data()));
-        exchangeValsDevice(thrust::raw_pointer_cast(d_s.data()),
+        exchangeVals(thrust::raw_pointer_cast(d_s.data()),
                            thrust::raw_pointer_cast(d_r.data()), sendOffsets_, recvOffsets_,
                            kTagFwd);
         launchScatter(thrust::raw_pointer_cast(d_r.data()),
@@ -350,12 +350,12 @@ public:
     template<typename T>
     void reverseAdd(T* d_v) const
     {
-        ensureIndicesOnDevice();
+        ensureIndicesUploaded();
         const int ns = totalRecv(), nr = totalSend();
         thrust::device_vector<T> d_s(ns), d_r(nr);
         launchGather(d_v, thrust::raw_pointer_cast(d_recvIdx_.data()), ns,
                      thrust::raw_pointer_cast(d_s.data()));
-        exchangeValsDevice(thrust::raw_pointer_cast(d_s.data()),
+        exchangeVals(thrust::raw_pointer_cast(d_s.data()),
                            thrust::raw_pointer_cast(d_r.data()), recvOffsets_, sendOffsets_,
                            kTagRev);
         launchScatter(thrust::raw_pointer_cast(d_r.data()),
@@ -429,7 +429,7 @@ private:
     }
 
     template<typename T>
-    void exchangeVals(const std::vector<T>& sbuf, std::vector<T>& rbuf,
+    void exchangeValsHost(const std::vector<T>& sbuf, std::vector<T>& rbuf,
                       const std::vector<int>& sOff, const std::vector<int>& rOff, int tag) const
     {
         const int np = static_cast<int>(peers_.size());
@@ -460,7 +460,7 @@ private:
 #ifdef MARS_GR_CUDA
     static constexpr int kBlock = 256;
 
-    void ensureIndicesOnDevice() const
+    void ensureIndicesUploaded() const
     {
         if (idxUploaded_) return;
         d_sendIdx_ = sendIdx_;
@@ -488,7 +488,7 @@ private:
 
     // Mirrors exchangeVals, but the buffers are device pointers handed straight to MPI.
     template<typename T>
-    void exchangeValsDevice(const T* sbuf, T* rbuf, const std::vector<int>& sOff,
+    void exchangeVals(const T* sbuf, T* rbuf, const std::vector<int>& sOff,
                             const std::vector<int>& rOff, int tag) const
     {
         const int np = static_cast<int>(peers_.size());

@@ -1,4 +1,4 @@
-// Multi-rank gates for mars::fem::coarseSearch (backend/distributed/unstructured/fem).
+// Multi-rank gates for mars::fem::coarseSearchHost (backend/distributed/unstructured/fem).
 //
 // Host-only + MPI on purpose, same reasoning as mars_ghost_registry_mpi.cpp: the hard part of a
 // parallel search is the communication plan, and that can be pinned down without a GPU or a mesh
@@ -100,7 +100,7 @@ bool hasPair(const std::vector<SearchPair>& v, uint64_t dId, int dProc, uint64_t
 }  // namespace
 
 // Gate 1: the seam query finds its partner on THIS rank (last range box).
-TEST(CoarseSearch, FindsPartnerOnOwnRank)
+TEST(CoarseSearchHost, FindsPartnerOnOwnRank)
 {
     Fixture f = makeFixture();
     std::vector<SearchPair> out;
@@ -110,7 +110,7 @@ TEST(CoarseSearch, FindsPartnerOnOwnRank)
 
 // Gate 2: and its partner on the NEXT rank. This is the one that fails if the routing or the
 // reply leg is wrong, and it is the whole point of the exercise.
-TEST(CoarseSearch, FindsPartnerOnNeighbourRank)
+TEST(CoarseSearchHost, FindsPartnerOnNeighbourRank)
 {
     Fixture f = makeFixture();
     std::vector<SearchPair> out;
@@ -123,7 +123,7 @@ TEST(CoarseSearch, FindsPartnerOnNeighbourRank)
 
 // Gate 3: a caller only gets pairs it has a stake in. With enforceSymmetry (STK's default) that
 // means owning EITHER side, not just the domain side.
-TEST(CoarseSearch, ResultIsOwnedByCaller)
+TEST(CoarseSearchHost, ResultIsOwnedByCaller)
 {
     Fixture f = makeFixture();
     std::vector<SearchPair> out;
@@ -133,7 +133,7 @@ TEST(CoarseSearch, ResultIsOwnedByCaller)
 
 // Gate 4: no spurious pairs. My seam box touches the two range boxes either side of the seam, and
 // under symmetry I also keep the pair rank-1's seam makes with MY first range box.
-TEST(CoarseSearch, NoSpuriousPairs)
+TEST(CoarseSearchHost, NoSpuriousPairs)
 {
     Fixture f = makeFixture();
     std::vector<SearchPair> out;
@@ -145,7 +145,7 @@ TEST(CoarseSearch, NoSpuriousPairs)
 }
 
 // Gate 5: sorted and deduplicated, so the answer does not depend on message arrival order.
-TEST(CoarseSearch, SortedAndUnique)
+TEST(CoarseSearchHost, SortedAndUnique)
 {
     Fixture f = makeFixture();
     std::vector<SearchPair> out;
@@ -156,7 +156,7 @@ TEST(CoarseSearch, SortedAndUnique)
 
 // Gate 6: a rank contributing nothing must not hang the collective, and must not corrupt the
 // answer for everyone else. This is the failure mode that cost a night on MARS_OFS_DBG.
-TEST(CoarseSearch, EmptyRankDoesNotHang)
+TEST(CoarseSearchHost, EmptyRankDoesNotHang)
 {
     Fixture f = makeFixture();
     std::vector<Aabb<double>> emptyBoxes;
@@ -176,7 +176,7 @@ TEST(CoarseSearch, EmptyRankDoesNotHang)
 // under the conventions listed at the bottom of this file. This catches routing bugs the hand-built
 // slab fixture cannot: boxes spanning three or more ranks, overlaps between NON-neighbouring ranks,
 // and ranks holding no domain or no range boxes at all.
-TEST(CoarseSearch, MatchesBruteForceOracle)
+TEST(CoarseSearchHost, MatchesBruteForceOracle)
 {
     int rank = 0, np = 1;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);

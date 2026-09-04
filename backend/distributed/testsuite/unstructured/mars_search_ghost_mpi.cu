@@ -51,7 +51,7 @@ int worldSize()
 // Gate: the device coarse search returns exactly what the host reference returns. Random boxes and
 // random ownership, so the routing has to be right for non-neighbouring ranks too, not just for a
 // tidy slab layout.
-TEST(CoarseSearchDevice, MatchesHostReference)
+TEST(CoarseSearch, MatchesHostReference)
 {
     const int rank = worldRank(), np = worldSize();
     constexpr int kSeeds = 10;
@@ -156,7 +156,7 @@ Chain makeChain(int rank, int np)
 }  // namespace
 
 // Gate: device forward writes the same field as forwardHost.
-TEST(GhostRegistryDevice, ForwardMatchesHost)
+TEST(GhostRegistry, ForwardMatchesHost)
 {
     const int rank = worldRank(), np = worldSize();
     Chain c = makeChain(rank, np);
@@ -183,7 +183,7 @@ TEST(GhostRegistryDevice, ForwardMatchesHost)
 // Gate: device reverseAdd sums the same as reverseAddHost. This is the one that would catch the
 // atomicAdd being wrong -- an owned entity ghosted by several peers appears once per peer, so a
 // plain store would drop contributions where the serial host loop accumulates them.
-TEST(GhostRegistryDevice, ReverseAddMatchesHost)
+TEST(GhostRegistry, ReverseAddMatchesHost)
 {
     const int rank = worldRank(), np = worldSize();
     Chain c = makeChain(rank, np);
