@@ -121,23 +121,26 @@ TEST(CoarseSearch, FindsPartnerOnNeighbourRank)
         SUCCEED() << "last rank has no right neighbour";
 }
 
-// Gate 3: a caller only ever gets pairs whose DOMAIN box it owns.
+// Gate 3: a caller only gets pairs it has a stake in. With enforceSymmetry (STK's default) that
+// means owning EITHER side, not just the domain side.
 TEST(CoarseSearch, ResultIsOwnedByCaller)
 {
     Fixture f = makeFixture();
     std::vector<SearchPair> out;
     coarseSearchHost(f.domain, f.domainIds, f.range, f.rangeIds, f.peers, MPI_COMM_WORLD, out);
-    for (const auto& p : out) EXPECT_EQ(p.domain.proc, f.rank);
+    for (const auto& p : out) EXPECT_TRUE(p.domain.proc == f.rank || p.range.proc == f.rank);
 }
 
-// Gate 4: no spurious pairs. The seam box is narrow, so it can only touch the two range boxes
-// either side of the seam -- anything else means the overlap test is too permissive.
+// Gate 4: no spurious pairs. My seam box touches the two range boxes either side of the seam, and
+// under symmetry I also keep the pair rank-1's seam makes with MY first range box.
 TEST(CoarseSearch, NoSpuriousPairs)
 {
     Fixture f = makeFixture();
     std::vector<SearchPair> out;
     coarseSearchHost(f.domain, f.domainIds, f.range, f.rangeIds, f.peers, MPI_COMM_WORLD, out);
-    const size_t expected = (f.rank + 1 < f.nRanks) ? 2u : 1u;
+    const size_t fromMySeam   = (f.rank + 1 < f.nRanks) ? 2u : 1u;  // own last box, plus neighbour's first
+    const size_t fromPrevSeam = (f.rank > 0) ? 1u : 0u;             // symmetry: I own that range box
+    const size_t expected     = fromMySeam + fromPrevSeam;
     EXPECT_EQ(out.size(), expected);
 }
 
@@ -219,15 +222,16 @@ TEST(CoarseSearch, MatchesBruteForceOracle)
         std::vector<SearchPair> got;
         coarseSearchHost(myDom, myDomId, myRan, myRanId, peers, MPI_COMM_WORLD, got);
 
+        // enforceSymmetry defaults to true, as in STK: I keep a pair if I own EITHER side.
         std::vector<SearchPair> want;
         for (int i = 0; i < nDomainGlobal; ++i)
-        {
-            if (gDomOwner[i] != rank) continue;
             for (int j = 0; j < nRangeGlobal; ++j)
+            {
+                if (gDomOwner[i] != rank && gRanOwner[j] != rank) continue;
                 if (gDom[i].overlaps(gRan[j]))
-                    want.push_back(SearchPair{IdentProc{uint64_t(i), rank},
+                    want.push_back(SearchPair{IdentProc{uint64_t(i), gDomOwner[i]},
                                               IdentProc{uint64_t(1000 + j), gRanOwner[j]}});
-        }
+            }
         std::sort(want.begin(), want.end());
         want.erase(std::unique(want.begin(), want.end()), want.end());
 
@@ -243,12 +247,21 @@ int main(int argc, char** argv)
     return RUN_ALL_TESTS();
 }
 
-// STK conventions these gates assert, and where each comes from:
-//   1. A pair is returned to the rank owning the DOMAIN box -- STK does this in coarse_search via
-//      communicateRangeBoxInfo. Source: internal-notes/pump/NONCONFORMAL_INTERFACE_DESIGN.md S7.3.
-//   2. Boxes that merely TOUCH intersect (closed test). Matters on a conformal seam, where
-//      opposing faces share an edge exactly and an open test would drop real partners.
-//   3. Self-rank pairs are included.
-//   4. The result is sorted and deduplicated, so it never depends on message arrival order.
-// (1) is read from the design doc. (2)-(4) are our choices, written down so a later diff against a
-// real STK build has something concrete to check rather than a vague "should match".
+// STK parity, checked against Trilinos develop rather than from memory:
+//   1. OVERLAP PREDICATE -- identical. stk_search/BoundingBox.hpp tests disjointness as
+//      `amax[d] < bmin[d] || bmax[d] < amin[d]`, exactly what Aabb::overlaps computes. Note this
+//      is CLOSED: at amax == bmin the strict `<` is false, so touching boxes DO intersect. That is
+//      what a conformal seam needs, where opposing faces share an edge exactly.
+//   2. SYMMETRY -- matched. stk_search/CoarseSearch.hpp takes `enforceSearchResultSymmetry`,
+//      DEFAULT TRUE, and CommonSearchUtil.hpp's communicate_vector then sends each pair to the
+//      range box's processor as well as the domain box's. Our `enforceSymmetry` mirrors it, same
+//      default. The DG-IP assembly needs it: master rows carry opposing-element columns and vice
+//      versa, so both sides must know about the pair.
+//   3. SORTING -- we are stricter on purpose. STK's `sortSearchResults` defaults to FALSE; we
+//      always sort and dedup, so the result cannot depend on message arrival order. That is what
+//      lets the device path be diffed against the host one element-for-element.
+//   4. Self-rank pairs are included on both sides.
+//
+// An earlier version of this comment claimed the routing was done by a `communicateRangeBoxInfo`
+// parameter. There is no such parameter; it is `enforceSearchResultSymmetry`. That note came from
+// the design doc, not the source -- which is why this block now cites files.

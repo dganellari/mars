@@ -25,6 +25,20 @@
 // Routing is one envelope per PEER, not a distributed tree. Interface and overset boxes live on a
 // SURFACE, so an envelope prunes most of the traffic and the fan-out stays small. A tree buys
 // nothing until the query set stops being a surface.
+//
+// STK PARITY, checked against Trilinos develop (stk_search/CoarseSearch.hpp, BoundingBox.hpp,
+// CommonSearchUtil.hpp) rather than from memory:
+//   - The overlap predicate is IDENTICAL. STK's box-box disjoint test is
+//         amax[d] < bmin[d] || bmax[d] < amin[d]
+//     which is what `Aabb::overlaps` computes, and it is CLOSED: at amax == bmin the strict `<`
+//     is false, so touching boxes DO intersect. That is the behaviour a conformal seam needs.
+//   - `enforceSymmetry` mirrors STK's `enforceSearchResultSymmetry`, and like STK it defaults to
+//     TRUE: the pair is delivered to the range owner as well as the domain owner. The DG-IP
+//     interface assembly needs exactly that -- master rows carry opposing-element columns and
+//     vice versa, so both sides have to know about the pair.
+//   - We always sort and dedup. STK makes that optional (`sortSearchResults`, default false).
+//     Ours is the stricter guarantee, deliberately: it makes the result independent of message
+//     arrival order, which is what lets the device path be diffed against the host one.
 
 #include <mpi.h>
 
@@ -221,7 +235,8 @@ void coarseSearchHost(const std::vector<Aabb<T>>& domainBoxes,
                       const std::vector<uint64_t>& rangeIds,
                       const std::vector<int>& candidatePeers,
                       MPI_Comm comm,
-                      std::vector<SearchPair>& out)
+                      std::vector<SearchPair>& out,
+                      bool enforceSymmetry = true)
 {
     int myRank = 0;
     MPI_Comm_rank(comm, &myRank);
@@ -284,6 +299,9 @@ void coarseSearchHost(const std::vector<Aabb<T>>& domainBoxes,
                     reply[i].push_back(
                         SearchPair{IdentProc{q.id, q.proc}, IdentProc{rangeIds[j], myRank}});
         repSendCnt[i] = int(reply[i].size());
+        // STK's enforceSearchResultSymmetry: the RANGE owner keeps the pair too, not just the
+        // domain owner. I generated these, so my copy is simply the one I already have.
+        if (enforceSymmetry) out.insert(out.end(), reply[i].begin(), reply[i].end());
     }
     const std::vector<int> repRecvCnt = detail::exchangeCounts(repSendCnt, peers, comm, 0x5E02);
 
@@ -410,7 +428,7 @@ template<typename T>
 void coarseSearch(const Aabb<T>* d_domainBoxes, const uint64_t* d_domainIds, size_t nDomain,
                   const Aabb<T>* d_rangeBoxes, const uint64_t* d_rangeIds, size_t nRange,
                   const std::vector<int>& candidatePeers, MPI_Comm comm,
-                  thrust::device_vector<SearchPair>& d_out)
+                  thrust::device_vector<SearchPair>& d_out, bool enforceSymmetry = true)
 {
     int myRank = 0;
     MPI_Comm_rank(comm, &myRank);
@@ -509,6 +527,15 @@ void coarseSearch(const Aabb<T>* d_domainBoxes, const uint64_t* d_domainIds, siz
                                        d_rangeBoxes, d_rangeIds, nRange, myRank, d_reply[i]);
         repSendCnt[i] = int(d_reply[i].size());
     }
+    // Symmetry, device side: append my own replies to my result before the remote ones arrive.
+    if (enforceSymmetry)
+        for (int i = 0; i < np; ++i)
+        {
+            if (d_reply[i].empty()) continue;
+            size_t at = d_out.size();
+            d_out.resize(at + d_reply[i].size());
+            thrust::copy(d_reply[i].begin(), d_reply[i].end(), d_out.begin() + at);
+        }
     const std::vector<int> repRecvCnt = detail::exchangeCounts(repSendCnt, peers, comm, 0x5E02);
 
     std::vector<thrust::device_vector<SearchPair>> d_repRecv(np);
