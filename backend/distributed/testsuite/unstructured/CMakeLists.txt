@@ -186,6 +186,16 @@ addMarsMpiTest(
     marsCoarseSearchMpiTest
 )
 
+# The ONLY thing that compiles the device halves of mars_coarse_search.hpp and
+# mars_ghost_registry.hpp -- both are header-only and every other consumer is a .cpp, so without
+# this the kernels never reach nvcc. Gates device against host on identical input.
+addMarsGpuMpiTest(
+    ${CMAKE_CURRENT_SOURCE_DIR}/mars_search_ghost_device.cu
+    mars_search_ghost_device_test
+    MarsSearchGhostDeviceTest
+    MarsSearchGhostDeviceTest
+)
+
 addMarsGpuMpiTest(
     ${CMAKE_CURRENT_SOURCE_DIR}/mars_domain_binary_mesh.cu
     mars_domain_binary_test
