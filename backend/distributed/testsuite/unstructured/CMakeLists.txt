@@ -178,6 +178,14 @@ addMarsMpiTest(
     marsGhostRegistryMpiTest
 )
 
+# coarseSearch has a host+MPI reference and a CUDA path in the same header. Only the host one is
+# tested here -- it is the oracle the device version must reproduce, and it needs no GPU.
+addMarsMpiTest(
+    ${CMAKE_CURRENT_SOURCE_DIR}/mars_coarse_search_mpi.cpp
+    mars_coarse_search_mpi_test
+    marsCoarseSearchMpiTest
+)
+
 addMarsGpuMpiTest(
     ${CMAKE_CURRENT_SOURCE_DIR}/mars_domain_binary_mesh.cu
     mars_domain_binary_test
