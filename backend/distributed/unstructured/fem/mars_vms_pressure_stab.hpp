@@ -44,6 +44,28 @@
 //                normalizeGradientPerNodeKernel on p, then halo exchange).
 //   tau        : stabilization time scale (~dt). Pass the same value the
 //                existing path uses for rhieChowTau.
+// OpenAccel's self-adapting stabilization coefficient: D = V/a_P, with a_P the
+// ASSEMBLED momentum diagonal (their navierStokesAssembler.cpp:192) rather than
+// one global tau. V/a_P has units of time, so it plays the same role as tau --
+// but it shrinks on its own where the cell is small, dt is small or nu is large,
+// which is the whole point: a single global tau cannot be right everywhere.
+// Per-node; ghosts stay 0 here and are filled by the caller's halo exchange.
+template<typename RealType>
+__global__ void buildVmsNodalTauKernel(const int* diagPtr, const RealType* valsVel,
+                                       const int* nodeToDof, const RealType* massDof,
+                                       RealType* tauNode, size_t nodeCount, int numOwnedDofs)
+{
+    size_t i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= nodeCount) return;
+    tauNode[i] = RealType(0);
+    int dof = nodeToDof[i];
+    if (dof < 0 || dof >= numOwnedDofs) return;
+    int dp = diagPtr[dof];
+    if (dp < 0) return;
+    RealType aP = valsVel[dp];
+    if (aP > RealType(0)) tauNode[i] = massDof[dof] / aP;
+}
+
 template<typename KeyType, typename RealType>
 __global__ void computeDivergenceVMSTetKernel(
     const KeyType* c0, const KeyType* c1, const KeyType* c2, const KeyType* c3,
@@ -53,6 +75,7 @@ __global__ void computeDivergenceVMSTetKernel(
     const RealType* nodeX, const RealType* nodeY, const RealType* nodeZ,
     const RealType* areaVecX, const RealType* areaVecY, const RealType* areaVecZ,
     RealType tau,
+    const RealType* tauNode,  // non-null => per-node V/a_P (OpenAccel); null => the scalar tau
     bool keepSmooth,          // true=full Nalu G-dpdx (blows up on Chorin u**); false=compact -dpdx only (default)
     RealType* divAccNode,
     size_t startElem, size_t numLocal)
@@ -127,11 +150,14 @@ __global__ void computeDivergenceVMSTetKernel(
         // checkerboard-mode amplitude (the ip gradient sees the sign-alternating p
         // strongly; subtracting it damps the mode) WITHOUT re-adding the smooth
         // grad p the predictor already applied. Mirrors what Rhie-Chow did for Chorin.
+        // Face coefficient: the average of the two endpoint D's when running the
+        // OpenAccel self-adapting form, otherwise the single global tau.
+        RealType tauIp = tauNode ? RealType(0.5) * (tauNode[iL] + tauNode[iR]) : tau;
         RealType stab;
         if (keepSmooth)
-            stab = tau * ((Gx - dpdx) * Ax + (Gy - dpdy) * Ay + (Gz - dpdz) * Az);
+            stab = tauIp * ((Gx - dpdx) * Ax + (Gy - dpdy) * Ay + (Gz - dpdz) * Az);
         else
-            stab = tau * ((-dpdx) * Ax + (-dpdy) * Ay + (-dpdz) * Az);
+            stab = tauIp * ((-dpdx) * Ax + (-dpdy) * Ay + (-dpdz) * Az);
         flow += stab;
 
         atomicAdd(&divAccNode[iL], +flow);

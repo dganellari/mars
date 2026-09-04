@@ -8967,6 +8967,25 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
             // and ramps |p| unbounded (validated on cube16). Set
             // MARS_VMS_KEEP_SMOOTH=1 to A/B the full form.
             bool keepSmooth = (std::getenv("MARS_VMS_KEEP_SMOOTH") != nullptr);
+            // MARS_VMS_DIAG_TAU: replace the global tau with OpenAccel's V/a_P,
+            // read off the ASSEMBLED momentum diagonal so the coefficient adapts
+            // per node instead of being one number for the whole mesh.
+            const RealType* tauNodePtr = nullptr;
+            cstone::DeviceVector<RealType> d_vmsTau;
+            if (std::getenv("MARS_VMS_DIAG_TAU"))
+            {
+                d_vmsTau.resize(s.nodeCount);
+                int nB = int((s.nodeCount + s.blockSize - 1) / s.blockSize);
+                buildVmsNodalTauKernel<RealType><<<nB, s.blockSize>>>(
+                    s.d_diagPtr.data(), s.d_valuesVel.data(),
+                    s.d_node_to_dof.data(), s.d_mass.data(),
+                    d_vmsTau.data(), s.nodeCount, s.numOwnedDofs);
+                cudaDeviceSynchronize();
+                // ghosts are 0 out of the kernel; the ip average reads both
+                // endpoints, so they must be halo-complete like the gradient.
+                s.domain.exchangeNodeHalo(d_vmsTau);
+                tauNodePtr = d_vmsTau.data();
+            }
             computeDivergenceVMSTetKernel<KeyType, RealType><<<eBlocks, s.blockSize>>>(
                 c0, c1, c2, c3,
                 s.d_uStarStar.data(), s.d_vStarStar.data(), s.d_wStarStar.data(),
@@ -8974,7 +8993,7 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
                 d_GxN.data(), d_GyN.data(), d_GzN.data(),
                 d_x.data(), d_y.data(), d_z.data(),
                 s.d_areaVec_x.data(), s.d_areaVec_y.data(), s.d_areaVec_z.data(),
-                tauV, keepSmooth,
+                tauV, tauNodePtr, keepSmooth,
                 d_divAccNode.data(), startElem, numLocal);
         }
         else if (useRC)
