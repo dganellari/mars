@@ -1318,6 +1318,8 @@ int main(int argc, char** argv)
     double tFlow = (inletU > 0 && Lscale > 0) ? (Lscale / double(inletU)) : 1.0;
     double prevURms = 0.0;
     int    steadyHits = 0;      // consecutive reports under steadyTol
+    int    divergeHits = 0;     // consecutive reports with a non-finite state or a failed solve
+    bool   divergeStop = false;
     int    stepsRun   = numSteps;  // < numSteps if --steady-tol trips
     bool   steadyDone = false;  // set in the report block, acted on at the loop tail
 
@@ -1448,6 +1450,11 @@ int main(int argc, char** argv)
             }
             else if (!healthy)
                 steadyHits = 0;
+            // Not-steady is not the same as keep-going. A diverged run stays unhealthy forever, so
+            // without this it burns the entire wall clock solving nothing -- 20000 steps of
+            // cg_uvw=-2 (seen 2026-09-04). Three consecutive bad reports is past any transient.
+            divergeHits = healthy ? 0 : divergeHits + 1;
+            if (divergeHits >= 3) divergeStop = true;
             // Peak INTERIOR velocity (excludes the pinned inlet/outlet/wall DOFs):
             // does the inlet jet propagate into the domain? u_max/U ~ O(1) near
             // the jet means flow IS entering even if the volume-average u_rms is
@@ -1579,6 +1586,15 @@ int main(int argc, char** argv)
         }
         if (!vtuPrefix.empty() && (step % vtuEvery == 0 || step == numSteps || steadyDone))
             writeFrame(step, simTime);
+        if (divergeStop)
+        {
+            if (rank == 0)
+                std::cout << "\n[diverged] non-finite state or failed velocity solve for 3 straight"
+                             " reports -- stopping at step " << step << " of " << numSteps
+                          << ". This is a FAILURE, not a converged result.\n";
+            stepsRun = step;
+            break;
+        }
         if (steadyDone)
         {
             if (rank == 0)

@@ -26,6 +26,7 @@
 #include <cstdint>
 #include <string>
 #include <utility>
+#include <cstring>
 #include <vector>
 
 // nvcc/hipcc define these; USE_CUDA does NOT distinguish them, it is set for every translation
@@ -155,11 +156,18 @@ public:
             if (participates[e]) keyToLocal.push_back({key[e], static_cast<int>(e)});
         std::sort(keyToLocal.begin(), keyToLocal.end(),
                   [](const auto& a, const auto& b) { return a.first < b.first; });
+        keyToLocal_ = keyToLocal;
 
         // Peers are walked in sorted order so both sides post their messages in the same peer
         // order; the caller's list may be in any order.
         std::vector<int> peers = candidatePeers;
         std::sort(peers.begin(), peers.end());
+        peers.erase(std::unique(peers.begin(), peers.end()), peers.end());
+        peers.erase(std::remove(peers.begin(), peers.end(), myRank), peers.end());
+        // Retained: peers_ below is COMPACTED to peers that actually have traffic, so an update
+        // that gives a silent peer its first ghost would find no channel. keyToLocal_ is retained
+        // so the owner can resolve later additions without a second full scan.
+        candidatePeers_ = peers;
         auto slot = [&](int rank) -> int {
             auto it = std::lower_bound(peers.begin(), peers.end(), rank);
             if (it == peers.end() || *it != rank) return -1;
@@ -179,6 +187,31 @@ public:
             if (s < 0) continue;                  // owner not among the candidate peers
             recvLocal[s].push_back(static_cast<int>(e));
             reqKeys[s].push_back(key[e]);
+        }
+
+        // Order each peer's request list BY KEY, not by local index.
+        //
+        // This is the invariant the whole incremental path rests on. With local-index order, slot j
+        // means "the j-th entity I happen to store", so inserting one entity renumbers every later
+        // slot and both sides would have to renegotiate positions. Sorted by key, slot j means "the
+        // j-th smallest key I share with this peer" -- the owner resolves the keys in the order it
+        // receives them, so both sides land in the same order without any position ever going on
+        // the wire. STK's comm list is kept sorted by EntityKey for exactly this reason.
+        for (int i = 0; i < np; ++i)
+        {
+            std::vector<int> ord(reqKeys[i].size());
+            for (size_t j = 0; j < ord.size(); ++j) ord[j] = static_cast<int>(j);
+            std::sort(ord.begin(), ord.end(),
+                      [&](int a, int b) { return reqKeys[i][a] < reqKeys[i][b]; });
+            std::vector<KeyT> k2(ord.size());
+            std::vector<int>  l2(ord.size());
+            for (size_t j = 0; j < ord.size(); ++j)
+            {
+                k2[j] = reqKeys[i][ord[j]];
+                l2[j] = recvLocal[i][ord[j]];
+            }
+            reqKeys[i].swap(k2);
+            recvLocal[i].swap(l2);
         }
 
         // 1) request counts, 2) request keys. Symmetric over candidatePeers -> no deadlock.
@@ -237,27 +270,142 @@ public:
         recvOffsets_.assign(1, 0);
         sendIdx_.clear();
         recvIdx_.clear();
-        ghostOwner_.clear();
-        for (int i = 0; i < np; ++i)
-        {
-            if (sendLocal[i].empty() && recvLocal[i].empty()) continue;
-            peers_.push_back(peers[i]);
-            for (int v : sendLocal[i]) sendIdx_.push_back(v);
-            for (int v : recvLocal[i])
-            {
-                recvIdx_.push_back(v);
-                ghostOwner_.push_back({v, peers[i]});   // O(surface), never O(numEntities)
-            }
-            sendOffsets_.push_back(static_cast<int>(sendIdx_.size()));
-            recvOffsets_.push_back(static_cast<int>(recvIdx_.size()));
-        }
-        std::sort(ghostOwner_.begin(), ghostOwner_.end());
+        // Per-peer lists are the master state from here on; the CSR is a derived view, rebuilt by
+        // flatten(). Editing vectors-of-vectors is what makes an incremental update cheap.
+        sendIdxP_ = sendLocal;
+        recvIdxP_ = recvLocal;
+        recvKeysP_ = reqKeys;
+        sendKeysP_.assign(np, {});
+        for (int i = 0; i < np; ++i) sendKeysP_[i] = gotKeys[i];
+        flatten();
 
         // A rank only learns about an unresolvable key when it is the one being ASKED, so a
         // requester would otherwise sit on a silently-zeroed ghost slot forever. One int of
         // all-reduce at build time (build is already collective) gives every rank the same verdict.
         long localUnresolved = static_cast<long>(unresolvedIncoming_);
         MPI_Allreduce(&localUnresolved, &globalUnresolved_, 1, MPI_LONG, MPI_SUM, comm_);
+    }
+
+    // ---- incremental update (STK: change_ghosting(ghosting, add, remove)) ---------------------
+    //
+    // Adds and removes ghosts WITHOUT rebuilding the match. `add` names entities this rank now
+    // wants to receive; `removeKeys` names ghosts it no longer wants.
+    //
+    // Removing is NOT local bookkeeping. If this rank drops a ghost and the owner keeps sending it,
+    // the per-peer send and recv counts disagree and the next exchange misaligns -- silent
+    // corruption, not a clean failure. So the delta goes on the wire and the owner edits its send
+    // list in place. STK does the same (BulkData::internal_change_ghosting -> comm_sync_send_recv).
+    //
+    // ONE round, not two: the payload is self-describing and MPI_Probe gives the size, so unlike
+    // build() there is no separate count exchange. Point-to-point over candidatePeers_ throughout;
+    // no collective, nothing O(P).
+    struct Delta
+    {
+        KeyT key;
+        int  localId;
+        int  owner;
+    };
+
+    void update(const std::vector<Delta>& add, const std::vector<KeyT>& removeKeys)
+    {
+        const int np = static_cast<int>(candidatePeers_.size());
+        if (np == 0) return;
+        auto slot = [&](int rank) -> int {
+            auto it = std::lower_bound(candidatePeers_.begin(), candidatePeers_.end(), rank);
+            if (it == candidatePeers_.end() || *it != rank) return -1;
+            return static_cast<int>(it - candidatePeers_.begin());
+        };
+
+        // Group my changes by the peer that owns them. Removes are located by key in the recv
+        // lists, so the caller does not have to remember which peer a ghost came from.
+        std::vector<std::vector<KeyT>> addK(np), remK(np);
+        std::vector<std::vector<int>>  addL(np);
+        for (const Delta& d : add)
+        {
+            const int p = slot(d.owner);
+            if (p < 0) continue;                       // owner outside the candidate set
+            addK[p].push_back(d.key);
+            addL[p].push_back(d.localId);
+        }
+        for (const KeyT& k : removeKeys)
+            for (int p = 0; p < np; ++p)
+            {
+                auto it = std::lower_bound(recvKeysP_[p].begin(), recvKeysP_[p].end(), k);
+                if (it != recvKeysP_[p].end() && *it == k) { remK[p].push_back(k); break; }
+            }
+
+        // One self-describing message per peer: [nAdd][nRemove] then the keys.
+        std::vector<std::vector<char>> out(np);
+        for (int p = 0; p < np; ++p)
+        {
+            const int na = static_cast<int>(addK[p].size()), nr = static_cast<int>(remK[p].size());
+            out[p].resize(2 * sizeof(int) + (na + nr) * sizeof(KeyT));
+            char* w = out[p].data();
+            std::memcpy(w, &na, sizeof(int));                     w += sizeof(int);
+            std::memcpy(w, &nr, sizeof(int));                     w += sizeof(int);
+            if (na) std::memcpy(w, addK[p].data(), na * sizeof(KeyT)); w += na * sizeof(KeyT);
+            if (nr) std::memcpy(w, remK[p].data(), nr * sizeof(KeyT));
+        }
+        std::vector<MPI_Request> rq;
+        rq.reserve(np);
+        for (int p = 0; p < np; ++p)
+        {
+            rq.emplace_back();
+            MPI_Isend(out[p].data(), static_cast<int>(out[p].size()), MPI_BYTE, candidatePeers_[p],
+                      kTagDelta, comm_, &rq.back());
+        }
+
+        // Probe for the size instead of exchanging counts first -- this is the round build() pays
+        // that update() does not.
+        for (int p = 0; p < np; ++p)
+        {
+            MPI_Status st;
+            MPI_Probe(candidatePeers_[p], kTagDelta, comm_, &st);
+            int nbytes = 0;
+            MPI_Get_count(&st, MPI_BYTE, &nbytes);
+            std::vector<char> in(nbytes);
+            MPI_Recv(in.data(), nbytes, MPI_BYTE, candidatePeers_[p], kTagDelta, comm_,
+                     MPI_STATUS_IGNORE);
+            int na = 0, nr = 0;
+            const char* r = in.data();
+            std::memcpy(&na, r, sizeof(int)); r += sizeof(int);
+            std::memcpy(&nr, r, sizeof(int)); r += sizeof(int);
+            std::vector<KeyT> gotAdd(na), gotRem(nr);
+            if (na) { std::memcpy(gotAdd.data(), r, na * sizeof(KeyT)); r += na * sizeof(KeyT); }
+            if (nr) std::memcpy(gotRem.data(), r, nr * sizeof(KeyT));
+
+            // I am the OWNER for these: stop sending the removed keys, start sending the added.
+            std::sort(gotRem.begin(), gotRem.end());
+            eraseKeys(sendKeysP_[p], sendIdxP_[p], gotRem);
+            std::sort(gotAdd.begin(), gotAdd.end());
+            std::vector<int> resolved(gotAdd.size(), -1);
+            for (size_t j = 0; j < gotAdd.size(); ++j)
+            {
+                auto it = std::lower_bound(keyToLocal_.begin(), keyToLocal_.end(), gotAdd[j],
+                                           [](const auto& a, const KeyT& k) { return a.first < k; });
+                if (it != keyToLocal_.end() && it->first == gotAdd[j]) resolved[j] = it->second;
+                else ++unresolvedIncoming_;   // same contract as build(): -1 slots contribute nothing
+            }
+            insertKeys(sendKeysP_[p], sendIdxP_[p], gotAdd, resolved);
+        }
+        if (!rq.empty()) MPI_Waitall(static_cast<int>(rq.size()), rq.data(), MPI_STATUSES_IGNORE);
+
+        // My own recv side needs no message -- I already know what I asked for, and applying the
+        // identical sorted edit keeps me aligned with the owner by construction.
+        for (int p = 0; p < np; ++p)
+        {
+            std::sort(remK[p].begin(), remK[p].end());
+            eraseKeys(recvKeysP_[p], recvIdxP_[p], remK[p]);
+            std::vector<int> ord(addK[p].size());
+            for (size_t j = 0; j < ord.size(); ++j) ord[j] = static_cast<int>(j);
+            std::sort(ord.begin(), ord.end(),
+                      [&](int a, int b) { return addK[p][a] < addK[p][b]; });
+            std::vector<KeyT> ak(ord.size());
+            std::vector<int>  al(ord.size());
+            for (size_t j = 0; j < ord.size(); ++j) { ak[j] = addK[p][ord[j]]; al[j] = addL[p][ord[j]]; }
+            insertKeys(recvKeysP_[p], recvIdxP_[p], ak, al);
+        }
+        flatten();
     }
 
     // ---- STK-shaped queries -------------------------------------------------------------------
@@ -379,6 +527,7 @@ private:
     static constexpr int kTagKeys   = 2;
     static constexpr int kTagFwd    = 3;
     static constexpr int kTagRev    = 4;
+    static constexpr int kTagDelta  = 5;
 
     // Freeing a communicator after MPI_Finalize is illegal and aborts the job. A registry held as a
     // member of a long-lived object (ElementDomain, a solver) is destroyed during scope teardown,
@@ -392,6 +541,82 @@ private:
         comm_ = MPI_COMM_NULL;
     }
 
+    // Both lists stay sorted by key and parallel, so an edit is a linear merge on each -- no
+    // search per element, and no positions ever exchanged.
+    static void eraseKeys(std::vector<KeyT>& keys, std::vector<int>& idx,
+                          const std::vector<KeyT>& drop)
+    {
+        if (drop.empty() || keys.empty()) return;
+        std::vector<KeyT> k2;
+        std::vector<int>  i2;
+        k2.reserve(keys.size());
+        i2.reserve(idx.size());
+        size_t d = 0;
+        for (size_t j = 0; j < keys.size(); ++j)
+        {
+            while (d < drop.size() && drop[d] < keys[j]) ++d;
+            if (d < drop.size() && drop[d] == keys[j]) continue;
+            k2.push_back(keys[j]);
+            i2.push_back(idx[j]);
+        }
+        keys.swap(k2);
+        idx.swap(i2);
+    }
+
+    // Duplicates are dropped: re-adding a ghost that is already there must be a no-op, or the two
+    // sides would disagree on the slot count.
+    static void insertKeys(std::vector<KeyT>& keys, std::vector<int>& idx,
+                           const std::vector<KeyT>& addK, const std::vector<int>& addI)
+    {
+        if (addK.empty()) return;
+        std::vector<KeyT> k2;
+        std::vector<int>  i2;
+        k2.reserve(keys.size() + addK.size());
+        i2.reserve(idx.size() + addI.size());
+        size_t a = 0, b = 0;
+        while (a < keys.size() || b < addK.size())
+        {
+            if (b >= addK.size() || (a < keys.size() && keys[a] < addK[b]))
+            { k2.push_back(keys[a]); i2.push_back(idx[a]); ++a; }
+            else if (a < keys.size() && keys[a] == addK[b])
+            { k2.push_back(keys[a]); i2.push_back(idx[a]); ++a; ++b; }
+            else
+            { k2.push_back(addK[b]); i2.push_back(addI[b]); ++b; }
+        }
+        keys.swap(k2);
+        idx.swap(i2);
+    }
+
+    // Rebuild the CSR view from the per-peer master state. peers_ keeps only peers with traffic,
+    // which is why candidatePeers_ is retained separately.
+    void flatten()
+    {
+        peers_.clear();
+        sendIdx_.clear();
+        recvIdx_.clear();
+        sendOffsets_.assign(1, 0);
+        recvOffsets_.assign(1, 0);
+        ghostOwner_.clear();
+        for (size_t i = 0; i < candidatePeers_.size(); ++i)
+        {
+            if (sendIdxP_[i].empty() && recvIdxP_[i].empty()) continue;
+            peers_.push_back(candidatePeers_[i]);
+            for (int v : sendIdxP_[i]) sendIdx_.push_back(v);
+            for (int v : recvIdxP_[i])
+            {
+                recvIdx_.push_back(v);
+                ghostOwner_.push_back({v, candidatePeers_[i]});   // O(surface)
+            }
+            sendOffsets_.push_back(static_cast<int>(sendIdx_.size()));
+            recvOffsets_.push_back(static_cast<int>(recvIdx_.size()));
+        }
+        std::sort(ghostOwner_.begin(), ghostOwner_.end());
+#ifdef MARS_GR_CUDA
+        // The device index lists and the reverseAdd inverse map are now stale.
+        idxUploaded_ = false;
+#endif
+    }
+
     void moveFrom(GhostRegistry&& o) noexcept
     {
         name_        = std::move(o.name_);
@@ -400,6 +625,12 @@ private:
         recvOffsets_ = std::move(o.recvOffsets_);
         sendIdx_     = std::move(o.sendIdx_);
         recvIdx_     = std::move(o.recvIdx_);
+        candidatePeers_ = std::move(o.candidatePeers_);
+        sendIdxP_    = std::move(o.sendIdxP_);
+        recvIdxP_    = std::move(o.recvIdxP_);
+        sendKeysP_   = std::move(o.sendKeysP_);
+        recvKeysP_   = std::move(o.recvKeysP_);
+        keyToLocal_  = std::move(o.keyToLocal_);
         ghostOwner_  = std::move(o.ghostOwner_);
         myRank_      = o.myRank_;
         unresolvedIncoming_ = o.unresolvedIncoming_;
@@ -570,6 +801,11 @@ private:
     std::vector<int> sendOffsets_{0}, recvOffsets_{0};   // CSR over peers_
     std::vector<int> sendIdx_, recvIdx_;                 // local entity ids
     std::vector<std::pair<int, int>> ghostOwner_;        // sorted (local id, owner rank), ghosts only
+    // Master state for incremental edits: per peer, key-sorted and parallel to the index lists.
+    std::vector<int>                   candidatePeers_;  // FULL list; peers_ is compacted
+    std::vector<std::vector<int>>      sendIdxP_, recvIdxP_;
+    std::vector<std::vector<KeyT>>     sendKeysP_, recvKeysP_;
+    std::vector<std::pair<KeyT, int>>  keyToLocal_;      // sorted; resolves later additions
     int      myRank_     = 0;
     size_t   unresolvedIncoming_ = 0;
     long     globalUnresolved_   = 0;
