@@ -115,12 +115,42 @@ sums each entity in a fixed order. Deterministic, and free per call.
 Run the device gate at **4 ranks or more**: the `reverseAdd` collision it is really testing cannot
 occur on one rank.
 
+## 4. Building a ghosting from a domain — `createNodeGhosting`
+
+`fem/mars_domain_ghosting.hpp`. The equivalent of `bulkData.create_ghosting(name)`:
+
+```cpp
+auto ghosting = createNodeGhosting(domain, "fluid-solid-interface", comm);   // all shared nodes
+auto iface    = createNodeGhosting(domain, "iface", comm, myMask);           // a chosen subset
+```
+
+A **free function taking the domain**, not a method on `ElementDomain`, because `domain.hpp` is a
+lower layer than `fem/` and having it include the registry would invert that.
+
+Everything the registry needs is already in the node halo topology. The domain stores only an
+owned/not-owned flag, but the halo's **recv list per peer** says which foreign rank each ghost came
+from, so the owner-rank map falls out of it. The peer list is by construction a superset of the
+ranks that can own a shared node — a node's owner is always a mesh neighbour.
+
+The default mask marks every node this rank sends *or* receives. That matters: a node must be
+marked on the OWNER as well as on every rank that ghosts it, or the two sides disagree and
+`isConsistent()` reports it. Taking it from both halo lists satisfies that by construction.
+
+Setup-time only — the registry's build is host-side, so this copies the halo lists and SFC keys
+down once. The per-step exchange stays on the device.
+
 ## Not done yet
 
-- **`ElementDomain::create_ghosting(name)`** — nothing calls the registry yet.
 - **Incremental `change_ghosting(add, remove)`.** OpenAccel calls this every step
   (`interface.cpp`, `updateGhostings_()`), because a *sliding* interface re-pairs continuously.
-  Our registry is build-once, so a sliding interface would pay a full rebuild per step.
+  Our registry is build-once, so sliding would pay a full rebuild per step.
+
+  This is not a small addition. Removing a ghost needs communication, not just local bookkeeping:
+  if a rank stops wanting an entity and the owner keeps sending it, the send and recv counts
+  disagree and the next exchange misaligns. So a correct incremental update needs a delta protocol
+  — each rank diffs its request list against the previous one and ships the added *and* removed
+  keys, and the owner edits its send list in place. That is most of the complexity of `build()`
+  again, over a smaller key set. Worth doing for sliding; worth designing before writing.
 - **The local overlap test in the coarse search is brute force**, O(nQ × nRange) per peer. Fine for
   interface surfaces; the batching around it is arranged so cstone's `collisions_gpu` traversal can
   be dropped in without touching the communication plan.
