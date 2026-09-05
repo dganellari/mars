@@ -8947,28 +8947,22 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
             cstone::DeviceVector<RealType> d_GxN(s.nodeCount, RealType(0));
             cstone::DeviceVector<RealType> d_GyN(s.nodeCount, RealType(0));
             cstone::DeviceVector<RealType> d_GzN(s.nodeCount, RealType(0));
-            computeGradientPerNodeKernel<KeyType, RealType, ElementTag><<<eBlocks, s.blockSize>>>(
-                c0, c1, c2, c3, c4, c5, c6, c7,
-                s.d_p.data(),
-                s.d_areaVec_x.data(), s.d_areaVec_y.data(), s.d_areaVec_z.data(),
-                d_Gx.data(), d_Gy.data(), d_Gz.data(),
-                startElem, numLocal);
-            cudaDeviceSynchronize();
-            s.domain.reverseExchangeNodeHaloAdd(d_Gx);
-            s.domain.reverseExchangeNodeHaloAdd(d_Gy);
-            s.domain.reverseExchangeNodeHaloAdd(d_Gz);
-            maybePeriodicSum<KeyType, RealType, ElementTag>(s, d_Gx);
-            maybePeriodicSum<KeyType, RealType, ElementTag>(s, d_Gy);
-            maybePeriodicSum<KeyType, RealType, ElementTag>(s, d_Gz);
-            normalizeGradientPerNodeKernel<RealType><<<nodeBlocks, s.blockSize>>>(
-                d_Gx.data(), d_Gy.data(), d_Gz.data(),
-                s.d_massNode.data(),
-                s.d_node_to_dof.data(), d_nodeOwnership.data(),
-                d_GxN.data(), d_GyN.data(), d_GzN.data(),
-                s.nodeCount);
-            cudaDeviceSynchronize();
-            // halo-complete the normalized nodal gradient so ghost endpoints in
-            // the VMS kernel's 0.5*(G_L+G_R) read valid values.
+            // G(p) is the PREDICTOR'S OWN gradient, copied then halo-completed.
+            //
+            // It must be the same discrete operator the predictor injected, or the smooth halves
+            // of the Rhie-Chow swap never cancel: the predictor uses M^-1 D^T p, and a fresh
+            // Green-Gauss SCS gradient is a different operator, so (M^-1 D^T - G)p is left over as
+            // uncontrolled explicit pressure feedback.
+            //
+            // But it CANNOT be read directly: the flip at :8153 that turns -grad p into +grad p is
+            // negateThreeOwnedKernel, which touches OWNED nodes only, and nothing exchanges after
+            // it. So s.d_gradPx holds +grad p on owned nodes and -grad p on ghosts. The VMS kernel
+            // reads both endpoints of every SCS, so using it raw sign-flips the gradient on every
+            // element touching the halo -- measured 2026-09-05: diverged to 1e+147 by step 40.
+            // Copying and exchanging overwrites each ghost with its owner's correct value.
+            thrust::copy(thrust::device, s.d_gradPx.begin(), s.d_gradPx.end(), d_GxN.begin());
+            thrust::copy(thrust::device, s.d_gradPy.begin(), s.d_gradPy.end(), d_GyN.begin());
+            thrust::copy(thrust::device, s.d_gradPz.begin(), s.d_gradPz.end(), d_GzN.begin());
             s.domain.exchangeNodeHalo(d_GxN);
             s.domain.exchangeNodeHalo(d_GyN);
             s.domain.exchangeNodeHalo(d_GzN);
@@ -9028,12 +9022,7 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
                 c0, c1, c2, c3,
                 s.d_uStarStar.data(), s.d_vStarStar.data(), s.d_wStarStar.data(),
                 s.d_p.data(),
-                // G(p) must be the SAME operator the predictor used, not a second one. The
-                // predictor injects M^-1 D^T p (sign-flipped to +grad p, :8143-8156); a fresh
-                // Green-Gauss SCS gradient is a DIFFERENT discrete operator, so the residual
-                // (M^-1 D^T - G)p is an uncontrolled explicit pressure feedback. A cancellation
-                // that has to be exact cannot be attempted across two operators.
-                s.d_gradPx.data(), s.d_gradPy.data(), s.d_gradPz.data(),
+                d_GxN.data(), d_GyN.data(), d_GzN.data(),   // predictor's grad, halo-complete
                 d_x.data(), d_y.data(), d_z.data(),
                 s.d_areaVec_x.data(), s.d_areaVec_y.data(), s.d_areaVec_z.data(),
                 tauV, tauNodePtr, keepSmooth,
