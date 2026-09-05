@@ -53,7 +53,7 @@
 template<typename RealType>
 __global__ void buildVmsNodalTauKernel(const int* diagPtr, const RealType* valsVel,
                                        const int* nodeToDof, const RealType* massDof,
-                                       RealType rho,
+                                       RealType rho, RealType tauFallback,
                                        RealType* tauNode, size_t nodeCount, int numOwnedDofs)
 {
     size_t i = blockIdx.x * blockDim.x + threadIdx.x;
@@ -64,6 +64,13 @@ __global__ void buildVmsNodalTauKernel(const int* diagPtr, const RealType* valsV
     int dp = diagPtr[dof];
     if (dp < 0) return;
     RealType aP = valsVel[dp];
+    // enforceBcMatrixKernel zeroes the row and writes values[dp] = EXACTLY 1 on every
+    // velocity-Dirichlet node, so a_P there is the BC convention rather than a momentum diagonal:
+    // V/1 = V ~ h^3, orders of magnitude off the interior value, at every wall node. The pump is
+    // wall-dominated, so those nodes fall back to the scalar tau instead of a meaningless one.
+    // Detected by the exact 1 rather than a mask because that IS the signature, and a real
+    // diagonal here is ~V/dt ~ 1e-4 -- nowhere near 1.
+    if (aP == RealType(1)) { tauNode[i] = tauFallback; return; }
     // V/a_P is a TIME here, but pressure enters momentum as (1/rho)*grad p, so the Rhie-Chow
     // coefficient must be TIME/DENSITY. d_mass is geometric volume (no rho) and the momentum
     // matrix is kinematic (M/dt + nu*K, no rho), so rho has to be divided in explicitly.

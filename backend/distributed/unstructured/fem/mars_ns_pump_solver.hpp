@@ -8900,6 +8900,20 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
         bool useRC = s.useRhieChow;
         // VMS path is opt-in AND tet-only (the kernel uses Tet4CVFEM::jacobian_and_dNdx).
         bool useVMS = s.useVMSStab && std::is_same_v<ElementTag, TetTag>;
+        // Two pressure stabilizations at once cannot be attributed: PSPG adds tau*L (units L^2) to
+        // the operator, VMS adds an explicit lagged pressure-gradient difference (units T/rho) to
+        // the RHS, tuned independently. Warn once rather than silently measure their sum.
+        if (useVMS && s.usePSPG && s.rank == 0)
+        {
+            static bool warned = false;
+            if (!warned)
+            {
+                std::cout << "  WARNING: --vms-stab and --pspg are BOTH on. Two pressure "
+                             "stabilizations with different physical dimensions; results cannot be "
+                             "attributed to either. Drop one for an A/B.\n";
+                warned = true;
+            }
+        }
         // FEM-consistent weak divergence (tet-only, --pressure-k). Takes
         // precedence over the VMS/RC SCS variants: the projection contracts
         // only when divergence and corrector gradient are the SAME weak-form
@@ -8925,10 +8939,10 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
         {
             // Nalu-Wind VMS pressure stabilization: tau*(G(p) - dp/dx_ip).A, no A.dx.
             //
-            // G(p) = PROJECTED NODAL gradient of the CURRENT pressure s.d_p,
-            // computed FRESH here (not the predictor's d_gradPx/y/z, which holds
-            // -grad p^n via the div^T path). We use computeGradientPerNodeKernel
-            // (the SCS-face Green-Gauss form) which integrates to +V*grad p, then
+            // G(p) is the PREDICTOR'S gradient, copied and halo-completed below -- NOT a fresh
+            // Green-Gauss one. It has to be the same discrete operator or the Rhie-Chow swap
+            // cannot cancel. (This comment previously described the old fresh-gradient design and
+            // contradicted the code 40 lines below it.)
             // normalize by lumped mass -> +grad p, halo-complete. This is exactly
             // Nalu's G_i(p). dp/dx_ip (the element ip gradient) is +grad p too, so
             // the residual (G - dp/dx) is sign-consistent.
@@ -8945,9 +8959,6 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
             const auto& d_z = s.domain.getNodeZ();
 
             // --- fresh projected nodal gradient of p (+grad p), halo-complete ---
-            cstone::DeviceVector<RealType> d_Gx(s.nodeCount, RealType(0));
-            cstone::DeviceVector<RealType> d_Gy(s.nodeCount, RealType(0));
-            cstone::DeviceVector<RealType> d_Gz(s.nodeCount, RealType(0));
             cstone::DeviceVector<RealType> d_GxN(s.nodeCount, RealType(0));
             cstone::DeviceVector<RealType> d_GyN(s.nodeCount, RealType(0));
             cstone::DeviceVector<RealType> d_GzN(s.nodeCount, RealType(0));
@@ -8974,7 +8985,7 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
             // keepSmooth=false by default (compact -dpdx only): the full Nalu
             // G-dpdx form double-counts grad p on the Chorin post-predictor u**
             // and ramps |p| unbounded (validated on cube16). Set
-            // MARS_VMS_KEEP_SMOOTH=1 to A/B the full form.
+            // MARS_VMS_COMPACT_ONLY=1 to A/B the compact form.
             // FULL difference form by default (2026-09-04). Dropping the smooth half was
             // justified by "SIMPLE/PISO's u* = HbyA does not yet contain grad p" -- but OpenAccel's
             // predictor DOES carry it as a source (navierStokesAssemblerNodeTerms.cpp:128-130), and
@@ -9013,7 +9024,7 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
                     // so reading d_valuesVel would make a_P 1.5x too small.
                     s.d_diagPtr.data(),
                     (bdf2Vms ? s.d_valuesVel_bdf2.data() : s.d_valuesVel.data()),
-                    s.d_node_to_dof.data(), s.d_mass.data(), rho,
+                    s.d_node_to_dof.data(), s.d_mass.data(), rho, tauV,
                     d_vmsTau.data(), s.nodeCount, s.numOwnedDofs);
                 cudaDeviceSynchronize();
                 // ghosts are 0 out of the kernel; the ip average reads both
@@ -9035,6 +9046,11 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
                 tauV, tauNodePtr, keepSmooth,
                 s.relaxMass, thrust::raw_pointer_cast(s.d_mDotPrev.data()),
                 d_divAccNode.data(), startElem, numLocal);
+            // Sync INSIDE the branch: d_GxN/d_GyN/d_GzN/d_vmsTau are function-scope and die at the
+            // closing brace. cudaFree happens to sync today, but that is an allocator detail, not
+            // a guarantee -- a pooled or stream-ordered allocator would free them under a running
+            // kernel.
+            cudaDeviceSynchronize();
         }
         else if (useRC)
         {
