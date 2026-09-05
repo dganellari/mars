@@ -9045,6 +9045,7 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
                 s.d_areaVec_x.data(), s.d_areaVec_y.data(), s.d_areaVec_z.data(),
                 tauV, tauNodePtr, keepSmooth,
                 s.relaxMass, thrust::raw_pointer_cast(s.d_mDotPrev.data()),
+                (s.d_isBdryNode.size() == s.nodeCount ? s.d_isBdryNode.data() : nullptr),
                 d_divAccNode.data(), startElem, numLocal);
             // Sync INSIDE the branch: d_GxN/d_GyN/d_GzN/d_vmsTau are function-scope and die at the
             // closing brace. cudaFree happens to sync today, but that is an allocator detail, not
@@ -11014,7 +11015,12 @@ void runNsStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, RealTyp
         double frac  = (totSum > 0) ? std::sqrt(mfSum / totSum) : 0.0;
         std::cout << "    [checker] mean-free p RMS=" << std::scientific << mfRms
                   << " frac=" << frac << std::defaultfloat
-                  << " (grows -> checkerboard; stabilizer should shrink frac)\n";
+                  // frac is a RATIO of mean-free to total pressure energy, so it also falls when
+                  // smooth |p| GROWS -- which is exactly the failure mode an uncancelled explicit
+                  // stabilization produces. A falling frac alone is therefore not evidence that a
+                  // stabilizer works; mfRms is the number that decides. Judge on mfRms, and only
+                  // trust it alongside Q_out/Q_in and div*L/U.
+                  << "   <- JUDGE ON mean-free p RMS, NOT frac (frac falls if |p| grows)\n";
     }
 
     // BDF2 velocity-history shuffle: snapshot u^n into u_{n-1} BEFORE the

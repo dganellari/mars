@@ -96,6 +96,9 @@ __global__ void computeDivergenceVMSTetKernel(
     // is explicit, so without it nothing bounds the step-to-step change in the flux.
     RealType massURF,
     RealType* mDotPrev,       // per (element, ip); null disables the blend
+    // Velocity-Dirichlet nodes (per node). At those, u* = qTarget, so the predictor injected NO
+    // pressure gradient there -- adding one back would be a source that was never subtracted.
+    const uint8_t* isVelBc,
     RealType* divAccNode,
     size_t startElem, size_t numLocal)
 {
@@ -154,9 +157,16 @@ __global__ void computeDivergenceVMSTetKernel(
         RealType flow = vfx * Ax + vfy * Ay + vfz * Az;
 
         // Projected nodal gradient interpolated to the ip = 0.5*(G_L + G_R).
-        RealType Gx = RealType(0.5) * (gradPx[iL] + gradPx[iR]);
-        RealType Gy = RealType(0.5) * (gradPy[iL] + gradPy[iR]);
-        RealType Gz = RealType(0.5) * (gradPz[iL] + gradPz[iR]);
+        // The face velocity is 0.5*(u_L + u_R), and an endpoint carries -tau*G only if it was
+        // actually integrated -- a velocity-Dirichlet node was overwritten with qTarget. So the
+        // add-back weights each endpoint by whether it received the gradient, which is exactly
+        // what was subtracted. Nalu does the equivalent by using the prescribed boundary mdot at
+        // boundary-adjacent ips instead of the interior formula.
+        const RealType wL = (isVelBc != nullptr && isVelBc[iL]) ? RealType(0) : RealType(0.5);
+        const RealType wR = (isVelBc != nullptr && isVelBc[iR]) ? RealType(0) : RealType(0.5);
+        RealType Gx = wL * gradPx[iL] + wR * gradPx[iR];
+        RealType Gy = wL * gradPy[iL] + wR * gradPy[iR];
+        RealType Gz = wL * gradPz[iL] + wR * gradPz[iR];
 
         // Stabilization flux. The FULL Nalu term is tau*(G - dp/dx).A. But that
         // KEEPS the smooth +tau*G.A half, and on a Chorin POST-PREDICTOR u**
