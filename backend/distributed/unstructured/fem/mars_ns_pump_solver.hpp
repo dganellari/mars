@@ -3335,6 +3335,11 @@ struct NSStepper
     // tet-only for now. Uses the residual (projected-nodal-grad - element-ip-grad),
     // no A.dx denominator -> skew-robust. tau reuses rhieChowTau (<=0 => dt/rho).
     bool useVMSStab       = false;
+    // OpenAccel's relaxation, which MARS ran without entirely. Their centrifugal-pump input uses
+    // 0.3 for mass, velocity and pressure alike (examples/centrifugalPump/input.i:110-114).
+    RealType relaxMass    = RealType(0.3);   // mass-flux URF (flowModel.cpp:6265)
+    RealType relaxU       = RealType(0.3);   // folds into D, as their postAssemble order does
+    cstone::DeviceVector<RealType> d_mDotPrev;   // per (element, ip), for the flux blend
 
     // IMPLICIT PSPG pressure stabilization (the CORRECT equal-order checkerboard fix):
     // adds tau*L*phi inside applyDDTPerNode so CG solves (A+tau*L)phi=b. tau is a
@@ -8985,12 +8990,23 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
             // RHS -- bigger p, bigger correction, bigger p, which is the doubling-every-step
             // runaway measured on 2026-09-04.
             bool keepSmooth = (std::getenv("MARS_VMS_COMPACT_ONLY") == nullptr);
+            // Sized on first use; the blend needs the PREVIOUS step's flux, so it must persist.
+            if (s.d_mDotPrev.size() != numLocal * ElemTraits<ElementTag>::ScsPerElem)
+            {
+                s.d_mDotPrev.resize(numLocal * ElemTraits<ElementTag>::ScsPerElem);
+                thrust::fill(thrust::device, s.d_mDotPrev.begin(), s.d_mDotPrev.end(), RealType(0));
+            }
             // MARS_VMS_DIAG_TAU: replace the global tau with OpenAccel's V/a_P,
             // read off the ASSEMBLED momentum diagonal so the coefficient adapts
             // per node instead of being one number for the whole mesh.
+            // D = alpha_u * V/a_P off the ASSEMBLED momentum diagonal is what OpenAccel actually
+            // uses (navierStokesAssembler.cpp:191), and the URF is already folded in because their
+            // postAssemble scales the diagonal by 1/urf BEFORE computing D (phiAssembler.h:1176).
+            // Default ON now: a single global tau cannot be right everywhere, which is the same
+            // reason K + tau*L is inert.
             const RealType* tauNodePtr = nullptr;
             cstone::DeviceVector<RealType> d_vmsTau;
-            if (std::getenv("MARS_VMS_DIAG_TAU"))
+            if (std::getenv("MARS_VMS_GLOBAL_TAU") == nullptr)
             {
                 d_vmsTau.resize(s.nodeCount);
                 int nB = int((s.nodeCount + s.blockSize - 1) / s.blockSize);
@@ -9002,6 +9018,10 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
                 // ghosts are 0 out of the kernel; the ip average reads both
                 // endpoints, so they must be halo-complete like the gradient.
                 s.domain.exchangeNodeHalo(d_vmsTau);
+                if (s.relaxU > RealType(0) && s.relaxU < RealType(1))
+                    thrust::transform(thrust::device, d_vmsTau.begin(), d_vmsTau.end(),
+                                      d_vmsTau.begin(),
+                                      [a = s.relaxU] __device__(RealType v) { return a * v; });
                 tauNodePtr = d_vmsTau.data();
             }
             computeDivergenceVMSTetKernel<KeyType, RealType><<<eBlocks, s.blockSize>>>(
@@ -9017,6 +9037,7 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
                 d_x.data(), d_y.data(), d_z.data(),
                 s.d_areaVec_x.data(), s.d_areaVec_y.data(), s.d_areaVec_z.data(),
                 tauV, tauNodePtr, keepSmooth,
+                s.relaxMass, thrust::raw_pointer_cast(s.d_mDotPrev.data()),
                 d_divAccNode.data(), startElem, numLocal);
         }
         else if (useRC)

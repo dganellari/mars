@@ -87,7 +87,9 @@ int main(int argc, char** argv)
     bool        useBdf2     = true;    // --bdf1 forces BDF1/Chorin (1st-order time, more stable for explicit advection)
     bool        useRhieChow = false;   // compact RC is geometrically unsafe on tets (blows up at every tau); --rhie-chow to force on
     RealType    rhieTau    = -1;       // RC strength; <=0 -> auto dt/rho. --rhie-tau= to sweep
-    bool        useVMSStab = false;    // Nalu-Wind VMS pressure stab (NOT Rhie-Chow); --vms-stab. EXPERIMENTAL, validate.
+    bool        useVMSStab = false;
+    double      relaxMass  = 0.3;      // --relax-mass: OpenAccel's mDotURF (their pump uses 0.3)
+    double      relaxU     = 0.3;      // --relax-u: momentum URF, folded into D    // Nalu-Wind VMS pressure stab (NOT Rhie-Chow); --vms-stab. EXPERIMENTAL, validate.
     bool        usePSPG    = false;    // implicit PSPG pressure stab (tau*L in the DDT operator); --pspg. The correct equal-order checkerboard fix.
     double      pspgTau    = -1;       // <=0 => auto h^2/24; --pspg-tau=V overrides
     bool        useHypre   = false;    // --solver=hypre: assembled DDT + Hypre FlexGMRES+BoomerAMG (else matrix-free Jacobi-CG)
@@ -167,7 +169,9 @@ int main(int argc, char** argv)
         else if (a == "--no-rhie")                   useRhieChow = false; // plain Galerkin divergence (checkerboard-prone)
         else if (a == "--rhie-chow")                 useRhieChow = true;
         else if (a.rfind("--rhie-tau=", 0) == 0)     rhieTau   = std::stod(a.substr(11));
-        else if (a == "--vms-stab")                  useVMSStab = true;  // Nalu VMS pressure stab (tet-only, experimental)
+        else if (a == "--vms-stab")                  useVMSStab = true;
+        else if (a.rfind("--relax-mass=", 0) == 0)   relaxMass = std::stod(a.substr(13));
+        else if (a.rfind("--relax-u=", 0) == 0)      relaxU    = std::stod(a.substr(10));  // Nalu VMS pressure stab (tet-only, experimental)
         else if (a == "--pressure-k")                pressureK  = true;  // Galerkin K + FEM-consistent weak div/grad projection
         else if (a.rfind("--correctors=", 0) == 0)   nCorrectors = std::stoi(a.substr(13)); // PISO inner pressure corrections (FEM path)
         else if (a == "--pspg")                      usePSPG    = true;  // implicit PSPG (tau*L in DDT operator) -- the correct checkerboard fix
@@ -471,7 +475,9 @@ int main(int argc, char** argv)
     // leaves div*L/U stuck. tau auto = dt/rho. --no-rhie for an A/B comparison.
     s.useBdf2 = useBdf2;
     s.useRhieChow = useRhieChow;
-    s.useVMSStab  = useVMSStab;   // Nalu VMS pressure stabilization (tet-only)
+    s.useVMSStab  = useVMSStab;
+    s.relaxMass   = RealType(relaxMass);
+    s.relaxU      = RealType(relaxU);   // Nalu VMS pressure stabilization (tet-only)
     s.usePSPG     = usePSPG;       // implicit PSPG (tau*L in DDT operator)
     s.pspgTau     = RealType(pspgTau);
     // Correct through-flow config: mass-conserving outlet + opening-flux-source ON

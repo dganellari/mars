@@ -75,8 +75,14 @@ __global__ void computeDivergenceVMSTetKernel(
     const RealType* nodeX, const RealType* nodeY, const RealType* nodeZ,
     const RealType* areaVecX, const RealType* areaVecY, const RealType* areaVecZ,
     RealType tau,
-    const RealType* tauNode,  // non-null => per-node V/a_P (OpenAccel); null => the scalar tau
-    bool keepSmooth,          // true=full Nalu G-dpdx (blows up on Chorin u**); false=compact -dpdx only (default)
+    const RealType* tauNode,  // non-null => per-node alpha_u*V/a_P (OpenAccel); null => scalar tau
+    bool keepSmooth,          // true = the full Nalu/OpenAccel G-dpdx difference (the default)
+    // OpenAccel under-relaxes the STABILIZED mass flux itself (flowModel.cpp:6265):
+    //   mDot = urf*mDotNew + (1-urf)*mDotOld
+    // Their pump runs relax_mass: 0.3. This is the damping MARS had none of -- the stabilization
+    // is explicit, so without it nothing bounds the step-to-step change in the flux.
+    RealType massURF,
+    RealType* mDotPrev,       // per (element, ip); null disables the blend
     RealType* divAccNode,
     size_t startElem, size_t numLocal)
 {
@@ -159,6 +165,14 @@ __global__ void computeDivergenceVMSTetKernel(
         else
             stab = tauIp * ((-dpdx) * Ax + (-dpdy) * Ay + (-dpdz) * Az);
         flow += stab;
+
+        if (mDotPrev != nullptr && massURF < RealType(1))
+        {
+            const size_t off = e * NSCS + ip;
+            flow              = massURF * flow + (RealType(1) - massURF) * mDotPrev[off];
+            mDotPrev[off]     = flow;
+        }
+        else if (mDotPrev != nullptr) { mDotPrev[e * NSCS + ip] = flow; }
 
         atomicAdd(&divAccNode[iL], +flow);
         atomicAdd(&divAccNode[iR], -flow);
