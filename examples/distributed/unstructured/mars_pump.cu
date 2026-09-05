@@ -88,7 +88,10 @@ int main(int argc, char** argv)
     bool        useRhieChow = false;   // compact RC is geometrically unsafe on tets (blows up at every tau); --rhie-chow to force on
     RealType    rhieTau    = -1;       // RC strength; <=0 -> auto dt/rho. --rhie-tau= to sweep
     bool        useVMSStab = false;
-    double      relaxMass  = 0.3;      // --relax-mass: OpenAccel's mDotURF (their pump uses 0.3)
+    // OFF by default: OpenAccel's mDotURF is sound only because SIMPLE's outer loop closes the
+    // lag inside the step. This projection has no outer loop, so a blend leaves (1-urf)*div(u**)
+    // unprojected permanently, with no dt in it to vanish under refinement.
+    double      relaxMass  = 1.0;
     double      relaxU     = 0.3;      // --relax-u: momentum URF, folded into D
     bool        usePSPG    = false;    // implicit PSPG pressure stab (tau*L in the DDT operator); --pspg. The correct equal-order checkerboard fix.
     double      pspgTau    = -1;       // <=0 => auto h^2/24; --pspg-tau=V overrides

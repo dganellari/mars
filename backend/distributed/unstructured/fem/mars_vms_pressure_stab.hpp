@@ -53,6 +53,7 @@
 template<typename RealType>
 __global__ void buildVmsNodalTauKernel(const int* diagPtr, const RealType* valsVel,
                                        const int* nodeToDof, const RealType* massDof,
+                                       RealType rho,
                                        RealType* tauNode, size_t nodeCount, int numOwnedDofs)
 {
     size_t i = blockIdx.x * blockDim.x + threadIdx.x;
@@ -63,7 +64,12 @@ __global__ void buildVmsNodalTauKernel(const int* diagPtr, const RealType* valsV
     int dp = diagPtr[dof];
     if (dp < 0) return;
     RealType aP = valsVel[dp];
-    if (aP > RealType(0)) tauNode[i] = massDof[dof] / aP;
+    // V/a_P is a TIME here, but pressure enters momentum as (1/rho)*grad p, so the Rhie-Chow
+    // coefficient must be TIME/DENSITY. d_mass is geometric volume (no rho) and the momentum
+    // matrix is kinematic (M/dt + nu*K, no rho), so rho has to be divided in explicitly.
+    // Nalu/OpenAccel get it for free because their a_P ~ rho*V/dt. Without this, tau was ~450x
+    // too large -- a dimensional error, not a mistuning, and the cause of the 1e+147 blowup.
+    if (aP > RealType(0)) tauNode[i] = massDof[dof] / (aP * rho);
 }
 
 template<typename KeyType, typename RealType>
@@ -166,13 +172,17 @@ __global__ void computeDivergenceVMSTetKernel(
             stab = tauIp * ((-dpdx) * Ax + (-dpdy) * Ay + (-dpdz) * Az);
         flow += stab;
 
-        if (mDotPrev != nullptr && massURF < RealType(1))
+        // Index by k (the LOCAL element), not e (= startElem + k). The area vectors are sized
+        // elementCount so they take e, but this buffer is sized numLocal -- and cornerstone puts
+        // halos BEFORE local elements, so startElem > 0 on any rank with a halo and e would write
+        // past the end. Single rank hid it; 4 ranks corrupted the heap.
+        if (mDotPrev != nullptr)
         {
-            const size_t off = e * NSCS + ip;
-            flow              = massURF * flow + (RealType(1) - massURF) * mDotPrev[off];
-            mDotPrev[off]     = flow;
+            const size_t off = k * NSCS + ip;
+            if (massURF < RealType(1))
+                flow = massURF * flow + (RealType(1) - massURF) * mDotPrev[off];
+            mDotPrev[off] = flow;
         }
-        else if (mDotPrev != nullptr) { mDotPrev[e * NSCS + ip] = flow; }
 
         atomicAdd(&divAccNode[iL], +flow);
         atomicAdd(&divAccNode[iR], -flow);

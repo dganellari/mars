@@ -3337,7 +3337,11 @@ struct NSStepper
     bool useVMSStab       = false;
     // OpenAccel's relaxation, which MARS ran without entirely. Their centrifugal-pump input uses
     // 0.3 for mass, velocity and pressure alike (examples/centrifugalPump/input.i:110-114).
-    RealType relaxMass    = RealType(0.3);   // mass-flux URF (flowModel.cpp:6265)
+    // OFF by default. OpenAccel's mDotURF is only sound because SIMPLE's OUTER LOOP drives
+    // m^n -> m^{n-1} within the step, so the (1-urf) terms vanish at the inner fixed point. This
+    // projection has no outer loop -- the corrector runs once -- so a blend leaves (1-urf)*div(u**)
+    // unprojected FOREVER, with no dt in the expression, so it does not vanish under refinement.
+    RealType relaxMass    = RealType(1.0);
     RealType relaxU       = RealType(0.3);   // folds into D, as their postAssemble order does
     cstone::DeviceVector<RealType> d_mDotPrev;   // per (element, ip), for the flux blend
 
@@ -8954,12 +8958,12 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
             // Green-Gauss SCS gradient is a different operator, so (M^-1 D^T - G)p is left over as
             // uncontrolled explicit pressure feedback.
             //
-            // But it CANNOT be read directly: the flip at :8153 that turns -grad p into +grad p is
-            // negateThreeOwnedKernel, which touches OWNED nodes only, and nothing exchanges after
-            // it. So s.d_gradPx holds +grad p on owned nodes and -grad p on ghosts. The VMS kernel
-            // reads both endpoints of every SCS, so using it raw sign-flips the gradient on every
-            // element touching the halo -- measured 2026-09-05: diverged to 1e+147 by step 40.
-            // Copying and exchanging overwrites each ghost with its owner's correct value.
+            // But it CANNOT be read directly: normalizeGradientPerNodeKernel ZEROES every
+            // non-owned node, and nothing exchanges afterwards, so ghosts hold 0 -- not a
+            // sign-flipped value, as an earlier version of this comment wrongly claimed. Reading it
+            // raw gives G_f = 0.5*(G_owned + 0) on halo faces: a bounded 50% under-estimate, not an
+            // unbounded error. (The 1e+147 blowup had other causes -- see the tau/rho note below.)
+            // Copying and exchanging gives each ghost its owner's value.
             thrust::copy(thrust::device, s.d_gradPx.begin(), s.d_gradPx.end(), d_GxN.begin());
             thrust::copy(thrust::device, s.d_gradPy.begin(), s.d_gradPy.end(), d_GyN.begin());
             thrust::copy(thrust::device, s.d_gradPz.begin(), s.d_gradPz.end(), d_GzN.begin());
@@ -9005,8 +9009,11 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
                 d_vmsTau.resize(s.nodeCount);
                 int nB = int((s.nodeCount + s.blockSize - 1) / s.blockSize);
                 buildVmsNodalTauKernel<RealType><<<nB, s.blockSize>>>(
-                    s.d_diagPtr.data(), s.d_valuesVel.data(),
-                    s.d_node_to_dof.data(), s.d_mass.data(),
+                    // The ACTIVE momentum matrix: under BDF2 the diagonal is 3M/(2dt), not M/dt,
+                    // so reading d_valuesVel would make a_P 1.5x too small.
+                    s.d_diagPtr.data(),
+                    (bdf2Vms ? s.d_valuesVel_bdf2.data() : s.d_valuesVel.data()),
+                    s.d_node_to_dof.data(), s.d_mass.data(), rho,
                     d_vmsTau.data(), s.nodeCount, s.numOwnedDofs);
                 cudaDeviceSynchronize();
                 // ghosts are 0 out of the kernel; the ip average reads both
