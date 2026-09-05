@@ -231,7 +231,9 @@ int main(int argc, char** argv)
                     "  --advection=NAME     skew (default) | upwind | barth-jespersen (--bj)\n"
                     "  --pspg [--pspg-tau=V] implicit PSPG pressure stabilization (tau*L in DDT operator; the equal-order checkerboard fix; tau auto h^2/24)\n"
                     "  --correctors=N       PISO inner pressure corrections per step (FEM-projection\n"
-                    "                       path, pair with --pressure-k; default 1 = single correction)\n"
+                    "                       path OR the --vms-stab path; default 1 = single correction. The\n"
+                    "                       stabilized flux is explicit, so without outer passes its\n"
+                    "                       lag never closes -- this is what SIMPLE does and we did not)\n"
                     "  --rho=V --nu=V       physical fluid properties (default water: rho=1000, nu=1e-6)\n"
                     "  --Re=V               LEGACY: override nu = inletU*L_bbox/Re. L_bbox is the\n"
                     "                       whole-geometry diagonal, NOT the passage scale, so this Re\n"
@@ -414,7 +416,7 @@ int main(int argc, char** argv)
     // would re-add the full head every inner pass (p^n updates only after the
     // loop), so that combination is rejected too.
     s.nCorrectors = std::max(1, nCorrectors);
-    if (rank == 0 && nCorrectors > 1 && !pressureK)
+    if (rank == 0 && nCorrectors > 1 && !pressureK && !useVMSStab)
         std::cerr << "WARNING: --correctors=" << nCorrectors
                   << " applies only to the FEM-projection path (--pressure-k); ignored.\n";
     if (nCorrectors > 1 && pressureK && pumpDp > 0.0)

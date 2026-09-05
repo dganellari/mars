@@ -10965,7 +10965,53 @@ void runNsStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, RealTyp
                   << double(s.lastPicardRes) << std::defaultfloat
                   << " (tol=" << double(s.picardTol) << ")\n";
 
-    runPressureSolveStep<KeyType, RealType, ElementTag>(s, dt, rho);
+    // SIMPLE-style OUTER ITERATION for the stabilized (Rhie-Chow / VMS) path.
+    //
+    // The stabilization term is explicit and evaluated at the CURRENT pressure. OpenAccel gets
+    // away with that because SIMPLE re-converges the pressure inside the time step, so the lag
+    // closes before the step ends. A single-correction projection never closes it, and whatever
+    // the term leaves behind stays in the divergence -- measured 2026-09-05: div*L/U = 2338 and
+    // Q_out/Q_in = 1.293 with their own D coefficient, against a 2.16 / 1.025 baseline.
+    //
+    // Each extra pass re-evaluates the divergence (and with it the stabilization) at the UPDATED
+    // p and the CORRECTED velocity, which is exactly what closes the lag. u** has to be refreshed
+    // from u^{n+1} between passes or the solve would see the same right-hand side every time and
+    // the loop would be a no-op.
+    //
+    // nCorrectors == 1 (default) runs the original single pass, kernel-for-kernel.
+    const bool vmsOuter = s.useVMSStab && std::is_same_v<ElementTag, TetTag> && s.nCorrectors > 1;
+    const int  nOuter   = vmsOuter ? s.nCorrectors : 1;
+    // BDF2 keeps u^{n-1}, and the shuffle below normally runs after the (single) corrector, when
+    // d_u still holds u^n. With outer passes the in-loop corrector overwrites d_u first, so the
+    // snapshot has to be taken HERE or the time history silently becomes a corrected field.
+    bool bdf2HistTaken = false;
+    if (vmsOuter && s.useBdf2
+        && s.d_u_nm1.size() == s.d_u.size()
+        && s.d_v_nm1.size() == s.d_v.size()
+        && s.d_w_nm1.size() == s.d_w.size())
+    {
+        thrust::copy(thrust::device, s.d_u.begin(), s.d_u.end(), s.d_u_nm1.begin());
+        thrust::copy(thrust::device, s.d_v.begin(), s.d_v.end(), s.d_v_nm1.begin());
+        thrust::copy(thrust::device, s.d_w.begin(), s.d_w.end(), s.d_w_nm1.begin());
+        bdf2HistTaken = true;
+    }
+    for (int outer = 0; outer < nOuter; ++outer)
+    {
+        runPressureSolveStep<KeyType, RealType, ElementTag>(s, dt, rho);
+        if (outer + 1 < nOuter)
+        {
+            runCorrectorStep<KeyType, RealType, ElementTag>(s, dt, rho);
+            // u** := u^{n+1} so the next pass corrects the corrected field, not the predictor's.
+            thrust::copy(thrust::device, s.d_u.begin(), s.d_u.end(), s.d_uStarStar.begin());
+            thrust::copy(thrust::device, s.d_v.begin(), s.d_v.end(), s.d_vStarStar.begin());
+            thrust::copy(thrust::device, s.d_w.begin(), s.d_w.end(), s.d_wStarStar.begin());
+            if (s.rank == 0 && std::getenv("MARS_SOLVE_TRACE"))
+                std::cout << "    [vms-outer] pass " << (outer + 1) << "/" << nOuter
+                          << " |phi|max=" << std::scientific
+                          << double(maxAbsOwned(s.d_phi, s.nodeCount)) << std::defaultfloat
+                          << "  (should shrink each pass)\n";
+        }
+    }
     if (dbg && s.rank == 0)
     {
         std::cout << "    [ns-dbg POIS ] |phi|max=" << maxAbsOwned(s.d_phi, s.nodeCount)
@@ -11027,7 +11073,7 @@ void runNsStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, RealTyp
     // corrector overwrites s.d_u with u^{n+1}. The advection-history copy
     // (advN -> advNm1) happens after the corrector since the advection slots
     // are only consumed by next step's predictor.
-    if (s.useBdf2
+    if (!bdf2HistTaken && s.useBdf2
         && s.d_u_nm1.size() == s.d_u.size()
         && s.d_v_nm1.size() == s.d_v.size()
         && s.d_w_nm1.size() == s.d_w.size())
