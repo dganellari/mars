@@ -88,7 +88,8 @@ int main(int argc, char** argv)
     bool        useRhieChow = false;   // compact RC is geometrically unsafe on tets (blows up at every tau); --rhie-chow to force on
     RealType    rhieTau    = -1;       // RC strength; <=0 -> auto dt/rho. --rhie-tau= to sweep
     bool        useVMSStab = false;
-    bool        rcImplicit = false;   // --rc-implicit: RC sensitivity in the pressure matrix
+    bool        rcImplicit = false;   // --rc-implicit: RC sensitivity ADDED to K
+    bool        rcOnly     = false;   // --rc-only: RC sensitivity IS the operator (K zeroed)
     // OFF by default: OpenAccel's mDotURF is sound only because SIMPLE's outer loop closes the
     // lag inside the step. This projection has no outer loop, so a blend leaves (1-urf)*div(u**)
     // unprojected permanently, with no dt in it to vanish under refinement.
@@ -175,6 +176,7 @@ int main(int argc, char** argv)
         else if (a.rfind("--rhie-tau=", 0) == 0)     rhieTau   = std::stod(a.substr(11));
         else if (a == "--vms-stab")                  useVMSStab = true;
         else if (a == "--rc-implicit")               rcImplicit = true;
+        else if (a == "--rc-only")                   rcOnly     = true;
         else if (a.rfind("--relax-mass=", 0) == 0)   relaxMass = std::stod(a.substr(13));
         else if (a.rfind("--relax-u=", 0) == 0)      relaxU    = std::stod(a.substr(10));
         else if (a == "--pressure-k")                pressureK  = true;  // Galerkin K + FEM-consistent weak div/grad projection
@@ -484,6 +486,7 @@ int main(int argc, char** argv)
     s.useRhieChow = useRhieChow;
     s.useVMSStab  = useVMSStab;
     s.useRcImplicit = rcImplicit;
+    s.useRcOnly     = rcOnly;
     s.rhoCached     = RealType(rho);
     s.relaxMass   = RealType(relaxMass);
     s.relaxU      = RealType(relaxU);

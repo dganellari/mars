@@ -3424,6 +3424,13 @@ struct NSStepper
     // --rc-implicit: assemble the Rhie-Chow pressure sensitivity into the operator, as OpenAccel
     // does, instead of leaving the whole term on the RHS. Replaces PSPG on this path.
     bool useRcImplicit    = false;
+    // --rc-only: OpenAccel's LITERAL structure. Their pressure Laplacian IS the Rhie-Chow
+    // sensitivity -- there is no separate K, because in SIMPLE the velocity correction
+    // u' = -D*grad(p') and the RC stabilization are the SAME term scaled by the SAME D. Our
+    // projection normally splits those (K approximates D M^-1 D^T from the corrector, the RC
+    // sensitivity is extra), which is why --rc-implicit can double the pressure diffusion.
+    // This mode zeroes K and lets the SCS D-weighted Laplacian be the entire operator.
+    bool useRcOnly        = false;
     RealType rhoCached    = RealType(1);   // set by the driver; the setup assembly needs it
     // OpenAccel's relaxation, which MARS ran without entirely. Their centrifugal-pump input uses
     // 0.3 for mass, velocity and pressure alike (examples/centrifugalPump/input.i:110-114).
@@ -4800,8 +4807,19 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
     // Laplacian with no relation to the mass flux; the Rhie-Chow sensitivity IS the flux's own
     // pressure dependence. Running both would be two stabilizations of different physical
     // dimension on one operator, which is what made every earlier measurement unattributable.
-    if (s.useRcImplicit && std::is_same_v<ElementTag, TetTag> && s.elementCount > 0)
+    if ((s.useRcImplicit || s.useRcOnly) && std::is_same_v<ElementTag, TetTag> && s.elementCount > 0)
     {
+        // --rc-only: K goes away entirely, because in their structure the RC sensitivity IS the
+        // pressure Laplacian. --rc-implicit keeps K and adds the sensitivity on top, which is the
+        // smaller step but is NOT their operator: with D ~ dtEff/rho the sensitivity and K carry
+        // the same Laplacian, so that mode roughly doubles the pressure diffusion.
+        if (s.useRcOnly)
+        {
+            thrust::fill(thrust::device_pointer_cast(s.d_valuesPre.data()),
+                         thrust::device_pointer_cast(s.d_valuesPre.data() + s.d_valuesPre.size()),
+                         RealType(0));
+            cudaDeviceSynchronize();
+        }
         // The SAME per-node D the flux term uses. Built here rather than reused from the step so
         // the operator cannot silently drift from the flux -- if these two ever disagree the solve
         // is inconsistent again, which is the whole bug this fixes.
@@ -4837,9 +4855,13 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
             cudaDeviceSynchronize();
         }
         if (s.rank == 0)
-            std::cout << "  [pressure-K] assembled Rhie-Chow sensitivities into K (D = alpha_u*V/"
-                         "(a_P*rho), the SAME D as the flux) -> operator is consistent with the "
-                         "stabilized flux; PSPG tau*L NOT applied\n";
+            std::cout << (s.useRcOnly
+                              ? "  [pressure-K] operator IS the Rhie-Chow sensitivity (K zeroed) --"
+                                " OpenAccel's literal structure, one term one D"
+                              : "  [pressure-K] Rhie-Chow sensitivity ADDED to K -- consistent with"
+                                " the flux, but K already carries a D-weighted Laplacian")
+                      << "  (D = alpha_u*V/(a_P*rho), the SAME D as the flux); PSPG tau*L NOT"
+                         " applied\n";
     }
     else if (s.usePSPG && std::is_same_v<ElementTag, TetTag> && s.elementCount > 0)
     {
