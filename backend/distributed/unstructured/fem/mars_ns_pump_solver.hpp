@@ -4994,7 +4994,7 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
                 thrust::device,
                 thrust::device_pointer_cast(s.d_valuesPre.data()),
                 thrust::device_pointer_cast(s.d_valuesPre.data() + s.nnz),
-                [] __device__(RealType v) { return double(v) * double(v); },
+                [] __device__(RealType v) -> double { return double(v) * double(v); },
                 0.0, thrust::plus<double>()));
             std::cout << "  [rc-dbg] |K|_F before RC = " << std::scientific << f0
                       << std::defaultfloat << "\n";
@@ -5032,7 +5032,7 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
                     thrust::device,
                     thrust::device_pointer_cast(s.d_valuesPre.data()),
                     thrust::device_pointer_cast(s.d_valuesPre.data() + s.nnz),
-                    [] __device__(RealType v) { return double(v) * double(v); },
+                    [] __device__(RealType v) -> double { return double(v) * double(v); },
                     0.0, thrust::plus<double>()));
             };
             double dmin = thrust::reduce(thrust::device, d_rcD.begin(), d_rcD.end(),
