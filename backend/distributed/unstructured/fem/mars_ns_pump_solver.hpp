@@ -10134,7 +10134,6 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
 // decoupled from the flux, so it can stay O(1) even when RC works -- use THIS
 // to tell whether RC is doing its job. tau matches the solve (s.rhieChowTau or
 // dt/rho). Returns roundoff-level max when the projection is consistent.
-template<typename KeyType, typename RealType, typename ElementTag>
 // Divergence of the VMS/Rhie-Chow STABILIZED flux at u^{n+1} -- the quantity the pressure solve
 // actually drives to zero, and the one a finite-volume code reports.
 //
@@ -10204,6 +10203,7 @@ inline void divMaxVmsOwned(NSStepper<KeyType, RealType, ElementTag>& s, RealType
     }
 }
 
+template<typename KeyType, typename RealType, typename ElementTag>
 inline void divMaxRhieChowOwned(NSStepper<KeyType, RealType, ElementTag>& s,
                                 RealType dt, RealType rho,
                                 RealType& outMax, RealType& outRms)
