@@ -4988,6 +4988,17 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
         // rho/dtEff, matching buildPressureRhsKernel's coef. useBdf2 defaults ON and the momentum
         // diagonal read below is the BDF2 one, so pairing it with rho/dt would leave the
         // sensitivity at 2/3 of the value the flux requires.
+        if (s.rank == 0)
+        {
+            double f0 = std::sqrt(thrust::transform_reduce(
+                thrust::device,
+                thrust::device_pointer_cast(s.d_valuesPre.data()),
+                thrust::device_pointer_cast(s.d_valuesPre.data() + s.nnz),
+                [] __device__(RealType v) { return double(v) * double(v); },
+                0.0, thrust::plus<double>()));
+            std::cout << "  [rc-dbg] |K|_F before RC = " << std::scientific << f0
+                      << std::defaultfloat << "\n";
+        }
         const RealType dtEffSetup     = (s.useBdf2 && s.d_valuesVel_bdf2.size() > 0)
                                             ? (RealType(2) * s.dtCached / RealType(3))
                                             : s.dtCached;
@@ -5012,6 +5023,28 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
                 s.d_rowPtr.data(), s.d_colInd.data(), s.numOwnedDofs,
                 s.d_valuesPre.data(), startE, numL);
             cudaDeviceSynchronize();
+        }
+        // Measure what actually landed in the matrix. Reasoning about this three different ways
+        // did not settle whether the contribution was reaching the solve; a norm does.
+        {
+            auto frob = [&] () -> double {
+                return std::sqrt(thrust::transform_reduce(
+                    thrust::device,
+                    thrust::device_pointer_cast(s.d_valuesPre.data()),
+                    thrust::device_pointer_cast(s.d_valuesPre.data() + s.nnz),
+                    [] __device__(RealType v) { return double(v) * double(v); },
+                    0.0, thrust::plus<double>()));
+            };
+            double dmin = thrust::reduce(thrust::device, d_rcD.begin(), d_rcD.end(),
+                                         1e300, thrust::minimum<RealType>());
+            double dmax = thrust::reduce(thrust::device, d_rcD.begin(), d_rcD.end(),
+                                         -1e300, thrust::maximum<RealType>());
+            if (s.rank == 0)
+                std::cout << "  [rc-dbg] |K|_F after RC = " << std::scientific << frob()
+                          << "   D range = [" << dmin << ", " << dmax << "]"
+                          << "   rho/dtEff = " << rcRhoOverDtEff
+                          << "   coef = (rho/dtEff)*D_max = " << (rcRhoOverDtEff * dmax)
+                          << std::defaultfloat << "\n";
         }
         if (s.rank == 0)
             std::cout << (s.useRcOnly
