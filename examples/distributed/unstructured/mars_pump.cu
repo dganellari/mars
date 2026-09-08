@@ -1597,7 +1597,7 @@ int main(int argc, char** argv)
                           << "  uMax/U=" << std::setprecision(2) << (inletU > 0 ? uMax/double(inletU) : uMax)
                           << "  d(u_rms)=" << std::scientific << std::setprecision(2) << dURms
                           << "  div*L/U=" << std::fixed << std::setprecision(2) << divND;
-                if (useRhieChow)
+                if (useRhieChow || useVMSStab)
                     std::cout << "  divRC*L/U=" << std::fixed << std::setprecision(2) << divRCnd;
                 if (adaptDt)
                     std::cout << "  dt=" << std::scientific << std::setprecision(2) << dt;

@@ -10135,6 +10135,75 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
 // to tell whether RC is doing its job. tau matches the solve (s.rhieChowTau or
 // dt/rho). Returns roundoff-level max when the projection is consistent.
 template<typename KeyType, typename RealType, typename ElementTag>
+// Divergence of the VMS/Rhie-Chow STABILIZED flux at u^{n+1} -- the quantity the pressure solve
+// actually drives to zero, and the one a finite-volume code reports.
+//
+// This matters more than it looks. `lastDivMax` is div of the RAW nodal velocity, and with any
+// Rhie-Chow stabilization that equals -S by construction: the conserved quantity is the stabilized
+// mass flux, not the reconstructed nodal velocity, and the nodal velocity is never exactly
+// divergence-free in ANY code that uses RC -- OpenAccel included. Every VMS measurement in this
+// project up to 2026-09-08 read the raw number (div*L/U = 2338 against a 2.16 baseline) and
+// concluded mass conservation was destroyed. That comparison was against a quantity OpenAccel
+// would not report.
+template<typename KeyType, typename RealType, typename ElementTag>
+inline void divMaxVmsOwned(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, RealType rho,
+                           RealType& outMax, RealType& outRms)
+{
+    outMax = 0; outRms = 0;
+    if constexpr (!std::is_same_v<ElementTag, TetTag>) { return; }
+    else
+    {
+    const auto& d_own  = s.domain.getNodeOwnershipMap();
+    const auto& d_conn = s.domain.getElementToNodeConnectivity();
+    auto cp = connPtrs<ElementTag, KeyType>(d_conn);
+    const size_t startElem = s.domain.startIndex();
+    const size_t numLocal  = s.domain.localElementCount();
+    const int eBlocks    = numLocal > 0 ? int((numLocal + s.blockSize - 1) / s.blockSize) : 0;
+    const int nodeBlocks = (s.nodeCount + s.blockSize - 1) / s.blockSize;
+
+    const bool     bdf2 = (s.useBdf2 && s.bdfStep >= 1 && s.d_valuesVel_bdf2.size() > 0);
+    const RealType dtE  = bdf2 ? (RealType(2) * dt / RealType(3)) : dt;
+    RealType tauV = s.rhieChowTau;
+    if (tauV <= 0) tauV = dtE / rho;
+
+    // G(p) exactly as the step builds it: the predictor's own gradient, halo-completed.
+    cstone::DeviceVector<RealType> d_GxN(s.nodeCount, RealType(0));
+    cstone::DeviceVector<RealType> d_GyN(s.nodeCount, RealType(0));
+    cstone::DeviceVector<RealType> d_GzN(s.nodeCount, RealType(0));
+    thrust::copy(thrust::device, s.d_gradPx.begin(), s.d_gradPx.end(), d_GxN.begin());
+    thrust::copy(thrust::device, s.d_gradPy.begin(), s.d_gradPy.end(), d_GyN.begin());
+    thrust::copy(thrust::device, s.d_gradPz.begin(), s.d_gradPz.end(), d_GzN.begin());
+    s.domain.exchangeNodeHalo(d_GxN);
+    s.domain.exchangeNodeHalo(d_GyN);
+    s.domain.exchangeNodeHalo(d_GzN);
+
+    cstone::DeviceVector<RealType> d_divAcc(s.nodeCount, RealType(0));
+    if (eBlocks > 0)
+    {
+        // mDotPrev = nullptr: this is a measurement, it must not disturb the stored flux history.
+        computeDivergenceVMSTetKernel<KeyType, RealType><<<eBlocks, s.blockSize>>>(
+            cp[0], cp[1], cp[2], cp[3],
+            s.d_u.data(), s.d_v.data(), s.d_w.data(),
+            s.d_p.data(),
+            d_GxN.data(), d_GyN.data(), d_GzN.data(),
+            s.domain.getNodeX().data(), s.domain.getNodeY().data(), s.domain.getNodeZ().data(),
+            s.d_areaVec_x.data(), s.d_areaVec_y.data(), s.d_areaVec_z.data(),
+            tauV, nullptr, /*keepSmooth=*/true,
+            RealType(1), nullptr,
+            (s.d_isBdryNode.size() == s.nodeCount ? s.d_isBdryNode.data() : nullptr),
+            d_divAcc.data(), startElem, numLocal);
+        cudaDeviceSynchronize();
+    }
+    s.domain.reverseExchangeNodeHaloAdd(d_divAcc);
+    cstone::DeviceVector<RealType> d_divNorm(s.nodeCount, RealType(0));
+    normalizeDivergencePerNodeKernel<RealType><<<nodeBlocks, s.blockSize>>>(
+        d_divAcc.data(), s.d_massNode.data(), s.d_node_to_dof.data(), d_own.data(),
+        d_divNorm.data(), s.nodeCount);
+    cudaDeviceSynchronize();
+    outMax = maxOwnedInteriorAbs<KeyType, RealType, ElementTag>(s, d_divNorm);
+    }
+}
+
 inline void divMaxRhieChowOwned(NSStepper<KeyType, RealType, ElementTag>& s,
                                 RealType dt, RealType rho,
                                 RealType& outMax, RealType& outRms)
@@ -10707,6 +10776,14 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
     {
         RealType rcMax = 0, rcRms = 0;
         divMaxRhieChowOwned<KeyType, RealType, ElementTag>(s, dt, rho, rcMax, rcRms);
+        s.lastDivRC = rcMax;
+    }
+    // Same for the VMS path, which had no such report -- so every VMS run so far was judged on
+    // div of the RAW velocity, which any Rhie-Chow scheme leaves at -S by construction.
+    else if (s.useVMSStab)
+    {
+        RealType rcMax = 0, rcRms = 0;
+        divMaxVmsOwned<KeyType, RealType, ElementTag>(s, dt, rho, rcMax, rcRms);
         s.lastDivRC = rcMax;
     }
 }
