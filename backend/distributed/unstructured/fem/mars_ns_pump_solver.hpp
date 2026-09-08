@@ -2002,9 +2002,30 @@ __global__ void assemblePSPGStiffnessTetKernel(
 // Assembling it here makes the operator consistent with the flux, which is what OpenAccel does and
 // what we were missing. The same per-node D scales both -- that is the entire point.
 //
-// Sign: the flux carries `-tau*grad_e(phi).A`, scattered +/- to the two SCS endpoints, and the
-// continuity equation moves it to the left, so the matrix receives `+tau*(dNdx_ic . A)` with the
-// same +/- scatter -- a D-weighted Laplacian on the median-dual faces, the same sign as K.
+// SIGN AND SCALING -- both got this wrong on the first attempt, so the derivation is written out.
+//
+// The solved system is `K phi = -(rho/dtEff) * divAcc` (see buildPressureRhsKernel and the invDt
+// at the pressure solve, which is 3/(2dt) under BDF2). K is the BARE Galerkin Laplacian: the
+// rho/dtEff lives in the RHS coefficient, NOT in K.
+//
+// The flux carries `-D*grad_e(phi).A`, scattered +flow to iL and -flow to iR. So
+//     divAcc_iL += -D * sum_ic phi_ic (dNdx_ic . A)
+// and moving that to the left through the RHS coefficient gives the matrix entries
+//     [iL][ic] = -(rho/dtEff) * D * (dNdx_ic . A)
+//     [iR][ic] = +(rho/dtEff) * D * (dNdx_ic . A)
+//
+// Two checks that it is the right sign: (a) against the compact form
+// `-tau*(p_R-p_L)*|A|^2/(A.dx)`, whose matrix has a POSITIVE diagonal, like K and like PSPG's
+// tau*L; (b) dNdx_L points toward node L while A points away from L's control volume, so
+// (dNdx_L . A) < 0 and the leading minus makes the diagonal positive.
+//
+// The scaling matters enormously: rho/dtEff is ~5e8 for the pump. Omitting it made the whole
+// contribution ~1e-9 of K, i.e. a no-op.
+//
+// Note the product is nearly dt-INDEPENDENT: a_P is mass-dominated (~M/dtEff), so
+// D ~ alpha_u*dtEff/rho and (rho/dtEff)*D ~ alpha_u. That is why assembling once at setup is
+// sound. It would NOT be sound with adaptive dt (--cfl), where a_P changes every step -- the
+// operator would have to be rebuilt.
 template<typename KeyType, typename RealType>
 __global__ void assembleRhieChowSensitivityTetKernel(
     const KeyType* c0, const KeyType* c1, const KeyType* c2, const KeyType* c3,
@@ -2012,6 +2033,7 @@ __global__ void assembleRhieChowSensitivityTetKernel(
     const RealType* areaVecX, const RealType* areaVecY, const RealType* areaVecZ,
     const RealType* tauNode,      // per-node D = alpha_u*V/(a_P*rho); null -> tauScalar
     RealType tauScalar,
+    RealType rhoOverDtEff,        // the RHS coefficient; the matrix must carry it too
     const int* nodeToDof, const uint8_t* ownership,
     const int* rowPtr, const int* colInd, int numOwnedDofs,
     RealType* values, size_t startElem, size_t numLocal)
@@ -2063,7 +2085,8 @@ __global__ void assembleRhieChowSensitivityTetKernel(
 
         for (int ic = 0; ic < NPE; ++ic)
         {
-            const RealType lhs = D * (dNdx[ic][0] * Ax + dNdx[ic][1] * Ay + dNdx[ic][2] * Az);
+            const RealType lhs =
+                -rhoOverDtEff * D * (dNdx[ic][0] * Ax + dNdx[ic][1] * Ay + dNdx[ic][2] * Az);
             scatterRow(iL, ic, +lhs);
             scatterRow(iR, ic, -lhs);
         }
@@ -3432,6 +3455,7 @@ struct NSStepper
     // This mode zeroes K and lets the SCS D-weighted Laplacian be the entire operator.
     bool useRcOnly        = false;
     RealType rhoCached    = RealType(1);   // set by the driver; the setup assembly needs it
+    RealType dtCached     = RealType(1);   // ditto -- the RC sensitivity carries rho/dtEff
     // OpenAccel's relaxation, which MARS ran without entirely. Their centrifugal-pump input uses
     // 0.3 for mass, velocity and pressure alike (examples/centrifugalPump/input.i:110-114).
     // OFF by default. OpenAccel's mDotURF is only sound because SIMPLE's OUTER LOOP drives
@@ -4838,6 +4862,10 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
                 thrust::transform(thrust::device, d_rcD.begin(), d_rcD.end(), d_rcD.begin(),
                                   [a = s.relaxU] __device__(RealType v) { return a * v; });
         }
+        // Match the RHS coefficient exactly. bdfStep is 0 at setup so this is rho/dt; the
+        // product (rho/dtEff)*D is nearly dt-independent (see the kernel's derivation), so the
+        // 1.5x that BDF2 later introduces in dtEff is cancelled by the same change in a_P.
+        const RealType rcRhoOverDtEff = s.rhoCached / s.dtCached;
         const size_t startE = s.domain.startIndex();
         const size_t numL   = s.domain.localElementCount();
         if (numL > 0)
@@ -4848,7 +4876,7 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
                 std::get<2>(d_conn).data(), std::get<3>(d_conn).data(),
                 s.domain.getNodeX().data(), s.domain.getNodeY().data(), s.domain.getNodeZ().data(),
                 s.d_areaVec_x.data(), s.d_areaVec_y.data(), s.d_areaVec_z.data(),
-                thrust::raw_pointer_cast(d_rcD.data()), tauFallback,
+                thrust::raw_pointer_cast(d_rcD.data()), tauFallback, rcRhoOverDtEff,
                 s.d_node_to_dof.data(), d_nodeOwnership.data(),
                 s.d_rowPtr.data(), s.d_colInd.data(), s.numOwnedDofs,
                 s.d_valuesPre.data(), startE, numL);

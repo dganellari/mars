@@ -488,6 +488,7 @@ int main(int argc, char** argv)
     s.useRcImplicit = rcImplicit;
     s.useRcOnly     = rcOnly;
     s.rhoCached     = RealType(rho);
+    s.dtCached      = RealType(dt);
     s.relaxMass   = RealType(relaxMass);
     s.relaxU      = RealType(relaxU);
     s.usePSPG     = usePSPG;       // implicit PSPG (tau*L in DDT operator)
