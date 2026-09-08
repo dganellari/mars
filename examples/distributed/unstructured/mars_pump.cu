@@ -502,8 +502,19 @@ int main(int argc, char** argv)
     if (rcBlend && useVMSStab)
     {
         if (rank == 0)
-            std::cerr << "Error: --rc-blend and --vms-stab both apply the Rhie-Chow difference,"
-                         " one in the operator and one on the RHS. Use one.\n";
+            std::cerr << "Error: --rc-blend puts the whole Rhie-Chow difference in the operator;"
+                         " --vms-stab puts it on the RHS. Use one.\n";
+        MPI_Finalize();
+        return 1;
+    }
+    // OpenAccel's structure is the PAIR: the matrix carries the implicit grad p half
+    // (pressureCorrectionAssemblerElemTerms.cpp:548), the flux carries the full explicit
+    // difference (flowModel.cpp:6242). One without the other is what produced div*L/U = 2338.
+    if ((rcImplicit || rcOnly) && !useVMSStab)
+    {
+        if (rank == 0)
+            std::cerr << "Error: --rc-implicit/--rc-only supply only the MATRIX half of Rhie-Chow."
+                         " OpenAccel pairs it with the explicit flux difference -- add --vms-stab.\n";
         MPI_Finalize();
         return 1;
     }

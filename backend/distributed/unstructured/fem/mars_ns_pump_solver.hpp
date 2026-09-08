@@ -4934,29 +4934,24 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
     // Laplacian with no relation to the mass flux; the Rhie-Chow sensitivity IS the flux's own
     // pressure dependence. Running both would be two stabilizations of different physical
     // dimension on one operator, which is what made every earlier measurement unattributable.
-    // DISARMED 2026-09-08. Both modes assemble a scalar multiple of K and contain NO Rhie-Chow.
+    // --rc-implicit: the implicit HALF of Rhie-Chow, exactly as OpenAccel assembles it.
     //
-    // On a P1 tet the per-node signed median-dual area sum is B_i = -Vol*gradN_i, so the scatter
-    // below collapses onto the Galerkin stiffness exactly: R = (rho/dtEff)*D*K, with
-    // (rho/dt)*D = (2/3)*relaxU ~ 0.2. So --rc-implicit solves 1.2K and --rc-only solves 0.2K.
+    // Theirs (pressureCorrectionAssemblerElemTerms.cpp:548): the matrix gets
+    //     lhsfac = -rho*D * (dNdx_c . A_ip)      scattered +rowL / -rowR
+    // and the FLUX separately carries the full difference -rho*D*(grad p - Gp).A.
     //
-    // The error: only the grad_e(phi) half was made implicit. G(p) is equally linear in p, so
-    // G(phi) is equally implicit -- Rhie-Chow IS the difference D*(G - grad_e), and taking one
-    // half gives back the plain Laplacian. Same mistake as keepSmooth=false, which this project
-    // had already diagnosed and written up. And S(p^n) was never removed from the RHS, so the
-    // fixed point is unchanged regardless.
+    // On P1 tets that matrix term collapses to a scaled Galerkin stiffness -- B_i = -Vol*gradN_i,
+    // verified to 6.7e-16 in scripts/rc_algebra_check.py. That is TRUE OF THEIRS TOO, and it is
+    // not a defect: the Rhie-Chow physics is in the flux DIFFERENCE, and the matrix half exists so
+    // the operator knows about the grad p dependence the flux carries. Without it the solve drives
+    // div(stabilized flux) to zero using an operator blind to the stabilization, and the mismatch
+    // comes back as raw divergence -- measured div*L/U = 2338 against a 2.16 baseline, unchanged
+    // by three SIMPLE outer correctors.
     //
-    // Left in place, refusing to run, because the assembly mechanics are the reusable part: the
-    // right operator is K + (rho/dtEff)*D*(K_compact - A_gram) -- the DIFFERENCE, with the
-    // explicit term dropped from the divergence. See pump_explained.md 2026-09-08.
-    const bool rcRequested = (s.useRcImplicit || s.useRcOnly);
-    const bool rcForced    = rcRequested && std::getenv("MARS_RC_KNOWN_WRONG") != nullptr;
-    if (rcRequested && !rcForced && s.rank == 0)
-        std::cerr << "ERROR: --rc-implicit/--rc-only assemble a scalar multiple of K and contain no"
-                     " Rhie-Chow (R = (rho/dtEff)*D*K on P1 tets, so 1.2K and 0.2K respectively)."
-                     " Not applied. MARS_RC_KNOWN_WRONG=1 forces it anyway. See"
-                     " internal-notes/pump/core/pump_explained.md, 2026-09-08.\n";
-    if (rcForced && std::is_same_v<ElementTag, TetTag> && s.elementCount > 0)
+    // So this REQUIRES --vms-stab: matrix half here, full explicit difference on the RHS. That
+    // pair is their structure. (An earlier note here called this "no Rhie-Chow" and disarmed it;
+    // the algebra was right and the conclusion was wrong.)
+    if ((s.useRcImplicit || s.useRcOnly) && std::is_same_v<ElementTag, TetTag> && s.elementCount > 0)
     {
         // --rc-only: K goes away entirely, because in their structure the RC sensitivity IS the
         // pressure Laplacian. --rc-implicit keeps K and adds the sensitivity on top, which is the
@@ -4990,9 +4985,20 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
         // Match the RHS coefficient exactly. bdfStep is 0 at setup so this is rho/dt; the
         // product (rho/dtEff)*D is nearly dt-independent (see the kernel's derivation), so the
         // 1.5x that BDF2 later introduces in dtEff is cancelled by the same change in a_P.
-        const RealType rcRhoOverDtEff = s.rhoCached / s.dtCached;
-        const size_t startE = s.domain.startIndex();
-        const size_t numL   = s.domain.localElementCount();
+        // rho/dtEff, matching buildPressureRhsKernel's coef. useBdf2 defaults ON and the momentum
+        // diagonal read below is the BDF2 one, so pairing it with rho/dt would leave the
+        // sensitivity at 2/3 of the value the flux requires.
+        const RealType dtEffSetup     = (s.useBdf2 && s.d_valuesVel_bdf2.size() > 0)
+                                            ? (RealType(2) * s.dtCached / RealType(3))
+                                            : s.dtCached;
+        const RealType rcRhoOverDtEff = s.rhoCached / dtEffSetup;
+        // ALL elements, not just owned. Every other matrix assembler in this file loops
+        // s.elementCount (= owned + halo) and relies on the owned-ROW filter inside the scatter.
+        // The double-count hazard the divergence kernel warns about exists only because divAccNode
+        // is reverse-halo-folded afterwards; a CSR assembly has no such fold, so looping owned-only
+        // simply under-assembles every rank-boundary row.
+        const size_t startE = 0;
+        const size_t numL   = s.elementCount;
         if (numL > 0)
         {
             int eB = int((numL + s.blockSize - 1) / s.blockSize);
