@@ -4831,7 +4831,29 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
     // Laplacian with no relation to the mass flux; the Rhie-Chow sensitivity IS the flux's own
     // pressure dependence. Running both would be two stabilizations of different physical
     // dimension on one operator, which is what made every earlier measurement unattributable.
-    if ((s.useRcImplicit || s.useRcOnly) && std::is_same_v<ElementTag, TetTag> && s.elementCount > 0)
+    // DISARMED 2026-09-08. Both modes assemble a scalar multiple of K and contain NO Rhie-Chow.
+    //
+    // On a P1 tet the per-node signed median-dual area sum is B_i = -Vol*gradN_i, so the scatter
+    // below collapses onto the Galerkin stiffness exactly: R = (rho/dtEff)*D*K, with
+    // (rho/dt)*D = (2/3)*relaxU ~ 0.2. So --rc-implicit solves 1.2K and --rc-only solves 0.2K.
+    //
+    // The error: only the grad_e(phi) half was made implicit. G(p) is equally linear in p, so
+    // G(phi) is equally implicit -- Rhie-Chow IS the difference D*(G - grad_e), and taking one
+    // half gives back the plain Laplacian. Same mistake as keepSmooth=false, which this project
+    // had already diagnosed and written up. And S(p^n) was never removed from the RHS, so the
+    // fixed point is unchanged regardless.
+    //
+    // Left in place, refusing to run, because the assembly mechanics are the reusable part: the
+    // right operator is K + (rho/dtEff)*D*(K_compact - A_gram) -- the DIFFERENCE, with the
+    // explicit term dropped from the divergence. See pump_explained.md 2026-09-08.
+    const bool rcRequested = (s.useRcImplicit || s.useRcOnly);
+    const bool rcForced    = rcRequested && std::getenv("MARS_RC_KNOWN_WRONG") != nullptr;
+    if (rcRequested && !rcForced && s.rank == 0)
+        std::cerr << "ERROR: --rc-implicit/--rc-only assemble a scalar multiple of K and contain no"
+                     " Rhie-Chow (R = (rho/dtEff)*D*K on P1 tets, so 1.2K and 0.2K respectively)."
+                     " Not applied. MARS_RC_KNOWN_WRONG=1 forces it anyway. See"
+                     " internal-notes/pump/core/pump_explained.md, 2026-09-08.\n";
+    if (rcForced && std::is_same_v<ElementTag, TetTag> && s.elementCount > 0)
     {
         // --rc-only: K goes away entirely, because in their structure the RC sensitivity IS the
         // pressure Laplacian. --rc-implicit keeps K and adds the sensitivity on top, which is the
