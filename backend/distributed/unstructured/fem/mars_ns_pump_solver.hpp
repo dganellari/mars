@@ -1984,6 +1984,59 @@ __global__ void assemblePSPGStiffnessTetKernel(
     }
 }
 
+// Galerkin stiffness assembled into the DDT sparsity pattern, scaled by (1-c).
+//
+// Companion to the Rhie-Chow blend below. K's stencil is strictly INSIDE the DDT one -- verified
+// numerically in scripts/rc_sparsity_check.py: on a 2-tet mesh A_gram has 25 nonzeros to K's 19,
+// six of them outside K's pattern (the 2-ring coupling through a shared face), and zero K entries
+// outside A_gram's. So K can be written into the wider pattern, but not the reverse: truncating
+// A_gram to K's pattern would drop those entries and destroy the zero row sums that put constants
+// in the null space, which is what makes the operator solvable at all.
+template<typename KeyType, typename RealType>
+__global__ void assembleScaledStiffnessIntoDDTKernel(
+    const KeyType* c0, const KeyType* c1, const KeyType* c2, const KeyType* c3,
+    const RealType* nodeX, const RealType* nodeY, const RealType* nodeZ,
+    RealType scale,
+    const int* nodeToDof, const uint8_t* ownership,
+    const int* rowPtr, const int* colInd, int numOwnedDofs,
+    RealType* values, size_t numElem)
+{
+    size_t e = blockIdx.x * blockDim.x + threadIdx.x;
+    if (e >= numElem) return;
+    constexpr int NPE = ElemTraits<TetTag>::NodesPerElem;
+    const KeyType* cc[4] = {c0, c1, c2, c3};
+    KeyType n[NPE];
+    for (int i = 0; i < NPE; ++i) n[i] = cc[i][e];
+    RealType coords[4][3];
+    for (int i = 0; i < NPE; ++i)
+    {
+        coords[i][0] = nodeX[n[i]];
+        coords[i][1] = nodeY[n[i]];
+        coords[i][2] = nodeZ[n[i]];
+    }
+    RealType det, dNdx[4][3];
+    Tet4CVFEM::jacobian_and_dNdx<RealType>(coords, det, dNdx);
+    const RealType vol = det / RealType(6);
+    if (!(vol > RealType(0))) return;
+    const RealType coef = scale * vol;
+    for (int i = 0; i < NPE; ++i)
+    {
+        if (ownership[n[i]] != 1) continue;
+        int dofI = nodeToDof[n[i]];
+        if (dofI < 0 || dofI >= numOwnedDofs) continue;
+        const int rs = rowPtr[dofI], re = rowPtr[dofI + 1];
+        for (int j = 0; j < NPE; ++j)
+        {
+            int dofJ = nodeToDof[n[j]];
+            if (dofJ < 0) continue;
+            const RealType kij = coef * (dNdx[i][0]*dNdx[j][0]
+                                       + dNdx[i][1]*dNdx[j][1]
+                                       + dNdx[i][2]*dNdx[j][2]);
+            fem::atomicAddSparseEntry(values, colInd, rs, re, dofJ, kij);
+        }
+    }
+}
+
 // OpenAccel's "rhie-chow sensitivities" -- the half of Rhie-Chow that belongs in the MATRIX.
 // (their pressureCorrection/pressureCorrectionAssemblerElemTerms.cpp:548-566)
 //
@@ -3454,6 +3507,9 @@ struct NSStepper
     // sensitivity is extra), which is why --rc-implicit can double the pressure diffusion.
     // This mode zeroes K and lets the SCS D-weighted Laplacian be the entire operator.
     bool useRcOnly        = false;
+    // --rc-blend: A = (1-c)K + c*A_gram, the Rhie-Chow difference as an OPERATOR.
+    bool     useRcBlend   = false;
+    RealType rcBlend      = RealType(-1);   // <=0 -> (2/3)*relaxU
     RealType rhoCached    = RealType(1);   // set by the driver; the setup assembly needs it
     RealType dtCached     = RealType(1);   // ditto -- the RC sensitivity carries rho/dtEff
     // OpenAccel's relaxation, which MARS ran without entirely. Their centrifugal-pump input uses
@@ -4418,6 +4474,53 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
                 s.d_valuesDDT.data(), s.nodeCount);
             cudaDeviceSynchronize();
         }
+
+        // --rc-blend: the Rhie-Chow operator, as OpenAccel has it.
+        //
+        //     A = (1-c)*K + c*A_gram        c = (rho/dtEff)*D = (2/3)*relaxU
+        //
+        // Rhie-Chow is D*(G - grad_e p): G is the projected NODAL gradient, whose divergence is
+        // A_gram = D M^-1 D^T, and grad_e is the ELEMENT gradient, whose divergence is K. So the
+        // stabilization is the DIFFERENCE of the two Laplacians, and the operator is a blend of
+        // them -- not K plus something, which is what the earlier --rc-implicit got wrong by
+        // implicitizing only the grad_e half and landing back on a multiple of K.
+        //
+        // Verified in scripts/rc_algebra_check.py on random tets: K - A_gram is NOT a scalar
+        // multiple of K (52-94% survives removing the best-fit multiple), it is symmetric to
+        // machine precision, and its row sums vanish. The stabilizing direction is A_gram - K
+        // (eigenvalues of K - A_gram are all <= 0), which is what this blend produces for c > 0.
+        //
+        // c is a SCALAR on purpose. A per-node c breaks the null space: sum_j (1-c_ij)K_ij is not
+        // zero once c varies, so constants stop being annihilated and the pin no longer removes a
+        // genuine null mode. And it would gain nothing -- a_P is mass-dominated by ~5000x, so
+        // (rho/dtEff)*D is already the constant (2/3)*relaxU everywhere except the Dirichlet rows,
+        // which get overwritten anyway.
+        if (s.useRcBlend && s.nnzDDT > 0)
+        {
+            const RealType c = (s.rcBlend > RealType(0)) ? s.rcBlend
+                                                         : (RealType(2) / RealType(3)) * s.relaxU;
+            thrust::transform(thrust::device,
+                              thrust::device_pointer_cast(s.d_valuesDDT.data()),
+                              thrust::device_pointer_cast(s.d_valuesDDT.data() + s.nnzDDT),
+                              thrust::device_pointer_cast(s.d_valuesDDT.data()),
+                              [c] __device__(RealType v) { return c * v; });
+            cudaDeviceSynchronize();
+            const int eB = int((s.elementCount + s.blockSize - 1) / s.blockSize);
+            assembleScaledStiffnessIntoDDTKernel<KeyType, RealType><<<eB, s.blockSize>>>(
+                std::get<0>(d_conn).data(), std::get<1>(d_conn).data(),
+                std::get<2>(d_conn).data(), std::get<3>(d_conn).data(),
+                s.domain.getNodeX().data(), s.domain.getNodeY().data(), s.domain.getNodeZ().data(),
+                RealType(1) - c,
+                s.d_node_to_dof.data(), d_nodeOwnership.data(),
+                s.d_rowPtrDDT.data(), s.d_colIndDDT.data(), s.numOwnedDofs,
+                s.d_valuesDDT.data(), s.elementCount);
+            cudaDeviceSynchronize();
+            if (s.rank == 0)
+                std::cout << "  [rc-blend] pressure operator = (1-c)*K + c*A_gram, c=" << c
+                          << " -- the Rhie-Chow difference, assembled in the DDT pattern because"
+                          << " A_gram is wider than K\n";
+        }
+
         // Same post-assembly health check as the hex branch (rank 0 only).
         if (s.rank == 0)
         {

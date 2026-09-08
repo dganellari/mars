@@ -90,6 +90,8 @@ int main(int argc, char** argv)
     bool        useVMSStab = false;
     bool        rcImplicit = false;   // --rc-implicit: RC sensitivity ADDED to K
     bool        rcOnly     = false;   // --rc-only: RC sensitivity IS the operator (K zeroed)
+    bool        rcBlend    = false;   // --rc-blend: A = (1-c)K + c*A_gram, the RC difference
+    double      rcBlendC   = -1.0;    // --rc-blend=V overrides c; <=0 -> (2/3)*relax_u
     // OFF by default: OpenAccel's mDotURF is sound only because SIMPLE's outer loop closes the
     // lag inside the step. This projection has no outer loop, so a blend leaves (1-urf)*div(u**)
     // unprojected permanently, with no dt in it to vanish under refinement.
@@ -177,6 +179,8 @@ int main(int argc, char** argv)
         else if (a == "--vms-stab")                  useVMSStab = true;
         else if (a == "--rc-implicit")               rcImplicit = true;
         else if (a == "--rc-only")                   rcOnly     = true;
+        else if (a == "--rc-blend")                  rcBlend    = true;
+        else if (a.rfind("--rc-blend=", 0) == 0)   { rcBlend = true; rcBlendC = std::stod(a.substr(11)); }
         else if (a.rfind("--relax-mass=", 0) == 0)   relaxMass = std::stod(a.substr(13));
         else if (a.rfind("--relax-u=", 0) == 0)      relaxU    = std::stod(a.substr(10));
         else if (a == "--pressure-k")                pressureK  = true;  // Galerkin K + FEM-consistent weak div/grad projection
@@ -487,6 +491,25 @@ int main(int argc, char** argv)
     s.useVMSStab  = useVMSStab;
     s.useRcImplicit = rcImplicit;
     s.useRcOnly     = rcOnly;
+    s.useRcBlend    = rcBlend;
+    s.rcBlend       = RealType(rcBlendC);
+    // The blend lives in the DDT CSR, so the solve has to be pointed at it.
+    if (rcBlend) setenv("MARS_HYPRE_USE_DDT", "1", 1);
+    // --rc-blend PUTS the Rhie-Chow difference in the operator. --vms-stab puts the same
+    // difference on the RHS. Running both applies it twice -- and worse, the RHS copy is the
+    // explicit lagged one whose leftover S(p^n) is exactly the mass error the operator form
+    // exists to remove (measured: Q_out/Q_in 1.29-1.50, div*L/U 2338-3594).
+    if (rcBlend && useVMSStab)
+    {
+        if (rank == 0)
+            std::cerr << "Error: --rc-blend and --vms-stab both apply the Rhie-Chow difference,"
+                         " one in the operator and one on the RHS. Use one.\n";
+        MPI_Finalize();
+        return 1;
+    }
+    if (rcBlend && usePSPG && rank == 0)
+        std::cerr << "WARNING: --rc-blend with --pspg stacks two pressure stabilizations of"
+                     " different physical dimension; results cannot be attributed.\n";
     s.rhoCached     = RealType(rho);
     s.dtCached      = RealType(dt);
     s.relaxMass   = RealType(relaxMass);
