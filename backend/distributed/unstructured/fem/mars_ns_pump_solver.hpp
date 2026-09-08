@@ -1984,6 +1984,92 @@ __global__ void assemblePSPGStiffnessTetKernel(
     }
 }
 
+// OpenAccel's "rhie-chow sensitivities" -- the half of Rhie-Chow that belongs in the MATRIX.
+// (their pressureCorrection/pressureCorrectionAssemblerElemTerms.cpp:548-566)
+//
+// The stabilized SCS mass flux is
+//     mdot_ip = u_ip.A + tau*( G(p) - grad_e(p) ).A
+// and `grad_e(p)` is LINEAR in the pressure. Writing p^{n+1} = p^n + phi, the `grad_e(phi)` part
+// is linear in the UNKNOWN and therefore belongs on the left-hand side; only `G(p^n) - grad_e(p^n)`
+// is genuinely explicit.
+//
+// MARS previously put the WHOLE term on the RHS. That is why it did not work: the projection then
+// drives div(stabilized flux) = 0 using an operator (K + tau*L) that knows nothing about the
+// stabilization in the flux, so the mismatch comes straight back out as raw divergence. Measured:
+// div*L/U = 2338 against a 2.16 baseline, and UNCHANGED by three SIMPLE outer correctors, because
+// correcting makes phi consistent with the operator and the operator was the wrong one.
+//
+// Assembling it here makes the operator consistent with the flux, which is what OpenAccel does and
+// what we were missing. The same per-node D scales both -- that is the entire point.
+//
+// Sign: the flux carries `-tau*grad_e(phi).A`, scattered +/- to the two SCS endpoints, and the
+// continuity equation moves it to the left, so the matrix receives `+tau*(dNdx_ic . A)` with the
+// same +/- scatter -- a D-weighted Laplacian on the median-dual faces, the same sign as K.
+template<typename KeyType, typename RealType>
+__global__ void assembleRhieChowSensitivityTetKernel(
+    const KeyType* c0, const KeyType* c1, const KeyType* c2, const KeyType* c3,
+    const RealType* nodeX, const RealType* nodeY, const RealType* nodeZ,
+    const RealType* areaVecX, const RealType* areaVecY, const RealType* areaVecZ,
+    const RealType* tauNode,      // per-node D = alpha_u*V/(a_P*rho); null -> tauScalar
+    RealType tauScalar,
+    const int* nodeToDof, const uint8_t* ownership,
+    const int* rowPtr, const int* colInd, int numOwnedDofs,
+    RealType* values, size_t startElem, size_t numLocal)
+{
+    size_t k = blockIdx.x * blockDim.x + threadIdx.x;
+    if (k >= numLocal) return;
+    size_t e = startElem + k;   // area vectors are sized elementCount, so they take e, not k
+
+    constexpr int NPE  = ElemTraits<TetTag>::NodesPerElem;   // 4
+    constexpr int NSCS = ElemTraits<TetTag>::ScsPerElem;     // 6
+    const KeyType* cc[4] = {c0, c1, c2, c3};
+    KeyType n[NPE];
+    for (int i = 0; i < NPE; ++i) n[i] = cc[i][e];
+
+    RealType coords[4][3];
+    for (int i = 0; i < NPE; ++i)
+    {
+        coords[i][0] = nodeX[n[i]];
+        coords[i][1] = nodeY[n[i]];
+        coords[i][2] = nodeZ[n[i]];
+    }
+    RealType det, dNdx[4][3];
+    Tet4CVFEM::jacobian_and_dNdx<RealType>(coords, det, dNdx);
+    if (!(det > RealType(0))) return;   // degenerate tet
+
+    // One scatter helper so the L/R rows cannot drift apart.
+    auto scatterRow = [&] (KeyType nodeRow, int ic, RealType val)
+    {
+        if (ownership[nodeRow] != 1) return;
+        int dofI = nodeToDof[nodeRow];
+        if (dofI < 0 || dofI >= numOwnedDofs) return;
+        int dofJ = nodeToDof[n[ic]];
+        if (dofJ < 0) return;
+        fem::atomicAddSparseEntry(values, colInd, rowPtr[dofI], rowPtr[dofI + 1], dofJ, val);
+    };
+
+    for (int ip = 0; ip < NSCS; ++ip)
+    {
+        int nodeL, nodeR;
+        scsLR<TetTag>(ip, nodeL, nodeR);
+        const KeyType iL = n[nodeL], iR = n[nodeR];
+
+        const size_t off = e * NSCS + ip;
+        const RealType Ax = areaVecX[off], Ay = areaVecY[off], Az = areaVecZ[off];
+
+        // Same face coefficient the flux term uses: the average of the two endpoints.
+        const RealType D = tauNode ? RealType(0.5) * (tauNode[iL] + tauNode[iR]) : tauScalar;
+        if (!(D > RealType(0))) continue;
+
+        for (int ic = 0; ic < NPE; ++ic)
+        {
+            const RealType lhs = D * (dNdx[ic][0] * Ax + dNdx[ic][1] * Ay + dNdx[ic][2] * Az);
+            scatterRow(iL, ic, +lhs);
+            scatterRow(iR, ic, -lhs);
+        }
+    }
+}
+
 // Linearized convection block C for --implicit-advection (tet-only).
 //   C_ij = int N_i (a . grad N_j) = (V/4) * (a . grad N_j)
 // with a = element-mean u^n. On a linear tet a.gradN_j is constant over the
@@ -3335,6 +3421,10 @@ struct NSStepper
     // tet-only for now. Uses the residual (projected-nodal-grad - element-ip-grad),
     // no A.dx denominator -> skew-robust. tau reuses rhieChowTau (<=0 => dt/rho).
     bool useVMSStab       = false;
+    // --rc-implicit: assemble the Rhie-Chow pressure sensitivity into the operator, as OpenAccel
+    // does, instead of leaving the whole term on the RHS. Replaces PSPG on this path.
+    bool useRcImplicit    = false;
+    RealType rhoCached    = RealType(1);   // set by the driver; the setup assembly needs it
     // OpenAccel's relaxation, which MARS ran without entirely. Their centrifugal-pump input uses
     // 0.3 for mass, velocity and pressure alike (examples/centrifugalPump/input.i:110-114).
     // OFF by default. OpenAccel's mDotURF is only sound because SIMPLE's OUTER LOOP drives
@@ -4706,7 +4796,52 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
     // (d_rowPtr/d_colInd -> d_valuesPre). Tet-only; gated on usePSPG so no flag
     // leaves K bare (legacy). Done here (after tau, before the pin) so the pin
     // and the Apre wrap see the stabilized operator.
-    if (s.usePSPG && std::is_same_v<ElementTag, TetTag> && s.elementCount > 0)
+    // --rc-implicit REPLACES PSPG rather than stacking with it. tau*L is a plain pressure
+    // Laplacian with no relation to the mass flux; the Rhie-Chow sensitivity IS the flux's own
+    // pressure dependence. Running both would be two stabilizations of different physical
+    // dimension on one operator, which is what made every earlier measurement unattributable.
+    if (s.useRcImplicit && std::is_same_v<ElementTag, TetTag> && s.elementCount > 0)
+    {
+        // The SAME per-node D the flux term uses. Built here rather than reused from the step so
+        // the operator cannot silently drift from the flux -- if these two ever disagree the solve
+        // is inconsistent again, which is the whole bug this fixes.
+        cstone::DeviceVector<RealType> d_rcD(s.nodeCount, RealType(0));
+        const RealType tauFallback = s.rhieChowTau > RealType(0) ? s.rhieChowTau : RealType(0);
+        {
+            int nB = int((s.nodeCount + s.blockSize - 1) / s.blockSize);
+            buildVmsNodalTauKernel<RealType><<<nB, s.blockSize>>>(
+                s.d_diagPtr.data(),
+                (s.d_valuesVel_bdf2.size() > 0 ? s.d_valuesVel_bdf2.data() : s.d_valuesVel.data()),
+                s.d_node_to_dof.data(), s.d_mass.data(), s.rhoCached, tauFallback,
+                d_rcD.data(), s.nodeCount, s.numOwnedDofs);
+            cudaDeviceSynchronize();
+            s.domain.exchangeNodeHalo(d_rcD);   // both SCS endpoints are read
+            if (s.relaxU > RealType(0) && s.relaxU < RealType(1))
+                thrust::transform(thrust::device, d_rcD.begin(), d_rcD.end(), d_rcD.begin(),
+                                  [a = s.relaxU] __device__(RealType v) { return a * v; });
+        }
+        const size_t startE = s.domain.startIndex();
+        const size_t numL   = s.domain.localElementCount();
+        if (numL > 0)
+        {
+            int eB = int((numL + s.blockSize - 1) / s.blockSize);
+            assembleRhieChowSensitivityTetKernel<KeyType, RealType><<<eB, s.blockSize>>>(
+                std::get<0>(d_conn).data(), std::get<1>(d_conn).data(),
+                std::get<2>(d_conn).data(), std::get<3>(d_conn).data(),
+                s.domain.getNodeX().data(), s.domain.getNodeY().data(), s.domain.getNodeZ().data(),
+                s.d_areaVec_x.data(), s.d_areaVec_y.data(), s.d_areaVec_z.data(),
+                thrust::raw_pointer_cast(d_rcD.data()), tauFallback,
+                s.d_node_to_dof.data(), d_nodeOwnership.data(),
+                s.d_rowPtr.data(), s.d_colInd.data(), s.numOwnedDofs,
+                s.d_valuesPre.data(), startE, numL);
+            cudaDeviceSynchronize();
+        }
+        if (s.rank == 0)
+            std::cout << "  [pressure-K] assembled Rhie-Chow sensitivities into K (D = alpha_u*V/"
+                         "(a_P*rho), the SAME D as the flux) -> operator is consistent with the "
+                         "stabilized flux; PSPG tau*L NOT applied\n";
+    }
+    else if (s.usePSPG && std::is_same_v<ElementTag, TetTag> && s.elementCount > 0)
     {
         RealType tauL = (s.pspgTau > RealType(0)) ? s.pspgTau : s.pspgTauAuto;
         if (tauL > RealType(0))
