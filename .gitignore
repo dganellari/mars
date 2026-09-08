@@ -73,3 +73,4 @@ __pycache__/
 docs/pasc_matrixfree.pdf
 docs/pasc_matrixfree.tex
 *.pdf
+scripts/regression_results/
