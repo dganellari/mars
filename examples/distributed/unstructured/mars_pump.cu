@@ -1049,7 +1049,10 @@ int main(int argc, char** argv)
             const size_t nNodes = amr.domain().getNodeCount();
             std::vector<int> triNode;
             std::vector<RealType> triAx, triAy, triAz;
-            auto collectOpeningFacets = [&](const std::string& nm)
+            // Which opening each facet came from: their pressure outlet carries the Rhie-Chow
+            // term, their velocity inlet does not (flowModel.cpp:8418 vs :7181).
+            std::vector<uint8_t> triIsOut;
+            auto collectOpeningFacets = [&](const std::string& nm, bool isOutlet)
             {
                 auto tit = ss.triangleCoordsByName.find(nm);
                 if (tit == ss.triangleCoordsByName.end()) return;
@@ -1067,6 +1070,7 @@ int main(int argc, char** argv)
                     triAx.push_back(RealType(0.5*(e1y*e2z - e1z*e2y)));
                     triAy.push_back(RealType(0.5*(e1z*e2x - e1x*e2z)));
                     triAz.push_back(RealType(0.5*(e1x*e2y - e1y*e2x)));
+                    triIsOut.push_back(isOutlet ? uint8_t(1) : uint8_t(0));
                     for (int j = 0; j < 3; ++j)
                     {
                         int lj = triLocal[f + j];
@@ -1074,8 +1078,8 @@ int main(int argc, char** argv)
                     }
                 }
             };
-            collectOpeningFacets(inletSS);
-            collectOpeningFacets(outletSS);
+            collectOpeningFacets(inletSS, false);
+            collectOpeningFacets(outletSS, true);
 
             const size_t nFacets = triAx.size();
             s.d_openingTriNode.resize(triNode.size());
@@ -1093,6 +1097,71 @@ int main(int argc, char** argv)
                 cudaMemcpy(s.d_openingTriAreaZ.data(), triAz.data(),
                            nFacets*sizeof(RealType), cudaMemcpyHostToDevice);
             }
+            // Match every facet to the tet behind it, so the boundary mass flux can use the same
+            // form OpenAccel does. Sorted node triples + a binary search from a kernel over
+            // elements: the facets are a surface, so this is far cheaper than a whole-mesh face
+            // topology, and nothing large moves to the host.
+            if (nFacets > 0)
+            {
+                std::vector<int> tri3(3 * nFacets);
+                for (size_t f = 0; f < nFacets; ++f)
+                {
+                    int a = triNode[3*f], b = triNode[3*f+1], c = triNode[3*f+2];
+                    int t;
+                    if (a > b) { t = a; a = b; b = t; }
+                    if (b > c) { t = b; b = c; c = t; }
+                    if (a > b) { t = a; a = b; b = t; }
+                    tri3[3*f] = a; tri3[3*f+1] = b; tri3[3*f+2] = c;
+                }
+                std::vector<int> perm(nFacets);
+                for (size_t f = 0; f < nFacets; ++f) perm[f] = int(f);
+                std::sort(perm.begin(), perm.end(), [&](int x, int y) {
+                    for (int j = 0; j < 3; ++j)
+                        if (tri3[3*x+j] != tri3[3*y+j]) return tri3[3*x+j] < tri3[3*y+j];
+                    return false;
+                });
+                std::vector<int> flat(3 * nFacets);
+                for (size_t r = 0; r < nFacets; ++r)
+                    for (int j = 0; j < 3; ++j) flat[3*r+j] = tri3[3*size_t(perm[r])+j];
+
+                cstone::DeviceVector<int> d_sortedTri(3 * nFacets), d_triPerm(nFacets);
+                cudaMemcpy(d_sortedTri.data(), flat.data(), flat.size()*sizeof(int), cudaMemcpyHostToDevice);
+                cudaMemcpy(d_triPerm.data(), perm.data(), perm.size()*sizeof(int), cudaMemcpyHostToDevice);
+
+                s.d_openingTriElem.resize(nFacets);
+                s.d_openingTriOpp.resize(nFacets);
+                s.d_openingTriIsOutlet.resize(nFacets);
+                // 0xFF bytes == -1 for int: "unresolved".
+                cudaMemset(s.d_openingTriElem.data(), 0xFF, nFacets*sizeof(int));
+                cudaMemset(s.d_openingTriOpp.data(),  0xFF, nFacets*sizeof(int));
+                cudaMemcpy(s.d_openingTriIsOutlet.data(), triIsOut.data(),
+                           nFacets*sizeof(uint8_t), cudaMemcpyHostToDevice);
+
+                const auto&  d_connF = amr.domain().getElementToNodeConnectivity();
+                auto         cpF     = connPtrs<TetTag, KeyType>(d_connF);
+                const size_t nElemF  = amr.domain().getElementCount();
+                const int    blkF    = 256;
+                const int    nBF     = int((nElemF + blkF - 1) / blkF);
+                if (nBF > 0)
+                {
+                    resolveOpeningFacetElementsKernel<KeyType><<<nBF, blkF>>>(
+                        cpF[0], cpF[1], cpF[2], cpF[3],
+                        d_sortedTri.data(), d_triPerm.data(), int(nFacets),
+                        s.d_openingTriElem.data(), s.d_openingTriOpp.data(), nElemF);
+                    cudaDeviceSynchronize();
+                }
+                std::vector<int> h_elem(nFacets);
+                cudaMemcpy(h_elem.data(), s.d_openingTriElem.data(),
+                           nFacets*sizeof(int), cudaMemcpyDeviceToHost);
+                long long unresolved = 0;
+                for (int x : h_elem) if (x < 0) ++unresolved;
+                long long gUnresolved = 0;
+                MPI_Allreduce(&unresolved, &gUnresolved, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+                if (rank == 0 && gUnresolved > 0)
+                    std::cout << "    opening-facets: " << gUnresolved
+                              << " unmatched to an element -> bare advective flux there\n";
+            }
+
             long long localFacets = (long long)nFacets, globalFacets = 0;
             MPI_Allreduce(&localFacets, &globalFacets, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
             // Mirror the solver's femOpeningSurfaceActive so the line does not
@@ -1561,6 +1630,11 @@ int main(int argc, char** argv)
             // nothing about transport; this one measures what the pressure solve actually zeros.
             double qr25 = 0.0, qr50 = 0.0, qr75 = 0.0;
             bool   haveRcCut = false;
+            // Built ONCE per report -- the cut probes and the boundary balance both need it and it
+            // costs four halo exchanges.
+            VmsFluxCtx<RealType> rcCtx;
+            if (useVMSStab || useRhieChow)
+                buildVmsFluxCtx<KeyType, RealType, TetTag>(s, RealType(dt), rho, rcCtx);
             int cutAxis = 0;
             double qcAll[3][3] = {{0,0,0},{0,0,0},{0,0,0}};
             bool cutAllAxes = false;
@@ -1595,20 +1669,20 @@ int main(int argc, char** argv)
                     qc75 = double(interiorCutFlux<KeyType, RealType, TetTag>(s, cutAxis, RealType(lo + 0.75*span)));
                     // Only on the single-axis path: MARS_CUT_AXIS=all exists to FIND the separating
                     // axis, and 18 numbers would not help that.
-                    if (useVMSStab || useRhieChow)
+                    if (rcCtx.valid)
                     {
-                        VmsFluxCtx<RealType> rcCtx;
-                        buildVmsFluxCtx<KeyType, RealType, TetTag>(s, RealType(dt), rho, rcCtx);
-                        if (rcCtx.valid)
-                        {
-                            qr25 = double(interiorCutFlux<KeyType, RealType, TetTag>(s, cutAxis, RealType(lo + 0.25*span), &rcCtx));
-                            qr50 = double(interiorCutFlux<KeyType, RealType, TetTag>(s, cutAxis, RealType(lo + 0.50*span), &rcCtx));
-                            qr75 = double(interiorCutFlux<KeyType, RealType, TetTag>(s, cutAxis, RealType(lo + 0.75*span), &rcCtx));
-                            haveRcCut = true;
-                        }
+                        qr25 = double(interiorCutFlux<KeyType, RealType, TetTag>(s, cutAxis, RealType(lo + 0.25*span), &rcCtx));
+                        qr50 = double(interiorCutFlux<KeyType, RealType, TetTag>(s, cutAxis, RealType(lo + 0.50*span), &rcCtx));
+                        qr75 = double(interiorCutFlux<KeyType, RealType, TetTag>(s, cutAxis, RealType(lo + 0.75*span), &rcCtx));
+                        haveRcCut = true;
                     }
                 }
             }
+            // OpenAccel's continuity metric. Collective -> every rank calls it.
+            double mbIn = 0.0, mbOut = 0.0;
+            boundaryMassBalance<KeyType, RealType, TetTag>(
+                s, rcCtx.valid ? &rcCtx : nullptr, mbIn, mbOut);
+
             double divND = (inletU > 0 && Lscale > 0)
                            ? double(s.lastDivMax) * Lscale / inletU : double(s.lastDivMax);
             // RC-flux divergence (the operator RC actually zeros); only meaningful
@@ -1645,6 +1719,13 @@ int main(int argc, char** argv)
                               << (useVMSStab || useRhieChow
                                   ? "  (RAW u.A on the side set, NOT the stabilized flux -- see [interior-fluxRC])"
                                   : "  (prescribed-BC check, NOT through-flow)")
+                              << "\n" << std::defaultfloat;
+                if (mbIn < 0.0)
+                    std::cout << "  [mass-balance] in=" << std::scientific << std::setprecision(3) << mbIn
+                              << "  out=" << mbOut
+                              << "  imbalance=" << std::fixed << std::setprecision(3)
+                              << ((mbIn + mbOut) / mbIn * 100.0)
+                              << " %  (OpenAccel's metric; in<0, +ve = less leaves than enters)"
                               << "\n" << std::defaultfloat;
                 if (!cavityMode)
                 {

@@ -3396,6 +3396,15 @@ struct NSStepper
     // else, which disables the surface term.
     cstone::DeviceVector<int>      d_openingTriNode;
     cstone::DeviceVector<RealType> d_openingTriAreaX, d_openingTriAreaY, d_openingTriAreaZ;
+    // Per facet: the adjacent element and the node of it NOT on the face, plus which opening the
+    // facet belongs to. OpenAccel's boundary mDot needs all three -- the pressure gradient at the
+    // face comes from the adjacent tet, the projected-gradient blend pairs the face against the
+    // OPPOSING node (flowModel.cpp:8354-8372), and an inlet with specified velocity carries NO
+    // stabilization at all (flowModel.cpp:7181) while a pressure outlet does (:8418).
+    // -1 = unresolved; such a facet falls back to the bare advective flux.
+    cstone::DeviceVector<int>     d_openingTriElem;
+    cstone::DeviceVector<int>     d_openingTriOpp;
+    cstone::DeviceVector<uint8_t> d_openingTriIsOutlet;   // 1 = pressure outlet, 0 = velocity inlet
 
     // FIX 1 -- opening-flux source. The CVFEM divergence operator integrates
     // ONLY interior median-dual SCS faces (each scsLR pair links two NODES of the
@@ -10878,6 +10887,159 @@ inline RealType fluxThroughOwned(NSStepper<KeyType, RealType, ElementTag>& s,
     return global;
 }
 
+// Find, for every opening facet, the element behind it and that element's opposing node.
+// One thread per element, binary search over the facets' sorted node triples. The facets are a
+// SURFACE, so the search set is small and this is far cheaper than standing up a whole-mesh face
+// topology for a diagnostic. Halo elements are searched on purpose: a facet belongs to the rank
+// that owns its first node, and the tet behind it can be a halo element there.
+// A boundary facet has exactly one adjacent element, so no two threads write the same slot.
+template<typename KeyType>
+__global__ void resolveOpeningFacetElementsKernel(
+    const KeyType* c0, const KeyType* c1, const KeyType* c2, const KeyType* c3,
+    const int* sortedTri,   // [nFacets*3], each row ascending, rows lexicographically sorted
+    const int* triPerm,     // sorted row -> original facet index
+    int nFacets,
+    int* facetElem, int* facetOpp,
+    size_t elementCount)
+{
+    size_t e = size_t(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (e >= elementCount || nFacets == 0) return;
+
+    const int n[4] = {int(c0[e]), int(c1[e]), int(c2[e]), int(c3[e])};
+    const int faceIdx[4][3] = {{0, 1, 2}, {0, 1, 3}, {0, 2, 3}, {1, 2, 3}};
+    const int oppIdx[4]     = {3, 2, 1, 0};
+
+    for (int f = 0; f < 4; ++f)
+    {
+        int a = n[faceIdx[f][0]], b = n[faceIdx[f][1]], c = n[faceIdx[f][2]];
+        if (a > b) { int t = a; a = b; b = t; }
+        if (b > c) { int t = b; b = c; c = t; }
+        if (a > b) { int t = a; a = b; b = t; }
+
+        int lo = 0, hi = nFacets - 1, hit = -1;
+        while (lo <= hi)
+        {
+            const int  mid = (lo + hi) >> 1;
+            const int* r   = sortedTri + 3 * mid;
+            if (r[0] == a && r[1] == b && r[2] == c) { hit = mid; break; }
+            const bool less = (r[0] < a) || (r[0] == a && (r[1] < b || (r[1] == b && r[2] < c)));
+            if (less) lo = mid + 1; else hi = mid - 1;
+        }
+        if (hit >= 0)
+        {
+            const int orig  = triPerm[hit];
+            facetElem[orig] = int(e);
+            facetOpp[orig]  = n[oppIdx[f]];
+        }
+    }
+}
+
+// Boundary mass flux per opening facet, matching OpenAccel's boundary mDot:
+//   pressure outlet (flowModel.cpp:8418):  mdot = u_f.A + tau_b*((G_b - grad p|_b).A)
+//   velocity inlet  (flowModel.cpp:7181):  mdot = u_f.A            -- no stabilization, by design
+//
+// The prescribed outlet pressure enters through the GRADIENT's node vector, not as a
+// (p_bip - p_spec) difference: the adjacent tet's face-node pressures are replaced by the
+// boundary value and grad p is taken of that mixed vector (their flowModel.cpp:8292).
+//
+// ADAPTATION, stated plainly rather than hidden: OpenAccel carries several integration points per
+// face and blends the projected gradient at each against the single face node nearest it
+// (faceIpNodeMap / opposingNodes, :8354-8372). We lump one value per triangle, so the face side of
+// that two-point mean is the 3-node average. Same arithmetic blend, coarser quadrature.
+//
+// Volume flux, not mass flux: MARS is volume-based throughout, so rho is absent. It cancels in the
+// imbalance ratio at constant density -- but never print this next to one of their absolute numbers.
+template<typename KeyType, typename RealType>
+__global__ void boundaryMassFluxKernel(
+    const KeyType* c0, const KeyType* c1, const KeyType* c2, const KeyType* c3,
+    const int* triNode, const int* triElem, const int* triOpp, const uint8_t* triIsOutlet,
+    const RealType* aX, const RealType* aY, const RealType* aZ,
+    const RealType* u, const RealType* v, const RealType* w,
+    const RealType* p, const RealType* Gx, const RealType* Gy, const RealType* Gz,
+    const RealType* nodeX, const RealType* nodeY, const RealType* nodeZ,
+    const RealType* tauNode, RealType tau, RealType pBc,
+    double* partialIn, double* partialOut, int nFacets)
+{
+    const int f = blockIdx.x * blockDim.x + threadIdx.x;
+    double mIn = 0.0, mOut = 0.0;
+
+    if (f < nFacets)
+    {
+        const int f0 = triNode[3 * f], f1 = triNode[3 * f + 1], f2 = triNode[3 * f + 2];
+        if (f0 >= 0 && f1 >= 0 && f2 >= 0)
+        {
+            const RealType Ax = aX[f], Ay = aY[f], Az = aZ[f];
+            // Face velocity: the flat average over the triangle, matching the 1/3 weighting the
+            // weak surface term already uses.
+            const RealType third = RealType(1) / RealType(3);
+            RealType ufx = third * (u[f0] + u[f1] + u[f2]);
+            RealType ufy = third * (v[f0] + v[f1] + v[f2]);
+            RealType ufz = third * (w[f0] + w[f1] + w[f2]);
+            RealType mdot = ufx * Ax + ufy * Ay + ufz * Az;
+
+            const int e   = triElem[f];
+            const int opp = triOpp[f];
+            if (triIsOutlet[f] && e >= 0 && opp >= 0 && p != nullptr)
+            {
+                const KeyType* cc[4] = {c0, c1, c2, c3};
+                RealType coords[4][3];
+                int      en[4];
+                for (int i = 0; i < 4; ++i)
+                {
+                    en[i]        = int(cc[i][e]);
+                    coords[i][0] = nodeX[en[i]];
+                    coords[i][1] = nodeY[en[i]];
+                    coords[i][2] = nodeZ[en[i]];
+                }
+                RealType det, dNdx[4][3];
+                Tet4CVFEM::jacobian_and_dNdx<RealType>(coords, det, dNdx);
+
+                // Face nodes carry the PRESCRIBED pressure; only the opposing node keeps its own.
+                RealType dpdx = 0, dpdy = 0, dpdz = 0;
+                for (int k = 0; k < 4; ++k)
+                {
+                    const RealType pk = (en[k] == opp) ? p[en[k]] : pBc;
+                    dpdx += dNdx[k][0] * pk;
+                    dpdy += dNdx[k][1] * pk;
+                    dpdz += dNdx[k][2] * pk;
+                }
+
+                // Two-point blend: the face (as its 3-node average) against the opposing node.
+                const RealType gfx = third * (Gx[f0] + Gx[f1] + Gx[f2]);
+                const RealType gfy = third * (Gy[f0] + Gy[f1] + Gy[f2]);
+                const RealType gfz = third * (Gz[f0] + Gz[f1] + Gz[f2]);
+                const RealType Gbx = RealType(0.5) * (gfx + Gx[opp]);
+                const RealType Gby = RealType(0.5) * (gfy + Gy[opp]);
+                const RealType Gbz = RealType(0.5) * (gfz + Gz[opp]);
+
+                RealType tauB = tau;
+                if (tauNode != nullptr)
+                {
+                    const RealType tf = third * (tauNode[f0] + tauNode[f1] + tauNode[f2]);
+                    tauB = RealType(0.5) * (tf + tauNode[opp]);
+                }
+                mdot += tauB * ((Gbx - dpdx) * Ax + (Gby - dpdy) * Ay + (Gbz - dpdz) * Az);
+            }
+
+            // Their sign convention exactly (flowModel.cpp:3078): the area vector is OUTWARD, so a
+            // negative flux is inflow. in is a sum of negatives; out a sum of positives.
+            if (mdot < RealType(0)) mIn = double(mdot); else mOut = double(mdot);
+        }
+    }
+
+    __shared__ double sIn[256];
+    __shared__ double sOut[256];
+    const int t = threadIdx.x;
+    sIn[t] = mIn; sOut[t] = mOut;
+    __syncthreads();
+    for (int s2 = blockDim.x / 2; s2 > 0; s2 >>= 1)
+    {
+        if (t < s2) { sIn[t] += sIn[t + s2]; sOut[t] += sOut[t + s2]; }
+        __syncthreads();
+    }
+    if (t == 0) { partialIn[blockIdx.x] = sIn[0]; partialOut[blockIdx.x] = sOut[0]; }
+}
+
 // The two fields the Rhie-Chow face flux needs beyond u and p, neither of which the stepper leaves
 // in a usable state after a step: the projected nodal gradient is written on OWNED dofs only, and
 // the per-node D is a step-local temp. Both must be halo-complete because a face value averages its
@@ -10929,6 +11091,61 @@ inline void buildVmsFluxCtx(NSStepper<KeyType, RealType, ElementTag>& s, RealTyp
                                   [a = s.relaxU] __device__(RealType v) { return a * v; });
         }
         c.valid = true;
+    }
+}
+
+// Net in/out flux through every opening, in OpenAccel's convention (flowModel.cpp:2696-2713,
+// :3062-3094): `in` sums the NEGATIVE (inflowing) facet fluxes and `out` the positive ones, so
+// the percentage they report is
+//     imbalance = (in + out) / in * 100        with in < 0
+// Positive means less leaves than enters. This replaces the old Q_out/Q_in ratio, which divided a
+// discrete outlet sum by an ANALYTIC inlet number and measured the raw nodal velocity on top.
+// Collective -- every rank must call it.
+template<typename KeyType, typename RealType, typename ElementTag>
+inline void boundaryMassBalance(NSStepper<KeyType, RealType, ElementTag>& s,
+                                const VmsFluxCtx<RealType>* rc, double& qIn, double& qOut)
+{
+    qIn = 0.0; qOut = 0.0;
+    if constexpr (!std::is_same_v<ElementTag, TetTag>) { return; }
+    else
+    {
+        const int nFacets = int(s.d_openingTriAreaX.size());
+        double locIn = 0.0, locOut = 0.0;
+        if (nFacets > 0 && s.d_openingTriElem.size() == size_t(nFacets))
+        {
+            const auto& d_conn = s.domain.getElementToNodeConnectivity();
+            auto       cp  = connPtrs<ElementTag, KeyType>(d_conn);
+            const int  blk = 256;
+            const int  nB  = (nFacets + blk - 1) / blk;
+            cstone::DeviceVector<double> d_pIn(nB, 0.0), d_pOut(nB, 0.0);
+            const bool haveRc = (rc && rc->valid);
+            boundaryMassFluxKernel<KeyType, RealType><<<nB, blk>>>(
+                cp[0], cp[1], cp[2], cp[3],
+                s.d_openingTriNode.data(), s.d_openingTriElem.data(),
+                s.d_openingTriOpp.data(), s.d_openingTriIsOutlet.data(),
+                s.d_openingTriAreaX.data(), s.d_openingTriAreaY.data(), s.d_openingTriAreaZ.data(),
+                s.d_u.data(), s.d_v.data(), s.d_w.data(),
+                haveRc ? s.d_p.data()  : nullptr,
+                haveRc ? rc->Gx.data() : nullptr,
+                haveRc ? rc->Gy.data() : nullptr,
+                haveRc ? rc->Gz.data() : nullptr,
+                s.domain.getNodeX().data(), s.domain.getNodeY().data(), s.domain.getNodeZ().data(),
+                (haveRc && rc->tauNode.size() == s.nodeCount) ? rc->tauNode.data() : nullptr,
+                haveRc ? rc->tauScalar : RealType(0),
+                // --outlet=do-nothing pins the WHOLE outlet face to p=0, so the prescribed
+                // boundary pressure is exactly zero. Becomes a real parameter the day a nonzero
+                // outlet pressure is supported.
+                RealType(0),
+                d_pIn.data(), d_pOut.data(), nFacets);
+            cudaDeviceSynchronize();
+            auto pi = thrust::device_pointer_cast(d_pIn.data());
+            auto po = thrust::device_pointer_cast(d_pOut.data());
+            locIn  = thrust::reduce(thrust::device, pi, pi + nB, 0.0, thrust::plus<double>());
+            locOut = thrust::reduce(thrust::device, po, po + nB, 0.0, thrust::plus<double>());
+        }
+        double both[2] = {locIn, locOut}, sum[2] = {0.0, 0.0};
+        MPI_Allreduce(both, sum, 2, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+        qIn = sum[0]; qOut = sum[1];
     }
 }
 
