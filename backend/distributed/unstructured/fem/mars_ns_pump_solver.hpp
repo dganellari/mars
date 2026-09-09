@@ -3264,6 +3264,7 @@ struct NSStepper
     RealType lastDivRms     = 0;  // |div(u^{n+1})| RMS over interior owned DOFs; less ring-sensitive
     RealType lastDivMaxPre  = 0;  // |div(u**)|    max -- pre-corrector (= b magnitude / V scaled)
     RealType lastDivRC      = 0;  // |div_RC(u^{n+1})| max -- the operator RC actually zeros (only set when useRhieChow)
+    RealType lastDivRCRms   = 0;  // same field's RMS; max is dominated by the ring next to the outlet
     RealType lastGradPRms   = 0;  // RMS of grad(p^n) magnitude  -- predictor input
     RealType lastGradPhiRms = 0;  // RMS of grad(phi)  magnitude -- corrector input
 
@@ -10166,6 +10167,65 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
 // Divergence of the VMS/Rhie-Chow STABILIZED flux at u^{n+1} -- the quantity the pressure solve
 // actually drives to zero, and the one a finite-volume code reports.
 //
+// The two fields the Rhie-Chow face flux needs beyond u and p, neither of which the stepper leaves
+// in a usable state after a step: the projected nodal gradient is written on OWNED dofs only, and
+// the per-node D is a step-local temp. Both must be halo-complete because a face value averages its
+// two endpoints. Built once per report so the three cut planes share it instead of each redoing
+// four halo exchanges.
+template<typename RealType>
+struct VmsFluxCtx
+{
+    cstone::DeviceVector<RealType> Gx, Gy, Gz, tauNode;
+    RealType tauScalar = 0;
+    bool     valid     = false;
+};
+
+template<typename KeyType, typename RealType, typename ElementTag>
+inline void buildVmsFluxCtx(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, RealType rho,
+                            VmsFluxCtx<RealType>& c)
+{
+    if constexpr (!std::is_same_v<ElementTag, TetTag>) { return; }
+    else
+    {
+        const bool     bdf2 = (s.useBdf2 && s.bdfStep >= 1 && s.d_valuesVel_bdf2.size() > 0);
+        const RealType dtE  = bdf2 ? (RealType(2) * dt / RealType(3)) : dt;
+        c.tauScalar = s.rhieChowTau > RealType(0) ? s.rhieChowTau : dtE / rho;
+
+        c.Gx.resize(s.nodeCount); c.Gy.resize(s.nodeCount); c.Gz.resize(s.nodeCount);
+        thrust::copy(thrust::device, s.d_gradPx.begin(), s.d_gradPx.end(), c.Gx.begin());
+        thrust::copy(thrust::device, s.d_gradPy.begin(), s.d_gradPy.end(), c.Gy.begin());
+        thrust::copy(thrust::device, s.d_gradPz.begin(), s.d_gradPz.end(), c.Gz.begin());
+        s.domain.exchangeNodeHalo(c.Gx);
+        s.domain.exchangeNodeHalo(c.Gy);
+        s.domain.exchangeNodeHalo(c.Gz);
+
+        // The same per-node D the step itself builds, including the relax_u fold -- read the
+        // ACTIVE momentum diagonal, which under BDF2 is 3M/(2dt).
+        if (std::getenv("MARS_VMS_GLOBAL_TAU") == nullptr)
+        {
+            c.tauNode.resize(s.nodeCount);
+            int nB = int((s.nodeCount + s.blockSize - 1) / s.blockSize);
+            buildVmsNodalTauKernel<RealType><<<nB, s.blockSize>>>(
+                s.d_diagPtr.data(),
+                (bdf2 ? s.d_valuesVel_bdf2.data() : s.d_valuesVel.data()),
+                s.d_node_to_dof.data(), s.d_mass.data(), rho, c.tauScalar,
+                c.tauNode.data(), s.nodeCount, s.numOwnedDofs);
+            cudaDeviceSynchronize();
+            s.domain.exchangeNodeHalo(c.tauNode);
+            if (s.relaxU > RealType(0) && s.relaxU < RealType(1))
+                thrust::transform(thrust::device, c.tauNode.begin(), c.tauNode.end(),
+                                  c.tauNode.begin(),
+                                  [a = s.relaxU] __device__(RealType v) { return a * v; });
+        }
+        c.valid = true;
+    }
+}
+
+// NOT an acceptance residual. This norm is INTERIOR-ONLY (maxOwnedInteriorAbs / rmsOwnedInterior1
+// both skip velocity- and pressure-Dirichlet DOFs), so it cannot certify a boundary-coupled
+// formulation: the average-pressure outlet needs ALL owned continuity equations plus the matching
+// boundary flux. Use it as a report, not as the thing a solve is stopped on.
+//
 // This matters more than it looks. `lastDivMax` is div of the RAW nodal velocity, and with any
 // Rhie-Chow stabilization that equals -S by construction: the conserved quantity is the stabilized
 // mass flux, not the reconstructed nodal velocity, and the nodal velocity is never exactly
@@ -10192,21 +10252,14 @@ inline void divMaxVmsOwned(NSStepper<KeyType, RealType, ElementTag>& s, RealType
     const int eBlocks    = numLocal > 0 ? int((numLocal + s.blockSize - 1) / s.blockSize) : 0;
     const int nodeBlocks = (s.nodeCount + s.blockSize - 1) / s.blockSize;
 
-    const bool     bdf2 = (s.useBdf2 && s.bdfStep >= 1 && s.d_valuesVel_bdf2.size() > 0);
-    const RealType dtE  = bdf2 ? (RealType(2) * dt / RealType(3)) : dt;
-    RealType tauV = s.rhieChowTau;
-    if (tauV <= 0) tauV = dtE / rho;
-
-    // G(p) exactly as the step builds it: the predictor's own gradient, halo-completed.
-    cstone::DeviceVector<RealType> d_GxN(s.nodeCount, RealType(0));
-    cstone::DeviceVector<RealType> d_GyN(s.nodeCount, RealType(0));
-    cstone::DeviceVector<RealType> d_GzN(s.nodeCount, RealType(0));
-    thrust::copy(thrust::device, s.d_gradPx.begin(), s.d_gradPx.end(), d_GxN.begin());
-    thrust::copy(thrust::device, s.d_gradPy.begin(), s.d_gradPy.end(), d_GyN.begin());
-    thrust::copy(thrust::device, s.d_gradPz.begin(), s.d_gradPz.end(), d_GzN.begin());
-    s.domain.exchangeNodeHalo(d_GxN);
-    s.domain.exchangeNodeHalo(d_GyN);
-    s.domain.exchangeNodeHalo(d_GzN);
+    // The SAME state the assembly uses: the nodal coefficient with relaxU folded in (not a scalar
+    // tau), the halo-complete predictor gradient, and the same smooth-term option. Substituting a
+    // scalar coefficient and forcing keepSmooth on made this report a DIFFERENT flux from the one
+    // the solve drives to zero, which is the whole reason to have the diagnostic.
+    VmsFluxCtx<RealType> ctx;
+    buildVmsFluxCtx<KeyType, RealType, ElementTag>(s, dt, rho, ctx);
+    if (!ctx.valid) return;
+    const bool keepSmooth = (std::getenv("MARS_VMS_COMPACT_ONLY") == nullptr);
 
     cstone::DeviceVector<RealType> d_divAcc(s.nodeCount, RealType(0));
     if (eBlocks > 0)
@@ -10216,10 +10269,15 @@ inline void divMaxVmsOwned(NSStepper<KeyType, RealType, ElementTag>& s, RealType
             cp[0], cp[1], cp[2], cp[3],
             s.d_u.data(), s.d_v.data(), s.d_w.data(),
             s.d_p.data(),
-            d_GxN.data(), d_GyN.data(), d_GzN.data(),
+            ctx.Gx.data(), ctx.Gy.data(), ctx.Gz.data(),
             s.domain.getNodeX().data(), s.domain.getNodeY().data(), s.domain.getNodeZ().data(),
             s.d_areaVec_x.data(), s.d_areaVec_y.data(), s.d_areaVec_z.data(),
-            tauV, nullptr, /*keepSmooth=*/true,
+            ctx.tauScalar,
+            (ctx.tauNode.size() == s.nodeCount ? ctx.tauNode.data() : nullptr),
+            keepSmooth,
+            // massURF=1 with a null history: this is the RAW residual, and it must never write
+            // mDotPrev -- a report may not advance state. With --relax-mass at its 1.0 default the
+            // raw and accepted fluxes coincide; they do not if anyone sets it.
             RealType(1), nullptr,
             (s.d_isBdryNode.size() == s.nodeCount ? s.d_isBdryNode.data() : nullptr),
             d_divAcc.data(), startElem, numLocal);
@@ -10232,6 +10290,8 @@ inline void divMaxVmsOwned(NSStepper<KeyType, RealType, ElementTag>& s, RealType
         d_divNorm.data(), s.nodeCount);
     cudaDeviceSynchronize();
     outMax = maxOwnedInteriorAbs<KeyType, RealType, ElementTag>(s, d_divNorm);
+    // outRms was initialized to 0 and never computed, so every VMS RMS ever printed was a zero.
+    outRms = rmsOwnedInterior1<KeyType, RealType, ElementTag>(s, d_divNorm);
     }
 }
 
@@ -10809,6 +10869,7 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
         RealType rcMax = 0, rcRms = 0;
         divMaxRhieChowOwned<KeyType, RealType, ElementTag>(s, dt, rho, rcMax, rcRms);
         s.lastDivRC = rcMax;
+        s.lastDivRCRms = rcRms;
     }
     // Same for the VMS path, which had no such report -- so every VMS run so far was judged on
     // div of the RAW velocity, which any Rhie-Chow scheme leaves at -S by construction.
@@ -10817,6 +10878,7 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
         RealType rcMax = 0, rcRms = 0;
         divMaxVmsOwned<KeyType, RealType, ElementTag>(s, dt, rho, rcMax, rcRms);
         s.lastDivRC = rcMax;
+        s.lastDivRCRms = rcRms;
     }
 }
 
@@ -11129,60 +11191,6 @@ __global__ void boundaryMassFluxKernel(
         __syncthreads();
     }
     if (t == 0) { partialIn[blockIdx.x] = sIn[0]; partialOut[blockIdx.x] = sOut[0]; }
-}
-
-// The two fields the Rhie-Chow face flux needs beyond u and p, neither of which the stepper leaves
-// in a usable state after a step: the projected nodal gradient is written on OWNED dofs only, and
-// the per-node D is a step-local temp. Both must be halo-complete because a face value averages its
-// two endpoints. Built once per report so the three cut planes share it instead of each redoing
-// four halo exchanges.
-template<typename RealType>
-struct VmsFluxCtx
-{
-    cstone::DeviceVector<RealType> Gx, Gy, Gz, tauNode;
-    RealType tauScalar = 0;
-    bool     valid     = false;
-};
-
-template<typename KeyType, typename RealType, typename ElementTag>
-inline void buildVmsFluxCtx(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, RealType rho,
-                            VmsFluxCtx<RealType>& c)
-{
-    if constexpr (!std::is_same_v<ElementTag, TetTag>) { return; }
-    else
-    {
-        const bool     bdf2 = (s.useBdf2 && s.bdfStep >= 1 && s.d_valuesVel_bdf2.size() > 0);
-        const RealType dtE  = bdf2 ? (RealType(2) * dt / RealType(3)) : dt;
-        c.tauScalar = s.rhieChowTau > RealType(0) ? s.rhieChowTau : dtE / rho;
-
-        c.Gx.resize(s.nodeCount); c.Gy.resize(s.nodeCount); c.Gz.resize(s.nodeCount);
-        thrust::copy(thrust::device, s.d_gradPx.begin(), s.d_gradPx.end(), c.Gx.begin());
-        thrust::copy(thrust::device, s.d_gradPy.begin(), s.d_gradPy.end(), c.Gy.begin());
-        thrust::copy(thrust::device, s.d_gradPz.begin(), s.d_gradPz.end(), c.Gz.begin());
-        s.domain.exchangeNodeHalo(c.Gx);
-        s.domain.exchangeNodeHalo(c.Gy);
-        s.domain.exchangeNodeHalo(c.Gz);
-
-        // The same per-node D the step itself builds, including the relax_u fold -- read the
-        // ACTIVE momentum diagonal, which under BDF2 is 3M/(2dt).
-        if (std::getenv("MARS_VMS_GLOBAL_TAU") == nullptr)
-        {
-            c.tauNode.resize(s.nodeCount);
-            int nB = int((s.nodeCount + s.blockSize - 1) / s.blockSize);
-            buildVmsNodalTauKernel<RealType><<<nB, s.blockSize>>>(
-                s.d_diagPtr.data(),
-                (bdf2 ? s.d_valuesVel_bdf2.data() : s.d_valuesVel.data()),
-                s.d_node_to_dof.data(), s.d_mass.data(), rho, c.tauScalar,
-                c.tauNode.data(), s.nodeCount, s.numOwnedDofs);
-            cudaDeviceSynchronize();
-            s.domain.exchangeNodeHalo(c.tauNode);
-            if (s.relaxU > RealType(0) && s.relaxU < RealType(1))
-                thrust::transform(thrust::device, c.tauNode.begin(), c.tauNode.end(),
-                                  c.tauNode.begin(),
-                                  [a = s.relaxU] __device__(RealType v) { return a * v; });
-        }
-        c.valid = true;
-    }
 }
 
 // Refresh the outlet pressure trace from the current pressure field. LAGGED on purpose: called

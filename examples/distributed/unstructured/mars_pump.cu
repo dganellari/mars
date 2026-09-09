@@ -1752,7 +1752,11 @@ int main(int argc, char** argv)
                           << "  d(u_rms)=" << std::scientific << std::setprecision(2) << dURms
                           << "  div*L/U=" << std::fixed << std::setprecision(2) << divND;
                 if (useRhieChow || useVMSStab)
-                    std::cout << "  divRC*L/U=" << std::fixed << std::setprecision(2) << divRCnd;
+                    std::cout << "  divRC*L/U=" << std::fixed << std::setprecision(2) << divRCnd
+                              << "  divRCrms*L/U=" << std::fixed << std::setprecision(2)
+                              << ((inletU > 0 && Lscale > 0)
+                                    ? double(s.lastDivRCRms) * Lscale / inletU
+                                    : double(s.lastDivRCRms));
                 if (adaptDt)
                     std::cout << "  dt=" << std::scientific << std::setprecision(2) << dt;
                 std::cout << "  cg_p=" << s.lastPressureIters
