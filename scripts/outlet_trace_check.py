@@ -91,6 +91,40 @@ def main():
     check("clamped p=0 face collapses the trace to a uniform p_ref",
           np.allclose(tc, p_ref) and np.std(tc) < 1e-12)
 
+    print("gate 7: exact values from the GPT spec (docs/design/gpt_outlet_boundary_spec_2026-09-09.md)")
+    sp = np.array([2.0, 4.0, 8.0])
+    sa = np.array([1.0, 2.0, 1.0])
+    for b, want in ((0.05, [7.625, 9.525, 13.325]),
+                    (0.0,  [7.5, 9.5, 13.5]),
+                    (1.0,  [10.0, 10.0, 10.0])):
+        t7, m7 = trace(sp, sa, 10.0, b)
+        check(f"beta={b}: trace matches the spec", np.allclose(t7, want, atol=1e-12),
+              f"{np.round(t7,6).tolist()} vs {want}")
+    check("spec mean is 4.5", abs(m7 - 4.5) < 1e-12)
+    t7a, _ = trace(sp + 100.0, sa, 10.0, 0.05)
+    t7b, _ = trace(sp, sa, 10.0, 0.05)
+    check("adding 100 Pa to every sample leaves the trace unchanged",
+          np.allclose(t7a, t7b, atol=1e-12))
+
+    print("gate 8: BENT surface -- scalar area vs the norm of the summed area vector")
+    # Node 0 carries two PERPENDICULAR unit-area facet contributions, node 1 carries one.
+    # Scalar area (correct):     |A|sum = 1+1 = 2   and 1
+    # Norm of the summed vector: |(1,0,0)+(0,1,0)| = sqrt(2)  and 1   <- what the old code used
+    pb = np.array([0.0, 3.0])
+    a_scalar = np.array([2.0, 1.0])
+    a_norm = np.array([np.sqrt(2.0), 1.0])
+    _, m_true = trace(pb, a_scalar, 10.0, 0.05)
+    _, m_bad = trace(pb, a_norm, 10.0, 0.05)
+    check("true scalar-area mean is 1", abs(m_true - 1.0) < 1e-12, f"got {m_true}")
+    check("vector-norm mean is the spec's wrong value",
+          abs(m_bad - 1.242640687119285) < 1e-12, f"got {m_bad:.15f}")
+    # The consequence: the trace no longer has the prescribed physical mean.
+    t_bad = 10.0 + 0.95 * (pb - m_bad)
+    phys = (a_scalar * t_bad).sum() / a_scalar.sum()
+    check("vector-norm weights break the prescribed mean by the spec's amount",
+          abs(phys - (10.0 - 0.230508652763321)) < 1e-12, f"physical mean {phys:.15f}")
+    check("the two weightings genuinely disagree", abs(m_true - m_bad) > 1e-3)
+
     print()
     if FAIL:
         print(f"{len(FAIL)} FAILED: {', '.join(FAIL)}")

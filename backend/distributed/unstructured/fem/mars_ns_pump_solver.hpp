@@ -3380,7 +3380,12 @@ struct NSStepper
     // outletBeta < 0 disables it and keeps the classic p=0 Dirichlet outlet.
     RealType                       outletBeta = RealType(-1);
     RealType                       outletPRef = RealType(0);
-    cstone::DeviceVector<RealType> d_pTraceOutlet;      // nodeCount; meaningful where the outlet area vector is nonzero
+    cstone::DeviceVector<RealType> d_pTraceOutlet;      // nodeCount; meaningful where the outlet scalar area is nonzero
+    // sum_f |A_f|/3 per node -- the SCALAR area, which is NOT |sum_f A_f/3|. The two agree only
+    // when a node's facet normals are aligned; on a bent or curved outlet the vector norm
+    // under-weights, and where normals cancel it can read zero on a node with real area.
+    // The physical area-weighted mean needs this one.
+    cstone::DeviceVector<RealType> d_outletAreaScalar;
     RealType                       lastOutletTraceMean = RealType(0);
     RealType                       lastOutletArea      = RealType(0);
 
@@ -10919,15 +10924,14 @@ struct OutletMomentFunctor
     const int*      n2d;
     int             nOwn;
     const RealType* p;
-    const RealType* ax; const RealType* ay; const RealType* az;
+    const RealType* aScalar;                    // sum_f |A_f|/3, NOT the norm of the summed vector
     __device__ AreaMoment operator()(size_t i) const
     {
         AreaMoment r; r.aw = 0.0; r.a = 0.0;
         if (own[i] != 1) return r;
         const int dof = n2d[i];
         if (dof < 0 || dof >= nOwn) return r;   // owned only -> partition invariant
-        const double A = sqrt(double(ax[i]) * double(ax[i]) + double(ay[i]) * double(ay[i])
-                              + double(az[i]) * double(az[i]));
+        const double A = double(aScalar[i]);
         if (A <= 0.0) return r;                 // zero off the outlet
         r.aw = A * double(p[i]);
         r.a  = A;
@@ -10949,16 +10953,16 @@ __host__ __device__ inline RealType outletTraceValue(RealType p, RealType meanP,
 
 template<typename RealType>
 __global__ void buildOutletPressureTraceKernel(const RealType* p,
-                                               const RealType* ax, const RealType* ay,
-                                               const RealType* az,
+                                               const RealType* aScalar,
                                                RealType pRef, RealType beta, RealType meanP,
                                                RealType* trace, size_t nodeCount)
 {
     size_t i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= nodeCount) return;
     trace[i] = RealType(0);
-    const RealType A2 = ax[i] * ax[i] + ay[i] * ay[i] + az[i] * az[i];
-    if (A2 <= RealType(0)) return;
+    // Scalar area, not the vector norm: a node whose facet normals cancel has real area and must
+    // still carry a trace.
+    if (aScalar[i] <= RealType(0)) return;
     trace[i] = outletTraceValue<RealType>(p[i], meanP, pRef, beta);
 }
 
@@ -11180,14 +11184,12 @@ template<typename KeyType, typename RealType, typename ElementTag>
 inline void updateOutletPressureTrace(NSStepper<KeyType, RealType, ElementTag>& s)
 {
     if (s.outletBeta < RealType(0)) return;                    // disabled -> classic p=0 outlet
-    if (s.d_outletAreaVecX.size() != s.nodeCount) return;
+    if (s.d_outletAreaScalar.size() != s.nodeCount) return;
     if (s.d_pTraceOutlet.size() != s.nodeCount) s.d_pTraceOutlet.resize(s.nodeCount);
 
     OutletMomentFunctor<RealType> f{s.domain.getNodeOwnershipMap().data(),
                                     s.d_node_to_dof.data(), s.numOwnedDofs,
-                                    s.d_p.data(),
-                                    s.d_outletAreaVecX.data(), s.d_outletAreaVecY.data(),
-                                    s.d_outletAreaVecZ.data()};
+                                    s.d_p.data(), s.d_outletAreaScalar.data()};
     AreaMoment zero{0.0, 0.0};
     AreaMoment loc = thrust::transform_reduce(thrust::device,
                                               thrust::counting_iterator<size_t>(0),
@@ -11203,8 +11205,7 @@ inline void updateOutletPressureTrace(NSStepper<KeyType, RealType, ElementTag>& 
 
     const int nB = int((s.nodeCount + s.blockSize - 1) / s.blockSize);
     buildOutletPressureTraceKernel<RealType><<<nB, s.blockSize>>>(
-        s.d_p.data(),
-        s.d_outletAreaVecX.data(), s.d_outletAreaVecY.data(), s.d_outletAreaVecZ.data(),
+        s.d_p.data(), s.d_outletAreaScalar.data(),
         s.outletPRef, s.outletBeta, meanP, s.d_pTraceOutlet.data(), s.nodeCount);
     cudaDeviceSynchronize();
 }

@@ -22,8 +22,18 @@ The map lives in one `__host__ __device__` inline, `outletTraceValue`. `boundary
 reads the trace, so operator and diagnostic share it. Flags: `--outlet-beta`, `--outlet-pref`.
 
 Because the refresh happens *before* the predictor, predictor and corrector use the same trace, so
-the review's `G_boundary*(trace_new - trace_used_by_predictor)` lift is identically zero within a
-step. That term returns the moment anyone refreshes the trace mid-step.
+the `G_boundary*(trace_new - trace_used_by_predictor)` lift is identically zero within a step. That
+term returns the moment anyone refreshes the trace mid-step.
+
+**Correction (2026-09-09, from `gpt_outlet_boundary_spec_2026-09-09.md` section 3).** That statement
+was right about the trace-CHANGE term and wrong to imply nothing else is needed. With
+`B = B_i + B_o`, the gradient operator `G_v` itself gains a boundary contribution, so a frozen
+trace still leaves
+
+    (G_v phi)_i = (G_0 phi)_i - phi_i * a_o,i / V_i
+
+in the corrector. Setting `phi = 0` on outlet volume nodes would remove it incorrectly. Freezing
+the trace removes one term, not the boundary operator.
 
 **Gates run** (`scripts/outlet_trace_check.py`, all pass on host):
 prescribed area-weighted mean; `(1-beta)` of the fluctuation retained; gauge invariance under
@@ -57,6 +67,13 @@ byte-identical for the controlled comparison:
 Complication: the pressure solve has three variants (`PressureSolveKind::K`, `DDT`, and the
 FemGram path) with symmetric-Jacobi scaling and a separate AMG preconditioner matrix. Establish
 which is active under the production flags before editing, and change one.
+
+**Third finding from the spec, section 5.** Contraction of the compact approximate correction is
+NOT automatic. Their matrix counterexample (unit tet, `h=1`, `D=0.3`) gives eigenvalues of
+`A_tilde^-1 J` up to `13.05`, so the undamped stationary iteration has spectral radius `12.05` and
+even `omega=0.25` leaves `2.26`. So `Apre` cannot be assumed to work as a stationary corrector;
+it may still serve as a GMRES preconditioner for the true `J`. Measure residual contraction before
+trusting any result from this path.
 
 CUDA/MPI gates still pending: frozen-state Jacobian action vs its declared linearization; owned
 continuity sums equal exterior flux sums; 1/2/4 ranks agree including empty-outlet ranks; a

@@ -876,15 +876,19 @@ int main(int argc, char** argv)
         // its share of the opening area; the direction is outward (Exodus winding).
         // Reused by the inlet per-node normals, the inlet flux source, and the
         // through-flow diagnostic so the geometry is computed one consistent way.
+        // outS accumulates the SCALAR area sum_f |A_f|/3, which the average-pressure outlet mean
+        // needs. |sum_f A_f/3| is a different number whenever the facet normals are not aligned.
         auto perNodeAreaVec = [&](const std::string& nm,
                                   std::vector<RealType>& outX,
                                   std::vector<RealType>& outY,
-                                  std::vector<RealType>& outZ)
+                                  std::vector<RealType>& outZ,
+                                  std::vector<RealType>* outS = nullptr)
         {
             const size_t nNodes = amr.domain().getNodeCount();
             outX.assign(nNodes, RealType(0));
             outY.assign(nNodes, RealType(0));
             outZ.assign(nNodes, RealType(0));
+            if (outS) outS->assign(nNodes, RealType(0));
             auto tit = ss.triangleCoordsByName.find(nm);
             if (tit != ss.triangleCoordsByName.end())
             {
@@ -910,10 +914,12 @@ int main(int argc, char** argv)
                         outX[li] += RealType(ax / 3.0);
                         outY[li] += RealType(ay / 3.0);
                         outZ[li] += RealType(az / 3.0);
+                        if (outS)
+                            (*outS)[li] += RealType(std::sqrt(ax*ax + ay*ay + az*az) / 3.0);
                     }
                 }
             }
-            cstone::DeviceVector<RealType> dX(nNodes), dY(nNodes), dZ(nNodes);
+            cstone::DeviceVector<RealType> dX(nNodes), dY(nNodes), dZ(nNodes), dS(nNodes);
             cudaMemcpy(dX.data(), outX.data(), nNodes*sizeof(RealType), cudaMemcpyHostToDevice);
             cudaMemcpy(dY.data(), outY.data(), nNodes*sizeof(RealType), cudaMemcpyHostToDevice);
             cudaMemcpy(dZ.data(), outZ.data(), nNodes*sizeof(RealType), cudaMemcpyHostToDevice);
@@ -926,6 +932,14 @@ int main(int argc, char** argv)
             cudaMemcpy(outX.data(), dX.data(), nNodes*sizeof(RealType), cudaMemcpyDeviceToHost);
             cudaMemcpy(outY.data(), dY.data(), nNodes*sizeof(RealType), cudaMemcpyDeviceToHost);
             cudaMemcpy(outZ.data(), dZ.data(), nNodes*sizeof(RealType), cudaMemcpyDeviceToHost);
+            if (outS)
+            {
+                // Same reverse-add then publish, so ghost readers see owner values.
+                cudaMemcpy(dS.data(), outS->data(), nNodes*sizeof(RealType), cudaMemcpyHostToDevice);
+                amr.domain().reverseExchangeNodeHaloAdd(dS);
+                amr.domain().exchangeNodeHalo(dS);
+                cudaMemcpy(outS->data(), dS.data(), nNodes*sizeof(RealType), cudaMemcpyDeviceToHost);
+            }
         };
 
         double aIn[3], aOut[3];
@@ -1011,8 +1025,11 @@ int main(int argc, char** argv)
         if (areaOut > 1e-30)
         {
             const size_t nNodes = amr.domain().getNodeCount();
-            std::vector<RealType> h_outAx, h_outAy, h_outAz;
-            perNodeAreaVec(outletSS, h_outAx, h_outAy, h_outAz);
+            std::vector<RealType> h_outAx, h_outAy, h_outAz, h_outAs;
+            perNodeAreaVec(outletSS, h_outAx, h_outAy, h_outAz, &h_outAs);
+            s.d_outletAreaScalar.resize(nNodes);
+            cudaMemcpy(s.d_outletAreaScalar.data(), h_outAs.data(),
+                       nNodes*sizeof(RealType), cudaMemcpyHostToDevice);
             s.d_outletAreaVecX.resize(nNodes);
             s.d_outletAreaVecY.resize(nNodes);
             s.d_outletAreaVecZ.resize(nNodes);
