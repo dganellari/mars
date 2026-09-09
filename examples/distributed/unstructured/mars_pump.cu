@@ -1041,7 +1041,10 @@ int main(int argc, char** argv)
         // source below cannot do because there is no prescribed velocity to use.
         // Same once-per-face owner gate and same OUTWARD winding as
         // perNodeAreaVec, so the geometry matches the flux weights exactly.
-        if (s.useFemProjection)
+        // Collected UNCONDITIONALLY: these are pure geometry, and the boundary mass-flux
+        // diagnostic needs them on every path. Uploading them cannot switch the weak-divergence
+        // surface term on, because femOpeningSurfaceActive gates on s.useFemProjection itself,
+        // not on the arrays being non-empty.
         {
             const size_t nNodes = amr.domain().getNodeCount();
             std::vector<int> triNode;
@@ -1095,7 +1098,9 @@ int main(int argc, char** argv)
             // Mirror the solver's femOpeningSurfaceActive so the line does not
             // claim a term that will not fire.
             const char* surfaceOff =
-                s.useOpeningFluxSource
+                !s.useFemProjection
+                    ? "  [geometry only: the weak-divergence surface term needs --pressure-k]"
+                : s.useOpeningFluxSource
                     ? "  [INACTIVE: --opening-flux-source selects the external source instead]"
                 : std::getenv("MARS_FEMGRAM_SOLVE")
                     ? "  [INACTIVE: MARS_FEMGRAM_SOLVE solves D M^-1 D^T, which has no boundary rows]"
