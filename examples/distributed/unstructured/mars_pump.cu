@@ -839,8 +839,12 @@ int main(int argc, char** argv)
                          thrust::device_pointer_cast(d_own.data() + d_own.size()),
                          hostOwnFA.begin());
         }
-        auto faceAreaVec = [&](const std::string& nm, double out[3]) -> double {
-            double nx = 0, ny = 0, nz = 0;
+        // Returns |sum_f A_f|. scalarOut, when given, receives sum_f |A_f| -- the two differ on any
+        // patch whose facet normals are not aligned, and the norm can be ~0 on a patch with real
+        // area (a bent or folded outlet). Gate setup on the SCALAR one.
+        auto faceAreaVec = [&](const std::string& nm, double out[3],
+                               double* scalarOut = nullptr) -> double {
+            double nx = 0, ny = 0, nz = 0, sa = 0;
             auto tit = ss.triangleCoordsByName.find(nm);
             if (tit != ss.triangleCoordsByName.end())
             {
@@ -859,13 +863,17 @@ int main(int argc, char** argv)
                     const auto& C = tit->second[f + 2];
                     double e1x = B[0]-A[0], e1y = B[1]-A[1], e1z = B[2]-A[2];
                     double e2x = C[0]-A[0], e2y = C[1]-A[1], e2z = C[2]-A[2];
-                    nx += 0.5*(e1y*e2z - e1z*e2y);
-                    ny += 0.5*(e1z*e2x - e1x*e2z);
-                    nz += 0.5*(e1x*e2y - e1y*e2x);
+                    const double fx = 0.5*(e1y*e2z - e1z*e2y);
+                    const double fy = 0.5*(e1z*e2x - e1x*e2z);
+                    const double fz = 0.5*(e1x*e2y - e1y*e2x);
+                    nx += fx; ny += fy; nz += fz;
+                    sa += std::sqrt(fx*fx + fy*fy + fz*fz);
                 }
             }
-            double l[3] = {nx, ny, nz};
-            MPI_Allreduce(l, out, 3, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+            double l[4] = {nx, ny, nz, sa}, g[4] = {0, 0, 0, 0};
+            MPI_Allreduce(l, g, 4, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+            out[0] = g[0]; out[1] = g[1]; out[2] = g[2];
+            if (scalarOut) *scalarOut = g[3];
             return std::sqrt(out[0]*out[0] + out[1]*out[1] + out[2]*out[2]);
         };
 
@@ -882,13 +890,14 @@ int main(int argc, char** argv)
                                   std::vector<RealType>& outX,
                                   std::vector<RealType>& outY,
                                   std::vector<RealType>& outZ,
-                                  std::vector<RealType>* outS = nullptr)
+                                  cstone::DeviceVector<RealType>* dOutS = nullptr)
         {
             const size_t nNodes = amr.domain().getNodeCount();
             outX.assign(nNodes, RealType(0));
             outY.assign(nNodes, RealType(0));
             outZ.assign(nNodes, RealType(0));
-            if (outS) outS->assign(nNodes, RealType(0));
+            std::vector<RealType> hS;
+            if (dOutS) hS.assign(nNodes, RealType(0));
             auto tit = ss.triangleCoordsByName.find(nm);
             if (tit != ss.triangleCoordsByName.end())
             {
@@ -914,12 +923,11 @@ int main(int argc, char** argv)
                         outX[li] += RealType(ax / 3.0);
                         outY[li] += RealType(ay / 3.0);
                         outZ[li] += RealType(az / 3.0);
-                        if (outS)
-                            (*outS)[li] += RealType(std::sqrt(ax*ax + ay*ay + az*az) / 3.0);
+                        if (dOutS) hS[li] += RealType(std::sqrt(ax*ax + ay*ay + az*az) / 3.0);
                     }
                 }
             }
-            cstone::DeviceVector<RealType> dX(nNodes), dY(nNodes), dZ(nNodes), dS(nNodes);
+            cstone::DeviceVector<RealType> dX(nNodes), dY(nNodes), dZ(nNodes);
             cudaMemcpy(dX.data(), outX.data(), nNodes*sizeof(RealType), cudaMemcpyHostToDevice);
             cudaMemcpy(dY.data(), outY.data(), nNodes*sizeof(RealType), cudaMemcpyHostToDevice);
             cudaMemcpy(dZ.data(), outZ.data(), nNodes*sizeof(RealType), cudaMemcpyHostToDevice);
@@ -932,19 +940,20 @@ int main(int argc, char** argv)
             cudaMemcpy(outX.data(), dX.data(), nNodes*sizeof(RealType), cudaMemcpyDeviceToHost);
             cudaMemcpy(outY.data(), dY.data(), nNodes*sizeof(RealType), cudaMemcpyDeviceToHost);
             cudaMemcpy(outZ.data(), dZ.data(), nNodes*sizeof(RealType), cudaMemcpyDeviceToHost);
-            if (outS)
+            if (dOutS)
             {
-                // Same reverse-add then publish, so ghost readers see owner values.
-                cudaMemcpy(dS.data(), outS->data(), nNodes*sizeof(RealType), cudaMemcpyHostToDevice);
-                amr.domain().reverseExchangeNodeHaloAdd(dS);
-                amr.domain().exchangeNodeHalo(dS);
-                cudaMemcpy(outS->data(), dS.data(), nNodes*sizeof(RealType), cudaMemcpyDeviceToHost);
+                // Reverse-add then publish, and LEAVE IT ON DEVICE -- no reader needs it on host.
+                dOutS->resize(nNodes);
+                cudaMemcpy(dOutS->data(), hS.data(), nNodes*sizeof(RealType), cudaMemcpyHostToDevice);
+                amr.domain().reverseExchangeNodeHaloAdd(*dOutS);
+                amr.domain().exchangeNodeHalo(*dOutS);
             }
         };
 
         double aIn[3], aOut[3];
-        double areaIn  = faceAreaVec(inletSS,  aIn);
-        double areaOut = faceAreaVec(outletSS, aOut);
+        double scalarAreaIn = 0.0, scalarAreaOut = 0.0;
+        double areaIn  = faceAreaVec(inletSS,  aIn,  &scalarAreaIn);
+        double areaOut = faceAreaVec(outletSS, aOut, &scalarAreaOut);
         qIn = double(inletU) * areaIn;   // prescribed inflow for the through-flow diagnostic
 
         // Inlet velocity along the INWARD normal (-outward), magnitude Uinf.
@@ -1022,14 +1031,16 @@ int main(int argc, char** argv)
 
         // Per-node OUTWARD outlet area-vectors for the through-flow diagnostic
         // (Q_out = sum_owned u.areaVec). Always available for the pump print.
-        if (areaOut > 1e-30)
+        // Gate on the SCALAR area: a patch whose facet normals cancel has |sum A_f| ~ 0 yet real
+        // area, and gating on the norm would skip its setup entirely.
+        if (scalarAreaOut > 1e-30)
         {
             const size_t nNodes = amr.domain().getNodeCount();
-            std::vector<RealType> h_outAx, h_outAy, h_outAz, h_outAs;
-            perNodeAreaVec(outletSS, h_outAx, h_outAy, h_outAz, &h_outAs);
+            std::vector<RealType> h_outAx, h_outAy, h_outAz;
             s.d_outletAreaScalar.resize(nNodes);
-            cudaMemcpy(s.d_outletAreaScalar.data(), h_outAs.data(),
-                       nNodes*sizeof(RealType), cudaMemcpyHostToDevice);
+            // The scalar stays on device: perNodeAreaVec halo-completes it there and nothing on
+            // the host needs it, so the D2H/H2D round-trip the vector components take is skipped.
+            perNodeAreaVec(outletSS, h_outAx, h_outAy, h_outAz, &s.d_outletAreaScalar);
             s.d_outletAreaVecX.resize(nNodes);
             s.d_outletAreaVecY.resize(nNodes);
             s.d_outletAreaVecZ.resize(nNodes);

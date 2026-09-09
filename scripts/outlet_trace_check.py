@@ -125,6 +125,54 @@ def main():
           abs(phys - (10.0 - 0.230508652763321)) < 1e-12, f"physical mean {phys:.15f}")
     check("the two weightings genuinely disagree", abs(m_true - m_bad) > 1e-3)
 
+    print("gate 9: the GEOMETRY builder, from triangle coordinates")
+    # Replicates perNodeAreaVec: per triangle A_f = 0.5*cross(B-A, C-A), then each vertex takes
+    # A_f/3 (vector) and |A_f|/3 (scalar). Gate 8 supplied weights directly and so could not see
+    # this; here the weights are BUILT.
+    def build(tris):
+        vec, sca = {}, {}
+        for (A, B, C) in tris:
+            A, B, C = map(np.asarray, (A, B, C))
+            Af = 0.5 * np.cross(B - A, C - A)
+            for v in (A, B, C):
+                k = tuple(np.round(v, 12))
+                vec[k] = vec.get(k, np.zeros(3)) + Af / 3.0
+                sca[k] = sca.get(k, 0.0) + np.linalg.norm(Af) / 3.0
+        return vec, sca
+
+    # Two PERPENDICULAR unit-area triangles sharing the origin.
+    t1 = ((0, 0, 0), (2, 0, 0), (0, 1, 0))     # A=(0,0,1),  |A|=1
+    t2 = ((0, 0, 0), (2, 0, 0), (0, 0, 1))     # A=(0,-1,0), |A|=1
+    vec, sca = build([t1, t2])
+    o = (0.0, 0.0, 0.0)
+    check("builder: shared node scalar area is 2/3", abs(sca[o] - 2.0 / 3.0) < 1e-12,
+          f"got {sca[o]:.12f}")
+    check("builder: |summed vector| is sqrt(2)/3, NOT 2/3",
+          abs(np.linalg.norm(vec[o]) - np.sqrt(2.0) / 3.0) < 1e-12,
+          f"got {np.linalg.norm(vec[o]):.12f}")
+    check("builder: the two disagree by the bend factor sqrt(2)/2",
+          abs(np.linalg.norm(vec[o]) / sca[o] - np.sqrt(2.0) / 2.0) < 1e-12)
+
+    # Opposed normals: the vector sum CANCELS on a node that has real area.
+    t3 = ((0, 0, 0), (0, 1, 0), (2, 0, 0))     # t1 with reversed winding -> A=(0,0,-1)
+    vec2, sca2 = build([t1, t3])
+    check("cancelling normals: scalar area is still 2/3", abs(sca2[o] - 2.0 / 3.0) < 1e-12)
+    check("cancelling normals: |summed vector| is 0 -- the node would be DROPPED",
+          np.linalg.norm(vec2[o]) < 1e-14, f"got {np.linalg.norm(vec2[o]):.3e}")
+
+    # And the patch-level gate: |sum_f A_f| ~ 0 while sum_f |A_f| = 2.
+    patch_vec = np.zeros(3)
+    patch_sca = 0.0
+    for (A, B, C) in (t1, t3):
+        A, B, C = map(np.asarray, (A, B, C))
+        Af = 0.5 * np.cross(B - A, C - A)
+        patch_vec += Af
+        patch_sca += np.linalg.norm(Af)
+    check("patch: |sum A_f| ~ 0 would skip setup entirely",
+          np.linalg.norm(patch_vec) < 1e-14)
+    check("patch: sum |A_f| = 2 is the real area to gate on",
+          abs(patch_sca - 2.0) < 1e-12)
+
     print()
     if FAIL:
         print(f"{len(FAIL)} FAILED: {', '.join(FAIL)}")
