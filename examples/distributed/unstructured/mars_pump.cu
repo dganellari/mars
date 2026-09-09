@@ -537,6 +537,21 @@ int main(int argc, char** argv)
         MPI_Finalize();
         return 1;
     }
+    // The average-pressure outlet is INCOMPLETE: the trace exists and the boundary flux reads it,
+    // but the outlet pressure rows are still identity, so the mode would run silently inert -- the
+    // exact "formula-only change" the design review rejected. Refuse rather than produce a number
+    // that looks like a result. Remove this once the continuity rows, the boundary derivative and
+    // the boundary-aware gradient all land together (docs/design/outlet_trace_status.md).
+    if (outletBeta >= 0.0)
+    {
+        if (rank == 0)
+            std::cerr << "Error: --outlet-beta is not implemented yet. The trace is built and the\n"
+                         "       boundary flux reads it, but the outlet pressure rows are still\n"
+                         "       Dirichlet, so the trace collapses to a uniform p_ref and changes\n"
+                         "       nothing. See docs/design/outlet_trace_status.md.\n";
+        MPI_Finalize();
+        return 1;
+    }
     if (rcBlend && usePSPG && rank == 0)
         std::cerr << "WARNING: --rc-blend with --pspg stacks two pressure stabilizations of"
                      " different physical dimension; results cannot be attributed.\n";
