@@ -1679,9 +1679,13 @@ int main(int argc, char** argv)
                 }
             }
             // OpenAccel's continuity metric. Collective -> every rank calls it.
-            double mbIn = 0.0, mbOut = 0.0;
-            boundaryMassBalance<KeyType, RealType, TetTag>(
-                s, rcCtx.valid ? &rcCtx : nullptr, mbIn, mbOut);
+            // Reported TWICE, for the same reason div and divRC both are: the bare advective
+            // boundary flux, and the stabilized one. Passing a null ctx disables the Rhie-Chow
+            // term inside the kernel, so the two differ by exactly that term.
+            double mbIn = 0.0, mbOut = 0.0, mbInRc = 0.0, mbOutRc = 0.0;
+            boundaryMassBalance<KeyType, RealType, TetTag>(s, nullptr, mbIn, mbOut);
+            if (rcCtx.valid)
+                boundaryMassBalance<KeyType, RealType, TetTag>(s, &rcCtx, mbInRc, mbOutRc);
 
             double divND = (inletU > 0 && Lscale > 0)
                            ? double(s.lastDivMax) * Lscale / inletU : double(s.lastDivMax);
@@ -1725,7 +1729,14 @@ int main(int argc, char** argv)
                               << "  out=" << mbOut
                               << "  imbalance=" << std::fixed << std::setprecision(3)
                               << ((mbIn + mbOut) / mbIn * 100.0)
-                              << " %  (OpenAccel's metric; in<0, +ve = less leaves than enters)"
+                              << " %  (bare u.A per facet; cross-check against Q_in/Q_out above)"
+                              << "\n" << std::defaultfloat;
+                if (mbInRc < 0.0)
+                    std::cout << "  [mass-balanceRC] in=" << std::scientific << std::setprecision(3) << mbInRc
+                              << "  out=" << mbOutRc
+                              << "  imbalance=" << std::fixed << std::setprecision(3)
+                              << ((mbInRc + mbOutRc) / mbInRc * 100.0)
+                              << " %  (OpenAccel's metric on the stabilized flux)"
                               << "\n" << std::defaultfloat;
                 if (!cavityMode)
                 {
