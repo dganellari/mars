@@ -10142,8 +10142,11 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
 // mass flux, not the reconstructed nodal velocity, and the nodal velocity is never exactly
 // divergence-free in ANY code that uses RC -- OpenAccel included. Every VMS measurement in this
 // project up to 2026-09-08 read the raw number (div*L/U = 2338 against a 2.16 baseline) and
-// concluded mass conservation was destroyed. That comparison was against a quantity OpenAccel
-// would not report.
+// concluded mass conservation was destroyed. That the nodal velocity carries -S follows from RC
+// itself (the correction lands on the FLUX), so it holds for any RC code. What is NOT verified is
+// the stronger claim that OpenAccel reports the flux divergence rather than this one -- their
+// source was not available to check, unlike every other OpenAccel reference in this file, which
+// carries a file:line. Do not cite this comment as evidence about their diagnostics.
 template<typename KeyType, typename RealType, typename ElementTag>
 inline void divMaxVmsOwned(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, RealType rho,
                            RealType& outMax, RealType& outRms)
