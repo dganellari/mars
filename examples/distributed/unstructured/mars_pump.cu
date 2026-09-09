@@ -1675,11 +1675,18 @@ int main(int argc, char** argv)
             // nothing about transport; this one measures what the pressure solve actually zeros.
             double qr25 = 0.0, qr50 = 0.0, qr75 = 0.0;
             bool   haveRcCut = false;
-            // Built ONCE per report -- the cut probes and the boundary balance both need it and it
-            // costs four halo exchanges.
-            VmsFluxCtx<RealType> rcCtx;
-            if (useVMSStab || useRhieChow)
-                buildVmsFluxCtx<KeyType, RealType, TetTag>(s, RealType(dt), rho, rcCtx);
+            // READ the step's frozen context. Under --vms-stab the assembly built it, so the probes
+            // describe exactly the state the solve used; rebuilding here would sample p after the
+            // corrector. The legacy --rhie-chow path does not populate it, so that one still builds
+            // a local copy and its probes carry the post-corrector state.
+            VmsFluxCtx<RealType> localCtx;
+            const VmsFluxCtx<RealType>* rcCtxPtr = nullptr;
+            if (s.vmsCtx.valid) { rcCtxPtr = &s.vmsCtx; }
+            else if (useVMSStab || useRhieChow)
+            {
+                buildVmsFluxCtx<KeyType, RealType, TetTag>(s, RealType(dt), rho, localCtx);
+                if (localCtx.valid) rcCtxPtr = &localCtx;
+            }
             int cutAxis = 0;
             double qcAll[3][3] = {{0,0,0},{0,0,0},{0,0,0}};
             bool cutAllAxes = false;
@@ -1714,11 +1721,11 @@ int main(int argc, char** argv)
                     qc75 = double(interiorCutFlux<KeyType, RealType, TetTag>(s, cutAxis, RealType(lo + 0.75*span)));
                     // Only on the single-axis path: MARS_CUT_AXIS=all exists to FIND the separating
                     // axis, and 18 numbers would not help that.
-                    if (rcCtx.valid)
+                    if (rcCtxPtr)
                     {
-                        qr25 = double(interiorCutFlux<KeyType, RealType, TetTag>(s, cutAxis, RealType(lo + 0.25*span), &rcCtx));
-                        qr50 = double(interiorCutFlux<KeyType, RealType, TetTag>(s, cutAxis, RealType(lo + 0.50*span), &rcCtx));
-                        qr75 = double(interiorCutFlux<KeyType, RealType, TetTag>(s, cutAxis, RealType(lo + 0.75*span), &rcCtx));
+                        qr25 = double(interiorCutFlux<KeyType, RealType, TetTag>(s, cutAxis, RealType(lo + 0.25*span), rcCtxPtr));
+                        qr50 = double(interiorCutFlux<KeyType, RealType, TetTag>(s, cutAxis, RealType(lo + 0.50*span), rcCtxPtr));
+                        qr75 = double(interiorCutFlux<KeyType, RealType, TetTag>(s, cutAxis, RealType(lo + 0.75*span), rcCtxPtr));
                         haveRcCut = true;
                     }
                 }
@@ -1729,8 +1736,8 @@ int main(int argc, char** argv)
             // term inside the kernel, so the two differ by exactly that term.
             double mbIn = 0.0, mbOut = 0.0, mbInRc = 0.0, mbOutRc = 0.0;
             boundaryMassBalance<KeyType, RealType, TetTag>(s, nullptr, mbIn, mbOut);
-            if (rcCtx.valid)
-                boundaryMassBalance<KeyType, RealType, TetTag>(s, &rcCtx, mbInRc, mbOutRc);
+            if (rcCtxPtr)
+                boundaryMassBalance<KeyType, RealType, TetTag>(s, rcCtxPtr, mbInRc, mbOutRc);
 
             double divND = (inletU > 0 && Lscale > 0)
                            ? double(s.lastDivMax) * Lscale / inletU : double(s.lastDivMax);
