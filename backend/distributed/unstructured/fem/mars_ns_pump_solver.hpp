@@ -8609,6 +8609,11 @@ void runPredictorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
                 s.d_node_to_dof.data(), d_nodeOwnership.data(), s.nodeCount);
             cudaDeviceSynchronize();
         }
+        // g_i += (t_i - p_i) * a_o,i / V_i -- the outlet half of B = B_i + B_o.
+        addOutletGradientTerm<KeyType, RealType, ElementTag>(
+            s, s.d_p,
+            (s.d_pTraceOutlet.size() == s.nodeCount ? s.d_pTraceOutlet.data() : nullptr),
+            s.d_gradPx, s.d_gradPy, s.d_gradPz);
         s.lastGradPRms = rmsOwnedInterior3<KeyType, RealType, ElementTag>(
             s, s.d_gradPx, s.d_gradPy, s.d_gradPz);
     }
@@ -10437,6 +10442,9 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
                 s.d_node_to_dof.data(), d_nodeOwnership.data(), s.nodeCount);
             cudaDeviceSynchronize();
         }
+        // Increment form, trace frozen: (G_v phi)_i = (G_0 phi)_i - phi_i * a_o,i / V_i.
+        addOutletGradientTerm<KeyType, RealType, ElementTag>(
+            s, s.d_phi, nullptr, s.d_gradPhix, s.d_gradPhiy, s.d_gradPhiz);
         s.lastGradPhiRms = rmsOwnedInterior3<KeyType, RealType, ElementTag>(
             s, s.d_gradPhix, s.d_gradPhiy, s.d_gradPhiz);
     };
@@ -11025,6 +11033,69 @@ __global__ void buildOutletPressureTraceKernel(const RealType* p,
     // still carry a trace.
     if (aScalar[i] <= RealType(0)) return;
     trace[i] = outletTraceValue<RealType>(p[i], meanP, pRef, beta);
+}
+
+// Boundary term of the nodal pressure gradient at an average-pressure outlet.
+//
+// With B = B_i + B_o the gradient is g = M^-1(-B^T p + Z t), which under the nodal SCS boundary
+// quadrature (each outlet triangle giving its three vertices A_f/3) reduces to
+//
+//     g_i = (G_0 p)_i + (t_i - p_i) * a_o,i / V_i,     a_o,i = sum_{f in i} A_f/3
+//
+// FREEZING THE TRACE DOES NOT REMOVE THIS. For an increment phi with delta t = 0 it still leaves
+//
+//     (G_v phi)_i = (G_0 phi)_i - phi_i * a_o,i / V_i
+//
+// which is the increment form: pass trace = nullptr. Setting phi = 0 on outlet volume nodes would
+// drop the term instead of evaluating it, and that is a different (wrong) boundary condition.
+//
+// Q, the velocity-correction mask, is applied here: on a velocity-Dirichlet node the gradient does
+// not move velocity, so the boundary term must not be added there either.
+template<typename RealType>
+__global__ void addOutletGradientTermKernel(const RealType* p, const RealType* trace,
+                                            const RealType* aox, const RealType* aoy,
+                                            const RealType* aoz,
+                                            const RealType* massNode,
+                                            const int* nodeToDof, const uint8_t* own,
+                                            const uint8_t* isVelBcDof, int numOwnedDofs,
+                                            RealType* gx, RealType* gy, RealType* gz,
+                                            size_t nodeCount)
+{
+    size_t i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= nodeCount) return;
+    if (own[i] != 1) return;
+    const int dof = nodeToDof[i];
+    if (dof < 0 || dof >= numOwnedDofs) return;
+    if (isVelBcDof != nullptr && isVelBcDof[dof]) return;      // Q = 0
+    const RealType V = massNode[i];
+    if (V <= RealType(0)) return;
+    const RealType t = (trace != nullptr) ? trace[i] : RealType(0);
+    const RealType c = (t - p[i]) / V;
+    gx[i] += c * aox[i];
+    gy[i] += c * aoy[i];
+    gz[i] += c * aoz[i];
+}
+
+// Add it to a nodal gradient already normalized and sign-corrected. `trace` null -> increment form.
+// Owned nodes only, so the caller must halo-publish afterwards if ghosts read the gradient.
+template<typename KeyType, typename RealType, typename ElementTag>
+inline void addOutletGradientTerm(NSStepper<KeyType, RealType, ElementTag>& s,
+                                  const cstone::DeviceVector<RealType>& d_field,
+                                  const RealType* trace,
+                                  cstone::DeviceVector<RealType>& gx,
+                                  cstone::DeviceVector<RealType>& gy,
+                                  cstone::DeviceVector<RealType>& gz)
+{
+    if (s.outletBeta < RealType(0)) return;                     // default path untouched
+    if (s.d_outletAreaVecX.size() != s.nodeCount) return;
+    const int nB = int((s.nodeCount + s.blockSize - 1) / s.blockSize);
+    addOutletGradientTermKernel<RealType><<<nB, s.blockSize>>>(
+        d_field.data(), trace,
+        s.d_outletAreaVecX.data(), s.d_outletAreaVecY.data(), s.d_outletAreaVecZ.data(),
+        s.d_massNode.data(), s.d_node_to_dof.data(), s.ownershipMap().data(),
+        (s.d_isBdryDof.size() == size_t(s.numOwnedDofs) ? s.d_isBdryDof.data() : nullptr),
+        s.numOwnedDofs, gx.data(), gy.data(), gz.data(), s.nodeCount);
+    cudaDeviceSynchronize();
 }
 
 // Find, for every opening facet, the element behind it and that element's opposing node.
