@@ -5891,6 +5891,14 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
         // FIX B: with a pressure drop the outlet is a pressure-Dirichlet face (p=0)
         // and the inlet a second one (p=pumpDp), so force the whole-face path -- two
         // Dirichlet faces make A nonsingular, no single pin is needed.
+        // Average-pressure outlet: the face carries NO pressure-Dirichlet row. Its level comes
+        // from the prescribed trace through the boundary flux derivative, and its continuity
+        // equations must survive -- replacing them with identity discards the closure being added.
+        // d_isPressureBdryDof is the single control point: enforceBcMatrixKernel, the RHS zeroing
+        // and the lift all read it, so leaving the outlet unmasked frees all three at once.
+        // NOTE: without the boundary derivative (D3) this leaves the system pure-Neumann and
+        // singular, which is why --outlet-beta is refused in the driver until that lands.
+        const bool avgPressureOutlet = (s.outletBeta >= RealType(0));
         bool singlePin = (s.outletU > RealType(0));
         if (s.pumpDp > RealType(0)) singlePin = false;
         // fluxNeumann: NEITHER opening is masked. Both keep their assembled rows and the
@@ -5908,7 +5916,11 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
             int dof = hostNodeToDof[li];
             if (dof < 0 || dof >= s.numOwnedDofs) continue;
             if (firstOutletDof < 0) firstOutletDof = dof;
-            if (!singlePin && !s.fluxNeumann) { hostMask[dof] = 1; ++ownedOutletCount; }
+            if (!singlePin && !s.fluxNeumann && !avgPressureOutlet)
+            {
+                hostMask[dof] = 1;
+                ++ownedOutletCount;
+            }
             // FIX B: outlet target p=0 (explicit for clarity; zero-init already).
             if (s.pumpDp > RealType(0)) hostTarget[dof] = RealType(0);
         }
