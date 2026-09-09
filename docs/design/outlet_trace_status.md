@@ -42,6 +42,67 @@ zero outlet nodes; empty and zero-area patch fall back to `p_ref` without dividi
 gate 6 — a clamped `p=0` face collapses the trace to a uniform `p_ref`, which is the review's
 argument for why a formula-only change is a no-op.
 
+## D progress (2026-09-09, under ultracode)
+
+`--outlet-beta` is **refused by the driver** (`8b7fb24`) until D2+D3 land: without the boundary
+derivative the freed rows leave a pure-Neumann, singular system. Everything below is gated on
+`outletBeta >= 0`, so the default path is untouched.
+
+| Commit | Piece | State |
+|---|---|---|
+| `981793a` | D0 one frozen `s.vmsCtx` | done |
+| `cd01ef6` | D1 boundary gradient term | done |
+| `580d979` | D4 outlet rows freed | done |
+| — | **D2 continuity residual** | **not started** |
+| — | **D3 boundary derivative** | **not started** |
+
+**D0** — the assembly built its own gradient copy and nodal tau while diagnostics and driver probes
+each rebuilt theirs; a rebuild after the corrector samples a different `p`, so reports described a
+state the solve never used. `s.vmsCtx` is now built once per step by the assembly and read
+everywhere, carrying `dtEff` and the BDF flag so the timestep is frozen with the coefficients.
+The legacy `--rhie-chow` path does not populate it and still rebuilds locally.
+
+**D1** — `addOutletGradientTerm`: `g_i += (t_i - p_i) a_o,i / V_i` in the predictor, and the
+increment form (`trace = nullptr`, giving `- phi_i a_o,i / V_i`) in the corrector. Masked by Q via
+`d_isBdryDof`. Owned nodes only; a halo publish is needed if ghosts ever read these gradients.
+
+**D4** — `d_isPressureBdryDof` is the single control point for the matrix rows, the RHS zeroing and
+the lift, so omitting the outlet from it frees all three together.
+
+### D2 — continuity residual, remaining
+
+`computeDivergenceVMSTetKernel` scatters interior SCS only. The outlet needs its boundary samples
+scattered into the same `d_divAccNode`, per the spec's nodal lumped quadrature: for triangle
+`f=(a,b,c)`, three samples with vector area `A_f/3`, each scattering to its OWN vertex row, using
+
+    q_{f,r} = u_r . (A_f/3) + D_f (gbar_f - grad p_mix) . (A_f/3)
+    grad p_mix = p_o grad N_o + sum_r t_r grad N_r
+    D_f        = boundaryFaceCoefficient(face nodes only)   [already fixed, 2622cb0]
+
+`boundaryMassFluxKernel` already evaluates exactly this but REDUCES it; D2 needs the same
+expression scattering per vertex. Share one evaluator rather than writing a second. Do not also
+run the old raw opening term for those facets. Reverse-add owned-facet contributions exactly once.
+
+### D3 — boundary derivative, remaining
+
+    dq_{f,r}/dp_j = -D_f (A_f/3) . grad N_o * delta_{jo}
+
+row = face node, column = opposite node — both in the same tet, so the CSR entries already exist
+(the rows are assembled, then were overwritten). Scale by `rho/dtEff` before adding into
+`d_valuesPre`, and add it BEFORE the values are copied into the active wrapped matrix; rebuild the
+Hypre operator and preconditioner afterwards. `A_f . grad N_o < 0` on an outward face, so the
+entries are positive in the opposite-node column: nonsymmetric, not a diagonal Robin penalty. Use
+Hypre GMRES, not PCG.
+
+### Gates, none of which have run
+
+Full continuity-residual contraction (measured, not assumed — the spec's counterexample gives
+spectral radius 12.05 undamped and 2.26 at omega=0.25); the actual CUDA evaluator checks; 1/2/4-rank
+conservation including an empty-outlet rank; and the manufactured channel before any changed
+physical case. Host algebra gates that DO pass: `scripts/outlet_trace_check.py` (9 groups) and
+`scripts/outlet_boundary_flux_check.py`.
+
+## Superseded: the solve was unchanged at b3b714b
 ## NOT done: the solve is unchanged
 
 Outlet pressure rows are still identity. With them clamped, `p_sample = 0`, so the trace is
