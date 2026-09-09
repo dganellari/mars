@@ -1150,17 +1150,17 @@ int main(int argc, char** argv)
                         s.d_openingTriElem.data(), s.d_openingTriOpp.data(), nElemF);
                     cudaDeviceSynchronize();
                 }
-                std::vector<int> h_elem(nFacets);
-                cudaMemcpy(h_elem.data(), s.d_openingTriElem.data(),
-                           nFacets*sizeof(int), cudaMemcpyDeviceToHost);
-                long long unresolved = 0;
-                for (int x : h_elem) if (x < 0) ++unresolved;
-                long long gUnresolved = 0;
-                MPI_Allreduce(&unresolved, &gUnresolved, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
-                if (rank == 0 && gUnresolved > 0)
-                    std::cout << "    opening-facets: " << gUnresolved
-                              << " unmatched to an element -> bare advective flux there\n";
             }
+            // OUTSIDE the nFacets>0 guard. A rank can legitimately own no opening facets (facets go
+            // to the owner of their first node), and skipping this collective there would pair it
+            // with the globalFacets reduction below -- mismatched collectives, so a hang or a
+            // silently wrong answer. Same defect as the MARS_OFS_DBG deadlock in c0d9860.
+            const long long unresolved  = unresolvedOpeningFacets<KeyType, RealType, TetTag>(s);
+            long long       gUnresolved = 0;
+            MPI_Allreduce(&unresolved, &gUnresolved, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+            if (rank == 0 && gUnresolved > 0)
+                std::cout << "    opening-facets: " << gUnresolved
+                          << " unmatched to an element -> bare advective flux there\n";
 
             long long localFacets = (long long)nFacets, globalFacets = 0;
             MPI_Allreduce(&localFacets, &globalFacets, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);

@@ -11094,6 +11094,19 @@ inline void buildVmsFluxCtx(NSStepper<KeyType, RealType, ElementTag>& s, RealTyp
     }
 }
 
+// Facets with no adjacent element found. Device reduction on purpose: the alternative is a full
+// D2H of the per-facet element indices, which the host never otherwise needs.
+// NOT collective -- the caller must reduce, on EVERY rank, including ranks owning no facets.
+template<typename KeyType, typename RealType, typename ElementTag>
+inline long long unresolvedOpeningFacets(const NSStepper<KeyType, RealType, ElementTag>& s)
+{
+    const size_t n = s.d_openingTriElem.size();
+    if (n == 0) return 0;
+    auto p = thrust::device_pointer_cast(s.d_openingTriElem.data());
+    return (long long)thrust::count_if(thrust::device, p, p + n,
+                                       [] __device__(int e) -> bool { return e < 0; });
+}
+
 // Net in/out flux through every opening, in OpenAccel's convention (flowModel.cpp:2696-2713,
 // :3062-3094): `in` sums the NEGATIVE (inflowing) facet fluxes and `out` the positive ones, so
 // the percentage they report is
