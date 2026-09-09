@@ -10942,6 +10942,18 @@ struct OutletMomentFunctor
 // Evaluated on ALL nodes, halo included: the boundary flux reads the trace at whichever node a
 // facet touches, and a facet's corners can be halo nodes. Requires d_p halo-complete, which it is
 // after the corrector's exchange.
+// Boundary influence coefficient D_f: the mean of the THREE FACE-node coefficients, with no
+// opposing-node term. Blending in the opposite node makes the boundary flux depend on a coefficient
+// that does not belong to the face -- on the unit-tet fixture (face coefficients 2,4,6, opposite
+// pressure 1, trace 0, zero velocity and gradient) the flux should be 6 regardless of the opposite
+// coefficient, and the blend gave 4.5 at d_opp=2 and 18 at d_opp=20.
+// The face/opposite blend belongs to the RECONSTRUCTED GRADIENT, not to the coefficient.
+template<typename RealType>
+__host__ __device__ inline RealType boundaryFaceCoefficient(RealType d0, RealType d1, RealType d2)
+{
+    return (d0 + d1 + d2) / RealType(3);
+}
+
 // The map itself, in one place so the kernel and any host check share a definition rather than
 // two that can drift.
 template<typename RealType>
@@ -11094,12 +11106,9 @@ __global__ void boundaryMassFluxKernel(
                 const RealType Gby = RealType(0.5) * (gfy + Gy[opp]);
                 const RealType Gbz = RealType(0.5) * (gfz + Gz[opp]);
 
-                RealType tauB = tau;
-                if (tauNode != nullptr)
-                {
-                    const RealType tf = third * (tauNode[f0] + tauNode[f1] + tauNode[f2]);
-                    tauB = RealType(0.5) * (tf + tauNode[opp]);
-                }
+                const RealType tauB =
+                    tauNode ? boundaryFaceCoefficient<RealType>(tauNode[f0], tauNode[f1], tauNode[f2])
+                            : tau;
                 mdot += tauB * ((Gbx - dpdx) * Ax + (Gby - dpdy) * Ay + (Gbz - dpdz) * Az);
             }
 
