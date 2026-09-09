@@ -3369,6 +3369,21 @@ struct NSStepper
     // Q_out = sum_owned( u . outletAreaVec ). Filled by the driver.
     cstone::DeviceVector<RealType> d_outletAreaVecX, d_outletAreaVecY, d_outletAreaVecZ;
 
+    // Average-pressure outlet trace, OpenAccel's averageStaticPressure (flowModel.cpp:21037):
+    //     p_trace = p_ref + (1-beta)*(p_sample - mean_A(p_sample))
+    // It prescribes the area-weighted MEAN and KEEPS the spatial fluctuation: at beta=0.05, 95% of
+    // the variation survives. It is not a temporal relaxation and not 5% forcing.
+    //
+    // Held in its OWN field and never written back into d_p. That is the whole point: the pressure
+    // unknowns must stay free. Feeding a hard p=0 face into the map returns 0, and repeatedly
+    // clamping the same unknown with it converges to a uniform face -- neither is the reference BC.
+    // outletBeta < 0 disables it and keeps the classic p=0 Dirichlet outlet.
+    RealType                       outletBeta = RealType(-1);
+    RealType                       outletPRef = RealType(0);
+    cstone::DeviceVector<RealType> d_pTraceOutlet;      // nodeCount; meaningful where the outlet area vector is nonzero
+    RealType                       lastOutletTraceMean = RealType(0);
+    RealType                       lastOutletArea      = RealType(0);
+
     // Per-node OUTWARD inlet area-vectors (un-normalized, nodeCount-sized, zero
     // off the inlet). Filled by the driver when useOpeningFluxSource is on. The
     // magnitude at a node is its share of the opening area; direction is outward.
@@ -10887,6 +10902,66 @@ inline RealType fluxThroughOwned(NSStepper<KeyType, RealType, ElementTag>& s,
     return global;
 }
 
+// One-pass area moment over this rank's OWNED outlet nodes: (sum A*p, sum A). Own POD rather than
+// double2 so the header still compiles in the host-only test translation units.
+struct AreaMoment { double aw; double a; };
+struct AreaMomentPlus
+{
+    __host__ __device__ AreaMoment operator()(const AreaMoment& x, const AreaMoment& y) const
+    {
+        AreaMoment r; r.aw = x.aw + y.aw; r.a = x.a + y.a; return r;
+    }
+};
+template<typename RealType>
+struct OutletMomentFunctor
+{
+    const uint8_t*  own;
+    const int*      n2d;
+    int             nOwn;
+    const RealType* p;
+    const RealType* ax; const RealType* ay; const RealType* az;
+    __device__ AreaMoment operator()(size_t i) const
+    {
+        AreaMoment r; r.aw = 0.0; r.a = 0.0;
+        if (own[i] != 1) return r;
+        const int dof = n2d[i];
+        if (dof < 0 || dof >= nOwn) return r;   // owned only -> partition invariant
+        const double A = sqrt(double(ax[i]) * double(ax[i]) + double(ay[i]) * double(ay[i])
+                              + double(az[i]) * double(az[i]));
+        if (A <= 0.0) return r;                 // zero off the outlet
+        r.aw = A * double(p[i]);
+        r.a  = A;
+        return r;
+    }
+};
+
+// Evaluated on ALL nodes, halo included: the boundary flux reads the trace at whichever node a
+// facet touches, and a facet's corners can be halo nodes. Requires d_p halo-complete, which it is
+// after the corrector's exchange.
+// The map itself, in one place so the kernel and any host check share a definition rather than
+// two that can drift.
+template<typename RealType>
+__host__ __device__ inline RealType outletTraceValue(RealType p, RealType meanP,
+                                                     RealType pRef, RealType beta)
+{
+    return pRef + (RealType(1) - beta) * (p - meanP);
+}
+
+template<typename RealType>
+__global__ void buildOutletPressureTraceKernel(const RealType* p,
+                                               const RealType* ax, const RealType* ay,
+                                               const RealType* az,
+                                               RealType pRef, RealType beta, RealType meanP,
+                                               RealType* trace, size_t nodeCount)
+{
+    size_t i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= nodeCount) return;
+    trace[i] = RealType(0);
+    const RealType A2 = ax[i] * ax[i] + ay[i] * ay[i] + az[i] * az[i];
+    if (A2 <= RealType(0)) return;
+    trace[i] = outletTraceValue<RealType>(p[i], meanP, pRef, beta);
+}
+
 // Find, for every opening facet, the element behind it and that element's opposing node.
 // One thread per element, binary search over the facets' sorted node triples. The facets are a
 // SURFACE, so the search set is small and this is far cheaper than standing up a whole-mesh face
@@ -10957,7 +11032,9 @@ __global__ void boundaryMassFluxKernel(
     const RealType* u, const RealType* v, const RealType* w,
     const RealType* p, const RealType* Gx, const RealType* Gy, const RealType* Gz,
     const RealType* nodeX, const RealType* nodeY, const RealType* nodeZ,
-    const RealType* tauNode, RealType tau, RealType pBc,
+    const RealType* tauNode, RealType tau,
+    // Prescribed outlet pressure: the per-node trace when present, else the scalar fallback.
+    const RealType* pTrace, RealType pBc,
     double* partialIn, double* partialOut, int nFacets)
 {
     const int f = blockIdx.x * blockDim.x + threadIdx.x;
@@ -10998,7 +11075,8 @@ __global__ void boundaryMassFluxKernel(
                 RealType dpdx = 0, dpdy = 0, dpdz = 0;
                 for (int k = 0; k < 4; ++k)
                 {
-                    const RealType pk = (en[k] == opp) ? p[en[k]] : pBc;
+                    const RealType pk = (en[k] == opp) ? p[en[k]]
+                                                       : (pTrace ? pTrace[en[k]] : pBc);
                     dpdx += dNdx[k][0] * pk;
                     dpdy += dNdx[k][1] * pk;
                     dpdz += dNdx[k][2] * pk;
@@ -11094,6 +11172,43 @@ inline void buildVmsFluxCtx(NSStepper<KeyType, RealType, ElementTag>& s, RealTyp
     }
 }
 
+// Refresh the outlet pressure trace from the current pressure field. LAGGED on purpose: called
+// once per timestep before the predictor, so the trace is frozen for the whole step and the inner
+// pressure Jacobian sees delta p_trace = 0. That is NOT the same as phi = 0 on outlet volume nodes.
+// Collective -- every rank must call it, including ranks owning no outlet nodes.
+template<typename KeyType, typename RealType, typename ElementTag>
+inline void updateOutletPressureTrace(NSStepper<KeyType, RealType, ElementTag>& s)
+{
+    if (s.outletBeta < RealType(0)) return;                    // disabled -> classic p=0 outlet
+    if (s.d_outletAreaVecX.size() != s.nodeCount) return;
+    if (s.d_pTraceOutlet.size() != s.nodeCount) s.d_pTraceOutlet.resize(s.nodeCount);
+
+    OutletMomentFunctor<RealType> f{s.domain.getNodeOwnershipMap().data(),
+                                    s.d_node_to_dof.data(), s.numOwnedDofs,
+                                    s.d_p.data(),
+                                    s.d_outletAreaVecX.data(), s.d_outletAreaVecY.data(),
+                                    s.d_outletAreaVecZ.data()};
+    AreaMoment zero{0.0, 0.0};
+    AreaMoment loc = thrust::transform_reduce(thrust::device,
+                                              thrust::counting_iterator<size_t>(0),
+                                              thrust::counting_iterator<size_t>(s.nodeCount),
+                                              f, zero, AreaMomentPlus());
+    double both[2] = {loc.aw, loc.a}, sum[2] = {0.0, 0.0};
+    MPI_Allreduce(both, sum, 2, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+
+    // Empty or zero-area patch: fall back to the prescribed level. Never divide by zero.
+    const RealType meanP  = (sum[1] > 0.0) ? RealType(sum[0] / sum[1]) : s.outletPRef;
+    s.lastOutletTraceMean = meanP;
+    s.lastOutletArea      = RealType(sum[1]);
+
+    const int nB = int((s.nodeCount + s.blockSize - 1) / s.blockSize);
+    buildOutletPressureTraceKernel<RealType><<<nB, s.blockSize>>>(
+        s.d_p.data(),
+        s.d_outletAreaVecX.data(), s.d_outletAreaVecY.data(), s.d_outletAreaVecZ.data(),
+        s.outletPRef, s.outletBeta, meanP, s.d_pTraceOutlet.data(), s.nodeCount);
+    cudaDeviceSynchronize();
+}
+
 // Facets with no adjacent element found. Device reduction on purpose: the alternative is a full
 // D2H of the per-facet element indices, which the host never otherwise needs.
 // NOT collective -- the caller must reduce, on EVERY rank, including ranks owning no facets.
@@ -11145,9 +11260,9 @@ inline void boundaryMassBalance(NSStepper<KeyType, RealType, ElementTag>& s,
                 s.domain.getNodeX().data(), s.domain.getNodeY().data(), s.domain.getNodeZ().data(),
                 (haveRc && rc->tauNode.size() == s.nodeCount) ? rc->tauNode.data() : nullptr,
                 haveRc ? rc->tauScalar : RealType(0),
-                // --outlet=do-nothing pins the WHOLE outlet face to p=0, so the prescribed
-                // boundary pressure is exactly zero. Becomes a real parameter the day a nonzero
-                // outlet pressure is supported.
+                // The trace when the average-pressure outlet is on; otherwise --outlet=do-nothing
+                // pins the whole face to p=0 and the scalar fallback is exactly that.
+                (s.d_pTraceOutlet.size() == s.nodeCount) ? s.d_pTraceOutlet.data() : nullptr,
                 RealType(0),
                 d_pIn.data(), d_pOut.data(), nFacets);
             cudaDeviceSynchronize();

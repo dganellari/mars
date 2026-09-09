@@ -96,6 +96,9 @@ int main(int argc, char** argv)
     // lag inside the step. This projection has no outer loop, so a blend leaves (1-urf)*div(u**)
     // unprojected permanently, with no dt in it to vanish under refinement.
     double      relaxMass  = 1.0;
+    // Average-pressure outlet trace. <0 keeps the classic p=0 Dirichlet outlet.
+    double      outletBeta = -1.0;
+    double      outletPRef = 0.0;
     double      relaxU     = 0.3;      // --relax-u: momentum URF, folded into D
     bool        usePSPG    = false;    // implicit PSPG pressure stab (tau*L in the DDT operator); --pspg. The correct equal-order checkerboard fix.
     double      pspgTau    = -1;       // <=0 => auto h^2/24; --pspg-tau=V overrides
@@ -182,6 +185,8 @@ int main(int argc, char** argv)
         else if (a == "--rc-blend")                  rcBlend    = true;
         else if (a.rfind("--rc-blend=", 0) == 0)   { rcBlend = true; rcBlendC = std::stod(a.substr(11)); }
         else if (a.rfind("--relax-mass=", 0) == 0)   relaxMass = std::stod(a.substr(13));
+        else if (a.rfind("--outlet-beta=", 0) == 0)  outletBeta = std::stod(a.substr(14));
+        else if (a.rfind("--outlet-pref=", 0) == 0)  outletPRef = std::stod(a.substr(14));
         else if (a.rfind("--relax-u=", 0) == 0)      relaxU    = std::stod(a.substr(10));
         else if (a == "--pressure-k")                pressureK  = true;  // Galerkin K + FEM-consistent weak div/grad projection
         else if (a.rfind("--correctors=", 0) == 0)   nCorrectors = std::stoi(a.substr(13)); // PISO inner pressure corrections (FEM path)
@@ -251,6 +256,9 @@ int main(int argc, char** argv)
                     "                       reports (default 0 = off; ~1e-5 is a converged pump).\n"
                     "                       There is no restart, so a wall-clock kill loses the run.\n"
                     "  --source-ramp-steps=N ramp inlet drive 0->full over N steps (gentle startup; default 0=off)\n"
+                    "  --outlet-beta=V      average-pressure outlet trace p_ref+(1-beta)(p-mean_A p); beta=0.05 keeps\n"
+                    "                       95%% of the spatial variation and prescribes only the mean. <0 = off (default)\n"
+                    "  --outlet-pref=V      prescribed outlet mean pressure for --outlet-beta (default 0)\n"
                     "  --supg              SUPG streamline stabilization on the implicit convection operator\n"
                     "  --div-correct       conservative->advective correction on upwind/BJ advection\n"
                     "  --picard=N          deferred-correction outer sweeps per step (default 1 = plain explicit)\n"
@@ -341,6 +349,10 @@ int main(int argc, char** argv)
                   // Echo the RC knobs. Without this a log cannot be told apart from one run
                   // with different relaxation -- two runs on 2026-09-09 came back bit-identical
                   // and there was no way to check from the logs whether the flag had applied.
+                  << (outletBeta >= 0.0
+                        ? "outlet-trace= average-pressure ON (beta=" + std::to_string(outletBeta)
+                          + ", p_ref=" + std::to_string(outletPRef) + ")\n"
+                        : std::string(""))
                   << "RC knobs    = relax_u " << relaxU << " | relax_mass " << relaxMass
                   << (rcImplicit ? " | rc-implicit" : "")
                   << (rcOnly     ? " | rc-only"     : "")
@@ -531,6 +543,8 @@ int main(int argc, char** argv)
     s.rhoCached     = RealType(rho);
     s.dtCached      = RealType(dt);
     s.relaxMass   = RealType(relaxMass);
+    s.outletBeta  = RealType(outletBeta);
+    s.outletPRef  = RealType(outletPRef);
     s.relaxU      = RealType(relaxU);
     s.usePSPG     = usePSPG;       // implicit PSPG (tau*L in DDT operator)
     s.pspgTau     = RealType(pspgTau);
@@ -1555,6 +1569,9 @@ int main(int argc, char** argv)
                 RealType(rho), s.d_pPhiTargetDof.data(), s.numOwnedDofs);
             cudaDeviceSynchronize();
         }
+        // Lagged: refresh the outlet trace from the previous step's pressure, then hold it frozen
+        // for this whole step so the inner pressure Jacobian sees delta p_trace = 0.
+        updateOutletPressureTrace<KeyType, RealType, TetTag>(s);
         runNsStep<KeyType, RealType, TetTag>(s, RealType(dt), RealType(nu), RealType(rho));
         simTime += dt;
 
