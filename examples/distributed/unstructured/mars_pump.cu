@@ -338,6 +338,13 @@ int main(int argc, char** argv)
                   << (nCorrectors > 1
                         ? "correctors  = " + std::to_string(nCorrectors) + " (PISO inner pressure corrections)\n"
                         : std::string(""))
+                  // Echo the RC knobs. Without this a log cannot be told apart from one run
+                  // with different relaxation -- two runs on 2026-09-09 came back bit-identical
+                  // and there was no way to check from the logs whether the flag had applied.
+                  << "RC knobs    = relax_u " << relaxU << " | relax_mass " << relaxMass
+                  << (rcImplicit ? " | rc-implicit" : "")
+                  << (rcOnly     ? " | rc-only"     : "")
+                  << (rcBlend    ? " | rc-blend"    : "") << "\n"
                   << "MPI ranks   = " << numRanks << "\n"
                   << "========================================\n\n";
     }
