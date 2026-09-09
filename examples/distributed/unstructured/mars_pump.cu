@@ -1544,6 +1544,11 @@ int main(int argc, char** argv)
             // MARS_CUT_AXIS=x|y|z forces one axis; =all probes all three (9 numbers) so
             // the separating plane cannot be missed. Unset = the original auto behaviour.
             double qc25 = 0.0, qc50 = 0.0, qc75 = 0.0;
+            // Same three cuts through the RC-STABILIZED flux. Under Rhie-Chow the raw probe above
+            // measures the reconstructed nodal velocity, which is -S by construction and says
+            // nothing about transport; this one measures what the pressure solve actually zeros.
+            double qr25 = 0.0, qr50 = 0.0, qr75 = 0.0;
+            bool   haveRcCut = false;
             int cutAxis = 0;
             double qcAll[3][3] = {{0,0,0},{0,0,0},{0,0,0}};
             bool cutAllAxes = false;
@@ -1576,6 +1581,20 @@ int main(int argc, char** argv)
                     qc25 = double(interiorCutFlux<KeyType, RealType, TetTag>(s, cutAxis, RealType(lo + 0.25*span)));
                     qc50 = double(interiorCutFlux<KeyType, RealType, TetTag>(s, cutAxis, RealType(lo + 0.50*span)));
                     qc75 = double(interiorCutFlux<KeyType, RealType, TetTag>(s, cutAxis, RealType(lo + 0.75*span)));
+                    // Only on the single-axis path: MARS_CUT_AXIS=all exists to FIND the separating
+                    // axis, and 18 numbers would not help that.
+                    if (useVMSStab || useRhieChow)
+                    {
+                        VmsFluxCtx<RealType> rcCtx;
+                        buildVmsFluxCtx<KeyType, RealType, TetTag>(s, RealType(dt), rho, rcCtx);
+                        if (rcCtx.valid)
+                        {
+                            qr25 = double(interiorCutFlux<KeyType, RealType, TetTag>(s, cutAxis, RealType(lo + 0.25*span), &rcCtx));
+                            qr50 = double(interiorCutFlux<KeyType, RealType, TetTag>(s, cutAxis, RealType(lo + 0.50*span), &rcCtx));
+                            qr75 = double(interiorCutFlux<KeyType, RealType, TetTag>(s, cutAxis, RealType(lo + 0.75*span), &rcCtx));
+                            haveRcCut = true;
+                        }
+                    }
                 }
             }
             double divND = (inletU > 0 && Lscale > 0)
@@ -1611,7 +1630,9 @@ int main(int argc, char** argv)
                               << "  Q_out=" << qOut
                               << "  ratio=" << std::fixed << std::setprecision(3)
                               << (std::abs(qIn) > 0 ? qOut / qIn : 0.0)
-                              << "  (prescribed-BC check, NOT through-flow)"
+                              << (useVMSStab || useRhieChow
+                                  ? "  (RAW u.A on the side set, NOT the stabilized flux -- see [interior-fluxRC])"
+                                  : "  (prescribed-BC check, NOT through-flow)")
                               << "\n" << std::defaultfloat;
                 if (!cavityMode)
                 {
@@ -1628,12 +1649,21 @@ int main(int argc, char** argv)
                                      " is the one separating inlet from outlet)\n" << std::defaultfloat;
                     }
                     else
+                    {
                     std::cout << "  [interior-flux] axis=" << axc[cutAxis]
                               << "  cut@25%=" << std::scientific << std::setprecision(3) << qc25
                               << "  cut@50%=" << qc50
                               << "  cut@75%=" << qc75
                               << "  (solved interior; ~equal+nonzero = real through-flow)"
                               << "\n" << std::defaultfloat;
+                    if (haveRcCut)
+                        std::cout << "  [interior-fluxRC] axis=" << axc[cutAxis]
+                                  << "  cut@25%=" << std::scientific << std::setprecision(3) << qr25
+                                  << "  cut@50%=" << qr50
+                                  << "  cut@75%=" << qr75
+                                  << "  (STABILIZED flux -- judge through-flow on THIS line)"
+                                  << "\n" << std::defaultfloat;
+                    }
                 }
             }
         }

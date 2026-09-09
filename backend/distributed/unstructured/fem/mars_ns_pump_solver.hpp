@@ -10875,6 +10875,60 @@ inline RealType fluxThroughOwned(NSStepper<KeyType, RealType, ElementTag>& s,
     return global;
 }
 
+// The two fields the Rhie-Chow face flux needs beyond u and p, neither of which the stepper leaves
+// in a usable state after a step: the projected nodal gradient is written on OWNED dofs only, and
+// the per-node D is a step-local temp. Both must be halo-complete because a face value averages its
+// two endpoints. Built once per report so the three cut planes share it instead of each redoing
+// four halo exchanges.
+template<typename RealType>
+struct VmsFluxCtx
+{
+    cstone::DeviceVector<RealType> Gx, Gy, Gz, tauNode;
+    RealType tauScalar = 0;
+    bool     valid     = false;
+};
+
+template<typename KeyType, typename RealType, typename ElementTag>
+inline void buildVmsFluxCtx(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, RealType rho,
+                            VmsFluxCtx<RealType>& c)
+{
+    if constexpr (!std::is_same_v<ElementTag, TetTag>) { return; }
+    else
+    {
+        const bool     bdf2 = (s.useBdf2 && s.bdfStep >= 1 && s.d_valuesVel_bdf2.size() > 0);
+        const RealType dtE  = bdf2 ? (RealType(2) * dt / RealType(3)) : dt;
+        c.tauScalar = s.rhieChowTau > RealType(0) ? s.rhieChowTau : dtE / rho;
+
+        c.Gx.resize(s.nodeCount); c.Gy.resize(s.nodeCount); c.Gz.resize(s.nodeCount);
+        thrust::copy(thrust::device, s.d_gradPx.begin(), s.d_gradPx.end(), c.Gx.begin());
+        thrust::copy(thrust::device, s.d_gradPy.begin(), s.d_gradPy.end(), c.Gy.begin());
+        thrust::copy(thrust::device, s.d_gradPz.begin(), s.d_gradPz.end(), c.Gz.begin());
+        s.domain.exchangeNodeHalo(c.Gx);
+        s.domain.exchangeNodeHalo(c.Gy);
+        s.domain.exchangeNodeHalo(c.Gz);
+
+        // The same per-node D the step itself builds, including the relax_u fold -- read the
+        // ACTIVE momentum diagonal, which under BDF2 is 3M/(2dt).
+        if (std::getenv("MARS_VMS_GLOBAL_TAU") == nullptr)
+        {
+            c.tauNode.resize(s.nodeCount);
+            int nB = int((s.nodeCount + s.blockSize - 1) / s.blockSize);
+            buildVmsNodalTauKernel<RealType><<<nB, s.blockSize>>>(
+                s.d_diagPtr.data(),
+                (bdf2 ? s.d_valuesVel_bdf2.data() : s.d_valuesVel.data()),
+                s.d_node_to_dof.data(), s.d_mass.data(), rho, c.tauScalar,
+                c.tauNode.data(), s.nodeCount, s.numOwnedDofs);
+            cudaDeviceSynchronize();
+            s.domain.exchangeNodeHalo(c.tauNode);
+            if (s.relaxU > RealType(0) && s.relaxU < RealType(1))
+                thrust::transform(thrust::device, c.tauNode.begin(), c.tauNode.end(),
+                                  c.tauNode.begin(),
+                                  [a = s.relaxU] __device__(RealType v) { return a * v; });
+        }
+        c.valid = true;
+    }
+}
+
 // FIX 3: interior cut-plane flux probe. For every INTERIOR median-dual SCS face
 // whose two endpoints straddle the plane axis==cut, add the SOLVED face flux
 // u_f . scsAreaVec (u_f = 0.5*(u_L+u_R), the exact interpolation the divergence
@@ -10895,6 +10949,18 @@ __global__ void interiorCutFluxKernel(const KeyType* c0, const KeyType* c1,
                                       const RealType* areaVecX,
                                       const RealType* areaVecY,
                                       const RealType* areaVecZ,
+                                      // Rhie-Chow: pass p != nullptr to probe the STABILIZED face
+                                      // flux instead of the raw interpolated one. Under RC the
+                                      // stabilized flux is the conserved quantity and the nodal
+                                      // velocity is not, so a raw probe reads -S, not transport.
+                                      const RealType* p,
+                                      const RealType* gradPx, const RealType* gradPy,
+                                      const RealType* gradPz,
+                                      const RealType* nodeX, const RealType* nodeY,
+                                      const RealType* nodeZ,
+                                      const RealType* tauNode,    // null -> the scalar tau
+                                      RealType tau,
+                                      const uint8_t* isVelBc,
                                       RealType cut,
                                       double* partial,            // one slot per block
                                       size_t startElem, size_t numLocal)
@@ -10909,6 +10975,33 @@ __global__ void interiorCutFluxKernel(const KeyType* c0, const KeyType* c1,
         const KeyType* cc[8] = {c0, c1, c2, c3, c4, c5, c6, c7};
         KeyType n[NPE];
         for (int i = 0; i < NPE; ++i) n[i] = cc[i][e];
+
+        // dN/dx is constant over a linear tet, so the element pressure gradient is the same for
+        // all SCS -- compute it once instead of per ip.
+        RealType dpdx = 0, dpdy = 0, dpdz = 0;
+        if constexpr (std::is_same_v<ElementTag, TetTag>)
+        {
+            if (p != nullptr)
+            {
+                RealType coords[4][3];
+                for (int i = 0; i < NPE; ++i)
+                {
+                    coords[i][0] = nodeX[n[i]];
+                    coords[i][1] = nodeY[n[i]];
+                    coords[i][2] = nodeZ[n[i]];
+                }
+                RealType det, dNdx[4][3];
+                Tet4CVFEM::jacobian_and_dNdx<RealType>(coords, det, dNdx);
+                for (int kk = 0; kk < NPE; ++kk)
+                {
+                    RealType pk = p[n[kk]];
+                    dpdx += dNdx[kk][0] * pk;
+                    dpdy += dNdx[kk][1] * pk;
+                    dpdz += dNdx[kk][2] * pk;
+                }
+            }
+        }
+
         for (int ip = 0; ip < NSCS; ++ip)
         {
             int nodeL, nodeR; scsLR<ElementTag>(ip, nodeL, nodeR);
@@ -10923,7 +11016,27 @@ __global__ void interiorCutFluxKernel(const KeyType* c0, const KeyType* c1,
             RealType vfy = RealType(0.5) * (vy[iL] + vy[iR]);
             RealType vfz = RealType(0.5) * (vz[iL] + vz[iR]);
             size_t off = e * NSCS + ip;
-            mine += double(vfx * areaVecX[off] + vfy * areaVecY[off] + vfz * areaVecZ[off]);
+            RealType f = vfx * areaVecX[off] + vfy * areaVecY[off] + vfz * areaVecZ[off];
+            if constexpr (std::is_same_v<ElementTag, TetTag>)
+            {
+                if (p != nullptr)
+                {
+                    // Term for term the same as computeDivergenceVMSTetKernel, including the
+                    // velocity-Dirichlet endpoint weighting. The probe has to measure exactly the
+                    // flux the pressure solve drives to zero, or it proves nothing.
+                    const RealType wL =
+                        (isVelBc != nullptr && isVelBc[iL]) ? RealType(0) : RealType(0.5);
+                    const RealType wR =
+                        (isVelBc != nullptr && isVelBc[iR]) ? RealType(0) : RealType(0.5);
+                    RealType Gx = wL * gradPx[iL] + wR * gradPx[iR];
+                    RealType Gy = wL * gradPy[iL] + wR * gradPy[iR];
+                    RealType Gz = wL * gradPz[iL] + wR * gradPz[iR];
+                    RealType tauIp = tauNode ? RealType(0.5) * (tauNode[iL] + tauNode[iR]) : tau;
+                    f += tauIp * ((Gx - dpdx) * areaVecX[off] + (Gy - dpdy) * areaVecY[off]
+                                  + (Gz - dpdz) * areaVecZ[off]);
+                }
+            }
+            mine += double(f);
         }
     }
     // block reduce into shared then one atomic per block
@@ -10942,7 +11055,8 @@ __global__ void interiorCutFluxKernel(const KeyType* c0, const KeyType* c1,
 // 0=x,1=y,2=z). Owned elements only; globally reduced. Reads s.d_u/v/w.
 template<typename KeyType, typename RealType, typename ElementTag = HexTag>
 inline RealType interiorCutFlux(NSStepper<KeyType, RealType, ElementTag>& s,
-                                int axis, RealType cut)
+                                int axis, RealType cut,
+                                const VmsFluxCtx<RealType>* rc = nullptr)
 {
     const auto& d_conn = s.domain.getElementToNodeConnectivity();
     auto cp = connPtrs<ElementTag, KeyType>(d_conn);
@@ -10968,6 +11082,14 @@ inline RealType interiorCutFlux(NSStepper<KeyType, RealType, ElementTag>& s,
             s.d_u.data(), s.d_v.data(), s.d_w.data(),
             nodeAxis,
             s.d_areaVec_x.data(), s.d_areaVec_y.data(), s.d_areaVec_z.data(),
+            (rc && rc->valid) ? s.d_p.data()  : nullptr,
+            (rc && rc->valid) ? rc->Gx.data() : nullptr,
+            (rc && rc->valid) ? rc->Gy.data() : nullptr,
+            (rc && rc->valid) ? rc->Gz.data() : nullptr,
+            s.domain.getNodeX().data(), s.domain.getNodeY().data(), s.domain.getNodeZ().data(),
+            (rc && rc->valid && rc->tauNode.size() == s.nodeCount) ? rc->tauNode.data() : nullptr,
+            (rc && rc->valid) ? rc->tauScalar : RealType(0),
+            (s.d_isBdryNode.size() == s.nodeCount ? s.d_isBdryNode.data() : nullptr),
             cut, d_partial.data(), startElem, numLocal);
         cudaDeviceSynchronize();
         auto pp = thrust::device_pointer_cast(d_partial.data());
