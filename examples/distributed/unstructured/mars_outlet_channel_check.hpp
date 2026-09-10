@@ -45,7 +45,8 @@ struct OutletChannelCheck
             && s.d_v_nm1.size() == s.nodeCount && s.d_w_nm1.size() == s.nodeCount,
             "channel gate: missing BDF history");
         const auto* own = s.ownershipMap().data();
-        auto difference = [&](const auto& a, const auto& b, bool owned_only) {
+        auto difference = [&](const cstone::DeviceVector<RealType>& a,
+                              const cstone::DeviceVector<RealType>& b, bool owned_only) {
             const auto* ap = a.data(); const auto* bp = b.data();
             double local = thrust::transform_reduce(thrust::device,
                 thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(s.nodeCount),
