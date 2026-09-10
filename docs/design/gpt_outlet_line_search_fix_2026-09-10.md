@@ -2,7 +2,8 @@
 
 Author: GPT/Codex. Date: 2026-09-10.
 Status: confirmed code defects corrected; host regression checks pass;
-causal confirmation and integrated CUDA/MPI execution pending.
+subsequent Daint execution confirms approximate-correction stagnation.
+See [the true-J follow-up](gpt_outlet_true_j_krylov_2026-09-10.md) for the current implementation.
 
 ## Evidence and limits
 
@@ -74,6 +75,7 @@ changes are outside this fix.
   extracted from `domain.cu` reproduced volume 4.0000005722048915. It ran on the CPU.
 - `git diff --check` passes.
 
-Next: rebuild on Daint and rerun only the public one-rank channel command with
-`MARS_SOLVE_TRACE=1`, as shown in the integration instructions. Do not proceed to
-multi-rank flow runs until this completes or its failure has been diagnosed.
+The subsequent public one-rank run (job 4642390) exercised this repair: corrections
+5–7 passed with `old_gate=0`, but correction 8 stagnated at roundoff. Predicted and
+measured ratios agreed. The follow-up above replaces the approximate single-direction
+iteration with a true-J Krylov solve; its GPU execution is pending.

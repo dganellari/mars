@@ -606,6 +606,7 @@ int main(int argc, char** argv)
     s.dtCached      = RealType(dt);
     s.relaxMass   = RealType(relaxMass);
     s.outletBeta  = RealType(outletBeta);
+    s.outlet_check_jacobian = outlet_channel_check;
     s.outletPRef  = RealType(outletPRef);
     s.outlet_max_corrections = outlet_max_corrections;
     s.outlet_relative_tolerance = RealType(outlet_rtol);

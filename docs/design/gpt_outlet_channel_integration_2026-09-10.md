@@ -1,14 +1,14 @@
 # Public channel: full outlet-stepper integration gate
 
 Author: GPT/Codex. Date: 2026-09-10.
-Status: implemented; mesh read-back and log-checker fault tests pass locally.
-Compilation of the new driver check and integrated CUDA/MPI runs remain pending.
+Status: public driver compiled and ran on Daint; no full timestep has passed.
+The latest true-J FGMRES implementation still needs CUDA compilation and execution.
 
-Update: the user compiled and ran the first public-channel step on Daint. Momentum
-converged, but the pressure line search rejected all backtracks before any channel
-step passed. The [line-search diagnosis and fix](gpt_outlet_line_search_fix_2026-09-10.md)
-records the confirmed acceptance-rule defect and the exact SFC volume reference.
-The corrected integrated run is pending; this is not a passing flow result.
+The corrected Armijo run (Daint job 4642390) confirmed that the approximate
+correction stagnates despite accurate predicted residual changes. See
+[the true-J implementation and validation record](gpt_outlet_true_j_krylov_2026-09-10.md).
+The earlier [line-search and volume fixes](gpt_outlet_line_search_fix_2026-09-10.md)
+remain in place. This is not a passing flow result.
 
 ## Equations and bounded purpose
 
@@ -30,12 +30,14 @@ There is no claimed analytic velocity or pressure solution for these eight steps
 The production nodal Tet4 CVFEM/SCS discretization, lumped mass, per-vertex opening
 samples with triangle area/3, nodal VMS coefficients, and boundary-aware gradients
 are reused unchanged. `dt=0.01 s`; the first step must use BDF1 (`dtEff=dt`), followed
-by BDF2 (`dtEff=2*dt/3`). The full Hypre correction path is used, including its
-measured damping and failure conditions. No solver terms or tolerance defaults change.
+by BDF2 (`dtEff=2*dt/3`). The true correction operator is solved with FGMRES and Hypre on `Apre` as a
+preconditioner, followed by measured damping and the same final acceptance gates.
 
 ## Checks and limits
 
-The opt-in `--outlet-channel-check` captures velocity before each physical step and
+The opt-in `--outlet-channel-check` first verifies the production Jacobian against
+pressure-and-velocity finite differences at each step, including frozen-state
+preservation. It emits three `[outlet-jacobian]` records per step. It also captures velocity before each physical step and
 checks the stored BDF history afterward. History equality is exact because this is
 a copy invariant, not a floating-point reduction. It forward-exchanges copies of
 the solved fields using the actual domain halo and requires that no ghost value
@@ -65,7 +67,15 @@ or performance. Those remain later gates.
 ## Daint run sequence
 
 Pull `cstone` and rebuild `mars_pump` using the existing CUDA/Hypre/netCDF build.
-No new target or Python package is required. Run from `daint-gpu/`.
+Rebuild the existing `mars_outlet_kernel_gate` target too; no new target or Python
+package is required. Run from `daint-gpu/`. Check the updated projection kernel first:
+
+```bash
+srun --account=csstaff --time=00:05:00 --nodes=1 --ntasks-per-node=1 --export=ALL --kill-on-bad-exit=1 \
+  ~/affinity/bind_numa.sh ./examples/distributed/unstructured/mars_outlet_kernel_gate
+```
+
+Require PASS (393 checks per rank) before the channel run.
 Stop at the first failure; do not increase damping or relax tolerances to hide it.
 The shell `pipefail` setting preserves `srun` failure when output is saved with `tee`.
 

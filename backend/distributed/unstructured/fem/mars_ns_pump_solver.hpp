@@ -3483,6 +3483,7 @@ struct NSStepper
     RealType                       outlet_divergence_tolerance = RealType(1e-8); // 1/s
     RealType                       outlet_flux_tolerance = RealType(1e-12);     // volume/s
     RealType                       outlet_max_damping = RealType(1);
+    bool                           outlet_check_jacobian = false;
     int                            last_outlet_corrections = 0;
     RealType                       last_outlet_damping = 0;
     RealType                       last_outlet_residual_rms = 0, last_outlet_residual_max = 0;
@@ -3490,6 +3491,9 @@ struct NSStepper
     cstone::DeviceVector<RealType> d_outlet_residual, d_outlet_trial_residual;
     cstone::DeviceVector<RealType> d_outlet_base_u, d_outlet_base_v, d_outlet_base_w, d_outlet_base_p;
     cstone::DeviceVector<RealType> d_outlet_rhs, d_outlet_solution;
+    cstone::DeviceVector<RealType> d_outlet_krylov, d_outlet_action;
+    cstone::DeviceVector<RealType> d_outlet_delta_u, d_outlet_delta_v, d_outlet_delta_w;
+    cstone::DeviceVector<double> d_outlet_krylov_products;
     cstone::DeviceVector<RealType> d_outlet_gradient_acc_x, d_outlet_gradient_acc_y, d_outlet_gradient_acc_z;
     cstone::DeviceVector<double> d_outlet_flux_in, d_outlet_flux_out;
     cstone::DeviceVector<RealType> d_pTraceOutlet;      // nodeCount; meaningful where the outlet scalar area is nonzero
@@ -10543,8 +10547,17 @@ inline void divMaxRhieChowOwned(NSStepper<KeyType, RealType, ElementTag>& s,
 // Writes s.lastDivMax for monitoring.
 // -------------------------------------------------------------------------
 template<typename KeyType, typename RealType, typename ElementTag>
-void compute_pressure_increment_gradient(NSStepper<KeyType, RealType, ElementTag>& s)
+void compute_pressure_increment_gradient(NSStepper<KeyType, RealType, ElementTag>& s, bool report_rms = true)
 {
+    auto finish_launch = [&] {
+        if (s.outletBeta < RealType(0)) { cudaDeviceSynchronize(); return; }
+        const cudaError_t error = cudaGetLastError();
+        if (error != cudaSuccess)
+        {
+            std::cerr << "ERROR: outlet increment gradient: " << cudaGetErrorString(error) << '\n';
+            MPI_Abort(MPI_COMM_WORLD, 1);
+        }
+    };
     const auto& d_nodeOwnership = s.ownershipMap();
     const auto& d_conn          = s.domain.getElementToNodeConnectivity();
     // connPtrs gives NodesPerElem pointers; c4..c7 stay nullptr for tet (the
@@ -10615,7 +10628,7 @@ void compute_pressure_increment_gradient(NSStepper<KeyType, RealType, ElementTag
                 d_gxAcc.data(), d_gyAcc.data(), d_gzAcc.data(),
                 startElem, numLocal);
         }
-        cudaDeviceSynchronize();
+        finish_launch();
     }
     s.domain.reverseExchangeNodeHaloAdd(d_gxAcc);
     s.domain.reverseExchangeNodeHaloAdd(d_gyAcc);
@@ -10631,7 +10644,7 @@ void compute_pressure_increment_gradient(NSStepper<KeyType, RealType, ElementTag
             s.d_node_to_dof.data(), d_nodeOwnership.data(),
             s.d_gradPhix.data(), s.d_gradPhiy.data(), s.d_gradPhiz.data(),
             s.nodeCount);
-        cudaDeviceSynchronize();
+        finish_launch();
     }
     // applyDivTransposePerNodeKernel integrates to -V*grad (validator-
     // confirmed by mars_amr_ddt.cu --test=sign), so M^{-1} D^T phi = -grad.
@@ -10643,13 +10656,14 @@ void compute_pressure_increment_gradient(NSStepper<KeyType, RealType, ElementTag
         negateThreeOwnedKernel<RealType><<<nodeBlocks, s.blockSize>>>(
             s.d_gradPhix.data(), s.d_gradPhiy.data(), s.d_gradPhiz.data(),
             s.d_node_to_dof.data(), d_nodeOwnership.data(), s.nodeCount);
-        cudaDeviceSynchronize();
+        finish_launch();
     }
     // Increment form, trace frozen: (G_v phi)_i = (G_0 phi)_i - phi_i * a_o,i / V_i.
     addOutletGradientTerm<KeyType, RealType, ElementTag>(
         s, s.d_phi, nullptr, s.d_gradPhix, s.d_gradPhiy, s.d_gradPhiz);
-    s.lastGradPhiRms = rmsOwnedInterior3<KeyType, RealType, ElementTag>(
-        s, s.d_gradPhix, s.d_gradPhiy, s.d_gradPhiz);
+    if (report_rms)
+        s.lastGradPhiRms = rmsOwnedInterior3<KeyType, RealType, ElementTag>(
+            s, s.d_gradPhix, s.d_gradPhiy, s.d_gradPhiz);
 }
 
 template<typename KeyType, typename RealType, typename ElementTag = HexTag>
@@ -11325,7 +11339,12 @@ inline void addOutletGradientTerm(NSStepper<KeyType, RealType, ElementTag>& s,
         s.d_massNode.data(), s.d_node_to_dof.data(), s.ownershipMap().data(),
         (s.d_isBdryDof.size() == size_t(s.numOwnedDofs) ? s.d_isBdryDof.data() : nullptr),
         s.numOwnedDofs, gx.data(), gy.data(), gz.data(), s.nodeCount);
-    cudaDeviceSynchronize();
+    const cudaError_t error = cudaGetLastError();
+    if (error != cudaSuccess)
+    {
+        std::cerr << "ERROR: outlet boundary gradient: " << cudaGetErrorString(error) << '\n';
+        MPI_Abort(MPI_COMM_WORLD, 1);
+    }
 }
 
 // Find, for every opening facet, the element behind it and that element's opposing node.
@@ -11584,8 +11603,10 @@ inline void validate_outlet_continuity(NSStepper<KeyType, RealType, ElementTag>&
 // Integrated volume flux R = C{F_u u + T(W Gbar - L_v p - L_t trace)}.
 // Inputs and frozen context are halo-complete. No row masks, history writes, or source patches.
 template<typename KeyType, typename RealType, typename ElementTag>
-inline void assemble_outlet_continuity(NSStepper<KeyType, RealType, ElementTag>& s,
+inline void assemble_outlet_continuity_fields(NSStepper<KeyType, RealType, ElementTag>& s,
                                      const RealType* u, const RealType* v, const RealType* w,
+                                     const RealType* pressure, const RealType* trace,
+                                     RealType p_ref, bool keep_smooth,
                                      cstone::DeviceVector<RealType>& residual)
 {
     if constexpr (std::is_same_v<ElementTag, TetTag>)
@@ -11616,10 +11637,10 @@ inline void assemble_outlet_continuity(NSStepper<KeyType, RealType, ElementTag>&
         {
             const int blocks = int((num_local + s.blockSize - 1) / s.blockSize);
             computeDivergenceVMSTetKernel<KeyType, RealType><<<blocks, s.blockSize>>>(
-                cp[0], cp[1], cp[2], cp[3], u, v, w, s.d_p.data(),
+                cp[0], cp[1], cp[2], cp[3], u, v, w, pressure,
                 ctx.Gx.data(), ctx.Gy.data(), ctx.Gz.data(), x.data(), y.data(), z.data(),
                 s.d_areaVec_x.data(), s.d_areaVec_y.data(), s.d_areaVec_z.data(),
-                ctx.tauScalar, tau_node, ctx.keepSmooth, RealType(1), nullptr,
+                ctx.tauScalar, tau_node, keep_smooth, RealType(1), nullptr,
                 s.d_isBdryNode.size() == s.nodeCount ? s.d_isBdryNode.data() : nullptr,
                 residual.data(), s.domain.startIndex(), num_local);
             check_launch(cudaGetLastError());
@@ -11631,13 +11652,22 @@ inline void assemble_outlet_continuity(NSStepper<KeyType, RealType, ElementTag>&
                 cp[0], cp[1], cp[2], cp[3], s.d_openingTriNode.data(),
                 s.d_openingTriElem.data(), s.d_openingTriOpp.data(), s.d_openingTriIsOutlet.data(),
                 s.d_openingTriAreaX.data(), s.d_openingTriAreaY.data(), s.d_openingTriAreaZ.data(),
-                u, v, w, s.d_p.data(), ctx.Gx.data(), ctx.Gy.data(), ctx.Gz.data(),
+                u, v, w, pressure, ctx.Gx.data(), ctx.Gy.data(), ctx.Gz.data(),
                 x.data(), y.data(), z.data(), tau_node, ctx.tauScalar,
-                s.d_pTraceOutlet.data(), s.outletPRef, ctx.keepSmooth, residual.data(), n_facets);
+                trace, p_ref, keep_smooth, residual.data(), n_facets);
             check_launch(cudaGetLastError());
         }
         s.domain.reverseExchangeNodeHaloAdd(residual);
     }
+}
+
+template<typename KeyType, typename RealType, typename ElementTag>
+inline void assemble_outlet_continuity(NSStepper<KeyType, RealType, ElementTag>& s,
+                                      const RealType* u, const RealType* v, const RealType* w,
+                                      cstone::DeviceVector<RealType>& residual)
+{
+    assemble_outlet_continuity_fields(s, u, v, w, s.d_p.data(), s.d_pTraceOutlet.data(),
+                                      s.outletPRef, s.vmsCtx.keepSmooth, residual);
 }
 
 // Boundary mass flux per opening facet, matching OpenAccel's boundary mDot:

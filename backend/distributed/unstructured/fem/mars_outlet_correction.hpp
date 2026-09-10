@@ -69,6 +69,9 @@ OutletResidualNorm outlet_residual_norm(NSStepper<KeyType, RealType, ElementTag>
             maximum, global[2], global[3], global[1]};
 }
 
+#include "mars_outlet_krylov.hpp"
+#include "mars_outlet_jacobian_check.hpp"
+
 template<typename KeyType, typename RealType, typename ElementTag>
 void run_outlet_pressure_correction(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, RealType rho)
 {
@@ -106,7 +109,6 @@ void run_outlet_pressure_correction(NSStepper<KeyType, RealType, ElementTag>& s,
     const auto* dof = s.d_node_to_dof.data();
     const auto* fixed = s.d_isBdryDof.data();
     const int n_owned = s.numOwnedDofs;
-    const int blocks = int((s.nodeCount + s.blockSize - 1) / s.blockSize);
     auto copy = [](const auto& source, auto& target) {
         target.resize(source.size());
         if (!source.empty())
@@ -138,6 +140,9 @@ void run_outlet_pressure_correction(NSStepper<KeyType, RealType, ElementTag>& s,
         thrust::fill(thrust::device, thrust::device_pointer_cast(s.d_phi.data()),
                      thrust::device_pointer_cast(s.d_phi.data() + s.nodeCount), RealType(0));
 
+    constexpr int restart = 40;
+    OutletKrylovOps<KeyType, RealType, ElementTag> krylov(s, h, restart);
+    if (s.outlet_check_jacobian) check_outlet_jacobian(krylov);
     for (int k = 0; ; ++k)
     {
         double q_in = 0, q_out = 0;
@@ -158,19 +163,12 @@ void run_outlet_pressure_correction(NSStepper<KeyType, RealType, ElementTag>& s,
         require_outlet_correction(s, k < s.outlet_max_corrections,
                                  "full continuity residual did not converge within --outlet-max-corrections");
 
-        thrust::fill(thrust::device, thrust::device_pointer_cast(s.d_outlet_rhs.data()),
-                     thrust::device_pointer_cast(s.d_outlet_rhs.data() + s.d_outlet_rhs.size()), RealType(0));
-        thrust::fill(thrust::device, thrust::device_pointer_cast(s.d_outlet_solution.data()),
-                     thrust::device_pointer_cast(s.d_outlet_solution.data() + s.d_outlet_solution.size()), RealType(0));
-        if (blocks > 0)
-            buildPressureRhsKernel<RealType><<<blocks, s.blockSize>>>(
-                s.d_outlet_residual.data(), dof, own, RealType(1) / h,
-                s.d_outlet_rhs.data(), s.nodeCount, n_owned);
-        int iterations = solveOneComponent(s, s.d_outlet_rhs, s.d_outlet_solution,
-                                          s.d_phi, s.Apre, KrylovHint::GMRES);
-        require_outlet_correction(s, iterations >= 0, "Hypre failed to solve the correction system");
-        s.lastPressureIters += iterations;
-        s.domain.exchangeNodeHalo(s.d_phi);
+        krylov.build_rhs();
+        const auto linear = outlet_fgmres(krylov, restart, s.maxIter,
+            std::max(double(s.tolerance), 128*double(std::numeric_limits<RealType>::epsilon())),
+            double(std::numeric_limits<RealType>::epsilon()));
+        require_outlet_correction(s, linear.converged, "true-J FGMRES did not converge");
+        krylov.set_pressure(krylov.solution());
         compute_pressure_increment_gradient(s);
         copy(s.d_u, s.d_outlet_base_u); copy(s.d_v, s.d_outlet_base_v);
         copy(s.d_w, s.d_outlet_base_w); copy(s.d_p, s.d_outlet_base_p);
@@ -207,7 +205,7 @@ void run_outlet_pressure_correction(NSStepper<KeyType, RealType, ElementTag>& s,
         MPI_Allreduce(local, global, 2, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
         RealType omega = RealType(outlet_correction_damping(global[0], global[1], double(s.outlet_max_damping)));
         require_outlet_correction(s, omega > RealType(0),
-            "compact correction has no descent direction; a true-J Krylov solve is required");
+            "true-J correction has no measured descent direction");
         const double slope = global[0] / norm.volume;
         bool accepted = false;
         OutletResidualNorm next{};

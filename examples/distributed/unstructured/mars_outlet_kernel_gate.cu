@@ -530,6 +530,34 @@ void check_anchor_failures(int rank, Checks& checks)
     run(valid_map, valid_owner, 3, 0, 0, false, 0, "empty facet ranks participate without error");
 }
 
+void check_krylov_products(int rank, int ranks, Checks& checks)
+{
+    constexpr int count = 4, n = 513, stride = 520;
+    Field basis(count*stride, 1e90), vector(n), reference(count, 0.);
+    for (int i = 0; i < n; ++i)
+    {
+        vector[i] = std::sin(.03*i);
+        for (int j = 0; j < count; ++j)
+        {
+            basis[j*stride+i] = std::cos(.02*i+j);
+            reference[j] += basis[j*stride+i]*vector[i];
+        }
+    }
+    DeviceArray<double> d_basis, d_vector, d_products;
+    d_basis.upload(basis); d_vector.upload(vector); d_products.zero(count);
+    for (bool empty_peers : {false, true})
+    {
+        const int local_n = empty_peers && rank != 0 ? 0 : n;
+        outlet_krylov_products_kernel<double><<<count,256>>>(
+            d_basis.data, d_vector.data, stride, local_n, d_products.data);
+        complete("batched Krylov projection");
+        const auto result = sum_ranks(d_products.download());
+        for (int j = 0; j < count; ++j)
+            checks.near(result[j], reference[j]*(empty_peers ? 1 : ranks), 1e-10,
+                        "batched Krylov projection, padding and empty-rank reduction");
+    }
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -547,6 +575,7 @@ int main(int argc, char** argv)
     cuda_check(cudaFree(nullptr), "initialize visible GPU");
     Checks checks;
     check_anchor_failures(rank, checks);
+    check_krylov_products(rank, ranks, checks);
     run_fixture(1, rank, ranks, checks);
     run_fixture(2, rank, ranks, checks);
     int failures = 0;

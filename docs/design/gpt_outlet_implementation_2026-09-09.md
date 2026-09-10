@@ -2,13 +2,14 @@
 
 Author: GPT/Codex, with Codex implementation and review agents.
 Date: 2026-09-09.
-Status (updated 2026-09-10): host, scalar CUDA, and 1/2/4-rank kernel gates pass.
-Domain-halo, full Hypre stepper, and manufactured flow validation remain pending.
+Status (updated 2026-09-10): earlier host, scalar CUDA, and 1/2/4-rank
+kernel gates passed. The public full-stepper run stalled in step 1 after the Armijo
+repair. The new true-J FGMRES path has host validation and still needs CUDA/MPI
+compilation and execution; no full channel timestep has passed.
 
-First public-channel run: step 1 failed the line search. A confirmed acceptance-rule
-defect has been fixed and host-tested; the corrected GPU run is pending. See the
-[diagnosis](gpt_outlet_line_search_fix_2026-09-10.md). Earlier CUDA/kernel PASS results
-refer to the preceding implementation, not a passing full channel solve.
+See [the true-J implementation and current run instructions](gpt_outlet_true_j_krylov_2026-09-10.md).
+The earlier [line-search diagnosis](gpt_outlet_line_search_fix_2026-09-10.md)
+remains relevant; prior GPU PASS records do not validate the new Krylov adapter.
 
 ## Review follow-up: pressure-anchor guard
 
@@ -77,7 +78,7 @@ The pressure unknown and increment have physical pressure units. With
 
 ```
 R = interior flux + prescribed inlet flux + stabilized outlet flux
-Apre * delta_phi = -R/h
+J * delta_phi = -R/h   // true-J FGMRES, with Apre as preconditioner
 p_trial = p_base + omega * delta_phi
 u_trial = u_base - omega*h*Q*G_v(delta_phi)
 ```
@@ -104,8 +105,10 @@ claim that arbitrary meshes admit a convergent stationary iteration.
 Momentum failure, invalid geometry/coefficient data, nonfinite residuals, conservation
 mismatch, a non-descent direction, failed backtracking, or exhausted corrections
 abort the run through MPI. Failure cannot be reported as a completed physical step.
-There is no automatic true-J Krylov fallback. If this approximate correction does
-not contract on a flow gate, that fallback is a separate numerical extension.
+The original approximate single-direction iteration stalled on the public flow gate.
+The current opt-in path solves the true correction Jacobian with FGMRES, using
+`Apre` only as its right preconditioner. Measured physical residual acceptance still
+follows that solve; the new implementation's GPU gates remain pending.
 
 Defaults and units:
 
