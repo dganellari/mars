@@ -2,12 +2,12 @@
 
 Author: GPT/Codex, with Codex implementation and review agents.
 Date: 2026-09-09.
-Status: implemented; host gates pass; CUDA build,
-CUDA/MPI execution, domain-halo validation, and manufactured flow validation pending.
+Status (updated 2026-09-10): host, scalar CUDA, and 1/2/4-rank kernel gates pass.
+Domain-halo, full Hypre stepper, and manufactured flow validation remain pending.
 
 ## Review follow-up: pressure-anchor guard
 
-GPT/Codex, 2026-09-10. Status: implemented; CUDA/MPI validation pending.
+GPT/Codex, 2026-09-10. Status: implemented; kernel gates pass on CUDA/MPI.
 Following Claude's missing-CSR-entry finding, outlet matrix assembly now flags any
 missing opposite DOF, invalid owned-row mapping, missing CSR slot, or unresolved
 facet caught by its existing connectivity guards. Each owned face row must have its
@@ -26,8 +26,9 @@ a valid ghost column with only one owned face row, missing DOFs/CSR slots, and e
 ranks receiving the failure reduction. A serial host harness extracted the production
 kernel, CSR lookup, and these fixture cases: all 22 assertions passed with
 `-Wall -Wextra -Werror` and address/undefined-behavior sanitizers. Atomics and MPI were
-serial substitutes in that harness; CUDA compilation and real 1/2/4-rank execution
-remain pending because this host has no `nvcc`.
+serial substitutes in that harness. The user subsequently supplied passing Daint
+CUDA runs on 1/2/4 ranks, including these fault cases; see
+[the execution record](gpt_outlet_daint_validation_2026-09-10.md).
 
 ## Provenance
 
@@ -171,10 +172,11 @@ execution. Use the established GPU binding when launching on the cluster.
 The kernel gate uses replicated synthetic arrays and real MPI reductions;
 it does not exercise `ElementDomain` halo communication or the full Hypre stepper.
 
-This host has no CUDA compiler. Neither CUDA target nor `mars_pump` has been compiled
-or run here. Required before interpreting a changed physical case:
+This host has no CUDA compiler. The user ran both CUDA gates on Daint: 321 scalar
+CUDA checks and 385 kernel checks per rank at 1/2/4 ranks passed. Full `mars_pump`
+execution has not been demonstrated. Required before interpreting a changed physical case:
 
-1. Build the solver and both gates on CUDA; execute the scalar gate and 1/2/4-rank kernel gates.
+1. Confirm the solver build; the scalar CUDA and 1/2/4-rank kernel gates have passed.
 2. Check the actual domain halo, facet ownership, and full stepper on a public synthetic
    mesh, including an empty-opening rank and BDF startup. Compare full residuals and
    physical boundary fluxes across partitions.

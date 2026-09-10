@@ -1,7 +1,27 @@
 # Outlet CUDA/MPI validation
 
 Author: GPT/Codex. Date: 2026-09-10.
-Status: prepared; pull on Daint, build, and execution pending.
+Status: scalar CUDA gate and 1/2/4-rank kernel gates passed on Daint;
+domain-halo and full-stepper validation pending.
+
+## Executed results
+
+User-executed Daint output supplied on 2026-09-10 after the `ee6f1528` build fix.
+The output does not print the executable commit ID. GPT inspected the supplied text;
+GPT did not launch these jobs.
+
+| Gate | Ranks | Reported result |
+|---|---:|---|
+| `mars_outlet_boundary_gate` | 1 | PASS: 1,396 host checks and 321 CUDA checks |
+| `mars_outlet_kernel_gate` | 1 | PASS: 385 checks per rank |
+| `mars_outlet_kernel_gate` | 2 | PASS: 385 checks per rank |
+| `mars_outlet_kernel_gate` | 4 | PASS: 385 checks per rank |
+
+The runs used source `/capstor/scratch/cscs/gandanie/git/mars`, build `daint-gpu/`,
+and `~/affinity/bind_numa.sh`. The scalar job was 4641220; the two-rank job was
+4641227. The supplied text does not show job IDs for the other two runs.
+All four runs printed PASS; the transcript does not include explicit exit codes.
+It establishes execution of both CUDA targets, not a full `mars_pump` solve.
 
 ## Scope
 
