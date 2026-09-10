@@ -4,6 +4,9 @@ Author: GPT/Codex. Date: 2026-09-10.
 Status: scalar CUDA gate and 1/2/4-rank kernel gates passed on Daint;
 domain-halo and full-stepper validation pending.
 
+Next stage: [public channel integration gate](gpt_outlet_channel_integration_2026-09-10.md),
+using the real domain halo and full Hypre stepper. That new gate has not run on Daint yet.
+
 ## Executed results
 
 User-executed Daint output supplied on 2026-09-10 after the `ee6f1528` build fix.

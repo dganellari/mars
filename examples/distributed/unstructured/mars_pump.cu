@@ -31,6 +31,7 @@
 #include "backend/distributed/unstructured/fem/mars_ns_pump_solver.hpp"
 #include "backend/distributed/unstructured/utils/mars_vtu_parallel_writer.hpp"
 #include "backend/distributed/unstructured/utils/mars_read_exodus_mesh.hpp"
+#include "mars_outlet_channel_check.hpp"
 
 #include <unordered_map>
 #include <mpi.h>
@@ -102,6 +103,7 @@ int main(int argc, char** argv)
     int         outlet_max_corrections = 100;
     double      outlet_rtol = 1e-6, outlet_div_tol = 1e-8, outlet_flux_tol = 1e-12;
     double      outlet_max_damping = 1.0;
+    bool        outlet_channel_check = false;
     double      relaxU     = 0.3;      // --relax-u: momentum URF, folded into D
     bool        usePSPG    = false;    // implicit PSPG pressure stab (tau*L in the DDT operator); --pspg. The correct equal-order checkerboard fix.
     double      pspgTau    = -1;       // <=0 => auto h^2/24; --pspg-tau=V overrides
@@ -195,6 +197,7 @@ int main(int argc, char** argv)
         else if (a.rfind("--outlet-div-tol=", 0) == 0) outlet_div_tol = std::stod(a.substr(17));
         else if (a.rfind("--outlet-flux-tol=", 0) == 0) outlet_flux_tol = std::stod(a.substr(18));
         else if (a.rfind("--outlet-max-damping=", 0) == 0) outlet_max_damping = std::stod(a.substr(21));
+        else if (a == "--outlet-channel-check") outlet_channel_check = true;
         else if (a.rfind("--relax-u=", 0) == 0)      relaxU    = std::stod(a.substr(10));
         else if (a == "--pressure-k")                pressureK  = true;  // Galerkin K + FEM-consistent weak div/grad projection
         else if (a.rfind("--correctors=", 0) == 0)   nCorrectors = std::stoi(a.substr(13)); // PISO inner pressure corrections (FEM path)
@@ -272,6 +275,7 @@ int main(int argc, char** argv)
                     "  --outlet-div-tol=V   absolute continuity tolerance in 1/s (1e-8)\n"
                     "  --outlet-flux-tol=V  absolute boundary-flux tolerance in volume/s (1e-12)\n"
                     "  --outlet-max-damping=V  maximum measured correction step in (0,1] (1)\n"
+                    "  --outlet-channel-check  public channel integration checks and per-step scalar records\n"
                     "  --supg              SUPG streamline stabilization on the implicit convection operator\n"
                     "  --div-correct       conservative->advective correction on upwind/BJ advection\n"
                     "  --picard=N          deferred-correction outer sweeps per step (default 1 = plain explicit)\n"
@@ -303,6 +307,16 @@ int main(int argc, char** argv)
     if (meshFile.empty())
     {
         if (rank == 0) std::cerr << "Error: --mesh=FILE.exo required\n";
+        MPI_Finalize();
+        return 1;
+    }
+    if (outlet_channel_check && !(outletBeta >= 0 && useBdf2 && numSteps >= 2 && numSteps <= 32
+        && steadyTol == 0 && !pumpUniformIC && inletU > 0 && vtuPrefix.empty()
+        && inletSS == "inlet" && outletSS == "outlet" && !inletFlipNormal))
+    {
+        if (rank == 0) std::cerr << "Error: --outlet-channel-check needs the public channel fixture, "
+            "average-pressure outlet, BDF2, --num-steps between 2 and 32, rest startup, positive inlet speed, "
+            "inlet/outlet side sets, no flipped normal, no early steady stop, and no VTU output.\n";
         MPI_Finalize();
         return 1;
     }
@@ -1557,6 +1571,18 @@ int main(int argc, char** argv)
 
     setupNSStepper<KeyType, RealType, TetTag>(s, RealType(nu), RealType(dt),
                                               CvfemKernelVariant::Tensor);
+    OutletChannelCheck<KeyType, RealType> channel_check;
+    if (outlet_channel_check)
+    {
+        int empty = s.d_openingTriAreaX.empty() ? 1 : 0, empty_ranks = 0;
+        MPI_Allreduce(&empty, &empty_ranks, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+        if (rank == 0)
+            std::cout << std::setprecision(16) << "[outlet-channel-config] ranks=" << numRanks
+                << " steps=" << numSteps << " dt=" << dt << " nu=" << nu << " rho=" << rho
+                << " inlet=" << inletU << " ramp_steps=" << sourceRampSteps
+                << " beta=" << outletBeta << " p_ref=" << outletPRef
+                << " empty_opening_ranks=" << empty_ranks << '\n';
+    }
 
     // -------- VTU output --------
     std::unique_ptr<fem::VTUParallelWriter<KeyType, RealType, TetTag>> vw;
@@ -1753,7 +1779,9 @@ int main(int argc, char** argv)
         // Lagged: refresh the outlet trace from the previous step's pressure, then hold it frozen
         // for this whole step so the inner pressure Jacobian sees delta p_trace = 0.
         updateOutletPressureTrace<KeyType, RealType, TetTag>(s);
+        if (outlet_channel_check) channel_check.capture(s);
         runNsStep<KeyType, RealType, TetTag>(s, RealType(dt), RealType(nu), RealType(rho));
+        if (outlet_channel_check) channel_check.verify(s, step, RealType(dt));
         simTime += dt;
 
         if (step % 10 == 0 || step == numSteps)
@@ -2007,6 +2035,12 @@ int main(int argc, char** argv)
         }
     }
     auto wallEnd = std::chrono::high_resolution_clock::now();
+    if (outlet_channel_check)
+    {
+        require_outlet_correction(s, !divergeStop && stepsRun == numSteps,
+                                 "channel gate: incomplete time loop");
+        if (rank == 0) std::cout << "PASS: public outlet channel integration steps=" << numSteps << '\n';
+    }
     double wallMs = std::chrono::duration<double, std::milli>(wallEnd - wallStart).count();
     if (rank == 0)
         std::cout << "\nPump run complete: " << stepsRun << " steps, "
