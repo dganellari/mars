@@ -5,6 +5,11 @@ Date: 2026-09-09.
 Status (updated 2026-09-10): host, scalar CUDA, and 1/2/4-rank kernel gates pass.
 Domain-halo, full Hypre stepper, and manufactured flow validation remain pending.
 
+First public-channel run: step 1 failed the line search. A confirmed acceptance-rule
+defect has been fixed and host-tested; the corrected GPU run is pending. See the
+[diagnosis](gpt_outlet_line_search_fix_2026-09-10.md). Earlier CUDA/kernel PASS results
+refer to the preceding implementation, not a passing full channel solve.
+
 ## Review follow-up: pressure-anchor guard
 
 GPT/Codex, 2026-09-10. Status: implemented; kernel gates pass on CUDA/MPI.

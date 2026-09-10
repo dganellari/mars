@@ -11,8 +11,15 @@ inline double outlet_correction_damping(double dot, double square, double maximu
     return std::min(maximum, -dot / square);
 }
 
-inline bool outlet_correction_contracts(double before, double after, double damping)
+// For F = 0.5*rms(R)^2, slope = <R, delta R>_(1/V) / sum(V).
+inline bool outlet_correction_contracts(double before, double after, double damping, double slope)
 {
-    return std::isfinite(before) && std::isfinite(after) && damping > 0 && damping <= 1
-        && after >= 0 && after < before && after <= before * (1.0 - 1e-4 * damping);
+    if (!std::isfinite(before) || !std::isfinite(after) || !std::isfinite(damping)
+        || !std::isfinite(slope) || !(before > 0) || !(slope < 0)
+        || !(damping > 0) || damping > 1 || after < 0 || !(after < before)) return false;
+    // Normalize without squaring a large/tiny norm; preserve a small measured decrease.
+    const double relative_slope = (slope / before) / before;
+    const double relative_change = ((after - before) / before) * (after / before + 1.0);
+    return std::isfinite(relative_slope)
+        && relative_change <= 2e-4 * damping * relative_slope;
 }

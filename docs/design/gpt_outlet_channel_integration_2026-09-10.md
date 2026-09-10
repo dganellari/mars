@@ -4,6 +4,12 @@ Author: GPT/Codex. Date: 2026-09-10.
 Status: implemented; mesh read-back and log-checker fault tests pass locally.
 Compilation of the new driver check and integrated CUDA/MPI runs remain pending.
 
+Update: the user compiled and ran the first public-channel step on Daint. Momentum
+converged, but the pressure line search rejected all backtracks before any channel
+step passed. The [line-search diagnosis and fix](gpt_outlet_line_search_fix_2026-09-10.md)
+records the confirmed acceptance-rule defect and the exact SFC volume reference.
+The corrected integrated run is pending; this is not a passing flow result.
+
 ## Equations and bounded purpose
 
 The existing driver solves incompressible Navier–Stokes with physical pressure:
@@ -39,7 +45,8 @@ Every step reassembles the actual full continuity residual with the frozen conte
 and real reverse halo. Require RMS and max <= `1e-7 /s`, boundary imbalance <=
 `1e-8 m^3/s`, and agreement between the residual sum and boundary reporter within
 `1e-10 m^3/s`. The prescribed inlet flux is independently `-U_in*1 m^2` at the
-current ramp. Require positive outlet flow, total lumped volume 4, scalar outlet
+current ramp. Require positive outlet flow, total lumped volume matching the
+production SFC-encoded/decoded box (4.0000005722048915 for the current 64-bit keys), scalar outlet
 area 1, and the prescribed frozen trace mean. The checker prints full-precision
 velocity/pressure means and RMS values for partition comparisons.
 
@@ -64,7 +71,7 @@ The shell `pipefail` setting preserves `srun` failure when output is saved with 
 
 ```bash
 set -o pipefail
-MARS_NS_DEBUG_STEPS=1 srun --account=csstaff --time=00:05:00 --nodes=1 --ntasks-per-node=1 --export=ALL --kill-on-bad-exit=1 \
+MARS_SOLVE_TRACE=1 MARS_NS_DEBUG_STEPS=1 srun --account=csstaff --time=00:05:00 --nodes=1 --ntasks-per-node=1 --export=ALL --kill-on-bad-exit=1 \
   ~/affinity/bind_numa.sh ./examples/distributed/unstructured/mars_pump \
   --mesh=../tests/data/public_outlet_channel/outlet_channel.exo --inlet-ss=inlet --outlet-ss=outlet \
   --solver=hypre --vms-stab --rc-implicit --outlet=do-nothing --outlet-beta=0.05 --outlet-channel-check \

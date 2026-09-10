@@ -208,14 +208,32 @@ void run_outlet_pressure_correction(NSStepper<KeyType, RealType, ElementTag>& s,
         RealType omega = RealType(outlet_correction_damping(global[0], global[1], double(s.outlet_max_damping)));
         require_outlet_correction(s, omega > RealType(0),
             "compact correction has no descent direction; a true-J Krylov solve is required");
+        const double slope = global[0] / norm.volume;
         bool accepted = false;
         OutletResidualNorm next{};
         for (int backtrack = 0; backtrack < 16; ++backtrack)
         {
             trial(omega);
             next = outlet_residual_norm(s, s.d_outlet_trial_residual);
-            if (outlet_correction_contracts(norm.rms, next.rms, double(omega)))
-            { accepted = true; break; }
+            accepted = outlet_correction_contracts(norm.rms, next.rms, double(omega), slope);
+            if (std::getenv("MARS_SOLVE_TRACE") && s.rank == 0)
+            {
+                const double relative_slope = (slope / norm.rms) / norm.rms;
+                const double relative_square = (global[1] / norm.volume / norm.rms) / norm.rms;
+                const double predicted_square = std::fma(double(omega),
+                    std::fma(double(omega), relative_square, 2*relative_slope), 1.0);
+                const auto flags = std::cerr.flags(); const auto precision = std::cerr.precision();
+                std::cerr << std::scientific << std::setprecision(16)
+                    << "[outlet-trial] k=" << k+1 << " backtrack=" << backtrack
+                    << " omega=" << omega << " relative_slope=" << relative_slope
+                    << " predicted_ratio=" << std::sqrt(std::max(0.0, predicted_square))
+                    << " actual_ratio=" << next.rms/norm.rms
+                    << " rms_before=" << norm.rms << " rms_after=" << next.rms
+                    << " old_gate=" << (next.rms < norm.rms && next.rms <= norm.rms*(1-1e-4*omega))
+                    << " accepted=" << accepted << '\n';
+                std::cerr.flags(flags); std::cerr.precision(precision);
+            }
+            if (accepted) break;
             omega *= RealType(0.5);
         }
         require_outlet_correction(s, accepted, "damped correction failed the measured contraction gate");

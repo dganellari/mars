@@ -491,7 +491,7 @@ inline void algebra_checks(Checks& checks)
         checks.require(omega > 0 && omega <= 1, "production damping accepts residual descent");
         Vector next;
         for (int node = 0; node < 4; ++node) next[node] = remaining[node]+omega*delta[node];
-        const bool contracts = outlet_correction_contracts(norm(remaining), norm(next), omega);
+        const bool contracts = outlet_correction_contracts(norm(remaining), norm(next), omega, product/24);
         checks.require(contracts, "production Armijo check contracts actual mixed-mode residual");
         if (!contracts) break;
         remaining = next;
@@ -519,9 +519,28 @@ inline void iteration_checks(Checks& checks)
             {0,0,1}, {1,1,1}, {1,2,.1}, {1,-.1,.1}, {1,.5,0}, {1,.5,-1}, {1,.5,1.1},
             {1,1-1e-5,1}, {infinity,.5,1}, {1,infinity,1}, {nan,.5,1},
             {1,nan,1}, {1,.5,nan}, {1,.5,infinity}})
-        checks.require(!outlet_correction_contracts(values[0], values[1], values[2]),
+        checks.require(!outlet_correction_contracts(values[0], values[1], values[2], -1),
                        "production contraction rejects stagnation, growth, nonfinite or weak decrease");
-    checks.require(outlet_correction_contracts(1,.9998,1), "production Armijo accepts sufficient decrease");
+    checks.require(outlet_correction_contracts(1,.9998,1,-1), "production Armijo accepts sufficient decrease");
+    for (double slope : {0., 1., infinity, -infinity, nan})
+        checks.require(!outlet_correction_contracts(1,.9,1,slope), "Armijo rejects invalid/non-descent slopes");
+
+    // A nearly orthogonal direction still descends. Fixed fractional contraction rejects
+    // every backtrack, whereas Armijo measures decrease against this direction's slope.
+    const double dot = -1e-6, square = 1e-12+1e-6;
+    const double optimum = outlet_correction_damping(dot, square, 1);
+    double omega = optimum;
+    for (int backtrack = 0; backtrack < 16; ++backtrack) {
+        const double after = std::hypot(1-omega*1e-6, omega*1e-3);
+        checks.require(!(after <= 1-1e-4*omega), "old fractional gate rejects valid affine descent");
+        checks.require(outlet_correction_contracts(1, after, omega, dot), "slope-based Armijo accepts affine descent");
+        omega *= .5;
+    }
+    for (double scale : {1e-100, 1e100}) {
+        const double after = scale*std::hypot(1-optimum*1e-6, optimum*1e-3);
+        checks.require(outlet_correction_contracts(scale, after, optimum, scale*scale*dot),
+                       "Armijo decision is invariant to residual units");
+    }
 }
 
 inline void derivative_checks(Checks& checks)

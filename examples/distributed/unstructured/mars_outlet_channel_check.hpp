@@ -98,7 +98,17 @@ struct OutletChannelCheck
         MPI_Allreduce(values, sums, 9, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
         bool finite = true;
         for (double value : sums) finite &= std::isfinite(value);
-        require_outlet_correction(s, finite && std::abs(sums[0]-4.) <= 1e-10
+        // Tet geometry is decoded from SFC keys, while opening areas come from the Exodus triangles.
+        // Compare volume to the encoded/decoded public box, not to its pre-quantization volume.
+        const auto& box = s.domain.getBoundingBox();
+        using SfcKey = cstone::SfcKind<KeyType>;
+        const KeyType lo_key = cstone::sfc3D<SfcKey>(RealType(0), RealType(0), RealType(0), box);
+        const KeyType hi_key = cstone::sfc3D<SfcKey>(RealType(4), RealType(1), RealType(1), box);
+        const auto [lx, ly, lz] = s.domain.sfcToPhysicalCoordinate(lo_key);
+        const auto [hx, hy, hz] = s.domain.sfcToPhysicalCoordinate(hi_key);
+        const double expected_volume = double(hx-lx)*double(hy-ly)*double(hz-lz);
+        require_outlet_correction(s, finite && std::isfinite(expected_volume) && expected_volume > 0
+            && std::abs(sums[0]-expected_volume) <= 1e-10
             && std::abs(sums[8]-1.) <= 1e-10
             && std::abs(sums[7]-double(s.outletPRef)*sums[8]) <= 1e-10,
             "channel gate: volume, outlet area, or frozen trace mean failed");
