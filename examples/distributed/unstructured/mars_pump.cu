@@ -562,7 +562,7 @@ int main(int argc, char** argv)
         const bool valid = outletBeta <= 1.0 && useHypre && useVMSStab && rcImplicit
             && !pressureK && !rcOnly && !rcBlend && !usePSPG && !useRhieChow
             && !fluxNeumann && !openingFluxSource && !openNormalProj && !fluxPressureBc
-            && !implicitAdv && pumpDp == 0.0 && outletMode == "do-nothing" && !cavityMode
+            && !implicitAdv && pumpDp == 0.0 && outletMode == "do-nothing" && bcMode != "cavity"
             && relaxMass == 1.0 && relaxU > 0.0 && relaxU <= 1.0 && nCorrectors == 1
             && cflMax <= 0.0 && std::isfinite(dt) && dt > 0 && std::isfinite(rho) && rho > 0
             && std::getenv("MARS_HYPRE_USE_DDT") == nullptr
