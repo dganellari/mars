@@ -33,6 +33,7 @@
 #include "backend/distributed/unstructured/fem/mars_sparsity_builder.hpp"
 #include "backend/distributed/unstructured/fem/mars_perf_counters.hpp"
 #include "backend/distributed/unstructured/fem/mars_sparse_matrix.hpp"
+#include "backend/distributed/unstructured/fem/mars_outlet_flux.hpp"
 #include "backend/distributed/unstructured/fem/mars_periodic_bc.hpp"
 #include "backend/distributed/unstructured/solvers/mars_cg_solver.hpp"
 #ifdef MARS_ENABLE_HYPRE
@@ -2146,6 +2147,63 @@ __global__ void assembleRhieChowSensitivityTetKernel(
     }
 }
 
+template<typename KeyType, typename RealType>
+__global__ void assemble_outlet_pressure_sensitivity_kernel(
+    const KeyType* c0, const KeyType* c1, const KeyType* c2, const KeyType* c3,
+    const int* tri_node, const int* tri_element, const int* tri_opposite,
+    const RealType* area_x, const RealType* area_y, const RealType* area_z,
+    const RealType* node_x, const RealType* node_y, const RealType* node_z,
+    const RealType* coefficient_node, RealType coefficient_scalar, RealType rho_over_dt,
+    const int* node_to_dof, const uint8_t* ownership,
+    const int* row_ptr, const int* col_ind, int num_owned_dofs,
+    int num_total_dofs, RealType* values, int* invalid_anchor, int num_facets)
+{
+    const int f = blockIdx.x * blockDim.x + threadIdx.x;
+    if (f >= num_facets) return;
+    const int element = tri_element[f], opposite = tri_opposite[f];
+    if (element < 0 || opposite < 0) { atomicExch(invalid_anchor, 1); return; }
+    const int nodes[3] = {tri_node[3 * f], tri_node[3 * f + 1], tri_node[3 * f + 2]};
+    if (nodes[0] < 0 || nodes[1] < 0 || nodes[2] < 0) { atomicExch(invalid_anchor, 1); return; }
+    const KeyType* connectivity[4] = {c0, c1, c2, c3};
+    RealType coordinates[4][3];
+    int opposite_index = -1;
+    for (int k = 0; k < 4; ++k)
+    {
+        const int node = int(connectivity[k][element]);
+        coordinates[k][0] = node_x[node];
+        coordinates[k][1] = node_y[node];
+        coordinates[k][2] = node_z[node];
+        if (node == opposite) opposite_index = k;
+    }
+    if (opposite_index < 0) { atomicExch(invalid_anchor, 1); return; }
+    RealType determinant, gradient[4][3];
+    outlet_tet_gradient(coordinates, determinant, gradient);
+    const RealType coefficient = coefficient_node
+        ? boundaryFaceCoefficient(coefficient_node[nodes[0]], coefficient_node[nodes[1]],
+                                  coefficient_node[nodes[2]])
+        : coefficient_scalar;
+    const RealType area[3] = {area_x[f], area_y[f], area_z[f]};
+    // Frozen trace and projected gradient leave only the opposite pressure unknown in this flux.
+    const RealType entry = rho_over_dt * outlet_sample_pressure_derivative(
+        area, gradient[opposite_index], coefficient);
+    const int column = node_to_dof[opposite];
+    for (int r = 0; r < 3; ++r)
+    {
+        const int node = nodes[r];
+        if (ownership[node] != 1) continue;
+        const int row = node_to_dof[node];
+        // Row ownership determines expected writes; a shared facet need not supply three here.
+        if (row < 0 || row >= num_owned_dofs || column < 0 || column >= num_total_dofs)
+        {
+            atomicExch(invalid_anchor, 1);
+            continue;
+        }
+        const int index = fem::findColumnIndex(col_ind, row_ptr[row], row_ptr[row + 1], column);
+        if (index < 0) atomicExch(invalid_anchor, 1);
+        else atomicAdd(&values[index], entry);
+    }
+}
+
 // Linearized convection block C for --implicit-advection (tet-only).
 //   C_ij = int N_i (a . grad N_j) = (V/4) * (a . grad N_j)
 // with a = element-mean u^n. On a linear tet a.gradN_j is constant over the
@@ -2959,6 +3017,14 @@ enum class PressureSolveKind { K, DDT };
 
 template<typename KeyType, typename RealType, typename ElementTag = HexTag> struct NSStepper;
 
+template<typename KeyType, typename RealType, typename ElementTag>
+void validate_outlet_continuity(NSStepper<KeyType, RealType, ElementTag>& s);
+
+template<typename KeyType, typename RealType, typename ElementTag>
+void assemble_outlet_continuity(NSStepper<KeyType, RealType, ElementTag>& s,
+                              const RealType* u, const RealType* v, const RealType* w,
+                              cstone::DeviceVector<RealType>& residual);
+
 // Forward declaration so the setup-time MARS_DDT_PROBE_DIFF diagnostic can
 // call applyDDTPerNode (defined later in this file).
 template<typename KeyType, typename RealType, typename ElementTag = HexTag>
@@ -2984,6 +3050,7 @@ struct VmsFluxCtx
     // momentum diagonal 3M/(2dt), so reading the wrong one puts the coefficient 1.5x off.
     RealType dtEff     = 0;
     bool     bdf2      = false;
+    bool     keepSmooth = true;
     bool     valid     = false;
 };
 
@@ -3095,6 +3162,13 @@ struct NSStepper
     cstone::DeviceVector<int> d_diagPtr;
     cstone::DeviceVector<RealType> d_valuesVel;
     cstone::DeviceVector<RealType> d_valuesPre;
+    // Restore bare K before each outlet-operator refresh; derivatives must never accumulate.
+    cstone::DeviceVector<RealType> d_outlet_pressure_base;
+    // CSR assembly visits every outlet facet touching an owned row, including halo tets.
+    // The separate opening list remains uniquely owned for continuity's reverse-add.
+    cstone::DeviceVector<int> d_pressure_tri_node, d_pressure_tri_element, d_pressure_tri_opposite;
+    cstone::DeviceVector<RealType> d_pressure_tri_area_x, d_pressure_tri_area_y, d_pressure_tri_area_z;
+    cstone::DeviceVector<int> d_outlet_invalid_anchor;
     cstone::DeviceVector<RealType> d_valuesPreScaled;  // K scaled by A_fem's D^-1/2 (precond only)
     // Assembled D M^-1 D^T uses its OWN reduced (7-NNZ) sparsity that exactly
     // matches the SCS-face graph the assembler writes to. Sharing K's 27-NNZ
@@ -3404,6 +3478,20 @@ struct NSStepper
     // outletBeta < 0 disables it and keeps the classic p=0 Dirichlet outlet.
     RealType                       outletBeta = RealType(-1);
     RealType                       outletPRef = RealType(0);
+    int                            outlet_max_corrections = 100;
+    RealType                       outlet_relative_tolerance = RealType(1e-6);
+    RealType                       outlet_divergence_tolerance = RealType(1e-8); // 1/s
+    RealType                       outlet_flux_tolerance = RealType(1e-12);     // volume/s
+    RealType                       outlet_max_damping = RealType(1);
+    int                            last_outlet_corrections = 0;
+    RealType                       last_outlet_damping = 0;
+    RealType                       last_outlet_residual_rms = 0, last_outlet_residual_max = 0;
+    RealType                       last_outlet_balance = 0;
+    cstone::DeviceVector<RealType> d_outlet_residual, d_outlet_trial_residual;
+    cstone::DeviceVector<RealType> d_outlet_base_u, d_outlet_base_v, d_outlet_base_w, d_outlet_base_p;
+    cstone::DeviceVector<RealType> d_outlet_rhs, d_outlet_solution;
+    cstone::DeviceVector<RealType> d_outlet_gradient_acc_x, d_outlet_gradient_acc_y, d_outlet_gradient_acc_z;
+    cstone::DeviceVector<double> d_outlet_flux_in, d_outlet_flux_out;
     cstone::DeviceVector<RealType> d_pTraceOutlet;      // nodeCount; meaningful where the outlet scalar area is nonzero
     // sum_f |A_f|/3 per node -- the SCALAR area, which is NOT |sum_f A_f/3|. The two agree only
     // when a node's facet normals are aligned; on a bent or curved outlet the vector norm
@@ -3703,6 +3791,95 @@ void wrapIntoSparseMatrix(SparseMatrix<int, RealType, cstone::GpuTag>& A,
     cudaMemcpy(A.rowOffsetsPtr(), d_rowPtr, (numOwnedDofs + 1) * sizeof(int), cudaMemcpyDeviceToDevice);
     cudaMemcpy(A.colIndicesPtr(), d_colInd, nnz * sizeof(int),                cudaMemcpyDeviceToDevice);
     cudaMemcpy(A.valuesPtr(),     d_values, nnz * sizeof(RealType),           cudaMemcpyDeviceToDevice);
+}
+
+// Rebuild the approximate pressure Jacobian from the same frozen coefficients as continuity.
+// Apre approximates B Q M^-1 B^T + (rho/dtEff) K_D; bare K supplies its first term.
+template<typename KeyType, typename RealType, typename ElementTag>
+void refresh_outlet_pressure_operator(NSStepper<KeyType, RealType, ElementTag>& s, RealType rho)
+{
+    if (s.outletBeta < RealType(0)) return;
+    if constexpr (std::is_same_v<ElementTag, TetTag>)
+    {
+        const auto& ctx = s.vmsCtx;
+        if (!ctx.valid || !(ctx.dtEff > RealType(0)) || !(rho > RealType(0))
+            || s.d_outlet_pressure_base.size() != size_t(s.nnz))
+        {
+            std::cerr << "ERROR: outlet pressure operator needs a frozen step context and bare K\n";
+            MPI_Abort(MPI_COMM_WORLD, 1);
+        }
+        auto check_cuda = [](cudaError_t error)
+        {
+            if (error != cudaSuccess)
+            {
+                std::cerr << "ERROR: outlet pressure assembly: " << cudaGetErrorString(error) << "\n";
+                MPI_Abort(MPI_COMM_WORLD, 1);
+            }
+        };
+        if (s.nnz > 0)
+            check_cuda(cudaMemcpy(s.d_valuesPre.data(), s.d_outlet_pressure_base.data(),
+                                  size_t(s.nnz) * sizeof(RealType), cudaMemcpyDeviceToDevice));
+        const auto cp = connPtrs<ElementTag, KeyType>(s.domain.getElementToNodeConnectivity());
+        const auto& ownership = s.ownershipMap();
+        const RealType* coefficient = ctx.tauNode.size() == s.nodeCount ? ctx.tauNode.data() : nullptr;
+        const RealType rho_over_dt = rho / ctx.dtEff;
+        // Owned-row CSR assembly needs halo elements too; no reverse-add follows this scatter.
+        if (s.elementCount > 0)
+        {
+            const int blocks = int((s.elementCount + s.blockSize - 1) / s.blockSize);
+            assembleRhieChowSensitivityTetKernel<KeyType, RealType><<<blocks, s.blockSize>>>(
+                cp[0], cp[1], cp[2], cp[3],
+                s.domain.getNodeX().data(), s.domain.getNodeY().data(), s.domain.getNodeZ().data(),
+                s.d_areaVec_x.data(), s.d_areaVec_y.data(), s.d_areaVec_z.data(),
+                coefficient, ctx.tauScalar, rho_over_dt,
+                s.d_node_to_dof.data(), ownership.data(), s.d_rowPtr.data(), s.d_colInd.data(),
+                s.numOwnedDofs, s.d_valuesPre.data(), 0, s.elementCount);
+            check_cuda(cudaGetLastError());
+        }
+        const int num_facets = int(s.d_pressure_tri_element.size());
+        int invalid_anchor = 0;
+        if (num_facets > 0)
+        {
+            s.d_outlet_invalid_anchor.resize(1);
+            check_cuda(cudaMemset(s.d_outlet_invalid_anchor.data(), 0, sizeof(int)));
+            const int blocks = (num_facets + s.blockSize - 1) / s.blockSize;
+            assemble_outlet_pressure_sensitivity_kernel<KeyType, RealType><<<blocks, s.blockSize>>>(
+                cp[0], cp[1], cp[2], cp[3],
+                s.d_pressure_tri_node.data(), s.d_pressure_tri_element.data(), s.d_pressure_tri_opposite.data(),
+                s.d_pressure_tri_area_x.data(), s.d_pressure_tri_area_y.data(), s.d_pressure_tri_area_z.data(),
+                s.domain.getNodeX().data(), s.domain.getNodeY().data(), s.domain.getNodeZ().data(),
+                coefficient, ctx.tauScalar, rho_over_dt,
+                s.d_node_to_dof.data(), ownership.data(), s.d_rowPtr.data(), s.d_colInd.data(),
+                s.numOwnedDofs, s.numTotalDofs, s.d_valuesPre.data(),
+                s.d_outlet_invalid_anchor.data(), num_facets);
+            check_cuda(cudaGetLastError());
+            // Only the failure flag crosses to the host for MPI; matrix data stay on device.
+            check_cuda(cudaMemcpy(&invalid_anchor, s.d_outlet_invalid_anchor.data(),
+                                  sizeof(int), cudaMemcpyDeviceToHost));
+        }
+        int any_invalid_anchor = 0;
+        // Empty-facet ranks must join before any rank can publish Apre or enter Hypre.
+        MPI_Allreduce(&invalid_anchor, &any_invalid_anchor, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+        if (any_invalid_anchor)
+        {
+            if (s.rank == 0)
+                std::cerr << "ERROR: outlet pressure anchor has unresolved connectivity, a missing DOF, or a missing CSR entry\n";
+            MPI_Abort(MPI_COMM_WORLD, 1);
+        }
+        if (s.numOwnedDofs > 0 && s.d_isPressureBdryDof.size() == size_t(s.numOwnedDofs))
+        {
+            const int blocks = (s.numOwnedDofs + s.blockSize - 1) / s.blockSize;
+            enforceBcMatrixKernel<RealType><<<blocks, s.blockSize>>>(
+                s.d_isPressureBdryDof.data(), s.d_rowPtr.data(), s.d_colInd.data(),
+                s.d_diagPtr.data(), s.d_valuesPre.data(), s.numOwnedDofs);
+            check_cuda(cudaGetLastError());
+        }
+        // Wrapping copied the values at setup. Refresh the actual matrix without reallocating CSR.
+        // solveOneComponent constructs Hypre anew, so its operator and AMG setup see these values.
+        if (s.nnz > 0)
+            check_cuda(cudaMemcpy(s.Apre.valuesPtr(), s.d_valuesPre.data(),
+                                  size_t(s.nnz) * sizeof(RealType), cudaMemcpyDeviceToDevice));
+    }
 }
 
 // =============================================================================
@@ -4028,21 +4205,21 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
 
         // Pass 3: compact map: compact[old_dof] = prefix-sum of d_isLive.
         cstone::DeviceVector<int> d_compact(numOwned, -1);
-        thrust::exclusive_scan(thrust::device, d_isLive.begin(), d_isLive.end(),
-                               d_compact.begin());
+        thrust::exclusive_scan(thrust::device, thrust::device_pointer_cast(d_isLive.data()), thrust::device_pointer_cast(d_isLive.data() + d_isLive.size()),
+                               thrust::device_pointer_cast(d_compact.data()));
         // For orphan DOFs we leave compact = scan value but they will be
         // unreachable from nodeToDof, so it doesn't matter. Mark them -1
         // explicitly for safety so any stale lookup is detected.
         thrust::transform(thrust::device,
-                          d_isLive.begin(), d_isLive.end(),
-                          d_compact.begin(), d_compact.begin(),
+                          thrust::device_pointer_cast(d_isLive.data()), thrust::device_pointer_cast(d_isLive.data() + d_isLive.size()),
+                          thrust::device_pointer_cast(d_compact.data()), thrust::device_pointer_cast(d_compact.data()),
                           [] __device__ (int live, int idx) {
                               return live ? idx : -1;
                           });
         cudaDeviceSynchronize();
 
         int nLive = int(thrust::reduce(thrust::device,
-                                        d_isLive.begin(), d_isLive.end(), 0));
+                                        thrust::device_pointer_cast(d_isLive.data()), thrust::device_pointer_cast(d_isLive.data() + d_isLive.size()), 0));
         std::cerr << "[collapse-trace rank=" << s.rank << "] Pass 3 done, nLive=" << nLive << std::endl;
 
         // Pass 4: rewrite nodeToDof through the compact map.
@@ -4178,6 +4355,12 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
     // numRanks==1 or no cross-rank peers exist.
     // Pressure matrix: same K (no nu scale). Assemble into d_valuesPre.
     assembleLaplacian<KeyType, RealType, ElementTag>(s, s.d_node_to_dof, s.d_valuesPre, kernelVariant);
+    if (s.outletBeta >= RealType(0))
+    {
+        s.d_outlet_pressure_base.resize(s.nnz);
+        thrust::copy(thrust::device, thrust::device_pointer_cast(s.d_valuesPre.data()), thrust::device_pointer_cast(s.d_valuesPre.data() + s.d_valuesPre.size()),
+                     thrust::device_pointer_cast(s.d_outlet_pressure_base.data()));
+    }
     pt.lap("assembly K (pressure)");
 
     // Lumped mass (per-node + reverse-halo). Identical to B.2/B.3/B.4 pattern.
@@ -4921,8 +5104,8 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
     {
         s.d_valuesVel_bdf2.resize(s.d_valuesVel.size());
         thrust::copy(thrust::device,
-                     s.d_valuesVel.begin(), s.d_valuesVel.end(),
-                     s.d_valuesVel_bdf2.begin());
+                     thrust::device_pointer_cast(s.d_valuesVel.data()), thrust::device_pointer_cast(s.d_valuesVel.data() + s.d_valuesVel.size()),
+                     thrust::device_pointer_cast(s.d_valuesVel_bdf2.data()));
         int dofBlocks = (s.numOwnedDofs + s.blockSize - 1) / s.blockSize;
         addLumpedMassDiagonalKernel<RealType><<<dofBlocks, s.blockSize>>>(
             s.d_mass.data(), s.d_diagPtr.data(), RealType(1) / (RealType(2) * dt),
@@ -5004,7 +5187,8 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
     // So this REQUIRES --vms-stab: matrix half here, full explicit difference on the RHS. That
     // pair is their structure. (An earlier note here called this "no Rhie-Chow" and disarmed it;
     // the algebra was right and the conclusion was wrong.)
-    if ((s.useRcImplicit || s.useRcOnly) && std::is_same_v<ElementTag, TetTag> && s.elementCount > 0)
+    if ((s.useRcImplicit || s.useRcOnly) && s.outletBeta < RealType(0)
+        && std::is_same_v<ElementTag, TetTag> && s.elementCount > 0)
     {
         // --rc-only: K goes away entirely, because in their structure the RC sensitivity IS the
         // pressure Laplacian. --rc-implicit keeps K and adds the sensitivity on top, which is the
@@ -5032,7 +5216,7 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
             cudaDeviceSynchronize();
             s.domain.exchangeNodeHalo(d_rcD);   // both SCS endpoints are read
             if (s.relaxU > RealType(0) && s.relaxU < RealType(1))
-                thrust::transform(thrust::device, d_rcD.begin(), d_rcD.end(), d_rcD.begin(),
+                thrust::transform(thrust::device, thrust::device_pointer_cast(d_rcD.data()), thrust::device_pointer_cast(d_rcD.data() + d_rcD.size()), thrust::device_pointer_cast(d_rcD.data()),
                                   [a = s.relaxU] __device__(RealType v) { return a * v; });
         }
         // Match the RHS coefficient exactly. bdfStep is 0 at setup so this is rho/dt; the
@@ -5088,9 +5272,9 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
                     [] __device__(RealType v) -> double { return double(v) * double(v); },
                     0.0, thrust::plus<double>()));
             };
-            double dmin = thrust::reduce(thrust::device, d_rcD.begin(), d_rcD.end(),
+            double dmin = thrust::reduce(thrust::device, thrust::device_pointer_cast(d_rcD.data()), thrust::device_pointer_cast(d_rcD.data() + d_rcD.size()),
                                          1e300, thrust::minimum<RealType>());
-            double dmax = thrust::reduce(thrust::device, d_rcD.begin(), d_rcD.end(),
+            double dmax = thrust::reduce(thrust::device, thrust::device_pointer_cast(d_rcD.data()), thrust::device_pointer_cast(d_rcD.data() + d_rcD.size()),
                                          -1e300, thrust::maximum<RealType>());
             if (s.rank == 0)
                 std::cout << "  [rc-dbg] |K|_F after RC = " << std::scientific << frob()
@@ -5896,8 +6080,9 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
         // equations must survive -- replacing them with identity discards the closure being added.
         // d_isPressureBdryDof is the single control point: enforceBcMatrixKernel, the RHS zeroing
         // and the lift all read it, so leaving the outlet unmasked frees all three at once.
-        // NOTE: without the boundary derivative (D3) this leaves the system pure-Neumann and
-        // singular, which is why --outlet-beta is refused in the driver until that lands.
+        // The level is anchored by the boundary flux derivative (assemble_outlet_pressure_
+        // sensitivity_kernel), not by a pin or a mean subtraction. Without that derivative the
+        // system would be pure-Neumann and singular, so the two must stay together.
         const bool avgPressureOutlet = (s.outletBeta >= RealType(0));
         bool singlePin = (s.outletU > RealType(0));
         if (s.pumpDp > RealType(0)) singlePin = false;
@@ -7363,8 +7548,10 @@ int solveOneComponent(NSStepper<KeyType, RealType, ElementTag>& s,
         // GMRES explicitly.
         // forceGmres wins over the env knob: PCG on a non-symmetric matrix is
         // wrong, not just slow, so it must not be reachable by mistake.
-        KrylovHint krylovEff = forceGmres ? KrylovHint::GMRES : krylov;
-        if (!forceGmres)
+        const bool outletPressure = s.outletBeta >= RealType(0) && &A == &s.Apre;
+        KrylovHint krylovEff = (forceGmres || outletPressure) ? KrylovHint::GMRES : krylov;
+        // The outlet derivative occupies opposite-node columns and is nonsymmetric.
+        if (!forceGmres && !outletPressure)
         {
             const char* kEnv = std::getenv("MARS_HYPRE_KRYLOV");
             if (kEnv)
@@ -8294,12 +8481,13 @@ inline void buildVmsFluxCtx(NSStepper<KeyType, RealType, ElementTag>& s, RealTyp
         const RealType dtE  = bdf2 ? (RealType(2) * dt / RealType(3)) : dt;
         c.dtEff     = dtE;
         c.bdf2      = bdf2;
+        c.keepSmooth = (std::getenv("MARS_VMS_COMPACT_ONLY") == nullptr);
         c.tauScalar = s.rhieChowTau > RealType(0) ? s.rhieChowTau : dtE / rho;
 
         c.Gx.resize(s.nodeCount); c.Gy.resize(s.nodeCount); c.Gz.resize(s.nodeCount);
-        thrust::copy(thrust::device, s.d_gradPx.begin(), s.d_gradPx.end(), c.Gx.begin());
-        thrust::copy(thrust::device, s.d_gradPy.begin(), s.d_gradPy.end(), c.Gy.begin());
-        thrust::copy(thrust::device, s.d_gradPz.begin(), s.d_gradPz.end(), c.Gz.begin());
+        thrust::copy(thrust::device, thrust::device_pointer_cast(s.d_gradPx.data()), thrust::device_pointer_cast(s.d_gradPx.data() + s.d_gradPx.size()), thrust::device_pointer_cast(c.Gx.data()));
+        thrust::copy(thrust::device, thrust::device_pointer_cast(s.d_gradPy.data()), thrust::device_pointer_cast(s.d_gradPy.data() + s.d_gradPy.size()), thrust::device_pointer_cast(c.Gy.data()));
+        thrust::copy(thrust::device, thrust::device_pointer_cast(s.d_gradPz.data()), thrust::device_pointer_cast(s.d_gradPz.data() + s.d_gradPz.size()), thrust::device_pointer_cast(c.Gz.data()));
         s.domain.exchangeNodeHalo(c.Gx);
         s.domain.exchangeNodeHalo(c.Gy);
         s.domain.exchangeNodeHalo(c.Gz);
@@ -8310,18 +8498,22 @@ inline void buildVmsFluxCtx(NSStepper<KeyType, RealType, ElementTag>& s, RealTyp
         {
             c.tauNode.resize(s.nodeCount);
             int nB = int((s.nodeCount + s.blockSize - 1) / s.blockSize);
-            buildVmsNodalTauKernel<RealType><<<nB, s.blockSize>>>(
-                s.d_diagPtr.data(),
-                (bdf2 ? s.d_valuesVel_bdf2.data() : s.d_valuesVel.data()),
-                s.d_node_to_dof.data(), s.d_mass.data(), rho, c.tauScalar,
-                c.tauNode.data(), s.nodeCount, s.numOwnedDofs);
-            cudaDeviceSynchronize();
+            if (nB > 0)
+            {
+                buildVmsNodalTauKernel<RealType><<<nB, s.blockSize>>>(
+                    s.d_diagPtr.data(),
+                    (bdf2 ? s.d_valuesVel_bdf2.data() : s.d_valuesVel.data()),
+                    s.d_node_to_dof.data(), s.d_mass.data(), rho, c.tauScalar,
+                    c.tauNode.data(), s.nodeCount, s.numOwnedDofs);
+                cudaDeviceSynchronize();
+            }
             s.domain.exchangeNodeHalo(c.tauNode);
             if (s.relaxU > RealType(0) && s.relaxU < RealType(1))
-                thrust::transform(thrust::device, c.tauNode.begin(), c.tauNode.end(),
-                                  c.tauNode.begin(),
+                thrust::transform(thrust::device, thrust::device_pointer_cast(c.tauNode.data()), thrust::device_pointer_cast(c.tauNode.data() + c.tauNode.size()),
+                                  thrust::device_pointer_cast(c.tauNode.data()),
                                   [a = s.relaxU] __device__(RealType v) { return a * v; });
         }
+        else c.tauNode.resize(0);
         c.valid = true;
     }
 }
@@ -9460,7 +9652,7 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
             if (s.d_mDotPrev.size() != numLocal * ElemTraits<ElementTag>::ScsPerElem)
             {
                 s.d_mDotPrev.resize(numLocal * ElemTraits<ElementTag>::ScsPerElem);
-                thrust::fill(thrust::device, s.d_mDotPrev.begin(), s.d_mDotPrev.end(), RealType(0));
+                thrust::fill(thrust::device, thrust::device_pointer_cast(s.d_mDotPrev.data()), thrust::device_pointer_cast(s.d_mDotPrev.data() + s.d_mDotPrev.size()), RealType(0));
             }
             // MARS_VMS_DIAG_TAU: replace the global tau with OpenAccel's V/a_P,
             // read off the ASSEMBLED momentum diagonal so the coefficient adapts
@@ -10263,7 +10455,7 @@ inline void divMaxVmsOwned(NSStepper<KeyType, RealType, ElementTag>& s, RealType
     // report a state the solve never used.
     const VmsFluxCtx<RealType>& ctx = s.vmsCtx;
     if (!ctx.valid) return;
-    const bool keepSmooth = (std::getenv("MARS_VMS_COMPACT_ONLY") == nullptr);
+    const bool keepSmooth = ctx.keepSmooth;
 
     cstone::DeviceVector<RealType> d_divAcc(s.nodeCount, RealType(0));
     if (eBlocks > 0)
@@ -10350,6 +10542,116 @@ inline void divMaxRhieChowOwned(NSStepper<KeyType, RealType, ElementTag>& s,
 // grad(phi) computed once via the same B.4 kernel, applied per-component.
 // Writes s.lastDivMax for monitoring.
 // -------------------------------------------------------------------------
+template<typename KeyType, typename RealType, typename ElementTag>
+void compute_pressure_increment_gradient(NSStepper<KeyType, RealType, ElementTag>& s)
+{
+    const auto& d_nodeOwnership = s.ownershipMap();
+    const auto& d_conn          = s.domain.getElementToNodeConnectivity();
+    // connPtrs gives NodesPerElem pointers; c4..c7 stay nullptr for tet (the
+    // templated Phase-1 kernels read c0..c3 only when ElementTag==TetTag).
+    auto cp = connPtrs<ElementTag, KeyType>(d_conn);
+    const KeyType* c0 = cp[0]; const KeyType* c1 = cp[1];
+    const KeyType* c2 = cp[2]; const KeyType* c3 = cp[3];
+    const KeyType* c4 = nullptr; const KeyType* c5 = nullptr;
+    const KeyType* c6 = nullptr; const KeyType* c7 = nullptr;
+    if constexpr (std::is_same_v<ElementTag, HexTag>) { c4 = cp[4]; c5 = cp[5]; c6 = cp[6]; c7 = cp[7]; }
+    // OWNED-only per-element scatter (proven-green pattern, commit 5da5d6a).
+    // Looping owned+halo here would DOUBLE-COUNT shared rank-boundary faces
+    // because the halo element on this rank is the same physical element the
+    // owning rank already scatters; reverseExchangeNodeHaloAdd then folds the
+    // ghost-side contribution back to owner, giving 2x at shared faces and 4x
+    // at shared corners.
+    const size_t startElem = s.domain.startIndex();
+    const size_t numLocal  = s.domain.localElementCount();
+    const int nodeBlocks   = (s.nodeCount + s.blockSize - 1) / s.blockSize;
+    const int eBlocks      = numLocal > 0 ? int((numLocal + s.blockSize - 1) / s.blockSize) : 0;
+    cstone::DeviceVector<RealType> d_local_x, d_local_y, d_local_z;
+    auto& d_gxAcc = s.outletBeta >= RealType(0) ? s.d_outlet_gradient_acc_x : d_local_x;
+    auto& d_gyAcc = s.outletBeta >= RealType(0) ? s.d_outlet_gradient_acc_y : d_local_y;
+    auto& d_gzAcc = s.outletBeta >= RealType(0) ? s.d_outlet_gradient_acc_z : d_local_z;
+    for (auto* accumulator : {&d_gxAcc, &d_gyAcc, &d_gzAcc})
+    {
+        accumulator->resize(s.nodeCount);
+        if (s.nodeCount > 0)
+            thrust::fill(thrust::device, thrust::device_pointer_cast(accumulator->data()),
+                         thrust::device_pointer_cast(accumulator->data() + s.nodeCount), RealType(0));
+    }
+    // DDT mode MUST use the divT gradient (= literal D^T) to keep the
+    // projection identity D u^{n+1} = 0 algebraically exact. K mode keeps
+    // the legacy SCS gradient unless --experimental-divT overrides.
+    const bool useDivT = (s.pressureSolve == PressureSolveKind::DDT) || !s.useLegacyGradient;
+    // FEM-consistent corrector gradient (tet-only, --pressure-k): the
+    // adjoint of the weak divergence runPressureSolveStep fed to K. Must
+    // override both SCS variants -- the pair contracts only together.
+    const bool useFemGrad = s.useFemProjection && std::is_same_v<ElementTag, TetTag>;
+    if (eBlocks > 0)
+    {
+        if (useFemGrad)
+        {
+            // phi ghosts are current (exchangeNodeHalo at the end of
+            // runPressureSolveStep), so ghost-node reads are valid.
+            computeFemGradientTetKernel<KeyType, RealType><<<eBlocks, s.blockSize>>>(
+                c0, c1, c2, c3,
+                s.d_phi.data(),
+                s.domain.getNodeX().data(), s.domain.getNodeY().data(), s.domain.getNodeZ().data(),
+                d_gxAcc.data(), d_gyAcc.data(), d_gzAcc.data(),
+                startElem, numLocal);
+        }
+        else if (!useDivT)
+        {
+            computeGradientPerNodeKernel<KeyType, RealType, ElementTag><<<eBlocks, s.blockSize>>>(
+                c0, c1, c2, c3, c4, c5, c6, c7,
+                s.d_phi.data(),
+                s.d_areaVec_x.data(), s.d_areaVec_y.data(), s.d_areaVec_z.data(),
+                d_gxAcc.data(), d_gyAcc.data(), d_gzAcc.data(),
+                startElem, numLocal);
+        }
+        else
+        {
+            applyDivTransposePerNodeKernel<KeyType, RealType, ElementTag><<<eBlocks, s.blockSize>>>(
+                c0, c1, c2, c3, c4, c5, c6, c7,
+                s.d_phi.data(),
+                s.d_areaVec_x.data(), s.d_areaVec_y.data(), s.d_areaVec_z.data(),
+                d_gxAcc.data(), d_gyAcc.data(), d_gzAcc.data(),
+                startElem, numLocal);
+        }
+        cudaDeviceSynchronize();
+    }
+    s.domain.reverseExchangeNodeHaloAdd(d_gxAcc);
+    s.domain.reverseExchangeNodeHaloAdd(d_gyAcc);
+    s.domain.reverseExchangeNodeHaloAdd(d_gzAcc);
+    maybePeriodicSum<KeyType, RealType, ElementTag>(s, d_gxAcc);
+    maybePeriodicSum<KeyType, RealType, ElementTag>(s, d_gyAcc);
+    maybePeriodicSum<KeyType, RealType, ElementTag>(s, d_gzAcc);
+    if (nodeBlocks > 0)
+    {
+        normalizeGradientPerNodeKernel<RealType><<<nodeBlocks, s.blockSize>>>(
+            d_gxAcc.data(), d_gyAcc.data(), d_gzAcc.data(),
+            s.d_massNode.data(),
+            s.d_node_to_dof.data(), d_nodeOwnership.data(),
+            s.d_gradPhix.data(), s.d_gradPhiy.data(), s.d_gradPhiz.data(),
+            s.nodeCount);
+        cudaDeviceSynchronize();
+    }
+    // applyDivTransposePerNodeKernel integrates to -V*grad (validator-
+    // confirmed by mars_amr_ddt.cu --test=sign), so M^{-1} D^T phi = -grad.
+    // The corrector kernel expects gradPhiq = +grad. Flip sign in place.
+    // The SCS-gradient and FEM-gradient paths produce +grad already, so no
+    // flip there (the FEM accumulator is +(V/4)*grad per element).
+    if (useDivT && !useFemGrad && nodeBlocks > 0)
+    {
+        negateThreeOwnedKernel<RealType><<<nodeBlocks, s.blockSize>>>(
+            s.d_gradPhix.data(), s.d_gradPhiy.data(), s.d_gradPhiz.data(),
+            s.d_node_to_dof.data(), d_nodeOwnership.data(), s.nodeCount);
+        cudaDeviceSynchronize();
+    }
+    // Increment form, trace frozen: (G_v phi)_i = (G_0 phi)_i - phi_i * a_o,i / V_i.
+    addOutletGradientTerm<KeyType, RealType, ElementTag>(
+        s, s.d_phi, nullptr, s.d_gradPhix, s.d_gradPhiy, s.d_gradPhiz);
+    s.lastGradPhiRms = rmsOwnedInterior3<KeyType, RealType, ElementTag>(
+        s, s.d_gradPhix, s.d_gradPhiy, s.d_gradPhiz);
+}
+
 template<typename KeyType, typename RealType, typename ElementTag = HexTag>
 void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, RealType rho)
 {
@@ -10385,80 +10687,7 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
     // single immediate call keeps nCorrectors==1 kernel-for-kernel identical.
     auto computeGradPhi = [&] ()
     {
-        cstone::DeviceVector<RealType> d_gxAcc(s.nodeCount, RealType(0));
-        cstone::DeviceVector<RealType> d_gyAcc(s.nodeCount, RealType(0));
-        cstone::DeviceVector<RealType> d_gzAcc(s.nodeCount, RealType(0));
-        // DDT mode MUST use the divT gradient (= literal D^T) to keep the
-        // projection identity D u^{n+1} = 0 algebraically exact. K mode keeps
-        // the legacy SCS gradient unless --experimental-divT overrides.
-        const bool useDivT = (s.pressureSolve == PressureSolveKind::DDT) || !s.useLegacyGradient;
-        // FEM-consistent corrector gradient (tet-only, --pressure-k): the
-        // adjoint of the weak divergence runPressureSolveStep fed to K. Must
-        // override both SCS variants -- the pair contracts only together.
-        const bool useFemGrad = s.useFemProjection && std::is_same_v<ElementTag, TetTag>;
-        if (eBlocks > 0)
-        {
-            if (useFemGrad)
-            {
-                // phi ghosts are current (exchangeNodeHalo at the end of
-                // runPressureSolveStep), so ghost-node reads are valid.
-                computeFemGradientTetKernel<KeyType, RealType><<<eBlocks, s.blockSize>>>(
-                    c0, c1, c2, c3,
-                    s.d_phi.data(),
-                    s.domain.getNodeX().data(), s.domain.getNodeY().data(), s.domain.getNodeZ().data(),
-                    d_gxAcc.data(), d_gyAcc.data(), d_gzAcc.data(),
-                    startElem, numLocal);
-            }
-            else if (!useDivT)
-            {
-                computeGradientPerNodeKernel<KeyType, RealType, ElementTag><<<eBlocks, s.blockSize>>>(
-                    c0, c1, c2, c3, c4, c5, c6, c7,
-                    s.d_phi.data(),
-                    s.d_areaVec_x.data(), s.d_areaVec_y.data(), s.d_areaVec_z.data(),
-                    d_gxAcc.data(), d_gyAcc.data(), d_gzAcc.data(),
-                    startElem, numLocal);
-            }
-            else
-            {
-                applyDivTransposePerNodeKernel<KeyType, RealType, ElementTag><<<eBlocks, s.blockSize>>>(
-                    c0, c1, c2, c3, c4, c5, c6, c7,
-                    s.d_phi.data(),
-                    s.d_areaVec_x.data(), s.d_areaVec_y.data(), s.d_areaVec_z.data(),
-                    d_gxAcc.data(), d_gyAcc.data(), d_gzAcc.data(),
-                    startElem, numLocal);
-            }
-            cudaDeviceSynchronize();
-        }
-        s.domain.reverseExchangeNodeHaloAdd(d_gxAcc);
-        s.domain.reverseExchangeNodeHaloAdd(d_gyAcc);
-        s.domain.reverseExchangeNodeHaloAdd(d_gzAcc);
-        maybePeriodicSum<KeyType, RealType, ElementTag>(s, d_gxAcc);
-        maybePeriodicSum<KeyType, RealType, ElementTag>(s, d_gyAcc);
-        maybePeriodicSum<KeyType, RealType, ElementTag>(s, d_gzAcc);
-        normalizeGradientPerNodeKernel<RealType><<<nodeBlocks, s.blockSize>>>(
-            d_gxAcc.data(), d_gyAcc.data(), d_gzAcc.data(),
-            s.d_massNode.data(),
-            s.d_node_to_dof.data(), d_nodeOwnership.data(),
-            s.d_gradPhix.data(), s.d_gradPhiy.data(), s.d_gradPhiz.data(),
-            s.nodeCount);
-        cudaDeviceSynchronize();
-        // applyDivTransposePerNodeKernel integrates to -V*grad (validator-
-        // confirmed by mars_amr_ddt.cu --test=sign), so M^{-1} D^T phi = -grad.
-        // The corrector kernel expects gradPhiq = +grad. Flip sign in place.
-        // The SCS-gradient and FEM-gradient paths produce +grad already, so no
-        // flip there (the FEM accumulator is +(V/4)*grad per element).
-        if (useDivT && !useFemGrad)
-        {
-            negateThreeOwnedKernel<RealType><<<nodeBlocks, s.blockSize>>>(
-                s.d_gradPhix.data(), s.d_gradPhiy.data(), s.d_gradPhiz.data(),
-                s.d_node_to_dof.data(), d_nodeOwnership.data(), s.nodeCount);
-            cudaDeviceSynchronize();
-        }
-        // Increment form, trace frozen: (G_v phi)_i = (G_0 phi)_i - phi_i * a_o,i / V_i.
-        addOutletGradientTerm<KeyType, RealType, ElementTag>(
-            s, s.d_phi, nullptr, s.d_gradPhix, s.d_gradPhiy, s.d_gradPhiz);
-        s.lastGradPhiRms = rmsOwnedInterior3<KeyType, RealType, ElementTag>(
-            s, s.d_gradPhix, s.d_gradPhiy, s.d_gradPhiz);
+        compute_pressure_increment_gradient<KeyType, RealType, ElementTag>(s);
     };
     computeGradPhi();
 
@@ -11011,18 +11240,6 @@ struct OutletMomentFunctor
 // Evaluated on ALL nodes, halo included: the boundary flux reads the trace at whichever node a
 // facet touches, and a facet's corners can be halo nodes. Requires d_p halo-complete, which it is
 // after the corrector's exchange.
-// Boundary influence coefficient D_f: the mean of the THREE FACE-node coefficients, with no
-// opposing-node term. Blending in the opposite node makes the boundary flux depend on a coefficient
-// that does not belong to the face -- on the unit-tet fixture (face coefficients 2,4,6, opposite
-// pressure 1, trace 0, zero velocity and gradient) the flux should be 6 regardless of the opposite
-// coefficient, and the blend gave 4.5 at d_opp=2 and 18 at d_opp=20.
-// The face/opposite blend belongs to the RECONSTRUCTED GRADIENT, not to the coefficient.
-template<typename RealType>
-__host__ __device__ inline RealType boundaryFaceCoefficient(RealType d0, RealType d1, RealType d2)
-{
-    return (d0 + d1 + d2) / RealType(3);
-}
-
 // The map itself, in one place so the kernel and any host check share a definition rather than
 // two that can drift.
 template<typename RealType>
@@ -11101,6 +11318,7 @@ inline void addOutletGradientTerm(NSStepper<KeyType, RealType, ElementTag>& s,
     if (s.outletBeta < RealType(0)) return;                     // default path untouched
     if (s.d_outletAreaVecX.size() != s.nodeCount) return;
     const int nB = int((s.nodeCount + s.blockSize - 1) / s.blockSize);
+    if (nB == 0) return;
     addOutletGradientTermKernel<RealType><<<nB, s.blockSize>>>(
         d_field.data(), trace,
         s.d_outletAreaVecX.data(), s.d_outletAreaVecY.data(), s.d_outletAreaVecZ.data(),
@@ -11157,6 +11375,271 @@ __global__ void resolveOpeningFacetElementsKernel(
     }
 }
 
+// ONE evaluation of an opening facet's sample fluxes, shared by the continuity scatter and the
+// reporting reduction so the two can never drift -- the review's requirement that diagnostics read
+// the same boundary flux the operator uses.
+//
+// Nodal lumped triangle quadrature (spec section 1): triangle f=(a,b,c) gives three samples, one
+// per vertex, each with vector area A_f/3, and a sample scatters to its OWN vertex control volume.
+//
+//   q_{f,r} = u_r.(A_f/3) + D_f (Gb_f - grad p_mix).(A_f/3)
+//   grad p_mix = p_o grad N_o + sum_r t_r grad N_r      (face nodes carry the PRESCRIBED trace)
+//   D_f        = mean of the three FACE-node coefficients, no opposing node
+//
+// The advective parts sum to mean(u).A_f exactly, so the triangle total is unchanged by splitting.
+// The stabilization part carries no r dependence, so it divides equally over the three samples.
+// Returns false if the facet has an unresolved vertex.
+template<typename KeyType, typename RealType>
+__device__ inline bool outletFacetSampleFlux(
+    int f,
+    const KeyType* c0, const KeyType* c1, const KeyType* c2, const KeyType* c3,
+    const int* triNode, const int* triElem, const int* triOpp, const uint8_t* triIsOutlet,
+    const RealType* aX, const RealType* aY, const RealType* aZ,
+    const RealType* u, const RealType* v, const RealType* w,
+    const RealType* p, const RealType* Gx, const RealType* Gy, const RealType* Gz,
+    const RealType* nodeX, const RealType* nodeY, const RealType* nodeZ,
+    const RealType* tauNode, RealType tau,
+    const RealType* pTrace, RealType pBc, bool keepSmooth,
+    int nodeOut[3], RealType q[3])
+{
+    const int f0 = triNode[3 * f], f1 = triNode[3 * f + 1], f2 = triNode[3 * f + 2];
+    if (f0 < 0 || f1 < 0 || f2 < 0) return false;
+    nodeOut[0] = f0; nodeOut[1] = f1; nodeOut[2] = f2;
+
+    const RealType third = RealType(1) / RealType(3);
+    const RealType Ax = aX[f], Ay = aY[f], Az = aZ[f];
+    const RealType Ax3 = Ax * third, Ay3 = Ay * third, Az3 = Az * third;
+
+    // Each sample carries its OWN vertex velocity against A_f/3.
+    q[0] = u[f0] * Ax3 + v[f0] * Ay3 + w[f0] * Az3;
+    q[1] = u[f1] * Ax3 + v[f1] * Ay3 + w[f1] * Az3;
+    q[2] = u[f2] * Ax3 + v[f2] * Ay3 + w[f2] * Az3;
+
+    const int e   = triElem[f];
+    const int opp = triOpp[f];
+    if (triIsOutlet[f] && e >= 0 && opp >= 0 && p != nullptr)
+    {
+        const KeyType* cc[4] = {c0, c1, c2, c3};
+        RealType coords[4][3], projected_gradient[4][3];
+        int en[4], face_nodes[3] = {-1, -1, -1}, opposite = -1;
+        for (int i = 0; i < 4; ++i)
+        {
+            en[i]        = int(cc[i][e]);
+            coords[i][0] = nodeX[en[i]];
+            coords[i][1] = nodeY[en[i]];
+            coords[i][2] = nodeZ[en[i]];
+            projected_gradient[i][0] = keepSmooth ? Gx[en[i]] : RealType(0);
+            projected_gradient[i][1] = keepSmooth ? Gy[en[i]] : RealType(0);
+            projected_gradient[i][2] = keepSmooth ? Gz[en[i]] : RealType(0);
+            if (en[i] == opp) opposite = i;
+            for (int r = 0; r < 3; ++r)
+                if (en[i] == nodeOut[r]) face_nodes[r] = i;
+        }
+        if (opposite < 0 || face_nodes[0] < 0 || face_nodes[1] < 0 || face_nodes[2] < 0) return false;
+        RealType velocity[3][3], trace[3], coefficient[3];
+        for (int r = 0; r < 3; ++r)
+        {
+            const int n = nodeOut[r];
+            velocity[r][0] = u[n]; velocity[r][1] = v[n]; velocity[r][2] = w[n];
+            trace[r] = pTrace ? pTrace[n] : pBc;
+            coefficient[r] = tauNode ? tauNode[n] : tau;
+        }
+        const RealType area[3] = {Ax, Ay, Az};
+        outlet_facet_sample_flux(coords, face_nodes, opposite, area, velocity, p[opp], trace,
+                                 projected_gradient, coefficient, q);
+    }
+    return true;
+}
+
+// Each unique opening sample scatters to its own vertex, before the single reverse-add.
+// The inlet carries its prescribed velocity directly; no separate opening source is added.
+template<typename KeyType, typename RealType>
+__global__ void scatterOutletContinuityKernel(
+    const KeyType* c0, const KeyType* c1, const KeyType* c2, const KeyType* c3,
+    const int* triNode, const int* triElem, const int* triOpp, const uint8_t* triIsOutlet,
+    const RealType* aX, const RealType* aY, const RealType* aZ,
+    const RealType* u, const RealType* v, const RealType* w,
+    const RealType* p, const RealType* Gx, const RealType* Gy, const RealType* Gz,
+    const RealType* nodeX, const RealType* nodeY, const RealType* nodeZ,
+    const RealType* tauNode, RealType tau,
+    const RealType* pTrace, RealType pBc, bool keepSmooth,
+    RealType* divAccNode, int nFacets)
+{
+    const int f = blockIdx.x * blockDim.x + threadIdx.x;
+    if (f >= nFacets) return;
+    int      nodes[3];
+    RealType q[3];
+    if (!outletFacetSampleFlux<KeyType, RealType>(
+            f, c0, c1, c2, c3, triNode, triElem, triOpp, triIsOutlet,
+            aX, aY, aZ, u, v, w, p, Gx, Gy, Gz, nodeX, nodeY, nodeZ,
+            tauNode, tau, pTrace, pBc, keepSmooth, nodes, q))
+        return;
+    for (int r = 0; r < 3; ++r) atomicAdd(&divAccNode[nodes[r]], q[r]);
+}
+
+// Validate once before the frozen-state correction loop, with every rank participating.
+template<typename KeyType, typename RealType, typename ElementTag>
+inline void validate_outlet_continuity(NSStepper<KeyType, RealType, ElementTag>& s)
+{
+    if constexpr (std::is_same_v<ElementTag, TetTag>)
+    {
+        const size_t n = s.nodeCount;
+        const size_t facets = s.d_openingTriAreaX.size();
+        const size_t elements = s.domain.getElementCount();
+        const auto& ctx = s.vmsCtx;
+        int invalid = !ctx.valid || !std::isfinite(ctx.dtEff) || !(ctx.dtEff > RealType(0))
+            || s.relaxMass != RealType(1)
+            || ctx.Gx.size() != n || ctx.Gy.size() != n || ctx.Gz.size() != n
+            || (!ctx.tauNode.empty() && ctx.tauNode.size() != n)
+            || (ctx.tauNode.empty() && (!std::isfinite(ctx.tauScalar) || !(ctx.tauScalar > RealType(0))))
+            || s.d_p.size() != n || s.d_pTraceOutlet.size() != n
+            || s.domain.getNodeX().size() != n || s.domain.getNodeY().size() != n
+            || s.domain.getNodeZ().size() != n || s.elementCount != elements
+            || s.d_areaVec_x.size() != 6 * elements || s.d_areaVec_y.size() != 6 * elements
+            || s.d_areaVec_z.size() != 6 * elements || s.d_isBdryNode.size() != n
+            || s.d_openingTriNode.size() != 3 * facets || s.d_openingTriElem.size() != facets
+            || s.d_openingTriOpp.size() != facets || s.d_openingTriIsOutlet.size() != facets
+            || s.d_openingTriAreaY.size() != facets || s.d_openingTriAreaZ.size() != facets;
+        if (!invalid && elements > 0)
+        {
+            const auto cp = connPtrs<ElementTag, KeyType>(s.domain.getElementToNodeConnectivity());
+            const KeyType *c0 = cp[0], *c1 = cp[1], *c2 = cp[2], *c3 = cp[3];
+            const RealType *x = s.domain.getNodeX().data(), *y = s.domain.getNodeY().data();
+            const RealType* z = s.domain.getNodeZ().data();
+            const RealType* coefficient = ctx.tauNode.empty() ? nullptr : ctx.tauNode.data();
+            // Apre consumes halo elements too. Reject a tet that its positive-Jacobian assembly
+            // would skip, and validate coefficients at every vertex that either operator reads.
+            invalid = thrust::transform_reduce(thrust::device,
+                thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(elements),
+                [=] __device__(size_t e) -> int {
+                    const KeyType* cc[4] = {c0, c1, c2, c3};
+                    RealType coords[4][3];
+                    for (int i = 0; i < 4; ++i)
+                    {
+                        const size_t node = size_t(cc[i][e]);
+                        if (node >= n) return 1;
+                        if (coefficient && (!isfinite(coefficient[node]) || !(coefficient[node] > RealType(0))))
+                            return 1;
+                        coords[i][0] = x[node]; coords[i][1] = y[node]; coords[i][2] = z[node];
+                    }
+                    RealType det, gradient[4][3];
+                    outlet_tet_gradient(coords, det, gradient);
+                    if (!isfinite(det) || !(det > RealType(0))) return 1;
+                    for (int i = 0; i < 4; ++i)
+                        for (int j = 0; j < 3; ++j) if (!isfinite(gradient[i][j])) return 1;
+                    return 0;
+                }, 0, thrust::maximum<int>());
+        }
+        if (!invalid && facets > 0)
+        {
+            const auto& conn = s.domain.getElementToNodeConnectivity();
+            const auto cp = connPtrs<ElementTag, KeyType>(conn);
+            const KeyType *c0 = cp[0], *c1 = cp[1], *c2 = cp[2], *c3 = cp[3];
+            const int *tri = s.d_openingTriNode.data(), *elem = s.d_openingTriElem.data();
+            const int* opp = s.d_openingTriOpp.data();
+            const RealType *ax = s.d_openingTriAreaX.data(), *ay = s.d_openingTriAreaY.data();
+            const RealType *az = s.d_openingTriAreaZ.data();
+            const RealType *x = s.domain.getNodeX().data(), *y = s.domain.getNodeY().data();
+            const RealType* z = s.domain.getNodeZ().data();
+            invalid = thrust::transform_reduce(thrust::device,
+                thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(facets),
+                [=] __device__(size_t f) -> int {
+                    const int e = elem[f], o = opp[f];
+                    if (e < 0 || size_t(e) >= elements || o < 0 || size_t(o) >= n) return 1;
+                    const int face[3] = {tri[3*f], tri[3*f+1], tri[3*f+2]};
+                    for (int r = 0; r < 3; ++r)
+                        if (face[r] < 0 || size_t(face[r]) >= n || face[r] == o) return 1;
+                    if (face[0] == face[1] || face[1] == face[2] || face[0] == face[2]) return 1;
+                    const KeyType* cc[4] = {c0, c1, c2, c3};
+                    RealType coords[4][3];
+                    int opposite = -1, found = 0;
+                    for (int i = 0; i < 4; ++i)
+                    {
+                        const size_t node = size_t(cc[i][e]);
+                        if (node >= n) return 1;
+                        if (node == size_t(o)) opposite = i;
+                        for (int r = 0; r < 3; ++r) if (node == size_t(face[r])) ++found;
+                        coords[i][0] = x[node]; coords[i][1] = y[node]; coords[i][2] = z[node];
+                    }
+                    if (opposite < 0 || found != 3) return 1;
+                    RealType det, gradient[4][3];
+                    outlet_tet_gradient(coords, det, gradient);
+                    if (!isfinite(det) || !(det > RealType(0))) return 1;
+                    const RealType outward = ax[f] * gradient[opposite][0]
+                                           + ay[f] * gradient[opposite][1]
+                                           + az[f] * gradient[opposite][2];
+                    return isfinite(outward) && outward < RealType(0) ? 0 : 1;
+                }, 0, thrust::maximum<int>());
+        }
+        int any_invalid = 0;
+        MPI_Allreduce(&invalid, &any_invalid, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+        if (any_invalid)
+        {
+            if (s.rank == 0) std::cerr << "ERROR: invalid frozen outlet coefficient, context, or tetrahedral geometry\n";
+            MPI_Abort(MPI_COMM_WORLD, 1);
+        }
+    }
+}
+
+// Integrated volume flux R = C{F_u u + T(W Gbar - L_v p - L_t trace)}.
+// Inputs and frozen context are halo-complete. No row masks, history writes, or source patches.
+template<typename KeyType, typename RealType, typename ElementTag>
+inline void assemble_outlet_continuity(NSStepper<KeyType, RealType, ElementTag>& s,
+                                     const RealType* u, const RealType* v, const RealType* w,
+                                     cstone::DeviceVector<RealType>& residual)
+{
+    if constexpr (std::is_same_v<ElementTag, TetTag>)
+    {
+        residual.resize(s.nodeCount);
+        if (s.nodeCount > 0)
+        {
+            auto begin = thrust::device_pointer_cast(residual.data());
+            thrust::fill(thrust::device, begin, begin + s.nodeCount, RealType(0));
+        }
+        const auto& conn = s.domain.getElementToNodeConnectivity();
+        const auto cp = connPtrs<ElementTag, KeyType>(conn);
+        const auto& ctx = s.vmsCtx;
+        const auto& x = s.domain.getNodeX();
+        const auto& y = s.domain.getNodeY();
+        const auto& z = s.domain.getNodeZ();
+        const RealType* tau_node = ctx.tauNode.size() == s.nodeCount ? ctx.tauNode.data() : nullptr;
+        const size_t num_local = s.domain.localElementCount();
+        const int n_facets = int(s.d_openingTriAreaX.size());
+        auto check_launch = [](cudaError_t error) {
+            if (error != cudaSuccess)
+            {
+                std::cerr << "ERROR: outlet continuity: " << cudaGetErrorString(error) << "\n";
+                MPI_Abort(MPI_COMM_WORLD, 1);
+            }
+        };
+        if (num_local > 0)
+        {
+            const int blocks = int((num_local + s.blockSize - 1) / s.blockSize);
+            computeDivergenceVMSTetKernel<KeyType, RealType><<<blocks, s.blockSize>>>(
+                cp[0], cp[1], cp[2], cp[3], u, v, w, s.d_p.data(),
+                ctx.Gx.data(), ctx.Gy.data(), ctx.Gz.data(), x.data(), y.data(), z.data(),
+                s.d_areaVec_x.data(), s.d_areaVec_y.data(), s.d_areaVec_z.data(),
+                ctx.tauScalar, tau_node, ctx.keepSmooth, RealType(1), nullptr,
+                s.d_isBdryNode.size() == s.nodeCount ? s.d_isBdryNode.data() : nullptr,
+                residual.data(), s.domain.startIndex(), num_local);
+            check_launch(cudaGetLastError());
+        }
+        if (n_facets > 0)
+        {
+            const int blocks = (n_facets + s.blockSize - 1) / s.blockSize;
+            scatterOutletContinuityKernel<KeyType, RealType><<<blocks, s.blockSize>>>(
+                cp[0], cp[1], cp[2], cp[3], s.d_openingTriNode.data(),
+                s.d_openingTriElem.data(), s.d_openingTriOpp.data(), s.d_openingTriIsOutlet.data(),
+                s.d_openingTriAreaX.data(), s.d_openingTriAreaY.data(), s.d_openingTriAreaZ.data(),
+                u, v, w, s.d_p.data(), ctx.Gx.data(), ctx.Gy.data(), ctx.Gz.data(),
+                x.data(), y.data(), z.data(), tau_node, ctx.tauScalar,
+                s.d_pTraceOutlet.data(), s.outletPRef, ctx.keepSmooth, residual.data(), n_facets);
+            check_launch(cudaGetLastError());
+        }
+        s.domain.reverseExchangeNodeHaloAdd(residual);
+    }
+}
+
 // Boundary mass flux per opening facet, matching OpenAccel's boundary mDot:
 //   pressure outlet (flowModel.cpp:8418):  mdot = u_f.A + tau_b*((G_b - grad p|_b).A)
 //   velocity inlet  (flowModel.cpp:7181):  mdot = u_f.A            -- no stabilization, by design
@@ -11182,7 +11665,7 @@ __global__ void boundaryMassFluxKernel(
     const RealType* nodeX, const RealType* nodeY, const RealType* nodeZ,
     const RealType* tauNode, RealType tau,
     // Prescribed outlet pressure: the per-node trace when present, else the scalar fallback.
-    const RealType* pTrace, RealType pBc,
+    const RealType* pTrace, RealType pBc, bool keepSmooth,
     double* partialIn, double* partialOut, int nFacets)
 {
     const int f = blockIdx.x * blockDim.x + threadIdx.x;
@@ -11190,63 +11673,15 @@ __global__ void boundaryMassFluxKernel(
 
     if (f < nFacets)
     {
-        const int f0 = triNode[3 * f], f1 = triNode[3 * f + 1], f2 = triNode[3 * f + 2];
-        if (f0 >= 0 && f1 >= 0 && f2 >= 0)
+        int nodes[3];
+        RealType samples[3];
+        if (outletFacetSampleFlux<KeyType, RealType>(
+                f, c0, c1, c2, c3, triNode, triElem, triOpp, triIsOutlet,
+                aX, aY, aZ, u, v, w, p, Gx, Gy, Gz, nodeX, nodeY, nodeZ,
+                tauNode, tau, pTrace, pBc, keepSmooth, nodes, samples))
         {
-            const RealType Ax = aX[f], Ay = aY[f], Az = aZ[f];
-            // Face velocity: the flat average over the triangle, matching the 1/3 weighting the
-            // weak surface term already uses.
-            const RealType third = RealType(1) / RealType(3);
-            RealType ufx = third * (u[f0] + u[f1] + u[f2]);
-            RealType ufy = third * (v[f0] + v[f1] + v[f2]);
-            RealType ufz = third * (w[f0] + w[f1] + w[f2]);
-            RealType mdot = ufx * Ax + ufy * Ay + ufz * Az;
-
-            const int e   = triElem[f];
-            const int opp = triOpp[f];
-            if (triIsOutlet[f] && e >= 0 && opp >= 0 && p != nullptr)
-            {
-                const KeyType* cc[4] = {c0, c1, c2, c3};
-                RealType coords[4][3];
-                int      en[4];
-                for (int i = 0; i < 4; ++i)
-                {
-                    en[i]        = int(cc[i][e]);
-                    coords[i][0] = nodeX[en[i]];
-                    coords[i][1] = nodeY[en[i]];
-                    coords[i][2] = nodeZ[en[i]];
-                }
-                RealType det, dNdx[4][3];
-                Tet4CVFEM::jacobian_and_dNdx<RealType>(coords, det, dNdx);
-
-                // Face nodes carry the PRESCRIBED pressure; only the opposing node keeps its own.
-                RealType dpdx = 0, dpdy = 0, dpdz = 0;
-                for (int k = 0; k < 4; ++k)
-                {
-                    const RealType pk = (en[k] == opp) ? p[en[k]]
-                                                       : (pTrace ? pTrace[en[k]] : pBc);
-                    dpdx += dNdx[k][0] * pk;
-                    dpdy += dNdx[k][1] * pk;
-                    dpdz += dNdx[k][2] * pk;
-                }
-
-                // Two-point blend: the face (as its 3-node average) against the opposing node.
-                const RealType gfx = third * (Gx[f0] + Gx[f1] + Gx[f2]);
-                const RealType gfy = third * (Gy[f0] + Gy[f1] + Gy[f2]);
-                const RealType gfz = third * (Gz[f0] + Gz[f1] + Gz[f2]);
-                const RealType Gbx = RealType(0.5) * (gfx + Gx[opp]);
-                const RealType Gby = RealType(0.5) * (gfy + Gy[opp]);
-                const RealType Gbz = RealType(0.5) * (gfz + Gz[opp]);
-
-                const RealType tauB =
-                    tauNode ? boundaryFaceCoefficient<RealType>(tauNode[f0], tauNode[f1], tauNode[f2])
-                            : tau;
-                mdot += tauB * ((Gbx - dpdx) * Ax + (Gby - dpdy) * Ay + (Gbz - dpdz) * Az);
-            }
-
-            // Their sign convention exactly (flowModel.cpp:3078): the area vector is OUTWARD, so a
-            // negative flux is inflow. in is a sum of negatives; out a sum of positives.
-            if (mdot < RealType(0)) mIn = double(mdot); else mOut = double(mdot);
+            const RealType flux = samples[0] + samples[1] + samples[2];
+            if (flux < RealType(0)) mIn = double(flux); else mOut = double(flux);
         }
     }
 
@@ -11271,7 +11706,14 @@ template<typename KeyType, typename RealType, typename ElementTag>
 inline void updateOutletPressureTrace(NSStepper<KeyType, RealType, ElementTag>& s)
 {
     if (s.outletBeta < RealType(0)) return;                    // disabled -> classic p=0 outlet
-    if (s.d_outletAreaScalar.size() != s.nodeCount) return;
+    int invalid = s.d_outletAreaScalar.size() != s.nodeCount || s.d_p.size() != s.nodeCount;
+    int any_invalid = 0;
+    MPI_Allreduce(&invalid, &any_invalid, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+    if (any_invalid)
+    {
+        if (s.rank == 0) std::cerr << "ERROR: invalid outlet trace storage\n";
+        MPI_Abort(MPI_COMM_WORLD, 1);
+    }
     if (s.d_pTraceOutlet.size() != s.nodeCount) s.d_pTraceOutlet.resize(s.nodeCount);
 
     OutletMomentFunctor<RealType> f{s.domain.getNodeOwnershipMap().data(),
@@ -11291,10 +11733,19 @@ inline void updateOutletPressureTrace(NSStepper<KeyType, RealType, ElementTag>& 
     s.lastOutletArea      = RealType(sum[1]);
 
     const int nB = int((s.nodeCount + s.blockSize - 1) / s.blockSize);
-    buildOutletPressureTraceKernel<RealType><<<nB, s.blockSize>>>(
-        s.d_p.data(), s.d_outletAreaScalar.data(),
-        s.outletPRef, s.outletBeta, meanP, s.d_pTraceOutlet.data(), s.nodeCount);
-    cudaDeviceSynchronize();
+    if (nB > 0)
+    {
+        buildOutletPressureTraceKernel<RealType><<<nB, s.blockSize>>>(
+            s.d_p.data(), s.d_outletAreaScalar.data(),
+            s.outletPRef, s.outletBeta, meanP, s.d_pTraceOutlet.data(), s.nodeCount);
+        const cudaError_t error = cudaGetLastError();
+        if (error != cudaSuccess)
+        {
+            std::cerr << "ERROR: outlet pressure trace: " << cudaGetErrorString(error) << "\n";
+            MPI_Abort(MPI_COMM_WORLD, 1);
+        }
+    }
+    s.domain.exchangeNodeHalo(s.d_pTraceOutlet);
 }
 
 // Facets with no adjacent element found. Device reduction on purpose: the alternative is a full
@@ -11333,7 +11784,8 @@ inline void boundaryMassBalance(NSStepper<KeyType, RealType, ElementTag>& s,
             auto       cp  = connPtrs<ElementTag, KeyType>(d_conn);
             const int  blk = 256;
             const int  nB  = (nFacets + blk - 1) / blk;
-            cstone::DeviceVector<double> d_pIn(nB, 0.0), d_pOut(nB, 0.0);
+            s.d_outlet_flux_in.resize(nB);
+            s.d_outlet_flux_out.resize(nB);
             const bool haveRc = (rc && rc->valid);
             boundaryMassFluxKernel<KeyType, RealType><<<nB, blk>>>(
                 cp[0], cp[1], cp[2], cp[3],
@@ -11351,11 +11803,17 @@ inline void boundaryMassBalance(NSStepper<KeyType, RealType, ElementTag>& s,
                 // The trace when the average-pressure outlet is on; otherwise --outlet=do-nothing
                 // pins the whole face to p=0 and the scalar fallback is exactly that.
                 (s.d_pTraceOutlet.size() == s.nodeCount) ? s.d_pTraceOutlet.data() : nullptr,
-                RealType(0),
-                d_pIn.data(), d_pOut.data(), nFacets);
-            cudaDeviceSynchronize();
-            auto pi = thrust::device_pointer_cast(d_pIn.data());
-            auto po = thrust::device_pointer_cast(d_pOut.data());
+                s.outletBeta >= RealType(0) ? s.outletPRef : RealType(0),
+                haveRc ? rc->keepSmooth : true,
+                s.d_outlet_flux_in.data(), s.d_outlet_flux_out.data(), nFacets);
+            const cudaError_t error = cudaGetLastError();
+            if (error != cudaSuccess)
+            {
+                std::cerr << "ERROR: outlet flux reduction: " << cudaGetErrorString(error) << "\n";
+                MPI_Abort(MPI_COMM_WORLD, 1);
+            }
+            auto pi = thrust::device_pointer_cast(s.d_outlet_flux_in.data());
+            auto po = thrust::device_pointer_cast(s.d_outlet_flux_out.data());
             locIn  = thrust::reduce(thrust::device, pi, pi + nB, 0.0, thrust::plus<double>());
             locOut = thrust::reduce(thrust::device, po, po + nB, 0.0, thrust::plus<double>());
         }
@@ -11818,6 +12276,8 @@ void reportSpeedProfile(NSStepper<KeyType, RealType, ElementTag>& s)
                   << std::defaultfloat << "\n";
 }
 
+#include "mars_outlet_correction.hpp"
+
 template<typename KeyType, typename RealType, typename ElementTag = HexTag>
 void runNsStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, RealType nu, RealType rho)
 {
@@ -11963,22 +12423,25 @@ void runNsStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, RealTyp
     // the loop would be a no-op.
     //
     // nCorrectors == 1 (default) runs the original single pass, kernel-for-kernel.
-    const bool vmsOuter = s.useVMSStab && std::is_same_v<ElementTag, TetTag> && s.nCorrectors > 1;
-    const int  nOuter   = vmsOuter ? s.nCorrectors : 1;
+    const bool average_outlet = s.outletBeta >= RealType(0);
+    const bool vmsOuter = !average_outlet && s.useVMSStab
+                         && std::is_same_v<ElementTag, TetTag> && s.nCorrectors > 1;
+    const int  nOuter   = average_outlet ? 0 : (vmsOuter ? s.nCorrectors : 1);
     // BDF2 keeps u^{n-1}, and the shuffle below normally runs after the (single) corrector, when
     // d_u still holds u^n. With outer passes the in-loop corrector overwrites d_u first, so the
     // snapshot has to be taken HERE or the time history silently becomes a corrected field.
     bool bdf2HistTaken = false;
-    if (vmsOuter && s.useBdf2
+    if ((vmsOuter || average_outlet) && s.useBdf2
         && s.d_u_nm1.size() == s.d_u.size()
         && s.d_v_nm1.size() == s.d_v.size()
         && s.d_w_nm1.size() == s.d_w.size())
     {
-        thrust::copy(thrust::device, s.d_u.begin(), s.d_u.end(), s.d_u_nm1.begin());
-        thrust::copy(thrust::device, s.d_v.begin(), s.d_v.end(), s.d_v_nm1.begin());
-        thrust::copy(thrust::device, s.d_w.begin(), s.d_w.end(), s.d_w_nm1.begin());
+        thrust::copy(thrust::device, thrust::device_pointer_cast(s.d_u.data()), thrust::device_pointer_cast(s.d_u.data() + s.d_u.size()), thrust::device_pointer_cast(s.d_u_nm1.data()));
+        thrust::copy(thrust::device, thrust::device_pointer_cast(s.d_v.data()), thrust::device_pointer_cast(s.d_v.data() + s.d_v.size()), thrust::device_pointer_cast(s.d_v_nm1.data()));
+        thrust::copy(thrust::device, thrust::device_pointer_cast(s.d_w.data()), thrust::device_pointer_cast(s.d_w.data() + s.d_w.size()), thrust::device_pointer_cast(s.d_w_nm1.data()));
         bdf2HistTaken = true;
     }
+    if (average_outlet) run_outlet_pressure_correction(s, dt, rho);
     for (int outer = 0; outer < nOuter; ++outer)
     {
         runPressureSolveStep<KeyType, RealType, ElementTag>(s, dt, rho);
@@ -11986,9 +12449,9 @@ void runNsStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, RealTyp
         {
             runCorrectorStep<KeyType, RealType, ElementTag>(s, dt, rho);
             // u** := u^{n+1} so the next pass corrects the corrected field, not the predictor's.
-            thrust::copy(thrust::device, s.d_u.begin(), s.d_u.end(), s.d_uStarStar.begin());
-            thrust::copy(thrust::device, s.d_v.begin(), s.d_v.end(), s.d_vStarStar.begin());
-            thrust::copy(thrust::device, s.d_w.begin(), s.d_w.end(), s.d_wStarStar.begin());
+            thrust::copy(thrust::device, thrust::device_pointer_cast(s.d_u.data()), thrust::device_pointer_cast(s.d_u.data() + s.d_u.size()), thrust::device_pointer_cast(s.d_uStarStar.data()));
+            thrust::copy(thrust::device, thrust::device_pointer_cast(s.d_v.data()), thrust::device_pointer_cast(s.d_v.data() + s.d_v.size()), thrust::device_pointer_cast(s.d_vStarStar.data()));
+            thrust::copy(thrust::device, thrust::device_pointer_cast(s.d_w.data()), thrust::device_pointer_cast(s.d_w.data() + s.d_w.size()), thrust::device_pointer_cast(s.d_wStarStar.data()));
             if (s.rank == 0 && std::getenv("MARS_SOLVE_TRACE"))
                 std::cout << "    [vms-outer] pass " << (outer + 1) << "/" << nOuter
                           << " |phi|max=" << std::scientific
@@ -12062,12 +12525,12 @@ void runNsStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, RealTyp
         && s.d_v_nm1.size() == s.d_v.size()
         && s.d_w_nm1.size() == s.d_w.size())
     {
-        thrust::copy(thrust::device, s.d_u.begin(), s.d_u.end(), s.d_u_nm1.begin());
-        thrust::copy(thrust::device, s.d_v.begin(), s.d_v.end(), s.d_v_nm1.begin());
-        thrust::copy(thrust::device, s.d_w.begin(), s.d_w.end(), s.d_w_nm1.begin());
+        thrust::copy(thrust::device, thrust::device_pointer_cast(s.d_u.data()), thrust::device_pointer_cast(s.d_u.data() + s.d_u.size()), thrust::device_pointer_cast(s.d_u_nm1.data()));
+        thrust::copy(thrust::device, thrust::device_pointer_cast(s.d_v.data()), thrust::device_pointer_cast(s.d_v.data() + s.d_v.size()), thrust::device_pointer_cast(s.d_v_nm1.data()));
+        thrust::copy(thrust::device, thrust::device_pointer_cast(s.d_w.data()), thrust::device_pointer_cast(s.d_w.data() + s.d_w.size()), thrust::device_pointer_cast(s.d_w_nm1.data()));
     }
 
-    runCorrectorStep<KeyType, RealType, ElementTag>(s, dt, rho);
+    if (!average_outlet) runCorrectorStep<KeyType, RealType, ElementTag>(s, dt, rho);
     if (dbg)
     {
         RealType KE_np1 = keOwned<KeyType, RealType, ElementTag>(s, s.d_u, s.d_v, s.d_w);   // collective: all ranks
@@ -12089,9 +12552,9 @@ void runNsStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, RealTyp
         && s.d_advU_n.size() == s.nodeCount
         && s.d_advU_nm1.size() == s.nodeCount)
     {
-        thrust::copy(thrust::device, s.d_advU_n.begin(), s.d_advU_n.end(), s.d_advU_nm1.begin());
-        thrust::copy(thrust::device, s.d_advV_n.begin(), s.d_advV_n.end(), s.d_advV_nm1.begin());
-        thrust::copy(thrust::device, s.d_advW_n.begin(), s.d_advW_n.end(), s.d_advW_nm1.begin());
+        thrust::copy(thrust::device, thrust::device_pointer_cast(s.d_advU_n.data()), thrust::device_pointer_cast(s.d_advU_n.data() + s.d_advU_n.size()), thrust::device_pointer_cast(s.d_advU_nm1.data()));
+        thrust::copy(thrust::device, thrust::device_pointer_cast(s.d_advV_n.data()), thrust::device_pointer_cast(s.d_advV_n.data() + s.d_advV_n.size()), thrust::device_pointer_cast(s.d_advV_nm1.data()));
+        thrust::copy(thrust::device, thrust::device_pointer_cast(s.d_advW_n.data()), thrust::device_pointer_cast(s.d_advW_n.data() + s.d_advW_n.size()), thrust::device_pointer_cast(s.d_advW_nm1.data()));
         if (s.bdfStep < 1) s.bdfStep = 1;
     }
 

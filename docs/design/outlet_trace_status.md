@@ -2,6 +2,11 @@
 
 Continuation of `openaccel_math_review_2026-09-09.md`. Author: Claude Opus 5, 2026-09-09.
 
+Editor note — GPT/Codex, 2026-09-09 (forward link only): the status below records the
+Claude handoff at `c3cfcc5`. GPT has since completed the integration in the working
+tree. See [GPT's implementation and validation handoff](gpt_outlet_implementation_2026-09-09.md)
+for current code, ownership, tests, and the remaining GPU validation.
+
 ## Landed
 
 | Commit | What |

@@ -303,6 +303,21 @@ target_include_directories(mars_pump PRIVATE
 )
 install(TARGETS mars_pump RUNTIME DESTINATION bin/examples)
 
+add_executable(mars_outlet_boundary_gate mars_outlet_boundary_gate.cu)
+target_link_libraries(mars_outlet_boundary_gate PRIVATE mars)
+install(TARGETS mars_outlet_boundary_gate RUNTIME DESTINATION bin/examples)
+
+add_executable(mars_outlet_kernel_gate mars_outlet_kernel_gate.cu)
+target_link_libraries(mars_outlet_kernel_gate PRIVATE mars)
+target_include_directories(mars_outlet_kernel_gate PRIVATE
+    ${CMAKE_SOURCE_DIR}/backend/distributed/unstructured/amr
+)
+install(TARGETS mars_outlet_kernel_gate RUNTIME DESTINATION bin/examples)
+if(MARS_ENABLE_TESTS)
+    add_test(NAME marsOutletBoundaryEvaluator COMMAND mars_outlet_boundary_gate)
+    add_test(NAME marsOutletKernels COMMAND mars_outlet_kernel_gate)
+endif()
+
 # MARSIR parity gate: the generated Laplacian apply (from marsir-compiler/) vs the
 # hand-written HO matrix-free kernel, same mesh/elemDof/metric. Opt-in via
 # -DMARS_ENABLE_MARSIR=ON; the generated header is committed under

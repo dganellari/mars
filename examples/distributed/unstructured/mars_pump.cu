@@ -99,6 +99,9 @@ int main(int argc, char** argv)
     // Average-pressure outlet trace. <0 keeps the classic p=0 Dirichlet outlet.
     double      outletBeta = -1.0;
     double      outletPRef = 0.0;
+    int         outlet_max_corrections = 100;
+    double      outlet_rtol = 1e-6, outlet_div_tol = 1e-8, outlet_flux_tol = 1e-12;
+    double      outlet_max_damping = 1.0;
     double      relaxU     = 0.3;      // --relax-u: momentum URF, folded into D
     bool        usePSPG    = false;    // implicit PSPG pressure stab (tau*L in the DDT operator); --pspg. The correct equal-order checkerboard fix.
     double      pspgTau    = -1;       // <=0 => auto h^2/24; --pspg-tau=V overrides
@@ -187,6 +190,11 @@ int main(int argc, char** argv)
         else if (a.rfind("--relax-mass=", 0) == 0)   relaxMass = std::stod(a.substr(13));
         else if (a.rfind("--outlet-beta=", 0) == 0)  outletBeta = std::stod(a.substr(14));
         else if (a.rfind("--outlet-pref=", 0) == 0)  outletPRef = std::stod(a.substr(14));
+        else if (a.rfind("--outlet-max-corrections=", 0) == 0) outlet_max_corrections = std::stoi(a.substr(25));
+        else if (a.rfind("--outlet-rtol=", 0) == 0) outlet_rtol = std::stod(a.substr(14));
+        else if (a.rfind("--outlet-div-tol=", 0) == 0) outlet_div_tol = std::stod(a.substr(17));
+        else if (a.rfind("--outlet-flux-tol=", 0) == 0) outlet_flux_tol = std::stod(a.substr(18));
+        else if (a.rfind("--outlet-max-damping=", 0) == 0) outlet_max_damping = std::stod(a.substr(21));
         else if (a.rfind("--relax-u=", 0) == 0)      relaxU    = std::stod(a.substr(10));
         else if (a == "--pressure-k")                pressureK  = true;  // Galerkin K + FEM-consistent weak div/grad projection
         else if (a.rfind("--correctors=", 0) == 0)   nCorrectors = std::stoi(a.substr(13)); // PISO inner pressure corrections (FEM path)
@@ -259,6 +267,11 @@ int main(int argc, char** argv)
                     "  --outlet-beta=V      average-pressure outlet trace p_ref+(1-beta)(p-mean_A p); beta=0.05 keeps\n"
                     "                       95%% of the spatial variation and prescribes only the mean. <0 = off (default)\n"
                     "  --outlet-pref=V      prescribed outlet mean pressure for --outlet-beta (default 0)\n"
+                    "  --outlet-max-corrections=N  full-residual correction limit (default 100)\n"
+                    "  --outlet-rtol=V      relative continuity and boundary-balance tolerance (1e-6)\n"
+                    "  --outlet-div-tol=V   absolute continuity tolerance in 1/s (1e-8)\n"
+                    "  --outlet-flux-tol=V  absolute boundary-flux tolerance in volume/s (1e-12)\n"
+                    "  --outlet-max-damping=V  maximum measured correction step in (0,1] (1)\n"
                     "  --supg              SUPG streamline stabilization on the implicit convection operator\n"
                     "  --div-correct       conservative->advective correction on upwind/BJ advection\n"
                     "  --picard=N          deferred-correction outer sweeps per step (default 1 = plain explicit)\n"
@@ -537,20 +550,40 @@ int main(int argc, char** argv)
         MPI_Finalize();
         return 1;
     }
-    // The average-pressure outlet is INCOMPLETE: the trace exists and the boundary flux reads it,
-    // but the outlet pressure rows are still identity, so the mode would run silently inert -- the
-    // exact "formula-only change" the design review rejected. Refuse rather than produce a number
-    // that looks like a result. Remove this once the continuity rows, the boundary derivative and
-    // the boundary-aware gradient all land together (docs/design/outlet_trace_status.md).
-    if (outletBeta >= 0.0)
+    if (!std::isfinite(outletBeta) || !std::isfinite(outletPRef))
     {
-        if (rank == 0)
-            std::cerr << "Error: --outlet-beta is not implemented yet. The trace is built and the\n"
-                         "       boundary flux reads it, but the outlet pressure rows are still\n"
-                         "       Dirichlet, so the trace collapses to a uniform p_ref and changes\n"
-                         "       nothing. See docs/design/outlet_trace_status.md.\n";
+        if (rank == 0) std::cerr << "Error: outlet pressure parameters must be finite.\n";
         MPI_Finalize();
         return 1;
+    }
+    if (outletBeta >= 0.0)
+    {
+        const char* krylov = std::getenv("MARS_HYPRE_KRYLOV");
+        const bool valid = outletBeta <= 1.0 && useHypre && useVMSStab && rcImplicit
+            && !pressureK && !rcOnly && !rcBlend && !usePSPG && !useRhieChow
+            && !fluxNeumann && !openingFluxSource && !openNormalProj && !fluxPressureBc
+            && !implicitAdv && pumpDp == 0.0 && outletMode == "do-nothing" && !cavityMode
+            && relaxMass == 1.0 && relaxU > 0.0 && relaxU <= 1.0 && nCorrectors == 1
+            && cflMax <= 0.0 && std::isfinite(dt) && dt > 0 && std::isfinite(rho) && rho > 0
+            && std::getenv("MARS_HYPRE_USE_DDT") == nullptr
+            && std::getenv("MARS_FEMGRAM_SOLVE") == nullptr
+            && std::getenv("MARS_VMS_COMPACT_ONLY") == nullptr
+            && (!krylov || std::string(krylov) == "gmres")
+            && outlet_max_corrections > 0 && std::isfinite(outlet_rtol) && outlet_rtol > 0 && outlet_rtol < 1
+            && std::isfinite(outlet_div_tol) && outlet_div_tol > 0
+            && std::isfinite(outlet_flux_tol) && outlet_flux_tol > 0
+            && std::isfinite(outlet_max_damping) && outlet_max_damping > 0 && outlet_max_damping <= 1;
+        if (!valid)
+        {
+            if (rank == 0)
+                std::cerr << "Error: average-pressure outlet requires the fixed-dt tet SCS/Hypre "
+                    "path: --solver=hypre --vms-stab --rc-implicit --outlet=do-nothing, "
+                    "velocity inlet, relax-mass=1, and GMRES. Extra pressure/flux modes, "
+                    "implicit advection, adaptive dt and --correctors>1 are unsupported. "
+                    "Use positive outlet tolerances, beta in [0,1], damping in (0,1].\n";
+            MPI_Finalize();
+            return 1;
+        }
     }
     if (rcBlend && usePSPG && rank == 0)
         std::cerr << "WARNING: --rc-blend with --pspg stacks two pressure stabilizations of"
@@ -560,6 +593,11 @@ int main(int argc, char** argv)
     s.relaxMass   = RealType(relaxMass);
     s.outletBeta  = RealType(outletBeta);
     s.outletPRef  = RealType(outletPRef);
+    s.outlet_max_corrections = outlet_max_corrections;
+    s.outlet_relative_tolerance = RealType(outlet_rtol);
+    s.outlet_divergence_tolerance = RealType(outlet_div_tol);
+    s.outlet_flux_tolerance = RealType(outlet_flux_tol);
+    s.outlet_max_damping = RealType(outlet_max_damping);
     s.relaxU      = RealType(relaxU);
     s.usePSPG     = usePSPG;       // implicit PSPG (tau*L in DDT operator)
     s.pspgTau     = RealType(pspgTau);
@@ -1106,6 +1144,8 @@ int main(int argc, char** argv)
             const size_t nNodes = amr.domain().getNodeCount();
             std::vector<int> triNode;
             std::vector<RealType> triAx, triAy, triAz;
+            std::vector<int> pressure_tri_node;
+            std::vector<RealType> pressure_tri_ax, pressure_tri_ay, pressure_tri_az;
             // Which opening each facet came from: their pressure outlet carries the Rhie-Chow
             // term, their velocity inlet does not (flowModel.cpp:8418 vs :7181).
             std::vector<uint8_t> triIsOut;
@@ -1118,20 +1158,39 @@ int main(int argc, char** argv)
                 for (size_t f = 0; f + 2 < tit->second.size(); f += 3)
                 {
                     int la = triLocal[f];
-                    if (la < 0 || hostOwnFA[la] != 1) continue;   // count once: owner of first node
+                    const bool unique_owner = la >= 0 && size_t(la) < nNodes && hostOwnFA[la] == 1;
+                    bool owns_pressure_row = false;
+                    if (isOutlet && s.outletBeta >= RealType(0))
+                        for (int j = 0; j < 3; ++j)
+                        {
+                            const int node = triLocal[f + j];
+                            owns_pressure_row |= node >= 0 && size_t(node) < nNodes && hostOwnFA[node] == 1;
+                        }
+                    if (!unique_owner && !owns_pressure_row) continue;
                     const auto& A = tit->second[f];
                     const auto& B = tit->second[f + 1];
                     const auto& C = tit->second[f + 2];
                     double e1x = B[0]-A[0], e1y = B[1]-A[1], e1z = B[2]-A[2];
                     double e2x = C[0]-A[0], e2y = C[1]-A[1], e2z = C[2]-A[2];
-                    triAx.push_back(RealType(0.5*(e1y*e2z - e1z*e2y)));
-                    triAy.push_back(RealType(0.5*(e1z*e2x - e1x*e2z)));
-                    triAz.push_back(RealType(0.5*(e1x*e2y - e1y*e2x)));
-                    triIsOut.push_back(isOutlet ? uint8_t(1) : uint8_t(0));
+                    const RealType ax = RealType(0.5*(e1y*e2z - e1z*e2y));
+                    const RealType ay = RealType(0.5*(e1z*e2x - e1x*e2z));
+                    const RealType az = RealType(0.5*(e1x*e2y - e1y*e2x));
+                    if (unique_owner)
+                    {
+                        triAx.push_back(ax); triAy.push_back(ay); triAz.push_back(az);
+                        triIsOut.push_back(isOutlet ? uint8_t(1) : uint8_t(0));
+                    }
+                    // Matrix entries stay on the owner of each row; continuity instead reverse-adds.
+                    if (owns_pressure_row)
+                    {
+                        pressure_tri_ax.push_back(ax); pressure_tri_ay.push_back(ay); pressure_tri_az.push_back(az);
+                    }
                     for (int j = 0; j < 3; ++j)
                     {
                         int lj = triLocal[f + j];
-                        triNode.push_back((lj >= 0 && (size_t)lj < nNodes) ? lj : -1);
+                        const int node = (lj >= 0 && (size_t)lj < nNodes) ? lj : -1;
+                        if (unique_owner) triNode.push_back(node);
+                        if (owns_pressure_row) pressure_tri_node.push_back(node);
                     }
                 }
             };
@@ -1206,6 +1265,85 @@ int main(int argc, char** argv)
                         d_sortedTri.data(), d_triPerm.data(), int(nFacets),
                         s.d_openingTriElem.data(), s.d_openingTriOpp.data(), nElemF);
                     cudaDeviceSynchronize();
+                }
+            }
+            if (s.outletBeta >= RealType(0))
+            {
+                const size_t pressure_facets = pressure_tri_ax.size();
+                s.d_pressure_tri_node.resize(pressure_tri_node.size());
+                s.d_pressure_tri_area_x.resize(pressure_facets);
+                s.d_pressure_tri_area_y.resize(pressure_facets);
+                s.d_pressure_tri_area_z.resize(pressure_facets);
+                s.d_pressure_tri_element.resize(pressure_facets);
+                s.d_pressure_tri_opposite.resize(pressure_facets);
+                auto check_pressure_setup_cuda = [](cudaError_t error)
+                {
+                    if (error != cudaSuccess)
+                    {
+                        std::cerr << "ERROR: outlet matrix facet setup: " << cudaGetErrorString(error) << "\n";
+                        MPI_Abort(MPI_COMM_WORLD, 1);
+                    }
+                };
+                if (pressure_facets > 0)
+                {
+                    check_pressure_setup_cuda(cudaMemcpy(s.d_pressure_tri_node.data(), pressure_tri_node.data(),
+                        pressure_tri_node.size() * sizeof(int), cudaMemcpyHostToDevice));
+                    check_pressure_setup_cuda(cudaMemcpy(s.d_pressure_tri_area_x.data(), pressure_tri_ax.data(),
+                        pressure_facets * sizeof(RealType), cudaMemcpyHostToDevice));
+                    check_pressure_setup_cuda(cudaMemcpy(s.d_pressure_tri_area_y.data(), pressure_tri_ay.data(),
+                        pressure_facets * sizeof(RealType), cudaMemcpyHostToDevice));
+                    check_pressure_setup_cuda(cudaMemcpy(s.d_pressure_tri_area_z.data(), pressure_tri_az.data(),
+                        pressure_facets * sizeof(RealType), cudaMemcpyHostToDevice));
+                    check_pressure_setup_cuda(cudaMemset(s.d_pressure_tri_element.data(), 0xFF,
+                                                         pressure_facets * sizeof(int)));
+                    check_pressure_setup_cuda(cudaMemset(s.d_pressure_tri_opposite.data(), 0xFF,
+                                                         pressure_facets * sizeof(int)));
+                    std::vector<std::array<int, 3>> keys(pressure_facets);
+                    std::vector<int> permutation(pressure_facets), sorted(3 * pressure_facets);
+                    for (size_t f = 0; f < pressure_facets; ++f)
+                    {
+                        for (int j = 0; j < 3; ++j) keys[f][j] = pressure_tri_node[3 * f + j];
+                        std::sort(keys[f].begin(), keys[f].end());
+                        permutation[f] = int(f);
+                    }
+                    std::sort(permutation.begin(), permutation.end(),
+                              [&](int a, int b) { return keys[a] < keys[b]; });
+                    for (size_t f = 0; f < pressure_facets; ++f)
+                        for (int j = 0; j < 3; ++j) sorted[3 * f + j] = keys[permutation[f]][j];
+                    cstone::DeviceVector<int> d_sorted(3 * pressure_facets), d_permutation(pressure_facets);
+                    check_pressure_setup_cuda(cudaMemcpy(d_sorted.data(), sorted.data(),
+                        sorted.size() * sizeof(int), cudaMemcpyHostToDevice));
+                    check_pressure_setup_cuda(cudaMemcpy(d_permutation.data(), permutation.data(),
+                        permutation.size() * sizeof(int), cudaMemcpyHostToDevice));
+                    const auto cp = connPtrs<TetTag, KeyType>(amr.domain().getElementToNodeConnectivity());
+                    const size_t elements = amr.domain().getElementCount();
+                    if (elements > 0)
+                    {
+                        const int blocks = int((elements + 255) / 256);
+                        resolveOpeningFacetElementsKernel<KeyType><<<blocks, 256>>>(
+                            cp[0], cp[1], cp[2], cp[3], d_sorted.data(), d_permutation.data(),
+                            int(pressure_facets), s.d_pressure_tri_element.data(), s.d_pressure_tri_opposite.data(), elements);
+                        check_pressure_setup_cuda(cudaGetLastError());
+                        check_pressure_setup_cuda(cudaDeviceSynchronize());
+                    }
+                }
+                // Empty-facet ranks still join the check. Missing halo closure must fail, not drop rows.
+                const int* element = s.d_pressure_tri_element.data();
+                const int* opposite = s.d_pressure_tri_opposite.data();
+                const int* nodes = s.d_pressure_tri_node.data();
+                int invalid = thrust::count_if(thrust::device,
+                    thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(pressure_facets),
+                    [element, opposite, nodes] __device__(size_t f) {
+                        return element[f] < 0 || opposite[f] < 0 || nodes[3 * f] < 0
+                            || nodes[3 * f + 1] < 0 || nodes[3 * f + 2] < 0;
+                    }) > 0;
+                int invalid_global = 0;
+                MPI_Allreduce(&invalid, &invalid_global, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+                if (invalid_global)
+                {
+                    if (rank == 0)
+                        std::cerr << "ERROR: outlet matrix facets need complete owner-row halo connectivity\n";
+                    MPI_Abort(MPI_COMM_WORLD, 1);
                 }
             }
             // OUTSIDE the nFacets>0 guard. A rank can legitimately own no opening facets (facets go
@@ -1620,6 +1758,11 @@ int main(int argc, char** argv)
 
         if (step % 10 == 0 || step == numSteps)
         {
+            if (outletBeta >= 0.0 && rank == 0)
+                std::cout << "  [outlet-continuity] corrections=" << s.last_outlet_corrections
+                          << " damping=" << s.last_outlet_damping
+                          << " rms=" << s.last_outlet_residual_rms << " max=" << s.last_outlet_residual_max
+                          << " [1/s] net=" << s.last_outlet_balance << " [volume/s]\n";
             RealType uN = computeWeightedL2Norm<KeyType, RealType, TetTag>(s, s.d_u);
             RealType pN = computeWeightedL2Norm<KeyType, RealType, TetTag>(s, s.d_p);
             // Scale-independent: RMS velocity ~ O(U), non-dim divergence.
