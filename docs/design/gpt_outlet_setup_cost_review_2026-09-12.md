@@ -5,7 +5,9 @@ Status: complete public-log comparison and targeted source inspection; no timing
 of individual phases and no production changes.
 
 Follow-up: [opt-in profiling](gpt_outlet_profiling_2026-09-12.md) now implements
-the measurement points below. Its GPU timing results remain pending.
+the measurement points below. The complete public GPU result is now recorded
+there: after startup, solve is 72.9% of correction time, preparation/setup 24.1%,
+and matrix assembly 0.038%.
 
 The looser-tolerance run is 5.25% faster, but it does not remove 45% of the total
 Krylov work. It needs an additional pressure correction on 74 of its 200 steps.

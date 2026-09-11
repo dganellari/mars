@@ -1,8 +1,9 @@
 # Opt-in outlet and Hypre phase timings
 
 Author: GPT/Codex. Date: 2026-09-12.
-Status: implemented; profiler header compiled and tested with real local MPI and
-a CUDA synchronization stub. Full CUDA/Hypre compilation and GPU timing pending.
+Status: implemented and executed in a 200-step public one-rank GPU run; local
+profiler tests also pass on 1/2/4 real MPI ranks with CUDA synchronization stubbed.
+Multi-rank GPU profiling remains unverified.
 
 `MARS_OUTLET_PROFILE=1` enables one `[outlet-profile]` line per physical outlet
 correction step. This measures the repeated setup identified in the
@@ -67,7 +68,66 @@ mpirun -np 4 /tmp/mars-outlet-profile-check
 The stub include directory is test-only and is not registered with any production
 target. The production changes introduce no new device lambdas or kernels.
 
-## Daint public run after pulling and rebuilding
+## Executed public GPU result
+
+GPT retrieved the complete `channel-C-profile.log` by authorized rsync and
+inspected it locally. The header confirms the public fixture, one rank, beta=1,
+rho=1000, nu=1e-4, dt=2e-6 and the expected relaxation settings. There are 200
+consecutive profile records, no solve-trace records and no failure/nonfinite
+markers. Every phase has matching rank-min/max call counts, and all four Hypre
+phase counts equal the preconditioner count. There are 3569 preconditioner calls
+over the complete run. The header does not embed an executable revision.
+
+Means over steps 3-200, excluding BDF startup:
+
+| Phase | ms/step | Share of correction time |
+|---|---:|---:|
+| VMS context | 0.043 | 0.016% |
+| Outlet matrix assembly | 0.101 | 0.038% |
+| Hypre preparation | 16.404 | 6.124% |
+| Hypre setup | 48.072 | 17.947% |
+| Hypre solve | 195.315 | 72.917% |
+| Hypre finish | 1.695 | 0.633% |
+| Whole preconditioner, including the Hypre phases | 262.871 | 98.137% |
+| Whole correction | 267.860 | 100% |
+
+This is a single-rank run, so phase shares have no cross-rank-max ambiguity.
+The whole-preconditioner and whole-correction rows are inclusive totals.
+Steps 101-200 give essentially the same shares: solve 72.92%, preparation/setup
+24.09%, assembly 0.036%. Step 1 is exceptional: correction 759.369 ms, including
+394.525 ms of setup. It should not represent steady per-step cost.
+
+The run finishes in 55628.7 ms (278.1 ms/step). Final full continuity RMS is
+3.86e-13 /s, maximum 2.43e-12 /s and net boundary imbalance 4e-15 volume/s.
+The final maximum speed is 1.233 and all three stabilized cuts print 0.5000.
+These agree with the previous fixed-trace results at reported precision; they
+do not constitute a field-level or multi-rank GPU comparison. Profiling is on
+and solve tracing is off, so do not interpret its wall time as a controlled
+speedup against the earlier trace-enabled baseline.
+
+```
+remote: /capstor/scratch/cscs/gandanie/git/mars/daint-gpu/channel-C-profile.log
+local:  /private/tmp/mars-outlet-audit-20260911/channel-C-profile.log
+SHA256: 9765b1fe190223e63cfe5908fe4e497db98762967a5522d15f1b0c7ec733c2d5
+```
+
+The measured ranking settles the earlier hypotheses. Matrix assembly is not a
+meaningful performance target here. Persistent Hypre preparation/setup has a
+useful but limited opportunity: those phases account for about 24% of correction
+time, and preparation includes per-RHS work that cannot all disappear. This is
+an opportunity estimate, not a promised speedup. The dominant cost is the nested
+Hypre solve, which must also be addressed for a large improvement.
+
+Recommended next scope: High effort, one agent, a prepared Hypre/AMG context with
+explicit invalidation and a separately selectable direct AMG-cycle preconditioner
+experiment for the existing outer FGMRES. First verify reusable solves preserve
+the current equations and residual gates; then measure whether avoiding the
+inner GMRES reduces total work without excessive outer iterations. Keep the
+true-J solve and full continuity/flux acceptance unchanged. Neither a single
+AMG cycle nor persistence has an established speedup yet; no cache or algorithm
+change is part of this profiling commit.
+
+## Reproduce the public GPU run
 
 From the existing Daint build directory, use the fixed-trace public case. This
 keeps the stricter original tolerance and disables solve tracing so per-solve
