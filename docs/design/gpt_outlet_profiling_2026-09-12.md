@@ -5,6 +5,9 @@ Status: implemented and executed in a 200-step public one-rank GPU run; local
 profiler tests also pass on 1/2/4 real MPI ranks with CUDA synchronization stubbed.
 Multi-rank GPU profiling remains unverified.
 
+Follow-up implementation: [prepared Hypre and AMG-cycle modes](gpt_outlet_preconditioner_reuse_2026-09-12.md).
+In those opt-in modes, setup counts can be smaller than the number of applications.
+
 `MARS_OUTLET_PROFILE=1` enables one `[outlet-profile]` line per physical outlet
 correction step. This measures the repeated setup identified in the
 [cost review](gpt_outlet_setup_cost_review_2026-09-12.md). No matrix, solver

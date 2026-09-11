@@ -3479,6 +3479,7 @@ struct NSStepper
     // outletBeta < 0 disables it and keeps the classic p=0 Dirichlet outlet.
     RealType                       outletBeta = RealType(-1);
     SolverProfile                  outlet_profile;
+    int                            outlet_preconditioner = -1; // collective selection: legacy, reuse, AMG cycle
     RealType                       outletPRef = RealType(0);
     int                            outlet_max_corrections = 100;
     RealType                       outlet_relative_tolerance = RealType(1e-6);
@@ -3881,7 +3882,7 @@ void refresh_outlet_pressure_operator(NSStepper<KeyType, RealType, ElementTag>& 
             check_cuda(cudaGetLastError());
         }
         // Wrapping copied the values at setup. Refresh the actual matrix without reallocating CSR.
-        // solveOneComponent constructs Hypre anew, so its operator and AMG setup see these values.
+        // Prepared outlet solvers are created after this refresh and expire at step end.
         if (s.nnz > 0)
             check_cuda(cudaMemcpy(s.Apre.valuesPtr(), s.d_valuesPre.data(),
                                   size_t(s.nnz) * sizeof(RealType), cudaMemcpyDeviceToDevice));

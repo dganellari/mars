@@ -30,6 +30,10 @@ struct OutletKrylovOps
     int restart, n;
     size_t stride;
     std::vector<double> coefficients;
+#ifdef MARS_ENABLE_HYPRE
+    using PreparedSolver = mars::fem::HypreGMRESSolver<RealType, int, cstone::GpuTag>;
+    std::unique_ptr<PreparedSolver> prepared_solver;
+#endif
 
     OutletKrylovOps(Stepper& stepper, RealType step_scale, int depth)
         : s(stepper), h(step_scale), restart(depth), n(s.numOwnedDofs),
@@ -40,6 +44,22 @@ struct OutletKrylovOps
         s.d_outlet_delta_u.resize(s.nodeCount);
         s.d_outlet_delta_v.resize(s.nodeCount);
         s.d_outlet_delta_w.resize(s.nodeCount);
+#ifdef MARS_ENABLE_HYPRE
+        if (s.outlet_preconditioner != 0)
+        {
+            const char* flex = std::getenv("MARS_HYPRE_FLEXGMRES");
+            const char* precond = std::getenv("MARS_HYPRE_PRECOND");
+            const bool jacobi = precond && std::string(precond) == "jacobi";
+            require_outlet_correction(s, (!flex || std::string(flex) == "0")
+                && (s.outlet_preconditioner != 2 || !jacobi),
+                "prepared outlet requires plain inner GMRES; amg-cycle requires BoomerAMG");
+            prepared_solver = std::make_unique<PreparedSolver>(MPI_COMM_WORLD, s.maxIter, s.tolerance,
+                jacobi ? PreparedSolver::JACOBI : PreparedSolver::BOOMERAMG);
+            prepared_solver->setVerbose(false);
+            prepared_solver->enable_reuse(s.outlet_preconditioner == 2);
+            if (s.outlet_profile.enabled()) prepared_solver->set_profile(&s.outlet_profile);
+        }
+#endif
     }
 
     RealType* solution() { return s.d_outlet_krylov.data(); }
@@ -172,8 +192,28 @@ struct OutletKrylovOps
         check(cudaGetLastError());
         if (!s.d_outlet_solution.empty())
             check(cudaMemsetAsync(s.d_outlet_solution.data(), 0, s.d_outlet_solution.size()*sizeof(RealType)));
-        const int iterations = solveOneComponent(s, s.d_outlet_rhs, s.d_outlet_solution,
-                                                 s.d_phi, s.Apre, KrylovHint::GMRES);
+        int iterations = -2;
+#ifdef MARS_ENABLE_HYPRE
+        if (prepared_solver)
+        {
+            bool usable = prepared_solver->solve(s.Apre, s.d_outlet_rhs, s.d_outlet_solution,
+                static_cast<int>(s.globalRowStart), static_cast<int>(s.globalRowEnd),
+                0, static_cast<int>(s.numInteriorGlobal), s.d_localToGlobalDof);
+            // Preserve the existing GMRES fallback; a direct cycle has no inner residual target.
+            if (s.outlet_preconditioner == 1)
+            {
+                RealType accept_res = RealType(1e-6);
+                if (const char* value = std::getenv("MARS_HYPRE_ACCEPT_RES"))
+                { const double parsed = std::atof(value); if (parsed > 0) accept_res = RealType(parsed); }
+                usable = usable || (prepared_solver->getLastFinalResidual() < accept_res
+                                     && !prepared_solver->lastReturnedNullSolution());
+            }
+            iterations = usable ? prepared_solver->getLastIterations() : -2;
+        }
+        else
+#endif
+            iterations = solveOneComponent(s, s.d_outlet_rhs, s.d_outlet_solution,
+                                           s.d_phi, s.Apre, KrylovHint::GMRES);
         require_outlet_correction(s, iterations >= 0, "Hypre failed inside the true-J preconditioner");
         s.lastPressureIters += iterations;
         copy(s.d_outlet_solution.data(), z);

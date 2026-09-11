@@ -80,6 +80,23 @@ void run_outlet_pressure_correction(NSStepper<KeyType, RealType, ElementTag>& s,
     profile.begin_step();
     // Declared before Krylov scratch so its destruction is included in the total.
     SolverProfile::Scope correction_profile(profile, SolverProfile::Correction, true);
+    if (s.outlet_preconditioner < 0)
+    {
+        int mode = 0;
+        if (s.rank == 0)
+        {
+            const char* value = std::getenv("MARS_OUTLET_PRECOND");
+            if (value && std::string(value) != "legacy")
+                mode = std::string(value) == "reuse" ? 1 : std::string(value) == "amg-cycle" ? 2 : -1;
+        }
+        MPI_Bcast(&mode, 1, MPI_INT, 0, MPI_COMM_WORLD);
+        require_outlet_correction(s, mode >= 0, "MARS_OUTLET_PRECOND must be legacy, reuse, or amg-cycle");
+        s.outlet_preconditioner = mode;
+        if (mode != 0 && s.rank == 0)
+            std::cout << "[outlet-preconditioner] mode=" << (mode == 1 ? "reuse" : "amg-cycle")
+                      << " lifetime=physical-step work_units="
+                      << (mode == 1 ? "inner_iterations" : "amg_cycles") << '\n';
+    }
     using Stepper = NSStepper<KeyType, RealType, ElementTag>;
     require_outlet_correction(s,
         std::is_same_v<ElementTag, TetTag> && s.bcKind == Stepper::BCKind::Pump

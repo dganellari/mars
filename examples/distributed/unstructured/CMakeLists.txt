@@ -313,6 +313,17 @@ target_include_directories(mars_outlet_kernel_gate PRIVATE
     ${CMAKE_SOURCE_DIR}/backend/distributed/unstructured/amr
 )
 install(TARGETS mars_outlet_kernel_gate RUNTIME DESTINATION bin/examples)
+if(MARS_ENABLE_HYPRE)
+    add_executable(mars_outlet_hypre_gate mars_outlet_hypre_gate.cu)
+    target_link_libraries(mars_outlet_hypre_gate PRIVATE mars)
+    target_include_directories(mars_outlet_hypre_gate PRIVATE
+        ${CMAKE_SOURCE_DIR}/backend/distributed/unstructured/amr
+    )
+    install(TARGETS mars_outlet_hypre_gate RUNTIME DESTINATION bin/examples)
+    if(MARS_ENABLE_TESTS)
+        add_test(NAME marsOutletHypreReuse COMMAND mars_outlet_hypre_gate)
+    endif()
+endif()
 if(MARS_ENABLE_TESTS)
     add_test(NAME marsOutletBoundaryEvaluator COMMAND mars_outlet_boundary_gate)
     add_test(NAME marsOutletKernels COMMAND mars_outlet_kernel_gate)

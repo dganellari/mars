@@ -6,6 +6,7 @@
 // header. Including it here means we don't redefine those symbols.
 #include "mars_hypre_pcg_solver.hpp"
 #include "mars_solver_profile.hpp"
+#include <limits>
 
 namespace mars {
 namespace fem {
@@ -29,6 +30,16 @@ public:
     enum PrecondType { BOOMERAMG, JACOBI };
 
     void set_profile(SolverProfile* profile) { profile_ = profile; }
+
+    // The caller must invalidate before changing matrix/map contents in place.
+    // The outlet owner bounds reuse to a single frozen physical step.
+    void enable_reuse(bool amg_cycle = false) {
+        destroy();
+        reuse_enabled_ = true;
+        amg_cycle_ = amg_cycle;
+    }
+    void invalidate_setup() { destroy(); }
+    int get_setup_count() const { return setup_count_; }
 
     HypreGMRESSolver(MPI_Comm comm = MPI_COMM_WORLD, int maxIter = 1000, RealType tolerance = 1e-6,
                      PrecondType precondType = BOOMERAMG, int kDim = 30)
@@ -78,11 +89,34 @@ public:
                       << globalDofStart << ", " << globalDofEnd << ")" << std::endl;
         }
 
-        destroy();
         HYPRE_Int m = static_cast<HYPRE_Int>(A.numRows());
         if (globalDofEnd == 0) globalDofEnd = globalDofStart + m;
+        if (reuse_enabled_) {
+            const bool same = prepared_ && matrix_ == &A && values_ == A.valuesPtr()
+                && row_offsets_ == A.rowOffsetsPtr() && columns_ == A.colIndicesPtr()
+                && rows_ == A.numRows() && cols_ == A.numCols() && nnz_ == A.nnz()
+                && map_ == thrust::raw_pointer_cast(d_localToGlobalDof.data())
+                && map_size_ == d_localToGlobalDof.size()
+                && globalDofStart_ == globalDofStart && globalDofEnd_ == globalDofEnd
+                && global_col_start_ == globalColStart && global_col_end_ == globalColEnd;
+            int rebuild = same ? 0 : 1, any_rebuild = 0;
+            MPI_Allreduce(&rebuild, &any_rebuild, 1, MPI_INT, MPI_MAX, comm_);
+            if (!any_rebuild) {
+                if (!update_vectors(b, x)) return false;
+                if (!vectors_changed_) {
+                    if (profile_) profile_->lap(SolverProfile::Prepare, profile_start_);
+                    return solve_vectors(b, x);
+                }
+            }
+        }
+        destroy();
         globalDofStart_ = globalDofStart;
         globalDofEnd_   = globalDofEnd;
+        matrix_ = &A; values_ = A.valuesPtr(); row_offsets_ = A.rowOffsetsPtr();
+        columns_ = A.colIndicesPtr(); rows_ = A.numRows(); cols_ = A.numCols(); nnz_ = A.nnz();
+        map_ = thrust::raw_pointer_cast(d_localToGlobalDof.data());
+        map_size_ = d_localToGlobalDof.size();
+        global_col_start_ = globalColStart; global_col_end_ = globalColEnd;
 
         // Take a device-side copy of the caller's map so the wrapper has stable
         // storage across the whole solve sequence (matrix setup, then solve).
@@ -159,7 +193,10 @@ public:
     // of the solved matrix A. K must share A's partition (same row/col global
     // range and same local->global DOF map). Pass nullptr to revert to the
     // classic single-matrix path. See precondMatrix_ for the rationale.
-    void setPrecondMatrix(const Matrix* K) { precondMatrix_ = K; }
+    void setPrecondMatrix(const Matrix* K) {
+        if (precondMatrix_ != K) invalidate_setup();
+        precondMatrix_ = K;
+    }
 
     // Env-override helpers for the BoomerAMG knobs. Return the default when the
     // var is unset or unparseable, so a typo never silently disables AMG tuning.
@@ -190,7 +227,11 @@ public:
     // (dof = N*node + comp), BoomerAMG auto-generates dof_func[i] = i % N, so a
     // single SetNumFunctions(N) call enables point-block coarsening. Default N=1
     // (scalar) -> no behavior change for existing callers.
-    void   setPointBlock(int n)         { pointBlock_ = (n > 1) ? n : 1; }
+    void   setPointBlock(int n) {
+        const int next = n > 1 ? n : 1;
+        if (pointBlock_ != next) invalidate_setup();
+        pointBlock_ = next;
+    }
     double getLastFinalResidual() const { return lastFinalRes_; }
     double getLastSolutionMax()   const { return lastSolutionMax_; }
     bool   lastReturnedNullSolution() const { return nullSolutionReturned_; }
@@ -210,7 +251,16 @@ public:
         MPI_Comm_rank(comm_, &rank);
         HYPRE_Int m = static_cast<HYPRE_Int>(A.numRows());
 
+        if (reuse_enabled_) {
+            const bool bad = A.nnz() > 0 && thrust::any_of(thrust::device_pointer_cast(A.valuesPtr()),
+                thrust::device_pointer_cast(A.valuesPtr() + A.nnz()), IsNonFinite<RealType>());
+            require_reuse(!bad && globalDofEnd_ - globalDofStart_ == m,
+                          "nonfinite matrix or inconsistent row partition");
+            HYPRE_ClearAllErrors();
+        }
         setupHypreMatrix(A, globalColStart, globalColEnd);
+        if (reuse_enabled_)
+            require_reuse(parcsr_A_ != nullptr && HYPRE_GetError() == 0, "matrix preparation failed");
 
         // RHS + initial guess: pure device path.
         HYPRE_BigInt ilower = static_cast<HYPRE_BigInt>(globalDofStart_);
@@ -220,65 +270,20 @@ public:
         HYPRE_IJVectorCreate(comm_, ilower, iupper, &x_hypre_);
         HYPRE_IJVectorSetObjectType(b_hypre_, HYPRE_PARCSR);
         HYPRE_IJVectorSetObjectType(x_hypre_, HYPRE_PARCSR);
-        HYPRE_IJVectorInitialize(b_hypre_);
-        HYPRE_IJVectorInitialize(x_hypre_);
+        if (reuse_enabled_)
+            require_reuse(b_hypre_ && x_hypre_ && HYPRE_GetError() == 0, "vector creation failed");
 
         // Device-side global row indices [ilower, ilower+m).
-        thrust::device_vector<HYPRE_BigInt> d_rowGlobal(m);
-        {
+        auto& d_rowGlobal = d_row_global_;
+        d_rowGlobal.resize(m);
+        if (m > 0) {
             const int bs = 256;
             const int gs = (m + bs - 1) / bs;
             fillGlobalRowIndicesKernel<HYPRE_BigInt><<<gs, bs>>>(
                 thrust::raw_pointer_cast(d_rowGlobal.data()), ilower, m);
         }
 
-        // RHS NaN/Inf summary + min/max/sum, all on device.
-        validateVector(b.data(), m, rank, "RHS");
-
-        // Hypre RHS values must be HYPRE_Real; cast on device if RealType != HYPRE_Real.
-        const HYPRE_Real* d_b_hypre = nullptr;
-        thrust::device_vector<HYPRE_Real> d_b_cast;
-        if constexpr (std::is_same_v<RealType, HYPRE_Real>) {
-            d_b_hypre = reinterpret_cast<const HYPRE_Real*>(b.data());
-        } else {
-            d_b_cast.resize(m);
-            thrust::copy(thrust::device_pointer_cast(b.data()),
-                         thrust::device_pointer_cast(b.data() + m),
-                         d_b_cast.begin());
-            d_b_hypre = thrust::raw_pointer_cast(d_b_cast.data());
-        }
-
-        HYPRE_IJVectorSetValues(b_hypre_, m,
-                                thrust::raw_pointer_cast(d_rowGlobal.data()),
-                                d_b_hypre);
-
-        // Initial guess.
-        const HYPRE_Real* d_x_hypre = nullptr;
-        thrust::device_vector<HYPRE_Real> d_x_cast;
-        if constexpr (std::is_same_v<RealType, HYPRE_Real>) {
-            d_x_hypre = reinterpret_cast<const HYPRE_Real*>(x.data());
-        } else {
-            d_x_cast.resize(m);
-            thrust::copy(thrust::device_pointer_cast(x.data()),
-                         thrust::device_pointer_cast(x.data() + m),
-                         d_x_cast.begin());
-            d_x_hypre = thrust::raw_pointer_cast(d_x_cast.data());
-        }
-        HYPRE_IJVectorSetValues(x_hypre_, m,
-                                thrust::raw_pointer_cast(d_rowGlobal.data()),
-                                d_x_hypre);
-
-        HYPRE_IJVectorAssemble(b_hypre_);
-        HYPRE_IJVectorAssemble(x_hypre_);
-
-        if (verbose_) std::cout << "Rank " << rank << ": Vectors assembled, getting ParVector objects..." << std::endl;
-        HYPRE_IJVectorGetObject(b_hypre_, (void**)&par_b_);
-        HYPRE_IJVectorGetObject(x_hypre_, (void**)&par_x_);
-
-        if (!par_b_ || !par_x_) {
-            std::cerr << "Rank " << rank << ": Failed to get Hypre ParVector objects" << std::endl;
-            return false;
-        }
+        if (!update_vectors(b, x)) return false;
 
         if (profile_) profile_start_ = profile_->lap(SolverProfile::Prepare, profile_start_);
 
@@ -287,6 +292,8 @@ public:
         if (precondType_ == BOOMERAMG) {
             if (verbose_ && rank == 0) std::cout << "Using BoomerAMG preconditioner (GPU)" << std::endl;
             HYPRE_BoomerAMGCreate(&precond_);
+            if (reuse_enabled_)
+                require_reuse(precond_ && HYPRE_GetError() == 0, "AMG creation failed");
             // Env var MARS_HYPRE_VERBOSE=1 turns on per-iter Hypre prints so a
             // stalled AMG solve shows its residual history without rebuilding.
             const char* ev = std::getenv("MARS_HYPRE_VERBOSE");
@@ -415,10 +422,23 @@ public:
             precond_ = (HYPRE_Solver) parcsr_A_;
         }
 
+        if (amg_cycle_) {
+            require_reuse(precondType_ == BOOMERAMG && precond_ && !precondMatrix_,
+                          "direct cycle requires BoomerAMG on Apre");
+            const HYPRE_Int error = HYPRE_BoomerAMGSetup(precond_, parcsr_A_, par_b_, par_x_);
+            if (profile_) profile_->lap(SolverProfile::Setup, profile_start_);
+            require_reuse(error == 0 && HYPRE_GetError() == 0, "AMG setup failed");
+            ++setup_count_;
+            prepared_ = true;
+            return solve_vectors(b, x);
+        }
+
         const char* krylovName = useFlexGmres_ ? "FlexGMRES" : "GMRES";
         if (verbose_ && rank == 0) std::cout << "Creating " << krylovName << " solver..." << std::endl;
         if (useFlexGmres_) HYPRE_ParCSRFlexGMRESCreate(comm_, &solver_);
         else               HYPRE_ParCSRGMRESCreate(comm_, &solver_);
+        if (reuse_enabled_)
+            require_reuse(solver_ && HYPRE_GetError() == 0, "GMRES creation failed");
         if (!solver_) {
             std::cerr << "Failed to create Hypre " << krylovName << " solver" << std::endl;
             return false;
@@ -494,6 +514,8 @@ public:
             ? HYPRE_ParCSRFlexGMRESSetup(solver_, parcsr_A_, par_b_, par_x_)
             : HYPRE_ParCSRGMRESSetup(solver_, parcsr_A_, par_b_, par_x_);
         if (profile_) profile_start_ = profile_->lap(SolverProfile::Setup, profile_start_);
+        if (reuse_enabled_)
+            require_reuse(setup_err == 0 && HYPRE_GetError() == 0, "GMRES/AMG setup failed");
         if (setup_err != 0 && rank == 0) {
             std::cerr << "[HypreGMRES] Setup returned error " << setup_err
                       << " (HYPRE_GetError=" << HYPRE_GetError() << ")\n";
@@ -504,12 +526,107 @@ public:
         }
         if (verbose_ && rank == 0) std::cout << "GMRES setup complete, starting solve..." << std::endl;
 
+        if (setup_err == 0) ++setup_count_;
+        prepared_ = reuse_enabled_ && setup_err == 0;
+        return solve_vectors(b, x);
+    }
+
+    // Reinitialize the same IJ vectors; their partition and storage stay fixed.
+    bool update_vectors(const Vector& b, Vector& x) {
+        int rank = 0;
+        MPI_Comm_rank(comm_, &rank);
+        const HYPRE_Int m = globalDofEnd_ - globalDofStart_;
+        auto& d_rowGlobal = d_row_global_;
+        const auto previous_b = par_b_, previous_x = par_x_;
+        if (reuse_enabled_) {
+            require_reuse(b.size() >= size_t(m) && x.size() >= size_t(m), "undersized RHS or solution");
+            const bool bad_b = m > 0 && thrust::any_of(thrust::device_pointer_cast(b.data()),
+                thrust::device_pointer_cast(b.data() + m), IsNonFinite<RealType>());
+            const bool bad_x = m > 0 && thrust::any_of(thrust::device_pointer_cast(x.data()),
+                thrust::device_pointer_cast(x.data() + m), IsNonFinite<RealType>());
+            require_reuse(!bad_b && !bad_x, "nonfinite RHS or initial guess");
+            HYPRE_ClearAllErrors();
+        }
+        HYPRE_IJVectorInitialize(b_hypre_);
+        HYPRE_IJVectorInitialize(x_hypre_);
+        // RHS NaN/Inf summary + min/max/sum, all on device.
+        validateVector(b.data(), m, rank, "RHS");
+
+        // Hypre RHS values must be HYPRE_Real; cast on device if RealType != HYPRE_Real.
+        const HYPRE_Real* d_b_hypre = nullptr;
+        auto& d_b_cast = d_b_cast_;
+        if constexpr (std::is_same_v<RealType, HYPRE_Real>) {
+            d_b_hypre = reinterpret_cast<const HYPRE_Real*>(b.data());
+        } else {
+            d_b_cast.resize(m);
+            thrust::copy(thrust::device_pointer_cast(b.data()),
+                         thrust::device_pointer_cast(b.data() + m),
+                         d_b_cast.begin());
+            d_b_hypre = thrust::raw_pointer_cast(d_b_cast.data());
+        }
+
+        HYPRE_IJVectorSetValues(b_hypre_, m,
+                                thrust::raw_pointer_cast(d_rowGlobal.data()),
+                                d_b_hypre);
+
+        // Initial guess.
+        const HYPRE_Real* d_x_hypre = nullptr;
+        auto& d_x_cast = d_x_cast_;
+        if constexpr (std::is_same_v<RealType, HYPRE_Real>) {
+            d_x_hypre = reinterpret_cast<const HYPRE_Real*>(x.data());
+        } else {
+            d_x_cast.resize(m);
+            thrust::copy(thrust::device_pointer_cast(x.data()),
+                         thrust::device_pointer_cast(x.data() + m),
+                         d_x_cast.begin());
+            d_x_hypre = thrust::raw_pointer_cast(d_x_cast.data());
+        }
+        HYPRE_IJVectorSetValues(x_hypre_, m,
+                                thrust::raw_pointer_cast(d_rowGlobal.data()),
+                                d_x_hypre);
+
+        HYPRE_IJVectorAssemble(b_hypre_);
+        HYPRE_IJVectorAssemble(x_hypre_);
+
+        if (verbose_) std::cout << "Rank " << rank << ": Vectors assembled, getting ParVector objects..." << std::endl;
+        HYPRE_IJVectorGetObject(b_hypre_, (void**)&par_b_);
+        HYPRE_IJVectorGetObject(x_hypre_, (void**)&par_x_);
+
+        if (reuse_enabled_) {
+            require_reuse(par_b_ && par_x_ && HYPRE_GetError() == 0, "vector update failed");
+            int changed = prepared_ && (previous_b != par_b_ || previous_x != par_x_);
+            int any_changed = 0;
+            MPI_Allreduce(&changed, &any_changed, 1, MPI_INT, MPI_MAX, comm_);
+            vectors_changed_ = any_changed != 0;
+        }
+
+        if (!par_b_ || !par_x_) {
+            std::cerr << "Rank " << rank << ": Failed to get Hypre ParVector objects" << std::endl;
+            return false;
+        }
+
+        return true;
+    }
+
+    bool solve_vectors(const Vector& b, Vector& x) {
+        int rank = 0;
+        MPI_Comm_rank(comm_, &rank);
+        const HYPRE_Int m = globalDofEnd_ - globalDofStart_;
+        auto& d_rowGlobal = d_row_global_;
+        auto& d_x_cast = d_x_cast_;
         if (profile_) profile_start_ = profile_->stamp();
         MPI_Barrier(comm_);
-        HYPRE_Int solve_err = useFlexGmres_
+        HYPRE_Int solve_err = amg_cycle_
+            ? HYPRE_BoomerAMGSolve(precond_, parcsr_A_, par_b_, par_x_)
+            : useFlexGmres_
             ? HYPRE_ParCSRFlexGMRESSolve(solver_, parcsr_A_, par_b_, par_x_)
             : HYPRE_ParCSRGMRESSolve(solver_, parcsr_A_, par_b_, par_x_);
         if (profile_) profile_start_ = profile_->lap(SolverProfile::Solve, profile_start_);
+        if (reuse_enabled_) {
+            require_reuse((amg_cycle_ ? solve_err : (solve_err & ~HYPRE_ERROR_CONV)) == 0,
+                          "Hypre apply failed");
+            HYPRE_ClearAllErrors();
+        }
         if (solve_err != 0 && rank == 0) {
             std::cerr << "[HypreGMRES] Solve returned error " << solve_err
                       << " (HYPRE_GetError=" << HYPRE_GetError() << ")\n";
@@ -532,6 +649,33 @@ public:
                                     thrust::raw_pointer_cast(d_x_cast.data()));
             thrust::copy(d_x_cast.begin(), d_x_cast.end(),
                          thrust::device_pointer_cast(x.data()));
+        }
+
+        if (reuse_enabled_) {
+            const bool bad = m > 0 && thrust::any_of(thrust::device_pointer_cast(x.data()),
+                thrust::device_pointer_cast(x.data() + m), IsNonFinite<RealType>());
+            require_reuse(!bad && HYPRE_GetError() == 0 && cudaGetLastError() == cudaSuccess,
+                          "nonfinite result, extraction error, or CUDA failure");
+        }
+        if (amg_cycle_) {
+            const double local[2] = {
+                m > 0 ? thrust::transform_reduce(thrust::device_pointer_cast(x.data()),
+                    thrust::device_pointer_cast(x.data() + m),
+                    [] __device__(RealType v) -> double { return fabs(double(v)); },
+                    0.0, thrust::maximum<double>()) : 0.0,
+                m > 0 ? thrust::transform_reduce(thrust::device_pointer_cast(b.data()),
+                    thrust::device_pointer_cast(b.data() + m),
+                    [] __device__(RealType v) -> double { return fabs(double(v)); },
+                    0.0, thrust::maximum<double>()) : 0.0};
+            double global[2] = {};
+            MPI_Allreduce(local, global, 2, MPI_DOUBLE, MPI_MAX, comm_);
+            lastNumIters_ = 1;
+            lastFinalRes_ = std::numeric_limits<double>::quiet_NaN();
+            lastSolutionMax_ = global[0];
+            nullSolutionReturned_ = global[1] > 0 && global[0] == 0;
+            if (profile_) profile_->lap(SolverProfile::Finish, profile_start_);
+            // A cycle is a preconditioner action, not a converged linear solve.
+            return !nullSolutionReturned_;
         }
 
         int    num_iterations = 0;
@@ -637,11 +781,13 @@ public:
         (void)globalColEnd;
 
         HYPRE_IJMatrixCreate(comm_, ilower, iupper, ilower, iupper, &ij_out);
+        if (reuse_enabled_)
+            require_reuse(ij_out && HYPRE_GetError() == 0, "matrix creation failed");
         HYPRE_IJMatrixSetObjectType(ij_out, HYPRE_PARCSR);
         HYPRE_IJMatrixInitialize(ij_out);
 
         // Quick NaN/Inf scan on raw values (single allreduce-style reduction).
-        bool hasNaN = thrust::any_of(thrust::device_pointer_cast(A.valuesPtr()),
+        bool hasNaN = A.nnz() > 0 && thrust::any_of(thrust::device_pointer_cast(A.valuesPtr()),
                                      thrust::device_pointer_cast(A.valuesPtr() + A.nnz()),
                                      IsNonFinite<RealType>());
         if (hasNaN) {
@@ -655,7 +801,7 @@ public:
         // Pass 1: per-row valid count + diagonal flag.
         thrust::device_vector<int> d_perRowCount(m, 0);
         thrust::device_vector<int> d_hasDiagonal(m, 0);
-        {
+        if (m > 0) {
             const int bs = 256;
             const int gs = (m + bs - 1) / bs;
             countValidPerRowKernel<IndexType, HYPRE_BigInt><<<gs, bs>>>(
@@ -689,7 +835,7 @@ public:
         // Pass 2: compact.
         thrust::device_vector<HYPRE_BigInt> d_colsGlobalCompact(totalFiltered);
         thrust::device_vector<HYPRE_Real>   d_valsCompact(totalFiltered);
-        {
+        if (m > 0) {
             const int bs = 256;
             const int gs = (m + bs - 1) / bs;
             compactGlobalCsrKernel<IndexType, RealType, HYPRE_BigInt, HYPRE_Real><<<gs, bs>>>(
@@ -706,7 +852,7 @@ public:
 
         // Device-side row indices for the SetValues call.
         thrust::device_vector<HYPRE_BigInt> d_rows(m);
-        {
+        if (m > 0) {
             const int bs = 256;
             const int gs = (m + bs - 1) / bs;
             fillGlobalRowIndicesKernel<HYPRE_BigInt><<<gs, bs>>>(
@@ -814,6 +960,7 @@ public:
     }
 
     void destroy() {
+        prepared_ = false;
         if (solver_) {
             if (useFlexGmres_) HYPRE_ParCSRFlexGMRESDestroy(solver_);
             else               HYPRE_ParCSRGMRESDestroy(solver_);
@@ -840,9 +987,32 @@ public:
             HYPRE_IJVectorDestroy(x_hypre_);
             x_hypre_ = nullptr;
         }
+        parcsr_A_ = nullptr;
+        par_b_ = nullptr;
+        par_x_ = nullptr;
+    }
+
+    void require_reuse(bool local_ok, const char* message) const {
+        int bad = local_ok ? 0 : 1, any_bad = 0;
+        MPI_Allreduce(&bad, &any_bad, 1, MPI_INT, MPI_MAX, comm_);
+        if (any_bad) {
+            int rank = 0;
+            MPI_Comm_rank(comm_, &rank);
+            if (rank == 0) std::cerr << "ERROR: prepared Hypre: " << message << '\n';
+            MPI_Abort(comm_, 1);
+            std::abort();
+        }
     }
 
 private:
+    bool reuse_enabled_ = false, amg_cycle_ = false, prepared_ = false, vectors_changed_ = false;
+    int setup_count_ = 0;
+    const Matrix* matrix_ = nullptr;
+    const void *values_ = nullptr, *row_offsets_ = nullptr, *columns_ = nullptr, *map_ = nullptr;
+    size_t map_size_ = 0;
+    IndexType rows_ = 0, cols_ = 0, nnz_ = 0, global_col_start_ = 0, global_col_end_ = 0;
+    thrust::device_vector<HYPRE_BigInt> d_row_global_;
+    thrust::device_vector<HYPRE_Real> d_b_cast_, d_x_cast_;
     SolverProfile* profile_ = nullptr;
     double profile_start_ = 0;
     MPI_Comm comm_;
@@ -861,7 +1031,7 @@ private:
     HYPRE_Solver precond_;
 
     HYPRE_IJMatrix A_hypre_;
-    HYPRE_ParCSRMatrix parcsr_A_;
+    HYPRE_ParCSRMatrix parcsr_A_ = nullptr;
 
     // Optional SEPARATE preconditioner matrix K (the AMG-friendly Galerkin
     // stiffness). When set, BoomerAMG is built on parcsr_K_ while GMRES still
@@ -875,13 +1045,13 @@ private:
 
     HYPRE_IJVector b_hypre_;
     HYPRE_IJVector x_hypre_;
-    HYPRE_ParVector par_b_;
-    HYPRE_ParVector par_x_;
+    HYPRE_ParVector par_b_ = nullptr;
+    HYPRE_ParVector par_x_ = nullptr;
 
     IndexType globalDofStart_;
     IndexType globalDofEnd_;
 
-    // Device-resident local->global DOF map, uploaded once per solve.
+    // Device-resident map, copied when the setup is rebuilt.
     thrust::device_vector<HYPRE_BigInt> d_localToGlobalDof_;
 
     // GMRES(k) restart length.
