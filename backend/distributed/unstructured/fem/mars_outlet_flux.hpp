@@ -7,6 +7,13 @@
 #endif
 
 // Kept independent of the CUDA runtime so gates execute the production arithmetic.
+// Summing +q at L and -q at R over the low-coordinate rows gives this signed weight.
+template<typename RealType>
+MARS_OUTLET_HD inline int outlet_cut_weight(RealType left, RealType right, RealType cut)
+{
+    return int(left <= cut) - int(right <= cut);
+}
+
 template<typename RealType>
 MARS_OUTLET_HD inline void outlet_tet_gradient(const RealType coords[4][3], RealType& det,
                                               RealType dNdx[4][3])

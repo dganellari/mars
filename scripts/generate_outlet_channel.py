@@ -11,7 +11,7 @@ from netCDF4 import Dataset
 from generate_tet_cube import KUHN_TETS
 
 
-def geometry():
+def geometry(opening_width=1.):
     nx, ny, nz = 16, 4, 4
     points = np.array([(4*i/nx, j/ny, k/nz)
                        for k in range(nz+1) for j in range(ny+1) for i in range(nx+1)])
@@ -34,12 +34,13 @@ def geometry():
         assert len(entries) == 1
         element, side, nodes = entries[0]
         x = points[nodes, 0]
-        name = 'inlet' if np.all(x == 0) else 'outlet' if np.all(x == 4) else 'walls'
+        opening = np.all(points[nodes, 1:] <= opening_width)
+        name = 'inlet' if opening and np.all(x == 0) else 'outlet' if opening and np.all(x == 4) else 'walls'
         patches[name].append((element+1, side))
     return points, tets, faces, patches
 
 
-def verify(path):
+def verify(path, opening_width=1.):
     # Read back the serialized mesh, not the arrays used to write it.
     with Dataset(path) as mesh:
         xyz = np.column_stack([mesh.variables['coord'+d][:] for d in 'xyz'])
@@ -56,7 +57,8 @@ def verify(path):
         assert all(count in (1, 2) for count in occurrences.values())
         exterior = {key for key, count in occurrences.items() if count == 1}
         seen, total_area = set(), np.zeros(3)
-        for patch, expected_area in enumerate((1., 1., 16.), 1):
+        opening_area = opening_width**2
+        for patch, expected_area in enumerate((opening_area, opening_area, 18.-2*opening_area), 1):
             area = 0.
             for element, side in zip(mesh.variables[f'elem_ss{patch}'][:],
                                      mesh.variables[f'side_ss{patch}'][:]):
@@ -70,6 +72,8 @@ def verify(path):
                 normal = .5*np.cross(b-a, c-a)
                 opposite = next(k for k in range(4) if k not in local)
                 assert np.dot(normal, xyz[tet[opposite]]-a) < 0
+                if patch in (1, 2):
+                    assert np.all(xyz[nodes, 1:] <= opening_width)
                 if patch == 1:
                     assert np.all(xyz[nodes, 0] == 0) and normal[0] < 0
                 if patch == 2:
@@ -81,11 +85,14 @@ def verify(path):
     print('PASS: public channel read-back, positive tets, volume, boundary closure, areas and winding')
 
 
-def write(path):
-    xyz, tets, _, patches = geometry()
+def write(path, opening_width=1.):
+    if opening_width not in (1., .25):
+        raise ValueError("supported public opening widths are 1 and 0.25")
+    xyz, tets, _, patches = geometry(opening_width)
     path.parent.mkdir(parents=True, exist_ok=True)
     with Dataset(path, 'w', format='NETCDF3_CLASSIC') as mesh:
-        mesh.title = 'PUBLIC_SYNTHETIC_OUTLET_CHANNEL_V1'
+        mesh.title = ('PUBLIC_SYNTHETIC_OUTLET_CHANNEL_V1' if opening_width == 1.
+                      else 'PUBLIC_SYNTHETIC_CORNER_OPENINGS_V1')
         mesh.api_version = np.float32(7.22)
         mesh.version = np.float32(7.22)
         mesh.floating_point_word_size = np.int32(8)
@@ -111,11 +118,12 @@ def write(path):
             for j, kind in enumerate(('elem', 'side')):
                 mesh.createVariable(f'{kind}_ss{i}', 'i4', (dim,))[:] = np.array(entries)[:, j]
         mesh.createVariable('ss_names', 'S1', ('num_side_sets', 'len_name'))[:] = names
-    verify(path)
+    verify(path, opening_width)
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--opening-width', type=float, choices=(1., .25), default=1.)
     args = parser.parse_args()
-    write(args.output)
+    write(args.output, args.opening_width)

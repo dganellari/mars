@@ -3495,7 +3495,7 @@ struct NSStepper
     cstone::DeviceVector<RealType> d_outlet_delta_u, d_outlet_delta_v, d_outlet_delta_w;
     cstone::DeviceVector<double> d_outlet_krylov_products;
     cstone::DeviceVector<RealType> d_outlet_gradient_acc_x, d_outlet_gradient_acc_y, d_outlet_gradient_acc_z;
-    cstone::DeviceVector<double> d_outlet_flux_in, d_outlet_flux_out;
+    cstone::DeviceVector<double> d_outlet_flux_in, d_outlet_flux_out, d_cut_partial;
     cstone::DeviceVector<RealType> d_pTraceOutlet;      // nodeCount; meaningful where the outlet scalar area is nonzero
     // sum_f |A_f|/3 per node -- the SCALAR area, which is NOT |sum_f A_f/3|. The two agree only
     // when a node's facet normals are aligned; on a bent or curved outlet the vector norm
@@ -11853,16 +11853,9 @@ inline void boundaryMassBalance(NSStepper<KeyType, RealType, ElementTag>& s,
     }
 }
 
-// FIX 3: interior cut-plane flux probe. For every INTERIOR median-dual SCS face
-// whose two endpoints straddle the plane axis==cut, add the SOLVED face flux
-// u_f . scsAreaVec (u_f = 0.5*(u_L+u_R), the exact interpolation the divergence
-// scatter uses) to a per-block accumulator. This reads the SOLVED interior field,
-// so unlike the outlet Q_out it CANNOT be faked by the BC relock at the openings:
-// if flow truly threads the passage the probe is nonzero and ~equal at every cut;
-// if it dies near the inlet, the mid/outlet cuts read ~0. Owned elements only;
-// the host wrapper MPI_Allreduces. Straddle test on the L/R node coords means each
-// crossing dual face is counted once with a consistent orientation (areaVec points
-// L->R by construction), so the signed sum is the net flux across the plane.
+// Flux out of the graph subset whose node coordinate is <= cut. Internal SCS contributions
+// cancel when both endpoints lie in the subset. A crossing contributes +q if L is inside,
+// -q if R is inside. This is a control-volume cut, not geometric plane-intersection quadrature.
 template<typename KeyType, typename RealType, typename ElementTag>
 __global__ void interiorCutFluxKernel(const KeyType* c0, const KeyType* c1,
                                       const KeyType* c2, const KeyType* c3,
@@ -11883,7 +11876,7 @@ __global__ void interiorCutFluxKernel(const KeyType* c0, const KeyType* c1,
                                       const RealType* nodeX, const RealType* nodeY,
                                       const RealType* nodeZ,
                                       const RealType* tauNode,    // null -> the scalar tau
-                                      RealType tau,
+                                      RealType tau, bool keepSmooth,
                                       const uint8_t* isVelBc,
                                       RealType cut,
                                       double* partial,            // one slot per block
@@ -11933,9 +11926,8 @@ __global__ void interiorCutFluxKernel(const KeyType* c0, const KeyType* c1,
             KeyType iR = n[nodeR];
             RealType aL = nodeAxis[iL];
             RealType aR = nodeAxis[iR];
-            // dual face crosses the plane iff its endpoints are on opposite sides
-            bool straddle = (aL <= cut && aR > cut) || (aR <= cut && aL > cut);
-            if (!straddle) continue;
+            const int orientation = outlet_cut_weight(aL, aR, cut);
+            if (orientation == 0) continue;
             RealType vfx = RealType(0.5) * (vx[iL] + vx[iR]);
             RealType vfy = RealType(0.5) * (vy[iL] + vy[iR]);
             RealType vfz = RealType(0.5) * (vz[iL] + vz[iR]);
@@ -11952,15 +11944,15 @@ __global__ void interiorCutFluxKernel(const KeyType* c0, const KeyType* c1,
                         (isVelBc != nullptr && isVelBc[iL]) ? RealType(0) : RealType(0.5);
                     const RealType wR =
                         (isVelBc != nullptr && isVelBc[iR]) ? RealType(0) : RealType(0.5);
-                    RealType Gx = wL * gradPx[iL] + wR * gradPx[iR];
-                    RealType Gy = wL * gradPy[iL] + wR * gradPy[iR];
-                    RealType Gz = wL * gradPz[iL] + wR * gradPz[iR];
+                    RealType Gx = keepSmooth ? wL * gradPx[iL] + wR * gradPx[iR] : RealType(0);
+                    RealType Gy = keepSmooth ? wL * gradPy[iL] + wR * gradPy[iR] : RealType(0);
+                    RealType Gz = keepSmooth ? wL * gradPz[iL] + wR * gradPz[iR] : RealType(0);
                     RealType tauIp = tauNode ? RealType(0.5) * (tauNode[iL] + tauNode[iR]) : tau;
                     f += tauIp * ((Gx - dpdx) * areaVecX[off] + (Gy - dpdy) * areaVecY[off]
                                   + (Gz - dpdz) * areaVecZ[off]);
                 }
             }
-            mine += double(f);
+            mine += double(orientation) * double(f);
         }
     }
     // block reduce into shared then one atomic per block
@@ -12000,7 +11992,7 @@ inline RealType interiorCutFlux(NSStepper<KeyType, RealType, ElementTag>& s,
     double local = 0.0;
     if (eBlocks > 0)
     {
-        cstone::DeviceVector<double> d_partial(eBlocks, 0.0);
+        s.d_cut_partial.resize(eBlocks);
         interiorCutFluxKernel<KeyType, RealType, ElementTag><<<eBlocks, blk>>>(
             c0, c1, c2, c3, c4, c5, c6, c7,
             s.d_u.data(), s.d_v.data(), s.d_w.data(),
@@ -12013,10 +12005,16 @@ inline RealType interiorCutFlux(NSStepper<KeyType, RealType, ElementTag>& s,
             s.domain.getNodeX().data(), s.domain.getNodeY().data(), s.domain.getNodeZ().data(),
             (rc && rc->valid && rc->tauNode.size() == s.nodeCount) ? rc->tauNode.data() : nullptr,
             (rc && rc->valid) ? rc->tauScalar : RealType(0),
+            rc && rc->valid && rc->keepSmooth,
             (s.d_isBdryNode.size() == s.nodeCount ? s.d_isBdryNode.data() : nullptr),
-            cut, d_partial.data(), startElem, numLocal);
-        cudaDeviceSynchronize();
-        auto pp = thrust::device_pointer_cast(d_partial.data());
+            cut, s.d_cut_partial.data(), startElem, numLocal);
+        const cudaError_t error = cudaGetLastError();
+        if (error != cudaSuccess)
+        {
+            std::cerr << "ERROR: interior cut flux: " << cudaGetErrorString(error) << '\n';
+            MPI_Abort(MPI_COMM_WORLD, 1);
+        }
+        auto pp = thrust::device_pointer_cast(s.d_cut_partial.data());
         local = thrust::reduce(thrust::device, pp, pp + eBlocks, 0.0, thrust::plus<double>());
     }
     double global = 0.0;

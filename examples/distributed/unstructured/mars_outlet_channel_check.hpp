@@ -20,6 +20,7 @@ template<class KeyType, class RealType>
 struct OutletChannelCheck
 {
     cstone::DeviceVector<RealType> previous_u, previous_v, previous_w, scratch, residual;
+    double opening_area = 1.;
 
     static void copy(const cstone::DeviceVector<RealType>& source, cstone::DeviceVector<RealType>& target)
     {
@@ -78,8 +79,38 @@ struct OutletChannelCheck
         boundaryMassBalance(s, &s.vmsCtx, q_in, q_out);
         require_outlet_correction(s, norm.rms <= 1e-7 && norm.maximum <= 1e-7
             && std::abs(q_in+q_out) <= 1e-8 && std::abs(norm.sum-q_in-q_out) <= 1e-10
-            && std::abs(q_in+double(s.Uinf)) <= 1e-10 && q_out > 0,
+            && std::abs(q_in+double(s.Uinf)*opening_area) <= 1e-10 && q_out > 0,
             "channel gate: continuity, source, or boundary balance failed");
+
+        std::array<double, 3> cuts{};
+        double identity_error = 0;
+        const auto* x = s.domain.getNodeX().data();
+        const auto* r = residual.data();
+        for (int j = 0; j < 3; ++j)
+        {
+            const RealType cut = RealType(j + 1);
+            cuts[j] = double(interiorCutFlux(s, 0, cut, &s.vmsCtx));
+            double local = thrust::transform_reduce(thrust::device,
+                thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(s.nodeCount),
+                [=] __device__(size_t i) -> double { return own[i] == 1 && x[i] <= cut ? double(r[i]) : 0.; },
+                0., thrust::plus<double>());
+            double low_rows = 0;
+            MPI_Allreduce(&local, &low_rows, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+            // All inlet samples are below these public cuts; all outlet samples are above.
+            const double error = std::abs(cuts[j] + q_in - low_rows);
+            require_outlet_correction(s, std::isfinite(cuts[j]) && error <= 1e-10
+                && std::abs(cuts[j] + q_in) <= 1e-8,
+                "channel gate: cut flux disagrees with continuity rows or inlet flux");
+            identity_error = std::max(identity_error, error);
+        }
+        if (s.rank == 0)
+        {
+            const auto flags = std::cout.flags(); const auto precision = std::cout.precision();
+            std::cout << std::scientific << std::setprecision(16)
+                << "[outlet-cut] step=" << step << " q25=" << cuts[0] << " q50=" << cuts[1]
+                << " q75=" << cuts[2] << " identity_error=" << identity_error << '\n';
+            std::cout.flags(flags); std::cout.precision(precision);
+        }
 
         const auto* mass = s.d_massNode.data();
         const auto* u = s.d_u.data(); const auto* v = s.d_v.data(); const auto* w = s.d_w.data();
@@ -109,7 +140,7 @@ struct OutletChannelCheck
         const double expected_volume = double(hx-lx)*double(hy-ly)*double(hz-lz);
         require_outlet_correction(s, finite && std::isfinite(expected_volume) && expected_volume > 0
             && std::abs(sums[0]-expected_volume) <= 1e-10
-            && std::abs(sums[8]-1.) <= 1e-10
+            && std::abs(sums[8]-opening_area) <= 1e-10
             && std::abs(sums[7]-double(s.outletPRef)*sums[8]) <= 1e-10,
             "channel gate: volume, outlet area, or frozen trace mean failed");
         if (s.rank == 0)

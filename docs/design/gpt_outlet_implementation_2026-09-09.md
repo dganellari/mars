@@ -1,5 +1,11 @@
 # Average-pressure outlet: implementation handoff
 
+**Current validation, GPT/Codex, 2026-09-11:** public 1/2/4-rank runs report PASS.
+The signed-cut diagnostic fix and separate empty-opening fixture now need their
+focused Daint gates. See [the current record and commands](gpt_outlet_cut_validation_2026-09-11.md).
+The dated implementation/run notes below are historical; their pending statuses
+refer to the evidence available at that time.
+
 Author: GPT/Codex, with Codex implementation and review agents.
 Date: 2026-09-09.
 Status (updated 2026-09-10): earlier host, scalar CUDA, and 1/2/4-rank

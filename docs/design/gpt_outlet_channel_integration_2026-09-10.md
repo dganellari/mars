@@ -1,5 +1,11 @@
 # Public channel: full outlet-stepper integration gate
 
+**Current validation, GPT/Codex, 2026-09-11:** public 1/2/4-rank runs report PASS.
+The signed-cut diagnostic fix and separate empty-opening fixture now need their
+focused Daint gates. See [the current record and commands](gpt_outlet_cut_validation_2026-09-11.md).
+The dated implementation/run notes below are historical; their pending statuses
+refer to the evidence available at that time.
+
 Author: GPT/Codex. Date: 2026-09-10.
 Status: public driver compiled and ran on Daint; no full timestep has passed.
 The latest true-J FGMRES implementation still needs CUDA compilation and execution.

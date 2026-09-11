@@ -21,3 +21,16 @@ python3 scripts/generate_outlet_channel.py --output tests/data/public_outlet_cha
 The committed Exodus file is sufficient for Daint runs; regeneration and Python
 packages are not required there. See the shared
 [integration test instructions](../../../docs/design/gpt_outlet_channel_integration_2026-09-10.md).
+
+
+GPT/Codex update, 2026-09-11: `corner_openings.exo` uses the same public box and
+connectivity, with each opening restricted to `0 <= y,z <= 0.25`. Opening areas are
+0.0625 each; all remaining exterior triangles are walls (total area 17.875).
+This separate fixture exercises empty-opening ranks; its actual coverage is checked
+at runtime. It is a communication/algebra fixture, not an analytic flow benchmark.
+
+```bash
+python3 scripts/generate_outlet_channel.py --opening-width=0.25 --output tests/data/public_outlet_channel/corner_openings.exo
+```
+
+Use the [current coverage commands](../../../docs/design/gpt_outlet_cut_validation_2026-09-11.md).

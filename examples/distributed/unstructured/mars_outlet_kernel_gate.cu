@@ -293,6 +293,54 @@ struct DeviceFixture {
         local_facets.upload(local); all_outlets.upload(outlets);
     }
 
+    void check_cuts(Checks& checks)
+    {
+        const int n = fixture.nodes;
+        for (int mode = 0; mode < 5; ++mode)
+        {
+            const bool raw = mode == 0;
+            const bool nodal = mode > 2;
+            const bool smooth = !raw && mode%2 == 0;
+            const double* diffusion = nodal ? coefficient.data : nullptr;
+            const double tau = raw ? 0. : .3;
+            DeviceArray<double> accumulator, partial;
+            accumulator.zero(n); partial.zero(1);
+            for (int e = 0; e < fixture.elements; ++e) if (e%ranks == rank)
+                computeDivergenceVMSTetKernel<KeyType,double><<<1,128>>>(
+                    connectivity[0].data, connectivity[1].data, connectivity[2].data, connectivity[3].data,
+                    velocity[0].data, velocity[1].data, velocity[2].data, pressure.data,
+                    reconstructed[0].data, reconstructed[1].data, reconstructed[2].data,
+                    coordinates[0].data, coordinates[1].data, coordinates[2].data,
+                    area[0].data, area[1].data, area[2].data, tau, diffusion, smooth, 1., nullptr,
+                    fixed_node.data, accumulator.data, e, 1);
+            complete("cut reference: production interior continuity rows");
+            const auto rows = sum_ranks(accumulator.download());
+            for (int axis = 0; axis < 3; ++axis)
+                for (double cut : {-.1, 0., .25, .5, 1., 2.})
+                {
+                    double local = 0, expected = 0;
+                    for (int i = 0; i < n; ++i)
+                        if (fixture.coordinates[i][axis] <= cut) expected += rows[i];
+                    for (int e = 0; e < fixture.elements; ++e) if (e%ranks == rank)
+                    {
+                        interiorCutFluxKernel<KeyType,double,TetTag><<<1,128>>>(
+                            connectivity[0].data, connectivity[1].data, connectivity[2].data, connectivity[3].data,
+                            nullptr, nullptr, nullptr, nullptr,
+                            velocity[0].data, velocity[1].data, velocity[2].data, coordinates[axis].data,
+                            area[0].data, area[1].data, area[2].data, raw ? nullptr : pressure.data,
+                            reconstructed[0].data, reconstructed[1].data, reconstructed[2].data,
+                            coordinates[0].data, coordinates[1].data, coordinates[2].data,
+                            diffusion, tau, smooth, fixed_node.data, cut, partial.data, e, 1);
+                        complete("production signed cut reporter");
+                        local += partial.download()[0];
+                    }
+                    double global = 0;
+                    MPI_Allreduce(&local, &global, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+                    checks.near(global, expected, 1e-12, "cut equals low-side production continuity rows");
+                }
+        }
+    }
+
     Field residual(const Field& p, const VectorField& u, bool nodal, double* exterior = nullptr)
     {
         const int n = fixture.nodes;
@@ -417,6 +465,7 @@ void run_fixture(int num_elements, int rank, int ranks, Checks& checks)
 {
     Fixture fixture(num_elements);
     DeviceFixture device(fixture, rank, ranks, checks);
+    device.check_cuts(checks);
     const int n = fixture.nodes;
     const auto b = fixture.divergence();
     Field direction(n);

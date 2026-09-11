@@ -104,6 +104,8 @@ int main(int argc, char** argv)
     double      outlet_rtol = 1e-6, outlet_div_tol = 1e-8, outlet_flux_tol = 1e-12;
     double      outlet_max_damping = 1.0;
     bool        outlet_channel_check = false;
+    bool        outlet_channel_require_empty = false;
+    double      outlet_channel_opening_width = 1.;
     double      relaxU     = 0.3;      // --relax-u: momentum URF, folded into D
     bool        usePSPG    = false;    // implicit PSPG pressure stab (tau*L in the DDT operator); --pspg. The correct equal-order checkerboard fix.
     double      pspgTau    = -1;       // <=0 => auto h^2/24; --pspg-tau=V overrides
@@ -198,6 +200,9 @@ int main(int argc, char** argv)
         else if (a.rfind("--outlet-flux-tol=", 0) == 0) outlet_flux_tol = std::stod(a.substr(18));
         else if (a.rfind("--outlet-max-damping=", 0) == 0) outlet_max_damping = std::stod(a.substr(21));
         else if (a == "--outlet-channel-check") outlet_channel_check = true;
+        else if (a == "--outlet-channel-require-empty") outlet_channel_require_empty = true;
+        else if (a.rfind("--outlet-channel-opening-width=", 0) == 0)
+            outlet_channel_opening_width = std::stod(a.substr(std::string("--outlet-channel-opening-width=").size()));
         else if (a.rfind("--relax-u=", 0) == 0)      relaxU    = std::stod(a.substr(10));
         else if (a == "--pressure-k")                pressureK  = true;  // Galerkin K + FEM-consistent weak div/grad projection
         else if (a.rfind("--correctors=", 0) == 0)   nCorrectors = std::stoi(a.substr(13)); // PISO inner pressure corrections (FEM path)
@@ -307,6 +312,14 @@ int main(int argc, char** argv)
     if (meshFile.empty())
     {
         if (rank == 0) std::cerr << "Error: --mesh=FILE.exo required\n";
+        MPI_Finalize();
+        return 1;
+    }
+    if ((outlet_channel_opening_width != 1. && outlet_channel_opening_width != .25)
+        || (!outlet_channel_check && (outlet_channel_opening_width != 1. || outlet_channel_require_empty)))
+    {
+        if (rank == 0) std::cerr << "Error: public channel opening width must be 1 or 0.25; "
+            "coverage options require --outlet-channel-check.\n";
         MPI_Finalize();
         return 1;
     }
@@ -1573,15 +1586,19 @@ int main(int argc, char** argv)
     setupNSStepper<KeyType, RealType, TetTag>(s, RealType(nu), RealType(dt),
                                               CvfemKernelVariant::Tensor);
     OutletChannelCheck<KeyType, RealType> channel_check;
+    channel_check.opening_area = outlet_channel_opening_width*outlet_channel_opening_width;
     if (outlet_channel_check)
     {
         int empty = s.d_openingTriAreaX.empty() ? 1 : 0, empty_ranks = 0;
         MPI_Allreduce(&empty, &empty_ranks, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+        require_outlet_correction(s, !outlet_channel_require_empty || empty_ranks > 0,
+                                 "public coverage gate: no empty-opening rank exercised");
         if (rank == 0)
             std::cout << std::setprecision(16) << "[outlet-channel-config] ranks=" << numRanks
                 << " steps=" << numSteps << " dt=" << dt << " nu=" << nu << " rho=" << rho
                 << " inlet=" << inletU << " ramp_steps=" << sourceRampSteps
                 << " beta=" << outletBeta << " p_ref=" << outletPRef
+                << " opening_area=" << channel_check.opening_area << " cut_check=1"
                 << " empty_opening_ranks=" << empty_ranks << '\n';
     }
 
@@ -1857,9 +1874,8 @@ int main(int argc, char** argv)
             // MARS_CUT_AXIS=x|y|z forces one axis; =all probes all three (9 numbers) so
             // the separating plane cannot be missed. Unset = the original auto behaviour.
             double qc25 = 0.0, qc50 = 0.0, qc75 = 0.0;
-            // Same three cuts through the RC-STABILIZED flux. Under Rhie-Chow the raw probe above
-            // measures the reconstructed nodal velocity, which is -S by construction and says
-            // nothing about transport; this one measures what the pressure solve actually zeros.
+            // Raw velocity flux and stabilized continuity flux are distinct. Both sums use
+            // the signed graph cut; only the stabilized one can close the VMS continuity rows.
             double qr25 = 0.0, qr50 = 0.0, qr75 = 0.0;
             bool   haveRcCut = false;
             // READ the step's frozen context. Under --vms-stab the assembly built it, so the probes
@@ -2001,14 +2017,14 @@ int main(int argc, char** argv)
                               << "  cut@25%=" << std::scientific << std::setprecision(3) << qc25
                               << "  cut@50%=" << qc50
                               << "  cut@75%=" << qc75
-                              << "  (solved interior; ~equal+nonzero = real through-flow)"
+                              << "  (raw velocity flux through signed control-volume cuts)"
                               << "\n" << std::defaultfloat;
                     if (haveRcCut)
                         std::cout << "  [interior-fluxRC] axis=" << axc[cutAxis]
                                   << "  cut@25%=" << std::scientific << std::setprecision(3) << qr25
                                   << "  cut@50%=" << qr50
                                   << "  cut@75%=" << qr75
-                                  << "  (STABILIZED flux -- judge through-flow on THIS line)"
+                                  << "  (stabilized continuity flux through signed control-volume cuts)"
                                   << "\n" << std::defaultfloat;
                     }
                 }
