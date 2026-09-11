@@ -1,8 +1,14 @@
 # Signed cut flux and empty-opening coverage
 
 Author: GPT/Codex. Date: 2026-09-11.
-Status: diagnostic fix and new public gate implemented; host checks pass.
-The revised CUDA kernels and corner-opening fixture still need Daint execution.
+Status update, 2026-09-11: the user reports a PASS from the combined eight-step
+1/2/4-rank parser and the additional cut/empty-opening-rank coverage case.
+Claude reports standalone 573-check kernel passes on one and four ranks; GPT has
+not inspected those transcripts. The implementation/run notes below are historical.
+
+A later public run exposes a timestep instability despite these passing algebra
+gates. See [the temporal audit](gpt_outlet_temporal_audit_2026-09-11.md); the outlet
+stage remains open for stability.
 
 ## Existing Daint evidence
 
