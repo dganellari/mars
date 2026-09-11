@@ -5,6 +5,7 @@
 // HYPRE_/thrust/mpi headers, the namespace declarations) come from the PCG
 // header. Including it here means we don't redefine those symbols.
 #include "mars_hypre_pcg_solver.hpp"
+#include "mars_solver_profile.hpp"
 
 namespace mars {
 namespace fem {
@@ -26,6 +27,8 @@ public:
     using Vector = typename mars::VectorSelector<RealType, AcceleratorTag>::type;
 
     enum PrecondType { BOOMERAMG, JACOBI };
+
+    void set_profile(SolverProfile* profile) { profile_ = profile; }
 
     HypreGMRESSolver(MPI_Comm comm = MPI_COMM_WORLD, int maxIter = 1000, RealType tolerance = 1e-6,
                      PrecondType precondType = BOOMERAMG, int kDim = 30)
@@ -64,6 +67,7 @@ public:
                IndexType globalDofStart, IndexType globalDofEnd,
                IndexType globalColStart, IndexType globalColEnd,
                const thrust::device_vector<HYPRE_BigInt>& d_localToGlobalDof) {
+        if (profile_) profile_start_ = profile_->stamp();
         static HypreInitGuard g_hypreInit;
         (void)g_hypreInit;
 
@@ -97,6 +101,7 @@ public:
                IndexType globalDofStart, IndexType globalDofEnd,
                IndexType globalColStart, IndexType globalColEnd,
                const std::vector<KeyType>& localToGlobalDof) {
+        if (profile_) profile_start_ = profile_->stamp();
         // Initialize Hypre exactly once per process, lazily, after MPI is up.
         static HypreInitGuard g_hypreInit;
         (void)g_hypreInit;
@@ -274,6 +279,8 @@ public:
             std::cerr << "Rank " << rank << ": Failed to get Hypre ParVector objects" << std::endl;
             return false;
         }
+
+        if (profile_) profile_start_ = profile_->lap(SolverProfile::Prepare, profile_start_);
 
         if (verbose_ && rank == 0) std::cout << "Creating preconditioner..." << std::endl;
 
@@ -486,6 +493,7 @@ public:
         HYPRE_Int setup_err = useFlexGmres_
             ? HYPRE_ParCSRFlexGMRESSetup(solver_, parcsr_A_, par_b_, par_x_)
             : HYPRE_ParCSRGMRESSetup(solver_, parcsr_A_, par_b_, par_x_);
+        if (profile_) profile_start_ = profile_->lap(SolverProfile::Setup, profile_start_);
         if (setup_err != 0 && rank == 0) {
             std::cerr << "[HypreGMRES] Setup returned error " << setup_err
                       << " (HYPRE_GetError=" << HYPRE_GetError() << ")\n";
@@ -496,10 +504,12 @@ public:
         }
         if (verbose_ && rank == 0) std::cout << "GMRES setup complete, starting solve..." << std::endl;
 
+        if (profile_) profile_start_ = profile_->stamp();
         MPI_Barrier(comm_);
         HYPRE_Int solve_err = useFlexGmres_
             ? HYPRE_ParCSRFlexGMRESSolve(solver_, parcsr_A_, par_b_, par_x_)
             : HYPRE_ParCSRGMRESSolve(solver_, parcsr_A_, par_b_, par_x_);
+        if (profile_) profile_start_ = profile_->lap(SolverProfile::Solve, profile_start_);
         if (solve_err != 0 && rank == 0) {
             std::cerr << "[HypreGMRES] Solve returned error " << solve_err
                       << " (HYPRE_GetError=" << HYPRE_GetError() << ")\n";
@@ -593,6 +603,7 @@ public:
         }
 
         // Real convergence requires BOTH the residual test AND a non-null x.
+        if (profile_) profile_->lap(SolverProfile::Finish, profile_start_);
         return (final_res_norm < tolerance_) && !nullSolutionReturned_;
     }
 
@@ -832,6 +843,8 @@ public:
     }
 
 private:
+    SolverProfile* profile_ = nullptr;
+    double profile_start_ = 0;
     MPI_Comm comm_;
     int maxIter_;
     RealType tolerance_;

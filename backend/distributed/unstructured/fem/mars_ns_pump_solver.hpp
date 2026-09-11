@@ -36,6 +36,7 @@
 #include "backend/distributed/unstructured/fem/mars_outlet_flux.hpp"
 #include "backend/distributed/unstructured/fem/mars_periodic_bc.hpp"
 #include "backend/distributed/unstructured/solvers/mars_cg_solver.hpp"
+#include "backend/distributed/unstructured/solvers/mars_solver_profile.hpp"
 #ifdef MARS_ENABLE_HYPRE
 #include "backend/distributed/unstructured/solvers/mars_hypre_pcg_solver.hpp"
 #include "backend/distributed/unstructured/solvers/mars_hypre_gmres_solver.hpp"
@@ -3477,6 +3478,7 @@ struct NSStepper
     // clamping the same unknown with it converges to a uniform face -- neither is the reference BC.
     // outletBeta < 0 disables it and keeps the classic p=0 Dirichlet outlet.
     RealType                       outletBeta = RealType(-1);
+    SolverProfile                  outlet_profile;
     RealType                       outletPRef = RealType(0);
     int                            outlet_max_corrections = 100;
     RealType                       outlet_relative_tolerance = RealType(1e-6);
@@ -7612,6 +7614,8 @@ int solveOneComponent(NSStepper<KeyType, RealType, ElementTag>& s,
             // equivalent Galerkin K (precondMat) instead. K shares A_fem's
             // partition. nullptr -> classic AMG-on-A.
             if (precondMat != nullptr) hypreSolver.setPrecondMatrix(precondMat);
+            if (outletPressure && s.outlet_profile.enabled())
+                hypreSolver.set_profile(&s.outlet_profile);
             converged = hypreSolver.solve(
                 A, b_rhs, xVec,
                 static_cast<int>(s.globalRowStart), static_cast<int>(s.globalRowEnd),

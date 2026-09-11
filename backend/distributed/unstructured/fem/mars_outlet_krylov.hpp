@@ -157,6 +157,7 @@ struct OutletKrylovOps
     // Solve Apre*z = S^-1*v, S_ii=1/sqrt(V_i). Hypre may vary its iteration count.
     bool precondition(const RealType* v, RealType* z)
     {
+        SolverProfile::Scope profile(s.outlet_profile, SolverProfile::Preconditioner);
         auto* b = s.d_outlet_rhs.data();
         const auto* mass = s.d_massNode.data();
         const auto* own = s.ownershipMap().data();

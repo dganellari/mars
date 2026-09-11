@@ -4,6 +4,9 @@ Author: GPT/Codex. Date: 2026-09-12.
 Status: complete public-log comparison and targeted source inspection; no timings
 of individual phases and no production changes.
 
+Follow-up: [opt-in profiling](gpt_outlet_profiling_2026-09-12.md) now implements
+the measurement points below. Its GPU timing results remain pending.
+
 The looser-tolerance run is 5.25% faster, but it does not remove 45% of the total
 Krylov work. It needs an additional pressure correction on 74 of its 200 steps.
 Full-run counts contradict the conclusion drawn from its final-step excerpt.

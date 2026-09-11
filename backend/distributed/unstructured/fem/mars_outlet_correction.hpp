@@ -75,6 +75,11 @@ OutletResidualNorm outlet_residual_norm(NSStepper<KeyType, RealType, ElementTag>
 template<typename KeyType, typename RealType, typename ElementTag>
 void run_outlet_pressure_correction(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, RealType rho)
 {
+    auto& profile = s.outlet_profile;
+    profile.initialize(MPI_COMM_WORLD);
+    profile.begin_step();
+    // Declared before Krylov scratch so its destruction is included in the total.
+    SolverProfile::Scope correction_profile(profile, SolverProfile::Correction, true);
     using Stepper = NSStepper<KeyType, RealType, ElementTag>;
     require_outlet_correction(s,
         std::is_same_v<ElementTag, TetTag> && s.bcKind == Stepper::BCKind::Pump
@@ -99,11 +104,15 @@ void run_outlet_pressure_correction(NSStepper<KeyType, RealType, ElementTag>& s,
         "unsupported correction configuration");
     require_outlet_correction(s, s.lastUIters >= 0 && s.lastVIters >= 0 && s.lastWIters >= 0,
                              "momentum solve failed before pressure correction");
+    const double context_start = profile.stamp();
     buildVmsFluxCtx(s, dt, rho, s.vmsCtx);
+    profile.lap(SolverProfile::Context, context_start);
     validate_outlet_continuity(s);
     require_outlet_correction(s, s.vmsCtx.valid && s.vmsCtx.keepSmooth,
                              "the full frozen VMS gradient difference is required");
+    const double assembly_start = profile.stamp();
     refresh_outlet_pressure_operator(s, rho);
+    profile.lap(SolverProfile::Assembly, assembly_start);
     const RealType h = s.vmsCtx.dtEff / rho;
     const auto* own = s.ownershipMap().data();
     const auto* dof = s.d_node_to_dof.data();
