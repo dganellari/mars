@@ -1,7 +1,7 @@
 # Public channel: outlet trace feedback amplifies a timestep mode
 
 Author: GPT/Codex. Date: 2026-09-11.
-Status: source audit and executed host reconstruction; GPU confirmation of the proposed control is pending.
+Status: source audit, executed host reconstruction, and completed 200-step public GPU fixed-trace control.
 Source snapshot: `03acc1d7f15080ff31f152b5bc0726ab0fbdac6d`.
 
 The current lagged average-pressure trace produces a growing mode in a linear
@@ -9,6 +9,11 @@ reconstruction of the complete timestep. Advection is disabled in this model.
 Its early velocity growth closely follows the public GPU failure. This identifies
 an instability in the time coupling specified in GPT's outlet design; passing
 individual flux/Jacobian and short integration gates does not exclude it.
+
+The predicted fixed-trace control now completes 200 steps on the GPU with bounded
+reported speed and small full continuity residuals. This supports the diagnosis
+of lagged trace feedback in this formulation. It does not validate beta=0.05 or
+establish long-time stability of beta=1.
 
 No production solver code was changed in this audit. The reproducible model is
 [`scripts/outlet_temporal_audit.py`](../../scripts/outlet_temporal_audit.py).
@@ -63,7 +68,54 @@ The prior eight-step 1/2/4-rank checks and the additional empty-opening-rank gat
 passed according to the user's complete parser result. Claude reports separate
 573-check kernel passes on one and four ranks; GPT has not inspected those transcripts.
 These checks remain valid within their scope. The outlet stage remains open for
-time stability.
+time stability of the average-pressure feedback formulation.
+
+## Executed public GPU fixed-trace control
+
+The user ran C with `--outlet-beta=1`. GPT retrieved its complete log with
+authorized `rsync` and inspected it locally:
+
+```
+remote: /capstor/scratch/cscs/gandanie/git/mars/daint-gpu/channel-C-fixedtrace.log
+local:  /private/tmp/mars-outlet-audit-20260911/channel-C-fixedtrace.log
+SHA256: 174ea09c5dc82a5e23ac5c2e9cdc6c010e245e8db59efad507ed5f327f43c5d8
+```
+
+The C header matches A's public fixture, one rank, density, viscosity, timestep,
+inlet speed, skew advection, stabilization and relaxation settings, with beta
+changed to 1. Neither log embeds the executable revision or complete environment.
+The command supplied for this control is retained below.
+
+| Observed quantity | C: fixed trace, beta=1 |
+|---|---:|
+| Completed physical steps | 200 |
+| Maximum reported nodal speed over the 20 ten-step reports | 1.234 |
+| Final nodal maximum speed | 1.233 |
+| Final full continuity RMS | 3.86e-13 /s |
+| Final full continuity maximum | 2.43e-12 /s |
+| Final signed boundary imbalance | 4.22e-15 volume/s |
+| Largest post-correction RMS across all 200 trial records | 3.1643e-11 /s |
+| Final stabilized flux at each of the three interior cuts | 0.5000 volume/s (printed precision) |
+
+All 200 trial records accept the first correction with no backtracking and omega
+within 3.9e-13 of 1. All 200 true Krylov relative residuals are at most 9.944e-9.
+The local parser found no failed solve, abort or nonfinite-value marker. Full
+continuity maxima and boundary sums are printed only every ten steps; their
+largest reported magnitudes are 1.582e-10 /s and 2.62e-12 volume/s respectively.
+This is log verification of an executed GPU run, not a field-level accuracy test.
+
+The final raw boundary imbalance is 0.007%; stabilized balance prints -0.000%.
+The legacy `divRC` diagnostic is not the full acceptance residual for this path.
+Beta=1 fixes the separate boundary trace to p_ref while preserving free pressure
+DOFs and the new conservative correction. It does not restore the old whole-face
+Dirichlet pressure solve, despite the driver's unchanged generic outlet banner.
+
+C removes the rapid growth seen in A, as the independent linear model predicted.
+The evidence implicates the lagged trace/correction time coupling rather than a
+standalone momentum linear-solver failure. The GPU result covers one rank and
+200 steps, only 0.0004 s of physical time. It is a working public baseline for
+further development, not proof of steady flow, long-time stability, spatial
+accuracy, or validity on other meshes.
 
 ## Discrete map audited
 
@@ -158,7 +210,7 @@ python3 scripts/outlet_temporal_audit.py --dt=.01 --nu=.1 --rho=1 --steps=0 --sp
 python3 scripts/outlet_temporal_audit.py --trace=implicit --steps=0 --spectrum
 ```
 
-## Acceptance and next public GPU check
+## Acceptance and reproduced GPU command
 
 The correction loop uses `max(atol, rtol*initial_residual)` and a relative boundary
 balance scale. This explains why, much later in A, a final RMS of 4.08e126 can
@@ -167,10 +219,9 @@ as a correction test; it is not a physical-step stability test. A separate
 physical acceptance criterion should use a declared reference scale, but adding
 one alone would only stop the failure, not repair the unstable map.
 
-The smallest GPU falsification is to change only beta from 0.05 to 1 in A.
-Beta=1 sets the trace to p_ref while retaining the new boundary-aware correction.
-No rebuild or new solver implementation is needed. Keep the same environment and
-executable. From the user's Daint build directory:
+The control changed beta from 0.05 to 1 in A, retaining the new boundary-aware
+correction. No rebuild or new solver implementation was needed. The supplied
+command, from the user's Daint build directory, was:
 
 ```bash
 set -o pipefail
@@ -184,8 +235,10 @@ MARS_SOLVE_TRACE=1 srun --account=csstaff --time=00:05:00 --nodes=1 --ntasks-per
   2>&1 | tee channel-C-fixedtrace.log
 ```
 
-Prediction to test: removing trace feedback removes the early growing mode.
-GPU nonlinear stability over this run is not yet established. If the prediction
-holds, redesign the trace/reconstructed-gradient/pressure update as a coupled
-time map and test its amplification before changing production kernels. Do not
-ship a guessed damping value or the implicit-trace-only counterfactual as a fix.
+The prediction that removing trace feedback removes the early growing mode is
+supported by C. Keep beta=1 as the public comparison baseline. The next numerical
+design step is to derive the trace/reconstructed-gradient/pressure update as a
+coupled time map and test its amplification before changing production kernels.
+Recommended effort: High, one agent, limited to that derivation and its host gate;
+routine implementation and known validation should return to Medium. Do not ship
+a guessed damping value or the implicit-trace-only counterfactual as a fix.
