@@ -15,6 +15,11 @@ reported speed and small full continuity residuals. This supports the diagnosis
 of lagged trace feedback in this formulation. It does not validate beta=0.05 or
 establish long-time stability of beta=1.
 
+Follow-up: the [fully implicit coupling review](gpt_outlet_coupled_time_review_2026-09-11.md)
+finds that refreshing both trace and reconstructed gradient, with an exact
+momentum response, still has growing modes at beta=0.05. Removing the lag alone
+is not a repair of this boundary closure.
+
 No production solver code was changed in this audit. The reproducible model is
 [`scripts/outlet_temporal_audit.py`](../../scripts/outlet_temporal_audit.py).
 It assembles the documented algebra independently with NumPy; it does not execute
