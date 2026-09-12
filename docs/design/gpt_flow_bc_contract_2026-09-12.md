@@ -43,6 +43,16 @@ The separate 200-step fixed-trace host trajectory at nu=1e-6 stays bounded,
 ending at speed 1.2327604 and continuity RMS 1.34e-16 /s. It omits advection;
 the user-run GPU water test remains necessary.
 
+Subsequent user-supplied public GPU transcript: beta=1 with AMG-cycle and
+nu=1e-6 completes 200 steps in 7,690.9 ms (38.5 ms/step). Final full continuity
+RMS is 5.36e-13 /s, signed boundary flux 2.42e-14, maximum speed 1.233 and all
+three stabilized cuts 0.500 at printed precision. Tracing and profiling are off.
+This closes the short one-rank GPU startup check; physical duration is only
+0.0004 s. It does not certify steady convergence or the unverified host spectrum.
+
+The [OpenAccel GPU port plan](gpt_openaccel_gpu_port_plan_2026-09-12.md) now
+defines the development direction; retain this projection run as a baseline.
+
 ## Inlet implementation
 
 `inletPernodeNormal` defaults to true (`mars_pump.cu:122`). For a nondegenerate
