@@ -20,8 +20,9 @@ of executed comparisons, not a solver name or a generally successful CFD run.
 
 The user's PI uses OpenAccel with an inward-normal velocity inlet, pressure
 outlet and other sides no-slip. The clarified fluid has rho=1000 kg/m^3 and
-mu=1e-3 Pa s, hence MARS nu=1e-6 m^2/s. Earlier nu=1e-4 runs were an intentional
-MARS workaround. Exact OpenAccel algorithm/options and the convergence norm
+mu=1e-3 Pa s, hence MARS nu=1e-6 m^2/s. The user described earlier nu=1e-4 runs
+as an intentional workaround; that is historical motivation, not evidence that
+the current solver requires higher viscosity. Exact OpenAccel algorithm/options and the convergence norm
 behind the PI's 1e-6 criterion still need to be identified. Do not infer SIMPLE
 versus SIMPLEC, an advection scheme, or a pressure-boundary subtype from that
 physical description alone.
@@ -29,6 +30,10 @@ physical description alone.
 The current baseline has completed a user-run one-rank public water-viscosity
 test: 200 steps at 38.5 ms/step, final full continuity RMS 5.36e-13 /s. This is
 a short startup result, not steady-state convergence or OpenAccel parity.
+Claude reports matching public-case speed/flux summaries at nu=1e-4. This does
+not identify the cause of viscosity insensitivity. The
+[baseline review](gpt_baseline_review_2026-09-12.md) adds an active-viscosity
+benchmark and corrects the interpretation of the Hypre work counters.
 
 ## Responsibilities and effort
 
@@ -45,7 +50,7 @@ document alone. Ultra is not the default for any stage.
 | 2. Device state, topology and communication | Claude | Medium: reuse established MARS patterns against a settled state contract | GPU ownership/halo/geometry gates; no solver exposed prematurely |
 | 3. Momentum, influence coefficients and flux kernels | Claude; GPT reviews mathematical diff | High: discretization, relaxation and boundary terms must agree | Frozen-state matrix/action/RHS/coefficient/flux parity |
 | 4. Pressure correction and one complete segregated iteration | Claude; GPT reviews the coupled update | High: pressure, velocity, flux and boundary states interact | One-iteration parity including all updates and residuals |
-| 5. Outer iteration, physical-time history and MPI integration | Claude; GPT reviews lifecycle and acceptance | High for integration; Medium for running settled gates | Converged public cases at water properties and 1/2/4-rank agreement |
+| 5. Outer iteration, physical-time history and MPI integration | Claude; GPT reviews lifecycle and acceptance | High for integration; Medium for running settled gates | Viscosity-sensitive analytic/refinement gates, converged public water cases and 1/2/4-rank agreement |
 | 6. Performance optimization | Claude by measured hotspot; GPT for mathematical changes | Medium for storage/batching; High for communication or solver changes | Before/after timings and unchanged acceptance results |
 | 7. Private application validation | User/PI on their systems | Their workflow; GPT only handles permitted public work | Owner-reviewed BCs, flow, convergence and reference comparison |
 
@@ -85,6 +90,14 @@ The contract must identify:
 7. Outer-iteration acceptance, linear tolerances, residual normalization and
    physical-time history. Separate steady momentum convergence from continuity
    and changes in a scalar RMS speed.
+
+Before claiming PI-configuration parity, identify its advection/limiter,
+turbulence or subgrid model (including none), wall treatment, time controls and
+resolution strategy from permitted settings. The initial laminar/upwind profile
+does not answer these application questions. Public transport/refinement and
+energy-budget checks must assess numerical dissipation separately from physical
+viscosity. A successful reference run alone does not identify its stabilizing
+mechanism or demonstrate that LES/AMR is mandatory.
 
 Required output: a table mapping every term to an exact reference source symbol,
 its frozen/current state, units, proposed MARS typed interface and its parity gate.
@@ -161,6 +174,10 @@ Gate in this order:
 6. Public channel at the target water properties, then a public contraction/
    expansion with a downstream chamber to exercise changing area and backflow.
    Match transient trajectories or steady residuals according to the chosen mode.
+   Also require a fully developed Poiseuille or manufactured Stokes case with
+   known viscosity sensitivity and spatial refinement: fixed pressure gradient
+   gives flow proportional to 1/mu; fixed flow gives pressure drop proportional
+   to mu. A short fixed-inlet startup's speed/flux agreement is insufficient.
 7. 1/2/4-rank invariants, including an empty-opening rank, before scaling claims.
 
 Compare relative/absolute operator and field errors with declared scales and

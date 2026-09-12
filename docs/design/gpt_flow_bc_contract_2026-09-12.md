@@ -27,10 +27,11 @@ mu=0.1 Pa s at this density, 100 times the specified dynamic viscosity. They
 remain valid performance and solver comparisons at their stated parameters;
 they are not physical-property matches to the newly clarified target. Do not
 rewrite their reported parameters or infer new GPU validation at nu=1e-6.
-The user clarified that this higher viscosity was a workaround because the
-water-viscosity case could not previously be run successfully; it was not an
-unintentional units conversion. The next public GPU control changes only nu
-to 1e-6, retaining beta=1, AMG-cycle and the previous acceptance tolerances.
+The user described this higher-viscosity choice as an intentional workaround;
+it was not an unintentional units conversion. This records historical motivation,
+not an established requirement of the current solver. The subsequent public
+GPU control changed only nu to 1e-6, retaining beta=1, AMG-cycle and the previous
+acceptance tolerances; its result is recorded below.
 The beta=.05 instability established on the public MARS replica does not show
 that OpenAccel's own outlet implementation has the same instability.
 
@@ -41,7 +42,7 @@ spectral stability claim is made for that new parameter set. This is an
 eigensolve verification failure, not evidence by itself of a growing mode.
 The separate 200-step fixed-trace host trajectory at nu=1e-6 stays bounded,
 ending at speed 1.2327604 and continuity RMS 1.34e-16 /s. It omits advection;
-the user-run GPU water test remains necessary.
+that host result did not establish GPU behavior. The later GPU result follows.
 
 Subsequent user-supplied public GPU transcript: beta=1 with AMG-cycle and
 nu=1e-6 completes 200 steps in 7,690.9 ms (38.5 ms/step). Final full continuity
@@ -49,6 +50,12 @@ RMS is 5.36e-13 /s, signed boundary flux 2.42e-14, maximum speed 1.233 and all
 three stabilized cuts 0.500 at printed precision. Tracing and profiling are off.
 This closes the short one-rank GPU startup check; physical duration is only
 0.0004 s. It does not certify steady convergence or the unverified host spectrum.
+Claude subsequently noted that the public nu=1e-4 run reports the same printed
+maximum speed and cuts (40.0 ms/step, continuity RMS 5.33e-13 /s). This is useful
+property-matched startup coverage, not a demonstrated viscous-response test.
+The [baseline review](gpt_baseline_review_2026-09-12.md) specifies an analytic
+viscosity-sensitive gate; short-time speed agreement alone does not prove that
+numerical diffusion dominates physical viscosity.
 
 The [OpenAccel GPU port plan](gpt_openaccel_gpu_port_plan_2026-09-12.md) now
 defines the development direction; retain this projection run as a baseline.

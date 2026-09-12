@@ -55,6 +55,13 @@ convergence. The implementation must eventually support a converged steady
 public case and physical-time iterations. Upwind parity does not certify the
 reference's high-resolution limiter or the PI's exact configuration.
 
+Follow-up to Claude's 2026-09-12 review: before PI-configuration parity, identify
+the actual advection/limiter, turbulence/subgrid model (including none), wall
+treatment, time controls and resolution strategy from permitted settings. Keep
+the initial laminar/upwind profile unchanged until that evidence is available.
+The [baseline review](gpt_baseline_review_2026-09-12.md) explains the limits of
+short-startup viscosity comparisons and the different Hypre work-counter units.
+
 ## 2. Unknowns, units and quadrature
 
 The target continuum equations, with no sources, are
@@ -599,6 +606,12 @@ Required falsifiable gates:
   balance, including empty-opening ranks, shared corners and a partition that
   places opposite/face nodes on different ranks. This is later GPU validation;
   no CUDA/MPI execution is claimed by Stage 0.
+- For Stage 5, require a fully developed Poiseuille or manufactured Stokes
+  benchmark with spatial refinement and a measurable viscous response. At fixed
+  pressure gradient, flow scales as 1/mu; at fixed flow, pressure drop scales as
+  mu. Also assess public transport accuracy and numerical dissipation under
+  refinement. Merely running a short prescribed-inlet case at water viscosity
+  does not satisfy these gates; no turbulence model is selected by that fact.
 
 Start double-precision local algebra comparisons at
 `|a-b| <= 1e-12*max(1,max|reference block|)` in their stated SI units for the

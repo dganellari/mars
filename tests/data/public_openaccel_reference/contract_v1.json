@@ -517,6 +517,17 @@
     "bdf_startup_parity",
     "cuda_compilation",
     "gpu_1_2_4_rank_parity",
-    "water_public_nonlinear_convergence"
+    "water_public_nonlinear_convergence",
+    "viscosity_sensitive_analytic_and_refinement_benchmark",
+    "public_transport_accuracy_and_numerical_dissipation_refinement"
+  ],
+  "required_pi_configuration_identification": [
+    "reference_revision",
+    "SIMPLE_or_SIMPLEC",
+    "advection_and_limiter",
+    "turbulence_or_subgrid_model_including_none",
+    "wall_treatment",
+    "time_and_convergence_controls",
+    "owner_reported_resolution_strategy"
   ]
 }
