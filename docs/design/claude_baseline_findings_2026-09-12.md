@@ -51,21 +51,25 @@ on a public channel and the pump still blow up.
 
 Suggested: add it to the Stage 0 contract's required identifications.
 
-## 3. Hypre reuse carries a measured latent defect
+## 3. RETRACTED: the cg_p gap is a work-unit artifact, not a defect
 
-Port plan line 113 permits reusing FGMRES and GPU Hypre/AMG. Measured on the public
-channel, 200 steps, one rank, identical flags apart from one env var, producing
-bit-identical solutions (same `|phi|max` every step):
+This section previously reported that `MARS_OUTLET_PRECOND=legacy` costs the pressure
+Poisson solve ~12x its iterations (`cg_p` 288-465 vs 20-32) and suspected a latent
+defect in the Hypre wrapper. That is wrong. GPT/Codex identified the cause:
 
-- `MARS_OUTLET_PRECOND=legacy`: pressure Poisson `cg_p` 288-465 (typ ~374)
-- `MARS_OUTLET_PRECOND=amg-cycle`: `cg_p` 20-32 (typ ~29)
+`mars_outlet_krylov.hpp:218` does `s.lastPressureIters += iterations;` inside the
+outlet preconditioner apply, and the same function calls `solveOneComponent` in the
+legacy branch. So `cg_p` is the pressure Poisson count PLUS accumulated outlet
+preconditioner work -- reported as inner GMRES iterations in legacy mode and as AMG
+cycles in amg-cycle mode. Different units; the ratio measures nothing.
 
-~12x, for a flag that nominally selects the *outlet correction* preconditioner.
-Something couples the outlet path's solver lifetime to the pressure solve; the
-mechanism is UNCONFIRMED. Suspected: the per-apply `destroy()`/`Setup` in
-`mars_hypre_gmres_solver.hpp` discarding the hierarchy the pressure GMRES relies on.
-If so it predates the outlet work and affects every `--solver=hypre` run. Worth
-resolving before the wrapper is reused by the new solver.
+My supporting analysis was wrong because two greps were mis-scoped: the pattern
+`lastPressureIters *=` cannot match `+=`, and I searched the correction and flux
+files but not the krylov file where both the accumulation and the legacy call live.
+Null grep results were treated as proof of absence.
+
+No Hypre wrapper defect is claimed. The amg-cycle timing improvement (278.1 -> 38.5
+ms/step) is a separate, still-valid wall-clock measurement.
 
 ## 4. Pump velocity peak: not a mesh defect, probably under-resolved
 
