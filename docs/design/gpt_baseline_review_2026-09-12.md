@@ -151,3 +151,67 @@ Both agents share this workspace: Codex can already read an uncommitted
 `SYNC.md` is currently excluded through `.git/info/exclude`; preserve that policy
 unless the user changes it. Put public detailed handoffs in tracked documents
 and update the local sync pointer. Neither agent should stage the other's files.
+
+## Follow-up: reference dependencies and turbulence
+
+Author: GPT/Codex. Checked 2026-09-12. Status: source/documentation review;
+no reference build or cluster inspection performed.
+
+The mandatory Trilinos/STK dependency is confirmed at pinned OpenAccel
+`0d69041`: `CMakeLists.txt:74` is outside the optional Trilinos-solver guard.
+However, the claim that its numerical term files contain no STK is incorrect.
+`src/assemble/flow/segregatedFlow/navierStokes/navierStokesAssemblerElemTerms.cpp:34`
+and the pressure counterpart `pressureCorrection/pressureCorrectionAssemblerElemTerms.cpp:35`
+directly obtain `stk::mesh::BulkData` and `MetaData`, followed by mesh/field calls.
+The dependency extends beyond the base-class signatures. Use the real dependency
+stack for the reference executable; an STK stub would require separate validation.
+
+Upstream already supplies the dependency route Claude's report did not mention:
+
+- `tools/spack/openmpi.yaml` and `tools/spack/mpich.yaml` describe CPU environments.
+- `tools/spack/repos/spack_repo/ccfnum/openaccel` contains the custom Trilinos
+  package and its patches. The manifests request `trilinos@16` with `+stk`,
+  `+exodus` and `+sierra_migration`, among the other solver packages.
+- The README requires Sierra migration and describes parallel netCDF support
+  for STK/Ioss runtime mesh decomposition. MPI, HDF5, YAML-cpp and a Fortran
+  compiler are also build concerns; finding Trilinos alone is insufficient.
+
+These are checked-in inputs at the
+[pinned OpenAccel revision](https://github.com/CCFNUM/OpenAccel/tree/0d69041ba1afda63e9e4328d9e0d9834bba37756/tools/spack),
+not a build we have executed. `@16` is a version range, not a dependency lock.
+Preserve the custom recipe/patches, pin compatible Spack and package-repository
+revisions, and retain the concretized lockfile with compiler/MPI versions.
+
+Recommended build order:
+
+1. Try the existing real-valued **linalg** uenv first. CSCS lists version 25.10
+   on Daint GH200 and Eiger Zen2, including Trilinos 16.0.0. Its documentation
+   does not establish the STK/Sierra options needed here. Check the exported
+   package/configuration and actual OpenAccel configure/link result before
+   calling it compatible. Keep its compiler/MPI stack consistent.
+   [CSCS linalg documentation](https://docs.cscs.ch/software/prgenv/linalg/).
+2. If incompatible, use the pinned upstream Spack environment/custom recipe
+   in a Linux CPU container matching the target architecture. This is the
+   portable fallback for the reference executable. CSCS documents Podman
+   image builds and Enroot import; no container image has been built or tested
+   for this reference yet.
+   [CSCS container build workflow](https://docs.cscs.ch/build-install/containers/).
+
+Do not spend the harness ticket inventing another Trilinos recipe or stripping
+out STK. Instrumentation, the native public deck and the global-node-ID comparator
+remain useful work at Medium with one agent. Dependency compatibility/build work
+is a separate bounded High step, subject to the user's effort approval rule.
+
+The RANS implementations are present: k-epsilon, SST and transition variants
+under `src/model/turbulence/RANS` and `src/assemble/turbulence/RANS`.
+Their presence is not evidence that the PI selected one. In fact,
+`src/domain/domain.h:42` defaults the turbulence option to laminar, and
+`src/domain/domainIO.cpp:624` handles that selection without extra equations.
+Neither a turbulence-related failure mechanism nor a numerical Reynolds number
+for the private case follows from this source inspection.
+
+Keep the first reference profile laminar so we can isolate discretization parity.
+If the PI confirms RANS, record the exact model, wall treatment and inlet
+turbulence data before specifying the additional equations and effective
+viscosity. This adds a defined modeling task; it does not replace the existing
+momentum, flux, SIMPLE and conservation gates.
