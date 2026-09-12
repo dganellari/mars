@@ -1,0 +1,522 @@
+{
+  "schema_version": 1,
+  "author": "GPT/Codex",
+  "date": "2026-09-12",
+  "status": "source-derived contract; reference execution and device parity pending",
+  "format_note": "Harness contract, not native OpenAccel input. Export native deck and effective runtime settings.",
+  "coordination_file": "SYNC.md",
+  "contract": "docs/design/gpt_openaccel_numerical_contract_2026-09-12.md",
+  "reference": {
+    "repository": "https://github.com/CCFNUM/OpenAccel",
+    "revision": "0d69041ba1afda63e9e4328d9e0d9834bba37756",
+    "inspected_source_sha256": {
+      "src/equation/flow/segregatedFlowEquations.cpp": "27bec7a09264d3e7c769b2119126c9ae4c6eae34ca32c0e033f526f48161695f",
+      "src/equation/flow/navierStokes/navierStokesEquation.cpp": "6f5a48b99d2bd0365954647af4667a15512a1b04fdad3bd9b58a860f75c93dee",
+      "src/equation/flow/pressureCorrection/pressureCorrectionEquation.cpp": "b0368d2a198be580196514dcdbe05a209a2506f704ae9388a2b26f417e72c2e3",
+      "src/equation/flow/pressureCorrection/pressureCorrectionEquation.h": "f9d6e16a85ef18ac662a6d1488f619861764309a2f01b0c886498e54ccdf8f10",
+      "src/equation/equation.h": "7af00894a833f835e9b2bf62a7bec89602ddd6c424e51c7a025ef9b954262b63",
+      "src/equation/linearSystem.h": "cf215bbfa454d14bb39e26ef7352c2553c40044e7d43d54f0eebb586ba15f5b4",
+      "src/assemble/phiAssembler/phiAssembler.h": "6cb01e568924e60ab5f01141455651d3d747d77553e201756b68e0104a6fe24b",
+      "src/assemble/flow/segregatedFlow/navierStokes/navierStokesAssembler.cpp": "e0213349ccc8e65cc8b94bb595518b9582c30c53be555a78a9535faa2aa74c06",
+      "src/assemble/flow/segregatedFlow/navierStokes/navierStokesAssemblerElemTerms.cpp": "6ca53ea4c40a03a5afdd696dea4bdf907f1fdd657ba0950d8792ecf2d3a4990c",
+      "src/assemble/flow/segregatedFlow/navierStokes/navierStokesAssemblerNodeTerms.cpp": "47b6db6bcfbac9c0b5b2aad7930b6b4af8f1569e31bf211e7401023141fd0d16",
+      "src/assemble/flow/segregatedFlow/navierStokes/navierStokesAssemblerElemBoundaryConditions.cpp": "3b73dcfb62b993ebbd86cf25dadf24c730402f806b8bb09f98c52fe617ed8a25",
+      "src/assemble/flow/segregatedFlow/pressureCorrection/pressureCorrectionAssembler.cpp": "f1a7e523966dac8a75bc0ed6785a69c537a269273b34ce9ebeb38e008a5ba141",
+      "src/assemble/flow/segregatedFlow/pressureCorrection/pressureCorrectionAssemblerElemTerms.cpp": "1f220ebe5f858868b475d0bdb7b0e686f7fe21a2a2da18d89bad53b960c75940",
+      "src/assemble/flow/segregatedFlow/pressureCorrection/pressureCorrectionAssemblerNodeTerms.cpp": "2c6093846aae8205759396388db12859737634054ac4b621b43fb069ab235e7c",
+      "src/assemble/flow/segregatedFlow/pressureCorrection/pressureCorrectionAssemblerElemBoundaryConditions.cpp": "7953b4aa4c9a989dbf98dc0638dd29e6c43edbc1a4c41157d25a01066da72705",
+      "src/model/flow/flowModel.cpp": "206bc718cd1befa0f28afbe3676cfdfb58d3ec8472c0b3d34bad6a1fc07f2575",
+      "src/realm/fieldBroker.cpp": "aefb6c580c149f7ff4193ede4678e8bbe55fdb944bc3c071b7cdaa9ae43520db",
+      "src/field/nodeField/nodeField.hpp": "af5925aa9be4bf1a521e9632b1b3b8f800617c7ff3c5c73fc9489686450c282a",
+      "src/field/nodeField/nodeField.h": "acbeba9aa2d23a609c5fdfd45a542f6b75b02fc6095d8054cb81970fdf01e83b",
+      "src/field/nodeField/vector/transport/flow/velocity.cpp": "200594a55b3bea9b2c70fcd976823bfc05f45af6a200b45c1fce00fb74e25299",
+      "src/field/nodeField/scalar/transport/flow/pressure.cpp": "62e2e765981f9254f39b4d5857ae7b4d8b5505c76d9bb3f1c7df25b129bd99cf",
+      "src/field/nodeField/scalar/transport/flow/pressureCorrection.cpp": "c0e285f702efa4be9009f5332596d63420956db8aa7f7dbebd30df6b446eaf5a",
+      "src/field/nodeSideField/nodeSideField.cpp": "19e1622621427541913e5757332810a814dcb9794d758712c3bf0683936f854e",
+      "src/field/sideField/sideField.cpp": "ba3e18f8cc3b784f30b6a8d0c9ff0b8e2c048fa26a3114456869f05adee117a9",
+      "src/field/elementField/elementField.hpp": "65e90a675921eda2e8f25405c25e4112664cadb96339dff37a1872fcc84f8814",
+      "src/field/elementField/scalar/massFlowRate/massFlowRate.cpp": "7a3a0bdbe47696f42f6936e97020a08628ac9d6ec15c85fb71a1077dd53377f5",
+      "src/controls/controls.h": "28b054c7dfc8bb9c5103d4d38ae26054d5750446ff8ac3d75c37ff813111a180",
+      "src/basic/types.h": "fbf9840aebf615f25e70508a688b625b56518d81d43f40362c11c2342337da15",
+      "src/mesh/meshGeometry.cpp": "0266179b464ccd9f0203298660d452032644f703f2caadffbeb0f53c7fd9ba09",
+      "external/nalu/src/master_element/Tet4CVFEM.C": "b2cb19882372e1c6ecd175bb6377bab364677de6628c5e7288a554a3b156c299",
+      "external/nalu/src/master_element/MasterElement.C": "83002173952c6aa872b1953d4e12454e0e7e9ed1df03f6c7a7dafe4925b6568a"
+    },
+    "solver_gitlink": {
+      "repository": "https://github.com/CCFNUM/LibLinSolve",
+      "revision": "e351ba5eeaf3537dcc53d0aba09a8347f0a44cd0",
+      "inspected_source_sha256": {
+        "residual.h": "44a9adc452d13e4405cf80d6b26d12b7aa2aa8a1fe0671ac6373b512ef05581b",
+        "linearSolverContext.h": "898de9fd5dc161365a134fe9d01018e267657f32e847e551cd7f66e1c6420144",
+        "coefficients.h": "ddd416d6723aa3e6780c04dc80b50a3421f87b44460329c60d43ee478fd5a999",
+        "matrix/operators/distributed/CRSResidual.h": "f928a56394f167364469746937de3c9a4544264778ecf4b94d5abac18d863e1a"
+      }
+    }
+  },
+  "profile": {
+    "steady": true,
+    "physical_timescale_s": 0.01,
+    "consistent_": false,
+    "fractionalStepMethod_": false,
+    "advectionScheme_": "upwind",
+    "nso_": false,
+    "velocityInterpolationType_": "trilinear",
+    "pressureInterpolationType_": "linearLinear",
+    "velocityGradientInterpolationType_": "linearLinear",
+    "pressureGradientInterpolationType_": "linearLinear",
+    "velocityRelaxationFactor_": 0.3,
+    "pressureRelaxationFactor_": 0.3,
+    "relaxMass_": 0.75,
+    "relaxGradients_": false,
+    "incrementalGradientChange_": true,
+    "limitGradients_": false,
+    "momentum_subiterations": 1,
+    "pressure_subiterations": 1,
+    "segregated_flow_subiterations": 1,
+    "field_update_acceleration": false,
+    "field_update_clipping": false,
+    "reference_outlet_sample_flux_clipping": true,
+    "corrected_boundary_volume_node_values": false,
+    "boundary_update_order": [
+      "walls",
+      "inlet",
+      "outlet"
+    ],
+    "inlet": {
+      "velocity_type": "normalSpeed",
+      "pressure_type": "zeroGradient",
+      "speed_m_s": 0.1
+    },
+    "outlet": {
+      "pressure_type": "averageStaticPressure",
+      "reference_pressure_Pa": 0.0,
+      "blend_factor": 0.05
+    },
+    "walls": {
+      "velocity": "stationary_no_slip_reference_coefficient_law"
+    },
+    "topology": "Tet4",
+    "interfaces": false,
+    "moving_mesh": false,
+    "rotating_frame": false,
+    "compressible": false,
+    "turbulence": false,
+    "body_forces": false,
+    "sources": false,
+    "initial_increment_guess": "zero",
+    "fixture_assembly_precision": "float64",
+    "outer_residual_target": 1e-06,
+    "linear_solve_requirement": "Export actual solver configuration and achieved residual; compare operator entries before solver trajectories."
+  },
+  "property_cases": [
+    {
+      "id": "elementary",
+      "rho_kg_m3": 1,
+      "mu_Pa_s": 0.1,
+      "nu_m2_s": 0.1
+    },
+    {
+      "id": "water",
+      "rho_kg_m3": 1000,
+      "mu_Pa_s": 0.001,
+      "nu_m2_s": 1e-06
+    }
+  ],
+  "variant_overrides": [
+    {
+      "id": "fixed_outlet_trace",
+      "changes": {
+        "outlet.blend_factor": 1.0
+      }
+    },
+    {
+      "id": "simplec",
+      "changes": {
+        "consistent_": true
+      }
+    },
+    {
+      "id": "relaxed_gradient",
+      "changes": {
+        "relaxGradients_": true
+      },
+      "expected_later_gradient_urf": 0.5625,
+      "expected_pressure_correction_gradient_urf": 1.0
+    },
+    {
+      "id": "transient_bdf1",
+      "changes": {
+        "steady": false,
+        "dt_s": 0.01,
+        "transientScheme_": "firstOrderBackwardEuler"
+      }
+    },
+    {
+      "id": "transient_bdf2",
+      "changes": {
+        "steady": false,
+        "dt_s": 0.01,
+        "previous_dt_s": 0.01,
+        "transientScheme_": "secondOrderBackwardEuler"
+      },
+      "startup_policy": "Export actual pinned reference dispatch before claiming BDF2 trajectory parity."
+    }
+  ],
+  "fixtures": [
+    {
+      "id": "unit_tet",
+      "scope": "local geometry/assembly; not a converged global-flow benchmark",
+      "coordinates_m": [
+        [
+          0,
+          0,
+          0
+        ],
+        [
+          1,
+          0,
+          0
+        ],
+        [
+          0,
+          1,
+          0
+        ],
+        [
+          0,
+          0,
+          1
+        ]
+      ],
+      "elements": [
+        [
+          0,
+          1,
+          2,
+          3
+        ]
+      ],
+      "outlet_face_nodes": [
+        1,
+        2,
+        3
+      ],
+      "inlet_face_nodes": [
+        0,
+        2,
+        1
+      ],
+      "other_exterior_faces": "walls"
+    },
+    {
+      "id": "skew_tet",
+      "scope": "local component coupling and geometry",
+      "coordinates_m": [
+        [
+          0.1,
+          -0.2,
+          0.3
+        ],
+        [
+          1.3,
+          0,
+          0.4
+        ],
+        [
+          0.4,
+          0.7,
+          0.2
+        ],
+        [
+          0.2,
+          0.1,
+          1.4
+        ]
+      ],
+      "elements": [
+        [
+          0,
+          1,
+          2,
+          3
+        ]
+      ],
+      "outlet_face_nodes": [
+        1,
+        2,
+        3
+      ],
+      "inlet_face_nodes": [
+        0,
+        2,
+        1
+      ],
+      "other_exterior_faces": "walls"
+    },
+    {
+      "id": "two_tets",
+      "scope": "shared node/face, bent exterior and boundary order",
+      "coordinates_m": [
+        [
+          0,
+          0,
+          0
+        ],
+        [
+          1,
+          0,
+          0
+        ],
+        [
+          0,
+          1,
+          0
+        ],
+        [
+          0,
+          0,
+          1
+        ],
+        [
+          0.25,
+          0.15,
+          -0.8
+        ]
+      ],
+      "elements": [
+        [
+          0,
+          1,
+          2,
+          3
+        ],
+        [
+          0,
+          2,
+          1,
+          4
+        ]
+      ],
+      "outlet_faces_by_element_and_nodes": [
+        [
+          0,
+          [
+            1,
+            2,
+            3
+          ]
+        ],
+        [
+          1,
+          [
+            2,
+            1,
+            4
+          ]
+        ]
+      ],
+      "inlet_faces_by_element_and_nodes": [
+        [
+          0,
+          [
+            0,
+            3,
+            2
+          ]
+        ],
+        [
+          1,
+          [
+            0,
+            2,
+            4
+          ]
+        ]
+      ],
+      "other_exterior_faces": "walls",
+      "shared_face_nodes": [
+        0,
+        1,
+        2
+      ]
+    },
+    {
+      "id": "public_channel",
+      "scope": "later full iteration and MPI integration",
+      "mars_path": "tests/data/public_outlet_channel/outlet_channel.exo",
+      "geometry_read_in_stage0": false,
+      "require_owner_verified_public_provenance": true
+    }
+  ],
+  "analytic_witnesses": {
+    "provenance": "Hand-derived mathematical checks; not executed OpenAccel outputs.",
+    "face_sample_node_order": [
+      1,
+      2,
+      3
+    ],
+    "rho": 1,
+    "affine": {
+      "u_each_node": [
+        1,
+        2,
+        3
+      ],
+      "p_each_node": [
+        7,
+        9,
+        4,
+        12
+      ],
+      "nodal_side_trace": [
+        9,
+        4,
+        12
+      ],
+      "provided_reconstructed_gradient_each_node": [
+        2,
+        -3,
+        5
+      ],
+      "d_each_node_component": 2,
+      "expected_sample_mass_flux": [
+        1,
+        1,
+        1
+      ],
+      "expected_opposite_pressure_derivative_each_sample": 1,
+      "pressure_perturbation": 0.2,
+      "expected_opposite_flux_change": 0.6,
+      "expected_common_trace_flux_change": -0.6
+    },
+    "nonuniform_gradient": {
+      "u_each_node": [
+        0,
+        0,
+        0
+      ],
+      "p_each_node": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "nodal_side_trace": [
+        0,
+        0,
+        0
+      ],
+      "provided_reconstructed_gradients": [
+        [
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          0
+        ],
+        [
+          3,
+          0,
+          0
+        ],
+        [
+          9,
+          0,
+          0
+        ]
+      ],
+      "d_each_node_component": 2,
+      "expected_sample_mass_flux": [
+        0,
+        0.5,
+        1.5
+      ],
+      "incorrect_face_mean_gradient_sample_mass_flux_rational": [
+        "2/3",
+        "2/3",
+        "2/3"
+      ]
+    },
+    "nonuniform_face_d": {
+      "inherits": "nonuniform_gradient",
+      "face_d_each_component": [
+        2,
+        4,
+        8
+      ],
+      "opposite_d_each_component": 123,
+      "expected_sample_d_rational": [
+        "32/9",
+        "79/18",
+        "109/18"
+      ],
+      "expected_sample_mass_flux_rational": [
+        "0",
+        "79/72",
+        "109/24"
+      ]
+    },
+    "frozen_transport": {
+      "interior_sample_mass_flux_kg_s": [
+        -0.4,
+        0.7,
+        -0.3,
+        0.2,
+        0.5,
+        -0.6
+      ],
+      "purpose": "Override only for local momentum assembly gate; expose upwind and nodal divergence correction."
+    }
+  },
+  "required_exports": [
+    "source_and_dependency_revisions",
+    "native_input",
+    "effective_controls_and_side_urfs",
+    "boundary_enumeration",
+    "canonical_node_element_sample_ids",
+    "dual_volumes",
+    "sample_area_vectors",
+    "shape_weights",
+    "shape_gradients",
+    "wall_normal_distance",
+    "volume_and_side_state_after_each_boundary_update",
+    "momentum_local_blocks_rhs",
+    "momentum_node_blocks_rhs",
+    "momentum_boundary_blocks_rhs",
+    "momentum_matrix_rhs_before_and_after_relaxation",
+    "influence_denominators_d_dtilde",
+    "pressure_matrix_rhs",
+    "fresh_mass_flux_per_sample",
+    "stored_mass_flux_before_and_after_relaxation_and_reversal",
+    "trace_sample_and_nodal_side_values",
+    "reversal_flags",
+    "grad_p_and_grad_phi",
+    "delta_u_phi",
+    "ordered_iteration_u_p_m_gradients",
+    "raw_linear_residuals",
+    "diagonal_normalized_initial_residuals",
+    "field_scales_at_report_time",
+    "residual_converged_and_stopped_at_limit",
+    "bdf_coefficients_histories",
+    "full_owned_continuity_and_unique_boundary_sums",
+    "compiler_precision_runtime_and_artifact_hashes"
+  ],
+  "tolerances": {
+    "local_entry_comparison": "abs(error) <= 1e-12*max(1,max(abs(reference block))) for well-scaled local SI fixtures only",
+    "linear_solutions": "Use achieved residual and conditioning; no universal bitwise or field tolerance.",
+    "finite_difference": "Multiple step sizes; hold d, trace, reconstructed gradients and flags fixed for compact-H check."
+  },
+  "pending_gates": [
+    "actual_reference_build_and_export",
+    "native_deck_effective_settings",
+    "boundary_corner_buffer_order",
+    "full_iteration_parity",
+    "bdf_startup_parity",
+    "cuda_compilation",
+    "gpu_1_2_4_rank_parity",
+    "water_public_nonlinear_convergence"
+  ]
+}

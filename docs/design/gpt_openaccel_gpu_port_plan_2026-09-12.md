@@ -56,6 +56,12 @@ approval. Do not launch multiple reviewers by default.
 
 ## Stage 0: the architectural contract
 
+The source-derived [version 1 numerical contract](gpt_openaccel_numerical_contract_2026-09-12.md)
+now defines the provisional profile, equations, update order, typed reuse and
+Claude's first reference-harness ticket. Read [SYNC.md](../../SYNC.md) before
+acting on a handoff; it records newer coordination updates. Reference execution
+and production GPU parity remain subsequent gates.
+
 Start from the previously inspected public OpenAccel revision
 `0d69041ba1afda63e9e4328d9e0d9834bba37756` as a provisional navigation reference,
 not as an assertion that the PI ran that revision. Record the PI's version and
@@ -200,9 +206,8 @@ memory. User/PI private mesh and field inspection remains outside GPT's access.
 
 ## First Claude task
 
-Stage 0 comes first. Until GPT's source-to-equation contract is available, Claude
-can help identify the selected reference build/configuration and public fixture,
-but should not begin another speculative pressure/outlet implementation.
+The Stage 0 contract is linked above. Claude should take its section 9 ticket:
+build the public reference export/comparison harness before production kernels.
 
 After the architect closes the contract's numerical questions, Claude's first
 coding ticket is Stage 1: build the public
