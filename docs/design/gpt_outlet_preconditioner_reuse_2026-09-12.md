@@ -1,8 +1,9 @@
 # Prepared Hypre solves and direct AMG-cycle experiment
 
 Author: GPT/Codex. Date: 2026-09-12.
-Status: implementation and source review; 46 host FGMRES checks pass. The new
-CUDA/Hypre wrapper and GPU lifecycle gate have not been compiled or run locally.
+Status: implementation; 46 local host FGMRES checks pass. User-executed Daint
+GPU lifecycle gates pass on one and four ranks. Public flow and timing evidence
+is recorded below; CUDA/Hypre execution was on Daint, not on the laptop.
 
 The measured public profile spends about 24% of correction time on Hypre
 preparation/setup and 73% on inner solves. This change exposes two opt-in paths
@@ -98,8 +99,8 @@ off-rank couplings on multiple ranks and an analytic solution. It checks:
 - collective rebuilding when only rank 0 changes its map allocation.
 
 Fresh AMG hierarchies need not be identical, so the gate does not demand bitwise
-agreement between independently built cycles. CUDA compilation, this gate on
-1/2/4 ranks, and the public flow comparisons remain pending.
+agreement between independently built cycles. The user supplied PASS transcripts
+for this gate on one and four ranks. A separate two-rank run was not supplied.
 
 With profiling enabled, legacy has one setup per preconditioner call. Reuse and
 cycle modes should have one setup per physical step that actually calls the
@@ -137,4 +138,44 @@ For the separate cycle experiment, change only `MARS_OUTLET_PRECOND=amg-cycle`
 and the output name to `channel-C-amg-cycle.log`. Keep beta=1 and all tolerances.
 Confirm full continuity and boundary balance, and compare total work rather than
 only inner iteration counts. A matched timing claim requires subsequent runs
-with both profiling and solve tracing disabled. No speedup is claimed yet.
+with both profiling and solve tracing disabled.
+
+## Daint validation and measured comparison
+
+Recorded by GPT/Codex on 2026-09-12 from user-executed public-channel runs.
+Both lifecycle gates passed, including collective invalidation. Both one-rank
+flow modes completed 200 steps. The complete profiled logs were pulled with
+authorized rsync and inspected locally:
+
+| Log | SHA256 |
+|---|---|
+| `channel-C-reuse.log` | `0e0fa14bff07e02bb8958949cbec32aae616875fd35e399d07d85acb06185fd4` |
+| `channel-C-amg-cycle.log` | `95ef2c8b3771f550c4deac701bd06da279b5114962bf3a941dc487050904b5b7` |
+
+Both modes report one setup per physical step. Mean correction times over steps
+3–200 are 214.10 ms (reuse), 29.38 ms (cycle), and 267.86 ms in the previously
+recorded legacy profile. The cycle run uses 5,466 preconditioner applications
+versus 3,571 for reuse: cheap approximate actions win despite more outer work.
+
+The subsequent matched one-rank commands disable both `MARS_OUTLET_PROFILE` and
+`MARS_SOLVE_TRACE`. The supplied complete transcripts give:
+
+| Mode | 200-step runtime | ms/step | Final continuity RMS /s | Final signed boundary flux |
+|---|---:|---:|---:|---:|
+| legacy | 57,935.4 ms | 289.7 | 3.86e-13 | 4.11e-15 |
+| amg-cycle | 8,000.4 ms | 40.0 | 5.33e-13 | 2.38e-14 |
+
+This pair measures 7.24x lower total runtime (86.2% reduction) on this fixture.
+It is not a repeated-run statistical benchmark. Both final reports have
+`u_rms=0.6615`, `u_max=1.233`, and stabilized cut fluxes 0.500/0.500/0.500.
+This is agreement at printed precision, not a field-norm comparison.
+
+The user's four-rank AMG transcript covers steps 21–200 and reaches step 200
+with the same printed velocities and cuts, RMS 6.10e-13 /s and signed boundary
+flux -6.64e-14. Every supplied profile row has one setup on every rank. Mean
+correction time over those steps is 85.98 ms versus 29.35 ms for one rank over
+the same interval. This tiny fixture does not demonstrate useful strong scaling.
+The four-rank excerpt does not contain the final runtime/completion footer.
+
+These results support the opt-in cycle mode for further beta=1 work. They do
+not validate beta=0.05, larger meshes, long-time physics, or a SIMPLE solver.

@@ -17,8 +17,8 @@ def relative_error(actual, expected):
 
 
 class CoupledStep:
-    def __init__(self, dt_eff, nu, beta, compact_only=False):
-        self.op = op = Operators(dt_eff, nu, beta)
+    def __init__(self, dt_eff, nu, beta, compact_only=False, wall_precedence=False):
+        self.op = op = Operators(dt_eff, nu, beta, wall_precedence=wall_precedence)
         self.h = np.kron(op.hfree, np.eye(3))
         self.g = op.gpred[op.free3]
         self.b = op.bfree
@@ -118,16 +118,17 @@ def main():
     parser.add_argument('--beta', type=float, default=.05)
     parser.add_argument('--steps', type=int, default=200)
     parser.add_argument('--compact-only', action='store_true')
+    parser.add_argument('--wall-precedence', action='store_true')
     parser.add_argument('--expect', choices=['stable', 'unstable'])
     args = parser.parse_args()
     if args.dt <= 0 or args.nu < 0 or not 0 < args.beta <= 1 or args.steps < 0:
         parser.error('require dt>0, nu>=0, 0<beta<=1 and steps>=0')
-    later = CoupledStep(2 * args.dt / 3, args.nu, args.beta, args.compact_only)
+    later = CoupledStep(2 * args.dt / 3, args.nu, args.beta, args.compact_only, args.wall_precedence)
     evidence = later.check()
     evidence['model'] = 'fully implicit linear host replica; advection disabled'
     evidence['parameters'] = vars(args)
     if args.steps:
-        first = CoupledStep(args.dt, args.nu, args.beta, args.compact_only)
+        first = CoupledStep(args.dt, args.nu, args.beta, args.compact_only, args.wall_precedence)
         u = np.zeros((first.op.n, 3))
         previous_u = u.copy()
         trajectory = []

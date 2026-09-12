@@ -28,7 +28,7 @@ def mesh():
 
 
 class Operators:
-    def __init__(self, dt_eff, nu, beta, trace_mode='lagged'):
+    def __init__(self, dt_eff, nu, beta, trace_mode='lagged', wall_precedence=False):
         xyz, cells, det, grad = mesh()
         n = len(xyz)
         self.n, self.xyz, self.cells, self.grad = n, xyz, cells, grad
@@ -36,7 +36,7 @@ class Operators:
         self.inlet = xyz[:,0] == 0
         self.outlet = xyz[:,0] == 4
         wall = np.any((xyz[:,1:] == 0) | (xyz[:,1:] == 1),axis=1)
-        fixed = (wall | self.inlet) & ~self.outlet
+        fixed = (wall | self.inlet) if wall_precedence else (wall | self.inlet) & ~self.outlet
         self.fixed = fixed
         self.free = np.flatnonzero(~fixed)
         self.free3 = np.flatnonzero(np.repeat(~fixed,3))
@@ -168,9 +168,11 @@ def main():
     parser.add_argument('--trace',choices=['lagged','fixed','implicit'],default='lagged')
     parser.add_argument('--steps',type=int,default=200)
     parser.add_argument('--spectrum',action='store_true')
+    parser.add_argument('--wall-precedence', action='store_true',
+                        help='host counterfactual: keep wall/outlet intersections velocity-fixed')
     args=parser.parse_args()
-    first=Operators(args.dt,args.nu,args.beta,args.trace)
-    later=Operators(2*args.dt/3,args.nu,args.beta,args.trace)
+    first=Operators(args.dt,args.nu,args.beta,args.trace,args.wall_precedence)
+    later=Operators(2*args.dt/3,args.nu,args.beta,args.trace,args.wall_precedence)
     print('REPLICA: linear momentum, advection disabled, NumPy direct pressure solve',flush=True)
     print('nodes',first.n,'free',len(first.free),'volume',sum(first.mass),
           'nu*K_trace',args.nu*np.trace(first.stiffness),'inverse_errors',first.inverse_error,later.inverse_error,flush=True)
