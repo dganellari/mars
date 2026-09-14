@@ -212,10 +212,12 @@ struct ChainContractsPass
     b.setInsertionPointToStart(body);
     Lane L = makeLane(b, root->getLoc());
 
-    // Map: contract result SSA -> the C-fragment (vector<1x2>) that lowered it.
+    // Any vector<8x8xf64> value that now lives as a per-lane C-fragment
+    // (vector<1x2>). Contract results and pointwise results are BOTH in C
+    // layout, so a pointwise op reads its operands from the same map that a
+    // following contract relayouts out of.
     DenseMap<Value, Value> frag;
-    SmallVector<vector::ContractionOp> chain;
-    body->walk([&](vector::ContractionOp c) { chain.push_back(c); });
+    SmallVector<Operation *> dead;
 
     // Fragment reader for an operand of a contract. A leaf transfer_read of an
     // 8x8 memref is read directly as the requested fragment; a prior contract
@@ -225,6 +227,8 @@ struct ChainContractsPass
       if (auto it = frag.find(v); it != frag.end())
         return relayout(b, loc, L, it->second, slab, /*toB=*/false);
       auto rd = v.getDefiningOp<vector::TransferReadOp>();
+      if (!rd)
+        return Value();  // neither a leaf read nor a value we lowered
       Value col = colOf(b, loc, L, slab);
       return readFrag1(b, loc, L, rd.getSource(), L.i, col);  // A[i,4s+k]
     };
@@ -233,60 +237,134 @@ struct ChainContractsPass
       if (auto it = frag.find(v); it != frag.end())
         return relayout(b, loc, L, it->second, slab, /*toB=*/true);
       auto rd = v.getDefiningOp<vector::TransferReadOp>();
+      if (!rd)
+        return Value();
       Value col = colOf(b, loc, L, slab);
       if (transp)
         return readFrag1(b, loc, L, rd.getSource(), L.i, col);   // B[i,4s+k]
       return readFrag1(b, loc, L, rd.getSource(), col, L.i);     // B[4s+k,i]
     };
 
-    for (auto c : chain) {
-      Value A, B, acc;
-      bool bt;
-      if (!classify(c, M, A, B, acc, bt)) {
-        c.emitOpError("mir-chain-contracts: unsupported contract shape/maps");
-        signalPassFailure();
-        return;
+    auto is8x8f64 = [](Value v) {
+      auto t = dyn_cast<VectorType>(v.getType());
+      return t && t.getElementType().isF64() &&
+             t.getShape() == ArrayRef<int64_t>({8, 8});
+    };
+
+    // Fragment an operand of a POINTWISE op, which needs C layout. Already
+    // lowered -> reuse. Leaf transfer_read -> read [i, 2k]. Splat constant ->
+    // a vector<1x2> splat (a uniform value has no layout).
+    auto operandFragC = [&](Value v) -> Value {
+      if (auto it = frag.find(v); it != frag.end())
+        return it->second;
+      Location loc = v.getLoc();
+      if (auto rd = v.getDefiningOp<vector::TransferReadOp>())
+        return readC(b, loc, L, rd.getSource());
+      if (auto cst = v.getDefiningOp<arith::ConstantOp>())
+        if (auto d = dyn_cast<DenseElementsAttr>(cst.getValue()))
+          if (d.isSplat())
+            return b.create<arith::ConstantOp>(
+                loc, L.frag2,
+                DenseElementsAttr::get(L.frag2, d.getSplatValue<APFloat>()));
+      return Value();
+    };
+
+    // One in-order pass: the chain is straight-line, so lowering each op as it
+    // is reached keeps `frag` populated before any consumer needs it.
+    for (Operation &opRef : *body) {
+      Operation *op = &opRef;
+
+      if (auto c = dyn_cast<vector::ContractionOp>(op)) {
+        Value A, B, acc;
+        bool bt;
+        if (!classify(c, M, A, B, acc, bt)) {
+          c.emitOpError("mir-chain-contracts: unsupported contract shape/maps");
+          signalPassFailure();
+          return;
+        }
+        b.setInsertionPoint(c);
+        // Each contract starts from a zero C-fragment; the pointwise ops between
+        // contracts do the combining, matching the emit_face_reg structure.
+        Value cfrag = b.create<arith::ConstantOp>(
+            c.getLoc(), L.frag2,
+            DenseElementsAttr::get(L.frag2, b.getF64FloatAttr(0.0)));
+        for (int s2 = 0; s2 < 2; ++s2) {  // 8x8x8 = two m8n8k4 slabs
+          Value af = operandFragA(A, s2);
+          Value bf = operandFragB(B, s2, bt);
+          if (!af || !bf) {
+            c.emitOpError("mir-chain-contracts: contract operand is neither a "
+                          "leaf transfer_read nor a value this pass lowered");
+            signalPassFailure();
+            return;
+          }
+          cfrag = mma(b, c.getLoc(), L, af, bf, cfrag);
+        }
+        frag[c.getResult()] = cfrag;
+        dead.push_back(op);
+        continue;
       }
-      b.setInsertionPoint(c);
-      // acc: the vector.contract's acc operand is a zero constant (fresh chain)
-      // or a prior C-fragment (handled via frag map by the pointwise ops); here
-      // we start each contract from a zero C-fragment and rely on the pointwise
-      // ops between contracts to combine, matching the emit_face_reg structure.
-      Value cfrag = b.create<arith::ConstantOp>(
-          c.getLoc(), L.frag2,
-          DenseElementsAttr::get(L.frag2, b.getF64FloatAttr(0.0)));
-      for (int s = 0; s < 2; ++s) {  // 8x8x8 = two m8n8k4 slabs
-        Value af = operandFragA(A, s);
-        Value bf = operandFragB(B, s, bt);
-        cfrag = mma(b, c.getLoc(), L, af, bf, cfrag);
+
+      // Pointwise (the flux): elementwise on 8x8 needs NO relayout -- it acts
+      // lane-locally on the vector<1x2>. Only fuse ops that actually touch the
+      // chain; an elementwise op on two leaf reads is left alone.
+      if (op->hasTrait<OpTrait::Elementwise>() && op->getNumResults() == 1 &&
+          is8x8f64(op->getResult(0)) &&
+          llvm::all_of(op->getOperands(), is8x8f64) &&
+          llvm::any_of(op->getOperands(),
+                       [&](Value v) { return frag.count(v); })) {
+        b.setInsertionPoint(op);
+        SmallVector<Value> fops;
+        for (Value v : op->getOperands()) {
+          Value f = operandFragC(v);
+          if (!f) {
+            op->emitOpError("mir-chain-contracts: pointwise operand is not a "
+                            "fragment, a leaf transfer_read or a splat");
+            signalPassFailure();
+            return;
+          }
+          fops.push_back(f);
+        }
+        OperationState st(op->getLoc(), op->getName());
+        st.addOperands(fops);
+        st.addTypes({L.frag2});
+        st.addAttributes(op->getAttrs());
+        frag[op->getResult(0)] = b.create(st)->getResult(0);
+        dead.push_back(op);
+        continue;
       }
-      frag[c.getResult()] = cfrag;
+
+      // A write of a lowered value stores the C-fragment at [i, 2k].
+      if (auto w = dyn_cast<vector::TransferWriteOp>(op)) {
+        auto it = frag.find(w.getVector());
+        if (it == frag.end())
+          continue;
+        b.setInsertionPoint(w);
+        Value col2k = b.create<arith::MulIOp>(w.getLoc(), L.k, L.c2idx);
+        b.create<vector::TransferWriteOp>(
+            w.getLoc(), it->second, w.getSource(), ValueRange{L.i, col2k},
+            AffineMapAttr::get(AffineMap::getMinorIdentityMap(2, 2, ctx)),
+            /*mask=*/Value(), b.getBoolArrayAttr({true, true}));
+        dead.push_back(op);
+        continue;
+      }
     }
 
-    // Rewire: every use of a contract result that ISN'T another contract's
-    // operand (i.e. a transfer_write, or a pointwise op) must consume the
-    // C-fragment. Pointwise ops on vector<8x8> are rewritten to vector<1x2>.
-    // For the first milestone we only handle a terminal transfer_write of the
-    // last contract; richer rewiring (pointwise flux fusion) is the next step.
-    for (auto c : chain) {
-      Value res = c.getResult();
-      Value cf = frag[res];
-      for (Operation *user : llvm::make_early_inc_range(res.getUsers())) {
-        if (isa<vector::ContractionOp>(user))
-          continue;  // consumed as a fragment via the frag map
-        if (auto w = dyn_cast<vector::TransferWriteOp>(user)) {
-          OpBuilder wb(w);
-          Value col2k = wb.create<arith::MulIOp>(w.getLoc(), L.k, L.c2idx);
-          wb.create<vector::TransferWriteOp>(
-              w.getLoc(), cf, w.getSource(), ValueRange{L.i, col2k},
-              AffineMapAttr::get(AffineMap::getMinorIdentityMap(2, 2, ctx)),
-              /*mask=*/Value(), wb.getBoolArrayAttr({true, true}));
-          w.erase();
-        }
-      }
-    }
-    for (auto c : llvm::reverse(chain))
-      c.erase();
+    // Erasing a lowered op whose result is still consumed by something we did
+    // not rewrite leaves a dangling operand -- that used to crash the verifier
+    // rather than report anything. Refuse instead.
+    DenseSet<Operation *> deadSet(dead.begin(), dead.end());
+    for (Operation *op : dead)
+      for (Value r : op->getResults())
+        for (Operation *u : r.getUsers())
+          if (!deadSet.count(u)) {
+            u->emitOpError("mir-chain-contracts: unhandled consumer of a "
+                           "register-resident value (only contracts, "
+                           "elementwise 8x8 ops and transfer_write are lowered)");
+            signalPassFailure();
+            return;
+          }
+    for (Operation *op : llvm::reverse(dead))
+      op->erase();
   }
 };
 

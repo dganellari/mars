@@ -82,3 +82,15 @@ grep -c "mma.sync.aligned.m8n8k4" generated/warp_hybrid_sm90.ptx
 # Python-emitted warp_batched above except that gpu.block_id is read before
 # gpu.thread_id, which swaps %r1/%r2: 264 mma
 emit test/warp_fulls.mlir generated/warp_pass_batched_sm90.ptx --mir-batch-elements
+
+# P2 REGISTER-RESIDENT CHAIN PASS (--mir-chain-contracts), two shapes:
+#   warp_chain_pass  pure contract->contract chain:            4 mma, 4 shfl
+#   warp_chain_flux  contract->POINTWISE FLUX->contract:       4 mma, 4 shfl
+# The flux is elementwise, so it fuses lane-locally onto the vector<1x2>
+# C-fragment with no relayout. Both must show NO .shared and NO bar.sync.
+for k in warp_chain_pass warp_chain_flux; do
+  build/tools/mir-opt/mir-opt test/$k.mlir --mir-chain-contracts --canonicalize --cse --lower-affine \
+    | mlir-opt --gpu-lower-to-nvvm-pipeline="cubin-chip=sm_90 cubin-format=isa" \
+    | python3 test/extract_ptx.py generated/${k}_sm90.ptx
+  echo "  $k: shared=$(grep -a -c '\.shared' generated/${k}_sm90.ptx) barrier=$(grep -a -c 'bar.sync' generated/${k}_sm90.ptx)"
+done
