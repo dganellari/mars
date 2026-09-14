@@ -601,9 +601,12 @@ include(cmake/PostInstall.cmake)
 # Ensure DeviceVector instantiations are available through mars_unstructured linkage
 # Note: cstone_instantiations.cu is compiled into mars_unstructured, which is linked to mars
 if(MARS_ENABLE_UNSTRUCTURED AND MARS_ENABLE_CUDA)
-    # Ensure cstone_gpu is linked to mars
+    # BUILD_INTERFACE only: cstone_gpu comes from FetchContent and is not in
+    # MarsTargets, so leaving its plain name in the install interface makes
+    # install(EXPORT) fail to generate. MarsConfig.cmake recreates it as an
+    # imported target and re-attaches it for consumers.
     if(TARGET cstone_gpu)
-        target_link_libraries(mars PUBLIC cstone_gpu)
+        target_link_libraries(mars PUBLIC $<BUILD_INTERFACE:cstone_gpu>)
     endif()
 
     # Link Cuda libraries required for unstructured backend
