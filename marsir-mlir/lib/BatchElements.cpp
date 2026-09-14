@@ -21,6 +21,7 @@
 
 #include "mir/MirPasses.h"
 
+#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/IR/Builders.h"
@@ -36,11 +37,11 @@ constexpr StringLiteral kElementAttr = "mir.element";
 // A subview's result layout is derived from its source, so rebasing the body
 // onto a dynamically-offset element view invalidates every subview below it
 // (offset: 8 becomes offset: ?). Re-infer until nothing moves.
-static void refreshSubViewTypes(gpu::GPUFuncOp func) {
+static void refreshSubViewTypes(Operation *func) {
   bool changed = true;
   while (changed) {
     changed = false;
-    func.walk([&](memref::SubViewOp sv) {
+    func->walk([&](memref::SubViewOp sv) {
       auto src = cast<MemRefType>(sv.getSource().getType());
       auto want = cast<MemRefType>(memref::SubViewOp::inferRankReducedResultType(
           sv.getType().getShape(), src, sv.getMixedOffsets(),
@@ -53,7 +54,11 @@ static void refreshSubViewTypes(gpu::GPUFuncOp func) {
   }
 }
 
-static void batchOne(gpu::GPUFuncOp func) {
+// Templated over the function op: the hex path arrives as a gpu.func from the
+// emitter, the tet path as a bufferized func.func. Both expose the same
+// function_type / arg-attribute / body API.
+template <typename FuncT>
+static void batchOne(FuncT func) {
   FunctionType fnTy = func.getFunctionType();
   SmallVector<unsigned> marked;
   for (unsigned i = 0, n = fnTy.getNumInputs(); i < n; ++i)
@@ -105,7 +110,7 @@ static void batchOne(gpu::GPUFuncOp func) {
     func.removeArgAttr(i, kElementAttr);
   }
 
-  refreshSubViewTypes(func);
+  refreshSubViewTypes(func.getOperation());
 }
 
 struct BatchElementsPass
@@ -123,7 +128,8 @@ struct BatchElementsPass
   }
 
   void runOnOperation() override {
-    getOperation()->walk([](gpu::GPUFuncOp func) { batchOne(func); });
+    getOperation()->walk([](gpu::GPUFuncOp f) { batchOne(f); });
+    getOperation()->walk([](func::FuncOp f) { batchOne(f); });
   }
 };
 
