@@ -1,7 +1,9 @@
 // GPU correctness + perf gate for the optimized HO-CVFEM matrix-free diffusion
 // apply (mars_cvfem_ho_matfree.hpp). Single rank, in-memory structured cube --
-// reuses the host patch-test setup (HODofHandler + the same elemDof/coord
-// convention) so any divergence localizes to the GPU kernel, not the DOF map.
+// same elemDof/coord convention as the host patch test, so any divergence
+// localizes to the GPU kernel and not the DOF map. The numbering itself is built
+// on the DEVICE (buildGpu) and stays there -- the apply reads elemDof straight
+// out of HoOwnershipDeviceData, with no host build and no H2D.
 //
 // Three gates per order p in {1,2,4}:
 //   (A) ELEMENT bit-exactness: GPU PerPoint metric kernel must reproduce the host
@@ -54,6 +56,9 @@ static std::vector<SweepRow> g_sweep;
 // host patch test. Returns corners (per element, 8x xyz) for the metric kernel.
 struct CubeMesh {
     HODofHandler dh;
+    // The numbering is built on the device and STAYS there: own.elemDof is what
+    // the apply reads, so there is no H2D upload of it anywhere below.
+    HoOwnershipDeviceData own;
     std::vector<std::array<int,3>> ijk;
     long nDof;
     size_t nEl;
@@ -78,8 +83,13 @@ static CubeMesh buildCube(const HoCvfemOperators& op, int P, int E)
     const int n = P + 1, N3 = n * n * n;
     std::vector<std::array<int,8>> ec;
     makeCubeCorners(E, ec, m.ijk);
-    m.dh.build(ec, long(E+1)*(E+1)*(E+1), P);
+    buildGpu(m.dh, ec, long(E+1)*(E+1)*(E+1), P, &m.own);
     m.nDof = m.dh.numDof; m.nEl = ec.size(); m.n = n; m.N3 = N3;
+    // TEST ONLY: the gates below score the device apply against a host reference,
+    // which indexes elemDof on the host. Passing keepOwn deliberately skips that
+    // download, so take it once here. Nothing in the apply path needs it.
+    m.dh.elemDof.resize((size_t)m.nEl * N3);
+    thrust::copy(m.own.elemDof.begin(), m.own.elemDof.end(), m.dh.elemDof.begin());
 
     // Physical corner coords (unit cube, h = 1/E). Hex corner order matches the
     // host hexCornerRef / handler convention.
@@ -121,15 +131,14 @@ static bool runOrder(int E)
                                  op.D.data(), op.W.data(), op.xi.data(), op.zeta.data()));
 
     // Device buffers.
-    int*    d_elemDof; double* d_corners; double* d_G;
+    double* d_corners; double* d_G;
+    const int* d_elemDof = thrust::raw_pointer_cast(m.own.elemDof.data());
     double* d_u; double* d_y;
     const size_t gLen = nEl * (size_t)(3 * P * n * n) * 3;
-    CK(cudaMalloc(&d_elemDof, sizeof(int)    * nEl * N3));
     CK(cudaMalloc(&d_corners, sizeof(double) * nEl * 24));
     CK(cudaMalloc(&d_G,       sizeof(double) * gLen));
     CK(cudaMalloc(&d_u,       sizeof(double) * nDof));
     CK(cudaMalloc(&d_y,       sizeof(double) * nDof));
-    CK(cudaMemcpy(d_elemDof, m.dh.elemDof.data(), sizeof(int) * nEl * N3, cudaMemcpyHostToDevice));
     CK(cudaMemcpy(d_corners, m.h_corners.data(),  sizeof(double) * nEl * 24, cudaMemcpyHostToDevice));
 
     // Build the PerPoint metric on device.
@@ -245,7 +254,7 @@ static bool runOrder(int E)
     double asmBpd = std::pow(2.0*P+1.0, 3.0) * 12.0;
     g_sweep.push_back({P, nDof, sPerApply*1e3, mdofs, gbs, mfBpd, asmBpd});
 
-    cudaFree(d_elemDof); cudaFree(d_corners); cudaFree(d_G);
+    cudaFree(d_corners); cudaFree(d_G);
     cudaFree(d_u); cudaFree(d_y);
     cudaFree(d_edof1); cudaFree(d_u1); cudaFree(d_y1);
     return ok;
@@ -283,14 +292,13 @@ static bool runShearGate(int E)
     CK(ho_cvfem_upload_operators(P, op.Btil.data(), op.Dtil.data(),
                                  op.D.data(), op.W.data(), op.xi.data(), op.zeta.data()));
 
-    int* d_elemDof; double* d_corners; double* d_G; double* d_u; double* d_y;
+    double* d_corners; double* d_G; double* d_u; double* d_y;
+    const int* d_elemDof = thrust::raw_pointer_cast(m.own.elemDof.data());
     const size_t gLen = nEl * (size_t)(3 * P * n * n) * 3;
-    CK(cudaMalloc(&d_elemDof, sizeof(int)    * nEl * N3));
     CK(cudaMalloc(&d_corners, sizeof(double) * nEl * 24));
     CK(cudaMalloc(&d_G,       sizeof(double) * gLen));
     CK(cudaMalloc(&d_u,       sizeof(double) * nDof));
     CK(cudaMalloc(&d_y,       sizeof(double) * nDof));
-    CK(cudaMemcpy(d_elemDof, m.dh.elemDof.data(), sizeof(int) * nEl * N3, cudaMemcpyHostToDevice));
     CK(cudaMemcpy(d_corners, m.h_corners.data(),  sizeof(double) * nEl * 24, cudaMemcpyHostToDevice));
     CK(ho_cvfem_metric_perpoint_launch<double, P>(d_corners, d_G, nEl));
     CK(cudaDeviceSynchronize());
@@ -336,7 +344,7 @@ static bool runShearGate(int E)
     printf("p=%d E=%d (SHEAR) nEl=%zu | metricErr=%.2e applyRel=%.2e | %s\n",
            P, E, nEl, metricErr, applyRel, ok?"PASS":"FAIL");
 
-    cudaFree(d_elemDof); cudaFree(d_corners); cudaFree(d_G); cudaFree(d_u); cudaFree(d_y);
+    cudaFree(d_corners); cudaFree(d_G); cudaFree(d_u); cudaFree(d_y);
     return ok;
 }
 

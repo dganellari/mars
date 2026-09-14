@@ -69,7 +69,14 @@ quantities (`numDof`/`nEdge`/`nFace`, the `DofKey` multiset, and the `elemDof`
 identification classes) — the DOF ids themselves are a permutation, as on the
 distributed path.
 
-What is left: no single-rank driver uses it yet. `mars_cvfem_ho_matfree_test`
-still calls host `build()` by default. Switching the default (and dropping the
-`elemDof` H2D by taking the device-resident `HoOwnershipDeviceData::elemDof`)
-is a follow-up.
+`mars_cvfem_ho_matfree_test` now numbers on the device only: `buildGpu()` with
+`keepOwn`, and the apply reads `HoOwnershipDeviceData::elemDof` in place, so
+there is no host build and no `elemDof` H2D. Measured on GH200 at E=32 (32768
+hexes, up to 11.4M DOF), device vs host numbering: 7.8x at p=1, 11.4x at p=2,
+3.3x at p=7. The speedup falls with p because the host cost is dominated by the
+p-independent edge/face `std::map` work, which amortizes as p grows; 3.3x is the
+steady-state per-DOF figure (47 ns host vs 14 ns device).
+
+The host `build()` remains, as the oracle that `--dof-self-check` scores the
+device numbering against. That gate, and only that gate, still builds on the
+host.
