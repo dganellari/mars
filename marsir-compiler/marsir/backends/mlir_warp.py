@@ -655,7 +655,12 @@ def build_full_single(n, P):
     inargs = [("u", u3), ("Btil", mrg), ("Dtil", mrg), ("Dm", mrg), ("W", mrg)]
     inargs += [(g, gall) for g in gnames]
     inargs += [("y3", gall)]
-    argstr = ", ".join("%%%s: %s" % (a, t) for a, t in inargs)
+    # Which arguments carry one element's data (as opposed to the reference
+    # operators, which every element shares). --mir-batch-elements reads this to
+    # know what to give a batch dimension; it is inert for every other pass.
+    perelem = set(["u"] + gnames + ["y3"])
+    argstr = ", ".join("%%%s: %s%s" % (a, t, " {mir.element}" if a in perelem else "")
+                       for a, t in inargs)
     scratch_names = ["interp_all", "deriv_all", "flux", "tmp", "intf"]
     wg = ", ".join("%%%s: %s" % (s, wg64 if s in ("interp_all", "deriv_all")
                                  else wsty) for s in scratch_names)
