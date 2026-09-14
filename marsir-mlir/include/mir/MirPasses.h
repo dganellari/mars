@@ -18,6 +18,9 @@ void registerChainContractsPass();
 
 // --mir-batch-elements
 void registerBatchElementsPass();
+
+// --mir-gpu-wrap
+void registerGpuWrapPass();
 }  // namespace mir
 
 #endif  // MIR_MIRPASSES_H

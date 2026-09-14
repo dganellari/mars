@@ -114,12 +114,28 @@ def Mir_SimplexContractOp : Mir_Op<"simplex_contract", [Pure]> {
     Gauss-Jacobi points). u and out use the dense W = D+1 cube layout with the
     ragged region valid (entries beyond p+q+r <= D are ignored / zeroed).
     Lowers to explicit scf.for loops (triangular nests do not fit linalg).
+
+    `axis` selects the modal axis being swept and `transposed` the direction
+    (modal->quadrature, or quadrature->modal for integrating back). The four
+    combinations are the four ragged stages of the collapsed tet operator; the
+    p-axis sweep is full-range and is a plain `mir.contract`:
+
+      axis=2               out[p,q,k] = sum_{r<=D-p-q} in[p,q,r] * T[p,q,r,k]
+        in[W,W,W] T[W,W,W,n] -> out[W,W,n]
+      axis=2 transposed    out[p,q,r] = sum_k in[p,q,k] * T[p,q,r,k],  r<=D-p-q
+        in[W,W,n] T[W,W,W,n] -> out[W,W,W]
+      axis=1               out[p,j,k] = sum_{q<=D-p} T[p,q,j] * in[p,q,k]
+        in[W,W,n] T[W,W,n]   -> out[W,n,n]
+      axis=1 transposed    out[p,q,k] = sum_j T[p,q,j] * in[p,j,k],    q<=D-p
+        in[W,n,n] T[W,W,n]   -> out[W,W,n]
   }];
 
-  let arguments = (ins AnyRankedTensor:$input,     // u[W, W, W]
-                       AnyRankedTensor:$table,     // C[W, W, W, n]
-                       I64Attr:$degree);           // D (order of the simplex set)
-  let results = (outs AnyRankedTensor:$result);    // out[W, W, n]
+  let arguments = (ins AnyRankedTensor:$input,
+                       AnyRankedTensor:$table,
+                       I64Attr:$degree,                            // D
+                       DefaultValuedAttr<I64Attr, "2">:$axis,      // modal axis: 1=q, 2=r
+                       DefaultValuedAttr<BoolAttr, "false">:$transposed);
+  let results = (outs AnyRankedTensor:$result);
 
   let assemblyFormat = [{
     $input `,` $table attr-dict `:` functional-type(operands, results)

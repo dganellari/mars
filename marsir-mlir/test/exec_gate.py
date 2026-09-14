@@ -441,7 +441,213 @@ func.func @main() {{
     return ok
 
 
+def gate7():
+    """The four RAGGED stages of the collapsed tet operator, each executed and
+    compared against a NumPy reference. gate4 covers only axis=2 forward; the
+    full operator also needs the q-axis sweep and both integrate-back
+    transposes, and an index slip in any of them is silent otherwise."""
+    D = 3
+    W = nq = D + 1
+    rng = np.random.RandomState(11)
+    ok = True
+
+    def shape_of(axis, tr):
+        if axis == 2 and not tr:  return (W, W, W), (W, W, W, nq), (W, W, nq)
+        if axis == 2 and tr:      return (W, W, nq), (W, W, W, nq), (W, W, W)
+        if axis == 1 and not tr:  return (W, W, nq), (W, W, nq),    (W, nq, nq)
+        return (W, nq, nq), (W, W, nq), (W, W, nq)
+
+    def reference(axis, tr, x, T, out):
+        res = np.zeros(out)
+        for p in range(W):
+            for o1 in range(nq if (axis == 1 and not tr) else W - p):
+                hi2 = (W - p - o1) if (axis == 2 and tr) else nq
+                for o2 in range(hi2):
+                    if axis == 2 and not tr:
+                        res[p, o1, o2] = sum(x[p, o1, r] * T[p, o1, r, o2]
+                                             for r in range(W - p - o1))
+                    elif axis == 2:
+                        res[p, o1, o2] = sum(x[p, o1, k] * T[p, o1, o2, k]
+                                             for k in range(nq))
+                    elif not tr:
+                        res[p, o1, o2] = sum(T[p, q, o1] * x[p, q, o2]
+                                             for q in range(W - p))
+                    else:
+                        res[p, o1, o2] = sum(T[p, o1, j] * x[p, j, o2]
+                                             for j in range(nq))
+        return res
+
+    def ty(sh):
+        return "tensor<" + "x".join(str(d) for d in sh) + "xf64>"
+
+    for axis, tr in ((2, False), (2, True), (1, False), (1, True)):
+        xs, Ts, os_ = shape_of(axis, tr)
+        x = rng.uniform(-1, 1, xs)
+        T = rng.uniform(-1, 1, Ts)
+        expected = reference(axis, tr, x, T, os_)
+        payload = f"""
+func.func private @printMemrefF64(tensor<*xf64>)
+func.func @main() {{
+{cst("x", x)}
+{cst("T", T)}
+    %y = mir.simplex_contract %x, %T {{degree = {D} : i64, axis = {axis} : i64, transposed = {str(tr).lower()}}}
+         : ({ty(xs)}, {ty(Ts)}) -> {ty(os_)}
+{cst("exp", expected)}
+    %scale = arith.constant 1.0e12 : f64
+    %diff = mir.flux ins(%y, %exp) : ({ty(os_)}, {ty(os_)}) -> {ty(os_)} {{
+    ^bb0(%a: f64, %b: f64):
+      %d = arith.subf %a, %b : f64
+      %ad = math.absf %d : f64
+      %sd = arith.mulf %ad, %scale : f64
+      mir.yield %sd : f64
+    }}
+    %pr = tensor.cast %diff : {ty(os_)} to tensor<*xf64>
+    call @printMemrefF64(%pr) : (tensor<*xf64>) -> ()
+    return
+}}
+"""
+        got = run_pipeline(payload)
+        scaled = np.max(np.abs(got)) if len(got) else 9e9
+        good = len(got) == int(np.prod(os_)) and scaled < 1.0
+        ok &= good
+        label = f"axis={axis}{' transposed' if tr else '          '}"
+        print(f"gate 7 ({label})           : max|err| = {scaled:.3e}e-12  {'PASS' if good else 'FAIL'}")
+    return ok
+
+
+def gate8():
+    """THE FULL COLLAPSED-TET OPERATOR in high-level mir: y = B^T G_c B u on the
+    Duffy tetrahedron, sum-factorized, executed and compared against a NumPy
+    transcription of tet_galerkin.py (the validated reference).
+
+    Six stages per gradient component. The p sweep is full-range (mir.contract);
+    the q and r sweeps are ragged (mir.simplex_contract, axis 1 / 2, forward and
+    transposed). This is the tet analogue of gate 5."""
+    D = 3
+    W = n = D + 1
+    rng = np.random.RandomState(23)
+    u  = rng.uniform(-1, 1, (W, W, W))
+    A  = rng.uniform(-1, 1, (W, n));  Ad = rng.uniform(-1, 1, (W, n))
+    B  = rng.uniform(-1, 1, (W, W, n)); Bd = rng.uniform(-1, 1, (W, W, n))
+    C  = rng.uniform(-1, 1, (W, W, W, n)); Cd = rng.uniform(-1, 1, (W, W, W, n))
+    G  = rng.uniform(-1, 1, (3, 3, n, n, n))
+
+    # --- NumPy oracle: tet_galerkin.py, transcribed ---
+    def sweep(Af, Bf, Cf):
+        f1 = np.zeros((W, W, n)); f2 = np.zeros((W, n, n)); g = np.zeros((n, n, n))
+        for p in range(W):
+            for q in range(W - p):
+                for k in range(n):
+                    f1[p, q, k] = sum(u[p, q, r] * Cf[p, q, r, k] for r in range(W - p - q))
+        for p in range(W):
+            for j in range(n):
+                for k in range(n):
+                    f2[p, j, k] = sum(Bf[p, q, j] * f1[p, q, k] for q in range(W - p))
+        for i in range(n):
+            for j in range(n):
+                for k in range(n):
+                    g[i, j, k] = sum(Af[p, i] * f2[p, j, k] for p in range(W))
+        return g
+    grad = [sweep(Ad, B, C), sweep(A, Bd, C), sweep(A, B, Cd)]
+    flux = [sum(G[a, b] * grad[b] for b in range(3)) for a in range(3)]
+
+    def tsweep(Af, Bf, Cf, fl):
+        h1 = np.zeros((W, n, n)); h2 = np.zeros((W, W, n)); yy = np.zeros((W, W, W))
+        for p in range(W):
+            for j in range(n):
+                for k in range(n):
+                    h1[p, j, k] = sum(Af[p, i] * fl[i, j, k] for i in range(n))
+        for p in range(W):
+            for q in range(W - p):
+                for k in range(n):
+                    h2[p, q, k] = sum(Bf[p, q, j] * h1[p, j, k] for j in range(n))
+        for p in range(W):
+            for q in range(W - p):
+                for r in range(W - p - q):
+                    yy[p, q, r] = sum(Cf[p, q, r, k] * h2[p, q, k] for k in range(n))
+        return yy
+    expected = (tsweep(Ad, B, C, flux[0]) + tsweep(A, Bd, C, flux[1])
+                + tsweep(A, B, Cd, flux[2]))
+
+    T3 = f"tensor<{W}x{W}x{W}xf64>"
+    TQ = f"tensor<{n}x{n}x{n}xf64>"
+    TF1 = f"tensor<{W}x{W}x{n}xf64>"
+    TF2 = f"tensor<{W}x{n}x{n}xf64>"
+    TB = f"tensor<{W}x{W}x{n}xf64>"
+    TC = f"tensor<{W}x{W}x{W}x{n}xf64>"
+    TA = f"tensor<{W}x{n}xf64>"
+    TAT = f"tensor<{n}x{W}xf64>"
+
+    decls = [cst("u", u), cst("Am", A), cst("Adm", Ad), cst("AmT", A.T),
+             cst("AdmT", Ad.T), cst("Bm", B), cst("Bdm", Bd),
+             cst("Cm", C), cst("Cdm", Cd)]
+    for a in range(3):
+        for b in range(3):
+            decls.append(cst(f"g{a}{b}", G[a, b]))
+
+    body = []
+    # forward: per component, ragged r sweep -> ragged q sweep -> full p sweep
+    for c, (af, bf, cf) in enumerate([("AdmT", "Bm", "Cm"), ("AmT", "Bdm", "Cm"),
+                                      ("AmT", "Bm", "Cdm")]):
+        body.append(f"""    %f1_{c} = mir.simplex_contract %u, %{cf} {{degree = {D} : i64, axis = 2 : i64}}
+         : ({T3}, {TC}) -> {TF1}
+    %f2_{c} = mir.simplex_contract %f1_{c}, %{bf} {{degree = {D} : i64, axis = 1 : i64}}
+         : ({TF1}, {TB}) -> {TF2}
+    %gr{c} = mir.contract %f2_{c}, %{af} {{axis = 0 : i64}} : ({TF2}, {TAT}) -> {TQ}""")
+    # pointwise flux: the 3x3 collapse metric maps gradient -> flux
+    for a in range(3):
+        body.append(f"""    %fx{a} = mir.flux ins(%gr0, %gr1, %gr2, %g{a}0, %g{a}1, %g{a}2)
+         : ({TQ}, {TQ}, {TQ}, {TQ}, {TQ}, {TQ}) -> {TQ} {{
+    ^bb0(%d0: f64, %d1: f64, %d2: f64, %m0: f64, %m1: f64, %m2: f64):
+      %p0 = arith.mulf %m0, %d0 : f64
+      %p1 = arith.mulf %m1, %d1 : f64
+      %p2 = arith.mulf %m2, %d2 : f64
+      %s0 = arith.addf %p0, %p1 : f64
+      %s1 = arith.addf %s0, %p2 : f64
+      mir.yield %s1 : f64
+    }}""")
+    # transpose: integrate the flux back to modal coefficients
+    for c, (af, bf, cf) in enumerate([("Adm", "Bm", "Cm"), ("Am", "Bdm", "Cm"),
+                                      ("Am", "Bm", "Cdm")]):
+        body.append(f"""    %h1_{c} = mir.contract %fx{c}, %{af} {{axis = 0 : i64}} : ({TQ}, {TA}) -> {TF2}
+    %h2_{c} = mir.simplex_contract %h1_{c}, %{bf} {{degree = {D} : i64, axis = 1 : i64, transposed = true}}
+         : ({TF2}, {TB}) -> {TF1}
+    %y{c} = mir.simplex_contract %h2_{c}, %{cf} {{degree = {D} : i64, axis = 2 : i64, transposed = true}}
+         : ({TF1}, {TC}) -> {T3}""")
+    body.append(f"""    %y = mir.flux ins(%y0, %y1, %y2) : ({T3}, {T3}, {T3}) -> {T3} {{
+    ^bb0(%a0: f64, %a1: f64, %a2: f64):
+      %t0 = arith.addf %a0, %a1 : f64
+      %t1 = arith.addf %t0, %a2 : f64
+      mir.yield %t1 : f64
+    }}""")
+
+    payload = f"""
+func.func private @printMemrefF64(tensor<*xf64>)
+func.func @main() {{
+{chr(10).join(decls)}
+{chr(10).join(body)}
+{cst("exp", expected)}
+    %scale = arith.constant 1.0e12 : f64
+    %diff = mir.flux ins(%y, %exp) : ({T3}, {T3}) -> {T3} {{
+    ^bb0(%a: f64, %b: f64):
+      %d = arith.subf %a, %b : f64
+      %ad = math.absf %d : f64
+      %sd = arith.mulf %ad, %scale : f64
+      mir.yield %sd : f64
+    }}
+    %pr = tensor.cast %diff : {T3} to tensor<*xf64>
+    call @printMemrefF64(%pr) : (tensor<*xf64>) -> ()
+    return
+}}
+"""
+    got = run_pipeline(payload)
+    scaled = np.max(np.abs(got)) if len(got) else 9e9
+    ok = len(got) == W * W * W and scaled < 1.0
+    print(f"gate 8 (FULL TET operator vs tet_galerkin): max|err| = {scaled:.3e}e-12  {'PASS' if ok else 'FAIL'}")
+    return ok
+
+
 if __name__ == "__main__":
-    ok = gate1() & gate2() & gate3() & gate4() & gate5() & gate6()
+    ok = gate1() & gate2() & gate3() & gate4() & gate5() & gate6() & gate7() & gate8()
     print("ALL PASS (mir lowering executes correctly)" if ok else "FAILED")
     sys.exit(0 if ok else 1)
