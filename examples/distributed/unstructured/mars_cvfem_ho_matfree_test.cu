@@ -18,6 +18,10 @@
 // --dof-self-check (or MARS_HO_DOF_SELF_CHECK=1) adds a numbering gate in front:
 // host HODofHandler::build() vs the single-rank GPU buildGpu(), compared on the
 // permutation-invariant quantities. Off by default; the gates below are unchanged.
+// --dof-self-check=E (or MARS_HO_DOF_SELF_CHECK_E=E) sets the cube size. E=4 is
+// the cheap correctness cube; a large E is what shows the setup-time win, since
+// the host numbering goes through std::map and the GPU path through a radix
+// dedup. Both build times are printed per p.
 
 #include "backend/distributed/unstructured/fem/mars_ho_dof_handler.hpp"
 #include "backend/distributed/unstructured/fem/mars_ho_dof_handler_gpu.hpp"
@@ -31,6 +35,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <chrono>
 #include <random>
 #include <vector>
 
@@ -369,11 +374,18 @@ static bool checkDofNumbering(int P, int E)
 
     HODofHandler dofPlain, dofHost, dofGpu;
     dofPlain.build(ec, nCornerNodes, P);
+    using Clk = std::chrono::steady_clock;
     // buildDistributed() calls build() and then tags the DofKeys build() alone does
     // not produce. Comparing dofPlain to dofHost verifies that rather than assuming
     // it, so the oracle really is build().
+    const auto t0 = Clk::now();
     dofHost.buildDistributed(ec, nCornerNodes, P, cornerGid, cornerOwner, elemOwner, 0, sharedCorner);
+    const auto t1 = Clk::now();
     buildGpu(dofGpu, ec, nCornerNodes, P);
+    cudaDeviceSynchronize();
+    const auto t2 = Clk::now();
+    const double hostS = std::chrono::duration<double>(t1 - t0).count();
+    const double gpuS  = std::chrono::duration<double>(t2 - t1).count();
 
     const bool oracleOk = (dofPlain.numDof == dofHost.numDof) && (dofPlain.elemDof == dofHost.elemDof);
     const bool countOk  = (dofHost.numDof == dofGpu.numDof) && (dofHost.nEdge == dofGpu.nEdge) &&
@@ -426,8 +438,10 @@ static bool checkDofNumbering(int P, int E)
 
     const bool ok = oracleOk && countOk && keyBad == 0 && permBad == 0 &&
                     unmapped == 0 && flagOk && ownOk;
-    printf("[dof-self-check] p=%d E=%d nEl=%ld N3=%d | numDof h=%ld g=%ld nEdge h=%ld g=%ld nFace h=%ld g=%ld\n",
-           P, E, nElem, N3, dofHost.numDof, dofGpu.numDof, dofHost.nEdge, dofGpu.nEdge, dofHost.nFace, dofGpu.nFace);
+    printf("[dof-self-check] p=%d E=%d nEl=%ld N3=%d | numDof h=%ld g=%ld nEdge h=%ld g=%ld nFace h=%ld g=%ld"
+           " | build host %.3fs gpu %.3fs (%.2fx)\n",
+           P, E, nElem, N3, dofHost.numDof, dofGpu.numDof, dofHost.nEdge, dofGpu.nEdge, dofHost.nFace, dofGpu.nFace,
+           hostS, gpuS, gpuS > 0.0 ? hostS / gpuS : 0.0);
     printf("                 oracle=%s keyMismatch=%ld permMismatch=%ld unmapped=%ld flags=%s owner=%s perm=%s | %s\n",
            oracleOk ? "ok" : "BAD", keyBad, permBad, unmapped,
            flagOk ? "ok" : "BAD", ownOk ? "ok" : "BAD",
@@ -443,11 +457,24 @@ int main(int argc, char** argv)
     // Opt-in only: proves host build() and the single-rank GPU buildGpu() number the
     // same space before the operator gates run on the host numbering.
     bool dofSelfCheck = std::getenv("MARS_HO_DOF_SELF_CHECK") != nullptr;
-    for (int i = 1; i < argc; ++i)
-        if (std::strcmp(argv[i], "--dof-self-check") == 0) dofSelfCheck = true;
+    int  selfCheckE = 4;   // cells per side; 4 is the cheap correctness cube
+    if (const char* ev = std::getenv("MARS_HO_DOF_SELF_CHECK_E")) {
+        const int v = std::atoi(ev);
+        if (v > 0) { selfCheckE = v; dofSelfCheck = true; }
+    }
+    for (int i = 1; i < argc; ++i) {
+        if (std::strcmp(argv[i], "--dof-self-check") == 0) {
+            dofSelfCheck = true;
+        } else if (std::strncmp(argv[i], "--dof-self-check=", 17) == 0) {
+            dofSelfCheck = true;
+            const int v = std::atoi(argv[i] + 17);
+            if (v > 0) selfCheckE = v;
+        }
+    }
     if (dofSelfCheck) {
-        printf("=== HO DOF numbering self-check: host build() vs GPU buildGpu() ===\n");
-        for (int p = 1; p <= 7; ++p) ok &= checkDofNumbering(p, 4);
+        printf("=== HO DOF numbering self-check: host build() vs GPU buildGpu() (E=%d) ===\n",
+               selfCheckE);
+        for (int p = 1; p <= 7; ++p) ok &= checkDofNumbering(p, selfCheckE);
         printf("\n");
     }
     // Larger meshes so the timing loop saturates the GPU (132 SMs on H100); the
