@@ -49,3 +49,27 @@ Unless you are benchmarking a specific GPU path, use the tensor or graph kernel.
   at configure time, so a network connection is needed for a fresh configure.
 - The test suite and FEM examples are GPU-oriented and most require a mesh input and/or
   MPI; there is not yet a CPU-only smoke test.
+
+## HO DOF numbering: single-rank GPU path exists, but is not the default
+
+`HODofHandler` used to split its build paths by rank count, not by device:
+`build()` (host) for one rank, `buildDistributedGpu*()` (device) for many. So
+single-rank drivers numbered their DOFs on the host and uploaded `elemDof`,
+which bounded single-GPU problem size and setup time by host numbering (the
+distributed path measured 80 s -> 8 s per rank at 625M DOF/GPU when it moved to
+the device).
+
+The device twin now exists — `buildGpu()` / `buildGpuDevice()` in
+`mars_ho_dof_handler_gpu.hpp`. They feed `buildDistributedGpuCore` the
+degenerate single-rank configuration (`myRank = 0`, every corner and element
+owned by 0, no shared corners, global id == local id), so there is still only
+one numbering implementation. Equivalence to host `build()` is gated by
+`mars_cvfem_ho_matfree_test --dof-self-check` on the permutation-invariant
+quantities (`numDof`/`nEdge`/`nFace`, the `DofKey` multiset, and the `elemDof`
+identification classes) — the DOF ids themselves are a permutation, as on the
+distributed path.
+
+What is left: no single-rank driver uses it yet. `mars_cvfem_ho_matfree_test`
+still calls host `build()` by default. Switching the default (and dropping the
+`elemDof` H2D by taking the device-resident `HoOwnershipDeviceData::elemDof`)
+is a follow-up.

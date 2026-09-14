@@ -14,15 +14,23 @@
 //
 // d_y MUST be zeroed before every apply (scatter is additive); operators are
 // uploaded once per p via ho_cvfem_upload_operators.
+//
+// --dof-self-check (or MARS_HO_DOF_SELF_CHECK=1) adds a numbering gate in front:
+// host HODofHandler::build() vs the single-rank GPU buildGpu(), compared on the
+// permutation-invariant quantities. Off by default; the gates below are unchanged.
 
 #include "backend/distributed/unstructured/fem/mars_ho_dof_handler.hpp"
+#include "backend/distributed/unstructured/fem/mars_ho_dof_handler_gpu.hpp"
 #include "backend/distributed/unstructured/fem/mars_cvfem_ho_apply.hpp"
 #include "backend/distributed/unstructured/fem/mars_cvfem_ho_matfree.hpp"
 
 #include <cuda_runtime.h>
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <random>
 #include <vector>
 
@@ -48,17 +56,23 @@ struct CubeMesh {
     std::vector<double> h_corners;   // [nEl*8*3]
 };
 
+static void makeCubeCorners(int E, std::vector<std::array<int,8>>& ec,
+                            std::vector<std::array<int,3>>& ijk)
+{
+    auto cg = [&](int x, int y, int z) { return (x*(E+1)+y)*(E+1)+z; };
+    for (int ex=0; ex<E; ++ex) for (int ey=0; ey<E; ++ey) for (int ez=0; ez<E; ++ez) {
+        ec.push_back({cg(ex,ey,ez),cg(ex+1,ey,ez),cg(ex+1,ey+1,ez),cg(ex,ey+1,ez),
+                      cg(ex,ey,ez+1),cg(ex+1,ey,ez+1),cg(ex+1,ey+1,ez+1),cg(ex,ey+1,ez+1)});
+        ijk.push_back({ex,ey,ez});
+    }
+}
+
 static CubeMesh buildCube(const HoCvfemOperators& op, int P, int E)
 {
     CubeMesh m;
     const int n = P + 1, N3 = n * n * n;
-    auto cg = [&](int x, int y, int z) { return (x*(E+1)+y)*(E+1)+z; };
     std::vector<std::array<int,8>> ec;
-    for (int ex=0; ex<E; ++ex) for (int ey=0; ey<E; ++ey) for (int ez=0; ez<E; ++ez) {
-        ec.push_back({cg(ex,ey,ez),cg(ex+1,ey,ez),cg(ex+1,ey+1,ez),cg(ex,ey+1,ez),
-                      cg(ex,ey,ez+1),cg(ex+1,ey,ez+1),cg(ex+1,ey+1,ez+1),cg(ex,ey+1,ez+1)});
-        m.ijk.push_back({ex,ey,ez});
-    }
+    makeCubeCorners(E, ec, m.ijk);
     m.dh.build(ec, long(E+1)*(E+1)*(E+1), P);
     m.nDof = m.dh.numDof; m.nEl = ec.size(); m.n = n; m.N3 = N3;
 
@@ -321,10 +335,121 @@ static bool runShearGate(int E)
     return ok;
 }
 
-int main()
+// ---- Opt-in gate: single-rank host build() vs the GPU buildGpu(). ----
+// --dof-self-check (or MARS_HO_DOF_SELF_CHECK=1). Additive: the A/B/C/shear gates
+// below run exactly as before with or without it.
+//
+// The GPU numbers edges/faces in sorted-key order, the host in std::map insertion
+// order, so the two DOF numberings are a PERMUTATION of each other by construction.
+// Only permutation-invariant properties can be compared:
+//   (1) numDof / nEdge / nFace,
+//   (2) the multiset of canonical DofKeys,
+//   (3) the elemDof identification classes: the (element,local-node) slots that
+//       share a DOF must be the same set on both sides. This is the strongest of
+//       the three -- it proves ONE bijection relates the two maps, i.e. the two
+//       spaces have identical continuity, not just the same keys somewhere.
+// (1)+(2) are what mars_ho_dist_apply_test --self-check compares for the
+// distributed path; (3) is available here because there is a single numbering.
+static bool checkDofNumbering(int P, int E)
+{
+    std::vector<std::array<int,8>> ec;
+    std::vector<std::array<int,3>> ijk;
+    makeCubeCorners(E, ec, ijk);
+    const long nCornerNodes = (long)(E+1)*(E+1)*(E+1);
+    const long nElem = (long)ec.size();
+    const int  n = P + 1, N3 = n*n*n;
+
+    // The degenerate single-rank configuration buildGpu feeds the shared numbering
+    // core, spelled out here so the host oracle sees the identical inputs.
+    std::vector<long> cornerGid(nCornerNodes);
+    for (long i = 0; i < nCornerNodes; ++i) cornerGid[i] = i;   // global id == local id
+    const std::vector<int>     cornerOwner(nCornerNodes, 0);
+    const std::vector<uint8_t> sharedCorner(nCornerNodes, 0);
+    const std::vector<int>     elemOwner(nElem, 0);
+
+    HODofHandler dofPlain, dofHost, dofGpu;
+    dofPlain.build(ec, nCornerNodes, P);
+    // buildDistributed() calls build() and then tags the DofKeys build() alone does
+    // not produce. Comparing dofPlain to dofHost verifies that rather than assuming
+    // it, so the oracle really is build().
+    dofHost.buildDistributed(ec, nCornerNodes, P, cornerGid, cornerOwner, elemOwner, 0, sharedCorner);
+    buildGpu(dofGpu, ec, nCornerNodes, P);
+
+    const bool oracleOk = (dofPlain.numDof == dofHost.numDof) && (dofPlain.elemDof == dofHost.elemDof);
+    const bool countOk  = (dofHost.numDof == dofGpu.numDof) && (dofHost.nEdge == dofGpu.nEdge) &&
+                          (dofHost.nFace == dofGpu.nFace);
+
+    // (2) DofKey multiset.
+    long keyBad = -1;
+    if (dofHost.dofKey.size() == dofGpu.dofKey.size()) {
+        auto packed = [](const HODofHandler::DofKey& k) {
+            return std::array<long,6>{ (long)k.kind, k.g0, k.g1, k.g2, k.g3, (long)k.pos }; };
+        std::vector<std::array<long,6>> hk(dofHost.dofKey.size()), gk(dofGpu.dofKey.size());
+        for (size_t i = 0; i < hk.size(); ++i) hk[i] = packed(dofHost.dofKey[i]);
+        for (size_t i = 0; i < gk.size(); ++i) gk[i] = packed(dofGpu.dofKey[i]);
+        std::sort(hk.begin(), hk.end());
+        std::sort(gk.begin(), gk.end());
+        keyBad = 0;
+        for (size_t i = 0; i < hk.size(); ++i) if (hk[i] != gk[i]) ++keyBad;
+    }
+
+    // (3) elemDof identification classes: host dof <-> GPU dof must be a bijection.
+    long permBad = 0, unmapped = 0;
+    bool identity = true;
+    if (countOk && dofHost.elemDof.size() == dofGpu.elemDof.size()) {
+        std::vector<int> h2g(dofHost.numDof, -1), g2h(dofGpu.numDof, -1);
+        for (size_t s = 0; s < dofHost.elemDof.size(); ++s) {
+            const int hd = dofHost.elemDof[s], gd = dofGpu.elemDof[s];
+            if (hd != gd) identity = false;
+            if (h2g[hd] < 0) h2g[hd] = gd; else if (h2g[hd] != gd) ++permBad;
+            if (g2h[gd] < 0) g2h[gd] = hd; else if (g2h[gd] != hd) ++permBad;
+        }
+        for (long d = 0; d < dofHost.numDof; ++d) if (h2g[d] < 0) ++unmapped;
+    } else {
+        permBad = -1;
+    }
+
+    // With no shared corners nothing may be flagged shared or on a boundary, on
+    // either side -- a direct check that the degenerate inputs landed as intended.
+    long hShared = 0, gShared = 0, hBnd = 0, gBnd = 0;
+    for (auto v : dofHost.dofShared)   hShared += v;
+    for (auto v : dofGpu.dofShared)    gShared += v;
+    for (auto v : dofHost.dofBoundary) hBnd += v;
+    for (auto v : dofGpu.dofBoundary)  gBnd += v;
+    const bool flagOk = (hShared == 0 && gShared == 0 && hBnd == 0 && gBnd == 0);
+
+    // Single rank -> every DOF is owned by rank 0 on both sides.
+    bool ownOk = ((long)dofHost.dofOwner.size() == dofHost.numDof) &&
+                 ((long)dofGpu.dofOwner.size() == dofGpu.numDof);
+    for (int o : dofHost.dofOwner) if (o != 0) ownOk = false;
+    for (int o : dofGpu.dofOwner)  if (o != 0) ownOk = false;
+
+    const bool ok = oracleOk && countOk && keyBad == 0 && permBad == 0 &&
+                    unmapped == 0 && flagOk && ownOk;
+    printf("[dof-self-check] p=%d E=%d nEl=%ld N3=%d | numDof h=%ld g=%ld nEdge h=%ld g=%ld nFace h=%ld g=%ld\n",
+           P, E, nElem, N3, dofHost.numDof, dofGpu.numDof, dofHost.nEdge, dofGpu.nEdge, dofHost.nFace, dofGpu.nFace);
+    printf("                 oracle=%s keyMismatch=%ld permMismatch=%ld unmapped=%ld flags=%s owner=%s perm=%s | %s\n",
+           oracleOk ? "ok" : "BAD", keyBad, permBad, unmapped,
+           flagOk ? "ok" : "BAD", ownOk ? "ok" : "BAD",
+           identity ? "identity" : "permuted", ok ? "PASS" : "FAIL");
+    return ok;
+}
+
+int main(int argc, char** argv)
 {
     int dev=0; cudaGetDeviceCount(&dev); if (dev>0) cudaSetDevice(0);
     bool ok = true;
+
+    // Opt-in only: proves host build() and the single-rank GPU buildGpu() number the
+    // same space before the operator gates run on the host numbering.
+    bool dofSelfCheck = std::getenv("MARS_HO_DOF_SELF_CHECK") != nullptr;
+    for (int i = 1; i < argc; ++i)
+        if (std::strcmp(argv[i], "--dof-self-check") == 0) dofSelfCheck = true;
+    if (dofSelfCheck) {
+        printf("=== HO DOF numbering self-check: host build() vs GPU buildGpu() ===\n");
+        for (int p = 1; p <= 7; ++p) ok &= checkDofNumbering(p, 4);
+        printf("\n");
+    }
     // Larger meshes so the timing loop saturates the GPU (132 SMs on H100); the
     // tiny-mesh numbers are launch/latency-bound and not representative. The
     // correctness gates A/B/C are still cheap at these sizes (element-0 + max
