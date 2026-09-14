@@ -53,7 +53,8 @@ todo.txt
 *.pvtu
 *.pvd
 *.mp4
-pump_frames_fast/
+# NDA pump renders -- derived from confidential geometry, never commit
+pump_frames*/
 examples/distributed/unstructured/render_pump_4panel.py
 
 # Document/presentation build artifacts

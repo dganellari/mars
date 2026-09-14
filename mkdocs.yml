@@ -34,6 +34,10 @@ nav:
   - FEM:
       - FEM Assembly: FEM-Assembly.md
       - CVFEM Kernels (GPU): CVFEM-Kernels.md
+  - High-Order Matrix-Free:
+      - Tutorial: Matrix-Free-Tutorial.md
+      - Scaling Results: Matrix-Free-Scaling.md
+      - Reproducing the Results: Matrix-Free-Reproduce.md
   - Advanced Features:
       - Adjacency Structures: Adjacency-Structures.md
       - Halo Management: Halo-Management.md
