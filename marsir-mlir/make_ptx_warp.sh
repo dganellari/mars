@@ -16,7 +16,8 @@ emit() {
   # nvgpu-to-nvvm,convert-vector-to-llvm) pre-stage ERRORS on workgroup (shared)
   # memory ("space conversion failed"). Clean path handles both global and
   # workgroup-memory kernels.
-  build/tools/mir-opt/mir-opt "$1" \
+  # $3 = optional passes to run BEFORE distribution (e.g. --mir-batch-elements).
+  build/tools/mir-opt/mir-opt "$1" $3 \
       --mir-warp-distribute --canonicalize --cse --lower-affine \
   | mlir-opt --gpu-lower-to-nvvm-pipeline="cubin-chip=sm_90 cubin-format=isa" \
   | python3 test/extract_ptx.py "$2"
@@ -73,3 +74,10 @@ build/tools/mir-opt/mir-opt test/warp_hybrid.mlir --mir-warp-distribute --canoni
   | mlir-opt --gpu-lower-to-nvvm-pipeline="cubin-chip=sm_90 cubin-format=isa" \
   | python3 test/extract_ptx.py generated/warp_hybrid_sm90.ptx
 grep -c "mma.sync.aligned.m8n8k4" generated/warp_hybrid_sm90.ptx
+
+# PASS-BATCHED (P3): --mir-batch-elements turns the SINGLE-element kernel into the
+# warp-per-element batched one, replacing what mlir_warp.py hand-wrote as
+# build_full_batched_kernel. The resulting PTX is byte-identical to the
+# Python-emitted warp_batched above except that gpu.block_id is read before
+# gpu.thread_id, which swaps %r1/%r2: 264 mma
+emit test/warp_fulls_marked.mlir generated/warp_pass_batched_sm90.ptx --mir-batch-elements

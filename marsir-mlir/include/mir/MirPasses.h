@@ -15,6 +15,9 @@ void registerWarpDistributePass();
 void registerWarpWrapPass();
 // Registers --mir-chain-contracts (register-resident mma+shuffle chaining).
 void registerChainContractsPass();
+
+// --mir-batch-elements
+void registerBatchElementsPass();
 }  // namespace mir
 
 #endif  // MIR_MIRPASSES_H
