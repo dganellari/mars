@@ -155,7 +155,7 @@ struct Maps {
 // Classify a vector.contract: is it m8n8k4 f64, and which operand is A vs B,
 // and is B transposed? Returns false if it is not a supported contract.
 static bool classify(vector::ContractionOp c, Maps &M, Value &A, Value &B,
-                     Value &acc, bool &bTransp) {
+                     bool &bTransp) {
   auto maps = c.getIndexingMapsArray();
   if (maps.size() != 3 || maps[2] != M.mn)
     return false;
@@ -275,19 +275,36 @@ struct ChainContractsPass
       Operation *op = &opRef;
 
       if (auto c = dyn_cast<vector::ContractionOp>(op)) {
-        Value A, B, acc;
+        Value A, B;
         bool bt;
-        if (!classify(c, M, A, B, acc, bt)) {
+        if (!classify(c, M, A, B, bt)) {
           c.emitOpError("mir-chain-contracts: unsupported contract shape/maps");
           signalPassFailure();
           return;
         }
         b.setInsertionPoint(c);
-        // Each contract starts from a zero C-fragment; the pointwise ops between
-        // contracts do the combining, matching the emit_face_reg structure.
-        Value cfrag = b.create<arith::ConstantOp>(
-            c.getLoc(), L.frag2,
-            DenseElementsAttr::get(L.frag2, b.getF64FloatAttr(0.0)));
+        // The accumulator decides where the chain starts. A zero splat starts a
+        // fresh one; a value this pass already lowered continues one, in C layout.
+        // Anything else would be SILENTLY DROPPED -- refuse it instead.
+        Value cfrag;
+        if (auto it = frag.find(c.getAcc()); it != frag.end()) {
+          cfrag = it->second;
+        } else {
+          bool zeroAcc = false;
+          if (auto cst = c.getAcc().getDefiningOp<arith::ConstantOp>())
+            if (auto dv = dyn_cast<DenseElementsAttr>(cst.getValue()))
+              zeroAcc = dv.isSplat() && dv.getSplatValue<APFloat>().isZero();
+          if (!zeroAcc) {
+            c.emitOpError("mir-chain-contracts: accumulator is neither a zero "
+                          "splat nor a value this pass lowered, so it would be "
+                          "dropped");
+            signalPassFailure();
+            return;
+          }
+          cfrag = b.create<arith::ConstantOp>(
+              c.getLoc(), L.frag2,
+              DenseElementsAttr::get(L.frag2, b.getF64FloatAttr(0.0)));
+        }
         for (int s2 = 0; s2 < 2; ++s2) {  // 8x8x8 = two m8n8k4 slabs
           Value af = operandFragA(A, s2);
           Value bf = operandFragB(B, s2, bt);
