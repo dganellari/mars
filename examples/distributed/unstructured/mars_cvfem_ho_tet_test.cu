@@ -34,7 +34,7 @@ static bool run_order(int ncells, int rank, int nranks) {
     buildKuhnTetMesh(ncells, coords, elemCorners);
     const size_t nElem = elemCorners.size()/4;
     std::vector<double> Zd(o.Z.begin(), o.Z.end());
-    HoCvfemTetDofHandler dh; dh.build(elemCorners, coords, Zd);
+    HoCvfemTetDofHandler dh; buildGpu(dh, elemCorners, coords, Zd);
     const int NN = o.NN; const long nDof = dh.numDof;
 
     const size_t e0 = nElem*rank/nranks, e1 = nElem*(rank+1)/nranks, nOwn = e1-e0;

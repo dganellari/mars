@@ -80,3 +80,21 @@ steady-state per-DOF figure (47 ns host vs 14 ns device).
 The host `build()` remains, as the oracle that `--dof-self-check` scores the
 device numbering against. That gate, and only that gate, still builds on the
 host.
+
+## Tet HO DOF numbering
+
+The tet apply was always device-side; only the numbering
+(`HoCvfemTetDofHandler::build` / `HoTetDofHandler::build`, both `std::map` over a
+`vector<pair<gid,weight>>` key) ran on the host. `buildGpu()` in
+`mars_ho_dof_handler_tet_gpu.hpp` is the device twin, and every tet driver now
+calls it; the host build survives only as the `--dof-self-check` oracle.
+
+Measured on GH200 at p=3, Kuhn mesh, device vs host numbering: 0.45x at 3.4k DOF
+(launch-bound), 8.65x at 466k, 8.72x at 1.56M. The ratio plateaus because both
+sides are sort-dominated. Per DOF the host costs ~480 ns against hex's ~47 ns --
+the tet key is a heap-allocated vector per node -- so the port is worth more here
+than it was for hex.
+
+Build memory is ~48 B/node while numbering (four uint64 key lanes plus the
+permutation and scan buffers), freed before return. That, not correctness, is the
+scale limit of the current key packing.
