@@ -23,6 +23,10 @@
 // first-encounter order, so the two numberings are a PERMUTATION of each other. What
 // is identical is the partition: which (element, node) slots share a DOF.
 //
+// Corner sorting, the key build, the dedup and dofPos all run on the device. The only
+// host work left is filling the handler's host members, and passing a
+// HoTetOwnershipDeviceData skips even that.
+//
 // MEMORY: peak while building is ~48 B/node over nElem*NN nodes -- four uint64 lanes
 // (32) plus perm, isNew, ids and elemDof (4 each) -- all freed before return except
 // elemDof. That is ~12x elemDof itself, and it is the scale limit of this approach.
@@ -151,11 +155,23 @@ inline long dedupAndScatter(thrust::device_vector<uint64_t> lane[4],
 
 }  // namespace ho_tet_gpu_detail
 
+// Device-resident results. Pass one to buildGpu and NOTHING is downloaded: the apply
+// reads elemDof straight off the device, exactly as the hex path does with
+// HoOwnershipDeviceData. Without it the host members are filled, which costs a D2H of
+// elemDof and dofPos -- needed only by code that scores against a host reference.
+struct HoTetOwnershipDeviceData {
+    long numDof = 0;
+    thrust::device_vector<int>    elemDof;        // [nElem * NN]
+    thrust::device_vector<int>    sortedCorners;  // [nElem * 4], CVFEM only
+    thrust::device_vector<double> dofPos;         // [numDof * 3]
+};
+
 // ---- CVFEM collapsed GLL tensor grid (the one mars_ho_tet_perf drives) ----
 inline void buildGpu(HoCvfemTetDofHandler& dof,
                      const std::vector<int>& elemCorners,
                      const std::vector<std::array<double,3>>& coords,
-                     const std::vector<double>& Z)
+                     const std::vector<double>& Z,
+                     HoTetOwnershipDeviceData* keepOwn = nullptr)
 {
     using namespace ho_tet_gpu_detail;
     const int n = (int)Z.size();
@@ -164,19 +180,28 @@ inline void buildGpu(HoCvfemTetDofHandler& dof,
     const long N = nElem * NN;
     dof.n = n; dof.P = n - 1; dof.NN = NN;
 
-    // Ascending-gid corner order per element: the host does this so a shared face
-    // induces the same canonical Duffy grid from both sides.
-    std::vector<int> h_sorted(elemCorners.size());
-    for (long e = 0; e < nElem; ++e) {
-        int g[4] = { elemCorners[e*4+0], elemCorners[e*4+1],
-                     elemCorners[e*4+2], elemCorners[e*4+3] };
-        std::sort(g, g + 4);
-        for (int c = 0; c < 4; ++c) h_sorted[e*4+c] = g[c];
-    }
-    dof.sortedCorners = h_sorted;
-
-    thrust::device_vector<int>    d_corners(h_sorted.begin(), h_sorted.end());
+    // Ascending-gid corner order per element, ON THE DEVICE: a shared face must induce
+    // the same canonical Duffy grid from both sides.
+    thrust::device_vector<int>    d_corners(elemCorners.begin(), elemCorners.end());
     thrust::device_vector<double> d_Z(Z.begin(), Z.end());
+    {
+        int* dcs = thrust::raw_pointer_cast(d_corners.data());
+        thrust::for_each(thrust::device, thrust::counting_iterator<long>(0),
+                         thrust::counting_iterator<long>(nElem),
+                         [=] __host__ __device__ (long e) {
+                             int* g = dcs + e * 4;
+                             for (int i = 1; i < 4; ++i) {   // 4 elements: insertion sort
+                                 int v = g[i], j = i - 1;
+                                 while (j >= 0 && g[j] > v) { g[j + 1] = g[j]; --j; }
+                                 g[j + 1] = v;
+                             }
+                         });
+    }
+    // Coordinates flattened for device indexing.
+    std::vector<double> h_xyz(coords.size() * 3);
+    for (size_t v = 0; v < coords.size(); ++v)
+        for (int d = 0; d < 3; ++d) h_xyz[v * 3 + d] = coords[v][d];
+    thrust::device_vector<double> d_xyz(h_xyz.begin(), h_xyz.end());
 
     thrust::device_vector<uint64_t> lane[4];
     for (int l = 0; l < 4; ++l) lane[l].resize(N);
@@ -211,25 +236,48 @@ inline void buildGpu(HoCvfemTetDofHandler& dof,
     dof.numDof = dedupAndScatter(lane, N, perm, d_elemDof, firstOf);
     for (int l = 0; l < 4; ++l) lane[l].clear(), lane[l].shrink_to_fit();
 
+    // Physical positions, on the device, from one representative node per DOF.
+    thrust::device_vector<double> d_pos((size_t)dof.numDof * 3);
+    {
+        const int*    fo  = thrust::raw_pointer_cast(firstOf.data());
+        const int*    dcs = thrust::raw_pointer_cast(d_corners.data());
+        const double* dz  = thrust::raw_pointer_cast(d_Z.data());
+        const double* xyz = thrust::raw_pointer_cast(d_xyz.data());
+        double*       op  = thrust::raw_pointer_cast(d_pos.data());
+        thrust::for_each(thrust::device, thrust::counting_iterator<long>(0),
+                         thrust::counting_iterator<long>(dof.numDof),
+                         [=] __host__ __device__ (long d) {
+                             const long idx = fo[d];
+                             const long e   = idx / NN;
+                             const int  nd  = (int)(idx - e * NN);
+                             const int ia = nd / (n * n), ib = (nd / n) % n, ic = nd % n;
+                             double w[4];
+                             duffyWeights(dz[ia], dz[ib], dz[ic], w);
+                             for (int k = 0; k < 3; ++k) {
+                                 double x = 0.0;
+                                 for (int c = 0; c < 4; ++c)
+                                     x += w[c] * xyz[(long)dcs[e * 4 + c] * 3 + k];
+                                 op[d * 3 + k] = x;
+                             }
+                         });
+    }
+
+    if (keepOwn) {                       // nothing crosses PCIe
+        keepOwn->numDof        = dof.numDof;
+        keepOwn->elemDof       = std::move(d_elemDof);
+        keepOwn->sortedCorners = std::move(d_corners);
+        keepOwn->dofPos        = std::move(d_pos);
+        return;
+    }
     dof.elemDof.resize(N);
     thrust::copy(d_elemDof.begin(), d_elemDof.end(), dof.elemDof.begin());
-
-    // Physical positions from one representative node per DOF.
-    std::vector<int> h_first(dof.numDof);
-    thrust::copy(firstOf.begin(), firstOf.end(), h_first.begin());
-    dof.dofPos.assign(dof.numDof, {0.0, 0.0, 0.0});
-    for (long d = 0; d < dof.numDof; ++d) {
-        const long idx = h_first[d];
-        const long e  = idx / NN;
-        const int  nd = (int)(idx - e * NN);
-        const int ia = nd / (n * n), ib = (nd / n) % n, ic = nd % n;
-        double w[4];
-        duffyWeights(Z[ia], Z[ib], Z[ic], w);
-        std::array<double,3> x = {0, 0, 0};
-        for (int c = 0; c < 4; ++c)
-            for (int k = 0; k < 3; ++k) x[k] += w[c] * coords[h_sorted[e*4+c]][k];
-        dof.dofPos[d] = x;
-    }
+    dof.sortedCorners.resize(elemCorners.size());
+    thrust::copy(d_corners.begin(), d_corners.end(), dof.sortedCorners.begin());
+    std::vector<double> h_pos((size_t)dof.numDof * 3);
+    thrust::copy(d_pos.begin(), d_pos.end(), h_pos.begin());
+    dof.dofPos.resize(dof.numDof);
+    for (long d = 0; d < dof.numDof; ++d)
+        dof.dofPos[d] = { h_pos[d*3+0], h_pos[d*3+1], h_pos[d*3+2] };
 }
 
 // ---- Nodal HO tet (integer barycentric indices) ----
@@ -237,7 +285,8 @@ template <typename RealType>
 inline void buildGpu(HoTetDofHandler& dof,
                      const std::vector<int>& elemCorners,
                      const std::vector<std::array<double,3>>& coords,
-                     const HoTetNodal<RealType>& nd)
+                     const HoTetNodal<RealType>& nd,
+                     HoTetOwnershipDeviceData* keepOwn = nullptr)
 {
     using namespace ho_tet_gpu_detail;
     const int P = nd.P, Np = nd.Np;
@@ -252,6 +301,10 @@ inline void buildGpu(HoTetDofHandler& dof,
 
     thrust::device_vector<int> d_corners(elemCorners.begin(), elemCorners.end());
     thrust::device_vector<int> d_bary(h_bary.begin(), h_bary.end());
+    std::vector<double> h_xyz(coords.size() * 3);
+    for (size_t v = 0; v < coords.size(); ++v)
+        for (int d = 0; d < 3; ++d) h_xyz[v * 3 + d] = coords[v][d];
+    thrust::device_vector<double> d_xyz(h_xyz.begin(), h_xyz.end());
 
     thrust::device_vector<uint64_t> lane[4];
     for (int l = 0; l < 4; ++l) lane[l].resize(N);
@@ -282,24 +335,45 @@ inline void buildGpu(HoTetDofHandler& dof,
     dof.numDof = dedupAndScatter(lane, N, perm, d_elemDof, firstOf);
     for (int l = 0; l < 4; ++l) lane[l].clear(), lane[l].shrink_to_fit();
 
+    // Physical positions, on the device, from one representative node per DOF.
+    thrust::device_vector<double> d_pos((size_t)dof.numDof * 3);
+    {
+        const int*    fo  = thrust::raw_pointer_cast(firstOf.data());
+        const int*    dcs = thrust::raw_pointer_cast(d_corners.data());
+        const int*    dbb = thrust::raw_pointer_cast(d_bary.data());
+        const double* xyz = thrust::raw_pointer_cast(d_xyz.data());
+        double*       op  = thrust::raw_pointer_cast(d_pos.data());
+        thrust::for_each(thrust::device, thrust::counting_iterator<long>(0),
+                         thrust::counting_iterator<long>(dof.numDof),
+                         [=] __host__ __device__ (long d) {
+                             const long idx = fo[d];
+                             const long e = idx / Np;
+                             const int  m = (int)(idx - e * Np);
+                             const int i = dbb[(long)m*3+0], j = dbb[(long)m*3+1],
+                                       k = dbb[(long)m*3+2];
+                             const int w[4] = { P - i - j - k, i, j, k };
+                             for (int q = 0; q < 3; ++q) {
+                                 double x = 0.0;
+                                 for (int c = 0; c < 4; ++c)
+                                     x += (w[c] / (double)P) * xyz[(long)dcs[e*4+c]*3 + q];
+                                 op[d * 3 + q] = x;
+                             }
+                         });
+    }
+
+    if (keepOwn) {                       // nothing crosses PCIe
+        keepOwn->numDof  = dof.numDof;
+        keepOwn->elemDof = std::move(d_elemDof);
+        keepOwn->dofPos  = std::move(d_pos);
+        return;
+    }
     dof.elemDof.resize(N);
     thrust::copy(d_elemDof.begin(), d_elemDof.end(), dof.elemDof.begin());
-
-    std::vector<int> h_first(dof.numDof);
-    thrust::copy(firstOf.begin(), firstOf.end(), h_first.begin());
-    dof.dofPos.assign(dof.numDof, {0.0, 0.0, 0.0});
-    for (long d = 0; d < dof.numDof; ++d) {
-        const long idx = h_first[d];
-        const long e = idx / Np;
-        const int  m = (int)(idx - e * Np);
-        const int i = h_bary[(size_t)m*3+0], j = h_bary[(size_t)m*3+1], k = h_bary[(size_t)m*3+2];
-        const int w[4] = { P - i - j - k, i, j, k };
-        std::array<double,3> x = {0, 0, 0};
-        for (int c = 0; c < 4; ++c)
-            for (int q = 0; q < 3; ++q)
-                x[q] += (w[c] / (double)P) * coords[elemCorners[e*4+c]][q];
-        dof.dofPos[d] = x;
-    }
+    std::vector<double> h_pos((size_t)dof.numDof * 3);
+    thrust::copy(d_pos.begin(), d_pos.end(), h_pos.begin());
+    dof.dofPos.resize(dof.numDof);
+    for (long d = 0; d < dof.numDof; ++d)
+        dof.dofPos[d] = { h_pos[d*3+0], h_pos[d*3+1], h_pos[d*3+2] };
 }
 
 }  // namespace fem
