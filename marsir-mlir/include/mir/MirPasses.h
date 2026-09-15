@@ -21,6 +21,9 @@ void registerBatchElementsPass();
 
 // --mir-gpu-wrap
 void registerGpuWrapPass();
+
+// --mir-forward-transfers
+void registerForwardTransfersPass();
 }  // namespace mir
 
 #endif  // MIR_MIRPASSES_H

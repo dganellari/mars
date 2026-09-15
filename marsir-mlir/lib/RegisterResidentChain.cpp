@@ -327,6 +327,79 @@ struct ChainContractsPass
       return Value();
     };
 
+    // ---- Phase 1: the LOWERABLE CLOSURE ----------------------------------
+    // An op can be lowered only if every operand it needs is available as a
+    // fragment AND every consumer of its result can itself consume a fragment.
+    // Both directions matter: a fragment cannot be materialized back into a full
+    // vector, so lowering a value whose consumer we cannot handle would strand
+    // it. Neither condition is local, hence the fixpoint.
+    auto isLeafRead = [](Value v) {
+      return (bool)v.getDefiningOp<vector::TransferReadOp>();
+    };
+    auto isSplatCst = [](Value v) {
+      if (auto cst = v.getDefiningOp<arith::ConstantOp>())
+        if (auto dv = dyn_cast<DenseElementsAttr>(cst.getValue()))
+          return dv.isSplat();
+      return false;
+    };
+
+    SmallVector<Operation *> cand;
+    DenseSet<Operation *> inCand;
+    for (Block *blk : blocks)
+      for (Operation &o : *blk) {
+        Operation *op = &o;
+        bool ok = false;
+        if (auto c = dyn_cast<vector::ContractionOp>(op)) {
+          Value A2, B2; bool bt2; int64_t K2, N2, m2;
+          ok = classify(c, M, A2, B2, bt2, K2, N2, m2);
+        } else if (op->hasTrait<OpTrait::Elementwise>() &&
+                   op->getNumResults() == 1 && tilesOf(op->getResult(0)) > 0) {
+          ok = llvm::all_of(op->getOperands(), [&](Value v) {
+            return tilesOf(v) == tilesOf(op->getResult(0));
+          });
+        }
+        if (ok) { cand.push_back(op); inCand.insert(op); }
+      }
+
+    for (bool changed = true; changed;) {
+      changed = false;
+      for (Operation *op : cand) {
+        if (!inCand.count(op))
+          continue;
+        // A contract's A/B must be a leaf read or a SINGLE-tile lowered value:
+        // the relayout formulas are per-tile, so a wide value cannot be an
+        // operand. This has to mirror the emit-time check exactly, or the
+        // closure promises something emit then declines and the chain breaks.
+        auto operandOk = [&](Value v, bool singleTileOnly) {
+          if (isLeafRead(v) || isSplatCst(v))
+            return true;
+          Operation *d = v.getDefiningOp();
+          if (!d || !inCand.count(d))
+            return false;
+          return !singleTileOnly || tilesOf(v) == 1;
+        };
+        bool good;
+        if (auto c = dyn_cast<vector::ContractionOp>(op)) {
+          Value A2, B2; bool bt2; int64_t K2, N2, m2;
+          good = classify(c, M, A2, B2, bt2, K2, N2, m2) &&
+                 operandOk(A2, /*singleTileOnly=*/true) &&
+                 operandOk(B2, /*singleTileOnly=*/true) &&
+                 operandOk(c.getAcc(), /*singleTileOnly=*/false);
+        } else {
+          good = llvm::all_of(op->getOperands(), [&](Value v) {
+            return operandOk(v, /*singleTileOnly=*/false);
+          });
+        }
+        if (good)
+          for (Operation *u : op->getResult(0).getUsers())
+            if (!inCand.count(u) && !isa<vector::TransferWriteOp>(u)) {
+              good = false;
+              break;
+            }
+        if (!good) { inCand.erase(op); changed = true; }
+      }
+    }
+
     // One in-order pass per block: within a block the chain is straight-line, so
     // lowering each op as it is reached keeps `frag` populated before any
     // consumer needs it.
@@ -335,6 +408,8 @@ struct ChainContractsPass
       Operation *op = &opRef;
 
       if (auto c = dyn_cast<vector::ContractionOp>(op)) {
+        if (!inCand.count(op))
+          continue;   // outside the lowerable closure
         Value A, B;
         bool bt;
         int64_t K = 0, N = 0, mDim = 8;
@@ -435,14 +510,17 @@ struct ChainContractsPass
       // Pointwise (the flux): elementwise on 8x8 needs NO relayout -- it acts
       // lane-locally on the vector<1x2>. Only fuse ops that actually touch the
       // chain; an elementwise op on two leaf reads is left alone.
-      if (op->hasTrait<OpTrait::Elementwise>() && op->getNumResults() == 1 &&
-          tilesOf(op->getResult(0)) > 0 &&
+      if (op->hasTrait<OpTrait::Elementwise>() && inCand.count(op) &&
+          op->getNumResults() == 1 && tilesOf(op->getResult(0)) > 0 &&
           llvm::all_of(op->getOperands(),
                        [&](Value v) {
                          return tilesOf(v) == tilesOf(op->getResult(0));
-                       }) &&
-          llvm::any_of(op->getOperands(),
-                       [&](Value v) { return frag.count(v); })) {
+                       })) {
+        // No "must already touch the chain" test here: the closure decided, and
+        // an op it kept may legitimately have only leaf-read operands (a flux
+        // term built from two metric reads) while its CONSUMER is on the chain.
+        // Skipping it would strand that consumer with one fragment operand and
+        // one full vector.
         b.setInsertionPoint(op);
         const int nTiles = tilesOf(op->getResult(0));
         SmallVector<Value> out;

@@ -7,6 +7,10 @@
 #     one-shot-bufferize                      memrefs
 #     dmma_schedule.mlir (transform dialect)  tile m8n8k4 + vectorize
 #     --convert-linalg-to-loops               anything the tile+vectorize left
+#     --mir-forward-transfers                 store-to-load: the accumulator a
+#                                             tiled contraction stages in scratch
+#                                             becomes the value itself, so the
+#                                             chain pass can SEE the dataflow
 #     --mir-chain-contracts                   per-lane nvgpu.mma.sync
 #     --canonicalize --cse                    drop the now-dead full-width reads
 #     --loop-invariant-code-motion            so the fragment indices are invariant
@@ -40,7 +44,8 @@ sys.stdout.write(mlir_ir.emit_full(ea, p=$P))
        --one-shot-bufferize="bufferize-function-boundaries=true function-boundary-type-conversion=identity-layout-map" \
 | mlir-opt --transform-preload-library="transform-library-paths=test/dmma_schedule.mlir" \
            --transform-interpreter \
-| mlir-opt --convert-linalg-to-loops \
+| mlir-opt --convert-linalg-to-loops --canonicalize --cse \
+| $OPT --mir-forward-transfers \
 | $OPT --mir-chain-contracts --canonicalize --cse \
 | mlir-opt --loop-invariant-code-motion \
 | $OPT --mir-hoist-transfer-pairs > generated/hl_mma_p$P.mlir

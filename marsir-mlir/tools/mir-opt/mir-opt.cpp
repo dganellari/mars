@@ -22,6 +22,7 @@ int main(int argc, char **argv) {
   mir::registerChainContractsPass();
   mir::registerBatchElementsPass();
   mir::registerGpuWrapPass();
+  mir::registerForwardTransfersPass();
 
   return mlir::asMainReturnCode(mlir::MlirOptMain(
       argc, argv, "mir optimizer driver (Stage 2 MLIR dialect)\n", registry));
