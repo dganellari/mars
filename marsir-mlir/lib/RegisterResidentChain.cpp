@@ -80,15 +80,15 @@ static Value colOf(OpBuilder &b, Location loc, Lane &L, int slab) {
 }
 
 static Value readFrag1(OpBuilder &b, Location loc, Lane &L, Value mem, Value row,
-                       Value col) {
+                       Value col, bool rowInBounds = true) {
   return b.create<vector::TransferReadOp>(
       loc, L.frag1, mem, ValueRange{row, col},
       AffineMap::getMinorIdentityMap(2, 2, b.getContext()), L.f0, Value(),
-      b.getBoolArrayAttr({true, true}));
+      b.getBoolArrayAttr({rowInBounds, true}));
 }
 
 static Value readCTile(OpBuilder &b, Location loc, Lane &L, Value mem, int tile,
-                       ValueRange base = {}) {
+                       ValueRange base = {}, bool rowInBounds = true) {
   Value col2k = b.create<arith::MulIOp>(loc, L.k, L.c2idx);
   if (tile) {
     Value off = b.create<arith::ConstantIndexOp>(loc, 8 * tile);
@@ -102,7 +102,7 @@ static Value readCTile(OpBuilder &b, Location loc, Lane &L, Value mem, int tile,
   return b.create<vector::TransferReadOp>(
       loc, L.frag2, mem, ValueRange{row, col2k},
       AffineMap::getMinorIdentityMap(2, 2, b.getContext()), L.f0, Value(),
-      b.getBoolArrayAttr({true, true}));
+      b.getBoolArrayAttr({rowInBounds, true}));
 }
 
 static Value mma(OpBuilder &b, Location loc, Lane &L, Value a, Value bfrag,
@@ -165,7 +165,7 @@ struct Maps {
 // Classify a vector.contract: is it m8n8k4 f64, and which operand is A vs B,
 // and is B transposed? Returns false if it is not a supported contract.
 static bool classify(vector::ContractionOp c, Maps &M, Value &A, Value &B,
-                     bool &bTransp, int64_t &K, int64_t &N) {
+                     bool &bTransp, int64_t &K, int64_t &N, int64_t &M_) {
   auto maps = c.getIndexingMapsArray();
   if (maps.size() != 3 || maps[2] != M.mn)
     return false;
@@ -189,11 +189,13 @@ static bool classify(vector::ContractionOp c, Maps &M, Value &A, Value &B,
        cs = shp(c.getResultType());
   if (as.size() != 2 || bs.size() != 2 || cs.size() != 2)
     return false;
-  // m8n8k4 fixes m = 8 in hardware. K and N do not have to be 8: K splits into
-  // k-slabs of 4 and N into column tiles of 8, which is how a wide sum-
-  // factorization sweep (8xK @ KxN) maps onto the tile.
-  if (as[0] != 8 || cs[0] != 8)
+  // m8n8k4 fixes the TILE at m = 8, but the operator's m may be smaller -- the
+  // Knaus B-sweep is Pxn with P = 7 faces. A shorter m rides in the same tile:
+  // the tail rows read out of bounds (transfer_read pads them with 0) and their
+  // writes are dropped, so the result is exact with one wasted row.
+  if (as[0] != cs[0] || as[0] < 1 || as[0] > 8)
     return false;
+  M_ = as[0];
   K = as[1];
   N = cs[1];
   if (K % 4 != 0 || N % 8 != 0)
@@ -253,6 +255,9 @@ struct ChainContractsPass
     // BOTH in C layout, so a pointwise op reads its operands from the same map a
     // following contract relayouts out of.
     DenseMap<Value, SmallVector<Value>> frag;
+    // How many of the tile's 8 rows a lowered value actually occupies, so its
+    // write knows whether to clip the tail.
+    DenseMap<Value, int64_t> fragRows;
     SmallVector<Operation *> dead;
 
     // Column offset of tile t, as an index value.
@@ -265,7 +270,7 @@ struct ChainContractsPass
     };
 
     // A is 8xK: the same fragment feeds every column tile.
-    auto operandFragA = [&](Value v, int slab) -> Value {
+    auto operandFragA = [&](Value v, int slab, bool rowIB) -> Value {
       Location loc = v.getLoc();
       if (auto it = frag.find(v); it != frag.end()) {
         if (it->second.size() != 1)
@@ -276,7 +281,7 @@ struct ChainContractsPass
       if (!rd)
         return Value();  // neither a leaf read nor a value we lowered
       Value col = colOf(b, loc, L, slab);
-      return readFrag1(b, loc, L, rd.getSource(), L.i, col);  // A[i,4s+k]
+      return readFrag1(b, loc, L, rd.getSource(), L.i, col, rowIB);  // A[i,4s+k]
     };
     // B supplies columns 8t..8t+7 for tile t.
     auto operandFragB = [&](Value v, int slab, bool transp, int tile) -> Value {
@@ -332,13 +337,14 @@ struct ChainContractsPass
       if (auto c = dyn_cast<vector::ContractionOp>(op)) {
         Value A, B;
         bool bt;
-        int64_t K = 0, N = 0;
+        int64_t K = 0, N = 0, mDim = 8;
         // DECLINE rather than fail: a real operator mixes shapes, and m is fixed
         // at 8 by the hardware tile. A contraction that does not fit (the Knaus
         // B-sweep is PxN with P = 7 faces) is left alone for another lowering,
         // not erased and not silently mangled.
-        if (!classify(c, M, A, B, bt, K, N))
+        if (!classify(c, M, A, B, bt, K, N, mDim))
           continue;
+        const bool rowIB = (mDim == 8);   // else the tail rows ride OOB
         const int nTiles = (int)(N / 8), nSlabs = (int)(K / 4);
 
         // Check every operand BEFORE emitting anything, so declining leaves no
@@ -386,7 +392,7 @@ struct ChainContractsPass
           // take it in C layout and accumulate straight into it.
           for (int t = 0; t < nTiles; ++t)
             accFrags.push_back(readCTile(b, c.getLoc(), L, accRd.getSource(), t,
-                                         accRd.getIndices()));
+                                         accRd.getIndices(), rowIB));
         } else {
           bool zeroAcc = false;
           if (auto cst = c.getAcc().getDefiningOp<arith::ConstantOp>())
@@ -409,7 +415,7 @@ struct ChainContractsPass
         for (int t = 0; t < nTiles; ++t) {
           Value cfrag = accFrags[t];
           for (int s2 = 0; s2 < nSlabs; ++s2) {
-            Value af = operandFragA(A, s2);
+            Value af = operandFragA(A, s2, rowIB);
             Value bf = operandFragB(B, s2, bt, t);
             if (!af || !bf) {   // pre-checked above; defensive
               c.emitOpError("mir-chain-contracts: operand became unfragmentable");
@@ -421,6 +427,7 @@ struct ChainContractsPass
           out.push_back(cfrag);
         }
         frag[c.getResult()] = out;
+        fragRows[c.getResult()] = mDim;
         dead.push_back(op);
         continue;
       }
@@ -458,6 +465,12 @@ struct ChainContractsPass
           out.push_back(b.create(st)->getResult(0));
         }
         frag[op->getResult(0)] = out;
+        {   // a pointwise result is as tall as its tallest fragmented operand
+          int64_t rows = 8;
+          for (Value v : op->getOperands())
+            if (auto it = fragRows.find(v); it != fragRows.end()) rows = it->second;
+          fragRows[op->getResult(0)] = rows;
+        }
         dead.push_back(op);
         continue;
       }
@@ -468,6 +481,9 @@ struct ChainContractsPass
         if (it == frag.end())
           continue;
         b.setInsertionPoint(w);
+        int64_t wRows = 8;
+        if (auto it = fragRows.find(w.getVector()); it != fragRows.end())
+          wRows = it->second;
         Value col2k = b.create<arith::MulIOp>(w.getLoc(), L.k, L.c2idx);
         // The write's own indices are the base of the destination window.
         SmallVector<Value> base(w.getIndices().begin(), w.getIndices().end());
@@ -485,7 +501,8 @@ struct ChainContractsPass
           b.create<vector::TransferWriteOp>(
               w.getLoc(), it->second[t], w.getSource(), ValueRange{row, col},
               AffineMapAttr::get(AffineMap::getMinorIdentityMap(2, 2, ctx)),
-              /*mask=*/Value(), b.getBoolArrayAttr({true, true}));
+              /*mask=*/Value(),
+              b.getBoolArrayAttr({wRows == 8, true}));
         }
         dead.push_back(op);
         continue;

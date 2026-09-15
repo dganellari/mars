@@ -7,6 +7,13 @@
 #     one-shot-bufferize                      memrefs
 #     dmma_schedule.mlir (transform dialect)  tile m8n8k4 + vectorize
 #     --mir-chain-contracts                   per-lane nvgpu.mma.sync
+#     --canonicalize --cse                    drop the now-dead full-width reads
+#     --loop-invariant-code-motion            so the fragment indices are invariant
+#     --mir-hoist-transfer-pairs              C-fragment into a loop-carried register
+#
+# ORDER MATTERS: without the DCE the accumulator view still has the dead
+# full-width read as a third user, and without LICM its column index is computed
+# inside the loop -- either one makes the hoist decline.
 #
 # This is the route the tutorial's Chapter 0 calls the destination: the Python is
 # a thin front-end emitting the dialect, everything below it is a pass.
@@ -32,9 +39,12 @@ sys.stdout.write(mlir_ir.emit_full(ea, p=$P))
        --one-shot-bufferize="bufferize-function-boundaries=true function-boundary-type-conversion=identity-layout-map" \
 | mlir-opt --transform-preload-library="transform-library-paths=test/dmma_schedule.mlir" \
            --transform-interpreter \
-| $OPT --mir-chain-contracts > generated/hl_mma_p$P.mlir
+| $OPT --mir-chain-contracts --canonicalize --cse \
+| mlir-opt --loop-invariant-code-motion \
+| $OPT --mir-hoist-transfer-pairs > generated/hl_mma_p$P.mlir
 
 mma=$(grep -c "nvgpu.mma.sync" generated/hl_mma_p$P.mlir || true)
 left=$(grep -c "vector.contract" generated/hl_mma_p$P.mlir || true)
 $OPT generated/hl_mma_p$P.mlir -o /dev/null
-echo "high-level mir -> mma (p=$P): $mma nvgpu.mma.sync, $left contracts declined (P=$P shapes), verifies"
+acc=$(grep -c "iter_args(.*vector<1x2xf64>" generated/hl_mma_p$P.mlir || true)
+echo "high-level mir -> mma (p=$P): $mma nvgpu.mma.sync, $left declined, $acc register-carried accumulators, verifies"
