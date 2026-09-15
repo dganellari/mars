@@ -87,8 +87,13 @@ static Value readFrag1(OpBuilder &b, Location loc, Lane &L, Value mem, Value row
       b.getBoolArrayAttr({true, true}));
 }
 
-static Value readC(OpBuilder &b, Location loc, Lane &L, Value mem) {
+static Value readCTile(OpBuilder &b, Location loc, Lane &L, Value mem,
+                       int tile) {
   Value col2k = b.create<arith::MulIOp>(loc, L.k, L.c2idx);
+  if (tile) {
+    Value off = b.create<arith::ConstantIndexOp>(loc, 8 * tile);
+    col2k = b.create<arith::AddIOp>(loc, col2k, off);
+  }
   return b.create<vector::TransferReadOp>(
       loc, L.frag2, mem, ValueRange{L.i, col2k},
       AffineMap::getMinorIdentityMap(2, 2, b.getContext()), L.f0, Value(),
@@ -155,7 +160,7 @@ struct Maps {
 // Classify a vector.contract: is it m8n8k4 f64, and which operand is A vs B,
 // and is B transposed? Returns false if it is not a supported contract.
 static bool classify(vector::ContractionOp c, Maps &M, Value &A, Value &B,
-                     bool &bTransp) {
+                     bool &bTransp, int64_t &K, int64_t &N) {
   auto maps = c.getIndexingMapsArray();
   if (maps.size() != 3 || maps[2] != M.mn)
     return false;
@@ -175,9 +180,22 @@ static bool classify(vector::ContractionOp c, Maps &M, Value &A, Value &B,
   auto shp = [](Type t) { return cast<VectorType>(t).getShape(); };
   if (!cast<VectorType>(A.getType()).getElementType().isF64())
     return false;
-  return shp(A.getType()) == ArrayRef<int64_t>({8, 8}) &&
-         shp(B.getType()) == ArrayRef<int64_t>({8, 8}) &&
-         shp(c.getResultType()) == ArrayRef<int64_t>({8, 8});
+  auto as = shp(A.getType()), bs = shp(B.getType()),
+       cs = shp(c.getResultType());
+  if (as.size() != 2 || bs.size() != 2 || cs.size() != 2)
+    return false;
+  // m8n8k4 fixes m = 8 in hardware. K and N do not have to be 8: K splits into
+  // k-slabs of 4 and N into column tiles of 8, which is how a wide sum-
+  // factorization sweep (8xK @ KxN) maps onto the tile.
+  if (as[0] != 8 || cs[0] != 8)
+    return false;
+  K = as[1];
+  N = cs[1];
+  if (K % 4 != 0 || N % 8 != 0)
+    return false;
+  if (bTransp)
+    return bs[0] == N && bs[1] == K;
+  return bs[0] == K && bs[1] == N;
 }
 
 struct ChainContractsPass
@@ -212,54 +230,71 @@ struct ChainContractsPass
     b.setInsertionPointToStart(body);
     Lane L = makeLane(b, root->getLoc());
 
-    // Any vector<8x8xf64> value that now lives as a per-lane C-fragment
-    // (vector<1x2>). Contract results and pointwise results are BOTH in C
-    // layout, so a pointwise op reads its operands from the same map that a
+    // A value of type vector<8xN> lives as N/8 per-lane C-fragments, one per
+    // column tile, each vector<1x2>. Contract results and pointwise results are
+    // BOTH in C layout, so a pointwise op reads its operands from the same map a
     // following contract relayouts out of.
-    DenseMap<Value, Value> frag;
+    DenseMap<Value, SmallVector<Value>> frag;
     SmallVector<Operation *> dead;
 
-    // Fragment reader for an operand of a contract. A leaf transfer_read of an
-    // 8x8 memref is read directly as the requested fragment; a prior contract
-    // result is repacked via shuffle.
+    // Column offset of tile t, as an index value.
+    auto tileCol = [&](Location loc, int t) -> Value {
+      return b.create<arith::ConstantIndexOp>(loc, 8 * t);
+    };
+    auto addCol = [&](Location loc, Value base, int t) -> Value {
+      return t ? b.create<arith::AddIOp>(loc, base, tileCol(loc, t)).getResult()
+               : base;
+    };
+
+    // A is 8xK: the same fragment feeds every column tile.
     auto operandFragA = [&](Value v, int slab) -> Value {
       Location loc = v.getLoc();
-      if (auto it = frag.find(v); it != frag.end())
-        return relayout(b, loc, L, it->second, slab, /*toB=*/false);
+      if (auto it = frag.find(v); it != frag.end()) {
+        if (it->second.size() != 1)
+          return Value();   // a multi-tile value cannot be an A operand
+        return relayout(b, loc, L, it->second[0], slab, /*toB=*/false);
+      }
       auto rd = v.getDefiningOp<vector::TransferReadOp>();
       if (!rd)
         return Value();  // neither a leaf read nor a value we lowered
       Value col = colOf(b, loc, L, slab);
       return readFrag1(b, loc, L, rd.getSource(), L.i, col);  // A[i,4s+k]
     };
-    auto operandFragB = [&](Value v, int slab, bool transp) -> Value {
+    // B supplies columns 8t..8t+7 for tile t.
+    auto operandFragB = [&](Value v, int slab, bool transp, int tile) -> Value {
       Location loc = v.getLoc();
-      if (auto it = frag.find(v); it != frag.end())
-        return relayout(b, loc, L, it->second, slab, /*toB=*/true);
+      if (auto it = frag.find(v); it != frag.end()) {
+        if (it->second.size() != 1)
+          return Value();
+        return relayout(b, loc, L, it->second[0], slab, /*toB=*/true);
+      }
       auto rd = v.getDefiningOp<vector::TransferReadOp>();
       if (!rd)
         return Value();
       Value col = colOf(b, loc, L, slab);
-      if (transp)
-        return readFrag1(b, loc, L, rd.getSource(), L.i, col);   // B[i,4s+k]
-      return readFrag1(b, loc, L, rd.getSource(), col, L.i);     // B[4s+k,i]
+      if (transp)   // B stored [n,k]: read [8t+i, 4s+k]
+        return readFrag1(b, loc, L, rd.getSource(), addCol(loc, L.i, tile), col);
+      // B stored [k,n]: read [4s+k, 8t+i]
+      return readFrag1(b, loc, L, rd.getSource(), col, addCol(loc, L.i, tile));
     };
 
-    auto is8x8f64 = [](Value v) {
+    // Shape of a value in tiles, or 0 if it is not an f64 8xN vector.
+    auto tilesOf = [](Value v) -> int {
       auto t = dyn_cast<VectorType>(v.getType());
-      return t && t.getElementType().isF64() &&
-             t.getShape() == ArrayRef<int64_t>({8, 8});
+      if (!t || !t.getElementType().isF64() || t.getRank() != 2) return 0;
+      if (t.getDimSize(0) != 8 || t.getDimSize(1) % 8 != 0) return 0;
+      return (int)(t.getDimSize(1) / 8);
     };
 
-    // Fragment an operand of a POINTWISE op, which needs C layout. Already
-    // lowered -> reuse. Leaf transfer_read -> read [i, 2k]. Splat constant ->
-    // a vector<1x2> splat (a uniform value has no layout).
-    auto operandFragC = [&](Value v) -> Value {
+    // Fragment tile `tile` of a POINTWISE operand, which needs C layout.
+    // Already lowered -> reuse. Leaf transfer_read -> read [i, 8t + 2k]. Splat
+    // constant -> a vector<1x2> splat (a uniform value has no layout).
+    auto operandFragC = [&](Value v, int tile) -> Value {
       if (auto it = frag.find(v); it != frag.end())
-        return it->second;
+        return tile < (int)it->second.size() ? it->second[tile] : Value();
       Location loc = v.getLoc();
       if (auto rd = v.getDefiningOp<vector::TransferReadOp>())
-        return readC(b, loc, L, rd.getSource());
+        return readCTile(b, loc, L, rd.getSource(), tile);
       if (auto cst = v.getDefiningOp<arith::ConstantOp>())
         if (auto d = dyn_cast<DenseElementsAttr>(cst.getValue()))
           if (d.isSplat())
@@ -277,18 +312,29 @@ struct ChainContractsPass
       if (auto c = dyn_cast<vector::ContractionOp>(op)) {
         Value A, B;
         bool bt;
-        if (!classify(c, M, A, B, bt)) {
-          c.emitOpError("mir-chain-contracts: unsupported contract shape/maps");
+        int64_t K = 0, N = 0;
+        if (!classify(c, M, A, B, bt, K, N)) {
+          c.emitOpError("mir-chain-contracts: unsupported contract shape/maps "
+                        "(m8n8k4 needs m = 8, K a multiple of 4, N a multiple "
+                        "of 8)");
           signalPassFailure();
           return;
         }
+        const int nTiles = (int)(N / 8), nSlabs = (int)(K / 4);
         b.setInsertionPoint(c);
-        // The accumulator decides where the chain starts. A zero splat starts a
-        // fresh one; a value this pass already lowered continues one, in C layout.
-        // Anything else would be SILENTLY DROPPED -- refuse it instead.
-        Value cfrag;
+
+        // The accumulator decides where each tile's chain starts. A zero splat
+        // starts a fresh one; a value this pass already lowered continues one,
+        // in C layout. Anything else would be SILENTLY DROPPED -- refuse it.
+        SmallVector<Value> accFrags;
         if (auto it = frag.find(c.getAcc()); it != frag.end()) {
-          cfrag = it->second;
+          if ((int)it->second.size() != nTiles) {
+            c.emitOpError("mir-chain-contracts: accumulator tile count does not "
+                          "match the result");
+            signalPassFailure();
+            return;
+          }
+          accFrags = it->second;
         } else {
           bool zeroAcc = false;
           if (auto cst = c.getAcc().getDefiningOp<arith::ConstantOp>())
@@ -301,22 +347,30 @@ struct ChainContractsPass
             signalPassFailure();
             return;
           }
-          cfrag = b.create<arith::ConstantOp>(
+          Value z = b.create<arith::ConstantOp>(
               c.getLoc(), L.frag2,
               DenseElementsAttr::get(L.frag2, b.getF64FloatAttr(0.0)));
+          accFrags.assign(nTiles, z);
         }
-        for (int s2 = 0; s2 < 2; ++s2) {  // 8x8x8 = two m8n8k4 slabs
-          Value af = operandFragA(A, s2);
-          Value bf = operandFragB(B, s2, bt);
-          if (!af || !bf) {
-            c.emitOpError("mir-chain-contracts: contract operand is neither a "
-                          "leaf transfer_read nor a value this pass lowered");
-            signalPassFailure();
-            return;
+
+        SmallVector<Value> out;
+        for (int t = 0; t < nTiles; ++t) {
+          Value cfrag = accFrags[t];
+          for (int s2 = 0; s2 < nSlabs; ++s2) {
+            Value af = operandFragA(A, s2);
+            Value bf = operandFragB(B, s2, bt, t);
+            if (!af || !bf) {
+              c.emitOpError("mir-chain-contracts: contract operand is neither a "
+                            "leaf transfer_read nor a single-tile value this "
+                            "pass lowered");
+              signalPassFailure();
+              return;
+            }
+            cfrag = mma(b, c.getLoc(), L, af, bf, cfrag);
           }
-          cfrag = mma(b, c.getLoc(), L, af, bf, cfrag);
+          out.push_back(cfrag);
         }
-        frag[c.getResult()] = cfrag;
+        frag[c.getResult()] = out;
         dead.push_back(op);
         continue;
       }
@@ -325,42 +379,64 @@ struct ChainContractsPass
       // lane-locally on the vector<1x2>. Only fuse ops that actually touch the
       // chain; an elementwise op on two leaf reads is left alone.
       if (op->hasTrait<OpTrait::Elementwise>() && op->getNumResults() == 1 &&
-          is8x8f64(op->getResult(0)) &&
-          llvm::all_of(op->getOperands(), is8x8f64) &&
+          tilesOf(op->getResult(0)) > 0 &&
+          llvm::all_of(op->getOperands(),
+                       [&](Value v) {
+                         return tilesOf(v) == tilesOf(op->getResult(0));
+                       }) &&
           llvm::any_of(op->getOperands(),
                        [&](Value v) { return frag.count(v); })) {
         b.setInsertionPoint(op);
-        SmallVector<Value> fops;
-        for (Value v : op->getOperands()) {
-          Value f = operandFragC(v);
-          if (!f) {
-            op->emitOpError("mir-chain-contracts: pointwise operand is not a "
-                            "fragment, a leaf transfer_read or a splat");
-            signalPassFailure();
-            return;
+        const int nTiles = tilesOf(op->getResult(0));
+        SmallVector<Value> out;
+        for (int t = 0; t < nTiles; ++t) {
+          SmallVector<Value> fops;
+          for (Value v : op->getOperands()) {
+            Value f = operandFragC(v, t);
+            if (!f) {
+              op->emitOpError("mir-chain-contracts: pointwise operand is not a "
+                              "fragment, a leaf transfer_read or a splat");
+              signalPassFailure();
+              return;
+            }
+            fops.push_back(f);
           }
-          fops.push_back(f);
+          OperationState st(op->getLoc(), op->getName());
+          st.addOperands(fops);
+          st.addTypes({L.frag2});
+          st.addAttributes(op->getAttrs());
+          out.push_back(b.create(st)->getResult(0));
         }
-        OperationState st(op->getLoc(), op->getName());
-        st.addOperands(fops);
-        st.addTypes({L.frag2});
-        st.addAttributes(op->getAttrs());
-        frag[op->getResult(0)] = b.create(st)->getResult(0);
+        frag[op->getResult(0)] = out;
         dead.push_back(op);
         continue;
       }
 
-      // A write of a lowered value stores the C-fragment at [i, 2k].
+      // A write of a lowered value stores tile t's C-fragment at [i, 8t + 2k].
       if (auto w = dyn_cast<vector::TransferWriteOp>(op)) {
         auto it = frag.find(w.getVector());
         if (it == frag.end())
           continue;
         b.setInsertionPoint(w);
         Value col2k = b.create<arith::MulIOp>(w.getLoc(), L.k, L.c2idx);
-        b.create<vector::TransferWriteOp>(
-            w.getLoc(), it->second, w.getSource(), ValueRange{L.i, col2k},
-            AffineMapAttr::get(AffineMap::getMinorIdentityMap(2, 2, ctx)),
-            /*mask=*/Value(), b.getBoolArrayAttr({true, true}));
+        // The write's own indices are the base of the destination window.
+        SmallVector<Value> base(w.getIndices().begin(), w.getIndices().end());
+        Value row = base.size() == 2 ? b.create<arith::AddIOp>(w.getLoc(), base[0], L.i)
+                                     : L.i;
+        Value colBase = base.size() == 2 ? base[1] : Value();
+        for (int t = 0; t < (int)it->second.size(); ++t) {
+          Value col = col2k;
+          if (t)
+            col = b.create<arith::AddIOp>(
+                w.getLoc(), col,
+                b.create<arith::ConstantIndexOp>(w.getLoc(), 8 * t));
+          if (colBase)
+            col = b.create<arith::AddIOp>(w.getLoc(), colBase, col);
+          b.create<vector::TransferWriteOp>(
+              w.getLoc(), it->second[t], w.getSource(), ValueRange{row, col},
+              AffineMapAttr::get(AffineMap::getMinorIdentityMap(2, 2, ctx)),
+              /*mask=*/Value(), b.getBoolArrayAttr({true, true}));
+        }
         dead.push_back(op);
         continue;
       }
