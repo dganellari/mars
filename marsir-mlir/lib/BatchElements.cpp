@@ -34,10 +34,11 @@ namespace {
 
 constexpr StringLiteral kElementAttr = "mir.element";
 
-// A subview's result layout is derived from its source, so rebasing the body
-// onto a dynamically-offset element view invalidates every subview below it
-// (offset: 8 becomes offset: ?). Re-infer until nothing moves.
-static void refreshSubViewTypes(Operation *func) {
+// A view's result layout is derived from its source, so rebasing the body onto a
+// dynamically-offset element view invalidates every view below it (offset: 8
+// becomes offset: ?). Re-infer until nothing moves. Reshapes need this as much as
+// subviews do: a collapse_shape of a now-strided source has a strided result.
+static void refreshViewTypes(Operation *func) {
   bool changed = true;
   while (changed) {
     changed = false;
@@ -48,6 +49,24 @@ static void refreshSubViewTypes(Operation *func) {
           sv.getMixedSizes(), sv.getMixedStrides()));
       if (want != sv.getType()) {
         sv.getResult().setType(want);
+        changed = true;
+      }
+    });
+    func->walk([&](memref::CollapseShapeOp cs) {
+      auto src = cast<MemRefType>(cs.getSrc().getType());
+      MemRefType want = memref::CollapseShapeOp::computeCollapsedType(
+          src, cs.getReassociationIndices());
+      if (want != cs.getType()) {
+        cs.getResult().setType(want);
+        changed = true;
+      }
+    });
+    func->walk([&](memref::ExpandShapeOp es) {
+      auto src = cast<MemRefType>(es.getSrc().getType());
+      FailureOr<MemRefType> want = memref::ExpandShapeOp::computeExpandedType(
+          src, es.getType().getShape(), es.getReassociationIndices());
+      if (succeeded(*&want) && *want != es.getType()) {
+        es.getResult().setType(*want);
         changed = true;
       }
     });
@@ -110,7 +129,7 @@ static void batchOne(FuncT func) {
     func.removeArgAttr(i, kElementAttr);
   }
 
-  refreshSubViewTypes(func.getOperation());
+  refreshViewTypes(func.getOperation());
 }
 
 struct BatchElementsPass
