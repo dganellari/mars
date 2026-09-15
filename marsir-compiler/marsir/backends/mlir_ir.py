@@ -360,11 +360,17 @@ def emit_full_batched(ea, p=7, tpb=128):
          "  %c1 = arith.constant 1 : index",
          "  %%ctpb = arith.constant %d : index" % tpb,
          "  %%E = memref.dim %%U, %%c0 : %s" % mU,
-         "  %B = arith.divui %E, %ctpb : index",
+         # Ceil-divide: a floor here silently drops the last E mod tpb elements.
+         "  %ctpbm1 = arith.subi %ctpb, %c1 : index",
+         "  %Epad = arith.addi %E, %ctpbm1 : index",
+         "  %B = arith.divui %Epad, %ctpb : index",
          "  scf.parallel (%b) = (%c0) to (%B) step (%c1) {",
          "    %be = arith.muli %b, %ctpb : index",
          "    scf.parallel (%t) = (%c0) to (%ctpb) step (%c1) {",
          "      %e = arith.addi %be, %t : index",
+         # ...and the last block is then partly out of range, so guard it.
+         "      %inb = arith.cmpi ult, %e, %E : index",
+         "      scf.if %inb {",
          "      %%us = memref.subview %%U[%%e, 0, 0, 0] [1, %d, %d, %d] "
          "[1, 1, 1, 1] : %s to %s" % (n, n, n, mU, mUe),
          "      %%u = bufferization.to_tensor %%us restrict : %s" % mUe,
@@ -388,6 +394,7 @@ def emit_full_batched(ea, p=7, tpb=128):
                     y_init="%yseed")
     L += ["      bufferization.materialize_in_destination %s in writable %%ys "
           ": (%s, %s) -> ()" % (y, t3, mUe),
+          "      }",
           "      scf.reduce",
           "    } {mapping = [#gpu.loop_dim_map<processor = thread_x, "
           "map = %s, bound = %s>]}" % (dm, dm),

@@ -79,10 +79,20 @@ class Block:
         self.scheme = scheme        # "knaus-scs" (GLL solution nodes + Gauss SCS pts)
 
     def render(self):
+        # A front-end SUMMARY, not IR. It used to be spelled "!mir.block<...>",
+        # which reads as a dialect type but does not parse as one: the dialect
+        # type carries only the four axes a pass keys on (see dialect_type).
         f = ", ".join(self.fields)
-        return (f"!mir.block<Fields: [{f}], Shape: {self.shape}, Basis: {self.basis}, "
-                f"Scheme: {self.scheme}, Order: P, Deformed: {{affine|curved}}, "
-                f"Precision: (sol=f64, metric=f64), Batch: E=MarsirLaunchDefault<P>>")
+        return (f"fields=[{f}] shape={self.shape} basis={self.basis} "
+                f"scheme={self.scheme} order=P deformed={{affine|curved}} "
+                f"precision=(sol=f64, metric=f64) batch=E")
+
+    def dialect_type(self, order="P", deformed="{0|1}", batch="E"):
+        """The !mir.block spelling this Block corresponds to. Deliberately
+        narrower than the summary above: basis, scheme, fields and precision are
+        front-end metadata that never reach the IR, so no pass can key on them."""
+        return (f'!mir.block<shape = "{self.shape}", p = {order}, '
+                f"deformed = {deformed}, batch = {batch}>")
 
 
 def block_for(op):
@@ -163,6 +173,7 @@ def dump(ea: ElementApply) -> str:
         f"  flux    : {o.flux_src}",
         f"  uses    : {', '.join(sorted(ea.free_vars)) or '(none)'}",
         f"  block   : {ea.block.render()}",
+        f"  mir type: {ea.block.dialect_type()}",
         "  schedule (per element):",
         "    gather   u_local <- u_global[edof]        ; y_local <- 0",
         "    for dir in 0,1,2:",
