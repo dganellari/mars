@@ -87,15 +87,20 @@ static Value readFrag1(OpBuilder &b, Location loc, Lane &L, Value mem, Value row
       b.getBoolArrayAttr({true, true}));
 }
 
-static Value readCTile(OpBuilder &b, Location loc, Lane &L, Value mem,
-                       int tile) {
+static Value readCTile(OpBuilder &b, Location loc, Lane &L, Value mem, int tile,
+                       ValueRange base = {}) {
   Value col2k = b.create<arith::MulIOp>(loc, L.k, L.c2idx);
   if (tile) {
     Value off = b.create<arith::ConstantIndexOp>(loc, 8 * tile);
     col2k = b.create<arith::AddIOp>(loc, col2k, off);
   }
+  Value row = L.i;
+  if (base.size() == 2) {   // the read's own window origin
+    row = b.create<arith::AddIOp>(loc, base[0], row);
+    col2k = b.create<arith::AddIOp>(loc, base[1], col2k);
+  }
   return b.create<vector::TransferReadOp>(
-      loc, L.frag2, mem, ValueRange{L.i, col2k},
+      loc, L.frag2, mem, ValueRange{row, col2k},
       AffineMap::getMinorIdentityMap(2, 2, b.getContext()), L.f0, Value(),
       b.getBoolArrayAttr({true, true}));
 }
@@ -217,17 +222,30 @@ struct ChainContractsPass
     MLIRContext *ctx = &getContext();
     Maps M(ctx);
 
-    // Find the kernel body (the region that holds the contract chain).
-    Block *body = nullptr;
+    // EVERY block holding contracts, not just the first: a real operator spreads
+    // them over several scf.for bodies, and taking only the first silently left
+    // the rest unlowered.
+    SmallVector<Block *> blocks;
+    DenseSet<Block *> seenBlocks;
     root->walk([&](vector::ContractionOp c) {
-      if (!body)
-        body = c->getBlock();
+      if (seenBlocks.insert(c->getBlock()).second)
+        blocks.push_back(c->getBlock());
     });
-    if (!body)
+    if (blocks.empty())
       return;
 
+    // Lane values go at the enclosing function's entry block so they dominate
+    // every block below; putting them in a loop body would not dominate a
+    // sibling loop.
+    Operation *fnOp = blocks.front()->getParentOp();
+    while (fnOp && !isa<FunctionOpInterface>(fnOp))
+      fnOp = fnOp->getParentOp();
+    Block *entry = (fnOp && fnOp->getNumRegions() && !fnOp->getRegion(0).empty())
+                       ? &fnOp->getRegion(0).front()
+                       : blocks.front();
+
     OpBuilder b(ctx);
-    b.setInsertionPointToStart(body);
+    b.setInsertionPointToStart(entry);
     Lane L = makeLane(b, root->getLoc());
 
     // A value of type vector<8xN> lives as N/8 per-lane C-fragments, one per
@@ -294,7 +312,7 @@ struct ChainContractsPass
         return tile < (int)it->second.size() ? it->second[tile] : Value();
       Location loc = v.getLoc();
       if (auto rd = v.getDefiningOp<vector::TransferReadOp>())
-        return readCTile(b, loc, L, rd.getSource(), tile);
+        return readCTile(b, loc, L, rd.getSource(), tile, rd.getIndices());
       if (auto cst = v.getDefiningOp<arith::ConstantOp>())
         if (auto d = dyn_cast<DenseElementsAttr>(cst.getValue()))
           if (d.isSplat())
@@ -304,8 +322,10 @@ struct ChainContractsPass
       return Value();
     };
 
-    // One in-order pass: the chain is straight-line, so lowering each op as it
-    // is reached keeps `frag` populated before any consumer needs it.
+    // One in-order pass per block: within a block the chain is straight-line, so
+    // lowering each op as it is reached keeps `frag` populated before any
+    // consumer needs it.
+    for (Block *body : blocks)
     for (Operation &opRef : *body) {
       Operation *op = &opRef;
 
@@ -313,14 +333,39 @@ struct ChainContractsPass
         Value A, B;
         bool bt;
         int64_t K = 0, N = 0;
-        if (!classify(c, M, A, B, bt, K, N)) {
-          c.emitOpError("mir-chain-contracts: unsupported contract shape/maps "
-                        "(m8n8k4 needs m = 8, K a multiple of 4, N a multiple "
-                        "of 8)");
-          signalPassFailure();
-          return;
-        }
+        // DECLINE rather than fail: a real operator mixes shapes, and m is fixed
+        // at 8 by the hardware tile. A contraction that does not fit (the Knaus
+        // B-sweep is PxN with P = 7 faces) is left alone for another lowering,
+        // not erased and not silently mangled.
+        if (!classify(c, M, A, B, bt, K, N))
+          continue;
         const int nTiles = (int)(N / 8), nSlabs = (int)(K / 4);
+
+        // Check every operand BEFORE emitting anything, so declining leaves no
+        // half-lowered contract behind. A multi-tile value cannot be an A or B
+        // operand (its layout is per-tile, the relayout formulas are not).
+        auto usable = [&](Value v) {
+          auto it = frag.find(v);
+          if (it != frag.end()) return it->second.size() == 1;
+          return (bool)v.getDefiningOp<vector::TransferReadOp>();
+        };
+        if (!usable(A) || !usable(B))
+          continue;
+        {
+          Value av = c.getAcc();
+          bool accOk = frag.count(av) || av.getDefiningOp<vector::TransferReadOp>();
+          if (!accOk)
+            if (auto cst = av.getDefiningOp<arith::ConstantOp>())
+              if (auto dv = dyn_cast<DenseElementsAttr>(cst.getValue()))
+                accOk = dv.isSplat() && dv.getSplatValue<APFloat>().isZero();
+          if (!accOk) {
+            c.emitOpError("mir-chain-contracts: accumulator is neither a zero "
+                          "splat, a memory read, nor a value this pass lowered, "
+                          "so it would be dropped");
+            signalPassFailure();
+            return;
+          }
+        }
         b.setInsertionPoint(c);
 
         // The accumulator decides where each tile's chain starts. A zero splat
@@ -335,6 +380,13 @@ struct ChainContractsPass
             return;
           }
           accFrags = it->second;
+        } else if (auto accRd =
+                       c.getAcc().getDefiningOp<vector::TransferReadOp>()) {
+          // An accumulator staged in memory (what tiling a matmul produces):
+          // take it in C layout and accumulate straight into it.
+          for (int t = 0; t < nTiles; ++t)
+            accFrags.push_back(readCTile(b, c.getLoc(), L, accRd.getSource(), t,
+                                         accRd.getIndices()));
         } else {
           bool zeroAcc = false;
           if (auto cst = c.getAcc().getDefiningOp<arith::ConstantOp>())
@@ -359,10 +411,8 @@ struct ChainContractsPass
           for (int s2 = 0; s2 < nSlabs; ++s2) {
             Value af = operandFragA(A, s2);
             Value bf = operandFragB(B, s2, bt, t);
-            if (!af || !bf) {
-              c.emitOpError("mir-chain-contracts: contract operand is neither a "
-                            "leaf transfer_read nor a single-tile value this "
-                            "pass lowered");
+            if (!af || !bf) {   // pre-checked above; defensive
+              c.emitOpError("mir-chain-contracts: operand became unfragmentable");
               signalPassFailure();
               return;
             }
