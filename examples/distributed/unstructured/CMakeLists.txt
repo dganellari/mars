@@ -303,6 +303,23 @@ target_include_directories(mars_pump PRIVATE
 )
 install(TARGETS mars_pump RUNTIME DESTINATION bin/examples)
 
+# Frozen element replay has no dependency on the MARS mesh or linear solvers.
+add_executable(mars_segregated_replay mars_segregated_replay.cu)
+target_compile_definitions(mars_segregated_replay PRIVATE MARS_REPLAY_CUDA)
+target_include_directories(mars_segregated_replay PRIVATE
+    ${CMAKE_SOURCE_DIR}/backend/distributed/unstructured/fem/segregated)
+set_target_properties(mars_segregated_replay PROPERTIES CUDA_STANDARD 20 CUDA_STANDARD_REQUIRED ON)
+install(TARGETS mars_segregated_replay RUNTIME DESTINATION bin/examples)
+
+add_executable(mars_segregated_algebra_check
+    ${CMAKE_SOURCE_DIR}/tests/reference/openaccel/replay/algebra_check.cpp)
+target_include_directories(mars_segregated_algebra_check PRIVATE
+    ${CMAKE_SOURCE_DIR}/backend/distributed/unstructured/fem/segregated)
+target_compile_features(mars_segregated_algebra_check PRIVATE cxx_std_20)
+if(MARS_ENABLE_TESTS)
+    add_test(NAME marsSegregatedInteriorAlgebra COMMAND mars_segregated_algebra_check)
+endif()
+
 add_executable(mars_outlet_boundary_gate mars_outlet_boundary_gate.cu)
 target_link_libraries(mars_outlet_boundary_gate PRIVATE mars)
 install(TARGETS mars_outlet_boundary_gate RUNTIME DESTINATION bin/examples)
