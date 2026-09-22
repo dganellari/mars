@@ -320,6 +320,21 @@ if(MARS_ENABLE_TESTS)
     add_test(NAME marsSegregatedInteriorAlgebra COMMAND mars_segregated_algebra_check)
 endif()
 
+add_executable(mars_segregated_node_replay mars_segregated_node_replay.cu)
+target_compile_definitions(mars_segregated_node_replay PRIVATE MARS_REPLAY_CUDA)
+target_include_directories(mars_segregated_node_replay PRIVATE
+    ${CMAKE_SOURCE_DIR}/backend/distributed/unstructured/fem/segregated)
+set_target_properties(mars_segregated_node_replay PROPERTIES CUDA_STANDARD 20 CUDA_STANDARD_REQUIRED ON)
+
+add_executable(mars_segregated_node_algebra_check
+    ${CMAKE_SOURCE_DIR}/tests/reference/openaccel/node_replay/algebra_check.cpp)
+target_include_directories(mars_segregated_node_algebra_check PRIVATE
+    ${CMAKE_SOURCE_DIR}/backend/distributed/unstructured/fem/segregated)
+target_compile_features(mars_segregated_node_algebra_check PRIVATE cxx_std_20)
+if(MARS_ENABLE_TESTS)
+    add_test(NAME marsSegregatedNodeAlgebra COMMAND mars_segregated_node_algebra_check)
+endif()
+
 add_executable(mars_outlet_boundary_gate mars_outlet_boundary_gate.cu)
 target_link_libraries(mars_outlet_boundary_gate PRIVATE mars)
 install(TARGETS mars_outlet_boundary_gate RUNTIME DESTINATION bin/examples)
