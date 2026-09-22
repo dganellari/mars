@@ -63,6 +63,39 @@ class PublicRunTests(unittest.TestCase):
             self.execute("exit 0\n", True)
         self.assertFalse(self.output.exists())
 
+    def boundary_bundle(self):
+        self.enable_capture_bundle()
+        path = self.bundle / 'manifest.json'
+        manifest = json.loads(path.read_text())
+        manifest['require_boundary_capture'] = True
+        name = 'openaccel_boundary_check.py'
+        (self.bundle / name).write_text('# fake hashed checker fixture\n')
+        manifest['sha256'][name] = sha256(self.bundle / name)
+        path.write_text(json.dumps(manifest))
+        return dict(blocks={(s,c,n): {} for s in ('pressure.interior','momentum.interior')
+                            for c in (1,2) for n in range(1536)},
+                    hashes={str(i):'hash' for i in range(4)}, inputs={},
+                    producer='openaccel',signature=['public_channel'])
+
+    def test_required_boundary_cannot_silently_pass_without_exports(self):
+        capture = self.boundary_bundle()
+        with patch('openaccel_reference_check.load_dump',return_value=capture), contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(self.execute("printf 'Iter = 1\\nIter = 2\\n'\n",True),1)
+        result = json.loads((self.output/'run.json').read_text())
+        self.assertIn('missing boundary stages',result['capture_error'])
+
+    def test_boundary_completion_still_does_not_claim_parity(self):
+        capture = self.boundary_bundle()
+        boundary = ({(s,c,21+s%3):{} for s in range(6) for c in (1,2)}, {'boundary':'hash'})
+        with patch('openaccel_reference_check.load_dump',return_value=capture), \
+                patch('openaccel_boundary_check.load_boundary',return_value=boundary):
+            self.assertEqual(self.execute("printf 'Iter = 1\\nIter = 2\\n'\n",True),0)
+        result = json.loads((self.output/'run.json').read_text())
+        self.assertEqual(result['status'],'boundary_capture_completed')
+        self.assertEqual(result['coverage'],'frozen-interior-boundary-blocks')
+        self.assertFalse(result['numerical_parity_verified'])
+        self.assertFalse(result['full_contract_passed'])
+
     def test_success_does_not_claim_convergence(self):
         self.assertEqual(self.execute("printf 'Iter = 1\nIter = 2\n'\n"), 0)
         result = json.loads((self.output / "run.json").read_text())

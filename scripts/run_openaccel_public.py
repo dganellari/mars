@@ -27,6 +27,8 @@ def run(bundle, executable, output, capture_interior=False):
     names = ["input.i", "channel.exo", "run_openaccel_public.py"]
     if capture_interior:
         names += ["openaccel_reference_check.py", "contract_v1.json", "provenance.json"]
+        if manifest.get("require_boundary_capture"):
+            names += ["openaccel_boundary_check.py"]
         if manifest.get("require_node_capture"):
             names += ["openaccel_node_check.py"]
     for name in names:
@@ -106,6 +108,14 @@ def run(bundle, executable, output, capture_interior=False):
                         raise ValueError("public boundary relaxation was not captured")
                     record.update(status="node_capture_completed", coverage="local-interior-and-steady-nodes",
                                   node_records=len(nodes), node_sha256=node_hashes)
+                if manifest.get("require_boundary_capture"):
+                    from openaccel_boundary_check import load_boundary
+                    blocks, boundary_hashes = load_boundary(output / "exports" / "boundary")
+                    if {call for stage, call, face in blocks} != {1, 2}:
+                        raise ValueError("expected two calls per boundary stage")
+                    record.update(status="boundary_capture_completed", coverage="frozen-interior"
+                                  + ("-node" if manifest.get("require_node_capture") else "") + "-boundary-blocks",
+                                  boundary_blocks=len(blocks), boundary_sha256=boundary_hashes)
             except (ValueError, KeyError, TypeError, OSError, OverflowError) as error:
                 completed = False
                 record.update(status="interior_capture_failed", capture_error=str(error))
