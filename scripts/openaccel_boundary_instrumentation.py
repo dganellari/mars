@@ -45,6 +45,9 @@ def instrument_function(text, stage):
     capture = '''            if (export_boundary.active()) export_boundary.capture([&] {
                 mars_reference::require(nodesPerSide == 3 && numScsBip == 3, "boundary capture requires Tri3");
 '''
+    if stage == 4:
+        # Momentum outlet assembly does not otherwise need this parent/face map.
+        capture += '                const auto* faceNodeOrdinals = meSCS->side_node_ordinals(faceOrdinal);\n'
     if not wall:
         capture += '''                mars_reference::require(nodesPerElement == 4, "boundary capture requires Tet4");
                 for (int f = 0; f < 3; ++f)

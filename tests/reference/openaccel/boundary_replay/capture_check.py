@@ -46,8 +46,13 @@ struct Domain {
     mars_reference::BoundaryExport export_boundary(bulkData, "NAME", 3);
     Domain domain_object; auto* domain = &domain_object;
     const int nodesPerSide=3, numScsBip=3, nodesPerElement=4, faceOrdinal=0, side=21+STAGE%3;
-    const int *faceNodeOrdinals=x.face_nodes, *ipNodeMap=x.nearest, *faceIpNodeMap=x.nearest, *rfflag=x.reversal;
-    struct Master { const int* opp; int opposingNodes(int,int ip) const {return opp[ip];} } master{x.opposing};
+    FACE_NODE_DECLARATION
+    const int *ipNodeMap=x.nearest, *faceIpNodeMap=x.nearest, *rfflag=x.reversal;
+    struct Master {
+        const int *opp, *face;
+        int opposingNodes(int,int ip) const { return opp[ip]; }
+        const int* side_node_ordinals(int) const { return face; }
+    } master{x.opposing,x.face_nodes};
     auto* meSCS=&master;
     const double *areaVec=x.area, *UbcVec=x.boundary_velocity, *mDot=x.stored_flux, *uWallCoeffsBip=x.wall_coefficient;
     std::vector<int> connectedNodes = STAGE==5 ? std::vector<int>{20,30,40} : std::vector<int>{10,20,30,40};
@@ -65,7 +70,8 @@ struct Domain {
     std::vector<double> ws_du(x.influence_lhs,x.influence_lhs+9), ws_duRhs(x.influence_rhs,x.influence_rhs+9);
     std::vector<double> ws_bcMultiplier(x.bc_multiplier,x.bc_multiplier+4), ws_muEff(x.viscosity,x.viscosity+3);
     std::vector<double> ws_F(9,0), ws_FOrig_elem(12,0), ws_F_elem(12,0);
-'''.replace('STAGE',str(stage)).replace('NAME',name)+capture+'}\n'
+'''.replace('STAGE',str(stage)).replace('NAME',name).replace(
+            'FACE_NODE_DECLARATION', '' if stage == 4 else 'const int* faceNodeOrdinals=x.face_nodes;')+capture+'}\n'
     text += '''int main(int argc,char** argv) {
     MPI_Init(&argc,&argv);
     if(argc!=2) { MPI_Finalize(); return 1; }
