@@ -11,6 +11,7 @@ only -- no Python low-level emit anywhere in the path.
       --mir-forward-transfers                store-to-load, so the chain is visible
       --mir-chain-contracts                  per-lane nvgpu.mma.sync + gpu.shuffle
       LICM + --mir-hoist-transfer-pairs      accumulator into a register
+      --promote-buffers-to-stack             no device-side malloc in the kernel
       --mir-batch-elements                   one warp per element (grid = E)
       --mir-gpu-wrap                         gpu.module { gpu.func ... kernel }
       explicit NVVM lowering                 -> PTX
@@ -72,6 +73,15 @@ sys.stdout.write(mlir_ir.emit_full(ea, p={p}))
     shfl_ir = ir.count("gpu.shuffle")
     ir = run([MLIROPT, "-", "--loop-invariant-code-motion"], ir)
     ir = run([MIROPT, "-", "--mir-hoist-transfer-pairs"], ir)
+    # Bufferization leaves memref.alloc for every temporary. Inside a kernel those
+    # become DEVICE-SIDE malloc calls: with grid = E each block allocates, the 8 MB
+    # device heap is gone almost immediately, malloc returns null and the kernel
+    # faults with an illegal memory access. Promote them to stack allocations.
+    # This has to run AFTER --mir-forward-transfers, which keys on memref.alloc to
+    # decide what it may safely forward.
+    ir = run([MLIROPT, "-",
+              "--promote-buffers-to-stack=max-alloc-size-in-bytes=65536",
+              "--canonicalize", "--cse"], ir)
 
     m = re.search(r"(func\.func @laplacian_apply\()(.*?)(\) \{)", ir, re.S)
     args = m.group(2).split(", ")
