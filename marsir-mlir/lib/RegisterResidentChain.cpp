@@ -119,10 +119,12 @@ static Value readCTile(OpBuilder &b, Location loc, Lane &L, Value mem, int tile,
     col2k = b.create<arith::AddIOp>(loc, col2k, off);
   }
   SmallVector<Value> idx = fragIdx(b, loc, base, L.i, col2k);
-  return b.create<vector::TransferReadOp>(
+  auto rd = b.create<vector::TransferReadOp>(
       loc, L.frag2, mem, idx,
       AffineMap::getMinorIdentityMap(idx.size(), 2, b.getContext()), L.f0,
       Value(), b.getBoolArrayAttr({rowIB, colIB}));
+  rd->setAttr(mir::kLaneOwnedAttr, b.getUnitAttr());
+  return rd;
 }
 
 static Value mma(OpBuilder &b, Location loc, Lane &L, Value a, Value bfrag,
@@ -708,11 +710,12 @@ struct ChainContractsPass
                 w.getLoc(), col,
                 b.create<arith::ConstantIndexOp>(w.getLoc(), 8 * t));
           SmallVector<Value> idx = fragIdx(b, w.getLoc(), w.getIndices(), L.i, col);
-          b.create<vector::TransferWriteOp>(
+          auto pw = b.create<vector::TransferWriteOp>(
               w.getLoc(), it->second[t], w.getSource(), idx,
               AffineMapAttr::get(AffineMap::getMinorIdentityMap(idx.size(), 2, ctx)),
               /*mask=*/Value(),
               b.getBoolArrayAttr({wRowIB, wColIB}));
+          pw->setAttr(mir::kLaneOwnedAttr, b.getUnitAttr());
         }
         dead.push_back(op);
         continue;

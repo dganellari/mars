@@ -24,6 +24,9 @@ int main(int argc, char **argv) {
   mir::registerGpuWrapPass();
   mir::registerForwardTransfersPass();
   mir::registerEmulateWarpPass();
+  mir::registerWorkgroupBuffersPass();
+  mir::registerDistributeFillsPass();
+  mir::registerWarpBarriersPass();
 
   return mlir::asMainReturnCode(mlir::MlirOptMain(
       argc, argv, "mir optimizer driver (Stage 2 MLIR dialect)\n", registry));

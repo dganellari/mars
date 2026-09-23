@@ -5,15 +5,19 @@ only -- no Python low-level emit anywhere in the path.
     laplacian.op -> mlir_ir.emit_full        high-level mir: mir.contract + mir.flux
       --convert-mir-to-linalg                linalg
       one-shot-bufferize                     memrefs
-      --buffer-results-to-out-params         DPS (a kernel cannot return a buffer)
+      --buffer-results-to-out-params         DPS, Y accumulated in the out-param
       dmma_schedule.mlir                     tile m8n8k4 + vectorize
       --convert-linalg-to-loops              whatever tiling left
-      --mir-forward-transfers                store-to-load, so the chain is visible
+      --mir-forward-transfers                store-to-load, so the chain is visible;
+                                             write-only scratch is dropped
+      --mir-workgroup-buffers                remaining scratch -> shared slots, reused
       --mir-chain-contracts                  per-lane nvgpu.mma.sync + gpu.shuffle
       LICM + --mir-hoist-transfer-pairs      accumulator into a register
+      --mir-distribute-fills                 a shared fill is 1/32 per lane
+      --mir-warp-barriers                    gpu.barrier where lanes can conflict
       --promote-buffers-to-stack             no device-side malloc in the kernel
       --mir-batch-elements                   one warp per element (grid = E)
-      --mir-gpu-wrap                         gpu.module { gpu.func ... kernel }
+      --mir-gpu-wrap                         gpu.func kernel, slots -> workgroup
       explicit NVVM lowering                 -> PTX
 
 WHY THE LOWERING IS SPELLED OUT rather than --gpu-lower-to-nvvm-pipeline: that
@@ -74,12 +78,26 @@ sys.stdout.write(mlir_ir.emit_full(ea, p={p}))
     ir = run([MIROPT, "-", "--convert-mir-to-linalg",
               "--one-shot-bufferize=bufferize-function-boundaries=true "
               "function-boundary-type-conversion=identity-layout-map"], src)
-    ir = run([MLIROPT, "-", "--buffer-results-to-out-params"], ir)
+    # Canonicalize first so the returned buffer is the alloc itself, not a chain
+    # of memref iter_args; hoist-static-allocs then accumulates Y IN the out-
+    # param instead of a private copy that is copied out at the end.
+    ir = run([MLIROPT, "-", "--canonicalize",
+              "--buffer-results-to-out-params=hoist-static-allocs=true"], ir)
+
+    # The kernel and its per-element arguments, before any pass that keys on them.
+    m = re.search(r"(func\.func @laplacian_apply\()(.*?)(\) \{)", ir, re.S)
+    args = m.group(2).split(", ")
+    marks = PER_ELEMENT | {len(args) - 1}
+    args = [a + " {mir.element}" if i in marks else a for i, a in enumerate(args)]
+    ir = (ir[:m.start(2)] + ", ".join(args) + ") attributes {mir.kernel} {"
+          + ir[m.end(3):])
     ir = run([MLIROPT, "-",
               f"--transform-preload-library=transform-library-paths={HERE}/dmma_schedule.mlir",
               "--transform-interpreter"], ir)
     ir = run([MLIROPT, "-", "--convert-linalg-to-loops", "--canonicalize", "--cse"], ir)
-    ir = run([MIROPT, "-", "--mir-forward-transfers"], ir)
+    # Forwarding first (it keys on allocs), then what is left of the scratch
+    # moves to workgroup memory, so fragments are stored there piecewise.
+    ir = run([MIROPT, "-", "--mir-forward-transfers", "--mir-workgroup-buffers"], ir)
     if not no_chain:
         flag = "--mir-chain-contracts" + (
             "=" + " ".join(chain_opts.split(",")) if chain_opts else "")
@@ -89,6 +107,9 @@ sys.stdout.write(mlir_ir.emit_full(ea, p={p}))
     ir = run([MLIROPT, "-", "--loop-invariant-code-motion"], ir)
     if not no_hoist:
         ir = run([MIROPT, "-", "--mir-hoist-transfer-pairs"], ir)
+    # Barriers last: they must see the final access pattern, fills included.
+    ir = run([MIROPT, "-", "--mir-distribute-fills", "--mir-warp-barriers"], ir)
+    barriers = ir.count("gpu.barrier")
     # Bufferization leaves memref.alloc for every temporary. Inside a kernel those
     # become DEVICE-SIDE malloc calls: with grid = E each block allocates, the 8 MB
     # device heap is gone almost immediately, malloc returns null and the kernel
@@ -98,13 +119,6 @@ sys.stdout.write(mlir_ir.emit_full(ea, p={p}))
     ir = run([MLIROPT, "-",
               "--promote-buffers-to-stack=max-alloc-size-in-bytes=65536",
               "--canonicalize", "--cse"], ir)
-
-    m = re.search(r"(func\.func @laplacian_apply\()(.*?)(\) \{)", ir, re.S)
-    args = m.group(2).split(", ")
-    marks = PER_ELEMENT | {len(args) - 1}
-    args = [a + " {mir.element}" if i in marks else a for i, a in enumerate(args)]
-    ir = (ir[:m.start(2)] + ", ".join(args) + ") attributes {mir.kernel} {"
-          + ir[m.end(3):])
 
     if "--emulate" in sys.argv:
         return emulate(run([MIROPT, "-", "--mir-batch-elements"], ir), p)
@@ -136,10 +150,12 @@ sys.stdout.write(mlir_ir.emit_full(ea, p={p}))
         ("lane index (tid.x)", no_chain or "tid.x" in ptx),
         ("fp64 tensor-core mma", no_chain or ptx.count("mma.sync.aligned.m8n8k4") > 0),
         ("register relayout (shfl)", no_chain or ptx.count("shfl.sync") > 0),
-        ("no shared memory", ptx.count(".shared") == 0),
+        ("no local memory", no_chain or ptx.count(".local") == 0),
     ]
     for name, good in checks:
         print(f"  {'ok  ' if good else 'FAIL'} {name}")
+    shared = sum(int(x) for x in re.findall(r"\.shared \.align \d+ \.b8 \S+\[(\d+)\]", ptx))
+    print(f"  shared memory {shared} B/block, {barriers} gpu.barrier in IR")
     print(f"  IR had {mma_ir} nvgpu.mma.sync and {shfl_ir} gpu.shuffle; "
           f"PTX has {ptx.count('mma.sync.aligned.m8n8k4')} mma, "
           f"{ptx.count('shfl.sync')} shfl")
@@ -155,6 +171,12 @@ def emulate(ir, p):
     tools/emu_hl_mma.cpp against the Knaus oracle."""
     E = next((int(a.split("=", 1)[1]) for a in sys.argv if a.startswith("--emu-e=")), 3)
     ir = run([MIROPT, "-", "--mir-emulate-warp"], ir)
+    work = os.path.join(ROOT, "build", "emu")
+    os.makedirs(work, exist_ok=True)
+    # TSan reports point at lines of THIS text (the debug scopes below), so keep it.
+    with open(os.path.join(work, "kernel_in.mlir"), "w") as f:
+        f.write(ir)
+    tsan = "--emu-tsan" in sys.argv
     ir = run([MLIROPT, "-",
               "--convert-linalg-to-loops",
               "--convert-vector-to-scf", "--canonicalize",
@@ -166,19 +188,36 @@ def emulate(ir, p):
               "--convert-cf-to-llvm",
               "--finalize-memref-to-llvm",
               "--convert-func-to-llvm",
-              "--reconcile-unrealized-casts"], ir)
+              "--reconcile-unrealized-casts"]
+             + (["--ensure-debug-info-scope-on-llvm-func"] if tsan else []), ir)
     ll = run([os.path.join(LLVM, "bin", "mlir-translate"), "--mlir-to-llvmir"], ir)
-    work = os.path.join(ROOT, "build", "emu")
-    os.makedirs(work, exist_ok=True)
+    # --emu-tsan: ThreadSanitizer, with the lane exchanges hidden from it (see
+    # emu_hl_mma.cpp), so it reports shared accesses no gpu.barrier orders. TSan
+    # only instruments functions marked sanitize_thread, which clang adds for C
+    # sources but mlir-translate does not.
+    if tsan:
+        # A short tile's out-of-bounds access lowers to llvm.masked.load/store,
+        # which TSan does not instrument; scalarized, it is ordinary loads/stores.
+        ll = run([os.path.join(LLVM, "bin", "opt"), "-S",
+                  "-passes=scalarize-masked-mem-intrin"], ll)
+        ll = re.sub(r"^(define .*\))( #\d+)? \{$", r"\1 sanitize_thread\2 {", ll,
+                    flags=re.M)
     with open(os.path.join(work, "kernel.ll"), "w") as f:
         f.write(ll)
-    run([os.path.join(LLVM, "bin", "clang"), "-O2", "-c",
-         os.path.join(work, "kernel.ll"), "-o", os.path.join(work, "kernel.o")], "")
+    san = ["-fsanitize=thread", "-g", "-O1"] if tsan else ["-O2"]
+    cc = "/usr/bin/clang" if tsan else os.path.join(LLVM, "bin", "clang")
+    run([cc, *san, "-c", os.path.join(work, "kernel.ll"),
+         "-o", os.path.join(work, "kernel.o")], "")
     exe = os.path.join(work, "emu_hl_mma")
-    run(["/usr/bin/clang++", "-std=c++20", "-O2",
-         os.path.join(ROOT, "tools", "emu_hl_mma.cpp"),
+    run(["/usr/bin/clang++", "-std=c++20", *san] + (["-DMIR_EMU_TSAN"] if tsan else []) +
+        [os.path.join(ROOT, "tools", "emu_hl_mma.cpp"),
          os.path.join(work, "kernel.o"), "-o", exe], "")
-    r = subprocess.run([exe, str(E), str(p)], capture_output=True, text=True)
+    env = dict(os.environ, TSAN_OPTIONS="halt_on_error=1 exitcode=66")
+    r = subprocess.run([exe, str(E), str(p)], capture_output=True, text=True, env=env)
+    if tsan and "ThreadSanitizer: data race" in r.stderr:
+        print("\n".join(r.stderr.splitlines()[:24]))
+        print("WARP EMULATION (TSan): DATA RACE -- a shared access no gpu.barrier orders")
+        return 1
     print(r.stdout.strip() or r.stderr.strip())
     return r.returncode
 

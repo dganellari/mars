@@ -12,6 +12,7 @@
 // so that wrapping stays something the caller asks for.
 
 #include "mir/MirPasses.h"
+#include "mir/ViewTypes.h"
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
@@ -24,6 +25,7 @@ using namespace mlir;
 namespace {
 
 constexpr StringLiteral kKernelAttr = "mir.kernel";
+constexpr StringLiteral kWorkgroupAttr = "mir.workgroup";
 constexpr StringLiteral kModuleName = "mir_kernels";
 
 struct GpuWrapPass : public PassWrapper<GpuWrapPass, OperationPass<ModuleOp>> {
@@ -79,6 +81,30 @@ struct GpuWrapPass : public PassWrapper<GpuWrapPass, OperationPass<ModuleOp>> {
         rb.create<gpu::ReturnOp>(r.getLoc(), r.getOperands());
         r.erase();
       });
+      // {mir.workgroup} arguments (--mir-workgroup-buffers) are the block's
+      // shared memory, not something the host passes: each becomes a workgroup
+      // attribution, and every view of it moves to the workgroup address space.
+      // Argument attributes live on the func.func, not on its body.
+      SmallVector<unsigned> wg;
+      for (unsigned i = 0; i < f.getNumArguments(); ++i)
+        if (f.getArgAttr(i, kWorkgroupAttr))
+          wg.push_back(i);
+      // The numeric shared-memory space (3 on NVVM, and LDS on AMDGPU), not
+      // #gpu.address_space<workgroup>: the separate vector/memref-to-LLVM passes
+      // of the lowering have no mapping for the attribute (only
+      // --convert-gpu-to-nvvm does), and would leave every transfer on shared
+      // memory unconverted.
+      auto space = b.getI64IntegerAttr(3);
+      for (unsigned i : wg) {
+        auto t = cast<MemRefType>(gfunc.getArgument(i).getType());
+        BlockArgument attr = gfunc.addWorkgroupAttribution(
+            MemRefType::get(t.getShape(), t.getElementType(), t.getLayout(), space),
+            gfunc.getLoc());
+        gfunc.getArgument(i).replaceAllUsesWith(attr);
+      }
+      for (unsigned i : llvm::reverse(wg))
+        gfunc.eraseArgument(i);
+      mir::refreshViewTypes(gfunc);
       f.erase();
     }
   }

@@ -115,10 +115,6 @@ struct HoistTransferPairsPass
     if (!read)
       return failure();
 
-    // Capture everything needed AFTER the rewrite before any op is erased.
-    Value src = read.getSource();
-    SmallVector<Value> indices(read.getIndices());
-    Location wloc = write.getLoc();
     Value storedVal = write.getVector();
 
     // 1. Initial accumulator: re-read the tile before the loop, or a zero
@@ -147,16 +143,18 @@ struct HoistTransferPairsPass
       return failure();
     auto newLoop = cast<scf::ForOp>(*newLoopOr);
 
-    // 3. Inside the loop: the read becomes the new iter_arg; the write is gone.
+    // 3. Inside the loop: the read becomes the new iter_arg.
     BlockArgument acc = newLoop.getRegionIterArgs().back();
     rewriter.replaceAllUsesWith(read.getResult(), acc);
     rewriter.eraseOp(read);
-    rewriter.eraseOp(write);
 
-    // 4. Write the final accumulator back AFTER the loop.
+    // 4. The write moves AFTER the loop and stores the final accumulator. It is
+    //    cloned, not rebuilt, so it keeps its in_bounds (a rebuilt write
+    //    defaults to bounds-checked) and its attributes.
     rewriter.setInsertionPointAfter(newLoop);
-    rewriter.create<vector::TransferWriteOp>(
-        wloc, newLoop.getResults().back(), src, indices);
+    Operation *moved = rewriter.clone(*write.getOperation());
+    moved->setOperand(0, newLoop.getResults().back());
+    rewriter.eraseOp(write);
 
     return success();
   }

@@ -11,6 +11,9 @@ add_mlir_dialect_library(MLIRMir
   GpuWrap.cpp
   ForwardTransfers.cpp
   EmulateWarp.cpp
+  WorkgroupBuffers.cpp
+  DistributeFills.cpp
+  WarpBarriers.cpp
 
   ADDITIONAL_HEADER_DIRS
   ${PROJECT_SOURCE_DIR}/include/mir

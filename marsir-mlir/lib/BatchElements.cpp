@@ -20,6 +20,7 @@
 // warp), which is what --mir-warp-wrap / --mir-warp-distribute assume.
 
 #include "mir/MirPasses.h"
+#include "mir/ViewTypes.h"
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
@@ -33,45 +34,6 @@ using namespace mlir;
 namespace {
 
 constexpr StringLiteral kElementAttr = "mir.element";
-
-// A view's result layout is derived from its source, so rebasing the body onto a
-// dynamically-offset element view invalidates every view below it (offset: 8
-// becomes offset: ?). Re-infer until nothing moves. Reshapes need this as much as
-// subviews do: a collapse_shape of a now-strided source has a strided result.
-static void refreshViewTypes(Operation *func) {
-  bool changed = true;
-  while (changed) {
-    changed = false;
-    func->walk([&](memref::SubViewOp sv) {
-      auto src = cast<MemRefType>(sv.getSource().getType());
-      auto want = cast<MemRefType>(memref::SubViewOp::inferRankReducedResultType(
-          sv.getType().getShape(), src, sv.getMixedOffsets(),
-          sv.getMixedSizes(), sv.getMixedStrides()));
-      if (want != sv.getType()) {
-        sv.getResult().setType(want);
-        changed = true;
-      }
-    });
-    func->walk([&](memref::CollapseShapeOp cs) {
-      auto src = cast<MemRefType>(cs.getSrc().getType());
-      MemRefType want = memref::CollapseShapeOp::computeCollapsedType(
-          src, cs.getReassociationIndices());
-      if (want != cs.getType()) {
-        cs.getResult().setType(want);
-        changed = true;
-      }
-    });
-    func->walk([&](memref::ExpandShapeOp es) {
-      auto src = cast<MemRefType>(es.getSrc().getType());
-      FailureOr<MemRefType> want = memref::ExpandShapeOp::computeExpandedType(
-          src, es.getType().getShape(), es.getReassociationIndices());
-      if (succeeded(*&want) && *want != es.getType()) {
-        es.getResult().setType(*want);
-        changed = true;
-      }
-    });
-  }
-}
 
 // Templated over the function op: the hex path arrives as a gpu.func from the
 // emitter, the tet path as a bufferized func.func. Both expose the same
@@ -129,7 +91,9 @@ static void batchOne(FuncT func) {
     func.removeArgAttr(i, kElementAttr);
   }
 
-  refreshViewTypes(func.getOperation());
+  // Rebasing onto a dynamically-offset element view changes every view below it
+  // (offset: 8 becomes offset: ?).
+  mir::refreshViewTypes(func.getOperation());
 }
 
 struct BatchElementsPass

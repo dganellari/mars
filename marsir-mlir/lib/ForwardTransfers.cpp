@@ -19,6 +19,12 @@
 // considered. That rules out aliasing through subview/reshape entirely -- no
 // view of the buffer can exist -- and distinct allocations cannot alias each
 // other. A write invalidates every recorded entry for its own buffer.
+//
+// DEAD BUFFERS: once its reads are forwarded, a scratch buffer is often only
+// ever written -- every temporary of the face chain ends up that way. Its
+// contents are unobservable, so the buffer and its writes are erased. Left in
+// place, each such write would cost --mir-chain-contracts a full-value gather
+// (the buffer is per-thread) for a value no one reads.
 
 #include "mir/MirPasses.h"
 
@@ -117,6 +123,18 @@ struct ForwardTransfersPass
           }
         }
       }
+    }
+
+    SmallVector<memref::AllocOp> allocs;
+    getOperation()->walk([&](memref::AllocOp a) { allocs.push_back(a); });
+    for (memref::AllocOp a : allocs) {
+      if (!llvm::all_of(a->getUsers(), [](Operation *u) {
+            return isa<vector::TransferWriteOp, memref::DeallocOp>(u);
+          }))
+        continue;
+      for (Operation *u : llvm::make_early_inc_range(a->getUsers()))
+        u->erase();
+      a.erase();
     }
   }
 };
