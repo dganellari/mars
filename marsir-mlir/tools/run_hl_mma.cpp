@@ -222,8 +222,11 @@ int main(int argc, char** argv)
                            &uSt[0], &uSt[1], &uSt[2], &uSt[3],
         &dBt, &dBt, &zero, &oSz[0], &oSz[1], &oSt[0], &oSt[1],
         &dDt, &dDt, &zero, &oSz[0], &oSz[1], &oSt[0], &oSt[1],
-        &dDm, &dDm, &zero, &sSz[0], &sSz[1], &sSt[0], &sSt[1],
+        // ORDER: the operator is emitted as (u, Btil, Dtil, W, D, G) -- W BEFORE D.
+        // Both are memref<8x8>, so swapping them is type-invisible and silently
+        // yields a plausible-looking wrong answer.
         &dW,  &dW,  &zero, &sSz[0], &sSz[1], &sSt[0], &sSt[1],
+        &dDm, &dDm, &zero, &sSz[0], &sSz[1], &sSt[0], &sSt[1],
         &dG,  &dG,  &zero, &gSz[0], &gSz[1], &gSz[2], &gSz[3], &gSz[4], &gSz[5],
                            &gSt[0], &gSt[1], &gSt[2], &gSt[3], &gSt[4], &gSt[5],
         &dY,  &dY,  &zero, &uSz[0], &uSz[1], &uSz[2], &uSz[3],
@@ -264,6 +267,5 @@ int main(int argc, char** argv)
     printf("  %d applies: %.3f ms/apply | %.1f ns/elem | ~%.0f GB/s useful (%.1f KiB/elem)\n",
            iters, msApply, msApply * 1e6 / (double)E,
            (double)E * bytesElem / (msApply * 1e-3) / 1e9, bytesElem / 1024.0);
-    printf("  NOTE: scalar thread-per-element fusion baseline (no tensor cores yet).\n");
     return err < 1e-11 ? 0 : 1;
 }
