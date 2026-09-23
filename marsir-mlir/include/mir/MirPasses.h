@@ -35,6 +35,8 @@ void registerWorkgroupBuffersPass();
 void registerDistributeFillsPass();
 void registerWarpBarriersPass();
 void registerHoistInvariantReadsPass();
+void registerUnrollLoopsPass();
+void registerForwardOwnedPass();
 }  // namespace mir
 
 #endif  // MIR_MIRPASSES_H

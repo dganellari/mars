@@ -14,6 +14,7 @@ only -- no Python low-level emit anywhere in the path.
       --mir-chain-contracts                  per-lane nvgpu.mma.sync + gpu.shuffle
       LICM + --mir-hoist-invariant-reads     operator fragments read once, not per face
       --mir-hoist-transfer-pairs             accumulator into a register
+      --mir-unroll-loops + --mir-forward-owned  Y planes stay in registers across faces
       --mir-distribute-fills                 a shared fill is 1/32 per lane
       --mir-warp-barriers                    gpu.barrier where lanes can conflict
       --promote-buffers-to-stack             no device-side malloc in the kernel
@@ -112,6 +113,11 @@ sys.stdout.write(mlir_ir.emit_full(ea, p={p}))
     ir = run([MLIROPT, "-", "--loop-invariant-code-motion"], ir)
     if not no_hoist:
         ir = run([MIROPT, "-", "--mir-hoist-transfer-pairs"], ir)
+    # Unrolled, every plane and tile has constant offsets; a lane's own
+    # fragment of a Y plane then stays in registers between the faces that
+    # update it, and the first direction's planes start from the zero fill.
+    ir = run([MIROPT, "-", "--mir-unroll-loops", "--canonicalize", "--cse",
+              "--mir-forward-owned", "--canonicalize", "--cse"], ir)
     # Barriers last: they must see the final access pattern, fills included.
     ir = run([MIROPT, "-", "--mir-distribute-fills", "--mir-warp-barriers"], ir)
     barriers = ir.count("gpu.barrier")

@@ -15,6 +15,8 @@ add_mlir_dialect_library(MLIRMir
   DistributeFills.cpp
   WarpBarriers.cpp
   HoistInvariantReads.cpp
+  UnrollLoops.cpp
+  ForwardOwned.cpp
 
   ADDITIONAL_HEADER_DIRS
   ${PROJECT_SOURCE_DIR}/include/mir
@@ -32,6 +34,7 @@ add_mlir_dialect_library(MLIRMir
   MLIRTensorDialect
   MLIRArithDialect
   MLIRSCFDialect
+  MLIRSCFUtils
   MLIRVectorDialect
   MLIRMemRefDialect
   MLIRGPUDialect

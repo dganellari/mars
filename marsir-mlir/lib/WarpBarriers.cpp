@@ -9,7 +9,7 @@
 // lane still reads, a gpu.barrier goes between the two.
 //
 // Two accesses to the same root argument CONFLICT when at least one writes,
-// except in two provable cases:
+// except in three provable cases:
 //   * LANE-CONSISTENT: both lane-owned, same vector type and map, index values
 //     equal, and windows that map (row, col) to the same elements -- the same
 //     view, or subviews of one source that differ only in a DROPPED (unit,
@@ -19,6 +19,8 @@
 //     and a current one, both through the same subview whose offset in a kept
 //     dimension IS the induction variable with size <= step. Iterations touch
 //     disjoint tiles: the column tiles of a sweep.
+//   * DISJOINT WINDOWS: two transfers through subviews of one buffer whose
+//     static ranges do not meet -- the same tiles once the loop is unrolled.
 // "Equal" for index values means equal at run time: the same SSA value (unless
 // it is defined inside the loop that carries the earlier access -- a new value
 // every iteration), or the same pure expression over such values.
@@ -30,6 +32,7 @@
 // inside it would be divergent.
 
 #include "mir/MirPasses.h"
+#include "mir/Windows.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
@@ -182,6 +185,14 @@ static bool disjointTiles(Operation *x, Operation *y, Operation *carried) {
   return false;
 }
 
+// Two transfers through statically disjoint windows of the same buffer (the
+// column tiles of an unrolled sweep) never touch the same element.
+static bool disjointAccesses(Operation *x, Operation *y) {
+  auto tx = dyn_cast<VectorTransferOpInterface>(x);
+  auto ty = dyn_cast<VectorTransferOpInterface>(y);
+  return tx && ty && mir::disjointWindows(tx.getSource(), ty.getSource());
+}
+
 struct Rec {
   Value root;
   bool write;
@@ -239,7 +250,7 @@ struct WarpBarriersPass : public PassWrapper<WarpBarriersPass, OperationPass<>> 
       if (x.root != y.root || (!x.write && !y.write))
         continue;
       if (laneConsistent(x.op, y.op, x.carried) ||
-          disjointTiles(x.op, y.op, x.carried))
+          disjointTiles(x.op, y.op, x.carried) || disjointAccesses(x.op, y.op))
         continue;
       return true;
     }

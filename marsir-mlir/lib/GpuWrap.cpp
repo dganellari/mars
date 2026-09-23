@@ -16,6 +16,7 @@
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Pass/Pass.h"
@@ -37,7 +38,7 @@ struct GpuWrapPass : public PassWrapper<GpuWrapPass, OperationPass<ModuleOp>> {
            "gpu.func kernel";
   }
   void getDependentDialects(DialectRegistry &registry) const override {
-    registry.insert<gpu::GPUDialect, func::FuncDialect>();
+    registry.insert<gpu::GPUDialect, func::FuncDialect, memref::MemRefDialect>();
   }
 
   void runOnOperation() override {
@@ -105,6 +106,22 @@ struct GpuWrapPass : public PassWrapper<GpuWrapPass, OperationPass<ModuleOp>> {
       for (unsigned i : llvm::reverse(wg))
         gfunc.eraseArgument(i);
       mir::refreshViewTypes(gfunc);
+
+      // The kernel ABI: every memref argument comes from a device allocator
+      // (cudaMalloc / hipMalloc: at least 256-byte aligned), and every
+      // workgroup buffer is placed 16-byte aligned. Stated, LLVM merges a lane's
+      // two f64 fragment entries into one 16-byte access; unstated, NVPTX splits
+      // every such access in two. A workgroup buffer left at its default
+      // .align 8 while read 16 bytes at a time would be aligned only by luck.
+      constexpr unsigned kAlign = 16;
+      for (unsigned j = 0; j < gfunc.getNumWorkgroupAttributions(); ++j)
+        gfunc.setWorkgroupAttributionAttr(j, "llvm.align",
+                                          b.getI64IntegerAttr(kAlign));
+      OpBuilder eb = OpBuilder::atBlockBegin(&gfunc.getBody().front());
+      for (unsigned i = 0; i < gfunc.getNumArguments(); ++i)
+        if (isa<MemRefType>(gfunc.getArgument(i).getType()))
+          eb.create<memref::AssumeAlignmentOp>(gfunc.getLoc(),
+                                               gfunc.getArgument(i), kAlign);
       f.erase();
     }
   }
