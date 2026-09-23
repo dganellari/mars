@@ -79,43 +79,6 @@ struct ContractLowering : public OpRewritePattern<mir::ContractOp> {
       return success();
     }
 
-    // Axis-(rank-1) static case: the LEADING axes collapse instead.
-    //   out[(ij), k] = sum_r in[(ij), r] * M[k, r]   ==   in2 @ M^T
-    // Only the small operator matrix is transposed (n x n), never the field, so
-    // this costs nothing at runtime and hands the tensor-core schedule a plain
-    // linalg.matmul like the axis-0 case does.
-    if (axis == rank - 1 && rank == 3 && inType.hasStaticShape() &&
-        resType.hasStaticShape()) {
-      SmallVector<ReassociationIndices> reassoc = {{0, 1}, {2}};
-      auto elemTy = resType.getElementType();
-      const int64_t rows = resType.getDimSize(0) * resType.getDimSize(1);
-      const int64_t cols = resType.getDimSize(2);
-      const int64_t kdim = inType.getDimSize(2);
-      Value u2 = rewriter.create<tensor::CollapseShapeOp>(loc, input, reassoc);
-      Value mtEmpty = rewriter.create<tensor::EmptyOp>(
-          loc, ArrayRef<int64_t>{kdim, cols}, elemTy);
-      Value mt = rewriter
-                     .create<linalg::TransposeOp>(loc, opMatrix, mtEmpty,
-                                                  ArrayRef<int64_t>{1, 0})
-                     ->getResult(0);
-      Value zero = rewriter.create<arith::ConstantOp>(
-          loc, rewriter.getZeroAttr(elemTy));
-      Value empty2 = rewriter.create<tensor::EmptyOp>(
-          loc, ArrayRef<int64_t>{rows, cols}, elemTy);
-      Value init2 = rewriter
-                        .create<linalg::FillOp>(loc, ValueRange{zero},
-                                                ValueRange{empty2})
-                        .getResult(0);
-      Value mm = rewriter
-                     .create<linalg::MatmulOp>(loc, TypeRange{init2.getType()},
-                                               ValueRange{u2, mt},
-                                               ValueRange{init2})
-                     .getResult(0);
-      rewriter.replaceOpWithNewOp<tensor::ExpandShapeOp>(op, resType, mm,
-                                                         reassoc);
-      return success();
-    }
-
     const int64_t nLoops = rank + 1;  // R parallel output dims + 1 reduction (p)
 
     // Affine maps. Loops are (d0..d_{R-1}, p) with p = dim rank.
@@ -154,6 +117,13 @@ struct ContractLowering : public OpRewritePattern<mir::ContractOp> {
           Value a = b.create<arith::AddFOp>(l, args[2], m);
           b.create<linalg::YieldOp>(l, a);
         });
+
+    // A rank-3 contraction along a NON-leading axis cannot be folded into one
+    // 2-D matmul without moving the field, but it IS a batch of 2-D ones: one
+    // per index of the leading axis. Tag it so the tensor-core schedule tiles
+    // that axis by 1 and each tile becomes a plain 2-D contraction.
+    if (rank == 3 && axis != 0)
+      generic->setAttr("mir.batch_contract", rewriter.getUnitAttr());
 
     rewriter.replaceOp(op, generic.getResults());
     return success();
