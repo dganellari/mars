@@ -175,8 +175,8 @@ int main(int argc, char** argv)
     Desc<2> dDt{hDt.data(), hDt.data(), 0, {p, n}, {n, 1}};
     Desc<2> dW{hW.data(), hW.data(), 0, {n, n}, {n, 1}};
     Desc<2> dDm{hDm.data(), hDm.data(), 0, {n, n}, {n, 1}};
-    Desc<6> dG{G.data(), G.data(), 0, {E, 3, p, n, n, 3},
-               {gElem, (int64_t)p * nn * 3, (int64_t)nn * 3, (int64_t)n * 3, 3, 1}};
+    Desc<6> dG{G.data(), G.data(), 0, {E, 3, p, 3, n, n},   // [dir][face][component][row][col]
+               {gElem, (int64_t)p * 3 * nn, 3LL * nn, (int64_t)nn, n, 1}};
 
     // One block at a time: the kernel's workgroup buffers are process-wide
     // globals in the emulated build, so two blocks in flight would share them.

@@ -301,7 +301,7 @@ def gate5():
     Dtil = rng.uniform(-1, 1, (P, n))
     Dm = rng.uniform(-1, 1, (n, n))
     W = rng.uniform(-1, 1, (n, n))
-    G = rng.uniform(-1, 1, (3, P, n, n, 3))
+    G = rng.uniform(-1, 1, (3, P, 3, n, n))   # [dir][face][component][row][col]
 
     # NumPy port of the Knaus Alg-2 host reference (applyHoCvfemElement).
     y = np.zeros((n, n, n))
@@ -314,7 +314,7 @@ def gate5():
             dt2 = np.einsum("rq,sq->sr", Dm, interp)
             dt1 = np.einsum("sq,qr->sr", Dm, interp)
             g = G[d, l]
-            flux = g[..., 2] * deriv + g[..., 0] * dt2 + g[..., 1] * dt1
+            flux = g[2] * deriv + g[0] * dt2 + g[1] * dt1
             tmp = np.einsum("rq,sq->sr", W, flux)
             intf = np.einsum("sq,qr->sr", W, tmp)
             Y[l] -= intf
@@ -324,7 +324,7 @@ def gate5():
     t3 = f"tensor<{n}x{n}x{n}xf64>"
     t2 = f"tensor<{n}x{n}xf64>"
     tPn = f"tensor<{P}x{n}xf64>"
-    tG = f"tensor<3x{P}x{n}x{n}x3xf64>"
+    tG = f"tensor<3x{P}x3x{n}x{n}xf64>"
     payload = f"""{apply_func}
 func.func private @printMemrefF64(tensor<*xf64>)
 func.func @main() {{
@@ -370,7 +370,7 @@ def gate6():
     Dtil = rng.uniform(-1, 1, (P, n))
     Dm = rng.uniform(-1, 1, (n, n))
     W = rng.uniform(-1, 1, (n, n))
-    G = rng.uniform(-1, 1, (E, 3, P, n, n, 3))
+    G = rng.uniform(-1, 1, (E, 3, P, 3, n, n))
 
     def oracle(u, g):
         y = np.zeros((n, n, n))
@@ -382,7 +382,7 @@ def gate6():
                 dt2 = np.einsum("rq,sq->sr", Dm, interp)
                 dt1 = np.einsum("sq,qr->sr", Dm, interp)
                 gg = g[d, l]
-                flux = gg[..., 2] * deriv + gg[..., 0] * dt2 + gg[..., 1] * dt1
+                flux = gg[2] * deriv + gg[0] * dt2 + gg[1] * dt1
                 tmp = np.einsum("rq,sq->sr", W, flux)
                 intf = np.einsum("sq,qr->sr", W, tmp)
                 Yv[l] -= intf
@@ -393,9 +393,9 @@ def gate6():
     tU = f"tensor<{E}x{n}x{n}x{n}xf64>"
     mUs = f"memref<{E}x{n}x{n}x{n}xf64>"
     mUd = f"memref<?x{n}x{n}x{n}xf64>"
-    tGt = f"tensor<{E}x3x{P}x{n}x{n}x3xf64>"
-    mGs = f"memref<{E}x3x{P}x{n}x{n}x3xf64>"
-    mGd = f"memref<?x3x{P}x{n}x{n}x3xf64>"
+    tGt = f"tensor<{E}x3x{P}x3x{n}x{n}xf64>"
+    mGs = f"memref<{E}x3x{P}x3x{n}x{n}xf64>"
+    mGd = f"memref<?x3x{P}x3x{n}x{n}xf64>"
     t2m, tPnm = f"memref<{n}x{n}xf64>", f"memref<{P}x{n}xf64>"
 
     def buf(name, arr, tty, mty):

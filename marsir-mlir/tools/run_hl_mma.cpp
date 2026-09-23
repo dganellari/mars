@@ -152,9 +152,8 @@ int main(int argc, char** argv)
 
     long long zero = 0;
     long long uSz[4] = {E, n, n, n}, uSt[4] = {(long long)n3, (long long)nn, n, 1};
-    long long gSz[6] = {E, 3, p, n, n, 3};
-    long long gSt[6] = {gElem, (long long)p * nn * 3, (long long)nn * 3,
-                        (long long)n * 3, 3, 1};
+    long long gSz[6] = {E, 3, p, 3, n, n};   // [dir][face][component][row][col]
+    long long gSt[6] = {gElem, (long long)p * 3 * nn, 3LL * nn, (long long)nn, n, 1};
     long long oSz[2] = {p, n}, oSt[2] = {n, 1};       // Btil/Dtil (P x n)
     long long sSz[2] = {n, n}, sSt[2] = {n, 1};       // D/W (n x n)
     void* args[] = {

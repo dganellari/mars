@@ -6,6 +6,7 @@
 #include <vector>
 
 // CPU port of the Knaus Alg-2 apply (applyHoCvfemElement) for one element.
+// G is component-major: [dir][face][component][row][col].
 static void oracle(int p, const double* u, const double* Bt, const double* Dt,
                    const double* Dm, const double* W, const double* G,
                    double* y)
@@ -34,8 +35,8 @@ static void oracle(int p, const double* u, const double* Bt, const double* Dt,
                     double dt2 = 0, dt1 = 0;
                     for (int q = 0; q < n; ++q) dt2 += Dm[r * n + q] * interp[s * n + q];
                     for (int q = 0; q < n; ++q) dt1 += Dm[s * n + q] * interp[q * n + r];
-                    const double* g = G + (((d * p + l) * n + s) * n + r) * 3;
-                    flux[s * n + r] = g[2] * deriv[s * n + r] + g[0] * dt2 + g[1] * dt1;
+                    const double* g = G + (d * p + l) * 3 * nn + s * n + r;
+                    flux[s * n + r] = g[2 * nn] * deriv[s * n + r] + g[0] * dt2 + g[nn] * dt1;
                 }
             for (int s = 0; s < n; ++s)
                 for (int r = 0; r < n; ++r) { double v = 0;
