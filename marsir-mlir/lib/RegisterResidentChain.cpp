@@ -209,6 +209,23 @@ struct ChainContractsPass
     : public PassWrapper<ChainContractsPass, OperationPass<>> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(ChainContractsPass)
 
+  ChainContractsPass() = default;
+  ChainContractsPass(const ChainContractsPass &other) : PassWrapper(other) {}
+
+  // Feature switches, all on by default. Turning one off makes the pass DECLINE
+  // what that feature would have lowered, so those ops fall back to ordinary
+  // lowering. Used to bisect a numerical failure to one feature.
+  Option<bool> fusePointwise{*this, "fuse-pointwise",
+      llvm::cl::desc("lower elementwise ops onto C-fragments"), llvm::cl::init(true)};
+  Option<bool> shortM{*this, "short-m",
+      llvm::cl::desc("lower contractions with m < 8 via out-of-bounds padding"),
+      llvm::cl::init(true)};
+  Option<bool> wideN{*this, "wide-n",
+      llvm::cl::desc("lower contractions with N > 8 as several column tiles"),
+      llvm::cl::init(true)};
+  Option<bool> memAcc{*this, "mem-acc",
+      llvm::cl::desc("accept an accumulator read from memory"), llvm::cl::init(true)};
+
   StringRef getArgument() const final { return "mir-chain-contracts"; }
   StringRef getDescription() const final {
     return "Lower a chain of m8n8k4 vector.contract to register-resident "
@@ -351,8 +368,9 @@ struct ChainContractsPass
         bool ok = false;
         if (auto c = dyn_cast<vector::ContractionOp>(op)) {
           Value A2, B2; bool bt2; int64_t K2, N2, m2;
-          ok = classify(c, M, A2, B2, bt2, K2, N2, m2);
-        } else if (op->hasTrait<OpTrait::Elementwise>() &&
+          ok = classify(c, M, A2, B2, bt2, K2, N2, m2) &&
+               (shortM || m2 == 8) && (wideN || N2 == 8);
+        } else if (fusePointwise && op->hasTrait<OpTrait::Elementwise>() &&
                    op->getNumResults() == 1 && tilesOf(op->getResult(0)) > 0) {
           ok = llvm::all_of(op->getOperands(), [&](Value v) {
             return tilesOf(v) == tilesOf(op->getResult(0));
@@ -384,7 +402,8 @@ struct ChainContractsPass
           good = classify(c, M, A2, B2, bt2, K2, N2, m2) &&
                  operandOk(A2, /*singleTileOnly=*/true) &&
                  operandOk(B2, /*singleTileOnly=*/true) &&
-                 operandOk(c.getAcc(), /*singleTileOnly=*/false);
+                 operandOk(c.getAcc(), /*singleTileOnly=*/false) &&
+                 (memAcc || !isLeafRead(c.getAcc()));
         } else {
           good = llvm::all_of(op->getOperands(), [&](Value v) {
             return operandOk(v, /*singleTileOnly=*/false);

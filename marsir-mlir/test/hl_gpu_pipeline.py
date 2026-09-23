@@ -57,6 +57,12 @@ def main():
     # lowering and kernel signature -- a control for bisecting a GPU failure
     # between the chain pass and everything around it.
     no_chain = "--no-chain" in sys.argv
+    # --chain-opts=a=false,b=false  forwards switches to --mir-chain-contracts;
+    # --no-hoist skips --mir-hoist-transfer-pairs; --tag=x names the output.
+    # Together they bisect a numerical failure to one feature of the chain pass.
+    chain_opts = next((a.split("=", 1)[1] for a in sys.argv if a.startswith("--chain-opts=")), "")
+    no_hoist = "--no-hoist" in sys.argv
+    tag_arg = next((a.split("=", 1)[1] for a in sys.argv if a.startswith("--tag=")), "")
     src = run([sys.executable, "-c", f"""
 import sys; sys.path.insert(0, {os.path.join(ROOT, '..', 'marsir-compiler')!r})
 from marsir import parse_spec_file, synthesize
@@ -75,11 +81,14 @@ sys.stdout.write(mlir_ir.emit_full(ea, p={p}))
     ir = run([MLIROPT, "-", "--convert-linalg-to-loops", "--canonicalize", "--cse"], ir)
     ir = run([MIROPT, "-", "--mir-forward-transfers"], ir)
     if not no_chain:
-        ir = run([MIROPT, "-", "--mir-chain-contracts", "--canonicalize", "--cse"], ir)
+        flag = "--mir-chain-contracts" + (
+            "=" + " ".join(chain_opts.split(",")) if chain_opts else "")
+        ir = run([MIROPT, "-", flag, "--canonicalize", "--cse"], ir)
     mma_ir = ir.count("nvgpu.mma.sync")
     shfl_ir = ir.count("gpu.shuffle")
     ir = run([MLIROPT, "-", "--loop-invariant-code-motion"], ir)
-    ir = run([MIROPT, "-", "--mir-hoist-transfer-pairs"], ir)
+    if not no_hoist:
+        ir = run([MIROPT, "-", "--mir-hoist-transfer-pairs"], ir)
     # Bufferization leaves memref.alloc for every temporary. Inside a kernel those
     # become DEVICE-SIDE malloc calls: with grid = E each block allocates, the 8 MB
     # device heap is gone almost immediately, malloc returns null and the kernel
@@ -113,7 +122,7 @@ sys.stdout.write(mlir_ir.emit_full(ea, p={p}))
               "--finalize-memref-to-llvm", "--reconcile-unrealized-casts"], ir)
     ir = run([MLIROPT, "-", "--gpu-module-to-binary=format=isa"], ir)
 
-    tag = "_nochain" if no_chain else ""
+    tag = "_nochain" if no_chain else (("_" + tag_arg) if tag_arg else "")
     out = os.path.join(ROOT, "generated", f"hl_full_p{p}{tag}_sm90.ptx")
     print(run([sys.executable, os.path.join(HERE, "extract_ptx.py"), out, "0"], ir).strip())
 
