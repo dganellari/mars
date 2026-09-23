@@ -1,4 +1,5 @@
 #include "mars_segregated_simple.hpp"
+#include "mars_segregated_simple_metrics.hpp"
 #include <algorithm>
 #include <cmath>
 #include <iostream>
@@ -65,7 +66,7 @@ int main() {
         for (int j=0;j<3;++j) near(corrected[j],velocity[j]-influence[j]*increment[j]);
         near(pressure_update(10,4,.3),11.2);
         double area[]={1,0,0},prescribed[]={2,0,0}; near(inlet_flux_update(3,prescribed,area,2,.75),5);
-        // A closed outlet must fail until artificial-wall selection is integrated.
+        // A caller without persistent reversal storage must reject closure.
         int one[]={0},two[]={1},three[]={2},four[]={3},error=0;
         double px[]={0,1,0,0},py[]={0,0,1,0},pz[]={0,0,0,1};
         double backward[12],zero_pressure[4]{},zero_gradient[36]{},zero_d[12]{},zero_trace[3]{},bf[3]{},div[4]{};
@@ -76,6 +77,63 @@ int main() {
         state.boundary_flux=bf; state.mass_divergence=div; state.error=&error;
         SimpleBoundary<1>{mesh,state,c,{},false,true}(0);
         check(error==1); for (double q:bf) near(q,0);
+        // Persist closure, omit both opening blocks, retain trace, then reopen.
+        int flags[3]{}; state.reversal=flags; error=0;
+        SimpleBoundary<1>{mesh,state,c,{},false,true}(0);
+        check(error==0); for (int flag:flags) check(flag==1);
+        int offsets[]={0,4,8,12,16},columns[]={0,1,2,3,0,1,2,3,0,1,2,3,0,1,2,3};
+        double pa[16]{},pb[4]{},ma[144]{},mb[12]{};
+        SimpleBoundary<1>{mesh,state,c,{4,offsets,columns,pa,pb},true,false}(0);
+        SimpleBoundary<3>{mesh,state,c,{4,offsets,columns,ma,mb},true,false}(0);
+        for (double v:pa) near(v,0); for (double v:pb) near(v,0);
+        for (double v:ma) near(v,0); for (double v:mb) near(v,0);
+        double moments[2]{};
+        std::fill(zero_trace,zero_trace+3,2.);
+        SimpleTraceMoment{mesh,state,moments}(0); near(moments[0],0); near(moments[1],0);
+        SimpleTrace{mesh,state,c,moments}(0);
+        for (double t:zero_trace) near(t,2); check(error==0);
+        std::fill(backward,backward+12,1.);
+        // Outward velocity alone cannot reopen against the pressure condition.
+        SimpleBoundary<1>{mesh,state,c,{},true,true}(0);
+        for (int flag:flags) check(flag==1);
+        std::fill(zero_pressure,zero_pressure+4,3.);
+        SimpleBoundary<1>{mesh,state,c,{},true,true}(0);
+        for (int flag:flags) check(flag==0);
+        for (double q:bf) near(q,0);
+        SimpleTraceMoment{mesh,state,moments}(0);
+        near(moments[1],std::sqrt(3.)/2); near(moments[0]/moments[1],3);
+        SimpleTrace{mesh,state,c,moments}(0); for (double t:zero_trace) near(t,0);
+        SimpleBoundary<1>{mesh,state,c,{},true,true}(0);
+        for (double q:bf) near(q,.375); near(div[1]+div[2]+div[3],1.125);
+        // The newly open pressure derivative restores its constant-mode anchor.
+        std::fill(zero_d,zero_d+12,2.);
+        SimpleBoundary<1>{mesh,state,c,{4,offsets,columns,pa,pb},true,false}(0);
+        double anchor=0; for (double v:pa) anchor+=v; near(anchor,3);
+        SimpleSums sums; sums.volume=2; sums.momentum2=8; sums.continuity2=2;
+        sums.velocity_change2=.02; sums.pressure_change2=.0002;
+        sums.inlet=-1; sums.outlet=.9; sums.continuity=-.1; sums.inlet_area=1;
+        SimpleControls scales; scales.density=2; scales.inlet_speed=.5;
+        auto metrics=simple_metrics(sums,scales);
+        near(metrics.momentum,4); near(metrics.continuity,1); near(metrics.flux,.1);
+        near(metrics.velocity_change,.2); near(metrics.pressure_change,.02); near(metrics.cancellation,0);
+        check(metrics.finite); check(!simple_converged(metrics,100,0,1e-6,1e-6,1e-6));
+        SimpleMetrics good{0,0,0,0,0,0,true};
+        check(simple_converged(good,2,0,1e-6,1e-6,1e-6));
+        check(!simple_converged(good,1,0,1e-6,1e-6,1e-6));
+        check(!simple_converged(good,2,1,1e-6,1e-6,1e-6));
+        for (double* value:{&good.momentum,&good.continuity,&good.flux,&good.velocity_change,&good.pressure_change,&good.cancellation,&good.flux_change}) {
+            *value=1.; check(!simple_converged(good,10,0,1e-6,1e-6,1e-6)); *value=0;
+        }
+        double fresh_flux[]={1,2},prior_flux[]={.9,2.2};
+        near(SimpleFluxChange{fresh_flux,prior_flux}(1).flux_change,.2);
+        good.finite=false; check(!simple_converged(good,10,0,1e-6,1e-6,1e-6));
+        // Boundary RHS relaxation must not hide a physical momentum defect.
+        double volumes[4]={2,2,2,2},factors[4]={1,0,0,0},rhs[12]={1.5,0,0};
+        double old_u[12]{},old_p[4]{}; state.volume=volumes; state.boundary_factor=factors;
+        state.mass_divergence=div;
+        auto node=SimpleNodeSums{state,rhs,old_u,old_p}(0); near(node.momentum2,2);
+        rhs[0]=std::numeric_limits<double>::quiet_NaN();
+        check(SimpleNodeSums{state,rhs,old_u,old_p}(0).invalid);
         std::cout<<"PASS: "<<checks<<" independent SIMPLE integration checks\n";
     } catch (const std::exception& e) { std::cerr<<"FAIL: "<<e.what()<<'\n'; return 1; }
 }

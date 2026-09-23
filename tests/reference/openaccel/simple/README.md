@@ -52,12 +52,11 @@ Each solve is checked using a separately evaluated true `A*x-b` residual:
 ## Bounds and evidence
 
 Only the public fixed-frame, constant-property, upwind SIMPLE profile is enabled.
-A transition to a reversed outlet fails explicitly: selecting new artificial-wall
-blocks is not integrated here. SIMPLEC, moving meshes, transient terms, forces,
+The integrated reversal path is described below. SIMPLEC, moving meshes, transient terms, forces,
 turbulence, other boundary types, MPI ownership and general input decks remain
 outside this executable. The two iterations do not establish nonlinear convergence.
 
-Local strict C++ host builds pass 230 independent checks and 35,544 comparisons
+Local strict C++ host builds pass 457 independent checks and 35,544 comparisons
 against actual captured update states. The independent host oracle uses dense
 partial-pivot elimination, not Hypre. Maximum scaled state difference is 1.43e-8
 for iteration 2's raw pressure increment; corrected velocity differs by at most
@@ -67,7 +66,8 @@ relative residuals are below 1e-13. Flux cancellation is checked independently;
 the net balances (-0.0525 and approximately -0.00231336 kg/s) remain nonzero,
 just as in the unconverged two-iteration reference.
 
-The CUDA path is implemented but has not been compiled or executed locally.
+The original two-iteration CUDA/Hypre path passed on Daint (35,544 comparisons).
+The shared runtime, new reversal gate and convergence driver require new GPU validation.
 Full array downloads exist only for these validation comparisons. Geometry,
 assembly, gradients, scalar CSR, solution updates and history stay on-device
 between comparisons; solver acceptance downloads scalar reductions only.
@@ -103,5 +103,106 @@ printf 'Saved: %s\n' "$simple_work"
 ```
 
 No OpenAccel rebuild or rerun is needed. A pass closes the single-GPU two-iteration
-integration gate. The following work is general driver integration, reversal
-selection, distributed ownership/halos and converged public-case comparisons.
+integration gate. The standalone public driver below extends that gate; distributed ownership/halos,
+general meshes and converged reference-field comparisons remain pending.
+
+## Standalone public-channel iteration driver
+
+`mars_segregated_simple` reads coordinates, connectivity and boundary tags only.
+It uses the same `SimpleRunner` and CUDA/Hypre solves as the two-iteration gate;
+no captured stage fields or expected answers are loaded. Material, relaxation,
+pseudo-time, upwind interpolation and boundary settings remain the pinned profile
+above. This is a one-rank public-channel driver, not an arbitrary-mesh pump driver.
+
+Outlet reversal flags now persist between iterations. The pinned reference's
+artificial slip wall omits the opening's momentum/pressure boundary blocks and
+sets its mass flux to zero. Closed faces are excluded from the pressure mean and
+retain their old trace. Reopening requires outward face-average velocity and
+interior mean pressure at least as large as that trace. The current iteration's
+flux stays zero when reopening; the next iteration restores the opening blocks.
+All-closed outlets fail explicitly before a pressure solve: the pressure anchor
+would be absent with prescribed inflow. No pressure pin or fallback wall model
+is silently introduced. Source: pinned `flowModel.cpp` outlet flag/trace updates
+and segregated momentum/pressure boundary assemblers.
+
+At the start of each iteration, the driver assembles the momentum defect for the
+current velocity, pressure and stored flux history. Let `R_u` be that nodal RHS
+before the boundary factor 0.75, `R_m` the stored nodal mass-flux sum and `V` the
+nodal dual volume. It reports
+
+- momentum: `sqrt(sum(|R_u|^2/V)/sum(V))*L/(rho*U^2)`;
+- continuity: `sqrt(sum(R_m^2/V)/sum(V))*L/(rho*U)`;
+- mass balance: `abs(Q_in+Q_out)/(rho*U*A_in)`;
+- velocity/pressure changes: volume-weighted RMS changes divided by `U` and
+  `rho*U^2`, respectively;
+- flux-history change: the largest sample-flux change divided by `rho*U*A_in`.
+
+Here `L=1 m` is the channel height, `U=0.1 m/s`, and `Q` denotes mass flow in
+kg/s. These are dimensionless MARS norms, not OpenAccel's displayed RMS columns.
+Pseudo-time and diagonal relaxation affect the increment matrix, not this steady
+momentum RHS. The boundary RHS factor is divided out in the diagnostic. Continuity
+includes every node and uses the same stored stabilized flux as the iteration.
+`sum(R_m)=Q_in+Q_out` is checked to `1e-10` relative to prescribed inflow.
+
+Success requires momentum and continuity below `--residual-tol`, mass balance
+below `--mass-tol`, all three state-change measures below `--change-tol`, no flag
+changes and at least two completed iterations. Reaching the iteration limit prints
+`NOT CONVERGED` and returns 2; a runtime/linear/consistency failure returns 1.
+Final nodal fields and per-iteration metrics are CSV files. Field `node` is the
+zero-based packed row; the mesh JSON records `node_global_ids` for reference matching.
+Full field downloads
+occur only for the explicit final export; scalar reductions are used during
+iteration. The host/direct build is a validation oracle, not a production CPU path.
+
+The host/direct standalone run converged at iteration 1,277 with the default
+`1e-6` thresholds: momentum `9.90686e-7`, continuity `3.25978e-11`, relative mass
+imbalance `1.98244e-12`, velocity change `2.56626e-10`, pressure change `1.14102e-9`
+and flux-history change `4.44996e-12`. Peak speed was `0.188288 m/s`; no face reversed
+in that run. This is internal convergence on the public mesh, not a converged
+OpenAccel field comparison or GPU result. The new synthetic reversal gate supplies
+the missing close/reopen branch coverage.
+
+The extended `mars_segregated_simple_check` additionally exercises native kernels
+on a unit tetrahedron through closure, retained trace, pressure-qualified reopening,
+restored flux/pressure anchor and device diagnostics reductions. Its two-iteration
+reference comparisons remain unchanged. CPU algebra and host checks do not certify
+the new CUDA branches; run the following commands on Daint.
+
+From the existing MARS CUDA/Hypre build directory, after pulling this change:
+
+```bash
+(
+set -euo pipefail
+git pull --ff-only
+cmake -S .. -B .
+cmake --build . --parallel 4
+simple_run=$(mktemp -d "$PWD/simple-channel-XXXXXX")
+python3 ../scripts/prepare_openaccel_simple.py \
+  /capstor/scratch/cscs/gandanie/git/OpenAccel-reference-updates-IxgJIp/run/exports \
+  --boundary /capstor/scratch/cscs/gandanie/git/OpenAccel-reference-boundary-TljPP1/run/exports/boundary \
+  --mesh-only --output "$simple_run/channel.txt"
+./examples/distributed/unstructured/mars_segregated_simple_algebra_check
+srun --account=csstaff --time=00:05:00 --nodes=1 --ntasks-per-node=1 \
+  --export=ALL --kill-on-bad-exit=1 \
+  ~/affinity/bind_numa.sh ./examples/distributed/unstructured/mars_segregated_simple_check \
+  "$PWD/segregated-simple-ZH466h/inputs.txt" 2>&1 | tee "$simple_run/gate.log"
+git rev-parse HEAD > "$simple_run/mars-revision.txt"
+sha256sum ./examples/distributed/unstructured/mars_segregated_simple \
+  ./examples/distributed/unstructured/mars_segregated_simple_check \
+  "$simple_run/channel.txt" > "$simple_run/sha256.txt"
+# Save the path before launching so a failed or unconverged run is easy to locate.
+printf 'Results: %s\n' "$simple_run"
+srun --account=csstaff --time=00:20:00 --nodes=1 --ntasks-per-node=1 \
+  --export=ALL --kill-on-bad-exit=1 \
+  ~/affinity/bind_numa.sh ./examples/distributed/unstructured/mars_segregated_simple \
+  --mesh "$simple_run/channel.txt" --output-prefix "$simple_run/channel" \
+  --iterations 2000 --report-every 20 \
+  --residual-tol 1e-6 --mass-tol 1e-6 --change-tol 1e-6 \
+  2>&1 | tee "$simple_run/run.log"
+)
+```
+
+No OpenAccel build or new capture is needed for this gate/run. A later converged
+field comparison needs a longer OpenAccel run with this same public deck; two
+captured iterations cannot supply that final reference. MPI and general input
+meshes remain outside this milestone.

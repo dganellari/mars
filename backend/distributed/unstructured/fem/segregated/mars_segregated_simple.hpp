@@ -32,7 +32,7 @@ MARS_SIMPLE_HD inline TetInteriorInput simple_interior(int stage, const int* nod
 
 MARS_SIMPLE_HD inline BoundaryAssemblyInput simple_boundary(bool momentum, SimpleFace face,
     const int* nodes, const TetGeometry<double>& g, const double* velocity, const double* pressure,
-    const double* trace, const double* flux, const SimpleControls& c, bool wall_initialized)
+    const double* trace, const double* flux, const SimpleControls& c, bool wall_initialized, const int* reversal=nullptr)
 {
     BoundaryAssemblyInput input{}; input.element=face.element; input.face=face.ordinal;
     auto& x=input.values; x.stage=face.kind+(momentum?3:0);
@@ -46,6 +46,7 @@ MARS_SIMPLE_HD inline BoundaryAssemblyInput simple_boundary(bool momentum, Simpl
     for (int f=0;f<3;++f) {
         const int local=tet_face_node(face.ordinal,f);
         x.face_nodes[f]=x.nearest[f]=local; x.opposing[f]=opposite;
+        x.reversal[f]=face.kind==1 && reversal?reversal[f]:0;
         x.density[f]=c.density; x.viscosity[f]=c.viscosity; x.stored_flux[f]=flux[f];
         for (int j=0;j<3;++j) {
             x.boundary_velocity[3*f+j]=face.kind==0?-c.inlet_speed*area[j]/magnitude:0;
@@ -104,6 +105,7 @@ struct SimpleState {
     double *velocity,*pressure,*velocity_gradient,*pressure_gradient,*influence;
     double *volume,*mass_divergence,*interior_flux,*boundary_flux,*trace,*boundary_factor;
     int* error;
+    int* reversal=nullptr;
 };
 struct SimpleGeometry {
     SimpleMesh mesh; SimpleState state;
@@ -171,7 +173,7 @@ template<int Components> struct SimpleBoundary {
     MARS_SIMPLE_HD void operator()(int i) const {
         const auto face=mesh.faces[i]; int nodes[4]; double xyz[12]; mesh.cell(face.element,nodes,xyz);
         const auto& g=mesh.geometry[face.element];
-        auto input=simple_boundary(Components==3,face,nodes,g,state.velocity,state.pressure,state.trace+3*i,state.boundary_flux+3*i,controls,wall_initialized);
+        auto input=simple_boundary(Components==3,face,nodes,g,state.velocity,state.pressure,state.trace+3*i,state.boundary_flux+3*i,controls,wall_initialized,state.reversal?state.reversal+3*i:nullptr);
         auto& x=input.values;
         if (!native_boundary(x,input,g,nodes,state.pressure_gradient,state.influence)) { simple_error(state.error); return; }
         BoundaryOutput y; boundary_block(x,y);
@@ -179,17 +181,17 @@ template<int Components> struct SimpleBoundary {
             if (!scatter_block(matrix,input.nodes,x.stage==5?3:4,y.lhs,y.rhs)) simple_error(state.error);
         } else {
             double flux[3];
-            for (int j=0;j<3;++j) flux[j]=controls.alpha_mass*y.flux[j]+(1-controls.alpha_mass)*state.boundary_flux[3*i+j];
+            for (int j=0;j<3;++j) flux[j]=x.reversal[j]?0:controls.alpha_mass*y.flux[j]+(1-controls.alpha_mass)*state.boundary_flux[3*i+j];
             if (face.kind==1) {
-                int flags[3]{},next[3]; double velocity[9],pressure[3],filtered[3];
+                int next[3]; double velocity[9],pressure[3],filtered[3];
                 for (int f=0;f<3;++f) {
                     const int n=nodes[tet_face_node(face.ordinal,f)]; pressure[f]=state.pressure[n];
                     for (int j=0;j<3;++j) velocity[3*f+j]=state.velocity[3*n+j];
                 }
-                outlet_reversal_update(flux,flags,velocity,pressure,state.trace+3*i,x.area,false,filtered,next);
+                outlet_reversal_update(flux,x.reversal,velocity,pressure,state.trace+3*i,x.area,false,filtered,next);
                 for (int j=0;j<3;++j) {
-                    // Closing faces require another boundary block selection, not just a flux clip.
-                    if (next[j]) simple_error(state.error);
+                    if (state.reversal) state.reversal[3*i+j]=next[j];
+                    else if (next[j]) simple_error(state.error);
                     flux[j]=filtered[j];
                 }
             }
@@ -213,7 +215,7 @@ struct SimpleMomentumNode {
 struct SimpleTraceMoment {
     SimpleMesh mesh; SimpleState state; double* moment;
     MARS_SIMPLE_HD void operator()(int i) const {
-        const auto f=mesh.faces[i]; if (f.kind!=1) return;
+        const auto f=mesh.faces[i]; if (f.kind!=1 || (state.reversal && state.reversal[3*i])) return;
         double area[3]; tet_boundary_area(mesh.geometry[f.element],f.ordinal,area);
         double magnitude=0; for (int j=0;j<3;++j) magnitude+=area[j]*area[j]; magnitude=sqrt(magnitude);
         for (int j=0;j<3;++j) {
@@ -225,7 +227,7 @@ struct SimpleTraceMoment {
 struct SimpleTrace {
     SimpleMesh mesh; SimpleState state; SimpleControls controls; const double* moment;
     MARS_SIMPLE_HD void operator()(int i) const {
-        auto f=mesh.faces[i]; if (f.kind!=1) return;
+        auto f=mesh.faces[i]; if (f.kind!=1 || (state.reversal && state.reversal[3*i])) return;
         if (!(moment[1]>0)) { simple_error(state.error); return; }
         for (int j=0;j<3;++j) state.trace[3*i+j]=outlet_trace_update(state.pressure[mesh.nodes[tet_face_node(f.ordinal,j)][f.element]],controls.pressure_reference,moment[0]/moment[1],controls.beta,state.trace[3*i+j],false);
     }
