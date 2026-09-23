@@ -14,6 +14,7 @@ add_mlir_dialect_library(MLIRMir
   WorkgroupBuffers.cpp
   DistributeFills.cpp
   WarpBarriers.cpp
+  HoistInvariantReads.cpp
 
   ADDITIONAL_HEADER_DIRS
   ${PROJECT_SOURCE_DIR}/include/mir

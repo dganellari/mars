@@ -12,7 +12,8 @@ only -- no Python low-level emit anywhere in the path.
                                              write-only scratch is dropped
       --mir-workgroup-buffers                remaining scratch -> shared slots, reused
       --mir-chain-contracts                  per-lane nvgpu.mma.sync + gpu.shuffle
-      LICM + --mir-hoist-transfer-pairs      accumulator into a register
+      LICM + --mir-hoist-invariant-reads     operator fragments read once, not per face
+      --mir-hoist-transfer-pairs             accumulator into a register
       --mir-distribute-fills                 a shared fill is 1/32 per lane
       --mir-warp-barriers                    gpu.barrier where lanes can conflict
       --promote-buffers-to-stack             no device-side malloc in the kernel
@@ -104,6 +105,10 @@ sys.stdout.write(mlir_ir.emit_full(ea, p={p}))
         ir = run([MIROPT, "-", flag, "--canonicalize", "--cse"], ir)
     mma_ir = ir.count("nvgpu.mma.sync")
     shfl_ir = ir.count("gpu.shuffle")
+    # LICM hoists pure ops only; the invariant operator reads it leaves behind are
+    # hoisted next, and a second LICM takes the extracts that fed off them.
+    ir = run([MLIROPT, "-", "--loop-invariant-code-motion"], ir)
+    ir = run([MIROPT, "-", "--mir-hoist-invariant-reads"], ir)
     ir = run([MLIROPT, "-", "--loop-invariant-code-motion"], ir)
     if not no_hoist:
         ir = run([MIROPT, "-", "--mir-hoist-transfer-pairs"], ir)
