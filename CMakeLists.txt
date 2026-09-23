@@ -128,7 +128,16 @@ include(cmake/MarsClangFormat.cmake)
 # Find Cornerstone - centralize all Cornerstone finding and setup here
 if(MARS_ENABLE_UNSTRUCTURED)
     set(CORNERSTONE_INSTALL_DIR "${CORNERSTONE_INSTALL_DIR}" CACHE PATH "Path to Cornerstone installation directory")
-    find_package(cornerstone QUIET)
+    # Cached headers from our earlier fetch do not recreate its build targets.
+    # Keep using that source tree instead of treating it as an installed library.
+    set(_mars_cornerstone_source "")
+    if(NOT CORNERSTONE_INSTALL_DIR AND cornerstone-octree_SOURCE_DIR
+       AND cornerstone-octree_BINARY_DIR
+       AND CORNERSTONE_INCLUDE_DIRS STREQUAL "${cornerstone-octree_SOURCE_DIR}/include")
+        set(_mars_cornerstone_source "${cornerstone-octree_SOURCE_DIR}")
+    else()
+        find_package(cornerstone QUIET)
+    endif()
     if(CORNERSTONE_INSTALL_DIR)
         set(CORNERSTONE_SRC_DIR "${CORNERSTONE_INSTALL_DIR}" CACHE PATH "Cornerstone source directory" FORCE)
         set(CORNERSTONE_INCLUDE_DIRS "${CORNERSTONE_INSTALL_DIR}/include" CACHE PATH "Cornerstone include directory" FORCE)
@@ -154,8 +163,7 @@ if(MARS_ENABLE_UNSTRUCTURED)
         endif()
     endif()
 
-    if(NOT CORNERSTONE_INCLUDE_DIRS)
-        message(STATUS "Cornerstone headers not found, fetching source...")
+    if(NOT CORNERSTONE_INCLUDE_DIRS OR _mars_cornerstone_source)
         
         include(FetchContent)
         
@@ -191,17 +199,20 @@ if(MARS_ENABLE_UNSTRUCTURED)
             OVERRIDE_FIND_PACKAGE
         )
     
-        # Use the modern, non-deprecated approach
-        FetchContent_MakeAvailable(cornerstone_fetch)
-        
-        # Get the source directory that was populated
-        FetchContent_GetProperties(cornerstone_fetch SOURCE_DIR CORNERSTONE_SRC_DIR)
+        if(_mars_cornerstone_source AND EXISTS "${_mars_cornerstone_source}/CMakeLists.txt")
+            # Reconfigure the existing checkout without updating its revision.
+            add_subdirectory("${_mars_cornerstone_source}" "${cornerstone-octree_BINARY_DIR}")
+            set(CORNERSTONE_SRC_DIR "${_mars_cornerstone_source}")
+        else()
+            FetchContent_MakeAvailable(cornerstone_fetch)
+            FetchContent_GetProperties(cornerstone_fetch SOURCE_DIR CORNERSTONE_SRC_DIR)
+        endif()
         
         # Set paths for includes (both plural and singular for compatibility)
         set(CORNERSTONE_INCLUDE_DIRS "${CORNERSTONE_SRC_DIR}/include" CACHE PATH "Cornerstone include directory" FORCE)
         set(cornerstone_INCLUDE_DIR "${CORNERSTONE_SRC_DIR}/include" CACHE PATH "Cornerstone include directory (singular)" FORCE)
         
-        message(STATUS "Fetched Cornerstone from: ${CORNERSTONE_SRC_DIR}")
+        message(STATUS "Using Cornerstone source: ${CORNERSTONE_SRC_DIR}")
         
         # Now only build cstone_gpu if needed
         if(MARS_ENABLE_CUDA OR MARS_ENABLE_HIP)
@@ -357,7 +368,10 @@ if(MARS_ENABLE_UNSTRUCTURED)
                 if(TARGET cstone_gpu)
                     message(STATUS "Using Cornerstone GPU library built from source")
                 else()
-                    message(WARNING "No Cornerstone GPU library found or built: ${CORNERSTONE_GPU_LIBRARY}")
+                    message(FATAL_ERROR
+                        "Unstructured CUDA/HIP requires the Cornerstone GPU library. "
+                        "Set CORNERSTONE_GPU_LIBRARY to a matching library, provide "
+                        "CORNERSTONE_INSTALL_DIR, or let MARS build Cornerstone from source.")
                 endif()
             endif()
         endif()
