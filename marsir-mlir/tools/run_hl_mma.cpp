@@ -239,13 +239,27 @@ int main(int argc, char** argv)
 
     double err = 0;
     std::vector<double> out(n3), ref(n3);
-    for (int probe = 0; probe < 8; ++probe) {
-        long long e = (long long)((double)rand() / RAND_MAX * (E - 1));
+    // Probes: element 0, the last element, then random ones. Printing |out| next
+    // to |ref| per probe separates the failure modes: |out| = 0 everywhere means
+    // Y was never written; correct at e = 0 but zero elsewhere means every warp
+    // wrote element 0; nonzero-but-wrong means the math itself is off.
+    const int nProbe = 10;
+    for (int probe = 0; probe < nProbe; ++probe) {
+        long long e = probe == 0 ? 0 : probe == 1 ? E - 1
+                    : (long long)((double)rand() / RAND_MAX * (E - 1));
         CK(p_cuMemcpyDtoH(out.data(), dY + (size_t)e * n3 * 8, n3 * 8));
         fillElem(e);
         oracle(p, elemU.data(), hBt.data(), hDt.data(), hDm.data(),
                hW.data(), elemG.data(), ref.data());
-        for (int i = 0; i < n3; ++i) err = fmax(err, fabs(out[i] - ref[i]));
+        double eo = 0, mo = 0, mr = 0;
+        for (int i = 0; i < n3; ++i) {
+            eo = fmax(eo, fabs(out[i] - ref[i]));
+            mo = fmax(mo, fabs(out[i]));
+            mr = fmax(mr, fabs(ref[i]));
+        }
+        printf("  probe e=%-8lld max|out|=%.3e  max|ref|=%.3e  max|out-ref|=%.3e  y[0..2]=% .4e % .4e % .4e  ref=% .4e % .4e % .4e\n",
+               e, mo, mr, eo, out[0], out[1], out[2], ref[0], ref[1], ref[2]);
+        err = fmax(err, eo);
     }
     printf("HIGH-LEVEL mir -> mma gate (p=%d, E=%lld, warp/elem): spot max|err| = %.3e  %s\n",
            p, E, err, err < 1e-11 ? "PASS" : "FAIL");

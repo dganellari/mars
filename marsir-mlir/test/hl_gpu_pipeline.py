@@ -50,7 +50,13 @@ def run(cmd, data):
 
 
 def main():
-    p = int(sys.argv[1]) if len(sys.argv) > 1 else 7
+    argv = [a for a in sys.argv[1:] if not a.startswith("--")]
+    p = int(argv[0]) if argv else 7
+    # --no-chain: identical pipeline minus --mir-chain-contracts, so the leftover
+    # vector.contract ops lower to ordinary FMA code. Same batching, wrapping,
+    # lowering and kernel signature -- a control for bisecting a GPU failure
+    # between the chain pass and everything around it.
+    no_chain = "--no-chain" in sys.argv
     src = run([sys.executable, "-c", f"""
 import sys; sys.path.insert(0, {os.path.join(ROOT, '..', 'marsir-compiler')!r})
 from marsir import parse_spec_file, synthesize
@@ -68,7 +74,8 @@ sys.stdout.write(mlir_ir.emit_full(ea, p={p}))
               "--transform-interpreter"], ir)
     ir = run([MLIROPT, "-", "--convert-linalg-to-loops", "--canonicalize", "--cse"], ir)
     ir = run([MIROPT, "-", "--mir-forward-transfers"], ir)
-    ir = run([MIROPT, "-", "--mir-chain-contracts", "--canonicalize", "--cse"], ir)
+    if not no_chain:
+        ir = run([MIROPT, "-", "--mir-chain-contracts", "--canonicalize", "--cse"], ir)
     mma_ir = ir.count("nvgpu.mma.sync")
     shfl_ir = ir.count("gpu.shuffle")
     ir = run([MLIROPT, "-", "--loop-invariant-code-motion"], ir)
@@ -106,16 +113,17 @@ sys.stdout.write(mlir_ir.emit_full(ea, p={p}))
               "--finalize-memref-to-llvm", "--reconcile-unrealized-casts"], ir)
     ir = run([MLIROPT, "-", "--gpu-module-to-binary=format=isa"], ir)
 
-    out = os.path.join(ROOT, "generated", f"hl_full_p{p}_sm90.ptx")
+    tag = "_nochain" if no_chain else ""
+    out = os.path.join(ROOT, "generated", f"hl_full_p{p}{tag}_sm90.ptx")
     print(run([sys.executable, os.path.join(HERE, "extract_ptx.py"), out, "0"], ir).strip())
 
     ptx = open(out).read()
     checks = [
         ("single kernel entry", ptx.count(".visible .entry") == 1),
         ("element index (ctaid.x)", "ctaid.x" in ptx),
-        ("lane index (tid.x)", "tid.x" in ptx),
-        ("fp64 tensor-core mma", ptx.count("mma.sync.aligned.m8n8k4") > 0),
-        ("register relayout (shfl)", ptx.count("shfl.sync") > 0),
+        ("lane index (tid.x)", no_chain or "tid.x" in ptx),
+        ("fp64 tensor-core mma", no_chain or ptx.count("mma.sync.aligned.m8n8k4") > 0),
+        ("register relayout (shfl)", no_chain or ptx.count("shfl.sync") > 0),
         ("no shared memory", ptx.count(".shared") == 0),
     ]
     for name, good in checks:

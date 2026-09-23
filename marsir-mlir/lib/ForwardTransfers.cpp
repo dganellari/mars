@@ -78,6 +78,19 @@ struct ForwardTransfersPass
       for (Operation &opRef : llvm::make_early_inc_range(*blk)) {
         Operation *op = &opRef;
 
+        // An op with regions (an scf.for / scf.if body) can write a buffer from
+        // INSIDE its region, where this block-local scan never looks. Anything
+        // it touches in there is no longer known here.
+        if (op->getNumRegions() > 0) {
+          llvm::SmallPtrSet<Value, 8> touched;
+          op->walk([&](Operation *inner) {
+            if (inner == op) return;
+            for (Value v : inner->getOperands()) touched.insert(v);
+          });
+          llvm::erase_if(live, [&](const Entry &e) { return touched.count(e.mem); });
+          continue;
+        }
+
         if (auto w = dyn_cast<vector::TransferWriteOp>(op)) {
           if (!isPrivateAlloc(w.getSource()))
             continue;
