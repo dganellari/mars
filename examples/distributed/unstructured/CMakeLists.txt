@@ -366,6 +366,21 @@ if(MARS_ENABLE_TESTS)
     add_test(NAME marsSegregatedUpdateAlgebra COMMAND mars_segregated_update_algebra_check)
 endif()
 
+add_executable(mars_segregated_geometry_check mars_segregated_geometry_check.cu)
+target_compile_definitions(mars_segregated_geometry_check PRIVATE MARS_REPLAY_CUDA)
+target_include_directories(mars_segregated_geometry_check PRIVATE
+    ${CMAKE_SOURCE_DIR}/backend/distributed/unstructured/fem/segregated)
+set_target_properties(mars_segregated_geometry_check PROPERTIES CUDA_STANDARD 20 CUDA_STANDARD_REQUIRED ON)
+
+add_executable(mars_segregated_geometry_algebra_check
+    ${CMAKE_SOURCE_DIR}/tests/reference/openaccel/geometry/algebra_check.cpp)
+target_include_directories(mars_segregated_geometry_algebra_check PRIVATE
+    ${CMAKE_SOURCE_DIR}/backend/distributed/unstructured/fem/segregated)
+target_compile_features(mars_segregated_geometry_algebra_check PRIVATE cxx_std_20)
+if(MARS_ENABLE_TESTS)
+    add_test(NAME marsSegregatedGeometryAlgebra COMMAND mars_segregated_geometry_algebra_check)
+endif()
+
 add_executable(mars_outlet_boundary_gate mars_outlet_boundary_gate.cu)
 target_link_libraries(mars_outlet_boundary_gate PRIVATE mars)
 install(TARGETS mars_outlet_boundary_gate RUNTIME DESTINATION bin/examples)
