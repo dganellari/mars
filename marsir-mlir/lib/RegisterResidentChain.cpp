@@ -13,6 +13,13 @@
 // shuffle). Pointwise ops (mulf/addf on the 8x8 C-fragment) between contracts
 // are preserved -- they act per lane on the vector<1x2> and need no relayout.
 //
+// COHERENCE RULE: a C-fragment is only complete across the whole warp. It may be
+// stored piecewise (each lane its two entries) only into memory the warp shares.
+// Before it goes into per-thread memory -- a function-local alloc/alloca -- it is
+// materialized: every lane gathers the full value. Missing this left each lane's
+// private buffers holding two real entries and zeros, which the rest of the
+// kernel then read as complete.
+//
 // m8n8k4 f64 fragment conventions (row.col), lane L, i=L/4, k=L%4, slab s:
 //   A-frag        = A[i, 4s+k]           (read mem [i, 4s+k])
 //   B-frag std    = B[4s+k, i]           (read mem [4s+k, i])
@@ -27,6 +34,8 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Interfaces/FunctionInterfaces.h"
 #include "mlir/Dialect/NVGPU/IR/NVGPUDialect.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/AffineMap.h"
@@ -147,6 +156,72 @@ static Value relayout(OpBuilder &b, Location loc, Lane &L, Value cfrag, int slab
   Value sel = b.create<arith::SelectOp>(loc, elemOdd, s1.getShuffleResult(),
                                         s0.getShuffleResult());
   return b.create<vector::InsertOp>(loc, sel, L.zc1, ArrayRef<int64_t>{0, 0});
+}
+
+// Is `mem` private to each thread? A function-local buffer is: memref.alloc
+// becomes a per-thread malloc on the GPU and memref.alloca per-thread stack.
+// Kernel arguments are global memory the whole warp shares. Anything this walk
+// cannot trace to a kernel argument is treated as private -- that only costs a
+// gather, while the opposite mistake silently loses data.
+static bool isThreadPrivate(Value mem) {
+  for (int guard = 0; guard < 64; ++guard) {
+    if (auto ba = dyn_cast<BlockArgument>(mem)) {
+      Operation *owner = ba.getOwner()->getParentOp();
+      return !(owner && isa<FunctionOpInterface>(owner) &&
+               ba.getOwner()->isEntryBlock());
+    }
+    Operation *d = mem.getDefiningOp();
+    if (!d || isa<memref::AllocOp, memref::AllocaOp>(d))
+      return true;
+    if (auto sv = dyn_cast<memref::SubViewOp>(d)) { mem = sv.getSource(); continue; }
+    if (auto cs = dyn_cast<memref::CollapseShapeOp>(d)) { mem = cs.getSrc(); continue; }
+    if (auto es = dyn_cast<memref::ExpandShapeOp>(d)) { mem = es.getSrc(); continue; }
+    if (auto rc = dyn_cast<memref::ReinterpretCastOp>(d)) { mem = rc.getSource(); continue; }
+    if (auto ca = dyn_cast<memref::CastOp>(d)) { mem = ca.getSource(); continue; }
+    return true;
+  }
+  return true;
+}
+
+// Rebuild the full value of `ty` (R x 8*nTiles) in EVERY lane from its C-fragments.
+// Element (r, 8t + c) lives in lane 4r + c/2 as component c%2 of tile t, so each
+// element is one broadcast shuffle. Needed before a fragment is stored into
+// per-thread memory: there each lane has its own copy of the buffer, and a lane
+// that stored only its two entries would leave the rest of its copy stale.
+static Value materialize(OpBuilder &b, Location loc, Lane &L,
+                         ArrayRef<Value> tiles, VectorType ty) {
+  const int64_t R = ty.getDimSize(0), C = ty.getDimSize(1);
+  Value width = L.ci(b, loc, 32);
+  SmallVector<Value> lo, hi;
+  for (Value t : tiles) {
+    lo.push_back(b.create<vector::ExtractOp>(loc, t, ArrayRef<int64_t>{0, 0}));
+    hi.push_back(b.create<vector::ExtractOp>(loc, t, ArrayRef<int64_t>{0, 1}));
+  }
+  Value acc = b.create<arith::ConstantOp>(
+      loc, ty, DenseElementsAttr::get(ty, b.getF64FloatAttr(0.0)));
+  for (int64_t r = 0; r < R; ++r)
+    for (int64_t col = 0; col < C; ++col) {
+      const int t = (int)(col / 8), c = (int)(col % 8);
+      Value src = L.ci(b, loc, (int)(4 * r + c / 2));
+      Value v = (c % 2) ? hi[t] : lo[t];
+      Value e = b.create<gpu::ShuffleOp>(loc, v, src, width, gpu::ShuffleMode::IDX)
+                    .getShuffleResult();
+      acc = b.create<vector::InsertOp>(loc, e, acc, ArrayRef<int64_t>{r, col});
+    }
+  return acc;
+}
+
+// A transfer the fragment path can address directly: rank-2 memref, identity
+// permutation map, no mask. Anything else is declined (reads) or materialized
+// and handed to the original op (writes), which keeps its own map and indices.
+static bool isPlain2D(Operation *op) {
+  if (auto r = dyn_cast<vector::TransferReadOp>(op))
+    return r.getShapedType().getRank() == 2 && r.getPermutationMap().isIdentity() &&
+           !r.getMask();
+  if (auto w = dyn_cast<vector::TransferWriteOp>(op))
+    return w.getShapedType().getRank() == 2 && w.getPermutationMap().isIdentity() &&
+           !w.getMask();
+  return false;
 }
 
 // m8n8k4 iteration-space maps (m=d0, n=d1, k=d2).
@@ -295,10 +370,12 @@ struct ChainContractsPass
         return relayout(b, loc, L, it->second[0], slab, /*toB=*/false);
       }
       auto rd = v.getDefiningOp<vector::TransferReadOp>();
-      if (!rd)
-        return Value();  // neither a leaf read nor a value we lowered
+      if (!rd || !isPlain2D(rd))
+        return Value();  // neither a plain leaf read nor a value we lowered
       Value col = colOf(b, loc, L, slab);
-      return readFrag1(b, loc, L, rd.getSource(), L.i, col, rowIB);  // A[i,4s+k]
+      Value r0 = b.create<arith::AddIOp>(loc, rd.getIndices()[0], L.i);
+      Value c0 = b.create<arith::AddIOp>(loc, rd.getIndices()[1], col);
+      return readFrag1(b, loc, L, rd.getSource(), r0, c0, rowIB);  // A[i,4s+k]
     };
     // B supplies columns 8t..8t+7 for tile t.
     auto operandFragB = [&](Value v, int slab, bool transp, int tile) -> Value {
@@ -306,16 +383,25 @@ struct ChainContractsPass
       if (auto it = frag.find(v); it != frag.end()) {
         if (it->second.size() != 1)
           return Value();
-        return relayout(b, loc, L, it->second[0], slab, /*toB=*/true);
+        // A TRANSPOSED B operand X (indexed [n,k]) supplies B[k][n] = X[n][k] to
+        // lane L as X[L/4][4s + L%4] -- which is X's A-fragment, not its
+        // B-fragment. Only the standard (k,n) form takes the C->B relayout.
+        return relayout(b, loc, L, it->second[0], slab, /*toB=*/!transp);
       }
       auto rd = v.getDefiningOp<vector::TransferReadOp>();
-      if (!rd)
+      if (!rd || !isPlain2D(rd))
         return Value();
       Value col = colOf(b, loc, L, slab);
+      Value nIdx = addCol(loc, L.i, tile);
+      Value b0 = rd.getIndices()[0], b1 = rd.getIndices()[1];
       if (transp)   // B stored [n,k]: read [8t+i, 4s+k]
-        return readFrag1(b, loc, L, rd.getSource(), addCol(loc, L.i, tile), col);
+        return readFrag1(b, loc, L, rd.getSource(),
+                         b.create<arith::AddIOp>(loc, b0, nIdx),
+                         b.create<arith::AddIOp>(loc, b1, col));
       // B stored [k,n]: read [4s+k, 8t+i]
-      return readFrag1(b, loc, L, rd.getSource(), col, addCol(loc, L.i, tile));
+      return readFrag1(b, loc, L, rd.getSource(),
+                       b.create<arith::AddIOp>(loc, b0, col),
+                       b.create<arith::AddIOp>(loc, b1, nIdx));
     };
 
     // Shape of a value in tiles, or 0 if it is not an f64 8xN vector.
@@ -351,7 +437,8 @@ struct ChainContractsPass
     // vector, so lowering a value whose consumer we cannot handle would strand
     // it. Neither condition is local, hence the fixpoint.
     auto isLeafRead = [](Value v) {
-      return (bool)v.getDefiningOp<vector::TransferReadOp>();
+      auto rd = v.getDefiningOp<vector::TransferReadOp>();
+      return rd && isPlain2D(rd);
     };
     auto isSplatCst = [](Value v) {
       if (auto cst = v.getDefiningOp<arith::ConstantOp>())
@@ -572,12 +659,22 @@ struct ChainContractsPass
         continue;
       }
 
-      // A write of a lowered value stores tile t's C-fragment at [i, 8t + 2k].
+      // A write of a lowered value. Into memory the warp SHARES (a kernel
+      // argument), each lane stores its own two entries: tile t's C-fragment at
+      // [i, 8t + 2k]. Into PER-THREAD memory that would leave every lane's copy
+      // missing the other lanes' entries, so the full value is gathered first and
+      // handed to the original write, which keeps its own map and indices.
       if (auto w = dyn_cast<vector::TransferWriteOp>(op)) {
         auto it = frag.find(w.getVector());
         if (it == frag.end())
           continue;
         b.setInsertionPoint(w);
+        if (isThreadPrivate(w.getSource()) || !isPlain2D(w)) {
+          Value full = materialize(b, w.getLoc(), L, it->second,
+                                   cast<VectorType>(w.getVector().getType()));
+          w->setOperand(0, full);
+          continue;   // the write stays; it now stores the gathered value
+        }
         int64_t wRows = 8;
         if (auto it = fragRows.find(w.getVector()); it != fragRows.end())
           wRows = it->second;
