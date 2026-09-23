@@ -396,6 +396,24 @@ if(MARS_ENABLE_TESTS)
     add_test(NAME marsSegregatedAssemblyAlgebra COMMAND mars_segregated_assembly_algebra_check)
 endif()
 
+add_executable(mars_segregated_simple_algebra_check
+    ${CMAKE_SOURCE_DIR}/tests/reference/openaccel/simple/algebra_check.cpp)
+target_include_directories(mars_segregated_simple_algebra_check PRIVATE
+    ${CMAKE_SOURCE_DIR}/backend/distributed/unstructured/fem/segregated)
+target_compile_features(mars_segregated_simple_algebra_check PRIVATE cxx_std_20)
+if(MARS_ENABLE_TESTS)
+    add_test(NAME marsSegregatedSimpleAlgebra COMMAND mars_segregated_simple_algebra_check)
+endif()
+if(MARS_ENABLE_HYPRE)
+    add_executable(mars_segregated_simple_check mars_segregated_simple_check.cu)
+    target_link_libraries(mars_segregated_simple_check PRIVATE mars)
+    target_compile_definitions(mars_segregated_simple_check PRIVATE MARS_REPLAY_CUDA)
+    target_include_directories(mars_segregated_simple_check PRIVATE
+        ${CMAKE_SOURCE_DIR}/backend/distributed/unstructured/fem/segregated
+        ${CMAKE_SOURCE_DIR}/tests/reference/openaccel/simple)
+    set_target_properties(mars_segregated_simple_check PROPERTIES CUDA_STANDARD 20 CUDA_STANDARD_REQUIRED ON)
+endif()
+
 add_executable(mars_outlet_boundary_gate mars_outlet_boundary_gate.cu)
 target_link_libraries(mars_outlet_boundary_gate PRIVATE mars)
 install(TARGETS mars_outlet_boundary_gate RUNTIME DESTINATION bin/examples)
