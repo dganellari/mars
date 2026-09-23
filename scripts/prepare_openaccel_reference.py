@@ -104,7 +104,7 @@ unset(_mars_stk_header_dir CACHE)
     return replace_once(original, anchor, anchor + addition)
 
 
-def prepare(source, output, include_nodes=False, include_boundary=False):
+def prepare(source, output, include_nodes=False, include_boundary=False, include_updates=False):
     contract = json.loads(MANIFEST.read_text())
     ref = contract["reference"]
     if git(source, "rev-parse", "HEAD") != ref["revision"]:
@@ -140,6 +140,12 @@ def prepare(source, output, include_nodes=False, include_boundary=False):
     if include_boundary:
         from openaccel_boundary_instrumentation import add_boundary_edits
         add_boundary_edits(source, edits, ROOT / "tests/reference/openaccel")
+    if include_updates:
+        from openaccel_update_instrumentation import add_update_edits
+        add_update_edits(source, edits, ROOT / "tests/reference/openaccel")
+    for name, (before, after) in edits.items():
+        if before:
+            hashes[name] = hashlib.sha256(before.encode()).hexdigest()
     patch = "".join("".join(difflib.unified_diff(
         before.splitlines(keepends=True), after.splitlines(keepends=True),
         fromfile="a/"+name if before else "/dev/null", tofile="b/"+name))
@@ -157,16 +163,19 @@ def prepare(source, output, include_nodes=False, include_boundary=False):
                      else "local-interior-and-steady-nodes" if include_nodes else "local-interior-only"),
         "frozen_inputs_schema": 2, "executed_reference": False,
         "node_capture": include_nodes, "boundary_capture": include_boundary,
+        "update_capture": include_updates,
         "manifest_sha256": hashlib.sha256(MANIFEST.read_bytes()).hexdigest(),
         "pending": ["STK compilation and execution", "captured block numerical parity",
                     "boundary state updates", "global assembly", "full iteration and MPI execution"],
     }
+    if include_updates:
+        provenance["coverage"] += "-ordered-updates"
     (output / "provenance.json").write_text(json.dumps(provenance, indent=2)+"\n")
     shutil.copyfile(ROOT / "tests/reference/openaccel/build_reference.py", output / "build_reference.py")
     return output / "instrumentation.patch"
 
 
-def package_case(case, output, include_nodes=False, include_boundary=False):
+def package_case(case, output, include_nodes=False, include_boundary=False, include_updates=False):
     manifest = json.loads((case / "manifest.json").read_text())
     if manifest["fixture"] != "public_channel" or manifest["iterations"] != 2:
         raise ValueError("capture requires the public two-iteration channel bundle")
@@ -178,7 +187,8 @@ def package_case(case, output, include_nodes=False, include_boundary=False):
         shutil.copyfile(ROOT / "scripts" / name, output / name)
     shutil.copyfile(MANIFEST, output / "contract_v1.json")
     manifest["purpose"] = ("actual frozen interior" + (", steady node" if include_nodes else "")
-                           + (", boundary" if include_boundary else "") + " capture; full contract and parity pending")
+                           + (", boundary" if include_boundary else "")
+                           + (", ordered updates" if include_updates else "") + " capture; full contract and parity pending")
     manifest["require_frozen_inputs"] = True
     manifest.pop("author", None)
     if include_nodes:
@@ -193,6 +203,10 @@ def package_case(case, output, include_nodes=False, include_boundary=False):
         manifest["require_boundary_capture"] = True
         shutil.copyfile(ROOT / "scripts/openaccel_boundary_check.py", output / "openaccel_boundary_check.py")
         manifest["sha256"]["openaccel_boundary_check.py"] = hashlib.sha256((output / "openaccel_boundary_check.py").read_bytes()).hexdigest()
+    if include_updates:
+        manifest["require_update_capture"] = True
+        shutil.copyfile(ROOT / "scripts/openaccel_update_check.py", output / "openaccel_update_check.py")
+        manifest["sha256"]["openaccel_update_check.py"] = hashlib.sha256((output / "openaccel_update_check.py").read_bytes()).hexdigest()
     (output / "manifest.json").write_text(json.dumps(manifest, indent=2)+"\n")
 
 
@@ -203,11 +217,12 @@ def main():
     parser.add_argument("--public-case", type=Path, help="verified v4 public smoke bundle to copy")
     parser.add_argument("--include-nodes", action="store_true", help="also capture steady nodes, relaxation and influence coefficients")
     parser.add_argument("--include-boundary", action="store_true", help="also capture frozen inlet/outlet/wall assembly blocks")
+    parser.add_argument("--include-updates", action="store_true", help="capture ordered pressure, velocity, flux and outlet-state updates")
     args = parser.parse_args()
     try:
-        print(prepare(args.source.resolve(), args.output.resolve(), args.include_nodes, args.include_boundary))
+        print(prepare(args.source.resolve(), args.output.resolve(), args.include_nodes, args.include_boundary, args.include_updates))
         if args.public_case:
-            package_case(args.public_case.resolve(), args.output.resolve(), args.include_nodes, args.include_boundary)
+            package_case(args.public_case.resolve(), args.output.resolve(), args.include_nodes, args.include_boundary, args.include_updates)
     except (ValueError, OSError, subprocess.CalledProcessError) as error:
         parser.exit(1, f"ERROR: {error}\n")
 

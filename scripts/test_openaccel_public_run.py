@@ -103,6 +103,37 @@ class PublicRunTests(unittest.TestCase):
         self.assertFalse(result["convergence_verified"])
         self.assertFalse(result["numerical_parity_verified"])
 
+    def update_bundle(self):
+        capture = self.boundary_bundle()
+        path = self.bundle / 'manifest.json'
+        manifest = json.loads(path.read_text())
+        manifest.pop('require_boundary_capture')
+        manifest['require_update_capture'] = True
+        name = 'openaccel_update_check.py'
+        (self.bundle / name).write_text('# fake hashed checker fixture\n')
+        manifest['sha256'][name] = sha256(self.bundle / name)
+        path.write_text(json.dumps(manifest))
+        return capture
+
+    def test_update_capture_requires_exports(self):
+        capture = self.update_bundle()
+        with patch('openaccel_reference_check.load_dump',return_value=capture), contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(self.execute("printf 'Iter = 1\\nIter = 2\\n'\n",True),1)
+        result = json.loads((self.output/'run.json').read_text())
+        self.assertEqual(result['status'],'interior_capture_failed')
+
+    def test_update_capture_does_not_claim_numerical_parity(self):
+        capture = self.update_bundle()
+        updates = {(s,i,n,0): {} for s,count in enumerate((425,425,425,9216,96,96,32,96,96,1))
+                   for i in (1,2) for n in range(count)}
+        with patch('openaccel_reference_check.load_dump',return_value=capture), \
+                patch('openaccel_update_check.load_updates',return_value=(updates,{'updates':'hash'})):
+            self.assertEqual(self.execute("printf 'Iter = 1\\nIter = 2\\n'\n",True),0)
+        result = json.loads((self.output/'run.json').read_text())
+        self.assertEqual(result['status'],'update_capture_completed')
+        self.assertFalse(result['numerical_parity_verified'])
+        self.assertFalse(result['full_contract_passed'])
+
     def test_solver_failure_preserves_exit_and_log(self):
         self.assertEqual(self.execute("echo 'missing library' >&2\nexit 7\n"), 7)
         self.assertIn("missing library", (self.output / "run.log").read_text())

@@ -31,6 +31,8 @@ def run(bundle, executable, output, capture_interior=False):
             names += ["openaccel_boundary_check.py"]
         if manifest.get("require_node_capture"):
             names += ["openaccel_node_check.py"]
+        if manifest.get("require_update_capture"):
+            names += ["openaccel_update_check.py"]
     for name in names:
         if sha256(bundle / name) != manifest["sha256"][name]:
             raise ValueError("bundle checksum mismatch: " + name)
@@ -116,6 +118,16 @@ def run(bundle, executable, output, capture_interior=False):
                     record.update(status="boundary_capture_completed", coverage="frozen-interior"
                                   + ("-node" if manifest.get("require_node_capture") else "") + "-boundary-blocks",
                                   boundary_blocks=len(blocks), boundary_sha256=boundary_hashes)
+                if manifest.get("require_update_capture"):
+                    from openaccel_update_check import load_updates
+                    updates, update_hashes = load_updates(output / "exports" / "updates")
+                    counts = (425,425,425,9216,96,96,32,96,96,1)
+                    if {i for s,i,n,p in updates} != {1,2} or any(
+                            sum(s == stage and i == iteration for s,i,n,p in updates) != count
+                            for stage,count in enumerate(counts) for iteration in (1,2)):
+                        raise ValueError("expected complete two-iteration public update coverage")
+                    record.update(status="update_capture_completed", coverage=record["coverage"]+"-ordered-updates",
+                                  update_records=len(updates), update_sha256=update_hashes)
             except (ValueError, KeyError, TypeError, OSError, OverflowError) as error:
                 completed = False
                 record.update(status="interior_capture_failed", capture_error=str(error))
