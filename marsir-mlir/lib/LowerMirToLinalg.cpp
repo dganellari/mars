@@ -163,9 +163,9 @@ struct SimplexContractLowering
     // the result, and one reduction. Only the bounds and the index order of the
     // input/table reads differ. o0 is always the p axis.
     //   A = axis 2 forward, B = axis 2 transposed,
-    //   C = axis 1 forward, D_ = axis 1 transposed
+    //   C = axis 1 forward, and axis 1 transposed is the remaining case
     const bool A = (axis == 2 && !tr), B_ = (axis == 2 && tr),
-               C_ = (axis == 1 && !tr), D_ = (axis == 1 && tr);
+               C_ = (axis == 1 && !tr);
     if (tabType.getRank() != (axis == 2 ? 4 : 3))
       return op.emitOpError("table rank must be 4 for axis=2, 3 for axis=1");
 

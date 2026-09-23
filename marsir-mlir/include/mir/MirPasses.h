@@ -24,6 +24,7 @@ void registerGpuWrapPass();
 
 // --mir-forward-transfers
 void registerForwardTransfersPass();
+void registerEmulateWarpPass();
 }  // namespace mir
 
 #endif  // MIR_MIRPASSES_H

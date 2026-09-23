@@ -106,6 +106,9 @@ sys.stdout.write(mlir_ir.emit_full(ea, p={p}))
     ir = (ir[:m.start(2)] + ", ".join(args) + ") attributes {mir.kernel} {"
           + ir[m.end(3):])
 
+    if "--emulate" in sys.argv:
+        return emulate(run([MIROPT, "-", "--mir-batch-elements"], ir), p)
+
     ir = run([MIROPT, "-", "--mir-batch-elements", "--mir-gpu-wrap"], ir)
     ir = ir.replace("gpu.module @mir_kernels {",
                     'gpu.module @mir_kernels [#nvvm.target<chip = "sm_90", O = 3>] {')
@@ -143,6 +146,41 @@ sys.stdout.write(mlir_ir.emit_full(ea, p={p}))
     ok = all(g for _, g in checks)
     print("HIGH-LEVEL mir -> TENSOR-CORE PTX: PASS" if ok else "FAILED")
     return 0 if ok else 1
+
+
+def emulate(ir, p):
+    """--emulate: the batched kernel body -- everything the GPU build runs up to
+    --mir-gpu-wrap -- with its warp primitives turned into host runtime calls,
+    compiled for the CPU and run with 32 threads per element by
+    tools/emu_hl_mma.cpp against the Knaus oracle."""
+    E = next((int(a.split("=", 1)[1]) for a in sys.argv if a.startswith("--emu-e=")), 3)
+    ir = run([MIROPT, "-", "--mir-emulate-warp"], ir)
+    ir = run([MLIROPT, "-",
+              "--convert-linalg-to-loops",
+              "--convert-vector-to-scf", "--canonicalize",
+              "--convert-scf-to-cf",
+              "--expand-strided-metadata",
+              "--lower-affine",
+              "--convert-vector-to-llvm",
+              "--convert-arith-to-llvm", "--convert-index-to-llvm",
+              "--convert-cf-to-llvm",
+              "--finalize-memref-to-llvm",
+              "--convert-func-to-llvm",
+              "--reconcile-unrealized-casts"], ir)
+    ll = run([os.path.join(LLVM, "bin", "mlir-translate"), "--mlir-to-llvmir"], ir)
+    work = os.path.join(ROOT, "build", "emu")
+    os.makedirs(work, exist_ok=True)
+    with open(os.path.join(work, "kernel.ll"), "w") as f:
+        f.write(ll)
+    run([os.path.join(LLVM, "bin", "clang"), "-O2", "-c",
+         os.path.join(work, "kernel.ll"), "-o", os.path.join(work, "kernel.o")], "")
+    exe = os.path.join(work, "emu_hl_mma")
+    run(["/usr/bin/clang++", "-std=c++20", "-O2",
+         os.path.join(ROOT, "tools", "emu_hl_mma.cpp"),
+         os.path.join(work, "kernel.o"), "-o", exe], "")
+    r = subprocess.run([exe, str(E), str(p)], capture_output=True, text=True)
+    print(r.stdout.strip() or r.stderr.strip())
+    return r.returncode
 
 
 if __name__ == "__main__":
