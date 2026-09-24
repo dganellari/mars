@@ -1,5 +1,9 @@
 # Two native SIMPLE iterations on the public channel
 
+The standalone single-GPU run now has Daint convergence evidence at iteration
+1277. Continue with the [converged OpenAccel field comparison](convergence.md),
+which reuses the existing reference executable and the completed MARS run.
+
 This gate starts from zero velocity, pressure, stored flux, mass divergence and
 wall coefficients. MARS computes two complete steady SIMPLE iterations using
 native geometry, reconstruction, assembly, linear solves and state updates.
