@@ -5,7 +5,7 @@ All notable changes to MARS are documented here. The format follows
 [Semantic Versioning](https://semver.org/). While the major version is `0`, the
 public API may change between minor releases.
 
-## [0.1.0] — 2026-07-01
+## [0.1.0] — 2026-09-24
 
 First tagged public release. MARS is a GPU-native mesh management and finite-element
 assembly library for N-dimensional elements (N ≤ 4), built in C++20 on CUDA / HIP and
@@ -21,11 +21,23 @@ the cornerstone-octree library.
   communication (CUDA-aware MPI) on top of the cornerstone element halo.
 - Lazy composition of adjacency, halo, and coordinate caches (built on first access)
   to minimize VRAM and startup time.
-- CMake install / `find_package(Mars)` packaging with the `Mars::mars` target.
+- CMake install / `find_package(Mars)` packaging with the `Mars::mars` target
+  (config installed to `<prefix>/lib/cmake/Mars`, found through `CMAKE_PREFIX_PATH`).
+- A plain `cmake ..` on a CPU-only machine builds the core library; the unstructured
+  backend is on by default in CUDA / HIP builds.
 
 ### Experimental
-- High-order matrix-free CVFEM operators (p ≥ 2).
+- High-order matrix-free CVFEM operators (p ≥ 2), with DOF numbering on the device.
+- Tetrahedral high-order operators: collapsed sum-factorization Galerkin and
+  box-partition CVFEM.
 - GPU-native adaptive mesh refinement (mark → refine → rebuild → transfer).
+- Parallel AABB coarse search and a named per-interface ghost registry, each with a
+  device path and a host reference.
+- Segregated SIMPLE flow solver on the GPU, with a standalone public-channel driver.
+- Multi-block Exodus side sets and a multi-state field history.
+- MARSIR: an operator-spec → MLIR → tensor-core CUDA kernel generator
+  (`marsir-compiler/`, `marsir-mlir/`). Research tooling, not part of the library
+  build.
 
 See [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md) for the full stable / experimental /
 unsupported breakdown.

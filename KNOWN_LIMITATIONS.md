@@ -16,6 +16,15 @@ whether MARS fits your use case. The major version is `0`: APIs may change.
   operator action; not yet a turnkey solver path. Interfaces may change.
 - **Adaptive mesh refinement (AMR).** Single-rank mark/refine/rebuild/transfer works;
   multi-rank AMR is under development.
+- **Tetrahedral high-order operators** (`mars_ho_laplacian_tet.hpp`, collapsed
+  sum-factorization). Interfaces may change.
+- **Coarse search and ghost registry** (`mars_coarse_search.hpp`,
+  `mars_ghost_registry.hpp`). The device paths are gated against the host references.
+- **Segregated SIMPLE solver** (`fem/segregated/`). Converges on the single-GPU public
+  channel case; multi-rank runs, general meshes and field-level parity with a reference
+  code are not validated yet.
+- **MARSIR** (`marsir-compiler/`, `marsir-mlir/`). Research code generator, off by
+  default (`MARS_ENABLE_MARSIR`), not needed to build or use the library.
 
 ## Not supported yet
 - **Multi-rank periodic boundary conditions** (e.g. multi-rank periodic TGV). Periodic
@@ -47,8 +56,11 @@ Unless you are benchmarking a specific GPU path, use the tensor or graph kernel.
 - MPI is required by default (`-DMARS_ENABLE_MPI=ON`).
 - Dependencies (cornerstone-octree, googletest, google/benchmark) are fetched by CMake
   at configure time, so a network connection is needed for a fresh configure.
-- The test suite and FEM examples are GPU-oriented and most require a mesh input and/or
-  MPI; there is not yet a CPU-only smoke test.
+- Without CUDA or HIP, `MARS_ENABLE_UNSTRUCTURED` defaults to OFF and a plain `cmake ..`
+  builds only the core library. Its CPU tests are the MPI communication tests plus the
+  install smoke test in `examples/usage_from_external_cmake_project/`.
+- The rest of the test suite and the FEM examples are GPU-oriented, and most need a mesh
+  input and/or MPI.
 
 ## HO DOF numbering: single-rank GPU path exists, but is not the default
 
