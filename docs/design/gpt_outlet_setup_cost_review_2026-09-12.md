@@ -48,7 +48,7 @@ diagnostics. Both runs enable solve tracing. Final printed velocity summaries
 agree; this is not proof of unchanged field accuracy.
 
 Local evidence directory: `/private/tmp/mars-outlet-audit-20260911/`.
-Remote directory: `/capstor/scratch/cscs/gandanie/git/mars/daint-gpu/`.
+Remote directory: `$SCRATCH/git/mars/daint-gpu/`.
 
 ```
 channel-C-fixedtrace.log

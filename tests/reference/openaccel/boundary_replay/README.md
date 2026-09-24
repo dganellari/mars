@@ -80,15 +80,15 @@ the same 425-node/1536-tet channel as the previous interior/node captures.
 
 ```bash
 set -o pipefail
-boundary_work=$(mktemp -d /capstor/scratch/cscs/gandanie/git/OpenAccel-reference-boundary-XXXXXX)
+boundary_work=$(mktemp -d $SCRATCH/git/OpenAccel-reference-boundary-XXXXXX)
 printf 'Boundary run directory: %s\n' "$boundary_work"
 python3 ../scripts/prepare_openaccel_reference.py \
-  --source /capstor/scratch/cscs/gandanie/git/OpenAccel \
-  --public-case /capstor/scratch/cscs/gandanie/git/OpenAccel/mars-reference-inputs-20260920-v2 \
+  --source $SCRATCH/git/OpenAccel \
+  --public-case $SCRATCH/git/OpenAccel/mars-reference-inputs-20260920-v2 \
   --output "$boundary_work/bundle" --include-boundary
 python3 "$boundary_work/bundle/build_reference.py" \
-  --source /capstor/scratch/cscs/gandanie/git/OpenAccel \
-  --baseline-build /capstor/scratch/cscs/gandanie/git/OpenAccel/prgenv \
+  --source $SCRATCH/git/OpenAccel \
+  --baseline-build $SCRATCH/git/OpenAccel/prgenv \
   --destination "$boundary_work/source" --jobs 4 2>&1 | tee "$boundary_work/build.log"
 srun --account=csstaff --time=00:05:00 --nodes=1 --ntasks-per-node=1 \
   --cpus-per-task=1 --cpu-bind=cores --export=ALL --kill-on-bad-exit=1 \

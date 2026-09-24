@@ -36,7 +36,7 @@ provided in an attachment. The full A log was subsequently retrieved with author
 `rsync` from `daint-alps3`, then inspected locally:
 
 ```
-remote: /capstor/scratch/cscs/gandanie/git/mars/daint-gpu/channel-A-outletbeta.log
+remote: $SCRATCH/git/mars/daint-gpu/channel-A-outletbeta.log
 local:  /private/tmp/mars-outlet-audit-20260911/channel-A-outletbeta.log
 SHA256: 7a173734db48886f6562599f5d741914b7b2da1dc56164ddaf1bb3275bf2d5c1
 ```
@@ -81,7 +81,7 @@ The user ran C with `--outlet-beta=1`. GPT retrieved its complete log with
 authorized `rsync` and inspected it locally:
 
 ```
-remote: /capstor/scratch/cscs/gandanie/git/mars/daint-gpu/channel-C-fixedtrace.log
+remote: $SCRATCH/git/mars/daint-gpu/channel-C-fixedtrace.log
 local:  /private/tmp/mars-outlet-audit-20260911/channel-C-fixedtrace.log
 SHA256: 174ea09c5dc82a5e23ac5c2e9cdc6c010e245e8db59efad507ed5f327f43c5d8
 ```

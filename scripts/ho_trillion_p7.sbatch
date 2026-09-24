@@ -4,7 +4,6 @@
 #SBATCH --nodes=448
 #SBATCH --ntasks-per-node=4
 #SBATCH --time=02:00:00
-#SBATCH --chdir=/capstor/scratch/cscs/gandanie/git/mars/daint-gpu
 #SBATCH --output=ho1e12p7_%j.out
 #SBATCH --uenv-passthrough=use
 #
@@ -13,6 +12,8 @@
 # sync) is element-bound and ate the ~1h wall on the p=4 run; at p=7 it drops to ~12 min and
 # fits comfortably. d_G is leaner too (~100 B/DOF at p=7 vs ~139 at p=4): 559M DOF/GPU -> ~65 GB
 # on 96 GB. Same binary, STORE-d_G default. Gate: device A.1 ~ 1e-18 at a trillion DOF.
+cd "$SCRATCH/git/mars/daint-gpu"
+
 export MARS_GLOBAL_BUCKETSIZE=256   # cstone global-tree Allreduce < 2 GiB (the trillion fix)
 export MARS_HO_SKIP_HOST_GATE=1     # device A.1 is the gate
 export MARS_HO_RESOLVE_TIMING=1     # per-stage resolve breakdown

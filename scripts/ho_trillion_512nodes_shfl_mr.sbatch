@@ -4,13 +4,14 @@
 #SBATCH --nodes=512
 #SBATCH --ntasks-per-node=4
 #SBATCH --time=00:30:00
-#SBATCH --chdir=/capstor/scratch/cscs/gandanie/git/mars/daint-gpu
-#SBATCH --output=/capstor/scratch/cscs/gandanie/git/mars/ho1e12shflmr_%j.out
+#SBATCH --output=ho1e12shflmr_%j.out
 #SBATCH --uenv-passthrough=use
 #
 # Step 2 of the isolation ladder: shuffle no-overlap (proven green in step 1) PLUS
 # FI_MR_CACHE_MONITOR=userfaultfd. Run ONLY after ho_trillion_512nodes_shfl.sbatch
 # completes. If this one MPI-errors while step 1 was green, the MR monitor is the culprit.
+cd "$SCRATCH/git/mars/daint-gpu"
+
 unset MARS_HO_RECOMPUTE MARS_HO_OVERLAP
 
 echo "=== 2048 ranks / 512 nodes, ~1.0 TRILLION DOF (cube2500), store-d_G PA SHUFFLE, NO overlap + MR=userfaultfd ==="

@@ -4,7 +4,6 @@
 #SBATCH --nodes=448
 #SBATCH --ntasks-per-node=4
 #SBATCH --time=03:00:00
-#SBATCH --chdir=/capstor/scratch/cscs/gandanie/git/mars/daint-gpu
 #SBATCH --output=ho1e12fit_%j.out
 #SBATCH --uenv-passthrough=use
 #
@@ -13,6 +12,8 @@
 # the 63 GB d_G, returned, and the rest hung forever on the alloc MPI_Barrier. Recompute drops
 # d_G -> ~15 GB/rank -> fits with huge margin, no OOM, no deadlock. (It also fits the trillion
 # back on 400 nodes / 1600 GPU now, since there is no d_G ceiling.) cube2500 ~= 1.005e12 DOF.
+cd "$SCRATCH/git/mars/daint-gpu"
+
 export MARS_NODEHALO_V2=1           # v2 per-node halo -- the standard HO run path (was MISSING)
 export MARS_HO_RECOMPUTE=1          # no d_G: recompute metric inline -> fits, no OOM/deadlock
 export MARS_GLOBAL_BUCKETSIZE=256   # cstone global-tree Allreduce < 2 GiB (the trillion fix)

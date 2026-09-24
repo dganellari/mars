@@ -88,9 +88,9 @@ set -euo pipefail
 git pull --ff-only
 simple_work=$(mktemp -d "$PWD/segregated-simple-XXXXXX")
 python3 ../scripts/prepare_openaccel_simple.py \
-  /capstor/scratch/cscs/gandanie/git/OpenAccel-reference-updates-IxgJIp/run/exports \
-  --boundary /capstor/scratch/cscs/gandanie/git/OpenAccel-reference-boundary-TljPP1/run/exports/boundary \
-  --updates /capstor/scratch/cscs/gandanie/git/OpenAccel-reference-updates-IxgJIp/run/exports/updates \
+  $SCRATCH/git/OpenAccel-reference-updates-IxgJIp/run/exports \
+  --boundary $SCRATCH/git/OpenAccel-reference-boundary-TljPP1/run/exports/boundary \
+  --updates $SCRATCH/git/OpenAccel-reference-updates-IxgJIp/run/exports/updates \
   --output "$simple_work/inputs.txt"
 cmake -S .. -B .
 cmake --build . --target mars_segregated_simple_check mars_segregated_simple_algebra_check -j4
@@ -182,8 +182,8 @@ cmake -S .. -B .
 cmake --build . --parallel 4
 simple_run=$(mktemp -d "$PWD/simple-channel-XXXXXX")
 python3 ../scripts/prepare_openaccel_simple.py \
-  /capstor/scratch/cscs/gandanie/git/OpenAccel-reference-updates-IxgJIp/run/exports \
-  --boundary /capstor/scratch/cscs/gandanie/git/OpenAccel-reference-boundary-TljPP1/run/exports/boundary \
+  $SCRATCH/git/OpenAccel-reference-updates-IxgJIp/run/exports \
+  --boundary $SCRATCH/git/OpenAccel-reference-boundary-TljPP1/run/exports/boundary \
   --mesh-only --output "$simple_run/channel.txt"
 ./examples/distributed/unstructured/mars_segregated_simple_algebra_check
 srun --account=csstaff --time=00:05:00 --nodes=1 --ntasks-per-node=1 \

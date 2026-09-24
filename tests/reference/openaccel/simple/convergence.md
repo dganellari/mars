@@ -35,24 +35,24 @@ no CMake/build command is needed:
 
 ```bash
 git pull --ff-only
-reference_run=/capstor/scratch/cscs/gandanie/git/OpenAccel-simple-converged-$(date +%Y%m%d-%H%M%S)
+reference_run=$SCRATCH/git/OpenAccel-simple-converged-$(date +%Y%m%d-%H%M%S)
 printf 'Reference results: %s\n' "$reference_run"
 srun --account=csstaff --time=00:30:00 --nodes=1 --ntasks-per-node=1 \
   --cpus-per-task=1 --cpu-bind=cores --export=ALL --kill-on-bad-exit=1 \
   env OMP_NUM_THREADS=1 OMP_PROC_BIND=close OMP_PLACES=cores \
   python3 ../scripts/openaccel_simple_convergence.py run \
-  --capture /capstor/scratch/cscs/gandanie/git/OpenAccel-reference-updates-IxgJIp/run \
-  --executable /capstor/scratch/cscs/gandanie/git/OpenAccel-reference-updates-IxgJIp/source/build/openaccel-3D.exe \
+  --capture $SCRATCH/git/OpenAccel-reference-updates-IxgJIp/run \
+  --executable $SCRATCH/git/OpenAccel-reference-updates-IxgJIp/source/build/openaccel-3D.exe \
   --output "$reference_run"
 ```
 
 Then compare on the login node; no GPU allocation or MARS environment switch:
 
 ```bash
-comparison_python=/capstor/scratch/cscs/gandanie/git/OpenAccel/spack/var/spack/environments/accel-clean-20260914/.spack-env/view/bin/python3
+comparison_python=$SCRATCH/git/OpenAccel/spack/var/spack/environments/accel-clean-20260914/.spack-env/view/bin/python3
 "$comparison_python" ../scripts/openaccel_simple_convergence.py compare \
   --reference "$reference_run" \
-  --mars /capstor/scratch/cscs/gandanie/git/mars/mlir/simple-channel-4VjvlT \
+  --mars $SCRATCH/git/mars/mlir/simple-channel-4VjvlT \
   --output "$reference_run/field-comparison.json"
 ```
 

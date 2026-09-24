@@ -109,7 +109,7 @@ and solve tracing is off, so do not interpret its wall time as a controlled
 speedup against the earlier trace-enabled baseline.
 
 ```
-remote: /capstor/scratch/cscs/gandanie/git/mars/daint-gpu/channel-C-profile.log
+remote: $SCRATCH/git/mars/daint-gpu/channel-C-profile.log
 local:  /private/tmp/mars-outlet-audit-20260911/channel-C-profile.log
 SHA256: 9765b1fe190223e63cfe5908fe4e497db98762967a5522d15f1b0c7ec733c2d5
 ```

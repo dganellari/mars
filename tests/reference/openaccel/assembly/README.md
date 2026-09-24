@@ -111,9 +111,9 @@ set -euo pipefail
 git pull --ff-only
 assembly_work=$(mktemp -d "$PWD/segregated-assembly-XXXXXX")
 python3 ../scripts/prepare_openaccel_assembly.py \
-  /capstor/scratch/cscs/gandanie/git/OpenAccel-reference-updates-IxgJIp/run/exports \
-  --boundary /capstor/scratch/cscs/gandanie/git/OpenAccel-reference-boundary-TljPP1/run/exports/boundary \
-  --nodes /capstor/scratch/cscs/gandanie/git/OpenAccel-reference-nodes-20260922-171816-KT5eld/run/exports/nodes \
+  $SCRATCH/git/OpenAccel-reference-updates-IxgJIp/run/exports \
+  --boundary $SCRATCH/git/OpenAccel-reference-boundary-TljPP1/run/exports/boundary \
+  --nodes $SCRATCH/git/OpenAccel-reference-nodes-20260922-171816-KT5eld/run/exports/nodes \
   --output "$assembly_work/inputs.txt"
 cmake -S .. -B .
 cmake --build . --target mars_segregated_assembly_check mars_segregated_assembly_algebra_check -j4

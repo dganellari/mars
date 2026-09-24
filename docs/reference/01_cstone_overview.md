@@ -1,6 +1,7 @@
 # Cornerstone-Octree Reference for MARS
 
-Header-only + CUDA library at `/Users/gandanie/scratch/santis/mars/cornerstone-octree/`.
+Header-only + CUDA library, fetched by CMake at configure time (or pass a local
+checkout with `-DCORNERSTONE_INSTALL_DIR=...`).
 This document is the API-surface map. For algorithmic depth (Hilbert, focus
 tree, sync data flow), see [04_cstone_focus_tree.md](04_cstone_focus_tree.md).
 

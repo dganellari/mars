@@ -144,17 +144,17 @@ cache; it does not install a new environment. Execute the guarded group so a
 failed build cannot fall through to the launch.
 
 ```bash
-update_work=$(mktemp -d /capstor/scratch/cscs/gandanie/git/OpenAccel-reference-updates-XXXXXX)
+update_work=$(mktemp -d $SCRATCH/git/OpenAccel-reference-updates-XXXXXX)
 printf 'Update capture directory: %s\n' "$update_work"
 (
 set -euo pipefail
 python3 ../scripts/prepare_openaccel_reference.py \
-  --source /capstor/scratch/cscs/gandanie/git/OpenAccel \
-  --public-case /capstor/scratch/cscs/gandanie/git/OpenAccel/mars-reference-inputs-20260920-v2 \
+  --source $SCRATCH/git/OpenAccel \
+  --public-case $SCRATCH/git/OpenAccel/mars-reference-inputs-20260920-v2 \
   --output "$update_work/bundle" --include-updates
 python3 "$update_work/bundle/build_reference.py" \
-  --source /capstor/scratch/cscs/gandanie/git/OpenAccel \
-  --baseline-build /capstor/scratch/cscs/gandanie/git/OpenAccel/prgenv \
+  --source $SCRATCH/git/OpenAccel \
+  --baseline-build $SCRATCH/git/OpenAccel/prgenv \
   --destination "$update_work/source" --jobs 4 2>&1 | tee "$update_work/build.log"
 srun --account=csstaff --time=00:05:00 --nodes=1 --ntasks-per-node=1 \
   --cpus-per-task=1 --cpu-bind=cores --export=ALL --kill-on-bad-exit=1 \

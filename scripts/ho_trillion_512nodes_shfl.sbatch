@@ -4,8 +4,7 @@
 #SBATCH --nodes=512
 #SBATCH --ntasks-per-node=4
 #SBATCH --time=00:30:00
-#SBATCH --chdir=/capstor/scratch/cscs/gandanie/git/mars/daint-gpu
-#SBATCH --output=/capstor/scratch/cscs/gandanie/git/mars/ho1e12shfl_%j.out
+#SBATCH --output=ho1e12shfl_%j.out
 #SBATCH --uenv-passthrough=use
 #
 # Trillion-DOF store-d_G PA SHUFFLE on 2048 GPU, NO overlap (comm exposed).
@@ -13,7 +12,9 @@
 # shuffle + FI_MR_CACHE_MONITOR=userfaultfd attempt died with an MPI error (log lost with the
 # build dir), so this rerun isolates ONE variable: shuffle alone on the proven no-overlap path,
 # NO MR monitor. If green, run ho_trillion_512nodes_shfl_mr.sbatch next to isolate the monitor.
-# Output path is absolute so the log survives independent of the build dir.
+# The log goes to the submit directory (submit from the repo root), so it survives the build dir.
+cd "$SCRATCH/git/mars/daint-gpu"
+
 unset MARS_HO_RECOMPUTE MARS_HO_OVERLAP FI_MR_CACHE_MONITOR
 
 echo "=== 2048 ranks / 512 nodes, ~1.0 TRILLION DOF (cube2500), store-d_G PA SHUFFLE, NO overlap, no MR monitor ==="

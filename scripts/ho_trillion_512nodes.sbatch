@@ -4,7 +4,6 @@
 #SBATCH --nodes=512
 #SBATCH --ntasks-per-node=4
 #SBATCH --time=00:20:00
-#SBATCH --chdir=/capstor/scratch/cscs/gandanie/git/mars/daint-gpu
 #SBATCH --output=ho1e12PA_%j.out
 #SBATCH --uenv-passthrough=use
 #
@@ -13,6 +12,8 @@
 # store-d_G 138.6 B/DOF -> 5.8e8 DOF/GPU, and 491M < 580M).
 # 448 (8.72M elem/rank) crashed in the cstone build (illegal address); 512 (7.63M/rank)
 # clears it -- the recompute run already built fine here.
+cd "$SCRATCH/git/mars/daint-gpu"
+
 unset MARS_HO_RECOMPUTE              # CRITICAL: force store-d_G PA, kill any leaked shell export
 export MARS_GLOBAL_BUCKETSIZE=256   # cstone global-tree Allreduce < 2 GiB (the trillion fix)
 export MARS_HO_SKIP_HOST_GATE=1     # device A.1 is the gate at scale

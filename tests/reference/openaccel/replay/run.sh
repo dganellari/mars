@@ -3,7 +3,7 @@
 set -euo pipefail
 recipe=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 repo=$(cd -- "$recipe/../../../.." && pwd -P)
-capture=${1:-/capstor/scratch/cscs/gandanie/git/OpenAccel/prgenv/openaccel-public-inputs-20260920-231801/exports}
+capture=${1:-$SCRATCH/git/OpenAccel/prgenv/openaccel-public-inputs-20260920-231801/exports}
 build_root=${2:-$PWD}
 build_root=$(cd -- "$build_root" && pwd -P)
 replay="$build_root/examples/distributed/unstructured/mars_segregated_replay"

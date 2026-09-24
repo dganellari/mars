@@ -4,7 +4,6 @@
 #SBATCH --nodes=400
 #SBATCH --ntasks-per-node=4
 #SBATCH --time=01:00:00
-#SBATCH --chdir=/capstor/scratch/cscs/gandanie/git/mars/daint-gpu
 #SBATCH --output=ho_nt_%j.out
 #SBATCH --uenv-passthrough=use
 #
@@ -13,6 +12,8 @@
 # (~945B total on 1600 GPUs), ~82 GB, fits with margin. Gives A.1 + TDOF/s at
 # near-trillion scale with NO rebuild (current validated binary). Pass ncells as arg 1.
 # (The full 1.0T matvec needs the --MF/no-d_G path once it validates.)
+cd "$SCRATCH/git/mars/daint-gpu"
+
 NCELLS=${1:-2450}
 export MARS_GLOBAL_BUCKETSIZE=256   # cstone global-tree Allreduce < 2 GiB (the trillion fix)
 export MARS_HO_SKIP_HOST_GATE=1     # device A.1 is the gate

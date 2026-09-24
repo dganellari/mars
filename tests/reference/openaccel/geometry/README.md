@@ -112,8 +112,8 @@ set -euo pipefail
 geometry_work=$(mktemp -d "$PWD/segregated-geometry-XXXXXX")
 printf 'Geometry gate: %s\n' "$geometry_work"
 python3 ../scripts/prepare_openaccel_geometry.py \
-  /capstor/scratch/cscs/gandanie/git/OpenAccel-reference-updates-IxgJIp/run/exports \
-  --boundary /capstor/scratch/cscs/gandanie/git/OpenAccel-reference-boundary-TljPP1/run/exports/boundary \
+  $SCRATCH/git/OpenAccel-reference-updates-IxgJIp/run/exports \
+  --boundary $SCRATCH/git/OpenAccel-reference-boundary-TljPP1/run/exports/boundary \
   --output "$geometry_work/inputs.txt"
 cmake -S .. -B .
 cmake --build . --target mars_segregated_geometry_check mars_segregated_geometry_algebra_check -j4

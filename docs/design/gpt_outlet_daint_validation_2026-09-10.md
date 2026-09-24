@@ -20,7 +20,7 @@ GPT did not launch these jobs.
 | `mars_outlet_kernel_gate` | 2 | PASS: 385 checks per rank |
 | `mars_outlet_kernel_gate` | 4 | PASS: 385 checks per rank |
 
-The runs used source `/capstor/scratch/cscs/gandanie/git/mars`, build `daint-gpu/`,
+The runs used source `$SCRATCH/git/mars`, build `daint-gpu/`,
 and `~/affinity/bind_numa.sh`. The scalar job was 4641220; the two-rank job was
 4641227. The supplied text does not show job IDs for the other two runs.
 All four runs printed PASS; the transcript does not include explicit exit codes.

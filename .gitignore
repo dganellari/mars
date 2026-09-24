@@ -56,9 +56,28 @@ todo.txt
 # NDA pump renders -- derived from confidential geometry, never commit
 pump_frames*/
 examples/distributed/unstructured/render_pump_4panel.py
+scripts/render_pump_flow.py
+# NDA pump case data -- never commit
+daniel_knf_pump/
+
+# Local meshes and run directories at the repo root
+/*.e
+/*.e.gz
+/*.exo
+/poiseuille/
+
+# Local agent coordination and session notes
+SYNC.md
+AGENTS.md
+.codex/
+*.md.bak
+DILU_OPT_HANDOFF.md
 
 # Document/presentation build artifacts
 *.aux
+*.fls
+*.fdb_latexmk
+*.synctex.gz
 *.log
 *.nav
 *.snm

@@ -4,7 +4,6 @@
 #SBATCH --nodes=512
 #SBATCH --ntasks-per-node=4
 #SBATCH --time=00:30:00
-#SBATCH --chdir=/capstor/scratch/cscs/gandanie/git/mars/pump
 #SBATCH --output=ho5e12p7_%j.out
 #SBATCH --uenv-passthrough=use
 #
@@ -18,6 +17,8 @@
 #     store-d_G would be ~169 GB = OOM at p=7 this dense, so RECOMPUTE is required at this scale.
 # Throughput here is recompute-limited (~1.5-2 GDOF/s/GPU); this is the SCALE headline (~5T on
 # <half of Alps), not a throughput number. Gate: device A.1 ~ 1e-17 at ~5 trillion DOF.
+cd "$SCRATCH/git/mars/pump"
+
 export MARS_HO_RECOMPUTE=1          # no d_G: the only path that fits ~5T on 512 nodes
 export MARS_NODEHALO_V2=1           # standard HO node-halo path (no-op env, kept for parity)
 export MARS_GLOBAL_BUCKETSIZE=256   # cstone global-tree Allreduce < 2 GiB (the trillion fix)

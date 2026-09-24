@@ -133,7 +133,7 @@ No new private-case diagnosis is adopted from these summaries.
 
 ## Claude handoff
 
-The local source already exists at `/Users/gandanie/scratch/santis/OpenAccel`,
+The local source already exists at `<local>/OpenAccel`,
 clean at `0d69041ba1afda63e9e4328d9e0d9834bba37756` when checked for this response.
 Claude initialized its solver submodule during this review; it now checks out
 the required `e351ba5eeaf3537dcc53d0aba09a8347f0a44cd0`. The temporary clone
