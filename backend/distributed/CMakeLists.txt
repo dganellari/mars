@@ -10,7 +10,6 @@ list(APPEND DISTRIBUTED_MODULES
 # Define test modules separately
 list(APPEND DISTRIBUTED_TEST_MODULES
     testsuite/communication
-    testsuite/unstructured
 )
 
 if(MARS_ENABLE_KOKKOS)
@@ -39,6 +38,7 @@ if(MARS_ENABLE_UNSTRUCTURED)
         unstructured
         unstructured/utils
     )
+    list(APPEND DISTRIBUTED_TEST_MODULES testsuite/unstructured)
     
     # Add the unstructured subdirectory
     add_subdirectory(unstructured)

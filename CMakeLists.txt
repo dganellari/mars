@@ -585,17 +585,18 @@ if(CORNERSTONE_INCLUDE_DIRS AND IS_DIRECTORY "${CORNERSTONE_INCLUDE_DIRS}")
             FILES_MATCHING PATTERN "*.h" PATTERN "*.hpp" PATTERN "*.cuh" PATTERN "*.inc")
 endif()
 
+# find_package(Mars) searches <prefix>/lib/cmake/Mars*/, not lib/cmake/ itself.
 install(
     EXPORT MarsTargets
     FILE MarsTargets.cmake
     NAMESPACE Mars::
-    DESTINATION lib/cmake)
+    DESTINATION lib/cmake/Mars)
 
 # generate the config file that is includes the exports
 configure_package_config_file(
   ${CMAKE_CURRENT_SOURCE_DIR}/cmake/MarsConfig.cmake.in
   "${CMAKE_CURRENT_BINARY_DIR}/MarsConfig.cmake"
-  INSTALL_DESTINATION "lib/cmake/")
+  INSTALL_DESTINATION "lib/cmake/Mars")
 
 # generate the version file for the config file
 write_basic_package_version_file(
@@ -606,7 +607,7 @@ write_basic_package_version_file(
 # install the configuration file
 install(FILES ${CMAKE_CURRENT_BINARY_DIR}/MarsConfig.cmake
               ${CMAKE_CURRENT_BINARY_DIR}/MarsConfigVersion.cmake
-        DESTINATION lib/cmake/)
+        DESTINATION lib/cmake/Mars)
 
 include(cmake/PostInstall.cmake)
 
