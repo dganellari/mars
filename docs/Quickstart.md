@@ -52,8 +52,9 @@ cmake .. -DMARS_ENABLE_HIP=ON -DHIP_GPU_ARCHITECTURES=gfx942 \
          -DMARS_ENABLE_UNSTRUCTURED=ON -DMARS_ENABLE_FEM_EXAMPLES=ON
 ```
 
-On a CPU-only laptop (for browsing/compiling, not GPU runs) use the Kokkos backend:
-`cmake .. -DMARS_ENABLE_KOKKOS=ON`.
+On a CPU-only laptop (for browsing/compiling, not GPU runs), a plain `cmake ..` builds
+the core library; the unstructured backend needs CUDA or HIP. Add `-DMARS_ENABLE_KOKKOS=ON`
+for the Kokkos structured backend.
 
 ---
 

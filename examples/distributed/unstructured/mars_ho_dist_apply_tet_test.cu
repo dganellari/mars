@@ -9,6 +9,7 @@
 //   srun -N2 --ntasks-per-node=4 ./examples/distributed/unstructured/mars_ho_dist_apply_tet_test --ncells=8 --p=3
 #include "backend/distributed/unstructured/fem/mars_ho_laplacian_tet.hpp"
 #include "backend/distributed/unstructured/fem/mars_ho_dof_handler_tet.hpp"
+#include "backend/distributed/unstructured/fem/mars_ho_dof_handler_tet_gpu.hpp"
 #include <mpi.h>
 #include <cuda_runtime.h>
 #include <cstdio>
@@ -32,7 +33,7 @@ static bool run_order(int ncells, int rank, int nranks) {
     std::vector<int> elemCorners;
     buildKuhnTetMesh(ncells, coords, elemCorners);
     const size_t nElem = elemCorners.size()/4;
-    HoTetDofHandler dh; dh.build(elemCorners, coords, nd);
+    HoTetDofHandler dh; buildGpu(dh, elemCorners, coords, nd);
     const int Np = nd.Np; const long nDof = dh.numDof;
 
     // contiguous element partition

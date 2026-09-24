@@ -173,27 +173,27 @@ addMarsMpiTest(
 # The header is included by a path relative to the source: mars_add_test() builds a second
 # executable from it that does not inherit the include directories set here.
 addMarsMpiTest(
-    ${CMAKE_CURRENT_SOURCE_DIR}/mars_ghost_registry_mpi.cpp
-    mars_ghost_registry_mpi_test
-    marsGhostRegistryMpiTest
+    ${CMAKE_CURRENT_SOURCE_DIR}/mars_ghost_registry_host_mpi.cpp
+    mars_ghost_registry_host_mpi_test
+    marsGhostRegistryHostMpiTest
 )
 
 # coarseSearch has a host+MPI reference and a CUDA path in the same header. Only the host one is
 # tested here -- it is the oracle the device version must reproduce, and it needs no GPU.
 addMarsMpiTest(
-    ${CMAKE_CURRENT_SOURCE_DIR}/mars_coarse_search_mpi.cpp
-    mars_coarse_search_mpi_test
-    marsCoarseSearchMpiTest
+    ${CMAKE_CURRENT_SOURCE_DIR}/mars_coarse_search_host_mpi.cpp
+    mars_coarse_search_host_mpi_test
+    marsCoarseSearchHostMpiTest
 )
 
 # The ONLY thing that compiles the device halves of mars_coarse_search.hpp and
 # mars_ghost_registry.hpp -- both are header-only and every other consumer is a .cpp, so without
 # this the kernels never reach nvcc. Gates device against host on identical input.
 addMarsGpuMpiTest(
-    ${CMAKE_CURRENT_SOURCE_DIR}/mars_search_ghost_device.cu
-    mars_search_ghost_device_test
-    MarsSearchGhostDeviceTest
-    MarsSearchGhostDeviceTest
+    ${CMAKE_CURRENT_SOURCE_DIR}/mars_search_ghost_mpi.cu
+    mars_search_ghost_mpi_test
+    MarsSearchGhostMpiTest
+    MarsSearchGhostMpiTest
 )
 
 addMarsGpuMpiTest(

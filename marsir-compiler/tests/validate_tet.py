@@ -7,8 +7,8 @@ p=2..5. Reproduces rung 9 (see marsir-compiler/TET_SUMFAC_HANDOFF.md):
   generated == dense (~1e-14),  A.1=0 exactly,  symmetric (~1e-14).
 
 Requires the reference headers (jacobi/gauss_jacobi/basis) from the sibling
-tet_ho_ref reference; point MARSIR_TET_ORACLE at that dir (default: this session's
-scratchpad copy). Run from marsir-compiler/:  python3 tests/validate_tet.py
+tet_ho_ref reference; point MARSIR_TET_ORACLE at that dir. Run from marsir-compiler/:
+  MARSIR_TET_ORACLE=/path/to/tet_ho_ref python3 tests/validate_tet.py
 """
 
 import os
@@ -18,10 +18,7 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 GEN = os.path.join(ROOT, "generated")
-ORACLE = os.environ.get(
-    "MARSIR_TET_ORACLE",
-    "/private/tmp/claude-501/-Users-gandanie-scratch-santis-mars/"
-    "8ed75b86-c40b-4adf-9eeb-9a07dee15bc2/scratchpad/tet_ho_ref")
+ORACLE = os.environ.get("MARSIR_TET_ORACLE", "")
 
 sys.path.insert(0, ROOT)
 from marsir.backends import tet_galerkin          # noqa: E402

@@ -1,10 +1,8 @@
 # PostInstall.cmake
 
 include(cmake/TestInstall.cmake)
-include(cmake/InstallMakefileConfig.cmake)
 
 add_custom_target(post_install)
-add_dependencies(post_install install_makefile_config)
 
 add_custom_target(
     install_all

@@ -1,7 +1,9 @@
 // GPU correctness + perf gate for the optimized HO-CVFEM matrix-free diffusion
 // apply (mars_cvfem_ho_matfree.hpp). Single rank, in-memory structured cube --
-// reuses the host patch-test setup (HODofHandler + the same elemDof/coord
-// convention) so any divergence localizes to the GPU kernel, not the DOF map.
+// same elemDof/coord convention as the host patch test, so any divergence
+// localizes to the GPU kernel and not the DOF map. The numbering itself is built
+// on the DEVICE (buildGpu) and stays there -- the apply reads elemDof straight
+// out of HoOwnershipDeviceData, with no host build and no H2D.
 //
 // Three gates per order p in {1,2,4}:
 //   (A) ELEMENT bit-exactness: GPU PerPoint metric kernel must reproduce the host
@@ -14,15 +16,28 @@
 //
 // d_y MUST be zeroed before every apply (scatter is additive); operators are
 // uploaded once per p via ho_cvfem_upload_operators.
+//
+// --dof-self-check (or MARS_HO_DOF_SELF_CHECK=1) adds a numbering gate in front:
+// host HODofHandler::build() vs the single-rank GPU buildGpu(), compared on the
+// permutation-invariant quantities. Off by default; the gates below are unchanged.
+// --dof-self-check=E (or MARS_HO_DOF_SELF_CHECK_E=E) sets the cube size. E=4 is
+// the cheap correctness cube; a large E is what shows the setup-time win, since
+// the host numbering goes through std::map and the GPU path through a radix
+// dedup. Both build times are printed per p.
 
 #include "backend/distributed/unstructured/fem/mars_ho_dof_handler.hpp"
+#include "backend/distributed/unstructured/fem/mars_ho_dof_handler_gpu.hpp"
 #include "backend/distributed/unstructured/fem/mars_cvfem_ho_apply.hpp"
 #include "backend/distributed/unstructured/fem/mars_cvfem_ho_matfree.hpp"
 
 #include <cuda_runtime.h>
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <chrono>
 #include <random>
 #include <vector>
 
@@ -41,6 +56,9 @@ static std::vector<SweepRow> g_sweep;
 // host patch test. Returns corners (per element, 8x xyz) for the metric kernel.
 struct CubeMesh {
     HODofHandler dh;
+    // The numbering is built on the device and STAYS there: own.elemDof is what
+    // the apply reads, so there is no H2D upload of it anywhere below.
+    HoOwnershipDeviceData own;
     std::vector<std::array<int,3>> ijk;
     long nDof;
     size_t nEl;
@@ -48,19 +66,30 @@ struct CubeMesh {
     std::vector<double> h_corners;   // [nEl*8*3]
 };
 
+static void makeCubeCorners(int E, std::vector<std::array<int,8>>& ec,
+                            std::vector<std::array<int,3>>& ijk)
+{
+    auto cg = [&](int x, int y, int z) { return (x*(E+1)+y)*(E+1)+z; };
+    for (int ex=0; ex<E; ++ex) for (int ey=0; ey<E; ++ey) for (int ez=0; ez<E; ++ez) {
+        ec.push_back({cg(ex,ey,ez),cg(ex+1,ey,ez),cg(ex+1,ey+1,ez),cg(ex,ey+1,ez),
+                      cg(ex,ey,ez+1),cg(ex+1,ey,ez+1),cg(ex+1,ey+1,ez+1),cg(ex,ey+1,ez+1)});
+        ijk.push_back({ex,ey,ez});
+    }
+}
+
 static CubeMesh buildCube(const HoCvfemOperators& op, int P, int E)
 {
     CubeMesh m;
     const int n = P + 1, N3 = n * n * n;
-    auto cg = [&](int x, int y, int z) { return (x*(E+1)+y)*(E+1)+z; };
     std::vector<std::array<int,8>> ec;
-    for (int ex=0; ex<E; ++ex) for (int ey=0; ey<E; ++ey) for (int ez=0; ez<E; ++ez) {
-        ec.push_back({cg(ex,ey,ez),cg(ex+1,ey,ez),cg(ex+1,ey+1,ez),cg(ex,ey+1,ez),
-                      cg(ex,ey,ez+1),cg(ex+1,ey,ez+1),cg(ex+1,ey+1,ez+1),cg(ex,ey+1,ez+1)});
-        m.ijk.push_back({ex,ey,ez});
-    }
-    m.dh.build(ec, long(E+1)*(E+1)*(E+1), P);
+    makeCubeCorners(E, ec, m.ijk);
+    buildGpu(m.dh, ec, long(E+1)*(E+1)*(E+1), P, &m.own);
     m.nDof = m.dh.numDof; m.nEl = ec.size(); m.n = n; m.N3 = N3;
+    // TEST ONLY: the gates below score the device apply against a host reference,
+    // which indexes elemDof on the host. Passing keepOwn deliberately skips that
+    // download, so take it once here. Nothing in the apply path needs it.
+    m.dh.elemDof.resize((size_t)m.nEl * N3);
+    thrust::copy(m.own.elemDof.begin(), m.own.elemDof.end(), m.dh.elemDof.begin());
 
     // Physical corner coords (unit cube, h = 1/E). Hex corner order matches the
     // host hexCornerRef / handler convention.
@@ -102,15 +131,14 @@ static bool runOrder(int E)
                                  op.D.data(), op.W.data(), op.xi.data(), op.zeta.data()));
 
     // Device buffers.
-    int*    d_elemDof; double* d_corners; double* d_G;
+    double* d_corners; double* d_G;
+    const int* d_elemDof = thrust::raw_pointer_cast(m.own.elemDof.data());
     double* d_u; double* d_y;
     const size_t gLen = nEl * (size_t)(3 * P * n * n) * 3;
-    CK(cudaMalloc(&d_elemDof, sizeof(int)    * nEl * N3));
     CK(cudaMalloc(&d_corners, sizeof(double) * nEl * 24));
     CK(cudaMalloc(&d_G,       sizeof(double) * gLen));
     CK(cudaMalloc(&d_u,       sizeof(double) * nDof));
     CK(cudaMalloc(&d_y,       sizeof(double) * nDof));
-    CK(cudaMemcpy(d_elemDof, m.dh.elemDof.data(), sizeof(int) * nEl * N3, cudaMemcpyHostToDevice));
     CK(cudaMemcpy(d_corners, m.h_corners.data(),  sizeof(double) * nEl * 24, cudaMemcpyHostToDevice));
 
     // Build the PerPoint metric on device.
@@ -226,7 +254,7 @@ static bool runOrder(int E)
     double asmBpd = std::pow(2.0*P+1.0, 3.0) * 12.0;
     g_sweep.push_back({P, nDof, sPerApply*1e3, mdofs, gbs, mfBpd, asmBpd});
 
-    cudaFree(d_elemDof); cudaFree(d_corners); cudaFree(d_G);
+    cudaFree(d_corners); cudaFree(d_G);
     cudaFree(d_u); cudaFree(d_y);
     cudaFree(d_edof1); cudaFree(d_u1); cudaFree(d_y1);
     return ok;
@@ -264,14 +292,13 @@ static bool runShearGate(int E)
     CK(ho_cvfem_upload_operators(P, op.Btil.data(), op.Dtil.data(),
                                  op.D.data(), op.W.data(), op.xi.data(), op.zeta.data()));
 
-    int* d_elemDof; double* d_corners; double* d_G; double* d_u; double* d_y;
+    double* d_corners; double* d_G; double* d_u; double* d_y;
+    const int* d_elemDof = thrust::raw_pointer_cast(m.own.elemDof.data());
     const size_t gLen = nEl * (size_t)(3 * P * n * n) * 3;
-    CK(cudaMalloc(&d_elemDof, sizeof(int)    * nEl * N3));
     CK(cudaMalloc(&d_corners, sizeof(double) * nEl * 24));
     CK(cudaMalloc(&d_G,       sizeof(double) * gLen));
     CK(cudaMalloc(&d_u,       sizeof(double) * nDof));
     CK(cudaMalloc(&d_y,       sizeof(double) * nDof));
-    CK(cudaMemcpy(d_elemDof, m.dh.elemDof.data(), sizeof(int) * nEl * N3, cudaMemcpyHostToDevice));
     CK(cudaMemcpy(d_corners, m.h_corners.data(),  sizeof(double) * nEl * 24, cudaMemcpyHostToDevice));
     CK(ho_cvfem_metric_perpoint_launch<double, P>(d_corners, d_G, nEl));
     CK(cudaDeviceSynchronize());
@@ -317,14 +344,147 @@ static bool runShearGate(int E)
     printf("p=%d E=%d (SHEAR) nEl=%zu | metricErr=%.2e applyRel=%.2e | %s\n",
            P, E, nEl, metricErr, applyRel, ok?"PASS":"FAIL");
 
-    cudaFree(d_elemDof); cudaFree(d_corners); cudaFree(d_G); cudaFree(d_u); cudaFree(d_y);
+    cudaFree(d_corners); cudaFree(d_G); cudaFree(d_u); cudaFree(d_y);
     return ok;
 }
 
-int main()
+// ---- Opt-in gate: single-rank host build() vs the GPU buildGpu(). ----
+// --dof-self-check (or MARS_HO_DOF_SELF_CHECK=1). Additive: the A/B/C/shear gates
+// below run exactly as before with or without it.
+//
+// The GPU numbers edges/faces in sorted-key order, the host in std::map insertion
+// order, so the two DOF numberings are a PERMUTATION of each other by construction.
+// Only permutation-invariant properties can be compared:
+//   (1) numDof / nEdge / nFace,
+//   (2) the multiset of canonical DofKeys,
+//   (3) the elemDof identification classes: the (element,local-node) slots that
+//       share a DOF must be the same set on both sides. This is the strongest of
+//       the three -- it proves ONE bijection relates the two maps, i.e. the two
+//       spaces have identical continuity, not just the same keys somewhere.
+// (1)+(2) are what mars_ho_dist_apply_test --self-check compares for the
+// distributed path; (3) is available here because there is a single numbering.
+static bool checkDofNumbering(int P, int E)
+{
+    std::vector<std::array<int,8>> ec;
+    std::vector<std::array<int,3>> ijk;
+    makeCubeCorners(E, ec, ijk);
+    const long nCornerNodes = (long)(E+1)*(E+1)*(E+1);
+    const long nElem = (long)ec.size();
+    const int  n = P + 1, N3 = n*n*n;
+
+    // The degenerate single-rank configuration buildGpu feeds the shared numbering
+    // core, spelled out here so the host oracle sees the identical inputs.
+    std::vector<long> cornerGid(nCornerNodes);
+    for (long i = 0; i < nCornerNodes; ++i) cornerGid[i] = i;   // global id == local id
+    const std::vector<int>     cornerOwner(nCornerNodes, 0);
+    const std::vector<uint8_t> sharedCorner(nCornerNodes, 0);
+    const std::vector<int>     elemOwner(nElem, 0);
+
+    HODofHandler dofPlain, dofHost, dofGpu;
+    dofPlain.build(ec, nCornerNodes, P);
+    using Clk = std::chrono::steady_clock;
+    // buildDistributed() calls build() and then tags the DofKeys build() alone does
+    // not produce. Comparing dofPlain to dofHost verifies that rather than assuming
+    // it, so the oracle really is build().
+    const auto t0 = Clk::now();
+    dofHost.buildDistributed(ec, nCornerNodes, P, cornerGid, cornerOwner, elemOwner, 0, sharedCorner);
+    const auto t1 = Clk::now();
+    buildGpu(dofGpu, ec, nCornerNodes, P);
+    cudaDeviceSynchronize();
+    const auto t2 = Clk::now();
+    const double hostS = std::chrono::duration<double>(t1 - t0).count();
+    const double gpuS  = std::chrono::duration<double>(t2 - t1).count();
+
+    const bool oracleOk = (dofPlain.numDof == dofHost.numDof) && (dofPlain.elemDof == dofHost.elemDof);
+    const bool countOk  = (dofHost.numDof == dofGpu.numDof) && (dofHost.nEdge == dofGpu.nEdge) &&
+                          (dofHost.nFace == dofGpu.nFace);
+
+    // (2) DofKey multiset.
+    long keyBad = -1;
+    if (dofHost.dofKey.size() == dofGpu.dofKey.size()) {
+        auto packed = [](const HODofHandler::DofKey& k) {
+            return std::array<long,6>{ (long)k.kind, k.g0, k.g1, k.g2, k.g3, (long)k.pos }; };
+        std::vector<std::array<long,6>> hk(dofHost.dofKey.size()), gk(dofGpu.dofKey.size());
+        for (size_t i = 0; i < hk.size(); ++i) hk[i] = packed(dofHost.dofKey[i]);
+        for (size_t i = 0; i < gk.size(); ++i) gk[i] = packed(dofGpu.dofKey[i]);
+        std::sort(hk.begin(), hk.end());
+        std::sort(gk.begin(), gk.end());
+        keyBad = 0;
+        for (size_t i = 0; i < hk.size(); ++i) if (hk[i] != gk[i]) ++keyBad;
+    }
+
+    // (3) elemDof identification classes: host dof <-> GPU dof must be a bijection.
+    long permBad = 0, unmapped = 0;
+    bool identity = true;
+    if (countOk && dofHost.elemDof.size() == dofGpu.elemDof.size()) {
+        std::vector<int> h2g(dofHost.numDof, -1), g2h(dofGpu.numDof, -1);
+        for (size_t s = 0; s < dofHost.elemDof.size(); ++s) {
+            const int hd = dofHost.elemDof[s], gd = dofGpu.elemDof[s];
+            if (hd != gd) identity = false;
+            if (h2g[hd] < 0) h2g[hd] = gd; else if (h2g[hd] != gd) ++permBad;
+            if (g2h[gd] < 0) g2h[gd] = hd; else if (g2h[gd] != hd) ++permBad;
+        }
+        for (long d = 0; d < dofHost.numDof; ++d) if (h2g[d] < 0) ++unmapped;
+    } else {
+        permBad = -1;
+    }
+
+    // With no shared corners nothing may be flagged shared or on a boundary, on
+    // either side -- a direct check that the degenerate inputs landed as intended.
+    long hShared = 0, gShared = 0, hBnd = 0, gBnd = 0;
+    for (auto v : dofHost.dofShared)   hShared += v;
+    for (auto v : dofGpu.dofShared)    gShared += v;
+    for (auto v : dofHost.dofBoundary) hBnd += v;
+    for (auto v : dofGpu.dofBoundary)  gBnd += v;
+    const bool flagOk = (hShared == 0 && gShared == 0 && hBnd == 0 && gBnd == 0);
+
+    // Single rank -> every DOF is owned by rank 0 on both sides.
+    bool ownOk = ((long)dofHost.dofOwner.size() == dofHost.numDof) &&
+                 ((long)dofGpu.dofOwner.size() == dofGpu.numDof);
+    for (int o : dofHost.dofOwner) if (o != 0) ownOk = false;
+    for (int o : dofGpu.dofOwner)  if (o != 0) ownOk = false;
+
+    const bool ok = oracleOk && countOk && keyBad == 0 && permBad == 0 &&
+                    unmapped == 0 && flagOk && ownOk;
+    printf("[dof-self-check] p=%d E=%d nEl=%ld N3=%d | numDof h=%ld g=%ld nEdge h=%ld g=%ld nFace h=%ld g=%ld"
+           " | build host %.3fs gpu %.3fs (%.2fx)\n",
+           P, E, nElem, N3, dofHost.numDof, dofGpu.numDof, dofHost.nEdge, dofGpu.nEdge, dofHost.nFace, dofGpu.nFace,
+           hostS, gpuS, gpuS > 0.0 ? hostS / gpuS : 0.0);
+    printf("                 oracle=%s keyMismatch=%ld permMismatch=%ld unmapped=%ld flags=%s owner=%s perm=%s | %s\n",
+           oracleOk ? "ok" : "BAD", keyBad, permBad, unmapped,
+           flagOk ? "ok" : "BAD", ownOk ? "ok" : "BAD",
+           identity ? "identity" : "permuted", ok ? "PASS" : "FAIL");
+    return ok;
+}
+
+int main(int argc, char** argv)
 {
     int dev=0; cudaGetDeviceCount(&dev); if (dev>0) cudaSetDevice(0);
     bool ok = true;
+
+    // Opt-in only: proves host build() and the single-rank GPU buildGpu() number the
+    // same space before the operator gates run on the host numbering.
+    bool dofSelfCheck = std::getenv("MARS_HO_DOF_SELF_CHECK") != nullptr;
+    int  selfCheckE = 4;   // cells per side; 4 is the cheap correctness cube
+    if (const char* ev = std::getenv("MARS_HO_DOF_SELF_CHECK_E")) {
+        const int v = std::atoi(ev);
+        if (v > 0) { selfCheckE = v; dofSelfCheck = true; }
+    }
+    for (int i = 1; i < argc; ++i) {
+        if (std::strcmp(argv[i], "--dof-self-check") == 0) {
+            dofSelfCheck = true;
+        } else if (std::strncmp(argv[i], "--dof-self-check=", 17) == 0) {
+            dofSelfCheck = true;
+            const int v = std::atoi(argv[i] + 17);
+            if (v > 0) selfCheckE = v;
+        }
+    }
+    if (dofSelfCheck) {
+        printf("=== HO DOF numbering self-check: host build() vs GPU buildGpu() (E=%d) ===\n",
+               selfCheckE);
+        for (int p = 1; p <= 7; ++p) ok &= checkDofNumbering(p, selfCheckE);
+        printf("\n");
+    }
     // Larger meshes so the timing loop saturates the GPU (132 SMs on H100); the
     // tiny-mesh numbers are launch/latency-bound and not representative. The
     // correctness gates A/B/C are still cheap at these sizes (element-0 + max

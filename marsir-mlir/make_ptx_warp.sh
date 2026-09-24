@@ -16,7 +16,8 @@ emit() {
   # nvgpu-to-nvvm,convert-vector-to-llvm) pre-stage ERRORS on workgroup (shared)
   # memory ("space conversion failed"). Clean path handles both global and
   # workgroup-memory kernels.
-  build/tools/mir-opt/mir-opt "$1" \
+  # $3 = optional passes to run BEFORE distribution (e.g. --mir-batch-elements).
+  build/tools/mir-opt/mir-opt "$1" $3 \
       --mir-warp-distribute --canonicalize --cse --lower-affine \
   | mlir-opt --gpu-lower-to-nvvm-pipeline="cubin-chip=sm_90 cubin-format=isa" \
   | python3 test/extract_ptx.py "$2"
@@ -73,3 +74,28 @@ build/tools/mir-opt/mir-opt test/warp_hybrid.mlir --mir-warp-distribute --canoni
   | mlir-opt --gpu-lower-to-nvvm-pipeline="cubin-chip=sm_90 cubin-format=isa" \
   | python3 test/extract_ptx.py generated/warp_hybrid_sm90.ptx
 grep -c "mma.sync.aligned.m8n8k4" generated/warp_hybrid_sm90.ptx
+
+# PASS-BATCHED (P3): --mir-batch-elements turns the SINGLE-element kernel above
+# (whose per-element args the emitter marks {mir.element}) into the
+# warp-per-element batched one, replacing what mlir_warp.py hand-wrote as
+# build_full_batched_kernel. The resulting PTX is byte-identical to the
+# Python-emitted warp_batched above except that gpu.block_id is read before
+# gpu.thread_id, which swaps %r1/%r2: 264 mma
+emit test/warp_fulls.mlir generated/warp_pass_batched_sm90.ptx --mir-batch-elements
+
+# P2 REGISTER-RESIDENT CHAIN PASS (--mir-chain-contracts), five shapes:
+#   warp_chain_pass  pure contract->contract chain:            4 mma, 4 shfl
+#   warp_chain_flux  contract->POINTWISE FLUX->contract:       4 mma, 4 shfl
+#   warp_chain_wide  WIDE 8x8 @ 8x64 (8 column tiles x 2 slabs): 16 mma, 0 shfl
+#   warp_chain_scatter  +/- plane scatter:                       2 mma, 0 shfl
+#   warp_chain_face  THE WHOLE FACE CHAIN (3 D-contracts + flux +
+#                    W integrate-back + scatter):               8 mma, 4 shfl
+#                    -- what mlir_warp_reg.py hand-writes, at 4 shfl not 16
+# The flux is elementwise, so it fuses lane-locally onto the vector<1x2>
+# C-fragment with no relayout. All five must show NO .shared and NO bar.sync.
+for k in warp_chain_pass warp_chain_flux warp_chain_wide warp_chain_scatter warp_chain_face; do
+  build/tools/mir-opt/mir-opt test/$k.mlir --mir-chain-contracts --canonicalize --cse --lower-affine \
+    | mlir-opt --gpu-lower-to-nvvm-pipeline="cubin-chip=sm_90 cubin-format=isa" \
+    | python3 test/extract_ptx.py generated/${k}_sm90.ptx
+  echo "  $k: shared=$(grep -a -c '\.shared' generated/${k}_sm90.ptx) barrier=$(grep -a -c 'bar.sync' generated/${k}_sm90.ptx)"
+done

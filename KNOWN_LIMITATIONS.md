@@ -16,6 +16,15 @@ whether MARS fits your use case. The major version is `0`: APIs may change.
   operator action; not yet a turnkey solver path. Interfaces may change.
 - **Adaptive mesh refinement (AMR).** Single-rank mark/refine/rebuild/transfer works;
   multi-rank AMR is under development.
+- **Tetrahedral high-order operators** (`mars_ho_laplacian_tet.hpp`, collapsed
+  sum-factorization). Interfaces may change.
+- **Coarse search and ghost registry** (`mars_coarse_search.hpp`,
+  `mars_ghost_registry.hpp`). The device paths are gated against the host references.
+- **Segregated SIMPLE solver** (`fem/segregated/`). Converges on the single-GPU public
+  channel case; multi-rank runs, general meshes and field-level parity with a reference
+  code are not validated yet.
+- **MARSIR** (`marsir-compiler/`, `marsir-mlir/`). Research code generator, off by
+  default (`MARS_ENABLE_MARSIR`), not needed to build or use the library.
 
 ## Not supported yet
 - **Multi-rank periodic boundary conditions** (e.g. multi-rank periodic TGV). Periodic
@@ -47,5 +56,57 @@ Unless you are benchmarking a specific GPU path, use the tensor or graph kernel.
 - MPI is required by default (`-DMARS_ENABLE_MPI=ON`).
 - Dependencies (cornerstone-octree, googletest, google/benchmark) are fetched by CMake
   at configure time, so a network connection is needed for a fresh configure.
-- The test suite and FEM examples are GPU-oriented and most require a mesh input and/or
-  MPI; there is not yet a CPU-only smoke test.
+- Without CUDA or HIP, `MARS_ENABLE_UNSTRUCTURED` defaults to OFF and a plain `cmake ..`
+  builds only the core library. Its CPU tests are the MPI communication tests plus the
+  install smoke test in `examples/usage_from_external_cmake_project/`.
+- The rest of the test suite and the FEM examples are GPU-oriented, and most need a mesh
+  input and/or MPI.
+
+## HO DOF numbering: single-rank GPU path exists, but is not the default
+
+`HODofHandler` used to split its build paths by rank count, not by device:
+`build()` (host) for one rank, `buildDistributedGpu*()` (device) for many. So
+single-rank drivers numbered their DOFs on the host and uploaded `elemDof`,
+which bounded single-GPU problem size and setup time by host numbering (the
+distributed path measured 80 s -> 8 s per rank at 625M DOF/GPU when it moved to
+the device).
+
+The device twin now exists — `buildGpu()` / `buildGpuDevice()` in
+`mars_ho_dof_handler_gpu.hpp`. They feed `buildDistributedGpuCore` the
+degenerate single-rank configuration (`myRank = 0`, every corner and element
+owned by 0, no shared corners, global id == local id), so there is still only
+one numbering implementation. Equivalence to host `build()` is gated by
+`mars_cvfem_ho_matfree_test --dof-self-check` on the permutation-invariant
+quantities (`numDof`/`nEdge`/`nFace`, the `DofKey` multiset, and the `elemDof`
+identification classes) — the DOF ids themselves are a permutation, as on the
+distributed path.
+
+`mars_cvfem_ho_matfree_test` now numbers on the device only: `buildGpu()` with
+`keepOwn`, and the apply reads `HoOwnershipDeviceData::elemDof` in place, so
+there is no host build and no `elemDof` H2D. Measured on GH200 at E=32 (32768
+hexes, up to 11.4M DOF), device vs host numbering: 7.8x at p=1, 11.4x at p=2,
+3.3x at p=7. The speedup falls with p because the host cost is dominated by the
+p-independent edge/face `std::map` work, which amortizes as p grows; 3.3x is the
+steady-state per-DOF figure (47 ns host vs 14 ns device).
+
+The host `build()` remains, as the oracle that `--dof-self-check` scores the
+device numbering against. That gate, and only that gate, still builds on the
+host.
+
+## Tet HO DOF numbering
+
+The tet apply was always device-side; only the numbering
+(`HoCvfemTetDofHandler::build` / `HoTetDofHandler::build`, both `std::map` over a
+`vector<pair<gid,weight>>` key) ran on the host. `buildGpu()` in
+`mars_ho_dof_handler_tet_gpu.hpp` is the device twin, and every tet driver now
+calls it; the host build survives only as the `--dof-self-check` oracle.
+
+Measured on GH200 at p=3, Kuhn mesh, device vs host numbering: 0.45x at 3.4k DOF
+(launch-bound), 8.65x at 466k, 8.72x at 1.56M. The ratio plateaus because both
+sides are sort-dominated. Per DOF the host costs ~480 ns against hex's ~47 ns --
+the tet key is a heap-allocated vector per node -- so the port is worth more here
+than it was for hex.
+
+Build memory is ~48 B/node while numbering (four uint64 key lanes plus the
+permutation and scan buffers), freed before return. That, not correctness, is the
+scale limit of the current key packing.

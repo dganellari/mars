@@ -31,6 +31,7 @@
 #include "backend/distributed/unstructured/fem/mars_ns_pump_solver.hpp"
 #include "backend/distributed/unstructured/utils/mars_vtu_parallel_writer.hpp"
 #include "backend/distributed/unstructured/utils/mars_read_exodus_mesh.hpp"
+#include "mars_outlet_channel_check.hpp"
 
 #include <unordered_map>
 #include <mpi.h>
@@ -87,7 +88,25 @@ int main(int argc, char** argv)
     bool        useBdf2     = true;    // --bdf1 forces BDF1/Chorin (1st-order time, more stable for explicit advection)
     bool        useRhieChow = false;   // compact RC is geometrically unsafe on tets (blows up at every tau); --rhie-chow to force on
     RealType    rhieTau    = -1;       // RC strength; <=0 -> auto dt/rho. --rhie-tau= to sweep
-    bool        useVMSStab = false;    // Nalu-Wind VMS pressure stab (NOT Rhie-Chow); --vms-stab. EXPERIMENTAL, validate.
+    bool        useVMSStab = false;
+    bool        rcImplicit = false;   // --rc-implicit: RC sensitivity ADDED to K
+    bool        rcOnly     = false;   // --rc-only: RC sensitivity IS the operator (K zeroed)
+    bool        rcBlend    = false;   // --rc-blend: A = (1-c)K + c*A_gram, the RC difference
+    double      rcBlendC   = -1.0;    // --rc-blend=V overrides c; <=0 -> (2/3)*relax_u
+    // OFF by default: OpenAccel's mDotURF is sound only because SIMPLE's outer loop closes the
+    // lag inside the step. This projection has no outer loop, so a blend leaves (1-urf)*div(u**)
+    // unprojected permanently, with no dt in it to vanish under refinement.
+    double      relaxMass  = 1.0;
+    // Average-pressure outlet trace. <0 keeps the classic p=0 Dirichlet outlet.
+    double      outletBeta = -1.0;
+    double      outletPRef = 0.0;
+    int         outlet_max_corrections = 100;
+    double      outlet_rtol = 1e-6, outlet_div_tol = 1e-8, outlet_flux_tol = 1e-12;
+    double      outlet_max_damping = 1.0;
+    bool        outlet_channel_check = false;
+    bool        outlet_channel_require_empty = false;
+    double      outlet_channel_opening_width = 1.;
+    double      relaxU     = 0.3;      // --relax-u: momentum URF, folded into D
     bool        usePSPG    = false;    // implicit PSPG pressure stab (tau*L in the DDT operator); --pspg. The correct equal-order checkerboard fix.
     double      pspgTau    = -1;       // <=0 => auto h^2/24; --pspg-tau=V overrides
     bool        useHypre   = false;    // --solver=hypre: assembled DDT + Hypre FlexGMRES+BoomerAMG (else matrix-free Jacobi-CG)
@@ -167,7 +186,24 @@ int main(int argc, char** argv)
         else if (a == "--no-rhie")                   useRhieChow = false; // plain Galerkin divergence (checkerboard-prone)
         else if (a == "--rhie-chow")                 useRhieChow = true;
         else if (a.rfind("--rhie-tau=", 0) == 0)     rhieTau   = std::stod(a.substr(11));
-        else if (a == "--vms-stab")                  useVMSStab = true;  // Nalu VMS pressure stab (tet-only, experimental)
+        else if (a == "--vms-stab")                  useVMSStab = true;
+        else if (a == "--rc-implicit")               rcImplicit = true;
+        else if (a == "--rc-only")                   rcOnly     = true;
+        else if (a == "--rc-blend")                  rcBlend    = true;
+        else if (a.rfind("--rc-blend=", 0) == 0)   { rcBlend = true; rcBlendC = std::stod(a.substr(11)); }
+        else if (a.rfind("--relax-mass=", 0) == 0)   relaxMass = std::stod(a.substr(13));
+        else if (a.rfind("--outlet-beta=", 0) == 0)  outletBeta = std::stod(a.substr(14));
+        else if (a.rfind("--outlet-pref=", 0) == 0)  outletPRef = std::stod(a.substr(14));
+        else if (a.rfind("--outlet-max-corrections=", 0) == 0) outlet_max_corrections = std::stoi(a.substr(25));
+        else if (a.rfind("--outlet-rtol=", 0) == 0) outlet_rtol = std::stod(a.substr(14));
+        else if (a.rfind("--outlet-div-tol=", 0) == 0) outlet_div_tol = std::stod(a.substr(17));
+        else if (a.rfind("--outlet-flux-tol=", 0) == 0) outlet_flux_tol = std::stod(a.substr(18));
+        else if (a.rfind("--outlet-max-damping=", 0) == 0) outlet_max_damping = std::stod(a.substr(21));
+        else if (a == "--outlet-channel-check") outlet_channel_check = true;
+        else if (a == "--outlet-channel-require-empty") outlet_channel_require_empty = true;
+        else if (a.rfind("--outlet-channel-opening-width=", 0) == 0)
+            outlet_channel_opening_width = std::stod(a.substr(std::string("--outlet-channel-opening-width=").size()));
+        else if (a.rfind("--relax-u=", 0) == 0)      relaxU    = std::stod(a.substr(10));
         else if (a == "--pressure-k")                pressureK  = true;  // Galerkin K + FEM-consistent weak div/grad projection
         else if (a.rfind("--correctors=", 0) == 0)   nCorrectors = std::stoi(a.substr(13)); // PISO inner pressure corrections (FEM path)
         else if (a == "--pspg")                      usePSPG    = true;  // implicit PSPG (tau*L in DDT operator) -- the correct checkerboard fix
@@ -224,7 +260,9 @@ int main(int argc, char** argv)
                     "  --advection=NAME     skew (default) | upwind | barth-jespersen (--bj)\n"
                     "  --pspg [--pspg-tau=V] implicit PSPG pressure stabilization (tau*L in DDT operator; the equal-order checkerboard fix; tau auto h^2/24)\n"
                     "  --correctors=N       PISO inner pressure corrections per step (FEM-projection\n"
-                    "                       path, pair with --pressure-k; default 1 = single correction)\n"
+                    "                       path OR the --vms-stab path; default 1 = single correction. The\n"
+                    "                       stabilized flux is explicit, so without outer passes its\n"
+                    "                       lag never closes -- this is what SIMPLE does and we did not)\n"
                     "  --rho=V --nu=V       physical fluid properties (default water: rho=1000, nu=1e-6)\n"
                     "  --Re=V               LEGACY: override nu = inletU*L_bbox/Re. L_bbox is the\n"
                     "                       whole-geometry diagonal, NOT the passage scale, so this Re\n"
@@ -234,6 +272,15 @@ int main(int argc, char** argv)
                     "                       reports (default 0 = off; ~1e-5 is a converged pump).\n"
                     "                       There is no restart, so a wall-clock kill loses the run.\n"
                     "  --source-ramp-steps=N ramp inlet drive 0->full over N steps (gentle startup; default 0=off)\n"
+                    "  --outlet-beta=V      average-pressure outlet trace p_ref+(1-beta)(p-mean_A p); beta=0.05 keeps\n"
+                    "                       95%% of the spatial variation and prescribes only the mean. <0 = off (default)\n"
+                    "  --outlet-pref=V      prescribed outlet mean pressure for --outlet-beta (default 0)\n"
+                    "  --outlet-max-corrections=N  full-residual correction limit (default 100)\n"
+                    "  --outlet-rtol=V      relative continuity and boundary-balance tolerance (1e-6)\n"
+                    "  --outlet-div-tol=V   absolute continuity tolerance in 1/s (1e-8)\n"
+                    "  --outlet-flux-tol=V  absolute boundary-flux tolerance in volume/s (1e-12)\n"
+                    "  --outlet-max-damping=V  maximum measured correction step in (0,1] (1)\n"
+                    "  --outlet-channel-check  public channel integration checks and per-step scalar records\n"
                     "  --supg              SUPG streamline stabilization on the implicit convection operator\n"
                     "  --div-correct       conservative->advective correction on upwind/BJ advection\n"
                     "  --picard=N          deferred-correction outer sweeps per step (default 1 = plain explicit)\n"
@@ -265,6 +312,24 @@ int main(int argc, char** argv)
     if (meshFile.empty())
     {
         if (rank == 0) std::cerr << "Error: --mesh=FILE.exo required\n";
+        MPI_Finalize();
+        return 1;
+    }
+    if ((outlet_channel_opening_width != 1. && outlet_channel_opening_width != .25)
+        || (!outlet_channel_check && (outlet_channel_opening_width != 1. || outlet_channel_require_empty)))
+    {
+        if (rank == 0) std::cerr << "Error: public channel opening width must be 1 or 0.25; "
+            "coverage options require --outlet-channel-check.\n";
+        MPI_Finalize();
+        return 1;
+    }
+    if (outlet_channel_check && !(outletBeta >= 0 && useBdf2 && numSteps >= 2 && numSteps <= 32
+        && steadyTol == 0 && !pumpUniformIC && inletU > 0 && vtuPrefix.empty()
+        && inletSS == "inlet" && outletSS == "outlet" && !inletFlipNormal))
+    {
+        if (rank == 0) std::cerr << "Error: --outlet-channel-check needs the public channel fixture, "
+            "average-pressure outlet, BDF2, --num-steps between 2 and 32, rest startup, positive inlet speed, "
+            "inlet/outlet side sets, no flipped normal, no early steady stop, and no VTU output.\n";
         MPI_Finalize();
         return 1;
     }
@@ -321,6 +386,17 @@ int main(int argc, char** argv)
                   << (nCorrectors > 1
                         ? "correctors  = " + std::to_string(nCorrectors) + " (PISO inner pressure corrections)\n"
                         : std::string(""))
+                  // Echo the RC knobs. Without this a log cannot be told apart from one run
+                  // with different relaxation -- two runs on 2026-09-09 came back bit-identical
+                  // and there was no way to check from the logs whether the flag had applied.
+                  << (outletBeta >= 0.0
+                        ? "outlet-trace= average-pressure ON (beta=" + std::to_string(outletBeta)
+                          + ", p_ref=" + std::to_string(outletPRef) + ")\n"
+                        : std::string(""))
+                  << "RC knobs    = relax_u " << relaxU << " | relax_mass " << relaxMass
+                  << (rcImplicit ? " | rc-implicit" : "")
+                  << (rcOnly     ? " | rc-only"     : "")
+                  << (rcBlend    ? " | rc-blend"    : "") << "\n"
                   << "MPI ranks   = " << numRanks << "\n"
                   << "========================================\n\n";
     }
@@ -407,7 +483,7 @@ int main(int argc, char** argv)
     // would re-add the full head every inner pass (p^n updates only after the
     // loop), so that combination is rejected too.
     s.nCorrectors = std::max(1, nCorrectors);
-    if (rank == 0 && nCorrectors > 1 && !pressureK)
+    if (rank == 0 && nCorrectors > 1 && !pressureK && !useVMSStab)
         std::cerr << "WARNING: --correctors=" << nCorrectors
                   << " applies only to the FEM-projection path (--pressure-k); ignored.\n";
     if (nCorrectors > 1 && pressureK && pumpDp > 0.0)
@@ -471,7 +547,86 @@ int main(int argc, char** argv)
     // leaves div*L/U stuck. tau auto = dt/rho. --no-rhie for an A/B comparison.
     s.useBdf2 = useBdf2;
     s.useRhieChow = useRhieChow;
-    s.useVMSStab  = useVMSStab;   // Nalu VMS pressure stabilization (tet-only)
+    s.useVMSStab  = useVMSStab;
+    s.useRcImplicit = rcImplicit;
+    s.useRcOnly     = rcOnly;
+    s.useRcBlend    = rcBlend;
+    s.rcBlend       = RealType(rcBlendC);
+    // The blend lives in the DDT CSR, so the solve has to be pointed at it.
+    if (rcBlend) setenv("MARS_HYPRE_USE_DDT", "1", 1);
+    // --rc-blend PUTS the Rhie-Chow difference in the operator. --vms-stab puts the same
+    // difference on the RHS. Running both applies it twice -- and worse, the RHS copy is the
+    // explicit lagged one whose leftover S(p^n) is exactly the mass error the operator form
+    // exists to remove (measured: Q_out/Q_in 1.29-1.50, div*L/U 2338-3594).
+    if (rcBlend && useVMSStab)
+    {
+        if (rank == 0)
+            std::cerr << "Error: --rc-blend puts the whole Rhie-Chow difference in the operator;"
+                         " --vms-stab puts it on the RHS. Use one.\n";
+        MPI_Finalize();
+        return 1;
+    }
+    // OpenAccel's structure is the PAIR: the matrix carries the implicit grad p half
+    // (pressureCorrectionAssemblerElemTerms.cpp:548), the flux carries the full explicit
+    // difference (flowModel.cpp:6242). One without the other is what produced div*L/U = 2338.
+    if ((rcImplicit || rcOnly) && !useVMSStab)
+    {
+        if (rank == 0)
+            std::cerr << "Error: --rc-implicit/--rc-only supply only the MATRIX half of Rhie-Chow."
+                         " OpenAccel pairs it with the explicit flux difference -- add --vms-stab.\n";
+        MPI_Finalize();
+        return 1;
+    }
+    if (!std::isfinite(outletBeta) || !std::isfinite(outletPRef))
+    {
+        if (rank == 0) std::cerr << "Error: outlet pressure parameters must be finite.\n";
+        MPI_Finalize();
+        return 1;
+    }
+    if (outletBeta >= 0.0)
+    {
+        const char* krylov = std::getenv("MARS_HYPRE_KRYLOV");
+        const bool valid = outletBeta <= 1.0 && useHypre && useVMSStab && rcImplicit
+            && !pressureK && !rcOnly && !rcBlend && !usePSPG && !useRhieChow
+            && !fluxNeumann && !openingFluxSource && !openNormalProj && !fluxPressureBc
+            && !implicitAdv && pumpDp == 0.0 && outletMode == "do-nothing" && bcMode != "cavity"
+            && relaxMass == 1.0 && relaxU > 0.0 && relaxU <= 1.0 && nCorrectors == 1
+            && cflMax <= 0.0 && std::isfinite(dt) && dt > 0 && std::isfinite(rho) && rho > 0
+            && std::getenv("MARS_HYPRE_USE_DDT") == nullptr
+            && std::getenv("MARS_FEMGRAM_SOLVE") == nullptr
+            && std::getenv("MARS_VMS_COMPACT_ONLY") == nullptr
+            && (!krylov || std::string(krylov) == "gmres")
+            && outlet_max_corrections > 0 && std::isfinite(outlet_rtol) && outlet_rtol > 0 && outlet_rtol < 1
+            && std::isfinite(outlet_div_tol) && outlet_div_tol > 0
+            && std::isfinite(outlet_flux_tol) && outlet_flux_tol > 0
+            && std::isfinite(outlet_max_damping) && outlet_max_damping > 0 && outlet_max_damping <= 1;
+        if (!valid)
+        {
+            if (rank == 0)
+                std::cerr << "Error: average-pressure outlet requires the fixed-dt tet SCS/Hypre "
+                    "path: --solver=hypre --vms-stab --rc-implicit --outlet=do-nothing, "
+                    "velocity inlet, relax-mass=1, and GMRES. Extra pressure/flux modes, "
+                    "implicit advection, adaptive dt and --correctors>1 are unsupported. "
+                    "Use positive outlet tolerances, beta in [0,1], damping in (0,1].\n";
+            MPI_Finalize();
+            return 1;
+        }
+    }
+    if (rcBlend && usePSPG && rank == 0)
+        std::cerr << "WARNING: --rc-blend with --pspg stacks two pressure stabilizations of"
+                     " different physical dimension; results cannot be attributed.\n";
+    s.rhoCached     = RealType(rho);
+    s.dtCached      = RealType(dt);
+    s.relaxMass   = RealType(relaxMass);
+    s.outletBeta  = RealType(outletBeta);
+    s.outlet_check_jacobian = outlet_channel_check;
+    s.outletPRef  = RealType(outletPRef);
+    s.outlet_max_corrections = outlet_max_corrections;
+    s.outlet_relative_tolerance = RealType(outlet_rtol);
+    s.outlet_divergence_tolerance = RealType(outlet_div_tol);
+    s.outlet_flux_tolerance = RealType(outlet_flux_tol);
+    s.outlet_max_damping = RealType(outlet_max_damping);
+    s.relaxU      = RealType(relaxU);
     s.usePSPG     = usePSPG;       // implicit PSPG (tau*L in DDT operator)
     s.pspgTau     = RealType(pspgTau);
     // Correct through-flow config: mass-conserving outlet + opening-flux-source ON
@@ -765,8 +920,12 @@ int main(int argc, char** argv)
                          thrust::device_pointer_cast(d_own.data() + d_own.size()),
                          hostOwnFA.begin());
         }
-        auto faceAreaVec = [&](const std::string& nm, double out[3]) -> double {
-            double nx = 0, ny = 0, nz = 0;
+        // Returns |sum_f A_f|. scalarOut, when given, receives sum_f |A_f| -- the two differ on any
+        // patch whose facet normals are not aligned, and the norm can be ~0 on a patch with real
+        // area (a bent or folded outlet). Gate setup on the SCALAR one.
+        auto faceAreaVec = [&](const std::string& nm, double out[3],
+                               double* scalarOut = nullptr) -> double {
+            double nx = 0, ny = 0, nz = 0, sa = 0;
             auto tit = ss.triangleCoordsByName.find(nm);
             if (tit != ss.triangleCoordsByName.end())
             {
@@ -785,13 +944,17 @@ int main(int argc, char** argv)
                     const auto& C = tit->second[f + 2];
                     double e1x = B[0]-A[0], e1y = B[1]-A[1], e1z = B[2]-A[2];
                     double e2x = C[0]-A[0], e2y = C[1]-A[1], e2z = C[2]-A[2];
-                    nx += 0.5*(e1y*e2z - e1z*e2y);
-                    ny += 0.5*(e1z*e2x - e1x*e2z);
-                    nz += 0.5*(e1x*e2y - e1y*e2x);
+                    const double fx = 0.5*(e1y*e2z - e1z*e2y);
+                    const double fy = 0.5*(e1z*e2x - e1x*e2z);
+                    const double fz = 0.5*(e1x*e2y - e1y*e2x);
+                    nx += fx; ny += fy; nz += fz;
+                    sa += std::sqrt(fx*fx + fy*fy + fz*fz);
                 }
             }
-            double l[3] = {nx, ny, nz};
-            MPI_Allreduce(l, out, 3, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+            double l[4] = {nx, ny, nz, sa}, g[4] = {0, 0, 0, 0};
+            MPI_Allreduce(l, g, 4, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+            out[0] = g[0]; out[1] = g[1]; out[2] = g[2];
+            if (scalarOut) *scalarOut = g[3];
             return std::sqrt(out[0]*out[0] + out[1]*out[1] + out[2]*out[2]);
         };
 
@@ -802,15 +965,20 @@ int main(int argc, char** argv)
         // its share of the opening area; the direction is outward (Exodus winding).
         // Reused by the inlet per-node normals, the inlet flux source, and the
         // through-flow diagnostic so the geometry is computed one consistent way.
+        // outS accumulates the SCALAR area sum_f |A_f|/3, which the average-pressure outlet mean
+        // needs. |sum_f A_f/3| is a different number whenever the facet normals are not aligned.
         auto perNodeAreaVec = [&](const std::string& nm,
                                   std::vector<RealType>& outX,
                                   std::vector<RealType>& outY,
-                                  std::vector<RealType>& outZ)
+                                  std::vector<RealType>& outZ,
+                                  cstone::DeviceVector<RealType>* dOutS = nullptr)
         {
             const size_t nNodes = amr.domain().getNodeCount();
             outX.assign(nNodes, RealType(0));
             outY.assign(nNodes, RealType(0));
             outZ.assign(nNodes, RealType(0));
+            std::vector<RealType> hS;
+            if (dOutS) hS.assign(nNodes, RealType(0));
             auto tit = ss.triangleCoordsByName.find(nm);
             if (tit != ss.triangleCoordsByName.end())
             {
@@ -836,6 +1004,7 @@ int main(int argc, char** argv)
                         outX[li] += RealType(ax / 3.0);
                         outY[li] += RealType(ay / 3.0);
                         outZ[li] += RealType(az / 3.0);
+                        if (dOutS) hS[li] += RealType(std::sqrt(ax*ax + ay*ay + az*az) / 3.0);
                     }
                 }
             }
@@ -852,11 +1021,20 @@ int main(int argc, char** argv)
             cudaMemcpy(outX.data(), dX.data(), nNodes*sizeof(RealType), cudaMemcpyDeviceToHost);
             cudaMemcpy(outY.data(), dY.data(), nNodes*sizeof(RealType), cudaMemcpyDeviceToHost);
             cudaMemcpy(outZ.data(), dZ.data(), nNodes*sizeof(RealType), cudaMemcpyDeviceToHost);
+            if (dOutS)
+            {
+                // Reverse-add then publish, and LEAVE IT ON DEVICE -- no reader needs it on host.
+                dOutS->resize(nNodes);
+                cudaMemcpy(dOutS->data(), hS.data(), nNodes*sizeof(RealType), cudaMemcpyHostToDevice);
+                amr.domain().reverseExchangeNodeHaloAdd(*dOutS);
+                amr.domain().exchangeNodeHalo(*dOutS);
+            }
         };
 
         double aIn[3], aOut[3];
-        double areaIn  = faceAreaVec(inletSS,  aIn);
-        double areaOut = faceAreaVec(outletSS, aOut);
+        double scalarAreaIn = 0.0, scalarAreaOut = 0.0;
+        double areaIn  = faceAreaVec(inletSS,  aIn,  &scalarAreaIn);
+        double areaOut = faceAreaVec(outletSS, aOut, &scalarAreaOut);
         qIn = double(inletU) * areaIn;   // prescribed inflow for the through-flow diagnostic
 
         // Inlet velocity along the INWARD normal (-outward), magnitude Uinf.
@@ -934,11 +1112,16 @@ int main(int argc, char** argv)
 
         // Per-node OUTWARD outlet area-vectors for the through-flow diagnostic
         // (Q_out = sum_owned u.areaVec). Always available for the pump print.
-        if (areaOut > 1e-30)
+        // Gate on the SCALAR area: a patch whose facet normals cancel has |sum A_f| ~ 0 yet real
+        // area, and gating on the norm would skip its setup entirely.
+        if (scalarAreaOut > 1e-30)
         {
             const size_t nNodes = amr.domain().getNodeCount();
             std::vector<RealType> h_outAx, h_outAy, h_outAz;
-            perNodeAreaVec(outletSS, h_outAx, h_outAy, h_outAz);
+            s.d_outletAreaScalar.resize(nNodes);
+            // The scalar stays on device: perNodeAreaVec halo-completes it there and nothing on
+            // the host needs it, so the D2H/H2D round-trip the vector components take is skipped.
+            perNodeAreaVec(outletSS, h_outAx, h_outAy, h_outAz, &s.d_outletAreaScalar);
             s.d_outletAreaVecX.resize(nNodes);
             s.d_outletAreaVecY.resize(nNodes);
             s.d_outletAreaVecZ.resize(nNodes);
@@ -981,12 +1164,20 @@ int main(int argc, char** argv)
         // source below cannot do because there is no prescribed velocity to use.
         // Same once-per-face owner gate and same OUTWARD winding as
         // perNodeAreaVec, so the geometry matches the flux weights exactly.
-        if (s.useFemProjection)
+        // Collected UNCONDITIONALLY: these are pure geometry, and the boundary mass-flux
+        // diagnostic needs them on every path. Uploading them cannot switch the weak-divergence
+        // surface term on, because femOpeningSurfaceActive gates on s.useFemProjection itself,
+        // not on the arrays being non-empty.
         {
             const size_t nNodes = amr.domain().getNodeCount();
             std::vector<int> triNode;
             std::vector<RealType> triAx, triAy, triAz;
-            auto collectOpeningFacets = [&](const std::string& nm)
+            std::vector<int> pressure_tri_node;
+            std::vector<RealType> pressure_tri_ax, pressure_tri_ay, pressure_tri_az;
+            // Which opening each facet came from: their pressure outlet carries the Rhie-Chow
+            // term, their velocity inlet does not (flowModel.cpp:8418 vs :7181).
+            std::vector<uint8_t> triIsOut;
+            auto collectOpeningFacets = [&](const std::string& nm, bool isOutlet)
             {
                 auto tit = ss.triangleCoordsByName.find(nm);
                 if (tit == ss.triangleCoordsByName.end()) return;
@@ -995,24 +1186,44 @@ int main(int argc, char** argv)
                 for (size_t f = 0; f + 2 < tit->second.size(); f += 3)
                 {
                     int la = triLocal[f];
-                    if (la < 0 || hostOwnFA[la] != 1) continue;   // count once: owner of first node
+                    const bool unique_owner = la >= 0 && size_t(la) < nNodes && hostOwnFA[la] == 1;
+                    bool owns_pressure_row = false;
+                    if (isOutlet && s.outletBeta >= RealType(0))
+                        for (int j = 0; j < 3; ++j)
+                        {
+                            const int node = triLocal[f + j];
+                            owns_pressure_row |= node >= 0 && size_t(node) < nNodes && hostOwnFA[node] == 1;
+                        }
+                    if (!unique_owner && !owns_pressure_row) continue;
                     const auto& A = tit->second[f];
                     const auto& B = tit->second[f + 1];
                     const auto& C = tit->second[f + 2];
                     double e1x = B[0]-A[0], e1y = B[1]-A[1], e1z = B[2]-A[2];
                     double e2x = C[0]-A[0], e2y = C[1]-A[1], e2z = C[2]-A[2];
-                    triAx.push_back(RealType(0.5*(e1y*e2z - e1z*e2y)));
-                    triAy.push_back(RealType(0.5*(e1z*e2x - e1x*e2z)));
-                    triAz.push_back(RealType(0.5*(e1x*e2y - e1y*e2x)));
+                    const RealType ax = RealType(0.5*(e1y*e2z - e1z*e2y));
+                    const RealType ay = RealType(0.5*(e1z*e2x - e1x*e2z));
+                    const RealType az = RealType(0.5*(e1x*e2y - e1y*e2x));
+                    if (unique_owner)
+                    {
+                        triAx.push_back(ax); triAy.push_back(ay); triAz.push_back(az);
+                        triIsOut.push_back(isOutlet ? uint8_t(1) : uint8_t(0));
+                    }
+                    // Matrix entries stay on the owner of each row; continuity instead reverse-adds.
+                    if (owns_pressure_row)
+                    {
+                        pressure_tri_ax.push_back(ax); pressure_tri_ay.push_back(ay); pressure_tri_az.push_back(az);
+                    }
                     for (int j = 0; j < 3; ++j)
                     {
                         int lj = triLocal[f + j];
-                        triNode.push_back((lj >= 0 && (size_t)lj < nNodes) ? lj : -1);
+                        const int node = (lj >= 0 && (size_t)lj < nNodes) ? lj : -1;
+                        if (unique_owner) triNode.push_back(node);
+                        if (owns_pressure_row) pressure_tri_node.push_back(node);
                     }
                 }
             };
-            collectOpeningFacets(inletSS);
-            collectOpeningFacets(outletSS);
+            collectOpeningFacets(inletSS, false);
+            collectOpeningFacets(outletSS, true);
 
             const size_t nFacets = triAx.size();
             s.d_openingTriNode.resize(triNode.size());
@@ -1030,12 +1241,158 @@ int main(int argc, char** argv)
                 cudaMemcpy(s.d_openingTriAreaZ.data(), triAz.data(),
                            nFacets*sizeof(RealType), cudaMemcpyHostToDevice);
             }
+            // Match every facet to the tet behind it, so the boundary mass flux can use the same
+            // form OpenAccel does. Sorted node triples + a binary search from a kernel over
+            // elements: the facets are a surface, so this is far cheaper than a whole-mesh face
+            // topology, and nothing large moves to the host.
+            if (nFacets > 0)
+            {
+                std::vector<int> tri3(3 * nFacets);
+                for (size_t f = 0; f < nFacets; ++f)
+                {
+                    int a = triNode[3*f], b = triNode[3*f+1], c = triNode[3*f+2];
+                    int t;
+                    if (a > b) { t = a; a = b; b = t; }
+                    if (b > c) { t = b; b = c; c = t; }
+                    if (a > b) { t = a; a = b; b = t; }
+                    tri3[3*f] = a; tri3[3*f+1] = b; tri3[3*f+2] = c;
+                }
+                std::vector<int> perm(nFacets);
+                for (size_t f = 0; f < nFacets; ++f) perm[f] = int(f);
+                std::sort(perm.begin(), perm.end(), [&](int x, int y) {
+                    for (int j = 0; j < 3; ++j)
+                        if (tri3[3*x+j] != tri3[3*y+j]) return tri3[3*x+j] < tri3[3*y+j];
+                    return false;
+                });
+                std::vector<int> flat(3 * nFacets);
+                for (size_t r = 0; r < nFacets; ++r)
+                    for (int j = 0; j < 3; ++j) flat[3*r+j] = tri3[3*size_t(perm[r])+j];
+
+                cstone::DeviceVector<int> d_sortedTri(3 * nFacets), d_triPerm(nFacets);
+                cudaMemcpy(d_sortedTri.data(), flat.data(), flat.size()*sizeof(int), cudaMemcpyHostToDevice);
+                cudaMemcpy(d_triPerm.data(), perm.data(), perm.size()*sizeof(int), cudaMemcpyHostToDevice);
+
+                s.d_openingTriElem.resize(nFacets);
+                s.d_openingTriOpp.resize(nFacets);
+                s.d_openingTriIsOutlet.resize(nFacets);
+                // 0xFF bytes == -1 for int: "unresolved".
+                cudaMemset(s.d_openingTriElem.data(), 0xFF, nFacets*sizeof(int));
+                cudaMemset(s.d_openingTriOpp.data(),  0xFF, nFacets*sizeof(int));
+                cudaMemcpy(s.d_openingTriIsOutlet.data(), triIsOut.data(),
+                           nFacets*sizeof(uint8_t), cudaMemcpyHostToDevice);
+
+                const auto&  d_connF = amr.domain().getElementToNodeConnectivity();
+                auto         cpF     = connPtrs<TetTag, KeyType>(d_connF);
+                const size_t nElemF  = amr.domain().getElementCount();
+                const int    blkF    = 256;
+                const int    nBF     = int((nElemF + blkF - 1) / blkF);
+                if (nBF > 0)
+                {
+                    resolveOpeningFacetElementsKernel<KeyType><<<nBF, blkF>>>(
+                        cpF[0], cpF[1], cpF[2], cpF[3],
+                        d_sortedTri.data(), d_triPerm.data(), int(nFacets),
+                        s.d_openingTriElem.data(), s.d_openingTriOpp.data(), nElemF);
+                    cudaDeviceSynchronize();
+                }
+            }
+            if (s.outletBeta >= RealType(0))
+            {
+                const size_t pressure_facets = pressure_tri_ax.size();
+                s.d_pressure_tri_node.resize(pressure_tri_node.size());
+                s.d_pressure_tri_area_x.resize(pressure_facets);
+                s.d_pressure_tri_area_y.resize(pressure_facets);
+                s.d_pressure_tri_area_z.resize(pressure_facets);
+                s.d_pressure_tri_element.resize(pressure_facets);
+                s.d_pressure_tri_opposite.resize(pressure_facets);
+                auto check_pressure_setup_cuda = [](cudaError_t error)
+                {
+                    if (error != cudaSuccess)
+                    {
+                        std::cerr << "ERROR: outlet matrix facet setup: " << cudaGetErrorString(error) << "\n";
+                        MPI_Abort(MPI_COMM_WORLD, 1);
+                    }
+                };
+                if (pressure_facets > 0)
+                {
+                    check_pressure_setup_cuda(cudaMemcpy(s.d_pressure_tri_node.data(), pressure_tri_node.data(),
+                        pressure_tri_node.size() * sizeof(int), cudaMemcpyHostToDevice));
+                    check_pressure_setup_cuda(cudaMemcpy(s.d_pressure_tri_area_x.data(), pressure_tri_ax.data(),
+                        pressure_facets * sizeof(RealType), cudaMemcpyHostToDevice));
+                    check_pressure_setup_cuda(cudaMemcpy(s.d_pressure_tri_area_y.data(), pressure_tri_ay.data(),
+                        pressure_facets * sizeof(RealType), cudaMemcpyHostToDevice));
+                    check_pressure_setup_cuda(cudaMemcpy(s.d_pressure_tri_area_z.data(), pressure_tri_az.data(),
+                        pressure_facets * sizeof(RealType), cudaMemcpyHostToDevice));
+                    check_pressure_setup_cuda(cudaMemset(s.d_pressure_tri_element.data(), 0xFF,
+                                                         pressure_facets * sizeof(int)));
+                    check_pressure_setup_cuda(cudaMemset(s.d_pressure_tri_opposite.data(), 0xFF,
+                                                         pressure_facets * sizeof(int)));
+                    std::vector<std::array<int, 3>> keys(pressure_facets);
+                    std::vector<int> permutation(pressure_facets), sorted(3 * pressure_facets);
+                    for (size_t f = 0; f < pressure_facets; ++f)
+                    {
+                        for (int j = 0; j < 3; ++j) keys[f][j] = pressure_tri_node[3 * f + j];
+                        std::sort(keys[f].begin(), keys[f].end());
+                        permutation[f] = int(f);
+                    }
+                    std::sort(permutation.begin(), permutation.end(),
+                              [&](int a, int b) { return keys[a] < keys[b]; });
+                    for (size_t f = 0; f < pressure_facets; ++f)
+                        for (int j = 0; j < 3; ++j) sorted[3 * f + j] = keys[permutation[f]][j];
+                    cstone::DeviceVector<int> d_sorted(3 * pressure_facets), d_permutation(pressure_facets);
+                    check_pressure_setup_cuda(cudaMemcpy(d_sorted.data(), sorted.data(),
+                        sorted.size() * sizeof(int), cudaMemcpyHostToDevice));
+                    check_pressure_setup_cuda(cudaMemcpy(d_permutation.data(), permutation.data(),
+                        permutation.size() * sizeof(int), cudaMemcpyHostToDevice));
+                    const auto cp = connPtrs<TetTag, KeyType>(amr.domain().getElementToNodeConnectivity());
+                    const size_t elements = amr.domain().getElementCount();
+                    if (elements > 0)
+                    {
+                        const int blocks = int((elements + 255) / 256);
+                        resolveOpeningFacetElementsKernel<KeyType><<<blocks, 256>>>(
+                            cp[0], cp[1], cp[2], cp[3], d_sorted.data(), d_permutation.data(),
+                            int(pressure_facets), s.d_pressure_tri_element.data(), s.d_pressure_tri_opposite.data(), elements);
+                        check_pressure_setup_cuda(cudaGetLastError());
+                        check_pressure_setup_cuda(cudaDeviceSynchronize());
+                    }
+                }
+                // Empty-facet ranks still join the check. Missing halo closure must fail, not drop rows.
+                const int* element = s.d_pressure_tri_element.data();
+                const int* opposite = s.d_pressure_tri_opposite.data();
+                const int* nodes = s.d_pressure_tri_node.data();
+                int invalid = thrust::count_if(thrust::device,
+                    thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(pressure_facets),
+                    [element, opposite, nodes] __device__(size_t f) {
+                        return element[f] < 0 || opposite[f] < 0 || nodes[3 * f] < 0
+                            || nodes[3 * f + 1] < 0 || nodes[3 * f + 2] < 0;
+                    }) > 0;
+                int invalid_global = 0;
+                MPI_Allreduce(&invalid, &invalid_global, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+                if (invalid_global)
+                {
+                    if (rank == 0)
+                        std::cerr << "ERROR: outlet matrix facets need complete owner-row halo connectivity\n";
+                    MPI_Abort(MPI_COMM_WORLD, 1);
+                }
+            }
+            // OUTSIDE the nFacets>0 guard. A rank can legitimately own no opening facets (facets go
+            // to the owner of their first node), and skipping this collective there would pair it
+            // with the globalFacets reduction below -- mismatched collectives, so a hang or a
+            // silently wrong answer. Same defect as the MARS_OFS_DBG deadlock in c0d9860.
+            const long long unresolved  = unresolvedOpeningFacets<KeyType, RealType, TetTag>(s);
+            long long       gUnresolved = 0;
+            MPI_Allreduce(&unresolved, &gUnresolved, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+            if (rank == 0 && gUnresolved > 0)
+                std::cout << "    opening-facets: " << gUnresolved
+                          << " unmatched to an element -> bare advective flux there\n";
+
             long long localFacets = (long long)nFacets, globalFacets = 0;
             MPI_Allreduce(&localFacets, &globalFacets, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
             // Mirror the solver's femOpeningSurfaceActive so the line does not
             // claim a term that will not fire.
             const char* surfaceOff =
-                s.useOpeningFluxSource
+                !s.useFemProjection
+                    ? "  [geometry only: the weak-divergence surface term needs --pressure-k]"
+                : s.useOpeningFluxSource
                     ? "  [INACTIVE: --opening-flux-source selects the external source instead]"
                 : std::getenv("MARS_FEMGRAM_SOLVE")
                     ? "  [INACTIVE: MARS_FEMGRAM_SOLVE solves D M^-1 D^T, which has no boundary rows]"
@@ -1228,6 +1585,22 @@ int main(int argc, char** argv)
 
     setupNSStepper<KeyType, RealType, TetTag>(s, RealType(nu), RealType(dt),
                                               CvfemKernelVariant::Tensor);
+    OutletChannelCheck<KeyType, RealType> channel_check;
+    channel_check.opening_area = outlet_channel_opening_width*outlet_channel_opening_width;
+    if (outlet_channel_check)
+    {
+        int empty = s.d_openingTriAreaX.empty() ? 1 : 0, empty_ranks = 0;
+        MPI_Allreduce(&empty, &empty_ranks, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+        require_outlet_correction(s, !outlet_channel_require_empty || empty_ranks > 0,
+                                 "public coverage gate: no empty-opening rank exercised");
+        if (rank == 0)
+            std::cout << std::setprecision(16) << "[outlet-channel-config] ranks=" << numRanks
+                << " steps=" << numSteps << " dt=" << dt << " nu=" << nu << " rho=" << rho
+                << " inlet=" << inletU << " ramp_steps=" << sourceRampSteps
+                << " beta=" << outletBeta << " p_ref=" << outletPRef
+                << " opening_area=" << channel_check.opening_area << " cut_check=1"
+                << " empty_opening_ranks=" << empty_ranks << '\n';
+    }
 
     // -------- VTU output --------
     std::unique_ptr<fem::VTUParallelWriter<KeyType, RealType, TetTag>> vw;
@@ -1318,6 +1691,8 @@ int main(int argc, char** argv)
     double tFlow = (inletU > 0 && Lscale > 0) ? (Lscale / double(inletU)) : 1.0;
     double prevURms = 0.0;
     int    steadyHits = 0;      // consecutive reports under steadyTol
+    int    divergeHits = 0;     // consecutive reports with a non-finite state or a failed solve
+    bool   divergeStop = false;
     int    stepsRun   = numSteps;  // < numSteps if --steady-tol trips
     bool   steadyDone = false;  // set in the report block, acted on at the loop tail
 
@@ -1419,11 +1794,21 @@ int main(int argc, char** argv)
                 RealType(rho), s.d_pPhiTargetDof.data(), s.numOwnedDofs);
             cudaDeviceSynchronize();
         }
+        // Lagged: refresh the outlet trace from the previous step's pressure, then hold it frozen
+        // for this whole step so the inner pressure Jacobian sees delta p_trace = 0.
+        updateOutletPressureTrace<KeyType, RealType, TetTag>(s);
+        if (outlet_channel_check) channel_check.capture(s);
         runNsStep<KeyType, RealType, TetTag>(s, RealType(dt), RealType(nu), RealType(rho));
+        if (outlet_channel_check) channel_check.verify(s, step, RealType(dt));
         simTime += dt;
 
         if (step % 10 == 0 || step == numSteps)
         {
+            if (outletBeta >= 0.0 && rank == 0)
+                std::cout << "  [outlet-continuity] corrections=" << s.last_outlet_corrections
+                          << " damping=" << s.last_outlet_damping
+                          << " rms=" << s.last_outlet_residual_rms << " max=" << s.last_outlet_residual_max
+                          << " [1/s] net=" << s.last_outlet_balance << " [volume/s]\n";
             RealType uN = computeWeightedL2Norm<KeyType, RealType, TetTag>(s, s.d_u);
             RealType pN = computeWeightedL2Norm<KeyType, RealType, TetTag>(s, s.d_p);
             // Scale-independent: RMS velocity ~ O(U), non-dim divergence.
@@ -1434,12 +1819,25 @@ int main(int argc, char** argv)
             // uRms comes from an MPI_Allreduce, so it is bit-identical on every rank:
             // each rank reaches the same verdict and they all leave the loop together.
             // Require 3 straight hits -- a single small step can just be a stall.
-            if (steadyTol > 0.0 && uRms > 0.0)
+            // A DIVERGED run also stops changing: once u_rms saturates at ~1e82 the relative
+            // residual goes tiny and this would report "[steady]" on a dead solution (seen
+            // 2026-09-04, a VMS run that blew up was declared steady at step 80). So require the
+            // state to be finite AND the velocity solve to have actually converged -- s.lastUIters
+            // is negative when it gave up.
+            const bool healthy = std::isfinite(uRms) && std::isfinite(dURms) && s.lastUIters >= 0;
+            if (steadyTol > 0.0 && uRms > 0.0 && healthy)
             {
                 const double relResid = std::abs(dURms) / uRms;
                 steadyHits = (relResid < steadyTol) ? steadyHits + 1 : 0;
                 if (steadyHits >= 3) steadyDone = true;
             }
+            else if (!healthy)
+                steadyHits = 0;
+            // Not-steady is not the same as keep-going. A diverged run stays unhealthy forever, so
+            // without this it burns the entire wall clock solving nothing -- 20000 steps of
+            // cg_uvw=-2 (seen 2026-09-04). Three consecutive bad reports is past any transient.
+            divergeHits = healthy ? 0 : divergeHits + 1;
+            if (divergeHits >= 3) divergeStop = true;
             // Peak INTERIOR velocity (excludes the pinned inlet/outlet/wall DOFs):
             // does the inlet jet propagate into the domain? u_max/U ~ O(1) near
             // the jet means flow IS entering even if the volume-average u_rms is
@@ -1476,6 +1874,22 @@ int main(int argc, char** argv)
             // MARS_CUT_AXIS=x|y|z forces one axis; =all probes all three (9 numbers) so
             // the separating plane cannot be missed. Unset = the original auto behaviour.
             double qc25 = 0.0, qc50 = 0.0, qc75 = 0.0;
+            // Raw velocity flux and stabilized continuity flux are distinct. Both sums use
+            // the signed graph cut; only the stabilized one can close the VMS continuity rows.
+            double qr25 = 0.0, qr50 = 0.0, qr75 = 0.0;
+            bool   haveRcCut = false;
+            // READ the step's frozen context. Under --vms-stab the assembly built it, so the probes
+            // describe exactly the state the solve used; rebuilding here would sample p after the
+            // corrector. The legacy --rhie-chow path does not populate it, so that one still builds
+            // a local copy and its probes carry the post-corrector state.
+            VmsFluxCtx<RealType> localCtx;
+            const VmsFluxCtx<RealType>* rcCtxPtr = nullptr;
+            if (s.vmsCtx.valid) { rcCtxPtr = &s.vmsCtx; }
+            else if (useVMSStab || useRhieChow)
+            {
+                buildVmsFluxCtx<KeyType, RealType, TetTag>(s, RealType(dt), rho, localCtx);
+                if (localCtx.valid) rcCtxPtr = &localCtx;
+            }
             int cutAxis = 0;
             double qcAll[3][3] = {{0,0,0},{0,0,0},{0,0,0}};
             bool cutAllAxes = false;
@@ -1508,8 +1922,26 @@ int main(int argc, char** argv)
                     qc25 = double(interiorCutFlux<KeyType, RealType, TetTag>(s, cutAxis, RealType(lo + 0.25*span)));
                     qc50 = double(interiorCutFlux<KeyType, RealType, TetTag>(s, cutAxis, RealType(lo + 0.50*span)));
                     qc75 = double(interiorCutFlux<KeyType, RealType, TetTag>(s, cutAxis, RealType(lo + 0.75*span)));
+                    // Only on the single-axis path: MARS_CUT_AXIS=all exists to FIND the separating
+                    // axis, and 18 numbers would not help that.
+                    if (rcCtxPtr)
+                    {
+                        qr25 = double(interiorCutFlux<KeyType, RealType, TetTag>(s, cutAxis, RealType(lo + 0.25*span), rcCtxPtr));
+                        qr50 = double(interiorCutFlux<KeyType, RealType, TetTag>(s, cutAxis, RealType(lo + 0.50*span), rcCtxPtr));
+                        qr75 = double(interiorCutFlux<KeyType, RealType, TetTag>(s, cutAxis, RealType(lo + 0.75*span), rcCtxPtr));
+                        haveRcCut = true;
+                    }
                 }
             }
+            // OpenAccel's continuity metric. Collective -> every rank calls it.
+            // Reported TWICE, for the same reason div and divRC both are: the bare advective
+            // boundary flux, and the stabilized one. Passing a null ctx disables the Rhie-Chow
+            // term inside the kernel, so the two differ by exactly that term.
+            double mbIn = 0.0, mbOut = 0.0, mbInRc = 0.0, mbOutRc = 0.0;
+            boundaryMassBalance<KeyType, RealType, TetTag>(s, nullptr, mbIn, mbOut);
+            if (rcCtxPtr)
+                boundaryMassBalance<KeyType, RealType, TetTag>(s, rcCtxPtr, mbInRc, mbOutRc);
+
             double divND = (inletU > 0 && Lscale > 0)
                            ? double(s.lastDivMax) * Lscale / inletU : double(s.lastDivMax);
             // RC-flux divergence (the operator RC actually zeros); only meaningful
@@ -1529,8 +1961,12 @@ int main(int argc, char** argv)
                           << "  uMax/U=" << std::setprecision(2) << (inletU > 0 ? uMax/double(inletU) : uMax)
                           << "  d(u_rms)=" << std::scientific << std::setprecision(2) << dURms
                           << "  div*L/U=" << std::fixed << std::setprecision(2) << divND;
-                if (useRhieChow)
-                    std::cout << "  divRC*L/U=" << std::fixed << std::setprecision(2) << divRCnd;
+                if (useRhieChow || useVMSStab)
+                    std::cout << "  divRC*L/U=" << std::fixed << std::setprecision(2) << divRCnd
+                              << "  divRCrms*L/U=" << std::fixed << std::setprecision(2)
+                              << ((inletU > 0 && Lscale > 0)
+                                    ? double(s.lastDivRCRms) * Lscale / inletU
+                                    : double(s.lastDivRCRms));
                 if (adaptDt)
                     std::cout << "  dt=" << std::scientific << std::setprecision(2) << dt;
                 std::cout << "  cg_p=" << s.lastPressureIters
@@ -1543,7 +1979,23 @@ int main(int argc, char** argv)
                               << "  Q_out=" << qOut
                               << "  ratio=" << std::fixed << std::setprecision(3)
                               << (std::abs(qIn) > 0 ? qOut / qIn : 0.0)
-                              << "  (prescribed-BC check, NOT through-flow)"
+                              << (useVMSStab || useRhieChow
+                                  ? "  (RAW u.A on the side set, NOT the stabilized flux -- see [interior-fluxRC])"
+                                  : "  (prescribed-BC check, NOT through-flow)")
+                              << "\n" << std::defaultfloat;
+                if (mbIn < 0.0)
+                    std::cout << "  [mass-balance] in=" << std::scientific << std::setprecision(3) << mbIn
+                              << "  out=" << mbOut
+                              << "  imbalance=" << std::fixed << std::setprecision(3)
+                              << ((mbIn + mbOut) / mbIn * 100.0)
+                              << " %  (bare u.A per facet; cross-check against Q_in/Q_out above)"
+                              << "\n" << std::defaultfloat;
+                if (mbInRc < 0.0)
+                    std::cout << "  [mass-balanceRC] in=" << std::scientific << std::setprecision(3) << mbInRc
+                              << "  out=" << mbOutRc
+                              << "  imbalance=" << std::fixed << std::setprecision(3)
+                              << ((mbInRc + mbOutRc) / mbInRc * 100.0)
+                              << " %  (OpenAccel's metric on the stabilized flux)"
                               << "\n" << std::defaultfloat;
                 if (!cavityMode)
                 {
@@ -1560,17 +2012,35 @@ int main(int argc, char** argv)
                                      " is the one separating inlet from outlet)\n" << std::defaultfloat;
                     }
                     else
+                    {
                     std::cout << "  [interior-flux] axis=" << axc[cutAxis]
                               << "  cut@25%=" << std::scientific << std::setprecision(3) << qc25
                               << "  cut@50%=" << qc50
                               << "  cut@75%=" << qc75
-                              << "  (solved interior; ~equal+nonzero = real through-flow)"
+                              << "  (raw velocity flux through signed control-volume cuts)"
                               << "\n" << std::defaultfloat;
+                    if (haveRcCut)
+                        std::cout << "  [interior-fluxRC] axis=" << axc[cutAxis]
+                                  << "  cut@25%=" << std::scientific << std::setprecision(3) << qr25
+                                  << "  cut@50%=" << qr50
+                                  << "  cut@75%=" << qr75
+                                  << "  (stabilized continuity flux through signed control-volume cuts)"
+                                  << "\n" << std::defaultfloat;
+                    }
                 }
             }
         }
         if (!vtuPrefix.empty() && (step % vtuEvery == 0 || step == numSteps || steadyDone))
             writeFrame(step, simTime);
+        if (divergeStop)
+        {
+            if (rank == 0)
+                std::cout << "\n[diverged] non-finite state or failed velocity solve for 3 straight"
+                             " reports -- stopping at step " << step << " of " << numSteps
+                          << ". This is a FAILURE, not a converged result.\n";
+            stepsRun = step;
+            break;
+        }
         if (steadyDone)
         {
             if (rank == 0)
@@ -1582,6 +2052,12 @@ int main(int argc, char** argv)
         }
     }
     auto wallEnd = std::chrono::high_resolution_clock::now();
+    if (outlet_channel_check)
+    {
+        require_outlet_correction(s, !divergeStop && stepsRun == numSteps,
+                                 "channel gate: incomplete time loop");
+        if (rank == 0) std::cout << "PASS: public outlet channel integration steps=" << numSteps << '\n';
+    }
     double wallMs = std::chrono::duration<double, std::milli>(wallEnd - wallStart).count();
     if (rank == 0)
         std::cout << "\nPump run complete: " << stepsRun << " steps, "

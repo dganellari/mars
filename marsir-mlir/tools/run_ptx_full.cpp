@@ -15,10 +15,13 @@
 // Run:    ./run_ptx_full ../generated/full_apply_p3_sm90.ptx 1048576 3
 
 #include <dlfcn.h>
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <vector>
+
+#include "knaus_oracle.h"
 
 typedef int CUresult;
 typedef int CUdevice;
@@ -58,54 +61,6 @@ static void* must_sym(void* lib, const char* name)
     void* p = dlsym(lib, name);
     if (!p) { fprintf(stderr, "missing driver symbol %s\n", name); exit(1); }
     return p;
-}
-
-// CPU port of the Knaus Alg-2 apply (applyHoCvfemElement) for one element.
-static void oracle(int p, const double* u, const double* Bt, const double* Dt,
-                   const double* Dm, const double* W, const double* G,
-                   double* y)
-{
-    const int n = p + 1, nn = n * n;
-    auto idx = [&](int d, int nrm, int t1, int t2) {
-        if (d == 0) return nrm * nn + t1 * n + t2;
-        if (d == 1) return t1 * nn + nrm * n + t2;
-        return t1 * nn + t2 * n + nrm;
-    };
-    for (int i = 0; i < n * nn; ++i) y[i] = 0.0;
-    std::vector<double> interp(nn), deriv(nn), flux(nn), tmp(nn), intf(nn);
-    for (int d = 0; d < 3; ++d)
-        for (int l = 0; l < p; ++l) {
-            for (int s = 0; s < n; ++s)
-                for (int r = 0; r < n; ++r) {
-                    double bi = 0, di = 0;
-                    for (int q = 0; q < n; ++q) {
-                        bi += Bt[l * n + q] * u[idx(d, q, s, r)];
-                        di += Dt[l * n + q] * u[idx(d, q, s, r)];
-                    }
-                    interp[s * n + r] = bi; deriv[s * n + r] = di;
-                }
-            for (int s = 0; s < n; ++s)
-                for (int r = 0; r < n; ++r) {
-                    double dt2 = 0, dt1 = 0;
-                    for (int q = 0; q < n; ++q) dt2 += Dm[r * n + q] * interp[s * n + q];
-                    for (int q = 0; q < n; ++q) dt1 += Dm[s * n + q] * interp[q * n + r];
-                    const double* g = G + (((d * p + l) * n + s) * n + r) * 3;
-                    flux[s * n + r] = g[2] * deriv[s * n + r] + g[0] * dt2 + g[1] * dt1;
-                }
-            for (int s = 0; s < n; ++s)
-                for (int r = 0; r < n; ++r) { double v = 0;
-                    for (int q = 0; q < n; ++q) v += W[r * n + q] * flux[s * n + q];
-                    tmp[s * n + r] = v; }
-            for (int s = 0; s < n; ++s)
-                for (int r = 0; r < n; ++r) { double v = 0;
-                    for (int q = 0; q < n; ++q) v += W[s * n + q] * tmp[q * n + r];
-                    intf[s * n + r] = v; }
-            for (int s = 0; s < n; ++s)
-                for (int r = 0; r < n; ++r) {
-                    y[idx(d, l, s, r)]     -= intf[s * n + r];
-                    y[idx(d, l + 1, s, r)] += intf[s * n + r];
-                }
-        }
 }
 
 int main(int argc, char** argv)
@@ -151,28 +106,56 @@ int main(int argc, char** argv)
     CUmodule mod; CK(p_cuModuleLoadData(&mod, ptx.data()));
     CUfunction fn; CK(p_cuModuleGetFunction(&fn, mod, "laplacian_apply_batched_kernel"));
 
-    std::vector<double> hU((size_t)E * n3), hBt((size_t)p * n), hDt((size_t)p * n),
-        hDm((size_t)nn), hW((size_t)nn), hG((size_t)E * gElem);
+    std::vector<double> hBt((size_t)p * n), hDt((size_t)p * n),
+        hDm((size_t)nn), hW((size_t)nn);
     srand(42);
     auto rnd = [] { return 2.0 * rand() / RAND_MAX - 1.0; };
-    for (auto& x : hU) x = rnd();
     for (auto& x : hBt) x = rnd();
     for (auto& x : hDt) x = rnd();
     for (auto& x : hDm) x = rnd();
     for (auto& x : hW) x = rnd();
-    for (auto& x : hG) x = rnd();
+
+    // Per-element U and metric are a deterministic hash of (element, slot, salt)
+    // instead of materialized host arrays. Those mirrors were E*n3 + E*gElem
+    // doubles -- tens of GB at the default E = 2^20 with p = 7 -- and existed only
+    // so the 8 spot-checks below could index them. The host regenerates a single
+    // element on demand instead. Data stays DISTINCT per element, so the gate can
+    // still catch a kernel that reads the wrong one.
+    std::vector<double> elemU((size_t)n3), elemG((size_t)gElem);
+    auto fillElem = [&](long long e) {
+        for (size_t i = 0; i < (size_t)n3; ++i)    elemU[i] = hashVal(e, i, 0u);
+        for (size_t i = 0; i < (size_t)gElem; ++i) elemG[i] = hashVal(e, i, 0x9e37u);
+    };
 
     CUdeviceptr dU, dY, dG, dBt, dDt, dDm, dW;
-    CK(p_cuMemAlloc(&dU, hU.size() * 8));
-    CK(p_cuMemAlloc(&dY, hU.size() * 8));
-    CK(p_cuMemAlloc(&dG, hG.size() * 8));
+    const size_t uBytes = (size_t)E * n3 * 8, gBytes = (size_t)E * gElem * 8;
+    CK(p_cuMemAlloc(&dU, uBytes));
+    CK(p_cuMemAlloc(&dY, uBytes));
+    CK(p_cuMemAlloc(&dG, gBytes));
     CK(p_cuMemAlloc(&dBt, hBt.size() * 8));
     CK(p_cuMemAlloc(&dDt, hDt.size() * 8));
     CK(p_cuMemAlloc(&dDm, hDm.size() * 8));
     CK(p_cuMemAlloc(&dW, hW.size() * 8));
-    CK(p_cuMemcpyHtoD(dU, hU.data(), hU.size() * 8));
-    CK(p_cuMemsetD8(dY, 0, hU.size() * 8));
-    CK(p_cuMemcpyHtoD(dG, hG.data(), hG.size() * 8));
+    {   // Chunked staging: bounded host memory, and O(E/chunk) uploads rather than
+        // the O(E) driver calls a per-element loop would cost.
+        const size_t perElem = (size_t)(n3 + gElem) * 8;
+        size_t chunk = (64u << 20) / (perElem ? perElem : 1);
+        if (chunk == 0) chunk = 1;
+        if (chunk > (size_t)E) chunk = (size_t)E;
+        std::vector<double> sU(chunk * n3), sG(chunk * gElem);
+        for (long long e0 = 0; e0 < E; e0 += (long long)chunk) {
+            const size_t cnt = (size_t)((E - e0) < (long long)chunk ? (E - e0)
+                                                                    : (long long)chunk);
+            for (size_t c = 0; c < cnt; ++c) {
+                fillElem(e0 + (long long)c);
+                std::copy(elemU.begin(), elemU.end(), sU.begin() + c * n3);
+                std::copy(elemG.begin(), elemG.end(), sG.begin() + c * gElem);
+            }
+            CK(p_cuMemcpyHtoD(dU + (size_t)e0 * n3 * 8, sU.data(), cnt * n3 * 8));
+            CK(p_cuMemcpyHtoD(dG + (size_t)e0 * gElem * 8, sG.data(), cnt * gElem * 8));
+        }
+    }
+    CK(p_cuMemsetD8(dY, 0, uBytes));
     CK(p_cuMemcpyHtoD(dBt, hBt.data(), hBt.size() * 8));
     CK(p_cuMemcpyHtoD(dDt, hDt.data(), hDt.size() * 8));
     CK(p_cuMemcpyHtoD(dDm, hDm.data(), hDm.size() * 8));
@@ -181,9 +164,8 @@ int main(int argc, char** argv)
     long long i1 = 1, i0 = 0, itpb = tpb, in = n, inn = nn, iP = p, zero = 0;
     double fzero = 0.0;
     long long uSz[4] = {E, n, n, n}, uSt[4] = {(long long)n3, (long long)nn, n, 1};
-    long long gSz[6] = {E, 3, p, n, n, 3};
-    long long gSt[6] = {gElem, (long long)p * nn * 3, (long long)nn * 3,
-                        (long long)n * 3, 3, 1};
+    long long gSz[6] = {E, 3, p, 3, n, n};   // [dir][face][component][row][col]
+    long long gSt[6] = {gElem, (long long)p * 3 * nn, 3LL * nn, (long long)nn, n, 1};
     long long oSz[2] = {p, n}, oSt[2] = {n, 1};       // Btil/Dtil (P x n)
     long long sSz[2] = {n, n}, sSt[2] = {n, 1};       // D/W (n x n)
     void* args[] = {
@@ -210,8 +192,9 @@ int main(int argc, char** argv)
     for (int probe = 0; probe < 8; ++probe) {
         long long e = (long long)((double)rand() / RAND_MAX * (E - 1));
         CK(p_cuMemcpyDtoH(out.data(), dY + (size_t)e * n3 * 8, n3 * 8));
-        oracle(p, &hU[(size_t)e * n3], hBt.data(), hDt.data(), hDm.data(),
-               hW.data(), &hG[(size_t)e * gElem], ref.data());
+        fillElem(e);
+        oracle(p, elemU.data(), hBt.data(), hDt.data(), hDm.data(),
+               hW.data(), elemG.data(), ref.data());
         for (int i = 0; i < n3; ++i) err = fmax(err, fabs(out[i] - ref[i]));
     }
     printf("FULL operator gate (p=%d, E=%lld, fused 1-kernel): spot max|err| = %.3e  %s\n",

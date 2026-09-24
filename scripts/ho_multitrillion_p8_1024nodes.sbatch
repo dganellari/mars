@@ -4,7 +4,6 @@
 #SBATCH --nodes=1024
 #SBATCH --ntasks-per-node=4
 #SBATCH --time=00:30:00
-#SBATCH --chdir=/capstor/scratch/cscs/gandanie/git/mars/pump
 #SBATCH --output=ho6e12p8_1024_%j.out
 #SBATCH --uenv-passthrough=use
 #
@@ -16,6 +15,8 @@
 #   At 1024 nodes elements/rank halve to 2271^3/4096 = 2.86M -> elemDof ~8.3 GB and the sort
 #   over ~1.46e9 DOF/rank -> numbering peak ~52 GB < 80 GB. The recompute apply (~64 GB at 512)
 #   also halves per rank, so both phases fit comfortably.
+cd "$SCRATCH/git/mars/pump"
+
 export MARS_HO_RECOMPUTE=1          # no d_G: the only path that fits ~6T
 export MARS_NODEHALO_V2=1
 export MARS_GLOBAL_BUCKETSIZE=256   # cstone global-tree Allreduce < 2 GiB (the trillion fix)

@@ -53,6 +53,7 @@
 template<typename RealType>
 __global__ void buildVmsNodalTauKernel(const int* diagPtr, const RealType* valsVel,
                                        const int* nodeToDof, const RealType* massDof,
+                                       RealType rho, RealType tauFallback,
                                        RealType* tauNode, size_t nodeCount, int numOwnedDofs)
 {
     size_t i = blockIdx.x * blockDim.x + threadIdx.x;
@@ -63,7 +64,19 @@ __global__ void buildVmsNodalTauKernel(const int* diagPtr, const RealType* valsV
     int dp = diagPtr[dof];
     if (dp < 0) return;
     RealType aP = valsVel[dp];
-    if (aP > RealType(0)) tauNode[i] = massDof[dof] / aP;
+    // enforceBcMatrixKernel zeroes the row and writes values[dp] = EXACTLY 1 on every
+    // velocity-Dirichlet node, so a_P there is the BC convention rather than a momentum diagonal:
+    // V/1 = V ~ h^3, orders of magnitude off the interior value, at every wall node. The pump is
+    // wall-dominated, so those nodes fall back to the scalar tau instead of a meaningless one.
+    // Detected by the exact 1 rather than a mask because that IS the signature, and a real
+    // diagonal here is ~V/dt ~ 1e-4 -- nowhere near 1.
+    if (aP == RealType(1)) { tauNode[i] = tauFallback; return; }
+    // V/a_P is a TIME here, but pressure enters momentum as (1/rho)*grad p, so the Rhie-Chow
+    // coefficient must be TIME/DENSITY. d_mass is geometric volume (no rho) and the momentum
+    // matrix is kinematic (M/dt + nu*K, no rho), so rho has to be divided in explicitly.
+    // Nalu/OpenAccel get it for free because their a_P ~ rho*V/dt. Without this, tau was ~450x
+    // too large -- a dimensional error, not a mistuning, and the cause of the 1e+147 blowup.
+    if (aP > RealType(0)) tauNode[i] = massDof[dof] / (aP * rho);
 }
 
 template<typename KeyType, typename RealType>
@@ -75,8 +88,17 @@ __global__ void computeDivergenceVMSTetKernel(
     const RealType* nodeX, const RealType* nodeY, const RealType* nodeZ,
     const RealType* areaVecX, const RealType* areaVecY, const RealType* areaVecZ,
     RealType tau,
-    const RealType* tauNode,  // non-null => per-node V/a_P (OpenAccel); null => the scalar tau
-    bool keepSmooth,          // true=full Nalu G-dpdx (blows up on Chorin u**); false=compact -dpdx only (default)
+    const RealType* tauNode,  // non-null => per-node alpha_u*V/a_P (OpenAccel); null => scalar tau
+    bool keepSmooth,          // true = the full Nalu/OpenAccel G-dpdx difference (the default)
+    // OpenAccel under-relaxes the STABILIZED mass flux itself (flowModel.cpp:6265):
+    //   mDot = urf*mDotNew + (1-urf)*mDotOld
+    // Their pump runs relax_mass: 0.3. This is the damping MARS had none of -- the stabilization
+    // is explicit, so without it nothing bounds the step-to-step change in the flux.
+    RealType massURF,
+    RealType* mDotPrev,       // per (element, ip); null disables the blend
+    // Velocity-Dirichlet nodes (per node). At those, u* = qTarget, so the predictor injected NO
+    // pressure gradient there -- adding one back would be a source that was never subtracted.
+    const uint8_t* isVelBc,
     RealType* divAccNode,
     size_t startElem, size_t numLocal)
 {
@@ -135,9 +157,16 @@ __global__ void computeDivergenceVMSTetKernel(
         RealType flow = vfx * Ax + vfy * Ay + vfz * Az;
 
         // Projected nodal gradient interpolated to the ip = 0.5*(G_L + G_R).
-        RealType Gx = RealType(0.5) * (gradPx[iL] + gradPx[iR]);
-        RealType Gy = RealType(0.5) * (gradPy[iL] + gradPy[iR]);
-        RealType Gz = RealType(0.5) * (gradPz[iL] + gradPz[iR]);
+        // The face velocity is 0.5*(u_L + u_R), and an endpoint carries -tau*G only if it was
+        // actually integrated -- a velocity-Dirichlet node was overwritten with qTarget. So the
+        // add-back weights each endpoint by whether it received the gradient, which is exactly
+        // what was subtracted. Nalu does the equivalent by using the prescribed boundary mdot at
+        // boundary-adjacent ips instead of the interior formula.
+        const RealType wL = (isVelBc != nullptr && isVelBc[iL]) ? RealType(0) : RealType(0.5);
+        const RealType wR = (isVelBc != nullptr && isVelBc[iR]) ? RealType(0) : RealType(0.5);
+        RealType Gx = wL * gradPx[iL] + wR * gradPx[iR];
+        RealType Gy = wL * gradPy[iL] + wR * gradPy[iR];
+        RealType Gz = wL * gradPz[iL] + wR * gradPz[iR];
 
         // Stabilization flux. The FULL Nalu term is tau*(G - dp/dx).A. But that
         // KEEPS the smooth +tau*G.A half, and on a Chorin POST-PREDICTOR u**
@@ -159,6 +188,18 @@ __global__ void computeDivergenceVMSTetKernel(
         else
             stab = tauIp * ((-dpdx) * Ax + (-dpdy) * Ay + (-dpdz) * Az);
         flow += stab;
+
+        // Index by k (the LOCAL element), not e (= startElem + k). The area vectors are sized
+        // elementCount so they take e, but this buffer is sized numLocal -- and cornerstone puts
+        // halos BEFORE local elements, so startElem > 0 on any rank with a halo and e would write
+        // past the end. Single rank hid it; 4 ranks corrupted the heap.
+        if (mDotPrev != nullptr)
+        {
+            const size_t off = k * NSCS + ip;
+            if (massURF < RealType(1))
+                flow = massURF * flow + (RealType(1) - massURF) * mDotPrev[off];
+            mDotPrev[off] = flow;
+        }
 
         atomicAdd(&divAccNode[iL], +flow);
         atomicAdd(&divAccNode[iR], -flow);

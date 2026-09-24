@@ -11,9 +11,9 @@ spack:
   - cxxopts
   develop:
     mars:
-      path: /scratch/e1000/gandanie/apps/mars
+      path: /scratch/e1000/$user/apps/mars
       spec: mars@develop
-  view: /scratch/e1000/gandanie/apps/view_rocmars
+  view: /scratch/e1000/$user/apps/view_rocmars
   packages:
     all:
       variants: std=17 amdgpu_target=gfx90a amdgpu_target_sram_ecc=gfx90a target=zen3

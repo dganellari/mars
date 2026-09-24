@@ -108,17 +108,41 @@ int main(int argc, char** argv)
     const size_t totalBytes = (size_t)E * elemDoubles * 8;
 
     std::vector<double> hD(M * K);
-    std::vector<double> hU((size_t)E * elemDoubles);
     srand(42);
     for (auto& v : hD) v = 2.0 * rand() / RAND_MAX - 1.0;
-    for (auto& v : hU) v = 2.0 * rand() / RAND_MAX - 1.0;
+
+    // Element data is a deterministic hash of (element, slot) rather than a
+    // materialized host array. A full host mirror is ~4 GiB at the default
+    // E = 2^20, and it existed only so the 8 spot-checks below could index it;
+    // this way the host can regenerate any single element on demand. Keeping the
+    // data DISTINCT per element matters: broadcasting one element would stop the
+    // gate from catching a kernel that reads the wrong element.
+    auto elemVal = [](long long e, size_t i) -> double {
+        unsigned h = (unsigned)((unsigned long long)e * 2654435761ull +
+                                (unsigned long long)i * 40503ull);
+        h ^= h >> 13; h *= 1274126177u; h ^= h >> 16;
+        return 2.0 * (h / 4294967296.0) - 1.0;
+    };
 
     CUdeviceptr dD, dU, dY;
     CK(p_cuMemAlloc(&dD, M * K * sizeof(double)));
     CK(p_cuMemAlloc(&dU, totalBytes));
     CK(p_cuMemAlloc(&dY, totalBytes));
     CK(p_cuMemcpyHtoD(dD, hD.data(), M * K * sizeof(double)));
-    CK(p_cuMemcpyHtoD(dU, hU.data(), totalBytes));
+    {   // chunked upload: bounded host staging instead of a full mirror
+        const size_t chunkElems =
+            (size_t)1 << 13 < (size_t)E ? (size_t)1 << 13 : (size_t)E;
+        std::vector<double> stage(chunkElems * elemDoubles);
+        for (long long e0 = 0; e0 < E; e0 += (long long)chunkElems) {
+            const size_t cnt = (size_t)((E - e0) < (long long)chunkElems
+                                            ? (E - e0) : (long long)chunkElems);
+            for (size_t c = 0; c < cnt; ++c)
+                for (size_t i = 0; i < elemDoubles; ++i)
+                    stage[c * elemDoubles + i] = elemVal(e0 + (long long)c, i);
+            CK(p_cuMemcpyHtoD(dU + (size_t)e0 * elemDoubles * 8, stage.data(),
+                              cnt * elemDoubles * sizeof(double)));
+        }
+    }
     CK(p_cuMemsetD8(dY, 0, totalBytes));
 
     long long zero = 0;
@@ -164,11 +188,11 @@ int main(int argc, char** argv)
         long long e = (long long)((double)rand() / RAND_MAX * (E - 1));
         CK(p_cuMemcpyDtoH(out.data(), dY + (size_t)e * elemDoubles * 8,
                           elemDoubles * sizeof(double)));
-        const double* u = &hU[(size_t)e * elemDoubles];
         for (int i = 0; i < M; ++i)
             for (int j = 0; j < N; ++j) {
                 double s = 0;
-                for (int p = 0; p < K; ++p) s += hD[i * K + p] * u[p * N + j];
+                for (int p = 0; p < K; ++p)
+                    s += hD[i * K + p] * elemVal(e, (size_t)p * N + j);
                 ref[i * N + j] = s;
             }
         for (size_t i = 0; i < elemDoubles; ++i)

@@ -18,6 +18,8 @@ if(MARS_ENABLE_TESTS)
 
         FetchContent_GetProperties(googletest)
 
+        # Test-only dependency: keep it out of the MARS install tree.
+        set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
         if(NOT googletest_POPULATED)
             FetchContent_MakeAvailable(googletest)
         endif()

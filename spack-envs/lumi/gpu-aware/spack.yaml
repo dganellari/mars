@@ -9,9 +9,9 @@ spack:
   - cxxopts
   develop:
     mars:
-      path: /project/project_465000105/gandanie/mars
+      path: /project/project_465000105/$user/mars
       spec: mars@develop
-  view: /project/project_465000105/gandanie/view/mars
+  view: /project/project_465000105/$user/view/mars
   packages:
     all:
       variants: std=17 amdgpu_target=gfx90a amdgpu_target_sram_ecc=gfx90a
@@ -23,5 +23,5 @@ spack:
   concretizer:
     unify: true
   repos:
-  - /project/project_465000105/gandanie/external/spack-repo
+  - /project/project_465000105/$user/external/spack-repo
 

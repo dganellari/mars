@@ -35,5 +35,15 @@ option(MARS_ENABLE_CXXOPTS "Enable cxxopts" ON)
 # dependency. OFF by default.
 option(MARS_ENABLE_MARSIR "Build the MARSIR generated-kernel parity example (requires UNSTRUCTURED + CUDA)" OFF)
 
-# Unstructured (cornerstone-octree) module
-option(MARS_ENABLE_UNSTRUCTURED "Enable unstructured module" ON)
+# Unstructured (cornerstone-octree) module. Its kernels are CUDA/HIP only, so it defaults ON
+# only in a GPU build; a plain `cmake ..` on a CPU machine then builds the core library.
+if(MARS_ENABLE_CUDA OR MARS_ENABLE_HIP)
+    option(MARS_ENABLE_UNSTRUCTURED "Enable unstructured module (needs CUDA or HIP)" ON)
+else()
+    option(MARS_ENABLE_UNSTRUCTURED "Enable unstructured module (needs CUDA or HIP)" OFF)
+endif()
+if(MARS_ENABLE_UNSTRUCTURED AND NOT (MARS_ENABLE_CUDA OR MARS_ENABLE_HIP))
+    message(FATAL_ERROR
+        "MARS_ENABLE_UNSTRUCTURED needs a GPU build: add -DMARS_ENABLE_CUDA=ON or "
+        "-DMARS_ENABLE_HIP=ON, or set -DMARS_ENABLE_UNSTRUCTURED=OFF for a CPU-only build.")
+endif()

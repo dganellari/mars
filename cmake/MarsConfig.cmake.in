@@ -57,3 +57,15 @@ if (@MARS_ENABLE_CUDA@ AND NOT TARGET cstone_gpu)
 endif()
 
 include("${CMAKE_CURRENT_LIST_DIR}/MarsTargets.cmake")
+
+# The in-tree build links cstone_gpu through BUILD_INTERFACE so that install(EXPORT)
+# can generate, which means the installed interface carries no reference to it.
+# Put it back, now that both the imported target and Mars::* exist.
+if (TARGET cstone_gpu)
+    foreach (_mars_tgt Mars::mars Mars::mars_unstructured)
+        if (TARGET ${_mars_tgt})
+            set_property(TARGET ${_mars_tgt} APPEND PROPERTY INTERFACE_LINK_LIBRARIES cstone_gpu)
+        endif()
+    endforeach()
+    unset(_mars_tgt)
+endif()

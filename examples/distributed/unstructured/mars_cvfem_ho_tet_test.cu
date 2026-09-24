@@ -6,6 +6,7 @@
 //   srun -N1 --ntasks-per-node=4 ./examples/distributed/unstructured/mars_cvfem_ho_tet_test --ncells=4 --p=3
 #include "backend/distributed/unstructured/fem/mars_cvfem_ho_tet.hpp"
 #include "backend/distributed/unstructured/fem/mars_ho_dof_handler_tet.hpp"
+#include "backend/distributed/unstructured/fem/mars_ho_dof_handler_tet_gpu.hpp"
 #include <mpi.h>
 #include <cuda_runtime.h>
 #include <cstdio>
@@ -13,6 +14,8 @@
 #include <cstdlib>
 #include <vector>
 #include <cmath>
+#include <chrono>
+#include <algorithm>
 using namespace mars::fem;
 
 #define CK(x) do{ cudaError_t e_=(x); if(e_!=cudaSuccess){ \
@@ -31,7 +34,7 @@ static bool run_order(int ncells, int rank, int nranks) {
     buildKuhnTetMesh(ncells, coords, elemCorners);
     const size_t nElem = elemCorners.size()/4;
     std::vector<double> Zd(o.Z.begin(), o.Z.end());
-    HoCvfemTetDofHandler dh; dh.build(elemCorners, coords, Zd);
+    HoCvfemTetDofHandler dh; buildGpu(dh, elemCorners, coords, Zd);
     const int NN = o.NN; const long nDof = dh.numDof;
 
     const size_t e0 = nElem*rank/nranks, e1 = nElem*(rank+1)/nranks, nOwn = e1-e0;
@@ -107,6 +110,64 @@ static bool run_order(int ncells, int rank, int nranks) {
     return ok;
 }
 
+
+// ---- Opt-in gate: host HoCvfemTetDofHandler::build() vs the GPU buildGpu(). ----
+// --dof-self-check (or MARS_HO_TET_DOF_SELF_CHECK=1). Additive: the gate below runs
+// exactly as before with or without it.
+//
+// The device numbers in sorted-key order and the host in std::map first-encounter
+// order, so the two id sets are a PERMUTATION. Only permutation-invariant things can
+// be compared: numDof, and the identification classes -- which (element, node) slots
+// share a DOF. dofPos is compared through that bijection, so a position slip shows up
+// too: the same physical node must come back from both sides.
+static bool checkTetDofNumbering(int ncells, int p, int rank)
+{
+    std::vector<std::array<double,3>> coords;
+    std::vector<int> elemCorners;
+    buildKuhnTetMesh(ncells, coords, elemCorners);
+    auto o = buildHoCvfemTetOps<double>(p);
+    std::vector<double> Zd(o.Z.begin(), o.Z.end());
+    const size_t nElem = elemCorners.size() / 4;
+
+    using Clk = std::chrono::steady_clock;
+    HoCvfemTetDofHandler hostDh, gpuDh;
+    const auto t0 = Clk::now();
+    hostDh.build(elemCorners, coords, Zd);
+    const auto t1 = Clk::now();
+    buildGpu(gpuDh, elemCorners, coords, Zd);
+    cudaDeviceSynchronize();
+    const auto t2 = Clk::now();
+    const double hs = std::chrono::duration<double>(t1 - t0).count();
+    const double gs = std::chrono::duration<double>(t2 - t1).count();
+
+    const bool countOk = (hostDh.numDof == gpuDh.numDof);
+    long permBad = 0, unmapped = 0;
+    double posMax = 0.0;
+    if (countOk && hostDh.elemDof.size() == gpuDh.elemDof.size()) {
+        std::vector<int> h2g(hostDh.numDof, -1), g2h(gpuDh.numDof, -1);
+        for (size_t sl = 0; sl < hostDh.elemDof.size(); ++sl) {
+            const int hd = hostDh.elemDof[sl], gd = gpuDh.elemDof[sl];
+            if (hd < 0 || gd < 0) { ++permBad; continue; }
+            if (h2g[hd] < 0) h2g[hd] = gd; else if (h2g[hd] != gd) ++permBad;
+            if (g2h[gd] < 0) g2h[gd] = hd; else if (g2h[gd] != hd) ++permBad;
+            for (int d = 0; d < 3; ++d)
+                posMax = std::max(posMax, std::fabs(hostDh.dofPos[hd][d] - gpuDh.dofPos[gd][d]));
+        }
+        for (long d = 0; d < hostDh.numDof; ++d) if (h2g[d] < 0) ++unmapped;
+    } else {
+        permBad = -1;
+    }
+
+    const bool ok = countOk && permBad == 0 && unmapped == 0 && posMax <= 1e-12;
+    if (rank == 0)
+        std::printf("[tet-dof-self-check] p=%d ncells=%d nElem=%zu NN=%d | numDof h=%ld g=%ld"
+                    " | build host %.3fs gpu %.3fs (%.2fx)"
+                    " | permMismatch=%ld unmapped=%ld maxPosErr=%.2e | %s\n",
+                    p, ncells, nElem, o.NN, hostDh.numDof, gpuDh.numDof, hs, gs,
+                    gs > 0.0 ? hs / gs : 0.0, permBad, unmapped, posMax, ok ? "PASS" : "FAIL");
+    return ok;
+}
+
 int main(int argc, char** argv) {
     MPI_Init(&argc,&argv);
     int rank,nranks; MPI_Comm_rank(MPI_COMM_WORLD,&rank); MPI_Comm_size(MPI_COMM_WORLD,&nranks);
@@ -118,6 +179,17 @@ int main(int argc, char** argv) {
         if (!std::strncmp(argv[i],"--ncells=",9)) ncells=std::atoi(argv[i]+9);
         if (!std::strncmp(argv[i],"--p=",4))      p=std::atoi(argv[i]+4);
     }
+    // Opt-in DOF-numbering gate in front, before the operator gate.
+    bool dofSelfCheck = std::getenv("MARS_HO_TET_DOF_SELF_CHECK") != nullptr;
+    for (int i=1;i<argc;++i)
+        if (!std::strcmp(argv[i],"--dof-self-check")) dofSelfCheck = true;
+    bool dofOk = true;
+    if (dofSelfCheck) {
+        // Every rank runs it -- the Kuhn mesh is replicated anyway, so this keeps the
+        // verdict consistent without an extra collective. Only rank 0 prints.
+        dofOk = checkTetDofNumbering(ncells, p, rank);
+    }
+
     if (rank==0) std::printf("=== HO tet CVFEM gate (box-partition, quadrature-exact): ncells=%d p=%d ranks=%d ===\n",
                              ncells,p,nranks);
     bool ok=false;
@@ -128,6 +200,7 @@ int main(int argc, char** argv) {
         case 5: ok=run_order<5>(ncells,rank,nranks); break;
         default: if(rank==0) std::printf("unsupported --p=%d (2..5)\n",p);
     }
+    ok = ok && dofOk;
     if (rank==0) std::printf(ok ? "==== TET HO CVFEM GATE PASS ====\n" : "==== FAILURE ====\n");
     MPI_Finalize();
     return ok?0:1;

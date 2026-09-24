@@ -158,7 +158,7 @@ def _apply_body(L, ea, p, ctr, v, uval, gval, indent="  ", y_init=None):
     t3 = "tensor<%dx%dx%dxf64>" % (n, n, n)
     t2 = "tensor<%dx%dxf64>" % (n, n)
     tPn = "tensor<%dx%dxf64>" % (P, n)
-    tG = "tensor<3x%dx%dx%dx3xf64>" % (P, n, n)
+    tG = "tensor<3x%dx3x%dx%dxf64>" % (P, n, n)
     inputs = sorted(ea.free_vars)
     metric_used = [g for g in ("g0", "g1", "g2") if g in ea.free_vars]
 
@@ -179,10 +179,15 @@ def _apply_body(L, ea, p, ctr, v, uval, gval, indent="  ", y_init=None):
                  % (J, r, src, ", ".join(off), ", ".join(sz), src_ty, t2))
         return r
 
+    # The metric is COMPONENT-MAJOR, [dir][face][component][row][col]: each
+    # component plane is contiguous, so a warp reads it as one 16-byte load per
+    # lane. Interleaving the components (component last) made every component
+    # read two scalar loads spread over three times the cache lines, and the
+    # tensor-core kernel is bound by the load/store unit, not by DRAM.
     def g_slice(J, d, lvar, c):
         r = fresh("g")
-        L.append("%s%s = tensor.extract_slice %s[%d, %s, 0, 0, %d] "
-                 "[1, 1, %d, %d, 1] [1, 1, 1, 1, 1] : %s to %s"
+        L.append("%s%s = tensor.extract_slice %s[%d, %s, %d, 0, 0] "
+                 "[1, 1, 1, %d, %d] [1, 1, 1, 1, 1] : %s to %s"
                  % (J, r, gval, d, lvar, c, n, n, tG, t2))
         return r
 
@@ -296,7 +301,7 @@ def emit_full(ea, p=7):
     t3 = "tensor<%dx%dx%dxf64>" % (n, n, n)
     t2 = "tensor<%dx%dxf64>" % (n, n)
     tPn = "tensor<%dx%dxf64>" % (P, n)
-    tG = "tensor<3x%dx%dx%dx3xf64>" % (P, n, n)
+    tG = "tensor<3x%dx3x%dx%dxf64>" % (P, n, n)
     metric_used = [g for g in ("g0", "g1", "g2") if g in ea.free_vars]
 
     args = ["%%u: %s" % t3, "%%Btil: %s" % tPn, "%%Dtil: %s" % tPn,
@@ -331,15 +336,15 @@ def emit_full_batched(ea, p=7, tpb=128):
     t3 = "tensor<%dx%dx%dxf64>" % (n, n, n)
     t2 = "tensor<%dx%dxf64>" % (n, n)
     tPn = "tensor<%dx%dxf64>" % (P, n)
-    tG = "tensor<3x%dx%dx%dx3xf64>" % (P, n, n)
+    tG = "tensor<3x%dx3x%dx%dxf64>" % (P, n, n)
     metric_used = [g for g in ("g0", "g1", "g2") if g in ea.free_vars]
 
     mU = "memref<?x%dx%dx%dxf64>" % (n, n, n)
     mUe = "memref<%dx%dx%dxf64, strided<[%d, %d, 1], offset: ?>>" % (n, n, n, n2, n)
     gdims = (P, n, n)
-    gstr = (P * n * n * 3, n * n * 3, n * 3, 3)
-    mG = "memref<?x3x%dx%dx%dx3xf64>" % gdims
-    mGe = ("memref<3x%dx%dx%dx3xf64, strided<[%d, %d, %d, %d, 1], offset: ?>>"
+    gstr = (P * 3 * n * n, 3 * n * n, n * n, n)
+    mG = "memref<?x3x%dx3x%dx%dxf64>" % gdims
+    mGe = ("memref<3x%dx3x%dx%dxf64, strided<[%d, %d, %d, %d, 1], offset: ?>>"
            % (gdims + gstr))
     m2 = "memref<%dx%dxf64>" % (n, n)
     mPn = "memref<%dx%dxf64>" % (P, n)
@@ -360,11 +365,17 @@ def emit_full_batched(ea, p=7, tpb=128):
          "  %c1 = arith.constant 1 : index",
          "  %%ctpb = arith.constant %d : index" % tpb,
          "  %%E = memref.dim %%U, %%c0 : %s" % mU,
-         "  %B = arith.divui %E, %ctpb : index",
+         # Ceil-divide: a floor here silently drops the last E mod tpb elements.
+         "  %ctpbm1 = arith.subi %ctpb, %c1 : index",
+         "  %Epad = arith.addi %E, %ctpbm1 : index",
+         "  %B = arith.divui %Epad, %ctpb : index",
          "  scf.parallel (%b) = (%c0) to (%B) step (%c1) {",
          "    %be = arith.muli %b, %ctpb : index",
          "    scf.parallel (%t) = (%c0) to (%ctpb) step (%c1) {",
          "      %e = arith.addi %be, %t : index",
+         # ...and the last block is then partly out of range, so guard it.
+         "      %inb = arith.cmpi ult, %e, %E : index",
+         "      scf.if %inb {",
          "      %%us = memref.subview %%U[%%e, 0, 0, 0] [1, %d, %d, %d] "
          "[1, 1, 1, 1] : %s to %s" % (n, n, n, mU, mUe),
          "      %%u = bufferization.to_tensor %%us restrict : %s" % mUe,
@@ -375,7 +386,7 @@ def emit_full_batched(ea, p=7, tpb=128):
         L.append("      %%D = bufferization.to_tensor %%Dm restrict : %s" % m2)
     if metric_used:
         L.append("      %%gs = memref.subview %%Gm[%%e, 0, 0, 0, 0, 0] "
-                 "[1, 3, %d, %d, %d, 3] [1, 1, 1, 1, 1, 1] : %s to %s"
+                 "[1, 3, %d, 3, %d, %d] [1, 1, 1, 1, 1, 1] : %s to %s"
                  % (P, n, n, mG, mGe))
         L.append("      %%G = bufferization.to_tensor %%gs restrict : %s" % mGe)
 
@@ -388,6 +399,7 @@ def emit_full_batched(ea, p=7, tpb=128):
                     y_init="%yseed")
     L += ["      bufferization.materialize_in_destination %s in writable %%ys "
           ": (%s, %s) -> ()" % (y, t3, mUe),
+          "      }",
           "      scf.reduce",
           "    } {mapping = [#gpu.loop_dim_map<processor = thread_x, "
           "map = %s, bound = %s>]}" % (dm, dm),

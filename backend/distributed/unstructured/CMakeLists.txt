@@ -140,8 +140,10 @@ if(MARS_ENABLE_CUDA)
         CUDA::cusolver)
 endif()
 
+# BUILD_INTERFACE only -- see the note at the matching link in the top-level
+# CMakeLists: cstone_gpu is not in the MarsTargets export set.
 if(TARGET cstone_gpu)
-    target_link_libraries(mars_unstructured PUBLIC cstone_gpu)
+    target_link_libraries(mars_unstructured PUBLIC $<BUILD_INTERFACE:cstone_gpu>)
 endif()
 
 # Export targets

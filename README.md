@@ -1,4 +1,4 @@
-[![License](https://img.shields.io/badge/License-BSD%203--Clause-blue.svg)](https://opensource.org/licenses/BSD-3-Clause) [![Build status](https://ci.appveyor.com/api/projects/status/a6kjacwk5e5pd4by/branch/development?svg=true)](https://ci.appveyor.com/project/zulianp/mars/branch/development) [![Documentation](https://readthedocs.org/projects/mesh-adaptive-refinement-for-supercomputing-mars/badge/?version=latest)](https://mesh-adaptive-refinement-for-supercomputing-mars.readthedocs.io/en/latest/?badge=latest)
+[![License](https://img.shields.io/badge/License-BSD%203--Clause-blue.svg)](https://opensource.org/licenses/BSD-3-Clause) [![Documentation](https://readthedocs.org/projects/mesh-adaptive-refinement-for-supercomputing-mars/badge/?version=latest)](https://mesh-adaptive-refinement-for-supercomputing-mars.readthedocs.io/en/latest/?badge=latest)
 
 
 # M.A.R.S #
@@ -56,13 +56,34 @@ CMake at configure time, so a plain clone is all you need:
 
 A network connection is required at configure time for the dependency fetch.
 
-Compiling M.A.R.S for serial usage:
+GPU build (the main use case; for AMD use `-DMARS_ENABLE_HIP=ON` instead of the CUDA flags).
+The unstructured backend is on by default in a GPU build:
 
-	- cd mars/
-	- mkdir build
-	- cd build
-	- cmake ..
-	- make
+```bash
+cd mars
+cmake -B build -DMARS_ENABLE_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=90
+cmake --build build -j
+```
+
+CPU-only build. This builds the core library; the unstructured backend needs CUDA or HIP:
+
+```bash
+cd mars
+cmake -B build
+cmake --build build -j
+```
+
+To use MARS from another CMake project, install it and point `CMAKE_PREFIX_PATH` at the
+install prefix (see `examples/usage_from_external_cmake_project/`):
+
+```bash
+cmake --install build --prefix <prefix>
+```
+
+```cmake
+find_package(Mars REQUIRED)
+target_link_libraries(my_app PRIVATE Mars::mars)
+```
 
 ## MARS Kokkos requirements ##
 
@@ -116,10 +137,10 @@ const auto& d_owner = domain.getNodeOwnershipMap();       // 0=ghost, 1=owned, 2
 
 ### Build Configuration
 
-To enable unstructured support:
-- Set `-DMARS_ENABLE_UNSTRUCTURED=ON` during CMake configuration
+Unstructured support:
+- Needs `-DMARS_ENABLE_CUDA=ON` or `-DMARS_ENABLE_HIP=ON`; `MARS_ENABLE_UNSTRUCTURED`
+  is then ON by default
 - Cornerstone is fetched automatically if not found on the system
-- GPU support requires `-DMARS_ENABLE_CUDA=ON` or `-DMARS_ENABLE_HIP=ON`
 
 Example CMake command for unstructured with CUDA:
 

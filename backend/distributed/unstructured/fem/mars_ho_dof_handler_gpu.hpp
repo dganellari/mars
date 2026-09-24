@@ -56,6 +56,8 @@
 #include <thrust/iterator/zip_iterator.h>
 #include <thrust/tuple.h>
 #include <thrust/for_each.h>
+#include <thrust/fill.h>
+#include <thrust/sequence.h>
 
 namespace mars {
 namespace fem {
@@ -581,6 +583,103 @@ inline void buildDistributedGpuDevice(HODofHandler&  dof,
     buildDistributedGpuCore(dof, thrust::raw_pointer_cast(d_corners.data()), nElem,
                             numCornerNodes, order, d_cornerGid, d_cornerOwner,
                             d_sharedCorner, d_elemOwner, myRank, keepOwn);
+}
+
+// ---------------------------------------------------------------------------
+// SINGLE-RANK device numbering. Same core, degenerate ownership.
+//
+// The split between the host build() and the GPU buildDistributedGpu* used to be
+// by RANK COUNT, not by device: one rank meant host numbering. That is backwards --
+// a single GPU wants the device path most, since host numbering bounds both the
+// setup time and the reachable problem size. buildGpu closes that gap by feeding
+// buildDistributedGpuCore the degenerate configuration a single rank IS:
+//   myRank = 0, every corner owned by 0, every element owned by 0, no shared
+//   corners, global corner id == local corner id.
+// No numbering logic is duplicated: with those inputs the core's owner/shared/
+// boundary tagging collapses to constants and its edge/face keying reduces to the
+// host build() convention (which already keys on LOCAL corner ids).
+//
+// As with the distributed path, the LOCAL edge/face ids -- and therefore the DOF
+// ids -- may be a PERMUTATION of the host build()'s. Everything that matters is
+// permutation-invariant (numDof/nEdge/nFace, the DofKey multiset, the elemDof
+// connectivity classes); mars_cvfem_ho_matfree_test --dof-self-check gates that.
+// ---------------------------------------------------------------------------
+
+// The core reads per-corner gid/owner/shared and per-element owner columns. For one
+// rank they are constants or the identity, but they must still exist as arrays --
+// the price of keeping ONE numbering body. Filled on device so no host buffer of
+// numCornerNodes is ever allocated. Cost is ~13B per corner node + 4B per element,
+// small next to the core's own transient sort buffers (18 uint64 keys per element).
+struct HoSingleRankColumns {
+    thrust::device_vector<long>    gid;
+    thrust::device_vector<int>     cornerOwner;
+    thrust::device_vector<uint8_t> sharedCorner;
+    thrust::device_vector<int>     elemOwner;
+
+    void build(long numCornerNodes, long nElem)
+    {
+        gid.resize(numCornerNodes);
+        cornerOwner.resize(numCornerNodes);
+        sharedCorner.resize(numCornerNodes);
+        elemOwner.resize(nElem);
+        // resize() does not zero on every thrust version, so fill explicitly.
+        thrust::sequence(gid.begin(), gid.end(), (long)0);    // gid == local id
+        thrust::fill(cornerOwner.begin(), cornerOwner.end(), 0);
+        thrust::fill(sharedCorner.begin(), sharedCorner.end(), (uint8_t)0);  // nothing on a rank boundary
+        thrust::fill(elemOwner.begin(), elemOwner.end(), 0);
+    }
+};
+
+// HOST-INPUT single-rank build. Mirrors HODofHandler::build(elemCorners, numCornerNodes,
+// order) so a call site switches by adding the handler as the first argument.
+// keepOwn, when given, keeps elemDof (and the per-DOF columns) device-resident and skips
+// the D2H -- the useful mode for a matrix-free apply that only wants d_elemDof.
+inline void buildGpu(HODofHandler&                         dof,
+                     const std::vector<std::array<int,8>>& elemCorners,
+                     long                                  numCornerNodes,
+                     int                                   order,
+                     HoOwnershipDeviceData*                keepOwn = nullptr)
+{
+    const long nElem = (long)elemCorners.size();
+    // SoA layout d_corners[c*nElem + e] -- coalesced per-corner reads in the core.
+    std::vector<int> h_corners((size_t)nElem * 8);
+    for (long e = 0; e < nElem; ++e)
+        for (int c = 0; c < 8; ++c)
+            h_corners[(size_t)c * nElem + e] = elemCorners[e][c];
+    thrust::device_vector<int> d_corners(h_corners.begin(), h_corners.end());
+
+    HoSingleRankColumns own;
+    own.build(numCornerNodes, nElem);
+    buildDistributedGpuCore(dof, thrust::raw_pointer_cast(d_corners.data()), nElem,
+                            numCornerNodes, order,
+                            thrust::raw_pointer_cast(own.gid.data()),
+                            thrust::raw_pointer_cast(own.cornerOwner.data()),
+                            thrust::raw_pointer_cast(own.sharedCorner.data()),
+                            thrust::raw_pointer_cast(own.elemOwner.data()),
+                            0, keepOwn);
+}
+
+// DEVICE-INPUT single-rank build: connectivity already device-resident (the domain's
+// 8 columns over the full element range; the owned slice starts at startElem), so
+// nothing crosses PCIe. Same relation to buildGpu as buildDistributedGpuDevice has to
+// buildDistributedGpu.
+template<typename KeyType>
+inline void buildGpuDevice(HODofHandler&  dof,
+                           const KeyType* d_conn[8],
+                           long           startElem,
+                           long           nElem,
+                           long           numCornerNodes,
+                           int            order,
+                           HoOwnershipDeviceData* keepOwn = nullptr)
+{
+    HoSingleRankColumns own;
+    own.build(numCornerNodes, nElem);
+    buildDistributedGpuDevice<KeyType>(dof, d_conn, startElem, nElem, numCornerNodes, order,
+                                       thrust::raw_pointer_cast(own.gid.data()),
+                                       thrust::raw_pointer_cast(own.cornerOwner.data()),
+                                       thrust::raw_pointer_cast(own.sharedCorner.data()),
+                                       thrust::raw_pointer_cast(own.elemOwner.data()),
+                                       0, keepOwn);
 }
 
 } // namespace fem

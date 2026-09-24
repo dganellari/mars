@@ -303,6 +303,149 @@ target_include_directories(mars_pump PRIVATE
 )
 install(TARGETS mars_pump RUNTIME DESTINATION bin/examples)
 
+# Frozen element replay has no dependency on the MARS mesh or linear solvers.
+add_executable(mars_segregated_replay mars_segregated_replay.cu)
+target_compile_definitions(mars_segregated_replay PRIVATE MARS_REPLAY_CUDA)
+target_include_directories(mars_segregated_replay PRIVATE
+    ${CMAKE_SOURCE_DIR}/backend/distributed/unstructured/fem/segregated)
+set_target_properties(mars_segregated_replay PROPERTIES CUDA_STANDARD 20 CUDA_STANDARD_REQUIRED ON)
+install(TARGETS mars_segregated_replay RUNTIME DESTINATION bin/examples)
+
+add_executable(mars_segregated_algebra_check
+    ${CMAKE_SOURCE_DIR}/tests/reference/openaccel/replay/algebra_check.cpp)
+target_include_directories(mars_segregated_algebra_check PRIVATE
+    ${CMAKE_SOURCE_DIR}/backend/distributed/unstructured/fem/segregated)
+target_compile_features(mars_segregated_algebra_check PRIVATE cxx_std_20)
+if(MARS_ENABLE_TESTS)
+    add_test(NAME marsSegregatedInteriorAlgebra COMMAND mars_segregated_algebra_check)
+endif()
+
+add_executable(mars_segregated_node_replay mars_segregated_node_replay.cu)
+target_compile_definitions(mars_segregated_node_replay PRIVATE MARS_REPLAY_CUDA)
+target_include_directories(mars_segregated_node_replay PRIVATE
+    ${CMAKE_SOURCE_DIR}/backend/distributed/unstructured/fem/segregated)
+set_target_properties(mars_segregated_node_replay PROPERTIES CUDA_STANDARD 20 CUDA_STANDARD_REQUIRED ON)
+
+add_executable(mars_segregated_node_algebra_check
+    ${CMAKE_SOURCE_DIR}/tests/reference/openaccel/node_replay/algebra_check.cpp)
+target_include_directories(mars_segregated_node_algebra_check PRIVATE
+    ${CMAKE_SOURCE_DIR}/backend/distributed/unstructured/fem/segregated)
+target_compile_features(mars_segregated_node_algebra_check PRIVATE cxx_std_20)
+if(MARS_ENABLE_TESTS)
+    add_test(NAME marsSegregatedNodeAlgebra COMMAND mars_segregated_node_algebra_check)
+endif()
+
+add_executable(mars_segregated_boundary_replay mars_segregated_boundary_replay.cu)
+target_compile_definitions(mars_segregated_boundary_replay PRIVATE MARS_REPLAY_CUDA)
+target_include_directories(mars_segregated_boundary_replay PRIVATE
+    ${CMAKE_SOURCE_DIR}/backend/distributed/unstructured/fem/segregated)
+set_target_properties(mars_segregated_boundary_replay PROPERTIES CUDA_STANDARD 20 CUDA_STANDARD_REQUIRED ON)
+
+add_executable(mars_segregated_boundary_algebra_check
+    ${CMAKE_SOURCE_DIR}/tests/reference/openaccel/boundary_replay/algebra_check.cpp)
+target_include_directories(mars_segregated_boundary_algebra_check PRIVATE
+    ${CMAKE_SOURCE_DIR}/backend/distributed/unstructured/fem/segregated)
+target_compile_features(mars_segregated_boundary_algebra_check PRIVATE cxx_std_20)
+if(MARS_ENABLE_TESTS)
+    add_test(NAME marsSegregatedBoundaryAlgebra COMMAND mars_segregated_boundary_algebra_check)
+endif()
+
+add_executable(mars_segregated_update_replay mars_segregated_update_replay.cu)
+target_compile_definitions(mars_segregated_update_replay PRIVATE MARS_REPLAY_CUDA)
+target_include_directories(mars_segregated_update_replay PRIVATE
+    ${CMAKE_SOURCE_DIR}/backend/distributed/unstructured/fem/segregated
+    ${CMAKE_SOURCE_DIR}/tests/reference/openaccel/update_replay)
+set_target_properties(mars_segregated_update_replay PROPERTIES CUDA_STANDARD 20 CUDA_STANDARD_REQUIRED ON)
+
+add_executable(mars_segregated_update_algebra_check
+    ${CMAKE_SOURCE_DIR}/tests/reference/openaccel/update_replay/algebra_check.cpp)
+target_include_directories(mars_segregated_update_algebra_check PRIVATE
+    ${CMAKE_SOURCE_DIR}/backend/distributed/unstructured/fem/segregated)
+target_compile_features(mars_segregated_update_algebra_check PRIVATE cxx_std_20)
+if(MARS_ENABLE_TESTS)
+    add_test(NAME marsSegregatedUpdateAlgebra COMMAND mars_segregated_update_algebra_check)
+endif()
+
+add_executable(mars_segregated_geometry_check mars_segregated_geometry_check.cu)
+target_compile_definitions(mars_segregated_geometry_check PRIVATE MARS_REPLAY_CUDA)
+target_include_directories(mars_segregated_geometry_check PRIVATE
+    ${CMAKE_SOURCE_DIR}/backend/distributed/unstructured/fem/segregated)
+set_target_properties(mars_segregated_geometry_check PROPERTIES CUDA_STANDARD 20 CUDA_STANDARD_REQUIRED ON)
+
+add_executable(mars_segregated_geometry_algebra_check
+    ${CMAKE_SOURCE_DIR}/tests/reference/openaccel/geometry/algebra_check.cpp)
+target_include_directories(mars_segregated_geometry_algebra_check PRIVATE
+    ${CMAKE_SOURCE_DIR}/backend/distributed/unstructured/fem/segregated)
+target_compile_features(mars_segregated_geometry_algebra_check PRIVATE cxx_std_20)
+if(MARS_ENABLE_TESTS)
+    add_test(NAME marsSegregatedGeometryAlgebra COMMAND mars_segregated_geometry_algebra_check)
+endif()
+
+add_executable(mars_segregated_assembly_check mars_segregated_assembly_check.cu)
+target_compile_definitions(mars_segregated_assembly_check PRIVATE MARS_REPLAY_CUDA)
+target_include_directories(mars_segregated_assembly_check PRIVATE
+    ${CMAKE_SOURCE_DIR}/backend/distributed/unstructured/fem/segregated)
+set_target_properties(mars_segregated_assembly_check PROPERTIES CUDA_STANDARD 20 CUDA_STANDARD_REQUIRED ON)
+
+add_executable(mars_segregated_assembly_algebra_check
+    ${CMAKE_SOURCE_DIR}/tests/reference/openaccel/assembly/algebra_check.cpp)
+target_include_directories(mars_segregated_assembly_algebra_check PRIVATE
+    ${CMAKE_SOURCE_DIR}/backend/distributed/unstructured/fem/segregated)
+target_compile_features(mars_segregated_assembly_algebra_check PRIVATE cxx_std_20)
+if(MARS_ENABLE_TESTS)
+    add_test(NAME marsSegregatedAssemblyAlgebra COMMAND mars_segregated_assembly_algebra_check)
+endif()
+
+add_executable(mars_segregated_simple_algebra_check
+    ${CMAKE_SOURCE_DIR}/tests/reference/openaccel/simple/algebra_check.cpp)
+target_include_directories(mars_segregated_simple_algebra_check PRIVATE
+    ${CMAKE_SOURCE_DIR}/backend/distributed/unstructured/fem/segregated)
+target_compile_features(mars_segregated_simple_algebra_check PRIVATE cxx_std_20)
+if(MARS_ENABLE_TESTS)
+    add_test(NAME marsSegregatedSimpleAlgebra COMMAND mars_segregated_simple_algebra_check)
+endif()
+if(MARS_ENABLE_HYPRE)
+    add_executable(mars_segregated_simple mars_segregated_simple.cu)
+    target_link_libraries(mars_segregated_simple PRIVATE mars)
+    target_compile_definitions(mars_segregated_simple PRIVATE MARS_REPLAY_CUDA)
+    target_include_directories(mars_segregated_simple PRIVATE
+        ${CMAKE_SOURCE_DIR}/backend/distributed/unstructured/fem/segregated)
+    set_target_properties(mars_segregated_simple PROPERTIES CUDA_STANDARD 20 CUDA_STANDARD_REQUIRED ON)
+    add_executable(mars_segregated_simple_check mars_segregated_simple_check.cu)
+    target_link_libraries(mars_segregated_simple_check PRIVATE mars)
+    target_compile_definitions(mars_segregated_simple_check PRIVATE MARS_REPLAY_CUDA)
+    target_include_directories(mars_segregated_simple_check PRIVATE
+        ${CMAKE_SOURCE_DIR}/backend/distributed/unstructured/fem/segregated
+        ${CMAKE_SOURCE_DIR}/tests/reference/openaccel/simple)
+    set_target_properties(mars_segregated_simple_check PROPERTIES CUDA_STANDARD 20 CUDA_STANDARD_REQUIRED ON)
+endif()
+
+add_executable(mars_outlet_boundary_gate mars_outlet_boundary_gate.cu)
+target_link_libraries(mars_outlet_boundary_gate PRIVATE mars)
+install(TARGETS mars_outlet_boundary_gate RUNTIME DESTINATION bin/examples)
+
+add_executable(mars_outlet_kernel_gate mars_outlet_kernel_gate.cu)
+target_link_libraries(mars_outlet_kernel_gate PRIVATE mars)
+target_include_directories(mars_outlet_kernel_gate PRIVATE
+    ${CMAKE_SOURCE_DIR}/backend/distributed/unstructured/amr
+)
+install(TARGETS mars_outlet_kernel_gate RUNTIME DESTINATION bin/examples)
+if(MARS_ENABLE_HYPRE)
+    add_executable(mars_outlet_hypre_gate mars_outlet_hypre_gate.cu)
+    target_link_libraries(mars_outlet_hypre_gate PRIVATE mars)
+    target_include_directories(mars_outlet_hypre_gate PRIVATE
+        ${CMAKE_SOURCE_DIR}/backend/distributed/unstructured/amr
+    )
+    install(TARGETS mars_outlet_hypre_gate RUNTIME DESTINATION bin/examples)
+    if(MARS_ENABLE_TESTS)
+        add_test(NAME marsOutletHypreReuse COMMAND mars_outlet_hypre_gate)
+    endif()
+endif()
+if(MARS_ENABLE_TESTS)
+    add_test(NAME marsOutletBoundaryEvaluator COMMAND mars_outlet_boundary_gate)
+    add_test(NAME marsOutletKernels COMMAND mars_outlet_kernel_gate)
+endif()
+
 # MARSIR parity gate: the generated Laplacian apply (from marsir-compiler/) vs the
 # hand-written HO matrix-free kernel, same mesh/elemDof/metric. Opt-in via
 # -DMARS_ENABLE_MARSIR=ON; the generated header is committed under

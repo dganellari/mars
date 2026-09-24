@@ -136,7 +136,13 @@ int main(int argc, char** argv)
     auto allocBatchedSz = [&](const double* elem0, size_t eb)->CUdeviceptr {
         CUdeviceptr d; CK(p_cuMemAlloc(&d, (size_t)E*eb));
         CK(p_cuMemcpyHtoD(d, elem0, eb));
-        for (long e=1;e<E;++e) CK(p_cuMemcpyDtoD(d+(size_t)e*eb, d, eb));
+        // Doubling broadcast: one DtoD per element was O(E) driver calls before a
+        // single kernel ran (10^7 at E = 10^6). This is O(log E).
+        for (size_t done = 1; done < (size_t)E; ) {
+            size_t cnt = (done < (size_t)E - done) ? done : (size_t)E - done;
+            CK(p_cuMemcpyDtoD(d + done*eb, d, cnt*eb));
+            done += cnt;
+        }
         return d;
     };
     CUdeviceptr dU = allocBatchedSz(u.data(), elemB);

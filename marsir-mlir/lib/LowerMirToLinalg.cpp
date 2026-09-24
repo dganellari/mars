@@ -118,6 +118,13 @@ struct ContractLowering : public OpRewritePattern<mir::ContractOp> {
           b.create<linalg::YieldOp>(l, a);
         });
 
+    // A rank-3 contraction along a NON-leading axis cannot be folded into one
+    // 2-D matmul without moving the field, but it IS a batch of 2-D ones: one
+    // per index of the leading axis. Tag it so the tensor-core schedule tiles
+    // that axis by 1 and each tile becomes a plain 2-D contraction.
+    if (rank == 3 && axis != 0)
+      generic->setAttr("mir.batch_contract", rewriter.getUnitAttr());
+
     rewriter.replaceOp(op, generic.getResults());
     return success();
   }
@@ -136,60 +143,95 @@ struct SimplexContractLowering
     Location loc = op.getLoc();
     auto resType = dyn_cast<RankedTensorType>(op.getResult().getType());
     auto inType = dyn_cast<RankedTensorType>(op.getInput().getType());
-    if (!resType || !inType || !resType.hasStaticShape())
+    auto tabType = dyn_cast<RankedTensorType>(op.getTable().getType());
+    if (!resType || !inType || !tabType || !resType.hasStaticShape())
       return failure();
-    const int64_t W = inType.getDimSize(0);   // = D+1 (dense cube layout)
-    const int64_t n = resType.getDimSize(2);  // quadrature points
-    if (op.getDegree() + 1 != W)
+    const int64_t D = op.getDegree();
+    const int64_t W = D + 1;
+    const int64_t axis = op.getAxis();
+    const bool tr = op.getTransposed();
+    if (axis != 1 && axis != 2)
+      return op.emitOpError("axis must be 1 (q) or 2 (r); the p sweep is "
+                            "full-range and is a plain mir.contract");
+    if (inType.getDimSize(0) != W)
       return op.emitOpError("degree+1 must equal the modal cube extent");
+    // n = quadrature points. It is the trailing table extent in every form.
+    const int64_t n = tabType.getDimSize(tabType.getRank() - 1);
     Type elemTy = resType.getElementType();
+
+    // The four ragged stages share one nest: three output loops o0/o1/o2 over
+    // the result, and one reduction. Only the bounds and the index order of the
+    // input/table reads differ. o0 is always the p axis.
+    //   A = axis 2 forward, B = axis 2 transposed,
+    //   C = axis 1 forward, and axis 1 transposed is the remaining case
+    const bool A = (axis == 2 && !tr), B_ = (axis == 2 && tr),
+               C_ = (axis == 1 && !tr);
+    if (tabType.getRank() != (axis == 2 ? 4 : 3))
+      return op.emitOpError("table rank must be 4 for axis=2, 3 for axis=1");
 
     Value fzero = rewriter.create<arith::ConstantOp>(
         loc, rewriter.getZeroAttr(elemTy));
     Value empty = rewriter.create<tensor::EmptyOp>(
         loc, resType.getShape(), elemTy);
-    Value init =
-        rewriter.create<linalg::FillOp>(loc, ValueRange{fzero},
-                                        ValueRange{empty})
-            .getResult(0);
+    Value init = rewriter
+                     .create<linalg::FillOp>(loc, ValueRange{fzero},
+                                             ValueRange{empty})
+                     .getResult(0);
 
     auto idx = [&](int64_t v) {
       return rewriter.create<arith::ConstantIndexOp>(loc, v).getResult();
     };
     Value c0 = idx(0), c1 = idx(1), cW = idx(W), cn = idx(n);
 
-    // for p in [0, W): triangular bounds derive from p and q below.
     auto pLoop = rewriter.create<scf::ForOp>(
         loc, c0, cW, c1, ValueRange{init},
-        [&](OpBuilder &bp, Location lp, Value p, ValueRange op0) {
-          Value ubq = bp.create<arith::SubIOp>(lp, cW, p);   // q < W - p
-          auto qLoop = bp.create<scf::ForOp>(
-              lp, c0, ubq, c1, op0,
-              [&](OpBuilder &bq, Location lq, Value q, ValueRange oq0) {
-                Value ubr = bq.create<arith::SubIOp>(lq, ubq, q);  // r < W-p-q
-                auto kLoop = bq.create<scf::ForOp>(
-                    lq, c0, cn, c1, oq0,
-                    [&](OpBuilder &bk, Location lk, Value k, ValueRange ok0) {
-                      auto rLoop = bk.create<scf::ForOp>(
-                          lk, c0, ubr, c1, ValueRange{fzero},
-                          [&](OpBuilder &br, Location lr, Value r,
+        [&](OpBuilder &bp, Location lp, Value o0, ValueRange it0) {
+          Value wmp = bp.create<arith::SubIOp>(lp, cW, o0);   // W - p
+          Value ub1 = (C_ ? cn : wmp);
+          auto l1 = bp.create<scf::ForOp>(
+              lp, c0, ub1, c1, it0,
+              [&](OpBuilder &b1, Location l1loc, Value o1, ValueRange it1) {
+                // W - p - o1, only meaningful where o1 is the q axis.
+                Value wmpq = b1.create<arith::SubIOp>(l1loc, wmp, o1);
+                Value ub2 = (B_ ? wmpq : cn);
+                auto l2 = b1.create<scf::ForOp>(
+                    l1loc, c0, ub2, c1, it1,
+                    [&](OpBuilder &b2, Location l2loc, Value o2,
+                        ValueRange it2) {
+                      Value ubR = A ? wmpq : (C_ ? wmp : cn);
+                      auto rLoop = b2.create<scf::ForOp>(
+                          l2loc, c0, ubR, c1, ValueRange{fzero},
+                          [&](OpBuilder &br, Location lr, Value red,
                               ValueRange acc) {
+                            SmallVector<Value> inIdx, tabIdx;
+                            if (A || B_)
+                              inIdx = {o0, o1, red};
+                            else
+                              inIdx = {o0, red, o2};
+                            if (A)
+                              tabIdx = {o0, o1, red, o2};
+                            else if (B_)
+                              tabIdx = {o0, o1, o2, red};
+                            else if (C_)
+                              tabIdx = {o0, red, o1};
+                            else
+                              tabIdx = {o0, o1, red};
                             Value uv = br.create<tensor::ExtractOp>(
-                                lr, op.getInput(), ValueRange{p, q, r});
+                                lr, op.getInput(), inIdx);
                             Value tv = br.create<tensor::ExtractOp>(
-                                lr, op.getTable(), ValueRange{p, q, r, k});
+                                lr, op.getTable(), tabIdx);
                             Value m = br.create<arith::MulFOp>(lr, uv, tv);
-                            Value s =
-                                br.create<arith::AddFOp>(lr, acc[0], m);
-                            br.create<scf::YieldOp>(lr, s);
+                            Value sum = br.create<arith::AddFOp>(lr, acc[0], m);
+                            br.create<scf::YieldOp>(lr, sum);
                           });
-                      Value updated = bk.create<tensor::InsertOp>(
-                          lk, rLoop.getResult(0), ok0[0], ValueRange{p, q, k});
-                      bk.create<scf::YieldOp>(lk, updated);
+                      Value updated = b2.create<tensor::InsertOp>(
+                          l2loc, rLoop.getResult(0), it2[0],
+                          ValueRange{o0, o1, o2});
+                      b2.create<scf::YieldOp>(l2loc, updated);
                     });
-                bq.create<scf::YieldOp>(lq, kLoop.getResults());
+                b1.create<scf::YieldOp>(l1loc, l2.getResults());
               });
-          bp.create<scf::YieldOp>(lp, qLoop.getResults());
+          bp.create<scf::YieldOp>(lp, l1.getResults());
         });
 
     rewriter.replaceOp(op, pLoop.getResults());
