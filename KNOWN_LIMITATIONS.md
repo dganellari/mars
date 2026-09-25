@@ -11,6 +11,9 @@ whether MARS fits your use case. The major version is `0`: APIs may change.
   (e.g. lid-driven cavity, channel Navier–Stokes).
 - Single-rank periodic Taylor–Green vortex.
 
+The stable paths are validated on generated structured meshes (release checks: `ctest -L release`),
+including element numberings that are not aligned with the coordinate axes.
+
 ## Experimental — usable, not yet hardened
 - **High-order matrix-free CVFEM (p ≥ 2).** Validated single-rank and at scale for the
   operator action; not yet a turnkey solver path. Interfaces may change.
@@ -30,7 +33,10 @@ whether MARS fits your use case. The major version is `0`: APIs may change.
 - **Multi-rank periodic boundary conditions** (e.g. multi-rank periodic TGV). Periodic
   DOF collapse across rank boundaries is still under development; use single-rank for
   periodic cases.
-- **Multi-rank Poiseuille channel.** Under investigation; single-rank works.
+- **Poiseuille channel (`mars_poiseuille_flow`).** Does not reproduce the tutorial's validated
+  profile at v0.1.0, on one or several ranks: the velocity stops developing after the first step.
+  A projection repair for this channel solver is in progress; treat the tutorial as a description
+  of the method until a release notes it as fixed.
 - **Triangle and quadrilateral meshes.** `ElementDomain` supports `TetTag` and `HexTag` only;
   `TriTag`/`QuadTag` are rejected at compile time.
 - **Example-level restrictions.** `mars_cvfem_poisson` is single-rank and refuses more ranks.

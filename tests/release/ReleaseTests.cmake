@@ -24,6 +24,7 @@ set(_rel_dir  ${CMAKE_BINARY_DIR}/release_meshes)
 set(_rel_hex  ${_rel_dir}/hex16)
 set(_rel_tet  ${_rel_dir}/tet8)
 set(_rel_hexs ${_rel_dir}/hex16_x100)
+set(_rel_hexc ${_rel_dir}/hex16_cycled)
 set(_rel_mpi  ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG})
 set(_rel_np   ${MARS_RELEASE_TEST_RANKS})
 
@@ -38,7 +39,12 @@ add_test(NAME marsReleaseMeshTet
 add_test(NAME marsReleaseMeshHexScaled
          COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/scripts/generate_hex_cube.py
                  --nx 16 --ny 16 --nz 16 --scale 100 --output ${_rel_hexs})
-set_tests_properties(marsReleaseMeshHex marsReleaseMeshTet marsReleaseMeshHexScaled PROPERTIES
+# Same cube with each element's reference axes along (y, z, x): catches a wrong gradient transform,
+# which axis-aligned numbering hides because the Jacobian is then diagonal.
+add_test(NAME marsReleaseMeshHexCycled
+         COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/scripts/generate_hex_cube.py
+                 --nx 16 --ny 16 --nz 16 --cycle-axes --output ${_rel_hexc})
+set_tests_properties(marsReleaseMeshHex marsReleaseMeshTet marsReleaseMeshHexScaled marsReleaseMeshHexCycled PROPERTIES
     FIXTURES_SETUP marsReleaseMeshes LABELS "release" TIMEOUT 120)
 
 # --- assembly: same norms AND the same owned rows (by node SFC key) on 1 rank and on N ranks ---
@@ -54,6 +60,11 @@ add_test(NAME marsReleaseHexAssembly
 add_test(NAME marsReleaseHexAssemblyScaled
          COMMAND ${_rel_check} --rows=${_rel_rows}/hex_x100 --
                  $<TARGET_FILE:mars_cvfem_graph> --mesh=${_rel_hexs} --iterations=1 --quiet)
+add_test(NAME marsReleaseHexNumbering
+         COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/release/check_same_rows.py
+                 --rows=${_rel_rows}/hex_numbering --mesh-a=${_rel_hex} --mesh-b=${_rel_hexc} --
+                 ${_rel_mpi} 1 ${MPIEXEC_PREFLAGS} $<TARGET_FILE:mars_cvfem_graph> ${MPIEXEC_POSTFLAGS}
+                 --mesh={mesh} --iterations=1 --quiet)
 add_test(NAME marsReleaseTetAssembly
          COMMAND ${_rel_check} --rows=${_rel_rows}/tet --
                  $<TARGET_FILE:mars_cvfem_graph_tet> --mesh=${_rel_tet} --iterations=1 --quiet)
@@ -65,6 +76,11 @@ add_test(NAME marsReleasePoisson
                  "--regex=Max:\\s*([-+0-9.eE]+)" --lo 0.0534 --hi 0.0590 --
                  ${_rel_mpi} 1 ${MPIEXEC_PREFLAGS} $<TARGET_FILE:mars_cvfem_poisson> ${MPIEXEC_POSTFLAGS}
                  --mesh=${_rel_hex})
+add_test(NAME marsReleasePoissonCycled
+         COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/release/check_value.py
+                 "--regex=Max:\\s*([-+0-9.eE]+)" --lo 0.0534 --hi 0.0590 --
+                 ${_rel_mpi} 1 ${MPIEXEC_PREFLAGS} $<TARGET_FILE:mars_cvfem_poisson> ${MPIEXEC_POSTFLAGS}
+                 --mesh=${_rel_hexc})
 
 # --- Navier-Stokes projection: cavity and channel, 1 and N ranks --------------------------------
 # The driver exits non-zero on any failed linear solve (all ranks stop together).

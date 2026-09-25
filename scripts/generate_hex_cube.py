@@ -17,7 +17,20 @@ import os
 import time
 
 
-def generate_hex_cube(nx, ny, nz, output_dir, use_int64=True, chunked=False, scale=1.0):
+# Standard hex corner order as (x, y, z) bits.
+_REF = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0), (0, 0, 1), (1, 0, 1), (1, 1, 1), (0, 1, 1)]
+
+
+def _corner_order(cycle_axes):
+    """Column order for the 8 corners. With cycle_axes each element's reference axes
+    (xi0, xi1, xi2) point along physical (y, z, x) instead of (x, y, z): the same geometry and
+    orientation (a proper rotation), numbered differently. Correct assembly is independent of it."""
+    if not cycle_axes:
+        return list(range(8))
+    return [_REF.index((c, a, b)) for (a, b, c) in _REF]
+
+
+def generate_hex_cube(nx, ny, nz, output_dir, use_int64=True, chunked=False, scale=1.0, cycle_axes=False):
     num_nodes = (nx + 1) * (ny + 1) * (nz + 1)
     num_elems = nx * ny * nz
 
@@ -61,10 +74,11 @@ def generate_hex_cube(nx, ny, nz, output_dir, use_int64=True, chunked=False, sca
     print("Writing connectivity...")
     t0 = time.time()
 
+    order = _corner_order(cycle_axes)
     if chunked:
-        _write_connectivity_chunked(nx, ny, nz, output_dir, dtype, ext)
+        _write_connectivity_chunked(nx, ny, nz, output_dir, dtype, ext, order)
     else:
-        _write_connectivity_dense(nx, ny, nz, output_dir, dtype, ext)
+        _write_connectivity_dense(nx, ny, nz, output_dir, dtype, ext, order)
 
     t1 = time.time()
     print(f"  connectivity: {t1 - t0:.2f}s")
@@ -75,7 +89,7 @@ def generate_hex_cube(nx, ny, nz, output_dir, use_int64=True, chunked=False, sca
     print(f"  Format:   {ext} + float32")
 
 
-def _write_connectivity_dense(nx, ny, nz, output_dir, dtype, ext):
+def _write_connectivity_dense(nx, ny, nz, output_dir, dtype, ext, order):
     """Build all 8 connectivity columns in memory and write each.
 
     Memory: 8 * num_elems * sizeof(dtype) bytes peak (8 * 8 * num_elems for int64).
@@ -116,6 +130,8 @@ def _write_connectivity_dense(nx, ny, nz, output_dir, dtype, ext):
         n0 + plane + nx1,
     ]
 
+    cols = [cols[m] for m in order]
+
     # Write 8 columns in parallel via threads. Each tofile releases the GIL
     # while doing the actual write, so threading is fine (no need for processes).
     from concurrent.futures import ThreadPoolExecutor
@@ -125,7 +141,7 @@ def _write_connectivity_dense(nx, ny, nz, output_dir, dtype, ext):
         list(ex.map(_write_one, range(8), cols))
 
 
-def _write_connectivity_chunked(nx, ny, nz, output_dir, dtype, ext):
+def _write_connectivity_chunked(nx, ny, nz, output_dir, dtype, ext, order):
     """Stream connectivity in z-slabs to keep peak memory bounded.
 
     Per slab uses ~ 8 * ny * nx * sizeof(dtype) bytes. For nx=ny=1024 that's
@@ -159,8 +175,8 @@ def _write_connectivity_chunked(nx, ny, nz, output_dir, dtype, ext):
                 n0 + plane + nx1 + 1,
                 n0 + plane + nx1,
             ]
-            for c, col in enumerate(cols):
-                col.astype(dtype, copy=False).tofile(files[c])
+            for c, m in enumerate(order):
+                cols[m].astype(dtype, copy=False).tofile(files[c])
     finally:
         for f in files:
             f.close()
@@ -177,6 +193,8 @@ if __name__ == "__main__":
     p.add_argument("--int32", action="store_true", help="Use int32 instead of int64")
     p.add_argument("--scale", type=float, default=1.0,
                    help="Edge length of the cube (default 1); the same mesh in other length units")
+    p.add_argument("--cycle-axes", action="store_true",
+                   help="Number each element's corners with its reference axes along (y, z, x)")
     p.add_argument("--chunked", action="store_true",
                    help="Stream connectivity in z-slabs (lower peak memory)")
     args = p.parse_args()
@@ -188,4 +206,5 @@ if __name__ == "__main__":
     nz = args.nz if args.nz is not None else base
 
     generate_hex_cube(nx, ny, nz, args.output,
-                      use_int64=not args.int32, chunked=args.chunked, scale=args.scale)
+                      use_int64=not args.int32, chunked=args.chunked, scale=args.scale,
+                      cycle_axes=args.cycle_axes)

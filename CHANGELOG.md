@@ -27,6 +27,9 @@ the cornerstone-octree library.
   backend is on by default in CUDA / HIP builds.
 - Release checks: `ctest -L release` runs the documented drivers end to end on generated
   meshes (assembly rank-count invariance, Poisson solve, cavity/channel Navier–Stokes).
+- Hex CVFEM kernels transform reference gradients with the inverse-transpose Jacobian. Earlier
+  code used the inverse, which is wrong whenever an element's reference axes are not aligned with
+  x, y, z (typical of meshes from mesh generators).
 - The Poiseuille tutorial mesh ships in `tests/data/poiseuille/`; its validation run is
   opt-in with `-DMARS_ENABLE_VALIDATION_TESTS=ON`.
 

@@ -1,5 +1,9 @@
 # Poiseuille Channel Flow with MARS — A Validation Tutorial
 
+> **Status at v0.1.0:** the channel solver does not currently reproduce the result shown here
+> (the velocity stops developing after the first step); a repair is in progress. The tutorial
+> still describes the method and the setup. See KNOWN_LIMITATIONS.md.
+
 This tutorial explains the `mars_poiseuille_flow` example: what Poiseuille flow
 is, why it is the standard first validation case for any incompressible CFD
 code, how to build and run it, how to read every line of its output, and the
