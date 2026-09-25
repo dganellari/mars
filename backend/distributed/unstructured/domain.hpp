@@ -749,24 +749,25 @@ public:
     // Setting haloSearchExt_ > 1 inflates each leaf's search box so those
     // elements arrive through sync() -- WITH their nodes/coords/SFC keys/DOF/
     // sparsity all built by the existing pipeline (no post-sync append, which
-    // would dangle). Opt-in via MARS_HALO_FACTOR; default 1.0 = byte-identical
-    // to today. Gated to multi-rank, non-periodic (periodic has its own image
-    // halo; single rank has no seam). Persists on domain_ across AMR re-syncs.
-    // Larger factor over-includes (cube256 OOM risk) -> use the smallest factor
-    // that makes [Avel-diag] rank-invariant. Called right after each domain_
-    // construction so both sync paths and re-syncs see it.
+    // would dangle). Default 1.5 for multi-rank, non-periodic runs: an empirical mitigation that
+    // made every owned row match the 1-rank run on the release test cubes (the default 1.0 missed
+    // one element at corner-contact nodes on 4 ranks). It is not a coverage guarantee; the real fix
+    // is completing each owned node's element star by connectivity. MARS_HALO_FACTOR overrides it
+    // (1 restores cstone's default). Gated to multi-rank, non-periodic (periodic has its own image
+    // halo; single rank has no seam). Persists on domain_ across AMR re-syncs. Larger factors
+    // over-include (cube256 OOM risk). Called right after each domain_ construction so both sync
+    // paths and re-syncs see it.
     void applyHaloFactor()
     {
         if (numRanks_ <= 1 || periodicAxesMask_ != 0 || !domain_) return;
-        const char* f = std::getenv("MARS_HALO_FACTOR");
-        if (!f) return;
-        float factor = std::strtof(f, nullptr);
+        const char* f  = std::getenv("MARS_HALO_FACTOR");
+        float factor   = f ? std::strtof(f, nullptr) : 1.5f;
         if (factor > 1.0f)
         {
             domain_->setHaloFactor(factor);
             if (rank_ == 0)
-                std::cout << "[halo] MARS_HALO_FACTOR=" << factor
-                          << " (widen element halo to close the seam-stiffness gap)\n";
+                std::cout << "[halo] element halo factor " << factor << (f ? " (MARS_HALO_FACTOR)" : " (default)")
+                          << "\n";
         }
     }
 

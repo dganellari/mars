@@ -37,6 +37,14 @@ including element numberings that are not aligned with the coordinate axes.
   profile at v0.1.0, on one or several ranks: the velocity stops developing after the first step.
   A projection repair for this channel solver is in progress; treat the tutorial as a description
   of the method until a release notes it as fixed.
+- **Guaranteed element-halo coverage.** A rank must hold every element that touches a node it
+  owns. MARS gets its element halo from cornerstone's distance-based search, which is not a
+  connectivity guarantee: with cornerstone's default reach, 4-rank hex runs missed one element at
+  corner-contact nodes. Multi-rank, non-periodic runs therefore widen the halo by a factor of 1.5
+  by default (`MARS_HALO_FACTOR` overrides it; `1` restores the old reach). This is an empirical
+  mitigation, verified row by row on the release test meshes, not a guarantee for strongly graded
+  or high-aspect-ratio meshes; `MARS_ROW_DUMP` plus `tests/release/compare_rows.py` checks a mesh
+  directly. Completing each owned node's elements by connectivity is planned.
 - **Triangle and quadrilateral meshes.** `ElementDomain` supports `TetTag` and `HexTag` only;
   `TriTag`/`QuadTag` are rejected at compile time.
 - **Example-level restrictions.** `mars_cvfem_poisson` is single-rank and refuses more ranks.
