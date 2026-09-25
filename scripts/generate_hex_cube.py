@@ -17,7 +17,7 @@ import os
 import time
 
 
-def generate_hex_cube(nx, ny, nz, output_dir, use_int64=True, chunked=False):
+def generate_hex_cube(nx, ny, nz, output_dir, use_int64=True, chunked=False, scale=1.0):
     num_nodes = (nx + 1) * (ny + 1) * (nz + 1)
     num_elems = nx * ny * nz
 
@@ -31,9 +31,10 @@ def generate_hex_cube(nx, ny, nz, output_dir, use_int64=True, chunked=False):
     t0 = time.time()
     print("Writing coordinates...")
     # i runs fastest; ix has shape (nz+1, ny+1, nx+1) with i values
-    inv_x = np.float32(1.0 / nx)
-    inv_y = np.float32(1.0 / ny)
-    inv_z = np.float32(1.0 / nz)
+    # scale != 1 gives the same mesh in other length units (tests unit-independence).
+    inv_x = np.float32(scale / nx)
+    inv_y = np.float32(scale / ny)
+    inv_z = np.float32(scale / nz)
 
     # Use broadcasting; full arrays of shape (nz+1, ny+1, nx+1) flattened to 1-D
     ix = np.arange(nx + 1, dtype=np.float32) * inv_x
@@ -174,6 +175,8 @@ if __name__ == "__main__":
     p.add_argument("--nz", type=int, default=None, help="Cells in z (overrides -n)")
     p.add_argument("--output", type=str, default="hex_cube_mesh")
     p.add_argument("--int32", action="store_true", help="Use int32 instead of int64")
+    p.add_argument("--scale", type=float, default=1.0,
+                   help="Edge length of the cube (default 1); the same mesh in other length units")
     p.add_argument("--chunked", action="store_true",
                    help="Stream connectivity in z-slabs (lower peak memory)")
     args = p.parse_args()
@@ -185,4 +188,4 @@ if __name__ == "__main__":
     nz = args.nz if args.nz is not None else base
 
     generate_hex_cube(nx, ny, nz, args.output,
-                      use_int64=not args.int32, chunked=args.chunked)
+                      use_int64=not args.int32, chunked=args.chunked, scale=args.scale)

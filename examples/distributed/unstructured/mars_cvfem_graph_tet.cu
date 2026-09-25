@@ -10,6 +10,7 @@
 #include "backend/distributed/unstructured/fem/mars_perf_counters.hpp"
 #include "backend/distributed/unstructured/fem/mars_cvfem_utils.hpp"
 #include "backend/distributed/unstructured/fem/mars_sparsity_builder.hpp"
+#include "mars_row_dump.hpp"
 #include <thrust/device_vector.h>
 #include <thrust/reduce.h>
 #include <thrust/system/cuda/execution_policy.h>
@@ -265,6 +266,10 @@ int main(int argc, char** argv) {
     }
 
     // DD imbalance + matrix/RHS norms (overlap reductions like the hex driver).
+    dumpOwnedRowsIfRequested<KeyType, RealType>(rank, nodeCount, numDofs, nnz, d_nodeToDof.data(),
+                                                d_nodeOwnership.data(), domain.getLocalToGlobalSfcMap().data(),
+                                                d_rowPtr.data(), d_values.data(), d_diagPtr.data(), d_rhs.data());
+
     MARS_NVTX_PUSH("Post-processing");
     size_t ghostNodeCount = nodeCount - static_cast<size_t>(numDofs);
     double sendBuf[3] = {

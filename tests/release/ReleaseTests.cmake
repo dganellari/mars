@@ -23,6 +23,7 @@ set(MARS_RELEASE_TEST_RANKS 4 CACHE STRING "Rank count for the multi-rank releas
 set(_rel_dir  ${CMAKE_BINARY_DIR}/release_meshes)
 set(_rel_hex  ${_rel_dir}/hex16)
 set(_rel_tet  ${_rel_dir}/tet8)
+set(_rel_hexs ${_rel_dir}/hex16_x100)
 set(_rel_mpi  ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG})
 set(_rel_np   ${MARS_RELEASE_TEST_RANKS})
 
@@ -33,19 +34,29 @@ add_test(NAME marsReleaseMeshHex
 add_test(NAME marsReleaseMeshTet
          COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/scripts/generate_tet_cube.py
                  --nx 8 --ny 8 --nz 8 --output ${_rel_tet})
-set_tests_properties(marsReleaseMeshHex marsReleaseMeshTet PROPERTIES
+# Same cube with edges of 6.25 instead of 1/16: halo coverage must not depend on length units.
+add_test(NAME marsReleaseMeshHexScaled
+         COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/scripts/generate_hex_cube.py
+                 --nx 16 --ny 16 --nz 16 --scale 100 --output ${_rel_hexs})
+set_tests_properties(marsReleaseMeshHex marsReleaseMeshTet marsReleaseMeshHexScaled PROPERTIES
     FIXTURES_SETUP marsReleaseMeshes LABELS "release" TIMEOUT 120)
 
-# --- assembly: same matrix/RHS norms on 1 rank and on N ranks ---------------------------------
+# --- assembly: same norms AND the same owned rows (by node SFC key) on 1 rank and on N ranks ---
 # MPIEXEC_PREFLAGS is a CMake list; the checker takes the flags as one space-separated string.
 string(REPLACE ";" " " _rel_preflags "${MPIEXEC_PREFLAGS}")
 set(_rel_check ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/release/check_rank_invariance.py
                --np ${_rel_np} "--mpiexec=${MPIEXEC_EXECUTABLE}" "--numproc-flag=${MPIEXEC_NUMPROC_FLAG}"
-               "--preflags=${_rel_preflags}" --)
+               "--preflags=${_rel_preflags}")
+set(_rel_rows ${CMAKE_BINARY_DIR}/release_rows)
 add_test(NAME marsReleaseHexAssembly
-         COMMAND ${_rel_check} $<TARGET_FILE:mars_cvfem_graph> --mesh=${_rel_hex} --iterations=1 --quiet)
+         COMMAND ${_rel_check} --rows=${_rel_rows}/hex --
+                 $<TARGET_FILE:mars_cvfem_graph> --mesh=${_rel_hex} --iterations=1 --quiet)
+add_test(NAME marsReleaseHexAssemblyScaled
+         COMMAND ${_rel_check} --rows=${_rel_rows}/hex_x100 --
+                 $<TARGET_FILE:mars_cvfem_graph> --mesh=${_rel_hexs} --iterations=1 --quiet)
 add_test(NAME marsReleaseTetAssembly
-         COMMAND ${_rel_check} $<TARGET_FILE:mars_cvfem_graph_tet> --mesh=${_rel_tet} --iterations=1 --quiet)
+         COMMAND ${_rel_check} --rows=${_rel_rows}/tet --
+                 $<TARGET_FILE:mars_cvfem_graph_tet> --mesh=${_rel_tet} --iterations=1 --quiet)
 
 # --- solve: CVFEM Poisson (single-rank driver), -Δu = 1 on the unit cube, u = 0 on the boundary ---
 # Exact centre value 0.05621; the discrete maximum on the 16^3 mesh must be within 5% of it.

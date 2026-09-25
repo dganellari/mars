@@ -7,6 +7,7 @@
 #include "backend/distributed/unstructured/fem/mars_perf_counters.hpp"
 #include "backend/distributed/unstructured/fem/mars_cvfem_utils.hpp"
 #include "backend/distributed/unstructured/fem/mars_sparsity_builder.hpp"
+#include "mars_row_dump.hpp"
 #include <thrust/device_vector.h>
 #include <thrust/reduce.h>
 #include <thrust/system/cuda/execution_policy.h>
@@ -394,6 +395,10 @@ int main(int argc, char** argv) {
         if (rank == 0) std::cout << "iter " << iter << ": " << iterTime << " ms" << std::endl;
         MARS_NVTX_POP();
     }
+
+    dumpOwnedRowsIfRequested<KeyType, RealType>(rank, nodeCount, numDofs, nnz, d_nodeToDof.data(),
+                                                d_nodeOwnership.data(), domain.getLocalToGlobalSfcMap().data(),
+                                                d_rowPtr.data(), d_values.data(), d_diagPtr.data(), d_rhs.data());
 
     // Compute DD load imbalance from node counts (owned / ghost / total)
     MARS_NVTX_PUSH("Post-processing");
