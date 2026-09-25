@@ -53,6 +53,11 @@ below 6.0e-3**.
 
 `poiseuille_hex_14k_elem.e` (Exodus format): 14,751 hexahedra, 30,000 nodes.
 
+> **This mesh is not distributed with MARS v0.1.0.** The driver finds its boundaries
+> geometrically (inflow at x = xmin, outflow at x = xmax, walls on the y faces, symmetry on the
+> thin z faces), so any hex channel mesh with the layout below runs. The reference numbers in
+> this tutorial (profile RMS, |u| → 0.849, flux ratios) are specific to this mesh.
+
 ```
 x: -0.5 .. 10.5   streamwise   (~150 node planes)
 y:  0.0 .. 1.0    wall-normal  (~100 node planes)  -> channel height H = 1

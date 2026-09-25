@@ -116,7 +116,7 @@ MARS supports GPU-native unstructured meshes through integration with the Corner
 - **Lazy Composition**: Components (adjacency, halo, coordinates) allocated on-demand to minimize VRAM usage
 - **Thrust Algorithms**: CSR building, sorting, and reductions use GPU-optimized Thrust primitives
 - **MPI Integration**: Multi-rank support via Cornerstone domain decomposition
-- **Element Support**: Tetrahedra, hexahedra, triangles, and quadrilaterals
+- **Element Support**: Tetrahedra and hexahedra (triangle/quadrilateral tags exist but are not implemented yet)
 
 ### Quick Start
 

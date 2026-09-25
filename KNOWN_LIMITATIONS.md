@@ -31,6 +31,11 @@ whether MARS fits your use case. The major version is `0`: APIs may change.
   DOF collapse across rank boundaries is still under development; use single-rank for
   periodic cases.
 - **Multi-rank Poiseuille channel.** Under investigation; single-rank works.
+- **Triangle and quadrilateral meshes.** `ElementDomain` supports `TetTag` and `HexTag` only;
+  `TriTag`/`QuadTag` are rejected at compile time.
+- **Example-level restrictions.** `mars_cvfem_poisson` is single-rank and refuses more ranks.
+  `mars_ex1_poisson` applies u = 0 on the faces of the mesh's bounding box, so it is correct for
+  box-shaped domains only.
 
 ## Module status
 The unstructured GPU backend (`backend/distributed/unstructured/`) is the active,
@@ -45,15 +50,21 @@ developed for v0.1:
 `fem/` ships several CVFEM assembly kernels. The canonical paths are the **hex tensor**
 kernel (`mars_cvfem_hex_kernel_tensor.hpp`) and the **graph** kernels (hex/tet). The other
 hex variants (`_wmma`, `_perip`, `_aos`, `_colored`, `_shmem`, `_optimized`) are
-hardware-targeted optimizations of the same math; `_core_example` is a reference/teaching
-kernel, not for production. High-order matrix-free kernels are experimental (see above).
+hardware-targeted optimizations of the same math. High-order matrix-free kernels are experimental (see above).
 Unless you are benchmarking a specific GPU path, use the tensor or graph kernel.
 
 ## Build / platform notes
 - Primary supported build: CUDA (`-DMARS_ENABLE_CUDA=ON -DMARS_ENABLE_UNSTRUCTURED=ON`)
   on NVIDIA GPUs, architectures `70;80;90` by default (override with
-  `-DCMAKE_CUDA_ARCHITECTURES=...`). HIP (AMD) is supported via `-DMARS_ENABLE_HIP=ON`.
+  `-DCMAKE_CUDA_ARCHITECTURES=...`). HIP (AMD) is enabled with `-DMARS_ENABLE_HIP=ON`, but
+  the HIP build was not re-verified for v0.1.0, and the FEM examples are CUDA-only.
 - MPI is required by default (`-DMARS_ENABLE_MPI=ON`).
+- Exodus mesh input and side sets need netCDF. Without it MARS still builds; reading an Exodus
+  mesh then fails at runtime with a clear error, and the binary directory format still works.
+- Multi-GPU runs: `mars_cvfem_graph`, `mars_cvfem_graph_tet`, `mars_ex1_poisson`,
+  `mars_cvfem_poisson` and `mars_amr_ns_projection` select GPU `rank % deviceCount`. Other
+  drivers (e.g. `mars_tgv`) expect the launcher to expose one GPU per rank (a binding wrapper
+  or `CUDA_VISIBLE_DEVICES`); otherwise every rank uses GPU 0.
 - Dependencies (cornerstone-octree, googletest, google/benchmark) are fetched by CMake
   at configure time, so a network connection is needed for a fresh configure.
 - Without CUDA or HIP, `MARS_ENABLE_UNSTRUCTURED` defaults to OFF and a plain `cmake ..`
