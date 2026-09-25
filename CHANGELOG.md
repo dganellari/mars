@@ -25,6 +25,10 @@ the cornerstone-octree library.
   (config installed to `<prefix>/lib/cmake/Mars`, found through `CMAKE_PREFIX_PATH`).
 - A plain `cmake ..` on a CPU-only machine builds the core library; the unstructured
   backend is on by default in CUDA / HIP builds.
+- Release checks: `ctest -L release` runs the documented drivers end to end on generated
+  meshes (assembly rank-count invariance, Poisson solve, cavity/channel Navier–Stokes).
+- The Poiseuille tutorial mesh ships in `tests/data/poiseuille/`; its validation run is
+  opt-in with `-DMARS_ENABLE_VALIDATION_TESTS=ON`.
 
 ### Experimental
 - High-order matrix-free CVFEM operators (p ≥ 2), with DOF numbering on the device.

@@ -256,13 +256,13 @@ target_include_directories(mars_poiseuille_flow PRIVATE
 install(TARGETS mars_poiseuille_flow RUNTIME DESTINATION bin/examples)
 
 # Long-running GPU regression: converge the channel to the analytic parabola
-# and fail if the profile RMS or the interior through-flow drifts. Registered
-# only when the validation mesh sits at the repo root (gunzip -k the .gz once).
-# ~25 min on one GH200; run via `ctest -L validation`.
-if(EXISTS ${CMAKE_SOURCE_DIR}/poiseuille_hex_14k_elem.e)
+# and fail if the profile RMS or the interior through-flow drifts. ~25 min on
+# one GH200, so it is opt-in (-DMARS_ENABLE_VALIDATION_TESTS=ON) and a plain
+# `ctest` never runs it; then run it via `ctest -L validation`.
+if(MARS_ENABLE_TESTS AND MARS_ENABLE_VALIDATION_TESTS)
     add_test(NAME marsPoiseuilleValidation
              COMMAND mars_poiseuille_flow
-                     --mesh=${CMAKE_SOURCE_DIR}/poiseuille_hex_14k_elem.e
+                     --mesh=${CMAKE_SOURCE_DIR}/tests/data/poiseuille/poiseuille_hex_14k_elem.e
                      --uinf=1.0 --nu=0.01 --dt=0.01 --tol=1e-6 --max-iter=4000
                      --num-steps=1500 --check)
     set_tests_properties(marsPoiseuilleValidation PROPERTIES
@@ -459,4 +459,9 @@ if(MARS_ENABLE_MARSIR)
     add_executable(mars_marsir_jvp_test mars_marsir_jvp_test.cu)
     target_link_libraries(mars_marsir_jvp_test PRIVATE mars)
     install(TARGETS mars_marsir_jvp_test RUNTIME DESTINATION bin/examples)
+endif()
+
+# End-to-end release checks on generated meshes (`ctest -L release`).
+if(MARS_ENABLE_TESTS)
+    include(${CMAKE_SOURCE_DIR}/tests/release/ReleaseTests.cmake)
 endif()

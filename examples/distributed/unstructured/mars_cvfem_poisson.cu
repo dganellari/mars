@@ -418,5 +418,5 @@ int main(int argc, char** argv) {
     }
 
     MPI_Finalize();
-    return 0;
+    return converged ? 0 : 1;
 }

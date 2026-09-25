@@ -73,6 +73,24 @@ cmake -B build
 cmake --build build -j
 ```
 
+### Checking your build
+
+A CUDA build configured with `-DMARS_ENABLE_TESTS=ON -DMARS_ENABLE_FEM_EXAMPLES=ON` registers
+release checks that run the documented drivers end to end on meshes generated at test time:
+
+```bash
+cd build
+ctest -L release
+```
+
+They check that hex and tet assembly give the same matrix and RHS norms on 1 rank and on N
+ranks (`-DMARS_RELEASE_TEST_RANKS=N`, default 4), that a CVFEM Poisson solve converges, and that
+10-step lid-driven cavity and channel Navier–Stokes runs finish on 1 and N ranks without a failed
+solve or NaN. They need python3 with numpy and an MPI launcher, and take a few minutes on one
+GPU; on a cluster, run them inside an allocation. The 25-minute Poiseuille validation against the
+analytic profile is opt-in: configure with `-DMARS_ENABLE_VALIDATION_TESTS=ON`, then run
+`ctest -L validation`.
+
 To use MARS from another CMake project, install it and point `CMAKE_PREFIX_PATH` at the
 install prefix (see `examples/usage_from_external_cmake_project/`):
 

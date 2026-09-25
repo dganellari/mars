@@ -70,8 +70,9 @@ Unless you are benchmarking a specific GPU path, use the tensor or graph kernel.
 - Without CUDA or HIP, `MARS_ENABLE_UNSTRUCTURED` defaults to OFF and a plain `cmake ..`
   builds only the core library. Its CPU tests are the MPI communication tests plus the
   install smoke test in `examples/usage_from_external_cmake_project/`.
-- The rest of the test suite and the FEM examples are GPU-oriented, and most need a mesh
-  input and/or MPI.
+- GPU builds: `ctest -L release` runs the documented drivers on generated meshes (see the
+  README). The lower-level GPU domain tests still need a mesh directory in `MESH_PATH` and are
+  skipped without one.
 
 ## HO DOF numbering: single-rank GPU path exists, but is not the default
 
