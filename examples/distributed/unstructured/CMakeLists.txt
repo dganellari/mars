@@ -256,8 +256,8 @@ target_include_directories(mars_poiseuille_flow PRIVATE
 install(TARGETS mars_poiseuille_flow RUNTIME DESTINATION bin/examples)
 
 # Long-running GPU regression: converge the channel to the analytic parabola
-# and fail if the profile RMS or the interior through-flow drifts. ~25 min on
-# one GH200, so it is opt-in (-DMARS_ENABLE_VALIDATION_TESTS=ON) and a plain
+# and fail if the profile RMS or the interior through-flow drifts. 1500 steps took
+# 60 min on one GH200 at v0.1.0, so it is opt-in (-DMARS_ENABLE_VALIDATION_TESTS=ON) and a plain
 # `ctest` never runs it; then run it via `ctest -L validation`.
 if(MARS_ENABLE_TESTS AND MARS_ENABLE_VALIDATION_TESTS)
     add_test(NAME marsPoiseuilleValidation
@@ -266,7 +266,7 @@ if(MARS_ENABLE_TESTS AND MARS_ENABLE_VALIDATION_TESTS)
                      --uinf=1.0 --nu=0.01 --dt=0.01 --tol=1e-6 --max-iter=4000
                      --num-steps=1500 --check)
     set_tests_properties(marsPoiseuilleValidation PROPERTIES
-        TIMEOUT 2400
+        TIMEOUT 7200
         LABELS "validation;gpu;long"
         ENVIRONMENT "MARS_NODEHALO_V2=1")
 endif()

@@ -310,7 +310,8 @@ Notes on the numbers:
   rejects it); it is slow but completely stable.
 - `--tol=1e-6` for the pressure solve is sufficient; 1e-10 is unreachable
   for Jacobi-PCG here and would FAIL every step.
-- Budget ~25 minutes wall; a 15-minute limit dies around step 1250.
+- Budget at least 2 hours: at v0.1.0 a 1500-step run took 60 minutes on one GH200 with
+  ~2200 pressure iterations per step, and a developing flow needs more (~3600).
 
 Useful flags:
 
@@ -391,7 +392,7 @@ the BC back at you — a lesson from the pump debugging). Ratios near 1.0 at
 | flux ratios 25/50/75% | 0.99 – 1.01 |
 | velocity-fit G | 0.121 (exact 0.12, ~101%) |
 | `div_max` at convergence | ~1.5–1.8 (frozen boundary-bookkeeping residual, not interior error) |
-| wall time, 1500 steps, 1 GH200 | ~25 min |
+| wall time, 1500 steps, 1 GH200 | 60 min measured at v0.1.0 (non-developing flow) |
 
 ---
 
@@ -405,7 +406,7 @@ VALIDATION PASS: RMS=5.781e-03 < 6e-3, flux ratios 0.992/0.992/1.006 within 1 +/
 ```
 
 The case is registered with ctest as `marsPoiseuilleValidation` (labels
-`validation;gpu;long`, 40-minute timeout) when you configure with
+`validation;gpu;long`, 2-hour timeout) when you configure with
 `-DMARS_ENABLE_VALIDATION_TESTS=ON` (and FEM examples + tests on). Run it with
 `ctest -L validation`. This is the canary for any change to
 the projection, the boundary conditions, or the opening-flux source: if one

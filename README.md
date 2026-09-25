@@ -103,7 +103,7 @@ cmake -B build -DMPIEXEC_EXECUTABLE=$(which srun) \
 ```
 
 The drivers pick GPU `rank % deviceCount` themselves, so no GPU-binding wrapper is required. The
-25-minute Poiseuille validation against the analytic profile is opt-in: configure with
+long (1-2 hour) Poiseuille validation against the analytic profile is opt-in: configure with
 `-DMARS_ENABLE_VALIDATION_TESTS=ON`, then run `ctest -L validation`.
 
 To use MARS from another CMake project, install it and point `CMAKE_PREFIX_PATH` at the
