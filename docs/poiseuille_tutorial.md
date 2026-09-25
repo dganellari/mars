@@ -51,12 +51,8 @@ below 6.0e-3**.
 
 ### The mesh
 
-`poiseuille_hex_14k_elem.e` (Exodus format): 14,751 hexahedra, 30,000 nodes.
-
-> **This mesh is not distributed with MARS v0.1.0.** The driver finds its boundaries
-> geometrically (inflow at x = xmin, outflow at x = xmax, walls on the y faces, symmetry on the
-> thin z faces), so any hex channel mesh with the layout below runs. The reference numbers in
-> this tutorial (profile RMS, |u| → 0.849, flux ratios) are specific to this mesh.
+`tests/data/poiseuille/poiseuille_hex_14k_elem.e` (Exodus format, shipped with MARS):
+14,751 hexahedra, 30,000 nodes. Reading it needs a MARS build with netCDF.
 
 ```
 x: -0.5 .. 10.5   streamwise   (~150 node planes)
@@ -297,7 +293,7 @@ Run (single rank; the area lumping assumes the opening planes are rank-local):
 MARS_NODEHALO_V2=1 srun --account=<acct> --time=00:30:00 \
   --nodes=1 --ntasks-per-node=1 \
   ./examples/distributed/unstructured/mars_poiseuille_flow \
-  --mesh=/path/to/poiseuille_hex_14k_elem.e \
+  --mesh=/path/to/mars/tests/data/poiseuille/poiseuille_hex_14k_elem.e \
   --uinf=1.0 --nu=0.01 --dt=0.01 --tol=1e-6 --max-iter=4000 --num-steps=1200 \
   --vtu-output=poiseuille
 ```
@@ -405,8 +401,9 @@ VALIDATION PASS: RMS=5.781e-03 < 6e-3, flux ratios 0.992/0.992/1.006 within 1 +/
 ```
 
 The case is registered with ctest as `marsPoiseuilleValidation` (labels
-`validation;gpu;long`, 40-minute timeout) whenever the mesh sits at the repo
-root. Run it with `ctest -L validation`. This is the canary for any change to
+`validation;gpu;long`, 40-minute timeout) when you configure with
+`-DMARS_ENABLE_VALIDATION_TESTS=ON` (and FEM examples + tests on). Run it with
+`ctest -L validation`. This is the canary for any change to
 the projection, the boundary conditions, or the opening-flux source: if one
 of them regresses, the parabola degrades and the test fails loudly.
 

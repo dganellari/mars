@@ -13,6 +13,7 @@ option(MARS_ENABLE_ADIOS2 "Uses ADIOS2 IO" OFF)
 # maintainace
 option(MARS_ENABLE_BENCHMARK "Enable benchmarks" OFF)
 option(MARS_ENABLE_TESTS "Enable tests" ON)
+option(MARS_ENABLE_VALIDATION_TESTS "Register long GPU validation runs (e.g. the 25-min Poiseuille check)" OFF)
 
 # FIXME Extra backends 
 option(MARS_ENABLE_MOONOLITH "Use -DMARS_ENABLE_MOONOLITH=ON for enabling mesh transfer functions." OFF)
