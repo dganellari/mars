@@ -14,6 +14,8 @@
 #include <thrust/extrema.h>
 #include <thrust/inner_product.h>
 #include <thrust/execution_policy.h>
+#include <thrust/iterator/counting_iterator.h>
+#include <thrust/for_each.h>
 #include <set>
 #include <mpi.h>
 #include <iomanip>
@@ -22,6 +24,43 @@
 
 using namespace mars;
 using namespace mars::fem;
+
+// Lumped control volume per node: each hex adds 1/8 of its volume to every corner. The trilinear
+// hex volume is integrated exactly by 2x2x2 Gauss (detJ is quadratic in each reference direction).
+template<typename KeyType, typename RealType>
+__global__ void lumpedNodeVolumeKernel(const KeyType* c0, const KeyType* c1, const KeyType* c2,
+                                       const KeyType* c3, const KeyType* c4, const KeyType* c5,
+                                       const KeyType* c6, const KeyType* c7,
+                                       const RealType* x, const RealType* y, const RealType* z,
+                                       RealType* nodeVol, size_t numElements)
+{
+    size_t e = blockIdx.x * size_t(blockDim.x) + threadIdx.x;
+    if (e >= numElements) return;
+    const KeyType n[8] = {c0[e], c1[e], c2[e], c3[e], c4[e], c5[e], c6[e], c7[e]};
+    const RealType s[8][3] = {{-1, -1, -1}, {1, -1, -1}, {1, 1, -1}, {-1, 1, -1},
+                              {-1, -1, 1},  {1, -1, 1},  {1, 1, 1},  {-1, 1, 1}};
+    const RealType g = RealType(0.5773502691896257);
+    RealType vol = 0;
+    for (int q = 0; q < 8; ++q)
+    {
+        RealType a = s[q][0] * g, b = s[q][1] * g, c = s[q][2] * g;
+        RealType J[3][3] = {};
+        for (int i = 0; i < 8; ++i)
+        {
+            RealType dN[3] = {s[i][0] * (1 + s[i][1] * b) * (1 + s[i][2] * c) / 8,
+                              s[i][1] * (1 + s[i][0] * a) * (1 + s[i][2] * c) / 8,
+                              s[i][2] * (1 + s[i][0] * a) * (1 + s[i][1] * b) / 8};
+            RealType p[3] = {x[n[i]], y[n[i]], z[n[i]]};
+            for (int r = 0; r < 3; ++r)
+                for (int t = 0; t < 3; ++t) J[r][t] += p[r] * dN[t];
+        }
+        RealType det = J[0][0] * (J[1][1] * J[2][2] - J[1][2] * J[2][1])
+                     - J[0][1] * (J[1][0] * J[2][2] - J[1][2] * J[2][0])
+                     + J[0][2] * (J[1][0] * J[2][1] - J[1][1] * J[2][0]);
+        vol += fabs(det);
+    }
+    for (int i = 0; i < 8; ++i) atomicAdd(&nodeVol[n[i]], vol / 8);
+}
 
 int main(int argc, char** argv) {
     // Initialize MPI
@@ -300,9 +339,25 @@ int main(int argc, char** argv) {
     auto assemblyEnd = std::chrono::high_resolution_clock::now();
     float assemblyTime = std::chrono::duration<float, std::milli>(assemblyEnd - assemblyStart).count();
 
-    // Add source term to RHS: RHS = -f (since we have -Δu on LHS)
-    thrust::transform(thrust::device, d_rhs.begin(), d_rhs.end(), d_rhs.begin(),
-                      [sourceTerm] __device__ (RealType x) { return -sourceTerm + x; });
+    // Source term: the assembled operator is the positive-definite -Δ integrated over control
+    // volumes, so the load of node i is +f * V_i (lumped control volume), not a bare -f.
+    cstone::DeviceVector<RealType> d_nodeVol(nodeCount, RealType(0));
+    {
+        int nb = int((elementCount + blockSize - 1) / blockSize);
+        lumpedNodeVolumeKernel<KeyType, RealType><<<nb, blockSize>>>(
+            std::get<0>(d_conn).data(), std::get<1>(d_conn).data(), std::get<2>(d_conn).data(),
+            std::get<3>(d_conn).data(), std::get<4>(d_conn).data(), std::get<5>(d_conn).data(),
+            std::get<6>(d_conn).data(), std::get<7>(d_conn).data(),
+            d_x.data(), d_y.data(), d_z.data(), d_nodeVol.data(), elementCount);
+        cudaDeviceSynchronize();
+    }
+    thrust::for_each(thrust::device, thrust::counting_iterator<size_t>(0),
+                     thrust::counting_iterator<size_t>(nodeCount),
+                     [rhs = d_rhs.data(), vol = d_nodeVol.data(), n2d = d_node_to_dof.data(), sourceTerm] __device__(size_t i)
+                     {
+                         int dof = n2d[i];
+                         if (dof >= 0) rhs[dof] += RealType(sourceTerm) * vol[i];
+                     });
 
     if (rank == 0) {
         std::cout << "Assembly completed in " << assemblyTime << " ms\n\n";

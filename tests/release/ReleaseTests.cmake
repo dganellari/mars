@@ -47,9 +47,12 @@ add_test(NAME marsReleaseHexAssembly
 add_test(NAME marsReleaseTetAssembly
          COMMAND ${_rel_check} $<TARGET_FILE:mars_cvfem_graph_tet> --mesh=${_rel_tet} --iterations=1 --quiet)
 
-# --- solve: CVFEM Poisson (single-rank driver) must converge ----------------------------------
+# --- solve: CVFEM Poisson (single-rank driver), -Δu = 1 on the unit cube, u = 0 on the boundary ---
+# Exact centre value 0.05621; the discrete maximum on the 16^3 mesh must be within 5% of it.
 add_test(NAME marsReleasePoisson
-         COMMAND ${_rel_mpi} 1 ${MPIEXEC_PREFLAGS} $<TARGET_FILE:mars_cvfem_poisson> ${MPIEXEC_POSTFLAGS}
+         COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/release/check_value.py
+                 "--regex=Max:\\s*([-+0-9.eE]+)" --lo 0.0534 --hi 0.0590 --
+                 ${_rel_mpi} 1 ${MPIEXEC_PREFLAGS} $<TARGET_FILE:mars_cvfem_poisson> ${MPIEXEC_POSTFLAGS}
                  --mesh=${_rel_hex})
 
 # --- Navier-Stokes projection: cavity and channel, 1 and N ranks --------------------------------
