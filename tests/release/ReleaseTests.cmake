@@ -5,6 +5,8 @@
 #
 # Included from examples/distributed/unstructured/CMakeLists.txt, so the driver targets exist.
 # MARS_RELEASE_TEST_RANKS sets the multi-rank count (ranks share GPUs if there are fewer).
+# Launcher flags go in MPIEXEC_PREFLAGS (a CMake list), e.g. on a Slurm cluster:
+#   -DMPIEXEC_EXECUTABLE=$(which srun) "-DMPIEXEC_PREFLAGS=--account=X;--time=00:10:00;--export=ALL"
 
 find_package(Python3 COMPONENTS Interpreter)
 if(NOT Python3_Interpreter_FOUND)
@@ -35,9 +37,11 @@ set_tests_properties(marsReleaseMeshHex marsReleaseMeshTet PROPERTIES
     FIXTURES_SETUP marsReleaseMeshes LABELS "release" TIMEOUT 120)
 
 # --- assembly: same matrix/RHS norms on 1 rank and on N ranks ---------------------------------
+# MPIEXEC_PREFLAGS is a CMake list; the checker takes the flags as one space-separated string.
+string(REPLACE ";" " " _rel_preflags "${MPIEXEC_PREFLAGS}")
 set(_rel_check ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/release/check_rank_invariance.py
                --np ${_rel_np} "--mpiexec=${MPIEXEC_EXECUTABLE}" "--numproc-flag=${MPIEXEC_NUMPROC_FLAG}"
-               "--preflags=${MPIEXEC_PREFLAGS}" --)
+               "--preflags=${_rel_preflags}" --)
 add_test(NAME marsReleaseHexAssembly
          COMMAND ${_rel_check} $<TARGET_FILE:mars_cvfem_graph> --mesh=${_rel_hex} --iterations=1 --quiet)
 add_test(NAME marsReleaseTetAssembly
