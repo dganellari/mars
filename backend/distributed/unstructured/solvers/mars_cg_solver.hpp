@@ -230,6 +230,7 @@ public:
         const RealType cgDiagB  = b_norm;
 
         // PCG iterations
+        bool warnedNegativePAp = false;
         for (int iter = 0; iter < maxIter_; ++iter)
         {
             // Call halo exchange before SpMV if callback is set
@@ -278,6 +279,15 @@ public:
                 }
                 lastIterations_ = iter + 1;
                 return false;
+            }
+            // Negative curvature means the operator is not SPD (e.g. an asymmetric BC). CG keeps
+            // going as before, but say so once instead of failing silently later.
+            if (pAp < 0 && !warnedNegativePAp)
+            {
+                if (verbose_)
+                    std::cout << "CG warning: p^T Ap = " << pAp
+                              << " < 0, the operator is not positive definite; CG may not converge." << std::endl;
+                warnedNegativePAp = true;
             }
 
             RealType alpha = rho / pAp;

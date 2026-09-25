@@ -68,6 +68,10 @@ if(MARS_ENABLE_CUDA)
         $<$<COMPILE_LANGUAGE:CUDA>:-Xnvlink=--suppress-stack-size-warning>
         $<$<COMPILE_LANGUAGE:CUDA>:--diag-suppress=20281>
     )
+elseif(MARS_ENABLE_HIP)
+    # Source-file properties are directory-scoped: the top-level LANGUAGE HIP glob does not
+    # reach targets defined here, so set it for this target's .cu file explicitly.
+    set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/domain.cu PROPERTIES LANGUAGE HIP)
 endif()
 
 # For domain_cuda_impl.cpp
