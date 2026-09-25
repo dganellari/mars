@@ -285,12 +285,15 @@ target_include_directories(mars_tgv PRIVATE
 # Coupled collocated solver -- Phase 0 model operator (plan in
 # internal-notes/plan_coupled_collocated_solver.md). Increment 1 is the G=-D^T
 # geometry gate; coupled assembly + direct-solve oracle land in later increments.
-add_executable(mars_coupled_model_operator mars_coupled_model_operator.cu)
-target_link_libraries(mars_coupled_model_operator PRIVATE mars)
-target_include_directories(mars_coupled_model_operator PRIVATE
-    ${CMAKE_SOURCE_DIR}/backend/distributed/unstructured/amr
-)
-install(TARGETS mars_coupled_model_operator RUNTIME DESTINATION bin/examples)
+# Its solve paths use HypreGMRESSolver directly, so it needs a Hypre build.
+if(MARS_ENABLE_HYPRE)
+    add_executable(mars_coupled_model_operator mars_coupled_model_operator.cu)
+    target_link_libraries(mars_coupled_model_operator PRIVATE mars)
+    target_include_directories(mars_coupled_model_operator PRIVATE
+        ${CMAKE_SOURCE_DIR}/backend/distributed/unstructured/amr
+    )
+    install(TARGETS mars_coupled_model_operator RUNTIME DESTINATION bin/examples)
+endif()
 install(TARGETS mars_tgv RUNTIME DESTINATION bin/examples)
 
 # Pump driver: transient projection (BDF2 + Chorin) NS on a tet pump mesh, with
