@@ -522,6 +522,11 @@ template<typename ElementTag     = TetTag,
          typename AcceleratorTag = cstone::GpuTag>
 class ElementDomain
 {
+    // The Tri/Quad branches below are incomplete (no SFC connectivity, kernel signatures do not
+    // match), so reject them at compile time instead of failing inside the implementation.
+    static_assert(std::is_same_v<ElementTag, TetTag> || std::is_same_v<ElementTag, HexTag>,
+                  "ElementDomain supports TetTag and HexTag only; TriTag/QuadTag are not implemented yet");
+
 public:
     static constexpr int NodesPerElement = ElementTag::NodesPerElement;
 

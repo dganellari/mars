@@ -23,6 +23,29 @@
 namespace mars
 {
 
+// Defined outside the netCDF guard: code that only names these members (domain.hpp,
+// the drivers) must compile in a build without netCDF too.
+struct ExodusSideSets
+{
+    std::map<std::string, std::vector<uint64_t>> nodesByName;   // side-set name -> sorted unique GLOBAL 0-based node IDs
+    // side-set name -> per-node coordinate (x,y,z), aligned 1:1 with
+    // nodesByName[name]. The driver resolves an Exodus boundary node to its
+    // RUNTIME node id by recomputing the SFC key from this coordinate -- because
+    // after mesh ingest MARS/cstone index nodes by their SFC-sorted local id,
+    // NOT by the Exodus node id. Resolving through the Exodus id (the old g2l)
+    // was wrong on >1 rank (the two index spaces differ in order and size).
+    std::map<std::string, std::vector<std::array<double, 3>>> nodeCoordsByName;
+    // side-set name -> flat list of face triangle coordinates, 3 (x,y,z) per
+    // face (size = 3*num_faces), in the same order as trianglesByName. Lets the
+    // inlet-normal calc use coordinates directly instead of an index lookup.
+    std::map<std::string, std::vector<std::array<double, 3>>> triangleCoordsByName;
+    // side-set name -> flat list of face triangles, 3 GLOBAL 0-based node IDs
+    // per face (size = 3*num_faces). Used to compute the inlet face normal so
+    // an inlet velocity can be applied along the surface normal, not a global
+    // axis. Tet faces are triangles; only the tet reader fills this.
+    std::map<std::string, std::vector<uint64_t>> trianglesByName;
+};
+
 #ifdef MARS_HAVE_NETCDF
 
 // Helper macro for netCDF error checking
@@ -403,27 +426,6 @@ readAllBlockConnectivity(int ncid, size_t nodesPerElem, const char* caller, int 
 //
 // Hex face -> local-node convention follows Exodus II (1-based sides 1..6,
 // 1-based local nodes); we use the 0-based form internally.
-struct ExodusSideSets
-{
-    std::map<std::string, std::vector<uint64_t>> nodesByName;   // side-set name -> sorted unique GLOBAL 0-based node IDs
-    // side-set name -> per-node coordinate (x,y,z), aligned 1:1 with
-    // nodesByName[name]. The driver resolves an Exodus boundary node to its
-    // RUNTIME node id by recomputing the SFC key from this coordinate -- because
-    // after mesh ingest MARS/cstone index nodes by their SFC-sorted local id,
-    // NOT by the Exodus node id. Resolving through the Exodus id (the old g2l)
-    // was wrong on >1 rank (the two index spaces differ in order and size).
-    std::map<std::string, std::vector<std::array<double, 3>>> nodeCoordsByName;
-    // side-set name -> flat list of face triangle coordinates, 3 (x,y,z) per
-    // face (size = 3*num_faces), in the same order as trianglesByName. Lets the
-    // inlet-normal calc use coordinates directly instead of an index lookup.
-    std::map<std::string, std::vector<std::array<double, 3>>> triangleCoordsByName;
-    // side-set name -> flat list of face triangles, 3 GLOBAL 0-based node IDs
-    // per face (size = 3*num_faces). Used to compute the inlet face normal so
-    // an inlet velocity can be applied along the surface normal, not a global
-    // axis. Tet faces are triangles; only the tet reader fills this.
-    std::map<std::string, std::vector<uint64_t>> trianglesByName;
-};
-
 inline ExodusSideSets readExodusSideSetsHex8(const std::string& meshFile, int rank)
 {
     ExodusSideSets out;
@@ -816,12 +818,6 @@ readExodusElementBlocks(const std::string&, int, int)
 {
     return { std::vector<int>(), size_t(1) };
 }
-
-struct ExodusSideSets
-{
-    std::map<std::string, std::vector<uint64_t>> nodesByName;
-    std::map<std::string, std::vector<uint64_t>> trianglesByName;
-};
 
 inline ExodusSideSets readExodusSideSetsHex8(const std::string&, int)
 {

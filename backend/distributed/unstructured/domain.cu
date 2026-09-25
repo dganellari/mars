@@ -1381,25 +1381,13 @@ static void buildNodeHaloTopologyHostPath(
 // just via a different algorithm. Validation harness (validateAgainstHost)
 // diffs per-peer sorted node-id lists; bit-exact match expected.
 //
-// UNTESTED on hardware. Build, then on the cluster:
-//   MARS_NODEHALO_VALIDATE=1 mpirun ... ./mars_cvfem_graph ...
-//      → runs both paths and aborts on first mismatch
-//   MARS_NODEHALO_V2=1 mpirun ... ./mars_cvfem_graph ...
-//      → runs only v2 path (use after Gate 1 passes)
-//   (no env)            → host O(global) path (default, current production)
+// This is the DEFAULT path. MARS_NODEHALO_HOST=1 selects the host O(global)
+// path instead; MARS_NODEHALO_VALIDATE=1 runs both and aborts on the first
+// per-peer mismatch.
 //
-// KNOWN GAP: this builder consumes d_nodeOwnership_ as produced by
-// HaloData::buildNodeOwnership() Steps 1+2 only. It does NOT run a
-// global tiebreaker exchange to resolve corner-shared duplicate ownership
-// (the host path does that via MPI_Allgatherv at L1085 and the keyOwner
-// map at L1090).
-//
-// Consequence: on cube/structured meshes where Steps 1+2 already produce
-// unambiguous ownership, v2 should match host bit-exactly. On meshes
-// where multiple ranks initially own the same SFC key (corner-shared
-// nodes on >=4-rank partitions), v2 will diverge from host. Gate 1's
-// validateAgainstHost is precisely how we detect this — if it fires,
-// we add a tiebreaker pass before flipping v2 on by default.
+// Duplicate ownership of corner-shared nodes is resolved lowest-rank-wins
+// over the claims exchanged with halo peers (resolveOwnershipKernel). There is
+// no global SFC-key ownership pass.
 // ============================================================================
 
 // Send-side per-node kernel: for each node N where I'm the authoritative

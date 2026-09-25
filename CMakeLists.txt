@@ -185,17 +185,18 @@ if(MARS_ENABLE_UNSTRUCTURED)
         
         # Declare the content
         #
-        # MARS pins cstone to the `mars-extensions` branch which carries:
+        # MARS pins cstone to a commit on the `mars-extensions` branch, which carries:
         #   1. Public halo-index accessors (required by NodeHaloTopology v2).
         #   2. Env-gated sync phase timing (CSTONE_SYNC_TIMING=1).
         #   3. Experimental Domain::resetForAMRRefinement (WIP, env-gated
         #      on the MARS side via MARS_AMR_REUSE_DOMAIN=1).
         # The branch is maintained alongside upstream master; halo accessors
-        # are PR-able to upstream when ready.
+        # are PR-able to upstream when ready. Pinned to a commit, not the branch,
+        # so a release always builds against the cstone it was tested with.
         FetchContent_Declare(
             cornerstone_fetch
             GIT_REPOSITORY https://github.com/sekelle/cornerstone-octree.git
-            GIT_TAG mars-extensions
+            GIT_TAG 4eb195a662bd8b77f88621c1c14aeb32f8693dbb  # mars-extensions
             OVERRIDE_FIND_PACKAGE
         )
     

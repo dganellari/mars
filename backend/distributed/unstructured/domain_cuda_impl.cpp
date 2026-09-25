@@ -20,6 +20,25 @@
 namespace mars
 {
 
+namespace
+{
+// The partition gives every rank at least one element iff the GLOBAL count reaches the rank count.
+// Compare the global sum, not this rank's slice: a slice below numRanks is a valid decomposition
+// (e.g. 4096 elements on 128 ranks), and a rank-local verdict would let some ranks throw while the
+// rest enter cstone's collective sync.
+void requireEnoughElements(size_t localCount, int numRanks)
+{
+    unsigned long long local = localCount, global = 0;
+    MPI_Allreduce(&local, &global, 1, MPI_UNSIGNED_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+    if (global < static_cast<unsigned long long>(numRanks))
+    {
+        throw std::runtime_error("Mesh has fewer elements (" + std::to_string(global) + ") than MPI ranks (" +
+                                 std::to_string(numRanks) +
+                                 "). Each rank must get at least one element for domain decomposition.");
+    }
+}
+} // namespace
+
 // Implementation of syncDomainImpl for various KeyType and RealType combinations
 template<typename KeyType, typename RealType, typename SfcConnTuple>
 void syncDomainImpl(cstone::Domain<KeyType, RealType, cstone::GpuTag>* domain,
@@ -33,13 +52,7 @@ void syncDomainImpl(cstone::Domain<KeyType, RealType, cstone::GpuTag>* domain,
 {
     int numRanks;
     MPI_Comm_size(MPI_COMM_WORLD, &numRanks);
-    // Early check for insufficient elements
-    if (elementCount < numRanks)
-    {
-        throw std::runtime_error("Mesh has fewer elements (" + std::to_string(elementCount) + 
-                               ") than MPI ranks (" + std::to_string(numRanks) +
-                               "). Each rank must get at least one element for domain decomposition.");
-    }
+    requireEnoughElements(elementCount, numRanks);
 
     // Create scratch buffers to match the data types being synced:
     // - First 3 for coordinates (x, y, z) -> RealType
@@ -139,12 +152,7 @@ void syncDomainImplBlock(cstone::Domain<KeyType, RealType, cstone::GpuTag>* doma
 {
     int numRanks;
     MPI_Comm_size(MPI_COMM_WORLD, &numRanks);
-    if (elementCount < numRanks)
-    {
-        throw std::runtime_error("Mesh has fewer elements (" + std::to_string(elementCount) +
-                               ") than MPI ranks (" + std::to_string(numRanks) +
-                               "). Each rank must get at least one element for domain decomposition.");
-    }
+    requireEnoughElements(elementCount, numRanks);
 
     cstone::DeviceVector<RealType> s1(elementCount);
     cstone::DeviceVector<RealType> s2(elementCount);
@@ -228,12 +236,7 @@ void syncDomainImplWithOrigCoords(cstone::Domain<KeyType, RealType, cstone::GpuT
     MPI_Comm_size(MPI_COMM_WORLD, &numRanks);
 
     // Early check for insufficient elements
-    if (elementCount < numRanks)
-    {
-        throw std::runtime_error("Mesh has fewer elements (" + std::to_string(elementCount) +
-                               ") than MPI ranks (" + std::to_string(numRanks) +
-                               "). Each rank must get at least one element for domain decomposition.");
-    }
+    requireEnoughElements(elementCount, numRanks);
 
     // Create scratch buffers - need MORE for original coordinates
     // We need: 3 for x,y,z coords + 8 for SFC keys + 24 for original coords = 35 total
