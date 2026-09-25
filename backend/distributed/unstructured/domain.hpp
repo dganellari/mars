@@ -132,11 +132,6 @@ __global__ void computeCharacteristicSizesKernel(const RealType* x,
 template<typename KeyType, typename RealType>
 __global__ void finalizeCharacteristicSizesKernel(RealType* h, int* nodeTetCount, int numNodes);
 
-// Forward declarations of CUDA kernels
-template<typename RealType>
-__global__ void
-transformCharacteristicSizesKernel(RealType* d_h, size_t size, RealType meshFactor, RealType minH, RealType maxH);
-
 template<typename RealType>
 __global__ void fillCharacteristicSizesKernel(RealType* d_h, size_t size, RealType value);
 
@@ -2749,7 +2744,10 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::calculateChar
         if constexpr (NodesPerElem > 7) { d_i7_ptr = thrust::raw_pointer_cast(std::get<7>(d_conn_).data()); }
         else { d_i7_ptr = nullptr; }
 
-        // accumulate edge lengths per node
+        // accumulate edge lengths per node. The kernel atomically adds into d_h, and cstone's
+        // DeviceVector does not initialize on resize, so zero it on every call (AMR re-syncs reuse it).
+        thrust::fill(thrust::device, thrust::device_pointer_cast(d_h.data()),
+                     thrust::device_pointer_cast(d_h.data() + nodeCount_), RealType(0));
         int blockSize = 256;
         int numBlocks = (elementCount_ + blockSize - 1) / blockSize;
 
@@ -2768,14 +2766,8 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::calculateChar
             thrust::raw_pointer_cast(d_h.data()), thrust::raw_pointer_cast(d_nodeTetCount.data()), nodeCount_);
 
         cudaCheckError();
-
-        constexpr RealType meshFactor = 1.0;
-        constexpr RealType minH       = 1.0e-6;
-        constexpr RealType maxH       = 1.0;
-
-        transformCharacteristicSizesKernel<RealType>
-            <<<numBlocks, blockSize>>>(thrust::raw_pointer_cast(d_h.data()), nodeCount_, meshFactor, minH, maxH);
-        cudaCheckError();
+        // No clamp: h is a physical length and sets the cstone halo reach, so any absolute bound
+        // would make halo coverage depend on the mesh's coordinate units.
     }
     else
     {

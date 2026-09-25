@@ -34,24 +34,6 @@ __device__ __host__ std::tuple<RealType, RealType, RealType> decodeSfcToPhysical
 
 // CUDA kernels with RealType template parameter instead of Real
 template<typename RealType>
-__global__ void
-transformCharacteristicSizesKernel(RealType* d_h, size_t size, RealType meshFactor, RealType minH, RealType maxH)
-{
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx < size)
-    {
-        RealType val    = d_h[idx];
-        RealType result = val * meshFactor;
-
-        if constexpr (std::is_same_v<RealType, float>) {
-            d_h[idx] = fmaxf(minH, fminf(maxH, result));
-        } else {
-            d_h[idx] = fmax(minH, fmin(maxH, result));  // For double
-        }
-    }
-}
-
-template<typename RealType>
 __global__ void fillCharacteristicSizesKernel(RealType* d_h, size_t size, RealType value)
 {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -2589,8 +2571,6 @@ template __global__ void rebuildNodeCoordsFromElementsKernel<HexTag, uint64_t, d
     double* nodeX, double* nodeY, double* nodeZ,
     int numElements);
 
-template __global__ void transformCharacteristicSizesKernel<float>(float* d_h, size_t size, float meshFactor, float minH, float maxH);
-template __global__ void transformCharacteristicSizesKernel<double>(double* d_h, size_t size, double meshFactor, double minH, double maxH);
 template __global__ void fillCharacteristicSizesKernel<float>(float* d_h, size_t size, float value);
 template __global__ void fillCharacteristicSizesKernel<double>(double* d_h, size_t size, double value);
 
