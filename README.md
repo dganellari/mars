@@ -87,9 +87,24 @@ They check that hex and tet assembly give the same matrix and RHS norms on 1 ran
 ranks (`-DMARS_RELEASE_TEST_RANKS=N`, default 4), that a CVFEM Poisson solve converges, and that
 10-step lid-driven cavity and channel Navier–Stokes runs finish on 1 and N ranks without a failed
 solve or NaN. They need python3 with numpy and an MPI launcher, and take a few minutes on one
-GPU; on a cluster, run them inside an allocation. The 25-minute Poiseuille validation against the
-analytic profile is opt-in: configure with `-DMARS_ENABLE_VALIDATION_TESTS=ON`, then run
-`ctest -L validation`.
+GPU. ctest starts every GPU run through the MPI launcher CMake found (`mpiexec`, or `srun` on
+Slurm), so on a Slurm cluster either run ctest inside an allocation:
+
+```bash
+salloc -A <account> -N 1 -t 00:30:00      # add the partition/GPU flags your site needs
+ctest -L release -V
+```
+
+or give the launcher your site's flags once at configure time and run ctest from the login node:
+
+```bash
+cmake -B build -DMPIEXEC_EXECUTABLE=$(which srun) \
+  "-DMPIEXEC_PREFLAGS=--account=<account>;--time=00:10:00;--nodes=1"
+```
+
+The drivers pick GPU `rank % deviceCount` themselves, so no GPU-binding wrapper is required. The
+25-minute Poiseuille validation against the analytic profile is opt-in: configure with
+`-DMARS_ENABLE_VALIDATION_TESTS=ON`, then run `ctest -L validation`.
 
 To use MARS from another CMake project, install it and point `CMAKE_PREFIX_PATH` at the
 install prefix (see `examples/usage_from_external_cmake_project/`):
