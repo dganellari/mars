@@ -59,6 +59,17 @@ foreach(_bc cavity channel)
     endforeach()
 endforeach()
 
+# With Hypre, also run the cavity through PCG + BoomerAMG so that build's optional path is covered.
+if(MARS_ENABLE_HYPRE)
+    foreach(_np 1 ${_rel_np})
+        add_test(NAME marsReleaseNs_cavity_hypre_np${_np}
+                 COMMAND ${_rel_mpi} ${_np} ${MPIEXEC_PREFLAGS} $<TARGET_FILE:mars_amr_ns_projection>
+                         ${MPIEXEC_POSTFLAGS} --mesh=${_rel_hex} --bc=cavity --solver=hypre --num-steps=10)
+        set_tests_properties(marsReleaseNs_cavity_hypre_np${_np} PROPERTIES
+            FAIL_REGULAR_EXPRESSION "[=: ](-?nan|NaN)[ ,\n]")
+    endforeach()
+endif()
+
 get_property(_rel_tests DIRECTORY PROPERTY TESTS)
 list(FILTER _rel_tests INCLUDE REGEX "^marsRelease(Hex|Tet|Poisson|Ns)")
 set_tests_properties(${_rel_tests} PROPERTIES

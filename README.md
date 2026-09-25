@@ -28,8 +28,8 @@ The main features of MARS consist of:
 4. Distributed multi-rank execution via MPI, including a per-node halo for solver
    communication (CUDA-aware MPI) on top of the cornerstone element halo.
 
-5. GPU-native adaptive mesh refinement (mark → refine → rebuild → solution transfer),
-   with multi-rank support.
+5. GPU-native adaptive mesh refinement (mark → refine → rebuild → solution transfer);
+   experimental, single-rank for now.
 
 6. Lazy composition — adjacency, halo, and coordinate caches are built on first access
    to minimize VRAM and startup time.
@@ -179,9 +179,9 @@ The block above already enables `MARS_ENABLE_FEM_EXAMPLES`, needed for the
 CVFEM / FEM example drivers (Poisson, CVFEM assembly, the high-order
 matrix-free gates). Other optional add-ons:
 
-- `-DMARS_ENABLE_HYPRE=ON` — BoomerAMG preconditioner. Needed by the
-  AMG-preconditioned solvers and the AMR / Navier-Stokes drivers; **not**
-  needed for the matrix-free operator gates.
+- `-DMARS_ENABLE_HYPRE=ON` — optional BoomerAMG-preconditioned solvers. The
+  Navier–Stokes drivers default to CG and only need it for `--solver=hypre` (without
+  it that option stops with an error); the segregated SIMPLE driver requires it.
 - `-DMARS_ENABLE_ADIOS2=ON`, `-DMARS_ENABLE_VTK=ON` — extra I/O backends.
 
 See `cmake/MarsOptions.cmake` and `cmake/MarsDependencies.cmake` for the full
