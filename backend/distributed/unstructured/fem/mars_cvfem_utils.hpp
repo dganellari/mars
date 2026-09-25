@@ -510,12 +510,12 @@ __global__ void precomputeShapeDerivativesKernel(
         RealType invJ[3][3];
         invert3x3_generic(J, invJ);
 
-        // Transform parametric derivatives to physical derivatives
+        // J[physical][reference] requires grad_x = J^{-T} grad_reference.
         for (int node = 0; node < 8; ++node) {
             RealType dndx_val[3] = {0, 0, 0};
             for (int i = 0; i < 3; ++i) {
                 for (int j = 0; j < 3; ++j) {
-                    dndx_val[i] += invJ[i][j] * d_hexDerivConst[ip][node][j];
+                    dndx_val[i] += invJ[j][i] * d_hexDerivConst[ip][node][j];
                 }
             }
 
