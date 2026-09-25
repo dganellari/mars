@@ -111,6 +111,12 @@ int main(int argc, char** argv)
             else if (v == "tensor_colored")kernelVariant = CvfemKernelVariant::TensorColored;
             else if (v == "tensor_aos")    kernelVariant = CvfemKernelVariant::TensorAoS;
             else if (v == "wmma_tensor")   kernelVariant = CvfemKernelVariant::WmmaTensor;
+            else
+            {
+                if (rank == 0) std::cerr << "Error: unknown --kernel '" << v << "'\n";
+                MPI_Finalize();
+                return 1;
+            }
         }
         else if (arg.find("--block-size=") == 0)   blockSize  = std::stoi(arg.substr(13));
         else if (arg.find("--bucket-size=") == 0)  bucketSize = std::stoi(arg.substr(14));
@@ -402,10 +408,17 @@ int main(int argc, char** argv)
     }
 
     auto totalStart = std::chrono::high_resolution_clock::now();
+    int failedStep = 0;
 
     for (int step = 1; step <= numSteps; ++step)
     {
         runNsStep<KeyType, RealType>(s, RealType(dt), RealType(nu), RealType(rho));
+
+        // -2 marks a failed solve. Agree on it across ranks so every rank stops at the same step.
+        int localFail = (s.lastPressureIters == -2 || s.lastUIters == -2 || s.lastVIters == -2
+                         || s.lastWIters == -2) ? 1 : 0;
+        int anyFail = 0;
+        MPI_Allreduce(&localFail, &anyFail, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
 
         double t = step * dt;
 
@@ -431,14 +444,22 @@ int main(int argc, char** argv)
             if (s.lastPressureIters == -1)       std::cout << "hypre";
             else if (s.lastPressureIters == -2)  std::cout << "FAIL";
             else                                  std::cout << s.lastPressureIters;
-            // cg_iter_uvw: report the max across the three velocity solves so
-            // a single number summarizes convergence (Hypre: -1; FAIL: -2).
-            int vMax = std::max({s.lastUIters, s.lastVIters, s.lastWIters});
+            // cg_iter_uvw: the max across the three velocity solves, but FAIL (-2) wins over any
+            // success so one failed component is never hidden (Hypre: -1).
+            bool vFail = s.lastUIters == -2 || s.lastVIters == -2 || s.lastWIters == -2;
+            int vMax   = std::max({s.lastUIters, s.lastVIters, s.lastWIters});
             std::cout << " cg_iter_uvw=";
-            if (vMax == -1)      std::cout << "hypre";
-            else if (vMax == -2) std::cout << "FAIL";
-            else                  std::cout << vMax;
+            if (vFail)           std::cout << "FAIL";
+            else if (vMax == -1) std::cout << "hypre";
+            else                 std::cout << vMax;
             std::cout << "\n" << std::defaultfloat;
+        }
+
+        if (anyFail)
+        {
+            failedStep = step;
+            if (rank == 0) std::cerr << "Error: linear solve failed at step " << step << ", stopping.\n";
+            break;
         }
 
         if (vtuWriterU && (step % vtuEvery == 0 || step == numSteps))
@@ -457,13 +478,14 @@ int main(int argc, char** argv)
     if (rank == 0)
     {
         std::cout << "\n========================================\n";
-        std::cout << "NS projection run complete\n";
-        std::cout << "  Time steps: " << numSteps << "\n";
+        if (failedStep) std::cout << "NS projection run FAILED at step " << failedStep << "\n";
+        else            std::cout << "NS projection run complete\n";
+        std::cout << "  Time steps: " << (failedStep ? failedStep : numSteps) << "\n";
         std::cout << "  Total wall: " << std::fixed << totalMs << " ms ("
                   << (totalMs / std::max(numSteps, 1)) << " ms/step)\n";
         std::cout << "========================================\n";
     }
 
     MPI_Finalize();
-    return 0;
+    return failedStep ? 1 : 0;
 }

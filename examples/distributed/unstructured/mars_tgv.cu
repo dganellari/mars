@@ -323,6 +323,10 @@ int main(int argc, char** argv)
 
     SolverKind solverKind = useHypre ? SolverKind::Hypre : SolverKind::CG;
 
+    if (numRanks > 1 && rank == 0)
+        std::cerr << "WARNING: multi-rank periodic TGV is not supported yet (see KNOWN_LIMITATIONS.md);\n"
+                  << "         a residual at the periodic interface grows over many steps. Use 1 rank.\n";
+
     if (rank == 0) {
         std::cout << "\n========================================\n"
                   << "MARS TGV driver (incompressible NS + AMR)\n"

@@ -35,6 +35,11 @@ int main(int argc, char** argv) {
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &numRanks);
 
+    // Bind one GPU per rank; harmless when the launcher already exposes a single GPU per rank.
+    int deviceCount = 0;
+    cudaGetDeviceCount(&deviceCount);
+    if (deviceCount > 0) cudaSetDevice(rank % deviceCount);
+
     std::string meshFile;
     int numIterations    = 10;
     int blockSize        = 256;

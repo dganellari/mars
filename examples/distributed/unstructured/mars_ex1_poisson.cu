@@ -1,5 +1,6 @@
 // MARS Poisson Example - GPU-native finite element solver
-// Solves: -Δu = f in Ω, u = 0 on ∂Ω
+// Solves: -Δu = f in Ω, u = 0 on ∂Ω, for a box-shaped Ω (the boundary is found as the faces of the
+// mesh's global bounding box)
 // 
 // Equivalent to MFEM examples/ex1.cpp but fully GPU-accelerated
 //
@@ -17,6 +18,7 @@
 #include <iostream>
 #include <chrono>
 #include <cmath>
+#include <algorithm>
 
 using namespace mars;
 using namespace mars::fem;
@@ -47,6 +49,11 @@ int main(int argc, char* argv[]) {
     int rank, numRanks;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &numRanks);
+
+    // Tet drivers must bind a GPU per rank before the domain touches the device.
+    int deviceCount = 0;
+    cudaGetDeviceCount(&deviceCount);
+    if (deviceCount > 0) cudaSetDevice(rank % deviceCount);
     
     // Parse command line arguments
     std::string meshPath = "mesh_parts";
@@ -56,7 +63,9 @@ int main(int argc, char* argv[]) {
     
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
-        if (arg == "--mesh" && i + 1 < argc) {
+        if (arg.rfind("--mesh=", 0) == 0) {
+            meshPath = arg.substr(7);
+        } else if (arg == "--mesh" && i + 1 < argc) {
             meshPath = argv[++i];
         } else if (arg == "--order" && i + 1 < argc) {
             order = std::atoi(argv[++i]);
@@ -68,10 +77,10 @@ int main(int argc, char* argv[]) {
             if (rank == 0) {
                 std::cout << "Usage: " << argv[0] << " [options]\n"
                           << "Options:\n"
-                          << "  --mesh <path>      Path to mesh files (default: mesh_parts)\n"
+                          << "  --mesh <path>      Path to a box-shaped tet mesh (default: mesh_parts)\n"
                           << "  --order <n>        Polynomial order (default: 1)\n"
-                          << "  --max-iter <n>     Max CG iterations (default: 1000)\n"
-                          << "  --tol <val>        CG tolerance (default: 1e-10)\n"
+                          << "  --max-iter <n>     Max GMRES iterations (default: 500)\n"
+                          << "  --tol <val>        GMRES tolerance (default: 1e-6)\n"
                           << "  --help, -h         Print this help message\n";
             }
             MPI_Finalize();
@@ -227,8 +236,8 @@ int main(int argc, char* argv[]) {
         // size_t numOwnedDofs = dof_handler.get_num_local_dofs(); // Already declared above
         size_t totalLocalDofs = dof_handler.get_num_local_dofs_with_ghosts();
         
-        // Use geometric boundary detection for beam-tet mesh
-        // Mesh domain: [0, 8] x [0, 1] x [0, 1]
+        // Geometric boundary detection: a node is on ∂Ω when it lies on a face of the mesh's GLOBAL
+        // bounding box, so this is exact for box-shaped domains only.
         // Note: Size to totalLocalDofs to handle ghost DOF column indices in matrix
         std::vector<bool> isBoundaryDOF(totalLocalDofs, false);
         std::vector<float> boundaryValues(totalLocalDofs, 0.0f);
@@ -254,9 +263,19 @@ int main(int argc, char* argv[]) {
                     thrust::device_pointer_cast(d_z.data() + d_z.size()),
                     h_z.begin());
         
+        float lo[3] = { 1e30f,  1e30f,  1e30f};
+        float hi[3] = {-1e30f, -1e30f, -1e30f};
+        for (size_t n = 0; n < h_x.size(); ++n) {
+            const float c[3] = {h_x[n], h_y[n], h_z[n]};
+            for (int d = 0; d < 3; ++d) { lo[d] = std::min(lo[d], c[d]); hi[d] = std::max(hi[d], c[d]); }
+        }
+        MPI_Allreduce(MPI_IN_PLACE, lo, 3, MPI_FLOAT, MPI_MIN, MPI_COMM_WORLD);
+        MPI_Allreduce(MPI_IN_PLACE, hi, 3, MPI_FLOAT, MPI_MAX, MPI_COMM_WORLD);
+        const float extent = std::max({hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]});
+
         // Mark boundary DOFs geometrically (using DOF handler)
         size_t numBoundary = 0;
-        const float tol = 1e-6f;
+        const float tol = 1e-6f * extent;
         for (size_t nodeIdx = 0; nodeIdx < domain_ref.getNodeCount(); ++nodeIdx) {
             // Skip ghost nodes - only owned nodes should apply BCs
             if (h_ownership[nodeIdx] != 1) continue;
@@ -272,10 +291,9 @@ int main(int argc, char* argv[]) {
             float y = h_y[nodeIdx];
             float z = h_z[nodeIdx];
             
-            // Check if on any face of [0,8] x [0,1] x [0,1] domain
-            bool onBoundary = (std::abs(x - 0.0f) < tol) || (std::abs(x - 8.0f) < tol) ||
-                             (std::abs(y - 0.0f) < tol) || (std::abs(y - 1.0f) < tol) ||
-                             (std::abs(z - 0.0f) < tol) || (std::abs(z - 1.0f) < tol);
+            bool onBoundary = (std::abs(x - lo[0]) < tol) || (std::abs(x - hi[0]) < tol) ||
+                             (std::abs(y - lo[1]) < tol) || (std::abs(y - hi[1]) < tol) ||
+                             (std::abs(z - lo[2]) < tol) || (std::abs(z - hi[2]) < tol);
             
             if (onBoundary) {
                 isBoundaryDOF[dof] = true;

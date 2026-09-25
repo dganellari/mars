@@ -12,6 +12,7 @@
 #include "backend/distributed/unstructured/solvers/mars_cg_solver.hpp"
 #include "backend/distributed/unstructured/amr/mars_amr.hpp"
 
+#include <thrust/execution_policy.h>
 #include <thrust/device_vector.h>
 #include <thrust/reduce.h>
 #include <thrust/extrema.h>
@@ -80,7 +81,7 @@ void solvePoisson(ElementDomain<HexTag, RealType, KeyType, cstone::GpuTag>& doma
     if (numOwnedDofs == 0)
     {
         d_nodeSolution.resize(nodeCount);
-        thrust::fill(d_nodeSolution.begin(), d_nodeSolution.end(), RealType(0));
+        thrust::fill(thrust::device, d_nodeSolution.begin(), d_nodeSolution.end(), RealType(0));
         return;
     }
 
@@ -203,7 +204,7 @@ void solvePoisson(ElementDomain<HexTag, RealType, KeyType, cstone::GpuTag>& doma
     cudaDeviceSynchronize();
 
     // Source term
-    thrust::transform(d_rhs.begin(), d_rhs.end(), d_rhs.begin(),
+    thrust::transform(thrust::device, d_rhs.begin(), d_rhs.end(), d_rhs.begin(),
                        [sourceTerm] __device__(RealType x) { return -sourceTerm + x; });
 
     // Apply boundary conditions
@@ -257,8 +258,8 @@ void solvePoisson(ElementDomain<HexTag, RealType, KeyType, cstone::GpuTag>& doma
     // Solve
     using Vector = cstone::DeviceVector<RealType>;
     Vector b(numOwnedDofs), x(numOwnedDofs);
-    thrust::copy(d_rhs.begin(), d_rhs.end(), b.begin());
-    thrust::fill(x.begin(), x.end(), RealType(0));
+    thrust::copy(thrust::device, d_rhs.begin(), d_rhs.end(), b.begin());
+    thrust::fill(thrust::device, x.begin(), x.end(), RealType(0));
 
     ConjugateGradientSolver<RealType, int, cstone::GpuTag> solver(maxIter, tolerance);
     solver.setVerbose(false);
@@ -267,7 +268,7 @@ void solvePoisson(ElementDomain<HexTag, RealType, KeyType, cstone::GpuTag>& doma
 
     // Convert DOF solution to node solution
     d_nodeSolution.resize(nodeCount);
-    thrust::fill(d_nodeSolution.begin(), d_nodeSolution.end(), RealType(0));
+    thrust::fill(thrust::device, d_nodeSolution.begin(), d_nodeSolution.end(), RealType(0));
 
     // Scatter DOF values back to nodes
     std::vector<RealType> h_x_sol(numOwnedDofs);
@@ -282,7 +283,7 @@ void solvePoisson(ElementDomain<HexTag, RealType, KeyType, cstone::GpuTag>& doma
 
     if (rank == 0)
     {
-        RealType solNorm = std::sqrt(thrust::inner_product(x.begin(), x.end(), x.begin(), RealType(0)));
+        RealType solNorm = std::sqrt(thrust::inner_product(thrust::device, x.begin(), x.end(), x.begin(), RealType(0)));
         std::cout << "    Solve: " << numOwnedDofs << " DOFs, " << nnz << " NNZ, ||u||=" << std::scientific << solNorm
                   << "\n"
                   << std::defaultfloat;
@@ -452,12 +453,12 @@ int main(int argc, char** argv)
     // Final solution statistics
     if (rank == 0)
     {
-        RealType solMin = thrust::reduce(d_nodeSolution.begin(), d_nodeSolution.end(),
+        RealType solMin = thrust::reduce(thrust::device, d_nodeSolution.begin(), d_nodeSolution.end(),
                                           std::numeric_limits<RealType>::max(), thrust::minimum<RealType>());
-        RealType solMax = thrust::reduce(d_nodeSolution.begin(), d_nodeSolution.end(),
+        RealType solMax = thrust::reduce(thrust::device, d_nodeSolution.begin(), d_nodeSolution.end(),
                                           std::numeric_limits<RealType>::lowest(), thrust::maximum<RealType>());
         RealType solNorm = std::sqrt(
-            thrust::inner_product(d_nodeSolution.begin(), d_nodeSolution.end(), d_nodeSolution.begin(), RealType(0)));
+            thrust::inner_product(thrust::device, d_nodeSolution.begin(), d_nodeSolution.end(), d_nodeSolution.begin(), RealType(0)));
 
         std::cout << "\n========================================\n";
         std::cout << "Final Solution\n";

@@ -13,6 +13,7 @@
 #include <thrust/reduce.h>
 #include <thrust/extrema.h>
 #include <thrust/inner_product.h>
+#include <thrust/execution_policy.h>
 #include <set>
 #include <mpi.h>
 #include <iomanip>
@@ -36,6 +37,15 @@ int main(int argc, char** argv) {
     if (deviceCount > 0) {
         int device = rank % deviceCount;
         cudaSetDevice(device);
+    }
+
+    // Ghost nodes get no DOF and the CG solve has no halo exchange, so on >1 rank each rank would
+    // silently solve its own disconnected block. Refuse until the distributed coupling exists.
+    if (numRanks > 1) {
+        if (rank == 0)
+            std::cerr << "Error: mars_cvfem_poisson is single-rank only (run with 1 MPI rank).\n";
+        MPI_Finalize();
+        return 1;
     }
 
     // Parse command-line options
@@ -291,7 +301,7 @@ int main(int argc, char** argv) {
     float assemblyTime = std::chrono::duration<float, std::milli>(assemblyEnd - assemblyStart).count();
 
     // Add source term to RHS: RHS = -f (since we have -Δu on LHS)
-    thrust::transform(d_rhs.begin(), d_rhs.end(), d_rhs.begin(),
+    thrust::transform(thrust::device, d_rhs.begin(), d_rhs.end(), d_rhs.begin(),
                       [sourceTerm] __device__ (RealType x) { return -sourceTerm + x; });
 
     if (rank == 0) {
@@ -366,8 +376,8 @@ int main(int argc, char** argv) {
     // Solve using CG
     using Vector = cstone::DeviceVector<RealType>;
     Vector b(numOwnedDofs), x(numOwnedDofs);
-    thrust::copy(d_rhs.begin(), d_rhs.end(), b.begin());
-    thrust::fill(x.begin(), x.end(), RealType(0));
+    thrust::copy(thrust::device, d_rhs.begin(), d_rhs.end(), b.begin());
+    thrust::fill(thrust::device, x.begin(), x.end(), RealType(0));
 
     if (rank == 0) {
         std::cout << "Solving with CG...\n";
@@ -393,11 +403,11 @@ int main(int argc, char** argv) {
     }
 
     // Compute solution statistics
-    RealType solMin = thrust::reduce(x.begin(), x.end(),
+    RealType solMin = thrust::reduce(thrust::device, x.begin(), x.end(),
                                      std::numeric_limits<RealType>::max(), thrust::minimum<RealType>());
-    RealType solMax = thrust::reduce(x.begin(), x.end(),
+    RealType solMax = thrust::reduce(thrust::device, x.begin(), x.end(),
                                      std::numeric_limits<RealType>::lowest(), thrust::maximum<RealType>());
-    RealType solNorm = std::sqrt(thrust::inner_product(x.begin(), x.end(), x.begin(), 0.0));
+    RealType solNorm = std::sqrt(thrust::inner_product(thrust::device, x.begin(), x.end(), x.begin(), 0.0));
 
     if (rank == 0) {
         std::cout << "Solution statistics:\n";
