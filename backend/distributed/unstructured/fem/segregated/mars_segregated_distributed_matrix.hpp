@@ -232,14 +232,15 @@ template<int Threads>
 __global__ void owned_residual_finish(int count,const SquareSums* partial,SquareSums* result)
 {
     __shared__ double s_r[Threads], s_b[Threads];
+    const int t=int(threadIdx.x);
     double r2=0, b2=0;
-    for (int i=threadIdx.x;i<count;i+=blockDim.x) { r2+=partial[i].residual2; b2+=partial[i].rhs2; }
-    s_r[threadIdx.x]=r2; s_b[threadIdx.x]=b2; __syncthreads();
-    for (int o=blockDim.x/2;o>0;o/=2) {
-        if (threadIdx.x<o) { s_r[threadIdx.x]+=s_r[threadIdx.x+o]; s_b[threadIdx.x]+=s_b[threadIdx.x+o]; }
+    for (int i=t;i<count;i+=Threads) { r2+=partial[i].residual2; b2+=partial[i].rhs2; }
+    s_r[t]=r2; s_b[t]=b2; __syncthreads();
+    for (int o=Threads/2;o>0;o/=2) {
+        if (t<o) { s_r[t]+=s_r[t+o]; s_b[t]+=s_b[t+o]; }
         __syncthreads();
     }
-    if (threadIdx.x==0) *result={s_r[0],s_b[0]};
+    if (t==0) *result={s_r[0],s_b[0]};
 }
 #endif
 } // namespace kernels

@@ -164,6 +164,23 @@ the gate fail.
 These are host results. The device kernels (atomics, the subwarp residual and the thrust scan)
 run only in the CUDA gate.
 
+### Compile-only CUDA check (not nvcc, not run)
+
+Clang 18.1.3 in CUDA mode was used, with CUDA 12.9 headers, libdevice and `ptxas` from
+NVIDIA's pip wheels. Headers: cornerstone at the pinned `4eb195a`, and Hypre `master`
+(`5b58261`, configured without CUDA, 32-bit `HYPRE_BigInt`).
+
+| Translation unit | Host | Device (through `ptxas`) |
+|---|---|---|
+| adapter + shared gates on device buffers (C=1/3, 64- and 32-bit ids) | compiles, no warnings | sm_80 and sm_90, no warnings |
+| `cuda_gate.cu` with the real `HypreGMRESSolver`, `domain.hpp`, `mars.hpp` | compiles | sm_90 |
+| `mars_segregated_simple.cu`, before and after the proposed integration diff | compiles | sm_90 |
+
+Clang needed one change, applied only to a scratch copy of `domain.hpp`: its out-of-line
+`getConnectivity<I>(size_t)` definition lacks the `MARS_HOST_DEVICE` of its declaration, which
+nvcc accepts and clang rejects. nvcc was not available, so nvcc-specific diagnostics remain
+possible, and nothing was linked or run on a GPU.
+
 ### Not executed: CUDA/Hypre gate on Daint
 
 This code has never been compiled with nvcc or run with Hypre. Apply the patch to the MARS
