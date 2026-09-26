@@ -139,7 +139,9 @@ public:
         static_assert(std::is_integral_v<T> && sizeof(T)<=8);
         if (values.size()!=std::size_t(nodes_)) fatal("metadata does not cover local nodes");
         using Wire=std::conditional_t<std::is_signed_v<T>,std::int64_t,std::uint64_t>;
-        const MPI_Datatype type=std::is_signed_v<T>?MPI_INT64_T:MPI_UINT64_T;
+        MPI_Datatype type;
+        if constexpr (std::is_signed<T>::value) type=MPI_INT64_T;
+        else type=MPI_UINT64_T;
         std::vector<Wire> send(h_send_nodes_.size()), recv(h_recv_nodes_.size());
         for (std::size_t i=0;i<send.size();++i) send[i]=values[h_send_nodes_[i]];
         auto& requests=requests_; requests.clear();
