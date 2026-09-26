@@ -83,9 +83,51 @@ class ComparisonTests(unittest.TestCase):
             record[key] = gate.digest(self.reference / name)
         (self.reference / 'comparison-run.json').write_text(json.dumps(record))
 
-    def compare(self):
+    def compare(self, native_mesh=None):
         with patch.object(gate, 'MESH_SHA256', self.mesh_hash), contextlib.redirect_stdout(io.StringIO()):
-            gate.compare(self.reference, self.mars, self.output)
+            gate.compare(self.reference, self.mars, self.output, native_mesh)
+
+    def native_input(self, explicit_ids=True):
+        path = self.reference / 'channel.exo'
+        if not explicit_ids:
+            self.ids = np.arange(1, 426)
+            self.write_exodus()
+        with Dataset(str(path), 'w') as mesh:
+            mesh.createDimension('num_nodes', 425)
+            mesh.createDimension('num_elem', 1536)
+            if explicit_ids:
+                mesh.createVariable('node_num_map', 'i8', ('num_nodes',))[:] = self.ids
+        self.mesh_hash = gate.digest(path)
+        self.manifest()
+        (self.mars / 'run.log').write_text('Native SIMPLE Exodus input: ' + str(path.resolve())
+                                         + '\nCONVERGED iterations=1277\n')
+        # Native runtime order differs from the Exodus storage row written in column node.
+        fields = self.mars / 'channel-fields.csv'
+        lines = fields.read_text().splitlines()
+        fields.write_text('\n'.join(lines[:1] + lines[:0:-1]) + '\n')
+        (self.mars / 'channel.json').unlink()
+        (self.mars / 'channel.txt').unlink()
+        return path
+
+    def test_native_permuted_rows_and_explicit_ids(self):
+        self.compare(self.native_input())
+        report = json.loads(self.output.read_text())
+        self.assertTrue(report['passed']); self.assertEqual(report['input_format'], 'exodus')
+
+    def test_native_default_node_ids(self):
+        self.compare(self.native_input(explicit_ids=False))
+
+    def test_native_requires_run_path(self):
+        path = self.native_input()
+        (self.mars / 'run.log').write_text('CONVERGED iterations=1277\n')
+        with self.assertRaisesRegex(ValueError, 'native input path'):
+            self.compare(path)
+
+    def test_native_rejects_other_mesh(self):
+        path = self.native_input()
+        other = self.root / 'wrong.exo'; other.write_bytes(b'not the pinned mesh')
+        with self.assertRaisesRegex(ValueError, 'pinned public reference'):
+            self.compare(other)
 
     def test_permuted_ids_pass(self):
         self.compare()

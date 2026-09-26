@@ -1,5 +1,6 @@
 #include "mars_segregated_simple.hpp"
 #include "mars_segregated_simple_metrics.hpp"
+#include "mars_segregated_native_mapping.hpp"
 #include <algorithm>
 #include <cmath>
 #include <iostream>
@@ -10,6 +11,31 @@ namespace {
 int checks=0;
 void check(bool ok) { ++checks; if (!ok) throw std::runtime_error("independent SIMPLE algebra mismatch"); }
 void near(double a,double b) { check(std::isfinite(a) && std::abs(a-b)<=2e-13*std::max(1.,std::abs(b))); }
+void native_mapping() {
+    const int source[]={17,3,29,8}; int permutation[]={0,1,2,3};
+    const auto identity=simple_cell_key(source);
+    do {
+        int cell[4]; for (int j=0;j<4;++j) cell[j]=source[permutation[j]];
+        check(simple_cell_key(cell)==identity);
+        for (int f=0;f<4;++f) {
+            int face[3]; for (int j=0;j<3;++j) face[j]=source[tet_face_node(f,j)];
+            std::sort(face,face+3);
+            do {
+                const int mapped=simple_native_face(face,cell); check(mapped>=0);
+                // Compare the excluded vertex, independently of face numbering/orientation.
+                int absent=-1;
+                for (int value:source) if (std::find(face,face+3,value)==face+3) absent=value;
+                check(cell[tet_opposite_node(mapped)]==absent);
+            } while (std::next_permutation(face,face+3));
+        }
+    } while (std::next_permutation(permutation,permutation+4));
+    const int absent[]={17,3,99},duplicate[]={17,17,3};
+    check(simple_native_face(absent,source)==-1); check(simple_native_face(duplicate,source)==-1);
+    const int keys[]={3,8,17,29};
+    for (int j=0;j<4;++j) check(simple_find_key(keys,4,keys[j])==j);
+    for (int key:{-1,0,4,30}) check(simple_find_key(keys,4,key)==-1);
+    check(simple_find_key(keys,0,3)==-1);
+}
 template<int C> void csr() {
     int offsets[]={0,2,5,7},columns[]={0,1,0,1,2,1,2};
     std::vector<double> blocks(7*C*C),rhs(3*C,0),values(7*C*C);
@@ -39,7 +65,7 @@ template<int C> void csr() {
 }
 int main() {
     try {
-        csr<1>(); csr<3>();
+        csr<1>(); csr<3>(); native_mapping();
         double xyz[]={0,0,0,1,0,0,0,1,0,0,0,1}; TetGeometry<double> g; check(tet_geometry(xyz,g));
         int nodes[]={0,1,2,3}; double u[]={1,2,3,4,5,6,7,8,9,10,11,12},p[]={2,3,4,5},trace[]={7,8,9},flux[]={.1,.2,.3};
         SimpleControls c; SimpleFace face{0,1,0};

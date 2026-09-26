@@ -1,5 +1,6 @@
 #include "mars_segregated_simple_runtime.hpp"
 #include "mars_segregated_simple_input.hpp"
+#include "mars_segregated_native_input.hpp"
 #include <filesystem>
 #include <iomanip>
 #include <limits>
@@ -7,7 +8,7 @@ using namespace mars::segregated;
 using namespace mars::segregated::runtime;
 
 struct Options {
-    std::string mesh,output;
+    std::string mesh,output,format="prepared";
     int iterations=2000,report=10;
     double residual=1e-6,mass=1e-6,change=1e-6;
 };
@@ -17,6 +18,7 @@ Options options(int argc,char** argv) {
         std::string key=argv[i];
         ensure(i+1<argc,"each option requires a value; see --help"); const std::string value=argv[++i];
         if (key=="--mesh") o.mesh=value;
+        else if (key=="--mesh-format") { ensure(value=="prepared" || value=="exodus","mesh format must be prepared or exodus"); o.format=value; }
         else if (key=="--output-prefix") o.output=value;
         else {
             std::size_t end=0; const double number=std::stod(value,&end);
@@ -32,19 +34,17 @@ Options options(int argc,char** argv) {
     }
     ensure(!o.mesh.empty() && !o.output.empty(),"--mesh and --output-prefix are required"); return o;
 }
-void save_fields(const Options& o,const SimpleInput& input,SimpleRunner& run) {
+void save_fields(const Options& o,const std::vector<int>& source_nodes,SimpleRunner& run) {
     // Explicit final public-field export; no field downloads inside the iteration loop.
-    const auto u=run.velocity.host(),p=run.pressure.host();
+    const auto u=run.velocity.host(),p=run.pressure.host(),x=run.x.host(),y=run.y.host(),z=run.z.host();
     std::ofstream out(o.output+"-fields.csv"); ensure(bool(out),"cannot write fields");
     out<<std::setprecision(17)<<"node,x,y,z,u,v,w,p\n";
-    for (int n=0;n<run.n;++n) out<<n<<','<<input.x[n]<<','<<input.y[n]<<','<<input.z[n]<<','
+    for (int n=0;n<run.n;++n) out<<source_nodes[n]<<','<<x[n]<<','<<y[n]<<','<<z[n]<<','
         <<u[3*n]<<','<<u[3*n+1]<<','<<u[3*n+2]<<','<<p[n]<<'\n';
     out.close(); ensure(bool(out),"field output failed");
 }
-int execute(const Options& o) {
-    for (const char* suffix:{"-metrics.csv","-fields.csv"})
-        ensure(!std::filesystem::exists(o.output+suffix),"output exists; choose a fresh prefix");
-    const auto input=load_simple_input(o.mesh.c_str());
+template<class Input>
+int solve(const Options& o,const Input& input,const std::vector<int>& source_nodes) {
     SimpleRunner run(input); run.momentum.verbose=run.poisson.verbose=false;
     std::ofstream csv(o.output+"-metrics.csv"); ensure(bool(csv),"cannot write metrics");
     csv<<std::setprecision(17)<<"iteration,momentum,continuity,mass_balance,du,dp,dflux,cancellation,inlet_kg_s,outlet_kg_s,umax_m_s,closed_faces,changed_faces\n";
@@ -69,13 +69,33 @@ int execute(const Options& o) {
         if (converged || run.completed==o.iterations) break;
         run.advance();
     }
-    csv.close(); ensure(bool(csv),"metric output failed"); save_fields(o,input,run);
+    csv.close(); ensure(bool(csv),"metric output failed"); save_fields(o,source_nodes,run);
     std::cout<<(converged?"CONVERGED":"NOT CONVERGED: iteration limit")<<" iterations="<<run.completed<<'\n';
     return converged?0:2;
+}
+int execute(const Options& o) {
+    for (const char* suffix:{"-metrics.csv","-fields.csv"})
+        ensure(!std::filesystem::exists(o.output+suffix),"output exists; choose a fresh prefix");
+    if (o.format=="exodus") {
+#ifdef MARS_REPLAY_CUDA
+        NativeSimpleInput input(o.mesh);
+        std::cout<<"Native SIMPLE Exodus input: "<<std::filesystem::canonical(o.mesh).string()<<'\n';
+        // Exodus storage rows identify final output; the comparator applies node_num_map.
+        std::vector<int> ids(input.source_node.size());
+        thrust::copy(input.source_node.begin(),input.source_node.end(),ids.begin());
+        return solve(o,input,ids);
+#else
+        throw std::runtime_error("native ElementDomain input requires the CUDA build");
+#endif
+    }
+    const auto input=load_simple_input(o.mesh.c_str());
+    std::vector<int> ids(input.x.size()); std::iota(ids.begin(),ids.end(),0);
+    return solve(o,input,ids);
 }
 int main(int argc,char** argv) {
     if (argc==2 && std::string(argv[1])=="--help") {
         std::cout<<"mars_segregated_simple --mesh PUBLIC_MESH --output-prefix PATH [--iterations 2000] "
+                 <<"[--mesh-format prepared|exodus] "
                  <<"[--report-every 10] [--residual-tol 1e-6] [--mass-tol 1e-6] [--change-tol 1e-6]\n"; return 0;
     }
 #ifdef MARS_REPLAY_CUDA

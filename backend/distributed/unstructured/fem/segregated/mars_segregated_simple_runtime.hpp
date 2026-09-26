@@ -29,6 +29,7 @@ template<class T> struct Array {
     thrust::device_vector<T> values;
     explicit Array(std::size_t n):values(n) {}
     explicit Array(const std::vector<T>& x):values(x) {}
+    explicit Array(const thrust::device_vector<T>& x):values(x) {}
     T* data() { return device_data(values); }
     void copy_from(const Array& other) { thrust::copy(other.values.begin(),other.values.end(),values.begin()); }
     void zero() { thrust::fill(values.begin(),values.end(),T{}); }

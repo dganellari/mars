@@ -142,7 +142,7 @@ def read_reference(path, iteration):
     return ids.astype('int64'), xyz, np.stack(fields, axis=2)
 
 
-def compare(reference, mars, output):
+def compare(reference, mars, output, native_mesh=None):
     import numpy as np
     require(not output.exists(), 'comparison output exists')
     r = json.loads((reference / 'comparison-run.json').read_text())
@@ -155,11 +155,23 @@ def compare(reference, mars, output):
                           ('run.log', 'log_sha256'), (r['result_file'], 'result_sha256')]:
         require(digest(reference / filename) == r[key], 'reference file changed: ' + filename)
     require(last_iteration((reference / 'run.log').read_text()) == r['iteration'], 'reference iteration mismatch')
-    meta = json.loads((mars / 'channel.json').read_text())
-    require(digest(mars / 'channel.txt') == meta['packed_sha256'], 'MARS mesh checksum mismatch')
-    require((mars / 'channel.txt').read_text().splitlines()[0] == 'MARS_PUBLIC_SIMPLE_MESH_V1 425 1536 576',
-            'not public mesh-only input')
-    ids = np.asarray(meta['node_global_ids'])
+    if native_mesh is None:
+        meta = json.loads((mars / 'channel.json').read_text())
+        require(digest(mars / 'channel.txt') == meta['packed_sha256'], 'MARS mesh checksum mismatch')
+        require((mars / 'channel.txt').read_text().splitlines()[0] == 'MARS_PUBLIC_SIMPLE_MESH_V1 425 1536 576',
+                'not public mesh-only input')
+        ids = np.asarray(meta['node_global_ids'])
+        input_files = [mars / 'channel.json', mars / 'channel.txt']
+    else:
+        from netCDF4 import Dataset
+        require(digest(native_mesh) == MESH_SHA256, 'native mesh is not the pinned public reference')
+        require('Native SIMPLE Exodus input: ' + str(native_mesh.resolve()) in (mars / 'run.log').read_text(),
+                'native input path missing from MARS run log')
+        with Dataset(str(native_mesh)) as mesh:
+            require(len(mesh.dimensions['num_nodes']) == 425 and len(mesh.dimensions['num_elem']) == 1536,
+                    'native mesh dimensions differ')
+            ids = np.asarray(mesh['node_num_map'][:]) if 'node_num_map' in mesh.variables else np.arange(1, 426)
+        input_files = [native_mesh]
     require(ids.shape == (425,) and len(set(ids)) == 425 and np.all(ids == ids.astype('int64')),
             'MARS global ID map invalid')
     with (mars / 'channel-fields.csv').open() as f:
@@ -196,7 +208,8 @@ def compare(reference, mars, output):
                   reference_pressure_change_scaled=float(np.abs(drift[:, 3]).max()),
                   pressure_mean_shift_pa=float(np.mean(values[:, 3] - states[-1, order, 3])),
                   field_tolerance=1e-5, reference_change_tolerance=1e-6,
-                  hashes={str(p):digest(p) for p in [reference / 'comparison-run.json', mars / 'channel.json',
+                  input_format='exodus' if native_mesh is not None else 'prepared',
+                  hashes={str(p):digest(p) for p in input_files + [reference / 'comparison-run.json',
                           mars / 'channel-fields.csv', mars / 'channel-metrics.csv', mars / 'run.log']})
     passed = all(report[k] <= 1e-5 for k in ('velocity_max_scaled', 'pressure_max_scaled'))
     passed = passed and all(report[k] <= 1e-6 for k in ('reference_velocity_change_scaled', 'reference_pressure_change_scaled'))
@@ -216,12 +229,13 @@ def main():
     c = sub.add_parser('compare')
     for name in ('reference', 'mars', 'output'):
         c.add_argument('--' + name, type=Path, required=True)
+    c.add_argument('--native-mesh', type=Path, help='pinned Exodus input used by the native ElementDomain run')
     args = p.parse_args()
     try:
         if args.command == 'run':
             run(args.capture, args.executable, args.output)
         elif args.command == 'compare':
-            compare(args.reference, args.mars, args.output)
+            compare(args.reference, args.mars, args.output, args.native_mesh)
         else:
             p.error('choose run or compare')
     except (OSError, ValueError, KeyError, TypeError, IndexError, ImportError) as error:
