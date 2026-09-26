@@ -1,0 +1,234 @@
+#pragma once
+// Fused node-field halo exchange from explicit per-peer lists, in NodeHaloTopology's layout
+// (peers, CSR send/recv offsets, local node ids). Owners' values of every listed field go to
+// each ghost copy in one message per peer: node-major, fields concatenated per node.
+// Persistent buffers; device pointers go straight to (CUDA-aware) MPI in a CUDA build.
+// The node lists themselves come from the halo/ownership work; nothing here decides ownership.
+#include "mars_segregated_distributed_matrix.hpp"
+#include <initializer_list>
+#include <array>
+#include <cstdio>
+#include <cstdlib>
+#include <map>
+#include <set>
+#include <string>
+#include <type_traits>
+#include <vector>
+#if defined(__CUDACC__)
+#define MARS_HALO_HD __host__ __device__
+#else
+#define MARS_HALO_HD
+#endif
+
+namespace mars::segregated::distributed {
+struct Field { double* values; int components; };
+constexpr int max_fields=4;
+struct FieldSet { double* values[max_fields]; int components[max_fields]; int count, stride; };
+
+namespace kernels {
+struct PackFields {
+    FieldSet f; const int* nodes; double* buffer;
+    MARS_HALO_HD void operator()(int i) const {
+        const int node=nodes[i]; int out=f.stride*i;
+        for (int k=0;k<f.count;++k) for (int c=0;c<f.components[k];++c) buffer[out++]=f.values[k][f.components[k]*node+c];
+    }
+};
+struct UnpackFields {
+    FieldSet f; const int* nodes; const double* buffer;
+    MARS_HALO_HD void operator()(int i) const {
+        const int node=nodes[i]; int in=f.stride*i;
+        for (int k=0;k<f.count;++k) for (int c=0;c<f.components[k];++c) f.values[k][f.components[k]*node+c]=buffer[in++];
+    }
+};
+// Reverse direction: a ghost's partial value is added into its owner's entry.
+struct AddFields {
+    FieldSet f; const int* nodes; const double* buffer;
+    MARS_HALO_HD void operator()(int i) const {
+        const int node=nodes[i]; int in=f.stride*i;
+        for (int k=0;k<f.count;++k) for (int c=0;c<f.components[k];++c) assembly_add(f.values[k]+f.components[k]*node+c,buffer[in++]);
+    }
+};
+} // namespace kernels
+
+class FieldExchange {
+public:
+    // Lists are host copies (ElementDomain: getNodeHaloTopology().peers_, sendOffsets_, recvOffsets_,
+    // and downloads of sendNodeIds_/recvNodeIds_). Construction checks, collectively, that every
+    // peer sends exactly as many nodes as the receiver expects and that ids address local nodes.
+    FieldExchange(MPI_Comm comm,const std::vector<int>& peers,const std::vector<int>& send_offsets,
+        const std::vector<int>& send_nodes,const std::vector<int>& recv_offsets,const std::vector<int>& recv_nodes,
+        int nodes,int max_stride=8,Stream stream={})
+        : comm_(comm), stream_(stream), peers_(peers), send_offsets_(send_offsets), recv_offsets_(recv_offsets),
+          max_stride_(max_stride), nodes_(nodes), h_send_nodes_(send_nodes), h_recv_nodes_(recv_nodes)
+    {
+        int local=0;
+        const std::size_t p=peers.size();
+        if (send_offsets.size()!=p+1 || recv_offsets.size()!=p+1 || send_offsets.front()!=0 || recv_offsets.front()!=0
+            || std::size_t(send_offsets.back())!=send_nodes.size() || std::size_t(recv_offsets.back())!=recv_nodes.size())
+            local|=capacity;
+        if (nodes<0 || max_stride<1 || !std::is_sorted(send_offsets.begin(),send_offsets.end())
+            || !std::is_sorted(recv_offsets.begin(),recv_offsets.end())) local|=capacity;
+        for (int v:send_nodes) if (v<0 || v>=nodes) local|=capacity;
+        for (int v:recv_nodes) if (v<0 || v>=nodes) local|=capacity;
+        if (std::set<int>(recv_nodes.begin(),recv_nodes.end()).size()!=recv_nodes.size()) local|=capacity;
+        long long buffer=0;
+        if (!checked_product(max_stride,(long long)std::max(send_nodes.size(),recv_nodes.size()),std::numeric_limits<int>::max(),buffer))
+            local|=overflow;
+        if (!checked_product(max_stride,nodes,std::numeric_limits<int>::max(),buffer)) local|=overflow;
+        int ranks=1, rank=0; MPI_Comm_size(comm_,&ranks); MPI_Comm_rank(comm_,&rank);
+        for (int peer:peers) if (peer<0 || peer>=ranks || peer==rank) local|=capacity;
+        if (std::set<int>(peers.begin(),peers.end()).size()!=p || p>std::size_t(std::numeric_limits<int>::max()/2)) local|=capacity;
+        reject_lists(local);
+        validate_peer_counts();
+        try {
+            // These lists live on the host; wrapping them in device_ptr does not upload them.
+            send_nodes_.assign(send_nodes.begin(),send_nodes.end());
+            recv_nodes_.assign(recv_nodes.begin(),recv_nodes.end());
+            send_buffer_.resize(std::size_t(max_stride)*send_nodes.size());
+            recv_buffer_.resize(std::size_t(max_stride)*recv_nodes.size());
+            requests_.reserve(2*p);
+        } catch (const std::exception&) { fatal("cannot allocate or upload halo buffers"); }
+    }
+    FieldExchange(const FieldExchange&)=delete;
+    FieldExchange& operator=(const FieldExchange&)=delete;
+
+    // Refresh the ghost entries of every field from its owner, in one round. Owned entries
+    // must be final; ghost entries are overwritten. Field arrays hold components*nodes values.
+    void operator()(std::initializer_list<Field> fields) {
+        const FieldSet set=field_set(fields);
+        int faults=0;
+        apply(int(send_nodes_.size()),kernels::PackFields{set,raw(send_nodes_),raw(send_buffer_)},stream_,faults);
+        finish_device(faults);
+        auto& requests=requests_; requests.clear();
+        for (std::size_t i=0;i<peers_.size();++i) {
+            const int count=set.stride*(recv_offsets_[i+1]-recv_offsets_[i]);
+            if (count) { requests.emplace_back(); check_mpi(MPI_Irecv(raw(recv_buffer_)+std::size_t(set.stride)*recv_offsets_[i],count,MPI_DOUBLE,peers_[i],tag_values,comm_,&requests.back())); }
+        }
+        for (std::size_t i=0;i<peers_.size();++i) {
+            const int count=set.stride*(send_offsets_[i+1]-send_offsets_[i]);
+            if (count) { requests.emplace_back(); check_mpi(MPI_Isend(raw(send_buffer_)+std::size_t(set.stride)*send_offsets_[i],count,MPI_DOUBLE,peers_[i],tag_values,comm_,&requests.back())); }
+        }
+        check_mpi(MPI_Waitall(int(requests.size()),requests.data(),MPI_STATUSES_IGNORE));
+        apply(int(recv_nodes_.size()),kernels::UnpackFields{set,raw(recv_nodes_),raw(recv_buffer_)},stream_,faults);
+        finish_device(faults);
+        ++rounds_; values_+=(long long)set.stride*(long long)recv_nodes_.size();
+    }
+    // Transpose of the publish: ghost entries are added into their owners' entries (atomically:
+    // several peers may hold the same node). Ghost entries are left as they were. Used for setup
+    // checks such as star completeness, not in the SIMPLE iteration.
+    void reverse_add(Field field) {
+        const FieldSet set=field_set({field});
+        int faults=0;
+        apply(int(recv_nodes_.size()),kernels::PackFields{set,raw(recv_nodes_),raw(recv_buffer_)},stream_,faults);
+        finish_device(faults);
+        auto& requests=requests_; requests.clear();
+        for (std::size_t i=0;i<peers_.size();++i) {
+            const int count=set.stride*(send_offsets_[i+1]-send_offsets_[i]);
+            if (count) { requests.emplace_back(); check_mpi(MPI_Irecv(raw(send_buffer_)+std::size_t(set.stride)*send_offsets_[i],count,MPI_DOUBLE,peers_[i],tag_reverse,comm_,&requests.back())); }
+        }
+        for (std::size_t i=0;i<peers_.size();++i) {
+            const int count=set.stride*(recv_offsets_[i+1]-recv_offsets_[i]);
+            if (count) { requests.emplace_back(); check_mpi(MPI_Isend(raw(recv_buffer_)+std::size_t(set.stride)*recv_offsets_[i],count,MPI_DOUBLE,peers_[i],tag_reverse,comm_,&requests.back())); }
+        }
+        check_mpi(MPI_Waitall(int(requests.size()),requests.data(),MPI_STATUSES_IGNORE));
+        apply(int(send_nodes_.size()),kernels::AddFields{set,raw(send_nodes_),raw(send_buffer_)},stream_,faults);
+        finish_device(faults);
+    }
+    // Setup-only integer metadata. Keys and solver ids must not pass through double.
+    template<class T> void publish_host(std::vector<T>& values) {
+        static_assert(std::is_integral_v<T> && sizeof(T)<=8);
+        if (values.size()!=std::size_t(nodes_)) fatal("metadata does not cover local nodes");
+        using Wire=std::conditional_t<std::is_signed_v<T>,std::int64_t,std::uint64_t>;
+        const MPI_Datatype type=std::is_signed_v<T>?MPI_INT64_T:MPI_UINT64_T;
+        std::vector<Wire> send(h_send_nodes_.size()), recv(h_recv_nodes_.size());
+        for (std::size_t i=0;i<send.size();++i) send[i]=values[h_send_nodes_[i]];
+        auto& requests=requests_; requests.clear();
+        for (std::size_t i=0;i<peers_.size();++i) {
+            const int count=recv_offsets_[i+1]-recv_offsets_[i];
+            if (count) { requests.emplace_back(); check_mpi(MPI_Irecv(recv.data()+recv_offsets_[i],count,type,peers_[i],tag_metadata,comm_,&requests.back())); }
+        }
+        for (std::size_t i=0;i<peers_.size();++i) {
+            const int count=send_offsets_[i+1]-send_offsets_[i];
+            if (count) { requests.emplace_back(); check_mpi(MPI_Isend(send.data()+send_offsets_[i],count,type,peers_[i],tag_metadata,comm_,&requests.back())); }
+        }
+        check_mpi(MPI_Waitall(int(requests.size()),requests.data(),MPI_STATUSES_IGNORE));
+        for (std::size_t i=0;i<recv.size();++i) {
+            if (recv[i]<std::numeric_limits<T>::min() || recv[i]>std::numeric_limits<T>::max()) fatal("metadata integer overflow");
+            values[h_recv_nodes_[i]]=T(recv[i]);
+        }
+    }
+    std::size_t ghosts() const { return recv_nodes_.size(); }
+    long long rounds() const { return rounds_; }
+    long long received_values() const { return values_; }
+private:
+    static constexpr int tag_counts=0x4d47, tag_values=0x4d48, tag_reverse=0x4d49, tag_metadata=0x4d4a;
+    [[noreturn]] void fatal(const char* message) const {
+        std::fprintf(stderr,"ERROR: node-field halo: %s\n",message);
+        MPI_Abort(comm_,1);
+        std::abort();
+    }
+    void check_mpi(int code) const { if (code!=MPI_SUCCESS) fatal("MPI exchange failed"); }
+    void reject_lists(int local) const {
+        int global=0; check_mpi(MPI_Allreduce(&local,&global,1,MPI_INT,MPI_BOR,comm_));
+        if (global) throw std::runtime_error("halo exchange lists rejected on all ranks (global: "+describe(global)+"; this rank: "+describe(local)+")");
+    }
+    // Sparse NBX handshake: synchronous sends complete only when received. Keep probing
+    // until all ranks finish their sends, including ranks with no peers or one-sided lists.
+    void validate_peer_counts() {
+        std::vector<std::array<int,2>> send(peers_.size());
+        std::vector<MPI_Request> pending(peers_.size());
+        std::map<int,std::array<int,2>> received;
+        for (std::size_t i=0;i<peers_.size();++i) {
+            send[i]={send_offsets_[i+1]-send_offsets_[i],recv_offsets_[i+1]-recv_offsets_[i]};
+            check_mpi(MPI_Issend(send[i].data(),2,MPI_INT,peers_[i],tag_counts,comm_,&pending[i]));
+        }
+        MPI_Request barrier=MPI_REQUEST_NULL;
+        bool started=false; int done=0, local=0;
+        while (!done) {
+            int ready=0; MPI_Status status;
+            check_mpi(MPI_Iprobe(MPI_ANY_SOURCE,tag_counts,comm_,&ready,&status));
+            if (ready) {
+                std::array<int,2> counts;
+                check_mpi(MPI_Recv(counts.data(),2,MPI_INT,status.MPI_SOURCE,tag_counts,comm_,MPI_STATUS_IGNORE));
+                if (!received.emplace(status.MPI_SOURCE,counts).second) local|=capacity;
+            }
+            if (started) check_mpi(MPI_Test(&barrier,&done,MPI_STATUS_IGNORE));
+            else {
+                int sent=0; check_mpi(MPI_Testall(int(pending.size()),pending.data(),&sent,MPI_STATUSES_IGNORE));
+                if (sent) { check_mpi(MPI_Ibarrier(comm_,&barrier)); started=true; }
+            }
+        }
+        if (received.size()!=peers_.size()) local|=capacity;
+        for (std::size_t i=0;i<peers_.size();++i) {
+            const auto it=received.find(peers_[i]);
+            if (it==received.end() || it->second[0]!=send[i][1] || it->second[1]!=send[i][0]) local|=capacity;
+        }
+        reject_lists(local);
+    }
+    FieldSet field_set(std::initializer_list<Field> fields) const {
+        FieldSet set{};
+        if (fields.size()<1 || fields.size()>max_fields) fatal("1..4 fields required per round");
+        for (const Field& f:fields) {
+            if (f.components<1 || f.components>max_stride_-set.stride || (nodes_ && !f.values))
+                fatal("invalid field pointer or buffer stride");
+            set.values[set.count]=f.values; set.components[set.count++]=f.components; set.stride+=f.components;
+        }
+        return set;
+    }
+    void finish_device(int faults) const {
+#if defined(__CUDACC__)
+        if (!cuda_ok(cudaStreamSynchronize(stream_))) faults|=device_error;
+#endif
+        if (faults) fatal("CUDA pack or unpack failed");
+    }
+    MPI_Comm comm_; Stream stream_;
+    std::vector<int> peers_, send_offsets_, recv_offsets_;
+    int max_stride_, nodes_;
+    std::vector<int> h_send_nodes_, h_recv_nodes_;
+    std::vector<MPI_Request> requests_;
+    Buffer<int> send_nodes_, recv_nodes_;
+    Buffer<double> send_buffer_, recv_buffer_;
+    long long rounds_=0, values_=0;
+};
+} // namespace mars::segregated::distributed
+#undef MARS_HALO_HD
