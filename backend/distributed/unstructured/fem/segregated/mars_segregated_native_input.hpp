@@ -4,7 +4,7 @@
 #include "mars_segregated_simple_runtime.hpp"
 
 #ifdef MARS_REPLAY_CUDA
-#include <thrust/adjacent_find.h>
+#include <thrust/unique.h>
 #include <thrust/sequence.h>
 #include <thrust/sort.h>
 namespace mars::segregated::runtime {
@@ -182,7 +182,7 @@ struct NativeSimpleInput {
         thrust::sequence(cell_ids.begin(),cell_ids.end());
         launch(e,NativeCellKeys{{s0.data(),s1.data(),s2.data(),s3.data()},node_map.data(),device_data(cell_keys)});
         thrust::sort_by_key(cell_keys.begin(),cell_keys.end(),cell_ids.begin());
-        ensure(thrust::adjacent_find(cell_keys.begin(),cell_keys.end())==cell_keys.end(),"duplicate source cells");
+        ensure(thrust::unique_count(cell_keys.begin(),cell_keys.end())==e,"duplicate source cells");
         launch(e,NativeCellMap{{std::get<0>(conn).data(),std::get<1>(conn).data(),std::get<2>(conn).data(),std::get<3>(conn).data()},
             {device_data(nodes[0]),device_data(nodes[1]),device_data(nodes[2]),device_data(nodes[3])},
             device_data(cell_keys),device_data(cell_ids),n,e,element_map.data(),element_hits.data(),error.data()});
