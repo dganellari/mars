@@ -3,6 +3,7 @@
 // rank-local SIMPLE inputs. Test-only: the global mesh is replicated on every rank to build
 // explicit ownership, which production gets from ingestion and element-halo completion.
 #include "mars_segregated_simple_distributed.hpp"
+#include "mars_segregated_simple_partition.hpp"
 #include "mars_segregated_simple_input.hpp"
 #include <algorithm>
 #include <array>
@@ -163,6 +164,50 @@ inline Part extract(const SimpleInput& f,const Partition& p,int r,int drop_eleme
         o.recv_nodes.insert(o.recv_nodes.end(),recv.begin(),recv.end()); o.recv_offsets.push_back(int(o.recv_nodes.size()));
     }
     if (o.send_offsets.empty()) { o.send_offsets.push_back(0); o.recv_offsets.push_back(0); }
+    return part;
+}
+// The same rank state as ElementDomain presents it (keys = global node ids, sorted local nodes,
+// cstone-style element order: lower-rank halo, own range, higher-rank halo), handed to the
+// production builder simple_partition instead of the fixture's own extraction.
+inline Part build(const SimpleInput& f,const Partition& p,int r,int drop_element=-1,int drop_rank=-1) {
+    using mars::segregated::runtime::DomainView;
+    auto els=present_elements(f,p,r);
+    if (r==drop_rank) els.erase(std::remove(els.begin(),els.end(),drop_element),els.end());
+    std::stable_sort(els.begin(),els.end(),[&](int a,int b) {
+        auto band=[&](int el) { return p.element_owner[el]<r?0:p.element_owner[el]==r?1:2; }; return band(a)<band(b); });
+    const std::set<int> nodes=holds(f,p,r,drop_element,drop_rank);
+    DomainView<long long> v; std::vector<int> local(f.x.size(),-1);
+    for (int g:nodes) { local[g]=int(v.key.size()); v.key.push_back(g); v.x.push_back(f.x[g]); v.y.push_back(f.y[g]); v.z.push_back(f.z[g]); v.owned.push_back(p.node_owner[g]==r); }
+    for (int el:els) for (int k=0;k<4;++k) v.nodes[k].push_back(local[f.nodes[k][el]]);
+    v.element_begin=int(std::count_if(els.begin(),els.end(),[&](int el) { return p.element_owner[el]<r; }));
+    v.element_end=v.element_begin+int(std::count_if(els.begin(),els.end(),[&](int el) { return p.element_owner[el]==r; }));
+    for (int q=0;q<p.ranks;++q) {
+        if (q==r) continue;
+        const auto theirs=holds(f,p,q,drop_element,drop_rank); std::vector<int> send, recv;
+        for (int g:nodes) { if (p.node_owner[g]==q) recv.push_back(local[g]); if (p.node_owner[g]==r && theirs.count(g)) send.push_back(local[g]); }
+        if (send.empty() && recv.empty()) continue;
+        v.peers.push_back(q);
+        v.send_nodes.insert(v.send_nodes.end(),send.begin(),send.end()); v.send_offsets.push_back(int(v.send_nodes.size()));
+        v.recv_nodes.insert(v.recv_nodes.end(),recv.begin(),recv.end()); v.recv_offsets.push_back(int(v.recv_nodes.size()));
+    }
+    double lx=0; for (double x:f.x) lx=std::max(lx,x);
+    auto kind=[&](const int* face) {   // by plane, as the generator tags them
+        auto on=[&](const std::vector<double>& c,double value) { for (int j=0;j<3;++j) if (std::abs(c[face[j]]-value)>1e-12) return false; return true; };
+        if (on(v.x,0)) return 0;
+        if (on(v.x,lx)) return 1;
+        return on(v.y,0) || on(v.y,1) || on(v.z,0) || on(v.z,1) ? 2 : -1;
+    };
+    auto built=mars::segregated::runtime::simple_partition<long long>(MPI_COMM_WORLD,v,kind);
+    Part part; part.input=std::move(built.input); part.ownership=std::move(built.ownership);
+    part.node_global.assign(v.key.begin(),v.key.end()); part.element_global=els;
+    for (unsigned char o:v.owned) part.node_owned.push_back(char(o));
+    std::map<std::pair<int,int>,int> face_id;
+    for (int i=0;i<int(f.faces.size());++i) face_id[{f.faces[i].element,f.faces[i].ordinal}]=i;
+    for (const auto& face:part.input.faces) {
+        auto it=face_id.find({els[face.element],face.ordinal});
+        if (it==face_id.end()) throw std::runtime_error("builder produced a boundary face the mesh does not have");
+        part.face_global.push_back(it->second);
+    }
     return part;
 }
 } // namespace dsimple_gate

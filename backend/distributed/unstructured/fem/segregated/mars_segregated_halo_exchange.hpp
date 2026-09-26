@@ -34,6 +34,14 @@ struct UnpackFields {
         for (int k=0;k<f.count;++k) for (int c=0;c<f.components[k];++c) f.values[k][f.components[k]*node+c]=buffer[in++];
     }
 };
+// Reverse direction: a ghost's partial value is added into its owner's entry.
+struct AddFields {
+    FieldSet f; const int* nodes; const double* buffer;
+    MARS_HALO_HD void operator()(int i) const {
+        const int node=nodes[i]; int in=f.stride*i;
+        for (int k=0;k<f.count;++k) for (int c=0;c<f.components[k];++c) assembly_add(f.values[k]+f.components[k]*node+c,buffer[in++]);
+    }
+};
 } // namespace kernels
 
 class FieldExchange {
@@ -106,11 +114,34 @@ public:
         if (faults) throw std::runtime_error("halo exchange: CUDA error");
         ++rounds_; values_+=(long long)set.stride*(long long)recv_nodes_.size();
     }
+    // Transpose of the publish: ghost entries are added into their owners' entries (atomically:
+    // several peers may hold the same node). Ghost entries are left as they were. Used for setup
+    // checks such as star completeness, not in the SIMPLE iteration.
+    void reverse_add(Field field) {
+        FieldSet set{}; set.count=1; set.values[0]=field.values; set.components[0]=field.components; set.stride=field.components;
+        if (set.stride<1 || set.stride>max_stride_) throw std::runtime_error("halo reverse add: field exceeds the buffer stride");
+        int faults=0;
+        apply(int(recv_nodes_.size()),kernels::PackFields{set,raw(recv_nodes_),raw(recv_buffer_)},stream_,faults);
+        sync(faults);
+        std::vector<MPI_Request> requests; requests.reserve(2*peers_.size());
+        for (std::size_t i=0;i<peers_.size();++i) {
+            const int count=set.stride*(send_offsets_[i+1]-send_offsets_[i]);
+            if (count) { requests.emplace_back(); MPI_Irecv(raw(send_buffer_)+std::size_t(set.stride)*send_offsets_[i],count,MPI_DOUBLE,peers_[i],tag_reverse,comm_,&requests.back()); }
+        }
+        for (std::size_t i=0;i<peers_.size();++i) {
+            const int count=set.stride*(recv_offsets_[i+1]-recv_offsets_[i]);
+            if (count) { requests.emplace_back(); MPI_Isend(raw(recv_buffer_)+std::size_t(set.stride)*recv_offsets_[i],count,MPI_DOUBLE,peers_[i],tag_reverse,comm_,&requests.back()); }
+        }
+        MPI_Waitall(int(requests.size()),requests.data(),MPI_STATUSES_IGNORE);
+        apply(int(send_nodes_.size()),kernels::AddFields{set,raw(send_nodes_),raw(send_buffer_)},stream_,faults);
+        sync(faults);
+        if (faults) throw std::runtime_error("halo reverse add: CUDA error");
+    }
     std::size_t ghosts() const { return recv_nodes_.size(); }
     long long rounds() const { return rounds_; }
     long long received_values() const { return values_; }
 private:
-    static constexpr int tag_values=0x4d48;
+    static constexpr int tag_values=0x4d48, tag_reverse=0x4d49;
     void sync(int& faults) const {
 #if defined(__CUDACC__)
         if (!cuda_ok(cudaStreamSynchronize(stream_))) faults|=device_error;

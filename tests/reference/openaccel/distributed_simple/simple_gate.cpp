@@ -97,6 +97,7 @@ template<int C> struct Solve {
 struct Options {
     int nx=16, ny=4, nz=4, iterations=2, converge=0;
     std::string reference, write, fault;
+    bool builder=false;   // distributed side built by simple_partition from ElementDomain-shaped state
     double backflow=0;   // initial outlet-region velocity, see initial()
     double tolerance=1e-10;
 };
@@ -123,7 +124,7 @@ struct Collector {
         }
     }
     // What the adapter hands to Hypre: owned scalar rows, local columns through the solver map.
-    template<class System> void adapter(const std::string& name,const System& sys,const Partition& p,int C) {
+    template<class System> void adapter(const std::string& name,const System& sys,const std::vector<int>& solver_to_global,int C) {
         const auto o=download(sys.matrix().rowOffsetsPtr(),std::size_t(sys.rows())+1);
         const auto c=download(sys.matrix().colIndicesPtr(),std::size_t(sys.nnz()));
         const auto v=download(sys.matrix().valuesPtr(),std::size_t(sys.nnz()));
@@ -135,10 +136,10 @@ struct Collector {
 #endif
         auto& m=s[name+"_adapter"];
         for (int i=0;i<sys.rows();++i) {
-            const long long R=C*sys.first_solver_node()+i; const int g=p.solver_to_global[R/C];
+            const long long R=C*sys.first_solver_node()+i; const int g=solver_to_global[R/C];
             for (int k=o[i];k<o[i+1];++k) {
                 const long long Q=(long long)map[c[k]];
-                m.push_back({entry_key(g,int(R%C),p.solver_to_global[Q/C],int(Q%C)),v[k]});
+                m.push_back({entry_key(g,int(R%C),solver_to_global[Q/C],int(Q%C)),v[k]});
             }
         }
     }
@@ -290,7 +291,18 @@ int execute(const Options& o) {
         for (int el:present_elements(mesh,p,drop_rank)) if (p.element_owner[el]!=drop_rank) { drop=el; break; }
         if (drop<0) throw std::runtime_error("missing-element fault: rank 0 holds no halo element (use >= 2 ranks)");
     }
-    auto part=extract(mesh,p,rank,drop,drop_rank);
+    Part part;
+    if (o.builder) {
+        // An incomplete star must be rejected by the builder, collectively, before any iteration.
+        std::string message; int threw=0;
+        try { part=build(mesh,p,rank,drop,drop_rank); } catch (const std::exception& ex) { threw=1; message=ex.what(); }
+        int all=0, any=0; MPI_Allreduce(&threw,&all,1,MPI_INT,MPI_MIN,MPI_COMM_WORLD); MPI_Allreduce(&threw,&any,1,MPI_INT,MPI_MAX,MPI_COMM_WORLD);
+        if (any) {
+            const bool detected=all && o.fault=="missing-element" && message.find("incomplete element star")!=std::string::npos;
+            if (rank==0) std::cout<<(detected?"PASS: injected fault detected by the partition builder on all ranks: ":"FAIL: builder rejected the partition: ")<<message<<'\n';
+            return detected?0:1;
+        }
+    } else part=extract(mesh,p,rank,drop,drop_rank);
     if (o.fault=="duplicate-face") {
         int injected=0;
         if (rank==0) for (int i:part.ownership.owned_faces) if (part.input.faces[i].kind==0) { part.ownership.owned_faces.push_back(i); injected=1; break; }
@@ -305,12 +317,26 @@ int execute(const Options& o) {
     }
     if (!o.fault.empty() && o.fault!="missing-element" && o.fault!="duplicate-face" && o.fault!="stale-ghost")
         throw std::runtime_error("unknown fault "+o.fault);
+    // Decode solver ids with the numbering this partition actually uses (the fixture's, or the
+    // builder's SFC-ordered one): gather (solver id, global node) of every owned node.
+    std::vector<int> solver_to_global;
+    {
+        std::vector<long long> pairs;
+        for (int v:part.ownership.owned_nodes) { pairs.push_back(part.ownership.solver_node[v]); pairs.push_back(part.node_global[v]); }
+        int count=int(pairs.size()); std::vector<int> counts(ranks), displs(ranks);
+        MPI_Allgather(&count,1,MPI_INT,counts.data(),1,MPI_INT,MPI_COMM_WORLD);
+        int total=0; for (int q=0;q<ranks;++q) { displs[q]=total; total+=counts[q]; }
+        std::vector<long long> all; all.resize(std::size_t(total));
+        MPI_Allgatherv(pairs.data(),count,MPI_LONG_LONG,all.data(),counts.data(),displs.data(),MPI_LONG_LONG,MPI_COMM_WORLD);
+        solver_to_global.assign(std::size_t(total/2),-1);
+        for (int i=0;i<total;i+=2) solver_to_global[std::size_t(all[i])]=int(all[i+1]);
+    }
     DistributedSimpleRunner<Matrix,GlobalId,Solve> run(MPI_COMM_WORLD,part.input,part.ownership,controls);
     run.poison_unexchanged=true;
     initial(run,part.input.x,part.input.y,double(o.nx)/o.ny,o.backflow,controls);
     Collector c;
     int closed_owned=0;   // outlet faces this rank owns that were ever closed
-    struct { Collector& c; Part& part; const Partition& p; const std::string& fault; int rank, ranks; bool full; int& closed;
+    struct { Collector& c; Part& part; const std::vector<int>& s2g; const std::string& fault; int rank, ranks; bool full; int& closed;
         void assembled(DistributedSimpleRunner<Matrix,GlobalId,Solve>& r,int k,const SimpleSums& s) {
             c.sums(tag("diagnostics",k),s);
             if (full) c.blocks<3>(tag("momentum",k),r.graph,r.momentum_blocks.host(),r.momentum_rhs.host(),part.node_global,part.node_owned);
@@ -326,7 +352,7 @@ int execute(const Options& o) {
             closed=std::max(closed,now);
             if (!full) return;
             c.blocks<1>(tag("pressure",k),r.graph,r.poisson_blocks.host(),r.poisson_rhs.host(),part.node_global,part.node_owned);
-            c.adapter(tag("pressure",k),r.poisson,p,1);
+            c.adapter(tag("pressure",k),r.poisson,s2g,1);
             c.node_field(tag("velocity",k),r.velocity.host(),3,part.node_global,part.node_owned);
             c.node_field(tag("pressure",k),r.pressure.host(),1,part.node_global,part.node_owned);
             c.node_field(tag("influence",k),r.d.host(),3,part.node_global,part.node_owned);
@@ -335,15 +361,15 @@ int execute(const Options& o) {
             c.samples(tag("trace",k),r.trace.host(),3,part.face_global);
             const auto f=r.flags.host(); c.samples(tag("flags",k),std::vector<double>(f.begin(),f.end()),3,part.face_global);
         }
-    } rec{c,part,p,o.fault,rank,ranks,o.converge==0,closed_owned};
+    } rec{c,part,solver_to_global,o.fault,rank,ranks,o.converge==0,closed_owned};
     // The momentum adapter matrix is what Hypre receives; record it right after assembly.
-    struct Wrapped { decltype(rec)& inner; Collector& c; const Partition& p;
+    struct Wrapped { decltype(rec)& inner; Collector& c; const std::vector<int>& s2g;
         void assembled(DistributedSimpleRunner<Matrix,GlobalId,Solve>& r,int k,const SimpleSums& s) { inner.assembled(r,k,s); }
         void advanced(DistributedSimpleRunner<Matrix,GlobalId,Solve>& r,int k) {
-            if (inner.full) c.adapter(tag("momentum",k),r.momentum,p,3);
+            if (inner.full) c.adapter(tag("momentum",k),r.momentum,s2g,3);
             inner.advanced(r,k);
         }
-    } wrapped{rec,c,p};
+    } wrapped{rec,c,solver_to_global};
     const std::string outcome=drive(run,o,wrapped);
     if (o.converge>0) { c.node_field("velocity@final",run.velocity.host(),3,part.node_global,part.node_owned);
                         c.node_field("pressure@final",run.pressure.host(),1,part.node_global,part.node_owned); }
@@ -409,6 +435,7 @@ int main(int argc,char** argv) {
             else if (k=="--reference") o.reference=v;
             else if (k=="--write-reference") o.write=v;
             else if (k=="--fault") o.fault=v;
+            else if (k=="--builder") o.builder=v=="1";
             else if (k=="--backflow") o.backflow=std::stod(v);
             else if (k=="--tolerance") o.tolerance=std::stod(v);
             else throw std::runtime_error("unknown option "+k);

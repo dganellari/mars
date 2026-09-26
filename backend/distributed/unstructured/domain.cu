@@ -2100,19 +2100,56 @@ void NodeHaloTopology<ElementTag, RealType, KeyType, AcceleratorTag>::buildFromC
         // global key -> local node id (keys are unique per node on this rank).
         std::unordered_map<KeyType, int> keyToLocal;
         keyToLocal.reserve(nodeCount * 2);
-        for (size_t n = 0; n < nodeCount; ++n) keyToLocal.emplace(h_sfc[n], int(n));
+        std::unordered_map<KeyType, int> keyCopies;  // > 1 only for multi-block coincident nodes
+        for (size_t n = 0; n < nodeCount; ++n)
+        {
+            keyToLocal.emplace(h_sfc[n], int(n));
+            ++keyCopies[h_sfc[n]];
+        }
+        std::vector<uint8_t> h_owned(nodeCount);
+        if (nodeCount > 0)
+            cudaMemcpy(h_owned.data(), thrust::raw_pointer_cast(domain.getNodeOwnershipMap().data()),
+                       nodeCount * sizeof(uint8_t), cudaMemcpyDeviceToHost);
 
         // My send list to peer i = its requested keys mapped to my local node ids,
-        // IN THE RECEIVED ORDER (matches peer i's recv slot order).
+        // IN THE RECEIVED ORDER (matches peer i's recv slot order). A request must name a node
+        // this rank holds and owns: skipping a key shifts every later slot for that peer, and
+        // answering for a ghost forwards a value that is one exchange stale.
+        long long faults[3] = {0, 0, 0};  // not held, held but not owned, ambiguous (multi-block)
+        int firstPeer = -1;
+        KeyType firstKey = 0;
         for (int i = 0; i < np; ++i)
         {
             sendIdsPerPeer[i].reserve(recvReqKeys[i].size());
             for (KeyType k : recvReqKeys[i])
             {
                 auto it = keyToLocal.find(k);
-                // A peer can only request a node it ghosts from me -> I must hold it.
+                const int fault = it == keyToLocal.end() ? 0 : !h_owned[size_t(it->second)] ? 1
+                                  : keyCopies[k] > 1 ? 2 : -1;
+                if (fault >= 0)
+                {
+                    if (faults[0] + faults[1] + faults[2] == 0) { firstPeer = peers[i]; firstKey = k; }
+                    ++faults[fault];
+                }
                 if (it != keyToLocal.end()) sendIdsPerPeer[i].push_back(it->second);
             }
+        }
+        long long global[3] = {0, 0, 0};
+        MPI_Allreduce(faults, global, 3, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+        if (global[0] + global[1] + global[2] > 0)
+        {
+            if (faults[0] + faults[1] + faults[2] > 0)
+                std::cerr << "[Rank " << rank << "] NodeHaloTopo: peer requests not held=" << faults[0]
+                          << " not owned=" << faults[1] << " ambiguous(multi-block)=" << faults[2]
+                          << "; first: peer " << firstPeer << " key " << firstKey << std::endl;
+            const bool allow = envFlag("MARS_NODEHALO_ALLOW_INCONSISTENT");
+            if (rank == 0)
+                std::cerr << "NodeHaloTopo: inconsistent ownership across ranks (requests not held=" << global[0]
+                          << ", not owned=" << global[1] << ", ambiguous=" << global[2] << "): ghost values would be "
+                          << "shifted or stale. " << (allow ? "Continuing (MARS_NODEHALO_ALLOW_INCONSISTENT=1)."
+                                                            : "Aborting; MARS_NODEHALO_ALLOW_INCONSISTENT=1 only warns.")
+                          << std::endl;
+            if (!allow && global[0] + global[1] > 0) MPI_Abort(MPI_COMM_WORLD, 1);
         }
     }
 

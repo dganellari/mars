@@ -147,17 +147,101 @@ printf 'Results: %s (status %s)\n' "$run" "$status"
 
 A pass is `PASS:` in every log.
 
-## What remains for production
+## ElementDomain (cstone) path
 
-1. **Build `SimpleOwnership` from ElementDomain.** This belongs to the ingestion and halo work:
-   - owned node list and solver ids: `Exscan`, plus one ghost exchange of ids;
-   - owned elements: the local range `[startIndex, endIndex)`;
-   - owned faces: faces of owned elements;
-   - halo lists: `getNodeHaloTopology()`.
+- **Builder:** `mars_segregated_simple_partition.hpp` builds the runner's input from
+  ElementDomain state. `domain_view(domain)` copies it to the host:
+  - SFC-key-sorted local nodes;
+  - element-to-node connectivity;
+  - cornerstone's local element range;
+  - the node ownership map;
+  - the `NodeHaloTopology` lists.
 
-   The runner's local node order must then be ElementDomain's order.
-2. **Resolve the NodeHaloTopology send-list issue first.** An owner that misses a requested key,
-   or answers for a key it doesn't own, gives shifted or stale ghosts.
-   `FieldExchange` rejects count mismatches, but not a wrong owner.
-3. **Switch the driver.** `mars_segregated_simple` constructs `DistributedSimpleRunner` for
-   more than one rank. `SimpleRunner` stays as the one-rank reference.
+  `simple_partition` then derives:
+  - **solver ids:** contiguous per rank in SFC key order (an `Exscan` plus one ghost exchange);
+  - **owned elements:** cornerstone's local range;
+  - **boundary faces:** faces of held elements that no other held element shares. That is exact
+    for every face touching an owned node once element stars are complete;
+  - **face owner:** the owner of the face's smallest-key node.
+
+  It checks, collectively: unique keys, every ghost received exactly once, and complete element
+  stars. The star check uses a reverse add of each rank's own-element incidence, which must equal
+  the held incidence at every owned node. This makes cornerstone's halo coverage, currently the
+  1.5 halo-factor mitigation, a startup check instead of an assumption.
+- **Driver:** `simple_mpi_driver.cu` builds the target `mars_segregated_simple_mpi`, the
+  multi-rank public-channel driver:
+  - each rank hands a slice of elements to `ElementDomain`, whose cornerstone sync distributes
+    them and builds halos;
+  - exact coordinates and boundary tags are restored through `resolveSideSetNodesToLocalKeepMisses`
+    (the domain's own `sfc3D` keys), because Tet4 domains store decoded coordinates;
+  - coverage is checked globally: every node and every inlet/outlet/wall face owned exactly once;
+  - options and CSV output are the same as `mars_segregated_simple`.
+
+  `compare_fields.py` compares a one-rank and a P-rank field file node by node. It scales by U
+  and ρU², and removes no pressure mean.
+- **`domain.cu` send-list check:** every node request a peer sends must name a node the
+  responder holds and owns. Multi-block ambiguity is only reported. Otherwise all ranks abort
+  together at topology build. `MARS_NODEHALO_ALLOW_INCONSISTENT=1` downgrades that to a warning.
+  If existing multi-rank runs now abort, their ghosts were shifted or stale before.
+
+Host results through the builder (`--builder 1`, part of ctest; the suite is now 30/30):
+
+| Case | Result |
+|---|---|
+| 2 iterations, every entry, 1 rank | bitwise identical to the reference |
+| 2 iterations, every entry, 2 and 4 ranks | max 8e-13 |
+| sheared outlet reversal, 1/2/4 ranks | pass |
+| incomplete star (a halo element removed), 2 and 4 ranks | rejected by the builder on all ranks before any iteration |
+| builder, sheared case, 2 and 4 ranks, under ASan/UBSan | pass, no sanitizer reports |
+
+Compile check (clang CUDA, not run): `domain.cu` with the new check, all 8 explicit
+`NodeHaloTopology` instantiations, host and device. `mars_segregated_simple_mpi` compiles for
+host and device with no warnings from these files. Its
+`ElementDomain<TetTag,double,uint64_t,GpuTag>` kernels are instantiated in `domain.cu`.
+
+### Not executed: multi-rank public channel on Daint
+
+Same configure as above; `inject.cmake` adds `mars_segregated_simple_mpi`. `channel.txt` is the
+public mesh-only input from the earlier one-rank run
+(`prepare_openaccel_simple.py --mesh-only`). Replace the path with yours.
+
+```bash
+(
+set -euo pipefail
+gates=$(cd .. && pwd)/tests/reference/openaccel/distributed_matrix
+cmake -S .. -B . -DCMAKE_PROJECT_mars_INCLUDE="$gates/inject.cmake"
+cmake --build . --target mars_segregated_simple mars_segregated_simple_mpi -j4
+mesh="$PWD/simple-channel-4VjvlT/channel.txt"
+run=$(mktemp -d "$PWD/simple-mpi-XXXXXX"); printf 'Results: %s\n' "$run"
+git -C .. rev-parse HEAD > "$run/mars-revision.txt"
+status=0
+for n in 1 2 4; do
+  srun --account=csstaff --time=00:30:00 --nodes=1 --ntasks-per-node=$n \
+    --export=ALL,MPICH_GPU_SUPPORT_ENABLED=1 --kill-on-bad-exit=1 \
+    ~/affinity/bind_numa.sh ./mars_segregated_simple_mpi --mesh "$mesh" --output-prefix "$run/channel-$n" \
+    --iterations 2000 --report-every 100 --residual-tol 1e-6 --mass-tol 1e-6 --change-tol 1e-6 \
+    2>&1 | tee "$run/run-$n.log" || status=1
+done
+for n in 2 4; do
+  python3 ../tests/reference/openaccel/distributed_simple/compare_fields.py \
+    "$run/channel-1-fields.csv" "$run/channel-$n-fields.csv" --tol 1e-6 | tee "$run/compare-$n.txt" || status=1
+done
+printf 'Results: %s (status %s)\n' "$run" "$status"
+)
+```
+
+Expected: every run prints `CONVERGED iterations=1277` (the one-rank driver's count; the linear
+solves stop at rtol 1e-12, so ±1 iteration is possible). `compare_fields.py` should report
+`PASS` against the one-rank file. The one-rank file is also directly comparable to the earlier
+`simple-channel-4VjvlT` result.
+
+## What remains
+
+- **Globally consistent owner from cornerstone.** A natural choice is `SfcAssignment::findRank`
+  applied to each node's smallest adjacent element key. That rank is guaranteed to hold the node,
+  but computing it needs the node's complete star on every holder. This is the halo/ownership
+  work, and the new `domain.cu` check reports where today's ownership is inconsistent.
+- **Production ingestion.** Replace the driver's replicated public mesh (exact coordinates and
+  tags) with ingested side sets. Exact Tet4 coordinates in ElementDomain belong there too.
+- **Single driver.** Fold `mars_segregated_simple_mpi` into `mars_segregated_simple` once the
+  ingestion session's single-rank changes land.
