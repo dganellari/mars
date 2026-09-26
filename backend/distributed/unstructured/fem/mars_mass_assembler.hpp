@@ -326,7 +326,8 @@ public:
             conn7_ptr = nullptr;
         }
 
-        size_t numElements = domain.localElementCount();
+        // all elements the rank holds, halos included: owned rows need their whole star
+        size_t numElements = domain.getElementCount();
         
         // Use provided node-to-DOF mapping
         cstone::DeviceVector<KeyType> d_nodeToDof = nodeToDof;
@@ -410,7 +411,8 @@ public:
             conn7_ptr = nullptr;
         }
 
-        size_t numElements = domain.localElementCount();
+        // all elements the rank holds, halos included: owned rows need their whole star
+        size_t numElements = domain.getElementCount();
         
         // Use provided node-to-DOF mapping
         cstone::DeviceVector<KeyType> d_nodeToDof = nodeToDof;

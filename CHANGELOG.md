@@ -35,6 +35,11 @@ the cornerstone-octree library.
   corners, so every owner holds all elements around its nodes and owned rows are complete. Earlier versions relied
   on the distance-based halo reaching those elements, which failed at corner contacts between ranks. Periodic and
   multi-block meshes keep the previous ownership scheme (see KNOWN_LIMITATIONS.md).
+- `mars_ex1_poisson` numbers DOFs from the domain's node ownership and solves with CG and the node
+  halo, like the Navier–Stokes solvers; before, its own DOF handler disagreed with the assembler's
+  rows on more than one rank. The P1 tet assemblers now loop over every element a rank holds, halo
+  elements included, and keep the ghost columns of owned rows; they used to drop both, which on more
+  than one rank decoupled the ranks.
 - The Poiseuille tutorial mesh ships in `tests/data/poiseuille/`; its validation run is
   opt-in with `-DMARS_ENABLE_VALIDATION_TESTS=ON`.
 

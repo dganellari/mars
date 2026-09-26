@@ -84,7 +84,8 @@ ctest -L release
 ```
 
 They check that hex and tet assembly give the same matrix and RHS norms on 1 rank and on N
-ranks (`-DMARS_RELEASE_TEST_RANKS=N`, default 4), that a CVFEM Poisson solve converges, and that
+ranks (`-DMARS_RELEASE_TEST_RANKS=N`, default 4), that the CVFEM Poisson solve (1 rank) and the
+P1 Poisson example `mars_ex1_poisson` (1 and N ranks) reach the expected maximum, and that
 10-step lid-driven cavity and channel Navier–Stokes runs finish on 1 and N ranks without a failed
 solve or NaN. They need python3 with numpy and an MPI launcher, and take a few minutes on one
 GPU. ctest starts every GPU run through the MPI launcher CMake found (`mpiexec`, or `srun` on

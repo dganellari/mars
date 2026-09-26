@@ -135,6 +135,16 @@ int main(int argc, char** argv) {
     int rank, numRanks;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &numRanks);
+
+    // UnstructuredDofHandler picks node owners with its own rule, which differs from the domain's node
+    // ownership that the assemblers and halo exchange use, so on >1 rank rows and ghosts do not match.
+    // mars_ex1_poisson shows the multi-rank scheme (buildDofMappingGpu + node-halo CG).
+    if (numRanks > 1) {
+        if (rank == 0)
+            std::cerr << "Error: mars_ex_beam_tet_distributed is single-rank only (run with 1 MPI rank).\n";
+        MPI_Finalize();
+        return 1;
+    }
     
     if (rank == 0) {
         std::cout << "=== BINARY COMPILED: " << __DATE__ << " " << __TIME__ << " ===" << std::endl;

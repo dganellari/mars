@@ -82,6 +82,15 @@ add_test(NAME marsReleasePoissonCycled
                  ${_rel_mpi} 1 ${MPIEXEC_PREFLAGS} $<TARGET_FILE:mars_cvfem_poisson> ${MPIEXEC_POSTFLAGS}
                  --mesh=${_rel_hexc})
 
+# Galerkin P1 Poisson example on the tet cube, 1 and N ranks: same band (exact max 0.05621)
+foreach(_np 1 ${_rel_np})
+    add_test(NAME marsReleaseEx1Poisson_np${_np}
+             COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/release/check_value.py
+                     "--regex=Max:\\s*([-+0-9.eE]+)" --lo 0.0534 --hi 0.0590 --
+                     ${_rel_mpi} ${_np} ${MPIEXEC_PREFLAGS} $<TARGET_FILE:mars_ex1_poisson> ${MPIEXEC_POSTFLAGS}
+                     --mesh=${_rel_tet})
+endforeach()
+
 # --- Navier-Stokes projection: cavity and channel, 1 and N ranks --------------------------------
 # The driver exits non-zero on any failed linear solve (all ranks stop together).
 foreach(_bc cavity channel)
@@ -105,6 +114,6 @@ if(MARS_ENABLE_HYPRE)
 endif()
 
 get_property(_rel_tests DIRECTORY PROPERTY TESTS)
-list(FILTER _rel_tests INCLUDE REGEX "^marsRelease(Hex|Tet|Poisson|Ns)")
+list(FILTER _rel_tests INCLUDE REGEX "^marsRelease(Hex|Tet|Poisson|Ex1Poisson|Ns)")
 set_tests_properties(${_rel_tests} PROPERTIES
     FIXTURES_REQUIRED marsReleaseMeshes LABELS "release;gpu" TIMEOUT 600)

@@ -181,7 +181,7 @@ __global__ void assembleStiffnessKernel(
     }
     
     // Assemble into global matrix (atomic operations)
-    // Rows: only owned or shared nodes (states 1 or 2); Columns: owned nodes only
+    // Rows: only owned or shared nodes (states 1 or 2); columns: owned and ghost nodes
     for (int i = 0; i < RefElem::numNodes; ++i) {
         // Skip if this node is not owned or shared (must be state 1 or 2)
         if (nodeOwnership[nodes[i]] != 1 && nodeOwnership[nodes[i]] != 2) continue;
@@ -268,8 +268,7 @@ public:
         const auto& conn2 = std::get<2>(conn_tuple);
         const auto& conn3 = std::get<3>(conn_tuple);
 
-        size_t numElements = domain.getElementCount();    // Total elements
-        size_t localElementCount = domain.localElementCount();  // Owned elements
+        size_t numElements = domain.getElementCount();
         size_t numDofs = numOwnedDofs;  // Number of owned DOFs (from resolved ownership)
         int nodesPerElem = FESpace::dofsPerElement();
 
@@ -279,9 +278,10 @@ public:
         // Use provided resolved ownership
         cstone::DeviceVector<uint8_t> d_ownership = resolvedOwnership;
         
-        // Launch assembly kernel for LOCAL elements only [0, localElementCount)
+        // Owned rows need every element of their star, and on several ranks some of those are halos
+        // (cornerstone stores halos before and after the assigned elements): loop over all of them.
         const int blockSize = 256;
-        const int gridSize = (localElementCount + blockSize - 1) / blockSize;
+        const int gridSize = (numElements + blockSize - 1) / blockSize;
         
         assembleStiffnessKernel<ElementTag, RealType, KeyType>
             <<<gridSize, blockSize>>>(
@@ -292,8 +292,8 @@ public:
                 conn1.data(),
                 conn2.data(),
                 conn3.data(),
-                0,                       // Start from 0
-                localElementCount,       // End at localElementCount
+                0,
+                numElements,
                 numDofs,                     // Number of owned DOFs for square matrix
                 K.rowOffsetsPtr(),
                 K.colIndicesPtr(),
@@ -326,7 +326,7 @@ public:
         const auto& conn2 = std::get<2>(conn_tuple);
         const auto& conn3 = std::get<3>(conn_tuple);
         
-        size_t numElements = domain.localElementCount();
+        size_t numElements = domain.getElementCount();
         
         // Allocate device counters
         cstone::DeviceVector<int> d_counters(2, 0);  // [numInverted, numDegenerate]
@@ -410,8 +410,7 @@ void StiffnessAssembler<ElementTag, RealType, KeyType, AcceleratorTag>::buildSpa
     auto& domain = fes.domain();
 
     size_t numDofs = numOwnedDofs;
-    size_t numElements = domain.getElementCount();  // Total elements in arrays
-    size_t localElementCount = domain.localElementCount();  // Owned elements
+    size_t numElements = domain.getElementCount();
     size_t numNodes = domain.getNodeCount();
 
     // Validate input sizes
@@ -468,9 +467,8 @@ void StiffnessAssembler<ElementTag, RealType, KeyType, AcceleratorTag>::buildSpa
     // Debug: count elements with mixed ownership
     int totalElems = 0, mixedElems = 0, ownedOnlyElems = 0;
     
-    // Loop over LOCAL elements: [0, localElementCount)
-    // Cornerstone places owned elements first in connectivity arrays
-    for (size_t elem = 0; elem < localElementCount; ++elem) {
+    // All elements, halos included: they are part of the owned rows' stars (see assemble)
+    for (size_t elem = 0; elem < numElements; ++elem) {
         KeyType nodes[4] = {h_conn0[elem], h_conn1[elem], h_conn2[elem], h_conn3[elem]};
         
         // Validate node indices
@@ -521,13 +519,10 @@ void StiffnessAssembler<ElementTag, RealType, KeyType, AcceleratorTag>::buildSpa
             KeyType localRow = localDofs[i];
             if (localRow >= numDofs) continue;  // Safety check
             
+            // Ghost columns too: they couple this rank's own rows to its neighbours' nodes, and no
+            // other rank assembles these rows. Dropping them decouples the ranks.
             for (int j = 0; j < 4; ++j) {
-                // Only include OWNED columns to create square matrix (like CVFEM)
-                // Skip ghost columns - their contributions are handled by owning rank
-                KeyType localCol = localDofs[j];
-                if (localCol < numDofs) {  // Only owned DOFs
-                    rowCols[localRow].push_back(localCol);
-                }
+                rowCols[localRow].push_back(localDofs[j]);
             }
         }
     }
@@ -537,7 +532,7 @@ void StiffnessAssembler<ElementTag, RealType, KeyType, AcceleratorTag>::buildSpa
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     if (rank == 0 || rank == 1) {
         std::cout << "Rank " << rank << ": Sparsity - processed " << totalElems 
-                  << " elements in range [0, " << localElementCount << "): "
+                  << " of " << numElements << " elements: "
                   << mixedElems << " mixed (owned+ghost), "
                   << ownedOnlyElems << " owned-only\n";
     }
@@ -561,9 +556,8 @@ void StiffnessAssembler<ElementTag, RealType, KeyType, AcceleratorTag>::buildSpa
         totalNnz += row.size();
     }
     
-    // Allocate SQUARE matrix (owned rows × owned columns)
-    // Using CVFEM-style assembly: ghost columns excluded, square matrix on each rank
-    K.allocate(numDofs, numDofs, totalNnz);
+    // Owned rows x (owned + ghost) columns; square on a single rank
+    K.allocate(numDofs, numLocalDofsWithGhosts, totalNnz);
     
     // Build CSR format
     auto rowOffsets = K.rowOffsetsPtr();

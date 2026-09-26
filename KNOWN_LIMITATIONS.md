@@ -48,7 +48,10 @@ including element numberings that are not aligned with the coordinate axes.
   every mesh.
 - **Example-level restrictions.** `mars_cvfem_poisson` is single-rank and refuses more ranks.
   `mars_ex1_poisson` applies u = 0 on the faces of the mesh's bounding box, so it is correct for
-  box-shaped domains only.
+  box-shaped domains only. `mars_ex_beam_tet` and `mars_ex_beam_tet_distributed` are single-rank:
+  their DOF handler (`UnstructuredDofHandler`) chooses node owners with its own rule, not the
+  domain's. Multi-rank drivers number DOFs with `buildDofMappingGpu` from the domain's ownership,
+  as `mars_ex1_poisson` and the Navier–Stokes solvers do.
 
 ## Module status
 The unstructured GPU backend (`backend/distributed/unstructured/`) is the active,
