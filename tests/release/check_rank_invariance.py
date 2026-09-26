@@ -23,7 +23,7 @@ def run(cmd, row_prefix=None):
     env = dict(os.environ)
     if row_prefix:
         env["MARS_ROW_DUMP"] = row_prefix
-    res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env)
+    res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True, env=env)
     sys.stdout.write(res.stdout)
     if res.returncode != 0:
         sys.exit(f"FAIL: exit code {res.returncode}")

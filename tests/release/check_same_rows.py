@@ -36,7 +36,7 @@ def main():
             os.remove(os.path.join(a.rows, fn))
         run = [c.replace("{mesh}", mesh) for c in cmd]
         print("+ " + " ".join(run), flush=True)
-        res = subprocess.run(run, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+        res = subprocess.run(run, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True,
                              env=dict(os.environ, MARS_ROW_DUMP=prefix))
         sys.stdout.write(res.stdout)
         if res.returncode != 0:

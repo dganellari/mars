@@ -21,7 +21,7 @@ def main():
         sys.exit("usage: missing command after --")
 
     print("+ " + " ".join(cmd), flush=True)
-    res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True)
     sys.stdout.write(res.stdout)
     if res.returncode != 0:
         sys.exit(f"FAIL: exit code {res.returncode}")
