@@ -30,6 +30,11 @@ the cornerstone-octree library.
 - Hex CVFEM kernels transform reference gradients with the inverse-transpose Jacobian. Earlier
   code used the inverse, which is wrong whenever an element's reference axes are not aligned with
   x, y, z (typical of meshes from mesh generators).
+- Multi-rank node ownership comes from the SFC decomposition: a node belongs to the rank whose SFC range contains
+  it, which every rank computes without communication. The domain sync sends each element to the owners of its
+  corners, so every owner holds all elements around its nodes and owned rows are complete. Earlier versions relied
+  on the distance-based halo reaching those elements, which failed at corner contacts between ranks. Periodic and
+  multi-block meshes keep the previous ownership scheme (see KNOWN_LIMITATIONS.md).
 - The Poiseuille tutorial mesh ships in `tests/data/poiseuille/`; its validation run is
   opt-in with `-DMARS_ENABLE_VALIDATION_TESTS=ON`.
 

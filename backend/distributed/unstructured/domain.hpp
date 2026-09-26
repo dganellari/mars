@@ -18,6 +18,7 @@ using std::get;
 #include "cstone/domain/assignment.hpp"
 
 #include "domain_cuda_impl.hpp"
+#include "mars_sfc_ownership.hpp"
 
 // stl includes
 // #include <adios2.h>
@@ -372,6 +373,13 @@ struct HostConnectivityTupleHelper<QuadTag, T>
 template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
 class ElementDomain;
 
+// Keys of the elements this rank needs as extra halos so that every rank holds the complete element star of the
+// nodes it owns (mars_sfc_ownership.hpp). Collective; returns true if any rank needs extra halos. Call between the
+// cornerstone sync and the halo exchange of the element properties.
+template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
+bool requestStarHalos(const ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>& domain,
+                      cstone::DeviceVector<KeyType>& haloKeys);
+
 // ============================================================================
 // AdjacencyData: Manage node-element and element-node mappings
 // Lazily initialized for memory efficiency
@@ -466,6 +474,12 @@ struct NodeHaloTopology
     // Selected at runtime via env MARS_NODEHALO_V2; both paths populate the
     // same fields so callers don't change.
     void buildFromCstoneHalos(const ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>& domain);
+
+    // SFC node ownership: receive lists from the owner function, send lists from one sparse key exchange
+    void buildFromSfcOwner(const ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>& domain);
+
+    // buildFromSfcOwner when the domain uses SFC ownership, buildFromCstoneHalos otherwise
+    void buildOnDevice(const ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>& domain);
 
     // Gate 1 validation: build with both paths and diff per-peer node-id lists.
     // Prints first mismatch to stderr; returns true if identical (after sort).
@@ -741,34 +755,32 @@ public:
 
     int getPeriodicAxesMask() const { return periodicAxesMask_; }
 
-    // Widen cstone's halo search box so every element touching an owned node is
-    // delivered as a local halo element. cstone's default halo (factor 1.0) can
-    // miss the opposite-rank element touching a corner/edge-shared seam node, so
-    // a seam-owned node's assembled stiffness row is incomplete (PROVEN on the
-    // multirank Poiseuille channel: [Avel-diag] sum(nuK_diag) was rank-varying).
-    // Setting haloSearchExt_ > 1 inflates each leaf's search box so those
-    // elements arrive through sync() -- WITH their nodes/coords/SFC keys/DOF/
-    // sparsity all built by the existing pipeline (no post-sync append, which
-    // would dangle). Default 1.5 for multi-rank, non-periodic runs: an empirical mitigation that
-    // made every owned row match the 1-rank run on the release test cubes (the default 1.0 missed
-    // one element at corner-contact nodes on 4 ranks). It is not a coverage guarantee; the real fix
-    // is completing each owned node's element star by connectivity. MARS_HALO_FACTOR overrides it
-    // (1 restores cstone's default). Gated to multi-rank, non-periodic (periodic has its own image
-    // halo; single rank has no seam). Persists on domain_ across AMR re-syncs. Larger factors
-    // over-include (cube256 OOM risk). Called right after each domain_ construction so both sync
-    // paths and re-syncs see it.
-    void applyHaloFactor()
+    // Multi-rank, non-periodic, single-block meshes use SFC node ownership (mars_sfc_ownership.hpp): a node belongs
+    // to the rank whose cornerstone SFC range holds it, and sync() completes the element star of every owned node,
+    // so each owned row is assembled from all its elements by construction. MARS_OWNERSHIP=vote restores the
+    // previous scheme (lowest claiming rank among halo peers, with the cornerstone halo search widened by 1.5 as an
+    // empirical mitigation); periodic and multi-block meshes keep that scheme. MARS_HALO_FACTOR sets the halo search
+    // factor in either mode. The choice must be the same on all ranks, so it comes from the environment only.
+    // Called right after each domain_ construction; persists across AMR re-syncs.
+    void configureHalos()
     {
         if (numRanks_ <= 1 || periodicAxesMask_ != 0 || !domain_) return;
-        const char* f  = std::getenv("MARS_HALO_FACTOR");
-        float factor   = f ? std::strtof(f, nullptr) : 1.5f;
-        if (factor > 1.0f)
-        {
-            domain_->setHaloFactor(factor);
-            if (rank_ == 0)
-                std::cout << "[halo] element halo factor " << factor << (f ? " (MARS_HALO_FACTOR)" : " (default)")
-                          << "\n";
-        }
+        const char* mode = std::getenv("MARS_OWNERSHIP");
+        sfcOwnership_    = numBlocks_ == 1 && !(mode && std::string(mode) == "vote");
+        const char* f    = std::getenv("MARS_HALO_FACTOR");
+        float factor     = f ? std::strtof(f, nullptr) : (sfcOwnership_ ? 1.0f : 1.5f);
+        if (factor > 1.0f) domain_->setHaloFactor(factor);
+        if (rank_ == 0)
+            std::cout << "[halo] " << (sfcOwnership_ ? "SFC node ownership" : "vote node ownership")
+                      << ", halo factor " << std::max(factor, 1.0f) << "\n";
+    }
+
+    bool sfcOwnership() const { return sfcOwnership_; }
+
+    // Owner rank of a node key (device-callable); valid after sync() when sfcOwnership() is on
+    SfcNodeOwner<KeyType, RealType> sfcNodeOwner() const
+    {
+        return {box_, sfcBox_, thrust::raw_pointer_cast(d_rankBounds_.data()), numRanks_};
     }
 
     // Start and end indices for local work assignment
@@ -1666,6 +1678,12 @@ private:
     // non-periodic) -- cavity / channel / wing are unaffected.
     int periodicAxesMask_ = 0;
 
+    // SFC node ownership (configureHalos). d_rankBounds_ and sfcBox_ are cornerstone's replicated assignment and
+    // box from the last sync; they define the owner of every node.
+    bool sfcOwnership_ = false;
+    DeviceVector<KeyType> d_rankBounds_;
+    cstone::Box<RealType> sfcBox_{0, 1};
+
     // useful mapping from element to node indices
     DeviceVector<KeyType> d_elemToNodeMap_;
 
@@ -1717,6 +1735,19 @@ private:
     mutable std::unique_ptr<OriginalCoordinates<ElementTag, RealType, KeyType, AcceleratorTag>> originalCoords_;
 
     void initializeConnectivityKeys();
+
+    // Cornerstone's replicated assignment (numRanks + 1 keys) is host data; the node owner needs it on the device
+    void updateSfcOwner()
+    {
+        const auto& assignment = domain_->assignment();
+        std::vector<KeyType> h_bounds(numRanks_ + 1);
+        for (int r = 0; r <= numRanks_; ++r)
+            h_bounds[r] = assignment[r];
+        d_rankBounds_.resize(numRanks_ + 1);
+        cudaMemcpy(thrust::raw_pointer_cast(d_rankBounds_.data()), h_bounds.data(), h_bounds.size() * sizeof(KeyType),
+                   cudaMemcpyHostToDevice);
+        sfcBox_ = domain_->box();
+    }
 
     // Helper method for creating SFC map
     void createLocalToGlobalSfcMap();
@@ -2202,7 +2233,7 @@ ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(cons
     testSfcPrecision<KeyType, RealType>(box_, rank_);
 
     domain_ = std::make_unique<DomainType>(rank, numRanks, bucketSize, bucketSizeFocus, theta, box_);
-    applyHaloFactor();
+    configureHalos();
 
     // Transfer data to GPU before sync
     auto t3 = clk::now();
@@ -2267,7 +2298,7 @@ ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(cons
     testSfcPrecision<KeyType, RealType>(box_, rank_);
 
     domain_ = std::make_unique<DomainType>(rank, numRanks, bucketSize, bucketSizeFocus, theta, box_);
-    applyHaloFactor();
+    configureHalos();
 
     // Transfer data to GPU before sync
     transferDataToGPU(h_coords, h_conn, d_coords_, d_conn_);
@@ -2322,7 +2353,7 @@ ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(cons
     testSfcPrecision<KeyType, RealType>(box_, rank_);
 
     domain_ = std::make_unique<DomainType>(rank, numRanks, bucketSize, bucketSizeFocus, theta, box_);
-    applyHaloFactor();
+    configureHalos();
 
     // Transfer data to GPU before sync (including boundary data)
     transferDataToGPU(h_coords, h_conn, h_boundary, d_coords_, d_conn_, d_boundary_);
@@ -2416,7 +2447,7 @@ ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(Devi
     RealType theta = 0.5;
 
     domain_ = std::make_unique<DomainType>(rank, numRanks, bucketSize, bucketSizeFocus, theta, box_);
-    applyHaloFactor();
+    configureHalos();
 
     // d_props_ is initialized in calculateCharacteristicSizes; no transferDataToGPU needed
     DeviceConnectivityTuple d_conn_local = std::move(d_conn);
@@ -2838,6 +2869,18 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::sync(const De
             std::cout << "Rank " << rank_ << " syncing " << ElementTag::Name << " domain with " << elementCount_
                       << " elements." << std::endl;
 
+        // SFC node ownership: between the cornerstone sync and the property halo exchange, add the elements
+        // whose corners this rank owns as halos (see configureHalos)
+        StarHaloKeysFn<KeyType> starHaloKeys;
+        if (sfcOwnership_)
+        {
+            starHaloKeys = [this](DeviceVector<KeyType>& haloKeys)
+            {
+                updateSfcOwner();
+                return requestStarHalos(*this, haloKeys);
+            };
+        }
+
         // Block-aware element sync. For multi-block meshes (non-conformal / FSI) co-move the per-
         // element block id (widened int -> KeyType) through cstone's SFC sort + cross-rank
         // redistribution + halo exchange, then narrow it back to the post-sync layout. Single-block
@@ -2851,7 +2894,7 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::sync(const De
                              thrust::device_pointer_cast(d_elemBlock_.data() + elementCount_),
                              thrust::device_pointer_cast(d_elemBlockKeys.data()));
                 syncDomainImplBlock(domain_.get(), d_elemSfcCodes_, d_elemX, d_elemY, d_elemZ, d_elemH,
-                                    elementCount_, d_conn_keys_, d_elemBlockKeys);
+                                    elementCount_, d_conn_keys_, d_elemBlockKeys, starHaloKeys);
                 d_elemBlock_.resize(elementCount_);  // elementCount_ is now post-sync (incl. halos)
                 thrust::copy(thrust::device_pointer_cast(d_elemBlockKeys.data()),
                              thrust::device_pointer_cast(d_elemBlockKeys.data() + elementCount_),
@@ -2860,7 +2903,7 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::sync(const De
             else
             {
                 syncDomainImpl(domain_.get(), d_elemSfcCodes_, d_elemX, d_elemY, d_elemZ, d_elemH,
-                               elementCount_, d_conn_keys_);
+                               elementCount_, d_conn_keys_, starHaloKeys);
             }
         };
 
@@ -2926,7 +2969,7 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::sync(const De
                                          "coordinates are not supported yet; disable storeOriginalCoords "
                                          "or use a tet mesh.");
             syncDomainImplWithOrigCoords(domain_.get(), d_elemSfcCodes_, d_elemX, d_elemY, d_elemZ, d_elemH,
-                                        elementCount_, d_conn_keys_, d_orig_coords);
+                                        elementCount_, d_conn_keys_, d_orig_coords, starHaloKeys);
 
             // Build adjacency to get local IDs (d_conn_keys_ -> d_conn_local_ids_)
             // This is needed because d_conn_keys_ contains SFC keys, not local node indices

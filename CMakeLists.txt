@@ -190,13 +190,15 @@ if(MARS_ENABLE_UNSTRUCTURED)
         #   2. Env-gated sync phase timing (CSTONE_SYNC_TIMING=1).
         #   3. Experimental Domain::resetForAMRRefinement (WIP, env-gated
         #      on the MARS side via MARS_AMR_REUSE_DOMAIN=1).
+        #   4. Domain::addHalos and Domain::assignment() (SFC node ownership,
+        #      element-star completion in ElementDomain::sync).
         # The branch is maintained alongside upstream master; halo accessors
         # are PR-able to upstream when ready. Pinned to a commit, not the branch,
         # so a release always builds against the cstone it was tested with.
         FetchContent_Declare(
             cornerstone_fetch
             GIT_REPOSITORY https://github.com/sekelle/cornerstone-octree.git
-            GIT_TAG 4eb195a662bd8b77f88621c1c14aeb32f8693dbb  # mars-extensions
+            GIT_TAG c48fc282799b679ae9c506c5f36dbdca9e5ef0d2  # mars-extensions
             OVERRIDE_FIND_PACKAGE
         )
     
