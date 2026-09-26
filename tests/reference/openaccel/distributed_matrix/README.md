@@ -187,7 +187,8 @@ This code has never been compiled with nvcc or run with Hypre. Apply the patch t
 checkout (`git -C .. am <patch>`). Then, from the configured MARS CUDA/Hypre build directory
 (`mars/mlir`), run the block below. The configure step adds one cache entry,
 `CMAKE_PROJECT_mars_INCLUDE`. Remove it later with
-`cmake -S .. -B . -UCMAKE_PROJECT_mars_INCLUDE`.
+`cmake -S .. -B . -UCMAKE_PROJECT_mars_INCLUDE`. The same `inject.cmake` also adds the
+distributed SIMPLE gates (`../distributed_simple/README.md`), so one configure covers both.
 
 ```bash
 (
@@ -225,6 +226,12 @@ A pass means every log ends in `PASS:`. If an empty-rank probe fails or hangs, k
 `EmptyRanks::reject`: the wrapper limitation is then confirmed.
 
 ## Minimum later changes to SimpleRunner
+
+Most of steps 2–4 below are now implemented, outside the active runtime, as
+`DistributedSimpleRunner` (`../distributed_simple/README.md`). On the host it matches the
+one-rank `SimpleRunner` entry by entry on 1, 2 and 4 ranks. What remains is building its
+ownership input from ElementDomain. The list below is the original minimum for adapting
+`SimpleRunner` itself.
 
 1. **Adopt the adapter (one rank).** Apply `proposed-simple-runtime-integration.diff` (kept
    outside this patch). `LinearSystem` then uses the adapter with the one-rank identity maps.
