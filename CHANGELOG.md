@@ -48,7 +48,8 @@ the cornerstone-octree library.
   opt-in with `-DMARS_ENABLE_VALIDATION_TESTS=ON`.
 - The Poiseuille `--planar-ddt` path uses consistent constrained pressure gradients,
   BDF scaling, inlet diffusion lift and opening fluxes. The long regression checks
-  the steady profile and conservation; its full CUDA validation is still pending.
+  the steady profile, conservation and steadiness. The reported single-rank Daint
+  run passed all checks after 1500 steps; profile RMS error was 4.563e-4 m/s.
 
 ### Experimental
 - High-order matrix-free CVFEM operators (p ≥ 2), with DOF numbering on the device.

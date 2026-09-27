@@ -1,9 +1,9 @@
 # Poiseuille Channel Flow with MARS — A Validation Tutorial
 
-> **Release validation pending:** use the repaired `--planar-ddt` path and the
-> [current validation recipe](../tests/reference/poiseuille/planar_validation.md).
-> Three GPU startup steps passed; the full steady-profile test has not yet passed.
-> Historical results and explanations below are not evidence for the repaired path.
+> **Planar release validation passed:** the reported 1500-step Daint run passed
+> profile, conservation and steadiness checks on 2026-09-27. Use `--planar-ddt` and
+> the [current results and recipe](../tests/reference/poiseuille/planar_validation.md).
+> Historical results and explanations below describe the earlier solver path.
 
 This tutorial explains the `mars_poiseuille_flow` example: what Poiseuille flow
 is, why it is the standard first validation case for any incompressible CFD
@@ -381,7 +381,7 @@ faked by boundary values (a flux measured at a Dirichlet plane just reports
 the BC back at you — a lesson from the pump debugging). Ratios near 1.0 at
 25/50/75% mean real, mass-conserving flow through the whole channel.
 
-### Expected results (the validated run)
+### Historical results (before the planar repair)
 
 | Quantity | Expected |
 |----------|----------|

@@ -7,8 +7,29 @@ rectangular cells and one element through z. This is separate from the Tet4
 SIMPLE solver. General 3D symmetry and distributed opening-area reconstruction
 are not implemented by this change.
 
-The three-step GPU startup gate passed previously. A full steady-profile pass
-on the committed repair is still required before declaring this regression fixed.
+The full 1500-step Daint run passed on 2026-09-27, as reported in the user's
+terminal transcript for `poiseuille-release-nWKnbQ`. This closes the single-rank
+planar regression gate. The saved revision and binary hashes were not retrieved;
+the transcript follows the release recipe supplied after repair `cdffd654`.
+
+## Recorded CUDA result
+
+At t=15, the run printed `VALIDATION PASS` with the unchanged acceptance limits:
+
+| Quantity | Reported value | Acceptance limit |
+|----------|----------------|------------------|
+| Profile RMS error | 4.562586e-4 m/s | < 6e-3 m/s |
+| Profile RMS / analytic peak speed | 3.041724e-4 | Diagnostic |
+| Through-flow ratios at 25/50/75% | 1.000 / 1.000 / 1.000 (printed) | 0.9 to 1.1 |
+| Active continuity RMS * H/U | 7.3849e-9 | <= 1e-6 |
+| Relative net boundary flux | 2.4104e-10 | <= 1e-6 |
+| Final 20-step velocity change / U | 3.10352119e-7 | <= 1e-6 |
+
+The final projection gate also passed. The velocity-fit pressure gradient was
+0.11992 Pa/m against 0.12 Pa/m analytically; the solved-pressure gradient was
+0.12178 Pa/m (about 1.48% high). These gradient reports are diagnostics, not
+additional acceptance tests. Pressure CG took 4202 iterations in the final step;
+this result establishes correctness for the stated case, not solver efficiency.
 
 ## Discrete equations
 
