@@ -26,8 +26,12 @@
 #include "mars_segregated_simple_runtime.hpp"
 #include "mars_segregated_distributed_matrix.hpp"
 #include "mars_segregated_halo_exchange.hpp"
+#include "mars_segregated_simple_reduction.hpp"
 #include <limits>
 #include <memory>
+#ifdef MARS_REPLAY_CUDA
+#include <thrust/logical.h>
+#endif
 #if defined(__CUDACC__) && !defined(MARS_REPLAY_CUDA)
 #error "Distributed SIMPLE: CUDA builds define MARS_REPLAY_CUDA, as the SIMPLE drivers do"
 #endif
@@ -39,10 +43,12 @@
 
 namespace mars::segregated::runtime {
 
-template<class GlobalId> struct SimpleOwnership {
-    std::vector<int> owned_nodes, owned_elements, owned_faces;
-    std::vector<GlobalId> solver_node;
-    std::vector<int> peers, send_offsets, send_nodes, recv_offsets, recv_nodes;
+template<class T> using HostStorage=std::vector<T>;
+template<class GlobalId,template<class> class Storage=HostStorage> struct SimpleOwnership {
+    Storage<int> owned_nodes, owned_elements, owned_faces;
+    Storage<GlobalId> solver_node;
+    std::vector<int> peers, send_offsets, recv_offsets;
+    Storage<int> send_nodes, recv_nodes;
 };
 
 // Apply a per-index functor to a list of indices (owned nodes, elements or faces).
@@ -64,6 +70,25 @@ struct MarkOwnedNodes {
     MARS_DSIMPLE_HD void operator()(int k) const { owned[list[k]]=1; }
 };
 
+struct CheckTraceMoment {
+    const double* moment; int* error;
+    MARS_DSIMPLE_HD void operator()(int) const {
+        if (!(distributed::finite_value(moment[0]) && distributed::finite_value(moment[1]) && moment[1]>0))
+            distributed::raise_fault(error,1);
+    }
+};
+struct OutsideRange {
+    int size;
+    MARS_DSIMPLE_HD bool operator()(int i) const { return i<0 || i>=size; }
+};
+inline bool valid_indices(const std::vector<int>& indices,int size) {
+    return std::none_of(indices.begin(),indices.end(),OutsideRange{size});
+}
+#ifdef MARS_REPLAY_CUDA
+inline bool valid_indices(const thrust::device_vector<int>& indices,int size) {
+    return !thrust::any_of(indices.begin(),indices.end(),OutsideRange{size});
+}
+#endif
 inline void simple_collective(MPI_Comm comm,bool local_ok,const char* message) {
     int bad=local_ok?0:1, any=0; MPI_Allreduce(&bad,&any,1,MPI_INT,MPI_MAX,comm);
     if (any) throw std::runtime_error(std::string(message)+" (on "+(local_ok?"another rank":"this rank")+")");
@@ -117,12 +142,16 @@ struct DistributedSimpleRunner {
     distributed::OwnedRowSystem<1,Matrix,GlobalId> poisson;
     Solve<3> momentum_solve; Solve<1> poisson_solve;
     distributed::FieldExchange exchange;
+#ifdef MARS_REPLAY_CUDA
+    SimpleDeviceReduction reduction;
+    Array<SimpleReport> report{1};
+#endif
     bool assembled=false;
     distributed::Tolerance tolerance{1e-13,1e-10};
 
     // Id may be wider than GlobalId (e.g. int64 ids for a 32-bit HYPRE_BigInt build); ids
     // that do not fit are rejected collectively instead of narrowed.
-    template<class Input,class Id> DistributedSimpleRunner(MPI_Comm c,const Input& f,const SimpleOwnership<Id>& o,SimpleControls ctl={},
+    template<class Input,class Id,template<class> class Storage> DistributedSimpleRunner(MPI_Comm c,const Input& f,const SimpleOwnership<Id,Storage>& o,SimpleControls ctl={},
         distributed::EmptyRanks empty=distributed::EmptyRanks::reject):
         comm(c),n(int(f.x.size())),e(int(f.nodes[0].size())),b(int(f.faces.size())),
         owned_nodes(int(o.owned_nodes.size())),owned_elements(int(o.owned_elements.size())),owned_faces(int(o.owned_faces.size())),controls(ctl),
@@ -144,10 +173,8 @@ struct DistributedSimpleRunner {
         simple_collective(comm,ctl.density>0 && ctl.viscosity>0 && ctl.pseudo_dt>0 && ctl.inlet_speed>0,"invalid material or pseudo-time");
         for (double alpha:{ctl.alpha_u,ctl.alpha_p,ctl.alpha_mass,ctl.beta})
             simple_collective(comm,alpha>0 && alpha<=1,"relaxation and beta must be in (0,1]");
-        bool lists_ok=true;
-        for (int v:o.owned_elements) lists_ok=lists_ok && v>=0 && v<e;
-        for (int v:o.owned_faces) lists_ok=lists_ok && v>=0 && v<b;
-        simple_collective(comm,lists_ok,"owned element or face list outside the local mesh");
+        simple_collective(comm,valid_indices(o.owned_elements,e) && valid_indices(o.owned_faces,b),
+                          "owned element or face list outside the local mesh");
         launch(owned_nodes,MarkOwnedNodes{owned.data(),owned_mask.data()});
         launch(e,SimpleGeometry{mesh,state}); check("native geometry failed");
         launch(b,SimpleBoundaryFactor{mesh,factor.data()});
@@ -161,6 +188,19 @@ struct DistributedSimpleRunner {
         simple_collective(c,fits,"solver node id does not fit the solver's global index type");
         return std::vector<GlobalId>(ids.begin(),ids.end());
     }
+#ifdef MARS_REPLAY_CUDA
+    template<class Id> static thrust::device_vector<GlobalId> narrow(MPI_Comm c,const thrust::device_vector<Id>& ids) {
+        // Solver ids are nonnegative, and the wrapper only supports int-sized global row ranges.
+        simple_collective(c,!thrust::any_of(ids.begin(),ids.end(),IdTooWide<Id>{}),
+                          "solver node id does not fit the solver's global index type");
+        return thrust::device_vector<GlobalId>(ids.begin(),ids.end());
+    }
+    template<class Id> struct IdTooWide {
+        __host__ __device__ bool operator()(Id id) const {
+            return id<0 || static_cast<unsigned long long>(id)>static_cast<unsigned long long>(std::numeric_limits<GlobalId>::max());
+        }
+    };
+#endif
     DistributedSimpleRunner(const DistributedSimpleRunner&)=delete;
     DistributedSimpleRunner& operator=(const DistributedSimpleRunner&)=delete;
     void check(const char* message) { simple_collective(comm,error.host()[0]==0,message); }
@@ -181,6 +221,22 @@ struct DistributedSimpleRunner {
         launch(owned_nodes,OnList<SimpleMomentumNode>{{state,controls,am},owned.data()});
         check("momentum assembly failed"); assembled=true;
     }
+#ifdef MARS_REPLAY_CUDA
+    void reduce_diagnostics() {
+        ensure(assembled,"diagnostics require a fresh momentum assembly");
+        reduction.reduce(owned_nodes,OnList<SimpleNodeSums>{{state,momentum_rhs.data(),old_velocity.data(),old_pressure.data()},owned.data()},0);
+        reduction.reduce(owned_faces,OnList<SimpleFaceSums>{{mesh,state,old_flags.data()},boundary.data()},1);
+        reduction.reduce(6*owned_elements,OnSamples<SimpleFluxChange>{{eflux.data(),old_eflux.data()},elements.data(),6},2);
+        reduction.reduce(3*owned_faces,OnSamples<SimpleFluxChange>{{bflux.data(),old_bflux.data()},boundary.data(),3},3);
+        reduction.finish(comm);
+    }
+    SimpleSums diagnostics() { reduce_diagnostics(); return reduction.result.host()[0]; }
+    SimpleReport diagnostic_report(double residual,double mass,double change) {
+        reduce_diagnostics();
+        launch(1,FinishSimpleReport{reduction.result.data(),controls,completed,residual,mass,change,report.data()});
+        return report.host()[0]; // Fixed-size logging/convergence report; no field or reduction staging.
+    }
+#else
     SimpleSums diagnostics() {
         ensure(assembled,"diagnostics require a fresh momentum assembly"); // same program order on every rank
         auto a=reduce_sums(owned_nodes,OnList<SimpleNodeSums>{{state,momentum_rhs.data(),old_velocity.data(),old_pressure.data()},owned.data()});
@@ -189,6 +245,7 @@ struct DistributedSimpleRunner {
         a=SimpleSumCombine{}(a,reduce_sums(3*owned_faces,OnSamples<SimpleFluxChange>{{bflux.data(),old_bflux.data()},boundary.data(),3}));
         return allreduce_sums(comm,a);
     }
+#endif
     template<int C,class System,class Solver> void solve(System& system,Solver& solver,BlockCsrView<C> view,Array<double>& increment,
         bool assembly_failed,std::initializer_list<distributed::Field> with) {
         system.update(view,solver.rhs(std::size_t(system.rows())),std::size_t(system.rows()),assembly_failed);
@@ -209,11 +266,18 @@ struct DistributedSimpleRunner {
         launch(3*n,SimpleAddIncrement{state.velocity,du.data(),1});
         observe("momentum",velocity); observe("influence",d);
         moment.zero(); launch(owned_faces,OnList<SimpleTraceMoment>{{mesh,state,moment.data()},boundary.data()});
+#ifdef MARS_REPLAY_CUDA
+        assembly_cuda_check(cudaStreamSynchronize(nullptr));
+        ensure(MPI_Allreduce(MPI_IN_PLACE,moment.data(),2,MPI_DOUBLE,MPI_SUM,comm)==MPI_SUCCESS,"outlet moment reduction failed");
+        launch(1,CheckTraceMoment{moment.data(),error.data()});
+        check("all outlet faces closed: no open pressure anchor or nonfinite outlet moments");
+#else
         const auto local=moment.host(); std::vector<double> global(2);
         MPI_Allreduce(local.data(),global.data(),2,MPI_DOUBLE,MPI_SUM,comm);
         if (!(std::isfinite(global[0]) && std::isfinite(global[1]) && global[1]>0))
             throw std::runtime_error("all outlet faces closed: no open pressure anchor; cannot solve this prescribed-inflow case");
         moment.values=global;
+#endif
         launch(b,SimpleTrace{mesh,state,controls,moment.data()}); observe("trace",trace);
         poisson_blocks.zero(); poisson_rhs.zero(); auto ap=graph.template view<1>(poisson_blocks.data(),poisson_rhs.data());
         launch(e,SimpleInterior<1>{mesh,state,controls,ap}); launch(b,SimpleBoundary<1>{mesh,state,controls,ap});

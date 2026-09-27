@@ -1,86 +1,66 @@
-// Multi-rank public-channel SIMPLE driver on ElementDomain (cstone): each rank passes a slice of
-// the elements, cstone's sync distributes them by SFC and builds the halos; domain_view +
-// simple_partition turn the domain into DistributedSimpleRunner input. Same options, metrics and
-// CSV formats as mars_segregated_simple, so a one-rank and a P-rank run compare line by line.
-// Validation driver: every rank reads the (small) public mesh to restore exact coordinates and
-// boundary tags by SFC key; production ingestion supplies those without replication.
-#include "mars_segregated_simple_partition.hpp"
+// Native Exodus -> device ElementDomain -> distributed SIMPLE. Host work is file I/O and API control.
+#include "mars_segregated_simple_native_mesh.hpp"
 #include <filesystem>
 #include <iomanip>
 #include <limits>
-#include <map>
+
 using namespace mars;
 using namespace mars::segregated;
 using namespace mars::segregated::runtime;
-using Domain=ElementDomain<TetTag,double,uint64_t,cstone::GpuTag>;
 using Runner=DistributedSimpleRunner<HypreSimpleSolve<1>::Solver::Matrix,HYPRE_BigInt,HypreSimpleSolve>;
 
-struct Options { std::string mesh,output; int iterations=2000,report=10; double residual=1e-6,mass=1e-6,change=1e-6; };
+struct Options { std::string mesh,output; int iterations=2000,report=10; double residual=1e-6,mass=1e-6,change=1e-6; bool setup_only=false; };
 Options options(int argc,char** argv) {
     Options o;
     for (int i=1;i<argc;i+=2) {
         ensure(i+1<argc,"each option requires a value");
         const std::string k=argv[i], v=argv[i+1];
         if (k=="--mesh") o.mesh=v; else if (k=="--output-prefix") o.output=v;
+        else if (k=="--mesh-format") ensure(v=="exodus","distributed native SIMPLE requires --mesh-format exodus");
         else if (k=="--iterations") o.iterations=std::stoi(v); else if (k=="--report-every") o.report=std::stoi(v);
         else if (k=="--residual-tol") o.residual=std::stod(v); else if (k=="--mass-tol") o.mass=std::stod(v);
-        else if (k=="--change-tol") o.change=std::stod(v); else throw std::runtime_error("unknown option: "+k);
+        else if (k=="--change-tol") o.change=std::stod(v);
+        else if (k=="--setup-only") { ensure(v=="0" || v=="1","--setup-only expects 0 or 1"); o.setup_only=v=="1"; }
+        else throw std::runtime_error("unknown option: "+k);
     }
     ensure(!o.mesh.empty() && !o.output.empty() && o.iterations>0 && o.report>0,"--mesh and --output-prefix are required");
     return o;
 }
 
+struct FieldRow { double values[8]; };
+struct FieldRowLess {
+    __host__ __device__ bool operator()(const FieldRow& a,const FieldRow& b) const { return a.values[0]<b.values[0]; }
+};
+struct PackOutput {
+    const int *owned,*source; const double *x,*y,*z,*u,*p; FieldRow* rows;
+    __device__ void operator()(int i) const {
+        const int n=owned[i]; rows[i]={{double(source[n]),x[n],y[n],z[n],u[3*n],u[3*n+1],u[3*n+2],p[n]}};
+    }
+};
+struct CheckOutput {
+    const FieldRow* rows; int* error;
+    __device__ void operator()(int i) const { if (rows[i].values[0]!=double(i)) atomicExch(error,1); }
+};
+
 int execute(const Options& o) {
     int rank=0, ranks=1; MPI_Comm_rank(MPI_COMM_WORLD,&rank); MPI_Comm_size(MPI_COMM_WORLD,&ranks);
     if (rank==0) for (const char* suffix:{"-metrics.csv","-fields.csv"})
         ensure(!std::filesystem::exists(o.output+suffix),"output exists; choose a fresh prefix");
-    const auto input=load_simple_input(o.mesh.c_str());
-    const int nodes=int(input.x.size()), elements=int(input.nodes[0].size());
-
-    // Every rank passes all coordinates and its slice of elements; cstone distributes by SFC.
-    std::vector<double> hx(input.x), hy(input.y), hz(input.z);
-    const int begin=int((long long)elements*rank/ranks), end=int((long long)elements*(rank+1)/ranks);
-    std::array<std::vector<uint64_t>,4> conn;
-    for (int k=0;k<4;++k) for (int el=begin;el<end;++el) conn[k].push_back(uint64_t(input.nodes[k][el]));
-    Domain domain(std::make_tuple(hx,hy,hz),std::make_tuple(conn[0],conn[1],conn[2],conn[3]),rank,ranks);
-
-    // Exact coordinates and source node ids by SFC key (Tet4 domains store decoded coordinates).
-    auto view=domain_view(domain);
-    std::vector<std::array<double,3>> coords(nodes);
-    for (int g=0;g<nodes;++g) coords[g]={input.x[g],input.y[g],input.z[g]};
-    const auto local=domain.resolveSideSetNodesToLocalKeepMisses(coords);
-    std::vector<int> source(view.x.size(),-1);
-    for (int g=0;g<nodes;++g) if (local[g]>=0) { source[local[g]]=g; view.x[local[g]]=input.x[g]; view.y[local[g]]=input.y[g]; view.z[local[g]]=input.z[g]; }
-    simple_collective(MPI_COMM_WORLD,std::find(source.begin(),source.end(),-1)==source.end(),"a local node did not match a public mesh node by SFC key");
-
-    // Boundary tags from the public face list, keyed by sorted source node ids.
-    std::map<std::array<int,3>,std::array<int,2>> tags;
-    for (const auto& f:input.faces) {
-        std::array<int,3> k3; for (int j=0;j<3;++j) k3[j]=input.nodes[tet_face_node(f.ordinal,j)][f.element];
-        std::sort(k3.begin(),k3.end());
-        ensure(tags.emplace(k3,std::array<int,2>{f.kind,int(tags.size())}).second,"duplicate public boundary face");
-    }
-    auto kind=[&](const int* face) {
-        std::array<int,3> k3{source[face[0]],source[face[1]],source[face[2]]}; std::sort(k3.begin(),k3.end());
-        auto it=tags.find(k3); return it==tags.end()?-1:it->second[0];
+    int nodes=0;
+    Buffer<int> source_node;
+    auto make_runner=[&]() {
+        const auto input=read_simple_mesh(MPI_COMM_WORLD,o.mesh); nodes=int(input.x.size());
+        auto domain=distribute_simple_mesh(MPI_COMM_WORLD,input);
+        NativeSimpleMesh<HYPRE_BigInt> native(MPI_COMM_WORLD,*domain,input);
+        source_node=std::move(native.source_node);
+        return std::make_unique<Runner>(MPI_COMM_WORLD,native.partition.input,native.partition.ownership);
     };
-    auto part=simple_partition<HYPRE_BigInt>(MPI_COMM_WORLD,view,kind);
-
-    // This small public gate checks identities, not totals that can hide a missing/duplicate pair.
-    std::vector<int> mine(std::size_t(nodes)+tags.size(),0), total(mine.size());
-    for (int i:part.ownership.owned_nodes) ++mine[source[i]];
-    for (int i:part.ownership.owned_faces) {
-        const auto& f=part.input.faces[i];
-        std::array<int,3> k3;
-        for (int j=0;j<3;++j) k3[j]=source[part.input.nodes[tet_face_node(f.ordinal,j)][f.element]];
-        std::sort(k3.begin(),k3.end());
-        ++mine[std::size_t(nodes)+tags.at(k3)[1]];
+    auto runner=make_runner(); // Release replicated file arrays and setup scratch before iterating.
+    auto& run=*runner;
+    if (o.setup_only) {
+        if (rank==0) std::cout<<"PASS: ElementDomain SIMPLE setup ranks="<<ranks<<"; no iterations run"<<std::endl;
+        return 0;
     }
-    MPI_Allreduce(mine.data(),total.data(),int(total.size()),MPI_INT,MPI_SUM,MPI_COMM_WORLD);
-    simple_collective(MPI_COMM_WORLD,std::all_of(total.begin(),total.end(),[](int count) { return count==1; }),
-                      "ownership does not cover every node and boundary face exactly once");
-
-    Runner run(MPI_COMM_WORLD,part.input,part.ownership);
     std::ofstream csv;
     if (rank==0) {
         csv.open(o.output+"-metrics.csv"); ensure(bool(csv),"cannot write metrics");
@@ -89,38 +69,46 @@ int execute(const Options& o) {
     }
     bool converged=false;
     for (;;) {
-        run.assemble_momentum(); const auto sums=run.diagnostics(); const auto m=simple_metrics(sums,run.controls);
+        run.assemble_momentum(); const auto report=run.diagnostic_report(o.residual,o.mass,o.change);
+        const auto& sums=report.sums; const auto& m=report.metrics;
         ensure(m.finite,"nonfinite nonlinear diagnostics");
         ensure(m.cancellation<=1e-10,"assembled continuity does not match boundary mass flux");
-        converged=simple_converged(m,run.completed,sums.changed,o.residual,o.mass,o.change);
+        converged=report.converged;
         if (rank==0) {
             csv<<run.completed<<','<<m.momentum<<','<<m.continuity<<','<<m.flux<<','<<m.velocity_change<<','
-               <<m.pressure_change<<','<<m.flux_change<<','<<m.cancellation<<','<<sums.inlet<<','<<sums.outlet<<','<<std::sqrt(sums.speed2)<<','
+               <<m.pressure_change<<','<<m.flux_change<<','<<m.cancellation<<','<<sums.inlet<<','<<sums.outlet<<','<<report.speed<<','
                <<sums.closed<<','<<sums.changed<<'\n';
             if (run.completed%o.report==0 || converged || run.completed==o.iterations)
                 std::cout<<"[simple] iteration="<<run.completed<<" momentum="<<m.momentum<<" continuity="<<m.continuity
                          <<" balance="<<m.flux<<" du="<<m.velocity_change<<" dp="<<m.pressure_change<<" dflux="<<m.flux_change
-                         <<" umax="<<std::sqrt(sums.speed2)<<" closed="<<sums.closed<<" changed="<<sums.changed<<std::endl;
+                         <<" umax="<<report.speed<<" closed="<<sums.closed<<" changed="<<sums.changed<<std::endl;
         }
         if (converged || run.completed==o.iterations) break;
         run.advance();
     }
-    // Owned nodes to rank 0, written in public node order (same file as the one-rank driver).
-    const auto u=run.velocity.host(), p=run.pressure.host();
-    std::vector<double> rows;
-    for (int v:part.ownership.owned_nodes) { rows.push_back(source[v]); for (int j=0;j<3;++j) rows.push_back(u[3*v+j]); rows.push_back(p[v]); }
-    int count=int(rows.size()); std::vector<int> counts(ranks), displs(ranks);
-    MPI_Gather(&count,1,MPI_INT,counts.data(),1,MPI_INT,0,MPI_COMM_WORLD);
-    int all=0; if (rank==0) for (int q=0;q<ranks;++q) { displs[q]=all; all+=counts[q]; }
-    std::vector<double> gathered(std::size_t(rank==0?all:0));
-    MPI_Gatherv(rows.data(),count,MPI_DOUBLE,gathered.data(),counts.data(),displs.data(),MPI_DOUBLE,0,MPI_COMM_WORLD);
+    // Output is the only field download. MPI gathers device rows before rank zero writes the CSV.
+    Buffer<FieldRow> rows(run.owned_nodes);
+    launch(run.owned_nodes,PackOutput{run.owned.data(),raw(source_node),run.x.data(),run.y.data(),run.z.data(),
+                                     run.velocity.data(),run.pressure.data(),raw(rows)});
+    static_assert(sizeof(FieldRow)==8*sizeof(double));
+    simple_collective(MPI_COMM_WORLD,run.owned_nodes<=INT_MAX/8,"field output exceeds MPI count capacity");
+    const int count=run.owned_nodes*8; std::vector<int> counts(ranks),displacements(ranks);
+    ensure(MPI_Gather(&count,1,MPI_INT,counts.data(),1,MPI_INT,0,MPI_COMM_WORLD)==MPI_SUCCESS,"field counts failed");
+    long long all=0;
+    if (!rank) for (int q=0;q<ranks;++q) { displacements[q]=int(all); all+=counts[q]; ensure(all<=INT_MAX,"field output exceeds MPI count capacity"); }
+    simple_collective(MPI_COMM_WORLD,rank!=0 || all==8LL*nodes,"field gather does not cover every source node");
+    Buffer<FieldRow> gathered(size_t(rank==0?nodes:0));
+    mesh_mpi_ready();
+    ensure(MPI_Gatherv(raw(rows),count,MPI_DOUBLE,raw(gathered),counts.data(),displacements.data(),MPI_DOUBLE,0,MPI_COMM_WORLD)==MPI_SUCCESS,"device field gather failed");
     if (rank==0) {
-        std::vector<std::array<double,4>> field(nodes); std::vector<int> seen(nodes,0);
-        for (std::size_t i=0;i+4<gathered.size();i+=5) { const int g=int(gathered[i]); ++seen[g]; field[g]={gathered[i+1],gathered[i+2],gathered[i+3],gathered[i+4]}; }
-        ensure(std::count(seen.begin(),seen.end(),1)==nodes,"field gather did not return every node exactly once");
+        mesh_sort(gathered,FieldRowLess{});
+        Array<int> output_error(1);
+        launch(nodes,CheckOutput{raw(gathered),output_error.data()});
+        ensure(output_error.host()[0]==0,"field gather returned duplicate or missing source nodes");
+        std::vector<FieldRow> field(gathered.size()); thrust::copy(gathered.begin(),gathered.end(),field.begin());
         std::ofstream out(o.output+"-fields.csv"); ensure(bool(out),"cannot write fields");
         out<<std::setprecision(17)<<"node,x,y,z,u,v,w,p\n";
-        for (int g=0;g<nodes;++g) out<<g<<','<<input.x[g]<<','<<input.y[g]<<','<<input.z[g]<<','<<field[g][0]<<','<<field[g][1]<<','<<field[g][2]<<','<<field[g][3]<<'\n';
+        for (const auto& row:field) { for (int j=0;j<8;++j) out<<(j?",":"")<<row.values[j]; out<<'\n'; }
         ensure(bool(out),"field output failed");
         std::cout<<(converged?"CONVERGED":"NOT CONVERGED: iteration limit")<<" iterations="<<run.completed<<" ranks="<<ranks
                  <<" exchange_rounds="<<run.exchange.rounds()<<'\n';

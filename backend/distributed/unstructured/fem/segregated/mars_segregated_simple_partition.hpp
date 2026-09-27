@@ -107,32 +107,49 @@ SimplePartition<GlobalId> simple_partition(MPI_Comm comm,const DomainView<Key>& 
     return part;
 }
 
-#ifdef MARS_REPLAY_CUDA
-template<class T,class V> std::vector<T> download_as(const V& device,std::size_t count) {
-    using S=std::remove_cv_t<std::remove_reference_t<decltype(device.data()[0])>>;
-    std::vector<S> raw_values(count);
-    if (count) assembly_cuda_check(cudaMemcpy(raw_values.data(),thrust::raw_pointer_cast(device.data()),count*sizeof(S),cudaMemcpyDeviceToHost));
-    return std::vector<T>(raw_values.begin(),raw_values.end());
-}
 // Host copy of a tet ElementDomain's state for simple_partition. Coordinates are the domain's
 // (SFC-decoded for Tet4 unless the caller overwrites x/y/z with exact values afterwards).
-template<class RealType,class KeyType>
-DomainView<KeyType> domain_view(const ElementDomain<TetTag,RealType,KeyType,cstone::GpuTag>& d) {
-    DomainView<KeyType> v; const std::size_t n=d.getNodeCount(), e=d.getElementCount();
-    v.key=download_as<KeyType>(d.getLocalToGlobalSfcMap(),n);
-    v.x=download_as<double>(d.getNodeX(),n); v.y=download_as<double>(d.getNodeY(),n); v.z=download_as<double>(d.getNodeZ(),n);
+template<class KeyType,class Domain,class Copy>
+DomainView<KeyType> domain_view_host(const Domain& d,Copy copy) {
+    // Building the lazy key map replaces the input node count with this rank's held-node count.
+    const auto& keys=d.getLocalToGlobalSfcMap();
+    DomainView<KeyType> v; const std::size_t n=keys.size(), e=d.getElementCount();
+    auto read=[&](auto& host,const auto& source,std::size_t count,const char* field) {
+        if (source.size()!=count)
+            throw std::runtime_error(std::string("SIMPLE domain snapshot: inconsistent ")+field+" size");
+        copy(host,source,count,field);
+    };
+    read(v.key,keys,n,"node keys");
+    read(v.x,d.getNodeX(),n,"x coordinates"); read(v.y,d.getNodeY(),n,"y coordinates"); read(v.z,d.getNodeZ(),n,"z coordinates");
     const auto& c=d.getElementToNodeConnectivity();
-    v.nodes[0]=download_as<int>(std::get<0>(c),e); v.nodes[1]=download_as<int>(std::get<1>(c),e);
-    v.nodes[2]=download_as<int>(std::get<2>(c),e); v.nodes[3]=download_as<int>(std::get<3>(c),e);
+    read(v.nodes[0],std::get<0>(c),e,"corner 0"); read(v.nodes[1],std::get<1>(c),e,"corner 1");
+    read(v.nodes[2],std::get<2>(c),e,"corner 2"); read(v.nodes[3],std::get<3>(c),e,"corner 3");
     v.element_begin=int(d.startIndex()); v.element_end=int(d.endIndex());
-    v.owned=download_as<unsigned char>(d.getNodeOwnershipMap(),n);
+    read(v.owned,d.getNodeOwnershipMap(),n,"ownership");
     if (d.numRanks()>1) {   // one rank has no NodeHaloTopology object
         const auto& t=d.getNodeHaloTopology();
         v.peers=t.peers_; v.send_offsets=t.sendOffsets_; v.recv_offsets=t.recvOffsets_;
-        v.send_nodes=download_as<int>(t.sendNodeIds_,std::size_t(t.sendOffsets_.back()));
-        v.recv_nodes=download_as<int>(t.recvNodeIds_,std::size_t(t.recvOffsets_.back()));
+        if (v.send_offsets.empty() || v.recv_offsets.empty() || v.send_offsets.back()<0 || v.recv_offsets.back()<0)
+            throw std::runtime_error("SIMPLE domain snapshot: invalid halo offsets");
+        read(v.send_nodes,t.sendNodeIds_,std::size_t(v.send_offsets.back()),"halo send nodes");
+        read(v.recv_nodes,t.recvNodeIds_,std::size_t(v.recv_offsets.back()),"halo receive nodes");
     }
     return v;
+}
+
+#ifdef MARS_REPLAY_CUDA
+template<class RealType,class KeyType>
+DomainView<KeyType> domain_view(const ElementDomain<TetTag,RealType,KeyType,cstone::GpuTag>& d) {
+    return domain_view_host<KeyType>(d,[](auto& host,const auto& device,std::size_t count,const char* field) {
+        using S=std::remove_cv_t<std::remove_pointer_t<decltype(thrust::raw_pointer_cast(device.data()))>>;
+        std::vector<S> raw_values(count);
+        if (count) {
+            const auto error=cudaMemcpy(raw_values.data(),thrust::raw_pointer_cast(device.data()),count*sizeof(S),cudaMemcpyDeviceToHost);
+            if (error!=cudaSuccess)
+                throw std::runtime_error(std::string("SIMPLE domain snapshot: ")+field+": "+cudaGetErrorString(error));
+        }
+        host.assign(raw_values.begin(),raw_values.end());
+    });
 }
 #endif
 } // namespace mars::segregated::runtime

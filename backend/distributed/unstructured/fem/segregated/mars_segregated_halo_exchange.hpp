@@ -48,47 +48,59 @@ struct AddFields {
         for (int k=0;k<f.count;++k) for (int c=0;c<f.components[k];++c) assembly_add(f.values[k]+f.components[k]*node+c,buffer[in++]);
     }
 };
+template<class T> struct PackInteger {
+    const T* values; const int* nodes; T* buffer;
+    MARS_HALO_HD void operator()(int i) const { buffer[i]=values[nodes[i]]; }
+};
+template<class T> struct UnpackInteger {
+    T* values; const int* nodes; const T* buffer;
+    MARS_HALO_HD void operator()(int i) const { values[nodes[i]]=buffer[i]; }
+};
+struct CheckHaloNode {
+    const int* nodes; int count; int* seen; int* status;
+    MARS_HALO_HD void operator()(int i) const {
+        const int v=nodes[i];
+        if (v<0 || v>=count) { raise_fault(status,capacity); return; }
+        if (seen) {
+#if defined(__CUDA_ARCH__)
+            if (atomicExch(seen+v,1)) raise_fault(status,capacity);
+#else
+            if (seen[v]) raise_fault(status,capacity);
+            seen[v]=1;
+#endif
+        }
+    }
+};
 } // namespace kernels
 
 class FieldExchange {
 public:
-    // Lists are host copies (ElementDomain: getNodeHaloTopology().peers_, sendOffsets_, recvOffsets_,
-    // and downloads of sendNodeIds_/recvNodeIds_). Construction checks, collectively, that every
-    // peer sends exactly as many nodes as the receiver expects and that ids address local nodes.
+    // CPU fixtures upload their lists once. Native callers pass device lists directly.
     FieldExchange(MPI_Comm comm,const std::vector<int>& peers,const std::vector<int>& send_offsets,
         const std::vector<int>& send_nodes,const std::vector<int>& recv_offsets,const std::vector<int>& recv_nodes,
         int nodes,int max_stride=8,Stream stream={})
-        : comm_(comm), stream_(stream), peers_(peers), send_offsets_(send_offsets), recv_offsets_(recv_offsets),
-          max_stride_(max_stride), nodes_(nodes), h_send_nodes_(send_nodes), h_recv_nodes_(recv_nodes)
+        :comm_(comm),stream_(stream),peers_(peers),send_offsets_(send_offsets),recv_offsets_(recv_offsets),
+         max_stride_(max_stride),nodes_(nodes),send_nodes_(send_nodes.begin(),send_nodes.end()),recv_nodes_(recv_nodes.begin(),recv_nodes.end())
+    { initialize(); }
+
+    struct NodeLists { const int* send; std::size_t send_size; const int* recv; std::size_t recv_size; };
+    FieldExchange(MPI_Comm comm,const std::vector<int>& peers,const std::vector<int>& send_offsets,
+        const std::vector<int>& recv_offsets,NodeLists lists,int nodes,int max_stride=8,Stream stream={})
+        :comm_(comm),stream_(stream),peers_(peers),send_offsets_(send_offsets),recv_offsets_(recv_offsets),
+         max_stride_(max_stride),nodes_(nodes)
     {
-        int local=0;
-        const std::size_t p=peers.size();
-        if (send_offsets.size()!=p+1 || recv_offsets.size()!=p+1 || send_offsets.front()!=0 || recv_offsets.front()!=0
-            || std::size_t(send_offsets.back())!=send_nodes.size() || std::size_t(recv_offsets.back())!=recv_nodes.size())
-            local|=capacity;
-        if (nodes<0 || max_stride<1 || !std::is_sorted(send_offsets.begin(),send_offsets.end())
-            || !std::is_sorted(recv_offsets.begin(),recv_offsets.end())) local|=capacity;
-        for (int v:send_nodes) if (v<0 || v>=nodes) local|=capacity;
-        for (int v:recv_nodes) if (v<0 || v>=nodes) local|=capacity;
-        if (std::set<int>(recv_nodes.begin(),recv_nodes.end()).size()!=recv_nodes.size()) local|=capacity;
-        long long buffer=0;
-        if (!checked_product(max_stride,(long long)std::max(send_nodes.size(),recv_nodes.size()),std::numeric_limits<int>::max(),buffer))
-            local|=overflow;
-        if (!checked_product(max_stride,nodes,std::numeric_limits<int>::max(),buffer)) local|=overflow;
-        int ranks=1, rank=0; MPI_Comm_size(comm_,&ranks); MPI_Comm_rank(comm_,&rank);
-        for (int peer:peers) if (peer<0 || peer>=ranks || peer==rank) local|=capacity;
-        if (std::set<int>(peers.begin(),peers.end()).size()!=p || p>std::size_t(std::numeric_limits<int>::max()/2)) local|=capacity;
-        reject_lists(local);
-        validate_peer_counts();
-        try {
-            // These lists live on the host; wrapping them in device_ptr does not upload them.
-            send_nodes_.assign(send_nodes.begin(),send_nodes.end());
-            recv_nodes_.assign(recv_nodes.begin(),recv_nodes.end());
-            send_buffer_.resize(std::size_t(max_stride)*send_nodes.size());
-            recv_buffer_.resize(std::size_t(max_stride)*recv_nodes.size());
-            requests_.reserve(2*p);
-        } catch (const std::exception&) { fatal("cannot allocate or upload halo buffers"); }
+        reject_lists((lists.send_size && !lists.send) || (lists.recv_size && !lists.recv)?capacity:0);
+        if (lists.send_size) copy_in(send_nodes_,lists.send,lists.send_size);
+        if (lists.recv_size) copy_in(recv_nodes_,lists.recv,lists.recv_size);
+        initialize();
     }
+#if defined(__CUDACC__)
+    FieldExchange(MPI_Comm comm,const std::vector<int>& peers,const std::vector<int>& send_offsets,
+        const Buffer<int>& send_nodes,const std::vector<int>& recv_offsets,const Buffer<int>& recv_nodes,
+        int nodes,int max_stride=8,Stream stream={})
+        :FieldExchange(comm,peers,send_offsets,recv_offsets,
+                       NodeLists{raw(send_nodes),send_nodes.size(),raw(recv_nodes),recv_nodes.size()},nodes,max_stride,stream) {}
+#endif
     FieldExchange(const FieldExchange&)=delete;
     FieldExchange& operator=(const FieldExchange&)=delete;
 
@@ -134,35 +146,75 @@ public:
         apply(int(send_nodes_.size()),kernels::AddFields{set,raw(send_nodes_),raw(send_buffer_)},stream_,faults);
         finish_device(faults);
     }
-    // Setup-only integer metadata. Keys and solver ids must not pass through double.
-    template<class T> void publish_host(std::vector<T>& values) {
-        static_assert(std::is_integral_v<T> && sizeof(T)<=8);
-        if (values.size()!=std::size_t(nodes_)) fatal("metadata does not cover local nodes");
-        using Wire=std::conditional_t<std::is_signed_v<T>,std::int64_t,std::uint64_t>;
+    // Integer identities travel as integers directly from device memory, never through double.
+    template<class T> void publish(T* values,std::size_t size) {
+        static_assert(std::is_integral_v<T> && (sizeof(T)==4 || sizeof(T)==8));
+        if (size!=std::size_t(nodes_) || (size && !values)) fatal("metadata does not cover local nodes");
         MPI_Datatype type;
-        if constexpr (std::is_signed<T>::value) type=MPI_INT64_T;
-        else type=MPI_UINT64_T;
-        std::vector<Wire> send(h_send_nodes_.size()), recv(h_recv_nodes_.size());
-        for (std::size_t i=0;i<send.size();++i) send[i]=values[h_send_nodes_[i]];
+        if constexpr (sizeof(T)==8) {
+            if constexpr (std::is_signed<T>::value) type=MPI_INT64_T;
+            else type=MPI_UINT64_T;
+        } else {
+            if constexpr (std::is_signed<T>::value) type=MPI_INT32_T;
+            else type=MPI_UINT32_T;
+        }
+        Buffer<T> send(send_nodes_.size()),recv(recv_nodes_.size());
+        int faults=0;
+        apply(int(send.size()),kernels::PackInteger<T>{values,raw(send_nodes_),raw(send)},stream_,faults);
+        finish_device(faults);
         auto& requests=requests_; requests.clear();
         for (std::size_t i=0;i<peers_.size();++i) {
             const int count=recv_offsets_[i+1]-recv_offsets_[i];
-            if (count) { requests.emplace_back(); check_mpi(MPI_Irecv(recv.data()+recv_offsets_[i],count,type,peers_[i],tag_metadata,comm_,&requests.back())); }
+            if (count) { requests.emplace_back(); check_mpi(MPI_Irecv(raw(recv)+recv_offsets_[i],count,type,peers_[i],tag_metadata,comm_,&requests.back())); }
         }
         for (std::size_t i=0;i<peers_.size();++i) {
             const int count=send_offsets_[i+1]-send_offsets_[i];
-            if (count) { requests.emplace_back(); check_mpi(MPI_Isend(send.data()+send_offsets_[i],count,type,peers_[i],tag_metadata,comm_,&requests.back())); }
+            if (count) { requests.emplace_back(); check_mpi(MPI_Isend(raw(send)+send_offsets_[i],count,type,peers_[i],tag_metadata,comm_,&requests.back())); }
         }
         check_mpi(MPI_Waitall(int(requests.size()),requests.data(),MPI_STATUSES_IGNORE));
-        for (std::size_t i=0;i<recv.size();++i) {
-            if (recv[i]<std::numeric_limits<T>::min() || recv[i]>std::numeric_limits<T>::max()) fatal("metadata integer overflow");
-            values[h_recv_nodes_[i]]=T(recv[i]);
-        }
+        apply(int(recv.size()),kernels::UnpackInteger<T>{values,raw(recv_nodes_),raw(recv)},stream_,faults);
+        finish_device(faults);
+    }
+    template<class T> void publish_host(std::vector<T>& values) {
+        Buffer<T> device(values.begin(),values.end());
+        publish(raw(device),device.size());
+#if defined(__CUDACC__)
+        thrust::copy(device.begin(),device.end(),values.begin());
+#else
+        values=device;
+#endif
     }
     std::size_t ghosts() const { return recv_nodes_.size(); }
     long long rounds() const { return rounds_; }
     long long received_values() const { return values_; }
 private:
+    void initialize() {
+        int local=0;
+        const std::size_t p=peers_.size();
+        if (send_offsets_.size()!=p+1 || recv_offsets_.size()!=p+1 || send_offsets_.front()!=0 || recv_offsets_.front()!=0
+            || std::size_t(send_offsets_.back())!=send_nodes_.size() || std::size_t(recv_offsets_.back())!=recv_nodes_.size())
+            local|=capacity;
+        if (nodes_<0 || max_stride_<1 || !std::is_sorted(send_offsets_.begin(),send_offsets_.end())
+            || !std::is_sorted(recv_offsets_.begin(),recv_offsets_.end())) local|=capacity;
+        long long buffer=0;
+        if (!checked_product(max_stride_,(long long)std::max(send_nodes_.size(),recv_nodes_.size()),std::numeric_limits<int>::max(),buffer)
+            || !checked_product(max_stride_,nodes_,std::numeric_limits<int>::max(),buffer)) local|=overflow;
+        int ranks=1,rank=0; MPI_Comm_size(comm_,&ranks); MPI_Comm_rank(comm_,&rank);
+        for (int peer:peers_) if (peer<0 || peer>=ranks || peer==rank) local|=capacity;
+        if (std::set<int>(peers_.begin(),peers_.end()).size()!=p || p>std::size_t(std::numeric_limits<int>::max()/2)) local|=capacity;
+        reject_lists(local);
+        Buffer<int> status(1,0),seen(std::size_t(nodes_),0);
+        apply(int(send_nodes_.size()),kernels::CheckHaloNode{raw(send_nodes_),nodes_,nullptr,raw(status)},stream_,local);
+        apply(int(recv_nodes_.size()),kernels::CheckHaloNode{raw(recv_nodes_),nodes_,raw(seen),raw(status)},stream_,local);
+        local|=fetch(raw(status),stream_,local);
+        reject_lists(local);
+        validate_peer_counts();
+        try {
+            send_buffer_.resize(std::size_t(max_stride_)*send_nodes_.size());
+            recv_buffer_.resize(std::size_t(max_stride_)*recv_nodes_.size());
+            requests_.reserve(2*p);
+        } catch (const std::exception&) { fatal("cannot allocate halo buffers"); }
+    }
     static constexpr int tag_counts=0x4d47, tag_values=0x4d48, tag_reverse=0x4d49, tag_metadata=0x4d4a;
     [[noreturn]] void fatal(const char* message) const {
         std::fprintf(stderr,"ERROR: node-field halo: %s\n",message);
@@ -226,7 +278,6 @@ private:
     MPI_Comm comm_; Stream stream_;
     std::vector<int> peers_, send_offsets_, recv_offsets_;
     int max_stride_, nodes_;
-    std::vector<int> h_send_nodes_, h_recv_nodes_;
     std::vector<MPI_Request> requests_;
     Buffer<int> send_nodes_, recv_nodes_;
     Buffer<double> send_buffer_, recv_buffer_;

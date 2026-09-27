@@ -15,6 +15,7 @@
 #include <utility>
 #include <cstdint>
 #include "mars.hpp"
+#include "mars_read_exodus_raw.hpp"
 
 #ifdef MARS_HAVE_NETCDF
 #include <netcdf.h>

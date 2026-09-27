@@ -3,8 +3,10 @@
 The distributed runner retains the single-rank steady, laminar, upwind SIMPLE
 kernels. It assembles complete owned rows, solves through the owned-row Hypre
 adapter, publishes ghost fields and reduces diagnostics over unique owners.
-This integration is a public validation path. CUDA execution, distributed
-ElementDomain convergence and arbitrary-mesh ingestion remain unverified.
+This integration is a public validation path. Controlled-partition CUDA gates
+passed on 1/2/4 ranks at revision `3f7ce1e4`, including reversal and split
+communicators. The device ingestion and reduction changes below still need
+CUDA compilation and execution. Distributed ElementDomain convergence is pending.
 The existing single-rank driver and shared ElementDomain halo code are unchanged.
 
 ## Ownership and communication contract
@@ -18,7 +20,7 @@ face. The partition builder uses the owner of the smallest-key face node.
 The setup checks peer counts using sparse synchronous sends and a nonblocking
 barrier; no rank-sized all-to-all metadata is built. It rejects malformed offsets,
 duplicate peers, duplicate receive slots and asymmetric lists collectively.
-`simple_partition` then verifies that each ghost has one owner, send slots are
+The partition builders then verify that each ghost has one owner, send slots are
 owned, and peer slots carry exactly matching integer node keys. Solver IDs use
 integer messages too. Finally, reverse-added own-element incidence must equal
 held incidence at owned nodes. This last check assumes unique element ownership
@@ -73,8 +75,11 @@ cmake --build build-dsimple --parallel 4
 ctest --test-dir build-dsimple --output-on-failure
 ```
 
-These are CPU MPI results. Neither nvcc compilation nor device execution has been
-validated for this integration. Earlier compile-only checks do not cover the repairs.
+These are CPU MPI results. The new device partition kernels also have a host
+oracle checked against the independent partition builder on 1/2/4 ranks, including
+rejection of missing stars, swapped identities and missing boundary tags. The
+native Exodus reader is tested with packed/split coordinates and eight malformed
+fixtures on 1/2 ranks under ASan/UBSan. Host execution does not validate CUDA.
 
 ## Short Daint CUDA gates
 
@@ -133,43 +138,103 @@ all-closed rejection. These saved references are tied to the gate executable.
 
 ## ElementDomain public driver
 
-`mars_segregated_simple_mpi` uses cornerstone's element range, node ownership and
-NodeHaloTopology. Its setup prototype downloads domain state, restores exact
-coordinates and boundary tags from the replicated public input, builds ownership
-on the host, and uploads the runtime arrays. The iteration uses device arrays;
-this is not yet fully device-native distributed ingestion.
+`mars_segregated_simple_mpi` reads native Exodus through the MARS C++ reader.
+No Python mesh preprocessing or OpenAccel rerun is needed. Rank zero reads the
+file arrays; the GPU converts indices, validates side sets and constructs input
+for the existing device-data ElementDomain constructor. Cornerstone redistributes
+elements and completes stars using SFC node ownership. The vote fallback is rejected.
 
-Startup verifies ownership of every public node and face by identity. The builder
-validates key correspondence and element incidence without changing shared halo
-code or choosing a new ownership scheme. An incomplete star is a failure to fix
-in the mesh/halo layer, not a reason to skip the check or tune a halo factor blindly.
+The lazy local node-key map is built **before** deriving local array sizes. The
+constructor's input node count can exceed the nodes held after redistribution;
+using that stale count caused the earlier multi-rank download to overrun buffers.
+`mars_simple_domain_view_host_test` exercises shrinking, growing and empty local
+maps and malformed arrays. The native driver no longer downloads those arrays.
 
-After the short CUDA gates pass, use the saved mesh-only public input. No reference
-exports or OpenAccel invocation are used inside this solve:
+SFC-key matching restores exact file coordinates on the GPU. Face matching,
+side-set tags, owned entity lists and solver IDs are built on the GPU. Integer
+keys and IDs travel directly through CUDA-aware MPI. Device coverage counters
+check unique ownership of every public source node and boundary face. Missing
+stars or inconsistent halo identities are errors, not reasons to enlarge halos
+blindly. The shared ElementDomain halo implementation is unchanged.
+
+During iteration, fields, outlet moments, residual reductions and convergence
+calculations stay on the GPU; MPI receives device buffers. Scratch is reused.
+The CPU controls CUDA/MPI/Hypre APIs, handles peer/count metadata and reads small
+error/convergence reports for logging. At the end, field rows are packed, gathered
+and sorted on the GPU, then downloaded once for CSV file output.
+
+Current scope: one 3D Tet4 block with `inlet`, `outlet`, `walls` side sets, fixed
+public-channel controls and MPI_COMM_WORLD. Initial source arrays are broadcast
+to every rank for coordinate/tag matching and released before iteration. This is
+not yet scalable distributed file ingestion, and no performance improvement is
+claimed without GPU measurements. Empty owned-row ranks remain rejected by the
+Hypre adapter. This establishes no pump or arbitrary-mesh capability.
+
+From the existing CUDA/Hypre build directory, build the new targets without
+replacing its other options:
 
 ```bash
+git pull --ff-only
+cmake -S .. -B . \
+  -DCMAKE_PROJECT_mars_INCLUDE="$PWD/../tests/reference/openaccel/distributed_matrix/inject.cmake"
+cmake --build . --parallel 4 --target mars_segregated_simple_mpi \
+  mars_simple_mesh_cuda_gate mars_simple_exodus_cuda_gate
+```
+
+Run the small topology/input gates and native startup before a long solve:
+
+```bash
+(
+set -euo pipefail
+unset MARS_OWNERSHIP MARS_HALO_FACTOR MARS_NODEHALO_ALLOW_INCONSISTENT
+native_run=$(mktemp -d "$PWD/simple-device-XXXXXX")
+mesh=/capstor/scratch/cscs/gandanie/git/mars/mlir/simple-native-bMEZdp/channel.exo
+printf 'Results: %s\n' "$native_run"
+git rev-parse HEAD > "$native_run/mars-revision.txt"
+for np in 1 2 4; do
+  srun --account=csstaff --time=00:05:00 --nodes=1 --ntasks-per-node="$np" \
+    --export=ALL,MPICH_GPU_SUPPORT_ENABLED=1 --kill-on-bad-exit=1 \
+    ~/affinity/bind_numa.sh ./mars_simple_mesh_cuda_gate \
+    2>&1 | tee "$native_run/mesh-$np.log"
+  srun --account=csstaff --time=00:05:00 --nodes=1 --ntasks-per-node="$np" \
+    --export=ALL,MPICH_GPU_SUPPORT_ENABLED=1 --kill-on-bad-exit=1 \
+    ~/affinity/bind_numa.sh ./mars_simple_exodus_cuda_gate "$native_run/fixtures-$np" \
+    2>&1 | tee "$native_run/exodus-$np.log"
+  srun --account=csstaff --time=00:05:00 --nodes=1 --ntasks-per-node="$np" \
+    --export=ALL,MPICH_GPU_SUPPORT_ENABLED=1 --kill-on-bad-exit=1 \
+    ~/affinity/bind_numa.sh ./mars_segregated_simple_mpi \
+    --mesh "$mesh" --mesh-format exodus --setup-only 1 \
+    --output-prefix "$native_run/setup-$np" \
+    2>&1 | tee "$native_run/setup-$np.log"
+done
+)
+```
+
+A setup PASS builds the full runner but runs no iteration and writes no field CSV.
+After the short gates pass, run the same public case to convergence and compare
+the absolute pressure and velocity against the saved baseline:
+
+```bash
+(
+set -euo pipefail
+unset MARS_OWNERSHIP MARS_HALO_FACTOR MARS_NODEHALO_ALLOW_INCONSISTENT
+baseline=/capstor/scratch/cscs/gandanie/git/mars/mlir/simple-native-bMEZdp
 simple_mpi_run=$(mktemp -d "$PWD/simple-mpi-XXXXXX")
 printf 'Results: %s\n' "$simple_mpi_run"
 for np in 1 2 4; do
   srun --account=csstaff --time=00:30:00 --nodes=1 --ntasks-per-node="$np" \
     --export=ALL,MPICH_GPU_SUPPORT_ENABLED=1 --kill-on-bad-exit=1 \
     ~/affinity/bind_numa.sh ./mars_segregated_simple_mpi \
-    --mesh "$PWD/simple-channel-4VjvlT/channel.txt" \
+    --mesh "$baseline/channel.exo" --mesh-format exodus \
     --output-prefix "$simple_mpi_run/channel-$np" --iterations 2000 --report-every 100 \
     --residual-tol 1e-6 --mass-tol 1e-6 --change-tol 1e-6 \
     2>&1 | tee "$simple_mpi_run/run-$np.log"
-done
-for np in 1 2 4; do
   python3 ../tests/reference/openaccel/distributed_simple/compare_fields.py \
-    "$PWD/simple-native-bMEZdp/channel-fields.csv" \
-    "$simple_mpi_run/channel-$np-fields.csv" --tol 1e-6
+    "$baseline/channel-fields.csv" "$simple_mpi_run/channel-$np-fields.csv" --tol 1e-6
 done
+)
 ```
 
-Require convergence and field agreement with the saved native single-rank baseline;
-an identical iteration count is not required. The comparator uses U=0.1 and
-rho U^2=0.01, removes no pressure mean, and needs only the Python standard library.
-
-Production side-set ingestion, GPU-built partition metadata and integration into
-the single driver remain separate milestones. This channel gate establishes no
-pump, turbulence, arbitrary-mesh or scaling claim.
+Require convergence and field agreement; an identical iteration count is not
+required. The comparator uses U=0.1 and rho U^2=0.01, removes no pressure mean,
+and needs only the Python standard library.

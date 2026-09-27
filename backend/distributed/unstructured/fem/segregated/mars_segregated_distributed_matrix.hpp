@@ -76,6 +76,7 @@ struct ResidualNorms {
 struct HaloComplete { const double* values; std::size_t size; };
 inline HaloComplete halo_complete(const double* values,std::size_t size) { return {values,size}; }
 struct HypreRows { int begin=0, end=0, column_begin=0, column_end=0; };
+struct ResidualReport { ResidualNorms norms; bool failed; };
 struct alignas(16) SquareSums { double residual2, rhs2; };
 
 MARS_DMATRIX_HD inline void raise_fault(int* status,int fault) {
@@ -204,6 +205,19 @@ template<int C> struct Unpack {
 #if defined(__CUDACC__)
 // W lanes per row (coalesced column/value reads); fixed grid and a fixed-order final
 // pass make the reported norms reproducible run to run.
+struct ResidualInput {
+    const SquareSums* sums; double* values; int faults;
+    __device__ void operator()(int) const { values[0]=sums->residual2; values[1]=sums->rhs2; values[2]=faults?1.:0.; }
+};
+struct ResidualDecision {
+    const double* values; Tolerance tolerance; ResidualReport* report;
+    __device__ void operator()(int) const {
+        auto& n=report->norms;
+        n.residual2=values[0]; n.rhs2=values[1]; n.finite=finite_value(values[0]) && finite_value(values[1]);
+        n.passed=n.finite && sqrt(values[0])<=tolerance.absolute+tolerance.relative*sqrt(values[1]);
+        report->failed=values[2]>0;
+    }
+};
 constexpr int residual_threads=256, residual_blocks=1024;
 template<int W>
 __global__ void owned_residual_partials(int rows,const int* offsets,const int* columns,const double* values,
@@ -298,7 +312,7 @@ public:
         collective(local,"distributed matrix build");
         copy_in(owned_,owned,std::size_t(owned_count_));
         matrix_.allocate(rows_,int(scalar_columns),nnz_);
-        source_.resize(nnz_); map_.resize(std::size_t(scalar_columns)); partial_.resize(partial_count); result_.resize(1);
+        source_.resize(nnz_); map_.resize(std::size_t(scalar_columns)); partial_.resize(partial_count); result_.resize(1); residual_global_.resize(3); residual_report_.resize(1);
         apply(rows_+1,kernels::NarrowOffsets{raw(length),matrix_.rowOffsetsPtr()},stream_,local);
         apply(rows_,kernels::FillRows<C>{graph,raw(owned_),matrix_.rowOffsetsPtr(),matrix_.colIndicesPtr(),raw(source_)},stream_,local);
         apply(nodes_,kernels::DofMap<C,GlobalId>{solver_node,raw(map_)},stream_,local);
@@ -334,9 +348,9 @@ public:
     ResidualNorms residual(HaloComplete x,const double* rhs,Tolerance tolerance={}) {
         int local=deferred_|(updated_?0:values_not_updated); deferred_=0;
         if (x.size<std::size_t(C)*std::size_t(nodes_) || (rows_>0 && (!x.values || !rhs))) local|=capacity;
-        SquareSums sums{0,0};
-        if (!(local&capacity) && rows_>0) {
 #if defined(__CUDACC__)
+        if (!cuda_ok(cudaMemsetAsync(raw(result_),0,sizeof(SquareSums),stream_))) local|=device_error;
+        if (!(local&capacity) && rows_>0) {
             constexpr int lanes=C==1?4:8;
             const long long threads=(long long)rows_*lanes;
             const int blocks=int(std::min<long long>(partial_count,(threads+kernels::residual_threads-1)/kernels::residual_threads));
@@ -344,14 +358,26 @@ public:
                 matrix_.rowOffsetsPtr(),matrix_.colIndicesPtr(),matrix_.valuesPtr(),x.values,rhs,raw(partial_));
             kernels::owned_residual_finish<kernels::residual_threads><<<1,kernels::residual_threads,0,stream_>>>(blocks,raw(partial_),raw(result_));
             if (!cuda_ok(cudaGetLastError())) local|=device_error;
-            sums=fetch(raw(result_),stream_,local);
+        }
+        apply(1,kernels::ResidualInput{raw(result_),raw(residual_global_),local},stream_,local);
+        synchronize(local);
+        if (local&device_error) { MPI_Abort(comm_,1); throw std::runtime_error("CUDA residual reduction failed"); }
+        if (MPI_Allreduce(MPI_IN_PLACE,raw(residual_global_),3,MPI_DOUBLE,MPI_SUM,comm_)!=MPI_SUCCESS) {
+            MPI_Abort(comm_,1); throw std::runtime_error("device residual collective failed");
+        }
+        apply(1,kernels::ResidualDecision{raw(residual_global_),tolerance,raw(residual_report_)},stream_,local);
+        const auto report=fetch(raw(residual_report_),stream_,local);
+        if (local&device_error) { MPI_Abort(comm_,1); throw std::runtime_error("CUDA residual decision failed"); }
+        if (report.failed) collective(local,"distributed residual");
+        return report.norms;
 #else
+        SquareSums sums{0,0};
+        if (!(local&capacity) && rows_>0) {
             const int* offsets=matrix_.rowOffsetsPtr(); const int* columns=matrix_.colIndicesPtr(); const double* values=matrix_.valuesPtr();
             for (int row=0;row<rows_;++row) {
                 double sum=0; for (int k=offsets[row];k<offsets[row+1];++k) sum+=values[k]*x.values[columns[k]];
                 const double r=sum-rhs[row]; sums.residual2+=r*r; sums.rhs2+=rhs[row]*rhs[row];
             }
-#endif
         }
         double reduced[3]={sums.residual2,sums.rhs2,local?1.:0.}, global[3]={};
         MPI_Allreduce(reduced,global,3,MPI_DOUBLE,MPI_SUM,comm_);
@@ -360,6 +386,7 @@ public:
         norms.finite=std::isfinite(global[0]) && std::isfinite(global[1]);
         norms.passed=norms.finite && norms.absolute()<=tolerance.absolute+tolerance.relative*std::sqrt(global[1]);
         return norms;
+#endif
     }
     // Arguments of HypreGMRESSolver::solve(A,b,x,begin,end,column_begin,column_end,map).
     HypreRows hypre_rows() const { return {int(C*first_),int(C*(first_+owned_count_)),0,int(C*total_)}; }
@@ -397,6 +424,8 @@ private:
     Buffer<int> owned_, source_, status_;
     Buffer<GlobalId> map_;
     Buffer<SquareSums> partial_, result_;
+    Buffer<double> residual_global_;
+    Buffer<ResidualReport> residual_report_;
 };
 
 // The real wrapper call; Solver is mars::fem::HypreGMRESSolver<double,int,cstone::GpuTag>.

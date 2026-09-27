@@ -79,7 +79,7 @@ struct SimpleMetrics {
     double flux_change=0;
 };
 // L=1 m is the public channel height. These are MARS norms, not OpenAccel's RMS columns.
-inline SimpleMetrics simple_metrics(const SimpleSums& s,const SimpleControls& c,double length=1) {
+MARS_METRICS_HD inline SimpleMetrics simple_metrics(const SimpleSums& s,const SimpleControls& c,double length=1) {
     const double target=c.density*c.inlet_speed*s.inlet_area;
     SimpleMetrics m{sqrt(s.momentum2/s.volume)*length/(c.density*c.inlet_speed*c.inlet_speed),
         sqrt(s.continuity2/s.volume)*length/(c.density*c.inlet_speed),
@@ -91,7 +91,7 @@ inline SimpleMetrics simple_metrics(const SimpleSums& s,const SimpleControls& c,
         m.finite=m.finite && std::isfinite(value);
     return m;
 }
-inline bool simple_converged(const SimpleMetrics& m,int iterations,int changed,
+MARS_METRICS_HD inline bool simple_converged(const SimpleMetrics& m,int iterations,int changed,
     double residual_tolerance,double flux_tolerance,double change_tolerance) {
     return m.finite && iterations>=2 && changed==0 && m.momentum<=residual_tolerance
         && m.continuity<=residual_tolerance && m.flux<=flux_tolerance
