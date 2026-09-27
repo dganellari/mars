@@ -35,6 +35,7 @@
 //
 
 #include "mars.hpp"
+#include "mars_channel_projection.hpp"
 #include "backend/distributed/unstructured/domain.hpp"
 #include "backend/distributed/unstructured/fem/mars_fem.hpp"
 #include "backend/distributed/unstructured/fem/mars_cvfem_assembler.hpp"
@@ -922,7 +923,14 @@ __global__ void explicitAdvectionFluxScatterPerNodeKernel(const KeyType* c0, con
         size_t off = e * NSCS + ip;
         RealType mdot = vfx * areaVecX[off] + vfy * areaVecY[off] + vfz * areaVecZ[off];
 
-        if (advMode == 0)
+        if (advMode == 3)
+        {
+            RealType left, right;
+            channel_skew_flux(mdot, q[iL], q[iR], left, right);
+            atomicAdd(&dqdtNode[iL], left);
+            atomicAdd(&dqdtNode[iR], right);
+        }
+        else if (advMode == 0)
         {
             // Verstappen-Veldman discrete skew-symmetric advection.
             //
@@ -2028,6 +2036,58 @@ enum class KrylovHint { PCG, GMRES };
 //         D D^T) is a separate work item.
 enum class PressureSolveKind { K, DDT };
 
+template<typename RealType>
+__global__ void project_channel_gradient_kernel(const uint8_t* fixed,
+                                             RealType* gx, RealType* gy, RealType* gz,
+                                             size_t count)
+{
+    size_t i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < count) channel_project_gradient(fixed[i] != 0, gx[i], gy[i], gz[i]);
+}
+
+template<typename RealType>
+__global__ void build_channel_velocity_lift_kernel(const int* row_ptr, const int* columns,
+                                              const int* dof_to_node, const uint8_t* fixed,
+                                              const RealType* values, const RealType* target,
+                                              RealType* lift, int count)
+{
+    int row = blockIdx.x * blockDim.x + threadIdx.x;
+    if (row >= count) return;
+    RealType sum = 0;
+    for (int k = row_ptr[row]; k < row_ptr[row + 1]; ++k)
+    {
+        int node = dof_to_node[columns[k]];
+        sum += channel_lift_entry(fixed[dof_to_node[row]] != 0, fixed[node] != 0,
+                                  values[k], target[node]);
+    }
+    lift[row] = sum;
+}
+
+template<typename RealType>
+__global__ void add_channel_opening_flux_kernel(const RealType* inlet_area,
+                                            const RealType* outlet_area,
+                                            const RealType* target, const RealType* velocity,
+                                            const uint8_t* ownership, RealType* residual,
+                                            size_t count)
+{
+    size_t i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < count && ownership[i] == 1)
+        residual[i] += channel_opening_flux(inlet_area[i], outlet_area[i], target[i], velocity[i]);
+}
+
+template<typename RealType>
+__global__ void add_channel_advection_boundary_kernel(const RealType* inlet_area,
+                                                  const RealType* outlet_area,
+                                                  const RealType* target, const RealType* velocity,
+                                                  const RealType* q, const uint8_t* ownership,
+                                                  RealType* advection, size_t count)
+{
+    size_t i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < count && ownership[i] == 1)
+        advection[i] -= RealType(0.5) * q[i]
+            * channel_opening_flux(inlet_area[i], outlet_area[i], target[i], velocity[i]);
+}
+
 template<typename KeyType, typename RealType, typename ElementTag = HexTag> struct NSStepper;
 
 // Forward declaration so the setup-time MARS_DDT_PROBE_DIFF diagnostic can
@@ -2066,6 +2126,15 @@ struct NSStepper
     // Default is the SCS gradient (legacy); the div^T path stays available
     // under --experimental-divT for future Path B (Rhie-Chow) work.
     bool useLegacyGradient = true;
+    // Opt-in rectilinear, one-layer xy channel. The driver verifies the geometry.
+    bool planar_projection = false;
+    bool check_projection = false;
+    int completed_steps = 0;
+    double channel_continuity_rms = std::numeric_limits<double>::infinity();
+    double channel_boundary_balance = std::numeric_limits<double>::infinity();
+    std::vector<int> pressure_null_nodes;
+    std::array<cstone::DeviceVector<RealType>, 6> d_channel_check_scratch;
+    cstone::DeviceVector<RealType> d_velocity_lift_u, d_velocity_lift_v, d_velocity_lift_w;
 
     size_t nodeCount    = 0;
     size_t elementCount = 0;
@@ -2603,6 +2672,18 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
                     RealType dt,
                     CvfemKernelVariant kernelVariant)
 {
+    if (s.planar_projection &&
+        (!std::is_same_v<ElementTag, HexTag>
+         || s.bcKind != NSStepper<KeyType, RealType, ElementTag>::BCKind::Pump
+         || s.solverKind != SolverKind::CG || s.pressureSolve != PressureSolveKind::DDT
+         || s.useLegacyGradient || s.useRhieChow || s.stabBochevDohrmann
+         || s.advScheme != NSStepper<KeyType, RealType, ElementTag>::AdvScheme::Skew
+         || std::getenv("MARS_NO_VEL_COLZERO") || std::getenv("MARS_DDT_DIAG_SHIFT")))
+    {
+        if (s.rank == 0) std::cerr << "ERROR: incompatible planar projection settings\n";
+        MPI_Abort(MPI_COMM_WORLD, 1);
+        return;
+    }
     // Live-print each setup lap on rank 0; the final report still summarizes.
     PhaseTimer pt(/*sync=*/true, /*liveRank=*/0);
 
@@ -3931,6 +4012,26 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
     // not possess -- nothing to fold). Tracked as the multirank element-coverage
     // work; single-rank is unaffected.
 
+    if (s.planar_projection)
+    {
+        s.d_velocity_lift_u.resize(s.numOwnedDofs);
+        s.d_velocity_lift_v.resize(s.numOwnedDofs);
+        s.d_velocity_lift_w.resize(s.numOwnedDofs);
+        const int blocks = (s.numOwnedDofs + s.blockSize - 1) / s.blockSize;
+        auto build_lift = [&](const auto& target, auto& lift) {
+            if (blocks > 0)
+                build_channel_velocity_lift_kernel<RealType><<<blocks, s.blockSize>>>(
+                    s.d_rowPtr.data(), s.d_colInd.data(), s.d_dofToNode.data(),
+                    s.d_isBdryNode.data(), s.d_valuesVel.data(), target.data(),
+                    lift.data(), s.numOwnedDofs);
+        };
+        build_lift(s.d_uTarget, s.d_velocity_lift_u);
+        build_lift(s.d_vTarget, s.d_velocity_lift_v);
+        build_lift(s.d_wTarget, s.d_velocity_lift_w);
+        // Setup-only check also completes the lift before column elimination.
+        if (cudaDeviceSynchronize() != cudaSuccess) MPI_Abort(MPI_COMM_WORLD, 1);
+    }
+
     // Enforce velocity Dirichlet on the velocity matrix (row=0, diag=1).
     // - Cavity/channel/pump: zero rows + diag=1 for d_isBdryDof slots.
     // - Periodic: nothing to enforce. Periodic pairs collapse to one owned
@@ -3959,7 +4060,8 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
             // enough that the existing asymmetric row-clear converges fine
             // (same rationale as DDT-cavity at lines ~3500-3508).
             //
-            // NOTE: no Dirichlet "lift" yet. For zero qTarget (wall no-slip)
+            // The planar path builds its nonzero Dirichlet lift before elimination.
+            // Legacy paths still have no lift. For zero qTarget (wall no-slip)
             // it isn't needed. For non-zero qTarget (inlet/extra u=Uinf)
             // this introduces an O(off-diag * Uinf) perturbation localized to
             // the 1-cell ring around those faces. Acceptable for the "BC
@@ -4434,6 +4536,13 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
             }
             (void)pinRankLocal;
         }
+        // These corner continuity rows have no free velocity columns. Their
+        // residual is identically zero with wall-first inlet targets.
+        if (s.planar_projection)
+            for (int node : s.pressure_null_nodes)
+                if (hostOwn[node] == 1 && hostNodeToDof[node] >= 0
+                    && hostNodeToDof[node] < s.numOwnedDofs)
+                    hostMask[hostNodeToDof[node]] = 1;
         thrust::copy(hostMask.begin(), hostMask.end(),
                      thrust::device_pointer_cast(s.d_isPressureBdryDof.data()));
 
@@ -5594,6 +5703,12 @@ void applyDDTPerNode(NSStepper<KeyType, RealType, ElementTag>& s,
         s.d_node_to_dof.data(), d_nodeOwnership.data(),
         gxAcc.data(), gyAcc.data(), gzAcc.data(), s.nodeCount);
     cudaDeviceSynchronize();
+    if (s.planar_projection && nodeBlocks > 0)
+    {
+        project_channel_gradient_kernel<RealType><<<nodeBlocks, s.blockSize>>>(
+            s.d_isBdryNode.data(), gxAcc.data(), gyAcc.data(), gzAcc.data(), s.nodeCount);
+        if (cudaGetLastError() != cudaSuccess) MPI_Abort(MPI_COMM_WORLD, 1);
+    }
     // Forward halo: D-scatter in step c reads g[iL], g[iR] at ghost slots too.
     s.domain.exchangeNodeHalo(gxAcc);
     s.domain.exchangeNodeHalo(gyAcc);
@@ -7310,8 +7425,9 @@ void runPredictorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
 
     using AdvScheme = typename NSStepper<KeyType, RealType, ElementTag>::AdvScheme;
     const bool   bjMode  = (s.advScheme == AdvScheme::BarthJespersen);
-    // Runtime mode passed to the flux kernel: 0=skew, 1=upwind, 2=Barth-Jespersen.
-    const int    advMode = (s.advScheme == AdvScheme::Skew)   ? 0
+    // 0=legacy skew, 1=upwind, 2=BJ, 3=skew with the planar opening terms.
+    const int    advMode = s.planar_projection ? 3
+                         : (s.advScheme == AdvScheme::Skew)   ? 0
                          : (s.advScheme == AdvScheme::Upwind) ? 1
                                                               : 2;
 
@@ -7427,6 +7543,13 @@ void runPredictorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
                 s.d_gradPx.data(), s.d_gradPy.data(), s.d_gradPz.data(),
                 s.d_node_to_dof.data(), d_nodeOwnership.data(), s.nodeCount);
             cudaDeviceSynchronize();
+        }
+        if (s.planar_projection && nodeBlocks > 0)
+        {
+            project_channel_gradient_kernel<RealType><<<nodeBlocks, s.blockSize>>>(
+                s.d_isBdryNode.data(), s.d_gradPx.data(), s.d_gradPy.data(),
+                s.d_gradPz.data(), s.nodeCount);
+            if (cudaGetLastError() != cudaSuccess) MPI_Abort(MPI_COMM_WORLD, 1);
         }
         s.lastGradPRms = rmsOwnedInterior3<KeyType, RealType, ElementTag>(
             s, s.d_gradPx, s.d_gradPy, s.d_gradPz);
@@ -7596,6 +7719,13 @@ void runPredictorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
         }
         s.domain.reverseExchangeNodeHaloAdd(advN);
         maybePeriodicSum<KeyType, RealType, ElementTag>(s, advN);
+        if (s.planar_projection && nodeBlocks > 0)
+        {
+            add_channel_advection_boundary_kernel<RealType><<<nodeBlocks, s.blockSize>>>(
+                s.d_openInAreaX.data(), s.d_openOutAreaX.data(), s.d_uTarget.data(),
+                s.d_u.data(), qN.data(), d_nodeOwnership.data(), advN.data(), s.nodeCount);
+            if (cudaGetLastError() != cudaSuccess) MPI_Abort(MPI_COMM_WORLD, 1);
+        }
         // advN[master] is now the full-control-volume advective flux (both half-CVs
         // summed via the reverse-halo + periodic fold). Under owner-migration the
         // predictor reads advN ONLY at owned master DOFs (dof<numOwnedDofs); the
@@ -7660,8 +7790,17 @@ void runPredictorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
                  s.d_gradUx, s.d_gradUy, s.d_gradUz);
     runPredictor(s.d_v, s.d_v_nm1, s.d_vStar, s.d_advV_n, s.d_advV_nm1, s.d_gradPy, s.d_vTarget, s.bodyForceY,
                  s.d_gradVx, s.d_gradVy, s.d_gradVz);
-    runPredictor(s.d_w, s.d_w_nm1, s.d_wStar, s.d_advW_n, s.d_advW_nm1, s.d_gradPz, s.d_wTarget, s.bodyForceZ,
-                 s.d_gradWx, s.d_gradWy, s.d_gradWz);
+    if (s.planar_projection)
+    {
+        if (s.d_advW_n.size() != s.nodeCount) s.d_advW_n.resize(s.nodeCount);
+        thrust::fill(thrust::device_pointer_cast(s.d_wStar.data()),
+                     thrust::device_pointer_cast(s.d_wStar.data() + s.nodeCount), RealType(0));
+        thrust::fill(thrust::device_pointer_cast(s.d_advW_n.data()),
+                     thrust::device_pointer_cast(s.d_advW_n.data() + s.nodeCount), RealType(0));
+    }
+    else
+        runPredictor(s.d_w, s.d_w_nm1, s.d_wStar, s.d_advW_n, s.d_advW_nm1, s.d_gradPz, s.d_wTarget, s.bodyForceZ,
+                     s.d_gradWx, s.d_gradWy, s.d_gradWz);
 
     // Sync ghosts of q* so the implicit RHS / CG warm-start read correct ghosts.
     s.domain.exchangeNodeHalo(s.d_uStar);
@@ -7708,7 +7847,8 @@ void runImplicitDiffusionStep(NSStepper<KeyType, RealType, ElementTag>& s, RealT
 
     auto runImplicit = [&] (cstone::DeviceVector<RealType>& qStar,
                              cstone::DeviceVector<RealType>& qStarStar,
-                             cstone::DeviceVector<RealType>& qTarget) -> int
+                             cstone::DeviceVector<RealType>& qTarget,
+                             const cstone::DeviceVector<RealType>& lift) -> int
     {
         // RHS = (mass coef) * mass * qStar; coef = 1/dt for BDF1, 3/(2dt) for BDF2.
         thrust::fill(thrust::device_pointer_cast(b.data()),
@@ -7718,6 +7858,13 @@ void runImplicitDiffusionStep(NSStepper<KeyType, RealType, ElementTag>& s, RealT
             qStar.data(), s.d_node_to_dof.data(), d_nodeOwnership.data(),
             s.d_mass.data(), invDt, b.data(), s.nodeCount, s.numOwnedDofs);
         cudaDeviceSynchronize();
+
+        if (s.planar_projection)
+            thrust::transform(thrust::device,
+                thrust::device_pointer_cast(b.data()),
+                thrust::device_pointer_cast(b.data() + s.numOwnedDofs),
+                thrust::device_pointer_cast(lift.data()),
+                thrust::device_pointer_cast(b.data()), thrust::plus<RealType>());
 
         enforceBcRhsFromTargetKernel<RealType><<<nodeBlocks, s.blockSize>>>(
             s.d_isBdryDof.data(), qTarget.data(),
@@ -7747,9 +7894,15 @@ void runImplicitDiffusionStep(NSStepper<KeyType, RealType, ElementTag>& s, RealT
             bdf2Active ? s.Avel_bdf2 : s.Avel);
     };
 
-    s.lastUIters = runImplicit(s.d_uStar, s.d_uStarStar, s.d_uTarget);
-    s.lastVIters = runImplicit(s.d_vStar, s.d_vStarStar, s.d_vTarget);
-    s.lastWIters = runImplicit(s.d_wStar, s.d_wStarStar, s.d_wTarget);
+    s.lastUIters = runImplicit(s.d_uStar, s.d_uStarStar, s.d_uTarget, s.d_velocity_lift_u);
+    s.lastVIters = runImplicit(s.d_vStar, s.d_vStarStar, s.d_vTarget, s.d_velocity_lift_v);
+    if (s.planar_projection)
+    {
+        thrust::fill(thrust::device_pointer_cast(s.d_wStarStar.data()),
+                     thrust::device_pointer_cast(s.d_wStarStar.data() + s.nodeCount), RealType(0));
+        s.lastWIters = 0;
+    }
+    else s.lastWIters = runImplicit(s.d_wStar, s.d_wStarStar, s.d_wTarget, s.d_velocity_lift_w);
 
     // Sync ghosts of q** for the divergence scatter (face donors read q** at
     // ghost corners on rank boundaries).
@@ -7865,7 +8018,9 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
     const size_t numLocal  = s.domain.localElementCount();
     const int nodeBlocks   = (s.nodeCount + s.blockSize - 1) / s.blockSize;
     const int eBlocks      = numLocal > 0 ? int((numLocal + s.blockSize - 1) / s.blockSize) : 0;
-    const RealType invDt   = RealType(1) / dt;
+    // A phi = -(rho/dtEff) R must match the corrector's dtEff/rho.
+    const bool bdf2Active = (s.useBdf2 && s.bdfStep >= 1 && s.d_valuesVel_bdf2.size() > 0);
+    const RealType invDt = bdf2Active ? (RealType(3) / (RealType(2) * dt)) : (RealType(1) / dt);
 
     cstone::DeviceVector<RealType> b(s.numOwnedDofs);
     cstone::DeviceVector<RealType> xVec(s.numTotalDofs);
@@ -7945,7 +8100,15 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
     // rescale the outlet so the net added source is machine-zero by IEEE
     // (oScale*Qout == -Qin to the last bit) -- else the FP imbalance scaled by
     // rho/dt in the RHS build explodes the system.
-    if (s.useOpeningFluxSource)
+    if (s.planar_projection)
+    {
+        if (nodeBlocks > 0)
+            add_channel_opening_flux_kernel<RealType><<<nodeBlocks, s.blockSize>>>(
+                s.d_openInAreaX.data(), s.d_openOutAreaX.data(), s.d_uTarget.data(),
+                s.d_uStarStar.data(), d_nodeOwnership.data(), d_divAccNode.data(), s.nodeCount);
+        if (cudaGetLastError() != cudaSuccess) MPI_Abort(MPI_COMM_WORLD, 1);
+    }
+    else if (s.useOpeningFluxSource)
     {
         const RealType Qin_raw = openingFluxSum<KeyType, RealType, ElementTag>(s,
             s.openInletVel[0], s.openInletVel[1], s.openInletVel[2],
@@ -9138,7 +9301,10 @@ void runCorrectorStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, 
 
     runCorrector(s.d_u, s.d_uStarStar, s.d_gradPhix, s.d_uTarget);
     runCorrector(s.d_v, s.d_vStarStar, s.d_gradPhiy, s.d_vTarget);
-    runCorrector(s.d_w, s.d_wStarStar, s.d_gradPhiz, s.d_wTarget);
+    if (s.planar_projection)
+        thrust::fill(thrust::device_pointer_cast(s.d_w.data()),
+                     thrust::device_pointer_cast(s.d_w.data() + s.nodeCount), RealType(0));
+    else runCorrector(s.d_w, s.d_wStarStar, s.d_gradPhiz, s.d_wTarget);
 
     // NOTE: the master->slave broadcast on s.d_u/v/w is DEFERRED to AFTER the
     // PROJ-P3 probe below (see end of this branch). The corrector's slot-wise
@@ -10004,6 +10170,118 @@ void computeVorticityMagnitudePerNode(NSStepper<KeyType, RealType, ElementTag>& 
     cudaDeviceSynchronize();
 }
 
+// Debug gate: pressure equation rows, actual opening flux, and the exact
+// operator/corrector identity are separate measurements.
+template<typename RealType>
+struct ChannelProjectionSums
+{
+    __host__ __device__ ChannelProjectionSums() = default;
+    double sum[7]{};
+    double maximum[4]{};
+    __host__ __device__ ChannelProjectionSums operator+(const ChannelProjectionSums& other) const
+    {
+        ChannelProjectionSums out;
+        for (int k = 0; k < 7; ++k) out.sum[k] = sum[k] + other.sum[k];
+        for (int k = 0; k < 4; ++k)
+            out.maximum[k] = maximum[k] > other.maximum[k] ? maximum[k] : other.maximum[k];
+        return out;
+    }
+};
+
+template<typename KeyType, typename RealType, typename ElementTag>
+void check_channel_projection(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, RealType rho)
+{
+    const auto& ownership = s.ownershipMap();
+    const auto& conn = s.domain.getElementToNodeConnectivity();
+    auto cp = connPtrs<ElementTag, KeyType>(conn);
+    size_t start = s.domain.startIndex(), count = s.domain.localElementCount();
+    int blocks = (count + s.blockSize - 1) / s.blockSize;
+    int nodes = (s.nodeCount + s.blockSize - 1) / s.blockSize;
+    auto& scratch = s.d_channel_check_scratch;
+    for (auto& buffer : scratch) buffer.resize(s.nodeCount);
+    auto& before = scratch[0]; auto& after = scratch[1]; auto& action = scratch[2];
+    auto residual = [&](const auto& u, const auto& v, const auto& w, auto& result) {
+        thrust::fill(thrust::device_pointer_cast(result.data()),
+                     thrust::device_pointer_cast(result.data() + s.nodeCount), RealType(0));
+        if (blocks > 0)
+            computeDivergencePerNodeKernel<KeyType, RealType, ElementTag><<<blocks, s.blockSize>>>(
+                cp[0], cp[1], cp[2], cp[3], cp[4], cp[5], cp[6], cp[7],
+                u.data(), v.data(), w.data(), s.d_areaVec_x.data(), s.d_areaVec_y.data(),
+                s.d_areaVec_z.data(), result.data(), start, count);
+        if (cudaGetLastError() != cudaSuccess) MPI_Abort(MPI_COMM_WORLD, 1);
+        s.domain.reverseExchangeNodeHaloAdd(result);
+        if (nodes > 0)
+            add_channel_opening_flux_kernel<RealType><<<nodes, s.blockSize>>>(
+                s.d_openInAreaX.data(), s.d_openOutAreaX.data(), s.d_uTarget.data(),
+                u.data(), ownership.data(), result.data(), s.nodeCount);
+        if (cudaGetLastError() != cudaSuccess) MPI_Abort(MPI_COMM_WORLD, 1);
+    };
+    residual(s.d_uStarStar, s.d_vStarStar, s.d_wStarStar, before);
+    residual(s.d_u, s.d_v, s.d_w, after);
+    applyDDTPerNode<KeyType, RealType, ElementTag>(s, s.d_phi, action, scratch[3], scratch[4], scratch[5]);
+    const bool bdf2 = s.useBdf2 && s.bdfStep >= 1 && s.d_valuesVel_bdf2.size() > 0;
+    const RealType h = (bdf2 ? RealType(2) * dt / RealType(3) : dt) / rho;
+    using Sums = ChannelProjectionSums<RealType>;
+    Sums local = thrust::transform_reduce(thrust::device,
+        thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(s.nodeCount),
+        [own = ownership.data(), mass = s.d_massNode.data(), pbc = s.d_isPressureBdryNode.data(),
+         b = before.data(), a = after.data(), ap = action.data(), w = s.d_w.data(),
+         ai = s.d_openInAreaX.data(), ao = s.d_openOutAreaX.data(),
+         target = s.d_uTarget.data(), u = s.d_u.data(), h] __device__ (size_t i) -> Sums {
+            Sums out;
+            if (own[i] != 1) return out;
+            double volume = mass[i];
+            if (!(volume > 0) || !isfinite(volume) || !isfinite(a[i]) || !isfinite(b[i])
+                || !isfinite(ap[i]) || !isfinite(w[i]) || !isfinite(u[i]))
+            { out.maximum[3] = 1; return out; }
+            if (!pbc[i])
+            {
+                double error = double(a[i]) - double(b[i]) - double(h) * double(ap[i]);
+                out.sum[0] = double(b[i]) * b[i] / volume;
+                out.sum[1] = double(a[i]) * a[i] / volume;
+                out.sum[2] = error * error / volume;
+                out.sum[3] = volume;
+                out.maximum[1] = fabs(double(a[i])) / volume;
+            }
+            else if (ao[i] == RealType(0)) out.maximum[2] = fabs(double(a[i])) / volume;
+            out.sum[4] = double(ai[i]) * target[i];
+            out.sum[5] = double(ao[i]) * u[i];
+            out.sum[6] = a[i];
+            out.maximum[0] = fabs(double(w[i]));
+            return out;
+        }, Sums{}, thrust::plus<Sums>());
+    Sums global;
+    MPI_Allreduce(local.sum, global.sum, 7, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+    MPI_Allreduce(local.maximum, global.maximum, 4, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+    const double scale = std::max(global.sum[0], 1e-60);
+    const double identity = std::sqrt(global.sum[2] / scale);
+    const double identity_rms = std::sqrt(global.sum[2] / std::max(global.sum[3], 1e-60));
+    const double relative = std::sqrt(global.sum[1] / scale);
+    const double rms = std::sqrt(global.sum[1] / std::max(global.sum[3], 1e-60));
+    const double flux_scale = std::max(std::abs(global.sum[4]) + std::abs(global.sum[5]), 1e-30);
+    const double balance_error = std::abs(global.sum[6] - global.sum[4] - global.sum[5]) / flux_scale;
+    s.channel_continuity_rms = rms;
+    s.channel_boundary_balance = std::abs(global.sum[4] + global.sum[5])
+                                 / std::max(std::abs(global.sum[4]), 1e-30);
+    // The relative identity loses significance when both residuals approach zero.
+    const double identity_floor = 1e-10 * std::abs(double(s.Uinf)) / double(s.ymax - s.ymin);
+    bool failed = global.maximum[3] != 0 || !std::isfinite(identity) || !std::isfinite(balance_error)
+                  || !std::isfinite(relative) || !std::isfinite(rms)
+                  || (identity > 1e-7 && identity_rms > identity_floor) || balance_error > 1e-10
+                  || global.maximum[0] > 1e-12 || global.maximum[2] > 1e-8;
+    if (s.rank == 0)
+        std::cout << "[channel-projection] step=" << s.completed_steps + 1
+                  << " identity=" << identity << " relative=" << relative
+                  << " identity_rms=" << identity_rms
+                  << " active_rms=" << rms << " active_max=" << global.maximum[1]
+                  << " w_max=" << global.maximum[0] << " corner_max=" << global.maximum[2]
+                  << " Qin=" << global.sum[4] << " Qout=" << global.sum[5]
+                  << " boundary_balance=" << s.channel_boundary_balance
+                  << " balance_identity=" << balance_error
+                  << " gate=" << (failed ? "FAIL" : "PASS") << '\n';
+    if (failed) MPI_Abort(MPI_COMM_WORLD, 1);
+}
+
 template<typename KeyType, typename RealType, typename ElementTag = HexTag>
 void runNsStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, RealType nu, RealType rho)
 {
@@ -10054,6 +10332,17 @@ void runNsStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, RealTyp
     }
 
     runImplicitDiffusionStep<KeyType, RealType, ElementTag>(s, dt);
+    // Failed solves leave stale diffusion fields; never project those into a new step.
+    int momentum_failed = (s.lastUIters < 0 || s.lastVIters < 0 || s.lastWIters < 0) ? 1 : 0;
+    int any_momentum_failed = 0;
+    MPI_Allreduce(&momentum_failed, &any_momentum_failed, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+    if (any_momentum_failed)
+    {
+        if (s.rank == 0)
+            std::cerr << "ERROR: channel momentum solve failed before pressure correction\n";
+        MPI_Abort(MPI_COMM_WORLD, 1);
+        return;
+    }
     if (dbg)
     {
         RealType KE_ss      = keOwned<KeyType, RealType, ElementTag>(s, s.d_uStarStar, s.d_vStarStar, s.d_wStarStar);
@@ -10068,6 +10357,15 @@ void runNsStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, RealTyp
     }
 
     runPressureSolveStep<KeyType, RealType, ElementTag>(s, dt, rho);
+    int pressure_failed = s.lastPressureIters < 0 ? 1 : 0;
+    int any_pressure_failed = 0;
+    MPI_Allreduce(&pressure_failed, &any_pressure_failed, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+    if (any_pressure_failed)
+    {
+        if (s.rank == 0) std::cerr << "ERROR: channel pressure solve failed before velocity correction\n";
+        MPI_Abort(MPI_COMM_WORLD, 1);
+        return;
+    }
     if (dbg && s.rank == 0)
     {
         std::cout << "    [ns-dbg POIS ] |phi|max=" << maxAbsOwned(s.d_phi, s.nodeCount)
@@ -10099,6 +10397,7 @@ void runNsStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, RealTyp
     }
 
     runCorrectorStep<KeyType, RealType, ElementTag>(s, dt, rho);
+    if (s.planar_projection && (dbg || s.check_projection)) check_channel_projection(s, dt, rho);
     if (dbg)
     {
         RealType KE_np1 = keOwned<KeyType, RealType, ElementTag>(s, s.d_u, s.d_v, s.d_w);   // collective: all ranks
@@ -10106,6 +10405,8 @@ void runNsStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, RealTyp
         {
             std::cout << "    [ns-dbg CORR ] KE_(n+1)=" << KE_np1
                       << " |u_(n+1)|max=" << maxAbsOwned(s.d_u, s.nodeCount)
+                      << " |v|max_rank0=" << maxAbsOwned(s.d_v, s.nodeCount)
+                      << " |w|max_rank0=" << maxAbsOwned(s.d_w, s.nodeCount)
                       << " |p_(n+1)|max=" << maxAbsOwned(s.d_p, s.nodeCount)
                       << " div_max=" << s.lastDivMax << "\n";
             std::cout << std::defaultfloat;
@@ -10135,6 +10436,7 @@ void runNsStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, RealTyp
     }
 
     if (g_nsDebugStepsLeft > 0) --g_nsDebugStepsLeft;
+    ++s.completed_steps;
 }
 
 // =============================================================================

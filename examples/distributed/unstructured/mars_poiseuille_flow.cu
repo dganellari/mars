@@ -20,6 +20,7 @@
 #include <cmath>
 #include <vector>
 #include <algorithm>
+#include <charconv>
 #include <fstream>
 
 // Voronoi-lumped per-node areas of a y-z cross-section plane of this quasi-2D
@@ -95,9 +96,14 @@ int main(int argc, char** argv)
     int    numSteps   = 1000;
     int    vtuEvery   = 50;
     std::string vtuPrefix;
+    std::string comparisonPrefix;
+    std::string comparisonEveryText;
+    int    comparisonEvery = 50;
+    bool   comparisonRequested = false;
+    bool   comparisonEveryRequested = false;
     SolverKind        solverKind    = SolverKind::CG;
-    // DDT (matrix-free D M^-1 D^T + Jacobi-PCG) is the validated channel
-    // pressure path; the K-path on this channel hits pAp<=0 (cg_iter_p=FAIL).
+    // The planar pressure action includes the velocity constraint Q:
+    // D Q M^-1 D^T, with symmetric pressure elimination.
     PressureSolveKind pressureSolve = PressureSolveKind::DDT;
     double Uinf       = 1.0;
 
@@ -126,6 +132,7 @@ int main(int argc, char** argv)
     // Default ON in inlet mode -- without it the inlet is invisible to the
     // pressure solve. --no-opening-flux-source gives the A/B baseline.
     bool openingFluxSource = true;
+    bool planar_projection = false;
     bool forceBdf1 = false;   // --bdf1: 1st-order time stepping (disable BDF2)
     // Regression-check mode: exit 1 unless the final profile RMS is below
     // rmsTol (the FLUYA reference tolerance) AND every interior-flux ratio is
@@ -133,6 +140,8 @@ int main(int argc, char** argv)
     bool   checkMode = false;
     double rmsTol    = 6e-3;
     double fluxTol   = 0.10;
+    double steady_tol = 1e-6;
+    double continuity_tol = 1e-6;
 
     for (int i = 1; i < argc; ++i)
     {
@@ -144,6 +153,16 @@ int main(int argc, char** argv)
         else if (arg.find("--num-steps=") == 0)    numSteps   = std::stoi(arg.substr(12));
         else if (arg.find("--vtu-every=") == 0)    vtuEvery   = std::stoi(arg.substr(12));
         else if (arg.find("--vtu-output=") == 0)   vtuPrefix  = arg.substr(13);
+        else if (arg.find("--comparison-output=") == 0)
+        {
+            comparisonRequested = true;
+            comparisonPrefix = arg.substr(20);
+        }
+        else if (arg.find("--comparison-every=") == 0)
+        {
+            comparisonEveryRequested = true;
+            comparisonEveryText = arg.substr(19);
+        }
         else if (arg.find("--lid-u=") == 0)        Uinf       = std::stod(arg.substr(8));
         else if (arg.find("--uinf=") == 0)         Uinf       = std::stod(arg.substr(7));
         else if (arg.find("--profile-x=") == 0)    profileX   = std::stod(arg.substr(12));
@@ -153,10 +172,13 @@ int main(int argc, char** argv)
         else if (arg.find("--body-force-x=") == 0) bodyForceX = std::stod(arg.substr(15));
         else if (arg == "--no-seed-interior")      seedInterior = false;
         else if (arg == "--no-opening-flux-source") openingFluxSource = false;
+        else if (arg == "--planar-ddt")            planar_projection = true;
         else if (arg == "--bdf1")                  forceBdf1 = true;
         else if (arg == "--check")                 checkMode = true;
         else if (arg.find("--rms-tol=") == 0)      rmsTol  = std::stod(arg.substr(10));
         else if (arg.find("--flux-tol=") == 0)     fluxTol = std::stod(arg.substr(11));
+        else if (arg.find("--steady-tol=") == 0)   steady_tol = std::stod(arg.substr(13));
+        else if (arg.find("--continuity-tol=") == 0) continuity_tol = std::stod(arg.substr(17));
         else if (arg.find("--block-size=") == 0)   blockSize  = std::stoi(arg.substr(13));
         else if (arg.find("--bucket-size=") == 0)  bucketSize = std::stoi(arg.substr(14));
         else if (arg.find("--max-iter=") == 0)     maxIter    = std::stoi(arg.substr(11));
@@ -177,16 +199,67 @@ int main(int argc, char** argv)
         else if (arg[0] != '-' && meshFile.empty()) meshFile = arg;
     }
 
+    // Plane-area reconstruction and the profile export currently require a complete local plane.
+    if ((planar_projection || checkMode) && numRanks != 1)
+    {
+        if (rank == 0) std::cerr << "ERROR: planar Poiseuille validation currently requires one MPI rank\n";
+        MPI_Finalize();
+        return 1;
+    }
+    if (!(std::isfinite(dt) && dt > 0 && std::isfinite(nu) && nu > 0
+          && std::isfinite(rho) && rho > 0 && std::isfinite(Uinf) && Uinf > 0
+          && std::isfinite(tolerance) && tolerance > 0 && maxIter > 0 && numSteps > 0
+          && std::isfinite(rmsTol) && rmsTol > 0 && std::isfinite(fluxTol) && fluxTol > 0
+          && std::isfinite(steady_tol) && steady_tol > 0
+          && std::isfinite(continuity_tol) && continuity_tol > 0))
+    {
+        if (rank == 0) std::cerr << "ERROR: require positive finite physical parameters and tolerances\n";
+        MPI_Finalize();
+        return 1;
+    }
+
+    int comparisonError = 0;
+    if (comparisonRequested && comparisonPrefix.empty()) comparisonError |= 1;
+    if (comparisonEveryRequested)
+    {
+        int parsed = 0;
+        auto result = std::from_chars(comparisonEveryText.data(),
+                                      comparisonEveryText.data() + comparisonEveryText.size(), parsed);
+        if (result.ec != std::errc{} ||
+            result.ptr != comparisonEveryText.data() + comparisonEveryText.size() || parsed <= 0)
+            comparisonError |= 2;
+        else
+            comparisonEvery = parsed;
+    }
+    if (comparisonEveryRequested && !comparisonRequested) comparisonError |= 4;
+    if (comparisonRequested && numRanks != 1) comparisonError |= 8;
+    int comparisonErrorGlobal = 0;
+    MPI_Allreduce(&comparisonError, &comparisonErrorGlobal, 1, MPI_INT, MPI_BOR, MPI_COMM_WORLD);
+    if (comparisonErrorGlobal)
+    {
+        if (rank == 0)
+        {
+            std::cerr << "Invalid comparison export options:";
+            if (comparisonErrorGlobal & 1) std::cerr << " --comparison-output needs a nonempty prefix;";
+            if (comparisonErrorGlobal & 2) std::cerr << " --comparison-every needs a positive integer;";
+            if (comparisonErrorGlobal & 4) std::cerr << " --comparison-every requires --comparison-output;";
+            if (comparisonErrorGlobal & 8) std::cerr << " comparison export requires one MPI rank;";
+            std::cerr << "\n";
+        }
+        MPI_Finalize();
+        return 1;
+    }
+
     if (meshFile.empty())
     {
         if (rank == 0)
             std::cout << "Usage: " << argv[0] << " --mesh=FILE [options]\n\n"
                       << "Poiseuille channel flow validation (parabolic profile).\n\n"
                       << "  --mesh=FILE         Mesh file (.exo / .mesh) [REQUIRED]\n"
-                      << "  --drive=bodyforce|inlet  Flow driver (default bodyforce; textbook plane Poiseuille)\n"
+                      << "  --drive=bodyforce|inlet  Flow driver (default inlet)\n"
                       << "                      bodyforce: constant streamwise force G, no-slip y-walls,\n"
                       << "                                 U_max=G*H^2/(8 rho nu). inlet: prescribed velocity\n"
-                      << "                                 inlet+mass-conserving outlet (study; does not sustain)\n"
+                      << "                                 inlet+free-velocity pressure outlet\n"
                       << "  --body-force-x=G    Body force value (default: auto = G to hit U_max=Uinf)\n"
                       << "  --uinf=VALUE        Target U_max (bodyforce) / inflow speed (inlet); default 1.0\n"
                       << "  --nu=VALUE          Kinematic viscosity (default 0.01)\n"
@@ -198,15 +271,20 @@ int main(int argc, char** argv)
                       << "  --no-opening-flux-source  Disable the balanced opening-flux source (A/B baseline;\n"
                       << "                      without it the inlet is invisible to the pressure solve)\n"
                       << "  --check             Regression mode: exit 1 unless RMS < rms-tol and flux\n"
-                      << "                      ratios within flux-tol of 1\n"
+                      << "                      ratios within flux-tol of 1; planar mode also requires continuity and steadiness\n"
                       << "  --rms-tol=VAL       RMS pass threshold (default 6e-3, the reference tol)\n"
                       << "  --flux-tol=VAL      Relative flux-ratio tolerance (default 0.10)\n"
                       << "  --profile-x=X       Outlet probe plane x (default: 90% down the channel)\n"
                       << "  --profile-xtol=TOL  Half-width of the probe plane (default: one element)\n"
                       << "  --solver=cg|hypre   Linear solver (default cg)\n"
+                      << "  --planar-ddt        Consistent xy projection for a one-layer rectilinear channel (inlet + CG/DDT)\n"
+                      << "  --steady-tol=TOL    Final 20-step velocity change / Uinf (default 1e-6)\n"
+                      << "  --continuity-tol=TOL  Final planar continuity RMS*H/U and relative boundary balance (default 1e-6)\n"
                       << "  --pressure-solve=K|DDT  Pressure operator (default DDT; K FAILs on this channel)\n"
                       << "  --vtu-output=PREFIX Write VTU/PVTU/PVD frames\n"
                       << "  --vtu-every=N       Frame every N steps (default 50)\n"
+                      << "  --comparison-output=PREFIX  Export public Poiseuille u,v,w,p frames (one rank only)\n"
+                      << "  --comparison-every=N       Comparison frame every N steps (default 50)\n"
                       << "  --tol=VALUE         Solver tolerance (default 1e-10)\n"
                       << "  --max-iter=N        Solver max iters (default 1000)\n";
         MPI_Finalize();
@@ -267,6 +345,7 @@ int main(int argc, char** argv)
     // attempt rebuilt d_isBdryDof after setup: the derived state kept the
     // original thin-z all-Dirichlet marking, owner and ghost ranks disagreed,
     // and the run blew up at step 1 (single rank has no ghosts -> worked).
+    amr.domain().getLocalToGlobalSfcMap();
     const size_t nNodes = amr.domain().getNodeCount();
     std::vector<RealType> hx(nNodes), hy(nNodes), hz(nNodes);
     {
@@ -295,6 +374,41 @@ int main(int argc, char** argv)
     // float-rounded the TOP first interior node into the wall set.
     RealType eps = 1e-5 * std::max(RealType(1), yMax - yMin);
     double H = static_cast<double>(yMax - yMin);   // channel height
+    if (planar_projection)
+    {
+        int invalid = useBodyForce || crossAxis != "y" || !openingFluxSource
+                      || solverKind != SolverKind::CG || pressureSolve != PressureSolveKind::DDT;
+        invalid |= !(xMax > xMin && yMax > yMin && zMax > zMin);
+        for (size_t i = 0; i < nNodes; ++i)
+            invalid |= std::abs(hz[i] - zMin) > eps && std::abs(hz[i] - zMax) > eps;
+        const auto& d_x = amr.domain().getNodeX();
+        const auto& d_y = amr.domain().getNodeY();
+        const auto& d_z = amr.domain().getNodeZ();
+        const auto cp = connPtrs<HexTag, KeyType>(amr.domain().getElementToNodeConnectivity());
+        const size_t first = amr.domain().startIndex();
+        const size_t count = amr.domain().localElementCount();
+        const RealType cell_tolerance = RealType(1e-10) * std::max({xMax-xMin, yMax-yMin, zMax-zMin});
+        int invalid_cells = thrust::transform_reduce(thrust::device,
+            thrust::counting_iterator<size_t>(first), thrust::counting_iterator<size_t>(first + count),
+            [c0=cp[0], c1=cp[1], c2=cp[2], c3=cp[3], c4=cp[4], c5=cp[5], c6=cp[6], c7=cp[7],
+             x=d_x.data(), y=d_y.data(), z=d_z.data(), cell_tolerance] __device__ (size_t e) -> int {
+                const KeyType n[8] = {c0[e],c1[e],c2[e],c3[e],c4[e],c5[e],c6[e],c7[e]};
+                RealType coords[8][3];
+                for (int j=0;j<8;++j) {coords[j][0]=x[n[j]];coords[j][1]=y[n[j]];coords[j][2]=z[n[j]];}
+                return channel_rectilinear_hex(coords, cell_tolerance) ? 0 : 1;
+            }, 0, thrust::maximum<int>());
+        invalid |= invalid_cells;
+        int any_invalid = 0;
+        MPI_Allreduce(&invalid, &any_invalid, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+        if (any_invalid)
+        {
+            if (rank == 0) std::cerr << "--planar-ddt requires inlet, y walls, CG/DDT, openings and rectilinear cells in one z layer\n";
+            MPI_Abort(MPI_COMM_WORLD, 1);
+            return 1;
+        }
+        s.planar_projection = true;
+        s.useLegacyGradient = false;
+    }
 
     if (useBodyForce)
     {
@@ -316,14 +430,18 @@ int main(int argc, char** argv)
             bool onInflow  = std::abs(hx[i] - xMin) < eps;
             bool onYWall   = std::abs(hy[i] - yMin) < eps || std::abs(hy[i] - yMax) < eps;
             bool onOutflow = std::abs(hx[i] - xMax) < eps;
-            if (onInflow)     s.inletNodes.push_back(int(i));
+            if (planar_projection && onYWall) s.wallNodes.push_back(int(i));
+            else if (onInflow) s.inletNodes.push_back(int(i));
             else if (onYWall) s.wallNodes.push_back(int(i));
+            if (planar_projection && onInflow && onYWall)
+                s.pressure_null_nodes.push_back(int(i));
             if (onOutflow)    s.outletNodes.push_back(int(i));
         }
         targetUMax = 1.5 * Uinf;
         if (rank == 0)
             std::cout << "Drive: INLET (FLUYA-ref via pump BC path): walls=no-slip, "
-                      << "inlet u=" << Uinf << ", outlet natural + p=0, z free\n";
+                      << "inlet u=" << Uinf << ", outlet natural + p=0"
+                      << (planar_projection ? ", planar symmetry w=0; walls win at corners\n" : ", z free\n");
     }
 
     setupNSStepper<KeyType, RealType>(s, RealType(nu), RealType(dt), kernelVariant);
@@ -420,7 +538,9 @@ int main(int argc, char** argv)
         s.openInletVel[0]  = RealType(Uinf);
         s.openOutletVel[0] = srcOutletU;
         s.useOpeningFluxSource = true;
-        if (rank == 0)
+        if (rank == 0 && planar_projection)
+            std::cout << "Opening flux: nodal inlet targets and solved outlet velocity; no outlet rescaling\n";
+        else if (rank == 0)
             std::cout << "Opening-flux source: Ain=" << Ain << " Aout=" << Aout
                       << " Qin=" << Uinf * Ain << " outletU=" << srcOutletU
                       << " (net zeroed per step via oScale)\n";
@@ -466,6 +586,7 @@ int main(int argc, char** argv)
     std::unique_ptr<fem::VTUParallelWriter<KeyType, RealType>> vtuWriterU;
     std::unique_ptr<fem::VTUParallelWriter<KeyType, RealType>> vtuWriterP;
     std::unique_ptr<fem::VTUParallelWriter<KeyType, RealType>> vtuWriterUmag;
+    std::unique_ptr<fem::VTUParallelWriter<KeyType, RealType>> comparisonWriter;
     if (!vtuPrefix.empty())
     {
         vtuWriterU    = std::make_unique<fem::VTUParallelWriter<KeyType, RealType>>(vtuPrefix + "_u");
@@ -473,6 +594,14 @@ int main(int argc, char** argv)
         vtuWriterUmag = std::make_unique<fem::VTUParallelWriter<KeyType, RealType>>(vtuPrefix + "_umag");
         if (rank == 0)
             std::cout << "VTU output enabled: " << vtuPrefix << "_{u,p,umag}_step*.pvtu\n\n";
+    }
+    if (comparisonRequested)
+    {
+        comparisonWriter = std::make_unique<fem::VTUParallelWriter<KeyType, RealType>>(
+            comparisonPrefix, true);
+        if (rank == 0)
+            std::cout << "Comparison output enabled: " << comparisonPrefix
+                      << "_step*.pvtu (u,v,w,p; every " << comparisonEvery << " steps)\n";
     }
 
     auto writeVtuFrame = [&] (int step, double t)
@@ -496,7 +625,21 @@ int main(int argc, char** argv)
         vtuWriterUmag->writeFrame(step, t, amr.domain(), d_umag, "umag");
     };
 
+    auto writeComparisonFrame = [&] (int step, double t)
+    {
+        if (!comparisonWriter) return;
+        using FD = typename fem::VTUParallelWriter<KeyType, RealType>::FieldDesc;
+        std::vector<FD> fields{
+            {"u", FD::Kind::PointScalar, &s.d_u, nullptr, nullptr},
+            {"v", FD::Kind::PointScalar, &s.d_v, nullptr, nullptr},
+            {"w", FD::Kind::PointScalar, &s.d_w, nullptr, nullptr},
+            {"p", FD::Kind::PointScalar, &s.d_p, nullptr, nullptr}
+        };
+        comparisonWriter->writeMultiFieldFrame(step, t, amr.domain(), fields);
+    };
+
     if (vtuWriterU) writeVtuFrame(0, 0.0);
+    if (comparisonWriter) writeComparisonFrame(0, 0.0);
 
     // Step-0 norm: confirms the seeded IC actually populated d_u before any step.
     {
@@ -506,8 +649,20 @@ int main(int argc, char** argv)
                       << std::setprecision(3) << nu0 << " (IC)\n" << std::defaultfloat;
     }
 
+    // A small timestep can hide drift in a one-step change. Compare a fixed window.
+    const int steady_window = std::min(20, numSteps - 1);
+    std::array<cstone::DeviceVector<RealType>, 3> d_steady_start;
+    if (checkMode && planar_projection)
+        for (auto& component : d_steady_start) component.resize(s.nodeCount);
     for (int step = 1; step <= numSteps; ++step)
     {
+        if (checkMode && planar_projection && step == numSteps - steady_window + 1)
+        {
+            thrust::copy(thrust::device, s.d_u.begin(), s.d_u.end(), d_steady_start[0].begin());
+            thrust::copy(thrust::device, s.d_v.begin(), s.d_v.end(), d_steady_start[1].begin());
+            thrust::copy(thrust::device, s.d_w.begin(), s.d_w.end(), d_steady_start[2].begin());
+        }
+        s.check_projection = checkMode && step == numSteps;
         runNsStep<KeyType, RealType>(s, RealType(dt), RealType(nu), RealType(rho));
         double t = step * dt;
 
@@ -527,6 +682,26 @@ int main(int argc, char** argv)
 
         if (vtuWriterU && (step % vtuEvery == 0 || step == numSteps))
             writeVtuFrame(step, t);
+        if (comparisonWriter && (step % comparisonEvery == 0 || step == numSteps))
+            writeComparisonFrame(step, t);
+    }
+
+    double steady_change = std::numeric_limits<double>::infinity();
+    if (checkMode && planar_projection && steady_window > 0)
+    {
+        double difference = thrust::transform_reduce(thrust::device,
+            thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(s.nodeCount),
+            [u=s.d_u.data(), v=s.d_v.data(), w=s.d_w.data(), mass=s.d_massNode.data(),
+             u0=d_steady_start[0].data(), v0=d_steady_start[1].data(),
+             w0=d_steady_start[2].data()] __device__ (size_t i) -> double {
+                const double du=u[i]-u0[i], dv=v[i]-v0[i], dw=w[i]-w0[i];
+                return mass[i]*(du*du+dv*dv+dw*dw);
+            }, 0.0, thrust::plus<double>());
+        double volume = thrust::reduce(thrust::device, s.d_massNode.begin(), s.d_massNode.end(), 0.0);
+        if (!(volume > 0) || cudaGetLastError() != cudaSuccess) MPI_Abort(MPI_COMM_WORLD, 1);
+        steady_change = std::sqrt(difference / volume) / Uinf;
+        std::cout << "[channel-steady] window=" << steady_window << " velocity_change/U="
+                  << std::scientific << std::setprecision(8) << steady_change << '\n';
     }
 
     double finalRms     = -1.0;      // raw RMS vs analytic (reference tol 6e-3)
@@ -619,9 +794,7 @@ int main(int argc, char** argv)
 
             // G from the solved VELOCITY: quadratic fit over the core
             // (u > 0.5 U_max -- avoids the near-wall overshoot layer), then
-            // G = -mu * u'' = -2 a mu. This is the trustworthy pressure-
-            // gradient measurement; the solved p field cannot give it (see
-            // the artifact note at the p-based check below).
+            // G = -mu * u'' = -2 a mu. Report this independently of solved p.
             double s0 = 0, s1 = 0, s2 = 0, s3 = 0, s4 = 0, b0 = 0, b1 = 0, b2 = 0;
             for (auto& pr : pts)
             {
@@ -733,15 +906,8 @@ int main(int argc, char** argv)
         // SOLVED pressure gradient between two developed stations (60%, 90%)
         // and compare -- validates the pressure field, not just the velocity.
         //
-        // Sample ONLY the moving core (u > 0.5 U_max): incremental Chorin does
-        // p += phi at EVERY node each step, and at velocity-Dirichlet nodes
-        // (walls/inlet) phi carries the projection's one-sided boundary residue
-        // that the corrector can never clean -- p there accumulates linearly
-        // into garbage and poisons a full-station mean (observed: measured G
-        // off by 8 orders of magnitude when wall nodes were included). The core
-        // nodes feel the physical gradient (the steady parabola proves it).
-        // Plane means are Allreduced; ghosts may be double-counted on
-        // multi-rank, so the mean is exact on 1 rank, approximate on N.
+        // Use the moving core for this diagnostic. An empty sample is invalid,
+        // not a zero pressure gradient. Validation is restricted to one rank.
         {
             auto planeMeanP = [&](double xTarget) -> double
             {
@@ -757,7 +923,7 @@ int main(int argc, char** argv)
                 double sumG = sum; long cntG = cntP;
                 MPI_Allreduce(&sum,  &sumG, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
                 MPI_Allreduce(&cntP, &cntG, 1, MPI_LONG,   MPI_SUM, MPI_COMM_WORLD);
-                return cntG > 0 ? sumG / double(cntG) : 0.0;
+                return cntG > 0 ? sumG / double(cntG) : std::numeric_limits<double>::quiet_NaN();
             };
             double xA = double(xMin) + 0.60 * double(xMax - xMin);
             double xB = double(xMin) + 0.90 * double(xMax - xMin);
@@ -767,11 +933,8 @@ int main(int argc, char** argv)
             double Gmeas  = (pA - pB) / (xB - xA);
             double Gexact = (H > 0) ? 8.0 * rho * nu * targetUMax / (H * H) : 0.0;
             if (rank == 0)
-                std::cout << "Pressure-gradient from SOLVED p (KNOWN ARTIFACT -- incremental Chorin\n"
-                          << "accumulates the startup-transient phi into p and nothing removes it, so\n"
-                          << "p carries a giant frozen ramp ~1e5 x physical; use the velocity-fit G\n"
-                          << "above as the physical measurement):\n"
-                          << "  raw dp/dx = " << std::scientific << std::setprecision(4) << Gmeas
+                std::cout << "Pressure-gradient from solved p (moving-core station means):\n"
+                          << "  -dp/dx = " << std::scientific << std::setprecision(4) << Gmeas
                           << "   physical G = " << Gexact << "\n"
                           << "========================================\n";
         }
@@ -786,14 +949,27 @@ int main(int argc, char** argv)
         bool fluxOk = true;
         for (int k = 0; k < 3; ++k)
             fluxOk = fluxOk && (std::abs(fluxRatio[k] - 1.0) <= fluxTol);
-        bool pass = rmsOk && fluxOk;
+        const bool steady_ok = !planar_projection ||
+            (std::isfinite(steady_change) && steady_change <= steady_tol);
+        const double scaled_continuity = s.channel_continuity_rms * H / Uinf;
+        const bool continuity_ok = !planar_projection || channel_state_converged(
+            scaled_continuity, s.channel_boundary_balance, 0.0, continuity_tol, steady_tol);
+        bool pass = rmsOk && fluxOk && (!planar_projection || channel_state_converged(
+            scaled_continuity, s.channel_boundary_balance, steady_change, continuity_tol, steady_tol));
+        if (rank == 0 && planar_projection)
+            std::cout << "[channel-validation] continuity*H/U=" << std::scientific << scaled_continuity
+                      << " boundary_balance=" << s.channel_boundary_balance
+                      << " tolerance=" << continuity_tol
+                      << " steady_change/U=" << steady_change << " tolerance=" << steady_tol << '\n';
         if (rank == 0)
             std::cout << "VALIDATION " << (pass ? "PASS" : "FAIL")
                       << ": RMS=" << std::scientific << std::setprecision(3) << finalRms
                       << (rmsOk ? " < " : " >= ") << rmsTol
                       << ", flux ratios " << std::fixed << std::setprecision(3)
                       << fluxRatio[0] << "/" << fluxRatio[1] << "/" << fluxRatio[2]
-                      << (fluxOk ? " within " : " OUTSIDE ") << "1 +/- " << fluxTol << "\n";
+                      << (fluxOk ? " within " : " OUTSIDE ") << "1 +/- " << fluxTol
+                      << ", steady=" << (steady_ok ? "PASS" : "FAIL")
+                      << ", continuity=" << (continuity_ok ? "PASS" : "FAIL") << "\n";
         exitCode = pass ? 0 : 1;
     }
 

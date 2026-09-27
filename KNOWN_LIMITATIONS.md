@@ -33,10 +33,11 @@ including element numberings that are not aligned with the coordinate axes.
 - **Multi-rank periodic boundary conditions** (e.g. multi-rank periodic TGV). Periodic
   DOF collapse across rank boundaries is still under development; use single-rank for
   periodic cases.
-- **Poiseuille channel (`mars_poiseuille_flow`).** Does not reproduce the tutorial's validated
-  profile at v0.1.0, on one or several ranks: the velocity stops developing after the first step.
-  A projection repair for this channel solver is in progress; treat the tutorial as a description
-  of the method until a release notes it as fixed.
+- **Poiseuille channel (`mars_poiseuille_flow`).** The single-rank `--planar-ddt` repair
+  passed a three-step GPU startup check; the full steady-profile release validation remains
+  pending. The long regression now selects that path and checks profile, conservation and
+  steadiness. See [the validation recipe](tests/reference/poiseuille/planar_validation.md).
+  The legacy path and multi-rank Poiseuille validation are not supported by this repair.
 - **Triangle and quadrilateral meshes.** `ElementDomain` supports `TetTag` and `HexTag` only;
   `TriTag`/`QuadTag` are rejected at compile time.
 - **Node ownership on periodic and multi-block meshes.** Multi-rank, non-periodic, single-block meshes give each

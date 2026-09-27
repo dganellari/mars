@@ -1,8 +1,9 @@
 # Poiseuille Channel Flow with MARS — A Validation Tutorial
 
-> **Status at v0.1.0:** the channel solver does not currently reproduce the result shown here
-> (the velocity stops developing after the first step); a repair is in progress. The tutorial
-> still describes the method and the setup. See KNOWN_LIMITATIONS.md.
+> **Release validation pending:** use the repaired `--planar-ddt` path and the
+> [current validation recipe](../tests/reference/poiseuille/planar_validation.md).
+> Three GPU startup steps passed; the full steady-profile test has not yet passed.
+> Historical results and explanations below are not evidence for the repaired path.
 
 This tutorial explains the `mars_poiseuille_flow` example: what Poiseuille flow
 is, why it is the standard first validation case for any incompressible CFD
@@ -288,30 +289,27 @@ the face area `H*dz`. For domain-aligned planes the direction is just `-x`
 Build (the target links only against the `mars` library):
 
 ```bash
-make mars_poiseuille_flow -j
+cmake --build . --target mars_poiseuille_flow --parallel 4
 ```
 
 Run (single rank; the area lumping assumes the opening planes are rank-local):
 
 ```bash
-MARS_NODEHALO_V2=1 srun --account=<acct> --time=00:30:00 \
-  --nodes=1 --ntasks-per-node=1 \
-  ./examples/distributed/unstructured/mars_poiseuille_flow \
+MARS_NS_DEBUG_STEPS=3 MARS_DDT_CG_PRINT_EVERY=1000 \
+srun --account=<acct> --time=04:00:00 --nodes=1 --ntasks-per-node=1 \
+  --export=ALL --kill-on-bad-exit=1 \
+  ~/affinity/bind_numa.sh ./examples/distributed/unstructured/mars_poiseuille_flow \
   --mesh=/path/to/mars/tests/data/poiseuille/poiseuille_hex_14k_elem.e \
-  --uinf=1.0 --nu=0.01 --dt=0.01 --tol=1e-6 --max-iter=4000 --num-steps=1200 \
+  --planar-ddt --uinf=1.0 --nu=0.01 --dt=0.01 --tol=1e-6 --max-iter=8000 --num-steps=1500 --check \
   --vtu-output=poiseuille
 ```
 
 Notes on the numbers:
-- `--num-steps=1200` (t = 12) is comfortably past convergence (~t = 10).
-- `--max-iter=4000`: the matrix-free DDT pressure solve with Jacobi
-  preconditioning needs ~3600 CG iterations per step on this mesh. That is
-  the price of the un-preconditioned thin-channel Poisson operator (AMG
-  rejects it); it is slow but completely stable.
-- `--tol=1e-6` for the pressure solve is sufficient; 1e-10 is unreachable
-  for Jacobi-PCG here and would FAIL every step.
-- Budget at least 2 hours: at v0.1.0 a 1500-step run took 60 minutes on one GH200 with
-  ~2200 pressure iterations per step, and a developing flow needs more (~3600).
+- `--num-steps=1500` fixes the validation interval at t=15. The final check must
+  demonstrate steadiness; reaching that time does not establish it.
+- `--max-iter=8000` accommodates the repaired startup's roughly 5500 pressure
+  iterations per step. The cap does not change the linear tolerance of 1e-6.
+- The four-hour budget is not a measured runtime for the repaired full run.
 
 Useful flags:
 
@@ -406,9 +404,11 @@ VALIDATION PASS: RMS=5.781e-03 < 6e-3, flux ratios 0.992/0.992/1.006 within 1 +/
 ```
 
 The case is registered with ctest as `marsPoiseuilleValidation` (labels
-`validation;gpu;long`, 2-hour timeout) when you configure with
+`validation;gpu;long`, 4-hour timeout) when you configure with
 `-DMARS_ENABLE_VALIDATION_TESTS=ON` (and FEM examples + tests on). Run it with
-`ctest -L validation`. This is the canary for any change to
+`ctest -L validation` inside a GPU allocation. The repaired path additionally
+checks continuity, boundary balance and the final 20-step velocity change.
+This is the canary for any change to
 the projection, the boundary conditions, or the opening-flux source: if one
 of them regresses, the parabola degrades and the test fails loudly.
 

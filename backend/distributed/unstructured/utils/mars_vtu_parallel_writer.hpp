@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <fstream>
 #include <iomanip>
+#include <limits>
 #include <sstream>
 #include <string>
 #include <utility>
@@ -66,7 +67,8 @@ private:
 
 public:
 
-    explicit VTUParallelWriter(const std::string& prefix) : prefix_(prefix) {}
+    explicit VTUParallelWriter(const std::string& prefix, bool full_precision = false)
+        : prefix_(prefix), full_precision_(full_precision) {}
 
     // Write one timestep / AMR-level frame.
     //   step      = frame index (e.g. AMR level)
@@ -129,6 +131,7 @@ public:
 
 private:
     std::string prefix_;
+    bool full_precision_;
 
     static std::string rankPieceName(const std::string& prefix, int step, int rank)
     {
@@ -339,6 +342,9 @@ private:
         std::ofstream f(fname);
         if (!f) throw std::runtime_error("Cannot open " + fname);
 
+        if (full_precision_)
+            f << std::scientific << std::setprecision(std::numeric_limits<RealType>::max_digits10);
+
         f << "<?xml version=\"1.0\"?>\n";
         f << "<VTKFile type=\"UnstructuredGrid\" version=\"0.1\" byte_order=\"LittleEndian\">\n";
         f << "<UnstructuredGrid>\n";
@@ -346,7 +352,8 @@ private:
           << "\" NumberOfCells=\"" << numOwnedElem << "\">\n";
 
         // Points
-        f << "<Points>\n<DataArray type=\"Float32\" NumberOfComponents=\"3\" format=\"ascii\">\n";
+        f << "<Points>\n<DataArray type=\"" << (full_precision_ ? "Float64" : "Float32")
+          << "\" NumberOfComponents=\"3\" format=\"ascii\">\n";
         for (size_t i = 0; i < numWrittenNodes; ++i) {
             int n = compact[i];
             f << hx[n] << " " << hy[n] << " " << hz[n] << "\n";
@@ -389,7 +396,8 @@ private:
                 for (size_t i = 0; i < numWrittenNodes; ++i) f << hf.x[compact[i]] << "\n";
                 f << "</DataArray>\n";
             } else if (hf.desc->kind == K::PointVector3) {
-                f << "<DataArray type=\"Float32\" Name=\"" << hf.desc->name
+                f << "<DataArray type=\"" << (full_precision_ ? "Float64" : "Float32")
+                  << "\" Name=\"" << hf.desc->name
                   << "\" NumberOfComponents=\"3\" format=\"ascii\">\n";
                 for (size_t i = 0; i < numWrittenNodes; ++i) {
                     int n = compact[i];
@@ -435,7 +443,8 @@ private:
         f << "<?xml version=\"1.0\"?>\n";
         f << "<VTKFile type=\"PUnstructuredGrid\" version=\"0.1\" byte_order=\"LittleEndian\">\n";
         f << "<PUnstructuredGrid GhostLevel=\"0\">\n";
-        f << "<PPoints>\n<PDataArray type=\"Float32\" NumberOfComponents=\"3\"/>\n</PPoints>\n";
+        f << "<PPoints>\n<PDataArray type=\"" << (full_precision_ ? "Float64" : "Float32")
+          << "\" NumberOfComponents=\"3\"/>\n</PPoints>\n";
 
         std::string scalarsAttr, vectorsAttr, cellScalarsAttr;
         for (const auto& fd : fields) {
@@ -451,9 +460,11 @@ private:
         for (const auto& fd : fields) {
             using K = typename FieldDesc::Kind;
             if (fd.kind == K::PointScalar)
-                f << "<PDataArray type=\"Float32\" Name=\"" << fd.name << "\"/>\n";
+                f << "<PDataArray type=\"" << (full_precision_ ? "Float64" : "Float32")
+                  << "\" Name=\"" << fd.name << "\"/>\n";
             else if (fd.kind == K::PointVector3)
-                f << "<PDataArray type=\"Float32\" Name=\"" << fd.name
+                f << "<PDataArray type=\"" << (full_precision_ ? "Float64" : "Float32")
+                  << "\" Name=\"" << fd.name
                   << "\" NumberOfComponents=\"3\"/>\n";
         }
         f << "</PPointData>\n";
@@ -464,7 +475,8 @@ private:
         for (const auto& fd : fields) {
             using K = typename FieldDesc::Kind;
             if (fd.kind == K::CellScalar)
-                f << "<PDataArray type=\"Float32\" Name=\"" << fd.name << "\"/>\n";
+                f << "<PDataArray type=\"" << (full_precision_ ? "Float64" : "Float32")
+                  << "\" Name=\"" << fd.name << "\"/>\n";
         }
         f << "</PCellData>\n";
 
@@ -550,6 +562,7 @@ private:
 
         std::ofstream f(pvdName(prefix_), std::ios::trunc);
         if (!f) throw std::runtime_error("Cannot open " + pvdName(prefix_));
+        if (full_precision_) f << std::setprecision(std::numeric_limits<double>::max_digits10);
         f << "<?xml version=\"1.0\"?>\n";
         f << "<VTKFile type=\"Collection\" version=\"0.1\" byte_order=\"LittleEndian\">\n";
         f << "<Collection>\n";

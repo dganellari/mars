@@ -256,19 +256,19 @@ target_include_directories(mars_poiseuille_flow PRIVATE
 install(TARGETS mars_poiseuille_flow RUNTIME DESTINATION bin/examples)
 
 # Long-running GPU regression: converge the channel to the analytic parabola
-# and fail if the profile RMS or the interior through-flow drifts. 1500 steps took
-# 60 min on one GH200 at v0.1.0, so it is opt-in (-DMARS_ENABLE_VALIDATION_TESTS=ON) and a plain
-# `ctest` never runs it; then run it via `ctest -L validation`.
+# and check profile, through-flow, continuity and final velocity change.
+# The stretched mesh needs thousands of pressure iterations per step. Keep this
+# opt-in and allow four hours; execute it only in a GPU allocation.
 if(MARS_ENABLE_TESTS AND MARS_ENABLE_VALIDATION_TESTS)
     add_test(NAME marsPoiseuilleValidation
              COMMAND mars_poiseuille_flow
                      --mesh=${CMAKE_SOURCE_DIR}/tests/data/poiseuille/poiseuille_hex_14k_elem.e
-                     --uinf=1.0 --nu=0.01 --dt=0.01 --tol=1e-6 --max-iter=4000
+                     --planar-ddt --uinf=1.0 --nu=0.01 --dt=0.01 --tol=1e-6 --max-iter=8000
                      --num-steps=1500 --check)
     set_tests_properties(marsPoiseuilleValidation PROPERTIES
-        TIMEOUT 7200
+        TIMEOUT 14400
         LABELS "validation;gpu;long"
-        ENVIRONMENT "MARS_NODEHALO_V2=1")
+        ENVIRONMENT "MARS_NS_DEBUG_STEPS=3;MARS_DDT_CG_PRINT_EVERY=1000")
 endif()
 
 # Taylor-Green vortex driver. Periodic-cube NS solver + AMR. Currently a

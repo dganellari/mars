@@ -46,6 +46,9 @@ the cornerstone-octree library.
   solver clips its Jacobi diagonal on the GPU instead of copying it to the host every solve.
 - The Poiseuille tutorial mesh ships in `tests/data/poiseuille/`; its validation run is
   opt-in with `-DMARS_ENABLE_VALIDATION_TESTS=ON`.
+- The Poiseuille `--planar-ddt` path uses consistent constrained pressure gradients,
+  BDF scaling, inlet diffusion lift and opening fluxes. The long regression checks
+  the steady profile and conservation; its full CUDA validation is still pending.
 
 ### Experimental
 - High-order matrix-free CVFEM operators (p ≥ 2), with DOF numbering on the device.
