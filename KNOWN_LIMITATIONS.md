@@ -46,9 +46,8 @@ including element numberings that are not aligned with the coordinate axes.
   search is widened by 1.5. That width is an empirical choice, not a guarantee; `MARS_ROW_DUMP` plus
   `tests/release/compare_rows.py` checks a mesh directly. `MARS_OWNERSHIP=vote` selects the previous scheme for
   every mesh.
-- **Example-level restrictions.** `mars_cvfem_poisson` is single-rank and refuses more ranks.
-  `mars_ex1_poisson` applies u = 0 on the faces of the mesh's bounding box, so it is correct for
-  box-shaped domains only. `mars_ex_beam_tet` and `mars_ex_beam_tet_distributed` are single-rank:
+- **Example-level restrictions.** `mars_cvfem_poisson` and `mars_ex1_poisson` apply u = 0 on the
+  faces of the mesh's bounding box, so they are correct for box-shaped domains only. `mars_ex_beam_tet` and `mars_ex_beam_tet_distributed` are single-rank:
   their DOF handler (`UnstructuredDofHandler`) chooses node owners with its own rule, not the
   domain's. Multi-rank drivers number DOFs with `buildDofMappingGpu` from the domain's ownership,
   as `mars_ex1_poisson` and the Navier–Stokes solvers do.

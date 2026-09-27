@@ -40,6 +40,10 @@ the cornerstone-octree library.
   rows on more than one rank. The P1 tet assemblers now loop over every element a rank holds, halo
   elements included, and keep the ghost columns of owned rows; they used to drop both, which on more
   than one rank decoupled the ranks.
+- `mars_cvfem_poisson` builds its DOF numbering, sparsity, boundary conditions and statistics on the
+  GPU and runs on any number of ranks; before, it built them on the host, ran on one rank only, and
+  handed the assembly kernels a host pointer that only unified-memory systems could read. The CG
+  solver clips its Jacobi diagonal on the GPU instead of copying it to the host every solve.
 - The Poiseuille tutorial mesh ships in `tests/data/poiseuille/`; its validation run is
   opt-in with `-DMARS_ENABLE_VALIDATION_TESTS=ON`.
 

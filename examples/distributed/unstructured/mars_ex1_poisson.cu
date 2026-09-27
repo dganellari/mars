@@ -12,7 +12,6 @@
 #include "backend/distributed/unstructured/domain.hpp"
 #include "backend/distributed/unstructured/fem/mars_fem.hpp"
 #include "backend/distributed/unstructured/solvers/mars_cg_solver.hpp"
-#include <thrust/copy.h>
 #include <thrust/fill.h>
 #include <thrust/for_each.h>
 #include <thrust/functional.h>
@@ -134,11 +133,6 @@ int main(int argc, char* argv[]) {
         long numGlobalDofs = numOwnedDofs;
         MPI_Allreduce(MPI_IN_PLACE, &numGlobalDofs, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
 
-        // The P1 assemblers take the numbering on the host
-        std::vector<int> h_nodeToDof(nodeCount);
-        cudaMemcpy(h_nodeToDof.data(), d_nodeToDof.data(), nodeCount * sizeof(int), cudaMemcpyDeviceToHost);
-        std::vector<uint64_t> nodeToLocalDof(h_nodeToDof.begin(), h_nodeToDof.end());
-
         auto t_fes_end = std::chrono::high_resolution_clock::now();
         double t_fes = std::chrono::duration<double>(t_fes_end - t_fes_start).count();
 
@@ -163,19 +157,15 @@ int main(int argc, char* argv[]) {
         if (rank == 0) std::cout << "4. Assembling stiffness matrix...\n";
         auto t_stiff_start = std::chrono::high_resolution_clock::now();
 
-        TetSparseMatrix<float, uint64_t> K;
-        stiffnessAssembler.assemble(fes, K, nodeToLocalDof);
-        if (K.numRows() != uint64_t(numOwnedDofs)) {
-            throw std::runtime_error("stiffness rows (" + std::to_string(K.numRows()) +
-                                     ") differ from owned DOFs (" + std::to_string(numOwnedDofs) + ")");
-        }
+        SparseMatrix<int, float, cstone::GpuTag> A;
+        stiffnessAssembler.assemble(domain, A, d_nodeToDof.data(), numOwnedDofs);
 
         auto t_stiff_end = std::chrono::high_resolution_clock::now();
         double t_stiff = std::chrono::duration<double>(t_stiff_end - t_stiff_start).count();
 
         if (rank == 0) {
             std::cout << "   Stiffness matrix assembled in " << t_stiff << " seconds\n"
-                      << "   Rank 0 rows: " << K.numRows() << ", non-zeros: " << K.nnz() << "\n\n";
+                      << "   Rank 0 rows: " << A.numRows() << ", non-zeros: " << A.nnz() << "\n\n";
         }
 
         // =====================================================
@@ -186,9 +176,7 @@ int main(int argc, char* argv[]) {
 
         TetMassAssembler<float, uint64_t> massAssembler;
         cstone::DeviceVector<float> b(numOwnedDofs);
-        massAssembler.assembleRHS(fes, b, SourceTerm{}, nodeToLocalDof, uint64_t(numOwnedDofs));
-        // assembleRHS sizes an empty vector to the FE space
-        b.resize(numOwnedDofs);
+        massAssembler.assembleRHS(domain, b, SourceTerm{}, d_nodeToDof.data(), numOwnedDofs);
 
         auto t_rhs_end = std::chrono::high_resolution_clock::now();
         double t_rhs = std::chrono::duration<double>(t_rhs_end - t_rhs_start).count();
@@ -237,13 +225,6 @@ int main(int argc, char* argv[]) {
                              });
         }
 
-        // CG takes 32-bit CSR indices
-        uint64_t nnz = K.nnz();
-        SparseMatrix<int, float, cstone::GpuTag> A;
-        A.allocate(numOwnedDofs, int(nodeCount), int(nnz));
-        thrust::copy(thrust::device, K.rowOffsetsPtr(), K.rowOffsetsPtr() + numOwnedDofs + 1, A.rowOffsetsPtr());
-        thrust::copy(thrust::device, K.colIndicesPtr(), K.colIndicesPtr() + nnz, A.colIndicesPtr());
-        thrust::copy(thrust::device, K.valuesPtr(), K.valuesPtr() + nnz, A.valuesPtr());
         {
             const int* rowPtr         = A.rowOffsetsPtr();
             const int* colInd         = A.colIndicesPtr();

@@ -135,7 +135,8 @@ __global__ void assembleMassKernel(const RealType* node_x,
 
 // CUDA kernel for RHS vector assembly
 // Computes b_i = ∫ f φ_i dV where f is source term
-template<typename ElementTag, typename RealType, typename IndexType, typename SourceFunc>
+// IndexType indexes elements and nodes, DofIndex the DOFs (int for buildDofMappingGpu)
+template<typename ElementTag, typename RealType, typename IndexType, typename SourceFunc, typename DofIndex>
 __global__ void assembleRHSKernel(const RealType* node_x,
                                   const RealType* node_y,
                                   const RealType* node_z,
@@ -150,8 +151,8 @@ __global__ void assembleRHSKernel(const RealType* node_x,
                                   IndexType numElements,
                                   SourceFunc sourceTerm,
                                   RealType* rhs,
-                                  const IndexType* nodeToDof,
-                                  IndexType numOwnedDofs)
+                                  const DofIndex* nodeToDof,
+                                  DofIndex numOwnedDofs)
 {
     using RefElem = ReferenceElement<ElementTag, RealType>;
 
@@ -171,7 +172,7 @@ __global__ void assembleRHSKernel(const RealType* node_x,
     if constexpr (NodesPerElem > 7) nodes[7] = conn7[elemIdx];
     
     // Map nodes to local DOF indices (includes ghosts)
-    IndexType dofs[NodesPerElem > 8 ? NodesPerElem : 8];
+    DofIndex dofs[NodesPerElem > 8 ? NodesPerElem : 8];
     for (int i = 0; i < RefElem::numNodes; ++i) {
         dofs[i] = nodeToDof[nodes[i]];
     }
@@ -249,7 +250,7 @@ __global__ void assembleRHSKernel(const RealType* node_x,
     // Assemble into global vector (atomic add)
     for (int i = 0; i < RefElem::numNodes; ++i)
     {
-        IndexType dofIdx = dofs[i];
+        DofIndex dofIdx = dofs[i];
         // Only add to owned DOFs (ghost DOFs are handled by their owner rank)
         if (dofIdx < numOwnedDofs) {
             atomicAdd(&rhs[dofIdx], localB[i]);
@@ -357,20 +358,25 @@ public:
     template<typename SourceFunc>
     void assembleRHS(FESpace& fes, Vector& b, SourceFunc f, const std::vector<KeyType>& nodeToDof, KeyType numOwnedDofs)
     {
-        auto& domain = fes.domain();
-
         // NOTE: For distributed assembly, the caller should pre-size b to include ghosts (owned+ghost DOFs)
         // We only resize if the vector is empty (backward compatibility with serial code)
         if (b.size() == 0) {
             size_t numDofs = fes.numDofs();
             b.resize(numDofs);
         }
-        
-        // Zero the vector
+        cstone::DeviceVector<KeyType> d_nodeToDof = nodeToDof;
+        assembleRHS(fes.domain(), b, f, d_nodeToDof.data(), numOwnedDofs);
+    }
+
+    // Device DOF map (e.g. buildDofMappingGpu). b is zeroed and grown to the owned DOFs if shorter; every
+    // element the rank holds contributes, halos included, so owned entries get their whole star.
+    template<typename SourceFunc, typename DofIndex>
+    void assembleRHS(const Domain& domain, Vector& b, SourceFunc f, const DofIndex* d_nodeToDof, DofIndex numOwnedDofs)
+    {
+        if (b.size() < size_t(numOwnedDofs)) b.resize(numOwnedDofs);
         thrust::fill(thrust::device_pointer_cast(b.data()), thrust::device_pointer_cast(b.data() + b.size()),
                      RealType(0));
 
-        // Get mesh data
         const auto& d_x = domain.getNodeX();
         const auto& d_y = domain.getNodeY();
         const auto& d_z = domain.getNodeZ();
@@ -380,53 +386,28 @@ public:
         const auto& conn1      = std::get<1>(conn_tuple);
         const auto& conn2      = std::get<2>(conn_tuple);
         const auto& conn3      = std::get<3>(conn_tuple);
-        
+
         constexpr int NodesPerElem = ElementTag::NodesPerElement;
-        const KeyType* conn4_ptr;
-        const KeyType* conn5_ptr;
-        const KeyType* conn6_ptr;
-        const KeyType* conn7_ptr;
+        const KeyType* conn4_ptr   = nullptr;
+        const KeyType* conn5_ptr   = nullptr;
+        const KeyType* conn6_ptr   = nullptr;
+        const KeyType* conn7_ptr   = nullptr;
+        if constexpr (NodesPerElem > 4) conn4_ptr = std::get<4>(conn_tuple).data();
+        if constexpr (NodesPerElem > 5) conn5_ptr = std::get<5>(conn_tuple).data();
+        if constexpr (NodesPerElem > 6) conn6_ptr = std::get<6>(conn_tuple).data();
+        if constexpr (NodesPerElem > 7) conn7_ptr = std::get<7>(conn_tuple).data();
 
-        if constexpr (NodesPerElem > 4) {
-            conn4_ptr = std::get<4>(conn_tuple).data();
-        } else {
-            conn4_ptr = nullptr;
-        }
-
-        if constexpr (NodesPerElem > 5) {
-            conn5_ptr = std::get<5>(conn_tuple).data();
-        } else {
-            conn5_ptr = nullptr;
-        }
-
-        if constexpr (NodesPerElem > 6) {
-            conn6_ptr = std::get<6>(conn_tuple).data();
-        } else {
-            conn6_ptr = nullptr;
-        }
-
-        if constexpr (NodesPerElem > 7) {
-            conn7_ptr = std::get<7>(conn_tuple).data();
-        } else {
-            conn7_ptr = nullptr;
-        }
-
-        // all elements the rank holds, halos included: owned rows need their whole star
         size_t numElements = domain.getElementCount();
-        
-        // Use provided node-to-DOF mapping
-        cstone::DeviceVector<KeyType> d_nodeToDof = nodeToDof;
-
-        // Launch kernel
         const int blockSize = 256;
-        const int gridSize  = (numElements + blockSize - 1) / blockSize;
-
-        assembleRHSKernel<ElementTag, RealType, KeyType>
-            <<<gridSize, blockSize>>>(d_x.data(), d_y.data(), d_z.data(), 
-                                      conn0.data(), conn1.data(), conn2.data(), conn3.data(),
-                                      conn4_ptr, conn5_ptr, conn6_ptr, conn7_ptr,
-                                      numElements, f, thrust::raw_pointer_cast(b.data()), d_nodeToDof.data(), numOwnedDofs);
-
+        const int gridSize  = int((numElements + blockSize - 1) / blockSize);
+        if (gridSize > 0) {
+            assembleRHSKernel<ElementTag, RealType, KeyType>
+                <<<gridSize, blockSize>>>(d_x.data(), d_y.data(), d_z.data(),
+                                          conn0.data(), conn1.data(), conn2.data(), conn3.data(),
+                                          conn4_ptr, conn5_ptr, conn6_ptr, conn7_ptr,
+                                          KeyType(numElements), f, thrust::raw_pointer_cast(b.data()), d_nodeToDof,
+                                          numOwnedDofs);
+        }
         cudaDeviceSynchronize();
     }
 };

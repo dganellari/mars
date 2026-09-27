@@ -1,6 +1,7 @@
 #pragma once
 
 #include "mars_sparse_matrix.hpp"
+#include "mars_sparsity_builder.hpp"
 #include "mars_h1_fe_space.hpp"
 #include "mars_reference_element.hpp"
 #include <thrust/fill.h>
@@ -9,6 +10,9 @@
 #include <vector>
 #include <unordered_set>
 #include <algorithm>
+#include <stdexcept>
+#include <string>
+#include <type_traits>
 
 namespace mars {
 namespace fem {
@@ -64,7 +68,8 @@ __global__ void checkMeshQualityKernel(
 
 // CUDA kernel for stiffness matrix assembly
 // Computes local element stiffness matrices and atomically adds to global matrix
-template<typename ElementTag, typename RealType, typename IndexType>
+// IndexType indexes elements and nodes, DofIndex the DOFs and the CSR (int for buildDofMappingGpu)
+template<typename ElementTag, typename RealType, typename IndexType, typename DofIndex = IndexType>
 __global__ void assembleStiffnessKernel(
     const RealType* node_x,
     const RealType* node_y,
@@ -75,11 +80,11 @@ __global__ void assembleStiffnessKernel(
     const IndexType* conn3,  // Connectivity node 3
     IndexType elementStart,           // Start of local element range
     IndexType elementEnd,             // End of local element range  
-    IndexType numDofs,                // Number of owned DOFs (for square matrix)
-    const IndexType* rowOffsets,      // CSR row pointers (local DOF indexing)
-    const IndexType* colIndices,      // CSR column indices (local DOF indexing)
+    DofIndex numDofs,                 // Number of owned DOFs (for square matrix)
+    const DofIndex* rowOffsets,       // CSR row pointers (local DOF indexing)
+    const DofIndex* colIndices,       // CSR column indices (local DOF indexing)
     RealType* values,                 // CSR values (output)
-    const IndexType* nodeToLocalDof,  // Node to local DOF mapping (includes ghosts)
+    const DofIndex* nodeToLocalDof,   // Node to local DOF mapping (includes ghosts)
     const uint8_t* nodeOwnership      // Node ownership (0=ghost, 1=owned, 2=shared)
 )
 {
@@ -106,7 +111,7 @@ __global__ void assembleStiffnessKernel(
     if (!hasOwnedNode) return;  // Skip elements with no owned/shared nodes
     
     // Map nodes to local DOF indices (includes both owned and ghost DOFs)
-    IndexType localDofs[4];
+    DofIndex localDofs[4];
     for (int i = 0; i < 4; ++i) {
         localDofs[i] = nodeToLocalDof[nodes[i]];
     }
@@ -186,12 +191,12 @@ __global__ void assembleStiffnessKernel(
         // Skip if this node is not owned or shared (must be state 1 or 2)
         if (nodeOwnership[nodes[i]] != 1 && nodeOwnership[nodes[i]] != 2) continue;
         
-        IndexType localRow = localDofs[i];     // Local row index (owned DOF)
-        IndexType rowStart = rowOffsets[localRow];
-        IndexType rowEnd = rowOffsets[localRow + 1];
+        DofIndex localRow = localDofs[i];     // Local row index (owned DOF)
+        DofIndex rowStart = rowOffsets[localRow];
+        DofIndex rowEnd = rowOffsets[localRow + 1];
         
         for (int j = 0; j < RefElem::numNodes; ++j) {
-            IndexType localCol = localDofs[j];
+            DofIndex localCol = localDofs[j];
             
             // Include all columns (owned + ghost) for distributed matrix
             // Hypre will handle off-diagonal blocks automatically
@@ -221,7 +226,48 @@ public:
     using FESpace = H1FESpace<ElementTag, RealType, KeyType, AcceleratorTag>;
     using Matrix = SparseMatrix<KeyType, RealType, AcceleratorTag>;
     using Domain = typename FESpace::Domain;
-    
+    using DeviceMatrix = SparseMatrix<int, RealType, AcceleratorTag>;
+
+    // Device path for a DOF map from buildDofMappingGpu (owned DOFs first, then ghosts): the owned-row
+    // sparsity is built on the device and every element the rank holds is assembled into it.
+    void assemble(const Domain& domain, DeviceMatrix& K, const int* d_nodeToDof, int numOwnedDofs) {
+        static_assert(std::is_same_v<ElementTag, TetTag>, "the device sparsity builder is for tetrahedra");
+        const auto& conn   = domain.getElementToNodeConnectivity();
+        size_t numElements = domain.getElementCount();
+        int numNodes       = int(domain.getNodeCount());
+
+        // Rows for every local DOF; the owned ones come first and are the only ones kept.
+        // 16 pairs per element bound the column count, so one pass of the builder is enough.
+        cstone::DeviceVector<int> d_rowPtr(numNodes + 1);
+        cstone::DeviceVector<int> d_colInd(numElements * 16);
+        CvfemTetSparsityBuilder<KeyType>::buildFullSparsity(std::get<0>(conn).data(), std::get<1>(conn).data(),
+                                                            std::get<2>(conn).data(), std::get<3>(conn).data(),
+                                                            numElements, d_nodeToDof, numNodes, d_rowPtr.data(),
+                                                            d_colInd.data());
+        int nnz = 0;
+        cudaMemcpy(&nnz, d_rowPtr.data() + numOwnedDofs, sizeof(int), cudaMemcpyDeviceToHost);
+
+        K.allocate(numOwnedDofs, numNodes, nnz);
+        cudaMemcpy(K.rowOffsetsPtr(), d_rowPtr.data(), (numOwnedDofs + 1) * sizeof(int), cudaMemcpyDeviceToDevice);
+        cudaMemcpy(K.colIndicesPtr(), d_colInd.data(), size_t(nnz) * sizeof(int), cudaMemcpyDeviceToDevice);
+        K.zero();
+
+        const int blockSize = 256;
+        const int gridSize  = int((numElements + blockSize - 1) / blockSize);
+        if (gridSize > 0) {
+            assembleStiffnessKernel<ElementTag, RealType, KeyType, int><<<gridSize, blockSize>>>(
+                domain.getNodeX().data(), domain.getNodeY().data(), domain.getNodeZ().data(),
+                std::get<0>(conn).data(), std::get<1>(conn).data(), std::get<2>(conn).data(),
+                std::get<3>(conn).data(), KeyType(0), KeyType(numElements), numOwnedDofs, K.rowOffsetsPtr(),
+                K.colIndicesPtr(), K.valuesPtr(), d_nodeToDof, domain.getNodeOwnershipMap().data());
+        }
+        cudaDeviceSynchronize();
+        cudaError_t err = cudaGetLastError();
+        if (err != cudaSuccess) {
+            throw std::runtime_error(std::string("CUDA error in stiffness assembly: ") + cudaGetErrorString(err));
+        }
+    }
+
     void assemble(FESpace& fes, Matrix& K, const std::vector<KeyType>& nodeToLocalDof) {
         // Use domain's ownership (original behavior)
         auto& domain = fes.domain();

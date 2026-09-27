@@ -69,7 +69,7 @@ add_test(NAME marsReleaseTetAssembly
          COMMAND ${_rel_check} --rows=${_rel_rows}/tet --
                  $<TARGET_FILE:mars_cvfem_graph_tet> --mesh=${_rel_tet} --iterations=1 --quiet)
 
-# --- solve: CVFEM Poisson (single-rank driver), -Δu = 1 on the unit cube, u = 0 on the boundary ---
+# --- solve: CVFEM Poisson, -Δu = 1 on the unit cube, u = 0 on the boundary, 1 and N ranks ---------
 # Exact centre value 0.05621; the discrete maximum on the 16^3 mesh must be within 5% of it.
 add_test(NAME marsReleasePoisson
          COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/release/check_value.py
@@ -81,6 +81,11 @@ add_test(NAME marsReleasePoissonCycled
                  "--regex=Max:\\s*([-+0-9.eE]+)" --lo 0.0534 --hi 0.0590 --
                  ${_rel_mpi} 1 ${MPIEXEC_PREFLAGS} $<TARGET_FILE:mars_cvfem_poisson> ${MPIEXEC_POSTFLAGS}
                  --mesh=${_rel_hexc})
+add_test(NAME marsReleasePoisson_np${_rel_np}
+         COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/release/check_value.py
+                 "--regex=Max:\\s*([-+0-9.eE]+)" --lo 0.0534 --hi 0.0590 --
+                 ${_rel_mpi} ${_rel_np} ${MPIEXEC_PREFLAGS} $<TARGET_FILE:mars_cvfem_poisson> ${MPIEXEC_POSTFLAGS}
+                 --mesh=${_rel_hex})
 
 # Galerkin P1 Poisson example on the tet cube, 1 and N ranks: same band (exact max 0.05621)
 foreach(_np 1 ${_rel_np})

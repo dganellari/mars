@@ -16,7 +16,8 @@
 #include <thrust/execution_policy.h>
 #include <thrust/iterator/counting_iterator.h>
 #include <thrust/for_each.h>
-#include <set>
+#include <algorithm>
+#include <limits>
 #include <mpi.h>
 #include <iomanip>
 #include <chrono>
@@ -76,15 +77,6 @@ int main(int argc, char** argv) {
     if (deviceCount > 0) {
         int device = rank % deviceCount;
         cudaSetDevice(device);
-    }
-
-    // Ghost nodes get no DOF and the CG solve has no halo exchange, so on >1 rank each rank would
-    // silently solve its own disconnected block. Refuse until the distributed coupling exists.
-    if (numRanks > 1) {
-        if (rank == 0)
-            std::cerr << "Error: mars_cvfem_poisson is single-rank only (run with 1 MPI rank).\n";
-        MPI_Finalize();
-        return 1;
     }
 
     // Parse command-line options
@@ -153,7 +145,6 @@ int main(int argc, char** argv) {
     // Load mesh and create domain
     ElementDomain<ElemTag, RealType, KeyType, cstone::GpuTag> domain(meshFile, rank, numRanks, true);
     const auto& d_nodeOwnership = domain.getNodeOwnershipMap();
-    cudaDeviceSynchronize();
 
     size_t nodeCount = domain.getNodeCount();
     size_t elementCount = domain.getElementCount();
@@ -164,117 +155,57 @@ int main(int argc, char** argv) {
     const auto& d_z = domain.getNodeZ();
 
     if (rank == 0) {
-        std::cout << "Mesh loaded:\n";
+        std::cout << "Mesh loaded (rank 0):\n";
         std::cout << "  Nodes:    " << nodeCount << "\n";
         std::cout << "  Elements: " << elementCount << "\n\n";
     }
 
-    // Create node-to-DOF mapping (1 DOF per node for scalar Poisson)
-    // DOFs are numbered only for owned nodes
-    std::vector<int> h_node_to_dof(nodeCount, -1);
-    std::vector<uint8_t> h_ownership(nodeCount);
-    cudaMemcpy(h_ownership.data(), d_nodeOwnership.data(), nodeCount * sizeof(uint8_t), cudaMemcpyDeviceToHost);
-
-    int numOwnedDofs = 0;
-    for (size_t i = 0; i < nodeCount; ++i) {
-        if (h_ownership[i] == 1) {
-            h_node_to_dof[i] = numOwnedDofs++;
-        }
-    }
-
+    // Owned nodes first, then ghosts, from the domain's node ownership (as the Navier-Stokes solvers)
     cstone::DeviceVector<int> d_node_to_dof(nodeCount);
-    cudaMemcpy(d_node_to_dof.data(), h_node_to_dof.data(), nodeCount * sizeof(int), cudaMemcpyHostToDevice);
+    int numOwnedDofs = buildDofMappingGpu<KeyType>(d_nodeOwnership.data(), d_node_to_dof.data(), nodeCount);
+    int numTotalDofs = int(nodeCount);
+    long numGlobalDofs = numOwnedDofs;
+    MPI_Allreduce(MPI_IN_PLACE, &numGlobalDofs, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
 
     if (rank == 0) {
         std::cout << "DOF mapping:\n";
-        std::cout << "  Owned DOFs: " << numOwnedDofs << "\n\n";
+        std::cout << "  Global DOFs: " << numGlobalDofs << "\n\n";
     }
 
-    // Build sparsity pattern (full 8×8 connectivity for hex8)
-    std::vector<KeyType> h_conn0(elementCount), h_conn1(elementCount), h_conn2(elementCount), h_conn3(elementCount);
-    std::vector<KeyType> h_conn4(elementCount), h_conn5(elementCount), h_conn6(elementCount), h_conn7(elementCount);
+    // Full 8x8 sparsity for every local DOF, ghost columns included; the owned rows come first
+    cstone::DeviceVector<int> d_rowPtr(numTotalDofs + 1);
+    cstone::DeviceVector<int> d_diagPtr(numTotalDofs);
+    int nnzAll = CvfemSparsityBuilder<KeyType>::buildFullSparsity(
+        std::get<0>(d_conn).data(), std::get<1>(d_conn).data(), std::get<2>(d_conn).data(),
+        std::get<3>(d_conn).data(), std::get<4>(d_conn).data(), std::get<5>(d_conn).data(),
+        std::get<6>(d_conn).data(), std::get<7>(d_conn).data(), elementCount, d_node_to_dof.data(), numTotalDofs,
+        d_rowPtr.data(), nullptr, nullptr, 0);
+    cstone::DeviceVector<int> d_colInd(nnzAll);
+    CvfemSparsityBuilder<KeyType>::buildFullSparsity(
+        std::get<0>(d_conn).data(), std::get<1>(d_conn).data(), std::get<2>(d_conn).data(),
+        std::get<3>(d_conn).data(), std::get<4>(d_conn).data(), std::get<5>(d_conn).data(),
+        std::get<6>(d_conn).data(), std::get<7>(d_conn).data(), elementCount, d_node_to_dof.data(), numTotalDofs,
+        d_rowPtr.data(), d_colInd.data(), d_diagPtr.data(), 0);
+    int nnz = 0;  // owned rows only
+    cudaMemcpy(&nnz, d_rowPtr.data() + numOwnedDofs, sizeof(int), cudaMemcpyDeviceToHost);
 
-    cudaMemcpy(h_conn0.data(), std::get<0>(d_conn).data(), elementCount * sizeof(KeyType), cudaMemcpyDeviceToHost);
-    cudaMemcpy(h_conn1.data(), std::get<1>(d_conn).data(), elementCount * sizeof(KeyType), cudaMemcpyDeviceToHost);
-    cudaMemcpy(h_conn2.data(), std::get<2>(d_conn).data(), elementCount * sizeof(KeyType), cudaMemcpyDeviceToHost);
-    cudaMemcpy(h_conn3.data(), std::get<3>(d_conn).data(), elementCount * sizeof(KeyType), cudaMemcpyDeviceToHost);
-    cudaMemcpy(h_conn4.data(), std::get<4>(d_conn).data(), elementCount * sizeof(KeyType), cudaMemcpyDeviceToHost);
-    cudaMemcpy(h_conn5.data(), std::get<5>(d_conn).data(), elementCount * sizeof(KeyType), cudaMemcpyDeviceToHost);
-    cudaMemcpy(h_conn6.data(), std::get<6>(d_conn).data(), elementCount * sizeof(KeyType), cudaMemcpyDeviceToHost);
-    cudaMemcpy(h_conn7.data(), std::get<7>(d_conn).data(), elementCount * sizeof(KeyType), cudaMemcpyDeviceToHost);
-
-    // Build adjacency for owned DOFs
-    std::vector<std::set<int>> adj(numOwnedDofs);
-    for (size_t e = 0; e < elementCount; ++e) {
-        KeyType nodes[8] = {h_conn0[e], h_conn1[e], h_conn2[e], h_conn3[e],
-                            h_conn4[e], h_conn5[e], h_conn6[e], h_conn7[e]};
-        int dofs[8];
-        for (int i = 0; i < 8; ++i) {
-            dofs[i] = h_node_to_dof[nodes[i]];
-        }
-        // Add edges for owned DOFs
-        for (int i = 0; i < 8; ++i) {
-            if (dofs[i] >= 0 && h_ownership[nodes[i]] == 1) {
-                for (int j = 0; j < 8; ++j) {
-                    if (dofs[j] >= 0) {
-                        adj[dofs[i]].insert(dofs[j]);
-                    }
-                }
-            }
-        }
-    }
-
-    // Build CSR matrix
-    std::vector<int> rowPtr(numOwnedDofs + 1);
-    std::vector<int> colInd;
-    std::vector<int> diagPtr(numOwnedDofs);
-
-    rowPtr[0] = 0;
-    for (int d = 0; d < numOwnedDofs; ++d) {
-        int diagFound = -1;
-        for (int col : adj[d]) {
-            if (col == d) {
-                diagFound = colInd.size();
-            }
-            colInd.push_back(col);
-        }
-        diagPtr[d] = diagFound;
-        rowPtr[d + 1] = colInd.size();
-    }
-
-    int nnz = colInd.size();
     if (rank == 0) {
-        std::cout << "Sparsity pattern:\n";
+        std::cout << "Sparsity pattern (rank 0 owned rows):\n";
         std::cout << "  NNZ: " << nnz << "\n";
-        std::cout << "  Avg NNZ/row: " << (double)nnz / numOwnedDofs << "\n\n";
+        std::cout << "  Avg NNZ/row: " << (double)nnz / std::max(numOwnedDofs, 1) << "\n\n";
     }
 
-    // Allocate matrix using SparseMatrix class
-    using Matrix = SparseMatrix<int, RealType, cstone::GpuTag>;
-    Matrix A;
-    A.allocate(numOwnedDofs, numOwnedDofs, nnz);
+    cstone::DeviceVector<RealType> d_values(nnzAll, RealType(0));
+    cstone::DeviceVector<RealType> d_rhs(numTotalDofs, RealType(0));
 
-    // Copy sparsity pattern
-    thrust::copy(rowPtr.begin(), rowPtr.end(),
-                 thrust::device_pointer_cast(A.rowOffsetsPtr()));
-    thrust::copy(colInd.begin(), colInd.end(),
-                 thrust::device_pointer_cast(A.colIndicesPtr()));
-    thrust::fill(thrust::device_pointer_cast(A.valuesPtr()),
-                 thrust::device_pointer_cast(A.valuesPtr() + nnz),
-                 RealType(0));
-
-    // Create temporary CSRMatrix for assembly (CVFEM kernels need this format)
-    cstone::DeviceVector<int> d_diagPtr(numOwnedDofs);
-    cudaMemcpy(d_diagPtr.data(), diagPtr.data(), numOwnedDofs * sizeof(int), cudaMemcpyHostToDevice);
-    CSRMatrix<RealType> assemblyMatrix;
-    assemblyMatrix.numRows = numOwnedDofs;
-    assemblyMatrix.nnz = nnz;
-    assemblyMatrix.rowPtr = A.rowOffsetsPtr();
-    assemblyMatrix.colInd = A.colIndicesPtr();
-    assemblyMatrix.values = A.valuesPtr();
-    assemblyMatrix.diagPtr = d_diagPtr.data();
-
-    cstone::DeviceVector<RealType> d_rhs(numOwnedDofs, 0.0);
+    // The assembly kernels read the matrix descriptor on the device; ghost rows exist only so ghost
+    // columns are addressable and are skipped
+    CSRMatrix<RealType> h_matrix{d_rowPtr.data(), d_colInd.data(), d_values.data(), d_diagPtr.data(),
+                                 numTotalDofs, nnzAll};
+    h_matrix.numOwnedRows = numOwnedDofs;
+    CSRMatrix<RealType>* d_matrix = nullptr;
+    cudaMalloc(&d_matrix, sizeof(CSRMatrix<RealType>));
+    cudaMemcpy(d_matrix, &h_matrix, sizeof(CSRMatrix<RealType>), cudaMemcpyHostToDevice);
 
     // Initialize fields for CVFEM assembly
     // For Poisson equation: -Δu = f
@@ -330,17 +261,19 @@ int main(int argc, char** argv) {
         d_areaVec_x.data(), d_areaVec_y.data(), d_areaVec_z.data(),
         d_node_to_dof.data(),
         d_nodeOwnership.data(),
-        &assemblyMatrix,
+        d_matrix,
         d_rhs.data(),
         config
     );
 
     cudaDeviceSynchronize();
+    cudaFree(d_matrix);
     auto assemblyEnd = std::chrono::high_resolution_clock::now();
     float assemblyTime = std::chrono::duration<float, std::milli>(assemblyEnd - assemblyStart).count();
 
     // Source term: the assembled operator is the positive-definite -Δ integrated over control
-    // volumes, so the load of node i is +f * V_i (lumped control volume), not a bare -f.
+    // volumes, so the load of node i is +f * V_i (lumped control volume), not a bare -f. Every held
+    // element adds to the volumes, so owned nodes get their complete control volume.
     cstone::DeviceVector<RealType> d_nodeVol(nodeCount, RealType(0));
     {
         int nb = int((elementCount + blockSize - 1) / blockSize);
@@ -353,85 +286,74 @@ int main(int argc, char** argv) {
     }
     thrust::for_each(thrust::device, thrust::counting_iterator<size_t>(0),
                      thrust::counting_iterator<size_t>(nodeCount),
-                     [rhs = d_rhs.data(), vol = d_nodeVol.data(), n2d = d_node_to_dof.data(), sourceTerm] __device__(size_t i)
+                     [rhs = d_rhs.data(), vol = d_nodeVol.data(), n2d = d_node_to_dof.data(), sourceTerm,
+                      numOwnedDofs] __device__(size_t i)
                      {
                          int dof = n2d[i];
-                         if (dof >= 0) rhs[dof] += RealType(sourceTerm) * vol[i];
+                         if (dof >= 0 && dof < numOwnedDofs) rhs[dof] += RealType(sourceTerm) * vol[i];
                      });
 
     if (rank == 0) {
         std::cout << "Assembly completed in " << assemblyTime << " ms\n\n";
     }
 
-    // Apply boundary conditions: u = 0 on boundary
-    // Detect boundary nodes geometrically
-    std::vector<RealType> h_cx(nodeCount), h_cy(nodeCount), h_cz(nodeCount);
-    cudaMemcpy(h_cx.data(), d_x.data(), nodeCount * sizeof(RealType), cudaMemcpyDeviceToHost);
-    cudaMemcpy(h_cy.data(), d_y.data(), nodeCount * sizeof(RealType), cudaMemcpyDeviceToHost);
-    cudaMemcpy(h_cz.data(), d_z.data(), nodeCount * sizeof(RealType), cudaMemcpyDeviceToHost);
-
-    // Find bounding box
-    RealType xmin = *std::min_element(h_cx.begin(), h_cx.end());
-    RealType xmax = *std::max_element(h_cx.begin(), h_cx.end());
-    RealType ymin = *std::min_element(h_cy.begin(), h_cy.end());
-    RealType ymax = *std::max_element(h_cy.begin(), h_cy.end());
-    RealType zmin = *std::min_element(h_cz.begin(), h_cz.end());
-    RealType zmax = *std::max_element(h_cz.begin(), h_cz.end());
-
-    RealType eps = 1e-10 * std::max({xmax - xmin, ymax - ymin, zmax - zmin});
-
-    // Mark boundary DOFs
-    std::vector<bool> isBoundary(numOwnedDofs, false);
-    int numBoundaryDofs = 0;
-
-    for (size_t i = 0; i < nodeCount; ++i) {
-        if (h_ownership[i] == 1) {
-            bool onBoundary = (std::abs(h_cx[i] - xmin) < eps || std::abs(h_cx[i] - xmax) < eps ||
-                               std::abs(h_cy[i] - ymin) < eps || std::abs(h_cy[i] - ymax) < eps ||
-                               std::abs(h_cz[i] - zmin) < eps || std::abs(h_cz[i] - zmax) < eps);
-            if (onBoundary) {
-                int dof = h_node_to_dof[i];
-                if (dof >= 0) {
-                    isBoundary[dof] = true;
-                    numBoundaryDofs++;
-                }
-            }
-        }
+    // Boundary conditions u = 0 on the faces of the global bounding box: owned boundary rows become
+    // identity rows with zero right-hand side
+    const RealType* coords[3] = {d_x.data(), d_y.data(), d_z.data()};
+    RealType lo[3], hi[3];
+    for (int d = 0; d < 3; ++d) {
+        lo[d] = thrust::reduce(thrust::device, coords[d], coords[d] + nodeCount,
+                               std::numeric_limits<RealType>::max(), thrust::minimum<RealType>());
+        hi[d] = thrust::reduce(thrust::device, coords[d], coords[d] + nodeCount,
+                               std::numeric_limits<RealType>::lowest(), thrust::maximum<RealType>());
     }
+    MPI_Allreduce(MPI_IN_PLACE, lo, 3, MPI_DOUBLE, MPI_MIN, MPI_COMM_WORLD);
+    MPI_Allreduce(MPI_IN_PLACE, hi, 3, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+    RealType eps = 1e-10 * std::max({hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]});
+
+    cstone::DeviceVector<uint8_t> d_isBoundary(numOwnedDofs, 0);
+    thrust::for_each(thrust::device, thrust::counting_iterator<size_t>(0),
+                     thrust::counting_iterator<size_t>(nodeCount),
+                     [x = d_x.data(), y = d_y.data(), z = d_z.data(), n2d = d_node_to_dof.data(),
+                      isB = d_isBoundary.data(), numOwnedDofs, eps, x0 = lo[0], x1 = hi[0], y0 = lo[1],
+                      y1 = hi[1], z0 = lo[2], z1 = hi[2]] __device__(size_t i)
+                     {
+                         int dof = n2d[i];
+                         if (dof < 0 || dof >= numOwnedDofs) return;
+                         bool onBoundary = fabs(x[i] - x0) < eps || fabs(x[i] - x1) < eps ||
+                                           fabs(y[i] - y0) < eps || fabs(y[i] - y1) < eps ||
+                                           fabs(z[i] - z0) < eps || fabs(z[i] - z1) < eps;
+                         if (onBoundary) isB[dof] = 1;
+                     });
+    thrust::for_each(thrust::device, thrust::counting_iterator<int>(0),
+                     thrust::counting_iterator<int>(numOwnedDofs),
+                     [rowPtr = d_rowPtr.data(), diagPtr = d_diagPtr.data(), values = d_values.data(),
+                      rhs = d_rhs.data(), isB = d_isBoundary.data()] __device__(int dof)
+                     {
+                         if (!isB[dof]) return;
+                         for (int j = rowPtr[dof]; j < rowPtr[dof + 1]; ++j) values[j] = RealType(0);
+                         values[diagPtr[dof]] = RealType(1);
+                         rhs[dof] = RealType(0);
+                     });
+    long numBoundaryDofs = thrust::reduce(thrust::device, d_isBoundary.data(), d_isBoundary.data() + numOwnedDofs, 0L);
+    MPI_Allreduce(MPI_IN_PLACE, &numBoundaryDofs, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
 
     if (rank == 0) {
         std::cout << "Boundary conditions:\n";
         std::cout << "  Boundary DOFs: " << numBoundaryDofs << "\n\n";
     }
 
-    // Apply BC by zeroing rows and setting diagonal to 1, RHS to 0
-    std::vector<RealType> h_values(nnz);
-    std::vector<RealType> h_rhs(numOwnedDofs);
-    cudaMemcpy(h_values.data(), A.valuesPtr(), nnz * sizeof(RealType), cudaMemcpyDeviceToHost);
-    cudaMemcpy(h_rhs.data(), d_rhs.data(), numOwnedDofs * sizeof(RealType), cudaMemcpyDeviceToHost);
+    // CG on the owned rows; columns include ghosts, refreshed through the node halo
+    using Matrix = SparseMatrix<int, RealType, cstone::GpuTag>;
+    Matrix A;
+    A.allocate(numOwnedDofs, numTotalDofs, nnz);
+    cudaMemcpy(A.rowOffsetsPtr(), d_rowPtr.data(), (numOwnedDofs + 1) * sizeof(int), cudaMemcpyDeviceToDevice);
+    cudaMemcpy(A.colIndicesPtr(), d_colInd.data(), size_t(nnz) * sizeof(int), cudaMemcpyDeviceToDevice);
+    cudaMemcpy(A.valuesPtr(), d_values.data(), size_t(nnz) * sizeof(RealType), cudaMemcpyDeviceToDevice);
 
-    for (int dof = 0; dof < numOwnedDofs; ++dof) {
-        if (isBoundary[dof]) {
-            // Zero row
-            for (int j = rowPtr[dof]; j < rowPtr[dof + 1]; ++j) {
-                h_values[j] = 0.0;
-            }
-            // Set diagonal to 1
-            if (diagPtr[dof] >= 0) {
-                h_values[diagPtr[dof]] = 1.0;
-            }
-            // Set RHS to 0
-            h_rhs[dof] = 0.0;
-        }
-    }
-
-    cudaMemcpy(A.valuesPtr(), h_values.data(), nnz * sizeof(RealType), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_rhs.data(), h_rhs.data(), numOwnedDofs * sizeof(RealType), cudaMemcpyHostToDevice);
-
-    // Solve using CG
     using Vector = cstone::DeviceVector<RealType>;
-    Vector b(numOwnedDofs), x(numOwnedDofs);
-    thrust::copy(thrust::device, d_rhs.begin(), d_rhs.end(), b.begin());
+    Vector b(numOwnedDofs), x(numTotalDofs);
+    cudaMemcpy(b.data(), d_rhs.data(), numOwnedDofs * sizeof(RealType), cudaMemcpyDeviceToDevice);
     thrust::fill(thrust::device, x.begin(), x.end(), RealType(0));
 
     if (rank == 0) {
@@ -442,6 +364,11 @@ int main(int argc, char** argv) {
 
     ConjugateGradientSolver<RealType, int, cstone::GpuTag> solver(maxIter, tolerance);
     solver.setVerbose(rank == 0);  // Only rank 0 prints
+    solver.setOwnedSize(numOwnedDofs);
+    if (numRanks > 1) {
+        const int* dofMap = d_node_to_dof.data();
+        solver.setHaloExchangeCallback([&domain, dofMap](Vector& p) { domain.exchangeNodeHalo(p, dofMap); });
+    }
     bool converged = solver.solve(A, b, x);
 
     cudaDeviceSynchronize();
@@ -457,18 +384,22 @@ int main(int argc, char** argv) {
         std::cout << "========================================\n\n";
     }
 
-    // Compute solution statistics
-    RealType solMin = thrust::reduce(thrust::device, x.begin(), x.end(),
+    // Solution statistics over the owned DOFs of all ranks
+    const RealType* xOwned = x.data();
+    RealType solMin = thrust::reduce(thrust::device, xOwned, xOwned + numOwnedDofs,
                                      std::numeric_limits<RealType>::max(), thrust::minimum<RealType>());
-    RealType solMax = thrust::reduce(thrust::device, x.begin(), x.end(),
+    RealType solMax = thrust::reduce(thrust::device, xOwned, xOwned + numOwnedDofs,
                                      std::numeric_limits<RealType>::lowest(), thrust::maximum<RealType>());
-    RealType solNorm = std::sqrt(thrust::inner_product(thrust::device, x.begin(), x.end(), x.begin(), 0.0));
+    RealType solSq  = thrust::inner_product(thrust::device, xOwned, xOwned + numOwnedDofs, xOwned, RealType(0));
+    MPI_Allreduce(MPI_IN_PLACE, &solMin, 1, MPI_DOUBLE, MPI_MIN, MPI_COMM_WORLD);
+    MPI_Allreduce(MPI_IN_PLACE, &solMax, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+    MPI_Allreduce(MPI_IN_PLACE, &solSq, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
 
     if (rank == 0) {
         std::cout << "Solution statistics:\n";
         std::cout << "  Min:  " << std::scientific << solMin << "\n";
         std::cout << "  Max:  " << solMax << "\n";
-        std::cout << "  L2 norm: " << solNorm << "\n";
+        std::cout << "  L2 norm: " << std::sqrt(solSq) << "\n";
         std::cout << "========================================\n";
     }
 
