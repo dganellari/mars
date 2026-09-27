@@ -4002,16 +4002,6 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
         pt.lap("velocity per-node BC mask + halo");
     }
 
-    // NOTE (multirank): the assembled velocity stiffness has incomplete owned
-    // rows at a rank-partition seam -- cstone's element halo does not always
-    // include the opposite-rank elements touching an owned seam node, so the
-    // wall no-slip does not propagate across the seam and the velocity field
-    // does not develop on >1 rank. The fix is to widen the element halo in the
-    // domain layer (every element touching an owned node must be local), NOT a
-    // fork-local row-fold (the off-rank stiffness is in elements this rank does
-    // not possess -- nothing to fold). Tracked as the multirank element-coverage
-    // work; single-rank is unaffected.
-
     if (s.planar_projection)
     {
         s.d_velocity_lift_u.resize(s.numOwnedDofs);

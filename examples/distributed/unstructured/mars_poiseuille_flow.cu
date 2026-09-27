@@ -23,29 +23,104 @@
 #include <charconv>
 #include <fstream>
 
-// Voronoi-lumped per-node areas of a y-z cross-section plane of this quasi-2D
-// mesh (one cell thick in z, two z node-planes): per node, (Voronoi y-interval)
-// x dz/2. Sums to the exact face area H*dz over a full plane. ys holds the y
-// coordinate of each plane node (parallel to the caller's node-id list).
-// Single-rank assumption: the local node set must cover the full plane.
-static std::vector<double> planeVoronoiAreas(const std::vector<double>& ys, double dz)
+#include <thrust/copy.h>
+#include <thrust/pair.h>
+
+// Per-node share of the element faces on the plane x = plane_x, times `scale`.
+// A face counts only from the owned element whose other four nodes lie on
+// `side` of the plane, so a face shared by two elements (or two ranks) counts
+// once. The reverse halo completes the owned nodes; the forward halo copies
+// them to the ghosts. A node's share is the y-z area of its sub-quad (node,
+// edge midpoints, face centre), the CVFEM boundary sub-face; for the
+// rectangular faces of this mesh it is a quarter of the face.
+template<class KeyType, class RealType, class Domain>
+void plane_face_areas(const Domain& domain, double plane_x, double tolerance, int side,
+                      double scale, cstone::DeviceVector<RealType>& area)
 {
-    std::vector<double> yu(ys);
-    std::sort(yu.begin(), yu.end());
-    yu.erase(std::unique(yu.begin(), yu.end(),
-                         [](double a, double b) { return std::abs(a - b) < 1e-12; }),
-             yu.end());
-    std::vector<double> areas(ys.size(), 0.0);
-    if (yu.size() < 2) return areas;
-    for (size_t k = 0; k < ys.size(); ++k)
-    {
-        size_t j = std::lower_bound(yu.begin(), yu.end(), ys[k] - 1e-12) - yu.begin();
-        if (j >= yu.size()) j = yu.size() - 1;
-        double lo = (j == 0) ? yu.front() : 0.5 * (yu[j - 1] + yu[j]);
-        double hi = (j + 1 >= yu.size()) ? yu.back() : 0.5 * (yu[j] + yu[j + 1]);
-        areas[k] = (hi - lo) * dz * 0.5;
-    }
-    return areas;
+    const size_t n = domain.getNodeCount();
+    area.resize(n);
+    thrust::fill(thrust::device_pointer_cast(area.data()),
+                 thrust::device_pointer_cast(area.data() + n), RealType(0));
+    const auto cp = connPtrs<HexTag, KeyType>(domain.getElementToNodeConnectivity());
+    const size_t first = domain.startIndex();
+    const size_t count = domain.localElementCount();
+    thrust::for_each(thrust::device,
+        thrust::counting_iterator<size_t>(first), thrust::counting_iterator<size_t>(first + count),
+        [c0=cp[0], c1=cp[1], c2=cp[2], c3=cp[3], c4=cp[4], c5=cp[5], c6=cp[6], c7=cp[7],
+         x=domain.getNodeX().data(), y=domain.getNodeY().data(), z=domain.getNodeZ().data(),
+         a=area.data(), plane_x, tolerance, side, scale] __device__ (size_t e) {
+            const KeyType nodes[8] = {c0[e],c1[e],c2[e],c3[e],c4[e],c5[e],c6[e],c7[e]};
+            KeyType face[4];
+            int on_plane = 0;
+            for (int j = 0; j < 8; ++j)
+            {
+                const double d = double(x[nodes[j]]) - plane_x;
+                if (fabs(d) <= tolerance) { if (on_plane < 4) face[on_plane] = nodes[j]; ++on_plane; }
+                else if (d * side <= 0) return;
+            }
+            if (on_plane != 4) return;
+            double cy = 0, cz = 0;
+            for (int k = 0; k < 4; ++k) { cy += 0.25 * y[face[k]]; cz += 0.25 * z[face[k]]; }
+            // Local node order does not give the face cycle; sort by angle.
+            double angle[4];
+            for (int k = 0; k < 4; ++k) angle[k] = atan2(z[face[k]] - cz, y[face[k]] - cy);
+            for (int k = 1; k < 4; ++k)
+                for (int j = k; j > 0 && angle[j] < angle[j - 1]; --j)
+                {
+                    double t = angle[j]; angle[j] = angle[j - 1]; angle[j - 1] = t;
+                    KeyType f = face[j]; face[j] = face[j - 1]; face[j - 1] = f;
+                }
+            for (int k = 0; k < 4; ++k)
+            {
+                const KeyType p = face[k], next = face[(k + 1) % 4], prev = face[(k + 3) % 4];
+                const double ny = 0.5 * (y[prev] - y[next]), nz = 0.5 * (z[prev] - z[next]);
+                const double share = 0.5 * fabs((cy - y[p]) * nz - (cz - z[p]) * ny);
+                atomicAdd(&a[p], RealType(scale * share));
+            }
+        });
+    if (cudaDeviceSynchronize() != cudaSuccess) MPI_Abort(MPI_COMM_WORLD, 1);
+    domain.reverseExchangeNodeHaloAdd(area);
+    domain.exchangeNodeHalo(area);
+}
+
+// x of the node plane nearest `target`, the same on every rank: global minimum
+// of (|x - target|, x), so a tie resolves to the smaller x.
+template<class RealType>
+double nearest_node_plane(const cstone::DeviceVector<RealType>& d_x, size_t n, double target)
+{
+    using Candidate = thrust::pair<double, double>;
+    const double inf = std::numeric_limits<double>::infinity();
+    const Candidate local = thrust::transform_reduce(thrust::device,
+        thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(n),
+        [x=d_x.data(), target] __device__ (size_t i) -> Candidate {
+            return Candidate(fabs(double(x[i]) - target), double(x[i]));
+        }, Candidate(inf, inf),
+        [] __device__ (const Candidate& a, const Candidate& b) -> Candidate { return b < a ? b : a; });
+    double distance = inf, plane = inf;
+    MPI_Allreduce(&local.first, &distance, 1, MPI_DOUBLE, MPI_MIN, MPI_COMM_WORLD);
+    const double candidate = local.first == distance ? local.second : inf;
+    MPI_Allreduce(&candidate, &plane, 1, MPI_DOUBLE, MPI_MIN, MPI_COMM_WORLD);
+    return plane;
+}
+
+template<class Function>
+struct OwnedTerm
+{
+    const uint8_t* ownership;
+    Function f;
+    __device__ double operator()(size_t i) const { return ownership[i] == 1 ? f(i) : 0.0; }
+};
+
+// Global sum over owned nodes of f(i).
+template<class Function>
+double owned_sum(const uint8_t* ownership, size_t n, Function f)
+{
+    const double local = thrust::transform_reduce(thrust::device,
+        thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(n),
+        OwnedTerm<Function>{ownership, f}, 0.0, thrust::plus<double>());
+    double global = 0;
+    MPI_Allreduce(&local, &global, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+    return global;
 }
 
 // Analytic plane-Poiseuille profile, normalized cross-section coordinate
@@ -56,13 +131,13 @@ struct PoiseuilleProfile
     double wallLo;   // cross-section coordinate at one wall
     double wallHi;   // cross-section coordinate at the other wall
 
-    double eta(double s) const
+    __host__ __device__ double eta(double s) const
     {
         double mid  = 0.5 * (wallLo + wallHi);
         double half = 0.5 * (wallHi - wallLo);
         return half > 0 ? (s - mid) / half : 0.0;
     }
-    double analytic(double s) const
+    __host__ __device__ double analytic(double s) const
     {
         double e = eta(s);
         return uMax * (1.0 - e * e);
@@ -199,13 +274,6 @@ int main(int argc, char** argv)
         else if (arg[0] != '-' && meshFile.empty()) meshFile = arg;
     }
 
-    // Plane-area reconstruction and the profile export currently require a complete local plane.
-    if ((planar_projection || checkMode) && numRanks != 1)
-    {
-        if (rank == 0) std::cerr << "ERROR: planar Poiseuille validation currently requires one MPI rank\n";
-        MPI_Finalize();
-        return 1;
-    }
     if (!(std::isfinite(dt) && dt > 0 && std::isfinite(nu) && nu > 0
           && std::isfinite(rho) && rho > 0 && std::isfinite(Uinf) && Uinf > 0
           && std::isfinite(tolerance) && tolerance > 0 && maxIter > 0 && numSteps > 0
@@ -232,7 +300,6 @@ int main(int argc, char** argv)
             comparisonEvery = parsed;
     }
     if (comparisonEveryRequested && !comparisonRequested) comparisonError |= 4;
-    if (comparisonRequested && numRanks != 1) comparisonError |= 8;
     int comparisonErrorGlobal = 0;
     MPI_Allreduce(&comparisonError, &comparisonErrorGlobal, 1, MPI_INT, MPI_BOR, MPI_COMM_WORLD);
     if (comparisonErrorGlobal)
@@ -243,7 +310,6 @@ int main(int argc, char** argv)
             if (comparisonErrorGlobal & 1) std::cerr << " --comparison-output needs a nonempty prefix;";
             if (comparisonErrorGlobal & 2) std::cerr << " --comparison-every needs a positive integer;";
             if (comparisonErrorGlobal & 4) std::cerr << " --comparison-every requires --comparison-output;";
-            if (comparisonErrorGlobal & 8) std::cerr << " comparison export requires one MPI rank;";
             std::cerr << "\n";
         }
         MPI_Finalize();
@@ -283,7 +349,7 @@ int main(int argc, char** argv)
                       << "  --pressure-solve=K|DDT  Pressure operator (default DDT; K FAILs on this channel)\n"
                       << "  --vtu-output=PREFIX Write VTU/PVTU/PVD frames\n"
                       << "  --vtu-every=N       Frame every N steps (default 50)\n"
-                      << "  --comparison-output=PREFIX  Export public Poiseuille u,v,w,p frames (one rank only)\n"
+                      << "  --comparison-output=PREFIX  Export public Poiseuille u,v,w,p frames\n"
                       << "  --comparison-every=N       Comparison frame every N steps (default 50)\n"
                       << "  --tol=VALUE         Solver tolerance (default 1e-10)\n"
                       << "  --max-iter=N        Solver max iters (default 1000)\n";
@@ -486,60 +552,30 @@ int main(int argc, char** argv)
     }
     else if (openingFluxSource)
     {
-        // Balanced opening-flux source: per-node OUTWARD area vectors,
-        // Voronoi-lumped from the plane node coordinates; outlet rescaled per
-        // step (oScale) so the net source is machine-zero. Ain/Aout are global
-        // owned-only sums (a rank can own just one plane; ghosts double-count).
-        const auto& d_ownership = s.ownershipMap();
-        size_t n = s.nodeCount;
-        std::vector<uint8_t> h_own(n);
-        cudaMemcpy(h_own.data(), d_ownership.data(), n * sizeof(uint8_t), cudaMemcpyDeviceToHost);
-
-        std::vector<size_t> inIds, outIds;
-        std::vector<double> inYs, outYs;
-        for (size_t i = 0; i < n; ++i)
+        // Balanced opening-flux source: per-node OUTWARD x-areas of the inlet
+        // and outlet faces; the outlet is rescaled per step (oScale) so the net
+        // source is machine-zero. The openings are x planes, so y/z stay zero.
+        const size_t n = s.nodeCount;
+        plane_face_areas<KeyType>(amr.domain(), double(xMin), double(eps), +1, -1.0, s.d_openInAreaX);
+        plane_face_areas<KeyType>(amr.domain(), double(xMax), double(eps), -1, +1.0, s.d_openOutAreaX);
+        for (auto* d : {&s.d_openInAreaY, &s.d_openInAreaZ, &s.d_openOutAreaY, &s.d_openOutAreaZ})
         {
-            if (std::abs(hx[i] - xMin) < eps)
-            { inIds.push_back(i); inYs.push_back(double(hy[i])); }
-            else if (std::abs(hx[i] - xMax) < eps)
-            { outIds.push_back(i); outYs.push_back(double(hy[i])); }
+            d->resize(n);
+            thrust::fill(thrust::device_pointer_cast(d->data()),
+                         thrust::device_pointer_cast(d->data() + n), RealType(0));
         }
-        double dz = double(zMax - zMin);
-        auto inAreas  = planeVoronoiAreas(inYs, dz);
-        auto outAreas = planeVoronoiAreas(outYs, dz);
-
-        std::vector<RealType> aInX(n, 0), aZero(n, 0), aOutX(n, 0);
-        double AinL = 0, AoutL = 0;
-        for (size_t k = 0; k < inIds.size(); ++k)
-        {
-            aInX[inIds[k]] = RealType(-inAreas[k]);
-            if (h_own[inIds[k]] == 1) AinL += inAreas[k];
-        }
-        for (size_t k = 0; k < outIds.size(); ++k)
-        {
-            aOutX[outIds[k]] = RealType(+outAreas[k]);
-            if (h_own[outIds[k]] == 1) AoutL += outAreas[k];
-        }
-        double Ain = AinL, Aout = AoutL;
-        MPI_Allreduce(&AinL,  &Ain,  1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-        MPI_Allreduce(&AoutL, &Aout, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-
-        auto upload = [&](cstone::DeviceVector<RealType>& d, const std::vector<RealType>& hv)
-        {
-            d.resize(n);
-            thrust::copy(hv.begin(), hv.end(), thrust::device_pointer_cast(d.data()));
-        };
-        upload(s.d_openInAreaX, aInX);   upload(s.d_openInAreaY, aZero);
-        upload(s.d_openInAreaZ, aZero);
-        upload(s.d_openOutAreaX, aOutX); upload(s.d_openOutAreaY, aZero);
-        upload(s.d_openOutAreaZ, aZero);
+        const uint8_t* own = s.ownershipMap().data();
+        const double Ain  = owned_sum(own, n, [a=s.d_openInAreaX.data()] __device__ (size_t i) -> double { return -double(a[i]); });
+        const double Aout = owned_sum(own, n, [a=s.d_openOutAreaX.data()] __device__ (size_t i) -> double { return double(a[i]); });
 
         RealType srcOutletU = (Aout > 0) ? RealType(Uinf * Ain / Aout) : RealType(Uinf);
         s.openInletVel[0]  = RealType(Uinf);
         s.openOutletVel[0] = srcOutletU;
         s.useOpeningFluxSource = true;
         if (rank == 0 && planar_projection)
-            std::cout << "Opening flux: nodal inlet targets and solved outlet velocity; no outlet rescaling\n";
+            std::cout << "Opening flux: nodal inlet targets and solved outlet velocity; no outlet rescaling"
+                      << std::setprecision(17) << " Ain=" << Ain << " Aout=" << Aout
+                      << std::setprecision(6) << '\n';
         else if (rank == 0)
             std::cout << "Opening-flux source: Ain=" << Ain << " Aout=" << Aout
                       << " Qin=" << Uinf * Ain << " outletU=" << srcOutletU
@@ -689,80 +725,72 @@ int main(int argc, char** argv)
     double steady_change = std::numeric_limits<double>::infinity();
     if (checkMode && planar_projection && steady_window > 0)
     {
-        double difference = thrust::transform_reduce(thrust::device,
-            thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(s.nodeCount),
+        const uint8_t* own = s.ownershipMap().data();
+        const double difference = owned_sum(own, s.nodeCount,
             [u=s.d_u.data(), v=s.d_v.data(), w=s.d_w.data(), mass=s.d_massNode.data(),
              u0=d_steady_start[0].data(), v0=d_steady_start[1].data(),
              w0=d_steady_start[2].data()] __device__ (size_t i) -> double {
                 const double du=u[i]-u0[i], dv=v[i]-v0[i], dw=w[i]-w0[i];
                 return mass[i]*(du*du+dv*dv+dw*dw);
-            }, 0.0, thrust::plus<double>());
-        double volume = thrust::reduce(thrust::device, s.d_massNode.begin(), s.d_massNode.end(), 0.0);
+            });
+        const double volume = owned_sum(own, s.nodeCount,
+            [mass=s.d_massNode.data()] __device__ (size_t i) -> double { return mass[i]; });
         if (!(volume > 0) || cudaGetLastError() != cudaSuccess) MPI_Abort(MPI_COMM_WORLD, 1);
         steady_change = std::sqrt(difference / volume) / Uinf;
-        std::cout << "[channel-steady] window=" << steady_window << " velocity_change/U="
-                  << std::scientific << std::setprecision(8) << steady_change << '\n';
+        if (rank == 0)
+            std::cout << "[channel-steady] window=" << steady_window << " velocity_change/U="
+                      << std::scientific << std::setprecision(8) << steady_change << '\n';
     }
 
     double finalRms     = -1.0;      // raw RMS vs analytic (reference tol 6e-3)
     double fluxRatio[3] = {0, 0, 0}; // Q(25/50/75%) / Q(inlet)
 
     // -------------------------------------------------------------------------
-    // Outlet-plane validation against the analytic parabolic profile.
-    // Pull u and node coords to host, gather the probe-plane nodes, fit the
-    // wall extents from the data, and report RMS error vs the analytic parabola.
+    // Outlet-plane validation against the analytic parabolic profile. Sums run
+    // on the device over owned nodes and are then reduced over ranks, so every
+    // node counts once on any rank count.
     // -------------------------------------------------------------------------
     {
+        const size_t n = s.nodeCount;
+        const uint8_t* own = s.ownershipMap().data();
         const auto& d_x = amr.domain().getNodeX();
-        const auto& d_y = amr.domain().getNodeY();
-        const auto& d_z = amr.domain().getNodeZ();
-        size_t n = s.nodeCount;
-
-        std::vector<RealType> h_u(n), h_x(n), h_y(n), h_z(n), h_p(n);
-        cudaMemcpy(h_p.data(), s.d_p.data(), n * sizeof(RealType), cudaMemcpyDeviceToHost);
-        cudaMemcpy(h_u.data(), s.d_u.data(), n * sizeof(RealType), cudaMemcpyDeviceToHost);
-        cudaMemcpy(h_x.data(), d_x.data(),   n * sizeof(RealType), cudaMemcpyDeviceToHost);
-        cudaMemcpy(h_y.data(), d_y.data(),   n * sizeof(RealType), cudaMemcpyDeviceToHost);
-        cudaMemcpy(h_z.data(), d_z.data(),   n * sizeof(RealType), cudaMemcpyDeviceToHost);
-
-        // Local x-extent -> reduce to global for the auto probe plane.
-        RealType xMinL = *std::min_element(h_x.begin(), h_x.end());
-        RealType xMaxL = *std::max_element(h_x.begin(), h_x.end());
-        RealType xMin = xMinL, xMax = xMaxL;
-        MPI_Allreduce(&xMinL, &xMin, 1, MPI_DOUBLE, MPI_MIN, MPI_COMM_WORLD);
-        MPI_Allreduce(&xMaxL, &xMax, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+        const RealType* node_x = d_x.data();
+        const RealType* node_s = (crossAxis == "z") ? amr.domain().getNodeZ().data()
+                                                    : amr.domain().getNodeY().data();
+        const RealType* vel_u = s.d_u.data();
+        const RealType* pres  = s.d_p.data();
+        const double snapTol = 1e-9 * std::max(1.0, double(xMax - xMin));
 
         double xProbe = (profileX >= 0) ? profileX : (xMin + 0.9 * (xMax - xMin));
         double xTol   = (profileXTol > 0) ? profileXTol : 0.02 * (xMax - xMin);
 
-        const std::vector<RealType>& cross = (crossAxis == "z") ? h_z : h_y;
-
-        std::vector<std::pair<double,double>> plane;   // (cross-coord, u)
-        for (size_t i = 0; i < n; ++i)
-            if (std::abs(h_x[i] - xProbe) < xTol)
-                plane.emplace_back(cross[i], h_u[i]);
-
-        // Wall extents from the gathered plane (reduce min/max across ranks).
-        double sLoL =  1e300, sHiL = -1e300;
-        for (auto& p : plane) { sLoL = std::min(sLoL, p.first); sHiL = std::max(sHiL, p.first); }
+        // Wall extents of the probe slab.
+        const double inf = std::numeric_limits<double>::infinity();
+        const double sLoL = thrust::transform_reduce(thrust::device,
+            thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(n),
+            [node_x, node_s, xProbe, xTol, inf] __device__ (size_t i) -> double {
+                return fabs(double(node_x[i]) - xProbe) < xTol ? double(node_s[i]) : inf;
+            }, inf, thrust::minimum<double>());
+        const double sHiL = thrust::transform_reduce(thrust::device,
+            thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(n),
+            [node_x, node_s, xProbe, xTol, inf] __device__ (size_t i) -> double {
+                return fabs(double(node_x[i]) - xProbe) < xTol ? double(node_s[i]) : -inf;
+            }, -inf, thrust::maximum<double>());
         double sLo = sLoL, sHi = sHiL;
         MPI_Allreduce(&sLoL, &sLo, 1, MPI_DOUBLE, MPI_MIN, MPI_COMM_WORLD);
         MPI_Allreduce(&sHiL, &sHi, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
 
         PoiseuilleProfile prof{targetUMax, sLo, sHi};
 
-        // Local sum of squared error + node count, reduce to global RMS.
-        double sumSqL = 0.0;
-        long   cntL   = 0;
-        for (auto& p : plane)
-        {
-            double err = p.second - prof.analytic(p.first);
-            sumSqL += err * err;
-            ++cntL;
-        }
-        double sumSq = 0.0; long cnt = 0;
-        MPI_Allreduce(&sumSqL, &sumSq, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-        MPI_Allreduce(&cntL,   &cnt,   1, MPI_LONG,   MPI_SUM, MPI_COMM_WORLD);
+        const double sumSq = owned_sum(own, n,
+            [node_x, node_s, vel_u, xProbe, xTol, prof] __device__ (size_t i) -> double {
+                if (!(fabs(double(node_x[i]) - xProbe) < xTol)) return 0.0;
+                const double err = double(vel_u[i]) - prof.analytic(double(node_s[i]));
+                return err * err;
+            });
+        const long cnt = long(owned_sum(own, n, [node_x, xProbe, xTol] __device__ (size_t i) -> double {
+            return fabs(double(node_x[i]) - xProbe) < xTol ? 1.0 : 0.0;
+        }));
 
         double rms = cnt > 0 ? std::sqrt(sumSq / cnt) : -1.0;
         finalRms = rms;
@@ -771,17 +799,36 @@ int main(int argc, char** argv)
         // cross-coordinate, solved u, analytic u at ONE fixed x (the node plane
         // nearest xProbe) -- the report's figure samples a single station, so
         // the CSV must too (the RMS above uses a slab, which is fine for the
-        // norm but would smear the dot plot). Rank-0-local nodes only.
+        // norm but would smear the dot plot). Each rank sends the owned nodes
+        // of that plane to rank 0.
+        const double xSnap = nearest_node_plane(d_x, n, xProbe);
+        cstone::DeviceVector<int> d_ids(n);
+        const int localCount = int(thrust::copy_if(thrust::device,
+            thrust::counting_iterator<int>(0), thrust::counting_iterator<int>(int(n)), d_ids.data(),
+            [own, node_x, xSnap, snapTol] __device__ (int i) -> bool {
+                return own[i] == 1 && fabs(double(node_x[i]) - xSnap) < snapTol;
+            }) - d_ids.data());
+        cstone::DeviceVector<double> d_plane(2 * size_t(localCount));
+        thrust::for_each(thrust::device,
+            thrust::counting_iterator<int>(0), thrust::counting_iterator<int>(localCount),
+            [ids=d_ids.data(), node_s, vel_u, out=d_plane.data()] __device__ (int k) {
+                out[2 * k]     = node_s[ids[k]];
+                out[2 * k + 1] = vel_u[ids[k]];
+            });
+        std::vector<double> h_plane(2 * size_t(localCount));
+        cudaMemcpy(h_plane.data(), d_plane.data(), h_plane.size() * sizeof(double), cudaMemcpyDeviceToHost);
+        const int sendCount = int(h_plane.size());
+        std::vector<int> counts(numRanks, 0), displs(numRanks, 0);
+        MPI_Gather(&sendCount, 1, MPI_INT, counts.data(), 1, MPI_INT, 0, MPI_COMM_WORLD);
+        for (int r = 1; r < numRanks; ++r) displs[r] = displs[r - 1] + counts[r - 1];
+        std::vector<double> allPlane(rank == 0 ? size_t(displs.back() + counts.back()) : 0);
+        MPI_Gatherv(h_plane.data(), sendCount, MPI_DOUBLE, allPlane.data(), counts.data(),
+                    displs.data(), MPI_DOUBLE, 0, MPI_COMM_WORLD);
         if (rank == 0)
         {
-            double xSnap = 1e300;
-            for (size_t i = 0; i < n; ++i)
-                if (std::abs(h_x[i] - xProbe) < std::abs(xSnap - xProbe)) xSnap = h_x[i];
-            double snapTol = 1e-9 * std::max(1.0, double(xMax - xMin));
             std::vector<std::pair<double,double>> pts;
-            for (size_t i = 0; i < n; ++i)
-                if (std::abs(h_x[i] - xSnap) < snapTol)
-                    pts.emplace_back(double(cross[i]), double(h_u[i]));
+            for (size_t k = 0; k + 1 < allPlane.size(); k += 2)
+                pts.emplace_back(allPlane[k], allPlane[k + 1]);
             std::sort(pts.begin(), pts.end());
             std::string csvName = (vtuPrefix.empty() ? std::string("poiseuille") : vtuPrefix)
                                   + "_profile.csv";
@@ -851,33 +898,17 @@ int main(int argc, char** argv)
         // velocity, vs Qin at the inlet plane. Cannot be faked by BC values --
         // a dead channel shows ratio ~0 here no matter what the BCs claim.
         {
-            RealType zMinL2 = *std::min_element(h_z.begin(), h_z.end());
-            RealType zMaxL2 = *std::max_element(h_z.begin(), h_z.end());
-            RealType zMin2 = zMinL2, zMax2 = zMaxL2;
-            MPI_Allreduce(&zMinL2, &zMin2, 1, MPI_DOUBLE, MPI_MIN, MPI_COMM_WORLD);
-            MPI_Allreduce(&zMaxL2, &zMax2, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
-            double dz = double(zMax2 - zMin2);
-
-            // Flux through the mesh x-plane nearest to xTarget: snap to the
-            // closest actual node-plane, then Voronoi-lump that plane's nodes.
+            // Flux through the node plane nearest xTarget, u weighted by the
+            // face areas of that plane.
+            cstone::DeviceVector<RealType> d_area;
             auto planeFlux = [&](double xTarget) -> double
             {
-                double xSnap = 1e300;
-                for (size_t i = 0; i < n; ++i)
-                    if (std::abs(h_x[i] - xTarget) < std::abs(xSnap - xTarget)) xSnap = h_x[i];
-                double snapTol = 1e-9 * std::max(1.0, double(xMax - xMin));
-                std::vector<double> ys, us;
-                for (size_t i = 0; i < n; ++i)
-                    if (std::abs(h_x[i] - xSnap) < snapTol)
-                    { ys.push_back(double(h_y[i])); us.push_back(double(h_u[i])); }
-                auto areas = planeVoronoiAreas(ys, dz);
-                double q = 0;
-                for (size_t k = 0; k < us.size(); ++k) q += us[k] * areas[k];
-                // All ranks call planeFlux the same number of times, so this
-                // collective is safe; areas at partition cuts are approximate.
-                double qG = q;
-                MPI_Allreduce(&q, &qG, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-                return qG;
+                const double xPlane = nearest_node_plane(d_x, n, xTarget);
+                const int side = xPlane < double(xMax) - snapTol ? +1 : -1;
+                plane_face_areas<KeyType>(amr.domain(), xPlane, snapTol, side, 1.0, d_area);
+                return owned_sum(own, n, [a=d_area.data(), vel_u] __device__ (size_t i) -> double {
+                    return double(vel_u[i]) * double(a[i]);
+                });
             };
 
             double qIn = planeFlux(double(xMin));
@@ -890,7 +921,7 @@ int main(int argc, char** argv)
             }
             if (rank == 0)
             {
-                std::cout << "Interior-flux probe (solved u, Voronoi-lumped):\n";
+                std::cout << "Interior-flux probe (solved u, face-lumped):\n";
                 std::cout << "  Q(inlet) = " << std::scientific << std::setprecision(4) << qIn << "\n";
                 for (int k = 0; k < 3; ++k)
                     std::cout << "  Q(" << std::fixed << std::setprecision(0) << fracs[k] * 100
@@ -907,23 +938,23 @@ int main(int argc, char** argv)
         // and compare -- validates the pressure field, not just the velocity.
         //
         // Use the moving core for this diagnostic. An empty sample is invalid,
-        // not a zero pressure gradient. Validation is restricted to one rank.
+        // not a zero pressure gradient.
         {
             auto planeMeanP = [&](double xTarget) -> double
             {
-                double xSnap = 1e300;
-                for (size_t i = 0; i < n; ++i)
-                    if (std::abs(h_x[i] - xTarget) < std::abs(xSnap - xTarget)) xSnap = h_x[i];
-                double snapTol = 1e-9 * std::max(1.0, double(xMax - xMin));
-                double uCore = 0.5 * targetUMax;
-                double sum = 0; long cntP = 0;
-                for (size_t i = 0; i < n; ++i)
-                    if (std::abs(h_x[i] - xSnap) < snapTol && double(h_u[i]) > uCore)
-                    { sum += h_p[i]; ++cntP; }
-                double sumG = sum; long cntG = cntP;
-                MPI_Allreduce(&sum,  &sumG, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-                MPI_Allreduce(&cntP, &cntG, 1, MPI_LONG,   MPI_SUM, MPI_COMM_WORLD);
-                return cntG > 0 ? sumG / double(cntG) : std::numeric_limits<double>::quiet_NaN();
+                const double xPlane = nearest_node_plane(d_x, n, xTarget);
+                const double uCore = 0.5 * targetUMax;
+                const double sum = owned_sum(own, n,
+                    [node_x, vel_u, pres, xPlane, snapTol, uCore] __device__ (size_t i) -> double {
+                        const bool core = fabs(double(node_x[i]) - xPlane) < snapTol && double(vel_u[i]) > uCore;
+                        return core ? double(pres[i]) : 0.0;
+                    });
+                const double count = owned_sum(own, n,
+                    [node_x, vel_u, xPlane, snapTol, uCore] __device__ (size_t i) -> double {
+                        const bool core = fabs(double(node_x[i]) - xPlane) < snapTol && double(vel_u[i]) > uCore;
+                        return core ? 1.0 : 0.0;
+                    });
+                return count > 0 ? sum / count : std::numeric_limits<double>::quiet_NaN();
             };
             double xA = double(xMin) + 0.60 * double(xMax - xMin);
             double xB = double(xMin) + 0.90 * double(xMax - xMin);
