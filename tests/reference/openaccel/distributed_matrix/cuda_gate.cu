@@ -14,7 +14,7 @@ using Solver=mars::fem::HypreGMRESSolver<double,int,cstone::GpuTag>;
 using Matrix=Solver::Matrix;
 using Vector=Solver::Vector;
 
-template<int C> void hypre_gates(MPI_Comm comm,Report& report,Options o,EmptyRanks policy,const std::string& label) {
+template<int C> void hypre_gates(MPI_Comm comm,Report& report,Options o,EmptyRanks policy,const std::string& label,int coarse_relax=-1) {
     int rank=0, ranks=1; MPI_Comm_rank(comm,&rank); MPI_Comm_size(comm,&ranks);
     const std::string tag="C="+std::to_string(C)+" ranks="+std::to_string(ranks)+" "+label+": ";
     Problem p(C,ranks,o); Local l=extract(p,rank);
@@ -23,6 +23,7 @@ template<int C> void hypre_gates(MPI_Comm comm,Report& report,Options o,EmptyRan
     OwnedRowSystem<C,Matrix,HYPRE_BigInt> s(comm,d.view(),raw(d.owned),int(l.owned.size()),raw(d.solver_node),l.nodes(),policy);
     Vector b, x; b.resize(std::size_t(s.rows())); x.resize(std::size_t(s.rows()));
     Solver solver(comm,2000,1e-12,Solver::BOOMERAMG,100); solver.setVerbose(false); solver.setPointBlock(C);
+    solver.setAMGCoarseRelaxType(coarse_relax);
     GhostExchange exchange(p,l,rank);
     for (unsigned round:{1u,2u}) {   // round 2: new values, RHS and solution; same structure
         if (round==2) { fill(p,l,rank,2,[&](int g,int c) { return p.product(g,c,2,12); }); overwrite(d.blocks,l.blocks); overwrite(d.rhs,l.rhs); }
@@ -99,6 +100,9 @@ int main(int argc,char** argv) {
             run_gates<3,Matrix,HYPRE_BigInt>(MPI_COMM_WORLD,report);
             hypre_gates<1>(MPI_COMM_WORLD,report,{},EmptyRanks::reject,"uneven");
             hypre_gates<3>(MPI_COMM_WORLD,report,{},EmptyRanks::reject,"uneven");
+            Options small; small.nx=9; small.ny=3; small.nz=3;
+            hypre_gates<1>(MPI_COMM_WORLD,report,small,EmptyRanks::reject,"81-row l1 coarse relaxation",18);
+            hypre_gates<3>(MPI_COMM_WORLD,report,small,EmptyRanks::reject,"l1 coarse block relaxation",18);
             if (repetitions>0) { bench<1>(MPI_COMM_WORLD,report,repetitions); bench<3>(MPI_COMM_WORLD,report,repetitions); }
         }
     } catch (const std::exception& e) {

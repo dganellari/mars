@@ -29,6 +29,7 @@
 #include "mars_segregated_simple_reduction.hpp"
 #include <limits>
 #include <memory>
+#include <string>
 #ifdef MARS_REPLAY_CUDA
 #include <thrust/logical.h>
 #endif
@@ -112,6 +113,9 @@ template<int C> struct HypreSimpleSolve {
     typename Solver::Vector b,x;
     explicit HypreSimpleSolve(MPI_Comm comm):solver(comm,2000,1e-12,Solver::BOOMERAMG,100) {
         solver.setVerbose(false); solver.setPointBlock(C);
+        // A one-level hierarchy needs l1 row norms too; the default coarse type omits them.
+        // l1-Jacobi also keeps coarse relaxation on the device.
+        solver.setAMGCoarseRelaxType(18);
     }
     double* rhs(std::size_t rows) { if (b.size()!=rows) { b.resize(rows); x.resize(rows); } return b.data(); }
     const double* rhs() const { return b.data(); }
@@ -248,12 +252,17 @@ struct DistributedSimpleRunner {
         bool assembly_failed,std::initializer_list<distributed::Field> with) {
         system.update(view,solver.rhs(std::size_t(system.rows())),std::size_t(system.rows()),assembly_failed);
         // Solve policies return a rank-consistent result (Hypre: global norms; the test oracle: a broadcast).
-        simple_collective(comm,solver(system),"linear solve failed");
+        const bool solved=solver(system);
+        const auto context=[&](const char* reason) {
+            return std::string(C==3?"momentum":"pressure correction")+" at SIMPLE iteration "+std::to_string(completed+1)+": "+reason;
+        };
+        simple_collective(comm,solved,solved?"linear solve failed on a peer":context("linear solve failed").c_str());
         system.unpack(solver.solution(),solver.size(),increment.data(),increment.values.size());
         if (with.size()==0) exchange({{increment.data(),C}});
         else { auto it=with.begin(); exchange({{increment.data(),C},*it}); }
         const auto norms=system.residual(distributed::halo_complete(increment.data(),increment.values.size()),solver.rhs(),tolerance);
-        ensure(norms.passed,"true linear residual failed"); // from allreduced sums: identical on every rank
+        // Allreduced norms agree on every rank; construct context only on failure.
+        if (!norms.passed) throw std::runtime_error(context("true linear residual failed"));
     }
     template<class Observer=NoSimpleObserver> void advance(Observer observe={}) {
         ensure(assembled,"advance requires momentum assembly");

@@ -232,6 +232,11 @@ public:
         if (pointBlock_ != next) invalidate_setup();
         pointBlock_ = next;
     }
+    // Keep Hypre's default unless a caller supplies a coarse-level relaxation.
+    void setAMGCoarseRelaxType(int type) {
+        if (coarseRelaxType_ != type) invalidate_setup();
+        coarseRelaxType_ = type;
+    }
     double getLastFinalResidual() const { return lastFinalRes_; }
     double getLastSolutionMax()   const { return lastSolutionMax_; }
     bool   lastReturnedNullSolution() const { return nullSolutionReturned_; }
@@ -352,6 +357,8 @@ public:
             HYPRE_BoomerAMGSetCoarsenType(precond_, amgCoarsen);
             HYPRE_BoomerAMGSetInterpType(precond_, amgInterp);
             HYPRE_BoomerAMGSetRelaxType(precond_, amgRelax);
+            if (coarseRelaxType_ >= 0)
+                HYPRE_BoomerAMGSetCycleRelaxType(precond_, coarseRelaxType_, 3);
             HYPRE_BoomerAMGSetRelaxOrder(precond_, amgRelaxOrder);
             HYPRE_BoomerAMGSetKeepTranspose(precond_, 1);
             HYPRE_BoomerAMGSetStrongThreshold(precond_, amgStrong);
@@ -718,11 +725,10 @@ public:
             double nullRatio = getEnvDouble("MARS_HYPRE_NULLX_RATIO", 1e-12);
             nullSolutionReturned_ = (gBmax > 0.0 && gXmax < nullRatio * gBmax);
             if (nullSolutionReturned_ && rank == 0) {
-                std::cout << "[HypreGMRES] WARNING: solver reported converged (iters="
+                std::cout << "[HypreGMRES] WARNING: near-zero solution (iters="
                           << num_iterations << ", rel_res=" << final_res_norm
                           << ") but |x|inf=" << gXmax << " << |b|inf=" << gBmax
-                          << " -- this is the null-mode false convergence; "
-                          << "reporting NOT converged.\n";
+                          << " -- reporting NOT converged; cause is undetermined.\n";
             }
             // UPPER-BOUND reject: a |x| that is HUGE relative to |b| is an
             // under-resolved near-null-space solution (the observed 1e7..1e9 phi
@@ -1058,6 +1064,7 @@ private:
     int kDim_;
     bool useFlexGmres_ = false;  // FlexGMRES (varying precond) vs plain GMRES
     int  pointBlock_   = 1;      // >1: systems/point-block BoomerAMG via SetNumFunctions
+    int  coarseRelaxType_ = -1;
 };
 
 } // namespace fem

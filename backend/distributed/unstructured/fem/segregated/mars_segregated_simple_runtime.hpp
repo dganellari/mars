@@ -78,6 +78,7 @@ template<int C> struct LinearSystem {
     LinearSystem(int n,int nnz):rows(C*n),blocks(nnz*C*C),rhs(rows),increment(rows),residual(2*rows),mapping(rows),solver(MPI_COMM_WORLD,2000,1e-12,Solver::BOOMERAMG,100) {
         matrix.allocate(rows,rows,nnz*C*C); b.resize(rows); x.resize(rows);
         thrust::sequence(mapping.begin(),mapping.end(),HYPRE_BigInt(0)); solver.setVerbose(false); solver.setPointBlock(C);
+        solver.setAMGCoarseRelaxType(18); // Prepare l1 norms even when the hierarchy has only one level.
     }
     void solve(BlockCsrView<C> view) {
         launch(rows,SimpleScalarRows<C>{view,matrix.rowOffsetsPtr(),matrix.colIndicesPtr(),matrix.valuesPtr()});
