@@ -60,7 +60,7 @@ int main(int argc,char** argv) {
         MPI_Comm_rank(shared,&local); MPI_Comm_free(&shared);
         assembly_cuda_check(cudaGetDeviceCount(&devices)); ensure(devices>0,"no CUDA device"); assembly_cuda_check(cudaSetDevice(local%devices));
 #endif
-        ensure(argc==2 || argc==3,"supply a fixture directory and optional public channel mesh");
+        ensure(argc>=2 && argc<=4,"supply a fixture directory and optional public channel mesh");
         if (!rank) std::filesystem::create_directories(argv[1]);
         MPI_Barrier(MPI_COMM_WORLD);
         const char* expected[]={"","","native Exodus read failed","native Exodus read failed","native Exodus read failed",
@@ -86,10 +86,23 @@ int main(int argc,char** argv) {
             }
             simple_collective(MPI_COMM_WORLD,rejected==(variant>=2),"malformed Exodus fixture accepted");
         }
-        if (argc==3) {
+        if (argc>=3) {
             const auto channel=read_simple_mesh(MPI_COMM_WORLD,argv[2]);
             simple_collective(MPI_COMM_WORLD,channel.x.size()==425 && channel.nodes[0].size()==1536 && channel.faces.size()==576,
                               "public channel dimensions changed");
+        }
+        if (argc==4) {
+            const mars::segregated::SimpleBoundaryNames selection{"feed","exit",{"casing","cover"}};
+            const auto mesh=read_simple_mesh(MPI_COMM_WORLD,argv[3],selection);
+            simple_collective(MPI_COMM_WORLD,mesh.x.size()==81 && mesh.nodes[0].size()==192 && mesh.faces.size()==144,
+                              "oblique public mesh dimensions changed");
+            for (auto bad:{mars::segregated::SimpleBoundaryNames{},
+                          mars::segregated::SimpleBoundaryNames{"feed","exit",{"casing","missing"}},
+                          mars::segregated::SimpleBoundaryNames{"feed","exit",{"casing","casing"}}}) {
+                bool rejected=false;
+                try { read_simple_mesh(MPI_COMM_WORLD,argv[3],bad); } catch (const std::exception&) { rejected=true; }
+                simple_collective(MPI_COMM_WORLD,rejected,"invalid side-set mapping accepted");
+            }
         }
         if (!rank) std::cout<<"PASS: native Exodus input, packed/split coordinates and 8 malformed cases ranks="<<ranks<<'\n';
     } catch (const std::exception& e) { std::cerr<<"FAIL: "<<e.what()<<'\n'; MPI_Abort(MPI_COMM_WORLD,1); }

@@ -11,13 +11,13 @@ class FieldComparisonTest(unittest.TestCase):
     header = "node,x,y,z,u,v,w,p\n"
     row = "0,0,0,0,0.1,0,0,1\n"
 
-    def check(self, candidate, expected=1, reference=None, tol="1e-6"):
+    def check(self, candidate, expected=1, reference=None, tol="1e-6", scales=()):
         with tempfile.TemporaryDirectory() as directory:
             ref, got = Path(directory) / "ref.csv", Path(directory) / "got.csv"
             ref.write_text(self.header + self.row if reference is None else reference)
             got.write_text(candidate)
             with contextlib.redirect_stdout(io.StringIO()):
-                result = compare_fields.main([str(ref), str(got), "--tol=" + tol])
+                result = compare_fields.main([str(ref), str(got), "--tol=" + tol] + list(scales))
             self.assertEqual(result, expected)
 
     def test_valid(self):
@@ -53,6 +53,17 @@ class FieldComparisonTest(unittest.TestCase):
 
     def test_pressure_level_is_not_removed(self):
         self.check(self.header + self.row.replace(",1\n", ",2\n"))
+
+    def test_configured_scales(self):
+        # Both differences exceed the old scales but fit rho=2, U=.2.
+        self.check(self.header + "0,0,0,0,0.10000015,0,0,1.00000006\n", 0,
+                   scales=("--rho=2", "--inlet-velocity=.2"))
+        self.check(self.header + "0,0,0,0,0.10000015,0,0,1.00000006\n")
+
+    def test_invalid_scales(self):
+        for args in (("--rho=nan",), ("--rho=0",), ("--inlet-velocity=-1",),
+                     ("--rho=1e308", "--inlet-velocity=1e308")):
+            self.check(self.header + self.row, scales=args)
 
     def test_large_finite_difference(self):
         self.check(self.header + "0,0,0,0,1e308,0,0,1\n")

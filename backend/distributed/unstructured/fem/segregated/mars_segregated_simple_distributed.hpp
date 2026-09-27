@@ -170,9 +170,7 @@ struct DistributedSimpleRunner {
         momentum_solve(c),poisson_solve(c),
         exchange(c,o.peers,o.send_offsets,o.send_nodes,o.recv_offsets,o.recv_nodes,n)
     {
-        simple_collective(comm,ctl.density>0 && ctl.viscosity>0 && ctl.pseudo_dt>0 && ctl.inlet_speed>0,"invalid material or pseudo-time");
-        for (double alpha:{ctl.alpha_u,ctl.alpha_p,ctl.alpha_mass,ctl.beta})
-            simple_collective(comm,alpha>0 && alpha<=1,"relaxation and beta must be in (0,1]");
+        simple_collective(comm,valid_simple_controls(ctl),"invalid SIMPLE controls");
         simple_collective(comm,valid_indices(o.owned_elements,e) && valid_indices(o.owned_faces,b),
                           "owned element or face list outside the local mesh");
         launch(owned_nodes,MarkOwnedNodes{owned.data(),owned_mask.data()});

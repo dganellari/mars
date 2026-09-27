@@ -1,4 +1,6 @@
 #pragma once
+#include <cmath>
+#include <initializer_list>
 #include "mars_segregated_assembly.hpp"
 #include "mars_segregated_update.hpp"
 
@@ -13,7 +15,15 @@ namespace mars::segregated {
 struct SimpleControls {
     double density=1, viscosity=.1, pseudo_dt=.01, inlet_speed=.1;
     double alpha_u=.3, alpha_p=.3, alpha_mass=.75, beta=.05, pressure_reference=0;
+    double reference_length=1;
 };
+inline bool valid_simple_controls(const SimpleControls& c) {
+    for (double value:{c.density,c.viscosity,c.pseudo_dt,c.inlet_speed,c.reference_length})
+        if (!std::isfinite(value) || value<=0) return false;
+    for (double value:{c.alpha_u,c.alpha_p,c.alpha_mass,c.beta})
+        if (!std::isfinite(value) || value<=0 || value>1) return false;
+    return std::isfinite(c.pressure_reference);
+}
 struct SimpleFace { int element, ordinal, kind; }; // inlet=0, outlet=1, no-slip wall=2
 
 MARS_SIMPLE_HD inline TetInteriorInput simple_interior(int stage, const int* nodes,

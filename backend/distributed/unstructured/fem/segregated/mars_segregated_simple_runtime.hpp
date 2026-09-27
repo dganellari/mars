@@ -163,9 +163,7 @@ struct SimpleRunner {
         state{velocity.data(),pressure.data(),vg.data(),pg.data(),d.data(),volume.data(),div.data(),
               eflux.data(),bflux.data(),trace.data(),factor.data(),error.data(),flags.data()},
         graph(mesh),momentum(n,graph.blocks()),poisson(n,graph.blocks()) {
-        ensure(c.density>0 && c.viscosity>0 && c.pseudo_dt>0 && c.inlet_speed>0,"invalid material or pseudo-time");
-        for (double alpha:{c.alpha_u,c.alpha_p,c.alpha_mass,c.beta})
-            ensure(alpha>0 && alpha<=1,"relaxation and beta must be in (0,1]");
+        ensure(valid_simple_controls(c),"invalid SIMPLE controls");
         launch(e,SimpleGeometry{mesh,state}); check("native geometry failed");
         launch(b,SimpleBoundaryFactor{mesh,factor.data()});
     }

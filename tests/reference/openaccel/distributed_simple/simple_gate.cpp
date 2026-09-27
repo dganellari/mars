@@ -3,7 +3,7 @@
 // component. Phase 2 (--reference FILE, any rank count): DistributedSimpleRunner on an irregular
 // partition writes the same snapshots; rank 0 compares every entry. Host builds solve with a
 // test-only gathered dense LU; CUDA builds (MARS_REPLAY_CUDA) use Hypre on both sides.
-#include "channel.hpp"
+#include "configured_case.hpp"
 #include "mars_segregated_simple_distributed.hpp"
 #include <cmath>
 #include <cstring>
@@ -100,7 +100,7 @@ template<int C> struct Solve {
 struct Options {
     int nx=16, ny=4, nz=4, iterations=2, converge=0;
     std::string reference, write, fault;
-    bool split=false;
+    bool split=false,configured=false;
     bool builder=false;   // distributed side built by simple_partition from ElementDomain-shaped state
     double backflow=0;   // initial outlet-region velocity, see initial()
     double tolerance=1e-10;
@@ -223,16 +223,22 @@ Verdict compare(const Snapshots& ref,const Snapshots& got,double tolerance) {
 
 std::string header_of(const Options& o) {
     std::ostringstream h; h<<"MARS_DSIMPLE_V1 "<<o.nx<<'x'<<o.ny<<'x'<<o.nz<<" iterations="<<o.iterations<<" converge="<<o.converge<<" backflow="<<o.backflow;
+    if (o.configured) h<<" configured-oblique";
     return h.str();
 }
 // lx is the global channel length: a rank's local extent must not change the initial field.
-template<class Runner> void initial(Runner& run,const std::vector<double>& x,const std::vector<double>& y,double lx,double backflow,const SimpleControls& c) {
+template<class Runner> void initial(Runner& run,const std::vector<double>& x,const std::vector<double>& y,const std::vector<double>& z,double lx,double backflow,const SimpleControls& c,bool rotated) {
     if (backflow==0) return;
     // backflow>0: uniform reverse flow near the outlet (closes every outlet face);
     // backflow<0: sheared, forward below y=0.5 and reverse above (closes part of the outlet).
     std::vector<double> u(3*x.size(),0.0);
-    for (std::size_t v=0;v<x.size();++v) if (x[v]>0.75*lx)
-        u[3*v]=backflow>0?-backflow*c.inlet_speed:(y[v]>0.5?backflow:-backflow)*c.inlet_speed;
+    for (std::size_t v=0;v<x.size();++v) {
+        const auto point=rotated?unrotate_point(x[v],y[v],z[v]):std::array<double,3>{x[v],y[v],z[v]};
+        if (point[0]<=.75*lx) continue;
+        const double speed=backflow>0?-backflow*c.inlet_speed:(point[1]>.5?backflow:-backflow)*c.inlet_speed;
+        const auto velocity=rotated?rotate_vector(speed,0,0):std::array<double,3>{speed,0,0};
+        for (int j=0;j<3;++j) u[3*v+j]=velocity[j];
+    }
     run.velocity.values=u;
 }
 
@@ -258,11 +264,15 @@ template<class Runner,class Record> std::string drive(Runner& run,const Options&
 
 int execute(const Options& o) {
     int rank=0, ranks=1; MPI_Comm_rank(gate_comm,&rank); MPI_Comm_size(gate_comm,&ranks);
-    const auto mesh=channel(o.nx,o.ny,o.nz); const SimpleControls controls;
+    auto mesh=channel(o.nx,o.ny,o.nz);
+    // Keep the fixture's logical slab partition when rotating its physical coordinates.
+    const auto p=partition(mesh,ranks);
+    if (o.configured) rotate_channel(mesh);
+    const SimpleControls controls=o.configured?configured_controls():SimpleControls{};
     if (!o.write.empty()) {
         if (ranks!=1) throw std::runtime_error("--write-reference runs the one-rank SimpleRunner: use one rank");
-        SimpleRunner run(mesh); run.momentum.verbose=run.poisson.verbose=false;
-        initial(run,mesh.x,mesh.y,double(o.nx)/o.ny,o.backflow,controls);
+        SimpleRunner run(mesh,controls); run.momentum.verbose=run.poisson.verbose=false;
+        initial(run,mesh.x,mesh.y,mesh.z,double(o.nx)/o.ny,o.backflow,controls,o.configured);
         std::vector<int> global(mesh.x.size()); for (std::size_t g=0;g<global.size();++g) global[g]=int(g);
         std::vector<int> el(mesh.nodes[0].size()), fa(mesh.faces.size());
         for (std::size_t i=0;i<el.size();++i) el[i]=int(i);
@@ -292,7 +302,6 @@ int execute(const Options& o) {
     }
     std::string header; const auto ref=read_snapshots(o.reference,header);
     if (header!=header_of(o)) throw std::runtime_error("reference header '"+header+"' does not match options '"+header_of(o)+"'");
-    const auto p=partition(mesh,ranks);
     int drop=-1, drop_rank=-1;
     if (o.fault=="missing-element") {
         // Lowest-rank ownership leaves the highest rank without halo elements; rank 0 has the most.
@@ -342,7 +351,7 @@ int execute(const Options& o) {
     }
     DistributedSimpleRunner<Matrix,GlobalId,Solve> run(gate_comm,part.input,part.ownership,controls);
     run.poison_unexchanged=true;
-    initial(run,part.input.x,part.input.y,double(o.nx)/o.ny,o.backflow,controls);
+    initial(run,part.input.x,part.input.y,part.input.z,double(o.nx)/o.ny,o.backflow,controls,o.configured);
     Collector c;
     int closed_owned=0;   // outlet faces this rank owns that were ever closed
     struct { Collector& c; Part& part; const std::vector<int>& s2g; const std::string& fault; int rank, ranks; bool full; int& closed;
@@ -448,6 +457,7 @@ int main(int argc,char** argv) {
             else if (k=="--write-reference") o.write=v;
             else if (k=="--fault") o.fault=v;
             else if (k=="--split") o.split=v=="1";
+            else if (k=="--configured") o.configured=v=="1";
             else if (k=="--builder") o.builder=v=="1";
             else if (k=="--backflow") o.backflow=std::stod(v);
             else if (k=="--tolerance") o.tolerance=std::stod(v);

@@ -1,4 +1,5 @@
 #pragma once
+#include "mars_segregated_simple_options.hpp"
 #include "mars_segregated_simple_mesh.hpp"
 #include "../../utils/mars_read_exodus_raw.hpp"
 #if defined(__CUDACC__)
@@ -64,7 +65,7 @@ struct SourceExteriorCheck {
 };
 
 // Rank zero reads bytes. Broadcasts, index conversion and all topology validation use device buffers.
-inline SimpleDeviceInput read_simple_mesh(MPI_Comm comm,const std::string& path) {
+inline SimpleDeviceInput read_simple_mesh(MPI_Comm comm,const std::string& path,const SimpleBoundaryNames& names={}) {
     int rank; MPI_Comm_rank(comm,&rank);
     ExodusRawTet4 file;
     bool ok=true; std::string message;
@@ -89,16 +90,17 @@ inline SimpleDeviceInput read_simple_mesh(MPI_Comm comm,const std::string& path)
     mesh_check(comm,error,"degenerate source connectivity");
     // Side-set names are file metadata. All element/face matching is performed below on the device.
     int sets=int(file.side_sets.size()); MPI_Bcast(&sets,1,MPI_INT,0,comm);
-    simple_collective(comm,sets==3,"SIMPLE requires inlet, outlet and walls side sets");
-    Buffer<int> tags(4*e,-1); int seen=0;
+    simple_collective(comm,names.valid() && size_t(sets)==names.walls.size()+2,
+                      "SIMPLE boundary selection must name every side set exactly once");
+    Buffer<int> tags(4*e,-1); std::set<std::string> seen;
     for (int i=0;i<sets;++i) {
         int kind=-1;
         if (!rank) {
             const auto& name=file.side_sets[size_t(i)].name;
-            kind=name=="inlet"?0:name=="outlet"?1:name=="walls"?2:-1;
+            kind=seen.insert(name).second?names.kind(name):-1;
         }
         MPI_Bcast(&kind,1,MPI_INT,0,comm);
-        simple_collective(comm,kind>=0 && !(seen&(1<<kind)),"missing, repeated or unsupported boundary name"); seen|=1<<kind;
+        simple_collective(comm,kind>=0,"missing, repeated or unsupported boundary name");
         Buffer<long long> elements,sides; const std::vector<long long> empty;
         broadcast_mesh_array(comm,rank?empty:file.side_sets[size_t(i)].elements,elements,MPI_LONG_LONG);
         broadcast_mesh_array(comm,rank?empty:file.side_sets[size_t(i)].sides,sides,MPI_LONG_LONG);

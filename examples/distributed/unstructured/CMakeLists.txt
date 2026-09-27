@@ -413,7 +413,9 @@ if(MARS_ENABLE_HYPRE)
     target_compile_definitions(mars_segregated_simple PRIVATE MARS_REPLAY_CUDA)
     target_include_directories(mars_segregated_simple PRIVATE
         ${CMAKE_SOURCE_DIR}/backend/distributed/unstructured/fem/segregated)
-    set_target_properties(mars_segregated_simple PROPERTIES CUDA_STANDARD 20 CUDA_STANDARD_REQUIRED ON)
+    set_target_properties(mars_segregated_simple PROPERTIES CUDA_STANDARD 20 CUDA_STANDARD_REQUIRED ON
+        CUDA_SEPARABLE_COMPILATION ON)
+    install(TARGETS mars_segregated_simple RUNTIME DESTINATION bin/examples)
     add_executable(mars_segregated_simple_check mars_segregated_simple_check.cu)
     target_link_libraries(mars_segregated_simple_check PRIVATE mars)
     target_compile_definitions(mars_segregated_simple_check PRIVATE MARS_REPLAY_CUDA)

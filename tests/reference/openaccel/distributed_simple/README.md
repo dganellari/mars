@@ -3,11 +3,16 @@
 The distributed runner retains the single-rank steady, laminar, upwind SIMPLE
 kernels. It assembles complete owned rows, solves through the owned-row Hypre
 adapter, publishes ghost fields and reduces diagnostics over unique owners.
-This integration is a public validation path. Controlled-partition CUDA gates
-passed on 1/2/4 ranks at revision `3f7ce1e4`, including reversal and split
-communicators. The device ingestion and reduction changes below still need
-CUDA compilation and execution. Distributed ElementDomain convergence is pending.
-The existing single-rank driver and shared ElementDomain halo code are unchanged.
+Controlled-partition CUDA gates passed on 1/2/4 ranks at revision `3f7ce1e4`,
+including reversal and split communicators. Subsequent user-reported Daint runs
+also passed native Exodus/ElementDomain convergence and field parity on 1/2/4
+ranks: 1277 iterations on the fixed public channel, with maximum scaled velocity
+and pressure differences below 6e-13. These results do not cover the newly
+exposed physical controls or the oblique fixture.
+
+The distributed path is now the normal `mars_segregated_simple` executable.
+See [configurable controls and interactive runs](configurable_run.md). The shared
+ElementDomain halo code is unchanged. The compatibility target below still works.
 
 ## Ownership and communication contract
 
@@ -163,12 +168,12 @@ The CPU controls CUDA/MPI/Hypre APIs, handles peer/count metadata and reads smal
 error/convergence reports for logging. At the end, field rows are packed, gathered
 and sorted on the GPU, then downloaded once for CSV file output.
 
-Current scope: one 3D Tet4 block with `inlet`, `outlet`, `walls` side sets, fixed
-public-channel controls and MPI_COMM_WORLD. Initial source arrays are broadcast
+Current scope: one 3D Tet4 block with one selected inlet, one outlet and one or
+more wall side sets, configurable physical controls and MPI_COMM_WORLD. Initial source arrays are broadcast
 to every rank for coordinate/tag matching and released before iteration. This is
 not yet scalable distributed file ingestion, and no performance improvement is
 claimed without GPU measurements. Empty owned-row ranks remain rejected by the
-Hypre adapter. This establishes no pump or arbitrary-mesh capability.
+Hypre adapter. This establishes no pump or unrestricted mesh capability.
 
 From the existing CUDA/Hypre build directory, build the new targets without
 replacing its other options:

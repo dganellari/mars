@@ -1,112 +1,134 @@
-#include "mars_segregated_simple_runtime.hpp"
-#include "mars_segregated_simple_input.hpp"
-#include "mars_segregated_native_input.hpp"
+// Native Exodus -> device ElementDomain -> distributed SIMPLE. Host work is file I/O and API control.
+#include "mars_segregated_simple_native_mesh.hpp"
 #include <filesystem>
 #include <iomanip>
 #include <limits>
+
+using namespace mars;
 using namespace mars::segregated;
 using namespace mars::segregated::runtime;
+using Runner=DistributedSimpleRunner<HypreSimpleSolve<1>::Solver::Matrix,HYPRE_BigInt,HypreSimpleSolve>;
 
-struct Options {
-    std::string mesh,output,format="prepared";
-    int iterations=2000,report=10;
-    double residual=1e-6,mass=1e-6,change=1e-6;
+struct FieldRow { double values[8]; };
+struct FieldRowLess {
+    __host__ __device__ bool operator()(const FieldRow& a,const FieldRow& b) const { return a.values[0]<b.values[0]; }
 };
-Options options(int argc,char** argv) {
-    Options o;
-    for (int i=1;i<argc;++i) {
-        std::string key=argv[i];
-        ensure(i+1<argc,"each option requires a value; see --help"); const std::string value=argv[++i];
-        if (key=="--mesh") o.mesh=value;
-        else if (key=="--mesh-format") { ensure(value=="prepared" || value=="exodus","mesh format must be prepared or exodus"); o.format=value; }
-        else if (key=="--output-prefix") o.output=value;
-        else {
-            std::size_t end=0; const double number=std::stod(value,&end);
-            ensure(end==value.size() && std::isfinite(number) && number>0,"options require positive finite numbers");
-            if (key=="--iterations" || key=="--report-every") {
-                ensure(number<=std::numeric_limits<int>::max() && number==std::floor(number),"iteration counts must be integers");
-                (key=="--iterations"?o.iterations:o.report)=int(number);
-            } else if (key=="--residual-tol") o.residual=number;
-            else if (key=="--mass-tol") o.mass=number;
-            else if (key=="--change-tol") o.change=number;
-            else throw std::runtime_error("unknown option: "+key);
-        }
+struct PackOutput {
+    const int *owned,*source; const double *x,*y,*z,*u,*p; FieldRow* rows;
+    __device__ void operator()(int i) const {
+        const int n=owned[i]; rows[i]={{double(source[n]),x[n],y[n],z[n],u[3*n],u[3*n+1],u[3*n+2],p[n]}};
     }
-    ensure(!o.mesh.empty() && !o.output.empty(),"--mesh and --output-prefix are required"); return o;
-}
-void save_fields(const Options& o,const std::vector<int>& source_nodes,SimpleRunner& run) {
-    // Explicit final public-field export; no field downloads inside the iteration loop.
-    const auto u=run.velocity.host(),p=run.pressure.host(),x=run.x.host(),y=run.y.host(),z=run.z.host();
-    std::ofstream out(o.output+"-fields.csv"); ensure(bool(out),"cannot write fields");
-    out<<std::setprecision(17)<<"node,x,y,z,u,v,w,p\n";
-    for (int n=0;n<run.n;++n) out<<source_nodes[n]<<','<<x[n]<<','<<y[n]<<','<<z[n]<<','
-        <<u[3*n]<<','<<u[3*n+1]<<','<<u[3*n+2]<<','<<p[n]<<'\n';
-    out.close(); ensure(bool(out),"field output failed");
-}
-template<class Input>
-int solve(const Options& o,const Input& input,const std::vector<int>& source_nodes) {
-    SimpleRunner run(input); run.momentum.verbose=run.poisson.verbose=false;
-    std::ofstream csv(o.output+"-metrics.csv"); ensure(bool(csv),"cannot write metrics");
-    csv<<std::setprecision(17)<<"iteration,momentum,continuity,mass_balance,du,dp,dflux,cancellation,inlet_kg_s,outlet_kg_s,umax_m_s,closed_faces,changed_faces\n";
-    std::cout<<"SIMPLE public Tet4 channel, one rank, upwind, laminar, rho=1 mu=0.1 U=0.1 L=1\n"
-             <<"alpha_u=0.3 alpha_p=0.3 alpha_mass=0.75 beta=0.05 pseudo_dt=0.01 (steady, no physical time)\n"
-             <<"Norms are dimensionless MARS residuals; not the OpenAccel printed RMS normalization.\n";
+};
+struct CheckOutput {
+    const FieldRow* rows; int* error;
+    __device__ void operator()(int i) const { if (rows[i].values[0]!=double(i)) atomicExch(error,1); }
+};
+
+int execute(const SimpleOptions& o) {
+    int rank=0, ranks=1; MPI_Comm_rank(MPI_COMM_WORLD,&rank); MPI_Comm_size(MPI_COMM_WORLD,&ranks);
+    if (rank==0) for (const char* suffix:{"-metrics.csv","-fields.csv"})
+        ensure(!std::filesystem::exists(o.output+suffix),"output exists; choose a fresh prefix");
+    int nodes=0;
+    Buffer<int> source_node;
+    auto make_runner=[&]() {
+        const auto input=read_simple_mesh(MPI_COMM_WORLD,o.mesh,o.boundaries); nodes=int(input.x.size());
+        auto domain=distribute_simple_mesh(MPI_COMM_WORLD,input);
+        NativeSimpleMesh<HYPRE_BigInt> native(MPI_COMM_WORLD,*domain,input);
+        source_node=std::move(native.source_node);
+        return std::make_unique<Runner>(MPI_COMM_WORLD,native.partition.input,native.partition.ownership,o.controls);
+    };
+    auto runner=make_runner(); // Release replicated file arrays and setup scratch before iterating.
+    auto& run=*runner;
+    if (o.setup_only) {
+        if (rank==0) std::cout<<"PASS: ElementDomain SIMPLE setup ranks="<<ranks<<"; no iterations run"<<std::endl;
+        return 0;
+    }
+    std::ofstream csv;
+    if (rank==0) {
+        csv.open(o.output+"-metrics.csv"); ensure(bool(csv),"cannot write metrics");
+        csv<<std::setprecision(17)<<"iteration,momentum,continuity,mass_balance,du,dp,dflux,cancellation,inlet_kg_s,outlet_kg_s,umax_m_s,closed_faces,changed_faces\n";
+        const auto& c=o.controls;
+        std::cout<<std::setprecision(17)<<"SIMPLE Tet4, "<<ranks<<" ranks (ElementDomain/cstone), upwind, laminar\n"
+                 <<"rho="<<c.density<<" mu="<<c.viscosity<<" nu="<<c.viscosity/c.density
+                 <<" inlet_speed="<<c.inlet_speed<<" (inward normal) outlet_pressure="<<c.pressure_reference
+                 <<" reference_length="<<c.reference_length<<'\n'
+                 <<"alpha_u="<<c.alpha_u<<" alpha_p="<<c.alpha_p<<" alpha_mass="<<c.alpha_mass
+                 <<" beta="<<c.beta<<" pseudo_dt="<<c.pseudo_dt<<" (steady, no physical time)\n"
+                 <<"Norms are dimensionless MARS residuals; not OpenAccel printed RMS.\n";
+    }
     bool converged=false;
     for (;;) {
-        // Evaluate the current state before advancing it; no mixed-iteration stopping test.
-        run.assemble_momentum(); const auto sums=run.diagnostics(); const auto m=simple_metrics(sums,run.controls);
+        run.assemble_momentum(); const auto report=run.diagnostic_report(o.residual,o.mass,o.change);
+        const auto& sums=report.sums; const auto& m=report.metrics;
         ensure(m.finite,"nonfinite nonlinear diagnostics");
         ensure(m.cancellation<=1e-10,"assembled continuity does not match boundary mass flux");
-        converged=simple_converged(m,run.completed,sums.changed,o.residual,o.mass,o.change);
-        csv<<run.completed<<','<<m.momentum<<','<<m.continuity<<','<<m.flux<<','<<m.velocity_change<<','
-           <<m.pressure_change<<','<<m.flux_change<<','<<m.cancellation<<','<<sums.inlet<<','<<sums.outlet<<','<<sqrt(sums.speed2)<<','
-           <<sums.closed<<','<<sums.changed<<'\n';
-        ensure(bool(csv),"metric output failed");
-        if (run.completed%o.report==0 || converged || run.completed==o.iterations)
-            std::cout<<"[simple] iteration="<<run.completed<<" momentum="<<m.momentum<<" continuity="<<m.continuity
-                     <<" balance="<<m.flux<<" du="<<m.velocity_change<<" dp="<<m.pressure_change
-                     <<" dflux="<<m.flux_change<<" umax="<<sqrt(sums.speed2)<<" closed="<<sums.closed<<" changed="<<sums.changed<<std::endl;
+        converged=report.converged;
+        if (rank==0) {
+            csv<<run.completed<<','<<m.momentum<<','<<m.continuity<<','<<m.flux<<','<<m.velocity_change<<','
+               <<m.pressure_change<<','<<m.flux_change<<','<<m.cancellation<<','<<sums.inlet<<','<<sums.outlet<<','<<report.speed<<','
+               <<sums.closed<<','<<sums.changed<<'\n';
+            ensure(bool(csv),"metric output failed");
+            if (run.completed%o.report==0 || converged || run.completed==o.iterations)
+                std::cout<<"[simple] iteration="<<run.completed<<" momentum="<<m.momentum<<" continuity="<<m.continuity
+                         <<" balance="<<m.flux<<" du="<<m.velocity_change<<" dp="<<m.pressure_change<<" dflux="<<m.flux_change
+                         <<" umax="<<report.speed<<" closed="<<sums.closed<<" changed="<<sums.changed<<std::endl;
+        }
         if (converged || run.completed==o.iterations) break;
         run.advance();
     }
-    csv.close(); ensure(bool(csv),"metric output failed"); save_fields(o,source_nodes,run);
-    std::cout<<(converged?"CONVERGED":"NOT CONVERGED: iteration limit")<<" iterations="<<run.completed<<'\n';
+    if (!rank) { csv.close(); ensure(bool(csv),"metric output failed"); }
+    // Output is the only field download. MPI gathers device rows before rank zero writes the CSV.
+    Buffer<FieldRow> rows(run.owned_nodes);
+    launch(run.owned_nodes,PackOutput{run.owned.data(),raw(source_node),run.x.data(),run.y.data(),run.z.data(),
+                                     run.velocity.data(),run.pressure.data(),raw(rows)});
+    static_assert(sizeof(FieldRow)==8*sizeof(double));
+    simple_collective(MPI_COMM_WORLD,run.owned_nodes<=INT_MAX/8,"field output exceeds MPI count capacity");
+    const int count=run.owned_nodes*8; std::vector<int> counts(ranks),displacements(ranks);
+    ensure(MPI_Gather(&count,1,MPI_INT,counts.data(),1,MPI_INT,0,MPI_COMM_WORLD)==MPI_SUCCESS,"field counts failed");
+    long long all=0;
+    if (!rank) for (int q=0;q<ranks;++q) { displacements[q]=int(all); all+=counts[q]; ensure(all<=INT_MAX,"field output exceeds MPI count capacity"); }
+    simple_collective(MPI_COMM_WORLD,rank!=0 || all==8LL*nodes,"field gather does not cover every source node");
+    Buffer<FieldRow> gathered(size_t(rank==0?nodes:0));
+    mesh_mpi_ready();
+    ensure(MPI_Gatherv(raw(rows),count,MPI_DOUBLE,raw(gathered),counts.data(),displacements.data(),MPI_DOUBLE,0,MPI_COMM_WORLD)==MPI_SUCCESS,"device field gather failed");
+    if (rank==0) {
+        mesh_sort(gathered,FieldRowLess{});
+        Array<int> output_error(1);
+        launch(nodes,CheckOutput{raw(gathered),output_error.data()});
+        ensure(output_error.host()[0]==0,"field gather returned duplicate or missing source nodes");
+        std::vector<FieldRow> field(gathered.size()); thrust::copy(gathered.begin(),gathered.end(),field.begin());
+        std::ofstream out(o.output+"-fields.csv"); ensure(bool(out),"cannot write fields");
+        out<<std::setprecision(17)<<"node,x,y,z,u,v,w,p\n";
+        for (const auto& row:field) { for (int j=0;j<8;++j) out<<(j?",":"")<<row.values[j]; out<<'\n'; }
+        ensure(bool(out),"field output failed");
+        std::cout<<(converged?"CONVERGED":"NOT CONVERGED: iteration limit")<<" iterations="<<run.completed<<" ranks="<<ranks
+                 <<" exchange_rounds="<<run.exchange.rounds()<<'\n';
+    }
     return converged?0:2;
 }
-int execute(const Options& o) {
-    for (const char* suffix:{"-metrics.csv","-fields.csv"})
-        ensure(!std::filesystem::exists(o.output+suffix),"output exists; choose a fresh prefix");
-    if (o.format=="exodus") {
-#ifdef MARS_REPLAY_CUDA
-        NativeSimpleInput input(o.mesh);
-        std::cout<<"Native SIMPLE Exodus input: "<<std::filesystem::canonical(o.mesh).string()<<'\n';
-        // Exodus storage rows identify final output; the comparator applies node_num_map.
-        std::vector<int> ids(input.source_node.size());
-        thrust::copy(input.source_node.begin(),input.source_node.end(),ids.begin());
-        return solve(o,input,ids);
-#else
-        throw std::runtime_error("native ElementDomain input requires the CUDA build");
-#endif
-    }
-    const auto input=load_simple_input(o.mesh.c_str());
-    std::vector<int> ids(input.x.size()); std::iota(ids.begin(),ids.end(),0);
-    return solve(o,input,ids);
-}
 int main(int argc,char** argv) {
-    if (argc==2 && std::string(argv[1])=="--help") {
-        std::cout<<"mars_segregated_simple --mesh PUBLIC_MESH --output-prefix PATH [--iterations 2000] "
-                 <<"[--mesh-format prepared|exodus] "
-                 <<"[--report-every 10] [--residual-tol 1e-6] [--mass-tol 1e-6] [--change-tol 1e-6]\n"; return 0;
+    MPI_Init(&argc,&argv);
+    SimpleOptions parsed;
+    try { parsed=simple_options(argc,argv); }
+    catch (const std::exception& e) { std::cerr<<"ERROR: "<<e.what()<<'\n'; MPI_Abort(MPI_COMM_WORLD,1); }
+    if (parsed.help) {
+        int rank; MPI_Comm_rank(MPI_COMM_WORLD,&rank);
+        if (!rank) std::cout<<simple_help();
+        MPI_Finalize(); return 0;
     }
-#ifdef MARS_REPLAY_CUDA
-    MPI_Init(&argc,&argv); int ranks=0; MPI_Comm_size(MPI_COMM_WORLD,&ranks);
-    if (ranks!=1) { std::cerr<<"SIMPLE public driver currently requires one rank\n"; MPI_Finalize(); return 1; }
-#endif
+    {
+        int rank=0, local=0, devices=0; MPI_Comm_rank(MPI_COMM_WORLD,&rank);
+        MPI_Comm node; MPI_Comm_split_type(MPI_COMM_WORLD,MPI_COMM_TYPE_SHARED,rank,MPI_INFO_NULL,&node);
+        MPI_Comm_rank(node,&local); MPI_Comm_free(&node);
+        if (cudaGetDeviceCount(&devices)!=cudaSuccess || devices<=0 || cudaSetDevice(local%devices)!=cudaSuccess) {
+            std::cerr<<"ERROR: cannot select a CUDA device"<<std::endl;
+            MPI_Abort(MPI_COMM_WORLD,1);
+        }
+    }
     int result=1;
-    try { result=execute(options(argc,argv)); }
-    catch (const std::exception& e) { std::cerr<<"ERROR: "<<e.what()<<'\n'; }
-#ifdef MARS_REPLAY_CUDA
+    try { result=execute(parsed); }
+    catch (const std::exception& e) { std::cerr<<"ERROR: "<<e.what()<<'\n'; MPI_Abort(MPI_COMM_WORLD,1); }
+    MPI_Bcast(&result,1,MPI_INT,0,MPI_COMM_WORLD);
     MPI_Finalize();
-#endif
     return result;
 }

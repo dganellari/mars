@@ -190,12 +190,16 @@ inline Part build(const SimpleInput& f,const Partition& p,int r,int drop_element
         v.send_nodes.insert(v.send_nodes.end(),send.begin(),send.end()); v.send_offsets.push_back(int(v.send_nodes.size()));
         v.recv_nodes.insert(v.recv_nodes.end(),recv.begin(),recv.end()); v.recv_offsets.push_back(int(v.recv_nodes.size()));
     }
-    double lx=0; for (double x:f.x) lx=std::max(lx,x);
-    auto kind=[&](const int* face) {   // by plane, as the generator tags them
-        auto on=[&](const std::vector<double>& c,double value) { for (int j=0;j<3;++j) if (std::abs(c[face[j]]-value)>1e-12) return false; return true; };
-        if (on(v.x,0)) return 0;
-        if (on(v.x,lx)) return 1;
-        return on(v.y,0) || on(v.y,1) || on(v.z,0) || on(v.z,1) ? 2 : -1;
+    std::map<std::array<int,3>,int> tags;
+    for (const auto& face:f.faces) {
+        std::array<int,3> key;
+        for (int j=0;j<3;++j) key[j]=f.nodes[mars::segregated::tet_face_node(face.ordinal,j)][face.element];
+        std::sort(key.begin(),key.end()); tags[key]=face.kind;
+    }
+    auto kind=[&](const int* face) {
+        std::array<int,3> key{int(v.key[face[0]]),int(v.key[face[1]]),int(v.key[face[2]])};
+        std::sort(key.begin(),key.end()); const auto found=tags.find(key);
+        return found==tags.end()?-1:found->second;
     };
     auto built=mars::segregated::runtime::simple_partition<long long>(comm,v,kind);
     Part part; part.input=std::move(built.input); part.ownership=std::move(built.ownership);
