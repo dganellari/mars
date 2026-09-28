@@ -7,7 +7,9 @@ CSV formats. The clean family must PASS; each defect must FAIL for the stated re
 planar Poiseuille parabola, a biased or low-order pressure gradient, a flow-rate floor,
 entrance or outlet transients inside the window, a window inside the a-priori entrance region,
 rank mismatches, malformed or unconverged output, outlet reversal, stagnant transverse
-velocity, too few or non-monotone levels, and a mesh that is not the one described.
+velocity, too few or non-monotone levels, a mesh that is not the one described, and missing
+evidence (no Exodus file, no log, no control line in the log). Meshes come from the real
+generator, so every study verifies an Exodus SHA-256.
 """
 import json
 import math
@@ -21,17 +23,17 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import duct_analytic as da  # noqa: E402
 import duct_compare as dc  # noqa: E402
+import duct_mesh as dm  # noqa: E402
 from duct_mesh import Lattice  # noqa: E402
 
 U, MU, RHO = 0.1, 0.1, 1.0
 
 
-def write_mesh(d, cells, lattice):
-    info = {"format": "mars-simple-duct-v1", "cells": cells, "nx": lattice.nx, "ny": lattice.ny, "nz": lattice.nz,
-            "length": lattice.length, "width": lattice.width, "height": lattice.height, "stretch": lattice.stretch,
-            "nodes": lattice.nodes, "exodus": "duct-%d.exo" % cells, "sha256": "0" * 64}
-    with open(os.path.join(d, "duct-%d.json" % cells), "w") as f:
-        json.dump(info, f)
+def write_mesh(d, cells):
+    """The real generator: duct-<cells>.exo and its description with SHA-256."""
+    exo = os.path.join(d, "duct-%d.exo" % cells)
+    if not os.path.exists(exo) and dm.main(["--cells", str(cells), "--output", exo]) != 0:
+        raise RuntimeError("mesh generation failed")
 
 
 def synthetic(d, levels=(4, 8, 16), ranks=(1,), profile=0.3, g=-0.2, order=1.0, g_bias=0.0, g_signs=None,
@@ -43,7 +45,7 @@ def synthetic(d, levels=(4, 8, 16), ranks=(1,), profile=0.3, g=-0.2, order=1.0, 
     G = duct.pressure_gradient(U)
     for n, c in enumerate(levels):
         lat = Lattice(c)
-        write_mesh(d, c, lat)
+        write_mesh(d, c)
         scale = lat.hz / 0.25
         e_u = profile * scale ** order
         e_g = g_bias + (g_signs[n] if g_signs else 1) * g * scale ** order
@@ -117,7 +119,7 @@ class Study(unittest.TestCase):
         self.assertLessEqual(q["finest_rms"], q["band"])
         run = r["runs"]["16-1"]
         self.assertAlmostEqual(run["G_error"], -0.2 / 4, delta=1e-12)
-        self.assertLess(run["window_contamination"], 1e-4)
+        self.assertLess(run["window_section_indicator"], 1e-4)
         self.assertLess(run["development"]["profile_1e-3"], 2.5)
 
     def test_second_order_family_passes(self):
@@ -161,10 +163,10 @@ class Study(unittest.TestCase):
 
     # ---- entrance and outlet development
     def test_entrance_transient_in_window_fails(self):
-        self.assertFailsWith(self.study(entrance=1.0), "window not fully developed")
+        self.assertFailsWith(self.study(entrance=1.0), "window indicator: sections differ")
 
     def test_outlet_transient_in_window_fails(self):
-        self.assertFailsWith(self.study(outlet=1.2, outlet_amplitude=0.5), "window not fully developed")
+        self.assertFailsWith(self.study(outlet=1.2, outlet_amplitude=0.5), "window indicator: sections differ")
 
     def test_window_inside_entrance_region_fails(self):
         self.assertFailsWith(self.study(window=(1.0, 6.0)), "a-priori entrance or outlet region")
@@ -243,7 +245,45 @@ class Study(unittest.TestCase):
         with open(os.path.join(self.dir, "duct-8.exo"), "wb") as f:
             f.write(b"not the mesh")
         r = dc.study(self.dir, [4, 8, 16], [1], dc.Controls(RHO, MU, U))
-        self.assertFailsWith(r, "SHA-256")
+        self.assertFailsWith(r, "SHA-256 differs")
+
+    # ---- missing evidence
+    def test_missing_exodus_fails(self):
+        synthetic(self.dir, (4, 8, 16), (1,))
+        os.remove(os.path.join(self.dir, "duct-16.exo"))
+        self.assertFailsWith(dc.study(self.dir, [4, 8, 16], [1], dc.Controls(RHO, MU, U)), "SHA-256 cannot be verified")
+
+    def test_description_without_exodus_name_fails(self):
+        synthetic(self.dir, (4, 8, 16), (1,))
+        path = os.path.join(self.dir, "duct-8.json")
+        with open(path) as f:
+            info = json.load(f)
+        del info["exodus"]
+        with open(path, "w") as f:
+            json.dump(info, f)
+        self.assertFailsWith(dc.study(self.dir, [4, 8, 16], [1], dc.Controls(RHO, MU, U)), "no Exodus file named")
+
+    def test_missing_log_fails(self):
+        synthetic(self.dir, (4, 8, 16), (1, 2))
+        os.remove(os.path.join(self.dir, "duct-8-2.log"))
+        r = dc.study(self.dir, [4, 8, 16], [1, 2], dc.Controls(RHO, MU, U))
+        self.assertFailsWith(r, "cells 8, 2 ranks: log:")
+        self.assertFailsWith(r, "cells 8, 2 ranks: log: no CONVERGED line")
+
+    def test_log_without_controls_fails(self):
+        r = self.study(header="SIMPLE Tet4 (controls not printed)")
+        for key in ("rho", "mu", "inlet_speed"):
+            self.assertFailsWith(r, "controls: the log states no %s" % key)
+
+    def test_log_without_viscosity_fails(self):
+        self.assertFailsWith(self.study(header="rho=1 inlet_speed=0.1"), "controls: the log states no mu")
+
+    def test_run_command_requires_the_log(self):
+        synthetic(self.dir, (4,), (1,))
+        prefix, mesh = os.path.join(self.dir, "duct-4-1"), os.path.join(self.dir, "duct-4.json")
+        self.assertEqual(dc.main(["run", prefix, "--mesh", mesh]), 0)
+        os.remove(prefix + ".log")
+        self.assertEqual(dc.main(["run", prefix, "--mesh", mesh]), 1)
 
     # ---- command line
     def test_command_line_exit_codes(self):

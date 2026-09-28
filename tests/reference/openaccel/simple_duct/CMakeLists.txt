@@ -43,11 +43,16 @@ else()
     message(STATUS "simple_duct: netCDF not found; ductExodusReader is not built")
 endif()
 
+add_test(NAME ductHostStudyScript COMMAND ${Python3_EXECUTABLE} "${_duct}/test_run_host_study.py")
+set_tests_properties(ductHostStudyScript PROPERTIES TIMEOUT 300)
+
 # Production SIMPLE on the duct, host build: coarse 1/2/4-rank parity (a few minutes), and the
-# refinement study (label long). Results persist in the build tree and are reused on rerun.
+# refinement study (label long). Results persist in the build tree with manifests (executable
+# SHA-256, arguments, mesh); they are reused only when the manifest matches and are rerun after
+# a rebuild that changes duct_host_run (--rerun-stale).
 function(_duct_study name levels ranks)
     add_test(NAME ${name} COMMAND ${Python3_EXECUTABLE} "${_duct}/run_host_study.py" "${CMAKE_CURRENT_BINARY_DIR}/${name}"
-             --host-run $<TARGET_FILE:duct_host_run> --levels ${levels} --ranks ${ranks}
+             --host-run $<TARGET_FILE:duct_host_run> --levels ${levels} --ranks ${ranks} --rerun-stale
              "--mpiexec=${MPIEXEC_EXECUTABLE}" "--numproc-flag=${MPIEXEC_NUMPROC_FLAG}" "--mpi-args=${MPIEXEC_PREFLAGS}" ${ARGN})
 endfunction()
 _duct_study(ductHostParity 4 1,2,4 --parity-only)

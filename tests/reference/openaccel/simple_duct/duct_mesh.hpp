@@ -1,6 +1,7 @@
 #pragma once
-// C++ mirror of duct_mesh.py (same lattice, numbering, orientation and side sets; the
-// canonical() text must match `duct_mesh.py --dump` byte for byte): x in [0,L] (inlet x=0,
+// C++ mirror of duct_mesh.py (same lattice, numbering, orientation and side sets; canonical()
+// must match `duct_mesh.py --dump` exactly except coordinates, which may differ by
+// coordinate_tolerance()): x in [0,L] (inlet x=0,
 // outlet x=L), y in [-W/2,W/2], z in [-H/2,H/2], no-slip walls on the four sides. nx*ny*nz
 // hexes, six positively oriented Kuhn tets per hex around the hex diagonal, so the mesh is
 // invariant under x -> x+hx and a discrete fully developed state exists.
@@ -14,6 +15,7 @@
 #include <cmath>
 #include <stdexcept>
 #include <cstdio>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -42,9 +44,14 @@ struct Lattice {
     std::array<int,3> ijk(long long g) const {
         const int i=int(g%(nx+1)); g/=nx+1; return {i,int(g%(ny+1)),int(g/(ny+1))};
     }
-    double x(int i) const { return i*hx(); }
-    double y(int j) const { return -width/2+j*hy(); }
-    double z(int k) const { return -height/2+k*hz(); }
+    // Same operations as duct_mesh.py. The division between product and sum leaves nothing to
+    // contract into an FMA, so every step is one correctly rounded IEEE operation in C++ and Python.
+    double x(int i) const { return (i*length)/nx; }
+    double y(int j) const { return (j*width)/ny-width/2; }
+    double z(int k) const { return (k*height)/nz-height/2; }
+    // Coordinates from other toolchains may still differ by rounding (e.g. value-changing
+    // optimizations): at most three roundings of values bounded by max(L,W,H).
+    double coordinate_tolerance() const { return 4*std::numeric_limits<double>::epsilon()*std::max({length,width,height}); }
     std::array<double,3> coordinates(long long g) const { const auto c=ijk(g); return {x(c[0]),y(c[1]),z(c[2])}; }
 
     // Element el = t + 6*(hex i + nx*(j + ny*k)), t the Kuhn path permutation.

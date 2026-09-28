@@ -2,16 +2,19 @@
 """Rectangular-duct SIMPLE comparator (contract: README.md, "Mathematical contract").
 
   run    PREFIX --mesh MESH.json   one SIMPLE result (PREFIX-fields.csv, PREFIX-metrics.csv,
-                                   PREFIX.log if present) against the analytic duct solution
+                                   PREFIX.log) against the analytic duct solution; MESH.json
+                                   must sit next to the Exodus file it describes
   study  RUNDIR --levels 8,16,32 --ranks 1,2,4
                                    every RUNDIR/duct-<cells>-<ranks> result (mesh RUNDIR/duct-<cells>.json):
                                    each run, rank parity per level and refinement across levels
 
-Per run: valid files on the mesh lattice; converged; the comparison window starts beyond the
-a-priori entrance length and ends before the outlet's upstream influence; a-posteriori, the
-velocity field in the window is x-invariant and the section-mean pressure linear to within 10%
-of the measured error. Reported: profile errors of the window's reference section against the
-Boussinesq series (L2 and max), the least-squares pressure gradient against G = 3 mu U/(a^2 K),
+Per run: complete evidence (Exodus file matching its SHA-256, fields, metrics, a log with the
+controls and CONVERGED); converged; the comparison window starts beyond the a-priori entrance
+length and ends before the outlet's upstream influence; two a-posteriori indicators hold: the
+window sections agree and the section-mean pressure is linear, each to 10% of the measured error.
+The indicators detect entrance or outlet transients that vary across the window; they are not a
+bound on contamination (a transient nearly uniform over the window would pass them).
+Reported: profile errors of the window's reference section against the Boussinesq series (L2 and max), the least-squares pressure gradient against G = 3 mu U/(a^2 K),
 transverse velocity, wall slip, flow rate, and the measured development and outlet lengths.
 Study: P-rank fields equal the one-rank fields to --rank-tol (velocity/U, pressure/(rho U^2));
 errors decrease monotonically under refinement with observed order >= 0.7 on the finest pair;
@@ -40,7 +43,7 @@ _A, _B, _C, _D = 0.445948490915965, 0.108103018168070, 0.091576213509771, 0.8168
 QUADRATURE = [(0.223381589678011, (_B, _A, _A)), (0.223381589678011, (_A, _B, _A)), (0.223381589678011, (_A, _A, _B)),
               (0.109951743655322, (_D, _C, _C)), (0.109951743655322, (_C, _D, _C)), (0.109951743655322, (_C, _C, _D))]
 STOKES_FACTOR = 1e4      # a-priori margin: slowest Stokes mode decays by 1e4 before the window
-CONTAMINATION = 0.1      # window contamination allowed, relative to the measured error
+INDICATOR = 0.1          # window indicators allowed, relative to the measured error
 ORDER_MIN = 0.7          # observed order on the finest pair (first-order upwind, pre-asymptotic)
 GCI_SAFETY = 1.25        # Roache's factor for three levels with the observed order
 ORDER_RANGE = (0.5, 3.0) # three-level observed orders accepted for a GCI band
@@ -65,14 +68,19 @@ def load_mesh(path):
     lattice = Lattice(info["cells"], info["length"], info["width"], info["height"], info["stretch"])
     if (lattice.nx, lattice.ny, lattice.nz, lattice.nodes) != (info["nx"], info["ny"], info["nz"], info["nodes"]):
         raise ValueError("%s: lattice sizes disagree with its parameters" % path)
-    exo = os.path.join(os.path.dirname(path), info.get("exodus", ""))
-    if os.path.isfile(exo):
-        h = hashlib.sha256()
-        with open(exo, "rb") as f:
-            for block in iter(lambda: f.read(1 << 20), b""):
-                h.update(block)
-        if h.hexdigest() != info["sha256"]:
-            raise ValueError("%s: SHA-256 differs from %s" % (exo, path))
+    # The runs read the Exodus file; without it the description proves nothing about their mesh.
+    name = info.get("exodus")
+    if not name or os.path.basename(name) != name:
+        raise ValueError("%s: no Exodus file named" % path)
+    exo = os.path.join(os.path.dirname(path), name)
+    if not os.path.isfile(exo):
+        raise ValueError("%s: Exodus file %s missing; its SHA-256 cannot be verified" % (path, exo))
+    h = hashlib.sha256()
+    with open(exo, "rb") as f:
+        for block in iter(lambda: f.read(1 << 20), b""):
+            h.update(block)
+    if h.hexdigest() != info.get("sha256"):
+        raise ValueError("%s: SHA-256 differs from %s" % (exo, path))
     return lattice
 
 
@@ -213,15 +221,22 @@ def analyze(prefix, lattice, controls, window=None):
     except (OSError, ValueError, StopIteration) as e:
         fail("input: %s" % e)
         return out
-    log, used = read_log(prefix + ".log") if os.path.isfile(prefix + ".log") else ("absent", {})
+    # The log is evidence: the solver's own verdict and the physical controls it ran with.
+    try:
+        log, used = read_log(prefix + ".log")
+    except OSError as e:
+        log, used = None, {}
+        fail("log: %s" % e)
     out["iterations"] = int(metrics["iteration"])
     out["final_metrics"] = metrics
     out["log"] = log
-    if log in ("NOT CONVERGED", None):
+    if log != "CONVERGED":
         fail("log: no CONVERGED line")
-    # The analytic solution is for these controls: the run must have used them.
+    # The analytic solution is for these controls: the run must state them and have used them.
     for key, value in (("rho", controls.rho), ("mu", controls.mu), ("inlet_speed", controls.U)):
-        if key in used and not abs(used[key] - value) <= 1e-12 * value:
+        if key not in used:
+            fail("controls: the log states no %s (expected a 'rho=... mu=... inlet_speed=...' line)" % key)
+        elif not abs(used[key] - value) <= 1e-12 * value:
             fail("controls: the run used %s=%g, the comparison assumes %g" % (key, used[key], value))
     inflow = controls.rho * controls.U * lattice.width * lattice.height
     if not abs(abs(metrics["inlet_kg_s"]) - inflow) <= 1e-9 * inflow:
@@ -294,16 +309,17 @@ def analyze(prefix, lattice, controls, window=None):
         i -= 1
     out["development"] = {"profile_1e-2": upstream(1e-2), "profile_1e-3": upstream(1e-3),
                           "centerline_99": lattice.x(i), "outlet_1e-2": downstream(1e-2), "outlet_1e-3": downstream(1e-3)}
-    out["window_contamination"] = max(dev[i] for i in planes)
+    out["window_section_indicator"] = max(dev[i] for i in planes)
     out["profile_max_window"] = max(max(abs(a - b) / uc for a, b in zip(plane(u, lattice, i), sec.exact)) for i in planes)
     out["profile_l2_window"] = max(sec.l2_error(plane(u, lattice, i)) for i in planes)
-    allowed = max(CONTAMINATION * out["profile_max"], 1e-6)
-    if out["window_contamination"] > allowed:
-        fail("window not fully developed: velocity varies by %.3e u_c > %.3e (entrance or outlet region)"
-             % (out["window_contamination"], allowed))
-    allowed = max(CONTAMINATION * abs(out["G_error"]), 1e-6)
+    # Indicators, not bounds: they see transients that vary across the window.
+    allowed = max(INDICATOR * out["profile_max"], 1e-6)
+    if out["window_section_indicator"] > allowed:
+        fail("window indicator: sections differ by %.3e u_c > %.3e (entrance or outlet transient in the window)"
+             % (out["window_section_indicator"], allowed))
+    allowed = max(INDICATOR * abs(out["G_error"]), 1e-6)
     if out["pressure_linearity"] > allowed:
-        fail("section-mean pressure not linear in the window: %.3e > %.3e" % (out["pressure_linearity"], allowed))
+        fail("window indicator: section-mean pressure not linear: %.3e > %.3e" % (out["pressure_linearity"], allowed))
     out["sections"] = [{"x": lattice.x(i), "deviation": dev[i], "u_center": center[i],
                         "p_mean": sec.mean(plane(p, lattice, i))} for i in range(lattice.nx + 1)]
     return out
@@ -476,8 +492,8 @@ def run_lines(s):
             % (s["profile_l2"], s["profile_max"], s["profile_max_interior"], s["wall_slip"], s["transverse_max"]),
             "  G %.8g vs analytic %.8g (error %+.4e; planar parabola would be %.4g)  linearity %.2e"
             % (s["G"], s["analytic"]["G"], s["G_error"], s["analytic"]["G_planar"], s["pressure_linearity"]),
-            "  centerline u/u_c %.6f  flow rate %.6f U  contamination %.2e u_c"
-            % (s["centerline_ratio"], s["flow_rate_ratio"], s["window_contamination"]),
+            "  centerline u/u_c %.6f  flow rate %.6f U  window section indicator %.2e u_c"
+            % (s["centerline_ratio"], s["flow_rate_ratio"], s["window_section_indicator"]),
             "  development: profile 1e-2 %.3f, 1e-3 %.3f, centerline 99%% %.3f; outlet influence 1e-2 %.3f, 1e-3 %.3f"
             % (d["profile_1e-2"], d["profile_1e-3"], d["centerline_99"], d["outlet_1e-2"], d["outlet_1e-3"])] + \
            ["  FAIL: %s" % f for f in s["failures"]]
@@ -486,7 +502,7 @@ def run_lines(s):
 def markdown(report):
     lines = ["# Rectangular duct SIMPLE study", "", "Run directory: `%s`" % report["rundir"], ""]
     if report["runs"]:
-        lines += ["| cells | ranks | iterations | profile L2 | max interior | G error | wall slip | transverse/U | contamination | verdict |",
+        lines += ["| cells | ranks | iterations | profile L2 | max interior | G error | wall slip | transverse/U | window indicator | verdict |",
                   "|---|---|---|---|---|---|---|---|---|---|"]
         for key in sorted(report["runs"], key=lambda k: tuple(int(x) for x in k.split("-"))):
             s = report["runs"][key]
@@ -494,7 +510,7 @@ def markdown(report):
             if "profile_l2" in s:
                 lines.append("| %s | %s | %d | %.4e | %.4e | %+.4e | %.4e | %.3e | %.2e | %s |"
                              % (c, r, s["iterations"], s["profile_l2"], s["profile_max_interior"], s["G_error"],
-                                s["wall_slip"], s["transverse_max"], s["window_contamination"], "FAIL" if s["failures"] else "PASS"))
+                                s["wall_slip"], s["transverse_max"], s["window_section_indicator"], "FAIL" if s["failures"] else "PASS"))
             else:
                 lines.append("| %s | %s | - | - | - | - | - | - | - | FAIL |" % (c, r))
     if report["parity"]:

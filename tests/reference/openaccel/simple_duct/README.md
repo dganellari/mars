@@ -101,10 +101,13 @@ like Stokes eigenmodes.
 
   A window inside this region fails. Higher-Re runs must lengthen the duct (`--length`) or pass
   `--window`, and the Durst term then moves the start.
-- **A-posteriori check** (measured on the discrete solution, not assumed): every window
-  section must equal the reference section to within 10% of the run's own max profile error,
-  with a floor of 1e-6·u_c. The section-mean pressure must be linear to within 10% of the
-  run's own |G error|, so development contaminates the measured error by less than 10%.
+- **A-posteriori indicators** (measured on the discrete solution): every window section must
+  equal the reference section to within 10% of the run's own max profile error, with a floor
+  of 1e-6·u_c. The section-mean pressure must be linear to within 10% of the run's own |G
+  error|. These are indicators, not a bound on contamination: they detect entrance or outlet
+  transients that vary across the window, but a transient that is nearly uniform over the
+  window would pass them. That case is what the a-priori margin addresses, and the margin
+  rests on the plane-channel Stokes estimate, not on a proof for the duct.
 - **Reported, not gated:** the development length (profile within 1e-2 or 1e-3·u_c,
   centerline within 1%) and the outlet influence length.
 
@@ -135,16 +138,18 @@ like Stokes eigenmodes.
 
 **Per run** (`duct_compare.py run`, and every run of a study):
 
-1. Fields cover every lattice node once, with the lattice coordinates to 1e-12 and finite
-   values. The mesh description matches the Exodus SHA-256.
-2. The run used the compared ρ, μ and U (read from the log's control line), and the inlet mass
-   flux is ρUWH to 1e-9.
+1. The evidence is complete. The Exodus file named by the mesh description exists next to it
+   and matches its SHA-256. The fields cover every lattice node once, with the lattice
+   coordinates to 1e-12 and finite values. The metrics exist, and the log exists. A missing
+   file fails; nothing is skipped.
+2. The log states ρ, μ and U on its control line, and they are the compared values. A missing
+   control line or value fails. The inlet mass flux is ρUWH to 1e-9.
 3. The run converged. The log has `CONVERGED`. The final momentum and continuity residuals are
    at most `--residual-tol`, the mass balance at most `--mass-tol`, and du, dp and dflux at most
    `--change-tol` (all 1e-8 in the study). Cancellation is at most 1e-10, and no outlet face is
    closed or changed.
 4. The window satisfies the a-priori bounds and holds at least 3 node planes.
-5. The window passes the a-posteriori test above.
+5. The window passes both a-posteriori indicators above.
 
 **Rank parity:** at every level, the 2- and 4-rank fields equal the 1-rank fields node by node:
 max |Δu|/U ≤ 1e-6 and max |Δp|/(ρU²) ≤ 1e-6, with absolute pressure and no mean removed.
@@ -186,7 +191,9 @@ stated reason:
 - outlet reversal;
 - another μ, or another inflow;
 - two levels only;
-- a changed Exodus file.
+- a changed Exodus file;
+- missing evidence: no Exodus file, no Exodus name in the description, no log, or a log
+  without the control line or without μ.
 
 Rank differences of 5e-8 pass.
 
@@ -196,37 +203,63 @@ Rank differences of 5e-8 pass.
 |---|---|
 | `duct_analytic.py`, `duct_analytic.hpp` | Series solution, K, G, fRe, planar control, entrance estimates (Python drives the comparator; C++ cross-check) |
 | `duct_mesh.py` | Lattice, Kuhn tets, `inlet`/`outlet`/`walls` side sets. Writes Exodus II (netCDF 64-bit offset, standard library only) and a JSON description with SHA-256 |
-| `duct_mesh.hpp` | C++ mirror of the lattice, plus a test slab partition in ElementDomain's shape |
+| `duct_mesh.hpp` | C++ mirror of the lattice, plus a test slab partition in ElementDomain's shape. Coordinates are `(j*W)/ny - W/2` in both languages: no multiply feeds an add, so an FMA-contracting compiler (GCC's default on aarch64) rounds exactly like Python. Tests still allow 4·eps·max(L,W,H) on coordinates only; topology and side sets must match exactly |
 | `duct_host_run.cpp` | Host CPU/MPI run: slab partition, production `simple_partition`, production `DistributedSimpleRunner`. Uses the production option parser, and writes the same CSV files and `CONVERGED` line as `mars_segregated_simple` |
 | `duct_host_solver.hpp` | Test-only gathered GMRES(60) with ILU(0), relative true residual 1e-12 (the gates' dense LU does not scale to these sizes) |
 | `duct_compare.py` | Comparator: `run` (one result) and `study` (all runs, parity, refinement, GCI) |
-| `run_host_study.py` | Meshes, host runs and study in one command (used by ctest) |
+| `run_host_study.py`, `test_run_host_study.py` | Meshes, host runs and study in one command (used by ctest). Each run records a manifest (executable SHA-256, arguments, ranks, mesh SHA-256, exit status, output SHA-256). Results are reused only when it matches; a missing executable, a failed launch or a nonzero exit fails |
 | `duct_exodus_check.cpp`, `test_duct_exodus.py` | Production native reader (`read_simple_mesh`) on generated files, which must return the C++ lattice (netCDF only) |
-| `test_duct_analytic.py`, `analytic_check.cpp`, `test_duct_mesh.py`, `test_duct_compare.py` | Tests described above; Python 3.6 compatible (vermin: minimum 3.3) |
+| `test_duct_analytic.py`, `analytic_check.cpp`, `test_duct_mesh.py`, `test_duct_compare.py`, `test_run_host_study.py` | Tests described above; Python 3.6 compatible (checked with vermin) |
 
 ## Local results (executed on this branch: host CPU, OpenMPI 4.1, 4 cores)
 
-Test suite (`ctest -LE long`, 6 tests, about 3 minutes):
+Test suite (`ctest -LE long`, 7 tests, about 3 minutes). It was built with `-mfma
+-ffp-contract=fast` to reproduce the FMA contraction that aarch64 GCC applies by default:
 
 | Test | Result |
 |---|---|
 | analytic (C++, Python, cross-check) | pass |
-| mesh (topology, orientation, tags, netCDF bytes, determinism, identical C++ mirror) | pass |
-| comparator (27 cases) | pass |
+| mesh (topology, orientation, tags, netCDF bytes, determinism, C++ mirror) | pass |
+| comparator (33 cases, including missing evidence) | pass |
 | production Exodus reader on 1 and 2 ranks | pass |
-| coarse duct on 1/2/4 ranks | pass |
+| study script (9 cases: manifests, stale or edited caches, nonzero exit, missing executable) | pass |
+| coarse duct on 1/2/4 ranks, fresh | pass |
 
 The production reader test is built because netCDF 4.9.2 was installed locally for it.
 
-Host study with the production runner, upwind, default controls and tolerances 1e-8. The
-refinement to 16 cells is the `long` ctest.
+**Coordinate portability, reproduced:** with the same contracting flags, the 1d2037c formula
+`-W/2 + j*hy` compiled to an FMA, and its cells = 6 coordinates differed from Python. The
+current formula `(j*W)/ny - W/2` compiles without FMA and matches Python bitwise. For the
+power-of-two levels (4 to 64) both formulas are exact, so those meshes are unchanged.
 
-| cells | ranks | iterations | profile L2 | max interior | G error | wall slip | transverse/U | contamination |
+Host study with the production runner, upwind, default controls and tolerances 1e-8. The
+three-level refinement uses the 4-rank runs, because 16 cells was run on 4 ranks only; at 4
+and 8 cells, 1, 2 and 4 ranks agree to round-off.
+
+| cells | ranks | iterations | profile L2 | max interior | G error | wall slip | transverse/U | window indicator |
 |---|---|---|---|---|---|---|---|---|
 | 4 | 1, 2, 4 | 3338 | 1.2546e-01 | 8.3026e-02 | −2.2024e-01 | 1.9604e-01 | 4.002e-02 | 2.91e-03 |
 | 8 | 1, 2, 4 | 3139 | 7.4461e-02 | 6.2211e-02 | −1.3985e-01 | 1.0857e-01 | 1.108e-02 | 1.85e-04 |
+| 16 | 4 | 4484 | 4.1965e-02 | 3.8364e-02 | −8.0783e-02 | 5.8314e-02 | 2.971e-03 | 8.15e-05 |
 
-HOST_REFINEMENT_PLACEHOLDER
+**Host refinement verdict: FAIL**, on one criterion with the thresholds unchanged. The three-level
+G order is 0.44, below the required 0.5.
+
+- **G does not pass:** G_h goes 0.13639 → 0.15045 → 0.16079, and the successive differences
+  shrink only by 1.36. Richardson with p = 0.44 overshoots to 0.1894 (+8.3%). The error-based
+  orders rise, from 0.66 to 0.79, which looks pre-asymptotic rather than like a wrong limit. That
+  is an interpretation, not a demonstration: convergence alone does not close refinement.
+- **Everything else passes:**
+  - all errors decrease monotonically;
+  - the finest-pair orders are 0.83 (profile L2) and 0.79 (G), both above 0.7;
+  - the profile GCI passes, with order 0.85 and finest RMS error 2.99e-2 inside the band
+    3.91e-2 (the extrapolated RMS error is 6.1e-3);
+  - each run passes its per-run checks.
+
+The host levels (h = H/4 to H/16) are coarse. Whether G reaches the asymptotic range is the open
+question for the Daint levels 8/16/32 and 16/32/64. The iteration counts also grow with
+refinement: at 16 cells the momentum residual falls about 100× per 1000 iterations, against
+about 900× at 8 cells.
 
 - **Rank parity** (2 and 4 ranks against 1): max |Δu|/U ≤ 2.3e-15 and max |Δp|/(ρU²) ≤ 8e-13 at
   both levels, with identical iteration counts.
@@ -234,7 +267,7 @@ HOST_REFINEMENT_PLACEHOLDER
   Stokes theory gives 8.2 per 0.5 H, which the finer mesh approaches.
   - development to 1e-3·u_c is complete at x = 2.0, and the 99% centerline at x = 1.25;
   - the outlet influences the flow up to 1.5 upstream at the 1e-3 level;
-  - the window contamination is 1.9e-4·u_c, which is 0.2% of the measured max error.
+  - the section indicator in the window is 1.9e-4·u_c, which is 0.2% of the measured max error.
 - **High-resolution advection** (nz = 4, 1 rank): converges after 3502 iterations, with profile
   L2 1.23e-1 and G error −2.27e-1. The weak wall treatment dominates both schemes at this
   resolution.

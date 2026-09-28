@@ -4,7 +4,9 @@
 Independent of the writer: a separate netCDF (CDF-2) parser reads the file back; every tet has
 positive volume; exactly the manifold exterior faces are tagged, each on its own plane; the
 generator is deterministic and refuses to overwrite. With --cxx BINARY the C++ mirror
-(duct_host_run --dump-mesh) must produce byte-identical canonical text.
+(duct_host_run --dump-mesh) must produce the same canonical text: sizes, connectivity, side
+sets and line order exactly, coordinates within Lattice.coordinate_tolerance() (both languages
+evaluate the same contraction-free operations, but another toolchain may round differently).
 """
 import array
 import json
@@ -26,6 +28,22 @@ CXX = None
 def contents(path, mode="rb"):
     with open(path, mode) as f:
         return f.read()
+
+
+def canonical_difference(a, b):
+    """Largest coordinate difference between two canonical dumps. Every other token (sizes,
+    connectivity, side sets, line order) must match exactly, else AssertionError."""
+    la, lb = a.rstrip("\n").split("\n"), b.rstrip("\n").split("\n")
+    if len(la) != len(lb):
+        raise AssertionError("dumps differ in length: %d vs %d lines" % (len(la), len(lb)))
+    worst = 0.0
+    for n, (x, y) in enumerate(zip(la, lb)):
+        tx, ty = x.split(), y.split()
+        if tx[:1] == ["n"] and ty[:1] == ["n"] and len(tx) == len(ty) == 4:
+            worst = max(worst, max(abs(float(p) - float(q)) for p, q in zip(tx[1:], ty[1:])))
+        elif x != y:
+            raise AssertionError("line %d differs: %r vs %r" % (n + 1, x, y))
+    return worst
 
 
 def read_netcdf(path):
@@ -179,11 +197,32 @@ class Mesh(unittest.TestCase):
     def test_cxx_mirror_is_identical(self):
         if CXX is None:
             self.skipTest("C++ mirror not requested (--cxx BINARY)")
-        for cells, extra in ((4, []), (6, ["--length", "7.5", "--stretch", "2.5"])):
+        for cells, extra, lattice in ((4, [], dm.Lattice(4)), (6, ["--length", "7.5", "--stretch", "2.5"], dm.Lattice(6, 7.5, 2.0, 1.0, 2.5))):
             py, cx = os.path.join(self.dir, "py-%d.txt" % cells), os.path.join(self.dir, "cxx-%d.txt" % cells)
             self.assertEqual(dm.main(["--cells", str(cells), "--dump", py] + extra), 0)
             subprocess.check_call([CXX, "--cells", str(cells), "--dump-mesh", cx] + extra)
-            self.assertEqual(contents(py), contents(cx))
+            self.assertLessEqual(canonical_difference(contents(py, "r"), contents(cx, "r")), lattice.coordinate_tolerance())
+
+    def test_canonical_comparison_is_strict_where_it_must_be(self):
+        text = dm.canonical(dm.Lattice(4))
+        tol = dm.Lattice(4).coordinate_tolerance()
+        self.assertEqual(canonical_difference(text, text), 0.0)
+        # One ulp in a coordinate is rounding; a swapped node, another face or a moved node is not.
+        lines = text.split("\n")
+        n = next(i for i, l in enumerate(lines) if l.startswith("n ") and float(l.split()[2]) != 0)
+        v = float(lines[n].split()[2])
+        bumped = lines[:n] + ["n %s %.17g %s" % (lines[n].split()[1], v + abs(v) * sys.float_info.epsilon, lines[n].split()[3])] + lines[n + 1:]
+        self.assertLessEqual(canonical_difference(text, "\n".join(bumped)), tol)
+        moved = lines[:n] + ["n %s %.17g %s" % (lines[n].split()[1], v + 1e-9, lines[n].split()[3])] + lines[n + 1:]
+        self.assertGreater(canonical_difference(text, "\n".join(moved)), tol)
+        e = next(i for i, l in enumerate(lines) if l.startswith("e "))
+        a = lines[e].split()
+        swapped = lines[:e] + [" ".join([a[0], a[1], a[2], a[4], a[3]])] + lines[e + 1:]
+        with self.assertRaises(AssertionError):
+            canonical_difference(text, "\n".join(swapped))
+        s = next(i for i, l in enumerate(lines) if l.startswith("s "))
+        with self.assertRaises(AssertionError):
+            canonical_difference(text, "\n".join(lines[:s] + lines[s + 1:]))
 
 
 if __name__ == "__main__":

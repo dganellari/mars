@@ -55,14 +55,21 @@ class Lattice(object):
         g //= self.nx + 1
         return i, g % (self.ny + 1), g // (self.ny + 1)
 
+    # Same operations as duct_mesh.hpp: no multiply feeds an add directly, so a C++ compiler has
+    # nothing to contract into an FMA and both languages round every step the same way.
     def x(self, i):
-        return i * self.hx
+        return (i * self.length) / self.nx
 
     def y(self, j):
-        return -self.width / 2 + j * self.hy
+        return (j * self.width) / self.ny - self.width / 2
 
     def z(self, k):
-        return -self.height / 2 + k * self.hz
+        return (k * self.height) / self.nz - self.height / 2
+
+    def coordinate_tolerance(self):
+        """Bound for coordinates computed elsewhere (other evaluation order or value-changing
+        optimizations): at most three roundings of values bounded by max(L, W, H)."""
+        return 4 * sys.float_info.epsilon * max(self.length, self.width, self.height)
 
     def boundary_faces(self):
         return {"inlet": 2 * self.ny * self.nz, "outlet": 2 * self.ny * self.nz,

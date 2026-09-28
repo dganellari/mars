@@ -1,7 +1,8 @@
 // A duct_mesh.py Exodus file, read by the production native reader (read_simple_mesh: Exodus
 // arrays, side-set selection, exterior coverage), must equal the C++ lattice of the host runs:
-// coordinates bit for bit, connectivity, and every boundary face with its inlet/outlet/wall
-// kind. Selecting the side sets under other names must be rejected.
+// coordinates within Lattice::coordinate_tolerance() (the same operations in both languages, so
+// normally bitwise), connectivity exactly, and every boundary face with its inlet/outlet/wall
+// kind exactly. Selecting the side sets under other names must be rejected.
 //   duct_exodus_check FILE.exo --cells N [--length 7 --width 2 --height 1 --stretch 2]
 #include "duct_mesh.hpp"
 #include "mars_segregated_simple_native_mesh.hpp"
@@ -23,7 +24,13 @@ int main(int argc,char** argv) {
         const auto lattice=duct::Lattice::make(cells,length,width,height,stretch);
         const auto expected=duct::global_input(lattice);
         const auto mesh=read_simple_mesh(MPI_COMM_WORLD,argv[1]);
-        bool same=mesh.x==expected.x && mesh.y==expected.y && mesh.z==expected.z;
+        // Coordinates within the documented rounding bound (the file holds Python's doubles);
+        // topology and boundary kinds exactly.
+        double worst=0;
+        bool same=mesh.x.size()==expected.x.size() && mesh.y.size()==expected.y.size() && mesh.z.size()==expected.z.size();
+        for (std::size_t i=0;same && i<mesh.x.size();++i)
+            worst=std::max({worst,std::abs(mesh.x[i]-expected.x[i]),std::abs(mesh.y[i]-expected.y[i]),std::abs(mesh.z[i]-expected.z[i])});
+        same=same && worst<=lattice.coordinate_tolerance();
         for (int j=0;j<4;++j) same=same && mesh.nodes[j]==expected.nodes[j];
         std::set<std::tuple<int,int,int>> a,b;
         for (const auto& f:mesh.faces) a.insert({f.element,f.ordinal,f.kind});
