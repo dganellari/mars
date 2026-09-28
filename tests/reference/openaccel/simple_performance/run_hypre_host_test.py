@@ -25,7 +25,13 @@ def main():
     pcg = (directory / 'mars_hypre_pcg_solver.hpp').read_text()
     kernels = pcg[pcg.index('// Pass 1:'):pcg.index('// GPU-resident Hypre PCG')]
     wrapper = (directory / 'mars_hypre_gmres_solver.hpp').read_text()
-    wrapper = re.sub(r'^#include[^\n]*\n', '', wrapper, flags=re.M)
+    # Keep Hypre includes so version-specific declarations are compiled too.
+    wrapper = re.sub(r'^#include(?!\s+[<"](?:HYPRE|_hypre))[^\n]*\n', '', wrapper, flags=re.M)
+    # Sequential internal headers alias MPI names; retain our instrumented stubs.
+    mpi_names = ('Comm', 'COMM_WORLD', 'INT', 'DOUBLE', 'MAX', 'Comm_rank',
+                 'Allreduce', 'Barrier', 'Abort', 'Wtime')
+    mpi_restore = '\n'.join('#undef MPI_' + name for name in mpi_names)
+    wrapper = wrapper.replace('\nnamespace mars {', '\n' + mpi_restore + '\nnamespace mars {', 1)
     source = ('#include "hypre_host_shim.hpp"\nnamespace mars::fem {\n' + kernels
               + '\n}\n' + wrapper)
     # Each launch is executed with the same grid, block and thread indices on CPU.

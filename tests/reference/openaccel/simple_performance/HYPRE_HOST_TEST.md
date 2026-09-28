@@ -86,6 +86,14 @@ It checks that neither input changes, including zero RHS/solution, changing
 matrix values and RHS scaling from 1e-9 to 1e9, for GMRES and FlexGMRES. This
 checks the algebra and storage contract, not CUDA stream ordering.
 
+Hypre 2.x declares the exported `HYPRE_ParVectorAxpy` in its installed internal
+`_hypre_parcsr_mv.h`; Hypre 3.x also declares it in the public header. The wrapper
+includes the older header only for releases before 3.0 (or an unknown version).
+The host adapter retains these includes and restores its instrumented MPI stubs
+after Hypre's sequential aliases. The regression passes with sequential Hypre
+2.32.0 and 3.1.0 under ASan/UBSan, including both Krylov backends. This checks
+header compatibility and CPU behavior; the Daint CUDA rebuild remains separate.
+
 A rejected solve in this mode prints the iteration count/limit, restart length,
 Hypre's reported relative residual, the recomputed relative residual (absolute
 when the RHS is zero), the Krylov target and the solve error code. Mixed mode

@@ -5,6 +5,10 @@
 // HYPRE_/thrust/mpi headers, the namespace declarations) come from the PCG
 // header. Including it here means we don't redefine those symbols.
 #include "mars_hypre_pcg_solver.hpp"
+#if !defined(HYPRE_RELEASE_NUMBER) || HYPRE_RELEASE_NUMBER < 30000
+// Older releases export ParVectorAxpy but declare it only in this header.
+#include <_hypre_parcsr_mv.h>
+#endif
 #include "mars_solver_profile.hpp"
 #include <limits>
 #include <stdexcept>
