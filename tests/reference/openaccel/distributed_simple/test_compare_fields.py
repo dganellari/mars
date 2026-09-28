@@ -1,5 +1,6 @@
 import contextlib
 import io
+import json
 from pathlib import Path
 import tempfile
 import unittest
@@ -71,6 +72,25 @@ class FieldComparisonTest(unittest.TestCase):
     def test_node_set_and_coordinates(self):
         self.check(self.header + "1,0,0,0,0.1,0,0,1\n")
         self.check(self.header + "0,0.01,0,0,0.1,0,0,1\n")
+
+    def test_distributed_manifest(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "empty.csv").write_text(self.header)
+            (root / "part.csv").write_text(self.header + self.row)
+            manifest = {"format": "mars-simple-fields-v1", "nodes": 1, "parts": ["empty.csv", "part.csv"]}
+            path = root / "fields.json"
+            path.write_text(json.dumps(manifest))
+            self.assertEqual(compare_fields.load(path), compare_fields.load(root / "part.csv"))
+            for change in ({"nodes": 2}, {"parts": ["part.csv", "part.csv"]}, {"parts": ["missing.csv"]},
+                           {"parts": ["../part.csv"]}, {"nodes": True}, {"format": "unknown"}):
+                path.write_text(json.dumps(dict(manifest, **change)))
+                with self.assertRaises((ValueError, OSError)):
+                    compare_fields.load(path)
+            (root / "empty.csv").write_text(self.header + self.row)
+            path.write_text(json.dumps(manifest))
+            with self.assertRaises(ValueError):
+                compare_fields.load(path)
 
 
 if __name__ == "__main__":

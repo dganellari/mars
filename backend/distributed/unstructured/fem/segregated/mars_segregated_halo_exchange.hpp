@@ -75,6 +75,10 @@ struct CheckHaloNode {
 
 class FieldExchange {
 public:
+    struct Profile {
+        double pack_seconds=0,pack_ready_wait_seconds=0,wait_seconds=0,unpack_seconds=0;
+        long long sent_bytes=0,received_bytes=0,rounds=0;
+    };
     // CPU fixtures upload their lists once. Native callers pass device lists directly.
     FieldExchange(MPI_Comm comm,const std::vector<int>& peers,const std::vector<int>& send_offsets,
         const std::vector<int>& send_nodes,const std::vector<int>& recv_offsets,const std::vector<int>& recv_nodes,
@@ -104,13 +108,39 @@ public:
     FieldExchange(const FieldExchange&)=delete;
     FieldExchange& operator=(const FieldExchange&)=delete;
 
+    ~FieldExchange() {
+        // Completing here could write fields whose lifetime already ended.
+        if (in_flight_) fatal("exchange destroyed before end");
+#if defined(__CUDACC__)
+        if (ready_) cudaEventDestroy(ready_);
+        if (timer_start_) cudaEventDestroy(timer_start_);
+        if (timer_end_) cudaEventDestroy(timer_end_);
+#endif
+    }
+    void enable_profiling(bool enabled=true) { require_idle(); profiling_=enabled; }
+    const Profile& profile() const { return profile_; }
+    bool in_flight() const { return in_flight_; }
+
     // Refresh the ghost entries of every field from its owner, in one round. Owned entries
     // must be final; ghost entries are overwritten. Field arrays hold components*nodes values.
-    void operator()(std::initializer_list<Field> fields) {
-        const FieldSet set=field_set(fields);
+    void operator()(std::initializer_list<Field> fields) { begin(fields); end(); }
+    // Pack snapshots owners before returning. Field storage must remain alive and at
+    // the same address through end(); received ghosts are stale until end completes.
+    void begin(std::initializer_list<Field> fields) {
+        require_idle();
+        active_=field_set(fields);
+        const FieldSet set=active_;
+        in_flight_=true;
         int faults=0;
+        const double start=start_timing();
         apply(int(send_nodes_.size()),kernels::PackFields{set,raw(send_nodes_),raw(send_buffer_)},stream_,faults);
+        stop_timing();
+        const double ready_start=profiling_?MPI_Wtime():0;
         finish_device(faults);
+        if (profiling_) {
+            profile_.pack_ready_wait_seconds+=MPI_Wtime()-ready_start;
+            profile_.pack_seconds+=elapsed_timing(start);
+        }
         auto& requests=requests_; requests.clear();
         for (std::size_t i=0;i<peers_.size();++i) {
             const int count=set.stride*(recv_offsets_[i+1]-recv_offsets_[i]);
@@ -120,15 +150,31 @@ public:
             const int count=set.stride*(send_offsets_[i+1]-send_offsets_[i]);
             if (count) { requests.emplace_back(); check_mpi(MPI_Isend(raw(send_buffer_)+std::size_t(set.stride)*send_offsets_[i],count,MPI_DOUBLE,peers_[i],tag_values,comm_,&requests.back())); }
         }
-        check_mpi(MPI_Waitall(int(requests.size()),requests.data(),MPI_STATUSES_IGNORE));
-        apply(int(recv_nodes_.size()),kernels::UnpackFields{set,raw(recv_nodes_),raw(recv_buffer_)},stream_,faults);
+    }
+    void end() {
+        if (!in_flight_) fatal("end called without begin");
+        const double wait_start=profiling_?MPI_Wtime():0;
+        check_mpi(MPI_Waitall(int(requests_.size()),requests_.data(),MPI_STATUSES_IGNORE));
+        if (profiling_) profile_.wait_seconds+=MPI_Wtime()-wait_start;
+        int faults=0;
+        const double start=start_timing();
+        apply(int(recv_nodes_.size()),kernels::UnpackFields{active_,raw(recv_nodes_),raw(recv_buffer_)},stream_,faults);
+        stop_timing();
         finish_device(faults);
-        ++rounds_; values_+=(long long)set.stride*(long long)recv_nodes_.size();
+        ++rounds_; values_+=(long long)active_.stride*(long long)recv_nodes_.size();
+        if (profiling_) {
+            profile_.unpack_seconds+=elapsed_timing(start);
+            profile_.sent_bytes+=(long long)sizeof(double)*active_.stride*(long long)send_nodes_.size();
+            profile_.received_bytes+=(long long)sizeof(double)*active_.stride*(long long)recv_nodes_.size();
+            ++profile_.rounds;
+        }
+        requests_.clear(); active_={}; in_flight_=false;
     }
     // Transpose of the publish: ghost entries are added into their owners' entries (atomically:
     // several peers may hold the same node). Ghost entries are left as they were. Used for setup
     // checks such as star completeness, not in the SIMPLE iteration.
     void reverse_add(Field field) {
+        require_idle();
         const FieldSet set=field_set({field});
         int faults=0;
         apply(int(recv_nodes_.size()),kernels::PackFields{set,raw(recv_nodes_),raw(recv_buffer_)},stream_,faults);
@@ -148,6 +194,7 @@ public:
     }
     // Integer identities travel as integers directly from device memory, never through double.
     template<class T> void publish(T* values,std::size_t size) {
+        require_idle();
         static_assert(std::is_integral_v<T> && (sizeof(T)==4 || sizeof(T)==8));
         if (size!=std::size_t(nodes_) || (size && !values)) fatal("metadata does not cover local nodes");
         MPI_Datatype type;
@@ -214,6 +261,11 @@ private:
             recv_buffer_.resize(std::size_t(max_stride_)*recv_nodes_.size());
             requests_.reserve(2*p);
         } catch (const std::exception&) { fatal("cannot allocate halo buffers"); }
+#if defined(__CUDACC__)
+        if (!cuda_ok(cudaEventCreateWithFlags(&ready_,cudaEventDisableTiming)) ||
+            !cuda_ok(cudaEventCreate(&timer_start_)) || !cuda_ok(cudaEventCreate(&timer_end_)))
+            fatal("cannot create halo events");
+#endif
     }
     static constexpr int tag_counts=0x4d47, tag_values=0x4d48, tag_reverse=0x4d49, tag_metadata=0x4d4a;
     [[noreturn]] void fatal(const char* message) const {
@@ -269,9 +321,31 @@ private:
         }
         return set;
     }
+    void require_idle() const { if (in_flight_) fatal("another exchange is in flight"); }
+    double start_timing() {
+        if (!profiling_) return 0;
+#if defined(__CUDACC__)
+        if (!cuda_ok(cudaEventRecord(timer_start_,stream_))) fatal("cannot record halo timer");
+#endif
+        return MPI_Wtime();
+    }
+    void stop_timing() {
+#if defined(__CUDACC__)
+        if (profiling_ && !cuda_ok(cudaEventRecord(timer_end_,stream_))) fatal("cannot record halo timer");
+#endif
+    }
+    double elapsed_timing(double start) const {
+#if defined(__CUDACC__)
+        float milliseconds=0;
+        if (!cuda_ok(cudaEventElapsedTime(&milliseconds,timer_start_,timer_end_))) fatal("cannot read halo timer");
+        return milliseconds*1e-3;
+#else
+        return MPI_Wtime()-start;
+#endif
+    }
     void finish_device(int faults) const {
 #if defined(__CUDACC__)
-        if (!cuda_ok(cudaStreamSynchronize(stream_))) faults|=device_error;
+        if (!cuda_ok(cudaEventRecord(ready_,stream_)) || !cuda_ok(cudaEventSynchronize(ready_))) faults|=device_error;
 #endif
         if (faults) fatal("CUDA pack or unpack failed");
     }
@@ -282,6 +356,12 @@ private:
     Buffer<int> send_nodes_, recv_nodes_;
     Buffer<double> send_buffer_, recv_buffer_;
     long long rounds_=0, values_=0;
+    FieldSet active_{};
+    bool in_flight_=false,profiling_=false;
+    Profile profile_;
+#if defined(__CUDACC__)
+    cudaEvent_t ready_=nullptr,timer_start_=nullptr,timer_end_=nullptr;
+#endif
 };
 } // namespace mars::segregated::distributed
 #undef MARS_HALO_HD

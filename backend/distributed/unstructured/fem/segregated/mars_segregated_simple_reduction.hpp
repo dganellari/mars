@@ -44,8 +44,10 @@ struct SimpleDeviceReduction {
     void finish(MPI_Comm comm) {
         launch(1,PackSimpleSums{partial.data(),packed.data()});
         assembly_cuda_check(cudaStreamSynchronize(nullptr));
-        ensure(MPI_Allreduce(MPI_IN_PLACE,packed.data(),12,MPI_DOUBLE,MPI_SUM,comm)==MPI_SUCCESS,"SIMPLE diagnostic sum failed");
-        ensure(MPI_Allreduce(MPI_IN_PLACE,packed.data()+12,2,MPI_DOUBLE,MPI_MAX,comm)==MPI_SUCCESS,"SIMPLE diagnostic max failed");
+        MPI_Request requests[2];
+        ensure(MPI_Iallreduce(MPI_IN_PLACE,packed.data(),12,MPI_DOUBLE,MPI_SUM,comm,requests)==MPI_SUCCESS,"SIMPLE diagnostic sum failed");
+        ensure(MPI_Iallreduce(MPI_IN_PLACE,packed.data()+12,2,MPI_DOUBLE,MPI_MAX,comm,requests+1)==MPI_SUCCESS,"SIMPLE diagnostic max failed");
+        ensure(MPI_Waitall(2,requests,MPI_STATUSES_IGNORE)==MPI_SUCCESS,"SIMPLE diagnostic reductions failed");
         launch(1,UnpackSimpleSums{packed.data(),result.data()});
     }
 };

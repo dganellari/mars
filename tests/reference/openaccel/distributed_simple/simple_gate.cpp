@@ -100,7 +100,7 @@ template<int C> struct Solve {
 struct Options {
     int nx=16, ny=4, nz=4, iterations=2, converge=0;
     std::string reference, write, fault;
-    bool split=false,configured=false,high_resolution=false;
+    bool split=false,configured=false,high_resolution=false,overlap=true,water=false,linear_cache=true;
     bool builder=false;   // distributed side built by simple_partition from ElementDomain-shaped state
     double backflow=0;   // initial outlet-region velocity, see initial()
     double tolerance=1e-10;
@@ -225,6 +225,7 @@ std::string header_of(const Options& o) {
     std::ostringstream h; h<<"MARS_DSIMPLE_V1 "<<o.nx<<'x'<<o.ny<<'x'<<o.nz<<" iterations="<<o.iterations<<" converge="<<o.converge<<" backflow="<<o.backflow;
     if (o.configured) h<<" configured-oblique";
     if (o.high_resolution) h<<" high-resolution";
+    if (o.water) h<<" water";
     return h.str();
 }
 // lx is the global channel length: a rank's local extent must not change the initial field.
@@ -276,6 +277,7 @@ int execute(const Options& o) {
     if (o.configured) rotate_channel(mesh);
     SimpleControls controls=o.configured?configured_controls():SimpleControls{};
     controls.high_resolution=o.high_resolution;
+    if (o.water) { controls.density=1000; controls.viscosity=.001; controls.inlet_speed=.5; controls.pseudo_dt=2e-6; }
     if (!o.write.empty()) {
         if (ranks!=1) throw std::runtime_error("--write-reference runs the one-rank SimpleRunner: use one rank");
         SimpleRunner run(mesh,controls); run.momentum.verbose=run.poisson.verbose=false;
@@ -359,6 +361,25 @@ int execute(const Options& o) {
     }
     DistributedSimpleRunner<Matrix,GlobalId,Solve> run(gate_comm,part.input,part.ownership,controls);
     run.poison_unexchanged=true;
+    run.overlap_assembly=o.overlap;
+#ifdef MARS_REPLAY_CUDA
+    if (o.linear_cache) { run.momentum_solve.solver.enable_fixed_graph_updates(); run.poisson_solve.solver.enable_fixed_graph_updates(); }
+#endif
+    const auto check_partition=[&](Array<int>& list,int count,bool boundary) {
+        auto ids=list.host(); auto sorted=ids; std::sort(sorted.begin(),sorted.end());
+        const auto mask=run.owned_mask.host();
+        bool ok=count>=0 && count<=int(ids.size());
+        for (int i=0;i<int(ids.size());++i) {
+            ok=ok && sorted[i]==i;
+            const int e=boundary?part.input.faces[ids[i]].element:ids[i];
+            bool local=true;
+            for (int k=0;k<4;++k) local=local && mask[part.input.nodes[k][e]];
+            ok=ok && local==(i<count);
+        }
+        simple_collective(gate_comm,ok,"momentum overlap partition reads a ghost or misses an entity");
+    };
+    check_partition(run.momentum_elements,run.local_momentum_elements,false);
+    check_partition(run.momentum_faces,run.local_momentum_faces,true);
     initial(run,part.input.x,part.input.y,part.input.z,double(o.nx)/o.ny,o.backflow,controls,o.configured);
     Collector c;
     int closed_owned=0;   // outlet faces this rank owns that were ever closed
@@ -468,6 +489,9 @@ int main(int argc,char** argv) {
             else if (k=="--split") o.split=v=="1";
             else if (k=="--configured") o.configured=v=="1";
             else if (k=="--high-resolution") o.high_resolution=v=="1";
+            else if (k=="--halo-overlap") o.overlap=v=="1";
+            else if (k=="--linear-cache") o.linear_cache=v=="1";
+            else if (k=="--water") o.water=v=="1";
             else if (k=="--builder") o.builder=v=="1";
             else if (k=="--backflow") o.backflow=std::stod(v);
             else if (k=="--tolerance") o.tolerance=std::stod(v);

@@ -75,7 +75,7 @@ endforeach()
 find_package(Python3 QUIET COMPONENTS Interpreter)
 if(Python3_Interpreter_FOUND)
     add_test(NAME marsDistributedFieldsComparator COMMAND ${Python3_EXECUTABLE} "${_dsimple_gates}/test_compare_fields.py")
-    foreach(_fault stride reverse-stride)
+    foreach(_fault stride reverse-stride destroy-in-flight double-begin reverse-in-flight metadata-in-flight end-without-begin)
         add_test(NAME marsDistributedHalo_abort_${_fault} COMMAND ${Python3_EXECUTABLE} "${_dsimple_gates}/check_abort.py"
                  ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 2 ${MPIEXEC_PREFLAGS}
                  $<TARGET_FILE:mars_distributed_halo_host_gate> ${MPIEXEC_POSTFLAGS} ${_fault})
@@ -151,6 +151,8 @@ foreach(_case ordinary shear)
     foreach(_ranks 1 2 4)
         _dsimple_test(marsSimpleHighResolution_${_case}_${_ranks} ${_ranks} --reference ${_ref}-hr-${_case}.bin --builder 1 ${_hr_args})
         set_tests_properties(marsSimpleHighResolution_${_case}_${_ranks} PROPERTIES FIXTURES_REQUIRED high_resolution_${_case})
+        _dsimple_test(marsSimpleHighResolutionSynchronous_${_case}_${_ranks} ${_ranks} --reference ${_ref}-hr-${_case}.bin --builder 1 --halo-overlap 0 ${_hr_args})
+        set_tests_properties(marsSimpleHighResolutionSynchronous_${_case}_${_ranks} PROPERTIES FIXTURES_REQUIRED high_resolution_${_case})
     endforeach()
 endforeach()
 
@@ -185,3 +187,5 @@ if(TARGET mars AND MARS_ENABLE_CUDA AND MARS_ENABLE_HYPRE)
     target_include_directories(mars_segregated_simple_mpi PRIVATE "${_dsimple_segregated}" "${_dsimple_gates}")
     set_target_properties(mars_segregated_simple_mpi PROPERTIES CUDA_STANDARD 20 CUDA_STANDARD_REQUIRED ON)
 endif()
+
+include("${CMAKE_CURRENT_LIST_DIR}/../simple_performance/gates.cmake")

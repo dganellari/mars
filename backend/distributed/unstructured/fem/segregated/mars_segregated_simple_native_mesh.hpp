@@ -2,6 +2,10 @@
 #include "mars_segregated_simple_options.hpp"
 #include "mars_segregated_simple_mesh.hpp"
 #include "../../utils/mars_read_exodus_raw.hpp"
+#include <type_traits>
+#ifdef MARS_REPLAY_CUDA
+#include <thrust/unique.h>
+#endif
 #if defined(__CUDACC__)
 #define MARS_SINPUT_HD __host__ __device__
 #else
@@ -117,97 +121,249 @@ inline SimpleDeviceInput read_simple_mesh(MPI_Comm comm,const std::string& path,
     return source;
 }
 
+struct NativeSimpleSource : SimpleDeviceInput {
+    int global_nodes=0,global_elements=0,global_faces=0;
+};
+inline NativeSimpleSource read_simple_mesh_root(MPI_Comm comm,const std::string& path,const SimpleBoundaryNames& names={}) {
+    int rank; MPI_Comm_rank(comm,&rank);
+    NativeSimpleSource source; bool ok=true;
+    if (!rank) try {
+        static_cast<SimpleDeviceInput&>(source)=read_simple_mesh(MPI_COMM_SELF,path,names);
+        source.global_nodes=int(source.x.size()); source.global_elements=int(source.nodes[0].size());
+        source.global_faces=int(source.faces.size());
+    } catch (const std::exception& e) { std::cerr<<e.what()<<'\n'; ok=false; }
+    simple_collective(comm,ok,"root native mesh read or validation failed");
+    int counts[3]={source.global_nodes,source.global_elements,source.global_faces};
+    ensure(MPI_Bcast(counts,3,MPI_INT,0,comm)==MPI_SUCCESS,"source count broadcast failed");
+    source.global_nodes=counts[0]; source.global_elements=counts[1]; source.global_faces=counts[2];
+    return source;
+}
+
+// Payloads remain on the device. Only counts and fault words reach the host.
+// A bounded root service avoids replicating the source or a global routing directory.
+inline constexpr int native_mesh_chunk=65536;
+template<class Request,class Response,class Kernel>
+void native_root_lookup(MPI_Comm comm,const Buffer<Request>& requests,Buffer<Response>& responses,Kernel kernel) try {
+    static_assert(std::is_trivially_copyable_v<Request> && std::is_trivially_copyable_v<Response>);
+    static_assert(sizeof(Request)<=INT_MAX/native_mesh_chunk && sizeof(Response)<=INT_MAX/native_mesh_chunk);
+    int rank,ranks; MPI_Comm_rank(comm,&rank); MPI_Comm_size(comm,&ranks);
+    simple_collective(comm,requests.size()<=size_t(INT_MAX),"native lookup count overflow");
+    responses.resize(requests.size());
+    Buffer<Request> incoming; Buffer<Response> outgoing;
+    if (!rank) { incoming.resize(native_mesh_chunk); outgoing.resize(native_mesh_chunk); }
+    for (int peer=0;peer<ranks;++peer) {
+        int count=rank==peer?int(requests.size()):0;
+        ensure(MPI_Bcast(&count,1,MPI_INT,peer,comm)==MPI_SUCCESS,"native lookup count broadcast failed");
+        for (int first=0;first<count;) {
+            const int work=std::min(native_mesh_chunk,count-first);
+            if (rank==peer || !rank) mesh_mpi_ready();
+            if (peer && rank==peer)
+                ensure(MPI_Send(raw(requests)+first,work*sizeof(Request),MPI_BYTE,0,27101,comm)==MPI_SUCCESS,"native lookup request failed");
+            if (!rank) {
+                const Request* request=nullptr;
+                Response* response=nullptr;
+                if (peer) {
+                    ensure(MPI_Recv(raw(incoming),work*sizeof(Request),MPI_BYTE,peer,27101,comm,MPI_STATUS_IGNORE)==MPI_SUCCESS,"native lookup receive failed");
+                    request=raw(incoming); response=raw(outgoing);
+                } else { request=raw(requests)+first; response=raw(responses)+first; }
+                launch(work,kernel(request,response)); mesh_mpi_ready();
+                if (peer) ensure(MPI_Send(response,work*sizeof(Response),MPI_BYTE,peer,27102,comm)==MPI_SUCCESS,"native lookup reply failed");
+            }
+            if (peer && rank==peer)
+                ensure(MPI_Recv(raw(responses)+first,work*sizeof(Response),MPI_BYTE,0,27102,comm,MPI_STATUS_IGNORE)==MPI_SUCCESS,"native lookup reply receive failed");
+            first+=work;
+        }
+    }
+} catch (const std::exception&) {
+    // A failed allocation or device launch cannot leave a peer waiting for its reply.
+    MPI_Abort(comm,1); throw;
+}
+struct NativeCell {
+    double x[4],y[4],z[4]; int source[4];
+};
+struct NativeCellLookup {
+    const int* requests; NativeCell* result; const int* nodes[4]; const double *x,*y,*z;
+    MARS_SINPUT_HD void operator()(int i) const {
+        for (int j=0;j<4;++j) { const int n=nodes[j][requests[i]]; result[i].x[j]=x[n]; result[i].y[j]=y[n]; result[i].z[j]=z[n]; result[i].source[j]=n; }
+    }
+};
+struct NativeVertex { int source; double x,y,z; };
+struct NativeVertexLess { MARS_SINPUT_HD bool operator()(NativeVertex a,NativeVertex b) const { return a.source<b.source; } };
+struct NativeVertexEqual { MARS_SINPUT_HD bool operator()(NativeVertex a,NativeVertex b) const { return a.source==b.source; } };
+struct NativeCellVertices {
+    const NativeCell* cells; NativeVertex* vertices;
+    MARS_SINPUT_HD void operator()(int i) const {
+        const auto& cell=cells[i/4]; const int j=i%4;
+        vertices[i]={cell.source[j],cell.x[j],cell.y[j],cell.z[j]};
+    }
+};
+struct NativeVertexUnpack {
+    const NativeVertex* vertices; double *x,*y,*z;
+    MARS_SINPUT_HD void operator()(int i) const { const auto v=vertices[i]; x[i]=v.x; y[i]=v.y; z[i]=v.z; }
+};
+struct NativeCellUnpack {
+    const NativeCell* cells; const NativeVertex* vertices; int count; int* nodes[4];
+    MARS_SINPUT_HD void operator()(int e) const {
+        for (int j=0;j<4;++j) {
+            const int source=cells[e].source[j]; int lo=0,hi=count;
+            while (lo<hi) { const int mid=lo+(hi-lo)/2; if (vertices[mid].source<source) lo=mid+1; else hi=mid; }
+            nodes[j][e]=lo;
+        }
+    }
+};
+inline SimpleDeviceInput native_initial_partition(MPI_Comm comm,const NativeSimpleSource& source) {
+    int rank,ranks; MPI_Comm_rank(comm,&rank); MPI_Comm_size(comm,&ranks);
+    simple_collective(comm,source.global_elements>=ranks,"native mesh needs at least one source element per rank");
+    const int first=int(static_cast<long long>(source.global_elements)*rank/ranks);
+    const int last=int(static_cast<long long>(source.global_elements)*(rank+1)/ranks),count=last-first;
+    auto ids=mesh_sequence(first,last); Buffer<NativeCell> cells;
+    native_root_lookup(comm,ids,cells,[&](const int* requests,NativeCell* response) {
+        return NativeCellLookup{requests,response,{raw(source.nodes[0]),raw(source.nodes[1]),raw(source.nodes[2]),raw(source.nodes[3])},
+                                raw(source.x),raw(source.y),raw(source.z)};
+    });
+    // Shared source IDs must remain shared locally: ElementDomain averages incident cell sizes per node.
+    Buffer<NativeVertex> vertices(4*count);
+    launch(4*count,NativeCellVertices{raw(cells),raw(vertices)}); mesh_sort(vertices,NativeVertexLess{});
+#ifdef MARS_REPLAY_CUDA
+    vertices.resize(size_t(thrust::unique(vertices.begin(),vertices.end(),NativeVertexEqual{})-vertices.begin()));
+#else
+    vertices.resize(size_t(std::unique(vertices.begin(),vertices.end(),NativeVertexEqual{})-vertices.begin()));
+#endif
+    SimpleDeviceInput local; local.x.resize(vertices.size()); local.y.resize(vertices.size()); local.z.resize(vertices.size());
+    for (auto& column:local.nodes) column.resize(count);
+    launch(int(vertices.size()),NativeVertexUnpack{raw(vertices),raw(local.x),raw(local.y),raw(local.z)});
+    launch(count,NativeCellUnpack{raw(cells),raw(vertices),int(vertices.size()),
+        {raw(local.nodes[0]),raw(local.nodes[1]),raw(local.nodes[2]),raw(local.nodes[3])}});
+    return local;
+}
+
 #ifdef MARS_REPLAY_CUDA
 using NativeSimpleDomain=ElementDomain<TetTag,double,uint64_t,cstone::GpuTag>;
-inline std::unique_ptr<NativeSimpleDomain> distribute_simple_mesh(MPI_Comm comm,const SimpleDeviceInput& source) {
+inline std::unique_ptr<NativeSimpleDomain> distribute_simple_mesh(MPI_Comm comm,const NativeSimpleSource& source) {
     int rank,ranks; MPI_Comm_rank(comm,&rank); MPI_Comm_size(comm,&ranks);
     // ElementDomain currently uses MPI_COMM_WORLD internally.
     int relation; MPI_Comm_compare(comm,MPI_COMM_WORLD,&relation);
     simple_collective(comm,relation==MPI_IDENT || relation==MPI_CONGRUENT,"ElementDomain requires the world communicator");
     const char* mode=std::getenv("MARS_OWNERSHIP");
     simple_collective(comm,!mode || std::string(mode)!="vote","native SIMPLE requires SFC node ownership");
+    auto local=native_initial_partition(comm,source);
     NativeSimpleDomain::DeviceCoordsTuple coordinates;
     auto copy=[](auto& out,const auto& in) {
         out.resize(in.size()); thrust::copy(in.begin(),in.end(),thrust::device_pointer_cast(out.data()));
     };
-    copy(std::get<0>(coordinates),source.x); copy(std::get<1>(coordinates),source.y); copy(std::get<2>(coordinates),source.z);
+    copy(std::get<0>(coordinates),local.x); copy(std::get<1>(coordinates),local.y); copy(std::get<2>(coordinates),local.z);
     NativeSimpleDomain::DeviceConnectivityTuple connectivity;
-    const auto e=static_cast<long long>(source.nodes[0].size());
-    const size_t first=size_t(e*rank/ranks),last=size_t(e*(rank+1)/ranks);
-    auto slice=[&](auto& out,const auto& in) {
-        out.resize(last-first); thrust::copy(in.begin()+first,in.begin()+last,thrust::device_pointer_cast(out.data()));
-    };
-    slice(std::get<0>(connectivity),source.nodes[0]); slice(std::get<1>(connectivity),source.nodes[1]);
-    slice(std::get<2>(connectivity),source.nodes[2]); slice(std::get<3>(connectivity),source.nodes[3]);
+    copy(std::get<0>(connectivity),local.nodes[0]); copy(std::get<1>(connectivity),local.nodes[1]);
+    copy(std::get<2>(connectivity),local.nodes[2]); copy(std::get<3>(connectivity),local.nodes[3]);
     return std::make_unique<NativeSimpleDomain>(std::move(coordinates),std::move(connectivity),rank,ranks);
+}
+#endif
+MARS_SINPUT_HD inline void native_count(int* value) {
+#if defined(__CUDA_ARCH__)
+    atomicAdd(value,1);
+#else
+    ++*value;
+#endif
 }
 struct InvalidNativeNode {
     size_t count;
-    template<class T> __host__ __device__ bool operator()(T node) const {
+    template<class T> MARS_SINPUT_HD bool operator()(T node) const {
         return static_cast<unsigned long long>(node)>=count;
     }
 };
 struct SourceKey {
     uint64_t key; int source;
-    __host__ __device__ bool operator<(const SourceKey& b) const { return key<b.key; }
+    MARS_SINPUT_HD bool operator<(const SourceKey& b) const { return key<b.key; }
 };
+#ifdef MARS_REPLAY_CUDA
 struct EncodeSourceKeys {
     const double *x,*y,*z; cstone::Box<double> box; SourceKey* records; uint64_t* keys;
-    __device__ void operator()(int i) const {
+    MARS_SINPUT_HD void operator()(int i) const {
         const uint64_t k=cstone::sfc3D<cstone::HilbertKey<uint64_t>>(x[i],y[i],z[i],box).value(); records[i]={k,i}; keys[i]=k;
     }
 };
-struct SourceKeyLess { __host__ __device__ bool operator()(SourceKey a,SourceKey b) const { return a<b; } };
+#endif
+struct SourceKeyLess { MARS_SINPUT_HD bool operator()(SourceKey a,SourceKey b) const { return a<b; } };
 struct UniqueSourceKeys {
     const SourceKey* keys; int* error;
-    __device__ void operator()(int i) const { if (i && keys[i-1].key==keys[i].key) atomicExch(error,1); }
+    MARS_SINPUT_HD void operator()(int i) const { if (i && keys[i-1].key==keys[i].key) distributed::raise_fault(error,1); }
 };
-struct RestoreCoordinates {
-    const SourceKey* sorted; int count; const uint64_t* keys;
-    const double *sx,*sy,*sz; double *x,*y,*z; int *source,*error;
-    __device__ void operator()(int i) const {
-        const uint64_t key=keys[i]; int lo=0,hi=count;
+struct NativeCoordinate { double x,y,z; int source; };
+struct NativeCoordinateLookup {
+    const uint64_t* requests; NativeCoordinate* response; const SourceKey* sorted; int count;
+    const double *x,*y,*z; int* error;
+    MARS_SINPUT_HD void operator()(int i) const {
+        const uint64_t key=requests[i]; int lo=0,hi=count;
         while (lo<hi) { const int mid=lo+(hi-lo)/2; if (sorted[mid].key<key) lo=mid+1; else hi=mid; }
-        if (lo==count || sorted[lo].key!=key) { atomicExch(error,1); return; }
-        const int g=sorted[lo].source; source[i]=g; x[i]=sx[g]; y[i]=sy[g]; z[i]=sz[g];
+        if (lo==count || sorted[lo].key!=key) { distributed::raise_fault(error,1); response[i]={0,0,0,-1}; return; }
+        const int g=sorted[lo].source; response[i]={x[g],y[g],z[g],g};
     }
 };
+struct NativeCoordinateUnpack {
+    const NativeCoordinate* coordinates; double *x,*y,*z; int* source;
+    MARS_SINPUT_HD void operator()(int i) const { const auto c=coordinates[i]; x[i]=c.x; y[i]=c.y; z[i]=c.z; source[i]=c.source; }
+};
 struct SourceTag { SimpleFaceKey<uint64_t> key; int kind,source; };
-struct SourceTagLess { __host__ __device__ bool operator()(const SourceTag& a,const SourceTag& b) const { return a.key<b.key; } };
+struct SourceTagLess { MARS_SINPUT_HD bool operator()(const SourceTag& a,const SourceTag& b) const { return a.key<b.key; } };
 struct EncodeSourceTags {
     const SimpleFace* faces; const int* nodes[4]; const uint64_t* keys; SourceTag* tags;
-    __device__ void operator()(int i) const {
+    MARS_SINPUT_HD void operator()(int i) const {
         const auto f=faces[i]; tags[i]={mesh_face_key(keys[nodes[tet_face_node(f.ordinal,0)][f.element]],
             keys[nodes[tet_face_node(f.ordinal,1)][f.element]],keys[nodes[tet_face_node(f.ordinal,2)][f.element]]),f.kind,i};
     }
 };
 struct NativeBoundaryKind {
     const uint64_t* keys; const SourceTag* tags; int count;
-    __host__ __device__ int find(const int* face) const {
+    MARS_SINPUT_HD int find(const int* face) const {
         const auto key=mesh_face_key(keys[face[0]],keys[face[1]],keys[face[2]]); int lo=0,hi=count;
         while (lo<hi) { const int mid=lo+(hi-lo)/2; if (tags[mid].key<key) lo=mid+1; else hi=mid; }
         return lo<count && tags[lo].key==key?lo:-1;
     }
-    __host__ __device__ int operator()(const int* face) const { const int i=find(face); return i<0?-1:tags[i].kind; }
+    MARS_SINPUT_HD int operator()(const int* face) const { const int i=find(face); return i<0?-1:tags[i].kind; }
 };
-struct NativeCoverage {
+struct NativeFaceRequest {
+    const int* nodes[4]; const uint64_t* keys; SimpleFaceKey<uint64_t>* requests;
+    MARS_SINPUT_HD void operator()(int i) const {
+        const int e=i/4,f=i%4;
+        requests[i]=mesh_face_key(keys[nodes[tet_face_node(f,0)][e]],keys[nodes[tet_face_node(f,1)][e]],keys[nodes[tet_face_node(f,2)][e]]);
+    }
+};
+struct NativeTagLookup {
+    const SimpleFaceKey<uint64_t>* requests; SourceTag* response; const SourceTag* tags; int count;
+    MARS_SINPUT_HD void operator()(int i) const {
+        const auto key=requests[i]; int lo=0,hi=count;
+        while (lo<hi) { const int mid=lo+(hi-lo)/2; if (tags[mid].key<key) lo=mid+1; else hi=mid; }
+        response[i]=lo<count && tags[lo].key==key?tags[lo]:SourceTag{key,-1,-1};
+    }
+};
+struct NativeTagged { MARS_SINPUT_HD bool operator()(SourceTag tag) const { return tag.source>=0; } };
+struct NativeSameTag { MARS_SINPUT_HD bool operator()(SourceTag a,SourceTag b) const { return a.key==b.key; } };
+struct NativeCoverageIds {
     const int *owned_nodes,*source; const SimpleFace* faces; const int* owned_faces; const int* nodes[4];
-    int node_work,face_work,source_nodes; NativeBoundaryKind lookup; int* counts;
-    __device__ void operator()(int i) const {
-        if (i<node_work) atomicAdd(counts+source[owned_nodes[i]],1);
-        if (i<face_work) {
-            const auto f=faces[owned_faces[i]]; int local[3]; for (int j=0;j<3;++j) local[j]=nodes[tet_face_node(f.ordinal,j)][f.element];
-            const int match=lookup.find(local);
-            if (match>=0) atomicAdd(counts+source_nodes+lookup.tags[match].source,1);
+    int node_work,source_nodes; NativeBoundaryKind lookup; int* ids;
+    MARS_SINPUT_HD void operator()(int i) const {
+        if (i<node_work) ids[i]=source[owned_nodes[i]];
+        else {
+            const auto f=faces[owned_faces[i-node_work]]; int local[3];
+            for (int j=0;j<3;++j) local[j]=nodes[tet_face_node(f.ordinal,j)][f.element];
+            const int match=lookup.find(local); ids[i]=match<0?-1:source_nodes+lookup.tags[match].source;
         }
     }
 };
-struct CoverageCheck { const int* counts; int* error; __device__ void operator()(int i) const { if (counts[i]!=1) atomicExch(error,1); } };
+struct NativeCoverageLookup {
+    const int* ids; unsigned char* response; int* counts; int size; int* error;
+    MARS_SINPUT_HD void operator()(int i) const {
+        const int id=ids[i]; response[i]=0;
+        if (id<0 || id>=size) distributed::raise_fault(error,1); else native_count(counts+id);
+    }
+};
+struct CoverageCheck { const int* counts; int* error; MARS_SINPUT_HD void operator()(int i) const { if (counts[i]!=1) distributed::raise_fault(error,1); } };
 
+#ifdef MARS_REPLAY_CUDA
 template<class GlobalId> struct NativeSimpleMesh {
     NativeSimplePartition<GlobalId> partition;
     Buffer<int> source_node;
-    NativeSimpleMesh(MPI_Comm comm,const NativeSimpleDomain& domain,const SimpleDeviceInput& source) {
+    NativeSimpleMesh(MPI_Comm comm,const NativeSimpleDomain& domain,const NativeSimpleSource& source) {
         // Force the lazy local map first: the constructor's input node count is not rank-local.
         simple_collective(comm,domain.numRanks()==1 || domain.sfcOwnership(),"native SIMPLE requires SFC node ownership");
         const auto& keys=domain.getLocalToGlobalSfcMap();
@@ -233,28 +389,47 @@ template<class GlobalId> struct NativeSimpleMesh {
             const auto& h=domain.getNodeHaloTopology(); v.peers=h.peers_; v.send_offsets=h.sendOffsets_; v.recv_offsets=h.recvOffsets_;
             copy(v.send_nodes,h.sendNodeIds_,h.sendNodeIds_.size()); copy(v.recv_nodes,h.recvNodeIds_,h.recvNodeIds_.size());
         }
+        int rank; MPI_Comm_rank(comm,&rank);
         v.x.resize(n); v.y.resize(n); v.z.resize(n); source_node.resize(n);
         Buffer<SourceKey> sorted(source.x.size()); Buffer<uint64_t> source_keys(source.x.size());
-        launch(int(source.x.size()),EncodeSourceKeys{raw(source.x),raw(source.y),raw(source.z),domain.getBoundingBox(),raw(sorted),raw(source_keys)});
-        mesh_sort(sorted,SourceKeyLess{});
-        launch(int(sorted.size()),UniqueSourceKeys{raw(sorted),raw(error)});
+        if (!rank) {
+            launch(int(source.x.size()),EncodeSourceKeys{raw(source.x),raw(source.y),raw(source.z),domain.getBoundingBox(),raw(sorted),raw(source_keys)});
+            mesh_sort(sorted,SourceKeyLess{});
+            launch(int(sorted.size()),UniqueSourceKeys{raw(sorted),raw(error)});
+        }
         mesh_check(comm,error,"source nodes collide under native SFC identity");
-        launch(int(n),RestoreCoordinates{raw(sorted),int(sorted.size()),raw(v.key),raw(source.x),raw(source.y),raw(source.z),raw(v.x),raw(v.y),raw(v.z),raw(source_node),raw(error)});
+        Buffer<NativeCoordinate> coordinates;
+        native_root_lookup(comm,v.key,coordinates,[&](const uint64_t* requests,NativeCoordinate* response) {
+            return NativeCoordinateLookup{requests,response,raw(sorted),int(sorted.size()),raw(source.x),raw(source.y),raw(source.z),raw(error)};
+        });
         mesh_check(comm,error,"a local node has no source coordinate");
-        Buffer<SourceTag> tags(source.faces.size());
-        launch(int(tags.size()),EncodeSourceTags{raw(source.faces),{raw(source.nodes[0]),raw(source.nodes[1]),raw(source.nodes[2]),raw(source.nodes[3])},raw(source_keys),raw(tags)});
-        mesh_sort(tags,SourceTagLess{});
+        launch(int(n),NativeCoordinateUnpack{raw(coordinates),raw(v.x),raw(v.y),raw(v.z),raw(source_node)});
+        Buffer<SourceTag> source_tags(source.faces.size());
+        if (!rank) {
+            launch(int(source_tags.size()),EncodeSourceTags{raw(source.faces),{raw(source.nodes[0]),raw(source.nodes[1]),raw(source.nodes[2]),raw(source.nodes[3])},raw(source_keys),raw(source_tags)});
+            mesh_sort(source_tags,SourceTagLess{});
+        }
+        Buffer<SimpleFaceKey<uint64_t>> face_keys(4*e);
+        launch(int(4*e),NativeFaceRequest{{raw(v.nodes[0]),raw(v.nodes[1]),raw(v.nodes[2]),raw(v.nodes[3])},raw(v.key),raw(face_keys)});
+        Buffer<SourceTag> tags;
+        native_root_lookup(comm,face_keys,tags,[&](const SimpleFaceKey<uint64_t>* requests,SourceTag* response) {
+            return NativeTagLookup{requests,response,raw(source_tags),int(source_tags.size())};
+        });
+        mesh_compact(tags,NativeTagged{}); mesh_sort(tags,SourceTagLess{});
+        tags.resize(size_t(thrust::unique(tags.begin(),tags.end(),NativeSameTag{})-tags.begin()));
         NativeBoundaryKind lookup{raw(v.key),raw(tags),int(tags.size())};
         partition=build_simple_partition<GlobalId>(comm,v,lookup);
         auto& o=partition.ownership; const auto& f=partition.input;
-        // Identity coverage is a public validation gate; its counters and collective stay on-device.
-        simple_collective(comm,source.x.size()+source.faces.size()<=size_t(INT_MAX),"coverage exceeds MPI count capacity");
-        Buffer<int> coverage(source.x.size()+source.faces.size(),0);
-        launch(int(std::max(o.owned_nodes.size(),o.owned_faces.size())),NativeCoverage{raw(o.owned_nodes),raw(source_node),raw(f.faces),raw(o.owned_faces),
-            {raw(f.nodes[0]),raw(f.nodes[1]),raw(f.nodes[2]),raw(f.nodes[3])},int(o.owned_nodes.size()),int(o.owned_faces.size()),int(source.x.size()),lookup,raw(coverage)});
-        mesh_mpi_ready();
-        ensure(MPI_Allreduce(MPI_IN_PLACE,raw(coverage),int(coverage.size()),MPI_INT,MPI_SUM,comm)==MPI_SUCCESS,"native coverage reduction failed");
-        launch(int(coverage.size()),CoverageCheck{raw(coverage),raw(error)});
+        simple_collective(comm,static_cast<long long>(source.global_nodes)+source.global_faces<=INT_MAX,"coverage exceeds index capacity");
+        const int total=source.global_nodes+source.global_faces;
+        Buffer<int> coverage(rank?0:size_t(total),0),coverage_ids(o.owned_nodes.size()+o.owned_faces.size());
+        launch(int(coverage_ids.size()),NativeCoverageIds{raw(o.owned_nodes),raw(source_node),raw(f.faces),raw(o.owned_faces),
+            {raw(f.nodes[0]),raw(f.nodes[1]),raw(f.nodes[2]),raw(f.nodes[3])},int(o.owned_nodes.size()),source.global_nodes,lookup,raw(coverage_ids)});
+        Buffer<unsigned char> acknowledgements;
+        native_root_lookup(comm,coverage_ids,acknowledgements,[&](const int* requests,unsigned char* response) {
+            return NativeCoverageLookup{requests,response,raw(coverage),total,raw(error)};
+        });
+        if (!rank) launch(total,CoverageCheck{raw(coverage),raw(error)});
         mesh_check(comm,error,"native ownership must cover every source node and boundary face once");
     }
 };

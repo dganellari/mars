@@ -1,44 +1,37 @@
 // Native Exodus -> device ElementDomain -> distributed SIMPLE. Host work is file I/O and API control.
 #include "mars_segregated_simple_native_mesh.hpp"
+#include "mars_segregated_simple_output.hpp"
 #include <filesystem>
 #include <iomanip>
 #include <limits>
+#include <sstream>
 
 using namespace mars;
 using namespace mars::segregated;
 using namespace mars::segregated::runtime;
 using Runner=DistributedSimpleRunner<HypreSimpleSolve<1>::Solver::Matrix,HYPRE_BigInt,HypreSimpleSolve>;
 
-struct FieldRow { double values[8]; };
-struct FieldRowLess {
-    __host__ __device__ bool operator()(const FieldRow& a,const FieldRow& b) const { return a.values[0]<b.values[0]; }
-};
-struct PackOutput {
-    const int *owned,*source; const double *x,*y,*z,*u,*p; FieldRow* rows;
-    __device__ void operator()(int i) const {
-        const int n=owned[i]; rows[i]={{double(source[n]),x[n],y[n],z[n],u[3*n],u[3*n+1],u[3*n+2],p[n]}};
-    }
-};
-struct CheckOutput {
-    const FieldRow* rows; int* error;
-    __device__ void operator()(int i) const { if (rows[i].values[0]!=double(i)) atomicExch(error,1); }
-};
-
 int execute(const SimpleOptions& o) {
     int rank=0, ranks=1; MPI_Comm_rank(MPI_COMM_WORLD,&rank); MPI_Comm_size(MPI_COMM_WORLD,&ranks);
-    if (rank==0) for (const char* suffix:{"-metrics.csv","-fields.csv"})
-        ensure(!std::filesystem::exists(o.output+suffix),"output exists; choose a fresh prefix");
+    simple_output_preflight(MPI_COMM_WORLD,o.output,o.field_output);
+    const double setup_start=MPI_Wtime();
     int nodes=0;
     Buffer<int> source_node;
     auto make_runner=[&]() {
-        const auto input=read_simple_mesh(MPI_COMM_WORLD,o.mesh,o.boundaries); nodes=int(input.x.size());
+        const auto input=read_simple_mesh_root(MPI_COMM_WORLD,o.mesh,o.boundaries); nodes=input.global_nodes;
         auto domain=distribute_simple_mesh(MPI_COMM_WORLD,input);
         NativeSimpleMesh<HYPRE_BigInt> native(MPI_COMM_WORLD,*domain,input);
         source_node=std::move(native.source_node);
         return std::make_unique<Runner>(MPI_COMM_WORLD,native.partition.input,native.partition.ownership,o.controls);
     };
-    auto runner=make_runner(); // Release replicated file arrays and setup scratch before iterating.
+    auto runner=make_runner(); // Release root file arrays and setup scratch before iterating.
     auto& run=*runner;
+    run.profile.configure(o.profile,o.profile_warmup);
+    run.exchange.enable_profiling(o.profile);
+    run.overlap_assembly=o.halo_overlap;
+    if (o.linear_cache) { run.momentum_solve.solver.enable_fixed_graph_updates(); run.poisson_solve.solver.enable_fixed_graph_updates(); }
+    run.momentum_solve.solver.enable_timing(o.profile); run.poisson_solve.solver.enable_timing(o.profile);
+    const double setup_seconds=MPI_Wtime()-setup_start;
     if (o.setup_only) {
         if (rank==0) std::cout<<"PASS: ElementDomain SIMPLE setup ranks="<<ranks<<"; no iterations run"<<std::endl;
         return 0;
@@ -55,11 +48,27 @@ int execute(const SimpleOptions& o) {
                  <<" reference_length="<<c.reference_length<<'\n'
                  <<"alpha_u="<<c.alpha_u<<" alpha_p="<<c.alpha_p<<" alpha_mass="<<c.alpha_mass
                  <<" beta="<<c.beta<<" pseudo_dt="<<c.pseudo_dt<<" (steady, no physical time)\n"
+                 <<"linear_cache="<<o.linear_cache<<" halo_overlap="<<o.halo_overlap
+                 <<" field_output="<<o.field_output<<" profile="<<o.profile<<'\n'
                  <<"Norms are dimensionless MARS residuals; not OpenAccel printed RMS.\n";
     }
+    if (o.profile) {
+        char host[MPI_MAX_PROCESSOR_NAME]; int length=0,device=0;
+        ensure(MPI_Get_processor_name(host,&length)==MPI_SUCCESS,"cannot read profile host name");
+        assembly_cuda_check(cudaGetDevice(&device));
+        cudaDeviceProp properties{}; assembly_cuda_check(cudaGetDeviceProperties(&properties,device));
+        std::ostringstream line;
+        line<<"[simple-profile] rank="<<rank<<" host="<<std::string(host,length)
+            <<" device="<<device<<" model="<<properties.name<<'\n';
+        std::cout<<line.str();
+    }
+    const double iteration_start=MPI_Wtime();
+    distributed::FieldExchange::Profile halo_baseline;
     bool converged=false;
     for (;;) {
         run.assemble_momentum(); const auto report=run.diagnostic_report(o.residual,o.mass,o.change);
+        run.profile.collect(run.completed);
+        if (o.profile && run.completed<=o.profile_warmup) halo_baseline=run.exchange.profile();
         const auto& sums=report.sums; const auto& m=report.metrics;
         ensure(m.finite,"nonfinite nonlinear diagnostics");
         ensure(m.cancellation<=1e-10,"assembled continuity does not match boundary mass flux");
@@ -76,34 +85,43 @@ int execute(const SimpleOptions& o) {
         }
         if (converged || run.completed==o.iterations) break;
         run.advance();
+        run.profile.record_linear(3,run.momentum_solve.solver,run.completed);
+        run.profile.record_linear(1,run.poisson_solve.solver,run.completed);
     }
     if (!rank) { csv.close(); ensure(bool(csv),"metric output failed"); }
-    // Output is the only field download. MPI gathers device rows before rank zero writes the CSV.
-    Buffer<FieldRow> rows(run.owned_nodes);
-    launch(run.owned_nodes,PackOutput{run.owned.data(),raw(source_node),run.x.data(),run.y.data(),run.z.data(),
-                                     run.velocity.data(),run.pressure.data(),raw(rows)});
-    static_assert(sizeof(FieldRow)==8*sizeof(double));
-    simple_collective(MPI_COMM_WORLD,run.owned_nodes<=INT_MAX/8,"field output exceeds MPI count capacity");
-    const int count=run.owned_nodes*8; std::vector<int> counts(ranks),displacements(ranks);
-    ensure(MPI_Gather(&count,1,MPI_INT,counts.data(),1,MPI_INT,0,MPI_COMM_WORLD)==MPI_SUCCESS,"field counts failed");
-    long long all=0;
-    if (!rank) for (int q=0;q<ranks;++q) { displacements[q]=int(all); all+=counts[q]; ensure(all<=INT_MAX,"field output exceeds MPI count capacity"); }
-    simple_collective(MPI_COMM_WORLD,rank!=0 || all==8LL*nodes,"field gather does not cover every source node");
-    Buffer<FieldRow> gathered(size_t(rank==0?nodes:0));
-    mesh_mpi_ready();
-    ensure(MPI_Gatherv(raw(rows),count,MPI_DOUBLE,raw(gathered),counts.data(),displacements.data(),MPI_DOUBLE,0,MPI_COMM_WORLD)==MPI_SUCCESS,"device field gather failed");
-    if (rank==0) {
-        mesh_sort(gathered,FieldRowLess{});
-        Array<int> output_error(1);
-        launch(nodes,CheckOutput{raw(gathered),output_error.data()});
-        ensure(output_error.host()[0]==0,"field gather returned duplicate or missing source nodes");
-        std::vector<FieldRow> field(gathered.size()); thrust::copy(gathered.begin(),gathered.end(),field.begin());
-        std::ofstream out(o.output+"-fields.csv"); ensure(bool(out),"cannot write fields");
-        out<<std::setprecision(17)<<"node,x,y,z,u,v,w,p\n";
-        for (const auto& row:field) { for (int j=0;j<8;++j) out<<(j?",":"")<<row.values[j]; out<<'\n'; }
-        ensure(bool(out),"field output failed");
-        std::cout<<(converged?"CONVERGED":"NOT CONVERGED: iteration limit")<<" iterations="<<run.completed<<" ranks="<<ranks
-                 <<" exchange_rounds="<<run.exchange.rounds()<<'\n';
+    const double iteration_seconds=MPI_Wtime()-iteration_start;
+    const double output_start=MPI_Wtime();
+    if (o.field_output!="none") {
+        Buffer<FieldRow> rows(run.owned_nodes);
+        launch(run.owned_nodes,PackOutput{run.owned.data(),raw(source_node),run.x.data(),run.y.data(),run.z.data(),
+                                         run.velocity.data(),run.pressure.data(),raw(rows)});
+        write_simple_fields(MPI_COMM_WORLD,o.output,o.field_output,nodes,rows);
+    }
+    const double output_seconds=MPI_Wtime()-output_start;
+    if (!rank) std::cout<<(converged?"CONVERGED":"NOT CONVERGED: iteration limit")<<" iterations="<<run.completed<<" ranks="<<ranks
+                       <<" exchange_rounds="<<run.exchange.rounds()<<'\n';
+    double wall[3]={setup_seconds,iteration_seconds,output_seconds},maximum[3];
+    ensure(MPI_Reduce(wall,maximum,3,MPI_DOUBLE,MPI_MAX,0,MPI_COMM_WORLD)==MPI_SUCCESS,"run timing reduction failed");
+    if (!rank) std::cout<<"[simple-time] scope=rank_max_wall setup_seconds="<<maximum[0]<<" iteration_seconds="<<maximum[1]
+                       <<" output_seconds="<<maximum[2]<<" seconds_per_iteration="<<(run.completed?maximum[1]/run.completed:0)<<'\n';
+    run.profile.write(MPI_COMM_WORLD,std::cout);
+    if (o.profile) {
+        const auto& h=run.exchange.profile();
+        double local[4]={h.pack_seconds-halo_baseline.pack_seconds,h.pack_ready_wait_seconds-halo_baseline.pack_ready_wait_seconds,
+                         h.wait_seconds-halo_baseline.wait_seconds,h.unpack_seconds-halo_baseline.unpack_seconds},global[4];
+        long long counts[3]={h.rounds-halo_baseline.rounds,h.sent_bytes-halo_baseline.sent_bytes,h.received_bytes-halo_baseline.received_bytes},totals[3];
+        ensure(MPI_Reduce(local,global,4,MPI_DOUBLE,MPI_MAX,0,MPI_COMM_WORLD)==MPI_SUCCESS,"halo timing reduction failed");
+        ensure(MPI_Reduce(counts,totals,3,MPI_LONG_LONG,MPI_SUM,0,MPI_COMM_WORLD)==MPI_SUCCESS,"halo count reduction failed");
+        int builds[6]={run.momentum_solve.solver.get_graph_build_count(),run.momentum_solve.solver.get_numeric_update_count(),run.momentum_solve.solver.get_setup_count(),
+                       run.poisson_solve.solver.get_graph_build_count(),run.poisson_solve.solver.get_numeric_update_count(),run.poisson_solve.solver.get_setup_count()},max_builds[6];
+        ensure(MPI_Reduce(builds,max_builds,6,MPI_INT,MPI_MAX,0,MPI_COMM_WORLD)==MPI_SUCCESS,"linear count reduction failed");
+        if (!rank) {
+            std::cout<<"[simple-profile] halo_scope=post_warmup_application_only pack_seconds="<<global[0]<<" pack_ready_wait_seconds="<<global[1]
+                     <<" mpi_wait_seconds="<<global[2]<<" unpack_seconds="<<global[3]<<" rank_rounds_sum="<<totals[0]
+                     <<" sent_bytes_sum="<<totals[1]<<" received_bytes_sum="<<totals[2]<<'\n';
+            for (int c=0;c<2;++c) std::cout<<"[simple-profile] linear="<<(c?"pressure":"momentum")<<" scope=lifetime_rank_max graph_builds="<<max_builds[3*c]
+                                        <<" numeric_updates="<<max_builds[3*c+1]<<" setups="<<max_builds[3*c+2]<<'\n';
+        }
     }
     return converged?0:2;
 }

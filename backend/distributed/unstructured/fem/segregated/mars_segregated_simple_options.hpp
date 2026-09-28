@@ -28,12 +28,12 @@ struct SimpleBoundaryNames {
     }
 };
 struct SimpleOptions {
-    std::string mesh,output;
+    std::string mesh,output,field_output="gathered";
     SimpleControls controls;
     SimpleBoundaryNames boundaries;
-    int iterations=2000,report=10;
+    int iterations=2000,report=10,profile_warmup=10;
     double residual=1e-6,mass=1e-6,change=1e-6;
-    bool setup_only=false,help=false;
+    bool setup_only=false,help=false,profile=false,linear_cache=true,halo_overlap=true;
 };
 inline SimpleOptions simple_options(int argc,char** argv) {
     SimpleOptions o;
@@ -50,6 +50,11 @@ inline SimpleOptions simple_options(int argc,char** argv) {
         if (value.empty() || !seen.insert(key).second) throw std::runtime_error("empty or repeated option: "+key);
         if (key=="--mesh") o.mesh=value;
         else if (key=="--output-prefix") o.output=value;
+        else if (key=="--field-output") {
+            if (value!="gathered" && value!="distributed" && value!="none")
+                throw std::runtime_error("--field-output expects gathered, distributed or none");
+            o.field_output=value;
+        }
         else if (key=="--mesh-format") {
             if (value!="exodus") throw std::runtime_error("SIMPLE uses native Exodus; prepared input is reserved for the reference gates");
         }
@@ -76,9 +81,17 @@ inline SimpleOptions simple_options(int argc,char** argv) {
                     throw std::runtime_error("expected positive integer for "+key);
                 (key=="--iterations"?o.iterations:o.report)=int(number);
             }
-            else if (key=="--setup-only") {
-                if (number!=0 && number!=1) throw std::runtime_error("--setup-only expects 0 or 1");
-                o.setup_only=number!=0;
+            else if (key=="--profile-warmup") {
+                if (number<0 || number>std::numeric_limits<int>::max() || number!=std::floor(number))
+                    throw std::runtime_error("--profile-warmup expects a nonnegative integer");
+                o.profile_warmup=int(number);
+            }
+            else if (key=="--setup-only" || key=="--profile" || key=="--linear-cache" || key=="--halo-overlap") {
+                if (number!=0 && number!=1) throw std::runtime_error(key+" expects 0 or 1");
+                if (key=="--setup-only") o.setup_only=number!=0;
+                else if (key=="--profile") o.profile=number!=0;
+                else if (key=="--linear-cache") o.linear_cache=number!=0;
+                else o.halo_overlap=number!=0;
             }
             else if (key=="--residual-tol") o.residual=number;
             else if (key=="--mass-tol") o.mass=number;
@@ -115,6 +128,9 @@ inline const char* simple_help() {
            "  --reference-length 1    residual normalization length [m]\n"
            "  --iterations 2000 --report-every 10 --setup-only 0\n"
            "  --residual-tol 1e-6 --mass-tol 1e-6 --change-tol 1e-6\n"
+           "  --linear-cache 1 --halo-overlap 1    set 0 for a performance control\n"
+           "  --profile 0 --profile-warmup 10      optional phase timing (adds event fences)\n"
+           "  --field-output gathered             distributed writes per-rank CSVs; none skips fields\n"
            "Both --option value and --option=value are accepted. Every exterior\n"
            "face must belong to exactly one selected inlet, outlet or wall set.\n";
 }

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare two SIMPLE field CSVs (node,x,y,z,u,v,w,p) node by node: a one-rank and a P-rank run.
+"""Compare two SIMPLE field CSVs or distributed JSON manifests (node,x,y,z,u,v,w,p) node by node: a one-rank and a P-rank run.
 
 Velocity is scaled by U and pressure by rho*U^2 (defaults U=.1, rho=1).
 No pressure mean is removed. Exit 1 if coordinates differ or a scaled error exceeds --tol.
@@ -7,25 +7,45 @@ No pressure mean is removed. Exit 1 if coordinates differ or a scaled error exce
 import argparse
 import csv
 import math
+import json
+from pathlib import Path
 import sys
 
 def load(path):
+    path = Path(path)
+    expected = None
+    paths = [path]
+    if path.suffix == ".json":
+        manifest = json.loads(path.read_text())
+        if not isinstance(manifest, dict) or manifest.get("format") != "mars-simple-fields-v1":
+            raise ValueError("invalid SIMPLE field manifest")
+        expected, parts = manifest.get("nodes"), manifest.get("parts")
+        if type(expected) is not int or expected <= 0 or not isinstance(parts, list) or not parts:
+            raise ValueError("invalid manifest node count or parts")
+        if any(not isinstance(p, str) or Path(p).name != p or not p.endswith(".csv") for p in parts):
+            raise ValueError("manifest parts must be CSV filenames")
+        if len(set(parts)) != len(parts):
+            raise ValueError("duplicate manifest part")
+        paths = [path.parent / p for p in parts]
     rows = {}
-    with open(path, newline="") as f:
-        reader = csv.DictReader(f)
-        columns = ["node", "x", "y", "z", "u", "v", "w", "p"]
-        if reader.fieldnames != columns:
-            raise ValueError("{}: expected columns {}".format(path, ",".join(columns)))
-        for r in reader:
-            node = int(r["node"])
-            if node < 0 or node in rows or None in r:
-                raise ValueError("{}: invalid or duplicate node, or extra columns".format(path))
-            values = {k: float(r[k]) for k in columns[1:]}
-            if not all(math.isfinite(v) for v in values.values()):
-                raise ValueError("{}: nonfinite field or coordinate".format(path))
-            rows[node] = values
+    for part in paths:
+        with open(part, newline="") as f:
+            reader = csv.DictReader(f)
+            columns = ["node", "x", "y", "z", "u", "v", "w", "p"]
+            if reader.fieldnames != columns:
+                raise ValueError("{}: expected columns {}".format(part, ",".join(columns)))
+            for r in reader:
+                node = int(r["node"])
+                if node < 0 or node in rows or None in r:
+                    raise ValueError("{}: invalid or duplicate node, or extra columns".format(part))
+                values = {k: float(r[k]) for k in columns[1:]}
+                if not all(math.isfinite(v) for v in values.values()):
+                    raise ValueError("{}: nonfinite field or coordinate".format(part))
+                rows[node] = values
     if not rows:
         raise ValueError("{}: no field records".format(path))
+    if expected is not None and (len(rows) != expected or any(n not in rows for n in range(expected))):
+        raise ValueError("manifest does not cover every source node exactly once")
     return rows
 
 def main(argv=None):

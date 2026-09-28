@@ -40,11 +40,33 @@ void ring(MPI_Comm comm,bool isolate_last,const std::string& fault) {
             else exchange.reverse_add({scalar.data(),rank==0?0:1});
             throw std::logic_error("invalid field did not abort");
         }
-        exchange({{scalar.data(),1},{vector.data(),3}});
+        if (fault=="end-without-begin" && rank==0) exchange.end();
+        exchange.enable_profiling();
+        exchange.begin({{scalar.data(),1},{vector.data(),3}});
+        if (rank==0) {
+            if (fault=="destroy-in-flight") throw std::runtime_error("force unwinding during exchange");
+            if (fault=="double-begin") exchange.begin({{scalar.data(),1}});
+            if (fault=="reverse-in-flight") exchange.reverse_add({scalar.data(),1});
+            if (fault=="metadata-in-flight") exchange.publish(static_cast<int*>(nullptr),0);
+        }
+        require(comm,exchange.in_flight() && exchange.rounds()==0,"split phase not in flight");
+        // Packing must snapshot owners; unpack must not run until end().
+        launch(1,mars::segregated::SimpleAddIncrement{scalar.data(),scalar.data(),400});
+        const auto pending=scalar.host();
+        require(comm,pending[1]==-9,"ghost changed before end");
+        exchange.end();
+        require(comm,!exchange.in_flight() && exchange.rounds()==1,"split phase not completed");
+        const auto& timing=exchange.profile();
+        require(comm,timing.rounds==1 && timing.sent_bytes==static_cast<long long>(4*sizeof(double)*sn.size()) &&
+                timing.received_bytes==static_cast<long long>(4*sizeof(double)*rn.size()) && timing.pack_seconds>=0 &&
+                timing.wait_seconds>=0 && timing.unpack_seconds>=0,"halo profile counters mismatch");
+        scalar.values=std::vector<double>{rank+0.25,scalar.host()[1]};
         auto s=scalar.host(), v=vector.host();
         const int previous=(rank+active-1)%active;
         require(comm,s[0]==rank+0.25 && v[0]==rank && (rn.empty() ||
                 (s[1]==previous+0.25 && v[3]==previous && v[4]==previous+1 && v[5]==previous+2)),"fused publish mismatch");
+        exchange({{scalar.data(),1},{vector.data(),3}});
+        require(comm,exchange.rounds()==2,"synchronous compatibility round missing");
         exchange.reverse_add({scalar.data(),1});
         s=scalar.host();
         require(comm,s[0]==(sn.empty()?1:2)*(rank+0.25),"reverse sum mismatch");

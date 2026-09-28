@@ -27,11 +27,14 @@
 #include "mars_segregated_distributed_matrix.hpp"
 #include "mars_segregated_halo_exchange.hpp"
 #include "mars_segregated_simple_reduction.hpp"
+#include "mars_segregated_simple_profile.hpp"
 #include <limits>
 #include <memory>
 #include <string>
 #ifdef MARS_REPLAY_CUDA
 #include <thrust/logical.h>
+#include <thrust/partition.h>
+#include <thrust/sequence.h>
 #endif
 #if defined(__CUDACC__) && !defined(MARS_REPLAY_CUDA)
 #error "Distributed SIMPLE: CUDA builds define MARS_REPLAY_CUDA, as the SIMPLE drivers do"
@@ -69,6 +72,16 @@ struct PoisonGhosts {
 struct MarkOwnedNodes {
     const int* list; unsigned char* owned;
     MARS_DSIMPLE_HD void operator()(int k) const { owned[list[k]]=1; }
+};
+
+struct LocalMomentumEntity {
+    SimpleMesh mesh; const unsigned char* owned; bool boundary;
+    MARS_DSIMPLE_HD bool operator()(int i) const {
+        const int element=boundary?mesh.faces[i].element:i;
+        // Boundary reconstruction may use the fourth node, not just the face nodes.
+        for (int k=0;k<4;++k) if (!owned[mesh.nodes[k][element]]) return false;
+        return true;
+    }
 };
 
 struct CheckTraceMoment {
@@ -132,11 +145,13 @@ template<class Matrix,class GlobalId,template<int> class Solve>
 struct DistributedSimpleRunner {
     MPI_Comm comm;
     int n,e,b,completed=0,limiter_iteration=-1,owned_nodes,owned_elements,owned_faces;
+    int local_momentum_elements=0,local_momentum_faces=0;
+    bool overlap_assembly=true;
     bool poison_unexchanged=false; // validation: NaN in ghost entries that must never be read
     SimpleControls controls;
     Array<double> x,y,z,velocity,pressure,vg,pg,d,volume,div,eflux,bflux,trace,factor,sum,gp,moment,old_velocity,old_pressure,old_eflux,old_bflux;
     Array<double> blend,blend_lower,blend_upper,blend_candidate;
-    Array<int> n0,n1,n2,n3,error,flags,old_flags,owned,elements,boundary;
+    Array<int> n0,n1,n2,n3,error,flags,old_flags,owned,elements,boundary,momentum_elements,momentum_faces;
     Array<unsigned char> owned_mask;
     Array<GlobalId> solver_node;
     Array<SimpleFace> faces; Array<TetGeometry<double>> geometry;
@@ -147,6 +162,7 @@ struct DistributedSimpleRunner {
     distributed::OwnedRowSystem<1,Matrix,GlobalId> poisson;
     Solve<3> momentum_solve; Solve<1> poisson_solve;
     distributed::FieldExchange exchange;
+    SimpleProfile profile;
 #ifdef MARS_REPLAY_CUDA
     SimpleDeviceReduction reduction;
     Array<SimpleReport> report{1};
@@ -164,7 +180,7 @@ struct DistributedSimpleRunner {
         eflux(6*e),bflux(3*b),trace(3*b),factor(n),sum(9*n),gp(3*n),moment(2),old_velocity(3*n),old_pressure(n),old_eflux(6*e),old_bflux(3*b),
         blend(ctl.high_resolution?3*n:0),blend_lower(ctl.high_resolution?3*n:0),blend_upper(ctl.high_resolution?3*n:0),blend_candidate(ctl.high_resolution?3*n:0),
         n0(f.nodes[0]),n1(f.nodes[1]),n2(f.nodes[2]),n3(f.nodes[3]),error(1),flags(3*b),old_flags(3*b),
-        owned(o.owned_nodes),elements(o.owned_elements),boundary(o.owned_faces),owned_mask(std::size_t(n)),solver_node(narrow(c,o.solver_node)),
+        owned(o.owned_nodes),elements(o.owned_elements),boundary(o.owned_faces),momentum_elements(e),momentum_faces(b),owned_mask(std::size_t(n)),solver_node(narrow(c,o.solver_node)),
         faces(f.faces),geometry(e),
         mesh{n,e,b,{n0.data(),n1.data(),n2.data(),n3.data()},x.data(),y.data(),z.data(),faces.data(),geometry.data()},
         state{velocity.data(),pressure.data(),vg.data(),pg.data(),d.data(),volume.data(),div.data(),
@@ -180,10 +196,22 @@ struct DistributedSimpleRunner {
         simple_collective(comm,valid_indices(o.owned_elements,e) && valid_indices(o.owned_faces,b),
                           "owned element or face list outside the local mesh");
         launch(owned_nodes,MarkOwnedNodes{owned.data(),owned_mask.data()});
+        local_momentum_elements=partition_momentum(momentum_elements,false);
+        local_momentum_faces=partition_momentum(momentum_faces,true);
         launch(e,SimpleGeometry{mesh,state}); check("native geometry failed");
         launch(b,SimpleBoundaryFactor{mesh,factor.data()});
         // Owned volumes and boundary factors are complete. Ghost entries stay partial on purpose:
         // only owned gradients and limiter bounds are used before publication.
+    }
+    int partition_momentum(Array<int>& list,bool boundary) {
+        const LocalMomentumEntity local{mesh,owned_mask.data(),boundary};
+#ifdef MARS_REPLAY_CUDA
+        thrust::sequence(list.values.begin(),list.values.end());
+        return int(thrust::stable_partition(list.values.begin(),list.values.end(),local)-list.values.begin());
+#else
+        std::iota(list.values.begin(),list.values.end(),0);
+        return int(std::stable_partition(list.values.begin(),list.values.end(),local)-list.values.begin());
+#endif
     }
     template<class Id> static std::vector<GlobalId> narrow(MPI_Comm c,const std::vector<Id>& ids) {
         bool fits=true;
@@ -215,6 +243,7 @@ struct DistributedSimpleRunner {
             never_read?std::numeric_limits<double>::quiet_NaN():1e30});
     }
     void assemble_momentum() {
+        auto timing=profile.scope(SimpleProfile::assembly);
         gradient<3>(mesh,state,state.velocity,sum,state.velocity_gradient);
         if (controls.high_resolution && limiter_iteration!=completed) {
             const auto a=graph.template view<3>(nullptr,nullptr);
@@ -225,17 +254,29 @@ struct DistributedSimpleRunner {
             limiter_iteration=completed;
         }
         gradient<1>(mesh,state,state.pressure,sum,state.pressure_gradient);
+        momentum_blocks.zero(); momentum_rhs.zero(); auto am=graph.template view<3>(momentum_blocks.data(),momentum_rhs.data());
+        poison(pg,3);
         if (controls.high_resolution) {
             poison(vg,9); poison(blend,3);
             // Owners have complete stars: compute locally, then batch both fields with grad(p).
-            exchange({{pg.data(),3},{vg.data(),9},{blend.data(),3}});
+            exchange.begin({{pg.data(),3},{vg.data(),9},{blend.data(),3}});
         } else {
             poison(vg,9,false); // Upwind multiplies the unused gradient by zero.
-            exchange({{pg.data(),3}});
+            exchange.begin({{pg.data(),3}});
         }
-        momentum_blocks.zero(); momentum_rhs.zero(); auto am=graph.template view<3>(momentum_blocks.data(),momentum_rhs.data());
-        launch(e,SimpleInterior<3>{mesh,state,controls,am});
-        launch(b,SimpleBoundary<3>{mesh,state,controls,am,completed>0,false});
+        if (overlap_assembly) {
+            launch(local_momentum_elements,OnList<SimpleInterior<3>>{{mesh,state,controls,am},momentum_elements.data()});
+            launch(local_momentum_faces,OnList<SimpleBoundary<3>>{{mesh,state,controls,am,completed>0,false},momentum_faces.data()});
+            exchange.end();
+            if (e>local_momentum_elements)
+                launch(e-local_momentum_elements,OnList<SimpleInterior<3>>{{mesh,state,controls,am},momentum_elements.data()+local_momentum_elements});
+            if (b>local_momentum_faces)
+                launch(b-local_momentum_faces,OnList<SimpleBoundary<3>>{{mesh,state,controls,am,completed>0,false},momentum_faces.data()+local_momentum_faces});
+        } else {
+            exchange.end();
+            launch(e,SimpleInterior<3>{mesh,state,controls,am});
+            launch(b,SimpleBoundary<3>{mesh,state,controls,am,completed>0,false});
+        }
         launch(owned_nodes,OnList<SimpleMomentumNode>{{state,controls,am},owned.data()});
         check("momentum assembly failed"); assembled=true;
     }
@@ -248,14 +289,19 @@ struct DistributedSimpleRunner {
         reduction.reduce(3*owned_faces,OnSamples<SimpleFluxChange>{{bflux.data(),old_bflux.data()},boundary.data(),3},3);
         reduction.finish(comm);
     }
-    SimpleSums diagnostics() { reduce_diagnostics(); return reduction.result.host()[0]; }
+    SimpleSums diagnostics() {
+        auto timing=profile.scope(SimpleProfile::diagnostics);
+        reduce_diagnostics(); return reduction.result.host()[0];
+    }
     SimpleReport diagnostic_report(double residual,double mass,double change) {
+        auto timing=profile.scope(SimpleProfile::diagnostics);
         reduce_diagnostics();
         launch(1,FinishSimpleReport{reduction.result.data(),controls,completed,residual,mass,change,report.data()});
         return report.host()[0]; // Fixed-size logging/convergence report; no field or reduction staging.
     }
 #else
     SimpleSums diagnostics() {
+        auto timing=profile.scope(SimpleProfile::diagnostics);
         ensure(assembled,"diagnostics require a fresh momentum assembly"); // same program order on every rank
         auto a=reduce_sums(owned_nodes,OnList<SimpleNodeSums>{{state,momentum_rhs.data(),old_velocity.data(),old_pressure.data()},owned.data()});
         a=SimpleSumCombine{}(a,reduce_sums(owned_faces,OnList<SimpleFaceSums>{{mesh,state,old_flags.data()},boundary.data()}));
@@ -266,6 +312,7 @@ struct DistributedSimpleRunner {
 #endif
     template<int C,class System,class Solver> void solve(System& system,Solver& solver,BlockCsrView<C> view,Array<double>& increment,
         bool assembly_failed,std::initializer_list<distributed::Field> with) {
+        auto timing=profile.scope(C==3?SimpleProfile::momentum:SimpleProfile::pressure);
         system.update(view,solver.rhs(std::size_t(system.rows())),std::size_t(system.rows()),assembly_failed);
         // Solve policies return a rank-consistent result (Hypre: global norms; the test oracle: a broadcast).
         const bool solved=solver(system);
@@ -288,35 +335,45 @@ struct DistributedSimpleRunner {
         solve<3>(momentum,momentum_solve,graph.template view<3>(momentum_blocks.data(),momentum_rhs.data()),du,false,{{d.data(),3}});
         launch(3*n,SimpleAddIncrement{state.velocity,du.data(),1});
         observe("momentum",velocity); observe("influence",d);
-        moment.zero(); launch(owned_faces,OnList<SimpleTraceMoment>{{mesh,state,moment.data()},boundary.data()});
+        {
+            auto timing=profile.scope(SimpleProfile::outlet);
+            moment.zero(); launch(owned_faces,OnList<SimpleTraceMoment>{{mesh,state,moment.data()},boundary.data()});
 #ifdef MARS_REPLAY_CUDA
-        assembly_cuda_check(cudaStreamSynchronize(nullptr));
-        ensure(MPI_Allreduce(MPI_IN_PLACE,moment.data(),2,MPI_DOUBLE,MPI_SUM,comm)==MPI_SUCCESS,"outlet moment reduction failed");
-        launch(1,CheckTraceMoment{moment.data(),error.data()});
-        check("all outlet faces closed: no open pressure anchor or nonfinite outlet moments");
+            assembly_cuda_check(cudaStreamSynchronize(nullptr));
+            ensure(MPI_Allreduce(MPI_IN_PLACE,moment.data(),2,MPI_DOUBLE,MPI_SUM,comm)==MPI_SUCCESS,"outlet moment reduction failed");
+            launch(1,CheckTraceMoment{moment.data(),error.data()});
+            check("all outlet faces closed: no open pressure anchor or nonfinite outlet moments");
 #else
-        const auto local=moment.host(); std::vector<double> global(2);
-        MPI_Allreduce(local.data(),global.data(),2,MPI_DOUBLE,MPI_SUM,comm);
-        if (!(std::isfinite(global[0]) && std::isfinite(global[1]) && global[1]>0))
-            throw std::runtime_error("all outlet faces closed: no open pressure anchor; cannot solve this prescribed-inflow case");
-        moment.values=global;
+            const auto local=moment.host(); std::vector<double> global(2);
+            MPI_Allreduce(local.data(),global.data(),2,MPI_DOUBLE,MPI_SUM,comm);
+            if (!(std::isfinite(global[0]) && std::isfinite(global[1]) && global[1]>0))
+                throw std::runtime_error("all outlet faces closed: no open pressure anchor; cannot solve this prescribed-inflow case");
+            moment.values=global;
 #endif
-        launch(b,SimpleTrace{mesh,state,controls,moment.data()}); observe("trace",trace);
-        poisson_blocks.zero(); poisson_rhs.zero(); auto ap=graph.template view<1>(poisson_blocks.data(),poisson_rhs.data());
-        launch(e,SimpleInterior<1>{mesh,state,controls,ap}); launch(b,SimpleBoundary<1>{mesh,state,controls,ap});
+            launch(b,SimpleTrace{mesh,state,controls,moment.data()}); observe("trace",trace);
+        }
+        auto ap=graph.template view<1>(poisson_blocks.data(),poisson_rhs.data());
+        {
+            auto timing=profile.scope(SimpleProfile::pressure_assembly);
+            poisson_blocks.zero(); poisson_rhs.zero();
+            launch(e,SimpleInterior<1>{mesh,state,controls,ap}); launch(b,SimpleBoundary<1>{mesh,state,controls,ap});
+        }
         solve<1>(poisson,poisson_solve,ap,phi,error.host()[0]!=0,{});
         observe("raw_pressure_increment",phi);
-        launch(n,SimpleAddIncrement{state.pressure,phi.data(),controls.alpha_p});
-        gradient<1>(mesh,state,phi.data(),sum,gp.data());
-        poison(gp,3);
-        // Match the reference: new p, predicted u, old grad(p), then reversal and velocity correction.
-        div.zero(); launch(e,SimpleInterior<1>{mesh,state,controls,ap,true});
-        launch(b,SimpleBoundary<1>{mesh,state,controls,ap,completed>0,true}); check("flux update failed");
-        poison(div,1);
-        launch(owned_nodes,OnList<SimpleCorrectVelocity>{{state,gp.data()},owned.data()});
-        exchange({{velocity.data(),3},{pressure.data(),1}});
-        observe("pressure",pressure); observe("velocity",velocity); observe("interior_flux",eflux);
-        observe("boundary_flux",bflux); observe("mass_divergence",div);
+        {
+            auto timing=profile.scope(SimpleProfile::correction);
+            launch(n,SimpleAddIncrement{state.pressure,phi.data(),controls.alpha_p});
+            gradient<1>(mesh,state,phi.data(),sum,gp.data());
+            poison(gp,3);
+            // Match the reference: new p, predicted u, old grad(p), then reversal and velocity correction.
+            div.zero(); launch(e,SimpleInterior<1>{mesh,state,controls,ap,true});
+            launch(b,SimpleBoundary<1>{mesh,state,controls,ap,completed>0,true}); check("flux update failed");
+            poison(div,1);
+            launch(owned_nodes,OnList<SimpleCorrectVelocity>{{state,gp.data()},owned.data()});
+            exchange({{velocity.data(),3},{pressure.data(),1}});
+            observe("pressure",pressure); observe("velocity",velocity); observe("interior_flux",eflux);
+            observe("boundary_flux",bflux); observe("mass_divergence",div);
+        }
         ++completed; assembled=false;
     }
     template<class Observer=NoSimpleObserver> void step(Observer observe={}) { assemble_momentum(); advance(observe); }
