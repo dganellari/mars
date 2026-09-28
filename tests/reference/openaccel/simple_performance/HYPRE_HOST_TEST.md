@@ -73,8 +73,18 @@ The legacy `MARS_HYPRE_NULLX_RATIO` and `MARS_HYPRE_MAXX_RATIO` heuristics remai
 unchanged for other callers; they do not apply in this mode. The caller must
 still provide a pressure anchor. A small residual alone cannot detect a nullspace.
 The existing SIMPLE check against its own CSR and exchanged solution also remains.
-This adds a device ParCSR matvec, global inner products and a coordinated error
-check per solve; scalar reductions and API control are host work, not field copies.
+The wrapper forms `r = -Ax` with beta zero, then adds `b` with ParVectorAxpy.
+Both operations use Hypre's compute stream. This avoids putting a runtime
+device copy immediately before a matvec that reads and overwrites its destination.
+It retains the same cached residual vector, inner products and coordinated error
+check; no device-wide synchronization or host field copy is added. The acceptance
+limits and independent MARS CSR check are unchanged.
+
+The real-Hypre host test poisons that workspace with NaN and large finite values,
+then compares repeated residuals with an independent original-CSR calculation.
+It checks that neither input changes, including zero RHS/solution, changing
+matrix values and RHS scaling from 1e-9 to 1e9, for GMRES and FlexGMRES. This
+checks the algebra and storage contract, not CUDA stream ordering.
 
 A rejected solve in this mode prints the iteration count/limit, restart length,
 Hypre's reported relative residual, the recomputed relative residual (absolute
@@ -102,6 +112,13 @@ Using GMRES APIs on that handle writes/reads a different Hypre data layout.
 The real-Hypre regression exercises both backends, fresh and cached solves,
 configuration getters, returned iterations and residual acceptance. This fixes
 the optional API path; it does not establish the cause of the duct GPU mismatch.
+
+In the reported duct-32 failure at momentum iteration 5 (Daint job 4884081),
+the independent MARS residual and Hypre's Krylov work residual both equal
+2.67277e-13, below the 4.05018e-11 acceptance limit. The former copy-and-matvec
+wrapper check instead reports 1.88542e-7. This localizes the disagreement to
+the wrapper's residual evaluation path; it does not prove a stream race.
+The revised construction still needs the same cached GPU case to pass.
 
 For the water/backflow fixture, the pseudo-time momentum diagonal is dominated
 by `rho*V/(alpha_u*pseudo_dt)`. Thus `d=V/a` is about `6e-10` and pressure

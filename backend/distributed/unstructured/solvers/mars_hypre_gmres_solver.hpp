@@ -893,12 +893,13 @@ public:
             HYPRE_IJVectorGetObject(r_hypre_, reinterpret_cast<void**>(&par_r_));
             require_reuse(par_r_ && HYPRE_GetError() == 0, "residual vector creation failed");
         }
-        HYPRE_ParVectorCopy(par_b_, par_r_);
-        HYPRE_ParCSRMatrixMatvec(-1.0, parcsr_A_, par_x_, 1.0, par_r_);
+        // Keep b-Ax on Hypre's compute stream without a runtime memcpy before SpMV.
+        HYPRE_Int error = HYPRE_ParCSRMatrixMatvec(-1.0, parcsr_A_, par_x_, 0.0, par_r_);
+        error |= HYPRE_ParVectorAxpy(1.0, par_b_, par_r_);
         HYPRE_Real residual2 = 0, rhs2 = 0;
-        HYPRE_ParVectorInnerProd(par_r_, par_r_, &residual2);
-        HYPRE_ParVectorInnerProd(par_b_, par_b_, &rhs2);
-        require_reuse(HYPRE_GetError() == 0 && std::isfinite(residual2) && std::isfinite(rhs2)
+        error |= HYPRE_ParVectorInnerProd(par_r_, par_r_, &residual2);
+        error |= HYPRE_ParVectorInnerProd(par_b_, par_b_, &rhs2);
+        require_reuse(error == 0 && HYPRE_GetError() == 0 && std::isfinite(residual2) && std::isfinite(rhs2)
                       && residual2 >= 0 && rhs2 >= 0,
                       "true residual evaluation failed");
         last_absolute_residual_ = std::sqrt(residual2);

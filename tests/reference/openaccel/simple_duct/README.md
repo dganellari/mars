@@ -338,6 +338,24 @@ The optional FlexGMRES API dispatch was corrected separately and tested with
 real CPU Hypre. The full 8/16/32 study remains incomplete.
 Preserve the completed runs; no successful fine-grid refinement is claimed yet.
 
+A later check of the preserved 8/16-cell runs passes on 1/2/4 GPUs
+(`simple-duct-finish-RJjq00`). Iterations are 3139 and 4484 respectively;
+maximum rank differences are 1.597e-15 in velocity/U and 6.328e-13 in
+pressure/(rho U^2). This verifies those levels, not the three-level study.
+The subsequent cached 32-cell run fails momentum at iteration 5 (job 4884081,
+nid005673). MARS's original-CSR residual and Hypre's Krylov work residual both
+give 2.67277e-13, below the 4.05018e-11 limit, while the wrapper's extra check
+gives 1.88542e-7. The candidate satisfies the original linear system in this
+failure. A previous uncached 30-step probe also passed its linear checks
+(job 4883979, nid006447), but did not establish nonlinear convergence.
+
+The wrapper now constructs the residual as `-Ax`, then adds `b`, using Hypre
+compute-stream operations instead of copy-and-accumulate. Its real CPU Hypre
+test passes with ASan/UBSan, including poisoned residual workspace and both
+Krylov backends. This does not prove the GPU root cause or close the refinement
+study: cached GPU validation remains pending, with both residual checks and all
+acceptance thresholds retained.
+
 ## Daint commands
 
 Run on `cstone`. From the configured MARS CUDA/Hypre build directory (for example `mars-v010-check/build-hypre`), build only the existing production

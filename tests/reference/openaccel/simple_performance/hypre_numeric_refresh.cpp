@@ -125,6 +125,66 @@ void scaled_systems() {
     }
 }
 
+void residual_workspace() {
+    const int n=257;
+    Matrix matrix;
+    make_graph(matrix,n);
+    std::vector<HYPRE_BigInt> map(n+1);
+    for (int i=0;i<n;++i) map[i]=n-1-i;
+    map.back()=-1;
+    Solver solver(0,300,1e-12);
+    solver.setVerbose(false);
+    solver.setAMGCoarseRelaxType(18);
+    solver.enable_fixed_graph_updates();
+    solver.enable_true_residual_check(1e-13,1e-10);
+    for (int epoch=0;epoch<3;++epoch) {
+        std::vector<double> b,truth,x(n,0),got_b(n),got_x(n);
+        fill_system(matrix,map,epoch,b,truth);
+        check(solver.solve(matrix,b,x,0,n,0,n,map),"residual fixture solve failed");
+        for (double rhs_scale : {0.,1e-9,1.,1e9}) {
+            for (double x_scale : {0.,1.,1.-1e-6}) {
+                auto rhs=b,guess=truth;
+                for (double& value:rhs) value*=rhs_scale;
+                for (double& value:guess) value*=rhs_scale==0?x_scale:rhs_scale*x_scale;
+                HYPRE_IJVectorSetValues(solver.b_hypre_,n,solver.d_row_global_.data(),rhs.data());
+                HYPRE_IJVectorSetValues(solver.x_hypre_,n,solver.d_row_global_.data(),guess.data());
+                HYPRE_IJVectorAssemble(solver.b_hypre_);
+                HYPRE_IJVectorAssemble(solver.x_hypre_);
+                long double residual2=0,rhs2=0,scale2=0;
+                for (int row=0;row<n;++row) {
+                    long double residual=rhs[row],scale=std::abs(residual);
+                    for (int slot=matrix.offsets[row];slot<matrix.offsets[row+1];++slot) {
+                        const int local=matrix.columns[slot];
+                        if (local<0 || local>=int(map.size()) || map[local]<0) continue;
+                        const long double term=static_cast<long double>(matrix.values[slot])*guess[map[local]];
+                        residual-=term; scale+=std::abs(term);
+                    }
+                    residual2+=residual*residual; scale2+=scale*scale;
+                    rhs2+=static_cast<long double>(rhs[row])*rhs[row];
+                }
+                const double expected=std::sqrt(residual2),bnorm=std::sqrt(rhs2);
+                const double roundoff=64*std::numeric_limits<double>::epsilon()*std::sqrt(scale2);
+                for (double poison : {1e100,std::numeric_limits<double>::quiet_NaN()}) {
+                    // Cached scratch must be overwritten, including after zero-RHS solves.
+                    HYPRE_ParVectorSetConstantValues(solver.par_r_,poison);
+                    const double relative=solver.true_relative_residual();
+                    check(std::isfinite(relative),"poisoned residual workspace escaped");
+                    check(std::abs(solver.last_absolute_residual_-expected)<=roundoff,
+                          "residual disagrees with independent original CSR");
+                    check(std::abs(solver.last_rhs_norm_-bnorm)<=roundoff,"RHS norm changed");
+                    check(std::abs(relative-(bnorm>0?expected/bnorm:expected))
+                          <=4*roundoff/(bnorm>0?bnorm:1),"relative/absolute residual convention changed");
+                    HYPRE_IJVectorGetValues(solver.b_hypre_,n,solver.d_row_global_.data(),got_b.data());
+                    HYPRE_IJVectorGetValues(solver.x_hypre_,n,solver.d_row_global_.data(),got_x.data());
+                    check(got_b==rhs && got_x==guess,"residual calculation modified b or x");
+                    check(HYPRE_GetError()==0,"residual fixture API failure");
+                }
+            }
+        }
+    }
+    std::cout<<"PASS: residual workspace overwrite, immutable inputs and independent CSR norms\n";
+}
+
 void mixed_residual_acceptance() {
     Matrix matrix;
     make_graph(matrix,32);
@@ -207,6 +267,7 @@ int main() {
             scaled_systems();
             setenv("MARS_HYPRE_MINITER","0",1);
             mixed_residual_acceptance();
+            residual_workspace();
             std::cout<<"PASS: Krylov API and residual checks, MARS_HYPRE_FLEXGMRES="<<flexible<<'\n';
         }
         unsetenv("MARS_HYPRE_FLEXGMRES");
