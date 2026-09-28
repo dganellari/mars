@@ -33,11 +33,11 @@ including element numberings that are not aligned with the coordinate axes.
 - **Multi-rank periodic boundary conditions** (e.g. multi-rank periodic TGV). Periodic
   DOF collapse across rank boundaries is still under development; use single-rank for
   periodic cases.
-- **Poiseuille channel (`mars_poiseuille_flow`).** Validation covers only the single-rank
-  `--planar-ddt` path on rectangular Hex8 cells with one element through z. The reported
-  1500-step Daint run passed profile, conservation and steadiness checks on 2026-09-27.
+- **Poiseuille channel (`mars_poiseuille_flow`).** Validation covers the `--planar-ddt`
+  path on rectangular Hex8 cells with one element through z, on 1, 2 and 4 ranks. The
+  1500-step Daint runs passed profile, conservation and steadiness checks on 2026-09-27.
   See [the result and recipe](tests/reference/poiseuille/planar_validation.md).
-  The legacy path and multi-rank Poiseuille validation are not supported by this repair.
+  The legacy path is not validated. On this 30k-node mesh more ranks are slower, not faster.
 - **Triangle and quadrilateral meshes.** `ElementDomain` supports `TetTag` and `HexTag` only;
   `TriTag`/`QuadTag` are rejected at compile time.
 - **Node ownership on periodic and multi-block meshes.** Multi-rank, non-periodic, single-block meshes give each

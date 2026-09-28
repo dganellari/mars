@@ -277,10 +277,12 @@ shared `mars_ns_solver.hpp` (same pattern as the pump's fork), so the shared
 solver used by cavity/channel/TGV is untouched. The source is gated behind
 `NSStepper::useOpeningFluxSource`, default off; the driver enables it.
 
-The per-node outward area vectors are built by the driver: for each opening
-plane node, area = (Voronoi interval in y) × (dz/2), which sums exactly to
-the face area `H*dz`. For domain-aligned planes the direction is just `-x`
-(inlet) and `+x` (outlet).
+The per-node outward areas are built by the driver on the GPU from the element
+faces on each opening plane: every face node gets the area of its sub-quad
+(node, edge midpoints, face centre), a quarter of the face for these rectangles.
+Each rank adds the faces of its own elements and the reverse halo completes the
+shared nodes, so the areas sum exactly to `H*dz` on any number of ranks. For
+domain-aligned planes the direction is just `-x` (inlet) and `+x` (outlet).
 
 ---
 
@@ -292,7 +294,7 @@ Build (the target links only against the `mars` library):
 cmake --build . --target mars_poiseuille_flow --parallel 4
 ```
 
-Run (single rank; the area lumping assumes the opening planes are rank-local):
+Run (one rank shown; set `--ntasks-per-node` for more):
 
 ```bash
 MARS_NS_DEBUG_STEPS=3 MARS_DDT_CG_PRINT_EVERY=1000 \

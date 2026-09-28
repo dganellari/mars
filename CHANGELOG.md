@@ -50,6 +50,9 @@ the cornerstone-octree library.
   BDF scaling, inlet diffusion lift and opening fluxes. The long regression checks
   the steady profile, conservation and steadiness. The reported single-rank Daint
   run passed all checks after 1500 steps; profile RMS error was 4.563e-4 m/s.
+- `mars_poiseuille_flow --planar-ddt` runs on any number of ranks. Opening and cut-plane
+  areas come from each rank's element faces on the GPU; validation sums count owned nodes
+  only. 1-, 2- and 4-rank Daint runs pass the same checks with the same profile RMS.
 
 ### Experimental
 - High-order matrix-free CVFEM operators (p ≥ 2), with DOF numbering on the device.
