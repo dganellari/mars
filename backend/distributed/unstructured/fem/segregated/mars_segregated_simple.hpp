@@ -11,11 +11,12 @@
 #endif
 namespace mars::segregated {
 
-// Restricted steady, laminar SIMPLE profile: fixed frame, upwind, one open outlet.
+// Restricted steady, laminar SIMPLE profile: fixed frame, one open outlet.
 struct SimpleControls {
     double density=1, viscosity=.1, pseudo_dt=.01, inlet_speed=.1;
     double alpha_u=.3, alpha_p=.3, alpha_mass=.75, beta=.05, pressure_reference=0;
     double reference_length=1;
+    bool high_resolution=false;
 };
 inline bool valid_simple_controls(const SimpleControls& c) {
     for (double value:{c.density,c.viscosity,c.pseudo_dt,c.inlet_speed,c.reference_length})
@@ -116,6 +117,7 @@ struct SimpleState {
     double *volume,*mass_divergence,*interior_flux,*boundary_flux,*trace,*boundary_factor;
     int* error;
     int* reversal=nullptr;
+    double* velocity_blend=nullptr;
 };
 struct SimpleGeometry {
     SimpleMesh mesh; SimpleState state;
@@ -166,6 +168,9 @@ template<int Components> struct SimpleInterior {
         int nodes[4]; double xyz[12]; mesh.cell(e,nodes,xyz);
         auto x=simple_interior(Components==3?1:0,nodes,xyz,state.velocity,state.pressure,state.interior_flux+6*e,controls);
         native_interior(x,mesh.geometry[e],nodes,state.velocity_gradient,state.pressure_gradient,state.influence);
+        if constexpr (Components==3) if (controls.high_resolution)
+            for (int k=0;k<4;++k) for (int j=0;j<3;++j)
+                x.velocity_blend[3*k+j]=state.velocity_blend[3*nodes[k]+j];
         TetInteriorOutput y; tet_interior(x,y);
         if (!update_flux) {
             if (!scatter_block(matrix,nodes,4,y.lhs,y.rhs)) simple_error(state.error);

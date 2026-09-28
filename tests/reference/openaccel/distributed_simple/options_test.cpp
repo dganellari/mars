@@ -15,6 +15,8 @@ SimpleOptions parse(const std::string& args) {
 int main() {
     const auto defaults=parse("");
     check(defaults.controls.density==1 && defaults.controls.viscosity==.1 && defaults.controls.inlet_speed==.1);
+    check(!defaults.controls.high_resolution && !parse("--advection upwind").controls.high_resolution);
+    check(parse("--advection=high-resolution").controls.high_resolution);
     const auto options=parse("--rho=2 --mu .4 --inlet-velocity=.2 --outlet-pressure=-3 --pseudo-dt .005 "
         "--reference-length=2 --relax-u .4 --relax-p .2 --relax-mass .8 --outlet-beta .1 "
         "--inlet-ss feed --outlet-ss exit --wall-ss casing,cover --iterations 20 --report-every=2");
@@ -28,7 +30,7 @@ int main() {
         "--reference-length 0","--pseudo-dt -1","--relax-u 1.1","--relax-p 0","--relax-mass nan","--outlet-beta 0",
         "--residual-tol nan","--mass-tol 0","--change-tol -1","--iterations 2.5","--iterations 2147483648",
         "--report-every 0","--setup-only 2","--rho 2x","--rho 1 --rho 2","--rho=","--mesh-format prepared",
-        "--inlet-ss outlet","--wall-ss walls,","--wall-ss walls,walls","--wall-ss walls,inlet","--unknown 1"}) {
+        "--advection central","--advection 1","--inlet-ss outlet","--wall-ss walls,","--wall-ss walls,walls","--wall-ss walls,inlet","--unknown 1"}) {
         bool rejected=false; try { parse(args); } catch (const std::exception&) { rejected=true; }
         check(rejected);
     }

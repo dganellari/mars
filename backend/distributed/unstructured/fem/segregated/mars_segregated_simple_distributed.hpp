@@ -9,7 +9,7 @@
 //   halo lists     NodeHaloTopology-style peers and send/recv node lists.
 //
 // Schedule per iteration (fields published owner -> ghost, 4 rounds, 14 values per ghost;
-// in addition to setup metadata checks):
+// in addition to setup metadata checks; high-resolution adds 12 values to the first round):
 //   gradient(p)            owned rows exact from complete stars          -> publish grad p (3)
 //   momentum assembly      owned rows only enter the solve; d at owned rows
 //   momentum solve         -> publish [du (3), d (3)]; true residual; u += du on every node
@@ -131,10 +131,11 @@ template<int C> struct HypreSimpleSolve {
 template<class Matrix,class GlobalId,template<int> class Solve>
 struct DistributedSimpleRunner {
     MPI_Comm comm;
-    int n,e,b,completed=0,owned_nodes,owned_elements,owned_faces;
+    int n,e,b,completed=0,limiter_iteration=-1,owned_nodes,owned_elements,owned_faces;
     bool poison_unexchanged=false; // validation: NaN in ghost entries that must never be read
     SimpleControls controls;
     Array<double> x,y,z,velocity,pressure,vg,pg,d,volume,div,eflux,bflux,trace,factor,sum,gp,moment,old_velocity,old_pressure,old_eflux,old_bflux;
+    Array<double> blend,blend_lower,blend_upper,blend_candidate;
     Array<int> n0,n1,n2,n3,error,flags,old_flags,owned,elements,boundary;
     Array<unsigned char> owned_mask;
     Array<GlobalId> solver_node;
@@ -161,18 +162,19 @@ struct DistributedSimpleRunner {
         owned_nodes(int(o.owned_nodes.size())),owned_elements(int(o.owned_elements.size())),owned_faces(int(o.owned_faces.size())),controls(ctl),
         x(f.x),y(f.y),z(f.z),velocity(3*n),pressure(n),vg(9*n),pg(3*n),d(3*n),volume(n),div(n),
         eflux(6*e),bflux(3*b),trace(3*b),factor(n),sum(9*n),gp(3*n),moment(2),old_velocity(3*n),old_pressure(n),old_eflux(6*e),old_bflux(3*b),
+        blend(ctl.high_resolution?3*n:0),blend_lower(ctl.high_resolution?3*n:0),blend_upper(ctl.high_resolution?3*n:0),blend_candidate(ctl.high_resolution?3*n:0),
         n0(f.nodes[0]),n1(f.nodes[1]),n2(f.nodes[2]),n3(f.nodes[3]),error(1),flags(3*b),old_flags(3*b),
         owned(o.owned_nodes),elements(o.owned_elements),boundary(o.owned_faces),owned_mask(std::size_t(n)),solver_node(narrow(c,o.solver_node)),
         faces(f.faces),geometry(e),
         mesh{n,e,b,{n0.data(),n1.data(),n2.data(),n3.data()},x.data(),y.data(),z.data(),faces.data(),geometry.data()},
         state{velocity.data(),pressure.data(),vg.data(),pg.data(),d.data(),volume.data(),div.data(),
-              eflux.data(),bflux.data(),trace.data(),factor.data(),error.data(),flags.data()},
+              eflux.data(),bflux.data(),trace.data(),factor.data(),error.data(),flags.data(),blend.data()},
         graph(mesh),
         momentum_blocks(std::size_t(graph.blocks())*9),momentum_rhs(3*n),poisson_blocks(std::size_t(graph.blocks())),poisson_rhs(n),du(3*n),phi(n),
         momentum(c,graph.template view<3>(momentum_blocks.data(),momentum_rhs.data()),owned.data(),owned_nodes,solver_node.data(),solver_node.values.size(),empty),
         poisson(c,graph.template view<1>(poisson_blocks.data(),poisson_rhs.data()),owned.data(),owned_nodes,solver_node.data(),solver_node.values.size(),empty),
         momentum_solve(c),poisson_solve(c),
-        exchange(c,o.peers,o.send_offsets,o.send_nodes,o.recv_offsets,o.recv_nodes,n)
+        exchange(c,o.peers,o.send_offsets,o.send_nodes,o.recv_offsets,o.recv_nodes,n,ctl.high_resolution?15:8)
     {
         simple_collective(comm,valid_simple_controls(ctl),"invalid SIMPLE controls");
         simple_collective(comm,valid_indices(o.owned_elements,e) && valid_indices(o.owned_faces,b),
@@ -181,7 +183,7 @@ struct DistributedSimpleRunner {
         launch(e,SimpleGeometry{mesh,state}); check("native geometry failed");
         launch(b,SimpleBoundaryFactor{mesh,factor.data()});
         // Owned volumes and boundary factors are complete. Ghost entries stay partial on purpose:
-        // they only feed ghost gradients that are republished or multiplied by a zero blend.
+        // only owned gradients and limiter bounds are used before publication.
     }
     template<class Id> static std::vector<GlobalId> narrow(MPI_Comm c,const std::vector<Id>& ids) {
         bool fits=true;
@@ -214,9 +216,23 @@ struct DistributedSimpleRunner {
     }
     void assemble_momentum() {
         gradient<3>(mesh,state,state.velocity,sum,state.velocity_gradient);
-        poison(vg,9,false); // only multiplied by velocity_blend=0; never published
+        if (controls.high_resolution && limiter_iteration!=completed) {
+            const auto a=graph.template view<3>(nullptr,nullptr);
+            launch(owned_nodes,OnList<SimpleBlendBounds>{{a,state.velocity,blend_lower.data(),blend_upper.data(),blend_candidate.data(),state.error},owned.data()});
+            const SimpleBlendSamples samples{mesh,state,blend_lower.data(),blend_upper.data(),blend_candidate.data(),owned_mask.data()};
+            launch(e,SimpleBlendInterior{samples}); launch(b,SimpleBlendBoundary{samples});
+            launch(owned_nodes,OnList<SimpleBlendFinish>{{blend_candidate.data(),blend.data()},owned.data()});
+            limiter_iteration=completed;
+        }
         gradient<1>(mesh,state,state.pressure,sum,state.pressure_gradient);
-        exchange({{pg.data(),3}});
+        if (controls.high_resolution) {
+            poison(vg,9); poison(blend,3);
+            // Owners have complete stars: compute locally, then batch both fields with grad(p).
+            exchange({{pg.data(),3},{vg.data(),9},{blend.data(),3}});
+        } else {
+            poison(vg,9,false); // Upwind multiplies the unused gradient by zero.
+            exchange({{pg.data(),3}});
+        }
         momentum_blocks.zero(); momentum_rhs.zero(); auto am=graph.template view<3>(momentum_blocks.data(),momentum_rhs.data());
         launch(e,SimpleInterior<3>{mesh,state,controls,am});
         launch(b,SimpleBoundary<3>{mesh,state,controls,am,completed>0,false});

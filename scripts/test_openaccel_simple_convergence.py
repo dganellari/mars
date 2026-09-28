@@ -129,6 +129,36 @@ class ComparisonTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'pinned public reference'):
             self.compare(other)
 
+    def test_high_resolution_deck(self):
+        source = DECK + ('advection_scheme: upwind\nblend_factor_max: 0\n'
+                         'limit_gradients: false\nrelax_gradients: false\n')
+        result = gate.convergence_deck(source, 'high-resolution')
+        self.assertIn('advection_scheme: high_resolution', result)
+        self.assertIn('blend_factor_max: 1', result)
+        with self.assertRaisesRegex(ValueError, 'unrelaxed gradient'):
+            gate.convergence_deck(source.replace('relax_gradients: false', 'relax_gradients: true'), 'high-resolution')
+
+    def test_native_completion_suffix(self):
+        (self.mars / 'run.log').write_text('CONVERGED iterations=1277 ranks=1 exchange_rounds=5109\n')
+        self.compare()
+
+    def test_reject_different_advection(self):
+        (self.mars / 'run.log').write_text('SIMPLE Tet4, 1 ranks (ElementDomain/cstone), high-resolution, laminar\n'
+                                         'CONVERGED iterations=1277\n')
+        with self.assertRaisesRegex(ValueError, 'advection differs'): self.compare()
+
+    def test_high_resolution_comparison(self):
+        (self.reference / 'input.i').write_text('advection_scheme: high_resolution\nblend_factor_max: 1\n')
+        self.manifest()
+        path = self.reference / 'comparison-run.json'
+        record = json.loads(path.read_text()); record['advection'] = 'high-resolution'
+        path.write_text(json.dumps(record))
+        with self.assertRaisesRegex(ValueError, 'advection differs'): self.compare()
+        (self.mars / 'run.log').write_text('SIMPLE Tet4, 1 ranks (ElementDomain/cstone), high-resolution, laminar\n'
+                                         'CONVERGED iterations=1277 ranks=1 exchange_rounds=5109\n')
+        self.compare()
+        self.assertEqual(json.loads(self.output.read_text())['advection'], 'high-resolution')
+
     def test_permuted_ids_pass(self):
         self.compare()
         r = json.loads(self.output.read_text())

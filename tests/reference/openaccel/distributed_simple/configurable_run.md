@@ -10,7 +10,8 @@ point to the same source. Prepared-text inputs remain in the reference gates;
 the production executable accepts native Exodus only.
 
 The equations are steady, incompressible, laminar Navier-Stokes with upwind
-advection, physical pressure in Pa and dynamic viscosity in Pa s. `--mu` sets
+advection by default (or opt-in [high-resolution advection](high_resolution.md)),
+physical pressure in Pa and dynamic viscosity in Pa s. `--mu` sets
 dynamic viscosity; kinematic viscosity is mu/rho. For water, rho=1000 and
 mu=.001 give nu=1e-6. This specifies material properties, not a turbulence
 model or a convergence guarantee at high Reynolds number.

@@ -3,6 +3,7 @@
 #include <cuda_runtime.h>
 #endif
 #include "mars_segregated_simple.hpp"
+#include "mars_segregated_high_resolution.hpp"
 #include "mars_segregated_simple_metrics.hpp"
 #include <algorithm>
 #include <cmath>
@@ -145,9 +146,10 @@ struct NoSimpleObserver { void operator()(const char*,Array<double>&) const {} }
 
 // Geometry, graph, state and scratch persist across outer iterations.
 struct SimpleRunner {
-    int n,e,b,completed=0;
+    int n,e,b,completed=0,limiter_iteration=-1;
     SimpleControls controls;
     Array<double> x,y,z,velocity,pressure,vg,pg,d,volume,div,eflux,bflux,trace,factor,sum,gp,moment,old_velocity,old_pressure,old_eflux,old_bflux;
+    Array<double> blend,blend_lower,blend_upper,blend_candidate;
     Array<int> n0,n1,n2,n3,error,flags,old_flags;
     Array<SimpleFace> faces; Array<TetGeometry<double>> geometry;
     SimpleMesh mesh; SimpleState state;
@@ -158,11 +160,12 @@ struct SimpleRunner {
         n(int(f.x.size())),e(int(f.nodes[0].size())),b(int(f.faces.size())),controls(c),
         x(f.x),y(f.y),z(f.z),velocity(3*n),pressure(n),vg(9*n),pg(3*n),d(3*n),volume(n),div(n),
         eflux(6*e),bflux(3*b),trace(3*b),factor(n),sum(9*n),gp(3*n),moment(2),old_velocity(3*n),old_pressure(n),old_eflux(6*e),old_bflux(3*b),
+        blend(c.high_resolution?3*n:0),blend_lower(c.high_resolution?3*n:0),blend_upper(c.high_resolution?3*n:0),blend_candidate(c.high_resolution?3*n:0),
         n0(f.nodes[0]),n1(f.nodes[1]),n2(f.nodes[2]),n3(f.nodes[3]),error(1),flags(3*b),old_flags(3*b),
         faces(f.faces),geometry(e),
         mesh{n,e,b,{n0.data(),n1.data(),n2.data(),n3.data()},x.data(),y.data(),z.data(),faces.data(),geometry.data()},
         state{velocity.data(),pressure.data(),vg.data(),pg.data(),d.data(),volume.data(),div.data(),
-              eflux.data(),bflux.data(),trace.data(),factor.data(),error.data(),flags.data()},
+              eflux.data(),bflux.data(),trace.data(),factor.data(),error.data(),flags.data(),blend.data()},
         graph(mesh),momentum(n,graph.blocks()),poisson(n,graph.blocks()) {
         ensure(valid_simple_controls(c),"invalid SIMPLE controls");
         launch(e,SimpleGeometry{mesh,state}); check("native geometry failed");
@@ -173,6 +176,14 @@ struct SimpleRunner {
     void check(const char* message) { ensure(error.host()[0]==0,message); }
     void assemble_momentum() {
         gradient<3>(mesh,state,state.velocity,sum,state.velocity_gradient);
+        if (controls.high_resolution && limiter_iteration!=completed) {
+            const auto a=graph.view<3>(nullptr,nullptr);
+            launch(n,SimpleBlendBounds{a,state.velocity,blend_lower.data(),blend_upper.data(),blend_candidate.data(),state.error});
+            const SimpleBlendSamples samples{mesh,state,blend_lower.data(),blend_upper.data(),blend_candidate.data()};
+            launch(e,SimpleBlendInterior{samples}); launch(b,SimpleBlendBoundary{samples});
+            launch(n,SimpleBlendFinish{blend_candidate.data(),blend.data()});
+            limiter_iteration=completed;
+        }
         gradient<1>(mesh,state,state.pressure,sum,state.pressure_gradient);
         momentum.blocks.zero(); momentum.rhs.zero(); auto am=graph.view<3>(momentum.blocks.data(),momentum.rhs.data());
         launch(e,SimpleInterior<3>{mesh,state,controls,am});

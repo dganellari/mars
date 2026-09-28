@@ -28,11 +28,17 @@ def digest(path):
     return h.hexdigest()
 
 
-def convergence_deck(text):
+def convergence_deck(text, advection="upwind"):
+    require(advection in ("upwind", "high-resolution"), "unsupported advection scheme")
     changes = {'max_iterations: 2\n': 'max_iterations: 5000\n',
                'residual_target: 1.0e-6': 'residual_target: 1.0e-10',
                'rtol: 1.0e-8': 'rtol: 1.0e-12',
                'atol: 1.0e-12': 'atol: 1.0e-14'}
+    if advection == 'high-resolution':
+        changes.update({'advection_scheme: upwind': 'advection_scheme: high_resolution',
+                        'blend_factor_max: 0': 'blend_factor_max: 1'})
+        require('limit_gradients: false' in text and 'relax_gradients: false' in text,
+                'high-resolution reference requires the unrelaxed gradient profile')
     for old, new in changes.items():
         require(text.count(old) == 1, 'unexpected pinned deck control: ' + old)
         text = text.replace(old, new)
@@ -48,7 +54,7 @@ def last_iteration(log):
     return iterations[-1]
 
 
-def run(capture, executable, output):
+def run(capture, executable, output, advection="upwind"):
     capture, executable, output = [p.resolve() for p in (capture, executable, output)]
     require(not output.exists(), 'output exists; choose a fresh directory')
     record = json.loads((capture / 'run.json').read_text())
@@ -64,13 +70,13 @@ def run(capture, executable, output):
     for key in ('SLURM_NTASKS', 'OMPI_COMM_WORLD_SIZE', 'PMI_SIZE', 'PMIX_SIZE'):
         require(int(os.environ.get(key, '1')) == 1, 'reference runner requires one rank')
     output.mkdir(parents=True)
-    (output / 'input.i').write_text(convergence_deck((capture / 'input.i').read_text()))
+    (output / 'input.i').write_text(convergence_deck((capture / 'input.i').read_text(), advection))
     shutil.copyfile(str(capture / 'channel.exo'), str(output / 'channel.exo'))
     env = os.environ.copy()
     for key in ('MARS_OPENACCEL_EXPORT_DIR', 'MARS_OPENACCEL_PUBLIC_FIXTURE'):
         env.pop(key, None)
     env['OMP_NUM_THREADS'] = '1'
-    result = dict(fixture='public_simple_convergence_v1', source_capture=str(capture),
+    result = dict(fixture='public_simple_convergence_v1', advection=advection, source_capture=str(capture),
                   source_deck_sha256=DECK_SHA256, mesh_sha256=MESH_SHA256,
                   deck_sha256=digest(output / 'input.i'), binary_sha256=digest(executable),
                   executable=str(executable), status='started')
@@ -149,6 +155,8 @@ def compare(reference, mars, output, native_mesh=None):
     require(r['fixture'] == 'public_simple_convergence_v1' and r['status'] == 'native_convergence_reported'
             and r['returncode'] == 0 and r['mesh_sha256'] == MESH_SHA256
             and r['source_deck_sha256'] == DECK_SHA256, 'reference run is incomplete or unsupported')
+    advection = r.get('advection', 'upwind')
+    require(advection in ('upwind', 'high-resolution'), 'unsupported reference advection')
     require(Path(r['result_file']).name == r['result_file'] and r['result_file'].startswith('results.e'),
             'invalid reference result filename')
     for filename, key in [('input.i', 'deck_sha256'), ('channel.exo', 'mesh_sha256'),
@@ -187,7 +195,17 @@ def compare(reference, mars, output, native_mesh=None):
     require(np.max(np.abs(xyz - rxyz[order])) <= 1e-12, 'coordinates differ after global ID mapping')
     with (mars / 'channel-metrics.csv').open() as f:
         metrics = list(csv.DictReader(f))[-1]
-    end = re.findall(r'^CONVERGED iterations=(\d+)\s*$', (mars / 'run.log').read_text(), re.M)
+    mars_log = (mars / 'run.log').read_text()
+    if advection == 'high-resolution':
+        require('advection_scheme: high_resolution' in (reference / 'input.i').read_text()
+                and 'blend_factor_max: 1' in (reference / 'input.i').read_text(),
+                'reference high-resolution controls missing')
+        require(re.search(r'^SIMPLE .*high-resolution, laminar$', mars_log, re.M),
+                'MARS advection differs from reference')
+    else:
+        require(not re.search(r'^SIMPLE .*high-resolution, laminar$', mars_log, re.M),
+                'MARS advection differs from reference')
+    end = re.findall(r'^CONVERGED iterations=(\d+)(?: ranks=1 exchange_rounds=\d+)?\s*$', mars_log, re.M)
     require(len(end) == 1 and int(end[0]) == int(metrics['iteration']), 'MARS completion/metrics mismatch')
     for k in ('momentum', 'continuity', 'mass_balance', 'du', 'dp', 'dflux', 'cancellation'):
         x = float(metrics[k])
@@ -199,7 +217,7 @@ def compare(reference, mars, output, native_mesh=None):
     drift = (states[-1, order] - states[-2, order]) / scale
     uerr = np.linalg.norm(delta[:, :3], axis=1)
     udrift = np.linalg.norm(drift[:, :3], axis=1)
-    report = dict(scope='converged public single-rank nodal fields; no MPI or pump claim',
+    report = dict(scope='converged public single-rank nodal fields; no MPI or pump claim', advection=advection,
                   reference_iteration=r['iteration'], mars_iteration=int(end[0]),
                   velocity_max_scaled=float(uerr.max()), velocity_rms_scaled=float(np.sqrt(np.mean(uerr**2))),
                   pressure_max_scaled=float(np.abs(delta[:, 3]).max()),
@@ -226,6 +244,7 @@ def main():
     r = sub.add_parser('run')
     for name in ('capture', 'executable', 'output'):
         r.add_argument('--' + name, type=Path, required=True)
+    r.add_argument('--advection', choices=('upwind', 'high-resolution'), default='upwind')
     c = sub.add_parser('compare')
     for name in ('reference', 'mars', 'output'):
         c.add_argument('--' + name, type=Path, required=True)
@@ -233,7 +252,7 @@ def main():
     args = p.parse_args()
     try:
         if args.command == 'run':
-            run(args.capture, args.executable, args.output)
+            run(args.capture, args.executable, args.output, args.advection)
         elif args.command == 'compare':
             compare(args.reference, args.mars, args.output, args.native_mesh)
         else:

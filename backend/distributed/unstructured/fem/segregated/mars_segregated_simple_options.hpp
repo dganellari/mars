@@ -55,6 +55,10 @@ inline SimpleOptions simple_options(int argc,char** argv) {
         }
         else if (key=="--inlet-ss") o.boundaries.inlet=value;
         else if (key=="--outlet-ss") o.boundaries.outlet=value;
+        else if (key=="--advection") {
+            if (value!="upwind" && value!="high-resolution") throw std::runtime_error("--advection expects upwind or high-resolution");
+            o.controls.high_resolution=value=="high-resolution";
+        }
         else if (key=="--wall-ss") {
             o.boundaries.walls.clear();
             for (size_t start=0;;) {
@@ -98,9 +102,10 @@ inline SimpleOptions simple_options(int argc,char** argv) {
     return o;
 }
 inline const char* simple_help() {
-    return "Native distributed Tet4 SIMPLE (CUDA/Hypre, steady, laminar, upwind)\n"
+    return "Native distributed Tet4 SIMPLE (CUDA/Hypre, steady, laminar)\n"
            "  --mesh FILE --output-prefix PREFIX [--mesh-format exodus]\n"
            "  --inlet-ss inlet --outlet-ss outlet --wall-ss walls[,other_wall]\n"
+           "  --advection upwind      or high-resolution (OpenAccel limiter, cap 1)\n"
            "  --rho 1                 density [kg/m^3]\n"
            "  --mu 0.1                dynamic viscosity [Pa s]; nu=mu/rho\n"
            "  --inlet-velocity 0.1     positive inward-normal speed [m/s]\n"

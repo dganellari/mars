@@ -1,7 +1,8 @@
 # Distributed SIMPLE validation
 
-The distributed runner retains the single-rank steady, laminar, upwind SIMPLE
-kernels. It assembles complete owned rows, solves through the owned-row Hypre
+The distributed runner retains the single-rank steady, laminar SIMPLE kernels.
+Upwind remains the default; the opt-in [high-resolution path](high_resolution.md)
+adds limited velocity reconstruction. It assembles complete owned rows, solves through the owned-row Hypre
 adapter, publishes ghost fields and reduces diagnostics over unique owners.
 Controlled-partition CUDA gates passed on 1/2/4 ranks at revision `3f7ce1e4`,
 including reversal and split communicators. Subsequent user-reported Daint runs
@@ -38,8 +39,9 @@ The steady iteration publishes four fused messages per peer (14 doubles per ghos
 3. pressure increment (1);
 4. corrected velocity and pressure (3 + 1).
 
-Velocity gradients are not published because this profile has zero reconstructed
-advection blend. Enable their exchange before adding a nonzero blend. Dual
+High-resolution mode bundles velocity gradients (9) and limiter coefficients (3)
+into the first round, for 26 doubles per ghost and the same four rounds. Only
+owners compute complete limiter bounds; partial ghost bounds are never read. Dual
 volumes and boundary factors are complete at owned nodes; ghost partial values
 are not used. No reverse-add assembly occurs during the iteration.
 

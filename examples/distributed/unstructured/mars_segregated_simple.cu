@@ -48,7 +48,8 @@ int execute(const SimpleOptions& o) {
         csv.open(o.output+"-metrics.csv"); ensure(bool(csv),"cannot write metrics");
         csv<<std::setprecision(17)<<"iteration,momentum,continuity,mass_balance,du,dp,dflux,cancellation,inlet_kg_s,outlet_kg_s,umax_m_s,closed_faces,changed_faces\n";
         const auto& c=o.controls;
-        std::cout<<std::setprecision(17)<<"SIMPLE Tet4, "<<ranks<<" ranks (ElementDomain/cstone), upwind, laminar\n"
+        std::cout<<std::setprecision(17)<<"SIMPLE Tet4, "<<ranks<<" ranks (ElementDomain/cstone), "
+                 <<(c.high_resolution?"high-resolution":"upwind")<<", laminar\n"
                  <<"rho="<<c.density<<" mu="<<c.viscosity<<" nu="<<c.viscosity/c.density
                  <<" inlet_speed="<<c.inlet_speed<<" (inward normal) outlet_pressure="<<c.pressure_reference
                  <<" reference_length="<<c.reference_length<<'\n'

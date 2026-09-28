@@ -100,7 +100,7 @@ template<int C> struct Solve {
 struct Options {
     int nx=16, ny=4, nz=4, iterations=2, converge=0;
     std::string reference, write, fault;
-    bool split=false,configured=false;
+    bool split=false,configured=false,high_resolution=false;
     bool builder=false;   // distributed side built by simple_partition from ElementDomain-shaped state
     double backflow=0;   // initial outlet-region velocity, see initial()
     double tolerance=1e-10;
@@ -224,6 +224,7 @@ Verdict compare(const Snapshots& ref,const Snapshots& got,double tolerance) {
 std::string header_of(const Options& o) {
     std::ostringstream h; h<<"MARS_DSIMPLE_V1 "<<o.nx<<'x'<<o.ny<<'x'<<o.nz<<" iterations="<<o.iterations<<" converge="<<o.converge<<" backflow="<<o.backflow;
     if (o.configured) h<<" configured-oblique";
+    if (o.high_resolution) h<<" high-resolution";
     return h.str();
 }
 // lx is the global channel length: a rank's local extent must not change the initial field.
@@ -247,6 +248,11 @@ template<class Runner,class Record> std::string drive(Runner& run,const Options&
     try {
         for (int k=0;;++k) {
             run.assemble_momentum();
+            if (o.high_resolution && k==1) {
+                const auto before=run.blend.host();
+                run.assemble_momentum();
+                if (before!=run.blend.host()) throw std::runtime_error("repeated assembly advanced limiter history");
+            }
             const auto sums=run.diagnostics(); const auto m=simple_metrics(sums,run.controls);
             record.assembled(run,k,sums);
             const bool done=o.converge>0 && simple_converged(m,run.completed,sums.changed,1e-6,1e-6,1e-6);
@@ -268,7 +274,8 @@ int execute(const Options& o) {
     // Keep the fixture's logical slab partition when rotating its physical coordinates.
     const auto p=partition(mesh,ranks);
     if (o.configured) rotate_channel(mesh);
-    const SimpleControls controls=o.configured?configured_controls():SimpleControls{};
+    SimpleControls controls=o.configured?configured_controls():SimpleControls{};
+    controls.high_resolution=o.high_resolution;
     if (!o.write.empty()) {
         if (ranks!=1) throw std::runtime_error("--write-reference runs the one-rank SimpleRunner: use one rank");
         SimpleRunner run(mesh,controls); run.momentum.verbose=run.poisson.verbose=false;
@@ -282,6 +289,7 @@ int execute(const Options& o) {
         struct { Collector& c; const std::vector<int> &global,&el,&fa; const std::vector<char>& all; bool full;
             void assembled(SimpleRunner& r,int k,const SimpleSums& s) {
                 c.sums(tag("diagnostics",k),s);
+                if (full && r.controls.high_resolution) c.node_field(tag("blend",k),r.blend.host(),3,global,all);
                 if (full) c.blocks<3>(tag("momentum",k),r.graph,r.momentum.blocks.host(),r.momentum.rhs.host(),global,all);
             }
             void advanced(SimpleRunner& r,int k) {
@@ -357,6 +365,7 @@ int execute(const Options& o) {
     struct { Collector& c; Part& part; const std::vector<int>& s2g; const std::string& fault; int rank, ranks; bool full; int& closed;
         void assembled(DistributedSimpleRunner<Matrix,GlobalId,Solve>& r,int k,const SimpleSums& s) {
             c.sums(tag("diagnostics",k),s);
+            if (full && r.controls.high_resolution) c.node_field(tag("blend",k),r.blend.host(),3,part.node_global,part.node_owned);
             if (full) c.blocks<3>(tag("momentum",k),r.graph,r.momentum_blocks.host(),r.momentum_rhs.host(),part.node_global,part.node_owned);
         }
         void advanced(DistributedSimpleRunner<Matrix,GlobalId,Solve>& r,int k) {
@@ -458,6 +467,7 @@ int main(int argc,char** argv) {
             else if (k=="--fault") o.fault=v;
             else if (k=="--split") o.split=v=="1";
             else if (k=="--configured") o.configured=v=="1";
+            else if (k=="--high-resolution") o.high_resolution=v=="1";
             else if (k=="--builder") o.builder=v=="1";
             else if (k=="--backflow") o.backflow=std::stod(v);
             else if (k=="--tolerance") o.tolerance=std::stod(v);
