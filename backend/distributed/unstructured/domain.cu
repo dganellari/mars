@@ -2326,6 +2326,51 @@ bool requestStarHalos(const ElementDomain<ElementTag, RealType, KeyType, Acceler
                          }
                      });
 
+    // MARS_SYNC_TRACE: an element sent to a rank this rank exchanges no halos with means a node owned far from its
+    // elements. Print a few, with the corners that the destination owns.
+    if (std::getenv("MARS_SYNC_TRACE") != nullptr)
+    {
+        const auto& in  = cstoneDomain.incomingHaloIndices();
+        const auto& out = cstoneDomain.outgoingHaloIndices();
+        auto isPeer     = [&](int r)
+        {
+            return (size_t(r) < in.size() && in[r].count() > 0) ||
+                   (size_t(r) < out.size() && out[r].totalCount() > 0);
+        };
+        std::vector<int> h_dest(d_dest.size());
+        std::vector<size_t> h_boundary(numBoundary);
+        thrust::copy(d_dest.begin(), d_dest.end(), h_dest.begin());
+        thrust::copy(d_boundary.begin(), d_boundary.end(), h_boundary.begin());
+
+        auto owner = domain.sfcNodeOwner();
+        std::vector<KeyType> bounds(numRanks + 1);
+        cudaMemcpy(bounds.data(), owner.rankBounds, bounds.size() * sizeof(KeyType), cudaMemcpyDeviceToHost);
+        owner.rankBounds = bounds.data();
+        const auto box   = domain.getBoundingBox();
+
+        long far = 0;
+        for (size_t i = 0; i < h_dest.size(); ++i)
+        {
+            int d = h_dest[i];
+            if (d < 0 || isPeer(d)) { continue; }
+            if (far++ >= 5) { continue; }
+            size_t e = h_boundary[i / NPC];
+            std::fprintf(stderr, "[sync-trace] rank %d sends element %zu to rank %d, no halo exchange between them;"
+                                 " corners owned by %d:", rank, e, d, d);
+            for (int c = 0; c < NPC; ++c)
+            {
+                KeyType corner;
+                cudaMemcpy(&corner, destinations.conn.ptrs[c] + e, sizeof(KeyType), cudaMemcpyDeviceToHost);
+                if (owner(corner) != d) { continue; }
+                auto [px, py, pz] = decodeSfcToPhysical(corner, box);
+                std::fprintf(stderr, " (%g, %g, %g)", px, py, pz);
+            }
+            std::fprintf(stderr, "\n");
+        }
+        if (far > 0) { std::fprintf(stderr, "[sync-trace] rank %d sends %ld elements to non-peer ranks\n", rank, far); }
+        std::fflush(stderr);
+    }
+
     auto pairs     = thrust::make_zip_iterator(thrust::make_tuple(d_dest.begin(), d_key.begin()));
     auto pairsEnd  = thrust::remove_if(thrust::device, pairs, pairs + d_dest.size(),
                                        [] __device__(const thrust::tuple<int, KeyType>& p) { return thrust::get<0>(p) < 0; });
