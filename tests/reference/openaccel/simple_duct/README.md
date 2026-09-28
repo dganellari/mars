@@ -305,8 +305,8 @@ The seven short tests passed on macOS against `cstone` 092297d, with C++20,
 `-Wall -Wextra -Werror -ffp-contract=fast`, and the native netCDF reader enabled.
 Fresh coarse host runs converged at iteration 3338 on 1/2/4 ranks and passed field parity.
 All Python files also parse with Python 3.6 grammar. The longer 4/8/16 refinement study was
-not repeated during integration; the reported failure above remains open. No GPU duct
-result is claimed.
+not repeated during integration; the reported failure above remains open. GPU
+results reported after integration are recorded below.
 
 ## Reported Daint progress (2026-09-28)
 
@@ -315,12 +315,19 @@ checks after 4484 iterations on four GPUs: profile L2 error 4.1965e-2 and
 G = 0.16078541 Pa/m, 8.0783% below the analytic value. These agree with the
 reported host values to the shown precision. This is not a refinement verdict.
 
-The 32-cell, one-GPU run then fails in its first pressure correction
-(job 4877248, nid005534), before producing a converged field. The original log
-contains no linear residual or iteration count, so its cause is not established.
-The wrapper now prints both the reported and recomputed residual on rejection;
-a one-iteration diagnostic rerun is pending. Preserve the completed runs and do
-not weaken the acceptance thresholds to obtain a study pass.
+The 32-cell, one-GPU run then failed in its first pressure correction
+(job 4877248, nid005534). The diagnostic rerun (job 4883615, nid005690) returned
+after 27/2000 GMRES iterations with no Hypre error, but both the reported and
+recomputed relative residual were 1.26351e-12, above the wrapper's 1e-12 limit.
+The absolute residual was 5.386251e-15. It already satisfied SIMPLE's independent
+linear acceptance criterion, `||b-Ax|| <= 1e-13 + 1e-10*||b||`.
+
+The wrapper now uses that same mixed acceptance criterion for SIMPLE, while
+Hypre still targets 1e-12. This changes wrapper acceptance, not the final
+linear, nonlinear, field-parity or refinement thresholds. Other callers keep
+their prior acceptance policy. The real CPU Hypre regression passes with
+ASan/UBSan; the 32-cell CUDA rerun and full 8/16/32 study remain pending.
+Preserve the completed runs; no successful fine-grid refinement is claimed yet.
 
 ## Daint commands
 

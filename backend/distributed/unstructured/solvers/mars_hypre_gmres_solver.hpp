@@ -7,6 +7,7 @@
 #include "mars_hypre_pcg_solver.hpp"
 #include "mars_solver_profile.hpp"
 #include <limits>
+#include <stdexcept>
 #include <thrust/gather.h>
 
 namespace mars {
@@ -50,7 +51,22 @@ public:
 
     // Use ||b-Ax||/||b|| instead of unit-dependent x/b magnitude heuristics.
     // A zero RHS uses an absolute residual. The caller must fix any nullspace.
-    void enable_true_residual_check() { true_residual_check_ = true; }
+    void enable_true_residual_check() {
+        true_residual_check_ = true;
+        mixed_residual_check_ = false;
+    }
+    // Accept the caller's ||b-Ax|| <= atol + rtol*||b|| without changing
+    // the tighter Krylov target. Hypre can stop before reaching that target.
+    void enable_true_residual_check(double absolute_tolerance, double relative_tolerance) {
+        if (!std::isfinite(absolute_tolerance) || !std::isfinite(relative_tolerance)
+            || absolute_tolerance < 0 || relative_tolerance < 0
+            || (absolute_tolerance == 0 && relative_tolerance == 0))
+            throw std::runtime_error("invalid true residual tolerances");
+        true_residual_check_ = true;
+        mixed_residual_check_ = true;
+        residual_absolute_tolerance_ = absolute_tolerance;
+        residual_relative_tolerance_ = relative_tolerance;
+    }
 
     // The caller must invalidate before changing matrix/map contents in place.
     // The outlet owner bounds reuse to a single frozen physical step.
@@ -535,11 +551,8 @@ public:
             int minIt = getEnvInt("MARS_HYPRE_MINITER", 3);
             if (minIt > 0) HYPRE_GMRESSetMinIter(solver_, minIt);
         }
-        // Absolute residual floor. A pure relative test can be satisfied by a
-        // tiny ||b|| whose mass sits in the null mode; pairing it with an
-        // absolute tol means convergence requires the TRUE residual to be small,
-        // not just relatively small versus a near-null RHS. Default 0 (disabled)
-        // keeps legacy behavior; set MARS_HYPRE_ABSTOL>0 to engage.
+        // Optional absolute stopping floor: Hypre uses max(atol, rtol*||b||).
+        // Default 0 keeps the relative target; the wrapper checks acceptance below.
         {
             double absTol = getEnvDouble("MARS_HYPRE_ABSTOL", 0.0);
             if (absTol > 0.0) HYPRE_GMRESSetAbsoluteTol(solver_, absTol);
@@ -826,13 +839,22 @@ public:
             }
         }
 
-        const bool converged = (final_res_norm < tolerance_) && !nullSolutionReturned_;
+        const double residual_limit = residual_absolute_tolerance_
+                                    + residual_relative_tolerance_ * last_rhs_norm_;
+        const bool residual_ok = mixed_residual_check_
+            ? std::isfinite(residual_limit) && last_absolute_residual_ <= residual_limit
+            : final_res_norm < tolerance_;
+        const bool converged = residual_ok && !nullSolutionReturned_;
         if (true_residual_check_ && !converged && rank == 0) {
             std::cerr << "[HypreGMRES] rejected: iterations=" << num_iterations
                       << '/' << maxIter_ << " restart=" << kDim_
                       << " reported_relative=" << reported_res_norm
                       << " true_relative_or_absolute=" << final_res_norm
-                      << " tolerance=" << tolerance_ << " solve_error=" << solve_err << '\n';
+                      << " tolerance=" << tolerance_ << " solve_error=" << solve_err;
+            if (mixed_residual_check_)
+                std::cerr << " absolute_residual=" << last_absolute_residual_
+                          << " acceptance_limit=" << residual_limit;
+            std::cerr << '\n';
         }
         if (verbose_) {
             std::cout << "Hypre GMRES " << (converged ? "converged" : "did not converge")
@@ -864,6 +886,8 @@ public:
         require_reuse(HYPRE_GetError() == 0 && std::isfinite(residual2) && std::isfinite(rhs2)
                       && residual2 >= 0 && rhs2 >= 0,
                       "true residual evaluation failed");
+        last_absolute_residual_ = std::sqrt(residual2);
+        last_rhs_norm_ = std::sqrt(rhs2);
         return std::sqrt(rhs2 > 0 ? residual2 / rhs2 : residual2);
     }
 
@@ -1206,6 +1230,8 @@ private:
         if (timing_enabled_) last_timing_.prepare_seconds = wall_stamp() - prepare_start_;
     }
     bool fixed_graph_updates_ = false, timing_enabled_ = false, true_residual_check_ = false;
+    bool mixed_residual_check_ = false;
+    double residual_absolute_tolerance_ = 0, residual_relative_tolerance_ = 0;
     int graph_build_count_ = 0, numeric_update_count_ = 0;
     SolveTiming last_timing_;
     double prepare_start_ = 0;
@@ -1232,6 +1258,7 @@ private:
     // Per-solve diagnostics (filled by solveImpl after Hypre returns).
     int    lastNumIters_ = 0;
     double lastFinalRes_ = 0.0;
+    double last_absolute_residual_ = 0, last_rhs_norm_ = 0;
     double lastSolutionMax_ = 0.0;        // ||x||inf of the returned solution
     bool   nullSolutionReturned_ = false; // converged-but-x~0 (null-mode) flag
 

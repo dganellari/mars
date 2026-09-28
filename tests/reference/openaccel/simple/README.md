@@ -48,10 +48,11 @@ reference parity even if it were a desirable separate physics change.
 
 The pressure matrix and momentum matrix are not assumed symmetric. CUDA uses
 the existing MARS Hypre GMRES/BoomerAMG adapter with node-major component DOFs,
-zero initial increments and rtol=1e-12. Momentum requests three-function AMG.
+zero initial increments and a Krylov target of rtol=1e-12. Momentum requests three-function AMG.
 Block CSR expands on-device into sorted scalar CSR without transposing blocks.
 Each solve is checked using a separately evaluated true `A*x-b` residual:
-`||r||_2 <= 1e-13 + 1e-10*||b||_2`. No Hypre setup is reused across changed matrices.
+`||r||_2 <= 1e-13 + 1e-10*||b||_2`. The Hypre wrapper uses the same acceptance
+limit even if GMRES stops above its tighter target. No Hypre setup is reused across changed matrices.
 
 ## Bounds and evidence
 

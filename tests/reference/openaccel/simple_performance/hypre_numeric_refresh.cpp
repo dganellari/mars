@@ -111,11 +111,84 @@ void scaled_systems() {
     }
 }
 
+void mixed_residual_acceptance() {
+    Matrix matrix;
+    make_graph(matrix,32);
+    std::vector<HYPRE_BigInt> map(33);
+    for (int i=0;i<32;++i) map[i]=31-i;
+    map.back()=-1;
+    auto norms=[&](const std::vector<double>& b,const std::vector<double>& x) {
+        double r2=0,b2=0;
+        for (int row=0;row<32;++row) {
+            double r=b[row];
+            for (int slot=matrix.offsets[row];slot<matrix.offsets[row+1];++slot) {
+                const int local=matrix.columns[slot];
+                if (local>=0 && local<int(map.size()) && map[local]>=0)
+                    r-=matrix.values[slot]*x[map[local]];
+            }
+            r2+=r*r; b2+=b[row]*b[row];
+        }
+        return std::make_pair(std::sqrt(r2),std::sqrt(b2));
+    };
+    // Force a successful Hypre early stop at the supplied guess. The wrapper
+    // must decide from b-Ax, not the success code or Hypre's stopping criterion.
+    const char* saved_env=std::getenv("MARS_HYPRE_ABSTOL");
+    const bool had_env=saved_env!=nullptr;
+    const std::string saved=had_env?saved_env:"";
+    setenv("MARS_HYPRE_ABSTOL","1e100",1);
+    for (bool cached : {false,true}) {
+        Solver solver(0,300,1e-12);
+        solver.setVerbose(false);
+        solver.setAMGCoarseRelaxType(18);
+        if (cached) solver.enable_fixed_graph_updates();
+        for (double scale : {1e-6,1.,1e6}) {
+            std::vector<double> b,truth,x;
+            fill_system(matrix,map,0,b,truth);
+            for (double& value:matrix.values) value*=scale;
+            for (double& value:b) value*=scale;
+            for (double error : {1e-11,1e-9,1e-5}) {
+                auto guess=[&] { x=truth; for (double& value:x) value*=1-error; };
+                const bool expected=error==1e-11 || (scale==1e-6 && error==1e-9);
+                guess();
+                solver.enable_true_residual_check(1e-13,1e-10);
+                check(solver.solve(matrix,b,x,0,32,0,32,map)==expected,"mixed acceptance mismatch");
+                const auto [r,bnorm]=norms(b,x);
+                check((r<=1e-13+1e-10*bnorm)==expected,"independent mixed residual mismatch");
+                check(solver.getLastIterations()==0,"early-stop fixture performed iterations");
+                check(solver.getLastFinalResidual()>1e-12,"fixture did not miss the Krylov target");
+                check(solver.tolerance_==1e-12,"acceptance changed the Krylov target");
+                guess();
+                solver.enable_true_residual_check();
+                check(!solver.solve(matrix,b,x,0,32,0,32,map),"strict residual mode changed");
+            }
+        }
+        std::vector<double> b,truth,x(32,1);
+        fill_system(matrix,map,0,b,truth);
+        std::fill(b.begin(),b.end(),0);
+        const double unit_residual=norms(b,x).first;
+        solver.enable_true_residual_check(1e-13,1e-10);
+        for (double factor : {0.,0.5,2.}) {
+            std::fill(x.begin(),x.end(),factor*1e-13/unit_residual);
+            check(solver.solve(matrix,b,x,0,32,0,32,map)==(factor<=1),"zero RHS mixed acceptance mismatch");
+            check((norms(b,x).first<=1e-13)==(factor<=1),"independent zero RHS check failed");
+        }
+        expect_failure([&] { solver.enable_true_residual_check(-1.,1e-10); });
+        expect_failure([&] { solver.enable_true_residual_check(1e-13,-1.); });
+        expect_failure([&] { solver.enable_true_residual_check(0.,0.); });
+        expect_failure([&] { solver.enable_true_residual_check(std::numeric_limits<double>::infinity(),1e-10); });
+        expect_failure([&] { solver.enable_true_residual_check(1e-13,std::numeric_limits<double>::quiet_NaN()); });
+    }
+    if (had_env) setenv("MARS_HYPRE_ABSTOL",saved.c_str(),1);
+    else unsetenv("MARS_HYPRE_ABSTOL");
+    std::cout<<"PASS: mixed residual acceptance, strict mode and zero RHS (fresh/cached)\n";
+}
+
 int main() {
     setenv("MARS_HYPRE_MINITER", "0", 1);
     unsetenv("MARS_HYPRE_FLEXGMRES");
     try {
         scaled_systems();
+        mixed_residual_acceptance();
         Matrix matrix;
         make_graph(matrix, 160);
         std::vector<HYPRE_BigInt> map(161);

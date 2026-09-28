@@ -61,9 +61,14 @@ multi-rank lifecycle checks remain necessary on the user-run GPU environment.
 
 ## SIMPLE convergence with physical units
 
-Both SIMPLE Hypre call sites enable `enable_true_residual_check()`. Acceptance
-uses an explicitly recomputed `||b-Ax||_2 / ||b||_2` with the existing tolerance,
-or the absolute residual for a zero RHS, and rejects nonfinite solutions.
+Both SIMPLE Hypre call sites enable `enable_true_residual_check(1e-13,1e-10)`.
+Hypre still targets relative tolerance `1e-12`. Wrapper acceptance uses the
+explicit residual `||b-Ax||_2 <= 1e-13 + 1e-10*||b||_2`, matching the existing
+independent SIMPLE CSR check. A zero RHS uses the absolute tolerance. This
+separates the tighter Krylov target from the application's acceptance limit:
+Hypre can return successfully above its requested target. Nonfinite solutions
+and API errors still fail. The no-argument overload retains strict acceptance
+at the wrapper's configured relative tolerance (absolute when the RHS is zero).
 The legacy `MARS_HYPRE_NULLX_RATIO` and `MARS_HYPRE_MAXX_RATIO` heuristics remain
 unchanged for other callers; they do not apply in this mode. The caller must
 still provide a pressure anchor. A small residual alone cannot detect a nullspace.
@@ -73,7 +78,8 @@ check per solve; scalar reductions and API control are host work, not field copi
 
 A rejected solve in this mode prints the iteration count/limit, restart length,
 Hypre's reported relative residual, the recomputed relative residual (absolute
-when the RHS is zero), the tolerance and the solve error code. This failure-only
+when the RHS is zero), the Krylov target and the solve error code. Mixed mode
+also prints the absolute residual and its acceptance limit. This failure-only
 report adds no reductions or field transfers. `MARS_HYPRE_VERBOSE=1` additionally
 prints Hypre's iteration history. A residual mismatch does not, by itself,
 identify whether the cause is roundoff, conditioning or an operator defect.
@@ -90,3 +96,11 @@ The wrapper regression scales both a nonsymmetric matrix and its RHS by
 `1e-9`, `1` and `1e15`, preserving the manufactured solution and conditioning.
 It exercises fresh and cached wrappers, zero RHS and a deliberately stalled
 solve, using real CPU Hypre with ASan/UBSan. CUDA/MPI validation remains separate.
+
+The mixed-tolerance regression forces Hypre to stop at supplied initial guesses
+using an intentionally loose absolute stopping tolerance in the test only. It
+checks actual returned fields against an independent CSR residual: candidates
+above the Krylov target but inside SIMPLE's limit pass, candidates outside fail,
+and the strict mode still rejects them. Fresh and cached wrappers cover small
+and large RHS norms, zero RHS, and invalid tolerances. This is a controlled
+early-stop test, not a reproduction of Hypre's GPU stagnation path.
