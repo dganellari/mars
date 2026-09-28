@@ -308,7 +308,21 @@ All Python files also parse with Python 3.6 grammar. The longer 4/8/16 refinemen
 not repeated during integration; the reported failure above remains open. No GPU duct
 result is claimed.
 
-## Daint (not executed here)
+## Reported Daint progress (2026-09-28)
+
+The user-provided log for `simple-duct-upwind-Ng67FX/duct-16-4` passes the per-run
+checks after 4484 iterations on four GPUs: profile L2 error 4.1965e-2 and
+G = 0.16078541 Pa/m, 8.0783% below the analytic value. These agree with the
+reported host values to the shown precision. This is not a refinement verdict.
+
+The 32-cell, one-GPU run then fails in its first pressure correction
+(job 4877248, nid005534), before producing a converged field. The original log
+contains no linear residual or iteration count, so its cause is not established.
+The wrapper now prints both the reported and recomputed residual on rejection;
+a one-iteration diagnostic rerun is pending. Preserve the completed runs and do
+not weaken the acceptance thresholds to obtain a study pass.
+
+## Daint commands
 
 Run on `cstone`. From the configured MARS CUDA/Hypre build directory (for example `mars-v010-check/build-hypre`), build only the existing production
 target; no CMake injection is needed:
@@ -407,4 +421,5 @@ comparator, if gathered output becomes too large.
   (rtol 1e-12) and checks the true residual (1e-13 + 1e-10·|b|) as usual.
 - **Evidence:** rank parity on the host is at round-off. On the GPU, Hypre's preconditioner
   depends on the partition, so differences at the linear-solve tolerance are expected, and
-  1e-6 leaves room for them. Nothing here has run on a GPU.
+  1e-6 leaves room for them. GPU progress is recorded above; the complete GPU
+  refinement and rank-parity study has not passed.

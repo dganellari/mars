@@ -717,10 +717,9 @@ public:
             HYPRE_ClearAllErrors();
         }
         if (solve_err != 0 && rank == 0) {
-            std::cerr << "[HypreGMRES] Solve returned error " << solve_err
-                      << " (HYPRE_GetError=" << HYPRE_GetError() << ")\n";
+            std::cerr << "[HypreGMRES] Solve returned error " << solve_err << '\n';
             char errbuf[256];
-            HYPRE_DescribeError(HYPRE_GetError(), errbuf);
+            HYPRE_DescribeError(solve_err, errbuf);
             std::cerr << "[HypreGMRES] " << errbuf << "\n";
             HYPRE_ClearAllErrors();
         }
@@ -772,6 +771,7 @@ public:
         double final_res_norm = 0.0;
         HYPRE_GMRESGetNumIterations(solver_, &num_iterations);
         HYPRE_GMRESGetFinalRelativeResidualNorm(solver_, &final_res_norm);
+        const double reported_res_norm = final_res_norm;
         // Hypre's zero-residual early return can leave the previous solve's norm.
         if (true_residual_check_ || (fixed_graph_updates_ && num_iterations == 0))
             final_res_norm = true_relative_residual();
@@ -826,15 +826,24 @@ public:
             }
         }
 
+        const bool converged = (final_res_norm < tolerance_) && !nullSolutionReturned_;
+        if (true_residual_check_ && !converged && rank == 0) {
+            std::cerr << "[HypreGMRES] rejected: iterations=" << num_iterations
+                      << '/' << maxIter_ << " restart=" << kDim_
+                      << " reported_relative=" << reported_res_norm
+                      << " true_relative_or_absolute=" << final_res_norm
+                      << " tolerance=" << tolerance_ << " solve_error=" << solve_err << '\n';
+        }
         if (verbose_) {
-            std::cout << "Hypre GMRES converged in " << num_iterations
+            std::cout << "Hypre GMRES " << (converged ? "converged" : "did not converge")
+                      << " in " << num_iterations
                       << " iterations, final residual: " << final_res_norm << std::endl;
         }
 
         // Legacy callers also retain their magnitude safeguards.
         if (profile_) profile_->lap(SolverProfile::Finish, profile_start_);
         if (timing_enabled_) last_timing_.finish_seconds = wall_stamp() - finish_start;
-        return (final_res_norm < tolerance_) && !nullSolutionReturned_;
+        return converged;
     }
 
     double true_relative_residual() {

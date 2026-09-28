@@ -71,6 +71,13 @@ The existing SIMPLE check against its own CSR and exchanged solution also remain
 This adds a device ParCSR matvec, global inner products and a coordinated error
 check per solve; scalar reductions and API control are host work, not field copies.
 
+A rejected solve in this mode prints the iteration count/limit, restart length,
+Hypre's reported relative residual, the recomputed relative residual (absolute
+when the RHS is zero), the tolerance and the solve error code. This failure-only
+report adds no reductions or field transfers. `MARS_HYPRE_VERBOSE=1` additionally
+prints Hypre's iteration history. A residual mismatch does not, by itself,
+identify whether the cause is roundoff, conditioning or an operator defect.
+
 For the water/backflow fixture, the pseudo-time momentum diagonal is dominated
 by `rho*V/(alpha_u*pseudo_dt)`. Thus `d=V/a` is about `6e-10` and pressure
 matrix entries are about `1e-7`, while the mass RHS is about `125 kg/s`.
