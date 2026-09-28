@@ -151,6 +151,8 @@ def read_reference(path, iteration):
 def compare(reference, mars, output, native_mesh=None):
     import numpy as np
     require(not output.exists(), 'comparison output exists')
+    mars_log = (mars / 'run.log').read_text()
+    native_path_recorded = None
     r = json.loads((reference / 'comparison-run.json').read_text())
     require(r['fixture'] == 'public_simple_convergence_v1' and r['status'] == 'native_convergence_reported'
             and r['returncode'] == 0 and r['mesh_sha256'] == MESH_SHA256
@@ -173,8 +175,17 @@ def compare(reference, mars, output, native_mesh=None):
     else:
         from netCDF4 import Dataset
         require(digest(native_mesh) == MESH_SHA256, 'native mesh is not the pinned public reference')
-        require('Native SIMPLE Exodus input: ' + str(native_mesh.resolve()) in (mars / 'run.log').read_text(),
-                'native input path missing from MARS run log')
+        marker = 'Native SIMPLE Exodus input:'
+        paths = re.findall(r'^Native SIMPLE Exodus input: (.*)$', mars_log, re.M)
+        native_path_recorded = marker in mars_log
+        if native_path_recorded:
+            require(mars_log.count(marker) == 1 and paths == [str(native_mesh.resolve())],
+                    'native input path differs from MARS run log')
+        else:
+            # The distributed driver omits paths; bind its saved source rows to the pinned mesh below.
+            banners = re.findall(r'^SIMPLE Tet4, .*$', mars_log, re.M)
+            require(banners == ['SIMPLE Tet4, 1 ranks (ElementDomain/cstone), ' + advection + ', laminar'],
+                    'native input path missing and no unique single-rank ElementDomain banner')
         with Dataset(str(native_mesh)) as mesh:
             require(len(mesh.dimensions['num_nodes']) == 425 and len(mesh.dimensions['num_elem']) == 1536,
                     'native mesh dimensions differ')
@@ -195,7 +206,6 @@ def compare(reference, mars, output, native_mesh=None):
     require(np.max(np.abs(xyz - rxyz[order])) <= 1e-12, 'coordinates differ after global ID mapping')
     with (mars / 'channel-metrics.csv').open() as f:
         metrics = list(csv.DictReader(f))[-1]
-    mars_log = (mars / 'run.log').read_text()
     if advection == 'high-resolution':
         require('advection_scheme: high_resolution' in (reference / 'input.i').read_text()
                 and 'blend_factor_max: 1' in (reference / 'input.i').read_text(),
@@ -227,6 +237,8 @@ def compare(reference, mars, output, native_mesh=None):
                   pressure_mean_shift_pa=float(np.mean(values[:, 3] - states[-1, order, 3])),
                   field_tolerance=1e-5, reference_change_tolerance=1e-6,
                   input_format='exodus' if native_mesh is not None else 'prepared',
+                  native_input_path_recorded=native_path_recorded,
+                  native_output_binding='pinned mesh hash and source-row global IDs/coordinates' if native_mesh is not None else None,
                   hashes={str(p):digest(p) for p in input_files + [reference / 'comparison-run.json',
                           mars / 'channel-fields.csv', mars / 'channel-metrics.csv', mars / 'run.log']})
     passed = all(report[k] <= 1e-5 for k in ('velocity_max_scaled', 'pressure_max_scaled'))

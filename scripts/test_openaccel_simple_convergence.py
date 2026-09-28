@@ -113,6 +113,77 @@ class ComparisonTests(unittest.TestCase):
         self.compare(self.native_input())
         report = json.loads(self.output.read_text())
         self.assertTrue(report['passed']); self.assertEqual(report['input_format'], 'exodus')
+        self.assertTrue(report['native_input_path_recorded'])
+
+    def native_distributed_input(self, advection='upwind'):
+        path = self.native_input()
+        (self.mars / 'run.log').write_text(
+            'SIMPLE Tet4, 1 ranks (ElementDomain/cstone), ' + advection + ', laminar\n'
+            'CONVERGED iterations=1277 ranks=1 exchange_rounds=5109\n')
+        return path
+
+    def test_native_distributed_banner_without_path(self):
+        self.compare(self.native_distributed_input())
+        report = json.loads(self.output.read_text())
+        self.assertTrue(report['passed'])
+        self.assertFalse(report['native_input_path_recorded'])
+        self.assertEqual(report['native_output_binding'], 'pinned mesh hash and source-row global IDs/coordinates')
+
+    def test_native_distributed_high_resolution(self):
+        path = self.native_distributed_input('high-resolution')
+        (self.reference / 'input.i').write_text('advection_scheme: high_resolution\nblend_factor_max: 1\n')
+        self.manifest()
+        manifest = self.reference / 'comparison-run.json'
+        record = json.loads(manifest.read_text()); record['advection'] = 'high-resolution'
+        manifest.write_text(json.dumps(record))
+        self.compare(path)
+        self.assertFalse(json.loads(self.output.read_text())['native_input_path_recorded'])
+
+    def test_native_distributed_rejects_wrong_or_duplicate_banner(self):
+        path = self.native_distributed_input()
+        log = self.mars / 'run.log'
+        original = log.read_text()
+        for text in (original.replace('1 ranks', '4 ranks'),
+                     original.replace('upwind', 'high-resolution'),
+                     original.replace('ElementDomain/cstone', 'unknown'),
+                     original + original.splitlines()[0] + '\n'):
+            with self.subTest(text=text):
+                log.write_text(text)
+                with self.assertRaisesRegex(ValueError, 'single-rank ElementDomain banner'):
+                    self.compare(path)
+
+    def test_native_distributed_cannot_bypass_legacy_path(self):
+        path = self.native_distributed_input()
+        log = self.mars / 'run.log'
+        original = log.read_text()
+        correct = 'Native SIMPLE Exodus input: ' + str(path.resolve()) + '\n'
+        for suffix in ('Native SIMPLE Exodus input: /wrong/channel.exo\n',
+                       'Native SIMPLE Exodus input:\n', correct + correct,
+                       correct + 'Native SIMPLE Exodus input:\n'):
+            with self.subTest(suffix=suffix):
+                log.write_text(original + suffix)
+                with self.assertRaisesRegex(ValueError, 'native input path differs'):
+                    self.compare(path)
+
+    def test_native_distributed_rejects_changed_coordinates(self):
+        path = self.native_distributed_input()
+        self.xyz[0, 0] += .01
+        self.write_exodus(); self.manifest()
+        with self.assertRaisesRegex(ValueError, 'coordinates'):
+            self.compare(path)
+
+    def test_native_distributed_rejects_changed_ids(self):
+        path = self.native_distributed_input()
+        self.ids += 1
+        self.write_exodus(); self.manifest()
+        with self.assertRaisesRegex(ValueError, 'global node ID sets differ'):
+            self.compare(path)
+
+    def test_native_distributed_rejects_other_mesh(self):
+        self.native_distributed_input()
+        other = self.root / 'wrong.exo'; other.write_bytes(b'not the pinned mesh')
+        with self.assertRaisesRegex(ValueError, 'pinned public reference'):
+            self.compare(other)
 
     def test_native_default_node_ids(self):
         self.compare(self.native_input(explicit_ids=False))

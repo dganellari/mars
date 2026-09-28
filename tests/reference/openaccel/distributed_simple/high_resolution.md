@@ -126,6 +126,13 @@ srun --account=csstaff --time=00:10:00 --nodes=1 --ntasks-per-node=1 \
 With NumPy/netCDF4 available, compare the saved one-rank fields (use the paths
 printed above if changing shells):
 
+The current distributed driver does not print the mesh path. The comparator
+accepts its exact single-rank scheme banner and checks the pinned mesh hash,
+source-row/global-ID mapping and output coordinates. The report records
+`native_input_path_recorded: false`; this does not attest which file path was
+opened. Legacy logs that include a path must still match it exactly. Existing
+saved fields can be compared without rebuilding or rerunning either solver.
+
 ```bash
 python3 /capstor/scratch/cscs/gandanie/git/mars-v010-check/scripts/openaccel_simple_convergence.py compare \
   --reference "$highres_reference" --mars "$highres_run/np1" \
