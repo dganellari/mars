@@ -12,14 +12,13 @@
 #include <hip/hip_runtime.h>
 #endif
 
+#include "cstone/execution.hpp"
+
 namespace cstone
 {
 // Forward declaration of Domain class
-template<class KeyType, class T, class AcceleratorType>
+template<class KeyType, class T, execution::Policy Exec>
 class Domain;
-
-// Forward declaration of GpuTag
-struct GpuTag;
 
 // Forward declaration of DeviceVector
 template<typename T>
@@ -39,7 +38,7 @@ using StarHaloKeysFn = std::function<bool(cstone::DeviceVector<KeyType>&)>;
 
 // Forward declaration of sync implementation function
 template<typename KeyType, typename RealType, typename SfcConnTuple>
-void syncDomainImpl(cstone::Domain<KeyType, RealType, cstone::GpuTag>* domain,
+void syncDomainImpl(cstone::Domain<KeyType, RealType, cstone::execution::Gpu>* domain,
                     cstone::DeviceVector<KeyType>& elemSfcCodes,
                     cstone::DeviceVector<RealType>& elemX,
                     cstone::DeviceVector<RealType>& elemY,
@@ -53,7 +52,7 @@ void syncDomainImpl(cstone::Domain<KeyType, RealType, cstone::GpuTag>* domain,
 // KeyType) through cstone sync + halo exchange, so the block rides the element SFC sort + cross-rank
 // redistribution. Multi-block meshes only; single-block meshes use syncDomainImpl above unchanged.
 template<typename KeyType, typename RealType, typename SfcConnTuple>
-void syncDomainImplBlock(cstone::Domain<KeyType, RealType, cstone::GpuTag>* domain,
+void syncDomainImplBlock(cstone::Domain<KeyType, RealType, cstone::execution::Gpu>* domain,
                          cstone::DeviceVector<KeyType>& elemSfcCodes,
                          cstone::DeviceVector<RealType>& elemX,
                          cstone::DeviceVector<RealType>& elemY,
@@ -66,7 +65,7 @@ void syncDomainImplBlock(cstone::Domain<KeyType, RealType, cstone::GpuTag>* doma
 
 // Overload for syncing with original coordinates (24 additional properties for hex8)
 template<typename KeyType, typename RealType, typename SfcConnTuple, typename OrigCoordsTuple>
-void syncDomainImplWithOrigCoords(cstone::Domain<KeyType, RealType, cstone::GpuTag>* domain,
+void syncDomainImplWithOrigCoords(cstone::Domain<KeyType, RealType, cstone::execution::Gpu>* domain,
                                    cstone::DeviceVector<KeyType>& elemSfcCodes,
                                    cstone::DeviceVector<RealType>& elemX,
                                    cstone::DeviceVector<RealType>& elemY,

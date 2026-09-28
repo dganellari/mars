@@ -484,7 +484,7 @@ Inspected existing signatures permit the following reuse (these are interface
 sketches, not compiled new call sites):
 
 ```cpp
-using Solver = mars::fem::HypreGMRESSolver<double, int, cstone::GpuTag>;
+using Solver = mars::fem::HypreGMRESSolver<double, int, cstone::execution::Gpu>;
 using Matrix = Solver::Matrix;
 using Vector = Solver::Vector;
 Matrix H;
@@ -498,7 +498,7 @@ bool solved = pressure_solver.solve(H, rhs, phi, global_row_begin,
     global_row_end, 0, global_node_count, d_local_to_global);
 ```
 
-`SparseMatrix<int,double,cstone::GpuTag>` exposes `rowOffsets()`, `colIndices()`,
+`SparseMatrix<int,double,cstone::execution::Gpu>` exposes `rowOffsets()`, `colIndices()`,
 `values()` and their `*Ptr()` accessors. Do not call its current `sortColumns()`
 in the production loop: it sorts through host arrays. The new block momentum
 can be expanded into this scalar CSR using component row IDs `3*g_node+j`.

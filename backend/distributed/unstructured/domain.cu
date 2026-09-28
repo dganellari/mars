@@ -18,24 +18,6 @@
 namespace mars
 {
 
-// Single source of truth for SFC-to-physical conversion
-template<typename KeyType, typename RealType>
-__device__ __host__ std::tuple<RealType, RealType, RealType> decodeSfcToPhysical(KeyType sfcKey, const cstone::Box<RealType>& box) {
-    // Convert raw key to SfcKind strong type
-    auto sfcKindKey = cstone::SfcKind<KeyType>(sfcKey);
-    auto [ix, iy, iz] = cstone::decodeSfc(sfcKindKey);
-    
-    // Use SfcKind for maxTreeLevel
-    constexpr unsigned maxCoord = (1u << cstone::maxTreeLevel<cstone::SfcKind<KeyType>>{}) - 1;
-    RealType invMaxCoord = RealType(1.0) / maxCoord;
-    
-    RealType x = box.xmin() + ix * invMaxCoord * (box.xmax() - box.xmin());
-    RealType y = box.ymin() + iy * invMaxCoord * (box.ymax() - box.ymin());
-    RealType z = box.zmin() + iz * invMaxCoord * (box.zmax() - box.zmin());
-    
-    return std::make_tuple(x, y, z);
-}
-
 // CUDA kernels with RealType template parameter instead of Real
 template<typename RealType>
 __global__ void fillCharacteristicSizesKernel(RealType* d_h, size_t size, RealType value)
@@ -361,7 +343,7 @@ void generateSfcKeys(const RealType* x,
                      const cstone::Box<RealType>& box)
 {
     // Use sfcKindPointer to match cornerstone's template instantiation
-    cstone::computeSfcKeysGpu(x, y, z, cstone::sfcKindPointer(keys), numKeys, box);
+    cstone::computeSfcKeys(cstone::execution::gpuDefaultStream, x, y, z, cstone::sfcKindPointer(keys), numKeys, box);
     cudaCheckError();
 }
 
@@ -2802,7 +2784,7 @@ template __global__ void computeElementVolumesKernel<TetTag, float>(const float*
 template __global__ void computeElementVolumesKernel<TetTag, double>(const double* x, const double* y, const double* z,
     const int* indices0, const int* indices1, const int* indices2, const int* indices3, double* volumes, int numElements);
 
-// Explicit instantiation for computeSfcKeysGpu with common combinations
+// Explicit instantiations of generateSfcKeys
 template void generateSfcKeys<unsigned, float>(
     const float* x, const float* y, const float* z, unsigned* keys, size_t numKeys, const cstone::Box<float>& box);
 template void generateSfcKeys<unsigned, double>(
@@ -2885,11 +2867,6 @@ template __global__ void mapSfcBlockToLocalIdKernel<unsigned int>(
 template __global__ void mapSfcBlockToLocalIdKernel<uint64_t>(
     const uint64_t*, const int*, uint64_t*, const uint64_t*, const int*, size_t, size_t);
 
-// Explicit instantiations for decodeSfcToPhysical
-template __device__ __host__ std::tuple<float, float, float> decodeSfcToPhysical<unsigned, float>(unsigned, const cstone::Box<float>&);
-template __device__ __host__ std::tuple<double, double, double> decodeSfcToPhysical<unsigned, double>(unsigned, const cstone::Box<double>&);
-template __device__ __host__ std::tuple<float, float, float> decodeSfcToPhysical<uint64_t, float>(uint64_t, const cstone::Box<float>&);
-template __device__ __host__ std::tuple<double, double, double> decodeSfcToPhysical<uint64_t, double>(uint64_t, const cstone::Box<double>&);
 
 template __global__ void decodeAllNodesKernel<unsigned int, float>(
     const unsigned int*, float*, float*, float*, size_t, cstone::Box<float>);
@@ -2901,33 +2878,33 @@ template __global__ void decodeAllNodesKernel<uint64_t, double>(
     const uint64_t*, double*, double*, double*, size_t, cstone::Box<double>);
 
 // Explicit instantiations for HaloData
-template struct HaloData<TetTag, float, unsigned, cstone::GpuTag>;
-template struct HaloData<TetTag, double, unsigned, cstone::GpuTag>;
-template struct HaloData<TetTag, float, uint64_t, cstone::GpuTag>;
-template struct HaloData<TetTag, double, uint64_t, cstone::GpuTag>;
+template struct HaloData<TetTag, float, unsigned, cstone::execution::Gpu>;
+template struct HaloData<TetTag, double, unsigned, cstone::execution::Gpu>;
+template struct HaloData<TetTag, float, uint64_t, cstone::execution::Gpu>;
+template struct HaloData<TetTag, double, uint64_t, cstone::execution::Gpu>;
 
-template struct HaloData<HexTag, float, unsigned, cstone::GpuTag>;
-template struct HaloData<HexTag, double, unsigned, cstone::GpuTag>;
-template struct HaloData<HexTag, float, uint64_t, cstone::GpuTag>;
-template struct HaloData<HexTag, double, uint64_t, cstone::GpuTag>;
+template struct HaloData<HexTag, float, unsigned, cstone::execution::Gpu>;
+template struct HaloData<HexTag, double, unsigned, cstone::execution::Gpu>;
+template struct HaloData<HexTag, float, uint64_t, cstone::execution::Gpu>;
+template struct HaloData<HexTag, double, uint64_t, cstone::execution::Gpu>;
 
 // Explicit instantiations for NodeHaloTopology
-template bool requestStarHalos(const ElementDomain<TetTag, float, unsigned, cstone::GpuTag>&, cstone::DeviceVector<unsigned>&);
-template bool requestStarHalos(const ElementDomain<TetTag, double, unsigned, cstone::GpuTag>&, cstone::DeviceVector<unsigned>&);
-template bool requestStarHalos(const ElementDomain<TetTag, float, uint64_t, cstone::GpuTag>&, cstone::DeviceVector<uint64_t>&);
-template bool requestStarHalos(const ElementDomain<TetTag, double, uint64_t, cstone::GpuTag>&, cstone::DeviceVector<uint64_t>&);
-template bool requestStarHalos(const ElementDomain<HexTag, float, unsigned, cstone::GpuTag>&, cstone::DeviceVector<unsigned>&);
-template bool requestStarHalos(const ElementDomain<HexTag, double, unsigned, cstone::GpuTag>&, cstone::DeviceVector<unsigned>&);
-template bool requestStarHalos(const ElementDomain<HexTag, float, uint64_t, cstone::GpuTag>&, cstone::DeviceVector<uint64_t>&);
-template bool requestStarHalos(const ElementDomain<HexTag, double, uint64_t, cstone::GpuTag>&, cstone::DeviceVector<uint64_t>&);
+template bool requestStarHalos(const ElementDomain<TetTag, float, unsigned, cstone::execution::Gpu>&, cstone::DeviceVector<unsigned>&);
+template bool requestStarHalos(const ElementDomain<TetTag, double, unsigned, cstone::execution::Gpu>&, cstone::DeviceVector<unsigned>&);
+template bool requestStarHalos(const ElementDomain<TetTag, float, uint64_t, cstone::execution::Gpu>&, cstone::DeviceVector<uint64_t>&);
+template bool requestStarHalos(const ElementDomain<TetTag, double, uint64_t, cstone::execution::Gpu>&, cstone::DeviceVector<uint64_t>&);
+template bool requestStarHalos(const ElementDomain<HexTag, float, unsigned, cstone::execution::Gpu>&, cstone::DeviceVector<unsigned>&);
+template bool requestStarHalos(const ElementDomain<HexTag, double, unsigned, cstone::execution::Gpu>&, cstone::DeviceVector<unsigned>&);
+template bool requestStarHalos(const ElementDomain<HexTag, float, uint64_t, cstone::execution::Gpu>&, cstone::DeviceVector<uint64_t>&);
+template bool requestStarHalos(const ElementDomain<HexTag, double, uint64_t, cstone::execution::Gpu>&, cstone::DeviceVector<uint64_t>&);
 
-template struct NodeHaloTopology<TetTag, float, unsigned, cstone::GpuTag>;
-template struct NodeHaloTopology<TetTag, double, unsigned, cstone::GpuTag>;
-template struct NodeHaloTopology<TetTag, float, uint64_t, cstone::GpuTag>;
-template struct NodeHaloTopology<TetTag, double, uint64_t, cstone::GpuTag>;
-template struct NodeHaloTopology<HexTag, float, unsigned, cstone::GpuTag>;
-template struct NodeHaloTopology<HexTag, double, unsigned, cstone::GpuTag>;
-template struct NodeHaloTopology<HexTag, float, uint64_t, cstone::GpuTag>;
-template struct NodeHaloTopology<HexTag, double, uint64_t, cstone::GpuTag>;
+template struct NodeHaloTopology<TetTag, float, unsigned, cstone::execution::Gpu>;
+template struct NodeHaloTopology<TetTag, double, unsigned, cstone::execution::Gpu>;
+template struct NodeHaloTopology<TetTag, float, uint64_t, cstone::execution::Gpu>;
+template struct NodeHaloTopology<TetTag, double, uint64_t, cstone::execution::Gpu>;
+template struct NodeHaloTopology<HexTag, float, unsigned, cstone::execution::Gpu>;
+template struct NodeHaloTopology<HexTag, double, unsigned, cstone::execution::Gpu>;
+template struct NodeHaloTopology<HexTag, float, uint64_t, cstone::execution::Gpu>;
+template struct NodeHaloTopology<HexTag, double, uint64_t, cstone::execution::Gpu>;
 
 } // namespace mars

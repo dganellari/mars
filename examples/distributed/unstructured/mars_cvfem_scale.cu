@@ -37,7 +37,7 @@ int main(int argc, char** argv)
 
     using KeyType = uint64_t; using RealType = double; using ElemTag = HexTag;
     using Assembler = CvfemHexAssembler<KeyType, RealType>;
-    using Domain    = ElementDomain<ElemTag, RealType, KeyType, cstone::GpuTag>;
+    using Domain    = ElementDomain<ElemTag, RealType, KeyType, cstone::execution::Gpu>;
 
     size_t ncells = 256; int iters = 20; int blockSize = 256; bool buildOnly = false;
     for (int i = 1; i < argc; ++i) { std::string a = argv[i];

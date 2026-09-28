@@ -50,7 +50,7 @@ __global__ void buildDofMappingKernel(const uint8_t* ownership,
 
 // Solve Poisson on a given domain, return solution per node
 template<typename KeyType, typename RealType>
-void solvePoisson(ElementDomain<HexTag, RealType, KeyType, cstone::GpuTag>& domain,
+void solvePoisson(ElementDomain<HexTag, RealType, KeyType, cstone::execution::Gpu>& domain,
                   RealType sourceTerm,
                   CvfemKernelVariant kernelVariant,
                   int blockSize,
@@ -143,7 +143,7 @@ void solvePoisson(ElementDomain<HexTag, RealType, KeyType, cstone::GpuTag>& doma
     int nnz = colInd.size();
 
     // Allocate sparse matrix
-    using Matrix = SparseMatrix<int, RealType, cstone::GpuTag>;
+    using Matrix = SparseMatrix<int, RealType, cstone::execution::Gpu>;
     Matrix A;
     A.allocate(numOwnedDofs, numOwnedDofs, nnz);
 
@@ -261,7 +261,7 @@ void solvePoisson(ElementDomain<HexTag, RealType, KeyType, cstone::GpuTag>& doma
     thrust::copy(thrust::device, d_rhs.begin(), d_rhs.end(), b.begin());
     thrust::fill(thrust::device, x.begin(), x.end(), RealType(0));
 
-    ConjugateGradientSolver<RealType, int, cstone::GpuTag> solver(maxIter, tolerance);
+    ConjugateGradientSolver<RealType, int, cstone::execution::Gpu> solver(maxIter, tolerance);
     solver.setVerbose(false);
     solver.solve(A, b, x);
     cudaDeviceSynchronize();

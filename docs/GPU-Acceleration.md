@@ -6,11 +6,11 @@ GPU acceleration provides CUDA-based parallel processing for unstructured mesh o
 
 **GPU execution is mandatory** in MARS unstructured mesh system. All data structures and algorithms are GPU-native:
 
-- Mesh storage in device memory (`DeviceVector` via `VectorSelector<T, GpuTag>`)
+- Mesh storage in device memory (`DeviceVector` via `VectorSelector<T, cstone::execution::Gpu>`)
 - SFC key generation and sorting (Thrust algorithms)
 - Adjacency/halo building (GPU kernels + Thrust primitives)
 - Characteristic size computation (parallel GPU kernels)
-- No CPU fallback - `AcceleratorTag = GpuTag` required
+- No CPU fallback - `AcceleratorTag = cstone::execution::Gpu` required
 
 ## Key Components
 
@@ -22,7 +22,7 @@ struct VectorSelector;
 
 // Specialization for GPU (Cornerstone DeviceVector)
 template<typename T>
-struct VectorSelector<T, cstone::GpuTag> {
+struct VectorSelector<T, cstone::execution::Gpu> {
     using type = cstone::DeviceVector<T>;
 };
 

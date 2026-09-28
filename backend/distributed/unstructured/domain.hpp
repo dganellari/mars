@@ -225,10 +225,30 @@ template<typename KeyType>
 __global__ void convertSfcToNodeIndicesKernel(
     const KeyType* sfcIndices, KeyType* nodeIndices, const KeyType* particleKeys, size_t numElements, size_t numNodes);
 
-// Forward declaration for the shared SFC decoding function
+// Integer coordinates of a key encoded against box. Mixed-dimension keys give each axis its own number of bits, set by
+// the box aspect ratio, so this must be the box the key was encoded with.
 template<typename KeyType, typename RealType>
-MARS_HOST_DEVICE std::tuple<RealType, RealType, RealType> decodeSfcToPhysical(KeyType sfcKey,
-                                                                              const cstone::Box<RealType>& box);
+MARS_HOST_DEVICE inline std::tuple<unsigned, unsigned, unsigned> decodeSfcToIntegers(KeyType sfcKey,
+                                                                                    const cstone::Box<RealType>& box)
+{
+    auto [ix, iy, iz] =
+        cstone::decodeSfc(cstone::SfcKind<KeyType>(sfcKey), box.getBoxDimBits(cstone::maxTreeLevel<KeyType>{}));
+    return std::make_tuple(unsigned(ix), unsigned(iy), unsigned(iz));
+}
+
+// Physical position of a key encoded against box; each axis is scaled by its own number of bits
+template<typename KeyType, typename RealType>
+MARS_HOST_DEVICE inline std::tuple<RealType, RealType, RealType> decodeSfcToPhysical(KeyType sfcKey,
+                                                                                     const cstone::Box<RealType>& box)
+{
+    auto [ix, iy, iz] = decodeSfcToIntegers(sfcKey, box);
+    const auto bits   = box.getBoxDimBits(cstone::maxTreeLevel<KeyType>{});
+
+    RealType x = box.xmin() + ix * (RealType(1.0) / ((1u << bits[0]) - 1)) * (box.xmax() - box.xmin());
+    RealType y = box.ymin() + iy * (RealType(1.0) / ((1u << bits[1]) - 1)) * (box.ymax() - box.ymin());
+    RealType z = box.zmin() + iz * (RealType(1.0) / ((1u << bits[2]) - 1)) * (box.zmax() - box.zmin());
+    return std::make_tuple(x, y, z);
+}
 
 // Better: use std::array for compile-time indexing
 template<typename KeyType, size_t NodesPerElement>
@@ -273,14 +293,14 @@ struct VectorSelector
 
 // Specialization for GPU tag - use cornerstone device vector
 template<typename T>
-struct VectorSelector<T, cstone::GpuTag>
+struct VectorSelector<T, cstone::execution::Gpu>
 {
     using type = cstone::DeviceVector<T>;
 };
 
 // Specialization for host tag - use cornerstone host vector
 template<typename T>
-struct VectorSelector<T, cstone::CpuTag>
+struct VectorSelector<T, cstone::execution::Cpu>
 {
     using type = std::vector<T>;
 };
@@ -340,7 +360,7 @@ struct HostConnectivityTupleHelper;
 template<typename T>
 struct HostConnectivityTupleHelper<TetTag, T>
 {
-    using HostVector = typename VectorSelector<T, cstone::CpuTag>::type;
+    using HostVector = typename VectorSelector<T, cstone::execution::Cpu>::type;
     using type       = std::tuple<HostVector, HostVector, HostVector, HostVector>;
 };
 
@@ -348,7 +368,7 @@ struct HostConnectivityTupleHelper<TetTag, T>
 template<typename T>
 struct HostConnectivityTupleHelper<HexTag, T>
 {
-    using HostVector = typename VectorSelector<T, cstone::CpuTag>::type;
+    using HostVector = typename VectorSelector<T, cstone::execution::Cpu>::type;
     using type =
         std::tuple<HostVector, HostVector, HostVector, HostVector, HostVector, HostVector, HostVector, HostVector>;
 };
@@ -357,7 +377,7 @@ struct HostConnectivityTupleHelper<HexTag, T>
 template<typename T>
 struct HostConnectivityTupleHelper<TriTag, T>
 {
-    using HostVector = typename VectorSelector<T, cstone::CpuTag>::type;
+    using HostVector = typename VectorSelector<T, cstone::execution::Cpu>::type;
     using type       = std::tuple<HostVector, HostVector, HostVector>;
 };
 
@@ -365,7 +385,7 @@ struct HostConnectivityTupleHelper<TriTag, T>
 template<typename T>
 struct HostConnectivityTupleHelper<QuadTag, T>
 {
-    using HostVector = typename VectorSelector<T, cstone::CpuTag>::type;
+    using HostVector = typename VectorSelector<T, cstone::execution::Cpu>::type;
     using type       = std::tuple<HostVector, HostVector, HostVector, HostVector>;
 };
 
@@ -524,11 +544,19 @@ struct OriginalCoordinates
     OriginalCoordinates(size_t nodeCount);
 };
 
+// Cornerstone work goes to the default stream, where MARS launches its own kernels, so the two stay ordered
+template<class Exec>
+constexpr Exec defaultExecution()
+{
+    if constexpr (cstone::execution::HaveGpu<Exec>{}) { return cstone::execution::gpuDefaultStream; }
+    else { return cstone::execution::cpu; }
+}
+
 // Main domain class templated on element type, real type, key type, and accelerator type
 template<typename ElementTag     = TetTag,
          typename RealType       = float,
          typename KeyType        = unsigned,
-         typename AcceleratorTag = cstone::GpuTag>
+         typename AcceleratorTag = cstone::execution::Gpu>
 class ElementDomain
 {
     // The Tri/Quad branches below are incomplete (no SFC connectivity, kernel signatures do not
@@ -547,7 +575,7 @@ public:
 
     // Host vector types are always std::vector
     template<typename T>
-    using HostVector = typename VectorSelector<T, cstone::CpuTag>::type;
+    using HostVector = typename VectorSelector<T, cstone::execution::Cpu>::type;
 
     // SoA data structures using tuples - device versions
     using DeviceCoordsTuple       = std::tuple<DeviceVector<RealType>, DeviceVector<RealType>, DeviceVector<RealType>>;
@@ -2232,7 +2260,8 @@ ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(cons
     // Test SFC precision for this domain (debug only)
     testSfcPrecision<KeyType, RealType>(box_, rank_);
 
-    domain_ = std::make_unique<DomainType>(rank, numRanks, bucketSize, bucketSizeFocus, theta, box_);
+    domain_ = std::make_unique<DomainType>(defaultExecution<AcceleratorTag>(), rank, numRanks, bucketSize,
+                                           bucketSizeFocus, theta, MPI_COMM_WORLD, box_);
     configureHalos();
 
     // Transfer data to GPU before sync
@@ -2297,7 +2326,8 @@ ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(cons
     // Test SFC precision for this domain (debug only)
     testSfcPrecision<KeyType, RealType>(box_, rank_);
 
-    domain_ = std::make_unique<DomainType>(rank, numRanks, bucketSize, bucketSizeFocus, theta, box_);
+    domain_ = std::make_unique<DomainType>(defaultExecution<AcceleratorTag>(), rank, numRanks, bucketSize,
+                                           bucketSizeFocus, theta, MPI_COMM_WORLD, box_);
     configureHalos();
 
     // Transfer data to GPU before sync
@@ -2352,7 +2382,8 @@ ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(cons
     // Test SFC precision for this domain (debug only)
     testSfcPrecision<KeyType, RealType>(box_, rank_);
 
-    domain_ = std::make_unique<DomainType>(rank, numRanks, bucketSize, bucketSizeFocus, theta, box_);
+    domain_ = std::make_unique<DomainType>(defaultExecution<AcceleratorTag>(), rank, numRanks, bucketSize,
+                                           bucketSizeFocus, theta, MPI_COMM_WORLD, box_);
     configureHalos();
 
     // Transfer data to GPU before sync (including boundary data)
@@ -2386,9 +2417,9 @@ ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(Devi
     , numRanks_(numRanks)
     , box_(0, 1)
 {
-    if constexpr (!std::is_same_v<AcceleratorTag, cstone::GpuTag>)
+    if constexpr (!std::is_same_v<AcceleratorTag, cstone::execution::Gpu>)
     {
-        throw std::runtime_error("ElementDomain device-data constructor requires GpuTag");
+        throw std::runtime_error("ElementDomain device-data constructor requires the GPU execution policy");
     }
 
     auto& d_x = std::get<0>(d_coords);
@@ -2446,7 +2477,8 @@ ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(Devi
 
     RealType theta = 0.5;
 
-    domain_ = std::make_unique<DomainType>(rank, numRanks, bucketSize, bucketSizeFocus, theta, box_);
+    domain_ = std::make_unique<DomainType>(defaultExecution<AcceleratorTag>(), rank, numRanks, bucketSize,
+                                           bucketSizeFocus, theta, MPI_COMM_WORLD, box_);
     configureHalos();
 
     // d_props_ is initialized in calculateCharacteristicSizes; no transferDataToGPU needed
@@ -2744,7 +2776,7 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::calculateChar
     // Compute per-element h from actual edge lengths for Tet and Hex elements.
     // Cornerstone uses h as an SPH smoothing length (interaction radius = 2*h),
     // so h should reflect the local mesh size to avoid over-fetching ghost elements.
-    if constexpr (std::is_same_v<AcceleratorTag, cstone::GpuTag> &&
+    if constexpr (std::is_same_v<AcceleratorTag, cstone::execution::Gpu> &&
                   (std::is_same_v<ElementTag, TetTag> || std::is_same_v<ElementTag, HexTag>))
     {
         DeviceVector<int> d_nodeTetCount(nodeCount_, 0);
@@ -2822,7 +2854,7 @@ template<typename ElementTag, typename RealType, typename KeyType, typename Acce
 void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::sync(const DeviceConnectivityTuple& d_conn_,
                                                                         const DeviceCoordsTuple& d_coords_)
 {
-    if constexpr (std::is_same_v<AcceleratorTag, cstone::GpuTag>)
+    if constexpr (std::is_same_v<AcceleratorTag, cstone::execution::Gpu>)
     {
         // Extract coordinates for clarity
         auto& d_x = std::get<0>(d_coords_);
@@ -3023,7 +3055,7 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::transferDataT
     DeviceCoordsTuple& d_coords_,
     DeviceConnectivityTuple& d_conn_)
 {
-    if constexpr (std::is_same_v<AcceleratorTag, cstone::GpuTag>)
+    if constexpr (std::is_same_v<AcceleratorTag, cstone::execution::Gpu>)
     {
         // Copy coordinate data from host to device
         copyTupleElements(d_coords_, h_coords_);
@@ -3046,7 +3078,7 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::transferDataT
     DeviceConnectivityTuple& d_conn_,
     DeviceBoundaryTuple& d_boundary_)
 {
-    if constexpr (std::is_same_v<AcceleratorTag, cstone::GpuTag>)
+    if constexpr (std::is_same_v<AcceleratorTag, cstone::execution::Gpu>)
     {
         // Copy coordinate data from host to device
         copyTupleElements(d_coords_, h_coords_);
@@ -3076,88 +3108,49 @@ template<typename ElementTag, typename RealType, typename KeyType, typename Acce
 MARS_HOST_DEVICE RealType
 ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::sfcToPhysicalCoordinateX(KeyType sfcKey) const
 {
-    // Convert raw key to SfcKind strong type
-    auto sfcKindKey   = cstone::SfcKind<KeyType>(sfcKey);
-    auto [ix, iy, iz] = cstone::decodeSfc(sfcKindKey);
-
-    // Use SfcKind for maxTreeLevel
-    constexpr unsigned maxCoord = (1u << cstone::maxTreeLevel<cstone::SfcKind<KeyType>>{}) - 1;
-    RealType invMaxCoord        = RealType(1.0) / maxCoord;
-    auto box                    = getBoundingBox();
-
-    return box.xmin() + ix * invMaxCoord * (box.xmax() - box.xmin());
+    return std::get<0>(decodeSfcToPhysical(sfcKey, getBoundingBox()));
 }
 
 template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
 MARS_HOST_DEVICE RealType
 ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::sfcToPhysicalCoordinateY(KeyType sfcKey) const
 {
-    // Convert raw key to SfcKind strong type
-    auto sfcKindKey   = cstone::SfcKind<KeyType>(sfcKey);
-    auto [ix, iy, iz] = cstone::decodeSfc(sfcKindKey);
-
-    // Use SfcKind for maxTreeLevel
-    constexpr unsigned maxCoord = (1u << cstone::maxTreeLevel<cstone::SfcKind<KeyType>>{}) - 1;
-    RealType invMaxCoord        = RealType(1.0) / maxCoord;
-    auto box                    = getBoundingBox();
-
-    return box.ymin() + iy * invMaxCoord * (box.ymax() - box.ymin());
+    return std::get<1>(decodeSfcToPhysical(sfcKey, getBoundingBox()));
 }
 
 template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
 MARS_HOST_DEVICE RealType
 ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::sfcToPhysicalCoordinateZ(KeyType sfcKey) const
 {
-    // Convert raw key to SfcKind strong type
-    auto sfcKindKey   = cstone::SfcKind<KeyType>(sfcKey);
-    auto [ix, iy, iz] = cstone::decodeSfc(sfcKindKey);
-
-    // Use SfcKind for maxTreeLevel
-    constexpr unsigned maxCoord = (1u << cstone::maxTreeLevel<cstone::SfcKind<KeyType>>{}) - 1;
-    RealType invMaxCoord        = RealType(1.0) / maxCoord;
-    auto box                    = getBoundingBox();
-
-    return box.zmin() + iz * invMaxCoord * (box.zmax() - box.zmin());
+    return std::get<2>(decodeSfcToPhysical(sfcKey, getBoundingBox()));
 }
 
 template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
 MARS_HOST_DEVICE std::tuple<unsigned, unsigned, unsigned>
 ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::sfcToSpatialCoordinate(KeyType sfcKey) const
 {
-    // Convert raw key to SfcKind strong type
-    auto sfcKindKey   = cstone::SfcKind<KeyType>(sfcKey);
-    auto [ix, iy, iz] = cstone::decodeSfc(sfcKindKey);
-    return std::make_tuple(ix, iy, iz);
+    return decodeSfcToIntegers(sfcKey, getBoundingBox());
 }
 
 template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
 MARS_HOST_DEVICE unsigned
 ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::sfcToSpatialCoordinateX(KeyType sfcKey) const
 {
-    // Convert raw key to SfcKind strong type
-    auto sfcKindKey   = cstone::SfcKind<KeyType>(sfcKey);
-    auto [ix, iy, iz] = cstone::decodeSfc(sfcKindKey);
-    return ix;
+    return std::get<0>(decodeSfcToIntegers(sfcKey, getBoundingBox()));
 }
 
 template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
 MARS_HOST_DEVICE unsigned
 ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::sfcToSpatialCoordinateY(KeyType sfcKey) const
 {
-    // Convert raw key to SfcKind strong type
-    auto sfcKindKey   = cstone::SfcKind<KeyType>(sfcKey);
-    auto [ix, iy, iz] = cstone::decodeSfc(sfcKindKey);
-    return iy;
+    return std::get<1>(decodeSfcToIntegers(sfcKey, getBoundingBox()));
 }
 
 template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
 MARS_HOST_DEVICE unsigned
 ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::sfcToSpatialCoordinateZ(KeyType sfcKey) const
 {
-    // Convert raw key to SfcKind strong type
-    auto sfcKindKey   = cstone::SfcKind<KeyType>(sfcKey);
-    auto [ix, iy, iz] = cstone::decodeSfc(sfcKindKey);
-    return iz;
+    return std::get<2>(decodeSfcToIntegers(sfcKey, getBoundingBox()));
 }
 
 // host function to get connectivity for a specific element index
@@ -3368,7 +3361,7 @@ template<typename ElementTag, typename RealType, typename KeyType, typename Acce
 void AdjacencyData<ElementTag, RealType, KeyType, AcceleratorTag>::createElementToNodeLocalIdMap(
     const ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>& domain)
 {
-    if constexpr (std::is_same_v<AcceleratorTag, cstone::GpuTag>)
+    if constexpr (std::is_same_v<AcceleratorTag, cstone::execution::Gpu>)
     {
         size_t elementCount = domain.getElementCount();
 
@@ -3421,7 +3414,7 @@ template<typename ElementTag, typename RealType, typename KeyType, typename Acce
 void AdjacencyData<ElementTag, RealType, KeyType, AcceleratorTag>::buildNodeToElementMap(
     const ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>& domain)
 {
-    if constexpr (std::is_same_v<AcceleratorTag, cstone::GpuTag>)
+    if constexpr (std::is_same_v<AcceleratorTag, cstone::execution::Gpu>)
     {
         size_t elementCount           = domain.getElementCount();
         size_t nodeCount              = domain.getNodeCount();
@@ -3522,7 +3515,7 @@ template<typename ElementTag, typename RealType, typename KeyType, typename Acce
 void HaloData<ElementTag, RealType, KeyType, AcceleratorTag>::buildHaloElementIndices(
     const ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>& domain)
 {
-    if constexpr (std::is_same_v<AcceleratorTag, cstone::GpuTag>)
+    if constexpr (std::is_same_v<AcceleratorTag, cstone::execution::Gpu>)
     {
         auto haloRanges = domain.haloElementRanges();
 
@@ -3564,7 +3557,7 @@ template<typename ElementTag, typename RealType, typename KeyType, typename Acce
 CoordinateCache<ElementTag, RealType, KeyType, AcceleratorTag>::CoordinateCache(
     const ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>& domain)
 {
-    if constexpr (std::is_same_v<AcceleratorTag, cstone::GpuTag>)
+    if constexpr (std::is_same_v<AcceleratorTag, cstone::execution::Gpu>)
     {
         size_t nodeCount = domain.getNodeCount();
         d_node_x_.resize(nodeCount);
@@ -3631,7 +3624,7 @@ struct SfcBlockEqual
 template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
 void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::createLocalToGlobalSfcMap()
 {
-    if constexpr (std::is_same_v<AcceleratorTag, cstone::GpuTag>)
+    if constexpr (std::is_same_v<AcceleratorTag, cstone::execution::Gpu>)
     {
         // 1. Gather all node SFC keys from the element connectivity lists into a single flat vector
         size_t numConnectivityEntries = elementCount_ * NodesPerElement;
@@ -3719,9 +3712,9 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::resyncFromDev
     DeviceCoordsTuple&& d_coords_new,
     DeviceConnectivityTuple&& d_conn_new)
 {
-    if constexpr (!std::is_same_v<AcceleratorTag, cstone::GpuTag>)
+    if constexpr (!std::is_same_v<AcceleratorTag, cstone::execution::Gpu>)
     {
-        throw std::runtime_error("resyncFromDevice requires GpuTag");
+        throw std::runtime_error("resyncFromDevice requires the GPU execution policy");
     }
 
     if (!domain_)

@@ -31,7 +31,7 @@ int main(int argc, char** argv)
     int devCount = 0; cudaGetDeviceCount(&devCount); if (devCount > 0) cudaSetDevice(rank % devCount);
 
     using KeyType = uint64_t; using RealType = double; using ElemTag = HexTag;
-    using Domain  = ElementDomain<ElemTag, RealType, KeyType, cstone::GpuTag>;
+    using Domain  = ElementDomain<ElemTag, RealType, KeyType, cstone::execution::Gpu>;
 
     size_t ncells = 16; int P = 2;
     for (int i = 1; i < argc; ++i) { std::string a = argv[i];

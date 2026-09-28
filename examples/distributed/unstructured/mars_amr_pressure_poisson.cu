@@ -275,7 +275,7 @@ enum class SolverKind { CG, Hypre };
 //   7) GPU DOF -> per-node scatter
 // No host downloads of node/element data.
 template<typename KeyType, typename RealType>
-void solvePressurePoisson(ElementDomain<HexTag, RealType, KeyType, cstone::GpuTag>& domain,
+void solvePressurePoisson(ElementDomain<HexTag, RealType, KeyType, cstone::execution::Gpu>& domain,
                           RealType xcVortex,
                           RealType ycVortex,
                           RealType Uinf,
@@ -431,7 +431,7 @@ void solvePressurePoisson(ElementDomain<HexTag, RealType, KeyType, cstone::GpuTa
 
     // 6) CG solve. SparseMatrix is m x n: m=numOwnedDofs rows (one per owned DOF),
     // n=numTotalDofs columns (entries reference both owned and ghost DOFs).
-    using Matrix = SparseMatrix<int, RealType, cstone::GpuTag>;
+    using Matrix = SparseMatrix<int, RealType, cstone::execution::Gpu>;
     Matrix A;
     A.allocate(numOwnedDofs, numTotalDofs, nnz);
     cudaMemcpy(A.rowOffsetsPtr(),  d_rowPtr.data(),  (numOwnedDofs + 1) * sizeof(int),     cudaMemcpyDeviceToDevice);
@@ -465,7 +465,7 @@ void solvePressurePoisson(ElementDomain<HexTag, RealType, KeyType, cstone::GpuTa
 
     if (solverKind == SolverKind::CG)
     {
-        ConjugateGradientSolver<RealType, int, cstone::GpuTag> solver(maxIter, tolerance);
+        ConjugateGradientSolver<RealType, int, cstone::execution::Gpu> solver(maxIter, tolerance);
         solver.setVerbose(false);
         solver.setOwnedSize(numOwnedDofs); // enables MPI_Allreduce in dot products
 
@@ -552,12 +552,12 @@ void solvePressurePoisson(ElementDomain<HexTag, RealType, KeyType, cstone::GpuTa
 
         // The wrapper expects A of size m=numOwnedDofs rows, n=numTotalDofs cols
         // (already what we built). It internally re-uses comm_=MPI_COMM_WORLD.
-        // SparseMatrix typedefs in the wrapper are <int, RealType, GpuTag>; pass
+        // SparseMatrix typedefs in the wrapper are <int, RealType, cstone::execution::Gpu>; pass
         // matching index type. We already use int rowPtr/colInd; cast IdxType
         // localToGlobalDof to the wrapper's KeyType template argument.
-        mars::fem::HyprePCGSolver<RealType, int, cstone::GpuTag>
+        mars::fem::HyprePCGSolver<RealType, int, cstone::execution::Gpu>
             hypreSolver(MPI_COMM_WORLD, maxIter, tolerance,
-                        mars::fem::HyprePCGSolver<RealType, int, cstone::GpuTag>::BOOMERAMG);
+                        mars::fem::HyprePCGSolver<RealType, int, cstone::execution::Gpu>::BOOMERAMG);
         hypreSolver.setVerbose(rank == 0);
 
         bool converged = hypreSolver.template solve<IdxType>(

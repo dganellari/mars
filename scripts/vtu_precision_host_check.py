@@ -11,7 +11,7 @@ STUBS = r'''
 #include <cstring>
 #include <tuple>
 #include <vector>
-namespace cstone { struct GpuTag {}; template<class T> using DeviceVector=std::vector<T>; }
+namespace cstone { namespace execution { struct Gpu {}; } template<class T> using DeviceVector=std::vector<T>; }
 namespace thrust { template<class T> T* raw_pointer_cast(T* p){return p;} }
 constexpr int MPI_COMM_WORLD=0, cudaMemcpyDeviceToHost=0;
 inline int MPI_Comm_rank(int,int* r){*r=0;return 0;}
@@ -37,7 +37,7 @@ template<class Tag,class R,class K,class Accel> struct ElementDomain {
 MAIN = r'''
 int main(int argc,char** argv){
     if(argc!=2)return 1;
-    mars::ElementDomain<HexTag,double,unsigned,cstone::GpuTag> domain;
+    mars::ElementDomain<HexTag,double,unsigned,cstone::execution::Gpu> domain;
     std::vector<double> u(8,0.12345678901234567),p(8,123456789.01234567),cell(1,1.2345678901234567);
     using Writer=mars::fem::VTUParallelWriter<unsigned,double>;
     using FD=Writer::FieldDesc;

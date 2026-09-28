@@ -168,11 +168,14 @@ if(MARS_ENABLE_UNSTRUCTURED)
         include(FetchContent)
         
         # Set options BEFORE declaring the content
+        # Cornerstone enables each backend whose compiler it finds, so switch the other one off explicitly
         if(MARS_ENABLE_CUDA)
             set(CSTONE_WITH_CUDA ON CACHE BOOL "Enable CUDA for Cornerstone" FORCE)
+            set(CSTONE_WITH_HIP OFF CACHE BOOL "Enable HIP for Cornerstone" FORCE)
             set(CSTONE_WITH_GPU_AWARE_MPI ON CACHE BOOL "Enable GPU-aware MPI in Cornerstone" FORCE)
         elseif(MARS_ENABLE_HIP)
             set(CSTONE_WITH_HIP ON CACHE BOOL "Enable HIP for Cornerstone" FORCE)
+            set(CSTONE_WITH_CUDA OFF CACHE BOOL "Enable CUDA for Cornerstone" FORCE)
             set(CSTONE_WITH_GPU_AWARE_MPI ON CACHE BOOL "Enable GPU-aware MPI in Cornerstone" FORCE)
         endif()
         
@@ -192,9 +195,11 @@ if(MARS_ENABLE_UNSTRUCTURED)
         #      on the MARS side via MARS_AMR_REUSE_DOMAIN=1).
         #   4. Domain::addHalos and Domain::assignment() (SFC node ownership,
         #      element-star completion in ElementDomain::sync).
-        # The branch is maintained alongside upstream master; halo accessors
-        # are PR-able to upstream when ready. Pinned to a commit, not the branch,
-        # so a release always builds against the cstone it was tested with.
+        # Upstream master is merged in, including mixed-dimension SFC keys: key
+        # bits per axis follow the box aspect ratio, so thin and elongated meshes
+        # keep compact rank ranges. The halo accessors and addHalos are PR-able
+        # to upstream when ready. Pinned to a commit, not the branch, so a
+        # release always builds against the cstone it was tested with.
         FetchContent_Declare(
             cornerstone_fetch
             GIT_REPOSITORY https://github.com/sekelle/cornerstone-octree.git

@@ -97,7 +97,7 @@ inline SimpleInput load_simple_exodus(const std::string& path) {
 #endif
 }
 
-using SimpleDomain=mars::ElementDomain<mars::TetTag,double,uint64_t,cstone::GpuTag>;
+using SimpleDomain=mars::ElementDomain<mars::TetTag,double,uint64_t,cstone::execution::Gpu>;
 struct NativeNodeMap {
     const double *sx,*sy,*sz; const uint64_t* keys; int count;
     cstone::Box<double> box;

@@ -143,7 +143,7 @@ int main(int argc, char** argv) {
     }
 
     // Load mesh and create domain
-    ElementDomain<ElemTag, RealType, KeyType, cstone::GpuTag> domain(meshFile, rank, numRanks, true);
+    ElementDomain<ElemTag, RealType, KeyType, cstone::execution::Gpu> domain(meshFile, rank, numRanks, true);
     const auto& d_nodeOwnership = domain.getNodeOwnershipMap();
 
     size_t nodeCount = domain.getNodeCount();
@@ -344,7 +344,7 @@ int main(int argc, char** argv) {
     }
 
     // CG on the owned rows; columns include ghosts, refreshed through the node halo
-    using Matrix = SparseMatrix<int, RealType, cstone::GpuTag>;
+    using Matrix = SparseMatrix<int, RealType, cstone::execution::Gpu>;
     Matrix A;
     A.allocate(numOwnedDofs, numTotalDofs, nnz);
     cudaMemcpy(A.rowOffsetsPtr(), d_rowPtr.data(), (numOwnedDofs + 1) * sizeof(int), cudaMemcpyDeviceToDevice);
@@ -362,7 +362,7 @@ int main(int argc, char** argv) {
 
     auto solveStart = std::chrono::high_resolution_clock::now();
 
-    ConjugateGradientSolver<RealType, int, cstone::GpuTag> solver(maxIter, tolerance);
+    ConjugateGradientSolver<RealType, int, cstone::execution::Gpu> solver(maxIter, tolerance);
     solver.setVerbose(rank == 0);  // Only rank 0 prints
     solver.setOwnedSize(numOwnedDofs);
     if (numRanks > 1) {

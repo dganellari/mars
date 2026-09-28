@@ -15,7 +15,7 @@ class MarsDomainAdjacencyAndHaloTest : public ::testing::Test {
 protected:
     using RealType = double;
     using KeyType = uint64_t;
-    using AcceleratorTag = cstone::GpuTag;
+    using AcceleratorTag = cstone::execution::Gpu;
     using DomainType = ElementDomain<TetTag, RealType, KeyType, AcceleratorTag>;
 
     void SetUp() override {

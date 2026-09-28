@@ -54,18 +54,11 @@ __global__ void validateConnectivityKernel(const unsigned* sfc0_ptr,
     }
     
     // Check all four SFC keys by decoding and validating coordinates
-    constexpr unsigned maxCoord = (1u << cstone::maxTreeLevel<cstone::SfcKind<unsigned>>{}) - 1;
-    float invMaxCoord = 1.0f / maxCoord;
     const float tolerance = 1e-5f;
 
     // Helper lambda to check if coordinates are within bounds
     auto validateCoords = [&](unsigned sfc) -> bool {
-        auto sfcKindKey = cstone::SfcKind<unsigned>(sfc);
-        auto [ix, iy, iz] = cstone::decodeSfc(sfcKindKey);
-        
-        float x = box.xmin() + ix * invMaxCoord * (box.xmax() - box.xmin());
-        float y = box.ymin() + iy * invMaxCoord * (box.ymax() - box.ymin());
-        float z = box.zmin() + iz * invMaxCoord * (box.zmax() - box.zmin());
+        auto [x, y, z] = mars::decodeSfcToPhysical(sfc, box);
         
         return (x >= box.xmin()-tolerance && x <= box.xmax()+tolerance &&
                 y >= box.ymin()-tolerance && y <= box.ymax()+tolerance &&
@@ -108,14 +101,7 @@ __global__ void calculateVolumeKernel(const unsigned* sfc0_ptr,
             return thrust::make_tuple(box.xmin(), box.ymin(), box.zmin());
         }
         
-        auto sfcKindKey = cstone::SfcKind<unsigned>(sfc);
-        auto [ix, iy, iz] = cstone::decodeSfc(sfcKindKey);
-        constexpr unsigned maxCoord = (1u << cstone::maxTreeLevel<cstone::SfcKind<unsigned>>{}) - 1;
-        float invMaxCoord = 1.0f / maxCoord;
-        
-        float x = box.xmin() + ix * invMaxCoord * (box.xmax() - box.xmin());
-        float y = box.ymin() + iy * invMaxCoord * (box.ymax() - box.ymin());
-        float z = box.zmin() + iz * invMaxCoord * (box.zmax() - box.zmin());
+        auto [x, y, z] = mars::decodeSfcToPhysical(sfc, box);
         return thrust::make_tuple(x, y, z);
     };
     
@@ -156,15 +142,7 @@ __global__ void coordinateConversionKernel(const unsigned* sfc0_ptr,
         default: return;
     }
     
-    // Manual SFC to coordinate conversion
-    auto sfcKindKey = cstone::SfcKind<unsigned>(sfcKey);
-    auto [ix, iy, iz] = cstone::decodeSfc(sfcKindKey);
-    constexpr unsigned maxCoord = (1u << cstone::maxTreeLevel<cstone::SfcKind<unsigned>>{}) - 1;
-    float invMaxCoord = 1.0f / maxCoord;
-    
-    float x = box.xmin() + ix * invMaxCoord * (box.xmax() - box.xmin());
-    float y = box.ymin() + iy * invMaxCoord * (box.ymax() - box.ymin());
-    float z = box.zmin() + iz * invMaxCoord * (box.zmax() - box.zmin());
+    auto [x, y, z] = mars::decodeSfcToPhysical(sfcKey, box);
     
     coordinates[tid * 3 + 0] = x;
     coordinates[tid * 3 + 1] = y;
@@ -182,11 +160,10 @@ __global__ void spatialCoordinateKernel(const unsigned* sfc0_ptr,
     auto sfc0 = sfc0_ptr[tid];
     
     // Test individual spatial coordinate functions
-    auto sfcKindKey = cstone::SfcKind<unsigned>(sfc0);
-    auto [ix, iy, iz] = cstone::decodeSfc(sfcKindKey);
+    auto [ix, iy, iz] = mars::decodeSfcToIntegers(sfc0, box);
     
     // Test both individual and tuple access
-    auto [ix2, iy2, iz2] = cstone::decodeSfc(sfcKindKey);
+    auto [ix2, iy2, iz2] = mars::decodeSfcToIntegers(sfc0, box);
     
     // Verify consistency
     bool consistent = (ix == ix2) && (iy == iy2) && (iz == iz2);
@@ -304,7 +281,7 @@ TEST_F(GpuElementDomainTest, GpuConnectivityValidation)
 
     try
     {
-        using Domain = ElementDomain<TetTag, float, unsigned, cstone::GpuTag>;
+        using Domain = ElementDomain<TetTag, float, unsigned, cstone::execution::Gpu>;
         Domain domain(testDir.string(), rank, numRanks);
 
         if (domain.getElementCount() == 0) {
@@ -364,7 +341,7 @@ TEST_F(GpuElementDomainTest, GpuVolumeCalculation)
 
     try
     {
-        using Domain = ElementDomain<TetTag, float, unsigned, cstone::GpuTag>;
+        using Domain = ElementDomain<TetTag, float, unsigned, cstone::execution::Gpu>;
         Domain domain(testDir.string(), rank, numRanks);
 
         if (domain.getElementCount() == 0) {
@@ -426,7 +403,7 @@ TEST_F(GpuElementDomainTest, GpuCoordinateConversionPerformance)
 
     try
     {
-        using Domain = ElementDomain<TetTag, float, unsigned, cstone::GpuTag>;
+        using Domain = ElementDomain<TetTag, float, unsigned, cstone::execution::Gpu>;
         Domain domain(testDir.string(), rank, numRanks);
 
         if (domain.getElementCount() == 0) {
@@ -517,7 +494,7 @@ TEST_F(GpuElementDomainTest, GpuSpatialCoordinates)
 
     try
     {
-        using Domain = ElementDomain<TetTag, float, unsigned, cstone::GpuTag>;
+        using Domain = ElementDomain<TetTag, float, unsigned, cstone::execution::Gpu>;
         Domain domain(testDir.string(), rank, numRanks);
 
         if (domain.getElementCount() == 0) {
@@ -578,7 +555,7 @@ TEST_F(GpuElementDomainTest, GpuDomainCreation)
 
     try
     {
-        using Domain = ElementDomain<TetTag, float, unsigned, cstone::GpuTag>;
+        using Domain = ElementDomain<TetTag, float, unsigned, cstone::execution::Gpu>;
         Domain domain(testDir.string(), rank, numRanks);
 
         EXPECT_GT(domain.getNodeCount(), 0);

@@ -18,21 +18,21 @@ The `ElementDomain` class is the central component of MARS's unstructured mesh s
 template<typename ElementTag     = TetTag,
          typename RealType       = float,
          typename KeyType        = unsigned,
-         typename AcceleratorTag = cstone::GpuTag>
+         typename AcceleratorTag = cstone::execution::Gpu>
 class ElementDomain;
 ```
 
 - **ElementTag**: Element type tag (e.g., `TetTag` for tetrahedra, `HexTag` for hexahedra)
 - **RealType**: Floating-point type for coordinates (e.g., `float`, `double`)
 - **KeyType**: Unsigned integer type for SFC keys (e.g., `unsigned`, `uint64_t`)
-- **AcceleratorTag**: Backend tag (`cstone::GpuTag` for CUDA/HIP, `cstone::CpuTag` for host)
+- **AcceleratorTag**: Backend tag (`cstone::execution::Gpu` for CUDA/HIP, `cstone::execution::Cpu` for host)
 
 ## Key Features
 
 ### Element Management
 - Stores mesh elements as SFC keys in device memory (`DeviceVector<KeyType>`)
 - Elements represented by lowest SFC corner node, not centroids
-- Connectivity stored as tuple of device vectors via `VectorSelector<T, GpuTag>`
+- Connectivity stored as tuple of device vectors via `VectorSelector<T, cstone::execution::Gpu>`
 
 ### Coordinate Handling
 - Vertex coordinates stored as Structure-of-Arrays (SoA) on GPU
@@ -48,7 +48,7 @@ class ElementDomain;
 
 ```cpp
 // Create domain for tetrahedral mesh (read + partition + cstone sync on construction)
-ElementDomain<TetTag, double, uint64_t, cstone::GpuTag> domain("mesh_directory", rank, numRanks);
+ElementDomain<TetTag, double, uint64_t, cstone::execution::Gpu> domain("mesh_directory", rank, numRanks);
 
 // Mesh sizes this rank sees (owned + halo)
 std::cout << "Elements: " << domain.getElementCount() << std::endl;

@@ -124,7 +124,7 @@ inline SimpleSums allreduce_sums(MPI_Comm comm,const SimpleSums& a) {
 #ifdef MARS_REPLAY_CUDA
 // Production linear solve: the Hypre device-map overload through the owned-row adapter.
 template<int C> struct HypreSimpleSolve {
-    using Solver=mars::fem::HypreGMRESSolver<double,int,cstone::GpuTag>;
+    using Solver=mars::fem::HypreGMRESSolver<double,int,cstone::execution::Gpu>;
     Solver solver;
     typename Solver::Vector b,x;
     explicit HypreSimpleSolve(MPI_Comm comm):solver(comm,2000,1e-12,Solver::BOOMERAMG,100) {

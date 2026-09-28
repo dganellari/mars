@@ -139,7 +139,7 @@ DomainView<KeyType> domain_view_host(const Domain& d,Copy copy) {
 
 #ifdef MARS_REPLAY_CUDA
 template<class RealType,class KeyType>
-DomainView<KeyType> domain_view(const ElementDomain<TetTag,RealType,KeyType,cstone::GpuTag>& d) {
+DomainView<KeyType> domain_view(const ElementDomain<TetTag,RealType,KeyType,cstone::execution::Gpu>& d) {
     return domain_view_host<KeyType>(d,[](auto& host,const auto& device,std::size_t count,const char* field) {
         using S=std::remove_cv_t<std::remove_pointer_t<decltype(thrust::raw_pointer_cast(device.data()))>>;
         std::vector<S> raw_values(count);

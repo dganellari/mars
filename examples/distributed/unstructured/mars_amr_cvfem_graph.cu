@@ -200,7 +200,7 @@ __global__ void enforceBCKernel(const uint8_t* isBoundaryDof,
 //   7) GPU DOF -> per-node scatter
 // No host downloads of node/element data.
 template<typename KeyType, typename RealType>
-void solvePoissonGraph(ElementDomain<HexTag, RealType, KeyType, cstone::GpuTag>& domain,
+void solvePoissonGraph(ElementDomain<HexTag, RealType, KeyType, cstone::execution::Gpu>& domain,
                        RealType sourceTerm,
                        CvfemKernelVariant kernelVariant,
                        int blockSize,
@@ -350,7 +350,7 @@ void solvePoissonGraph(ElementDomain<HexTag, RealType, KeyType, cstone::GpuTag>&
 
     // 6) CG solve. SparseMatrix is m x n: m=numOwnedDofs rows (one per owned DOF),
     // n=numTotalDofs columns (entries reference both owned and ghost DOFs).
-    using Matrix = SparseMatrix<int, RealType, cstone::GpuTag>;
+    using Matrix = SparseMatrix<int, RealType, cstone::execution::Gpu>;
     Matrix A;
     A.allocate(numOwnedDofs, numTotalDofs, nnz);
     cudaMemcpy(A.rowOffsetsPtr(),  d_rowPtr.data(),  (numOwnedDofs + 1) * sizeof(int),     cudaMemcpyDeviceToDevice);
@@ -379,7 +379,7 @@ void solvePoissonGraph(ElementDomain<HexTag, RealType, KeyType, cstone::GpuTag>&
                           });
     }
 
-    ConjugateGradientSolver<RealType, int, cstone::GpuTag> solver(maxIter, tolerance);
+    ConjugateGradientSolver<RealType, int, cstone::execution::Gpu> solver(maxIter, tolerance);
     solver.setVerbose(false);
     solver.setOwnedSize(numOwnedDofs); // enables MPI_Allreduce in dot products
 

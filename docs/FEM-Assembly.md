@@ -186,7 +186,7 @@ Its skeleton:
 
 ```cpp
 // 1. mesh (GPU-native, partitioned)
-ElementDomain<HexTag, double, uint64_t, cstone::GpuTag> domain(meshFile, rank, nRanks);
+ElementDomain<HexTag, double, uint64_t, cstone::execution::Gpu> domain(meshFile, rank, nRanks);
 
 // 2. node -> DOF (GPU-native local numbering)
 int numOwned = buildDofMappingGpu(domain.getNodeOwnershipMap(), d_nodeToDof);

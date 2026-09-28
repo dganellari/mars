@@ -415,7 +415,7 @@ struct CoupledPumpCfg {
 // interleaved [u,v,w,p] state (dof = 4*node + comp) in xa_out (resized to 4*nNodes).
 // rc 0 = ok, rc 6 = requested side set missing (caller does MPI_Finalize()).
 template<typename KeyType, typename RealType>
-int runCoupledPumpSolve(mars::ElementDomain<mars::TetTag, RealType, KeyType, cstone::GpuTag>& domain,
+int runCoupledPumpSolve(mars::ElementDomain<mars::TetTag, RealType, KeyType, cstone::execution::Gpu>& domain,
                         const CoupledPumpCfg<KeyType, RealType>& C,
                         cstone::DeviceVector<RealType>& xa_out)
 {
@@ -659,7 +659,7 @@ int runCoupledPumpSolve(mars::ElementDomain<mars::TetTag, RealType, KeyType, cst
     const int dblk = (ND + blockSize - 1) / blockSize;
     const int nblkN = ((int)nNodes + blockSize - 1) / blockSize;
 
-    SparseMatrix<int, RealType, cstone::GpuTag> Am; Am.allocate(ND, ND, nnz);
+    SparseMatrix<int, RealType, cstone::execution::Gpu> Am; Am.allocate(ND, ND, nnz);
     thrust::copy(d_rowOff.begin(), d_rowOff.end(), thrust::device_pointer_cast(Am.rowOffsetsPtr()));
     thrust::copy(d_colInd.begin(), d_colInd.end(), thrust::device_pointer_cast(Am.colIndicesPtr()));
     using Vec = cstone::DeviceVector<RealType>;
@@ -698,8 +698,8 @@ int runCoupledPumpSolve(mars::ElementDomain<mars::TetTag, RealType, KeyType, cst
     // Picard outer loop: freeze the velocity (d_av*), re-assemble the CONVECTIVE momentum, re-solve with
     // the ACM. d_av*=0 on iter 0 (pure Stokes); the previous solution then advects the next. BC and
     // sparsity are fixed across iters; only d_vals (the operator) + b are rebuilt each iter.
-    GpuAcmPreconditioner<RealType, int, cstone::GpuTag> acm;
-    GMRESSolver<RealType, int, cstone::GpuTag> ga(2000, 1e-8, 30);
+    GpuAcmPreconditioner<RealType, int, cstone::execution::Gpu> acm;
+    GMRESSolver<RealType, int, cstone::execution::Gpu> ga(2000, 1e-8, 30);
     ga.setVerbose(false); ga.setPreconditioner(&acm); ga.setFlexible(true);
     // Stage 1 multi-rank wiring: the interleaved 4-DOF halo exchange (one round-trip, block variant);
     // the per-DOF ownership mask drives the solver's ghost-zero/owned-dot discipline. Single rank:
@@ -893,8 +893,8 @@ int runCoupledPumpSolve(mars::ElementDomain<mars::TetTag, RealType, KeyType, cst
     } else {
         Vec bh, xh; bh.resize(ND); xh.resize(ND);
         thrust::copy(d_rhs.begin(), d_rhs.end(), thrust::device_pointer_cast(bh.data()));
-        HypreGMRESSolver<RealType, int, cstone::GpuTag> hg(
-            MPI_COMM_WORLD, 2000, 1e-8, HypreGMRESSolver<RealType, int, cstone::GpuTag>::BOOMERAMG, 50);
+        HypreGMRESSolver<RealType, int, cstone::execution::Gpu> hg(
+            MPI_COMM_WORLD, 2000, 1e-8, HypreGMRESSolver<RealType, int, cstone::execution::Gpu>::BOOMERAMG, 50);
         hg.setVerbose(false); hg.setPointBlock(4);
         hg.solve(Am, bh, xh, 0, ND, 0, ND, std::vector<int>{});
         const int itH = hg.getLastIterations(); const RealType rH = resid(xh);
@@ -1562,7 +1562,7 @@ int main(int argc, char** argv)
                   1e-12, 1, thrust::raw_pointer_cast(d_xref.data()), &sg);
               cudaDeviceSynchronize(); cusparseDestroyMatDescr(de); cusolverSpDestroy(cs); }
             // wrap the BC-eliminated CSR into a SparseMatrix (shared by the Hypre + ACM solves)
-            SparseMatrix<int, RealType, cstone::GpuTag> Am; Am.allocate(ND, ND, nnz);
+            SparseMatrix<int, RealType, cstone::execution::Gpu> Am; Am.allocate(ND, ND, nnz);
             thrust::copy(d_rowOff.begin(), d_rowOff.end(), thrust::device_pointer_cast(Am.rowOffsetsPtr()));
             thrust::copy(d_colInd.begin(), d_colInd.end(), thrust::device_pointer_cast(Am.colIndicesPtr()));
             thrust::copy(d_vals.begin(),   d_vals.end(),   thrust::device_pointer_cast(Am.valuesPtr()));
@@ -1572,9 +1572,9 @@ int main(int argc, char** argv)
             // Hypre point-block BoomerAMG + GMRES
             cstone::DeviceVector<RealType> bH, xH; bH.resize(ND); xH.resize(ND);
             thrust::copy(d_rhs.begin(), d_rhs.end(), thrust::device_pointer_cast(bH.data()));
-            HypreGMRESSolver<RealType, int, cstone::GpuTag> hg(
+            HypreGMRESSolver<RealType, int, cstone::execution::Gpu> hg(
                 MPI_COMM_WORLD, 1000, 1e-8,
-                HypreGMRESSolver<RealType, int, cstone::GpuTag>::BOOMERAMG, 50);
+                HypreGMRESSolver<RealType, int, cstone::execution::Gpu>::BOOMERAMG, 50);
             hg.setVerbose(false);
             hg.setPointBlock(4);
             hg.solve(Am, bH, xH, 0, ND, 0, ND, std::vector<int>{});
@@ -1632,12 +1632,12 @@ int main(int argc, char** argv)
                 // (Jacobi is too weak to converge on this indefinite saddle operator, so it cannot be the
                 // oracle; identity can.)
                 Vec xp; xp.resize(ND);
-                GMRESSolver<RealType, int, cstone::GpuTag> gp(2000, 1e-8, 30);
+                GMRESSolver<RealType, int, cstone::execution::Gpu> gp(2000, 1e-8, 30);
                 gp.setVerbose(false); gp.solve(Am, bvec, xp, false);            // plain (unpreconditioned)
                 const int itP = gp.getLastIterations();
-                IdentityPreconditioner<RealType, int, cstone::GpuTag> id;
+                IdentityPreconditioner<RealType, int, cstone::execution::Gpu> id;
                 Vec xi; xi.resize(ND);
-                GMRESSolver<RealType, int, cstone::GpuTag> gi(2000, 1e-8, 30);
+                GMRESSolver<RealType, int, cstone::execution::Gpu> gi(2000, 1e-8, 30);
                 gi.setVerbose(false); gi.setPreconditioner(&id); gi.setFlexible(true);
                 gi.solve(Am, bvec, xi, true);                                   // flexible, M = I
                 const int itI = gi.getLastIterations();
@@ -1655,9 +1655,9 @@ int main(int argc, char** argv)
                           << " rel=" << relZ << "  -> " << (gate1 ? "PASS" : "FAIL") << "\n";
 
                 // GATE 2 (ACM quality): ACM-preconditioned FlexGMRES converges to the reference.
-                GpuAcmPreconditioner<RealType, int, cstone::GpuTag> acm;
+                GpuAcmPreconditioner<RealType, int, cstone::execution::Gpu> acm;
                 Vec xa; xa.resize(ND);
-                GMRESSolver<RealType, int, cstone::GpuTag> ga(2000, 1e-8, 30);
+                GMRESSolver<RealType, int, cstone::execution::Gpu> ga(2000, 1e-8, 30);
                 ga.setVerbose(false); ga.setPreconditioner(&acm); ga.setFlexible(true);
                 ga.solve(Am, bvec, xa, true);
                 const int itA = ga.getLastIterations();

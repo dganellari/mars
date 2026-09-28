@@ -253,7 +253,7 @@ TEST_F(MFEMMeshDomainTest, BasicMFEMMeshLoading)
     try
     {
         // Load MFEM mesh directly using ElementDomain constructor
-        using Domain = ElementDomain<TetTag, float, unsigned, cstone::GpuTag>;
+        using Domain = ElementDomain<TetTag, float, unsigned, cstone::execution::Gpu>;
         Domain domain(meshPath, rank, numRanks);
 
         if (rank == 0) {
@@ -284,7 +284,7 @@ TEST_F(MFEMMeshDomainTest, MFEMDomainCreation)
     try
     {
         // Load MFEM mesh using ElementDomain - it handles partitioning automatically
-        using Domain = ElementDomain<TetTag, float, unsigned, cstone::GpuTag>;
+        using Domain = ElementDomain<TetTag, float, unsigned, cstone::execution::Gpu>;
         Domain domain(meshPath, rank, numRanks);
 
         validateBasicDomainProperties(domain);
@@ -306,7 +306,7 @@ TEST_F(MFEMMeshDomainTest, MFEMDomainWithBoundaryInfo)
     try
     {
         // Load MFEM mesh - readMFEMMeshWithElementPartitioning returns boundary info
-        using Domain = ElementDomain<TetTag, float, unsigned, cstone::GpuTag>;
+        using Domain = ElementDomain<TetTag, float, unsigned, cstone::execution::Gpu>;
         Domain domain(meshPath, rank, numRanks);
 
         validateBasicDomainProperties(domain);
@@ -333,7 +333,7 @@ TEST_F(MFEMMeshDomainTest, MultiRankConsistency)
     try
     {
         // Load MFEM mesh - each rank reads its partition
-        using Domain = ElementDomain<TetTag, float, unsigned, cstone::GpuTag>;
+        using Domain = ElementDomain<TetTag, float, unsigned, cstone::execution::Gpu>;
         Domain domain(meshPath, rank, numRanks);
 
         // Verify bounding box is consistent across ranks
@@ -399,16 +399,7 @@ void writeVTKOutput(const Domain& domain, const std::string& filename, int rank)
         if (it != vertexMap.end()) return it->second;
 
         // Decode SFC to get coordinates
-        auto sfcKindKey = cstone::sfcKey(sfcKey);
-        auto [ix, iy, iz] = cstone::decodeSfc(sfcKindKey);
-
-        constexpr uint64_t maxCoord = (1ULL << cstone::maxTreeLevel<cstone::SfcKind<uint64_t>>{}) - 1;
-        double invMaxCoord = 1.0 / static_cast<double>(maxCoord);
-
-        auto box = domain.getDomain().box();
-        double x = box.xmin() + ix * invMaxCoord * (box.xmax() - box.xmin());
-        double y = box.ymin() + iy * invMaxCoord * (box.ymax() - box.ymin());
-        double z = box.zmin() + iz * invMaxCoord * (box.zmax() - box.zmin());
+        auto [x, y, z] = mars::decodeSfcToPhysical(sfcKey, domain.getDomain().box());
 
         size_t idx = vertices.size() / 3;
         vertices.push_back(x);
@@ -474,7 +465,7 @@ TEST_F(MFEMMeshDomainTest, VisualizeMFEMDomainPartitioning)
     try
     {
         // Load MFEM mesh using ElementDomain
-        using Domain = ElementDomain<TetTag, float, unsigned, cstone::GpuTag>;
+        using Domain = ElementDomain<TetTag, float, unsigned, cstone::execution::Gpu>;
         Domain domain(meshPath, rank, numRanks);
 
         // Create output directory

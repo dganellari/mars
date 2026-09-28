@@ -261,7 +261,7 @@ int main(int argc, char** argv) {
 
     // Create domain with optional exact coordinate storage
     auto meshLoadStart = std::chrono::high_resolution_clock::now();
-    ElementDomain<ElemTag, RealType, KeyType, cstone::GpuTag> domain(meshFile, rank, numRanks, useExactCoords);
+    ElementDomain<ElemTag, RealType, KeyType, cstone::execution::Gpu> domain(meshFile, rank, numRanks, useExactCoords);
 
     // Build halo for node ownership (this triggers SFC map creation which updates node count)
     const auto& d_nodeOwnership = domain.getNodeOwnershipMap();

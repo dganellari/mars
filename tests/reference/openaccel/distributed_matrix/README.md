@@ -30,7 +30,7 @@ the reference and residual gates, not by the adapter.
 | source id | never an input | Exodus/public-file id, for I/O and comparisons only. SFC keys are not solver ids either. |
 
 The real wrapper call, with `System = OwnedRowSystem<C, Solver::Matrix, HYPRE_BigInt>` and
-`Solver = mars::fem::HypreGMRESSolver<double,int,cstone::GpuTag>`:
+`Solver = mars::fem::HypreGMRESSolver<double,int,cstone::execution::Gpu>`:
 
 ```cpp
 System s(MPI_COMM_WORLD, graph.view<C>(nullptr,nullptr), d_owned, owned_count,

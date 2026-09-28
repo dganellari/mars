@@ -201,7 +201,7 @@ int main(int argc, char** argv)
     if (devCount > 0) CK(cudaSetDevice(rank % devCount));
 
     using KeyType = uint64_t; using RealType = double; using ElemTag = HexTag;
-    using Domain  = ElementDomain<ElemTag, RealType, KeyType, cstone::GpuTag>;
+    using Domain  = ElementDomain<ElemTag, RealType, KeyType, cstone::execution::Gpu>;
 
     std::string mesh; size_t ncells = 0; int iters = 50; std::string dumpFile;
     bool overlap = false;   // --overlap: hide the forward halo behind the interior apply

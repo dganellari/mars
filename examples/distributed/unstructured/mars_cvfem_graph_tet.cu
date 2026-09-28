@@ -103,7 +103,7 @@ int main(int argc, char** argv) {
 
     MARS_NVTX_PUSH("Mesh Loading");
     auto meshLoadStart = std::chrono::high_resolution_clock::now();
-    ElementDomain<ElemTag, RealType, KeyType, cstone::GpuTag> domain(
+    ElementDomain<ElemTag, RealType, KeyType, cstone::execution::Gpu> domain(
         meshFile, rank, numRanks, true, bucketSize, static_cast<unsigned>(bucketSizeFocus));
     if (rank == 0) { std::cout << "PHASE: domain constructed" << std::endl; std::cout.flush(); }
 

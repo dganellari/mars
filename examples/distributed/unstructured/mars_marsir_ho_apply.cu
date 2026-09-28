@@ -71,7 +71,7 @@ int main(int argc, char** argv)
     if (numRanks > 1) { if (rank == 0) printf("single-rank parity check; run with -np 1.\n"); MPI_Finalize(); return 1; }
 
     using KeyType = uint64_t; using RealType = double; using ElemTag = HexTag;
-    using Domain = ElementDomain<ElemTag, RealType, KeyType, cstone::GpuTag>;
+    using Domain = ElementDomain<ElemTag, RealType, KeyType, cstone::execution::Gpu>;
 
     size_t ncells = 0; int iters = 50;
     for (int i = 1; i < argc; ++i) { std::string a = argv[i];

@@ -2109,7 +2109,7 @@ void applyDDTPerNode(NSStepper<KeyType, RealType, ElementTag>& s,
 template<typename KeyType, typename RealType, typename ElementTag>
 struct NSStepper
 {
-    using DomainT = ElementDomain<ElementTag, RealType, KeyType, cstone::GpuTag>;
+    using DomainT = ElementDomain<ElementTag, RealType, KeyType, cstone::execution::Gpu>;
 
     DomainT& domain;
     SolverKind solverKind;
@@ -2223,7 +2223,7 @@ struct NSStepper
     RealType ddtDiagShift = RealType(0);
 
     // Owned-row SparseMatrix wrappers consumed by CG/Hypre.
-    using Matrix = SparseMatrix<int, RealType, cstone::GpuTag>;
+    using Matrix = SparseMatrix<int, RealType, cstone::execution::Gpu>;
     Matrix Avel;
     Matrix Apre;
     Matrix AddT;
@@ -2532,7 +2532,7 @@ void assembleLaplacian(NSStepper<KeyType, RealType, ElementTag>& s,
 // Wrap a CSR (rowPtr/colInd/values) into a SparseMatrix and copy into A.
 // numCols = numTotalDofs so ghost columns are addressable; numRows = owned only.
 template<typename RealType>
-void wrapIntoSparseMatrix(SparseMatrix<int, RealType, cstone::GpuTag>& A,
+void wrapIntoSparseMatrix(SparseMatrix<int, RealType, cstone::execution::Gpu>& A,
                           int numOwnedDofs, int numTotalDofs, int nnz,
                           const int* d_rowPtr, const int* d_colInd, const RealType* d_values)
 {
@@ -4109,7 +4109,7 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
         // Wrap Avel for the matvec (owned rows, total cols), like the solver does.
         wrapIntoSparseMatrix<RealType>(s.Avel, s.numOwnedDofs, s.numTotalDofs, s.nnz,
                                        s.d_rowPtr.data(), s.d_colInd.data(), s.d_valuesVel.data());
-        ConjugateGradientSolver<RealType, int, cstone::GpuTag> probe(1, RealType(1));
+        ConjugateGradientSolver<RealType, int, cstone::execution::Gpu> probe(1, RealType(1));
         probe.setVerbose(false);
         probe.setOwnedSize(s.numOwnedDofs);
         const uint8_t* bdofPtr = (s.d_isBdryDof.size() == size_t(s.numOwnedDofs))
@@ -5359,7 +5359,7 @@ int solveOneComponent(NSStepper<KeyType, RealType, ElementTag>& s,
 
     if (s.solverKind == SolverKind::CG)
     {
-        ConjugateGradientSolver<RealType, int, cstone::GpuTag> solver(s.maxIter, s.tolerance);
+        ConjugateGradientSolver<RealType, int, cstone::execution::Gpu> solver(s.maxIter, s.tolerance);
         solver.setVerbose(false);
         solver.setOwnedSize(s.numOwnedDofs);
         if (s.numRanks > 1)
@@ -5464,7 +5464,7 @@ int solveOneComponent(NSStepper<KeyType, RealType, ElementTag>& s,
         }
         if (krylovEff == KrylovHint::PCG)
         {
-            using HSol = mars::fem::HyprePCGSolver<RealType, int, cstone::GpuTag>;
+            using HSol = mars::fem::HyprePCGSolver<RealType, int, cstone::execution::Gpu>;
             auto precond = HSol::BOOMERAMG;
             {
                 const char* p = std::getenv("MARS_HYPRE_PRECOND");
@@ -5487,7 +5487,7 @@ int solveOneComponent(NSStepper<KeyType, RealType, ElementTag>& s,
         }
         else  // KrylovHint::GMRES
         {
-            using HSol = mars::fem::HypreGMRESSolver<RealType, int, cstone::GpuTag>;
+            using HSol = mars::fem::HypreGMRESSolver<RealType, int, cstone::execution::Gpu>;
             auto precond = HSol::BOOMERAMG;
             {
                 const char* p = std::getenv("MARS_HYPRE_PRECOND");

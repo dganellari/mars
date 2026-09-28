@@ -43,7 +43,7 @@ template<typename KeyType, typename RealType, typename ElementTag = HexTag>
 class VTUParallelWriter
 {
 public:
-    using DomainT = ElementDomain<ElementTag, RealType, KeyType, cstone::GpuTag>;
+    using DomainT = ElementDomain<ElementTag, RealType, KeyType, cstone::execution::Gpu>;
 
     static constexpr int NPE         = ElemTraits<ElementTag>::NodesPerElem;
     static constexpr int VtkCellType = (NPE == 4) ? 10 : 12;   // VTK_TETRA : VTK_HEXAHEDRON

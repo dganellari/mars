@@ -58,7 +58,7 @@ using namespace mars;
 using namespace mars::fem;
 
 using KeyType = uint64_t; using RealType = double; using ElemTag = HexTag;
-using Domain  = ElementDomain<ElemTag, RealType, KeyType, cstone::GpuTag>;
+using Domain  = ElementDomain<ElemTag, RealType, KeyType, cstone::execution::Gpu>;
 
 // Timed-loop length, overridable by --iters=N (default 50). Higher counts damp
 // the per-matvec timer noise on the throughput sweep. Warm-ups stay fixed at 5.

@@ -69,7 +69,7 @@ unstructured meshes:
 #include <mars.hpp>
 
 // Hex8 mesh, double precision, uint64_t SFC keys, GPU
-using Domain = mars::ElementDomain<mars::HexTag, double, uint64_t, cstone::GpuTag>;
+using Domain = mars::ElementDomain<mars::HexTag, double, uint64_t, cstone::execution::Gpu>;
 
 // Read + partition + build cstone domain
 Domain domain(meshFile, rank, numRanks);

@@ -168,7 +168,7 @@ __global__ void enforceBCKernel(const uint8_t* isBoundaryDof,
 }
 
 template<typename KeyType, typename RealType>
-void solvePoissonGraphTet(ElementDomain<TetTag, RealType, KeyType, cstone::GpuTag>& domain,
+void solvePoissonGraphTet(ElementDomain<TetTag, RealType, KeyType, cstone::execution::Gpu>& domain,
                           RealType sourceTerm,
                           int blockSize,
                           int maxIter,
@@ -294,7 +294,7 @@ void solvePoissonGraphTet(ElementDomain<TetTag, RealType, KeyType, cstone::GpuTa
     cudaDeviceSynchronize();
     pt.lap("BC enforcement");
 
-    using Matrix = SparseMatrix<int, RealType, cstone::GpuTag>;
+    using Matrix = SparseMatrix<int, RealType, cstone::execution::Gpu>;
     Matrix A;
     A.allocate(numOwnedDofs, numTotalDofs, nnz);
     cudaMemcpy(A.rowOffsetsPtr(),  d_rowPtr.data(),  (numOwnedDofs + 1) * sizeof(int),     cudaMemcpyDeviceToDevice);
@@ -318,7 +318,7 @@ void solvePoissonGraphTet(ElementDomain<TetTag, RealType, KeyType, cstone::GpuTa
                           });
     }
 
-    ConjugateGradientSolver<RealType, int, cstone::GpuTag> solver(maxIter, tolerance);
+    ConjugateGradientSolver<RealType, int, cstone::execution::Gpu> solver(maxIter, tolerance);
     solver.setVerbose(false);
     solver.setOwnedSize(numOwnedDofs);
 

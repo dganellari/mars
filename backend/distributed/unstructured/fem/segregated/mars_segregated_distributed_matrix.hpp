@@ -357,7 +357,7 @@ __global__ void owned_residual_finish(int count,const SquareSums* partial,Square
 #endif
 } // namespace kernels
 
-// Matrix: mars::fem::SparseMatrix<int,double,cstone::GpuTag> in production (any type with
+// Matrix: mars::fem::SparseMatrix<int,double,cstone::execution::Gpu> in production (any type with
 // allocate(rows,cols,nnz), rowOffsetsPtr(), colIndicesPtr(), valuesPtr()). GlobalId must be
 // HYPRE_BigInt for the wrapper's device-map overload. Pointers passed in are device pointers
 // in a CUDA build and host pointers otherwise.
@@ -549,7 +549,7 @@ private:
     Buffer<ResidualReport> residual_report_;
 };
 
-// The real wrapper call; Solver is mars::fem::HypreGMRESSolver<double,int,cstone::GpuTag>.
+// The real wrapper call; Solver is mars::fem::HypreGMRESSolver<double,int,cstone::execution::Gpu>.
 template<class Solver,class System,class Vector>
 bool solve_owned(Solver& solver,const System& system,const Vector& rhs,Vector& x) {
     const auto r=system.hypre_rows();

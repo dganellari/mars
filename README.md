@@ -159,7 +159,7 @@ MARS supports GPU-native unstructured meshes through integration with the Corner
 
 // Create GPU-native unstructured domain (read + partition + cstone sync).
 // Template params: <ElementTag, RealType, KeyType, AcceleratorTag>.
-ElementDomain<HexTag, double, uint64_t, cstone::GpuTag> domain("mesh_dir", rank, numRanks);
+ElementDomain<HexTag, double, uint64_t, cstone::execution::Gpu> domain("mesh_dir", rank, numRanks);
 
 // Components built lazily on first access (all device-side):
 const auto& offsets = domain.getNodeToElementOffsets();   // builds adjacency (CSR)

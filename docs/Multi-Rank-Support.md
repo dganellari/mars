@@ -49,7 +49,7 @@ MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 MPI_Comm_size(MPI_COMM_WORLD, &numRanks);
 
 // Each rank reads its share, builds SFC keys, and hands them to the cstone domain.
-ElementDomain<HexTag, double, uint64_t, cstone::GpuTag> domain(meshFile, rank, numRanks);
+ElementDomain<HexTag, double, uint64_t, cstone::execution::Gpu> domain(meshFile, rank, numRanks);
 
 if (rank == 0)
     std::cout << "Rank 0 owns " << domain.getElementCount() << " elements (owned + halo)\n";

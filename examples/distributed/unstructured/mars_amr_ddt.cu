@@ -324,7 +324,7 @@ __global__ void computeDivergencePerNodeKernel(
 template<typename KeyType, typename RealType>
 struct DDTStepper
 {
-    using DomainT = ElementDomain<HexTag, RealType, KeyType, cstone::GpuTag>;
+    using DomainT = ElementDomain<HexTag, RealType, KeyType, cstone::execution::Gpu>;
     DomainT& domain;
     int blockSize;
     int rank;

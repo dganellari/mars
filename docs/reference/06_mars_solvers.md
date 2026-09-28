@@ -436,7 +436,7 @@ Weak scaling p=4: SpMV flat, halo +1 ms, Allreduce +0.3 ms (log p),
 
 ### Domain setup (L119–132)
 ```cpp
-ElementDomain<ElemTag, RealType, KeyType, cstone::GpuTag> domain(
+ElementDomain<ElemTag, RealType, KeyType, cstone::execution::Gpu> domain(
     meshFile, rank, numRanks, true, bucketSize);
 size_t nodeCount = domain.getNodeCount();
 size_t elementCount = domain.getElementCount();
@@ -478,9 +478,9 @@ const auto& d_x = domain.getNodeX();
 int numOwnedDofs = buildDofMappingGpu<KeyType>(domain.getNodeOwnershipMap().data(), d_nodeToDof.data(), nodeCount);
 // owned rows, owned + ghost columns; boundary rows (faces of the global bounding box) become identity
 // rows with zero RHS
-SparseMatrix<int, float, cstone::GpuTag> A;
+SparseMatrix<int, float, cstone::execution::Gpu> A;
 A.allocate(numOwnedDofs, nodeCount, nnz);
-ConjugateGradientSolver<float, int, cstone::GpuTag> solver(maxIter, tolerance);
+ConjugateGradientSolver<float, int, cstone::execution::Gpu> solver(maxIter, tolerance);
 solver.setOwnedSize(numOwnedDofs);
 if (numRanks > 1)
     solver.setHaloExchangeCallback([&domain, dofMap](cstone::DeviceVector<float>& p) { domain.exchangeNodeHalo(p, dofMap); });

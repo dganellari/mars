@@ -272,7 +272,7 @@ inline SimpleDeviceInput native_initial_partition(MPI_Comm comm,const NativeSimp
 }
 
 #ifdef MARS_REPLAY_CUDA
-using NativeSimpleDomain=ElementDomain<TetTag,double,uint64_t,cstone::GpuTag>;
+using NativeSimpleDomain=ElementDomain<TetTag,double,uint64_t,cstone::execution::Gpu>;
 inline std::unique_ptr<NativeSimpleDomain> distribute_simple_mesh(MPI_Comm comm,const NativeSimpleSource& source) {
     int rank,ranks; MPI_Comm_rank(comm,&rank); MPI_Comm_size(comm,&ranks);
     // ElementDomain currently uses MPI_COMM_WORLD internally.

@@ -142,7 +142,7 @@ int main(int argc, char** argv)
 
     using KeyType = uint64_t; using RealType = double; using ElemTag = HexTag;
     using Assembler = CvfemHexAssembler<KeyType, RealType>;
-    using Domain    = ElementDomain<ElemTag, RealType, KeyType, cstone::GpuTag>;
+    using Domain    = ElementDomain<ElemTag, RealType, KeyType, cstone::execution::Gpu>;
 
     std::string mesh; size_t ncells = 0; int iters = 50;
     for (int i = 1; i < argc; ++i) { std::string a = argv[i];

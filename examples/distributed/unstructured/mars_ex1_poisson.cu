@@ -105,7 +105,7 @@ int main(int argc, char* argv[]) {
         if (rank == 0) std::cout << "1. Loading mesh...\n";
         auto t_mesh_start = std::chrono::high_resolution_clock::now();
 
-        using Domain = ElementDomain<TetTag, float, uint64_t, cstone::GpuTag>;
+        using Domain = ElementDomain<TetTag, float, uint64_t, cstone::execution::Gpu>;
         Domain domain(meshPath, rank, numRanks);
         const auto& d_ownership = domain.getNodeOwnershipMap();
         size_t nodeCount        = domain.getNodeCount();
@@ -157,7 +157,7 @@ int main(int argc, char* argv[]) {
         if (rank == 0) std::cout << "4. Assembling stiffness matrix...\n";
         auto t_stiff_start = std::chrono::high_resolution_clock::now();
 
-        SparseMatrix<int, float, cstone::GpuTag> A;
+        SparseMatrix<int, float, cstone::execution::Gpu> A;
         stiffnessAssembler.assemble(domain, A, d_nodeToDof.data(), numOwnedDofs);
 
         auto t_stiff_end = std::chrono::high_resolution_clock::now();
@@ -258,7 +258,7 @@ int main(int argc, char* argv[]) {
         if (rank == 0) std::cout << "7. Solving linear system (CG)...\n";
         auto t_solve_start = std::chrono::high_resolution_clock::now();
 
-        ConjugateGradientSolver<float, int, cstone::GpuTag> solver(maxIter, tolerance);
+        ConjugateGradientSolver<float, int, cstone::execution::Gpu> solver(maxIter, tolerance);
         solver.setVerbose(false);
         solver.setOwnedSize(numOwnedDofs);
         if (numRanks > 1) {

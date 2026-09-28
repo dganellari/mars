@@ -31,7 +31,7 @@ struct OutletKrylovOps
     size_t stride;
     std::vector<double> coefficients;
 #ifdef MARS_ENABLE_HYPRE
-    using PreparedSolver = mars::fem::HypreGMRESSolver<RealType, int, cstone::GpuTag>;
+    using PreparedSolver = mars::fem::HypreGMRESSolver<RealType, int, cstone::execution::Gpu>;
     std::unique_ptr<PreparedSolver> prepared_solver;
 #endif
 

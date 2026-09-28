@@ -16,7 +16,7 @@ namespace fem {
  * Provides distributed data management similar to the structured DM,
  * but adapted for unstructured meshes using ElementDomain.
  */
-template<typename DofHandler, typename RealType = float, typename AcceleratorTag = cstone::GpuTag>
+template<typename DofHandler, typename RealType = float, typename AcceleratorTag = cstone::execution::Gpu>
 class UnstructuredDM {
 public:
     using DeviceVector = typename VectorSelector<RealType, AcceleratorTag>::type;

@@ -59,19 +59,12 @@ __global__ void validateConnectivityKernel(const unsigned* sfc0_ptr,
     }
 
     // Check all four SFC keys by decoding and validating coordinates
-    constexpr unsigned maxCoord = (1u << cstone::maxTreeLevel<cstone::SfcKind<unsigned>>{}) - 1;
-    float invMaxCoord           = 1.0f / maxCoord;
-    const float tolerance       = 1e-5f;
+    const float tolerance = 1e-5f;
 
     // Helper lambda to check if coordinates are within bounds
     auto validateCoords = [&](unsigned sfc) -> bool
     {
-        auto sfcKindKey   = cstone::SfcKind<unsigned>(sfc);
-        auto [ix, iy, iz] = cstone::decodeSfc(sfcKindKey);
-
-        float x = box.xmin() + ix * invMaxCoord * (box.xmax() - box.xmin());
-        float y = box.ymin() + iy * invMaxCoord * (box.ymax() - box.ymin());
-        float z = box.zmin() + iz * invMaxCoord * (box.zmax() - box.zmin());
+        auto [x, y, z] = mars::decodeSfcToPhysical(sfc, box);
 
         return (x >= box.xmin() - tolerance && x <= box.xmax() + tolerance && y >= box.ymin() - tolerance &&
                 y <= box.ymax() + tolerance && z >= box.zmin() - tolerance && z <= box.zmax() + tolerance);
@@ -117,15 +110,10 @@ __global__ void performanceTestKernel(const unsigned* sfc0_ptr,
         return;
     }
 
-    // Manual SFC to coordinate conversion
-    auto sfcKindKey             = cstone::SfcKind<unsigned>(sfcKey);
-    auto [ix, iy, iz]           = cstone::decodeSfc(sfcKindKey);
-    constexpr unsigned maxCoord = (1u << cstone::maxTreeLevel<cstone::SfcKind<unsigned>>{}) - 1;
-    float invMaxCoord           = 1.0f / maxCoord;
-
-    coordinates[tid * 3 + 0] = box.xmin() + ix * invMaxCoord * (box.xmax() - box.xmin());
-    coordinates[tid * 3 + 1] = box.ymin() + iy * invMaxCoord * (box.ymax() - box.ymin());
-    coordinates[tid * 3 + 2] = box.zmin() + iz * invMaxCoord * (box.zmax() - box.zmin());
+    auto [x, y, z]           = mars::decodeSfcToPhysical(sfcKey, box);
+    coordinates[tid * 3 + 0] = x;
+    coordinates[tid * 3 + 1] = y;
+    coordinates[tid * 3 + 2] = z;
 }
 
 __global__ void volumeCalculationKernel(const unsigned* sfc0_ptr,
@@ -145,17 +133,9 @@ __global__ void volumeCalculationKernel(const unsigned* sfc0_ptr,
     auto sfc2 = sfc2_ptr[tid];
     auto sfc3 = sfc3_ptr[tid];
 
-    // Convert to coordinates using structured bindings
-    constexpr unsigned maxCoord = (1u << cstone::maxTreeLevel<cstone::SfcKind<unsigned>>{}) - 1;
-    float invMaxCoord           = 1.0f / maxCoord;
-
     auto convertSfc = [&](unsigned sfc)
     {
-        auto sfcKey       = cstone::SfcKind<unsigned>(sfc);
-        auto [ix, iy, iz] = cstone::decodeSfc(sfcKey);
-        float x           = box.xmin() + ix * invMaxCoord * (box.xmax() - box.xmin());
-        float y           = box.ymin() + iy * invMaxCoord * (box.ymax() - box.ymin());
-        float z           = box.zmin() + iz * invMaxCoord * (box.zmax() - box.zmin());
+        auto [x, y, z] = mars::decodeSfcToPhysical(sfc, box);
         return make_float3(x, y, z);
     };
 
@@ -275,15 +255,7 @@ protected:
         auto sfc0 = h_i0[0];
         auto box  = domain.getDomain().box();
 
-        // Manual SFC to coordinate conversion
-        auto sfcKindKey             = cstone::SfcKind<unsigned>(sfc0);
-        auto [ix, iy, iz]           = cstone::decodeSfc(sfcKindKey);
-        constexpr unsigned maxCoord = (1u << cstone::maxTreeLevel<cstone::SfcKind<unsigned>>{}) - 1;
-        float invMaxCoord           = 1.0f / maxCoord;
-
-        float x = box.xmin() + ix * invMaxCoord * (box.xmax() - box.xmin());
-        float y = box.ymin() + iy * invMaxCoord * (box.ymax() - box.ymin());
-        float z = box.zmin() + iz * invMaxCoord * (box.zmax() - box.zmin());
+        auto [x, y, z] = mars::decodeSfcToPhysical(sfc0, box);
 
         EXPECT_GE(x, box.xmin()) << "SFC coordinate conversion failed - X below minimum";
         EXPECT_LE(x, box.xmax()) << "SFC coordinate conversion failed - X above maximum";
@@ -344,16 +316,7 @@ protected:
                     // SFC key 0 maps to minimum corner
                     return {box.xmin(), box.ymin(), box.zmin()};
                 }
-
-                auto sfcKindKey             = cstone::SfcKind<unsigned>(sfc);
-                auto [ix, iy, iz]           = cstone::decodeSfc(sfcKindKey);
-                constexpr unsigned maxCoord = (1u << cstone::maxTreeLevel<cstone::SfcKind<unsigned>>{}) - 1;
-                float invMaxCoord           = 1.0f / maxCoord;
-
-                float x = box.xmin() + ix * invMaxCoord * (box.xmax() - box.xmin());
-                float y = box.ymin() + iy * invMaxCoord * (box.ymax() - box.ymin());
-                float z = box.zmin() + iz * invMaxCoord * (box.zmax() - box.zmin());
-                return {x, y, z};
+                return mars::decodeSfcToPhysical(sfc, box);
             };
 
             auto [x0, y0, z0] = convertSfc(sfc0);
@@ -422,7 +385,7 @@ TEST_F(ExternalMeshDomainTest, HostSfcConnectivityValidation)
 
     try
     {
-        using Domain = ElementDomain<TetTag, float, unsigned, cstone::GpuTag>;
+        using Domain = ElementDomain<TetTag, float, unsigned, cstone::execution::Gpu>;
         Domain domain(meshPath, rank, numRanks);
 
         if (domain.getElementCount() == 0) { GTEST_SKIP() << "No elements on this rank"; }
@@ -446,17 +409,7 @@ TEST_F(ExternalMeshDomainTest, HostSfcConnectivityValidation)
             // Manual SFC to coordinate conversion
             auto box        = domain.getDomain().box();
             auto convertSfc = [&](unsigned sfc) -> std::tuple<float, float, float>
-            {
-                auto sfcKindKey             = cstone::SfcKind<unsigned>(sfc);
-                auto [ix, iy, iz]           = cstone::decodeSfc(sfcKindKey);
-                constexpr unsigned maxCoord = (1u << cstone::maxTreeLevel<cstone::SfcKind<unsigned>>{}) - 1;
-                float invMaxCoord           = 1.0f / maxCoord;
-
-                float x = box.xmin() + ix * invMaxCoord * (box.xmax() - box.xmin());
-                float y = box.ymin() + iy * invMaxCoord * (box.ymax() - box.ymin());
-                float z = box.zmin() + iz * invMaxCoord * (box.zmax() - box.zmin());
-                return {x, y, z};
-            };
+            { return mars::decodeSfcToPhysical(sfc, box); };
 
             auto [x0, y0, z0] = convertSfc(sfc0);
             auto [x1, y1, z1] = convertSfc(sfc1);
@@ -492,7 +445,7 @@ TEST_F(ExternalMeshDomainTest, DeviceSfcConnectivityValidation)
 
     try
     {
-        using Domain = ElementDomain<TetTag, float, unsigned, cstone::GpuTag>;
+        using Domain = ElementDomain<TetTag, float, unsigned, cstone::execution::Gpu>;
         Domain domain(meshPath, rank, numRanks);
 
         if (domain.getElementCount() == 0) { GTEST_SKIP() << "No elements on this rank"; }
@@ -557,15 +510,7 @@ TEST_F(ExternalMeshDomainTest, DeviceSfcConnectivityValidation)
                               << sfc3 << std::endl;
 
                     // Print decoded coordinates for the first node
-                    auto sfcKindKey0     = cstone::SfcKind<unsigned>(sfc0);
-                    auto [ix0, iy0, iz0] = cstone::decodeSfc(sfcKindKey0);
-
-                    constexpr unsigned maxCoord = (1u << cstone::maxTreeLevel<cstone::SfcKind<unsigned>>{}) - 1;
-                    float invMaxCoord           = 1.0f / maxCoord;
-
-                    float x0 = box.xmin() + ix0 * invMaxCoord * (box.xmax() - box.xmin());
-                    float y0 = box.ymin() + iy0 * invMaxCoord * (box.ymax() - box.ymin());
-                    float z0 = box.zmin() + iz0 * invMaxCoord * (box.zmax() - box.zmin());
+                    auto [x0, y0, z0] = mars::decodeSfcToPhysical(sfc0, box);
 
                     std::cout << "    Node 0 coords: (" << x0 << ", " << y0 << ", " << z0 << ")" << std::endl;
 
@@ -595,7 +540,7 @@ TEST_F(ExternalMeshDomainTest, BasicSfcDomainCreation)
 
     try
     {
-        using Domain = ElementDomain<TetTag, float, unsigned, cstone::GpuTag>;
+        using Domain = ElementDomain<TetTag, float, unsigned, cstone::execution::Gpu>;
         Domain domain(meshPath, rank, numRanks);
 
         validateBasicDomainProperties(domain);
@@ -616,7 +561,7 @@ TEST_F(ExternalMeshDomainTest, GpuVolumeCalculation)
 
     try
     {
-        using Domain = ElementDomain<TetTag, float, unsigned, cstone::GpuTag>;
+        using Domain = ElementDomain<TetTag, float, unsigned, cstone::execution::Gpu>;
         Domain domain(meshPath, rank, numRanks);
 
         if (domain.getElementCount() == 0) { GTEST_SKIP() << "No elements on this rank"; }
@@ -683,7 +628,7 @@ TEST_F(ExternalMeshDomainTest, GpuCoordinateConversionPerformance)
 
     try
     {
-        using Domain = ElementDomain<TetTag, float, unsigned, cstone::GpuTag>;
+        using Domain = ElementDomain<TetTag, float, unsigned, cstone::execution::Gpu>;
         Domain domain(meshPath, rank, numRanks);
 
         if (domain.getElementCount() < 100) { GTEST_SKIP() << "Mesh too small for performance test"; }
@@ -771,7 +716,7 @@ TEST_F(ExternalMeshDomainTest, AnalyzeTetrahedronOrientations)
 
     try
     {
-        using Domain = ElementDomain<TetTag, float, uint64_t, cstone::GpuTag>;
+        using Domain = ElementDomain<TetTag, float, uint64_t, cstone::execution::Gpu>;
         Domain domain(meshPath, rank, numRanks);
 
         if (domain.getElementCount() == 0)
@@ -810,15 +755,11 @@ TEST_F(ExternalMeshDomainTest, AnalyzeTetrahedronOrientations)
             try
             {
                 // Get the 4 vertices
-                auto sfcKindKey0 = cstone::sfcKey(h_sfc0[i]);
-                auto sfcKindKey1 = cstone::sfcKey(h_sfc1[i]);
-                auto sfcKindKey2 = cstone::sfcKey(h_sfc2[i]);
-                auto sfcKindKey3 = cstone::sfcKey(h_sfc3[i]);
-
-                auto [ix0, iy0, iz0] = cstone::decodeSfc(sfcKindKey0);
-                auto [ix1, iy1, iz1] = cstone::decodeSfc(sfcKindKey1);
-                auto [ix2, iy2, iz2] = cstone::decodeSfc(sfcKindKey2);
-                auto [ix3, iy3, iz3] = cstone::decodeSfc(sfcKindKey3);
+                const auto box       = domain.getBoundingBox();
+                auto [ix0, iy0, iz0] = mars::decodeSfcToIntegers(h_sfc0[i], box);
+                auto [ix1, iy1, iz1] = mars::decodeSfcToIntegers(h_sfc1[i], box);
+                auto [ix2, iy2, iz2] = mars::decodeSfcToIntegers(h_sfc2[i], box);
+                auto [ix3, iy3, iz3] = mars::decodeSfcToIntegers(h_sfc3[i], box);
 
                 // Check for degenerate elements (duplicate coordinates)
                 std::set<std::tuple<uint64_t, uint64_t, uint64_t>> uniqueCoords = {
@@ -830,25 +771,11 @@ TEST_F(ExternalMeshDomainTest, AnalyzeTetrahedronOrientations)
                     continue;
                 }
 
-                // Convert to float coordinates for volume calculation
-                constexpr uint64_t maxCoord = (1ULL << cstone::maxTreeLevel<cstone::SfcKind<uint64_t>>{}) - 1;
-                float invMaxCoord           = 1.0f / static_cast<float>(maxCoord);
-
-                float x0 = static_cast<float>(ix0) * invMaxCoord * 100.0f;
-                float y0 = static_cast<float>(iy0) * invMaxCoord * 100.0f;
-                float z0 = static_cast<float>(iz0) * invMaxCoord * 100.0f;
-
-                float x1 = static_cast<float>(ix1) * invMaxCoord * 100.0f;
-                float y1 = static_cast<float>(iy1) * invMaxCoord * 100.0f;
-                float z1 = static_cast<float>(iz1) * invMaxCoord * 100.0f;
-
-                float x2 = static_cast<float>(ix2) * invMaxCoord * 100.0f;
-                float y2 = static_cast<float>(iy2) * invMaxCoord * 100.0f;
-                float z2 = static_cast<float>(iz2) * invMaxCoord * 100.0f;
-
-                float x3 = static_cast<float>(ix3) * invMaxCoord * 100.0f;
-                float y3 = static_cast<float>(iy3) * invMaxCoord * 100.0f;
-                float z3 = static_cast<float>(iz3) * invMaxCoord * 100.0f;
+                // Physical coordinates for the volume: per-axis key resolution differs, so integers would skew it
+                auto [x0, y0, z0] = mars::decodeSfcToPhysical(h_sfc0[i], box);
+                auto [x1, y1, z1] = mars::decodeSfcToPhysical(h_sfc1[i], box);
+                auto [x2, y2, z2] = mars::decodeSfcToPhysical(h_sfc2[i], box);
+                auto [x3, y3, z3] = mars::decodeSfcToPhysical(h_sfc3[i], box);
 
                 // Calculate tetrahedron volume using determinant
                 // Volume = (1/6) * det|v1-v0, v2-v0, v3-v0|
@@ -1021,7 +948,7 @@ std::string getTypeName() {
 template<typename CoordType, typename KeyType, bool halos = false>
 void testSFCVisualization(ExternalMeshDomainTest* testInstance)
 {
-    using Domain = ElementDomain<TetTag, CoordType, KeyType, cstone::GpuTag>;
+    using Domain = ElementDomain<TetTag, CoordType, KeyType, cstone::execution::Gpu>;
     Domain domain(testInstance->meshPath, testInstance->rank, testInstance->numRanks);
 
     if (domain.getElementCount() == 0)
@@ -1062,19 +989,7 @@ void testSFCVisualization(ExternalMeshDomainTest* testInstance)
         auto it = vertexMap.find(sfcKey);
         if (it != vertexMap.end()) return it->second;
 
-        // Decode SFC
-        auto sfcKindKey   = cstone::sfcKey(sfcKey);
-        auto [ix, iy, iz] = cstone::decodeSfc(sfcKindKey);
-
-     // Convert with template precision
-        constexpr KeyType maxCoord = (1ULL << cstone::maxTreeLevel<cstone::SfcKind<KeyType>>{}) - 1;
-        CoordType invMaxCoord       = static_cast<CoordType>(1.0) / static_cast<CoordType>(maxCoord);
-
-        auto bbox = domain.getBoundingBox();
-
-        CoordType x = bbox.xmin() + (static_cast<CoordType>(ix) * invMaxCoord) * (bbox.xmax() - bbox.xmin());
-        CoordType y = bbox.ymin() + (static_cast<CoordType>(iy) * invMaxCoord) * (bbox.ymax() - bbox.ymin());
-        CoordType z = bbox.zmin() + (static_cast<CoordType>(iz) * invMaxCoord) * (bbox.zmax() - bbox.zmin());
+        auto [x, y, z] = mars::decodeSfcToPhysical(sfcKey, domain.getBoundingBox());
 
         size_t idx = vertices.size() / 3;
         vertices.push_back(x);

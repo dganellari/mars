@@ -39,14 +39,14 @@ struct SfcNodeOwner
 
     HOST_DEVICE_FUN int operator()(KeyType nodeKey) const
     {
-        auto [ix, iy, iz]           = cstone::decodeSfc(cstone::sfcKey(nodeKey));
-        constexpr unsigned maxCoord = (1u << cstone::maxTreeLevel<cstone::SfcKind<KeyType>>{}) - 1;
-        RealType invMaxCoord        = RealType(1) / maxCoord;
+        // Mixed-dimension keys: each axis has its own number of bits, set by the box they were encoded with
+        const auto bits   = meshBox.getBoxDimBits(cstone::maxTreeLevel<KeyType>{});
+        auto [ix, iy, iz] = cstone::decodeSfc(cstone::sfcKey(nodeKey), bits);
 
         // Cornerstone fits its box to the element representative corners, so nodes can lie outside it
-        RealType x = meshBox.xmin() + ix * invMaxCoord * (meshBox.xmax() - meshBox.xmin());
-        RealType y = meshBox.ymin() + iy * invMaxCoord * (meshBox.ymax() - meshBox.ymin());
-        RealType z = meshBox.zmin() + iz * invMaxCoord * (meshBox.zmax() - meshBox.zmin());
+        RealType x = meshBox.xmin() + ix * (RealType(1) / ((1u << bits[0]) - 1)) * (meshBox.xmax() - meshBox.xmin());
+        RealType y = meshBox.ymin() + iy * (RealType(1) / ((1u << bits[1]) - 1)) * (meshBox.ymax() - meshBox.ymin());
+        RealType z = meshBox.zmin() + iz * (RealType(1) / ((1u << bits[2]) - 1)) * (meshBox.zmax() - meshBox.zmin());
         x          = ::stl::min(::stl::max(x, sfcBox.xmin()), sfcBox.xmax());
         y          = ::stl::min(::stl::max(y, sfcBox.ymin()), sfcBox.ymax());
         z          = ::stl::min(::stl::max(z, sfcBox.zmin()), sfcBox.zmax());

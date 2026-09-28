@@ -71,7 +71,7 @@ template<int C> struct LinearSystem {
     bool verbose=true;
     Array<double> blocks,rhs,increment,residual;
 #ifdef MARS_REPLAY_CUDA
-    using Solver=mars::fem::HypreGMRESSolver<double,int,cstone::GpuTag>;
+    using Solver=mars::fem::HypreGMRESSolver<double,int,cstone::execution::Gpu>;
     typename Solver::Matrix matrix;
     typename Solver::Vector b,x;
     thrust::device_vector<HYPRE_BigInt> mapping;
