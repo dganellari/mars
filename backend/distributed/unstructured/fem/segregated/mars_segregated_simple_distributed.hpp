@@ -126,6 +126,7 @@ template<int C> struct HypreSimpleSolve {
     typename Solver::Vector b,x;
     explicit HypreSimpleSolve(MPI_Comm comm):solver(comm,2000,1e-12,Solver::BOOMERAMG,100) {
         solver.setVerbose(false); solver.setPointBlock(C);
+        solver.enable_true_residual_check();
         // A one-level hierarchy needs l1 row norms too; the default coarse type omits them.
         // l1-Jacobi also keeps coarse relaxation on the device.
         solver.setAMGCoarseRelaxType(18);

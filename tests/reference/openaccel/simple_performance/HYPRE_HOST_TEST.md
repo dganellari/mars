@@ -58,3 +58,28 @@ norm is absolute, matching the existing Hypre/wrapper convention.
 This gate does not compile CUDA, exercise real MPI, validate Hypre's device
 backend, or establish a speedup. Public native CUDA field/residual parity and
 multi-rank lifecycle checks remain necessary on the user-run GPU environment.
+
+## SIMPLE convergence with physical units
+
+Both SIMPLE Hypre call sites enable `enable_true_residual_check()`. Acceptance
+uses an explicitly recomputed `||b-Ax||_2 / ||b||_2` with the existing tolerance,
+or the absolute residual for a zero RHS, and rejects nonfinite solutions.
+The legacy `MARS_HYPRE_NULLX_RATIO` and `MARS_HYPRE_MAXX_RATIO` heuristics remain
+unchanged for other callers; they do not apply in this mode. The caller must
+still provide a pressure anchor. A small residual alone cannot detect a nullspace.
+The existing SIMPLE check against its own CSR and exchanged solution also remains.
+This adds a device ParCSR matvec, global inner products and a coordinated error
+check per solve; scalar reductions and API control are host work, not field copies.
+
+For the water/backflow fixture, the pseudo-time momentum diagonal is dominated
+by `rho*V/(alpha_u*pseudo_dt)`. Thus `d=V/a` is about `6e-10` and pressure
+matrix entries are about `1e-7`, while the mass RHS is about `125 kg/s`.
+The independent host solve returns a pressure increment near `3.07003e9 Pa`
+with relative residual `1.51e-14`. Comparing that increment directly to the
+mass RHS with a fixed ratio ceiling rejects a valid linear solution. This
+startup fixture is not a converged physical pressure prediction.
+
+The wrapper regression scales both a nonsymmetric matrix and its RHS by
+`1e-9`, `1` and `1e15`, preserving the manufactured solution and conditioning.
+It exercises fresh and cached wrappers, zero RHS and a deliberately stalled
+solve, using real CPU Hypre with ASan/UBSan. CUDA/MPI validation remains separate.

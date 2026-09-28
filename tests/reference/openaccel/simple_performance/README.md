@@ -138,7 +138,11 @@ checkout's revision instead of `_deps/cornerstone_fetch-src`.
 The next short gate uses water (`rho=1000`, dynamic `mu=.001`), high-resolution
 advection and a synthetic reversing outlet field. It checks four iterations
 against an independently assembled one-rank reference, not water-flow convergence.
-It never opens a pump file.
+It never opens a pump file. SIMPLE uses the explicit true linear residual,
+not the legacy solution/RHS magnitude ratio: the first pressure increment is
+about `3.07e9 Pa` on this abrupt-start fixture because of its small pseudo-time
+step. That magnitude alone neither invalidates the linear solve nor establishes
+physical accuracy. See [the residual regression](HYPRE_HOST_TEST.md#simple-convergence-with-physical-units).
 
 ```bash
 srun --account=csstaff --time=00:05:00 --nodes=1 --ntasks-per-node=1 \

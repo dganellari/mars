@@ -77,10 +77,45 @@ void verify(const Matrix& matrix, const std::vector<HYPRE_BigInt>& map,
     check(error < 2e-9, "manufactured solution error failed");
 }
 
+void scaled_systems() {
+    Matrix matrix;
+    make_graph(matrix, 32);
+    std::vector<HYPRE_BigInt> map(33);
+    for (int i=0;i<32;++i) map[i]=31-i;
+    map.back()=-1;
+    for (bool cached : {false,true}) {
+        Solver solver(0,300,1e-10);
+        solver.setVerbose(false);
+        solver.setAMGCoarseRelaxType(18);
+        solver.enable_true_residual_check();
+        if (cached) solver.enable_fixed_graph_updates();
+        for (double scale : {1e-9,1.0,1e15}) {
+            std::vector<double> b,truth,x(32,0);
+            fill_system(matrix,map,0,b,truth);
+            for (double& value:matrix.values) value*=scale;
+            for (double& value:b) value*=scale;
+            check(solver.solve(matrix,b,x,0,32,0,32,map), "scaled system rejected");
+            verify(matrix,map,b,x,truth);
+            check(solver.getLastFinalResidual()<1e-10, "explicit residual not reported");
+        }
+        std::vector<double> b(32,0),truth,x(32,0);
+        check(solver.solve(matrix,b,x,0,32,0,32,map), "explicit zero RHS rejected");
+        check(solver.getLastFinalResidual()==0, "explicit zero residual was stale");
+        fill_system(matrix,map,0,b,truth);
+        Solver stalled(0,1,1e-14,Solver::JACOBI,1);
+        stalled.setVerbose(false);
+        stalled.enable_true_residual_check();
+        if (cached) stalled.enable_fixed_graph_updates();
+        check(!stalled.solve(matrix,b,x,0,32,0,32,map), "unconverged solve accepted");
+        check(stalled.getLastFinalResidual()>1e-14, "failed solve hid its true residual");
+    }
+}
+
 int main() {
     setenv("MARS_HYPRE_MINITER", "0", 1);
     unsetenv("MARS_HYPRE_FLEXGMRES");
     try {
+        scaled_systems();
         Matrix matrix;
         make_graph(matrix, 160);
         std::vector<HYPRE_BigInt> map(161);
@@ -246,7 +281,7 @@ int main() {
         const std::vector<HYPRE_BigInt> empty_map;
         std::vector<double> empty_rhs, empty_x;
         expect_failure([&] { jacobi.solve(empty, empty_rhs, empty_x, 0, 0, 0, 0, empty_map); });
-        std::cout << "PASS: refreshed values/zeros, true residuals, fresh-solve parity, stable resources, "
+        std::cout << "PASS: scale-independent acceptance and rejected stalled solves, refreshed values/zeros, true residuals, fresh-solve parity, stable resources, "
                      "relocation, resize, invalidation, frozen/Jacobi modes, rejected bad inputs, "
                      "timing and collective counts\n";
     } catch (const std::exception& error) {
