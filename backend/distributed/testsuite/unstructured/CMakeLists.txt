@@ -187,7 +187,8 @@ addMarsMpiTest(
 )
 
 # SFC node ownership and element-star completion on cornerstone's CPU domain: the same owner function,
-# destinations and sparse exchange as the GPU sync, checked on a hex cube. Needs no GPU or mesh file.
+# destinations and sparse exchange as the GPU sync, checked on a hex cube and a one-cell-thick layer. Needs no GPU
+# or mesh file.
 addMarsMpiTest(
     ${CMAKE_CURRENT_SOURCE_DIR}/mars_sfc_ownership_host_mpi.cpp
     mars_sfc_ownership_host_mpi_test

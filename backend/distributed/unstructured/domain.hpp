@@ -261,6 +261,50 @@ template<typename KeyType, size_t NodesPerElement>
 __global__ void
 flattenConnectivityKernel(ConnPtrs<KeyType, NodesPerElement> conn, KeyType* flat_keys, size_t numElements);
 
+template<typename KeyType, size_t NodesPerElement, typename ConnTuple, size_t... I>
+ConnPtrs<KeyType, NodesPerElement> connPtrsOf(const ConnTuple& conn, std::index_sequence<I...>)
+{
+    return {{thrust::raw_pointer_cast(std::get<I>(conn).data())...}};
+}
+
+// Shortest edge of each element
+template<typename ElementTag, typename KeyType, typename RealType>
+void shortestEdgeLengths(ConnPtrs<KeyType, ElementTag::NodesPerElement> conn,
+                         const RealType* x,
+                         const RealType* y,
+                         const RealType* z,
+                         RealType* length,
+                         size_t numElements)
+{
+    thrust::for_each(thrust::device, thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(numElements),
+                     [=] __device__(size_t e)
+                     {
+                         auto edge = [&](int a, int b)
+                         {
+                             KeyType i = conn.ptrs[a][e], j = conn.ptrs[b][e];
+                             RealType dx = x[i] - x[j], dy = y[i] - y[j], dz = z[i] - z[j];
+                             return sqrt(dx * dx + dy * dy + dz * dz);
+                         };
+                         RealType shortest;
+                         if constexpr (std::is_same_v<ElementTag, HexTag>)
+                         {
+                             constexpr int edges[12][2] = {{0, 1}, {1, 2}, {2, 3}, {3, 0}, {4, 5}, {5, 6},
+                                                           {6, 7}, {7, 4}, {0, 4}, {1, 5}, {2, 6}, {3, 7}};
+                             shortest = edge(0, 1);
+                             for (int k = 1; k < 12; ++k)
+                                 shortest = min(shortest, edge(edges[k][0], edges[k][1]));
+                         }
+                         else
+                         {
+                             constexpr int edges[6][2] = {{0, 1}, {0, 2}, {0, 3}, {1, 2}, {1, 3}, {2, 3}};
+                             shortest = edge(0, 1);
+                             for (int k = 1; k < 6; ++k)
+                                 shortest = min(shortest, edge(edges[k][0], edges[k][1]));
+                         }
+                         length[e] = shortest;
+                     });
+}
+
 template<typename KeyType>
 __global__ void mapSfcToLocalIdKernel(
     const KeyType* sfc_conn, KeyType* local_conn, const KeyType* sorted_sfc, size_t num_elements, size_t num_nodes);
@@ -2896,6 +2940,18 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::sync(const De
             thrust::raw_pointer_cast(d_elemY.data()), thrust::raw_pointer_cast(d_elemZ.data()),
             thrust::raw_pointer_cast(d_elemH.data()), elementCount_);
         cudaCheckError();
+
+        // With SFC node ownership the star completion adds every element an owner needs, so the distance search
+        // only has to find direct neighbours. Search with each element's shortest edge: the mean edge length at
+        // the representative node reaches many cells deep across flat or stretched cells.
+        if (sfcOwnership_)
+        {
+            auto conn = connPtrsOf<KeyType, NodesPerElement>(d_conn_, std::make_index_sequence<NodesPerElement>{});
+            shortestEdgeLengths<ElementTag>(conn, thrust::raw_pointer_cast(d_x.data()),
+                                            thrust::raw_pointer_cast(d_y.data()), thrust::raw_pointer_cast(d_z.data()),
+                                            thrust::raw_pointer_cast(d_elemH.data()), elementCount_);
+            cudaCheckError();
+        }
 
         if (std::getenv("MARS_VERBOSE_MESH"))
             std::cout << "Rank " << rank_ << " syncing " << ElementTag::Name << " domain with " << elementCount_
