@@ -28,6 +28,7 @@
 #include "mars_segregated_halo_exchange.hpp"
 #include "mars_segregated_simple_reduction.hpp"
 #include "mars_segregated_simple_profile.hpp"
+#include <iostream>
 #include <limits>
 #include <memory>
 #include <string>
@@ -316,18 +317,32 @@ struct DistributedSimpleRunner {
         bool assembly_failed,std::initializer_list<distributed::Field> with) {
         auto timing=profile.scope(C==3?SimpleProfile::momentum:SimpleProfile::pressure);
         system.update(view,solver.rhs(std::size_t(system.rows())),std::size_t(system.rows()),assembly_failed);
-        // Solve policies return a rank-consistent result (Hypre: global norms; the test oracle: a broadcast).
+        // Keep a candidate on nonconvergence so both matrix representations can be checked.
         const bool solved=solver(system);
         const auto context=[&](const char* reason) {
             return std::string(C==3?"momentum":"pressure correction")+" at SIMPLE iteration "+std::to_string(completed+1)+": "+reason;
         };
-        simple_collective(comm,solved,solved?"linear solve failed on a peer":context("linear solve failed").c_str());
+        const bool candidate=solver.size()==std::size_t(system.rows()) && (!system.rows() || solver.solution());
+        int verdict[2]={candidate?1:0,solved?1:0};
+        if (MPI_Allreduce(MPI_IN_PLACE,verdict,2,MPI_INT,MPI_MIN,comm)!=MPI_SUCCESS) {
+            MPI_Abort(comm,1); throw std::runtime_error("linear verdict reduction failed");
+        }
+        if (!verdict[0]) throw std::runtime_error(context("linear solver returned no usable candidate"));
         system.unpack(solver.solution(),solver.size(),increment.data(),increment.values.size());
         if (with.size()==0) exchange({{increment.data(),C}});
         else { auto it=with.begin(); exchange({{increment.data(),C},*it}); }
         const auto norms=system.residual(distributed::halo_complete(increment.data(),increment.values.size()),solver.rhs(),tolerance);
-        // Allreduced norms agree on every rank; construct context only on failure.
-        if (!norms.passed) throw std::runtime_error(context("true linear residual failed"));
+        // Check rejected candidates too, before discarding the only independent evidence.
+        // Neither a solver rejection nor a failed MARS residual can become a success.
+        if (!verdict[1] || !norms.passed) {
+            int rank=0; MPI_Comm_rank(comm,&rank);
+            if (!rank) std::cerr<<"[simple-linear] stage="<<(C==3?"momentum":"pressure")
+                <<" iteration="<<completed+1<<" solver_accepted="<<verdict[1]
+                <<" mars_absolute_residual="<<norms.absolute()<<" rhs_norm="<<std::sqrt(norms.rhs2)
+                <<" acceptance_limit="<<tolerance.absolute+tolerance.relative*std::sqrt(norms.rhs2)
+                <<" mars_passed="<<norms.passed<<'\n';
+            throw std::runtime_error(context(verdict[1]?"true linear residual failed":"linear solve failed"));
+        }
     }
     template<class Observer=NoSimpleObserver> void advance(Observer observe={}) {
         ensure(assembled,"advance requires momentum assembly");

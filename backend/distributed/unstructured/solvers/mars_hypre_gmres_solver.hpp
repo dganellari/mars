@@ -534,12 +534,10 @@ public:
             std::cerr << "Failed to create Hypre " << krylovName << " solver" << std::endl;
             return false;
         }
-        // FlexGMRES and GMRES share the HYPRE_GMRES* setter/getter symbols
-        // (FlexGMRES is a GMRES variant in Hypre); only Create/Setup/Solve/
-        // Destroy and SetPrecond differ. So the Set* calls below are common.
-        HYPRE_GMRESSetMaxIter(solver_, maxIter_);
-        HYPRE_GMRESSetTol(solver_, tolerance_);
-        HYPRE_GMRESSetKDim(solver_, kDim_);  // restart length
+        // These handles have different layouts; every API must match the solver.
+        (useFlexGmres_ ? HYPRE_FlexGMRESSetMaxIter : HYPRE_GMRESSetMaxIter)(solver_, maxIter_);
+        (useFlexGmres_ ? HYPRE_FlexGMRESSetTol : HYPRE_GMRESSetTol)(solver_, tolerance_);
+        (useFlexGmres_ ? HYPRE_FlexGMRESSetKDim : HYPRE_GMRESSetKDim)(solver_, kDim_);
         // Floor on iterations. For the near-singular DDT pressure operator (one
         // constant null mode, single pin), BoomerAMG's first V-cycle can map the
         // initial residual almost entirely into the null space, dropping the
@@ -549,19 +547,21 @@ public:
         // that first deceptive cycle so a real x emerges. Env-overridable.
         {
             int minIt = getEnvInt("MARS_HYPRE_MINITER", 3);
-            if (minIt > 0) HYPRE_GMRESSetMinIter(solver_, minIt);
+            if (minIt > 0)
+                (useFlexGmres_ ? HYPRE_FlexGMRESSetMinIter : HYPRE_GMRESSetMinIter)(solver_, minIt);
         }
         // Optional absolute stopping floor: Hypre uses max(atol, rtol*||b||).
         // Default 0 keeps the relative target; the wrapper checks acceptance below.
         {
             double absTol = getEnvDouble("MARS_HYPRE_ABSTOL", 0.0);
-            if (absTol > 0.0) HYPRE_GMRESSetAbsoluteTol(solver_, absTol);
+            if (absTol > 0.0)
+                (useFlexGmres_ ? HYPRE_FlexGMRESSetAbsoluteTol : HYPRE_GMRESSetAbsoluteTol)(solver_, absTol);
         }
         // print level: 0 silent, 2 per-iter residuals. Env MARS_HYPRE_VERBOSE=1.
         {
             const char* ev = std::getenv("MARS_HYPRE_VERBOSE");
             int gmresPrint = (verbose_ || (ev && std::string(ev) != "0")) ? 2 : 0;
-            HYPRE_GMRESSetPrintLevel(solver_, gmresPrint);
+            (useFlexGmres_ ? HYPRE_FlexGMRESSetPrintLevel : HYPRE_GMRESSetPrintLevel)(solver_, gmresPrint);
         }
 
         if (precondType_ == BOOMERAMG && precond_) {
@@ -782,8 +782,8 @@ public:
 
         int    num_iterations = 0;
         double final_res_norm = 0.0;
-        HYPRE_GMRESGetNumIterations(solver_, &num_iterations);
-        HYPRE_GMRESGetFinalRelativeResidualNorm(solver_, &final_res_norm);
+        (useFlexGmres_ ? HYPRE_FlexGMRESGetNumIterations : HYPRE_GMRESGetNumIterations)(solver_, &num_iterations);
+        (useFlexGmres_ ? HYPRE_FlexGMRESGetFinalRelativeResidualNorm : HYPRE_GMRESGetFinalRelativeResidualNorm)(solver_, &final_res_norm);
         const double reported_res_norm = final_res_norm;
         // Hypre's zero-residual early return can leave the previous solve's norm.
         if (true_residual_check_ || (fixed_graph_updates_ && num_iterations == 0))
@@ -845,16 +845,31 @@ public:
             ? std::isfinite(residual_limit) && last_absolute_residual_ <= residual_limit
             : final_res_norm < tolerance_;
         const bool converged = residual_ok && !nullSolutionReturned_;
-        if (true_residual_check_ && !converged && rank == 0) {
-            std::cerr << "[HypreGMRES] rejected: iterations=" << num_iterations
-                      << '/' << maxIter_ << " restart=" << kDim_
-                      << " reported_relative=" << reported_res_norm
-                      << " true_relative_or_absolute=" << final_res_norm
-                      << " tolerance=" << tolerance_ << " solve_error=" << solve_err;
-            if (mixed_residual_check_)
-                std::cerr << " absolute_residual=" << last_absolute_residual_
-                          << " acceptance_limit=" << residual_limit;
-            std::cerr << '\n';
+        if (true_residual_check_ && !converged) {
+            // Read the solver's work vector without replacing our explicit check.
+            // After an early stop it need not contain the final b-Ax.
+            HYPRE_Real work_residual2 = std::numeric_limits<HYPRE_Real>::quiet_NaN();
+            if (num_iterations > 0) {
+                HYPRE_ParVector work_residual = nullptr;
+                (useFlexGmres_ ? HYPRE_ParCSRFlexGMRESGetResidual : HYPRE_ParCSRGMRESGetResidual)(solver_, &work_residual);
+                require_reuse(work_residual && HYPRE_GetError() == 0, "Krylov residual lookup failed");
+                HYPRE_ParVectorInnerProd(work_residual, work_residual, &work_residual2);
+                require_reuse(HYPRE_GetError() == 0, "Krylov residual norm failed");
+            }
+            if (rank == 0) {
+                std::cerr << "[HypreGMRES] rejected: backend=" << (useFlexGmres_ ? "FlexGMRES" : "GMRES")
+                          << " iterations=" << num_iterations
+                          << '/' << maxIter_ << " restart=" << kDim_
+                          << " reported_relative=" << reported_res_norm
+                          << " true_relative_or_absolute=" << final_res_norm
+                          << " tolerance=" << tolerance_ << " solve_error=" << solve_err
+                          << " krylov_work_norm=" << std::sqrt(work_residual2)
+                          << " rhs_norm=" << last_rhs_norm_;
+                if (mixed_residual_check_)
+                    std::cerr << " absolute_residual=" << last_absolute_residual_
+                              << " acceptance_limit=" << residual_limit;
+                std::cerr << '\n';
+            }
         }
         if (verbose_) {
             std::cout << "Hypre GMRES " << (converged ? "converged" : "did not converge")

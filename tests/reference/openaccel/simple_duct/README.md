@@ -326,7 +326,16 @@ The wrapper now uses that same mixed acceptance criterion for SIMPLE, while
 Hypre still targets 1e-12. This changes wrapper acceptance, not the final
 linear, nonlinear, field-parity or refinement thresholds. Other callers keep
 their prior acceptance policy. The real CPU Hypre regression passes with
-ASan/UBSan; the 32-cell CUDA rerun and full 8/16/32 study remain pending.
+ASan/UBSan. Subsequent 32-cell GPU runs passed the first pressure solve but failed
+momentum: iteration 21 with caching (job 4883662, nid005656) and iteration 13
+without caching (job 4883720, nid006328). The uncached run reported relative
+residual 1.39477e-14, while the wrapper recomputed 9.68571e-7 (absolute
+3.58055e-8, acceptance limit 3.79673e-12). Disabling cache does not remove the
+defect, and the cause remains unresolved. Failure diagnostics now also evaluate
+the candidate against MARS's original CSR and identify the Krylov backend.
+These are diagnostic checks, not a tolerance change or a claimed GPU fix.
+The optional FlexGMRES API dispatch was corrected separately and tested with
+real CPU Hypre. The full 8/16/32 study remains incomplete.
 Preserve the completed runs; no successful fine-grid refinement is claimed yet.
 
 ## Daint commands

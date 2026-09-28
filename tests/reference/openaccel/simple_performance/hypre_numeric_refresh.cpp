@@ -97,6 +97,20 @@ void scaled_systems() {
             check(solver.solve(matrix,b,x,0,32,0,32,map), "scaled system rejected");
             verify(matrix,map,b,x,truth);
             check(solver.getLastFinalResidual()<1e-10, "explicit residual not reported");
+            HYPRE_Real target=0,reported=0;
+            HYPRE_Int restart=0,minimum=0,limit=0,iterations=0,print=0;
+            const bool flex=solver.useFlexGmres_;
+            (flex?HYPRE_FlexGMRESGetTol:HYPRE_GMRESGetTol)(solver.solver_,&target);
+            (flex?HYPRE_FlexGMRESGetKDim:HYPRE_GMRESGetKDim)(solver.solver_,&restart);
+            (flex?HYPRE_FlexGMRESGetMinIter:HYPRE_GMRESGetMinIter)(solver.solver_,&minimum);
+            (flex?HYPRE_FlexGMRESGetMaxIter:HYPRE_GMRESGetMaxIter)(solver.solver_,&limit);
+            (flex?HYPRE_FlexGMRESGetPrintLevel:HYPRE_GMRESGetPrintLevel)(solver.solver_,&print);
+            (flex?HYPRE_FlexGMRESGetNumIterations:HYPRE_GMRESGetNumIterations)(solver.solver_,&iterations);
+            (flex?HYPRE_FlexGMRESGetFinalRelativeResidualNorm:HYPRE_GMRESGetFinalRelativeResidualNorm)(solver.solver_,&reported);
+            check(target==solver.tolerance_ && restart==solver.kDim_ && minimum==3 && limit==solver.maxIter_ && print==0,
+                  "wrong Krylov configuration API");
+            check(iterations==solver.getLastIterations() && iterations>0 && reported<1e-10,
+                  "wrong Krylov result API");
         }
         std::vector<double> b(32,0),truth,x(32,0);
         check(solver.solve(matrix,b,x,0,32,0,32,map), "explicit zero RHS rejected");
@@ -187,8 +201,15 @@ int main() {
     setenv("MARS_HYPRE_MINITER", "0", 1);
     unsetenv("MARS_HYPRE_FLEXGMRES");
     try {
-        scaled_systems();
-        mixed_residual_acceptance();
+        for (const char* flexible : {"0","1"}) {
+            setenv("MARS_HYPRE_FLEXGMRES",flexible,1);
+            setenv("MARS_HYPRE_MINITER","3",1);
+            scaled_systems();
+            setenv("MARS_HYPRE_MINITER","0",1);
+            mixed_residual_acceptance();
+            std::cout<<"PASS: Krylov API and residual checks, MARS_HYPRE_FLEXGMRES="<<flexible<<'\n';
+        }
+        unsetenv("MARS_HYPRE_FLEXGMRES");
         Matrix matrix;
         make_graph(matrix, 160);
         std::vector<HYPRE_BigInt> map(161);

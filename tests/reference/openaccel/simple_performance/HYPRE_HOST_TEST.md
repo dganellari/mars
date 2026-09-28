@@ -79,10 +79,29 @@ check per solve; scalar reductions and API control are host work, not field copi
 A rejected solve in this mode prints the iteration count/limit, restart length,
 Hypre's reported relative residual, the recomputed relative residual (absolute
 when the RHS is zero), the Krylov target and the solve error code. Mixed mode
-also prints the absolute residual and its acceptance limit. This failure-only
-report adds no reductions or field transfers. `MARS_HYPRE_VERBOSE=1` additionally
+also prints the absolute residual and its acceptance limit. The report identifies
+GMRES versus FlexGMRES, the RHS norm and the norm of the Krylov work residual.
+The last quantity requires an extra global inner product on failure only; it is
+unavailable after zero iterations and is not necessarily the final residual after
+an early stop. No field is copied to the host. `MARS_HYPRE_VERBOSE=1` additionally
 prints Hypre's iteration history. A residual mismatch does not, by itself,
 identify whether the cause is roundoff, conditioning or an operator defect.
+
+The distributed SIMPLE runner now unpacks and exchanges a dimensionally valid
+rejected candidate before evaluating its original MARS CSR residual. A failure
+prints `[simple-linear]` with that independent residual and both verdicts, then
+stops. A passing CSR check never overrides a backend rejection. A missing
+candidate is rejected collectively before it can be read. The existing verdict
+collective carries both flags, so accepted solves gain no reduction or transfer.
+The `marsSimpleLinearRejection{1,2,4}` host MPI tests cover valid candidates,
+one-rank backend rejection, corrupted values, missing storage and nonfinite
+values for both scalar pressure and three-component momentum systems.
+
+The optional `MARS_HYPRE_FLEXGMRES=1` path uses FlexGMRES setters and getters.
+Using GMRES APIs on that handle writes/reads a different Hypre data layout.
+The real-Hypre regression exercises both backends, fresh and cached solves,
+configuration getters, returned iterations and residual acceptance. This fixes
+the optional API path; it does not establish the cause of the duct GPU mismatch.
 
 For the water/backflow fixture, the pseudo-time momentum diagonal is dominated
 by `rho*V/(alpha_u*pseudo_dt)`. Thus `d=V/a` is about `6e-10` and pressure
