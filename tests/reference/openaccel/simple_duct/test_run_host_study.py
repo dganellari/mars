@@ -3,11 +3,12 @@
 
 A fake launcher and a fake host executable replay prepared synthetic outputs (see
 test_duct_compare.synthetic), so the tests take seconds and exercise only the orchestration:
-a missing executable, a launch failure and a nonzero exit fail; a verified cache is reused; a
-cache from another executable, other arguments, edited outputs or without a manifest is an
-error and is not rerun, except that --rerun-stale replaces results carrying a manifest (never
-results without one).
+a missing executable or launcher and a nonzero exit fail; a verified cache is reused; a cache
+from another executable, another launcher (path or content), other launcher or driver
+arguments, edited outputs or without a manifest is an error and is not rerun, except that
+--rerun-stale replaces results carrying a manifest (never results without one).
 """
+import json
 import os
 import shutil
 import stat
@@ -98,6 +99,31 @@ class HostStudy(unittest.TestCase):
         with open(os.path.join(self.out, "duct-4-2-fields.csv"), "a") as f:
             f.write("\n")
         self.assertEqual(self.run_study(), 1)
+
+    def test_cache_with_missing_launcher_is_rejected(self):
+        self.assertEqual(self.run_study(), 0)
+        self.assertEqual(self.run_study(launcher=os.path.join(self.dir, "no_such_mpiexec")), 1)
+
+    def test_cache_from_another_launcher_is_rejected(self):
+        self.assertEqual(self.run_study(), 0)
+        other = script(os.path.join(self.dir, "launch_b"), LAUNCHER % sys.executable)   # same content, other path
+        self.assertEqual(self.run_study(launcher=other), 1)
+        with open(self.launcher, "a") as f:                                               # same path, other content
+            f.write("# changed\n")
+        self.assertEqual(self.run_study(), 1)
+
+    def test_cache_from_other_launcher_arguments_is_rejected(self):
+        self.assertEqual(self.run_study(), 0)
+        self.assertEqual(self.run_study(extra=["--mpi-args=--bind-to none"]), 1)
+        self.assertEqual(self.run_study(extra=["--numproc-flag=-np"]), 1)
+
+    def test_manifest_records_the_launch(self):
+        self.assertEqual(self.run_study(), 0)
+        with open(os.path.join(self.out, "duct-4-2.run.json")) as f:
+            record = json.load(f)
+        self.assertEqual(record["launch"][:3], [os.path.abspath(self.launcher), "-n", "2"])
+        self.assertEqual(record["launch"][3], os.path.abspath(self.fake))
+        self.assertEqual(record["exit"], 0)
 
     def test_results_without_manifest_are_rejected(self):
         self.assertEqual(self.run_study(), 0)

@@ -4,8 +4,10 @@
 Duct x in [0, L] (inlet side set "inlet" at x=0, "outlet" at x=L), y in [-W/2, W/2],
 z in [-H/2, H/2], side set "walls" on the four sides. nz = cells across the height, ny = W/H * nz,
 nx = L/(stretch*H) * nz: hexes of hx = stretch*h, hy = hz = h, each split into six positively
-oriented Kuhn tets around the hex diagonal. The mesh is invariant under x -> x + hx, so the
-discrete equations admit an exactly x-invariant (fully developed) state.
+oriented Kuhn tets around the hex diagonal. The mesh is invariant under x -> x + hx, so an
+x-invariant (fully developed) discrete state is compatible with the discrete equations; its
+existence, uniqueness and attainment are assumed, not proven (README.md), and checked per run
+by duct_compare.py's window indicators.
 
 Numbering (0-based; Exodus stores +1): node i + (nx+1)(j + (ny+1)k); element t + 6 (i + nx (j + ny k)),
 t the Kuhn path. The fields CSV of mars_segregated_simple reports this node number, so the

@@ -39,8 +39,10 @@ def write_mesh(d, cells):
 def synthetic(d, levels=(4, 8, 16), ranks=(1,), profile=0.3, g=-0.2, order=1.0, g_bias=0.0, g_signs=None,
               entrance=0.25, outlet=0.2, outlet_amplitude=0.02, transverse=0.05, transverse_order=1.0,
               planar=False, flow_scale=1.0, edit=None, metrics_edit=None, log="CONVERGED iterations=3000",
-              header="rho=1 mu=0.10000000000000001 nu=0.10000000000000001 inlet_speed=0.10000000000000001 (inward normal)"):
-    """Write duct-<c>.json and duct-<c>-<r>-{fields,metrics}.csv and .log for every level and rank."""
+              header="rho=1 mu=0.10000000000000001 nu=0.10000000000000001 inlet_speed=0.10000000000000001 (inward normal)",
+              scheme="upwind", log_edit=None, exit_code=0, field_output="gathered"):
+    """Write duct-<c>.exo/.json and, per level and rank, the production outputs: -fields.csv (or
+    distributed parts and -fields.json), -metrics.csv, .log, and the recipe's .exit record."""
     duct = da.Duct(2, 1, MU)
     G = duct.pressure_gradient(U)
     for n, c in enumerate(levels):
@@ -72,10 +74,19 @@ def synthetic(d, levels=(4, 8, 16), ranks=(1,), profile=0.3, g=-0.2, order=1.0, 
             data = [list(row) for row in rows]
             if edit:
                 edit(c, r, data)
-            with open(prefix + "-fields.csv", "w") as f:
-                f.write("node,x,y,z,u,v,w,p\n")
-                for row in data:
-                    f.write(",".join(repr(v) if not isinstance(v, str) else v for v in [int(row[0])] + row[1:]) + "\n")
+            def write_rows(path, rows_out):
+                with open(path, "w") as f:
+                    f.write("node,x,y,z,u,v,w,p\n")
+                    for row in rows_out:
+                        f.write(",".join(repr(v) if not isinstance(v, str) else v for v in [int(row[0])] + row[1:]) + "\n")
+            if field_output == "gathered":
+                write_rows(prefix + "-fields.csv", data)
+            else:   # the production distributed layout: one owned-node part per rank and a manifest
+                parts = ["duct-%d-%d-fields-rank%06d.csv" % (c, r, q) for q in range(r)]
+                for q, name in enumerate(parts):
+                    write_rows(os.path.join(d, name), data[q::r])
+                with open(prefix + "-fields.json", "w") as f:
+                    json.dump({"format": "mars-simple-fields-v1", "nodes": lat.nodes, "parts": parts}, f)
             m = dict((k, 0.0) for k in dc.METRIC_COLUMNS)
             m.update(iteration=3000, momentum=5e-9, continuity=1e-12, mass_balance=1e-13, du=1e-12, dp=1e-11,
                      dflux=1e-13, cancellation=1e-15, inlet_kg_s=-RHO * U * 2, outlet_kg_s=RHO * U * 2, umax_m_s=0.2)
@@ -84,9 +95,14 @@ def synthetic(d, levels=(4, 8, 16), ranks=(1,), profile=0.3, g=-0.2, order=1.0, 
             with open(prefix + "-metrics.csv", "w") as f:
                 f.write(",".join(dc.METRIC_COLUMNS) + "\n0" + ",0" * (len(dc.METRIC_COLUMNS) - 1) + "\n")
                 f.write(",".join(repr(m[k]) for k in dc.METRIC_COLUMNS) + "\n")
+            text = ("SIMPLE Tet4, %d ranks (ElementDomain/cstone), %s, laminar\n%s outlet_pressure=0 reference_length=1\n"
+                    "[simple] iteration=0\n%s ranks=%d exchange_rounds=0\n[simple-time] scope=rank_max_wall\n"
+                    % (r, scheme, header, log, r))
             with open(prefix + ".log", "w") as f:
-                f.write("SIMPLE Tet4, %d ranks\n%s outlet_pressure=0 reference_length=1\n[simple] iteration=0\n%s ranks=%d\n"
-                        % (r, header, log, r))
+                f.write(log_edit(c, r, text) if log_edit else text)
+            if exit_code is not None:
+                with open(prefix + ".exit", "w") as f:
+                    f.write("%d\n" % exit_code)
 
 
 class Study(unittest.TestCase):
@@ -96,9 +112,9 @@ class Study(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.dir)
 
-    def study(self, levels=(4, 8, 16), ranks=(1,), window=None, **kw):
+    def study(self, levels=(4, 8, 16), ranks=(1,), window=None, advection="upwind", **kw):
         synthetic(self.dir, levels, ranks, **kw)
-        return dc.study(self.dir, list(levels), list(ranks), dc.Controls(RHO, MU, U), window)
+        return dc.study(self.dir, list(levels), list(ranks), dc.Controls(RHO, MU, U, advection=advection), window)
 
     def assertFailsWith(self, report, text):
         self.assertTrue(report["failures"], "expected FAIL")
@@ -281,16 +297,67 @@ class Study(unittest.TestCase):
     def test_run_command_requires_the_log(self):
         synthetic(self.dir, (4,), (1,))
         prefix, mesh = os.path.join(self.dir, "duct-4-1"), os.path.join(self.dir, "duct-4.json")
-        self.assertEqual(dc.main(["run", prefix, "--mesh", mesh]), 0)
+        self.assertEqual(dc.main(["run", prefix, "--mesh", mesh, "--ranks", "1"]), 0)
+        self.assertEqual(dc.main(["run", prefix, "--mesh", mesh, "--ranks", "2"]), 1)
         os.remove(prefix + ".log")
-        self.assertEqual(dc.main(["run", prefix, "--mesh", mesh]), 1)
+        self.assertEqual(dc.main(["run", prefix, "--mesh", mesh, "--ranks", "1"]), 1)
+
+    # ---- run identity and exit status
+    def test_log_from_another_rank_count_fails(self):
+        # Files labelled 2 ranks whose log is a 1-rank run that stopped at another iteration.
+        def log_edit(c, r, text):
+            if c == 8 and r == 2:
+                text = text.replace("2 ranks (", "1 ranks (").replace("iterations=3000 ranks=2", "iterations=3338 ranks=1")
+            return text
+        r = self.study(ranks=(1, 2), log_edit=log_edit)
+        self.assertFailsWith(r, "cells 8, 2 ranks: identity: labelled 2 ranks, the log says 1 (header) and 1 (final)")
+        self.assertFailsWith(r, "cells 8, 2 ranks: identity: the log ends at iteration 3338, the metrics at 3000")
+
+    def test_log_iteration_mismatch_fails(self):
+        self.assertFailsWith(self.study(log="CONVERGED iterations=2999"), "identity: the log ends at iteration 2999")
+
+    def test_other_advection_fails(self):
+        self.assertFailsWith(self.study(scheme="high-resolution"), "identity: the run used high-resolution advection")
+
+    def test_high_resolution_study_is_checked_against_its_own_scheme(self):
+        self.assertEqual(self.study(scheme="high-resolution", advection="high-resolution")["failures"], [])
+        self.assertFailsWith(self.study(scheme="upwind", advection="high-resolution"), "the comparison expects high-resolution")
+
+    def test_concatenated_logs_fail(self):
+        self.assertFailsWith(self.study(log_edit=lambda c, r, text: text + text), "the log holds 2 run headers and 2 final lines")
+
+    def test_log_without_header_fails(self):
+        self.assertFailsWith(self.study(log_edit=lambda c, r, text: text.split("\n", 1)[1]), "the log holds 0 run headers")
+
+    def test_missing_exit_record_fails(self):
+        self.assertFailsWith(self.study(exit_code=None), "exit: no exit status recorded")
+
+    def test_nonzero_exit_record_fails(self):
+        # Fields, metrics and a CONVERGED log are all present; the launcher still failed.
+        self.assertFailsWith(self.study(exit_code=137), "exit: the run exited 137")
+
+    def test_malformed_exit_record_fails(self):
+        synthetic(self.dir, (4, 8, 16), (1,))
+        with open(os.path.join(self.dir, "duct-8-1.exit"), "w") as f:
+            f.write("0\n1\n")
+        self.assertFailsWith(dc.study(self.dir, [4, 8, 16], [1], dc.Controls(RHO, MU, U)), "exit: ")
+
+    # ---- distributed field output
+    def test_distributed_field_parts_pass(self):
+        r = self.study(ranks=(1, 2, 4), field_output="distributed")
+        self.assertEqual(r["failures"], [])
+
+    def test_missing_field_part_fails(self):
+        synthetic(self.dir, (4, 8, 16), (1, 2), field_output="distributed")
+        os.remove(os.path.join(self.dir, "duct-8-2-fields-rank000001.csv"))
+        self.assertFailsWith(dc.study(self.dir, [4, 8, 16], [1, 2], dc.Controls(RHO, MU, U)), "cells 8, 2 ranks: input:")
 
     # ---- command line
     def test_command_line_exit_codes(self):
         synthetic(self.dir, (4, 8, 16), (1, 2))
         self.assertEqual(dc.main(["study", self.dir, "--levels", "4,8,16", "--ranks", "1,2"]), 0)
-        self.assertEqual(dc.main(["run", os.path.join(self.dir, "duct-8-2"), "--mesh", os.path.join(self.dir, "duct-8.json")]), 0)
-        self.assertEqual(dc.main(["run", os.path.join(self.dir, "duct-8-2"), "--mesh", os.path.join(self.dir, "duct-4.json")]), 1)
+        self.assertEqual(dc.main(["run", os.path.join(self.dir, "duct-8-2"), "--mesh", os.path.join(self.dir, "duct-8.json"), "--ranks", "2"]), 0)
+        self.assertEqual(dc.main(["run", os.path.join(self.dir, "duct-8-2"), "--mesh", os.path.join(self.dir, "duct-4.json"), "--ranks", "2"]), 1)
         self.assertEqual(dc.main(["study", self.dir, "--levels", "4,8,16", "--ranks", "1,2", "--rank-tol", "-1"]), 1)
 
 

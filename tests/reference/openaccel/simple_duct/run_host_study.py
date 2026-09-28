@@ -9,8 +9,10 @@ the one the CUDA runs read; the host driver builds the identical lattice itself,
 tests check), runs duct_host_run on each rank count with the study tolerances, and then runs
 duct_compare.py study.
 
-Every run leaves PREFIX.run.json: executable path and SHA-256, driver arguments, rank count,
-mesh SHA-256, exit status and the SHA-256 of its fields, metrics and log. A result in OUTDIR is
+Every run leaves PREFIX.run.json: the complete launch command (launcher resolved to an absolute
+path, rank flag and count, launcher arguments, executable, driver arguments), the SHA-256 of
+launcher, executable and mesh, the exit status and the SHA-256 of its fields, metrics and log.
+The launcher and executable must exist before anything is reused. A result in OUTDIR is
 reused only when that manifest matches the requested run and the files are unchanged. Anything
 else is an error and is neither rerun nor overwritten: no manifest, another executable or
 argument list, or edited outputs. The exception is --rerun-stale (used by ctest after rebuilds),
@@ -22,6 +24,7 @@ import argparse
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 
@@ -43,9 +46,12 @@ def sha256(path):
     return h.hexdigest()
 
 
-def identity(executable, digest, arguments, ranks, mesh_digest):
-    return {"format": MANIFEST, "executable": executable, "executable_sha256": digest, "arguments": arguments,
-            "ranks": ranks, "mesh_sha256": mesh_digest}
+def identity(launch, launcher_digest, executable_digest, ranks, mesh_digest):
+    """What makes a cached result the requested one: the complete launch command (resolved
+    launcher, rank flag and count, launcher arguments, executable, driver arguments) and the
+    SHA-256 of launcher, executable and mesh."""
+    return {"format": MANIFEST, "launch": launch, "launcher_sha256": launcher_digest,
+            "executable_sha256": executable_digest, "ranks": ranks, "mesh_sha256": mesh_digest}
 
 
 def cached(prefix, wanted, rerun_stale=False):
@@ -99,7 +105,13 @@ def main(argv=None):
     if not (os.path.isfile(executable) and os.access(executable, os.X_OK)):
         print("FAIL: host executable %s does not exist or is not executable" % executable)
         return 1
-    digest = sha256(executable)
+    # The launcher is part of every run's identity: resolve it now, before anything is reused.
+    launcher = shutil.which(o.mpiexec)
+    if launcher is None:
+        print("FAIL: MPI launcher %s not found or not executable" % o.mpiexec)
+        return 1
+    launcher = os.path.abspath(launcher)
+    digest, launcher_digest = sha256(executable), sha256(launcher)
     os.makedirs(o.outdir, exist_ok=True)
     failed = []
     for c in levels:
@@ -116,14 +128,14 @@ def main(argv=None):
             prefix = os.path.join(o.outdir, "duct-%d-%d" % (c, r))
             arguments = ["--cells", str(c), "--output-prefix", prefix, "--iterations", o.iterations,
                          "--report-every", "500"] + TOLERANCES
-            wanted = identity(executable, digest, arguments, r, mesh_digest)
+            command = [launcher, o.numproc_flag, str(r)] + o.mpi_args.replace(";", " ").split() + [executable] + arguments
+            wanted = identity(command, launcher_digest, digest, r, mesh_digest)
             try:
                 status = cached(prefix, wanted, o.rerun_stale)
             except (OSError, ValueError, KeyError) as e:
                 print("FAIL: %s" % e)
                 return 1
             if status is None:
-                command = [o.mpiexec, o.numproc_flag, str(r)] + o.mpi_args.replace(";", " ").split() + [executable] + arguments
                 print(" ".join(command), flush=True)
                 with open(prefix + ".log", "w") as log:
                     try:
@@ -131,7 +143,7 @@ def main(argv=None):
                     except OSError as e:
                         log.write("ERROR: launch failed: %s\n" % e)
                         status = 127
-                record = dict(wanted, command=command, exit=status,
+                record = dict(wanted, exit=status,
                               outputs=dict((s, sha256(prefix + s)) for s in OUTPUTS if os.path.exists(prefix + s)))
                 with open(prefix + ".run.json", "w") as f:
                     json.dump(record, f, indent=1, sort_keys=True)

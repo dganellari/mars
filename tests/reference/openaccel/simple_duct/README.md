@@ -71,15 +71,22 @@ itself as a reference:
 - the parallel-plate limit;
 - the Python and C++ implementations agree to 1e-13.
 
-### Why a discrete fully developed state exists
+### The discrete fully developed state: an assumption, checked per run
 
 - **Mesh:** hexes of hx = 2h and hy = hz = h, h = H/cells, each split into six positively
-  oriented Kuhn tets around the hex diagonal. The mesh is invariant under x → x + hx, so the
-  discrete equations have an exactly x-invariant solution. Its flow rate is exactly ρUWH,
-  because the inlet flux is exact and the scheme conserves mass.
-- **Consequence:** away from the ends, the discrete solution converges to this state. The
-  window's profile measures the discretization of the fully developed problem, independent of
-  how the inlet corners are treated.
+  oriented Kuhn tets around the hex diagonal. The mesh is invariant under x → x + hx.
+- **What the symmetry gives:** a discrete state that is invariant under that shift, with a
+  linear pressure drop, is *compatible* with the discrete equations. If one is reached, its
+  flow rate is ρUWH, because the inlet flux is exact and the scheme conserves mass.
+- **What it does not prove:**
+  - that such a discrete state exists for this nonlinear SIMPLE discretization;
+  - that it is unique;
+  - that the computed solution approaches it away from the ends.
+
+  None of this is proven here. The benchmark assumes it. The window indicators test it on
+  each run: they are consistent with it, but they cannot prove it.
+- **Consequence, under that assumption:** the window's profile measures the discretization of
+  the fully developed problem, independent of how the inlet corners are treated.
 
 ### Entrance development with the uniform inlet
 
@@ -140,16 +147,22 @@ like Stokes eigenmodes.
 
 1. The evidence is complete. The Exodus file named by the mesh description exists next to it
    and matches its SHA-256. The fields cover every lattice node once, with the lattice
-   coordinates to 1e-12 and finite values. The metrics exist, and the log exists. A missing
-   file fails; nothing is skipped.
-2. The log states ρ, μ and U on its control line, and they are the compared values. A missing
+   coordinates to 1e-12 and finite values; `-fields.csv` or the distributed parts listed by
+   `-fields.json` are both accepted. The metrics and the log exist. A recorded exit status of 0
+   exists: `PREFIX.exit` from the GPU recipe, or the manifest of `run_host_study.py`. A
+   missing file or a nonzero exit fails; nothing is skipped.
+2. The run is the one it is labelled as. The log has exactly one `SIMPLE Tet4, R ranks ...,
+   <scheme>, laminar` header and one final line. Both give the labelled rank count R. The
+   scheme is the one compared (`--advection`, default upwind). The final line's iteration
+   equals the last row of the metrics.
+3. The log states ρ, μ and U on its control line, and they are the compared values. A missing
    control line or value fails. The inlet mass flux is ρUWH to 1e-9.
-3. The run converged. The log has `CONVERGED`. The final momentum and continuity residuals are
+4. The run converged. The log has `CONVERGED`. The final momentum and continuity residuals are
    at most `--residual-tol`, the mass balance at most `--mass-tol`, and du, dp and dflux at most
    `--change-tol` (all 1e-8 in the study). Cancellation is at most 1e-10, and no outlet face is
    closed or changed.
-4. The window satisfies the a-priori bounds and holds at least 3 node planes.
-5. The window passes both a-posteriori indicators above.
+5. The window satisfies the a-priori bounds and holds at least 3 node planes.
+6. The window passes both a-posteriori indicators above.
 
 **Rank parity:** at every level, the 2- and 4-rank fields equal the 1-rank fields node by node:
 max |Δu|/U ≤ 1e-6 and max |Δp|/(ρU²) ≤ 1e-6, with absolute pressure and no mean removed.
@@ -193,9 +206,18 @@ stated reason:
 - two levels only;
 - a changed Exodus file;
 - missing evidence: no Exodus file, no Exodus name in the description, no log, or a log
-  without the control line or without μ.
+  without the control line or without μ;
+- a wrong run identity:
+  - files labelled 2 ranks whose log is a 1-rank run ending at another iteration;
+  - a log ending at another iteration than the metrics;
+  - the other advection scheme;
+  - two concatenated logs;
+  - a log without its header;
+- no exit record, a nonzero exit (137) despite complete outputs, or a malformed exit record;
+- a missing distributed field part.
 
-Rank differences of 5e-8 pass.
+Rank differences of 5e-8 pass, distributed field parts pass, and high-resolution runs pass
+when compared as high-resolution.
 
 ## Files
 
@@ -206,8 +228,8 @@ Rank differences of 5e-8 pass.
 | `duct_mesh.hpp` | C++ mirror of the lattice, plus a test slab partition in ElementDomain's shape. Coordinates are `(j*W)/ny - W/2` in both languages: no multiply feeds an add, so an FMA-contracting compiler (GCC's default on aarch64) rounds exactly like Python. Tests still allow 4·eps·max(L,W,H) on coordinates only; topology and side sets must match exactly |
 | `duct_host_run.cpp` | Host CPU/MPI run: slab partition, production `simple_partition`, production `DistributedSimpleRunner`. Uses the production option parser, and writes the same CSV files and `CONVERGED` line as `mars_segregated_simple` |
 | `duct_host_solver.hpp` | Test-only gathered GMRES(60) with ILU(0), relative true residual 1e-12 (the gates' dense LU does not scale to these sizes) |
-| `duct_compare.py` | Comparator: `run` (one result) and `study` (all runs, parity, refinement, GCI) |
-| `run_host_study.py`, `test_run_host_study.py` | Meshes, host runs and study in one command (used by ctest). Each run records a manifest (executable SHA-256, arguments, ranks, mesh SHA-256, exit status, output SHA-256). Results are reused only when it matches; a missing executable, a failed launch or a nonzero exit fails |
+| `duct_compare.py` | Comparator: `run` (one result, `--ranks` required) and `study` (all runs, parity, refinement, GCI). Checks each run's identity (ranks, advection, final iteration) and recorded exit status |
+| `run_host_study.py`, `test_run_host_study.py` | Meshes, host runs and study in one command (used by ctest). Each run records a manifest: the complete launch command (resolved launcher, rank flag and count, launcher arguments, executable, driver arguments), the SHA-256 of launcher, executable and mesh, the exit status and the output SHA-256. Results are reused only when it matches. A missing launcher or executable, or a nonzero exit, fails |
 | `duct_exodus_check.cpp`, `test_duct_exodus.py` | Production native reader (`read_simple_mesh`) on generated files, which must return the C++ lattice (netCDF only) |
 | `test_duct_analytic.py`, `analytic_check.cpp`, `test_duct_mesh.py`, `test_duct_compare.py`, `test_run_host_study.py` | Tests described above; Python 3.6 compatible (checked with vermin) |
 
@@ -220,12 +242,14 @@ Test suite (`ctest -LE long`, 7 tests, about 3 minutes). It was built with `-mfm
 |---|---|
 | analytic (C++, Python, cross-check) | pass |
 | mesh (topology, orientation, tags, netCDF bytes, determinism, C++ mirror) | pass |
-| comparator (33 cases, including missing evidence) | pass |
+| comparator (44 cases: missing evidence, run identity, exit records, distributed parts) | pass |
 | production Exodus reader on 1 and 2 ranks | pass |
-| study script (9 cases: manifests, stale or edited caches, nonzero exit, missing executable) | pass |
+| study script (13 cases: manifests, launcher and executable identity, stale or edited caches, nonzero exit) | pass |
 | coarse duct on 1/2/4 ranks, fresh | pass |
 
-The production reader test is built because netCDF 4.9.2 was installed locally for it.
+The production reader test is built because netCDF 4.9.2 was installed locally for it. The same
+7 tests also pass with this directory copied onto `cstone` 092297d and built against its current
+production headers; there, the fresh host runs converge at iteration 3338 on 1, 2 and 4 ranks.
 
 **Coordinate portability, reproduced:** with the same contracting flags, the 1d2037c formula
 `-W/2 + j*hy` compiled to an FMA, and its cells = 6 coordinates differed from Python. The
@@ -234,7 +258,9 @@ power-of-two levels (4 to 64) both formulas are exact, so those meshes are uncha
 
 Host study with the production runner, upwind, default controls and tolerances 1e-8. The
 three-level refinement uses the 4-rank runs, because 16 cells was run on 4 ranks only; at 4
-and 8 cells, 1, 2 and 4 ranks agree to round-off.
+and 8 cells, 1, 2 and 4 ranks agree to round-off. These runs predate exit records. Their exit
+codes, recorded at run time by the local driver script (all 0), were transcribed into `.exit`
+files, and the result below passes the identity and exit checks.
 
 | cells | ranks | iterations | profile L2 | max interior | G error | wall slip | transverse/U | window indicator |
 |---|---|---|---|---|---|---|---|---|
@@ -274,18 +300,25 @@ about 900× at 8 cells.
 
 ## Daint (not executed here)
 
-From the configured MARS CUDA/Hypre build directory (for example `mars-v010-check/build-hypre`),
-after checking out `cstone-simple-duct`. Only the existing production target is built; no CMake
-injection is needed. The meshes are generated on the login node (nz = 32 takes 2 s and 28 MB).
+Run on `cstone`, which has SIMPLE fixes newer than this branch's base. This assumes the test
+files are integrated there (see Integration). From the configured MARS CUDA/Hypre build
+directory (for example `mars-v010-check/build-hypre`), build only the existing production
+target; no CMake injection is needed:
 
 ```bash
-git fetch origin cstone-simple-duct && git checkout cstone-simple-duct &&
+git switch cstone && git pull --ff-only &&
+test -f ../tests/reference/openaccel/simple_duct/duct_compare.py &&
 cmake --build . --target mars_segregated_simple --parallel 4
 ```
 
-Refinement study, levels 8/16/32 on 1/2/4 GPUs of one node (9 runs). `advection=upwind` is
-the production default and the gated case. Rerun the identical block with
-`advection=high-resolution` for the limited scheme, which lands in its own directory:
+The meshes are generated on the login node; nz = 32 takes 2 s and 28 MB. Each srun's exit
+status goes to `duct-<cells>-<np>.exit`, and the comparator rejects a run whose status is
+missing or nonzero, even when its fields and log look complete.
+
+Refinement study, levels 8/16/32 on 1/2/4 GPUs of one node (9 runs). `advection=upwind` is the
+production default and the gated case. Rerun the identical block with
+`advection=high-resolution` for the limited scheme; it lands in its own directory, and the
+comparator then requires high-resolution logs:
 
 ```bash
 (
@@ -308,19 +341,19 @@ for cells in 8 16 32; do
       --iterations 30000 --report-every 500 \
       --residual-tol 1e-8 --mass-tol 1e-8 --change-tol 1e-8 \
       --output-prefix "$duct_run/duct-$cells-$np" \
-      2>&1 | tee "$duct_run/duct-$cells-$np.log" || echo "duct-$cells-$np exit $?" >> "$duct_run/run-failures.txt"
+      2>&1 | tee "$duct_run/duct-$cells-$np.log"
+    printf '%s\n' "${PIPESTATUS[0]}" > "$duct_run/duct-$cells-$np.exit"
   done
 done
 python3 "$duct/duct_compare.py" study "$duct_run" --levels 8,16,32 --ranks 1,2,4 \
-  --report "$duct_run/study.md"
+  --advection "$advection" --report "$duct_run/study.md"
 printf 'Results: %s\n' "$duct_run"
 )
 ```
 
-A pass requires `**PASS**` at the end of `study.md`, which the study also prints. A
-`run-failures.txt` file means a run did not converge or aborted, and its log says why. The study
-only reads, so it can be rerun on the same directory, for example with `--window` or a subset of
-`--levels`/`--ranks`. The meshes are regenerated per directory and checked against their
+A pass requires `**PASS**` at the end of `study.md`, which the study also prints. The study only
+reads, so it can be rerun on the same directory, for example with `--window` or a subset of
+`--levels`/`--ranks`. Each directory holds its own meshes, and they are checked against their
 SHA-256.
 
 Optional finest level, to check the asymptotic range (mesh 225 MB, 1.9M nodes, 11M Tet4). Pass
@@ -344,11 +377,32 @@ for np in 1 2 4; do
     --iterations 30000 --report-every 500 \
     --residual-tol 1e-8 --mass-tol 1e-8 --change-tol 1e-8 \
     --output-prefix "$duct_run/duct-$cells-$np" \
-    2>&1 | tee "$duct_run/duct-$cells-$np.log" || echo "duct-$cells-$np exit $?" >> "$duct_run/run-failures.txt"
+    2>&1 | tee "$duct_run/duct-$cells-$np.log"
+  printf '%s\n' "${PIPESTATUS[0]}" > "$duct_run/duct-$cells-$np.exit"
 done
-python3 "$duct/duct_compare.py" study "$duct_run" --levels 16,32,64 --ranks 1,2,4 --report "$duct_run/study-64.md"
+python3 "$duct/duct_compare.py" study "$duct_run" --levels 16,32,64 --ranks 1,2,4 \
+  --advection "$advection" --report "$duct_run/study-64.md"
 )
 ```
+
+`--field-output distributed` (per-rank CSV parts plus `-fields.json`) is also accepted by the
+comparator, if gathered output becomes too large.
+
+## Integration
+
+Only this directory belongs on `cstone`; nothing else differs from its base. With your own git
+identity, which carries no AI author or co-author metadata:
+
+```bash
+git fetch origin cstone cstone-simple-duct &&
+git switch cstone && git pull --ff-only &&
+git checkout origin/cstone-simple-duct -- tests/reference/openaccel/simple_duct &&
+git status --short &&
+git commit -m "tests: rectangular-duct SIMPLE validation against the analytic duct solution" &&
+git push origin cstone
+```
+
+`git status --short` should list only `tests/reference/openaccel/simple_duct/` files.
 
 ## Scope and limits
 

@@ -1,15 +1,20 @@
 #!/usr/bin/env python3
 """Rectangular-duct SIMPLE comparator (contract: README.md, "Mathematical contract").
 
-  run    PREFIX --mesh MESH.json   one SIMPLE result (PREFIX-fields.csv, PREFIX-metrics.csv,
-                                   PREFIX.log) against the analytic duct solution; MESH.json
-                                   must sit next to the Exodus file it describes
+  run    PREFIX --mesh MESH.json --ranks R
+                                   one SIMPLE result (PREFIX-fields.csv or the parts listed by
+                                   PREFIX-fields.json, PREFIX-metrics.csv, PREFIX.log, and the exit
+                                   status in PREFIX.exit or PREFIX.run.json) against the analytic
+                                   duct solution; MESH.json must sit next to the Exodus file it
+                                   describes
   study  RUNDIR --levels 8,16,32 --ranks 1,2,4
                                    every RUNDIR/duct-<cells>-<ranks> result (mesh RUNDIR/duct-<cells>.json):
                                    each run, rank parity per level and refinement across levels
 
 Per run: complete evidence (Exodus file matching its SHA-256, fields, metrics, a log with the
-controls and CONVERGED); converged; the comparison window starts beyond the a-priori entrance
+controls and CONVERGED, a recorded exit status of 0); the run's identity (the log's rank count
+equals the label, its advection scheme equals --advection, and it ends at the metrics' final
+iteration, with one header and one final line); converged; the comparison window starts beyond the a-priori entrance
 length and ends before the outlet's upstream influence; two a-posteriori indicators hold: the
 window sections agree and the section-mean pressure is linear, each to 10% of the measured error.
 The indicators detect entrance or outlet transients that vary across the window; they are not a
@@ -50,13 +55,19 @@ ORDER_RANGE = (0.5, 3.0) # three-level observed orders accepted for a GCI band
 FLOOR = 1e-9             # errors below this count as zero (exact synthetic fields)
 
 
+ADVECTION = ("upwind", "high-resolution")
+
+
 class Controls(object):
     def __init__(self, rho=1.0, mu=0.1, inlet_velocity=0.1, residual_tol=1e-8, mass_tol=1e-8,
-                 change_tol=1e-8, rank_tol=1e-6):
+                 change_tol=1e-8, rank_tol=1e-6, advection="upwind"):
         self.rho, self.mu, self.U = rho, mu, inlet_velocity
         self.residual_tol, self.mass_tol, self.change_tol, self.rank_tol = residual_tol, mass_tol, change_tol, rank_tol
+        self.advection = advection
         if not all(math.isfinite(v) and v > 0 for v in (rho, mu, inlet_velocity, residual_tol, mass_tol, change_tol, rank_tol)):
             raise ValueError("controls and tolerances must be finite and positive")
+        if advection not in ADVECTION:
+            raise ValueError("advection must be one of %s" % ", ".join(ADVECTION))
 
 
 # ------------------------------------------------------------------ inputs
@@ -84,32 +95,52 @@ def load_mesh(path):
     return lattice
 
 
-def load_fields(path, lattice):
-    """u, v, w, p by lattice node; coordinates must be the lattice's."""
+def field_files(prefix, lattice):
+    """PREFIX-fields.csv (--field-output gathered), else the per-rank parts listed by
+    PREFIX-fields.json (--field-output distributed, format mars-simple-fields-v1)."""
+    if os.path.isfile(prefix + "-fields.csv"):
+        return [prefix + "-fields.csv"]
+    manifest = prefix + "-fields.json"
+    if not os.path.isfile(manifest):
+        raise ValueError("%s: no -fields.csv or -fields.json" % prefix)
+    with open(manifest) as f:
+        info = json.load(f)
+    parts = info.get("parts")
+    if info.get("format") != "mars-simple-fields-v1" or info.get("nodes") != lattice.nodes or not parts \
+            or any(not isinstance(q, str) or os.path.basename(q) != q for q in parts):
+        raise ValueError("%s: not a distributed field manifest for %d nodes" % (manifest, lattice.nodes))
+    return [os.path.join(os.path.dirname(manifest), q) for q in parts]
+
+
+def load_fields(prefix, lattice):
+    """u, v, w, p by lattice node from every field file of PREFIX; each node exactly once, and
+    coordinates must be the lattice's."""
     n = lattice.nodes
     u, v, w, p = [None] * n, [0.0] * n, [0.0] * n, [0.0] * n
     scale = max(lattice.length, lattice.width, lattice.height)
     worst = 0.0
-    with open(path, newline="") as f:
-        reader = csv.reader(f)
-        if next(reader, None) != FIELD_COLUMNS:
-            raise ValueError("%s: expected columns %s" % (path, ",".join(FIELD_COLUMNS)))
-        for row in reader:
-            if len(row) != 8:
-                raise ValueError("%s: malformed row" % path)
-            g = int(float(row[0]))
-            if g < 0 or g >= n or float(row[0]) != g or u[g] is not None:
-                raise ValueError("%s: invalid or duplicate node %s" % (path, row[0]))
-            values = [float(x) for x in row[1:]]
-            if not all(math.isfinite(x) for x in values):
-                raise ValueError("%s: nonfinite value at node %d" % (path, g))
-            i, j, k = lattice.ijk(g)
-            worst = max(worst, abs(values[0] - lattice.x(i)), abs(values[1] - lattice.y(j)), abs(values[2] - lattice.z(k)))
-            u[g], v[g], w[g], p[g] = values[3:]
+    paths = field_files(prefix, lattice)
+    for path in paths:
+        with open(path, newline="") as f:
+            reader = csv.reader(f)
+            if next(reader, None) != FIELD_COLUMNS:
+                raise ValueError("%s: expected columns %s" % (path, ",".join(FIELD_COLUMNS)))
+            for row in reader:
+                if len(row) != 8:
+                    raise ValueError("%s: malformed row" % path)
+                g = int(float(row[0]))
+                if g < 0 or g >= n or float(row[0]) != g or u[g] is not None:
+                    raise ValueError("%s: invalid or duplicate node %s" % (path, row[0]))
+                values = [float(x) for x in row[1:]]
+                if not all(math.isfinite(x) for x in values):
+                    raise ValueError("%s: nonfinite value at node %d" % (path, g))
+                i, j, k = lattice.ijk(g)
+                worst = max(worst, abs(values[0] - lattice.x(i)), abs(values[1] - lattice.y(j)), abs(values[2] - lattice.z(k)))
+                u[g], v[g], w[g], p[g] = values[3:]
     if any(x is None for x in u):
-        raise ValueError("%s: %d lattice nodes missing" % (path, sum(x is None for x in u)))
+        raise ValueError("%s: %d lattice nodes missing" % (prefix, sum(x is None for x in u)))
     if worst > 1e-12 * scale:
-        raise ValueError("%s: coordinates differ from the duct lattice by %.3e" % (path, worst))
+        raise ValueError("%s: coordinates differ from the duct lattice by %.3e" % (prefix, worst))
     return u, v, w, p
 
 
@@ -131,18 +162,54 @@ def load_metrics(path):
     return out
 
 
+HEADER = re.compile(r"^SIMPLE Tet4\b.*?\b(\d+) ranks\b.*?,\s*(upwind|high-resolution),\s*laminar")
+FINAL = re.compile(r"^(CONVERGED|NOT CONVERGED)\b.*?\biterations=(\d+) ranks=(\d+)")
+
+
 def read_log(path):
-    """('CONVERGED' | 'NOT CONVERGED' | None, {control: value} from the 'rho=... mu=...' line)."""
-    verdict, controls = None, {}
+    """What the solver says about its own run: {'verdict', 'controls', 'headers', 'finals'}.
+
+    verdict is 'CONVERGED', 'NOT CONVERGED' (also on ERROR) or None; controls come from the
+    'rho=... mu=... inlet_speed=...' line; headers lists (ranks, advection) of every 'SIMPLE Tet4'
+    line and finals (verdict, iterations, ranks) of every final line, so concatenated or
+    truncated logs are visible to the caller."""
+    out = {"verdict": None, "controls": {}, "headers": [], "finals": []}
     with open(path, errors="replace") as f:
         for line in f:
-            if line.startswith("CONVERGED"):
-                verdict = "CONVERGED"
+            header, final = HEADER.match(line), FINAL.match(line)
+            if header:
+                out["headers"].append((int(header.group(1)), header.group(2)))
+            elif final:
+                out["finals"].append((final.group(1), int(final.group(2)), int(final.group(3))))
+                out["verdict"] = final.group(1)
             elif line.startswith("NOT CONVERGED") or line.startswith("ERROR"):
-                verdict = "NOT CONVERGED"
+                out["verdict"] = "NOT CONVERGED"
+            elif line.startswith("CONVERGED"):
+                out["verdict"] = "CONVERGED"
             elif line.startswith("rho="):
-                controls = dict((k, float(v)) for k, v in re.findall(r"(\w+)=([-+0-9.eE]+)", line))
-    return verdict, controls
+                out["controls"] = dict((k, float(v)) for k, v in re.findall(r"(\w+)=([-+0-9.eE]+)", line))
+    if any(v == "NOT CONVERGED" for v, _, _ in out["finals"]):
+        out["verdict"] = "NOT CONVERGED"
+    return out
+
+
+def read_exit(prefix):
+    """Recorded exit statuses of the run: PREFIX.exit (a single integer, written by the GPU
+    recipe) and/or the 'exit' of PREFIX.run.json (run_host_study.py)."""
+    statuses = []
+    if os.path.isfile(prefix + ".exit"):
+        with open(prefix + ".exit") as f:
+            text = f.read().strip()
+        if not re.match(r"^-?\d+$", text):
+            raise ValueError("%s.exit: expected one integer, found %r" % (prefix, text[:40]))
+        statuses.append(int(text))
+    if os.path.isfile(prefix + ".run.json"):
+        with open(prefix + ".run.json") as f:
+            status = json.load(f).get("exit")
+        if not isinstance(status, int):
+            raise ValueError("%s.run.json: no integer exit status" % prefix)
+        statuses.append(status)
+    return statuses
 
 
 # ------------------------------------------------------------------ section geometry
@@ -206,8 +273,9 @@ def default_window(lattice, duct, controls):
     return math.ceil(start / step - 1e-9) * step, math.floor(end / step + 1e-9) * step, start, end, reynolds
 
 
-def analyze(prefix, lattice, controls, window=None):
-    """Summary dict of one run; 'failures' lists every violated per-run condition."""
+def analyze(prefix, lattice, controls, window=None, ranks=None):
+    """Summary dict of one run; 'failures' lists every violated per-run condition. ranks is the
+    rank count the run is labelled with; its log must say the same."""
     duct = da.Duct(lattice.width, lattice.height, controls.mu)
     G = duct.pressure_gradient(controls.U)
     uc = duct.centerline(G)
@@ -216,22 +284,49 @@ def analyze(prefix, lattice, controls, window=None):
                         "G_planar": da.planar_pressure_gradient(lattice.height, controls.mu, controls.U)}}
     fail = out["failures"].append
     try:
-        u, v, w, p = load_fields(prefix + "-fields.csv", lattice)
+        u, v, w, p = load_fields(prefix, lattice)
         metrics = load_metrics(prefix + "-metrics.csv")
     except (OSError, ValueError, StopIteration) as e:
         fail("input: %s" % e)
         return out
-    # The log is evidence: the solver's own verdict and the physical controls it ran with.
+    # The log is evidence: the solver's own verdict, identity and the physical controls it ran with.
     try:
-        log, used = read_log(prefix + ".log")
+        record = read_log(prefix + ".log")
     except OSError as e:
-        log, used = None, {}
+        record = {"verdict": None, "controls": {}, "headers": [], "finals": []}
         fail("log: %s" % e)
+    log, used = record["verdict"], record["controls"]
     out["iterations"] = int(metrics["iteration"])
     out["final_metrics"] = metrics
     out["log"] = log
     if log != "CONVERGED":
         fail("log: no CONVERGED line")
+    # Run identity: one run per log, the labelled rank count, the compared scheme, and the
+    # iteration the metrics end at.
+    if len(record["headers"]) != 1 or len(record["finals"]) != 1:
+        fail("identity: the log holds %d run headers and %d final lines; expected one of each"
+             % (len(record["headers"]), len(record["finals"])))
+    else:
+        (header_ranks, scheme), (_, iterations, final_ranks) = record["headers"][0], record["finals"][0]
+        out["log_identity"] = {"ranks": final_ranks, "advection": scheme, "iterations": iterations}
+        if header_ranks != final_ranks or (ranks is not None and final_ranks != ranks):
+            fail("identity: labelled %s ranks, the log says %d (header) and %d (final)" % (ranks, header_ranks, final_ranks))
+        if scheme != controls.advection:
+            fail("identity: the run used %s advection, the comparison expects %s" % (scheme, controls.advection))
+        if iterations != out["iterations"]:
+            fail("identity: the log ends at iteration %d, the metrics at %d" % (iterations, out["iterations"]))
+    # The launcher's exit status: recorded by the GPU recipe (.exit) or run_host_study (.run.json).
+    try:
+        statuses = read_exit(prefix)
+    except (OSError, ValueError) as e:
+        statuses = None
+        fail("exit: %s" % e)
+    if statuses is not None:
+        out["exit"] = statuses
+        if not statuses:
+            fail("exit: no exit status recorded (%s.exit or %s.run.json)" % (prefix, prefix))
+        elif any(s != 0 for s in statuses):
+            fail("exit: the run exited %s" % ", ".join(str(s) for s in statuses))
     # The analytic solution is for these controls: the run must state them and have used them.
     for key, value in (("rho", controls.rho), ("mu", controls.mu), ("inlet_speed", controls.U)):
         if key not in used:
@@ -327,8 +422,8 @@ def analyze(prefix, lattice, controls, window=None):
 
 # ------------------------------------------------------------------ rank parity
 def field_difference(a_prefix, b_prefix, lattice, controls):
-    a = load_fields(a_prefix + "-fields.csv", lattice)
-    b = load_fields(b_prefix + "-fields.csv", lattice)
+    a = load_fields(a_prefix, lattice)
+    b = load_fields(b_prefix, lattice)
     vel = max(math.sqrt((a[0][g] - b[0][g]) ** 2 + (a[1][g] - b[1][g]) ** 2 + (a[2][g] - b[2][g]) ** 2) for g in range(lattice.nodes))
     pres = max(abs(a[3][g] - b[3][g]) for g in range(lattice.nodes))
     return vel / controls.U, pres / (controls.rho * controls.U ** 2)
@@ -359,7 +454,7 @@ def profile_gci(prefixes, lattices, sec_m, duct, G, x_ref):
     The order comes from the solutions alone: RMS(u_m - u_c) / RMS(u_f - u_m) over the coarse
     nodes. Returns order, band = F_s RMS(u_f - u_m) / (2^p - 1), the finest RMS error against the
     analytic profile and the extrapolated RMS error, all over the medium nodes and / u_c."""
-    fields = [load_fields(pre + "-fields.csv", lat)[0] for pre, lat in zip(prefixes, lattices)]
+    fields = [load_fields(pre, lat)[0] for pre, lat in zip(prefixes, lattices)]
     lc, lm, lf = lattices
     if any(abs(x_ref / lat.hx - round(x_ref / lat.hx)) > 1e-9 for lat in lattices):
         raise ValueError("reference section x=%g is not a node plane of every level" % x_ref)
@@ -397,7 +492,7 @@ def study(rundir, levels, ranks, controls, window=None, refinement=True):
         return report
     for c in levels:
         for r in ranks:
-            s = analyze(os.path.join(rundir, "duct-%d-%d" % (c, r)), lattices[c], controls, window)
+            s = analyze(os.path.join(rundir, "duct-%d-%d" % (c, r)), lattices[c], controls, window, ranks=r)
             report["runs"]["%d-%d" % (c, r)] = s
             for f in s["failures"]:
                 fail("cells %d, %d ranks: %s" % (c, r, f))
@@ -537,7 +632,7 @@ def markdown(report):
 
 
 def controls_from(o):
-    return Controls(o.rho, o.mu, o.inlet_velocity, o.residual_tol, o.mass_tol, o.change_tol, o.rank_tol)
+    return Controls(o.rho, o.mu, o.inlet_velocity, o.residual_tol, o.mass_tol, o.change_tol, o.rank_tol, o.advection)
 
 
 def main(argv=None):
@@ -546,6 +641,7 @@ def main(argv=None):
     r = sub.add_parser("run")
     r.add_argument("prefix")
     r.add_argument("--mesh", required=True)
+    r.add_argument("--ranks", type=int, required=True, help="rank count the run is labelled with")
     r.add_argument("--summary")
     s = sub.add_parser("study")
     s.add_argument("rundir")
@@ -562,11 +658,12 @@ def main(argv=None):
         q.add_argument("--change-tol", type=float, default=1e-8)
         q.add_argument("--rank-tol", type=float, default=1e-6)
         q.add_argument("--window", type=float, nargs=2, metavar=("START", "END"))
+        q.add_argument("--advection", default="upwind", choices=ADVECTION, help="scheme the runs must report")
     o = p.parse_args(argv)
     try:
         controls = controls_from(o)
         if o.command == "run":
-            summary = analyze(o.prefix, load_mesh(o.mesh), controls, o.window)
+            summary = analyze(o.prefix, load_mesh(o.mesh), controls, o.window, ranks=o.ranks)
             print("\n".join(run_lines(summary)))
             if o.summary:
                 with open(o.summary, "x") as f:

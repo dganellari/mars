@@ -1,10 +1,10 @@
 #pragma once
 // C++ mirror of duct_mesh.py (same lattice, numbering, orientation and side sets; canonical()
 // must match `duct_mesh.py --dump` exactly except coordinates, which may differ by
-// coordinate_tolerance()): x in [0,L] (inlet x=0,
-// outlet x=L), y in [-W/2,W/2], z in [-H/2,H/2], no-slip walls on the four sides. nx*ny*nz
-// hexes, six positively oriented Kuhn tets per hex around the hex diagonal, so the mesh is
-// invariant under x -> x+hx and a discrete fully developed state exists.
+// coordinate_tolerance()): x in [0,L] (inlet x=0, outlet x=L), y in [-W/2,W/2], z in
+// [-H/2,H/2], no-slip walls on the four sides. nx*ny*nz hexes, six positively oriented Kuhn
+// tets per hex around the hex diagonal. The mesh is invariant under x -> x+hx, so an x-invariant
+// discrete state is compatible with the equations (assumed to be reached, not proven; README.md).
 //
 // slab_view(): a test-only partition in the shape ElementDomain presents (keys = lattice ids,
 // sorted local nodes, lower-halo/own/upper-halo element bands, lowest-rank node ownership,
