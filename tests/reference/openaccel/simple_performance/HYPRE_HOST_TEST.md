@@ -126,7 +126,27 @@ the independent MARS residual and Hypre's Krylov work residual both equal
 2.67277e-13, below the 4.05018e-11 acceptance limit. The former copy-and-matvec
 wrapper check instead reports 1.88542e-7. This localizes the disagreement to
 the wrapper's residual evaluation path; it does not prove a stream race.
-The revised construction still needs the same cached GPU case to pass.
+The revised construction failed again at momentum iteration 27 in job 4884759
+on nid005419: wrapper 4.96364e-7, original MARS CSR 2.84308e-16 and Krylov work
+2.84302e-16, against a 2.00185e-12 limit. Thus moving the operations to Hypre's
+compute stream did not resolve the discrepancy. Its cause remains unconfirmed.
+
+`MARS_HYPRE_RESIDUAL_AUDIT=1` enables a failure-only probe. It completes pending
+device work, extracts the stored residual to device scratch for a separate
+Thrust norm, and measures differences between Hypre's RHS/solution and the
+caller's device vectors. It then recomputes with the existing workspace, with
+completed copy-and-matvec operations, and with a fresh workspace. The log records
+all norms and header versions; it contains no field values. A passing repeat
+never changes the original rejection or its recorded residual. All ranks enter
+the probe if any rank enables it. Device-wide synchronization, temporary device
+storage and extra reductions occur only on this opted-in failure path; this is
+not a production performance mode. The original MARS CSR check still follows.
+
+The host regression exercises the probe on both Hypre 2.32.0 and 3.1.0 with
+ASan/UBSan and both Krylov backends. It detects deliberately overwritten residual
+storage and mismatched input copies, checks recomputed norms against the original
+CSR, preserves cached handles and acceptance evidence, and verifies that accepted
+solves do not enter the probe. These tests do not reproduce the GPU failure.
 
 For the water/backflow fixture, the pseudo-time momentum diagonal is dominated
 by `rho*V/(alpha_u*pseudo_dt)`. Thus `d=V/a` is about `6e-10` and pressure

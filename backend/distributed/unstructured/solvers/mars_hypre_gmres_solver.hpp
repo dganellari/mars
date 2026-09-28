@@ -874,6 +874,29 @@ public:
                               << " acceptance_limit=" << residual_limit;
                 std::cerr << '\n';
             }
+            const char* audit = std::getenv("MARS_HYPRE_RESIDUAL_AUDIT");
+            const int audit_requested = audit && std::string(audit) == "1";
+            int audit_any = 0;
+            MPI_Allreduce(&audit_requested, &audit_any, 1, MPI_INT, MPI_MAX, comm_);
+            if (audit_any) {
+                const auto result = audit_true_residual(b, x);
+                if (rank == 0) {
+                    std::cerr << "[hypre-residual-audit]";
+#ifdef HYPRE_RELEASE_VERSION
+                    std::cerr << " hypre_headers=" << HYPRE_RELEASE_VERSION;
+#endif
+#ifdef CUDART_VERSION
+                    std::cerr << " cudart_headers=" << CUDART_VERSION;
+#endif
+                    std::cerr << " stored_norm=" << result.stored_norm
+                              << " rhs_copy_difference=" << result.rhs_difference
+                              << " solution_copy_difference=" << result.solution_difference
+                              << " synchronized_norm=" << result.synchronized_norm
+                              << " copy_matvec_norm=" << result.copy_matvec_norm
+                              << " fresh_workspace_norm=" << result.fresh_workspace_norm
+                              << " verdict=REJECTED\n";
+                }
+            }
         }
         if (verbose_) {
             std::cout << "Hypre GMRES " << (converged ? "converged" : "did not converge")
@@ -909,6 +932,65 @@ public:
         last_absolute_residual_ = std::sqrt(residual2);
         last_rhs_norm_ = std::sqrt(rhs2);
         return std::sqrt(rhs2 > 0 ? residual2 / rhs2 : residual2);
+    }
+
+    struct ResidualAudit {
+        double stored_norm, rhs_difference, solution_difference;
+        double synchronized_norm, copy_matvec_norm, fresh_workspace_norm;
+    };
+
+    // Failure-only diagnostic: fields stay on the GPU; only norms reach the host.
+    double audit_vector_norm(HYPRE_IJVector vector, const RealType* expected = nullptr) {
+        const HYPRE_Int m = globalDofEnd_ - globalDofStart_;
+        thrust::device_vector<HYPRE_Real> d_values(m);
+        auto* values = thrust::raw_pointer_cast(d_values.data());
+        const HYPRE_Int error = HYPRE_IJVectorGetValues(vector, m,
+            thrust::raw_pointer_cast(d_row_global_.data()), values);
+        require_reuse(cudaDeviceSynchronize() == cudaSuccess && error == 0 && HYPRE_GetError() == 0,
+                      "residual audit vector extraction failed");
+        const double local = thrust::transform_reduce(thrust::make_counting_iterator(HYPRE_Int(0)),
+            thrust::make_counting_iterator(m), [=] __device__ (HYPRE_Int row) -> double {
+                const double difference = values[row] - (expected ? expected[row] : 0.0);
+                return difference * difference;
+            }, 0.0, thrust::plus<double>());
+        require_reuse(cudaGetLastError() == cudaSuccess, "residual audit reduction failed");
+        double global = 0;
+        MPI_Allreduce(&local, &global, 1, MPI_DOUBLE, MPI_SUM, comm_);
+        return std::sqrt(global);
+    }
+
+    ResidualAudit audit_true_residual(const Vector& b, const Vector& x) {
+        const double saved_absolute = last_absolute_residual_, saved_rhs = last_rhs_norm_;
+        require_reuse(cudaDeviceSynchronize() == cudaSuccess, "residual audit synchronization failed");
+        ResidualAudit result{};
+        result.stored_norm = audit_vector_norm(r_hypre_);
+        result.rhs_difference = audit_vector_norm(b_hypre_, b.data());
+        result.solution_difference = audit_vector_norm(x_hypre_, x.data());
+        true_relative_residual();
+        result.synchronized_norm = last_absolute_residual_;
+
+        // Repeat the Krylov residual construction with both operations completed.
+        HYPRE_Int error = HYPRE_ParVectorCopy(par_b_, par_r_);
+        require_reuse(cudaDeviceSynchronize() == cudaSuccess && error == 0,
+                      "residual audit RHS copy failed");
+        error = HYPRE_ParCSRMatrixMatvec(-1.0, parcsr_A_, par_x_, 1.0, par_r_);
+        require_reuse(cudaDeviceSynchronize() == cudaSuccess && error == 0,
+                      "residual audit matvec failed");
+        result.copy_matvec_norm = audit_vector_norm(r_hypre_);
+
+        const auto saved_ij = r_hypre_;
+        const auto saved_par = par_r_;
+        r_hypre_ = nullptr;
+        par_r_ = nullptr;
+        true_relative_residual();
+        result.fresh_workspace_norm = last_absolute_residual_;
+        error = HYPRE_IJVectorDestroy(r_hypre_);
+        r_hypre_ = saved_ij;
+        par_r_ = saved_par;
+        last_absolute_residual_ = saved_absolute;
+        last_rhs_norm_ = saved_rhs;
+        require_reuse(error == 0 && HYPRE_GetError() == 0, "residual audit cleanup failed");
+        return result;
     }
 
     // Build A_hypre_ entirely on the device:

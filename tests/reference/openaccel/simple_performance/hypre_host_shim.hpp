@@ -25,7 +25,7 @@
 #define __device__
 #define __global__
 using MPI_Comm = int;
-constexpr int MPI_COMM_WORLD = 0, MPI_INT = 0, MPI_DOUBLE = 1, MPI_MAX = 0;
+constexpr int MPI_COMM_WORLD = 0, MPI_INT = 0, MPI_DOUBLE = 1, MPI_MAX = 0, MPI_SUM = 1;
 inline int host_barriers = 0;
 inline int host_reductions = 0;
 inline void MPI_Comm_rank(MPI_Comm, int* rank) { *rank = 0; }
@@ -40,6 +40,8 @@ inline double MPI_Wtime() {
 }
 constexpr int cudaSuccess = 0, cudaMemcpyDeviceToHost = 0;
 inline int cudaGetLastError() { return 0; }
+inline int host_device_synchronizations = 0;
+inline int cudaDeviceSynchronize() { ++host_device_synchronizations; return cudaSuccess; }
 inline void cudaMemcpy(void* dst, const void* src, size_t bytes, int) { std::memcpy(dst, src, bytes); }
 struct HostDimension { int x = 0; };
 inline HostDimension blockIdx, blockDim, threadIdx;

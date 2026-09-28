@@ -353,8 +353,17 @@ The wrapper now constructs the residual as `-Ax`, then adds `b`, using Hypre
 compute-stream operations instead of copy-and-accumulate. Its real CPU Hypre
 test passes with ASan/UBSan, including poisoned residual workspace and both
 Krylov backends. This does not prove the GPU root cause or close the refinement
-study: cached GPU validation remains pending, with both residual checks and all
-acceptance thresholds retained.
+study: both residual checks and all acceptance thresholds remain unchanged.
+
+The compatibility rebuild succeeds, but job 4884759 on nid005419 fails again at
+momentum iteration 27: wrapper residual 4.96364e-7, original-CSR residual
+2.84308e-16, Krylov work norm 2.84302e-16, limit 2.00185e-12. The stream-based
+change did not resolve the discrepancy. Before resuming the full study, use
+`MARS_HYPRE_RESIDUAL_AUDIT=1` on a short cached one-GPU run to distinguish stored
+residual, input-copy, synchronization and workspace effects. See
+[the probe description](../simple_performance/HYPRE_HOST_TEST.md). The probe
+retains the original rejection even if a repeated calculation passes. Fine-grid
+convergence and the refinement verdict remain open; retain completed 8/16 runs.
 
 ## Daint commands
 

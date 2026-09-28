@@ -179,6 +179,29 @@ void residual_workspace() {
                     check(got_b==rhs && got_x==guess,"residual calculation modified b or x");
                     check(HYPRE_GetError()==0,"residual fixture API failure");
                 }
+                if (epoch==0 && rhs_scale==1. && x_scale==1.-1e-6) {
+                    const auto old_ij=solver.r_hypre_;
+                    const auto old_par=solver.par_r_;
+                    const double old_absolute=solver.last_absolute_residual_;
+                    const double old_rhs=solver.last_rhs_norm_;
+                    auto other_b=rhs,other_x=guess;
+                    other_b[0]+=1.; other_x[1]-=.5;
+                    HYPRE_ParVectorSetConstantValues(solver.par_r_,2.);
+                    const auto audit=solver.audit_true_residual(other_b,other_x);
+                    check(std::abs(audit.stored_norm-2*std::sqrt(double(n)))<1e-12,
+                          "audit missed overwritten residual storage");
+                    check(std::abs(audit.rhs_difference-1.)<1e-12
+                          && std::abs(audit.solution_difference-.5)<1e-12,
+                          "audit missed changed input copies");
+                    for (double norm : {audit.synchronized_norm,audit.copy_matvec_norm,audit.fresh_workspace_norm})
+                        check(std::abs(norm-expected)<=roundoff,"audit recomputation disagrees with CSR");
+                    check(solver.r_hypre_==old_ij && solver.par_r_==old_par
+                          && solver.last_absolute_residual_==old_absolute && solver.last_rhs_norm_==old_rhs,
+                          "audit changed cached handles or acceptance evidence");
+                    HYPRE_IJVectorGetValues(solver.b_hypre_,n,solver.d_row_global_.data(),got_b.data());
+                    HYPRE_IJVectorGetValues(solver.x_hypre_,n,solver.d_row_global_.data(),got_x.data());
+                    check(got_b==rhs && got_x==guess,"audit modified b or x");
+                }
             }
         }
     }
@@ -241,11 +264,16 @@ void mixed_residual_acceptance() {
         std::fill(b.begin(),b.end(),0);
         const double unit_residual=norms(b,x).first;
         solver.enable_true_residual_check(1e-13,1e-10);
+        setenv("MARS_HYPRE_RESIDUAL_AUDIT","1",1);
         for (double factor : {0.,0.5,2.}) {
             std::fill(x.begin(),x.end(),factor*1e-13/unit_residual);
+            const int synchronizations=host_device_synchronizations;
             check(solver.solve(matrix,b,x,0,32,0,32,map)==(factor<=1),"zero RHS mixed acceptance mismatch");
             check((norms(b,x).first<=1e-13)==(factor<=1),"independent zero RHS check failed");
+            check((host_device_synchronizations>synchronizations)==(factor>1),
+                  "audit synchronized an accepted solve or skipped a rejection");
         }
+        unsetenv("MARS_HYPRE_RESIDUAL_AUDIT");
         expect_failure([&] { solver.enable_true_residual_check(-1.,1e-10); });
         expect_failure([&] { solver.enable_true_residual_check(1e-13,-1.); });
         expect_failure([&] { solver.enable_true_residual_check(0.,0.); });
@@ -260,6 +288,7 @@ void mixed_residual_acceptance() {
 int main() {
     setenv("MARS_HYPRE_MINITER", "0", 1);
     unsetenv("MARS_HYPRE_FLEXGMRES");
+    unsetenv("MARS_HYPRE_RESIDUAL_AUDIT");
     try {
         for (const char* flexible : {"0","1"}) {
             setenv("MARS_HYPRE_FLEXGMRES",flexible,1);

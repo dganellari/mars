@@ -28,7 +28,7 @@ def main():
     # Keep Hypre includes so version-specific declarations are compiled too.
     wrapper = re.sub(r'^#include(?!\s+[<"](?:HYPRE|_hypre))[^\n]*\n', '', wrapper, flags=re.M)
     # Sequential internal headers alias MPI names; retain our instrumented stubs.
-    mpi_names = ('Comm', 'COMM_WORLD', 'INT', 'DOUBLE', 'MAX', 'Comm_rank',
+    mpi_names = ('Comm', 'COMM_WORLD', 'INT', 'DOUBLE', 'MAX', 'SUM', 'Comm_rank',
                  'Allreduce', 'Barrier', 'Abort', 'Wtime')
     mpi_restore = '\n'.join('#undef MPI_' + name for name in mpi_names)
     wrapper = wrapper.replace('\nnamespace mars {', '\n' + mpi_restore + '\nnamespace mars {', 1)
