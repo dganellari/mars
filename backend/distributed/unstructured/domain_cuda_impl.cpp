@@ -15,6 +15,8 @@
 
 #include <cstone/domain/domain.hpp>
 #include <cstone/domain/assignment.hpp>
+#include <cstdio>
+#include <cstdlib>
 #include <tuple>
 
 namespace mars
@@ -37,6 +39,18 @@ void requireEnoughElements(size_t localCount, int numRanks)
                                  "). Each rank must get at least one element for domain decomposition.");
     }
 }
+
+// MARS_SYNC_TRACE=1: every rank reports each finished phase of the element sync, so a hang shows which phase and
+// which ranks did not arrive.
+void syncTrace(const char* phase)
+{
+    static const bool on = std::getenv("MARS_SYNC_TRACE") != nullptr;
+    if (!on) return;
+    int rank = 0;
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    std::fprintf(stderr, "[sync-trace] rank %d finished %s at %.3f s\n", rank, phase, MPI_Wtime());
+    std::fflush(stderr);
+}
 } // namespace
 
 // SFC node ownership: add the element halos that the callback requests. Collective, so every rank calls it; runs
@@ -54,10 +68,13 @@ void addStarHalos(cstone::Domain<KeyType, RealType, cstone::execution::Gpu>* dom
 {
     if (!starHaloKeys) return;
     cstone::DeviceVector<KeyType> haloKeys;
-    if (starHaloKeys(haloKeys))
+    bool any = starHaloKeys(haloKeys);
+    syncTrace("star requests");
+    if (any)
     {
         domain->addHalos({haloKeys.data(), haloKeys.size()}, elemSfcCodes, elemX, elemY, elemZ, elemH, properties,
                          scratch);
+        syncTrace("addHalos");
     }
 }
 
@@ -105,9 +122,11 @@ void syncDomainImpl(cstone::Domain<KeyType, RealType, cstone::execution::Gpu>* d
             domain->sync(elemSfcCodes, elemX, elemY, elemZ, elemH,
                        properties_refs,                                  // 4 properties of KeyType
                        std::tie(s1, s2, s3, s4, s5, s6, s7));           // Mixed scratch types
+            syncTrace("cstone sync");
             addStarHalos(domain, starHaloKeys, elemSfcCodes, elemX, elemY, elemZ, elemH, properties_refs,
                          std::tie(s1, s2, s3, s4, s5, s6, s7));
             domain->exchangeHalos(properties_refs, s4, s5);
+            syncTrace("property halos");
         } catch (const std::exception& e) {
             std::string errorMsg = e.what();
             // If there's any sync error and element count is low, provide a more helpful message
@@ -134,9 +153,11 @@ void syncDomainImpl(cstone::Domain<KeyType, RealType, cstone::execution::Gpu>* d
             domain->sync(elemSfcCodes, elemX, elemY, elemZ, elemH,
                        properties_refs,                                              // 8 properties of KeyType
                        std::tie(s1, s2, s3, s4, s5, s6, s7, s8, s9, s10, s11));     // Mixed scratch types
+            syncTrace("cstone sync");
             addStarHalos(domain, starHaloKeys, elemSfcCodes, elemX, elemY, elemZ, elemH, properties_refs,
                          std::tie(s1, s2, s3, s4, s5, s6, s7, s8, s9, s10, s11));
             domain->exchangeHalos(properties_refs, s4, s5);
+            syncTrace("property halos");
         } catch (const std::exception& e) {
             std::string errorMsg = e.what();
             // If there's any sync error and element count is low, provide a more helpful message
@@ -205,9 +226,11 @@ void syncDomainImplBlock(cstone::Domain<KeyType, RealType, cstone::execution::Gp
             domain->sync(elemSfcCodes, elemX, elemY, elemZ, elemH,
                        properties_refs,
                        std::tie(s1, s2, s3, s4, s5, s6, s7, s8));
+            syncTrace("cstone sync");
             addStarHalos(domain, starHaloKeys, elemSfcCodes, elemX, elemY, elemZ, elemH, properties_refs,
                          std::tie(s1, s2, s3, s4, s5, s6, s7, s8));
             domain->exchangeHalos(properties_refs, s4, s5);
+            syncTrace("property halos");
         } catch (const std::exception& e) {
             std::string errorMsg = e.what();
             if (errorMsg.find("invalid device ordinal") != std::string::npos)
@@ -230,9 +253,11 @@ void syncDomainImplBlock(cstone::Domain<KeyType, RealType, cstone::execution::Gp
             domain->sync(elemSfcCodes, elemX, elemY, elemZ, elemH,
                        properties_refs,
                        std::tie(s1, s2, s3, s4, s5, s6, s7, s8, s9, s10, s11, s12));
+            syncTrace("cstone sync");
             addStarHalos(domain, starHaloKeys, elemSfcCodes, elemX, elemY, elemZ, elemH, properties_refs,
                          std::tie(s1, s2, s3, s4, s5, s6, s7, s8, s9, s10, s11, s12));
             domain->exchangeHalos(properties_refs, s4, s5);
+            syncTrace("property halos");
         } catch (const std::exception& e) {
             std::string errorMsg = e.what();
             if (errorMsg.find("invalid device ordinal") != std::string::npos)
@@ -346,11 +371,13 @@ void syncDomainImplWithOrigCoords(cstone::Domain<KeyType, RealType, cstone::exec
                        std::tie(s1, s2, s3, s4, s5, s6, s7, s8, s9, s10, s11,
                                s12, s13, s14, s15, s16, s17, s18, s19, s20, s21, s22, s23,
                                s24, s25, s26, s27, s28, s29, s30, s31, s32, s33, s34, s35));
+            syncTrace("cstone sync");
             addStarHalos(domain, starHaloKeys, elemSfcCodes, elemX, elemY, elemZ, elemH, all_properties,
                          std::tie(s1, s2, s3, s4, s5, s6, s7, s8, s9, s10, s11,
                                   s12, s13, s14, s15, s16, s17, s18, s19, s20, s21, s22, s23,
                                   s24, s25, s26, s27, s28, s29, s30, s31, s32, s33, s34, s35));
             domain->exchangeHalos(all_properties, s4, s5);
+            syncTrace("property halos");
         } catch (const std::exception& e) {
             std::string errorMsg = e.what();
             if (errorMsg.find("invalid device ordinal") != std::string::npos)
