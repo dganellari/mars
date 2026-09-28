@@ -16,6 +16,7 @@
 
 #include "backend/distributed/unstructured/fem/mars_ns_channel_solver.hpp"
 #include "backend/distributed/unstructured/utils/mars_vtu_parallel_writer.hpp"
+#include "backend/distributed/unstructured/utils/mars_generate_cube.hpp"
 
 #include <cmath>
 #include <vector>
@@ -160,6 +161,10 @@ int main(int argc, char** argv)
     using RealType = double;
 
     std::string meshFile;
+    // --cells=NX,NY generates the public channel's box, one cell through z, on
+    // every rank without a mesh file (scaling runs).
+    std::array<size_t, 2> cells{0, 0};
+    double yGrading = 0.0;
     CvfemKernelVariant kernelVariant = CvfemKernelVariant::Tensor;
     int    blockSize  = 256;
     int    bucketSize = 64;
@@ -222,6 +227,14 @@ int main(int argc, char** argv)
     {
         std::string arg = argv[i];
         if      (arg.find("--mesh=") == 0)         meshFile   = arg.substr(7);
+        else if (arg.find("--cells=") == 0)
+        {
+            const std::string v = arg.substr(8);
+            const size_t comma = v.find(',');
+            if (comma != std::string::npos)
+                cells = {size_t(std::stoull(v.substr(0, comma))), size_t(std::stoull(v.substr(comma + 1)))};
+        }
+        else if (arg.find("--y-grading=") == 0)    yGrading   = std::stod(arg.substr(12));
         else if (arg.find("--nu=") == 0)           nu         = std::stod(arg.substr(5));
         else if (arg.find("--dt=") == 0)           dt         = std::stod(arg.substr(5));
         else if (arg.find("--rho=") == 0)          rho        = std::stod(arg.substr(6));
@@ -316,12 +329,15 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    if (meshFile.empty())
+    const bool generated = cells[0] > 0 && cells[1] > 0;
+    if (meshFile.empty() == !generated || !(yGrading >= 0 && yGrading < 1))
     {
         if (rank == 0)
             std::cout << "Usage: " << argv[0] << " --mesh=FILE [options]\n\n"
                       << "Poiseuille channel flow validation (parabolic profile).\n\n"
-                      << "  --mesh=FILE         Mesh file (.exo / .mesh) [REQUIRED]\n"
+                      << "  --mesh=FILE         Mesh file (.exo / .mesh); or\n"
+                      << "  --cells=NX,NY       Generate the channel [0,10]x[0,1]x[0,0.06], one cell in z\n"
+                      << "  --y-grading=S       Cluster generated y spacing at the walls, S in [0,1) (default 0)\n"
                       << "  --drive=bodyforce|inlet  Flow driver (default inlet)\n"
                       << "                      bodyforce: constant streamwise force G, no-slip y-walls,\n"
                       << "                                 U_max=G*H^2/(8 rho nu). inlet: prescribed velocity\n"
@@ -372,7 +388,11 @@ int main(int argc, char** argv)
         std::cout << "dt        = " << dt  << "\n";
         std::cout << "Re (~L*U/nu, L=1) = " << Re << "\n";
         std::cout << "numSteps  = " << numSteps << " (T_final = " << numSteps * dt << ")\n";
-        std::cout << "Mesh:    " << meshFile << "\n";
+        if (generated)
+            std::cout << "Mesh:    generated " << cells[0] << " x " << cells[1] << " x 1 channel, y grading "
+                      << yGrading << "\n";
+        else
+            std::cout << "Mesh:    " << meshFile << "\n";
         std::cout << "Cross-axis (wall-normal): " << crossAxis << "\n";
         std::cout << "Pressure solve: " << (pressureSolve == PressureSolveKind::K ? "K" : "DDT") << "\n";
         std::cout << "MPI ranks: " << numRanks << "\n";
@@ -385,7 +405,20 @@ int main(int argc, char** argv)
     amrConfig.bucketSize = bucketSize;
 
     AmrManager<HexTag, KeyType, RealType> amr(amrConfig);
-    amr.initialize(meshFile, rank, numRanks);
+    if (generated)
+    {
+        using Domain = AmrManager<HexTag, KeyType, RealType>::Domain;
+        [[maybe_unused]] auto [nodes, elements, x, y, z, conn] = generateBoxElementPartition<RealType, KeyType>(
+            {cells[0], cells[1], 1}, {0.0, 0.0, 0.0}, {10.0, 1.0, 0.06}, yGrading, rank, numRanks);
+        typename Domain::HostCoordsTuple coords{std::move(x), std::move(y), std::move(z)};
+        typename Domain::HostConnectivityTuple connectivity{
+            std::move(conn[0]), std::move(conn[1]), std::move(conn[2]), std::move(conn[3]),
+            std::move(conn[4]), std::move(conn[5]), std::move(conn[6]), std::move(conn[7])};
+        amr.initialize(std::make_unique<Domain>(coords, connectivity, rank, numRanks, bucketSize, true),
+                       rank, numRanks);
+    }
+    else
+        amr.initialize(meshFile, rank, numRanks);
 
     if (rank == 0)
     {
@@ -700,6 +733,8 @@ int main(int argc, char** argv)
         }
         s.check_projection = checkMode && step == numSteps;
         runNsStep<KeyType, RealType>(s, RealType(dt), RealType(nu), RealType(rho));
+        // Step 1 carries first-use allocations and the BDF1 start; time steps 2..N.
+        if (step == 1 && numSteps > 1) s.step_timing = {};
         double t = step * dt;
 
         RealType nuN = computeWeightedL2Norm<KeyType, RealType>(s, s.d_u);
@@ -720,6 +755,25 @@ int main(int argc, char** argv)
             writeVtuFrame(step, t);
         if (comparisonWriter && (step % comparisonEvery == 0 || step == numSteps))
             writeComparisonFrame(step, t);
+    }
+
+    {
+        // Stage times are the slowest rank's; iteration counts are global.
+        const auto& t = s.step_timing;
+        const double steps = numSteps > 1 ? numSteps - 1 : 1;
+        double local[5] = {t.total, t.predictor, t.diffusion, t.pressure, t.corrector}, slowest[5];
+        MPI_Allreduce(local, slowest, 5, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+        long owned = s.numOwnedDofs, nodes = 0;
+        MPI_Allreduce(&owned, &nodes, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
+        if (rank == 0)
+            std::cout << "[timing] ranks=" << numRanks << " nodes=" << nodes << " nodes/rank=" << nodes / numRanks
+                      << " steps=" << long(steps) << std::fixed << std::setprecision(3)
+                      << " ms/step: total=" << slowest[0] / steps << " predictor=" << slowest[1] / steps
+                      << " diffusion=" << slowest[2] / steps << " pressure=" << slowest[3] / steps
+                      << " corrector=" << slowest[4] / steps
+                      << " | pressure_it/step=" << t.pressure_iterations / steps
+                      << " ms/pressure_it=" << (t.pressure_iterations > 0 ? slowest[3] / t.pressure_iterations : 0.0)
+                      << " velocity_it/step=" << t.velocity_iterations / steps << '\n' << std::defaultfloat;
     }
 
     double steady_change = std::numeric_limits<double>::infinity();

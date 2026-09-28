@@ -113,6 +113,39 @@ inline std::array<size_t, 3> factorRankGrid(int numRanks)
     return {best[0], best[1], best[2]};
 }
 
+// Rank grid for a box of cells[0] x cells[1] x cells[2] hexes: the divisor triple
+// Px*Py*Pz == numRanks whose brick (cells per rank along each axis) is the most
+// cubic, with no axis split into more pieces than it has cells. A one-cell-thick
+// box therefore splits in x and y only.
+inline std::array<size_t, 3> factorRankGrid(int numRanks, const std::array<size_t, 3>& cells)
+{
+    std::array<size_t, 3> best{0, 0, 0};
+    double bestScore = 1e300;
+    for (size_t px = 1; px <= (size_t)numRanks; ++px) {
+        if (numRanks % (int)px != 0) continue;
+        const size_t rem = (size_t)numRanks / px;
+        for (size_t py = 1; py <= rem; ++py) {
+            if (rem % py != 0) continue;
+            const size_t p[3] = {px, py, rem / py};
+            double lo = 1e300, hi = 0;
+            bool fits = true;
+            for (int d = 0; d < 3; ++d) {
+                if (p[d] > cells[d]) { fits = false; break; }
+                const double w = (double)cells[d] / (double)p[d];
+                lo = std::min(lo, w);
+                hi = std::max(hi, w);
+            }
+            if (fits && hi / lo < bestScore) { bestScore = hi / lo; best = {p[0], p[1], p[2]}; }
+        }
+    }
+    if (best[0] == 0) {
+        std::fprintf(stderr, "factorRankGrid: %d ranks cannot split %zu x %zu x %zu cells\n",
+                     numRanks, cells[0], cells[1], cells[2]);
+        std::abort();
+    }
+    return best;
+}
+
 // 1D block range [lo,hi) of cell indices for rank coordinate rc of P along an axis of
 // N cells. Even split with the remainder spread over the first ranks.
 inline void axisBlock(size_t N, size_t P, size_t rc, size_t& lo, size_t& hi)
@@ -122,57 +155,43 @@ inline void axisBlock(size_t N, size_t P, size_t rc, size_t& lo, size_t& hi)
     hi = lo + base + (rc < extra ? 1 : 0);
 }
 
-// Returns (nodeCount, elementCount, x, y, z, localConn[8]) for this rank's CUBIC BRICK
-// of an Ncells^3 hex cube. coords are local-node-indexed; localConn holds local node
-// indices in hex corner order matching generate_hex_cube.py:
+// Returns (nodeCount, elementCount, x, y, z, localConn[8]) for this rank's brick of a
+// cells[0] x cells[1] x cells[2] hex lattice split on rank grid P. coord(cx, cy, cz, x,
+// y, z) maps a GLOBAL lattice index to its position; it must be a pure function of the
+// index so nodes shared by two ranks get identical coords. coords are local-node-indexed;
+// localConn holds local node indices in hex corner order matching generate_hex_cube.py:
 //   0:(i,j,k) 1:(i+1,j,k) 2:(i+1,j+1,k) 3:(i,j+1,k)
 //   4:(i,j,k+1) 5:(i+1,j,k+1) 6:(i+1,j+1,k+1) 7:(i,j+1,k+1)
-template<typename RealType, typename KeyType>
-inline auto generateCubeElementPartition(size_t Ncells, int rank, int numRanks,
-                                         CubeIrregularity irr = {})
+template<typename RealType, typename KeyType, typename Coord>
+inline auto generateBrickPartition(const std::array<size_t, 3>& cells,
+                                   const std::array<size_t, 3>& P, int rank, Coord coord)
 {
-    const size_t Np1 = Ncells + 1;
-
     // Key-range guard: a 32-bit KeyType would silently overflow gid past 4.29e9.
-    // (Np1^3-1) is the max global node id; fail loudly if it does not fit KeyType.
     {
-        const long double maxGid = (long double)Np1 * (long double)Np1 * (long double)Np1;
+        const long double maxGid = (long double)(cells[0] + 1) * (long double)(cells[1] + 1)
+                                 * (long double)(cells[2] + 1);
         const long double keyMax = (long double)std::numeric_limits<
             typename std::make_unsigned<KeyType>::type>::max();
         if (maxGid - 1.0L > keyMax) {
             std::fprintf(stderr,
-                "generateCubeElementPartition: Ncells=%zu needs node ids up to %.0Lf "
+                "generateBrickPartition: %zu x %zu x %zu cells need node ids up to %.0Lf "
                 "but KeyType holds only %.0Lf -- use a wider KeyType.\n",
-                Ncells, maxGid - 1.0L, keyMax);
+                cells[0], cells[1], cells[2], maxGid - 1.0L, keyMax);
             std::abort();
         }
     }
 
-    // Validity guard: deform distortion is amp*2*pi*waves; inverts past ~1.0.
-    if (irr.deform) {
-        const double distortion = irr.deformAmp * 2.0 * M_PI * (double)irr.deformWaves;
-        if (distortion > 1.0) {
-            std::fprintf(stderr,
-                "generateCubeElementPartition: deform distortion deformAmp*2pi*deformWaves "
-                "= %.3f > 1.0 -> inverted hexes. Reduce deformAmp (%.3f) or deformWaves (%d).\n",
-                distortion, irr.deformAmp, irr.deformWaves);
-            std::abort();
-        }
-    }
-
-    // --- 3D cubic-block rank split ---
-    const auto P = factorRankGrid(numRanks);
-    const size_t usedRanks = P[0] * P[1] * P[2];   // <= numRanks
-    // rank -> (rcx,rcy,rcz). Ranks >= usedRanks own an empty brick.
+    // rank -> (rcx,rcy,rcz). Ranks >= Px*Py*Pz own an empty brick.
+    const size_t usedRanks = P[0] * P[1] * P[2];
     size_t bx0 = 0, bx1 = 0, by0 = 0, by1 = 0, bz0 = 0, bz1 = 0;
     if ((size_t)rank < usedRanks) {
         const size_t rcx = (size_t)rank / (P[1] * P[2]);
         const size_t rem = (size_t)rank % (P[1] * P[2]);
         const size_t rcy = rem / P[2];
         const size_t rcz = rem % P[2];
-        axisBlock(Ncells, P[0], rcx, bx0, bx1);
-        axisBlock(Ncells, P[1], rcy, by0, by1);
-        axisBlock(Ncells, P[2], rcz, bz0, bz1);
+        axisBlock(cells[0], P[0], rcx, bx0, bx1);
+        axisBlock(cells[1], P[1], rcy, by0, by1);
+        axisBlock(cells[2], P[2], rcz, bz0, bz1);
     }
     const size_t nex = (bx1 > bx0) ? bx1 - bx0 : 0;
     const size_t ney = (by1 > by0) ? by1 - by0 : 0;
@@ -210,48 +229,88 @@ inline auto generateCubeElementPartition(size_t Ncells, int rank, int numRanks,
                 }
     }
 
-    // --- coords: direct, pure function of the GLOBAL integer index so shared nodes
-    //     on rank boundaries get identical coords with no communication. ---
-    const RealType h = RealType(1) / static_cast<RealType>(Ncells);
-    const bool irregular = irr.warp || irr.deform;
-    const double twoPi = 2.0 * M_PI;
     std::vector<RealType> x(nodeCount), y(nodeCount), z(nodeCount);
     {
         size_t i = 0;
         for (size_t cx = bx0; cx < bx0 + nlx; ++cx)
             for (size_t cy = by0; cy < by0 + nly; ++cy)
-                for (size_t cz = bz0; cz < bz0 + nlz; ++cz, ++i) {
-                    if (!irregular) {
-                        x[i] = static_cast<RealType>(cx) * h;
-                        y[i] = static_cast<RealType>(cy) * h;
-                        z[i] = static_cast<RealType>(cz) * h;
-                        continue;
-                    }
-                    RealType tx = static_cast<RealType>(cx) / static_cast<RealType>(Ncells);
-                    RealType ty = static_cast<RealType>(cy) / static_cast<RealType>(Ncells);
-                    RealType tz = static_cast<RealType>(cz) / static_cast<RealType>(Ncells);
-                    if (irr.warp) {
-                        tx = warpAxis<RealType>(tx, irr.warpStrength);
-                        ty = warpAxis<RealType>(ty, irr.warpStrength);
-                        tz = warpAxis<RealType>(tz, irr.warpStrength);
-                    }
-                    RealType px = tx, py = ty, pz = tz;
-                    if (irr.deform) {
-                        // domain-scale bend: amplitude is an absolute fraction of the
-                        // domain, wavelength fixed in domain units -> distortion (and
-                        // halo bump) independent of Ncells. Each axis displaced by the
-                        // OTHER two axes' phase so the deformation is genuinely 3D.
-                        const double A  = irr.deformAmp;
-                        const double kw = static_cast<double>(irr.deformWaves);
-                        px += static_cast<RealType>(A * std::sin(twoPi * kw * ty) * std::cos(twoPi * kw * tz));
-                        py += static_cast<RealType>(A * std::sin(twoPi * kw * tz) * std::cos(twoPi * kw * tx));
-                        pz += static_cast<RealType>(A * std::sin(twoPi * kw * tx) * std::cos(twoPi * kw * ty));
-                    }
-                    x[i] = px; y[i] = py; z[i] = pz;
-                }
+                for (size_t cz = bz0; cz < bz0 + nlz; ++cz, ++i)
+                    coord(cx, cy, cz, x[i], y[i], z[i]);
     }
 
     return std::make_tuple(nodeCount, elementCount, std::move(x), std::move(y), std::move(z), std::move(lconn));
+}
+
+// This rank's CUBIC BRICK of an Ncells^3 hex cube on [0,1]^3 (rank grid from
+// factorRankGrid(numRanks)); see generateBrickPartition for the returned tuple.
+template<typename RealType, typename KeyType>
+inline auto generateCubeElementPartition(size_t Ncells, int rank, int numRanks,
+                                         CubeIrregularity irr = {})
+{
+    // Validity guard: deform distortion is amp*2*pi*waves; inverts past ~1.0.
+    if (irr.deform) {
+        const double distortion = irr.deformAmp * 2.0 * M_PI * (double)irr.deformWaves;
+        if (distortion > 1.0) {
+            std::fprintf(stderr,
+                "generateCubeElementPartition: deform distortion deformAmp*2pi*deformWaves "
+                "= %.3f > 1.0 -> inverted hexes. Reduce deformAmp (%.3f) or deformWaves (%d).\n",
+                distortion, irr.deformAmp, irr.deformWaves);
+            std::abort();
+        }
+    }
+
+    const RealType h = RealType(1) / static_cast<RealType>(Ncells);
+    const bool irregular = irr.warp || irr.deform;
+    const double twoPi = 2.0 * M_PI;
+    auto coord = [&](size_t cx, size_t cy, size_t cz, RealType& x, RealType& y, RealType& z) {
+        if (!irregular) {
+            x = static_cast<RealType>(cx) * h;
+            y = static_cast<RealType>(cy) * h;
+            z = static_cast<RealType>(cz) * h;
+            return;
+        }
+        RealType tx = static_cast<RealType>(cx) / static_cast<RealType>(Ncells);
+        RealType ty = static_cast<RealType>(cy) / static_cast<RealType>(Ncells);
+        RealType tz = static_cast<RealType>(cz) / static_cast<RealType>(Ncells);
+        if (irr.warp) {
+            tx = warpAxis<RealType>(tx, irr.warpStrength);
+            ty = warpAxis<RealType>(ty, irr.warpStrength);
+            tz = warpAxis<RealType>(tz, irr.warpStrength);
+        }
+        RealType px = tx, py = ty, pz = tz;
+        if (irr.deform) {
+            // domain-scale bend: amplitude is an absolute fraction of the
+            // domain, wavelength fixed in domain units -> distortion (and
+            // halo bump) independent of Ncells. Each axis displaced by the
+            // OTHER two axes' phase so the deformation is genuinely 3D.
+            const double A  = irr.deformAmp;
+            const double kw = static_cast<double>(irr.deformWaves);
+            px += static_cast<RealType>(A * std::sin(twoPi * kw * ty) * std::cos(twoPi * kw * tz));
+            py += static_cast<RealType>(A * std::sin(twoPi * kw * tz) * std::cos(twoPi * kw * tx));
+            pz += static_cast<RealType>(A * std::sin(twoPi * kw * tx) * std::cos(twoPi * kw * ty));
+        }
+        x = px; y = py; z = pz;
+    };
+    return generateBrickPartition<RealType, KeyType>({Ncells, Ncells, Ncells},
+                                                     factorRankGrid(numRanks), rank, coord);
+}
+
+// This rank's brick of a box [lo, hi] meshed with cells[0] x cells[1] x cells[2] hexes,
+// uniform in x and z. yGrading in [0,1) clusters the y spacing toward both y faces
+// (warpAxis); 0 is uniform.
+template<typename RealType, typename KeyType>
+inline auto generateBoxElementPartition(const std::array<size_t, 3>& cells,
+                                        const std::array<double, 3>& lo,
+                                        const std::array<double, 3>& hi,
+                                        double yGrading, int rank, int numRanks)
+{
+    auto coord = [&](size_t cx, size_t cy, size_t cz, RealType& x, RealType& y, RealType& z) {
+        const double ty = warpAxis<double>((double)cy / (double)cells[1], yGrading);
+        x = static_cast<RealType>(lo[0] + (hi[0] - lo[0]) * ((double)cx / (double)cells[0]));
+        y = static_cast<RealType>(lo[1] + (hi[1] - lo[1]) * ty);
+        z = static_cast<RealType>(lo[2] + (hi[2] - lo[2]) * ((double)cz / (double)cells[2]));
+    };
+    return generateBrickPartition<RealType, KeyType>(cells, factorRankGrid(numRanks, cells), rank, coord);
 }
 
 } // namespace mars

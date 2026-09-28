@@ -2307,6 +2307,13 @@ struct NSStepper
     RealType lastPressR0    = 0;  // initial absolute residual |r0| of the pressure CG this step
     RealType lastPressResid = 0;  // final relative residual |r|/|r0| at the pressure CG's exit
     int lastUIters = 0, lastVIters = 0, lastWIters = 0;
+    // Wall time (ms) and solver iterations summed over steps, per stage, for
+    // scaling runs. The device is synchronized at every stage boundary.
+    struct StepTiming
+    {
+        double predictor = 0, diffusion = 0, pressure = 0, corrector = 0, total = 0;
+        long pressure_iterations = 0, velocity_iterations = 0;
+    } step_timing;
     RealType lastDivMax     = 0;  // |div(u^{n+1})| max -- post-corrector, PLAIN nodal operator
     RealType lastDivRms     = 0;  // |div(u^{n+1})| RMS over interior owned DOFs; less ring-sensitive
     RealType lastDivMaxPre  = 0;  // |div(u**)|    max -- pre-corrector (= b magnitude / V scaled)
@@ -10286,7 +10293,15 @@ void runNsStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, RealTyp
         if (e) g_nsDebugStepsLeft = std::atoi(e);
     }
     bool dbg = (g_nsDebugStepsLeft > 0);
-
+    auto timed = [](double& total_ms, auto&& stage) {
+        cudaDeviceSynchronize();
+        const double t0 = MPI_Wtime();
+        stage();
+        cudaDeviceSynchronize();
+        total_ms += 1e3 * (MPI_Wtime() - t0);
+    };
+    cudaDeviceSynchronize();
+    const double step_start = MPI_Wtime();
 
     // ENTRY: state of u^n, p^n before the step.
     // IMPORTANT: keOwned / divMaxAndRmsOwned / computeWeightedL2Norm all do an
@@ -10307,7 +10322,7 @@ void runNsStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, RealTyp
                       << " div(u_n)rms=" << div_n_rms << "\n";
     }
 
-    runPredictorStep<KeyType, RealType, ElementTag>(s, dt, rho);
+    timed(s.step_timing.predictor, [&] { runPredictorStep<KeyType, RealType, ElementTag>(s, dt, rho); });
     if (dbg)
     {
         RealType KE_star      = keOwned<KeyType, RealType, ElementTag>(s, s.d_uStar, s.d_vStar, s.d_wStar);
@@ -10321,7 +10336,9 @@ void runNsStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, RealTyp
                       << " div(u*)rms=" << div_star_rms << "\n";
     }
 
-    runImplicitDiffusionStep<KeyType, RealType, ElementTag>(s, dt);
+    timed(s.step_timing.diffusion, [&] { runImplicitDiffusionStep<KeyType, RealType, ElementTag>(s, dt); });
+    s.step_timing.velocity_iterations += std::max(s.lastUIters, 0) + std::max(s.lastVIters, 0)
+                                       + std::max(s.lastWIters, 0);
     // Failed solves leave stale diffusion fields; never project those into a new step.
     int momentum_failed = (s.lastUIters < 0 || s.lastVIters < 0 || s.lastWIters < 0) ? 1 : 0;
     int any_momentum_failed = 0;
@@ -10346,7 +10363,8 @@ void runNsStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, RealTyp
                       << " cg_uvw="      << s.lastUIters << "/" << s.lastVIters << "/" << s.lastWIters << "\n";
     }
 
-    runPressureSolveStep<KeyType, RealType, ElementTag>(s, dt, rho);
+    timed(s.step_timing.pressure, [&] { runPressureSolveStep<KeyType, RealType, ElementTag>(s, dt, rho); });
+    s.step_timing.pressure_iterations += std::max(s.lastPressureIters, 0);
     int pressure_failed = s.lastPressureIters < 0 ? 1 : 0;
     int any_pressure_failed = 0;
     MPI_Allreduce(&pressure_failed, &any_pressure_failed, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
@@ -10386,7 +10404,7 @@ void runNsStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, RealTyp
         }
     }
 
-    runCorrectorStep<KeyType, RealType, ElementTag>(s, dt, rho);
+    timed(s.step_timing.corrector, [&] { runCorrectorStep<KeyType, RealType, ElementTag>(s, dt, rho); });
     if (s.planar_projection && (dbg || s.check_projection)) check_channel_projection(s, dt, rho);
     if (dbg)
     {
@@ -10427,6 +10445,8 @@ void runNsStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType dt, RealTyp
 
     if (g_nsDebugStepsLeft > 0) --g_nsDebugStepsLeft;
     ++s.completed_steps;
+    cudaDeviceSynchronize();
+    s.step_timing.total += 1e3 * (MPI_Wtime() - step_start);
 }
 
 // =============================================================================
