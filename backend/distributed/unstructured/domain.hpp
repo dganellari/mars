@@ -35,6 +35,7 @@ using std::get;
 #include <thrust/scan.h>
 #include <thrust/fill.h>
 #include <thrust/iterator/constant_iterator.h>
+#include <thrust/transform_reduce.h>
 #include <thrust/iterator/zip_iterator.h>
 #include <thrust/tuple.h>
 #include <algorithm>
@@ -1824,6 +1825,49 @@ private:
     // Helper method for creating SFC map
     void createLocalToGlobalSfcMap();
 
+public:
+    // Nodes are identified by their SFC key. Mixed-dimension keys have the same resolution on every axis, the longest
+    // box side over 2^maxTreeLevel, so two nodes closer than that along a short axis would share a key and be merged.
+    // Coincident nodes (multi-block interfaces, duplicates in a file) may share a key; distinct positions may not.
+    void checkNodeKeysDistinct(const DeviceVector<KeyType>& keys,
+                               const DeviceVector<RealType>& x,
+                               const DeviceVector<RealType>& y,
+                               const DeviceVector<RealType>& z) const
+    {
+        DeviceVector<KeyType> sorted(nodeCount_);
+        DeviceVector<KeyType> order(nodeCount_);
+        thrust::copy(thrust::device, keys.data(), keys.data() + nodeCount_, sorted.data());
+        thrust::sequence(thrust::device, order.data(), order.data() + nodeCount_);
+        thrust::sort_by_key(thrust::device, sorted.data(), sorted.data() + nodeCount_, order.data());
+
+        const auto& box        = getBoundingBox();
+        const RealType longest = std::max({box.xmax() - box.xmin(), box.ymax() - box.ymin(), box.zmax() - box.zmin()});
+        const RealType apart   = RealType(1e-9) * longest;
+        long collisions        = nodeCount_ < 2 ? 0
+                                 : thrust::transform_reduce(
+                                       thrust::device, thrust::counting_iterator<size_t>(1),
+                                       thrust::counting_iterator<size_t>(nodeCount_),
+                                       [k = sorted.data(), o = order.data(), px = x.data(), py = y.data(), pz = z.data(),
+                                        apart] __device__(size_t i) -> long
+                                       {
+                                           if (k[i] != k[i - 1]) { return 0; }
+                                           KeyType a = o[i], b = o[i - 1];
+                                           return fabs(px[a] - px[b]) > apart || fabs(py[a] - py[b]) > apart ||
+                                                  fabs(pz[a] - pz[b]) > apart;
+                                       },
+                                       0L, thrust::plus<long>());
+        MPI_Allreduce(MPI_IN_PLACE, &collisions, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
+        if (collisions > 0)
+        {
+            throw std::runtime_error("ElementDomain: " + std::to_string(collisions) +
+                                     " distinct nodes share an SFC key; the key resolution " +
+                                     std::to_string(longest / RealType(1ull << cstone::maxTreeLevel<KeyType>{})) +
+                                     " is coarser than the node spacing (use 64-bit keys or a less elongated box)");
+        }
+    }
+
+private:
+
     // Lazy initialization methods (called by public getters)
     void ensureSfcMap() const;
     void ensureAdjacency() const;
@@ -2912,6 +2956,7 @@ void ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::sync(const De
                                            thrust::raw_pointer_cast(d_z.data()),
                                            thrust::raw_pointer_cast(d_nodeSfcCodes.data()), nodeCount_,
                                            getBoundingBox());
+        checkNodeKeysDistinct(d_nodeSfcCodes, d_x, d_y, d_z);
 
         // Find representative nodes for each element
         d_elemToNodeMap_.resize(elementCount_);
