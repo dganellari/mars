@@ -18,6 +18,14 @@ whereas this MARS path requires false; omission is rejected. Unknown physical
 keys, expressions, moving walls, turbulence and ambiguous YAML are rejected.
 Do not remove a rejected control just to get a passing preparation.
 
+`velocity_interpolation_type: linear_linear` maps to
+`--velocity-interpolation linear-linear`; `trilinear` remains the default.
+This changes velocity sampling in fluxes, wall terms and gradient reconstruction,
+not mesh coordinates. Pressure and both derivative interpolation settings still
+require `linear_linear`. The numerical implementation requires a MARS rebuild;
+see the [public shifted-interpolation check](velocity_interpolation.md) before
+using the new mode on another case. Unknown expert keys remain rejected.
+
 `static_pressure` maps its constant `relative_pressure` in Pa to `--outlet-pressure`
 and sets `--outlet-beta 1`. The existing trace law
 `p_face = p_out + (1-beta)*(p_nearest-p_mean)` then fixes pressure at each open
@@ -87,6 +95,8 @@ records the deck hash and all arguments; `args.nul` provides arguments without
 shell evaluation. Use a new output directory each time.
 
 Preparation-only fixes do not require rebuilding the existing native executable.
+The velocity-interpolation option changes numerical kernels and does require it:
+`cmake --build . --parallel 4 --target mars_segregated_simple`.
 
 ## Direct short run
 

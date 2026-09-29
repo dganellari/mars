@@ -64,6 +64,11 @@ inline SimpleOptions simple_options(int argc,char** argv) {
             if (value!="upwind" && value!="high-resolution") throw std::runtime_error("--advection expects upwind or high-resolution");
             o.controls.high_resolution=value=="high-resolution";
         }
+        else if (key=="--velocity-interpolation") {
+            if (value!="trilinear" && value!="linear-linear")
+                throw std::runtime_error("--velocity-interpolation expects trilinear or linear-linear");
+            o.controls.velocity_shifted=value=="linear-linear";
+        }
         else if (key=="--wall-ss") {
             o.boundaries.walls.clear();
             for (size_t start=0;;) {
@@ -119,6 +124,7 @@ inline const char* simple_help() {
            "  --mesh FILE --output-prefix PREFIX [--mesh-format exodus]\n"
            "  --inlet-ss inlet --outlet-ss outlet --wall-ss walls[,other_wall]\n"
            "  --advection upwind      or high-resolution (OpenAccel limiter, cap 1)\n"
+           "  --velocity-interpolation trilinear   or linear-linear (shifted field weights)\n"
            "  --rho 1                 density [kg/m^3]\n"
            "  --mu 0.1                dynamic viscosity [Pa s]; nu=mu/rho\n"
            "  --inlet-velocity 0.1     positive inward-normal speed [m/s]\n"

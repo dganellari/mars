@@ -43,6 +43,7 @@ int execute(const SimpleOptions& o) {
         const auto& c=o.controls;
         std::cout<<std::setprecision(17)<<"SIMPLE Tet4, "<<ranks<<" ranks (ElementDomain/cstone), "
                  <<(c.high_resolution?"high-resolution":"upwind")<<", laminar\n"
+                 <<"velocity_interpolation="<<(c.velocity_shifted?"linear-linear":"trilinear")<<'\n'
                  <<"rho="<<c.density<<" mu="<<c.viscosity<<" nu="<<c.viscosity/c.density
                  <<" inlet_speed="<<c.inlet_speed<<" (inward normal) outlet_pressure="<<c.pressure_reference
                  <<" reference_length="<<c.reference_length<<'\n'

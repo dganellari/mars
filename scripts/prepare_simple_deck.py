@@ -236,10 +236,13 @@ def translate(doc):
     args += ['--advection', scheme.replace('_', '-')]
     interp = check.mapping(basic.get('interpolation_scheme', {}),
                      'velocity_interpolation_type pressure_interpolation_type velocity_gradient_interpolation_type pressure_gradient_interpolation_type', 'interpolation_scheme')
-    for key in ('velocity_interpolation_type', 'pressure_interpolation_type',
+    velocity_interp = interp.get('velocity_interpolation_type', 'trilinear')
+    if check.require(velocity_interp in ('trilinear', 'linear_linear'),
+                     'interpolation_scheme.velocity_interpolation_type', 'unsupported setting'):
+        args += ['--velocity-interpolation', velocity_interp.replace('_', '-')]
+    for key in ('pressure_interpolation_type',
                 'velocity_gradient_interpolation_type', 'pressure_gradient_interpolation_type'):
-        expected = 'trilinear' if key == 'velocity_interpolation_type' else 'linear_linear'
-        check.equal(interp.get(key, expected), expected, 'interpolation_scheme.' + key)
+        check.equal(interp.get(key, 'linear_linear'), 'linear_linear', 'interpolation_scheme.' + key)
     conv = check.mapping(basic.get('convergence_controls'),
                    'min_iterations max_iterations physical_timescale relaxation_parameters', 'convergence_controls')
     args += ['--pseudo-dt', str(check.number(conv.get('physical_timescale'), 'physical_timescale', positive=True))]

@@ -235,9 +235,19 @@ class DeckTests(unittest.TestCase):
                 bridge.load_deck(text)
 
     def test_interpolation_and_subiterations(self):
-        self.control['basic_settings']['interpolation_scheme']['velocity_interpolation_type'] = 'linear_linear'
-        self.reject()
-        self.control['basic_settings']['interpolation_scheme']['velocity_interpolation_type'] = 'trilinear'
+        interp = self.control['basic_settings']['interpolation_scheme']
+        for scheme in ('trilinear', 'linear_linear'):
+            interp['velocity_interpolation_type'] = scheme
+            args, _ = bridge.translate(self.doc)
+            self.assertEqual(dict(zip(args[::2], args[1::2]))['--velocity-interpolation'], scheme.replace('_', '-'))
+        for invalid in ('unsupported private setting', None, [], True):
+            interp['velocity_interpolation_type'] = invalid
+            self.reject()
+        interp['velocity_interpolation_type'] = 'trilinear'
+        for key in ('pressure_interpolation_type', 'velocity_gradient_interpolation_type', 'pressure_gradient_interpolation_type'):
+            interp[key] = 'trilinear'
+            self.reject()
+            interp[key] = 'linear_linear'
         self.control['advanced_options']['equation_controls']['sub_iterations']['pressure_correction'] = 2
         self.reject()
 

@@ -36,6 +36,80 @@ void native_mapping() {
     for (int key:{-1,0,4,30}) check(simple_find_key(keys,4,key)==-1);
     check(simple_find_key(keys,0,3)==-1);
 }
+void shifted_velocity() {
+    double xyz[]={0,0,0, 2,1,0, 0,2,1, 1,0,3};
+    TetGeometry<double> g; check(tet_geometry(xyz,g));
+    int nodes[]={0,1,2,3},n0[]={0},n1[]={1},n2[]={2},n3[]={3},error=0;
+    double x[]={0,2,0,1},y[]={0,1,2,0},z[]={0,0,1,3};
+    double u[]={1,2,-3, 4,-1,2, -2,3,1, 5,4,-2},p[4]{},vg[36]{},pg[12]{},d[12]{};
+    double ef[6]{},bf[3]{},trace[3]{},div[4]{};
+    SimpleFace face{0,1,1};
+    SimpleMesh mesh{4,1,1,{n0,n1,n2,n3},x,y,z,&face,&g};
+    SimpleState state{}; state.velocity=u; state.pressure=p; state.velocity_gradient=vg;
+    state.pressure_gradient=pg; state.influence=d; state.interior_flux=ef;
+    state.boundary_flux=bf; state.trace=trace; state.mass_divergence=div; state.error=&error;
+    SimpleControls c; c.velocity_shifted=true; c.density=2; c.alpha_mass=1;
+    auto input=simple_interior(0,nodes,xyz,u,p,ef,c);
+    native_interior(input,g,nodes,vg,pg,d,true);
+    for (int s=0;s<6;++s) for (int k=0;k<4;++k) {
+        const bool endpoint=k==tet_edge_node(s,0) || k==tet_edge_node(s,1);
+        near(input.velocity_shape[4*s+k],endpoint?.5:0);
+        near(input.coordinate_shape[4*s+k],endpoint?13./36:5./36);
+    }
+    // With zero pressure force, continuity uses the endpoint mean velocity.
+    SimpleInterior<1>{mesh,state,c,{},true}(0);
+    double expected_div[4]{},expected_gradient[36]{};
+    for (int s=0;s<6;++s) {
+        const int l=tet_edge_node(s,0),r=tet_edge_node(s,1);
+        double q=0;
+        for (int j=0;j<3;++j) q+=c.density*.5*(u[3*l+j]+u[3*r+j])*g.area[3*s+j];
+        near(ef[s],q); expected_div[l]+=q; expected_div[r]-=q;
+        for (int i=0;i<3;++i) for (int j=0;j<3;++j) {
+            const double value=.5*(u[3*r+i]-u[3*l+i])*g.area[3*s+j];
+            expected_gradient[9*l+3*i+j]+=value; expected_gradient[9*r+3*i+j]+=value;
+        }
+    }
+    for (int k=0;k<4;++k) near(div[k],expected_div[k]);
+    near(div[0]+div[1]+div[2]+div[3],0);
+    double gradient[36]{};
+    SimpleGradientInterior<3>{mesh,u,gradient,true}(0);
+    for (int k=0;k<36;++k) near(gradient[k],expected_gradient[k]);
+    std::fill(gradient,gradient+36,0);
+    SimpleGradientBoundary<3>{mesh,u,gradient,true}(0);
+    for (double value:gradient) near(value,0); // Incremental nodal samples subtract themselves.
+    SimpleGradientBoundary<3>{mesh,u,gradient,false}(0);
+    check(std::any_of(gradient,gradient+36,[](double v){return std::abs(v)>1e-3;}));
+    double scalar[]={1,4,-2,5},standard[12]{},shifted[12]{};
+    SimpleGradientInterior<1>{mesh,scalar,standard,false}(0);
+    SimpleGradientInterior<1>{mesh,scalar,shifted,true}(0);
+    for (int k=0;k<12;++k) near(standard[k],shifted[k]);
+
+    int offsets[]={0,4,8,12,16},columns[]={0,1,2,3,0,1,2,3,0,1,2,3,0,1,2,3};
+    double pa[16]{},pb[4]{},ma[144]{},mb[12]{},area[3];
+    tet_boundary_area(g,face.ordinal,area);
+    SimpleBoundary<1>{mesh,state,c,{4,offsets,columns,pa,pb}}(0);
+    for (int f=0;f<3;++f) {
+        const int n=tet_face_node(face.ordinal,f);
+        double q=0; for (int j=0;j<3;++j) q+=c.density*u[3*n+j]*area[j];
+        near(pb[n],-q);
+    }
+    face.kind=2;
+    SimpleBoundary<3>{mesh,state,c,{4,offsets,columns,ma,mb},true}(0);
+    const int opposite=tet_opposite_node(face.ordinal);
+    double norm2=0; for (double value:area) norm2+=value*value;
+    const double coefficient=4*c.viscosity*norm2/g.volume;
+    // Shifted wall sampling couples components at the same face node only.
+    for (int n=0;n<4;++n) for (int i=0;i<3;++i) {
+        double rhs=0;
+        for (int m=0;m<4;++m) for (int j=0;j<3;++j) {
+            const double entry=n!=opposite && n==m?coefficient*((i==j?1.:0)-area[i]*area[j]/norm2):0;
+            near(ma[9*(4*n+m)+3*i+j],entry);
+            rhs-=entry*u[3*m+j];
+        }
+        near(mb[3*n+i],rhs);
+    }
+    check(error==0);
+}
 template<int C> void csr() {
     int offsets[]={0,2,5,7},columns[]={0,1,0,1,2,1,2};
     std::vector<double> blocks(7*C*C),rhs(3*C,0),values(7*C*C);
@@ -65,7 +139,7 @@ template<int C> void csr() {
 }
 int main() {
     try {
-        csr<1>(); csr<3>(); native_mapping();
+        csr<1>(); csr<3>(); native_mapping(); shifted_velocity();
         double xyz[]={0,0,0,1,0,0,0,1,0,0,0,1}; TetGeometry<double> g; check(tet_geometry(xyz,g));
         int nodes[]={0,1,2,3}; double u[]={1,2,3,4,5,6,7,8,9,10,11,12},p[]={2,3,4,5},trace[]={7,8,9},flux[]={.1,.2,.3};
         SimpleControls c; SimpleFace face{0,1,0};

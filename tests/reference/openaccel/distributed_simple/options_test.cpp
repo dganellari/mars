@@ -20,6 +20,8 @@ int main() {
     check(performance.profile && performance.profile_warmup==0 && !performance.linear_cache && !performance.halo_overlap && performance.field_output=="distributed");
     check(!defaults.controls.high_resolution && !parse("--advection upwind").controls.high_resolution);
     check(parse("--advection=high-resolution").controls.high_resolution);
+    check(!defaults.controls.velocity_shifted && !parse("--velocity-interpolation trilinear").controls.velocity_shifted);
+    check(parse("--velocity-interpolation=linear-linear").controls.velocity_shifted);
     const auto options=parse("--rho=2 --mu .4 --inlet-velocity=.2 --outlet-pressure=-3 --pseudo-dt .005 "
         "--reference-length=2 --relax-u .4 --relax-p .2 --relax-mass .8 --outlet-beta .1 "
         "--inlet-ss feed --outlet-ss exit --wall-ss casing,cover --iterations 20 --report-every=2");
@@ -33,7 +35,8 @@ int main() {
         "--reference-length 0","--pseudo-dt -1","--relax-u 1.1","--relax-p 0","--relax-mass nan","--outlet-beta 0",
         "--residual-tol nan","--mass-tol 0","--change-tol -1","--iterations 2.5","--iterations 2147483648",
         "--report-every 0","--setup-only 2","--rho 2x","--rho 1 --rho 2","--rho=","--mesh-format prepared",
-        "--advection central","--advection 1","--inlet-ss outlet","--wall-ss walls,","--wall-ss walls,walls","--wall-ss walls,inlet","--unknown 1",
+        "--advection central","--advection 1","--velocity-interpolation other","--velocity-interpolation 1",
+        "--inlet-ss outlet","--wall-ss walls,","--wall-ss walls,walls","--wall-ss walls,inlet","--unknown 1",
         "--profile 2","--linear-cache -1","--halo-overlap 3","--profile-warmup -1","--profile-warmup 1.5","--field-output vtk"}) {
         bool rejected=false; try { parse(args); } catch (const std::exception&) { rejected=true; }
         check(rejected);

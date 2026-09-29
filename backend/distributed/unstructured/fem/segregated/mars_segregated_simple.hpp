@@ -17,6 +17,7 @@ struct SimpleControls {
     double alpha_u=.3, alpha_p=.3, alpha_mass=.75, beta=.05, pressure_reference=0;
     double reference_length=1;
     bool high_resolution=false;
+    bool velocity_shifted=false;
 };
 inline bool valid_simple_controls(const SimpleControls& c) {
     for (double value:{c.density,c.viscosity,c.pseudo_dt,c.inlet_speed,c.reference_length})
@@ -137,20 +138,22 @@ struct SimpleBoundaryFactor {
 };
 template<int Components> struct SimpleGradientInterior {
     SimpleMesh mesh; const double* field; double* sum;
+    bool velocity_shifted=false;
     MARS_SIMPLE_HD void operator()(int e) const {
         double values[4*Components],local[12*Components];
         for (int k=0;k<4;++k) for (int c=0;c<Components;++c) values[k*Components+c]=field[mesh.nodes[k][e]*Components+c];
-        tet_gradient_numerator<Components>(mesh.geometry[e],values,Components==1,true,local);
+        tet_gradient_numerator<Components>(mesh.geometry[e],values,Components==1 || velocity_shifted,true,local);
         for (int k=0;k<4;++k) for (int c=0;c<3*Components;++c) assembly_add(sum+mesh.nodes[k][e]*3*Components+c,local[k*3*Components+c]);
     }
 };
 template<int Components> struct SimpleGradientBoundary {
     SimpleMesh mesh; const double* field; double* sum;
+    bool velocity_shifted=false;
     MARS_SIMPLE_HD void operator()(int i) const {
         auto f=mesh.faces[i]; double values[3*Components],local[9*Components],area[3];
         tet_boundary_area(mesh.geometry[f.element],f.ordinal,area);
         for (int k=0;k<3;++k) for (int c=0;c<Components;++c) values[k*Components+c]=field[mesh.nodes[tet_face_node(f.ordinal,k)][f.element]*Components+c];
-        tri_gradient_numerator<Components>(area,values,Components==1,true,local);
+        tri_gradient_numerator<Components>(area,values,Components==1 || velocity_shifted,true,local);
         for (int k=0;k<3;++k) for (int c=0;c<3*Components;++c) assembly_add(sum+mesh.nodes[tet_face_node(f.ordinal,k)][f.element]*3*Components+c,local[k*3*Components+c]);
     }
 };
@@ -167,7 +170,7 @@ template<int Components> struct SimpleInterior {
     MARS_SIMPLE_HD void operator()(int e) const {
         int nodes[4]; double xyz[12]; mesh.cell(e,nodes,xyz);
         auto x=simple_interior(Components==3?1:0,nodes,xyz,state.velocity,state.pressure,state.interior_flux+6*e,controls);
-        native_interior(x,mesh.geometry[e],nodes,state.velocity_gradient,state.pressure_gradient,state.influence);
+        native_interior(x,mesh.geometry[e],nodes,state.velocity_gradient,state.pressure_gradient,state.influence,controls.velocity_shifted);
         if constexpr (Components==3) if (controls.high_resolution)
             for (int k=0;k<4;++k) for (int j=0;j<3;++j)
                 x.velocity_blend[3*k+j]=state.velocity_blend[3*nodes[k]+j];
@@ -190,7 +193,7 @@ template<int Components> struct SimpleBoundary {
         const auto& g=mesh.geometry[face.element];
         auto input=simple_boundary(Components==3,face,nodes,g,state.velocity,state.pressure,state.trace+3*i,state.boundary_flux+3*i,controls,wall_initialized,state.reversal?state.reversal+3*i:nullptr);
         auto& x=input.values;
-        if (!native_boundary(x,input,g,nodes,state.pressure_gradient,state.influence)) { simple_error(state.error); return; }
+        if (!native_boundary(x,input,g,nodes,state.pressure_gradient,state.influence,controls.velocity_shifted)) { simple_error(state.error); return; }
         BoundaryOutput y; boundary_block(x,y);
         if (!update_flux) {
             if (!scatter_block(matrix,input.nodes,x.stage==5?3:4,y.lhs,y.rhs)) simple_error(state.error);

@@ -127,9 +127,9 @@ template<int C> struct LinearSystem {
         ensure(std::isfinite(absolute) && std::isfinite(b2) && absolute<=1e-13+1e-10*std::sqrt(b2),"true linear residual failed");
     }
 };
-template<int C> void gradient(SimpleMesh m,SimpleState s,const double* field,Array<double>& sum,double* output) {
-    sum.zero(); launch(m.element_count,SimpleGradientInterior<C>{m,field,sum.data()});
-    launch(m.face_count,SimpleGradientBoundary<C>{m,field,sum.data()});
+template<int C> void gradient(SimpleMesh m,SimpleState s,const double* field,Array<double>& sum,double* output,bool velocity_shifted=false) {
+    sum.zero(); launch(m.element_count,SimpleGradientInterior<C>{m,field,sum.data(),velocity_shifted});
+    launch(m.face_count,SimpleGradientBoundary<C>{m,field,sum.data(),velocity_shifted});
     launch(m.node_count*C*3,SimpleGradientFinish<C>{s.volume,sum.data(),output,s.error});
 }
 
@@ -176,7 +176,7 @@ struct SimpleRunner {
     SimpleRunner& operator=(const SimpleRunner&)=delete;
     void check(const char* message) { ensure(error.host()[0]==0,message); }
     void assemble_momentum() {
-        gradient<3>(mesh,state,state.velocity,sum,state.velocity_gradient);
+        gradient<3>(mesh,state,state.velocity,sum,state.velocity_gradient,controls.velocity_shifted);
         if (controls.high_resolution && limiter_iteration!=completed) {
             const auto a=graph.view<3>(nullptr,nullptr);
             launch(n,SimpleBlendBounds{a,state.velocity,blend_lower.data(),blend_upper.data(),blend_candidate.data(),state.error});

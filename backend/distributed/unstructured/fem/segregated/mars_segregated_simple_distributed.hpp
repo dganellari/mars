@@ -247,7 +247,7 @@ struct DistributedSimpleRunner {
     }
     void assemble_momentum() {
         auto timing=profile.scope(SimpleProfile::assembly);
-        gradient<3>(mesh,state,state.velocity,sum,state.velocity_gradient);
+        gradient<3>(mesh,state,state.velocity,sum,state.velocity_gradient,controls.velocity_shifted);
         if (controls.high_resolution && limiter_iteration!=completed) {
             const auto a=graph.template view<3>(nullptr,nullptr);
             launch(owned_nodes,OnList<SimpleBlendBounds>{{a,state.velocity,blend_lower.data(),blend_upper.data(),blend_candidate.data(),state.error},owned.data()});

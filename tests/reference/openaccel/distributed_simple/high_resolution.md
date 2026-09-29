@@ -55,6 +55,10 @@ MARS uses `mars_segregated_high_resolution.hpp` for the limiter and the existing
 Scope matches the public reference deck: cap 1, unrelaxed/unlimited gradients,
 constant density, no shock sensor, no interfaces. Other OpenAccel high-resolution
 variants and turbulent models are not implied by this option.
+Velocity interpolation is independent of advection: see
+[standard and shifted sampling](velocity_interpolation.md). The limiter always
+uses standard geometric sample locations, including in shifted mode. The GPU
+results below used the default `--velocity-interpolation trilinear`.
 
 ## GPU and MPI
 

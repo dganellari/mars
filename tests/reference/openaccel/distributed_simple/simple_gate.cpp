@@ -101,6 +101,7 @@ struct Options {
     int nx=16, ny=4, nz=4, iterations=2, converge=0;
     std::string reference, write, fault;
     bool split=false,configured=false,high_resolution=false,overlap=true,water=false,linear_cache=true;
+    bool velocity_shifted=false;
     bool builder=false;   // distributed side built by simple_partition from ElementDomain-shaped state
     double backflow=0;   // initial outlet-region velocity, see initial()
     double tolerance=1e-10;
@@ -225,6 +226,7 @@ std::string header_of(const Options& o) {
     std::ostringstream h; h<<"MARS_DSIMPLE_V1 "<<o.nx<<'x'<<o.ny<<'x'<<o.nz<<" iterations="<<o.iterations<<" converge="<<o.converge<<" backflow="<<o.backflow;
     if (o.configured) h<<" configured-oblique";
     if (o.high_resolution) h<<" high-resolution";
+    if (o.velocity_shifted) h<<" linear-linear";
     if (o.water) h<<" water";
     return h.str();
 }
@@ -277,6 +279,7 @@ int execute(const Options& o) {
     if (o.configured) rotate_channel(mesh);
     SimpleControls controls=o.configured?configured_controls():SimpleControls{};
     controls.high_resolution=o.high_resolution;
+    controls.velocity_shifted=o.velocity_shifted;
     if (o.water) { controls.density=1000; controls.viscosity=.001; controls.inlet_speed=.5; controls.pseudo_dt=2e-6; }
     if (!o.write.empty()) {
         if (ranks!=1) throw std::runtime_error("--write-reference runs the one-rank SimpleRunner: use one rank");
@@ -488,6 +491,10 @@ int main(int argc,char** argv) {
             else if (k=="--fault") o.fault=v;
             else if (k=="--split") o.split=v=="1";
             else if (k=="--configured") o.configured=v=="1";
+            else if (k=="--velocity-interpolation") {
+                if (v!="trilinear" && v!="linear-linear") throw std::runtime_error("unsupported velocity interpolation");
+                o.velocity_shifted=v=="linear-linear";
+            }
             else if (k=="--high-resolution") o.high_resolution=v=="1";
             else if (k=="--halo-overlap") o.overlap=v=="1";
             else if (k=="--linear-cache") o.linear_cache=v=="1";

@@ -4,6 +4,8 @@ The distributed runner retains the single-rank steady, laminar SIMPLE kernels.
 Upwind remains the default; the opt-in [high-resolution path](high_resolution.md)
 adds limited velocity reconstruction. It assembles complete owned rows, solves through the owned-row Hypre
 adapter, publishes ghost fields and reduces diagnostics over unique owners.
+The separate [velocity-interpolation option](velocity_interpolation.md) selects
+standard or shifted field sampling; its GPU/reference checks are still pending.
 Controlled-partition CUDA gates passed on 1/2/4 ranks at revision `3f7ce1e4`,
 including reversal and split communicators. Subsequent user-reported Daint runs
 also passed native Exodus/ElementDomain convergence and field parity on 1/2/4
@@ -11,7 +13,8 @@ ranks: 1277 iterations on the fixed public channel, with maximum scaled velocity
 and pressure differences below 6e-13. Later results cover the
 [configured oblique fixture](configurable_run.md), the high-resolution public
 channel, and the [upwind duct refinement study](../simple_duct/DAINT_RESULTS.md).
-These validate the listed cases, not arbitrary meshes or multi-node scaling.
+These results used standard velocity interpolation and validate the listed cases,
+not the shifted option, arbitrary meshes or multi-node scaling.
 
 The distributed path is now the normal `mars_segregated_simple` executable.
 See [configurable controls and interactive runs](configurable_run.md). The shared

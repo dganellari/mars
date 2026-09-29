@@ -213,6 +213,38 @@ class ComparisonTests(unittest.TestCase):
         (self.mars / 'run.log').write_text('CONVERGED iterations=1277 ranks=1 exchange_rounds=5109\n')
         self.compare()
 
+    def test_shifted_deck(self):
+        source = DECK + 'velocity_interpolation_type: trilinear\n'
+        self.assertIn('velocity_interpolation_type: linear_linear',
+                      gate.convergence_deck(source, velocity_interpolation='linear-linear'))
+        with self.assertRaises(ValueError):
+            gate.convergence_deck(DECK, velocity_interpolation='linear-linear')
+        with self.assertRaises(ValueError):
+            gate.convergence_deck(source, velocity_interpolation='unknown')
+
+    def test_shifted_comparison_requires_matching_provenance(self):
+        path = self.native_distributed_input('high-resolution')
+        source = DECK + ('velocity_interpolation_type: trilinear\nadvection_scheme: upwind\n'
+                         'blend_factor_max: 0\nlimit_gradients: false\nrelax_gradients: false\n')
+        deck = gate.convergence_deck(source, 'high-resolution', 'linear-linear')
+        log = self.mars / 'run.log'
+        original = log.read_text()
+        for ref_mode in ('trilinear', 'linear_linear'):
+            (self.reference / 'input.i').write_text(deck.replace('linear_linear', ref_mode))
+            self.manifest()
+            manifest = self.reference / 'comparison-run.json'
+            record = json.loads(manifest.read_text())
+            record.update(advection='high-resolution', velocity_interpolation='linear-linear')
+            manifest.write_text(json.dumps(record))
+            for marker in ('', 'trilinear', 'unknown', 'linear-linear\nvelocity_interpolation=linear-linear', 'linear-linear'):
+                log.write_text(original + ('velocity_interpolation=' + marker + '\n' if marker else ''))
+                if marker == 'linear-linear' and ref_mode == 'linear_linear':
+                    self.compare(path)
+                    self.assertEqual(json.loads(self.output.read_text())['velocity_interpolation'], 'linear-linear')
+                else:
+                    with self.assertRaisesRegex(ValueError, 'velocity interpolation'):
+                        self.compare(path)
+
     def test_reject_different_advection(self):
         (self.mars / 'run.log').write_text('SIMPLE Tet4, 1 ranks (ElementDomain/cstone), high-resolution, laminar\n'
                                          'CONVERGED iterations=1277\n')
