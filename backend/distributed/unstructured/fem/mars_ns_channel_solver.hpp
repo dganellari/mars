@@ -51,6 +51,7 @@
 #ifdef MARS_ENABLE_HYPRE
 #include "backend/distributed/unstructured/solvers/mars_hypre_pcg_solver.hpp"
 #include "backend/distributed/unstructured/solvers/mars_hypre_gmres_solver.hpp"
+#include "backend/distributed/unstructured/solvers/mars_hypre_amg_pcg_solver.hpp"
 #endif
 #include "backend/distributed/unstructured/amr/mars_amr.hpp"
 
@@ -1646,6 +1647,75 @@ __global__ void computeDivergencePerNodeKernel(const KeyType* c0, const KeyType*
     }
 }
 
+#ifdef MARS_ENABLE_HYPRE
+// Triplets of the divergence D written by computeDivergencePerNodeKernel, and of D S with
+// S = Q M^-1 as applied in applyDDTPerNode. Its step a is the transpose of D, so
+// A = (D S) D^T is the matrix-free operator. Only owned rows are written, from local and
+// halo elements: SFC ownership gives every owner the whole element star of its nodes, so
+// the rows are complete without sending entries to other ranks. Rows of pressure-Dirichlet
+// nodes are left out too (row -1): the operator zeroes phi there before D^T, which removes
+// these columns of A. Planar channels have no z velocity, and fixed nodes have no x,y correction.
+template<typename KeyType, typename RealType, typename ElementTag>
+__global__ void projectionDivergenceCooKernel(const KeyType* c0, const KeyType* c1,
+                                              const KeyType* c2, const KeyType* c3,
+                                              const KeyType* c4, const KeyType* c5,
+                                              const KeyType* c6, const KeyType* c7,
+                                              const RealType* areaVecX,
+                                              const RealType* areaVecY,
+                                              const RealType* areaVecZ,
+                                              const HYPRE_BigInt* nodeGlobalDof,
+                                              const RealType* massNode,
+                                              const uint8_t* fixedNode,
+                                              const uint8_t* dirichletNode,
+                                              const uint8_t* ownership,
+                                              int components,
+                                              HYPRE_BigInt* rows,
+                                              HYPRE_BigInt* cols,
+                                              RealType* valD,
+                                              RealType* valDS,
+                                              size_t elementCount)
+{
+    size_t k = blockIdx.x * blockDim.x + threadIdx.x;
+    if (k >= elementCount) return;
+    size_t e = k;
+    constexpr int NPE = ElemTraits<ElementTag>::NodesPerElem;
+    constexpr int NSCS = ElemTraits<ElementTag>::ScsPerElem;
+    const KeyType* cc[8] = {c0, c1, c2, c3, c4, c5, c6, c7};
+    KeyType n[NPE];
+    for (int i = 0; i < NPE; ++i) n[i] = cc[i][e];
+
+    size_t out = k * NSCS * 4 * components;
+    for (int ip = 0; ip < NSCS; ++ip)
+    {
+        int nodeL, nodeR; scsLR<ElementTag>(ip, nodeL, nodeR);
+        const KeyType ends[2] = {n[nodeL], n[nodeR]};
+        size_t off = e * NSCS + ip;
+        const RealType area[3] = {areaVecX[off], areaVecY[off], areaVecZ[off]};
+
+        for (int r = 0; r < 2; ++r)
+        {
+            KeyType row = ends[r];
+            bool keep          = ownership[row] == 1 && !(dirichletNode && dirichletNode[row]);
+            HYPRE_BigInt rowId = keep ? nodeGlobalDof[row] : HYPRE_BigInt(-1);
+            RealType half = r == 0 ? RealType(0.5) : RealType(-0.5);
+            for (int c = 0; c < 2; ++c)
+            {
+                KeyType col = ends[c];
+                RealType m = massNode[col];
+                RealType scale = (m == RealType(0) || (fixedNode && fixedNode[col])) ? RealType(0) : RealType(1) / m;
+                for (int d = 0; d < components; ++d, ++out)
+                {
+                    rows[out]  = rowId;
+                    cols[out]  = components * nodeGlobalDof[col] + d;
+                    valD[out]  = half * area[d];
+                    valDS[out] = half * area[d] * scale;
+                }
+            }
+        }
+    }
+}
+#endif
+
 // =============================================================================
 // Rhie-Chow corrected divergence kernel for periodic Q1-Q1 CVFEM. Same as
 // computeDivergencePerNodeKernel but adds the Rhie-Chow pressure-velocity
@@ -2128,6 +2198,12 @@ struct NSStepper
     bool useLegacyGradient = true;
     // Opt-in rectilinear, one-layer xy channel. The driver verifies the geometry.
     bool planar_projection = false;
+    // DDT pressure: assemble D Q M^-1 D^T once and solve it with Hypre PCG + BoomerAMG,
+    // instead of the matrix-free Jacobi CG whose iterations grow with the mesh size.
+    bool pressure_amg = false;
+    // Implicit velocity: the assembled M/dt + nu K solved by Hypre PCG + BoomerAMG instead of
+    // the MARS Jacobi CG. One hierarchy per velocity matrix, shared by the components.
+    bool velocity_amg = false;
     bool check_projection = false;
     int completed_steps = 0;
     double channel_continuity_rms = std::numeric_limits<double>::infinity();
@@ -2327,6 +2403,9 @@ struct NSStepper
     int64_t numInteriorGlobal = 0;
 #ifdef MARS_ENABLE_HYPRE
     thrust::device_vector<HYPRE_BigInt> d_localToGlobalDof;
+    std::unique_ptr<mars::fem::HypreAmgPcgSolver> pressureAmgSolver;
+    thrust::device_vector<RealType> d_pressureAmgRhs, d_pressureAmgSol;
+    std::unique_ptr<mars::fem::HypreAmgPcgSolver> velocityAmgSolver, velocityAmgSolverBdf2;
 #endif
 
     // Cached bbox for BC marking (constant on a fixed mesh).
@@ -2667,6 +2746,264 @@ void addBochevDohrmannStab(NSStepper<KeyType, RealType, ElementTag>& s, RealType
         cudaDeviceSynchronize();
     }
 }
+
+#ifdef MARS_ENABLE_HYPRE
+// Owned pressure rows pinned to identity by applyDDTPerNode: the channel mask and the single pin.
+template<typename KeyType, typename RealType, typename ElementTag>
+struct PinnedPressureRows
+{
+    const uint8_t* mask;
+    int pinDof;
+    explicit PinnedPressureRows(const NSStepper<KeyType, RealType, ElementTag>& s)
+        : mask(s.d_isPressureBdryDof.size() > 0 ? s.d_isPressureBdryDof.data() : nullptr)
+        , pinDof(s.pressurePinDof)
+    {
+    }
+    __device__ bool operator()(int dof) const { return dof == pinDof || (mask && mask[dof]); }
+};
+
+// Assemble D Q M^-1 D^T once and build its AMG hierarchy. The assembled operator must equal
+// applyDDTPerNode, the operator of the matrix-free CG; setup stops if it does not.
+template<typename KeyType, typename RealType, typename ElementTag>
+void setupPressureAmg(NSStepper<KeyType, RealType, ElementTag>& s)
+{
+    using Stepper = NSStepper<KeyType, RealType, ElementTag>;
+    using Coo     = mars::fem::HypreAmgPcgSolver::Coo;
+    using Entry   = thrust::tuple<HYPRE_BigInt, HYPRE_BigInt, RealType, RealType>;
+    using Scaled  = thrust::tuple<HYPRE_BigInt, HYPRE_BigInt, RealType>;
+    static_assert(std::is_same_v<RealType, HYPRE_Complex>, "the pressure AMG assembles HYPRE_Complex values");
+    auto fail = [&](const char* message) {
+        std::cerr << "ERROR: pressure AMG on rank " << s.rank << ": " << message << '\n';
+        MPI_Abort(MPI_COMM_WORLD, 1);
+    };
+    if (s.pressureSolve != PressureSolveKind::DDT || s.bcKind == Stepper::BCKind::Periodic
+        || s.ddtDiagShift != RealType(0))
+    {
+        fail("needs the non-periodic DDT pressure operator without a diagonal shift");
+    }
+
+    const auto& d_nodeOwnership = s.ownershipMap();
+    const auto& d_conn          = s.domain.getElementToNodeConnectivity();
+    auto cp = connPtrs<ElementTag, KeyType>(d_conn);
+    const KeyType* c4 = nullptr; const KeyType* c5 = nullptr;
+    const KeyType* c6 = nullptr; const KeyType* c7 = nullptr;
+    if constexpr (std::is_same_v<ElementTag, HexTag>) { c4 = cp[4]; c5 = cp[5]; c6 = cp[6]; c7 = cp[7]; }
+    constexpr int NSCS      = ElemTraits<ElementTag>::ScsPerElem;
+    const size_t numElements = s.elementCount; // local and halo
+    const int components     = s.planar_projection ? 2 : 3;
+
+    thrust::device_vector<HYPRE_BigInt> nodeGid(s.nodeCount);
+    thrust::transform(thrust::device, thrust::device_pointer_cast(s.d_node_to_dof.data()),
+                      thrust::device_pointer_cast(s.d_node_to_dof.data() + s.nodeCount), nodeGid.begin(),
+                      [l2g = thrust::raw_pointer_cast(s.d_localToGlobalDof.data())] __device__ (int dof) -> HYPRE_BigInt {
+                          return dof >= 0 ? l2g[dof] : HYPRE_BigInt(-1);
+                      });
+    if (thrust::count_if(nodeGid.begin(), nodeGid.end(), [] __device__ (HYPRE_BigInt g) -> bool { return g < 0; }) > 0)
+        fail("a node has no global DOF");
+
+    if (std::getenv("MARS_PAMG_TRACE"))
+    {
+        std::fprintf(stderr, "[amg-trace] rank %d: triplets, %zu elements, %zu nodes, %d owned\n", s.rank,
+                     numElements, s.nodeCount, s.numOwnedDofs);
+        std::fflush(stderr);
+    }
+    const size_t count = numElements * NSCS * 4 * components;
+    if (count > size_t(std::numeric_limits<HYPRE_Int>::max())) fail("too many local triplets for HYPRE_Int");
+    thrust::device_vector<HYPRE_BigInt> rows(count), cols(count);
+    thrust::device_vector<RealType> valD(count), valDS(count);
+    if (numElements > 0)
+    {
+        projectionDivergenceCooKernel<KeyType, RealType, ElementTag>
+            <<<int((numElements + s.blockSize - 1) / s.blockSize), s.blockSize>>>(
+                cp[0], cp[1], cp[2], cp[3], c4, c5, c6, c7,
+                s.d_areaVec_x.data(), s.d_areaVec_y.data(), s.d_areaVec_z.data(),
+                thrust::raw_pointer_cast(nodeGid.data()), s.d_massNode.data(),
+                s.planar_projection ? s.d_isBdryNode.data() : nullptr,
+                s.d_isPressureBdryNode.size() == s.nodeCount ? s.d_isPressureBdryNode.data() : nullptr,
+                d_nodeOwnership.data(), components, thrust::raw_pointer_cast(rows.data()),
+                thrust::raw_pointer_cast(cols.data()), thrust::raw_pointer_cast(valD.data()),
+                thrust::raw_pointer_cast(valDS.data()), numElements);
+    }
+    if (cudaDeviceSynchronize() != cudaSuccess) fail("triplet assembly kernel failed");
+
+    auto all = thrust::make_zip_iterator(thrust::make_tuple(rows.begin(), cols.begin(), valD.begin(), valDS.begin()));
+    const size_t nnzD = thrust::remove_if(thrust::device, all, all + count,
+                                          [] __device__ (const Entry& t) -> bool { return thrust::get<0>(t) < 0; }) - all;
+    thrust::device_vector<HYPRE_BigInt> rowsS(nnzD), colsS(nnzD);
+    thrust::device_vector<RealType> valS(nnzD);
+    auto scaledIn  = thrust::make_zip_iterator(thrust::make_tuple(rows.begin(), cols.begin(), valDS.begin()));
+    auto scaledOut = thrust::make_zip_iterator(thrust::make_tuple(rowsS.begin(), colsS.begin(), valS.begin()));
+    const size_t nnzS = thrust::copy_if(thrust::device, scaledIn, scaledIn + nnzD, scaledOut,
+                                        [] __device__ (const Scaled& t) -> bool { return thrust::get<2>(t) != RealType(0); })
+                        - scaledOut;
+
+    const HYPRE_BigInt rowStart = s.globalRowStart;
+    thrust::device_vector<HYPRE_BigInt> pinned(s.numOwnedDofs);
+    const size_t numPinned = thrust::copy_if(thrust::device, thrust::counting_iterator<HYPRE_BigInt>(rowStart),
+                                             thrust::counting_iterator<HYPRE_BigInt>(rowStart + s.numOwnedDofs),
+                                             thrust::counting_iterator<int>(0), pinned.begin(),
+                                             PinnedPressureRows<KeyType, RealType, ElementTag>(s))
+                             - pinned.begin();
+
+    s.pressureAmgSolver = std::make_unique<mars::fem::HypreAmgPcgSolver>("MARS_PAMG");
+    s.pressureAmgSolver->setupProjection(
+        MPI_COMM_WORLD, rowStart, s.globalRowEnd, components,
+        Coo{thrust::raw_pointer_cast(rows.data()), thrust::raw_pointer_cast(cols.data()),
+            thrust::raw_pointer_cast(valD.data()), HYPRE_Int(nnzD)},
+        Coo{thrust::raw_pointer_cast(rowsS.data()), thrust::raw_pointer_cast(colsS.data()),
+            thrust::raw_pointer_cast(valS.data()), HYPRE_Int(nnzS)},
+        thrust::raw_pointer_cast(pinned.data()), HYPRE_Int(numPinned), s.tolerance, s.maxIter);
+    s.d_pressureAmgRhs.resize(s.numOwnedDofs);
+    s.d_pressureAmgSol.resize(s.numOwnedDofs);
+
+    // Compare A x with applyDDTPerNode on a varied vector that is zero on the pinned rows.
+    cstone::DeviceVector<RealType> x(s.nodeCount, RealType(0)), y(s.nodeCount, RealType(0));
+    cstone::DeviceVector<RealType> gx(s.nodeCount, RealType(0)), gy(s.nodeCount, RealType(0)),
+        gz(s.nodeCount, RealType(0));
+    const int* n2d        = s.d_node_to_dof.data();
+    const uint8_t* own    = d_nodeOwnership.data();
+    const int numOwned    = s.numOwnedDofs;
+    PinnedPressureRows<KeyType, RealType, ElementTag> pinnedRow(s);
+    thrust::for_each(thrust::device, thrust::counting_iterator<size_t>(0),
+                     thrust::counting_iterator<size_t>(s.nodeCount),
+                     [xp = x.data(), n2d, own, numOwned, pinnedRow, gid = thrust::raw_pointer_cast(nodeGid.data())]
+                     __device__ (size_t i) {
+                         int dof = n2d[i];
+                         if (own[i] != 1 || dof < 0 || dof >= numOwned || pinnedRow(dof)) return;
+                         xp[i] = RealType(1) + RealType((gid[i] * 7919) % 97) / RealType(97);
+                     });
+    s.domain.exchangeNodeHalo(x);
+    applyDDTPerNode<KeyType, RealType, ElementTag>(s, x, y, gx, gy, gz);
+    thrust::device_vector<RealType> xDof(numOwned), yRef(numOwned), yAsm(numOwned);
+    thrust::for_each(thrust::device, thrust::counting_iterator<size_t>(0),
+                     thrust::counting_iterator<size_t>(s.nodeCount),
+                     [xp = x.data(), yp = y.data(), n2d, own, numOwned,
+                      xd = thrust::raw_pointer_cast(xDof.data()),
+                      yd = thrust::raw_pointer_cast(yRef.data())] __device__ (size_t i) {
+                         int dof = n2d[i];
+                         if (own[i] != 1 || dof < 0 || dof >= numOwned) return;
+                         xd[dof] = xp[i];
+                         yd[dof] = yp[i];
+                     });
+    s.pressureAmgSolver->apply(thrust::raw_pointer_cast(xDof.data()), thrust::raw_pointer_cast(yAsm.data()));
+    auto diffAndRef = thrust::make_zip_iterator(thrust::make_tuple(yAsm.begin(), yRef.begin()));
+    using Pair = thrust::tuple<RealType, RealType>;
+    const Pair localMax = thrust::transform_reduce(
+        thrust::device, diffAndRef, diffAndRef + numOwned,
+        [] __device__ (const Pair& t) -> Pair {
+            return Pair(fabs(thrust::get<0>(t) - thrust::get<1>(t)), fabs(thrust::get<1>(t)));
+        },
+        Pair(0, 0),
+        [] __device__ (const Pair& a, const Pair& b) -> Pair {
+            return Pair(fmax(thrust::get<0>(a), thrust::get<0>(b)), fmax(thrust::get<1>(a), thrust::get<1>(b)));
+        });
+    double local[2] = {thrust::get<0>(localMax), thrust::get<1>(localMax)}, global[2] = {0, 0};
+    MPI_Allreduce(local, global, 2, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+    const double relative = global[1] > 0 ? global[0] / global[1] : global[0];
+    if (s.rank == 0)
+    {
+        std::cout << "[pressure-amg] assembled D Q M^-1 D^T vs matrix-free: max |difference| / max |Ax| = "
+                  << std::scientific << relative << std::defaultfloat << '\n';
+    }
+    if (!(relative <= 1e-10)) fail("the assembled operator differs from the matrix-free operator");
+}
+
+// One pressure solve with the assembled operator. Same contract as solvePressureDDT: phi on
+// the owned nodes, ghosts refreshed, iterations returned or -2 without convergence.
+template<typename KeyType, typename RealType, typename ElementTag>
+int solvePressureAmg(NSStepper<KeyType, RealType, ElementTag>& s,
+                     cstone::DeviceVector<RealType>& b_node,
+                     cstone::DeviceVector<RealType>& phi_node)
+{
+    const int* n2d     = s.d_node_to_dof.data();
+    const uint8_t* own = s.ownershipMap().data();
+    const int numOwned = s.numOwnedDofs;
+    RealType* rhs      = thrust::raw_pointer_cast(s.d_pressureAmgRhs.data());
+    RealType* sol      = thrust::raw_pointer_cast(s.d_pressureAmgSol.data());
+    PinnedPressureRows<KeyType, RealType, ElementTag> pinnedRow(s);
+    thrust::for_each(thrust::device, thrust::counting_iterator<size_t>(0),
+                     thrust::counting_iterator<size_t>(s.nodeCount),
+                     [bp = b_node.data(), n2d, own, numOwned, rhs, pinnedRow] __device__ (size_t i) {
+                         int dof = n2d[i];
+                         if (own[i] != 1 || dof < 0 || dof >= numOwned) return;
+                         rhs[dof] = pinnedRow(dof) ? RealType(0) : bp[i];
+                     });
+    double local = thrust::transform_reduce(thrust::device, rhs, rhs + numOwned,
+                                            [] __device__ (RealType v) -> double { return double(v) * double(v); }, 0.0,
+                                            thrust::plus<double>());
+    double global = 0;
+    MPI_Allreduce(&local, &global, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+    s.lastPressR0 = std::sqrt(global);
+
+    int iterations = 0;
+    if (s.lastPressR0 < std::numeric_limits<RealType>::min())
+    {
+        thrust::fill(thrust::device, sol, sol + numOwned, RealType(0));
+        s.lastPressResid = 0;
+    }
+    else
+    {
+        iterations       = s.pressureAmgSolver->solve(rhs, sol);
+        s.lastPressResid = s.pressureAmgSolver->lastRelativeResidual();
+    }
+    thrust::for_each(thrust::device, thrust::counting_iterator<size_t>(0),
+                     thrust::counting_iterator<size_t>(s.nodeCount),
+                     [phip = phi_node.data(), n2d, own, numOwned, sol] __device__ (size_t i) {
+                         int dof = n2d[i];
+                         if (own[i] != 1 || dof < 0 || dof >= numOwned) return;
+                         phip[i] = sol[dof];
+                     });
+    s.domain.exchangeNodeHalo(phi_node);
+    return iterations;
+}
+#endif
+
+#ifdef MARS_ENABLE_HYPRE
+// Hand the frozen velocity matrices to BoomerAMG once: M/dt + nu K for BDF1 and, when BDF2
+// is on, 3M/(2dt) + nu K. The rows are copied as they are, boundary rows included.
+template<typename KeyType, typename RealType, typename ElementTag>
+void setupVelocityAmg(NSStepper<KeyType, RealType, ElementTag>& s)
+{
+    using Stepper = NSStepper<KeyType, RealType, ElementTag>;
+    if (s.bcKind == Stepper::BCKind::Periodic)
+    {
+        // Periodic CG also broadcasts master to slave values each iteration; the matrix alone is not the operator.
+        if (s.rank == 0) std::cerr << "ERROR: the velocity AMG does not support periodic boundaries\n";
+        MPI_Abort(MPI_COMM_WORLD, 1);
+    }
+    auto build = [&](const cstone::DeviceVector<RealType>& values) {
+        auto solver = std::make_unique<mars::fem::HypreAmgPcgSolver>("MARS_VAMG");
+        solver->setupCsr(MPI_COMM_WORLD, HYPRE_BigInt(s.globalRowStart), HYPRE_BigInt(s.globalRowEnd),
+                         s.d_rowPtr.data(), s.d_colInd.data(), values.data(),
+                         thrust::raw_pointer_cast(s.d_localToGlobalDof.data()), s.d_localToGlobalDof.size(),
+                         s.tolerance, s.maxIter);
+        return solver;
+    };
+    s.velocityAmgSolver = build(s.d_valuesVel);
+    if (s.useBdf2 && s.d_valuesVel_bdf2.size() > 0) s.velocityAmgSolverBdf2 = build(s.d_valuesVel_bdf2);
+}
+
+// One velocity component, warm-started from x. Same contract as solveOneComponent: the
+// solution reaches qOut only if the solve converged.
+template<typename KeyType, typename RealType, typename ElementTag>
+int solveVelocityAmg(NSStepper<KeyType, RealType, ElementTag>& s,
+                     cstone::DeviceVector<RealType>& b_rhs,
+                     cstone::DeviceVector<RealType>& xVec,
+                     cstone::DeviceVector<RealType>& qOut,
+                     bool bdf2)
+{
+    auto& solver   = bdf2 ? *s.velocityAmgSolverBdf2 : *s.velocityAmgSolver;
+    int iterations = solver.solve(b_rhs.data(), xVec.data(), true);
+    if (iterations >= 0)
+    {
+        int nBlocks = (s.nodeCount + s.blockSize - 1) / s.blockSize;
+        scatterDofToNodeKernel<RealType><<<nBlocks, s.blockSize>>>(
+            xVec.data(), s.d_node_to_dof.data(), qOut.data(), s.nodeCount);
+        cudaDeviceSynchronize();
+    }
+    return iterations;
+}
+#endif
 
 // =============================================================================
 // Setup: builds DOF mapping, sparsity, two matrices, lumped mass, BC mask,
@@ -5094,7 +5431,7 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
     }
 
 #ifdef MARS_ENABLE_HYPRE
-    if (s.solverKind == SolverKind::Hypre)
+    if (s.solverKind == SolverKind::Hypre || s.pressure_amg || s.velocity_amg)
     {
         // Build contiguous global-DOF numbering (same recipe as
         // mars_amr_advdiff/mars_amr_pressure_poisson). Used by both matrix
@@ -5161,6 +5498,34 @@ void setupNSStepper(NSStepper<KeyType, RealType, ElementTag>& s,
         }
         cudaDeviceSynchronize();
         pt.lap("Hypre global DOF map (on-device)");
+    }
+    if (s.pressure_amg)
+    {
+        if constexpr (std::is_same_v<RealType, HYPRE_Complex>)
+            setupPressureAmg<KeyType, RealType, ElementTag>(s);
+        else
+        {
+            if (s.rank == 0) std::cerr << "ERROR: the pressure AMG needs double precision\n";
+            MPI_Abort(MPI_COMM_WORLD, 1);
+        }
+        pt.lap("pressure AMG: assemble D Q M^-1 D^T + BoomerAMG setup");
+    }
+    if (s.velocity_amg)
+    {
+        if constexpr (std::is_same_v<RealType, HYPRE_Complex>)
+            setupVelocityAmg<KeyType, RealType, ElementTag>(s);
+        else
+        {
+            if (s.rank == 0) std::cerr << "ERROR: the velocity AMG needs double precision\n";
+            MPI_Abort(MPI_COMM_WORLD, 1);
+        }
+        pt.lap("velocity AMG: BoomerAMG setup");
+    }
+#else
+    if (s.pressure_amg || s.velocity_amg)
+    {
+        if (s.rank == 0) std::cerr << "ERROR: --pressure-amg and --velocity-amg need MARS built with MARS_ENABLE_HYPRE\n";
+        MPI_Abort(MPI_COMM_WORLD, 1);
     }
 #endif
 
@@ -7886,6 +8251,13 @@ void runImplicitDiffusionStep(NSStepper<KeyType, RealType, ElementTag>& s, RealT
         // there is no separate slave row/DOF to zero here -- the merged row already
         // carries the full RHS.
 
+#ifdef MARS_ENABLE_HYPRE
+        if constexpr (std::is_same_v<RealType, HYPRE_Complex>)
+        {
+            if (s.velocity_amg)
+                return solveVelocityAmg<KeyType, RealType, ElementTag>(s, b, xVec, qStarStar, bdf2Active);
+        }
+#endif
         return solveOneComponent<KeyType, RealType, ElementTag>(
             s, b, xVec, qStarStar,
             bdf2Active ? s.Avel_bdf2 : s.Avel);
@@ -8687,7 +9059,19 @@ void runPressureSolveStep(NSStepper<KeyType, RealType, ElementTag>& s, RealType 
                                         ? s.periodicMap->d_periodicPartner.data() : nullptr;
                 mars::fem::removeMean<RealType>(s.domain, d_bNode, MPI_COMM_WORLD, partnerPtr);
             }
-            s.lastPressureIters = solvePressureDDT<KeyType, RealType, ElementTag>(s, d_bNode, s.d_phi);
+            bool solvedByAmg = false;
+#ifdef MARS_ENABLE_HYPRE
+            if constexpr (std::is_same_v<RealType, HYPRE_Complex>)
+            {
+                if (s.pressure_amg)
+                {
+                    s.lastPressureIters = solvePressureAmg<KeyType, RealType, ElementTag>(s, d_bNode, s.d_phi);
+                    solvedByAmg         = true;
+                }
+            }
+#endif
+            if (!solvedByAmg)
+                s.lastPressureIters = solvePressureDDT<KeyType, RealType, ElementTag>(s, d_bNode, s.d_phi);
         }
     }
 

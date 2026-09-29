@@ -213,6 +213,8 @@ int main(int argc, char** argv)
     // pressure solve. --no-opening-flux-source gives the A/B baseline.
     bool openingFluxSource = true;
     bool planar_projection = false;
+    bool pressureAmg = false;
+    bool velocityAmg = false;
     bool forceBdf1 = false;   // --bdf1: 1st-order time stepping (disable BDF2)
     // Regression-check mode: exit 1 unless the final profile RMS is below
     // rmsTol (the FLUYA reference tolerance) AND every interior-flux ratio is
@@ -261,6 +263,8 @@ int main(int argc, char** argv)
         else if (arg == "--no-seed-interior")      seedInterior = false;
         else if (arg == "--no-opening-flux-source") openingFluxSource = false;
         else if (arg == "--planar-ddt")            planar_projection = true;
+        else if (arg == "--pressure-amg")          pressureAmg = true;
+        else if (arg == "--velocity-amg")          velocityAmg = true;
         else if (arg == "--bdf1")                  forceBdf1 = true;
         else if (arg == "--check")                 checkMode = true;
         else if (arg.find("--rms-tol=") == 0)      rmsTol  = std::stod(arg.substr(10));
@@ -360,6 +364,8 @@ int main(int argc, char** argv)
                       << "  --profile-xtol=TOL  Half-width of the probe plane (default: one element)\n"
                       << "  --solver=cg|hypre   Linear solver (default cg)\n"
                       << "  --planar-ddt        Consistent xy projection for a one-layer rectilinear channel (inlet + CG/DDT)\n"
+                      << "  --pressure-amg      Assemble the DDT pressure operator and solve it with Hypre PCG + BoomerAMG\n"
+                      << "  --velocity-amg      Solve the implicit velocity systems with Hypre PCG + BoomerAMG\n"
                       << "  --steady-tol=TOL    Final 20-step velocity change / Uinf (default 1e-6)\n"
                       << "  --continuity-tol=TOL  Final planar continuity RMS*H/U and relative boundary balance (default 1e-6)\n"
                       << "  --pressure-solve=K|DDT  Pressure operator (default DDT; K FAILs on this channel)\n"
@@ -508,6 +514,8 @@ int main(int argc, char** argv)
         s.planar_projection = true;
         s.useLegacyGradient = false;
     }
+    s.pressure_amg = pressureAmg;
+    s.velocity_amg = velocityAmg;
 
     if (useBodyForce)
     {
@@ -1058,6 +1066,12 @@ int main(int argc, char** argv)
         exitCode = pass ? 0 : 1;
     }
 
+#ifdef MARS_ENABLE_HYPRE
+    // Hypre objects must be destroyed while MPI is still initialized.
+    s.pressureAmgSolver.reset();
+    s.velocityAmgSolver.reset();
+    s.velocityAmgSolverBdf2.reset();
+#endif
     MPI_Finalize();
     return exitCode;
 }
