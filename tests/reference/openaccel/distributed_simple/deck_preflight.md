@@ -8,13 +8,25 @@ keep private decks, generated arguments, logs and fields out of Git and review u
 
 The tool checks one fluid domain/material, constant positive density and dynamic
 viscosity, zero initial velocity/pressure, fixed-frame physics, one normal-speed
-inlet, one average-static-pressure outlet and stationary no-slip walls. It maps
-pseudo-time, relaxation, outlet blend and upwind/high-resolution selection.
+inlet, one constant-static-pressure or average-static-pressure outlet and
+stationary no-slip walls. It maps pseudo-time, relaxation, outlet blend and
+upwind/high-resolution selection.
 Interpolation, pressure subiterations and expert settings must match the current
 MARS implementation. In particular, OpenAccel defaults `relax_gradients` to true,
 whereas this MARS path requires false; omission is rejected. Unknown physical
 keys, expressions, moving walls, turbulence and ambiguous YAML are rejected.
 Do not remove a rejected control just to get a passing preparation.
+
+`static_pressure` maps its constant `relative_pressure` in Pa to `--outlet-pressure`
+and sets `--outlet-beta 1`. The existing trace law
+`p_face = p_out + (1-beta)*(p_nearest-p_mean)` then fixes pressure at each open
+outlet sample. The trace is set before the first pressure assembly; closed faces
+retain that constant and use it again when reopening. At OpenAccel revision
+`0d69041`, both pressure outlet modes share momentum/pressure assembly and
+backflow selection. `pressure_profile_blend` is read only for
+`average_static_pressure`; a leftover entry is ignored for `static_pressure`.
+Time-dependent or spatially varying pressure input remains unsupported. This
+mapping does not establish field parity on a new case.
 
 Mesh coordinates must be in metres. The supplied mesh path must resolve to the
 same file as the deck's `mesh.file_path` (relative to the saved deck directory).
@@ -94,7 +106,8 @@ this executable does not resume from the short run's CSV output.
 python3 -m unittest discover -s scripts -p test_prepare_simple_deck.py -v
 ```
 
-The public-fixture tests cover extraction, high-resolution selection, global
+The checked-in synthetic `preparation_fixture.i` tests cover extraction, static
+and average pressure outlets, high-resolution selection, global
 initialization, unsupported physics/interpolation/gradients/subiterations,
 nonfinite values, duplicate YAML keys, unsafe tags, boundary ambiguity, literal
 argument handling, path mismatch and existing-output rejection. An invalid dummy

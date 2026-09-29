@@ -131,9 +131,14 @@ def translate(doc):
             equal(mm.get('option'), 'normal_speed', 'inlet.option')
             args += ['--inlet-velocity', str(number(mm.get('normal_speed'), 'normal_speed', positive=True))]
         else:
-            equal(mm.get('option'), 'average_static_pressure', 'outlet.option')
+            option = mm.get('option')
+            require(option in ('static_pressure', 'average_static_pressure'), 'outlet.option', 'unsupported setting')
+            # beta=1 fixes the trace to the prescribed pressure. OpenAccel only
+            # reads pressure_profile_blend for average_static_pressure.
+            beta = (1.0 if option == 'static_pressure' else
+                    number(mm.get('pressure_profile_blend'), 'pressure_profile_blend', unit=True))
             args += ['--outlet-pressure', str(number(mm.get('relative_pressure'), 'relative_pressure')),
-                     '--outlet-beta', str(number(mm.get('pressure_profile_blend'), 'pressure_profile_blend', unit=True))]
+                     '--outlet-beta', str(beta)]
     require(set(kinds) == {'inlet', 'outlet'} and wall_sets, 'boundaries', 'requires inlet, outlet and walls')
     args += ['--wall-ss', ','.join(wall_sets)]
 
@@ -228,6 +233,7 @@ def main():
                   arguments=args, status='supported_deck_mesh_not_validated',
                   notes=['Native C++ setup must validate single-block Tet4 topology and boundary coverage.',
                          'OpenAccel automatic_decomposition_type is not translated; MARS uses Cornerstone.',
+                         'Constant static_pressure uses outlet beta=1; pressure_profile_blend applies only to average_static_pressure.',
                          'Coordinates must be in metres; mesh bytes were not read.',
                          'MARS uses its own Hypre settings, zero initial fields and convergence norms.',
                          'Iteration counts and reference residual criteria are not translated.'])

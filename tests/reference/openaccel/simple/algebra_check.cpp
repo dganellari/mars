@@ -135,6 +135,20 @@ int main() {
         std::fill(zero_d,zero_d+12,2.);
         SimpleBoundary<1>{mesh,state,c,{4,offsets,columns,pa,pb},true,false}(0);
         double anchor=0; for (double v:pa) anchor+=v; near(anchor,3);
+        // Constant static pressure survives pressure changes and face closure.
+        auto static_controls=c; static_controls.beta=1;
+        for (double prescribed:{0.,7.5,-3.5}) {
+            static_controls.pressure_reference=prescribed;
+            for (int closed:{0,1,0}) {
+                std::fill(flags,flags+3,closed);
+                for (int j=0;j<4;++j) zero_pressure[j]=20.*(j+1)*(closed?1:-1);
+                std::fill(moments,moments+2,0.);
+                SimpleTraceMoment{mesh,state,moments}(0);
+                SimpleTrace{mesh,state,static_controls,moments}(0);
+                for (double t:zero_trace) near(t,prescribed);
+                check(error==0);
+            }
+        }
         SimpleSums sums; sums.volume=2; sums.momentum2=8; sums.continuity2=2;
         sums.velocity_change2=.02; sums.pressure_change2=.0002;
         sums.inlet=-1; sums.outlet=.9; sums.continuity=-.1; sums.inlet_area=1;

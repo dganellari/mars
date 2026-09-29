@@ -12,7 +12,7 @@ from unittest.mock import patch
 import prepare_simple_deck as bridge
 
 ROOT = Path(__file__).resolve().parents[1]
-PUBLIC = ROOT / 'tests/data/public_openaccel_reference/channel_smoke.i'
+PUBLIC = ROOT / 'tests/reference/openaccel/distributed_simple/preparation_fixture.i'
 
 
 class DeckTests(unittest.TestCase):
@@ -98,11 +98,34 @@ class DeckTests(unittest.TestCase):
         bridge.translate(self.doc)
 
     def test_boundary_contract(self):
-        for option in ('static_pressure', 'mass_flow_rate'):
+        for option in ('total_pressure', 'mass_flow_rate', 'normal_speed', None):
             doc = copy.deepcopy(self.doc)
             doc['simulation']['physical_analysis']['domains'][0]['boundaries'][2]['boundary_details']['mass_and_momentum']['option'] = option
             self.reject(doc)
         self.domain['boundaries'][0]['boundary_details'] = {'mass_and_momentum': {'option': 'no_slip_wall', 'wall_velocity': [1, 0, 0]}}
+        self.reject()
+
+    def test_constant_static_pressure(self):
+        mm = self.domain['boundaries'][2]['boundary_details']['mass_and_momentum']
+        mm['option'] = 'static_pressure'
+        # An average-pressure blend left in the deck does not affect this mode.
+        for pressure in (0, 7.5, -3.5):
+            with self.subTest(pressure=pressure):
+                mm['relative_pressure'] = pressure
+                with_blend = bridge.translate(self.doc)
+                mm.pop('pressure_profile_blend', None)
+                self.assertEqual(bridge.translate(self.doc), with_blend)
+                args = dict(zip(with_blend[0][::2], with_blend[0][1::2]))
+                self.assertEqual(float(args['--outlet-pressure']), pressure)
+                self.assertEqual(float(args['--outlet-beta']), 1)
+                mm['pressure_profile_blend'] = 0.05
+        for pressure in (None, True, 'nan', 'inf', [0], {'value': 0}):
+            with self.subTest(pressure=pressure):
+                mm['relative_pressure'] = pressure
+                self.reject()
+        mm['relative_pressure'] = 0
+        mm['option'] = 'average_static_pressure'
+        del mm['pressure_profile_blend']
         self.reject()
 
     def test_duplicate_sets_and_names(self):
