@@ -12,7 +12,7 @@ void write_fixture(const std::string& path,int variant) {
     };
     const int xyz=dimension("num_dim",3),nodes=dimension("num_nodes",4),elements=dimension("num_elem",1);
     dimension("num_el_blk",1); dimension("num_el_in_blk1",1);
-    const int corners=dimension("num_nod_per_el1",4),sets=dimension("num_side_sets",3),width=dimension("len_name",8);
+    const int corners=dimension("num_nod_per_el1",4),sets=dimension("num_side_sets",3),width=dimension("len_name",32);
     int coordinates[3]={-1,-1,-1};
     if (variant==1) coordinates[0]=variable("coord",NC_DOUBLE,{xyz,nodes});
     else {
@@ -21,7 +21,8 @@ void write_fixture(const std::string& path,int variant) {
     }
     const int connectivity=variable("connect1",NC_INT,variant==2?std::initializer_list<int>{corners}:std::initializer_list<int>{elements,corners});
     nc_check(nc_put_att_text(id,connectivity,"elem_type",variant==3?0:4,"TET4"));
-    const int names=variable("ss_names",NC_CHAR,{sets,width});
+    const int names=(variant==19 || variant==23)?-1:variable("ss_names",NC_CHAR,{sets,width});
+    const int ids=(variant>=12 && variant!=23)?variable("ss_prop1",NC_INT,{sets}):-1;
     int side_elements[3],sides[3];
     for (int i=0;i<3;++i) {
         const auto suffix=std::to_string(i+1);
@@ -36,7 +37,22 @@ void write_fixture(const std::string& path,int variant) {
     else for (int j=0;j<3;++j) if (coordinates[j]>=0) nc_check(nc_put_var_double(id,coordinates[j],coords+4*j));
     int conn[4]={1,2,3,4}; if (variant==8) conn[3]=5; if (variant==9) conn[3]=3;
     nc_check(nc_put_var_int(id,connectivity,conn));
-    const char labels[3][8]={"inlet","outlet","walls"}; nc_check(nc_put_var_text(id,names,&labels[0][0]));
+    std::string labels[3]={"inlet","outlet","walls"};
+    if (variant==10) { labels[0]="INLET"; labels[1]="OuTLeT"; labels[2]="WALLS   "; }
+    if (variant==11) { labels[0]="FEED PORT"; labels[1]="EXIT PORT"; labels[2]="WALL SET"; }
+    if (variant==13) for (auto& name:labels) name.clear();
+    if (variant==14) labels[1]="INLET";
+    if (variant==20) labels[0]="sideset_42";
+    if (variant==21 || variant==22) labels[0]="surface_999";
+    char raw_names[3][32]{};
+    for (int i=0;i<3;++i) std::copy(labels[i].begin(),labels[i].end(),raw_names[i]);
+    if (names>=0) nc_check(nc_put_var_text(id,names,&raw_names[0][0]));
+    if (ids>=0) {
+        int values[3]={17,42,93};
+        if (variant==15) values[1]=17;
+        if (variant==16) values[0]=0;
+        nc_check(nc_put_var_int(id,ids,values));
+    }
     for (int j=0;j<3;++j) {
         int e[2]={1,1},f[2]={j+1,4};
         if (variant==5 && j==2) f[1]=1;
@@ -65,14 +81,23 @@ int main(int argc,char** argv) {
         MPI_Barrier(MPI_COMM_WORLD);
         const char* expected[]={"","","native Exodus read failed","native Exodus read failed","native Exodus read failed",
             "invalid or repeated boundary face","invalid or repeated boundary face","invalid source coordinates or connectivity",
-            "invalid source coordinates or connectivity","degenerate source connectivity"};
-        for (int variant=0;variant<10;++variant) {
+            "invalid source coordinates or connectivity","degenerate source connectivity",
+            "","","","","native boundary name resolution failed","native boundary name resolution failed",
+            "native Exodus read failed","native boundary name resolution failed","native boundary name resolution failed",
+            "","native boundary name resolution failed","","native boundary name resolution failed","native boundary name resolution failed"};
+        for (int variant=0;variant<int(std::size(expected));++variant) {
             const auto path=std::string(argv[1])+"/fixture-"+std::to_string(variant)+".exo";
             if (!rank) write_fixture(path,variant);
             MPI_Barrier(MPI_COMM_WORLD);
             bool rejected=false;
             try {
-                const auto mesh=read_simple_mesh(MPI_COMM_WORLD,path);
+                mars::segregated::SimpleBoundaryNames selection;
+                if (variant==11) selection={"feed_port","EXIT_PORT",{"Wall_Set"}};
+                if (variant>=12) selection={"surface_17","SIDESET_42",{"surface_93"}};
+                if (variant==17) selection={"inlet","surface_17",{"surface_93"}};
+                if (variant==18) selection.inlet="surface_1"; // The ID is 17, not sequence 1.
+                if (variant==22) selection.inlet="surface_999"; // Ioss replaces this stale generated name.
+                const auto mesh=read_simple_mesh(MPI_COMM_WORLD,path,selection);
                 bool correct=file_gate_host(mesh.x)==std::vector<double>{0,1,0,0}
                     && file_gate_host(mesh.y)==std::vector<double>{0,0,1,0}
                     && file_gate_host(mesh.z)==std::vector<double>{0,0,0,1};
@@ -81,10 +106,10 @@ int main(int argc,char** argv) {
                 for (size_t j=0;j<faces.size();++j) correct=correct && faces[j].element==0 && faces[j].ordinal==int(j) && faces[j].kind==std::min(int(j),2);
                 simple_collective(MPI_COMM_WORLD,correct,"Exodus arrays differ from file data");
             } catch (const std::exception& e) {
-                rejected=variant>=2 && std::string(e.what()).find(expected[variant])!=std::string::npos;
+                rejected=expected[variant][0] && std::string(e.what()).find(expected[variant])!=std::string::npos;
                 if (!rejected) throw;
             }
-            simple_collective(MPI_COMM_WORLD,rejected==(variant>=2),"malformed Exodus fixture accepted");
+            simple_collective(MPI_COMM_WORLD,rejected==bool(expected[variant][0]),"unexpected Exodus fixture verdict");
         }
         if (argc>=3) {
             const auto channel=read_simple_mesh(MPI_COMM_WORLD,argv[2]);
@@ -104,7 +129,7 @@ int main(int argc,char** argv) {
                 simple_collective(MPI_COMM_WORLD,rejected,"invalid side-set mapping accepted");
             }
         }
-        if (!rank) std::cout<<"PASS: native Exodus input, packed/split coordinates and 8 malformed cases ranks="<<ranks<<'\n';
+        if (!rank) std::cout<<"PASS: native Exodus input, name/ID aliases, packed/split coordinates and 24 fixture verdicts ranks="<<ranks<<'\n';
     } catch (const std::exception& e) { std::cerr<<"FAIL: "<<e.what()<<'\n'; MPI_Abort(MPI_COMM_WORLD,1); }
     MPI_Finalize();
 }

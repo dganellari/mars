@@ -2,6 +2,7 @@
 #include "mars_segregated_simple_options.hpp"
 #include "mars_segregated_simple_mesh.hpp"
 #include "../../utils/mars_read_exodus_raw.hpp"
+#include <map>
 #include <type_traits>
 #ifdef MARS_REPLAY_CUDA
 #include <thrust/unique.h>
@@ -68,6 +69,42 @@ struct SourceExteriorCheck {
     }
 };
 
+inline std::vector<int> source_boundary_kinds(const std::vector<ExodusRawSideSet>& sets,const SimpleBoundaryNames& names) {
+    ensure(names.valid() && sets.size()==names.walls.size()+2,
+           "SIMPLE boundary selection must name every side set exactly once");
+    std::map<std::string,size_t> aliases;
+    auto add=[&](const std::string& name,size_t index) {
+        if (name.empty()) return;
+        const auto entry=aliases.emplace(simple_boundary_name(name),index);
+        ensure(entry.second || entry.first->second==index,"ambiguous Exodus boundary names or aliases");
+    };
+    for (size_t i=0;i<sets.size();++i) {
+        const auto& set=sets[i];
+        auto name=simple_boundary_name(set.name);
+        if (set.id>0) {
+            const auto id=std::to_string(set.id);
+            // Ioss replaces a generated surface name whose embedded ID is stale.
+            if (name.rfind("surface_",0)==0) {
+                const auto suffix=name.substr(8);
+                if (!suffix.empty() && suffix[0]>='1' && suffix[0]<='9' &&
+                    suffix.find_first_not_of("0123456789")==std::string::npos) name="surface_"+id;
+            }
+            add("surface_"+id,i); add("sideset_"+id,i);
+        }
+        add(name,i);
+    }
+    std::vector<int> kinds(sets.size(),-1);
+    auto select=[&](const std::string& name,int kind) {
+        const auto found=aliases.find(simple_boundary_name(name));
+        ensure(found!=aliases.end(),"selected boundary name has no Exodus name or ID alias match");
+        ensure(kinds[found->second]<0,"multiple boundary selections refer to the same Exodus side set");
+        kinds[found->second]=kind;
+    };
+    select(names.inlet,0); select(names.outlet,1);
+    for (const auto& wall:names.walls) select(wall,2);
+    return kinds;
+}
+
 // Rank zero reads bytes. Broadcasts, index conversion and all topology validation use device buffers.
 inline SimpleDeviceInput read_simple_mesh(MPI_Comm comm,const std::string& path,const SimpleBoundaryNames& names={}) {
     int rank; MPI_Comm_rank(comm,&rank);
@@ -93,18 +130,15 @@ inline SimpleDeviceInput read_simple_mesh(MPI_Comm comm,const std::string& path,
     launch(int(e),MeshCellCheck{{raw(source.nodes[0]),raw(source.nodes[1]),raw(source.nodes[2]),raw(source.nodes[3])},int(n),raw(error)});
     mesh_check(comm,error,"degenerate source connectivity");
     // Side-set names are file metadata. All element/face matching is performed below on the device.
+    std::vector<int> kinds;
+    if (!rank) try { kinds=source_boundary_kinds(file.side_sets,names); }
+    catch (const std::exception& ex) { ok=false; std::cerr<<ex.what()<<'\n'; }
+    simple_collective(comm,ok,"native boundary name resolution failed");
     int sets=int(file.side_sets.size()); MPI_Bcast(&sets,1,MPI_INT,0,comm);
-    simple_collective(comm,names.valid() && size_t(sets)==names.walls.size()+2,
-                      "SIMPLE boundary selection must name every side set exactly once");
-    Buffer<int> tags(4*e,-1); std::set<std::string> seen;
+    Buffer<int> tags(4*e,-1);
     for (int i=0;i<sets;++i) {
-        int kind=-1;
-        if (!rank) {
-            const auto& name=file.side_sets[size_t(i)].name;
-            kind=seen.insert(name).second?names.kind(name):-1;
-        }
+        int kind=rank?-1:kinds[size_t(i)];
         MPI_Bcast(&kind,1,MPI_INT,0,comm);
-        simple_collective(comm,kind>=0,"missing, repeated or unsupported boundary name");
         Buffer<long long> elements,sides; const std::vector<long long> empty;
         broadcast_mesh_array(comm,rank?empty:file.side_sets[size_t(i)].elements,elements,MPI_LONG_LONG);
         broadcast_mesh_array(comm,rank?empty:file.side_sets[size_t(i)].sides,sides,MPI_LONG_LONG);

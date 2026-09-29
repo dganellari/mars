@@ -13,6 +13,7 @@ namespace mars {
 struct ExodusRawSideSet {
     std::string name;
     std::vector<long long> elements,sides; // Exodus one-based file indices
+    long long id=0; // Zero means the optional ID array was absent; never infer an ID from sequence.
 };
 struct ExodusRawTet4 {
     std::array<std::vector<double>,3> coordinates;
@@ -73,18 +74,30 @@ inline ExodusRawTet4 readExodusTet4Raw(const std::string& path) {
         }
     }
     const size_t sets=dim("num_side_sets");
-    int name_id,rank,dims[NC_MAX_VAR_DIMS];
-    check(nc_inq_varid(file.id,"ss_names",&name_id)); check(nc_inq_varndims(file.id,name_id,&rank));
-    if (rank!=2) throw std::runtime_error("invalid Exodus side-set name array");
-    check(nc_inq_vardimid(file.id,name_id,dims)); size_t width; check(nc_inq_dimlen(file.id,dims[1],&width));
-    if (!width || width>4096 || sets>size_t(INT_MAX)/width) throw std::runtime_error("invalid Exodus side-set names");
-    std::vector<char> names(sets*width); check(nc_get_var_text(file.id,variable("ss_names",{sets,width}),names.data()));
+    if (sets>size_t(INT_MAX)) throw std::runtime_error("too many Exodus side sets");
+    int name_id,rank,dims[NC_MAX_VAR_DIMS]; size_t width=0;
+    const int name_status=nc_inq_varid(file.id,"ss_names",&name_id);
+    std::vector<char> names;
+    if (name_status!=NC_ENOTVAR) {
+        check(name_status); check(nc_inq_varndims(file.id,name_id,&rank));
+        if (rank!=2) throw std::runtime_error("invalid Exodus side-set name array");
+        check(nc_inq_vardimid(file.id,name_id,dims)); check(nc_inq_dimlen(file.id,dims[1],&width));
+        if (!width || width>4096 || sets>size_t(INT_MAX)/width) throw std::runtime_error("invalid Exodus side-set names");
+        names.resize(sets*width); check(nc_get_var_text(file.id,variable("ss_names",{sets,width}),names.data()));
+    }
+    std::vector<long long> ids(sets,0);
+    int id_variable; const int id_status=nc_inq_varid(file.id,"ss_prop1",&id_variable);
+    if (id_status!=NC_ENOTVAR) {
+        check(id_status); check(nc_get_var_longlong(file.id,variable("ss_prop1",{sets}),ids.data()));
+        for (auto id:ids) if (id<=0) throw std::runtime_error("invalid Exodus side-set ID");
+    }
     out.side_sets.resize(sets);
     for (size_t i=0;i<sets;++i) {
         auto& set=out.side_sets[i]; size_t len=0;
         while (len<width && names[i*width+len]) ++len;
-        set.name.assign(names.data()+i*width,len);
+        if (width) set.name.assign(names.data()+i*width,len);
         while (!set.name.empty() && set.name.back()==' ') set.name.pop_back();
+        set.id=ids[i];
         const std::string index=std::to_string(i+1);
         const size_t count=dim("num_side_ss"+index);
         if (count>size_t(INT_MAX)) throw std::runtime_error("side set exceeds SIMPLE index capacity");

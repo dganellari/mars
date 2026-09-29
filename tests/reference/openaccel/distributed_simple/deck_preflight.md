@@ -54,6 +54,21 @@ partitioner and is accepted without translation: MARS distributes the mesh with
 Cornerstone. Other mesh controls, including transformations and decomposition
 properties, remain rejected rather than silently omitted.
 
+Boundary locations are resolved by the native reader using lowercase ASCII names
+with spaces replaced by underscores, matching Ioss name normalization. It also
+accepts `surface_<id>` and `sideset_<id>` aliases from the Exodus `ss_prop1` IDs;
+IDs are not side-set sequence numbers. Blank or absent names require ID aliases.
+As in Ioss, a stored `surface_<number>` name with a stale number is replaced by
+the actual ID alias. Names or aliases that collide between side sets, repeated
+selections of one side set, and unmatched selections are rejected. Every side
+set must be selected, and GPU checks still require exact exterior-face coverage.
+No names or counts are printed by these resolution errors. This native-reader
+change requires rebuilding `mars_segregated_simple`; prepared arguments remain
+usable. The rules follow Trilinos 16.2
+[Ioex names and aliases](https://github.com/trilinos/Trilinos/blob/trilinos-release-16-2-0/packages/seacas/libraries/ioss/src/exodus/Ioex_DatabaseIO.C)
+and [Ioss normalization](https://github.com/trilinos/Trilinos/blob/trilinos-release-16-2-0/packages/seacas/libraries/ioss/src/Ioss_Utils.C).
+Split side-block aliases and arbitrary user aliases are not inferred.
+
 Output scheduling and reference linear-solver settings are not translated. MARS
 uses its own Hypre momentum/pressure solvers, true-residual checks and nonlinear
 norms. `--reference-length` selects MARS's residual scale, not a physical model

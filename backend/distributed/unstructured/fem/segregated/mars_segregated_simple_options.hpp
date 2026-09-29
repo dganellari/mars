@@ -8,22 +8,31 @@
 #include <vector>
 
 namespace mars::segregated {
+inline std::string simple_boundary_name(std::string name) {
+    // Ioss database names use lowercase ASCII and replace spaces with underscores.
+    for (char& c:name) {
+        if (c>='A' && c<='Z') c=char(c-'A'+'a');
+        else if (c==' ') c='_';
+    }
+    return name;
+}
 struct SimpleBoundaryNames {
     std::string inlet="inlet",outlet="outlet";
     std::vector<std::string> walls{"walls"};
     bool valid() const {
         std::set<std::string> names;
         for (const auto& name:{inlet,outlet})
-            if (name.empty() || !names.insert(name).second) return false;
+            if (name.empty() || !names.insert(simple_boundary_name(name)).second) return false;
         if (walls.empty()) return false;
         for (const auto& name:walls)
-            if (name.empty() || !names.insert(name).second) return false;
+            if (name.empty() || !names.insert(simple_boundary_name(name)).second) return false;
         return true;
     }
     int kind(const std::string& name) const {
-        if (name==inlet) return 0;
-        if (name==outlet) return 1;
-        for (const auto& wall:walls) if (name==wall) return 2;
+        const auto key=simple_boundary_name(name);
+        if (key==simple_boundary_name(inlet)) return 0;
+        if (key==simple_boundary_name(outlet)) return 1;
+        for (const auto& wall:walls) if (key==simple_boundary_name(wall)) return 2;
         return -1;
     }
 };

@@ -30,13 +30,18 @@ int main() {
     check(c.pseudo_dt==.005 && c.reference_length==2 && c.alpha_u==.4 && c.alpha_p==.2 && c.alpha_mass==.8 && c.beta==.1);
     check(options.boundaries.kind("feed")==0 && options.boundaries.kind("exit")==1);
     check(options.boundaries.kind("casing")==2 && options.boundaries.kind("cover")==2 && options.boundaries.kind("other")==-1);
+    check(options.boundaries.kind("FEED")==0 && options.boundaries.kind("Exit")==1 && options.boundaries.kind("CASING")==2);
+    const SimpleBoundaryNames spaced{"Feed Port","Exit Port",{"Outer Wall","Cover"}};
+    check(spaced.valid() && spaced.kind("feed_port")==0 && spaced.kind("OUTER_WALL")==2);
+    check(!SimpleBoundaryNames{"feed","FEED",{"walls"}}.valid());
+    check(!SimpleBoundaryNames{"feed","exit",{"outer wall","OUTER_WALL"}}.valid());
     check(options.iterations==20 && options.report==2);
     for (const char* args:{"--rho nan","--rho inf","--rho -1","--mu 0","--inlet-velocity 0","--outlet-pressure inf",
         "--reference-length 0","--pseudo-dt -1","--relax-u 1.1","--relax-p 0","--relax-mass nan","--outlet-beta 0",
         "--residual-tol nan","--mass-tol 0","--change-tol -1","--iterations 2.5","--iterations 2147483648",
         "--report-every 0","--setup-only 2","--rho 2x","--rho 1 --rho 2","--rho=","--mesh-format prepared",
         "--advection central","--advection 1","--velocity-interpolation other","--velocity-interpolation 1",
-        "--inlet-ss outlet","--wall-ss walls,","--wall-ss walls,walls","--wall-ss walls,inlet","--unknown 1",
+        "--inlet-ss outlet","--inlet-ss OUTLET","--wall-ss walls,","--wall-ss walls,walls","--wall-ss walls,inlet","--wall-ss walls,INLET","--unknown 1",
         "--profile 2","--linear-cache -1","--halo-overlap 3","--profile-warmup -1","--profile-warmup 1.5","--field-output vtk"}) {
         bool rejected=false; try { parse(args); } catch (const std::exception&) { rejected=true; }
         check(rejected);
