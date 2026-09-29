@@ -219,6 +219,32 @@ Host references exercise the same row algebra on synthetic matrices. The
 existing `mars_distributed_matrix_cuda_gate` includes these fixtures for
 user-run GPU validation; host checks alone do not validate CUDA execution.
 
+### Compare the saved reference target without a GPU run
+
+The optional `--reference-deck FILE` argument to
+`scripts/simple_public_diagnostics.py` reads the saved deck on the user's machine
+alongside an existing private log. It never reads the mesh. Only fixed family and
+solver labels, scaling flags and target-comparison booleans enter the shareable
+JSON; numerical settings, names and file paths stay local.
+
+Resolution follows public OpenAccel `0d69041`: `pressure_correction`, then
+`segregated_flow`, then `default`, including case-sensitive named `lookup`.
+Comparisons require Hypre GMRES, FlexGMRES or BoomerAMG and both
+`normalize_matrix` and `diagonal_scaling` disabled. Other cases yield unknown
+comparison flags. OpenAccel passes `rtol` and `atol` to its Krylov solvers;
+BoomerAMG receives only `rtol`. Defaults are `1e-6` and `1e-16`. The source
+threshold is `max(atol, rtol*||b||)` for GMRES/FlexGMRES and `rtol*||b||` for
+BoomerAMG. Zero RHS is left unknown here. This uses logged original-system
+residuals and does not reproduce the reference solve or establish field parity.
+
+`reference_pressure_target_looser` compares that threshold with the logged MARS
+acceptance limit, not just the relative-tolerance parameter. Separate flags compare
+each logged residual with the source threshold. Norms are rounded in logs, so
+comparisons within a relative margin of `1e-5` are unknown. This margin only
+withholds a diagnostic verdict; it never changes solver acceptance. Missing,
+conflicting or nonfinite evidence also remains unknown. The recorded run status
+stays failed, even when the source-target comparison passes.
+
 ## Local checks
 
 ```bash

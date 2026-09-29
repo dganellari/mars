@@ -1,3 +1,4 @@
+import copy
 import io
 import json
 from pathlib import Path
@@ -77,6 +78,74 @@ class PublicDiagnosticsTests(unittest.TestCase):
         self.assertIsNone(summarize('')['pressure_audit_finite'])
         self.assertIsNone(summarize(text + '\n' + text.replace('finite=1', 'finite=0'))['pressure_audit_finite'])
 
+    def reference_doc(self, config):
+        return {'simulation': {'solver': {'solver_control': {'advanced_options': {
+            'linear_solver_settings': {'default': config}}}}}}
+
+    def test_reference_pressure_target_and_resolution(self):
+        config = {'family': 'HYPRE', 'rtol': 1e-4, 'atol': 1e-16}
+        doc = self.reference_doc(config)
+        text = HYPRE + ' rhs_norm=0.02\n' + SIMPLE
+        result = diagnostic.summarize(io.StringIO(text), '255', doc)
+        self.assertTrue(result['reference_pressure_target_looser'])
+        self.assertTrue(result['reference_pressure_mars_residual_passed'])
+        self.assertTrue(result['reference_pressure_hypre_residual_passed'])
+        self.assertEqual(result['run_status'], 'failed')
+        self.assertFalse(result['mars_passed'])
+        library = doc['simulation']['solver']
+        settings = library['solver_control']['advanced_options']['linear_solver_settings']
+        settings['segregated_flow'] = {'family': 'Hypre', 'rtol': 1e-8}
+        result = diagnostic.summarize(io.StringIO(text), '255', doc)
+        self.assertFalse(result['reference_pressure_mars_residual_passed'])
+        settings['pressure_correction'] = {'lookup': 'SECRET pressure settings'}
+        library['SECRET pressure settings'] = copy.deepcopy(config)
+        result = diagnostic.summarize(io.StringIO(text), '255', doc)
+        self.assertTrue(result['reference_pressure_mars_residual_passed'])
+        self.assertNotIn('SECRET', json.dumps(result))
+        settings['pressure_correction']['lookup'] = 'secret pressure settings'
+        result = diagnostic.summarize(io.StringIO(text), '255', doc)
+        self.assertFalse(result['reference_pressure_resolved'])
+        self.assertIsNone(result['reference_pressure_mars_residual_passed'])
+
+    def test_reference_backend_and_scaling_guards(self):
+        config = {'family': 'HYPRE', 'rtol': 1e-4}
+        text = HYPRE + ' rhs_norm=0.02\n' + SIMPLE
+        for changes in ({'normalize_matrix': True}, {'diagonal_scaling': True},
+                        {'normalize_matrix': 'false'}, {'family': 'PETSc'}, {'family': 'Trilinos'},
+                        {'family': 'SECRET'}, {'rtol': True}, {'rtol': 'nan'}, {'rtol': -1},
+                        {'options': {}}, {'options': {'solver': {'type': 'SECRET'}}},
+                        {'options': {'solver': {'type': 'MGR'}}}):
+            candidate = dict(config, **changes)
+            result = diagnostic.summarize(io.StringIO(text), '255', self.reference_doc(candidate))
+            self.assertFalse(result['reference_pressure_original_norm_comparable'])
+            self.assertIsNone(result['reference_pressure_mars_residual_passed'])
+            self.assertNotIn('SECRET', json.dumps(result))
+
+    def test_reference_boomer_ignores_absolute_tolerance(self):
+        config = {'family': 'Hypre', 'rtol': 1e-8, 'atol': 1.0,
+                  'options': {'solver': {'type': 'BoomerAMG', 'tol': 1.0}}}
+        text = HYPRE + ' rhs_norm=0.02\n' + SIMPLE
+        result = diagnostic.summarize(io.StringIO(text), '255', self.reference_doc(config))
+        self.assertEqual(result['reference_pressure_solver'], 'BoomerAMG')
+        self.assertFalse(result['reference_pressure_mars_residual_passed'])
+        config['options']['solver']['type'] = 'FlexGMRES'
+        result = diagnostic.summarize(io.StringIO(text), '255', self.reference_doc(config))
+        self.assertTrue(result['reference_pressure_mars_residual_passed'])
+
+    def test_reference_missing_conflicting_and_rounded_evidence(self):
+        doc = self.reference_doc({'family': 'Hypre', 'rtol': 1e-4})
+        for text in ('', HYPRE, SIMPLE.replace('pressure', 'momentum'),
+                     SIMPLE.replace('rhs_norm=0.02', 'rhs_norm=0'),
+                     SIMPLE.replace('rhs_norm=0.02', 'rhs_norm=nan'),
+                     SIMPLE.replace('mars_absolute_residual=3e-7', 'mars_absolute_residual=2e-6'),
+                     SIMPLE + '\n' + SIMPLE.replace('mars_absolute_residual=3e-7', 'mars_absolute_residual=1')):
+            result = diagnostic.summarize(io.StringIO(text), '255', doc)
+            self.assertIsNone(result['reference_pressure_mars_residual_passed'])
+        # The source's smaller atol can make its mixed limit tighter despite a larger rtol.
+        text = SIMPLE.replace('rhs_norm=0.02', 'rhs_norm=1e-20')
+        result = diagnostic.summarize(io.StringIO(text), '255', doc)
+        self.assertFalse(result['reference_pressure_target_looser'])
+
     def test_completion_requires_matching_exit(self):
         converged = 'CONVERGED iterations=10 ranks=4 exchange_rounds=41\n'
         limited = 'NOT CONVERGED: iteration limit iterations=50 ranks=4 exchange_rounds=201\n'
@@ -113,6 +182,20 @@ class PublicDiagnosticsTests(unittest.TestCase):
             result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
             self.assertEqual(result.returncode, 0)
             original = output.read_bytes()
+            deck = root / 'SECRET-deck.json'
+            deck.write_text(json.dumps(self.reference_doc({'family': 'Hypre', 'rtol': 1e-4})))
+            reference_output = root / 'reference.json'
+            reference_command = command[:-1] + [str(reference_output), '--reference-deck', str(deck)]
+            checked = subprocess.run(reference_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
+            self.assertEqual(checked.returncode, 0, checked.stderr)
+            self.assertTrue(json.loads(reference_output.read_text())['reference_pressure_target_looser'])
+            self.assertNotIn('SECRET', reference_output.read_text())
+            reference_output.unlink()
+            deck.write_text('SECRET: [bad')
+            checked = subprocess.run(reference_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
+            self.assertNotEqual(checked.returncode, 0)
+            self.assertFalse(reference_output.exists())
+            self.assertNotIn('SECRET', checked.stdout + checked.stderr)
             for args in (command, command + ['--SECRET=secret'], command[:-4]):
                 result = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
                 self.assertNotEqual(result.returncode, 0)

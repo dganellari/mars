@@ -70,7 +70,68 @@ def consensus(records, extract, unknown=None):
     return values[0] if values and all(v == values[0] for v in values) else unknown
 
 
-def summarize(lines, exit_text):
+def pressure_reference(doc, simple, hypre):
+    """Compare logged original-row residuals only where the source norm is known."""
+    result = dict(requested=doc is not None, resolved=False, family='unknown', solver='unknown',
+                  matrix_normalized=None, diagonal_scaled=None, original_norm_comparable=False,
+                  target_looser=None, mars_residual_passed=None, hypre_residual_passed=None)
+    try:
+        library = doc['simulation']['solver']
+        settings = library['solver_control']['advanced_options']['linear_solver_settings']
+        config = next(settings[key] for key in ('pressure_correction', 'segregated_flow', 'default') if key in settings)
+        if 'lookup' in config:
+            config = library[config['lookup']]
+        family = config['family'].lower()
+        result['family'] = {'hypre': 'Hypre', 'petsc': 'PETSc', 'trilinos': 'Trilinos',
+                            'amgsolver': 'AMGsolver', 'gmres': 'GMRES'}.get(family, 'unknown')
+        for source, target in (('normalize_matrix', 'matrix_normalized'), ('diagonal_scaling', 'diagonal_scaled')):
+            value = config.get(source, False)
+            result[target] = value if type(value) is bool else None
+        result['resolved'] = result['family'] != 'unknown'
+        if family != 'hypre':
+            return result
+        solver = 'gmres' if 'options' not in config else config['options']['solver']['type'].lower()
+        result['solver'] = {'gmres': 'GMRES', 'flexgmres': 'FlexGMRES',
+                            'boomeramg': 'BoomerAMG', 'mgr': 'MGR'}.get(solver, 'unknown')
+        rtol, atol = config.get('rtol', 1e-6), config.get('atol', 1e-16)
+        if isinstance(rtol, bool) or isinstance(atol, bool):
+            return result
+        rtol, atol = float(rtol), float(atol)
+        if not (math.isfinite(rtol) and math.isfinite(atol) and rtol > 0 and atol >= 0):
+            return result
+        if solver not in ('gmres', 'flexgmres', 'boomeramg'):
+            return result
+        if result['matrix_normalized'] is not False or result['diagonal_scaled'] is not False:
+            return result
+        # OpenAccel forwards atol to the Krylov solvers, but not to BoomerAMG.
+        if solver == 'boomeramg':
+            atol = 0.0
+        result['original_norm_comparable'] = True
+        if not simple or any(r.get('stage') != 'pressure' for r in simple):
+            return result
+
+        def compare(record, key, looser=False):
+            rhs, value = number(record, 'rhs_norm'), number(record, key)
+            if rhs is None or value is None or not (math.isfinite(rhs) and rhs > 0 and math.isfinite(value) and value >= 0):
+                return None
+            limit = max(atol, rtol * rhs)
+            if not math.isfinite(limit):
+                return None
+            # Logs round the norms; do not decide at a near-equal threshold.
+            if abs(value-limit) <= 1e-5 * max(value, limit):
+                return None
+            return limit > value if looser else value < limit
+
+        result['target_looser'] = consensus(simple, lambda r: compare(r, 'acceptance_limit', True))
+        result['mars_residual_passed'] = consensus(simple, lambda r: compare(r, 'mars_absolute_residual'))
+        result['hypre_residual_passed'] = consensus(hypre, lambda r: compare(r, 'absolute_residual'))
+    except (KeyError, TypeError, ValueError, AttributeError, StopIteration, OverflowError):
+        # Arbitrary lookup names and malformed private values must not escape.
+        pass
+    return result
+
+
+def summarize(lines, exit_text, reference_deck=None):
     records = {tag: [] for tag in TAGS}
     completions = []
     false_convergence = False
@@ -130,6 +191,9 @@ def summarize(lines, exit_text):
     result['pressure_audit_present'] = bool(audit)
     for key in AUDIT_FLAGS:
         result['pressure_audit_' + key] = consensus(audit, lambda r: flag(r, key))
+    if reference_deck is not None:
+        for key, value in pressure_reference(reference_deck, simple, hypre).items():
+            result['reference_pressure_' + key] = value
     return result
 
 
@@ -144,11 +208,19 @@ def main():
     parser.add_argument('--log', required=True)
     parser.add_argument('--exit-file', required=True)
     parser.add_argument('--output', required=True)
+    parser.add_argument('--reference-deck', help='Optional local OpenAccel deck; only fixed control comparisons are exported')
     args = parser.parse_args()
     try:
+        reference = None
+        if args.reference_deck:
+            from prepare_simple_deck import load_deck
+            with open(args.reference_deck, 'rb') as deck:
+                reference = load_deck(deck.read())
+            if not isinstance(reference, dict):
+                raise ValueError('Invalid reference deck')
         with open(args.log, encoding='utf-8', errors='replace') as log:
             with open(args.exit_file, encoding='ascii') as exit_file:
-                result = summarize(log, exit_file.read(64))
+                result = summarize(log, exit_file.read(64), reference)
         # An exclusive create prevents accidental replacement of an input or old summary.
         with open(args.output, 'x', encoding='ascii') as output:
             json.dump(result, output, indent=2, sort_keys=True, allow_nan=False)
