@@ -267,11 +267,8 @@ if(MARS_ENABLE_HYPRE)
     endif()
 endif()
 
-# Taylor-Green vortex driver. Periodic-cube NS solver + AMR. Currently a
-# skeleton that loads a mesh, builds the periodic node-pair map, applies the
-# TGV initial condition, and writes the IC as VTU. The full projection time
-# loop will be wired against mars_ns_solver.hpp in a follow-up commit once
-# BCKind::Periodic is added to NSStepper.
+# Taylor-Green vortex in a triply periodic box (docs/periodic_tgv_tutorial.md),
+# on the reduced periodic space of fem/mars_periodic_ns.hpp; any rank count.
 add_executable(mars_tgv mars_tgv.cu)
 target_link_libraries(mars_tgv PRIVATE mars)
 target_include_directories(mars_tgv PRIVATE
