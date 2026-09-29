@@ -308,7 +308,7 @@ All Python files also parse with Python 3.6 grammar. The longer 4/8/16 refinemen
 not repeated during integration; the reported failure above remains open. GPU
 results reported after integration are recorded below.
 
-## Reported Daint progress (2026-09-28)
+## Reported Daint progress (through 2026-09-29)
 
 The user-provided log for `simple-duct-upwind-Ng67FX/duct-16-4` passes the per-run
 checks after 4484 iterations on four GPUs: profile L2 error 4.1965e-2 and
@@ -358,12 +358,21 @@ study: both residual checks and all acceptance thresholds remain unchanged.
 The compatibility rebuild succeeds, but job 4884759 on nid005419 fails again at
 momentum iteration 27: wrapper residual 4.96364e-7, original-CSR residual
 2.84308e-16, Krylov work norm 2.84302e-16, limit 2.00185e-12. The stream-based
-change did not resolve the discrepancy. Before resuming the full study, use
-`MARS_HYPRE_RESIDUAL_AUDIT=1` on a short cached one-GPU run to distinguish stored
-residual, input-copy, synchronization and workspace effects. See
-[the probe description](../simple_performance/HYPRE_HOST_TEST.md). The probe
-retains the original rejection even if a repeated calculation passes. Fine-grid
-convergence and the refinement verdict remain open; retain completed 8/16 runs.
+change did not resolve the discrepancy. The subsequent failure-only audit
+(job 4937702, nid006524) confirms an incorrect stored residual with unchanged
+RHS/solution copies; every repeated Hypre evaluation agrees with MARS. A run
+with `CUDA_LAUNCH_BLOCKING=1` still fails at momentum iteration 1 (job 4940051,
+nid005598): stored residual 2.28427e-12, limit 1.14823e-12, repeated Hypre
+residual 9.7086e-15 and MARS residual 9.70859e-15. This is not fixed by
+serializing launches, and the source-level cause remains unknown.
+
+Before resuming the full study, compare fresh 100-iteration processes with
+`MARS_HYPRE_SPMV_VENDOR=1` and `0`, using the same binary, original acceptance
+limits, `MARS_HYPRE_RESIDUAL_AUDIT=1`, and `CUDA_LAUNCH_BLOCKING` unset. See
+[the backend probe](../simple_performance/HYPRE_HOST_TEST.md#gpu-spmv-backend-probe)
+for its scope and process-wide setting. The audit retains the original rejection
+even if a repeated calculation passes. Fine-grid convergence and the refinement
+verdict remain open; retain completed 8/16 runs.
 
 ## Daint commands
 

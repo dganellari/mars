@@ -28,10 +28,16 @@ using MPI_Comm = int;
 constexpr int MPI_COMM_WORLD = 0, MPI_INT = 0, MPI_DOUBLE = 1, MPI_MAX = 0, MPI_SUM = 1;
 inline int host_barriers = 0;
 inline int host_reductions = 0;
+inline bool host_spmv_rank_disagreement = false;
 inline void MPI_Comm_rank(MPI_Comm, int* rank) { *rank = 0; }
 inline void MPI_Allreduce(const void* src, void* dst, int n, int type, int, MPI_Comm) {
     ++host_reductions;
     std::memcpy(dst, src, n * (type == MPI_DOUBLE ? sizeof(double) : sizeof(int)));
+    if (host_spmv_rank_disagreement && n == 2 && type == MPI_INT) {
+        static_cast<int*>(dst)[0] = 1;
+        static_cast<int*>(dst)[1] = 0;
+        host_spmv_rank_disagreement = false;
+    }
 }
 inline void MPI_Barrier(MPI_Comm) { ++host_barriers; }
 [[noreturn]] inline void MPI_Abort(MPI_Comm, int) { throw std::runtime_error("collective failure"); }
@@ -43,6 +49,12 @@ inline int cudaGetLastError() { return 0; }
 inline int host_device_synchronizations = 0;
 inline int cudaDeviceSynchronize() { ++host_device_synchronizations; return cudaSuccess; }
 inline void cudaMemcpy(void* dst, const void* src, size_t bytes, int) { std::memcpy(dst, src, bytes); }
+inline int host_spmv_set_calls = 0, host_spmv_last_request = -1;
+inline HYPRE_Int host_set_spmv_use_vendor(HYPRE_Int requested) {
+    ++host_spmv_set_calls;
+    host_spmv_last_request = requested;
+    return HYPRE_SetSpMVUseVendor(requested);
+}
 struct HostDimension { int x = 0; };
 inline HostDimension blockIdx, blockDim, threadIdx;
 template<class Function> void launch_host(int grid, int block, Function function) {

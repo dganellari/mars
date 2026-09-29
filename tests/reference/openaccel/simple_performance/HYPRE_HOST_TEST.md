@@ -148,6 +148,40 @@ storage and mismatched input copies, checks recomputed norms against the origina
 CSR, preserves cached handles and acceptance evidence, and verifies that accepted
 solves do not enter the probe. These tests do not reproduce the GPU failure.
 
+### GPU SpMV backend probe
+
+The user-reported audit in job 4937702 (nid006524, Hypre headers 2.33.0) found
+an incorrect stored residual, zero RHS/solution copy differences, and passing
+repeated Hypre evaluations matching the independent MARS CSR check. Job 4940051
+(nid005598) still fails with `CUDA_LAUNCH_BLOCKING=1`: the stored norm is
+2.28427e-12 versus a 1.14823e-12 limit, while every repeated Hypre evaluation
+gives 9.7086e-15 and MARS gives 9.70859e-15. Serializing launches therefore did
+not resolve it. The audit also allocates scratch and performs reductions before
+repeating, so it does not isolate synchronization as the cause.
+
+`MARS_HYPRE_SPMV_VENDOR=0` requests Hypre's native GPU SpMV; `1` requests its
+vendor backend through the public `HYPRE_SetSpMVUseVendor` API. Leaving it unset
+preserves Hypre's existing setting. Hypre falls back to its native implementation
+when the vendor backend was not compiled in. `[hypre-spmv]` records the request,
+linked Hypre version and header build flags; it does not prove which kernel ran.
+The setting is process-wide: set it consistently on every rank before launching,
+and do not change it between solvers in the same process. Invalid or inconsistent
+values are rejected collectively before any solver state is built. Each wrapper
+checks once; there are no additional steady-state reductions or field transfers.
+
+Compare two fresh processes on the same binary and public duct-32 mesh, first
+with `1`, then `0`, with `CUDA_LAUNCH_BLOCKING` unset and the residual audit on.
+Keep all other options and acceptance limits unchanged. This selects SpMV for
+the whole Hypre solve, not just the extra residual calculation. A backend-specific
+failure would narrow the investigation, not prove a vendor-library defect. A
+100-iteration run ending at its iteration cap is not nonlinear convergence.
+
+The host regression checks the public API on sequential Hypre 2.32.0, 2.33.0
+and 3.1.0 with both Krylov backends and ASan/UBSan. It verifies unchanged default
+selection, a single setter call across cached solves, independent CSR residuals,
+invalid options and simulated rank disagreement. CPU Hypre does not execute GPU
+SpMV, and the stubbed collective is not an MPI execution test.
+
 For the water/backflow fixture, the pseudo-time momentum diagonal is dominated
 by `rho*V/(alpha_u*pseudo_dt)`. Thus `d=V/a` is about `6e-10` and pressure
 matrix entries are about `1e-7`, while the mass RHS is about `125 kg/s`.

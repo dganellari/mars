@@ -25,6 +25,8 @@ def main():
     pcg = (directory / 'mars_hypre_pcg_solver.hpp').read_text()
     kernels = pcg[pcg.index('// Pass 1:'):pcg.index('// GPU-resident Hypre PCG')]
     wrapper = (directory / 'mars_hypre_gmres_solver.hpp').read_text()
+    # Observe the selection while still calling the installed Hypre API.
+    wrapper = wrapper.replace('HYPRE_SetSpMVUseVendor(', 'host_set_spmv_use_vendor(')
     # Keep Hypre includes so version-specific declarations are compiled too.
     wrapper = re.sub(r'^#include(?!\s+[<"](?:HYPRE|_hypre))[^\n]*\n', '', wrapper, flags=re.M)
     # Sequential internal headers alias MPI names; retain our instrumented stubs.

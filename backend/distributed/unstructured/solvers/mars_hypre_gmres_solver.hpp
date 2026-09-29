@@ -144,6 +144,7 @@ public:
         if (profile_) profile_start_ = profile_->stamp();
         static HypreInitGuard g_hypreInit;
         (void)g_hypreInit;
+        configure_spmv();
 
         int rank;
         MPI_Comm_rank(comm_, &rank);
@@ -223,6 +224,7 @@ public:
         // Initialize Hypre exactly once per process, lazily, after MPI is up.
         static HypreInitGuard g_hypreInit;
         (void)g_hypreInit;
+        configure_spmv();
 
         int rank;
         MPI_Comm_rank(comm_, &rank);
@@ -910,6 +912,48 @@ public:
         return converged;
     }
 
+    void configure_spmv() {
+        if (spmv_configured_) return;
+        const char* option = std::getenv("MARS_HYPRE_SPMV_VENDOR");
+        const int requested = !option ? -1 : std::string(option) == "0" ? 0
+            : std::string(option) == "1" ? 1 : -2;
+        const int local[2] = {requested, -requested};
+        int bounds[2] = {};
+        MPI_Allreduce(local, bounds, 2, MPI_INT, MPI_MAX, comm_);
+        require_reuse(bounds[0] == -bounds[1] && bounds[0] >= -1,
+                      "MARS_HYPRE_SPMV_VENDOR must be unset, 0 or 1 on every rank, with the same choice");
+        if (requested >= 0) {
+            // Hypre's selector is process-wide; set it before building any solver state.
+            HYPRE_Int major = 0, minor = 0, patch = 0;
+            HYPRE_Int error = HYPRE_SetSpMVUseVendor(requested);
+            error |= HYPRE_VersionNumber(&major, &minor, &patch, nullptr);
+            require_reuse(error == 0 && HYPRE_GetError() == 0, "Hypre SpMV selection failed");
+            int rank = 0;
+            MPI_Comm_rank(comm_, &rank);
+            if (rank == 0) {
+                std::cout << "[hypre-spmv] vendor_requested=" << requested
+                          << " hypre_runtime=" << major << '.' << minor << '.' << patch;
+#ifdef HYPRE_USING_CUDA
+                std::cout << " build_cuda=1";
+#else
+                std::cout << " build_cuda=0";
+#endif
+#ifdef HYPRE_USING_CUSPARSE
+                std::cout << " build_cusparse=1";
+#else
+                std::cout << " build_cusparse=0";
+#endif
+#ifdef HYPRE_USING_CUBLAS
+                std::cout << " build_cublas=1";
+#else
+                std::cout << " build_cublas=0";
+#endif
+                std::cout << '\n';
+            }
+        }
+        spmv_configured_ = true;
+    }
+
     double true_relative_residual() {
         if (!r_hypre_) {
             HYPRE_IJVectorCreate(comm_, static_cast<HYPRE_BigInt>(globalDofStart_),
@@ -1333,6 +1377,7 @@ private:
     }
     bool fixed_graph_updates_ = false, timing_enabled_ = false, true_residual_check_ = false;
     bool mixed_residual_check_ = false;
+    bool spmv_configured_ = false;
     double residual_absolute_tolerance_ = 0, residual_relative_tolerance_ = 0;
     int graph_build_count_ = 0, numeric_update_count_ = 0;
     SolveTiming last_timing_;

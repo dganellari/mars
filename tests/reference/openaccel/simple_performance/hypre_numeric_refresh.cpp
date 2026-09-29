@@ -125,6 +125,49 @@ void scaled_systems() {
     }
 }
 
+void spmv_backend_selection() {
+    Matrix matrix;
+    make_graph(matrix,32);
+    std::vector<HYPRE_BigInt> map(33);
+    for (int i=0;i<32;++i) map[i]=31-i;
+    map.back()=-1;
+    for (const char* choice : {static_cast<const char*>(nullptr),"0","1"}) {
+        if (choice) setenv("MARS_HYPRE_SPMV_VENDOR",choice,1);
+        else unsetenv("MARS_HYPRE_SPMV_VENDOR");
+        Solver solver(0,300,1e-12);
+        solver.setVerbose(false);
+        solver.setAMGCoarseRelaxType(18);
+        solver.enable_fixed_graph_updates();
+        solver.enable_true_residual_check(1e-13,1e-10);
+        const int before=host_spmv_set_calls;
+        for (int epoch=0;epoch<2;++epoch) {
+            std::vector<double> b,truth,x(32,0);
+            fill_system(matrix,map,epoch,b,truth);
+            check(solver.solve(matrix,b,x,0,32,0,32,map),"SpMV selection solve rejected");
+            verify(matrix,map,b,x,truth);
+            check(host_spmv_set_calls==before+(choice?1:0),
+                  "SpMV setting changed by default or repeated on a cached solve");
+            if (choice) check(host_spmv_last_request==choice[0]-'0',"wrong SpMV policy requested");
+        }
+    }
+    for (const char* bad : {"","-1","2","native"}) {
+        setenv("MARS_HYPRE_SPMV_VENDOR",bad,1);
+        Solver solver;
+        const int before=host_spmv_set_calls;
+        expect_failure([&] { solver.configure_spmv(); });
+        check(host_spmv_set_calls==before,"invalid SpMV option reached Hypre");
+    }
+    setenv("MARS_HYPRE_SPMV_VENDOR","0",1);
+    Solver solver;
+    const int before=host_spmv_set_calls;
+    host_spmv_rank_disagreement=true;
+    expect_failure([&] { solver.configure_spmv(); });
+    check(!host_spmv_rank_disagreement && host_spmv_set_calls==before,
+          "inconsistent rank selection reached Hypre");
+    unsetenv("MARS_HYPRE_SPMV_VENDOR");
+    std::cout<<"PASS: SpMV selection, unchanged default, cached solves and collective option checks\n";
+}
+
 void residual_workspace() {
     const int n=257;
     Matrix matrix;
@@ -294,6 +337,7 @@ int main() {
             setenv("MARS_HYPRE_FLEXGMRES",flexible,1);
             setenv("MARS_HYPRE_MINITER","3",1);
             scaled_systems();
+            spmv_backend_selection();
             setenv("MARS_HYPRE_MINITER","0",1);
             mixed_residual_acceptance();
             residual_workspace();
