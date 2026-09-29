@@ -26,6 +26,13 @@ require `linear_linear`. The numerical implementation requires a MARS rebuild;
 see the [public shifted-interpolation check](velocity_interpolation.md) before
 using the new mode on another case. Unknown expert keys remain rejected.
 
+One explicit exception is `expert_parameters.coupled_pressure_velocity`: public
+OpenAccel revision `0d69041` does not read this key anywhere in `src/`, so the
+preparer accepts either boolean value without changing its arguments. This is
+not a request for a monolithic pressure/velocity solver; native MARS still uses
+SIMPLE. Non-boolean values and other unknown keys remain rejected. This exception
+describes that reference revision, not versions that may implement the option.
+
 `static_pressure` maps its constant `relative_pressure` in Pa to `--outlet-pressure`
 and sets `--outlet-beta 1`. The existing trace law
 `p_face = p_out + (1-beta)*(p_nearest-p_mean)` then fixes pressure at each open

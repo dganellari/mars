@@ -262,7 +262,12 @@ def translate(doc):
                     limit_gradients=False, relax_gradients=True, correct_gradients=False,
                     false_mass_accumulation=True, nonlinear_stabilisation=False,
                     disable_momentum_predictor=False, high_speed_blend_damping=False)
-    expert = check.mapping(control.get('expert_parameters', {}), ' '.join(defaults) + ' blend_factor_max', 'expert_parameters')
+    expert = check.mapping(control.get('expert_parameters', {}),
+                           ' '.join(defaults) + ' blend_factor_max coupled_pressure_velocity', 'expert_parameters')
+    # OpenAccel 0d69041 never reads this leftover key; it does not select a solver.
+    if 'coupled_pressure_velocity' in expert:
+        check.require(type(expert['coupled_pressure_velocity']) is bool,
+                      'expert_parameters.coupled_pressure_velocity', 'expected a boolean')
     for key, default in defaults.items():
         expected = False if key == 'relax_gradients' else default
         check.equal(expert.get(key, default), expected, 'expert_parameters.' + key)
@@ -325,6 +330,7 @@ def main():
                          'OpenAccel automatic_decomposition_type is not translated; MARS uses Cornerstone.',
                          'Constant static_pressure uses outlet beta=1; pressure_profile_blend applies only to average_static_pressure.',
                          'OpenAccel named and inline linear-solver settings are not translated; MARS retains its Hypre solvers.',
+                         'OpenAccel 0d69041 ignores expert coupled_pressure_velocity; it does not change the SIMPLE algorithm.',
                          'Coordinates must be in metres; mesh bytes were not read.',
                          'MARS uses its own Hypre settings, zero initial fields and convergence norms.',
                          'Iteration counts and reference residual criteria are not translated.'])

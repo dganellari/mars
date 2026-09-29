@@ -142,6 +142,24 @@ class DeckTests(unittest.TestCase):
         del self.control['expert_parameters']['relax_gradients']
         self.reject()  # OpenAccel defaults to relaxed gradients; MARS does not.
 
+    def test_unused_coupling_key_does_not_change_arguments(self):
+        expected = bridge.translate(self.doc)
+        expert = self.control['expert_parameters']
+        for value in (False, True):
+            expert['coupled_pressure_velocity'] = value
+            self.assertEqual(bridge.translate(self.doc), expected)
+        for value in (None, 0, 1, 'false', 'private-value', [], {}):
+            with self.subTest(value=value):
+                expert['coupled_pressure_velocity'] = value
+                with self.assertRaisesRegex(bridge.Unsupported, 'coupled_pressure_velocity: expected a boolean') as error:
+                    bridge.translate(self.doc)
+                self.assertNotIn('private-value', str(error.exception))
+        expert['coupled_pressure_velocity'] = False
+        expert['private-unknown-key'] = 'private-value'
+        with self.assertRaisesRegex(bridge.Unsupported, 'expert_parameters: unrecognized keys') as error:
+            bridge.translate(self.doc)
+        self.assertNotIn('private-', str(error.exception))
+
     def test_decomposition_is_not_a_physical_control(self):
         expected = bridge.translate(self.doc)
         for method in ('RCB', 'RIB', 'KWAY', ''):
