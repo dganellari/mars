@@ -692,8 +692,8 @@ private:
         areaY_.resize(12 * m);
         areaZ_.resize(12 * m);
         Ke_.resize(64 * m);
-        if (m == 0) return;
         domain_.cacheNodeCoordinates();
+        if (m == 0) return;
         const auto& x = domain_.getNodeX();
         const auto& y = domain_.getNodeY();
         const auto& z = domain_.getNodeZ();
