@@ -21,6 +21,10 @@ same file as the deck's `mesh.file_path` (relative to the saved deck directory).
 Preparation follows path links but does not read or validate mesh bytes. Native
 setup checks the single Tet4 block and complete side-set assignment before any
 iteration; a preparation PASS alone is not mesh compatibility or field parity.
+The optional string `mesh.automatic_decomposition_type` selects OpenAccel's
+partitioner and is accepted without translation: MARS distributes the mesh with
+Cornerstone. Other mesh controls, including transformations and decomposition
+properties, remain rejected rather than silently omitted.
 
 Output scheduling and reference linear-solver settings are not translated. MARS
 uses its own Hypre momentum/pressure solvers, true-residual checks and nonlinear

@@ -53,6 +53,24 @@ class DeckTests(unittest.TestCase):
         del self.control['expert_parameters']['relax_gradients']
         self.reject()  # OpenAccel defaults to relaxed gradients; MARS does not.
 
+    def test_decomposition_is_not_a_physical_control(self):
+        expected = bridge.translate(self.doc)
+        for method in ('RCB', 'RIB', 'KWAY', ''):
+            with self.subTest(method=method):
+                self.doc['mesh']['automatic_decomposition_type'] = method
+                self.assertEqual(bridge.translate(self.doc), expected)
+        for method in (None, True, 1, [], {}):
+            with self.subTest(method=method):
+                self.doc['mesh']['automatic_decomposition_type'] = method
+                with self.assertRaisesRegex(bridge.Unsupported, 'automatic_decomposition_type: expected a string'):
+                    bridge.translate(self.doc)
+        self.doc['mesh']['automatic_decomposition_type'] = 'RCB'
+        for key in ('transformation', 'decomposition_properties', 'unknown'):
+            with self.subTest(key=key):
+                doc = copy.deepcopy(self.doc)
+                doc['mesh'][key] = {}
+                self.reject(doc)
+
     def test_unsupported_physics(self):
         for section, key, value in [
                 ('domain', 'motion', {'option': 'rotating'}),

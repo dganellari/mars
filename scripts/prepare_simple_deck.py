@@ -67,7 +67,11 @@ def zero_field(value, field, vector=False):
 
 def translate(doc):
     doc = mapping(doc, 'mesh simulation', 'document')
-    mesh = mapping(doc.get('mesh'), 'file_path', 'mesh')
+    mesh = mapping(doc.get('mesh'), 'file_path automatic_decomposition_type', 'mesh')
+    # This selects OpenAccel's partitioner; MARS partitions through Cornerstone.
+    if 'automatic_decomposition_type' in mesh:
+        require(isinstance(mesh['automatic_decomposition_type'], str),
+                'mesh.automatic_decomposition_type', 'expected a string')
     mesh_path = mesh.get('file_path')
     require(isinstance(mesh_path, str) and mesh_path, 'mesh.file_path', 'expected a path')
     sim = mapping(doc.get('simulation'), 'verbose physical_analysis solver material_library', 'simulation')
@@ -223,6 +227,7 @@ def main():
     record = dict(format='mars-simple-deck-v1', deck_sha256=hashlib.sha256(data).hexdigest(),
                   arguments=args, status='supported_deck_mesh_not_validated',
                   notes=['Native C++ setup must validate single-block Tet4 topology and boundary coverage.',
+                         'OpenAccel automatic_decomposition_type is not translated; MARS uses Cornerstone.',
                          'Coordinates must be in metres; mesh bytes were not read.',
                          'MARS uses its own Hypre settings, zero initial fields and convergence norms.',
                          'Iteration counts and reference residual criteria are not translated.'])
