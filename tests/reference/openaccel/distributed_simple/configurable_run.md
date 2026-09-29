@@ -9,6 +9,10 @@ The old `mars_segregated_simple_mpi` gate target remains a compatibility entry
 point to the same source. Prepared-text inputs remain in the reference gates;
 the production executable accepts native Exodus only.
 
+For an existing OpenAccel deck, use the [local preparation check](deck_preflight.md)
+to extract supported controls without reading mesh bytes or evaluating shell text.
+It rejects unsupported physics and settings before launching the native solver.
+
 The equations are steady, incompressible, laminar Navier-Stokes with upwind
 advection by default (or opt-in [high-resolution advection](high_resolution.md)),
 physical pressure in Pa and dynamic viscosity in Pa s. `--mu` sets
