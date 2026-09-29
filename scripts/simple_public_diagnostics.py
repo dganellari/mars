@@ -10,7 +10,8 @@ import sys
 
 TAGS = ('[simple-linear]', '[HypreGMRES] rejected:', '[hypre-spmv]', '[simple-pressure-audit]')
 AUDIT_FLAGS = ('finite', 'zero_row', 'nonpositive_diagonal', 'positive_offdiagonal',
-               'constant_mode_detected', 'residual_within_roundoff_bound', 'roundoff_bound_exceeds_limit')
+               'constant_mode_detected', 'residual_within_roundoff_bound', 'roundoff_bound_exceeds_limit',
+               'compensated_residual_finite', 'compensated_residual_passed')
 
 
 def fields(text):

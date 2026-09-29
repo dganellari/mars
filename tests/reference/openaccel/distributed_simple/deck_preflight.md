@@ -199,6 +199,17 @@ limit. This is a cancellation warning, **not** a lower bound on attainable
 accuracy, a condition-number estimate or permission to accept a rejected solve.
 The `finite` flag also rejects overflow/underflow of the squared audit norms.
 
+The audit also recomputes each row with a compensated dot product (FMA product
+remainders and TwoSum), including subtraction of `b` in the compensation.
+`compensated_residual_finite` checks the resulting norm, and
+`compensated_residual_passed` compares it with the same application limit. This
+separates lost summation digits from a candidate that still fails a more accurate
+residual evaluation. It is a diagnostic, not exact arithmetic, an error bound on
+the solution, or an alternate acceptance path. The row algorithm is Dot2 from
+[Ogita, Rump and Oishi](https://www.tuhh.de/ti3/paper/rump/OgRuOi05.pdf),
+using an FMA product remainder; the global sum of nonnegative squares remains
+double precision. No solver setting or tolerance changes.
+
 All row work and reductions use device buffers in CUDA builds, including the
 MPI sums; only the fixed boolean report returns to the host for logging. Scratch
 is allocated only after a rejected pressure solve. No field, row, norm, count or

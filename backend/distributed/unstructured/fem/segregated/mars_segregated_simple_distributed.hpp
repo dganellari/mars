@@ -356,7 +356,9 @@ struct DistributedSimpleRunner {
                         <<" positive_offdiagonal="<<audit.positive_offdiagonal
                         <<" constant_mode_detected="<<audit.constant_mode_detected
                         <<" residual_within_roundoff_bound="<<audit.residual_within_roundoff_bound
-                        <<" roundoff_bound_exceeds_limit="<<audit.roundoff_bound_exceeds_limit<<'\n';
+                        <<" roundoff_bound_exceeds_limit="<<audit.roundoff_bound_exceeds_limit
+                        <<" compensated_residual_finite="<<audit.compensated_residual_finite
+                        <<" compensated_residual_passed="<<audit.compensated_residual_passed<<'\n';
                 }
             }
             throw std::runtime_error(context(verdict[1]?"true linear residual failed":"linear solve failed"));

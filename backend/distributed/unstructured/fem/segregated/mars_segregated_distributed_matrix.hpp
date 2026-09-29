@@ -82,6 +82,7 @@ struct alignas(16) SquareSums { double residual2, rhs2; };
 struct PressureAudit {
     bool finite=false, zero_row=false, nonpositive_diagonal=false, positive_offdiagonal=false;
     bool constant_mode_detected=false, residual_within_roundoff_bound=false, roundoff_bound_exceeds_limit=false;
+    bool compensated_residual_finite=false, compensated_residual_passed=false;
 };
 
 MARS_DMATRIX_HD inline void raise_fault(int* status,int fault) {
@@ -133,18 +134,47 @@ inline bool checked_product(long long a,long long b,long long limit,long long& o
 
 namespace kernels {
 enum PressureAuditFlag { audit_nonfinite=1, audit_zero_row=2, audit_nonpositive=4,
-                         audit_positive_offdiagonal=8, audit_constant_broken=16 };
+                         audit_positive_offdiagonal=8, audit_constant_broken=16, audit_compensated_invalid=32 };
+
+// Dot2 with an FMA product remainder preserves terms lost through cancellation.
+// Explicit device rounding prevents contraction from removing the error terms.
+struct CompensatedDot {
+    double sum=0, error=0;
+    MARS_DMATRIX_HD static double add(double a,double b) {
+#if defined(__CUDA_ARCH__)
+        return __dadd_rn(a,b);
+#else
+        return a+b;
+#endif
+    }
+    MARS_DMATRIX_HD void product(double a,double b) {
+#if defined(__CUDA_ARCH__)
+        const double p=__dmul_rn(a,b), remainder=__fma_rn(a,b,-p);
+#else
+        // The rounded product must exist separately even with FMA contraction.
+        const volatile double rounded=a*b;
+        const double p=rounded, remainder=std::fma(a,b,-p);
+#endif
+        const double next=add(sum,p), z=add(next,-sum);
+        const double lost=add(add(sum,-add(next,-z)),add(p,-z));
+        error=add(error,add(lost,remainder));
+        sum=next;
+    }
+    MARS_DMATRIX_HD double value() const { return add(sum,error); }
+};
 struct PressureAuditRow {
     const int *offsets,*columns,*owned;
     const double *values,*x,*rhs;
     double* sums; int* flags;
     MARS_DMATRIX_HD void operator()(int row) const {
         double ax=0, magnitude=0, row_sum=0, row_magnitude=0, diagonal=0;
+        CompensatedDot dot;
         int bits=0;
         const int begin=offsets[row], end=offsets[row+1];
         for (int k=begin;k<end;++k) {
             const double a=values[k], u=x[columns[k]];
             ax+=a*u; magnitude+=fabs(a)*fabs(u); row_sum+=a; row_magnitude+=fabs(a);
+            dot.product(a,u);
             if (columns[k]==owned[row]) diagonal+=a;
             else if (a>0) bits|=audit_positive_offdiagonal;
             if (!finite_value(a) || !finite_value(u)) bits|=audit_nonfinite;
@@ -156,6 +186,9 @@ struct PressureAuditRow {
         constexpr double unit=0x1p-53;
         const double t=(2.*(end-begin)+2)*unit, gamma=t/(1-t);
         if (fabs(row_sum)>gamma*row_magnitude) bits|=audit_constant_broken;
+        dot.product(-1.,rhs[row]);
+        const double compensated=dot.value(), compensated2=compensated*compensated;
+        if (!finite_value(compensated2) || (compensated!=0 && compensated2==0)) bits|=audit_compensated_invalid;
         const double r=ax-rhs[row], bound=gamma*(magnitude+fabs(rhs[row]));
         const double r2=r*r, b2=rhs[row]*rhs[row], bound2=bound*bound;
         if (!finite_value(row_magnitude) || !finite_value(row_sum) || !finite_value(diagonal)
@@ -163,6 +196,7 @@ struct PressureAuditRow {
             || (r!=0 && r2==0) || (rhs[row]!=0 && b2==0) || (bound!=0 && bound2==0)) bits|=audit_nonfinite;
         raise_fault(flags,bits);
         assembly_add(sums,r2); assembly_add(sums+1,b2); assembly_add(sums+2,bound2);
+        assembly_add(sums+3,compensated2);
     }
 };
 struct PressureAuditDecision {
@@ -178,6 +212,8 @@ struct PressureAuditDecision {
         a.constant_mode_detected=a.finite && !(*flags&audit_constant_broken);
         a.residual_within_roundoff_bound=a.finite && sums[0]<=sums[2];
         a.roundoff_bound_exceeds_limit=a.finite && sqrt(sums[2])>limit;
+        a.compensated_residual_finite=a.finite && !(*flags&audit_compensated_invalid) && finite_value(sums[3]);
+        a.compensated_residual_passed=a.compensated_residual_finite && sqrt(sums[3])<=limit;
         *result=a;
     }
 };
@@ -449,12 +485,12 @@ public:
         int local=updated_?0:values_not_updated;
         if (x.size<std::size_t(nodes_) || (rows_>0 && (!x.values || !rhs))) local|=capacity;
         collective(local,"pressure audit input");
-        Buffer<double> sums(3,0.); Buffer<int> flags(1,0); Buffer<PressureAudit> result(1);
+        Buffer<double> sums(4,0.); Buffer<int> flags(1,0); Buffer<PressureAudit> result(1);
         apply(rows_,kernels::PressureAuditRow{matrix_.rowOffsetsPtr(),matrix_.colIndicesPtr(),raw(owned_),
             matrix_.valuesPtr(),x.values,rhs,raw(sums),raw(flags)},stream_,local);
         synchronize(local);
         if (local&device_error) { MPI_Abort(comm_,1); throw std::runtime_error("pressure audit kernel failed"); }
-        const int sum_error=MPI_Allreduce(MPI_IN_PLACE,raw(sums),3,MPI_DOUBLE,MPI_SUM,comm_);
+        const int sum_error=MPI_Allreduce(MPI_IN_PLACE,raw(sums),4,MPI_DOUBLE,MPI_SUM,comm_);
         const int flag_error=MPI_Allreduce(MPI_IN_PLACE,raw(flags),1,MPI_INT,MPI_BOR,comm_);
         if (sum_error!=MPI_SUCCESS || flag_error!=MPI_SUCCESS) {
             MPI_Abort(comm_,1); throw std::runtime_error("pressure audit collective failed");
