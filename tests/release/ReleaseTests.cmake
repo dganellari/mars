@@ -118,7 +118,21 @@ if(MARS_ENABLE_HYPRE)
     endforeach()
 endif()
 
+# --- Taylor-Green vortex in the periodic unit cube, 1 and N ranks -------------------------------
+# Low-Re viscous decay. After 100 steps KE / KE_Stokes is 1.001504 in the host model of the same
+# scheme (tests/periodic/check_periodic_space.py --reference --n 16); a broken periodic coupling on
+# N ranks moves it far outside the band.
+foreach(_np 1 ${_rel_np})
+    add_test(NAME marsReleaseTgv_np${_np}
+             COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/release/check_value.py
+                     "--regex=TGV final:.*KE/KE_Stokes=([-+0-9.eE]+)" --lo 1.0013 --hi 1.0017 --
+                     ${_rel_mpi} ${_np} ${MPIEXEC_PREFLAGS} $<TARGET_FILE:mars_tgv> ${MPIEXEC_POSTFLAGS}
+                     --mesh=${_rel_hex} --box-lo=0 --box-hi=1 --nu=0.05 --dt=1e-4 --num-steps=100
+                     --report-every=100)
+    set_tests_properties(marsReleaseTgv_np${_np} PROPERTIES FAIL_REGULAR_EXPRESSION "[=: ](-?nan|NaN)[ ,\n]")
+endforeach()
+
 get_property(_rel_tests DIRECTORY PROPERTY TESTS)
-list(FILTER _rel_tests INCLUDE REGEX "^marsRelease(Hex|Tet|Poisson|Ex1Poisson|Ns)")
+list(FILTER _rel_tests INCLUDE REGEX "^marsRelease(Hex|Tet|Poisson|Ex1Poisson|Ns|Tgv)")
 set_tests_properties(${_rel_tests} PROPERTIES
     FIXTURES_REQUIRED marsReleaseMeshes LABELS "release;gpu" TIMEOUT 600)
