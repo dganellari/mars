@@ -181,6 +181,33 @@ on verbosity. This summary identifies failure categories, not a root cause or
 numerical parity. Add any new diagnostic through the fixed whitelist and its
 redaction tests rather than uploading more of the raw log.
 
+After rebuilding, `MARS_SIMPLE_PRESSURE_AUDIT=1` enables a failure-only device
+audit of the original pressure matrix `A`, RHS `b` and halo-complete candidate
+`phi`. The next export includes its booleans. The audit checks zero rows,
+nonpositive diagonal entries, positive off-diagonals and whether every row
+numerically annihilates the constant vector. This last check can reveal a missing
+global pressure anchor; a negative result does **not** exclude an unanchored
+disconnected component. Positive off-diagonals alone do not establish a bug in
+a general CVFEM operator or prove AMG will fail.
+
+It also compares the residual with a floating-point evaluation bound. For a row
+with `m` stored entries, it computes
+`gamma = (2*m+2)*u / (1-(2*m+2)*u)`, with double unit roundoff `u=2^-53`, and
+`bound_i = gamma*(sum_j |A_ij|*|phi_j| + |b_i|)`.
+The global L2 bound is compared with the residual and the unchanged application
+limit. This is a cancellation warning, **not** a lower bound on attainable
+accuracy, a condition-number estimate or permission to accept a rejected solve.
+The `finite` flag also rejects overflow/underflow of the squared audit norms.
+
+All row work and reductions use device buffers in CUDA builds, including the
+MPI sums; only the fixed boolean report returns to the host for logging. Scratch
+is allocated only after a rejected pressure solve. No field, row, norm, count or
+geometry is printed, no successful iteration gains this work, and solve
+acceptance is unchanged. A request on any rank enables the audit collectively.
+Host references exercise the same row algebra on synthetic matrices. The
+existing `mars_distributed_matrix_cuda_gate` includes these fixtures for
+user-run GPU validation; host checks alone do not validate CUDA execution.
+
 ## Local checks
 
 ```bash

@@ -44,7 +44,7 @@ template<int C> struct CandidateSolve {
 
 using Runner=DistributedSimpleRunner<HostMatrix,long long,CandidateSolve>;
 
-template<int C,class System> void cases(Runner& run,System& system,CandidateSolve<C>& solver) {
+template<int C,class System> void cases(Runner& run,System& system,CandidateSolve<C>& solver,bool audit=false) {
     Array<double> blocks(std::size_t(C*C)*run.graph.blocks()),rhs(std::size_t(C)*run.n),increment(std::size_t(C)*run.n);
     blocks.zero(); rhs.zero();
     const auto a=run.graph.template view<C>(blocks.data(),rhs.data());
@@ -78,6 +78,9 @@ template<int C,class System> void cases(Runner& run,System& system,CandidateSolv
                 message.str().find(mode==3?"solver_accepted=1":"solver_accepted=0")!=std::string::npos;
         }
         simple_collective(run.comm,report,"missing or incorrect independent rejection diagnostic");
+        if (rank==0) report=(message.str().find("[simple-pressure-audit]")!=std::string::npos)
+            ==(audit && C==1 && mode!=0 && mode!=4);
+        simple_collective(run.comm,report,"pressure audit opt-in or failure-only contract changed");
     }
 }
 
@@ -88,8 +91,13 @@ int main(int argc,char** argv) {
         const auto mesh=dsimple_gate::channel(8,2,2);
         const auto part=dsimple_gate::extract(mesh,dsimple_gate::partition(mesh,ranks),rank);
         Runner run(MPI_COMM_WORLD,part.input,part.ownership);
+        unsetenv("MARS_SIMPLE_PRESSURE_AUDIT");
         cases<3>(run,run.momentum,run.momentum_solve);
         cases<1>(run,run.poisson,run.poisson_solve);
+        // A request on any rank enables the same failure collectives on all ranks.
+        if (rank==ranks-1) setenv("MARS_SIMPLE_PRESSURE_AUDIT","1",1);
+        cases<3>(run,run.momentum,run.momentum_solve,true);
+        cases<1>(run,run.poisson,run.poisson_solve,true);
         if (!rank) std::cout<<"PASS: accepted/rejected, wrong, missing and nonfinite candidates; original CSR and halo residual; ranks="<<ranks<<'\n';
     } catch (const std::exception& error) {
         std::cerr<<error.what()<<'\n'; MPI_Abort(MPI_COMM_WORLD,1); return 1;

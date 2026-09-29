@@ -28,6 +28,7 @@
 #include "mars_segregated_halo_exchange.hpp"
 #include "mars_segregated_simple_reduction.hpp"
 #include "mars_segregated_simple_profile.hpp"
+#include <cstdlib>
 #include <iostream>
 #include <limits>
 #include <memory>
@@ -341,6 +342,23 @@ struct DistributedSimpleRunner {
                 <<" mars_absolute_residual="<<norms.absolute()<<" rhs_norm="<<std::sqrt(norms.rhs2)
                 <<" acceptance_limit="<<tolerance.absolute+tolerance.relative*std::sqrt(norms.rhs2)
                 <<" mars_passed="<<norms.passed<<'\n';
+            if constexpr (C==1) {
+                const char* option=std::getenv("MARS_SIMPLE_PRESSURE_AUDIT");
+                const int enabled=option && std::string(option)=="1";
+                int any=0;
+                if (MPI_Allreduce(&enabled,&any,1,MPI_INT,MPI_MAX,comm)!=MPI_SUCCESS) {
+                    MPI_Abort(comm,1); throw std::runtime_error("pressure audit selection failed");
+                }
+                if (any) {
+                    const auto audit=system.pressure_audit(distributed::halo_complete(increment.data(),increment.values.size()),solver.rhs(),tolerance);
+                    if (!rank) std::cerr<<"[simple-pressure-audit] finite="<<audit.finite
+                        <<" zero_row="<<audit.zero_row<<" nonpositive_diagonal="<<audit.nonpositive_diagonal
+                        <<" positive_offdiagonal="<<audit.positive_offdiagonal
+                        <<" constant_mode_detected="<<audit.constant_mode_detected
+                        <<" residual_within_roundoff_bound="<<audit.residual_within_roundoff_bound
+                        <<" roundoff_bound_exceeds_limit="<<audit.roundoff_bound_exceeds_limit<<'\n';
+                }
+            }
             throw std::runtime_error(context(verdict[1]?"true linear residual failed":"linear solve failed"));
         }
     }

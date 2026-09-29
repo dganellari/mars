@@ -79,6 +79,11 @@ struct HypreRows { int begin=0, end=0, column_begin=0, column_end=0; };
 struct ResidualReport { ResidualNorms norms; bool failed; };
 struct alignas(16) SquareSums { double residual2, rhs2; };
 
+struct PressureAudit {
+    bool finite=false, zero_row=false, nonpositive_diagonal=false, positive_offdiagonal=false;
+    bool constant_mode_detected=false, residual_within_roundoff_bound=false, roundoff_bound_exceeds_limit=false;
+};
+
 MARS_DMATRIX_HD inline void raise_fault(int* status,int fault) {
 #if defined(__CUDA_ARCH__)
     atomicOr(status,fault);
@@ -127,6 +132,55 @@ inline bool checked_product(long long a,long long b,long long limit,long long& o
 }
 
 namespace kernels {
+enum PressureAuditFlag { audit_nonfinite=1, audit_zero_row=2, audit_nonpositive=4,
+                         audit_positive_offdiagonal=8, audit_constant_broken=16 };
+struct PressureAuditRow {
+    const int *offsets,*columns,*owned;
+    const double *values,*x,*rhs;
+    double* sums; int* flags;
+    MARS_DMATRIX_HD void operator()(int row) const {
+        double ax=0, magnitude=0, row_sum=0, row_magnitude=0, diagonal=0;
+        int bits=0;
+        const int begin=offsets[row], end=offsets[row+1];
+        for (int k=begin;k<end;++k) {
+            const double a=values[k], u=x[columns[k]];
+            ax+=a*u; magnitude+=fabs(a)*fabs(u); row_sum+=a; row_magnitude+=fabs(a);
+            if (columns[k]==owned[row]) diagonal+=a;
+            else if (a>0) bits|=audit_positive_offdiagonal;
+            if (!finite_value(a) || !finite_value(u)) bits|=audit_nonfinite;
+        }
+        if (row_magnitude==0) bits|=audit_zero_row;
+        if (diagonal<=0) bits|=audit_nonpositive;
+        // A conservative sequential-dot bound, also valid for the shorter GPU reduction.
+        // This bounds evaluation error; it is not a solver acceptance tolerance.
+        constexpr double unit=0x1p-53;
+        const double t=(2.*(end-begin)+2)*unit, gamma=t/(1-t);
+        if (fabs(row_sum)>gamma*row_magnitude) bits|=audit_constant_broken;
+        const double r=ax-rhs[row], bound=gamma*(magnitude+fabs(rhs[row]));
+        const double r2=r*r, b2=rhs[row]*rhs[row], bound2=bound*bound;
+        if (!finite_value(row_magnitude) || !finite_value(row_sum) || !finite_value(diagonal)
+            || !finite_value(r2) || !finite_value(b2) || !finite_value(bound2)
+            || (r!=0 && r2==0) || (rhs[row]!=0 && b2==0) || (bound!=0 && bound2==0)) bits|=audit_nonfinite;
+        raise_fault(flags,bits);
+        assembly_add(sums,r2); assembly_add(sums+1,b2); assembly_add(sums+2,bound2);
+    }
+};
+struct PressureAuditDecision {
+    const double* sums; const int* flags; Tolerance tolerance; PressureAudit* result;
+    MARS_DMATRIX_HD void operator()(int) const {
+        PressureAudit a;
+        const double limit=tolerance.absolute+tolerance.relative*sqrt(sums[1]);
+        a.finite=!(*flags&audit_nonfinite) && finite_value(sums[0]) && finite_value(sums[1])
+            && finite_value(sums[2]) && finite_value(limit) && limit>=0;
+        a.zero_row=(*flags&audit_zero_row)!=0;
+        a.nonpositive_diagonal=(*flags&audit_nonpositive)!=0;
+        a.positive_offdiagonal=(*flags&audit_positive_offdiagonal)!=0;
+        a.constant_mode_detected=a.finite && !(*flags&audit_constant_broken);
+        a.residual_within_roundoff_bound=a.finite && sums[0]<=sums[2];
+        a.roundoff_bound_exceeds_limit=a.finite && sqrt(sums[2])>limit;
+        *result=a;
+    }
+};
 struct MarkOwned {
     const int* owned; int nodes; int* slot; int* status;
     MARS_DMATRIX_HD void operator()(int k) const {
@@ -387,6 +441,28 @@ public:
         norms.passed=norms.finite && norms.absolute()<=tolerance.absolute+tolerance.relative*std::sqrt(global[1]);
         return norms;
 #endif
+    }
+    // Failure-only audit of the original owned pressure rows and halo-complete candidate.
+    // Only these fixed-size flags leave device memory; no matrix or field is exported.
+    PressureAudit pressure_audit(HaloComplete x,const double* rhs,Tolerance tolerance={}) {
+        static_assert(C==1,"pressure audit requires scalar rows");
+        int local=updated_?0:values_not_updated;
+        if (x.size<std::size_t(nodes_) || (rows_>0 && (!x.values || !rhs))) local|=capacity;
+        collective(local,"pressure audit input");
+        Buffer<double> sums(3,0.); Buffer<int> flags(1,0); Buffer<PressureAudit> result(1);
+        apply(rows_,kernels::PressureAuditRow{matrix_.rowOffsetsPtr(),matrix_.colIndicesPtr(),raw(owned_),
+            matrix_.valuesPtr(),x.values,rhs,raw(sums),raw(flags)},stream_,local);
+        synchronize(local);
+        if (local&device_error) { MPI_Abort(comm_,1); throw std::runtime_error("pressure audit kernel failed"); }
+        const int sum_error=MPI_Allreduce(MPI_IN_PLACE,raw(sums),3,MPI_DOUBLE,MPI_SUM,comm_);
+        const int flag_error=MPI_Allreduce(MPI_IN_PLACE,raw(flags),1,MPI_INT,MPI_BOR,comm_);
+        if (sum_error!=MPI_SUCCESS || flag_error!=MPI_SUCCESS) {
+            MPI_Abort(comm_,1); throw std::runtime_error("pressure audit collective failed");
+        }
+        apply(1,kernels::PressureAuditDecision{raw(sums),raw(flags),tolerance,raw(result)},stream_,local);
+        const auto report=fetch(raw(result),stream_,local);
+        if (local&device_error) { MPI_Abort(comm_,1); throw std::runtime_error("pressure audit decision failed"); }
+        return report;
     }
     // Arguments of HypreGMRESSolver::solve(A,b,x,begin,end,column_begin,column_end,map).
     HypreRows hypre_rows() const { return {int(C*first_),int(C*(first_+owned_count_)),0,int(C*total_)}; }

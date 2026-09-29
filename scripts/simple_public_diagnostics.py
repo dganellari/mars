@@ -8,7 +8,9 @@ import re
 import sys
 
 
-TAGS = ('[simple-linear]', '[HypreGMRES] rejected:', '[hypre-spmv]')
+TAGS = ('[simple-linear]', '[HypreGMRES] rejected:', '[hypre-spmv]', '[simple-pressure-audit]')
+AUDIT_FLAGS = ('finite', 'zero_row', 'nonpositive_diagonal', 'positive_offdiagonal',
+               'constant_mode_detected', 'residual_within_roundoff_bound', 'roundoff_bound_exceeds_limit')
 
 
 def fields(text):
@@ -102,7 +104,7 @@ def summarize(lines, exit_text):
     if simple or hypre:
         # A concatenated successful run cannot hide a rejection.
         status = 'failed'
-    return {
+    result = {
         'schema': 'mars-simple-public-diagnostics-v1',
         'run_status': status,
         'multiple_completions': len(completions) > 1,
@@ -123,6 +125,11 @@ def summarize(lines, exit_text):
         'spmv_backend': consensus(spmv, lambda r: {'0': 'native', '1': 'vendor'}.get(r.get('vendor_requested'), 'unknown'), 'unknown'),
         'false_convergence_message_seen': false_convergence,
     }
+    audit = records['[simple-pressure-audit]']
+    result['pressure_audit_present'] = bool(audit)
+    for key in AUDIT_FLAGS:
+        result['pressure_audit_' + key] = consensus(audit, lambda r: flag(r, key))
+    return result
 
 
 class SafeParser(argparse.ArgumentParser):

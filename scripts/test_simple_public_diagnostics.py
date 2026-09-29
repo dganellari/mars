@@ -63,6 +63,17 @@ class PublicDiagnosticsTests(unittest.TestCase):
         self.assertEqual(result['spmv_backend'], 'native')
         self.assertIs(result['false_convergence_message_seen'], True)
 
+    def test_pressure_audit_exports_only_flags(self):
+        text = '[simple-pressure-audit] finite=1 zero_row=0 nonpositive_diagonal=0 positive_offdiagonal=1 constant_mode_detected=0 residual_within_roundoff_bound=1 roundoff_bound_exceeds_limit=1 secret=private'
+        result = summarize(text)
+        self.assertTrue(result['pressure_audit_present'])
+        self.assertTrue(result['pressure_audit_finite'])
+        self.assertFalse(result['pressure_audit_zero_row'])
+        self.assertTrue(result['pressure_audit_roundoff_bound_exceeds_limit'])
+        self.assertNotIn('private', json.dumps(result))
+        self.assertIsNone(summarize('')['pressure_audit_finite'])
+        self.assertIsNone(summarize(text + '\n' + text.replace('finite=1', 'finite=0'))['pressure_audit_finite'])
+
     def test_completion_requires_matching_exit(self):
         converged = 'CONVERGED iterations=10 ranks=4 exchange_rounds=41\n'
         limited = 'NOT CONVERGED: iteration limit iterations=50 ranks=4 exchange_rounds=201\n'

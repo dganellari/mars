@@ -349,10 +349,58 @@ inline std::vector<double> local_solution(const Problem& p,const Local& l,unsign
 }
 
 // Structural, update, residual, empty-work and fault-injection gates for one component count.
+template<class Matrix,class GlobalId> void pressure_audit_gates(MPI_Comm comm,Report& report) {
+    int rank=0,ranks=1; MPI_Comm_rank(comm,&rank); MPI_Comm_size(comm,&ranks);
+    const int n=4*ranks;
+    for (int mode=0;mode<9;++mode) {
+        Local l; l.global.resize(n); l.solver_node.resize(n); l.rhs.assign(n,0);
+        for (int i=0;i<n;++i) { l.global[i]=n-1-i; l.solver_node[i]=n-1-i; }
+        for (int i=0;i<4;++i) l.owned.push_back(n-1-(4*rank+i));
+        std::vector<double> solution(n,mode==4?1e12:mode==6?1e200:mode==7?1e-250:1.);
+        if (mode==5) solution[0]=std::numeric_limits<double>::quiet_NaN();
+        for (int i=0;i<n;++i) {
+            l.offsets.push_back(int(l.columns.size()));
+            const int g=n-1-i;
+            for (int j=0;j<n;++j) {
+                const int h=n-1-j;
+                double value=g==h?2.:(h==(g+1)%n || h==(g+n-1)%n)?-1.:0.;
+                if (mode==8) value=g/(n/2)!=h/(n/2)?0.:g==h?double(n/2-1):-1.;
+                if (mode!=1 && mode!=4 && g==0 && h==0) value+=1;
+                if (mode==2 && g==n-1) value=0;
+                if (mode==3 && g==n-1 && h==g) value=-1;
+                if (mode==3 && g==n-1 && h==0) value=1;
+                l.columns.push_back(j); l.blocks.push_back(value);
+                // Manufactured constant solution, apart from a deliberate small residual.
+                l.rhs[i]+=value*(mode==6?1e200:mode==7?1e-250:1.);
+            }
+            if (mode==4) l.rhs[i]=1e-7;
+        }
+        l.offsets.push_back(int(l.columns.size()));
+        Device<1,GlobalId> d(l); Buffer<double> b(l.owned.size()), x=upload(solution);
+        System<1,Matrix,GlobalId> system(comm,d.view(),raw(d.owned),int(l.owned.size()),raw(d.solver_node),l.nodes());
+        system.update(d.view(),raw(b),b.size());
+        const auto before=download(system.matrix().valuesPtr(),l.owned.size()*n);
+        const auto audit=system.pressure_audit(halo_complete(raw(x),x.size()),raw(b));
+        bool ok=false;
+        if (mode==0) ok=audit.finite && !audit.constant_mode_detected && !audit.zero_row && !audit.nonpositive_diagonal
+            && !audit.positive_offdiagonal && audit.residual_within_roundoff_bound && !audit.roundoff_bound_exceeds_limit;
+        if (mode==1) ok=audit.finite && audit.constant_mode_detected && !audit.zero_row && !audit.nonpositive_diagonal;
+        if (mode==2) ok=audit.finite && audit.zero_row && audit.nonpositive_diagonal;
+        if (mode==3) ok=audit.finite && audit.nonpositive_diagonal && audit.positive_offdiagonal;
+        if (mode==4) ok=audit.finite && audit.constant_mode_detected && audit.residual_within_roundoff_bound && audit.roundoff_bound_exceeds_limit;
+        if (mode>=5 && mode<=7) ok=!audit.finite && !audit.residual_within_roundoff_bound && !audit.roundoff_bound_exceeds_limit;
+        // One anchored component breaks the global constant, even when another is singular.
+        if (mode==8) ok=audit.finite && !audit.constant_mode_detected && !audit.zero_row && !audit.nonpositive_diagonal;
+        ok=ok && before==download(system.matrix().valuesPtr(),before.size());
+        report.result("pressure audit fixture "+std::to_string(mode),all_true(ok,comm));
+    }
+}
+
 template<int C,class Matrix,class GlobalId> void run_gates(MPI_Comm comm,Report& report,Options base={}) {
     int rank=0, ranks=1; MPI_Comm_rank(comm,&rank); MPI_Comm_size(comm,&ranks);
     const std::string tag="C="+std::to_string(C)+" ranks="+std::to_string(ranks)+": ";
     const int last=ranks-1; const bool injecting=rank==last;
+    if constexpr (C==1) pressure_audit_gates<Matrix,GlobalId>(comm,report);
     {   // Build, first values, oracle comparison of every entry, RHS and map.
         Problem p(C,ranks,base); Local l=extract(p,rank);
         fill(p,l,rank,1,[&](int g,int c) { return p.rhs(g,c,1); });
