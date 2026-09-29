@@ -181,6 +181,12 @@ SpMV for the whole Hypre solve, not just the extra residual calculation. The
 runs used different nodes. They support this workaround but do not establish
 the faulty instruction, nonlinear convergence, multi-rank safety or a speedup.
 
+The subsequent [full duct study](../simple_duct/DAINT_RESULTS.md) completes
+10656 iterations on level 32 with native GPU SpMV on 1/2/4 ranks and passes
+convergence, rank parity and 8/16/32 refinement checks. The downloaded output
+was independently rechecked on 2026-09-29. This validates the workaround for
+that case; it does not identify the vendor-path defect or establish a speedup.
+
 Hypre caches one SpMV workspace per matrix in the inspected 2.33.0 vendor path.
 That observation alone does not demonstrate misuse: NVIDIA documents that
 preprocessing is optional and even a preprocessed call permits changed

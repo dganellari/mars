@@ -25,9 +25,10 @@ The existing defaults reproduce the public channel configuration.
 
 Current scope is one 3D Tet4 element block, one inlet set, one outlet set and
 one or more explicitly selected wall sets. Every exterior face must be tagged
-exactly once; unknown, duplicate or missing selections are rejected. Initial
-file arrays are replicated for matching and then released. Empty owned-row
-ranks and periodic/multi-block configurations remain unsupported here.
+exactly once; unknown, duplicate or missing selections are rejected. Rank zero
+reads the file; element partitions and coordinate/tag requests use bounded GPU
+buffers. Root retains the source mesh during setup; this is not parallel I/O.
+Empty owned-row ranks and periodic/multi-block configurations remain unsupported here.
 
 Local validation on 2026-09-27 used a strict C++20 build and 62 CPU/MPI tests.
 The first pass found two oblique four-rank fixture failures: the test's slab
@@ -39,8 +40,13 @@ SIMPLE algebra checks and 12 field-comparator tests passed; the 133 control and
 inlet-normal checks also passed AddressSanitizer and UndefinedBehaviorSanitizer.
 The subsequent Daint run at `simple-configured-SQbfsO` passed the default
 configuration on 1/2/4 GPUs (1277 iterations and field parity), then failed in
-the oblique single-rank pressure solve. The repair below still needs its CUDA
-run; the earlier default result does not validate the changed preconditioner.
+the oblique single-rank pressure solve. After the repair below, user-reported
+2/4-rank oblique runs converged at 2050 iterations and matched the one-rank
+field file within 2.006e-15 in velocity/U and 1.277e-13 in pressure/(rho U^2).
+The supplied excerpt did not include the one-rank convergence line or binary
+hash. The subsequent default four-rank regression converged at 1277 and matched
+its saved baseline within 5.551e-13 in scaled pressure. These are reported CUDA
+results for those fixtures, not a general material/geometry validation.
 
 ## Small-system AMG repair
 

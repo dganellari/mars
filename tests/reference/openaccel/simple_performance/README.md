@@ -3,10 +3,15 @@
 This work preserves the existing steady, laminar Tet4 CVFEM equations, quadrature,
 boundary closure, physical pressure, relaxation and high-resolution limiter.
 Momentum and pressure matrices still use current coefficients on every iteration.
-Only storage, communication scheduling, diagnostics and file distribution change.
+Changes concern storage, communication scheduling, diagnostics, file distribution
+and GPU SpMV backend selection.
 
 ## Changes and limits
 
+- Hypre's native GPU SpMV is the default; `MARS_HYPRE_SPMV_VENDOR=1` opts back
+  into its vendor path. This avoids the observed residual mismatch without
+  changing either linear acceptance check. The exact vendor-path cause remains
+  unresolved; see the [backend audit](HYPRE_HOST_TEST.md#gpu-spmv-backend-probe).
 - `--linear-cache 1` (default) retains the Hypre wrapper's CSR packing, outer
   IJ/ParCSR objects, vectors, GMRES and AMG handles. Every solve overwrites all
   numerical entries, including zeros, and reruns setup. It does **not** freeze
@@ -71,10 +76,18 @@ with CUDA primitives emulated on the host and real sequential Hypre 3.1, passed
 ASan/UBSan lifecycle/numeric-refresh checks. Synthetic meshes were independently
 read back for positive volumes, exterior-face coverage and normal orientation.
 
-These results do not compile CUDA or validate GPU MPI, speedup, kernel occupancy
-or multi-node scaling. The checks below are required on Daint. Existing public
-high-resolution field agreement with OpenAccel is the numerical baseline;
-OpenAccel needs no rebuild or rerun for this optimization check.
+Those host checks do not validate CUDA. Subsequent user-reported Daint results
+in `simple-release-nI3XXr` passed optimized high-resolution channel convergence
+and saved-baseline field parity on 1/2/4 ranks, all at 1318 iterations. The
+[upwind duct study](../simple_duct/DAINT_RESULTS.md) subsequently passed an
+independent recheck of saved GPU results with cache, overlap and distributed
+output enabled. This establishes correctness for those cases, not speedup,
+kernel occupancy or multi-node scaling. The fine duct's saved loop times
+increase from one to four ranks; see the result's timing scope.
+
+The commands below reproduce the optimization checks. Existing public
+high-resolution agreement with OpenAccel is their numerical baseline;
+OpenAccel needs no rebuild or rerun for them.
 
 ## Daint: public correctness first
 

@@ -77,8 +77,17 @@ All 62 existing CPU/MPI regression cases passed. The first high-resolution MPI
 checks exposed an undersized halo stride capacity; after increasing it to 15,
 the focused 10-case CPU/MPI suite passed under a strict C++20 build. The 81-node
 host channel converged at iteration 2907, and 25 reference-comparator tests passed.
-These checks do not establish CUDA execution or OpenAccel field parity; the
-commands below are the pending GPU and independent-reference gates.
+Subsequent user-reported Daint runs of the 425-node public channel converged at
+1318 iterations on 1/2/4 GPU ranks. OpenAccel converged at 1315; the saved-field
+comparison passed with maximum scaled errors of 3.1101e-9 in velocity and
+1.2877e-8 in absolute pressure, below 1e-5. Results are in
+`/capstor/scratch/cscs/gandanie/simple-highres-yQnE5j`; the reference is
+`/capstor/scratch/cscs/gandanie/openaccel-highres-yQnE5j/run`.
+The later optimized channel regression also passed on 1/2/4 ranks. These are
+user-reported GPU results, separate from the host checks above and from the
+[independently rechecked upwind duct study](../simple_duct/DAINT_RESULTS.md).
+High-resolution duct refinement remains unvalidated. The commands below
+reproduce the public-channel checks.
 
 From the configured MARS CUDA/Hypre build, after pulling:
 

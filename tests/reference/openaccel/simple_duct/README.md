@@ -11,6 +11,11 @@ limiter or global CMake configuration.
 The CUDA runs use the unchanged `mars_segregated_simple` executable; the host tests use the
 unchanged production `simple_partition` and `DistributedSimpleRunner` (host build).
 
+**Daint status, 2026-09-29:** the upwind 8/16/32 study on 1/2/4 GPU ranks passes.
+An independent recheck of the saved fields and run evidence reproduces the result.
+See [results, provenance and limits](DAINT_RESULTS.md). The fine-grid runs use
+native Hypre GPU SpMV; the vendor-path root cause remains unresolved.
+
 ## Mathematical contract
 
 ### Problem, as the production code poses it
@@ -308,7 +313,10 @@ All Python files also parse with Python 3.6 grammar. The longer 4/8/16 refinemen
 not repeated during integration; the reported failure above remains open. GPU
 results reported after integration are recorded below.
 
-## Reported Daint progress (through 2026-09-29)
+## Daint diagnostic history (2026-09-28 to 2026-09-29)
+
+The failures below preceded the [completed native-backend study](DAINT_RESULTS.md).
+They explain the backend policy; they are not the current refinement verdict.
 
 The user-provided log for `simple-duct-upwind-Ng67FX/duct-16-4` passes the per-run
 checks after 4484 iterations on four GPUs: profile L2 error 4.1965e-2 and
@@ -335,8 +343,7 @@ defect, and the cause remains unresolved. Failure diagnostics now also evaluate
 the candidate against MARS's original CSR and identify the Krylov backend.
 These are diagnostic checks, not a tolerance change or a claimed GPU fix.
 The optional FlexGMRES API dispatch was corrected separately and tested with
-real CPU Hypre. The full 8/16/32 study remains incomplete.
-Preserve the completed runs; no successful fine-grid refinement is claimed yet.
+real CPU Hypre. The full 8/16/32 study was still incomplete at this stage.
 
 A later check of the preserved 8/16-cell runs passes on 1/2/4 GPUs
 (`simple-duct-finish-RJjq00`). Iterations are 3139 and 4484 respectively;
@@ -374,15 +381,14 @@ exit 2 marks the nonlinear iteration cap, not convergence. Runtime Hypre is
 proving a particular cuSPARSE or workspace defect.
 
 The wrapper now defaults to native GPU SpMV; `MARS_HYPRE_SPMV_VENDOR=1` opts
-back into the vendor path. No tolerance or retry acceptance changed. Resume
-the full 32-cell study on 1/2/4 GPUs with native mode, preserving completed
-8/16 runs and their original provenance. An already-built `4e31ae15` executable
-can select the same backend explicitly with `MARS_HYPRE_SPMV_VENDOR=0` without
-a rebuild. Keep `CUDA_LAUNCH_BLOCKING` unset. See
+back into the vendor path. No tolerance or retry acceptance changed with this
+backend selection. The completed study retained the 8/16 runs and used the
+`4e31ae15` executable with explicit `MARS_HYPRE_SPMV_VENDOR=0` for level 32,
+with `CUDA_LAUNCH_BLOCKING` unset. See
 [the backend probe](../simple_performance/HYPRE_HOST_TEST.md#gpu-spmv-backend-probe)
 for its scope and process-wide setting. The audit retains the original rejection
-even if a repeated calculation passes. Fine-grid convergence and the refinement
-verdict remain open; retain completed 8/16 runs.
+even if a repeated calculation passes. The later full study passes convergence,
+rank parity and refinement, without establishing the vendor-path root cause.
 
 ## Daint commands
 
@@ -483,5 +489,7 @@ comparator, if gathered output becomes too large.
   (rtol 1e-12) and checks the true residual (1e-13 + 1e-10·|b|) as usual.
 - **Evidence:** rank parity on the host is at round-off. On the GPU, Hypre's preconditioner
   depends on the partition, so differences at the linear-solve tolerance are expected, and
-  1e-6 leaves room for them. GPU progress is recorded above; the complete GPU
-  refinement and rank-parity study has not passed.
+  1e-6 leaves room for them. The upwind 8/16/32 GPU study passes refinement and
+  rank parity; [the result](DAINT_RESULTS.md) records remaining spatial errors
+  and the mixed coarse/fine provenance. High-resolution duct refinement and
+  level 64 remain unvalidated.
