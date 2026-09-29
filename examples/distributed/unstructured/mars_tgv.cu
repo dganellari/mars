@@ -312,7 +312,7 @@ void adaptMesh(Amr& amr, std::unique_ptr<Solver>& solver, mars::fem::PeriodicMap
     const auto& levels = amr.octree().elementLevels();
     frames.level.resize(domain.getElementCount());
     thrust::transform(thrust::device, levels.data(), levels.data() + domain.getElementCount(), frames.level.data(),
-                      [] __device__(int l) { return RealType(l); });
+                      [] __device__(int l) -> RealType { return RealType(l); });
 }
 
 // =============================================================================

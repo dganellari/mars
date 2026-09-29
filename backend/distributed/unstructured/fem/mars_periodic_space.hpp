@@ -141,13 +141,13 @@ void checkPeriodicPairing(const DomainT& domain, const PeriodicMap<KeyType, Real
     auto last           = thrust::counting_iterator<size_t>(domain.getNodeCount());
 
     // every owned slave must reach its final master, a node on no max face
-    long long unpaired = thrust::count_if(thrust::device, first, last, [partner, mask, own] __device__(size_t i) {
+    long long unpaired = thrust::count_if(thrust::device, first, last, [partner, mask, own] __device__(size_t i) -> bool {
         if (own[i] != 1 || mask[i] == 0) return false;
         int m = partner[i];
         return m < 0 || mask[m] != 0;
     });
     // every owned slave with a remote master must be in the cross-rank table
-    long long remote = thrust::count_if(thrust::device, first, last, [partner, own] __device__(size_t i) {
+    long long remote = thrust::count_if(thrust::device, first, last, [partner, own] __device__(size_t i) -> bool {
         return own[i] == 1 && partner[i] >= 0 && own[partner[i]] != 1;
     });
     long long bad[2] = {unpaired, remote != (long long)map.cross_.d_sendOwnedSlaveIds_.size() ? 1LL : 0LL};

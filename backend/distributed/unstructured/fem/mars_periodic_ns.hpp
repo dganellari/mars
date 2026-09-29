@@ -540,7 +540,7 @@ public:
         const RealType* mass = mass_.data();
         RealType local       = thrust::transform_reduce(
             thrust::device, thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(n_),
-            [dof, div, mass] __device__(size_t i) { return dof[i] ? fabs(div[i] / mass[i]) : RealType(0); },
+            [dof, div, mass] __device__(size_t i) -> RealType { return dof[i] ? fabs(div[i] / mass[i]) : RealType(0); },
             RealType(0), thrust::maximum<RealType>());
         RealType global = 0;
         MPI_Allreduce(&local, &global, 1, mpiDatatype<RealType>(), MPI_MAX, MPI_COMM_WORLD);
