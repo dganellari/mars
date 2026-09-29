@@ -366,9 +366,19 @@ nid005598): stored residual 2.28427e-12, limit 1.14823e-12, repeated Hypre
 residual 9.7086e-15 and MARS residual 9.70859e-15. This is not fixed by
 serializing launches, and the source-level cause remains unknown.
 
-Before resuming the full study, compare fresh 100-iteration processes with
-`MARS_HYPRE_SPMV_VENDOR=1` and `0`, using the same binary, original acceptance
-limits, `MARS_HYPRE_RESIDUAL_AUDIT=1`, and `CUDA_LAUNCH_BLOCKING` unset. See
+The backend comparison in `simple-duct-spmv-zHg5gB` fails in vendor mode at
+momentum iteration 7 (job 4940479, nid005504), while native GPU mode completes
+all 100 steps (job 4940490, nid005617). Both residual checks pass in the latter;
+exit 2 marks the nonlinear iteration cap, not convergence. Runtime Hypre is
+2.33.0. This narrows the issue to the vendor-enabled execution path without
+proving a particular cuSPARSE or workspace defect.
+
+The wrapper now defaults to native GPU SpMV; `MARS_HYPRE_SPMV_VENDOR=1` opts
+back into the vendor path. No tolerance or retry acceptance changed. Resume
+the full 32-cell study on 1/2/4 GPUs with native mode, preserving completed
+8/16 runs and their original provenance. An already-built `4e31ae15` executable
+can select the same backend explicitly with `MARS_HYPRE_SPMV_VENDOR=0` without
+a rebuild. Keep `CUDA_LAUNCH_BLOCKING` unset. See
 [the backend probe](../simple_performance/HYPRE_HOST_TEST.md#gpu-spmv-backend-probe)
 for its scope and process-wide setting. The audit retains the original rejection
 even if a repeated calculation passes. Fine-grid convergence and the refinement

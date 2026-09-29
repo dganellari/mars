@@ -915,13 +915,14 @@ public:
     void configure_spmv() {
         if (spmv_configured_) return;
         const char* option = std::getenv("MARS_HYPRE_SPMV_VENDOR");
-        const int requested = !option ? -1 : std::string(option) == "0" ? 0
+        // Native GPU SpMV avoids the observed vendor-path residual mismatch.
+        const int requested = !option ? 0 : std::string(option) == "0" ? 0
             : std::string(option) == "1" ? 1 : -2;
         const int local[2] = {requested, -requested};
         int bounds[2] = {};
         MPI_Allreduce(local, bounds, 2, MPI_INT, MPI_MAX, comm_);
-        require_reuse(bounds[0] == -bounds[1] && bounds[0] >= -1,
-                      "MARS_HYPRE_SPMV_VENDOR must be unset, 0 or 1 on every rank, with the same choice");
+        require_reuse(bounds[0] == -bounds[1] && bounds[0] >= 0,
+                      "MARS_HYPRE_SPMV_VENDOR must be unset (native), 0 or 1, with the same backend on every rank");
         if (requested >= 0) {
             // Hypre's selector is process-wide; set it before building any solver state.
             HYPRE_Int major = 0, minor = 0, patch = 0;

@@ -159,27 +159,40 @@ gives 9.7086e-15 and MARS gives 9.70859e-15. Serializing launches therefore did
 not resolve it. The audit also allocates scratch and performs reductions before
 repeating, so it does not isolate synchronization as the cause.
 
-`MARS_HYPRE_SPMV_VENDOR=0` requests Hypre's native GPU SpMV; `1` requests its
-vendor backend through the public `HYPRE_SetSpMVUseVendor` API. Leaving it unset
-preserves Hypre's existing setting. Hypre falls back to its native implementation
-when the vendor backend was not compiled in. `[hypre-spmv]` records the request,
+Unset or `MARS_HYPRE_SPMV_VENDOR=0` selects Hypre's native GPU SpMV; `1` opts into
+its vendor backend through the public `HYPRE_SetSpMVUseVendor` API. This wrapper
+now defaults to native GPU kernels as a workaround for the observed residual
+mismatch, without changing either acceptance check. Hypre falls back to its native
+implementation when the vendor backend was not compiled in. `[hypre-spmv]` records the request,
 linked Hypre version and header build flags; it does not prove which kernel ran.
 The setting is process-wide: set it consistently on every rank before launching,
 and do not change it between solvers in the same process. Invalid or inconsistent
 values are rejected collectively before any solver state is built. Each wrapper
 checks once; there are no additional steady-state reductions or field transfers.
 
-Compare two fresh processes on the same binary and public duct-32 mesh, first
-with `1`, then `0`, with `CUDA_LAUNCH_BLOCKING` unset and the residual audit on.
-Keep all other options and acceptance limits unchanged. This selects SpMV for
-the whole Hypre solve, not just the extra residual calculation. A backend-specific
-failure would narrow the investigation, not prove a vendor-library defect. A
-100-iteration run ending at its iteration cap is not nonlinear convergence.
+The user-reported comparison in `simple-duct-spmv-zHg5gB` used the same binary
+and public duct-32 mesh with normal asynchronous launches and unchanged limits.
+Vendor mode failed at momentum iteration 7 (job 4940479, nid005504): stored
+residual 3.77436e-6 versus a 1.62994e-11 limit; MARS, Krylov and repeated Hypre
+checks agreed at 1.41104e-13. Native mode completed 100 iterations with both
+residual checks passing (job 4940490, nid005617), then exited 2 at the iteration
+cap. Runtime Hypre was 2.33.0 with CUDA/cuSPARSE/cuBLAS enabled. This selects
+SpMV for the whole Hypre solve, not just the extra residual calculation. The
+runs used different nodes. They support this workaround but do not establish
+the faulty instruction, nonlinear convergence, multi-rank safety or a speedup.
+
+Hypre caches one SpMV workspace per matrix in the inspected 2.33.0 vendor path.
+That observation alone does not demonstrate misuse: NVIDIA documents that
+preprocessing is optional and even a preprocessed call permits changed
+`alpha`/`beta` ([cuSPARSE 12.9 API](https://docs.nvidia.com/cuda/archive/12.9.1/cusparse/index.html#cusparsespmv)).
+The proposed stale-workspace explanation remains a hypothesis. Identical wrapper
+code in another Hypre version cannot establish that an upgrade will behave
+identically across all dependencies and runtime settings.
 
 The host regression checks the public API on sequential Hypre 2.32.0, 2.33.0
-and 3.1.0 with both Krylov backends and ASan/UBSan. It verifies unchanged default
-selection, a single setter call across cached solves, independent CSR residuals,
-invalid options and simulated rank disagreement. CPU Hypre does not execute GPU
+and 3.1.0 with both Krylov backends and ASan/UBSan. It verifies native default
+selection, vendor opt-in, a single setter call across cached solves, independent
+CSR residuals, invalid options and simulated rank disagreement. CPU Hypre does not execute GPU
 SpMV, and the stubbed collective is not an MPI execution test.
 
 For the water/backflow fixture, the pseudo-time momentum diagonal is dominated

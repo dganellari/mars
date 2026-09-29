@@ -145,9 +145,8 @@ void spmv_backend_selection() {
             fill_system(matrix,map,epoch,b,truth);
             check(solver.solve(matrix,b,x,0,32,0,32,map),"SpMV selection solve rejected");
             verify(matrix,map,b,x,truth);
-            check(host_spmv_set_calls==before+(choice?1:0),
-                  "SpMV setting changed by default or repeated on a cached solve");
-            if (choice) check(host_spmv_last_request==choice[0]-'0',"wrong SpMV policy requested");
+            check(host_spmv_set_calls==before+1,"SpMV selection missing or repeated on a cached solve");
+            check(host_spmv_last_request==(choice?choice[0]-'0':0),"wrong default or explicit SpMV policy");
         }
     }
     for (const char* bad : {"","-1","2","native"}) {
@@ -165,7 +164,7 @@ void spmv_backend_selection() {
     check(!host_spmv_rank_disagreement && host_spmv_set_calls==before,
           "inconsistent rank selection reached Hypre");
     unsetenv("MARS_HYPRE_SPMV_VENDOR");
-    std::cout<<"PASS: SpMV selection, unchanged default, cached solves and collective option checks\n";
+    std::cout<<"PASS: native SpMV default, vendor opt-in, cached solves and collective option checks\n";
 }
 
 void residual_workspace() {
