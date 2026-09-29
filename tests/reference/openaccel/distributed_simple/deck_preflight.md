@@ -154,10 +154,38 @@ files. No new mesh diagnostic or matrix dump is enabled. Only after compatibilit
 and short-run completion should a fresh run use the matched 2000-iteration budget;
 this executable does not resume from the short run's CSV output.
 
+## Shareable failure summary
+
+Run the exporter on the machine holding the private log, after the job exits:
+
+```bash
+python3 ../scripts/simple_public_diagnostics.py \
+  --log "$simple_run/short.log" --exit-file "$simple_run/short.exit" \
+  --output "$simple_run/public-diagnostics.json"
+```
+
+Only `public-diagnostics.json` is intended for sharing or an exact-file transfer.
+It contains fixed software labels and booleans: the failed stage, Krylov/SpMV
+backend, residual-check verdicts, finite-value checks and completion status.
+It contains no raw log lines, paths, mesh or boundary details, field values,
+residual magnitudes, iteration counts, timings or input hashes. Full logs,
+prepared arguments and fields remain private. No rebuild or simulation rerun is
+needed; the exporter requires only Python 3.6 or later and its standard library.
+
+Missing or conflicting diagnostics become `null` or `unknown`, never a pass.
+The exporter combines observations without exposing their counts, refuses an
+existing output file, and suppresses private values in its own error messages.
+A successful export does not mean a successful solve. The absence of Hypre's
+`false convergence` message does not rule out stagnation: that message depends
+on verbosity. This summary identifies failure categories, not a root cause or
+numerical parity. Add any new diagnostic through the fixed whitelist and its
+redaction tests rather than uploading more of the raw log.
+
 ## Local checks
 
 ```bash
 python3 -m unittest discover -s scripts -p test_prepare_simple_deck.py -v
+python3 -m unittest discover -s scripts -p test_simple_public_diagnostics.py -v
 ```
 
 The checked-in synthetic `preparation_fixture.i` tests cover extraction, static
