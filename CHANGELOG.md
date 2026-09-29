@@ -5,6 +5,20 @@ All notable changes to MARS are documented here. The format follows
 [Semantic Versioning](https://semver.org/). While the major version is `0`, the
 public API may change between minor releases.
 
+## [Unreleased]
+
+### Changed
+- `mars_tgv` runs on `PeriodicNavierStokes` (`fem/mars_periodic_ns.hpp`): velocity and
+  pressure both keep one unknown per periodic point, and every operator is Pᵀ A P on
+  that space (`fem/mars_periodic_space.hpp`), so `D u = 0` holds exactly on any rank
+  count and the multi-rank guard is gone. The BDF2 pressure right-hand side uses
+  `3ρ / (2 dt)`, matching the corrector. Skew-symmetric advection is the default;
+  `--solver=hypre` and `--pressure-solve=K` are no longer options of `mars_tgv`.
+
+### Added
+- `tests/periodic/check_periodic_space.py`: host model of the multi-rank periodic
+  projection (no GPU) and the reference numbers of the TGV GPU check.
+
 ## [0.1.0] — 2026-09-24
 
 First tagged public release. MARS is a GPU-native mesh management and finite-element

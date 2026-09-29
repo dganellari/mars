@@ -9,7 +9,6 @@ whether MARS fits your use case. The major version is `0`: APIs may change.
   (load → adjacency → DOF map → CSR sparsity → assembled matrix).
 - Multi-rank distributed assembly and solve for non-periodic cases
   (e.g. lid-driven cavity, channel Navier–Stokes).
-- Single-rank periodic Taylor–Green vortex.
 
 The stable paths are validated on generated structured meshes (release checks: `ctest -L release`),
 including element numberings that are not aligned with the coordinate axes.
@@ -31,11 +30,16 @@ including element numberings that are not aligned with the coordinate axes.
   unresolved residual mismatch in the Hypre/cuSPARSE path.
 - **MARSIR** (`marsir-compiler/`, `marsir-mlir/`). Research code generator, off by
   default (`MARS_ENABLE_MARSIR`), not needed to build or use the library.
+- **Periodic Navier–Stokes (`mars_tgv`)** on one or more ranks. Velocity and pressure keep
+  one unknown per periodic point and every operator is Pᵀ A P
+  (`fem/mars_periodic_space.hpp`, `fem/mars_periodic_ns.hpp`), so the projection is exact
+  on any rank count. Rank invariance and the exact projection are checked on the host
+  (`tests/periodic/check_periodic_space.py`); the GPU check on 1, 2 and 4 ranks
+  ([periodic TGV tutorial](docs/periodic_tgv_tutorial.md), section 8) is pending. The
+  periodic mode of `NSStepper` (`fem/mars_ns_solver.hpp`) is superseded by it and is only
+  consistent on one rank.
 
 ## Not supported yet
-- **Multi-rank periodic boundary conditions** (e.g. multi-rank periodic TGV). Periodic
-  DOF collapse across rank boundaries is still under development; use single-rank for
-  periodic cases.
 - **Poiseuille channel (`mars_poiseuille_flow`).** The solver handles axis-aligned Hex8
   cells in one layer through z (planar flow) only. The 1500-step check passes on 1, 2 and
   4 GPUs; see [the result and recipe](tests/reference/poiseuille/planar_validation.md).
