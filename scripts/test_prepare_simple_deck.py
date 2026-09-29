@@ -39,6 +39,95 @@ class DeckTests(unittest.TestCase):
         self.control['expert_parameters']['blend_factor_max'] = 1
         self.assertIn('high-resolution', bridge.translate(self.doc)[0])
 
+    def test_named_linear_solvers(self):
+        expected = bridge.translate(self.doc)
+        solver = self.doc['simulation']['solver']
+        settings = self.control['advanced_options']['linear_solver_settings']
+        for family in ('PETSc', 'HYPRE', 'Trilinos', 'AMGsolver', 'gmres'):
+            with self.subTest(family=family):
+                solver['user named solver'] = {'family': family, 'options': {'backend setting': 3}}
+                settings['default'] = {'lookup': 'user named solver'}
+                self.assertEqual(bridge.translate(self.doc), expected)
+        # Unused definitions are also part of OpenAccel's solver library.
+        solver['unused solver'] = {'family': 'hypre'}
+        solver['pressure solver'] = {'family': 'Hypre'}
+        settings['pressure_correction'] = {'lookup': 'pressure solver'}
+        settings['coupled_navier_stokes'] = {'family': 'PETSc'}
+        self.assertEqual(bridge.translate(self.doc), expected)
+
+    def test_invalid_linear_solver_references(self):
+        solver = self.doc['simulation']['solver']
+        settings = self.control['advanced_options']['linear_solver_settings']
+        for name in ('missing private name', 'solver_control', 'output_control', '', None, True, [], {}):
+            with self.subTest(name=name):
+                settings['default'] = {'lookup': name}
+                with self.assertRaisesRegex(bridge.Unsupported, 'linear_solver_settings.entry.lookup') as error:
+                    bridge.translate(self.doc)
+                self.assertNotIn('missing private name', str(error.exception))
+        settings['default'] = {'lookup': 'named'}
+        for config in (None, [], 'private value', {'family': 'unknown'}, {'lookup': 'named'}):
+            with self.subTest(config=config):
+                solver['named'] = config
+                self.reject()
+        del solver['named']
+        for config in ([], None, 'private value', {}, {'family': []}):
+            with self.subTest(config=config):
+                settings['default'] = config
+                self.reject()
+        self.control['advanced_options']['linear_solver_settings'] = []
+        self.reject()
+
+    def test_restart_is_never_ignored_as_solver_metadata(self):
+        for config in ({'file_path': '/private/saved-fields.e'}, {}, None, {'family': 'Hypre'}):
+            with self.subTest(config=config):
+                self.doc['simulation']['solver']['restart_control'] = config
+                with self.assertRaisesRegex(bridge.Unsupported, 'solver.restart_control: loads saved fields') as error:
+                    bridge.translate(self.doc)
+                self.assertNotIn('/private/saved-fields.e', str(error.exception))
+
+    def test_explicit_subsonic_boundary(self):
+        expected = bridge.translate(self.doc)
+        for b in self.domain['boundaries'][1:]:
+            b['boundary_details']['option'] = 'subsonic'
+        self.assertEqual(bridge.translate(self.doc), expected)
+        for index in (1, 2):
+            doc = copy.deepcopy(self.doc)
+            doc['simulation']['physical_analysis']['domains'][0]['boundaries'][index]['boundary_details']['option'] = 'supersonic'
+            self.reject(doc)
+
+    def test_independent_errors_reported_together_without_private_values(self):
+        self.doc['mesh']['private mesh key'] = 'secret-mesh-value'
+        self.domain['initialization']['pressure']['pressure'] = 42
+        self.domain['boundaries'][2]['boundary_details']['mass_and_momentum']['option'] = 'secret-outlet-mode'
+        self.doc['simulation']['solver']['private solver key'] = {'private setting': 'secret-solver-value'}
+        self.control['expert_parameters']['relax_gradients'] = True
+        with self.assertRaises(bridge.Unsupported) as error:
+            bridge.translate(self.doc)
+        message = str(error.exception)
+        for path in ('mesh:', 'initialization.pressure:', 'outlet.option:', 'solver:', 'expert_parameters.relax_gradients:'):
+            self.assertIn(path, message)
+        for private in ('private', 'secret', '42'):
+            self.assertNotIn(private, message)
+
+    def test_malformed_sections_are_rejected_without_crashing(self):
+        paths = [('mesh',), ('simulation',), ('simulation', 'physical_analysis'),
+                 ('simulation', 'physical_analysis', 'domains'),
+                 ('simulation', 'physical_analysis', 'domains', 0),
+                 ('simulation', 'physical_analysis', 'domains', 0, 'boundaries'),
+                 ('simulation', 'physical_analysis', 'domains', 0, 'boundaries', 0),
+                 ('simulation', 'solver'), ('simulation', 'solver', 'solver_control'),
+                 ('simulation', 'solver', 'solver_control', 'basic_settings'),
+                 ('simulation', 'solver', 'solver_control', 'basic_settings', 'advection_scheme')]
+        for path in paths:
+            for value in (None, [], True, 'private text'):
+                with self.subTest(path=path, value=value):
+                    doc = copy.deepcopy(self.doc)
+                    target = doc
+                    for key in path[:-1]:
+                        target = target[key]
+                    target[path[-1]] = value
+                    self.reject(doc)
+
     def test_each_expert_mismatch(self):
         for key, value in dict(consistent=True, fractional_step_method=True,
                               incremental_gradient_change=False, limit_gradients=True,
@@ -151,6 +240,33 @@ class DeckTests(unittest.TestCase):
         self.control['basic_settings']['interpolation_scheme']['velocity_interpolation_type'] = 'trilinear'
         self.control['advanced_options']['equation_controls']['sub_iterations']['pressure_correction'] = 2
         self.reject()
+
+    def test_cli_rejection_has_no_partial_arguments_or_private_text(self):
+        scratch = ROOT / '.local-worktrees/simple-deck-tests'
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=str(scratch)) as tmp:
+            tmp = Path(tmp)
+            deck, out = tmp/'private-deck.i', tmp/'prepared'
+            argv = [sys.executable, str(ROOT/'scripts/prepare_simple_deck.py'),
+                    '--deck', str(deck), '--mesh', str(tmp/'private-mesh.exo'), '--output', str(out)]
+            # A file-access failure must not print its private path.
+            result = subprocess.run(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            self.assertEqual(result.returncode, 1)
+            self.assertIn(b'file access', result.stderr)
+            self.assertNotIn(b'private-', result.stderr)
+            self.doc['mesh']['private-key'] = 'secret-value'
+            self.doc['simulation']['solver']['restart_control'] = {'file_path': '/private/saved.e'}
+            self.control['expert_parameters']['relax_gradients'] = True
+            # JSON is a YAML subset; no additional fixture or private input is needed.
+            deck.write_text(json.dumps(self.doc))
+            result = subprocess.run(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            self.assertEqual(result.returncode, 1)
+            for path in (b'ERROR: mesh:', b'ERROR: solver.restart_control:', b'ERROR: expert_parameters.relax_gradients:'):
+                self.assertIn(path, result.stderr)
+            for private in (b'private', b'secret', str(tmp).encode()):
+                self.assertNotIn(private, result.stderr)
+            self.assertFalse(out.exists())
+            self.assertFalse(result.stdout)
 
     def test_no_mesh_read_and_literal_arguments(self):
         scratch = ROOT / '.local-worktrees/simple-deck-tests'

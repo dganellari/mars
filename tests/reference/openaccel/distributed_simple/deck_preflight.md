@@ -10,7 +10,8 @@ The tool checks one fluid domain/material, constant positive density and dynamic
 viscosity, zero initial velocity/pressure, fixed-frame physics, one normal-speed
 inlet, one constant-static-pressure or average-static-pressure outlet and
 stationary no-slip walls. It maps pseudo-time, relaxation, outlet blend and
-upwind/high-resolution selection.
+upwind/high-resolution selection. Inlet/outlet `boundary_details.option` may be
+omitted or explicitly `subsonic`; supersonic conditions remain unsupported.
 Interpolation, pressure subiterations and expert settings must match the current
 MARS implementation. In particular, OpenAccel defaults `relax_gradients` to true,
 whereas this MARS path requires false; omission is rejected. Unknown physical
@@ -46,6 +47,21 @@ are useful diagnostic checkpoints, not equal physical time or a promise of equal
 unconverged fields. The existing pinned public-channel comparator remains limited
 to that public fixture; do not use it for other meshes.
 
+OpenAccel allows named linear-solver definitions beside `solver_control` and
+`output_control`, not just inline definitions inside
+`solver_control.advanced_options.linear_solver_settings`. The preparer accepts
+both forms. A named definition must be a mapping with a recognized `family`
+(`petsc`, `hypre`, `trilinos`, `amgsolver` or `gmres`, case-insensitive).
+Each `lookup` must resolve to such a definition; unused definitions are allowed.
+Backend-specific options are not validated or copied into MARS. This follows
+`linearSystem<N>::setupSolver` in public OpenAccel `0d69041` and does not claim
+that MARS runs the reference's linear solver configuration.
+
+`solver.restart_control` is different: its presence tells OpenAccel to load saved
+fields. It is explicitly rejected, even if empty, because native SIMPLE currently
+starts from zero fields. Unknown blocks are still rejected; they are not all
+treated as output settings or linear-solver definitions.
+
 ## Preparation
 
 Requires PyYAML in the preparation Python environment. The solver has no new
@@ -61,10 +77,16 @@ MESH_BIG="$MESH_BIG" python3 ../scripts/prepare_simple_deck.py \
   --output "$simple_run/case" > "$simple_run/preparation.log" 2>&1
 ```
 
-Stop on preparation failure. The private log gives the unsupported schema setting
-without printing its value. File-system errors can contain paths. `case.json`
+Stop on preparation failure. Validation collects independent compatibility issues
+in one pass; checks that need a valid parent section cannot identify every error
+inside a malformed section. Error messages use fixed public schema labels and
+withhold custom key names, lookup names, values and file paths. File-access errors
+give a generic message; check the paths and permissions locally. No argument files
+are written when validation fails. `case.json`
 records the deck hash and all arguments; `args.nul` provides arguments without
 shell evaluation. Use a new output directory each time.
+
+Preparation-only fixes do not require rebuilding the existing native executable.
 
 ## Direct short run
 
@@ -113,3 +135,6 @@ nonfinite values, duplicate YAML keys, unsafe tags, boundary ambiguity, literal
 argument handling, path mismatch and existing-output rejection. An invalid dummy
 mesh verifies that preparation never parses mesh contents. These are host checks,
 not execution of a private case or a new CUDA validation.
+Named/inline solver equivalence, missing/invalid lookups, unused definitions,
+restart rejection, explicit subsonic boundaries, multiple simultaneous failures
+and redacted CLI failures are covered separately.
