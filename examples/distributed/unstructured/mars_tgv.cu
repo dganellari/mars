@@ -7,8 +7,9 @@
 //                        receives the elements across the opposite faces
 //   2. periodic DOFs     each max-face node is paired with its min-face master;
 //                        a periodic point is one unknown for every field
-//   3. operators         mass, divergence, gradient, viscosity and advection,
-//                        all built as P^T A P on that reduced space
+//   3. solver            the same NavierStokes solver as the Poiseuille and
+//                        cavity examples; its matrices are assembled on the
+//                        periodic unknowns and solved with BoomerAMG
 //   4. time loop         BDF2 incremental projection; div u = 0 every step
 //   5. output            kinetic energy against the viscous decay, VTU frames
 //
@@ -21,7 +22,7 @@
 // Example (unit box, low Reynolds number, same result on any rank count):
 //   mpirun -np 4 ./mars_tgv --mesh=cube16 --box-lo=0 --box-hi=1 --nu=0.05 --dt=1e-4 --num-steps=300
 
-#include "backend/distributed/unstructured/fem/mars_periodic_ns.hpp"
+#include "backend/distributed/unstructured/fem/mars_navier_stokes.hpp"
 #include "backend/distributed/unstructured/amr/mars_amr.hpp"
 #include "backend/distributed/unstructured/utils/mars_vtu_parallel_writer.hpp"
 
@@ -41,9 +42,16 @@
 
 using KeyType  = uint64_t;
 using RealType = double;
-using Solver   = mars::fem::PeriodicNavierStokes<KeyType, RealType>;
+using Solver   = mars::fem::NavierStokes<KeyType, RealType>;
 using Amr      = mars::amr::AmrManager<mars::HexTag, KeyType, RealType>;
 using Domain   = Solver::Domain;
+
+// Nine device pointers, one per velocity gradient component.
+template<typename T>
+struct Components9
+{
+    const T* c[9];
+};
 
 // =============================================================================
 // Command line
@@ -68,7 +76,6 @@ struct Options
     int adaptEvery       = 0;
     int maxLevels        = 2;
     int maxIter          = 1000;
-    bool skew            = true;
 };
 
 void printUsage()
@@ -79,8 +86,7 @@ void printUsage()
                  "  --V0=X --rho=X        velocity amplitude, density (default 1, 1)\n"
                  "  --nu=X | --Re=X       kinematic viscosity, or nu = 1/Re (default 1/1600)\n"
                  "  --dt=X --num-steps=N  time step and step count (default 1e-3, 1000)\n"
-                 "  --skew=0|1            advection: 1 skew-symmetric (default), 0 upwind\n"
-                 "  --tol=X --max-iter=N  CG tolerance and iteration cap (default 1e-10, 1000)\n"
+                 "  --tol=X --max-iter=N  AMG-PCG tolerance and iteration cap (default 1e-10, 1000)\n"
                  "  --report-every=N      energy report interval (default 10)\n"
                  "  --vtu-output=PREFIX   write PVTU frames; --vtu-every=N (default 20)\n"
                  "  --adapt-every=N       adapt the mesh every N steps (default 0: off)\n"
@@ -117,7 +123,7 @@ bool parseOptions(int argc, char** argv, int rank, Options& o, int& exitCode)
                      take("coarsen-frac", o.coarsenFrac) || take("num-steps", o.numSteps) ||
                      take("report-every", o.reportEvery) || take("vtu-every", o.vtuEvery) ||
                      take("adapt-every", o.adaptEvery) || take("max-levels", o.maxLevels) ||
-                     take("max-iter", o.maxIter) || take("skew", o.skew);
+                     take("max-iter", o.maxIter);
         if (!known)
         {
             if (rank == 0)
@@ -196,13 +202,13 @@ struct EnergyReport
     void print(Solver& solver, int step, RealType t)
     {
         RealType ke  = solver.kineticEnergy();
-        RealType div = solver.maxDivergence();
+        RealType div = solver.maxContinuity();
         maxDiv       = std::max(maxDiv, div);
         if (rank != 0) return;
         std::cout << "Step " << std::setw(6) << step << "  t=" << std::fixed << std::setprecision(5) << t
                   << std::scientific << std::setprecision(10) << "  KE=" << ke
                   << "  KE/KE_Stokes=" << std::fixed << std::setprecision(8) << ke / (ke0 * std::exp(-decay * t))
-                  << std::scientific << std::setprecision(3) << "  div=" << div << "  cg(u,v,w,p)="
+                  << std::scientific << std::setprecision(3) << "  div=" << div << "  amg(u,v,w,p)="
                   << solver.velocityIterations(0) << "/" << solver.velocityIterations(1) << "/"
                   << solver.velocityIterations(2) << "/" << solver.pressureIterations() << "\n"
                   << std::defaultfloat;
@@ -224,11 +230,23 @@ struct EnergyReport
 // VTU output: velocity, pressure, vorticity magnitude, refinement level
 // =============================================================================
 
+// |curl u| from the velocity gradients: g[3 c + d] = d u_c / d x_d.
+template<typename T>
+__global__ void vorticityKernel(size_t n, Components9<T> g, T* out)
+{
+    size_t i = size_t(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (i >= n) return;
+    T ox = g.c[7][i] - g.c[5][i]; // dw/dy - dv/dz
+    T oy = g.c[2][i] - g.c[6][i]; // du/dz - dw/dx
+    T oz = g.c[3][i] - g.c[1][i]; // dv/dx - du/dy
+    out[i] = sqrt(ox * ox + oy * oy + oz * oz);
+}
+
 struct FrameWriter
 {
     std::unique_ptr<mars::fem::VTUParallelWriter<KeyType, RealType>> writer;
-    cstone::DeviceVector<RealType> omega;
-    cstone::DeviceVector<RealType> level;   // per element; empty until the first adaptation
+    cstone::DeviceVector<RealType> grad[9], omega;
+    cstone::DeviceVector<RealType> level; // per element; empty until the first adaptation
 
     explicit FrameWriter(const std::string& prefix)
     {
@@ -238,7 +256,16 @@ struct FrameWriter
     void write(Solver& solver, const Domain& domain, int step, RealType t)
     {
         if (!writer) return;
-        solver.vorticityMagnitude(omega);
+        const cstone::DeviceVector<RealType>* velocity[3] = {&solver.u, &solver.v, &solver.w};
+        for (int c = 0; c < 3; ++c)
+            solver.gradient(*velocity[c], grad[3 * c], grad[3 * c + 1], grad[3 * c + 2]);
+        const size_t n = domain.getNodeCount();
+        omega.resize(n);
+        Components9<RealType> g;
+        for (int k = 0; k < 9; ++k)
+            g.c[k] = grad[k].data();
+        vorticityKernel<RealType><<<int((n + 255) / 256), 256>>>(n, g, omega.data());
+        cudaCheckError();
         using FD = typename mars::fem::VTUParallelWriter<KeyType, RealType>::FieldDesc;
         std::vector<FD> fields = {{"u", FD::Kind::PointScalar, &solver.u, nullptr, nullptr},
                                   {"v", FD::Kind::PointScalar, &solver.v, nullptr, nullptr},
@@ -302,7 +329,8 @@ void adaptMesh(Amr& amr, std::unique_ptr<Solver>& solver, mars::fem::PeriodicMap
     RealType hMin = (o.boxHi - o.boxLo) / RealType(16 * (1 << amr.config().maxLevels));
     pairPeriodicNodes(domain, map, o, std::max(RealType(1e-2) * hMin, RealType(1e-6) * (o.boxHi - o.boxLo)));
 
-    solver    = std::make_unique<Solver>(domain, map, params);
+    solver    = std::make_unique<Solver>(domain, params, mars::fem::FreeNodes<RealType>{},
+                                         std::vector<mars::fem::Opening<RealType>>{}, &map);
     solver->u = std::move(u);
     solver->v = std::move(v);
     solver->w = std::move(w);
@@ -341,23 +369,21 @@ int runTgv(const Options& opt, int rank, int numRanks)
     mars::fem::PeriodicMap<KeyType, RealType> periodicMap;
     pairPeriodicNodes(domain, periodicMap, opt, RealType(1e-6) * (opt.boxHi - opt.boxLo));
 
-    // 3. Operators. The solver builds the lumped mass, the divergence D, the
-    //    gradient G = D^T, the viscous stiffness and the advection, each as
-    //    P^T A P on the reduced periodic space.
+    // 3. Solver. A periodic box has no boundary conditions and no openings; the
+    //    periodic map makes every operator act on one unknown per periodic point.
     Solver::Params params;
-    params.nu            = opt.nu;
-    params.rho           = opt.rho;
-    params.dt            = opt.dt;
-    params.skewAdvection = opt.skew;
-    params.maxIter       = opt.maxIter;
-    params.tolerance     = opt.tolerance;
-    auto solver          = std::make_unique<Solver>(domain, periodicMap, params);
+    params.nu        = opt.nu;
+    params.rho       = opt.rho;
+    params.dt        = opt.dt;
+    params.maxIter   = opt.maxIter;
+    params.tolerance = opt.tolerance;
+    auto solver      = std::make_unique<Solver>(domain, params, mars::fem::FreeNodes<RealType>{},
+                                           std::vector<mars::fem::Opening<RealType>>{}, &periodicMap);
 
     if (rank == 0)
-        std::cout << "TGV: ranks=" << numRanks << "  periodic DOFs=" << solver->space().numDofs()
+        std::cout << "TGV: ranks=" << numRanks << "  periodic DOFs=" << solver->globalDofs()
                   << "  (the same on every rank count)\n"
-                  << "     nu=" << opt.nu << " dt=" << opt.dt << " steps=" << opt.numSteps
-                  << " advection=" << (opt.skew ? "skew-symmetric" : "upwind") << "\n";
+                  << "     nu=" << opt.nu << " dt=" << opt.dt << " steps=" << opt.numSteps << "\n";
 
     setInitialCondition(*solver, domain, opt);
 

@@ -10,12 +10,12 @@
 //   pressure   -dp/dx between 60% and 90% against 12 rho nu U / H^2
 //
 // --check turns this into the release gate. It also checks the projection of
-// the first three and the last step (ChannelFlow::projectionReport), requires the
+// the first three and the last step (NavierStokes::projectionReport), requires the
 // velocity to be steady over the last 20 steps, and exits 1 if anything fails.
 // --comparison-output writes u, v, w, p at full precision for comparisons with
 // other codes.
 
-#include "backend/distributed/unstructured/fem/mars_channel_flow.hpp"
+#include "backend/distributed/unstructured/fem/mars_navier_stokes.hpp"
 #include "backend/distributed/unstructured/utils/mars_vtu_parallel_writer.hpp"
 
 #include <thrust/copy.h>
@@ -38,7 +38,7 @@ namespace poiseuille
 
 using KeyType  = uint64_t;
 using RealType = double;
-using Solver   = mars::fem::ChannelFlow<KeyType, RealType>;
+using Solver   = mars::fem::NavierStokes<KeyType, RealType>;
 using Domain   = Solver::Domain;
 using Vector   = Solver::Vector;
 
@@ -214,13 +214,18 @@ inline double corePressure(const Solver& s, const Domain& domain, double x, doub
     return count > 0 ? sum / count : std::numeric_limits<double>::quiet_NaN();
 }
 
-// Flux of u through the node plane nearest x.
+// Flux of u in +x through the node plane nearest x.
 inline double planeFlux(const Solver& s, const Domain& domain, double x, double tolerance, double xMax)
 {
     const double plane = nearestNodePlane(domain, x);
+    const int side     = plane < xMax - tolerance ? +1 : -1; // elements on the +x side, except at the outlet
     Vector area;
-    mars::fem::planeFaceAreas<KeyType>(domain, plane, tolerance, plane < xMax - tolerance ? +1 : -1, 1.0, area);
-    return ownedSum(domain, [a = area.data(), u = s.u.data()] __device__(size_t i) -> double { return u[i] * a[i]; });
+    mars::fem::openingFaceAreas<KeyType>(domain, mars::fem::Opening<RealType>{0, plane, side}, RealType(tolerance),
+                                         area);
+    // The outward normal points to -x on side +1.
+    return -side * ownedSum(domain, [a = area.data(), u = s.u.data()] __device__(size_t i) -> double {
+               return u[i] * a[i];
+           });
 }
 
 // The per-step part: comparison frames, the steady-state snapshot and the
@@ -260,14 +265,21 @@ public:
         if (step >= 1 && (step <= 3 || step == numSteps_))
         {
             last_ = s.projectionReport();
-            projectionOk_ = projectionOk_ && last_.ok;
+            // When both divergences approach zero the relative identity loses its meaning; then
+            // the absolute one must be at roundoff of the velocity gradient scale U / H.
+            const auto& box      = s.box();
+            double identityFloor = 1e-10 * inflow_ / (box.hi[1] - box.lo[1]);
+            bool ok = last_.finite && !(last_.identity > 1e-7 && last_.identityRms > identityFloor) &&
+                      last_.balanceIdentity <= 1e-10 && last_.unreachedMax <= 1e-8;
+            projectionOk_ = projectionOk_ && ok;
             if (domain.rank() == 0)
                 std::cout << std::scientific << std::setprecision(6) << "[channel-projection] step=" << step
                           << " identity=" << last_.identity << " identity_rms=" << last_.identityRms
                           << " continuity_rms=" << last_.continuityRms << " continuity_max=" << last_.continuityMax
-                          << " corner_max=" << last_.cornerMax << " Qin=" << last_.inflow << " Qout=" << last_.outflow
+                          << " unreached_max=" << last_.unreachedMax << " Qin=" << last_.inflow
+                          << " Qout=" << last_.outflow
                           << " balance=" << last_.balance << " balance_identity=" << last_.balanceIdentity
-                          << " gate=" << (last_.ok ? "PASS" : "FAIL") << "\n"
+                          << " gate=" << (ok ? "PASS" : "FAIL") << "\n"
                           << std::defaultfloat;
         }
     }

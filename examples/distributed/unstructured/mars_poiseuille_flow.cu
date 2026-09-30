@@ -10,8 +10,9 @@
 // main() follows the steps of the tutorial:
 //   1. mesh and domain   read a mesh, or generate the channel on every rank;
 //                        cornerstone distributes the elements over the ranks
-//   2. solver            ChannelFlow finds the boundaries, assembles the viscous
-//                        and pressure matrices and builds their BoomerAMG solvers
+//   2. solver            the boundary conditions as a function of the node
+//                        position, and the inlet and outlet; the solver assembles
+//                        the viscous and pressure matrices and builds BoomerAMG
 //   3. time loop         BDF2 projection steps, D u = 0 after every step
 //   4. result            timing, and the profile against the parabola
 //                        (mars_poiseuille_validation.hpp)
@@ -23,6 +24,8 @@
 #include "mars_poiseuille_validation.hpp"
 #include "backend/distributed/unstructured/utils/mars_generate_cube.hpp"
 #include "backend/distributed/unstructured/utils/mars_vtu_parallel_writer.hpp"
+
+#include <thrust/fill.h>
 
 #include <algorithm>
 #include <array>
@@ -48,6 +51,7 @@ struct Options
     std::string mesh;
     std::array<size_t, 2> cells{0, 0}; // generated channel [0,10] x [0,1] x [0,0.06], one cell in z
     double yGrading = 0;               // clusters the generated y spacing at the walls, in [0, 1)
+    double inflow   = 1;               // inlet velocity U
     Solver::Params params;
     int numSteps    = 1000;
     int reportEvery = 1;
@@ -107,7 +111,7 @@ bool parseOptions(int argc, char** argv, int rank, Options& o, int& exitCode)
             continue;
         }
         Solver::Params& p = o.params;
-        bool known = take("mesh", o.mesh) || take("y-grading", o.yGrading) || take("uinf", p.inflow) ||
+        bool known = take("mesh", o.mesh) || take("y-grading", o.yGrading) || take("uinf", o.inflow) ||
                      take("rho", p.rho) || take("nu", p.nu) || take("dt", p.dt) || take("num-steps", o.numSteps) ||
                      take("tol", p.tolerance) || take("max-iter", p.maxIter) || take("report-every", o.reportEvery) ||
                      take("vtu-output", o.vtuPrefix) || take("vtu-every", o.vtuEvery) ||
@@ -121,7 +125,7 @@ bool parseOptions(int argc, char** argv, int rank, Options& o, int& exitCode)
     }
     const Solver::Params& p = o.params;
     bool generated          = o.cells[0] > 0 && o.cells[1] > 0;
-    bad = bad || o.mesh.empty() == !generated || !(o.yGrading >= 0 && o.yGrading < 1) || !(p.inflow > 0) ||
+    bad = bad || o.mesh.empty() == !generated || !(o.yGrading >= 0 && o.yGrading < 1) || !(o.inflow > 0) ||
           !(p.rho > 0) || !(p.nu > 0) || !(p.dt > 0) || !(p.tolerance > 0) || p.maxIter <= 0 || o.numSteps <= 0 ||
           o.reportEvery <= 0 || o.vtuEvery <= 0;
     if (bad)
@@ -224,16 +228,37 @@ int main(int argc, char** argv)
     // 1. Mesh and domain.
     auto domain = makeDomain(opt, rank, numRanks);
     {
-        // 2. Solver. Hypre objects live inside this scope: they must be
-        //    destroyed before MPI_Finalize.
-        Solver solver(*domain, opt.params);
+        // 2. Boundary conditions and solver. The conditions are a function of the
+        //    node position, evaluated on the GPU for every node: walls on the y
+        //    faces (they win at the corners), inflow U at x = xmin, p = 0 at x = xmax.
+        //    The z faces need nothing: planar flow keeps w = 0 there. Fluid enters
+        //    and leaves through the two openings.
+        //    Hypre objects live inside this scope: they must be destroyed before MPI_Finalize.
+        const auto box     = mars::fem::boundingBox(*domain);
+        const RealType eps = RealType(1e-5) * std::max(RealType(1), box.hi[1] - box.lo[1]);
+        const RealType U   = opt.inflow;
+        auto channel = [box, eps, U] __device__(RealType x, RealType y, RealType) -> mars::fem::NodeCondition<RealType> {
+            mars::fem::NodeCondition<RealType> node;
+            bool wall          = fabs(y - box.lo[1]) < eps || fabs(y - box.hi[1]) < eps;
+            bool inlet         = fabs(x - box.lo[0]) < eps;
+            node.velocityFixed = wall || inlet;
+            node.velocity[0]   = inlet && !wall ? U : RealType(0);
+            node.pressureFixed = fabs(x - box.hi[0]) < eps;
+            return node;
+        };
+        std::vector<mars::fem::Opening<RealType>> openings{{0, box.lo[0], +1}, {0, box.hi[0], -1}};
+        opt.params.planar = true;
+        Solver solver(*domain, opt.params, channel, openings);
+
+        // Start from uniform flow; start() puts the walls and the inlet at their values.
+        thrust::fill(thrust::device, solver.u.data(), solver.u.data() + solver.u.size(), U);
+        solver.start();
         if (rank == 0)
             std::cout << "Poiseuille channel: " << solver.globalDofs() << " nodes on " << numRanks
-                      << " ranks, Re = U H / nu = "
-                      << opt.params.inflow * (solver.box().hi[1] - solver.box().lo[1]) / opt.params.nu << "\n";
+                      << " ranks, Re = U H / nu = " << U * (box.hi[1] - box.lo[1]) / opt.params.nu << "\n";
 
         FrameWriter frames(opt.vtuPrefix);
-        poiseuille::Monitor monitor(opt.validation, solver, opt.numSteps, opt.params.inflow);
+        poiseuille::Monitor monitor(opt.validation, solver, opt.numSteps, U);
         frames.write(solver, *domain, 0, 0.0);
         monitor.afterStep(solver, *domain, 0, 0.0);
 
@@ -250,7 +275,7 @@ int main(int argc, char** argv)
             const double t = step * opt.params.dt;
             if (step % opt.reportEvery == 0 || step == opt.numSteps)
             {
-                double norm       = solver.streamwiseNorm();
+                double norm       = solver.norm(solver.u);
                 double continuity = solver.maxContinuity();
                 if (rank == 0)
                     std::cout << "Step " << std::setw(6) << step << "  t=" << std::fixed << std::setprecision(4) << t

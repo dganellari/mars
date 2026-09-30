@@ -1,26 +1,22 @@
 #pragma once
 
-// The reduced periodic space: one unknown per periodic point, for every field.
+// The unknowns of a nodal field on a distributed mesh.
 //
-// A mesh of a periodic box keeps separate node slots on opposite faces: the
-// master on a min face and its slaves (the same physical point) on the max
-// faces. On several ranks a point also has ghost copies. The unknown of a
-// point lives in ONE slot, the master slot on the master's owner rank; that
-// slot is its DOF. Two maps connect the slots and the DOFs:
+// Every rank stores one value per node slot: its owned nodes and ghost copies
+// of nodes owned by other ranks. On a periodic mesh a point on the box
+// boundary also has several slots on the same rank or on different ranks: the
+// master on a min face and its slaves (the same point) on the max faces. The
+// unknown (DOF) of a point lives in ONE slot: the owned slot that is not a
+// periodic slave. Two maps connect slots and DOFs:
 //
-//   prolong  (P)   copy the DOF value into every slot of the point
+//   prolong  (P)   copy each DOF value into every slot of its point
 //   restrict (P^T) add the per-slot contributions of an element scatter into
 //                  the DOF slot (the other slots end up holding nothing useful)
 //
-// Every discrete operator is then restrict(A_elem(prolong(x))) = P^T A P, with
-// A_elem the plain element scatter over owned elements. P and P^T are exact
-// transposes, so a symmetric element operator stays symmetric, and the
-// gradient and the divergence remain transposes of each other. This is what
-// makes the projection D u = 0 hold exactly on any number of ranks.
-//
-// Communication is the cstone node halo (owner <-> ghost) plus the cross-rank
-// pair tables of PeriodicMap (a slave owned on one rank whose master is owned
-// on another rank; cstone cannot link them because their SFC keys differ).
+// A discrete operator is then restrict(A_local(prolong(x))) = P^T A P, with
+// A_local the element scatter over this rank's own elements. Without a
+// periodic map the only copies are ghosts, and P^T / P are the cstone reverse
+// and forward node halo exchanges.
 
 #include "backend/distributed/unstructured/fem/mars_periodic_bc.hpp"
 
@@ -46,21 +42,21 @@ inline MPI_Datatype mpiDatatype()
     return std::is_same_v<RealType, double> ? MPI_DOUBLE : MPI_FLOAT;
 }
 
-// A slot is a DOF when it is owned and is not a periodic slave.
-__global__ void periodicDofMaskKernel(const int* partner, const uint8_t* ownership, size_t n, uint8_t* isDof)
+// A slot is a DOF when it is owned and is not a periodic slave. partner == nullptr: no periodic pairs.
+template<typename IndexType>
+__global__ void dofMaskKernel(const IndexType* partner, const uint8_t* ownership, size_t n, uint8_t* isDof)
 {
     size_t i = size_t(blockIdx.x) * blockDim.x + threadIdx.x;
     if (i >= n) return;
-    isDof[i] = (ownership[i] == 1 && partner[i] < 0) ? 1 : 0;
+    isDof[i] = (ownership[i] == 1 && (partner == nullptr || partner[i] < 0)) ? 1 : 0;
 }
 
 // Two dot products over DOF slots in one pass: block partial sums, reduced in
 // a second single-block pass so the result does not depend on scheduling.
 // b == nullptr sums a; c == nullptr skips the second product.
 template<typename RealType, int BlockSize>
-__global__ void periodicDot2PartialKernel(const RealType* a, const RealType* b,
-                                          const RealType* c, const RealType* d,
-                                          const uint8_t* isDof, size_t n, RealType* partial)
+__global__ void dofDot2PartialKernel(const RealType* a, const RealType* b, const RealType* c, const RealType* d,
+                                     const uint8_t* isDof, size_t n, RealType* partial)
 {
     __shared__ RealType s0[BlockSize];
     __shared__ RealType s1[BlockSize];
@@ -91,7 +87,7 @@ __global__ void periodicDot2PartialKernel(const RealType* a, const RealType* b,
 }
 
 template<typename RealType, int BlockSize>
-__global__ void periodicDot2FinalKernel(RealType* partial, int numPartials)
+__global__ void dofDot2FinalKernel(RealType* partial, int numPartials)
 {
     __shared__ RealType s0[BlockSize];
     __shared__ RealType s1[BlockSize];
@@ -121,11 +117,10 @@ __global__ void periodicDot2FinalKernel(RealType* partial, int numPartials)
 }
 
 template<typename RealType>
-__global__ void periodicShiftKernel(RealType* v, RealType shift, size_t n)
+__global__ void dofShiftKernel(RealType* v, RealType shift, size_t n)
 {
     size_t i = size_t(blockIdx.x) * blockDim.x + threadIdx.x;
-    if (i >= n) return;
-    v[i] -= shift;
+    if (i < n) v[i] -= shift;
 }
 
 // Setup-time guarantees prolong and restrict rely on. A violation means the
@@ -157,7 +152,7 @@ void checkPeriodicPairing(const DomainT& domain, const PeriodicMap<KeyType, Real
     {
         if (domain.rank() == 0)
             std::fprintf(stderr,
-                         "PeriodicSpace: %lld owned slaves have no master in the local halo, %lld ranks have an "
+                         "DofSpace: %lld owned slaves have no master in the local halo, %lld ranks have an "
                          "incomplete cross-rank pair table. Check the periodic box bounds and faceEps.\n",
                          badGlobal[0], badGlobal[1]);
         MPI_Abort(MPI_COMM_WORLD, 1);
@@ -165,16 +160,18 @@ void checkPeriodicPairing(const DomainT& domain, const PeriodicMap<KeyType, Real
 }
 
 template<typename KeyType, typename RealType, typename DomainT>
-class PeriodicSpace
+class DofSpace
 {
 public:
     using Vector = cstone::DeviceVector<RealType>;
+    using Map    = PeriodicMap<KeyType, RealType>;
     static constexpr int ReduceBlock = 256;
     static constexpr int ReduceGrid  = 256;
 
-    PeriodicSpace(const DomainT& domain, const PeriodicMap<KeyType, RealType>& map, int blockSize = 256)
+    // periodic == nullptr: no periodic pairs.
+    DofSpace(const DomainT& domain, const Map* periodic, int blockSize = 256)
         : domain_(domain)
-        , map_(map)
+        , map_(periodic)
         , n_(domain.getNodeCount())
         , blockSize_(blockSize)
         , isDof_(n_)
@@ -182,71 +179,68 @@ public:
         , hostPartial_(2)
     {
         const auto& own = domain_.getNodeOwnershipMap();
-        periodicDofMaskKernel<<<grid(), blockSize_>>>(map_.d_periodicPartner.data(), own.data(), n_,
-                                                                isDof_.data());
+        dofMaskKernel<int><<<grid(), blockSize_>>>(partner(), own.data(), n_, isDof_.data());
         cudaCheckError();
-        checkPeriodicPairing<KeyType, RealType>(domain_, map_);
+        if (map_) checkPeriodicPairing<KeyType, RealType>(domain_, *map_);
 
         long long local = thrust::count(thrust::device, isDof_.data(), isDof_.data() + n_, uint8_t(1));
         MPI_Allreduce(&local, &numDofs_, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
     }
 
-    // P: every slot of a periodic point takes the DOF value. Owned slaves first
-    // (locally, or from the master's owner rank), then the halo refreshes all
-    // ghosts, including ghost copies of slaves.
+    // P: every slot of a point takes the DOF value. Owned slaves first (locally,
+    // or from the master's owner rank), then the halo refreshes all ghosts.
     void prolong(Vector& v) const
     {
-        periodicBroadcastSameRankKernel<RealType><<<grid(), blockSize_>>>(
-            map_.d_periodicPartner.data(), domain_.getNodeOwnershipMap().data(), n_, v.data());
-        cudaCheckError();
-        crossRankPeriodicBroadcast<KeyType, RealType>(map_, v);
+        if (map_)
+        {
+            periodicBroadcastSameRankKernel<RealType><<<grid(), blockSize_>>>(
+                partner(), domain_.getNodeOwnershipMap().data(), n_, v.data());
+            cudaCheckError();
+            crossRankPeriodicBroadcast<KeyType, RealType>(*map_, v);
+        }
         domain_.exchangeNodeHalo(v);
     }
 
     // P^T: the reverse halo completes every owned slot, then every owned slave
     // adds into its master (locally, or on the master's owner rank). Must be
-    // applied to a scatter over OWNED elements only.
+    // applied to a scatter over this rank's own elements.
     void restrict(Vector& acc) const
     {
         domain_.reverseExchangeNodeHaloAdd(acc);
-        periodicPairSumKernel<RealType><<<grid(), blockSize_>>>(
-            map_.d_periodicPartner.data(), domain_.getNodeOwnershipMap().data(), n_, acc.data());
+        if (!map_) return;
+        periodicPairSumKernel<RealType><<<grid(), blockSize_>>>(partner(), domain_.getNodeOwnershipMap().data(), n_,
+                                                               acc.data());
         cudaCheckError();
-        crossRankPeriodicPairSum<KeyType, RealType>(map_, acc, /*broadcastBack=*/false);
+        crossRankPeriodicPairSum<KeyType, RealType>(*map_, acc, /*broadcastBack=*/false);
     }
 
-    // Inner products over DOFs: each periodic point is counted once globally.
-    RealType dot(const Vector& a, const Vector& b) const { return dot2(a, b, a, b).first; }
-
-    // (a, b) and (c, d) with one reduction pass and one Allreduce.
-    std::pair<RealType, RealType> dot2(const Vector& a, const Vector& b, const Vector& c, const Vector& d) const
-    {
-        return reduce2(a.data(), b.data(), c.data(), d.data());
-    }
-
+    // Inner products over DOFs: each point counts once globally.
+    RealType dot(const Vector& a, const Vector& b) const { return reduce2(a.data(), b.data(), a.data(), b.data()).first; }
     RealType sum(const Vector& a) const { return reduce2(a.data(), nullptr, nullptr, nullptr).first; }
 
-    // Pressure is defined up to a constant: fix it by a zero mean over DOFs.
-    // The shift is applied to every slot, so a prolonged field stays prolonged.
+    // Shift v by its mean over the DOFs. Applied to every slot, so a prolonged field stays prolonged.
     void removeMean(Vector& v) const
     {
         RealType mean = sum(v) / RealType(numDofs_);
-        periodicShiftKernel<RealType><<<grid(), blockSize_>>>(v.data(), mean, n_);
+        dofShiftKernel<RealType><<<grid(), blockSize_>>>(v.data(), mean, n_);
         cudaCheckError();
     }
 
     long long numDofs() const { return numDofs_; }
     const uint8_t* isDof() const { return isDof_.data(); }
+    const int* partner() const { return map_ ? map_->d_periodicPartner.data() : nullptr; }
+    bool periodic() const { return map_ != nullptr; }
     size_t numSlots() const { return n_; }
-    int grid() const { return std::max(1, int((n_ + blockSize_ - 1) / blockSize_)); }
 
 private:
+    int grid() const { return std::max(1, int((n_ + blockSize_ - 1) / blockSize_)); }
+
     std::pair<RealType, RealType> reduce2(const RealType* a, const RealType* b, const RealType* c,
                                           const RealType* d) const
     {
-        periodicDot2PartialKernel<RealType, ReduceBlock><<<ReduceGrid, ReduceBlock>>>(a, b, c, d, isDof_.data(), n_,
-                                                                                      partial_.data());
-        periodicDot2FinalKernel<RealType, ReduceBlock><<<1, ReduceBlock>>>(partial_.data(), ReduceGrid);
+        dofDot2PartialKernel<RealType, ReduceBlock><<<ReduceGrid, ReduceBlock>>>(a, b, c, d, isDof_.data(), n_,
+                                                                                 partial_.data());
+        dofDot2FinalKernel<RealType, ReduceBlock><<<1, ReduceBlock>>>(partial_.data(), ReduceGrid);
         cudaCheckError();
         RealType local[2];
         cudaMemcpy(local, partial_.data(), 2 * sizeof(RealType), cudaMemcpyDeviceToHost);
@@ -255,7 +249,7 @@ private:
     }
 
     const DomainT& domain_;
-    const PeriodicMap<KeyType, RealType>& map_;
+    const Map* map_;
     size_t n_;
     int blockSize_;
     cstone::DeviceVector<uint8_t> isDof_;

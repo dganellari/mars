@@ -96,43 +96,33 @@ foreach(_np 1 ${_rel_np})
                      --mesh=${_rel_tet})
 endforeach()
 
-# --- Navier-Stokes projection: cavity and channel, 1 and N ranks --------------------------------
-# The driver exits non-zero on any failed linear solve (all ranks stop together).
-foreach(_bc cavity channel)
-    foreach(_np 1 ${_rel_np})
-        add_test(NAME marsReleaseNs_${_bc}_np${_np}
-                 COMMAND ${_rel_mpi} ${_np} ${MPIEXEC_PREFLAGS} $<TARGET_FILE:mars_amr_ns_projection>
-                         ${MPIEXEC_POSTFLAGS} --mesh=${_rel_hex} --bc=${_bc} --num-steps=10)
-        set_tests_properties(marsReleaseNs_${_bc}_np${_np} PROPERTIES FAIL_REGULAR_EXPRESSION "[=: ](-?nan|NaN)[ ,\n]")
-    endforeach()
-endforeach()
-
-# With Hypre, also run the cavity through PCG + BoomerAMG so that build's optional path is covered.
+# --- Navier-Stokes (fem/mars_navier_stokes.hpp, needs Hypre), 1 and N ranks -------------------
+# The examples exit non-zero on any failed linear solve (all ranks stop together).
 if(MARS_ENABLE_HYPRE)
     foreach(_np 1 ${_rel_np})
-        add_test(NAME marsReleaseNs_cavity_hypre_np${_np}
-                 COMMAND ${_rel_mpi} ${_np} ${MPIEXEC_PREFLAGS} $<TARGET_FILE:mars_amr_ns_projection>
-                         ${MPIEXEC_POSTFLAGS} --mesh=${_rel_hex} --bc=cavity --solver=hypre --num-steps=10)
-        set_tests_properties(marsReleaseNs_cavity_hypre_np${_np} PROPERTIES
-            FAIL_REGULAR_EXPRESSION "[=: ](-?nan|NaN)[ ,\n]")
+        # Closed box: the pressure null space and the unreachable edge nodes.
+        add_test(NAME marsReleaseCavity_np${_np}
+                 COMMAND ${_rel_mpi} ${_np} ${MPIEXEC_PREFLAGS} $<TARGET_FILE:mars_lid_driven_cavity>
+                         ${MPIEXEC_POSTFLAGS} --mesh=${_rel_hex} --num-steps=10 --report-every=5)
+        # Planar channel with an inlet and an outlet, generated on every rank.
+        add_test(NAME marsReleaseChannel_np${_np}
+                 COMMAND ${_rel_mpi} ${_np} ${MPIEXEC_PREFLAGS} $<TARGET_FILE:mars_poiseuille_flow>
+                         ${MPIEXEC_POSTFLAGS} --cells=200,40 --num-steps=10 --report-every=5)
+        # Taylor-Green vortex in the periodic unit cube: low-Re viscous decay. After 100 steps
+        # KE / KE_Stokes is 1.0015; a broken periodic coupling on N ranks moves it far outside the band.
+        add_test(NAME marsReleaseTgv_np${_np}
+                 COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/release/check_value.py
+                         "--regex=TGV final:.*KE/KE_Stokes=([-+0-9.eE]+)" --lo 1.0013 --hi 1.0017 --
+                         ${_rel_mpi} ${_np} ${MPIEXEC_PREFLAGS} $<TARGET_FILE:mars_tgv> ${MPIEXEC_POSTFLAGS}
+                         --mesh=${_rel_hex} --box-lo=0 --box-hi=1 --nu=0.05 --dt=1e-4 --num-steps=100
+                         --report-every=100)
+        foreach(_t Cavity Channel Tgv)
+            set_tests_properties(marsRelease${_t}_np${_np} PROPERTIES FAIL_REGULAR_EXPRESSION "[=: ](-?nan|NaN)[ ,\n]")
+        endforeach()
     endforeach()
 endif()
 
-# --- Taylor-Green vortex in the periodic unit cube, 1 and N ranks -------------------------------
-# Low-Re viscous decay. After 100 steps KE / KE_Stokes is 1.001504 in the host model of the same
-# scheme (tests/periodic/check_periodic_space.py --reference --n 16); a broken periodic coupling on
-# N ranks moves it far outside the band.
-foreach(_np 1 ${_rel_np})
-    add_test(NAME marsReleaseTgv_np${_np}
-             COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/release/check_value.py
-                     "--regex=TGV final:.*KE/KE_Stokes=([-+0-9.eE]+)" --lo 1.0013 --hi 1.0017 --
-                     ${_rel_mpi} ${_np} ${MPIEXEC_PREFLAGS} $<TARGET_FILE:mars_tgv> ${MPIEXEC_POSTFLAGS}
-                     --mesh=${_rel_hex} --box-lo=0 --box-hi=1 --nu=0.05 --dt=1e-4 --num-steps=100
-                     --report-every=100)
-    set_tests_properties(marsReleaseTgv_np${_np} PROPERTIES FAIL_REGULAR_EXPRESSION "[=: ](-?nan|NaN)[ ,\n]")
-endforeach()
-
 get_property(_rel_tests DIRECTORY PROPERTY TESTS)
-list(FILTER _rel_tests INCLUDE REGEX "^marsRelease(Hex|Tet|Poisson|Ex1Poisson|Ns|Tgv)")
+list(FILTER _rel_tests INCLUDE REGEX "^marsRelease(Hex|Tet|Poisson|Ex1Poisson|Cavity|Channel|Tgv)")
 set_tests_properties(${_rel_tests} PROPERTIES
     FIXTURES_REQUIRED marsReleaseMeshes LABELS "release;gpu" TIMEOUT 600)

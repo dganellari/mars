@@ -246,7 +246,7 @@ target_include_directories(mars_amr_ns_projection PRIVATE
 install(TARGETS mars_amr_ns_projection RUNTIME DESTINATION bin/examples)
 
 # Poiseuille channel flow, the incompressible Navier-Stokes example of
-# docs/poiseuille_tutorial.md (solver: fem/mars_channel_flow.hpp). Both linear
+# docs/poiseuille_tutorial.md (solver: fem/mars_navier_stokes.hpp). Both linear
 # systems are solved with Hypre BoomerAMG, so it needs a Hypre build.
 if(MARS_ENABLE_HYPRE)
     add_executable(mars_poiseuille_flow mars_poiseuille_flow.cu)
@@ -267,13 +267,21 @@ if(MARS_ENABLE_HYPRE)
     endif()
 endif()
 
-# Taylor-Green vortex in a triply periodic box (docs/periodic_tgv_tutorial.md),
-# on the reduced periodic space of fem/mars_periodic_ns.hpp; any rank count.
-add_executable(mars_tgv mars_tgv.cu)
-target_link_libraries(mars_tgv PRIVATE mars)
-target_include_directories(mars_tgv PRIVATE
-    ${CMAKE_SOURCE_DIR}/backend/distributed/unstructured/amr
-)
+# Taylor-Green vortex in a triply periodic box (docs/periodic_tgv_tutorial.md) and the
+# lid-driven cavity: the same Navier-Stokes solver as the Poiseuille example, with
+# Hypre BoomerAMG for both linear systems.
+if(MARS_ENABLE_HYPRE)
+    add_executable(mars_tgv mars_tgv.cu)
+    target_link_libraries(mars_tgv PRIVATE mars)
+    target_include_directories(mars_tgv PRIVATE
+        ${CMAKE_SOURCE_DIR}/backend/distributed/unstructured/amr
+    )
+    install(TARGETS mars_tgv RUNTIME DESTINATION bin/examples)
+
+    add_executable(mars_lid_driven_cavity mars_lid_driven_cavity.cu)
+    target_link_libraries(mars_lid_driven_cavity PRIVATE mars)
+    install(TARGETS mars_lid_driven_cavity RUNTIME DESTINATION bin/examples)
+endif()
 
 # Coupled collocated solver -- Phase 0 model operator (plan in
 # internal-notes/plan_coupled_collocated_solver.md). Increment 1 is the G=-D^T
@@ -287,7 +295,6 @@ if(MARS_ENABLE_HYPRE)
     )
     install(TARGETS mars_coupled_model_operator RUNTIME DESTINATION bin/examples)
 endif()
-install(TARGETS mars_tgv RUNTIME DESTINATION bin/examples)
 
 # Pump driver: transient projection (BDF2 + Chorin) NS on a tet pump mesh, with
 # the pressure-drive opening BCs. Uses the pump fork mars_ns_pump_solver.hpp.
