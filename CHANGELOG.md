@@ -46,13 +46,14 @@ the cornerstone-octree library.
   solver clips its Jacobi diagonal on the GPU instead of copying it to the host every solve.
 - The Poiseuille tutorial mesh ships in `tests/data/poiseuille/`; its validation run is
   opt-in with `-DMARS_ENABLE_VALIDATION_TESTS=ON`.
-- The Poiseuille `--planar-ddt` path uses consistent constrained pressure gradients,
-  BDF scaling, inlet diffusion lift and opening fluxes. The long regression checks
-  the steady profile, conservation and steadiness. The reported single-rank Daint
-  run passed all checks after 1500 steps; profile RMS error was 4.563e-4 m/s.
-- `mars_poiseuille_flow --planar-ddt` runs on any number of ranks. Opening and cut-plane
-  areas come from each rank's element faces on the GPU; validation sums count owned nodes
-  only. 1-, 2- and 4-rank Daint runs pass the same checks with the same profile RMS.
+- `mars_poiseuille_flow` is a short teaching example on a small solver module,
+  `fem/mars_channel_flow.hpp`: the planar CVFEM projection with constrained pressure
+  gradients, inlet lift and opening fluxes, BDF2. Both linear systems are assembled once
+  and solved with Hypre PCG + BoomerAMG (15-17 pressure iterations per step instead of
+  thousands of Jacobi-CG iterations). The 1500-step check passes on 1, 2 and 4 GPUs
+  with profile RMS error 4.553e-4 m/s; the full run takes about 25 s on one GPU. The
+  10.9k-line channel solver fork and the `--planar-ddt`, `--pressure-amg` and
+  `--velocity-amg` options are gone.
 
 ### Experimental
 - High-order matrix-free CVFEM operators (p ≥ 2), with DOF numbering on the device.
