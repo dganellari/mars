@@ -60,6 +60,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <iomanip>
 #include <iostream>
 #include <limits>
 #include <memory>
@@ -1085,6 +1086,28 @@ public:
     const Box<RealType>& box() const { return box_; }
     const Timing& timing() const { return timing_; }
     void resetTiming() { timing_ = {}; }
+
+    // Stage times of the slowest rank over the steps since the last resetTiming (collective).
+    void printTiming(long steps) const
+    {
+        steps           = std::max(steps, 1L);
+        double local[4] = {timing_.predictor, timing_.viscous, timing_.pressure, timing_.corrector}, slowest[4];
+        MPI_Allreduce(local, slowest, 4, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+        if (rank_ != 0) return;
+        int ranks = 1;
+        MPI_Comm_size(MPI_COMM_WORLD, &ranks);
+        double total = slowest[0] + slowest[1] + slowest[2] + slowest[3];
+        long long n  = globalDofs();
+        std::cout << std::fixed << std::setprecision(3) << "[timing] ranks=" << ranks << " nodes=" << n
+                  << " nodes/rank=" << n / ranks << " steps=" << steps << " ms/step: total=" << total / steps
+                  << " predictor=" << slowest[0] / steps << " viscous=" << slowest[1] / steps
+                  << " pressure=" << slowest[2] / steps << " corrector=" << slowest[3] / steps
+                  << " | pressure_it/step=" << double(timing_.pressureIterations) / steps
+                  << " ms/pressure_it="
+                  << (timing_.pressureIterations > 0 ? slowest[2] / timing_.pressureIterations : 0.0)
+                  << " velocity_it/step=" << double(timing_.velocityIterations) / steps << "\n"
+                  << std::defaultfloat;
+    }
     int velocityIterations(int component) const { return velocityIters_[component]; }
     int pressureIterations() const { return pressureIters_; }
     long long globalDofs() const { return space_.numDofs(); }

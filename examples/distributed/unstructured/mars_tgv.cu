@@ -403,6 +403,7 @@ int runTgv(const Options& opt, int rank, int numRanks)
             if (rank == 0) std::cerr << "Step " << step << ": a linear solve did not converge, stopping\n";
             return 1;
         }
+        if (step == 1 && opt.numSteps > 1) solver->resetTiming();
         if (opt.adaptEvery > 0 && step % opt.adaptEvery == 0 && amr.currentLevel() < opt.maxLevels)
             adaptMesh(amr, solver, periodicMap, params, opt, frames);
 
@@ -415,6 +416,7 @@ int runTgv(const Options& opt, int rank, int numRanks)
         std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - wallStart).count();
 
     report.summary(*solver, opt.numSteps * opt.dt);
+    solver->printTiming(opt.numSteps - 1); // step 1 (first-use allocations, BDF1) is left out
     if (rank == 0)
         std::cout << "Wall time " << std::fixed << std::setprecision(1) << wallMs << " ms, "
                   << wallMs / std::max(opt.numSteps, 1) << " ms/step\n";

@@ -182,27 +182,6 @@ struct FrameWriter
     }
 };
 
-// Stage times are those of the slowest rank; step 1 (first-use allocations, BDF1) is left out.
-void printTiming(const Solver& s, int numSteps, int numRanks)
-{
-    const auto& t   = s.timing();
-    double steps    = numSteps > 1 ? numSteps - 1 : 1;
-    double local[4] = {t.predictor, t.viscous, t.pressure, t.corrector}, slowest[4];
-    MPI_Allreduce(local, slowest, 4, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
-    int rank = 0;
-    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-    if (rank != 0) return;
-    double total = slowest[0] + slowest[1] + slowest[2] + slowest[3];
-    std::cout << std::fixed << std::setprecision(3) << "[timing] ranks=" << numRanks << " nodes=" << s.globalDofs()
-              << " nodes/rank=" << s.globalDofs() / numRanks << " steps=" << long(steps)
-              << " ms/step: total=" << total / steps << " predictor=" << slowest[0] / steps
-              << " viscous=" << slowest[1] / steps << " pressure=" << slowest[2] / steps
-              << " corrector=" << slowest[3] / steps << " | pressure_it/step=" << t.pressureIterations / steps
-              << " ms/pressure_it=" << (t.pressureIterations > 0 ? slowest[2] / t.pressureIterations : 0.0)
-              << " velocity_it/step=" << t.velocityIterations / steps << "\n"
-              << std::defaultfloat;
-}
-
 // =============================================================================
 // main: the tutorial path
 // =============================================================================
@@ -292,7 +271,7 @@ int main(int argc, char** argv)
         // 4. Result.
         if (exitCode == 0)
         {
-            printTiming(solver, opt.numSteps, numRanks);
+            solver.printTiming(opt.numSteps - 1); // step 1 (first-use allocations, BDF1) is left out
             exitCode = monitor.finish(solver, *domain, opt.vtuPrefix, opt.params.rho, opt.params.nu);
         }
     }

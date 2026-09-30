@@ -202,6 +202,7 @@ public:
         HYPRE_BoomerAMGSetInterpType(amg_, envInt("INTERP", 6));   // extended+i
         HYPRE_BoomerAMGSetPMaxElmts(amg_, envInt("PMAX", 4));
         HYPRE_BoomerAMGSetAggNumLevels(amg_, envInt("AGG", 0));
+        HYPRE_BoomerAMGSetAggInterpType(amg_, envInt("AGG_INTERP", 6)); // 5-8 have GPU kernels; 6: 2-stage ext+i
         HYPRE_BoomerAMGSetStrongThreshold(amg_, envDouble("STRONG", 0.25));
         HYPRE_BoomerAMGSetRelaxType(amg_, 18); // l1-Jacobi: symmetric and parallel, so the V-cycle suits CG
         HYPRE_BoomerAMGSetRelaxOrder(amg_, 0);
@@ -210,7 +211,7 @@ public:
         HYPRE_BoomerAMGSetCycleRelaxType(amg_, 18, 3);
         HYPRE_BoomerAMGSetCycleNumSweeps(amg_, envInt("COARSE_SWEEPS", 4), 3);
         HYPRE_BoomerAMGSetKeepTranspose(amg_, 1);
-        HYPRE_BoomerAMGSetMaxLevels(amg_, 25);
+        HYPRE_BoomerAMGSetMaxLevels(amg_, envInt("MAX_LEVELS", 25)); // 1: l1-Jacobi PCG, no hierarchy
         HYPRE_BoomerAMGSetTol(amg_, 0.0);
         HYPRE_BoomerAMGSetMaxIter(amg_, 1);
         HYPRE_BoomerAMGSetPrintLevel(amg_, envInt("PRINT", 0));
