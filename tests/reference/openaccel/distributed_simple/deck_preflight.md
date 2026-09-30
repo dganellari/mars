@@ -190,6 +190,9 @@ python3 ../scripts/simple_public_diagnostics.py \
 Only `public-diagnostics.json` is intended for sharing or an exact-file transfer.
 It contains fixed software labels and booleans: the failed stage, Krylov/SpMV
 backend, residual-check verdicts, finite-value checks and completion status.
+It also records the process exit code (software metadata), exact public source
+errors from a fixed catalog, and scheduler labels such as `segmentation_fault`,
+`killed` or `terminated`. No unrecognized error text is copied into the report.
 It contains no raw log lines, paths, mesh or boundary details, field values,
 residual magnitudes, iteration counts, timings or input hashes. Full logs,
 prepared arguments and fields remain private. No rebuild or simulation rerun is
@@ -207,6 +210,43 @@ A false flag means no recognized message was found, not that the cause is exclud
 Recognized fatal messages prevent a concatenated successful run from hiding a
 failure. To inspect an earlier failure, export its existing log and exit file to
 a fresh JSON filename; no new GPU run is needed.
+
+### Automatic report for future launches
+
+Use `scripts/run_simple_diagnostics.py` around the existing `srun` command.
+It captures stdout and stderr in the private log, writes the exit file, and
+updates the separate public JSON atomically whenever the safe report changes.
+The JSON can be pulled during execution or after failure; no manual redaction
+or second export command is needed. Existing paths are refused before launch.
+All three files have owner-only permissions. Temporary report files live beside
+the public output, so use capstor paths for all outputs.
+
+From the configured build directory, with the prepared private `args` array and
+a fresh private `run` directory already set:
+
+```bash
+summary="/capstor/scratch/cscs/gandanie/simple-public-diagnostics-${run##*/}.json"
+python3 ../scripts/run_simple_diagnostics.py \
+  --log "$run/run.log" --exit-file "$run/run.exit" --output "$summary" -- \
+  srun --account=csstaff --time=01:00:00 --nodes=1 --ntasks-per-node=4 \
+  --export=ALL,MPICH_GPU_SUPPORT_ENABLED=1 --kill-on-bad-exit=1 \
+  ~/affinity/bind_numa.sh ./examples/distributed/unstructured/mars_segregated_simple \
+  "${args[@]}" --iterations 2000 --report-every 100 \
+  --residual-tol 1e-6 --mass-tol 1e-6 --change-tol 1e-6 \
+  --linear-cache 1 --halo-overlap 1 --field-output distributed \
+  --output-prefix "$run/flow"
+```
+
+Keep the validated environment and prepared arguments unchanged. The wrapper
+does not choose solver settings, submit work by itself, or read mesh/field files.
+It returns the command's exit status, except that a zero exit with a recognized
+fatal error returns failure. Launch/capture failures and interrupts also return
+nonzero. `capture_status=running` is not completion; if the wrapper itself is
+killed, the last snapshot may remain in that state. Null solver verdicts mean
+that failure-only records were not emitted, not that checks passed. The first
+recognized public error is first in log order, which need not be causal order
+across ranks. Scheduler `terminated`/`killed` messages do not establish who sent
+the signal or why. None of these observations replaces a numerical validation.
 
 Missing or conflicting diagnostics become `null` or `unknown`, never a pass.
 The exporter combines observations without exposing their counts, refuses an

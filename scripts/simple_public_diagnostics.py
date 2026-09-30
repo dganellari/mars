@@ -38,13 +38,57 @@ FAILURE_FLAGS = tuple(ERROR_MESSAGES) + tuple(ERROR_PREFIXES) + (
     'application_error_seen', 'unclassified_application_error_seen', 'linear_candidate_missing_seen',
     'scheduler_time_limit_seen', 'scheduler_out_of_memory_seen', 'scheduler_signal_seen', 'mpi_abort_seen')
 
+# These are public source messages, never text copied from an unrecognized error.
+SOFTWARE_ERRORS = tuple(message for messages in ERROR_MESSAGES.values() for message in messages) + (
+    'std::bad_alloc', 'std::bad_array_new_length', 'native geometry failed',
+    'pressure tolerance reduction failed', 'linear verdict reduction failed',
+    'pressure audit selection failed', 'run timing reduction failed',
+    'field count reduction failed', 'field counts failed', 'device field gather failed',
+    'root native mesh read or validation failed',
+) + tuple('prepared Hypre: ' + message for message in (
+    'invalid or late stopping tolerances', 'stopping tolerances differ between ranks',
+    'GMRES/AMG refresh failed', 'fixed graph updates require the device-map overload',
+    'nonfinite matrix, inconsistent partition, or empty partition/separate K in fixed graph mode',
+    'matrix preparation failed', 'vector creation failed', 'AMG creation failed',
+    'AMG setup failed', 'GMRES creation failed', 'GMRES/AMG setup failed',
+    'undersized RHS or solution', 'nonfinite RHS or initial guess',
+    'undersized or nonfinite RHS/initial guess', 'vector update failed', 'Hypre apply failed',
+    'nonfinite result, extraction error, or CUDA failure', 'Krylov residual lookup failed',
+    'Krylov residual norm failed', 'Hypre SpMV selection failed', 'residual vector creation failed',
+    'true residual evaluation failed', 'residual audit vector extraction failed',
+    'residual audit reduction failed', 'residual audit synchronization failed',
+    'residual audit RHS copy failed', 'residual audit matvec failed', 'residual audit cleanup failed',
+    'fixed graph contains an empty row or a missing diagonal', 'graph packing CUDA launch failed',
+    'matrix creation failed', 'nonfinite matrix or numeric packing failure',
+    'matrix refresh failed or changed the ParCSR object',
+)) + tuple('node-field halo: ' + message for message in (
+    'cannot allocate halo buffers', 'cannot create halo events', 'MPI exchange failed',
+    'CUDA pack or unpack failed',
+))
+SOFTWARE_ERROR_LOOKUP = {message: message for message in SOFTWARE_ERRORS}
+SCHEDULER_MESSAGES = {
+    'Segmentation fault': 'segmentation_fault', 'Bus error': 'bus_error',
+    'Killed': 'killed', 'Terminated': 'terminated',
+    'DUE TO TIME LIMIT': 'time_limit', 'Out Of Memory': 'out_of_memory',
+    'oom_kill': 'out_of_memory', 'oom-kill': 'out_of_memory',
+}
+
+
+def scheduler_error(line):
+    return re.match(r'^(?:(?:srun|slurmstepd)(?:\[[0-9]+\])?: error: '
+                    r'|\[[0-9T:.\-]+\] error: \*\*\* STEP )', line)
+
+
+def application_error(line):
+    error = re.fullmatch(r'(?:Rank [0-9]+ )?ERROR: (.+)', line)
+    return re.sub(r' \(on (?:this|another) rank\)$', '', error.group(1)) if error else None
+
 
 def failure_markers(line):
     seen = set()
-    error = re.fullmatch(r'(?:Rank [0-9]+ )?ERROR: (.+)', line)
-    if error:
+    message = application_error(line)
+    if message is not None:
         seen.add('application_error_seen')
-        message = re.sub(r' \(on (?:this|another) rank\)$', '', error.group(1))
         for key, messages in ERROR_MESSAGES.items():
             if message in messages:
                 seen.add(key)
@@ -56,12 +100,10 @@ def failure_markers(line):
             seen.add('linear_candidate_missing_seen')
         if message.startswith('halo exchange lists rejected on all ranks (global: '):
             seen.add('halo_error_seen')
-        if len(seen) == 1:
+        if len(seen) == 1 and message not in SOFTWARE_ERROR_LOOKUP:
             seen.add('unclassified_application_error_seen')
     # Only scheduler error lines count, not paths or echoed commands mentioning a limit.
-    scheduler = re.match(r'^(?:(?:srun|slurmstepd)(?:\[[0-9]+\])?: error: '
-                         r'|\[[0-9T:.\-]+\] error: \*\*\* STEP )', line)
-    if scheduler:
+    if scheduler_error(line):
         if 'DUE TO TIME LIMIT' in line:
             seen.add('scheduler_time_limit_seen')
         if re.search(r'\b(?:oom[_-]kill|out of memory)\b', line, re.IGNORECASE):
@@ -192,28 +234,63 @@ def pressure_reference(doc, simple, hypre):
     return result
 
 
-def summarize(lines, exit_text, reference_deck=None):
-    records = {tag: [] for tag in TAGS}
-    completions = []
-    false_convergence = False
-    failures = set()
-    for line in lines:
+class DiagnosticState:
+    def __init__(self):
+        self.records = {tag: [] for tag in TAGS}
+        self.completions = []
+        self.false_convergence = False
+        self.failures = set()
+        self.software_errors = []
+        self.scheduler_messages = []
+        self.solver_started = False
+        self.iteration_report_seen = False
+
+    def feed(self, line):
         line = line.strip()
-        failures.update(failure_markers(line))
+        self.failures.update(failure_markers(line))
+        error = SOFTWARE_ERROR_LOOKUP.get(application_error(line))
+        if error is not None and error not in self.software_errors:
+            self.software_errors.append(error)
+        if scheduler_error(line):
+            for message, label in SCHEDULER_MESSAGES.items():
+                if re.search(r'\b' + re.escape(message) + r'\b', line, re.IGNORECASE):
+                    if label not in self.scheduler_messages:
+                        self.scheduler_messages.append(label)
         for tag in TAGS:
             if line.startswith(tag):
                 record = fields(line[len(tag):])
-                if record not in records[tag]:
-                    records[tag].append(record)
+                if record not in self.records[tag]:
+                    self.records[tag].append(record)
         if re.fullmatch(r'CONVERGED iterations=[0-9]+ ranks=[0-9]+ exchange_rounds=[0-9]+', line):
-            completions.append('converged')
+            self.completions.append('converged')
         if re.fullmatch(r'NOT CONVERGED: iteration limit iterations=[0-9]+ ranks=[0-9]+ exchange_rounds=[0-9]+', line):
-            completions.append('iteration_limit')
+            self.completions.append('iteration_limit')
         if re.match(r'^false convergence [12](?:,|$)', line):
-            false_convergence = True
+            self.false_convergence = True
+        if re.fullmatch(r'SIMPLE Tet4, [0-9]+ ranks \(ElementDomain/cstone\), '
+                        r'(?:upwind|high-resolution), laminar', line):
+            self.solver_started = True
+        if re.match(r'^\[simple\] iteration=[0-9]+ momentum=', line):
+            self.iteration_report_seen = True
+
+    def result(self, exit_text, reference_deck=None):
+        return summarize_state(self, exit_text, reference_deck)
+
+
+def summarize(lines, exit_text, reference_deck=None):
+    state = DiagnosticState()
+    for line in lines:
+        state.feed(line)
+    return state.result(exit_text, reference_deck)
+
+
+def summarize_state(state, exit_text, reference_deck):
+    records, completions, failures = state.records, state.completions, state.failures
 
     exit_text = exit_text.strip()
     exit_code = int(exit_text) if re.fullmatch(r'[0-9]{1,3}', exit_text) else None
+    if exit_code is not None and exit_code > 255:
+        exit_code = None
     status = 'incomplete'
     if exit_code is not None and exit_code not in (0, 2):
         status = 'failed'
@@ -232,6 +309,7 @@ def summarize(lines, exit_text, reference_deck=None):
     result = {
         'schema': 'mars-simple-public-diagnostics-v1',
         'run_status': status,
+        'process_exit_code': exit_code,
         'multiple_completions': len(completions) > 1,
         'simple_diagnostic_present': bool(simple),
         'hypre_rejection_present': bool(hypre),
@@ -248,7 +326,12 @@ def summarize(lines, exit_text, reference_deck=None):
         'mars_explicit_residual_finite': consensus(simple, lambda r: finite(r, 'mars_absolute_residual')),
         'mars_explicit_residual_passed': consensus(simple, lambda r: passed(r, 'mars_absolute_residual', 'acceptance_limit')),
         'spmv_backend': consensus(spmv, lambda r: {'0': 'native', '1': 'vendor'}.get(r.get('vendor_requested'), 'unknown'), 'unknown'),
-        'false_convergence_message_seen': false_convergence,
+        'false_convergence_message_seen': state.false_convergence,
+        'solver_started': state.solver_started,
+        'iteration_report_seen': state.iteration_report_seen,
+        'software_errors': list(state.software_errors),
+        'first_software_error': state.software_errors[0] if state.software_errors else 'unknown',
+        'scheduler_messages': list(state.scheduler_messages),
     }
     result.update((key, key in failures) for key in FAILURE_FLAGS)
     audit = records['[simple-pressure-audit]']

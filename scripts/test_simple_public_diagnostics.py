@@ -191,6 +191,32 @@ class PublicDiagnosticsTests(unittest.TestCase):
         self.assertNotIn('SECRET', json.dumps(result))
         self.assertNotIn('1234', json.dumps(result))
 
+    def test_exact_public_messages_and_first_error_survive(self):
+        first = 'prepared Hypre: nonfinite result, extraction error, or CUDA failure'
+        second = 'prepared Hypre: true residual evaluation failed'
+        result = summarize('ERROR: ' + first + '\nERROR: ' + second + '\nERROR: ' + first)
+        self.assertEqual(result['software_errors'], [first, second])
+        self.assertEqual(result['first_software_error'], first)
+        self.assertFalse(result['unclassified_application_error_seen'])
+        # Even a public prefix followed by private text must not enter the report.
+        result = summarize('ERROR: ' + first + ' SECRET=123\nERROR: prepared Hypre: SECRET')
+        self.assertEqual(result['software_errors'], [])
+        self.assertEqual(result['first_software_error'], 'unknown')
+        self.assertNotIn('SECRET', json.dumps(result))
+        self.assertNotIn('123', json.dumps(result))
+
+    def test_incremental_report_matches_saved_log(self):
+        lines = ['SIMPLE Tet4, 4 ranks (ElementDomain/cstone), upwind, laminar',
+                 '[simple] iteration=50 momentum=SECRET continuity=SECRET', HYPRE, SIMPLE,
+                 'ERROR: prepared Hypre: vector update failed', 'ERROR: SECRET']
+        state = diagnostic.DiagnosticState()
+        for line in lines:
+            state.feed(line)
+        self.assertEqual(state.result('255'), summarize('\n'.join(lines)))
+        self.assertTrue(state.result('255')['solver_started'])
+        self.assertTrue(state.result('255')['iteration_report_seen'])
+        self.assertNotIn('SECRET', json.dumps(state.result('255')))
+
     def test_scheduler_and_mpi_markers(self):
         cases = {
             'scheduler_time_limit_seen': '[2026-09-30T12:00:00.001] error: *** STEP 123.0 ON SECRET CANCELLED DUE TO TIME LIMIT ***',
@@ -208,6 +234,18 @@ class PublicDiagnosticsTests(unittest.TestCase):
             self.assertTrue(combined[key])
         self.assertTrue(summarize('srun: error: SECRET: task 0: Out Of Memory')['scheduler_out_of_memory_seen'])
         self.assertTrue(summarize('application called MPI_Abort(MPI_COMM_WORLD, 1) - process 0')['mpi_abort_seen'])
+
+    def test_scheduler_labels_and_exit_code_are_software_metadata(self):
+        text = ('srun: error: SECRET: task 0: Segmentation fault\n'
+                'srun: error: SECRET: tasks 1-3: Terminated\n'
+                'srun: error: SECRET: task 0: Killed\n'
+                'srun: error: SECRET: task 0: Killed\n')
+        result = summarize(text, '139')
+        self.assertEqual(result['scheduler_messages'], ['segmentation_fault', 'terminated', 'killed'])
+        self.assertEqual(result['process_exit_code'], 139)
+        self.assertNotIn('SECRET', json.dumps(result))
+        for invalid in ('999', '-9', 'SECRET', ''):
+            self.assertIsNone(summarize('', invalid)['process_exit_code'])
 
     def test_failure_markers_cannot_be_hidden_by_completion(self):
         converged = 'CONVERGED iterations=10 ranks=4 exchange_rounds=41\n'
@@ -245,8 +283,16 @@ class PublicDiagnosticsTests(unittest.TestCase):
         for candidate in (text, text.replace('pressure', private).replace('GMRES', private)):
             result = summarize(candidate)
             self.assertNotIn(private, json.dumps(result))
-            for value in result.values():
-                self.assertTrue(value is None or type(value) is bool or value in allowed)
+            for key, value in result.items():
+                if key == 'software_errors':
+                    self.assertTrue(all(v in diagnostic.SOFTWARE_ERRORS for v in value))
+                elif key == 'scheduler_messages':
+                    self.assertTrue(all(v in diagnostic.SCHEDULER_MESSAGES.values() for v in value))
+                elif key == 'process_exit_code':
+                    self.assertTrue(value is None or type(value) is int and 0 <= value <= 255)
+                else:
+                    self.assertTrue(value is None or type(value) is bool
+                                    or value in allowed or value in diagnostic.SOFTWARE_ERRORS)
 
     def test_cli_private_errors_and_existing_output(self):
         script = str(Path(diagnostic.__file__).resolve())
