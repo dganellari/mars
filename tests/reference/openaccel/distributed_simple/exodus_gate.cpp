@@ -74,7 +74,7 @@ int main(int argc,char** argv) {
 #ifdef MARS_REPLAY_CUDA
         int devices,local; MPI_Comm shared; MPI_Comm_split_type(MPI_COMM_WORLD,MPI_COMM_TYPE_SHARED,rank,MPI_INFO_NULL,&shared);
         MPI_Comm_rank(shared,&local); MPI_Comm_free(&shared);
-        assembly_cuda_check(cudaGetDeviceCount(&devices)); ensure(devices>0,"no CUDA device"); assembly_cuda_check(cudaSetDevice(local%devices));
+        mars::segregated::assembly_cuda_check(cudaGetDeviceCount(&devices)); ensure(devices>0,"no CUDA device"); mars::segregated::assembly_cuda_check(cudaSetDevice(local%devices));
 #endif
         ensure(argc>=2 && argc<=4,"supply a fixture directory and optional public channel mesh");
         if (!rank) std::filesystem::create_directories(argv[1]);

@@ -48,7 +48,7 @@ template<int C> struct CandidateSolve {
 using Runner=DistributedSimpleRunner<HostMatrix,long long,CandidateSolve>;
 
 template<int C,class System> void cases(Runner& run,System& system,CandidateSolve<C>& solver,bool audit=false) {
-    Array<double> blocks(std::size_t(C*C)*run.graph.blocks()),rhs(std::size_t(C)*run.n),increment(std::size_t(C)*run.n);
+    Array<double> blocks(static_cast<std::size_t>(C*C)*run.graph.blocks()),rhs(static_cast<std::size_t>(C)*run.n),increment(static_cast<std::size_t>(C)*run.n);
     blocks.zero(); rhs.zero();
     const auto a=run.graph.template view<C>(blocks.data(),rhs.data());
     for (int row=0;row<run.n;++row) for (int k=a.offsets[row];k<a.offsets[row+1];++k)
@@ -88,7 +88,7 @@ template<int C,class System> void cases(Runner& run,System& system,CandidateSolv
 }
 
 template<int C,class System> void pressure_only_case(Runner& run,System& system,CandidateSolve<C>& solver) {
-    Array<double> blocks(std::size_t(C*C)*run.graph.blocks()),rhs(std::size_t(C)*run.n),increment(std::size_t(C)*run.n);
+    Array<double> blocks(static_cast<std::size_t>(C*C)*run.graph.blocks()),rhs(static_cast<std::size_t>(C)*run.n),increment(static_cast<std::size_t>(C)*run.n);
     blocks.zero(); rhs.zero();
     const auto a=run.graph.template view<C>(blocks.data(),rhs.data());
     for (int row=0;row<run.n;++row) for (int k=a.offsets[row];k<a.offsets[row+1];++k)

@@ -12,8 +12,8 @@ int main(int argc,char** argv) {
         int local,devices=0; MPI_Comm node;
         ensure(MPI_Comm_split_type(MPI_COMM_WORLD,MPI_COMM_TYPE_SHARED,rank,MPI_INFO_NULL,&node)==MPI_SUCCESS,"cannot create node communicator");
         MPI_Comm_rank(node,&local); MPI_Comm_free(&node);
-        assembly_cuda_check(cudaGetDeviceCount(&devices)); ensure(devices>0,"no CUDA device");
-        assembly_cuda_check(cudaSetDevice(local%devices));
+        mars::segregated::assembly_cuda_check(cudaGetDeviceCount(&devices)); ensure(devices>0,"no CUDA device");
+        mars::segregated::assembly_cuda_check(cudaSetDevice(local%devices));
 #endif
         ensure(argc==2,"output directory required");
         std::filesystem::create_directories(argv[1]);
