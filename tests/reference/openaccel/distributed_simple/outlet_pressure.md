@@ -54,7 +54,7 @@ those differences fall to `1.595e-13 m/s` and `1.189e-12 Pa`.
 At iteration 1431, maximum vector velocity difference divided by `U=0.1 m/s` is
 `1.485e-13`; maximum absolute pressure difference divided by `rho*U^2=0.01 Pa` is
 `1.066e-11`. No pressure offset is removed. This is a host-kernel comparison with
-an independently executed reference, not validation of the repaired CUDA path.
+an independently executed reference. The separate GPU results follow below.
 
 The algebra regression uses unequal sample areas, a retained closed-face trace,
 and an updated open-face trace. It checks the shared nodal values and their use in
@@ -63,6 +63,32 @@ boundary pressure explicitly and poison unexchanged ghost entries.
 The final local ASan/UBSan build passes 2139 algebra checks and 15 shifted/sheared
 host MPI tests, covering 1/2/4 ranks and overlapping/synchronous assembly. Bypassing
 the nodal pressure in the boundary kernel makes the algebra regression fail.
+
+## Daint CUDA/Hypre validation, 2026-09-30
+
+The user ran revision `02459212cd81c0497e3b76d96a69b894c273d7b3` on 1/2/4 GPUs
+with Hypre 2.33.0 and native GPU SpMV. Public results are saved at
+`/capstor/scratch/cscs/gandanie/simple-outlet-pressure-OVYNJC`.
+The recorded executable SHA-256 is
+`385c99163d1930c6462ed38090b358f4d66b232efefe76db3848ecea22052fea`.
+Retrieved fields, metrics, logs and exit files match their comparison hashes;
+recomputing differences against the pinned reference reproduces all three reports.
+
+| GPUs | Max velocity difference / U | Max pressure difference / (rho U^2) | Exit |
+| --- | --- | --- | --- |
+| 1 | 1.746e-13 | 1.101e-11 | 2 |
+| 2 | 1.608e-13 | 9.770e-12 | 2 |
+| 4 | 1.858e-13 | 1.208e-11 | 2 |
+
+Every run reaches iteration 1431 and passes the matched-snapshot field tolerance
+of `1e-5`, without removing a pressure offset. The four-rank log records SFC
+ownership and element-star completion. This validates the repaired CUDA path and
+rank agreement on this public case; full runtime provenance and identical linear
+solvers are not attested by the comparator.
+
+Iteration wall time was 30.84 seconds on one GPU (`nid005365`), versus
+69.18/80.22 seconds on 2/4 GPUs (`nid006489`). These individual runs of a 425-node
+test show no speedup and do not establish scalability.
 
 ## Conservation is a separate result
 
@@ -78,8 +104,9 @@ and mass-balance convergence checks and must report an iteration limit for this
 case. Compare matched snapshots; do not use the converged-field checker or claim
 physical convergence, private-pump parity or general scaling from this result.
 
-The repaired CUDA/Hypre execution and its 1/2/4-rank comparison remain pending.
-Existing reference binaries and results can be reused; OpenAccel need not rebuild.
+All three GPU runs retain the iteration-limit status and reproduce the roughly
+62.96% imbalance. Existing reference binaries and results can be reused;
+OpenAccel need not rebuild.
 
 ## Interactive Daint verification
 
