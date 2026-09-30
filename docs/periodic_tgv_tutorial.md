@@ -211,23 +211,23 @@ small pair table for the pairs split across ranks (`buildCrossRankPeriodicMap`),
 two exchanges use it: `crossRankPeriodicBroadcast` (master value to the slave's rank)
 and `crossRankPeriodicPairSum` (slave contribution to the master's rank).
 
-With these, P and Pᵀ are three calls each (`DofSpace::prolong`, `DofSpace::restrict`):
+With these, P and Pᵀ are three steps each (`DofSpace::prolong`, `DofSpace::restrict`),
+shown here for one field `v`:
 
 ```cpp
-void prolong(Vector& v) const
-{
-    periodicBroadcastSameRankKernel<RealType><<<...>>>(partner, ownership, n_, v.data());  // slave <- master, same rank
-    crossRankPeriodicBroadcast<KeyType, RealType>(*map_, v);                             // slave <- master, other rank
-    domain_.exchangeNodeHalo(v);                                                         // ghosts <- owners
-}
+// prolong
+periodicBroadcastSameRankKernel<<<...>>>(partner, ownership, n, v);   // slave <- master, same rank
+crossRankPeriodicBroadcastFields(map, fields);                        // slave <- master, other rank
+domain.exchangeNodeHaloFields(fields, /*reverse=*/false);             // ghosts <- owners
 
-void restrict(Vector& acc) const
-{
-    domain_.reverseExchangeNodeHaloAdd(acc);                                             // owners += ghosts
-    periodicPairSumKernel<RealType><<<...>>>(partner, ownership, n_, acc.data());        // master += slave, same rank
-    crossRankPeriodicPairSum<KeyType, RealType>(*map_, acc, /*broadcastBack=*/false);    // master += slave, other rank
-}
+// restrict
+domain.exchangeNodeHaloFields(fields, /*reverse=*/true);              // owners += ghosts
+periodicPairSumKernel<<<...>>>(partner, ownership, n, v);             // master += slave, same rank
+crossRankPeriodicPairSumFields(map, fields);                          // master += slave, other rank
 ```
+
+Both take several fields at once: the three velocity components and the pressure
+travel in one message per neighbour rank, not one message per field.
 
 **The order matters, and it is forced by what each step reads.** In `prolong`,
 the slave copies are updated first and the halo runs last, so that ghost copies of a

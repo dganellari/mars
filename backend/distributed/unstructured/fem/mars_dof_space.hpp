@@ -25,6 +25,7 @@
 #include <thrust/iterator/counting_iterator.h>
 
 #include <algorithm>
+#include <initializer_list>
 #include <cstdio>
 #include <type_traits>
 #include <utility>
@@ -206,32 +207,44 @@ public:
         MPI_Allreduce(&local, &numDofs_, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
     }
 
+    using Fields = NodeFieldPtrs<RealType>;
+
     // P: every slot of a point takes the DOF value. Owned slaves first (locally,
-    // or from the master's owner rank), then the halo refreshes all ghosts.
-    void prolong(Vector& v) const
+    // or from the master's owner rank), then the halo refreshes all ghosts. The
+    // fields share each exchange: one message per peer, not one per field.
+    void prolong(Vector* const* fields, int count) const
     {
+        Fields f = pointers(fields, count);
         if (map_)
         {
-            periodicBroadcastSameRankKernel<RealType><<<grid(), blockSize_>>>(
-                partner(), domain_.getNodeOwnershipMap().data(), n_, v.data());
+            const uint8_t* own = domain_.getNodeOwnershipMap().data();
+            for (int c = 0; c < f.count; ++c)
+                periodicBroadcastSameRankKernel<RealType><<<grid(), blockSize_>>>(partner(), own, n_, f.f[c]);
             cudaCheckError();
-            crossRankPeriodicBroadcast<KeyType, RealType>(*map_, v);
+            crossRankPeriodicBroadcastFields<KeyType, RealType>(*map_, f);
         }
-        domain_.exchangeNodeHalo(v);
+        domain_.exchangeNodeHaloFields(f, false);
     }
 
     // P^T: the reverse halo completes every owned slot, then every owned slave
     // adds into its master (locally, or on the master's owner rank). Must be
     // applied to a scatter over this rank's own elements.
-    void restrict(Vector& acc) const
+    void restrict(Vector* const* fields, int count) const
     {
-        domain_.reverseExchangeNodeHaloAdd(acc);
+        Fields f = pointers(fields, count);
+        domain_.exchangeNodeHaloFields(f, true);
         if (!map_) return;
-        periodicPairSumKernel<RealType><<<grid(), blockSize_>>>(partner(), domain_.getNodeOwnershipMap().data(), n_,
-                                                               acc.data());
+        const uint8_t* own = domain_.getNodeOwnershipMap().data();
+        for (int c = 0; c < f.count; ++c)
+            periodicPairSumKernel<RealType><<<grid(), blockSize_>>>(partner(), own, n_, f.f[c]);
         cudaCheckError();
-        crossRankPeriodicPairSum<KeyType, RealType>(*map_, acc, /*broadcastBack=*/false);
+        crossRankPeriodicPairSumFields<KeyType, RealType>(*map_, f);
     }
+
+    void prolong(std::initializer_list<Vector*> fields) const { prolong(fields.begin(), int(fields.size())); }
+    void restrict(std::initializer_list<Vector*> fields) const { restrict(fields.begin(), int(fields.size())); }
+    void prolong(Vector& v) const { prolong({&v}); }
+    void restrict(Vector& acc) const { restrict({&acc}); }
 
     // Inner products over DOFs: each point counts once globally.
     RealType dot(const Vector& a, const Vector& b) const { return reduce2(a.data(), b.data(), a.data(), b.data()).first; }
@@ -253,6 +266,20 @@ public:
 
 private:
     int grid() const { return std::max(1, int((n_ + blockSize_ - 1) / blockSize_)); }
+
+    static Fields pointers(Vector* const* fields, int count)
+    {
+        if (count > Fields::Max)
+        {
+            std::fprintf(stderr, "DofSpace: %d fields in one exchange, at most %d\n", count, Fields::Max);
+            MPI_Abort(MPI_COMM_WORLD, 1);
+        }
+        Fields f;
+        f.count = count;
+        for (int c = 0; c < count; ++c)
+            f.f[c] = fields[c]->data();
+        return f;
+    }
 
     std::pair<RealType, RealType> reduce2(const RealType* a, const RealType* b, const RealType* c,
                                           const RealType* d) const

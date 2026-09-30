@@ -912,6 +912,7 @@ public:
     struct Timing
     {
         double predictor = 0, viscous = 0, pressure = 0, corrector = 0;
+        double hypre = 0; // inside the Hypre solves, part of viscous and pressure
         long velocityIterations = 0, pressureIterations = 0;
     };
 
@@ -1090,9 +1091,11 @@ public:
     // Stage times of the slowest rank over the steps since the last resetTiming (collective).
     void printTiming(long steps) const
     {
-        steps           = std::max(steps, 1L);
-        double local[4] = {timing_.predictor, timing_.viscous, timing_.pressure, timing_.corrector}, slowest[4];
-        MPI_Allreduce(local, slowest, 4, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+        steps         = std::max(steps, 1L);
+        const auto& t = timing_;
+        double stages = t.predictor + t.viscous + t.pressure + t.corrector;
+        double local[6] = {t.predictor, t.viscous, t.pressure, t.corrector, t.hypre, stages - t.hypre}, slowest[6];
+        MPI_Allreduce(local, slowest, 6, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
         if (rank_ != 0) return;
         int ranks = 1;
         MPI_Comm_size(MPI_COMM_WORLD, &ranks);
@@ -1105,7 +1108,8 @@ public:
                   << " | pressure_it/step=" << double(timing_.pressureIterations) / steps
                   << " ms/pressure_it="
                   << (timing_.pressureIterations > 0 ? slowest[2] / timing_.pressureIterations : 0.0)
-                  << " velocity_it/step=" << double(timing_.velocityIterations) / steps << "\n"
+                  << " velocity_it/step=" << double(timing_.velocityIterations) / steps
+                  << " | hypre=" << slowest[4] / steps << " mars=" << slowest[5] / steps << "\n"
                   << std::defaultfloat;
     }
     int velocityIterations(int component) const { return velocityIters_[component]; }
@@ -1149,15 +1153,21 @@ private:
     // 1. u* from the history, the advection by F^n and the old pressure.
     void predict(bool bdf2)
     {
-        gradientOf(p, true);
+        scatterGradient(p);
         for (int d = 0; d < comps_; ++d)
             zero(adv_[d]);
         if (hex_.count > 0)
             nsAdvectionKernel<KeyType, RealType>
                 <<<elemGrid(), bs()>>>(hex_, flux_.data(), comps_, cview(vel()), view(adv_));
         cudaCheckError();
+        Vector* scattered[6];
         for (int d = 0; d < comps_; ++d)
-            space_.restrict(adv_[d]);
+        {
+            scattered[d]          = &g_[d];
+            scattered[comps_ + d] = &adv_[d];
+        }
+        space_.restrict(scattered, 2 * comps_);
+        inverseMass(true);
         nsOpeningAdvectionKernel<RealType><<<grid(), bs()>>>(n_, space_.isDof(), comps_, cview(openArea_),
                                                              fixed_.data(), cview(target_), cview(vel()),
                                                              view(adv_));
@@ -1181,14 +1191,16 @@ private:
                                                            massDof_.data(), invDt, star_[d].data(), lift_[d].data(),
                                                            target_[d].data(), rhs_.data(), x_.data());
             cudaCheckError();
+            StageClock clock;
             velocityIters_[d] = solver.solve(rhs_.data(), x_.data(), true);
+            timing_.hypre += clock.lap();
             if (velocityIters_[d] < 0) return failed("velocity", solver);
             timing_.velocityIterations += velocityIters_[d];
             nsFromDofKernel<RealType><<<grid(), bs()>>>(n_, space_.isDof(), dofIndex_.data(), x_.data(),
                                                         sstar_[d].data());
             cudaCheckError();
-            space_.prolong(sstar_[d]);
         }
+        space_.prolong(fieldsOf(sstar_).data(), comps_);
         return true;
     }
 
@@ -1197,8 +1209,7 @@ private:
     {
         const RealType invDt = bdf2 ? RealType(3) / (RealType(2) * prm_.dt) : RealType(1) / prm_.dt;
         gradientOf(p, false);
-        for (int d = 0; d < comps_; ++d)
-            space_.prolong(g_[d]);
+        space_.prolong(fieldsOf(g_).data(), comps_);
         if (hex_.count > 0)
             nsFaceFluxKernel<KeyType, RealType><<<elemGrid(), bs()>>>(hex_, x(), y(), z(), cview(area_), comps_,
                                                                       cview(sstar_), p.data(), cview(g_),
@@ -1209,7 +1220,9 @@ private:
         nsPressureRhsKernel<RealType><<<grid(), bs()>>>(n_, space_.isDof(), dofIndex_.data(), pressureFixed_.data(),
                                                         prm_.rho * invDt, divStar_.data(), rhs_.data());
         cudaCheckError();
+        StageClock clock;
         pressureIters_ = pressure_->solve(rhs_.data(), x_.data());
+        timing_.hypre += clock.lap();
         if (pressureIters_ < 0) return failed("pressure", *pressure_);
         timing_.pressureIterations += pressureIters_;
         nsFromDofKernel<RealType><<<grid(), bs()>>>(n_, space_.isDof(), dofIndex_.data(), x_.data(), phi_.data());
@@ -1232,9 +1245,9 @@ private:
         nsCorrectorKernel<RealType><<<grid(), bs()>>>(n_, space_.isDof(), fixed_.data(), h, comps_, cview(target_),
                                                       cview(sstar_), cview(g_), phi_.data(), vel(), p.data());
         cudaCheckError();
-        for (int d = 0; d < comps_; ++d)
-            space_.prolong(*velocity()[d]);
-        space_.prolong(p);
+        Vector* fields[4] = {velocity()[0], velocity()[1], velocity()[2], &p};
+        fields[comps_]    = &p;
+        space_.prolong(fields, comps_ + 1);
     }
 
     bool failed(const char* system, const HypreAmgPcgSolver& solver) const
@@ -1249,18 +1262,30 @@ private:
     // g = M^-1 D^T q (= -G q, ~ -grad q) at the DOF slots, with Q if withQ. q must be current on every slot.
     void gradientOf(const Vector& q, bool withQ)
     {
+        scatterGradient(q);
+        space_.restrict(fieldsOf(g_).data(), comps_);
+        inverseMass(withQ);
+    }
+
+    // g = D^T q over this rank's elements, before restrict.
+    void scatterGradient(const Vector& q)
+    {
         for (int d = 0; d < comps_; ++d)
             zero(g_[d]);
         if (hex_.count > 0)
             nsDivergenceTransposeKernel<KeyType, RealType>
                 <<<elemGrid(), bs()>>>(hex_, cview(area_), comps_, q.data(), view(g_));
         cudaCheckError();
-        for (int d = 0; d < comps_; ++d)
-            space_.restrict(g_[d]);
+    }
+
+    void inverseMass(bool withQ)
+    {
         nsInverseMassKernel<RealType><<<grid(), bs()>>>(n_, space_.isDof(), fixed_.data(), int(withQ),
                                                         massDof_.data(), comps_, view(g_));
         cudaCheckError();
     }
+
+    static std::array<Vector*, 3> fieldsOf(Vector (&c)[3]) { return {&c[0], &c[1], &c[2]}; }
 
     // out = D_F F + openings at the DOF slots; the outlets carry the nodal velocity.
     void fluxDivergence(Vector& out, Components<RealType*> velocityField)

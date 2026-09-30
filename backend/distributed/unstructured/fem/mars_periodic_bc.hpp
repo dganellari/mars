@@ -92,6 +92,9 @@ struct CrossRankPeriodicMap
     // Persistent staging buffers (mutable so const exchange methods can stage).
     mutable DevVec<RealType> sendBuf_;
     mutable DevVec<RealType> recvBuf_;
+    // Staging for the multi-field exchanges (crossRankPeriodic*Fields).
+    mutable DevVec<RealType> fieldsSendBuf_;
+    mutable DevVec<RealType> fieldsRecvBuf_;
 
     // Epoch counter + private sub-communicator. comm_ is MPI_Comm_dup'd from
     // the user-supplied comm at first build; freed in PeriodicMap dtor.
@@ -1572,6 +1575,83 @@ void crossRankPeriodicBroadcast(const PeriodicMap<KeyType, RealType>& map,
             d_field.data(), sendTotal, fieldSize);
         cudaDeviceSynchronize();
     }
+}
+
+// One exchange of several node fields over the cross-rank pair table: the rows of
+// sendIds (count k per row) go to each peer's rows of recvIds. sendOffsets/recvOffsets
+// are the per-peer CSR offsets of those two id lists.
+template<typename KeyType, typename RealType>
+void crossRankPeriodicFieldsExchange(const PeriodicMap<KeyType, RealType>& map,
+                                     NodeFieldPtrs<RealType> fields,
+                                     const cstone::DeviceVector<int>& sendIds,
+                                     const std::vector<int>& sendOffsets,
+                                     const cstone::DeviceVector<int>& recvIds,
+                                     const std::vector<int>& recvOffsets,
+                                     int tagBase,
+                                     bool add)
+{
+    const auto& xr = map.cross_;
+    const int k    = fields.count;
+    size_t sendTotal = size_t(sendOffsets.back()), recvTotal = size_t(recvOffsets.back());
+    if (xr.fieldsSendBuf_.size() < sendTotal * k) xr.fieldsSendBuf_.resize(sendTotal * k);
+    if (xr.fieldsRecvBuf_.size() < recvTotal * k) xr.fieldsRecvBuf_.resize(recvTotal * k);
+    RealType* sbuf = xr.fieldsSendBuf_.data();
+    RealType* rbuf = xr.fieldsRecvBuf_.data();
+
+    if (sendTotal > 0)
+        packNodeFieldsKernel<RealType><<<int((sendTotal + 255) / 256), 256>>>(sendIds.data(), sendTotal, fields, sbuf);
+    cudaDeviceSynchronize();
+
+    auto mpiType  = std::is_same_v<RealType, double> ? MPI_DOUBLE : MPI_FLOAT;
+    const int tag = tagBase + xr.epoch_;
+    std::vector<MPI_Request> reqs;
+    reqs.reserve(2 * xr.peers_.size());
+    for (size_t p = 0; p < xr.peers_.size(); ++p)
+    {
+        int count = recvOffsets[p + 1] - recvOffsets[p];
+        if (count == 0) continue;
+        reqs.emplace_back();
+        MPI_Irecv(rbuf + size_t(recvOffsets[p]) * k, count * k, mpiType, xr.peers_[p], tag, xr.comm_, &reqs.back());
+    }
+    for (size_t p = 0; p < xr.peers_.size(); ++p)
+    {
+        int count = sendOffsets[p + 1] - sendOffsets[p];
+        if (count == 0) continue;
+        reqs.emplace_back();
+        MPI_Isend(sbuf + size_t(sendOffsets[p]) * k, count * k, mpiType, xr.peers_[p], tag, xr.comm_, &reqs.back());
+    }
+    if (!reqs.empty()) MPI_Waitall(int(reqs.size()), reqs.data(), MPI_STATUSES_IGNORE);
+    ++xr.epoch_;
+
+    if (recvTotal > 0)
+        unpackNodeFieldsKernel<RealType><<<int((recvTotal + 255) / 256), 256>>>(recvIds.data(), recvTotal, fields,
+                                                                                 rbuf, add);
+}
+
+// crossRankPeriodicBroadcast for several fields: each owned master's value to its slaves on other ranks.
+template<typename KeyType, typename RealType>
+void crossRankPeriodicBroadcastFields(const PeriodicMap<KeyType, RealType>& map, NodeFieldPtrs<RealType> fields)
+{
+    const auto& xr = map.cross_;
+    if (xr.peers_.empty() || fields.count == 0) return;
+    crossRankPeriodicFieldsExchange(map, fields, xr.d_recvOwnedMasterIds_, xr.recvOffsets_, xr.d_sendOwnedSlaveIds_,
+                                    xr.sendOffsets_, 0x5058, false);
+}
+
+// crossRankPeriodicPairSum(broadcastBack = false) for several fields: each owned slave's value is added into
+// its master on another rank, and the slave slot is zeroed.
+template<typename KeyType, typename RealType>
+void crossRankPeriodicPairSumFields(const PeriodicMap<KeyType, RealType>& map, NodeFieldPtrs<RealType> fields)
+{
+    const auto& xr = map.cross_;
+    if (xr.peers_.empty() || fields.count == 0) return;
+    crossRankPeriodicFieldsExchange(map, fields, xr.d_sendOwnedSlaveIds_, xr.sendOffsets_, xr.d_recvOwnedMasterIds_,
+                                    xr.recvOffsets_, 0x5051, true);
+    int n = int(xr.sendOffsets_.back());
+    if (n > 0)
+        for (int c = 0; c < fields.count; ++c)
+            zeroCrossRankSlavesKernel<RealType><<<(n + 255) / 256, 256>>>(xr.d_sendOwnedSlaveIds_.data(),
+                                                                         fields.f[c], n);
 }
 
 // Tiny apply kernel for Fix Y: adds host-resolved (slot, delta) pairs into the
