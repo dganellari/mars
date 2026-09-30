@@ -115,12 +115,79 @@ python3 -m pip install --no-cache-dir --only-binary=:all: --target "$deps" numpy
 export PYTHONPATH="$deps${PYTHONPATH:+:$PYTHONPATH}"
 ```
 
+## Localize disagreement at an early saved state
+
+`scripts/prepare_simple_snapshot_probe.py` prepares a short run; it does not
+launch one. Use it after the late-state comparison shows disagreement. It requires
+the completed baseline directory with `run.log`, `run.exit`, `flow-metrics.csv`
+and `executable.sha256`, plus the original preparation's `case.json` and `args.nul`.
+
+The executable must match the baseline SHA-256. The original arguments must match
+the preparation and printed controls, and the reference deck hash must still
+match. Every reference shard must have the same saved coordinates. The probe
+selects the **earliest positive** coordinate, requires an integer steady iteration
+strictly before the baseline's final iteration, and refuses anything beyond 100
+iterations (`--max-iteration` can lower this cap). Initialization is not selected.
+
+The generated arguments preserve physical controls, explicit pressure targets,
+cache/halo settings and field-output mode. The recipe preserves rank count, starts
+from the same zero initialization, and changes only the iteration cap and report
+frequency. Supply the baseline's nonlinear targets if they differ from 1e-6.
+Only one-node baselines with 1–4 ranks and profiling disabled are accepted. The
+existing executable is reused; a source pull does not require a solver rebuild.
+
+Run preparation on the machine holding the data. With `baseline`, `case_file`,
+`reference`, `exe` and a fresh private `run` directory set to the relevant paths:
+
+```bash
+python3 ../scripts/prepare_simple_snapshot_probe.py \
+  --baseline "$baseline" --case "$case_file" --reference-dir "$reference" \
+  --executable "$exe" --output-dir "$run/probe" --output "$run/preparation-public.json"
+```
+
+If preparation succeeds, `probe/args.nul`, `iteration.txt`, `ranks.txt` and
+`probe.json` are private launch metadata. If it fails, share only
+`preparation-public.json`; do not bypass a changed executable or stale arguments.
+The one-node Alps launch, from the configured MARS build directory, is:
+
+```bash
+mapfile -d '' -t args < "$run/probe/args.nul"
+iteration=$(cat "$run/probe/iteration.txt")
+np=$(cat "$run/probe/ranks.txt")
+unset CUDA_LAUNCH_BLOCKING MARS_OWNERSHIP MARS_HALO_FACTOR MARS_NODEHALO_ALLOW_INCONSISTENT
+export MARS_HYPRE_SPMV_VENDOR=0 MARS_HYPRE_FLEXGMRES=0 MARS_HYPRE_ABSTOL=0
+export MARS_HYPRE_VERBOSE=0 MARS_HYPRE_RESIDUAL_AUDIT=0 MARS_SIMPLE_PRESSURE_AUDIT=1
+python3 ../scripts/run_simple_diagnostics.py \
+  --log "$run/run.log" --exit-file "$run/run.exit" --output "$run/run-public.json" -- \
+srun --account=csstaff --time=00:15:00 --nodes=1 --ntasks-per-node="$np" \
+  --export=ALL,MPICH_GPU_SUPPORT_ENABLED=1 --kill-on-bad-exit=1 \
+  "$HOME/affinity/bind_numa.sh" "$exe" "${args[@]}" --output-prefix "$run/flow"
+```
+
+That environment matches the recorded baseline recipe for the current comparison;
+it is not a general proof of shared-library or unrecorded environment identity.
+Tracing is omitted; do not use this check as a performance benchmark. Raw stdout
+and stderr remain in the private log. Handle the expected iteration-limit exit 2
+before proceeding in a `set -e` shell; other failures require the public run
+diagnostic, not a field comparison.
+
+Then run `simple_snapshot_compare.py` with the same `reference` and `case_file`,
+`--iteration "$iteration"` and the new `flow` prefix/log/exit. An early nonlinear
+convergence before that selected coordinate is rejected as an iteration mismatch;
+the script does not silently change stopping criteria to reach it.
+
+Early agreement and late disagreement locate growth between those checkpoints.
+An early mismatch means disagreement is already present **by the first saved
+reference state**, which need not be the first iteration. Neither outcome alone
+identifies whether assembly, boundary updates or differing linear solves caused
+it. Keep solver controls unchanged until that distinction is investigated.
+
 ## Local synthetic checks
 
 ```bash
 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=scripts \
   python3 -m unittest test_simple_snapshot_compare test_simple_convergence_summary \
-    test_simple_public_diagnostics test_prepare_simple_deck
+    test_simple_public_diagnostics test_prepare_simple_deck test_prepare_simple_snapshot_probe
 ```
 
 These test synthetic Exodus shards and field files, large global IDs, reordering,
