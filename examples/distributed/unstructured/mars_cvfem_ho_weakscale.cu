@@ -20,7 +20,7 @@
 // seam-shared element contributions. Owned-only + reverse-add is the unique
 // parity-exact scheme (sum is commutative; only FP reduction order differs from
 // single-rank, ~1e-13). This matches the NS-solver conservative-scatter pattern
-// (mars_ns_channel_solver.hpp:3185 -- owned scatter -> reverseAdd -> forward).
+// (fem/mars_channel_flow.hpp: owned scatter -> reverseAdd -> forward).
 //
 // PARITY GATES (partition-invariant, hold on any rank count):
 //   A*1 = 0       constant null space of a pure-Neumann diffusion operator.
