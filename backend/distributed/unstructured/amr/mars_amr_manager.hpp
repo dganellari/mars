@@ -59,7 +59,7 @@ struct RefinerTraits<HexTag, KeyType, RealType>
     using Refiner = HexRefiner<KeyType, RealType>;
     using Result  = typename Refiner::Result;
 
-    static Result refine(const ElementDomain<HexTag, RealType, KeyType, cstone::GpuTag>& domain,
+    static Result refine(const ElementDomain<HexTag, RealType, KeyType, cstone::execution::Gpu>& domain,
                          const uint8_t* marks, size_t numElements,
                          const RealType* nodeX, const RealType* nodeY, const RealType* nodeZ,
                          size_t numNodes, int blockSize)
@@ -79,7 +79,7 @@ struct RefinerTraits<HexTag, KeyType, RealType>
     // with halo elements). The output connectivity references node IDs in
     // [0, numNodes) plus newly created nodes, suitable for handing back to
     // ElementDomain/cstone for a fresh sync.
-    static Result refineLocal(const ElementDomain<HexTag, RealType, KeyType, cstone::GpuTag>& domain,
+    static Result refineLocal(const ElementDomain<HexTag, RealType, KeyType, cstone::execution::Gpu>& domain,
                               const uint8_t* marks, size_t startIdx, size_t endIdx,
                               const RealType* nodeX, const RealType* nodeY, const RealType* nodeZ,
                               size_t numNodes, int blockSize)
@@ -95,7 +95,7 @@ struct RefinerTraits<HexTag, KeyType, RealType>
     }
 
     static cstone::DeviceVector<RealType> transferField(
-        const ElementDomain<HexTag, RealType, KeyType, cstone::GpuTag>& domain,
+        const ElementDomain<HexTag, RealType, KeyType, cstone::execution::Gpu>& domain,
         const Result& refined, const RealType* oldField, size_t numElements, int blockSize)
     {
         const auto& d_conn = domain.getElementToNodeConnectivity();
@@ -118,7 +118,7 @@ struct RefinerTraits<TetTag, KeyType, RealType>
     using Refiner = TetRefiner<KeyType, RealType>;
     using Result  = typename Refiner::Result;
 
-    static Result refine(const ElementDomain<TetTag, RealType, KeyType, cstone::GpuTag>& domain,
+    static Result refine(const ElementDomain<TetTag, RealType, KeyType, cstone::execution::Gpu>& domain,
                          const uint8_t* marks, size_t numElements,
                          const RealType* nodeX, const RealType* nodeY, const RealType* nodeZ,
                          size_t numNodes, int blockSize)
@@ -130,7 +130,7 @@ struct RefinerTraits<TetTag, KeyType, RealType>
             marks, numElements, nodeX, nodeY, nodeZ, numNodes, blockSize);
     }
 
-    static Result refineLocal(const ElementDomain<TetTag, RealType, KeyType, cstone::GpuTag>& domain,
+    static Result refineLocal(const ElementDomain<TetTag, RealType, KeyType, cstone::execution::Gpu>& domain,
                               const uint8_t* marks, size_t startIdx, size_t endIdx,
                               const RealType* nodeX, const RealType* nodeY, const RealType* nodeZ,
                               size_t numNodes, int blockSize)
@@ -144,7 +144,7 @@ struct RefinerTraits<TetTag, KeyType, RealType>
     }
 
     static cstone::DeviceVector<RealType> transferField(
-        const ElementDomain<TetTag, RealType, KeyType, cstone::GpuTag>& domain,
+        const ElementDomain<TetTag, RealType, KeyType, cstone::execution::Gpu>& domain,
         const Result& refined, const RealType* oldField, size_t numElements, int blockSize)
     {
         const auto& d_conn = domain.getElementToNodeConnectivity();
@@ -193,7 +193,7 @@ template<typename ElementTag, typename KeyType, typename RealType>
 class AmrManager
 {
 public:
-    using Domain    = ElementDomain<ElementTag, RealType, KeyType, cstone::GpuTag>;
+    using Domain    = ElementDomain<ElementTag, RealType, KeyType, cstone::execution::Gpu>;
     using DomainPtr = std::unique_ptr<Domain>;
     using DevVector = cstone::DeviceVector<RealType>;
     using Traits    = RefinerTraits<ElementTag, KeyType, RealType>;

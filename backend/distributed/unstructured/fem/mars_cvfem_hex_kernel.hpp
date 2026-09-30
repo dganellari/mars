@@ -166,12 +166,12 @@ __device__ inline void computeShapeDerivatives(
     double invJ[3][3];
     invert3x3(J, invJ);
 
-    // Transform parametric derivatives to physical derivatives
+    // J[physical][reference] requires grad_x = J^{-T} grad_reference.
     for (int node = 0; node < 8; ++node) {
         for (int i = 0; i < 3; ++i) {
             dndx[node][i] = 0.0;
             for (int j = 0; j < 3; ++j) {
-                dndx[node][i] += invJ[i][j] * hexDerivConst[ip][node][j];
+                dndx[node][i] += invJ[j][i] * hexDerivConst[ip][node][j];
             }
         }
     }

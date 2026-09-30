@@ -22,10 +22,11 @@ MARS provides comprehensive support for unstructured mesh processing, including:
 - **AMR**: GPU-native multi-rank adaptive mesh refinement with solution transfer
 
 > **Multi-rank status.** Non-periodic distributed assembly and AMR are rank-invariant
-> and validated; periodic (Taylor–Green) and some inlet-driven channel multi-rank paths
-> have known limitations under active work — single-rank is the validated reference for
-> those. See [Multi-Rank Support](Multi-Rank-Support.md) and the tutorials for the
-> precise current state.
+> and validated. Periodic Taylor–Green keeps one unknown per periodic point on every
+> rank count; its GPU validation is pending (see the tutorial). Some inlet-driven
+> channel multi-rank paths have known limitations under active work. See
+> [Multi-Rank Support](Multi-Rank-Support.md) and the tutorials for the precise
+> current state.
 
 ## Key Components
 
@@ -57,11 +58,11 @@ unstructured meshes:
 
 - **[Poiseuille — a From-Scratch CFD Tutorial](poiseuille_tutorial.md)** — start here if
   you are new to CFD. What an internal pump-flow simulation computes, from the mesh
-  through the numerical method (CVFEM, the matrix-free `D M⁻¹ Dᵀ` projection, BDF2,
-  advection schemes), boundary conditions, running, reading the output, and making
+  through the numerical method (CVFEM, Rhie–Chow face fluxes, the projection, BDF2,
+  algebraic multigrid), boundary conditions, running, reading the output, and making
   flow visualizations.
 - [Taylor–Green Vortex (periodic)](periodic_tgv_tutorial.md) - the canonical periodic
-  validation case for the same solver family.
+  validation case for the same solver, and how unknowns are shared between GPUs.
 
 ## Quick Start
 
@@ -69,7 +70,7 @@ unstructured meshes:
 #include <mars.hpp>
 
 // Hex8 mesh, double precision, uint64_t SFC keys, GPU
-using Domain = mars::ElementDomain<mars::HexTag, double, uint64_t, cstone::GpuTag>;
+using Domain = mars::ElementDomain<mars::HexTag, double, uint64_t, cstone::execution::Gpu>;
 
 // Read + partition + build cstone domain
 Domain domain(meshFile, rank, numRanks);

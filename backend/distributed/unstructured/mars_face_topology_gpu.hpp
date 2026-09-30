@@ -396,7 +396,7 @@ template<typename ElementTag, typename RealType, typename KeyType, typename Acce
 void FaceTopology<ElementTag, RealType, KeyType, AcceleratorTag>::extractAndDeduplicate(
     const ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>& domain)
 {
-    if constexpr (!std::is_same_v<AcceleratorTag, cstone::GpuTag>) {
+    if constexpr (!std::is_same_v<AcceleratorTag, cstone::execution::Gpu>) {
         throw std::runtime_error("FaceTopology only implemented for GPU");
     }
     

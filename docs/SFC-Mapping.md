@@ -43,7 +43,7 @@ public:
 - Identifies lowest SFC corner node of each element (not centroid)
 - Maps 3D corner coordinates to 1D SFC key via Cornerstone encoding
 - GPU kernel (`findRepresentativeNodesKernel`) processes all elements in parallel
-- Handles various element types (tets, hexes, triangles, quads)
+- Handles tetrahedra and hexahedra (triangles and quads are not implemented yet)
 
 ## Usage Example
 

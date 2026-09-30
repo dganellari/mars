@@ -2,11 +2,15 @@
 #include "thrust/sort.h"
 #include "thrust/unique.h"
 #include "thrust/binary_search.h"
+#include "thrust/count.h"
+#include "thrust/gather.h"
+#include "thrust/remove.h"
 #include "thrust/device_vector.h"
 #include "cub/cub.cuh"
 #include <unordered_map>
 #include <algorithm>
 #include <cstdlib>
+#include <iterator>
 #include <climits>
 #include <map>
 #include <string>
@@ -14,43 +18,7 @@
 namespace mars
 {
 
-// Single source of truth for SFC-to-physical conversion
-template<typename KeyType, typename RealType>
-__device__ __host__ std::tuple<RealType, RealType, RealType> decodeSfcToPhysical(KeyType sfcKey, const cstone::Box<RealType>& box) {
-    // Convert raw key to SfcKind strong type
-    auto sfcKindKey = cstone::SfcKind<KeyType>(sfcKey);
-    auto [ix, iy, iz] = cstone::decodeSfc(sfcKindKey);
-    
-    // Use SfcKind for maxTreeLevel
-    constexpr unsigned maxCoord = (1u << cstone::maxTreeLevel<cstone::SfcKind<KeyType>>{}) - 1;
-    RealType invMaxCoord = RealType(1.0) / maxCoord;
-    
-    RealType x = box.xmin() + ix * invMaxCoord * (box.xmax() - box.xmin());
-    RealType y = box.ymin() + iy * invMaxCoord * (box.ymax() - box.ymin());
-    RealType z = box.zmin() + iz * invMaxCoord * (box.zmax() - box.zmin());
-    
-    return std::make_tuple(x, y, z);
-}
-
 // CUDA kernels with RealType template parameter instead of Real
-template<typename RealType>
-__global__ void
-transformCharacteristicSizesKernel(RealType* d_h, size_t size, RealType meshFactor, RealType minH, RealType maxH)
-{
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx < size)
-    {
-        RealType val    = d_h[idx];
-        RealType result = val * meshFactor;
-
-        if constexpr (std::is_same_v<RealType, float>) {
-            d_h[idx] = fmaxf(minH, fminf(maxH, result));
-        } else {
-            d_h[idx] = fmax(minH, fmin(maxH, result));  // For double
-        }
-    }
-}
-
 template<typename RealType>
 __global__ void fillCharacteristicSizesKernel(RealType* d_h, size_t size, RealType value)
 {
@@ -375,7 +343,7 @@ void generateSfcKeys(const RealType* x,
                      const cstone::Box<RealType>& box)
 {
     // Use sfcKindPointer to match cornerstone's template instantiation
-    cstone::computeSfcKeysGpu(x, y, z, cstone::sfcKindPointer(keys), numKeys, box);
+    cstone::computeSfcKeys(cstone::execution::gpuDefaultStream, x, y, z, cstone::sfcKindPointer(keys), numKeys, box);
     cudaCheckError();
 }
 
@@ -1008,6 +976,18 @@ void HaloData<ElementTag, RealType, KeyType, AcceleratorTag>::buildNodeOwnership
         return;
     }
 
+    if (domain.sfcOwnership())
+    {
+        auto owner        = domain.sfcNodeOwner();
+        int rank          = domain.rank();
+        const KeyType* keys = thrust::raw_pointer_cast(domain.getLocalToGlobalSfcMap().data());
+        uint8_t* own      = thrust::raw_pointer_cast(d_nodeOwnership_.data());
+        thrust::for_each(thrust::device, thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(nodeCount),
+                         [=] __device__(size_t n) { own[n] = owner(keys[n]) == rank ? 1 : 0; });
+        return;
+    }
+
+    // Vote ownership (MARS_OWNERSHIP=vote, multi-block meshes)
     constexpr int NPC = ElementTag::NodesPerElement;
     int blockSize = 256;
     
@@ -1053,13 +1033,8 @@ void HaloData<ElementTag, RealType, KeyType, AcceleratorTag>::buildNodeOwnership
         cudaCheckError();
     }
 
-    // Known limitation: a small number of corner-shared nodes (e.g. ~9 on
-    // cube16/4-rank) end up doubly-owned because cstone's halo width does not
-    // include the OPPOSITE-rank elements that touch corner-only contact nodes.
-    // An attempted Step 3 (atomicMin claim across element halos) is ineffective
-    // for the same reason: those elements aren't in any peer's halo set. A real
-    // fix needs an MPI_Allgatherv of (sfc_key, owner_rank) pairs and a global
-    // tiebreaker. Deferred until per-node halo topology is in place (#2).
+    // Corner-contact nodes can end up owned twice here when the cornerstone halo lacks the opposite-rank
+    // element; NodeHaloTopology resolves them lowest-rank-wins among halo peers. SFC ownership avoids both.
 
     cudaFree(d_ptrs);
 }
@@ -1143,10 +1118,10 @@ NodeHaloTopology<ElementTag, RealType, KeyType, AcceleratorTag>::NodeHaloTopolog
             std::cerr.flush();
             MPI_Abort(MPI_COMM_WORLD, 1);
         }
-        this->buildFromCstoneHalos(domain);
+        this->buildOnDevice(domain);
     }
     else if (useHost) { buildNodeHaloTopologyHostPath(*this, domain); }
-    else              { this->buildFromCstoneHalos(domain); }
+    else              { this->buildOnDevice(domain); }
 
     // Pre-size hot-path staging buffers (Gate 4 fix for v1 race).
     size_t sendTotal = sendOffsets_.empty() ? 0 : size_t(sendOffsets_.back());
@@ -1381,25 +1356,13 @@ static void buildNodeHaloTopologyHostPath(
 // just via a different algorithm. Validation harness (validateAgainstHost)
 // diffs per-peer sorted node-id lists; bit-exact match expected.
 //
-// UNTESTED on hardware. Build, then on the cluster:
-//   MARS_NODEHALO_VALIDATE=1 mpirun ... ./mars_cvfem_graph ...
-//      → runs both paths and aborts on first mismatch
-//   MARS_NODEHALO_V2=1 mpirun ... ./mars_cvfem_graph ...
-//      → runs only v2 path (use after Gate 1 passes)
-//   (no env)            → host O(global) path (default, current production)
+// This is the DEFAULT path. MARS_NODEHALO_HOST=1 selects the host O(global)
+// path instead; MARS_NODEHALO_VALIDATE=1 runs both and aborts on the first
+// per-peer mismatch.
 //
-// KNOWN GAP: this builder consumes d_nodeOwnership_ as produced by
-// HaloData::buildNodeOwnership() Steps 1+2 only. It does NOT run a
-// global tiebreaker exchange to resolve corner-shared duplicate ownership
-// (the host path does that via MPI_Allgatherv at L1085 and the keyOwner
-// map at L1090).
-//
-// Consequence: on cube/structured meshes where Steps 1+2 already produce
-// unambiguous ownership, v2 should match host bit-exactly. On meshes
-// where multiple ranks initially own the same SFC key (corner-shared
-// nodes on >=4-rank partitions), v2 will diverge from host. Gate 1's
-// validateAgainstHost is precisely how we detect this — if it fires,
-// we add a tiebreaker pass before flipping v2 on by default.
+// Duplicate ownership of corner-shared nodes is resolved lowest-rank-wins
+// over the claims exchanged with halo peers (resolveOwnershipKernel). There is
+// no global SFC-key ownership pass.
 // ============================================================================
 
 // Send-side per-node kernel: for each node N where I'm the authoritative
@@ -2179,6 +2142,262 @@ void NodeHaloTopology<ElementTag, RealType, KeyType, AcceleratorTag>::buildFromC
     std::cout.flush();
 }
 
+template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
+void NodeHaloTopology<ElementTag, RealType, KeyType, AcceleratorTag>::buildOnDevice(
+    const ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>& domain)
+{
+    if (domain.sfcOwnership()) { buildFromSfcOwner(domain); }
+    else { buildFromCstoneHalos(domain); }
+}
+
+// Every rank computes the owner of each node it holds (SfcNodeOwner), so the receive lists need no communication.
+// The keys of the ghost nodes go to their owners in one sparse exchange; an owner's send list to a rank is the
+// keys that rank asked for, in the order it asked, which is its receive order.
+template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
+void NodeHaloTopology<ElementTag, RealType, KeyType, AcceleratorTag>::buildFromSfcOwner(
+    const ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>& domain)
+{
+    int rank            = domain.rank();
+    size_t nodeCount    = domain.getNodeCount();
+    const KeyType* keys = thrust::raw_pointer_cast(domain.getLocalToGlobalSfcMap().data());
+    const uint8_t* own  = thrust::raw_pointer_cast(domain.getNodeOwnershipMap().data());
+    auto owner          = domain.sfcNodeOwner();
+
+    // ghost nodes grouped by owner; within an owner, node ids and therefore keys ascend
+    auto isGhost     = [own] __device__(int n) { return own[n] == 0; };
+    size_t numGhosts = thrust::count_if(thrust::device, thrust::counting_iterator<int>(0),
+                                        thrust::counting_iterator<int>(int(nodeCount)), isGhost);
+    thrust::device_vector<int> d_ghostNode(numGhosts), d_ghostOwner(numGhosts);
+    thrust::copy_if(thrust::device, thrust::counting_iterator<int>(0), thrust::counting_iterator<int>(int(nodeCount)),
+                    d_ghostNode.begin(), isGhost);
+    int* ghostNode   = thrust::raw_pointer_cast(d_ghostNode.data());
+    int* ghostOwner  = thrust::raw_pointer_cast(d_ghostOwner.data());
+    thrust::for_each(thrust::device, thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(numGhosts),
+                     [=] __device__(size_t i) { ghostOwner[i] = owner(keys[ghostNode[i]]); });
+    thrust::stable_sort_by_key(thrust::device, d_ghostOwner.begin(), d_ghostOwner.end(), d_ghostNode.begin());
+
+    thrust::device_vector<int> d_owners(numGhosts), d_ownerCounts(numGhosts);
+    auto ownersEnd   = thrust::reduce_by_key(thrust::device, d_ghostOwner.begin(), d_ghostOwner.end(),
+                                             thrust::constant_iterator<int>(1), d_owners.begin(), d_ownerCounts.begin());
+    size_t numOwners = ownersEnd.first - d_owners.begin();
+    std::vector<int> owners(numOwners), ownerCounts(numOwners);
+    thrust::copy(d_owners.begin(), d_owners.begin() + numOwners, owners.begin());
+    thrust::copy(d_ownerCounts.begin(), d_ownerCounts.begin() + numOwners, ownerCounts.begin());
+
+    thrust::device_vector<KeyType> d_requestKeys(numGhosts);
+    thrust::gather(thrust::device, d_ghostNode.begin(), d_ghostNode.end(), thrust::device_pointer_cast(keys),
+                   d_requestKeys.begin());
+    cstone::DeviceVector<KeyType> d_requested;
+    constexpr int tagGhostRequests = 0x4d41; // below the epoch-based node-halo tags (0x4d4d + epoch and up)
+    auto requests = sparseExchange<KeyType>(owners, ownerCounts, thrust::raw_pointer_cast(d_requestKeys.data()),
+                                            d_requested, tagGhostRequests, MPI_COMM_WORLD);
+
+    // a rank can only ask for nodes it holds as ghosts, whose owner is this rank
+    size_t numRequested = d_requested.size();
+    thrust::device_vector<int> d_sendIds(numRequested);
+    const KeyType* requested = d_requested.data();
+    int* sendIds             = thrust::raw_pointer_cast(d_sendIds.data());
+    thrust::for_each(thrust::device, thrust::counting_iterator<size_t>(0),
+                     thrust::counting_iterator<size_t>(numRequested),
+                     [=] __device__(size_t i)
+                     {
+                         const KeyType* pos = thrust::lower_bound(thrust::seq, keys, keys + nodeCount, requested[i]);
+                         size_t n           = pos - keys;
+                         sendIds[i]         = (n < nodeCount && keys[n] == requested[i] && own[n] == 1) ? int(n) : -1;
+                     });
+    size_t unresolved = thrust::count(thrust::device, d_sendIds.begin(), d_sendIds.end(), -1);
+    if (unresolved > 0)
+    {
+        std::cerr << "[Rank " << rank << "] NodeHaloTopology: " << unresolved
+                  << " requested nodes are not owned here; ranks disagree on node ownership" << std::endl;
+        MPI_Abort(MPI_COMM_WORLD, 1);
+    }
+
+    std::vector<int> requesters, peers;
+    for (const auto& r : requests)
+        requesters.push_back(r.source);
+    std::set_union(owners.begin(), owners.end(), requesters.begin(), requesters.end(), std::back_inserter(peers));
+
+    peers_.clear();
+    sendOffsets_.assign(1, 0);
+    recvOffsets_.assign(1, 0);
+    sendNodeIds_.resize(numRequested);
+    recvNodeIds_.resize(numGhosts);
+    size_t ownerIdx = 0, requestIdx = 0;
+    for (int peer : peers)
+    {
+        int sendCount = 0, recvCount = 0;
+        if (requestIdx < requests.size() && requests[requestIdx].source == peer)
+        {
+            const auto& r = requests[requestIdx++];
+            sendCount     = r.count;
+            cudaMemcpy(thrust::raw_pointer_cast(sendNodeIds_.data()) + sendOffsets_.back(), sendIds + r.offset,
+                       sendCount * sizeof(int), cudaMemcpyDeviceToDevice);
+        }
+        if (ownerIdx < owners.size() && owners[ownerIdx] == peer) { recvCount = ownerCounts[ownerIdx++]; }
+        peers_.push_back(peer);
+        sendOffsets_.push_back(sendOffsets_.back() + sendCount);
+        recvOffsets_.push_back(recvOffsets_.back() + recvCount);
+    }
+    // ghosts are sorted by owner, and peers ascend, so the receive list is the ghost list as is
+    if (numGhosts > 0)
+    {
+        cudaMemcpy(thrust::raw_pointer_cast(recvNodeIds_.data()), ghostNode, numGhosts * sizeof(int),
+                   cudaMemcpyDeviceToDevice);
+    }
+
+    std::cout << "Rank " << rank << ": NodeHaloTopo[sfc] " << peers_.size() << " peers, " << numRequested
+              << " send nodes, " << numGhosts << " recv nodes" << std::endl;
+}
+
+template<typename KeyType, int NPC, class Domain, size_t... I>
+ConnPtrs<KeyType, NPC> connKeyPointers(const Domain& domain, std::index_sequence<I...>)
+{
+    return {{thrust::raw_pointer_cast(domain.template indices<I>().data())...}};
+}
+
+// Ranks that must hold local element e but do not get it as a cornerstone halo (missingStarRanks)
+template<int NPC, typename KeyType, typename RealType>
+struct StarDestinations
+{
+    ConnPtrs<KeyType, NPC> conn;
+    SfcNodeOwner<KeyType, RealType> owner;
+    HaloSendRanges sent;
+    int rank;
+
+    __host__ __device__ int operator()(size_t e, int* dests) const
+    {
+        KeyType corners[NPC];
+        for (int c = 0; c < NPC; ++c)
+            corners[c] = conn.ptrs[c][e];
+        return missingStarRanks<NPC>(corners, cstone::LocalIndex(e), owner, sent, rank, dests);
+    }
+
+    __host__ __device__ bool operator()(size_t e) const
+    {
+        int dests[NPC];
+        return (*this)(e, dests) > 0;
+    }
+};
+
+template<typename ElementTag, typename RealType, typename KeyType, typename AcceleratorTag>
+bool requestStarHalos(const ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>& domain,
+                      cstone::DeviceVector<KeyType>& haloKeys)
+{
+    constexpr int NPC        = ElementTag::NodesPerElement;
+    const auto& cstoneDomain = domain.getDomain();
+    int rank                 = domain.rank();
+    int numRanks             = domain.numRanks();
+
+    auto ranges = flattenHaloSendRanges(cstoneDomain.outgoingHaloIndices(), numRanks);
+    thrust::device_vector<int> d_rankOffsets(ranges.rankOffsets.begin(), ranges.rankOffsets.end());
+    thrust::device_vector<cstone::LocalIndex> d_rangeStart(ranges.start.begin(), ranges.start.end());
+    thrust::device_vector<cstone::LocalIndex> d_rangeEnd(ranges.end.begin(), ranges.end.end());
+    HaloSendRanges sent{thrust::raw_pointer_cast(d_rankOffsets.data()), thrust::raw_pointer_cast(d_rangeStart.data()),
+                        thrust::raw_pointer_cast(d_rangeEnd.data())};
+
+    StarDestinations<NPC, KeyType, RealType> destinations{
+        connKeyPointers<KeyType, NPC>(domain, std::make_index_sequence<NPC>{}), domain.sfcNodeOwner(), sent, rank};
+
+    // only elements at the partition boundary have destinations: size the buffers to those
+    auto first         = thrust::counting_iterator<size_t>(cstoneDomain.startIndex());
+    auto last          = thrust::counting_iterator<size_t>(cstoneDomain.endIndex());
+    size_t numBoundary = thrust::count_if(thrust::device, first, last, destinations);
+    thrust::device_vector<size_t> d_boundary(numBoundary);
+    thrust::copy_if(thrust::device, first, last, d_boundary.begin(), destinations);
+
+    // one slot per (boundary element, corner): a destination rank or -1
+    thrust::device_vector<int> d_dest(numBoundary * NPC);
+    thrust::device_vector<KeyType> d_key(numBoundary * NPC);
+    const size_t* boundary  = thrust::raw_pointer_cast(d_boundary.data());
+    const KeyType* elemKeys = thrust::raw_pointer_cast(domain.getElementSfcCodes().data());
+    int* dest               = thrust::raw_pointer_cast(d_dest.data());
+    KeyType* key            = thrust::raw_pointer_cast(d_key.data());
+    thrust::for_each(thrust::device, thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(numBoundary),
+                     [=] __device__(size_t i)
+                     {
+                         size_t e = boundary[i];
+                         int dests[NPC];
+                         int n = destinations(e, dests);
+                         for (int c = 0; c < NPC; ++c)
+                         {
+                             dest[i * NPC + c] = c < n ? dests[c] : -1;
+                             key[i * NPC + c]  = elemKeys[e];
+                         }
+                     });
+
+    // MARS_SYNC_TRACE: an element sent to a rank this rank exchanges no halos with means a node owned far from its
+    // elements. Print a few, with the corners that the destination owns.
+    if (std::getenv("MARS_SYNC_TRACE") != nullptr)
+    {
+        const auto& in  = cstoneDomain.incomingHaloIndices();
+        const auto& out = cstoneDomain.outgoingHaloIndices();
+        auto isPeer     = [&](int r)
+        {
+            return (size_t(r) < in.size() && in[r].count() > 0) ||
+                   (size_t(r) < out.size() && out[r].totalCount() > 0);
+        };
+        std::vector<int> h_dest(d_dest.size());
+        std::vector<size_t> h_boundary(numBoundary);
+        thrust::copy(d_dest.begin(), d_dest.end(), h_dest.begin());
+        thrust::copy(d_boundary.begin(), d_boundary.end(), h_boundary.begin());
+
+        auto owner = domain.sfcNodeOwner();
+        std::vector<KeyType> bounds(numRanks + 1);
+        cudaMemcpy(bounds.data(), owner.rankBounds, bounds.size() * sizeof(KeyType), cudaMemcpyDeviceToHost);
+        owner.rankBounds = bounds.data();
+        const auto box   = domain.getBoundingBox();
+
+        long far = 0;
+        for (size_t i = 0; i < h_dest.size(); ++i)
+        {
+            int d = h_dest[i];
+            if (d < 0 || isPeer(d)) { continue; }
+            if (far++ >= 5) { continue; }
+            size_t e = h_boundary[i / NPC];
+            std::fprintf(stderr, "[sync-trace] rank %d sends element %zu to rank %d, no halo exchange between them;"
+                                 " corners owned by %d:", rank, e, d, d);
+            for (int c = 0; c < NPC; ++c)
+            {
+                KeyType corner;
+                cudaMemcpy(&corner, destinations.conn.ptrs[c] + e, sizeof(KeyType), cudaMemcpyDeviceToHost);
+                if (owner(corner) != d) { continue; }
+                auto [px, py, pz] = decodeSfcToPhysical(corner, box);
+                std::fprintf(stderr, " (%g, %g, %g)", px, py, pz);
+            }
+            std::fprintf(stderr, "\n");
+        }
+        if (far > 0) { std::fprintf(stderr, "[sync-trace] rank %d sends %ld elements to non-peer ranks\n", rank, far); }
+        std::fflush(stderr);
+    }
+
+    auto pairs     = thrust::make_zip_iterator(thrust::make_tuple(d_dest.begin(), d_key.begin()));
+    auto pairsEnd  = thrust::remove_if(thrust::device, pairs, pairs + d_dest.size(),
+                                       [] __device__(const thrust::tuple<int, KeyType>& p) { return thrust::get<0>(p) < 0; });
+    size_t numPush = pairsEnd - pairs;
+
+    int any = numPush > 0;
+    MPI_Allreduce(MPI_IN_PLACE, &any, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+    if (!any) { return false; }
+
+    thrust::sort(thrust::device, pairs, pairs + numPush);
+    thrust::device_vector<int> d_uniqueDest(numPush), d_counts(numPush);
+    auto destEnd    = thrust::reduce_by_key(thrust::device, d_dest.begin(), d_dest.begin() + numPush,
+                                            thrust::constant_iterator<int>(1), d_uniqueDest.begin(), d_counts.begin());
+    size_t numDests = destEnd.first - d_uniqueDest.begin();
+    std::vector<int> dests(numDests), counts(numDests);
+    thrust::copy(d_uniqueDest.begin(), d_uniqueDest.begin() + numDests, dests.begin());
+    thrust::copy(d_counts.begin(), d_counts.begin() + numDests, counts.begin());
+
+    constexpr int tagStarHalos = 0x4d40; // below the epoch-based node-halo tags (0x4d4d + epoch and up)
+    sparseExchange<KeyType>(dests, counts, key, haloKeys, tagStarHalos, MPI_COMM_WORLD);
+
+    long pushed = long(numPush);
+    MPI_Allreduce(MPI_IN_PLACE, &pushed, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
+    if (rank == 0) { std::cout << "[halo] element stars completed: " << pushed << " elements requested" << std::endl; }
+    return true;
+}
+
 // ============================================================================
 // validateAgainstHost: build both paths into separate topos, diff per-peer
 // sorted node-id lists. Returns true on bit-exact match.
@@ -2222,7 +2441,7 @@ bool NodeHaloTopology<ElementTag, RealType, KeyType, AcceleratorTag>::validateAg
         cudaMemcpy(thrust::raw_pointer_cast(dOwn.data()), ownSnapshot.data(),
                    ownSnapshot.size() * sizeof(uint8_t), cudaMemcpyHostToDevice);
 
-    v2Topo.buildFromCstoneHalos(domain);
+    v2Topo.buildOnDevice(domain);
 
     auto pullToHost = [](const auto& d_vec) {
         std::vector<int> h(d_vec.size());
@@ -2601,8 +2820,6 @@ template __global__ void rebuildNodeCoordsFromElementsKernel<HexTag, uint64_t, d
     double* nodeX, double* nodeY, double* nodeZ,
     int numElements);
 
-template __global__ void transformCharacteristicSizesKernel<float>(float* d_h, size_t size, float meshFactor, float minH, float maxH);
-template __global__ void transformCharacteristicSizesKernel<double>(double* d_h, size_t size, double meshFactor, double minH, double maxH);
 template __global__ void fillCharacteristicSizesKernel<float>(float* d_h, size_t size, float value);
 template __global__ void fillCharacteristicSizesKernel<double>(double* d_h, size_t size, double value);
 
@@ -2612,7 +2829,7 @@ template __global__ void computeElementVolumesKernel<TetTag, float>(const float*
 template __global__ void computeElementVolumesKernel<TetTag, double>(const double* x, const double* y, const double* z,
     const int* indices0, const int* indices1, const int* indices2, const int* indices3, double* volumes, int numElements);
 
-// Explicit instantiation for computeSfcKeysGpu with common combinations
+// Explicit instantiations of generateSfcKeys
 template void generateSfcKeys<unsigned, float>(
     const float* x, const float* y, const float* z, unsigned* keys, size_t numKeys, const cstone::Box<float>& box);
 template void generateSfcKeys<unsigned, double>(
@@ -2695,11 +2912,6 @@ template __global__ void mapSfcBlockToLocalIdKernel<unsigned int>(
 template __global__ void mapSfcBlockToLocalIdKernel<uint64_t>(
     const uint64_t*, const int*, uint64_t*, const uint64_t*, const int*, size_t, size_t);
 
-// Explicit instantiations for decodeSfcToPhysical
-template __device__ __host__ std::tuple<float, float, float> decodeSfcToPhysical<unsigned, float>(unsigned, const cstone::Box<float>&);
-template __device__ __host__ std::tuple<double, double, double> decodeSfcToPhysical<unsigned, double>(unsigned, const cstone::Box<double>&);
-template __device__ __host__ std::tuple<float, float, float> decodeSfcToPhysical<uint64_t, float>(uint64_t, const cstone::Box<float>&);
-template __device__ __host__ std::tuple<double, double, double> decodeSfcToPhysical<uint64_t, double>(uint64_t, const cstone::Box<double>&);
 
 template __global__ void decodeAllNodesKernel<unsigned int, float>(
     const unsigned int*, float*, float*, float*, size_t, cstone::Box<float>);
@@ -2711,24 +2923,33 @@ template __global__ void decodeAllNodesKernel<uint64_t, double>(
     const uint64_t*, double*, double*, double*, size_t, cstone::Box<double>);
 
 // Explicit instantiations for HaloData
-template struct HaloData<TetTag, float, unsigned, cstone::GpuTag>;
-template struct HaloData<TetTag, double, unsigned, cstone::GpuTag>;
-template struct HaloData<TetTag, float, uint64_t, cstone::GpuTag>;
-template struct HaloData<TetTag, double, uint64_t, cstone::GpuTag>;
+template struct HaloData<TetTag, float, unsigned, cstone::execution::Gpu>;
+template struct HaloData<TetTag, double, unsigned, cstone::execution::Gpu>;
+template struct HaloData<TetTag, float, uint64_t, cstone::execution::Gpu>;
+template struct HaloData<TetTag, double, uint64_t, cstone::execution::Gpu>;
 
-template struct HaloData<HexTag, float, unsigned, cstone::GpuTag>;
-template struct HaloData<HexTag, double, unsigned, cstone::GpuTag>;
-template struct HaloData<HexTag, float, uint64_t, cstone::GpuTag>;
-template struct HaloData<HexTag, double, uint64_t, cstone::GpuTag>;
+template struct HaloData<HexTag, float, unsigned, cstone::execution::Gpu>;
+template struct HaloData<HexTag, double, unsigned, cstone::execution::Gpu>;
+template struct HaloData<HexTag, float, uint64_t, cstone::execution::Gpu>;
+template struct HaloData<HexTag, double, uint64_t, cstone::execution::Gpu>;
 
 // Explicit instantiations for NodeHaloTopology
-template struct NodeHaloTopology<TetTag, float, unsigned, cstone::GpuTag>;
-template struct NodeHaloTopology<TetTag, double, unsigned, cstone::GpuTag>;
-template struct NodeHaloTopology<TetTag, float, uint64_t, cstone::GpuTag>;
-template struct NodeHaloTopology<TetTag, double, uint64_t, cstone::GpuTag>;
-template struct NodeHaloTopology<HexTag, float, unsigned, cstone::GpuTag>;
-template struct NodeHaloTopology<HexTag, double, unsigned, cstone::GpuTag>;
-template struct NodeHaloTopology<HexTag, float, uint64_t, cstone::GpuTag>;
-template struct NodeHaloTopology<HexTag, double, uint64_t, cstone::GpuTag>;
+template bool requestStarHalos(const ElementDomain<TetTag, float, unsigned, cstone::execution::Gpu>&, cstone::DeviceVector<unsigned>&);
+template bool requestStarHalos(const ElementDomain<TetTag, double, unsigned, cstone::execution::Gpu>&, cstone::DeviceVector<unsigned>&);
+template bool requestStarHalos(const ElementDomain<TetTag, float, uint64_t, cstone::execution::Gpu>&, cstone::DeviceVector<uint64_t>&);
+template bool requestStarHalos(const ElementDomain<TetTag, double, uint64_t, cstone::execution::Gpu>&, cstone::DeviceVector<uint64_t>&);
+template bool requestStarHalos(const ElementDomain<HexTag, float, unsigned, cstone::execution::Gpu>&, cstone::DeviceVector<unsigned>&);
+template bool requestStarHalos(const ElementDomain<HexTag, double, unsigned, cstone::execution::Gpu>&, cstone::DeviceVector<unsigned>&);
+template bool requestStarHalos(const ElementDomain<HexTag, float, uint64_t, cstone::execution::Gpu>&, cstone::DeviceVector<uint64_t>&);
+template bool requestStarHalos(const ElementDomain<HexTag, double, uint64_t, cstone::execution::Gpu>&, cstone::DeviceVector<uint64_t>&);
+
+template struct NodeHaloTopology<TetTag, float, unsigned, cstone::execution::Gpu>;
+template struct NodeHaloTopology<TetTag, double, unsigned, cstone::execution::Gpu>;
+template struct NodeHaloTopology<TetTag, float, uint64_t, cstone::execution::Gpu>;
+template struct NodeHaloTopology<TetTag, double, uint64_t, cstone::execution::Gpu>;
+template struct NodeHaloTopology<HexTag, float, unsigned, cstone::execution::Gpu>;
+template struct NodeHaloTopology<HexTag, double, unsigned, cstone::execution::Gpu>;
+template struct NodeHaloTopology<HexTag, float, uint64_t, cstone::execution::Gpu>;
+template struct NodeHaloTopology<HexTag, double, uint64_t, cstone::execution::Gpu>;
 
 } // namespace mars

@@ -415,7 +415,7 @@ void probeGradAt(const cstone::DeviceVector<RealType>& d_x,
 template<typename KeyType, typename RealType>
 struct GradStepper
 {
-    using DomainT = ElementDomain<HexTag, RealType, KeyType, cstone::GpuTag>;
+    using DomainT = ElementDomain<HexTag, RealType, KeyType, cstone::execution::Gpu>;
     DomainT& domain;
     int blockSize;
     int rank;

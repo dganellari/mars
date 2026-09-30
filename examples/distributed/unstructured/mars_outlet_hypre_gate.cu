@@ -3,7 +3,7 @@
 #include <numeric>
 
 namespace {
-using Solver = mars::fem::HypreGMRESSolver<double, int, cstone::GpuTag>;
+using Solver = mars::fem::HypreGMRESSolver<double, int, cstone::execution::Gpu>;
 using Matrix = Solver::Matrix;
 using Vector = Solver::Vector;
 

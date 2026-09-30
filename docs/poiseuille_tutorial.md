@@ -1,5 +1,8 @@
 # Poiseuille Channel Flow with MARS — A Validation Tutorial
 
+> The 1500-step validation passes on 1, 2 and 4 GPUs; see the
+> [results and recipe](../tests/reference/poiseuille/planar_validation.md).
+
 This tutorial explains the `mars_poiseuille_flow` example: what Poiseuille flow
 is, why it is the standard first validation case for any incompressible CFD
 code, how to build and run it, how to read every line of its output, and the
@@ -51,7 +54,8 @@ below 6.0e-3**.
 
 ### The mesh
 
-`poiseuille_hex_14k_elem.e` (Exodus format): 14,751 hexahedra, 30,000 nodes.
+`tests/data/poiseuille/poiseuille_hex_14k_elem.e` (Exodus format, shipped with MARS):
+14,751 hexahedra, 30,000 nodes. Reading it needs a MARS build with netCDF.
 
 ```
 x: -0.5 .. 10.5   streamwise   (~150 node planes)
@@ -90,10 +94,9 @@ Two of these are easy to get wrong:
   lets mass balance itself through the pressure field.
 - **The thin z faces are symmetry planes, not walls.** On a one-element-thick
   mesh every single node touches a z face. If z faces are treated as no-slip
-  walls (the default 3D channel marking), every node in the mesh becomes a
-  Dirichlet node and the entire velocity field is frozen — nothing can ever
-  flow. The driver rebuilds the boundary masks so only the y walls are
-  no-slip.
+  walls, every node in the mesh becomes a Dirichlet node and the entire
+  velocity field is frozen — nothing can ever flow. The solver marks only the
+  y faces as walls; on the z faces it keeps w = 0 and leaves u and v free.
 
 ---
 
@@ -154,15 +157,27 @@ From this one idea come the discrete operators the solver uses:
 
 | Operator | Discrete meaning |
 |---|---|
-| divergence `D` | net flux `Σ u·A` out of a node's control volume (the mass check) |
+| face flux `F` | the volume flow `u·A` through one sub-control face, stored per face |
+| divergence `D_F` | net flux `Σ F` out of a node's control volume (the mass check) |
 | gradient `G` | how p varies across the control-volume faces (the pressure push) |
-| Laplacian `K` | viscous exchange between neighboring control volumes (the drag) |
+| Laplacian `K` | exchange between neighboring control volumes through the faces (viscous drag, and the pressure equation) |
 
 Two consequences matter for this example. First, the SCS faces are
 *interior* faces — boundary opening faces need the explicit source of
 Part 3, or inflow is invisible. Second, equal-order velocity/pressure is
-not naturally stable (the LBB issue): it works here on a clean mesh, but
-harder cases (the pump) need pressure stabilization.
+not naturally stable. The flux through a face computed from the plain
+average of its two nodes, `A·(u_L + u_R)/2`, cannot see a pressure that
+alternates from node to node (a checkerboard). The solver therefore adds a
+Rhie–Chow term to every face flux:
+
+```
+F = A·(u_L + u_R)/2 − h [ (∇p·A)_f − A·(G p_L + G p_R)/2 ],   h = dt_eff/ρ
+```
+
+The bracket is the difference between the pressure gradient on the face
+(from the shape functions of the hex) and the average of the two nodal
+gradients. It is tiny for a smooth pressure and large for a checkerboard,
+so it couples every pressure node to its neighbours.
 
 ### 2.4 Marching in time: the projection method
 
@@ -173,11 +188,15 @@ projection, BDF2 time accuracy):
    (explicit — cheap, but ignores incompressibility).
 2. **Diffuse**: apply viscosity implicitly — one linear solve per velocity
    component (implicit so large time steps stay stable).
-3. **Project**: the predicted field violates `∇·u = 0`; solve a Poisson
-   equation for a pressure correction `phi` whose gradient removes exactly
-   that violation.
-4. **Correct**: subtract the gradient, update `p += phi`, re-impose boundary
-   values.
+3. **Project**: the face fluxes `F**` of the predicted field violate
+   continuity; solve the Poisson equation `K φ = −(ρ/dt_eff)(D_F F** + openings)`
+   for a pressure correction `φ`.
+4. **Correct**: `F = F** − h (∇φ·A)` on every face, `u = u** − h G φ` at the
+   free nodes, `p += φ`.
+
+Step 4 applies to the fluxes the same face gradients from which `K` is
+built, so `D_F F + openings = 0` holds to the solver tolerance on any number
+of GPUs. The nodal velocity follows the fluxes up to the stabilization term.
 
 The projection (step 3) is the heart and the cost: it is a global problem —
 a flux imbalance at the inlet must be felt instantly at the outlet — which
@@ -189,21 +208,30 @@ Each implicit step is a sparse linear system `A x = b` with one row per
 node. At 30k nodes (or 10⁹ on Alps) you never factor A — you iterate:
 
 - **CG (conjugate gradient)** only needs matrix-vector products, which are
-  perfectly GPU-shaped. Each iteration improves the answer; you stop when
-  the residual `|Ax−b|/|b|` drops below `--tol`.
-- A **preconditioner** is a cheap approximate inverse applied each iteration
-  to speed convergence. Here: **Jacobi** (divide by the diagonal) — the
-  simplest possible one.
-- The three **velocity** solves are easy (mass-dominated matrices, a dozen
-  iterations). The **pressure Poisson** solve is hard: its conditioning
-  worsens with mesh size and cell-aspect-ratio, and on this thin-z channel
-  Jacobi-PCG needs ~3600 iterations per step. That is the entire runtime.
-  Stronger preconditioners (multigrid/AMG) exist, but reject this particular
-  matrix-free operator — a known open item, shared with the wing/pump work.
-- The pressure solve here is **matrix-free**: the operator `D M⁻¹ Dᵀ` is
-  applied as three scatters per CG iteration instead of being assembled —
-  cheaper in memory, and exactly consistent with the divergence/gradient
-  used elsewhere in the step.
+  perfectly GPU-shaped. You stop when the residual `|Ax−b|/|b|` drops below
+  `--tol`.
+- A **preconditioner** is a cheap approximate inverse applied each iteration.
+  The simplest, Jacobi (divide by the diagonal), is not enough for the
+  pressure: its iteration count grows with the mesh and the number of GPUs
+  (thousands of iterations per step on this channel).
+- **Algebraic multigrid (BoomerAMG from Hypre)** solves the error on a
+  hierarchy of coarser problems it builds from the matrix itself. Its
+  iteration count stays flat as the mesh and the GPU count grow. Here it takes
+  about 18 iterations per step for the pressure and 10–13 per velocity component.
+
+Both matrices are constant in time, so the solver assembles them once and
+builds the multigrid hierarchies once:
+
+| System | Matrix |
+|---|---|
+| velocity (each of u, v) | `M/dt_eff + nu K`, fixed velocity rows and columns removed |
+| pressure | `K`, the rows of outlet nodes (p = 0) removed |
+
+Each GPU assembles the matrix of its own elements, and Hypre adds the
+contributions of the nodes that several GPUs share (the same assembly the
+Taylor–Green tutorial explains for periodic points). At setup the solver
+compares the assembled `K` with the matrix-free flux correction and stops if
+they differ.
 
 Deeper material on the CVFEM operators lives in
 [CVFEM-Kernels.md](CVFEM-Kernels.md) and [FEM-Assembly.md](FEM-Assembly.md).
@@ -242,182 +270,151 @@ system shows zero incoming stock, so it never schedules anything to ship out.
 This is the same root cause that left the pump's passage dead — the fix below
 was developed for the pump and is validated here against the analytic answer.
 
-### The fix: a balanced opening-flux source
+### The fix: the opening fluxes
 
-After the interior divergence scatter (and its reverse-halo exchange) and
-before the pressure RHS is built, add the missing opening fluxes directly to
-the divergence accumulator:
+After the interior divergence scatter (and its reverse-halo exchange), add the
+missing flux of every inlet and outlet node:
 
 ```
-divAccNode[i] += U_prescribed . areaVec_outward[i]     (inlet and outlet nodes)
+div[i] += A_in[i] · u_prescribed[i] + A_out[i] · u[i]
 ```
 
-with two non-negotiable details, both learned the hard way:
+`A_in` and `A_out` are the node's outward face areas on the inlet and outlet
+planes (negative at the inlet, whose outward normal is −x). The inlet uses the
+prescribed velocity; the outlet uses the computed one, so the outlet flux is
+part of the operator and needs no rescaling. The skew-symmetric advection gets
+the matching term: an opening face with flux `m` contributes `−m q / 2` to its
+node.
 
-1. **Use prescribed velocities, never the solved field.** At step 0 the
-   solved outlet velocity is zero, so a solved-field source is one-sided —
-   the system becomes inconsistent and blows up immediately.
-2. **Balance the source to machine zero.** The inlet and outlet
-   contributions must cancel *exactly* — to the last floating-point bit. The
-   RHS multiplies the divergence by `rho/dt` (here 100), so even a tiny
-   numerical imbalance is amplified every step and explodes the solve. The
-   recipe (OpenFOAM's `adjustPhi` idea): measure both discrete fluxes, then
-   rescale the outlet by `oScale = -Qin/Qout` so the sum is zero by
-   construction.
-
-In code: `addOpeningFluxSourceKernel` + the `oScale` block in
-`runPressureSolveStep` of **`mars_ns_channel_solver.hpp`** — a fork of the
-shared `mars_ns_solver.hpp` (same pattern as the pump's fork), so the shared
-solver used by cavity/channel/TGV is untouched. The source is gated behind
-`NSStepper::useOpeningFluxSource`, default off; the driver enables it.
-
-The per-node outward area vectors are built by the driver: for each opening
-plane node, area = (Voronoi interval in y) × (dz/2), which sums exactly to
-the face area `H*dz`. For domain-aligned planes the direction is just `-x`
-(inlet) and `+x` (outlet).
+The areas are built on the GPU from the element faces on each opening plane:
+every face node gets the area of its sub-quad (node, edge midpoints, face
+centre), a quarter of the face for these rectangles. Each rank adds the faces
+of its own elements and the reverse halo completes the shared nodes, so the
+areas sum exactly to `H*dz` on any number of ranks. In code:
+`nsOpeningAreaKernel` and `nsOpeningFlux` in
+`backend/distributed/unstructured/fem/mars_navier_stokes.hpp`.
 
 ---
 
 ## Part 4 — Build and run
 
-Build (the target links only against the `mars` library):
+The example needs a CUDA build with `MARS_ENABLE_HYPRE=ON`:
 
 ```bash
-make mars_poiseuille_flow -j
+cmake --build . --target mars_poiseuille_flow --parallel 32
 ```
 
-Run (single rank; the area lumping assumes the opening planes are rank-local):
+Run the validation case on one GPU (1500 steps; the time loop takes about 24 s on a GH200):
 
 ```bash
-MARS_NODEHALO_V2=1 srun --account=<acct> --time=00:30:00 \
-  --nodes=1 --ntasks-per-node=1 \
+srun --account=<acct> --time=00:30:00 --nodes=1 --ntasks-per-node=1 --export=ALL \
   ./examples/distributed/unstructured/mars_poiseuille_flow \
-  --mesh=/path/to/poiseuille_hex_14k_elem.e \
-  --uinf=1.0 --nu=0.01 --dt=0.01 --tol=1e-6 --max-iter=4000 --num-steps=1200 \
-  --vtu-output=poiseuille
+  --mesh=/path/to/mars/tests/data/poiseuille/poiseuille_hex_14k_elem.e \
+  --uinf=1 --nu=0.01 --dt=0.01 --num-steps=1500 --report-every=100 --check \
+  --vtu-output=poiseuille --vtu-every=50
 ```
 
-Notes on the numbers:
-- `--num-steps=1200` (t = 12) is comfortably past convergence (~t = 10).
-- `--max-iter=4000`: the matrix-free DDT pressure solve with Jacobi
-  preconditioning needs ~3600 CG iterations per step on this mesh. That is
-  the price of the un-preconditioned thin-channel Poisson operator (AMG
-  rejects it); it is slow but completely stable.
-- `--tol=1e-6` for the pressure solve is sufficient; 1e-10 is unreachable
-  for Jacobi-PCG here and would FAIL every step.
-- Budget ~25 minutes wall; a 15-minute limit dies around step 1250.
-
-Useful flags:
+The same command runs on any number of GPUs (`--ntasks-per-node=4`). For
+scaling runs, generate the channel on every rank instead of reading a mesh:
+`--cells=NX,NY` meshes `[0,10] × [0,1] × [0,0.06]` with one cell in z.
 
 | Flag | Meaning |
 |------|---------|
-| `--drive=inlet` (default) | FLUYA reference config: velocity inlet + free pressure outlet |
-| `--drive=bodyforce`       | constant streamwise force instead (study mode; needs periodic x to be meaningful) |
-| `--no-opening-flux-source`| disable the Part-3 source — reproduces the dead channel (A/B baseline) |
-| `--no-seed-interior`      | start from rest instead of seeded plug flow (slower development) |
-| `--profile-x=X`           | move the validation plane (default 90% down the channel) |
-| `--cross-axis=y\|z`       | which axis the parabola varies over (default y) |
-| `--check`                 | regression mode: exit 1 unless RMS and flux ratios pass (Part 6) |
-| `--rms-tol=VAL`           | RMS pass threshold for `--check` (default 6e-3, the reference tol) |
-| `--flux-tol=VAL`          | flux-ratio tolerance for `--check` (default 0.10 = ±10%) |
+| `--mesh=FILE` / `--cells=NX,NY` | read a mesh, or generate the channel |
+| `--y-grading=S` | cluster the generated y spacing at the walls, S in [0,1) |
+| `--uinf --rho --nu --dt --num-steps` | inflow velocity, density, viscosity, time step, steps |
+| `--bdf1` | first-order time stepping (default BDF2) |
+| `--tol --max-iter` | relative AMG-PCG tolerance (default 1e-10) and iteration cap |
+| `--report-every=N` | progress line interval |
+| `--vtu-output=PREFIX --vtu-every=N` | ParaView frames |
+| `--check` | release gate: exit 1 unless every check of Part 6 passes |
+| `--profile-x --profile-xtol` | move the validation plane (default 90% down the channel) |
+| `--comparison-output=PREFIX` | u, v, w, p at full precision for comparisons with other codes |
 
 ---
 
 ## Part 5 — Reading the output
 
-With `--vtu-output=PREFIX` the run writes three ParaView timelines:
-
-| Files | Field | Use |
-|---|---|---|
-| `PREFIX_u.pvd` + steps | u — streamwise velocity component | **the one to visualize** (clean, validated) |
-| `PREFIX_umag.pvd` | umag — velocity *magnitude* √(u²+v²+w²) | avoid: contaminated by the v/w artifact (Part 6) |
-| `PREFIX_p.pvd` | p — pressure | avoid: carries the accumulated startup ramp (Part 6) |
-
-Per-step line:
+Setup prints the operator check:
 
 ```
-Step  500: t=5.0000 |u|=8.167e-01 div_max=2.947e+00 cg_iter_p=3630
+Pressure operator: assembled vs matrix-free, max |difference| / max |Kx| = 1.145854e-15
 ```
 
-- `|u|` — mass-weighted L2 norm of streamwise velocity over the domain. For
-  this mesh (volume 0.6) the developed parabola gives **|u| → 0.849**;
-  watching it rise from the seeded 0.77 and plateau there *is* watching the
-  parabola form. If it is frozen near 0.045 the channel is dead (Part 3).
-- `div_max` — max nodal divergence after projection. It should fall steadily
-  (7.4 → 1.6 over the run). The nonzero floor lives at boundary nodes where
-  the one-sided stencil cannot vanish; the interior is much cleaner.
-- `cg_iter_p` — pressure CG iterations. ~3600 is normal here. `FAIL` means
-  it hit `--max-iter` or a breakdown — see Part 6.
-
-Final validation block:
+Then one line per `--report-every` steps:
 
 ```
-  probe plane x = 9.0000 ...
-  U_max analytic = 1.5000  (= 1.5*Uinf)
-  RMS error      = 5.781047e-03  (normalized: 3.854031e-03)
+Step   1500  t=15.0000  |u|_M=8.4091374298e-01  continuity=6.224e-12  amg(u,v,p)=10/13/18
 ```
 
-The RMS compares solved `u(y)` on the probe plane against the analytic
-parabola. **Pass criterion: RMS < 6.0e-3** (the reference report's
-tolerance). The probe sits at 90% of the channel — past the entrance length,
-upstream of any outlet influence.
+- `|u|_M` — mass-weighted L2 norm of the streamwise velocity. For this mesh
+  (volume 0.6) the developed parabola gives about 0.84; watching it rise from
+  the seeded uniform flow and level off *is* watching the parabola form.
+- `continuity` — max of `|D_F F + openings| / M` over the nodes the projection
+  constrains: the discrete mass balance of every control volume, at the solver
+  tolerance.
+- `amg(u,v,p)` — AMG-PCG iterations of the last step. A solve that misses its
+  tolerance stops the run.
 
-Interior-flux probe:
+At the end:
 
 ```
-  Q(inlet) = 6.0000e-02
-  Q(25%) = 5.9529e-02  ratio=0.992
-  Q(50%) = 5.9529e-02  ratio=0.992
-  Q(75%) = 6.0377e-02  ratio=1.006
+[timing] ranks=1 nodes=30000 ... ms/step: total=15.903 predictor=0.054 viscous=7.212 pressure=8.594 ...
+Poiseuille validation
+  profile RMS at x=9.0000 +/- 0.2000: 4.551373e-04 (U_max=1.500000e+00, 1200 nodes)
+  flux Q(x)/Q(inlet) at 25/50/75%: 1.0000 / 1.0000 / 1.0000
+  -dp/dx from p: 1.2178e-01   from the u profile: 1.1992e-01   exact: 1.2000e-01
 ```
 
-This is the *honest* through-flow diagnostic: the volumetric flux through
-interior cross-sections, computed from the **solved** velocity. It cannot be
-faked by boundary values (a flux measured at a Dirichlet plane just reports
-the BC back at you — a lesson from the pump debugging). Ratios near 1.0 at
-25/50/75% mean real, mass-conserving flow through the whole channel.
+- The profile RMS compares the computed `u(y)` on the probe slab with the
+  analytic parabola. **Pass: RMS < 6.0e-3** (the reference report's
+  tolerance). The probe sits at 90% of the channel — past the entrance length,
+  upstream of any outlet influence.
+- The flux ratios are the volumetric flux through interior cross-sections,
+  computed from the solved velocity, over the inlet flux. They cannot be faked
+  by boundary values; 1.0000 at 25/50/75% means the flow carries all the mass
+  through the channel.
+- `-dp/dx` is measured twice: from the computed pressure between 60% and 90% of
+  the channel, and from a parabola fit of the velocity core (`G = −μ u″`). Both
+  should match the exact `12 ρ ν U / H²`.
 
-### Expected results (the validated run)
-
-| Quantity | Expected |
-|----------|----------|
-| `|u|` plateau | 0.847 (analytic 0.849) |
-| RMS vs parabola | 5.4e-3 raw, 3.6e-3 normalized (tol 6e-3) |
-| flux ratios 25/50/75% | 0.99 – 1.01 |
-| velocity-fit G | 0.121 (exact 0.12, ~101%) |
-| `div_max` at convergence | ~1.5–1.8 (frozen boundary-bookkeeping residual, not interior error) |
-| wall time, 1500 steps, 1 GH200 | ~25 min |
+With `--vtu-output=PREFIX` the run writes `PREFIX.pvd` with the point fields
+`u`, `v` and `p`.
 
 ---
 
 ## Part 6 — Regression test, profile plot, and animation
 
-**Regression test.** With `--check` the driver grades itself at the end and
-sets the exit code:
+**Regression test.** With `--check` the example grades itself at the end:
 
 ```
-VALIDATION PASS: RMS=5.781e-03 < 6e-3, flux ratios 0.992/0.992/1.006 within 1 +/- 0.1
+VALIDATION PASS: RMS=4.551e-04 < 6.000e-03, flux PASS, steady=2.627e-08 PASS, continuity*H/U=8.050e-15 balance=8.797e-08 PASS, projection PASS
 ```
+
+It requires the profile RMS and the flux ratios above, plus:
+
+- **continuity**: the RMS of `D_F F + openings` per unit volume, times H/U, at
+  most 1e-6, and the inlet and outlet fluxes balancing to 1e-6 (the outlet flux
+  uses the nodal velocity, so the balance shows the stabilization term, about 1e-7);
+- **steadiness**: the velocity change over the last 20 steps, divided by U,
+  at most 1e-6;
+- **projection**: at steps 1, 2, 3 and the last, the corrected fluxes
+  satisfy `D_F F = D_F F** + (dt_eff/ρ) K φ` to 1e-7 (printed as
+  `[channel-projection]` lines).
 
 The case is registered with ctest as `marsPoiseuilleValidation` (labels
-`validation;gpu;long`, 40-minute timeout) whenever the mesh sits at the repo
-root. Run it with `ctest -L validation`. This is the canary for any change to
-the projection, the boundary conditions, or the opening-flux source: if one
-of them regresses, the parabola degrades and the test fails loudly.
+`validation;gpu;long`) when you configure with
+`-DMARS_ENABLE_VALIDATION_TESTS=ON`. Run it with `ctest -L validation` inside
+a GPU allocation. It is the canary for any change to the projection, the
+boundary conditions or the opening fluxes.
 
-**Profile plot.** At the end of every run the driver writes
-`<prefix>_profile.csv` — solved u(y) sampled at ONE fixed x station (the node
-plane nearest the probe x; the RMS uses a small slab, but a figure must show a
-single station). Turn it into the same figure the reference report shows:
+**Profile plot.** Every run writes `PREFIX_profile.csv` (default
+`poiseuille_profile.csv`): the computed u(y) on the one node plane nearest the
+probe. Plot it against the exact curve:
 
 ```bash
 python3 scripts/plot_poiseuille_profile.py poiseuille_profile.csv
 ```
-
-(plain matplotlib, no VTK). The exact curve is drawn from the closed-form
-Wikipedia formula — `u(y) = G/(2μ)·y(h−y)` with `G = 8μU_max/h²` stated in the
-legend — not fitted to the data, and the script warns if the driver's analytic
-column ever disagrees with it.
 
 **The exact solution, four ways.** The Wikipedia "Plane Poiseuille flow"
 section defines the solution by four related quantities; the run checks all of
@@ -426,45 +423,18 @@ them independently:
 | Wikipedia quantity | Checked by |
 |---|---|
 | `u(y) = G/(2μ)·y(h−y)` | profile RMS at fixed x + the figure above |
-| `Q = Gh³/(12μ)` | interior-flux probe (Q ≈ Q_in at 25/50/75%) |
-| `G = −dp/dx` | **velocity-fit G**: quadratic fit of the core profile, `G = −μ·u″` (validated: 100.8% of exact at convergence) |
-| `U_max = Gh²/(8μ)` | identical to the `U_max = 1.5·U_mean` target (same parabola, anchored by the inlet velocity instead of G) |
+| `Q = Gh³/(12μ)` | flux ratios at 25/50/75% |
+| `G = −dp/dx` | the two `-dp/dx` values |
+| `U_max = Gh²/(8μ)` | the `U_max = 1.5·U_mean` target (same parabola, anchored by the inlet) |
 
-The G line in the run log reads:
-
-```
-G from velocity (core parabola fit, 48 nodes): 1.2096e-01   exact 1.2000e-01   (100.8% of exact)
-```
-
-A match here means the velocity profile, the flow rate, *and* the momentum
-balance (which sets G) independently agree with the exact solution — stronger
-than the profile RMS alone. Note the fit tracks the actual state: on a
-half-developed run it honestly reports ~96%, reaching ~100% only at
-convergence.
-
-**Why G is measured from the velocity, not the solved pressure (a known
-artifact).** Incremental Chorin updates `p += phi` every step and nothing ever
-removes what accumulates, so the violent startup transient leaves a giant
-frozen smooth ramp in `p` (~1e5 × the physical pressure; the driver prints the
-raw `dp/dx` under an ARTIFACT label for tracking). Worse, the mismatch between
-the predictor's SCS gradient and the corrector's `D^T` gradient leaks this
-giant field into the weakly-anchored `v`/`w` components — `umag` in the VTU
-output reaches O(100) garbage while `u` underneath is the clean validated
-parabola. Consequences: **visualize the `u` field, never `umag` or `p`** (the
-render script defaults to `u` for this reason), and trust only velocity-derived
-diagnostics. The clean structural fix is a boundary-complete divergence /
-stabilized formulation — active work on the pump side.
-
-**Animation.** `--vtu-output=PREFIX` writes a `PREFIX_umag.pvd` timeline;
-render the channel developing — uniform plug at the inlet bending into the
-red-core/blue-wall parabola — with:
+**Animation.** Render the channel developing — uniform plug at the inlet
+bending into the parabola:
 
 ```bash
 pvbatch scripts/render_poiseuille.py --pvd PREFIX     # -> PREFIX_movie.mp4
 ```
 
-Use `--vtu-every=10` on the run for a smooth 121-frame movie (default 50
-gives 25 frames).
+Use `--vtu-every=10` for a smooth movie.
 
 ---
 
@@ -472,24 +442,27 @@ gives 25 frames).
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
-| `|u|` frozen ~0.045, `div_max` constant | opening-flux source off, or all nodes Dirichlet (z faces marked as walls) | default config already handles both; check the `Drive:` and `Opening-flux source:` banner lines |
-| `cg_iter_p=FAIL`, residual stalls ~1e-2..1e-5 | tolerance unreachable for Jacobi-PCG, or `--max-iter` too low | `--tol=1e-6 --max-iter=4000` |
-| `cg_iter_p=FAIL` at iteration 1 (`pAp<=0`) | Jacobi diagonal clip too small for extreme cell-size ratios | `MARS_DDT_JACOBI_CLIP_FRAC=1e-2` (env var, no rebuild) |
-| blows up within a few steps after flow develops | unbalanced opening source (should not happen with `oScale`), or — on harder meshes — the equal-order checkerboard instability | this clean hex mesh does not checkerboard through t=12; for meshes that do, pressure stabilization (PSPG/VMS) is required — active work on the pump side |
-| run dies near step 1250 with no validation block | srun wall-time limit | `--time=00:30:00` |
-| `umag`/`p` look like garbage in ParaView while the run PASSes | known incremental-pressure artifact leaking into v/w (Part 6) | render the `u` field (script default); trust velocity diagnostics only |
-| rerun reproduces identical numbers to many digits after a code change | stale binary — build dir not rebuilt | rebuild `mars_poiseuille_flow`; bit-identical output after an intended change is the tell |
+| `NavierStokes: planar flow needs one layer of elements between two z planes` | the example solves planar flow (u, v, p) on a one-element-thick mesh | use a mesh with every node on one of two z planes |
+| `the assembled pressure operator is wrong` at setup | assembly and matrix-free operator disagree | a real bug: report it with the rank count and mesh |
+| `the ... solve did not converge` | `--max-iter` too low, or a broken input (NaN) | check the last `amg(u,v,p)` line; raise `--max-iter` |
+| identical numbers after a code change | stale binary | rebuild `mars_poiseuille_flow` |
+| more GPUs are slower on the tutorial mesh | 30k nodes are too few to share | scale with `--cells=NX,NY` |
 
 ---
 
 ## Part 8 — Where to go next
 
+- `examples/distributed/unstructured/mars_poiseuille_flow.cu` — the example:
+  mesh and domain, solver, time loop, output, in that order.
+- `backend/distributed/unstructured/fem/mars_navier_stokes.hpp` — the solver,
+  shared with the Taylor–Green vortex and the lid-driven cavity: boundary
+  conditions, DOF numbering for Hypre, assembly, the four stages of a step, and
+  the projection check.
+- [periodic_tgv_tutorial.md](periodic_tgv_tutorial.md) — the same solver on a
+  periodic box, and how the unknowns are shared between GPUs.
+- `examples/distributed/unstructured/mars_poiseuille_validation.hpp` — the
+  validation against the exact solution and the `--check` gate.
 - [CVFEM-Kernels.md](CVFEM-Kernels.md) and [FEM-Assembly.md](FEM-Assembly.md) —
-  the discrete CVFEM operators and how they assemble into the projection method.
-- `examples/distributed/unstructured/mars_poiseuille_flow.cu` — the driver:
-  BC rebuild, area lumping, validation, flux probe. Deliberately small.
-- `backend/distributed/unstructured/fem/mars_ns_channel_solver.hpp` — the
-  channel fork; its only delta vs the shared solver is the opening-flux
-  source (search "Balanced opening-flux source").
+  the discrete CVFEM operators.
 - `report.html` — the FLUYA reference report this case is validated against,
   including the reference solver's input file.

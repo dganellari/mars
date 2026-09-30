@@ -48,7 +48,7 @@ struct SourceTerm {
 
 // Save solution to MFEM GridFunction format
 void saveSolutionToGridFunction(const cstone::DeviceVector<double>& u_local, 
-                               const mars::fem::UnstructuredDofHandler<TetTag, double, Unsigned, cstone::GpuTag>& dof_handler,
+                               const mars::fem::UnstructuredDofHandler<TetTag, double, Unsigned, cstone::execution::Gpu>& dof_handler,
                                int rank, int numRanks) {
     if (rank != 0) return;  // Only rank 0 writes the file
     
@@ -88,6 +88,16 @@ int main(int argc, char** argv) {
     int rank, numRanks;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &numRanks);
+
+    // UnstructuredDofHandler picks node owners with its own rule, which differs from the domain's node
+    // ownership that the assemblers and halo exchange use, so on >1 rank rows and ghosts do not match.
+    // mars_ex1_poisson shows the multi-rank scheme (buildDofMappingGpu + node-halo CG).
+    if (numRanks > 1) {
+        if (rank == 0)
+            std::cerr << "Error: mars_ex_beam_tet is single-rank only (run with 1 MPI rank).\n";
+        MPI_Finalize();
+        return 1;
+    }
     
     // Parse command line arguments
     std::string meshPath = "";  // No default, user must specify
@@ -189,7 +199,7 @@ int main(int argc, char** argv) {
     
     // Create ElementDomain using direct constructor with MFEM mesh data and boundary info
     // The bounding box will be computed automatically from the coordinate data
-    using Domain = ElementDomain<TetTag, double, Unsigned, cstone::GpuTag>;
+    using Domain = ElementDomain<TetTag, double, Unsigned, cstone::execution::Gpu>;
     Domain domain(std::make_tuple(x_coords, y_coords, z_coords),
                   std::make_tuple(i0, i1, i2, i3),
                   std::make_tuple(isBoundaryNode),
@@ -233,7 +243,7 @@ int main(int argc, char** argv) {
     // =====================================================
     if (rank == 0) std::cout << "\n1.5. Creating distributed DOF handler...\n";
     
-    using DofHandler = mars::fem::UnstructuredDofHandler<TetTag, double, Unsigned, cstone::GpuTag>;
+    using DofHandler = mars::fem::UnstructuredDofHandler<TetTag, double, Unsigned, cstone::execution::Gpu>;
     DofHandler dof_handler(domain, rank, numRanks);
     dof_handler.enumerate_dofs();
     
@@ -325,7 +335,7 @@ int main(int argc, char** argv) {
     auto t_fes_start = std::chrono::high_resolution_clock::now();
     
     // Create H1 finite element space
-    using FESpace = mars::fem::H1FESpace<TetTag, double, Unsigned, cstone::GpuTag>;
+    using FESpace = mars::fem::H1FESpace<TetTag, double, Unsigned, cstone::execution::Gpu>;
     FESpace fe_space(domain);
     
     auto t_fes_end = std::chrono::high_resolution_clock::now();
@@ -341,7 +351,7 @@ int main(int argc, char** argv) {
     // =====================================================
     if (rank == 0) std::cout << "\n1.5. Creating distributed data manager...\n";
     
-    mars::fem::UnstructuredDM<DofHandler, double, cstone::GpuTag> dm(dof_handler);
+    mars::fem::UnstructuredDM<DofHandler, double, cstone::execution::Gpu> dm(dof_handler);
     dm.add_data_field<double>();  // Solution vector
     dm.add_data_field<double>();  // RHS vector
     // Resize will be done after we know actual matrix size
@@ -560,7 +570,7 @@ int main(int argc, char** argv) {
 #ifdef MARS_ENABLE_HYPRE
     // Use full Hypre PCG + BoomerAMG (most MFEM-like)
     if (rank == 0) std::cout << "Using full Hypre PCG + BoomerAMG solver" << std::endl;
-    mars::fem::HyprePCGSolver<double, Unsigned, cstone::GpuTag> hypre_solver(MPI_COMM_WORLD, 400, 1e-10);
+    mars::fem::HyprePCGSolver<double, Unsigned, cstone::execution::Gpu> hypre_solver(MPI_COMM_WORLD, 400, 1e-10);
     hypre_solver.setVerbose(rank == 0);
 
     // Compute global DOF range from matrix dimensions using MPI
@@ -580,7 +590,7 @@ int main(int argc, char** argv) {
 #else
     // Fallback to custom CG with Jacobi preconditioner
     if (rank == 0) std::cout << "Using custom CG + Jacobi preconditioner" << std::endl;
-    mars::fem::PreconditionedConjugateGradientSolver<double, Unsigned, cstone::GpuTag> cg(400, 1e-10);
+    mars::fem::PreconditionedConjugateGradientSolver<double, Unsigned, cstone::execution::Gpu> cg(400, 1e-10);
     cg.setVerbose(rank == 0);
     bool converged = cg.solve(K_full, rhs_full, u_full);
 #endif

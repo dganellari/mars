@@ -39,7 +39,7 @@ protected:
     mars::context context;
 
     // Define the type we're testing
-    using DomainType = ElementDomain<TetTag, cstone::GpuTag>;
+    using DomainType = ElementDomain<TetTag, cstone::execution::Gpu>;
 
     void SetUp() override
     {

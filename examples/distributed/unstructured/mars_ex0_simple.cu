@@ -86,7 +86,7 @@ int main(int argc, char* argv[]) {
         if (rank == 0) std::cout << "4. Assembling stiffness matrix...\n";
         auto t_stiff_start = std::chrono::high_resolution_clock::now();
         
-        fem::SparseMatrix<uint64_t, float, cstone::GpuTag> K;
+        fem::SparseMatrix<uint64_t, float, cstone::execution::Gpu> K;
         fem::TetStiffnessAssembler<float, uint64_t> stiffAssembler;
         stiffAssembler.assemble(fes, K);
         
@@ -146,8 +146,8 @@ int main(int argc, char* argv[]) {
             boundaryValues[dof] = 0.0f;  // u = 0 on boundary
         }
         
-        fem::DOFElimination<float, uint64_t, cstone::GpuTag> eliminator;
-        fem::SparseMatrix<uint64_t, float, cstone::GpuTag> K_int;
+        fem::DOFElimination<float, uint64_t, cstone::execution::Gpu> eliminator;
+        fem::SparseMatrix<uint64_t, float, cstone::execution::Gpu> K_int;
         cstone::DeviceVector<float> b_int;
         
         eliminator.buildInteriorSystem(K, b, isBoundaryDOF, boundaryValues, K_int, b_int);

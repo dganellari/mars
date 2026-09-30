@@ -3,6 +3,7 @@
 #include <cuda_runtime.h>
 #endif
 #include "mars_segregated_simple.hpp"
+#include "mars_segregated_high_resolution.hpp"
 #include "mars_segregated_simple_metrics.hpp"
 #include <algorithm>
 #include <cmath>
@@ -29,6 +30,7 @@ template<class T> struct Array {
     thrust::device_vector<T> values;
     explicit Array(std::size_t n):values(n) {}
     explicit Array(const std::vector<T>& x):values(x) {}
+    explicit Array(const thrust::device_vector<T>& x):values(x) {}
     T* data() { return device_data(values); }
     void copy_from(const Array& other) { thrust::copy(other.values.begin(),other.values.end(),values.begin()); }
     void zero() { thrust::fill(values.begin(),values.end(),T{}); }
@@ -69,7 +71,7 @@ template<int C> struct LinearSystem {
     bool verbose=true;
     Array<double> blocks,rhs,increment,residual;
 #ifdef MARS_REPLAY_CUDA
-    using Solver=mars::fem::HypreGMRESSolver<double,int,cstone::GpuTag>;
+    using Solver=mars::fem::HypreGMRESSolver<double,int,cstone::execution::Gpu>;
     typename Solver::Matrix matrix;
     typename Solver::Vector b,x;
     thrust::device_vector<HYPRE_BigInt> mapping;
@@ -77,6 +79,8 @@ template<int C> struct LinearSystem {
     LinearSystem(int n,int nnz):rows(C*n),blocks(nnz*C*C),rhs(rows),increment(rows),residual(2*rows),mapping(rows),solver(MPI_COMM_WORLD,2000,1e-12,Solver::BOOMERAMG,100) {
         matrix.allocate(rows,rows,nnz*C*C); b.resize(rows); x.resize(rows);
         thrust::sequence(mapping.begin(),mapping.end(),HYPRE_BigInt(0)); solver.setVerbose(false); solver.setPointBlock(C);
+        solver.enable_true_residual_check(1e-13,1e-10);
+        solver.setAMGCoarseRelaxType(18); // Prepare l1 norms even when the hierarchy has only one level.
     }
     void solve(BlockCsrView<C> view) {
         launch(rows,SimpleScalarRows<C>{view,matrix.rowOffsetsPtr(),matrix.colIndicesPtr(),matrix.valuesPtr()});
@@ -123,9 +127,9 @@ template<int C> struct LinearSystem {
         ensure(std::isfinite(absolute) && std::isfinite(b2) && absolute<=1e-13+1e-10*std::sqrt(b2),"true linear residual failed");
     }
 };
-template<int C> void gradient(SimpleMesh m,SimpleState s,const double* field,Array<double>& sum,double* output) {
-    sum.zero(); launch(m.element_count,SimpleGradientInterior<C>{m,field,sum.data()});
-    launch(m.face_count,SimpleGradientBoundary<C>{m,field,sum.data()});
+template<int C> void gradient(SimpleMesh m,SimpleState s,const double* field,Array<double>& sum,double* output,bool velocity_shifted=false) {
+    sum.zero(); launch(m.element_count,SimpleGradientInterior<C>{m,field,sum.data(),velocity_shifted});
+    launch(m.face_count,SimpleGradientBoundary<C>{m,field,sum.data(),velocity_shifted});
     launch(m.node_count*C*3,SimpleGradientFinish<C>{s.volume,sum.data(),output,s.error});
 }
 
@@ -143,9 +147,10 @@ struct NoSimpleObserver { void operator()(const char*,Array<double>&) const {} }
 
 // Geometry, graph, state and scratch persist across outer iterations.
 struct SimpleRunner {
-    int n,e,b,completed=0;
+    int n,e,b,completed=0,limiter_iteration=-1;
     SimpleControls controls;
     Array<double> x,y,z,velocity,pressure,vg,pg,d,volume,div,eflux,bflux,trace,factor,sum,gp,moment,old_velocity,old_pressure,old_eflux,old_bflux;
+    Array<double> blend,blend_lower,blend_upper,blend_candidate,inlet_velocity;
     Array<int> n0,n1,n2,n3,error,flags,old_flags;
     Array<SimpleFace> faces; Array<TetGeometry<double>> geometry;
     SimpleMesh mesh; SimpleState state;
@@ -156,23 +161,33 @@ struct SimpleRunner {
         n(int(f.x.size())),e(int(f.nodes[0].size())),b(int(f.faces.size())),controls(c),
         x(f.x),y(f.y),z(f.z),velocity(3*n),pressure(n),vg(9*n),pg(3*n),d(3*n),volume(n),div(n),
         eflux(6*e),bflux(3*b),trace(3*b),factor(n),sum(9*n),gp(3*n),moment(2),old_velocity(3*n),old_pressure(n),old_eflux(6*e),old_bflux(3*b),
+        blend(c.high_resolution?3*n:0),blend_lower(c.high_resolution?3*n:0),blend_upper(c.high_resolution?3*n:0),blend_candidate(c.high_resolution?3*n:0),inlet_velocity(3*n),
         n0(f.nodes[0]),n1(f.nodes[1]),n2(f.nodes[2]),n3(f.nodes[3]),error(1),flags(3*b),old_flags(3*b),
         faces(f.faces),geometry(e),
         mesh{n,e,b,{n0.data(),n1.data(),n2.data(),n3.data()},x.data(),y.data(),z.data(),faces.data(),geometry.data()},
         state{velocity.data(),pressure.data(),vg.data(),pg.data(),d.data(),volume.data(),div.data(),
-              eflux.data(),bflux.data(),trace.data(),factor.data(),error.data(),flags.data()},
+              eflux.data(),bflux.data(),trace.data(),factor.data(),error.data(),flags.data(),blend.data(),inlet_velocity.data()},
         graph(mesh),momentum(n,graph.blocks()),poisson(n,graph.blocks()) {
-        ensure(c.density>0 && c.viscosity>0 && c.pseudo_dt>0 && c.inlet_speed>0,"invalid material or pseudo-time");
-        for (double alpha:{c.alpha_u,c.alpha_p,c.alpha_mass,c.beta})
-            ensure(alpha>0 && alpha<=1,"relaxation and beta must be in (0,1]");
+        ensure(valid_simple_controls(c),"invalid SIMPLE controls");
         launch(e,SimpleGeometry{mesh,state}); check("native geometry failed");
         launch(b,SimpleBoundaryFactor{mesh,factor.data()});
+        launch(b,SimpleInletArea{mesh,sum.data(),sum.data()+3*n});
+        launch(n,SimpleInletVelocity{sum.data(),sum.data()+3*n,inlet_velocity.data(),controls.inlet_speed,error.data()});
+        check("invalid inlet normal or boundary velocity");
     }
     SimpleRunner(const SimpleRunner&)=delete;
     SimpleRunner& operator=(const SimpleRunner&)=delete;
     void check(const char* message) { ensure(error.host()[0]==0,message); }
     void assemble_momentum() {
-        gradient<3>(mesh,state,state.velocity,sum,state.velocity_gradient);
+        gradient<3>(mesh,state,state.velocity,sum,state.velocity_gradient,controls.velocity_shifted);
+        if (controls.high_resolution && limiter_iteration!=completed) {
+            const auto a=graph.view<3>(nullptr,nullptr);
+            launch(n,SimpleBlendBounds{a,state.velocity,blend_lower.data(),blend_upper.data(),blend_candidate.data(),state.error});
+            const SimpleBlendSamples samples{mesh,state,blend_lower.data(),blend_upper.data(),blend_candidate.data()};
+            launch(e,SimpleBlendInterior{samples}); launch(b,SimpleBlendBoundary{samples});
+            launch(n,SimpleBlendFinish{blend_candidate.data(),blend.data()});
+            limiter_iteration=completed;
+        }
         gradient<1>(mesh,state,state.pressure,sum,state.pressure_gradient);
         momentum.blocks.zero(); momentum.rhs.zero(); auto am=graph.view<3>(momentum.blocks.data(),momentum.rhs.data());
         launch(e,SimpleInterior<3>{mesh,state,controls,am});

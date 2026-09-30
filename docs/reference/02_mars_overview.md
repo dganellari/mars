@@ -84,7 +84,7 @@ bool isLocalElement(idx);
 ```
 
 ### Template instantiations (8)
-`{TetTag, HexTag} × {float, double} × {unsigned, uint64_t} × {cstone::GpuTag}`
+`{TetTag, HexTag} × {float, double} × {unsigned, uint64_t} × {cstone::execution::Gpu}`
 
 ## 3. AdjacencyData — CSR connectivity
 

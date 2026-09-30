@@ -65,20 +65,20 @@ typedef uint64_t IndexType;
 
 // DOF handler typedef for convenience  
 template<typename ElemTag>
-using DofHandlerT = mars::fem::UnstructuredDofHandler<ElemTag, double, IndexType, cstone::GpuTag>;
+using DofHandlerT = mars::fem::UnstructuredDofHandler<ElemTag, double, IndexType, cstone::execution::Gpu>;
 
 // FE space typedef for convenience
 template<typename ElemTag>
-using FESpaceT = mars::fem::H1FESpace<ElemTag, double, IndexType, cstone::GpuTag>;
+using FESpaceT = mars::fem::H1FESpace<ElemTag, double, IndexType, cstone::execution::Gpu>;
 
 // Assembler typedefs for convenience
 template<typename ElemTag>
-using StiffnessAssemblerT = mars::fem::StiffnessAssembler<ElemTag, double, IndexType, cstone::GpuTag>;
+using StiffnessAssemblerT = mars::fem::StiffnessAssembler<ElemTag, double, IndexType, cstone::execution::Gpu>;
 template<typename ElemTag>
-using MassAssemblerT = mars::fem::MassAssembler<ElemTag, double, IndexType, cstone::GpuTag>;
+using MassAssemblerT = mars::fem::MassAssembler<ElemTag, double, IndexType, cstone::execution::Gpu>;
 
 // Matrix typedef (doesn't depend on element tag)
-using SparseMatrixType = mars::fem::SparseMatrix<IndexType, double, cstone::GpuTag>;
+using SparseMatrixType = mars::fem::SparseMatrix<IndexType, double, cstone::execution::Gpu>;
 
 // Backward compatibility - use full type names to avoid conflicts
 using DofHandler = DofHandlerT<ElementTag>;
@@ -135,6 +135,16 @@ int main(int argc, char** argv) {
     int rank, numRanks;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &numRanks);
+
+    // UnstructuredDofHandler picks node owners with its own rule, which differs from the domain's node
+    // ownership that the assemblers and halo exchange use, so on >1 rank rows and ghosts do not match.
+    // mars_ex1_poisson shows the multi-rank scheme (buildDofMappingGpu + node-halo CG).
+    if (numRanks > 1) {
+        if (rank == 0)
+            std::cerr << "Error: mars_ex_beam_tet_distributed is single-rank only (run with 1 MPI rank).\n";
+        MPI_Finalize();
+        return 1;
+    }
     
     if (rank == 0) {
         std::cout << "=== BINARY COMPILED: " << __DATE__ << " " << __TIME__ << " ===" << std::endl;
@@ -457,7 +467,7 @@ int main(int argc, char** argv) {
     }
 
     // Create ElementDomain with compile-time ElementTag selection
-    using Domain = mars::ElementDomain<ElementTag, double, IndexType, cstone::GpuTag>;
+    using Domain = mars::ElementDomain<ElementTag, double, IndexType, cstone::execution::Gpu>;
 
     // Validate mesh type matches compiled ElementTag and create domain
     std::unique_ptr<Domain> domain_ptr;
@@ -668,7 +678,7 @@ int main(int argc, char** argv) {
 
     // Create distributed data manager
     // Note: For Hypre, each rank stores only its owned DOFs
-    mars::fem::UnstructuredDM<DofHandler, double, cstone::GpuTag> dm(dof_handler);
+    mars::fem::UnstructuredDM<DofHandler, double, cstone::execution::Gpu> dm(dof_handler);
     dm.add_data_field<double>();  // Solution vector
     dm.add_data_field<double>();  // RHS vector
     dm.resize(dof_handler.get_num_local_dofs());  // Owned DOFs only
@@ -835,7 +845,7 @@ int main(int argc, char** argv) {
     auto bc_start = std::chrono::high_resolution_clock::now();
 
     SparseMatrixType A_r;
-    mars::VectorSelector<double, cstone::GpuTag>::type B_r;
+    mars::VectorSelector<double, cstone::execution::Gpu>::type B_r;
     std::vector<IndexType> dof_mapping;
     
     // IndexType numOwnedDofs = dof_handler.get_num_local_dofs(); // Already declared above
@@ -1348,10 +1358,10 @@ int main(int argc, char** argv) {
                   << ", " << globalRowEnd << "), columns [0, " << numInteriorGlobal << ")" << std::endl;
     }
     
-    mars::VectorSelector<double, cstone::GpuTag>::type X_r(reducedSize, 0.0);
+    mars::VectorSelector<double, cstone::execution::Gpu>::type X_r(reducedSize, 0.0);
     
     // Select preconditioner based on solver argument
-    using PrecondType = mars::fem::HyprePCGSolver<double, IndexType, cstone::GpuTag>::PrecondType;
+    using PrecondType = mars::fem::HyprePCGSolver<double, IndexType, cstone::execution::Gpu>::PrecondType;
     PrecondType precondType = PrecondType::BOOMERAMG;  // Default to BoomerAMG
     if (solver == "elimination-jacobi") {
         precondType = PrecondType::JACOBI;
@@ -1361,7 +1371,7 @@ int main(int argc, char** argv) {
         std::cout << "Using preconditioner: " << (precondType == PrecondType::JACOBI ? "Jacobi" : "BoomerAMG") << std::endl;
     }
     
-    mars::fem::HyprePCGSolver<double, IndexType, cstone::GpuTag> hypre_solver(MPI_COMM_WORLD, 400, 1e-10, precondType);
+    mars::fem::HyprePCGSolver<double, IndexType, cstone::execution::Gpu> hypre_solver(MPI_COMM_WORLD, 400, 1e-10, precondType);
     hypre_solver.setVerbose(rank == 0);
     
     // Pass the rectangular matrix with contiguous global numbering
@@ -1371,7 +1381,7 @@ int main(int argc, char** argv) {
     
     // Recover full solution (boundary DOFs = 0)
     auto& u_solution = dm.get_data<0>();
-    mars::fem::RecoverFEMSolution<IndexType, double, cstone::GpuTag>(X_r, dof_mapping, u_solution);
+    mars::fem::RecoverFEMSolution<IndexType, double, cstone::execution::Gpu>(X_r, dof_mapping, u_solution);
 #else
     if (rank == 0) std::cerr << "ERROR: Hypre not available\n";
     MPI_Finalize();

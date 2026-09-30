@@ -15,31 +15,84 @@
 
 #include <cstone/domain/domain.hpp>
 #include <cstone/domain/assignment.hpp>
+#include <cstdio>
+#include <cstdlib>
 #include <tuple>
 
 namespace mars
 {
 
+namespace
+{
+// The partition gives every rank at least one element iff the GLOBAL count reaches the rank count.
+// Compare the global sum, not this rank's slice: a slice below numRanks is a valid decomposition
+// (e.g. 4096 elements on 128 ranks), and a rank-local verdict would let some ranks throw while the
+// rest enter cstone's collective sync.
+void requireEnoughElements(size_t localCount, int numRanks)
+{
+    unsigned long long local = localCount, global = 0;
+    MPI_Allreduce(&local, &global, 1, MPI_UNSIGNED_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+    if (global < static_cast<unsigned long long>(numRanks))
+    {
+        throw std::runtime_error("Mesh has fewer elements (" + std::to_string(global) + ") than MPI ranks (" +
+                                 std::to_string(numRanks) +
+                                 "). Each rank must get at least one element for domain decomposition.");
+    }
+}
+
+// MARS_SYNC_TRACE=1: every rank reports each finished phase of the element sync, so a hang shows which phase and
+// which ranks did not arrive.
+void syncTrace(const char* phase)
+{
+    static const bool on = std::getenv("MARS_SYNC_TRACE") != nullptr;
+    if (!on) return;
+    int rank = 0;
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    std::fprintf(stderr, "[sync-trace] rank %d finished %s at %.3f s\n", rank, phase, MPI_Wtime());
+    std::fflush(stderr);
+}
+} // namespace
+
+// SFC node ownership: add the element halos that the callback requests. Collective, so every rank calls it; runs
+// between the cornerstone sync and the halo exchange of the element properties.
+template<typename KeyType, typename RealType, class Properties, class Scratch>
+void addStarHalos(cstone::Domain<KeyType, RealType, cstone::execution::Gpu>* domain,
+                  const StarHaloKeysFn<KeyType>& starHaloKeys,
+                  cstone::DeviceVector<KeyType>& elemSfcCodes,
+                  cstone::DeviceVector<RealType>& elemX,
+                  cstone::DeviceVector<RealType>& elemY,
+                  cstone::DeviceVector<RealType>& elemZ,
+                  cstone::DeviceVector<RealType>& elemH,
+                  Properties properties,
+                  Scratch scratch)
+{
+    if (!starHaloKeys) return;
+    cstone::DeviceVector<KeyType> haloKeys;
+    bool any = starHaloKeys(haloKeys);
+    syncTrace("star requests");
+    if (any)
+    {
+        domain->addHalos({haloKeys.data(), haloKeys.size()}, elemSfcCodes, elemX, elemY, elemZ, elemH, properties,
+                         scratch);
+        syncTrace("addHalos");
+    }
+}
+
 // Implementation of syncDomainImpl for various KeyType and RealType combinations
 template<typename KeyType, typename RealType, typename SfcConnTuple>
-void syncDomainImpl(cstone::Domain<KeyType, RealType, cstone::GpuTag>* domain,
+void syncDomainImpl(cstone::Domain<KeyType, RealType, cstone::execution::Gpu>* domain,
                     cstone::DeviceVector<KeyType>& elemSfcCodes,
                     cstone::DeviceVector<RealType>& elemX,
                     cstone::DeviceVector<RealType>& elemY,
                     cstone::DeviceVector<RealType>& elemZ,
                     cstone::DeviceVector<RealType>& elemH,
                     size_t& elementCount,
-                    SfcConnTuple& d_conn_keys_)
+                    SfcConnTuple& d_conn_keys_,
+                    const StarHaloKeysFn<KeyType>& starHaloKeys)
 {
     int numRanks;
     MPI_Comm_size(MPI_COMM_WORLD, &numRanks);
-    // Early check for insufficient elements
-    if (elementCount < numRanks)
-    {
-        throw std::runtime_error("Mesh has fewer elements (" + std::to_string(elementCount) + 
-                               ") than MPI ranks (" + std::to_string(numRanks) +
-                               "). Each rank must get at least one element for domain decomposition.");
-    }
+    requireEnoughElements(elementCount, numRanks);
 
     // Create scratch buffers to match the data types being synced:
     // - First 3 for coordinates (x, y, z) -> RealType
@@ -69,7 +122,11 @@ void syncDomainImpl(cstone::Domain<KeyType, RealType, cstone::GpuTag>* domain,
             domain->sync(elemSfcCodes, elemX, elemY, elemZ, elemH,
                        properties_refs,                                  // 4 properties of KeyType
                        std::tie(s1, s2, s3, s4, s5, s6, s7));           // Mixed scratch types
+            syncTrace("cstone sync");
+            addStarHalos(domain, starHaloKeys, elemSfcCodes, elemX, elemY, elemZ, elemH, properties_refs,
+                         std::tie(s1, s2, s3, s4, s5, s6, s7));
             domain->exchangeHalos(properties_refs, s4, s5);
+            syncTrace("property halos");
         } catch (const std::exception& e) {
             std::string errorMsg = e.what();
             // If there's any sync error and element count is low, provide a more helpful message
@@ -96,7 +153,11 @@ void syncDomainImpl(cstone::Domain<KeyType, RealType, cstone::GpuTag>* domain,
             domain->sync(elemSfcCodes, elemX, elemY, elemZ, elemH,
                        properties_refs,                                              // 8 properties of KeyType
                        std::tie(s1, s2, s3, s4, s5, s6, s7, s8, s9, s10, s11));     // Mixed scratch types
+            syncTrace("cstone sync");
+            addStarHalos(domain, starHaloKeys, elemSfcCodes, elemX, elemY, elemZ, elemH, properties_refs,
+                         std::tie(s1, s2, s3, s4, s5, s6, s7, s8, s9, s10, s11));
             domain->exchangeHalos(properties_refs, s4, s5);
+            syncTrace("property halos");
         } catch (const std::exception& e) {
             std::string errorMsg = e.what();
             // If there's any sync error and element count is low, provide a more helpful message
@@ -127,7 +188,7 @@ void syncDomainImpl(cstone::Domain<KeyType, RealType, cstone::GpuTag>* domain,
 // buffer than syncDomainImpl (s12) to keep mars' "#KeyType scratch = #properties, last = sfcOrder"
 // convention with the extra property.
 template<typename KeyType, typename RealType, typename SfcConnTuple>
-void syncDomainImplBlock(cstone::Domain<KeyType, RealType, cstone::GpuTag>* domain,
+void syncDomainImplBlock(cstone::Domain<KeyType, RealType, cstone::execution::Gpu>* domain,
                          cstone::DeviceVector<KeyType>& elemSfcCodes,
                          cstone::DeviceVector<RealType>& elemX,
                          cstone::DeviceVector<RealType>& elemY,
@@ -135,16 +196,12 @@ void syncDomainImplBlock(cstone::Domain<KeyType, RealType, cstone::GpuTag>* doma
                          cstone::DeviceVector<RealType>& elemH,
                          size_t& elementCount,
                          SfcConnTuple& d_conn_keys_,
-                         cstone::DeviceVector<KeyType>& elemBlockKeys)
+                         cstone::DeviceVector<KeyType>& elemBlockKeys,
+                         const StarHaloKeysFn<KeyType>& starHaloKeys)
 {
     int numRanks;
     MPI_Comm_size(MPI_COMM_WORLD, &numRanks);
-    if (elementCount < numRanks)
-    {
-        throw std::runtime_error("Mesh has fewer elements (" + std::to_string(elementCount) +
-                               ") than MPI ranks (" + std::to_string(numRanks) +
-                               "). Each rank must get at least one element for domain decomposition.");
-    }
+    requireEnoughElements(elementCount, numRanks);
 
     cstone::DeviceVector<RealType> s1(elementCount);
     cstone::DeviceVector<RealType> s2(elementCount);
@@ -169,7 +226,11 @@ void syncDomainImplBlock(cstone::Domain<KeyType, RealType, cstone::GpuTag>* doma
             domain->sync(elemSfcCodes, elemX, elemY, elemZ, elemH,
                        properties_refs,
                        std::tie(s1, s2, s3, s4, s5, s6, s7, s8));
+            syncTrace("cstone sync");
+            addStarHalos(domain, starHaloKeys, elemSfcCodes, elemX, elemY, elemZ, elemH, properties_refs,
+                         std::tie(s1, s2, s3, s4, s5, s6, s7, s8));
             domain->exchangeHalos(properties_refs, s4, s5);
+            syncTrace("property halos");
         } catch (const std::exception& e) {
             std::string errorMsg = e.what();
             if (errorMsg.find("invalid device ordinal") != std::string::npos)
@@ -192,7 +253,11 @@ void syncDomainImplBlock(cstone::Domain<KeyType, RealType, cstone::GpuTag>* doma
             domain->sync(elemSfcCodes, elemX, elemY, elemZ, elemH,
                        properties_refs,
                        std::tie(s1, s2, s3, s4, s5, s6, s7, s8, s9, s10, s11, s12));
+            syncTrace("cstone sync");
+            addStarHalos(domain, starHaloKeys, elemSfcCodes, elemX, elemY, elemZ, elemH, properties_refs,
+                         std::tie(s1, s2, s3, s4, s5, s6, s7, s8, s9, s10, s11, s12));
             domain->exchangeHalos(properties_refs, s4, s5);
+            syncTrace("property halos");
         } catch (const std::exception& e) {
             std::string errorMsg = e.what();
             if (errorMsg.find("invalid device ordinal") != std::string::npos)
@@ -214,7 +279,7 @@ void syncDomainImplBlock(cstone::Domain<KeyType, RealType, cstone::GpuTag>* doma
 
 // Implementation of syncDomainImplWithOrigCoords for syncing with original coordinates
 template<typename KeyType, typename RealType, typename SfcConnTuple, typename OrigCoordsTuple>
-void syncDomainImplWithOrigCoords(cstone::Domain<KeyType, RealType, cstone::GpuTag>* domain,
+void syncDomainImplWithOrigCoords(cstone::Domain<KeyType, RealType, cstone::execution::Gpu>* domain,
                                    cstone::DeviceVector<KeyType>& elemSfcCodes,
                                    cstone::DeviceVector<RealType>& elemX,
                                    cstone::DeviceVector<RealType>& elemY,
@@ -222,18 +287,14 @@ void syncDomainImplWithOrigCoords(cstone::Domain<KeyType, RealType, cstone::GpuT
                                    cstone::DeviceVector<RealType>& elemH,
                                    size_t& elementCount,
                                    SfcConnTuple& d_conn_keys_,
-                                   OrigCoordsTuple& d_orig_coords_)
+                                   OrigCoordsTuple& d_orig_coords_,
+                                   const StarHaloKeysFn<KeyType>& starHaloKeys)
 {
     int numRanks;
     MPI_Comm_size(MPI_COMM_WORLD, &numRanks);
 
     // Early check for insufficient elements
-    if (elementCount < numRanks)
-    {
-        throw std::runtime_error("Mesh has fewer elements (" + std::to_string(elementCount) +
-                               ") than MPI ranks (" + std::to_string(numRanks) +
-                               "). Each rank must get at least one element for domain decomposition.");
-    }
+    requireEnoughElements(elementCount, numRanks);
 
     // Create scratch buffers - need MORE for original coordinates
     // We need: 3 for x,y,z coords + 8 for SFC keys + 24 for original coords = 35 total
@@ -310,7 +371,13 @@ void syncDomainImplWithOrigCoords(cstone::Domain<KeyType, RealType, cstone::GpuT
                        std::tie(s1, s2, s3, s4, s5, s6, s7, s8, s9, s10, s11,
                                s12, s13, s14, s15, s16, s17, s18, s19, s20, s21, s22, s23,
                                s24, s25, s26, s27, s28, s29, s30, s31, s32, s33, s34, s35));
+            syncTrace("cstone sync");
+            addStarHalos(domain, starHaloKeys, elemSfcCodes, elemX, elemY, elemZ, elemH, all_properties,
+                         std::tie(s1, s2, s3, s4, s5, s6, s7, s8, s9, s10, s11,
+                                  s12, s13, s14, s15, s16, s17, s18, s19, s20, s21, s22, s23,
+                                  s24, s25, s26, s27, s28, s29, s30, s31, s32, s33, s34, s35));
             domain->exchangeHalos(all_properties, s4, s5);
+            syncTrace("property halos");
         } catch (const std::exception& e) {
             std::string errorMsg = e.what();
             if (errorMsg.find("invalid device ordinal") != std::string::npos)
@@ -343,7 +410,7 @@ template void syncDomainImpl<unsigned int,
                                         cstone::DeviceVector<unsigned int>,
                                         cstone::DeviceVector<unsigned int>,
                                         cstone::DeviceVector<unsigned int>>>(
-    cstone::Domain<unsigned int, float, cstone::GpuTag>* domain,
+    cstone::Domain<unsigned int, float, cstone::execution::Gpu>* domain,
     cstone::DeviceVector<unsigned int>& elemSfcCodes,
     cstone::DeviceVector<float>& elemX,
     cstone::DeviceVector<float>& elemY,
@@ -357,7 +424,7 @@ template void syncDomainImpl<unsigned int,
                cstone::DeviceVector<unsigned int>,
                cstone::DeviceVector<unsigned int>,
                cstone::DeviceVector<unsigned int>,
-               cstone::DeviceVector<unsigned int>>& d_conn_keys_);
+               cstone::DeviceVector<unsigned int>>& d_conn_keys_, const StarHaloKeysFn<unsigned int>&);
 
 // For elements with unsigned int keys and double coordinates
 template void syncDomainImpl<unsigned int,
@@ -370,7 +437,7 @@ template void syncDomainImpl<unsigned int,
                                         cstone::DeviceVector<unsigned int>,
                                         cstone::DeviceVector<unsigned int>,
                                         cstone::DeviceVector<unsigned int>>>(
-    cstone::Domain<unsigned int, double, cstone::GpuTag>* domain,
+    cstone::Domain<unsigned int, double, cstone::execution::Gpu>* domain,
     cstone::DeviceVector<unsigned int>& elemSfcCodes,
     cstone::DeviceVector<double>& elemX,
     cstone::DeviceVector<double>& elemY,
@@ -384,7 +451,7 @@ template void syncDomainImpl<unsigned int,
                cstone::DeviceVector<unsigned int>,
                cstone::DeviceVector<unsigned int>,
                cstone::DeviceVector<unsigned int>,
-               cstone::DeviceVector<unsigned int>>& d_conn_keys_);
+               cstone::DeviceVector<unsigned int>>& d_conn_keys_, const StarHaloKeysFn<unsigned int>&);
 
 // For elements with uint64_t keys and float coordinates
 template void
@@ -397,7 +464,7 @@ syncDomainImpl<uint64_t,
                           cstone::DeviceVector<uint64_t>,
                           cstone::DeviceVector<uint64_t>,
                           cstone::DeviceVector<uint64_t>,
-                          cstone::DeviceVector<uint64_t>>>(cstone::Domain<uint64_t, float, cstone::GpuTag>* domain,
+                          cstone::DeviceVector<uint64_t>>>(cstone::Domain<uint64_t, float, cstone::execution::Gpu>* domain,
                                                            cstone::DeviceVector<uint64_t>& elemSfcCodes,
                                                            cstone::DeviceVector<float>& elemX,
                                                            cstone::DeviceVector<float>& elemY,
@@ -411,7 +478,7 @@ syncDomainImpl<uint64_t,
                                                                       cstone::DeviceVector<uint64_t>,
                                                                       cstone::DeviceVector<uint64_t>,
                                                                       cstone::DeviceVector<uint64_t>,
-                                                                      cstone::DeviceVector<uint64_t>>& d_conn_keys_);
+                                                                      cstone::DeviceVector<uint64_t>>& d_conn_keys_, const StarHaloKeysFn<uint64_t>&);
 
 // For elements with uint64_t keys and double coordinates
 template void
@@ -424,7 +491,7 @@ syncDomainImpl<uint64_t,
                           cstone::DeviceVector<uint64_t>,
                           cstone::DeviceVector<uint64_t>,
                           cstone::DeviceVector<uint64_t>,
-                          cstone::DeviceVector<uint64_t>>>(cstone::Domain<uint64_t, double, cstone::GpuTag>* domain,
+                          cstone::DeviceVector<uint64_t>>>(cstone::Domain<uint64_t, double, cstone::execution::Gpu>* domain,
                                                            cstone::DeviceVector<uint64_t>& elemSfcCodes,
                                                            cstone::DeviceVector<double>& elemX,
                                                            cstone::DeviceVector<double>& elemY,
@@ -438,7 +505,7 @@ syncDomainImpl<uint64_t,
                                                                       cstone::DeviceVector<uint64_t>,
                                                                       cstone::DeviceVector<uint64_t>,
                                                                       cstone::DeviceVector<uint64_t>,
-                                                                      cstone::DeviceVector<uint64_t>>& d_conn_keys_);
+                                                                      cstone::DeviceVector<uint64_t>>& d_conn_keys_, const StarHaloKeysFn<uint64_t>&);
 
 // Add 4-tuple instantiations for TetTag/QuadTag (4 nodes per element)
 template void syncDomainImpl<unsigned int,
@@ -447,7 +514,7 @@ template void syncDomainImpl<unsigned int,
                                         cstone::DeviceVector<unsigned int>,
                                         cstone::DeviceVector<unsigned int>,
                                         cstone::DeviceVector<unsigned int>>>(
-    cstone::Domain<unsigned int, float, cstone::GpuTag>* domain,
+    cstone::Domain<unsigned int, float, cstone::execution::Gpu>* domain,
     cstone::DeviceVector<unsigned int>& elemSfcCodes,
     cstone::DeviceVector<float>& elemX,
     cstone::DeviceVector<float>& elemY,
@@ -457,7 +524,7 @@ template void syncDomainImpl<unsigned int,
     std::tuple<cstone::DeviceVector<unsigned int>,
                cstone::DeviceVector<unsigned int>,
                cstone::DeviceVector<unsigned int>,
-               cstone::DeviceVector<unsigned int>>& d_conn_keys_);
+               cstone::DeviceVector<unsigned int>>& d_conn_keys_, const StarHaloKeysFn<unsigned int>&);
 
 template void syncDomainImpl<unsigned int,
                              double,
@@ -465,7 +532,7 @@ template void syncDomainImpl<unsigned int,
                                         cstone::DeviceVector<unsigned int>,
                                         cstone::DeviceVector<unsigned int>,
                                         cstone::DeviceVector<unsigned int>>>(
-    cstone::Domain<unsigned int, double, cstone::GpuTag>* domain,
+    cstone::Domain<unsigned int, double, cstone::execution::Gpu>* domain,
     cstone::DeviceVector<unsigned int>& elemSfcCodes,
     cstone::DeviceVector<double>& elemX,
     cstone::DeviceVector<double>& elemY,
@@ -475,7 +542,7 @@ template void syncDomainImpl<unsigned int,
     std::tuple<cstone::DeviceVector<unsigned int>,
                cstone::DeviceVector<unsigned int>,
                cstone::DeviceVector<unsigned int>,
-               cstone::DeviceVector<unsigned int>>& d_conn_keys_);
+               cstone::DeviceVector<unsigned int>>& d_conn_keys_, const StarHaloKeysFn<unsigned int>&);
 
 template void syncDomainImpl<uint64_t,
                              float,
@@ -483,7 +550,7 @@ template void syncDomainImpl<uint64_t,
                                         cstone::DeviceVector<uint64_t>,
                                         cstone::DeviceVector<uint64_t>,
                                         cstone::DeviceVector<uint64_t>>>(
-    cstone::Domain<uint64_t, float, cstone::GpuTag>* domain,
+    cstone::Domain<uint64_t, float, cstone::execution::Gpu>* domain,
     cstone::DeviceVector<uint64_t>& elemSfcCodes,
     cstone::DeviceVector<float>& elemX,
     cstone::DeviceVector<float>& elemY,
@@ -493,7 +560,7 @@ template void syncDomainImpl<uint64_t,
     std::tuple<cstone::DeviceVector<uint64_t>,
                cstone::DeviceVector<uint64_t>,
                cstone::DeviceVector<uint64_t>,
-               cstone::DeviceVector<uint64_t>>& d_conn_keys_);
+               cstone::DeviceVector<uint64_t>>& d_conn_keys_, const StarHaloKeysFn<uint64_t>&);
 
 template void syncDomainImpl<uint64_t,
                              double,
@@ -501,7 +568,7 @@ template void syncDomainImpl<uint64_t,
                                         cstone::DeviceVector<uint64_t>,
                                         cstone::DeviceVector<uint64_t>,
                                         cstone::DeviceVector<uint64_t>>>(
-    cstone::Domain<uint64_t, double, cstone::GpuTag>* domain,
+    cstone::Domain<uint64_t, double, cstone::execution::Gpu>* domain,
     cstone::DeviceVector<uint64_t>& elemSfcCodes,
     cstone::DeviceVector<double>& elemX,
     cstone::DeviceVector<double>& elemY,
@@ -511,7 +578,7 @@ template void syncDomainImpl<uint64_t,
     std::tuple<cstone::DeviceVector<uint64_t>,
                cstone::DeviceVector<uint64_t>,
                cstone::DeviceVector<uint64_t>,
-               cstone::DeviceVector<uint64_t>>& d_conn_keys_);
+               cstone::DeviceVector<uint64_t>>& d_conn_keys_, const StarHaloKeysFn<uint64_t>&);
 
 // Explicit template instantiations for syncDomainImplBlock (block-aware sync; multi-block meshes only).
 // Same KeyType/RealType/tuple set as syncDomainImpl, plus the extra co-moved block array.
@@ -532,37 +599,37 @@ using Conn4l = std::tuple<cstone::DeviceVector<uint64_t>, cstone::DeviceVector<u
 }
 
 template void syncDomainImplBlock<unsigned int, float, detail_block_inst::Conn8u>(
-    cstone::Domain<unsigned int, float, cstone::GpuTag>*, cstone::DeviceVector<unsigned int>&,
+    cstone::Domain<unsigned int, float, cstone::execution::Gpu>*, cstone::DeviceVector<unsigned int>&,
     cstone::DeviceVector<float>&, cstone::DeviceVector<float>&, cstone::DeviceVector<float>&,
-    cstone::DeviceVector<float>&, size_t&, detail_block_inst::Conn8u&, cstone::DeviceVector<unsigned int>&);
+    cstone::DeviceVector<float>&, size_t&, detail_block_inst::Conn8u&, cstone::DeviceVector<unsigned int>&, const StarHaloKeysFn<unsigned int>&);
 template void syncDomainImplBlock<unsigned int, double, detail_block_inst::Conn8u>(
-    cstone::Domain<unsigned int, double, cstone::GpuTag>*, cstone::DeviceVector<unsigned int>&,
+    cstone::Domain<unsigned int, double, cstone::execution::Gpu>*, cstone::DeviceVector<unsigned int>&,
     cstone::DeviceVector<double>&, cstone::DeviceVector<double>&, cstone::DeviceVector<double>&,
-    cstone::DeviceVector<double>&, size_t&, detail_block_inst::Conn8u&, cstone::DeviceVector<unsigned int>&);
+    cstone::DeviceVector<double>&, size_t&, detail_block_inst::Conn8u&, cstone::DeviceVector<unsigned int>&, const StarHaloKeysFn<unsigned int>&);
 template void syncDomainImplBlock<uint64_t, float, detail_block_inst::Conn8l>(
-    cstone::Domain<uint64_t, float, cstone::GpuTag>*, cstone::DeviceVector<uint64_t>&,
+    cstone::Domain<uint64_t, float, cstone::execution::Gpu>*, cstone::DeviceVector<uint64_t>&,
     cstone::DeviceVector<float>&, cstone::DeviceVector<float>&, cstone::DeviceVector<float>&,
-    cstone::DeviceVector<float>&, size_t&, detail_block_inst::Conn8l&, cstone::DeviceVector<uint64_t>&);
+    cstone::DeviceVector<float>&, size_t&, detail_block_inst::Conn8l&, cstone::DeviceVector<uint64_t>&, const StarHaloKeysFn<uint64_t>&);
 template void syncDomainImplBlock<uint64_t, double, detail_block_inst::Conn8l>(
-    cstone::Domain<uint64_t, double, cstone::GpuTag>*, cstone::DeviceVector<uint64_t>&,
+    cstone::Domain<uint64_t, double, cstone::execution::Gpu>*, cstone::DeviceVector<uint64_t>&,
     cstone::DeviceVector<double>&, cstone::DeviceVector<double>&, cstone::DeviceVector<double>&,
-    cstone::DeviceVector<double>&, size_t&, detail_block_inst::Conn8l&, cstone::DeviceVector<uint64_t>&);
+    cstone::DeviceVector<double>&, size_t&, detail_block_inst::Conn8l&, cstone::DeviceVector<uint64_t>&, const StarHaloKeysFn<uint64_t>&);
 template void syncDomainImplBlock<unsigned int, float, detail_block_inst::Conn4u>(
-    cstone::Domain<unsigned int, float, cstone::GpuTag>*, cstone::DeviceVector<unsigned int>&,
+    cstone::Domain<unsigned int, float, cstone::execution::Gpu>*, cstone::DeviceVector<unsigned int>&,
     cstone::DeviceVector<float>&, cstone::DeviceVector<float>&, cstone::DeviceVector<float>&,
-    cstone::DeviceVector<float>&, size_t&, detail_block_inst::Conn4u&, cstone::DeviceVector<unsigned int>&);
+    cstone::DeviceVector<float>&, size_t&, detail_block_inst::Conn4u&, cstone::DeviceVector<unsigned int>&, const StarHaloKeysFn<unsigned int>&);
 template void syncDomainImplBlock<unsigned int, double, detail_block_inst::Conn4u>(
-    cstone::Domain<unsigned int, double, cstone::GpuTag>*, cstone::DeviceVector<unsigned int>&,
+    cstone::Domain<unsigned int, double, cstone::execution::Gpu>*, cstone::DeviceVector<unsigned int>&,
     cstone::DeviceVector<double>&, cstone::DeviceVector<double>&, cstone::DeviceVector<double>&,
-    cstone::DeviceVector<double>&, size_t&, detail_block_inst::Conn4u&, cstone::DeviceVector<unsigned int>&);
+    cstone::DeviceVector<double>&, size_t&, detail_block_inst::Conn4u&, cstone::DeviceVector<unsigned int>&, const StarHaloKeysFn<unsigned int>&);
 template void syncDomainImplBlock<uint64_t, float, detail_block_inst::Conn4l>(
-    cstone::Domain<uint64_t, float, cstone::GpuTag>*, cstone::DeviceVector<uint64_t>&,
+    cstone::Domain<uint64_t, float, cstone::execution::Gpu>*, cstone::DeviceVector<uint64_t>&,
     cstone::DeviceVector<float>&, cstone::DeviceVector<float>&, cstone::DeviceVector<float>&,
-    cstone::DeviceVector<float>&, size_t&, detail_block_inst::Conn4l&, cstone::DeviceVector<uint64_t>&);
+    cstone::DeviceVector<float>&, size_t&, detail_block_inst::Conn4l&, cstone::DeviceVector<uint64_t>&, const StarHaloKeysFn<uint64_t>&);
 template void syncDomainImplBlock<uint64_t, double, detail_block_inst::Conn4l>(
-    cstone::Domain<uint64_t, double, cstone::GpuTag>*, cstone::DeviceVector<uint64_t>&,
+    cstone::Domain<uint64_t, double, cstone::execution::Gpu>*, cstone::DeviceVector<uint64_t>&,
     cstone::DeviceVector<double>&, cstone::DeviceVector<double>&, cstone::DeviceVector<double>&,
-    cstone::DeviceVector<double>&, size_t&, detail_block_inst::Conn4l&, cstone::DeviceVector<uint64_t>&);
+    cstone::DeviceVector<double>&, size_t&, detail_block_inst::Conn4l&, cstone::DeviceVector<uint64_t>&, const StarHaloKeysFn<uint64_t>&);
 
 // Explicit template instantiations for syncDomainImplWithOrigCoords
 // For hex8 elements with original coordinates (8 SFC keys + 24 coordinate arrays)
@@ -588,7 +655,7 @@ template void syncDomainImplWithOrigCoords<
                cstone::DeviceVector<unsigned int>, cstone::DeviceVector<unsigned int>,
                cstone::DeviceVector<unsigned int>, cstone::DeviceVector<unsigned int>>,
     OrigCoords24<float>>(
-    cstone::Domain<unsigned int, float, cstone::GpuTag>* domain,
+    cstone::Domain<unsigned int, float, cstone::execution::Gpu>* domain,
     cstone::DeviceVector<unsigned int>& elemSfcCodes,
     cstone::DeviceVector<float>& elemX,
     cstone::DeviceVector<float>& elemY,
@@ -599,7 +666,7 @@ template void syncDomainImplWithOrigCoords<
                cstone::DeviceVector<unsigned int>, cstone::DeviceVector<unsigned int>,
                cstone::DeviceVector<unsigned int>, cstone::DeviceVector<unsigned int>,
                cstone::DeviceVector<unsigned int>, cstone::DeviceVector<unsigned int>>& d_conn_keys_,
-    OrigCoords24<float>& d_orig_coords_);
+    OrigCoords24<float>& d_orig_coords_, const StarHaloKeysFn<unsigned int>&);
 
 // unsigned int keys, double coords
 template void syncDomainImplWithOrigCoords<
@@ -609,7 +676,7 @@ template void syncDomainImplWithOrigCoords<
                cstone::DeviceVector<unsigned int>, cstone::DeviceVector<unsigned int>,
                cstone::DeviceVector<unsigned int>, cstone::DeviceVector<unsigned int>>,
     OrigCoords24<double>>(
-    cstone::Domain<unsigned int, double, cstone::GpuTag>* domain,
+    cstone::Domain<unsigned int, double, cstone::execution::Gpu>* domain,
     cstone::DeviceVector<unsigned int>& elemSfcCodes,
     cstone::DeviceVector<double>& elemX,
     cstone::DeviceVector<double>& elemY,
@@ -620,7 +687,7 @@ template void syncDomainImplWithOrigCoords<
                cstone::DeviceVector<unsigned int>, cstone::DeviceVector<unsigned int>,
                cstone::DeviceVector<unsigned int>, cstone::DeviceVector<unsigned int>,
                cstone::DeviceVector<unsigned int>, cstone::DeviceVector<unsigned int>>& d_conn_keys_,
-    OrigCoords24<double>& d_orig_coords_);
+    OrigCoords24<double>& d_orig_coords_, const StarHaloKeysFn<unsigned int>&);
 
 // uint64_t keys, float coords
 template void syncDomainImplWithOrigCoords<
@@ -630,7 +697,7 @@ template void syncDomainImplWithOrigCoords<
                cstone::DeviceVector<uint64_t>, cstone::DeviceVector<uint64_t>,
                cstone::DeviceVector<uint64_t>, cstone::DeviceVector<uint64_t>>,
     OrigCoords24<float>>(
-    cstone::Domain<uint64_t, float, cstone::GpuTag>* domain,
+    cstone::Domain<uint64_t, float, cstone::execution::Gpu>* domain,
     cstone::DeviceVector<uint64_t>& elemSfcCodes,
     cstone::DeviceVector<float>& elemX,
     cstone::DeviceVector<float>& elemY,
@@ -641,7 +708,7 @@ template void syncDomainImplWithOrigCoords<
                cstone::DeviceVector<uint64_t>, cstone::DeviceVector<uint64_t>,
                cstone::DeviceVector<uint64_t>, cstone::DeviceVector<uint64_t>,
                cstone::DeviceVector<uint64_t>, cstone::DeviceVector<uint64_t>>& d_conn_keys_,
-    OrigCoords24<float>& d_orig_coords_);
+    OrigCoords24<float>& d_orig_coords_, const StarHaloKeysFn<uint64_t>&);
 
 // uint64_t keys, double coords
 template void syncDomainImplWithOrigCoords<
@@ -651,7 +718,7 @@ template void syncDomainImplWithOrigCoords<
                cstone::DeviceVector<uint64_t>, cstone::DeviceVector<uint64_t>,
                cstone::DeviceVector<uint64_t>, cstone::DeviceVector<uint64_t>>,
     OrigCoords24<double>>(
-    cstone::Domain<uint64_t, double, cstone::GpuTag>* domain,
+    cstone::Domain<uint64_t, double, cstone::execution::Gpu>* domain,
     cstone::DeviceVector<uint64_t>& elemSfcCodes,
     cstone::DeviceVector<double>& elemX,
     cstone::DeviceVector<double>& elemY,
@@ -662,6 +729,6 @@ template void syncDomainImplWithOrigCoords<
                cstone::DeviceVector<uint64_t>, cstone::DeviceVector<uint64_t>,
                cstone::DeviceVector<uint64_t>, cstone::DeviceVector<uint64_t>,
                cstone::DeviceVector<uint64_t>, cstone::DeviceVector<uint64_t>>& d_conn_keys_,
-    OrigCoords24<double>& d_orig_coords_);
+    OrigCoords24<double>& d_orig_coords_, const StarHaloKeysFn<uint64_t>&);
 
 } // namespace mars

@@ -3058,7 +3058,7 @@ struct VmsFluxCtx
 template<typename KeyType, typename RealType, typename ElementTag>
 struct NSStepper
 {
-    using DomainT = ElementDomain<ElementTag, RealType, KeyType, cstone::GpuTag>;
+    using DomainT = ElementDomain<ElementTag, RealType, KeyType, cstone::execution::Gpu>;
 
     DomainT& domain;
     SolverKind solverKind;
@@ -3221,7 +3221,7 @@ struct NSStepper
     RealType diagDDTEpsClip = RealType(0);
 
     // Owned-row SparseMatrix wrappers consumed by CG/Hypre.
-    using Matrix = SparseMatrix<int, RealType, cstone::GpuTag>;
+    using Matrix = SparseMatrix<int, RealType, cstone::execution::Gpu>;
     Matrix Avel;
     Matrix Apre;
     Matrix AddT;
@@ -3790,7 +3790,7 @@ void assembleLaplacian(NSStepper<KeyType, RealType, ElementTag>& s,
 // Wrap a CSR (rowPtr/colInd/values) into a SparseMatrix and copy into A.
 // numCols = numTotalDofs so ghost columns are addressable; numRows = owned only.
 template<typename RealType>
-void wrapIntoSparseMatrix(SparseMatrix<int, RealType, cstone::GpuTag>& A,
+void wrapIntoSparseMatrix(SparseMatrix<int, RealType, cstone::execution::Gpu>& A,
                           int numOwnedDofs, int numTotalDofs, int nnz,
                           const int* d_rowPtr, const int* d_colInd, const RealType* d_values)
 {
@@ -7449,7 +7449,7 @@ int solveOneComponent(NSStepper<KeyType, RealType, ElementTag>& s,
     // for the ill-conditioned DDT PRESSURE operator, which is what needs AMG.
     if ((s.solverKind == SolverKind::CG || forceCG) && !forceGmres)
     {
-        ConjugateGradientSolver<RealType, int, cstone::GpuTag> solver(s.maxIter, s.tolerance);
+        ConjugateGradientSolver<RealType, int, cstone::execution::Gpu> solver(s.maxIter, s.tolerance);
         solver.setVerbose(false);
         solver.setOwnedSize(s.numOwnedDofs);
         if (s.numRanks > 1)
@@ -7570,7 +7570,7 @@ int solveOneComponent(NSStepper<KeyType, RealType, ElementTag>& s,
         }
         if (krylovEff == KrylovHint::PCG)
         {
-            using HSol = mars::fem::HyprePCGSolver<RealType, int, cstone::GpuTag>;
+            using HSol = mars::fem::HyprePCGSolver<RealType, int, cstone::execution::Gpu>;
             auto precond = HSol::BOOMERAMG;
             {
                 const char* p = std::getenv("MARS_HYPRE_PRECOND");
@@ -7593,7 +7593,7 @@ int solveOneComponent(NSStepper<KeyType, RealType, ElementTag>& s,
         }
         else  // KrylovHint::GMRES
         {
-            using HSol = mars::fem::HypreGMRESSolver<RealType, int, cstone::GpuTag>;
+            using HSol = mars::fem::HypreGMRESSolver<RealType, int, cstone::execution::Gpu>;
             // forceGmres == the --implicit-advection VELOCITY solve. NOTE: the
             // "mass-dominated, so Jacobi is near-exact" claim this used to make is
             // WRONG once C(u^n) is in the matrix -- |C|/|M| ~ (2/3)*CFL, so above

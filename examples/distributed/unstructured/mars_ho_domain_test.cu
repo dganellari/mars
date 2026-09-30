@@ -38,7 +38,7 @@ bool runDomain(const std::string& meshFile)
     using KeyType = uint64_t;
     using Real    = double;
 
-    ElementDomain<HexTag, Real, KeyType, cstone::GpuTag> domain(meshFile, 0, 1, true, 64, 8);
+    ElementDomain<HexTag, Real, KeyType, cstone::execution::Gpu> domain(meshFile, 0, 1, true, 64, 8);
     (void)domain.getNodeOwnershipMap();
     const auto& d_conn = domain.getElementToNodeConnectivity();
     domain.cacheNodeCoordinates();

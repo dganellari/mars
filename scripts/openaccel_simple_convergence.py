@@ -28,11 +28,20 @@ def digest(path):
     return h.hexdigest()
 
 
-def convergence_deck(text):
+def convergence_deck(text, advection="upwind", velocity_interpolation="trilinear"):
+    require(advection in ("upwind", "high-resolution"), "unsupported advection scheme")
+    require(velocity_interpolation in ("trilinear", "linear-linear"), "unsupported velocity interpolation")
     changes = {'max_iterations: 2\n': 'max_iterations: 5000\n',
                'residual_target: 1.0e-6': 'residual_target: 1.0e-10',
                'rtol: 1.0e-8': 'rtol: 1.0e-12',
                'atol: 1.0e-12': 'atol: 1.0e-14'}
+    if velocity_interpolation == 'linear-linear':
+        changes['velocity_interpolation_type: trilinear'] = 'velocity_interpolation_type: linear_linear'
+    if advection == 'high-resolution':
+        changes.update({'advection_scheme: upwind': 'advection_scheme: high_resolution',
+                        'blend_factor_max: 0': 'blend_factor_max: 1'})
+        require('limit_gradients: false' in text and 'relax_gradients: false' in text,
+                'high-resolution reference requires the unrelaxed gradient profile')
     for old, new in changes.items():
         require(text.count(old) == 1, 'unexpected pinned deck control: ' + old)
         text = text.replace(old, new)
@@ -48,7 +57,7 @@ def last_iteration(log):
     return iterations[-1]
 
 
-def run(capture, executable, output):
+def run(capture, executable, output, advection="upwind", velocity_interpolation="trilinear"):
     capture, executable, output = [p.resolve() for p in (capture, executable, output)]
     require(not output.exists(), 'output exists; choose a fresh directory')
     record = json.loads((capture / 'run.json').read_text())
@@ -64,13 +73,14 @@ def run(capture, executable, output):
     for key in ('SLURM_NTASKS', 'OMPI_COMM_WORLD_SIZE', 'PMI_SIZE', 'PMIX_SIZE'):
         require(int(os.environ.get(key, '1')) == 1, 'reference runner requires one rank')
     output.mkdir(parents=True)
-    (output / 'input.i').write_text(convergence_deck((capture / 'input.i').read_text()))
+    (output / 'input.i').write_text(convergence_deck((capture / 'input.i').read_text(), advection, velocity_interpolation))
     shutil.copyfile(str(capture / 'channel.exo'), str(output / 'channel.exo'))
     env = os.environ.copy()
     for key in ('MARS_OPENACCEL_EXPORT_DIR', 'MARS_OPENACCEL_PUBLIC_FIXTURE'):
         env.pop(key, None)
     env['OMP_NUM_THREADS'] = '1'
-    result = dict(fixture='public_simple_convergence_v1', source_capture=str(capture),
+    result = dict(fixture='public_simple_convergence_v1', advection=advection,
+                  velocity_interpolation=velocity_interpolation, source_capture=str(capture),
                   source_deck_sha256=DECK_SHA256, mesh_sha256=MESH_SHA256,
                   deck_sha256=digest(output / 'input.i'), binary_sha256=digest(executable),
                   executable=str(executable), status='started')
@@ -142,24 +152,61 @@ def read_reference(path, iteration):
     return ids.astype('int64'), xyz, np.stack(fields, axis=2)
 
 
-def compare(reference, mars, output):
+def compare(reference, mars, output, native_mesh=None):
     import numpy as np
     require(not output.exists(), 'comparison output exists')
+    mars_log = (mars / 'run.log').read_text()
+    native_path_recorded = None
     r = json.loads((reference / 'comparison-run.json').read_text())
     require(r['fixture'] == 'public_simple_convergence_v1' and r['status'] == 'native_convergence_reported'
             and r['returncode'] == 0 and r['mesh_sha256'] == MESH_SHA256
             and r['source_deck_sha256'] == DECK_SHA256, 'reference run is incomplete or unsupported')
+    advection = r.get('advection', 'upwind')
+    require(advection in ('upwind', 'high-resolution'), 'unsupported reference advection')
     require(Path(r['result_file']).name == r['result_file'] and r['result_file'].startswith('results.e'),
             'invalid reference result filename')
     for filename, key in [('input.i', 'deck_sha256'), ('channel.exo', 'mesh_sha256'),
                           ('run.log', 'log_sha256'), (r['result_file'], 'result_sha256')]:
         require(digest(reference / filename) == r[key], 'reference file changed: ' + filename)
     require(last_iteration((reference / 'run.log').read_text()) == r['iteration'], 'reference iteration mismatch')
-    meta = json.loads((mars / 'channel.json').read_text())
-    require(digest(mars / 'channel.txt') == meta['packed_sha256'], 'MARS mesh checksum mismatch')
-    require((mars / 'channel.txt').read_text().splitlines()[0] == 'MARS_PUBLIC_SIMPLE_MESH_V1 425 1536 576',
-            'not public mesh-only input')
-    ids = np.asarray(meta['node_global_ids'])
+    velocity_interpolation = r.get('velocity_interpolation', 'trilinear')
+    require(velocity_interpolation in ('trilinear', 'linear-linear'), 'unsupported reference velocity interpolation')
+    reference_interp = re.findall(r'^\s*velocity_interpolation_type:\s*(\S+)\s*$',
+                                  (reference / 'input.i').read_text(), re.M)
+    mars_interp = re.findall(r'^velocity_interpolation=(.*)$', mars_log, re.M)
+    # Historical references/runs had only the standard mode and no provenance label.
+    require(reference_interp == [velocity_interpolation.replace('-', '_')]
+            or (not reference_interp and 'velocity_interpolation' not in r and velocity_interpolation == 'trilinear'),
+            'reference velocity interpolation differs from its manifest')
+    require(mars_interp == [velocity_interpolation]
+            or (not mars_interp and velocity_interpolation == 'trilinear'),
+            'MARS velocity interpolation differs from reference or is missing')
+    if native_mesh is None:
+        meta = json.loads((mars / 'channel.json').read_text())
+        require(digest(mars / 'channel.txt') == meta['packed_sha256'], 'MARS mesh checksum mismatch')
+        require((mars / 'channel.txt').read_text().splitlines()[0] == 'MARS_PUBLIC_SIMPLE_MESH_V1 425 1536 576',
+                'not public mesh-only input')
+        ids = np.asarray(meta['node_global_ids'])
+        input_files = [mars / 'channel.json', mars / 'channel.txt']
+    else:
+        from netCDF4 import Dataset
+        require(digest(native_mesh) == MESH_SHA256, 'native mesh is not the pinned public reference')
+        marker = 'Native SIMPLE Exodus input:'
+        paths = re.findall(r'^Native SIMPLE Exodus input: (.*)$', mars_log, re.M)
+        native_path_recorded = marker in mars_log
+        if native_path_recorded:
+            require(mars_log.count(marker) == 1 and paths == [str(native_mesh.resolve())],
+                    'native input path differs from MARS run log')
+        else:
+            # The distributed driver omits paths; bind its saved source rows to the pinned mesh below.
+            banners = re.findall(r'^SIMPLE Tet4, .*$', mars_log, re.M)
+            require(banners == ['SIMPLE Tet4, 1 ranks (ElementDomain/cstone), ' + advection + ', laminar'],
+                    'native input path missing and no unique single-rank ElementDomain banner')
+        with Dataset(str(native_mesh)) as mesh:
+            require(len(mesh.dimensions['num_nodes']) == 425 and len(mesh.dimensions['num_elem']) == 1536,
+                    'native mesh dimensions differ')
+            ids = np.asarray(mesh['node_num_map'][:]) if 'node_num_map' in mesh.variables else np.arange(1, 426)
+        input_files = [native_mesh]
     require(ids.shape == (425,) and len(set(ids)) == 425 and np.all(ids == ids.astype('int64')),
             'MARS global ID map invalid')
     with (mars / 'channel-fields.csv').open() as f:
@@ -175,7 +222,16 @@ def compare(reference, mars, output):
     require(np.max(np.abs(xyz - rxyz[order])) <= 1e-12, 'coordinates differ after global ID mapping')
     with (mars / 'channel-metrics.csv').open() as f:
         metrics = list(csv.DictReader(f))[-1]
-    end = re.findall(r'^CONVERGED iterations=(\d+)\s*$', (mars / 'run.log').read_text(), re.M)
+    if advection == 'high-resolution':
+        require('advection_scheme: high_resolution' in (reference / 'input.i').read_text()
+                and 'blend_factor_max: 1' in (reference / 'input.i').read_text(),
+                'reference high-resolution controls missing')
+        require(re.search(r'^SIMPLE .*high-resolution, laminar$', mars_log, re.M),
+                'MARS advection differs from reference')
+    else:
+        require(not re.search(r'^SIMPLE .*high-resolution, laminar$', mars_log, re.M),
+                'MARS advection differs from reference')
+    end = re.findall(r'^CONVERGED iterations=(\d+)(?: ranks=1 exchange_rounds=\d+)?\s*$', mars_log, re.M)
     require(len(end) == 1 and int(end[0]) == int(metrics['iteration']), 'MARS completion/metrics mismatch')
     for k in ('momentum', 'continuity', 'mass_balance', 'du', 'dp', 'dflux', 'cancellation'):
         x = float(metrics[k])
@@ -187,7 +243,8 @@ def compare(reference, mars, output):
     drift = (states[-1, order] - states[-2, order]) / scale
     uerr = np.linalg.norm(delta[:, :3], axis=1)
     udrift = np.linalg.norm(drift[:, :3], axis=1)
-    report = dict(scope='converged public single-rank nodal fields; no MPI or pump claim',
+    report = dict(scope='converged public single-rank nodal fields; no MPI or pump claim', advection=advection,
+                  velocity_interpolation=velocity_interpolation,
                   reference_iteration=r['iteration'], mars_iteration=int(end[0]),
                   velocity_max_scaled=float(uerr.max()), velocity_rms_scaled=float(np.sqrt(np.mean(uerr**2))),
                   pressure_max_scaled=float(np.abs(delta[:, 3]).max()),
@@ -196,7 +253,10 @@ def compare(reference, mars, output):
                   reference_pressure_change_scaled=float(np.abs(drift[:, 3]).max()),
                   pressure_mean_shift_pa=float(np.mean(values[:, 3] - states[-1, order, 3])),
                   field_tolerance=1e-5, reference_change_tolerance=1e-6,
-                  hashes={str(p):digest(p) for p in [reference / 'comparison-run.json', mars / 'channel.json',
+                  input_format='exodus' if native_mesh is not None else 'prepared',
+                  native_input_path_recorded=native_path_recorded,
+                  native_output_binding='pinned mesh hash and source-row global IDs/coordinates' if native_mesh is not None else None,
+                  hashes={str(p):digest(p) for p in input_files + [reference / 'comparison-run.json',
                           mars / 'channel-fields.csv', mars / 'channel-metrics.csv', mars / 'run.log']})
     passed = all(report[k] <= 1e-5 for k in ('velocity_max_scaled', 'pressure_max_scaled'))
     passed = passed and all(report[k] <= 1e-6 for k in ('reference_velocity_change_scaled', 'reference_pressure_change_scaled'))
@@ -213,15 +273,18 @@ def main():
     r = sub.add_parser('run')
     for name in ('capture', 'executable', 'output'):
         r.add_argument('--' + name, type=Path, required=True)
+    r.add_argument('--advection', choices=('upwind', 'high-resolution'), default='upwind')
+    r.add_argument('--velocity-interpolation', choices=('trilinear', 'linear-linear'), default='trilinear')
     c = sub.add_parser('compare')
     for name in ('reference', 'mars', 'output'):
         c.add_argument('--' + name, type=Path, required=True)
+    c.add_argument('--native-mesh', type=Path, help='pinned Exodus input used by the native ElementDomain run')
     args = p.parse_args()
     try:
         if args.command == 'run':
-            run(args.capture, args.executable, args.output)
+            run(args.capture, args.executable, args.output, args.advection, args.velocity_interpolation)
         elif args.command == 'compare':
-            compare(args.reference, args.mars, args.output)
+            compare(args.reference, args.mars, args.output, args.native_mesh)
         else:
             p.error('choose run or compare')
     except (OSError, ValueError, KeyError, TypeError, IndexError, ImportError) as error:

@@ -245,53 +245,56 @@ target_include_directories(mars_amr_ns_projection PRIVATE
 )
 install(TARGETS mars_amr_ns_projection RUNTIME DESTINATION bin/examples)
 
-# Poiseuille flow validation driver: uniform inflow, free pressure outlet,
-# parabolic-profile RMS check against the analytic solution. Uses the channel
-# fork mars_ns_channel_solver.hpp (balanced opening-flux source).
-add_executable(mars_poiseuille_flow mars_poiseuille_flow.cu)
-target_link_libraries(mars_poiseuille_flow PRIVATE mars)
-target_include_directories(mars_poiseuille_flow PRIVATE
-    ${CMAKE_SOURCE_DIR}/backend/distributed/unstructured/amr
-)
-install(TARGETS mars_poiseuille_flow RUNTIME DESTINATION bin/examples)
+# Poiseuille channel flow, the incompressible Navier-Stokes example of
+# docs/poiseuille_tutorial.md (solver: fem/mars_navier_stokes.hpp). Both linear
+# systems are solved with Hypre BoomerAMG, so it needs a Hypre build.
+if(MARS_ENABLE_HYPRE)
+    add_executable(mars_poiseuille_flow mars_poiseuille_flow.cu)
+    target_link_libraries(mars_poiseuille_flow PRIVATE mars)
+    install(TARGETS mars_poiseuille_flow RUNTIME DESTINATION bin/examples)
 
-# Long-running GPU regression: converge the channel to the analytic parabola
-# and fail if the profile RMS or the interior through-flow drifts. Registered
-# only when the validation mesh sits at the repo root (gunzip -k the .gz once).
-# ~25 min on one GH200; run via `ctest -L validation`.
-if(EXISTS ${CMAKE_SOURCE_DIR}/poiseuille_hex_14k_elem.e)
-    add_test(NAME marsPoiseuilleValidation
-             COMMAND mars_poiseuille_flow
-                     --mesh=${CMAKE_SOURCE_DIR}/poiseuille_hex_14k_elem.e
-                     --uinf=1.0 --nu=0.01 --dt=0.01 --tol=1e-6 --max-iter=4000
-                     --num-steps=1500 --check)
-    set_tests_properties(marsPoiseuilleValidation PROPERTIES
-        TIMEOUT 2400
-        LABELS "validation;gpu;long"
-        ENVIRONMENT "MARS_NODEHALO_V2=1")
+    # GPU validation: develop the channel to the analytic parabola and check the
+    # profile, the through-flow, continuity, the projection and steadiness.
+    # Execute it only in a GPU allocation.
+    if(MARS_ENABLE_TESTS AND MARS_ENABLE_VALIDATION_TESTS)
+        add_test(NAME marsPoiseuilleValidation
+                 COMMAND mars_poiseuille_flow
+                         --mesh=${CMAKE_SOURCE_DIR}/tests/data/poiseuille/poiseuille_hex_14k_elem.e
+                         --uinf=1.0 --nu=0.01 --dt=0.01 --num-steps=1500 --report-every=100 --check)
+        set_tests_properties(marsPoiseuilleValidation PROPERTIES
+            TIMEOUT 1800
+            LABELS "validation;gpu;long")
+    endif()
 endif()
 
-# Taylor-Green vortex driver. Periodic-cube NS solver + AMR. Currently a
-# skeleton that loads a mesh, builds the periodic node-pair map, applies the
-# TGV initial condition, and writes the IC as VTU. The full projection time
-# loop will be wired against mars_ns_solver.hpp in a follow-up commit once
-# BCKind::Periodic is added to NSStepper.
-add_executable(mars_tgv mars_tgv.cu)
-target_link_libraries(mars_tgv PRIVATE mars)
-target_include_directories(mars_tgv PRIVATE
-    ${CMAKE_SOURCE_DIR}/backend/distributed/unstructured/amr
-)
+# Taylor-Green vortex in a triply periodic box (docs/periodic_tgv_tutorial.md) and the
+# lid-driven cavity: the same Navier-Stokes solver as the Poiseuille example, with
+# Hypre BoomerAMG for both linear systems.
+if(MARS_ENABLE_HYPRE)
+    add_executable(mars_tgv mars_tgv.cu)
+    target_link_libraries(mars_tgv PRIVATE mars)
+    target_include_directories(mars_tgv PRIVATE
+        ${CMAKE_SOURCE_DIR}/backend/distributed/unstructured/amr
+    )
+    install(TARGETS mars_tgv RUNTIME DESTINATION bin/examples)
+
+    add_executable(mars_lid_driven_cavity mars_lid_driven_cavity.cu)
+    target_link_libraries(mars_lid_driven_cavity PRIVATE mars)
+    install(TARGETS mars_lid_driven_cavity RUNTIME DESTINATION bin/examples)
+endif()
 
 # Coupled collocated solver -- Phase 0 model operator (plan in
 # internal-notes/plan_coupled_collocated_solver.md). Increment 1 is the G=-D^T
 # geometry gate; coupled assembly + direct-solve oracle land in later increments.
-add_executable(mars_coupled_model_operator mars_coupled_model_operator.cu)
-target_link_libraries(mars_coupled_model_operator PRIVATE mars)
-target_include_directories(mars_coupled_model_operator PRIVATE
-    ${CMAKE_SOURCE_DIR}/backend/distributed/unstructured/amr
-)
-install(TARGETS mars_coupled_model_operator RUNTIME DESTINATION bin/examples)
-install(TARGETS mars_tgv RUNTIME DESTINATION bin/examples)
+# Its solve paths use HypreGMRESSolver directly, so it needs a Hypre build.
+if(MARS_ENABLE_HYPRE)
+    add_executable(mars_coupled_model_operator mars_coupled_model_operator.cu)
+    target_link_libraries(mars_coupled_model_operator PRIVATE mars)
+    target_include_directories(mars_coupled_model_operator PRIVATE
+        ${CMAKE_SOURCE_DIR}/backend/distributed/unstructured/amr
+    )
+    install(TARGETS mars_coupled_model_operator RUNTIME DESTINATION bin/examples)
+endif()
 
 # Pump driver: transient projection (BDF2 + Chorin) NS on a tet pump mesh, with
 # the pressure-drive opening BCs. Uses the pump fork mars_ns_pump_solver.hpp.
@@ -410,7 +413,9 @@ if(MARS_ENABLE_HYPRE)
     target_compile_definitions(mars_segregated_simple PRIVATE MARS_REPLAY_CUDA)
     target_include_directories(mars_segregated_simple PRIVATE
         ${CMAKE_SOURCE_DIR}/backend/distributed/unstructured/fem/segregated)
-    set_target_properties(mars_segregated_simple PROPERTIES CUDA_STANDARD 20 CUDA_STANDARD_REQUIRED ON)
+    set_target_properties(mars_segregated_simple PROPERTIES CUDA_STANDARD 20 CUDA_STANDARD_REQUIRED ON
+        CUDA_SEPARABLE_COMPILATION ON)
+    install(TARGETS mars_segregated_simple RUNTIME DESTINATION bin/examples)
     add_executable(mars_segregated_simple_check mars_segregated_simple_check.cu)
     target_link_libraries(mars_segregated_simple_check PRIVATE mars)
     target_compile_definitions(mars_segregated_simple_check PRIVATE MARS_REPLAY_CUDA)
@@ -459,4 +464,9 @@ if(MARS_ENABLE_MARSIR)
     add_executable(mars_marsir_jvp_test mars_marsir_jvp_test.cu)
     target_link_libraries(mars_marsir_jvp_test PRIVATE mars)
     install(TARGETS mars_marsir_jvp_test RUNTIME DESTINATION bin/examples)
+endif()
+
+# End-to-end release checks on generated meshes (`ctest -L release`).
+if(MARS_ENABLE_TESTS)
+    include(${CMAKE_SOURCE_DIR}/tests/release/ReleaseTests.cmake)
 endif()

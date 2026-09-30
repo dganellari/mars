@@ -28,8 +28,8 @@ The main features of MARS consist of:
 4. Distributed multi-rank execution via MPI, including a per-node halo for solver
    communication (CUDA-aware MPI) on top of the cornerstone element halo.
 
-5. GPU-native adaptive mesh refinement (mark → refine → rebuild → solution transfer),
-   with multi-rank support.
+5. GPU-native adaptive mesh refinement (mark → refine → rebuild → solution transfer);
+   experimental, single-rank for now.
 
 6. Lazy composition — adjacency, halo, and coordinate caches are built on first access
    to minimize VRAM and startup time.
@@ -72,6 +72,40 @@ cd mars
 cmake -B build
 cmake --build build -j
 ```
+
+### Checking your build
+
+A CUDA build configured with `-DMARS_ENABLE_TESTS=ON -DMARS_ENABLE_FEM_EXAMPLES=ON` registers
+release checks that run the documented drivers end to end on meshes generated at test time:
+
+```bash
+cd build
+ctest -L release
+```
+
+They check that hex and tet assembly give the same matrix and RHS norms on 1 rank and on N
+ranks (`-DMARS_RELEASE_TEST_RANKS=N`, default 4), that the CVFEM Poisson solve and the P1 Poisson
+example `mars_ex1_poisson` reach the expected maximum on 1 and N ranks, and that
+10-step lid-driven cavity and channel Navier–Stokes runs finish on 1 and N ranks without a failed
+solve or NaN. They need python3 with numpy and an MPI launcher, and take a few minutes on one
+GPU. ctest starts every GPU run through the MPI launcher CMake found (`mpiexec`, or `srun` on
+Slurm), so on a Slurm cluster either run ctest inside an allocation:
+
+```bash
+salloc -A <account> -N 1 -t 00:30:00      # add the partition/GPU flags your site needs
+ctest -L release -V
+```
+
+or give the launcher your site's flags once at configure time and run ctest from the login node:
+
+```bash
+cmake -B build -DMPIEXEC_EXECUTABLE=$(which srun) \
+  "-DMPIEXEC_PREFLAGS=--account=<account>;--time=00:10:00;--nodes=1"
+```
+
+The drivers pick GPU `rank % deviceCount` themselves, so no GPU-binding wrapper is required. The
+Poiseuille validation against the analytic profile (1500 steps) is opt-in: configure with
+`-DMARS_ENABLE_VALIDATION_TESTS=ON`, then run `ctest -L validation` in a GPU allocation.
 
 To use MARS from another CMake project, install it and point `CMAKE_PREFIX_PATH` at the
 install prefix (see `examples/usage_from_external_cmake_project/`):
@@ -116,7 +150,7 @@ MARS supports GPU-native unstructured meshes through integration with the Corner
 - **Lazy Composition**: Components (adjacency, halo, coordinates) allocated on-demand to minimize VRAM usage
 - **Thrust Algorithms**: CSR building, sorting, and reductions use GPU-optimized Thrust primitives
 - **MPI Integration**: Multi-rank support via Cornerstone domain decomposition
-- **Element Support**: Tetrahedra, hexahedra, triangles, and quadrilaterals
+- **Element Support**: Tetrahedra and hexahedra (triangle/quadrilateral tags exist but are not implemented yet)
 
 ### Quick Start
 
@@ -125,7 +159,7 @@ MARS supports GPU-native unstructured meshes through integration with the Corner
 
 // Create GPU-native unstructured domain (read + partition + cstone sync).
 // Template params: <ElementTag, RealType, KeyType, AcceleratorTag>.
-ElementDomain<HexTag, double, uint64_t, cstone::GpuTag> domain("mesh_dir", rank, numRanks);
+ElementDomain<HexTag, double, uint64_t, cstone::execution::Gpu> domain("mesh_dir", rank, numRanks);
 
 // Components built lazily on first access (all device-side):
 const auto& offsets = domain.getNodeToElementOffsets();   // builds adjacency (CSR)
@@ -161,9 +195,9 @@ The block above already enables `MARS_ENABLE_FEM_EXAMPLES`, needed for the
 CVFEM / FEM example drivers (Poisson, CVFEM assembly, the high-order
 matrix-free gates). Other optional add-ons:
 
-- `-DMARS_ENABLE_HYPRE=ON` — BoomerAMG preconditioner. Needed by the
-  AMG-preconditioned solvers and the AMR / Navier-Stokes drivers; **not**
-  needed for the matrix-free operator gates.
+- `-DMARS_ENABLE_HYPRE=ON` — optional BoomerAMG-preconditioned solvers. The
+  Navier–Stokes drivers default to CG and only need it for `--solver=hypre` (without
+  it that option stops with an error); the segregated SIMPLE driver requires it.
 - `-DMARS_ENABLE_ADIOS2=ON`, `-DMARS_ENABLE_VTK=ON` — extra I/O backends.
 
 See `cmake/MarsOptions.cmake` and `cmake/MarsDependencies.cmake` for the full

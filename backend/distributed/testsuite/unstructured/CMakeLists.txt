@@ -186,6 +186,15 @@ addMarsMpiTest(
     marsCoarseSearchHostMpiTest
 )
 
+# SFC node ownership and element-star completion on cornerstone's CPU domain: the same owner function,
+# destinations and sparse exchange as the GPU sync, checked on a hex cube and a one-cell-thick layer. Needs no GPU
+# or mesh file.
+addMarsMpiTest(
+    ${CMAKE_CURRENT_SOURCE_DIR}/mars_sfc_ownership_host_mpi.cpp
+    mars_sfc_ownership_host_mpi_test
+    marsSfcOwnershipHostMpiTest
+)
+
 # The ONLY thing that compiles the device halves of mars_coarse_search.hpp and
 # mars_ghost_registry.hpp -- both are header-only and every other consumer is a .cpp, so without
 # this the kernels never reach nvcc. Gates device against host on identical input.

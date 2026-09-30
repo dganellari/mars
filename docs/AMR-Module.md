@@ -96,7 +96,7 @@ public:
 
     bool shouldContinue(const AmrStats& stats) const;
     int  currentLevel() const;
-    ElementDomain<ElementTag, RealType, KeyType, cstone::GpuTag>& domain();
+    ElementDomain<ElementTag, RealType, KeyType, cstone::execution::Gpu>& domain();
     static void printStats(const AmrStats& stats, int rank);
 };
 ```
@@ -196,7 +196,7 @@ for (int level = 0; level <= amrLevels; ++level) {
 The solver itself (`solvePoissonGraph`) uses the standard distributed CG path:
 
 ```cpp
-ConjugateGradientSolver<RealType, int, cstone::GpuTag> solver(maxIter, tolerance);
+ConjugateGradientSolver<RealType, int, cstone::execution::Gpu> solver(maxIter, tolerance);
 solver.setOwnedSize(numOwnedDofs);
 solver.setHaloExchangeCallback(
     [&domain, dofMap = d_node_to_dof.data()](cstone::DeviceVector<RealType>& p) {

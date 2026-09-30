@@ -51,7 +51,7 @@ int main(int argc, char** argv)
         else if (a.rfind("--iters=", 0) == 0) iters = std::stoi(a.substr(8)); }
     if (mesh.empty()) { if (rank==0) printf("need --mesh=<dir> [--iters=N]\n"); MPI_Finalize(); return 1; }
 
-    ElementDomain<ElemTag, RealType, KeyType, cstone::GpuTag> domain(mesh, rank, numRanks, true, 64, 8u);
+    ElementDomain<ElemTag, RealType, KeyType, cstone::execution::Gpu> domain(mesh, rank, numRanks, true, 64, 8u);
     const auto& d_nodeOwnership = domain.getNodeOwnershipMap();
     size_t nodeCount = domain.getNodeCount();
     size_t elementCount = domain.getElementCount();

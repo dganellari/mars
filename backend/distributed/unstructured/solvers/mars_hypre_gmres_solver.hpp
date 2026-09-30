@@ -5,12 +5,34 @@
 // HYPRE_/thrust/mpi headers, the namespace declarations) come from the PCG
 // header. Including it here means we don't redefine those symbols.
 #include "mars_hypre_pcg_solver.hpp"
+#if !defined(HYPRE_RELEASE_NUMBER) || HYPRE_RELEASE_NUMBER < 30000
+// Older releases export ParVectorAxpy but declare it only in this header.
+#include <_hypre_parcsr_mv.h>
+#endif
 #include "mars_solver_profile.hpp"
 #include <limits>
+#include <stdexcept>
+#include <thrust/gather.h>
 
 namespace mars {
 namespace fem {
 
+// Keep the source slot as well as the global column: later solves only gather values.
+template<typename IndexType>
+__global__ void pack_hypre_graph_kernel(const IndexType* offsets, const IndexType* columns,
+    const HYPRE_BigInt* map, size_t map_size, const int* packed_offsets, int rows,
+    HYPRE_BigInt* packed_columns, IndexType* source_slots)
+{
+    const int row = blockIdx.x * blockDim.x + threadIdx.x;
+    if (row >= rows) return;
+    int slot = packed_offsets[row];
+    for (IndexType j = offsets[row]; j < offsets[row + 1]; ++j) {
+        const IndexType col = columns[j];
+        if (col < 0 || static_cast<size_t>(col) >= map_size || map[col] < 0) continue;
+        packed_columns[slot] = map[col];
+        source_slots[slot++] = j;
+    }
+}
 
 // GPU-resident Hypre GMRES + BoomerAMG solver.
 // API-identical drop-in for HyprePCGSolver. Uses Hypre's restarted GMRES
@@ -31,15 +53,68 @@ public:
 
     void set_profile(SolverProfile* profile) { profile_ = profile; }
 
+    // Use ||b-Ax||/||b|| instead of unit-dependent x/b magnitude heuristics.
+    // A zero RHS uses an absolute residual. The caller must fix any nullspace.
+    void enable_true_residual_check() {
+        true_residual_check_ = true;
+        mixed_residual_check_ = false;
+    }
+    // The default uses atol + rtol*||b||. A reference target can request their
+    // maximum, matching Hypre's stopping test without changing the operator.
+    void enable_true_residual_check(double absolute_tolerance, double relative_tolerance, bool maximum = false) {
+        if (!std::isfinite(absolute_tolerance) || !std::isfinite(relative_tolerance)
+            || absolute_tolerance < 0 || relative_tolerance < 0
+            || (absolute_tolerance == 0 && relative_tolerance == 0))
+            throw std::runtime_error("invalid true residual tolerances");
+        true_residual_check_ = true;
+        mixed_residual_check_ = true;
+        maximum_residual_check_ = maximum;
+        residual_absolute_tolerance_ = absolute_tolerance;
+        residual_relative_tolerance_ = relative_tolerance;
+    }
+
+    // Configure before setup; explicit zero must also override an environment atol.
+    void set_stopping_tolerances(double relative_tolerance, double absolute_tolerance) {
+        require_reuse(!solver_ && !A_hypre_ && std::isfinite(relative_tolerance)
+            && std::isfinite(absolute_tolerance) && relative_tolerance > 0
+            && relative_tolerance < 1 && absolute_tolerance >= 0, "invalid or late stopping tolerances");
+        double bounds[4] = {relative_tolerance, -relative_tolerance, absolute_tolerance, -absolute_tolerance};
+        double global[4];
+        MPI_Allreduce(bounds, global, 4, MPI_DOUBLE, MPI_MAX, comm_);
+        require_reuse(global[0] == -global[1] && global[2] == -global[3], "stopping tolerances differ between ranks");
+        tolerance_ = RealType(relative_tolerance);
+        stopping_absolute_tolerance_ = absolute_tolerance;
+    }
+
     // The caller must invalidate before changing matrix/map contents in place.
     // The outlet owner bounds reuse to a single frozen physical step.
     void enable_reuse(bool amg_cycle = false) {
         destroy();
+        fixed_graph_updates_ = false;
         reuse_enabled_ = true;
         amg_cycle_ = amg_cycle;
     }
+    // Device-map overload and nonempty owned partitions only. Invalidate before
+    // changing CSR/map contents in place. Hypre may still rebuild its inner GPU CSR.
+    // All numeric values and the AMG hierarchy are refreshed on every solve.
+    void enable_fixed_graph_updates() {
+        destroy();
+        reuse_enabled_ = false;
+        amg_cycle_ = false;
+        fixed_graph_updates_ = true;
+    }
     void invalidate_setup() { destroy(); }
     int get_setup_count() const { return setup_count_; }
+    int get_graph_build_count() const { return graph_build_count_; }
+    int get_numeric_update_count() const { return numeric_update_count_; }
+
+    struct SolveTiming {
+        double prepare_seconds = 0, packing_seconds = 0, setup_seconds = 0;
+        double solve_seconds = 0, finish_seconds = 0;
+    };
+    // Local wall API times without synchronization; packing is part of prepare.
+    void enable_timing(bool enabled = true) { timing_enabled_ = enabled; }
+    const SolveTiming& get_last_timing() const { return last_timing_; }
 
     HypreGMRESSolver(MPI_Comm comm = MPI_COMM_WORLD, int maxIter = 1000, RealType tolerance = 1e-6,
                      PrecondType precondType = BOOMERAMG, int kDim = 30)
@@ -78,9 +153,12 @@ public:
                IndexType globalDofStart, IndexType globalDofEnd,
                IndexType globalColStart, IndexType globalColEnd,
                const thrust::device_vector<HYPRE_BigInt>& d_localToGlobalDof) {
+        last_timing_ = {};
+        prepare_start_ = wall_stamp();
         if (profile_) profile_start_ = profile_->stamp();
         static HypreInitGuard g_hypreInit;
         (void)g_hypreInit;
+        configure_spmv();
 
         int rank;
         MPI_Comm_rank(comm_, &rank);
@@ -91,8 +169,9 @@ public:
 
         HYPRE_Int m = static_cast<HYPRE_Int>(A.numRows());
         if (globalDofEnd == 0) globalDofEnd = globalDofStart + m;
-        if (reuse_enabled_) {
-            const bool same = prepared_ && matrix_ == &A && values_ == A.valuesPtr()
+        if (reuse_enabled_ || fixed_graph_updates_) {
+            const bool same = prepared_ && matrix_ == &A
+                && (fixed_graph_updates_ || values_ == A.valuesPtr())
                 && row_offsets_ == A.rowOffsetsPtr() && columns_ == A.colIndicesPtr()
                 && rows_ == A.numRows() && cols_ == A.numCols() && nnz_ == A.nnz()
                 && map_ == thrust::raw_pointer_cast(d_localToGlobalDof.data())
@@ -102,9 +181,25 @@ public:
             int rebuild = same ? 0 : 1, any_rebuild = 0;
             MPI_Allreduce(&rebuild, &any_rebuild, 1, MPI_INT, MPI_MAX, comm_);
             if (!any_rebuild) {
+                if (fixed_graph_updates_) {
+                    update_matrix_values(A);
+                    if (!update_vectors(b, x)) return false;
+                    if (profile_) profile_start_ = profile_->lap(SolverProfile::Prepare, profile_start_);
+                    finish_prepare();
+                    const double start = wall_stamp();
+                    const HYPRE_Int error = useFlexGmres_
+                        ? HYPRE_ParCSRFlexGMRESSetup(solver_, parcsr_A_, par_b_, par_x_)
+                        : HYPRE_ParCSRGMRESSetup(solver_, parcsr_A_, par_b_, par_x_);
+                    if (timing_enabled_) last_timing_.setup_seconds = wall_stamp() - start;
+                    if (profile_) profile_start_ = profile_->lap(SolverProfile::Setup, profile_start_);
+                    require_reuse(error == 0 && HYPRE_GetError() == 0, "GMRES/AMG refresh failed");
+                    ++setup_count_;
+                    return solve_vectors(b, x);
+                }
                 if (!update_vectors(b, x)) return false;
                 if (!vectors_changed_) {
                     if (profile_) profile_->lap(SolverProfile::Prepare, profile_start_);
+                    finish_prepare();
                     return solve_vectors(b, x);
                 }
             }
@@ -135,10 +230,15 @@ public:
                IndexType globalDofStart, IndexType globalDofEnd,
                IndexType globalColStart, IndexType globalColEnd,
                const std::vector<KeyType>& localToGlobalDof) {
+        last_timing_ = {};
+        prepare_start_ = wall_stamp();
+        if (fixed_graph_updates_)
+            require_reuse(false, "fixed graph updates require the device-map overload");
         if (profile_) profile_start_ = profile_->stamp();
         // Initialize Hypre exactly once per process, lazily, after MPI is up.
         static HypreInitGuard g_hypreInit;
         (void)g_hypreInit;
+        configure_spmv();
 
         int rank;
         MPI_Comm_rank(comm_, &rank);
@@ -232,6 +332,11 @@ public:
         if (pointBlock_ != next) invalidate_setup();
         pointBlock_ = next;
     }
+    // Keep Hypre's default unless a caller supplies a coarse-level relaxation.
+    void setAMGCoarseRelaxType(int type) {
+        if (coarseRelaxType_ != type) invalidate_setup();
+        coarseRelaxType_ = type;
+    }
     double getLastFinalResidual() const { return lastFinalRes_; }
     double getLastSolutionMax()   const { return lastSolutionMax_; }
     bool   lastReturnedNullSolution() const { return nullSolutionReturned_; }
@@ -251,15 +356,16 @@ public:
         MPI_Comm_rank(comm_, &rank);
         HYPRE_Int m = static_cast<HYPRE_Int>(A.numRows());
 
-        if (reuse_enabled_) {
+        if (reuse_enabled_ || fixed_graph_updates_ || true_residual_check_) {
             const bool bad = A.nnz() > 0 && thrust::any_of(thrust::device_pointer_cast(A.valuesPtr()),
                 thrust::device_pointer_cast(A.valuesPtr() + A.nnz()), IsNonFinite<RealType>());
-            require_reuse(!bad && globalDofEnd_ - globalDofStart_ == m,
-                          "nonfinite matrix or inconsistent row partition");
+            require_reuse(!bad && globalDofEnd_ - globalDofStart_ == m
+                          && (!fixed_graph_updates_ || (m > 0 && !precondMatrix_)),
+                          "nonfinite matrix, inconsistent partition, or empty partition/separate K in fixed graph mode");
             HYPRE_ClearAllErrors();
         }
         setupHypreMatrix(A, globalColStart, globalColEnd);
-        if (reuse_enabled_)
+        if (reuse_enabled_ || fixed_graph_updates_ || true_residual_check_)
             require_reuse(parcsr_A_ != nullptr && HYPRE_GetError() == 0, "matrix preparation failed");
 
         // RHS + initial guess: pure device path.
@@ -270,7 +376,7 @@ public:
         HYPRE_IJVectorCreate(comm_, ilower, iupper, &x_hypre_);
         HYPRE_IJVectorSetObjectType(b_hypre_, HYPRE_PARCSR);
         HYPRE_IJVectorSetObjectType(x_hypre_, HYPRE_PARCSR);
-        if (reuse_enabled_)
+        if (reuse_enabled_ || fixed_graph_updates_ || true_residual_check_)
             require_reuse(b_hypre_ && x_hypre_ && HYPRE_GetError() == 0, "vector creation failed");
 
         // Device-side global row indices [ilower, ilower+m).
@@ -286,13 +392,15 @@ public:
         if (!update_vectors(b, x)) return false;
 
         if (profile_) profile_start_ = profile_->lap(SolverProfile::Prepare, profile_start_);
+        finish_prepare();
+        const double setup_start = wall_stamp();
 
         if (verbose_ && rank == 0) std::cout << "Creating preconditioner..." << std::endl;
 
         if (precondType_ == BOOMERAMG) {
             if (verbose_ && rank == 0) std::cout << "Using BoomerAMG preconditioner (GPU)" << std::endl;
             HYPRE_BoomerAMGCreate(&precond_);
-            if (reuse_enabled_)
+            if (reuse_enabled_ || fixed_graph_updates_ || true_residual_check_)
                 require_reuse(precond_ && HYPRE_GetError() == 0, "AMG creation failed");
             // Env var MARS_HYPRE_VERBOSE=1 turns on per-iter Hypre prints so a
             // stalled AMG solve shows its residual history without rebuilding.
@@ -352,6 +460,8 @@ public:
             HYPRE_BoomerAMGSetCoarsenType(precond_, amgCoarsen);
             HYPRE_BoomerAMGSetInterpType(precond_, amgInterp);
             HYPRE_BoomerAMGSetRelaxType(precond_, amgRelax);
+            if (coarseRelaxType_ >= 0)
+                HYPRE_BoomerAMGSetCycleRelaxType(precond_, coarseRelaxType_, 3);
             HYPRE_BoomerAMGSetRelaxOrder(precond_, amgRelaxOrder);
             HYPRE_BoomerAMGSetKeepTranspose(precond_, 1);
             HYPRE_BoomerAMGSetStrongThreshold(precond_, amgStrong);
@@ -426,6 +536,7 @@ public:
             require_reuse(precondType_ == BOOMERAMG && precond_ && !precondMatrix_,
                           "direct cycle requires BoomerAMG on Apre");
             const HYPRE_Int error = HYPRE_BoomerAMGSetup(precond_, parcsr_A_, par_b_, par_x_);
+            if (timing_enabled_) last_timing_.setup_seconds = wall_stamp() - setup_start;
             if (profile_) profile_->lap(SolverProfile::Setup, profile_start_);
             require_reuse(error == 0 && HYPRE_GetError() == 0, "AMG setup failed");
             ++setup_count_;
@@ -437,18 +548,16 @@ public:
         if (verbose_ && rank == 0) std::cout << "Creating " << krylovName << " solver..." << std::endl;
         if (useFlexGmres_) HYPRE_ParCSRFlexGMRESCreate(comm_, &solver_);
         else               HYPRE_ParCSRGMRESCreate(comm_, &solver_);
-        if (reuse_enabled_)
+        if (reuse_enabled_ || fixed_graph_updates_ || true_residual_check_)
             require_reuse(solver_ && HYPRE_GetError() == 0, "GMRES creation failed");
         if (!solver_) {
             std::cerr << "Failed to create Hypre " << krylovName << " solver" << std::endl;
             return false;
         }
-        // FlexGMRES and GMRES share the HYPRE_GMRES* setter/getter symbols
-        // (FlexGMRES is a GMRES variant in Hypre); only Create/Setup/Solve/
-        // Destroy and SetPrecond differ. So the Set* calls below are common.
-        HYPRE_GMRESSetMaxIter(solver_, maxIter_);
-        HYPRE_GMRESSetTol(solver_, tolerance_);
-        HYPRE_GMRESSetKDim(solver_, kDim_);  // restart length
+        // These handles have different layouts; every API must match the solver.
+        (useFlexGmres_ ? HYPRE_FlexGMRESSetMaxIter : HYPRE_GMRESSetMaxIter)(solver_, maxIter_);
+        (useFlexGmres_ ? HYPRE_FlexGMRESSetTol : HYPRE_GMRESSetTol)(solver_, tolerance_);
+        (useFlexGmres_ ? HYPRE_FlexGMRESSetKDim : HYPRE_GMRESSetKDim)(solver_, kDim_);
         // Floor on iterations. For the near-singular DDT pressure operator (one
         // constant null mode, single pin), BoomerAMG's first V-cycle can map the
         // initial residual almost entirely into the null space, dropping the
@@ -458,22 +567,22 @@ public:
         // that first deceptive cycle so a real x emerges. Env-overridable.
         {
             int minIt = getEnvInt("MARS_HYPRE_MINITER", 3);
-            if (minIt > 0) HYPRE_GMRESSetMinIter(solver_, minIt);
+            if (minIt > 0)
+                (useFlexGmres_ ? HYPRE_FlexGMRESSetMinIter : HYPRE_GMRESSetMinIter)(solver_, minIt);
         }
-        // Absolute residual floor. A pure relative test can be satisfied by a
-        // tiny ||b|| whose mass sits in the null mode; pairing it with an
-        // absolute tol means convergence requires the TRUE residual to be small,
-        // not just relatively small versus a near-null RHS. Default 0 (disabled)
-        // keeps legacy behavior; set MARS_HYPRE_ABSTOL>0 to engage.
+        // Optional absolute stopping floor: Hypre uses max(atol, rtol*||b||).
+        // Default 0 keeps the relative target; the wrapper checks acceptance below.
         {
-            double absTol = getEnvDouble("MARS_HYPRE_ABSTOL", 0.0);
-            if (absTol > 0.0) HYPRE_GMRESSetAbsoluteTol(solver_, absTol);
+            double absTol = stopping_absolute_tolerance_ >= 0
+                ? stopping_absolute_tolerance_ : getEnvDouble("MARS_HYPRE_ABSTOL", 0.0);
+            if (absTol > 0.0 || stopping_absolute_tolerance_ >= 0.0)
+                (useFlexGmres_ ? HYPRE_FlexGMRESSetAbsoluteTol : HYPRE_GMRESSetAbsoluteTol)(solver_, absTol);
         }
         // print level: 0 silent, 2 per-iter residuals. Env MARS_HYPRE_VERBOSE=1.
         {
             const char* ev = std::getenv("MARS_HYPRE_VERBOSE");
             int gmresPrint = (verbose_ || (ev && std::string(ev) != "0")) ? 2 : 0;
-            HYPRE_GMRESSetPrintLevel(solver_, gmresPrint);
+            (useFlexGmres_ ? HYPRE_FlexGMRESSetPrintLevel : HYPRE_GMRESSetPrintLevel)(solver_, gmresPrint);
         }
 
         if (precondType_ == BOOMERAMG && precond_) {
@@ -509,12 +618,13 @@ public:
         }
 
         if (verbose_ && rank == 0) std::cout << "Setting up " << krylovName << " solver..." << std::endl;
-        MPI_Barrier(comm_);
+        if (!fixed_graph_updates_) MPI_Barrier(comm_);
         HYPRE_Int setup_err = useFlexGmres_
             ? HYPRE_ParCSRFlexGMRESSetup(solver_, parcsr_A_, par_b_, par_x_)
             : HYPRE_ParCSRGMRESSetup(solver_, parcsr_A_, par_b_, par_x_);
+        if (timing_enabled_) last_timing_.setup_seconds = wall_stamp() - setup_start;
         if (profile_) profile_start_ = profile_->lap(SolverProfile::Setup, profile_start_);
-        if (reuse_enabled_)
+        if (reuse_enabled_ || fixed_graph_updates_ || true_residual_check_)
             require_reuse(setup_err == 0 && HYPRE_GetError() == 0, "GMRES/AMG setup failed");
         if (setup_err != 0 && rank == 0) {
             std::cerr << "[HypreGMRES] Setup returned error " << setup_err
@@ -527,7 +637,7 @@ public:
         if (verbose_ && rank == 0) std::cout << "GMRES setup complete, starting solve..." << std::endl;
 
         if (setup_err == 0) ++setup_count_;
-        prepared_ = reuse_enabled_ && setup_err == 0;
+        prepared_ = (reuse_enabled_ || fixed_graph_updates_) && setup_err == 0;
         return solve_vectors(b, x);
     }
 
@@ -546,11 +656,19 @@ public:
                 thrust::device_pointer_cast(x.data() + m), IsNonFinite<RealType>());
             require_reuse(!bad_b && !bad_x, "nonfinite RHS or initial guess");
             HYPRE_ClearAllErrors();
+        } else if (fixed_graph_updates_) {
+            const bool sized = b.size() >= size_t(m) && x.size() >= size_t(m);
+            const bool bad_b = sized && m > 0 && thrust::any_of(thrust::device_pointer_cast(b.data()),
+                thrust::device_pointer_cast(b.data() + m), IsNonFinite<RealType>());
+            const bool bad_x = sized && m > 0 && thrust::any_of(thrust::device_pointer_cast(x.data()),
+                thrust::device_pointer_cast(x.data() + m), IsNonFinite<RealType>());
+            require_reuse(sized && !bad_b && !bad_x, "undersized or nonfinite RHS/initial guess");
+            HYPRE_ClearAllErrors();
         }
         HYPRE_IJVectorInitialize(b_hypre_);
         HYPRE_IJVectorInitialize(x_hypre_);
         // RHS NaN/Inf summary + min/max/sum, all on device.
-        validateVector(b.data(), m, rank, "RHS");
+        if (!fixed_graph_updates_ || verbose_) validateVector(b.data(), m, rank, "RHS");
 
         // Hypre RHS values must be HYPRE_Real; cast on device if RealType != HYPRE_Real.
         const HYPRE_Real* d_b_hypre = nullptr;
@@ -598,6 +716,8 @@ public:
             int any_changed = 0;
             MPI_Allreduce(&changed, &any_changed, 1, MPI_INT, MPI_MAX, comm_);
             vectors_changed_ = any_changed != 0;
+        } else if (fixed_graph_updates_ || true_residual_check_) {
+            require_reuse(par_b_ && par_x_ && HYPRE_GetError() == 0, "vector update failed");
         }
 
         if (!par_b_ || !par_x_) {
@@ -615,23 +735,25 @@ public:
         auto& d_rowGlobal = d_row_global_;
         auto& d_x_cast = d_x_cast_;
         if (profile_) profile_start_ = profile_->stamp();
-        MPI_Barrier(comm_);
+        const double solve_start = wall_stamp();
+        if (!fixed_graph_updates_) MPI_Barrier(comm_);
         HYPRE_Int solve_err = amg_cycle_
             ? HYPRE_BoomerAMGSolve(precond_, parcsr_A_, par_b_, par_x_)
             : useFlexGmres_
             ? HYPRE_ParCSRFlexGMRESSolve(solver_, parcsr_A_, par_b_, par_x_)
             : HYPRE_ParCSRGMRESSolve(solver_, parcsr_A_, par_b_, par_x_);
+        if (timing_enabled_) last_timing_.solve_seconds = wall_stamp() - solve_start;
+        const double finish_start = wall_stamp();
         if (profile_) profile_start_ = profile_->lap(SolverProfile::Solve, profile_start_);
-        if (reuse_enabled_) {
+        if (reuse_enabled_ || fixed_graph_updates_ || true_residual_check_) {
             require_reuse((amg_cycle_ ? solve_err : (solve_err & ~HYPRE_ERROR_CONV)) == 0,
                           "Hypre apply failed");
             HYPRE_ClearAllErrors();
         }
         if (solve_err != 0 && rank == 0) {
-            std::cerr << "[HypreGMRES] Solve returned error " << solve_err
-                      << " (HYPRE_GetError=" << HYPRE_GetError() << ")\n";
+            std::cerr << "[HypreGMRES] Solve returned error " << solve_err << '\n';
             char errbuf[256];
-            HYPRE_DescribeError(HYPRE_GetError(), errbuf);
+            HYPRE_DescribeError(solve_err, errbuf);
             std::cerr << "[HypreGMRES] " << errbuf << "\n";
             HYPRE_ClearAllErrors();
         }
@@ -651,7 +773,7 @@ public:
                          thrust::device_pointer_cast(x.data()));
         }
 
-        if (reuse_enabled_) {
+        if (reuse_enabled_ || fixed_graph_updates_ || true_residual_check_) {
             const bool bad = m > 0 && thrust::any_of(thrust::device_pointer_cast(x.data()),
                 thrust::device_pointer_cast(x.data() + m), IsNonFinite<RealType>());
             require_reuse(!bad && HYPRE_GetError() == 0 && cudaGetLastError() == cudaSuccess,
@@ -674,24 +796,25 @@ public:
             lastSolutionMax_ = global[0];
             nullSolutionReturned_ = global[1] > 0 && global[0] == 0;
             if (profile_) profile_->lap(SolverProfile::Finish, profile_start_);
+            if (timing_enabled_) last_timing_.finish_seconds = wall_stamp() - finish_start;
             // A cycle is a preconditioner action, not a converged linear solve.
             return !nullSolutionReturned_;
         }
 
         int    num_iterations = 0;
         double final_res_norm = 0.0;
-        HYPRE_GMRESGetNumIterations(solver_, &num_iterations);
-        HYPRE_GMRESGetFinalRelativeResidualNorm(solver_, &final_res_norm);
+        (useFlexGmres_ ? HYPRE_FlexGMRESGetNumIterations : HYPRE_GMRESGetNumIterations)(solver_, &num_iterations);
+        (useFlexGmres_ ? HYPRE_FlexGMRESGetFinalRelativeResidualNorm : HYPRE_GMRESGetFinalRelativeResidualNorm)(solver_, &final_res_norm);
+        const double reported_res_norm = final_res_norm;
+        // Hypre's zero-residual early return can leave the previous solve's norm.
+        if (true_residual_check_ || (fixed_graph_updates_ && num_iterations == 0))
+            final_res_norm = true_relative_residual();
         lastNumIters_ = num_iterations;
         lastFinalRes_ = final_res_norm;
 
-        // False-convergence guard against the near-singular DDT operator. When
-        // BoomerAMG collapses the first cycle onto the constant null mode,
-        // FlexGMRES can report converged=true with a tiny relative residual while
-        // the returned x is essentially zero. Detect that here: compute ||x||inf
-        // and ||b||inf (global), and if Hypre claims convergence but x is ~0 while
-        // b is not, the "solution" is the null vector -- report NON-converged so
-        // the caller does not scatter a zero phi as if it were a real projection.
+        // Keep legacy magnitude guards for projection callers. Anchored SIMPLE
+        // systems use the explicit residual: pressure and mass RHS have different
+        // units, and changing the matrix scale changes x/b without harming a solve.
         {
             double localXmax = (m > 0)
                 ? thrust::transform_reduce(
@@ -708,30 +831,26 @@ public:
                       0.0, thrust::maximum<double>())
                 : 0.0;
             double gXmax = 0.0, gBmax = 0.0;
-            MPI_Allreduce(&localXmax, &gXmax, 1, MPI_DOUBLE, MPI_MAX, comm_);
-            MPI_Allreduce(&localBmax, &gBmax, 1, MPI_DOUBLE, MPI_MAX, comm_);
+            if (fixed_graph_updates_) {
+                const double local[2] = {localXmax, localBmax};
+                double global[2] = {};
+                MPI_Allreduce(local, global, 2, MPI_DOUBLE, MPI_MAX, comm_);
+                gXmax = global[0]; gBmax = global[1];
+            } else {
+                MPI_Allreduce(&localXmax, &gXmax, 1, MPI_DOUBLE, MPI_MAX, comm_);
+                MPI_Allreduce(&localBmax, &gBmax, 1, MPI_DOUBLE, MPI_MAX, comm_);
+            }
             lastSolutionMax_ = gXmax;
-            // x is "null" if it is many orders below b. The default 1e-12 only
-            // fires on an essentially-exact x=0 (the observed failure mode), so
-            // it never rejects a physically meaningful phi. Raise the ratio via
-            // MARS_HYPRE_NULLX_RATIO if a borderline near-null x appears.
             double nullRatio = getEnvDouble("MARS_HYPRE_NULLX_RATIO", 1e-12);
-            nullSolutionReturned_ = (gBmax > 0.0 && gXmax < nullRatio * gBmax);
+            nullSolutionReturned_ = !true_residual_check_ && (gBmax > 0.0 && gXmax < nullRatio * gBmax);
             if (nullSolutionReturned_ && rank == 0) {
-                std::cout << "[HypreGMRES] WARNING: solver reported converged (iters="
+                std::cout << "[HypreGMRES] WARNING: near-zero solution (iters="
                           << num_iterations << ", rel_res=" << final_res_norm
                           << ") but |x|inf=" << gXmax << " << |b|inf=" << gBmax
-                          << " -- this is the null-mode false convergence; "
-                          << "reporting NOT converged.\n";
+                          << " -- reporting NOT converged; cause is undetermined.\n";
             }
-            // UPPER-BOUND reject: a |x| that is HUGE relative to |b| is an
-            // under-resolved near-null-space solution (the observed 1e7..1e9 phi
-            // from a stalled solve on a poorly-conditioned operator). Its small
-            // residual can slip a loose acceptance gate, but its gradient blows up
-            // the corrector. Reject it. Default ceiling 1e6 (an O(1)-conditioned
-            // pressure solve has |phi| ~ |b|/diag, not 1e6x|b|); MARS_HYPRE_MAXX_RATIO.
             double maxXRatio = getEnvDouble("MARS_HYPRE_MAXX_RATIO", 1e6);
-            if (gBmax > 0.0 && gXmax > maxXRatio * gBmax) {
+            if (!true_residual_check_ && gBmax > 0.0 && gXmax > maxXRatio * gBmax) {
                 nullSolutionReturned_ = true;
                 if (rank == 0)
                     std::cout << "[HypreGMRES] WARNING: |x|inf=" << gXmax
@@ -741,14 +860,199 @@ public:
             }
         }
 
+        const double scaled_tolerance = residual_relative_tolerance_ * last_rhs_norm_;
+        const double residual_limit = maximum_residual_check_
+            ? std::max(residual_absolute_tolerance_, scaled_tolerance)
+            : residual_absolute_tolerance_ + scaled_tolerance;
+        const bool residual_ok = mixed_residual_check_
+            ? std::isfinite(residual_limit) && last_absolute_residual_ <= residual_limit
+            : final_res_norm < tolerance_;
+        const bool converged = residual_ok && !nullSolutionReturned_;
+        if (true_residual_check_ && !converged) {
+            // Read the solver's work vector without replacing our explicit check.
+            // After an early stop it need not contain the final b-Ax.
+            HYPRE_Real work_residual2 = std::numeric_limits<HYPRE_Real>::quiet_NaN();
+            if (num_iterations > 0) {
+                HYPRE_ParVector work_residual = nullptr;
+                (useFlexGmres_ ? HYPRE_ParCSRFlexGMRESGetResidual : HYPRE_ParCSRGMRESGetResidual)(solver_, &work_residual);
+                require_reuse(work_residual && HYPRE_GetError() == 0, "Krylov residual lookup failed");
+                HYPRE_ParVectorInnerProd(work_residual, work_residual, &work_residual2);
+                require_reuse(HYPRE_GetError() == 0, "Krylov residual norm failed");
+            }
+            if (rank == 0) {
+                std::cerr << "[HypreGMRES] rejected: backend=" << (useFlexGmres_ ? "FlexGMRES" : "GMRES")
+                          << " iterations=" << num_iterations
+                          << '/' << maxIter_ << " restart=" << kDim_
+                          << " reported_relative=" << reported_res_norm
+                          << " true_relative_or_absolute=" << final_res_norm
+                          << " tolerance=" << tolerance_ << " solve_error=" << solve_err
+                          << " krylov_work_norm=" << std::sqrt(work_residual2)
+                          << " rhs_norm=" << last_rhs_norm_;
+                if (mixed_residual_check_)
+                    std::cerr << " absolute_residual=" << last_absolute_residual_
+                              << " acceptance_limit=" << residual_limit;
+                std::cerr << '\n';
+            }
+            const char* audit = std::getenv("MARS_HYPRE_RESIDUAL_AUDIT");
+            const int audit_requested = audit && std::string(audit) == "1";
+            int audit_any = 0;
+            MPI_Allreduce(&audit_requested, &audit_any, 1, MPI_INT, MPI_MAX, comm_);
+            if (audit_any) {
+                const auto result = audit_true_residual(b, x);
+                if (rank == 0) {
+                    std::cerr << "[hypre-residual-audit]";
+#ifdef HYPRE_RELEASE_VERSION
+                    std::cerr << " hypre_headers=" << HYPRE_RELEASE_VERSION;
+#endif
+#ifdef CUDART_VERSION
+                    std::cerr << " cudart_headers=" << CUDART_VERSION;
+#endif
+                    std::cerr << " stored_norm=" << result.stored_norm
+                              << " rhs_copy_difference=" << result.rhs_difference
+                              << " solution_copy_difference=" << result.solution_difference
+                              << " synchronized_norm=" << result.synchronized_norm
+                              << " copy_matvec_norm=" << result.copy_matvec_norm
+                              << " fresh_workspace_norm=" << result.fresh_workspace_norm
+                              << " verdict=REJECTED\n";
+                }
+            }
+        }
         if (verbose_) {
-            std::cout << "Hypre GMRES converged in " << num_iterations
+            std::cout << "Hypre GMRES " << (converged ? "converged" : "did not converge")
+                      << " in " << num_iterations
                       << " iterations, final residual: " << final_res_norm << std::endl;
         }
 
-        // Real convergence requires BOTH the residual test AND a non-null x.
+        // Legacy callers also retain their magnitude safeguards.
         if (profile_) profile_->lap(SolverProfile::Finish, profile_start_);
-        return (final_res_norm < tolerance_) && !nullSolutionReturned_;
+        if (timing_enabled_) last_timing_.finish_seconds = wall_stamp() - finish_start;
+        return converged;
+    }
+
+    void configure_spmv() {
+        if (spmv_configured_) return;
+        const char* option = std::getenv("MARS_HYPRE_SPMV_VENDOR");
+        // Native GPU SpMV avoids the observed vendor-path residual mismatch.
+        const int requested = !option ? 0 : std::string(option) == "0" ? 0
+            : std::string(option) == "1" ? 1 : -2;
+        const int local[2] = {requested, -requested};
+        int bounds[2] = {};
+        MPI_Allreduce(local, bounds, 2, MPI_INT, MPI_MAX, comm_);
+        require_reuse(bounds[0] == -bounds[1] && bounds[0] >= 0,
+                      "MARS_HYPRE_SPMV_VENDOR must be unset (native), 0 or 1, with the same backend on every rank");
+        if (requested >= 0) {
+            // Hypre's selector is process-wide; set it before building any solver state.
+            HYPRE_Int major = 0, minor = 0, patch = 0;
+            HYPRE_Int error = HYPRE_SetSpMVUseVendor(requested);
+            error |= HYPRE_VersionNumber(&major, &minor, &patch, nullptr);
+            require_reuse(error == 0 && HYPRE_GetError() == 0, "Hypre SpMV selection failed");
+            int rank = 0;
+            MPI_Comm_rank(comm_, &rank);
+            if (rank == 0) {
+                std::cout << "[hypre-spmv] vendor_requested=" << requested
+                          << " hypre_runtime=" << major << '.' << minor << '.' << patch;
+#ifdef HYPRE_USING_CUDA
+                std::cout << " build_cuda=1";
+#else
+                std::cout << " build_cuda=0";
+#endif
+#ifdef HYPRE_USING_CUSPARSE
+                std::cout << " build_cusparse=1";
+#else
+                std::cout << " build_cusparse=0";
+#endif
+#ifdef HYPRE_USING_CUBLAS
+                std::cout << " build_cublas=1";
+#else
+                std::cout << " build_cublas=0";
+#endif
+                std::cout << '\n';
+            }
+        }
+        spmv_configured_ = true;
+    }
+
+    double true_relative_residual() {
+        if (!r_hypre_) {
+            HYPRE_IJVectorCreate(comm_, static_cast<HYPRE_BigInt>(globalDofStart_),
+                                 static_cast<HYPRE_BigInt>(globalDofEnd_ - 1), &r_hypre_);
+            HYPRE_IJVectorSetObjectType(r_hypre_, HYPRE_PARCSR);
+            HYPRE_IJVectorInitialize(r_hypre_);
+            HYPRE_IJVectorAssemble(r_hypre_);
+            HYPRE_IJVectorGetObject(r_hypre_, reinterpret_cast<void**>(&par_r_));
+            require_reuse(par_r_ && HYPRE_GetError() == 0, "residual vector creation failed");
+        }
+        // Keep b-Ax on Hypre's compute stream without a runtime memcpy before SpMV.
+        HYPRE_Int error = HYPRE_ParCSRMatrixMatvec(-1.0, parcsr_A_, par_x_, 0.0, par_r_);
+        error |= HYPRE_ParVectorAxpy(1.0, par_b_, par_r_);
+        HYPRE_Real residual2 = 0, rhs2 = 0;
+        error |= HYPRE_ParVectorInnerProd(par_r_, par_r_, &residual2);
+        error |= HYPRE_ParVectorInnerProd(par_b_, par_b_, &rhs2);
+        require_reuse(error == 0 && HYPRE_GetError() == 0 && std::isfinite(residual2) && std::isfinite(rhs2)
+                      && residual2 >= 0 && rhs2 >= 0,
+                      "true residual evaluation failed");
+        last_absolute_residual_ = std::sqrt(residual2);
+        last_rhs_norm_ = std::sqrt(rhs2);
+        return std::sqrt(rhs2 > 0 ? residual2 / rhs2 : residual2);
+    }
+
+    struct ResidualAudit {
+        double stored_norm, rhs_difference, solution_difference;
+        double synchronized_norm, copy_matvec_norm, fresh_workspace_norm;
+    };
+
+    // Failure-only diagnostic: fields stay on the GPU; only norms reach the host.
+    double audit_vector_norm(HYPRE_IJVector vector, const RealType* expected = nullptr) {
+        const HYPRE_Int m = globalDofEnd_ - globalDofStart_;
+        thrust::device_vector<HYPRE_Real> d_values(m);
+        auto* values = thrust::raw_pointer_cast(d_values.data());
+        const HYPRE_Int error = HYPRE_IJVectorGetValues(vector, m,
+            thrust::raw_pointer_cast(d_row_global_.data()), values);
+        require_reuse(cudaDeviceSynchronize() == cudaSuccess && error == 0 && HYPRE_GetError() == 0,
+                      "residual audit vector extraction failed");
+        const double local = thrust::transform_reduce(thrust::make_counting_iterator(HYPRE_Int(0)),
+            thrust::make_counting_iterator(m), [=] __device__ (HYPRE_Int row) -> double {
+                const double difference = values[row] - (expected ? expected[row] : 0.0);
+                return difference * difference;
+            }, 0.0, thrust::plus<double>());
+        require_reuse(cudaGetLastError() == cudaSuccess, "residual audit reduction failed");
+        double global = 0;
+        MPI_Allreduce(&local, &global, 1, MPI_DOUBLE, MPI_SUM, comm_);
+        return std::sqrt(global);
+    }
+
+    ResidualAudit audit_true_residual(const Vector& b, const Vector& x) {
+        const double saved_absolute = last_absolute_residual_, saved_rhs = last_rhs_norm_;
+        require_reuse(cudaDeviceSynchronize() == cudaSuccess, "residual audit synchronization failed");
+        ResidualAudit result{};
+        result.stored_norm = audit_vector_norm(r_hypre_);
+        result.rhs_difference = audit_vector_norm(b_hypre_, b.data());
+        result.solution_difference = audit_vector_norm(x_hypre_, x.data());
+        true_relative_residual();
+        result.synchronized_norm = last_absolute_residual_;
+
+        // Repeat the Krylov residual construction with both operations completed.
+        HYPRE_Int error = HYPRE_ParVectorCopy(par_b_, par_r_);
+        require_reuse(cudaDeviceSynchronize() == cudaSuccess && error == 0,
+                      "residual audit RHS copy failed");
+        error = HYPRE_ParCSRMatrixMatvec(-1.0, parcsr_A_, par_x_, 1.0, par_r_);
+        require_reuse(cudaDeviceSynchronize() == cudaSuccess && error == 0,
+                      "residual audit matvec failed");
+        result.copy_matvec_norm = audit_vector_norm(r_hypre_);
+
+        const auto saved_ij = r_hypre_;
+        const auto saved_par = par_r_;
+        r_hypre_ = nullptr;
+        par_r_ = nullptr;
+        true_relative_residual();
+        result.fresh_workspace_norm = last_absolute_residual_;
+        error = HYPRE_IJVectorDestroy(r_hypre_);
+        r_hypre_ = saved_ij;
+        par_r_ = saved_par;
+        last_absolute_residual_ = saved_absolute;
+        last_rhs_norm_ = saved_rhs;
+        require_reuse(error == 0 && HYPRE_GetError() == 0, "residual audit cleanup failed");
+        return result;
     }
 
     // Build A_hypre_ entirely on the device:
@@ -758,8 +1062,79 @@ public:
     //   4) one HYPRE_IJMatrixSetValues call with all device pointers
     void setupHypreMatrix(const Matrix& A,
                           IndexType globalColStart, IndexType globalColEnd) {
+        if (fixed_graph_updates_) {
+            build_fixed_graph(A);
+            update_matrix_values(A);
+            return;
+        }
         // Default target: the solved operator's handles.
         buildParCsr(A, globalColStart, globalColEnd, A_hypre_, parcsr_A_);
+    }
+
+    void build_fixed_graph(const Matrix& A) {
+        const double start = wall_stamp();
+        const int m = static_cast<int>(A.numRows());
+        const HYPRE_BigInt lower = globalDofStart_, upper = globalDofEnd_ - 1;
+        d_packed_counts_.resize(m);
+        d_graph_diagonal_.resize(m);
+        d_packed_offsets_.resize(m);
+        d_row_global_.resize(m);
+        if (m > 0) {
+            countValidPerRowKernel<IndexType, HYPRE_BigInt><<<(m + 255) / 256, 256>>>(
+                A.rowOffsetsPtr(), A.colIndicesPtr(),
+                thrust::raw_pointer_cast(d_localToGlobalDof_.data()), d_localToGlobalDof_.size(),
+                lower, m, thrust::raw_pointer_cast(d_packed_counts_.data()),
+                thrust::raw_pointer_cast(d_graph_diagonal_.data()));
+            fillGlobalRowIndicesKernel<HYPRE_BigInt><<<(m + 255) / 256, 256>>>(
+                thrust::raw_pointer_cast(d_row_global_.data()), lower, m);
+        }
+        thrust::exclusive_scan(d_packed_counts_.begin(), d_packed_counts_.end(), d_packed_offsets_.begin());
+        require_reuse(thrust::count(d_packed_counts_.begin(), d_packed_counts_.end(), 0) == 0
+                      && thrust::count(d_graph_diagonal_.begin(), d_graph_diagonal_.end(), 0) == 0,
+                      "fixed graph contains an empty row or a missing diagonal");
+        // Hypre's insertion API needs a host count for allocating the packed arrays.
+        const int count = thrust::reduce(d_packed_counts_.begin(), d_packed_counts_.end(), 0);
+        d_packed_columns_.resize(count);
+        d_source_slots_.resize(count);
+        d_packed_values_.resize(count);
+        if (m > 0) {
+            pack_hypre_graph_kernel<IndexType><<<(m + 255) / 256, 256>>>(
+                A.rowOffsetsPtr(), A.colIndicesPtr(),
+                thrust::raw_pointer_cast(d_localToGlobalDof_.data()), d_localToGlobalDof_.size(),
+                thrust::raw_pointer_cast(d_packed_offsets_.data()), m,
+                thrust::raw_pointer_cast(d_packed_columns_.data()),
+                thrust::raw_pointer_cast(d_source_slots_.data()));
+        }
+        require_reuse(cudaGetLastError() == cudaSuccess, "graph packing CUDA launch failed");
+        HYPRE_IJMatrixCreate(comm_, lower, upper, lower, upper, &A_hypre_);
+        HYPRE_IJMatrixSetObjectType(A_hypre_, HYPRE_PARCSR);
+        require_reuse(A_hypre_ && HYPRE_GetError() == 0, "matrix creation failed");
+        ++graph_build_count_;
+        if (timing_enabled_) last_timing_.packing_seconds += wall_stamp() - start;
+    }
+
+    void update_matrix_values(const Matrix& A) {
+        const double start = wall_stamp();
+        const bool bad = A.nnz() > 0 && thrust::any_of(thrust::device_pointer_cast(A.valuesPtr()),
+            thrust::device_pointer_cast(A.valuesPtr() + A.nnz()), IsNonFinite<RealType>());
+        HYPRE_ClearAllErrors();
+        thrust::gather(d_source_slots_.begin(), d_source_slots_.end(),
+                       thrust::device_pointer_cast(A.valuesPtr()), d_packed_values_.begin());
+        require_reuse(!bad && cudaGetLastError() == cudaSuccess, "nonfinite matrix or numeric packing failure");
+        if (timing_enabled_) last_timing_.packing_seconds += wall_stamp() - start;
+        const auto previous = parcsr_A_;
+        HYPRE_IJMatrixInitialize(A_hypre_);
+        // Write every graph entry, including entries that changed to zero.
+        HYPRE_IJMatrixSetValues(A_hypre_, static_cast<HYPRE_Int>(A.numRows()),
+            thrust::raw_pointer_cast(d_packed_counts_.data()),
+            thrust::raw_pointer_cast(d_row_global_.data()),
+            thrust::raw_pointer_cast(d_packed_columns_.data()),
+            thrust::raw_pointer_cast(d_packed_values_.data()));
+        HYPRE_IJMatrixAssemble(A_hypre_);
+        HYPRE_IJMatrixGetObject(A_hypre_, reinterpret_cast<void**>(&parcsr_A_));
+        require_reuse(parcsr_A_ && (!previous || previous == parcsr_A_) && HYPRE_GetError() == 0,
+                      "matrix refresh failed or changed the ParCSR object");
+        ++numeric_update_count_;
     }
 
     // Build a ParCSR from a device CSR into the GIVEN handles, using the same
@@ -769,6 +1144,7 @@ public:
     void buildParCsr(const Matrix& A,
                      IndexType globalColStart, IndexType globalColEnd,
                      HYPRE_IJMatrix& ij_out, HYPRE_ParCSRMatrix& parcsr_out) {
+        const double packing_start = wall_stamp();
         int rank;
         MPI_Comm_rank(comm_, &rank);
         HYPRE_Int m       = static_cast<HYPRE_Int>(A.numRows());
@@ -781,7 +1157,7 @@ public:
         (void)globalColEnd;
 
         HYPRE_IJMatrixCreate(comm_, ilower, iupper, ilower, iupper, &ij_out);
-        if (reuse_enabled_)
+        if (reuse_enabled_ || fixed_graph_updates_ || true_residual_check_)
             require_reuse(ij_out && HYPRE_GetError() == 0, "matrix creation failed");
         HYPRE_IJMatrixSetObjectType(ij_out, HYPRE_PARCSR);
         HYPRE_IJMatrixInitialize(ij_out);
@@ -902,6 +1278,7 @@ public:
 
         // One device-pointer SetValues call: HYPRE_MEMORY_DEVICE has been set globally,
         // so Hypre reads ncols/rows/cols/values directly from device memory.
+        if (timing_enabled_) last_timing_.packing_seconds += wall_stamp() - packing_start;
         HYPRE_IJMatrixSetValues(ij_out, m,
                                 thrust::raw_pointer_cast(d_perRowCount.data()),
                                 thrust::raw_pointer_cast(d_rows.data()),
@@ -916,6 +1293,8 @@ public:
             std::cerr << "Rank " << rank << ": Failed to get Hypre ParCSR matrix object" << std::endl;
             return;
         }
+        ++graph_build_count_;
+        ++numeric_update_count_;
     }
 
     // Single thrust reduction: NaN/Inf check + min/max/sum, printed once.
@@ -987,9 +1366,14 @@ public:
             HYPRE_IJVectorDestroy(x_hypre_);
             x_hypre_ = nullptr;
         }
+        if (r_hypre_) {
+            HYPRE_IJVectorDestroy(r_hypre_);
+            r_hypre_ = nullptr;
+        }
         parcsr_A_ = nullptr;
         par_b_ = nullptr;
         par_x_ = nullptr;
+        par_r_ = nullptr;
     }
 
     void require_reuse(bool local_ok, const char* message) const {
@@ -1005,6 +1389,23 @@ public:
     }
 
 private:
+    double wall_stamp() const { return timing_enabled_ ? MPI_Wtime() : 0; }
+    void finish_prepare() {
+        if (timing_enabled_) last_timing_.prepare_seconds = wall_stamp() - prepare_start_;
+    }
+    bool fixed_graph_updates_ = false, timing_enabled_ = false, true_residual_check_ = false;
+    bool mixed_residual_check_ = false;
+    bool maximum_residual_check_ = false;
+    bool spmv_configured_ = false;
+    double residual_absolute_tolerance_ = 0, residual_relative_tolerance_ = 0;
+    double stopping_absolute_tolerance_ = -1;
+    int graph_build_count_ = 0, numeric_update_count_ = 0;
+    SolveTiming last_timing_;
+    double prepare_start_ = 0;
+    thrust::device_vector<int> d_packed_counts_, d_packed_offsets_, d_graph_diagonal_;
+    thrust::device_vector<IndexType> d_source_slots_;
+    thrust::device_vector<HYPRE_BigInt> d_packed_columns_;
+    thrust::device_vector<HYPRE_Real> d_packed_values_;
     bool reuse_enabled_ = false, amg_cycle_ = false, prepared_ = false, vectors_changed_ = false;
     int setup_count_ = 0;
     const Matrix* matrix_ = nullptr;
@@ -1024,6 +1425,7 @@ private:
     // Per-solve diagnostics (filled by solveImpl after Hypre returns).
     int    lastNumIters_ = 0;
     double lastFinalRes_ = 0.0;
+    double last_absolute_residual_ = 0, last_rhs_norm_ = 0;
     double lastSolutionMax_ = 0.0;        // ||x||inf of the returned solution
     bool   nullSolutionReturned_ = false; // converged-but-x~0 (null-mode) flag
 
@@ -1045,8 +1447,10 @@ private:
 
     HYPRE_IJVector b_hypre_;
     HYPRE_IJVector x_hypre_;
+    HYPRE_IJVector r_hypre_ = nullptr;
     HYPRE_ParVector par_b_ = nullptr;
     HYPRE_ParVector par_x_ = nullptr;
+    HYPRE_ParVector par_r_ = nullptr;
 
     IndexType globalDofStart_;
     IndexType globalDofEnd_;
@@ -1058,6 +1462,7 @@ private:
     int kDim_;
     bool useFlexGmres_ = false;  // FlexGMRES (varying precond) vs plain GMRES
     int  pointBlock_   = 1;      // >1: systems/point-block BoomerAMG via SetNumFunctions
+    int  coarseRelaxType_ = -1;
 };
 
 } // namespace fem

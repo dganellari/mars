@@ -72,7 +72,7 @@ __host__ __device__ inline RealType dgScalarFlux(
 template<typename ElementTag, typename RealType, typename KeyType>
 class NonConformalInterface {
 public:
-    using Domain = ElementDomain<ElementTag, RealType, KeyType, cstone::GpuTag>;
+    using Domain = ElementDomain<ElementTag, RealType, KeyType, cstone::execution::Gpu>;
 
     // masterBlock / slaveBlock are the element-block ids of the two interface sides (fluid vs solid,
     // or the two sides of a non-conformal cut). They disambiguate the coincident interface nodes,

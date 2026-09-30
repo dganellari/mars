@@ -9,6 +9,8 @@
 #include <functional>
 #include <mpi.h>
 #include <type_traits>
+#include <thrust/functional.h>
+#include <thrust/transform.h>
 #include <thrust/transform_reduce.h>
 #include <thrust/iterator/counting_iterator.h>
 #include <thrust/execution_policy.h>
@@ -32,6 +34,25 @@ RealType maskedOwnedDot(const RealType* x, const RealType* y,
         [x, y, mask] __device__ (int i) -> RealType {
             return mask[i] ? RealType(0) : x[i] * y[i];
         }, RealType(0), thrust::plus<RealType>());
+}
+
+// Largest |v[i]| on this rank; free function for the same lambda restriction as maskedOwnedDot
+template<typename RealType>
+RealType maxAbsEntry(const RealType* v, size_t n)
+{
+    return thrust::transform_reduce(thrust::device, v, v + n,
+        [] __device__ (RealType a) -> RealType { return fabs(a); }, RealType(0), thrust::maximum<RealType>());
+}
+
+// diag[i] = max(|diag[i]|, floor), the positive Jacobi diagonal of ConjugateGradientSolver::solve
+template<typename RealType>
+void clipJacobiDiagonal(RealType* diag, size_t n, RealType floor)
+{
+    thrust::transform(thrust::device, diag, diag + n, diag,
+        [floor] __device__ (RealType a) -> RealType {
+            RealType b = fabs(a);
+            return b < floor ? floor : b;
+        });
 }
 
 // Simple Conjugate Gradient solver for GPU
@@ -89,17 +110,9 @@ public:
         // class of fix as MARS_DDT_JACOBI_CLIP_FRAC on the DDT operator.
         // Env override: MARS_CG_JACOBI_CLIP_FRAC=F sets clip = F * max(diag).
         // Default 1e-3 (PETSc/Hypre standard fraction). 0 disables.
-        thrust::host_vector<RealType> h_diag(diag.size());
-        thrust::copy(thrust::device_pointer_cast(diag.data()),
-                    thrust::device_pointer_cast(diag.data() + diag.size()),
-                    h_diag.begin());
-
-        RealType localMax = RealType(0);
-        for (size_t i = 0; i < h_diag.size(); ++i) {
-            RealType ad = std::abs(h_diag[i]);
-            if (ad > localMax) localMax = ad;
-        }
-        RealType globalMax = localMax;
+        RealType* d_diag    = thrust::raw_pointer_cast(diag.data());
+        RealType localMax   = maxAbsEntry(d_diag, diag.size());
+        RealType globalMax  = localMax;
         {
             int worldSize = 1;
             MPI_Comm_size(MPI_COMM_WORLD, &worldSize);
@@ -122,13 +135,7 @@ public:
         // need not match the matrix sign; force every diagonal POSITIVE (use
         // |diag|, floored). Single-rank diagonals are all positive so this is a
         // no-op there; it only repairs the bad-sign seam entries on >1 rank.
-        for (size_t i = 0; i < h_diag.size(); ++i) {
-            RealType ad = std::abs(h_diag[i]);
-            h_diag[i] = (ad < clipFloor) ? (clipFloor > 0 ? clipFloor : RealType(1)) : ad;
-        }
-
-        thrust::copy(h_diag.begin(), h_diag.end(),
-                    thrust::device_pointer_cast(diag.data()));
+        clipJacobiDiagonal(d_diag, diag.size(), clipFloor);
         // One-shot diagnostic to know what got clipped on the first solve.
         {
             static bool clipDiagFired = false;
@@ -230,6 +237,7 @@ public:
         const RealType cgDiagB  = b_norm;
 
         // PCG iterations
+        bool warnedNegativePAp = false;
         for (int iter = 0; iter < maxIter_; ++iter)
         {
             // Call halo exchange before SpMV if callback is set
@@ -278,6 +286,15 @@ public:
                 }
                 lastIterations_ = iter + 1;
                 return false;
+            }
+            // Negative curvature means the operator is not SPD (e.g. an asymmetric BC). CG keeps
+            // going as before, but say so once instead of failing silently later.
+            if (pAp < 0 && !warnedNegativePAp)
+            {
+                if (verbose_)
+                    std::cout << "CG warning: p^T Ap = " << pAp
+                              << " < 0, the operator is not positive definite; CG may not converge." << std::endl;
+                warnedNegativePAp = true;
             }
 
             RealType alpha = rho / pAp;

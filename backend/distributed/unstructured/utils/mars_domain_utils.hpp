@@ -1,4 +1,4 @@
-#include "cstone/cuda/cuda_utils.cuh" // For IsDeviceVector, memcpyH2D, memcpyD2H, memcpyD2D
+#include "cstone/cuda/cuda_utils.cuh" // For IsDeviceVector and the memcpy helpers
 #include <tuple>
 #include <type_traits>
 #include <algorithm>
@@ -35,22 +35,24 @@ void copyTupleElements(DstTuple& dst, const SrcTuple& src)
         // Resize destination to match source
         dstVec.resize(srcVec.size());
 
-        // Determine copy direction based on vector types
+        // Determine copy direction based on vector types; the copies are complete on return
+        using cstone::IsDeviceVector;
+        constexpr auto stream = cstone::execution::gpuDefaultStream;
         if constexpr (IsDeviceVector<std::decay_t<decltype(srcVec)>>::value &&
                       IsDeviceVector<std::decay_t<decltype(dstVec)>>::value)
         {
-            // Device to Device
-            memcpyD2D(srcVec.data(), srcVec.size(), dstVec.data());
+            cstone::memcpyD2DAsync(stream, srcVec.data(), srcVec.size(), dstVec.data());
+            cstone::syncGpu(stream);
         }
         else if constexpr (IsDeviceVector<std::decay_t<decltype(dstVec)>>::value)
         {
-            // Host to Device
-            memcpyH2D(srcVec.data(), srcVec.size(), dstVec.data());
+            cstone::memcpyH2DAsync(stream, srcVec.data(), srcVec.size(), dstVec.data());
+            cstone::syncGpu(stream);
         }
         else if constexpr (IsDeviceVector<std::decay_t<decltype(srcVec)>>::value)
         {
-            // Device to Host
-            memcpyD2H(srcVec.data(), srcVec.size(), dstVec.data());
+            cstone::memcpyD2HAsync(stream, srcVec.data(), srcVec.size(), dstVec.data());
+            cstone::syncGpu(stream);
         }
         else
         {

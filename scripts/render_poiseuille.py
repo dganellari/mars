@@ -10,8 +10,7 @@
 #   BOT-R  : centerline u(x) -- entrance development toward U_max
 # --layout simple gives the old single-panel field view.
 #
-# Input: PREFIX_<field>.pvd (default field u -- the validated component;
-# umag/p carry the incremental-pressure artifact and render as garbage).
+# Input: PREFIX.pvd with the point fields u, v and p (--vtu-output=PREFIX).
 #
 # Usage:
 #   pvbatch scripts/render_poiseuille.py --pvd poiseuille_final
@@ -22,8 +21,7 @@ import argparse, os, sys, shutil, subprocess
 
 ap = argparse.ArgumentParser()
 ap.add_argument("--pvd",    required=True, help="driver --vtu-output prefix")
-ap.add_argument("--field",  default="u",
-                help="PVD timeline to render (default u; umag/p are artifact-contaminated)")
+ap.add_argument("--field",  default="u", help="point field to render: u, v or p (default u)")
 ap.add_argument("--layout", default="panels", choices=["panels", "simple"])
 ap.add_argument("--width",  type=int, default=1920)
 ap.add_argument("--height", type=int, default=1080)
@@ -35,7 +33,7 @@ ap.add_argument("--profile-x", type=float, default=9.0, help="profile station x"
 ap.add_argument("--no-mp4", action="store_true")
 args = ap.parse_args()
 
-pvd_path = args.pvd + "_" + args.field + ".pvd"
+pvd_path = args.pvd + ".pvd"
 if not os.path.exists(pvd_path):
     print(f"PVD not found: {pvd_path}", file=sys.stderr)
     sys.exit(1)

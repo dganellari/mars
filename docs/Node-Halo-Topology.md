@@ -150,7 +150,7 @@ thrust::for_each(thrust::device, counting_iterator(0), counting_iterator(recvTot
 Wire `exchangeNodeHalo` into the CG halo callback. The solver also needs `setOwnedSize(numOwnedDofs)` to do `MPI_Allreduce` on dot products:
 
 ```cpp
-ConjugateGradientSolver<RealType, int, cstone::GpuTag> solver(maxIter, tolerance);
+ConjugateGradientSolver<RealType, int, cstone::execution::Gpu> solver(maxIter, tolerance);
 solver.setOwnedSize(numOwnedDofs);
 solver.setHaloExchangeCallback(
     [&domain, dofMap = d_node_to_dof.data()](cstone::DeviceVector<RealType>& p) {

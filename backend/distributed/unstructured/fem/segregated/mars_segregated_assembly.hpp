@@ -19,11 +19,12 @@ struct BoundaryAssemblyInput {
 
 MARS_ASSEMBLY_HD inline void native_interior(TetInteriorInput& x, const TetGeometry<double>& g,
     const int* nodes, const double* velocity_gradient, const double* pressure_gradient,
-    const double* influence)
+    const double* influence, bool velocity_shifted=false)
 {
     for (int s = 0; s < 6; ++s) {
         for (int end = 0; end < 2; ++end) x.edges[2*s+end] = tet_edge_node(s,end);
-        tet_sample_shape(s,false,x.velocity_shape+4*s);
+        tet_sample_shape(s,velocity_shifted,x.velocity_shape+4*s);
+        // Shifting field interpolation must not move the geometric integration point.
         tet_sample_shape(s,false,x.coordinate_shape+4*s);
         for (int j = 0; j < 12; ++j) x.shape_gradient[12*s+j] = g.gradient[j];
         for (int j = 0; j < 3; ++j) x.area[3*s+j] = g.area[3*s+j];
@@ -39,7 +40,7 @@ MARS_ASSEMBLY_HD inline void native_interior(TetInteriorInput& x, const TetGeome
 
 MARS_ASSEMBLY_HD inline bool native_boundary(BoundaryInput& x, const BoundaryAssemblyInput& input,
     const TetGeometry<double>& g, const int* element_nodes, const double* pressure_gradient,
-    const double* influence)
+    const double* influence, bool velocity_shifted=false)
 {
     const int count = x.stage == 5 ? 3 : 4;
     for (int s = 0; s < 3; ++s) {
@@ -47,7 +48,7 @@ MARS_ASSEMBLY_HD inline bool native_boundary(BoundaryInput& x, const BoundaryAss
         int nearest = -1;
         for (int f = 0; f < 3; ++f) if (x.face_nodes[f] == x.nearest[s]) nearest = f;
         if (nearest < 0) return false;
-        tri_sample_shape(nearest,false,x.shape+3*s);
+        tri_sample_shape(nearest,velocity_shifted,x.shape+3*s);
     }
     for (int n = 0; n < count; ++n) {
         int local = -1;

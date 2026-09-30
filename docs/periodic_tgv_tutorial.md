@@ -1,697 +1,379 @@
 # Periodic Boundary Conditions in the MARS Navier–Stokes Solver
 
-### A beginner's tour of the Taylor–Green Vortex case, and how multi-rank periodicity is made correct
+### A beginner's tour of the Taylor–Green vortex, and how one periodic point stays one unknown on any number of GPUs
 
 This tutorial is for a developer who is new to FEM/CVFEM and to domain
 decomposition, but who needs to understand how MARS handles **periodic boundary
-conditions** in its GPU incompressible Navier–Stokes (NS) solver, and the story
-of how multi-rank periodicity went from a buggy "emulation" to the textbook
-**one-DOF-per-pair** collapse.
+conditions** in its GPU incompressible Navier–Stokes solver. It explains one idea,
+the **reduced periodic space**, shows how the solver's vectors and matrices are
+built on it, and tells the story of the bug this design removes on several ranks.
 
-You should be able to read it in about 20 minutes. Code snippets are quoted from
-the repo with `file:line` references so you can jump straight to the source.
-
-The relevant files:
+The solver is the same one the Poiseuille channel and the lid-driven cavity use;
+only its boundary description differs. You should be able to read this in about
+20 minutes.
 
 | File | What lives there |
 |------|------------------|
-| `backend/distributed/unstructured/fem/mars_periodic_bc.hpp` | Periodic-pair logic: the partner table, the P / Pᵀ kernels |
-| `backend/distributed/unstructured/fem/mars_ns_solver.hpp` | The NS time-stepper: the cross-rank DOF collapse, lumped mass, the pressure operator, the velocity solve, the corrector |
-| `backend/distributed/unstructured/solvers/mars_cg_solver.hpp` | The Conjugate-Gradient (CG) linear solver and its callback hooks |
-| `examples/distributed/unstructured/mars_tgv.cu` | The TGV driver: initial condition + time loop |
+| `backend/distributed/unstructured/fem/mars_periodic_bc.hpp` | Pairing: which node slot is the periodic image of which, and the cross-rank pair tables |
+| `backend/distributed/unstructured/fem/mars_dof_space.hpp` | `DofSpace`: the unknowns of a nodal field, `prolong` (P), `restrict` (Pᵀ), dot products |
+| `backend/distributed/unstructured/fem/mars_navier_stokes.hpp` | `NavierStokes`: the operators, the matrices and the time step |
+| `examples/distributed/unstructured/mars_tgv.cu` | The Taylor–Green example: mesh, periodic pairs, solver, time loop, output |
 
 ---
 
-## 1. What is the Taylor–Green Vortex, and what does "periodic" mean physically?
+## 1. What is the Taylor–Green vortex, and what does "periodic" mean?
 
-The **Taylor–Green Vortex (TGV)** is the standard validation case for an
-incompressible Navier–Stokes solver. You start with a known, smooth, swirling
-velocity field on a cube and let viscosity slowly drain its energy. The kinetic
-energy decay over time is well studied, so you can check your solver against a
-reference curve. It is the "hello world" of turbulence-resolving solvers.
+The **Taylor–Green vortex (TGV)** is the standard test for an incompressible
+Navier–Stokes solver. You start from a smooth, swirling velocity field in a cube
+and let viscosity drain its energy. It is the "hello world" of turbulence codes.
 
-In MARS the cube is `[0, 2π]³` and the initial field is set analytically in the
-driver (`mars_tgv.cu:64-88`):
+The initial field is set in the example (`tgvInitialConditionKernel`), with one
+wavelength per box length, `k = 2π / L`:
 
 ```cpp
-d_u[i] =  V0 * sx * cy * cz;
-d_v[i] = -V0 * cx * sy * cz;
-d_w[i] = RealType(0);
-d_p[i] = (rho * V0 * V0 / RealType(16)) *
-         (cos(RealType(2) * x) + cos(RealType(2) * y)) *
-         (cos(RealType(2) * z) + RealType(2));
+u[i] = V0 * sin(X) * cos(Y) * cos(Z);
+v[i] = -V0 * cos(X) * sin(Y) * cos(Z);
+w[i] = T(0);
+p[i] = rho * V0 * V0 / T(16) * (cos(T(2) * X) + cos(T(2) * Y)) * (cos(T(2) * Z) + T(2));
 ```
 
-**"Periodic" means the box wraps around.** The face at `x=0` is not a wall — it
-*is* the same physical surface as the face at `x=1` (here, `x=2π`). A vortex that
-swirls off the right edge re-enters from the left edge, unchanged. The same holds
-for y and z. There are no walls anywhere; all six faces are periodic.
+**"Periodic" means the box wraps around.** The face at `x = lo` is not a wall: it
+*is* the same surface as the face at `x = hi`. Flow that leaves on the right comes
+back on the left, as in Pac-Man. The same holds in y and z. Glue all three pairs
+of opposite faces together and the cube becomes a 3-D torus with no boundary.
 
-Two everyday analogies:
-
-- **Pac-Man.** Walk off the right edge of the screen, reappear on the left. The
-  two edges are the same place.
-- **Rolling the cube into a torus.** Glue `x=0` to `x=1`, then `y=0` to `y=1`,
-  then `z=0` to `z=1`. The flat cube becomes a 3-D torus with no boundary at all.
-
-```
-   A 2-D slice of the periodic box (the periodic interface is where x=0 meets x=1):
-
-        y=1  +----------------------+
-             |                      |
-             |     flow that        |
-   x=0  ===> |     leaves here  ----+---> ... re-enters at x=0
- (interface) |                      |    (same physical face!)
-             |                      |
-        y=0  +----------------------+
-            x=0                    x=1
-            \_____ these two edges are ONE place _____/
-```
-
-Because there are no walls, there are **no Dirichlet boundary conditions** on
-velocity. The driver sets this up explicitly (`mars_tgv.cu:383`):
-
-```cpp
-s.bcKind = NSStepper<KeyType, RealType>::BCKind::Periodic;
-```
-
-One consequence: the pressure is only defined up to an additive constant (a
-"null space"). MARS removes it by subtracting the global mean each step instead
-of pinning a node — see `removeMean` in the driver (`mars_tgv.cu:446`).
+So there are no boundary conditions at all. One consequence: the pressure is only
+defined up to a constant. The solver fixes it by setting `p = 0` at one unknown.
 
 ---
 
-## 2. The mesh's role: what is a "node", and what is the periodic interface?
+## 2. Two storage slots, one physical point
 
-The cube is filled with hexahedral (brick) elements. The corners of those bricks
-are **nodes**. A node is just a point in space where we store one unknown per
-field (one `u`, one `v`, one `w`, one `p`). The solver's job is to find the
-field values at every node.
+The cube is filled with hexahedral elements; their corners are the **nodes**. A
+node stores one value of every field.
 
-Now look at the periodic interface. A node sitting on the `x=0` face and a node sitting on the
-`x=1` face, at the same `(y, z)`, are — physically — **the same point**, because
-the box wraps. But in the mesh data they are stored as **two separate nodes with
-two separate storage slots**. This is the single most important idea in the
-whole tutorial:
+Look at the periodic faces. A node on the `x = lo` face and the node on the
+`x = hi` face with the same `(y, z)` are **the same physical point**, because the
+box wraps. The mesh still stores them as **two separate nodes**. That is the single
+most important fact of this tutorial:
 
-> **Two storage slots, one physical unknown.**
+> **Two storage slots, one physical point.**
 
-MARS gives these two slots names:
+MARS names the two slots:
 
-- The node on the **min** face (`x=0`) is the **master**.
-- The node on the **max** face (`x=1`) is the **slave**.
+- the node on a **min** face is the **master**,
+- the node on the matching **max** face is the **slave**.
 
-A device array, `d_periodicPartner`, records the pairing. For every slave it
-stores the index of its master; for everything else it stores `-1`
-(`mars_periodic_bc.hpp:62-63`):
-
-```cpp
-// d_periodicPartner[slave_node] = master_node_index (within local node array,
-// including ghosts). For non-slaves: -1.
-```
-
-How are pairs found? Each node carries a **space-filling-curve (SFC) key** from
-the cornerstone-octree library that MARS is built on. You can mostly ignore SFC
-keys for this tutorial — just know they are a unique integer label per node, and
-that the master and slave of a periodic pair have **distinct** SFC keys (the box
-is periodic but the coordinates are *not* shifted, so `x=0` and `x=1` stay
-genuinely different points to the octree). The pairing itself is done by spatial
-search: a slave on `x=1` looks for the master on `x=0` with the same `(y, z)`
-(`mars_periodic_bc.hpp:147-281`, the `classify` / `packMasterKeys` /
-`matchSlaves` kernels).
+`buildPeriodicMap` finds the pairs by coordinates and stores them in
+`d_periodicPartner`: for every slave slot, the slot of its master; `-1` for every
+other slot. A node on an edge or a corner of the box is a slave in two or three
+directions at once; `flattenPartnerChainKernel` follows the chain so that the
+partner is always the **final master**, the node with every coordinate at `lo`.
 
 ```
-   Master/slave pairing across the periodic x-interface:
-
-        master (x=0)                       slave (x=1)
-        d_periodicPartner = -1             d_periodicPartner = master_idx
-            o                                   o
-            |  same (y,z)  ===  one physical point  ===  |
-            o                                   o
+     master (x = lo)                         slave (x = hi)
+     partner = -1                            partner = master slot
+         o  ------------ same (y, z) ------------  o
+                 one physical point, two slots
 ```
-
-Corner nodes are special: a node at `(1,1,1)` is a slave in all three directions
-at once, so several slaves can chain to a single master. The
-`flattenPartnerChainKernel` (`mars_periodic_bc.hpp:270-281`) rewrites those
-chains so one lookup reaches the ultimate master.
 
 ---
 
-## 3. DOF collapse: one unknown per periodic pair
+## 3. The reduced periodic space: P and Pᵀ
 
-If master and slave are one physical unknown, the linear system should have **one
-equation for them, not two**. This is the same idea MFEM and deal.II use:
-*eliminate the slave*. MARS does it through a `node_to_dof` map — a slave node's
-"DOF" (degree of freedom = a row/column index in the linear system) is set to its
-**master's** DOF. The reduced system has size = number of interior + master DOFs.
-From the header (`mars_periodic_bc.hpp:11-14`):
+A periodic point is **one unknown** of every field, however many slots store it.
+The unknown lives in one place: the master slot, on the rank that owns the master.
+We call that slot the point's **DOF** (degree of freedom). An interior node is its
+own DOF.
+
+Two maps connect the slots and the DOFs (`DofSpace`):
+
+- **prolong (P)**: copy the DOF value into every slot of the point, including
+  copies on other ranks. After `prolong`, every slot of a periodic point holds the
+  same value.
+- **restrict (Pᵀ)**: add what every slot of the point received into the DOF slot.
+
+They are exact transposes of each other: copying one value to several places, and
+summing several places into one.
 
 ```
-//   2) During DOF numbering, slave nodes do NOT get their own DOF; their
-//      "DOF" is the master's DOF. The resulting linear system size = number
-//      of owned interior+master DOFs ...
+    DOF value  --prolong (P)-->  master slot, slave slots, ghost copies  (all equal)
+    DOF sum    <--restrict (Pᵀ)--  per-slot contributions of an element scatter
 ```
 
+Now the rule that makes periodicity correct, the same rule MFEM and deal.II use:
+
+> **Every field is kept in range(P), and every operator is Pᵀ A P.**
+
+Here `A` is the plain element operator that knows nothing about periodicity: a loop
+over elements that reads its corner nodes and adds a contribution to each of them.
+All periodic logic lives in P and Pᵀ. Without a periodic map the same `DofSpace`
+handles an ordinary mesh: the only copies are then ghosts on other ranks.
+
+Inner products count each periodic point once: `dot` and `sum` add only over DOF
+slots, the owned nodes that are not slaves.
+
+---
+
+## 4. The operators and the time step
+
+`NavierStokes` keeps velocity and pressure at the nodes. Its operators come from
+the 12 sub-control faces of each hex (area vector `A_f` from node L to node R) and
+the sub-control volumes (lumped mass `M`):
+
+| Symbol | Operator |
+|--------|----------|
+| `F` | the flux through each sub-control face, stored per face |
+| `D_F` | face flux divergence: `F` leaves node L and enters node R |
+| `G` | nodal gradient `G p = −M⁻¹ Dᵀ p`, where `Dᵀ` adds `(p_L − p_R) / 2 · A_f` to both ends of a face |
+| `K` | CVFEM Laplacian from the compact face gradient `(∇p · A)_f` |
+| `N(F)` | skew-symmetric advection by the face fluxes |
+
+The face flux is **stabilized** (Rhie–Chow):
+
 ```
-   Two nodes, one DOF:
-
-      node array:   [ ... master_node ...  slave_node ... ]
-                          |                     |
-      node_to_dof:        v                     v
-                        DOF 42  <------------- DOF 42   (same number!)
-                          |
-      solver vector:    x[42]   (the single shared unknown)
+F = A · (u_L + u_R) / 2  −  h [ (∇p · A)_f − A · (G p_L + G p_R) / 2 ],   h = dtEff / ρ
 ```
 
-### The prolongation P and its transpose Pᵀ
+With equal-order nodes, the plain average `A · (u_L + u_R) / 2` cannot see a
+pressure that alternates from node to node (a checkerboard). The bracket is the
+difference between the compact face gradient and the average of the nodal
+gradients: tiny for a smooth pressure, large for a checkerboard. It couples every
+pressure node to its neighbours.
 
-To move between the **node** picture (two slots) and the **DOF** picture (one
-unknown) we need two operators that are exact transposes of each other.
+One time step is the BDF2 incremental pressure correction (BDF1 on the first step),
+with `dtEff = dt` for BDF1 and `2 dt / 3` for BDF2:
 
-**P (prolongation): master → slave copy.** Take the one DOF value and write it
-into *both* the master slot and the slave slot, so the per-node kernels see a
-consistent field across the periodic interface. This is `periodicBroadcastKernel`
-(`mars_periodic_bc.hpp:311-320`):
+1. **Predictor**: `u*` from the BDF history, the extrapolated advection by `F` and the
+   old pressure gradient.
+2. **Viscous step**: `(M / dtEff + ν K) u** = (M / dtEff) u*`, one solve per component.
+3. **Projection**: `F**` is the stabilized flux of `u**` and `p^n`; solve
+   `K φ = −(ρ / dtEff) D_F F**`.
+4. **Corrector**: `F = F** − h (∇φ · A)`, `u = u** − h G φ`, `p = p^n + φ`.
+
+Apply `D_F` to the corrected flux:
+
+```
+D_F F = D_F F** − h D_F (∇φ · A) = D_F F** + h K φ = D_F F** − D_F F** = 0
+```
+
+The face fluxes are divergence-free **to the solver tolerance** on every rank
+count: the right-hand side, the matrix `K` and the flux correction use the same
+face gradients. In the output this is the `div=` column, at 10⁻¹⁵.
+
+**Every vector operation goes through P.** An element loop scatters into the local
+slots, `restrict` sums the slots into the DOFs, a node loop updates the DOFs, and
+`prolong` copies the result back to every slot. The new velocity is single-valued at
+every periodic point by construction.
+
+**Every matrix goes through P too.** `K` and `M / dtEff + ν K` are constant in time,
+so they are assembled once and solved with Hypre PCG + BoomerAMG. Each rank
+assembles its own elements into a matrix over its local slots, and Hypre forms the
+matrix over the DOFs as the product `Pᵀ A_local P`, with `P` stored as a Hypre matrix
+(one entry per slot: the global id of its DOF). This is how MFEM assembles. Rank
+boundaries and periodic seams are then the same thing: slots that share a DOF.
+BoomerAMG keeps the iteration count flat as the mesh and the number of GPUs grow
+(about 20 pressure iterations per step from 16³ to 64³).
+
+**Skew advection conserves kinetic energy.** Node L receives `−F q_R / 2` and node R
+`+F q_L / 2`, so the kinetic energy production `Σ q_i (N q)_i` cancels face by face.
+Only viscosity removes energy.
+
+---
+
+## 5. What changes on several GPUs
+
+With several ranks, each rank owns some elements and some nodes and also holds
+**ghost** copies of nodes owned elsewhere. The cstone node halo moves values between
+an owner and its ghosts:
+
+- `exchangeNodeHalo`: owner → ghosts (a copy),
+- `reverseExchangeNodeHaloAdd`: ghosts → owner (a sum).
+
+The example makes the cornerstone box periodic:
 
 ```cpp
-template<typename RealType>
-__global__ void periodicBroadcastKernel(const int* d_partner, size_t numNodes,
-                                        RealType* d_field)
+amr.initialize(opt.mesh, rank, numRanks, /*periodicAxesMask=*/7, opt.boxLo, opt.boxHi);
+```
+
+Node coordinates stay real, and every rank also receives the elements on the other
+side of each periodic face. So a rank that owns a slave also holds its master,
+usually as a ghost.
+
+The halo alone cannot connect a slave to its master: they have **different SFC
+keys**, so for cstone they are two unrelated nodes, and the master need not even be
+on the slave's rank. Two facts close the gap. The key of the master follows from the
+key of the slave: decode its integer SFC coordinates, set each max-face axis to the
+min face, encode again (`periodicMasterKey`). And a node's owner follows from its key:
+the rank whose SFC range contains it (SFC node ownership). So every rank knows, for each
+slave it owns, which rank owns the master, without searching. `PeriodicMap` keeps a
+small pair table for the pairs split across ranks (`buildCrossRankPeriodicMap`), and
+two exchanges use it: `crossRankPeriodicBroadcast` (master value to the slave's rank)
+and `crossRankPeriodicPairSum` (slave contribution to the master's rank).
+
+With these, P and Pᵀ are three calls each (`DofSpace::prolong`, `DofSpace::restrict`):
+
+```cpp
+void prolong(Vector& v) const
 {
-    size_t i = size_t(blockIdx.x) * blockDim.x + threadIdx.x;
-    if (i >= numNodes) return;
-    int master = d_partner[i];
-    if (master < 0) return;
-    d_field[i] = d_field[master];   // slave := master
+    periodicBroadcastSameRankKernel<RealType><<<...>>>(partner, ownership, n_, v.data());  // slave <- master, same rank
+    crossRankPeriodicBroadcast<KeyType, RealType>(*map_, v);                             // slave <- master, other rank
+    domain_.exchangeNodeHalo(v);                                                         // ghosts <- owners
+}
+
+void restrict(Vector& acc) const
+{
+    domain_.reverseExchangeNodeHaloAdd(acc);                                             // owners += ghosts
+    periodicPairSumKernel<RealType><<<...>>>(partner, ownership, n_, acc.data());        // master += slave, same rank
+    crossRankPeriodicPairSum<KeyType, RealType>(*map_, acc, /*broadcastBack=*/false);    // master += slave, other rank
 }
 ```
 
-**Pᵀ (restriction): slave → master sum.** Going the other way, contributions that
-landed on the slave slot must be *added* onto the master, and the slave slot
-zeroed. This is the transpose of "copy master to slave". MARS has two flavors:
+**The order matters, and it is forced by what each step reads.** In `prolong`,
+the slave copies are updated first and the halo runs last, so that ghost copies of a
+slave on a third rank also receive the new value. In `restrict`, the halo runs first,
+so that every owned slave holds its complete sum before it is added into its master.
 
-`periodicPairSumKernel` — the gated, single-rank-safe sum used after assembly
-(`mars_periodic_bc.hpp:296-309`):
+The `DofSpace` constructor checks the fact these maps rely on and stops if it fails
+(`checkPeriodicPairing`): every owned slave is paired exactly once, with a final master
+owned on the same rank or through the cross-rank table. The matrices need nothing extra: the global id of each slot's DOF is itself a
+field, prolonged once at setup.
 
-```cpp
-__global__ void periodicPairSumKernel(const int*     d_partner,
-                                      const uint8_t* d_ownership,
-                                      size_t         numNodes,
-                                      RealType*      d_field)
-{
-    ...
-    int master = d_partner[i];
-    if (master < 0) return;
-    if (d_ownership[master] != 1) return;   // only when master is owned here
-    atomicAdd(&d_field[master], d_field[i]);
-    d_field[i] = RealType(0);
-}
-```
-
-`periodicFoldToMasterKernel` — the *ungated* sum-only fold used inside the
-matrix-free reduced operator, because there the master may be a ghost
-(`mars_periodic_bc.hpp:330-340`):
-
-```cpp
-// Exact TRANSPOSE of periodicBroadcastKernel: for every slave (partner>=0),
-// field[partner] += field[slave]; field[slave] = 0.
-__global__ void periodicFoldToMasterKernel(const int* d_partner, size_t numNodes,
-                                           RealType* d_field)
-{
-    ...
-    int master = d_partner[i];
-    if (master < 0) return;
-    atomicAdd(&d_field[master], d_field[i]);
-    d_field[i] = RealType(0);
-}
-```
-
-**The operator the solver actually inverts is `Pᵀ A P`.** You take the reduced
-DOF vector, prolong it to nodes with P, apply the bare element operator A, then
-restrict back with Pᵀ. Because P and Pᵀ are exact transposes, `Pᵀ A P` stays
-symmetric — which CG requires. This is exactly how `applyDDTReduced` is built
-(`mars_ns_solver.hpp:5784`):
-
-```
-//   p_dof  --P-->  phiNode  --A(bare)-->  ApNode  --P^T(sum-only)-->  Ap_dof
-```
+Nothing else in the solver knows about ranks or periodicity. The time step is the
+same code on 1 and on N ranks, which is why the results agree to roundoff.
 
 ---
 
-## 4. The CVFEM pipeline, stage by stage — and what periodicity needs at each
+## 6. Walking through `mars_tgv.cu`
 
-MARS solves incompressible NS with **Chorin projection**. Conceptually each time
-step has four stages:
+`runTgv()` follows the steps of the method:
 
-1. **Predictor** — advance velocity ignoring the
-   incompressibility constraint, giving a provisional velocity `u**`.
-2. **Implicit velocity diffusion solve** — solve a Helmholtz-like system per
-   velocity component (this is the **velocity CG**) to handle viscosity
-   implicitly.
-3. **Pressure Poisson solve** — find a pressure correction `φ` that, when its
-   gradient is subtracted, makes the velocity divergence-free.
-4. **Corrector** — subtract `(dt/ρ) ∇φ` from `u**` to get the final
-   divergence-free `u^{n+1}`.
+1. **Mesh and domain.** `AmrManager` reads the hex mesh and builds the distributed
+   domain with a periodic cornerstone box.
+2. **Periodic DOFs.** `buildPeriodicMap` pairs every max-face node with its master.
+3. **Solver.** `NavierStokes` with no boundary conditions (`FreeNodes`), no openings
+   and the periodic map. It builds the geometry, the matrices over the periodic
+   unknowns and their AMG hierarchies, and checks the assembled pressure matrix
+   against the matrix-free one. It prints the number of periodic DOFs, which must be
+   the same on every rank count (4096 on a 16³ mesh).
+4. **Time loop.** `solver->step()` once per step.
+5. **Output.** Kinetic energy, continuity and AMG iterations every `--report-every`
+   steps, and VTU frames with `--vtu-output` (velocity, pressure, vorticity).
 
-The discrete identity the projection enforces is:
+The validation output (`EnergyReport`) is kept apart from these steps. At low
+Reynolds number the initial field is an eigenfunction of the Laplacian with
+eigenvalue `−3k²`, so the kinetic energy decays like the Stokes solution,
+`KE(t) ≈ KE(0) · exp(−6 ν k² t)`. The report prints `KE / KE_Stokes`; on a resolved
+mesh at low Re it stays within a few 10⁻³ of 1. At Re = 1600 it does not: the vortex
+breaks down, and the ratio only shows that transition.
 
-```
-   D ( u** − (dt/ρ) M⁻¹ Dᵀ φ ) = 0
-```
+`mainTgv` destroys the domain, the periodic map and the solver before
+`MPI_Finalize`: they hold MPI communicators and Hypre objects.
 
-where:
-
-- **D** is the discrete **divergence** operator (turns a velocity field into a
-  per-node divergence).
-- **Dᵀ** is its transpose, the discrete **gradient** operator (turns pressure
-  into a force).
-- **M** is the **lumped mass** matrix: a diagonal matrix whose entry at a node is
-  the control volume around that node. `M⁻¹` just divides by that volume.
-
-Rearranging, `φ` solves the pressure-Poisson system with operator
-`A = D M⁻¹ Dᵀ`. This is the "DDT" operator (the default for periodic TGV; see
-`mars_tgv.cu:245`).
-
-### Why every stage must agree on the *same* discrete D
-
-This is the subtle part. The RHS of the pressure solve uses D (the divergence of
-`u**`). The operator `A = D M⁻¹ Dᵀ` uses D and Dᵀ. The corrector subtracts
-`(dt/ρ) Dᵀ φ`. **If any of these uses a slightly different discrete D or Dᵀ, the
-projection does not close** — the corrected velocity is not actually
-divergence-free, and the error feeds back step after step. The driver is careful
-to use the literal `Dᵀ` everywhere (`mars_tgv.cu:417`):
-
-```cpp
-s.useLegacyGradient = false;
-```
-
-with the comment:
-
-```
-// This makes the predictor's grad(p^n) consistent with the
-// DDT projection operator D M^{-1} D^T, so div(u^{n+1})=0 holds algebraically
-// exactly.
-```
-
-### Lumped mass M and the periodic interface
-
-`M` is built per node by scattering each element's volume to its corner nodes,
-then summing. For periodic pairs, the master and slave together bound the same
-physical control volume, so **the interface node must carry the combined pair mass**.
-
-Here is the tricky bit that caused the first bug (see §6). After assembly,
-`maybePeriodicSum` folds the slave's mass onto the master *and zeroes the slave
-slot*. That zero is poison: the gradient-normalize kernel divides by mass, and a
-zero mass makes it **zero out the gradient at the slave node**
-(`normalizeGradientPerNodeKernel`, `mars_ns_solver.hpp:1645-1646`):
-
-```cpp
-RealType m = lumpedMassNode[i];
-if (m == RealType(0)) { gx[i] = gy[i] = gz[i] = RealType(0); return; }
-```
-
-So MARS explicitly **mirrors** the combined mass back onto the slave after the
-DOF gather (`mars_ns_solver.hpp:3041-3049`):
-
-```cpp
-if (s.periodicMap)
-{
-    mars::fem::periodicBroadcastKernel<<<nBlocks, s.blockSize>>>(
-        s.periodicMap->d_periodicPartner.data(), s.nodeCount, s.d_massNode.data());
-    cudaDeviceSynchronize();
-    // Re-sync ghost slots: a cross-rank master-ghost slave just got the
-    // master value; keep ghost copies consistent for the assembler.
-    s.domain.exchangeNodeHalo(s.d_massNode);
-}
-```
-
-The comment above it (`mars_ns_solver.hpp:3023-3040`) spells out the failure mode
-in full: a zeroed interface mass makes the operator's internal D drop the interface flux,
-so only about *half* the divergence gets removed.
-
-### The pressure operator as Pᵀ A P, matrix-free
-
-The pressure operator is never assembled as a matrix. It is applied **matrix-free**
-inside the CG, recomputed every iteration, as the `Pᵀ A P` chain shown in §3
-(`applyDDTReduced`, `mars_ns_solver.hpp:5807-5871`). The key correctness rule,
-repeated throughout the file: the RHS, the operator, and the corrector must all
-use the **identical** discrete D, or the projection identity `D u^{n+1} = 0` will
-not hold.
+Mesh adaptation (`--adapt-every`) is not supported by the solver yet. Refinement
+leaves hanging nodes on faces between a refined and an unrefined element, and those
+need constraints (a hanging node takes the average of its coarse neighbours) that
+are not implemented.
 
 ---
 
-## 5. Single rank vs multiple ranks — the escalation
+## 7. The bug story: what went wrong before
 
-Everything above works on **one GPU (one rank)** without any MPI. On one rank a
-periodic pair is *same-rank*: the master node is owned locally, and `node_to_dof`
-simply maps the slave to the master's DOF. The collapse is trivial — both node
-slots literally share one solver unknown.
+Before this design, periodic TGV was correct on 1 rank and blew up on several. It
+is worth understanding why, because the mistake is easy to make.
 
-```
-   SINGLE RANK (master and slave both local):
+The old solver (`NSStepper` in `mars_ns_solver.hpp`) collapsed the **pressure** to
+one unknown per periodic point, including across ranks, but kept the **velocity** as
+two independent slots, master and slave. Its corrector subtracted a per-slot
+pressure gradient from each slot separately, so the new velocity had
+`u[slave] ≠ u[master]`: two values for one physical point.
 
-        master_node ----\
-                          >-- node_to_dof --> DOF 42   (one unknown, done)
-        slave_node  ----/
-```
+The next step's advection and divergence read node slots, so the code then copied
+`u[slave] := u[master]`. That copy threw away exactly the part of the correction
+that made the per-slot field divergence-free. The divergence the projection had
+removed came back every step. Three more defects sat on the multi-rank path: a
+pressure right-hand side written (not added) from both slots of a pair, so the
+result depended on which GPU write landed last; assembled velocity rows that lost
+the slave side of every cross-rank pair; and a halo exchange that ran before a copy
+it should follow. On every rank count, the BDF2 pressure right-hand side used
+`ρ / dt` while the corrector used `2 dt / 3`, so each step removed only two thirds
+of the divergence.
 
-Now **split the cube across N GPUs** (domain decomposition). Each rank owns a
-chunk of the mesh. The master of a periodic pair can now live on a **different
-rank** than its slave. This is the **cross-rank interface**. The whole question of
-this tutorial is: how do we keep "two slots, one unknown" true when the two
-slots live on different GPUs?
-
-There are two ways to answer that, and MARS used to do the harder, wrong-shaped
-one. The current code does the textbook one. The rest of this section explains
-the cstone halo that both approaches build on; §6 tells the story of the switch.
-
-The communication primitive MARS leans on is the **cstone node halo**:
-
-- `exchangeNodeHalo` — owner → ghost. Copies each owned node's value into the
-  ghost copies that other ranks hold.
-- `reverseExchangeNodeHaloAdd` — ghost → owner, summing. Adds each ghost's
-  accumulated contribution back into the owner.
-
-The design goal is to **minimize bespoke MPI** and use the halo for as much as
-possible. The driver turns the periodic box on at the octree level so cstone
-itself delivers opposite-face nodes as halo ghosts (`mars_tgv.cu:352-354`):
-
-```cpp
-amr.initialize(meshFile, rank, numRanks,
-               /*periodicAxesMask=*/ 7,
-               RealType(boxLo), RealType(boxHi));
-```
-
-There is a catch: **the halo cannot bridge a periodic pair as if it were one
-shared node.** The master and slave have *distinct SFC keys* (no coordinate
-shift), so cstone does not consider them the same shared node. The plain
-owner→ghost / ghost→owner halo for the master's *value* exists, but cstone will
-not, on its own, treat the slave's storage slot as a copy of the master's DOF.
-From the header (`mars_periodic_bc.hpp:66-70`):
-
-```
-// reverseExchangeNodeHaloAdd cannot
-// bridge this because slave and master have DISTINCT SFC keys by design
-// (no coord shift); they are NOT the same cstone-shared node.
-```
-
-But there is a second, crucial thing cstone *does* deliver, and it is the whole
-basis of the modern fix. Because the box is periodic at the octree level, cstone
-delivers the **periodic-image element** (and the master node it contains) into
-the halo of the rank that owns the master. So the master's owner rank can see the
-slave-side brick that touches the periodic interface. As §6 shows, that single fact is enough
-to assemble a *complete* master row locally — with no rank-to-rank shipping of
-matrix entries at all.
+None of these can occur with the reduced space. There is no per-slot velocity to
+copy, no right-hand side written per slot, no matrix row assembled from a partial
+set of elements (every rank assembles only its own elements, and Pᵀ A P sums the
+rest), and P and Pᵀ are the only two places that know the order of the halo and the
+periodic copy.
 
 ---
 
-## 6. The bug story — and the architecture switch that fixed it for good
+## 8. Running and checking
 
-This is the heart of the tutorial. It is a detective story with two morals:
-**stop guessing, measure** — and, once you have measured, **fix the data model,
-don't emulate around it.**
+Build the example (`make mars_tgv`, needs Hypre) and generate a 16³ unit cube:
 
-### The symptom
-
-On **1 rank**, periodic TGV ran beautifully: the divergence of the final
-velocity was at roundoff, around `1e-14`. The projection was closing perfectly.
-
-On **4 ranks**, the same case **blew up**. The pressure magnitude `|p|` exploded
-from a healthy `0.13` to `7447` within a handful of steps. Same physics, same
-mesh, more ranks — diverging.
-
-### The discipline: build on-device probes
-
-Rather than theorize about which stage was wrong, the fix was to add **on-device
-probes** that measure the two things that *must* be true if the projection works.
-They are gated behind `MARS_PROJ_PROBE` so they cost nothing when off
-(`mars_ns_solver.hpp:7031`):
-
-```cpp
-static const bool g_projProbe = (std::getenv("MARS_PROJ_PROBE") != nullptr);
+```bash
+python3 scripts/generate_hex_cube.py --nx 16 --ny 16 --nz 16 --output hex16
 ```
 
-- **P1** checks the *linear solve*: `||A·φ − b|| / ||b||`. If this is tiny, CG
-  genuinely solved `A φ = b`, so any remaining failure is *not* in the solve
-  (`mars_ns_solver.hpp:8010-8019`):
+Low-Reynolds-number check on the unit box, on 1 and 4 ranks:
 
-  ```cpp
-  applyDDTReduced<KeyType, RealType, ElementTag>(s, phi_dof, Aphi, pn, apn, g1, g2, g3);
-  axpyDofKernel<RealType><<<dofBlocks, s.blockSize>>>(
-      rdif.data(), Aphi.data(), b.data(), RealType(-1), n);
-  ...
-  std::cout << "  [PROJ-P1] |b|=" << nb << " |A*phi|=" << nA
-            << " |A*phi-b|/|b|=" << (nr / (nb > 0 ? nb : RealType(1)))
-  ```
-
-- **P3** checks the *projection*: `||D u^{n+1}|| / ||D u**||`. This is the ratio
-  of divergence *after* the corrector to divergence *before*. It should be ≈ 0
-  (projection removed the divergence). A ratio of ≈ 0.5 means only half the
-  divergence was removed (`mars_ns_solver.hpp:8508-8510`):
-
-  ```cpp
-  std::cout << "  [PROJ-P2] |Du**|=" << dIn << " |Du^{n+1}|=" << dOut
-            << "  [PROJ-P3] ratio=" << (dOut / (dIn > 0 ? dIn : RealType(1)))
-  ```
-
-### Fix 1 — the interface mass mirror
-
-The first measurement pointed at the lumped mass. The slave's mass had been
-zeroed (§4), so `normalizeGradientPerNodeKernel` zeroed the slave's gradient,
-so the operator's internal D dropped the interface flux. The result: P3 ≈ 0.5 — the
-projection removed only **half** the divergence at the periodic interface, and pressure ran
-away.
-
-The fix was the **interface mass mirror** shown in §4 (`mars_ns_solver.hpp:3041-3049`):
-mirror the combined pair mass back onto the slave so every mass consumer — the
-operator's M⁻¹, the corrector's M⁻¹, the RHS normalize, the DDT diagonal, and the
-probe — sees the same non-zero interface mass. This killed the catastrophic blowup
-(`|p|` no longer went to thousands).
-
-### The pivotal redirect — "we were debugging the wrong stage"
-
-Fixing the mass helped, but multi-rank still drifted. The breakthrough was a
-direct **single-rank vs 4-rank baseline**: run the identical step on both and
-compare the numbers entering each stage.
-
-The result was damning: the divergence of `u**` *entering* the pressure solve was
-already **0.0096 on 4 ranks vs 1e-5 on 1 rank**, and the velocity diffusion
-solve's iteration count `cg_uvw` was **19–20 on 4 ranks vs 2–3 on 1 rank**. The
-TGV handoff notes (`TGV_HANDOFF.md`) record exactly this kind of `cg_uvw`
-breakdown and the eventual blow-up "around step 30".
-
-The conclusion: **the velocity diffusion solve was already broken *before* the
-pressure stage ever ran.** All the earlier effort had been aimed at the pressure
-operator — the wrong stage.
-
-### Root cause — the half-strength interface rows (the symcheck)
-
-A second on-device probe, `MARS_PERIODIC_XR_SYMCHECK`
-(`mars_ns_solver.hpp:3906-3911`), inspects the **assembled velocity matrix**
-across a cross-rank interface. It compares `A[slave_row, master_ghost_col]` on the
-slave's rank against `A[master_row, slave_ghost_col]` on the master's rank. If
-the matrix were symmetric across the periodic interface, these would match.
-
-They did not. The symcheck found `A_local = 0` and `A_peer ≈ 0` at the periodic interface: the
-master row did **not** carry the slave-side stiffness, and vice versa. The
-assembler had emitted **two independent half-strength rows** — one per side of
-the periodic interface — that *never coupled across ranks*. The reason is the same SFC-key
-issue from §5: the assembler could not route the periodic-image column entries
-across ranks, so each rank built only its local half of the equation. The comment
-records it (`mars_periodic_bc.hpp:1066-1070`):
-
-```
-// the matrix has half-strength rows on the seam (assembler couldn't
-// route the periodic-image column entries cross-rank), so the resulting
-// Ap slot is half what the merged equation requires.
+```bash
+mpirun -np 1 ./examples/distributed/unstructured/mars_tgv --mesh=hex16 --box-lo=0 --box-hi=1 \
+    --nu=0.05 --dt=1e-4 --num-steps=300 --report-every=50
+mpirun -np 4 ./examples/distributed/unstructured/mars_tgv --mesh=hex16 --box-lo=0 --box-hi=1 \
+    --nu=0.05 --dt=1e-4 --num-steps=300 --report-every=50
 ```
 
-### The old fix — "emulation": keep two DOFs, force them equal
+What to check:
 
-The first cross-rank fix did **not** try to make the pair one unknown. It kept
-*two* DOFs — a slave-owned row on rank A and a master-owned row on rank B — and
-spent a lot of machinery forcing them to behave like one. The half-strength rows
-stayed; the merged operator was **reconstructed on the fly, inside CG**, using a
-cross-rank primitive `crossRankPeriodicPairSumDof` (slave→master sum, then
-master→slave broadcast) wired into a per-matvec hook, `setSpmvPostCallback`.
+- `periodic DOFs=4096` on every rank count (one unknown per periodic point, none counted twice).
+- `KE` at each report step is the same on every rank count.
+- `div` (the continuity of the face fluxes, `max |D_F F| / M`) stays at roundoff, a few 10⁻¹⁵.
+- `KE / KE_Stokes` follows the reference, measured on GH200 with 1, 2 and 4 GPUs
+  (identical to all printed digits on each):
 
-That one mirror was not enough. A masked dot product (`setDotMask`) had to skip
-the slave copy so the one physical unknown was not counted twice; the Jacobi
-**preconditioner diagonal** had to be merged with the same primitive
-(`setPreconditionerDiagOverride`); and the **RHS** got the same pair-sum. The
-proven pressure path needed *four* CG-visible quantities — operator, dot,
-diagonal, RHS — all made interface-consistent every iteration. On the assembled
-matrix (the Hypre path) the analog was a Dirichlet-identity slave row plus a
-column fold into the master row.
+| step | t | KE | KE / KE_Stokes |
+|------|---|----|----------------|
+| 0 | 0.000 | 1.2500000000e-01 | 1.00000000 |
+| 100 | 0.010 | 1.1120541324e-01 | 1.00150170 |
+| 200 | 0.020 | 9.8927086261e-02 | 1.00294417 |
+| 300 | 0.030 | 8.7995777160e-02 | 1.00429002 |
 
-It worked, sort of — multi-rank reached single-rank parity for a while. But it
-was a lot of bespoke code (~500 lines), every piece had to stay perfectly in
-sync, and it had a hard ceiling: **a black-box AMG solver like Hypre cannot call
-a per-matvec callback**, so the emulation could never make the assembled-Hypre
-path correct. The whole thing was working *around* the real problem instead of
-fixing it: the pair was still two DOFs pretending to be one.
-
-### The real fix — true cross-rank collapse ("owner-migration")
-
-The textbook answer (MFEM / deal.II style) is the one §3 already gave for a
-single rank: **the slave does not own a DOF at all.** It migrates onto the
-master's DOF. The periodic pair becomes genuinely *one global row* in the matrix
-— even when the master lives on another GPU.
-
-How can the slave point at a DOF on another rank? Because cstone already delivers
-the master to this rank as a **periodic-image halo ghost**. The ghost has a DOF
-slot (in the ghost range, `>= numOwnedDofs`). So the slave's `node_to_dof` is
-simply redirected to the master's *ghost* DOF, and then the DOF-compaction
-**drops the slave's own owned row**. This is the entire change, and it is one
-predicate in the DOF-collapse pass (`mars_ns_solver.hpp:2692-2721`):
-
-```cpp
-// Pass 1: redirect EVERY owned slave -> its master's DOF (owner-migration),
-// for both same-rank and cross-rank pairs ...
-int master = d_partner[i];
-if (master < 0 || d_own[i] != 1) return;
-// ... For a same-rank pair d_old[master] is the master's owned dof (<numOwned).
-// For a cross-rank pair the master is a local ghost (delivered by cstone's
-// periodic-image halo) and d_old[master] is a GHOST dof (>= numOwned), so the
-// compaction below drops the slave's OWN owned row -> the pair becomes ONE
-// global DOF.
-d_n2d[i] = d_old[master];
-```
-
-The old code had an extra guard here — `if (... d_own[master] != 1) return;` —
-that *refused* to collapse when the master was a ghost. Removing that one guard
-is what turns "two DOFs, forced equal" into "one DOF". The slave becomes a
-ghost-valued node that reads the master's value through the ordinary cstone halo.
-
-**Why there is no orphan row** (the old failure that NaN-ed): when we drop the
-slave's row, nothing is left dangling, because the slave node now resolves to the
-master's ghost DOF and `exchangeNodeHalo` keeps it filled with the master's
-value. And **why there is no matrix to ship rank-to-rank**: recall from §5 that
-cstone delivered the periodic-image *element* into the master-owner rank's halo.
-The node-driven assembler walks that element too, so the master rank assembles a
-**complete master row** — its own-side stiffness *plus* the cross-interface slave-side
-contributions — all by itself. The slave's stiffness is simply re-assembled on
-the master's rank from the same periodic-image element. Nothing about the matrix
-crosses ranks; it is purely a DOF-numbering change.
-
-```
-   TRUE CROSS-RANK COLLAPSE (owner-migration):
-
-      rank A (owns x=1 face)            rank B (owns the master)
-      ----------------------           ------------------------
-        slave_node                       master_node (owns the ONE row)
-        node_to_dof --> master_ghost     periodic-image element also
-                          |  (a ghost      arrives here as a halo, so the
-                          |   DOF slot)     assembler fills the master row
-        slave's OWN row dropped            COMPLETE: own-side + slave-side
-                          |                          |
-                          \----- exchangeNodeHalo ---/
-                             (slave reads master's value)
-```
-
-### Proving it is correct — the 4096 invariant
-
-Here is the part worth memorizing, because it is how you *prove* a parallel
-periodic implementation is right with a single number. The DOF-collapse pass
-emits a diagnostic (`mars_ns_solver.hpp:2788-2801`): sum, across all ranks, the
-number of owned DOFs.
-
-```cpp
-long long localOwned = s.numOwnedDofs;
-MPI_Allreduce(&localOwned, &sumOwned, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
-// "[owned-node check] sum(numOwnedDofs over ranks)=" << sumOwned
-// (this should EQUAL the global unique node/DOF count; larger => doubly-owned)
-```
-
-The rule is exact: **`sum(numOwnedDofs over ranks)` must equal the single-rank
-global unique DOF count.** If a periodic pair is genuinely one DOF, it is counted
-exactly once no matter how many ranks the periodic interface is split across.
-
-For cube16 on 4 ranks the single-rank unique DOF count is **4096**. With the old
-emulation the sum was **4657** — larger, because each cross-rank pair was counted
-*twice* (a slave row on one rank, a master row on the other). With true
-owner-migration it is **exactly 4096**. That one integer is the smoking gun:
-no orphan, no double-count, every pair is one DOF.
-
-A second, physical check agrees: step-0 kinetic energy is now
-`KE = 0.125 = V0²/8` on 4 ranks — the exact analytic Taylor–Green value — matching
-single-rank. (Counting an interface DOF twice would have inflated it.)
-
-### What this bought, and what is left
-
-The payoff is large. Owner-migration **deletes the whole emulation layer** — the
-per-matvec pair-sum callback, the post-solve broadcast, the dot masks, the
-preconditioner-diagonal override, and (on the assembled side) the Path-B
-Dirichlet-identity slave row plus the column fold — about **500 lines** in all.
-In the current solver there are **zero call sites** of `setSpmvPostCallback`,
-`setDotMask`, `setPreconditionerDiagOverride`, or `crossRankPeriodicPairSumDof`.
-
-It also fixes *both* solver paths at once. The matrix-free CG path is correct, and
-so is the **assembled Hypre path** — because there is no longer a slave row for
-Hypre to mishandle. The single complete master row is what a black-box AMG solver
-needs, which is exactly what the per-matvec emulation could never give it.
-
-**Honest current state.** The cross-rank DOF machinery is now correct *and
-provable* (the 4096 invariant). But the multi-rank run is not finished: a
-separate, smaller **advection-interface residual** remains. The discrete advection
-flux across the periodic boundary is not yet perfectly consistent between ranks —
-single-rank is clean (`div ~ 1e-14`), while multi-rank carries a residual that
-grows over many steps. This is a **different problem** from the DOF collapse.
-Frame it precisely: the DOF / identity problem is solved the right way; one
-advection-consistency item remains.
+The ratio grows slowly above 1 because the discrete Laplacian of a 16-point
+wavelength is about 1.3 % weaker than the exact one. The release tests
+`marsReleaseTgv_np1` and `_npN` run 100 steps and require `KE / KE_Stokes` in
+`[1.0013, 1.0017]`.
 
 ---
 
-## 7. Takeaways for beginners
+## 9. Takeaways
 
-If you remember five things from this tutorial, make it these:
-
-1. **Periodicity = "two storage slots, one physical unknown."** Every operator
-   that reads those slots — mass, divergence, gradient, the matrix rows, the
-   preconditioner, the dot product — must agree about the periodic interface, or the math
-   silently breaks.
-
-2. **Single-rank can hide a multi-rank bug.** The same code that was perfect on
-   1 rank was catastrophically wrong on 4. Always cross-check ranks; a
-   single-rank-vs-N-rank baseline is one of the most powerful diagnostics you
-   have.
-
-3. **Measure with on-device probes, don't theorize.** `MARS_PROJ_PROBE` (P1 for
-   the solve, P3 for the projection) and `MARS_PERIODIC_XR_SYMCHECK` (for matrix
-   symmetry) turned a vague "it blows up" into precise numbers that pointed at the
-   exact broken stage. The pivotal moment was realizing the velocity solve, not
-   the pressure solve, was the culprit.
-
-4. **Collapse the pair to one DOF, don't emulate it.** Keeping two DOFs and
-   forcing them equal every iteration (the operator, the diagonal, the RHS, the
-   dot product) is a lot of fragile code, and it can never make a black-box solver
-   like Hypre correct. Letting the slave *migrate* onto the master's DOF — so the
-   pair is genuinely one global row — is simpler, correct for both CG and Hypre,
-   and it deleted ~500 lines. When you find yourself bolting consistency onto many
-   places at once, ask whether the data model is wrong.
-
-5. **Prove correctness with one invariant.** `sum(numOwnedDofs over ranks)` must
-   equal the single-rank unique DOF count (4096 for cube16). It went from 4657
-   (emulation, double-counted) to exactly 4096 (true collapse). A single integer
-   that *must* match is worth more than any amount of "looks stable" — and it
-   isolated the remaining advection-interface issue as a separate problem, not a DOF
-   one.
+1. **A periodic point is one unknown for every field.** Pressure and velocity
+   alike. Collapsing only the pressure leaves two velocity values for one point, and
+   no copy afterwards can make both divergence-free.
+2. **Put all periodic logic in one map, P.** Vectors go through `prolong` and
+   `restrict`; matrices are `Pᵀ A P`. Consistency between the right-hand side, the
+   operator and the corrector then follows by construction instead of by care.
+3. **Order matters in P and Pᵀ.** Copy to slaves before the halo; sum over the halo
+   before folding slaves into masters.
+4. **Stabilize equal-order pressure.** Without the face-flux stabilization the
+   pressure matrix of a periodic box has checkerboard null modes, and multigrid
+   breaks down on them.
+5. **Check invariants with one number.** The DOF count must not depend on the rank
+   count, and the KE history must agree across rank counts to roundoff.
 
 ---
 
-### Quick reference: the kernels and hooks
+### Quick reference
 
-| Role | Symbol | Location |
-|------|--------|----------|
-| Partner table | `d_periodicPartner` | `mars_periodic_bc.hpp:62` |
-| P (master → slave copy) | `periodicBroadcastKernel` | `mars_periodic_bc.hpp:311` |
-| Pᵀ (slave → master sum, gated) | `periodicPairSumKernel` | `mars_periodic_bc.hpp:296` |
-| Pᵀ (slave → master sum, fold) | `periodicFoldToMasterKernel` | `mars_periodic_bc.hpp:330` |
-| **True cross-rank collapse (owner-migration)** | DOF-collapse Pass 1 | `mars_ns_solver.hpp:2692-2721` |
-| **Correctness invariant** | `sum(numOwnedDofs)` == single-rank DOF count | `mars_ns_solver.hpp:2788-2801` |
-| Reduced pressure operator Pᵀ A P | `applyDDTReduced` | `mars_ns_solver.hpp:5807` |
-| Interface mass mirror | (lumped mass build) | `mars_ns_solver.hpp:3041` |
-| Velocity solve + CG wiring | `solveOneComponent` | `mars_ns_solver.hpp:5030` |
-| Projection probes | `MARS_PROJ_PROBE` (P1/P3) | `mars_ns_solver.hpp:7031`, `8010`, `8508` |
-| Matrix symmetry probe | `MARS_PERIODIC_XR_SYMCHECK` | `mars_ns_solver.hpp:3906` |
-| Removed emulation (no longer wired) | `crossRankPeriodicPairSumDof`, `setSpmvPostCallback`, `setDotMask`, `setPreconditionerDiagOverride` | (defs remain in `mars_periodic_bc.hpp` / `mars_cg_solver.hpp`; zero call sites in solver) |
+| Role | Symbol | File |
+|------|--------|------|
+| Partner table | `d_periodicPartner` | `mars_periodic_bc.hpp` |
+| Pairing | `buildPeriodicMap` | `mars_periodic_bc.hpp` |
+| Cross-rank pair table | `buildCrossRankPeriodicMap` | `mars_periodic_bc.hpp` |
+| P, Pᵀ | `DofSpace::prolong`, `DofSpace::restrict` | `mars_dof_space.hpp` |
+| Setup checks | `checkPeriodicPairing` | `mars_dof_space.hpp` |
+| Solver | `NavierStokes` | `mars_navier_stokes.hpp` |
+| Stabilized face flux | `nsFaceFluxKernel` | `mars_navier_stokes.hpp` |
+| Matrices over the DOFs | `assembleReduced`, `hypreGalerkin` | `mars_navier_stokes.hpp`, `mars_hypre_amg_pcg_solver.hpp` |
+| Example | `runTgv` | `mars_tgv.cu` |

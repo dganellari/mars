@@ -436,7 +436,7 @@ Weak scaling p=4: SpMV flat, halo +1 ms, Allreduce +0.3 ms (log p),
 
 ### Domain setup (L119–132)
 ```cpp
-ElementDomain<ElemTag, RealType, KeyType, cstone::GpuTag> domain(
+ElementDomain<ElemTag, RealType, KeyType, cstone::execution::Gpu> domain(
     meshFile, rank, numRanks, true, bucketSize);
 size_t nodeCount = domain.getNodeCount();
 size_t elementCount = domain.getElementCount();
@@ -472,27 +472,19 @@ const auto& d_x = domain.getNodeX();
 // dispatch: CvfemHexAssembler::assemble(d_matrix, d_x, ..., kernelVariant);
 ```
 
-### BC (from `mars_ex1_poisson.cu`, L223–250)
+### DOF numbering, BC and solve (from `mars_ex1_poisson.cu`)
 ```cpp
-std::vector<bool> isBoundaryDOF(totalLocalDofs, false);
-for (size_t i = 0; i < h_x.size(); ++i)
-    if (std::abs(h_x[i] - 0.0) < 1e-6 || std::abs(h_x[i] - 8.0) < 1e-6)
-        isBoundaryDOF[i] = true;
-std::vector<KeyType> boundaryDofs;
-for (size_t i = 0; i < isBoundaryDOF.size(); ++i)
-    if (isBoundaryDOF[i]) boundaryDofs.push_back(i);
-BoundaryConditionHandler<...> bc;
-bc.applyDirichlet(fes, K, b, boundaryDofs, 0.0);
-```
-
-### Solve (from `mars_ex1_poisson.cu`, L280–310)
-```cpp
-ConjugateGradientSolver<RealType, IndexType, AcceleratorTag> solver(maxIter, tolerance);
-solver.setVerbose(true);
-solver.setOwnedSize(numDofs);
-// solver.setHaloExchangeCallback([&](Vector& p) { dofHandler.updateGhostDofValues(p); });
-cstone::DeviceVector<RealType> x(numTotalDofs, 0.0);
-bool converged = solver.solve(K, b, x);
+// owned nodes first, then ghosts, from the domain's node ownership
+int numOwnedDofs = buildDofMappingGpu<KeyType>(domain.getNodeOwnershipMap().data(), d_nodeToDof.data(), nodeCount);
+// owned rows, owned + ghost columns; boundary rows (faces of the global bounding box) become identity
+// rows with zero RHS
+SparseMatrix<int, float, cstone::execution::Gpu> A;
+A.allocate(numOwnedDofs, nodeCount, nnz);
+ConjugateGradientSolver<float, int, cstone::execution::Gpu> solver(maxIter, tolerance);
+solver.setOwnedSize(numOwnedDofs);
+if (numRanks > 1)
+    solver.setHaloExchangeCallback([&domain, dofMap](cstone::DeviceVector<float>& p) { domain.exchangeNodeHalo(p, dofMap); });
+bool converged = solver.solve(A, b, u);   // u sized nodeCount, starts at zero
 ```
 
 ## 15. File Index

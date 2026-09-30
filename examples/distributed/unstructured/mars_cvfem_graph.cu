@@ -7,6 +7,7 @@
 #include "backend/distributed/unstructured/fem/mars_perf_counters.hpp"
 #include "backend/distributed/unstructured/fem/mars_cvfem_utils.hpp"
 #include "backend/distributed/unstructured/fem/mars_sparsity_builder.hpp"
+#include "mars_row_dump.hpp"
 #include <thrust/device_vector.h>
 #include <thrust/reduce.h>
 #include <thrust/system/cuda/execution_policy.h>
@@ -31,6 +32,11 @@ int main(int argc, char** argv) {
     int rank, numRanks;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &numRanks);
+
+    // Bind one GPU per rank; harmless when the launcher already exposes a single GPU per rank.
+    int deviceCount = 0;
+    cudaGetDeviceCount(&deviceCount);
+    if (deviceCount > 0) cudaSetDevice(rank % deviceCount);
 
     // Parse command-line options
     std::string meshFile;
@@ -123,7 +129,7 @@ int main(int argc, char** argv) {
     // Load mesh with custom bucket size
     MARS_NVTX_PUSH("Mesh Loading");
     auto meshLoadStart = std::chrono::high_resolution_clock::now();
-    ElementDomain<ElemTag, RealType, KeyType, cstone::GpuTag> domain(
+    ElementDomain<ElemTag, RealType, KeyType, cstone::execution::Gpu> domain(
         meshFile, rank, numRanks, true, bucketSize, static_cast<unsigned>(bucketSizeFocus));
     if (rank == 0) { std::cout << "PHASE: domain constructed" << std::endl; std::cout.flush(); }
 
@@ -389,6 +395,10 @@ int main(int argc, char** argv) {
         if (rank == 0) std::cout << "iter " << iter << ": " << iterTime << " ms" << std::endl;
         MARS_NVTX_POP();
     }
+
+    dumpOwnedRowsIfRequested<KeyType, RealType>(rank, nodeCount, numDofs, nnz, d_nodeToDof.data(),
+                                                d_nodeOwnership.data(), domain.getLocalToGlobalSfcMap().data(),
+                                                d_rowPtr.data(), d_values.data(), d_diagPtr.data(), d_rhs.data());
 
     // Compute DD load imbalance from node counts (owned / ghost / total)
     MARS_NVTX_PUSH("Post-processing");

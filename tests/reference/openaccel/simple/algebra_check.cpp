@@ -1,5 +1,6 @@
 #include "mars_segregated_simple.hpp"
 #include "mars_segregated_simple_metrics.hpp"
+#include "mars_segregated_native_mapping.hpp"
 #include <algorithm>
 #include <cmath>
 #include <iostream>
@@ -10,6 +11,105 @@ namespace {
 int checks=0;
 void check(bool ok) { ++checks; if (!ok) throw std::runtime_error("independent SIMPLE algebra mismatch"); }
 void near(double a,double b) { check(std::isfinite(a) && std::abs(a-b)<=2e-13*std::max(1.,std::abs(b))); }
+void native_mapping() {
+    const int source[]={17,3,29,8}; int permutation[]={0,1,2,3};
+    const auto identity=simple_cell_key(source);
+    do {
+        int cell[4]; for (int j=0;j<4;++j) cell[j]=source[permutation[j]];
+        check(simple_cell_key(cell)==identity);
+        for (int f=0;f<4;++f) {
+            int face[3]; for (int j=0;j<3;++j) face[j]=source[tet_face_node(f,j)];
+            std::sort(face,face+3);
+            do {
+                const int mapped=simple_native_face(face,cell); check(mapped>=0);
+                // Compare the excluded vertex, independently of face numbering/orientation.
+                int absent=-1;
+                for (int value:source) if (std::find(face,face+3,value)==face+3) absent=value;
+                check(cell[tet_opposite_node(mapped)]==absent);
+            } while (std::next_permutation(face,face+3));
+        }
+    } while (std::next_permutation(permutation,permutation+4));
+    const int absent[]={17,3,99},duplicate[]={17,17,3};
+    check(simple_native_face(absent,source)==-1); check(simple_native_face(duplicate,source)==-1);
+    const int keys[]={3,8,17,29};
+    for (int j=0;j<4;++j) check(simple_find_key(keys,4,keys[j])==j);
+    for (int key:{-1,0,4,30}) check(simple_find_key(keys,4,key)==-1);
+    check(simple_find_key(keys,0,3)==-1);
+}
+void shifted_velocity() {
+    double xyz[]={0,0,0, 2,1,0, 0,2,1, 1,0,3};
+    TetGeometry<double> g; check(tet_geometry(xyz,g));
+    int nodes[]={0,1,2,3},n0[]={0},n1[]={1},n2[]={2},n3[]={3},error=0;
+    double x[]={0,2,0,1},y[]={0,1,2,0},z[]={0,0,1,3};
+    double u[]={1,2,-3, 4,-1,2, -2,3,1, 5,4,-2},p[4]{},vg[36]{},pg[12]{},d[12]{};
+    double ef[6]{},bf[3]{},trace[3]{},div[4]{};
+    SimpleFace face{0,1,1};
+    SimpleMesh mesh{4,1,1,{n0,n1,n2,n3},x,y,z,&face,&g};
+    SimpleState state{}; state.velocity=u; state.pressure=p; state.velocity_gradient=vg;
+    state.pressure_gradient=pg; state.influence=d; state.interior_flux=ef;
+    state.boundary_flux=bf; state.trace=trace; state.mass_divergence=div; state.error=&error;
+    SimpleControls c; c.velocity_shifted=true; c.density=2; c.alpha_mass=1;
+    auto input=simple_interior(0,nodes,xyz,u,p,ef,c);
+    native_interior(input,g,nodes,vg,pg,d,true);
+    for (int s=0;s<6;++s) for (int k=0;k<4;++k) {
+        const bool endpoint=k==tet_edge_node(s,0) || k==tet_edge_node(s,1);
+        near(input.velocity_shape[4*s+k],endpoint?.5:0);
+        near(input.coordinate_shape[4*s+k],endpoint?13./36:5./36);
+    }
+    // With zero pressure force, continuity uses the endpoint mean velocity.
+    SimpleInterior<1>{mesh,state,c,{},true}(0);
+    double expected_div[4]{},expected_gradient[36]{};
+    for (int s=0;s<6;++s) {
+        const int l=tet_edge_node(s,0),r=tet_edge_node(s,1);
+        double q=0;
+        for (int j=0;j<3;++j) q+=c.density*.5*(u[3*l+j]+u[3*r+j])*g.area[3*s+j];
+        near(ef[s],q); expected_div[l]+=q; expected_div[r]-=q;
+        for (int i=0;i<3;++i) for (int j=0;j<3;++j) {
+            const double value=.5*(u[3*r+i]-u[3*l+i])*g.area[3*s+j];
+            expected_gradient[9*l+3*i+j]+=value; expected_gradient[9*r+3*i+j]+=value;
+        }
+    }
+    for (int k=0;k<4;++k) near(div[k],expected_div[k]);
+    near(div[0]+div[1]+div[2]+div[3],0);
+    double gradient[36]{};
+    SimpleGradientInterior<3>{mesh,u,gradient,true}(0);
+    for (int k=0;k<36;++k) near(gradient[k],expected_gradient[k]);
+    std::fill(gradient,gradient+36,0);
+    SimpleGradientBoundary<3>{mesh,u,gradient,true}(0);
+    for (double value:gradient) near(value,0); // Incremental nodal samples subtract themselves.
+    SimpleGradientBoundary<3>{mesh,u,gradient,false}(0);
+    check(std::any_of(gradient,gradient+36,[](double v){return std::abs(v)>1e-3;}));
+    double scalar[]={1,4,-2,5},standard[12]{},shifted[12]{};
+    SimpleGradientInterior<1>{mesh,scalar,standard,false}(0);
+    SimpleGradientInterior<1>{mesh,scalar,shifted,true}(0);
+    for (int k=0;k<12;++k) near(standard[k],shifted[k]);
+
+    int offsets[]={0,4,8,12,16},columns[]={0,1,2,3,0,1,2,3,0,1,2,3,0,1,2,3};
+    double pa[16]{},pb[4]{},ma[144]{},mb[12]{},area[3];
+    tet_boundary_area(g,face.ordinal,area);
+    SimpleBoundary<1>{mesh,state,c,{4,offsets,columns,pa,pb}}(0);
+    for (int f=0;f<3;++f) {
+        const int n=tet_face_node(face.ordinal,f);
+        double q=0; for (int j=0;j<3;++j) q+=c.density*u[3*n+j]*area[j];
+        near(pb[n],-q);
+    }
+    face.kind=2;
+    SimpleBoundary<3>{mesh,state,c,{4,offsets,columns,ma,mb},true}(0);
+    const int opposite=tet_opposite_node(face.ordinal);
+    double norm2=0; for (double value:area) norm2+=value*value;
+    const double coefficient=4*c.viscosity*norm2/g.volume;
+    // Shifted wall sampling couples components at the same face node only.
+    for (int n=0;n<4;++n) for (int i=0;i<3;++i) {
+        double rhs=0;
+        for (int m=0;m<4;++m) for (int j=0;j<3;++j) {
+            const double entry=n!=opposite && n==m?coefficient*((i==j?1.:0)-area[i]*area[j]/norm2):0;
+            near(ma[9*(4*n+m)+3*i+j],entry);
+            rhs-=entry*u[3*m+j];
+        }
+        near(mb[3*n+i],rhs);
+    }
+    check(error==0);
+}
 template<int C> void csr() {
     int offsets[]={0,2,5,7},columns[]={0,1,0,1,2,1,2};
     std::vector<double> blocks(7*C*C),rhs(3*C,0),values(7*C*C);
@@ -36,17 +136,64 @@ template<int C> void csr() {
         residual(r); near(squares[2*r],expected*expected); near(squares[2*r+1],0);
     }
 }
+void inlet_normals() {
+    const double xyz[]={0,0,0, 2,0,0, 0,3,0, 0,0,4};
+    TetGeometry<double> g; check(tet_geometry(xyz,g));
+    int nodes[]={0,1,2,3},n0[]={0},n1[]={1},n2[]={2},n3[]={3},error=0;
+    double x[]={0,2,0,0},y[]={0,0,3,0},z[]={0,0,0,4};
+    SimpleFace faces[]={{0,0,0},{0,3,0}};
+    SimpleMesh mesh{4,1,2,{n0,n1,n2,n3},x,y,z,faces,&g};
+    double normal[12]{},area[4]{},inlet[12]{},velocity[12]{},pressure[4]{},trace[3]{},flux[3]{};
+    SimpleInletArea{mesh,normal,area}(0); SimpleInletArea{mesh,normal,area}(1);
+    for (int n=0;n<4;++n) SimpleInletVelocity{normal,area,inlet,2.,&error}(n);
+    check(error==0);
+    // Inward face vectors have magnitudes 4/3 and 1. Shared nodes point along (0,4,3)/5.
+    const double expected[]={0,1.6,1.2, 0,1.6,1.2, 0,0,2, 0,2,0};
+    for (int i=0;i<12;++i) near(inlet[i],expected[i]);
+    SimpleControls c; c.inlet_speed=2; c.density=3;
+    for (bool shifted:{false,true}) {
+        c.velocity_shifted=shifted;
+        for (const auto face:faces) {
+            auto input=simple_boundary(true,face,nodes,g,velocity,pressure,trace,flux,c,false,inlet);
+            for (int s=0;s<3;++s) for (int j=0;j<3;++j) {
+                const int n=tet_face_node(face.ordinal,s);
+                near(input.values.velocity[3*n+j],expected[3*n+j]);
+                double sample=0;
+                for (int k=0;k<3;++k) sample+=(shifted?(k==s?1.:0.):(k==s?11./18:7./36))
+                    *expected[3*tet_face_node(face.ordinal,k)+j];
+                near(input.values.boundary_velocity[3*s+j],sample);
+            }
+            auto pressure_input=simple_boundary(false,face,nodes,g,velocity,pressure,trace,flux,c,false,inlet);
+            double gradient[12]{},influence[12]{};
+            check(native_boundary(pressure_input.values,pressure_input,g,nodes,gradient,influence,shifted));
+            BoundaryOutput out; boundary_block(pressure_input.values,out);
+            for (int s=0;s<3;++s) {
+                const int n=tet_face_node(face.ordinal,s);
+                double q=0;
+                for (int j=0;j<3;++j) q+=3*input.values.boundary_velocity[3*s+j]*pressure_input.values.area[3*s+j];
+                near(out.flux[s],q); near(out.rhs[n],-q);
+            }
+        }
+    }
+    // A node without inlet faces is zero; cancellation of incident normals must reject.
+    std::fill(normal,normal+12,0.); std::fill(area,area+4,0.);
+    SimpleInletVelocity{normal,area,inlet,2.,&error}(0); near(inlet[0],0); near(inlet[1],0); near(inlet[2],0);
+    area[0]=1; SimpleInletVelocity{normal,area,inlet,2.,&error}(0); check(error==1);
+    error=0; normal[0]=std::numeric_limits<double>::quiet_NaN();
+    SimpleInletVelocity{normal,area,inlet,2.,&error}(0); check(error==1);
+}
 }
 int main() {
     try {
-        csr<1>(); csr<3>();
+        csr<1>(); csr<3>(); native_mapping(); shifted_velocity(); inlet_normals();
         double xyz[]={0,0,0,1,0,0,0,1,0,0,0,1}; TetGeometry<double> g; check(tet_geometry(xyz,g));
         int nodes[]={0,1,2,3}; double u[]={1,2,3,4,5,6,7,8,9,10,11,12},p[]={2,3,4,5},trace[]={7,8,9},flux[]={.1,.2,.3};
         SimpleControls c; SimpleFace face{0,1,0};
-        auto inlet=simple_boundary(true,face,nodes,g,u,p,trace,flux,c,false);
+        double inlet_velocity[12]; std::fill(inlet_velocity,inlet_velocity+12,-.1/std::sqrt(3.));
+        auto inlet=simple_boundary(true,face,nodes,g,u,p,trace,flux,c,false,inlet_velocity);
         for (int j=0;j<3;++j) { near(inlet.values.velocity[j],u[j]); for (int f=0;f<3;++f) near(inlet.values.boundary_velocity[3*f+j],-.1/std::sqrt(3.)); }
         face.kind=1;
-        auto outlet=simple_boundary(false,face,nodes,g,u,p,trace,flux,c,false);
+        auto outlet=simple_boundary(false,face,nodes,g,u,p,trace,flux,c,false,nullptr);
         near(outlet.values.pressure[0],2);
         for (int f=0;f<3;++f) near(outlet.values.pressure[f+1],trace[f]);
         double pg[12]{},d[12]; std::fill(d,d+12,2.);
@@ -57,7 +204,7 @@ int main() {
         double row_sum=0; for (double a:out.lhs) row_sum+=a; near(row_sum,3);
         face.kind=2;
         for (bool initialized:{false,true}) {
-            auto wall=simple_boundary(true,face,nodes,g,u,p,trace,flux,c,initialized);
+            auto wall=simple_boundary(true,face,nodes,g,u,p,trace,flux,c,initialized,nullptr);
             for (int f=0;f<3;++f) { near(wall.values.wall_coefficient[f],initialized?.2:0); check(wall.nodes[f]==f+1); }
         }
         // Pressure relaxation must not enter velocity correction a second time.
@@ -109,6 +256,20 @@ int main() {
         std::fill(zero_d,zero_d+12,2.);
         SimpleBoundary<1>{mesh,state,c,{4,offsets,columns,pa,pb},true,false}(0);
         double anchor=0; for (double v:pa) anchor+=v; near(anchor,3);
+        // Constant static pressure survives pressure changes and face closure.
+        auto static_controls=c; static_controls.beta=1;
+        for (double prescribed:{0.,7.5,-3.5}) {
+            static_controls.pressure_reference=prescribed;
+            for (int closed:{0,1,0}) {
+                std::fill(flags,flags+3,closed);
+                for (int j=0;j<4;++j) zero_pressure[j]=20.*(j+1)*(closed?1:-1);
+                std::fill(moments,moments+2,0.);
+                SimpleTraceMoment{mesh,state,moments}(0);
+                SimpleTrace{mesh,state,static_controls,moments}(0);
+                for (double t:zero_trace) near(t,prescribed);
+                check(error==0);
+            }
+        }
         SimpleSums sums; sums.volume=2; sums.momentum2=8; sums.continuity2=2;
         sums.velocity_change2=.02; sums.pressure_change2=.0002;
         sums.inlet=-1; sums.outlet=.9; sums.continuity=-.1; sums.inlet_area=1;

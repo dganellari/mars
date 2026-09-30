@@ -80,14 +80,14 @@ small one runs.
 Single GPU:
 
 ```bash
-./build/examples/mars_cvfem_graph --mesh=cube16
+./build/examples/distributed/unstructured/mars_cvfem_graph --mesh=cube16
 ```
 
 Four GPUs (MPI) — the same binary, the mesh is partitioned automatically by the
 space-filling curve:
 
 ```bash
-mpirun -np 4 ./build/examples/mars_cvfem_graph --mesh=cube16
+mpirun -np 4 ./build/examples/distributed/unstructured/mars_cvfem_graph --mesh=cube16
 ```
 
 Useful options (`--help` lists them all):

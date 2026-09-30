@@ -377,8 +377,8 @@ public:
         // Step 5: cstone's rebalanceDecision (same function it uses for octree update).
         // Identical inputs across ranks => identical decisions => no comm needed.
         cstone::DeviceVector<cstone::TreeNodeIndex> d_nodeOps(numLeaves + 1);
-        cstone::computeNodeOpsGpu(treeLeaves, numLeaves, d_weightedCounts.data(),
-                                   config.bucketSize, d_nodeOps.data());
+        cstone::computeNodeOpsGpu(cstone::execution::gpuDefaultStream, treeLeaves, numLeaves,
+                                  d_weightedCounts.data(), config.bucketSize, d_nodeOps.data());
 
         // Step 6: map leaf decisions to element marks for LOCAL elements only.
         cstone::DeviceVector<uint8_t> d_marks(numElements, 0);

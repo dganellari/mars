@@ -81,7 +81,7 @@ The remaining single-iteration integration proceeds in dependency order:
    before introducing linear-solver differences.
 3. Solve the momentum increment, update velocity and its reconstruction, freeze
    the reference outlet state, and assemble/solve the pressure increment.
-   Reuse `HypreGMRESSolver<double,int,cstone::GpuTag>` with device global maps;
+   Reuse `HypreGMRESSolver<double,int,cstone::execution::Gpu>` with device global maps;
    its full cross-component input uses scalar row `3*node+component`.
    Invalidate prepared setup whenever matrix values change. Verify the selected
    pressure reference policy against OpenAccel before inserting any gauge.

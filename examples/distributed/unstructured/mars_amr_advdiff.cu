@@ -540,7 +540,7 @@ enum class SolverKind { CG, Hypre };
 template<typename KeyType, typename RealType>
 struct AdvDiffStepper
 {
-    using DomainT = ElementDomain<HexTag, RealType, KeyType, cstone::GpuTag>;
+    using DomainT = ElementDomain<HexTag, RealType, KeyType, cstone::execution::Gpu>;
 
     DomainT& domain;
     SolverKind solverKind;
@@ -581,7 +581,7 @@ struct AdvDiffStepper
     std::vector<int64_t> localToGlobalDof;
 
     // Owned-row CSR wrapper consumed by the CG / Hypre solvers.
-    using Matrix = SparseMatrix<int, RealType, cstone::GpuTag>;
+    using Matrix = SparseMatrix<int, RealType, cstone::execution::Gpu>;
     Matrix A;
 
     // Cached bbox for BC marking (constant on a fixed mesh).
@@ -972,7 +972,7 @@ void runAdvDiffTimeStep(AdvDiffStepper<KeyType, RealType>& s,
     bool converged = false;
     if (s.solverKind == SolverKind::CG)
     {
-        ConjugateGradientSolver<RealType, int, cstone::GpuTag> solver(s.maxIter, s.tolerance);
+        ConjugateGradientSolver<RealType, int, cstone::execution::Gpu> solver(s.maxIter, s.tolerance);
         solver.setVerbose(false);
         solver.setOwnedSize(s.numOwnedDofs);
         if (nRanks > 1)
@@ -991,9 +991,9 @@ void runAdvDiffTimeStep(AdvDiffStepper<KeyType, RealType>& s,
     {
 #ifdef MARS_ENABLE_HYPRE
         using IdxType = int64_t;
-        mars::fem::HyprePCGSolver<RealType, int, cstone::GpuTag>
+        mars::fem::HyprePCGSolver<RealType, int, cstone::execution::Gpu>
             hypreSolver(MPI_COMM_WORLD, s.maxIter, s.tolerance,
-                        mars::fem::HyprePCGSolver<RealType, int, cstone::GpuTag>::BOOMERAMG);
+                        mars::fem::HyprePCGSolver<RealType, int, cstone::execution::Gpu>::BOOMERAMG);
         hypreSolver.setVerbose(false);
         converged = hypreSolver.template solve<IdxType>(
             s.A, b, x,
