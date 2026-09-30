@@ -12,6 +12,67 @@ TAGS = ('[simple-linear]', '[HypreGMRES] rejected:', '[hypre-spmv]', '[simple-pr
 AUDIT_FLAGS = ('finite', 'zero_row', 'nonpositive_diagonal', 'positive_offdiagonal',
                'constant_mode_detected', 'residual_within_roundoff_bound', 'roundoff_bound_exceeds_limit',
                'compensated_residual_finite', 'compensated_residual_passed')
+ERROR_MESSAGES = {
+    'outlet_anchor_or_moment_error_seen': (
+        'all outlet faces closed: no open pressure anchor or nonfinite outlet moments',
+        'all outlet faces closed: no open pressure anchor; cannot solve this prescribed-inflow case'),
+    'nonfinite_diagnostics_error_seen': ('nonfinite nonlinear diagnostics',),
+    'continuity_consistency_error_seen': ('assembled continuity does not match boundary mass flux',),
+    'momentum_assembly_error_seen': ('momentum assembly failed',),
+    'flux_update_error_seen': ('flux update failed',),
+    'output_error_seen': ('cannot write metrics', 'metric output failed', 'field output failed',
+                          'field manifest output failed', 'output exists; choose a fresh prefix',
+                          'invalid output node identity or nonfinite field',
+                          'field output does not cover every source node',
+                          'field gather returned duplicate or missing source nodes'),
+    'cuda_error_seen': ('cannot select a CUDA device', 'an illegal memory access was encountered',
+                        'out of memory', 'unspecified launch failure', 'device-side assert triggered',
+                        'invalid device ordinal', 'invalid configuration argument',
+                        'no kernel image is available for execution on the device',
+                        'node-field halo: CUDA pack or unpack failed',
+                        'prepared Hypre: graph packing CUDA launch failed'),
+}
+ERROR_PREFIXES = {'hypre_wrapper_error_seen': 'prepared Hypre: ',
+                  'halo_error_seen': 'node-field halo: '}
+FAILURE_FLAGS = tuple(ERROR_MESSAGES) + tuple(ERROR_PREFIXES) + (
+    'application_error_seen', 'unclassified_application_error_seen', 'linear_candidate_missing_seen',
+    'scheduler_time_limit_seen', 'scheduler_out_of_memory_seen', 'scheduler_signal_seen', 'mpi_abort_seen')
+
+
+def failure_markers(line):
+    seen = set()
+    error = re.fullmatch(r'(?:Rank [0-9]+ )?ERROR: (.+)', line)
+    if error:
+        seen.add('application_error_seen')
+        message = re.sub(r' \(on (?:this|another) rank\)$', '', error.group(1))
+        for key, messages in ERROR_MESSAGES.items():
+            if message in messages:
+                seen.add(key)
+        for key, prefix in ERROR_PREFIXES.items():
+            if message.startswith(prefix):
+                seen.add(key)
+        if re.fullmatch(r'(?:momentum|pressure correction) at SIMPLE iteration [0-9]+: '
+                        r'linear solver returned no usable candidate', message):
+            seen.add('linear_candidate_missing_seen')
+        if message.startswith('halo exchange lists rejected on all ranks (global: '):
+            seen.add('halo_error_seen')
+        if len(seen) == 1:
+            seen.add('unclassified_application_error_seen')
+    # Only scheduler error lines count, not paths or echoed commands mentioning a limit.
+    scheduler = re.match(r'^(?:(?:srun|slurmstepd)(?:\[[0-9]+\])?: error: '
+                         r'|\[[0-9T:.\-]+\] error: \*\*\* STEP )', line)
+    if scheduler:
+        if 'DUE TO TIME LIMIT' in line:
+            seen.add('scheduler_time_limit_seen')
+        if re.search(r'\b(?:oom[_-]kill|out of memory)\b', line, re.IGNORECASE):
+            seen.add('scheduler_out_of_memory_seen')
+        if re.search(r'\b(?:Segmentation fault|Bus error|Killed|Terminated)\b', line):
+            seen.add('scheduler_signal_seen')
+    if re.match(r'^MPICH ERROR \[Rank [0-9]+\]', line) and 'MPI_Abort' in line:
+        seen.add('mpi_abort_seen')
+    if re.match(r'^application called MPI_Abort\(', line):
+        seen.add('mpi_abort_seen')
+    return seen
 
 
 def fields(text):
@@ -135,8 +196,10 @@ def summarize(lines, exit_text, reference_deck=None):
     records = {tag: [] for tag in TAGS}
     completions = []
     false_convergence = False
+    failures = set()
     for line in lines:
         line = line.strip()
+        failures.update(failure_markers(line))
         for tag in TAGS:
             if line.startswith(tag):
                 record = fields(line[len(tag):])
@@ -163,7 +226,7 @@ def summarize(lines, exit_text, reference_deck=None):
     simple = records['[simple-linear]']
     hypre = records['[HypreGMRES] rejected:']
     spmv = records['[hypre-spmv]']
-    if simple or hypre:
+    if simple or hypre or failures:
         # A concatenated successful run cannot hide a rejection.
         status = 'failed'
     result = {
@@ -187,6 +250,7 @@ def summarize(lines, exit_text, reference_deck=None):
         'spmv_backend': consensus(spmv, lambda r: {'0': 'native', '1': 'vendor'}.get(r.get('vendor_requested'), 'unknown'), 'unknown'),
         'false_convergence_message_seen': false_convergence,
     }
+    result.update((key, key in failures) for key in FAILURE_FLAGS)
     audit = records['[simple-pressure-audit]']
     result['pressure_audit_present'] = bool(audit)
     for key in AUDIT_FLAGS:

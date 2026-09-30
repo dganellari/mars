@@ -158,13 +158,90 @@ class PublicDiagnosticsTests(unittest.TestCase):
         self.assertTrue(summarize(converged * 2, '0')['multiple_completions'])
         self.assertEqual(summarize(converged * 2, '0')['run_status'], 'incomplete')
 
+    def test_application_failures_without_linear_rejection(self):
+        cases = {
+            'outlet_anchor_or_moment_error_seen': 'all outlet faces closed: no open pressure anchor or nonfinite outlet moments',
+            'nonfinite_diagnostics_error_seen': 'nonfinite nonlinear diagnostics',
+            'continuity_consistency_error_seen': 'assembled continuity does not match boundary mass flux',
+            'momentum_assembly_error_seen': 'momentum assembly failed',
+            'flux_update_error_seen': 'flux update failed',
+            'output_error_seen': 'field manifest output failed',
+            'cuda_error_seen': 'an illegal memory access was encountered',
+            'hypre_wrapper_error_seen': 'prepared Hypre: GMRES/AMG refresh failed',
+            'halo_error_seen': 'node-field halo: MPI exchange failed',
+            'linear_candidate_missing_seen': 'pressure correction at SIMPLE iteration 99: linear solver returned no usable candidate',
+        }
+        for key, message in cases.items():
+            for suffix in ('', ' (on this rank)', ' (on another rank)'):
+                with self.subTest(key=key, suffix=suffix):
+                    result = summarize('ERROR: ' + message + suffix)
+                    self.assertTrue(result[key])
+                    self.assertTrue(result['application_error_seen'])
+                    self.assertFalse(result['unclassified_application_error_seen'])
+                    self.assertFalse(result['hypre_rejection_present'])
+                    self.assertIsNone(result['solver_accepted'])
+                    self.assertEqual(result['run_status'], 'failed')
+        result = summarize('ERROR: all outlet faces closed: no open pressure anchor; cannot solve this prescribed-inflow case')
+        self.assertTrue(result['outlet_anchor_or_moment_error_seen'])
+
+    def test_unknown_application_errors_are_redacted(self):
+        result = summarize('Rank 2 ERROR: SECRET-name /private/SECRET values=1234')
+        self.assertTrue(result['application_error_seen'])
+        self.assertTrue(result['unclassified_application_error_seen'])
+        self.assertNotIn('SECRET', json.dumps(result))
+        self.assertNotIn('1234', json.dumps(result))
+
+    def test_scheduler_and_mpi_markers(self):
+        cases = {
+            'scheduler_time_limit_seen': '[2026-09-30T12:00:00.001] error: *** STEP 123.0 ON SECRET CANCELLED DUE TO TIME LIMIT ***',
+            'scheduler_out_of_memory_seen': 'slurmstepd: error: Detected 1 oom_kill event in StepId=123.0',
+            'scheduler_signal_seen': 'srun: error: SECRET: task 0: Segmentation fault',
+            'mpi_abort_seen': 'MPICH ERROR [Rank 0] [job id 123.0] [SECRET] - Abort(1): application called MPI_Abort(MPI_COMM_WORLD, 1)',
+        }
+        for key, message in cases.items():
+            result = summarize(message)
+            self.assertTrue(result[key])
+            self.assertFalse(result['application_error_seen'])
+            self.assertNotIn('SECRET', json.dumps(result))
+        combined = summarize('\n'.join(cases.values()))
+        for key in cases:
+            self.assertTrue(combined[key])
+        self.assertTrue(summarize('srun: error: SECRET: task 0: Out Of Memory')['scheduler_out_of_memory_seen'])
+        self.assertTrue(summarize('application called MPI_Abort(MPI_COMM_WORLD, 1) - process 0')['mpi_abort_seen'])
+
+    def test_failure_markers_cannot_be_hidden_by_completion(self):
+        converged = 'CONVERGED iterations=10 ranks=4 exchange_rounds=41\n'
+        for text in ('ERROR: nonfinite nonlinear diagnostics', 'ERROR: SECRET unknown error',
+                     'srun: error: *** STEP 123.0 CANCELLED DUE TO TIME LIMIT ***',
+                     'application called MPI_Abort(MPI_COMM_WORLD, 1) - process 0'):
+            self.assertEqual(summarize(text + '\n' + converged, '0')['run_status'], 'failed')
+
+    def test_failure_markers_require_error_context(self):
+        text = ('boundary: all outlet faces closed: no open pressure anchor or nonfinite outlet moments\n'
+                'path=/private/nonfinite nonlinear diagnostics\n'
+                'saved path: ERROR: an illegal memory access was encountered\n'
+                'file named DUE TO TIME LIMIT or oom_kill or MPI_Abort\n'
+                'slurmstepd: info: no oom_kill events\n'
+                'srun: job 123 queued and waiting for resources\n')
+        result = summarize(text)
+        for key in diagnostic.FAILURE_FLAGS:
+            self.assertFalse(result[key])
+        result = summarize('ERROR: /private/nonfinite nonlinear diagnostics')
+        self.assertTrue(result['unclassified_application_error_seen'])
+        self.assertFalse(result['nonfinite_diagnostics_error_seen'])
+        limited = ('NOT CONVERGED: iteration limit iterations=50 ranks=4 exchange_rounds=201\n'
+                   'srun: error: SECRET: task 0: Exited with exit code 2\n')
+        self.assertEqual(summarize(limited, '2')['run_status'], 'iteration_limit')
+
     def test_output_vocabulary_never_contains_input_text_or_numbers(self):
         allowed = {'mars-simple-public-diagnostics-v1', 'incomplete', 'failed',
                    'converged', 'iteration_limit', 'unknown', 'pressure', 'momentum',
                    'GMRES', 'FlexGMRES', 'native', 'vendor'}
         private = 'SECRET-path-boundary-value'
         text = (private + '\n' + HYPRE + ' ' + private + '=123456789\n' + SIMPLE
-                + '\n[hypre-spmv] vendor_requested=' + private)
+                + '\n[hypre-spmv] vendor_requested=' + private
+                + '\nERROR: prepared Hypre: ' + private
+                + '\nsrun: error: ' + private + ': Out Of Memory')
         for candidate in (text, text.replace('pressure', private).replace('GMRES', private)):
             result = summarize(candidate)
             self.assertNotIn(private, json.dumps(result))

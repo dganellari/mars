@@ -195,6 +195,19 @@ residual magnitudes, iteration counts, timings or input hashes. Full logs,
 prepared arguments and fields remain private. No rebuild or simulation rerun is
 needed; the exporter requires only Python 3.6 or later and its standard library.
 
+Failures without a linear-rejection record also have fixed `*_seen` flags for
+application errors, outlet anchors or moments, nonfinite nonlinear diagnostics,
+continuity consistency, assembly, output, Hypre wrapper and halo errors, known
+CUDA errors, and scheduler time limits, memory errors or termination signals.
+Unrecognized application errors set `unclassified_application_error_seen`; their
+text remains private. MPI abort and scheduler flags describe messages observed,
+not necessarily the original cause. The outlet flag covers missing positive
+open area **or nonfinite moments**, so it does not prove that every outlet closed.
+A false flag means no recognized message was found, not that the cause is excluded.
+Recognized fatal messages prevent a concatenated successful run from hiding a
+failure. To inspect an earlier failure, export its existing log and exit file to
+a fresh JSON filename; no new GPU run is needed.
+
 Missing or conflicting diagnostics become `null` or `unknown`, never a pass.
 The exporter combines observations without exposing their counts, refuses an
 existing output file, and suppresses private values in its own error messages.
