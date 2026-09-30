@@ -245,30 +245,26 @@ target_include_directories(mars_amr_ns_projection PRIVATE
 )
 install(TARGETS mars_amr_ns_projection RUNTIME DESTINATION bin/examples)
 
-# Poiseuille flow validation driver: uniform inflow, free pressure outlet,
-# parabolic-profile RMS check against the analytic solution. Uses the channel
-# fork mars_ns_channel_solver.hpp (balanced opening-flux source).
-add_executable(mars_poiseuille_flow mars_poiseuille_flow.cu)
-target_link_libraries(mars_poiseuille_flow PRIVATE mars)
-target_include_directories(mars_poiseuille_flow PRIVATE
-    ${CMAKE_SOURCE_DIR}/backend/distributed/unstructured/amr
-)
-install(TARGETS mars_poiseuille_flow RUNTIME DESTINATION bin/examples)
+# Poiseuille channel flow, the incompressible Navier-Stokes example of
+# docs/poiseuille_tutorial.md (solver: fem/mars_channel_flow.hpp). Both linear
+# systems are solved with Hypre BoomerAMG, so it needs a Hypre build.
+if(MARS_ENABLE_HYPRE)
+    add_executable(mars_poiseuille_flow mars_poiseuille_flow.cu)
+    target_link_libraries(mars_poiseuille_flow PRIVATE mars)
+    install(TARGETS mars_poiseuille_flow RUNTIME DESTINATION bin/examples)
 
-# Long-running GPU regression: converge the channel to the analytic parabola
-# and check profile, through-flow, continuity and final velocity change.
-# The stretched mesh needs thousands of pressure iterations per step. Keep this
-# opt-in and allow four hours; execute it only in a GPU allocation.
-if(MARS_ENABLE_TESTS AND MARS_ENABLE_VALIDATION_TESTS)
-    add_test(NAME marsPoiseuilleValidation
-             COMMAND mars_poiseuille_flow
-                     --mesh=${CMAKE_SOURCE_DIR}/tests/data/poiseuille/poiseuille_hex_14k_elem.e
-                     --planar-ddt --uinf=1.0 --nu=0.01 --dt=0.01 --tol=1e-6 --max-iter=8000
-                     --num-steps=1500 --check)
-    set_tests_properties(marsPoiseuilleValidation PROPERTIES
-        TIMEOUT 14400
-        LABELS "validation;gpu;long"
-        ENVIRONMENT "MARS_NS_DEBUG_STEPS=3;MARS_DDT_CG_PRINT_EVERY=1000")
+    # GPU validation: develop the channel to the analytic parabola and check the
+    # profile, the through-flow, continuity, the projection and steadiness.
+    # Execute it only in a GPU allocation.
+    if(MARS_ENABLE_TESTS AND MARS_ENABLE_VALIDATION_TESTS)
+        add_test(NAME marsPoiseuilleValidation
+                 COMMAND mars_poiseuille_flow
+                         --mesh=${CMAKE_SOURCE_DIR}/tests/data/poiseuille/poiseuille_hex_14k_elem.e
+                         --uinf=1.0 --nu=0.01 --dt=0.01 --num-steps=1500 --report-every=100 --check)
+        set_tests_properties(marsPoiseuilleValidation PROPERTIES
+            TIMEOUT 1800
+            LABELS "validation;gpu;long")
+    endif()
 endif()
 
 # Taylor-Green vortex driver. Periodic-cube NS solver + AMR. Currently a
