@@ -203,7 +203,7 @@ if(MARS_ENABLE_UNSTRUCTURED)
         FetchContent_Declare(
             cornerstone_fetch
             GIT_REPOSITORY https://github.com/sekelle/cornerstone-octree.git
-            GIT_TAG c48fc282799b679ae9c506c5f36dbdca9e5ef0d2  # mars-extensions
+            GIT_TAG 83ccddcf9ee0ad4ad4bb7a9e3e50d5146dfba2f3  # mars-extensions
             OVERRIDE_FIND_PACKAGE
         )
     
