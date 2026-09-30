@@ -321,11 +321,55 @@ withholds a diagnostic verdict; it never changes solver acceptance. Missing,
 conflicting or nonfinite evidence also remains unknown. The recorded run status
 stays failed, even when the source-target comparison passes.
 
+## Diagnose a completed iteration-limit run
+
+Use `scripts/simple_convergence_summary.py` beside the saved private log and
+`PREFIX-metrics.csv`. It needs no rebuild or new GPU run. Pass the three nonlinear
+tolerances from the original launch explicitly; older logs do not record them,
+so the script cannot independently verify those supplied targets.
+
+```bash
+python3 scripts/simple_convergence_summary.py \
+  --log "$run/run.log" --metrics "$run/flow-metrics.csv" \
+  --exit-file "$run/run.exit" \
+  --residual-tol 1e-6 --mass-tol 1e-6 --change-tol 1e-6 \
+  --output "$summary"
+```
+
+Share only the resulting JSON. It contains fixed labels and booleans, with no
+residuals, physical values, paths, iteration counts or boundary sizes. Raw inputs
+stay on the user's machine. Missing/malformed evidence, multiple runs, mismatched
+exit status, gaps in the per-iteration CSV, and disagreements between logged
+reports and CSV rows fail without exposing the offending input.
+
+The final checks mirror `simple_converged`: momentum and continuity versus
+`residual-tol`, mass balance versus `mass-tol`, all three update norms versus
+`change-tol`, conservation consistency at `1e-10`, at least two iterations, and
+unchanged outlet flags. `completion_matches_supplied_targets=false` calls for
+checking the supplied tolerances and run identity; it never changes the recorded
+run status. Small updates alone are not convergence when residuals still fail.
+
+Trends use the last three blocks of `floor(completed_iterations/10)` CSV samples,
+with at least five samples per block. `below_target` means every sample in the
+last block meets its target. Otherwise, two consecutive drops of at least 10%
+in block medians (the lower median for even-sized blocks) give `decreasing`.
+Two increases of at least 10% give `increasing`. Medians all within 10% give
+`flat`; other histories give `mixed`.
+Short histories give `insufficient_data`. These finite-window indicators do not
+prove asymptotic convergence, stagnation, oscillation or physical unsteadiness.
+Outlet flag changes anywhere in the same tail are reported separately.
+
+A valid export exits zero even when the simulation did not converge. An
+iteration-limit result is not by itself evidence of a solver defect: the reference
+calculation may also be unconverged. Keep the numerical settings unchanged until
+the failing criteria and trends are known.
+
 ## Local checks
 
 ```bash
 python3 -m unittest discover -s scripts -p test_prepare_simple_deck.py -v
 python3 -m unittest discover -s scripts -p test_simple_public_diagnostics.py -v
+python3 -m unittest discover -s scripts -p test_simple_convergence_summary.py -v
 ```
 
 The checked-in synthetic `preparation_fixture.i` tests cover extraction, static
