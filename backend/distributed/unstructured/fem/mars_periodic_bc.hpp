@@ -92,9 +92,6 @@ struct CrossRankPeriodicMap
     // Persistent staging buffers (mutable so const exchange methods can stage).
     mutable DevVec<RealType> sendBuf_;
     mutable DevVec<RealType> recvBuf_;
-    // Staging for the multi-field exchanges (crossRankPeriodic*Fields).
-    mutable DevVec<RealType> fieldsSendBuf_;
-    mutable DevVec<RealType> fieldsRecvBuf_;
 
     // Epoch counter + private sub-communicator. comm_ is MPI_Comm_dup'd from
     // the user-supplied comm at first build; freed in PeriodicMap dtor.
@@ -115,10 +112,6 @@ struct PeriodicMap
                                    // local intermediate telescopes hop-by-hop; the flattened
                                    // d_periodicPartner is for DOF-collapse/broadcast only.
     DevVecU8  d_periodicMask;      // [numNodes] -> bitmask as above
-    // [numNodes] -> 1 at owned slaves whose final master is not on this rank and was
-    // found by its key (their partner is -1; the cross-rank tables pair them). Empty
-    // unless buildPeriodicMap(..., resolveByKey = true).
-    DevVecU8  d_remoteSlave;
     int       numSlaves     = 0;
     int       numMasters    = 0;
 
@@ -570,17 +563,19 @@ __global__ void overwriteCrossRankRecvNodeGuardedKernel(const int* d_recv_ids,
 }
 
 // Key of the final master of a slave: the slave's integer SFC coordinates with every
-// max-face axis set to the integer coordinate of the min face. Exact, because node keys
-// are the identity and a matching mesh gives master and slave the same other coordinates.
+// max-face axis (mask bits 0-2) set to the integer coordinate of the min face. Exact,
+// because node keys are the node identity and a matching mesh gives master and slave
+// the same other coordinates.
 template<typename KeyType, typename RealType>
-KeyType periodicMasterKey(KeyType slaveKey, uint8_t mask, const cstone::Box<RealType>& box, const unsigned minCoord[3])
+HOST_DEVICE_FUN KeyType periodicMasterKey(KeyType slaveKey, uint8_t mask, const cstone::Box<RealType>& box,
+                                          unsigned minX, unsigned minY, unsigned minZ)
 {
-    using Sfc       = cstone::SfcKind<KeyType>;
-    const auto bits = box.getBoxDimBits(cstone::maxTreeLevel<KeyType>{});
+    using Sfc         = cstone::SfcKind<KeyType>;
+    const auto bits   = box.getBoxDimBits(cstone::maxTreeLevel<KeyType>{});
     auto [ix, iy, iz] = cstone::decodeSfc(Sfc(slaveKey), bits);
-    if (mask & 0x01) ix = minCoord[0];
-    if (mask & 0x02) iy = minCoord[1];
-    if (mask & 0x04) iz = minCoord[2];
+    if (mask & 0x01) ix = minX;
+    if (mask & 0x02) iy = minY;
+    if (mask & 0x04) iz = minZ;
     return cstone::iSfcKey<Sfc>(ix, iy, iz, bits).value();
 }
 
@@ -609,8 +604,7 @@ KeyType periodicMasterKey(KeyType slaveKey, uint8_t mask, const cstone::Box<Real
 template<typename KeyType, typename RealType, typename DomainT>
 void buildCrossRankPeriodicMap(const DomainT& domain,
                                PeriodicMap<KeyType, RealType>& map,
-                               MPI_Comm comm,
-                               bool resolveByKey = false)
+                               MPI_Comm comm)
 {
     using XR = CrossRankPeriodicMap<KeyType, RealType>;
     XR& xr = map.cross_;
@@ -621,7 +615,6 @@ void buildCrossRankPeriodicMap(const DomainT& domain,
     xr.recvOffsets_.assign(1, 0);
     xr.d_sendOwnedSlaveIds_.resize(0);
     xr.d_recvOwnedMasterIds_.resize(0);
-    map.d_remoteSlave.resize(0);
 
     if (domain.numRanks() <= 1) return;
 
@@ -740,42 +733,6 @@ void buildCrossRankPeriodicMap(const DomainT& domain,
     std::vector<std::vector<KeyType>> masterKeysByPeer(topo.peers_.size());
     std::vector<int>     fallbackSlaves;
     std::vector<KeyType> fallbackMasterKeys;
-    std::vector<std::vector<KeyType>> perRankKeys(numRanks);
-    std::vector<std::vector<int>>     perRankSlaves(numRanks);
-
-    // resolveByKey: an owned slave whose final master is not owned here is paired by the
-    // key of that master, so the pairing does not depend on what the halo brought. With
-    // SFC ownership every rank computes the owner of the key; otherwise every rank is asked
-    // and the owner claims it below. A slave whose chain does not end at a final master on
-    // this rank is paired only through the tables (keyResolved).
-    std::vector<int> keyResolved;
-    unsigned minCoord[3] = {0, 0, 0};
-    const auto& box         = domain.getBoundingBox();
-    const bool routeByOwner = resolveByKey && domain.sfcOwnership();
-    auto owner              = domain.sfcNodeOwner();
-    std::vector<KeyType> h_rankBounds;
-    long long keyMismatch = 0;
-    if (resolveByKey)
-    {
-        if (h_mask.empty())
-        {
-            h_mask.resize(numNodes);
-            cudaMemcpy(h_mask.data(), map.d_periodicMask.data(), numNodes * sizeof(uint8_t),
-                       cudaMemcpyDeviceToHost);
-        }
-        auto [x0, y0, z0] = cstone::decodeSfc(cstone::sfc3D<cstone::SfcKind<KeyType>>(map.xmin, map.ymin, map.zmin, box),
-                                              box.getBoxDimBits(cstone::maxTreeLevel<KeyType>{}));
-        minCoord[0] = x0;
-        minCoord[1] = y0;
-        minCoord[2] = z0;
-    }
-    if (routeByOwner)
-    {
-        h_rankBounds.resize(owner.numRanks + 1);
-        cudaMemcpy(h_rankBounds.data(), owner.rankBounds, h_rankBounds.size() * sizeof(KeyType),
-                   cudaMemcpyDeviceToHost);
-        owner.rankBounds = h_rankBounds.data();
-    }
 
     // GATE on the ULTIMATE master, ROUTE/KEY by the ULTIMATE master. The local
     // fold (maybePeriodicSum stage-a) runs a single pass on the FLATTENED
@@ -787,28 +744,6 @@ void buildCrossRankPeriodicMap(const DomainT& domain,
     {
         if (h_own[i] != 1) continue;
         int u = h_partnerUlt[i];     // ULTIMATE master -- gate AND route/key
-        if (resolveByKey && h_mask[i] != 0)
-        {
-            const bool finalHere = u >= 0 && h_mask[u] == 0;
-            if (finalHere && h_own[u] == 1) continue;
-            KeyType masterKey = periodicMasterKey<KeyType>(h_sfc[i], h_mask[i], box, minCoord);
-            // A master the halo did bring must have exactly the mirrored key.
-            if (finalHere && h_sfc[u] != masterKey) ++keyMismatch;
-            if (!finalHere) keyResolved.push_back(int(i));
-            if (routeByOwner)
-            {
-                int r = owner(masterKey);
-                perRankKeys[r].push_back(masterKey);
-                perRankSlaves[r].push_back(int(i));
-                continue;
-            }
-            if (!finalHere)
-            {
-                fallbackSlaves.push_back(int(i));
-                fallbackMasterKeys.push_back(masterKey);
-                continue;
-            }
-        }
         if (u < 0)                 continue;  // not a slave (terminal or non-pair)
         if (h_own[u] == 1)         continue;  // same-rank: local fold handles
         KeyType masterKey = h_sfc[u];
@@ -824,20 +759,12 @@ void buildCrossRankPeriodicMap(const DomainT& domain,
             fallbackMasterKeys.push_back(masterKey);
         }
     }
-    if (resolveByKey)
-    {
-        MPI_Allreduce(MPI_IN_PLACE, &keyMismatch, 1, MPI_LONG_LONG, MPI_SUM, xr.comm_);
-        if (keyMismatch > 0)
-        {
-            if (myRank == 0)
-                std::cerr << "buildCrossRankPeriodicMap: " << keyMismatch
-                          << " masters differ from the mirrored key of their slave\n";
-            MPI_Abort(xr.comm_, 1);
-        }
-    }
+    (void)h_partner;  // direct table no longer used for gating
 
     // STEP 2: per-rank send counts. For cstone-peer ranks: use the bucket
     // count. For fallback: broadcast count to every other rank.
+    std::vector<std::vector<KeyType>> perRankKeys(numRanks);
+    std::vector<std::vector<int>>     perRankSlaves(numRanks);
     for (size_t p = 0; p < topo.peers_.size(); ++p)
     {
         int peer = topo.peers_[p];
@@ -959,31 +886,6 @@ void buildCrossRankPeriodicMap(const DomainT& domain,
         xr.recvOffsets_.push_back(int(recvOwnedMasterIdsHost.size()));
     }
 
-    // A claimed key-resolved slave is paired only through the tables: partner -1 keeps the
-    // same-rank fold and broadcast off it. An unclaimed one keeps its partner, and the
-    // DofSpace pairing check reports it.
-    long long claimed = 0;
-    if (resolveByKey)
-    {
-        std::vector<uint8_t> inTable(numNodes, 0), h_remote(numNodes, 0);
-        for (int s : sendOwnedSlaveIdsHost)
-            inTable[s] = 1;
-        for (int s : keyResolved)
-        {
-            if (!inTable[s]) continue;
-            h_remote[s]     = 1;
-            h_partner[s]    = -1;
-            h_partnerUlt[s] = -1;
-            ++claimed;
-        }
-        cudaMemcpy(map.d_periodicPartnerDirect.data(), h_partner.data(), numNodes * sizeof(int),
-                   cudaMemcpyHostToDevice);
-        cudaMemcpy(map.d_periodicPartner.data(), h_partnerUlt.data(), numNodes * sizeof(int), cudaMemcpyHostToDevice);
-        map.d_remoteSlave.resize(numNodes);
-        cudaMemcpy(map.d_remoteSlave.data(), h_remote.data(), numNodes * sizeof(uint8_t), cudaMemcpyHostToDevice);
-        MPI_Allreduce(MPI_IN_PLACE, &claimed, 1, MPI_LONG_LONG, MPI_SUM, xr.comm_);
-    }
-
     // Optional build-side symmetry check (gate G6).
     if (std::getenv("MARS_PERIODIC_XR_CHECK") != nullptr)
     {
@@ -1029,21 +931,18 @@ void buildCrossRankPeriodicMap(const DomainT& domain,
     {
         std::cout << "[periodic-xr] peers=" << xr.peers_.size()
                   << " send_total=" << sendOwnedSlaveIdsHost.size()
-                  << " recv_total=" << recvOwnedMasterIdsHost.size();
-        if (resolveByKey) std::cout << " resolved_by_key=" << claimed;
-        std::cout << "\n";
+                  << " recv_total=" << recvOwnedMasterIdsHost.size() << "\n";
     }
 }
 
 // Build the periodic map from current domain coords. Call after mesh load
 // and after every AMR rebuild. When comm != MPI_COMM_NULL the cross-rank
-// periodic-pair tables are built too. resolveByKey also pairs owned slaves whose
-// final master the halo did not bring to this rank (see d_remoteSlave).
+// periodic-pair tables are built too.
 template<typename KeyType, typename RealType, typename DomainT>
 void buildPeriodicMap(const DomainT& domain, PeriodicMap<KeyType, RealType>& map,
                       RealType xmin, RealType xmax, RealType ymin, RealType ymax,
                       RealType zmin, RealType zmax, RealType faceEps = 1e-5,
-                      MPI_Comm comm = MPI_COMM_NULL, bool resolveByKey = false)
+                      MPI_Comm comm = MPI_COMM_NULL)
 {
     size_t numNodes = domain.getNodeCount();
     map.xmin = xmin; map.xmax = xmax; map.ymin = ymin; map.ymax = ymax;
@@ -1116,7 +1015,7 @@ void buildPeriodicMap(const DomainT& domain, PeriodicMap<KeyType, RealType>& map
     // leave map.cross_ empty.
     if (comm != MPI_COMM_NULL && domain.numRanks() > 1)
     {
-        buildCrossRankPeriodicMap<KeyType, RealType>(domain, map, comm, resolveByKey);
+        buildCrossRankPeriodicMap<KeyType, RealType>(domain, map, comm);
     }
 }
 
@@ -1575,83 +1474,6 @@ void crossRankPeriodicBroadcast(const PeriodicMap<KeyType, RealType>& map,
             d_field.data(), sendTotal, fieldSize);
         cudaDeviceSynchronize();
     }
-}
-
-// One exchange of several node fields over the cross-rank pair table: the rows of
-// sendIds (count k per row) go to each peer's rows of recvIds. sendOffsets/recvOffsets
-// are the per-peer CSR offsets of those two id lists.
-template<typename KeyType, typename RealType>
-void crossRankPeriodicFieldsExchange(const PeriodicMap<KeyType, RealType>& map,
-                                     NodeFieldPtrs<RealType> fields,
-                                     const cstone::DeviceVector<int>& sendIds,
-                                     const std::vector<int>& sendOffsets,
-                                     const cstone::DeviceVector<int>& recvIds,
-                                     const std::vector<int>& recvOffsets,
-                                     int tagBase,
-                                     bool add)
-{
-    const auto& xr = map.cross_;
-    const int k    = fields.count;
-    size_t sendTotal = size_t(sendOffsets.back()), recvTotal = size_t(recvOffsets.back());
-    if (xr.fieldsSendBuf_.size() < sendTotal * k) xr.fieldsSendBuf_.resize(sendTotal * k);
-    if (xr.fieldsRecvBuf_.size() < recvTotal * k) xr.fieldsRecvBuf_.resize(recvTotal * k);
-    RealType* sbuf = xr.fieldsSendBuf_.data();
-    RealType* rbuf = xr.fieldsRecvBuf_.data();
-
-    if (sendTotal > 0)
-        packNodeFieldsKernel<RealType><<<int((sendTotal + 255) / 256), 256>>>(sendIds.data(), sendTotal, fields, sbuf);
-    cudaDeviceSynchronize();
-
-    auto mpiType  = std::is_same_v<RealType, double> ? MPI_DOUBLE : MPI_FLOAT;
-    const int tag = tagBase + xr.epoch_;
-    std::vector<MPI_Request> reqs;
-    reqs.reserve(2 * xr.peers_.size());
-    for (size_t p = 0; p < xr.peers_.size(); ++p)
-    {
-        int count = recvOffsets[p + 1] - recvOffsets[p];
-        if (count == 0) continue;
-        reqs.emplace_back();
-        MPI_Irecv(rbuf + size_t(recvOffsets[p]) * k, count * k, mpiType, xr.peers_[p], tag, xr.comm_, &reqs.back());
-    }
-    for (size_t p = 0; p < xr.peers_.size(); ++p)
-    {
-        int count = sendOffsets[p + 1] - sendOffsets[p];
-        if (count == 0) continue;
-        reqs.emplace_back();
-        MPI_Isend(sbuf + size_t(sendOffsets[p]) * k, count * k, mpiType, xr.peers_[p], tag, xr.comm_, &reqs.back());
-    }
-    if (!reqs.empty()) MPI_Waitall(int(reqs.size()), reqs.data(), MPI_STATUSES_IGNORE);
-    ++xr.epoch_;
-
-    if (recvTotal > 0)
-        unpackNodeFieldsKernel<RealType><<<int((recvTotal + 255) / 256), 256>>>(recvIds.data(), recvTotal, fields,
-                                                                                 rbuf, add);
-}
-
-// crossRankPeriodicBroadcast for several fields: each owned master's value to its slaves on other ranks.
-template<typename KeyType, typename RealType>
-void crossRankPeriodicBroadcastFields(const PeriodicMap<KeyType, RealType>& map, NodeFieldPtrs<RealType> fields)
-{
-    const auto& xr = map.cross_;
-    if (xr.peers_.empty() || fields.count == 0) return;
-    crossRankPeriodicFieldsExchange(map, fields, xr.d_recvOwnedMasterIds_, xr.recvOffsets_, xr.d_sendOwnedSlaveIds_,
-                                    xr.sendOffsets_, 0x5058, false);
-}
-
-// crossRankPeriodicPairSum(broadcastBack = false) for several fields: each owned slave's value is added into
-// its master on another rank, and the slave slot is zeroed.
-template<typename KeyType, typename RealType>
-void crossRankPeriodicPairSumFields(const PeriodicMap<KeyType, RealType>& map, NodeFieldPtrs<RealType> fields)
-{
-    const auto& xr = map.cross_;
-    if (xr.peers_.empty() || fields.count == 0) return;
-    crossRankPeriodicFieldsExchange(map, fields, xr.d_sendOwnedSlaveIds_, xr.sendOffsets_, xr.d_recvOwnedMasterIds_,
-                                    xr.recvOffsets_, 0x5051, true);
-    int n = int(xr.sendOffsets_.back());
-    if (n > 0)
-        for (int c = 0; c < fields.count; ++c)
-            zeroCrossRankSlavesKernel<RealType><<<(n + 255) / 256, 256>>>(xr.d_sendOwnedSlaveIds_.data(),
-                                                                         fields.f[c], n);
 }
 
 // Tiny apply kernel for Fix Y: adds host-resolved (slot, delta) pairs into the

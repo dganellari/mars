@@ -226,40 +226,6 @@ template<typename KeyType>
 __global__ void convertSfcToNodeIndicesKernel(
     const KeyType* sfcIndices, KeyType* nodeIndices, const KeyType* particleKeys, size_t numElements, size_t numNodes);
 
-// Several node arrays of the same length, exchanged together: one message per peer carries every field.
-template<typename T>
-struct NodeFieldPtrs
-{
-    static constexpr int Max = 8;
-    T* f[Max];
-    int count = 0;
-};
-
-// buf[i * count + c] = field c at node ids[i]
-template<typename T>
-__global__ void packNodeFieldsKernel(const int* ids, size_t n, NodeFieldPtrs<T> fields, T* buf)
-{
-    size_t i = size_t(blockIdx.x) * blockDim.x + threadIdx.x;
-    if (i >= n) return;
-    int node = ids[i];
-    for (int c = 0; c < fields.count; ++c)
-        buf[i * fields.count + c] = fields.f[c][node];
-}
-
-// field c at node ids[i] = (or +=) buf[i * count + c]; add uses atomics because several peers can send to one node
-template<typename T>
-__global__ void unpackNodeFieldsKernel(const int* ids, size_t n, NodeFieldPtrs<T> fields, const T* buf, bool add)
-{
-    size_t i = size_t(blockIdx.x) * blockDim.x + threadIdx.x;
-    if (i >= n) return;
-    int node = ids[i];
-    for (int c = 0; c < fields.count; ++c)
-    {
-        if (add) atomicAdd(&fields.f[c][node], buf[i * fields.count + c]);
-        else fields.f[c][node] = buf[i * fields.count + c];
-    }
-}
-
 // Integer coordinates of a key encoded against box. Mixed-dimension keys give each axis its own number of bits, set by
 // the box aspect ratio, so this must be the box the key was encoded with.
 template<typename KeyType, typename RealType>
@@ -865,7 +831,7 @@ public:
     // Multi-rank, single-block meshes use SFC node ownership (mars_sfc_ownership.hpp): a node belongs to the rank
     // whose cornerstone SFC range holds it, and sync() completes the element star of every owned node, so each owned
     // row is assembled from all its elements by construction. On a periodic box every rank can also compute the owner
-    // of a periodic master from its key (buildCrossRankPeriodicMap). MARS_OWNERSHIP=vote restores the previous scheme
+    // of a periodic master from its key (DofSpace). MARS_OWNERSHIP=vote restores the previous scheme
     // (lowest claiming rank among halo peers, with the cornerstone halo search widened by 1.5 as an empirical
     // mitigation); multi-block meshes keep that scheme. MARS_HALO_FACTOR sets the halo search factor in either mode.
     // The choice must be the same on all ranks, so it comes from the environment only. Called right after each
@@ -1219,60 +1185,6 @@ public:
                              });
             cudaDeviceSynchronize();
         }
-    }
-
-    // exchangeNodeHalo (reverse = false: owner values to every ghost copy) or reverseExchangeNodeHaloAdd
-    // (reverse = true: ghost contributions summed into the owner) for several node arrays in one MPI round.
-    void exchangeNodeHaloFields(NodeFieldPtrs<RealType> fields, bool reverse) const
-    {
-        if (numRanks_ == 1 || fields.count == 0) return;
-        ensureNodeHaloTopo();
-        const auto& topo = *nodeHaloTopo_;
-        const int k      = fields.count;
-
-        const auto& packIds     = reverse ? topo.recvNodeIds_ : topo.sendNodeIds_;
-        const auto& unpackIds   = reverse ? topo.sendNodeIds_ : topo.recvNodeIds_;
-        const auto& packOffsets = reverse ? topo.recvOffsets_ : topo.sendOffsets_;
-        const auto& recvOffsets = reverse ? topo.sendOffsets_ : topo.recvOffsets_;
-        size_t packTotal        = packOffsets.empty() ? 0 : size_t(packOffsets.back());
-        size_t unpackTotal      = recvOffsets.empty() ? 0 : size_t(recvOffsets.back());
-        if (blockSendBuf_.size() < packTotal * k) blockSendBuf_.resize(packTotal * k);
-        if (blockRecvBuf_.size() < unpackTotal * k) blockRecvBuf_.resize(unpackTotal * k);
-        RealType* sbuf = thrust::raw_pointer_cast(blockSendBuf_.data());
-        RealType* rbuf = thrust::raw_pointer_cast(blockRecvBuf_.data());
-
-        // The sync also finishes the previous unpack before its receive buffer is reused.
-        if (packTotal > 0)
-            packNodeFieldsKernel<RealType><<<int((packTotal + 255) / 256), 256>>>(
-                thrust::raw_pointer_cast(packIds.data()), packTotal, fields, sbuf);
-        cudaDeviceSynchronize();
-
-        auto mpiType  = std::is_same_v<RealType, double> ? MPI_DOUBLE : MPI_FLOAT;
-        const int tag = (reverse ? 0x4d53 : 0x4d52) + topo.epoch_;
-        std::vector<MPI_Request> reqs;
-        reqs.reserve(2 * topo.peers_.size());
-        for (size_t p = 0; p < topo.peers_.size(); ++p)
-        {
-            int count = recvOffsets[p + 1] - recvOffsets[p];
-            if (count == 0) continue;
-            reqs.emplace_back();
-            MPI_Irecv(rbuf + size_t(recvOffsets[p]) * k, count * k, mpiType, topo.peers_[p], tag, MPI_COMM_WORLD,
-                      &reqs.back());
-        }
-        for (size_t p = 0; p < topo.peers_.size(); ++p)
-        {
-            int count = packOffsets[p + 1] - packOffsets[p];
-            if (count == 0) continue;
-            reqs.emplace_back();
-            MPI_Isend(sbuf + size_t(packOffsets[p]) * k, count * k, mpiType, topo.peers_[p], tag, MPI_COMM_WORLD,
-                      &reqs.back());
-        }
-        waitallDiag(reqs, mpiType);
-        ++topo.epoch_;
-
-        if (unpackTotal > 0)
-            unpackNodeFieldsKernel<RealType><<<int((unpackTotal + 255) / 256), 256>>>(
-                thrust::raw_pointer_cast(unpackIds.data()), unpackTotal, fields, rbuf, reverse);
     }
 
     // Reverse of exchangeNodeHalo: ghost-side contributions are SUMMED into the

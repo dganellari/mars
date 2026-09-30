@@ -38,7 +38,8 @@ including element numberings that are not aligned with the coordinate axes.
 
 ## Not supported yet
 - **Navier–Stokes solver restrictions** (`fem/mars_navier_stokes.hpp`). Hex8 meshes
-  only. Planar mode (`mars_poiseuille_flow`) needs one layer of elements between two z
+  only. On several ranks it needs SFC node ownership (the default); it stops under
+  `MARS_OWNERSHIP=vote`. Planar mode (`mars_poiseuille_flow`) needs one layer of elements between two z
   planes. Meshes with hanging nodes are not supported, so `mars_tgv --adapt-every` gives
   wrong results: the solver does not constrain the hanging nodes that refinement leaves.
   Both systems are solved with PCG, which assumes a symmetric matrix; the CVFEM Laplacian
