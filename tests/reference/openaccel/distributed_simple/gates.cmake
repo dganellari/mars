@@ -170,6 +170,18 @@ foreach(_case upwind high_resolution)
     endforeach()
 endforeach()
 
+foreach(_interpolation trilinear linear-linear)
+    set(_inlet_args --mesh 8x2x2 --iterations 3 --bent-inlet 1 --configured 1
+        --high-resolution 1 --velocity-interpolation ${_interpolation})
+    _dsimple_test(marsSimpleInletReference_${_interpolation} 1 --write-reference ${_ref}-inlet-${_interpolation}.bin ${_inlet_args})
+    set_tests_properties(marsSimpleInletReference_${_interpolation} PROPERTIES FIXTURES_SETUP inlet_${_interpolation})
+    foreach(_ranks 1 2 4)
+        _dsimple_test(marsSimpleInlet_${_interpolation}_${_ranks} ${_ranks}
+            --reference ${_ref}-inlet-${_interpolation}.bin --builder 1 ${_inlet_args})
+        set_tests_properties(marsSimpleInlet_${_interpolation}_${_ranks} PROPERTIES FIXTURES_REQUIRED inlet_${_interpolation})
+    endforeach()
+endforeach()
+
 if(TARGET mars AND MARS_ENABLE_CUDA AND MARS_ENABLE_HYPRE)
     add_executable(mars_distributed_halo_cuda_gate "${_dsimple_gates}/halo_gate.cu")
     target_link_libraries(mars_distributed_halo_cuda_gate PRIVATE mars)

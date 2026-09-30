@@ -44,7 +44,8 @@ MARS_SIMPLE_HD inline TetInteriorInput simple_interior(int stage, const int* nod
 
 MARS_SIMPLE_HD inline BoundaryAssemblyInput simple_boundary(bool momentum, SimpleFace face,
     const int* nodes, const TetGeometry<double>& g, const double* velocity, const double* pressure,
-    const double* trace, const double* flux, const SimpleControls& c, bool wall_initialized, const int* reversal=nullptr)
+    const double* trace, const double* flux, const SimpleControls& c, bool wall_initialized,
+    const double* inlet_velocity, const int* reversal=nullptr)
 {
     BoundaryAssemblyInput input{}; input.element=face.element; input.face=face.ordinal;
     auto& x=input.values; x.stage=face.kind+(momentum?3:0);
@@ -60,9 +61,15 @@ MARS_SIMPLE_HD inline BoundaryAssemblyInput simple_boundary(bool momentum, Simpl
         x.face_nodes[f]=x.nearest[f]=local; x.opposing[f]=opposite;
         x.reversal[f]=face.kind==1 && reversal?reversal[f]:0;
         x.density[f]=c.density; x.viscosity[f]=c.viscosity; x.stored_flux[f]=flux[f];
+        double shape[3]{}; if (face.kind==0) tri_sample_shape(f,c.velocity_shifted,shape);
         for (int j=0;j<3;++j) {
-            x.boundary_velocity[3*f+j]=face.kind==0?-c.inlet_speed*area[j]/magnitude:0;
-            if (x.stage==3) x.velocity[3*local+j]=x.boundary_velocity[3*f+j];
+            x.boundary_velocity[3*f+j]=0;
+            if (face.kind==0) {
+                for (int k=0;k<3;++k)
+                    x.boundary_velocity[3*f+j]+=shape[k]*inlet_velocity[3*nodes[tet_face_node(face.ordinal,k)]+j];
+            }
+            // The viscous term uses nodal boundary values; the flux uses interpolated samples.
+            if (x.stage==3) x.velocity[3*local+j]=inlet_velocity[3*nodes[local]+j];
         }
         if (x.stage==1) x.pressure[local]=trace[f];
     }
@@ -119,6 +126,7 @@ struct SimpleState {
     int* error;
     int* reversal=nullptr;
     double* velocity_blend=nullptr;
+    const double* inlet_velocity=nullptr;
 };
 struct SimpleGeometry {
     SimpleMesh mesh; SimpleState state;
@@ -134,6 +142,35 @@ struct SimpleBoundaryFactor {
         const auto f=mesh.faces[i];
         for (int j=0;j<3;++j)
             assembly_add(factor+mesh.nodes[tet_face_node(f.ordinal,j)][f.element],1.);
+    }
+};
+struct SimpleInletArea {
+    SimpleMesh mesh; double* normal; double* area;
+    MARS_SIMPLE_HD void operator()(int i) const {
+        const auto f=mesh.faces[i]; if (f.kind!=0) return;
+        double a[3]; tet_boundary_area(mesh.geometry[f.element],f.ordinal,a);
+        const double magnitude=sqrt(a[0]*a[0]+a[1]*a[1]+a[2]*a[2]);
+        for (int k=0;k<3;++k) {
+            const int n=mesh.nodes[tet_face_node(f.ordinal,k)][f.element];
+            for (int j=0;j<3;++j) assembly_add(normal+3*n+j,-a[j]);
+            assembly_add(area+n,magnitude);
+        }
+    }
+};
+struct SimpleInletVelocity {
+    const double *normal,*area; double* velocity; double speed; int* error;
+    MARS_SIMPLE_HD void operator()(int n) const {
+        for (int j=0;j<3;++j) velocity[3*n+j]=0;
+        if (area[n]==0) return;
+        const double* a=normal+3*n;
+        const double magnitude=sqrt(a[0]*a[0]+a[1]*a[1]+a[2]*a[2]);
+        if (!(area[n]>0 && magnitude>0) || !geometry_finite(area[n]) || !geometry_finite(magnitude)) {
+            simple_error(error); return;
+        }
+        for (int j=0;j<3;++j) {
+            velocity[3*n+j]=speed*(a[j]/magnitude);
+            if (!geometry_finite(velocity[3*n+j])) simple_error(error);
+        }
     }
 };
 template<int Components> struct SimpleGradientInterior {
@@ -190,8 +227,9 @@ template<int Components> struct SimpleBoundary {
     bool wall_initialized=false, update_flux=false;
     MARS_SIMPLE_HD void operator()(int i) const {
         const auto face=mesh.faces[i]; int nodes[4]; double xyz[12]; mesh.cell(face.element,nodes,xyz);
+        if (face.kind==0 && !state.inlet_velocity) { simple_error(state.error); return; }
         const auto& g=mesh.geometry[face.element];
-        auto input=simple_boundary(Components==3,face,nodes,g,state.velocity,state.pressure,state.trace+3*i,state.boundary_flux+3*i,controls,wall_initialized,state.reversal?state.reversal+3*i:nullptr);
+        auto input=simple_boundary(Components==3,face,nodes,g,state.velocity,state.pressure,state.trace+3*i,state.boundary_flux+3*i,controls,wall_initialized,state.inlet_velocity,state.reversal?state.reversal+3*i:nullptr);
         auto& x=input.values;
         if (!native_boundary(x,input,g,nodes,state.pressure_gradient,state.influence,controls.velocity_shifted)) { simple_error(state.error); return; }
         BoundaryOutput y; boundary_block(x,y);

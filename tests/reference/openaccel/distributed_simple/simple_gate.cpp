@@ -101,7 +101,7 @@ struct Options {
     int nx=16, ny=4, nz=4, iterations=2, converge=0;
     std::string reference, write, fault;
     bool split=false,configured=false,high_resolution=false,overlap=true,water=false,linear_cache=true;
-    bool velocity_shifted=false;
+    bool velocity_shifted=false,bent_inlet=false;
     bool builder=false;   // distributed side built by simple_partition from ElementDomain-shaped state
     double backflow=0;   // initial outlet-region velocity, see initial()
     double tolerance=1e-10;
@@ -228,6 +228,7 @@ std::string header_of(const Options& o) {
     if (o.high_resolution) h<<" high-resolution";
     if (o.velocity_shifted) h<<" linear-linear";
     if (o.water) h<<" water";
+    if (o.bent_inlet) h<<" bent-inlet";
     return h.str();
 }
 // lx is the global channel length: a rank's local extent must not change the initial field.
@@ -276,6 +277,8 @@ int execute(const Options& o) {
     auto mesh=channel(o.nx,o.ny,o.nz);
     // Keep the fixture's logical slab partition when rotating its physical coordinates.
     const auto p=partition(mesh,ranks);
+    if (o.bent_inlet) for (std::size_t n=0;n<mesh.x.size();++n)
+        mesh.x[n]+=.2*mesh.y[n]*mesh.y[n]+.1*mesh.z[n]*mesh.z[n];
     if (o.configured) rotate_channel(mesh);
     SimpleControls controls=o.configured?configured_controls():SimpleControls{};
     controls.high_resolution=o.high_resolution;
@@ -291,6 +294,7 @@ int execute(const Options& o) {
         for (std::size_t i=0;i<fa.size();++i) fa[i]=int(i);
         const std::vector<char> all(global.size(),1);
         Collector c;
+        c.node_field("inlet_velocity",run.inlet_velocity.host(),3,global,all);
         struct { Collector& c; const std::vector<int> &global,&el,&fa; const std::vector<char>& all; bool full;
             void assembled(SimpleRunner& r,int k,const SimpleSums& s) {
                 c.sums(tag("diagnostics",k),s);
@@ -385,6 +389,7 @@ int execute(const Options& o) {
     check_partition(run.momentum_faces,run.local_momentum_faces,true);
     initial(run,part.input.x,part.input.y,part.input.z,double(o.nx)/o.ny,o.backflow,controls,o.configured);
     Collector c;
+    c.node_field("inlet_velocity",run.inlet_velocity.host(),3,part.node_global,part.node_owned);
     int closed_owned=0;   // outlet faces this rank owns that were ever closed
     struct { Collector& c; Part& part; const std::vector<int>& s2g; const std::string& fault; int rank, ranks; bool full; int& closed;
         void assembled(DistributedSimpleRunner<Matrix,GlobalId,Solve>& r,int k,const SimpleSums& s) {
@@ -491,6 +496,7 @@ int main(int argc,char** argv) {
             else if (k=="--fault") o.fault=v;
             else if (k=="--split") o.split=v=="1";
             else if (k=="--configured") o.configured=v=="1";
+            else if (k=="--bent-inlet") o.bent_inlet=v=="1";
             else if (k=="--velocity-interpolation") {
                 if (v!="trilinear" && v!="linear-linear") throw std::runtime_error("unsupported velocity interpolation");
                 o.velocity_shifted=v=="linear-linear";

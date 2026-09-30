@@ -136,17 +136,64 @@ template<int C> void csr() {
         residual(r); near(squares[2*r],expected*expected); near(squares[2*r+1],0);
     }
 }
+void inlet_normals() {
+    const double xyz[]={0,0,0, 2,0,0, 0,3,0, 0,0,4};
+    TetGeometry<double> g; check(tet_geometry(xyz,g));
+    int nodes[]={0,1,2,3},n0[]={0},n1[]={1},n2[]={2},n3[]={3},error=0;
+    double x[]={0,2,0,0},y[]={0,0,3,0},z[]={0,0,0,4};
+    SimpleFace faces[]={{0,0,0},{0,3,0}};
+    SimpleMesh mesh{4,1,2,{n0,n1,n2,n3},x,y,z,faces,&g};
+    double normal[12]{},area[4]{},inlet[12]{},velocity[12]{},pressure[4]{},trace[3]{},flux[3]{};
+    SimpleInletArea{mesh,normal,area}(0); SimpleInletArea{mesh,normal,area}(1);
+    for (int n=0;n<4;++n) SimpleInletVelocity{normal,area,inlet,2.,&error}(n);
+    check(error==0);
+    // Inward face vectors have magnitudes 4/3 and 1. Shared nodes point along (0,4,3)/5.
+    const double expected[]={0,1.6,1.2, 0,1.6,1.2, 0,0,2, 0,2,0};
+    for (int i=0;i<12;++i) near(inlet[i],expected[i]);
+    SimpleControls c; c.inlet_speed=2; c.density=3;
+    for (bool shifted:{false,true}) {
+        c.velocity_shifted=shifted;
+        for (const auto face:faces) {
+            auto input=simple_boundary(true,face,nodes,g,velocity,pressure,trace,flux,c,false,inlet);
+            for (int s=0;s<3;++s) for (int j=0;j<3;++j) {
+                const int n=tet_face_node(face.ordinal,s);
+                near(input.values.velocity[3*n+j],expected[3*n+j]);
+                double sample=0;
+                for (int k=0;k<3;++k) sample+=(shifted?(k==s?1.:0.):(k==s?11./18:7./36))
+                    *expected[3*tet_face_node(face.ordinal,k)+j];
+                near(input.values.boundary_velocity[3*s+j],sample);
+            }
+            auto pressure_input=simple_boundary(false,face,nodes,g,velocity,pressure,trace,flux,c,false,inlet);
+            double gradient[12]{},influence[12]{};
+            check(native_boundary(pressure_input.values,pressure_input,g,nodes,gradient,influence,shifted));
+            BoundaryOutput out; boundary_block(pressure_input.values,out);
+            for (int s=0;s<3;++s) {
+                const int n=tet_face_node(face.ordinal,s);
+                double q=0;
+                for (int j=0;j<3;++j) q+=3*input.values.boundary_velocity[3*s+j]*pressure_input.values.area[3*s+j];
+                near(out.flux[s],q); near(out.rhs[n],-q);
+            }
+        }
+    }
+    // A node without inlet faces is zero; cancellation of incident normals must reject.
+    std::fill(normal,normal+12,0.); std::fill(area,area+4,0.);
+    SimpleInletVelocity{normal,area,inlet,2.,&error}(0); near(inlet[0],0); near(inlet[1],0); near(inlet[2],0);
+    area[0]=1; SimpleInletVelocity{normal,area,inlet,2.,&error}(0); check(error==1);
+    error=0; normal[0]=std::numeric_limits<double>::quiet_NaN();
+    SimpleInletVelocity{normal,area,inlet,2.,&error}(0); check(error==1);
+}
 }
 int main() {
     try {
-        csr<1>(); csr<3>(); native_mapping(); shifted_velocity();
+        csr<1>(); csr<3>(); native_mapping(); shifted_velocity(); inlet_normals();
         double xyz[]={0,0,0,1,0,0,0,1,0,0,0,1}; TetGeometry<double> g; check(tet_geometry(xyz,g));
         int nodes[]={0,1,2,3}; double u[]={1,2,3,4,5,6,7,8,9,10,11,12},p[]={2,3,4,5},trace[]={7,8,9},flux[]={.1,.2,.3};
         SimpleControls c; SimpleFace face{0,1,0};
-        auto inlet=simple_boundary(true,face,nodes,g,u,p,trace,flux,c,false);
+        double inlet_velocity[12]; std::fill(inlet_velocity,inlet_velocity+12,-.1/std::sqrt(3.));
+        auto inlet=simple_boundary(true,face,nodes,g,u,p,trace,flux,c,false,inlet_velocity);
         for (int j=0;j<3;++j) { near(inlet.values.velocity[j],u[j]); for (int f=0;f<3;++f) near(inlet.values.boundary_velocity[3*f+j],-.1/std::sqrt(3.)); }
         face.kind=1;
-        auto outlet=simple_boundary(false,face,nodes,g,u,p,trace,flux,c,false);
+        auto outlet=simple_boundary(false,face,nodes,g,u,p,trace,flux,c,false,nullptr);
         near(outlet.values.pressure[0],2);
         for (int f=0;f<3;++f) near(outlet.values.pressure[f+1],trace[f]);
         double pg[12]{},d[12]; std::fill(d,d+12,2.);
@@ -157,7 +204,7 @@ int main() {
         double row_sum=0; for (double a:out.lhs) row_sum+=a; near(row_sum,3);
         face.kind=2;
         for (bool initialized:{false,true}) {
-            auto wall=simple_boundary(true,face,nodes,g,u,p,trace,flux,c,initialized);
+            auto wall=simple_boundary(true,face,nodes,g,u,p,trace,flux,c,initialized,nullptr);
             for (int f=0;f<3;++f) { near(wall.values.wall_coefficient[f],initialized?.2:0); check(wall.nodes[f]==f+1); }
         }
         // Pressure relaxation must not enter velocity correction a second time.

@@ -20,8 +20,11 @@ dynamic viscosity; kinematic viscosity is mu/rho. For water, rho=1000 and
 mu=.001 give nu=1e-6. This specifies material properties, not a turbulence
 model or a convergence guarantee at high Reynolds number.
 
-On inlet faces, velocity is `-U*A/|A|` for outward area vector A. Walls are
-no-slip. `--outlet-pressure` is the area-mean pressure target in the existing
+At each inlet node, velocity is U times the normalized sum of inward incident
+inlet sample area vectors. These nodal values are interpolated to face samples,
+matching OpenAccel's fixed-frame constant `normal_speed` treatment. See the
+[inlet construction and validation](inlet_normal_speed.md). Walls are no-slip.
+`--outlet-pressure` is the area-mean pressure target in the existing
 outlet trace update, including its close/reopen treatment. Mesh coordinates
 must be in metres. `--reference-length` changes residual normalization only.
 Pseudo-time and relaxation are steady iteration controls, not physical time.

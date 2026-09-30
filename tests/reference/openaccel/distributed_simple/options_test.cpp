@@ -62,9 +62,11 @@ int main() {
     TetGeometry<double> g; check(tet_geometry(xyz,g));
     const int nodes[4]={0,1,2,3}; double velocity[12]{},pressure[4]{},trace[3]{},flux[3]{};
     for (int f=0;f<4;++f) {
-        const auto input=simple_boundary(true,{0,f,0},nodes,g,velocity,pressure,trace,flux,c,false);
         double area[3]; tet_boundary_area(g,f,area);
         const double norm=std::sqrt(area[0]*area[0]+area[1]*area[1]+area[2]*area[2]);
+        double inlet_velocity[12];
+        for (int n=0;n<4;++n) for (int j=0;j<3;++j) inlet_velocity[3*n+j]=-c.inlet_speed*area[j]/norm;
+        const auto input=simple_boundary(true,{0,f,0},nodes,g,velocity,pressure,trace,flux,c,false,inlet_velocity);
         for (int k=0;k<3;++k) {
             double dot=0,speed2=0;
             for (int j=0;j<3;++j) {
@@ -75,7 +77,7 @@ int main() {
             check(std::abs(dot+c.inlet_speed*norm)<1e-14 && std::abs(speed2-c.inlet_speed*c.inlet_speed)<1e-14);
             check(input.values.density[k]==2 && input.values.viscosity[k]==.4);
         }
-        const auto wall=simple_boundary(true,{0,f,2},nodes,g,velocity,pressure,trace,flux,c,false);
+        const auto wall=simple_boundary(true,{0,f,2},nodes,g,velocity,pressure,trace,flux,c,false,nullptr);
         for (double v:wall.values.boundary_velocity) check(v==0);
     }
     SimpleSums sums; sums.volume=2; sums.inlet_area=1; sums.momentum2=3; sums.continuity2=4;

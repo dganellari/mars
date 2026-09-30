@@ -122,7 +122,7 @@ launch one. Use it after the late-state comparison shows disagreement. It requir
 the completed baseline directory with `run.log`, `run.exit`, `flow-metrics.csv`
 and `executable.sha256`, plus the original preparation's `case.json` and `args.nul`.
 
-The executable must match the baseline SHA-256. The original arguments must match
+By default the executable must match the baseline SHA-256. The original arguments must match
 the preparation and printed controls, and the reference deck hash must still
 match. Every reference shard must have the same saved coordinates. The probe
 selects the **earliest positive** coordinate, requires an integer steady iteration
@@ -147,7 +147,7 @@ python3 ../scripts/prepare_simple_snapshot_probe.py \
 
 If preparation succeeds, `probe/args.nul`, `iteration.txt`, `ranks.txt` and
 `probe.json` are private launch metadata. If it fails, share only
-`preparation-public.json`; do not bypass a changed executable or stale arguments.
+`preparation-public.json`; do not bypass stale arguments.
 The one-node Alps launch, from the configured MARS build directory, is:
 
 ```bash
@@ -181,6 +181,20 @@ An early mismatch means disagreement is already present **by the first saved
 reference state**, which need not be the first iteration. Neither outcome alone
 identifies whether assembly, boundary updates or differing linear solves caused
 it. Keep solver controls unchanged until that distinction is investigated.
+
+### Comparing an implementation repair
+
+After intentionally rebuilding a changed solver, add `--allow-executable-change`
+to the preparation command. The default still rejects a changed executable. This
+opt-in preserves all baseline, argument, deck, runtime-option and iteration checks;
+it only permits the binary hash to differ. Both hashes are recorded privately in
+`probe.json`. The public `binary_matches_baseline` remains false for a changed
+binary and `executable_change_allowed` records the opt-in. Do not replace the
+baseline hash file or describe this comparison as a same-binary experiment.
+
+The [nodal inlet correction](inlet_normal_speed.md) needs this opt-in for its short
+comparison after the public GPU checks. Use the rebuilt executable, the original
+case and reference, and a fresh output directory. No OpenAccel rebuild is needed.
 
 ## Local synthetic checks
 

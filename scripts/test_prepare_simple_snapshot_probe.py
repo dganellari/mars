@@ -36,7 +36,11 @@ class ProbeTests(unittest.TestCase):
         values = dict(baseline=self.root, case=self.fixture.case, reference_dir=self.fixture.reference,
                       executable=self.exe, output_dir=self.output_dir, output=self.public)
         values.update(overrides)
-        argv = [v for key, value in values.items() for v in ('--' + key.replace('_', '-'), str(value))]
+        argv = []
+        for key, value in values.items():
+            argv.append('--' + key.replace('_', '-'))
+            if value is not True:
+                argv.append(str(value))
         with contextlib.redirect_stdout(io.StringIO()) as stdout, contextlib.redirect_stderr(io.StringIO()) as stderr:
             code = probe.main(argv)
         self.assertEqual(code, expected)
@@ -70,6 +74,32 @@ class ProbeTests(unittest.TestCase):
     def test_missing_binary_rejected(self):
         self.exe.unlink()
         self.assertEqual(self.run_probe(1)['failed_check'], 'binary_changed_or_unavailable')
+
+    def test_explicit_binary_change_records_both_hashes(self):
+        old_hash = digest(self.exe)
+        self.exe.write_text('rebuilt implementation')
+        result = self.run_probe(allow_executable_change=True)
+        self.assertFalse(result['binary_matches_baseline'])
+        self.assertTrue(result['executable_change_allowed'])
+        plan = json.loads((self.output_dir / 'probe.json').read_text())
+        self.assertEqual(plan['baseline_executable_sha256'], old_hash)
+        self.assertEqual(plan['executable_sha256'], digest(self.exe))
+        self.assertTrue(plan['executable_change_allowed'])
+
+    def test_binary_opt_in_still_checks_reference_deck(self):
+        self.exe.write_text('rebuilt implementation')
+        self.fixture.deck.write_text(self.fixture.deck.read_text() + '\n# altered\n')
+        self.assertEqual(self.run_probe(1, allow_executable_change=True)['failed_check'], 'saved_arguments_or_controls')
+
+    def test_binary_opt_in_still_checks_logged_controls(self):
+        self.exe.write_text('rebuilt implementation')
+        f = self.fixture
+        f.log.write_text(f.log.read_text().replace('alpha_p=0.3', 'alpha_p=0.1'))
+        self.assertEqual(self.run_probe(1, allow_executable_change=True)['failed_check'], 'saved_arguments_or_controls')
+
+    def test_binary_opt_in_still_requires_executable(self):
+        self.exe.unlink()
+        self.assertEqual(self.run_probe(1, allow_executable_change=True)['failed_check'], 'binary_changed_or_unavailable')
 
     def test_failed_baseline_rejected(self):
         self.fixture.exit.write_text('143')

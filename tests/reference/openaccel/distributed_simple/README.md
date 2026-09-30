@@ -20,6 +20,10 @@ The distributed path is now the normal `mars_segregated_simple` executable.
 See [configurable controls and interactive runs](configurable_run.md). The shared
 ElementDomain halo code is unchanged. The compatibility target below still works.
 
+The [normal-speed inlet construction](inlet_normal_speed.md) now uses accumulated
+nodal inlet normals before face interpolation, including nonplanar inlets.
+Local algebra and host/MPI checks pass; CUDA validation for this change is pending.
+
 ## Ownership and communication contract
 
 Each rank supplies every element touching its owned nodes, all relevant boundary
@@ -49,6 +53,11 @@ into the first round, for 26 doubles per ghost and the same four rounds. Only
 owners compute complete limiter bounds; partial ghost bounds are never read. Dual
 volumes and boundary factors are complete at owned nodes; ghost partial values
 are not used. No reverse-add assembly occurs during the iteration.
+
+At startup, owners normalize complete inlet area sums and publish three velocity
+components per ghost in one extra exchange. These prescribed values remain on
+device and are reused through all iterations. Lifetime exchange counts therefore
+increase by one; the four rounds per iteration are unchanged.
 
 Flux history and reversal state are recomputed on each holder from published
 inputs. The gate compares every copy by identity. Global continuity cancellation

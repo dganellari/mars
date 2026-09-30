@@ -52,8 +52,8 @@ def prepare(args, public):
     match = re.fullmatch(r'([0-9a-f]{64})[ \t]+.+', recorded[0])
     require(match is not None and args.executable.is_file() and os.access(str(args.executable), os.X_OK))
     executable_hash = digest(args.executable)
-    require(match.group(1) == executable_hash)
-    public['binary_matches_baseline'] = True
+    public['binary_matches_baseline'] = match.group(1) == executable_hash
+    require(public['binary_matches_baseline'] or args.allow_executable_change)
 
     public['failed_check'] = 'saved_arguments_or_controls'
     prepared, _, reference_status, same_deck = controls(args.case, args.reference_dir, None, log)
@@ -93,9 +93,12 @@ def prepare(args, public):
         format='mars-simple-snapshot-probe-v1', iteration=iteration, ranks=ranks,
         baseline=str(args.baseline.resolve()), baseline_iteration=baseline_iteration,
         executable=str(args.executable.resolve()), executable_sha256=executable_hash,
+        baseline_executable_sha256=match.group(1),
+        executable_change_allowed=args.allow_executable_change,
         case_sha256=digest(args.case), arguments=arguments,
         reference_files=[str(path.resolve()) for path in paths],
-        note='Same binary and recorded controls; shared-library and unrecorded environment identity not attested.'
+        note=('Recorded controls preserved; executable identity recorded for both runs. '
+              'Shared-library and unrecorded environment identity not attested.')
     ), indent=2, sort_keys=True) + '\n')
     public.update(preparation_status='ready', failed_check='none')
 
@@ -105,6 +108,8 @@ def main(argv=None):
     for name in ('baseline', 'case', 'reference-dir', 'executable', 'output-dir', 'output'):
         parser.add_argument('--' + name, type=Path, required=True)
     parser.add_argument('--max-iteration', type=int, default=100)
+    parser.add_argument('--allow-executable-change', action='store_true',
+                        help='Allow a rebuilt implementation; record both executable hashes privately.')
     for name in ('residual-tol', 'mass-tol', 'change-tol'):
         parser.add_argument('--' + name, type=float, default=1e-6)
     args = parser.parse_args(argv)
@@ -112,6 +117,7 @@ def main(argv=None):
     public = dict(schema='mars-simple-snapshot-probe-v1', preparation_status='rejected',
                   failed_check='output_preflight', baseline_completion_checked=False,
                   binary_matches_baseline=False, prepared_and_reference_controls_match=False,
+                  executable_change_allowed=args.allow_executable_change,
                   runtime_options_and_ranks_preserved=False, early_reference_state_available=False)
     try:
         with args.output.open('x') as output:
