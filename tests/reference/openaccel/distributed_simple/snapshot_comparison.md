@@ -65,7 +65,8 @@ shift is subtracted. Private output also records the signed mean difference.
 Each error gets the tightest band it meets: `within_1e_minus_5`,
 `within_1_percent`, `within_5_percent`, or `over_5_percent`. The last three are
 diagnostic bands, not CFD accuracy criteria. `snapshot_fields_within_tolerance`
-requires **both maximum errors <= 1e-5** in those scales. The peak-speed band
+requires **both maximum errors <= 1e-5** in those scales and a hash-matched saved
+deck requesting raw solver values, as described below. The peak-speed band
 instead uses the reference peak as denominator and reports `zero_reference_peak`
 when it is zero. Equal peaks do not imply equal velocity fields.
 
@@ -76,6 +77,45 @@ solvers/preconditioners and nonlinear norms still differ; therefore
 unconverged calculation does not by itself identify an implementation bug: the
 nonlinear trajectories can differ. Inspect the private errors before changing
 relaxation, physical timescale or boundary conditions.
+
+## Boundary output and localization
+
+OpenAccel `0d69041` has a separate **output** setting:
+`simulation.solver.output_control.corrected_boundary_values` (default `false`).
+In `src/simulation/simulationIO.cpp`, `writeResults()` temporarily replaces
+boundary nodal values with their boundary-field values, writes Exodus, and
+restores the solver values. Comparing that corrected output to MARS's raw nodal
+fields is not a solver-state comparison. This setting is independent of the
+physical controls already checked by the preparation tool.
+
+The public summary now reports `reference_deck_output_values` as `solver_values`,
+`boundary_corrected` or `unknown`. `solver_field_comparison_supported` requires
+`solver_values` and an exact match to the preparation's deck hash. A corrected,
+missing, malformed or unverified deck cannot produce a snapshot parity pass,
+even if the selected numerical fields happen to agree. Numerical error bands
+are still reported. The saved deck is evidence of requested settings, not proof
+of the actual reference launch; full provenance remains unverified.
+
+To localize a mismatch, the comparator also forms the union of the input mesh's
+stored side-set and node-set nodes. Tet4 side sets use Exodus element-row and
+side numbering across blocks, not global node or element IDs. The public report
+contains the same four error bands separately for `tagged_boundary` and
+`other_nodes`. It exports no names, counts, coordinates or numerical errors.
+Unsupported side topology or absent tags gives `boundary_localization_status`
+`unavailable`; malformed indexing fails the evidence check. Empty groups are
+reported explicitly rather than treated as an agreement.
+
+These labels do not certify complete physical boundary coverage: extra node sets
+can include interior nodes, and missing tags can omit boundary nodes. Consequently
+`other_nodes` is not automatically a certified interior. Regional agreement never
+replaces the full-field check or excuses an error. With complete boundary tags,
+an error away from the boundary cannot be explained solely by output correction.
+No pressure offset or boundary values are fitted or removed.
+
+Rerun the comparison on existing results to obtain these fields. No rebuild,
+solver launch, environment change or tolerance change is needed. This closes an
+unchecked comparison assumption; it does not establish the cause of a particular
+private mismatch.
 
 ## User-side command
 
