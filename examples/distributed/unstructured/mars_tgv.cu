@@ -319,21 +319,10 @@ void adaptMesh(Amr& amr, std::unique_ptr<Solver>& solver, mars::fem::PeriodicMap
 // main: the tutorial path
 // =============================================================================
 
-int main(int argc, char** argv)
+// Steps 1 to 5. The domain, the periodic map and the solver hold MPI
+// resources, so they must be destroyed before MPI_Finalize: they live here.
+int runTgv(const Options& opt, int rank, int numRanks)
 {
-    MPI_Init(&argc, &argv);
-    int rank = 0, numRanks = 1;
-    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-    MPI_Comm_size(MPI_COMM_WORLD, &numRanks);
-
-    Options opt;
-    int exitCode = 0;
-    if (!parseOptions(argc, argv, rank, opt, exitCode))
-    {
-        MPI_Finalize();
-        return exitCode;
-    }
-
     // 1. Mesh and domain. periodicAxesMask = 7 makes the cornerstone box
     //    periodic in x, y and z: node coordinates stay real, and each rank's
     //    halo also holds the elements on the other side of every periodic face.
@@ -384,7 +373,6 @@ int main(int argc, char** argv)
         if (!solver->step())
         {
             if (rank == 0) std::cerr << "Step " << step << ": a linear solve did not converge, stopping\n";
-            MPI_Finalize();
             return 1;
         }
         if (opt.adaptEvery > 0 && step % opt.adaptEvery == 0 && amr.currentLevel() < opt.maxLevels)
@@ -402,7 +390,19 @@ int main(int argc, char** argv)
     if (rank == 0)
         std::cout << "Wall time " << std::fixed << std::setprecision(1) << wallMs << " ms, "
                   << wallMs / std::max(opt.numSteps, 1) << " ms/step\n";
-
-    MPI_Finalize();
     return 0;
+}
+
+int main(int argc, char** argv)
+{
+    MPI_Init(&argc, &argv);
+    int rank = 0, numRanks = 1;
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &numRanks);
+
+    Options opt;
+    int exitCode = 0;
+    if (parseOptions(argc, argv, rank, opt, exitCode)) exitCode = runTgv(opt, rank, numRanks);
+    MPI_Finalize();
+    return exitCode;
 }
