@@ -801,24 +801,6 @@ struct NsKineticTerm
     }
 };
 
-// |u|^2 M^(4/3): the squared flux of u through a face of the DOF's control volume.
-template<typename RealType>
-struct NsFluxScaleTerm
-{
-    const uint8_t* isDof;
-    const RealType* mass;
-    int comps;
-    Components<const RealType*> u;
-    __device__ double operator()(size_t i) const
-    {
-        if (!isDof[i]) return 0.0;
-        double s = 0;
-        for (int d = 0; d < comps; ++d)
-            s += double(u.c[d][i]) * u.c[d][i];
-        return s * cbrt(double(mass[i]) * mass[i] * mass[i] * mass[i]);
-    }
-};
-
 // |D u| / M where the projection enforces continuity: DOFs that are not pinned.
 template<typename RealType>
 struct NsContinuityTerm
@@ -1212,13 +1194,7 @@ private:
         cudaCheckError();
         // With no p = 0 anywhere, A has the constants as null space: solve in its range.
         if (pureNeumann_) removeMean(rhs_);
-        // Once the flow is nearly divergence-free the right-hand side shrinks towards
-        // roundoff, and a tolerance relative to it alone cannot be met. The floor is
-        // the same tolerance relative to the divergence the velocity could carry.
-        const double fluxScale =
-            std::sqrt(dofSum(NsFluxScaleTerm<RealType>{space_.isDof(), massDof_.data(), comps_, cview(sstar_)}));
-        pressureIters_ = pressure_->solve(rhs_.data(), x_.data(), false,
-                                          double(prm_.tolerance) * prm_.rho * invDt * fluxScale);
+        pressureIters_ = pressure_->solve(rhs_.data(), x_.data());
         if (pressureIters_ < 0) return failed("pressure", *pressure_);
         timing_.pressureIterations += pressureIters_;
         if (pureNeumann_) removeMean(x_);

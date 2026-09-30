@@ -212,11 +212,10 @@ public:
     }
 
     // f and u hold this rank's unknowns on the device. u is the initial guess when
-    // useInitialGuess is set, and is overwritten. Returns the PCG iterations, or -2 if
-    // ||b - A u|| <= max(tol ||b||, absoluteTolerance) was not reached.
-    int solve(const HYPRE_Complex* f, HYPRE_Complex* u, bool useInitialGuess = false, double absoluteTolerance = 0)
+    // useInitialGuess is set, and is overwritten. Returns the PCG iterations, or -2 if the
+    // relative tolerance ||b - A u|| <= tol ||b|| was not reached.
+    int solve(const HYPRE_Complex* f, HYPRE_Complex* u, bool useInitialGuess = false)
     {
-        HYPRE_PCGSetAbsoluteTol(pcg_, absoluteTolerance);
         copyIn(f, f_);
         HYPRE_Real rhsNorm2 = 0;
         HYPRE_ParVectorInnerProd(f_, f_, &rhsNorm2);
