@@ -43,12 +43,22 @@ inline MPI_Datatype mpiDatatype()
 }
 
 // A slot is a DOF when it is owned and is not a periodic slave. partner == nullptr: no periodic pairs.
+// remote marks slaves paired only through the cross-rank tables (their partner is -1).
 template<typename IndexType>
-__global__ void dofMaskKernel(const IndexType* partner, const uint8_t* ownership, size_t n, uint8_t* isDof)
+__global__ void dofMaskKernel(const IndexType* partner, const uint8_t* remote, const uint8_t* ownership, size_t n,
+                              uint8_t* isDof)
 {
     size_t i = size_t(blockIdx.x) * blockDim.x + threadIdx.x;
     if (i >= n) return;
-    isDof[i] = (ownership[i] == 1 && (partner == nullptr || partner[i] < 0)) ? 1 : 0;
+    bool slave = (partner != nullptr && partner[i] >= 0) || (remote != nullptr && remote[i] != 0);
+    isDof[i]   = (ownership[i] == 1 && !slave) ? 1 : 0;
+}
+
+template<typename IndexType>
+__global__ void dofFlagSlotsKernel(const IndexType* ids, size_t count, uint8_t* flag)
+{
+    size_t k = size_t(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (k < count) flag[ids[k]] = 1;
 }
 
 // Two dot products over DOF slots in one pass: block partial sums, reduced in
@@ -123,37 +133,45 @@ __global__ void dofShiftKernel(RealType* v, RealType shift, size_t n)
     if (i < n) v[i] -= shift;
 }
 
-// Setup-time guarantees prolong and restrict rely on. A violation means the
-// mesh or the halo cannot represent a periodic point, so stop instead of
-// running with a silently split point.
+// Setup-time guarantee prolong and restrict rely on: every owned slave is paired
+// exactly once, either with a final master (a node on no max face) owned on this
+// rank, or through the cross-rank table. A violation means the mesh or the halo
+// cannot represent a periodic point, so stop instead of running with a split point.
 template<typename KeyType, typename RealType, typename DomainT>
 void checkPeriodicPairing(const DomainT& domain, const PeriodicMap<KeyType, RealType>& map)
 {
-    const int* partner  = map.d_periodicPartner.data();
-    const uint8_t* mask = map.d_periodicMask.data();
-    const uint8_t* own  = domain.getNodeOwnershipMap().data();
-    auto first          = thrust::counting_iterator<size_t>(0);
-    auto last           = thrust::counting_iterator<size_t>(domain.getNodeCount());
+    const size_t n        = domain.getNodeCount();
+    const auto& table     = map.cross_.d_sendOwnedSlaveIds_;
+    const int* partner    = map.d_periodicPartner.data();
+    const uint8_t* mask   = map.d_periodicMask.data();
+    const uint8_t* own    = domain.getNodeOwnershipMap().data();
+    cstone::DeviceVector<uint8_t> inTable(n);
+    thrust::fill(thrust::device, inTable.data(), inTable.data() + n, uint8_t(0));
+    if (table.size() > 0)
+        dofFlagSlotsKernel<int><<<int((table.size() + 255) / 256), 256>>>(table.data(), table.size(), inTable.data());
+    cudaCheckError();
+    const uint8_t* tab = inTable.data();
 
-    // every owned slave must reach its final master, a node on no max face
-    long long unpaired = thrust::count_if(thrust::device, first, last, [partner, mask, own] __device__(size_t i) -> bool {
-        if (own[i] != 1 || mask[i] == 0) return false;
-        int m = partner[i];
-        return m < 0 || mask[m] != 0;
+    auto first = thrust::counting_iterator<size_t>(0);
+    long long bad[2];
+    bad[0] = thrust::count_if(thrust::device, first, first + n, [partner, mask, own, tab] __device__(size_t i) -> bool {
+        if (own[i] != 1 || mask[i] == 0) return tab[i] != 0;
+        int m         = partner[i];
+        bool local    = m >= 0 && mask[m] == 0 && own[m] == 1;
+        bool viaTable = tab[i] != 0 && (m < 0 || mask[m] == 0);
+        return local == viaTable;
     });
-    // every owned slave with a remote master must be in the cross-rank table
-    long long remote = thrust::count_if(thrust::device, first, last, [partner, own] __device__(size_t i) -> bool {
-        return own[i] == 1 && partner[i] >= 0 && own[partner[i]] != 1;
-    });
-    long long bad[2] = {unpaired, remote != (long long)map.cross_.d_sendOwnedSlaveIds_.size() ? 1LL : 0LL};
+    long long tableSize = (long long)table.size();
+    long long flagged   = thrust::count(thrust::device, tab, tab + n, uint8_t(1));
+    bad[1]              = tableSize != flagged ? 1 : 0;
     long long badGlobal[2];
     MPI_Allreduce(bad, badGlobal, 2, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
     if (badGlobal[0] > 0 || badGlobal[1] > 0)
     {
         if (domain.rank() == 0)
             std::fprintf(stderr,
-                         "DofSpace: %lld owned slaves have no master in the local halo, %lld ranks have an "
-                         "incomplete cross-rank pair table. Check the periodic box bounds and faceEps.\n",
+                         "DofSpace: %lld owned slaves are not paired exactly once with a final master, %lld ranks "
+                         "list a slave twice in the cross-rank table. Check the periodic box bounds and faceEps.\n",
                          badGlobal[0], badGlobal[1]);
         MPI_Abort(MPI_COMM_WORLD, 1);
     }
@@ -179,7 +197,8 @@ public:
         , hostPartial_(2)
     {
         const auto& own = domain_.getNodeOwnershipMap();
-        dofMaskKernel<int><<<grid(), blockSize_>>>(partner(), own.data(), n_, isDof_.data());
+        const uint8_t* remote = map_ && map_->d_remoteSlave.size() == n_ ? map_->d_remoteSlave.data() : nullptr;
+        dofMaskKernel<int><<<grid(), blockSize_>>>(partner(), remote, own.data(), n_, isDof_.data());
         cudaCheckError();
         if (map_) checkPeriodicPairing<KeyType, RealType>(domain_, *map_);
 

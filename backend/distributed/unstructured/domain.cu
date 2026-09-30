@@ -987,7 +987,7 @@ void HaloData<ElementTag, RealType, KeyType, AcceleratorTag>::buildNodeOwnership
         return;
     }
 
-    // Vote ownership (MARS_OWNERSHIP=vote, periodic and multi-block meshes)
+    // Vote ownership (MARS_OWNERSHIP=vote, multi-block meshes)
     constexpr int NPC = ElementTag::NodesPerElement;
     int blockSize = 256;
     

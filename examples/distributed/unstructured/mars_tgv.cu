@@ -299,11 +299,12 @@ __global__ void elementMaxSpeedKernel(const KeyType* c0, const KeyType* c1, cons
     out[e] = m;
 }
 
+// Masters are paired by key, so a slave does not need its master in the local halo.
 void pairPeriodicNodes(const Domain& domain, mars::fem::PeriodicMap<KeyType, RealType>& map, const Options& o,
                       RealType faceEps)
 {
     mars::fem::buildPeriodicMap<KeyType, RealType>(domain, map, o.boxLo, o.boxHi, o.boxLo, o.boxHi, o.boxLo, o.boxHi,
-                                                   faceEps, MPI_COMM_WORLD);
+                                                   faceEps, MPI_COMM_WORLD, /*resolveByKey=*/true);
 }
 
 void adaptMesh(Amr& amr, std::unique_ptr<Solver>& solver, mars::fem::PeriodicMap<KeyType, RealType>& map,

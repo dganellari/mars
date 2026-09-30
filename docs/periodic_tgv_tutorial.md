@@ -201,11 +201,15 @@ side of each periodic face. So a rank that owns a slave also holds its master,
 usually as a ghost.
 
 The halo alone cannot connect a slave to its master: they have **different SFC
-keys**, so for cstone they are two unrelated nodes. When the slave is owned on rank A
-and the master on rank B, `PeriodicMap` keeps a small pair table
-(`buildCrossRankPeriodicMap`) and two exchanges use it: `crossRankPeriodicBroadcast`
-(master value to the slave's rank) and `crossRankPeriodicPairSum` (slave
-contribution to the master's rank).
+keys**, so for cstone they are two unrelated nodes, and the master need not even be
+on the slave's rank. Two facts close the gap. The key of the master follows from the
+key of the slave: decode its integer SFC coordinates, set each max-face axis to the
+min face, encode again (`periodicMasterKey`). And a node's owner follows from its key:
+the rank whose SFC range contains it (SFC node ownership). So every rank knows, for each
+slave it owns, which rank owns the master, without searching. `PeriodicMap` keeps a
+small pair table for the pairs split across ranks (`buildCrossRankPeriodicMap`), and
+two exchanges use it: `crossRankPeriodicBroadcast` (master value to the slave's rank)
+and `crossRankPeriodicPairSum` (slave contribution to the master's rank).
 
 With these, P and Pᵀ are three calls each (`DofSpace::prolong`, `DofSpace::restrict`):
 
@@ -230,10 +234,9 @@ the slave copies are updated first and the halo runs last, so that ghost copies 
 slave on a third rank also receive the new value. In `restrict`, the halo runs first,
 so that every owned slave holds its complete sum before it is added into its master.
 
-The `DofSpace` constructor checks the two facts these maps rely on and stops if
-either fails (`checkPeriodicPairing`): every owned slave reaches a final master in
-its local halo, and every slave whose master is owned elsewhere is in the cross-rank
-table. The matrices need nothing extra: the global id of each slot's DOF is itself a
+The `DofSpace` constructor checks the fact these maps rely on and stops if it fails
+(`checkPeriodicPairing`): every owned slave is paired exactly once, with a final master
+owned on the same rank or through the cross-rank table. The matrices need nothing extra: the global id of each slot's DOF is itself a
 field, prolonged once at setup.
 
 Nothing else in the solver knows about ranks or periodicity. The time step is the

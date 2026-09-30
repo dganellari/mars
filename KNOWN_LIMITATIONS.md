@@ -47,9 +47,9 @@ including element numberings that are not aligned with the coordinate axes.
   slower, not faster; use `--cells` for scaling.
 - **Triangle and quadrilateral meshes.** `ElementDomain` supports `TetTag` and `HexTag` only;
   `TriTag`/`QuadTag` are rejected at compile time.
-- **Node ownership on periodic and multi-block meshes.** Multi-rank, non-periodic, single-block meshes give each
+- **Node ownership on multi-block meshes.** Multi-rank, single-block meshes, periodic ones included, give each
   node to the rank whose SFC range contains it and complete every owned node's element star during the domain
-  sync, so owned rows are complete by construction. Periodic and multi-block (`MARS_BLOCK_NODE_IDENTITY`) meshes
+  sync, so owned rows are complete by construction. Multi-block (`MARS_BLOCK_NODE_IDENTITY`) meshes
   still use the previous scheme: the lowest claiming rank among halo peers owns a node, and the cornerstone halo
   search is widened by 1.5. That width is an empirical choice, not a guarantee; `MARS_ROW_DUMP` plus
   `tests/release/compare_rows.py` checks a mesh directly. `MARS_OWNERSHIP=vote` selects the previous scheme for

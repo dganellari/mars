@@ -828,16 +828,17 @@ public:
 
     int getPeriodicAxesMask() const { return periodicAxesMask_; }
 
-    // Multi-rank, non-periodic, single-block meshes use SFC node ownership (mars_sfc_ownership.hpp): a node belongs
-    // to the rank whose cornerstone SFC range holds it, and sync() completes the element star of every owned node,
-    // so each owned row is assembled from all its elements by construction. MARS_OWNERSHIP=vote restores the
-    // previous scheme (lowest claiming rank among halo peers, with the cornerstone halo search widened by 1.5 as an
-    // empirical mitigation); periodic and multi-block meshes keep that scheme. MARS_HALO_FACTOR sets the halo search
-    // factor in either mode. The choice must be the same on all ranks, so it comes from the environment only.
-    // Called right after each domain_ construction; persists across AMR re-syncs.
+    // Multi-rank, single-block meshes use SFC node ownership (mars_sfc_ownership.hpp): a node belongs to the rank
+    // whose cornerstone SFC range holds it, and sync() completes the element star of every owned node, so each owned
+    // row is assembled from all its elements by construction. On a periodic box every rank can also compute the owner
+    // of a periodic master from its key (buildCrossRankPeriodicMap). MARS_OWNERSHIP=vote restores the previous scheme
+    // (lowest claiming rank among halo peers, with the cornerstone halo search widened by 1.5 as an empirical
+    // mitigation); multi-block meshes keep that scheme. MARS_HALO_FACTOR sets the halo search factor in either mode.
+    // The choice must be the same on all ranks, so it comes from the environment only. Called right after each
+    // domain_ construction; persists across AMR re-syncs.
     void configureHalos()
     {
-        if (numRanks_ <= 1 || periodicAxesMask_ != 0 || !domain_) return;
+        if (numRanks_ <= 1 || !domain_) return;
         const char* mode = std::getenv("MARS_OWNERSHIP");
         sfcOwnership_    = numBlocks_ == 1 && !(mode && std::string(mode) == "vote");
         const char* f    = std::getenv("MARS_HALO_FACTOR");
