@@ -801,6 +801,24 @@ struct NsKineticTerm
     }
 };
 
+// |u|^2 M^(4/3): the squared flux of u through a face of the DOF's control volume.
+template<typename RealType>
+struct NsFluxScaleTerm
+{
+    const uint8_t* isDof;
+    const RealType* mass;
+    int comps;
+    Components<const RealType*> u;
+    __device__ double operator()(size_t i) const
+    {
+        if (!isDof[i]) return 0.0;
+        double s = 0;
+        for (int d = 0; d < comps; ++d)
+            s += double(u.c[d][i]) * u.c[d][i];
+        return s * cbrt(double(mass[i]) * mass[i] * mass[i] * mass[i]);
+    }
+};
+
 // |D u| / M where the projection enforces continuity: DOFs that are not pinned.
 template<typename RealType>
 struct NsContinuityTerm
@@ -1174,7 +1192,7 @@ private:
                                                            target_[d].data(), rhs_.data(), x_.data());
             cudaCheckError();
             velocityIters_[d] = solver.solve(rhs_.data(), x_.data(), true);
-            if (velocityIters_[d] < 0) return false;
+            if (velocityIters_[d] < 0) return failed("velocity", solver);
             timing_.velocityIterations += velocityIters_[d];
             nsFromDofKernel<RealType><<<grid(), bs()>>>(n_, space_.isDof(), dofIndex_.data(), x_.data(),
                                                         sstar_[d].data());
@@ -1194,8 +1212,14 @@ private:
         cudaCheckError();
         // With no p = 0 anywhere, A has the constants as null space: solve in its range.
         if (pureNeumann_) removeMean(rhs_);
-        pressureIters_ = pressure_->solve(rhs_.data(), x_.data());
-        if (pressureIters_ < 0) return false;
+        // Once the flow is nearly divergence-free the right-hand side shrinks towards
+        // roundoff, and a tolerance relative to it alone cannot be met. The floor is
+        // the same tolerance relative to the divergence the velocity could carry.
+        const double fluxScale =
+            std::sqrt(dofSum(NsFluxScaleTerm<RealType>{space_.isDof(), massDof_.data(), comps_, cview(sstar_)}));
+        pressureIters_ = pressure_->solve(rhs_.data(), x_.data(), false,
+                                          double(prm_.tolerance) * prm_.rho * invDt * fluxScale);
+        if (pressureIters_ < 0) return failed("pressure", *pressure_);
         timing_.pressureIterations += pressureIters_;
         if (pureNeumann_) removeMean(x_);
         nsFromDofKernel<RealType><<<grid(), bs()>>>(n_, space_.isDof(), dofIndex_.data(), x_.data(), phi_.data());
@@ -1218,6 +1242,15 @@ private:
         for (int d = 0; d < comps_; ++d)
             space_.prolong(*velocity()[d]);
         space_.prolong(p);
+    }
+
+    bool failed(const char* system, const HypreAmgPcgSolver& solver) const
+    {
+        if (rank_ == 0)
+            std::cerr << "NavierStokes: the " << system << " solve did not converge: relative residual "
+                      << std::scientific << solver.lastRelativeResidual() << std::defaultfloat << " after "
+                      << solver.lastIterations() << " iterations\n";
+        return false;
     }
 
     // g = M^-1 D^T q (~ -grad q) at the DOF slots, with Q if withQ. q must be current on every slot.
@@ -1555,7 +1588,7 @@ private:
         auto pinnedIds = flaggedDofs(pinned_.data());
         pressure_      = std::make_unique<HypreAmgPcgSolver>("MARS_PAMG");
         pressure_->setup(MPI_COMM_WORLD,
-                         hypreAddIdentityRows(MPI_COMM_WORLD, A, thrust::raw_pointer_cast(pinnedIds.data()),
+                         hypreAddIdentityRows(MPI_COMM_WORLD, std::move(A), thrust::raw_pointer_cast(pinnedIds.data()),
                                               HYPRE_Int(pinnedIds.size())),
                          prm_.tolerance, prm_.maxIter);
         checkPressureOperator();

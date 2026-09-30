@@ -130,9 +130,11 @@ inline HypreMatrix hypreGalerkin(const HypreMatrix& P, const HypreMatrix& A)
 }
 
 // A + I on the given rows, global ids owned by this rank. The rows must be empty in A.
-inline HypreMatrix hypreAddIdentityRows(MPI_Comm comm, const HypreMatrix& A, const HYPRE_BigInt* rows,
-                                        HYPRE_Int count)
+inline HypreMatrix hypreAddIdentityRows(MPI_Comm comm, HypreMatrix A, const HYPRE_BigInt* rows, HYPRE_Int count)
 {
+    long long total = count;
+    MPI_Allreduce(MPI_IN_PLACE, &total, 1, MPI_LONG_LONG, MPI_SUM, comm);
+    if (total == 0) return A;
     thrust::device_vector<HYPRE_Complex> ones(count, HYPRE_Complex(1));
     HypreMatrix I = hypreAssemble(comm, A.firstRow(), A.endRow(), A.firstRow(), A.endRow(),
                                   HypreCoo{rows, rows, thrust::raw_pointer_cast(ones.data()), count});
@@ -210,10 +212,11 @@ public:
     }
 
     // f and u hold this rank's unknowns on the device. u is the initial guess when
-    // useInitialGuess is set, and is overwritten. Returns the PCG iterations, or -2 if the
-    // relative tolerance ||b - A u|| <= tol ||b|| was not reached.
-    int solve(const HYPRE_Complex* f, HYPRE_Complex* u, bool useInitialGuess = false)
+    // useInitialGuess is set, and is overwritten. Returns the PCG iterations, or -2 if
+    // ||b - A u|| <= max(tol ||b||, absoluteTolerance) was not reached.
+    int solve(const HYPRE_Complex* f, HYPRE_Complex* u, bool useInitialGuess = false, double absoluteTolerance = 0)
     {
+        HYPRE_PCGSetAbsoluteTol(pcg_, absoluteTolerance);
         copyIn(f, f_);
         HYPRE_Real rhsNorm2 = 0;
         HYPRE_ParVectorInnerProd(f_, f_, &rhsNorm2);
@@ -223,6 +226,7 @@ public:
             HYPRE_ParVectorSetConstantValues(u_, 0.0);
             copyOut(u_, u);
             lastRelativeResidual_ = 0;
+            lastIterations_       = 0;
             return 0;
         }
         if (useInitialGuess) copyIn(u, u_);
@@ -234,6 +238,7 @@ public:
         HYPRE_PCGGetNumIterations(pcg_, &iterations);
         HYPRE_PCGGetConverged(pcg_, &converged);
         HYPRE_PCGGetFinalRelativeResidualNorm(pcg_, &lastRelativeResidual_);
+        lastIterations_ = int(iterations);
         hypreCheck(comm_, (error & ~HYPRE_ERROR_CONV) == 0, "PCG solve failed");
         HYPRE_ClearAllErrors();
         copyOut(u_, u);
@@ -249,6 +254,7 @@ public:
     }
 
     double lastRelativeResidual() const { return lastRelativeResidual_; }
+    int lastIterations() const { return lastIterations_; }
 
 private:
     HYPRE_ParCSRMatrix matrix() const { return reinterpret_cast<HYPRE_ParCSRMatrix>(A_.get()); }
@@ -309,6 +315,7 @@ private:
     HYPRE_Solver amg_            = nullptr;
     HYPRE_Solver pcg_            = nullptr;
     double lastRelativeResidual_ = 0;
+    int lastIterations_          = 0;
 };
 
 } // namespace fem
