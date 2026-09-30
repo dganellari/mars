@@ -20,18 +20,38 @@ namespace mars
 namespace fem
 {
 
+inline bool hypreEnvFlag(const char* name, bool fallback)
+{
+    const char* option = std::getenv(name);
+    return option ? std::string(option) == "1" : fallback;
+}
+
+// Hypre's own GPU kernels by default:
+// - SpMV: the vendor path returned wrong products intermittently with Hypre 2.33 on the SIMPLE duct.
+// - SpGEMM: cuSPARSE's default SpGEMM stopped the setup with "insufficient resources" on 16 and
+//   64 GPUs (2M nodes per GPU); 4 GPUs with the same load passed.
+// - GPU-aware MPI: without it Hypre copies every halo exchange through host memory, on every
+//   matvec of every AMG level. MARS already passes device buffers to MPI in its own halos.
+// MARS_HYPRE_SPMV_VENDOR=1, MARS_HYPRE_SPGEMM_VENDOR=1 and MARS_HYPRE_GPU_AWARE=0 switch back.
 inline void hypreInitializeOnce()
 {
     static HypreInitGuard guard;
-    (void)guard;
-}
-
-// The vendor SpMV path returned wrong products intermittently with Hypre 2.33 on the
-// SIMPLE duct; Hypre's own GPU SpMV did not. MARS_HYPRE_SPMV_VENDOR=1 opts back in.
-inline void hypreSelectSpMV()
-{
-    const char* option = std::getenv("MARS_HYPRE_SPMV_VENDOR");
-    HYPRE_SetSpMVUseVendor(option && std::string(option) == "1" ? 1 : 0);
+    static bool configured = false;
+    if (configured) return;
+    configured = true;
+    const bool spmvVendor   = hypreEnvFlag("MARS_HYPRE_SPMV_VENDOR", false);
+    const bool spgemmVendor = hypreEnvFlag("MARS_HYPRE_SPGEMM_VENDOR", false);
+    const bool gpuAwareMpi  = hypreEnvFlag("MARS_HYPRE_GPU_AWARE", true);
+    const int buildGpuAware = hypre_GetGpuAwareMPI();
+    HYPRE_SetSpMVUseVendor(spmvVendor ? 1 : 0);
+    HYPRE_SetSpGemmUseVendor(spgemmVendor ? 1 : 0);
+    HYPRE_SetGpuAwareMPI(gpuAwareMpi ? 1 : 0);
+    int rank = 0;
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    if (rank == 0)
+        std::printf("Hypre: SpMV %s, SpGEMM %s, GPU-aware MPI %s (build default %s)\n",
+                    spmvVendor ? "vendor" : "hypre", spgemmVendor ? "vendor" : "hypre", gpuAwareMpi ? "on" : "off",
+                    buildGpuAware ? "on" : "off");
 }
 
 // Collective: stops every rank if one rank fails.
@@ -166,7 +186,6 @@ public:
         partitioning_[1] = A.endRow();
         rows_            = HYPRE_Int(partitioning_[1] - partitioning_[0]);
         A_               = std::move(A);
-        hypreSelectSpMV();
         trace("diagonal first");
 #if defined(HYPRE_USING_GPU)
         // Relaxation reads the diagonal as the first entry of each row.
