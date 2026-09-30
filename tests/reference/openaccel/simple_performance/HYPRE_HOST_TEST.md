@@ -61,7 +61,7 @@ multi-rank lifecycle checks remain necessary on the user-run GPU environment.
 
 ## SIMPLE convergence with physical units
 
-Both SIMPLE Hypre call sites enable `enable_true_residual_check(1e-13,1e-10)`.
+By default both SIMPLE Hypre call sites enable `enable_true_residual_check(1e-13,1e-10)`.
 Hypre still targets relative tolerance `1e-12`. Wrapper acceptance uses the
 explicit residual `||b-Ax||_2 <= 1e-13 + 1e-10*||b||_2`, matching the existing
 independent SIMPLE CSR check. A zero RHS uses the absolute tolerance. This
@@ -73,6 +73,25 @@ The legacy `MARS_HYPRE_NULLX_RATIO` and `MARS_HYPRE_MAXX_RATIO` heuristics remai
 unchanged for other callers; they do not apply in this mode. The caller must
 still provide a pressure anchor. A small residual alone cannot detect a nullspace.
 The existing SIMPLE check against its own CSR and exchanged solution also remains.
+
+The paired production options `--pressure-linear-rtol R --pressure-linear-atol A`
+set a separate pressure target: both Hypre's stopping test and the two independent
+true-residual checks use `max(A, R*||b||_2)`. Momentum and nonlinear convergence
+defaults remain unchanged. The explicit absolute target overrides
+`MARS_HYPRE_ABSTOL`, including when `A=0`. Configuration is collective and precedes
+setup; invalid or rank-inconsistent settings are rejected. Reusing the matrix
+graph preserves the explicit target. No residual retry or audit can change a
+failed verdict, and an overflowed acceptance limit is rejected.
+
+The real-Hypre host regression checks this option on GMRES and FlexGMRES, both
+fresh and cached: environment precedence, zero RHS, invalid/late configuration,
+and exact dyadic candidates between `max(A,R*||b||)` and `A+R*||b||`. The latter
+must fail the maximum policy even though the additive policy accepts it. Host
+MPI gates check pressure-only selection, both mandatory verdicts and rank
+disagreement. The CUDA matrix gate includes a cached explicit-target solve and
+uses the same maximum-policy residual fixtures. Its execution remains a separate
+GPU validation step.
+
 The wrapper forms `r = -Ax` with beta zero, then adds `b` with ParVectorAxpy.
 Both operations use Hypre's compute stream. This avoids putting a runtime
 device copy immediately before a matvec that reads and overwrites its destination.

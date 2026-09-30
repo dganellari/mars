@@ -23,8 +23,11 @@ double truth(long long dof) { return .125*(1+dof%17); }
 template<int C> struct CandidateSolve {
     MPI_Comm comm;
     int mode=0;
+    bool configured=false;
+    double relative=0,absolute=0;
     std::vector<double> b,x;
     explicit CandidateSolve(MPI_Comm c):comm(c) {}
+    void set_tolerances(double r,double a) { configured=true; relative=r; absolute=a; }
     double* rhs(std::size_t n) { b.resize(n); return b.data(); }
     const double* rhs() const { return b.data(); }
     const double* solution() const { return x.data(); }
@@ -84,6 +87,49 @@ template<int C,class System> void cases(Runner& run,System& system,CandidateSolv
     }
 }
 
+template<int C,class System> void pressure_only_case(Runner& run,System& system,CandidateSolve<C>& solver) {
+    Array<double> blocks(std::size_t(C*C)*run.graph.blocks()),rhs(std::size_t(C)*run.n),increment(std::size_t(C)*run.n);
+    blocks.zero(); rhs.zero();
+    const auto a=run.graph.template view<C>(blocks.data(),rhs.data());
+    for (int row=0;row<run.n;++row) for (int k=a.offsets[row];k<a.offsets[row+1];++k)
+        if (a.columns[k]==row) for (int c=0;c<C;++c) {
+            a.values[C*C*k+C*c+c]=1;
+            a.rhs[C*row+c]=truth(C*run.solver_node.values[row]+c);
+        }
+    for (int mode:{2,3}) {
+        solver.mode=mode; bool accepted=true;
+        try { run.template solve<C>(system,solver,a,increment,false,{}); }
+        catch (const std::exception&) { accepted=false; }
+        // This .25 error meets the explicit pressure atol but not momentum's default.
+        simple_collective(run.comm,accepted==(C==1 && mode==3),"pressure override changed the wrong verdict");
+    }
+}
+
+void pressure_configuration(Runner& run,int rank,int ranks) {
+    auto reject=[&](bool enabled,double relative,double absolute) {
+        bool rejected=false;
+        try { run.set_pressure_tolerances(enabled,relative,absolute); }
+        catch (const std::exception&) { rejected=true; }
+        simple_collective(run.comm,rejected,"invalid pressure configuration accepted");
+    };
+    reject(true,rank==ranks-1?0:1e-6,0);
+    reject(true,1e-6,rank==ranks-1?std::numeric_limits<double>::infinity():0);
+    if (ranks>1) {
+        reject(rank==ranks-1,1e-6,0);
+        reject(true,rank==ranks-1?1e-5:1e-6,0);
+        reject(true,1e-6,rank==ranks-1?1e-5:0);
+    }
+    run.set_pressure_tolerances(false,1e-12,0);
+    simple_collective(run.comm,!run.poisson_solve.configured && !run.pressure_tolerance,"default pressure target changed");
+    run.set_pressure_tolerances(true,1e-6,.5);
+    simple_collective(run.comm,run.poisson_solve.configured && run.poisson_solve.relative==1e-6
+        && run.poisson_solve.absolute==.5 && !run.momentum_solve.configured
+        && run.tolerance.absolute==1e-13 && run.tolerance.relative==1e-10 && !run.tolerance.maximum,
+        "pressure targets not isolated from momentum");
+    pressure_only_case<1>(run,run.poisson,run.poisson_solve);
+    pressure_only_case<3>(run,run.momentum,run.momentum_solve);
+}
+
 int main(int argc,char** argv) {
     MPI_Init(&argc,&argv);
     try {
@@ -98,6 +144,7 @@ int main(int argc,char** argv) {
         if (rank==ranks-1) setenv("MARS_SIMPLE_PRESSURE_AUDIT","1",1);
         cases<3>(run,run.momentum,run.momentum_solve,true);
         cases<1>(run,run.poisson,run.poisson_solve,true);
+        pressure_configuration(run,rank,ranks);
         if (!rank) std::cout<<"PASS: accepted/rejected, wrong, missing and nonfinite candidates; original CSR and halo residual; ranks="<<ranks<<'\n';
     } catch (const std::exception& error) {
         std::cerr<<error.what()<<'\n'; MPI_Abort(MPI_COMM_WORLD,1); return 1;

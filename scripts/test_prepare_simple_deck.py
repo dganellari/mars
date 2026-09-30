@@ -55,6 +55,120 @@ class DeckTests(unittest.TestCase):
         settings['coupled_navier_stokes'] = {'family': 'PETSc'}
         self.assertEqual(bridge.translate(self.doc), expected)
 
+    def reference_values(self):
+        args, _ = bridge.translate(self.doc, pressure_linear_policy='reference')
+        return dict(zip(args[::2], args[1::2]))
+
+    def test_reference_pressure_precedence_and_defaults(self):
+        settings = self.control['advanced_options']['linear_solver_settings']
+        settings['default'] = {'family': 'Hypre', 'rtol': 1e-4, 'atol': 1e-10}
+        settings['segregated_flow'] = {'family': 'Hypre', 'rtol': 1e-5, 'atol': 0}
+        settings['pressure_correction'] = {'family': 'Hypre'}
+        expected_default = bridge.translate(self.doc)
+        self.assertEqual(expected_default, bridge.translate(self.doc, pressure_linear_policy='mars'))
+        self.assertNotIn('--pressure-linear-rtol', expected_default[0])
+        for key, rtol, atol in [('pressure_correction', 1e-6, 1e-16),
+                                ('segregated_flow', 1e-5, 0), ('default', 1e-4, 1e-10)]:
+            values = self.reference_values()
+            self.assertEqual(float(values['--pressure-linear-rtol']), rtol)
+            self.assertEqual(float(values['--pressure-linear-atol']), atol)
+            normal = dict(zip(expected_default[0][::2], expected_default[0][1::2]))
+            for flag, value in normal.items():
+                self.assertEqual(values[flag], value)
+            del settings[key]
+        with self.assertRaisesRegex(bridge.Unsupported, 'missing or malformed pressure solver definition'):
+            self.reference_values()
+
+    def test_reference_pressure_named_solver_and_case_sensitive_lookup(self):
+        solver = self.doc['simulation']['solver']
+        settings = self.control['advanced_options']['linear_solver_settings']
+        solver['Private Solver Name'] = {'family': 'hYpRe', 'rtol': '2e-5', 'atol': '0',
+                                         'options': {'solver': {'type': 'fLeXgMrEs', 'kdim': 17},
+                                                     'preconditioner': {'type': 'boomeramg'}}}
+        settings['pressure_correction'] = {'lookup': 'Private Solver Name', 'rtol': 0.25}
+        self.assertEqual(float(self.reference_values()['--pressure-linear-rtol']), 2e-5)
+        self.assertEqual(float(self.reference_values()['--pressure-linear-atol']), 0)
+        settings['pressure_correction']['lookup'] = 'private solver name'
+        with self.assertRaises(bridge.Unsupported) as error:
+            self.reference_values()
+        self.assertNotIn('private solver name', str(error.exception))
+
+    def test_reference_pressure_scaling_rejected(self):
+        settings = self.control['advanced_options']['linear_solver_settings']
+        for key in ('normalize_matrix', 'diagonal_scaling'):
+            settings['pressure_correction'] = {'family': 'Hypre', key: False}
+            self.reference_values()
+            for value in (True, None, 0, 1, 'false', 'private scaling', [], {}):
+                with self.subTest(key=key, value=value):
+                    settings['pressure_correction'][key] = value
+                    with self.assertRaisesRegex(bridge.Unsupported, key) as error:
+                        self.reference_values()
+                    self.assertNotIn('private scaling', str(error.exception))
+
+    def test_reference_pressure_tolerances_rejected(self):
+        settings = self.control['advanced_options']['linear_solver_settings']
+        for key, values in [('rtol', (0, -1, 1, 2, True, None, 'nan', 'inf', [], {}, 'private value')),
+                            ('atol', (-1, True, None, 'nan', 'inf', [], {}, 'private value'))]:
+            for value in values:
+                with self.subTest(key=key, value=value):
+                    settings['pressure_correction'] = {'family': 'Hypre', key: value}
+                    with self.assertRaisesRegex(bridge.Unsupported, 'reference.' + key) as error:
+                        self.reference_values()
+                    self.assertNotIn('private value', str(error.exception))
+
+    def test_reference_pressure_unsupported_or_malformed_solver(self):
+        settings = self.control['advanced_options']['linear_solver_settings']
+        configs = [None, [], True, 'private value', {}, {'family': 'Trilinos'}, {'family': []},
+                   {'lookup': []}, {'lookup': 'private missing name'}]
+        configs += [{'family': 'Hypre', 'options': value}
+                    for value in (None, [], True, 'private value', {}, {'solver': None},
+                                  {'solver': []}, {'solver': {}}, {'solver': {'type': []}})]
+        configs += [{'family': 'Hypre', 'options': {'solver': {'type': value}}}
+                    for value in ('boomeramg', 'mgr', 'private value')]
+        for config in configs:
+            with self.subTest(config=config):
+                settings['pressure_correction'] = config
+                with self.assertRaises(bridge.Unsupported) as error:
+                    self.reference_values()
+                self.assertNotIn('private', str(error.exception))
+        for value in (None, [], True, 'private value'):
+            self.control['advanced_options']['linear_solver_settings'] = value
+            with self.assertRaises(bridge.Unsupported):
+                self.reference_values()
+
+    def test_reference_pressure_cli_and_redaction(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            deck, mesh, out = tmp/'private-deck.i', tmp/'channel.exo', tmp/'prepared'
+            mesh.write_bytes(b'not a mesh')
+            settings = self.control['advanced_options']['linear_solver_settings']
+            settings['pressure_correction'] = {'family': 'Hypre', 'options': {'solver': {'type': 'GMRES'}}}
+            deck.write_text(json.dumps(self.doc))
+            argv = [sys.executable, str(ROOT/'scripts/prepare_simple_deck.py'), '--deck', str(deck),
+                    '--mesh', str(mesh), '--output', str(out), '--pressure-linear-policy', 'reference']
+            result = subprocess.run(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            record = json.loads((out/'case.json').read_text())
+            self.assertEqual(record['pressure_linear_policy'], 'reference')
+            self.assertIn('--pressure-linear-rtol', record['arguments'])
+            self.assertIn('--pressure-linear-atol', record['arguments'])
+            self.assertTrue(any('full solver configuration are not translated' in note for note in record['notes']))
+            self.assertEqual((out/'args.nul').read_bytes().decode().split('\0')[:-1], record['arguments'])
+            argv[argv.index('--output') + 1] = str(tmp/'rejected')
+            settings['pressure_correction'] = {'lookup': 'private missing solver'}
+            deck.write_text(json.dumps(self.doc))
+            result = subprocess.run(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            self.assertEqual(result.returncode, 1)
+            self.assertNotIn(b'private', result.stderr)
+            self.assertNotIn(str(tmp).encode(), result.stderr)
+            self.assertFalse(result.stdout)
+            self.assertFalse((tmp/'rejected').exists())
+            argv[-1] = 'private invalid policy'
+            result = subprocess.run(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            self.assertEqual(result.returncode, 2)
+            self.assertNotIn(b'private', result.stderr)
+            self.assertFalse((tmp/'rejected').exists())
+
     def test_invalid_linear_solver_references(self):
         solver = self.doc['simulation']['solver']
         settings = self.control['advanced_options']['linear_solver_settings']

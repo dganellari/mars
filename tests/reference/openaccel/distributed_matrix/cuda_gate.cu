@@ -14,7 +14,7 @@ using Solver=mars::fem::HypreGMRESSolver<double,int,cstone::GpuTag>;
 using Matrix=Solver::Matrix;
 using Vector=Solver::Vector;
 
-template<int C> void hypre_gates(MPI_Comm comm,Report& report,Options o,EmptyRanks policy,const std::string& label,int coarse_relax=-1) {
+template<int C> void hypre_gates(MPI_Comm comm,Report& report,Options o,EmptyRanks policy,const std::string& label,int coarse_relax=-1,bool explicit_target=false) {
     int rank=0, ranks=1; MPI_Comm_rank(comm,&rank); MPI_Comm_size(comm,&ranks);
     const std::string tag="C="+std::to_string(C)+" ranks="+std::to_string(ranks)+" "+label+": ";
     Problem p(C,ranks,o); Local l=extract(p,rank);
@@ -24,6 +24,12 @@ template<int C> void hypre_gates(MPI_Comm comm,Report& report,Options o,EmptyRan
     Vector b, x; b.resize(std::size_t(s.rows())); x.resize(std::size_t(s.rows()));
     Solver solver(comm,2000,1e-12,Solver::BOOMERAMG,100); solver.setVerbose(false); solver.setPointBlock(C);
     solver.setAMGCoarseRelaxType(coarse_relax);
+    const Tolerance acceptance=explicit_target?Tolerance{1e-13,1e-10,true}:Tolerance{};
+    if (explicit_target) {
+        solver.set_stopping_tolerances(acceptance.relative,acceptance.absolute);
+        solver.enable_true_residual_check(acceptance.absolute,acceptance.relative,true);
+        solver.enable_fixed_graph_updates();
+    }
     GhostExchange exchange(p,l,rank);
     for (unsigned round:{1u,2u}) {   // round 2: new values, RHS and solution; same structure
         if (round==2) { fill(p,l,rank,2,[&](int g,int c) { return p.product(g,c,2,12); }); overwrite(d.blocks,l.blocks); overwrite(d.rhs,l.rhs); }
@@ -34,7 +40,7 @@ template<int C> void hypre_gates(MPI_Comm comm,Report& report,Options o,EmptyRan
         s.unpack(x.data(),x.size(),raw(local),local.size());
         const auto before=s.residual(halo_complete(raw(local),local.size()),b.data());   // ghosts still NaN
         exchange.run(raw(local),comm);
-        const auto norms=s.residual(halo_complete(raw(local),local.size()),b.data());
+        const auto norms=s.residual(halo_complete(raw(local),local.size()),b.data(),acceptance);
         const auto h=download(raw(local),local.size()); double error=0;
         for (int v=0;v<l.nodes();++v) for (int c=0;c<C;++c)
             error=std::max(error,std::abs(h[std::size_t(C)*v+c]-p.solution(l.global[v],c,10+round)));
@@ -44,7 +50,8 @@ template<int C> void hypre_gates(MPI_Comm comm,Report& report,Options o,EmptyRan
         detail<<"round "<<round<<" iterations="<<solver.getLastIterations()<<" relative="<<norms.relative()
               <<" max|x-x*| incl. ghosts="<<worst<<" unexchanged_finite="<<before.finite;
         report.result(tag+"Hypre GMRES device-map solve, exchanged true residual, source-keyed solution",
-            all_true(solved,comm) && norms.passed && worst<=1e-8 && (ghosts==0 || !before.passed),detail.str());
+            all_true(solved,comm) && norms.passed && worst<=1e-8 && (ghosts==0 || !before.passed)
+            && (!explicit_target || (solver.get_graph_build_count()==1 && solver.get_numeric_update_count()==int(round))),detail.str());
     }
 }
 
@@ -103,6 +110,7 @@ int main(int argc,char** argv) {
             Options small; small.nx=9; small.ny=3; small.nz=3;
             hypre_gates<1>(MPI_COMM_WORLD,report,small,EmptyRanks::reject,"81-row l1 coarse relaxation",18);
             hypre_gates<3>(MPI_COMM_WORLD,report,small,EmptyRanks::reject,"l1 coarse block relaxation",18);
+            hypre_gates<1>(MPI_COMM_WORLD,report,small,EmptyRanks::reject,"explicit pressure target, cached refresh",18,true);
             if (repetitions>0) { bench<1>(MPI_COMM_WORLD,report,repetitions); bench<3>(MPI_COMM_WORLD,report,repetitions); }
         }
     } catch (const std::exception& e) {

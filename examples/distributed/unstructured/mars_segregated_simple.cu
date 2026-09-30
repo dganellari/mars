@@ -26,6 +26,7 @@ int execute(const SimpleOptions& o) {
     };
     auto runner=make_runner(); // Release root file arrays and setup scratch before iterating.
     auto& run=*runner;
+    run.set_pressure_tolerances(o.pressure_tolerances,o.pressure_rtol,o.pressure_atol);
     run.profile.configure(o.profile,o.profile_warmup);
     run.exchange.enable_profiling(o.profile);
     run.overlap_assembly=o.halo_overlap;
@@ -52,6 +53,9 @@ int execute(const SimpleOptions& o) {
                  <<"linear_cache="<<o.linear_cache<<" halo_overlap="<<o.halo_overlap
                  <<" field_output="<<o.field_output<<" profile="<<o.profile<<'\n'
                  <<"Norms are dimensionless MARS residuals; not OpenAccel printed RMS.\n";
+        if (o.pressure_tolerances)
+            std::cout<<"pressure_linear_rtol="<<o.pressure_rtol<<" pressure_linear_atol="<<o.pressure_atol
+                     <<" pressure_acceptance=max(atol,rtol*rhs_norm); momentum targets unchanged\n";
     }
     if (o.profile) {
         char host[MPI_MAX_PROCESSOR_NAME]; int length=0,device=0;

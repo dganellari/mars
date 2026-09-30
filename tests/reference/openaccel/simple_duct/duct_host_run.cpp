@@ -45,6 +45,7 @@ DuctOptions parse(int argc,char** argv) {
     if (o.dump.empty()) {
         std::vector<char*> args; for (auto& word:rest) args.push_back(word.data());
         o.simple=simple_options(int(args.size()),args.data());
+        ensure(!o.simple.pressure_tolerances,"pressure linear overrides require the production Hypre driver");
     }
     return o;
 }

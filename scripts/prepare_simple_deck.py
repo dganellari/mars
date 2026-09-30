@@ -129,6 +129,37 @@ def check_linear_settings(value, solver, check):
             check.require(is_linear_solver(config), path + '.family', 'unsupported or missing linear-solver family')
 
 
+def reference_pressure_target(settings, solver):
+    path = 'pressure_linear_policy.reference'
+    require(isinstance(settings, dict), path, 'expected linear_solver_settings mapping')
+    config = next((settings[key] for key in ('pressure_correction', 'segregated_flow', 'default')
+                   if key in settings), None)
+    require(isinstance(config, dict), path, 'missing or malformed pressure solver definition')
+    if 'lookup' in config:
+        name = config['lookup']
+        require(isinstance(name, str) and bool(name) and name not in SOLVER_CONTROLS,
+                path + '.lookup', 'expected a named linear solver')
+        config = solver.get(name)
+        require(isinstance(config, dict), path + '.lookup', 'named linear solver not found')
+    family = config.get('family')
+    require(isinstance(family, str) and family.lower() == 'hypre', path + '.family', 'requires Hypre')
+    for key in ('normalize_matrix', 'diagonal_scaling'):
+        require(config.get(key, False) is False, path + '.' + key, 'requires false or omission')
+    solver_type = 'gmres'
+    if 'options' in config:
+        options = config['options']
+        require(isinstance(options, dict) and isinstance(options.get('solver'), dict),
+                path + '.options', 'requires a solver mapping')
+        solver_type = options['solver'].get('type')
+    require(isinstance(solver_type, str) and solver_type.lower() in ('gmres', 'flexgmres'),
+            path + '.options.solver.type', 'requires GMRES or FlexGMRES')
+    rtol = number(config.get('rtol', 1e-6), path + '.rtol')
+    atol = number(config.get('atol', 1e-16), path + '.atol')
+    require(0 < rtol < 1, path + '.rtol', 'must lie in (0, 1)')
+    require(atol >= 0, path + '.atol', 'must be nonnegative')
+    return ['--pressure-linear-rtol', str(rtol), '--pressure-linear-atol', str(atol)]
+
+
 def zero_field(value, field, check, vector=False):
     path = 'initialization.' + field
     value = check.mapping(value, 'option ' + field, path)
@@ -142,8 +173,10 @@ def zero_field(value, field, check, vector=False):
     check.require(all(check.number(v, path) == 0 for v in items), path, 'only zero initial fields are supported')
 
 
-def translate(doc):
+def translate(doc, pressure_linear_policy='mars'):
     check = Checks()
+    check.require(pressure_linear_policy in ('mars', 'reference'),
+                  'pressure_linear_policy', 'requires mars or reference')
     doc = check.mapping(doc, 'mesh simulation', 'document')
     mesh = check.mapping(doc.get('mesh'), 'file_path automatic_decomposition_type', 'mesh')
     # This selects OpenAccel's partitioner; MARS partitions through Cornerstone.
@@ -254,6 +287,9 @@ def translate(doc):
     check.mapping(basic.get('convergence_criteria', {}), 'residual_type residual_target', 'convergence_criteria')
     advanced = check.mapping(control.get('advanced_options', {}), 'equation_controls linear_solver_settings', 'advanced_options')
     check_linear_settings(advanced.get('linear_solver_settings', {}), solver, check)
+    if pressure_linear_policy == 'reference':
+        args += check.checked(reference_pressure_target, advanced.get('linear_solver_settings', {}),
+                              solver, fallback=[])
     eq = check.mapping(advanced.get('equation_controls', {}), 'sub_iterations', 'equation_controls')
     sub = check.mapping(eq.get('sub_iterations', {}), 'pressure_correction segregated_flow', 'sub_iterations')
     for key in ('pressure_correction', 'segregated_flow'):
@@ -303,18 +339,25 @@ def load_deck(data):
         raise Unsupported('YAML: invalid or unsupported syntax')
 
 
+class SafeParser(argparse.ArgumentParser):
+    def error(self, message):
+        self.exit(2, 'ERROR: invalid preparation arguments; use --help.\n')
+
+
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = SafeParser(description=__doc__)
     parser.add_argument('--deck', type=Path, required=True)
     parser.add_argument('--mesh', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--reference-length', type=float, default=1,
                         help='MARS residual scale in metres; does not change physics')
+    parser.add_argument('--pressure-linear-policy', choices=('mars', 'reference'), default='mars',
+                        help='Use MARS defaults or copy only the unscaled reference pressure residual target')
     o = parser.parse_args()
     require(not o.output.exists(), 'output', 'choose a fresh directory')
     length = number(o.reference_length, 'reference-length', positive=True)
     data = o.deck.read_bytes()
-    args, declared_mesh = translate(load_deck(data))
+    args, declared_mesh = translate(load_deck(data), pressure_linear_policy=o.pressure_linear_policy)
     expanded = os.path.expandvars(os.path.expanduser(declared_mesh))
     require('$' not in expanded, 'mesh.file_path', 'unresolved environment variable')
     reference_mesh = Path(expanded)
@@ -326,14 +369,17 @@ def main():
     o.output.mkdir(parents=True, mode=0o700)
     record = dict(format='mars-simple-deck-v1', deck_sha256=hashlib.sha256(data).hexdigest(),
                   arguments=args, status='supported_deck_mesh_not_validated',
+                  pressure_linear_policy=o.pressure_linear_policy,
                   notes=['Native C++ setup must validate single-block Tet4 topology and boundary coverage.',
                          'OpenAccel automatic_decomposition_type is not translated; MARS uses Cornerstone.',
                          'Constant static_pressure uses outlet beta=1; pressure_profile_blend applies only to average_static_pressure.',
-                         'OpenAccel named and inline linear-solver settings are not translated; MARS retains its Hypre solvers.',
+                         ('Reference pressure residual target copied; preconditioner, restart and full solver configuration are not translated.'
+                          if o.pressure_linear_policy == 'reference' else
+                          'OpenAccel named and inline linear-solver settings are not translated; MARS retains its Hypre solvers.'),
                          'OpenAccel 0d69041 ignores expert coupled_pressure_velocity; it does not change the SIMPLE algorithm.',
                          'Coordinates must be in metres; mesh bytes were not read.',
-                         'MARS uses its own Hypre settings, zero initial fields and convergence norms.',
-                         'Iteration counts and reference residual criteria are not translated.'])
+                         'MARS retains its momentum solver settings, zero initial fields and nonlinear convergence norms.',
+                         'Iteration counts and reference nonlinear residual criteria are not translated.'])
     (o.output / 'case.json').write_text(json.dumps(record, indent=2) + '\n')
     (o.output / 'args.nul').write_bytes(b'\0'.join(v.encode('utf-8') for v in args) + b'\0')
     print('PASS: supported deck; native mesh setup still required. Arguments saved locally.')

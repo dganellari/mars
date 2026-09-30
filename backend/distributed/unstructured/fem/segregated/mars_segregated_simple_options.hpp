@@ -42,6 +42,8 @@ struct SimpleOptions {
     SimpleBoundaryNames boundaries;
     int iterations=2000,report=10,profile_warmup=10;
     double residual=1e-6,mass=1e-6,change=1e-6;
+    double pressure_rtol=1e-12,pressure_atol=0;
+    bool pressure_tolerances=false;
     bool setup_only=false,help=false,profile=false,linear_cache=true,halo_overlap=true;
 };
 inline SimpleOptions simple_options(int argc,char** argv) {
@@ -110,6 +112,8 @@ inline SimpleOptions simple_options(int argc,char** argv) {
             else if (key=="--residual-tol") o.residual=number;
             else if (key=="--mass-tol") o.mass=number;
             else if (key=="--change-tol") o.change=number;
+            else if (key=="--pressure-linear-rtol") o.pressure_rtol=number;
+            else if (key=="--pressure-linear-atol") o.pressure_atol=number;
             else if (key=="--rho") o.controls.density=number;
             else if (key=="--mu") o.controls.viscosity=number;
             else if (key=="--inlet-velocity") o.controls.inlet_speed=number;
@@ -123,6 +127,10 @@ inline SimpleOptions simple_options(int argc,char** argv) {
             else throw std::runtime_error("unknown option: "+key);
         }
     }
+    o.pressure_tolerances=seen.count("--pressure-linear-rtol")!=0;
+    if (o.pressure_tolerances!=(seen.count("--pressure-linear-atol")!=0)
+        || !(o.pressure_rtol>0 && o.pressure_rtol<1 && o.pressure_atol>=0))
+        throw std::runtime_error("pressure linear tolerances require both 0<rtol<1 and atol>=0");
     if (!valid_simple_controls(o.controls) || !o.boundaries.valid()
         || !(o.residual>0 && o.mass>0 && o.change>0)) throw std::runtime_error("invalid SIMPLE controls, tolerances or boundary names");
     if (!o.help && (o.mesh.empty() || o.output.empty())) throw std::runtime_error("--mesh and --output-prefix are required");
@@ -143,6 +151,8 @@ inline const char* simple_help() {
            "  --reference-length 1    residual normalization length [m]\n"
            "  --iterations 2000 --report-every 10 --setup-only 0\n"
            "  --residual-tol 1e-6 --mass-tol 1e-6 --change-tol 1e-6\n"
+           "  --pressure-linear-rtol R --pressure-linear-atol A   optional pair; max(A,R*||b||)\n"
+           "    Sets pressure Krylov and both true residual targets; momentum stays unchanged.\n"
            "  --linear-cache 1 --halo-overlap 1    set 0 for a performance control\n"
            "  --profile 0 --profile-warmup 10      optional phase timing (adds event fences)\n"
            "  --field-output gathered             distributed writes per-rank CSVs; none skips fields\n"

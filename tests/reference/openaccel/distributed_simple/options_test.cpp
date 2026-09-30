@@ -16,6 +16,10 @@ int main() {
     const auto defaults=parse("");
     check(defaults.controls.density==1 && defaults.controls.viscosity==.1 && defaults.controls.inlet_speed==.1);
     check(defaults.linear_cache && defaults.halo_overlap && !defaults.profile && defaults.field_output=="gathered");
+    check(!defaults.pressure_tolerances && defaults.pressure_rtol==1e-12 && defaults.pressure_atol==0);
+    const auto pressure_options=parse("--pressure-linear-rtol=1e-6 --pressure-linear-atol 0");
+    check(pressure_options.pressure_tolerances && pressure_options.pressure_rtol==1e-6 && pressure_options.pressure_atol==0);
+    check(pressure_options.residual==defaults.residual && pressure_options.mass==defaults.mass && pressure_options.change==defaults.change);
     const auto performance=parse("--profile 1 --profile-warmup 0 --linear-cache 0 --halo-overlap 0 --field-output distributed");
     check(performance.profile && performance.profile_warmup==0 && !performance.linear_cache && !performance.halo_overlap && performance.field_output=="distributed");
     check(!defaults.controls.high_resolution && !parse("--advection upwind").controls.high_resolution);
@@ -39,6 +43,13 @@ int main() {
     for (const char* args:{"--rho nan","--rho inf","--rho -1","--mu 0","--inlet-velocity 0","--outlet-pressure inf",
         "--reference-length 0","--pseudo-dt -1","--relax-u 1.1","--relax-p 0","--relax-mass nan","--outlet-beta 0",
         "--residual-tol nan","--mass-tol 0","--change-tol -1","--iterations 2.5","--iterations 2147483648",
+        "--pressure-linear-rtol 1e-6","--pressure-linear-atol 0",
+        "--pressure-linear-rtol 0 --pressure-linear-atol 1e-6",
+        "--pressure-linear-rtol 1 --pressure-linear-atol 0",
+        "--pressure-linear-rtol -1 --pressure-linear-atol 0",
+        "--pressure-linear-rtol 1e-6 --pressure-linear-atol -1",
+        "--pressure-linear-rtol nan --pressure-linear-atol 0",
+        "--pressure-linear-rtol 1e-6 --pressure-linear-atol inf",
         "--report-every 0","--setup-only 2","--rho 2x","--rho 1 --rho 2","--rho=","--mesh-format prepared",
         "--advection central","--advection 1","--velocity-interpolation other","--velocity-interpolation 1",
         "--inlet-ss outlet","--inlet-ss OUTLET","--wall-ss walls,","--wall-ss walls,walls","--wall-ss walls,inlet","--wall-ss walls,INLET","--unknown 1",

@@ -59,17 +59,31 @@ public:
         true_residual_check_ = true;
         mixed_residual_check_ = false;
     }
-    // Accept the caller's ||b-Ax|| <= atol + rtol*||b|| without changing
-    // the tighter Krylov target. Hypre can stop before reaching that target.
-    void enable_true_residual_check(double absolute_tolerance, double relative_tolerance) {
+    // The default uses atol + rtol*||b||. A reference target can request their
+    // maximum, matching Hypre's stopping test without changing the operator.
+    void enable_true_residual_check(double absolute_tolerance, double relative_tolerance, bool maximum = false) {
         if (!std::isfinite(absolute_tolerance) || !std::isfinite(relative_tolerance)
             || absolute_tolerance < 0 || relative_tolerance < 0
             || (absolute_tolerance == 0 && relative_tolerance == 0))
             throw std::runtime_error("invalid true residual tolerances");
         true_residual_check_ = true;
         mixed_residual_check_ = true;
+        maximum_residual_check_ = maximum;
         residual_absolute_tolerance_ = absolute_tolerance;
         residual_relative_tolerance_ = relative_tolerance;
+    }
+
+    // Configure before setup; explicit zero must also override an environment atol.
+    void set_stopping_tolerances(double relative_tolerance, double absolute_tolerance) {
+        require_reuse(!solver_ && !A_hypre_ && std::isfinite(relative_tolerance)
+            && std::isfinite(absolute_tolerance) && relative_tolerance > 0
+            && relative_tolerance < 1 && absolute_tolerance >= 0, "invalid or late stopping tolerances");
+        double bounds[4] = {relative_tolerance, -relative_tolerance, absolute_tolerance, -absolute_tolerance};
+        double global[4];
+        MPI_Allreduce(bounds, global, 4, MPI_DOUBLE, MPI_MAX, comm_);
+        require_reuse(global[0] == -global[1] && global[2] == -global[3], "stopping tolerances differ between ranks");
+        tolerance_ = RealType(relative_tolerance);
+        stopping_absolute_tolerance_ = absolute_tolerance;
     }
 
     // The caller must invalidate before changing matrix/map contents in place.
@@ -559,8 +573,9 @@ public:
         // Optional absolute stopping floor: Hypre uses max(atol, rtol*||b||).
         // Default 0 keeps the relative target; the wrapper checks acceptance below.
         {
-            double absTol = getEnvDouble("MARS_HYPRE_ABSTOL", 0.0);
-            if (absTol > 0.0)
+            double absTol = stopping_absolute_tolerance_ >= 0
+                ? stopping_absolute_tolerance_ : getEnvDouble("MARS_HYPRE_ABSTOL", 0.0);
+            if (absTol > 0.0 || stopping_absolute_tolerance_ >= 0.0)
                 (useFlexGmres_ ? HYPRE_FlexGMRESSetAbsoluteTol : HYPRE_GMRESSetAbsoluteTol)(solver_, absTol);
         }
         // print level: 0 silent, 2 per-iter residuals. Env MARS_HYPRE_VERBOSE=1.
@@ -845,8 +860,10 @@ public:
             }
         }
 
-        const double residual_limit = residual_absolute_tolerance_
-                                    + residual_relative_tolerance_ * last_rhs_norm_;
+        const double scaled_tolerance = residual_relative_tolerance_ * last_rhs_norm_;
+        const double residual_limit = maximum_residual_check_
+            ? std::max(residual_absolute_tolerance_, scaled_tolerance)
+            : residual_absolute_tolerance_ + scaled_tolerance;
         const bool residual_ok = mixed_residual_check_
             ? std::isfinite(residual_limit) && last_absolute_residual_ <= residual_limit
             : final_res_norm < tolerance_;
@@ -1378,8 +1395,10 @@ private:
     }
     bool fixed_graph_updates_ = false, timing_enabled_ = false, true_residual_check_ = false;
     bool mixed_residual_check_ = false;
+    bool maximum_residual_check_ = false;
     bool spmv_configured_ = false;
     double residual_absolute_tolerance_ = 0, residual_relative_tolerance_ = 0;
+    double stopping_absolute_tolerance_ = -1;
     int graph_build_count_ = 0, numeric_update_count_ = 0;
     SolveTiming last_timing_;
     double prepare_start_ = 0;

@@ -489,6 +489,26 @@ template<int C,class Matrix,class GlobalId> void run_gates(MPI_Comm comm,Report&
         const auto zero=s.residual(halo_complete(raw(zero_x),zero_x.size()),raw(zero_b));
         const auto nonzero=s.residual(halo_complete(raw(x_local),x_local.size()),raw(zero_b));
         report.result(tag+"zero RHS: absolute tolerance accepts x=0 and rejects x!=0",zero.passed && zero.residual2==0 && !nonzero.passed);
+        const auto no_solution=halo_complete(raw(zero_x),zero_x.size());
+        const double bnorm=std::sqrt(s.residual(no_solution,raw(b)).rhs2);
+        const Tolerance additive{.6*bnorm,.6}, maximum{.6*bnorm,.6,true};
+        report.result(tag+"maximum tolerance rejects residual between max and sum",
+            s.residual(no_solution,raw(b),additive).passed && !s.residual(no_solution,raw(b),maximum).passed);
+        report.result(tag+"maximum tolerance absolute, relative and zero RHS branches",
+            s.residual(no_solution,raw(b),{1.1*bnorm,.1,true}).passed
+            && s.residual(no_solution,raw(b),{0,1.1,true}).passed
+            && s.residual(no_solution,raw(zero_b),{0,.1,true}).passed
+            && !s.residual(halo_complete(raw(x_local),x_local.size()),raw(zero_b),{0,.1,true}).passed);
+        const double huge=std::numeric_limits<double>::max();
+        report.result(tag+"nonfinite tolerance limit rejects a finite residual",
+            !s.residual(no_solution,raw(b),{huge,huge,true}).passed
+            && !s.residual(no_solution,raw(b),{huge,huge}).passed);
+        if constexpr (C==1) {
+            const auto sum_audit=s.pressure_audit(no_solution,raw(b),additive);
+            const auto max_audit=s.pressure_audit(no_solution,raw(b),maximum);
+            report.result(tag+"compensated pressure audit follows maximum tolerance",
+                sum_audit.compensated_residual_passed && !max_audit.compensated_residual_passed);
+        }
     }
     {   // An omitted ghost-column coupling must fail both the oracle and the true residual.
         Options o=base; o.omit_coupling=true; Problem p(C,ranks,o); Local l=extract(p,rank);

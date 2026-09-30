@@ -32,6 +32,7 @@
 #include <iostream>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <string>
 #ifdef MARS_REPLAY_CUDA
 #include <thrust/logical.h>
@@ -134,6 +135,10 @@ template<int C> struct HypreSimpleSolve {
         // l1-Jacobi also keeps coarse relaxation on the device.
         solver.setAMGCoarseRelaxType(18);
     }
+    void set_tolerances(double relative,double absolute) {
+        solver.set_stopping_tolerances(relative,absolute);
+        solver.enable_true_residual_check(absolute,relative,true);
+    }
     double* rhs(std::size_t rows) { if (b.size()!=rows) { b.resize(rows); x.resize(rows); } return b.data(); }
     const double* rhs() const { return b.data(); }
     const double* solution() const { return x.data(); }
@@ -173,6 +178,24 @@ struct DistributedSimpleRunner {
 #endif
     bool assembled=false;
     distributed::Tolerance tolerance{1e-13,1e-10};
+    std::optional<distributed::Tolerance> pressure_tolerance;
+
+    // All ranks enter, including those without the override, before either solve.
+    void set_pressure_tolerances(bool enabled,double relative,double absolute) {
+        simple_collective(comm,completed==0 && std::isfinite(relative) && std::isfinite(absolute)
+            && relative>0 && relative<1 && absolute>=0,"invalid or late pressure tolerances");
+        const double local[6]={double(enabled),-double(enabled),relative,-relative,absolute,-absolute};
+        double global[6];
+        if (MPI_Allreduce(local,global,6,MPI_DOUBLE,MPI_MAX,comm)!=MPI_SUCCESS) {
+            MPI_Abort(comm,1); throw std::runtime_error("pressure tolerance reduction failed");
+        }
+        simple_collective(comm,global[0]==-global[1] && global[2]==-global[3] && global[4]==-global[5],
+            "pressure tolerances differ between ranks");
+        if (enabled) {
+            poisson_solve.set_tolerances(relative,absolute);
+            pressure_tolerance=distributed::Tolerance{absolute,relative,true};
+        }
+    }
 
     // Id may be wider than GlobalId (e.g. int64 ids for a 32-bit HYPRE_BigInt build); ids
     // that do not fit are rejected collectively instead of narrowed.
@@ -332,7 +355,8 @@ struct DistributedSimpleRunner {
         system.unpack(solver.solution(),solver.size(),increment.data(),increment.values.size());
         if (with.size()==0) exchange({{increment.data(),C}});
         else { auto it=with.begin(); exchange({{increment.data(),C},*it}); }
-        const auto norms=system.residual(distributed::halo_complete(increment.data(),increment.values.size()),solver.rhs(),tolerance);
+        const auto acceptance=C==1 && pressure_tolerance?*pressure_tolerance:tolerance;
+        const auto norms=system.residual(distributed::halo_complete(increment.data(),increment.values.size()),solver.rhs(),acceptance);
         // Check rejected candidates too, before discarding the only independent evidence.
         // Neither a solver rejection nor a failed MARS residual can become a success.
         if (!verdict[1] || !norms.passed) {
@@ -340,7 +364,7 @@ struct DistributedSimpleRunner {
             if (!rank) std::cerr<<"[simple-linear] stage="<<(C==3?"momentum":"pressure")
                 <<" iteration="<<completed+1<<" solver_accepted="<<verdict[1]
                 <<" mars_absolute_residual="<<norms.absolute()<<" rhs_norm="<<std::sqrt(norms.rhs2)
-                <<" acceptance_limit="<<tolerance.absolute+tolerance.relative*std::sqrt(norms.rhs2)
+                <<" acceptance_limit="<<acceptance.limit(std::sqrt(norms.rhs2))
                 <<" mars_passed="<<norms.passed<<'\n';
             if constexpr (C==1) {
                 const char* option=std::getenv("MARS_SIMPLE_PRESSURE_AUDIT");
@@ -350,7 +374,7 @@ struct DistributedSimpleRunner {
                     MPI_Abort(comm,1); throw std::runtime_error("pressure audit selection failed");
                 }
                 if (any) {
-                    const auto audit=system.pressure_audit(distributed::halo_complete(increment.data(),increment.values.size()),solver.rhs(),tolerance);
+                    const auto audit=system.pressure_audit(distributed::halo_complete(increment.data(),increment.values.size()),solver.rhs(),acceptance);
                     if (!rank) std::cerr<<"[simple-pressure-audit] finite="<<audit.finite
                         <<" zero_row="<<audit.zero_row<<" nonpositive_diagonal="<<audit.nonpositive_diagonal
                         <<" positive_offdiagonal="<<audit.positive_offdiagonal

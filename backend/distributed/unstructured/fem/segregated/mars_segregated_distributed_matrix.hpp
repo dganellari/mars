@@ -64,7 +64,14 @@ inline std::string describe(int faults) {
 // Zero-owned-row ranks: HypreGMRESSolver has no explicit empty-range handling, so the
 // default rejects them collectively until the Daint probe proves the wrapper path.
 enum class EmptyRanks { reject, allow };
-struct Tolerance { double absolute=1e-13, relative=1e-10; };
+struct Tolerance {
+    double absolute=1e-13, relative=1e-10;
+    bool maximum=false;
+    MARS_DMATRIX_HD double limit(double rhs_norm) const {
+        const double scaled=relative*rhs_norm;
+        return maximum?(absolute>scaled?absolute:scaled):absolute+scaled;
+    }
+};
 struct ResidualNorms {
     double residual2=0, rhs2=0;
     bool finite=false, passed=false;
@@ -203,7 +210,7 @@ struct PressureAuditDecision {
     const double* sums; const int* flags; Tolerance tolerance; PressureAudit* result;
     MARS_DMATRIX_HD void operator()(int) const {
         PressureAudit a;
-        const double limit=tolerance.absolute+tolerance.relative*sqrt(sums[1]);
+        const double limit=tolerance.limit(sqrt(sums[1]));
         a.finite=!(*flags&audit_nonfinite) && finite_value(sums[0]) && finite_value(sums[1])
             && finite_value(sums[2]) && finite_value(limit) && limit>=0;
         a.zero_row=(*flags&audit_zero_row)!=0;
@@ -304,7 +311,8 @@ struct ResidualDecision {
     __device__ void operator()(int) const {
         auto& n=report->norms;
         n.residual2=values[0]; n.rhs2=values[1]; n.finite=finite_value(values[0]) && finite_value(values[1]);
-        n.passed=n.finite && sqrt(values[0])<=tolerance.absolute+tolerance.relative*sqrt(values[1]);
+        const double limit=tolerance.limit(sqrt(values[1]));
+        n.passed=n.finite && finite_value(limit) && limit>=0 && sqrt(values[0])<=limit;
         report->failed=values[2]>0;
     }
 };
@@ -474,7 +482,8 @@ public:
         if (global[2]>0) collective(local,"distributed residual"); // failure path only: name the faults
         ResidualNorms norms; norms.residual2=global[0]; norms.rhs2=global[1];
         norms.finite=std::isfinite(global[0]) && std::isfinite(global[1]);
-        norms.passed=norms.finite && norms.absolute()<=tolerance.absolute+tolerance.relative*std::sqrt(global[1]);
+        const double limit=tolerance.limit(std::sqrt(global[1]));
+        norms.passed=norms.finite && std::isfinite(limit) && limit>=0 && norms.absolute()<=limit;
         return norms;
 #endif
     }

@@ -327,6 +327,111 @@ void mixed_residual_acceptance() {
     std::cout<<"PASS: mixed residual acceptance, strict mode and zero RHS (fresh/cached)\n";
 }
 
+void explicit_stopping_tolerances() {
+    Matrix matrix;
+    make_graph(matrix,32);
+    std::vector<HYPRE_BigInt> map(33);
+    for (int i=0;i<32;++i) map[i]=31-i;
+    map.back()=-1;
+    const char* previous=std::getenv("MARS_HYPRE_ABSTOL");
+    const bool had_env=previous!=nullptr;
+    const std::string saved=had_env?previous:"";
+    for (bool cached : {false,true}) for (const char* environment : {"0","1e100"}) {
+        setenv("MARS_HYPRE_ABSTOL",environment,1);
+        for (double absolute : {0.,0.125}) {
+            Solver solver(0,300,1e-6,Solver::JACOBI);
+            solver.setVerbose(false);
+            if (cached) solver.enable_fixed_graph_updates();
+            solver.set_stopping_tolerances(1e-10,absolute);
+            solver.enable_true_residual_check(absolute,1e-10,true);
+            int calls=0;
+            for (int epoch=0;epoch<2;++epoch) {
+                std::vector<double> b,truth;
+                fill_system(matrix,map,epoch,b,truth);
+                const double bnorm=std::sqrt(std::inner_product(b.begin(),b.end(),b.begin(),0.));
+                for (double factor : {0.5,2.}) {
+                    const double initial=absolute>0?factor*absolute:1e-3*bnorm;
+                    auto x=truth;
+                    for (double& value:x) value*=1-initial/bnorm;
+                    check(solver.solve(matrix,b,x,0,32,0,32,map),"explicit stopping target rejected");
+                    ++calls;
+                    double residual2=0;
+                    for (int row=0;row<32;++row) {
+                        double residual=b[row];
+                        for (int slot=matrix.offsets[row];slot<matrix.offsets[row+1];++slot) {
+                            const int local=matrix.columns[slot];
+                            if (local>=0 && local<int(map.size()) && map[local]>=0)
+                                residual-=matrix.values[slot]*x[map[local]];
+                        }
+                        residual2+=residual*residual;
+                    }
+                    check(std::sqrt(residual2)<=std::max(absolute,1e-10*bnorm),
+                          "explicit stopping target failed original CSR residual");
+                    check((solver.getLastIterations()==0)==(absolute>0 && factor<1),
+                          "explicit atol did not override the environment");
+                    HYPRE_Real target=0;
+                    (solver.useFlexGmres_?HYPRE_FlexGMRESGetTol:HYPRE_GMRESGetTol)(solver.solver_,&target);
+                    check(target==1e-10 && HYPRE_GetError()==0,"explicit relative target was not forwarded");
+                    expect_failure([&] { solver.set_stopping_tolerances(1e-8,0.5); });
+                    check(solver.tolerance_==1e-10 && solver.stopping_absolute_tolerance_==absolute,
+                          "late stopping configuration changed the active target");
+                }
+            }
+            check(solver.get_graph_build_count()==(cached?1:calls),"explicit target changed graph reuse");
+        }
+    }
+    Solver invalid;
+    invalid.set_stopping_tolerances(1e-8,0.125);
+    const double infinity=std::numeric_limits<double>::infinity(), nan=std::numeric_limits<double>::quiet_NaN();
+    for (double relative : {-1.,0.,1.,infinity,nan})
+        expect_failure([&] { invalid.set_stopping_tolerances(relative,0.); });
+    for (double absolute : {-1.,infinity,nan})
+        expect_failure([&] { invalid.set_stopping_tolerances(1e-10,absolute); });
+    check(invalid.tolerance_==1e-8 && invalid.stopping_absolute_tolerance_==0.125,
+          "invalid stopping configuration changed the target");
+    if (had_env) setenv("MARS_HYPRE_ABSTOL",saved.c_str(),1);
+    else unsetenv("MARS_HYPRE_ABSTOL");
+    std::cout<<"PASS: explicit stopping targets, environment overrides, cached refresh and invalid/late setters\n";
+}
+
+void maximum_residual_acceptance() {
+    Matrix matrix;
+    matrix.column_count=4; matrix.offsets={0,1,2,3,4}; matrix.columns={0,1,2,3}; matrix.values={1,1,1,1};
+    const std::vector<HYPRE_BigInt> map={0,1,2,3};
+    for (bool cached : {false,true}) {
+        Solver solver(0,300,1e-12,Solver::JACOBI);
+        solver.setVerbose(false);
+        if (cached) solver.enable_fixed_graph_updates();
+        // Preserve exact dyadic candidates so acceptance alone determines the verdict.
+        solver.set_stopping_tolerances(1e-12,1e100);
+        auto candidate=[&](double rhs,double guess,double absolute,double relative,bool maximum,bool expected) {
+            std::vector<double> b(4,rhs),x(4,guess);
+            if (maximum) solver.enable_true_residual_check(absolute,relative,true);
+            else solver.enable_true_residual_check(absolute,relative);
+            check(solver.solve(matrix,b,x,0,4,0,4,map)==expected,"maximum/additive acceptance mismatch");
+            check(solver.getLastIterations()==0 && x==std::vector<double>(4,guess),
+                  "acceptance fixture did not preserve its initial candidate");
+            const double residual=2*std::abs(rhs-guess), bnorm=2*std::abs(rhs);
+            const double limit=maximum?std::max(absolute,relative*bnorm):absolute+relative*bnorm;
+            check((residual<=limit)==expected && solver.last_absolute_residual_==residual,
+                  "maximum/additive verdict disagrees with exact residual");
+        };
+        for (bool maximum : {true,false}) {
+            candidate(1.,31./32,0.125,0.0625,maximum,true);
+            candidate(1.,29./32,0.125,0.0625,maximum,!maximum);
+            candidate(1.,26./32,0.125,0.0625,maximum,false);
+        }
+        candidate(1.,29./32,0.25,0.03125,true,true);  // absolute term controls
+        candidate(1.,29./32,0.03125,0.125,true,true); // relative term controls
+        candidate(1.,0.75,0.25,0.03125,true,false);
+        candidate(1.,0.75,0.03125,0.125,true,false);
+        candidate(0.,0.,0.125,0.0625,true,true);
+        candidate(0.,0.03125,0.125,0.0625,true,true);
+        candidate(0.,0.125,0.125,0.0625,true,false);
+    }
+    std::cout<<"PASS: exact maximum versus additive acceptance, absolute/relative targets and zero RHS\n";
+}
+
 int main() {
     setenv("MARS_HYPRE_MINITER", "0", 1);
     unsetenv("MARS_HYPRE_FLEXGMRES");
@@ -339,6 +444,8 @@ int main() {
             spmv_backend_selection();
             setenv("MARS_HYPRE_MINITER","0",1);
             mixed_residual_acceptance();
+            explicit_stopping_tolerances();
+            maximum_residual_acceptance();
             residual_workspace();
             std::cout<<"PASS: Krylov API and residual checks, MARS_HYPRE_FLEXGMRES="<<flexible<<'\n';
         }

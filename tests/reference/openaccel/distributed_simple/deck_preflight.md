@@ -69,7 +69,7 @@ usable. The rules follow Trilinos 16.2
 and [Ioss normalization](https://github.com/trilinos/Trilinos/blob/trilinos-release-16-2-0/packages/seacas/libraries/ioss/src/Ioss_Utils.C).
 Split side-block aliases and arbitrary user aliases are not inferred.
 
-Output scheduling and reference linear-solver settings are not translated. MARS
+By default, output scheduling and reference linear-solver settings are not translated. MARS
 uses its own Hypre momentum/pressure solvers, true-residual checks and nonlinear
 norms. `--reference-length` selects MARS's residual scale, not a physical model
 parameter. Iteration budgets are specified at launch. Equal outer iteration counts
@@ -83,9 +83,32 @@ OpenAccel allows named linear-solver definitions beside `solver_control` and
 both forms. A named definition must be a mapping with a recognized `family`
 (`petsc`, `hypre`, `trilinos`, `amgsolver` or `gmres`, case-insensitive).
 Each `lookup` must resolve to such a definition; unused definitions are allowed.
-Backend-specific options are not validated or copied into MARS. This follows
+Backend-specific options are not copied into MARS. This follows
 `linearSystem<N>::setupSolver` in public OpenAccel `0d69041` and does not claim
 that MARS runs the reference's linear solver configuration.
+
+The opt-in preparer option `--pressure-linear-policy reference` copies only the
+reference pressure linear residual target. The default policy, `mars`, emits no
+pressure tolerance overrides and preserves existing solver behavior. Reference
+mode resolves `pressure_correction`, then `segregated_flow`, then `default` in
+`linear_solver_settings`; a `lookup` resolves the named definition with exact,
+case-sensitive spelling. The selected definition must use Hypre GMRES or
+FlexGMRES (family and type names are case-insensitive), with both
+`normalize_matrix` and `diagonal_scaling` false or omitted. If `options` is
+omitted, public OpenAccel selects GMRES; otherwise `options.solver.type` is
+required. Missing definitions, unsupported families/types, scaling and malformed
+target controls are rejected without printing their values or lookup names.
+
+Reference mode emits both `--pressure-linear-rtol` and `--pressure-linear-atol`,
+using public OpenAccel defaults `1e-6` and `1e-16` when omitted. Values must be
+finite, with `0 < rtol < 1` and `atol >= 0`. Pressure acceptance uses the exact
+target `max(atol, rtol * ||b||_2)` for both Hypre and the independent original-CSR
+residual check; momentum targets and nonlinear convergence criteria are unchanged.
+This requires a rebuilt MARS executable supporting both flags. The selected
+policy is recorded in `case.json`; generated arguments and numerical values stay
+private. No preconditioner, restart dimension, iteration cap or Krylov backend
+selection is translated. Matching this target does not establish full solver,
+operator or field parity, reference convergence, or a fix for a failed run.
 
 `solver.restart_control` is different: its presence tells OpenAccel to load saved
 fields. It is explicitly rejected, even if empty, because native SIMPLE currently
