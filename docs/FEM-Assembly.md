@@ -149,8 +149,8 @@ MARS provides GPU assemblers per element type:
   `CvfemKernelVariant` enum — pure performance variants of the same math, all running
   on the device.
 
-The Navier–Stokes solvers build on these same control-volume operators (the discrete
-divergence `D`, gradient `Dᵀ`, and lumped mass `M`) — see the
+The Navier–Stokes solver builds on these same control-volume operators (face fluxes,
+their divergence, the nodal gradient, the CVFEM Laplacian and the lumped mass `M`) — see the
 [Poiseuille channel-flow tutorial](poiseuille_tutorial.md) for how they compose into a projection
 method.
 

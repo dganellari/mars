@@ -17,8 +17,8 @@ in detail elsewhere — this page points to them rather than re-deriving them:
 > **Multi-rank status (honest).** Non-periodic distributed assembly and AMR are
 > rank-invariant and validated (the cube16/4-rank DOF count matches single-rank
 > exactly, and assembled norms match to several digits). Periodic Taylor–Green keeps
-> one unknown per periodic point on every rank count, with rank invariance checked on
-> the host and the GPU check pending — see the [periodic TGV tutorial](periodic_tgv_tutorial.md).
+> one unknown per periodic point on every rank count and gives the same kinetic energy
+> on 1, 2 and 4 GPUs — see the [periodic TGV tutorial](periodic_tgv_tutorial.md).
 > Some inlet-driven channel multi-rank paths have **known limitations under active
 > work** — see [AMR Module → Known limitations](AMR-Module.md#known-limitations).
 

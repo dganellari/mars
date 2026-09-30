@@ -7,18 +7,6 @@ public API may change between minor releases.
 
 ## [Unreleased]
 
-### Changed
-- `mars_tgv` runs on `PeriodicNavierStokes` (`fem/mars_periodic_ns.hpp`): velocity and
-  pressure both keep one unknown per periodic point, and every operator is Pᵀ A P on
-  that space (`fem/mars_periodic_space.hpp`), so `D u = 0` holds exactly on any rank
-  count and the multi-rank guard is gone. The BDF2 pressure right-hand side uses
-  `3ρ / (2 dt)`, matching the corrector. Skew-symmetric advection is the default;
-  `--solver=hypre` and `--pressure-solve=K` are no longer options of `mars_tgv`.
-
-### Added
-- `tests/periodic/check_periodic_space.py`: host model of the multi-rank periodic
-  projection (no GPU) and the reference numbers of the TGV GPU check.
-
 ## [0.1.0] — 2026-09-24
 
 First tagged public release. MARS is a GPU-native mesh management and finite-element
@@ -60,14 +48,27 @@ the cornerstone-octree library.
   solver clips its Jacobi diagonal on the GPU instead of copying it to the host every solve.
 - The Poiseuille tutorial mesh ships in `tests/data/poiseuille/`; its validation run is
   opt-in with `-DMARS_ENABLE_VALIDATION_TESTS=ON`.
-- `mars_poiseuille_flow` is a short teaching example on a small solver module,
-  `fem/mars_channel_flow.hpp`: the planar CVFEM projection with constrained pressure
-  gradients, inlet lift and opening fluxes, BDF2. Both linear systems are assembled once
-  and solved with Hypre PCG + BoomerAMG (15-17 pressure iterations per step instead of
-  thousands of Jacobi-CG iterations). The 1500-step check passes on 1, 2 and 4 GPUs
-  with profile RMS error 4.553e-4 m/s; the full run takes about 25 s on one GPU. The
-  10.9k-line channel solver fork and the `--planar-ddt`, `--pressure-amg` and
-  `--velocity-amg` options are gone.
+- One incompressible Navier–Stokes solver for hex meshes, `fem/mars_navier_stokes.hpp`,
+  runs `mars_poiseuille_flow`, `mars_tgv` and the new `mars_lid_driven_cavity`; the
+  examples differ only in their boundary description (fixed velocity, p = 0,
+  inlets/outlets, periodic pairs). CVFEM with equal-order nodes, Rhie–Chow face fluxes,
+  a projection on the compact CVFEM Laplacian (the face fluxes are divergence-free to the
+  solver tolerance on any rank count), skew-symmetric advection, BDF2. `DofSpace`
+  (`fem/mars_dof_space.hpp`) maps node copies to unknowns: ghosts and periodic images of
+  one point share one unknown, and every matrix is Pᵀ A P, assembled per rank by Hypre.
+  Both systems are solved with Hypre PCG + BoomerAMG: 17–19 pressure iterations per step
+  on the validation cases, 22 on a 64³ periodic box.
+- Validation on 1, 2 and 4 GPUs, identical across rank counts: the Poiseuille 1500-step
+  check (profile RMS error 4.551e-4 m/s, about 24 s on one GPU), the Taylor–Green vortex
+  kinetic energy against the Stokes decay, and the lid-driven cavity. `ctest -L release`
+  runs all three on 1 and N ranks.
+- `mars_tgv` on several ranks: the old solver collapsed only the pressure at periodic
+  points, and the multi-rank run lost the projection. Velocity and pressure now share one
+  unknown per periodic point.
+- Removed: the 10.9k-line channel solver fork, `fem/mars_channel_flow.hpp`,
+  `fem/mars_periodic_ns.hpp`, `fem/mars_periodic_space.hpp` and its host model
+  `tests/periodic/`; the `--planar-ddt`, `--pressure-amg`, `--velocity-amg`, `--skew`,
+  `--solver` and `--pressure-solve` options.
 
 ### Experimental
 - High-order matrix-free CVFEM operators (p ≥ 2), with DOF numbering on the device.

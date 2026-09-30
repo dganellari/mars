@@ -9,6 +9,11 @@ whether MARS fits your use case. The major version is `0`: APIs may change.
   (load → adjacency → DOF map → CSR sparsity → assembled matrix).
 - Multi-rank distributed assembly and solve for non-periodic cases
   (e.g. lid-driven cavity, channel Navier–Stokes).
+- **Incompressible Navier–Stokes on hex meshes** (`fem/mars_navier_stokes.hpp`), the
+  solver of `mars_poiseuille_flow`, `mars_tgv` and `mars_lid_driven_cavity`, including
+  periodic boxes. Validated on 1, 2 and 4 GPUs with results identical across rank counts:
+  [Poiseuille](tests/reference/poiseuille/planar_validation.md), the
+  [periodic Taylor–Green vortex](docs/periodic_tgv_tutorial.md) and the lid-driven cavity.
 
 The stable paths are validated on generated structured meshes (release checks: `ctest -L release`),
 including element numberings that are not aligned with the coordinate axes.
@@ -30,20 +35,16 @@ including element numberings that are not aligned with the coordinate axes.
   unresolved residual mismatch in the Hypre/cuSPARSE path.
 - **MARSIR** (`marsir-compiler/`, `marsir-mlir/`). Research code generator, off by
   default (`MARS_ENABLE_MARSIR`), not needed to build or use the library.
-- **Periodic Navier–Stokes (`mars_tgv`)** on one or more ranks. Velocity and pressure keep
-  one unknown per periodic point and every operator is Pᵀ A P
-  (`fem/mars_periodic_space.hpp`, `fem/mars_periodic_ns.hpp`), so the projection is exact
-  on any rank count. Rank invariance and the exact projection are checked on the host
-  (`tests/periodic/check_periodic_space.py`); the GPU check on 1, 2 and 4 ranks
-  ([periodic TGV tutorial](docs/periodic_tgv_tutorial.md), section 8) is pending. The
-  periodic mode of `NSStepper` (`fem/mars_ns_solver.hpp`) is superseded by it and is only
-  consistent on one rank.
 
 ## Not supported yet
-- **Poiseuille channel (`mars_poiseuille_flow`).** The solver handles axis-aligned Hex8
-  cells in one layer through z (planar flow) only. The 1500-step check passes on 1, 2 and
-  4 GPUs; see [the result and recipe](tests/reference/poiseuille/planar_validation.md).
-  On the 30k-node tutorial mesh more GPUs are slower, not faster; use `--cells` for scaling.
+- **Navier–Stokes solver restrictions** (`fem/mars_navier_stokes.hpp`). Hex8 meshes
+  only. Planar mode (`mars_poiseuille_flow`) needs one layer of elements between two z
+  planes. Meshes with hanging nodes are not supported, so `mars_tgv --adapt-every` gives
+  wrong results: the solver does not constrain the hanging nodes that refinement leaves.
+  Both systems are solved with PCG, which assumes a symmetric matrix; the CVFEM Laplacian
+  is symmetric on the rectilinear meshes validated here but not in general on distorted
+  hexes, which are not validated. On the 30k-node Poiseuille tutorial mesh more GPUs are
+  slower, not faster; use `--cells` for scaling.
 - **Triangle and quadrilateral meshes.** `ElementDomain` supports `TetTag` and `HexTag` only;
   `TriTag`/`QuadTag` are rejected at compile time.
 - **Node ownership on periodic and multi-block meshes.** Multi-rank, non-periodic, single-block meshes give each

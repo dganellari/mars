@@ -89,7 +89,8 @@ void printUsage()
                  "  --tol=X --max-iter=N  AMG-PCG tolerance and iteration cap (default 1e-10, 1000)\n"
                  "  --report-every=N      energy report interval (default 10)\n"
                  "  --vtu-output=PREFIX   write PVTU frames; --vtu-every=N (default 20)\n"
-                 "  --adapt-every=N       adapt the mesh every N steps (default 0: off)\n"
+                 "  --adapt-every=N       adapt the mesh every N steps (default 0: off). Not supported\n"
+                 "                        yet: the solver does not constrain hanging nodes\n"
                  "  --max-levels=N --refine-frac=X --coarsen-frac=X   AMR settings\n";
 }
 
@@ -180,8 +181,8 @@ void setInitialCondition(Solver& solver, const Domain& domain, const Options& o)
 // initial field is an eigenfunction of the Laplacian with eigenvalue -3 k^2,
 // so KE(t) ~ KE(0) exp(-6 nu k^2 t). KE / KE_Stokes stays close to 1 on a
 // resolved mesh (the nonlinear transfer is weak there); at Re = 1600 it does
-// not, and the ratio then only shows the transition. div is max |D u| / M
-// after the projection: roundoff level on every rank count.
+// not, and the ratio then only shows the transition. div is max |D_F F| / M,
+// the continuity of the face fluxes: roundoff level on every rank count.
 // =============================================================================
 
 struct EnergyReport

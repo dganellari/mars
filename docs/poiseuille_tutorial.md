@@ -157,15 +157,27 @@ From this one idea come the discrete operators the solver uses:
 
 | Operator | Discrete meaning |
 |---|---|
-| divergence `D` | net flux `Σ u·A` out of a node's control volume (the mass check) |
+| face flux `F` | the volume flow `u·A` through one sub-control face, stored per face |
+| divergence `D_F` | net flux `Σ F` out of a node's control volume (the mass check) |
 | gradient `G` | how p varies across the control-volume faces (the pressure push) |
-| Laplacian `K` | viscous exchange between neighboring control volumes (the drag) |
+| Laplacian `K` | exchange between neighboring control volumes through the faces (viscous drag, and the pressure equation) |
 
 Two consequences matter for this example. First, the SCS faces are
 *interior* faces — boundary opening faces need the explicit source of
 Part 3, or inflow is invisible. Second, equal-order velocity/pressure is
-not naturally stable (the LBB issue): it works here on a clean mesh, but
-harder cases (the pump) need pressure stabilization.
+not naturally stable. The flux through a face computed from the plain
+average of its two nodes, `A·(u_L + u_R)/2`, cannot see a pressure that
+alternates from node to node (a checkerboard). The solver therefore adds a
+Rhie–Chow term to every face flux:
+
+```
+F = A·(u_L + u_R)/2 − h [ (∇p·A)_f − A·(G p_L + G p_R)/2 ],   h = dt_eff/ρ
+```
+
+The bracket is the difference between the pressure gradient on the face
+(from the shape functions of the hex) and the average of the two nodal
+gradients. It is tiny for a smooth pressure and large for a checkerboard,
+so it couples every pressure node to its neighbours.
 
 ### 2.4 Marching in time: the projection method
 
@@ -176,11 +188,15 @@ projection, BDF2 time accuracy):
    (explicit — cheap, but ignores incompressibility).
 2. **Diffuse**: apply viscosity implicitly — one linear solve per velocity
    component (implicit so large time steps stay stable).
-3. **Project**: the predicted field violates `∇·u = 0`; solve a Poisson
-   equation for a pressure correction `phi` whose gradient removes exactly
-   that violation.
-4. **Correct**: subtract the gradient, update `p += phi`, re-impose boundary
-   values.
+3. **Project**: the face fluxes `F**` of the predicted field violate
+   continuity; solve the Poisson equation `K φ = −(ρ/dt_eff)(D_F F** + openings)`
+   for a pressure correction `φ`.
+4. **Correct**: `F = F** − h (∇φ·A)` on every face, `u = u** − h G φ` at the
+   free nodes, `p += φ`.
+
+Step 4 applies to the fluxes the same face gradients from which `K` is
+built, so `D_F F + openings = 0` holds to the solver tolerance on any number
+of GPUs. The nodal velocity follows the fluxes up to the stabilization term.
 
 The projection (step 3) is the heart and the cost: it is a global problem —
 a flux imbalance at the inlet must be felt instantly at the outlet — which
@@ -201,7 +217,7 @@ node. At 30k nodes (or 10⁹ on Alps) you never factor A — you iterate:
 - **Algebraic multigrid (BoomerAMG from Hypre)** solves the error on a
   hierarchy of coarser problems it builds from the matrix itself. Its
   iteration count stays flat as the mesh and the GPU count grow. Here it takes
-  about 15 iterations per step for the pressure and 15 per velocity component.
+  about 18 iterations per step for the pressure and 10–13 per velocity component.
 
 Both matrices are constant in time, so the solver assembles them once and
 builds the multigrid hierarchies once:
@@ -209,12 +225,13 @@ builds the multigrid hierarchies once:
 | System | Matrix |
 |---|---|
 | velocity (each of u, v) | `M/dt_eff + nu K`, fixed velocity rows and columns removed |
-| pressure | `A = D Q M⁻¹ Dᵀ`, assembled by Hypre as the product of two sparse matrices |
+| pressure | `K`, the rows of outlet nodes (p = 0) removed |
 
-The pressure matrix is exactly the chain of operators the time step applies —
-divergence of the velocity correction — so after the correction `D u = 0`
-holds to the solver tolerance. At setup the solver compares the assembled `A`
-with the matrix-free chain and stops if they differ.
+Each GPU assembles the matrix of its own elements, and Hypre adds the
+contributions of the nodes that several GPUs share (the same assembly the
+Taylor–Green tutorial explains for periodic points). At setup the solver
+compares the assembled `K` with the matrix-free flux correction and stops if
+they differ.
 
 Deeper material on the CVFEM operators lives in
 [CVFEM-Kernels.md](CVFEM-Kernels.md) and [FEM-Assembly.md](FEM-Assembly.md).
@@ -274,8 +291,8 @@ every face node gets the area of its sub-quad (node, edge midpoints, face
 centre), a quarter of the face for these rectangles. Each rank adds the faces
 of its own elements and the reverse halo completes the shared nodes, so the
 areas sum exactly to `H*dz` on any number of ranks. In code:
-`planeFaceAreas` and `channelOpeningFlux` in
-`backend/distributed/unstructured/fem/mars_channel_flow.hpp`.
+`nsOpeningAreaKernel` and `nsOpeningFlux` in
+`backend/distributed/unstructured/fem/mars_navier_stokes.hpp`.
 
 ---
 
@@ -287,7 +304,7 @@ The example needs a CUDA build with `MARS_ENABLE_HYPRE=ON`:
 cmake --build . --target mars_poiseuille_flow --parallel 32
 ```
 
-Run the validation case on one GPU (1500 steps; the time loop takes about 25 s on a GH200):
+Run the validation case on one GPU (1500 steps; the time loop takes about 24 s on a GH200):
 
 ```bash
 srun --account=<acct> --time=00:30:00 --nodes=1 --ntasks-per-node=1 --export=ALL \
@@ -321,19 +338,19 @@ scaling runs, generate the channel on every rank instead of reading a mesh:
 Setup prints the operator check:
 
 ```
-Pressure operator: assembled vs matrix-free, max |difference| / max |Ax| = 1.358783e-15
+Pressure operator: assembled vs matrix-free, max |difference| / max |Kx| = 1.145854e-15
 ```
 
 Then one line per `--report-every` steps:
 
 ```
-Step   1500  t=15.0000  |u|_M=8.4089811651e-01  continuity=3.373e-10  amg(u,v,p)=15/14/15
+Step   1500  t=15.0000  |u|_M=8.4091374298e-01  continuity=6.224e-12  amg(u,v,p)=10/13/18
 ```
 
 - `|u|_M` — mass-weighted L2 norm of the streamwise velocity. For this mesh
   (volume 0.6) the developed parabola gives about 0.84; watching it rise from
   the seeded uniform flow and level off *is* watching the parabola form.
-- `continuity` — max of `|D u + openings| / M` over the nodes the projection
+- `continuity` — max of `|D_F F + openings| / M` over the nodes the projection
   constrains: the discrete mass balance of every control volume, at the solver
   tolerance.
 - `amg(u,v,p)` — AMG-PCG iterations of the last step. A solve that misses its
@@ -342,9 +359,9 @@ Step   1500  t=15.0000  |u|_M=8.4089811651e-01  continuity=3.373e-10  amg(u,v,p)
 At the end:
 
 ```
-[timing] ranks=1 nodes=30000 ... ms/step: total=16.330 predictor=0.044 viscous=8.731 pressure=7.528 ...
+[timing] ranks=1 nodes=30000 ... ms/step: total=15.903 predictor=0.054 viscous=7.212 pressure=8.594 ...
 Poiseuille validation
-  profile RMS at x=9.0000 +/- 0.2000: 4.553029e-04 (U_max=1.500000e+00, 1200 nodes)
+  profile RMS at x=9.0000 +/- 0.2000: 4.551373e-04 (U_max=1.500000e+00, 1200 nodes)
   flux Q(x)/Q(inlet) at 25/50/75%: 1.0000 / 1.0000 / 1.0000
   -dp/dx from p: 1.2178e-01   from the u profile: 1.1992e-01   exact: 1.2000e-01
 ```
@@ -371,18 +388,19 @@ With `--vtu-output=PREFIX` the run writes `PREFIX.pvd` with the point fields
 **Regression test.** With `--check` the example grades itself at the end:
 
 ```
-VALIDATION PASS: RMS=4.553e-04 < 6.000e-03, flux PASS, steady=3.006e-10 PASS, continuity*H/U=5.971e-13 balance=4.626e-16 PASS, projection PASS
+VALIDATION PASS: RMS=4.551e-04 < 6.000e-03, flux PASS, steady=2.627e-08 PASS, continuity*H/U=8.050e-15 balance=8.797e-08 PASS, projection PASS
 ```
 
 It requires the profile RMS and the flux ratios above, plus:
 
-- **continuity**: the RMS of `D u + openings` per unit volume, times H/U, at
-  most 1e-6, and the inlet and outlet fluxes balancing to 1e-6;
+- **continuity**: the RMS of `D_F F + openings` per unit volume, times H/U, at
+  most 1e-6, and the inlet and outlet fluxes balancing to 1e-6 (the outlet flux
+  uses the nodal velocity, so the balance shows the stabilization term, about 1e-7);
 - **steadiness**: the velocity change over the last 20 steps, divided by U,
   at most 1e-6;
-- **projection**: at steps 1, 2, 3 and the last, the corrected velocity
-  satisfies `D u = D u** + (dt_eff/ρ) A φ` with the assembled `A` to 1e-7
-  (printed as `[channel-projection]` lines).
+- **projection**: at steps 1, 2, 3 and the last, the corrected fluxes
+  satisfy `D_F F = D_F F** + (dt_eff/ρ) K φ` to 1e-7 (printed as
+  `[channel-projection]` lines).
 
 The case is registered with ctest as `marsPoiseuilleValidation` (labels
 `validation;gpu;long`) when you configure with
@@ -424,9 +442,9 @@ Use `--vtu-every=10` for a smooth movie.
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
-| `ChannelFlow: the mesh must be one layer of axis-aligned hexes` | the solver handles planar flow on axis-aligned Hex8 only | use a one-element-thick rectilinear mesh |
+| `NavierStokes: planar flow needs one layer of elements between two z planes` | the example solves planar flow (u, v, p) on a one-element-thick mesh | use a mesh with every node on one of two z planes |
 | `the assembled pressure operator is wrong` at setup | assembly and matrix-free operator disagree | a real bug: report it with the rank count and mesh |
-| `a linear solve did not converge` | `--max-iter` too low, or a broken input (NaN) | check the last `amg(u,v,p)` line; raise `--max-iter` |
+| `the ... solve did not converge` | `--max-iter` too low, or a broken input (NaN) | check the last `amg(u,v,p)` line; raise `--max-iter` |
 | identical numbers after a code change | stale binary | rebuild `mars_poiseuille_flow` |
 | more GPUs are slower on the tutorial mesh | 30k nodes are too few to share | scale with `--cells=NX,NY` |
 
@@ -436,9 +454,12 @@ Use `--vtu-every=10` for a smooth movie.
 
 - `examples/distributed/unstructured/mars_poiseuille_flow.cu` — the example:
   mesh and domain, solver, time loop, output, in that order.
-- `backend/distributed/unstructured/fem/mars_channel_flow.hpp` — the solver:
-  boundary marking, DOF numbering for Hypre, assembly, the four stages of a
-  step, and the projection check.
+- `backend/distributed/unstructured/fem/mars_navier_stokes.hpp` — the solver,
+  shared with the Taylor–Green vortex and the lid-driven cavity: boundary
+  conditions, DOF numbering for Hypre, assembly, the four stages of a step, and
+  the projection check.
+- [periodic_tgv_tutorial.md](periodic_tgv_tutorial.md) — the same solver on a
+  periodic box, and how the unknowns are shared between GPUs.
 - `examples/distributed/unstructured/mars_poiseuille_validation.hpp` — the
   validation against the exact solution and the `--check` gate.
 - [CVFEM-Kernels.md](CVFEM-Kernels.md) and [FEM-Assembly.md](FEM-Assembly.md) —

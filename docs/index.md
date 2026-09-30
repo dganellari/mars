@@ -58,11 +58,11 @@ unstructured meshes:
 
 - **[Poiseuille — a From-Scratch CFD Tutorial](poiseuille_tutorial.md)** — start here if
   you are new to CFD. What an internal pump-flow simulation computes, from the mesh
-  through the numerical method (CVFEM, the matrix-free `D M⁻¹ Dᵀ` projection, BDF2,
-  advection schemes), boundary conditions, running, reading the output, and making
+  through the numerical method (CVFEM, Rhie–Chow face fluxes, the projection, BDF2,
+  algebraic multigrid), boundary conditions, running, reading the output, and making
   flow visualizations.
 - [Taylor–Green Vortex (periodic)](periodic_tgv_tutorial.md) - the canonical periodic
-  validation case for the same solver family.
+  validation case for the same solver, and how unknowns are shared between GPUs.
 
 ## Quick Start
 
