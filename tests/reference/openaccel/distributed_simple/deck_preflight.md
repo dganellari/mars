@@ -6,6 +6,10 @@ reads the deck, never the mesh. MARS's C++ Exodus reader, GPU topology checks an
 GPU solver remain the execution path. Run the tool locally where the case lives;
 keep private decks, generated arguments, logs and fields out of Git and review uploads.
 
+After a run completes, use the [saved snapshot comparison](snapshot_comparison.md)
+to compare its fields with OpenAccel at the same steady iteration. That check
+accepts iteration-limit results; it does not require or claim nonlinear convergence.
+
 The tool checks one fluid domain/material, constant positive density and dynamic
 viscosity, zero initial velocity/pressure, fixed-frame physics, one normal-speed
 inlet, one constant-static-pressure or average-static-pressure outlet and
