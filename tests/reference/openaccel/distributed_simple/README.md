@@ -41,15 +41,16 @@ integer messages too. Finally, reverse-added own-element incidence must equal
 held incidence at owned nodes. This last check assumes unique element ownership
 and a valid local mesh; counts alone are not a general identity proof.
 
-The steady iteration publishes four fused messages per peer (14 doubles per ghost):
+The steady iteration publishes five messages per peer (15 doubles per ghost):
 
 1. reconstructed pressure gradient (3);
 2. momentum increment and influence coefficient (3 + 3);
-3. pressure increment (1);
-4. corrected velocity and pressure (3 + 1).
+3. area-averaged nodal outlet pressure (1);
+4. pressure increment (1);
+5. corrected velocity and pressure (3 + 1).
 
 High-resolution mode bundles velocity gradients (9) and limiter coefficients (3)
-into the first round, for 26 doubles per ghost and the same four rounds. Only
+into the first round, for 27 doubles per ghost and the same five rounds. Only
 owners compute complete limiter bounds; partial ghost bounds are never read. Dual
 volumes and boundary factors are complete at owned nodes; ghost partial values
 are not used. No reverse-add assembly occurs during the iteration.
@@ -57,7 +58,9 @@ are not used. No reverse-add assembly occurs during the iteration.
 At startup, owners normalize complete inlet area sums and publish three velocity
 components per ghost in one extra exchange. These prescribed values remain on
 device and are reused through all iterations. Lifetime exchange counts therefore
-increase by one; the four rounds per iteration are unchanged.
+increase by one. The nodal outlet-pressure exchange overlaps interior pressure
+assembly when `--halo-overlap 1` is selected. See
+[outlet pressure averaging](outlet_pressure.md) for the closed-face regression.
 
 Flux history and reversal state are recomputed on each holder from published
 inputs. The gate compares every copy by identity. Global continuity cancellation

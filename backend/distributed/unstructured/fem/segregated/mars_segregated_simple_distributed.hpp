@@ -159,7 +159,7 @@ struct DistributedSimpleRunner {
     bool poison_unexchanged=false; // validation: NaN in ghost entries that must never be read
     SimpleControls controls;
     Array<double> x,y,z,velocity,pressure,vg,pg,d,volume,div,eflux,bflux,trace,factor,sum,gp,moment,old_velocity,old_pressure,old_eflux,old_bflux;
-    Array<double> blend,blend_lower,blend_upper,blend_candidate,inlet_velocity;
+    Array<double> blend,blend_lower,blend_upper,blend_candidate,inlet_velocity,outlet_area,outlet_pressure;
     Array<int> n0,n1,n2,n3,error,flags,old_flags,owned,elements,boundary,momentum_elements,momentum_faces;
     Array<unsigned char> owned_mask;
     Array<GlobalId> solver_node;
@@ -205,13 +205,13 @@ struct DistributedSimpleRunner {
         owned_nodes(int(o.owned_nodes.size())),owned_elements(int(o.owned_elements.size())),owned_faces(int(o.owned_faces.size())),controls(ctl),
         x(f.x),y(f.y),z(f.z),velocity(3*n),pressure(n),vg(9*n),pg(3*n),d(3*n),volume(n),div(n),
         eflux(6*e),bflux(3*b),trace(3*b),factor(n),sum(9*n),gp(3*n),moment(2),old_velocity(3*n),old_pressure(n),old_eflux(6*e),old_bflux(3*b),
-        blend(ctl.high_resolution?3*n:0),blend_lower(ctl.high_resolution?3*n:0),blend_upper(ctl.high_resolution?3*n:0),blend_candidate(ctl.high_resolution?3*n:0),inlet_velocity(3*n),
+        blend(ctl.high_resolution?3*n:0),blend_lower(ctl.high_resolution?3*n:0),blend_upper(ctl.high_resolution?3*n:0),blend_candidate(ctl.high_resolution?3*n:0),inlet_velocity(3*n),outlet_area(n),outlet_pressure(n),
         n0(f.nodes[0]),n1(f.nodes[1]),n2(f.nodes[2]),n3(f.nodes[3]),error(1),flags(3*b),old_flags(3*b),
         owned(o.owned_nodes),elements(o.owned_elements),boundary(o.owned_faces),momentum_elements(e),momentum_faces(b),owned_mask(std::size_t(n)),solver_node(narrow(c,o.solver_node)),
         faces(f.faces),geometry(e),
         mesh{n,e,b,{n0.data(),n1.data(),n2.data(),n3.data()},x.data(),y.data(),z.data(),faces.data(),geometry.data()},
         state{velocity.data(),pressure.data(),vg.data(),pg.data(),d.data(),volume.data(),div.data(),
-              eflux.data(),bflux.data(),trace.data(),factor.data(),error.data(),flags.data(),blend.data(),inlet_velocity.data()},
+              eflux.data(),bflux.data(),trace.data(),factor.data(),error.data(),flags.data(),blend.data(),inlet_velocity.data(),outlet_pressure.data()},
         graph(mesh),
         momentum_blocks(std::size_t(graph.blocks())*9),momentum_rhs(3*n),poisson_blocks(std::size_t(graph.blocks())),poisson_rhs(n),du(3*n),phi(n),
         momentum(c,graph.template view<3>(momentum_blocks.data(),momentum_rhs.data()),owned.data(),owned_nodes,solver_node.data(),solver_node.values.size(),empty),
@@ -227,6 +227,7 @@ struct DistributedSimpleRunner {
         local_momentum_faces=partition_momentum(momentum_faces,true);
         launch(e,SimpleGeometry{mesh,state}); check("native geometry failed");
         launch(b,SimpleBoundaryFactor{mesh,factor.data()});
+        launch(b,SimpleOutletTraceSum{mesh,nullptr,outlet_area.data()});
         // Complete owned inlet stars are normalized once, then copied to ghost nodes.
         launch(b,SimpleInletArea{mesh,sum.data(),sum.data()+3*n});
         launch(owned_nodes,OnList<SimpleInletVelocity>{{sum.data(),sum.data()+3*n,inlet_velocity.data(),controls.inlet_speed,error.data()},owned.data()});
@@ -417,12 +418,19 @@ struct DistributedSimpleRunner {
             moment.values=global;
 #endif
             launch(b,SimpleTrace{mesh,state,controls,moment.data()}); observe("trace",trace);
+            outlet_pressure.zero(); launch(b,SimpleOutletTraceSum{mesh,trace.data(),outlet_pressure.data()});
+            launch(owned_nodes,OnList<SimpleOutletTraceFinish>{{outlet_pressure.data(),outlet_area.data(),outlet_pressure.data(),error.data()},owned.data()});
+            poison(outlet_pressure,1);
+            exchange.begin({{outlet_pressure.data(),1}});
         }
         auto ap=graph.template view<1>(poisson_blocks.data(),poisson_rhs.data());
         {
             auto timing=profile.scope(SimpleProfile::pressure_assembly);
             poisson_blocks.zero(); poisson_rhs.zero();
-            launch(e,SimpleInterior<1>{mesh,state,controls,ap}); launch(b,SimpleBoundary<1>{mesh,state,controls,ap});
+            if (!overlap_assembly) exchange.end();
+            launch(e,SimpleInterior<1>{mesh,state,controls,ap});
+            if (overlap_assembly) exchange.end();
+            launch(b,SimpleBoundary<1>{mesh,state,controls,ap});
         }
         solve<1>(poisson,poisson_solve,ap,phi,error.host()[0]!=0,{});
         observe("raw_pressure_increment",phi);

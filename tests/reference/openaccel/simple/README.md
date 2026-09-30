@@ -31,6 +31,8 @@ matrix; it does not advance physical time or BDF history.
    through its existing diagonal relaxation; multiply boundary-node RHS by
    0.75 once per node. Compute `d=V/(relaxed diagonal+SMALL)` and add delta_u.
 2. Refresh the outlet trace using the area-weighted mean of old pressure.
+   Average adjacent face traces onto boundary nodes, including retained traces on
+   closed faces, as described in [outlet pressure averaging](../distributed_simple/outlet_pressure.md).
    Assemble `A_p*phi=-net_mass_flux` using the computed d and predicted velocity.
    The outlet partial supplies the pressure-level anchor; no pin or mean removal.
 3. Update `p += 0.3*phi` and reconstruct the gradient of **raw phi**.

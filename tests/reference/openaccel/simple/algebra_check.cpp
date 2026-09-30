@@ -182,10 +182,54 @@ void inlet_normals() {
     error=0; normal[0]=std::numeric_limits<double>::quiet_NaN();
     SimpleInletVelocity{normal,area,inlet,2.,&error}(0); check(error==1);
 }
+void outlet_trace_nodes() {
+    const double xyz[]={0,0,0, 2,0,0, 0,3,0, 0,0,4};
+    TetGeometry<double> g; check(tet_geometry(xyz,g));
+    int n0[]={0},n1[]={1},n2[]={2},n3[]={3},error=0,flags[]={1,1,1,0,0,0};
+    double x[]={0,2,0,0},y[]={0,0,3,0},z[]={0,0,0,4};
+    SimpleFace faces[]={{0,0,1},{0,3,1}};
+    SimpleMesh mesh{4,1,2,{n0,n1,n2,n3},x,y,z,faces,&g};
+    double area[5]{},sum[5]{},nodal[5]{},trace[]={2,2,2,0,0,0},pressure[]={0,0,0,20};
+    SimpleState state{}; state.pressure=pressure; state.trace=trace; state.reversal=flags;
+    state.outlet_pressure=nodal; state.error=&error;
+    SimpleControls c; c.beta=1; c.pressure_reference=10; c.alpha_mass=1;
+    double moment[]={0,1};
+    for(int f=0;f<2;++f) {
+        SimpleTrace{mesh,state,c,moment}(f);
+        SimpleOutletTraceSum{mesh,nullptr,area}(f);
+        SimpleOutletTraceSum{mesh,trace,sum}(f);
+    }
+    for(int n=0;n<5;++n) SimpleOutletTraceFinish{sum,area,nodal,&error}(n);
+    // The two shared nodes include the frozen face: weights 4/3 and 1, not an equal mean.
+    const double expected[]={38./7,38./7,10,2,0};
+    for(int n=0;n<5;++n) near(nodal[n],expected[n]);
+    for(int j=0;j<3;++j) { near(trace[j],2); near(trace[j+3],10); }
+    check(error==0);
+
+    int offsets[]={0,4,8,12,16},columns[]={0,1,2,3,0,1,2,3,0,1,2,3,0,1,2,3};
+    double u[12]{},pg[12]{},d[12],flux[6]{},div[4]{},a[16]{},rhs[4]{};
+    std::fill(d,d+12,1.); state.velocity=u; state.pressure_gradient=pg; state.influence=d;
+    state.boundary_flux=flux; state.mass_divergence=div;
+    // On z=0, grad(p).A = -(20 - 38/7)/4, so each open sample carries 51/14.
+    for(bool shifted:{false,true}) {
+        c.velocity_shifted=shifted; std::fill(a,a+16,0.); std::fill(rhs,rhs+4,0.);
+        SimpleBoundary<1>{mesh,state,c,{4,offsets,columns,a,rhs}}(1);
+        for(int n=0;n<3;++n) near(rhs[n],-51./14);
+        near(rhs[3],0);
+        SimpleBoundary<1>{mesh,state,c,{},true,true}(1);
+        for(int j=0;j<3;++j) near(flux[3+j],51./14);
+    }
+    c.pressure_reference=17; std::fill(sum,sum+5,0.);
+    for(int f=0;f<2;++f) { SimpleTrace{mesh,state,c,moment}(f); SimpleOutletTraceSum{mesh,trace,sum}(f); }
+    for(int n=0;n<5;++n) SimpleOutletTraceFinish{sum,area,sum,&error}(n);
+    near(sum[0],59./7); near(sum[1],59./7); near(sum[2],17); near(sum[3],2);
+    for(int j=0;j<3;++j) near(trace[j],2);
+    check(error==0);
+}
 }
 int main() {
     try {
-        csr<1>(); csr<3>(); native_mapping(); shifted_velocity(); inlet_normals();
+        csr<1>(); csr<3>(); native_mapping(); shifted_velocity(); inlet_normals(); outlet_trace_nodes();
         double xyz[]={0,0,0,1,0,0,0,1,0,0,0,1}; TetGeometry<double> g; check(tet_geometry(xyz,g));
         int nodes[]={0,1,2,3}; double u[]={1,2,3,4,5,6,7,8,9,10,11,12},p[]={2,3,4,5},trace[]={7,8,9},flux[]={.1,.2,.3};
         SimpleControls c; SimpleFace face{0,1,0};

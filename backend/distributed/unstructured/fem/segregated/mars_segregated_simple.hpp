@@ -127,6 +127,7 @@ struct SimpleState {
     int* reversal=nullptr;
     double* velocity_blend=nullptr;
     const double* inlet_velocity=nullptr;
+    const double* outlet_pressure=nullptr;
 };
 struct SimpleGeometry {
     SimpleMesh mesh; SimpleState state;
@@ -231,6 +232,11 @@ template<int Components> struct SimpleBoundary {
         const auto& g=mesh.geometry[face.element];
         auto input=simple_boundary(Components==3,face,nodes,g,state.velocity,state.pressure,state.trace+3*i,state.boundary_flux+3*i,controls,wall_initialized,state.inlet_velocity,state.reversal?state.reversal+3*i:nullptr);
         auto& x=input.values;
+        if (Components==1 && face.kind==1 && state.outlet_pressure)
+            for (int f=0;f<3;++f) {
+                const int local=tet_face_node(face.ordinal,f);
+                x.pressure[local]=state.outlet_pressure[nodes[local]];
+            }
         if (!native_boundary(x,input,g,nodes,state.pressure_gradient,state.influence,controls.velocity_shifted)) { simple_error(state.error); return; }
         BoundaryOutput y; boundary_block(x,y);
         if (!update_flux) {
@@ -286,6 +292,27 @@ struct SimpleTrace {
         auto f=mesh.faces[i]; if (f.kind!=1 || (state.reversal && state.reversal[3*i])) return;
         if (!(moment[1]>0)) { simple_error(state.error); return; }
         for (int j=0;j<3;++j) state.trace[3*i+j]=outlet_trace_update(state.pressure[mesh.nodes[tet_face_node(f.ordinal,j)][f.element]],controls.pressure_reference,moment[0]/moment[1],controls.beta,state.trace[3*i+j],false);
+    }
+};
+// Closed faces retain their trace and still contribute to the nodal boundary pressure.
+struct SimpleOutletTraceSum {
+    SimpleMesh mesh; const double* trace; double* sum;
+    MARS_SIMPLE_HD void operator()(int i) const {
+        const auto f=mesh.faces[i]; if (f.kind!=1) return;
+        double a[3]; tet_boundary_area(mesh.geometry[f.element],f.ordinal,a);
+        const double area=sqrt(a[0]*a[0]+a[1]*a[1]+a[2]*a[2]);
+        for (int j=0;j<3;++j) {
+            const int node=mesh.nodes[tet_face_node(f.ordinal,j)][f.element];
+            assembly_add(sum+node,area*(trace?trace[3*i+j]:1.));
+        }
+    }
+};
+struct SimpleOutletTraceFinish {
+    const double *sum,*area; double* pressure; int* error;
+    MARS_SIMPLE_HD void operator()(int n) const {
+        pressure[n]=area[n]>0?sum[n]/area[n]:0;
+        if (!geometry_finite(pressure[n]) || !geometry_finite(area[n]) || area[n]<0)
+            simple_error(error);
     }
 };
 struct SimpleAddIncrement {
