@@ -3,24 +3,31 @@
 // Incompressible Navier-Stokes on hex meshes: CVFEM, one GPU per MPI rank. The
 // solver behind the Poiseuille, Taylor-Green and lid-driven cavity examples.
 //
-// Unknowns live at the nodes (equal order). Operators come from the 12
-// sub-control faces f of each hex (area vector A_f from node L to node R) and
-// the sub-control volumes (lumped mass M):
-//   D     divergence    (D u)_L += A_f . (u_L + u_R) / 2 and (D u)_R -= the same,
-//                       plus the flux through inlet and outlet faces
-//   D^T   its transpose; M^-1 D^T p approximates -grad p
+// Velocity and pressure live at the nodes (equal order, collocated). Each hex
+// contributes 12 sub-control faces f (area vector A_f from node L to node R)
+// and 8 sub-control volumes (lumped mass M). The flow through a face is a
+// stored flux F_f, and continuity is the balance of these fluxes:
+//   D_F   face flux divergence   (D_F F)_L += F_f, (D_F F)_R -= F_f, plus inlets and outlets
+//   G     nodal gradient         G p = -M^-1 D^T p, (D^T p)_L = (D^T p)_R += (p_L - p_R) / 2 A_f
+//   K     CVFEM Laplacian        -(K p)_L = sum_f (grad p . A)_f, compact face gradients
+//   N     skew-symmetric advection by the face fluxes F
 //   Q     zeroes the velocity at nodes where it is prescribed
-//   K     CVFEM viscous stiffness
-//   N     skew-symmetric advection
+//
+// On equal-order nodes the plain average A . (u_L + u_R) / 2 leaves the
+// pressure checkerboard invisible. The stabilized (Rhie-Chow) face flux
+//   F = A . (u_L + u_R) / 2 - h [ (grad p . A)_f - A . (G p_L + G p_R) / 2 ],  h = dtEff / rho,
+// adds the difference between the compact and the averaged nodal pressure
+// gradient: O(h^2) for smooth p, large for a checkerboard.
 //
 // One time step, BDF2 with extrapolated advection (BDF1 on the first step),
 // dtEff = 2 dt / 3 (dt with BDF1):
-//   predictor   u*  = BDF history + dtEff M^-1 (N_ext + Q D^T p / rho)
+//   predictor   u*  = BDF history + dtEff M^-1 (N_ext(F^n) - rho^-1 M Q G p^n)
 //   viscous     (M / dtEff + nu K) u** = M u* / dtEff,    u** = prescribed where fixed
-//   projection  A phi = -(rho / dtEff) D u**,              A = D Q M^-1 D^T
-//   corrector   u = u** + (dtEff / rho) Q M^-1 D^T phi,    p += phi
-// The corrector applies the operator A inverts, so D u = 0 holds to the solver
-// tolerance on any number of ranks.
+//   projection  K phi = -(rho / dtEff) (D_F F** + openings),   F** the stabilized flux of u**, p^n
+//   corrector   F = F** - h (grad phi . A),  u = u** - h Q G phi,  p += phi
+// K is the operator of the flux correction, so D_F F = 0 to the solver
+// tolerance on any number of ranks. The nodal velocity follows the flux up to
+// the stabilization.
 //
 // Parallel layout. Each rank assembles its own elements into its node slots:
 // owned nodes, ghost copies of other ranks' nodes and, on a periodic mesh,
@@ -32,10 +39,9 @@
 // of GPUs grow.
 
 #include "backend/distributed/unstructured/domain.hpp"
-#include "backend/distributed/unstructured/fem/mars_cvfem_assembler.hpp"
+#include "backend/distributed/unstructured/fem/mars_cvfem_hex_kernel.hpp"
 #include "backend/distributed/unstructured/fem/mars_cvfem_utils.hpp"
 #include "backend/distributed/unstructured/fem/mars_dof_space.hpp"
-#include "backend/distributed/unstructured/fem/mars_sparsity_builder.hpp"
 #include "backend/distributed/unstructured/solvers/mars_hypre_amg_pcg_solver.hpp"
 
 #include <thrust/copy.h>
@@ -43,14 +49,10 @@
 #include <thrust/device_vector.h>
 #include <thrust/execution_policy.h>
 #include <thrust/functional.h>
-#include <thrust/for_each.h>
 #include <thrust/iterator/counting_iterator.h>
 #include <thrust/iterator/transform_iterator.h>
-#include <thrust/iterator/zip_iterator.h>
 #include <thrust/reduce.h>
-#include <thrust/remove.h>
 #include <thrust/scan.h>
-#include <thrust/sequence.h>
 #include <thrust/transform.h>
 #include <thrust/transform_reduce.h>
 #include <thrust/tuple.h>
@@ -146,6 +148,7 @@ struct Components
 {
     T c[3];
 };
+
 
 // ---------------------------------------------------------------------------
 // Geometry
@@ -349,127 +352,14 @@ __global__ void nsProlongationTripletsKernel(size_t n, int comps, long long loca
     }
 }
 
-// Triplets of a CSR block over local slots, shifted to this rank's slot numbers.
-template<typename IndexType>
-__global__ void nsLocalCsrTripletsKernel(IndexType rows, const IndexType* rowPtr, const IndexType* colInd,
-                                         long long localStart, HYPRE_BigInt* rowIds, HYPRE_BigInt* colIds)
-{
-    IndexType r = blockIdx.x * blockDim.x + threadIdx.x;
-    if (r >= rows) return;
-    for (IndexType k = rowPtr[r]; k < rowPtr[r + 1]; ++k)
-    {
-        rowIds[k] = localStart + r;
-        colIds[k] = localStart + colInd[k];
-    }
-}
-
-// A slot that only halo elements touch has an empty local row, and no diagonal to add to.
+// With no p = 0 anywhere the pressure is only defined up to a constant: fix it
+// at the DOF with global id 0.
 template<typename RealType>
-__global__ void nsAddDiagonalKernel(int rows, const int* rowPtr, const int* diagPtr, const RealType* mass, RealType c,
-                                    RealType* a)
-{
-    int r = blockIdx.x * blockDim.x + threadIdx.x;
-    if (r < rows && rowPtr[r] < rowPtr[r + 1]) a[diagPtr[r]] += mass[r] * c;
-}
-
-// Removes the fixed velocity slots from the local viscous matrices a1 and a2
-// (they differ on the diagonal only): their rows and columns become zero, and
-// in a free row the fixed columns move to the right-hand side as the lift
-// -a_rc U_c. The Galerkin product keeps both properties; the fixed DOFs then get
-// identity rows, and the matrices stay symmetric for PCG.
-template<typename RealType>
-__global__ void nsEliminateFixedKernel(int rows, const int* rowPtr, const int* colInd, const uint8_t* fixed,
-                                       int comps, Components<const RealType*> target, RealType* a1, RealType* a2,
-                                       Components<RealType*> lift)
-{
-    int r = blockIdx.x * blockDim.x + threadIdx.x;
-    if (r >= rows) return;
-    RealType sum[3] = {0, 0, 0};
-    for (int k = rowPtr[r]; k < rowPtr[r + 1]; ++k)
-    {
-        int c = colInd[k];
-        if (!fixed[r] && fixed[c])
-            for (int d = 0; d < comps; ++d)
-                sum[d] -= a1[k] * target.c[d][c];
-        if (fixed[r] || fixed[c]) a1[k] = a2[k] = RealType(0);
-    }
-    for (int d = 0; d < comps; ++d)
-        lift.c[d][r] = sum[d];
-}
-
-// COO triplets of D and D S over the local elements, S = Q M^-1. Rows are local
-// slots, velocity column comps * slot + d is component d. Rows of nodes with
-// p = 0 are left out (-1), which also drops their columns from A = (D S) D^T.
-template<typename KeyType, typename RealType>
-__global__ void nsProjectionTripletsKernel(HexElements<KeyType> hex, Components<const RealType*> area, int comps,
-                                           long long localStart, const RealType* massDof, const uint8_t* fixed,
-                                           const uint8_t* pressureFixed, HYPRE_BigInt* rows, HYPRE_BigInt* cols,
-                                           RealType* valD, RealType* valDS)
-{
-    size_t k = size_t(blockIdx.x) * blockDim.x + threadIdx.x;
-    if (k >= hex.count) return;
-    size_t e = hex.first + k;
-    KeyType n[8];
-    for (int c = 0; c < 8; ++c)
-        n[c] = hex.node[c][e];
-    size_t out = k * 12 * 4 * comps; // per face: 2 rows x 2 columns x comps components
-    for (int ip = 0; ip < 12; ++ip)
-    {
-        const KeyType ends[2] = {n[hexLRSCV[2 * ip]], n[hexLRSCV[2 * ip + 1]]};
-        size_t f              = k * 12 + ip;
-        for (int r = 0; r < 2; ++r)
-        {
-            KeyType row        = ends[r];
-            HYPRE_BigInt rowId = pressureFixed[row] ? HYPRE_BigInt(-1) : localStart + HYPRE_BigInt(row);
-            RealType half      = r == 0 ? RealType(0.5) : RealType(-0.5);
-            for (int c = 0; c < 2; ++c)
-            {
-                KeyType col    = ends[c];
-                RealType scale = fixed[col] ? RealType(0) : RealType(1) / massDof[col];
-                for (int d = 0; d < comps; ++d, ++out)
-                {
-                    rows[out]  = rowId;
-                    cols[out]  = comps * (localStart + HYPRE_BigInt(col)) + d;
-                    valD[out]  = half * area.c[d][f];
-                    valDS[out] = half * area.c[d][f] * scale;
-                }
-            }
-        }
-    }
-}
-
-// Rows of the diagonal block without a nonzero diagonal: pressure DOFs that no
-// free velocity reaches (e.g. where a wall meets an inlet, or the edges of a
-// closed box). Their columns are empty too; they get identity rows.
-template<typename ValueType>
-__global__ void nsZeroDiagonalKernel(HYPRE_Int rows, const HYPRE_Int* I, const HYPRE_Int* J, const ValueType* data,
-                                     uint8_t* zero)
-{
-    HYPRE_Int r = blockIdx.x * blockDim.x + threadIdx.x;
-    if (r >= rows) return;
-    bool found = false;
-    for (HYPRE_Int j = I[r]; j < I[r + 1]; ++j)
-        found = found || (J[j] == r && data[j] != ValueType(0));
-    zero[r] = found ? 0 : 1;
-}
-
-template<typename RealType>
-__global__ void nsTestVectorKernel(size_t n, const uint8_t* isDof, const uint8_t* pinned, const RealType* gid,
-                                   RealType* x)
+__global__ void nsPinFirstDofKernel(size_t n, const uint8_t* isDof, const RealType* gid, const uint8_t* pressureFixed,
+                                    RealType* flag)
 {
     size_t i = size_t(blockIdx.x) * blockDim.x + threadIdx.x;
-    if (i >= n) return;
-    long long g = (long long)gid[i];
-    x[i] = isDof[i] && !pinned[i] ? RealType(1) + RealType((g * 7919) % 97) / RealType(97) : RealType(0);
-}
-
-// Pinned DOF slots (p = 0, or zero diagonal in A), as a number the DofSpace can copy to all copies.
-template<typename RealType>
-__global__ void nsPinnedFlagKernel(size_t n, const uint8_t* isDof, const int* dofIndex, const uint8_t* zeroDiagonal,
-                                   const uint8_t* pressureFixed, RealType* flag)
-{
-    size_t i = size_t(blockIdx.x) * blockDim.x + threadIdx.x;
-    if (i < n) flag[i] = isDof[i] && (zeroDiagonal[dofIndex[i]] || pressureFixed[i]) ? RealType(1) : RealType(0);
+    if (i < n) flag[i] = pressureFixed[i] || (isDof[i] && gid[i] == RealType(0)) ? RealType(1) : RealType(0);
 }
 
 template<typename RealType>
@@ -477,6 +367,96 @@ __global__ void nsFlagFromRealKernel(size_t n, const RealType* flag, uint8_t* ou
 {
     size_t i = size_t(blockIdx.x) * blockDim.x + threadIdx.x;
     if (i < n) out[i] = flag[i] > RealType(0.5) ? 1 : 0;
+}
+
+template<typename KeyType, typename RealType>
+__device__ inline void nsCorners(const HexElements<KeyType>& hex, size_t e, const RealType* x, const RealType* y,
+                                 const RealType* z, KeyType n[8], double corner[8][3])
+{
+    for (int c = 0; c < 8; ++c)
+    {
+        n[c]         = hex.node[c][e];
+        corner[c][0] = x[n[c]];
+        corner[c][1] = y[n[c]];
+        corner[c][2] = z[n[c]];
+    }
+}
+
+// (grad phi . A) at the integration point of face ip is sum_n w[n] phi_n, with
+// the shape derivatives of the library's CVFEM kernels.
+template<typename RealType>
+__device__ inline void nsFaceWeights(int ip, const double corner[8][3], const Components<const RealType*>& area,
+                                     size_t f, double w[8])
+{
+    double dndx[8][3];
+    computeShapeDerivatives(ip, corner, dndx);
+    for (int m = 0; m < 8; ++m)
+        w[m] = dndx[m][0] * area.c[0][f] + dndx[m][1] * area.c[1][f] + dndx[m][2] * area.c[2][f];
+}
+
+// The element matrix of scale * K as 64 triplets over local slots. Entries in
+// a removed row or column are 0: the Galerkin product keeps them empty and the
+// removed DOFs get identity rows. liftComps > 0 moves the removed columns of a
+// free row to the right-hand side, -scale K_rc target_c, which keeps K symmetric.
+template<typename KeyType, typename RealType>
+__global__ void nsLaplacianTripletsKernel(HexElements<KeyType> hex, const RealType* x, const RealType* y,
+                                          const RealType* z, Components<const RealType*> area, RealType scale,
+                                          long long localStart, const uint8_t* removed,
+                                          Components<const RealType*> target, Components<RealType*> lift,
+                                          int liftComps, HYPRE_BigInt* rows, HYPRE_BigInt* cols, RealType* values)
+{
+    size_t k = size_t(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (k >= hex.count) return;
+    KeyType n[8];
+    double corner[8][3];
+    nsCorners(hex, hex.first + k, x, y, z, n, corner);
+    double Ke[8][8] = {};
+    for (int ip = 0; ip < 12; ++ip)
+    {
+        double w[8];
+        nsFaceWeights(ip, corner, area, k * 12 + ip, w);
+        int L = hexLRSCV[2 * ip], R = hexLRSCV[2 * ip + 1];
+        for (int m = 0; m < 8; ++m)
+        {
+            Ke[L][m] -= w[m];
+            Ke[R][m] += w[m];
+        }
+    }
+    size_t out = k * 64;
+    for (int a = 0; a < 8; ++a)
+        for (int b = 0; b < 8; ++b, ++out)
+        {
+            KeyType r = n[a], c = n[b];
+            bool drop = removed && (removed[r] || removed[c]);
+            rows[out]   = localStart + HYPRE_BigInt(r);
+            cols[out]   = localStart + HYPRE_BigInt(c);
+            values[out] = drop ? RealType(0) : RealType(scale * Ke[a][b]);
+            if (liftComps > 0 && !removed[r] && removed[c])
+                for (int d = 0; d < liftComps; ++d)
+                    atomicAdd(&lift.c[d][r], RealType(-scale * Ke[a][b]) * target.c[d][c]);
+        }
+}
+
+// The diagonal c M over the local slots; zero in removed rows.
+template<typename RealType>
+__global__ void nsMassTripletsKernel(size_t n, long long localStart, const RealType* massLocal, const uint8_t* removed,
+                                     RealType c, HYPRE_BigInt* rows, HYPRE_BigInt* cols, RealType* values)
+{
+    size_t i = size_t(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (i >= n) return;
+    rows[i]   = localStart + HYPRE_BigInt(i);
+    cols[i]   = rows[i];
+    values[i] = removed[i] ? RealType(0) : c * massLocal[i];
+}
+
+template<typename RealType>
+__global__ void nsTestVectorKernel(size_t n, const uint8_t* isDof, const uint8_t* pressureFixed, const RealType* gid,
+                                   RealType* x)
+{
+    size_t i = size_t(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (i >= n) return;
+    long long g = (long long)gid[i];
+    x[i] = isDof[i] && !pressureFixed[i] ? RealType(1) + RealType((g * 7919) % 97) / RealType(97) : RealType(0);
 }
 
 // Slot values into DOF order.
@@ -488,31 +468,101 @@ __global__ void nsToDofKernel(size_t n, const uint8_t* isDof, const int* dofInde
 }
 
 // ---------------------------------------------------------------------------
-// Time step kernels. Element loops run over the local elements; node loops over
-// the DOF slots (isDof).
+// Time step kernels. Element loops run over the local elements, with the face
+// data of element k at k * 12 + face; node loops over the DOF slots (isDof).
 // ---------------------------------------------------------------------------
 
-// D u: the flux through a sub-control face leaves node L and enters node R.
+// The stabilized face flux F = A . (u_L + u_R) / 2 - h [ (grad p . A) + A . (g_L + g_R) / 2 ]
+// with g = M^-1 D^T p = -G p the nodal gradient term, see the top of the file. The
+// velocity and g have comps components; the compact gradient is always 3D (in
+// planar flow p does not depend on z, so it adds nothing across z).
 template<typename KeyType, typename RealType>
-__global__ void nsDivergenceKernel(HexElements<KeyType> hex, Components<const RealType*> area, int comps,
-                                   Components<const RealType*> u, RealType* div)
+__global__ void nsFaceFluxKernel(HexElements<KeyType> hex, const RealType* x, const RealType* y, const RealType* z,
+                                 Components<const RealType*> area, int comps, Components<const RealType*> u,
+                                 const RealType* p, Components<const RealType*> g, RealType h, RealType* flux)
+{
+    size_t k = size_t(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (k >= hex.count) return;
+    KeyType n[8];
+    double corner[8][3];
+    nsCorners(hex, hex.first + k, x, y, z, n, corner);
+    for (int ip = 0; ip < 12; ++ip)
+    {
+        size_t f = k * 12 + ip;
+        double w[8];
+        nsFaceWeights(ip, corner, area, f, w);
+        KeyType L = n[hexLRSCV[2 * ip]], R = n[hexLRSCV[2 * ip + 1]];
+        double average = 0, nodal = 0, compact = 0;
+        for (int d = 0; d < comps; ++d)
+        {
+            average += 0.5 * (u.c[d][L] + u.c[d][R]) * area.c[d][f];
+            nodal += 0.5 * (g.c[d][L] + g.c[d][R]) * area.c[d][f];
+        }
+        for (int m = 0; m < 8; ++m)
+            compact += w[m] * p[n[m]];
+        flux[f] = RealType(average - h * (compact + nodal));
+    }
+}
+
+// flux_f += c (grad phi . A)_f
+template<typename KeyType, typename RealType>
+__global__ void nsFaceGradientKernel(HexElements<KeyType> hex, const RealType* x, const RealType* y,
+                                     const RealType* z, Components<const RealType*> area, const RealType* phi,
+                                     RealType c, RealType* flux)
+{
+    size_t k = size_t(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (k >= hex.count) return;
+    KeyType n[8];
+    double corner[8][3];
+    nsCorners(hex, hex.first + k, x, y, z, n, corner);
+    for (int ip = 0; ip < 12; ++ip)
+    {
+        size_t f = k * 12 + ip;
+        double w[8], gradient = 0;
+        nsFaceWeights(ip, corner, area, f, w);
+        for (int m = 0; m < 8; ++m)
+            gradient += w[m] * phi[n[m]];
+        flux[f] += RealType(c * gradient);
+    }
+}
+
+// D_F F: the flux through a face leaves node L and enters node R.
+template<typename KeyType, typename RealType>
+__global__ void nsFaceDivergenceKernel(HexElements<KeyType> hex, const RealType* flux, RealType* div)
 {
     size_t k = size_t(blockIdx.x) * blockDim.x + threadIdx.x;
     if (k >= hex.count) return;
     size_t e = hex.first + k;
-    KeyType n[8];
-    for (int c = 0; c < 8; ++c)
-        n[c] = hex.node[c][e];
 #pragma unroll
     for (int ip = 0; ip < 12; ++ip)
     {
-        KeyType L = n[hexLRSCV[2 * ip]], R = n[hexLRSCV[2 * ip + 1]];
-        size_t f      = k * 12 + ip;
-        RealType flow = 0;
+        KeyType L = hex.node[hexLRSCV[2 * ip]][e], R = hex.node[hexLRSCV[2 * ip + 1]][e];
+        atomicAdd(&div[L], flux[k * 12 + ip]);
+        atomicAdd(&div[R], -flux[k * 12 + ip]);
+    }
+}
+
+
+// Skew-symmetric advection by the face fluxes: node L receives -F q_R / 2 and
+// node R receives +F q_L / 2. Its kinetic energy production, sum_i q_i (N q)_i,
+// cancels face by face.
+template<typename KeyType, typename RealType>
+__global__ void nsAdvectionKernel(HexElements<KeyType> hex, const RealType* flux, int comps,
+                                  Components<const RealType*> u, Components<RealType*> adv)
+{
+    size_t k = size_t(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (k >= hex.count) return;
+    size_t e = hex.first + k;
+#pragma unroll
+    for (int ip = 0; ip < 12; ++ip)
+    {
+        KeyType L = hex.node[hexLRSCV[2 * ip]][e], R = hex.node[hexLRSCV[2 * ip + 1]][e];
+        RealType F = flux[k * 12 + ip];
         for (int d = 0; d < comps; ++d)
-            flow += RealType(0.5) * (u.c[d][L] + u.c[d][R]) * area.c[d][f];
-        atomicAdd(&div[L], flow);
-        atomicAdd(&div[R], -flow);
+        {
+            atomicAdd(&adv.c[d][L], -RealType(0.5) * F * u.c[d][R]);
+            atomicAdd(&adv.c[d][R], RealType(0.5) * F * u.c[d][L]);
+        }
     }
 }
 
@@ -537,35 +587,6 @@ __global__ void nsDivergenceTransposeKernel(HexElements<KeyType> hex, Components
         {
             atomicAdd(&g.c[d][L], dp * area.c[d][f]);
             atomicAdd(&g.c[d][R], dp * area.c[d][f]);
-        }
-    }
-}
-
-// Skew-symmetric advection by the face flux m = A_f . (u_L + u_R) / 2: node L
-// receives -m q_R / 2 and node R receives +m q_L / 2. Its kinetic energy
-// production, sum_i q_i (N q)_i, cancels face by face.
-template<typename KeyType, typename RealType>
-__global__ void nsAdvectionKernel(HexElements<KeyType> hex, Components<const RealType*> area, int comps,
-                                  Components<const RealType*> u, Components<RealType*> adv)
-{
-    size_t k = size_t(blockIdx.x) * blockDim.x + threadIdx.x;
-    if (k >= hex.count) return;
-    size_t e = hex.first + k;
-    KeyType n[8];
-    for (int c = 0; c < 8; ++c)
-        n[c] = hex.node[c][e];
-#pragma unroll
-    for (int ip = 0; ip < 12; ++ip)
-    {
-        KeyType L = n[hexLRSCV[2 * ip]], R = n[hexLRSCV[2 * ip + 1]];
-        size_t f   = k * 12 + ip;
-        RealType m = 0;
-        for (int d = 0; d < comps; ++d)
-            m += RealType(0.5) * (u.c[d][L] + u.c[d][R]) * area.c[d][f];
-        for (int d = 0; d < comps; ++d)
-        {
-            atomicAdd(&adv.c[d][L], -RealType(0.5) * m * u.c[d][R]);
-            atomicAdd(&adv.c[d][R], RealType(0.5) * m * u.c[d][L]);
         }
     }
 }
@@ -658,13 +679,13 @@ __global__ void nsViscousRhsKernel(size_t n, const uint8_t* isDof, const int* do
     x[dof]   = qStar[i];
 }
 
-// A phi = -(rho / dtEff) D u** per DOF; a pinned row is an identity row with value 0.
+// K phi = -(rho / dtEff) (D F** + openings) per DOF; a p = 0 row is an identity row with value 0.
 template<typename RealType>
-__global__ void nsPressureRhsKernel(size_t n, const uint8_t* isDof, const int* dofIndex, const uint8_t* pinned,
+__global__ void nsPressureRhsKernel(size_t n, const uint8_t* isDof, const int* dofIndex, const uint8_t* pressureFixed,
                                     RealType coef, const RealType* div, RealType* rhs)
 {
     size_t i = size_t(blockIdx.x) * blockDim.x + threadIdx.x;
-    if (i < n && isDof[i]) rhs[dofIndex[i]] = pinned[i] ? RealType(0) : -coef * div[i];
+    if (i < n && isDof[i]) rhs[dofIndex[i]] = pressureFixed[i] ? RealType(0) : -coef * div[i];
 }
 
 template<typename RealType>
@@ -710,24 +731,6 @@ struct NsScaleBy
     __device__ RealType operator()(RealType a) const { return a * s; }
 };
 
-struct NsNotOwnedRow
-{
-    template<class Tuple>
-    __device__ bool operator()(const Tuple& t) const
-    {
-        return thrust::get<0>(t) < 0;
-    }
-};
-
-struct NsNonZeroValue
-{
-    template<class Tuple>
-    __device__ bool operator()(const Tuple& t) const
-    {
-        return thrust::get<2>(t) != 0;
-    }
-};
-
 struct NsToInt
 {
     __device__ int operator()(uint8_t b) const { return b; }
@@ -739,27 +742,6 @@ struct NsNegative
     __device__ bool operator()(RealType g) const { return g < 0; }
 };
 
-// Value of an unpinned DOF, 0 for a pinned one.
-template<typename RealType>
-struct NsUnpinnedValue
-{
-    __device__ double operator()(const thrust::tuple<RealType, uint8_t>& t) const
-    {
-        return thrust::get<1>(t) ? 0.0 : double(thrust::get<0>(t));
-    }
-};
-
-template<typename RealType>
-struct NsShiftUnpinned
-{
-    RealType shift;
-    __device__ RealType operator()(const thrust::tuple<RealType, uint8_t>& t) const
-    {
-        return thrust::get<1>(t) ? thrust::get<0>(t) : thrust::get<0>(t) - shift;
-    }
-};
-
-// Global DOF id of the DOF slots that satisfy flag.
 template<typename RealType>
 struct NsFlaggedDof
 {
@@ -801,32 +783,32 @@ struct NsKineticTerm
     }
 };
 
-// |D u| / M where the projection enforces continuity: DOFs that are not pinned.
+// |D_F F + openings| / M where the projection enforces continuity: DOFs without p = 0.
 template<typename RealType>
 struct NsContinuityTerm
 {
     const uint8_t* isDof;
-    const uint8_t* pinned;
+    const uint8_t* pressureFixed;
     const RealType* mass;
     const RealType* div;
     __device__ double operator()(size_t i) const
     {
-        return isDof[i] && !pinned[i] ? fabs(double(div[i]) / mass[i]) : 0.0;
+        return isDof[i] && !pressureFixed[i] ? fabs(double(div[i]) / mass[i]) : 0.0;
     }
 };
 
-// (|assembled - matrix-free|, |matrix-free|) per DOF that is not pinned.
+// (|assembled - matrix-free|, |matrix-free|) per DOF without p = 0.
 template<typename RealType>
 struct NsOperatorDifference
 {
     const uint8_t* isDof;
-    const uint8_t* pinned;
+    const uint8_t* pressureFixed;
     const int* dofIndex;
     const RealType* matFree;
     const RealType* assembled;
     __device__ thrust::tuple<double, double> operator()(size_t i) const
     {
-        if (!isDof[i] || pinned[i]) return thrust::make_tuple(0.0, 0.0);
+        if (!isDof[i] || pressureFixed[i]) return thrust::make_tuple(0.0, 0.0);
         double ref = matFree[i];
         return thrust::make_tuple(fabs(assembled[dofIndex[i]] - ref), fabs(ref));
     }
@@ -846,13 +828,13 @@ struct NsMaxPair
 struct NsProjectionSums
 {
     double sum[7]{};
-    double max[3]{};
+    double max[2]{};
     __host__ __device__ NsProjectionSums operator+(const NsProjectionSums& o) const
     {
         NsProjectionSums r;
         for (int k = 0; k < 7; ++k)
             r.sum[k] = sum[k] + o.sum[k];
-        for (int k = 0; k < 3; ++k)
+        for (int k = 0; k < 2; ++k)
             r.max[k] = max[k] > o.max[k] ? max[k] : o.max[k];
         return r;
     }
@@ -862,13 +844,12 @@ template<typename RealType>
 struct NsProjectionTerm
 {
     const uint8_t* isDof;
-    const uint8_t* pinned;
     const uint8_t* pressureFixed;
     const uint8_t* fixed;
     const RealType* mass;
-    const RealType* before; // D u** with openings
-    const RealType* after;  // D u with openings
-    const RealType* action; // A phi
+    const RealType* before; // D_F F** + openings
+    const RealType* after;  // D_F F + openings
+    const RealType* action; // K phi
     int comps;
     Components<const RealType*> area;
     Components<const RealType*> target;
@@ -882,10 +863,10 @@ struct NsProjectionTerm
         double V = mass[i], a = after[i], b = before[i], ap = action[i];
         if (!(V > 0) || !isfinite(V) || !isfinite(a) || !isfinite(b) || !isfinite(ap))
         {
-            s.max[2] = 1;
+            s.max[1] = 1;
             return s;
         }
-        if (!pinned[i])
+        if (!pressureFixed[i])
         {
             double error = a - b - double(h) * ap;
             s.sum[0]     = b * b / V;
@@ -894,7 +875,6 @@ struct NsProjectionTerm
             s.sum[3]     = V;
             s.max[0]     = fabs(a) / V;
         }
-        else if (!pressureFixed[i]) s.max[1] = fabs(a) / V; // pinned because no free velocity reaches it
         double flux = 0;
         for (int d = 0; d < comps; ++d)
             flux += double(area.c[d][i]) * (fixed[i] ? target.c[d][i] : u.c[d][i]);
@@ -934,14 +914,13 @@ public:
         long velocityIterations = 0, pressureIterations = 0;
     };
 
-    // The last projection, checked. continuity = D u + openings per unit volume.
+    // The last projection, checked. continuity = D_F F + openings per unit volume.
     struct ProjectionReport
     {
-        double identity;        // |D u - D u** - h A phi| / |D u**|, at the solver tolerance
+        double identity;        // |D_F F - D_F F** - h K phi| / |D_F F**|, at the solver tolerance
         double identityRms;     // the same, per unit volume
         double continuityRms;   // RMS of continuity over the rows the projection enforces
         double continuityMax;   // its maximum
-        double unreachedMax;    // continuity at DOFs that no free velocity reaches
         double inflow;          // flux through openings with prescribed velocity
         double outflow;         // flux through openings with computed velocity
         double balance;         // |inflow + outflow| / |inflow|
@@ -974,12 +953,13 @@ public:
         box_ = boundingBox(domain_);
 
         for (Vector* f :
-             {&u, &v, &w, &p, &phi_, &div_, &massLocal_, &massDof_, &gid_, &work_[0], &work_[1], &work_[2]})
+             {&u, &v, &w, &p, &phi_, &div_, &divStar_, &massLocal_, &massDof_, &gid_, &work_[0], &work_[1], &work_[2]})
             allocate(*f);
         for (int d = 0; d < 3; ++d)
             for (Vector* f : {&um1_[d], &star_[d], &sstar_[d], &adv_[d], &advm1_[d], &g_[d], &target_[d],
                               &openArea_[d], &lift_[d]})
                 allocate(*f);
+        flux_.resize(12 * hex_.count);
 
         if (prm_.planar) checkPlanarMesh();
         buildGeometry();
@@ -990,7 +970,8 @@ public:
         buildPressureSolver();
     }
 
-    // After setting u, v, w, p: prescribed velocities, periodic copies and ghosts; the next step is BDF1.
+    // After setting u, v, w, p: prescribed velocities, periodic copies and ghosts,
+    // and the face fluxes of u; the next step is BDF1.
     void start()
     {
         nsApplyTargetKernel<RealType><<<grid(), bs()>>>(n_, fixed_.data(), comps_, cview(target_), view(vel()));
@@ -998,6 +979,11 @@ public:
         for (Vector* q : velocity())
             space_.prolong(*q);
         space_.prolong(p);
+        if (hex_.count > 0)
+            nsFaceFluxKernel<KeyType, RealType><<<elemGrid(), bs()>>>(hex_, x(), y(), z(), cview(area_), comps_,
+                                                                      cview(vel()), p.data(), cview(g_), RealType(0),
+                                                                      flux_.data());
+        cudaCheckError();
         steps_ = 0;
     }
 
@@ -1030,41 +1016,38 @@ public:
         return dofSum(NsKineticTerm<RealType>{space_.isDof(), massDof_.data(), comps_, cview(vel())});
     }
 
-    // max |D u + openings| / M over the rows the projection enforces.
+    // max |D_F F + openings| / M over the rows the projection enforces.
     double maxContinuity()
     {
-        divergenceOf(vel(), div_, true);
+        fluxDivergence(div_, vel());
         double local = thrust::transform_reduce(
             thrust::device, thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(n_),
-            NsContinuityTerm<RealType>{space_.isDof(), pinned_.data(), massDof_.data(), div_.data()}, 0.0,
+            NsContinuityTerm<RealType>{space_.isDof(), pressureFixed_.data(), massDof_.data(), div_.data()}, 0.0,
             thrust::maximum<double>());
         double global = 0;
         MPI_Allreduce(&local, &global, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
         return global;
     }
 
-    // Checks the last step: the corrected velocity must satisfy D u = D u** + h A phi
-    // (h = dtEff / rho) with the operator the pressure solve inverted.
+    // Checks the last step: the corrected fluxes must satisfy
+    // D_F F = D_F F** + h K phi (h = dtEff / rho) with the matrix the pressure solve inverted.
     ProjectionReport projectionReport()
     {
-        Vector& before = work_[0];
         Vector& after  = work_[1];
         Vector& action = work_[2];
-        divergenceOf(view(sstar_), before, true);
-        divergenceOf(vel(), after, true);
-        applyProjection(phi_, action);
+        fluxDivergence(after, vel());
+        applyLaplacian(phi_, action);
         const RealType dtEff = lastBdf2_ ? RealType(2) * prm_.dt / RealType(3) : prm_.dt;
-        NsProjectionTerm<RealType> term{space_.isDof(),  pinned_.data(),   pressureFixed_.data(),
-                                        fixed_.data(),   massDof_.data(),  before.data(),
-                                        after.data(),    action.data(),    comps_,
-                                        cview(openArea_), cview(target_),  cview(vel()),
-                                        dtEff / prm_.rho};
+        NsProjectionTerm<RealType> term{space_.isDof(),   pressureFixed_.data(), fixed_.data(),
+                                        massDof_.data(),  divStar_.data(),       after.data(),
+                                        action.data(),    comps_,                cview(openArea_),
+                                        cview(target_),   cview(vel()),          dtEff / prm_.rho};
         NsProjectionSums local = thrust::transform_reduce(
             thrust::device, thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(n_), term,
             NsProjectionSums{}, thrust::plus<NsProjectionSums>());
         NsProjectionSums g;
         MPI_Allreduce(local.sum, g.sum, 7, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-        MPI_Allreduce(local.max, g.max, 3, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+        MPI_Allreduce(local.max, g.max, 2, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
 
         ProjectionReport r;
         double scale      = std::max(g.sum[0], 1e-60);
@@ -1073,13 +1056,12 @@ public:
         r.identityRms     = std::sqrt(g.sum[2] / volume);
         r.continuityRms   = std::sqrt(g.sum[1] / volume);
         r.continuityMax   = g.max[0];
-        r.unreachedMax    = g.max[1];
         r.inflow          = g.sum[4];
         r.outflow         = g.sum[5];
         r.balance         = std::abs(g.sum[4] + g.sum[5]) / std::max(std::abs(g.sum[4]), 1e-30);
         r.balanceIdentity = std::abs(g.sum[6] - g.sum[4] - g.sum[5]) /
                             std::max(std::abs(g.sum[4]) + std::abs(g.sum[5]), 1e-30);
-        r.finite          = g.max[2] == 0 && std::isfinite(r.identity) && std::isfinite(r.continuityRms);
+        r.finite          = g.max[1] == 0 && std::isfinite(r.identity) && std::isfinite(r.continuityRms);
         return r;
     }
 
@@ -1137,8 +1119,11 @@ private:
     }
     static Components<const RealType*> cview(Components<RealType*> c) { return {{c.c[0], c.c[1], c.c[2]}}; }
     static Components<const RealType*> cview(Components<const RealType*> c) { return c; }
+    const RealType* x() const { return domain_.getNodeX().data(); }
+    const RealType* y() const { return domain_.getNodeY().data(); }
+    const RealType* z() const { return domain_.getNodeZ().data(); }
 
-    // 1. u* from the history, the advection and the old pressure.
+    // 1. u* from the history, the advection by F^n and the old pressure.
     void predict(bool bdf2)
     {
         gradientOf(p, true);
@@ -1146,7 +1131,7 @@ private:
             zero(adv_[d]);
         if (hex_.count > 0)
             nsAdvectionKernel<KeyType, RealType>
-                <<<elemGrid(), bs()>>>(hex_, cview(area_), comps_, cview(vel()), view(adv_));
+                <<<elemGrid(), bs()>>>(hex_, flux_.data(), comps_, cview(vel()), view(adv_));
         cudaCheckError();
         for (int d = 0; d < comps_; ++d)
             space_.restrict(adv_[d]);
@@ -1184,36 +1169,45 @@ private:
         return true;
     }
 
-    // 3. A phi = -(rho / dtEff) (D u** + openings).
+    // 3. The stabilized fluxes F** of u** and p^n, then K phi = -(rho / dtEff) (D_F F** + openings).
     bool project(bool bdf2)
     {
         const RealType invDt = bdf2 ? RealType(3) / (RealType(2) * prm_.dt) : RealType(1) / prm_.dt;
-        divergenceOf(view(sstar_), div_, true);
-        nsPressureRhsKernel<RealType><<<grid(), bs()>>>(n_, space_.isDof(), dofIndex_.data(), pinned_.data(),
-                                                        prm_.rho * invDt, div_.data(), rhs_.data());
+        gradientOf(p, false);
+        for (int d = 0; d < comps_; ++d)
+            space_.prolong(g_[d]);
+        if (hex_.count > 0)
+            nsFaceFluxKernel<KeyType, RealType><<<elemGrid(), bs()>>>(hex_, x(), y(), z(), cview(area_), comps_,
+                                                                      cview(sstar_), p.data(), cview(g_),
+                                                                      RealType(1) / (prm_.rho * invDt),
+                                                                      flux_.data());
         cudaCheckError();
-        // With no p = 0 anywhere, A has the constants as null space: solve in its range.
-        if (pureNeumann_) removeMean(rhs_);
+        fluxDivergence(divStar_, view(sstar_));
+        nsPressureRhsKernel<RealType><<<grid(), bs()>>>(n_, space_.isDof(), dofIndex_.data(), pressureFixed_.data(),
+                                                        prm_.rho * invDt, divStar_.data(), rhs_.data());
+        cudaCheckError();
         pressureIters_ = pressure_->solve(rhs_.data(), x_.data());
         if (pressureIters_ < 0) return failed("pressure", *pressure_);
         timing_.pressureIterations += pressureIters_;
-        if (pureNeumann_) removeMean(x_);
         nsFromDofKernel<RealType><<<grid(), bs()>>>(n_, space_.isDof(), dofIndex_.data(), x_.data(), phi_.data());
         cudaCheckError();
         space_.prolong(phi_);
         return true;
     }
 
-    // 4. u = u** + (dtEff / rho) Q M^-1 D^T phi, p += phi. u^n becomes the BDF2 history.
+    // 4. F = F** - h (grad phi . A), u = u** - h Q G phi, p += phi. u^n becomes the BDF2 history.
     void correct(bool bdf2)
     {
-        const RealType dtEff = bdf2 ? RealType(2) * prm_.dt / RealType(3) : prm_.dt;
+        const RealType h = (bdf2 ? RealType(2) * prm_.dt / RealType(3) : prm_.dt) / prm_.rho;
+        if (hex_.count > 0)
+            nsFaceGradientKernel<KeyType, RealType>
+                <<<elemGrid(), bs()>>>(hex_, x(), y(), z(), cview(area_), phi_.data(), -h, flux_.data());
+        cudaCheckError();
         for (int d = 0; d < comps_; ++d)
             velocity()[d]->swap(um1_[d]);
         gradientOf(phi_, true);
-        nsCorrectorKernel<RealType><<<grid(), bs()>>>(n_, space_.isDof(), fixed_.data(), dtEff / prm_.rho, comps_,
-                                                      cview(target_), cview(sstar_), cview(g_), phi_.data(),
-                                                      vel(), p.data());
+        nsCorrectorKernel<RealType><<<grid(), bs()>>>(n_, space_.isDof(), fixed_.data(), h, comps_, cview(target_),
+                                                      cview(sstar_), cview(g_), phi_.data(), vel(), p.data());
         cudaCheckError();
         for (int d = 0; d < comps_; ++d)
             space_.prolong(*velocity()[d]);
@@ -1229,7 +1223,7 @@ private:
         return false;
     }
 
-    // g = M^-1 D^T q (~ -grad q) at the DOF slots, with Q if withQ. q must be current on every slot.
+    // g = M^-1 D^T q (= -G q, ~ -grad q) at the DOF slots, with Q if withQ. q must be current on every slot.
     void gradientOf(const Vector& q, bool withQ)
     {
         for (int d = 0; d < comps_; ++d)
@@ -1245,52 +1239,44 @@ private:
         cudaCheckError();
     }
 
-    // out = D u at the DOF slots, plus the opening fluxes if requested. u must be current on every slot.
-    void divergenceOf(Components<RealType*> velocityField, Vector& out, bool openings)
+    // out = D_F F + openings at the DOF slots; the outlets carry the nodal velocity.
+    void fluxDivergence(Vector& out, Components<RealType*> velocityField)
     {
         zero(out);
         if (hex_.count > 0)
-            nsDivergenceKernel<KeyType, RealType>
-                <<<elemGrid(), bs()>>>(hex_, cview(area_), comps_, cview(velocityField), out.data());
+            nsFaceDivergenceKernel<KeyType, RealType><<<elemGrid(), bs()>>>(hex_, flux_.data(), out.data());
         cudaCheckError();
         space_.restrict(out);
-        if (openings)
-            nsAddOpeningFluxKernel<RealType><<<grid(), bs()>>>(n_, space_.isDof(), comps_, cview(openArea_),
-                                                               fixed_.data(), cview(target_),
-                                                               cview(velocityField), out.data());
+        nsAddOpeningFluxKernel<RealType><<<grid(), bs()>>>(n_, space_.isDof(), comps_, cview(openArea_),
+                                                           fixed_.data(), cview(target_), cview(velocityField),
+                                                           out.data());
         cudaCheckError();
     }
 
-    // out = D Q M^-1 D^T x at the DOF slots, matrix-free, with the kernels of the time step.
-    void applyProjection(const Vector& x, Vector& out)
+    // out = K q at the DOF slots, matrix-free: -D_F of the compact face gradients.
+    // q must be current on every slot.
+    void applyLaplacian(const Vector& q, Vector& out)
     {
-        gradientOf(x, true);
-        for (int d = 0; d < comps_; ++d)
-            space_.prolong(g_[d]);
-        divergenceOf(view(g_), out, false);
-    }
-
-    // Subtracts the mean over the unpinned DOFs from a DOF-ordered vector.
-    void removeMean(Vector& q)
-    {
-        auto begin      = thrust::make_zip_iterator(thrust::make_tuple(q.data(), pinnedDof_.data()));
-        double local[2] = {thrust::transform_reduce(thrust::device, begin, begin + numOwned_,
-                                                    NsUnpinnedValue<RealType>{}, 0.0, thrust::plus<double>()),
-                           double(numOwned_) - double(thrust::count(thrust::device, pinnedDof_.data(),
-                                                                    pinnedDof_.data() + numOwned_, uint8_t(1)))};
-        double global[2];
-        MPI_Allreduce(local, global, 2, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-        const RealType mean = RealType(global[0] / std::max(global[1], 1.0));
-        thrust::transform(thrust::device, begin, begin + numOwned_, q.data(), NsShiftUnpinned<RealType>{mean});
+        Vector& faces = faceWork_;
+        faces.resize(12 * hex_.count);
+        zero(faces);
+        zero(out);
+        if (hex_.count > 0)
+        {
+            nsFaceGradientKernel<KeyType, RealType>
+                <<<elemGrid(), bs()>>>(hex_, x(), y(), z(), cview(area_), q.data(), RealType(-1), faces.data());
+            nsFaceDivergenceKernel<KeyType, RealType><<<elemGrid(), bs()>>>(hex_, faces.data(), out.data());
+        }
+        cudaCheckError();
+        space_.restrict(out);
     }
 
     void checkPlanarMesh()
     {
         // One layer of elements between two z planes, so w = 0 and nothing depends on z.
         const RealType eps = RealType(1e-8) * box_.extent();
-        const RealType* z  = domain_.getNodeZ().data();
         long long bad =
-            thrust::count_if(thrust::device, z, z + n_, NsOffPlanes<RealType>{box_.lo[2], box_.hi[2], eps});
+            thrust::count_if(thrust::device, z(), z() + n_, NsOffPlanes<RealType>{box_.lo[2], box_.hi[2], eps});
         MPI_Allreduce(MPI_IN_PLACE, &bad, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
         if (bad > 0 || !(box_.hi[2] > box_.lo[2]))
         {
@@ -1304,9 +1290,6 @@ private:
     // local sub-volumes per slot (for assembly) and the DOF mass on every copy.
     void buildGeometry()
     {
-        const RealType* x = domain_.getNodeX().data();
-        const RealType* y = domain_.getNodeY().data();
-        const RealType* z = domain_.getNodeZ().data();
         for (int d = 0; d < 3; ++d)
             area_[d].resize(12 * hex_.count);
         if (hex_.count > 0)
@@ -1314,10 +1297,11 @@ private:
             const KeyType* c[8];
             for (int i = 0; i < 8; ++i)
                 c[i] = hex_.node[i] + hex_.first;
-            precomputeAreaVectorsGpu<KeyType, RealType>(c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7], hex_.count, x,
-                                                        y, z, area_[0].data(), area_[1].data(), area_[2].data());
+            precomputeAreaVectorsGpu<KeyType, RealType>(c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7], hex_.count,
+                                                        x(), y(), z(), area_[0].data(), area_[1].data(),
+                                                        area_[2].data());
             cudaCheckError();
-            nsMassKernel<KeyType, RealType><<<elemGrid(), bs()>>>(hex_, x, y, z, massLocal_.data());
+            nsMassKernel<KeyType, RealType><<<elemGrid(), bs()>>>(hex_, x(), y(), z(), massLocal_.data());
         }
         cudaCheckError();
         copy(massLocal_, massDof_);
@@ -1329,9 +1313,8 @@ private:
     void applyConditions(Rule rule)
     {
         Vector& flags = work_[0];
-        nsBoundaryKernel<RealType, Rule><<<grid(), bs()>>>(n_, domain_.getNodeX().data(), domain_.getNodeY().data(),
-                                                           domain_.getNodeZ().data(), rule, flags.data(),
-                                                           view(target_));
+        nsBoundaryKernel<RealType, Rule>
+            <<<grid(), bs()>>>(n_, x(), y(), z(), rule, flags.data(), view(target_));
         cudaCheckError();
         // The DOF slot decides; every copy of the node takes its conditions.
         space_.prolong(flags);
@@ -1344,7 +1327,8 @@ private:
     }
 
     // DOF slots get consecutive local indices; rank r owns the global ids
-    // [dofStart_, dofStart_ + numOwned_). Every slot learns the global id of its DOF.
+    // [dofStart_, dofStart_ + numOwned_). Every slot learns the global id of its
+    // DOF. With no p = 0 anywhere, the DOF with id 0 gets p = 0.
     void numberDofs()
     {
         dofIndex_.resize(n_);
@@ -1369,6 +1353,21 @@ private:
         }
         rhs_.resize(numOwned_);
         x_.resize(numOwned_);
+
+        long long fixedPressure = thrust::count_if(thrust::device, thrust::counting_iterator<size_t>(0),
+                                                   thrust::counting_iterator<size_t>(n_),
+                                                   NsFlaggedDof<RealType>{space_.isDof(), pressureFixed_.data()});
+        MPI_Allreduce(MPI_IN_PLACE, &fixedPressure, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+        if (fixedPressure == 0)
+        {
+            Vector& flag = work_[0];
+            nsPinFirstDofKernel<RealType>
+                <<<grid(), bs()>>>(n_, space_.isDof(), gid_.data(), pressureFixed_.data(), flag.data());
+            cudaCheckError();
+            space_.prolong(flag);
+            nsFlagFromRealKernel<RealType><<<grid(), bs()>>>(n_, flag.data(), pressureFixed_.data());
+            cudaCheckError();
+        }
     }
 
     void buildOpenings(const std::vector<Opening<RealType>>& openings)
@@ -1376,9 +1375,8 @@ private:
         const RealType tolerance = RealType(1e-6) * box_.extent();
         for (const auto& opening : openings)
             if (hex_.count > 0)
-                nsOpeningAreaKernel<KeyType, RealType><<<elemGrid(), bs()>>>(
-                    hex_, domain_.getNodeX().data(), domain_.getNodeY().data(), domain_.getNodeZ().data(), opening,
-                    tolerance, openArea_[opening.axis].data());
+                nsOpeningAreaKernel<KeyType, RealType><<<elemGrid(), bs()>>>(hex_, x(), y(), z(), opening, tolerance,
+                                                                             openArea_[opening.axis].data());
         cudaCheckError();
         for (int d = 0; d < 3; ++d)
         {
@@ -1417,175 +1415,79 @@ private:
         return ids;
     }
 
-    // CVFEM stiffness K of the local elements (unit diffusivity, no advection),
-    // a1 = M / dt + nu K and a2 = 3 M / (2 dt) + nu K with the fixed velocity
-    // slots removed, reduced to P^T a P plus identity rows at the fixed DOFs.
-    void buildViscousSolvers()
+    // Local triplets of scale * K (element matrices, then the diagonal slots
+    // c M if massCoefficient is given) with the removed slots dropped, reduced to
+    // P^T A P plus identity rows at the removed DOFs.
+    HypreMatrix assembleReduced(const HypreMatrix& P, RealType scale, const uint8_t* removed,
+                                const RealType* massCoefficient, bool withLift)
     {
-        const auto& c = hex_.node;
-        cstone::DeviceVector<int> rowPtr(n_ + 1), diagPtr(n_), identity(n_);
-        thrust::sequence(thrust::device, identity.data(), identity.data() + n_);
-        const KeyType* local[8];
-        for (int i = 0; i < 8; ++i)
-            local[i] = c[i] + hex_.first;
-        int nnz = CvfemSparsityBuilder<KeyType>::buildFullSparsity(local[0], local[1], local[2], local[3], local[4],
-                                                                     local[5], local[6], local[7], hex_.count,
-                                                                     identity.data(), int(n_), rowPtr.data(), nullptr,
-                                                                     nullptr, 0);
-        cstone::DeviceVector<int> colInd(nnz);
-        CvfemSparsityBuilder<KeyType>::buildFullSparsity(local[0], local[1], local[2], local[3], local[4], local[5],
-                                                         local[6], local[7], hex_.count, identity.data(), int(n_),
-                                                         rowPtr.data(), colInd.data(), diagPtr.data(), 0);
-        Vector a1(nnz, RealType(0)), a2(nnz);
+        const size_t countK = 64 * hex_.count, countM = massCoefficient ? n_ : 0, count = countK + countM;
+        thrust::device_vector<HYPRE_BigInt> rows(std::max<size_t>(count, 1)), cols(std::max<size_t>(count, 1));
+        thrust::device_vector<RealType> values(std::max<size_t>(count, 1));
+        HYPRE_BigInt* r = thrust::raw_pointer_cast(rows.data());
+        HYPRE_BigInt* c = thrust::raw_pointer_cast(cols.data());
+        RealType* val   = thrust::raw_pointer_cast(values.data());
         if (hex_.count > 0)
-        {
-            // gamma = 1 and zero advection turn the CVFEM assembler into the Laplacian.
-            // Every local slot is a row: the Galerkin product sums the copies.
-            Vector ones(n_, RealType(1)), zeros(n_, RealType(0)), zeroFlux(12 * hex_.count, RealType(0));
-            Vector unusedRhs(n_, RealType(0));
-            cstone::DeviceVector<uint8_t> allRows(n_, uint8_t(1));
-            CSRMatrix<RealType> host{rowPtr.data(), colInd.data(), a1.data(), diagPtr.data(), int(n_), nnz, int(n_)};
-            thrust::device_vector<CSRMatrix<RealType>> matrix(1, host);
-            typename CvfemHexAssembler<KeyType, RealType>::Config config;
-            config.blockSize = bs();
-            config.variant   = CvfemKernelVariant::Tensor;
-            CvfemHexAssembler<KeyType, RealType>::assembleFull(
-                local[0], local[1], local[2], local[3], local[4], local[5], local[6], local[7], hex_.count,
-                domain_.getNodeX().data(), domain_.getNodeY().data(), domain_.getNodeZ().data(), ones.data(),
-                zeros.data(), zeros.data(), zeros.data(), zeros.data(), zeros.data(), zeroFlux.data(),
-                area_[0].data(), area_[1].data(), area_[2].data(), identity.data(), allRows.data(),
-                thrust::raw_pointer_cast(matrix.data()), unusedRhs.data(), config);
-            cudaCheckError();
-            cudaDeviceSynchronize();
-        }
-        const int rowGrid = std::max(1, int((n_ + bs() - 1) / bs()));
-        thrust::transform(thrust::device, a1.data(), a1.data() + nnz, a1.data(), NsScaleBy<RealType>{prm_.nu});
-        nsAddDiagonalKernel<RealType><<<rowGrid, bs()>>>(int(n_), rowPtr.data(), diagPtr.data(), massLocal_.data(),
-                                                         RealType(1) / prm_.dt, a1.data());
-        cudaMemcpy(a2.data(), a1.data(), nnz * sizeof(RealType), cudaMemcpyDeviceToDevice);
-        nsAddDiagonalKernel<RealType><<<rowGrid, bs()>>>(int(n_), rowPtr.data(), diagPtr.data(), massLocal_.data(),
-                                                         RealType(1) / (RealType(2) * prm_.dt), a2.data());
-        nsEliminateFixedKernel<RealType><<<rowGrid, bs()>>>(int(n_), rowPtr.data(), colInd.data(), fixed_.data(),
-                                                            comps_, cview(target_), a1.data(), a2.data(),
-                                                            view(lift_));
+            nsLaplacianTripletsKernel<KeyType, RealType><<<elemGrid(), bs()>>>(
+                hex_, x(), y(), z(), cview(area_), scale, localStart_, removed, cview(target_), view(lift_),
+                withLift ? comps_ : 0, r, c, val);
+        if (massCoefficient)
+            nsMassTripletsKernel<RealType><<<grid(), bs()>>>(n_, localStart_, massLocal_.data(), removed,
+                                                             *massCoefficient, r + countK, c + countK, val + countK);
         cudaCheckError();
-        for (int d = 0; d < comps_; ++d)
-            space_.restrict(lift_[d]);
-
-        thrust::device_vector<HYPRE_BigInt> rows(nnz), cols(nnz);
-        nsLocalCsrTripletsKernel<int><<<rowGrid, bs()>>>(int(n_), rowPtr.data(), colInd.data(), localStart_,
-                                                    thrust::raw_pointer_cast(rows.data()),
-                                                    thrust::raw_pointer_cast(cols.data()));
-        cudaCheckError();
-        HypreMatrix P     = prolongation(1);
-        auto fixedDofs    = flaggedDofs(fixed_.data());
-        auto build        = [&](const Vector& values) {
-            HypreMatrix local = hypreAssemble(
-                MPI_COMM_WORLD, localStart_, localStart_ + (long long)n_, localStart_, localStart_ + (long long)n_,
-                HypreCoo{thrust::raw_pointer_cast(rows.data()), thrust::raw_pointer_cast(cols.data()), values.data(),
-                         HYPRE_Int(nnz)});
-            auto solver = std::make_unique<HypreAmgPcgSolver>("MARS_VAMG");
-            solver->setup(MPI_COMM_WORLD,
-                          hypreAddIdentityRows(MPI_COMM_WORLD, hypreGalerkin(P, local),
-                                               thrust::raw_pointer_cast(fixedDofs.data()), HYPRE_Int(fixedDofs.size())),
-                          prm_.tolerance, prm_.maxIter);
-            return solver;
-        };
-        viscousBdf1_ = build(a1);
-        if (prm_.bdf2) viscousBdf2_ = build(a2);
+        HypreMatrix local = hypreAssemble(MPI_COMM_WORLD, localStart_, localStart_ + (long long)n_, localStart_,
+                                          localStart_ + (long long)n_, HypreCoo{r, c, val, HYPRE_Int(count)});
+        auto ids          = flaggedDofs(removed);
+        return hypreAddIdentityRows(MPI_COMM_WORLD, hypreGalerkin(P, local), thrust::raw_pointer_cast(ids.data()),
+                                    HYPRE_Int(ids.size()));
     }
 
-    // A = (D S) D^T over the DOFs, from the local D and D S reduced by P; then
-    // identity rows where p = 0 and where no free velocity reaches.
+    // a1 = M / dt + nu K and a2 = 3 M / (2 dt) + nu K, K the CVFEM Laplacian,
+    // with the fixed velocity DOFs removed. The lift of the removed
+    // columns is gathered while assembling a1 (it is the same for a2).
+    void buildViscousSolvers()
+    {
+        HypreMatrix P      = prolongation(1);
+        const RealType c1  = RealType(1) / prm_.dt;
+        const RealType c2  = RealType(3) / (RealType(2) * prm_.dt);
+        viscousBdf1_       = std::make_unique<HypreAmgPcgSolver>("MARS_VAMG");
+        viscousBdf1_->setup(MPI_COMM_WORLD, assembleReduced(P, prm_.nu, fixed_.data(), &c1, true), prm_.tolerance,
+                            prm_.maxIter);
+        for (int d = 0; d < comps_; ++d)
+            space_.restrict(lift_[d]);
+        if (!prm_.bdf2) return;
+        viscousBdf2_ = std::make_unique<HypreAmgPcgSolver>("MARS_VAMG");
+        viscousBdf2_->setup(MPI_COMM_WORLD, assembleReduced(P, prm_.nu, fixed_.data(), &c2, false),
+                            prm_.tolerance, prm_.maxIter);
+    }
+
+    // K over the DOFs with identity rows where p = 0; the operator of the flux correction.
     void buildPressureSolver()
     {
-        const size_t count = hex_.count * 12 * 4 * comps_;
-        if (count > size_t(std::numeric_limits<HYPRE_Int>::max()))
-        {
-            std::cerr << "NavierStokes: too many projection triplets on rank " << rank_ << "\n";
-            MPI_Abort(MPI_COMM_WORLD, 1);
-        }
-        thrust::device_vector<HYPRE_BigInt> rows(count), cols(count);
-        thrust::device_vector<RealType> valD(count), valDS(count);
-        if (hex_.count > 0)
-            nsProjectionTripletsKernel<KeyType, RealType><<<elemGrid(), bs()>>>(
-                hex_, cview(area_), comps_, localStart_, massDof_.data(), fixed_.data(), pressureFixed_.data(),
-                thrust::raw_pointer_cast(rows.data()), thrust::raw_pointer_cast(cols.data()),
-                thrust::raw_pointer_cast(valD.data()), thrust::raw_pointer_cast(valDS.data()));
-        cudaCheckError();
-        auto all    = thrust::make_zip_iterator(thrust::make_tuple(rows.begin(), cols.begin(), valD.begin(),
-                                                                   valDS.begin()));
-        size_t nnzD = thrust::remove_if(thrust::device, all, all + count, NsNotOwnedRow{}) - all;
-        thrust::device_vector<HYPRE_BigInt> rowsS(nnzD), colsS(nnzD);
-        thrust::device_vector<RealType> valS(nnzD);
-        auto in     = thrust::make_zip_iterator(thrust::make_tuple(rows.begin(), cols.begin(), valDS.begin()));
-        auto out    = thrust::make_zip_iterator(thrust::make_tuple(rowsS.begin(), colsS.begin(), valS.begin()));
-        size_t nnzS = thrust::copy_if(thrust::device, in, in + nnzD, out, NsNonZeroValue{}) - out;
-
-        const long long ls = localStart_, le = localStart_ + (long long)n_;
-        HypreMatrix Dlocal = hypreAssemble(MPI_COMM_WORLD, ls, le, comps_ * ls, comps_ * le,
-                                           HypreCoo{thrust::raw_pointer_cast(rows.data()),
-                                                    thrust::raw_pointer_cast(cols.data()),
-                                                    thrust::raw_pointer_cast(valD.data()), HYPRE_Int(nnzD)});
-        HypreMatrix DSlocal = hypreAssemble(MPI_COMM_WORLD, ls, le, comps_ * ls, comps_ * le,
-                                            HypreCoo{thrust::raw_pointer_cast(rowsS.data()),
-                                                     thrust::raw_pointer_cast(colsS.data()),
-                                                     thrust::raw_pointer_cast(valS.data()), HYPRE_Int(nnzS)});
-        HypreMatrix PT = hypreTranspose(prolongation(1));
-        HypreMatrix Pv = prolongation(comps_);
-        HypreMatrix D  = hypreMultiply(hypreMultiply(PT, Dlocal), Pv);
-        HypreMatrix DS = hypreMultiply(hypreMultiply(PT, DSlocal), Pv);
-        HypreMatrix A  = hypreMultiply(DS, hypreTranspose(D));
-
-        // Pinned rows: p = 0, or an empty diagonal. The DOF decides for all its copies.
-        cstone::DeviceVector<uint8_t> zeroDiagonal(std::max(numOwned_, 1));
-        hypre_CSRMatrix* diag = hypre_ParCSRMatrixDiag(A.get());
-        if (numOwned_ > 0)
-            nsZeroDiagonalKernel<HYPRE_Complex><<<(numOwned_ + 255) / 256, 256>>>(
-                numOwned_, hypre_CSRMatrixI(diag), hypre_CSRMatrixJ(diag), hypre_CSRMatrixData(diag),
-                zeroDiagonal.data());
-        Vector& flag = work_[0];
-        nsPinnedFlagKernel<RealType><<<grid(), bs()>>>(n_, space_.isDof(), dofIndex_.data(), zeroDiagonal.data(),
-                                                       pressureFixed_.data(), flag.data());
-        cudaCheckError();
-        space_.prolong(flag);
-        pinned_.resize(n_);
-        pinnedDof_.resize(numOwned_);
-        nsFlagFromRealKernel<RealType><<<grid(), bs()>>>(n_, flag.data(), pinned_.data());
-        nsToDofKernel<uint8_t><<<grid(), bs()>>>(n_, space_.isDof(), dofIndex_.data(), pinned_.data(),
-                                                 pinnedDof_.data());
-        cudaCheckError();
-        long long fixedP = thrust::count_if(thrust::device, thrust::counting_iterator<size_t>(0),
-                                            thrust::counting_iterator<size_t>(n_),
-                                            NsFlaggedDof<RealType>{space_.isDof(), pressureFixed_.data()});
-        MPI_Allreduce(MPI_IN_PLACE, &fixedP, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
-        pureNeumann_ = fixedP == 0;
-
-        auto pinnedIds = flaggedDofs(pinned_.data());
-        pressure_      = std::make_unique<HypreAmgPcgSolver>("MARS_PAMG");
-        pressure_->setup(MPI_COMM_WORLD,
-                         hypreAddIdentityRows(MPI_COMM_WORLD, std::move(A), thrust::raw_pointer_cast(pinnedIds.data()),
-                                              HYPRE_Int(pinnedIds.size())),
+        HypreMatrix P = prolongation(1);
+        pressure_     = std::make_unique<HypreAmgPcgSolver>("MARS_PAMG");
+        pressure_->setup(MPI_COMM_WORLD, assembleReduced(P, RealType(1), pressureFixed_.data(), nullptr, false),
                          prm_.tolerance, prm_.maxIter);
         checkPressureOperator();
     }
 
-    // A x from Hypre against the matrix-free D Q M^-1 D^T x, for a varied x that
-    // is zero on the pinned DOFs. Stops if they differ.
+    // K x from Hypre against the matrix-free K x of the time step, for a varied
+    // x that is zero where p = 0. Stops if they differ.
     void checkPressureOperator()
     {
-        Vector& x       = work_[1];
+        Vector& xs      = work_[1];
         Vector& matFree = work_[2];
-        nsTestVectorKernel<RealType><<<grid(), bs()>>>(n_, space_.isDof(), pinned_.data(), gid_.data(), x.data());
+        nsTestVectorKernel<RealType><<<grid(), bs()>>>(n_, space_.isDof(), pressureFixed_.data(), gid_.data(),
+                                                       xs.data());
         cudaCheckError();
-        space_.prolong(x);
-        applyProjection(x, matFree);
+        space_.prolong(xs);
+        applyLaplacian(xs, matFree);
 
         Vector xDof(numOwned_), assembled(numOwned_);
-        nsToDofKernel<RealType><<<grid(), bs()>>>(n_, space_.isDof(), dofIndex_.data(), x.data(), xDof.data());
+        nsToDofKernel<RealType><<<grid(), bs()>>>(n_, space_.isDof(), dofIndex_.data(), xs.data(), xDof.data());
         cudaCheckError();
         pressure_->apply(xDof.data(), assembled.data());
-        NsOperatorDifference<RealType> diff{space_.isDof(), pinned_.data(), dofIndex_.data(), matFree.data(),
+        NsOperatorDifference<RealType> diff{space_.isDof(), pressureFixed_.data(), dofIndex_.data(), matFree.data(),
                                             assembled.data()};
         thrust::tuple<double, double> local = thrust::transform_reduce(
             thrust::device, thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(n_), diff,
@@ -1594,7 +1496,7 @@ private:
         MPI_Allreduce(loc, glob, 2, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
         double relative = glob[1] > 0 ? glob[0] / glob[1] : glob[0];
         if (rank_ == 0)
-            std::cout << "Pressure operator: assembled vs matrix-free, max |difference| / max |Ax| = "
+            std::cout << "Pressure operator: assembled vs matrix-free, max |difference| / max |Kx| = "
                       << std::scientific << relative << std::defaultfloat << "\n";
         if (!(relative <= 1e-10))
         {
@@ -1647,21 +1549,19 @@ private:
     // Conditions per node slot
     cstone::DeviceVector<uint8_t> fixed_;         // velocity prescribed
     cstone::DeviceVector<uint8_t> pressureFixed_; // p = 0
-    cstone::DeviceVector<uint8_t> pinned_;        // pressure row replaced by identity: p = 0 or unreachable
     Vector target_[3];                            // prescribed velocity
     Vector openArea_[3];                          // outward area vector of the opening faces
 
     // DOFs
-    int numOwned_          = 0;
-    long long dofStart_    = 0;
-    long long localStart_  = 0;
-    bool pureNeumann_      = false;
+    int numOwned_         = 0;
+    long long dofStart_   = 0;
+    long long localStart_ = 0;
     cstone::DeviceVector<int> dofIndex_; // local DOF index of each DOF slot
-    cstone::DeviceVector<uint8_t> pinnedDof_;
     Vector gid_;                         // global DOF id of each slot's DOF
 
     // Geometry and solvers
     Vector area_[3]; // sub-control face area vectors, 12 per local element
+    Vector flux_;    // stabilized face fluxes F, 12 per local element
     Vector massLocal_, massDof_;
     Vector lift_[3];
     std::unique_ptr<HypreAmgPcgSolver> viscousBdf1_, viscousBdf2_, pressure_;
@@ -1673,8 +1573,8 @@ private:
     Vector adv_[3];   // N(u^n)
     Vector advm1_[3]; // N(u^{n-1})
     Vector g_[3];     // M^-1 D^T q
-    Vector div_, phi_;
-    Vector work_[3];
+    Vector div_, divStar_, phi_;
+    Vector work_[3], faceWork_;
     Vector rhs_, x_; // DOF order
 };
 

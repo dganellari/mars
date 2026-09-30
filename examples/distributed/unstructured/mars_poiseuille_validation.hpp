@@ -10,8 +10,9 @@
 //   pressure   -dp/dx between 60% and 90% against 12 rho nu U / H^2
 //
 // --check turns this into the release gate. It also checks the projection of
-// the first three and the last step (NavierStokes::projectionReport), requires the
-// velocity to be steady over the last 20 steps, and exits 1 if anything fails.
+// the first three and the last step (NavierStokes::projectionReport: the face
+// fluxes satisfy continuity), requires the velocity to be steady over the last
+// 20 steps, and exits 1 if anything fails.
 // --comparison-output writes u, v, w, p at full precision for comparisons with
 // other codes.
 
@@ -270,14 +271,13 @@ public:
             const auto& box      = s.box();
             double identityFloor = 1e-10 * inflow_ / (box.hi[1] - box.lo[1]);
             bool ok = last_.finite && !(last_.identity > 1e-7 && last_.identityRms > identityFloor) &&
-                      last_.balanceIdentity <= 1e-10 && last_.unreachedMax <= 1e-8;
+                      last_.balanceIdentity <= 1e-10;
             projectionOk_ = projectionOk_ && ok;
             if (domain.rank() == 0)
                 std::cout << std::scientific << std::setprecision(6) << "[channel-projection] step=" << step
                           << " identity=" << last_.identity << " identity_rms=" << last_.identityRms
                           << " continuity_rms=" << last_.continuityRms << " continuity_max=" << last_.continuityMax
-                          << " unreached_max=" << last_.unreachedMax << " Qin=" << last_.inflow
-                          << " Qout=" << last_.outflow
+                          << " Qin=" << last_.inflow << " Qout=" << last_.outflow
                           << " balance=" << last_.balance << " balance_identity=" << last_.balanceIdentity
                           << " gate=" << (ok ? "PASS" : "FAIL") << "\n"
                           << std::defaultfloat;
