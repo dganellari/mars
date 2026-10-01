@@ -92,6 +92,98 @@ maximum velocity difference/U is 6.46e-13, and maximum absolute pressure
 difference/(rho U²) is 1.04e-10. This checks the local comparison path; it does
 not establish agreement for the other three cases.
 
-Independent OpenAccel execution and subsequent field comparisons are pending.
-No production kernel, solver tolerance or private input changed. These probes do
-not establish GPU execution, multi-rank scaling, pump parity or convergence.
+## Independent reference results, 2026-10-01
+
+The user completed all four references on Daint in
+`/capstor/scratch/cscs/gandanie/simple-geometry-reference-MUYE1J/reference`,
+using harness revision `ac63b2c27e5c4764c8b5dc0e3158a5f9cc8fcfaf`.
+Retrieved manifests, decks, meshes, logs, exits and field files were checked:
+all four exited zero, saved iterations 1 through 20, and match their recorded
+SHA-256 hashes. Local and reference decks agree exactly; connectivity, side sets
+and node IDs agree, and coordinate differences are below 2e-15 m.
+
+Comparison by source node ID covers every node at every saved iteration. Velocity
+uses the vector difference divided by U=0.1 m/s; pressure uses the absolute
+difference divided by rho*U²=0.01 Pa. No pressure offset is removed.
+
+| Case | Maximum velocity difference / U | Maximum pressure difference / (rho U²) |
+| --- | --- | --- |
+| straight-average | 6.46e-13 | 1.04e-10 |
+| straight-static | 5.91e-13 | 8.81e-11 |
+| warped-average | 7.84e-13 | 1.96e-10 |
+| warped-static | 7.32e-13 | 1.96e-10 |
+
+These are maxima across all 20 states. They validate the host production
+arithmetic against the independent reference for these cases, including the
+nonplanar inlet and both outlet types. They do not identify the remaining private
+snapshot discrepancy. No production kernel, solver tolerance or private input
+changed. CUDA ingestion and MPI execution of these four references remain
+unverified; the next command checks those paths at iteration 20.
+
+## Production CUDA/MPI comparison
+
+Run this from `mars-v010-check/build-hypre` in the **MARS uenv**. The OpenAccel
+environment is not needed. Reuse the current executable containing the inlet and
+outlet repairs; this documentation change needs no rebuild. The Python environment
+needs numpy, netCDF4 and yaml. Outputs and temporary files stay on capstor.
+
+The one- and four-rank runs use the exact saved reference decks and meshes.
+Exit 2 is accepted only as a completed iteration-limited run; the comparator must
+independently verify completion at iteration 20 and field agreement. This is not
+a nonlinear convergence test or a scaling measurement. The existing comparison
+script calls its detailed output a private report, but all data in this recipe
+are synthetic public data and the full report may be shared.
+
+```bash
+(
+set -euo pipefail
+python3 -c 'import numpy, netCDF4, yaml'
+exe=./examples/distributed/unstructured/mars_segregated_simple
+test -x "$exe"
+links=$(ldd "$exe")
+if printf '%s\n' "$links" | grep -q 'not found'; then
+  printf '%s\n' "$links"
+  echo 'Restore the MARS runtime environment first.'
+  exit 1
+fi
+reference=/capstor/scratch/cscs/gandanie/simple-geometry-reference-MUYE1J/reference
+run=$(mktemp -d /capstor/scratch/cscs/gandanie/simple-geometry-mars-XXXXXX)
+mkdir "$run/tmp"
+export TMPDIR="$run/tmp"
+printf 'Public results: %s\n' "$run"
+git rev-parse HEAD > "$run/mars-revision.txt"
+sha256sum "$exe" > "$run/executable.sha256"
+printf '%s\n' "$links" > "$run/libraries.txt"
+unset CUDA_LAUNCH_BLOCKING MARS_OWNERSHIP MARS_HALO_FACTOR MARS_NODEHALO_ALLOW_INCONSISTENT
+export MARS_HYPRE_SPMV_VENDOR=0 MARS_HYPRE_FLEXGMRES=0 MARS_HYPRE_ABSTOL=0
+export MARS_HYPRE_VERBOSE=0 MARS_HYPRE_RESIDUAL_AUDIT=0 MARS_SIMPLE_PRESSURE_AUDIT=0
+for case in straight-average straight-static warped-average warped-static; do
+  ref="$reference/$case"
+  python3 ../scripts/prepare_simple_deck.py --deck "$ref/input.i" \
+    --mesh "$ref/channel.exo" --output "$run/$case/case"
+  mapfile -d '' -t args < "$run/$case/case/args.nul"
+  for np in 1 4; do
+    out="$run/$case/np$np"
+    mkdir "$out"
+    set +e
+    srun --account=csstaff --time=00:05:00 --nodes=1 --ntasks-per-node="$np" \
+      --export=ALL,MPICH_GPU_SUPPORT_ENABLED=1 --kill-on-bad-exit=1 \
+      ~/affinity/bind_numa.sh "$exe" "${args[@]}" \
+      --output-prefix "$out/channel" --iterations 20 --report-every 10 \
+      --field-output gathered --residual-tol 1e-6 --mass-tol 1e-6 --change-tol 1e-6 \
+      2>&1 | tee "$out/run.log"
+    statuses=("${PIPESTATUS[@]}")
+    set -e
+    printf '%s\n' "${statuses[0]}" > "$out/run.exit"
+    if (( statuses[1] != 0 || (statuses[0] != 0 && statuses[0] != 2) )); then exit 1; fi
+    python3 ../scripts/simple_snapshot_compare.py \
+      --reference-dir "$ref" --case "$run/$case/case/case.json" --iteration 20 \
+      --mars-prefix "$out/channel" --mars-log "$out/run.log" --mars-exit "$out/run.exit" \
+      --private-report "$out/field-errors.json" --output "$out/summary.json"
+    python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d["errors"]); s=json.load(open(sys.argv[2])); assert s["snapshot_fields_within_tolerance"] and s["reference_settings_status"] == "mapped_controls_match"' \
+      "$out/field-errors.json" "$out/summary.json"
+  done
+done
+printf 'Public results: %s\n' "$run"
+)
+```
