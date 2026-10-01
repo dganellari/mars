@@ -44,22 +44,28 @@
 #include "backend/distributed/unstructured/fem/mars_dof_space.hpp"
 #include "backend/distributed/unstructured/solvers/mars_hypre_amg_pcg_solver.hpp"
 
+#include <thrust/binary_search.h>
 #include <thrust/copy.h>
 #include <thrust/count.h>
 #include <thrust/device_vector.h>
 #include <thrust/execution_policy.h>
+#include <thrust/fill.h>
 #include <thrust/functional.h>
 #include <thrust/iterator/counting_iterator.h>
 #include <thrust/iterator/transform_iterator.h>
 #include <thrust/reduce.h>
 #include <thrust/scan.h>
+#include <thrust/sort.h>
 #include <thrust/transform.h>
+#include <thrust/unique.h>
 #include <thrust/transform_reduce.h>
 #include <thrust/tuple.h>
 
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <iomanip>
 #include <iostream>
 #include <limits>
@@ -395,16 +401,58 @@ __device__ inline void nsFaceWeights(int ip, const double corner[8][3], const Co
         w[m] = dndx[m][0] * area.c[0][f] + dndx[m][1] * area.c[1][f] + dndx[m][2] * area.c[2][f];
 }
 
-// The element matrix of scale * K as 64 triplets over local slots. Entries in
-// a removed row or column are 0: the Galerkin product keeps them empty and the
-// removed DOFs get identity rows. liftComps > 0 moves the removed columns of a
+// The pattern of the local slot matrix: (row << 32 | col) for every pair of corners of an element.
+template<typename KeyType>
+__global__ void nsPatternKeysKernel(HexElements<KeyType> hex, unsigned long long* keys)
+{
+    size_t k = size_t(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (k >= hex.count) return;
+    size_t e = hex.first + k;
+    unsigned long long n[8];
+    for (int c = 0; c < 8; ++c)
+        n[c] = (unsigned long long)hex.node[c][e];
+    for (int a = 0; a < 8; ++a)
+        for (int b = 0; b < 8; ++b)
+            keys[k * 64 + a * 8 + b] = (n[a] << 32) | n[b];
+}
+
+struct NsPatternCol
+{
+    HOST_DEVICE_FUN int operator()(unsigned long long key) const { return int(key & 0xffffffffull); }
+};
+
+struct NsRowKey
+{
+    HOST_DEVICE_FUN unsigned long long operator()(long long row) const { return (unsigned long long)row << 32; }
+};
+
+struct NsDiagonalKey
+{
+    HOST_DEVICE_FUN unsigned long long operator()(long long i) const { return ((unsigned long long)i << 32) | i; }
+};
+
+// Position of column c in a sorted CSR row.
+__device__ inline int nsFindColumn(const int* cols, int begin, int end, int c)
+{
+    while (begin < end)
+    {
+        int mid = begin + (end - begin) / 2;
+        if (cols[mid] < c) begin = mid + 1;
+        else end = mid;
+    }
+    return begin;
+}
+
+// scale * K added into the local slot CSR. Entries in a removed row or column
+// are left out: the Galerkin product keeps them empty and the removed DOFs get
+// identity rows (nsDiagonalKernel). liftComps > 0 moves the removed columns of a
 // free row to the right-hand side, -scale K_rc target_c, which keeps K symmetric.
 template<typename KeyType, typename RealType>
-__global__ void nsLaplacianTripletsKernel(HexElements<KeyType> hex, const RealType* x, const RealType* y,
-                                          const RealType* z, Components<const RealType*> area, RealType scale,
-                                          long long localStart, const uint8_t* removed,
-                                          Components<const RealType*> target, Components<RealType*> lift,
-                                          int liftComps, HYPRE_BigInt* rows, HYPRE_BigInt* cols, RealType* values)
+__global__ void nsLaplacianCsrKernel(HexElements<KeyType> hex, const RealType* x, const RealType* y,
+                                     const RealType* z, Components<const RealType*> area, RealType scale,
+                                     const uint8_t* removed, Components<const RealType*> target,
+                                     Components<RealType*> lift, int liftComps, const int* rowPtr, const int* cols,
+                                     RealType* values)
 {
     size_t k = size_t(blockIdx.x) * blockDim.x + threadIdx.x;
     if (k >= hex.count) return;
@@ -423,31 +471,41 @@ __global__ void nsLaplacianTripletsKernel(HexElements<KeyType> hex, const RealTy
             Ke[R][m] += w[m];
         }
     }
-    size_t out = k * 64;
     for (int a = 0; a < 8; ++a)
-        for (int b = 0; b < 8; ++b, ++out)
+    {
+        KeyType r = n[a];
+        if (removed && removed[r]) continue;
+        for (int b = 0; b < 8; ++b)
         {
-            KeyType r = n[a], c = n[b];
-            bool drop = removed && (removed[r] || removed[c]);
-            rows[out]   = localStart + HYPRE_BigInt(r);
-            cols[out]   = localStart + HYPRE_BigInt(c);
-            values[out] = drop ? RealType(0) : RealType(scale * Ke[a][b]);
-            if (liftComps > 0 && !removed[r] && removed[c])
+            KeyType c = n[b];
+            if (removed && removed[c])
+            {
                 for (int d = 0; d < liftComps; ++d)
                     atomicAdd(&lift.c[d][r], RealType(-scale * Ke[a][b]) * target.c[d][c]);
+                continue;
+            }
+            int pos = nsFindColumn(cols, rowPtr[r], rowPtr[r + 1], int(c));
+            atomicAdd(&values[pos], RealType(scale * Ke[a][b]));
         }
+    }
 }
 
-// The diagonal c M over the local slots; zero in removed rows.
+// The diagonal: + c M in free rows, 1 in the removed DOF rows (their copies stay
+// empty, so P^T A P has an identity row and column there).
 template<typename RealType>
-__global__ void nsMassTripletsKernel(size_t n, long long localStart, const RealType* massLocal, const uint8_t* removed,
-                                     RealType c, HYPRE_BigInt* rows, HYPRE_BigInt* cols, RealType* values)
+__global__ void nsDiagonalKernel(size_t n, const uint8_t* isDof, const uint8_t* removed, const RealType* massLocal,
+                                 RealType c, const int* rowPtr, const int* cols, RealType* values)
 {
     size_t i = size_t(blockIdx.x) * blockDim.x + threadIdx.x;
     if (i >= n) return;
-    rows[i]   = localStart + HYPRE_BigInt(i);
-    cols[i]   = rows[i];
-    values[i] = removed[i] ? RealType(0) : c * massLocal[i];
+    bool gone = removed && removed[i];
+    if (!gone && !massLocal) return;
+    int pos = nsFindColumn(cols, rowPtr[i], rowPtr[i + 1], int(i));
+    if (gone)
+    {
+        if (isDof[i]) values[pos] = RealType(1);
+    }
+    else atomicAdd(&values[pos], c * massLocal[i]);
 }
 
 template<typename RealType>
@@ -752,13 +810,6 @@ struct NsFlaggedDof
 };
 
 template<typename RealType>
-struct NsGidOf
-{
-    const RealType* gid;
-    __device__ HYPRE_BigInt operator()(size_t i) const { return HYPRE_BigInt(gid[i]); }
-};
-
-template<typename RealType>
 struct NsMassNormTerm
 {
     const uint8_t* isDof;
@@ -964,12 +1015,15 @@ public:
         flux_.resize(12 * hex_.count);
 
         if (prm_.planar) checkPlanarMesh();
+        trace("dof space");
         buildGeometry();
         applyConditions(rule);
         numberDofs();
         buildOpenings(openings);
+        buildPattern();
         buildViscousSolvers();
         buildPressureSolver();
+        trace("ready");
     }
 
     // After setting u, v, w, p: prescribed velocities, periodic copies and ghosts,
@@ -1118,6 +1172,24 @@ public:
     int components() const { return comps_; }
 
 private:
+    // MARS_NS_TRACE=1: each setup stage with the smallest free GPU memory over the ranks,
+    // flushed, to place a crash or an out-of-memory. Collective.
+    void trace(const char* stage) const
+    {
+        static const bool enabled = std::getenv("MARS_NS_TRACE") != nullptr;
+        if (!enabled) return;
+        cudaDeviceSynchronize();
+        size_t freeBytes = 0, totalBytes = 0;
+        cudaMemGetInfo(&freeBytes, &totalBytes);
+        double freeGiB = double(freeBytes) / double(1ull << 30), minFree = 0;
+        MPI_Allreduce(&freeGiB, &minFree, 1, MPI_DOUBLE, MPI_MIN, MPI_COMM_WORLD);
+        if (rank_ == 0)
+        {
+            std::printf("[ns-setup] %s: min free GPU memory %.2f GiB\n", stage, minFree);
+            std::fflush(stdout);
+        }
+    }
+
     struct StageClock
     {
         double t;
@@ -1387,6 +1459,7 @@ private:
         long long owned = numOwned_, slots = (long long)n_;
         MPI_Exscan(&owned, &dofStart_, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
         MPI_Exscan(&slots, &localStart_, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+        MPI_Allreduce(&slots, &totalSlots_, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
         if (rank_ == 0) dofStart_ = localStart_ = 0;
 
         nsGlobalIdKernel<RealType><<<grid(), bs()>>>(n_, space_.isDof(), dofIndex_.data(), dofStart_, gid_.data());
@@ -1450,44 +1523,56 @@ private:
                                       thrust::raw_pointer_cast(values.data()), HYPRE_Int(count)});
     }
 
-    // Global ids of the DOFs that satisfy flag.
-    thrust::device_vector<HYPRE_BigInt> flaggedDofs(const uint8_t* flag)
+    // The pattern of the local slot matrix, shared by the three matrices: every pair
+    // of corners of a local element, and the diagonal of every slot (a node may touch
+    // no local element: a ghost, or an owned node whose elements are all halos, and
+    // its row still needs the diagonal). Sorted 64-bit (row, col) keys give the CSR
+    // with sorted rows directly, at 8 bytes per pair once instead of a COO triplet
+    // list per matrix.
+    void buildPattern()
     {
-        thrust::device_vector<HYPRE_BigInt> ids(numOwned_);
-        auto gids =
-            thrust::make_transform_iterator(thrust::counting_iterator<size_t>(0), NsGidOf<RealType>{gid_.data()});
-        size_t count = thrust::copy_if(thrust::device, gids, gids + n_, thrust::counting_iterator<size_t>(0),
-                                       ids.begin(), NsFlaggedDof<RealType>{space_.isDof(), flag}) -
-                       ids.begin();
-        ids.resize(count);
-        return ids;
+        trace("pattern");
+        const size_t pairs = 64 * hex_.count;
+        thrust::device_vector<unsigned long long> keys(pairs + n_);
+        if (hex_.count > 0)
+            nsPatternKeysKernel<KeyType>
+                <<<elemGrid(), bs()>>>(hex_, thrust::raw_pointer_cast(keys.data()));
+        cudaCheckError();
+        thrust::transform(thrust::device, thrust::counting_iterator<long long>(0),
+                          thrust::counting_iterator<long long>((long long)n_), keys.begin() + pairs, NsDiagonalKey{});
+        thrust::sort(thrust::device, keys.begin(), keys.end());
+        size_t nnz = thrust::unique(thrust::device, keys.begin(), keys.end()) - keys.begin();
+        csrCols_.resize(nnz);
+        csrRowPtr_.resize(n_ + 1);
+        thrust::transform(thrust::device, keys.begin(), keys.begin() + nnz, csrCols_.data(), NsPatternCol{});
+        auto rowKeys = thrust::make_transform_iterator(thrust::counting_iterator<long long>(0), NsRowKey{});
+        thrust::lower_bound(thrust::device, keys.begin(), keys.begin() + nnz, rowKeys, rowKeys + n_ + 1,
+                            csrRowPtr_.data());
     }
 
-    // Local triplets of scale * K (element matrices, then the diagonal slots
-    // c M if massCoefficient is given) with the removed slots dropped, reduced to
-    // P^T A P plus identity rows at the removed DOFs.
+    // scale * K (+ c M with massCoefficient) over the local slots, without the removed
+    // rows and columns, reduced to P^T A P; the removed DOFs get identity rows.
     HypreMatrix assembleReduced(const HypreMatrix& P, RealType scale, const uint8_t* removed,
                                 const RealType* massCoefficient, bool withLift)
     {
-        const size_t countK = 64 * hex_.count, countM = massCoefficient ? n_ : 0, count = countK + countM;
-        thrust::device_vector<HYPRE_BigInt> rows(std::max<size_t>(count, 1)), cols(std::max<size_t>(count, 1));
-        thrust::device_vector<RealType> values(std::max<size_t>(count, 1));
-        HYPRE_BigInt* r = thrust::raw_pointer_cast(rows.data());
-        HYPRE_BigInt* c = thrust::raw_pointer_cast(cols.data());
-        RealType* val   = thrust::raw_pointer_cast(values.data());
+        const size_t nnz = csrCols_.size();
+        Vector values(nnz);
+        thrust::fill(thrust::device, values.data(), values.data() + nnz, RealType(0));
         if (hex_.count > 0)
-            nsLaplacianTripletsKernel<KeyType, RealType><<<elemGrid(), bs()>>>(
-                hex_, x(), y(), z(), cview(area_), scale, localStart_, removed, cview(target_), view(lift_),
-                withLift ? comps_ : 0, r, c, val);
-        if (massCoefficient)
-            nsMassTripletsKernel<RealType><<<grid(), bs()>>>(n_, localStart_, massLocal_.data(), removed,
-                                                             *massCoefficient, r + countK, c + countK, val + countK);
+            nsLaplacianCsrKernel<KeyType, RealType><<<elemGrid(), bs()>>>(
+                hex_, x(), y(), z(), cview(area_), scale, removed, cview(target_), view(lift_), withLift ? comps_ : 0,
+                csrRowPtr_.data(), csrCols_.data(), values.data());
+        nsDiagonalKernel<RealType><<<grid(), bs()>>>(n_, space_.isDof(), removed,
+                                                     massCoefficient ? massLocal_.data() : nullptr,
+                                                     massCoefficient ? *massCoefficient : RealType(0),
+                                                     csrRowPtr_.data(), csrCols_.data(), values.data());
         cudaCheckError();
-        HypreMatrix local = hypreAssemble(MPI_COMM_WORLD, localStart_, localStart_ + (long long)n_, localStart_,
-                                          localStart_ + (long long)n_, HypreCoo{r, c, val, HYPRE_Int(count)});
-        auto ids          = flaggedDofs(removed);
-        return hypreAddIdentityRows(MPI_COMM_WORLD, hypreGalerkin(P, local), thrust::raw_pointer_cast(ids.data()),
-                                    HYPRE_Int(ids.size()));
+        HypreMatrix local = hypreBlockDiagonal(MPI_COMM_WORLD, localStart_, totalSlots_, HYPRE_Int(n_), HYPRE_Int(nnz),
+                                               csrRowPtr_.data(), csrCols_.data(), values.data());
+        trace("assembled");
+        HypreMatrix reduced = hypreGalerkin(P, local);
+        trace("P^T A P");
+        return reduced;
     }
 
     // a1 = M / dt + nu K and a2 = 3 M / (2 dt) + nu K, K the CVFEM Laplacian,
@@ -1501,12 +1586,14 @@ private:
         viscousBdf1_       = std::make_unique<HypreAmgPcgSolver>("MARS_VAMG");
         viscousBdf1_->setup(MPI_COMM_WORLD, assembleReduced(P, prm_.nu, fixed_.data(), &c1, true), prm_.tolerance,
                             prm_.maxIter);
+        trace("velocity AMG (BDF1)");
         for (int d = 0; d < comps_; ++d)
             space_.restrict(lift_[d]);
         if (!prm_.bdf2) return;
         viscousBdf2_ = std::make_unique<HypreAmgPcgSolver>("MARS_VAMG");
         viscousBdf2_->setup(MPI_COMM_WORLD, assembleReduced(P, prm_.nu, fixed_.data(), &c2, false),
                             prm_.tolerance, prm_.maxIter);
+        trace("velocity AMG (BDF2)");
     }
 
     // K over the DOFs with identity rows where p = 0; the operator of the flux correction.
@@ -1516,6 +1603,7 @@ private:
         pressure_     = std::make_unique<HypreAmgPcgSolver>("MARS_PAMG");
         pressure_->setup(MPI_COMM_WORLD, assembleReduced(P, RealType(1), pressureFixed_.data(), nullptr, false),
                          prm_.tolerance, prm_.maxIter);
+        trace("pressure AMG");
         checkPressureOperator();
     }
 
@@ -1606,6 +1694,8 @@ private:
     long long localStart_ = 0;
     cstone::DeviceVector<int> dofIndex_; // local DOF index of each DOF slot
     Vector gid_;                         // global DOF id of each slot's DOF
+    long long totalSlots_ = 0;           // node slots on all ranks
+    cstone::DeviceVector<int> csrRowPtr_, csrCols_; // pattern of the local slot matrices
 
     // Geometry and solvers
     Vector area_[3]; // sub-control face area vectors, 12 per local element

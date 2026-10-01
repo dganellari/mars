@@ -3,13 +3,15 @@
 // Hypre PCG preconditioned by one BoomerAMG V-cycle, for SPD matrices that stay constant in
 // time: the matrix and the AMG hierarchy are built once, and each solve only runs PCG.
 //
-// The matrix is built on the GPU from a few pieces: COO assembly of rows this rank owns,
-// products and transposes of distributed matrices, and identity rows. The Galerkin product
+// The matrix is built on the GPU from a few pieces: a device CSR block per rank, COO assembly
+// of small matrices, and products and transposes of distributed matrices. The Galerkin product
 // P^T A P turns a matrix over each rank's local node slots into the matrix over the DOFs.
 
 #include "mars_hypre_pcg_solver.hpp"
 #include <_hypre_parcsr_mv.h>
+#include <thrust/copy.h>
 #include <thrust/device_vector.h>
+#include <thrust/execution_policy.h>
 #include <cstdio>
 #include <cstdlib>
 #include <string>
@@ -149,19 +151,26 @@ inline HypreMatrix hypreGalerkin(const HypreMatrix& P, const HypreMatrix& A)
     return hypreMultiply(hypreTranspose(P), hypreMultiply(A, P));
 }
 
-// A + I on the given rows, global ids owned by this rank. The rows must be empty in A.
-inline HypreMatrix hypreAddIdentityRows(MPI_Comm comm, HypreMatrix A, const HYPRE_BigInt* rows, HYPRE_Int count)
+// A block of a block-diagonal matrix: this rank's rows [firstRow, firstRow + rows) with
+// columns in the same range only, from a device CSR (local column ids). Unlike
+// hypreAssemble it needs no COO triplets and no IJ stack: the CSR is copied once.
+inline HypreMatrix hypreBlockDiagonal(MPI_Comm comm, HYPRE_BigInt firstRow, HYPRE_BigInt globalRows, HYPRE_Int rows,
+                                      HYPRE_Int nnz, const int* rowPtr, const int* cols, const HYPRE_Complex* values)
 {
-    long long total = count;
-    MPI_Allreduce(MPI_IN_PLACE, &total, 1, MPI_LONG_LONG, MPI_SUM, comm);
-    if (total == 0) return A;
-    thrust::device_vector<HYPRE_Complex> ones(count, HYPRE_Complex(1));
-    HypreMatrix I = hypreAssemble(comm, A.firstRow(), A.endRow(), A.firstRow(), A.endRow(),
-                                  HypreCoo{rows, rows, thrust::raw_pointer_cast(ones.data()), count});
-    hypre_ParCSRMatrix* sum = nullptr;
-    hypre_ParCSRMatrixAdd(1.0, A.get(), 1.0, I.get(), &sum);
-    hypreCheck(comm, sum != nullptr, "adding identity rows failed");
-    return HypreMatrix(sum);
+    hypreInitializeOnce();
+    HYPRE_BigInt starts[2] = {firstRow, firstRow + rows};
+    hypre_ParCSRMatrix* A  = hypre_ParCSRMatrixCreate(comm, globalRows, globalRows, starts, starts, 0, nnz, 0);
+    hypre_ParCSRMatrixInitialize_v2(A, HYPRE_MEMORY_DEVICE);
+    hypre_CSRMatrix* diag = hypre_ParCSRMatrixDiag(A);
+    thrust::copy(thrust::device, rowPtr, rowPtr + rows + 1, thrust::device_pointer_cast(hypre_CSRMatrixI(diag)));
+    if (nnz > 0)
+    {
+        thrust::copy(thrust::device, cols, cols + nnz, thrust::device_pointer_cast(hypre_CSRMatrixJ(diag)));
+        thrust::copy(thrust::device, values, values + nnz, thrust::device_pointer_cast(hypre_CSRMatrixData(diag)));
+    }
+    hypre_ParCSRMatrixSetNumNonzeros(A);
+    hypreCheck(comm, HYPRE_GetError() == 0, "block-diagonal matrix setup failed");
+    return HypreMatrix(A);
 }
 
 class HypreAmgPcgSolver
