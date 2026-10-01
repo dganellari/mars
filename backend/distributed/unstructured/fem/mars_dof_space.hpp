@@ -189,6 +189,17 @@ public:
     long long numDofs() const { return numDofs_; }
     const uint8_t* isDof() const { return isDof_.data(); }
 
+    // The exchanges of prolong and restrict on this rank since the last reset: how many,
+    // their time from pack to the end of the MPI wait, and the MPI part of it.
+    struct ExchangeStats
+    {
+        long count  = 0;
+        double ms   = 0;
+        double mpiMs = 0;
+    };
+    const ExchangeStats& exchangeStats() const { return stats_; }
+    void resetExchangeStats() { stats_ = {}; }
+
 private:
     int grid() const { return std::max(1, int((n_ + blockSize_ - 1) / blockSize_)); }
 
@@ -394,10 +405,12 @@ private:
         if (recvBuf_.size() < unpackTotal * k) recvBuf_.resize(unpackTotal * k);
 
         // The sync also finishes the previous unpack before its receive buffer is reused.
+        double start = MPI_Wtime();
         if (packTotal > 0)
             dofPackKernel<RealType><<<int((packTotal + 255) / 256), 256>>>(packIds.data(), packTotal, f,
                                                                            sendBuf_.data());
         cudaDeviceSynchronize();
+        double packed = MPI_Wtime();
 
         auto type     = mpiDatatype<RealType>();
         const int tag = reverse ? 0x4e51 : 0x4e50;
@@ -420,6 +433,10 @@ private:
                       &requests.back());
         }
         MPI_Waitall(int(requests.size()), requests.data(), MPI_STATUSES_IGNORE);
+        double done = MPI_Wtime();
+        stats_.count += 1;
+        stats_.ms += 1e3 * (done - start);
+        stats_.mpiMs += 1e3 * (done - packed);
 
         if (unpackTotal > 0)
             dofUnpackKernel<RealType><<<int((unpackTotal + 255) / 256), 256>>>(unpackIds.data(), unpackTotal, f,
@@ -436,6 +453,7 @@ private:
     std::vector<int> peers_, sendOffsets_, recvOffsets_;
     cstone::DeviceVector<int> sendDof_, recvCopy_;   // per peer: DOF slots sent, copies received
     mutable Vector sendBuf_, recvBuf_;
+    mutable ExchangeStats stats_;
 };
 
 } // namespace fem

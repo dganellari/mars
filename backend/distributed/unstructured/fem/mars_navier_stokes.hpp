@@ -1140,16 +1140,22 @@ public:
     const Space& space() const { return space_; }
     const Box<RealType>& box() const { return box_; }
     const Timing& timing() const { return timing_; }
-    void resetTiming() { timing_ = {}; }
+    void resetTiming()
+    {
+        timing_ = {};
+        space_.resetExchangeStats();
+    }
 
     // Stage times of the slowest rank over the steps since the last resetTiming (collective).
     void printTiming(long steps) const
     {
         steps         = std::max(steps, 1L);
-        const auto& t = timing_;
-        double stages = t.predictor + t.viscous + t.pressure + t.corrector;
-        double local[6] = {t.predictor, t.viscous, t.pressure, t.corrector, t.hypre, stages - t.hypre}, slowest[6];
-        MPI_Allreduce(local, slowest, 6, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+        const auto& t  = timing_;
+        const auto& ex = space_.exchangeStats();
+        double stages  = t.predictor + t.viscous + t.pressure + t.corrector;
+        double local[8] = {t.predictor, t.viscous, t.pressure, t.corrector, t.hypre, stages - t.hypre, ex.ms, ex.mpiMs};
+        double slowest[8];
+        MPI_Allreduce(local, slowest, 8, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
         if (rank_ != 0) return;
         int ranks = 1;
         MPI_Comm_size(MPI_COMM_WORLD, &ranks);
@@ -1163,7 +1169,9 @@ public:
                   << " ms/pressure_it="
                   << (timing_.pressureIterations > 0 ? slowest[2] / timing_.pressureIterations : 0.0)
                   << " velocity_it/step=" << double(timing_.velocityIterations) / steps
-                  << " | hypre=" << slowest[4] / steps << " mars=" << slowest[5] / steps << "\n"
+                  << " | hypre=" << slowest[4] / steps << " mars=" << slowest[5] / steps
+                  << " | exchanges/step=" << double(ex.count) / steps << " exchange=" << slowest[6] / steps
+                  << " mpi=" << slowest[7] / steps << "\n"
                   << std::defaultfloat;
     }
     int velocityIterations(int component) const { return velocityIters_[component]; }
