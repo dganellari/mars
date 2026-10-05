@@ -1,4 +1,4 @@
-Copyright (c) 2015, Institute of Computational Science USI Università della Svizzera Italiana, ETH-Z Eidgenössische Technische Hochschule Zürich
+Copyright (c) 2015, ETH-Z Eidgenössische Technische Hochschule Zürich, Institute of Computational Science USI Università della Svizzera Italiana
 
 Redistribution and use in source and binary forms, with or without modification, are permitted provided that the following conditions are met:
 

@@ -248,7 +248,7 @@ Ganellari Daniel, Zulian Patrick and Ramelli Dylan.
 The software is released with NO WARRANTY and it is licensed under [BSD 3-Clause license](https://opensource.org/licenses/BSD-3-Clause)
 
 # Copyright
-Copyright (c) 2015 Institute of Computational Science - USI Università della Svizzera Italiana, ETH-Z Eidgenössische Technische Hochschule Zürich
+Copyright (c) 2015 ETH-Z Eidgenössische Technische Hochschule Zürich, Institute of Computational Science - USI Università della Svizzera Italiana
 
 ## Cite MARS ##
 
