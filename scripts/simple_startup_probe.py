@@ -21,7 +21,9 @@ from simple_snapshot_compare import (COMPLETION, HEADER, EvidenceError, controls
 STEPS = 20
 SCHEMA = 'mars-simple-startup-v1'
 PREPARATION_ERRORS = {'saved_case_format', 'saved_deck_identity', 'saved_control_identity',
-                      'saved_mesh_path', 'reference_length', 'modified_controls', 'launcher_exit'}
+                      'saved_mesh_path', 'reference_length', 'modified_controls', 'launcher_exit',
+                      'runtime_library_probe', 'runtime_libraries_unresolved',
+                      'runtime_library_paths', 'runtime_library_unreadable', 'reference_outputs'}
 
 
 def read_json(path):
@@ -104,18 +106,28 @@ def solver_arguments(pair, solver):
 
 
 def runtime_libraries(executable):
-    result = subprocess.run(['ldd', str(executable)], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    try:
+        result = subprocess.run(['ldd', str(executable)], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    except OSError:
+        raise EvidenceError('runtime_library_probe')
     text = result.stdout.decode('utf-8', errors='replace')
-    require(result.returncode == 0 and 'not found' not in text)
+    require('not found' not in text, 'runtime_libraries_unresolved')
+    require(result.returncode == 0, 'runtime_library_probe')
     paths = re.findall(r'(?:=>\s+|^\s*)(/\S+)\s+\(', text, re.M)
-    require(paths)
-    return dict((p, digest(Path(p))) for p in paths)
+    require(paths, 'runtime_library_paths')
+    try:
+        return dict((p, digest(Path(p))) for p in paths)
+    except OSError:
+        raise EvidenceError('runtime_library_unreadable')
 
 
 def run_files(directory, solver):
     files = [directory / 'run.log', directory / 'run.exit']
     if solver == 'openaccel':
-        files += [directory / 'input.i'] + result_files(directory)
+        try:
+            files += [directory / 'input.i'] + result_files(directory)
+        except Exception:
+            raise EvidenceError('reference_outputs')
     else:
         files += sorted(directory.glob('flow-*.csv')) + sorted(directory.glob('flow-*.json'))
     require(all(p.is_file() for p in files))
@@ -163,12 +175,70 @@ def launch(pair, solver, executable, ranks, launcher):
     code = code if code >= 0 else 128 - code
     (directory / 'run.exit').write_text(str(code) + '\n')
     record.update(status='finished', exit_code=code)
+    if code not in ((0,) if solver == 'openaccel' else (0, 2)):
+        # A failed process may produce no Exodus files. Preserve its exit first.
+        record.update(status='failed', files={name: digest(directory / name) for name in ('run.log', 'run.exit')})
+        write_json(directory / 'launch.json', record)
+        raise EvidenceError('launcher_exit')
     require(digest(executable) == record['executable_sha256'])
     require(runtime_libraries(executable) == record['libraries'])
     pair_inputs(pair)
     record['files'] = run_files(directory, solver)
     write_json(directory / 'launch.json', record)
     require(code in ((0,) if solver == 'openaccel' else (0, 2)), 'launcher_exit')
+
+
+def inspect_launch(pair, solver, executable):
+    """Inspect a saved attempt without launching or changing its solver files."""
+    directory = pair / ('reference' if solver == 'openaccel' else 'mars')
+    result = dict(schema='mars-simple-startup-inspection-v1',
+                  launch_start_present=(directory / 'launch-start.json').is_file(),
+                  log_present=(directory / 'run.log').is_file(),
+                  exit_present=(directory / 'run.exit').is_file(),
+                  launch_record_present=(directory / 'launch.json').is_file(),
+                  process_exit_code=None, input_check='not_checked',
+                  runtime_check='not_checked', runtime_check_scope='current_environment',
+                  outputs_check='not_checked')
+    def check(label, function):
+        try:
+            function()
+            result[label] = 'passed'
+        except Exception as error:
+            result[label] = (str(error) if isinstance(error, EvidenceError)
+                             and str(error) in PREPARATION_ERRORS else 'rejected')
+            result[label + '_exception'] = next((name for kind, name in (
+                (ImportError, 'import_error'), (FileNotFoundError, 'file_missing'),
+                (PermissionError, 'permission_denied'), (OSError, 'os_error'),
+                (ValueError, 'value_error'), (KeyError, 'key_error'), (TypeError, 'type_error'))
+                if isinstance(error, kind)), 'other')
+    if result['exit_present']:
+        def exit_code():
+            raw = (directory / 'run.exit').read_text().strip()
+            require(re.fullmatch(r'[0-9]{1,3}', raw) and 0 <= int(raw) <= 255)
+            result['process_exit_code'] = int(raw)
+        check('exit_check', exit_code)
+    if result['log_present']:
+        from simple_public_diagnostics import DiagnosticState
+        def log_flags():
+            state = DiagnosticState()
+            result['library_load_error_seen'] = False
+            with (directory / 'run.log').open(errors='replace') as stream:
+                for line in stream:
+                    state.feed(line)
+                    result['library_load_error_seen'] |= 'error while loading shared libraries:' in line
+            diagnostics = state.result(str(result['process_exit_code']) if result['process_exit_code'] is not None else '')
+            for key in ('mpi_abort_seen', 'scheduler_time_limit_seen', 'scheduler_out_of_memory_seen',
+                        'scheduler_signal_seen', 'application_error_seen'):
+                result[key] = diagnostics[key]
+        check('log_check', log_flags)
+    check('input_check', lambda: pair_inputs(pair))
+    result['executable_available'] = executable.is_file() and os.access(str(executable), os.X_OK)
+    if result['executable_available']:
+        check('runtime_check', lambda: runtime_libraries(executable))
+    if result['exit_present']:
+        check('outputs_check', lambda: run_files(directory, solver))
+    # Absence of an exit file is not proof that no job started or is still running.
+    return result
 
 
 def verified_launch(pair, solver):
@@ -278,6 +348,11 @@ def main(argv=None):
     check = sub.add_parser('compare')
     check.add_argument('--pair', type=Path, required=True)
     check.add_argument('--output', type=Path, required=True)
+    inspect = sub.add_parser('inspect')
+    inspect.add_argument('--pair', type=Path, required=True)
+    inspect.add_argument('--solver', choices=('openaccel', 'mars'), required=True)
+    inspect.add_argument('--executable', type=Path, required=True)
+    inspect.add_argument('--output', type=Path, required=True)
     args = parser.parse_args(argv)
     os.umask(0o077)
     try:
@@ -302,6 +377,12 @@ def main(argv=None):
                 stream.write('\n')
             print('Startup comparison written. Share only the public JSON.')
             return 0 if public['comparison_status'] == 'completed' else 1
+        elif args.action == 'inspect':
+            with args.output.open('x') as stream:
+                result = inspect_launch(args.pair.resolve(), args.solver, args.executable.resolve())
+                json.dump(result, stream, indent=2, sort_keys=True, allow_nan=False)
+                stream.write('\n')
+            print('Startup inspection written. No solver launched; share only the public JSON.')
         else:
             parser.error('subcommand required')
     except Exception as error:

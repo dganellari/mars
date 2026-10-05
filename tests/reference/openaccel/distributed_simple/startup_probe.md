@@ -114,6 +114,37 @@ exit "$status"
 
 ## Local checks
 
+### Inspect a failed capture without launching again
+
+The original wrapper could hide a nonzero launcher exit behind a second error
+when the failed solver had not produced an Exodus file. It now preserves the
+failure record before looking for successful output. Library preflight failures
+also have separate fixed labels.
+
+For an existing attempt, `inspect` reads local metadata and sanitizes the log.
+It launches no solver and does not overwrite the attempt. Its library check
+describes the current shell environment; it cannot reconstruct an unrecorded
+earlier environment. Missing exit metadata does not prove that no job started.
+Only the new public JSON may be shared.
+
+```bash
+(
+set -euo pipefail
+root=/capstor/scratch/cscs/gandanie/git
+pair=/capstor/scratch/cscs/gandanie/simple-startup-lh05AV/pair
+git -C "$root/mars-v010-check" pull --ff-only
+summary=$(mktemp -d /capstor/scratch/cscs/gandanie/simple-startup-check-XXXXXX)/public.json
+python3 "$root/mars-v010-check/scripts/simple_startup_probe.py" inspect \
+  --pair "$pair" --solver openaccel \
+  --executable "$root/OpenAccel-reference-updates-IxgJIp/source/build/openaccel-3D.exe" \
+  --output "$summary"
+cat "$summary"
+printf 'Share only: %s\n' "$summary"
+)
+```
+
+### Tests
+
 Synthetic tests cover an exact history, an injected pressure mismatch at step 3,
 missing snapshots, altered input/run identities, launch failure, nonfinite fields,
 missing nodes and preserved controls. The existing field reader tests cover

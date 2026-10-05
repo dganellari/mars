@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import subprocess
 import sys
 import unittest
 from unittest.mock import patch
@@ -201,6 +202,57 @@ class StartupTests(unittest.TestCase):
         self.assertEqual(record['exit_code'], 0)
         self.assertNotIn('MARS_OPENACCEL_EXPORT_DIR', record['environment'])
         self.assertIn('synthetic completion', (pair / 'reference/run.log').read_text())
+
+    def test_failed_process_without_results_preserves_actual_exit(self):
+        pair = self.fixture.root / 'failed-launch'
+        probe.prepare(self.fixture.case, self.fixture.reference, pair)
+        exe = self.fixture.root / 'failed-solver.py'
+        exe.write_text("import sys\nprint('private-path: error while loading shared libraries: private-lib')\nsys.exit(127)\n")
+        exe.chmod(0o700)
+        with patch.object(probe, 'runtime_libraries', return_value={'test': 'a'*64}):
+            with self.assertRaisesRegex(probe.EvidenceError, '^launcher_exit$'):
+                probe.launch(pair, 'openaccel', exe, 1, [sys.executable])
+            record = probe.read_json(pair / 'reference/launch.json')
+            self.assertEqual(record['status'], 'failed')
+            self.assertEqual(record['exit_code'], 127)
+            result = probe.inspect_launch(pair, 'openaccel', exe)
+        self.assertEqual(result['process_exit_code'], 127)
+        self.assertTrue(result['library_load_error_seen'])
+        self.assertEqual(result['outputs_check'], 'reference_outputs')
+        self.assertNotIn('private-path', json.dumps(result))
+        self.assertNotIn('private-lib', json.dumps(result))
+
+    def test_inspection_before_launch_is_read_only(self):
+        pair = self.fixture.root / 'before-launch'
+        probe.prepare(self.fixture.case, self.fixture.reference, pair)
+        before = {str(p): probe.digest(p) for p in pair.rglob('*') if p.is_file()}
+        exe = self.fixture.root / 'fake-executable'
+        exe.chmod(0o700)
+        with patch.object(probe, 'runtime_libraries', side_effect=probe.EvidenceError('runtime_libraries_unresolved')):
+            result = probe.inspect_launch(pair, 'openaccel', exe)
+        self.assertFalse(result['launch_start_present'])
+        self.assertFalse(result['log_present'])
+        self.assertIsNone(result['process_exit_code'])
+        self.assertEqual(result['input_check'], 'passed')
+        self.assertEqual(result['runtime_check'], 'runtime_libraries_unresolved')
+        self.assertEqual(before, {str(p): probe.digest(p) for p in pair.rglob('*') if p.is_file()})
+
+    def test_library_probe_labels_hide_paths(self):
+        for output, code, label in (
+                (b'private-lib => not found\n', 0, 'runtime_libraries_unresolved'),
+                (b'private-executable: failure\n', 1, 'runtime_library_probe'),
+                (b'linux-vdso.so.1 (0x0)\n', 0, 'runtime_library_paths'),
+                (b'libfoo => /nonexistent/private-library (0x0)\n', 0, 'runtime_library_unreadable')):
+            with self.subTest(label=label), patch.object(probe.subprocess, 'run', return_value=subprocess.CompletedProcess([], code, output)):
+                with self.assertRaisesRegex(probe.EvidenceError, '^' + label + '$'):
+                    probe.runtime_libraries(self.fixture.root / 'fake-executable')
+
+    def test_library_probe_hashes_resolved_targets(self):
+        library = self.fixture.root / 'library.so'
+        library.write_bytes(b'synthetic library')
+        output = ('libfoo => ' + str(library) + ' (0x0)\n').encode()
+        with patch.object(probe.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, output)):
+            self.assertEqual(probe.runtime_libraries(library), {str(library): probe.digest(library)})
 
 
 if __name__ == '__main__':
