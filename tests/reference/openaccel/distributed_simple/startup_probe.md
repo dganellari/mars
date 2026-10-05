@@ -136,6 +136,13 @@ names and numerical values are never exported. Categories are diagnostic hints,
 not proven causes; an empty list does not exclude an unrecognized error.
 Stages mean that at least one rank printed the marker, not that all ranks passed
 that stage. Reinspect the saved attempt below; do not launch another pair yet.
+The inspector also reports standard C++ exception classes and a small allowlist
+of public source filenames when they appear in the error. Unknown classes become
+`other`; private filenames, paths, line numbers and exception text remain local.
+The `mesh_ready` marker is at the end of `mesh::read`, before `mesh::setup` registers
+geometric fields. Later messages can be buffered, so the marker alone does not
+prove the failing call. Field-registration and master-element signatures provide
+more specific evidence when available.
 
 ```bash
 (

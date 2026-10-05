@@ -164,7 +164,21 @@ class ReferenceLogState:
         ('input_validation', r'invalid boundary part|invalid side[12] part|Mesh dimension mismatch|not provided in the yaml input file'),
         ('assertion', r'Assertion .* failed|assertion .* failed|Requirement\('),
         ('linear_solver', r'Belos::|Tpetra::|Amesos2::|Ifpack2::|MueLu::|HYPRE ERROR'),
+        ('stk', r'stk::|STK ERROR|STK_Throw|ReportHandler'),
+        ('field_registration', r'FieldRepository|MetaData::declare_field|FieldBase|put_field_on_mesh|field restriction|incompatible.*(?:field|restriction)|(?:field|restriction).*incompatible'),
+        ('master_element', r'MasterElementFactory|MasterElementRepo|get_surface_master_element|get_volume_master_element|theElem != nullptr'),
+        ('container_lookup', r'\bmap::at\b|\bunordered_map::at\b|_Map_base::at|vector::_M_range_check'),
+        ('boundary_configuration', r'fieldBroker:|initialCondition::|option for (?:inlet|outlet|opening)|flow_direction node|mass_and_momentum node|Invalid option for'),
+        ('material_configuration', r'material .* does not exist'),
+        ('filesystem', r'filesystem error:'),
     )
+    exception_classes = frozenset(('std::runtime_error', 'std::logic_error', 'std::invalid_argument',
+        'std::out_of_range', 'std::length_error', 'std::bad_alloc', 'std::bad_array_new_length',
+        'std::system_error', 'std::ios_base::failure', 'std::filesystem::filesystem_error',
+        'std::domain_error', 'std::range_error', 'std::overflow_error', 'std::underflow_error',
+        'std::bad_function_call', 'std::bad_cast', 'std::bad_typeid'))
+    source_signatures = ('meshGeometry.cpp', 'meshIO.cpp', 'simulationIO.cpp', 'fieldBroker.cpp',
+                         'MasterElementFactory.C', 'FieldRepository.cpp', 'MetaData.cpp', 'FieldBase.cpp')
 
     def __init__(self):
         self.seen_stages = set()
@@ -173,6 +187,8 @@ class ReferenceLogState:
         self.what_seen = False
         self.abort_seen = False
         self.in_exception = False
+        self.seen_exception_classes = set()
+        self.seen_source_signatures = set()
 
     def feed(self, line):
         line = re.sub(r'^\[[0-9]+\]\s*', '', line.strip())
@@ -186,11 +202,18 @@ class ReferenceLogState:
         self.exception_seen |= exception
         self.what_seen |= what
         self.in_exception |= exception or what
+        if exception:
+            match = re.search(r"(?:instance of ['\"]([^'\"]+)['\"]|exception of type ([A-Za-z0-9_:<>]+))", line)
+            name = next((x for x in match.groups() if x), '').rstrip(':') if match else ''
+            self.seen_exception_classes.add(name if name in self.exception_classes else 'other')
         self.abort_seen |= bool(re.search(r'\b(?:SIGABRT|Aborted)\b', line))
         # Do not classify routine mesh/library banners as failures. Multiline what()
         # messages stay local; only matches to these fixed categories leave the log.
         error_line = bool(re.match(r'^(?:ERROR\b|Error\b|IOSS ERROR\b|Kokkos.*(?:Error|error)|Assertion\b)', line))
         if (self.in_exception or error_line) and not progress:
+            for name in self.source_signatures:
+                if re.search(r'(?<![A-Za-z0-9_])' + re.escape(name) + r'(?![A-Za-z0-9_.])', line):
+                    self.seen_source_signatures.add(name)
             for label, pattern in self.categories:
                 if re.search(pattern, line, re.I):
                     self.seen_categories.add(label)
@@ -202,6 +225,8 @@ class ReferenceLogState:
                     reference_cpp_termination_seen=self.exception_seen,
                     reference_exception_message_seen=self.what_seen,
                     reference_abort_seen=self.abort_seen,
+                    reference_exception_classes=sorted(self.seen_exception_classes),
+                    reference_source_signatures=sorted(self.seen_source_signatures),
                     reference_error_categories=sorted(self.seen_categories))
 
 

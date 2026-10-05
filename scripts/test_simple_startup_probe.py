@@ -85,6 +85,46 @@ Iter = 12
         self.assertTrue(result['reference_cpp_termination_seen'])
         self.assertEqual(result['reference_error_categories'], [])
         self.assertNotIn('456.78', json.dumps(result))
+        self.assertEqual(result['reference_exception_classes'], ['other'])
+
+    def test_setup_exception_classes_and_source_signatures_are_allowlisted(self):
+        result = self.scan("""Finished reading mesh ..
+terminate called after throwing an instance of 'std::runtime_error'
+what(): stk::mesh::impl::FieldRepository PRIVATE field restriction incompatible
+  at /PRIVATE/FieldRepository.cpp:456
+  at /PRIVATE/meshGeometry.cpp:123
+  at /PRIVATE/PRIVATE.cpp:789
+""")
+        self.assertEqual(result['reference_exception_classes'], ['std::runtime_error'])
+        self.assertEqual(result['reference_error_categories'], ['field_registration', 'stk'])
+        self.assertEqual(result['reference_source_signatures'], ['FieldRepository.cpp', 'meshGeometry.cpp'])
+        self.assertNotIn('456', json.dumps(result))
+
+    def test_out_of_range_is_not_misreported_as_field_registration(self):
+        result = self.scan("terminate called after throwing an instance of 'std::out_of_range'\nwhat(): map::at")
+        self.assertEqual(result['reference_exception_classes'], ['std::out_of_range'])
+        self.assertEqual(result['reference_error_categories'], ['container_lookup'])
+
+    def test_master_element_failure_hides_topology_and_paths(self):
+        result = self.scan("""terminate called after throwing an instance of 'std::logic_error'
+what(): Expr 'theElem != nullptr' eval'd to false
+location /PRIVATE/MasterElementFactory.C:179
+PRIVATE topology 456
+""")
+        self.assertEqual(result['reference_error_categories'], ['master_element'])
+        self.assertEqual(result['reference_source_signatures'], ['MasterElementFactory.C'])
+        self.assertNotIn('456', json.dumps(result))
+
+    def test_signature_like_private_names_do_not_escape(self):
+        result = self.scan("""terminate called after throwing an instance of 'PRIVATE::runtime_error'
+what(): PRIVATE_FieldRepository.cpp.tmp
+""")
+        self.assertEqual(result['reference_exception_classes'], ['other'])
+        self.assertEqual(result['reference_source_signatures'], [])
+
+    def test_libcpp_exception_class(self):
+        result = self.scan('libc++abi: terminating due to uncaught exception of type std::length_error: PRIVATE')
+        self.assertEqual(result['reference_exception_classes'], ['std::length_error'])
 
     def test_cpp_runtime_assertion_and_mpi_interleaving(self):
         result = self.scan("""[2] Reading mesh ..
