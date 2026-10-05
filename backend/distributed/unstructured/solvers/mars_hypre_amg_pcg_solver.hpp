@@ -37,6 +37,12 @@ inline bool hypreEnvFlag(const char* name, bool fallback)
     return option ? std::string(option) == "1" : fallback;
 }
 
+inline size_t hypreEnvMiB(const char* name, size_t fallback)
+{
+    const char* option = std::getenv(name);
+    return (option ? size_t(std::strtoull(option, nullptr, 10)) : fallback) << 20;
+}
+
 // Hypre's own GPU kernels by default:
 // - SpMV: the vendor path returned wrong products intermittently with Hypre 2.33 on the SIMPLE duct.
 // - SpGEMM: cuSPARSE's default SpGEMM stopped the setup with "insufficient resources" on 16 and
@@ -44,6 +50,7 @@ inline bool hypreEnvFlag(const char* name, bool fallback)
 // - GPU-aware MPI: without it Hypre copies every halo exchange through host memory, on every
 //   matvec of every AMG level. MARS already passes device buffers to MPI in its own halos.
 // MARS_HYPRE_SPMV_VENDOR=1, MARS_HYPRE_SPGEMM_VENDOR=1 and MARS_HYPRE_GPU_AWARE=0 switch back.
+// MARS_HYPRE_POOL_MAX_MIB and MARS_HYPRE_POOL_CACHE_MIB set the device pool limits below.
 inline void hypreInitializeOnce()
 {
     static HypreInitGuard guard;
@@ -57,12 +64,36 @@ inline void hypreInitializeOnce()
     HYPRE_SetSpMVUseVendor(spmvVendor ? 1 : 0);
     HYPRE_SetSpGemmUseVendor(spgemmVendor ? 1 : 0);
     HYPRE_SetGpuAwareMPI(gpuAwareMpi ? 1 : 0);
+
+    // Hypre's CUB device pool (when Hypre is built with it) by default rounds every allocation
+    // up to the next power of 8 and keeps every freed block, so setup memory never goes back to
+    // the GPU; TGV with 8M nodes per GPU ran out of memory on 8 GPUs. Pool only blocks up to
+    // 128 MiB, rounded to a power of 2, and cache at most 2 GiB; larger arrays are allocated
+    // exactly and freed at once. This must come before Hypre's first device allocation.
+    const size_t poolMax   = hypreEnvMiB("MARS_HYPRE_POOL_MAX_MIB", 128);
+    const size_t poolCache = hypreEnvMiB("MARS_HYPRE_POOL_CACHE_MIB", 2048);
+    int maxBin             = 0;
+    while ((size_t(2) << maxBin) <= poolMax)
+        ++maxBin;
+    HYPRE_SetGPUMemoryPoolSize(2, 1, maxBin, poolCache);
+    char memory[96];
+#if defined(HYPRE_USING_UMPIRE_DEVICE)
+    std::snprintf(memory, sizeof(memory), "Umpire pool");
+#elif defined(HYPRE_USING_CUDA) && defined(HYPRE_USING_DEVICE_POOL)
+    std::snprintf(memory, sizeof(memory), "CUB pool, blocks up to %zu MiB, at most %zu MiB cached",
+                  (size_t(1) << maxBin) >> 20, poolCache >> 20);
+#elif defined(HYPRE_USING_CUDA) && defined(HYPRE_USING_DEVICE_MALLOC_ASYNC)
+    std::snprintf(memory, sizeof(memory), "cudaMallocAsync");
+#else
+    std::snprintf(memory, sizeof(memory), "no pool");
+#endif
+
     int rank = 0;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     if (rank == 0)
-        std::printf("Hypre: SpMV %s, SpGEMM %s, GPU-aware MPI %s (build default %s)\n",
+        std::printf("Hypre: SpMV %s, SpGEMM %s, GPU-aware MPI %s (build default %s), device memory: %s\n",
                     spmvVendor ? "vendor" : "hypre", spgemmVendor ? "vendor" : "hypre", gpuAwareMpi ? "on" : "off",
-                    buildGpuAware ? "on" : "off");
+                    buildGpuAware ? "on" : "off", memory);
 }
 
 // Collective: stops every rank if one rank fails.
