@@ -144,6 +144,14 @@ geometric fields. Later messages can be buffered, so the marker alone does not
 prove the failing call. Field-registration and master-element signatures provide
 more specific evidence when available.
 
+For an unclassified exception, `--reference-source` builds a message index from
+Git revision `0d69041ba1afda63e9e4328d9e0d9834bba37756`, restricted to public
+OpenAccel/Nalu source directories. It never reads untracked files or the current
+working-tree contents. Literal error fragments are matched locally; the public
+JSON contains only candidate source paths and line numbers from that revision.
+These are possible message origins, not a stack trace or a proven cause. Dynamic
+messages and diagnostics from separately installed libraries may not match.
+
 ```bash
 (
 set -euo pipefail
@@ -154,6 +162,7 @@ summary=$(mktemp -d /capstor/scratch/cscs/gandanie/simple-startup-check-XXXXXX)/
 python3 "$root/mars-v010-check/scripts/simple_startup_probe.py" inspect \
   --pair "$pair" --solver openaccel \
   --executable "$root/OpenAccel-reference-updates-IxgJIp/source/build/openaccel-3D.exe" \
+  --reference-source "$root/OpenAccel" \
   --output "$summary"
 cat "$summary"
 printf 'Share only: %s\n' "$summary"

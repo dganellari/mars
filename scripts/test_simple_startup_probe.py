@@ -376,6 +376,29 @@ class StartupTests(unittest.TestCase):
         self.assertNotIn('PRIVATE', self.public.read_text())
         self.assertEqual(before, {str(p): probe.digest(p) for p in self.pair.rglob('*') if p.is_file()})
 
+    def test_inspection_matches_public_source_without_sharing_error_text(self):
+        reference = self.pair / 'reference'
+        (reference / 'run.log').write_text("terminate called after throwing an instance of 'std::runtime_error'\nwhat(): Error in the expression provided at boundary PRIVATE\n")
+        catalog = {tuple('error in the expression provided at boundary'.split()): {'src/model/model.cpp:62'}}
+        with patch.object(probe, 'read_catalog', return_value=catalog), contextlib.redirect_stdout(io.StringIO()):
+            code = probe.main(['inspect', '--pair', str(self.pair), '--solver', 'openaccel',
+                               '--executable', str(self.fixture.root / 'fake-executable'),
+                               '--reference-source', '/synthetic/source', '--output', str(self.public)])
+        result = probe.read_json(self.public)
+        self.assertEqual(code, 0)
+        self.assertEqual(result['reference_catalog_check'], 'passed')
+        self.assertEqual(result['reference_catalog_revision'], probe.REFERENCE_REVISION)
+        self.assertEqual(result['reference_message_candidates'], ['src/model/model.cpp:62'])
+        self.assertNotIn('PRIVATE', self.public.read_text())
+        self.assertNotIn('/synthetic/source', self.public.read_text())
+
+    def test_unavailable_source_does_not_export_process_error(self):
+        with patch.object(probe, 'read_catalog', side_effect=OSError('PRIVATE')):
+            result = probe.inspect_launch(self.pair, 'openaccel', self.fixture.root / 'fake-executable', Path('/synthetic/source'))
+        self.assertEqual(result['reference_catalog_check'], 'rejected')
+        self.assertNotIn('reference_message_candidates', result)
+        self.assertNotIn('PRIVATE', json.dumps(result))
+
     def test_library_probe_labels_hide_paths(self):
         for output, code, label in (
                 (b'private-lib => not found\n', 0, 'runtime_libraries_unresolved'),
