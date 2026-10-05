@@ -134,6 +134,11 @@ a nonlinear convergence test or a scaling measurement. The existing comparison
 script calls its detailed output a private report, but all data in this recipe
 are synthetic public data and the full report may be shared.
 
+These deliberately short MARS runs use `--kill-on-bad-exit=0` so every rank can
+finish and return the expected exit code 2. With `--kill-on-bad-exit=1`, Slurm
+can terminate a remaining rank during shutdown and return 143 instead. The
+exit-status and field checks below still reject unsuccessful comparisons.
+
 ```bash
 (
 set -euo pipefail
@@ -167,7 +172,7 @@ for case in straight-average straight-static warped-average warped-static; do
     mkdir "$out"
     set +e
     srun --account=csstaff --time=00:05:00 --nodes=1 --ntasks-per-node="$np" \
-      --export=ALL,MPICH_GPU_SUPPORT_ENABLED=1 --kill-on-bad-exit=1 \
+      --export=ALL,MPICH_GPU_SUPPORT_ENABLED=1 --kill-on-bad-exit=0 \
       ~/affinity/bind_numa.sh "$exe" "${args[@]}" \
       --output-prefix "$out/channel" --iterations 20 --report-every 10 \
       --field-output gathered --residual-tol 1e-6 --mass-tol 1e-6 --change-tol 1e-6 \
