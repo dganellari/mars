@@ -117,8 +117,43 @@ These are maxima across all 20 states. They validate the host production
 arithmetic against the independent reference for these cases, including the
 nonplanar inlet and both outlet types. They do not identify the remaining private
 snapshot discrepancy. No production kernel, solver tolerance or private input
-changed. CUDA ingestion and MPI execution of these four references remain
-unverified; the next command checks those paths at iteration 20.
+changed. CUDA ingestion and MPI execution of these four references were
+unverified at this host milestone; the GPU results below extend the evidence to
+the production driver at iteration 20.
+
+## Production GPU results, 2026-10-05
+
+All four cases pass at iteration 20 on one and four GPUs. The one-GPU
+straight-average result is in `simple-geometry-mars-fUCfA0`; the other seven
+are in `simple-geometry-retry-FJGrnL`, both under
+`/capstor/scratch/cscs/gandanie/`. They use the same executable SHA-256
+`385c99163d1930c6462ed38090b358f4d66b232efefe76db3848ecea22052fea`,
+with recorded source revision `ac63b2c27e5c4764c8b5dc0e3158a5f9cc8fcfaf`.
+
+The saved OpenAccel comparison reports give the following maximum nodal
+differences, using the velocity and pressure scales defined above. All 64
+input hashes in those reports match the retrieved files, including the reference
+meshes, decks and Exodus results. Each completed MARS run exits 2 and records
+iteration 20; this expected exit is not a convergence failure for this test.
+
+| Case | GPUs | Velocity difference / U | Pressure difference / (rho U²) |
+| --- | --- | --- | --- |
+| straight-average | 1 | 5.39e-13 | 3.67e-11 |
+| straight-average | 4 | 5.64e-13 | 4.25e-11 |
+| straight-static | 1 | 2.90e-13 | 2.70e-11 |
+| straight-static | 4 | 3.19e-13 | 3.16e-11 |
+| warped-average | 1 | 1.07e-12 | 2.05e-10 |
+| warped-average | 4 | 1.08e-12 | 2.12e-10 |
+| warped-static | 1 | 5.72e-13 | 5.78e-11 |
+| warped-static | 4 | 5.79e-13 | 5.68e-11 |
+
+An independent comparison of the retrieved one- and four-GPU CSV fields covers
+all 425 nodes per case, with identical coordinates. Across the four cases, the
+largest rank differences are 6.92e-14 for velocity/U and 3.26e-11 for pressure/(rho U²).
+These results validate the native ingestion and distributed SIMPLE path for
+these four public cases. They do not establish nonlinear convergence, performance
+scaling or agreement on a private pump mesh; the remaining private mismatch is
+not explained by this test.
 
 ## Production CUDA/MPI comparison
 
