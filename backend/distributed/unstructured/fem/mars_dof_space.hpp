@@ -32,6 +32,7 @@
 #include <thrust/iterator/constant_iterator.h>
 #include <thrust/iterator/counting_iterator.h>
 #include <thrust/reduce.h>
+#include <thrust/scan.h>
 #include <thrust/sort.h>
 
 #include <algorithm>
@@ -144,6 +145,50 @@ __global__ void dofLocalKernel(const int* copy, const int* dof, size_t n, DofFie
     }
 }
 
+struct DofNonNegative
+{
+    HOST_DEVICE_FUN bool operator()(int v) const { return v >= 0; }
+};
+
+// Length of the CSR row of each listed slot.
+template<typename IndexType>
+__global__ void dofRowLengthKernel(const IndexType* slots, size_t count, const IndexType* rowPtr, IndexType* length)
+{
+    size_t k = size_t(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (k < count) length[k] = rowPtr[slots[k] + 1] - rowPtr[slots[k]];
+}
+
+// The entries of each listed slot row from offset[k] on: the global id of the column slot's DOF
+// and the value; with outRow, also the row the entries go to (target[k]).
+template<typename T>
+__global__ void dofRowEntriesKernel(const int* slots, const int* target, const long long* offset, size_t count,
+                                    const int* rowPtr, const int* cols, const T* values, const long long* slotGid,
+                                    int* outRow, long long* outCol, T* outVal)
+{
+    size_t k = size_t(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (k >= count) return;
+    int s       = slots[k];
+    long long o = offset[k];
+    for (int j = rowPtr[s]; j < rowPtr[s + 1]; ++j, ++o)
+    {
+        if (outRow) outRow[o] = target[k];
+        outCol[o] = slotGid[cols[j]];
+        outVal[o] = values[j];
+    }
+}
+
+// The row of each received entry: those of request k belong to DOF slot dofSlot[k].
+template<typename IndexType>
+__global__ void dofReceivedRowsKernel(const IndexType* dofSlot, const IndexType* dofRow, const IndexType* length,
+                                      const long long* offset, size_t count, IndexType* outRow)
+{
+    size_t k = size_t(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (k >= count) return;
+    int r = dofRow[dofSlot[k]];
+    for (int j = 0; j < length[k]; ++j)
+        outRow[offset[k] + j] = r;
+}
+
 template<typename KeyType, typename RealType, typename DomainT>
 class DofSpace
 {
@@ -188,6 +233,143 @@ public:
 
     long long numDofs() const { return numDofs_; }
     const uint8_t* isDof() const { return isDof_.data(); }
+
+    // P^T A P for a matrix A over this rank's slots: the row of every copy is added into the
+    // row of its DOF, on whatever rank owns it, in one exchange (row lengths, then entries),
+    // the reverse direction of prolong. rowPtr/cols/values: A as a CSR over the local slots.
+    // slotGid: the global id of each slot's DOF. dofRow: the local row of each DOF slot, -1
+    // elsewhere. Out: the entries of this rank's DOF rows (local row, global column, value),
+    // unsorted and with duplicates.
+    template<typename T>
+    void restrictMatrix(const int* rowPtr, const int* cols, const T* values, const long long* slotGid,
+                        const int* dofRow, thrust::device_vector<int>& outRow, thrust::device_vector<long long>& outCol,
+                        thrust::device_vector<T>& outVal) const
+    {
+        // Rows that stay: the DOF slots, then the copies of DOFs on this rank.
+        const size_t numLocal = localCopy_.size();
+        thrust::device_vector<int> stay(n_ + numLocal), target(n_ + numLocal);
+        const size_t numDofs  = thrust::copy_if(thrust::device, thrust::counting_iterator<int>(0),
+                                                thrust::counting_iterator<int>(int(n_)), dofRow, stay.begin(),
+                                                DofNonNegative{}) -
+                               stay.begin();
+        thrust::gather(thrust::device, stay.begin(), stay.begin() + numDofs, dofRow, target.begin());
+        if (numLocal > 0)
+        {
+            thrust::copy(thrust::device, localCopy_.data(), localCopy_.data() + numLocal, stay.begin() + numDofs);
+            thrust::gather(thrust::device, localDof_.data(), localDof_.data() + numLocal, dofRow,
+                           target.begin() + numDofs);
+        }
+        const size_t numStay = numDofs + numLocal;
+
+        // Rows that leave: the copies of DOFs on other ranks, grouped by peer.
+        const size_t numSend = recvCopy_.size(), numRecv = sendDof_.size();
+        thrust::device_vector<int> stayLength(numStay), sendLength(numSend), recvLength(numRecv);
+        if (numStay > 0)
+            dofRowLengthKernel<int><<<int((numStay + 255) / 256), 256>>>(thrust::raw_pointer_cast(stay.data()), numStay,
+                                                                   rowPtr, thrust::raw_pointer_cast(stayLength.data()));
+        if (numSend > 0)
+            dofRowLengthKernel<int><<<int((numSend + 255) / 256), 256>>>(recvCopy_.data(), numSend, rowPtr,
+                                                                   thrust::raw_pointer_cast(sendLength.data()));
+        cudaCheckError();
+        thrust::device_vector<long long> stayOffset(numStay), sendOffset(numSend);
+        thrust::exclusive_scan(thrust::device, stayLength.begin(), stayLength.end(), stayOffset.begin(), 0LL);
+        thrust::exclusive_scan(thrust::device, sendLength.begin(), sendLength.end(), sendOffset.begin(), 0LL);
+        const long long stayTotal = thrust::reduce(thrust::device, stayLength.begin(), stayLength.end(), 0LL);
+        const long long sendTotal = thrust::reduce(thrust::device, sendLength.begin(), sendLength.end(), 0LL);
+
+        // Row lengths to the owners, so each side knows the entry counts per peer.
+        cudaDeviceSynchronize();
+        std::vector<MPI_Request> requests;
+        requests.reserve(4 * peers_.size());
+        for (size_t p = 0; p < peers_.size(); ++p)
+        {
+            int count = sendOffsets_[p + 1] - sendOffsets_[p];
+            if (count == 0) continue;
+            requests.emplace_back();
+            MPI_Irecv(thrust::raw_pointer_cast(recvLength.data()) + sendOffsets_[p], count, MPI_INT, peers_[p], 0x4e60,
+                      comm_, &requests.back());
+        }
+        for (size_t p = 0; p < peers_.size(); ++p)
+        {
+            int count = recvOffsets_[p + 1] - recvOffsets_[p];
+            if (count == 0) continue;
+            requests.emplace_back();
+            MPI_Isend(thrust::raw_pointer_cast(sendLength.data()) + recvOffsets_[p], count, MPI_INT, peers_[p], 0x4e60,
+                      comm_, &requests.back());
+        }
+        MPI_Waitall(int(requests.size()), requests.data(), MPI_STATUSES_IGNORE);
+        requests.clear();
+        thrust::device_vector<long long> recvOffset(numRecv);
+        thrust::exclusive_scan(thrust::device, recvLength.begin(), recvLength.end(), recvOffset.begin(), 0LL);
+        const long long recvTotal = thrust::reduce(thrust::device, recvLength.begin(), recvLength.end(), 0LL);
+
+        // Entries per peer, on the host: the row lengths summed over each peer's rows.
+        std::vector<int> hostSend(numSend), hostRecv(numRecv);
+        thrust::copy(sendLength.begin(), sendLength.end(), hostSend.begin());
+        thrust::copy(recvLength.begin(), recvLength.end(), hostRecv.begin());
+        auto entriesOf = [](const std::vector<int>& length, int begin, int end) {
+            long long sum = 0;
+            for (int k = begin; k < end; ++k)
+                sum += length[k];
+            return sum;
+        };
+
+        outRow.resize(stayTotal + recvTotal);
+        outCol.resize(stayTotal + recvTotal);
+        outVal.resize(stayTotal + recvTotal);
+        thrust::device_vector<long long> sendCol(sendTotal);
+        thrust::device_vector<T> sendVal(sendTotal);
+        if (numStay > 0)
+            dofRowEntriesKernel<T><<<int((numStay + 255) / 256), 256>>>(
+                thrust::raw_pointer_cast(stay.data()), thrust::raw_pointer_cast(target.data()),
+                thrust::raw_pointer_cast(stayOffset.data()), numStay, rowPtr, cols, values, slotGid,
+                thrust::raw_pointer_cast(outRow.data()), thrust::raw_pointer_cast(outCol.data()),
+                thrust::raw_pointer_cast(outVal.data()));
+        if (numSend > 0)
+            dofRowEntriesKernel<T><<<int((numSend + 255) / 256), 256>>>(
+                recvCopy_.data(), nullptr, thrust::raw_pointer_cast(sendOffset.data()), numSend, rowPtr, cols, values,
+                slotGid, nullptr, thrust::raw_pointer_cast(sendCol.data()), thrust::raw_pointer_cast(sendVal.data()));
+        cudaCheckError();
+        cudaDeviceSynchronize();
+
+        // The entries themselves: received straight into the output, after this rank's own.
+        long long* recvColPtr = thrust::raw_pointer_cast(outCol.data()) + stayTotal;
+        T* recvValPtr         = thrust::raw_pointer_cast(outVal.data()) + stayTotal;
+        long long recvAt = 0, sendAt = 0;
+        for (size_t p = 0; p < peers_.size(); ++p)
+        {
+            long long count = entriesOf(hostRecv, sendOffsets_[p], sendOffsets_[p + 1]);
+            if (count > 0)
+            {
+                requests.emplace_back();
+                MPI_Irecv(recvColPtr + recvAt, int(count), MPI_LONG_LONG, peers_[p], 0x4e61, comm_, &requests.back());
+                requests.emplace_back();
+                MPI_Irecv(recvValPtr + recvAt, int(count), mpiDatatype<T>(), peers_[p], 0x4e62, comm_,
+                          &requests.back());
+            }
+            recvAt += count;
+        }
+        for (size_t p = 0; p < peers_.size(); ++p)
+        {
+            long long count = entriesOf(hostSend, recvOffsets_[p], recvOffsets_[p + 1]);
+            if (count > 0)
+            {
+                requests.emplace_back();
+                MPI_Isend(thrust::raw_pointer_cast(sendCol.data()) + sendAt, int(count), MPI_LONG_LONG, peers_[p],
+                          0x4e61, comm_, &requests.back());
+                requests.emplace_back();
+                MPI_Isend(thrust::raw_pointer_cast(sendVal.data()) + sendAt, int(count), mpiDatatype<T>(), peers_[p],
+                          0x4e62, comm_, &requests.back());
+            }
+            sendAt += count;
+        }
+        MPI_Waitall(int(requests.size()), requests.data(), MPI_STATUSES_IGNORE);
+        if (numRecv > 0)
+            dofReceivedRowsKernel<int><<<int((numRecv + 255) / 256), 256>>>(
+                sendDof_.data(), dofRow, thrust::raw_pointer_cast(recvLength.data()),
+                thrust::raw_pointer_cast(recvOffset.data()), numRecv, thrust::raw_pointer_cast(outRow.data()) + stayTotal);
+        cudaCheckError();
+    }
 
     // The exchanges of prolong and restrict on this rank since the last reset: how many,
     // their time from pack to the end of the MPI wait, and the MPI part of it.

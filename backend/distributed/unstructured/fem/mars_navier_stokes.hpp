@@ -33,8 +33,9 @@
 // owned nodes, ghost copies of other ranks' nodes and, on a periodic mesh,
 // several slots for one periodic point. The DofSpace maps slots to the unknowns
 // (P) and back (P^T). Time step kernels scatter over the local elements and
-// restrict; the constant matrices are assembled per rank and reduced by Hypre
-// to P^T A_local P, the way MFEM assembles. Both systems are solved with PCG
+// restrict; the constant matrices are assembled per rank over its slots and
+// reduced to P^T A_local P by sending every copy's row to the owner of its DOF
+// (DofSpace::restrictMatrix), with no sparse product. Both systems are solved with PCG
 // and BoomerAMG, whose iteration count stays flat as the mesh and the number
 // of GPUs grow.
 
@@ -343,20 +344,16 @@ __global__ void nsGlobalIdKernel(size_t n, const uint8_t* isDof, const int* dofI
     if (i < n) id[i] = isDof[i] ? RealType(dofStart + dofIndex[i]) : RealType(-1);
 }
 
-// Rows of the prolongation P: slot localStart + i takes the value of DOF gid[i], per component.
+// The global DOF id of each slot as an integer, and the local row of each DOF slot (-1 for the
+// other slots): what DofSpace::restrictMatrix needs to place every matrix entry.
 template<typename RealType>
-__global__ void nsProlongationTripletsKernel(size_t n, int comps, long long localStart, const RealType* gid,
-                                             HYPRE_BigInt* rows, HYPRE_BigInt* cols, RealType* values)
+__global__ void nsSlotIdsKernel(size_t n, const uint8_t* isDof, const int* dofIndex, const RealType* gid,
+                                long long* slotGid, int* slotDofRow)
 {
     size_t i = size_t(blockIdx.x) * blockDim.x + threadIdx.x;
     if (i >= n) return;
-    for (int d = 0; d < comps; ++d)
-    {
-        size_t k  = i * comps + d;
-        rows[k]   = comps * (localStart + HYPRE_BigInt(i)) + d;
-        cols[k]   = comps * HYPRE_BigInt(gid[i]) + d;
-        values[k] = RealType(1);
-    }
+    slotGid[i]    = (long long)gid[i];
+    slotDofRow[i] = isDof[i] ? dofIndex[i] : -1;
 }
 
 // With no p = 0 anywhere the pressure is only defined up to a constant: fix it
@@ -1464,11 +1461,9 @@ private:
         thrust::exclusive_scan(thrust::device, dofIndex_.data(), dofIndex_.data() + n_, dofIndex_.data());
         numOwned_ = int(thrust::count(thrust::device, space_.isDof(), space_.isDof() + n_, uint8_t(1)));
 
-        long long owned = numOwned_, slots = (long long)n_;
+        long long owned = numOwned_;
         MPI_Exscan(&owned, &dofStart_, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
-        MPI_Exscan(&slots, &localStart_, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
-        MPI_Allreduce(&slots, &totalSlots_, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
-        if (rank_ == 0) dofStart_ = localStart_ = 0;
+        if (rank_ == 0) dofStart_ = 0;
 
         nsGlobalIdKernel<RealType><<<grid(), bs()>>>(n_, space_.isDof(), dofIndex_.data(), dofStart_, gid_.data());
         cudaCheckError();
@@ -1514,23 +1509,6 @@ private:
         }
     }
 
-    // P: local slot i (all ranks' slots numbered consecutively) takes the value of
-    // its DOF. comps > 1: one copy per velocity component.
-    HypreMatrix prolongation(int comps)
-    {
-        const size_t count = n_ * comps;
-        thrust::device_vector<HYPRE_BigInt> rows(count), cols(count);
-        thrust::device_vector<RealType> values(count);
-        nsProlongationTripletsKernel<RealType><<<grid(), bs()>>>(
-            n_, comps, localStart_, gid_.data(), thrust::raw_pointer_cast(rows.data()),
-            thrust::raw_pointer_cast(cols.data()), thrust::raw_pointer_cast(values.data()));
-        cudaCheckError();
-        return hypreAssemble(MPI_COMM_WORLD, comps * localStart_, comps * (localStart_ + (long long)n_),
-                             comps * dofStart_, comps * (dofStart_ + numOwned_),
-                             HypreCoo{thrust::raw_pointer_cast(rows.data()), thrust::raw_pointer_cast(cols.data()),
-                                      thrust::raw_pointer_cast(values.data()), HYPRE_Int(count)});
-    }
-
     // The pattern of the local slot matrix, shared by the three matrices: every pair
     // of corners of a local element, and the diagonal of every slot (a node may touch
     // no local element: a ghost, or an owned node whose elements are all halos, and
@@ -1556,29 +1534,40 @@ private:
         auto rowKeys = thrust::make_transform_iterator(thrust::counting_iterator<long long>(0), NsRowKey{});
         thrust::lower_bound(thrust::device, keys.begin(), keys.begin() + nnz, rowKeys, rowKeys + n_ + 1,
                             csrRowPtr_.data());
+        slotGid_.resize(n_);
+        slotDofRow_.resize(n_);
+        nsSlotIdsKernel<RealType><<<grid(), bs()>>>(n_, space_.isDof(), dofIndex_.data(), gid_.data(),
+                                                    thrust::raw_pointer_cast(slotGid_.data()), slotDofRow_.data());
+        cudaCheckError();
     }
 
     // scale * K (+ c M with massCoefficient) over the local slots, without the removed
-    // rows and columns, reduced to P^T A P; the removed DOFs get identity rows.
-    HypreMatrix assembleReduced(const HypreMatrix& P, RealType scale, const uint8_t* removed,
-                                const RealType* massCoefficient, bool withLift)
+    // rows and columns, reduced to P^T A P over the DOFs: every copy's row is added into its
+    // DOF's row by DofSpace, so no prolongation matrix and no sparse product are formed. The
+    // removed DOFs get identity rows.
+    HypreMatrix assembleReduced(RealType scale, const uint8_t* removed, const RealType* massCoefficient, bool withLift)
     {
-        const size_t nnz = csrCols_.size();
-        Vector values(nnz);
-        thrust::fill(thrust::device, values.data(), values.data() + nnz, RealType(0));
-        if (hex_.count > 0)
-            nsLaplacianCsrKernel<KeyType, RealType><<<elemGrid(), bs()>>>(
-                hex_, x(), y(), z(), cview(area_), scale, removed, cview(target_), view(lift_), withLift ? comps_ : 0,
-                csrRowPtr_.data(), csrCols_.data(), values.data());
-        nsDiagonalKernel<RealType><<<grid(), bs()>>>(n_, space_.isDof(), removed,
-                                                     massCoefficient ? massLocal_.data() : nullptr,
-                                                     massCoefficient ? *massCoefficient : RealType(0),
-                                                     csrRowPtr_.data(), csrCols_.data(), values.data());
-        cudaCheckError();
-        HypreMatrix local = hypreBlockDiagonal(MPI_COMM_WORLD, localStart_, totalSlots_, HYPRE_Int(n_), HYPRE_Int(nnz),
-                                               csrRowPtr_.data(), csrCols_.data(), values.data());
+        thrust::device_vector<int> rows;
+        thrust::device_vector<long long> cols;
+        thrust::device_vector<HYPRE_Complex> values;
+        {
+            const size_t nnz = csrCols_.size();
+            thrust::device_vector<HYPRE_Complex> slotValues(nnz, HYPRE_Complex(0));
+            HYPRE_Complex* v = thrust::raw_pointer_cast(slotValues.data());
+            if (hex_.count > 0)
+                nsLaplacianCsrKernel<KeyType, RealType><<<elemGrid(), bs()>>>(
+                    hex_, x(), y(), z(), cview(area_), scale, removed, cview(target_), view(lift_),
+                    withLift ? comps_ : 0, csrRowPtr_.data(), csrCols_.data(), v);
+            nsDiagonalKernel<RealType><<<grid(), bs()>>>(n_, space_.isDof(), removed,
+                                                         massCoefficient ? massLocal_.data() : nullptr,
+                                                         massCoefficient ? *massCoefficient : RealType(0),
+                                                         csrRowPtr_.data(), csrCols_.data(), v);
+            cudaCheckError();
+            space_.restrictMatrix(csrRowPtr_.data(), csrCols_.data(), static_cast<const HYPRE_Complex*>(v),
+                                  thrust::raw_pointer_cast(slotGid_.data()), slotDofRow_.data(), rows, cols, values);
+        }
         trace("assembled");
-        HypreMatrix reduced = hypreGalerkin(P, local);
+        HypreMatrix reduced = hypreFromEntries(MPI_COMM_WORLD, dofStart_, numOwned_, globalDofs(), rows, cols, values);
         trace("P^T A P");
         return reduced;
     }
@@ -1588,18 +1577,17 @@ private:
     // columns is gathered while assembling a1 (it is the same for a2).
     void buildViscousSolvers()
     {
-        HypreMatrix P      = prolongation(1);
         const RealType c1  = RealType(1) / prm_.dt;
         const RealType c2  = RealType(3) / (RealType(2) * prm_.dt);
         viscousBdf1_       = std::make_unique<HypreAmgPcgSolver>("MARS_VAMG");
-        viscousBdf1_->setup(MPI_COMM_WORLD, assembleReduced(P, prm_.nu, fixed_.data(), &c1, true), prm_.tolerance,
+        viscousBdf1_->setup(MPI_COMM_WORLD, assembleReduced(prm_.nu, fixed_.data(), &c1, true), prm_.tolerance,
                             prm_.maxIter);
         trace("velocity AMG (BDF1)");
         for (int d = 0; d < comps_; ++d)
             space_.restrict(lift_[d]);
         if (!prm_.bdf2) return;
         viscousBdf2_ = std::make_unique<HypreAmgPcgSolver>("MARS_VAMG");
-        viscousBdf2_->setup(MPI_COMM_WORLD, assembleReduced(P, prm_.nu, fixed_.data(), &c2, false),
+        viscousBdf2_->setup(MPI_COMM_WORLD, assembleReduced(prm_.nu, fixed_.data(), &c2, false),
                             prm_.tolerance, prm_.maxIter);
         trace("velocity AMG (BDF2)");
     }
@@ -1607,9 +1595,8 @@ private:
     // K over the DOFs with identity rows where p = 0; the operator of the flux correction.
     void buildPressureSolver()
     {
-        HypreMatrix P = prolongation(1);
-        pressure_     = std::make_unique<HypreAmgPcgSolver>("MARS_PAMG");
-        pressure_->setup(MPI_COMM_WORLD, assembleReduced(P, RealType(1), pressureFixed_.data(), nullptr, false),
+        pressure_ = std::make_unique<HypreAmgPcgSolver>("MARS_PAMG");
+        pressure_->setup(MPI_COMM_WORLD, assembleReduced(RealType(1), pressureFixed_.data(), nullptr, false),
                          prm_.tolerance, prm_.maxIter);
         trace("pressure AMG");
         checkPressureOperator();
@@ -1699,11 +1686,12 @@ private:
     // DOFs
     int numOwned_         = 0;
     long long dofStart_   = 0;
-    long long localStart_ = 0;
     cstone::DeviceVector<int> dofIndex_; // local DOF index of each DOF slot
     Vector gid_;                         // global DOF id of each slot's DOF
-    long long totalSlots_ = 0;           // node slots on all ranks
     cstone::DeviceVector<int> csrRowPtr_, csrCols_; // pattern of the local slot matrices
+    // cstone::DeviceVector has no signed 64-bit instantiation, so this one is a thrust vector.
+    thrust::device_vector<long long> slotGid_; // global DOF id of each slot's DOF
+    cstone::DeviceVector<int> slotDofRow_;         // local row of each DOF slot, -1 elsewhere
 
     // Geometry and solvers
     Vector area_[3]; // sub-control face area vectors, 12 per local element

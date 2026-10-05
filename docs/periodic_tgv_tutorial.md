@@ -172,10 +172,12 @@ every periodic point by construction.
 
 **Every matrix goes through P too.** `K` and `M / dtEff + ν K` are constant in time,
 so they are assembled once and solved with Hypre PCG + BoomerAMG. Each rank
-assembles its own elements into a matrix over its local slots, and Hypre forms the
-matrix over the DOFs as the product `Pᵀ A_local P`, with `P` stored as a Hypre matrix
-(one entry per slot: the global id of its DOF). This is how MFEM assembles. Rank
-boundaries and periodic seams are then the same thing: slots that share a DOF.
+assembles its own elements into a matrix over its local slots, `A_local`. The matrix
+over the DOFs is `Pᵀ A_local P`: since `P` only copies each DOF into its slots, the
+product is formed by adding every copy's row into its DOF's row, sent to the rank
+that owns the DOF in the same exchange as `restrict` (`DofSpace::restrictMatrix`).
+No sparse matrix product is needed. Rank boundaries and periodic seams are then the
+same thing: slots that share a DOF.
 BoomerAMG keeps the iteration count flat as the mesh and the number of GPUs grow
 (about 20 pressure iterations per step from 16³ to 64³).
 
@@ -372,5 +374,5 @@ wavelength is about 1.3 % weaker than the exact one. The release tests
 | Slot to DOF lists (setup) | `DofSpace::build` | `mars_dof_space.hpp` |
 | Solver | `NavierStokes` | `mars_navier_stokes.hpp` |
 | Stabilized face flux | `nsFaceFluxKernel` | `mars_navier_stokes.hpp` |
-| Matrices over the DOFs | `assembleReduced`, `hypreGalerkin` | `mars_navier_stokes.hpp`, `mars_hypre_amg_pcg_solver.hpp` |
+| Matrices over the DOFs | `assembleReduced`, `DofSpace::restrictMatrix`, `hypreFromEntries` | `mars_navier_stokes.hpp`, `mars_dof_space.hpp`, `mars_hypre_amg_pcg_solver.hpp` |
 | Example | `runTgv` | `mars_tgv.cu` |
