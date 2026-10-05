@@ -303,8 +303,7 @@ mpirun -np 4 ./build/examples/distributed/unstructured/mars_tgv --mesh=hex16 --b
     --nu=0.05 --dt=1e-4 --num-steps=300 --report-every=50
 ```
 
-`mars_tgv` does not choose a GPU per rank. Give each rank its own GPU with the launcher (a
-binding wrapper or `CUDA_VISIBLE_DEVICES`); otherwise all ranks use GPU 0.
+Each rank uses GPU `rank % deviceCount`, so 4 ranks on a 4-GPU node use all four GPUs.
 
 The example prints `TGV: ranks=4  periodic DOFs=4096  (the same on every rank count)`, then one
 line per report step:

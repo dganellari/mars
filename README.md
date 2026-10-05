@@ -106,8 +106,7 @@ cmake -B build -DMPIEXEC_EXECUTABLE=$(which srun) \
   "-DMPIEXEC_PREFLAGS=--account=<account>;--time=00:10:00;--nodes=1"
 ```
 
-The drivers pick GPU `rank % deviceCount` themselves, except `mars_tgv`: without a GPU-binding
-wrapper (or `CUDA_VISIBLE_DEVICES` per rank) its ranks share GPU 0. The Poiseuille validation
+The drivers pick GPU `rank % deviceCount` themselves. The Poiseuille validation
 against the analytic profile (1500 steps) is opt-in: configure with
 `-DMARS_ENABLE_VALIDATION_TESTS=ON`, then run `ctest -L validation` in a GPU allocation.
 
