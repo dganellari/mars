@@ -88,7 +88,7 @@ Every kernel below is a different point on these trade-offs:
   elements touches far fewer *unique* nodes than node-references; this kernel builds a
   **block-level deduplication cache in dynamic shared memory**, loads each unique
   node's fields and CSR row metadata into shared memory **once**, then serves every
-  thread's reads from shared memory (~5 cycles) instead of L2 (~30 cycles). It needs a
+  thread's reads from shared memory instead of L2. It needs a
   large shared-memory carveout (>48 KB), and it is the most fragile production-track
   kernel: it relies on spatial (Morton) ordering keeping the unique-node count per
   block under a fixed cap.
@@ -99,7 +99,7 @@ Every kernel below is a different point on these trade-offs:
   replaced by `+=`**, launched **once per color**. A host-side greedy graph coloring
   guarantees that within one color no two elements share a node, so the scatters are
   provably race-free and atomics are **eliminated entirely**. This is the big win on
-  older GPUs where FP64 atomics are slow. The cost is ~8–12 sequential kernel launches
+  older GPUs where FP64 atomics are slow. The cost is one kernel launch per color
   (less parallelism per launch) plus a host coloring precompute. On hardware with fast
   FP64 atomics the benefit shrinks — which is why the atomic-based `Tensor` is the
   claimed current best there, not `Colored`.
@@ -163,9 +163,9 @@ diagonal:
 - **Full (27 NNZ/row)** — the complete element-local coupling. Use for symmetric /
   Poisson-type systems solved with CG that need every coupling.
 - **Graph + lumped (7 NNZ/row)** — ~4× fewer nonzeros → ~4× smaller matrix in memory
-  and ~4× less bandwidth in every solver mat-vec. At the billion-element scale, where
-  the matrix and the SpMV dominate cost, this is the path that matters. The price is
-  a *lumped* (more diagonally-dominant, less accurate) operator.
+  and ~4× less bandwidth in every solver mat-vec. On large meshes, where the matrix and
+  the SpMV dominate the cost, this is the path that matters. The price is a *lumped*
+  (more diagonally dominant, less accurate) operator.
 
 So "graph vs full" is an **accuracy/memory** choice made at the sparsity-and-assemble
 level; the kernel variants above are **how fast** you assemble whichever you chose.
@@ -195,5 +195,6 @@ spatial locality, and whether you are occupancy- or bandwidth-bound.
 
 - [FEM Assembly](FEM-Assembly.md) — the pipeline these kernels sit inside
   (DOF map → sparsity → assemble → handoff).
-- [GPU Acceleration](GPU-Acceleration.md) — the broader device-execution model.
+- [Quickstart](Quickstart.md) — run `mars_cvfem_graph` with any of these kernels
+  (`--kernel=...`).
 - [Poiseuille channel-flow tutorial](poiseuille_tutorial.md) — the CVFEM operators in a full solver.
