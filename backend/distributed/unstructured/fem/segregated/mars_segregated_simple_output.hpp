@@ -34,6 +34,9 @@ inline std::string simple_part_path(const std::string& prefix,int rank) {
     std::ostringstream name; name<<prefix<<"-fields-rank"<<std::setw(6)<<std::setfill('0')<<rank<<".csv";
     return name.str();
 }
+inline std::string simple_snapshot_prefix(const std::string& prefix,int iteration) {
+    return prefix+"-step-"+std::to_string(iteration);
+}
 inline void simple_output_preflight(MPI_Comm comm,const std::string& prefix,const std::string& mode) {
     int rank; MPI_Comm_rank(comm,&rank);
     bool free=!std::filesystem::exists(simple_part_path(prefix,rank));

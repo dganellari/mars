@@ -5,7 +5,9 @@ Upwind remains the default; the opt-in [high-resolution path](high_resolution.md
 adds limited velocity reconstruction. It assembles complete owned rows, solves through the owned-row Hypre
 adapter, publishes ghost fields and reduces diagnostics over unique owners.
 The separate [velocity-interpolation option](velocity_interpolation.md) selects
-standard or shifted field sampling; its GPU/reference checks are still pending.
+standard or shifted field sampling. The [geometry probes](geometry_probe.md)
+record independent shifted-sampling agreement on straight/warped channels with
+average/static pressure outlets on one and four GPUs.
 Controlled-partition CUDA gates passed on 1/2/4 ranks at revision `3f7ce1e4`,
 including reversal and split communicators. Subsequent user-reported Daint runs
 also passed native Exodus/ElementDomain convergence and field parity on 1/2/4
@@ -13,8 +15,10 @@ ranks: 1277 iterations on the fixed public channel, with maximum scaled velocity
 and pressure differences below 6e-13. Later results cover the
 [configured oblique fixture](configurable_run.md), the high-resolution public
 channel, and the [upwind duct refinement study](../simple_duct/DAINT_RESULTS.md).
-These results used standard velocity interpolation and validate the listed cases,
-not the shifted option, arbitrary meshes or multi-node scaling.
+The channel and duct results above used standard velocity interpolation. Neither
+those nor the geometry probes establish arbitrary-mesh or multi-node scaling.
+The [fresh startup probe](startup_probe.md) locates the first differing saved
+state when a private case still disagrees with OpenAccel.
 
 The distributed path is now the normal `mars_segregated_simple` executable.
 See [configurable controls and interactive runs](configurable_run.md). The shared
@@ -22,7 +26,8 @@ ElementDomain halo code is unchanged. The compatibility target below still works
 
 The [normal-speed inlet construction](inlet_normal_speed.md) now uses accumulated
 nodal inlet normals before face interpolation, including nonplanar inlets.
-Local algebra and host/MPI checks pass; CUDA validation for this change is pending.
+Local algebra and host/MPI checks pass; the geometry probes exercise this path
+against OpenAccel on one and four GPUs, including the warped inlet.
 
 ## Ownership and communication contract
 

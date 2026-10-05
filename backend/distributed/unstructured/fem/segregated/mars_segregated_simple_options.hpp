@@ -40,7 +40,7 @@ struct SimpleOptions {
     std::string mesh,output,field_output="gathered";
     SimpleControls controls;
     SimpleBoundaryNames boundaries;
-    int iterations=2000,report=10,profile_warmup=10;
+    int iterations=2000,report=10,profile_warmup=10,snapshot_iterations=0;
     double residual=1e-6,mass=1e-6,change=1e-6;
     double pressure_rtol=1e-12,pressure_atol=0;
     bool pressure_tolerances=false;
@@ -97,6 +97,11 @@ inline SimpleOptions simple_options(int argc,char** argv) {
                     throw std::runtime_error("expected positive integer for "+key);
                 (key=="--iterations"?o.iterations:o.report)=int(number);
             }
+            else if (key=="--snapshot-iterations") {
+                if (number<0 || number>100 || number!=std::floor(number))
+                    throw std::runtime_error("--snapshot-iterations expects an integer from 0 to 100");
+                o.snapshot_iterations=int(number);
+            }
             else if (key=="--profile-warmup") {
                 if (number<0 || number>std::numeric_limits<int>::max() || number!=std::floor(number))
                     throw std::runtime_error("--profile-warmup expects a nonnegative integer");
@@ -134,6 +139,8 @@ inline SimpleOptions simple_options(int argc,char** argv) {
     if (!valid_simple_controls(o.controls) || !o.boundaries.valid()
         || !(o.residual>0 && o.mass>0 && o.change>0)) throw std::runtime_error("invalid SIMPLE controls, tolerances or boundary names");
     if (!o.help && (o.mesh.empty() || o.output.empty())) throw std::runtime_error("--mesh and --output-prefix are required");
+    if (o.snapshot_iterations && (o.field_output=="none" || o.setup_only || o.profile || o.snapshot_iterations>o.iterations))
+        throw std::runtime_error("snapshots require field output, iterations covering the requested range, and no setup-only or profiling");
     return o;
 }
 inline const char* simple_help() {
@@ -156,6 +163,8 @@ inline const char* simple_help() {
            "  --linear-cache 1 --halo-overlap 1    set 0 for a performance control\n"
            "  --profile 0 --profile-warmup 10      optional phase timing (adds event fences)\n"
            "  --field-output gathered             distributed writes per-rank CSVs; none skips fields\n"
+           "  --snapshot-iterations 0             opt-in private field files at states 0 through N (N<=100)\n"
+           "    Stops normally on convergence; snapshots are diagnostic I/O, not performance measurements.\n"
            "Both --option value and --option=value are accepted. Every exterior\n"
            "face must belong to exactly one selected inlet, outlet or wall set.\n";
 }

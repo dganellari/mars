@@ -30,6 +30,22 @@ int main(int argc,char** argv) {
         bool rejected=false;
         try { simple_output_preflight(MPI_COMM_WORLD,prefix,"distributed"); } catch (const std::runtime_error&) { rejected=true; }
         ensure(rejected,"existing output was not rejected collectively");
+        for (int step=0;step<3;++step) {
+            const auto snapshot=simple_snapshot_prefix(prefix,step);
+            simple_output_preflight(MPI_COMM_WORLD,snapshot,"distributed");
+            for (auto& row:file) row.values[7]+=1.;
+            rows.assign(file.begin(),file.end());
+            write_simple_fields(MPI_COMM_WORLD,snapshot,"distributed",2*ranks,rows);
+            std::ifstream saved(simple_part_path(snapshot,rank));
+            std::string line; std::getline(saved,line);
+            int count=0;
+            while (std::getline(saved,line)) {
+                std::istringstream input(line); double value[8];
+                for (int j=0;j<8;++j) { input>>value[j]; if (j!=7) ensure(input.get()==',',"invalid snapshot CSV"); }
+                ensure(value[7]==2.*value[0]+step+1,"snapshot contains stale state"); ++count;
+            }
+            ensure(count==2,"snapshot lost owned rows");
+        }
         SimpleProfile profile;
         { auto timing=profile.scope(SimpleProfile::assembly); }
         profile.collect(0); ensure(!profile.samples && !profile.totals[0].calls,"disabled profiler performed work");
