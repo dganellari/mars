@@ -122,6 +122,27 @@ if(MARS_ENABLE_HYPRE)
     endforeach()
 endif()
 
+# --- high-order matrix-free operator (experimental); both drivers generate their own cube -------
+# One GPU, p = 1..7: GPU metric and element apply against the host reference, A*1 = 0,
+# A*linear = 0 at interior DOFs, and a sheared-element gate. Exits 1 if any gate fails.
+if(TARGET mars_cvfem_ho_matfree_test)
+    add_test(NAME marsReleaseHoMatfree
+             COMMAND ${_rel_mpi} 1 ${MPIEXEC_PREFLAGS} $<TARGET_FILE:mars_cvfem_ho_matfree_test> ${MPIEXEC_POSTFLAGS})
+    set_tests_properties(marsReleaseHoMatfree PROPERTIES LABELS "release;gpu" TIMEOUT 600)
+endif()
+# N ranks, p = 3 (edge and face DOFs with more than one node, so their orientation matters):
+# one distributed matvec of u = 1 must vanish on every owned DOF. The driver exits 0 even when
+# a gate fails, so check_value reads the device gate and the regex catches the host gate.
+if(TARGET mars_ho_dist_apply_test)
+    add_test(NAME marsReleaseHoDistApply_np${_rel_np}
+             COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/release/check_value.py
+                     "--regex=device A\\.1 = ([-+0-9.eE]+) \\[" --lo 0 --hi 1e-8 --
+                     ${_rel_mpi} ${_rel_np} ${MPIEXEC_PREFLAGS} $<TARGET_FILE:mars_ho_dist_apply_test>
+                     ${MPIEXEC_POSTFLAGS} --ncells=16 --p=3)
+    set_tests_properties(marsReleaseHoDistApply_np${_rel_np} PROPERTIES
+        LABELS "release;gpu" TIMEOUT 600 FAIL_REGULAR_EXPRESSION "\\[FAIL\\]|CUDA error")
+endif()
+
 get_property(_rel_tests DIRECTORY PROPERTY TESTS)
 list(FILTER _rel_tests INCLUDE REGEX "^marsRelease(Hex|Tet|Poisson|Ex1Poisson|Cavity|Channel|Tgv)")
 set_tests_properties(${_rel_tests} PROPERTIES
