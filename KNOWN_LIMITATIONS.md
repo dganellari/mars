@@ -7,8 +7,8 @@ whether MARS fits your use case. The major version is `0`: APIs may change.
 ## Stable — validated and supported
 - Single-rank GPU-native unstructured mesh assembly pipeline
   (load → adjacency → DOF map → CSR sparsity → assembled matrix).
-- Multi-rank distributed assembly and solve for non-periodic cases
-  (e.g. lid-driven cavity, channel Navier–Stokes).
+- Multi-rank distributed assembly and solve, periodic boxes included
+  (lid-driven cavity, channel and Taylor–Green Navier–Stokes).
 - **Incompressible Navier–Stokes on hex meshes** (`fem/mars_navier_stokes.hpp`), the
   solver of `mars_poiseuille_flow`, `mars_tgv` and `mars_lid_driven_cavity`, including
   periodic boxes. Validated on 1, 2 and 4 GPUs:
