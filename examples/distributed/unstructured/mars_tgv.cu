@@ -26,9 +26,6 @@
 #include "backend/distributed/unstructured/amr/mars_amr.hpp"
 #include "backend/distributed/unstructured/utils/mars_vtu_parallel_writer.hpp"
 
-#include <thrust/execution_policy.h>
-#include <thrust/transform.h>
-
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -68,13 +65,9 @@ struct Options
     RealType boxLo       = 0;
     RealType boxHi       = RealType(2 * M_PI);
     RealType tolerance   = RealType(1e-10);
-    RealType refineFrac  = RealType(0.10);
-    RealType coarsenFrac = RealType(0.30);
     int numSteps         = 1000;
     int reportEvery      = 10;
     int vtuEvery         = 20;
-    int adaptEvery       = 0;
-    int maxLevels        = 2;
     int maxIter          = 1000;
 };
 
@@ -88,10 +81,7 @@ void printUsage()
                  "  --dt=X --num-steps=N  time step and step count (default 1e-3, 1000)\n"
                  "  --tol=X --max-iter=N  AMG-PCG tolerance and iteration cap (default 1e-10, 1000)\n"
                  "  --report-every=N      energy report interval (default 10)\n"
-                 "  --vtu-output=PREFIX   write PVTU frames; --vtu-every=N (default 20)\n"
-                 "  --adapt-every=N       adapt the mesh every N steps (default 0: off). Not supported\n"
-                 "                        yet: the solver does not constrain hanging nodes\n"
-                 "  --max-levels=N --refine-frac=X --coarsen-frac=X   AMR settings\n";
+                 "  --vtu-output=PREFIX   write PVTU frames; --vtu-every=N (default 20)\n";
 }
 
 // Returns false when the program should stop (help, or a bad option).
@@ -120,10 +110,8 @@ bool parseOptions(int argc, char** argv, int rank, Options& o, int& exitCode)
         }
         bool known = take("mesh", o.mesh) || take("vtu-output", o.vtuPrefix) || take("V0", o.V0) ||
                      take("rho", o.rho) || take("nu", o.nu) || take("dt", o.dt) || take("box-lo", o.boxLo) ||
-                     take("box-hi", o.boxHi) || take("tol", o.tolerance) || take("refine-frac", o.refineFrac) ||
-                     take("coarsen-frac", o.coarsenFrac) || take("num-steps", o.numSteps) ||
+                     take("box-hi", o.boxHi) || take("tol", o.tolerance) || take("num-steps", o.numSteps) ||
                      take("report-every", o.reportEvery) || take("vtu-every", o.vtuEvery) ||
-                     take("adapt-every", o.adaptEvery) || take("max-levels", o.maxLevels) ||
                      take("max-iter", o.maxIter);
         if (!known)
         {
@@ -228,7 +216,7 @@ struct EnergyReport
 };
 
 // =============================================================================
-// VTU output: velocity, pressure, vorticity magnitude, refinement level
+// VTU output: velocity, pressure, vorticity magnitude
 // =============================================================================
 
 // |curl u| from the velocity gradients: g[3 c + d] = d u_c / d x_d.
@@ -247,7 +235,6 @@ struct FrameWriter
 {
     std::unique_ptr<mars::fem::VTUParallelWriter<KeyType, RealType>> writer;
     cstone::DeviceVector<RealType> grad[9], omega;
-    cstone::DeviceVector<RealType> level; // per element; empty until the first adaptation
 
     explicit FrameWriter(const std::string& prefix)
     {
@@ -274,30 +261,9 @@ struct FrameWriter
                                   {"p", FD::Kind::PointScalar, &solver.p, nullptr, nullptr},
                                   {"omega", FD::Kind::PointScalar, &omega, nullptr, nullptr},
                                   {"velocity", FD::Kind::PointVector3, &solver.u, &solver.v, &solver.w}};
-        if (level.size() == domain.getElementCount())
-            fields.push_back({"level", FD::Kind::CellScalar, &level, nullptr, nullptr});
         writer->writeMultiFieldFrame(step, t, domain, fields);
     }
 };
-
-// =============================================================================
-// Optional AMR: refine where |u| is largest, then rebuild the periodic space
-// and the solver on the new mesh (BDF restarts from first order).
-// =============================================================================
-
-template<typename T>
-__global__ void elementMaxSpeedKernel(const KeyType* c0, const KeyType* c1, const KeyType* c2, const KeyType* c3,
-                                      const KeyType* c4, const KeyType* c5, const KeyType* c6, const KeyType* c7,
-                                      size_t numElements, const T* u, const T* v, const T* w, T* out)
-{
-    size_t e = size_t(blockIdx.x) * blockDim.x + threadIdx.x;
-    if (e >= numElements) return;
-    const KeyType n[8] = {c0[e], c1[e], c2[e], c3[e], c4[e], c5[e], c6[e], c7[e]};
-    T m = 0;
-    for (int c = 0; c < 8; ++c)
-        m = fmax(m, sqrt(u[n[c]] * u[n[c]] + v[n[c]] * v[n[c]] + w[n[c]] * w[n[c]]));
-    out[e] = m;
-}
 
 // Marks the nodes on the max faces. The solver's DofSpace finds each one's master by key,
 // on whatever rank owns it, so no cross-rank pair table is needed.
@@ -306,44 +272,6 @@ void pairPeriodicNodes(const Domain& domain, mars::fem::PeriodicMap<KeyType, Rea
 {
     mars::fem::buildPeriodicMap<KeyType, RealType>(domain, map, o.boxLo, o.boxHi, o.boxLo, o.boxHi, o.boxLo, o.boxHi,
                                                    faceEps);
-}
-
-void adaptMesh(Amr& amr, std::unique_ptr<Solver>& solver, mars::fem::PeriodicMap<KeyType, RealType>& map,
-               const Solver::Params& params, const Options& o, FrameWriter& frames)
-{
-    const Domain& old = amr.domain();
-    const auto& conn  = old.getElementToNodeConnectivity();
-    cstone::DeviceVector<RealType> indicator(old.getElementCount());
-    elementMaxSpeedKernel<RealType><<<int((old.getElementCount() + 255) / 256), 256>>>(
-        std::get<0>(conn).data(), std::get<1>(conn).data(), std::get<2>(conn).data(), std::get<3>(conn).data(),
-        std::get<4>(conn).data(), std::get<5>(conn).data(), std::get<6>(conn).data(), std::get<7>(conn).data(),
-        old.getElementCount(), solver->u.data(), solver->v.data(), solver->w.data(), indicator.data());
-    cudaCheckError();
-
-    cstone::DeviceVector<RealType> u, v, w, p;
-    amr.adaptMeshMultiField(indicator.data(), {solver->u.data(), solver->v.data(), solver->w.data(), solver->p.data()},
-                            {&u, &v, &w, &p});
-    solver.reset();
-
-    Domain& domain = amr.domain();
-    domain.cacheNodeCoordinates();
-    // Refined node coordinates are decoded from SFC keys; their error grows with
-    // the level, so the face tolerance follows the finest spacing.
-    RealType hMin = (o.boxHi - o.boxLo) / RealType(16 * (1 << amr.config().maxLevels));
-    pairPeriodicNodes(domain, map, o, std::max(RealType(1e-2) * hMin, RealType(1e-6) * (o.boxHi - o.boxLo)));
-
-    solver    = std::make_unique<Solver>(domain, params, mars::fem::FreeNodes<RealType>{},
-                                         std::vector<mars::fem::Opening<RealType>>{}, &map);
-    solver->u = std::move(u);
-    solver->v = std::move(v);
-    solver->w = std::move(w);
-    solver->p = std::move(p);
-    solver->start();
-
-    const auto& levels = amr.octree().elementLevels();
-    frames.level.resize(domain.getElementCount());
-    thrust::transform(thrust::device, levels.data(), levels.data() + domain.getElementCount(), frames.level.data(),
-                      [] __device__(int l) -> RealType { return RealType(l); });
 }
 
 // =============================================================================
@@ -357,11 +285,10 @@ int runTgv(const Options& opt, int rank, int numRanks)
     // 1. Mesh and domain. periodicAxesMask = 7 makes the cornerstone box
     //    periodic in x, y and z: node coordinates stay real, and each rank's
     //    halo also holds the elements on the other side of every periodic face.
+    //    The AMR manager only loads the mesh here (maxLevels = 0): the solver
+    //    does not constrain the hanging nodes that refinement would leave.
     Amr::Config amrConfig;
-    amrConfig.maxLevels       = (opt.adaptEvery > 0) ? opt.maxLevels : 0;
-    amrConfig.refineFraction  = opt.refineFrac;
-    amrConfig.coarsenFraction = opt.coarsenFrac;
-    amrConfig.strategy        = mars::amr::MarkingStrategy::Doerfler;
+    amrConfig.maxLevels = 0;
     Amr amr(amrConfig);
     amr.initialize(opt.mesh, rank, numRanks, /*periodicAxesMask=*/7, opt.boxLo, opt.boxHi);
     Domain& domain = amr.domain();
@@ -380,44 +307,42 @@ int runTgv(const Options& opt, int rank, int numRanks)
     params.dt        = opt.dt;
     params.maxIter   = opt.maxIter;
     params.tolerance = opt.tolerance;
-    auto solver      = std::make_unique<Solver>(domain, params, mars::fem::FreeNodes<RealType>{},
-                                           std::vector<mars::fem::Opening<RealType>>{}, &periodicMap);
+    Solver solver(domain, params, mars::fem::FreeNodes<RealType>{}, std::vector<mars::fem::Opening<RealType>>{},
+                  &periodicMap);
 
     if (rank == 0)
-        std::cout << "TGV: ranks=" << numRanks << "  periodic DOFs=" << solver->globalDofs()
+        std::cout << "TGV: ranks=" << numRanks << "  periodic DOFs=" << solver.globalDofs()
                   << "  (the same on every rank count)\n"
                   << "     nu=" << opt.nu << " dt=" << opt.dt << " steps=" << opt.numSteps << "\n";
 
-    setInitialCondition(*solver, domain, opt);
+    setInitialCondition(solver, domain, opt);
 
     // 4. Time loop.
-    EnergyReport report(*solver, opt, rank);
+    EnergyReport report(solver, opt, rank);
     FrameWriter frames(opt.vtuPrefix);
-    report.print(*solver, 0, 0);
-    frames.write(*solver, amr.domain(), 0, 0);
+    report.print(solver, 0, 0);
+    frames.write(solver, domain, 0, 0);
 
     auto wallStart = std::chrono::steady_clock::now();
     for (int step = 1; step <= opt.numSteps; ++step)
     {
-        if (!solver->step())
+        if (!solver.step())
         {
             if (rank == 0) std::cerr << "Step " << step << ": a linear solve did not converge, stopping\n";
             return 1;
         }
-        if (step == 1 && opt.numSteps > 1) solver->resetTiming();
-        if (opt.adaptEvery > 0 && step % opt.adaptEvery == 0 && amr.currentLevel() < opt.maxLevels)
-            adaptMesh(amr, solver, periodicMap, params, opt, frames);
+        if (step == 1 && opt.numSteps > 1) solver.resetTiming();
 
         // 5. Output.
         RealType t = step * opt.dt;
-        if (step % opt.reportEvery == 0 || step == opt.numSteps) report.print(*solver, step, t);
-        if (step % opt.vtuEvery == 0 || step == opt.numSteps) frames.write(*solver, amr.domain(), step, t);
+        if (step % opt.reportEvery == 0 || step == opt.numSteps) report.print(solver, step, t);
+        if (step % opt.vtuEvery == 0 || step == opt.numSteps) frames.write(solver, domain, step, t);
     }
     double wallMs =
         std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - wallStart).count();
 
-    report.summary(*solver, opt.numSteps * opt.dt);
-    solver->printTiming(opt.numSteps - 1); // step 1 (first-use allocations, BDF1) is left out
+    report.summary(solver, opt.numSteps * opt.dt);
+    solver.printTiming(opt.numSteps - 1); // step 1 (first-use allocations, BDF1) is left out
     if (rank == 0)
         std::cout << "Wall time " << std::fixed << std::setprecision(1) << wallMs << " ms, "
                   << wallMs / std::max(opt.numSteps, 1) << " ms/step\n";

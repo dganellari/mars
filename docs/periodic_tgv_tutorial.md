@@ -241,7 +241,7 @@ and on N ranks, which is why the results agree across rank counts.
 `runTgv()` follows the steps of the method:
 
 1. **Mesh and domain.** `AmrManager` reads the hex mesh and builds the distributed domain with a
-   periodic cornerstone box.
+   periodic cornerstone box. It only loads the mesh: the solver runs on the mesh as given.
 2. **Periodic DOFs.** `buildPeriodicMap` marks every max-face node; its master follows from its
    key.
 3. **Solver.** `NavierStokes` with no boundary conditions (`FreeNodes`), no openings and the
@@ -249,7 +249,7 @@ and on N ranks, which is why the results agree across rank counts.
    hierarchies, and checks the assembled pressure matrix against the matrix-free one. The example
    prints the number of periodic DOFs, which must be the same on every rank count (4096 on a
    16³ mesh).
-4. **Time loop.** `solver->step()` once per step.
+4. **Time loop.** `solver.step()` once per step.
 5. **Output.** Kinetic energy, continuity and AMG iterations every `--report-every` steps, and
    VTU frames with `--vtu-output` (velocity, pressure, vorticity).
 
@@ -261,10 +261,6 @@ and the ratio only shows that transition.
 
 The domain, the periodic map and the solver hold MPI communicators and Hypre objects, so they
 live inside `runTgv()` and are destroyed before `MPI_Finalize`.
-
-Mesh adaptation (`--adapt-every`) is not supported by the solver yet. Refinement leaves hanging
-nodes on faces between a refined and an unrefined element, and those need constraints (a hanging
-node takes the average of its coarse neighbours) that are not implemented.
 
 ---
 
