@@ -64,15 +64,19 @@ MARS names the two slots:
 - the node on a **min** face is the **master**,
 - the node on the matching **max** face is the **slave**.
 
-`buildPeriodicMap` finds the pairs by coordinates and stores them in
-`d_periodicPartner`: for every slave slot, the slot of its master; `-1` for every
-other slot. A node on an edge or a corner of the box is a slave in two or three
-directions at once; `flattenPartnerChainKernel` follows the chain so that the
-partner is always the **final master**, the node with every coordinate at `lo`.
+`buildPeriodicMap` marks every slave with the faces it lies on (`d_periodicMask`).
+A node on an edge or a corner of the box is a slave in two or three directions at
+once; its **final master** is the node with each of those coordinates moved to `lo`.
+
+Every node is identified by its SFC key, the space-filling-curve code of its
+position. So the master's key follows from the slave's: decode the slave key into
+its integer coordinates, set each marked axis to the `lo` face, and encode again
+(`periodicMasterKey`). No search and no coordinate matching is needed, and the master
+does not have to be on the slave's rank.
 
 ```
      master (x = lo)                         slave (x = hi)
-     partner = -1                            partner = master slot
+     key = K with ix = 0                     key = K
          o  ------------ same (y, z) ------------  o
                  one physical point, two slots
 ```
@@ -110,8 +114,8 @@ over elements that reads its corner nodes and adds a contribution to each of the
 All periodic logic lives in P and Pᵀ. Without a periodic map the same `DofSpace`
 handles an ordinary mesh: the only copies are then ghosts on other ranks.
 
-Inner products count each periodic point once: `dot` and `sum` add only over DOF
-slots, the owned nodes that are not slaves.
+Sums over the unknowns (norms, kinetic energy) count each periodic point once: they
+add only over DOF slots, the owned nodes that are not slaves (`DofSpace::isDof`).
 
 ---
 
@@ -168,10 +172,12 @@ every periodic point by construction.
 
 **Every matrix goes through P too.** `K` and `M / dtEff + ν K` are constant in time,
 so they are assembled once and solved with Hypre PCG + BoomerAMG. Each rank
-assembles its own elements into a matrix over its local slots, and Hypre forms the
-matrix over the DOFs as the product `Pᵀ A_local P`, with `P` stored as a Hypre matrix
-(one entry per slot: the global id of its DOF). This is how MFEM assembles. Rank
-boundaries and periodic seams are then the same thing: slots that share a DOF.
+assembles its own elements into a matrix over its local slots, `A_local`. The matrix
+over the DOFs is `Pᵀ A_local P`: since `P` only copies each DOF into its slots, the
+product is formed by adding every copy's row into its DOF's row, sent to the rank
+that owns the DOF in the same exchange as `restrict` (`DofSpace::restrictMatrix`).
+No sparse matrix product is needed. Rank boundaries and periodic seams are then the
+same thing: slots that share a DOF.
 BoomerAMG keeps the iteration count flat as the mesh and the number of GPUs grow
 (about 20 pressure iterations per step from 16³ to 64³).
 
@@ -200,44 +206,37 @@ Node coordinates stay real, and every rank also receives the elements on the oth
 side of each periodic face. So a rank that owns a slave also holds its master,
 usually as a ghost.
 
-The halo alone cannot connect a slave to its master: they have **different SFC
-keys**, so for cstone they are two unrelated nodes, and the master need not even be
-on the slave's rank. Two facts close the gap. The key of the master follows from the
-key of the slave: decode its integer SFC coordinates, set each max-face axis to the
-min face, encode again (`periodicMasterKey`). And a node's owner follows from its key:
-the rank whose SFC range contains it (SFC node ownership). So every rank knows, for each
-slave it owns, which rank owns the master, without searching. `PeriodicMap` keeps a
-small pair table for the pairs split across ranks (`buildCrossRankPeriodicMap`), and
-two exchanges use it: `crossRankPeriodicBroadcast` (master value to the slave's rank)
-and `crossRankPeriodicPairSum` (slave contribution to the master's rank).
+A ghost and its owned node share a key; a slave and its master do not. Both cases
+follow the same rule: every slot that is not a DOF (a ghost, a slave, or a ghost of a
+slave) knows the key of its DOF, its own key or its master's key, and the rank that
+holds the DOF is the SFC owner of that key (SFC node ownership: the rank whose range
+of the space-filling curve contains it). Every rank can evaluate that without
+communication.
 
-With these, P and Pᵀ are three calls each (`DofSpace::prolong`, `DofSpace::restrict`):
+At setup `DofSpace` groups its non-DOF slots by that rank and sends each rank the
+list of keys it needs, once. The owner answers with the slots that hold those DOFs.
+From then on P and Pᵀ are each one exchange, straight between a slot and the rank of
+its DOF:
 
 ```cpp
-void prolong(Vector& v) const
-{
-    periodicBroadcastSameRankKernel<RealType><<<...>>>(partner, ownership, n_, v.data());  // slave <- master, same rank
-    crossRankPeriodicBroadcast<KeyType, RealType>(*map_, v);                             // slave <- master, other rank
-    domain_.exchangeNodeHalo(v);                                                         // ghosts <- owners
-}
+// prolong: every copy takes the value of its DOF
+dofLocalKernel<<<...>>>(localCopy, localDof, n, fields, /*add=*/false);   // DOF on this rank
+exchange(fields, /*reverse=*/false);                                    // DOF on another rank
 
-void restrict(Vector& acc) const
-{
-    domain_.reverseExchangeNodeHaloAdd(acc);                                             // owners += ghosts
-    periodicPairSumKernel<RealType><<<...>>>(partner, ownership, n_, acc.data());        // master += slave, same rank
-    crossRankPeriodicPairSum<KeyType, RealType>(*map_, acc, /*broadcastBack=*/false);    // master += slave, other rank
-}
+// restrict: every copy adds into its DOF
+exchange(fields, /*reverse=*/true);
+dofLocalKernel<<<...>>>(localCopy, localDof, n, fields, /*add=*/true);
 ```
 
-**The order matters, and it is forced by what each step reads.** In `prolong`,
-the slave copies are updated first and the halo runs last, so that ghost copies of a
-slave on a third rank also receive the new value. In `restrict`, the halo runs first,
-so that every owned slave holds its complete sum before it is added into its master.
+A ghost copy of a slave on a third rank receives its value directly from the rank of
+the master, not through the slave's rank, so there is no order to get right. Several
+fields share one exchange: the three velocity components and the pressure travel in
+one message per neighbour rank.
 
-The `DofSpace` constructor checks the fact these maps rely on and stops if it fails
-(`checkPeriodicPairing`): every owned slave is paired exactly once, with a final master
-owned on the same rank or through the cross-rank table. The matrices need nothing extra: the global id of each slot's DOF is itself a
-field, prolonged once at setup.
+The setup stops if a requested key is not a DOF on the rank that owns it: the ranks
+disagree on ownership, or a slave has no matching master (box bounds, `faceEps`). The
+matrices need nothing extra: the global id of each slot's DOF is itself a field,
+prolonged once at setup.
 
 Nothing else in the solver knows about ranks or periodicity. The time step is the
 same code on 1 and on N ranks, which is why the results agree to roundoff.
@@ -354,8 +353,9 @@ wavelength is about 1.3 % weaker than the exact one. The release tests
 2. **Put all periodic logic in one map, P.** Vectors go through `prolong` and
    `restrict`; matrices are `Pᵀ A P`. Consistency between the right-hand side, the
    operator and the corrector then follows by construction instead of by care.
-3. **Order matters in P and Pᵀ.** Copy to slaves before the halo; sum over the halo
-   before folding slaves into masters.
+3. **Let every copy talk to its DOF directly.** A slave's master and a node's owner
+   both follow from keys, so P and Pᵀ are one exchange each, with no chain of copies
+   whose order could go wrong.
 4. **Stabilize equal-order pressure.** Without the face-flux stabilization the
    pressure matrix of a periodic box has checkerboard null modes, and multigrid
    breaks down on them.
@@ -368,12 +368,11 @@ wavelength is about 1.3 % weaker than the exact one. The release tests
 
 | Role | Symbol | File |
 |------|--------|------|
-| Partner table | `d_periodicPartner` | `mars_periodic_bc.hpp` |
-| Pairing | `buildPeriodicMap` | `mars_periodic_bc.hpp` |
-| Cross-rank pair table | `buildCrossRankPeriodicMap` | `mars_periodic_bc.hpp` |
+| Max-face marks | `buildPeriodicMap`, `d_periodicMask` | `mars_periodic_bc.hpp` |
+| Master key | `periodicMasterKey` | `mars_periodic_bc.hpp` |
 | P, Pᵀ | `DofSpace::prolong`, `DofSpace::restrict` | `mars_dof_space.hpp` |
-| Setup checks | `checkPeriodicPairing` | `mars_dof_space.hpp` |
+| Slot to DOF lists (setup) | `DofSpace::build` | `mars_dof_space.hpp` |
 | Solver | `NavierStokes` | `mars_navier_stokes.hpp` |
 | Stabilized face flux | `nsFaceFluxKernel` | `mars_navier_stokes.hpp` |
-| Matrices over the DOFs | `assembleReduced`, `hypreGalerkin` | `mars_navier_stokes.hpp`, `mars_hypre_amg_pcg_solver.hpp` |
+| Matrices over the DOFs | `assembleReduced`, `DofSpace::restrictMatrix`, `hypreFromEntries` | `mars_navier_stokes.hpp`, `mars_dof_space.hpp`, `mars_hypre_amg_pcg_solver.hpp` |
 | Example | `runTgv` | `mars_tgv.cu` |

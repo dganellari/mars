@@ -5,7 +5,7 @@
 //   1. mesh and domain   a hex mesh of the box, distributed over the ranks by
 //                        cornerstone; the box is periodic, so every rank also
 //                        receives the elements across the opposite faces
-//   2. periodic DOFs     each max-face node is paired with its min-face master;
+//   2. periodic DOFs     each max-face node belongs to its min-face master;
 //                        a periodic point is one unknown for every field
 //   3. solver            the same NavierStokes solver as the Poiseuille and
 //                        cavity examples; its matrices are assembled on the
@@ -299,12 +299,13 @@ __global__ void elementMaxSpeedKernel(const KeyType* c0, const KeyType* c1, cons
     out[e] = m;
 }
 
-// Masters are paired by key, so a slave does not need its master in the local halo.
+// Marks the nodes on the max faces. The solver's DofSpace finds each one's master by key,
+// on whatever rank owns it, so no cross-rank pair table is needed.
 void pairPeriodicNodes(const Domain& domain, mars::fem::PeriodicMap<KeyType, RealType>& map, const Options& o,
                       RealType faceEps)
 {
     mars::fem::buildPeriodicMap<KeyType, RealType>(domain, map, o.boxLo, o.boxHi, o.boxLo, o.boxHi, o.boxLo, o.boxHi,
-                                                   faceEps, MPI_COMM_WORLD, /*resolveByKey=*/true);
+                                                   faceEps);
 }
 
 void adaptMesh(Amr& amr, std::unique_ptr<Solver>& solver, mars::fem::PeriodicMap<KeyType, RealType>& map,
@@ -365,9 +366,9 @@ int runTgv(const Options& opt, int rank, int numRanks)
     amr.initialize(opt.mesh, rank, numRanks, /*periodicAxesMask=*/7, opt.boxLo, opt.boxHi);
     Domain& domain = amr.domain();
 
-    // 2. Periodic DOFs. Every node on a max face (x, y or z = hi) is paired
-    //    with its master on the min faces, possibly a ghost owned by another
-    //    rank. The solver keeps one unknown per periodic point.
+    // 2. Periodic DOFs. Every node on a max face (x, y or z = hi) is marked; its
+    //    master on the min faces has the same key with those axes moved to lo,
+    //    on whatever rank owns it. The solver keeps one unknown per periodic point.
     mars::fem::PeriodicMap<KeyType, RealType> periodicMap;
     pairPeriodicNodes(domain, periodicMap, opt, RealType(1e-6) * (opt.boxHi - opt.boxLo));
 

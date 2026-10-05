@@ -243,6 +243,88 @@ def norm3(data):
     return np.hypot(np.hypot(data[:, 0], data[:, 1]), data[:, 2])
 
 
+def reference_output_values(deck):
+    from prepare_simple_deck import load_deck
+    if deck is None:
+        return 'unknown'
+    try:
+        output = load_deck(deck.read_bytes())['simulation']['solver'].get('output_control', {})
+        corrected = output.get('corrected_boundary_values', False)
+        if type(corrected) is bool:
+            return 'boundary_corrected' if corrected else 'solver_values'
+    except Exception:
+        pass
+    return 'unknown'
+
+
+def boundary_tags(ds, count):
+    """Only classify stored tags; their completeness is not inferred from coordinates."""
+    import numpy as np
+    mask = np.zeros(count, dtype=bool)
+
+    def indices(variable, limit):
+        values = variable[:]
+        require(not np.any(np.ma.getmaskarray(values)) and values.dtype.kind in 'iu')
+        require(values.ndim == 1 and np.all(values > 0) and np.all(values <= limit))
+        return np.asarray(values, dtype=np.int64) - 1
+
+    sets = len(ds.dimensions['num_side_sets']) if 'num_side_sets' in ds.dimensions else 0
+    nodesets = len(ds.dimensions['num_node_sets']) if 'num_node_sets' in ds.dimensions else 0
+    if sets == 0 and nodesets == 0:
+        return None
+    for number in range(1, nodesets + 1):
+        name = 'node_ns' + str(number)
+        if name not in ds.variables and 'num_nod_ns' + str(number) not in ds.dimensions:
+            continue  # Exodus permits empty sets.
+        mask[indices(ds.variables[name], count)] = True
+    if sets:
+        total = len(ds.dimensions['num_elem'])
+        selected, sides = [], []
+        for number in range(1, sets + 1):
+            suffix = str(number)
+            if 'elem_ss' + suffix not in ds.variables and 'num_side_ss' + suffix not in ds.dimensions:
+                continue
+            elements = indices(ds.variables['elem_ss' + suffix], total)
+            faces = indices(ds.variables['side_ss' + suffix], 4)
+            require(elements.shape == faces.shape)
+            selected.extend(elements)
+            sides.extend(faces)
+        selected, sides = np.asarray(selected, dtype=np.int64), np.asarray(sides, dtype=np.int64)
+        # Exodus Tet4 side numbering, independent of global element IDs.
+        face_nodes = np.array([[0, 1, 3], [1, 2, 3], [0, 3, 2], [0, 2, 1]])
+        start = 0
+        for number in range(1, len(ds.dimensions['num_el_blk']) + 1):
+            name = 'connect' + str(number)
+            if name not in ds.variables:
+                require('num_el_in_blk' + str(number) not in ds.dimensions)
+                continue
+            connectivity = ds.variables[name]
+            end = start + connectivity.shape[0]
+            relevant = np.flatnonzero((selected >= start) & (selected < end))
+            if len(relevant):
+                topology = str(connectivity.getncattr('elem_type')).strip().upper()
+                if topology not in ('TETRA', 'TETRA4', 'TET4') or connectivity.shape[1:] != (4,):
+                    return None
+                for first in range(0, len(relevant), 65536):
+                    group = relevant[first:first + 65536]
+                    values = connectivity[selected[group] - start, :]
+                    require(not np.any(np.ma.getmaskarray(values)) and values.dtype.kind in 'iu')
+                    require(np.all(values > 0) and np.all(values <= count))
+                    nodes = np.asarray(values, dtype=np.int64)[np.arange(len(group))[:, None], face_nodes[sides[group]]]
+                    mask[nodes.ravel() - 1] = True
+            start = end
+        require(start == total)
+    return mask
+
+
+def field_errors(difference):
+    import numpy as np
+    velocity = norm3(difference[:, :3])
+    pressure = difference[:, 3]
+    return dict(velocity_max_scaled=float(np.max(velocity)), velocity_rms_scaled=rms(velocity),
+                pressure_max_scaled=float(np.max(np.abs(pressure))), pressure_rms_scaled=rms(pressure))
+
+
 def rms(data):
     import numpy as np
     peak = float(np.max(np.abs(data)))
@@ -276,6 +358,9 @@ def compare(args, public):
     public['logged_mars_controls_match_preparation'] = True
     public['reference_settings_status'] = reference_status
     public['reference_deck_hash_matches_preparation'] = deck_hash_matches
+    output_values = reference_output_values(deck)
+    public['reference_deck_output_values'] = output_values
+    public['solver_field_comparison_supported'] = deck_hash_matches and output_values == 'solver_values'
     u, rho = float(prepared['--inlet-velocity']), float(prepared['--rho'])
     pressure_scale = rho * u * u
     require(all(math.isfinite(v) and v > 0 for v in (u, rho, pressure_scale)))
@@ -285,6 +370,8 @@ def compare(args, public):
         count = len(ds.dimensions['num_nodes'])
         require(count > 0)
         ids, xyz = node_ids(ds, count), coordinates(ds)
+        public['failed_check'] = 'source_boundary_tags'
+        boundary = boundary_tags(ds, count)
     require(xyz.shape == (count, 3))
     coordinate_tolerance = 64 * np.finfo(float).eps * max(1., float(np.max(np.abs(xyz))))
     public['failed_check'] = 'mars_fields'
@@ -298,11 +385,19 @@ def compare(args, public):
     public['saved_iteration_and_node_mapping_match'] = True
     public['failed_check'] = 'field_arithmetic'
     difference = finite((mars - reference) / scales)
-    velocity = norm3(difference[:, :3])
-    pressure = difference[:, 3]
     reference_peak = float(np.max(norm3(reference[:, :3])))
-    errors = dict(velocity_max_scaled=float(np.max(velocity)), velocity_rms_scaled=rms(velocity),
-                  pressure_max_scaled=float(np.max(np.abs(pressure))), pressure_rms_scaled=rms(pressure))
+    errors = field_errors(difference)
+    regional_errors = {}
+    public['boundary_localization_status'] = 'unavailable'
+    if boundary is not None:
+        public['boundary_localization_status'] = 'source_tags'
+        for label, selected in (('tagged_boundary', boundary), ('other_nodes', ~boundary)):
+            if np.any(selected):
+                regional_errors[label] = field_errors(difference[selected])
+                public.update((label + '_' + key + '_band', band(value))
+                              for key, value in regional_errors[label].items())
+            else:
+                public[label + '_status'] = 'empty'
     require(all(math.isfinite(v) for v in errors.values()) and math.isfinite(reference_peak))
     # A peak alone does not establish agreement of the vector field.
     peak_relative = abs(peak - reference_peak) / reference_peak if reference_peak else None
@@ -313,7 +408,8 @@ def compare(args, public):
     if deck is not None:
         paths.append(deck)
     private = dict(schema=SCHEMA, iteration=args.iteration, density=rho, velocity_scale=u,
-                   pressure_scale=pressure_scale, errors=errors, mars_peak_speed=peak,
+                   pressure_scale=pressure_scale, errors=errors, regional_errors=regional_errors,
+                   reference_deck_output_values=output_values, mars_peak_speed=peak,
                    reference_peak_speed=reference_peak, peak_relative_difference=peak_relative,
                    pressure_mean_difference=float(np.mean(mars[:, 3] - reference[:, 3])),
                    convergence=convergence, reference_settings_status=reference_status,
@@ -323,6 +419,8 @@ def compare(args, public):
                            'Printed MARS controls checked against preparation; reference deck availability is reported separately.',
                            'Mapped controls are only the supported deck subset; actual reference launch not attested.',
                            'Linear solvers and tolerances need not match; iteration counts are not physical time.',
+                           'The saved deck declares output corrections; the actual reference launch is not attested.',
+                           'Regional errors use all source side/node sets; their completeness and physical roles are not verified.',
                            'No pressure shift removed. Nodal RMS is unweighted, not a volume norm.',
                            'A field mismatch at a finite iteration does not establish a discretization defect.'])
     with args.private_report.open('x') as stream:
@@ -330,7 +428,9 @@ def compare(args, public):
         stream.write('\n')
     public.update((key + '_band', band(value)) for key, value in errors.items())
     public['peak_speed_relative_band'] = band(peak_relative) if peak_relative is not None else 'zero_reference_peak'
-    public['snapshot_fields_within_tolerance'] = errors['velocity_max_scaled'] <= 1e-5 and errors['pressure_max_scaled'] <= 1e-5
+    public['snapshot_fields_within_tolerance'] = (public['solver_field_comparison_supported']
+                                               and errors['velocity_max_scaled'] <= 1e-5
+                                               and errors['pressure_max_scaled'] <= 1e-5)
     public.update(comparison_status='completed', failed_check='none')
 
 
@@ -347,6 +447,8 @@ def main(argv=None):
     result = dict(schema=SCHEMA, comparison_status='invalid_evidence', failed_check='dependencies',
                   logged_mars_controls_match_preparation=False, reference_settings_status='unavailable',
                   reference_deck_hash_matches_preparation=False, saved_iteration_and_node_mapping_match=False,
+                  reference_deck_output_values='unknown', solver_field_comparison_supported=False,
+                  boundary_localization_status='unavailable',
                   full_run_provenance_verified=False, identical_linear_solvers_verified=False,
                   nonlinear_convergence_required=False, mars_status='unknown')
     try:

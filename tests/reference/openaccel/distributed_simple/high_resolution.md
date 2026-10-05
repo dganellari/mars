@@ -67,7 +67,8 @@ Bounds, sample minima and history updates run on the GPU with persistent scratch
 Only owned rows are evaluated; neighbour velocities are already halo-complete.
 Complete element stars provide all required samples. The existing first halo round publishes pressure gradient,
 velocity gradient and beta together (15 doubles). The full iteration still has
-four field rounds, now 26 doubles per ghost. No mesh/field host staging or reverse
+five field rounds, now 27 doubles per ghost, including the nodal outlet-pressure
+exchange described in [outlet pressure averaging](outlet_pressure.md). No mesh/field host staging or reverse
 limiter reduction is added. File I/O, MPI/Hypre API calls and scalar reports remain
 host-controlled.
 

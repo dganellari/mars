@@ -306,6 +306,7 @@ int execute(const Options& o) {
                 c.blocks<1>(tag("pressure",k),r.graph,r.poisson.blocks.host(),r.poisson.rhs.host(),global,all);
                 c.node_field(tag("velocity",k),r.velocity.host(),3,global,all); c.node_field(tag("pressure",k),r.pressure.host(),1,global,all);
                 c.node_field(tag("influence",k),r.d.host(),3,global,all); c.node_field(tag("divergence",k),r.div.host(),1,global,all);
+                c.node_field(tag("outlet_pressure",k),r.outlet_pressure.host(),1,global,all);
                 c.samples(tag("eflux",k),r.eflux.host(),6,el); c.samples(tag("bflux",k),r.bflux.host(),3,fa); c.samples(tag("trace",k),r.trace.host(),3,fa);
                 const auto f=r.flags.host(); c.samples(tag("flags",k),std::vector<double>(f.begin(),f.end()),3,fa);
             }
@@ -413,6 +414,7 @@ int execute(const Options& o) {
             c.node_field(tag("pressure",k),r.pressure.host(),1,part.node_global,part.node_owned);
             c.node_field(tag("influence",k),r.d.host(),3,part.node_global,part.node_owned);
             c.node_field(tag("divergence",k),r.div.host(),1,part.node_global,part.node_owned);
+            c.node_field(tag("outlet_pressure",k),r.outlet_pressure.host(),1,part.node_global,part.node_owned);
             c.samples(tag("eflux",k),r.eflux.host(),6,part.element_global); c.samples(tag("bflux",k),r.bflux.host(),3,part.face_global);
             c.samples(tag("trace",k),r.trace.host(),3,part.face_global);
             const auto f=r.flags.host(); c.samples(tag("flags",k),std::vector<double>(f.begin(),f.end()),3,part.face_global);

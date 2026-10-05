@@ -3,13 +3,24 @@
 // Hypre PCG preconditioned by one BoomerAMG V-cycle, for SPD matrices that stay constant in
 // time: the matrix and the AMG hierarchy are built once, and each solve only runs PCG.
 //
-// The matrix is built on the GPU from a few pieces: COO assembly of rows this rank owns,
-// products and transposes of distributed matrices, and identity rows. The Galerkin product
+// The matrix is built on the GPU from a few pieces: a device CSR block per rank, COO assembly
+// of small matrices, and products and transposes of distributed matrices. The Galerkin product
 // P^T A P turns a matrix over each rank's local node slots into the matrix over the DOFs.
 
 #include "mars_hypre_pcg_solver.hpp"
 #include <_hypre_parcsr_mv.h>
+#include <thrust/binary_search.h>
+#include <thrust/copy.h>
 #include <thrust/device_vector.h>
+#include <thrust/execution_policy.h>
+#include <thrust/iterator/counting_iterator.h>
+#include <thrust/iterator/transform_iterator.h>
+#include <thrust/iterator/zip_iterator.h>
+#include <thrust/partition.h>
+#include <thrust/reduce.h>
+#include <thrust/sort.h>
+#include <thrust/transform.h>
+#include <thrust/unique.h>
 #include <cstdio>
 #include <cstdlib>
 #include <string>
@@ -26,6 +37,12 @@ inline bool hypreEnvFlag(const char* name, bool fallback)
     return option ? std::string(option) == "1" : fallback;
 }
 
+inline size_t hypreEnvMiB(const char* name, size_t fallback)
+{
+    const char* option = std::getenv(name);
+    return (option ? size_t(std::strtoull(option, nullptr, 10)) : fallback) << 20;
+}
+
 // Hypre's own GPU kernels by default:
 // - SpMV: the vendor path returned wrong products intermittently with Hypre 2.33 on the SIMPLE duct.
 // - SpGEMM: cuSPARSE's default SpGEMM stopped the setup with "insufficient resources" on 16 and
@@ -33,6 +50,7 @@ inline bool hypreEnvFlag(const char* name, bool fallback)
 // - GPU-aware MPI: without it Hypre copies every halo exchange through host memory, on every
 //   matvec of every AMG level. MARS already passes device buffers to MPI in its own halos.
 // MARS_HYPRE_SPMV_VENDOR=1, MARS_HYPRE_SPGEMM_VENDOR=1 and MARS_HYPRE_GPU_AWARE=0 switch back.
+// MARS_HYPRE_POOL_MAX_MIB and MARS_HYPRE_POOL_CACHE_MIB set the device pool limits below.
 inline void hypreInitializeOnce()
 {
     static HypreInitGuard guard;
@@ -46,12 +64,36 @@ inline void hypreInitializeOnce()
     HYPRE_SetSpMVUseVendor(spmvVendor ? 1 : 0);
     HYPRE_SetSpGemmUseVendor(spgemmVendor ? 1 : 0);
     HYPRE_SetGpuAwareMPI(gpuAwareMpi ? 1 : 0);
+
+    // Hypre's CUB device pool (when Hypre is built with it) by default rounds every allocation
+    // up to the next power of 8 and keeps every freed block, so setup memory never goes back to
+    // the GPU; TGV with 8M nodes per GPU ran out of memory on 8 GPUs. Pool only blocks up to
+    // 128 MiB, rounded to a power of 2, and cache at most 2 GiB; larger arrays are allocated
+    // exactly and freed at once. This must come before Hypre's first device allocation.
+    const size_t poolMax   = hypreEnvMiB("MARS_HYPRE_POOL_MAX_MIB", 128);
+    const size_t poolCache = hypreEnvMiB("MARS_HYPRE_POOL_CACHE_MIB", 2048);
+    int maxBin             = 0;
+    while ((size_t(2) << maxBin) <= poolMax)
+        ++maxBin;
+    HYPRE_SetGPUMemoryPoolSize(2, 1, maxBin, poolCache);
+    char memory[96];
+#if defined(HYPRE_USING_UMPIRE_DEVICE)
+    std::snprintf(memory, sizeof(memory), "Umpire pool");
+#elif defined(HYPRE_USING_CUDA) && defined(HYPRE_USING_DEVICE_POOL)
+    std::snprintf(memory, sizeof(memory), "CUB pool, blocks up to %zu MiB, at most %zu MiB cached",
+                  (size_t(1) << maxBin) >> 20, poolCache >> 20);
+#elif defined(HYPRE_USING_CUDA) && defined(HYPRE_USING_DEVICE_MALLOC_ASYNC)
+    std::snprintf(memory, sizeof(memory), "cudaMallocAsync");
+#else
+    std::snprintf(memory, sizeof(memory), "no pool");
+#endif
+
     int rank = 0;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     if (rank == 0)
-        std::printf("Hypre: SpMV %s, SpGEMM %s, GPU-aware MPI %s (build default %s)\n",
+        std::printf("Hypre: SpMV %s, SpGEMM %s, GPU-aware MPI %s (build default %s), device memory: %s\n",
                     spmvVendor ? "vendor" : "hypre", spgemmVendor ? "vendor" : "hypre", gpuAwareMpi ? "on" : "off",
-                    buildGpuAware ? "on" : "off");
+                    buildGpuAware ? "on" : "off", memory);
 }
 
 // Collective: stops every rank if one rank fails.
@@ -100,68 +142,130 @@ private:
     hypre_ParCSRMatrix* A_ = nullptr;
 };
 
-struct HypreCoo
+struct HypreRowColumnKey
 {
-    const HYPRE_BigInt* rows;
-    const HYPRE_BigInt* cols;
-    const HYPRE_Complex* values;
-    HYPRE_Int size;
+    __host__ __device__ unsigned long long operator()(int row, unsigned long long column) const
+    {
+        return ((unsigned long long)row << 32) | column;
+    }
 };
 
-// This rank's rows are [rowStart, rowEnd) and its share of the columns [colStart, colEnd).
-// Every triplet must lie in an owned row: Hypre 2.33 crashed sending device triplets to
-// other ranks. Duplicate entries are summed. All arrays are on the device.
-inline HypreMatrix hypreAssemble(MPI_Comm comm, HYPRE_BigInt rowStart, HYPRE_BigInt rowEnd, HYPRE_BigInt colStart,
-                                 HYPRE_BigInt colEnd, HypreCoo coo)
+struct HypreKeyRow
+{
+    __host__ __device__ int operator()(unsigned long long key) const { return int(key >> 32); }
+};
+
+// Compressed column ids [lo, hi) are this rank's own columns.
+struct HypreKeyInBlock
+{
+    unsigned long long lo, hi;
+    __host__ __device__ bool operator()(const thrust::tuple<unsigned long long, HYPRE_Complex>& entry) const
+    {
+        unsigned long long c = thrust::get<0>(entry) & 0xffffffffull;
+        return c >= lo && c < hi;
+    }
+};
+
+struct HypreDiagColumn
+{
+    const long long* columns;
+    long long first;
+    __host__ __device__ HYPRE_Int operator()(unsigned long long key) const
+    {
+        return HYPRE_Int(columns[key & 0xffffffffull] - first);
+    }
+};
+
+struct HypreOffdColumn
+{
+    unsigned long long lo, width;
+    __host__ __device__ HYPRE_Int operator()(unsigned long long key) const
+    {
+        unsigned long long c = key & 0xffffffffull;
+        return HYPRE_Int(c < lo ? c : c - width);
+    }
+};
+
+// The matrix over this rank's rows [firstRow, firstRow + rows) from its entries (row = local
+// row, col = global column, duplicates summed), in the layout Hypre keeps: this rank's own
+// columns (diag, local ids) and the others (offd, ids into a sorted column map). Two radix
+// sorts of 64-bit keys do the work: the columns compressed to this rank's sorted column set,
+// then (row << 32 | column). The input vectors are consumed.
+inline HypreMatrix hypreFromEntries(MPI_Comm comm, HYPRE_BigInt firstRow, HYPRE_Int rows, HYPRE_BigInt globalRows,
+                                    thrust::device_vector<int>& row, thrust::device_vector<long long>& col,
+                                    thrust::device_vector<HYPRE_Complex>& val)
 {
     hypreInitializeOnce();
-    HYPRE_IJMatrix ij = nullptr;
-    HYPRE_IJMatrixCreate(comm, rowStart, rowEnd - 1, colStart, colEnd - 1, &ij);
-    HYPRE_IJMatrixSetObjectType(ij, HYPRE_PARCSR);
-    HYPRE_IJMatrixInitialize_v2(ij, HYPRE_MEMORY_DEVICE);
-    // ncols == nullptr: one entry per triplet.
-    if (coo.size > 0) HYPRE_IJMatrixAddToValues(ij, coo.size, nullptr, coo.rows, coo.cols, coo.values);
-    HYPRE_IJMatrixAssemble(ij);
-    hypre_ParCSRMatrix* A = nullptr;
-    HYPRE_IJMatrixGetObject(ij, reinterpret_cast<void**>(&A));
-    // The IJ object owns A; keep a copy that outlives it.
-    HypreMatrix copy(hypre_ParCSRMatrixClone(A, 1));
-    HYPRE_IJMatrixDestroy(ij);
-    hypreCheck(comm, HYPRE_GetError() == 0 && copy.get() != nullptr, "COO assembly failed");
-    return copy;
-}
+    const size_t n = row.size();
+    thrust::device_vector<long long> columns(col);
+    thrust::sort(thrust::device, columns.begin(), columns.end());
+    columns.resize(thrust::unique(thrust::device, columns.begin(), columns.end()) - columns.begin());
 
-inline HypreMatrix hypreTranspose(const HypreMatrix& A)
-{
-    hypre_ParCSRMatrix* T = nullptr;
-    hypre_ParCSRMatrixTranspose(A.get(), &T, 1);
-    return HypreMatrix(T);
-}
+    thrust::device_vector<unsigned long long> keys(n);
+    thrust::lower_bound(thrust::device, columns.begin(), columns.end(), col.begin(), col.end(), keys.begin());
+    thrust::transform(thrust::device, row.begin(), row.end(), keys.begin(), keys.begin(), HypreRowColumnKey{});
+    thrust::device_vector<int>().swap(row);
+    thrust::device_vector<long long>().swap(col);
+    thrust::sort_by_key(thrust::device, keys.begin(), keys.end(), val.begin());
+    thrust::device_vector<unsigned long long> entryKey(n);
+    thrust::device_vector<HYPRE_Complex> entryVal(n);
+    const size_t nnz = thrust::reduce_by_key(thrust::device, keys.begin(), keys.end(), val.begin(), entryKey.begin(),
+                                             entryVal.begin())
+                           .first -
+                       entryKey.begin();
+    thrust::device_vector<unsigned long long>().swap(keys);
+    thrust::device_vector<HYPRE_Complex>().swap(val);
 
-inline HypreMatrix hypreMultiply(const HypreMatrix& A, const HypreMatrix& B)
-{
-    return HypreMatrix(hypre_ParCSRMatMat(A.get(), B.get()));
-}
+    // Own columns first, rows kept in order within each part.
+    const unsigned long long lo =
+        thrust::lower_bound(thrust::device, columns.begin(), columns.end(), (long long)firstRow) - columns.begin();
+    const unsigned long long hi =
+        thrust::lower_bound(thrust::device, columns.begin(), columns.end(), (long long)(firstRow + rows)) -
+        columns.begin();
+    auto entries = thrust::make_zip_iterator(thrust::make_tuple(entryKey.begin(), entryVal.begin()));
+    const size_t nnzDiag =
+        thrust::stable_partition(thrust::device, entries, entries + nnz, HypreKeyInBlock{lo, hi}) - entries;
+    const size_t nnzOffd = nnz - nnzDiag;
+    const HYPRE_Int colsOffd = HYPRE_Int(columns.size() - (hi - lo));
 
-// P^T A P
-inline HypreMatrix hypreGalerkin(const HypreMatrix& P, const HypreMatrix& A)
-{
-    return hypreMultiply(hypreTranspose(P), hypreMultiply(A, P));
-}
-
-// A + I on the given rows, global ids owned by this rank. The rows must be empty in A.
-inline HypreMatrix hypreAddIdentityRows(MPI_Comm comm, HypreMatrix A, const HYPRE_BigInt* rows, HYPRE_Int count)
-{
-    long long total = count;
-    MPI_Allreduce(MPI_IN_PLACE, &total, 1, MPI_LONG_LONG, MPI_SUM, comm);
-    if (total == 0) return A;
-    thrust::device_vector<HYPRE_Complex> ones(count, HYPRE_Complex(1));
-    HypreMatrix I = hypreAssemble(comm, A.firstRow(), A.endRow(), A.firstRow(), A.endRow(),
-                                  HypreCoo{rows, rows, thrust::raw_pointer_cast(ones.data()), count});
-    hypre_ParCSRMatrix* sum = nullptr;
-    hypre_ParCSRMatrixAdd(1.0, A.get(), 1.0, I.get(), &sum);
-    hypreCheck(comm, sum != nullptr, "adding identity rows failed");
-    return HypreMatrix(sum);
+    HYPRE_BigInt starts[2] = {firstRow, firstRow + rows};
+    hypre_ParCSRMatrix* A  = hypre_ParCSRMatrixCreate(comm, globalRows, globalRows, starts, starts, colsOffd,
+                                                      HYPRE_Int(nnzDiag), HYPRE_Int(nnzOffd));
+    hypre_ParCSRMatrixInitialize_v2(A, HYPRE_MEMORY_DEVICE);
+    hypre_CSRMatrix* diag = hypre_ParCSRMatrixDiag(A);
+    hypre_CSRMatrix* offd = hypre_ParCSRMatrixOffd(A);
+    auto rowOf            = thrust::make_transform_iterator(entryKey.begin(), HypreKeyRow{});
+    auto rowIds           = thrust::counting_iterator<int>(0);
+    thrust::lower_bound(thrust::device, rowOf, rowOf + nnzDiag, rowIds, rowIds + rows + 1,
+                        thrust::device_pointer_cast(hypre_CSRMatrixI(diag)));
+    thrust::lower_bound(thrust::device, rowOf + nnzDiag, rowOf + nnz, rowIds, rowIds + rows + 1,
+                        thrust::device_pointer_cast(hypre_CSRMatrixI(offd)));
+    const long long* columnIds = thrust::raw_pointer_cast(columns.data());
+    if (nnzDiag > 0)
+    {
+        thrust::transform(thrust::device, entryKey.begin(), entryKey.begin() + nnzDiag,
+                          thrust::device_pointer_cast(hypre_CSRMatrixJ(diag)), HypreDiagColumn{columnIds, firstRow});
+        thrust::copy(thrust::device, entryVal.begin(), entryVal.begin() + nnzDiag,
+                     thrust::device_pointer_cast(hypre_CSRMatrixData(diag)));
+    }
+    if (nnzOffd > 0)
+    {
+        thrust::transform(thrust::device, entryKey.begin() + nnzDiag, entryKey.begin() + nnz,
+                          thrust::device_pointer_cast(hypre_CSRMatrixJ(offd)), HypreOffdColumn{lo, hi - lo});
+        thrust::copy(thrust::device, entryVal.begin() + nnzDiag, entryVal.begin() + nnz,
+                     thrust::device_pointer_cast(hypre_CSRMatrixData(offd)));
+    }
+    if (colsOffd > 0)
+    {
+        thrust::device_vector<HYPRE_BigInt> colMap(colsOffd);
+        auto next = thrust::copy(thrust::device, columns.begin(), columns.begin() + lo, colMap.begin());
+        thrust::copy(thrust::device, columns.begin() + hi, columns.end(), next);
+        cudaMemcpy(hypre_ParCSRMatrixColMapOffd(A), thrust::raw_pointer_cast(colMap.data()),
+                   colsOffd * sizeof(HYPRE_BigInt), cudaMemcpyDeviceToHost);
+    }
+    hypre_ParCSRMatrixSetNumNonzeros(A);
+    hypreCheck(comm, HYPRE_GetError() == 0, "matrix setup from entries failed");
+    return HypreMatrix(A);
 }
 
 class HypreAmgPcgSolver

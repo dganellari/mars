@@ -255,8 +255,141 @@ class SnapshotTests(unittest.TestCase):
         self.deck.unlink()
         result = self.run_compare()
         self.assertEqual(result['reference_settings_status'], 'unavailable')
-        self.assertTrue(result['snapshot_fields_within_tolerance'])
+        self.assertFalse(result['snapshot_fields_within_tolerance'])
+        self.assertEqual(result['velocity_max_scaled_band'], 'within_1e_minus_5')
+        self.assertEqual(result['reference_deck_output_values'], 'unknown')
+        self.assertFalse(result['solver_field_comparison_supported'])
         self.assertFalse(result['full_run_provenance_verified'])
+
+    def update_deck(self):
+        self.deck.write_text(yaml.safe_dump(self.doc))
+        case = json.loads(self.case.read_text())
+        case['deck_sha256'] = compare.digest(self.deck)
+        self.case.write_text(json.dumps(case))
+
+    def add_boundary_tags(self, elements=(1,), faces=(1,)):
+        with Dataset(str(self.mesh), 'a') as ds:
+            ds.createDimension('num_elem', 3)
+            ds.createDimension('num_el_blk', 2)
+            for number, rows in enumerate(([[1, 2, 3, 4]], [[3, 4, 5, 6], [1, 3, 5, 6]]), 1):
+                suffix = str(number)
+                ds.createDimension('num_el_in_blk' + suffix, len(rows))
+                ds.createDimension('num_nod_per_el' + suffix, 4)
+                var = ds.createVariable('connect' + suffix, 'i8', ('num_el_in_blk' + suffix, 'num_nod_per_el' + suffix))
+                var.elem_type = 'TETRA4'
+                var[:] = rows
+            ds.createDimension('num_side_sets', 1)
+            ds.createDimension('num_side_ss1', len(elements))
+            ds.createVariable('elem_ss1', 'i8', ('num_side_ss1',))[:] = elements
+            ds.createVariable('side_ss1', 'i8', ('num_side_ss1',))[:] = faces
+
+    def test_corrected_reference_output_cannot_claim_solver_parity(self):
+        self.doc['simulation']['solver']['output_control']['corrected_boundary_values'] = True
+        self.update_deck()
+        result = self.run_compare()
+        self.assertEqual(result['reference_deck_output_values'], 'boundary_corrected')
+        self.assertFalse(result['solver_field_comparison_supported'])
+        self.assertFalse(result['snapshot_fields_within_tolerance'])
+        self.assertEqual(result['velocity_max_scaled_band'], 'within_1e_minus_5')
+
+    def test_omitted_output_correction_uses_pinned_false_default(self):
+        del self.doc['simulation']['solver']['output_control']['corrected_boundary_values']
+        self.update_deck()
+        result = self.run_compare()
+        self.assertEqual(result['reference_deck_output_values'], 'solver_values')
+        self.assertTrue(result['solver_field_comparison_supported'])
+
+    def test_malformed_output_correction_is_unknown(self):
+        self.doc['simulation']['solver']['output_control']['corrected_boundary_values'] = 'private-invalid-value'
+        self.update_deck()
+        result = self.run_compare()
+        self.assertEqual(result['reference_deck_output_values'], 'unknown')
+        self.assertFalse(result['solver_field_comparison_supported'])
+        self.assertNotIn('private-invalid-value', self.public.read_text())
+
+    def test_unmatched_deck_does_not_establish_output_semantics(self):
+        self.deck.write_text(self.deck.read_text() + '# unverified replacement\n')
+        result = self.run_compare()
+        self.assertFalse(result['solver_field_comparison_supported'])
+        self.assertFalse(result['snapshot_fields_within_tolerance'])
+
+    def test_boundary_only_difference_is_localized_without_hiding_global_error(self):
+        self.add_boundary_tags()
+        fields = self.fields.copy()
+        fields[[0, 1, 3], :] = 0.
+        for path, nodes in zip(self.ref_paths, ([4, 0, 2, 1], [3, 1, 5, 2])):
+            self.write_exodus(path, nodes, fields=fields)
+        result = self.run_compare()
+        self.assertEqual(result['boundary_localization_status'], 'source_tags')
+        self.assertEqual(result['tagged_boundary_velocity_max_scaled_band'], 'over_5_percent')
+        self.assertEqual(result['other_nodes_velocity_max_scaled_band'], 'within_1e_minus_5')
+        self.assertEqual(result['other_nodes_pressure_max_scaled_band'], 'within_1e_minus_5')
+        self.assertFalse(result['snapshot_fields_within_tolerance'])
+
+    def test_nonboundary_difference_is_not_attributed_to_boundary_output(self):
+        self.add_boundary_tags()
+        fields = self.fields.copy()
+        fields[5, :] += .1
+        self.write_exodus(self.ref_paths[1], [3, 1, 5, 2], fields=fields)
+        result = self.run_compare()
+        self.assertEqual(result['tagged_boundary_velocity_max_scaled_band'], 'within_1e_minus_5')
+        self.assertEqual(result['other_nodes_velocity_max_scaled_band'], 'over_5_percent')
+        self.assertFalse(result['snapshot_fields_within_tolerance'])
+
+    def test_side_sets_use_element_rows_across_blocks_and_all_tet_ordinals(self):
+        expected = [[0, 1, 3], [1, 2, 3], [0, 2, 3], [0, 1, 2]]
+        self.add_boundary_tags(elements=(3,), faces=(1,))
+        connectivity = np.array([0, 2, 4, 5])
+        for face, nodes in enumerate(expected, 1):
+            with Dataset(str(self.mesh), 'a') as ds:
+                ds['side_ss1'][:] = [face]
+                mask = compare.boundary_tags(ds, 6)
+            np.testing.assert_array_equal(np.flatnonzero(mask), connectivity[nodes])
+
+    def test_node_sets_join_side_sets(self):
+        self.add_boundary_tags()
+        with Dataset(str(self.mesh), 'a') as ds:
+            ds.createDimension('num_node_sets', 1)
+            ds.createDimension('num_nod_ns1', 1)
+            ds.createVariable('node_ns1', 'i8', ('num_nod_ns1',))[:] = [6]
+            np.testing.assert_array_equal(np.flatnonzero(compare.boundary_tags(ds, 6)), [0, 1, 3, 5])
+
+    def test_node_set_only_and_empty_complement(self):
+        with Dataset(str(self.mesh), 'a') as ds:
+            ds.createDimension('num_node_sets', 1)
+            ds.createDimension('num_nod_ns1', 6)
+            ds.createVariable('node_ns1', 'i8', ('num_nod_ns1',))[:] = [1, 2, 3, 4, 5, 6]
+        result = self.run_compare()
+        self.assertEqual(result['other_nodes_status'], 'empty')
+        self.assertNotIn('other_nodes_velocity_max_scaled_band', result)
+
+    def test_repeated_unordered_sides_are_a_union(self):
+        self.add_boundary_tags(elements=(3, 1, 3), faces=(2, 1, 2))
+        with Dataset(str(self.mesh)) as ds:
+            np.testing.assert_array_equal(np.flatnonzero(compare.boundary_tags(ds, 6)), np.arange(6))
+
+    def test_bad_connectivity_is_rejected(self):
+        self.add_boundary_tags()
+        with Dataset(str(self.mesh), 'a') as ds:
+            ds['connect1'][0, 3] = 0
+        self.assertEqual(self.run_compare(1)['failed_check'], 'source_boundary_tags')
+
+    def test_bad_side_element_is_rejected_without_private_values(self):
+        self.add_boundary_tags(elements=(987654321,))
+        self.assertEqual(self.run_compare(1)['failed_check'], 'source_boundary_tags')
+
+    def test_bad_side_ordinal_is_rejected(self):
+        self.add_boundary_tags(faces=(5,))
+        self.assertEqual(self.run_compare(1)['failed_check'], 'source_boundary_tags')
+
+    def test_unsupported_topology_keeps_regional_evidence_unavailable(self):
+        self.add_boundary_tags()
+        with Dataset(str(self.mesh), 'a') as ds:
+            ds['connect1'].elem_type = 'PRIVATE_UNSUPPORTED_TOPOLOGY'
+        result = self.run_compare()
+        self.assertEqual(result['boundary_localization_status'], 'unavailable')
+        self.assertNotIn('PRIVATE_UNSUPPORTED_TOPOLOGY', self.public.read_text())
+        self.assertNotIn('other_nodes_velocity_max_scaled_band', result)
 
     def test_changed_reference_physics_are_reported(self):
         self.doc['simulation']['material_library'][0]['transport_properties']['dynamic_viscosity']['dynamic_viscosity'] = .2

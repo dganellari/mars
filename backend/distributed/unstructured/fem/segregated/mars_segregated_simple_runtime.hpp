@@ -150,7 +150,7 @@ struct SimpleRunner {
     int n,e,b,completed=0,limiter_iteration=-1;
     SimpleControls controls;
     Array<double> x,y,z,velocity,pressure,vg,pg,d,volume,div,eflux,bflux,trace,factor,sum,gp,moment,old_velocity,old_pressure,old_eflux,old_bflux;
-    Array<double> blend,blend_lower,blend_upper,blend_candidate,inlet_velocity;
+    Array<double> blend,blend_lower,blend_upper,blend_candidate,inlet_velocity,outlet_area,outlet_pressure;
     Array<int> n0,n1,n2,n3,error,flags,old_flags;
     Array<SimpleFace> faces; Array<TetGeometry<double>> geometry;
     SimpleMesh mesh; SimpleState state;
@@ -161,16 +161,17 @@ struct SimpleRunner {
         n(int(f.x.size())),e(int(f.nodes[0].size())),b(int(f.faces.size())),controls(c),
         x(f.x),y(f.y),z(f.z),velocity(3*n),pressure(n),vg(9*n),pg(3*n),d(3*n),volume(n),div(n),
         eflux(6*e),bflux(3*b),trace(3*b),factor(n),sum(9*n),gp(3*n),moment(2),old_velocity(3*n),old_pressure(n),old_eflux(6*e),old_bflux(3*b),
-        blend(c.high_resolution?3*n:0),blend_lower(c.high_resolution?3*n:0),blend_upper(c.high_resolution?3*n:0),blend_candidate(c.high_resolution?3*n:0),inlet_velocity(3*n),
+        blend(c.high_resolution?3*n:0),blend_lower(c.high_resolution?3*n:0),blend_upper(c.high_resolution?3*n:0),blend_candidate(c.high_resolution?3*n:0),inlet_velocity(3*n),outlet_area(n),outlet_pressure(n),
         n0(f.nodes[0]),n1(f.nodes[1]),n2(f.nodes[2]),n3(f.nodes[3]),error(1),flags(3*b),old_flags(3*b),
         faces(f.faces),geometry(e),
         mesh{n,e,b,{n0.data(),n1.data(),n2.data(),n3.data()},x.data(),y.data(),z.data(),faces.data(),geometry.data()},
         state{velocity.data(),pressure.data(),vg.data(),pg.data(),d.data(),volume.data(),div.data(),
-              eflux.data(),bflux.data(),trace.data(),factor.data(),error.data(),flags.data(),blend.data(),inlet_velocity.data()},
+              eflux.data(),bflux.data(),trace.data(),factor.data(),error.data(),flags.data(),blend.data(),inlet_velocity.data(),outlet_pressure.data()},
         graph(mesh),momentum(n,graph.blocks()),poisson(n,graph.blocks()) {
         ensure(valid_simple_controls(c),"invalid SIMPLE controls");
         launch(e,SimpleGeometry{mesh,state}); check("native geometry failed");
         launch(b,SimpleBoundaryFactor{mesh,factor.data()});
+        launch(b,SimpleOutletTraceSum{mesh,nullptr,outlet_area.data()});
         launch(b,SimpleInletArea{mesh,sum.data(),sum.data()+3*n});
         launch(n,SimpleInletVelocity{sum.data(),sum.data()+3*n,inlet_velocity.data(),controls.inlet_speed,error.data()});
         check("invalid inlet normal or boundary velocity");
@@ -213,6 +214,8 @@ struct SimpleRunner {
         ensure(std::isfinite(moments[0]) && std::isfinite(moments[1]) && moments[1]>0,
                "all outlet faces closed: no open pressure anchor; cannot solve this prescribed-inflow case");
         launch(b,SimpleTrace{mesh,state,controls,moment.data()}); observe("trace",trace);
+        outlet_pressure.zero(); launch(b,SimpleOutletTraceSum{mesh,trace.data(),outlet_pressure.data()});
+        launch(n,SimpleOutletTraceFinish{outlet_pressure.data(),outlet_area.data(),outlet_pressure.data(),error.data()});
         poisson.blocks.zero(); poisson.rhs.zero(); auto ap=graph.view<1>(poisson.blocks.data(),poisson.rhs.data());
         launch(e,SimpleInterior<1>{mesh,state,controls,ap}); launch(b,SimpleBoundary<1>{mesh,state,controls,ap});
         check("pressure assembly failed"); poisson.solve(ap); observe("raw_pressure_increment",poisson.increment);

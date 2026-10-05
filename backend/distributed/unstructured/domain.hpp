@@ -831,7 +831,7 @@ public:
     // Multi-rank, single-block meshes use SFC node ownership (mars_sfc_ownership.hpp): a node belongs to the rank
     // whose cornerstone SFC range holds it, and sync() completes the element star of every owned node, so each owned
     // row is assembled from all its elements by construction. On a periodic box every rank can also compute the owner
-    // of a periodic master from its key (buildCrossRankPeriodicMap). MARS_OWNERSHIP=vote restores the previous scheme
+    // of a periodic master from its key (DofSpace). MARS_OWNERSHIP=vote restores the previous scheme
     // (lowest claiming rank among halo peers, with the cornerstone halo search widened by 1.5 as an empirical
     // mitigation); multi-block meshes keep that scheme. MARS_HALO_FACTOR sets the halo search factor in either mode.
     // The choice must be the same on all ranks, so it comes from the environment only. Called right after each

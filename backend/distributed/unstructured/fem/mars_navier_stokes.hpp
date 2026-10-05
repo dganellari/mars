@@ -33,8 +33,9 @@
 // owned nodes, ghost copies of other ranks' nodes and, on a periodic mesh,
 // several slots for one periodic point. The DofSpace maps slots to the unknowns
 // (P) and back (P^T). Time step kernels scatter over the local elements and
-// restrict; the constant matrices are assembled per rank and reduced by Hypre
-// to P^T A_local P, the way MFEM assembles. Both systems are solved with PCG
+// restrict; the constant matrices are assembled per rank over its slots and
+// reduced to P^T A_local P by sending every copy's row to the owner of its DOF
+// (DofSpace::restrictMatrix), with no sparse product. Both systems are solved with PCG
 // and BoomerAMG, whose iteration count stays flat as the mesh and the number
 // of GPUs grow.
 
@@ -44,22 +45,28 @@
 #include "backend/distributed/unstructured/fem/mars_dof_space.hpp"
 #include "backend/distributed/unstructured/solvers/mars_hypre_amg_pcg_solver.hpp"
 
+#include <thrust/binary_search.h>
 #include <thrust/copy.h>
 #include <thrust/count.h>
 #include <thrust/device_vector.h>
 #include <thrust/execution_policy.h>
+#include <thrust/fill.h>
 #include <thrust/functional.h>
 #include <thrust/iterator/counting_iterator.h>
 #include <thrust/iterator/transform_iterator.h>
 #include <thrust/reduce.h>
 #include <thrust/scan.h>
+#include <thrust/sort.h>
 #include <thrust/transform.h>
+#include <thrust/unique.h>
 #include <thrust/transform_reduce.h>
 #include <thrust/tuple.h>
 
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <iomanip>
 #include <iostream>
 #include <limits>
@@ -337,20 +344,16 @@ __global__ void nsGlobalIdKernel(size_t n, const uint8_t* isDof, const int* dofI
     if (i < n) id[i] = isDof[i] ? RealType(dofStart + dofIndex[i]) : RealType(-1);
 }
 
-// Rows of the prolongation P: slot localStart + i takes the value of DOF gid[i], per component.
+// The global DOF id of each slot as an integer, and the local row of each DOF slot (-1 for the
+// other slots): what DofSpace::restrictMatrix needs to place every matrix entry.
 template<typename RealType>
-__global__ void nsProlongationTripletsKernel(size_t n, int comps, long long localStart, const RealType* gid,
-                                             HYPRE_BigInt* rows, HYPRE_BigInt* cols, RealType* values)
+__global__ void nsSlotIdsKernel(size_t n, const uint8_t* isDof, const int* dofIndex, const RealType* gid,
+                                long long* slotGid, int* slotDofRow)
 {
     size_t i = size_t(blockIdx.x) * blockDim.x + threadIdx.x;
     if (i >= n) return;
-    for (int d = 0; d < comps; ++d)
-    {
-        size_t k  = i * comps + d;
-        rows[k]   = comps * (localStart + HYPRE_BigInt(i)) + d;
-        cols[k]   = comps * HYPRE_BigInt(gid[i]) + d;
-        values[k] = RealType(1);
-    }
+    slotGid[i]    = (long long)gid[i];
+    slotDofRow[i] = isDof[i] ? dofIndex[i] : -1;
 }
 
 // With no p = 0 anywhere the pressure is only defined up to a constant: fix it
@@ -395,16 +398,58 @@ __device__ inline void nsFaceWeights(int ip, const double corner[8][3], const Co
         w[m] = dndx[m][0] * area.c[0][f] + dndx[m][1] * area.c[1][f] + dndx[m][2] * area.c[2][f];
 }
 
-// The element matrix of scale * K as 64 triplets over local slots. Entries in
-// a removed row or column are 0: the Galerkin product keeps them empty and the
-// removed DOFs get identity rows. liftComps > 0 moves the removed columns of a
+// The pattern of the local slot matrix: (row << 32 | col) for every pair of corners of an element.
+template<typename KeyType>
+__global__ void nsPatternKeysKernel(HexElements<KeyType> hex, unsigned long long* keys)
+{
+    size_t k = size_t(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (k >= hex.count) return;
+    size_t e = hex.first + k;
+    unsigned long long n[8];
+    for (int c = 0; c < 8; ++c)
+        n[c] = (unsigned long long)hex.node[c][e];
+    for (int a = 0; a < 8; ++a)
+        for (int b = 0; b < 8; ++b)
+            keys[k * 64 + a * 8 + b] = (n[a] << 32) | n[b];
+}
+
+struct NsPatternCol
+{
+    HOST_DEVICE_FUN int operator()(unsigned long long key) const { return int(key & 0xffffffffull); }
+};
+
+struct NsRowKey
+{
+    HOST_DEVICE_FUN unsigned long long operator()(long long row) const { return (unsigned long long)row << 32; }
+};
+
+struct NsDiagonalKey
+{
+    HOST_DEVICE_FUN unsigned long long operator()(long long i) const { return ((unsigned long long)i << 32) | i; }
+};
+
+// Position of column c in a sorted CSR row.
+__device__ inline int nsFindColumn(const int* cols, int begin, int end, int c)
+{
+    while (begin < end)
+    {
+        int mid = begin + (end - begin) / 2;
+        if (cols[mid] < c) begin = mid + 1;
+        else end = mid;
+    }
+    return begin;
+}
+
+// scale * K added into the local slot CSR. Entries in a removed row or column
+// are left out: the Galerkin product keeps them empty and the removed DOFs get
+// identity rows (nsDiagonalKernel). liftComps > 0 moves the removed columns of a
 // free row to the right-hand side, -scale K_rc target_c, which keeps K symmetric.
 template<typename KeyType, typename RealType>
-__global__ void nsLaplacianTripletsKernel(HexElements<KeyType> hex, const RealType* x, const RealType* y,
-                                          const RealType* z, Components<const RealType*> area, RealType scale,
-                                          long long localStart, const uint8_t* removed,
-                                          Components<const RealType*> target, Components<RealType*> lift,
-                                          int liftComps, HYPRE_BigInt* rows, HYPRE_BigInt* cols, RealType* values)
+__global__ void nsLaplacianCsrKernel(HexElements<KeyType> hex, const RealType* x, const RealType* y,
+                                     const RealType* z, Components<const RealType*> area, RealType scale,
+                                     const uint8_t* removed, Components<const RealType*> target,
+                                     Components<RealType*> lift, int liftComps, const int* rowPtr, const int* cols,
+                                     RealType* values)
 {
     size_t k = size_t(blockIdx.x) * blockDim.x + threadIdx.x;
     if (k >= hex.count) return;
@@ -423,31 +468,41 @@ __global__ void nsLaplacianTripletsKernel(HexElements<KeyType> hex, const RealTy
             Ke[R][m] += w[m];
         }
     }
-    size_t out = k * 64;
     for (int a = 0; a < 8; ++a)
-        for (int b = 0; b < 8; ++b, ++out)
+    {
+        KeyType r = n[a];
+        if (removed && removed[r]) continue;
+        for (int b = 0; b < 8; ++b)
         {
-            KeyType r = n[a], c = n[b];
-            bool drop = removed && (removed[r] || removed[c]);
-            rows[out]   = localStart + HYPRE_BigInt(r);
-            cols[out]   = localStart + HYPRE_BigInt(c);
-            values[out] = drop ? RealType(0) : RealType(scale * Ke[a][b]);
-            if (liftComps > 0 && !removed[r] && removed[c])
+            KeyType c = n[b];
+            if (removed && removed[c])
+            {
                 for (int d = 0; d < liftComps; ++d)
                     atomicAdd(&lift.c[d][r], RealType(-scale * Ke[a][b]) * target.c[d][c]);
+                continue;
+            }
+            int pos = nsFindColumn(cols, rowPtr[r], rowPtr[r + 1], int(c));
+            atomicAdd(&values[pos], RealType(scale * Ke[a][b]));
         }
+    }
 }
 
-// The diagonal c M over the local slots; zero in removed rows.
+// The diagonal: + c M in free rows, 1 in the removed DOF rows (their copies stay
+// empty, so P^T A P has an identity row and column there).
 template<typename RealType>
-__global__ void nsMassTripletsKernel(size_t n, long long localStart, const RealType* massLocal, const uint8_t* removed,
-                                     RealType c, HYPRE_BigInt* rows, HYPRE_BigInt* cols, RealType* values)
+__global__ void nsDiagonalKernel(size_t n, const uint8_t* isDof, const uint8_t* removed, const RealType* massLocal,
+                                 RealType c, const int* rowPtr, const int* cols, RealType* values)
 {
     size_t i = size_t(blockIdx.x) * blockDim.x + threadIdx.x;
     if (i >= n) return;
-    rows[i]   = localStart + HYPRE_BigInt(i);
-    cols[i]   = rows[i];
-    values[i] = removed[i] ? RealType(0) : c * massLocal[i];
+    bool gone = removed && removed[i];
+    if (!gone && !massLocal) return;
+    int pos = nsFindColumn(cols, rowPtr[i], rowPtr[i + 1], int(i));
+    if (gone)
+    {
+        if (isDof[i]) values[pos] = RealType(1);
+    }
+    else atomicAdd(&values[pos], c * massLocal[i]);
 }
 
 template<typename RealType>
@@ -752,13 +807,6 @@ struct NsFlaggedDof
 };
 
 template<typename RealType>
-struct NsGidOf
-{
-    const RealType* gid;
-    __device__ HYPRE_BigInt operator()(size_t i) const { return HYPRE_BigInt(gid[i]); }
-};
-
-template<typename RealType>
 struct NsMassNormTerm
 {
     const uint8_t* isDof;
@@ -912,6 +960,7 @@ public:
     struct Timing
     {
         double predictor = 0, viscous = 0, pressure = 0, corrector = 0;
+        double hypre = 0; // inside the Hypre solves, part of viscous and pressure
         long velocityIterations = 0, pressureIterations = 0;
     };
 
@@ -963,12 +1012,15 @@ public:
         flux_.resize(12 * hex_.count);
 
         if (prm_.planar) checkPlanarMesh();
+        trace("dof space");
         buildGeometry();
         applyConditions(rule);
         numberDofs();
         buildOpenings(openings);
+        buildPattern();
         buildViscousSolvers();
         buildPressureSolver();
+        trace("ready");
     }
 
     // After setting u, v, w, p: prescribed velocities, periodic copies and ghosts,
@@ -1085,14 +1137,22 @@ public:
     const Space& space() const { return space_; }
     const Box<RealType>& box() const { return box_; }
     const Timing& timing() const { return timing_; }
-    void resetTiming() { timing_ = {}; }
+    void resetTiming()
+    {
+        timing_ = {};
+        space_.resetExchangeStats();
+    }
 
     // Stage times of the slowest rank over the steps since the last resetTiming (collective).
     void printTiming(long steps) const
     {
-        steps           = std::max(steps, 1L);
-        double local[4] = {timing_.predictor, timing_.viscous, timing_.pressure, timing_.corrector}, slowest[4];
-        MPI_Allreduce(local, slowest, 4, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+        steps         = std::max(steps, 1L);
+        const auto& t  = timing_;
+        const auto& ex = space_.exchangeStats();
+        double stages  = t.predictor + t.viscous + t.pressure + t.corrector;
+        double local[8] = {t.predictor, t.viscous, t.pressure, t.corrector, t.hypre, stages - t.hypre, ex.ms, ex.mpiMs};
+        double slowest[8];
+        MPI_Allreduce(local, slowest, 8, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
         if (rank_ != 0) return;
         int ranks = 1;
         MPI_Comm_size(MPI_COMM_WORLD, &ranks);
@@ -1105,7 +1165,10 @@ public:
                   << " | pressure_it/step=" << double(timing_.pressureIterations) / steps
                   << " ms/pressure_it="
                   << (timing_.pressureIterations > 0 ? slowest[2] / timing_.pressureIterations : 0.0)
-                  << " velocity_it/step=" << double(timing_.velocityIterations) / steps << "\n"
+                  << " velocity_it/step=" << double(timing_.velocityIterations) / steps
+                  << " | hypre=" << slowest[4] / steps << " mars=" << slowest[5] / steps
+                  << " | exchanges/step=" << double(ex.count) / steps << " exchange=" << slowest[6] / steps
+                  << " mpi=" << slowest[7] / steps << "\n"
                   << std::defaultfloat;
     }
     int velocityIterations(int component) const { return velocityIters_[component]; }
@@ -1114,6 +1177,24 @@ public:
     int components() const { return comps_; }
 
 private:
+    // MARS_NS_TRACE=1: each setup stage with the smallest free GPU memory over the ranks,
+    // flushed, to place a crash or an out-of-memory. Collective.
+    void trace(const char* stage) const
+    {
+        static const bool enabled = std::getenv("MARS_NS_TRACE") != nullptr;
+        if (!enabled) return;
+        cudaDeviceSynchronize();
+        size_t freeBytes = 0, totalBytes = 0;
+        cudaMemGetInfo(&freeBytes, &totalBytes);
+        double freeGiB = double(freeBytes) / double(1ull << 30), minFree = 0;
+        MPI_Allreduce(&freeGiB, &minFree, 1, MPI_DOUBLE, MPI_MIN, MPI_COMM_WORLD);
+        if (rank_ == 0)
+        {
+            std::printf("[ns-setup] %s: min free GPU memory %.2f GiB\n", stage, minFree);
+            std::fflush(stdout);
+        }
+    }
+
     struct StageClock
     {
         double t;
@@ -1149,15 +1230,21 @@ private:
     // 1. u* from the history, the advection by F^n and the old pressure.
     void predict(bool bdf2)
     {
-        gradientOf(p, true);
+        scatterGradient(p);
         for (int d = 0; d < comps_; ++d)
             zero(adv_[d]);
         if (hex_.count > 0)
             nsAdvectionKernel<KeyType, RealType>
                 <<<elemGrid(), bs()>>>(hex_, flux_.data(), comps_, cview(vel()), view(adv_));
         cudaCheckError();
+        Vector* scattered[6];
         for (int d = 0; d < comps_; ++d)
-            space_.restrict(adv_[d]);
+        {
+            scattered[d]          = &g_[d];
+            scattered[comps_ + d] = &adv_[d];
+        }
+        space_.restrict(scattered, 2 * comps_);
+        inverseMass(true);
         nsOpeningAdvectionKernel<RealType><<<grid(), bs()>>>(n_, space_.isDof(), comps_, cview(openArea_),
                                                              fixed_.data(), cview(target_), cview(vel()),
                                                              view(adv_));
@@ -1181,14 +1268,16 @@ private:
                                                            massDof_.data(), invDt, star_[d].data(), lift_[d].data(),
                                                            target_[d].data(), rhs_.data(), x_.data());
             cudaCheckError();
+            StageClock clock;
             velocityIters_[d] = solver.solve(rhs_.data(), x_.data(), true);
+            timing_.hypre += clock.lap();
             if (velocityIters_[d] < 0) return failed("velocity", solver);
             timing_.velocityIterations += velocityIters_[d];
             nsFromDofKernel<RealType><<<grid(), bs()>>>(n_, space_.isDof(), dofIndex_.data(), x_.data(),
                                                         sstar_[d].data());
             cudaCheckError();
-            space_.prolong(sstar_[d]);
         }
+        space_.prolong(fieldsOf(sstar_).data(), comps_);
         return true;
     }
 
@@ -1197,8 +1286,7 @@ private:
     {
         const RealType invDt = bdf2 ? RealType(3) / (RealType(2) * prm_.dt) : RealType(1) / prm_.dt;
         gradientOf(p, false);
-        for (int d = 0; d < comps_; ++d)
-            space_.prolong(g_[d]);
+        space_.prolong(fieldsOf(g_).data(), comps_);
         if (hex_.count > 0)
             nsFaceFluxKernel<KeyType, RealType><<<elemGrid(), bs()>>>(hex_, x(), y(), z(), cview(area_), comps_,
                                                                       cview(sstar_), p.data(), cview(g_),
@@ -1209,7 +1297,9 @@ private:
         nsPressureRhsKernel<RealType><<<grid(), bs()>>>(n_, space_.isDof(), dofIndex_.data(), pressureFixed_.data(),
                                                         prm_.rho * invDt, divStar_.data(), rhs_.data());
         cudaCheckError();
+        StageClock clock;
         pressureIters_ = pressure_->solve(rhs_.data(), x_.data());
+        timing_.hypre += clock.lap();
         if (pressureIters_ < 0) return failed("pressure", *pressure_);
         timing_.pressureIterations += pressureIters_;
         nsFromDofKernel<RealType><<<grid(), bs()>>>(n_, space_.isDof(), dofIndex_.data(), x_.data(), phi_.data());
@@ -1232,9 +1322,9 @@ private:
         nsCorrectorKernel<RealType><<<grid(), bs()>>>(n_, space_.isDof(), fixed_.data(), h, comps_, cview(target_),
                                                       cview(sstar_), cview(g_), phi_.data(), vel(), p.data());
         cudaCheckError();
-        for (int d = 0; d < comps_; ++d)
-            space_.prolong(*velocity()[d]);
-        space_.prolong(p);
+        Vector* fields[4] = {velocity()[0], velocity()[1], velocity()[2], &p};
+        fields[comps_]    = &p;
+        space_.prolong(fields, comps_ + 1);
     }
 
     bool failed(const char* system, const HypreAmgPcgSolver& solver) const
@@ -1249,18 +1339,30 @@ private:
     // g = M^-1 D^T q (= -G q, ~ -grad q) at the DOF slots, with Q if withQ. q must be current on every slot.
     void gradientOf(const Vector& q, bool withQ)
     {
+        scatterGradient(q);
+        space_.restrict(fieldsOf(g_).data(), comps_);
+        inverseMass(withQ);
+    }
+
+    // g = D^T q over this rank's elements, before restrict.
+    void scatterGradient(const Vector& q)
+    {
         for (int d = 0; d < comps_; ++d)
             zero(g_[d]);
         if (hex_.count > 0)
             nsDivergenceTransposeKernel<KeyType, RealType>
                 <<<elemGrid(), bs()>>>(hex_, cview(area_), comps_, q.data(), view(g_));
         cudaCheckError();
-        for (int d = 0; d < comps_; ++d)
-            space_.restrict(g_[d]);
+    }
+
+    void inverseMass(bool withQ)
+    {
         nsInverseMassKernel<RealType><<<grid(), bs()>>>(n_, space_.isDof(), fixed_.data(), int(withQ),
                                                         massDof_.data(), comps_, view(g_));
         cudaCheckError();
     }
+
+    static std::array<Vector*, 3> fieldsOf(Vector (&c)[3]) { return {&c[0], &c[1], &c[2]}; }
 
     // out = D_F F + openings at the DOF slots; the outlets carry the nodal velocity.
     void fluxDivergence(Vector& out, Components<RealType*> velocityField)
@@ -1359,10 +1461,9 @@ private:
         thrust::exclusive_scan(thrust::device, dofIndex_.data(), dofIndex_.data() + n_, dofIndex_.data());
         numOwned_ = int(thrust::count(thrust::device, space_.isDof(), space_.isDof() + n_, uint8_t(1)));
 
-        long long owned = numOwned_, slots = (long long)n_;
+        long long owned = numOwned_;
         MPI_Exscan(&owned, &dofStart_, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
-        MPI_Exscan(&slots, &localStart_, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
-        if (rank_ == 0) dofStart_ = localStart_ = 0;
+        if (rank_ == 0) dofStart_ = 0;
 
         nsGlobalIdKernel<RealType><<<grid(), bs()>>>(n_, space_.isDof(), dofIndex_.data(), dofStart_, gid_.data());
         cudaCheckError();
@@ -1408,61 +1509,67 @@ private:
         }
     }
 
-    // P: local slot i (all ranks' slots numbered consecutively) takes the value of
-    // its DOF. comps > 1: one copy per velocity component.
-    HypreMatrix prolongation(int comps)
+    // The pattern of the local slot matrix, shared by the three matrices: every pair
+    // of corners of a local element, and the diagonal of every slot (a node may touch
+    // no local element: a ghost, or an owned node whose elements are all halos, and
+    // its row still needs the diagonal). Sorted 64-bit (row, col) keys give the CSR
+    // with sorted rows directly, at 8 bytes per pair once instead of a COO triplet
+    // list per matrix.
+    void buildPattern()
     {
-        const size_t count = n_ * comps;
-        thrust::device_vector<HYPRE_BigInt> rows(count), cols(count);
-        thrust::device_vector<RealType> values(count);
-        nsProlongationTripletsKernel<RealType><<<grid(), bs()>>>(
-            n_, comps, localStart_, gid_.data(), thrust::raw_pointer_cast(rows.data()),
-            thrust::raw_pointer_cast(cols.data()), thrust::raw_pointer_cast(values.data()));
-        cudaCheckError();
-        return hypreAssemble(MPI_COMM_WORLD, comps * localStart_, comps * (localStart_ + (long long)n_),
-                             comps * dofStart_, comps * (dofStart_ + numOwned_),
-                             HypreCoo{thrust::raw_pointer_cast(rows.data()), thrust::raw_pointer_cast(cols.data()),
-                                      thrust::raw_pointer_cast(values.data()), HYPRE_Int(count)});
-    }
-
-    // Global ids of the DOFs that satisfy flag.
-    thrust::device_vector<HYPRE_BigInt> flaggedDofs(const uint8_t* flag)
-    {
-        thrust::device_vector<HYPRE_BigInt> ids(numOwned_);
-        auto gids =
-            thrust::make_transform_iterator(thrust::counting_iterator<size_t>(0), NsGidOf<RealType>{gid_.data()});
-        size_t count = thrust::copy_if(thrust::device, gids, gids + n_, thrust::counting_iterator<size_t>(0),
-                                       ids.begin(), NsFlaggedDof<RealType>{space_.isDof(), flag}) -
-                       ids.begin();
-        ids.resize(count);
-        return ids;
-    }
-
-    // Local triplets of scale * K (element matrices, then the diagonal slots
-    // c M if massCoefficient is given) with the removed slots dropped, reduced to
-    // P^T A P plus identity rows at the removed DOFs.
-    HypreMatrix assembleReduced(const HypreMatrix& P, RealType scale, const uint8_t* removed,
-                                const RealType* massCoefficient, bool withLift)
-    {
-        const size_t countK = 64 * hex_.count, countM = massCoefficient ? n_ : 0, count = countK + countM;
-        thrust::device_vector<HYPRE_BigInt> rows(std::max<size_t>(count, 1)), cols(std::max<size_t>(count, 1));
-        thrust::device_vector<RealType> values(std::max<size_t>(count, 1));
-        HYPRE_BigInt* r = thrust::raw_pointer_cast(rows.data());
-        HYPRE_BigInt* c = thrust::raw_pointer_cast(cols.data());
-        RealType* val   = thrust::raw_pointer_cast(values.data());
+        trace("pattern");
+        const size_t pairs = 64 * hex_.count;
+        thrust::device_vector<unsigned long long> keys(pairs + n_);
         if (hex_.count > 0)
-            nsLaplacianTripletsKernel<KeyType, RealType><<<elemGrid(), bs()>>>(
-                hex_, x(), y(), z(), cview(area_), scale, localStart_, removed, cview(target_), view(lift_),
-                withLift ? comps_ : 0, r, c, val);
-        if (massCoefficient)
-            nsMassTripletsKernel<RealType><<<grid(), bs()>>>(n_, localStart_, massLocal_.data(), removed,
-                                                             *massCoefficient, r + countK, c + countK, val + countK);
+            nsPatternKeysKernel<KeyType>
+                <<<elemGrid(), bs()>>>(hex_, thrust::raw_pointer_cast(keys.data()));
         cudaCheckError();
-        HypreMatrix local = hypreAssemble(MPI_COMM_WORLD, localStart_, localStart_ + (long long)n_, localStart_,
-                                          localStart_ + (long long)n_, HypreCoo{r, c, val, HYPRE_Int(count)});
-        auto ids          = flaggedDofs(removed);
-        return hypreAddIdentityRows(MPI_COMM_WORLD, hypreGalerkin(P, local), thrust::raw_pointer_cast(ids.data()),
-                                    HYPRE_Int(ids.size()));
+        thrust::transform(thrust::device, thrust::counting_iterator<long long>(0),
+                          thrust::counting_iterator<long long>((long long)n_), keys.begin() + pairs, NsDiagonalKey{});
+        thrust::sort(thrust::device, keys.begin(), keys.end());
+        size_t nnz = thrust::unique(thrust::device, keys.begin(), keys.end()) - keys.begin();
+        csrCols_.resize(nnz);
+        csrRowPtr_.resize(n_ + 1);
+        thrust::transform(thrust::device, keys.begin(), keys.begin() + nnz, csrCols_.data(), NsPatternCol{});
+        auto rowKeys = thrust::make_transform_iterator(thrust::counting_iterator<long long>(0), NsRowKey{});
+        thrust::lower_bound(thrust::device, keys.begin(), keys.begin() + nnz, rowKeys, rowKeys + n_ + 1,
+                            csrRowPtr_.data());
+        slotGid_.resize(n_);
+        slotDofRow_.resize(n_);
+        nsSlotIdsKernel<RealType><<<grid(), bs()>>>(n_, space_.isDof(), dofIndex_.data(), gid_.data(),
+                                                    thrust::raw_pointer_cast(slotGid_.data()), slotDofRow_.data());
+        cudaCheckError();
+    }
+
+    // scale * K (+ c M with massCoefficient) over the local slots, without the removed
+    // rows and columns, reduced to P^T A P over the DOFs: every copy's row is added into its
+    // DOF's row by DofSpace, so no prolongation matrix and no sparse product are formed. The
+    // removed DOFs get identity rows.
+    HypreMatrix assembleReduced(RealType scale, const uint8_t* removed, const RealType* massCoefficient, bool withLift)
+    {
+        thrust::device_vector<int> rows;
+        thrust::device_vector<long long> cols;
+        thrust::device_vector<HYPRE_Complex> values;
+        {
+            const size_t nnz = csrCols_.size();
+            thrust::device_vector<HYPRE_Complex> slotValues(nnz, HYPRE_Complex(0));
+            HYPRE_Complex* v = thrust::raw_pointer_cast(slotValues.data());
+            if (hex_.count > 0)
+                nsLaplacianCsrKernel<KeyType, RealType><<<elemGrid(), bs()>>>(
+                    hex_, x(), y(), z(), cview(area_), scale, removed, cview(target_), view(lift_),
+                    withLift ? comps_ : 0, csrRowPtr_.data(), csrCols_.data(), v);
+            nsDiagonalKernel<RealType><<<grid(), bs()>>>(n_, space_.isDof(), removed,
+                                                         massCoefficient ? massLocal_.data() : nullptr,
+                                                         massCoefficient ? *massCoefficient : RealType(0),
+                                                         csrRowPtr_.data(), csrCols_.data(), v);
+            cudaCheckError();
+            space_.restrictMatrix(csrRowPtr_.data(), csrCols_.data(), static_cast<const HYPRE_Complex*>(v),
+                                  thrust::raw_pointer_cast(slotGid_.data()), slotDofRow_.data(), rows, cols, values);
+        }
+        trace("assembled");
+        HypreMatrix reduced = hypreFromEntries(MPI_COMM_WORLD, dofStart_, numOwned_, globalDofs(), rows, cols, values);
+        trace("P^T A P");
+        return reduced;
     }
 
     // a1 = M / dt + nu K and a2 = 3 M / (2 dt) + nu K, K the CVFEM Laplacian,
@@ -1470,27 +1577,28 @@ private:
     // columns is gathered while assembling a1 (it is the same for a2).
     void buildViscousSolvers()
     {
-        HypreMatrix P      = prolongation(1);
         const RealType c1  = RealType(1) / prm_.dt;
         const RealType c2  = RealType(3) / (RealType(2) * prm_.dt);
         viscousBdf1_       = std::make_unique<HypreAmgPcgSolver>("MARS_VAMG");
-        viscousBdf1_->setup(MPI_COMM_WORLD, assembleReduced(P, prm_.nu, fixed_.data(), &c1, true), prm_.tolerance,
+        viscousBdf1_->setup(MPI_COMM_WORLD, assembleReduced(prm_.nu, fixed_.data(), &c1, true), prm_.tolerance,
                             prm_.maxIter);
+        trace("velocity AMG (BDF1)");
         for (int d = 0; d < comps_; ++d)
             space_.restrict(lift_[d]);
         if (!prm_.bdf2) return;
         viscousBdf2_ = std::make_unique<HypreAmgPcgSolver>("MARS_VAMG");
-        viscousBdf2_->setup(MPI_COMM_WORLD, assembleReduced(P, prm_.nu, fixed_.data(), &c2, false),
+        viscousBdf2_->setup(MPI_COMM_WORLD, assembleReduced(prm_.nu, fixed_.data(), &c2, false),
                             prm_.tolerance, prm_.maxIter);
+        trace("velocity AMG (BDF2)");
     }
 
     // K over the DOFs with identity rows where p = 0; the operator of the flux correction.
     void buildPressureSolver()
     {
-        HypreMatrix P = prolongation(1);
-        pressure_     = std::make_unique<HypreAmgPcgSolver>("MARS_PAMG");
-        pressure_->setup(MPI_COMM_WORLD, assembleReduced(P, RealType(1), pressureFixed_.data(), nullptr, false),
+        pressure_ = std::make_unique<HypreAmgPcgSolver>("MARS_PAMG");
+        pressure_->setup(MPI_COMM_WORLD, assembleReduced(RealType(1), pressureFixed_.data(), nullptr, false),
                          prm_.tolerance, prm_.maxIter);
+        trace("pressure AMG");
         checkPressureOperator();
     }
 
@@ -1578,9 +1686,12 @@ private:
     // DOFs
     int numOwned_         = 0;
     long long dofStart_   = 0;
-    long long localStart_ = 0;
     cstone::DeviceVector<int> dofIndex_; // local DOF index of each DOF slot
     Vector gid_;                         // global DOF id of each slot's DOF
+    cstone::DeviceVector<int> csrRowPtr_, csrCols_; // pattern of the local slot matrices
+    // cstone::DeviceVector has no signed 64-bit instantiation, so this one is a thrust vector.
+    thrust::device_vector<long long> slotGid_; // global DOF id of each slot's DOF
+    cstone::DeviceVector<int> slotDofRow_;         // local row of each DOF slot, -1 elsewhere
 
     // Geometry and solvers
     Vector area_[3]; // sub-control face area vectors, 12 per local element

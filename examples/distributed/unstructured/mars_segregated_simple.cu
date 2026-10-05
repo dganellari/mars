@@ -67,6 +67,8 @@ int execute(const SimpleOptions& o) {
             <<" device="<<device<<" model="<<properties.name<<'\n';
         std::cout<<line.str();
     }
+    Buffer<FieldRow> snapshot_rows(o.snapshot_iterations?run.owned_nodes:0);
+    double snapshot_seconds=0;
     const double iteration_start=MPI_Wtime();
     distributed::FieldExchange::Profile halo_baseline;
     bool converged=false;
@@ -88,13 +90,22 @@ int execute(const SimpleOptions& o) {
                          <<" balance="<<m.flux<<" du="<<m.velocity_change<<" dp="<<m.pressure_change<<" dflux="<<m.flux_change
                          <<" umax="<<report.speed<<" closed="<<sums.closed<<" changed="<<sums.changed<<std::endl;
         }
+        if (o.snapshot_iterations && run.completed<=o.snapshot_iterations) {
+            const double start=MPI_Wtime();
+            const auto prefix=simple_snapshot_prefix(o.output,run.completed);
+            simple_output_preflight(MPI_COMM_WORLD,prefix,o.field_output);
+            launch(run.owned_nodes,PackOutput{run.owned.data(),raw(source_node),run.x.data(),run.y.data(),run.z.data(),
+                                             run.velocity.data(),run.pressure.data(),raw(snapshot_rows)});
+            write_simple_fields(MPI_COMM_WORLD,prefix,o.field_output,nodes,snapshot_rows);
+            snapshot_seconds+=MPI_Wtime()-start;
+        }
         if (converged || run.completed==o.iterations) break;
         run.advance();
         run.profile.record_linear(3,run.momentum_solve.solver,run.completed);
         run.profile.record_linear(1,run.poisson_solve.solver,run.completed);
     }
     if (!rank) { csv.close(); ensure(bool(csv),"metric output failed"); }
-    const double iteration_seconds=MPI_Wtime()-iteration_start;
+    const double iteration_seconds=MPI_Wtime()-iteration_start-snapshot_seconds;
     const double output_start=MPI_Wtime();
     if (o.field_output!="none") {
         Buffer<FieldRow> rows(run.owned_nodes);
@@ -102,7 +113,7 @@ int execute(const SimpleOptions& o) {
                                          run.velocity.data(),run.pressure.data(),raw(rows)});
         write_simple_fields(MPI_COMM_WORLD,o.output,o.field_output,nodes,rows);
     }
-    const double output_seconds=MPI_Wtime()-output_start;
+    const double output_seconds=MPI_Wtime()-output_start+snapshot_seconds;
     if (!rank) std::cout<<(converged?"CONVERGED":"NOT CONVERGED: iteration limit")<<" iterations="<<run.completed<<" ranks="<<ranks
                        <<" exchange_rounds="<<run.exchange.rounds()<<'\n';
     double wall[3]={setup_seconds,iteration_seconds,output_seconds},maximum[3];
