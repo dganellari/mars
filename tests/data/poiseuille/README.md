@@ -7,9 +7,9 @@
 Exodus II, 14,751 hexahedra, 30,000 nodes, one element thick in z (a quasi-2D channel):
 
 ```
-x: -0.5 .. 10.5   streamwise
-y:  0.0 .. 1.0    wall-normal, channel height H = 1
-z:  0.0 .. 0.066  one element
+x: 0 .. 10     streamwise, 150 node planes
+y: 0 .. 1      wall-normal, 100 node planes, channel height H = 1
+z: 0 .. 0.06   one element, 2 node planes
 ```
 
 The solver finds the boundaries geometrically (inflow at x = xmin, outflow at x = xmax, walls
