@@ -127,6 +127,16 @@ describes the current shell environment; it cannot reconstruct an unrecorded
 earlier environment. Missing exit metadata does not prove that no job started.
 Only the new public JSON may be shared.
 
+An exit of 134 with no output is not a field-parity failure. The reference may
+have aborted before a snapshot was written. OpenAccel's `errorMsg` throws a C++
+exception; it does not print the `ERROR:` prefix used by the MARS diagnostic
+parser. The inspector therefore also recognizes uncaught-exception messages and
+reports fixed startup stages and error categories. Exception text, paths, part
+names and numerical values are never exported. Categories are diagnostic hints,
+not proven causes; an empty list does not exclude an unrecognized error.
+Stages mean that at least one rank printed the marker, not that all ranks passed
+that stage. Reinspect the saved attempt below; do not launch another pair yet.
+
 ```bash
 (
 set -euo pipefail

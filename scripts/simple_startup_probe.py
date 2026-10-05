@@ -134,6 +134,77 @@ def run_files(directory, solver):
     return dict((p.name, digest(p)) for p in files)
 
 
+class ReferenceLogState:
+    # Ordered milestones from the pinned OpenAccel source; never export captured text.
+    stages = (
+        ('banner', r'^.*\bOpenAccel 3D\b'),
+        ('controls_read', r'^Reading controls \.\.$'),
+        ('controls_ready', r'^Finished reading controls \.\.$'),
+        ('mesh_read', r'^Reading mesh \.\.$'),
+        ('mesh_validation', r'^Validating YAML input against Exodus file$'),
+        ('mesh_validated', r'^Finished validating YAML input$'),
+        ('zone_registration', r'^Registering zones$'),
+        ('part_registration', r'^Registering mesh parts$'),
+        ('mesh_ready', r'^Finished reading mesh \.\.$'),
+        ('domain_setup', r'^Setting up simulation domains:$'),
+        ('equation_initialization', r'^Initializing equation `'),
+        ('iteration', r'^Iter = [0-9]+$'),
+        ('complete', r'^.*\bSimulation is complete\b'),
+    )
+    categories = (
+        ('yaml', r'yaml-cpp|YAML::'),
+        ('allocation', r'std::bad_alloc|std::bad_array_new_length|out of memory|cannot allocate memory'),
+        ('mpi_initialization', r'MPI_Init(?:_thread)?|MPIR_Init|PMPI_Init'),
+        ('mpi_thread_support', r'Provided MPI thread-level support is not sufficient'),
+        ('kokkos', r'Kokkos'),
+        ('mesh_io', r'Ioss::|IOSS ERROR|Exodus|ex_open|netCDF|netcdf'),
+        ('decomposition', r'decomposition|decompos|Zoltan|METIS|ParMETIS'),
+        ('file_access', r'No such file or directory|Permission denied|could not open|cannot open|unable to open|failed to open|does not exist'),
+        ('disk_space', r'No space left on device|Disk quota exceeded'),
+        ('input_validation', r'invalid boundary part|invalid side[12] part|Mesh dimension mismatch|not provided in the yaml input file'),
+        ('assertion', r'Assertion .* failed|assertion .* failed|Requirement\('),
+        ('linear_solver', r'Belos::|Tpetra::|Amesos2::|Ifpack2::|MueLu::|HYPRE ERROR'),
+    )
+
+    def __init__(self):
+        self.seen_stages = set()
+        self.seen_categories = set()
+        self.exception_seen = False
+        self.what_seen = False
+        self.abort_seen = False
+        self.in_exception = False
+
+    def feed(self, line):
+        line = re.sub(r'^\[[0-9]+\]\s*', '', line.strip())
+        progress = False
+        for label, pattern in self.stages:
+            if re.search(pattern, line):
+                self.seen_stages.add(label)
+                progress = True
+        exception = bool(re.match(r'^(?:terminate called|libc\+\+abi: terminating)', line))
+        what = bool(re.match(r'^what\(\)\s*:', line))
+        self.exception_seen |= exception
+        self.what_seen |= what
+        self.in_exception |= exception or what
+        self.abort_seen |= bool(re.search(r'\b(?:SIGABRT|Aborted)\b', line))
+        # Do not classify routine mesh/library banners as failures. Multiline what()
+        # messages stay local; only matches to these fixed categories leave the log.
+        error_line = bool(re.match(r'^(?:ERROR\b|Error\b|IOSS ERROR\b|Kokkos.*(?:Error|error)|Assertion\b)', line))
+        if (self.in_exception or error_line) and not progress:
+            for label, pattern in self.categories:
+                if re.search(pattern, line, re.I):
+                    self.seen_categories.add(label)
+
+    def result(self):
+        stages = [label for label, _ in self.stages if label in self.seen_stages]
+        return dict(reference_stages_seen=stages,
+                    reference_progress_scope='any_logged_rank',
+                    reference_cpp_termination_seen=self.exception_seen,
+                    reference_exception_message_seen=self.what_seen,
+                    reference_abort_seen=self.abort_seen,
+                    reference_error_categories=sorted(self.seen_categories))
+
+
 def launch(pair, solver, executable, ranks, launcher):
     pair = pair.resolve()
     pair_inputs(pair)
@@ -221,15 +292,20 @@ def inspect_launch(pair, solver, executable):
         from simple_public_diagnostics import DiagnosticState
         def log_flags():
             state = DiagnosticState()
+            reference = ReferenceLogState() if solver == 'openaccel' else None
             result['library_load_error_seen'] = False
             with (directory / 'run.log').open(errors='replace') as stream:
                 for line in stream:
                     state.feed(line)
+                    if reference is not None:
+                        reference.feed(line)
                     result['library_load_error_seen'] |= 'error while loading shared libraries:' in line
             diagnostics = state.result(str(result['process_exit_code']) if result['process_exit_code'] is not None else '')
             for key in ('mpi_abort_seen', 'scheduler_time_limit_seen', 'scheduler_out_of_memory_seen',
                         'scheduler_signal_seen', 'application_error_seen'):
                 result[key] = diagnostics[key]
+            if reference is not None:
+                result.update(reference.result())
         check('log_check', log_flags)
     check('input_check', lambda: pair_inputs(pair))
     result['executable_available'] = executable.is_file() and os.access(str(executable), os.X_OK)

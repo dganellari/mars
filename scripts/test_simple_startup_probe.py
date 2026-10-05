@@ -19,6 +19,84 @@ import simple_startup_probe as probe
 import test_simple_snapshot_compare as fixtures
 
 
+class ReferenceLogTests(unittest.TestCase):
+    def scan(self, text):
+        state = probe.ReferenceLogState()
+        for line in text.splitlines():
+            state.feed(line)
+        result = state.result()
+        self.assertNotIn('PRIVATE', json.dumps(result))
+        return result
+
+    def test_uncaught_yaml_error_during_controls(self):
+        result = self.scan("""Reading controls ..
+terminate called after throwing an instance of 'YAML::TypedBadConversion<double>'
+  what(): yaml-cpp: error at line 45, column 7: PRIVATE
+srun: error: PRIVATE: task 0: Aborted (core dumped)
+""")
+        self.assertEqual(result['reference_stages_seen'], ['controls_read'])
+        self.assertEqual(result['reference_error_categories'], ['yaml'])
+        self.assertTrue(result['reference_cpp_termination_seen'])
+        self.assertTrue(result['reference_exception_message_seen'])
+        self.assertTrue(result['reference_abort_seen'])
+
+    def test_multiline_io_error_hides_mesh_name(self):
+        result = self.scan("""Finished reading controls ..
+Reading mesh ..
+terminate called after throwing an instance of 'std::runtime_error'
+  what(): Ioss::DatabaseIO PRIVATE
+Could not open PRIVATE/results.e.4.0: No such file or directory
+""")
+        self.assertEqual(result['reference_error_categories'], ['file_access', 'mesh_io'])
+        self.assertEqual(result['reference_stages_seen'], ['controls_ready', 'mesh_read'])
+
+    def test_known_failure_categories(self):
+        messages = (
+            ('std::bad_alloc', 'allocation'),
+            ('MPI_Init_thread PRIVATE', 'mpi_initialization'),
+            ('Provided MPI thread-level support is not sufficient', 'mpi_thread_support'),
+            ('Kokkos::Cuda::initialize PRIVATE', 'kokkos'),
+            ('unsupported decomposition method PRIVATE', 'decomposition'),
+            ('Disk quota exceeded PRIVATE', 'disk_space'),
+            ('invalid boundary part PRIVATE', 'input_validation'),
+            ('Assertion PRIVATE failed', 'assertion'),
+            ('Belos:: PRIVATE', 'linear_solver'),
+        )
+        for message, category in messages:
+            with self.subTest(category=category):
+                result = self.scan('terminate called\n  what(): ' + message)
+                self.assertEqual(result['reference_error_categories'], [category])
+
+    def test_normal_banners_and_private_values_are_not_errors(self):
+        result = self.scan("""Command line: PRIVATE/Kokkos/yaml-cpp
+Automatic domain decomposition: input Exodus file must be a serial file
+Validating YAML input against Exodus file
+Finished validating YAML input
+[3] Initializing equation `PRIVATE` on realm `PRIVATE`
+Iter = 12
+""")
+        self.assertEqual(result['reference_error_categories'], [])
+        self.assertFalse(result['reference_cpp_termination_seen'])
+        self.assertEqual(result['reference_stages_seen'],
+                         ['mesh_validation', 'mesh_validated', 'equation_initialization', 'iteration'])
+
+    def test_unknown_exception_is_reported_without_exporting_text(self):
+        result = self.scan("terminate called after throwing an instance of 'PRIVATE'\nwhat(): PRIVATE 456.78")
+        self.assertTrue(result['reference_cpp_termination_seen'])
+        self.assertEqual(result['reference_error_categories'], [])
+        self.assertNotIn('456.78', json.dumps(result))
+
+    def test_cpp_runtime_assertion_and_mpi_interleaving(self):
+        result = self.scan("""[2] Reading mesh ..
+[1] Finished reading controls ..
+libc++abi: terminating due to uncaught exception of type PRIVATE
+what(): Assertion PRIVATE failed
+""")
+        self.assertEqual(result['reference_stages_seen'], ['controls_ready', 'mesh_read'])
+        self.assertEqual(result['reference_progress_scope'], 'any_logged_rank')
+        self.assertEqual(result['reference_error_categories'], ['assertion'])
+
+
 class StartupTests(unittest.TestCase):
     def setUp(self):
         self.fixture = fixtures.SnapshotTests()
@@ -236,6 +314,27 @@ class StartupTests(unittest.TestCase):
         self.assertEqual(result['input_check'], 'passed')
         self.assertEqual(result['runtime_check'], 'runtime_libraries_unresolved')
         self.assertEqual(before, {str(p): probe.digest(p) for p in pair.rglob('*') if p.is_file()})
+
+    def test_inspection_of_reference_abort_without_final_record(self):
+        reference = self.pair / 'reference'
+        (reference / 'launch.json').unlink()
+        (reference / 'run.exit').write_text('134\n')
+        (reference / 'run.log').write_text("Reading mesh ..\nterminate called after throwing an instance of 'std::runtime_error'\nwhat(): Ioss:: PRIVATE\n")
+        for path in probe.result_files(reference):
+            path.unlink()
+        before = {str(p): probe.digest(p) for p in self.pair.rglob('*') if p.is_file()}
+        with patch.object(probe, 'runtime_libraries', return_value={'synthetic': 'a'*64}), contextlib.redirect_stdout(io.StringIO()):
+            code = probe.main(['inspect', '--pair', str(self.pair), '--solver', 'openaccel',
+                               '--executable', str(self.fixture.root / 'fake-executable'), '--output', str(self.public)])
+        result = probe.read_json(self.public)
+        self.assertEqual(code, 0)
+        self.assertEqual(result['process_exit_code'], 134)
+        self.assertFalse(result['launch_record_present'])
+        self.assertTrue(result['reference_cpp_termination_seen'])
+        self.assertEqual(result['reference_error_categories'], ['mesh_io'])
+        self.assertEqual(result['outputs_check'], 'reference_outputs')
+        self.assertNotIn('PRIVATE', self.public.read_text())
+        self.assertEqual(before, {str(p): probe.digest(p) for p in self.pair.rglob('*') if p.is_file()})
 
     def test_library_probe_labels_hide_paths(self):
         for output, code, label in (
