@@ -15,8 +15,8 @@ pipeline.
 - CMake 3.22 or newer and a C++20 compiler.
 - MPI. The build needs it by default; a single-rank run can start without `mpirun`.
 - Python 3 with NumPy, to generate the mesh.
-- A network connection at configure time: CMake fetches cornerstone-octree, and cxxopts and
-  googletest when they are needed and not found on the system.
+- A network connection at configure time: CMake fetches cornerstone-octree, and googletest when
+  tests are on and no system googletest is found.
 
 Spack environments under `spack-envs/` give a reproducible toolchain, but a system CUDA, MPI and
 CMake are enough.

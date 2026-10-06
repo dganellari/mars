@@ -7,7 +7,6 @@ spack:
   - kokkos+rocm ^hip@5.0.2
   - kokkos-kernels
   - mpi
-  - cxxopts
   develop:
     mars:
       path: /project/project_465000105/$user/mars

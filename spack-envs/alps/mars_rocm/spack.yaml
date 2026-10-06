@@ -8,7 +8,6 @@ spack:
   - kokkos+rocm std=17 amdgpu_target=gfx90a ^hip@5.2.4 ^llvm-amdgpu@5.2.4
   - kokkos-kernels
   - cray-mpich-binary+rocm ^hip@5.2.4
-  - cxxopts
   develop:
     mars:
       path: /scratch/e1000/$user/apps/mars

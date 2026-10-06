@@ -22,11 +22,6 @@ if(MARS_ENABLE_EXAMPLES)
         PARENT_SCOPE)
 
 
-    set(MARS_TARGETS mars_examples PARENT_SCOPE)
-
-    add_executable(mars_examples mars_discretization.cpp)
-    target_link_libraries(mars_examples PRIVATE mars)
-    
     # Build MFEM to MARS binary converter tool
     add_executable(mfem_to_mars_binary 
         distributed/unstructured/mfem_to_mars_binary.cpp)

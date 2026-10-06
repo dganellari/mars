@@ -19,7 +19,6 @@ class Mars(CMakePackage, CudaPackage,  ROCmPackage):
 
     variant("kokkos", default=True)
     variant("openmp", default=True)
-    variant("cxxopts", default=True)
     variant("tests", default=False)
     variant("build_type",
             default="Release",
@@ -49,7 +48,6 @@ class Mars(CMakePackage, CudaPackage,  ROCmPackage):
     #  depends_on("rocsolver", when="+rocm")
 
     depends_on("googletest", type="build", when="+tests")
-    depends_on("cxxopts")
 
     def cmake_args(self):
         options = [
@@ -58,7 +56,6 @@ class Mars(CMakePackage, CudaPackage,  ROCmPackage):
             #  self.define_from_variant("MARS_ENABLE_OPENMP", "openmp"),
             self.define_from_variant("MARS_ENABLE_HIP", "rocm"),
             self.define_from_variant("MARS_ENABLE_CUDA", "cuda"),
-            self.define_from_variant("MARS_ENABLE_CXXOPTS", "cxxopts"),
         ]
 
         if "+cuda%gcc" in self.spec:

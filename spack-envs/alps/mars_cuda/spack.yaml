@@ -4,7 +4,6 @@ spack:
   specs:
   - kokkos +wrapper+cuda_lambda
   - kokkos-kernels
-  - cxxopts
   packages:
     all:
       providers:

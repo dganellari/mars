@@ -49,7 +49,7 @@ development), read [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md). The major versi
 ## Downloading MARS and its dependencies ##
 
 Clone the repository. MARS has no git submodules: CMake fetches cornerstone-octree at
-configure time, and cxxopts and googletest when they are needed and not found on the system.
+configure time, and googletest when tests are enabled and no system googletest is found.
 A plain clone is all you need:
 
 `git clone https://github.com/dganellari/mars.git`

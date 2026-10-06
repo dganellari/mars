@@ -6,7 +6,6 @@ spack:
   - cray-mpich-binary+rocm
   - kokkos+rocm ^hip@5.2.3
   - kokkos-kernels
-  - cxxopts
   develop:
     mars:
       path: /project/project_465000105/$user/mars

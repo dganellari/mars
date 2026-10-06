@@ -70,6 +70,9 @@ the cornerstone-octree library.
 - `mars_tgv` on several ranks: the old solver collapsed only the pressure at periodic
   points, and the multi-rank run lost the projection. Velocity and pressure now share one
   unknown per periodic point.
+- Removed: the cxxopts dependency and the legacy example programs that used it
+  (`mars_examples` from `examples/mars_discretization.cpp`, `examples/mars_st_example.cpp`,
+  `examples/serial/mars_serial_driver.cpp`); the examples parse their options directly.
 - Removed: the 10.9k-line channel solver fork, `fem/mars_channel_flow.hpp`,
   `fem/mars_periodic_ns.hpp`, `fem/mars_periodic_space.hpp` and its host model
   `tests/periodic/`; the `--planar-ddt`, `--pressure-amg`, `--velocity-amg`, `--skew`,
