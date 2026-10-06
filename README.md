@@ -245,6 +245,10 @@ For more details, see the `backend/distributed/unstructured` directory and its t
 # Contributors
 Ganellari Daniel, Zulian Patrick, Ramelli Dylan and Rovi Gabriele.
 
+Everyone who has committed to MARS since 2018:
+[contributors graph](https://github.com/dganellari/mars/graphs/contributors?from=2018-06-01)
+(GitHub's default view shows only the last three months).
+
 # License
 The software is released with NO WARRANTY and it is licensed under [BSD 3-Clause license](https://opensource.org/licenses/BSD-3-Clause)
 
