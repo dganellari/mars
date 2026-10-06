@@ -41,29 +41,16 @@ including element numberings that are not aligned with the coordinate axes.
   default (`MARS_ENABLE_MARSIR`), not needed to build or use the library.
 
 ## Not supported yet
-- **Navier–Stokes solver restrictions** (`fem/mars_navier_stokes.hpp`). Hex8 meshes
-  only. On several ranks it needs SFC node ownership (the default); it stops under
-  `MARS_OWNERSHIP=vote`. Planar mode (`mars_poiseuille_flow`) needs one layer of elements between two z
-  planes. Meshes with hanging nodes are not supported, so `mars_tgv --adapt-every` gives
-  wrong results: the solver does not constrain the hanging nodes that refinement leaves.
-  Both systems are solved with PCG, which assumes a symmetric matrix; the CVFEM Laplacian
-  is symmetric on the rectilinear meshes validated here but not in general on distorted
-  hexes, which are not validated. On the 30k-node Poiseuille tutorial mesh more GPUs are
-  slower, not faster; use `--cells` for scaling.
-- **Triangle and quadrilateral meshes.** `ElementDomain` supports `TetTag` and `HexTag` only;
-  `TriTag`/`QuadTag` are rejected at compile time.
-- **Node ownership on multi-block meshes.** Multi-rank, single-block meshes, periodic ones included, give each
-  node to the rank whose SFC range contains it and complete every owned node's element star during the domain
-  sync, so owned rows are complete by construction. Multi-block (`MARS_BLOCK_NODE_IDENTITY`) meshes
-  still use the previous scheme: the lowest claiming rank among halo peers owns a node, and the cornerstone halo
-  search is widened by 1.5. That width is an empirical choice, not a guarantee; `MARS_ROW_DUMP` plus
-  `tests/release/compare_rows.py` checks a mesh directly. `MARS_OWNERSHIP=vote` selects the previous scheme for
-  every mesh.
-- **Example-level restrictions.** `mars_cvfem_poisson` and `mars_ex1_poisson` apply u = 0 on the
-  faces of the mesh's bounding box, so they are correct for box-shaped domains only. `mars_ex_beam_tet` and `mars_ex_beam_tet_distributed` are single-rank:
-  their DOF handler (`UnstructuredDofHandler`) chooses node owners with its own rule, not the
-  domain's. Multi-rank drivers number DOFs with `buildDofMappingGpu` from the domain's ownership,
-  as `mars_ex1_poisson` and the Navier–Stokes solvers do.
+- **Navier–Stokes solver** (`fem/mars_navier_stokes.hpp`): hexahedral meshes only, and conforming
+  meshes only. Meshes refined by the AMR module have hanging nodes, which the solver does not
+  constrain yet. The solver is validated on box-shaped hexahedra. On distorted hexahedra the CVFEM
+  matrices are not symmetric, but both systems are solved with PCG, which assumes symmetry; the
+  solver prints a warning when it finds such a matrix.
+- **Triangle and quadrilateral meshes.** Only tetrahedra and hexahedra are supported. A 2D problem
+  can run as one layer of hexahedra, as the Poiseuille example does.
+- **Example-level restrictions.** `mars_cvfem_poisson` and `mars_ex1_poisson` set u = 0 on the
+  faces of the mesh's bounding box, so they solve the intended problem only on box-shaped domains.
+  `mars_ex_beam_tet` and `mars_ex_beam_tet_distributed` run on one rank only.
 
 ## Module status
 The unstructured GPU backend (`backend/distributed/unstructured/`) is the active,
@@ -100,20 +87,3 @@ Unless you are benchmarking a specific GPU path, use the tensor or graph kernel.
 - GPU builds: `ctest -L release` runs the documented drivers on generated meshes (see the
   README). The lower-level GPU domain tests still need a mesh directory in `MESH_PATH` and are
   skipped without one.
-
-## High-order DOF numbering
-
-The high-order DOF numbering runs on the device: `buildGpu()` and `buildDistributedGpu()` in
-`mars_ho_dof_handler_gpu.hpp` for hexahedra, `buildGpu()` in `mars_ho_dof_handler_tet_gpu.hpp`
-for tetrahedra. The drivers use these by default. The host builders (`HODofHandler::build()` and
-`buildDistributed()`, and the tet `build()` of `mars_ho_dof_handler_tet.hpp`) remain as the
-reference that the self-checks compare against (`mars_cvfem_ho_matfree_test --dof-self-check`,
-`mars_ho_dist_apply_test --self-check`), and as the opt-in `--host-numbering` path of
-`mars_ho_dist_apply_test`. The two numberings differ by a permutation, so the checks
-compare permutation-invariant quantities: the DOF counts, the multiset of `DofKey`s and, for the
-single-rank hex case, which element slots share a DOF.
-
-The tet device numbering keeps about 48 bytes per element node while it runs (four 64-bit key
-lanes plus the permutation and scan buffers, see `mars_ho_dof_handler_tet_gpu.hpp`) and frees
-them before it returns. That memory, not correctness, limits the problem size of the current key
-packing.
