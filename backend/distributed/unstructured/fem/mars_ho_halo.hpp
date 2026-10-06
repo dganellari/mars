@@ -265,6 +265,21 @@ __device__ __forceinline__ uint64_t hoKeyHash(uint64_t k0, uint64_t k1, uint64_t
 }
 #undef HO_KEY_HASH_MIX
 
+// A peer asked for DOF keys this rank does not hold. The send and receive counts of the
+// exchange would then disagree and MPI would fail later inside an apply, so stop here with
+// the cause. With the default SFC node ownership an owner may have no owned element at its
+// node, and the numbering registers corners only through owned elements.
+inline void hoHaloAbortOnMissedKeys(long misses)
+{
+    int rank = 0;
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    std::fprintf(stderr,
+                 "HoHalo (rank %d): %ld requested DOF keys are not held here; on several ranks the high-order "
+                 "numbering needs MARS_OWNERSHIP=vote\n",
+                 rank, misses);
+    MPI_Abort(MPI_COMM_WORLD, 1);
+}
+
 // Per-stage timing, gated by env MARS_HO_RESOLVE_TIMING (quiet in production). Each stage
 // cudaDeviceSynchronizes before stop so the time is real device work, not just launch.
 struct HoResolveTimer {
@@ -1148,14 +1163,17 @@ public:
         // My send list to peer i = its requested keys mapped to my local DOF, IN THE
         // RECEIVED ORDER (matches peer i's recv slot order) -> forward/reverse align.
         std::vector<std::vector<int>> sendLocal(np);
+        long misses = 0;
         for (int i = 0; i < np; ++i) {
             sendLocal[i].reserve(gotKeys[i].size());
             for (auto& k : gotKeys[i]) {
                 auto it = std::lower_bound(keyToLocal.begin(), keyToLocal.end(), k,
                             [](const auto& a, const std::array<long,6>& key){ return a.first < key; });
                 if (it != keyToLocal.end() && it->first == k) sendLocal[i].push_back(it->second);
+                else ++misses;
             }
         }
+        if (misses > 0) hoHaloAbortOnMissedKeys(misses);
 
         // Compact into CSR over peers with any traffic.
         peers_.clear(); sendOffsets_.assign(1, 0); recvOffsets_.assign(1, 0);
@@ -1426,10 +1444,8 @@ public:
         // peers, candidatePeers order), then pack the two device DOF arrays contiguously.
         peers_.clear(); sendOffsets_.assign(1, 0); recvOffsets_.assign(1, 0);
 
-        // per-peer matched-send counts (drop -1 misses). Host build() drops a missed
-        // lower_bound the same way; a miss is a key the peer requested but I don't hold,
-        // which for a correct receiver-driven contract should not happen, but we mirror
-        // host's tolerant skip rather than assume.
+        // per-peer matched-send counts; a -1 is a key the peer requested but I don't hold
+        // (hoHaloAbortOnMissedKeys).
         std::vector<int> sendCnt(np, 0);
         std::vector<int> recvStart(np, 0);   // start of peer i's recv slice in d_recvDofSorted
         {
@@ -1439,11 +1455,14 @@ public:
         // count matches per peer on host (totalGot is the rank surface, tiny -> cheap copy).
         std::vector<int> h_match(totalGot > 0 ? totalGot : 1, -1);
         if (totalGot > 0) thrust::copy(d_sendMatch.begin(), d_sendMatch.begin() + totalGot, h_match.begin());
+        long misses = 0;
         for (int i = 0; i < np; ++i) {
             int c = 0;
             for (int s = gotOff[i]; s < gotOff[i + 1]; ++s) if (h_match[s] >= 0) ++c;
             sendCnt[i] = c;
+            misses += (gotOff[i + 1] - gotOff[i]) - c;
         }
+        if (misses > 0) hoHaloAbortOnMissedKeys(misses);
 
         // first pass: peers + offsets (only peers with any traffic)
         std::vector<int> keptPeer;                 // index into candidatePeers

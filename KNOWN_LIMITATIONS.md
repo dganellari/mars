@@ -23,8 +23,9 @@ including element numberings that are not aligned with the coordinate axes.
 ## Experimental — usable, not yet hardened
 - **High-order matrix-free CVFEM (hexahedra, p = 1 to 8).** The release tests
   `marsReleaseHoMatfree` and `marsReleaseHoDistApply_npN` check the operator apply on one GPU
-  and on several ranks; no linear solver uses it yet. Interfaces may change. See
-  [the tutorial](docs/Matrix-Free-Tutorial.md).
+  and on several ranks; no linear solver uses it yet. On several ranks it needs the older vote
+  node ownership, which its drivers select themselves (`MARS_OWNERSHIP=vote`). Interfaces may
+  change. See [the tutorial](docs/Matrix-Free-Tutorial.md).
 - **Adaptive mesh refinement (AMR).** Single-rank mark/refine/rebuild/transfer works;
   multi-rank AMR is under development.
 - **Tetrahedral high-order operators** (`mars_ho_laplacian_tet.hpp`, collapsed

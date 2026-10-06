@@ -1365,6 +1365,10 @@ int main(int argc, char** argv)
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &numRanks);
     int devCount = 0; cudaGetDeviceCount(&devCount); if (devCount > 0) cudaSetDevice(rank % devCount);
+    // The high-order numbering registers corners only through owned elements. Under the default
+    // SFC node ownership an owner may hold no owned element at its node; vote ownership gives
+    // every owner one. Set before any domain is built.
+    setenv("MARS_OWNERSHIP", "vote", 1);
 
     size_t ncells = 16; int P = 2;
     bool cliGpu = false, cliHost = false, cliSelfCheck = false, cliIrregular = false, cliSweep = false;

@@ -115,6 +115,10 @@ int main(int argc, char** argv) {
     int rank,nranks; MPI_Comm_rank(MPI_COMM_WORLD,&rank); MPI_Comm_size(MPI_COMM_WORLD,&nranks);
     int ndev=0; cudaGetDeviceCount(&ndev);
     if (ndev) CK(cudaSetDevice(rank%ndev));   // tet drivers must bind the device before first CUDA call
+    // The high-order numbering registers corners only through owned elements. Under the default
+    // SFC node ownership an owner may hold no owned element at its node; vote ownership gives
+    // every owner one. Set before any domain is built.
+    setenv("MARS_OWNERSHIP", "vote", 1);
 
     int ncells=4, p=3;
     for (int i=1;i<argc;++i){

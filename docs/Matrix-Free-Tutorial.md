@@ -57,7 +57,11 @@ On several ranks three more pieces are needed:
    (`DofKey`). Every rank that holds the DOF computes the same name, without communication.
 2. **Ownership.** A corner DOF belongs to the rank that owns the mesh node. An edge or face DOF
    belongs to the lowest rank among the ranks that hold it. An element-interior DOF belongs to
-   the rank of its element.
+   the rank of its element. The numbering registers corners only through the elements a rank
+   owns, so it needs every node owner to own an element at its node. The older vote node
+   ownership guarantees that; the default SFC ownership does not. The multi-rank drivers select
+   vote ownership themselves (`MARS_OWNERSHIP=vote`, set before the domain is built); code of
+   your own needs the same setting, and the halo stops with a message if it is missing.
 3. **Halo.** One distributed matvec is `forward` (owners copy their values to the ghost copies),
    the apply over the elements this rank owns, then `reverseAdd` (ghost contributions are added
    to the owners).
