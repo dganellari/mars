@@ -15,8 +15,8 @@ pipeline.
 - CMake 3.22 or newer and a C++20 compiler.
 - MPI. The build needs it by default; a single-rank run can start without `mpirun`.
 - Python 3 with NumPy, to generate the mesh.
-- A network connection at configure time: CMake fetches cornerstone-octree, and googletest when
-  tests are on and no system googletest is found.
+- A network connection at configure time: CMake fetches cornerstone-octree, and cxxopts and
+  googletest when they are needed and not found on the system.
 
 Spack environments under `spack-envs/` give a reproducible toolchain, but a system CUDA, MPI and
 CMake are enough.
@@ -94,7 +94,8 @@ Options (run it without `--mesh` to print them):
 | `--bucket-size-focus=N` | focus-tree bucket size (default 8; lower = finer halo, more memory) |
 | `--quiet` | do not print the timing breakdown |
 
-`--kernel` variants (all compute the same hex assembly; see [CVFEM Kernels](CVFEM-Kernels.md)):
+`--kernel` variants (all compute the same hex assembly; see [CVFEM Kernels](CVFEM-Kernels.md);
+compare them on your GPU with `--iterations=N`):
 
 | Variant | Notes |
 |---------|-------|
@@ -102,7 +103,7 @@ Options (run it without `--mesh` to print them):
 | `optimized` | optimized element kernel |
 | `shmem` | low-register, direct-scatter kernel |
 | `team` | warp per element |
-| `tensor` | full local matrix per thread; the recommended default on current GPUs |
+| `tensor` | full local matrix per thread |
 | `tensor_colored` | `tensor` with graph coloring, no atomics |
 | `tensor_aos` | `tensor` with packed node data |
 | `tensor_perip` | `tensor` with pre-resolved CSR positions |

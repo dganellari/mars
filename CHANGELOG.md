@@ -64,8 +64,8 @@ the cornerstone-octree library.
   21 to 23 pressure iterations at every size (Poiseuille tutorial, section 7).
 - Validation on 1, 2 and 4 GPUs: the Poiseuille 1500-step check (profile RMS error
   4.551e-4 m/s, about 24 s on one GPU; `tests/reference/poiseuille/planar_validation.md`)
-  and the Taylor–Green vortex kinetic energy against the Stokes decay, identical on 1, 2
-  and 4 GPUs (`docs/periodic_tgv_tutorial.md`). `ctest -L release` runs the lid-driven
+  and the Taylor–Green vortex kinetic energy against the Stokes decay, identical on 1, 2,
+  4 and 8 GPUs, 8 over two nodes (`docs/periodic_tgv_tutorial.md`). `ctest -L release` runs the lid-driven
   cavity, the channel and the Taylor–Green vortex on 1 and N ranks.
 - `mars_tgv` on several ranks: the old solver collapsed only the pressure at periodic
   points, and the multi-rank run lost the projection. Velocity and pressure now share one
