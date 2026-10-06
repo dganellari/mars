@@ -75,6 +75,9 @@ Unless you are benchmarking a specific GPU path, use the tensor or graph kernel.
   `-DCMAKE_CUDA_ARCHITECTURES=...`). HIP (AMD) is enabled with `-DMARS_ENABLE_HIP=ON`, but
   the HIP build was not re-verified for v0.1.0, and the FEM examples are CUDA-only.
 - MPI is required by default (`-DMARS_ENABLE_MPI=ON`).
+- A Hypre built with 32-bit global indices (its default) limits a Navier–Stokes run to
+  2^31 − 1 ≈ 2.1 billion unknowns per system; the solver stops with a message above that. Larger
+  runs need Hypre built with 64-bit global indices (`--enable-mixedint`, in Spack `hypre+mixedint`).
 - Exodus mesh input and side sets need netCDF. Without it MARS still builds; reading an Exodus
   mesh then fails at runtime with a clear error, and the binary directory format still works.
 - Multi-GPU runs: the drivers of the release tests and the tutorials select GPU
