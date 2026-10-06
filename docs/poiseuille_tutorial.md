@@ -365,7 +365,56 @@ Use `--vtu-every=10` for a smooth movie.
 
 ---
 
-## 7. Troubleshooting
+## 7. Running on many GPUs
+
+Weak scaling keeps the work per GPU fixed: the generated channel grows with the number of GPUs.
+At 8 million nodes per GPU the step time goes from 272 ms on 1 GPU to 525 ms on 256 GPUs. The
+pressure solve needs 21 to 23 AMG iterations per step at every size, so the method scales; the
+time lost is in Hypre's solves, which take over 90% of each step.
+
+| GPUs | Nodes | ms per step | MARS, ms | Hypre, ms | Efficiency: step / MARS / Hypre |
+|---:|---:|---:|---:|---:|---|
+| 1 | 8.0 M | 272 | 17.9 | 254 | 100% / 100% / 100% |
+| 4 | 32 M | 377 | 18.6 | 358 | 72% / 96% / 71% |
+| 16 | 128 M | 400 | 19.0 | 381 | 68% / 94% / 67% |
+| 64 | 512 M | 459 | 20.6 | 438 | 59% / 87% / 58% |
+| 256 | 2.05 B | 525 | 26.6 | 498 | 52% / 67% / 51% |
+
+Efficiency is the 1-GPU time divided by the N-GPU time. `MARS` is everything outside Hypre:
+the element kernels, the halo exchanges and the projection. A smaller load per GPU hides less of
+the communication: at 2 million nodes per GPU the step takes 73 ms on 1 GPU and 238 ms on 256
+GPUs (31%), with MARS at 65%.
+
+Measured on Alps (CSCS), GH200 nodes with 4 GPUs, one rank per GPU bound to its NUMA domain;
+CUDA 12.9, Cray MPICH, Hypre 2.33; 20 steps, the first left out (2026-10-06).
+
+**Reproduce it.** Generate the channel with `--cells=NX,NY` and grow both counts by `sqrt(N)` for
+N GPUs; shrink the time step by the same factor, so the CFL number stays the same:
+
+| GPUs | `--cells` | `--dt` |
+|---:|---|---|
+| 1 | `6325,632` | `3.16e-4` |
+| 4 | `12649,1265` | `1.58e-4` |
+| 16 | `25298,2530` | `7.9e-5` |
+| 64 | `50596,5060` | `3.95e-5` |
+| 256 | `101192,10120` | `1.975e-5` |
+
+For example on 64 GPUs (16 nodes):
+
+```bash
+srun --nodes=16 --ntasks-per-node=4 ./build/examples/distributed/unstructured/mars_poiseuille_flow \
+  --cells=50596,5060 --uinf=1 --rho=1 --nu=0.01 --dt=3.95e-5 --num-steps=20 --report-every=5
+```
+
+Read the result from the `[timing]` line: `total` is the time per step, `hypre=` the time inside
+Hypre's solves and `mars=` the rest. A Hypre built with 32-bit global indices (its default) caps
+a run at 2.1 billion unknowns, which is 256 GPUs at this load; see
+[Known limitations](https://github.com/dganellari/mars/blob/master/KNOWN_LIMITATIONS.md) for the
+64-bit build.
+
+---
+
+## 8. Troubleshooting
 
 | Message or symptom | Cause | Fix |
 |---|---|---|
@@ -376,7 +425,7 @@ Use `--vtu-every=10` for a smooth movie.
 
 ---
 
-## 8. Where to go next
+## 9. Where to go next
 
 - `examples/distributed/unstructured/mars_poiseuille_flow.cu`: the example, in the order mesh
   and domain, solver, time loop, result.

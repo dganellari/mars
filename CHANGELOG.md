@@ -7,7 +7,7 @@ public API may change between minor releases.
 
 ## [Unreleased]
 
-## [0.1.0] — 2026-09-24
+## [0.1.0] — 2026-10-09
 
 First tagged public release. MARS is a GPU-native mesh management and finite-element
 assembly library for N-dimensional elements (N ≤ 4), built in C++20 on CUDA / HIP and
@@ -59,7 +59,9 @@ the cornerstone-octree library.
   (`fem/mars_dof_space.hpp`) maps node copies to unknowns: ghosts and periodic images of
   one point share one unknown, and every matrix is Pᵀ A P, formed by sending each copy's
   matrix row to the rank that owns its unknown. Both systems are solved with Hypre PCG +
-  BoomerAMG (18 pressure iterations per step in the Poiseuille validation).
+  BoomerAMG (18 pressure iterations per step in the Poiseuille validation). Weak scaling on
+  Alps GH200, 8M nodes per GPU: 52% of the 1-GPU step speed on 256 GPUs, Hypre-bound, with
+  21 to 23 pressure iterations at every size (Poiseuille tutorial, section 7).
 - Validation on 1, 2 and 4 GPUs: the Poiseuille 1500-step check (profile RMS error
   4.551e-4 m/s, about 24 s on one GPU; `tests/reference/poiseuille/planar_validation.md`)
   and the Taylor–Green vortex kinetic energy against the Stokes decay, identical on 1, 2

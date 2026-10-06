@@ -222,7 +222,7 @@ has a quickstart, tutorials for v0.1 and reference pages:
 **Getting started & tutorials**
 
 - **[Quickstart](https://mesh-adaptive-refinement-for-supercomputing-mars.readthedocs.io/en/latest/Quickstart/)** - Clone, build, generate a mesh, run your first GPU assembly
-- **[Poiseuille Channel Flow](https://mesh-adaptive-refinement-for-supercomputing-mars.readthedocs.io/en/latest/poiseuille_tutorial/)** - Incompressible Navier–Stokes, from the mesh to the validated result
+- **[Poiseuille Channel Flow](https://mesh-adaptive-refinement-for-supercomputing-mars.readthedocs.io/en/latest/poiseuille_tutorial/)** - Incompressible Navier–Stokes, from the mesh to the validated result and weak scaling to 256 GPUs
 - **[Taylor–Green Vortex (periodic)](https://mesh-adaptive-refinement-for-supercomputing-mars.readthedocs.io/en/latest/periodic_tgv_tutorial/)** - Periodic boundaries, one unknown per periodic point on any number of GPUs
 - **[High-Order Matrix-Free Operator](https://mesh-adaptive-refinement-for-supercomputing-mars.readthedocs.io/en/latest/Matrix-Free-Tutorial/)** - The experimental high-order CVFEM operator apply on one and many GPUs
 
