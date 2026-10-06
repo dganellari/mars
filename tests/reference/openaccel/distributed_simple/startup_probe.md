@@ -40,8 +40,17 @@ yet the responsible assembly or solve stage.
 ## Daint: OpenAccel terminal
 
 Use the restored OpenAccel uenv/Spack environment and working Python dependencies.
-No OpenAccel rebuild is needed. The wrapper launches the visible `srun` command
-below; all new files go under the fresh capstor directory. The scratch pointer
+Set `OPENACCEL_REFERENCE_EXE` to the absolute path of the executable used for the
+successful original reference run, with every solver family requested by its deck
+compiled in. The public-channel binary is not a suitable default: it lacks PETSc,
+and the saved startup attempt aborted when its deck requested that backend.
+Resolved shared libraries alone do not establish compiled solver support. Reuse
+the compatible existing executable if available; otherwise its missing backend
+must be enabled in a compatible OpenAccel build. Do not replace the deck's linear
+solver settings to get past startup.
+
+The wrapper launches the visible `srun` command below; all new files go under the
+fresh capstor directory. Preserve the failed pair. The scratch pointer
 passes that directory to the separate MARS terminal.
 
 ```bash
@@ -49,6 +58,9 @@ passes that directory to the separate MARS terminal.
 set -euo pipefail
 root=/capstor/scratch/cscs/gandanie/git
 scratch=/capstor/scratch/cscs/gandanie
+: "${OPENACCEL_REFERENCE_EXE:?Set the absolute path of the compatible original OpenAccel executable first}"
+[[ "$OPENACCEL_REFERENCE_EXE" = /* ]]
+test -x "$OPENACCEL_REFERENCE_EXE"
 git -C "$root/mars-v010-check" pull --ff-only
 python3 -c 'import numpy, netCDF4, yaml'
 umask 077
@@ -62,7 +74,7 @@ python3 "$probe" prepare \
 printf '%s\n' "$pair" > "$scratch/simple-startup-current.txt"
 printf 'Private pair: %s\n' "$pair"
 python3 "$probe" run --pair "$pair" --solver openaccel --ranks 4 \
-  --executable "$root/OpenAccel-reference-updates-IxgJIp/source/build/openaccel-3D.exe" -- \
+  --executable "$OPENACCEL_REFERENCE_EXE" -- \
   srun --account=csstaff --time=00:15:00 --nodes=1 --ntasks-per-node=4 \
   --cpus-per-task=1 --cpu-bind=cores --export=ALL --kill-on-bad-exit=1
 )
@@ -113,6 +125,20 @@ exit "$status"
 ```
 
 ## Local checks
+
+### Located startup failure
+
+The user-reported inspection of `simple-startup-lh05AV` matched only
+`src/equation/linearSystem.h:377` at the pinned public revision. That error is
+emitted when a resolved solver selects `family: petsc` but `HAS_PETSC` was absent
+at compilation. It explains this reference abort before iterations; it does not
+diagnose the earlier MARS/reference field discrepancy. The earlier instruction
+to use the public-channel executable without checking its solver support was
+incorrect. No MARS rebuild is needed for this reference-binary mismatch.
+
+The inspector now labels that error `linear_solver_unavailable` for PETSc, Hypre
+or Trilinos without exporting equation names. No further inspection or rerun of
+the incompatible executable is needed for this attempt.
 
 ### Inspect a failed capture without launching again
 

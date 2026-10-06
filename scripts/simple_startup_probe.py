@@ -165,6 +165,7 @@ class ReferenceLogState:
         ('input_validation', r'invalid boundary part|invalid side[12] part|Mesh dimension mismatch|not provided in the yaml input file'),
         ('assertion', r'Assertion .* failed|assertion .* failed|Requirement\('),
         ('linear_solver', r'Belos::|Tpetra::|Amesos2::|Ifpack2::|MueLu::|HYPRE ERROR'),
+        ('linear_solver_unavailable', r'linearSystem: executable does not support (?:PETSc|HYPRE|Trilinos)\b'),
         ('stk', r'stk::|STK ERROR|STK_Throw|ReportHandler'),
         ('field_registration', r'FieldRepository|MetaData::declare_field|FieldBase|put_field_on_mesh|field restriction|incompatible.*(?:field|restriction)|(?:field|restriction).*incompatible'),
         ('master_element', r'MasterElementFactory|MasterElementRepo|get_surface_master_element|get_volume_master_element|theElem != nullptr'),

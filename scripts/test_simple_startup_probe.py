@@ -87,6 +87,17 @@ Iter = 12
         self.assertNotIn('456.78', json.dumps(result))
         self.assertEqual(result['reference_exception_classes'], ['other'])
 
+    def test_unavailable_linear_backend_hides_equation_name(self):
+        for family in ('PETSc', 'HYPRE', 'Trilinos'):
+            with self.subTest(family=family):
+                result = self.scan("terminate called after throwing an instance of 'std::runtime_error'\n"
+                                   'what(): linearSystem: executable does not support ' + family + ' (PRIVATE)')
+                self.assertEqual(result['reference_error_categories'], ['linear_solver_unavailable'])
+
+    def test_available_backend_banner_is_not_a_failure(self):
+        result = self.scan('Solver context: PETSc\nSolver context: HYPRE\nSolver context: Trilinos\n')
+        self.assertEqual(result['reference_error_categories'], [])
+
     def test_setup_exception_classes_and_source_signatures_are_allowlisted(self):
         result = self.scan("""Finished reading mesh ..
 terminate called after throwing an instance of 'std::runtime_error'
