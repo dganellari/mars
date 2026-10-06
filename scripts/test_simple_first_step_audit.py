@@ -1,6 +1,9 @@
 """Synthetic matrices and fields only; no private case is used by these tests."""
 import copy
 import csv
+import contextlib
+import io
+import json
 import unittest
 
 import numpy as np
@@ -178,6 +181,118 @@ class FirstStepTests(unittest.TestCase):
         self.assertTrue(result['first_step_stage_matches']['pressure_matrix'])
         self.assertTrue(result['first_step_stage_matches']['pressure_rhs'])
         self.assertFalse(result['first_step_linear_accuracy']['pressure_mars_relative_residual_below_1e_8'])
+
+    def test_pressure_can_meet_declared_target_and_fail_common_threshold(self):
+        self.phi += 1e-6
+        self.final = np.column_stack([self.predictor-self.influence*self.gradient, .3*self.phi])
+        self.write_reference_fields()
+        self.change_mars_final()
+        code, result = self.compare()
+        self.assertEqual(code, 0, result)
+        checks = result['pressure_solve_checks']
+        self.assertTrue(checks['same_declared_tolerances'])
+        self.assertTrue(checks['mars_owner_residual_meets_runtime_limit'])
+        self.assertTrue(checks['mars_local_residual_meets_runtime_limit'])
+        for name in ('mars', 'reference'):
+            self.assertTrue(checks[name + '_residual_below_declared_unpreconditioned_limit'])
+            self.assertTrue(checks[name + '_declared_limit_looser_than_common_relative_check'])
+            self.assertFalse(result['first_step_linear_accuracy']['pressure_' + name + '_relative_residual_below_1e_8'])
+        self.assertFalse(checks['reference_backend_convergence_verified'])
+
+    def change_pressure_ghost(self, match_local_rhs=False, value=.05):
+        path = self.mars / 'flow-audit-rank000000.bin'
+        part = audit.MarsPart(path, 0, 2, 6)
+        phi = part.phi.copy()
+        ghost = np.setdiff1d(np.arange(6), part.owned)[0]
+        phi[ghost] += value
+        with path.open('r+b') as stream:
+            stream.seek(part.phi.ctypes.data - part.data.ctypes.data)
+            phi.tofile(stream)
+            if match_local_rhs:
+                rhs = part.pressure_rhs.copy()
+                for local in part.owned:
+                    start, end = part.offsets[local:local+2]
+                    rhs[local] = part.pressure[start:end, 0, 0] @ phi[part.columns[start:end], 0]
+                stream.seek(part.pressure_rhs.ctypes.data - part.data.ctypes.data)
+                rhs.tofile(stream)
+        self.refresh()
+
+    def test_bad_ghost_is_visible_even_when_owner_residual_passes(self):
+        self.change_pressure_ghost()
+        code, result = self.compare()
+        self.assertEqual(code, 0, result)
+        checks = result['pressure_solve_checks']
+        self.assertFalse(checks['mars_referenced_copies_equal_owners'])
+        self.assertTrue(checks['mars_owner_residual_meets_runtime_limit'])
+        self.assertFalse(checks['mars_local_residual_meets_runtime_limit'])
+
+    def test_local_residual_can_pass_with_bad_owner_reconstruction(self):
+        self.change_pressure_ghost(match_local_rhs=True)
+        code, result = self.compare()
+        self.assertEqual(code, 0, result)
+        checks = result['pressure_solve_checks']
+        self.assertFalse(checks['mars_referenced_copies_equal_owners'])
+        self.assertFalse(checks['mars_owner_residual_meets_runtime_limit'])
+        self.assertTrue(checks['mars_local_residual_meets_runtime_limit'])
+
+    def test_nonfinite_referenced_ghost_rejects_evidence(self):
+        self.change_pressure_ghost(value=float('nan'))
+        code, result = self.compare()
+        self.assertEqual(code, 1, result)
+        self.assertEqual(result['failed_check'], 'audit_residual_arithmetic')
+
+    def test_default_absolute_floor_is_distinct_from_stopping_tolerance(self):
+        norms = dict(absolute_residual=5e-14, rhs_norm=1e-12)
+        system = dict(mars=norms, mars_local=norms, reference=norms, mars_referenced_copies_equal_owners=True)
+        checks, _ = audit.pressure_accuracy(self.pair, {}, system)
+        self.assertEqual(checks['mars_runtime_target_source'], 'default_true_residual_check')
+        self.assertTrue(checks['mars_owner_residual_meets_runtime_limit'])
+        self.assertFalse(checks['mars_residual_below_declared_unpreconditioned_limit'])
+        self.assertTrue(checks['mars_runtime_limit_looser_than_common_relative_check'])
+
+    def test_reference_controls_are_not_reported_as_backend_convergence(self):
+        import yaml
+        path = self.pair / 'reference/input.i'
+        doc = probe.load_deck(path.read_bytes())
+        config = doc['simulation']['solver']['solver_control']['advanced_options']['linear_solver_settings']['pressure_correction']
+        norms = dict(absolute_residual=1e-5, rhs_norm=1.)
+        system = dict(mars=norms, mars_local=norms, reference=norms, mars_referenced_copies_equal_owners=True)
+        for family, expected in (('PETSc', 'petsc'), ('PRIVATE', 'other')):
+            config.update(family=family, diagonal_scaling=True)
+            path.write_text(yaml.safe_dump(doc))
+            checks, _ = audit.pressure_accuracy(self.pair, {}, system)
+            self.assertEqual(checks['reference_family'], expected)
+            self.assertTrue(checks['reference_diagonal_scaling'])
+            self.assertFalse(checks['reference_backend_convergence_verified'])
+            self.assertNotIn('PRIVATE', json.dumps(checks))
+
+    def test_reanalysis_preserves_capture_and_previous_reports(self):
+        self.assertEqual(self.compare()[0], 0)
+        before = {path: probe.digest(path) for path in self.pair.rglob('*') if path.is_file()}
+        detail = self.fixture.root / 'new-details'
+        public = self.fixture.root / 'new-public.json'
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            code = probe.main(['compare', '--pair', str(self.pair), '--detail-dir', str(detail), '--output', str(public)])
+        self.assertEqual(code, 0, public.read_text())
+        self.assertEqual(before, {path: probe.digest(path) for path in self.pair.rglob('*') if path.is_file()})
+        self.assertTrue((detail / 'first-step-private.json').is_file())
+        text = public.read_text()
+        self.assertNotIn(str(self.fixture.root), text)
+        self.assertNotIn('absolute_residual', text)
+        self.assertNotIn('pressure_targets', text)
+
+    def test_reanalysis_still_rejects_modified_capture(self):
+        self.assertEqual(self.compare()[0], 0)
+        path = self.mars / 'flow-audit-rank000000.bin'
+        with path.open('ab') as stream:
+            stream.write(b'PRIVATE')
+        public = self.fixture.root / 'tampered-public.json'
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            code = probe.main(['compare', '--pair', str(self.pair), '--detail-dir', str(self.fixture.root / 'details'),
+                               '--output', str(public)])
+        self.assertEqual(code, 1)
+        self.assertEqual(json.loads(public.read_text())['failed_check'], 'launch_records')
+        self.assertNotIn('PRIVATE', public.read_text())
 
     def test_missing_or_truncated_data_never_passes(self):
         for name in ('mars/flow-audit-rank000001.bin', 'reference/pressure_correction_0000_vals.bin'):

@@ -60,6 +60,23 @@ These are common diagnostic thresholds, not the backends' configured stopping
 tests, and small residuals do not bound field error without conditioning evidence.
 Reference residuals use the reference's possibly scaled system.
 
+The saved local MARS increments are also checked before replacing ghost values
+with globally owned values. `mars_referenced_copies_equal_owners` requires exact
+agreement for every entry referenced by an owned row; binary halo exchange should
+not round these values. A disagreement separates a publication/mapping problem
+from a residual computed using a different copy of the solution.
+
+`pressure_solve_checks` compares recomputed residuals against the saved controls.
+Explicit MARS pressure options use `max(atol, rtol*||b||)`. Without them, its
+independent acceptance check uses `1e-13 + 1e-10*||b||`, separately from the Hypre
+stopping request (`rtol=1e-12`, `MARS_HYPRE_ABSTOL` or zero). The report distinguishes
+these limits from the common `1e-8` diagnostic. The reference's declared limit
+uses its own saved, possibly row-scaled RHS; its backend stopping norm and
+convergence reason are not verified. In particular PETSc may use a preconditioned
+norm, and the inspected OpenAccel wrapper does not check `KSPGetConvergedReason`.
+CPU recomputation can also differ from GPU reductions by roundoff. These flags
+do not by themselves prove a backend defect or an acceptable field error.
+
 `first_differing_stage` gives the first captured mismatch in execution order.
 A pressure-stage difference can follow a differing momentum predictor; it is not
 automatically a pressure-kernel bug. A reconstructed predictor mismatch may also
@@ -111,6 +128,7 @@ scratch=/capstor/scratch/cscs/gandanie
 cd "$root/mars-v010-check/build-hypre"
 git pull --ff-only
 python3 -c 'import numpy, netCDF4, yaml'
+cmake -S .. -B . -DMARS_ENABLE_SEGREGATED=ON
 cmake --build . --parallel 4 --target mars_segregated_simple mars_simple_output_profile_cuda_gate
 umask 077
 mkdir -p "$scratch/tmp"
@@ -138,6 +156,34 @@ exit "$status"
 )
 ```
 
+## Recheck an existing capture without launching either solver
+
+The first MPQGzD audit matches both assembled systems and the momentum predictor,
+then differs at the pressure increment. Both pressure residuals exceed the common
+diagnostic threshold. This localizes the discrepancy but does not identify its
+cause. Use this saved-file check to distinguish declared targets and local versus
+owned pressure values. All input and launch hashes are checked again; earlier
+captures and reports are preserved. No C++ build or GPU allocation is needed.
+
+```bash
+(
+set -euo pipefail
+scratch=/capstor/scratch/cscs/gandanie
+repo="$scratch/git/mars-v010-check"
+git -C "$repo" pull --ff-only
+python3 -c 'import numpy, netCDF4, yaml'
+umask 077
+mkdir -p "$scratch/tmp"
+export TMPDIR="$scratch/tmp" PYTHONDONTWRITEBYTECODE=1
+report=$(mktemp -d "$scratch/simple-pressure-audit-XXXXXX")
+python3 "$repo/scripts/simple_startup_probe.py" compare \
+  --pair "$scratch/simple-first-step-MPQGzD/pair" \
+  --detail-dir "$report/private" --output "$report/public.json"
+cat "$report/public.json"
+printf 'Share only: %s\n' "$report/public.json"
+)
+```
+
 ## Local validation
 
 Synthetic paired evidence covers reordered global/local nodes, overlapping ghost
@@ -145,6 +191,9 @@ copies, poisoned ghost rows, positive row scaling, 32/64-bit reference indices,
 independently wrong momentum/pressure matrices and RHS, bad solutions, missing or
 truncated data, nonfinite owned coefficients, duplicate ownership, missing fields,
 bad solver numbering, inconsistent updates and changed launch artifacts.
+Further tests separate local/owned residuals with deliberately stale ghosts,
+loose declared targets from the common threshold, and absolute tolerance floors;
+reanalysis preserves earlier reports and still rejects tampered captures.
 The C++ output gate exercises the actual binary writer and overwrite rejection
 on one and four host MPI ranks with address/undefined-behavior sanitizers.
 CUDA compilation and the actual paired capture remain Alps validation.

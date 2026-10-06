@@ -385,7 +385,7 @@ def verified_launch(pair, solver):
     return record
 
 
-def compare(pair, public):
+def compare(pair, public, detail_dir=None):
     import numpy as np
     from netCDF4 import Dataset
     pair = pair.resolve()
@@ -450,7 +450,7 @@ def compare(pair, public):
         if failed and first is None:
             first, first_fields = iteration, failed
         rows.append(dict(iteration=iteration, errors=errors))
-    write_json(pair / 'comparison-private.json', dict(schema=SCHEMA, snapshots=rows,
+    write_json((detail_dir or pair) / 'comparison-private.json', dict(schema=SCHEMA, snapshots=rows,
         first_differing_iteration=first, first_differing_fields=first_fields,
         field_tolerance=1e-5, pressure_gauge_shift_applied=False,
         mars_launch_sha256=digest(pair / 'mars/launch.json'),
@@ -462,7 +462,7 @@ def compare(pair, public):
         from simple_first_step_audit import compare_first_step
         public['comparison_status'] = 'invalid_evidence'
         public['failed_check'] = 'first_step_capture'
-        compare_first_step(pair, ids, xyz, tol, scales, mars_record['ranks'], reference_paths, public)
+        compare_first_step(pair, ids, xyz, tol, scales, mars_record['ranks'], reference_paths, public, detail_dir)
         public.update(comparison_status='completed', failed_check='none')
 
 
@@ -482,6 +482,8 @@ def main(argv=None):
     check = sub.add_parser('compare')
     check.add_argument('--pair', type=Path, required=True)
     check.add_argument('--output', type=Path, required=True)
+    check.add_argument('--detail-dir', type=Path,
+                       help='New private directory for reanalysis; preserve all captured files and earlier reports')
     inspect = sub.add_parser('inspect')
     inspect.add_argument('--pair', type=Path, required=True)
     inspect.add_argument('--solver', choices=('openaccel', 'mars'), required=True)
@@ -506,7 +508,9 @@ def main(argv=None):
                           identical_linear_solvers_verified=False, nonlinear_convergence_required=False)
             with args.output.open('x') as stream:
                 try:
-                    compare(args.pair, public)
+                    if args.detail_dir is not None:
+                        args.detail_dir.mkdir(mode=0o700)
+                    compare(args.pair, public, args.detail_dir)
                 except Exception as error:
                     # Only literal diagnostic labels may leave the private comparison.
                     if isinstance(error, EvidenceError):

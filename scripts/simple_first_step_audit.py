@@ -3,6 +3,7 @@ import math
 
 import numpy as np
 
+from prepare_simple_deck import load_deck
 from simple_snapshot_compare import mars_fields, options, reference_fields, require
 
 AUDIT_ERRORS = frozenset('audit_parts audit_format audit_rank_identity audit_dimensions audit_source_ids '
@@ -11,7 +12,8 @@ AUDIT_ERRORS = frozenset('audit_parts audit_format audit_rank_identity audit_dim
     'reference_matrix_columns audit_residual_arithmetic audit_duplicate_owner audit_field_coverage '
     'reference_solver_ids audit_initial_fields_differ reference_pressure_update mars_predictor_update '
     'mars_velocity_update mars_pressure_update audit_field_arithmetic reference_field_names '
-    'reference_ghost_values reference_coordinates reference_saved_iteration reference_node_ids reference_node_coverage'.split())
+    'reference_ghost_values reference_coordinates reference_saved_iteration reference_node_ids reference_node_coverage '
+    'audit_pressure_controls'.split())
 
 
 def enable_reference_audit(deck):
@@ -63,10 +65,13 @@ class MarsPart:
         self.position += size
         return result
 
-    def row(self, stage, local, component):
+    def row(self, stage, local, component, source_order=True):
         components = 3 if stage == 'momentum' else 1
         start, end = self.offsets[local:local+2]
-        columns = (self.source[self.columns[start:end]].astype(np.int64)[:, None]*components + np.arange(components)).ravel()
+        columns = self.columns[start:end]
+        if source_order:
+            columns = self.source[columns]
+        columns = (columns.astype(np.int64)[:, None]*components + np.arange(components)).ravel()
         return canonical_row(columns, getattr(self, stage)[start:end, component, :].ravel(),
                              getattr(self, stage + '_rhs')[local, component])
 
@@ -133,26 +138,78 @@ def residual(row, solution, scale):
 def compare_system(parts, reference, stage, mars_solution, reference_solution, scale):
     components = 3 if stage == 'momentum' else 1
     matrix_error = rhs_error = 0.
-    norms = {name: [0., 0., 0.] for name in ('mars', 'reference')}
+    norms = {name: [0., 0., 0.] for name in ('mars', 'reference', 'mars_local')}
+    ghosts_equal = True
     for part in parts:
+        local_solution = getattr(part, 'increment' if components == 3 else 'phi').ravel()
         for local in part.owned:
+            start, end = part.offsets[local:local+2]
+            referenced = part.columns[start:end]
+            saved = local_solution.reshape(-1, components)[referenced]
+            owners = mars_solution[part.source[referenced]]
+            ghosts_equal = ghosts_equal and np.array_equal(saved, owners)
             source = part.source[local]
             for component in range(components):
                 a, b = part.row(stage, local, component), reference.row(source, component)
                 da, db = row_difference(a, b, scale)
                 matrix_error, rhs_error = max(matrix_error, da), max(rhs_error, db)
-                for name, row, solution in (('mars', a, mars_solution), ('reference', b, reference_solution)):
+                local_row = part.row(stage, local, component, source_order=False)
+                for name, row, solution in (('mars', a, mars_solution), ('reference', b, reference_solution),
+                                            ('mars_local', local_row, local_solution)):
                     r, rhs, backward = residual(row, solution.ravel(), scale)
                     values = norms[name]
                     values[0] = math.hypot(values[0], r)
                     values[1] = math.hypot(values[1], rhs)
                     values[2] = max(values[2], backward)
-    result = dict(matrix_max_row_scaled=matrix_error, rhs_max_row_scaled=rhs_error)
+    result = dict(matrix_max_row_scaled=matrix_error, rhs_max_row_scaled=rhs_error,
+                  mars_referenced_copies_equal_owners=ghosts_equal)
     for name, (r, b, backward) in norms.items():
         require(all(math.isfinite(x) for x in (r, b, backward)), 'audit_residual_arithmetic')
         result[name] = dict(absolute_residual=r, rhs_norm=b, relative_residual=r/b if b else None,
                             max_row_backward_error=backward)
     return result
+
+
+def pressure_accuracy(pair, controls, system):
+    from simple_startup_probe import read_json
+    explicit = '--pressure-linear-rtol' in controls
+    environment = read_json(pair / 'mars/launch.json')['environment']
+    mars_rtol = float(controls.get('--pressure-linear-rtol', 1e-12))
+    mars_atol = float(controls['--pressure-linear-atol'] if explicit else environment.get('MARS_HYPRE_ABSTOL', 0))
+    runtime_rtol, runtime_atol = (mars_rtol, mars_atol) if explicit else (1e-10, 1e-13)
+    solver = load_deck((pair / 'reference/input.i').read_bytes())['simulation']['solver']
+    settings = solver['solver_control']['advanced_options']['linear_solver_settings']
+    config = next((settings[key] for key in ('pressure_correction', 'segregated_flow', 'default') if key in settings), None)
+    require(isinstance(config, dict), 'audit_pressure_controls')
+    if 'lookup' in config:
+        config = solver[config['lookup']]
+    reference_rtol, reference_atol = float(config.get('rtol', 1e-6)), float(config.get('atol', 1e-16))
+    require(all(math.isfinite(x) and x >= 0 for x in
+                (mars_rtol, mars_atol, reference_rtol, reference_atol)), 'audit_pressure_controls')
+    family = str(config.get('family', '')).lower()
+    family = family if family in ('hypre', 'petsc', 'trilinos') else 'other'
+    limits = dict(mars=max(mars_atol, mars_rtol*system['mars']['rhs_norm']),
+                  reference=max(reference_atol, reference_rtol*system['reference']['rhs_norm']))
+    scaled = runtime_rtol*system['mars']['rhs_norm']
+    limits['runtime'] = max(runtime_atol, scaled) if explicit else runtime_atol + scaled
+    require(all(math.isfinite(x) for x in limits.values()), 'audit_pressure_controls')
+    checks = dict(mars_runtime_target_source='explicit_pressure_options' if explicit else 'default_true_residual_check',
+                  same_declared_tolerances=mars_rtol == reference_rtol and mars_atol == reference_atol,
+                  mars_referenced_copies_equal_owners=system['mars_referenced_copies_equal_owners'],
+                  mars_owner_residual_meets_runtime_limit=system['mars']['absolute_residual'] <= limits['runtime'],
+                  mars_local_residual_meets_runtime_limit=system['mars_local']['absolute_residual'] <= limits['runtime'],
+                  mars_runtime_limit_looser_than_common_relative_check=limits['runtime'] > 1e-8*system['mars']['rhs_norm'],
+                  reference_family=family, reference_backend_convergence_verified=False)
+    for name in ('mars', 'reference'):
+        checks[name + '_residual_below_declared_unpreconditioned_limit'] = system[name]['absolute_residual'] <= limits[name]
+        checks[name + '_declared_limit_looser_than_common_relative_check'] = limits[name] > 1e-8*system[name]['rhs_norm']
+    # PETSc can stop on a preconditioned norm. A deck tolerance alone cannot certify its verdict.
+    for key in ('normalize_matrix', 'diagonal_scaling'):
+        require(type(config.get(key, False)) is bool, 'audit_pressure_controls')
+        checks['reference_' + key] = config.get(key, False)
+    details = dict(mars_rtol=mars_rtol, mars_atol=mars_atol, reference_rtol=reference_rtol,
+                   reference_atol=reference_atol, limits=limits)
+    return checks, details
 
 
 def collect(parts, name, nodes, components):
@@ -167,7 +224,7 @@ def collect(parts, name, nodes, components):
     return result
 
 
-def compare_first_step(pair, ids, xyz, tolerance, scales, ranks, reference_paths, public):
+def compare_first_step(pair, ids, xyz, tolerance, scales, ranks, reference_paths, public, detail_dir=None):
     from simple_startup_probe import read_json, write_json
     nodes = len(ids)
     expected = [pair / ('mars/flow-audit-rank{:06d}.bin'.format(rank)) for rank in range(ranks)]
@@ -222,17 +279,22 @@ def compare_first_step(pair, ids, xyz, tolerance, scales, ranks, reference_paths
     for stage, result in systems.items():
         matches[stage + '_matrix'] = result['matrix_max_row_scaled'] <= 1e-10
         matches[stage + '_rhs'] = result['rhs_max_row_scaled'] <= 1e-10
-        for name in ('mars', 'reference'):
+        for name in ('mars', 'reference', 'mars_local'):
             value = result[name]['relative_residual']
             accuracy[stage + '_' + name + '_relative_residual_below_1e_8'] = value <= 1e-8 if value is not None else None
             accuracy[stage + '_' + name + '_row_backward_error_below_1e_8'] = result[name]['max_row_backward_error'] <= 1e-8
     order = ('momentum_matrix', 'momentum_rhs', 'momentum_predictor', 'momentum_influence',
              'pressure_matrix', 'pressure_rhs', 'pressure_increment', 'pressure_increment_gradient',
              'corrected_velocity', 'corrected_pressure')
-    write_json(pair / 'first-step-private.json', dict(systems=systems, field_errors=errors,
+    public['failed_check'] = 'first_step_pressure_controls'
+    checks, target_details = pressure_accuracy(pair, controls, systems['pressure'])
+    write_json((detail_dir or pair) / 'first-step-private.json', dict(systems=systems, field_errors=errors,
+        pressure_targets=target_details,
         matrix_tolerance=1e-10, field_tolerance=1e-5, common_residual_threshold=1e-8,
         reference_predictor='reconstructed_from_final_velocity_and_correction', pressure_shift_applied=False))
     public.update(first_step_stage_matches=matches, first_step_linear_accuracy=accuracy,
+                  pressure_solve_checks=checks,
+                  pressure_target_scope='saved_controls_and_recomputed_residuals_not_backend_convergence_status',
                   first_differing_stage=next((name for name in order if not matches[name]), 'none'),
                   reference_predictor_reconstructed=True, matrix_comparison='positive_row_scaling_equivalence',
                   linear_accuracy_scope='common_diagnostic_threshold_not_backend_stopping_test')
