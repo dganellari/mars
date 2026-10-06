@@ -243,7 +243,7 @@ The unstructured backend uses:
 For more details, see the `backend/distributed/unstructured` directory and its testsuite.
 
 # Contributors
-Ganellari Daniel, Zulian Patrick and Ramelli Dylan.
+Ganellari Daniel, Zulian Patrick, Ramelli Dylan and Rovi Gabriele.
 
 # License
 The software is released with NO WARRANTY and it is licensed under [BSD 3-Clause license](https://opensource.org/licenses/BSD-3-Clause)
