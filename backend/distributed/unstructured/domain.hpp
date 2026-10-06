@@ -534,10 +534,10 @@ struct NodeHaloTopology
     NodeHaloTopology() = default;
     NodeHaloTopology(const ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>& domain);
 
-    // Gate 1 helper: build via the device-resident path consuming cstone's
-    // incomingHaloIndices/outgoingHaloIndices instead of host MPI_Allgatherv.
-    // Selected at runtime via env MARS_NODEHALO_V2; both paths populate the
-    // same fields so callers don't change.
+    // Device build from cstone's incomingHaloIndices/outgoingHaloIndices, without the
+    // host MPI_Allgatherv. buildOnDevice uses it when the domain does not use SFC
+    // ownership. MARS_NODEHALO_HOST=1 selects the host path instead; both fill the
+    // same fields, so callers do not change.
     void buildFromCstoneHalos(const ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>& domain);
 
     // SFC node ownership: receive lists from the owner function, send lists from one sparse key exchange
@@ -2301,31 +2301,15 @@ ElementDomain<ElementTag, RealType, KeyType, AcceleratorTag>::ElementDomain(cons
     auto t1 = clk::now();
     readMeshTimeMs = std::chrono::duration<float, std::milli>(t1 - t0).count();
 
-    // MFEM-style periodic vertex identification (before cstone sees the
-    // coords). Rewrite max-face vertex coords to match their min-face image
-    // so cstone's coord->SFC-key quantizer produces identical keys for
-    // periodic pairs; cstone's thrust::unique-by-key dedup then merges them
-    // locally, and the host-fallback halo path (MARS_NODEHALO_V2=0) finds
-    // cross-rank shared vertices via MPI_Allgatherv of owned-node keys.
-    //
-    // Connectivity (h_conn) is not modified; the merge happens at SFC-key
-    // time inside sync(). Coords are still the "raw" mesh coords for the
-    // bounding-box pass below, except the max-face vertices now sit at
-    // boxLo on their periodic axis -- which is consistent with the periodic
-    // box geometry.
     periodicAxesMask_ = periodicAxesMask;   // remember for AMR-resync box rebuilds
-    // NOTE: we deliberately do NOT shift vertex coordinates here. Moving a
-    // max-face vertex to its min-face image makes the wrap-around CVFEM
-    // element geometrically degenerate (it would span the whole box
-    // backwards), corrupting the Jacobian / area vectors. Instead we keep
-    // coordinates real and only set the cstone Box to periodic (below).
-    // The periodic Box makes cstone's halo collision test periodic-aware
-    // (applyPbc), so each rank receives the opposite-face nodes as halo
-    // ghosts -- giving us cross-rank periodic communication for free.
-    // The periodic DOF identity (slave DOF == master DOF) is applied later
-    // in setupNSStepper via buildPeriodicMap, which finds the master among
-    // the local halo ghosts and relies on cstone's reverse-halo exchange
-    // for cross-rank accumulation.
+    // Periodic boxes keep the real vertex coordinates. Moving a max-face vertex
+    // onto its min-face image would make the wrap-around element span the whole
+    // box backwards and corrupt its Jacobian and area vectors. Only the cstone
+    // Box is made periodic (below): its halo search then wraps around (applyPbc),
+    // so each rank also receives the elements across every periodic face.
+    // The periodic pairs are matched later by buildPeriodicMap
+    // (fem/mars_periodic_bc.hpp), and DofSpace (fem/mars_dof_space.hpp) gives
+    // each pair one DOF.
     if (periodicAxesMask != 0 && rank_ == 0) {
         std::cout << "Periodic box: axes mask=" << periodicAxesMask
                   << " (cstone Box set periodic; coords NOT shifted; DOF "

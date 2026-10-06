@@ -1,123 +1,62 @@
-# Unstructured Meshes in MARS
+# MARS Documentation
 
-Welcome to the MARS Unstructured Meshes Documentation. This section covers the unstructured mesh handling capabilities in the MARS (Multilevel Adaptive Refinement Solver) framework.
+MARS (Mesh Adaptive Refinement for Supercomputing) is a C++20 library for unstructured meshes and
+finite-element assembly on GPUs. The mesh is read, partitioned along a space-filling curve (SFC),
+and stored on the device; the DOF numbering, the sparsity pattern and the assembly run there too.
+MARS uses the cornerstone-octree library for the SFC decomposition and the element halo, and MPI
+between GPUs.
 
-> **New here?** Start with the **[Quickstart](Quickstart.md)** — clone, build,
-> generate a mesh, and run your first GPU assembly in a few minutes.
+This documentation covers **v0.1.0**. The major version is 0, so the API can change between minor
+releases.
 
-## Overview
+## Start here
 
-MARS provides comprehensive support for unstructured mesh processing, including:
-
-- **ElementDomain**: Core class for managing mesh elements and their properties
-- **Mesh Reading**: Support for various mesh formats with automatic partitioning
-- **SFC Mapping**: Space-filling curve mapping for load balancing
-- **Adjacency Structures**: Efficient neighbor finding and connectivity
-- **Halo Management**: Ghost cell handling for parallel computations (element halo + per-node halo)
-- **Coordinate Caching**: Optimized coordinate storage and access
-- **Characteristic Sizes**: Mesh quality metrics and sizing functions
-- **Connectivity Management**: Element-to-element relationships
-- **GPU Acceleration**: CUDA-based parallel processing
-- **Multi-Rank Support**: MPI-based distributed computing
-- **AMR**: GPU-native multi-rank adaptive mesh refinement with solution transfer
-
-> **Multi-rank status.** Non-periodic distributed assembly and AMR are rank-invariant
-> and validated. Periodic Taylor–Green keeps one unknown per periodic point on every
-> rank count; its GPU validation is pending (see the tutorial). Some inlet-driven
-> channel multi-rank paths have known limitations under active work. See
-> [Multi-Rank Support](Multi-Rank-Support.md) and the tutorials for the precise
-> current state.
-
-## Key Components
-
-### Core Infrastructure
-- [ElementDomain Overview](ElementDomain-Overview.md) - Main class for unstructured mesh management
-- [Mesh Reading and Partitioning](Mesh-Reading-and-Partitioning.md) - Input handling and domain decomposition
-- [SFC Mapping](SFC-Mapping.md) - Load balancing through space-filling curves
-
-### Advanced Features
-- [Adjacency Structures](Adjacency-Structures.md) - Neighbor relationships and connectivity
-- [Halo Management](Halo-Management.md) - Ghost cell management for parallel processing
-- [Node Halo Topology](Node-Halo-Topology.md) - Per-node halo via direct CUDA-aware MPI
-- [Coordinate Caching](Coordinate-Caching.md) - Efficient coordinate storage
-- [Characteristic Sizes](Characteristic-Sizes.md) - Mesh quality and sizing
-- [Connectivity Management](Connectivity-Management.md) - Element relationships
-
-### Adaptive Mesh Refinement
-- [AMR Module](AMR-Module.md) - Refinement pipeline (mark → refine → rebuild → transfer)
-- [Solution Transfer](Solution-Transfer.md) - Field interpolation across AMR levels (warm-start CG)
-
-### Performance & Parallelism
-- [GPU Acceleration](GPU-Acceleration.md) - CUDA implementation details
-- [Multi-Rank Support](Multi-Rank-Support.md) - MPI parallel processing
+- **[Quickstart](Quickstart.md)**: build MARS, generate a cube mesh and run a GPU assembly.
 
 ## Tutorials
 
-End-to-end walkthroughs of MARS' incompressible Navier–Stokes solvers on
-unstructured meshes:
+- **[Poiseuille channel flow](poiseuille_tutorial.md)**: incompressible Navier–Stokes from the
+  mesh to the validated result. Start here if you are new to CFD.
+- **[Taylor–Green vortex](periodic_tgv_tutorial.md)**: the same solver on a periodic box, and how
+  periodic points stay one unknown on any number of GPUs.
+- **[High-order matrix-free operator](Matrix-Free-Tutorial.md)**: the experimental high-order
+  CVFEM operator apply, on one GPU and on many.
 
-- **[Poiseuille — a From-Scratch CFD Tutorial](poiseuille_tutorial.md)** — start here if
-  you are new to CFD. What an internal pump-flow simulation computes, from the mesh
-  through the numerical method (CVFEM, Rhie–Chow face fluxes, the projection, BDF2,
-  algebraic multigrid), boundary conditions, running, reading the output, and making
-  flow visualizations.
-- [Taylor–Green Vortex (periodic)](periodic_tgv_tutorial.md) - the canonical periodic
-  validation case for the same solver, and how unknowns are shared between GPUs.
+## Reference
 
-## Quick Start
+- **[FEM Assembly](FEM-Assembly.md)**: mesh → DOF map → sparsity → assembled CSR, on the GPU.
+- **[CVFEM Kernels](CVFEM-Kernels.md)**: the hex assembly kernel variants and how to choose one.
+
+## Status
+
+- **[Known limitations](https://github.com/dganellari/mars/blob/master/KNOWN_LIMITATIONS.md)**:
+  what is stable, what is experimental, and what is not supported yet.
+- **[Changelog](https://github.com/dganellari/mars/blob/master/CHANGELOG.md)**: what changed in
+  v0.1.0.
+
+Stable in v0.1: the GPU mesh and assembly pipeline on one and on several ranks, and the
+incompressible Navier–Stokes solver on hexahedral meshes (`mars_poiseuille_flow`, `mars_tgv`,
+`mars_lid_driven_cavity`). Experimental, among others: the high-order matrix-free operators,
+adaptive mesh refinement, and the segregated SIMPLE solver.
+
+## The mesh in code
 
 ```cpp
-#include <mars.hpp>
+#include "backend/distributed/unstructured/domain.hpp"
 
-// Hex8 mesh, double precision, uint64_t SFC keys, GPU
+// Hex8 mesh, double precision, 64-bit SFC keys, GPU
 using Domain = mars::ElementDomain<mars::HexTag, double, uint64_t, cstone::execution::Gpu>;
 
-// Read + partition + build cstone domain
-Domain domain(meshFile, rank, numRanks);
+// Read the mesh, partition it along the SFC and build the cornerstone domain
+Domain domain(meshDir, rank, numRanks);
 
-// Lazy-built data: triggers HaloData (ownership) + NodeHaloTopology
-const auto& d_nodeOwnership = domain.getNodeOwnershipMap();   // size = nodeCount
-const auto& d_conn          = domain.getElementToNodeConnectivity();  // local node IDs
+// Built on first access, on the device
+const auto& d_owner = domain.getNodeOwnershipMap();          // per local node: 1 owned, 0 ghost
+const auto& d_conn  = domain.getElementToNodeConnectivity();  // local node ids, one column per corner
 
-// Cache decoded node coordinates
 domain.cacheNodeCoordinates();
-const auto& d_x = domain.getNodeX();
-const auto& d_y = domain.getNodeY();
-const auto& d_z = domain.getNodeZ();
-
-// Distributed CG halo callback
-auto haloExchange = [&domain, dofMap = d_node_to_dof.data()]
-    (cstone::DeviceVector<double>& p) {
-        domain.exchangeNodeHalo(p, dofMap);
-    };
+const auto& d_x = domain.getNodeX();                          // also getNodeY(), getNodeZ()
 ```
 
-For an end-to-end distributed AMR + Poisson example, see
-[`examples/distributed/unstructured/mars_amr_cvfem_graph.cu`](../examples/distributed/unstructured/mars_amr_cvfem_graph.cu)
-and the [AMR Module](AMR-Module.md) walkthrough.
-
-## Architecture
-
-The unstructured mesh system in MARS is built on Cornerstone octree and uses a lazy composition pattern where GPU components are initialized on-demand to minimize VRAM usage and startup time. Key architectural decisions include:
-
-- **GPU-Native Design**: All data structures live in device memory (Cornerstone `DeviceVector`)
-- **Template-based Design**: Type-safe mesh element handling via `AcceleratorTag`
-- **Lazy Initialization**: GPU components (adjacency, halo, coordinates) built only when needed
-- **SFC-Centric**: Elements identified by space-filling curve keys, not integer indices
-- **Thrust Algorithms**: CSR building, sorting, and reductions use Thrust primitives
-- **MPI Partitioning**: Multi-rank support via Cornerstone domain decomposition
-
-## Contributing
-
-When contributing to the unstructured mesh system:
-
-1. Follow the existing template patterns for new mesh element types
-2. Implement lazy initialization for new components
-3. Add comprehensive tests for parallel functionality
-4. Update this documentation for new features
-
-## See Also
-
-- [MARS Core Documentation](../README.md)
-- [Examples](../../examples/)
-- [API Reference](../../core/mars.hpp)
+`examples/distributed/unstructured/mars_cvfem_graph.cu` continues from here to an assembled matrix;
+the [Quickstart](Quickstart.md) runs it.

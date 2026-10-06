@@ -19,6 +19,135 @@ import simple_startup_probe as probe
 import test_simple_snapshot_compare as fixtures
 
 
+class ReferenceLogTests(unittest.TestCase):
+    def scan(self, text):
+        state = probe.ReferenceLogState()
+        for line in text.splitlines():
+            state.feed(line)
+        result = state.result()
+        self.assertNotIn('PRIVATE', json.dumps(result))
+        return result
+
+    def test_uncaught_yaml_error_during_controls(self):
+        result = self.scan("""Reading controls ..
+terminate called after throwing an instance of 'YAML::TypedBadConversion<double>'
+  what(): yaml-cpp: error at line 45, column 7: PRIVATE
+srun: error: PRIVATE: task 0: Aborted (core dumped)
+""")
+        self.assertEqual(result['reference_stages_seen'], ['controls_read'])
+        self.assertEqual(result['reference_error_categories'], ['yaml'])
+        self.assertTrue(result['reference_cpp_termination_seen'])
+        self.assertTrue(result['reference_exception_message_seen'])
+        self.assertTrue(result['reference_abort_seen'])
+
+    def test_multiline_io_error_hides_mesh_name(self):
+        result = self.scan("""Finished reading controls ..
+Reading mesh ..
+terminate called after throwing an instance of 'std::runtime_error'
+  what(): Ioss::DatabaseIO PRIVATE
+Could not open PRIVATE/results.e.4.0: No such file or directory
+""")
+        self.assertEqual(result['reference_error_categories'], ['file_access', 'mesh_io'])
+        self.assertEqual(result['reference_stages_seen'], ['controls_ready', 'mesh_read'])
+
+    def test_known_failure_categories(self):
+        messages = (
+            ('std::bad_alloc', 'allocation'),
+            ('MPI_Init_thread PRIVATE', 'mpi_initialization'),
+            ('Provided MPI thread-level support is not sufficient', 'mpi_thread_support'),
+            ('Kokkos::Cuda::initialize PRIVATE', 'kokkos'),
+            ('unsupported decomposition method PRIVATE', 'decomposition'),
+            ('Disk quota exceeded PRIVATE', 'disk_space'),
+            ('invalid boundary part PRIVATE', 'input_validation'),
+            ('Assertion PRIVATE failed', 'assertion'),
+            ('Belos:: PRIVATE', 'linear_solver'),
+        )
+        for message, category in messages:
+            with self.subTest(category=category):
+                result = self.scan('terminate called\n  what(): ' + message)
+                self.assertEqual(result['reference_error_categories'], [category])
+
+    def test_normal_banners_and_private_values_are_not_errors(self):
+        result = self.scan("""Command line: PRIVATE/Kokkos/yaml-cpp
+Automatic domain decomposition: input Exodus file must be a serial file
+Validating YAML input against Exodus file
+Finished validating YAML input
+[3] Initializing equation `PRIVATE` on realm `PRIVATE`
+Iter = 12
+""")
+        self.assertEqual(result['reference_error_categories'], [])
+        self.assertFalse(result['reference_cpp_termination_seen'])
+        self.assertEqual(result['reference_stages_seen'],
+                         ['mesh_validation', 'mesh_validated', 'equation_initialization', 'iteration'])
+
+    def test_unknown_exception_is_reported_without_exporting_text(self):
+        result = self.scan("terminate called after throwing an instance of 'PRIVATE'\nwhat(): PRIVATE 456.78")
+        self.assertTrue(result['reference_cpp_termination_seen'])
+        self.assertEqual(result['reference_error_categories'], [])
+        self.assertNotIn('456.78', json.dumps(result))
+        self.assertEqual(result['reference_exception_classes'], ['other'])
+
+    def test_unavailable_linear_backend_hides_equation_name(self):
+        for family in ('PETSc', 'HYPRE', 'Trilinos'):
+            with self.subTest(family=family):
+                result = self.scan("terminate called after throwing an instance of 'std::runtime_error'\n"
+                                   'what(): linearSystem: executable does not support ' + family + ' (PRIVATE)')
+                self.assertEqual(result['reference_error_categories'], ['linear_solver_unavailable'])
+
+    def test_available_backend_banner_is_not_a_failure(self):
+        result = self.scan('Solver context: PETSc\nSolver context: HYPRE\nSolver context: Trilinos\n')
+        self.assertEqual(result['reference_error_categories'], [])
+
+    def test_setup_exception_classes_and_source_signatures_are_allowlisted(self):
+        result = self.scan("""Finished reading mesh ..
+terminate called after throwing an instance of 'std::runtime_error'
+what(): stk::mesh::impl::FieldRepository PRIVATE field restriction incompatible
+  at /PRIVATE/FieldRepository.cpp:456
+  at /PRIVATE/meshGeometry.cpp:123
+  at /PRIVATE/PRIVATE.cpp:789
+""")
+        self.assertEqual(result['reference_exception_classes'], ['std::runtime_error'])
+        self.assertEqual(result['reference_error_categories'], ['field_registration', 'stk'])
+        self.assertEqual(result['reference_source_signatures'], ['FieldRepository.cpp', 'meshGeometry.cpp'])
+        self.assertNotIn('456', json.dumps(result))
+
+    def test_out_of_range_is_not_misreported_as_field_registration(self):
+        result = self.scan("terminate called after throwing an instance of 'std::out_of_range'\nwhat(): map::at")
+        self.assertEqual(result['reference_exception_classes'], ['std::out_of_range'])
+        self.assertEqual(result['reference_error_categories'], ['container_lookup'])
+
+    def test_master_element_failure_hides_topology_and_paths(self):
+        result = self.scan("""terminate called after throwing an instance of 'std::logic_error'
+what(): Expr 'theElem != nullptr' eval'd to false
+location /PRIVATE/MasterElementFactory.C:179
+PRIVATE topology 456
+""")
+        self.assertEqual(result['reference_error_categories'], ['master_element'])
+        self.assertEqual(result['reference_source_signatures'], ['MasterElementFactory.C'])
+        self.assertNotIn('456', json.dumps(result))
+
+    def test_signature_like_private_names_do_not_escape(self):
+        result = self.scan("""terminate called after throwing an instance of 'PRIVATE::runtime_error'
+what(): PRIVATE_FieldRepository.cpp.tmp
+""")
+        self.assertEqual(result['reference_exception_classes'], ['other'])
+        self.assertEqual(result['reference_source_signatures'], [])
+
+    def test_libcpp_exception_class(self):
+        result = self.scan('libc++abi: terminating due to uncaught exception of type std::length_error: PRIVATE')
+        self.assertEqual(result['reference_exception_classes'], ['std::length_error'])
+
+    def test_cpp_runtime_assertion_and_mpi_interleaving(self):
+        result = self.scan("""[2] Reading mesh ..
+[1] Finished reading controls ..
+libc++abi: terminating due to uncaught exception of type PRIVATE
+what(): Assertion PRIVATE failed
+""")
+        self.assertEqual(result['reference_stages_seen'], ['controls_ready', 'mesh_read'])
+        self.assertEqual(result['reference_progress_scope'], 'any_logged_rank')
+        self.assertEqual(result['reference_error_categories'], ['assertion'])
+
+
 class StartupTests(unittest.TestCase):
     def setUp(self):
         self.fixture = fixtures.SnapshotTests()
@@ -236,6 +365,50 @@ class StartupTests(unittest.TestCase):
         self.assertEqual(result['input_check'], 'passed')
         self.assertEqual(result['runtime_check'], 'runtime_libraries_unresolved')
         self.assertEqual(before, {str(p): probe.digest(p) for p in pair.rglob('*') if p.is_file()})
+
+    def test_inspection_of_reference_abort_without_final_record(self):
+        reference = self.pair / 'reference'
+        (reference / 'launch.json').unlink()
+        (reference / 'run.exit').write_text('134\n')
+        (reference / 'run.log').write_text("Reading mesh ..\nterminate called after throwing an instance of 'std::runtime_error'\nwhat(): Ioss:: PRIVATE\n")
+        for path in probe.result_files(reference):
+            path.unlink()
+        before = {str(p): probe.digest(p) for p in self.pair.rglob('*') if p.is_file()}
+        with patch.object(probe, 'runtime_libraries', return_value={'synthetic': 'a'*64}), contextlib.redirect_stdout(io.StringIO()):
+            code = probe.main(['inspect', '--pair', str(self.pair), '--solver', 'openaccel',
+                               '--executable', str(self.fixture.root / 'fake-executable'), '--output', str(self.public)])
+        result = probe.read_json(self.public)
+        self.assertEqual(code, 0)
+        self.assertEqual(result['process_exit_code'], 134)
+        self.assertFalse(result['launch_record_present'])
+        self.assertTrue(result['reference_cpp_termination_seen'])
+        self.assertEqual(result['reference_error_categories'], ['mesh_io'])
+        self.assertEqual(result['outputs_check'], 'reference_outputs')
+        self.assertNotIn('PRIVATE', self.public.read_text())
+        self.assertEqual(before, {str(p): probe.digest(p) for p in self.pair.rglob('*') if p.is_file()})
+
+    def test_inspection_matches_public_source_without_sharing_error_text(self):
+        reference = self.pair / 'reference'
+        (reference / 'run.log').write_text("terminate called after throwing an instance of 'std::runtime_error'\nwhat(): Error in the expression provided at boundary PRIVATE\n")
+        catalog = {tuple('error in the expression provided at boundary'.split()): {'src/model/model.cpp:62'}}
+        with patch.object(probe, 'read_catalog', return_value=catalog), contextlib.redirect_stdout(io.StringIO()):
+            code = probe.main(['inspect', '--pair', str(self.pair), '--solver', 'openaccel',
+                               '--executable', str(self.fixture.root / 'fake-executable'),
+                               '--reference-source', '/synthetic/source', '--output', str(self.public)])
+        result = probe.read_json(self.public)
+        self.assertEqual(code, 0)
+        self.assertEqual(result['reference_catalog_check'], 'passed')
+        self.assertEqual(result['reference_catalog_revision'], probe.REFERENCE_REVISION)
+        self.assertEqual(result['reference_message_candidates'], ['src/model/model.cpp:62'])
+        self.assertNotIn('PRIVATE', self.public.read_text())
+        self.assertNotIn('/synthetic/source', self.public.read_text())
+
+    def test_unavailable_source_does_not_export_process_error(self):
+        with patch.object(probe, 'read_catalog', side_effect=OSError('PRIVATE')):
+            result = probe.inspect_launch(self.pair, 'openaccel', self.fixture.root / 'fake-executable', Path('/synthetic/source'))
+        self.assertEqual(result['reference_catalog_check'], 'rejected')
+        self.assertNotIn('reference_message_candidates', result)
+        self.assertNotIn('PRIVATE', json.dumps(result))
 
     def test_library_probe_labels_hide_paths(self):
         for output, code, label in (

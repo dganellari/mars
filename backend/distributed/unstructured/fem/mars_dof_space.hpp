@@ -410,7 +410,8 @@ private:
         const auto& box     = domain.getBoundingBox();
         if (numRanks > 1 && !domain.sfcOwnership())
         {
-            if (rank == 0) std::fprintf(stderr, "DofSpace: several ranks need SFC node ownership (MARS_OWNERSHIP=vote)\n");
+            if (rank == 0)
+                std::fprintf(stderr, "DofSpace: several ranks need SFC node ownership; unset MARS_OWNERSHIP\n");
             MPI_Abort(MPI_COMM_WORLD, 1);
         }
 

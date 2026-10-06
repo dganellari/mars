@@ -3,9 +3,8 @@
 // Hypre PCG preconditioned by one BoomerAMG V-cycle, for SPD matrices that stay constant in
 // time: the matrix and the AMG hierarchy are built once, and each solve only runs PCG.
 //
-// The matrix is built on the GPU from a few pieces: a device CSR block per rank, COO assembly
-// of small matrices, and products and transposes of distributed matrices. The Galerkin product
-// P^T A P turns a matrix over each rank's local node slots into the matrix over the DOFs.
+// hypreFromEntries builds the distributed matrix on the GPU from (local row, global column,
+// value) entries; the Navier-Stokes solver forms them with DofSpace::restrictMatrix.
 
 #include "mars_hypre_pcg_solver.hpp"
 #include <_hypre_parcsr_mv.h>
@@ -23,6 +22,7 @@
 #include <thrust/unique.h>
 #include <cstdio>
 #include <cstdlib>
+#include <limits>
 #include <string>
 #include <utility>
 
@@ -191,11 +191,15 @@ struct HypreOffdColumn
 // columns (diag, local ids) and the others (offd, ids into a sorted column map). Two radix
 // sorts of 64-bit keys do the work: the columns compressed to this rank's sorted column set,
 // then (row << 32 | column). The input vectors are consumed.
-inline HypreMatrix hypreFromEntries(MPI_Comm comm, HYPRE_BigInt firstRow, HYPRE_Int rows, HYPRE_BigInt globalRows,
+inline HypreMatrix hypreFromEntries(MPI_Comm comm, long long firstRow, HYPRE_Int rows, long long globalRows,
                                     thrust::device_vector<int>& row, thrust::device_vector<long long>& col,
                                     thrust::device_vector<HYPRE_Complex>& val)
 {
     hypreInitializeOnce();
+    // Rows are numbered in 64 bits here; a Hypre built with 32-bit global indices would wrap
+    // them silently above 2^31 - 1.
+    hypreCheck(comm, globalRows <= (long long)std::numeric_limits<HYPRE_BigInt>::max(),
+               "more global rows than this Hypre build can index; build Hypre with --enable-mixedint");
     const size_t n = row.size();
     thrust::device_vector<long long> columns(col);
     thrust::sort(thrust::device, columns.begin(), columns.end());
@@ -228,9 +232,9 @@ inline HypreMatrix hypreFromEntries(MPI_Comm comm, HYPRE_BigInt firstRow, HYPRE_
     const size_t nnzOffd = nnz - nnzDiag;
     const HYPRE_Int colsOffd = HYPRE_Int(columns.size() - (hi - lo));
 
-    HYPRE_BigInt starts[2] = {firstRow, firstRow + rows};
-    hypre_ParCSRMatrix* A  = hypre_ParCSRMatrixCreate(comm, globalRows, globalRows, starts, starts, colsOffd,
-                                                      HYPRE_Int(nnzDiag), HYPRE_Int(nnzOffd));
+    HYPRE_BigInt starts[2] = {HYPRE_BigInt(firstRow), HYPRE_BigInt(firstRow + rows)};
+    hypre_ParCSRMatrix* A  = hypre_ParCSRMatrixCreate(comm, HYPRE_BigInt(globalRows), HYPRE_BigInt(globalRows), starts,
+                                                      starts, colsOffd, HYPRE_Int(nnzDiag), HYPRE_Int(nnzOffd));
     hypre_ParCSRMatrixInitialize_v2(A, HYPRE_MEMORY_DEVICE);
     hypre_CSRMatrix* diag = hypre_ParCSRMatrixDiag(A);
     hypre_CSRMatrix* offd = hypre_ParCSRMatrixOffd(A);

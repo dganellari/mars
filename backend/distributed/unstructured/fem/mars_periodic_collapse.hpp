@@ -184,13 +184,13 @@ inline std::size_t applyPeriodicCollapse(const std::vector<RealType>& h_x,
 //   - cstone dedups vertices by SFC key, which is a pure coord->key
 //     quantization (cstone::sfc3D is NOT periodic-aware).
 //   - Two vertices at the same physical position get the same SFC key.
-//   - cstone's host-fallback peer discovery (MARS_NODEHALO_V2=0) detects
+//   - The host node-halo path (MARS_NODEHALO_HOST=1, not the default) finds
 //     cross-rank shared vertices by MPI_Allgatherv of owned-node SFC keys.
 //   - Therefore: collapse periodic pairs by rewriting the SLAVE'S
 //     COORDINATES to match the master's. Then cstone naturally identifies
 //     the two physical locations as one vertex (locally via thrust::unique
-//     on SFC keys, cross-rank via the Allgatherv key-match in
-//     buildNodeHaloTopologyHostPath at domain.cu:1174-1198).
+//     on SFC keys, cross-rank via the Allgatherv key match in
+//     buildNodeHaloTopologyHostPath in domain.cu).
 //
 // This means **no MPI is needed at collapse time** -- each rank's slaves
 // just shift their own (x,y,z) by the periodicity vector. The cross-rank

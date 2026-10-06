@@ -7,7 +7,7 @@ public API may change between minor releases.
 
 ## [Unreleased]
 
-## [0.1.0] — 2026-09-24
+## [0.1.0] — 2026-10-09
 
 First tagged public release. MARS is a GPU-native mesh management and finite-element
 assembly library for N-dimensional elements (N ≤ 4), built in C++20 on CUDA / HIP and
@@ -24,19 +24,21 @@ the cornerstone-octree library.
 - Lazy composition of adjacency, halo, and coordinate caches (built on first access)
   to minimize VRAM and startup time.
 - CMake install / `find_package(Mars)` packaging with the `Mars::mars` target
-  (config installed to `<prefix>/lib/cmake/Mars`, found through `CMAKE_PREFIX_PATH`).
+  (config installed to `<prefix>/lib/cmake/Mars`, found through `CMAKE_PREFIX_PATH`). The
+  install holds the core library and the mesh headers, not yet the FEM and solver headers.
 - A plain `cmake ..` on a CPU-only machine builds the core library; the unstructured
   backend is on by default in CUDA / HIP builds.
 - Release checks: `ctest -L release` runs the documented drivers end to end on generated
-  meshes (assembly rank-count invariance, Poisson solve, cavity/channel Navier–Stokes).
+  meshes (assembly rank-count invariance, Poisson solve, cavity/channel/Taylor–Green
+  Navier–Stokes, high-order matrix-free gates on one GPU and on N ranks).
 - Hex CVFEM kernels transform reference gradients with the inverse-transpose Jacobian. Earlier
   code used the inverse, which is wrong whenever an element's reference axes are not aligned with
   x, y, z (typical of meshes from mesh generators).
 - Multi-rank node ownership comes from the SFC decomposition: a node belongs to the rank whose SFC range contains
   it, which every rank computes without communication. The domain sync sends each element to the owners of its
   corners, so every owner holds all elements around its nodes and owned rows are complete. Earlier versions relied
-  on the distance-based halo reaching those elements, which failed at corner contacts between ranks. Periodic and
-  multi-block meshes keep the previous ownership scheme (see KNOWN_LIMITATIONS.md).
+  on the distance-based halo reaching those elements, which failed at corner contacts between ranks. Periodic
+  meshes use the same SFC ownership.
 - `mars_ex1_poisson` numbers DOFs from the domain's node ownership and solves with CG and the node
   halo, like the Navier–Stokes solvers; before, its own DOF handler disagreed with the assembler's
   rows on more than one rank. The P1 tet assemblers now loop over every element a rank holds, halo
@@ -55,13 +57,16 @@ the cornerstone-octree library.
   a projection on the compact CVFEM Laplacian (the face fluxes are divergence-free to the
   solver tolerance on any rank count), skew-symmetric advection, BDF2. `DofSpace`
   (`fem/mars_dof_space.hpp`) maps node copies to unknowns: ghosts and periodic images of
-  one point share one unknown, and every matrix is Pᵀ A P, assembled per rank by Hypre.
-  Both systems are solved with Hypre PCG + BoomerAMG: 17–19 pressure iterations per step
-  on the validation cases, 22 on a 64³ periodic box.
-- Validation on 1, 2 and 4 GPUs, identical across rank counts: the Poiseuille 1500-step
-  check (profile RMS error 4.551e-4 m/s, about 24 s on one GPU), the Taylor–Green vortex
-  kinetic energy against the Stokes decay, and the lid-driven cavity. `ctest -L release`
-  runs all three on 1 and N ranks.
+  one point share one unknown, and every matrix is Pᵀ A P, formed by sending each copy's
+  matrix row to the rank that owns its unknown. Both systems are solved with Hypre PCG +
+  BoomerAMG (18 pressure iterations per step in the Poiseuille validation). Weak scaling on
+  Alps GH200, 8M nodes per GPU: 52% of the 1-GPU step speed on 256 GPUs, Hypre-bound, with
+  21 to 23 pressure iterations at every size (Poiseuille tutorial, section 7).
+- Validation on 1, 2 and 4 GPUs: the Poiseuille 1500-step check (profile RMS error
+  4.551e-4 m/s, about 24 s on one GPU; `tests/reference/poiseuille/planar_validation.md`)
+  and the Taylor–Green vortex kinetic energy against the Stokes decay, identical on 1, 2
+  and 4 GPUs (`docs/periodic_tgv_tutorial.md`). `ctest -L release` runs the lid-driven
+  cavity, the channel and the Taylor–Green vortex on 1 and N ranks.
 - `mars_tgv` on several ranks: the old solver collapsed only the pressure at periodic
   points, and the multi-rank run lost the projection. Velocity and pressure now share one
   unknown per periodic point.
@@ -71,7 +76,9 @@ the cornerstone-octree library.
   `--solver` and `--pressure-solve` options.
 
 ### Experimental
-- High-order matrix-free CVFEM operators (p ≥ 2), with DOF numbering on the device.
+- High-order matrix-free CVFEM operators (hexahedra, p = 1 to 8), with DOF numbering on
+  the device: the operator apply on one GPU and on several ranks, no solver yet
+  (`docs/Matrix-Free-Tutorial.md`).
 - Tetrahedral high-order operators: collapsed sum-factorization Galerkin and
   box-partition CVFEM.
 - GPU-native adaptive mesh refinement (mark → refine → rebuild → transfer).

@@ -36,8 +36,7 @@
 // restrict; the constant matrices are assembled per rank over its slots and
 // reduced to P^T A_local P by sending every copy's row to the owner of its DOF
 // (DofSpace::restrictMatrix), with no sparse product. Both systems are solved with PCG
-// and BoomerAMG, whose iteration count stays flat as the mesh and the number
-// of GPUs grow.
+// and BoomerAMG.
 
 #include "backend/distributed/unstructured/domain.hpp"
 #include "backend/distributed/unstructured/fem/mars_cvfem_hex_kernel.hpp"
@@ -873,6 +872,28 @@ struct NsMaxPair
     }
 };
 
+// (max |a_ij - a_ji|, max |a_ij|) over row i of the local slot CSR. PCG assumes a symmetric
+// matrix; the CVFEM Laplacian is symmetric on box-shaped hexes but not on distorted ones.
+struct NsRowAsymmetry
+{
+    const int* rowPtr;
+    const int* cols;
+    const HYPRE_Complex* values;
+    __device__ thrust::tuple<double, double> operator()(size_t i) const
+    {
+        double diff = 0, mag = 0;
+        for (int k = rowPtr[i]; k < rowPtr[i + 1]; ++k)
+        {
+            int j    = cols[k];
+            int pos  = nsFindColumn(cols, rowPtr[j], rowPtr[j + 1], int(i));
+            double t = (pos < rowPtr[j + 1] && cols[pos] == int(i)) ? double(values[pos]) : 0.0;
+            diff     = fmax(diff, fabs(double(values[k]) - t));
+            mag      = fmax(mag, fabs(double(values[k])));
+        }
+        return thrust::make_tuple(diff, mag);
+    }
+};
+
 // Sums of the projection check, see NavierStokes::projectionReport.
 struct NsProjectionSums
 {
@@ -1544,8 +1565,9 @@ private:
     // scale * K (+ c M with massCoefficient) over the local slots, without the removed
     // rows and columns, reduced to P^T A P over the DOFs: every copy's row is added into its
     // DOF's row by DofSpace, so no prolongation matrix and no sparse product are formed. The
-    // removed DOFs get identity rows.
-    HypreMatrix assembleReduced(RealType scale, const uint8_t* removed, const RealType* massCoefficient, bool withLift)
+    // removed DOFs get identity rows. With asymmetry, also returns max |a_ij - a_ji| / max |a_ij| over all ranks.
+    HypreMatrix assembleReduced(RealType scale, const uint8_t* removed, const RealType* massCoefficient, bool withLift,
+                                double* asymmetry)
     {
         thrust::device_vector<int> rows;
         thrust::device_vector<long long> cols;
@@ -1563,6 +1585,15 @@ private:
                                                          massCoefficient ? *massCoefficient : RealType(0),
                                                          csrRowPtr_.data(), csrCols_.data(), v);
             cudaCheckError();
+            if (asymmetry)
+            {
+                thrust::tuple<double, double> local = thrust::transform_reduce(
+                    thrust::device, thrust::counting_iterator<size_t>(0), thrust::counting_iterator<size_t>(n_),
+                    NsRowAsymmetry{csrRowPtr_.data(), csrCols_.data(), v}, thrust::make_tuple(0.0, 0.0), NsMaxPair{});
+                double loc[2] = {thrust::get<0>(local), thrust::get<1>(local)}, glob[2];
+                MPI_Allreduce(loc, glob, 2, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+                *asymmetry = glob[1] > 0 ? glob[0] / glob[1] : glob[0];
+            }
             space_.restrictMatrix(csrRowPtr_.data(), csrCols_.data(), static_cast<const HYPRE_Complex*>(v),
                                   thrust::raw_pointer_cast(slotGid_.data()), slotDofRow_.data(), rows, cols, values);
         }
@@ -1580,14 +1611,14 @@ private:
         const RealType c1  = RealType(1) / prm_.dt;
         const RealType c2  = RealType(3) / (RealType(2) * prm_.dt);
         viscousBdf1_       = std::make_unique<HypreAmgPcgSolver>("MARS_VAMG");
-        viscousBdf1_->setup(MPI_COMM_WORLD, assembleReduced(prm_.nu, fixed_.data(), &c1, true), prm_.tolerance,
+        viscousBdf1_->setup(MPI_COMM_WORLD, assembleReduced(prm_.nu, fixed_.data(), &c1, true, nullptr), prm_.tolerance,
                             prm_.maxIter);
         trace("velocity AMG (BDF1)");
         for (int d = 0; d < comps_; ++d)
             space_.restrict(lift_[d]);
         if (!prm_.bdf2) return;
         viscousBdf2_ = std::make_unique<HypreAmgPcgSolver>("MARS_VAMG");
-        viscousBdf2_->setup(MPI_COMM_WORLD, assembleReduced(prm_.nu, fixed_.data(), &c2, false),
+        viscousBdf2_->setup(MPI_COMM_WORLD, assembleReduced(prm_.nu, fixed_.data(), &c2, false, nullptr),
                             prm_.tolerance, prm_.maxIter);
         trace("velocity AMG (BDF2)");
     }
@@ -1595,11 +1626,22 @@ private:
     // K over the DOFs with identity rows where p = 0; the operator of the flux correction.
     void buildPressureSolver()
     {
-        pressure_ = std::make_unique<HypreAmgPcgSolver>("MARS_PAMG");
-        pressure_->setup(MPI_COMM_WORLD, assembleReduced(RealType(1), pressureFixed_.data(), nullptr, false),
+        double asymmetry = 0;
+        pressure_        = std::make_unique<HypreAmgPcgSolver>("MARS_PAMG");
+        pressure_->setup(MPI_COMM_WORLD,
+                         assembleReduced(RealType(1), pressureFixed_.data(), nullptr, false, &asymmetry),
                          prm_.tolerance, prm_.maxIter);
         trace("pressure AMG");
         checkPressureOperator();
+        // The velocity matrices add only a diagonal mass to nu K, so this covers them too.
+        if (rank_ == 0)
+        {
+            std::cout << "Pressure matrix symmetry: max |a_ij - a_ji| / max |a_ij| = " << std::scientific
+                      << asymmetry << std::defaultfloat << "\n";
+            if (!(asymmetry <= 1e-10))
+                std::cerr << "NavierStokes: warning: the matrices are not symmetric (distorted hexahedra?). Both "
+                             "systems use PCG, which assumes symmetry and is validated on box-shaped hexahedra only.\n";
+        }
     }
 
     // K x from Hypre against the matrix-free K x of the time step, for a varied

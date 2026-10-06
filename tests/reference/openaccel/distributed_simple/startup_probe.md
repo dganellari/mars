@@ -40,8 +40,17 @@ yet the responsible assembly or solve stage.
 ## Daint: OpenAccel terminal
 
 Use the restored OpenAccel uenv/Spack environment and working Python dependencies.
-No OpenAccel rebuild is needed. The wrapper launches the visible `srun` command
-below; all new files go under the fresh capstor directory. The scratch pointer
+Set `OPENACCEL_REFERENCE_EXE` to the absolute path of the executable used for the
+successful original reference run, with every solver family requested by its deck
+compiled in. The public-channel binary is not a suitable default: it lacks PETSc,
+and the saved startup attempt aborted when its deck requested that backend.
+Resolved shared libraries alone do not establish compiled solver support. Reuse
+the compatible existing executable if available; otherwise its missing backend
+must be enabled in a compatible OpenAccel build. Do not replace the deck's linear
+solver settings to get past startup.
+
+The wrapper launches the visible `srun` command below; all new files go under the
+fresh capstor directory. Preserve the failed pair. The scratch pointer
 passes that directory to the separate MARS terminal.
 
 ```bash
@@ -49,6 +58,9 @@ passes that directory to the separate MARS terminal.
 set -euo pipefail
 root=/capstor/scratch/cscs/gandanie/git
 scratch=/capstor/scratch/cscs/gandanie
+: "${OPENACCEL_REFERENCE_EXE:?Set the absolute path of the compatible original OpenAccel executable first}"
+[[ "$OPENACCEL_REFERENCE_EXE" = /* ]]
+test -x "$OPENACCEL_REFERENCE_EXE"
 git -C "$root/mars-v010-check" pull --ff-only
 python3 -c 'import numpy, netCDF4, yaml'
 umask 077
@@ -62,7 +74,7 @@ python3 "$probe" prepare \
 printf '%s\n' "$pair" > "$scratch/simple-startup-current.txt"
 printf 'Private pair: %s\n' "$pair"
 python3 "$probe" run --pair "$pair" --solver openaccel --ranks 4 \
-  --executable "$root/OpenAccel-reference-updates-IxgJIp/source/build/openaccel-3D.exe" -- \
+  --executable "$OPENACCEL_REFERENCE_EXE" -- \
   srun --account=csstaff --time=00:15:00 --nodes=1 --ntasks-per-node=4 \
   --cpus-per-task=1 --cpu-bind=cores --export=ALL --kill-on-bad-exit=1
 )
@@ -114,6 +126,20 @@ exit "$status"
 
 ## Local checks
 
+### Located startup failure
+
+The user-reported inspection of `simple-startup-lh05AV` matched only
+`src/equation/linearSystem.h:377` at the pinned public revision. That error is
+emitted when a resolved solver selects `family: petsc` but `HAS_PETSC` was absent
+at compilation. It explains this reference abort before iterations; it does not
+diagnose the earlier MARS/reference field discrepancy. The earlier instruction
+to use the public-channel executable without checking its solver support was
+incorrect. No MARS rebuild is needed for this reference-binary mismatch.
+
+The inspector now labels that error `linear_solver_unavailable` for PETSc, Hypre
+or Trilinos without exporting equation names. No further inspection or rerun of
+the incompatible executable is needed for this attempt.
+
 ### Inspect a failed capture without launching again
 
 The original wrapper could hide a nonzero launcher exit behind a second error
@@ -127,6 +153,31 @@ describes the current shell environment; it cannot reconstruct an unrecorded
 earlier environment. Missing exit metadata does not prove that no job started.
 Only the new public JSON may be shared.
 
+An exit of 134 with no output is not a field-parity failure. The reference may
+have aborted before a snapshot was written. OpenAccel's `errorMsg` throws a C++
+exception; it does not print the `ERROR:` prefix used by the MARS diagnostic
+parser. The inspector therefore also recognizes uncaught-exception messages and
+reports fixed startup stages and error categories. Exception text, paths, part
+names and numerical values are never exported. Categories are diagnostic hints,
+not proven causes; an empty list does not exclude an unrecognized error.
+Stages mean that at least one rank printed the marker, not that all ranks passed
+that stage. Reinspect the saved attempt below; do not launch another pair yet.
+The inspector also reports standard C++ exception classes and a small allowlist
+of public source filenames when they appear in the error. Unknown classes become
+`other`; private filenames, paths, line numbers and exception text remain local.
+The `mesh_ready` marker is at the end of `mesh::read`, before `mesh::setup` registers
+geometric fields. Later messages can be buffered, so the marker alone does not
+prove the failing call. Field-registration and master-element signatures provide
+more specific evidence when available.
+
+For an unclassified exception, `--reference-source` builds a message index from
+Git revision `0d69041ba1afda63e9e4328d9e0d9834bba37756`, restricted to public
+OpenAccel/Nalu source directories. It never reads untracked files or the current
+working-tree contents. Literal error fragments are matched locally; the public
+JSON contains only candidate source paths and line numbers from that revision.
+These are possible message origins, not a stack trace or a proven cause. Dynamic
+messages and diagnostics from separately installed libraries may not match.
+
 ```bash
 (
 set -euo pipefail
@@ -137,6 +188,7 @@ summary=$(mktemp -d /capstor/scratch/cscs/gandanie/simple-startup-check-XXXXXX)/
 python3 "$root/mars-v010-check/scripts/simple_startup_probe.py" inspect \
   --pair "$pair" --solver openaccel \
   --executable "$root/OpenAccel-reference-updates-IxgJIp/source/build/openaccel-3D.exe" \
+  --reference-source "$root/OpenAccel" \
   --output "$summary"
 cat "$summary"
 printf 'Share only: %s\n' "$summary"

@@ -14,6 +14,7 @@ import sys
 
 from prepare_simple_deck import load_deck, translate
 from simple_public_diagnostics import SafeParser
+from simple_reference_messages import MessageMatcher, REFERENCE_REVISION, read_catalog
 from simple_snapshot_compare import (COMPLETION, HEADER, EvidenceError, controls, coordinates, digest,
                                      field_errors, mars_fields, node_ids, options,
                                      reference_fields, require, result_files)
@@ -134,6 +135,109 @@ def run_files(directory, solver):
     return dict((p.name, digest(p)) for p in files)
 
 
+class ReferenceLogState:
+    # Ordered milestones from the pinned OpenAccel source; never export captured text.
+    stages = (
+        ('banner', r'^.*\bOpenAccel 3D\b'),
+        ('controls_read', r'^Reading controls \.\.$'),
+        ('controls_ready', r'^Finished reading controls \.\.$'),
+        ('mesh_read', r'^Reading mesh \.\.$'),
+        ('mesh_validation', r'^Validating YAML input against Exodus file$'),
+        ('mesh_validated', r'^Finished validating YAML input$'),
+        ('zone_registration', r'^Registering zones$'),
+        ('part_registration', r'^Registering mesh parts$'),
+        ('mesh_ready', r'^Finished reading mesh \.\.$'),
+        ('domain_setup', r'^Setting up simulation domains:$'),
+        ('equation_initialization', r'^Initializing equation `'),
+        ('iteration', r'^Iter = [0-9]+$'),
+        ('complete', r'^.*\bSimulation is complete\b'),
+    )
+    categories = (
+        ('yaml', r'yaml-cpp|YAML::'),
+        ('allocation', r'std::bad_alloc|std::bad_array_new_length|out of memory|cannot allocate memory'),
+        ('mpi_initialization', r'MPI_Init(?:_thread)?|MPIR_Init|PMPI_Init'),
+        ('mpi_thread_support', r'Provided MPI thread-level support is not sufficient'),
+        ('kokkos', r'Kokkos'),
+        ('mesh_io', r'Ioss::|IOSS ERROR|Exodus|ex_open|netCDF|netcdf'),
+        ('decomposition', r'decomposition|decompos|Zoltan|METIS|ParMETIS'),
+        ('file_access', r'No such file or directory|Permission denied|could not open|cannot open|unable to open|failed to open|does not exist'),
+        ('disk_space', r'No space left on device|Disk quota exceeded'),
+        ('input_validation', r'invalid boundary part|invalid side[12] part|Mesh dimension mismatch|not provided in the yaml input file'),
+        ('assertion', r'Assertion .* failed|assertion .* failed|Requirement\('),
+        ('linear_solver', r'Belos::|Tpetra::|Amesos2::|Ifpack2::|MueLu::|HYPRE ERROR'),
+        ('linear_solver_unavailable', r'linearSystem: executable does not support (?:PETSc|HYPRE|Trilinos)\b'),
+        ('stk', r'stk::|STK ERROR|STK_Throw|ReportHandler'),
+        ('field_registration', r'FieldRepository|MetaData::declare_field|FieldBase|put_field_on_mesh|field restriction|incompatible.*(?:field|restriction)|(?:field|restriction).*incompatible'),
+        ('master_element', r'MasterElementFactory|MasterElementRepo|get_surface_master_element|get_volume_master_element|theElem != nullptr'),
+        ('container_lookup', r'\bmap::at\b|\bunordered_map::at\b|_Map_base::at|vector::_M_range_check'),
+        ('boundary_configuration', r'fieldBroker:|initialCondition::|option for (?:inlet|outlet|opening)|flow_direction node|mass_and_momentum node|Invalid option for'),
+        ('material_configuration', r'material .* does not exist'),
+        ('filesystem', r'filesystem error:'),
+    )
+    exception_classes = frozenset(('std::runtime_error', 'std::logic_error', 'std::invalid_argument',
+        'std::out_of_range', 'std::length_error', 'std::bad_alloc', 'std::bad_array_new_length',
+        'std::system_error', 'std::ios_base::failure', 'std::filesystem::filesystem_error',
+        'std::domain_error', 'std::range_error', 'std::overflow_error', 'std::underflow_error',
+        'std::bad_function_call', 'std::bad_cast', 'std::bad_typeid'))
+    source_signatures = ('meshGeometry.cpp', 'meshIO.cpp', 'simulationIO.cpp', 'fieldBroker.cpp',
+                         'MasterElementFactory.C', 'FieldRepository.cpp', 'MetaData.cpp', 'FieldBase.cpp')
+
+    def __init__(self, catalog=None):
+        self.seen_stages = set()
+        self.seen_categories = set()
+        self.exception_seen = False
+        self.what_seen = False
+        self.abort_seen = False
+        self.in_exception = False
+        self.seen_exception_classes = set()
+        self.seen_source_signatures = set()
+        self.message_matcher = MessageMatcher(catalog) if catalog is not None else None
+
+    def feed(self, line):
+        line = re.sub(r'^\[[0-9]+\]\s*', '', line.strip())
+        progress = False
+        for label, pattern in self.stages:
+            if re.search(pattern, line):
+                self.seen_stages.add(label)
+                progress = True
+        exception = bool(re.match(r'^(?:terminate called|libc\+\+abi: terminating)', line))
+        what = bool(re.match(r'^what\(\)\s*:', line))
+        self.exception_seen |= exception
+        self.what_seen |= what
+        self.in_exception |= exception or what
+        if exception:
+            match = re.search(r"(?:instance of ['\"]([^'\"]+)['\"]|exception of type ([A-Za-z0-9_:<>]+))", line)
+            name = next((x for x in match.groups() if x), '').rstrip(':') if match else ''
+            self.seen_exception_classes.add(name if name in self.exception_classes else 'other')
+        self.abort_seen |= bool(re.search(r'\b(?:SIGABRT|Aborted)\b', line))
+        # Do not classify routine mesh/library banners as failures. Multiline what()
+        # messages stay local; only matches to these fixed categories leave the log.
+        error_line = bool(re.match(r'^(?:ERROR\b|Error\b|IOSS ERROR\b|Kokkos.*(?:Error|error)|Assertion\b)', line))
+        if (self.in_exception or error_line) and not progress:
+            if self.message_matcher is not None:
+                self.message_matcher.feed(line)
+            for name in self.source_signatures:
+                if re.search(r'(?<![A-Za-z0-9_])' + re.escape(name) + r'(?![A-Za-z0-9_.])', line):
+                    self.seen_source_signatures.add(name)
+            for label, pattern in self.categories:
+                if re.search(pattern, line, re.I):
+                    self.seen_categories.add(label)
+
+    def result(self):
+        stages = [label for label, _ in self.stages if label in self.seen_stages]
+        result = dict(reference_stages_seen=stages,
+                    reference_progress_scope='any_logged_rank',
+                    reference_cpp_termination_seen=self.exception_seen,
+                    reference_exception_message_seen=self.what_seen,
+                    reference_abort_seen=self.abort_seen,
+                    reference_exception_classes=sorted(self.seen_exception_classes),
+                    reference_source_signatures=sorted(self.seen_source_signatures),
+                    reference_error_categories=sorted(self.seen_categories))
+        if self.message_matcher is not None:
+            result.update(self.message_matcher.result())
+        return result
+
+
 def launch(pair, solver, executable, ranks, launcher):
     pair = pair.resolve()
     pair_inputs(pair)
@@ -188,7 +292,7 @@ def launch(pair, solver, executable, ranks, launcher):
     require(code in ((0,) if solver == 'openaccel' else (0, 2)), 'launcher_exit')
 
 
-def inspect_launch(pair, solver, executable):
+def inspect_launch(pair, solver, executable, reference_source=None):
     """Inspect a saved attempt without launching or changing its solver files."""
     directory = pair / ('reference' if solver == 'openaccel' else 'mars')
     result = dict(schema='mars-simple-startup-inspection-v1',
@@ -211,6 +315,14 @@ def inspect_launch(pair, solver, executable):
                 (PermissionError, 'permission_denied'), (OSError, 'os_error'),
                 (ValueError, 'value_error'), (KeyError, 'key_error'), (TypeError, 'type_error'))
                 if isinstance(error, kind)), 'other')
+    catalog = None
+    if reference_source is not None:
+        def source_catalog():
+            nonlocal catalog
+            require(solver == 'openaccel')
+            catalog = read_catalog(reference_source)
+            result['reference_catalog_revision'] = REFERENCE_REVISION
+        check('reference_catalog_check', source_catalog)
     if result['exit_present']:
         def exit_code():
             raw = (directory / 'run.exit').read_text().strip()
@@ -221,15 +333,20 @@ def inspect_launch(pair, solver, executable):
         from simple_public_diagnostics import DiagnosticState
         def log_flags():
             state = DiagnosticState()
+            reference = ReferenceLogState(catalog) if solver == 'openaccel' else None
             result['library_load_error_seen'] = False
             with (directory / 'run.log').open(errors='replace') as stream:
                 for line in stream:
                     state.feed(line)
+                    if reference is not None:
+                        reference.feed(line)
                     result['library_load_error_seen'] |= 'error while loading shared libraries:' in line
             diagnostics = state.result(str(result['process_exit_code']) if result['process_exit_code'] is not None else '')
             for key in ('mpi_abort_seen', 'scheduler_time_limit_seen', 'scheduler_out_of_memory_seen',
                         'scheduler_signal_seen', 'application_error_seen'):
                 result[key] = diagnostics[key]
+            if reference is not None:
+                result.update(reference.result())
         check('log_check', log_flags)
     check('input_check', lambda: pair_inputs(pair))
     result['executable_available'] = executable.is_file() and os.access(str(executable), os.X_OK)
@@ -353,6 +470,8 @@ def main(argv=None):
     inspect.add_argument('--solver', choices=('openaccel', 'mars'), required=True)
     inspect.add_argument('--executable', type=Path, required=True)
     inspect.add_argument('--output', type=Path, required=True)
+    inspect.add_argument('--reference-source', type=Path,
+                         help='Match error fragments against the pinned public OpenAccel Git source')
     args = parser.parse_args(argv)
     os.umask(0o077)
     try:
@@ -379,7 +498,8 @@ def main(argv=None):
             return 0 if public['comparison_status'] == 'completed' else 1
         elif args.action == 'inspect':
             with args.output.open('x') as stream:
-                result = inspect_launch(args.pair.resolve(), args.solver, args.executable.resolve())
+                result = inspect_launch(args.pair.resolve(), args.solver, args.executable.resolve(),
+                                        args.reference_source)
                 json.dump(result, stream, indent=2, sort_keys=True, allow_nan=False)
                 stream.write('\n')
             print('Startup inspection written. No solver launched; share only the public JSON.')
