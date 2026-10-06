@@ -57,11 +57,14 @@ A plain clone is all you need:
 A network connection is required at configure time for the dependency fetch.
 
 GPU build (the main use case; for AMD use `-DMARS_ENABLE_HIP=ON` instead of the CUDA flags).
-The unstructured backend is on by default in a GPU build:
+The unstructured backend is on by default in a GPU build. This builds the library, the example
+programs of the tutorials and the release checks; leave out `-DMARS_ENABLE_HYPRE=ON` if Hypre is
+not installed (the Navier–Stokes examples and their checks then are not built):
 
 ```bash
 cd mars
-cmake -B build -DMARS_ENABLE_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=90
+cmake -B build -DMARS_ENABLE_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=90 \
+      -DMARS_ENABLE_FEM_EXAMPLES=ON -DMARS_ENABLE_HYPRE=ON
 cmake --build build -j
 ```
 
@@ -75,22 +78,27 @@ cmake --build build -j
 
 ### Checking your build
 
-A CUDA build configured with `-DMARS_ENABLE_TESTS=ON -DMARS_ENABLE_FEM_EXAMPLES=ON` registers
-release checks that run the documented drivers end to end on meshes generated at test time:
+Run the release checks after every build, before you use MARS for your own work. They take a
+few minutes and catch a broken build, MPI setup or GPU setup. A CUDA build with the FEM examples
+(the GPU build above; tests are on by default) registers them; they run the documented drivers
+end to end on meshes generated at test time:
 
 ```bash
 cd build
 ctest -L release
 ```
 
+Every test must pass: 22 tests with Hypre and netCDF, 15 without Hypre.
+
 They check that hex and tet assembly give the same matrix and RHS norms on 1 rank and on N
 ranks (`-DMARS_RELEASE_TEST_RANKS=N`, default 4), that the CVFEM Poisson solve and the P1 Poisson
 example `mars_ex1_poisson` reach the expected maximum on 1 and N ranks, and that the high-order
 matrix-free operator passes its gates on one GPU and on N ranks. With `-DMARS_ENABLE_HYPRE=ON`
-they also run the Navier–Stokes examples on 1 and N ranks: 10-step lid-driven cavity and channel
-runs that must finish without a failed solve or NaN, and 100 steps of the Taylor–Green vortex,
-whose kinetic energy must follow the viscous decay. They need python3 with numpy and an MPI
-launcher, and take a few minutes on one GPU. ctest starts every GPU run through the MPI launcher
+they also run the Navier–Stokes examples: the lid-driven cavity, the generated channel and the
+periodic Taylor–Green vortex must give the same result on 1 and on N ranks, the Taylor–Green
+kinetic energy must follow the viscous decay, and, with netCDF, the Poiseuille channel must match
+the analytic parabola (the tutorial's 1500-step validation, on 1 and N ranks). They need python3
+with numpy and an MPI launcher, and take about ten minutes on one GPU node. ctest starts every GPU run through the MPI launcher
 CMake found (`mpiexec`, or `srun` on Slurm), so on a Slurm cluster either run ctest inside an
 allocation:
 
@@ -99,16 +107,20 @@ salloc -A <account> -N 1 -t 00:30:00      # add the partition/GPU flags your sit
 ctest -L release -V
 ```
 
-or give the launcher your site's flags once at configure time and run ctest from the login node:
+or let srun read your account from the environment and run ctest from the login node:
+
+```bash
+SLURM_ACCOUNT=<account> ctest -L release
+```
+
+or give the launcher your site's flags once at configure time:
 
 ```bash
 cmake -B build -DMPIEXEC_EXECUTABLE=$(which srun) \
   "-DMPIEXEC_PREFLAGS=--account=<account>;--time=00:10:00;--nodes=1"
 ```
 
-The drivers pick GPU `rank % deviceCount` themselves. The Poiseuille validation
-against the analytic profile (1500 steps) is opt-in: configure with
-`-DMARS_ENABLE_VALIDATION_TESTS=ON`, then run `ctest -L validation` in a GPU allocation.
+The drivers pick GPU `rank % deviceCount` themselves.
 
 To use MARS from another CMake project, install it and point `CMAKE_PREFIX_PATH` at the
 install prefix (see `examples/usage_from_external_cmake_project/`). The install holds the core

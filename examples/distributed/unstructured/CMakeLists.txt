@@ -252,19 +252,6 @@ if(MARS_ENABLE_HYPRE)
     add_executable(mars_poiseuille_flow mars_poiseuille_flow.cu)
     target_link_libraries(mars_poiseuille_flow PRIVATE mars)
     install(TARGETS mars_poiseuille_flow RUNTIME DESTINATION bin/examples)
-
-    # GPU validation: develop the channel to the analytic parabola and check the
-    # profile, the through-flow, continuity, the projection and steadiness.
-    # Execute it only in a GPU allocation.
-    if(MARS_ENABLE_TESTS AND MARS_ENABLE_VALIDATION_TESTS)
-        add_test(NAME marsPoiseuilleValidation
-                 COMMAND mars_poiseuille_flow
-                         --mesh=${CMAKE_SOURCE_DIR}/tests/data/poiseuille/poiseuille_hex_14k_elem.e
-                         --uinf=1.0 --nu=0.01 --dt=0.01 --num-steps=1500 --report-every=100 --check)
-        set_tests_properties(marsPoiseuilleValidation PROPERTIES
-            TIMEOUT 1800
-            LABELS "validation;gpu;long")
-    endif()
 endif()
 
 # Taylor-Green vortex in a triply periodic box (docs/periodic_tgv_tutorial.md) and the

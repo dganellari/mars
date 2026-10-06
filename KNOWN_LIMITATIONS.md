@@ -14,8 +14,8 @@ whether MARS fits your use case. The major version is `0`: APIs may change.
   periodic boxes. Validated on 1 to 8 GPUs:
   [Poiseuille](tests/reference/poiseuille/planar_validation.md) against the exact profile, and
   the [periodic Taylor–Green vortex](docs/periodic_tgv_tutorial.md) against the viscous decay,
-  with the same kinetic energy on every rank count. The lid-driven cavity runs in the release
-  tests on 1 and N ranks; it is not compared with a reference solution.
+  with the same kinetic energy on every rank count. The release checks require the lid-driven cavity
+  to give the same result on 1 and N ranks; it is not compared with a reference solution.
 
 The stable paths are validated on generated structured meshes (release checks: `ctest -L release`),
 including element numberings that are not aligned with the coordinate axes.

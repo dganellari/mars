@@ -110,6 +110,5 @@ python3 tests/reference/poiseuille/compare_fields.py <run1>/fields_step1500.pvtu
 - The projection check at steps 1, 2, 3 and 1500: D_F F = D_F F** + h K phi to
   1e-7, and the boundary flux balance consistent with it to 1e-10.
 
-A failed linear solve stops the run with exit code 1. The equivalent CTest,
-`marsPoiseuilleValidation`, is enabled with `MARS_ENABLE_VALIDATION_TESTS=ON`; run
-it only inside a GPU allocation.
+A failed linear solve stops the run with exit code 1. The release checks run the same case as
+`marsReleasePoiseuille_np1` and `marsReleasePoiseuille_npN` (`ctest -L release`).

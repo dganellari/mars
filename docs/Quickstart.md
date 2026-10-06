@@ -45,6 +45,18 @@ cmake --build build --target mars_cvfem_graph -j
 by default in a CUDA build. Without `--target`, `cmake --build build -j` builds the library and
 all examples.
 
+**Check the build before you go on** (recommended after every build): build everything, then run
+the release checks, which take a few minutes on one GPU. All 15 must pass; add
+`-DMARS_ENABLE_HYPRE=ON` to the configure line to include the Navier–Stokes checks (22 then,
+with netCDF).
+On a Slurm cluster, see the
+[README](https://github.com/dganellari/mars#checking-your-build) for how ctest starts the GPU runs.
+
+```bash
+cmake --build build -j
+cd build && ctest -L release && cd ..
+```
+
 On a machine without a GPU, a plain `cmake -B build` builds only the core library; the
 unstructured backend needs CUDA or HIP.
 
@@ -168,8 +180,6 @@ bigger problem.
 
 ## 8. Where to go next
 
-- **Check your build:** `ctest -L release` (see the
-  [README](https://github.com/dganellari/mars#checking-your-build)).
 - **The pipeline you just ran:** [FEM Assembly](FEM-Assembly.md).
 - **The assembly kernels:** [CVFEM Kernels](CVFEM-Kernels.md).
 - **A full CFD application:** the [Poiseuille channel-flow tutorial](poiseuille_tutorial.md)

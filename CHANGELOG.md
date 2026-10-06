@@ -48,8 +48,8 @@ the cornerstone-octree library.
   GPU and runs on any number of ranks; before, it built them on the host, ran on one rank only, and
   handed the assembly kernels a host pointer that only unified-memory systems could read. The CG
   solver clips its Jacobi diagonal on the GPU instead of copying it to the host every solve.
-- The Poiseuille tutorial mesh ships in `tests/data/poiseuille/`; its validation run is
-  opt-in with `-DMARS_ENABLE_VALIDATION_TESTS=ON`.
+- The Poiseuille tutorial mesh ships in `tests/data/poiseuille/`; its validation against the
+  analytic parabola is part of `ctest -L release` (1 and N ranks, needs netCDF).
 - One incompressible Navier–Stokes solver for hex meshes, `fem/mars_navier_stokes.hpp`,
   runs `mars_poiseuille_flow`, `mars_tgv` and the new `mars_lid_driven_cavity`; the
   examples differ only in their boundary description (fixed velocity, p = 0,
