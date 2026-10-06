@@ -32,12 +32,8 @@ including element numberings that are not aligned with the coordinate axes.
   sum-factorization). Interfaces may change.
 - **Coarse search and ghost registry** (`mars_coarse_search.hpp`,
   `mars_ghost_registry.hpp`). The device paths are gated against the host references.
-- **Segregated SIMPLE solver** (`fem/segregated/`). Public-channel upwind and
-  high-resolution fields agree with OpenAccel, with native 1/2/4-GPU rank parity.
-  The [upwind duct study](tests/reference/openaccel/simple_duct/DAINT_RESULTS.md)
-  passes refinement and rank comparisons. Accuracy on general meshes and multi-node
-  scaling remain unvalidated. Native GPU SpMV is the default workaround for an
-  unresolved residual mismatch in the Hypre/cuSPARSE path.
+- **Segregated SIMPLE solver** (`fem/segregated/`). Under development and not built by
+  default (`-DMARS_ENABLE_SEGREGATED=ON`).
 - **MARSIR** (`marsir-compiler/`, `marsir-mlir/`). Research code generator, off by
   default (`MARS_ENABLE_MARSIR`), not needed to build or use the library.
 

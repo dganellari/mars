@@ -88,7 +88,7 @@ the cornerstone-octree library.
 - GPU-native adaptive mesh refinement (mark → refine → rebuild → transfer).
 - Parallel AABB coarse search and a named per-interface ghost registry, each with a
   device path and a host reference.
-- Segregated SIMPLE flow solver on the GPU, with a standalone public-channel driver.
+- Segregated SIMPLE flow solver on the GPU (in development, built with `-DMARS_ENABLE_SEGREGATED=ON`).
 - Multi-block Exodus side sets and a multi-state field history.
 - MARSIR: an operator-spec → MLIR → tensor-core CUDA kernel generator
   (`marsir-compiler/`, `marsir-mlir/`). Research tooling, not part of the library

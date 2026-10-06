@@ -216,8 +216,7 @@ CVFEM / FEM example drivers (Poisson, CVFEM assembly, the high-order
 matrix-free tests). Other optional add-ons:
 
 - `-DMARS_ENABLE_HYPRE=ON` — Hypre BoomerAMG. The Navier–Stokes examples
-  (`mars_poiseuille_flow`, `mars_tgv`, `mars_lid_driven_cavity`) and the segregated SIMPLE
-  driver are built only with it.
+  (`mars_poiseuille_flow`, `mars_tgv`, `mars_lid_driven_cavity`) are built only with it.
 - netCDF, when CMake finds it (pkg-config, or the `NETCDF_DIR` / `NETCDF_ROOT` environment
   variable), enables reading Exodus meshes such as the Poiseuille tutorial mesh. Without it
   the binary mesh directory format still works.
