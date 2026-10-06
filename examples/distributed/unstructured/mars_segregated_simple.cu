@@ -1,6 +1,7 @@
 // Native Exodus -> device ElementDomain -> distributed SIMPLE. Host work is file I/O and API control.
 #include "mars_segregated_simple_native_mesh.hpp"
 #include "mars_segregated_simple_output.hpp"
+#include "mars_segregated_simple_audit.hpp"
 #include <filesystem>
 #include <iomanip>
 #include <limits>
@@ -68,6 +69,12 @@ int execute(const SimpleOptions& o) {
         std::cout<<line.str();
     }
     Buffer<FieldRow> snapshot_rows(o.snapshot_iterations?run.owned_nodes:0);
+    std::unique_ptr<SimpleFirstStepAudit> audit;
+    if (o.first_step_audit) {
+        auto graph=run.graph.template view<3>(run.momentum_blocks.data(),run.momentum_rhs.data());
+        audit=std::make_unique<SimpleFirstStepAudit>(MPI_COMM_WORLD,o.output,run.n,run.owned_nodes,run.graph.blocks(),
+                                                   raw(source_node),run.owned.data(),graph.offsets,graph.columns);
+    }
     double snapshot_seconds=0;
     const double iteration_start=MPI_Wtime();
     distributed::FieldExchange::Profile halo_baseline;
@@ -100,7 +107,20 @@ int execute(const SimpleOptions& o) {
             snapshot_seconds+=MPI_Wtime()-start;
         }
         if (converged || run.completed==o.iterations) break;
-        run.advance();
+        if (audit) {
+            double io_seconds=0;
+            run.advance([&](const char* stage,Array<double>&) {
+                const double io_start=MPI_Wtime();
+                if (std::string(stage)=="momentum")
+                    audit->momentum(run.graph.template view<3>(run.momentum_blocks.data(),run.momentum_rhs.data()),
+                                    run.du.data(),run.velocity.data(),run.d.data());
+                else if (std::string(stage)=="raw_pressure_increment")
+                    audit->pressure(run.graph.template view<1>(run.poisson_blocks.data(),run.poisson_rhs.data()),run.phi.data());
+                else if (std::string(stage)=="velocity") audit->finish(run.gp.data());
+                io_seconds+=MPI_Wtime()-io_start;
+            });
+            snapshot_seconds+=io_seconds;
+        } else run.advance();
         run.profile.record_linear(3,run.momentum_solve.solver,run.completed);
         run.profile.record_linear(1,run.poisson_solve.solver,run.completed);
     }

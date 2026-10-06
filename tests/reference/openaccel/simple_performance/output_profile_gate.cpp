@@ -1,5 +1,6 @@
 #include "mars_segregated_simple_output.hpp"
 #include "mars_segregated_simple_profile.hpp"
+#include "mars_segregated_simple_audit.hpp"
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -46,6 +47,28 @@ int main(int argc,char** argv) {
             }
             ensure(count==2,"snapshot lost owned rows");
         }
+        const std::vector<int> h_source{2*ranks-1-rank,rank},h_owned{1,0},h_offsets{0,2,4},h_columns{0,1,0,1};
+        Buffer<int> source(h_source.begin(),h_source.end()),owned(h_owned.begin(),h_owned.end()),
+                    offsets(h_offsets.begin(),h_offsets.end()),columns(h_columns.begin(),h_columns.end());
+        Buffer<double> blocks(36,2.),vector(6,3.),pressure(4,4.),scalar(2,5.);
+        SimpleFirstStepAudit audit(MPI_COMM_WORLD,prefix,2,2,4,raw(source),raw(owned),raw(offsets),raw(columns));
+        audit.momentum({2,raw(offsets),raw(columns),raw(blocks),raw(vector)},raw(vector),raw(vector),raw(vector));
+        audit.pressure({2,raw(offsets),raw(columns),raw(pressure),raw(scalar)},raw(scalar));
+        audit.finish(raw(vector));
+        std::ostringstream audit_path; audit_path<<prefix<<"-audit-rank"<<std::setw(6)<<std::setfill('0')<<rank<<".bin";
+        std::ifstream binary(audit_path.str(),std::ios::binary);
+        std::uint64_t header[7]; binary.read(reinterpret_cast<char*>(header),sizeof(header));
+        ensure(header[0]==0x4d53415544495431ULL && header[1]==1 && header[2]==std::uint64_t(rank) && header[3]==std::uint64_t(ranks),"audit identity failed");
+        ensure(header[4]==2 && header[5]==2 && header[6]==4,"audit counts failed");
+        int metadata[11]; binary.read(reinterpret_cast<char*>(metadata),sizeof(metadata));
+        ensure(metadata[0]==2*ranks-1-rank && metadata[1]==rank && metadata[2]==1 && metadata[3]==0,"audit node mapping failed");
+        double data[74]; binary.read(reinterpret_cast<char*>(data),sizeof(data));
+        ensure(bool(binary) && binary.peek()==std::char_traits<char>::eof(),"audit binary size failed");
+        for (int i=0;i<74;++i) ensure(data[i]==(i<36?2.:(i<60?3.:(i<64?4.:(i<68?5.:3.)))),"audit stage content failed");
+        rejected=false;
+        try { SimpleFirstStepAudit duplicate(MPI_COMM_WORLD,prefix,2,2,4,raw(source),raw(owned),raw(offsets),raw(columns)); }
+        catch (const std::runtime_error&) { rejected=true; }
+        ensure(rejected,"audit overwrite was not rejected collectively");
         SimpleProfile profile;
         { auto timing=profile.scope(SimpleProfile::assembly); }
         profile.collect(0); ensure(!profile.samples && !profile.totals[0].calls,"disabled profiler performed work");

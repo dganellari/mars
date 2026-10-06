@@ -37,7 +37,7 @@ def write_json(path, value):
         stream.write('\n')
 
 
-def prepare(case_path, reference_dir, output):
+def prepare(case_path, reference_dir, output, first_step_audit=False):
     import yaml
     case = read_json(case_path)
     require(case['format'] == 'mars-simple-deck-v1', 'saved_case_format')
@@ -58,10 +58,14 @@ def prepare(case_path, reference_dir, output):
     modified['mesh']['file_path'] = str(mesh)
     solver = modified['simulation']['solver']
     convergence = solver['solver_control']['basic_settings']['convergence_controls']
-    convergence['min_iterations'] = STEPS
-    convergence['max_iterations'] = STEPS
+    steps = 1 if first_step_audit else STEPS
+    convergence['min_iterations'] = steps
+    convergence['max_iterations'] = steps
     solver['output_control'] = dict(file_path='results.e', output_frequency=1,
                                   output_fields=['velocity', 'pressure'], corrected_boundary_values=False)
+    if first_step_audit:
+        from simple_first_step_audit import enable_reference_audit
+        enable_reference_audit(modified)
     require(translate(modified, policy)[0] == mapped, 'modified_controls')
     output.mkdir(mode=0o700)
     reference = output / 'reference'
@@ -73,16 +77,17 @@ def prepare(case_path, reference_dir, output):
     args[args.index('--mesh') + 1] = str(mesh)
     case['arguments'] = args
     write_json(output / 'case.json', case)
-    write_json(output / 'pair.json', dict(schema=SCHEMA, steps=STEPS, mesh=str(mesh), mesh_sha256=digest(mesh),
+    write_json(output / 'pair.json', dict(schema=SCHEMA, steps=steps, first_step_audit=first_step_audit, mesh=str(mesh), mesh_sha256=digest(mesh),
         original_deck_sha256=digest(decks[0]), original_case_sha256=digest(case_path),
         deck_sha256=digest(deck), case_sha256=digest(output / 'case.json'),
         initialization='declared_zero_fields_no_restart',
-        changed_controls=['mesh_path_spelling', 'iteration_limits', 'output_control']))
+        changed_controls=['mesh_path_spelling', 'iteration_limits', 'output_control'] +
+                         (['linear_system_output'] if first_step_audit else [])))
 
 
 def pair_inputs(pair):
     record = read_json(pair / 'pair.json')
-    require(record['schema'] == SCHEMA and record['steps'] == STEPS)
+    require(record['schema'] == SCHEMA and record['steps'] == (1 if record.get('first_step_audit', False) else STEPS))
     require(record['case_sha256'] == digest(pair / 'case.json'))
     require(record['deck_sha256'] == digest(pair / 'reference/input.i'))
     require(record['mesh_sha256'] == digest(Path(record['mesh'])))
@@ -99,11 +104,13 @@ def pair_inputs(pair):
 def solver_arguments(pair, solver):
     if solver == 'openaccel':
         return ['-i', 'input.i']
+    record = read_json(pair / 'pair.json')
     return read_json(pair / 'case.json')['arguments'] + [
-        '--iterations', str(STEPS), '--snapshot-iterations', str(STEPS), '--report-every', '1',
+        '--iterations', str(record['steps']), '--snapshot-iterations', str(record['steps']), '--report-every', '1',
         '--residual-tol', '1e-6', '--mass-tol', '1e-6', '--change-tol', '1e-6',
         '--linear-cache', '1', '--halo-overlap', '1', '--field-output', 'distributed',
-        '--profile', '0', '--output-prefix', str(pair / 'mars/flow')]
+        '--profile', '0', '--output-prefix', str(pair / 'mars/flow')] + (
+        ['--first-step-audit', '1'] if record.get('first_step_audit', False) else [])
 
 
 def runtime_libraries(executable):
@@ -131,6 +138,8 @@ def run_files(directory, solver):
             raise EvidenceError('reference_outputs')
     else:
         files += sorted(directory.glob('flow-*.csv')) + sorted(directory.glob('flow-*.json'))
+    if read_json(directory.parent / 'pair.json').get('first_step_audit', False):
+        files += sorted(directory.glob('*.bin'))
     require(all(p.is_file() for p in files))
     return dict((p.name, digest(p)) for p in files)
 
@@ -382,6 +391,7 @@ def compare(pair, public):
     pair = pair.resolve()
     public['failed_check'] = 'input_identity'
     inputs = pair_inputs(pair)
+    steps = inputs['steps']
     public['failed_check'] = 'launch_records'
     mars_record = verified_launch(pair, 'mars')
     reference_record = verified_launch(pair, 'openaccel')
@@ -392,20 +402,20 @@ def compare(pair, public):
     reference_log = (pair / 'reference/run.log').read_text(errors='replace')
     endings = [COMPLETION.fullmatch(line.strip()) for line in mars_log
                if line.startswith(('CONVERGED', 'NOT CONVERGED'))]
-    require(len(endings) == 1 and endings[0] and int(endings[0].group(2)) == STEPS
+    require(len(endings) == 1 and endings[0] and int(endings[0].group(2)) == steps
             and int(endings[0].group(3)) == mars_record['ranks'])
     require(mars_record['exit_code'] == (0 if endings[0].group(1) == 'CONVERGED' else 2))
     headers = [HEADER.fullmatch(line.strip()) for line in mars_log if line.startswith('SIMPLE Tet4,')]
     require(len(headers) == 1 and headers[0] and int(headers[0].group(1)) == mars_record['ranks'])
     prepared, _, matched, exact = controls(pair / 'case.json', pair / 'reference', Path(inputs['mesh']), mars_log)
     require(exact and matched == 'mapped_controls_match')
-    require([int(x) for x in re.findall(r'^Iter = (\d+)\s*$', reference_log, re.M)] == list(range(1, STEPS + 1)))
+    require([int(x) for x in re.findall(r'^Iter = (\d+)\s*$', reference_log, re.M)] == list(range(1, steps + 1)))
     require('Simulation is complete' in reference_log)
     reference_paths = result_files(pair / 'reference')
     require(len(reference_paths) == reference_record['ranks'])
     with (pair / 'mars/flow-metrics.csv').open() as stream:
         metrics = list(csv.DictReader(stream))
-    require([int(m['iteration']) for m in metrics] == list(range(STEPS + 1)))
+    require([int(m['iteration']) for m in metrics] == list(range(steps + 1)))
     for row in metrics:
         require(all(math.isfinite(float(value)) for value in row.values()))
     public['mapped_controls_verified'] = True
@@ -422,12 +432,12 @@ def compare(pair, public):
     rows = []
     first = None
     first_fields = []
-    for iteration in range(STEPS + 1):
+    for iteration in range(steps + 1):
         public['failed_check'] = 'snapshot_coverage_or_mapping'
         mars, _ = mars_fields(pair / ('mars/flow-step-' + str(iteration)), xyz, tol, mars_record['ranks'])
         peak = float(np.max(np.sqrt(np.sum(mars[:, :3]**2, axis=1))))
         require(math.isclose(peak, float(metrics[iteration]['umax_m_s']), rel_tol=1e-12, abs_tol=1e-12*u))
-        if iteration == STEPS:
+        if iteration == steps:
             final, _ = mars_fields(pair / 'mars/flow', xyz, tol, mars_record['ranks'])
             require(np.array_equal(mars, final))
         reference = reference_fields(reference_paths, ids, xyz, iteration, tol, scales)
@@ -447,13 +457,20 @@ def compare(pair, public):
         reference_launch_sha256=digest(pair / 'reference/launch.json')))
     public.update(comparison_status='completed', failed_check='none',
                   first_differing_iteration=first, first_differing_fields=first_fields,
-                  all_twenty_snapshots_match=first is None)
+                  **{('all_twenty_snapshots_match' if steps == STEPS else 'all_snapshots_match'): first is None})
+    if inputs.get('first_step_audit', False):
+        from simple_first_step_audit import compare_first_step
+        public['comparison_status'] = 'invalid_evidence'
+        public['failed_check'] = 'first_step_capture'
+        compare_first_step(pair, ids, xyz, tol, scales, mars_record['ranks'], reference_paths, public)
+        public.update(comparison_status='completed', failed_check='none')
 
 
 def main(argv=None):
     parser = SafeParser(description=__doc__)
     sub = parser.add_subparsers(dest='action')
     prep = sub.add_parser('prepare')
+    prep.add_argument('--first-step-audit', action='store_true', help='Private first-iteration matrices and intermediate fields')
     for name in ('case', 'reference-dir', 'output-dir'):
         prep.add_argument('--' + name, type=Path, required=True)
     run = sub.add_parser('run')
@@ -476,7 +493,7 @@ def main(argv=None):
     os.umask(0o077)
     try:
         if args.action == 'prepare':
-            prepare(args.case, args.reference_dir, args.output_dir.resolve())
+            prepare(args.case, args.reference_dir, args.output_dir.resolve(), args.first_step_audit)
             print('Startup preparation complete. All launch files are private; no solver launched.')
         elif args.action == 'run':
             launcher = args.launcher[1:] if args.launcher[:1] == ['--'] else args.launcher
@@ -490,8 +507,12 @@ def main(argv=None):
             with args.output.open('x') as stream:
                 try:
                     compare(args.pair, public)
-                except Exception:
-                    pass  # Paths, geometry and numerical values never enter the public report.
+                except Exception as error:
+                    # Only literal diagnostic labels may leave the private comparison.
+                    if isinstance(error, EvidenceError):
+                        from simple_first_step_audit import AUDIT_ERRORS
+                        if str(error) in AUDIT_ERRORS:
+                            public['failed_check'] = str(error)
                 json.dump(public, stream, indent=2, sort_keys=True, allow_nan=False)
                 stream.write('\n')
             print('Startup comparison written. Share only the public JSON.')

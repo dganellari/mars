@@ -181,12 +181,12 @@ def mars_fields(prefix, xyz, coordinate_tolerance, ranks):
     return values, ([manifest] if manifest.is_file() else []) + paths
 
 
-def reference_fields(paths, ids, xyz, iteration, coordinate_tolerance, scales):
+def reference_fields(paths, ids, xyz, iteration, coordinate_tolerance, scales, fields=FIELDS):
     import numpy as np
     from netCDF4 import Dataset, chartostring
     order = np.argsort(ids)
     sorted_ids = ids[order]
-    values = np.empty((len(ids), 4))
+    values = np.empty((len(ids), len(fields)))
     seen = np.zeros(len(ids), dtype=bool)
     expected_times = None
     for path in paths:
@@ -208,25 +208,25 @@ def reference_fields(paths, ids, xyz, iteration, coordinate_tolerance, scales):
             index = int(selected[0])
             names = chartostring(np.ma.filled(ds.variables['name_nod_var'][:], b'\0'))
             names = [(s.decode() if isinstance(s, bytes) else str(s)).strip('\x00 ').lower() for s in names]
-            require(all(names.count(f) == 1 for f in FIELDS), 'reference_field_names')
-            fields = []
-            for name in FIELDS:
+            require(all(names.count(f) == 1 for f in fields), 'reference_field_names')
+            variables = []
+            for name in fields:
                 j = names.index(name)
                 if 'vals_nod_var' in ds.variables:
                     var = ds.variables['vals_nod_var']
                     require(var.dimensions == ('time_step', 'num_nod_var', 'num_nodes'))
                     require(var.shape == (len(times), len(names), count))
-                    fields.append((var, j))
+                    variables.append((var, j))
                 else:
                     var = ds.variables['vals_nod_var' + str(j + 1)]
                     require(var.dimensions == ('time_step', 'num_nodes') and var.shape == (len(times), count))
-                    fields.append((var, None))
+                    variables.append((var, None))
             for start in range(0, count, 65536):
                 stop = min(start + 65536, count)
                 nodes = source[start:stop]
                 require(np.all(np.abs(coordinates(ds, start, stop) - xyz[nodes]) <= coordinate_tolerance), 'reference_coordinates')
                 block = np.column_stack([finite(v[index, start:stop] if j is None else v[index, j, start:stop])
-                                         for v, j in fields])
+                                         for v, j in variables])
                 duplicate = seen[nodes]
                 if duplicate.any():
                     a, b = block[duplicate], values[nodes[duplicate]]
