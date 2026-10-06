@@ -176,11 +176,13 @@ umask 077
 mkdir -p "$scratch/tmp"
 export TMPDIR="$scratch/tmp" PYTHONDONTWRITEBYTECODE=1
 report=$(mktemp -d "$scratch/simple-pressure-audit-XXXXXX")
+status=0
 python3 "$repo/scripts/simple_startup_probe.py" compare \
   --pair "$scratch/simple-first-step-MPQGzD/pair" \
-  --detail-dir "$report/private" --output "$report/public.json"
+  --detail-dir "$report/private" --output "$report/public.json" || status=$?
 cat "$report/public.json"
 printf 'Share only: %s\n' "$report/public.json"
+exit "$status"
 )
 ```
 
