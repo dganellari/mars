@@ -759,7 +759,6 @@ void buildCrossRankPeriodicMap(const DomainT& domain,
             fallbackMasterKeys.push_back(masterKey);
         }
     }
-    (void)h_partner;  // direct table no longer used for gating
 
     // STEP 2: per-rank send counts. For cstone-peer ranks: use the bucket
     // count. For fallback: broadcast count to every other rank.

@@ -24,7 +24,8 @@ the cornerstone-octree library.
 - Lazy composition of adjacency, halo, and coordinate caches (built on first access)
   to minimize VRAM and startup time.
 - CMake install / `find_package(Mars)` packaging with the `Mars::mars` target
-  (config installed to `<prefix>/lib/cmake/Mars`, found through `CMAKE_PREFIX_PATH`).
+  (config installed to `<prefix>/lib/cmake/Mars`, found through `CMAKE_PREFIX_PATH`). The
+  install holds the core library and the mesh headers, not yet the FEM and solver headers.
 - A plain `cmake ..` on a CPU-only machine builds the core library; the unstructured
   backend is on by default in CUDA / HIP builds.
 - Release checks: `ctest -L release` runs the documented drivers end to end on generated
@@ -37,7 +38,7 @@ the cornerstone-octree library.
   it, which every rank computes without communication. The domain sync sends each element to the owners of its
   corners, so every owner holds all elements around its nodes and owned rows are complete. Earlier versions relied
   on the distance-based halo reaching those elements, which failed at corner contacts between ranks. Periodic
-  meshes use the same SFC ownership; multi-block meshes keep the previous scheme (see KNOWN_LIMITATIONS.md).
+  meshes use the same SFC ownership.
 - `mars_ex1_poisson` numbers DOFs from the domain's node ownership and solves with CG and the node
   halo, like the Navier–Stokes solvers; before, its own DOF handler disagreed with the assembler's
   rows on more than one rank. The P1 tet assemblers now loop over every element a rank holds, halo

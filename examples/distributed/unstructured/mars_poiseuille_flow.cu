@@ -147,8 +147,8 @@ std::unique_ptr<Domain> makeDomain(const Options& o, int rank, int numRanks)
 {
     if (!o.mesh.empty()) return std::make_unique<Domain>(o.mesh, rank, numRanks, true, o.bucketSize);
 
-    // Every rank generates its own brick of the channel: no mesh file, so the
-    // setup cost stays flat on thousands of GPUs.
+    // Every rank generates its own brick of the channel: no mesh file, so no
+    // rank reads or broadcasts the whole mesh.
     [[maybe_unused]] auto [nodes, elements, x, y, z, conn] = mars::generateBoxElementPartition<RealType, KeyType>(
         {o.cells[0], o.cells[1], 1}, {0.0, 0.0, 0.0}, {10.0, 1.0, 0.06}, o.yGrading, rank, numRanks);
     Domain::HostCoordsTuple coords{std::move(x), std::move(y), std::move(z)};

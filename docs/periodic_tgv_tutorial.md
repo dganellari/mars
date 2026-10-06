@@ -344,8 +344,9 @@ require `KE / KE_Stokes` in `[1.0013, 1.0017]`.
 3. **Let every copy talk to its DOF directly.** A slave's master and a node's owner both follow
    from keys, so P and Pᵀ are one exchange each, with no chain of copies whose order could go
    wrong.
-4. **Stabilize equal-order pressure.** Without the face-flux stabilization the pressure matrix of
-   a periodic box has checkerboard null modes, and multigrid breaks down on them.
+4. **Use the compact Laplacian for the pressure.** The exact projection operator D M⁻¹ Dᵀ has
+   checkerboard null modes on a periodic box, and multigrid breaks down on them. The compact
+   CVFEM Laplacian has none; a Rhie–Chow term in the face fluxes keeps the projection consistent.
 5. **Check invariants with one number.** The DOF count must not depend on the rank count, and the
    KE history must agree across rank counts.
 

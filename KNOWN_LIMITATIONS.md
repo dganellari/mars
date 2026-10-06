@@ -79,11 +79,11 @@ Unless you are benchmarking a specific GPU path, use the tensor or graph kernel.
 - Multi-GPU runs: the drivers of the release tests and the tutorials select GPU
   `rank % deviceCount`. Some research drivers do not; give each of their ranks one GPU with the
   launcher (a binding wrapper or `CUDA_VISIBLE_DEVICES`), otherwise every rank uses GPU 0.
-- CMake fetches cornerstone-octree, and googletest when tests are on and no system googletest
-  is found, at configure time, so a network connection is needed for a fresh configure.
+- CMake fetches cornerstone-octree, and cxxopts and googletest when they are needed and not
+  found on the system, at configure time, so a network connection is needed for a fresh configure.
 - Without CUDA or HIP, `MARS_ENABLE_UNSTRUCTURED` defaults to OFF and a plain `cmake ..`
-  builds only the core library. Its CPU tests are the MPI communication tests plus the
-  install smoke test in `examples/usage_from_external_cmake_project/`.
+  builds only the core library. Its CPU tests are the MPI communication tests; the
+  `test_install` target builds `examples/usage_from_external_cmake_project/` against an install.
 - GPU builds: `ctest -L release` runs the documented drivers on generated meshes (see the
   README). The lower-level GPU domain tests still need a mesh directory in `MESH_PATH` and are
   skipped without one.

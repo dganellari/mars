@@ -36,8 +36,7 @@
 // restrict; the constant matrices are assembled per rank over its slots and
 // reduced to P^T A_local P by sending every copy's row to the owner of its DOF
 // (DofSpace::restrictMatrix), with no sparse product. Both systems are solved with PCG
-// and BoomerAMG, whose iteration count stays flat as the mesh and the number
-// of GPUs grow.
+// and BoomerAMG.
 
 #include "backend/distributed/unstructured/domain.hpp"
 #include "backend/distributed/unstructured/fem/mars_cvfem_hex_kernel.hpp"

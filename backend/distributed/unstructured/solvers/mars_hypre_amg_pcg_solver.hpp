@@ -3,9 +3,8 @@
 // Hypre PCG preconditioned by one BoomerAMG V-cycle, for SPD matrices that stay constant in
 // time: the matrix and the AMG hierarchy are built once, and each solve only runs PCG.
 //
-// The matrix is built on the GPU from a few pieces: a device CSR block per rank, COO assembly
-// of small matrices, and products and transposes of distributed matrices. The Galerkin product
-// P^T A P turns a matrix over each rank's local node slots into the matrix over the DOFs.
+// hypreFromEntries builds the distributed matrix on the GPU from (local row, global column,
+// value) entries; the Navier-Stokes solver forms them with DofSpace::restrictMatrix.
 
 #include "mars_hypre_pcg_solver.hpp"
 #include <_hypre_parcsr_mv.h>

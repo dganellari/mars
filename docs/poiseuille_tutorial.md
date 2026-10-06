@@ -259,16 +259,16 @@ a mesh: `--cells=NX,NY` meshes `[0,10] x [0,1] x [0,0.06]` with one cell in z.
 
 ## 5. Reading the output
 
-At the start:
+At the start, among the setup lines:
 
 ```
-Poiseuille channel: 30000 nodes on 1 ranks, Re = U H / nu = 100
 Pressure operator: assembled vs matrix-free, max |difference| / max |Kx| = ...
 Pressure matrix symmetry: max |a_ij - a_ji| / max |a_ij| = ...
+Poiseuille channel: 30000 nodes on 1 ranks, Re = U H / nu = 100
 ```
 
-The second line is the setup check of section 3.5. It must be at round-off level (1.1e-15 to
-1.3e-15 in the validation record); above 1e-10 the run stops. The third line checks that the
+The first line is the setup check of section 3.5. It must be at round-off level (1.1e-15 to
+1.3e-15 in the validation record); above 1e-10 the run stops. The second line checks that the
 matrices are symmetric, which PCG assumes. On box-shaped hexahedra it is at round-off level; on
 distorted ones it is not, and the solver prints a warning.
 
