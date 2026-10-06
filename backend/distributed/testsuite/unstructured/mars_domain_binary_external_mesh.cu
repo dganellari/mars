@@ -173,6 +173,13 @@ public:
             std::cout << "GPU Test setup: Found " << deviceCount << " CUDA devices" << std::endl;
             std::cout << "Using mesh at: " << (meshPath.empty() ? "none" : meshPath) << std::endl;
         }
+
+        // A skip in SetUp() skips the test body; a skip in a helper only returns from the helper.
+        if (meshPath.empty() || !hasRequiredMeshFiles(meshPath))
+        {
+            GTEST_SKIP() << "No mesh: set MESH_PATH to a binary mesh directory";
+        }
+        if (deviceCount == 0) { GTEST_SKIP() << "No CUDA devices available"; }
     }
 
 private:
@@ -204,21 +211,6 @@ private:
     }
 
 protected:
-    void checkPrerequisites(const std::string& testName)
-    {
-        if (meshPath.empty() || !fs::exists(meshPath))
-        {
-            GTEST_SKIP() << testName << ": No valid mesh directory found";
-        }
-
-        if (!hasRequiredMeshFiles(meshPath))
-        {
-            GTEST_SKIP() << testName << ": Mesh directory does not contain required coordinate files";
-        }
-
-        if (deviceCount == 0) { GTEST_SKIP() << testName << ": No CUDA devices available"; }
-    }
-
     // Helper validation functions
     template<typename Domain>
     void validateBasicDomainProperties(const Domain& domain)
@@ -381,8 +373,6 @@ protected:
 
 TEST_F(ExternalMeshDomainTest, HostSfcConnectivityValidation)
 {
-    checkPrerequisites("HostSfcConnectivityValidation");
-
     try
     {
         using Domain = ElementDomain<TetTag, float, unsigned, cstone::execution::Gpu>;
@@ -441,8 +431,6 @@ TEST_F(ExternalMeshDomainTest, HostSfcConnectivityValidation)
 
 TEST_F(ExternalMeshDomainTest, DeviceSfcConnectivityValidation)
 {
-    checkPrerequisites("DeviceSfcConnectivityValidation");
-
     try
     {
         using Domain = ElementDomain<TetTag, float, unsigned, cstone::execution::Gpu>;
@@ -536,8 +524,6 @@ TEST_F(ExternalMeshDomainTest, DeviceSfcConnectivityValidation)
 
 TEST_F(ExternalMeshDomainTest, BasicSfcDomainCreation)
 {
-    checkPrerequisites("BasicSfcDomainCreation");
-
     try
     {
         using Domain = ElementDomain<TetTag, float, unsigned, cstone::execution::Gpu>;
@@ -557,8 +543,6 @@ TEST_F(ExternalMeshDomainTest, BasicSfcDomainCreation)
 
 TEST_F(ExternalMeshDomainTest, GpuVolumeCalculation)
 {
-    checkPrerequisites("GpuVolumeCalculation");
-
     try
     {
         using Domain = ElementDomain<TetTag, float, unsigned, cstone::execution::Gpu>;
@@ -624,8 +608,6 @@ TEST_F(ExternalMeshDomainTest, GpuVolumeCalculation)
 
 TEST_F(ExternalMeshDomainTest, GpuCoordinateConversionPerformance)
 {
-    checkPrerequisites("GpuCoordinateConversionPerformance");
-
     try
     {
         using Domain = ElementDomain<TetTag, float, unsigned, cstone::execution::Gpu>;
@@ -712,8 +694,6 @@ TEST_F(ExternalMeshDomainTest, GpuCoordinateConversionPerformance)
 
 TEST_F(ExternalMeshDomainTest, AnalyzeTetrahedronOrientations)
 {
-    checkPrerequisites("AnalyzeTetrahedronOrientations");
-
     try
     {
         using Domain = ElementDomain<TetTag, float, uint64_t, cstone::execution::Gpu>;
@@ -1099,8 +1079,6 @@ void testSFCVisualization(ExternalMeshDomainTest* testInstance)
 // Now your actual test functions just call the template
 TEST_F(ExternalMeshDomainTest, VisualizeRawSFCDecodingFloat)
 {
-    checkPrerequisites("VisualizeRawSFCDecodingFloat");
-
     try
     {
         testSFCVisualization<float, unsigned>(this);
@@ -1113,8 +1091,6 @@ TEST_F(ExternalMeshDomainTest, VisualizeRawSFCDecodingFloat)
 
 TEST_F(ExternalMeshDomainTest, VisualizeRawSFCDecodingFloatUint64)
 {
-    checkPrerequisites("VisualizeRawSFCDecodingDouble");
-
     try
     {
         testSFCVisualization<float, uint64_t>(this);
@@ -1128,8 +1104,6 @@ TEST_F(ExternalMeshDomainTest, VisualizeRawSFCDecodingFloatUint64)
 // Now your actual test functions just call the template
 TEST_F(ExternalMeshDomainTest, VisualizeRawSFCDecodingWithHalosFloat)
 {
-    checkPrerequisites("VisualizeRawSFCDecodingFloat");
-
     try
     {
         testSFCVisualization<float, unsigned, true>(this);
@@ -1142,8 +1116,6 @@ TEST_F(ExternalMeshDomainTest, VisualizeRawSFCDecodingWithHalosFloat)
 
 TEST_F(ExternalMeshDomainTest, VisualizeRawSFCDecodingWithHalosFloatUint64)
 {
-    checkPrerequisites("VisualizeRawSFCDecodingDouble");
-
     try
     {
         testSFCVisualization<float, uint64_t, true>(this);
