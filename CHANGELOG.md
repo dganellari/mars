@@ -73,6 +73,7 @@ the cornerstone-octree library.
 - Removed: the cxxopts dependency and the legacy example programs that used it
   (`mars_examples` from `examples/mars_discretization.cpp`, `examples/mars_st_example.cpp`,
   `examples/serial/mars_serial_driver.cpp`); the examples parse their options directly.
+- Removed: `examples/cvfem/`, a standalone STK-based assembly bench from another project.
 - Removed: the 10.9k-line channel solver fork, `fem/mars_channel_flow.hpp`,
   `fem/mars_periodic_ns.hpp`, `fem/mars_periodic_space.hpp` and its host model
   `tests/periodic/`; the `--planar-ddt`, `--pressure-amg`, `--velocity-amg`, `--skew`,
