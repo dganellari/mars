@@ -425,10 +425,6 @@ if(MARS_ENABLE_UNSTRUCTURED AND MARS_ENABLE_ADIOS2)
     endif()
 endif()
 
-if(MARS_ENABLE_CXXOPTS)
-  include(cxxopts/cxxopts.cmake)
-endif()
-
 add_library(mars ${MARS_HEADERS} ${MARS_SOURCES})
 
 # Link mars to mars_unstructured now that mars exists
@@ -556,10 +552,6 @@ else()
                 RENAME "${GPU_LIB_NAME}")
     endif()
 endif()
-
-# cxxopts is internal CLI tooling for the example drivers, not part of the Mars API.
-# It is NOT exported into the Mars package: examples build it in-tree, and downstream
-# consumers neither need nor receive it.
 
 # Install the main mars library into the export set so downstream
 # find_package(Mars) gets the Mars::mars target (without this the export is empty).

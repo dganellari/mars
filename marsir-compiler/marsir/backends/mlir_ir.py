@@ -145,7 +145,8 @@ def emit(ea, p=7):
     return "\n".join(lines) + "\n"
 
 
-def _apply_body(L, ea, p, ctr, v, uval, gval, indent="  ", y_init=None):
+def _apply_body(L, ea, p, ctr, v, uval, gval, indent="  ", y_init=None,
+                pad_faces=False):
     """Emit the per-element Knaus Alg-2 apply into L; returns the final y SSA
     name. The face loop l is a REAL scf.for with iter_args(y) (not unrolled):
     temporaries then exist once per dir and bufferize to a few reusable
@@ -157,7 +158,14 @@ def _apply_body(L, ea, p, ctr, v, uval, gval, indent="  ", y_init=None):
     I = indent
     t3 = "tensor<%dx%dx%dxf64>" % (n, n, n)
     t2 = "tensor<%dx%dxf64>" % (n, n)
-    tPn = "tensor<%dx%dxf64>" % (P, n)
+    # pad_faces: Btil/Dtil arrive with a zero (P+1)-th row, so every sweep tile
+    # is a full n-row tile. A P-row tile needs out-of-bounds guards on its last
+    # row, and LLVM sinks a tensor-core mma whose result only that guarded store
+    # uses into the guard -- undefined behavior, since every lane must execute
+    # mma.sync. The extra plane is computed (in tiles already n rows tall) and
+    # never read: the face loop still runs over the P real faces.
+    nf = n if pad_faces else P
+    tPn = "tensor<%dx%dxf64>" % (nf, n)
     tG = "tensor<3x%dx3x%dx%dxf64>" % (P, n, n)
     inputs = sorted(ea.free_vars)
     metric_used = [g for g in ("g0", "g1", "g2") if g in ea.free_vars]
@@ -168,7 +176,7 @@ def _apply_body(L, ea, p, ctr, v, uval, gval, indent="  ", y_init=None):
 
     def all_faces_type(d):
         dims = [n, n, n]
-        dims[d] = P
+        dims[d] = nf
         return "tensor<%dx%dx%dxf64>" % tuple(dims)
 
     def face_slice(J, src, src_ty, d, lvar):
@@ -224,7 +232,11 @@ def _apply_body(L, ea, p, ctr, v, uval, gval, indent="  ", y_init=None):
     cP = fresh("i")
     L.append("%s%s = arith.constant %d : index" % (I, cP, P))
 
-    for d in range(3):
+    # Direction 2 first: its Y planes are element-strided (each access touches
+    # every cache line of the element), and the first direction only writes Y
+    # -- its reads see the zero fill -- so the strided reads disappear. The
+    # three directions are independent sums; only the rounding order changes.
+    for d in (2, 1, 0):
         fa_ty = all_faces_type(d)
         interp_all = deriv_all = None
         if ea.needs_tangential:
@@ -294,13 +306,14 @@ def _apply_body(L, ea, p, ctr, v, uval, gval, indent="  ", y_init=None):
     return y
 
 
-def emit_full(ea, p=7):
-    """Single-element full Knaus apply (tensor-semantic func)."""
+def emit_full(ea, p=7, pad_faces=False):
+    """Single-element full Knaus apply (tensor-semantic func). pad_faces: see
+    _apply_body; Btil/Dtil are then n x n with a zero last row."""
     o = ea.op
     n, P = p + 1, p
     t3 = "tensor<%dx%dx%dxf64>" % (n, n, n)
     t2 = "tensor<%dx%dxf64>" % (n, n)
-    tPn = "tensor<%dx%dxf64>" % (P, n)
+    tPn = "tensor<%dx%dxf64>" % (n if pad_faces else P, n)
     tG = "tensor<3x%dx3x%dx%dxf64>" % (P, n, n)
     metric_used = [g for g in ("g0", "g1", "g2") if g in ea.free_vars]
 
@@ -317,7 +330,7 @@ def emit_full(ea, p=7):
          "// RUN: mir-opt %s | mir-opt",
          "func.func @%s_apply(%s) -> %s {" % (o.name, ", ".join(args), t3)]
     ctr, v = [0], [0]
-    y = _apply_body(L, ea, p, ctr, v, "%u", "%G")
+    y = _apply_body(L, ea, p, ctr, v, "%u", "%G", pad_faces=pad_faces)
     L.append("  return %s : %s" % (y, t3))
     L.append("}")
     return "\n".join(L) + "\n"

@@ -53,7 +53,7 @@ Every kernel below is a different point on these trade-offs:
 
 - **`Original`** — the reference thread-per-element kernel. Computes area vectors on
   the fly, carries the full `lhs[64]`, and scatters with a **linear scan** of each
-  CSR row. Correct and readable; the slowest. Use it as the ground truth.
+  CSR row. Correct and readable; use it as the ground truth.
 - **`Optimized`** — same structure, but uses the fact that the shifted shape function
   has only two nonzero entries per sub-control-surface (so interpolation is a 2-term
   average, not an 8-term loop), unrolls the loops for instruction-level parallelism,
@@ -95,14 +95,12 @@ Every kernel below is a different point on these trade-offs:
 
 ## 4. Avoiding the race a different way: coloring
 
-- **`TensorColored`** — byte-for-byte the `Tensor` kernel **with every `atomicAdd`
-  replaced by `+=`**, launched **once per color**. A host-side greedy graph coloring
-  guarantees that within one color no two elements share a node, so the scatters are
-  provably race-free and atomics are **eliminated entirely**. This is the big win on
-  older GPUs where FP64 atomics are slow. The cost is one kernel launch per color
-  (less parallelism per launch) plus a host coloring precompute. On hardware with fast
-  FP64 atomics the benefit shrinks — which is why the atomic-based `Tensor` is the
-  claimed current best there, not `Colored`.
+- **`TensorColored`** — the `Tensor` kernel **with every `atomicAdd` replaced by
+  `+=`**, launched **once per color**. A host-side greedy graph coloring makes sure that
+  no two elements of one color share a node, so the scatters need no atomics. That helps
+  on GPUs where FP64 atomics are slow. The cost is one kernel launch per color (less
+  parallelism per launch) plus the coloring precompute. On GPUs with fast FP64 atomics
+  the atomic `Tensor` kernel can be faster: measure both.
 
 ## 5. Pre-resolving CSR positions: the "Perip" trick
 
@@ -142,10 +140,10 @@ Tets (4 nodes, 6 sub-control-surfaces) have only three kernels — `Full`, `Full
 and `Graph` — and **none** of the tensor / shared-memory / coloring hex variants. Two
 things to know:
 
-- **`FullPerip`** is the recommended production tet kernel: it applies the same
-  pre-resolved-positions trick as the hex Perip (pre-resolve all 16 CSR positions,
-  diagonal via the direct pointer, `__ldg` on read-only loads), and is bit-identical
-  to `Full` at double precision.
+- **`FullPerip`** applies the same pre-resolved-positions trick as the hex Perip
+  (pre-resolve all 16 CSR positions, diagonal via the direct pointer, `__ldg` on
+  read-only loads) and computes the same matrix as `Full`. The tet example
+  (`mars_cvfem_graph_tet`) uses the `Graph` kernel.
 - The tet **diffusion** operator is the classical constant-gradient linear-tet
   stiffness `K_ij = V·γ·(∇N_i·∇N_j)` (exact one-point quadrature), while the
   **advection** uses the per-surface edge form. So the tet `Graph` kernel and the hex
@@ -163,8 +161,8 @@ diagonal:
 - **Full (27 NNZ/row)** — the complete element-local coupling. Use for symmetric /
   Poisson-type systems solved with CG that need every coupling.
 - **Graph + lumped (7 NNZ/row)** — ~4× fewer nonzeros → ~4× smaller matrix in memory
-  and ~4× less bandwidth in every solver mat-vec. On large meshes, where the matrix and
-  the SpMV dominate the cost, this is the path that matters. The price is a *lumped*
+  and ~4× less bandwidth in every solver mat-vec. It suits large meshes, where the
+  matrix memory and the SpMV dominate. The price is a *lumped*
   (more diagonally dominant, less accurate) operator.
 
 So "graph vs full" is an **accuracy/memory** choice made at the sparsity-and-assemble
@@ -177,17 +175,18 @@ level; the kernel variants above are **how fast** you assemble whichever you cho
 | If you want… | Use |
 |---|---|
 | Correctness reference | `Original` (hex), `Full` (tet) |
-| A solid default on modern GPUs | `Tensor` (hex), `FullPerip` (tet) |
-| Maximum occupancy / large meshes | `TensorPerip` / `TensorPeripLb2` |
-| Lower node-gather traffic | `TensorAoS` |
-| Squeeze L2 node traffic further | `SmemCache` (fragile; needs spatial ordering) |
-| No FP64 atomics (older GPUs) | `TensorColored` |
-| Smallest matrix / extreme scale | the **graph-lumped** assembly path |
+| A starting point | `Tensor` (hex), `FullPerip` (tet) |
+| Fewer registers, higher occupancy | `TensorPerip` / `TensorPeripLb2` |
+| Less node-gather traffic | `TensorAoS` |
+| A shared-memory node cache | `SmemCache` (fragile; needs spatial ordering) |
+| No atomics | `TensorColored` |
+| The smallest matrix | the **graph-lumped** assembly path |
 | Drive the tensor cores (experimental) | `WmmaTensor` / `WgmmaTensor` |
 
-Start from the default (`Tensor` / `FullPerip`) and the graph-lumped sparsity, then
-profile — the right kernel depends on your GPU's atomic throughput, your mesh's
-spatial locality, and whether you are occupancy- or bandwidth-bound.
+Start from `Tensor` / `FullPerip` and the graph-lumped sparsity, then time the others on
+your GPU (`mars_cvfem_graph --kernel=... --iterations=N`): the right kernel depends on
+its atomic throughput, your mesh's spatial locality, and whether you are occupancy- or
+bandwidth-bound.
 
 ---
 

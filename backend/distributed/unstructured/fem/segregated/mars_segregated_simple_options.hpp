@@ -44,7 +44,7 @@ struct SimpleOptions {
     double residual=1e-6,mass=1e-6,change=1e-6;
     double pressure_rtol=1e-12,pressure_atol=0;
     bool pressure_tolerances=false;
-    bool setup_only=false,help=false,profile=false,linear_cache=true,halo_overlap=true;
+    bool setup_only=false,help=false,profile=false,linear_cache=true,halo_overlap=true,first_step_audit=false;
 };
 inline SimpleOptions simple_options(int argc,char** argv) {
     SimpleOptions o;
@@ -107,12 +107,13 @@ inline SimpleOptions simple_options(int argc,char** argv) {
                     throw std::runtime_error("--profile-warmup expects a nonnegative integer");
                 o.profile_warmup=int(number);
             }
-            else if (key=="--setup-only" || key=="--profile" || key=="--linear-cache" || key=="--halo-overlap") {
+            else if (key=="--setup-only" || key=="--profile" || key=="--linear-cache" || key=="--halo-overlap" || key=="--first-step-audit") {
                 if (number!=0 && number!=1) throw std::runtime_error(key+" expects 0 or 1");
                 if (key=="--setup-only") o.setup_only=number!=0;
                 else if (key=="--profile") o.profile=number!=0;
                 else if (key=="--linear-cache") o.linear_cache=number!=0;
-                else o.halo_overlap=number!=0;
+                else if (key=="--halo-overlap") o.halo_overlap=number!=0;
+                else o.first_step_audit=number!=0;
             }
             else if (key=="--residual-tol") o.residual=number;
             else if (key=="--mass-tol") o.mass=number;
@@ -141,6 +142,8 @@ inline SimpleOptions simple_options(int argc,char** argv) {
     if (!o.help && (o.mesh.empty() || o.output.empty())) throw std::runtime_error("--mesh and --output-prefix are required");
     if (o.snapshot_iterations && (o.field_output=="none" || o.setup_only || o.profile || o.snapshot_iterations>o.iterations))
         throw std::runtime_error("snapshots require field output, iterations covering the requested range, and no setup-only or profiling");
+    if (o.first_step_audit && (o.iterations!=1 || o.snapshot_iterations!=1 || o.field_output!="distributed" || o.setup_only || o.profile))
+        throw std::runtime_error("first-step audit requires one iteration, one snapshot interval and distributed field output without profiling");
     return o;
 }
 inline const char* simple_help() {
@@ -165,6 +168,7 @@ inline const char* simple_help() {
            "  --field-output gathered             distributed writes per-rank CSVs; none skips fields\n"
            "  --snapshot-iterations 0             opt-in private field files at states 0 through N (N<=100)\n"
            "    Stops normally on convergence; snapshots are diagnostic I/O, not performance measurements.\n"
+           "  --first-step-audit 0                opt-in PRIVATE matrices and intermediate fields; requires one iteration and snapshots\n"
            "Both --option value and --option=value are accepted. Every exterior\n"
            "face must belong to exactly one selected inlet, outlet or wall set.\n";
 }

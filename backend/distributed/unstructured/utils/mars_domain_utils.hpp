@@ -1,18 +1,60 @@
 #include "cstone/cuda/cuda_utils.cuh" // For IsDeviceVector and the memcpy helpers
+#include <mpi.h>
 #include <tuple>
 #include <type_traits>
 #include <algorithm>
+#include <cstdio>
+#include <cstdlib>
+#include <exception>
 #include <stdexcept>
 
 namespace mars
 {
+// Stops every rank. A rank that only exits can leave the others waiting in MPI, depending on the launcher.
+inline void abortAllRanks(int code)
+{
+    int up = 0, down = 0;
+    MPI_Initialized(&up);
+    MPI_Finalized(&down);
+    if (up && !down) MPI_Abort(MPI_COMM_WORLD, code);
+    std::exit(code);
+}
+
+// An uncaught exception (a failed thrust call, an unreadable mesh, ...) prints its message with the
+// rank and stops every rank, instead of a core dump on one rank. Call once, after MPI_Init.
+inline void abortAllRanksOnUncaughtException()
+{
+    std::set_terminate([] {
+        int rank = -1, up = 0, down = 0;
+        MPI_Initialized(&up);
+        MPI_Finalized(&down);
+        if (up && !down) MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+        try
+        {
+            if (std::exception_ptr e = std::current_exception()) std::rethrow_exception(e);
+            std::fprintf(stderr, "rank %d: error: std::terminate called\n", rank);
+        }
+        catch (const std::exception& e)
+        {
+            std::fprintf(stderr, "rank %d: error: %s\n", rank, e.what());
+        }
+        catch (...)
+        {
+            std::fprintf(stderr, "rank %d: error: unknown exception\n", rank);
+        }
+        std::fflush(stderr);
+        if (up && !down) MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
+        std::abort();
+    });
+}
+
 #define cudaCheckError()                                                                                               \
     {                                                                                                                  \
         cudaError_t e = cudaGetLastError();                                                                            \
         if (e != cudaSuccess)                                                                                          \
         {                                                                                                              \
-            printf("CUDA error %s:%d: %s\n", __FILE__, __LINE__, cudaGetErrorString(e));                               \
-            exit(EXIT_FAILURE);                                                                                        \
+            std::fprintf(stderr, "CUDA error %s:%d: %s\n", __FILE__, __LINE__, cudaGetErrorString(e));                 \
+            ::mars::abortAllRanks(EXIT_FAILURE);                                                                       \
         }                                                                                                              \
     }
 

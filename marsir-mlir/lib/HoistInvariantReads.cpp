@@ -11,10 +11,18 @@
 // argument that NOTHING in the function writes: then every iteration reads the
 // same memory holding the same values. Loops are visited innermost first, so a
 // read can climb as far as it stays invariant.
+//
+// The same fact makes two identical reads of such an argument one value, so a
+// read dominated by an identical one is replaced by it. Upstream CSE will not
+// merge reads across the writes in between, although none of them can touch a
+// never-written argument. After unrolling this removes the per-tile reloads of
+// the operator matrices and the second load of each U fragment.
 
 #include "mir/MirPasses.h"
 
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/IR/Dominance.h"
+#include "mlir/IR/OperationSupport.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
@@ -104,6 +112,41 @@ struct HoistInvariantReadsPass
         }
         for (Operation *op : hoist)
           op->moveBefore(loop);
+      }
+
+      // Merge identical reads of never-written arguments.
+      DominanceInfo dom(fn);
+      DenseMap<llvm::hash_code, SmallVector<Operation *>> seen;
+      SmallVector<Operation *> reads;
+      fn->walk<WalkOrder::PreOrder>([&](Operation *op) {
+        Value src;
+        if (auto r = dyn_cast<vector::TransferReadOp>(op))
+          src = r.getSource();
+        else if (auto l = dyn_cast<memref::LoadOp>(op))
+          src = l.getMemRef();
+        if (src && isa<BaseMemRefType>(src.getType()) && readOnlyArg(src))
+          reads.push_back(op);
+      });
+      constexpr auto flags = OperationEquivalence::IgnoreLocations;
+      for (Operation *op : reads) {
+        llvm::hash_code h = OperationEquivalence::computeHash(
+            op, OperationEquivalence::directHashValue,
+            OperationEquivalence::ignoreHashValue, flags);
+        Operation *same = nullptr;
+        for (Operation *prev : seen[h])
+          if (OperationEquivalence::isEquivalentTo(
+                  prev, op, OperationEquivalence::exactValueMatch,
+                  /*markEquivalent=*/nullptr, flags) &&
+              dom.properlyDominates(prev, op)) {
+            same = prev;
+            break;
+          }
+        if (same) {
+          op->replaceAllUsesWith(same);
+          op->erase();
+        } else {
+          seen[h].push_back(op);
+        }
       }
     });
   }

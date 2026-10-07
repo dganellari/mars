@@ -1,5 +1,9 @@
 # Fresh startup comparison
 
+The completed fresh pair first differs at iteration one in velocity and pressure,
+with matching initial fields and mapped controls. The next experiment is the
+[one-iteration matrix and solve audit](first_step_audit.md); no long rerun is needed.
+
 The geometry probes agree on the public cases. The remaining private snapshot
 disagreement needs a fresh execution record and the first differing state. This
 probe compares the initial nodal velocity/pressure and all 20 completed SIMPLE

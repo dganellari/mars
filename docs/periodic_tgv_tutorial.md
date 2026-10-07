@@ -315,7 +315,7 @@ What to check:
 - `periodic DOFs=4096` on every rank count (one unknown per periodic point, none counted twice).
 - `KE` at each report step is the same on every rank count.
 - `div` (the continuity of the face fluxes, `max |D_F F| / M`) stays at round-off level.
-- `KE / KE_Stokes` follows the reference, measured on GH200 with 1, 2 and 4 GPUs (identical to
+- `KE / KE_Stokes` follows the reference, measured on GH200 with 1, 2, 4 and 8 GPUs (identical to
   all printed digits on each):
 
 | step | t | KE | KE / KE_Stokes |

@@ -48,8 +48,8 @@ the cornerstone-octree library.
   GPU and runs on any number of ranks; before, it built them on the host, ran on one rank only, and
   handed the assembly kernels a host pointer that only unified-memory systems could read. The CG
   solver clips its Jacobi diagonal on the GPU instead of copying it to the host every solve.
-- The Poiseuille tutorial mesh ships in `tests/data/poiseuille/`; its validation run is
-  opt-in with `-DMARS_ENABLE_VALIDATION_TESTS=ON`.
+- The Poiseuille tutorial mesh ships in `tests/data/poiseuille/`; its validation against the
+  analytic parabola is part of `ctest -L release` (1 and N ranks, needs netCDF).
 - One incompressible Navier–Stokes solver for hex meshes, `fem/mars_navier_stokes.hpp`,
   runs `mars_poiseuille_flow`, `mars_tgv` and the new `mars_lid_driven_cavity`; the
   examples differ only in their boundary description (fixed velocity, p = 0,
@@ -64,12 +64,16 @@ the cornerstone-octree library.
   21 to 23 pressure iterations at every size (Poiseuille tutorial, section 7).
 - Validation on 1, 2 and 4 GPUs: the Poiseuille 1500-step check (profile RMS error
   4.551e-4 m/s, about 24 s on one GPU; `tests/reference/poiseuille/planar_validation.md`)
-  and the Taylor–Green vortex kinetic energy against the Stokes decay, identical on 1, 2
-  and 4 GPUs (`docs/periodic_tgv_tutorial.md`). `ctest -L release` runs the lid-driven
+  and the Taylor–Green vortex kinetic energy against the Stokes decay, identical on 1, 2,
+  4 and 8 GPUs, 8 over two nodes (`docs/periodic_tgv_tutorial.md`). `ctest -L release` runs the lid-driven
   cavity, the channel and the Taylor–Green vortex on 1 and N ranks.
 - `mars_tgv` on several ranks: the old solver collapsed only the pressure at periodic
   points, and the multi-rank run lost the projection. Velocity and pressure now share one
   unknown per periodic point.
+- Removed: the cxxopts dependency and the legacy example programs that used it
+  (`mars_examples` from `examples/mars_discretization.cpp`, `examples/mars_st_example.cpp`,
+  `examples/serial/mars_serial_driver.cpp`); the examples parse their options directly.
+- Removed: `examples/cvfem/`, a standalone STK-based assembly bench from another project.
 - Removed: the 10.9k-line channel solver fork, `fem/mars_channel_flow.hpp`,
   `fem/mars_periodic_ns.hpp`, `fem/mars_periodic_space.hpp` and its host model
   `tests/periodic/`; the `--planar-ddt`, `--pressure-amg`, `--velocity-amg`, `--skew`,
@@ -84,7 +88,7 @@ the cornerstone-octree library.
 - GPU-native adaptive mesh refinement (mark → refine → rebuild → transfer).
 - Parallel AABB coarse search and a named per-interface ghost registry, each with a
   device path and a host reference.
-- Segregated SIMPLE flow solver on the GPU, with a standalone public-channel driver.
+- Segregated SIMPLE flow solver on the GPU (in development, built with `-DMARS_ENABLE_SEGREGATED=ON`).
 - Multi-block Exodus side sets and a multi-state field history.
 - MARSIR: an operator-spec → MLIR → tensor-core CUDA kernel generator
   (`marsir-compiler/`, `marsir-mlir/`). Research tooling, not part of the library

@@ -139,6 +139,8 @@ inline void readCoordsPerRank(const std::string& path,
 {
     const size_t nodeCount = neededNodes.size();
     out.resize(nodeCount);
+    // A rank gets no elements when there are more ranks than elements.
+    if (nodeCount == 0) return;
 
     std::ifstream file(path, std::ios::binary);
     if (!file) throw std::runtime_error("Failed to open coord file: " + path);

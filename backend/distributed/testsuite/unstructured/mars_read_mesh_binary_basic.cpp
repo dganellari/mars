@@ -2,6 +2,7 @@
 #include <fstream>
 #include <filesystem>
 #include <cmath>
+#include <unistd.h>
 #include "mars_read_mesh_binary.hpp"
 
 namespace fs = std::filesystem;
@@ -17,12 +18,8 @@ protected:
     
     // Create test files with known data
     void SetUp() override {
-        // Get MPI rank for unique directory naming
-        int rank;
-        MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-        
-        // Create a temporary directory with rank-specific name
-        testDir = fs::temp_directory_path() / ("mars_mesh_binary_test_rank_" + std::to_string(rank));
+        // One directory per process: ctest may run these tests in parallel.
+        testDir = fs::temp_directory_path() / ("mars_mesh_binary_test_" + std::to_string(getpid()));
         fs::create_directories(testDir);
         
         // Create coordinate files
@@ -38,16 +35,7 @@ protected:
     }
     
     void TearDown() override {
-        int rank;
-        MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-        
-        // Allow all ranks to synchronize before cleanup
-        MPI_Barrier(MPI_COMM_WORLD);
-        
-        // Only rank 0 cleans up
-        if (rank == 0) {
-            fs::remove_all(testDir);
-        }
+        fs::remove_all(testDir);
     }
     
     // Helper to create a binary file with float data
@@ -136,7 +124,12 @@ TEST_F(MeshReadBinaryTest, ReadCoordinatesDouble) {
     std::vector<double> x_double = {1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0};
     std::vector<double> y_double = {0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8};
     std::vector<double> z_double = {10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0};
-    
+
+    // The reader takes the float32 files when both exist, so remove them.
+    fs::remove(testDir / "x.float32");
+    fs::remove(testDir / "y.float32");
+    fs::remove(testDir / "z.float32");
+
     // Create double-precision binary files
     std::ofstream x_file((testDir / "x.double").string(), std::ios::binary);
     std::ofstream y_file((testDir / "y.double").string(), std::ios::binary);
@@ -191,12 +184,6 @@ TEST_F(MeshReadBinaryTest, PrintMeshConnectivity) {
     // Print mesh summary
     std::cout << "\n=== MESH SUMMARY ===" << std::endl;
     std::cout << "Nodes: " << nodeCount << ", Elements: " << elementCount << std::endl;
-    
-    // Extract connectivity arrays for easier access
-    const auto& i0 = std::get<0>(conn_tuple);
-    const auto& i1 = std::get<1>(conn_tuple);
-    const auto& i2 = std::get<2>(conn_tuple);
-    const auto& i3 = std::get<3>(conn_tuple);
     
     // Verify something to make the test useful
     EXPECT_GT(nodeCount, 0) << "Node count should be positive";

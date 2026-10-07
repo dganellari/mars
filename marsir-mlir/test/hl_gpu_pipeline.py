@@ -74,7 +74,7 @@ import sys; sys.path.insert(0, {os.path.join(ROOT, '..', 'marsir-compiler')!r})
 from marsir import parse_spec_file, synthesize
 from marsir.backends import mlir_ir
 ea = synthesize(parse_spec_file({os.path.join(ROOT, '..', 'marsir-compiler', 'specs', 'laplacian.op')!r}))
-sys.stdout.write(mlir_ir.emit_full(ea, p={p}))
+sys.stdout.write(mlir_ir.emit_full(ea, p={p}, pad_faces=True))
 """], "")
 
     ir = run([MIROPT, "-", "--convert-mir-to-linalg",
@@ -117,6 +117,7 @@ sys.stdout.write(mlir_ir.emit_full(ea, p={p}))
     # fragment of a Y plane then stays in registers between the faces that
     # update it, and the first direction's planes start from the zero fill.
     ir = run([MIROPT, "-", "--mir-unroll-loops", "--canonicalize", "--cse",
+              "--mir-hoist-invariant-reads",   # now merges the unrolled reloads
               "--mir-forward-owned", "--canonicalize", "--cse"], ir)
     # Barriers last: they must see the final access pattern, fills included.
     ir = run([MIROPT, "-", "--mir-distribute-fills", "--mir-warp-barriers"], ir)
@@ -162,6 +163,10 @@ sys.stdout.write(mlir_ir.emit_full(ea, p={p}))
         ("fp64 tensor-core mma", no_chain or ptx.count("mma.sync.aligned.m8n8k4") > 0),
         ("register relayout (shfl)", no_chain or ptx.count("shfl.sync") > 0),
         ("no local memory", no_chain or ptx.count(".local") == 0),
+        # every mma/shfl/barrier reached by all 32 lanes (see ptx_convergence.py)
+        ("warp collectives convergent", subprocess.run(
+            [sys.executable, os.path.join(HERE, "ptx_convergence.py"), out],
+            capture_output=True).returncode == 0),
     ]
     for name, good in checks:
         print(f"  {'ok  ' if good else 'FAIL'} {name}")

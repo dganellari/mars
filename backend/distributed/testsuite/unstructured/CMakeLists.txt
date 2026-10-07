@@ -163,6 +163,13 @@ addMarsMpiTest(
     marsReadMeshBinaryMpiTest
 )
 
+# The reader is collective and splits the elements by rank, so run its MPI test on several ranks too.
+if(TARGET marsReadMeshBinaryMpiTest AND MPIEXEC_EXECUTABLE)
+    add_test(NAME marsReadMeshBinaryMpiTest_np4
+             COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 4 ${MPIEXEC_PREFLAGS}
+                     $<TARGET_FILE:marsReadMeshBinaryMpiTest> ${MPIEXEC_POSTFLAGS})
+endif()
+
 addMarsMpiTest(
     ${CMAKE_CURRENT_SOURCE_DIR}/mars_read_mesh_binary_external_mesh.cpp
     mars_read_mesh_binary_external_mesh_test

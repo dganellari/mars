@@ -18,6 +18,8 @@ int main() {
     check(defaults.linear_cache && defaults.halo_overlap && !defaults.profile && defaults.field_output=="gathered");
     check(!defaults.pressure_tolerances && defaults.pressure_rtol==1e-12 && defaults.pressure_atol==0);
     check(defaults.snapshot_iterations==0);
+    check(!defaults.first_step_audit);
+    check(parse("--first-step-audit 1 --iterations 1 --snapshot-iterations 1 --field-output distributed").first_step_audit);
     check(parse("--snapshot-iterations 20 --iterations 20 --field-output distributed").snapshot_iterations==20);
     const auto pressure_options=parse("--pressure-linear-rtol=1e-6 --pressure-linear-atol 0");
     check(pressure_options.pressure_tolerances && pressure_options.pressure_rtol==1e-6 && pressure_options.pressure_atol==0);
@@ -58,7 +60,10 @@ int main() {
         "--profile 2","--linear-cache -1","--halo-overlap 3","--profile-warmup -1","--profile-warmup 1.5","--field-output vtk",
         "--snapshot-iterations -1","--snapshot-iterations 101","--snapshot-iterations 2.5",
         "--snapshot-iterations 20 --iterations 10","--snapshot-iterations 1 --field-output none",
-        "--snapshot-iterations 1 --setup-only 1","--snapshot-iterations 1 --profile 1"}) {
+        "--snapshot-iterations 1 --setup-only 1","--snapshot-iterations 1 --profile 1",
+        "--first-step-audit 1","--first-step-audit 2",
+        "--first-step-audit 1 --iterations 2 --snapshot-iterations 1 --field-output distributed",
+        "--first-step-audit 1 --iterations 1 --snapshot-iterations 1 --field-output gathered"}) {
         bool rejected=false; try { parse(args); } catch (const std::exception&) { rejected=true; }
         check(rejected);
     }

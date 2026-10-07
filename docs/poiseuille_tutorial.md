@@ -333,10 +333,9 @@ It requires:
 - **projection**: at steps 1, 2, 3 and the last, the corrected fluxes satisfy
   `D_F F = D_F F** + (dt_eff / rho) K phi` to 1e-7 (printed as `[channel-projection]` lines).
 
-The case is registered with ctest as `marsPoiseuilleValidation` (labels `validation;gpu;long`)
-when you configure with `-DMARS_ENABLE_VALIDATION_TESTS=ON`. Run it with `ctest -L validation`
-on a node with a GPU. The release tests (`ctest -L release`) run a shorter generated channel
-(`--cells=200,40`, 10 steps) on 1 and N ranks.
+The release checks (`ctest -L release`) run this validation on 1 and on N ranks
+(`marsReleasePoiseuille_np1` and `_npN`; they need netCDF for the mesh), and a short generated
+channel (`--cells=200,40`, 10 steps) that must give the same result on 1 and N ranks.
 
 **Profile plot.** Every run writes `PREFIX_profile.csv` (`poiseuille_profile.csv` without
 `--vtu-output`): the computed and exact `u(y)` on the node plane nearest the probe. Plot it with

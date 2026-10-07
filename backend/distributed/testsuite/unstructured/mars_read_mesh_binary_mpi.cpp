@@ -2,7 +2,7 @@
 #include <fstream>
 #include <filesystem>
 #include <cmath>
-#include <unordered_set>
+#include <unistd.h>
 #include "mars_read_mesh_binary.hpp"
 
 namespace fs = std::filesystem;
@@ -16,12 +16,9 @@ protected:
     
     // Create test files with known data
     void SetUp() override {
-        // Get MPI rank for unique directory naming
-        int rank;
-        MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-        
-        // Create a temporary directory with rank-specific name
-        testDir = fs::temp_directory_path() / ("mars_mesh_binary_test_rank_" + std::to_string(rank));
+        // One directory per process: ctest may run these tests in parallel, and each rank reads
+        // its own copy of the files.
+        testDir = fs::temp_directory_path() / ("mars_mesh_binary_mpi_test_" + std::to_string(getpid()));
         fs::create_directories(testDir);
         
         // Create coordinate files
@@ -37,16 +34,7 @@ protected:
     }
     
     void TearDown() override {
-        int rank;
-        MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-        
-        // Allow all ranks to synchronize before cleanup
-        MPI_Barrier(MPI_COMM_WORLD);
-        
-        // Only rank 0 cleans up
-        if (rank == 0) {
-            fs::remove_all(testDir);
-        }
+        fs::remove_all(testDir);
     }
     
     // Helper to create a binary file with float data
@@ -64,97 +52,102 @@ protected:
     }
 };
 
-// Test multi-rank distribution with element-based partitioning
+// Each MPI rank reads its own element slice. Element e uses nodes 2e..2e+3, so neighbouring
+// slices share two nodes. All collective calls come before the checks: a rank that stopped early
+// would leave the others waiting.
 TEST_F(MeshReadBinaryMPITest, MultiRankDistribution) {
-    // Create larger coordinate files for testing rank distribution
-    std::vector<float> x_coords(100), y_coords(100), z_coords(100);
-    for (int i = 0; i < 100; i++) {
+    int rank, numRanks;
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &numRanks);
+
+    constexpr int numElements = 50;
+    constexpr int numNodes    = 2 * numElements + 2;
+
+    std::vector<float> x_coords(numNodes), y_coords(numNodes), z_coords(numNodes);
+    for (int i = 0; i < numNodes; i++) {
         x_coords[i] = static_cast<float>(i);
-        y_coords[i] = static_cast<float>(i) * 0.1f;
+        y_coords[i] = static_cast<float>(i) * 0.5f;
         z_coords[i] = static_cast<float>(i) * 10.0f;
     }
-    
     createCoordinateFile("x.float32", x_coords);
     createCoordinateFile("y.float32", y_coords);
     createCoordinateFile("z.float32", z_coords);
-    
-    // Create connectivity files with specific patterns to test node sharing
-    // Each element i uses nodes [2i, 2i+1, 2i+2, 2i+3]
-    std::vector<int> i0(50), i1(50), i2(50), i3(50);
-    for (int i = 0; i < 50; i++) {
-        i0[i] = i * 2;       // 0, 2, 4, ...
-        i1[i] = i * 2 + 1;   // 1, 3, 5, ...
-        i2[i] = i * 2 + 2;   // 2, 4, 6, ...
-        i3[i] = i * 2 + 3;   // 3, 5, 7, ...
+
+    std::vector<int> i0(numElements), i1(numElements), i2(numElements), i3(numElements);
+    for (int e = 0; e < numElements; e++) {
+        i0[e] = 2 * e;
+        i1[e] = 2 * e + 1;
+        i2[e] = 2 * e + 2;
+        i3[e] = 2 * e + 3;
     }
-    
     createConnectivityFile("i0.int32", i0);
     createConnectivityFile("i1.int32", i1);
     createConnectivityFile("i2.int32", i2);
     createConnectivityFile("i3.int32", i3);
-    
-    // Test with various numbers of ranks
-    std::vector<int> rankCounts = {2, 3, 4, 8};
-    
-    for (int numRanks : rankCounts) {
-        std::cout << "\nTesting with " << numRanks << " ranks:" << std::endl;
-        
-        size_t totalElements = 0;
-        size_t totalNodesAcrossRanks = 0;
-        std::unordered_set<int> uniqueNodesAcrossRanks;
-        
-        // For each rank, read its portion of the mesh
-        for (int rank = 0; rank < numRanks; rank++) {
-            auto [nodeCount, elementCount, x, y, z, conn, localToGlobal] =
-                mars::readMeshWithElementPartitioning<4, float>(testDir.string(), rank, numRanks);
-            
-            // Track total elements
-            totalElements += elementCount;
-            
-            // Track unique nodes
-            totalNodesAcrossRanks += nodeCount;
-            
-            // Expected elements per rank (roughly elementCount / numRanks)
-            size_t expectedElements = 50 / numRanks;
-            if (rank == numRanks - 1) {
-                expectedElements += 50 % numRanks; // Last rank gets remainder
-            }
-            
-            EXPECT_EQ(elementCount, expectedElements)
-                << "Rank " << rank << " of " << numRanks << " has incorrect element count";
-            
-            // Verify connectivity is valid (indices within bounds)
-            const auto& i0_conn = std::get<0>(conn);
-            const auto& i1_conn = std::get<1>(conn);
-            const auto& i2_conn = std::get<2>(conn);
-            const auto& i3_conn = std::get<3>(conn);
-            
-            for (size_t i = 0; i < elementCount; i++) {
-                EXPECT_LT(i0_conn[i], nodeCount);
-                EXPECT_LT(i1_conn[i], nodeCount);
-                EXPECT_LT(i2_conn[i], nodeCount);
-                EXPECT_LT(i3_conn[i], nodeCount);
-            }
-            
-            // Verify the first element's connectivity has been correctly mapped
-            if (elementCount > 0) {
-                size_t firstGlobalElementIdx = rank * (50 / numRanks);
-                
-                // The global nodes for the first element are [2*firstGlobalElementIdx, 2*firstGlobalElementIdx+1, ...]
-                // But they should be mapped to local indices starting from 0
-                EXPECT_EQ(i0_conn[0], 0);
-                EXPECT_EQ(i1_conn[0], 1);
-                
-                // Verify coordinate mapping
-                int globalFirstNode = i0[firstGlobalElementIdx];
-                EXPECT_FLOAT_EQ(x[0], static_cast<float>(globalFirstNode));
-            }
-        }
-        
-        // All elements should be distributed
-        EXPECT_EQ(totalElements, 50) 
-            << "With " << numRanks << " ranks, total elements don't match expected";
+
+    auto [nodeCount, elementCount, x, y, z, conn, localToGlobal] =
+        mars::readMeshWithElementPartitioning<4, float>(testDir.string(), rank, numRanks);
+
+    unsigned long localElements = elementCount;
+    unsigned long totalElements = 0;
+    MPI_Allreduce(&localElements, &totalElements, 1, MPI_UNSIGNED_LONG, MPI_SUM, MPI_COMM_WORLD);
+
+    std::vector<int> nodeSeen(numNodes, 0);
+    for (auto g : localToGlobal) {
+        if (g < static_cast<unsigned>(numNodes)) { nodeSeen[g] = 1; }
     }
+    MPI_Allreduce(MPI_IN_PLACE, nodeSeen.data(), numNodes, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+
+    EXPECT_EQ(totalElements, static_cast<unsigned long>(numElements));
+    for (int g = 0; g < numNodes; g++) {
+        EXPECT_EQ(nodeSeen[g], 1) << "node " << g << " is on no rank";
+    }
+
+    // Contiguous slices; the last rank takes the remainder.
+    size_t perRank   = numElements / numRanks;
+    size_t firstElem = rank * perRank;
+    size_t expected  = (rank == numRanks - 1) ? numElements - firstElem : perRank;
+    EXPECT_EQ(elementCount, expected) << "rank " << rank << " of " << numRanks;
+    EXPECT_EQ(nodeCount, elementCount > 0 ? 2 * elementCount + 2 : 0) << "rank " << rank;
+    ASSERT_EQ(localToGlobal.size(), nodeCount) << "rank " << rank;
+
+    const std::vector<unsigned>* corners[4] = {&std::get<0>(conn), &std::get<1>(conn), &std::get<2>(conn),
+                                               &std::get<3>(conn)};
+    for (size_t e = 0; e < elementCount; e++) {
+        for (int k = 0; k < 4; k++) {
+            unsigned local = (*corners[k])[e];
+            ASSERT_LT(local, nodeCount) << "rank " << rank << ", element " << e << ", corner " << k;
+            EXPECT_EQ(localToGlobal[local], 2 * (firstElem + e) + k)
+                << "rank " << rank << ", element " << e << ", corner " << k;
+        }
+    }
+
+    for (size_t l = 0; l < nodeCount; l++) {
+        float g = static_cast<float>(localToGlobal[l]);
+        EXPECT_FLOAT_EQ(x[l], g) << "rank " << rank << ", node " << localToGlobal[l];
+        EXPECT_FLOAT_EQ(y[l], g * 0.5f) << "rank " << rank << ", node " << localToGlobal[l];
+        EXPECT_FLOAT_EQ(z[l], g * 10.0f) << "rank " << rank << ", node " << localToGlobal[l];
+    }
+}
+
+// One element on several ranks: all ranks but the last get no elements and must get no nodes.
+TEST_F(MeshReadBinaryMPITest, RanksWithoutElements) {
+    int rank, numRanks;
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &numRanks);
+
+    createConnectivityFile("i0.int32", {0});
+    createConnectivityFile("i1.int32", {1});
+    createConnectivityFile("i2.int32", {2});
+    createConnectivityFile("i3.int32", {3});
+
+    auto [nodeCount, elementCount, x, y, z, conn, localToGlobal] =
+        mars::readMeshWithElementPartitioning<4, float>(testDir.string(), rank, numRanks);
+
+    bool last = (rank == numRanks - 1);
+    EXPECT_EQ(elementCount, last ? 1u : 0u) << "rank " << rank;
+    EXPECT_EQ(nodeCount, last ? 4u : 0u) << "rank " << rank;
+    EXPECT_EQ(x.size(), nodeCount) << "rank " << rank;
 }
 
 // Test explicitly for element-based partitioning with actual MPI ranks

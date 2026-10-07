@@ -66,6 +66,7 @@ __global__ void lumpedNodeVolumeKernel(const KeyType* c0, const KeyType* c1, con
 int main(int argc, char** argv) {
     // Initialize MPI
     MPI_Init(&argc, &argv);
+    mars::abortAllRanksOnUncaughtException();
 
     int rank, numRanks;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);

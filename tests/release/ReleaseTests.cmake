@@ -99,27 +99,54 @@ endforeach()
 # --- Navier-Stokes (fem/mars_navier_stokes.hpp, needs Hypre), 1 and N ranks -------------------
 # The examples exit non-zero on any failed linear solve (all ranks stop together).
 if(MARS_ENABLE_HYPRE)
+    # 1 and N ranks must give the same flow: a wrong halo, a node owned twice or a broken periodic
+    # pairing changes it. Closed box (the pressure null space, the lid edges), the generated planar
+    # channel (inlet and outlet), and the periodic Taylor-Green vortex.
+    set(_rel_same ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/release/check_rank_value.py
+                  --np ${_rel_np} "--mpiexec=${MPIEXEC_EXECUTABLE}" "--numproc-flag=${MPIEXEC_NUMPROC_FLAG}"
+                  "--preflags=${_rel_preflags}")
+    add_test(NAME marsReleaseCavity
+             COMMAND ${_rel_same} "--regex=KE=([-+0-9.eE]+)" --
+                     $<TARGET_FILE:mars_lid_driven_cavity> --mesh=${_rel_hex} --nu=0.01 --dt=0.01
+                     --num-steps=100 --report-every=50)
+    add_test(NAME marsReleaseChannel
+             COMMAND ${_rel_same} "--regex=\\|u\\|_M=([-+0-9.eE]+)" --
+                     $<TARGET_FILE:mars_poiseuille_flow> --cells=200,40 --num-steps=10 --report-every=5)
+    add_test(NAME marsReleaseTgv
+             COMMAND ${_rel_same} "--regex=TGV final:.*?KE=([-+0-9.eE]+)" --
+                     $<TARGET_FILE:mars_tgv> --mesh=${_rel_hex} --box-lo=0 --box-hi=1 --nu=0.05 --dt=1e-4
+                     --num-steps=100 --report-every=100)
+    # The physics of the periodic case: at low Re the vortex decays like the Stokes solution. After
+    # 100 steps KE / KE_Stokes is 1.0015; a broken periodic coupling moves it far outside the band.
     foreach(_np 1 ${_rel_np})
-        # Closed box: the pressure null space and the unreachable edge nodes.
-        add_test(NAME marsReleaseCavity_np${_np}
-                 COMMAND ${_rel_mpi} ${_np} ${MPIEXEC_PREFLAGS} $<TARGET_FILE:mars_lid_driven_cavity>
-                         ${MPIEXEC_POSTFLAGS} --mesh=${_rel_hex} --num-steps=10 --report-every=5)
-        # Planar channel with an inlet and an outlet, generated on every rank.
-        add_test(NAME marsReleaseChannel_np${_np}
-                 COMMAND ${_rel_mpi} ${_np} ${MPIEXEC_PREFLAGS} $<TARGET_FILE:mars_poiseuille_flow>
-                         ${MPIEXEC_POSTFLAGS} --cells=200,40 --num-steps=10 --report-every=5)
-        # Taylor-Green vortex in the periodic unit cube: low-Re viscous decay. After 100 steps
-        # KE / KE_Stokes is 1.0015; a broken periodic coupling on N ranks moves it far outside the band.
-        add_test(NAME marsReleaseTgv_np${_np}
+        add_test(NAME marsReleaseTgvDecay_np${_np}
                  COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/release/check_value.py
                          "--regex=TGV final:.*KE/KE_Stokes=([-+0-9.eE]+)" --lo 1.0013 --hi 1.0017 --
                          ${_rel_mpi} ${_np} ${MPIEXEC_PREFLAGS} $<TARGET_FILE:mars_tgv> ${MPIEXEC_POSTFLAGS}
                          --mesh=${_rel_hex} --box-lo=0 --box-hi=1 --nu=0.05 --dt=1e-4 --num-steps=100
                          --report-every=100)
-        foreach(_t Cavity Channel Tgv)
-            set_tests_properties(marsRelease${_t}_np${_np} PROPERTIES FAIL_REGULAR_EXPRESSION "[=: ](-?nan|NaN)[ ,\n]")
-        endforeach()
     endforeach()
+    set(_rel_ns marsReleaseCavity marsReleaseChannel marsReleaseTgv marsReleaseTgvDecay_np1
+                marsReleaseTgvDecay_np${_rel_np})
+
+    # Poiseuille against the analytic parabola (the tutorial's validation, 1500 steps): profile,
+    # through-flow, continuity, projection and steadiness, on 1 and N ranks. The shipped mesh is
+    # Exodus, so this needs netCDF.
+    get_target_property(_rel_defs mars_unstructured INTERFACE_COMPILE_DEFINITIONS)
+    if(_rel_defs AND "MARS_HAVE_NETCDF" IN_LIST _rel_defs)
+        foreach(_np 1 ${_rel_np})
+            file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/release_poiseuille_np${_np})
+            add_test(NAME marsReleasePoiseuille_np${_np}
+                     COMMAND ${_rel_mpi} ${_np} ${MPIEXEC_PREFLAGS} $<TARGET_FILE:mars_poiseuille_flow>
+                             ${MPIEXEC_POSTFLAGS}
+                             --mesh=${CMAKE_SOURCE_DIR}/tests/data/poiseuille/poiseuille_hex_14k_elem.e
+                             --uinf=1 --nu=0.01 --dt=0.01 --num-steps=1500 --report-every=500 --check
+                             --vtu-output=${CMAKE_BINARY_DIR}/release_poiseuille_np${_np}/flow --vtu-every=100000)
+            set_tests_properties(marsReleasePoiseuille_np${_np} PROPERTIES LABELS "release;gpu" TIMEOUT 900)
+            list(APPEND _rel_ns marsReleasePoiseuille_np${_np})
+        endforeach()
+    endif()
+    set_tests_properties(${_rel_ns} PROPERTIES FAIL_REGULAR_EXPRESSION "[=: ](-?nan|NaN)[ ,\n]")
 endif()
 
 # --- high-order matrix-free operator (experimental); both drivers generate their own cube -------

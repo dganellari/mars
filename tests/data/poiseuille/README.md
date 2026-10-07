@@ -2,7 +2,7 @@
 
 `poiseuille_hex_14k_elem.e` is the mesh used by the
 [Poiseuille channel tutorial](../../../docs/poiseuille_tutorial.md) and by the
-`marsPoiseuilleValidation` ctest. Distributed with MARS with the owner's permission.
+`marsReleasePoiseuille_np*` release checks. Distributed with MARS with the owner's permission.
 
 Exodus II, 14,751 hexahedra, 30,000 nodes, one element thick in z (a quasi-2D channel):
 

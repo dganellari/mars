@@ -37,6 +37,13 @@ public:
             std::cout << "MFEM Mesh GPU Test setup: Found " << deviceCount << " CUDA devices" << std::endl;
             std::cout << "Using mesh at: " << (meshPath.empty() ? "none" : meshPath) << std::endl;
         }
+
+        // A skip in SetUp() skips the test body; a skip in a helper only returns from the helper.
+        if (meshPath.empty() || !fs::exists(meshPath))
+        {
+            GTEST_SKIP() << "No MFEM mesh: set MFEM_MESH_PATH to a .mesh file";
+        }
+        if (deviceCount == 0) { GTEST_SKIP() << "No CUDA devices available"; }
     }
 
 private:
@@ -72,18 +79,6 @@ private:
     }
 
 protected:
-    void checkPrerequisites(const std::string& testName)
-    {
-        if (meshPath.empty() || !fs::exists(meshPath))
-        {
-            GTEST_SKIP() << testName << ": No valid MFEM mesh file found";
-        }
-
-        if (deviceCount == 0) {
-            GTEST_SKIP() << testName << ": No CUDA devices available";
-        }
-    }
-
     // Helper validation functions
     template<typename Domain>
     void validateBasicDomainProperties(const Domain& domain)
@@ -248,8 +243,6 @@ protected:
 
 TEST_F(MFEMMeshDomainTest, BasicMFEMMeshLoading)
 {
-    checkPrerequisites("BasicMFEMMeshLoading");
-
     try
     {
         // Load MFEM mesh directly using ElementDomain constructor
@@ -279,8 +272,6 @@ TEST_F(MFEMMeshDomainTest, BasicMFEMMeshLoading)
 
 TEST_F(MFEMMeshDomainTest, MFEMDomainCreation)
 {
-    checkPrerequisites("MFEMDomainCreation");
-
     try
     {
         // Load MFEM mesh using ElementDomain - it handles partitioning automatically
@@ -301,8 +292,6 @@ TEST_F(MFEMMeshDomainTest, MFEMDomainCreation)
 
 TEST_F(MFEMMeshDomainTest, MFEMDomainWithBoundaryInfo)
 {
-    checkPrerequisites("MFEMDomainWithBoundaryInfo");
-
     try
     {
         // Load MFEM mesh - readMFEMMeshWithElementPartitioning returns boundary info
@@ -324,8 +313,6 @@ TEST_F(MFEMMeshDomainTest, MFEMDomainWithBoundaryInfo)
 
 TEST_F(MFEMMeshDomainTest, MultiRankConsistency)
 {
-    checkPrerequisites("MultiRankConsistency");
-
     if (numRanks == 1) {
         GTEST_SKIP() << "Multi-rank test requires at least 2 ranks";
     }
@@ -460,8 +447,6 @@ void writeVTKOutput(const Domain& domain, const std::string& filename, int rank)
 
 TEST_F(MFEMMeshDomainTest, VisualizeMFEMDomainPartitioning)
 {
-    checkPrerequisites("VisualizeMFEMDomainPartitioning");
-
     try
     {
         // Load MFEM mesh using ElementDomain
