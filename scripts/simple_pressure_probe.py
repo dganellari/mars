@@ -13,12 +13,14 @@ from simple_public_diagnostics import SafeParser, summarize
 from simple_snapshot_compare import EvidenceError, digest, options, require
 
 SCHEMA = 'mars-simple-pressure-probe-v1'
+HISTORY = 'twenty_step_history'
 ERRORS = frozenset(('baseline_identity', 'baseline_first_step_required', 'baseline_reference_policy_required',
     'pressure_configuration', 'pressure_target_unchanged', 'momentum_configuration_changed',
     'nonpressure_controls_changed', 'experiment_identity', 'executable_changed', 'libraries_changed',
     'solver_environment_changed', 'launcher_changed', 'baseline_stage_mismatch', 'launcher_exit',
     'environment_restore_requires_mars', 'gradient_mesh', 'gradient_arithmetic', 'gradient_storage_precision',
-    'reference_ghost_values'))
+    'reference_ghost_values', 'experiment_kind', 'history_baseline_required',
+    'history_baseline_accuracy', 'history_gradient_audit_unavailable'))
 
 # Only scalar solver/execution controls can be restored. Never restore paths or device binding.
 RESTORABLE_ENVIRONMENT = frozenset(('MARS_AMG_AGG', 'MARS_AMG_COARSEN', 'MARS_AMG_INTERP',
@@ -76,10 +78,40 @@ def baseline_records(baseline):
     return record, case, launches
 
 
-def experiment_inputs(baseline):
+def history_deck(original):
+    modified = copy.deepcopy(original)
+    solver = modified['simulation']['solver']
+    convergence = solver['solver_control']['basic_settings']['convergence_controls']
+    convergence.update(min_iterations=startup.STEPS, max_iterations=startup.STEPS)
+    solver['output_control'] = dict(file_path='results.e', output_frequency=1,
+                                   output_fields=['velocity', 'pressure'], corrected_boundary_values=False)
+    settings = solver['solver_control']['advanced_options']['linear_solver_settings']
+    for equation in ('coupled_navier_stokes', 'pressure_correction'):
+        config = resolved_solver(original, equation)
+        # Keep fallback and named settings intact; disable only the two equations' dumps.
+        config['write_system'] = False
+        settings[equation] = config
+    require(translate(modified, 'reference') == translate(original, 'reference'), 'nonpressure_controls_changed')
+    return modified
+
+
+def experiment_inputs(baseline, history=False):
     baseline = baseline.resolve()
     old_record, old_case, launches = baseline_records(baseline)
-    deck, mapped = tightened_deck(load_deck((baseline / 'reference/input.i').read_bytes()))
+    original = load_deck((baseline / 'reference/input.i').read_bytes())
+    if history:
+        require('pressure_experiment' in old_record and 'kind' not in old_record['pressure_experiment'],
+                'history_baseline_required')
+        _, previous = check_inputs(baseline)
+        for solver, old in previous.items():
+            runtime_matches(old, launches[solver], baseline, solver)
+        deck = history_deck(original)
+        mapped, _ = translate(deck, 'reference')
+        old_record = dict(old_record, steps=startup.STEPS, first_step_audit=False,
+                          original_deck_sha256=digest(baseline / 'reference/input.i'),
+                          original_case_sha256=digest(baseline / 'case.json'))
+    else:
+        deck, mapped = tightened_deck(original)
     values = options(old_case['arguments'])
     args = ['--mesh', old_record['mesh'], '--mesh-format', 'exodus'] + mapped + [
         '--reference-length', values['--reference-length']]
@@ -87,20 +119,48 @@ def experiment_inputs(baseline):
     identity = dict(schema=SCHEMA, baseline_pair=str(baseline), baseline_pair_sha256=digest(baseline / 'pair.json'),
         baseline_launch_hashes={solver: digest(baseline / ('reference' if solver == 'openaccel' else 'mars') / 'launch.json')
                                for solver in launches})
+    if history:
+        identity['kind'] = HISTORY
     return old_record, case, deck, identity, launches
 
 
-def prepare(baseline, output):
+def changed_controls(identity):
+    return (['iteration_limits', 'output_control', 'linear_system_output'] if identity.get('kind') == HISTORY else
+            ['pressure_linear_rtol', 'pressure_linear_atol'])
+
+
+def pressure_targets_pass(public):
+    checks = public['pressure_solve_checks']
+    return all(checks[key] for key in ('same_declared_tolerances', 'mars_referenced_copies_equal_owners',
+        'mars_local_residual_meets_runtime_limit', 'mars_owner_residual_meets_runtime_limit',
+        'mars_residual_below_declared_unpreconditioned_limit', 'reference_residual_below_declared_unpreconditioned_limit'))
+
+
+def require_history_baseline(public):
+    stages = public['first_step_stage_matches']
+    require(public['initial_field_parity_verified'] and pressure_targets_pass(public) and
+            all(value for name, value in stages.items() if name != 'pressure_increment_gradient'),
+            'history_baseline_accuracy')
+
+
+def prepare(baseline, output, history=False):
     import yaml
-    record, case, deck, identity, _ = experiment_inputs(baseline)
+    record, case, deck, identity, _ = experiment_inputs(baseline, history)
     output.mkdir(mode=0o700)
+    if history:
+        details = output / 'baseline-check'
+        details.mkdir(mode=0o700)
+        public = {}
+        startup.compare(baseline, public, details)
+        require_history_baseline(public)
+        # Write pair.json only after the saved one-step equations and fields pass.
     (output / 'reference').mkdir(mode=0o700)
     path = output / 'reference/input.i'
     path.write_text(yaml.safe_dump(deck, default_flow_style=False))
     case['deck_sha256'] = digest(path)
     startup.write_json(output / 'case.json', case)
     record = dict(record, deck_sha256=digest(path), case_sha256=digest(output / 'case.json'),
-                  pressure_experiment=identity, changed_controls=['pressure_linear_rtol', 'pressure_linear_atol'])
+                  pressure_experiment=identity, changed_controls=changed_controls(identity))
     startup.write_json(output / 'pair.json', record)
     check_inputs(output)
 
@@ -109,14 +169,15 @@ def check_inputs(pair):
     inputs = startup.pair_inputs(pair)
     identity = inputs['pressure_experiment']
     require(identity['schema'] == SCHEMA, 'experiment_identity')
+    require(identity.get('kind') in (None, HISTORY), 'experiment_kind')
     baseline = Path(identity['baseline_pair'])
-    old, case, deck, expected_identity, launches = experiment_inputs(baseline)
+    old, case, deck, expected_identity, launches = experiment_inputs(baseline, identity.get('kind') == HISTORY)
     require(identity == expected_identity, 'baseline_identity')
     require(load_deck((pair / 'reference/input.i').read_bytes()) == deck, 'nonpressure_controls_changed')
     case['deck_sha256'] = digest(pair / 'reference/input.i')
     require(startup.read_json(pair / 'case.json') == case, 'experiment_identity')
     expected = dict(old, deck_sha256=case['deck_sha256'], case_sha256=digest(pair / 'case.json'),
-                    pressure_experiment=identity, changed_controls=['pressure_linear_rtol', 'pressure_linear_atol'])
+                    pressure_experiment=identity, changed_controls=changed_controls(identity))
     require(inputs == expected, 'experiment_identity')
     return baseline, launches
 
@@ -194,21 +255,29 @@ def run(pair, solver, restore_solver_environment=False, public=None):
 
 def compare(pair, public, details, gradient_audit=False):
     baseline, records = check_inputs(pair)
+    history = startup.read_json(pair / 'pair.json')['pressure_experiment'].get('kind') == HISTORY
+    require(not (history and gradient_audit), 'history_gradient_audit_unavailable')
     for solver, old in records.items():
         runtime_matches(old, startup.verified_launch(pair, solver), pair, solver)
-    old_details, new_details = details / 'baseline', details / 'tightened'
+    old_details, new_details = details / 'baseline', details / ('history' if history else 'tightened')
     old_details.mkdir(mode=0o700)
     new_details.mkdir(mode=0o700)
     old_public, new_public = {}, {}
     startup.compare(baseline, old_public, old_details)
     startup.compare(pair, new_public, new_details, gradient_audit=gradient_audit)
+    if history:
+        require_history_baseline(old_public)
+        public.update(comparison_status='completed', failed_check='none',
+            outcome='twenty_step_fields_match' if new_public['all_twenty_snapshots_match'] else 'twenty_step_fields_differ',
+            pressure_targets_preserved=True, first_step_pressure_targets_verified=True,
+            pressure_residuals_recomputed_at_every_step=False, captured_runtime_settings_match=True,
+            runtime_scope='recorded_binaries_libraries_launchers_and_solver_environment',
+            history=new_public, root_cause_proven=False, nonlinear_convergence_verified=False)
+        return
     stages = ('momentum_matrix', 'momentum_rhs', 'momentum_predictor', 'momentum_influence',
               'pressure_matrix', 'pressure_rhs')
     require(all(old_public['first_step_stage_matches'][key] for key in stages), 'baseline_stage_mismatch')
-    checks = new_public['pressure_solve_checks']
-    targets = all(checks[key] for key in ('same_declared_tolerances', 'mars_referenced_copies_equal_owners',
-        'mars_local_residual_meets_runtime_limit', 'mars_owner_residual_meets_runtime_limit',
-        'mars_residual_below_declared_unpreconditioned_limit', 'reference_residual_below_declared_unpreconditioned_limit'))
+    targets = pressure_targets_pass(new_public)
     matched = all(new_public['first_step_stage_matches'].values())
     upstream = all(new_public['first_step_stage_matches'][key] for key in stages)
     outcome = ('upstream_stage_mismatch' if not upstream else
@@ -236,9 +305,10 @@ def failure_summary(pair, solver):
 def main(argv=None):
     parser = SafeParser(description=__doc__)
     sub = parser.add_subparsers(dest='action')
-    prep = sub.add_parser('prepare')
-    prep.add_argument('--baseline-pair', type=Path, required=True)
-    prep.add_argument('--output-dir', type=Path, required=True)
+    for action in ('prepare', 'extend'):
+        prep = sub.add_parser(action)
+        prep.add_argument('--baseline-pair', type=Path, required=True)
+        prep.add_argument('--output-dir', type=Path, required=True)
     launch = sub.add_parser('run')
     launch.add_argument('--pair', type=Path, required=True)
     launch.add_argument('--solver', choices=('openaccel', 'mars'), required=True)
@@ -255,9 +325,10 @@ def main(argv=None):
     os.umask(0o077)
     public = dict(schema=SCHEMA, comparison_status='invalid_evidence', failed_check='private_preflight_or_capture')
     try:
-        if args.action == 'prepare':
-            prepare(args.baseline_pair.resolve(), args.output_dir.resolve())
-            print('Pressure-only experiment prepared. Baseline preserved; no solver launched.')
+        if args.action in ('prepare', 'extend'):
+            prepare(args.baseline_pair.resolve(), args.output_dir.resolve(), args.action == 'extend')
+            print(('Twenty-step comparison' if args.action == 'extend' else 'Pressure-only experiment') +
+                  ' prepared. Baseline preserved; no solver launched.')
             return 0
         if args.action not in ('run', 'compare'):
             parser.error('subcommand required')

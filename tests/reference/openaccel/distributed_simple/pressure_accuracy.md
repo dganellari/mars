@@ -338,3 +338,107 @@ across blocks, work-limit rejection, deterministic selection, and preservation
 of a failed pressure target even when the gradient difference is explained.
 A compiled host gate checks the replay against the production C++
 geometry kernels on shared, skew tetrahedra; this does not validate GPU execution.
+
+## Twenty steps with the verified pressure targets
+
+The user's `simple-gradient-exact-wnbVQ3/public.json` reports that exact replay
+explains the gradient difference at every selected node to within 1% of its
+local difference. Not all failing nodes were selected. The corrected first-step
+velocity and pressure already match; this supports moving to a longer history
+without changing a gradient kernel. It does not establish global gradient
+agreement, a complete root cause, or nonlinear convergence.
+
+`simple_pressure_probe.py extend` prepares a fresh 20-step run **from the same
+zero initialization**, not a restart from the saved solution. Its baseline is the
+completed tighter one-step pair W3SoRZ. Preparation rechecks that pair's pressure
+residuals, assembly, predictor, influence, raw increment and corrected fields.
+The remaining gradient mismatch does not block this history experiment.
+
+The helper preserves the tight pressure targets, all other numerical controls,
+and the recorded binaries, libraries, rank counts, launchers and solver
+environment. Only iteration limits and diagnostic output change. The reference
+momentum and pressure configurations are copied into dedicated blocks with
+`write_system=false`; the original shared/named configurations remain intact.
+This disables the inherited one-step matrix dumps without altering the solves.
+The new MARS launch also omits `--first-step-audit`.
+
+The existing `run` preflight rejects runtime drift against W3SoRZ, which is still
+checked against its original baseline. The MARS-only environment restoration
+option has the same restricted scope as above. **Do not rebuild either binary.**
+Preparation and comparison read the saved private matrices locally; only the
+fixed-label public reports may be shared.
+
+Run the following first in the **OpenAccel terminal**, with its working runtime
+and Python. Fetch only in this terminal; wait for this block before using the
+MARS block. Each `run` reuses that solver's recorded `srun` command, including
+the original allocation options and MARS GPU binding.
+
+```bash
+(
+set -euo pipefail
+scratch=/capstor/scratch/cscs/gandanie
+repo="$scratch/git/mars-v010-check"
+test "$(git -C "$repo" branch --show-current)" = cstone
+git -C "$repo" fetch origin cstone
+git -C "$repo" merge --ff-only refs/remotes/origin/cstone
+python3 -c 'import numpy, netCDF4, yaml'
+umask 077
+mkdir -p "$scratch/tmp"
+export TMPDIR="$scratch/tmp" PYTHONDONTWRITEBYTECODE=1
+run=$(mktemp -d "$scratch/simple-pressure-history-XXXXXX")
+pair="$run/pair"
+probe="$repo/scripts/simple_pressure_probe.py"
+python3 "$probe" extend \
+  --baseline-pair "$scratch/simple-pressure-accuracy-W3SoRZ/pair" \
+  --output-dir "$pair"
+printf '%s\n' "$pair" > "$scratch/simple-pressure-history-current.txt"
+printf 'Private pair: %s\n' "$pair"
+status=0
+python3 "$probe" run --pair "$pair" --solver openaccel \
+  --output "$run/reference-public.json" || status=$?
+cat "$run/reference-public.json"
+exit "$status"
+)
+```
+
+After `capture_complete`, use the **MARS terminal**, with its working runtime and
+Python. This reads the new pair's scratch pointer; it neither fetches nor builds.
+
+```bash
+(
+set -euo pipefail
+scratch=/capstor/scratch/cscs/gandanie
+probe="$scratch/git/mars-v010-check/scripts/simple_pressure_probe.py"
+python3 -c 'import numpy, netCDF4, yaml'
+umask 077
+mkdir -p "$scratch/tmp"
+export TMPDIR="$scratch/tmp" PYTHONDONTWRITEBYTECODE=1
+pair=$(cat "$scratch/simple-pressure-history-current.txt")
+test -f "$pair/reference/launch.json"
+status=0
+python3 "$probe" run --pair "$pair" --solver mars \
+  --restore-solver-environment --output "$pair/mars-public.json" || status=$?
+cat "$pair/mars-public.json"
+if test "$status" -ne 0; then exit "$status"; fi
+python3 "$probe" compare --pair "$pair" \
+  --detail-dir "$pair/history-private" \
+  --output "$pair/history-public.json" || status=$?
+cat "$pair/history-public.json"
+printf 'Share only: %s\n' "$pair/history-public.json"
+exit "$status"
+)
+```
+
+`twenty_step_fields_match` means states 0–20 meet the unchanged velocity/U and
+pressure/(rho U²) tolerance `1e-5`, without a pressure offset. Otherwise
+`twenty_step_fields_differ` identifies the first differing state and field.
+A completed comparison returns exit 0 in either case; read its `outcome`.
+Failed launches, missing states, or runtime changes cannot pass. Early MARS
+convergence before step 20 is incomplete evidence for this experiment; do not
+loosen convergence criteria to force the history.
+
+No matrices or intermediate gradients are captured in this history, so the
+comparator does not independently recompute pressure residuals at every step.
+`pressure_residuals_recomputed_at_every_step` and
+`nonlinear_convergence_verified` remain false even if all saved fields match.
+The original one-step captures and reports remain unchanged.
