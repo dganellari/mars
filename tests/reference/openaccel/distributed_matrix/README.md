@@ -50,6 +50,32 @@ rows of all ranks before the norm is formed, with the same defaults as `SimpleRu
 `halo_complete` is the caller's explicit statement that ghost entries were refreshed after
 the last change of owned entries.
 
+### Compensated defect for correction solves
+
+`s.compensated_defect(halo_complete(x, local_size), b, defect, owned_size, tolerance)`
+writes `b - A*x` in owned scalar solver order and returns global residual norms.
+It uses the original owned CSR and an FMA product remainder with compensated summation
+to retain small terms lost through cancellation. This reduces arithmetic error; it is
+not an exact-arithmetic certificate. The supplied tolerance and its additive/maximum
+convention are unchanged.
+
+The caller supplies persistent output storage, separate from the RHS, local solution
+and matrix values. Capacity and overlap errors are rejected collectively. Empty ranks
+follow the same policy as `residual`. Nonfinite results, overflow and a nonzero residual
+or RHS whose square underflows are rejected. Ghost values must already be current.
+
+The CUDA path computes full rows on device, reuses the existing reduction scratch and
+reduces norms through CUDA-aware MPI. Only the fixed-size decision report reaches the
+host. The ordinary residual implementation retains its existing arithmetic. This API
+is not yet connected to SIMPLE pressure refinement; adding it does not change solver
+acceptance or retry failed solves.
+
+On 2026-10-07 the shared host gates passed with ASan/UBSan on 1, 2 and 4 ranks
+(87/99/99 checks; eight inapplicable checks skipped on one rank). They cover exact sum
+and product cancellation, defect sign and row order, stale ghosts, empty ranks,
+nonfinite values, norm range, output bounds and input preservation. CUDA compilation
+and execution of these additions remain pending in `mars_distributed_matrix_cuda_gate`.
+
 Detected input errors are reduced before throwing at these checks. Callers must abort
 on unexpected rank-local exceptions, including allocation failures:
 - **Build:** capacity, overflow, owned range, duplicates, row contiguity, ghost ids in range
