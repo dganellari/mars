@@ -15,8 +15,9 @@
 //
 // Run:  mars_marsir_cellwise_solve --ptx <hl_full_p7_sm90.ptx> [--ne 8] [--deform 0]
 //                                  [--tol 1e-10] [--maxit 500] [--reps 10]
-// With --ne 3 --deform 0 the residual history must match
-// marsir-mlir/test/cellwise_krylov_ref.py.
+// With the same --ne and --deform, the residual history must match
+// marsir-mlir/test/cellwise_krylov_ref.py to about 4 digits (BiCGStab amplifies the
+// rounding of the different summation orders).
 
 #include "backend/distributed/unstructured/fem/mars_cvfem_ho_basis.hpp"
 #include "backend/distributed/unstructured/fem/mars_cvfem_ho_matfree.hpp"
@@ -222,17 +223,15 @@ int main(int argc, char** argv)
 
     double* d_G = device_array(E * kGElem);
     double* d_diag = device_array(n);
-    double* d_copies = device_array(n);
     double* d_uex = device_array(n);
     double* d_b = device_array(n);
     double* d_x = device_array(n);
 
     metric_kernel<<<blocks_for(E * 3LL * kP * kNN, threads), threads>>>(d_G, E, ne, deform);
-    diagonal_kernel<<<blocks_for(n, threads), threads>>>(d_G, d_diag, E);
+    diagonal_kernel<<<blocks_for(n, threads), threads>>>(d_G, d_b, E);   // d_b: scratch until b = A u
     exact_kernel<<<blocks_for(n, threads), threads>>>(d_uex, E, ne, deform);
     MARS_CELLWISE_CK(cudaGetLastError());
-    cellwise::dss(d_diag, blk);          // assembled diagonal on every copy
-    cellwise::copies(d_copies, blk);
+    cellwise::dss(d_b, d_diag, blk);     // assembled diagonal on every copy
 
     const marsir::LaplacianPtx op(ptx_path, kP);
     auto apply = [&](const double* u, double* y) {
@@ -246,7 +245,7 @@ int main(int argc, char** argv)
     MARS_CELLWISE_CK(cudaEventCreate(&t1));
     MARS_CELLWISE_CK(cudaEventRecord(t0));
     const cellwise::SolveResult res =
-        cellwise::bicgstab(apply, blk, d_b, d_x, d_diag, d_copies, tol, max_iterations);
+        cellwise::bicgstab(apply, blk, d_b, d_x, d_diag, tol, max_iterations);
     MARS_CELLWISE_CK(cudaEventRecord(t1));
     MARS_CELLWISE_CK(cudaEventSynchronize(t1));
     float solve_ms = 0.0f;
@@ -255,12 +254,12 @@ int main(int argc, char** argv)
     // Relative error against the manufactured solution, in the weighted (= assembled) norm.
     double rel_err = 0.0;
     {
-        cellwise::Workspace ws(n);
-        difference_kernel<<<blocks_for(n, threads), threads>>>(ws.q, d_x, d_uex, n);
-        cellwise::wdot(ws.q, ws.q, d_copies, n, ws, ws.scalars + cellwise::kRR);
-        const double err = cellwise::read_norm(ws, 0);
-        cellwise::wdot(d_uex, d_uex, d_copies, n, ws, ws.scalars + cellwise::kRR);
-        rel_err = err / cellwise::read_norm(ws, 0);
+        cellwise::Reduction red;
+        difference_kernel<<<blocks_for(n, threads), threads>>>(d_b, d_x, d_uex, n);
+        cellwise::wdot(d_b, d_b, blk, red, cellwise::kRR);
+        const double err = cellwise::read_norm(red, 0);
+        cellwise::wdot(d_uex, d_uex, blk, red, cellwise::kRR);
+        rel_err = err / cellwise::read_norm(red, 0);
     }
 
     printf("cell-wise BiCGStab, p=%d, %d^3 elements (%lld), %lld unique DoFs, deform %.3f\n",
@@ -283,17 +282,25 @@ int main(int argc, char** argv)
         MARS_CELLWISE_CK(cudaEventElapsedTime(&ms, t0, t1));
         return ms / reps;
     };
+    // Bandwidth counts each element-local value read and written once (8 B each), plus
+    // the diagonal read in the preconditioner: what a single pass must move at least.
+    const double vec_gb = n * 8.0 / 1e9;
     const float op_ms = time_ms([&] { apply(d_uex, d_b); });
-    const float dss_ms = time_ms([&] { cellwise::dss(d_x, blk); });
+    const float dss_ms = time_ms([&] { cellwise::dss(d_b, d_x, blk); });
+    const float cascade_ms = time_ms([&] { cellwise::dss_cascade(d_x, blk); });
     const float pre_ms = time_ms([&] { cellwise::precondition(d_b, d_x, d_diag, blk); });
     const double it_ms = res.iterations ? solve_ms / res.iterations : 0.0;
-    printf("  operator  %8.3f ms  %7.1f ns/elem  %6.2f GDoF/s (unique)\n", op_ms,
+    printf("  operator     %8.3f ms  %7.1f ns/elem  %6.2f GDoF/s (unique)\n", op_ms,
            op_ms * 1e6 / E, unique / (op_ms * 1e-3) / 1e9);
-    printf("  DSS       %8.3f ms  %6.2f GDoF/s (unique)\n", dss_ms, unique / (dss_ms * 1e-3) / 1e9);
-    printf("  precond   %8.3f ms\n", pre_ms);
-    printf("  iteration %8.3f ms  (2 operator + 2 preconditioner + 5 dots + updates)\n", it_ms);
+    printf("  DSS gather   %8.3f ms  %6.2f GDoF/s (unique)  %5.2f TB/s\n", dss_ms,
+           unique / (dss_ms * 1e-3) / 1e9, 2 * vec_gb / dss_ms);
+    printf("  DSS cascade  %8.3f ms  %6.2f GDoF/s (unique)  (in place, 3 passes)\n", cascade_ms,
+           unique / (cascade_ms * 1e-3) / 1e9);
+    printf("  precond      %8.3f ms  %5.2f TB/s  (gather + Jacobi, one pass)\n", pre_ms,
+           3 * vec_gb / pre_ms);
+    printf("  iteration    %8.3f ms  (2 operator, 2 precond + dots, 3 updates)\n", it_ms);
 
-    for (double* p : {d_btil, d_dtil, d_w, d_d, d_G, d_diag, d_copies, d_uex, d_b, d_x})
+    for (double* p : {d_btil, d_dtil, d_w, d_d, d_G, d_diag, d_uex, d_b, d_x})
         cudaFree(p);
     return rel_err < 1e-8 ? 0 : 1;
 }
