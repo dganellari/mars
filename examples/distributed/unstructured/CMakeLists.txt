@@ -270,28 +270,28 @@ if(MARS_ENABLE_HYPRE)
     install(TARGETS mars_lid_driven_cavity RUNTIME DESTINATION bin/examples)
 endif()
 
-# Coupled collocated solver -- Phase 0 model operator (plan in
-# internal-notes/plan_coupled_collocated_solver.md). Increment 1 is the G=-D^T
-# geometry gate; coupled assembly + direct-solve oracle land in later increments.
-# Its solve paths use HypreGMRESSolver directly, so it needs a Hypre build.
-if(MARS_ENABLE_HYPRE)
-    add_executable(mars_coupled_model_operator mars_coupled_model_operator.cu)
-    target_link_libraries(mars_coupled_model_operator PRIVATE mars)
-    target_include_directories(mars_coupled_model_operator PRIVATE
+# Development drivers, not part of the v0.1 docs, so off by default (-DMARS_ENABLE_DEV_EXAMPLES=ON).
+if(MARS_ENABLE_DEV_EXAMPLES)
+    # Coupled collocated solver, phase 0 model operator. Its solve paths use HypreGMRESSolver directly,
+    # so it needs a Hypre build.
+    if(MARS_ENABLE_HYPRE)
+        add_executable(mars_coupled_model_operator mars_coupled_model_operator.cu)
+        target_link_libraries(mars_coupled_model_operator PRIVATE mars)
+        target_include_directories(mars_coupled_model_operator PRIVATE
+            ${CMAKE_SOURCE_DIR}/backend/distributed/unstructured/amr
+        )
+        install(TARGETS mars_coupled_model_operator RUNTIME DESTINATION bin/examples)
+    endif()
+
+    # Pump driver: transient projection (BDF2 + Chorin) on a tet pump mesh, with pressure-driven
+    # opening boundaries. Uses the pump fork mars_ns_pump_solver.hpp.
+    add_executable(mars_pump mars_pump.cu)
+    target_link_libraries(mars_pump PRIVATE mars)
+    target_include_directories(mars_pump PRIVATE
         ${CMAKE_SOURCE_DIR}/backend/distributed/unstructured/amr
     )
-    install(TARGETS mars_coupled_model_operator RUNTIME DESTINATION bin/examples)
+    install(TARGETS mars_pump RUNTIME DESTINATION bin/examples)
 endif()
-
-# Pump driver: transient projection (BDF2 + Chorin) NS on a tet pump mesh, with
-# the pressure-drive opening BCs. Uses the pump fork mars_ns_pump_solver.hpp.
-# Validated config in the run notes: --solver=hypre --pressure-k --pspg.
-add_executable(mars_pump mars_pump.cu)
-target_link_libraries(mars_pump PRIVATE mars)
-target_include_directories(mars_pump PRIVATE
-    ${CMAKE_SOURCE_DIR}/backend/distributed/unstructured/amr
-)
-install(TARGETS mars_pump RUNTIME DESTINATION bin/examples)
 
 # Segregated SIMPLE solver (experimental), and the gates that compare it and the pump solver's
 # outlet treatment with OpenAccel on public cases. Development only, so off by default.
