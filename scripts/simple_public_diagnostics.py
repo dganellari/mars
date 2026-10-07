@@ -163,6 +163,27 @@ def cap_reached(record):
     return done >= cap if cap > 0 else None
 
 
+def zero_iterations(record):
+    match = re.fullmatch(r'([0-9]+)/([0-9]+)', record.get('iterations') or '')
+    if not match or int(match.group(2)) == 0:
+        return None
+    return int(match.group(1)) == 0
+
+
+def first_step(record):
+    value = record.get('iteration') or ''
+    if not re.fullmatch(r'[0-9]+', value) or int(value) == 0:
+        return None
+    return int(value) == 1
+
+
+def zero_norm(record, key):
+    value = number(record, key)
+    if value is None or not math.isfinite(value) or value < 0:
+        return None
+    return value == 0
+
+
 def error_nonzero(record):
     value = record.get('solve_error') or ''
     return int(value) != 0 if re.fullmatch(r'[0-9]+', value) else None
@@ -318,6 +339,13 @@ def summarize_state(state, exit_text, reference_deck):
         'solver_accepted': consensus(simple, lambda r: flag(r, 'solver_accepted')),
         'mars_passed': consensus(simple, lambda r: flag(r, 'mars_passed')),
         'iteration_cap_reached': consensus(hypre, cap_reached),
+        'linear_failure_at_first_step': consensus(simple, first_step),
+        'krylov_iterations_zero': consensus(hypre, zero_iterations),
+        'hypre_rhs_norm_zero': consensus(hypre, lambda r: zero_norm(r, 'rhs_norm')),
+        'hypre_acceptance_limit_zero': consensus(hypre, lambda r: zero_norm(r, 'acceptance_limit')),
+        # Hypre's work vector need not contain the final b-Ax after an early stop.
+        'krylov_work_residual_finite': consensus(hypre, lambda r: finite(r, 'krylov_work_norm')),
+        'krylov_work_residual_within_limit': consensus(hypre, lambda r: passed(r, 'krylov_work_norm', 'acceptance_limit')),
         'hypre_error_nonzero': consensus(hypre, error_nonzero),
         'reported_residual_finite': consensus(hypre, lambda r: finite(r, 'reported_relative')),
         'reported_residual_passed': consensus(hypre, lambda r: passed(r, 'reported_relative', 'tolerance')),

@@ -39,6 +39,54 @@ class PublicDiagnosticsTests(unittest.TestCase):
         self.assertIs(result['hypre_explicit_residual_passed'], False)
         self.assertIs(result['mars_explicit_residual_passed'], True)
 
+    def test_work_vector_cannot_accept_rejected_candidate(self):
+        text = HYPRE + ' rhs_norm=0.02 krylov_work_norm=1e-16\n' + SIMPLE
+        result = summarize(text)
+        for key in ('linear_failure_at_first_step', 'krylov_iterations_zero',
+                    'hypre_rhs_norm_zero', 'hypre_acceptance_limit_zero'):
+            self.assertIs(result[key], False)
+        self.assertIs(result['krylov_work_residual_finite'], True)
+        self.assertIs(result['krylov_work_residual_within_limit'], True)
+        for key in ('solver_accepted', 'mars_passed', 'hypre_explicit_residual_passed',
+                    'mars_explicit_residual_passed'):
+            self.assertIs(result[key], False)
+        self.assertEqual(result['run_status'], 'failed')
+
+    def test_zero_iteration_and_zero_target_remain_failed(self):
+        hypre = HYPRE.replace('7/2000', '0/2000').replace('acceptance_limit=1e-11', 'acceptance_limit=0')
+        simple = SIMPLE.replace('iteration=27', 'iteration=1')
+        result = summarize(hypre + ' rhs_norm=0 krylov_work_norm=nan\n' + simple)
+        for key in ('linear_failure_at_first_step', 'krylov_iterations_zero',
+                    'hypre_rhs_norm_zero', 'hypre_acceptance_limit_zero'):
+            self.assertIs(result[key], True)
+        self.assertIs(result['krylov_work_residual_finite'], False)
+        self.assertIs(result['krylov_work_residual_within_limit'], False)
+        self.assertEqual(result['run_status'], 'failed')
+
+    def test_stopping_flags_missing_malformed_or_conflicting_are_unknown(self):
+        keys = ('linear_failure_at_first_step', 'krylov_iterations_zero',
+                'hypre_rhs_norm_zero', 'hypre_acceptance_limit_zero',
+                'krylov_work_residual_finite', 'krylov_work_residual_within_limit')
+        for key in keys:
+            self.assertIsNone(summarize('')[key])
+        for value in ('bad', '-1/2000', '7/0', '7/2000 iterations=0/2000'):
+            text = HYPRE.replace('iterations=7/2000', 'iterations=' + value)
+            self.assertIsNone(summarize(text)['krylov_iterations_zero'])
+        for value in ('bad', '-1', '0', '1.0', '27 iteration=1'):
+            text = SIMPLE.replace('iteration=27', 'iteration=' + value)
+            self.assertIsNone(summarize(text)['linear_failure_at_first_step'])
+        for value in ('bad', '-1', 'nan', 'inf', '1e999', '0 rhs_norm=1'):
+            self.assertIsNone(summarize(HYPRE + ' rhs_norm=' + value)['hypre_rhs_norm_zero'])
+        for value in ('bad', '-1', 'nan', 'inf', '1e999', '0 acceptance_limit=1'):
+            text = HYPRE.replace('acceptance_limit=1e-11', 'acceptance_limit=' + value)
+            self.assertIsNone(summarize(text)['hypre_acceptance_limit_zero'])
+        first = HYPRE + ' rhs_norm=0 krylov_work_norm=nan\n' + SIMPLE
+        second = (HYPRE.replace('7/2000', '0/2000').replace('acceptance_limit=1e-11', 'acceptance_limit=0')
+                  + ' rhs_norm=1 krylov_work_norm=0\n' + SIMPLE.replace('iteration=27', 'iteration=1'))
+        result = summarize(first + '\n' + second)
+        for key in keys:
+            self.assertIsNone(result[key])
+
     def test_unknowns_and_conflicts_do_not_pass(self):
         self.assertIsNone(summarize('')['solver_accepted'])
         result = summarize(HYPRE + '\n' + HYPRE.replace('solve_error=0', 'solve_error=256'))

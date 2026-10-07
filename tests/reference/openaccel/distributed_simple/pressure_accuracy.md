@@ -442,3 +442,42 @@ comparator does not independently recompute pressure residuals at every step.
 `pressure_residuals_recomputed_at_every_step` and
 `nonlinear_convergence_verified` remain false even if all saved fields match.
 The original one-step captures and reports remain unchanged.
+
+### Inspecting a rejected pressure solve
+
+If the history stops at a pressure solve, re-export its saved log before changing
+solver controls. Run this in **one terminal only**; it needs neither a rebuild
+nor another GPU run. The existing capture and comparison inputs stay unchanged.
+
+```bash
+(
+set -euo pipefail
+scratch=/capstor/scratch/cscs/gandanie
+repo="$scratch/git/mars-v010-check"
+test "$(git -C "$repo" branch --show-current)" = cstone
+git -C "$repo" fetch origin cstone
+git -C "$repo" merge --ff-only refs/remotes/origin/cstone
+umask 077
+export PYTHONDONTWRITEBYTECODE=1
+pair=$(cat "$scratch/simple-pressure-history-current.txt")
+test -f "$pair/mars/run.log"
+test -f "$pair/mars/run.exit"
+summary=$(mktemp -d "$scratch/simple-pressure-stop-XXXXXX")/public.json
+python3 "$repo/scripts/simple_public_diagnostics.py" \
+  --log "$pair/mars/run.log" --exit-file "$pair/mars/run.exit" \
+  --output "$summary"
+cat "$summary"
+printf 'Share only: %s\n' "$summary"
+)
+```
+
+The extra flags distinguish a first-step rejection from a later one, zero from
+positive Krylov iterations, and zero from positive RHS norms and acceptance
+limits. Missing, invalid, or conflicting records remain unknown (`null`). Raw
+counts and norms stay private. These flags do not identify a stopping cause.
+
+`krylov_work_residual_within_limit` checks the logged work vector, which need not
+contain the final `b-Ax` after an early stop. It cannot override either explicit
+residual check or turn a failed run into a pass. Likewise, being within the
+pressure audit's roundoff upper bound does not certify an accurate solution or
+prove that a tighter solve is impossible.
