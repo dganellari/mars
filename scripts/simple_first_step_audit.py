@@ -13,7 +13,7 @@ AUDIT_ERRORS = frozenset('audit_parts audit_format audit_rank_identity audit_dim
     'reference_solver_ids audit_initial_fields_differ reference_pressure_update mars_predictor_update '
     'mars_velocity_update mars_pressure_update audit_field_arithmetic reference_field_names '
     'reference_ghost_values reference_coordinates reference_saved_iteration reference_node_ids reference_node_coverage '
-    'audit_pressure_controls'.split())
+    'audit_pressure_controls gradient_storage_precision gradient_mesh gradient_arithmetic'.split())
 
 
 def enable_reference_audit(deck):
@@ -224,7 +224,7 @@ def collect(parts, name, nodes, components):
     return result
 
 
-def compare_first_step(pair, ids, xyz, tolerance, scales, ranks, reference_paths, public, detail_dir=None):
+def compare_first_step(pair, ids, xyz, tolerance, scales, ranks, reference_paths, public, detail_dir=None, gradient_audit=False):
     from simple_startup_probe import read_json, write_json
     nodes = len(ids)
     expected = [pair / ('mars/flow-audit-rank{:06d}.bin'.format(rank)) for rank in range(ranks)]
@@ -233,7 +233,7 @@ def compare_first_step(pair, ids, xyz, tolerance, scales, ranks, reference_paths
     public['failed_check'] = 'reference_intermediate_fields'
     fields = ('aux', 'du_x', 'du_y', 'du_z', 'pressure_correction',
               'pressure_correction_gradient_x', 'pressure_correction_gradient_y', 'pressure_correction_gradient_z')
-    values = reference_fields(reference_paths, ids, xyz, 1, tolerance, np.ones(len(fields)), fields)
+    values = reference_fields(reference_paths, ids, xyz, 1, tolerance, np.ones(len(fields)), fields, exact_storage=gradient_audit)
     numbering = values[:, 0]
     require(np.array_equal(np.sort(numbering), np.arange(nodes)), 'reference_solver_ids')
     solver_to_source = np.argsort(numbering)
@@ -288,6 +288,12 @@ def compare_first_step(pair, ids, xyz, tolerance, scales, ranks, reference_paths
              'corrected_velocity', 'corrected_pressure')
     public['failed_check'] = 'first_step_pressure_controls'
     checks, target_details = pressure_accuracy(pair, controls, systems['pressure'])
+    if gradient_audit:
+        public['failed_check'] = 'pressure_gradient_reconstruction'
+        checks_gradient, details_gradient = gradient_reconstruction(
+            read_json(pair / 'pair.json')['mesh'], xyz, mars['phi'], phi, mars['gradient'], gradient, scales[3]/length)
+        public['pressure_gradient_checks'] = checks_gradient
+        write_json((detail_dir or pair) / 'gradient-private.json', details_gradient)
     write_json((detail_dir or pair) / 'first-step-private.json', dict(systems=systems, field_errors=errors,
         pressure_targets=target_details,
         matrix_tolerance=1e-10, field_tolerance=1e-5, common_residual_threshold=1e-8,
@@ -298,3 +304,100 @@ def compare_first_step(pair, ids, xyz, tolerance, scales, ranks, reference_paths
                   first_differing_stage=next((name for name in order if not matches[name]), 'none'),
                   reference_predictor_reconstructed=True, matrix_comparison='positive_row_scaling_equivalence',
                   linear_accuracy_scope='common_diagnostic_threshold_not_backend_stopping_test')
+
+
+def tet_gradient_action(xyz, chunks, fields):
+    """Replay the shifted incremental scalar operator, including complete nodal stars."""
+    require(xyz.ndim == 2 and xyz.shape[1] == 3 and fields.shape[0] == len(xyz)
+            and fields.ndim == 2 and np.isfinite(xyz).all() and np.isfinite(fields).all(), 'gradient_mesh')
+    volume = np.zeros(len(xyz))
+    numerator = np.zeros((len(xyz), fields.shape[1], 3))
+    magnitude = np.zeros_like(numerator)
+    with np.errstate(over='raise', invalid='raise', divide='raise'):
+        for nodes in chunks:
+            require(nodes.ndim == 2 and nodes.shape[1] == 4 and nodes.dtype.kind in 'iu'
+                    and np.all((nodes >= 0) & (nodes < len(xyz))), 'gradient_mesh')
+            vertices = xyz[nodes]
+            a, b, c = (vertices[:, i]-vertices[:, 0] for i in (1, 2, 3))
+            cross = np.stack((np.cross(b, c), np.cross(c, a), np.cross(a, b)), axis=1)
+            det = np.sum(a*cross[:, 0], axis=1)
+            require(np.all(np.isfinite(det)) and np.all(det != 0), 'gradient_mesh')
+            gradients = np.empty((len(nodes), 4, 3))
+            gradients[:, 1:] = cross / det[:, None, None]
+            gradients[:, 0] = -np.sum(gradients[:, 1:], axis=1)
+            quarter = np.abs(det)/24
+            values = fields[nodes]
+            for local in range(4):
+                np.add.at(volume, nodes[:, local], quarter)
+            for left, right in ((0, 1), (1, 2), (0, 2), (0, 3), (1, 3), (2, 3)):
+                area = quarter[:, None]*(gradients[:, right]-gradients[:, left])
+                term = .5*(values[:, right]-values[:, left])[:, :, None]*area[:, None, :]
+                # The captures interpolate before subtracting; account for cancellation in that form.
+                size = (np.abs(values[:, right])+np.abs(values[:, left]))[:, :, None]*np.abs(area[:, None, :])
+                for local in (left, right):
+                    np.add.at(numerator, nodes[:, local], term)
+                    np.add.at(magnitude, nodes[:, local], size)
+        require(np.all(volume > 0) and np.isfinite(volume).all(), 'gradient_mesh')
+        result, magnitude = numerator/volume[:, None, None], magnitude/volume[:, None, None]
+    require(np.isfinite(result).all() and np.isfinite(magnitude).all(), 'gradient_arithmetic')
+    return result, magnitude
+
+
+def tet_chunks(ds, nodes):
+    require('num_el_blk' in ds.dimensions and 'num_elem' in ds.dimensions, 'gradient_mesh')
+    total = 0
+    for number in range(1, len(ds.dimensions['num_el_blk'])+1):
+        name = 'connect' + str(number)
+        if name not in ds.variables:
+            require('num_el_in_blk' + str(number) not in ds.dimensions, 'gradient_mesh')
+            continue
+        variable = ds.variables[name]
+        require(variable.ndim == 2 and variable.shape[1] == 4 and variable.dtype.kind in 'iu'
+                and str(variable.getncattr('elem_type')).strip().upper() in ('TETRA', 'TETRA4', 'TET4'), 'gradient_mesh')
+        total += variable.shape[0]
+        for start in range(0, variable.shape[0], 65536):
+            block = variable[start:start+65536]
+            require(not np.any(np.ma.getmaskarray(block)) and np.all((block > 0) & (block <= nodes)), 'gradient_mesh')
+            yield np.asarray(block, dtype=np.int64)-1
+    require(total == len(ds.dimensions['num_elem']) and total > 0, 'gradient_mesh')
+
+
+def gradient_checks(replayed, magnitude, mars_gradient, reference_gradient, scale):
+    require(math.isfinite(scale) and scale > 0 and np.isfinite(mars_gradient).all()
+            and np.isfinite(reference_gradient).all(), 'gradient_arithmetic')
+    # This is a strict consistency tolerance, not a certified floating-point error bound.
+    limits = 1e-10*(scale + magnitude)
+    difference = mars_gradient-reference_gradient
+    errors = np.stack((mars_gradient-replayed[:, 0], reference_gradient-replayed[:, 1],
+                       difference-replayed[:, 2]), axis=1)
+    limits[:, 2] += limits[:, 0]+limits[:, 1]
+    require(np.isfinite(errors).all() and np.isfinite(limits).all(), 'gradient_arithmetic')
+    passed = np.all(np.abs(errors) <= limits, axis=(0, 2))
+    peak = float(np.max(np.abs(difference)))
+    resolved = float(np.max(limits)) < .01*peak
+    within = bool(peak/scale <= 1e-5)
+    assessment = ('reconstruction_mismatch' if not passed.all() else
+                  'gradients_within_field_tolerance' if within else
+                  'input_difference_explains_gradient_within_replay_tolerance' if resolved else
+                  'insufficient_replay_resolution')
+    public = dict(mars_saved_gradient_matches_reconstruction=bool(passed[0]),
+                  reference_saved_gradient_matches_reconstruction=bool(passed[1]),
+                  gradient_difference_matches_pressure_difference_action=bool(passed[2]),
+                  replay_tolerance_resolves_observed_difference=resolved,
+                  gradient_difference_within_field_tolerance=within, assessment=assessment,
+                  reference_float64_storage_and_exact_copies_verified=True,
+                  scope='common_shifted_tet4_operator_on_saved_fields', roundoff_bound_proven=False)
+    private = dict(max_errors_scaled=(np.max(np.abs(errors), axis=(0, 2))/scale).tolist(),
+                   max_limits_scaled=(np.max(limits, axis=(0, 2))/scale).tolist(),
+                   observed_difference_scaled=peak/scale, consistency_tolerance=1e-10,
+                   field_tolerance=1e-5, required_resolution_fraction=.01)
+    return public, private
+
+
+def gradient_reconstruction(mesh, xyz, mars_phi, reference_phi, mars_gradient, reference_gradient, scale):
+    from netCDF4 import Dataset
+    # Apply G directly to delta phi; subtracting two reconstructed gradients loses accuracy.
+    fields = np.column_stack((mars_phi, reference_phi, mars_phi-reference_phi))
+    with Dataset(mesh) as ds:
+        replayed, magnitude = tet_gradient_action(xyz, tet_chunks(ds, len(xyz)), fields)
+    return gradient_checks(replayed, magnitude, mars_gradient, reference_gradient, scale)

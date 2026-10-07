@@ -184,3 +184,100 @@ exit "$status"
 ```bash
 PYTHONPATH=scripts python3 -m unittest test_simple_pressure_probe test_simple_first_step_audit test_simple_startup_probe test_simple_snapshot_compare test_prepare_simple_deck
 ```
+
+## Saved gradient replay after hkkN7u
+
+The public hkkN7u report verifies the pressure-only experiment and recorded runtime
+identity. Both pressure residual checks now pass; the raw pressure increment and
+corrected velocity and pressure match the comparison tolerances. Only the
+pressure-increment gradient still differs. This is **one step**, not a converged
+pump comparison. A scalar passing its tolerance is not an identical scalar:
+differentiation can amplify the remaining difference.
+
+For the supported shifted, incremental Tet4 reconstruction, both source paths use
+
+```text
+V_i = sum(t containing i) V_t/4
+A_ij,t = (V_t/4) (grad N_j - grad N_i)
+(G phi)_i = sum(t containing i, j != i) 0.5*(phi_j-phi_i)*A_ij,t / V_i
+```
+
+Here `phi` is the raw pressure correction in Pa, `G phi` has units Pa/m, and
+`N_i` is the affine tetrahedral basis. The shifted boundary sample equals its
+node value, so the incremental boundary contribution is zero for the supported
+wall/inlet/outlet path. This operator is not affine-exact at every boundary
+node. Relevant implementations are MARS `mars_segregated_simple.hpp`
+(`SimpleGradientInterior/Boundary/Finish`) and pinned OpenAccel `nodeField.hpp`
+(`updateGradientField`), with shifted Tet4/Tri3 master elements. MARS sums before
+dividing by dual volume; OpenAccel divides each term before accumulation.
+Their geometric evaluation paths also differ, so exact floating-point identity
+is not assumed.
+
+`compare --gradient-audit` reads the already hashed input mesh and captures on
+the user's machine, reconstructs this common operator, and checks
+
+```text
+g_M - G(phi_M)
+g_R - G(phi_R)
+(g_M - g_R) - G(phi_M - phi_R)
+```
+
+It applies `G` directly to the pressure difference. The reference intermediates
+must be stored as float64, and duplicate reference copies must agree exactly.
+Connectivity is streamed by block; only Tet4 is accepted. The production solver,
+captured binaries, original reports, and launch records are unchanged. This is
+optional CPU postprocessing of existing files, not a CPU solver path.
+
+Each reconstruction uses consistency tolerance `1e-10*(P0/L + B)`, where `B`
+is the absolute edge-area/pressure accumulation divided by dual volume. The
+closure tolerance sums the two individual allowances and the delta-field
+allowance. These are diagnostic tolerances, **not certified roundoff bounds**.
+An explanation additionally requires every allowance to be below 1% of the
+observed maximum gradient difference. Numerical values remain in the fresh
+private report; the public report contains only fixed labels and booleans.
+
+- `input_difference_explains_gradient_within_replay_tolerance`: both individual
+  gradients reconstruct, the difference closes, and the check resolves that
+  difference. This supports amplification of the remaining scalar difference;
+  it does not prove backend convergence or nonlinear pump agreement.
+- `reconstruction_mismatch`: at least one reconstruction/closure fails. Further
+  geometry, mapping, capture or implementation checks are needed; it does not
+  uniquely identify a kernel bug.
+- `insufficient_replay_resolution`: the allowed replay error is too large for
+  that attribution.
+- `gradients_within_field_tolerance`: the saved gradients already meet the
+  original `1e-5` scaled check and reconstruct successfully.
+
+The original stage verdict is preserved even if the difference is explained.
+No tolerance is relaxed to turn `first_step_still_differs` into a pass.
+
+Run in either terminal with the working NumPy/netCDF4/PyYAML environment.
+**No build, allocation, OpenAccel rerun or MARS rerun is required.**
+
+```bash
+(
+set -euo pipefail
+scratch=/capstor/scratch/cscs/gandanie
+repo="$scratch/git/mars-v010-check"
+git -C "$repo" pull --ff-only
+python3 -c 'import numpy, netCDF4, yaml'
+umask 077
+mkdir -p "$scratch/tmp"
+export TMPDIR="$scratch/tmp" PYTHONDONTWRITEBYTECODE=1
+run=$(mktemp -d "$scratch/simple-gradient-replay-XXXXXX")
+status=0
+python3 "$repo/scripts/simple_pressure_probe.py" compare \
+  --pair "$scratch/simple-pressure-accuracy-W3SoRZ/pair" \
+  --gradient-audit --detail-dir "$run/private" \
+  --output "$run/public.json" || status=$?
+cat "$run/public.json"
+printf 'Share only: %s\n' "$run/public.json"
+exit "$status"
+)
+```
+
+Local validation adds public synthetic tests for the analytic single-tet action,
+constant fields, orientation/translation/scaling, block connectivity, amplified
+scalar errors, false explanations, storage/copy rejection, and preserved capture
+provenance. A compiled host gate checks the replay against the production C++
+geometry kernels on shared, skew tetrahedra; this does not validate GPU execution.

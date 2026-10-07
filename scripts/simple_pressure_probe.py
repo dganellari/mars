@@ -17,7 +17,8 @@ ERRORS = frozenset(('baseline_identity', 'baseline_first_step_required', 'baseli
     'pressure_configuration', 'pressure_target_unchanged', 'momentum_configuration_changed',
     'nonpressure_controls_changed', 'experiment_identity', 'executable_changed', 'libraries_changed',
     'solver_environment_changed', 'launcher_changed', 'baseline_stage_mismatch', 'launcher_exit',
-    'environment_restore_requires_mars'))
+    'environment_restore_requires_mars', 'gradient_mesh', 'gradient_arithmetic', 'gradient_storage_precision',
+    'reference_ghost_values'))
 
 # Only scalar solver/execution controls can be restored. Never restore paths or device binding.
 RESTORABLE_ENVIRONMENT = frozenset(('MARS_AMG_AGG', 'MARS_AMG_COARSEN', 'MARS_AMG_INTERP',
@@ -191,7 +192,7 @@ def run(pair, solver, restore_solver_environment=False, public=None):
     runtime_matches(old, startup.verified_launch(pair, solver), pair, solver)
 
 
-def compare(pair, public, details):
+def compare(pair, public, details, gradient_audit=False):
     baseline, records = check_inputs(pair)
     for solver, old in records.items():
         runtime_matches(old, startup.verified_launch(pair, solver), pair, solver)
@@ -200,7 +201,7 @@ def compare(pair, public, details):
     new_details.mkdir(mode=0o700)
     old_public, new_public = {}, {}
     startup.compare(baseline, old_public, old_details)
-    startup.compare(pair, new_public, new_details)
+    startup.compare(pair, new_public, new_details, gradient_audit=gradient_audit)
     stages = ('momentum_matrix', 'momentum_rhs', 'momentum_predictor', 'momentum_influence',
               'pressure_matrix', 'pressure_rhs')
     require(all(old_public['first_step_stage_matches'][key] for key in stages), 'baseline_stage_mismatch')
@@ -248,6 +249,8 @@ def main(argv=None):
     check.add_argument('--pair', type=Path, required=True)
     check.add_argument('--output', type=Path, required=True)
     check.add_argument('--detail-dir', type=Path, required=True)
+    check.add_argument('--gradient-audit', action='store_true',
+                       help='Privately reconstruct gradients from the saved Tet4 mesh and pressure fields; no solver run')
     args = parser.parse_args(argv)
     os.umask(0o077)
     public = dict(schema=SCHEMA, comparison_status='invalid_evidence', failed_check='private_preflight_or_capture')
@@ -267,7 +270,7 @@ def main(argv=None):
                     public.update(comparison_status='capture_complete', failed_check='none')
                 else:
                     args.detail_dir.mkdir(mode=0o700)
-                    compare(pair, public, args.detail_dir)
+                    compare(pair, public, args.detail_dir, args.gradient_audit)
             except Exception as error:
                 public['failed_check'] = str(error) if isinstance(error, EvidenceError) and str(error) in ERRORS else 'private_preflight_or_capture'
                 if args.action == 'run':

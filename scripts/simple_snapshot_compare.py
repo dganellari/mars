@@ -181,7 +181,7 @@ def mars_fields(prefix, xyz, coordinate_tolerance, ranks):
     return values, ([manifest] if manifest.is_file() else []) + paths
 
 
-def reference_fields(paths, ids, xyz, iteration, coordinate_tolerance, scales, fields=FIELDS):
+def reference_fields(paths, ids, xyz, iteration, coordinate_tolerance, scales, fields=FIELDS, exact_storage=False):
     import numpy as np
     from netCDF4 import Dataset, chartostring
     order = np.argsort(ids)
@@ -221,6 +221,9 @@ def reference_fields(paths, ids, xyz, iteration, coordinate_tolerance, scales, f
                     var = ds.variables['vals_nod_var' + str(j + 1)]
                     require(var.dimensions == ('time_step', 'num_nodes') and var.shape == (len(times), count))
                     variables.append((var, None))
+            if exact_storage:
+                require(all(v.dtype.kind == 'f' and v.dtype.itemsize == 8 for v, _ in variables),
+                        'gradient_storage_precision')
             for start in range(0, count, 65536):
                 stop = min(start + 65536, count)
                 nodes = source[start:stop]
@@ -231,7 +234,8 @@ def reference_fields(paths, ids, xyz, iteration, coordinate_tolerance, scales, f
                 if duplicate.any():
                     a, b = block[duplicate], values[nodes[duplicate]]
                     limit = 1e-12 * (scales + np.maximum(np.abs(a), np.abs(b)))
-                    require(np.all(np.abs(a - b) <= limit), 'reference_ghost_values')
+                    require(np.array_equal(a, b) if exact_storage else np.all(np.abs(a - b) <= limit),
+                            'reference_ghost_values')
                 values[nodes] = block
                 seen[nodes] = True
     require(seen.all(), 'reference_node_coverage')

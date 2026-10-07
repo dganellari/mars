@@ -385,13 +385,14 @@ def verified_launch(pair, solver):
     return record
 
 
-def compare(pair, public, detail_dir=None):
+def compare(pair, public, detail_dir=None, gradient_audit=False):
     import numpy as np
     from netCDF4 import Dataset
     pair = pair.resolve()
     public['failed_check'] = 'input_identity'
     inputs = pair_inputs(pair)
     steps = inputs['steps']
+    require(not gradient_audit or (steps == 1 and inputs.get('first_step_audit') is True), 'gradient_mesh')
     public['failed_check'] = 'launch_records'
     mars_record = verified_launch(pair, 'mars')
     reference_record = verified_launch(pair, 'openaccel')
@@ -462,7 +463,7 @@ def compare(pair, public, detail_dir=None):
         from simple_first_step_audit import compare_first_step
         public['comparison_status'] = 'invalid_evidence'
         public['failed_check'] = 'first_step_capture'
-        compare_first_step(pair, ids, xyz, tol, scales, mars_record['ranks'], reference_paths, public, detail_dir)
+        compare_first_step(pair, ids, xyz, tol, scales, mars_record['ranks'], reference_paths, public, detail_dir, gradient_audit)
         public.update(comparison_status='completed', failed_check='none')
 
 
