@@ -375,9 +375,11 @@ public:
     // y = A x on this rank's unknowns.
     void apply(const HYPRE_Complex* x, HYPRE_Complex* y)
     {
+        trace("apply");
         copyIn(x, f_);
         HYPRE_ParCSRMatrixMatvec(1.0, matrix(), f_, 0.0, u_);
         copyOut(u_, y);
+        trace("apply done");
     }
 
     double lastRelativeResidual() const { return lastRelativeResidual_; }
@@ -398,7 +400,7 @@ private:
         if (rows_ > 0) cudaMemcpy(dst, data, rows_ * sizeof(HYPRE_Complex), cudaMemcpyDeviceToDevice);
     }
 
-    // MARS_AMG_TRACE=1: each setup and solve phase per rank, flushed, to locate a crash or hang.
+    // MARS_AMG_TRACE=1: each setup, solve and apply phase per rank, flushed, to locate a crash or hang.
     void trace(const char* phase) const
     {
         static const bool enabled = std::getenv("MARS_AMG_TRACE") != nullptr;
