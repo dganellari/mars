@@ -232,7 +232,11 @@ def _apply_body(L, ea, p, ctr, v, uval, gval, indent="  ", y_init=None,
     cP = fresh("i")
     L.append("%s%s = arith.constant %d : index" % (I, cP, P))
 
-    for d in range(3):
+    # Direction 2 first: its Y planes are element-strided (each access touches
+    # every cache line of the element), and the first direction only writes Y
+    # -- its reads see the zero fill -- so the strided reads disappear. The
+    # three directions are independent sums; only the rounding order changes.
+    for d in (2, 1, 0):
         fa_ty = all_faces_type(d)
         interp_all = deriv_all = None
         if ea.needs_tangential:
