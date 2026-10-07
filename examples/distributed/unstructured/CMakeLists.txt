@@ -455,6 +455,13 @@ if(MARS_ENABLE_MARSIR)
     add_executable(mars_marsir_jvp_test mars_marsir_jvp_test.cu)
     target_link_libraries(mars_marsir_jvp_test PRIVATE mars)
     install(TARGETS mars_marsir_jvp_test RUNTIME DESTINATION bin/examples)
+
+    # Element-local (cell-wise) solve: the MLIR-generated operator (PTX, loaded at
+    # run time through the driver API) with the hand-written DSS and BiCGStab of
+    # solvers/mars_cellwise_krylov.hpp.
+    add_executable(mars_marsir_cellwise_solve mars_marsir_cellwise_solve.cu)
+    target_link_libraries(mars_marsir_cellwise_solve PRIVATE mars CUDA::cuda_driver)
+    install(TARGETS mars_marsir_cellwise_solve RUNTIME DESTINATION bin/examples)
 endif()
 
 # End-to-end release checks on generated meshes (`ctest -L release`).
