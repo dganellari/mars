@@ -73,8 +73,17 @@ acceptance or retry failed solves.
 On 2026-10-07 the shared host gates passed with ASan/UBSan on 1, 2 and 4 ranks
 (87/99/99 checks; eight inapplicable checks skipped on one rank). They cover exact sum
 and product cancellation, defect sign and row order, stale ghosts, empty ranks,
-nonfinite values, norm range, output bounds and input preservation. CUDA compilation
-and execution of these additions remain pending in `mars_distributed_matrix_cuda_gate`.
+nonfinite values, norm range, output bounds and input preservation.
+
+On 2026-10-08 the CUDA gate built and passed on Alps at MARS `59c89f0e`, using
+Hypre 2.33.0 with native GPU SpMV. The saved public logs report 95/107/107 passed
+checks on 1/2/4 ranks, zero failures and exit code zero on each run. The eight
+one-rank skips require ghost nodes or multiple ranks. All 13 compensated-defect
+fixtures passed on each rank count, and the four-rank launcher reported distinct
+GPUs 0/1/2/3. Results and executable SHA-256 are recorded under
+`/capstor/scratch/cscs/gandanie/simple-defect-gate-AwOrJE`.
+This validates the component and existing Hypre solve gates on one node; pressure
+refinement, pump convergence and multi-node behavior are not established by it.
 
 Detected input errors are reduced before throwing at these checks. Callers must abort
 on unexpected rank-local exceptions, including allocation failures:
