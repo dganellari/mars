@@ -247,7 +247,7 @@ class ReferenceLogState:
         return result
 
 
-def launch(pair, solver, executable, ranks, launcher):
+def launch(pair, solver, executable, ranks, launcher, environment=None):
     pair = pair.resolve()
     pair_inputs(pair)
     require(1 <= ranks <= 4 and launcher)
@@ -257,7 +257,7 @@ def launch(pair, solver, executable, ranks, launcher):
     if solver == 'mars':
         directory.mkdir()
     require(not (directory / 'run.log').exists() and not (directory / 'launch.json').exists())
-    environment = dict(os.environ)
+    environment = dict(os.environ if environment is None else environment)
     # Old public instrumentation must never capture this potentially private case.
     for key in ('MARS_OPENACCEL_EXPORT_DIR', 'MARS_OPENACCEL_PUBLIC_FIXTURE'):
         environment.pop(key, None)

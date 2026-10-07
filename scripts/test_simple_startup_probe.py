@@ -351,6 +351,25 @@ class StartupTests(unittest.TestCase):
         self.assertNotIn('private-path', json.dumps(result))
         self.assertNotIn('private-lib', json.dumps(result))
 
+    def test_explicit_child_environment_is_recorded_without_changing_parent(self):
+        pair = self.fixture.root / 'child-environment'
+        probe.prepare(self.fixture.case, self.fixture.reference, pair)
+        exe = self.fixture.root / 'environment-solver.py'
+        exe.write_text("import os\nfrom pathlib import Path\n"
+                       "Path('results.e').write_text(os.environ['MARS_HYPRE_ABSTOL'])\n")
+        exe.chmod(0o700)
+        parent = dict(os.environ)
+        child = dict(parent, MARS_HYPRE_ABSTOL='0.125', MARS_OPENACCEL_EXPORT_DIR='must-not-reach-child')
+        saved = dict(child)
+        with patch.object(probe, 'runtime_libraries', return_value={'test': 'a'*64}):
+            probe.launch(pair, 'openaccel', exe, 1, [sys.executable], environment=child)
+        record = probe.verified_launch(pair, 'openaccel')
+        self.assertEqual(record['environment']['MARS_HYPRE_ABSTOL'], '0.125')
+        self.assertEqual((pair / 'reference/results.e').read_text(), '0.125')
+        self.assertNotIn('MARS_OPENACCEL_EXPORT_DIR', record['environment'])
+        self.assertEqual(child, saved)
+        self.assertEqual(dict(os.environ), parent)
+
     def test_inspection_before_launch_is_read_only(self):
         pair = self.fixture.root / 'before-launch'
         probe.prepare(self.fixture.case, self.fixture.reference, pair)

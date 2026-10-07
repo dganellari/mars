@@ -16,7 +16,22 @@ SCHEMA = 'mars-simple-pressure-probe-v1'
 ERRORS = frozenset(('baseline_identity', 'baseline_first_step_required', 'baseline_reference_policy_required',
     'pressure_configuration', 'pressure_target_unchanged', 'momentum_configuration_changed',
     'nonpressure_controls_changed', 'experiment_identity', 'executable_changed', 'libraries_changed',
-    'solver_environment_changed', 'launcher_changed', 'baseline_stage_mismatch', 'launcher_exit'))
+    'solver_environment_changed', 'launcher_changed', 'baseline_stage_mismatch', 'launcher_exit',
+    'environment_restore_requires_mars'))
+
+# Only scalar solver/execution controls can be restored. Never restore paths or device binding.
+RESTORABLE_ENVIRONMENT = frozenset(('MARS_AMG_AGG', 'MARS_AMG_COARSEN', 'MARS_AMG_INTERP',
+    'MARS_AMG_PMAX', 'MARS_AMG_RELAX', 'MARS_AMG_RELAXORDER', 'MARS_AMG_STRONG', 'MARS_AMG_SWEEPS',
+    'MARS_HYPRE_ABSTOL', 'MARS_HYPRE_FLEXGMRES', 'MARS_HYPRE_MAXX_RATIO', 'MARS_HYPRE_MINITER',
+    'MARS_HYPRE_NULLX_RATIO', 'MARS_HYPRE_RESIDUAL_AUDIT', 'MARS_HYPRE_SPMV_VENDOR', 'MARS_HYPRE_VERBOSE',
+    'MARS_HYPRE_SPGEMM_VENDOR', 'MARS_HYPRE_GPU_AWARE', 'MARS_HYPRE_POOL_MAX_MIB', 'MARS_HYPRE_POOL_CACHE_MIB',
+    'MARS_OWNERSHIP', 'MARS_HALO_FACTOR', 'MARS_NODEHALO_HOST', 'MARS_NODEHALO_VALIDATE',
+    'MARS_SIMPLE_PRESSURE_AUDIT', 'CUDA_LAUNCH_BLOCKING', 'CUDA_DEVICE_MAX_CONNECTIONS',
+    'MPICH_GPU_SUPPORT_ENABLED', 'OMP_NUM_THREADS', 'OMP_PROC_BIND', 'OMP_PLACES'))
+PUBLIC_ENVIRONMENT_NAMES = RESTORABLE_ENVIRONMENT | frozenset(('CUDA_VISIBLE_DEVICES',
+    'CUDA_HOME', 'CUDA_PATH', 'CUDA_ROOT', 'CUDA_VERSION', 'CUDA_MODULE_LOADING',
+    'MARS_SIGNAL_DIR', 'MARS_VERBOSE_MESH', 'MARS_HALO_DEBUG', 'MARS_SS_RESOLVE_DEBUG',
+    'MARS_SYNC_TRACE', 'MARS_BLOCK_NODE_IDENTITY', 'PETSC_OPTIONS', 'PETSC_OPTIONS_YAML'))
 
 
 def resolved_solver(deck, equation):
@@ -111,6 +126,29 @@ def solver_environment(environment):
             or k in ('PETSC_OPTIONS', 'PETSC_OPTIONS_YAML')}
 
 
+def environment_changes(current, recorded):
+    current, recorded = solver_environment(current), solver_environment(recorded)
+    return {key for key in set(current) | set(recorded) if current.get(key) != recorded.get(key)}
+
+
+def environment_report(changes):
+    # Unknown names can carry private identifiers; export only literal labels from this module.
+    return dict(changed_known_names=sorted(changes & PUBLIC_ENVIRONMENT_NAMES),
+                other_changed_names_present=bool(changes - PUBLIC_ENVIRONMENT_NAMES),
+                restorable_changes_present=bool(changes & RESTORABLE_ENVIRONMENT),
+                protected_or_unknown_changes_present=bool(changes - RESTORABLE_ENVIRONMENT))
+
+
+def restore_environment(current, recorded):
+    result = dict(current)
+    for key in RESTORABLE_ENVIRONMENT:
+        if key in recorded:
+            result[key] = recorded[key]
+        else:
+            result.pop(key, None)
+    return result
+
+
 def launcher(record, pair, solver):
     suffix = [record['executable']] + startup.solver_arguments(pair.resolve(), solver)
     require(record['command'][-len(suffix):] == suffix, 'launcher_changed')
@@ -129,7 +167,7 @@ def runtime_matches(baseline, record, pair, solver):
     require(launcher(record, pair, solver) == launcher(baseline, old_pair, solver), 'launcher_changed')
 
 
-def run(pair, solver):
+def run(pair, solver, restore_solver_environment=False, public=None):
     baseline, records = check_inputs(pair)
     old = records[solver]
     executable = Path(old['executable'])
@@ -140,8 +178,16 @@ def run(pair, solver):
         environment.pop(key, None)
     if solver == 'openaccel':
         environment.update(OMP_NUM_THREADS='1', OMP_PROC_BIND='close', OMP_PLACES='cores')
+    changed = environment_changes(environment, old['environment'])
+    if public is not None:
+        public['environment_check'] = environment_report(changed)
+    if restore_solver_environment:
+        require(solver == 'mars', 'environment_restore_requires_mars')
+        environment = restore_environment(environment, old['environment'])
+        if public is not None:
+            public['restored_solver_controls'] = sorted(changed & RESTORABLE_ENVIRONMENT)
     require(solver_environment(environment) == solver_environment(old['environment']), 'solver_environment_changed')
-    startup.launch(pair, solver, executable, old['ranks'], launcher(old, baseline, solver))
+    startup.launch(pair, solver, executable, old['ranks'], launcher(old, baseline, solver), environment=environment)
     runtime_matches(old, startup.verified_launch(pair, solver), pair, solver)
 
 
@@ -196,6 +242,8 @@ def main(argv=None):
     launch.add_argument('--pair', type=Path, required=True)
     launch.add_argument('--solver', choices=('openaccel', 'mars'), required=True)
     launch.add_argument('--output', type=Path, required=True, help='New public launch status JSON')
+    launch.add_argument('--restore-solver-environment', action='store_true',
+                        help='MARS only: restore allowlisted scalar controls from the verified baseline in the child process')
     check = sub.add_parser('compare')
     check.add_argument('--pair', type=Path, required=True)
     check.add_argument('--output', type=Path, required=True)
@@ -215,7 +263,7 @@ def main(argv=None):
             try:
                 pair = args.pair.resolve()
                 if args.action == 'run':
-                    run(pair, args.solver)
+                    run(pair, args.solver, args.restore_solver_environment, public)
                     public.update(comparison_status='capture_complete', failed_check='none')
                 else:
                     args.detail_dir.mkdir(mode=0o700)

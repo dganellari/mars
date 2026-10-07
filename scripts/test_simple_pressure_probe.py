@@ -231,7 +231,8 @@ class PressureProbeTests(unittest.TestCase):
              patch.dict(os.environ, {}, clear=True), patch.object(startup, 'launch') as launch, \
              patch.object(startup, 'verified_launch', return_value=record), patch.object(pressure, 'runtime_matches'):
             pressure.run(self.pair, 'openaccel')
-        launch.assert_called_once_with(self.pair, 'openaccel', Path(record['executable']), 2, ['launcher'])
+        launch.assert_called_once_with(self.pair, 'openaccel', Path(record['executable']), 2, ['launcher'],
+                                       environment=environment)
 
     def test_changed_runtime_prevents_launch(self):
         self.prepare()
@@ -239,6 +240,80 @@ class PressureProbeTests(unittest.TestCase):
              patch.object(startup, 'launch') as launch:
             with self.assertRaisesRegex(startup.EvidenceError, 'libraries_changed'):
                 pressure.run(self.pair, 'mars')
+        launch.assert_not_called()
+
+    def test_environment_report_never_exports_unknown_names_or_values(self):
+        current = {'MARS_HYPRE_ABSTOL': 'PRIVATE', 'MARS_PRIVATE_NAME': 'PRIVATE',
+                   'CUDA_VISIBLE_DEVICES': 'PRIVATE', 'PATH': 'PRIVATE'}
+        result = pressure.environment_report(pressure.environment_changes(current, {}))
+        self.assertEqual(result['changed_known_names'], ['CUDA_VISIBLE_DEVICES', 'MARS_HYPRE_ABSTOL'])
+        self.assertTrue(result['other_changed_names_present'])
+        self.assertTrue(result['protected_or_unknown_changes_present'])
+        self.assertNotIn('PRIVATE', json.dumps(result))
+
+    def test_restore_sets_removes_and_preserves_protected_environment(self):
+        current = {'MARS_HYPRE_ABSTOL': 'changed', 'MARS_AMG_RELAX': '18',
+                   'CUDA_VISIBLE_DEVICES': '3', 'MARS_SIGNAL_DIR': '/current', 'LD_LIBRARY_PATH': '/current/lib'}
+        recorded = {'MARS_HYPRE_ABSTOL': '0', 'MARS_HYPRE_FLEXGMRES': '1',
+                    'CUDA_VISIBLE_DEVICES': '0', 'MARS_SIGNAL_DIR': '/old', 'LD_LIBRARY_PATH': '/old/lib'}
+        expected = dict(current, MARS_HYPRE_ABSTOL='0', MARS_HYPRE_FLEXGMRES='1')
+        expected.pop('MARS_AMG_RELAX')
+        saved = dict(current)
+        self.assertEqual(pressure.restore_environment(current, recorded), expected)
+        self.assertEqual(current, saved)
+
+    def test_restore_launch_passes_only_restored_child_environment(self):
+        self.prepare()
+        record = startup.verified_launch(self.baseline, 'mars')
+        record['environment'] = {'MARS_HYPRE_ABSTOL': '0', 'MARS_HYPRE_FLEXGMRES': '1'}
+        parent = {'MARS_HYPRE_ABSTOL': '999', 'MARS_AMG_RELAX': '18', 'PATH': '/parent'}
+        public = {}
+        with patch.object(pressure, 'check_inputs', return_value=(self.baseline, {'mars': record})), \
+             patch.object(startup, 'runtime_libraries', return_value=record['libraries']), \
+             patch.dict(os.environ, parent, clear=True), patch.object(startup, 'launch') as launch, \
+             patch.object(startup, 'verified_launch', return_value=record), patch.object(pressure, 'runtime_matches'):
+            pressure.run(self.pair, 'mars', True, public)
+            self.assertEqual(dict(os.environ), parent)
+        self.assertEqual(launch.call_args[1]['environment'], dict(record['environment'], PATH='/parent'))
+        self.assertEqual(public['restored_solver_controls'],
+                         ['MARS_AMG_RELAX', 'MARS_HYPRE_ABSTOL', 'MARS_HYPRE_FLEXGMRES'])
+        self.assertNotIn('999', json.dumps(public))
+
+    def test_restore_still_rejects_gpu_binding_unknown_names_and_options(self):
+        self.prepare()
+        record = startup.verified_launch(self.baseline, 'mars')
+        for name in ('CUDA_VISIBLE_DEVICES', 'MARS_PRIVATE_NAME', 'PETSC_OPTIONS', 'MARS_VERBOSE_MESH'):
+            with self.subTest(name=name), patch.object(startup, 'runtime_libraries', return_value=record['libraries']), \
+                 patch.dict(os.environ, {name: 'PRIVATE'}, clear=True), patch.object(startup, 'launch') as launch:
+                public = {}
+                with self.assertRaisesRegex(startup.EvidenceError, 'solver_environment_changed'):
+                    pressure.run(self.pair, 'mars', True, public)
+                self.assertNotIn('PRIVATE', json.dumps(public))
+                launch.assert_not_called()
+
+    def test_restore_is_explicit_and_mars_only(self):
+        self.prepare()
+        record = startup.verified_launch(self.baseline, 'openaccel')
+        with patch.object(startup, 'runtime_libraries', return_value=record['libraries']), \
+             patch.dict(os.environ, {}, clear=True), patch.object(startup, 'launch') as launch:
+            with self.assertRaisesRegex(startup.EvidenceError, 'environment_restore_requires_mars'):
+                pressure.run(self.pair, 'openaccel', True)
+        launch.assert_not_called()
+
+    def test_cli_mismatch_identifies_safe_names_without_launch(self):
+        self.prepare()
+        record = startup.verified_launch(self.baseline, 'mars')
+        with patch.object(startup, 'runtime_libraries', return_value=record['libraries']), \
+             patch.dict(os.environ, {'MARS_HYPRE_ABSTOL': 'PRIVATE', 'MARS_PRIVATE_NAME': 'PRIVATE'}, clear=True), \
+             patch.object(startup, 'launch') as launch:
+            code = self.invoke('run', '--pair', str(self.pair), '--solver', 'mars', '--output', str(self.output))
+        self.assertEqual(code, 1)
+        text = self.output.read_text()
+        self.assertNotIn('PRIVATE', text)
+        report = json.loads(text)
+        self.assertEqual(report['failed_check'], 'solver_environment_changed')
+        self.assertEqual(report['environment_check']['changed_known_names'], ['MARS_HYPRE_ABSTOL'])
+        self.assertTrue(report['environment_check']['other_changed_names_present'])
         launch.assert_not_called()
 
     def test_solver_rejection_has_public_diagnostics_and_cannot_pass(self):

@@ -37,6 +37,16 @@ not record `PETSC_OPTIONS` or `PETSC_OPTIONS_YAML`; this helper rejects those
 overrides if present rather than guessing their historical values. A changed
 runtime needs an explicitly reviewed new baseline, not bypassing the checks.
 
+An environment mismatch now reports only allowlisted variable names and whether
+other names changed; no values or unknown names are exported. The opt-in
+`run --restore-solver-environment` option restores known scalar MARS solver,
+halo and execution controls from the verified baseline, including removing a
+current override that was absent there. It applies only to the MARS child
+process; the interactive shell stays unchanged. It does not restore GPU binding,
+library paths, geometry-debug switches, file-output paths or unknown variables.
+The full environment equality check still runs after restoration, and the launch
+record stores the actual child environment. Binary and library checks stay strict.
+
 All decks, matrices, fields, identifiers, logs and detailed errors stay private
 on capstor. Only the fixed-label public JSON reports may be shared. The scripts
 run where the user owns those files; no private artifact is required locally.
@@ -131,6 +141,45 @@ This is a one-step experiment; no new GPU result has been established by prepari
 the helper. Synthetic tests check shared solver lookup, unchanged momentum/caps,
 strict target mapping, missing/tampered evidence, runtime drift, residual failure,
 upstream mismatch, failed launches and private-output suppression.
+
+## Retry W3SoRZ after the environment preflight stopped
+
+The OpenAccel capture completed; the MARS `solver_environment_changed` preflight
+stopped before launching a solver. The specific difference was not identified by
+that older report. Keep the completed reference and the old failure report.
+Run the following in the MARS terminal with its working runtime and Python.
+No C++ rebuild or OpenAccel rerun is needed. This explicitly restores only the
+allowlisted controls for the child process; any remaining mismatch is reported
+safely and still prevents launching. Reports go into a new scratch directory.
+
+```bash
+(
+set -euo pipefail
+scratch=/capstor/scratch/cscs/gandanie
+repo="$scratch/git/mars-v010-check"
+git -C "$repo" pull --ff-only
+python3 -c 'import numpy, netCDF4, yaml'
+umask 077
+mkdir -p "$scratch/tmp"
+export TMPDIR="$scratch/tmp" PYTHONDONTWRITEBYTECODE=1
+pair="$scratch/simple-pressure-accuracy-W3SoRZ/pair"
+probe="$repo/scripts/simple_pressure_probe.py"
+retry=$(mktemp -d "$scratch/simple-pressure-retry-XXXXXX")
+status=0
+python3 "$probe" run --pair "$pair" --solver mars \
+  --restore-solver-environment --output "$retry/launch-public.json" || status=$?
+cat "$retry/launch-public.json"
+if test "$status" -ne 0; then
+  printf 'Share only: %s\n' "$retry/launch-public.json"
+  exit "$status"
+fi
+python3 "$probe" compare --pair "$pair" --detail-dir "$retry/private" \
+  --output "$retry/comparison-public.json" || status=$?
+cat "$retry/comparison-public.json"
+printf 'Share only: %s\n' "$retry/comparison-public.json"
+exit "$status"
+)
+```
 
 ```bash
 PYTHONPATH=scripts python3 -m unittest test_simple_pressure_probe test_simple_first_step_audit test_simple_startup_probe test_simple_snapshot_compare test_prepare_simple_deck
