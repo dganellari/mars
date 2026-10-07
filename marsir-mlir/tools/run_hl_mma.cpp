@@ -46,6 +46,8 @@ static CUresult (*p_cuEventSynchronize)(CUevent);
 static CUresult (*p_cuEventElapsedTime)(float*, CUevent, CUevent);
 static CUresult (*p_cuGetErrorString)(CUresult, const char**);
 static CUresult (*p_cuMemsetD8)(CUdeviceptr, unsigned char, size_t);
+static CUresult (*p_cuFuncGetAttribute)(int*, int, CUfunction);
+static CUresult (*p_cuOccupancyMaxActiveBlocksPerMultiprocessor)(int*, CUfunction, int, size_t);
 
 #define CK(x) do { CUresult r_ = (x); if (r_ != 0) { \
     const char* s_ = nullptr; if (p_cuGetErrorString) p_cuGetErrorString(r_, &s_); \
@@ -80,6 +82,9 @@ int main(int argc, char** argv)
     *(void**)&p_cuEventElapsedTime  = must_sym(lib, "cuEventElapsedTime");
     *(void**)&p_cuGetErrorString    = must_sym(lib, "cuGetErrorString");
     *(void**)&p_cuMemsetD8          = must_sym(lib, "cuMemsetD8_v2");
+    *(void**)&p_cuFuncGetAttribute  = must_sym(lib, "cuFuncGetAttribute");
+    *(void**)&p_cuOccupancyMaxActiveBlocksPerMultiprocessor =
+        must_sym(lib, "cuOccupancyMaxActiveBlocksPerMultiprocessor");
 
     const char* ptxPath = argc > 1 ? argv[1] : "../generated/hl_full_sm90.ptx";
     const long long E = argc > 2 ? atoll(argv[2]) : (1LL << 20);
@@ -100,6 +105,16 @@ int main(int argc, char** argv)
     CUcontext ctx; CK(p_cuCtxCreate(&ctx, 0, dev));
     CUmodule mod; CK(p_cuModuleLoadData(&mod, ptx.data()));
     CUfunction fn; CK(p_cuModuleGetFunction(&fn, mod, "laplacian_apply"));
+    {   // What ptxas made of the PTX: register count and local memory (spills)
+        // are invisible in the PTX itself, and they decide occupancy.
+        int regs = 0, local = 0, shared = 0, blocks = 0;
+        CK(p_cuFuncGetAttribute(&regs, 4 /*NUM_REGS*/, fn));
+        CK(p_cuFuncGetAttribute(&local, 3 /*LOCAL_SIZE_BYTES*/, fn));
+        CK(p_cuFuncGetAttribute(&shared, 1 /*SHARED_SIZE_BYTES*/, fn));
+        CK(p_cuOccupancyMaxActiveBlocksPerMultiprocessor(&blocks, fn, 32, 0));
+        printf("  kernel: %d regs/thread, %d B local/thread (spills), %d B shared/block, "
+               "%d blocks (= warps) per SM\n", regs, local, shared, blocks);
+    }
 
     // Btil/Dtil are n x n with a zero last row (the kernel pads the face
     // dimension to a full tensor-core tile); the oracle reads the first P rows.

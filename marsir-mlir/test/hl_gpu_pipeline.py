@@ -117,6 +117,7 @@ sys.stdout.write(mlir_ir.emit_full(ea, p={p}, pad_faces=True))
     # fragment of a Y plane then stays in registers between the faces that
     # update it, and the first direction's planes start from the zero fill.
     ir = run([MIROPT, "-", "--mir-unroll-loops", "--canonicalize", "--cse",
+              "--mir-hoist-invariant-reads",   # now merges the unrolled reloads
               "--mir-forward-owned", "--canonicalize", "--cse"], ir)
     # Barriers last: they must see the final access pattern, fills included.
     ir = run([MIROPT, "-", "--mir-distribute-fills", "--mir-warp-barriers"], ir)
