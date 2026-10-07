@@ -41,6 +41,7 @@ struct SourceTerm {
 int main(int argc, char* argv[]) {
     // Initialize MPI
     MPI_Init(&argc, &argv);
+    mars::abortAllRanksOnUncaughtException();
 
     int rank, numRanks;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
@@ -330,11 +331,8 @@ int main(int argc, char* argv[]) {
         }
 
     } catch (const std::exception& e) {
-        if (rank == 0) {
-            std::cerr << "Error: " << e.what() << std::endl;
-        }
-        MPI_Finalize();
-        return 1;
+        std::cerr << "rank " << rank << ": error: " << e.what() << std::endl;
+        mars::abortAllRanks(1);
     }
 
     MPI_Finalize();

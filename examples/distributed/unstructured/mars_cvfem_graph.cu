@@ -28,6 +28,7 @@ using namespace mars::fem;
 
 int main(int argc, char** argv) {
     MPI_Init(&argc, &argv);
+    mars::abortAllRanksOnUncaughtException();
 
     int rank, numRanks;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
