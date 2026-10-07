@@ -251,7 +251,56 @@ private report; the public report contains only fixed labels and booleans.
 The original stage verdict is preserved even if the difference is explained.
 No tolerance is relaxed to turn `first_step_still_differs` into a pass.
 
-Run in either terminal with the working NumPy/netCDF4/PyYAML environment.
+### Exact checks after the unresolved ffIlzR replay
+
+The user's `simple-gradient-replay-ffIlzR/public.json` reports
+`insufficient_replay_resolution`: the allowance above cannot discriminate the
+observed difference. That does not measure the replay's actual arithmetic error
+or establish a gradient implementation defect.
+
+For gradients that fail the original field tolerance, `--gradient-audit` now
+also computes an exact rational reconstruction at selected nodes. Every stored
+binary64 coordinate, pressure and captured gradient is converted to a rational
+number **before subtraction**. With `a=x1-x0`, `b=x2-x0`, `c=x3-x0`, let
+`C1=b cross c`, `C2=c cross a`, `C3=a cross b`, `C0=-(C1+C2+C3)`, and
+`d=a dot C1`. Each incident tetrahedron contributes
+
+```text
+numerator_i += sum(j != i) sign(d)*(phi_j-phi_i)*(Cj-Ci)/48
+volume_i += abs(d)/24
+```
+
+Dividing the accumulated numerator by the accumulated volume gives the same
+operator above, without replay rounding. This is exact for the saved inputs;
+it does not reproduce either solver's floating-point geometry or accumulation.
+
+Selection takes up to eight nodes for each of four scores: observed gradient
+difference, MARS replay error, reference replay error, and difference-closure
+error. Only nodes failing the original field tolerance are candidates. Scores
+come from the floating-point replay, with source-row order breaking ties. The
+union has at most 32 nodes; it is not a certified set of global worst exact
+errors. Every tetrahedron touching a selected node is included. More than
+20,000 such elements yields `inconclusive_work_limit`, never a partial-star pass.
+
+The public `exact_selected_node_checks` compares each individual reconstruction
+error and the closure error against **1% of that node's own maximum-component
+captured gradient difference**, using exact comparisons. It reports:
+
+- `input_difference_explains_checked_nodes`: all three errors meet that check.
+- `captured_gradient_difference_not_explained_at_checked_nodes`: closure fails.
+- `individual_reconstruction_discrepancy_at_checked_nodes`: closure passes but
+  at least one individual reconstruction fails; shared errors must not hide.
+
+These are selected-node conclusions. `all_field_tolerance_failures_checked`
+states whether selection included every node failing the original tolerance;
+even then, nodes within that tolerance are not audited exactly. Global operator
+equivalence, runtime roundoff bounds, and the cause of the pressure difference
+remain unproved. The original global assessment, stage verdicts and pressure
+residual checks are unchanged. Exact ratios and node identifiers are written
+only to the fresh private report; the public report contains labels and booleans.
+
+Run **once in one terminal**, with the working NumPy/netCDF4/PyYAML environment.
+Both terminals share the same repository; do not fetch or merge concurrently.
 **No build, allocation, OpenAccel rerun or MARS rerun is required.**
 
 ```bash
@@ -259,12 +308,17 @@ Run in either terminal with the working NumPy/netCDF4/PyYAML environment.
 set -euo pipefail
 scratch=/capstor/scratch/cscs/gandanie
 repo="$scratch/git/mars-v010-check"
-git -C "$repo" pull --ff-only
+if test "$(git -C "$repo" branch --show-current)" != cstone; then
+  echo 'Stop: this checkout is not on cstone.'
+  exit 1
+fi
+git -C "$repo" fetch origin cstone
+git -C "$repo" merge --ff-only refs/remotes/origin/cstone
 python3 -c 'import numpy, netCDF4, yaml'
 umask 077
 mkdir -p "$scratch/tmp"
 export TMPDIR="$scratch/tmp" PYTHONDONTWRITEBYTECODE=1
-run=$(mktemp -d "$scratch/simple-gradient-replay-XXXXXX")
+run=$(mktemp -d "$scratch/simple-gradient-exact-XXXXXX")
 status=0
 python3 "$repo/scripts/simple_pressure_probe.py" compare \
   --pair "$scratch/simple-pressure-accuracy-W3SoRZ/pair" \
@@ -279,5 +333,8 @@ exit "$status"
 Local validation adds public synthetic tests for the analytic single-tet action,
 constant fields, orientation/translation/scaling, block connectivity, amplified
 scalar errors, false explanations, storage/copy rejection, and preserved capture
-provenance. A compiled host gate checks the replay against the production C++
+provenance. Exact checks cover cancellation before subtraction, complete stars
+across blocks, work-limit rejection, deterministic selection, and preservation
+of a failed pressure target even when the gradient difference is explained.
+A compiled host gate checks the replay against the production C++
 geometry kernels on shared, skew tetrahedra; this does not validate GPU execution.

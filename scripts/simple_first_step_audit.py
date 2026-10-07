@@ -1,5 +1,6 @@
 """User-local first-step algebra audit. Numerical data never enters the public report."""
 import math
+from fractions import Fraction
 
 import numpy as np
 
@@ -400,4 +401,108 @@ def gradient_reconstruction(mesh, xyz, mars_phi, reference_phi, mars_gradient, r
     fields = np.column_stack((mars_phi, reference_phi, mars_phi-reference_phi))
     with Dataset(mesh) as ds:
         replayed, magnitude = tet_gradient_action(xyz, tet_chunks(ds, len(xyz)), fields)
-    return gradient_checks(replayed, magnitude, mars_gradient, reference_gradient, scale)
+    public, private = gradient_checks(replayed, magnitude, mars_gradient, reference_gradient, scale)
+    if not public['gradient_difference_within_field_tolerance']:
+        selected, failing = select_gradient_nodes(replayed, mars_gradient, reference_gradient, scale)
+        with Dataset(mesh) as ds:
+            exact = exact_gradient_action(xyz, tet_chunks(ds, len(xyz)), mars_phi, reference_phi, selected)
+        checks, details = exact_gradient_checks(exact, selected, failing, mars_gradient, reference_gradient)
+        public['exact_selected_node_checks'] = checks
+        private['exact_selected_node_details'] = details
+    return public, private
+
+
+def select_gradient_nodes(replayed, mars_gradient, reference_gradient, scale, per_score=8):
+    difference = mars_gradient-reference_gradient
+    delta = np.max(np.abs(difference), axis=1)
+    candidates = np.flatnonzero(delta/scale > 1e-5)
+    scores = (delta, np.max(np.abs(mars_gradient-replayed[:, 0]), axis=1),
+              np.max(np.abs(reference_gradient-replayed[:, 1]), axis=1),
+              np.max(np.abs(difference-replayed[:, 2]), axis=1))
+    selected = set()
+    for score in scores:
+        # Source-row order breaks ties, independent of partition or previous selection.
+        order = np.lexsort((candidates, -score[candidates]))[:per_score]
+        selected.update(int(node) for node in candidates[order])
+    return np.array(sorted(selected), dtype=np.int64), len(candidates)
+
+
+def exact_gradient_action(xyz, chunks, mars_phi, reference_phi, selected, max_elements=20000):
+    """Evaluate complete selected stars exactly on the stored binary64 inputs."""
+    cells = []
+    count = 0
+    for chunk in chunks:
+        relevant = chunk[np.any(np.isin(chunk, selected), axis=1)]
+        count += len(relevant)
+        if count > max_elements:
+            return None  # Never truncate a star and call its reconstruction complete.
+        cells.extend(relevant.tolist())
+    points, fields = {}, {}
+    for node in {node for cell in cells for node in cell}:
+        points[node] = [Fraction(float(x)) for x in xyz[node]]
+        fields[node] = [Fraction(float(mars_phi[node, 0])), Fraction(float(reference_phi[node, 0]))]
+    zero = Fraction(0)
+    volumes = {int(node): zero for node in selected}
+    sums = {int(node): [[zero]*3 for _ in range(2)] for node in selected}
+    def cross(a, b):
+        return [a[(j+1)%3]*b[(j+2)%3]-a[(j+2)%3]*b[(j+1)%3] for j in range(3)]
+    for cell in cells:
+        x = [points[node] for node in cell]
+        a, b, c = ([x[k][j]-x[0][j] for j in range(3)] for k in (1, 2, 3))
+        cofactors = [None, cross(b, c), cross(c, a), cross(a, b)]
+        cofactors[0] = [-sum(cofactors[k][j] for k in (1, 2, 3)) for j in range(3)]
+        determinant = sum(a[j]*cofactors[1][j] for j in range(3))
+        require(determinant != 0, 'gradient_mesh')
+        sign = 1 if determinant > 0 else -1
+        for local, node in enumerate(cell):
+            if node not in sums:
+                continue
+            volumes[node] += abs(determinant)/24
+            for other, neighbor in enumerate(cell):
+                if local == other:
+                    continue
+                for field in range(2):
+                    # Convert operands before subtraction: the saved doubles are exact rational inputs.
+                    delta = fields[neighbor][field]-fields[node][field]
+                    for j in range(3):
+                        sums[node][field][j] += sign*delta*(cofactors[other][j]-cofactors[local][j])/48
+    require(bool(volumes) and all(v > 0 for v in volumes.values()), 'gradient_mesh')
+    return {node: [[value/volumes[node] for value in row] for row in sums[node]] for node in sums}
+
+
+def exact_gradient_checks(exact, selected, failing, mars_gradient, reference_gradient):
+    public = dict(scope='selected_field_tolerance_failures_complete_stars',
+                  selection='up_to_eight_per_observed_difference_and_three_replay_errors',
+                  all_field_tolerance_failures_checked=False,
+                  global_equivalence_verified=False, runtime_roundoff_bound_proven=False,
+                  assessment='inconclusive_work_limit', complete_selected_stars_verified=False)
+    if exact is None:
+        return public, dict(work_limit_reached=True)
+    require(len(selected) > 0 and set(int(x) for x in selected) == set(exact), 'gradient_mesh')
+    ratios = [Fraction(0)]*3
+    rows = []
+    for node in selected:
+        gm = [Fraction(float(x)) for x in mars_gradient[node]]
+        gr = [Fraction(float(x)) for x in reference_gradient[node]]
+        delta = [gm[j]-gr[j] for j in range(3)]
+        observed = max(abs(x) for x in delta)
+        require(observed > 0, 'gradient_arithmetic')
+        em = [gm[j]-exact[node][0][j] for j in range(3)]
+        er = [gr[j]-exact[node][1][j] for j in range(3)]
+        closure = [delta[j]-(exact[node][0][j]-exact[node][1][j]) for j in range(3)]
+        local = [max(abs(x) for x in values)/observed for values in (em, er, closure)]
+        ratios = [max(old, new) for old, new in zip(ratios, local)]
+        rows.append(dict(source_node=int(node), error_fractions_of_local_difference=[str(x) for x in local]))
+    passed = [x <= Fraction(1, 100) for x in ratios]
+    public.update(complete_selected_stars_verified=True,
+        all_field_tolerance_failures_checked=len(selected) == failing,
+        arithmetic='exact_rational_on_stored_binary64_inputs',
+        mars_reconstruction_within_one_percent_of_local_difference=passed[0],
+        reference_reconstruction_within_one_percent_of_local_difference=passed[1],
+        closure_within_one_percent_of_local_difference=passed[2],
+        assessment=('input_difference_explains_checked_nodes' if all(passed) else
+                    'captured_gradient_difference_not_explained_at_checked_nodes' if not passed[2] else
+                    'individual_reconstruction_discrepancy_at_checked_nodes'))
+    return public, dict(work_limit_reached=False, selected_nodes=rows,
+                        max_error_fractions_of_local_difference=[str(x) for x in ratios],
+                        required_fraction='1/100')

@@ -2,6 +2,7 @@
 import contextlib
 import io
 import json
+from fractions import Fraction
 from pathlib import Path
 import shutil
 import subprocess
@@ -86,6 +87,80 @@ class GradientTests(unittest.TestCase):
             with Dataset(str(path)) as ds, self.assertRaises(EvidenceError):
                 list(audit.tet_chunks(ds, 4))
 
+    def test_exact_action_matches_analytic_tet_and_permutation(self):
+        phi = self.xyz[:, :1]
+        selected = np.arange(4)
+        exact = audit.exact_gradient_action(self.xyz, [self.cells], phi, phi*0, selected)
+        expected = [[1., .5, .5], [2., 0., 0.], [.5, -.5, 0.], [.5, 0., -.5]]
+        for node in selected:
+            self.assertEqual(exact[node][0], [Fraction(x) for x in expected[node]])
+            self.assertEqual(exact[node][1], [Fraction(0)]*3)
+        moved = audit.exact_gradient_action(self.xyz*8+1024, [self.cells[:, [0, 2, 1, 3]]], phi, phi*0, selected)
+        for node in selected: self.assertEqual(moved[node][0], [x/8 for x in exact[node][0]])
+
+    def test_exact_check_resolves_large_offset_without_relaxing_old_verdict(self):
+        xyz = self.xyz*1e-6
+        r = np.full((4, 1), 1e6)
+        m = r + self.xyz[:, :1]*1e-9
+        selected = np.arange(4)
+        exact = audit.exact_gradient_action(xyz, [self.cells], m, r, selected)
+        gm = np.array([[float(x) for x in exact[node][0]] for node in selected])
+        gr = np.zeros_like(gm)
+        replayed, size = self.apply(xyz, np.column_stack([m, r, m-r]))
+        old, _ = audit.gradient_checks(replayed, size, gm, gr, 1.)
+        self.assertEqual(old['assessment'], 'insufficient_replay_resolution')
+        checks, private = audit.exact_gradient_checks(exact, selected, 4, gm, gr)
+        self.assertEqual(checks['assessment'], 'input_difference_explains_checked_nodes')
+        self.assertTrue(checks['all_field_tolerance_failures_checked'])
+        self.assertFalse(checks['global_equivalence_verified'])
+        self.assertFalse(checks['runtime_roundoff_bound_proven'])
+        self.assertEqual(len(private['selected_nodes']), 4)
+        # These equal errors cancel in the difference but contradict the individual reconstructions.
+        common, _ = audit.exact_gradient_checks(exact, selected, 4, gm+1, gr+1)
+        self.assertEqual(common['assessment'], 'individual_reconstruction_discrepancy_at_checked_nodes')
+        wrong, _ = audit.exact_gradient_checks(exact, selected, 4, gm*2, gr)
+        self.assertEqual(wrong['assessment'], 'captured_gradient_difference_not_explained_at_checked_nodes')
+
+    def test_exact_conversion_precedes_subtraction(self):
+        # 1 - 2^-54 rounds to 1 in binary64; preserve that small term in the rational action.
+        phi = np.array([[2.**-54], [1.], [0.], [0.]])
+        exact = audit.exact_gradient_action(self.xyz, [self.cells], phi, phi*0, np.array([0]))
+        self.assertEqual(exact[0][0][0], Fraction(1)-Fraction(1, 2**53))
+        self.assertNotEqual(exact[0][0][0], Fraction(float(1.-phi[0, 0]))-Fraction(1, 2**54))
+
+    def test_exact_complete_star_across_chunks_and_work_limit(self):
+        xyz = np.vstack([self.xyz, [1., 1., 1.]])
+        cells = [self.cells, np.array([[1, 2, 3, 4]])]
+        phi = xyz[:, :1]
+        exact = audit.exact_gradient_action(xyz, cells, phi, phi*0, np.array([1]))
+        replayed, _ = audit.tet_gradient_action(xyz, cells, phi)
+        np.testing.assert_allclose([float(x) for x in exact[1][0]], replayed[1, 0])
+        incomplete = audit.exact_gradient_action(xyz, cells[:1], phi, phi*0, np.array([1]))
+        self.assertNotEqual(exact, incomplete)
+        limited = audit.exact_gradient_action(xyz, cells, phi, phi*0, np.array([1]), max_elements=1)
+        self.assertIsNone(limited)
+        checks, _ = audit.exact_gradient_checks(limited, [1], 1, np.ones((5, 3)), np.zeros((5, 3)))
+        self.assertEqual(checks['assessment'], 'inconclusive_work_limit')
+        self.assertFalse(checks['all_field_tolerance_failures_checked'])
+        with self.assertRaises(EvidenceError):
+            audit.exact_gradient_checks({}, [], 0, np.zeros((5, 3)), np.zeros((5, 3)))
+
+    def test_selection_includes_error_peaks_and_breaks_ties_by_source(self):
+        gm, gr = np.ones((40, 3)), np.zeros((40, 3))
+        replayed = np.zeros((40, 3, 3))
+        replayed[:, 0] = gm
+        replayed[:, 2] = gm-gr
+        replayed[35, 0, 0] += 3
+        replayed[36, 1, 0] += 4
+        replayed[37, 2, 0] += 5
+        selected, failing = audit.select_gradient_nodes(replayed, gm, gr, 1.)
+        self.assertEqual(failing, 40)
+        self.assertLessEqual(len(selected), 32)
+        self.assertTrue(set(range(8)).issubset(selected))
+        self.assertTrue({35, 36, 37}.issubset(selected))
+        same, _ = audit.select_gradient_nodes(replayed, gm, gr, 1.)
+        np.testing.assert_array_equal(selected, same)
+
     def test_production_geometry_kernel_parity(self):
         compiler = shutil.which('c++')
         if compiler is None: self.skipTest('C++ compiler unavailable')
@@ -136,7 +211,7 @@ int main() {
 
 
 class GradientEvidenceTests(unittest.TestCase):
-    def test_complete_capture_replay_and_unchanged_originals(self):
+    def geometry_capture(self):
         case = probe_tests.PressureProbeTests()
         case.setUp()
         self.addCleanup(case.doCleanups)
@@ -153,6 +228,10 @@ class GradientEvidenceTests(unittest.TestCase):
         capture.write_reference_fields()
         capture.change_mars_final()
         case.finish()
+        return case, cells
+
+    def test_complete_capture_replay_and_unchanged_originals(self):
+        case, _ = self.geometry_capture()
         before = case.hashes(case.pair)
         status = case.invoke('compare', '--pair', str(case.pair), '--output', str(case.output),
                              '--detail-dir', str(case.details), '--gradient-audit')
@@ -164,6 +243,33 @@ class GradientEvidenceTests(unittest.TestCase):
         self.assertTrue((case.details/'tightened/gradient-private.json').is_file())
         self.assertNotIn('max_errors_scaled', case.output.read_text())
         self.assertNotIn(str(case.root), case.output.read_text())
+
+    def test_exact_selected_check_preserves_failed_solve_and_private_evidence(self):
+        case, cells = self.geometry_capture()
+        capture = case.capture
+        capture.pair = case.pair
+        capture.phi[0, 0] += 1e-6
+        replayed, _ = audit.tet_gradient_action(capture.fixture.xyz, [cells], capture.phi)
+        capture.gradient = replayed[:, 0]
+        capture.change_mars_final()
+        before, baseline = case.hashes(case.pair), case.hashes(case.baseline)
+        status = case.invoke('compare', '--pair', str(case.pair), '--output', str(case.output),
+                             '--detail-dir', str(case.details), '--gradient-audit')
+        public = json.loads(case.output.read_text())
+        self.assertEqual(status, 0, public)
+        self.assertEqual(public['outcome'], 'pressure_target_not_met')
+        self.assertFalse(public['tighter_pressure_residuals_pass'])
+        stages = public['tightened_first_step']['first_step_stage_matches']
+        self.assertFalse(stages['pressure_increment_gradient'])
+        checks = public['tightened_first_step']['pressure_gradient_checks']['exact_selected_node_checks']
+        self.assertEqual(checks['assessment'], 'input_difference_explains_checked_nodes')
+        self.assertFalse(checks['global_equivalence_verified'])
+        self.assertEqual(before, case.hashes(case.pair))
+        self.assertEqual(baseline, case.hashes(case.baseline))
+        private = json.loads((case.details/'tightened/gradient-private.json').read_text())
+        self.assertTrue(private['exact_selected_node_details']['selected_nodes'])
+        for forbidden in ('source_node', 'error_fractions', str(case.root)):
+            self.assertNotIn(forbidden, case.output.read_text())
 
     def test_reference_precision_and_duplicate_copies(self):
         with tempfile.TemporaryDirectory() as tmp:
