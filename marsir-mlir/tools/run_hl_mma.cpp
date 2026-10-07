@@ -101,12 +101,14 @@ int main(int argc, char** argv)
     CUmodule mod; CK(p_cuModuleLoadData(&mod, ptx.data()));
     CUfunction fn; CK(p_cuModuleGetFunction(&fn, mod, "laplacian_apply"));
 
-    std::vector<double> hBt((size_t)p * n), hDt((size_t)p * n),
+    // Btil/Dtil are n x n with a zero last row (the kernel pads the face
+    // dimension to a full tensor-core tile); the oracle reads the first P rows.
+    std::vector<double> hBt((size_t)nn, 0.0), hDt((size_t)nn, 0.0),
         hDm((size_t)nn), hW((size_t)nn);
     srand(42);
     auto rnd = [] { return 2.0 * rand() / RAND_MAX - 1.0; };
-    for (auto& x : hBt) x = rnd();
-    for (auto& x : hDt) x = rnd();
+    for (int i = 0; i < p * n; ++i) hBt[i] = rnd();
+    for (int i = 0; i < p * n; ++i) hDt[i] = rnd();
     for (auto& x : hDm) x = rnd();
     for (auto& x : hW) x = rnd();
 
@@ -154,7 +156,7 @@ int main(int argc, char** argv)
     long long uSz[4] = {E, n, n, n}, uSt[4] = {(long long)n3, (long long)nn, n, 1};
     long long gSz[6] = {E, 3, p, 3, n, n};   // [dir][face][component][row][col]
     long long gSt[6] = {gElem, (long long)p * 3 * nn, 3LL * nn, (long long)nn, n, 1};
-    long long oSz[2] = {p, n}, oSt[2] = {n, 1};       // Btil/Dtil (P x n)
+    long long oSz[2] = {n, n}, oSt[2] = {n, 1};       // Btil/Dtil (n x n, last row 0)
     long long sSz[2] = {n, n}, sSt[2] = {n, 1};       // D/W (n x n)
     void* args[] = {
         // laplacian_apply(U, Btil, Dtil, Dm, W, G, Y) -- MLIR memref descriptors:

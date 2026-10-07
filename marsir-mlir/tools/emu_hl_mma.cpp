@@ -152,11 +152,12 @@ int main(int argc, char** argv)
     const int n = p + 1, nn = n * n, n3 = nn * n;
     const long long gElem = 3LL * p * nn * 3;
 
-    std::vector<double> hBt((size_t)p * n), hDt((size_t)p * n), hDm(nn), hW(nn);
+    // Btil/Dtil n x n with a zero last row, as the GPU harness passes them.
+    std::vector<double> hBt((size_t)nn, 0.0), hDt((size_t)nn, 0.0), hDm(nn), hW(nn);
     srand(42);
     auto rnd = [] { return 2.0 * rand() / RAND_MAX - 1.0; };
-    for (auto& x : hBt) x = rnd();
-    for (auto& x : hDt) x = rnd();
+    for (int i = 0; i < p * n; ++i) hBt[i] = rnd();
+    for (int i = 0; i < p * n; ++i) hDt[i] = rnd();
     for (auto& x : hDm) x = rnd();
     for (auto& x : hW) x = rnd();
 
@@ -171,8 +172,8 @@ int main(int argc, char** argv)
 
     Desc<4> dU{U.data(), U.data(), 0, {E, n, n, n}, {n3, nn, n, 1}};
     Desc<4> dY{Y.data(), Y.data(), 0, {E, n, n, n}, {n3, nn, n, 1}};
-    Desc<2> dBt{hBt.data(), hBt.data(), 0, {p, n}, {n, 1}};
-    Desc<2> dDt{hDt.data(), hDt.data(), 0, {p, n}, {n, 1}};
+    Desc<2> dBt{hBt.data(), hBt.data(), 0, {n, n}, {n, 1}};
+    Desc<2> dDt{hDt.data(), hDt.data(), 0, {n, n}, {n, 1}};
     Desc<2> dW{hW.data(), hW.data(), 0, {n, n}, {n, 1}};
     Desc<2> dDm{hDm.data(), hDm.data(), 0, {n, n}, {n, 1}};
     Desc<6> dG{G.data(), G.data(), 0, {E, 3, p, 3, n, n},   // [dir][face][component][row][col]
