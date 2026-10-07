@@ -188,6 +188,11 @@ exit "$status"
 
 ## Local validation
 
+The saved-file target check now reports both pressure solutions inside their
+declared tolerance, with matching MARS owner/ghost copies. The next controlled
+experiment is the [pressure-only accuracy comparison](pressure_accuracy.md).
+It uses fresh captures and tighter pressure targets; baseline evidence is retained.
+
 Synthetic paired evidence covers reordered global/local nodes, overlapping ghost
 copies, poisoned ghost rows, positive row scaling, 32/64-bit reference indices,
 independently wrong momentum/pressure matrices and RHS, bad solutions, missing or
