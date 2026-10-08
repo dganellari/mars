@@ -24,6 +24,11 @@ named configurations used by momentum are not edited; the resolved momentum
 configuration is checked explicitly. The reference policy emits the same
 explicit pressure targets for MARS's Krylov and original-CSR residual checks.
 
+This policy does not copy the reference preconditioner, restart dimension,
+iteration limits or AMG options into MARS. Use the read-only
+[saved pressure settings check](pressure_solver_settings.md) to identify those
+differences before attributing a pressure mismatch to the equations.
+
 The helper reuses each solver's captured executable, rank count and launcher
 arguments. It rejects changed executable/library hashes or recorded solver
 environment overrides before launching. Use the same OpenAccel and MARS runtime
