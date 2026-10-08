@@ -18,6 +18,10 @@ if(MARS_SIMPLE_NETCDF_INCLUDE_DIR AND MARS_SIMPLE_NETCDF_LIBRARY)
     target_compile_definitions(mars_simple_native_source_host_gate PRIVATE MARS_HAVE_NETCDF OMPI_SKIP_MPICXX=1 MPICH_SKIP_MPICXX=1)
     target_link_libraries(mars_simple_native_source_host_gate PRIVATE MPI::MPI_CXX "${MARS_SIMPLE_NETCDF_LIBRARY}")
 endif()
+if(Python3_Interpreter_FOUND)
+    add_test(NAME marsSimpleCompensatedDotBound COMMAND ${Python3_EXECUTABLE}
+        "${_simple_perf}/test_compensated_dot.py")
+endif()
 foreach(_np 1 2 4)
     add_test(NAME marsSimpleLinearRejection${_np} COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${_np} ${MPIEXEC_PREFLAGS}
         $<TARGET_FILE:mars_simple_linear_rejection_host_gate> ${MPIEXEC_POSTFLAGS})

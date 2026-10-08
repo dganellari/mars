@@ -80,8 +80,10 @@ true-residual checks use `max(A, R*||b||_2)`. Momentum and nonlinear convergence
 defaults remain unchanged. The explicit absolute target overrides
 `MARS_HYPRE_ABSTOL`, including when `A=0`. Configuration is collective and precedes
 setup; invalid or rank-inconsistent settings are rejected. Reusing the matrix
-graph preserves the explicit target. No residual retry or audit can change a
-failed verdict, and an overflowed acceptance limit is rejected.
+graph preserves the explicit target. An audit or repeated residual measurement cannot change a failed verdict.
+The distributed pressure path can now perform bounded correction solves and
+accept a changed solution only at the original target; see
+[pressure refinement](pressure_refinement.md). An overflowed limit is rejected.
 
 The real-Hypre host regression checks this option on GMRES and FlexGMRES, both
 fresh and cached: environment precedence, zero RHS, invalid/late configuration,
@@ -240,3 +242,19 @@ above the Krylov target but inside SIMPLE's limit pass, candidates outside fail,
 and the strict mode still rejects them. Fresh and cached wrappers cover small
 and large RHS norms, zero RHS, and invalid tolerances. This is a controlled
 early-stop test, not a reproduction of Hypre's GPU stagnation path.
+
+## Bounded pressure correction
+
+The real-Hypre host test now covers prepared correction solves with GMRES and
+FlexGMRES, cached and uncached matrices, original stopping-control restoration
+(including the environment absolute tolerance and minimum iterations), unchanged
+setup counts, invalid budgets and nonfinite RHS rejection. A synthetic dyadic
+block system reproduces an inaccurate GMRES early stop under CPU Hypre 2.33.0;
+the bounded correction reaches its independently known exact solution.
+
+Policy tests reject stalled/worsened/nonfinite candidates, failed corrections,
+zero work, exhausted budgets and a failed final check. The host MPI integration
+gates exercise collective failure on one rank, restored/published owned and ghost
+values, and the untouched successful-solve path. The separate exact-rational test
+`test_compensated_dot.py` checks 1004 dot products, including severe cancellation
+and underflow. These are CPU results; new CUDA execution is pending.

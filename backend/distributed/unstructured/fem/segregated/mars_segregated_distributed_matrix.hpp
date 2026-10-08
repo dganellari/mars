@@ -21,6 +21,7 @@
 // reduction. Host transfers are scalars only (see the README next to the gates).
 // Every validation ends in one collective, so all ranks throw together.
 #include "mars_segregated_assembly.hpp"
+#include "mars_segregated_compensated_dot.hpp"
 #include <mpi.h>
 #include <cmath>
 #include <cstddef>
@@ -143,40 +144,23 @@ namespace kernels {
 enum PressureAuditFlag { audit_nonfinite=1, audit_zero_row=2, audit_nonpositive=4,
                          audit_positive_offdiagonal=8, audit_constant_broken=16, audit_compensated_invalid=32 };
 
-// Dot2 with an FMA product remainder preserves terms lost through cancellation.
-// Explicit device rounding prevents contraction from removing the error terms.
-struct CompensatedDot {
-    double sum=0, error=0;
-    MARS_DMATRIX_HD static double add(double a,double b) {
-#if defined(__CUDA_ARCH__)
-        return __dadd_rn(a,b);
-#else
-        return a+b;
-#endif
-    }
-    MARS_DMATRIX_HD void product(double a,double b) {
-#if defined(__CUDA_ARCH__)
-        const double p=__dmul_rn(a,b), remainder=__fma_rn(a,b,-p);
-#else
-        // The rounded product must exist separately even with FMA contraction.
-        const volatile double rounded=a*b;
-        const double p=rounded, remainder=std::fma(a,b,-p);
-#endif
-        const double next=add(sum,p), z=add(next,-sum);
-        const double lost=add(add(sum,-add(next,-z)),add(p,-z));
-        error=add(error,add(lost,remainder));
-        sum=next;
-    }
-    MARS_DMATRIX_HD double value() const { return add(sum,error); }
-};
+using CompensatedDot=mars::segregated::CompensatedDot;
 MARS_DMATRIX_HD inline SquareSums compensated_defect_row(int row,const int* offsets,const int* columns,
-    const double* values,const double* x,const double* rhs,double* defect)
+    const double* values,const double* x,const double* rhs,double* defect,bool bounded=false)
 {
     CompensatedDot dot;
     for (int k=offsets[row];k<offsets[row+1];++k) dot.product(values[k],x[columns[k]]);
     dot.product(-1.,rhs[row]);
-    const double r=-dot.value(), r2=r*r, b2=rhs[row]*rhs[row];
+    const double r=-dot.value(), b2=rhs[row]*rhs[row];
     defect[row]=r;
+    if (rhs[row]!=0 && b2==0) return {std::numeric_limits<double>::quiet_NaN(),b2};
+    if (bounded) {
+        const double upper=CompensatedDot::add_up(fabs(r),dot.error_bound());
+        // The factor two also covers rounding in positive norm reductions;
+        // global row counts are checked against the wrapper's integer range.
+        return {2*CompensatedDot::multiply_up(upper,upper),b2};
+    }
+    const double r2=r*r;
     // Squaring must not hide a nonzero defect or RHS below the norm's range.
     if ((r!=0 && r2==0) || (rhs[row]!=0 && b2==0))
         return {std::numeric_limits<double>::quiet_NaN(),b2};
@@ -331,12 +315,12 @@ struct ResidualDecision {
 };
 constexpr int residual_threads=256, residual_blocks=1024;
 __global__ void compensated_defect_partials(int rows,const int* offsets,const int* columns,const double* values,
-    const double* x,const double* rhs,double* defect,SquareSums* partial)
+    const double* x,const double* rhs,double* defect,SquareSums* partial,bool bounded)
 {
     double r2=0,b2=0;
     for (long long row=(long long)blockIdx.x*blockDim.x+threadIdx.x;row<rows;
          row+=(long long)gridDim.x*blockDim.x) {
-        const auto sum=compensated_defect_row(int(row),offsets,columns,values,x,rhs,defect);
+        const auto sum=compensated_defect_row(int(row),offsets,columns,values,x,rhs,defect,bounded);
         r2+=sum.residual2; b2+=sum.rhs2;
     }
     __shared__ double s_r[residual_threads/32],s_b[residual_threads/32];
@@ -476,17 +460,17 @@ public:
     }
     // True residual over owned rows: global sums of r^2 and b^2, then one decision on all ranks.
     ResidualNorms residual(HaloComplete x,const double* rhs,Tolerance tolerance={}) {
-        return residual_impl(x,rhs,tolerance,false,nullptr,0);
+        return residual_impl(x,rhs,tolerance,false,nullptr,0,false);
     }
     // Keep b-Ax in owned solver order for correction solves; x must include fresh ghosts.
     // Compensation reduces cancellation error, but is not an exact-arithmetic certificate.
     ResidualNorms compensated_defect(HaloComplete x,const double* rhs,double* defect,std::size_t size,
-                                    Tolerance tolerance={}) {
-        return residual_impl(x,rhs,tolerance,true,defect,size);
+                                    Tolerance tolerance={},bool bounded=false) {
+        return residual_impl(x,rhs,tolerance,true,defect,size,bounded);
     }
 private:
     ResidualNorms residual_impl(HaloComplete x,const double* rhs,Tolerance tolerance,bool compensated,
-                               double* defect,std::size_t size) {
+                               double* defect,std::size_t size,bool bounded) {
         int local=deferred_|(updated_?0:values_not_updated); deferred_=0;
         if (x.size<std::size_t(C)*std::size_t(nodes_) || (rows_>0 && (!x.values || !rhs))) local|=capacity;
         if (compensated) {
@@ -507,7 +491,7 @@ private:
             const int blocks=int(std::min<long long>(partial_count,(threads+kernels::residual_threads-1)/kernels::residual_threads));
             if (compensated)
                 kernels::compensated_defect_partials<<<blocks,kernels::residual_threads,0,stream_>>>(rows_,
-                    matrix_.rowOffsetsPtr(),matrix_.colIndicesPtr(),matrix_.valuesPtr(),x.values,rhs,defect,raw(partial_));
+                    matrix_.rowOffsetsPtr(),matrix_.colIndicesPtr(),matrix_.valuesPtr(),x.values,rhs,defect,raw(partial_),bounded);
             else
                 kernels::owned_residual_partials<C==1?4:8><<<blocks,kernels::residual_threads,0,stream_>>>(rows_,
                     matrix_.rowOffsetsPtr(),matrix_.colIndicesPtr(),matrix_.valuesPtr(),x.values,rhs,raw(partial_));
@@ -531,7 +515,7 @@ private:
             const int* offsets=matrix_.rowOffsetsPtr(); const int* columns=matrix_.colIndicesPtr(); const double* values=matrix_.valuesPtr();
             for (int row=0;row<rows_;++row) {
                 if (compensated) {
-                    const auto sum=kernels::compensated_defect_row(row,offsets,columns,values,x.values,rhs,defect);
+                    const auto sum=kernels::compensated_defect_row(row,offsets,columns,values,x.values,rhs,defect,bounded);
                     sums.residual2+=sum.residual2; sums.rhs2+=sum.rhs2;
                     continue;
                 }

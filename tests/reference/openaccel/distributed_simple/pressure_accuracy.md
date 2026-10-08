@@ -481,3 +481,14 @@ contain the final `b-Ax` after an early stop. It cannot override either explicit
 residual check or turn a failed run into a pass. Likewise, being within the
 pressure audit's roundoff upper bound does not certify an accurate solution or
 prove that a tighter solve is impossible.
+
+## Bounded correction implementation
+
+Rejected finite distributed pressure candidates now enter a bounded GPU defect
+correction path. The original pressure target and equations are preserved;
+three corrections and the original total Krylov budget bound the work. The
+implementation, acceptance guard, current validation scope and next public Alps
+gate are documented in [pressure refinement](../simple_performance/pressure_refinement.md).
+A passing component gate does not complete this private history experiment.
+Prepare a fresh capture after rebuilding; do not replace a recorded executable
+or rewrite the old pair's provenance.

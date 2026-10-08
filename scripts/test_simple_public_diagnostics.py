@@ -206,6 +206,29 @@ class PublicDiagnosticsTests(unittest.TestCase):
         self.assertTrue(summarize(converged * 2, '0')['multiple_completions'])
         self.assertEqual(summarize(converged * 2, '0')['run_status'], 'incomplete')
 
+    def test_pressure_correction_preserves_failure_history(self):
+        header = 'SIMPLE Tet4, 4 ranks (ElementDomain/cstone), upwind, laminar\n'
+        recovery = '[simple-pressure-refinement] iteration=2 rounds=1 iterations=25 accepted=1\n'
+        done = 'CONVERGED iterations=100 ranks=4 exchange_rounds=407\n'
+        result = summarize(header + HYPRE + '\n' + recovery + done, '0')
+        self.assertEqual(result['run_status'], 'converged')
+        self.assertTrue(result['hypre_rejection_present'])
+        self.assertTrue(result['pressure_refinement_accepted'])
+        self.assertFalse(result['unrecovered_hypre_rejection_present'])
+        limited = 'NOT CONVERGED: iteration limit iterations=100 ranks=4 exchange_rounds=407\n'
+        self.assertEqual(summarize(header + HYPRE + '\n' + recovery + limited, '2')['run_status'], 'iteration_limit')
+        cases = [header + HYPRE + '\n' + recovery + HYPRE + '\n' + done,
+                 header + HYPRE + '\n' + recovery.replace('accepted=1', 'accepted=0') + done,
+                 header + HYPRE + '\n' + recovery.replace('rounds=1', 'rounds=0') + done,
+                 header + HYPRE + '\n' + recovery.replace('iterations=25', 'iterations=0') + done,
+                 HYPRE + '\n' + recovery + done,
+                 header + HYPRE + '\n' + header + recovery + done,
+                 header + HYPRE + '\n' + done + recovery,
+                 header + HYPRE + '\n' + recovery + 'ERROR: pressure correction at SIMPLE iteration 2: linear solve failed\n' + done]
+        for case in cases:
+            with self.subTest(case=case):
+                self.assertEqual(summarize(case, '0')['run_status'], 'failed')
+
     def test_application_failures_without_linear_rejection(self):
         cases = {
             'outlet_anchor_or_moment_error_seen': 'all outlet faces closed: no open pressure anchor or nonfinite outlet moments',

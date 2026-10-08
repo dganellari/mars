@@ -3,9 +3,13 @@
 #define private public
 #include "host_gmres.hpp"
 #undef private
+#include "../../../../backend/distributed/unstructured/fem/segregated/mars_segregated_compensated_dot.hpp"
+#include "../../../../backend/distributed/unstructured/fem/segregated/mars_segregated_pressure_refinement.hpp"
 
 using Solver = mars::fem::HypreGMRESSolver<double, int, mars::HostTestTag>;
 using Matrix = Solver::Matrix;
+
+struct RefinementNorms { double residual2=0; bool finite=true,passed=false; };
 
 void check(bool okay, const char* message) {
     if (!okay) throw std::runtime_error(message);
@@ -432,6 +436,137 @@ void maximum_residual_acceptance() {
     std::cout<<"PASS: exact maximum versus additive acceptance, absolute/relative targets and zero RHS\n";
 }
 
+void prepared_corrections() {
+    for (bool flex:{false,true}) for (bool cached:{false,true}) {
+        setenv("MARS_HYPRE_FLEXGMRES",flex?"1":"0",1);
+        setenv("MARS_HYPRE_ABSTOL","37",1);
+        setenv("MARS_HYPRE_MINITER","0",1);
+        Solver solver(0,40,1e-12,Solver::JACOBI,10);
+        solver.setVerbose(false); solver.enable_true_residual_check(0.,1e-10,true);
+        if (cached) solver.enable_fixed_graph_updates();
+        Matrix a; a.column_count=8; a.offsets={0};
+        std::vector<HYPRE_BigInt> map(8); std::iota(map.begin(),map.end(),0);
+        for (int i=0;i<8;++i) { a.columns.push_back(i); a.values.push_back(2.); a.offsets.push_back(i+1); }
+        std::vector<double> b(8,1),x(8,0),delta(8,0);
+        check(!solver.solve(a,b,x,0,8,0,8,map),"loose backend stop escaped original residual check");
+        auto controls=solver.prepared_controls(); controls.minimum=7; solver.set_prepared_controls(controls);
+        check(controls.minimum==7 && controls.absolute==37,"test did not capture environment controls");
+        const auto matrix=solver.parcsr_A_; const auto precond=solver.precond_;
+        const int setups=solver.get_setup_count(),graphs=solver.get_graph_build_count();
+        check(solver.solve_prepared_correction(b,delta,10),"prepared correction failed");
+        check(solver.getLastIterations()>0 && solver.getLastIterations()<=10,"correction budget failed");
+        check(solver.parcsr_A_==matrix && solver.precond_==precond
+            && solver.get_setup_count()==setups && solver.get_graph_build_count()==graphs,"correction rebuilt matrix or preconditioner");
+        for (double d:delta) check(std::abs(d-.5)<4*std::numeric_limits<double>::epsilon(),"wrong diagonal correction");
+        check(solver.check_prepared_solution(b,delta),"corrected original equation rejected");
+        const auto after=solver.prepared_controls();
+        check(after.minimum==controls.minimum && after.maximum==controls.maximum
+            && after.relative==controls.relative && after.absolute==controls.absolute
+            && solver.residual_relative_tolerance_==1e-10 && solver.residual_absolute_tolerance_==0,
+            "correction did not restore stopping and acceptance controls");
+        solver.set_prepared_controls({controls.relative,controls.absolute,0,controls.maximum});
+        x.assign(8,0);
+        check(!solver.solve(a,b,x,0,8,0,8,map),"correction controls leaked to the next original solve");
+        solver.set_prepared_controls(controls);
+        expect_failure([&] { solver.solve_prepared_correction(b,delta,0); });
+        expect_failure([&] { solver.solve_prepared_correction(b,delta,41); });
+        auto bad=b; bad[0]=std::numeric_limits<double>::quiet_NaN();
+        expect_failure([&] { solver.solve_prepared_correction(bad,delta,10); });
+        const auto failed=solver.prepared_controls();
+        check(failed.minimum==controls.minimum && failed.maximum==controls.maximum
+            && failed.relative==controls.relative && failed.absolute==controls.absolute,"failed correction leaked controls");
+    }
+    unsetenv("MARS_HYPRE_ABSTOL"); unsetenv("MARS_HYPRE_MINITER"); unsetenv("MARS_HYPRE_FLEXGMRES");
+    std::cout<<"PASS: prepared corrections reuse matrix/setup, enforce budget and restore GMRES/FlexGMRES controls\n";
+}
+
+void refinement_policy() {
+    struct Operations {
+        int mode=0,attempts=0,kept=0,restored=0,checked=0;
+        double best=1;
+        RefinementNorms defect() { return {best,mode!=6,false}; }
+        mars::segregated::PressureCorrectionResult correct(int remaining) {
+            ++attempts;
+            return {mode!=3,mode==4?0:mode==5?remaining+1:1};
+        }
+        RefinementNorms candidate() {
+            const double residual=mode==1?best:mode==2?2*best:best*.01;
+            return {residual,mode!=7,residual<.1};
+        }
+        bool verify() { ++checked; return mode!=8; }
+        void keep() { ++kept; best*=.01; }
+        void restore() { ++restored; }
+    };
+    for (int mode=0;mode<9;++mode) {
+        Operations op; op.mode=mode;
+        const auto result=mars::segregated::refine_pressure(op,2,8);
+        check(result.accepted==(mode==0),"refinement falsely accepted a failed/stalled/uncertain candidate");
+        check(result.rounds<=3 && op.attempts<=3 && result.iterations<=8,"refinement exceeded a bound");
+        check(op.restored==int(!result.accepted),"best candidate was not restored on failure");
+        if (mode==1 || mode==2 || mode==7) check(op.kept==0,"nonimproving or nonfinite candidate replaced best");
+        if (mode==8) check(op.checked==3 && op.kept==3,"original-equation checks were bypassed");
+    }
+    Operations capped;
+    check(!mars::segregated::refine_pressure(capped,8,8).accepted && capped.attempts==0,"exhausted budget launched correction");
+    Operations exhausted; exhausted.mode=8;
+    const auto result=mars::segregated::refine_pressure(exhausted,7,8);
+    check(!result.accepted && result.iterations==8 && exhausted.attempts==1,"remaining budget not enforced");
+    std::cout<<"PASS: bounded correction policy rejects stalls, nonfinite values, failed verification and exhausted budgets\n";
+}
+
+void stagnation_correction() {
+    setenv("MARS_HYPRE_MINITER","0",1);
+    Matrix a; a.column_count=8; a.offsets={0};
+    std::vector<double> b(8,0),x(8,0),defect(8),delta(8),trial(8);
+    std::vector<HYPRE_BigInt> map(8); std::iota(map.begin(),map.end(),0);
+    for (int i=0;i<8;++i) {
+        const int k=i/2; const double scale=1.+k/16.;
+        a.columns.push_back(2*k); a.columns.push_back(2*k+1);
+        a.values.push_back(scale*(i%2?-1.:1.));
+        a.values.push_back(scale*(i%2?1.+0x1p-24:-1.));
+        a.offsets.push_back(a.columns.size()); b[i]=i%2?0.:scale;
+    }
+    Solver solver(0,200,1e-10,Solver::JACOBI,100);
+    solver.setVerbose(false); solver.enable_fixed_graph_updates();
+    solver.enable_true_residual_check(0.,1e-10,true); solver.set_stopping_tolerances(1e-10,0.);
+    check(!solver.solve(a,b,x,0,8,0,8,map),"public early-stop fixture no longer reproduces rejection");
+    const auto saved_a=a.values,saved_b=b;
+    struct Operations {
+        Solver& solver; Matrix& a; std::vector<double> &b,&x,&r,&delta,&trial;
+        RefinementNorms measure(const std::vector<double>& values,bool bounded=false) {
+            double r2=0,b2=0;
+            for (int i=0;i<8;++i) {
+                mars::segregated::CompensatedDot dot;
+                for (int k=a.offsets[i];k<a.offsets[i+1];++k) dot.product(a.values[k],values[a.columns[k]]);
+                dot.product(-1.,b[i]); r[i]=-dot.value();
+                const double absolute=std::abs(r[i])+(bounded?dot.error_bound():0);
+                r2+=(bounded?2:1)*absolute*absolute; b2+=b[i]*b[i];
+            }
+            return {r2,std::isfinite(r2),r2<=1e-20*b2};
+        }
+        auto defect() { return measure(x); }
+        mars::segregated::PressureCorrectionResult correct(int remaining) {
+            std::fill(delta.begin(),delta.end(),0);
+            const int before=solver.getLastIterations();
+            const bool accepted=solver.solve_prepared_correction(r,delta,remaining);
+            return {accepted,solver.getLastIterations()-before};
+        }
+        auto candidate() { for (int i=0;i<8;++i) trial[i]=x[i]+delta[i]; return measure(trial); }
+        bool verify() { return solver.check_prepared_solution(b,trial) && measure(trial,true).passed; }
+        void keep() { x.swap(trial); }
+        void restore() { solver.check_prepared_solution(b,x); }
+    } op{solver,a,b,x,defect,delta,trial};
+    const int before=solver.getLastIterations(),setups=solver.get_setup_count();
+    const auto result=mars::segregated::refine_pressure(op,before,solver.get_max_iterations());
+    check(result.accepted && result.rounds>0 && result.iterations<=200,"bounded correction did not recover public stagnation case");
+    check(solver.get_setup_count()==setups && a.values==saved_a && b==saved_b,"refinement modified original equation or setup");
+    // These dyadic blocks have exactly representable solutions; this oracle
+    // does not rely on either residual implementation to detect a false pass.
+    for (int i=0;i<8;++i) check(x[i]==(i%2?0x1p24:1.+0x1p24),"recovered solution differs from exact dyadic oracle");
+    unsetenv("MARS_HYPRE_MINITER");
+    std::cout<<"PASS: public Hypre early stop recovered against exact solution without tolerance or setup changes\n";
+}
+
 int main() {
     setenv("MARS_HYPRE_MINITER", "0", 1);
     unsetenv("MARS_HYPRE_FLEXGMRES");
@@ -450,6 +585,9 @@ int main() {
             std::cout<<"PASS: Krylov API and residual checks, MARS_HYPRE_FLEXGMRES="<<flexible<<'\n';
         }
         unsetenv("MARS_HYPRE_FLEXGMRES");
+        prepared_corrections();
+        refinement_policy();
+        stagnation_correction();
         Matrix matrix;
         make_graph(matrix, 160);
         std::vector<HYPRE_BigInt> map(161);

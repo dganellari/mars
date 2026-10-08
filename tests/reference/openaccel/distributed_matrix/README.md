@@ -8,9 +8,8 @@ evaluates the true distributed residual. It does **not** establish distributed S
 nonlinear convergence or pump readiness. Node ownership, element-star completion and native
 ingestion belong to other work; this code takes their results as explicit inputs.
 
-Base revision: `eb6a605fd3b61b90bb80692d23ba98cc1009e266` (`cstone`). Shared CMake, the
-SIMPLE runtime and drivers, domain/halo, native-input and Poiseuille files are unchanged.
-The runtime integration is a separate, unapplied diff.
+The adapter is integrated into the native distributed SIMPLE driver. Its original
+isolated review used base `eb6a605f`; the current runtime and tests have since evolved.
 
 ## Contract
 
@@ -66,9 +65,12 @@ or RHS whose square underflows are rejected. Ghost values must already be curren
 
 The CUDA path computes full rows on device, reuses the existing reduction scratch and
 reduces norms through CUDA-aware MPI. Only the fixed-size decision report reaches the
-host. The ordinary residual implementation retains its existing arithmetic. This API
-is not yet connected to SIMPLE pressure refinement; adding it does not change solver
-acceptance or retry failed solves.
+host. The ordinary residual implementation retains its existing arithmetic. The pressure
+runner now uses this API for bounded correction solves after a failed candidate.
+The optional final `bounded=true` argument tests an upper bound on the residual,
+including compensated-dot evaluation error. See the [correction contract and GPU
+gate](../simple_performance/pressure_refinement.md); previous component results
+below do not validate that new integration.
 
 On 2026-10-07 the shared host gates passed with ASan/UBSan on 1, 2 and 4 ranks
 (87/99/99 checks; eight inapplicable checks skipped on one rank). They cover exact sum
@@ -94,7 +96,10 @@ on unexpected rank-local exceptions, including allocation failures:
   own assembly error.
 - **`unpack` and `residual`:** capacity, and a residual requested before the first update.
 
-## Wrapper findings (wrapper not modified)
+## Original wrapper review
+
+These findings describe the initial adapter review. The current wrapper adds
+collective validation for cached solves and the prepared-correction path.
 
 1. **Unmapped columns are dropped silently.** `buildParCsr` discards any column whose map
    entry is `-1`. The adapter therefore rejects a referenced column without a solver id at

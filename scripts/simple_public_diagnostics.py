@@ -265,6 +265,11 @@ class DiagnosticState:
         self.scheduler_messages = []
         self.solver_started = False
         self.iteration_report_seen = False
+        self.headers = 0
+        self.pending_hypre_rejection = False
+        self.pressure_refinement_seen = False
+        self.pressure_refinement_accepted = False
+        self.pressure_refinement_invalid = False
 
     def feed(self, line):
         line = line.strip()
@@ -277,6 +282,18 @@ class DiagnosticState:
                 if re.search(r'\b' + re.escape(message) + r'\b', line, re.IGNORECASE):
                     if label not in self.scheduler_messages:
                         self.scheduler_messages.append(label)
+        if line.startswith('[HypreGMRES] rejected:'):
+            self.pending_hypre_rejection = True
+        if line.startswith('[simple-pressure-refinement]'):
+            self.pressure_refinement_seen = True
+            match = re.fullmatch(r'\[simple-pressure-refinement\] iteration=([1-9][0-9]*) '
+                                 r'rounds=([0-3]) iterations=([0-9]+) accepted=([01])', line)
+            if (not match or match.group(4) != '1' or int(match.group(2)) == 0
+                    or int(match.group(3)) == 0 or self.completions or self.headers != 1):
+                self.pressure_refinement_invalid = True
+            else:
+                self.pressure_refinement_accepted = True
+                self.pending_hypre_rejection = False
         for tag in TAGS:
             if line.startswith(tag):
                 record = fields(line[len(tag):])
@@ -291,6 +308,7 @@ class DiagnosticState:
         if re.fullmatch(r'SIMPLE Tet4, [0-9]+ ranks \(ElementDomain/cstone\), '
                         r'(?:upwind|high-resolution), laminar', line):
             self.solver_started = True
+            self.headers += 1
         if re.match(r'^\[simple\] iteration=[0-9]+ momentum=', line):
             self.iteration_report_seen = True
 
@@ -324,8 +342,10 @@ def summarize_state(state, exit_text, reference_deck):
     simple = records['[simple-linear]']
     hypre = records['[HypreGMRES] rejected:']
     spmv = records['[hypre-spmv]']
-    if simple or hypre or failures:
-        # A concatenated successful run cannot hide a rejection.
+    refinement_invalid = state.pressure_refinement_invalid or (state.pressure_refinement_seen and state.headers != 1)
+    if simple or state.pending_hypre_rejection or failures or refinement_invalid:
+        # A successful correction clears only preceding candidate rejections;
+        # terminal errors, later rejections and concatenated runs still fail.
         status = 'failed'
     result = {
         'schema': 'mars-simple-public-diagnostics-v1',
@@ -334,6 +354,10 @@ def summarize_state(state, exit_text, reference_deck):
         'multiple_completions': len(completions) > 1,
         'simple_diagnostic_present': bool(simple),
         'hypre_rejection_present': bool(hypre),
+        'unrecovered_hypre_rejection_present': state.pending_hypre_rejection,
+        'pressure_refinement_seen': state.pressure_refinement_seen,
+        'pressure_refinement_accepted': state.pressure_refinement_accepted,
+        'pressure_refinement_invalid': refinement_invalid,
         'linear_stage': consensus(simple, lambda r: enum_value(r, 'stage', ('momentum', 'pressure')), 'unknown'),
         'backend': consensus(hypre, lambda r: enum_value(r, 'backend', ('GMRES', 'FlexGMRES')), 'unknown'),
         'solver_accepted': consensus(simple, lambda r: flag(r, 'solver_accepted')),

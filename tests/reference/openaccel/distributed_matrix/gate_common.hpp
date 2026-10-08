@@ -425,11 +425,45 @@ template<class Matrix,class GlobalId> void pressure_audit_gates(MPI_Comm comm,Re
     }
 }
 
+// Dot2 itself can round to zero on extreme cancellation. Acceptance must
+// include its error bound, not merely the compensated point estimate.
+template<class Matrix,class GlobalId> void bounded_defect_gates(MPI_Comm comm,Report& report) {
+    int rank=0,ranks=1; MPI_Comm_rank(comm,&rank); MPI_Comm_size(comm,&ranks);
+    const int n=6*ranks;
+    for (int mode=0;mode<4;++mode) {
+        Local l; l.global.resize(n); l.solver_node.resize(n); l.rhs.assign(n,0);
+        for (int i=0;i<n;++i) { l.global[i]=i; l.solver_node[i]=i; }
+        for (int i=0;i<6;++i) l.owned.push_back(6*rank+i);
+        const double coefficients[]={0x1p106,0x1p53,1.,-0x1p106,-0x1p53,0.};
+        for (int row=0;row<n;++row) {
+            l.offsets.push_back(int(l.columns.size()));
+            for (int col=0;col<n;++col) {
+                l.columns.push_back(col);
+                l.blocks.push_back(mode==0?(col<6?coefficients[col]:0.):double(col==row));
+            }
+            l.rhs[row]=mode==0?0.:mode==2?1e-250:1.;
+        }
+        l.offsets.push_back(int(l.columns.size()));
+        Device<1,GlobalId> d(l); Buffer<double> b(l.owned.size()),defect(l.owned.size());
+        std::vector<double> values(n,mode==2?1e-250:1.);
+        if (mode==3) values.back()=std::numeric_limits<double>::quiet_NaN();
+        auto x=upload(values);
+        System<1,Matrix,GlobalId> system(comm,d.view(),raw(d.owned),int(l.owned.size()),raw(d.solver_node),n);
+        system.update(d.view(),raw(b),b.size());
+        const Tolerance tolerance{1e-6,0};
+        const auto point=system.compensated_defect(halo_complete(raw(x),x.size()),raw(b),raw(defect),defect.size(),tolerance);
+        const auto bounded=system.compensated_defect(halo_complete(raw(x),x.size()),raw(b),raw(defect),defect.size(),tolerance,true);
+        bool ok=mode==0?point.passed && bounded.finite && !bounded.passed && bounded.residual2>=n
+               :mode==1?point.passed && bounded.passed:!bounded.finite && !bounded.passed;
+        report.result("bounded defect fixture "+std::to_string(mode),all_true(ok,comm));
+    }
+}
+
 template<int C,class Matrix,class GlobalId> void run_gates(MPI_Comm comm,Report& report,Options base={}) {
     int rank=0, ranks=1; MPI_Comm_rank(comm,&rank); MPI_Comm_size(comm,&ranks);
     const std::string tag="C="+std::to_string(C)+" ranks="+std::to_string(ranks)+": ";
     const int last=ranks-1; const bool injecting=rank==last;
-    if constexpr (C==1) pressure_audit_gates<Matrix,GlobalId>(comm,report);
+    if constexpr (C==1) { pressure_audit_gates<Matrix,GlobalId>(comm,report); bounded_defect_gates<Matrix,GlobalId>(comm,report); }
     {   // Build, first values, oracle comparison of every entry, RHS and map.
         Problem p(C,ranks,base); Local l=extract(p,rank);
         fill(p,l,rank,1,[&](int g,int c) { return p.rhs(g,c,1); });

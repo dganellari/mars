@@ -322,6 +322,85 @@ public:
     // above tol) is visible in the step log instead of buried in Hypre's own
     // print output.
     int    getLastIterations()    const { return lastNumIters_; }
+    int get_max_iterations() const { return maxIter_; }
+
+    // Reuse the prepared matrix and preconditioner for A*delta=defect. The
+    // original stopping controls are restored before returning to the caller.
+    bool solve_prepared_correction(const Vector& defect, Vector& delta, int remaining) {
+        require_reuse(solver_ && parcsr_A_ && true_residual_check_ && !amg_cycle_
+                      && remaining > 0 && remaining <= maxIter_, "invalid pressure correction solve");
+        const int previous_iterations=lastNumIters_;
+        const auto previous_timing=last_timing_;
+        const auto controls=prepared_controls();
+        const RealType previous_tolerance=tolerance_;
+        const int previous_max=maxIter_;
+        const bool previous_mixed=mixed_residual_check_, previous_maximum=maximum_residual_check_;
+        const double previous_absolute=residual_absolute_tolerance_, previous_relative=residual_relative_tolerance_;
+        auto restore=[&] {
+            set_prepared_controls(controls);
+            tolerance_=previous_tolerance; maxIter_=previous_max;
+            mixed_residual_check_=previous_mixed; maximum_residual_check_=previous_maximum;
+            residual_absolute_tolerance_=previous_absolute; residual_relative_tolerance_=previous_relative;
+        };
+        try {
+            set_prepared_controls({0.1,0.0,0,remaining});
+            tolerance_=RealType(0.1); maxIter_=remaining;
+            enable_true_residual_check(0.0,0.1,true);
+            last_timing_={};
+            const double prepare=wall_stamp();
+            const auto old_b=par_b_, old_x=par_x_;
+            require_reuse(update_vectors(defect,delta,true) && old_b==par_b_ && old_x==par_x_,
+                          "correction changed prepared vector storage");
+            if (timing_enabled_) last_timing_.prepare_seconds=wall_stamp()-prepare;
+            const bool accepted=solve_vectors(defect,delta);
+            restore();
+            lastNumIters_+=previous_iterations;
+            last_timing_.prepare_seconds+=previous_timing.prepare_seconds;
+            last_timing_.packing_seconds+=previous_timing.packing_seconds;
+            last_timing_.setup_seconds+=previous_timing.setup_seconds;
+            last_timing_.solve_seconds+=previous_timing.solve_seconds;
+            last_timing_.finish_seconds+=previous_timing.finish_seconds;
+            return accepted;
+        } catch (...) { restore(); throw; }
+    }
+
+    // Evaluate the original equation after an actual correction, not a retry of
+    // a rejected residual measurement. No Krylov convergence flag is substituted.
+    bool check_prepared_solution(const Vector& b, Vector& x) {
+        require_reuse(solver_ && parcsr_A_ && true_residual_check_, "no prepared pressure equation");
+        const double prepare=wall_stamp();
+        require_reuse(update_vectors(b,x,true), "pressure candidate update failed");
+        const double finish=wall_stamp();
+        lastFinalRes_=true_relative_residual();
+        if (timing_enabled_) {
+            last_timing_.prepare_seconds+=finish-prepare;
+            last_timing_.finish_seconds+=wall_stamp()-finish;
+        }
+        const double scaled=residual_relative_tolerance_*last_rhs_norm_;
+        const double limit=maximum_residual_check_?std::max(residual_absolute_tolerance_,scaled)
+                                                :residual_absolute_tolerance_+scaled;
+        return std::isfinite(lastFinalRes_) && (mixed_residual_check_
+            ? std::isfinite(limit) && last_absolute_residual_<=limit : lastFinalRes_<tolerance_);
+    }
+
+    struct PreparedControls { double relative,absolute; int minimum,maximum; };
+    PreparedControls prepared_controls() const {
+        PreparedControls c{0,prepared_absolute_tolerance_,0,0};
+        HYPRE_Int error=(useFlexGmres_?HYPRE_FlexGMRESGetTol:HYPRE_GMRESGetTol)(solver_,&c.relative);
+        error|=(useFlexGmres_?HYPRE_FlexGMRESGetMinIter:HYPRE_GMRESGetMinIter)(solver_,&c.minimum);
+        error|=(useFlexGmres_?HYPRE_FlexGMRESGetMaxIter:HYPRE_GMRESGetMaxIter)(solver_,&c.maximum);
+        // FlexGMRES 2.33 has no public GetAbsoluteTol; retain the configured value.
+        require_reuse(error==0 && HYPRE_GetError()==0,"pressure control lookup failed");
+        return c;
+    }
+    void set_prepared_controls(PreparedControls c) {
+        HYPRE_Int error=(useFlexGmres_?HYPRE_FlexGMRESSetTol:HYPRE_GMRESSetTol)(solver_,c.relative);
+        error|=(useFlexGmres_?HYPRE_FlexGMRESSetAbsoluteTol:HYPRE_GMRESSetAbsoluteTol)(solver_,c.absolute);
+        error|=(useFlexGmres_?HYPRE_FlexGMRESSetMinIter:HYPRE_GMRESSetMinIter)(solver_,c.minimum);
+        error|=(useFlexGmres_?HYPRE_FlexGMRESSetMaxIter:HYPRE_GMRESSetMaxIter)(solver_,c.maximum);
+        require_reuse(error==0 && HYPRE_GetError()==0,"pressure control update failed");
+        prepared_absolute_tolerance_=c.absolute;
+    }
 
     // Opt-in systems / point-block AMG: with N>1 and node-major interleaved DOFs
     // (dof = N*node + comp), BoomerAMG auto-generates dof_func[i] = i % N, so a
@@ -575,6 +654,7 @@ public:
         {
             double absTol = stopping_absolute_tolerance_ >= 0
                 ? stopping_absolute_tolerance_ : getEnvDouble("MARS_HYPRE_ABSTOL", 0.0);
+            prepared_absolute_tolerance_=absTol>0?absTol:0;
             if (absTol > 0.0 || stopping_absolute_tolerance_ >= 0.0)
                 (useFlexGmres_ ? HYPRE_FlexGMRESSetAbsoluteTol : HYPRE_GMRESSetAbsoluteTol)(solver_, absTol);
         }
@@ -642,7 +722,7 @@ public:
     }
 
     // Reinitialize the same IJ vectors; their partition and storage stay fixed.
-    bool update_vectors(const Vector& b, Vector& x) {
+    bool update_vectors(const Vector& b, Vector& x, bool check_inputs=false) {
         int rank = 0;
         MPI_Comm_rank(comm_, &rank);
         const HYPRE_Int m = globalDofEnd_ - globalDofStart_;
@@ -656,7 +736,7 @@ public:
                 thrust::device_pointer_cast(x.data() + m), IsNonFinite<RealType>());
             require_reuse(!bad_b && !bad_x, "nonfinite RHS or initial guess");
             HYPRE_ClearAllErrors();
-        } else if (fixed_graph_updates_) {
+        } else if (fixed_graph_updates_ || check_inputs) {
             const bool sized = b.size() >= size_t(m) && x.size() >= size_t(m);
             const bool bad_b = sized && m > 0 && thrust::any_of(thrust::device_pointer_cast(b.data()),
                 thrust::device_pointer_cast(b.data() + m), IsNonFinite<RealType>());
@@ -1399,6 +1479,7 @@ private:
     bool spmv_configured_ = false;
     double residual_absolute_tolerance_ = 0, residual_relative_tolerance_ = 0;
     double stopping_absolute_tolerance_ = -1;
+    double prepared_absolute_tolerance_ = 0;
     int graph_build_count_ = 0, numeric_update_count_ = 0;
     SolveTiming last_timing_;
     double prepare_start_ = 0;

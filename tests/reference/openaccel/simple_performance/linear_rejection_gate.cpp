@@ -130,6 +130,68 @@ void pressure_configuration(Runner& run,int rank,int ranks) {
     pressure_only_case<3>(run,run.momentum,run.momentum_solve);
 }
 
+template<int C> struct RefiningSolve:CandidateSolve<C> {
+    int calls=0,fault=0;
+    using CandidateSolve<C>::CandidateSolve;
+    template<class System,class Publish>
+    PressureRefinementResult refine(System& system,Publish publish,distributed::Tolerance tolerance) {
+        static_assert(C==1);
+        ++calls;
+        struct Operations {
+            RefiningSolve& solve; System& system; Publish& publish; distributed::Tolerance tolerance;
+            std::vector<double> defect_values,trial;
+            auto defect() {
+                defect_values.resize(solve.b.size());
+                return system.compensated_defect(publish(solve.x),solve.b.data(),defect_values.data(),defect_values.size(),tolerance);
+            }
+            PressureCorrectionResult correct(int) {
+                int rank=0,ranks=1; MPI_Comm_rank(solve.comm,&rank); MPI_Comm_size(solve.comm,&ranks);
+                const int local=solve.fault==1 && rank==ranks-1?1:0; int any=0;
+                simple_max(solve.comm,&local,&any,1);
+                return {!any,1};
+            }
+            auto candidate() {
+                trial.resize(solve.x.size());
+                for (std::size_t i=0;i<trial.size();++i) trial[i]=truth(system.first_solver_node()+i);
+                if (solve.fault==2) trial=solve.x;
+                return system.compensated_defect(publish(trial),solve.b.data(),defect_values.data(),defect_values.size(),tolerance);
+            }
+            bool verify() { return solve.fault!=3; }
+            void keep() { solve.x.swap(trial); }
+            void restore() { publish(solve.x); }
+        } op{*this,system,publish,tolerance,{}, {}};
+        return refine_pressure(op,1,10);
+    }
+};
+
+template<class Part> void refinement_integration(MPI_Comm comm,const Part& part) {
+    DistributedSimpleRunner<HostMatrix,long long,RefiningSolve> run(comm,part.input,part.ownership);
+    Array<double> blocks(run.graph.blocks()),rhs(run.n),increment(run.n);
+    blocks.zero(); rhs.zero();
+    const auto a=run.graph.template view<1>(blocks.data(),rhs.data());
+    for (int row=0;row<run.n;++row) for (int k=a.offsets[row];k<a.offsets[row+1];++k) {
+        const double value=a.columns[k]==row?4.:-.0625;
+        a.values[k]=value; a.rhs[row]+=value*truth(run.solver_node.values[a.columns[k]]);
+    }
+    for (int fault=0;fault<4;++fault) {
+        run.poisson_solve.mode=2; run.poisson_solve.fault=fault;
+        bool accepted=true;
+        try { run.template solve<1>(run.poisson,run.poisson_solve,a,increment,false,{}); }
+        catch (const std::runtime_error&) { accepted=false; }
+        simple_collective(comm,accepted==(fault==0),"pressure refinement integration verdict incorrect");
+        simple_collective(comm,run.poisson_solve.calls==fault+1,"refinement was not collective");
+        if (accepted) {
+            bool exact=true;
+            for (int i=0;i<run.n;++i) exact=exact && increment.values[i]==truth(run.solver_node.values[i]);
+            simple_collective(comm,exact,"refinement left incorrect owned or ghost values");
+        }
+    }
+    const int before=run.poisson_solve.calls;
+    run.poisson_solve.mode=0;
+    run.template solve<1>(run.poisson,run.poisson_solve,a,increment,false,{});
+    simple_collective(comm,run.poisson_solve.calls==before,"successful solve entered refinement");
+}
+
 int main(int argc,char** argv) {
     MPI_Init(&argc,&argv);
     try {
@@ -145,6 +207,7 @@ int main(int argc,char** argv) {
         cases<3>(run,run.momentum,run.momentum_solve,true);
         cases<1>(run,run.poisson,run.poisson_solve,true);
         pressure_configuration(run,rank,ranks);
+        refinement_integration(MPI_COMM_WORLD,part);
         if (!rank) std::cout<<"PASS: accepted/rejected, wrong, missing and nonfinite candidates; original CSR and halo residual; ranks="<<ranks<<'\n';
     } catch (const std::exception& error) {
         std::cerr<<error.what()<<'\n'; MPI_Abort(MPI_COMM_WORLD,1); return 1;

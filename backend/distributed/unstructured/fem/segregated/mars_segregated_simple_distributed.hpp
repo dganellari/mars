@@ -28,6 +28,7 @@
 #include "mars_segregated_halo_exchange.hpp"
 #include "mars_segregated_simple_reduction.hpp"
 #include "mars_segregated_simple_profile.hpp"
+#include "mars_segregated_pressure_refinement.hpp"
 #include <cstdlib>
 #include <iostream>
 #include <limits>
@@ -110,6 +111,11 @@ inline void simple_collective(MPI_Comm comm,bool local_ok,const char* message) {
     int bad=local_ok?0:1, any=0; MPI_Allreduce(&bad,&any,1,MPI_INT,MPI_MAX,comm);
     if (any) throw std::runtime_error(std::string(message)+" (on "+(local_ok?"another rank":"this rank")+")");
 }
+inline void simple_max(MPI_Comm comm,const int* local,int* global,int count) {
+    if (MPI_Allreduce(local,global,count,MPI_INT,MPI_MAX,comm)!=MPI_SUCCESS) {
+        MPI_Abort(comm,1); throw std::runtime_error("pressure refinement reduction failed");
+    }
+}
 inline SimpleSums allreduce_sums(MPI_Comm comm,const SimpleSums& a) {
     double sum[12]={a.volume,a.momentum2,a.continuity2,a.continuity,a.velocity_change2,a.pressure_change2,
                     a.inlet,a.outlet,a.inlet_area,double(a.closed),double(a.changed),double(a.invalid)};
@@ -122,12 +128,17 @@ inline SimpleSums allreduce_sums(MPI_Comm comm,const SimpleSums& a) {
 }
 
 #ifdef MARS_REPLAY_CUDA
+struct PressureCandidate {
+    const double *x,*delta; double* trial;
+    MARS_DSIMPLE_HD void operator()(int i) const { trial[i]=x[i]+delta[i]; }
+};
 // Production linear solve: the Hypre device-map overload through the owned-row adapter.
 template<int C> struct HypreSimpleSolve {
     using Solver=mars::fem::HypreGMRESSolver<double,int,cstone::execution::Gpu>;
     Solver solver;
-    typename Solver::Vector b,x;
-    explicit HypreSimpleSolve(MPI_Comm comm):solver(comm,2000,1e-12,Solver::BOOMERAMG,100) {
+    MPI_Comm comm;
+    typename Solver::Vector b,x,defect,delta,trial;
+    explicit HypreSimpleSolve(MPI_Comm c):solver(c,2000,1e-12,Solver::BOOMERAMG,100),comm(c) {
         solver.setVerbose(false); solver.setPointBlock(C);
         const distributed::Tolerance acceptance;
         solver.enable_true_residual_check(acceptance.absolute,acceptance.relative);
@@ -146,6 +157,50 @@ template<int C> struct HypreSimpleSolve {
     template<class System> bool operator()(const System& s) {
         if (s.rows()) assembly_cuda_check(cudaMemset(x.data(),0,std::size_t(s.rows())*sizeof(double)));
         return distributed::solve_owned(solver,s,b,x);
+    }
+    template<class System,class Publish>
+    PressureRefinementResult refine(System& system,Publish publish,distributed::Tolerance acceptance) {
+        static_assert(C==1,"refinement is pressure-only");
+        defect.resize(b.size()); delta.resize(b.size()); trial.resize(b.size());
+        struct Operations {
+            HypreSimpleSolve& owner; System& system; Publish& publish; distributed::Tolerance tolerance;
+            distributed::HaloComplete local{};
+            auto defect() {
+                local=publish(owner.x);
+                return system.compensated_defect(local,owner.b.data(),owner.defect.data(),owner.defect.size(),tolerance);
+            }
+            PressureCorrectionResult correct(int remaining) {
+                if (system.rows()) assembly_cuda_check(cudaMemset(owner.delta.data(),0,owner.delta.size()*sizeof(double)));
+                const int before=owner.solver.getLastIterations();
+                const bool accepted=owner.solver.solve_prepared_correction(owner.defect,owner.delta,remaining);
+                const int input[2]={accepted?0:1,owner.solver.getLastIterations()-before};
+                int global[2];
+                simple_max(owner.comm,input,global,2);
+                return {global[0]==0,global[1]};
+            }
+            auto candidate() {
+                launch(system.rows(),PressureCandidate{owner.x.data(),owner.delta.data(),owner.trial.data()});
+                local=publish(owner.trial);
+                return system.compensated_defect(local,owner.b.data(),owner.defect.data(),owner.defect.size(),tolerance);
+            }
+            bool verify() {
+                // All three checks use the original RHS and requested target.
+                const int failed=owner.solver.check_prepared_solution(owner.b,owner.trial)?0:1;
+                int any=0;
+                simple_max(owner.comm,&failed,&any,1);
+                const auto ordinary=system.residual(local,owner.b.data(),tolerance);
+                const auto bounded=system.compensated_defect(local,owner.b.data(),owner.defect.data(),owner.defect.size(),tolerance,true);
+                return !any && ordinary.passed && bounded.passed;
+            }
+            void keep() { owner.x.swap(owner.trial); }
+            void restore() {
+                local=publish(owner.x);
+                owner.solver.check_prepared_solution(owner.b,owner.x);
+            }
+        } operations{*this,system,publish,acceptance};
+        int used=solver.getLastIterations(),global_used=0;
+        simple_max(comm,&used,&global_used,1);
+        return refine_pressure(operations,global_used,solver.get_max_iterations());
     }
 };
 #endif
@@ -362,9 +417,26 @@ struct DistributedSimpleRunner {
         if (with.size()==0) exchange({{increment.data(),C}});
         else { auto it=with.begin(); exchange({{increment.data(),C},*it}); }
         const auto acceptance=C==1 && pressure_tolerance?*pressure_tolerance:tolerance;
-        const auto norms=system.residual(distributed::halo_complete(increment.data(),increment.values.size()),solver.rhs(),acceptance);
+        auto norms=system.residual(distributed::halo_complete(increment.data(),increment.values.size()),solver.rhs(),acceptance);
+        if constexpr (C==1) {
+            auto publish=[&](const auto& candidate_values) {
+                system.unpack(candidate_values.data(),candidate_values.size(),increment.data(),increment.values.size());
+                exchange({{increment.data(),1}});
+                return distributed::halo_complete(increment.data(),increment.values.size());
+            };
+            if constexpr (requires { solver.refine(system,publish,acceptance); }) {
+                if ((!verdict[1] || !norms.passed) && norms.finite) {
+                    const auto refinement=solver.refine(system,publish,acceptance);
+                    verdict[1]=refinement.accepted?1:0;
+                    norms=system.residual(distributed::halo_complete(increment.data(),increment.values.size()),solver.rhs(),acceptance);
+                    int rank=0; MPI_Comm_rank(comm,&rank);
+                    if (!rank) std::cerr<<"[simple-pressure-refinement] iteration="<<completed+1<<" rounds="<<refinement.rounds
+                        <<" iterations="<<refinement.iterations<<" accepted="<<refinement.accepted<<'\n';
+                }
+            }
+        }
         // Check rejected candidates too, before discarding the only independent evidence.
-        // Neither a solver rejection nor a failed MARS residual can become a success.
+        // A rejected candidate needs a successful correction and both original-system checks.
         if (!verdict[1] || !norms.passed) {
             int rank=0; MPI_Comm_rank(comm,&rank);
             if (!rank) std::cerr<<"[simple-linear] stage="<<(C==3?"momentum":"pressure")
