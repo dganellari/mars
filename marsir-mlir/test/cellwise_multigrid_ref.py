@@ -6,17 +6,19 @@ Storage" (arXiv:2607.03413), here at p = 7 for the nonsymmetric CVFEM operator.
 
 Levels: the ne^3 block (ne = 2^k) coarsened 2:1 down to one element, all at p = 7.
 Prolongation evaluates the coarse polynomial at the child's GLL nodes; restriction
-is its exact transpose on the raw unassembled residual. Smoother: degree-3 Chebyshev
-on P_J A (P_J = DSS + Jacobi), interval [lmax / 15, lmax], lmax = 1.1 x a 30-step
-power iteration from a hash vector. The one-element level is solved exactly. One
-V-cycle per preconditioner call of the left-preconditioned BiCGStab.
+is its exact transpose on the raw unassembled residual. Smoother: Chebyshev on P_J A
+(P_J = DSS + Jacobi), interval [lmax / 15, lmax], lmax = 1.1 x a 30-step power
+iteration from a hash vector, --pre steps before and --post steps after the coarse
+correction (pre = 0 restricts the right-hand side directly). The one-element level
+is solved exactly. One V-cycle per preconditioner call of the left-preconditioned
+BiCGStab.
 
 Checks: prolongation keeps continuity, restriction is the transpose, degree-7
 polynomials are reproduced, the V-cycle is linear with continuous output, and the
 solve converges to the manufactured solution. The GPU run with the same --ne and
---deform (and --mg) must reproduce the history to about 4 digits.
+--deform, --pre and --post (and --mg) must reproduce the history to about 4 digits.
 
-Run: python3 test/cellwise_multigrid_ref.py [--ne 4] [--deform 0.05] [--tol 1e-10]
+Run: python3 test/cellwise_multigrid_ref.py [--ne 4] [--deform 0.05] [--pre 0] [--post 3]
 """
 import argparse
 
@@ -30,6 +32,8 @@ ap.add_argument("--ne", type=int, default=4)
 ap.add_argument("--deform", type=float, default=0.05)
 ap.add_argument("--tol", type=float, default=1e-10)
 ap.add_argument("--maxit", type=int, default=200)
+ap.add_argument("--pre", type=int, default=0)
+ap.add_argument("--post", type=int, default=3)
 args = ap.parse_args()
 
 I = [np.array([fem.lag(zeta, (z - 1) / 2)[0] for z in zeta]),
@@ -67,10 +71,10 @@ def power_iteration(lev, steps=30):
     return lam
 
 class Multigrid:
-    def __init__(self, ne, deform, degree=3, smoothing_range=15.0):
+    def __init__(self, ne, deform, pre, post, smoothing_range=15.0):
         self.levels = [fem.Level(m, deform) for m in [ne >> k for k in range(ne.bit_length())]]
         assert self.levels[-1].E == 1 and ne & (ne - 1) == 0, "ne must be a power of two"
-        self.degree, self.range = degree, smoothing_range
+        self.pre, self.post, self.range = pre, post, smoothing_range
         self.lmax = [power_iteration(l) for l in self.levels[:-1]]
         c = self.levels[-1]
         self.inner = np.where(c.mask[0] > 0)[0]
@@ -81,14 +85,14 @@ class Multigrid:
         self.Ainv = np.linalg.inv(Aint)
         self.vcycles = 0
 
-    def smooth(self, l, b, x=None):
+    def smooth(self, l, b, steps, x=None):
         lev = self.levels[l]
         lmax = 1.1 * self.lmax[l]; lmin = lmax / self.range
         theta, delta = 0.5 * (lmax + lmin), 0.5 * (lmax - lmin)
         sigma = theta / delta; rho = 1.0 / sigma
         d = lev.PJ(b if x is None else b - lev.A(x)) / theta
         x = d if x is None else x + d
-        for _ in range(self.degree - 1):
+        for _ in range(steps - 1):
             rho_new = 1.0 / (2.0 * sigma - rho)
             d = rho_new * rho * d + (2.0 * rho_new / delta) * lev.PJ(b - lev.A(x))
             x = x + d; rho = rho_new
@@ -99,10 +103,14 @@ class Multigrid:
             x = np.zeros((1, n3)); x[0, self.inner] = self.Ainv @ b[0, self.inner]
             return x
         lev, coarse = self.levels[l], self.levels[l + 1]
-        x = self.smooth(l, b)
-        r = lev.mask * (b - lev.A(x))
-        x = x + prolong(self.vcycle(restrict(r, coarse.ne), l + 1), coarse.ne)
-        return self.smooth(l, b, x)
+        if self.pre:
+            x = self.smooth(l, b, self.pre)
+            r = lev.mask * (b - lev.A(x))
+        else:
+            r = lev.mask * b
+        e = prolong(self.vcycle(restrict(r, coarse.ne), l + 1), coarse.ne)
+        x = x + e if self.pre else e
+        return self.smooth(l, b, self.post, x) if self.post else x
 
     def __call__(self, r):
         self.vcycles += 1
@@ -135,7 +143,7 @@ repro = np.abs(prolong(poly(c0.x), 2) - poly(f0.x)).max() / np.abs(poly(f0.x)).m
 print(f"prolongation continuity {cont:.1e}, restriction = transpose {transp:.1e}, "
       f"degree-7 reproduction {repro:.1e}")
 
-M = Multigrid(args.ne, args.deform)
+M = Multigrid(args.ne, args.deform, args.pre, args.post)
 lev = M.levels[0]
 r1, r2 = rng.standard_normal((lev.E, n3)), rng.standard_normal((lev.E, n3))
 z = M.vcycle(2.0 * r1 - 3.0 * r2)
@@ -147,7 +155,7 @@ print("lambda_max(P_J A) per level:", " ".join(f"{l:.4f}" for l in M.lmax))
 u = np.prod(np.sin(np.pi * lev.x), -1); b = lev.A(u)
 x, r0, hist = bicgstab(lev, M, b, args.tol, args.maxit)
 err = np.sqrt(lev.wdot(x - u, x - u) / lev.wdot(u, u))
-print(f"multigrid BiCGStab, p=7, {args.ne}^3 elements, deform {args.deform:.3f}")
+print(f"multigrid ({args.pre},{args.post}) BiCGStab, p=7, {args.ne}^3 elements, deform {args.deform:.3f}")
 print(f"  iterations {len(hist)}, ||P r0||_w = {r0:.3e}, ||P r||_w = {hist[-1]:.3e}")
 for k, h in enumerate(hist, 1):
     print(f"  it {k:3d}  ||P r||_w = {h:.3e}")

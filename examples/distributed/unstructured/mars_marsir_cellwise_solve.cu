@@ -14,10 +14,12 @@
 // All per-element work runs on the GPU: corners, metric, diagonal, u, b.
 //
 // Run:  mars_marsir_cellwise_solve --ptx <hl_full_p7_sm90.ptx> [--ne 8] [--deform 0]
-//                                  [--tol 1e-10] [--maxit 500] [--reps 10] [--mg]
+//                                  [--tol 1e-10] [--maxit 500] [--reps 10]
+//                                  [--mg] [--pre 0] [--post 3]
 // --mg preconditions with the geometric multigrid V-cycle instead of DSS + Jacobi
-// (ne must be a power of two); its history must match
-// marsir-mlir/test/cellwise_multigrid_ref.py.
+// (ne must be a power of two), with --pre / --post Chebyshev steps around the coarse
+// correction; its history must match marsir-mlir/test/cellwise_multigrid_ref.py
+// with the same options.
 // With the same --ne and --deform, the residual history must match
 // marsir-mlir/test/cellwise_krylov_ref.py to about 4 digits (BiCGStab amplifies the
 // rounding of the different summation orders).
@@ -191,6 +193,7 @@ int main(int argc, char** argv)
     int ne = 8, max_iterations = 500, reps = 10;
     double deform = 0.0, tol = 1e-10;
     bool use_mg = false;
+    int pre = 0, post = 3;
     for (int i = 1; i < argc; i += 2) {
         if (!strcmp(argv[i], "--mg")) { use_mg = true; --i; continue; }
         if (i + 1 >= argc) { fprintf(stderr, "option %s needs a value\n", argv[i]); return 1; }
@@ -200,11 +203,13 @@ int main(int argc, char** argv)
         else if (!strcmp(argv[i], "--tol")) tol = atof(argv[i + 1]);
         else if (!strcmp(argv[i], "--maxit")) max_iterations = atoi(argv[i + 1]);
         else if (!strcmp(argv[i], "--reps")) reps = atoi(argv[i + 1]);
+        else if (!strcmp(argv[i], "--pre")) pre = atoi(argv[i + 1]);
+        else if (!strcmp(argv[i], "--post")) post = atoi(argv[i + 1]);
         else { fprintf(stderr, "unknown option %s\n", argv[i]); return 1; }
     }
     if (ptx_path.empty()) {
         fprintf(stderr, "usage: %s --ptx <hl_full_p7_sm90.ptx> [--ne N] [--deform a] "
-                        "[--tol t] [--maxit k] [--reps r] [--mg]\n", argv[0]);
+                        "[--tol t] [--maxit k] [--reps r] [--mg] [--pre k] [--post k]\n", argv[0]);
         return 1;
     }
     if (use_mg && (ne & (ne - 1))) {
@@ -277,7 +282,7 @@ int main(int argc, char** argv)
             level_arrays.push_back(dg);
         }
         mg = std::make_unique<cellwise::Multigrid<decltype(apply_on)>>(apply_on, levels,
-                                                                      ops.zeta.data());
+                                                                      ops.zeta.data(), pre, post);
         MARS_CELLWISE_CK(cudaEventRecord(t1));
         MARS_CELLWISE_CK(cudaEventSynchronize(t1));
         MARS_CELLWISE_CK(cudaEventElapsedTime(&setup_ms, t0, t1));
@@ -308,7 +313,7 @@ int main(int argc, char** argv)
     printf("cell-wise BiCGStab, p=%d, %d^3 elements (%lld), %lld unique DoFs, deform %.3f, %s\n",
            kP, ne, E, unique, deform, use_mg ? "multigrid V-cycle" : "DSS + Jacobi");
     if (use_mg) {
-        printf("  multigrid setup %.1f ms; lambda_max(P_J A) per level:", setup_ms);
+        printf("  multigrid (%d,%d) setup %.1f ms; lambda_max(P_J A) per level:", pre, post, setup_ms);
         for (int l = 0; (ne >> l) > 1; ++l) printf(" %.4f", mg->lambda_max(l));
         printf("\n");
     }
@@ -335,15 +340,12 @@ int main(int argc, char** argv)
     const double vec_gb = n * 8.0 / 1e9;
     const float op_ms = time_ms([&] { apply(d_uex, d_b); });
     const float dss_ms = time_ms([&] { cellwise::dss(d_b, d_x, blk); });
-    const float cascade_ms = time_ms([&] { cellwise::dss_cascade(d_x, blk); });
     const float pre_ms = time_ms([&] { cellwise::precondition(d_b, d_x, d_diag, blk); });
     const double it_ms = res.iterations ? solve_ms / res.iterations : 0.0;
     printf("  operator     %8.3f ms  %7.1f ns/elem  %6.2f GDoF/s (unique)\n", op_ms,
            op_ms * 1e6 / E, unique / (op_ms * 1e-3) / 1e9);
     printf("  DSS gather   %8.3f ms  %6.2f GDoF/s (unique)  %5.2f TB/s\n", dss_ms,
            unique / (dss_ms * 1e-3) / 1e9, 2 * vec_gb / dss_ms);
-    printf("  DSS cascade  %8.3f ms  %6.2f GDoF/s (unique)  (in place, 3 passes)\n", cascade_ms,
-           unique / (cascade_ms * 1e-3) / 1e9);
     printf("  precond      %8.3f ms  %5.2f TB/s  (gather + Jacobi, one pass)\n", pre_ms,
            3 * vec_gb / pre_ms);
     if (use_mg) {

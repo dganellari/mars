@@ -20,8 +20,10 @@
 // element writes only its own values: no atomics, no coloring, no index map. Unlike
 // the cascade, the gather is one pass, so it fuses with the Jacobi step and the dot
 // products after it: a preconditioner call reads the residual once and writes the
-// result once. Copy counts and the Dirichlet boundary come from the element
-// position, not from stored arrays.
+// result once. On GH200 the fused preconditioner took 1.6 ms against 2.5 ms for
+// cascade + Jacobi at 64^3 elements, although the gather alone is slower than the
+// cascade alone (1.3 vs 1.0 ms). Copy counts and the Dirichlet boundary come from
+// the element position, not from stored arrays.
 
 #include <cuda_runtime.h>
 
@@ -54,52 +56,6 @@ struct Block {
     __host__ __device__ long long elements() const { return (long long)nx * ny * nz; }
     __host__ __device__ long long values() const { return elements() * kN3; }
 };
-
-// The paper's cascade, in place: one thread per face node of each element pair
-// adjacent along AXIS sums the two copies and writes the sum to both. Kept to time
-// against the gather below.
-template <int AXIS>
-__global__ void dss_axis_kernel(double* __restrict__ v, int nx, int ny, int nz)
-{
-    int dims[3] = {nx, ny, nz};
-    dims[AXIS] -= 1;
-    const long long pairs = (long long)dims[0] * dims[1] * dims[2];
-    const long long t = (long long)blockIdx.x * blockDim.x + threadIdx.x;
-    if (t >= pairs * kNN) return;
-    const int face = (int)(t % kNN);
-    const long long pair = t / kNN;
-    const int ez = (int)(pair % dims[2]);
-    const long long q = pair / dims[2];
-    const int ey = (int)(q % dims[1]);
-    const int ex = (int)(q / dims[1]);
-    const long long e = ((long long)ex * ny + ey) * nz + ez;
-    const long long f = e + (AXIS == 0 ? (long long)ny * nz : AXIS == 1 ? nz : 1);
-    const int u = face / kN, w = face % kN;
-    int lo, hi;   // the shared plane: last in e, first in f
-    if (AXIS == 0) { lo = (kN - 1) * kNN + u * kN + w; hi = u * kN + w; }
-    else if (AXIS == 1) { lo = u * kNN + (kN - 1) * kN + w; hi = u * kNN + w; }
-    else { lo = u * kNN + w * kN + (kN - 1); hi = u * kNN + w * kN; }
-    const double s = v[e * kN3 + lo] + v[f * kN3 + hi];
-    v[e * kN3 + lo] = s;
-    v[f * kN3 + hi] = s;
-}
-
-inline void dss_cascade(double* d_v, const Block& b, cudaStream_t stream = 0)
-{
-    auto blocks = [&](long long pairs) {
-        return (unsigned)((pairs * kNN + kThreads - 1) / kThreads);
-    };
-    if (b.nx > 1)
-        dss_axis_kernel<0><<<blocks((long long)(b.nx - 1) * b.ny * b.nz), kThreads, 0, stream>>>(
-            d_v, b.nx, b.ny, b.nz);
-    if (b.ny > 1)
-        dss_axis_kernel<1><<<blocks((long long)b.nx * (b.ny - 1) * b.nz), kThreads, 0, stream>>>(
-            d_v, b.nx, b.ny, b.nz);
-    if (b.nz > 1)
-        dss_axis_kernel<2><<<blocks((long long)b.nx * b.ny * (b.nz - 1)), kThreads, 0, stream>>>(
-            d_v, b.nx, b.ny, b.nz);
-    MARS_CELLWISE_CK(cudaGetLastError());
-}
 
 struct Node {
     long long e, t;   // element, and value index e * kN3 + local index

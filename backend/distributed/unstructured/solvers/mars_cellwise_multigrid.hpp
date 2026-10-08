@@ -10,7 +10,9 @@
 // restricting an assembled residual would count shared nodes several times. Elements
 // talk only through the DSS inside the smoother. Smoother: Chebyshev on the
 // DSS-Jacobi preconditioned operator, its upper bound from a power iteration (the
-// top of that spectrum is nearly real). The one-element level is solved exactly.
+// top of that spectrum is nearly real), `pre` steps before and `post` steps after the
+// coarse correction. With pre = 0 the cycle restricts the right-hand side directly
+// and needs no residual operator call. The one-element level is solved exactly.
 // The V-cycle is a fixed linear map with continuous output, as left-preconditioned
 // BiCGStab requires. Reference: marsir-mlir/test/cellwise_multigrid_ref.py.
 
@@ -33,10 +35,11 @@ constexpr int kMetric = 3 * (kN - 1) * 3 * kNN;                      // metric d
 // Coarse GLL basis at the GLL nodes of the left (0) and right (1) child: [child][fine][coarse].
 __constant__ double c_child_interp[2][kN][kN];
 
-// xf += prolongation of the coarse field xc. One thread block per fine element; the
+// xf (+)= prolongation of the coarse field xc. One thread block per fine element; the
 // three 1D contractions go through shared memory.
+template <bool ADD>
 __global__ void __launch_bounds__(kThreads)
-prolong_add_kernel(const double* __restrict__ xc, double* __restrict__ xf, Block fine)
+prolong_kernel(const double* __restrict__ xc, double* __restrict__ xf, Block fine)
 {
     __shared__ double s0[kN3], s1[kN3];
     const long long e = blockIdx.x;
@@ -68,13 +71,14 @@ prolong_add_kernel(const double* __restrict__ xc, double* __restrict__ xf, Block
         const int a = l / kNN, bc = l % kNN;
         double s = 0.0;
         for (int m = 0; m < kN; ++m) s += Ix[a][m] * s0[m * kNN + bc];
-        xf[e * kN3 + l] += s;
+        xf[e * kN3 + l] = ADD ? xf[e * kN3 + l] + s : s;
     }
 }
 
-// bc = restriction of the fine residual bf - qf, its Dirichlet copies zeroed: the
-// transpose of prolongation, summed over the 8 children. One thread block per coarse
-// element.
+// bc = restriction of the fine residual bf - qf (bf alone without HAVE_Q), its
+// Dirichlet copies zeroed: the transpose of prolongation, summed over the 8 children.
+// One thread block per coarse element.
+template <bool HAVE_Q>
 __global__ void __launch_bounds__(kThreads)
 restrict_kernel(const double* __restrict__ bf, const double* __restrict__ qf,
                 double* __restrict__ bc, Block fine)
@@ -100,7 +104,7 @@ restrict_kernel(const double* __restrict__ bf, const double* __restrict__ qf,
             nd.a = l / kNN;
             nd.b = (l / kN) % kN;
             nd.c = l % kN;
-            s0[l] = on_outer_boundary(nd, fine) ? 0.0 : bf[nd.t] - qf[nd.t];
+            s0[l] = on_outer_boundary(nd, fine) ? 0.0 : (HAVE_Q ? bf[nd.t] - qf[nd.t] : bf[nd.t]);
         }
         __syncthreads();
         for (int l = threadIdx.x; l < kN3; l += kThreads) {   // [a][b][c] -> [j][b][c]
@@ -132,8 +136,8 @@ restrict_kernel(const double* __restrict__ bf, const double* __restrict__ qf,
 
 // One Chebyshev step on P_J A: z = P_J (b - q) with q = A x, d = c_d d + c_z z, x += d.
 // FIRST: d = c_z z, the old d is not read. ZERO_X: x = 0 and q is not used (a smoother
-// starting from zero), so z = P_J b and x = d.
-template <bool FIRST, bool ZERO_X>
+// starting from zero), so z = P_J b and x = d. LAST: d is not needed again, not stored.
+template <bool FIRST, bool ZERO_X, bool LAST>
 __global__ void __launch_bounds__(kThreads)
 chebyshev_kernel(const double* __restrict__ b, const double* __restrict__ q,
                  const double* __restrict__ diag, double* __restrict__ d, double* __restrict__ x,
@@ -147,7 +151,7 @@ chebyshev_kernel(const double* __restrict__ b, const double* __restrict__ q,
             z = g / diag[nd.t];
         }
         const double dn = FIRST ? c_z * z : c_d * d[nd.t] + c_z * z;
-        d[nd.t] = dn;
+        if (!LAST) d[nd.t] = dn;
         x[nd.t] = ZERO_X ? dn : x[nd.t] + dn;
     });
 }
@@ -216,10 +220,15 @@ struct MultigridLevel {
 template <typename Apply>
 class Multigrid {
 public:
-    Multigrid(Apply apply, std::vector<MultigridLevel> levels, const double* zeta_host,
-              int degree = 3, double smoothing_range = 15.0)
-        : apply_(std::move(apply)), lv_(std::move(levels)), degree_(degree), range_(smoothing_range)
+    Multigrid(Apply apply, std::vector<MultigridLevel> levels, const double* zeta_host, int pre,
+              int post, double smoothing_range = 15.0)
+        : apply_(std::move(apply)), lv_(std::move(levels)), pre_(pre), post_(post),
+          range_(smoothing_range)
     {
+        if (pre_ < 0 || post_ < 0 || pre_ + post_ == 0) {
+            fprintf(stderr, "multigrid: need pre, post >= 0 and at least one smoothing step\n");
+            std::abort();
+        }
         for (size_t l = 0; l + 1 < lv_.size(); ++l) {
             const Block f = lv_[l].blk, c = lv_[l + 1].blk;
             if (c.nx * 2 != f.nx || c.ny * 2 != f.ny || c.nz * 2 != f.nz) {
@@ -278,45 +287,58 @@ public:
             return;
         }
         const MultigridLevel& L = lv_[l];
-        smooth(l, b, x, true, stream);
-        apply_(x, q_[l], L.G, L.blk.elements());
-        restrict_kernel<<<(unsigned)lv_[l + 1].blk.elements(), kThreads, 0, stream>>>(b, q_[l],
-                                                                                    b_[l + 1], L.blk);
+        const unsigned fine = (unsigned)L.blk.elements(), coarse = (unsigned)lv_[l + 1].blk.elements();
+        if (pre_ > 0) {
+            smooth(l, b, x, true, pre_, stream);
+            apply_(x, q_[l], L.G, L.blk.elements());
+            restrict_kernel<true><<<coarse, kThreads, 0, stream>>>(b, q_[l], b_[l + 1], L.blk);
+        } else {
+            restrict_kernel<false><<<coarse, kThreads, 0, stream>>>(b, nullptr, b_[l + 1], L.blk);
+        }
         vcycle(l + 1, b_[l + 1], x_[l + 1], stream);
-        prolong_add_kernel<<<(unsigned)L.blk.elements(), kThreads, 0, stream>>>(x_[l + 1], x, L.blk);
-        smooth(l, b, x, false, stream);
+        if (pre_ > 0)
+            prolong_kernel<true><<<fine, kThreads, 0, stream>>>(x_[l + 1], x, L.blk);
+        else
+            prolong_kernel<false><<<fine, kThreads, 0, stream>>>(x_[l + 1], x, L.blk);
+        if (post_ > 0) smooth(l, b, x, false, post_, stream);
     }
 
     double lambda_max(size_t l) const { return lmax_[l]; }
 
 private:
-    void smooth(size_t l, const double* b, double* x, bool zero_x, cudaStream_t stream) const
+    void smooth(size_t l, const double* b, double* x, bool zero_x, int steps,
+                cudaStream_t stream) const
     {
         const MultigridLevel& L = lv_[l];
         const double lmax = 1.1 * lmax_[l], lmin = lmax / range_;
         const double theta = 0.5 * (lmax + lmin), delta = 0.5 * (lmax - lmin);
         const double sigma = theta / delta;
         double rho = 1.0 / sigma;
+        const bool last = steps == 1;
         if (zero_x) {
-            launch<true, true>(b, nullptr, L, d_[l], x, 0.0, 1.0 / theta, stream);
+            if (last) launch<true, true, true>(b, nullptr, L, d_[l], x, 0.0, 1.0 / theta, stream);
+            else launch<true, true, false>(b, nullptr, L, d_[l], x, 0.0, 1.0 / theta, stream);
         } else {
             apply_(x, q_[l], L.G, L.blk.elements());
-            launch<true, false>(b, q_[l], L, d_[l], x, 0.0, 1.0 / theta, stream);
+            if (last) launch<true, false, true>(b, q_[l], L, d_[l], x, 0.0, 1.0 / theta, stream);
+            else launch<true, false, false>(b, q_[l], L, d_[l], x, 0.0, 1.0 / theta, stream);
         }
-        for (int k = 1; k < degree_; ++k) {
+        for (int k = 1; k < steps; ++k) {
             const double rho_new = 1.0 / (2.0 * sigma - rho);
+            const double c_d = rho_new * rho, c_z = 2.0 * rho_new / delta;
             apply_(x, q_[l], L.G, L.blk.elements());
-            launch<false, false>(b, q_[l], L, d_[l], x, rho_new * rho, 2.0 * rho_new / delta, stream);
+            if (k + 1 == steps) launch<false, false, true>(b, q_[l], L, d_[l], x, c_d, c_z, stream);
+            else launch<false, false, false>(b, q_[l], L, d_[l], x, c_d, c_z, stream);
             rho = rho_new;
         }
     }
 
-    template <bool FIRST, bool ZERO_X>
+    template <bool FIRST, bool ZERO_X, bool LAST>
     static void launch(const double* b, const double* q, const MultigridLevel& L, double* d,
                        double* x, double c_d, double c_z, cudaStream_t stream)
     {
-        static const int grid = resident_grid(chebyshev_kernel<FIRST, ZERO_X>);
-        chebyshev_kernel<FIRST, ZERO_X><<<grid, kThreads, 0, stream>>>(b, q, L.diag, d, x, c_d, c_z,
+        static const int grid = resident_grid(chebyshev_kernel<FIRST, ZERO_X, LAST>);
+        chebyshev_kernel<FIRST, ZERO_X, LAST><<<grid, kThreads, 0, stream>>>(b, q, L.diag, d, x, c_d, c_z,
                                                                        L.blk);
         MARS_CELLWISE_CK(cudaGetLastError());
     }
@@ -412,7 +434,7 @@ private:
 
     Apply apply_;
     std::vector<MultigridLevel> lv_;
-    int degree_;
+    int pre_, post_;
     double range_;
     std::vector<double*> b_, x_, q_, d_;   // per level: right-hand side, iterate, A x, Chebyshev d
     std::vector<double> lmax_;
