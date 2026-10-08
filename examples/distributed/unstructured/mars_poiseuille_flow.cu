@@ -237,6 +237,9 @@ int main(int argc, char** argv)
             std::cout << "Poiseuille channel: " << solver.globalDofs() << " nodes on " << numRanks
                       << " ranks, Re = U H / nu = " << U * (box.hi[1] - box.lo[1]) / opt.params.nu << "\n";
 
+        // Diagnostics for large runs: the exchange pattern alone, before any time step.
+        if (const char* reps = std::getenv("MARS_EXCHANGE_BENCH")) solver.benchmarkExchanges(std::atoi(reps));
+
         FrameWriter frames(opt.vtuPrefix);
         poiseuille::Monitor monitor(opt.validation, solver, opt.numSteps, U);
         frames.write(solver, *domain, 0, 0.0);

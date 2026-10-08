@@ -37,6 +37,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 #include <initializer_list>
 #include <iterator>
 #include <type_traits>
@@ -372,15 +373,71 @@ public:
     }
 
     // The exchanges of prolong and restrict on this rank since the last reset: how many,
-    // their time from pack to the end of the MPI wait, and the MPI part of it.
+    // their time from pack to the end of the MPI wait, and the MPI part of it. With
+    // MARS_EXCHANGE_PROFILE set, a barrier before the MPI part splits it: waitMs is the wait for the
+    // last rank to arrive (skew from the work before), mpiMs the transfer after it.
     struct ExchangeStats
     {
-        long count  = 0;
-        double ms   = 0;
-        double mpiMs = 0;
+        long count    = 0;
+        double ms     = 0;
+        double mpiMs  = 0;
+        double waitMs = 0;
     };
     const ExchangeStats& exchangeStats() const { return stats_; }
     void resetExchangeStats() { stats_ = {}; }
+    bool profiling() const { return profile_; }
+
+    // This rank's peers and the values it sends per field in a forward exchange, split by whether
+    // the peer runs on the same node. Collective.
+    struct ExchangeShape
+    {
+        int peers = 0, peersOnNode = 0;
+        long long sendValues = 0, sendValuesOffNode = 0;
+    };
+    ExchangeShape exchangeShape() const
+    {
+        int rank = 0, size = 1;
+        MPI_Comm_rank(comm_, &rank);
+        MPI_Comm_size(comm_, &size);
+        MPI_Comm node;
+        MPI_Comm_split_type(comm_, MPI_COMM_TYPE_SHARED, rank, MPI_INFO_NULL, &node);
+        int leader = rank;
+        MPI_Allreduce(MPI_IN_PLACE, &leader, 1, MPI_INT, MPI_MIN, node);
+        MPI_Comm_free(&node);
+        std::vector<int> nodeOf(size);
+        MPI_Allgather(&leader, 1, MPI_INT, nodeOf.data(), 1, MPI_INT, comm_);
+        ExchangeShape s;
+        for (size_t p = 0; p < peers_.size(); ++p)
+        {
+            const long long sent = sendOffsets_[p + 1] - sendOffsets_[p];
+            const bool onNode    = nodeOf[peers_[p]] == nodeOf[rank];
+            s.peers += 1;
+            s.peersOnNode += onNode ? 1 : 0;
+            s.sendValues += sent;
+            if (!onNode) s.sendValuesOffNode += sent;
+        }
+        return s;
+    }
+
+    // reps exchanges of these fields back to back, each after a barrier, so no skew from earlier work
+    // is in them: the cost of the exchange pattern alone. Per exchange, this rank's time in ms from
+    // the barrier to the end of the unpack. Collective; the exchange statistics are left unchanged.
+    std::vector<double> benchmark(Vector* const* fields, int count, int reps, bool reverse) const
+    {
+        const ExchangeStats saved = stats_;
+        Fields f                  = pointers(fields, count);
+        std::vector<double> t(reps);
+        for (int r = 0; r < reps; ++r)
+        {
+            MPI_Barrier(comm_);
+            const double start = MPI_Wtime();
+            exchange(f, reverse);
+            cudaDeviceSynchronize();
+            t[r] = 1e3 * (MPI_Wtime() - start);
+        }
+        stats_ = saved;
+        return t;
+    }
 
 private:
     int grid() const { return std::max(1, int((n_ + blockSize_ - 1) / blockSize_)); }
@@ -594,6 +651,8 @@ private:
                                                                            sendBuf_.data());
         cudaDeviceSynchronize();
         double packed = MPI_Wtime();
+        if (profile_) MPI_Barrier(comm_);
+        double synced = MPI_Wtime();
 
         auto type     = mpiDatatype<RealType>();
         const int tag = reverse ? 0x4e51 : 0x4e50;
@@ -619,7 +678,8 @@ private:
         double done = MPI_Wtime();
         stats_.count += 1;
         stats_.ms += 1e3 * (done - start);
-        stats_.mpiMs += 1e3 * (done - packed);
+        stats_.waitMs += 1e3 * (synced - packed);
+        stats_.mpiMs += 1e3 * (done - synced);
 
         if (unpackTotal > 0)
             dofUnpackKernel<RealType><<<int((unpackTotal + 255) / 256), 256>>>(unpackIds.data(), unpackTotal, f,
@@ -637,6 +697,7 @@ private:
     cstone::DeviceVector<int> sendDof_, recvCopy_;   // per peer: DOF slots sent, copies received
     mutable Vector sendBuf_, recvBuf_;
     mutable ExchangeStats stats_;
+    bool profile_ = std::getenv("MARS_EXCHANGE_PROFILE") != nullptr;
 };
 
 } // namespace fem
