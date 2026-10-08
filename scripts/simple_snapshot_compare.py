@@ -55,6 +55,9 @@ def options(arguments):
 
 def controls(case_path, reference_dir, mesh, log):
     from prepare_simple_deck import load_deck, translate
+    refinement = re.findall(r'(?:^|\s)pressure_refinement=([^\s]*)', '\n'.join(log))
+    require(refinement in ([], ['0']) and not any('[simple-pressure-refinement]' in line for line in log),
+            'pressure_refinement_not_comparable')
     case = json.loads(case_path.read_text())
     require(case['format'] == 'mars-simple-deck-v1')
     prepared = options(case['arguments'])

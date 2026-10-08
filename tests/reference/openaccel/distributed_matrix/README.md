@@ -66,7 +66,9 @@ or RHS whose square underflows are rejected. Ghost values must already be curren
 The CUDA path computes full rows on device, reuses the existing reduction scratch and
 reduces norms through CUDA-aware MPI. Only the fixed-size decision report reaches the
 host. The ordinary residual implementation retains its existing arithmetic. The pressure
-runner now uses this API for bounded correction solves after a failed candidate.
+runner uses this API for bounded correction solves only when the experimental
+`--pressure-refinement 1` option is selected. It is disabled by default and must
+remain disabled for controlled OpenAccel comparisons.
 The optional final `bounded=true` argument tests an upper bound on the residual,
 including compensated-dot evaluation error. See the [correction contract and GPU
 gate](../simple_performance/pressure_refinement.md); previous component results

@@ -173,6 +173,25 @@ template<class Part> void refinement_integration(MPI_Comm comm,const Part& part)
         const double value=a.columns[k]==row?4.:-.0625;
         a.values[k]=value; a.rhs[row]+=value*truth(run.solver_node.values[a.columns[k]]);
     }
+    const auto rejected_without_refinement=[&]() {
+        const int before=run.poisson_solve.calls;
+        run.poisson_solve.mode=2;
+        bool rejected=false;
+        try { run.template solve<1>(run.poisson,run.poisson_solve,a,increment,false,{}); }
+        catch (const std::runtime_error&) { rejected=true; }
+        simple_collective(comm,rejected && run.poisson_solve.calls==before,
+            "comparison path must reject without attempting pressure refinement");
+    };
+    rejected_without_refinement();
+    int rank=0,ranks=1; MPI_Comm_rank(comm,&rank); MPI_Comm_size(comm,&ranks);
+    if (ranks>1) {
+        bool rejected=false;
+        try { run.set_pressure_refinement(rank==ranks-1); }
+        catch (const std::runtime_error&) { rejected=true; }
+        simple_collective(comm,rejected,"inconsistent refinement selection was not rejected collectively");
+        rejected_without_refinement();
+    }
+    run.set_pressure_refinement(true);
     for (int fault=0;fault<4;++fault) {
         run.poisson_solve.mode=2; run.poisson_solve.fault=fault;
         bool accepted=true;
@@ -190,6 +209,8 @@ template<class Part> void refinement_integration(MPI_Comm comm,const Part& part)
     run.poisson_solve.mode=0;
     run.template solve<1>(run.poisson,run.poisson_solve,a,increment,false,{});
     simple_collective(comm,run.poisson_solve.calls==before,"successful solve entered refinement");
+    run.set_pressure_refinement(false);
+    rejected_without_refinement();
 }
 
 int main(int argc,char** argv) {

@@ -81,7 +81,7 @@ defaults remain unchanged. The explicit absolute target overrides
 `MARS_HYPRE_ABSTOL`, including when `A=0`. Configuration is collective and precedes
 setup; invalid or rank-inconsistent settings are rejected. Reusing the matrix
 graph preserves the explicit target. An audit or repeated residual measurement cannot change a failed verdict.
-The distributed pressure path can now perform bounded correction solves and
+The distributed pressure path can perform opt-in bounded correction solves and
 accept a changed solution only at the original target; see
 [pressure refinement](pressure_refinement.md). An overflowed limit is rejected.
 

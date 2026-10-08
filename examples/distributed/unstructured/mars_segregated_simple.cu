@@ -28,6 +28,7 @@ int execute(const SimpleOptions& o) {
     auto runner=make_runner(); // Release root file arrays and setup scratch before iterating.
     auto& run=*runner;
     run.set_pressure_tolerances(o.pressure_tolerances,o.pressure_rtol,o.pressure_atol);
+    run.set_pressure_refinement(o.pressure_refinement);
     run.profile.configure(o.profile,o.profile_warmup);
     run.exchange.enable_profiling(o.profile);
     run.overlap_assembly=o.halo_overlap;
@@ -53,6 +54,7 @@ int execute(const SimpleOptions& o) {
                  <<" beta="<<c.beta<<" pseudo_dt="<<c.pseudo_dt<<" (steady, no physical time)\n"
                  <<"linear_cache="<<o.linear_cache<<" halo_overlap="<<o.halo_overlap
                  <<" field_output="<<o.field_output<<" profile="<<o.profile<<'\n'
+                 <<"pressure_refinement="<<o.pressure_refinement<<'\n'
                  <<"Norms are dimensionless MARS residuals; not OpenAccel printed RMS.\n";
         if (o.pressure_tolerances)
             std::cout<<"pressure_linear_rtol="<<o.pressure_rtol<<" pressure_linear_atol="<<o.pressure_atol

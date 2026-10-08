@@ -43,7 +43,7 @@ struct SimpleOptions {
     int iterations=2000,report=10,profile_warmup=10,snapshot_iterations=0;
     double residual=1e-6,mass=1e-6,change=1e-6;
     double pressure_rtol=1e-12,pressure_atol=0;
-    bool pressure_tolerances=false;
+    bool pressure_tolerances=false,pressure_refinement=false;
     bool setup_only=false,help=false,profile=false,linear_cache=true,halo_overlap=true,first_step_audit=false;
 };
 inline SimpleOptions simple_options(int argc,char** argv) {
@@ -107,12 +107,13 @@ inline SimpleOptions simple_options(int argc,char** argv) {
                     throw std::runtime_error("--profile-warmup expects a nonnegative integer");
                 o.profile_warmup=int(number);
             }
-            else if (key=="--setup-only" || key=="--profile" || key=="--linear-cache" || key=="--halo-overlap" || key=="--first-step-audit") {
+            else if (key=="--setup-only" || key=="--profile" || key=="--linear-cache" || key=="--halo-overlap" || key=="--first-step-audit" || key=="--pressure-refinement") {
                 if (number!=0 && number!=1) throw std::runtime_error(key+" expects 0 or 1");
                 if (key=="--setup-only") o.setup_only=number!=0;
                 else if (key=="--profile") o.profile=number!=0;
                 else if (key=="--linear-cache") o.linear_cache=number!=0;
                 else if (key=="--halo-overlap") o.halo_overlap=number!=0;
+                else if (key=="--pressure-refinement") o.pressure_refinement=number!=0;
                 else o.first_step_audit=number!=0;
             }
             else if (key=="--residual-tol") o.residual=number;
@@ -163,6 +164,7 @@ inline const char* simple_help() {
            "  --residual-tol 1e-6 --mass-tol 1e-6 --change-tol 1e-6\n"
            "  --pressure-linear-rtol R --pressure-linear-atol A   optional pair; max(A,R*||b||)\n"
            "    Sets pressure Krylov and both true residual targets; momentum stays unchanged.\n"
+           "  --pressure-refinement 0             experimental recovery; keep disabled for OpenAccel comparisons\n"
            "  --linear-cache 1 --halo-overlap 1    set 0 for a performance control\n"
            "  --profile 0 --profile-warmup 10      optional phase timing (adds event fences)\n"
            "  --field-output gathered             distributed writes per-rank CSVs; none skips fields\n"

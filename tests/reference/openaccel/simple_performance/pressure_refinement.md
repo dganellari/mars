@@ -1,7 +1,21 @@
-# Bounded SIMPLE pressure correction
+# Experimental bounded SIMPLE pressure correction
 
-The distributed pressure solve now attempts a correction after a finite candidate
-fails either Hypre's explicit residual check or MARS's owned-row check. This adds
+Pressure recovery is disabled by default. `--pressure-refinement 1` explicitly
+enables this experiment; the startup log records `pressure_refinement=0` or `1`.
+All ranks must select the same mode before iterating. With recovery disabled, a
+rejected pressure candidate remains a failure without attempting a correction.
+
+OpenAccel's reference Hypre path does not perform this extra correction loop.
+It must stay disabled for controlled OpenAccel comparisons. The snapshot,
+startup and pressure-accuracy comparators reject logs with recovery enabled or
+attempted, including historical logs that lack the selection line but contain
+recovery records. Older logs without either remain eligible for their existing
+provenance checks. The same equations do not guarantee the same finite-iteration
+history when the linear-solver procedure differs.
+
+When explicitly enabled, the distributed pressure solve attempts a correction
+after a finite candidate fails either Hypre's explicit residual check or MARS's
+owned-row check. This adds
 no new PDE term, quadrature, boundary treatment, pressure gauge, relaxation or
 time discretization. Momentum and already accepted pressure solves are unchanged.
 
@@ -57,12 +71,15 @@ bound correctly prevents acceptance.
 
 These results do not identify the private run's exact Hypre exit branch or prove
 that its requested tolerance can be reached. CUDA compilation/execution of this
-new integration and the next private pressure-history comparison remain pending.
+experimental integration remains pending. Recovery results cannot establish
+parity of the unmodified OpenAccel solve procedure.
 Earlier component GPU results in `../distributed_matrix/README.md` predate it.
 
 ## Alps GPU gate
 
 Use the MARS uenv terminal and the existing `mars-v010-check/build-hypre` build.
+The synthetic matrix gate invokes recovery explicitly. The channel parity gate
+retains the default without recovery.
 Fetch only once, with no other Git operation running in that checkout. The user
 executes these commands; all results remain on capstor scratch.
 

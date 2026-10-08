@@ -235,6 +235,17 @@ struct DistributedSimpleRunner {
     distributed::Tolerance tolerance{1e-13,1e-10};
     std::optional<distributed::Tolerance> pressure_tolerance;
 
+private:
+    bool pressure_refinement_=false;
+public:
+    void set_pressure_refinement(bool enabled) {
+        simple_collective(comm,completed==0,"pressure refinement must be selected before iterating");
+        const int local[2]={int(enabled),-int(enabled)}; int global[2];
+        simple_max(comm,local,global,2);
+        simple_collective(comm,global[0]==-global[1],"pressure refinement differs between ranks");
+        pressure_refinement_=enabled;
+    }
+
     // All ranks enter, including those without the override, before either solve.
     void set_pressure_tolerances(bool enabled,double relative,double absolute) {
         simple_collective(comm,completed==0 && std::isfinite(relative) && std::isfinite(absolute)
@@ -425,7 +436,7 @@ struct DistributedSimpleRunner {
                 return distributed::halo_complete(increment.data(),increment.values.size());
             };
             if constexpr (requires { solver.refine(system,publish,acceptance); }) {
-                if ((!verdict[1] || !norms.passed) && norms.finite) {
+                if (pressure_refinement_ && (!verdict[1] || !norms.passed) && norms.finite) {
                     const auto refinement=solver.refine(system,publish,acceptance);
                     verdict[1]=refinement.accepted?1:0;
                     norms=system.residual(distributed::halo_complete(increment.data(),increment.values.size()),solver.rhs(),acceptance);

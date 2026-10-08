@@ -17,6 +17,9 @@ int main() {
     check(defaults.controls.density==1 && defaults.controls.viscosity==.1 && defaults.controls.inlet_speed==.1);
     check(defaults.linear_cache && defaults.halo_overlap && !defaults.profile && defaults.field_output=="gathered");
     check(!defaults.pressure_tolerances && defaults.pressure_rtol==1e-12 && defaults.pressure_atol==0);
+    check(!defaults.pressure_refinement);
+    check(parse("--pressure-refinement 1").pressure_refinement);
+    check(!parse("--pressure-refinement=0").pressure_refinement);
     check(defaults.snapshot_iterations==0);
     check(!defaults.first_step_audit);
     check(parse("--first-step-audit 1 --iterations 1 --snapshot-iterations 1 --field-output distributed").first_step_audit);
@@ -58,6 +61,8 @@ int main() {
         "--advection central","--advection 1","--velocity-interpolation other","--velocity-interpolation 1",
         "--inlet-ss outlet","--inlet-ss OUTLET","--wall-ss walls,","--wall-ss walls,walls","--wall-ss walls,inlet","--wall-ss walls,INLET","--unknown 1",
         "--profile 2","--linear-cache -1","--halo-overlap 3","--profile-warmup -1","--profile-warmup 1.5","--field-output vtk",
+        "--pressure-refinement 2","--pressure-refinement -1","--pressure-refinement 0.5",
+        "--pressure-refinement 0 --pressure-refinement 1",
         "--snapshot-iterations -1","--snapshot-iterations 101","--snapshot-iterations 2.5",
         "--snapshot-iterations 20 --iterations 10","--snapshot-iterations 1 --field-output none",
         "--snapshot-iterations 1 --setup-only 1","--snapshot-iterations 1 --profile 1",

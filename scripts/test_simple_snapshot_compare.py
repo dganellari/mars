@@ -142,6 +142,27 @@ class SnapshotTests(unittest.TestCase):
         self.assertEqual(detail['errors']['velocity_max_scaled'], 0.)
         self.assertGreater(len(detail['sha256']), 8)
 
+    def test_explicitly_disabled_pressure_refinement_is_comparable(self):
+        self.log.write_text(self.log.read_text() + 'pressure_refinement=0\n')
+        self.assertEqual(self.run_compare()['comparison_status'], 'completed')
+
+    def test_enabled_pressure_refinement_cannot_pass_comparison(self):
+        self.log.write_text(self.log.read_text() + 'pressure_refinement=1\n')
+        result = self.run_compare(expect=1)
+        self.assertEqual(result['failed_check'], 'pressure_refinement_not_comparable')
+        self.assertEqual(result['comparison_status'], 'invalid_evidence')
+
+    def test_recovery_or_ambiguous_selection_is_not_comparable(self):
+        original = self.log.read_text().splitlines()
+        for extra in (
+                'pressure_refinement=0\npressure_refinement=0',
+                'pressure_refinement=', 'pressure_refinement=unknown',
+                '[simple-pressure-refinement] iteration=1 rounds=1 iterations=2 accepted=1',
+                'pressure_refinement=0\n[simple-pressure-refinement] iteration=1 rounds=1 iterations=2 accepted=0'):
+            with self.subTest(extra=extra):
+                with self.assertRaisesRegex(compare.EvidenceError, '^pressure_refinement_not_comparable$'):
+                    compare.controls(self.case, self.reference, self.mesh, original + extra.splitlines())
+
     def test_serial_reference_and_mars_output(self):
         for path in self.ref_paths:
             path.unlink()
