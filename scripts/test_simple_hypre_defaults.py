@@ -59,6 +59,24 @@ class DefaultsTests(unittest.TestCase):
         self.launch_exit = 0
         self.after_launch = lambda: None
         self.calls = []
+        self.cache = None
+
+    def configure_cache(self):
+        self.cache = self.root / 'CMakeCache.txt'
+        self.mpi_include = self.root / 'PRIVATE_MPI_INCLUDE'
+        self.mpi_include.mkdir()
+        (self.mpi_include / 'mpi.h').write_text('// synthetic MPI header\n')
+        self.gcc = self.root / 'PRIVATE_GCC'
+        self.cache.write_text('\n'.join((
+            'CMAKE_CXX_COMPILER:FILEPATH=' + str(self.gcc),
+            'MPI_CXX_COMPILER:FILEPATH=/PRIVATE_MISSING_WRAPPER',
+            'MPI_CXX_COMPILER_INCLUDE_DIRS:STRING=' + str(self.mpi_include),
+            'MPI_CXX_COMPILE_DEFINITIONS:STRING=MPICH_SKIP_MPICXX;OMPI_SKIP_MPICXX;_MPICC_H',
+            'MPI_CXX_COMPILE_OPTIONS:STRING=-pthread',
+            'MPI_CXX_LIB_NAMES:STRING=mpi_gnu',
+            'MPI_mpi_gnu_LIBRARY:FILEPATH=' + str(self.mpi),
+            'MPI_CXX_LINK_FLAGS:STRING=-Wl,--no-as-needed',
+        )) + '\n')
 
     def subprocess(self, command, stdout, **kwargs):
         self.calls.append(command)
@@ -76,10 +94,12 @@ class DefaultsTests(unittest.TestCase):
     def invoke(self, linked=None):
         stream = io.StringIO()
         with contextlib.redirect_stdout(stream), contextlib.redirect_stderr(stream), \
-                patch.object(probe.shutil, 'which', side_effect=lambda name: '/PRIVATE_BIN/' + name), \
+                patch.object(probe.shutil, 'which', side_effect=lambda name:
+                             name if Path(name).is_absolute() else '/PRIVATE_BIN/' + name), \
                 patch.object(probe.subprocess, 'run', side_effect=self.subprocess), \
                 patch.object(startup, 'runtime_libraries', return_value=linked or self.libraries):
             code = probe.main(['--pair', str(self.pair), '--output-dir', str(self.output),
+                               *(['--build-cache', str(self.cache)] if self.cache else []),
                                '--launcher', 'srun', '--nodes=1', '-n', '1'])
         text = (self.output / 'public.json').read_text()
         self.assertNotIn('PRIVATE', text + stream.getvalue())
@@ -102,6 +122,48 @@ class DefaultsTests(unittest.TestCase):
         self.assertNotIn(str(self.exe), json.dumps(self.calls))
         self.assertEqual(before, {p: p.read_bytes() for p in self.pair.rglob('*') if p.is_file()})
         self.assertEqual(self.output.stat().st_mode & 0o777, 0o700)
+
+    def test_recorded_gcc_and_mpi_flags_work_without_wrapper(self):
+        self.configure_cache()
+        code, result = self.invoke()
+        self.assertEqual(code, 0)
+        self.assertEqual(result['compiler_configuration'], 'reference_build_cache')
+        command = self.calls[0]
+        self.assertEqual(command[0], str(self.gcc))
+        self.assertIn('-I' + str(self.mpi_include), command)
+        self.assertIn('-DMPICH_SKIP_MPICXX', command)
+        self.assertIn('-DOMPI_SKIP_MPICXX', command)
+        self.assertIn('-D_MPICC_H', command)
+        self.assertIn('-pthread', command)
+        self.assertIn('-Wl,--no-as-needed', command)
+        self.assertLess(command.index(str(self.library)), command.index(str(self.mpi)))
+        self.assertNotIn('/PRIVATE_MISSING_WRAPPER', command)
+
+    def test_recorded_mpi_header_is_required_before_compile(self):
+        self.configure_cache()
+        (self.mpi_include / 'mpi.h').unlink()
+        _, result = self.invoke()
+        self.assertEqual(result['failed_check'], 'recorded_build_configuration')
+        self.assertEqual(self.calls, [])
+
+    def test_recorded_link_flags_do_not_bypass_mpi_identity_check(self):
+        self.configure_cache()
+        _, result = self.invoke(dict(self.libraries, **{str(self.mpi): 'b'*64}))
+        self.assertEqual(result['failed_check'], 'probe_libraries')
+        self.assertEqual(len(self.calls), 1)
+
+    def test_changed_build_cache_is_rejected(self):
+        self.configure_cache()
+        self.after_launch = lambda: self.cache.write_text('PRIVATE_CHANGED')
+        _, result = self.invoke()
+        self.assertEqual(result['failed_check'], 'inputs_changed')
+        self.assertNotIn('defaults', result)
+
+    def test_changed_cached_mpi_header_is_rejected(self):
+        self.configure_cache()
+        self.after_launch = lambda: (self.mpi_include / 'mpi.h').write_text('PRIVATE_CHANGED')
+        _, result = self.invoke()
+        self.assertEqual(result['failed_check'], 'inputs_changed')
 
     def test_missing_or_stale_capture_stops_before_compile(self):
         (self.pair / 'reference/run.log').write_text('PRIVATE_STALE')

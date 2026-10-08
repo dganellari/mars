@@ -7,6 +7,7 @@ import math
 import os
 from pathlib import Path
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -65,6 +66,44 @@ def find_compiler(requested):
     return None
 
 
+def cached_toolchain(path, parallel):
+    cache = {}
+    for line in path.read_text().splitlines():
+        if line.startswith(('#', '//')) or '=' not in line or ':' not in line.split('=', 1)[0]:
+            continue
+        key, value = line.split('=', 1)
+        cache[key.split(':', 1)[0]] = value
+    compiler = cache['CMAKE_CXX_COMPILER']
+    require(Path(compiler).is_absolute())
+    inputs = {str(path): digest(path)}
+    compile_flags, link_flags = [], []
+    if parallel:
+        includes = set()
+        for key in ('MPI_CXX_COMPILER_INCLUDE_DIRS', 'MPI_CXX_ADDITIONAL_INCLUDE_DIRS',
+                    'MPI_CXX_INCLUDE_DIRS', 'MPI_CXX_HEADER_DIR'):
+            includes.update(value for value in cache.get(key, '').split(';') if value)
+        require(includes and any((Path(value) / 'mpi.h').is_file() for value in includes))
+        for value in sorted(includes):
+            require(Path(value).is_absolute() and Path(value).is_dir())
+            compile_flags.append('-I' + value)
+            for name in ('mpi.h', 'mpio.h'):
+                header = Path(value) / name
+                if header.is_file():
+                    inputs[str(header)] = digest(header)
+        compile_flags += ['-D' + value for value in cache.get('MPI_CXX_COMPILE_DEFINITIONS', '').split(';') if value]
+        compile_flags += [value for value in cache.get('MPI_CXX_COMPILE_OPTIONS', '').split(';') if value]
+        link_flags += shlex.split(cache.get('MPI_CXX_LINK_FLAGS', ''))
+        names = cache['MPI_CXX_LIB_NAMES'].split(';')
+        require(names and all(re.fullmatch('[A-Za-z0-9_]+', name) for name in names))
+        for name in names:
+            library = Path(cache['MPI_' + name + '_LIBRARY'])
+            require(library.is_absolute() and library.is_file())
+            link_flags.append(str(library))
+            inputs[str(library)] = digest(library)
+        require(not any('$<' in flag or flag.startswith('SHELL:') for flag in compile_flags + link_flags))
+    return compiler, compile_flags, link_flags, inputs
+
+
 def probe_dependencies(libraries, captured, parallel):
     # Compiler/loader libraries may differ; Hypre and MPI must match the capture.
     expected = {kind: {value for path, value in captured.items() if library_kind(path) == kind}
@@ -106,7 +145,7 @@ def public_defaults(raw):
                 header_version_matches=True, getter_layout_checks_passed=True, defaults=result)
 
 
-def inspect(pair, output, compiler, launcher, include_dirs=()):
+def inspect(pair, output, compiler, launcher, include_dirs=(), build_cache=None):
     public = dict(schema=SCHEMA, comparison_status='invalid_evidence', failed_check='saved_capture',
                   scope='fresh_objects_in_captured_hypre_library_no_matrix_or_solve',
                   application_effective_settings_verified=False,
@@ -124,6 +163,13 @@ def inspect(pair, output, compiler, launcher, include_dirs=()):
         headers = {str(path): digest(path) for path in include.glob('*.h')}
         config = (include / 'HYPRE_config.h').read_text()
         parallel = not re.search(r'^\s*#\s*define\s+HYPRE_SEQUENTIAL\b', config, re.M)
+        compile_flags, link_flags, build_inputs = [], [], {}
+        public['compiler_configuration'] = 'wrapper_lookup'
+        if build_cache is not None:
+            public['failed_check'] = 'recorded_build_configuration'
+            require(compiler is None)
+            compiler, compile_flags, link_flags, build_inputs = cached_toolchain(build_cache.resolve(), parallel)
+            public['compiler_configuration'] = 'reference_build_cache'
         public['failed_check'] = 'compiler_unavailable'
         compiler = find_compiler(compiler)
         public['compiler_available'] = compiler is not None
@@ -135,11 +181,13 @@ def inspect(pair, output, compiler, launcher, include_dirs=()):
         source = Path(__file__).resolve().parent.parent / 'tests/reference/openaccel/simple_performance/hypre_defaults.cpp'
         binary = output / 'probe'
         command = [compiler, '-std=c++11', '-fPIC', '-I' + str(include)]
+        command += compile_flags
         command += ['-I' + str(path.resolve(strict=True)) for path in include_dirs]
-        command += [str(source), str(library), '-Wl,-rpath,' + str(library.parent), '-ldl', '-o', str(binary)]
+        command += [str(source), str(library)] + link_flags
+        command += ['-Wl,-rpath,' + str(library.parent), '-ldl', '-o', str(binary)]
         launch = list(launcher) + [str(binary)]
         metadata = dict(capture=record, compiler_command=command, launch_command=launch,
-                        source_sha256=digest(source), headers=headers)
+                        source_sha256=digest(source), headers=headers, build_inputs=build_inputs)
         startup.write_json(output / 'private-provenance.json', metadata)
         with (output / 'compile.log').open('xb') as log:
             built = subprocess.run(command, stdout=log, stderr=subprocess.STDOUT)
@@ -172,6 +220,7 @@ def inspect(pair, output, compiler, launcher, include_dirs=()):
         require(record == saved_launch(pair, 'openaccel'))
         unchanged(identity)
         unchanged(headers)
+        unchanged(build_inputs)
         unchanged(libraries)
         require(probe_hash == digest(binary) and metadata['source_sha256'] == digest(source))
         public.update(projection)
@@ -189,7 +238,9 @@ def main(argv=None):
     parser = SafeParser(description=__doc__)
     parser.add_argument('--pair', type=Path, required=True)
     parser.add_argument('--output-dir', type=Path, required=True)
-    parser.add_argument('--cxx')
+    toolchain = parser.add_mutually_exclusive_group()
+    toolchain.add_argument('--cxx')
+    toolchain.add_argument('--build-cache', type=Path)
     parser.add_argument('--include-dir', type=Path, action='append', default=[])
     parser.add_argument('--launcher', nargs=argparse.REMAINDER, required=True)
     args = parser.parse_args(argv)
@@ -200,7 +251,7 @@ def main(argv=None):
         print('ERROR: a new output directory is required; existing files were not replaced.', file=sys.stderr)
         return 1
     output = args.output_dir.resolve()
-    result = inspect(args.pair, output, args.cxx, args.launcher, args.include_dir)
+    result = inspect(args.pair, output, args.cxx, args.launcher, args.include_dir, args.build_cache)
     startup.write_json(output / 'public.json', result)
     print('Hypre defaults inspection written. Share only public.json; no flow solver was launched.')
     return 0 if result['comparison_status'] == 'completed' else 1

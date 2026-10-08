@@ -143,10 +143,21 @@ wrapper without fallback, and `--include-dir` can supply an additional dependenc
 header directory if the installation requires one. Hypre/MPI identity checks
 still apply regardless of which wrapper is found.
 
+The recorded OpenAccel build instead uses a plain GCC C++ compiler with explicit
+MPI include paths, definitions, options and libraries. `--build-cache` reads those
+entries from its `CMakeCache.txt`, avoiding wrapper discovery. The command below
+uses this route. It retains the captured Hypre/MPI identity checks and verifies
+that the cache and selected MPI headers/libraries have not changed during the
+probe. It does not prove that the old executable was built from that cache.
+`--build-cache` and `--cxx` are mutually exclusive.
+
 Missing compilers and launchers are reported as `compiler_unavailable` and
 `launcher_unavailable`. The original `e4e3bb53` report grouped these under
 `probe_compile`; if neither `compile.log` nor `compile.exit` exists, compilation
 did not start. Retry with the current helper before changing library settings.
+The compiler and dependencies must be accessible in the user's active uenv.
+An rsync connection uses a different login shell; missing `/user-environment`
+targets there do not establish that they are missing in the interactive terminal.
 
 ```bash
 (
@@ -163,6 +174,7 @@ run=$(mktemp -d "$scratch/simple-hypre-defaults-XXXXXX")
 status=0
 python3 "$repo/scripts/simple_hypre_defaults.py" \
   --pair "$scratch/simple-pressure-accuracy-W3SoRZ/pair" \
+  --build-cache "$scratch/git/OpenAccel/prgenv/CMakeCache.txt" \
   --output-dir "$run/probe" \
   --launcher srun --account=csstaff --time=00:03:00 --nodes=1 \
     --ntasks-per-node=1 --export=ALL --kill-on-bad-exit=1 \
