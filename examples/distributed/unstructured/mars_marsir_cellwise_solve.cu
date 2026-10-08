@@ -14,7 +14,10 @@
 // All per-element work runs on the GPU: corners, metric, diagonal, u, b.
 //
 // Run:  mars_marsir_cellwise_solve --ptx <hl_full_p7_sm90.ptx> [--ne 8] [--deform 0]
-//                                  [--tol 1e-10] [--maxit 500] [--reps 10]
+//                                  [--tol 1e-10] [--maxit 500] [--reps 10] [--mg]
+// --mg preconditions with the geometric multigrid V-cycle instead of DSS + Jacobi
+// (ne must be a power of two); its history must match
+// marsir-mlir/test/cellwise_multigrid_ref.py.
 // With the same --ne and --deform, the residual history must match
 // marsir-mlir/test/cellwise_krylov_ref.py to about 4 digits (BiCGStab amplifies the
 // rounding of the different summation orders).
@@ -22,7 +25,7 @@
 #include "backend/distributed/unstructured/fem/mars_cvfem_ho_basis.hpp"
 #include "backend/distributed/unstructured/fem/mars_cvfem_ho_matfree.hpp"
 #include "backend/distributed/unstructured/marsir/mars_marsir_ptx_operator.hpp"
-#include "backend/distributed/unstructured/solvers/mars_cellwise_krylov.hpp"
+#include "backend/distributed/unstructured/solvers/mars_cellwise_multigrid.hpp"
 
 #include <cuda_runtime.h>
 
@@ -30,6 +33,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -186,7 +190,10 @@ int main(int argc, char** argv)
     std::string ptx_path;
     int ne = 8, max_iterations = 500, reps = 10;
     double deform = 0.0, tol = 1e-10;
-    for (int i = 1; i + 1 < argc; i += 2) {
+    bool use_mg = false;
+    for (int i = 1; i < argc; i += 2) {
+        if (!strcmp(argv[i], "--mg")) { use_mg = true; --i; continue; }
+        if (i + 1 >= argc) { fprintf(stderr, "option %s needs a value\n", argv[i]); return 1; }
         if (!strcmp(argv[i], "--ptx")) ptx_path = argv[i + 1];
         else if (!strcmp(argv[i], "--ne")) ne = atoi(argv[i + 1]);
         else if (!strcmp(argv[i], "--deform")) deform = atof(argv[i + 1]);
@@ -197,7 +204,11 @@ int main(int argc, char** argv)
     }
     if (ptx_path.empty()) {
         fprintf(stderr, "usage: %s --ptx <hl_full_p7_sm90.ptx> [--ne N] [--deform a] "
-                        "[--tol t] [--maxit k] [--reps r]\n", argv[0]);
+                        "[--tol t] [--maxit k] [--reps r] [--mg]\n", argv[0]);
+        return 1;
+    }
+    if (use_mg && (ne & (ne - 1))) {
+        fprintf(stderr, "--mg needs ne to be a power of two\n");
         return 1;
     }
 
@@ -238,14 +249,46 @@ int main(int argc, char** argv)
         op.apply(u, d_btil, d_dtil, d_w, d_d, d_G, y, E);
     };
     apply(d_uex, d_b);                   // b = A u, unassembled
-    MARS_CELLWISE_CK(cudaDeviceSynchronize());
 
+    // Multigrid levels: the same mesh with every block dimension halved, down to one
+    // element; each level gets its own metric and assembled diagonal, on the GPU.
+    auto apply_on = [&](const double* u, double* y, const double* G, long long elements) {
+        op.apply(u, d_btil, d_dtil, d_w, d_d, G, y, elements);
+    };
+    std::vector<double*> level_arrays;
+    std::unique_ptr<cellwise::Multigrid<decltype(apply_on)>> mg;
+    float setup_ms = 0.0f;
     cudaEvent_t t0, t1;
     MARS_CELLWISE_CK(cudaEventCreate(&t0));
     MARS_CELLWISE_CK(cudaEventCreate(&t1));
+    if (use_mg) {
+        MARS_CELLWISE_CK(cudaEventRecord(t0));
+        std::vector<cellwise::MultigridLevel> levels{{blk, d_G, d_diag}};
+        for (int m = ne / 2; m >= 1; m /= 2) {
+            const cellwise::Block bl{m, m, m};
+            const long long em = bl.elements(), nm = bl.values();
+            double* g = device_array(em * kGElem);
+            double* dg = device_array(nm);
+            metric_kernel<<<blocks_for(em * 3LL * kP * kNN, threads), threads>>>(g, em, m, deform);
+            diagonal_kernel<<<blocks_for(nm, threads), threads>>>(g, d_x, em);   // d_x: scratch
+            cellwise::dss(d_x, dg, bl);
+            levels.push_back({bl, g, dg});
+            level_arrays.push_back(g);
+            level_arrays.push_back(dg);
+        }
+        mg = std::make_unique<cellwise::Multigrid<decltype(apply_on)>>(apply_on, levels,
+                                                                      ops.zeta.data());
+        MARS_CELLWISE_CK(cudaEventRecord(t1));
+        MARS_CELLWISE_CK(cudaEventSynchronize(t1));
+        MARS_CELLWISE_CK(cudaEventElapsedTime(&setup_ms, t0, t1));
+    }
+    MARS_CELLWISE_CK(cudaDeviceSynchronize());
+
     MARS_CELLWISE_CK(cudaEventRecord(t0));
     const cellwise::SolveResult res =
-        cellwise::bicgstab(apply, blk, d_b, d_x, d_diag, tol, max_iterations);
+        use_mg ? cellwise::bicgstab(apply, *mg, blk, d_b, d_x, tol, max_iterations)
+               : cellwise::bicgstab(apply, cellwise::JacobiPreconditioner{d_diag, blk}, blk, d_b,
+                                    d_x, tol, max_iterations);
     MARS_CELLWISE_CK(cudaEventRecord(t1));
     MARS_CELLWISE_CK(cudaEventSynchronize(t1));
     float solve_ms = 0.0f;
@@ -262,8 +305,13 @@ int main(int argc, char** argv)
         rel_err = err / cellwise::read_norm(red, 0);
     }
 
-    printf("cell-wise BiCGStab, p=%d, %d^3 elements (%lld), %lld unique DoFs, deform %.3f\n",
-           kP, ne, E, unique, deform);
+    printf("cell-wise BiCGStab, p=%d, %d^3 elements (%lld), %lld unique DoFs, deform %.3f, %s\n",
+           kP, ne, E, unique, deform, use_mg ? "multigrid V-cycle" : "DSS + Jacobi");
+    if (use_mg) {
+        printf("  multigrid setup %.1f ms; lambda_max(P_J A) per level:", setup_ms);
+        for (int l = 0; (ne >> l) > 1; ++l) printf(" %.4f", mg->lambda_max(l));
+        printf("\n");
+    }
     printf("  iterations %d, ||P r0||_w = %.3e, ||P r||_w = %.3e\n", res.iterations,
            res.residual0, res.residual);
     for (int k : {1, 5, 10, 20, 30, 40})
@@ -298,8 +346,14 @@ int main(int argc, char** argv)
            unique / (cascade_ms * 1e-3) / 1e9);
     printf("  precond      %8.3f ms  %5.2f TB/s  (gather + Jacobi, one pass)\n", pre_ms,
            3 * vec_gb / pre_ms);
+    if (use_mg) {
+        const float vc_ms = time_ms([&] { mg->vcycle(0, d_b, d_x, 0); });
+        printf("  V-cycle      %8.3f ms  (%.1f operator calls' worth)\n", vc_ms, vc_ms / op_ms);
+    }
     printf("  iteration    %8.3f ms  (2 operator, 2 precond + dots, 3 updates)\n", it_ms);
 
+    mg.reset();
+    for (double* p : level_arrays) cudaFree(p);
     for (double* p : {d_btil, d_dtil, d_w, d_d, d_G, d_diag, d_uex, d_b, d_x})
         cudaFree(p);
     return rel_err < 1e-8 ? 0 : 1;

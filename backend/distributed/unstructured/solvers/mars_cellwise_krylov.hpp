@@ -137,8 +137,10 @@ __device__ inline double weight(const Node& nd, const Block& blk)
 // Sum of every copy of the node, in the cascade's order: x pairs first, then y pairs
 // of those sums, then z pairs. On a shared axis the pair is (low element, high
 // element); the low one holds the node on its last plane, the high one on plane 0.
-__device__ inline double gather_sum(const double* __restrict__ q, const Node& nd,
-                                    const Block& blk)
+// value(i) gives element-local value i, so a combination such as b - q is gathered
+// without being stored first.
+template <typename Value>
+__device__ inline double gather_sum_of(Value&& value, const Node& nd, const Block& blk)
 {
     const int sx = share_side(nd.a, nd.ex, blk.nx);
     const int sy = share_side(nd.b, nd.ey, blk.ny);
@@ -156,13 +158,19 @@ __device__ inline double gather_sum(const double* __restrict__ q, const Node& nd
             if (j == 1 && !sy) break;
             const long long base = low + j * stride_y + k;
             const int bc = (j ? 0 : b0) * kN + (k ? 0 : c0);
-            double xsum = q[base * kN3 + a0 * kNN + bc];
-            if (sx) xsum += q[(base + stride_x) * kN3 + bc];
+            double xsum = value(base * kN3 + a0 * kNN + bc);
+            if (sx) xsum += value((base + stride_x) * kN3 + bc);
             ysum = j == 0 ? xsum : ysum + xsum;
         }
         zsum = k == 0 ? ysum : zsum + ysum;
     }
     return zsum;
+}
+
+__device__ inline double gather_sum(const double* __restrict__ q, const Node& nd,
+                                    const Block& blk)
+{
+    return gather_sum_of([q](long long i) { return q[i]; }, nd, blk);
 }
 
 // Calls f(node) for each node of this thread. Each thread block owns a contiguous
@@ -267,6 +275,23 @@ wdot_kernel(const double* __restrict__ a, const double* __restrict__ b, Block bl
     store_partial<1>(acc, partial);
 }
 
+// The weighted dot products <a, z> (AZ) and <z, z> (ZZ) of a preconditioned vector,
+// for preconditioners that cannot form them on the fly.
+template <bool AZ, bool ZZ>
+__global__ void __launch_bounds__(kThreads)
+wdots_kernel(const double* __restrict__ z, const double* __restrict__ a, Block blk,
+             double* __restrict__ partial)
+{
+    constexpr int NV = AZ + ZZ;
+    double acc[NV] = {};
+    for_each_node(blk, [&](const Node& nd) {
+        const double v = z[nd.t], w = weight(nd, blk);
+        if constexpr (AZ) acc[0] += a[nd.t] * v * w;
+        if constexpr (ZZ) acc[NV - 1] += v * v * w;
+    });
+    store_partial<NV>(acc, partial);
+}
+
 // Krylov scalars live in device memory: the reductions write them and the vector
 // updates read them, so no step waits for a round trip to the host.
 enum Scalar { kRho, kAlpha, kOmega, kBeta, kRR, kScalars };
@@ -360,21 +385,19 @@ int resident_grid(Kernel kernel)
     return sms * per_sm;
 }
 
-// Scratch for the weighted dot products: per-block partial sums, the Krylov scalars,
-// and the grid of each reducing kernel.
+// Scratch for the weighted dot products: per-block partial sums and the Krylov
+// scalars. Room for two partials per block of any resident grid (at most 32 blocks
+// per SM).
 struct Reduction {
     double* partial = nullptr;
     double* scalars = nullptr;
-    int grid_dot, grid_start, grid_alpha, grid_omega, grid_xr;
-    Reduction()
-        : grid_dot(resident_grid(wdot_kernel)),
-          grid_start(resident_grid(precondition_kernel<false, true>)),
-          grid_alpha(resident_grid(precondition_kernel<true, false>)),
-          grid_omega(resident_grid(precondition_kernel<true, true>)),
-          grid_xr(resident_grid(update_xr_kernel))
+    int grid_dot, grid_xr;
+    Reduction() : grid_dot(resident_grid(wdot_kernel)), grid_xr(resident_grid(update_xr_kernel))
     {
-        const int most = std::max({grid_dot, grid_start, grid_alpha, grid_omega, grid_xr});
-        MARS_CELLWISE_CK(cudaMalloc(&partial, 2 * most * sizeof(double)));
+        int dev = 0, sms = 0;
+        MARS_CELLWISE_CK(cudaGetDevice(&dev));
+        MARS_CELLWISE_CK(cudaDeviceGetAttribute(&sms, cudaDevAttrMultiProcessorCount, dev));
+        MARS_CELLWISE_CK(cudaMalloc(&partial, 2 * 32 * sms * sizeof(double)));
         MARS_CELLWISE_CK(cudaMalloc(&scalars, kScalars * sizeof(double)));
     }
     ~Reduction()
@@ -441,6 +464,22 @@ struct Workspace {
     Workspace& operator=(const Workspace&) = delete;
 };
 
+// DSS + Jacobi, fused with the dot products that follow it. A preconditioner maps an
+// unassembled q to a continuous z = P q, writes the block partials of <a, z> (AZ) and
+// <z, z> (ZZ) to `partial`, and returns how many blocks wrote them.
+struct JacobiPreconditioner {
+    const double* diag;
+    Block blk;
+    template <bool AZ, bool ZZ>
+    int operator()(const double* q, double* z, const double* a, double* partial,
+                   cudaStream_t stream) const
+    {
+        static const int grid = resident_grid(precondition_kernel<AZ, ZZ>);
+        precondition_kernel<AZ, ZZ><<<grid, kThreads, 0, stream>>>(q, z, diag, a, blk, partial);
+        return grid;
+    }
+};
+
 struct SolveResult {
     int iterations = 0;
     double residual0 = 0.0, residual = 0.0;
@@ -448,13 +487,13 @@ struct SolveResult {
 };
 
 // Left-preconditioned BiCGStab on P A x = P b, x starting at zero. `apply(u, y)`
-// computes y = A u on element-local vectors (u continuous, y unassembled). Per
-// iteration: two operator calls, two fused preconditioner-and-dot passes, and three
-// vector updates, one of which also forms the two dot products the next iteration
-// needs.
-template <typename Apply>
-SolveResult bicgstab(Apply&& apply, const Block& b, const double* d_rhs, double* d_x,
-                     const double* d_diag, double tol, int max_iterations, cudaStream_t stream = 0)
+// computes y = A u on element-local vectors (u continuous, y unassembled); `precond`
+// is a preconditioner as JacobiPreconditioner above. Per iteration: two operator
+// calls, two preconditioner-and-dot passes, and three vector updates, one of which
+// also forms the two dot products the next iteration needs.
+template <typename Apply, typename Precond>
+SolveResult bicgstab(Apply&& apply, const Precond& precond, const Block& b, const double* d_rhs,
+                     double* d_x, double tol, int max_iterations, cudaStream_t stream = 0)
 {
     const long long n = b.values();
     const unsigned grid = (unsigned)((n + kThreads - 1) / kThreads);
@@ -465,9 +504,9 @@ SolveResult bicgstab(Apply&& apply, const Block& b, const double* d_rhs, double*
     fill_kernel<<<grid, kThreads, 0, stream>>>(d_x, 0.0, n);
     fill_kernel<<<grid, kThreads, 0, stream>>>(ws.p, 0.0, n);
     fill_kernel<<<grid, kThreads, 0, stream>>>(ws.v, 0.0, n);
-    precondition_kernel<false, true><<<red.grid_start, kThreads, 0, stream>>>(
-        d_rhs, ws.r, d_diag, nullptr, b, red.partial);   // r = P (b - A 0)
-    finish_kernel<kStepStart, 1><<<1, kThreads, 0, stream>>>(red.partial, red.grid_start, sc, 0);
+    int blocks = precond.template operator()<false, true>(d_rhs, ws.r, nullptr, red.partial,
+                                                          stream);   // r = P (b - A 0)
+    finish_kernel<kStepStart, 1><<<1, kThreads, 0, stream>>>(red.partial, blocks, sc, 0);
     MARS_CELLWISE_CK(cudaMemcpyAsync(ws.rh, ws.r, n * sizeof(double), cudaMemcpyDeviceToDevice, stream));
     MARS_CELLWISE_CK(cudaGetLastError());
 
@@ -477,14 +516,12 @@ SolveResult bicgstab(Apply&& apply, const Block& b, const double* d_rhs, double*
     for (int k = 0; k < max_iterations; ++k) {
         update_p_kernel<<<grid, kThreads, 0, stream>>>(ws.p, ws.r, ws.v, sc, n);
         apply(ws.p, ws.q);
-        precondition_kernel<true, false><<<red.grid_alpha, kThreads, 0, stream>>>(
-            ws.q, ws.v, d_diag, ws.rh, b, red.partial);
-        finish_kernel<kStepAlpha, 1><<<1, kThreads, 0, stream>>>(red.partial, red.grid_alpha, sc, 0);
+        blocks = precond.template operator()<true, false>(ws.q, ws.v, ws.rh, red.partial, stream);
+        finish_kernel<kStepAlpha, 1><<<1, kThreads, 0, stream>>>(red.partial, blocks, sc, 0);
         update_s_kernel<<<grid, kThreads, 0, stream>>>(ws.s, ws.r, ws.v, sc, n);
         apply(ws.s, ws.q);
-        precondition_kernel<true, true><<<red.grid_omega, kThreads, 0, stream>>>(
-            ws.q, ws.t, d_diag, ws.s, b, red.partial);
-        finish_kernel<kStepOmega, 2><<<1, kThreads, 0, stream>>>(red.partial, red.grid_omega, sc, 0);
+        blocks = precond.template operator()<true, true>(ws.q, ws.t, ws.s, red.partial, stream);
+        finish_kernel<kStepOmega, 2><<<1, kThreads, 0, stream>>>(red.partial, blocks, sc, 0);
         update_xr_kernel<<<red.grid_xr, kThreads, 0, stream>>>(d_x, ws.r, ws.p, ws.s, ws.t, ws.rh,
                                                                sc, b, red.partial);
         finish_kernel<kStepRho, 2><<<1, kThreads, 0, stream>>>(red.partial, red.grid_xr, sc, 0);
