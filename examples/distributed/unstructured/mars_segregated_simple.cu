@@ -2,6 +2,8 @@
 #include "mars_segregated_simple_native_mesh.hpp"
 #include "mars_segregated_simple_output.hpp"
 #include "mars_segregated_simple_audit.hpp"
+#include "mars_segregated_pressure_capture.hpp"
+#include "backend/distributed/unstructured/solvers/mars_hypre_pressure_settings.hpp"
 #include <filesystem>
 #include <iomanip>
 #include <limits>
@@ -11,6 +13,48 @@ using namespace mars;
 using namespace mars::segregated;
 using namespace mars::segregated::runtime;
 using Runner=DistributedSimpleRunner<HypreSimpleSolve<1>::Solver::Matrix,HYPRE_BigInt,HypreSimpleSolve>;
+
+void prepare_pressure_capture(Runner& run,const std::string& directory) {
+    int rank=0; MPI_Comm_rank(run.comm,&rank);
+    int size=rank==0?int(directory.size()):0;
+    ensure(MPI_Bcast(&size,1,MPI_INT,0,run.comm)==MPI_SUCCESS,"capture option reduction failed");
+    std::string root(size,'\0'); if (!rank) root=directory;
+    ensure(MPI_Bcast(root.data(),size,MPI_CHAR,0,run.comm)==MPI_SUCCESS,"capture option reduction failed");
+    simple_collective(run.comm,root==directory,"pressure capture option differs between ranks");
+    if (directory.empty()) return;
+    bool ready=true;
+    if (!rank) try {
+        ready=std::filesystem::create_directory(directory);
+        if (ready) std::filesystem::permissions(directory,std::filesystem::perms::owner_all);
+    } catch (...) { ready=false; }
+    simple_collective(run.comm,ready,"pressure capture requires a new private directory");
+    run.pressure_failure_capture=[&run,directory](int iteration,bool solved,bool passed) {
+        int rank=0,ranks=0; MPI_Comm_rank(run.comm,&rank); MPI_Comm_size(run.comm,&ranks);
+        bool saved=true;
+        try {
+            const std::filesystem::path path(directory);
+            std::ostringstream settings;
+            run.poisson_solve.solver.inspect_prepared([&](auto solver,auto amg,bool flex) {
+                fem::pressure_settings::write(settings,fem::pressure_settings::snapshot(solver,amg,flex));
+            });
+            const auto target=run.pressure_tolerance.value_or(run.tolerance);
+            auto part=frozen::capture_part(run.poisson,distributed::raw(run.poisson.solver_dof_map()),run.poisson_solve.rhs(),
+                distributed::halo_complete(run.phi.data(),run.phi.values.size()),rank,ranks,iteration,solved,passed,
+                target.absolute,target.relative,target.maximum);
+            part.write(path/frozen::part_name(rank));
+            frozen::Writer file(path/frozen::part_name(rank,".settings"));
+            const auto text=settings.str(); file.bytes(text.data(),text.size()); file.finish();
+        } catch (...) { saved=false; }
+        simple_collective(run.comm,saved,"private pressure capture failed");
+        if (!rank) try {
+            frozen::Writer file(std::filesystem::path(directory)/"complete");
+            const std::string text="mars-pressure-capture-v1\n"+std::to_string(ranks)+"\n";
+            file.bytes(text.data(),text.size()); file.finish();
+        } catch (...) { saved=false; }
+        simple_collective(run.comm,saved,"private pressure capture completion failed");
+        if (!rank) std::cerr<<"[simple-pressure-capture] complete; files are private; original rejection retained\n";
+    };
+}
 
 int execute(const SimpleOptions& o) {
     int rank=0, ranks=1; MPI_Comm_rank(MPI_COMM_WORLD,&rank); MPI_Comm_size(MPI_COMM_WORLD,&ranks);
@@ -29,6 +73,7 @@ int execute(const SimpleOptions& o) {
     auto& run=*runner;
     run.set_pressure_tolerances(o.pressure_tolerances,o.pressure_rtol,o.pressure_atol);
     run.set_pressure_refinement(o.pressure_refinement);
+    prepare_pressure_capture(run,o.pressure_failure_capture);
     run.profile.configure(o.profile,o.profile_warmup);
     run.exchange.enable_profiling(o.profile);
     run.overlap_assembly=o.halo_overlap;

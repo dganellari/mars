@@ -18,6 +18,8 @@ int main() {
     check(defaults.linear_cache && defaults.halo_overlap && !defaults.profile && defaults.field_output=="gathered");
     check(!defaults.pressure_tolerances && defaults.pressure_rtol==1e-12 && defaults.pressure_atol==0);
     check(!defaults.pressure_refinement);
+    check(defaults.pressure_failure_capture.empty());
+    check(parse("--pressure-failure-capture private --pressure-linear-rtol 1e-8 --pressure-linear-atol 0").pressure_failure_capture=="private");
     check(parse("--pressure-refinement 1").pressure_refinement);
     check(!parse("--pressure-refinement=0").pressure_refinement);
     check(defaults.snapshot_iterations==0);
@@ -50,6 +52,10 @@ int main() {
     for (const char* args:{"--rho nan","--rho inf","--rho -1","--mu 0","--inlet-velocity 0","--outlet-pressure inf",
         "--reference-length 0","--pseudo-dt -1","--relax-u 1.1","--relax-p 0","--relax-mass nan","--outlet-beta 0",
         "--residual-tol nan","--mass-tol 0","--change-tol -1","--iterations 2.5","--iterations 2147483648",
+        "--pressure-failure-capture private",
+        "--pressure-failure-capture private --pressure-linear-rtol 1e-8 --pressure-linear-atol 0 --pressure-refinement 1",
+        "--pressure-failure-capture private --pressure-linear-rtol 1e-8 --pressure-linear-atol 0 --setup-only 1",
+        "--pressure-failure-capture private --pressure-linear-rtol 1e-8 --pressure-linear-atol 0 --first-step-audit 1 --iterations 1 --snapshot-iterations 1 --field-output distributed",
         "--pressure-linear-rtol 1e-6","--pressure-linear-atol 0",
         "--pressure-linear-rtol 0 --pressure-linear-atol 1e-6",
         "--pressure-linear-rtol 1 --pressure-linear-atol 0",

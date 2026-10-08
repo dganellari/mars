@@ -1,5 +1,8 @@
 # Pressure solver settings in saved comparisons
 
+For an actual rejected system, use the opt-in [pressure capture and replay](pressure_replay.md).
+It preserves the rejected rows and compares new solves under one independent residual check.
+
 The `reference` pressure policy copies **only `rtol` and `atol`** into MARS.
 `mapped_controls_verified` does not certify equal linear solvers. The existing
 comparison explicitly reports `identical_linear_solvers_verified=false`.

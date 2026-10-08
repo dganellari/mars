@@ -324,6 +324,14 @@ public:
     int    getLastIterations()    const { return lastNumIters_; }
     int get_max_iterations() const { return maxIter_; }
 
+    // Opt-in diagnostics inspect the live objects without changing their controls.
+    template<class Inspect> void inspect_prepared(Inspect inspect) const {
+        // The capture caller combines failures after rank-local allocation and I/O.
+        if (!(solver_ && precond_ && precondType_==BOOMERAMG && !precondMatrix_))
+            throw std::runtime_error("pressure capture requires a prepared BoomerAMG solve");
+        inspect(solver_,precond_,useFlexGmres_);
+    }
+
     // Reuse the prepared matrix and preconditioner for A*delta=defect. The
     // original stopping controls are restored before returning to the caller.
     bool solve_prepared_correction(const Vector& defect, Vector& delta, int remaining) {

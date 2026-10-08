@@ -1,4 +1,5 @@
 #include "../distributed_simple/channel.hpp"
+#include "mars_segregated_pressure_capture.hpp"
 #include <iostream>
 #include <sstream>
 
@@ -57,9 +58,36 @@ template<int C,class System> void cases(Runner& run,System& system,CandidateSolv
             a.values[C*C*k+C*c+c]=value;
             a.rhs[C*row+c]+=value*truth(C*run.solver_node.values[a.columns[k]]+c);
         }
-    int rank=0; MPI_Comm_rank(run.comm,&rank);
+    int rank=0,ranks=1; MPI_Comm_rank(run.comm,&rank); MPI_Comm_size(run.comm,&ranks);
     for (int mode=0;mode<6;++mode) {
         solver.mode=mode;
+        int captures=0;
+        run.pressure_failure_capture=[&](int iteration,bool solved,bool passed) {
+            ++captures;
+            simple_collective(run.comm,C==1 && iteration==run.completed+1 && solved==(mode==3) && passed==(mode==1),
+                "pressure capture received the wrong verdict");
+            if constexpr (C==1) {
+                const auto part=frozen::capture_part(system,distributed::raw(system.solver_dof_map()),solver.rhs(),
+                    distributed::halo_complete(increment.data(),increment.values.size()),rank,ranks,iteration,
+                    solved,passed,1e-13,1e-10,false);
+                part.validate();
+                simple_collective(run.comm,part.rows()==std::size_t(system.rows()) && part.total==std::uint64_t(system.solver_nodes())
+                    && part.values==system.matrix().values && part.rhs==solver.b,"pressure capture changed the system");
+                if (mode==1) {
+                    const auto file="pressure-capture-test-"+std::to_string(getpid())+".bin";
+                    part.write(file);
+                    const auto saved=frozen::Part::read(file);
+                    bool exclusive=false;
+                    try { part.write(file); } catch (const std::runtime_error&) { exclusive=true; }
+                    const bool private_file=(std::filesystem::status(file).permissions() &
+                        (std::filesystem::perms::group_all|std::filesystem::perms::others_all))==std::filesystem::perms::none;
+                    std::filesystem::remove(file);
+                    simple_collective(run.comm,exclusive && private_file && saved.values==part.values && saved.rhs==part.rhs
+                        && saved.map==part.map && saved.candidate==part.candidate && saved.offsets==part.offsets
+                        && saved.columns==part.columns,"private pressure file round trip failed");
+                }
+            }
+        };
         std::ostringstream message;
         auto* previous=std::cerr.rdbuf(message.rdbuf());
         std::string failure;
@@ -67,6 +95,7 @@ template<int C,class System> void cases(Runner& run,System& system,CandidateSolv
         catch (const std::exception& error) { failure=error.what(); }
         std::cerr.rdbuf(previous);
         simple_collective(run.comm,failure.empty()==(mode==0),"linear rejection verdict changed");
+        simple_collective(run.comm,captures==(C==1 && mode!=0 && mode!=4?1:0),"pressure capture was not rejection-only");
         if (mode==0 || mode==1) {
             bool correct=true;
             for (int i=0;i<C*run.n;++i)
@@ -85,6 +114,7 @@ template<int C,class System> void cases(Runner& run,System& system,CandidateSolv
             ==(audit && C==1 && mode!=0 && mode!=4);
         simple_collective(run.comm,report,"pressure audit opt-in or failure-only contract changed");
     }
+    run.pressure_failure_capture={};
 }
 
 template<int C,class System> void pressure_only_case(Runner& run,System& system,CandidateSolve<C>& solver) {

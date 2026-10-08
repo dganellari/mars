@@ -30,6 +30,7 @@
 #include "mars_segregated_simple_profile.hpp"
 #include "mars_segregated_pressure_refinement.hpp"
 #include <cstdlib>
+#include <functional>
 #include <iostream>
 #include <limits>
 #include <memory>
@@ -234,6 +235,7 @@ struct DistributedSimpleRunner {
     bool assembled=false;
     distributed::Tolerance tolerance{1e-13,1e-10};
     std::optional<distributed::Tolerance> pressure_tolerance;
+    std::function<void(int,bool,bool)> pressure_failure_capture;
 
 private:
     bool pressure_refinement_=false;
@@ -449,6 +451,9 @@ public:
         // Check rejected candidates too, before discarding the only independent evidence.
         // A rejected candidate needs a successful correction and both original-system checks.
         if (!verdict[1] || !norms.passed) {
+            if constexpr (C==1) {
+                if (pressure_failure_capture) pressure_failure_capture(completed+1,verdict[1]!=0,norms.passed);
+            }
             int rank=0; MPI_Comm_rank(comm,&rank);
             if (!rank) std::cerr<<"[simple-linear] stage="<<(C==3?"momentum":"pressure")
                 <<" iteration="<<completed+1<<" solver_accepted="<<verdict[1]

@@ -595,6 +595,7 @@ int main() {
         map.back() = -1;
         std::vector<double> b, truth, x(160, 0), baseline_x(160, 0);
         Solver persistent(0, 300, 1e-10), baseline(0, 300, 1e-10);
+        expect_failure([&] { persistent.inspect_prepared([](auto,auto,bool){}); });
         persistent.setVerbose(false);
         baseline.setVerbose(false);
         baseline.enable_timing();
@@ -610,6 +611,11 @@ int main() {
             const int barriers = host_barriers;
             const int reductions = host_reductions;
             check(persistent.solve(matrix, b, x, 0, 160, 0, 160, map), "persistent solve failed");
+            bool inspected=false;
+            persistent.inspect_prepared([&](auto krylov,auto preconditioner,bool flexible) {
+                inspected=krylov==persistent.solver_ && preconditioner==persistent.precond_ && !flexible;
+            });
+            check(inspected,"pressure capture did not inspect the prepared solver");
             check(host_barriers == barriers, "fixed graph path added a barrier");
             if (epoch > 0) check(host_reductions - reductions == 9, "steady update collectives changed");
             verify(matrix, map, b, x, truth);
