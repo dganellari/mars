@@ -56,6 +56,15 @@ def unchanged(files):
                 for path, expected in files.items()))
 
 
+def find_compiler(requested):
+    # Cray environments can provide CC without the mpicxx alias.
+    for name in ([requested] if requested is not None else ('mpicxx', 'mpic++', 'mpiCC', 'CC')):
+        found = shutil.which(name)
+        if found is not None:
+            return found
+    return None
+
+
 def probe_dependencies(libraries, captured, parallel):
     # Compiler/loader libraries may differ; Hypre and MPI must match the capture.
     expected = {kind: {value for path, value in captured.items() if library_kind(path) == kind}
@@ -115,16 +124,20 @@ def inspect(pair, output, compiler, launcher, include_dirs=()):
         headers = {str(path): digest(path) for path in include.glob('*.h')}
         config = (include / 'HYPRE_config.h').read_text()
         parallel = not re.search(r'^\s*#\s*define\s+HYPRE_SEQUENTIAL\b', config, re.M)
-        public['failed_check'] = 'probe_compile'
-        compiler = shutil.which(compiler)
+        public['failed_check'] = 'compiler_unavailable'
+        compiler = find_compiler(compiler)
+        public['compiler_available'] = compiler is not None
         require(compiler is not None)
+        public['failed_check'] = 'launcher_unavailable'
+        public['launcher_available'] = bool(launcher and shutil.which(launcher[0]) is not None)
+        require(public['launcher_available'])
+        public['failed_check'] = 'probe_compile'
         source = Path(__file__).resolve().parent.parent / 'tests/reference/openaccel/simple_performance/hypre_defaults.cpp'
         binary = output / 'probe'
         command = [compiler, '-std=c++11', '-fPIC', '-I' + str(include)]
         command += ['-I' + str(path.resolve(strict=True)) for path in include_dirs]
         command += [str(source), str(library), '-Wl,-rpath,' + str(library.parent), '-ldl', '-o', str(binary)]
         launch = list(launcher) + [str(binary)]
-        require(launcher and shutil.which(launcher[0]) is not None)
         metadata = dict(capture=record, compiler_command=command, launch_command=launch,
                         source_sha256=digest(source), headers=headers)
         startup.write_json(output / 'private-provenance.json', metadata)
@@ -176,7 +189,7 @@ def main(argv=None):
     parser = SafeParser(description=__doc__)
     parser.add_argument('--pair', type=Path, required=True)
     parser.add_argument('--output-dir', type=Path, required=True)
-    parser.add_argument('--cxx', default='mpicxx')
+    parser.add_argument('--cxx')
     parser.add_argument('--include-dir', type=Path, action='append', default=[])
     parser.add_argument('--launcher', nargs=argparse.REMAINDER, required=True)
     args = parser.parse_args(argv)

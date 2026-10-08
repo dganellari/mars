@@ -137,9 +137,16 @@ defaults will not certify equal preconditioners or convergence histories.
 Run this block **only in the OpenAccel terminal**, with its working MPI/compiler
 environment. No MARS or OpenAccel rebuild is needed; the script compiles only the
 small probe. Use one task on a compute node because Hypre initialization may use
-the GPU in a CUDA build. All files stay in capstor scratch. The default compiler
-is `mpicxx`; `--cxx` selects another MPI C++ wrapper, and `--include-dir` can supply
-an additional dependency header directory if the installation requires one.
+the GPU in a CUDA build. All files stay in capstor scratch. Compiler lookup tries
+`mpicxx`, `mpic++`, `mpiCC`, then Cray's `CC`. `--cxx` selects a specific MPI C++
+wrapper without fallback, and `--include-dir` can supply an additional dependency
+header directory if the installation requires one. Hypre/MPI identity checks
+still apply regardless of which wrapper is found.
+
+Missing compilers and launchers are reported as `compiler_unavailable` and
+`launcher_unavailable`. The original `e4e3bb53` report grouped these under
+`probe_compile`; if neither `compile.log` nor `compile.exit` exists, compilation
+did not start. Retry with the current helper before changing library settings.
 
 ```bash
 (

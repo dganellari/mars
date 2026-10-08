@@ -134,6 +134,37 @@ class DefaultsTests(unittest.TestCase):
         self.assertEqual(result['failed_check'], 'probe_compile')
         self.assertEqual(len(self.calls), 1)
 
+    def test_cray_wrapper_fallback_and_explicit_compiler(self):
+        def available(name):
+            return '/PRIVATE_BIN/CC' if name == 'CC' else None
+        with patch.object(probe.shutil, 'which', side_effect=available):
+            self.assertEqual(probe.find_compiler(None), '/PRIVATE_BIN/CC')
+            self.assertEqual(probe.find_compiler('CC'), '/PRIVATE_BIN/CC')
+            self.assertIsNone(probe.find_compiler('PRIVATE_MISSING_COMPILER'))
+
+    def test_missing_compiler_is_distinguished_from_compile_failure(self):
+        self.output.mkdir()
+        with patch.object(probe.shutil, 'which', return_value=None), \
+                patch.object(probe.subprocess, 'run') as run:
+            result = probe.inspect(self.pair, self.output, None, ['srun'])
+        self.assertEqual(result['failed_check'], 'compiler_unavailable')
+        self.assertFalse(result['compiler_available'])
+        run.assert_not_called()
+        self.assertFalse((self.output / 'compile.log').exists())
+
+    def test_missing_launcher_is_distinguished_from_compile_failure(self):
+        self.output.mkdir()
+        def available(name):
+            return '/PRIVATE_BIN/CC' if name == 'CC' else None
+        with patch.object(probe.shutil, 'which', side_effect=available), \
+                patch.object(probe.subprocess, 'run') as run:
+            result = probe.inspect(self.pair, self.output, None, ['PRIVATE_MISSING_LAUNCHER'])
+        self.assertEqual(result['failed_check'], 'launcher_unavailable')
+        self.assertTrue(result['compiler_available'])
+        self.assertFalse(result['launcher_available'])
+        self.assertNotIn('PRIVATE', json.dumps(result))
+        run.assert_not_called()
+
     def test_mpi_link_mismatch_does_not_launch(self):
         _, result = self.invoke(dict(self.libraries, **{str(self.mpi): 'a'*64}))
         self.assertEqual(result['failed_check'], 'probe_libraries')
